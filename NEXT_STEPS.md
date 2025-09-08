@@ -30,9 +30,10 @@
 - `tests/test_official_alignment.py`：官方 `rwkv` vs HF logits + greedy 64 token 对齐。
 - `tests/test_reload_roundtrip.py`：`save_pretrained` / reload roundtrip。
 - `tests/test_fast_cache.py`：轻量 `RWKV7StateCache` 与 FLA 默认 cache 的 prefill/decode 等价测试。
+- `tests/test_fast_decode_api.py`：`rwkv7_forward_one` bsz=1 inference-only decode API 与 HF recurrent forward 的等价测试。
 - `tests/test_hf_training_smoke.py`：HF Trainer / TRL SFTTrainer 1-step LoRA smoke。
 - `bench/bench_decode_breakdown.py`：decode 瓶颈拆分。
-- `bench/bench_speed.py` 已改成 serving-style prefill：`use_cache=True + logits_to_keep=1`。
+- `bench/bench_speed.py` 已改成 serving-style prefill：`use_cache=True + logits_to_keep=1`，并可用 `--hf-decode-api rwkv7_forward_one` 测 bsz=1 快 decode API。
 - `bench/profile_decode.py`：单 token decode profiler。
 - `scripts/convert_rwkv7_to_hf.py` 新增 `--no-fuse-norm`，作为当前 V100 推理推荐配置。
 - remote config 改为唯一 `rwkv7_hf_adapter` model_type，避免 Transformers 环境中已注册的 FLA `rwkv7` 本地类绕过本仓库 wrapper。
@@ -59,8 +60,8 @@
    - 当前 smoke 明确 `TORCHDYNAMO_DISABLE=1`，并关闭 `use_l2warp` 避免 Trainer loss 原地缩放与 L2Wrap backward 冲突
 5. 性能路径：
    - 继续 profile 单 token decode
-   - `RWKV7StateCache` 已减少 generic CacheLayer 开销；下一步继续减少 `CausalLMOutputWithPast` / per-layer update / tiny kernel launch 开销
-   - 做专用 fast decode entrypoint
+   - `RWKV7StateCache` 已减少 generic CacheLayer 开销
+   - 已新增 `rwkv7_forward_one` bsz=1 专用 fast decode entrypoint；服务器恢复后补正式 V100 benchmark 并继续减少 tiny kernel launch
 
 ## 阶段 3：Transformers 原生 PR 方向
 
