@@ -191,7 +191,7 @@ When the V100 server is reachable, run the committed bundle from the repository 
 ```
 
 It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_token`,
-`test_batch_cache.py`, `bench_batch_sweep.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, and `profile_decode.py --hf-decode-api rwkv7_forward_token`,
+`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, and `profile_decode.py --hf-decode-api rwkv7_forward_token`,
 then writes logs under `bench/logs/`. Use `python bench/summarize_results.py --device V100 --last 12` for a compact view of the latest JSONL rows.
 
 ## Batch-size coverage
@@ -223,6 +223,42 @@ python bench/bench_batch_sweep.py \
 ```
 
 V100 numbers are still pending because the development server was unreachable during the local update. Once it is reachable, `run_v100_fast_decode_validation.sh` will append `axis=batch_sweep` rows to `bench/results.jsonl`.
+
+## Dynamic-batch coverage
+
+The dynamic-batch smoke test uses heterogeneous prompts, advances both batched
+and per-row states, reorders the batched cache, then verifies the reordered next
+logits against independently decoded rows:
+
+```bash
+python tests/test_dynamic_batch_cache.py \
+  --model /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --fuse-norm false \
+  --batch-size 3 \
+  --prompt-tokens 64
+```
+
+The benchmark simulation repeatedly reorders active rows and drops completed
+rows from the recurrent state cache:
+
+```bash
+python bench/bench_dynamic_batch.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --fast-cache true \
+  --decode-apis forward rwkv7_forward_token \
+  --batch-size 8 \
+  --min-batch-size 2 \
+  --results bench/results.jsonl
+```
+
+This is not a full scheduler, but it gives a reproducible `axis=dynamic_batch`
+signal for the cache operations needed by dynamic batching.
 
 ## Decode microbench coverage
 
@@ -256,10 +292,11 @@ The next optimization work should focus on **HF recurrent decode**:
    `rwkv` package layer-by-layer. `profile_decode.py --hf-decode-api rwkv7_forward_token` profiles the fast token API directly.
 4. Benchmark the new batched `rwkv7_forward_token` API with `bench_speed.py --hf-decode-api rwkv7_forward_token`, `bench_batch_sweep.py --fast-decode-api true`, and `bench_decode_breakdown.py --fast-decode-api true`; if the V100 result is stable, use it as the serving-stack fast path while keeping HF `forward`/`generate` compatibility unchanged.
 5. Use `bench_batch_sweep.py` to keep bsz=1/2/4/8 regressions visible while optimizing the batched fast decode path.
-6. Use `bench_decode_micro.py` to separate recurrent model cost from `lm_head`, argmax, and Python loop overhead before changing the decode implementation.
-7. Keep `logits_to_keep=1` as the default serving benchmark path because it already
+6. Use `tests/test_dynamic_batch_cache.py` and `bench_dynamic_batch.py` to keep heterogeneous-row cache reorder/drop behavior correct while approaching serving-style dynamic batching.
+7. Use `bench_decode_micro.py` to separate recurrent model cost from `lm_head`, argmax, and Python loop overhead before changing the decode implementation.
+8. Keep `logits_to_keep=1` as the default serving benchmark path because it already
    fixes the earlier excess-memory measurement.
-8. After V100 decode approaches official `rwkv`, rerun on newer GPUs and larger models.
+9. After V100 decode approaches official `rwkv`, rerun on newer GPUs and larger models.
 
 ## Loop state
 
@@ -268,5 +305,6 @@ The next optimization work should focus on **HF recurrent decode**:
 - Memory for the serving-style HF path is now at parity with official on V100.
 - First decode optimizations landed: `fuse_norm=false` plus the exact-match `RWKV7StateCache` keep the real remote-code HF path at ~41 tok/s vs official ~92 tok/s on V100.
 - Batch correctness and sweep harnesses are in place; formal V100 batch-sweep numbers are pending the next reachable server run.
+- Dynamic-batch cache reorder/drop correctness and benchmark harnesses are in place; formal V100 rows are pending the next reachable server run.
 - Decode microbench harness is in place; formal V100 per-component rows are pending the next reachable server run.
 - The active blocker remains decode throughput: optimized HF is still only ~0.45x official on V100.

@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+# coding=utf-8
+"""Dynamic-batch cache/reorder smoke test for RWKV-7 HF adapter.
+
+The repeated-prompt batch tests catch shape/layout issues, but dynamic batching
+also needs row independence and correct cache reordering. This test uses
+heterogeneous same-length prompts, advances batched and per-row states, reorders
+the batched cache, then verifies the next logits match the independently decoded
+rows in the reordered order.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+
+os.environ.setdefault("RWKV_V7_ON", "1")
+os.environ.setdefault("RWKV7_FAST_CACHE", "1")
+
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
+PROMPTS = [
+    "Alpha user asks about graph theory, eigenvalues, and sparse matrices. ",
+    "Beta dialogue covers cooking rice, mountain weather, and train tickets. ",
+    "Gamma note discusses compilers, register allocation, and loop fusion. ",
+    "Delta report mentions batteries, camera lenses, and market volatility. ",
+    "Epsilon story has robots, ancient maps, and a quiet library at night. ",
+]
+
+
+def set_attn_mode(model, attn_mode: str) -> None:
+    model.config.attn_mode = attn_mode
+    for layer in getattr(model.model, "layers", []):
+        attn = getattr(layer, "attn", None)
+        if hasattr(attn, "mode"):
+            attn.mode = attn_mode
+
+
+def build_heterogeneous_ids(tok, batch_size: int, prompt_tokens: int, device: str) -> torch.Tensor:
+    rows = []
+    for i in range(batch_size):
+        text = PROMPTS[i % len(PROMPTS)] * 128
+        ids = tok(text, return_tensors="pt", add_special_tokens=False).input_ids[0]
+        if ids.numel() < prompt_tokens:
+            raise ValueError(f"Prompt {i} only tokenized to {ids.numel()} tokens; need {prompt_tokens}")
+        rows.append(ids[:prompt_tokens])
+    out = torch.stack(rows, dim=0)
+    return out.to(device) if device.startswith("cuda") else out
+
+
+def max_abs_diff(a: torch.Tensor, b: torch.Tensor) -> float:
+    return float((a.float() - b.float()).abs().max().detach().cpu())
+
+
+def assert_close_logits(label: str, got: torch.Tensor, expected: torch.Tensor, max_diff_limit: float) -> None:
+    diff = max_abs_diff(got, expected)
+    print(f"{label} max_abs_diff={diff}")
+    assert diff <= max_diff_limit, (label, diff)
+    got_next = got[:, -1:].argmax(dim=-1)
+    expected_next = expected[:, -1:].argmax(dim=-1)
+    assert torch.equal(got_next, expected_next), label
+
+
+def run_case(model, ids: torch.Tensor, mode: str, decode_steps: int, max_diff_limit: float) -> None:
+    assert ids.ndim == 2 and ids.shape[0] >= 2 and ids.shape[1] >= 2
+    if mode == "forward":
+        def step_fn(token, state):
+            return model(token, past_key_values=state, use_cache=True, logits_to_keep=1)
+    elif mode == "fast_token":
+        if not hasattr(model, "rwkv7_forward_token"):
+            raise AssertionError("Model does not expose rwkv7_forward_token")
+        step_fn = model.rwkv7_forward_token
+    else:  # pragma: no cover - argparse constrains this
+        raise ValueError(mode)
+
+    with torch.inference_mode():
+        batched = model(ids, use_cache=True, logits_to_keep=1)
+        batched_state = batched.past_key_values
+        batched_next = batched.logits[:, -1:].argmax(dim=-1)
+        assert hasattr(batched_state, "reorder_cache"), type(batched_state).__name__
+
+        indiv_states = []
+        indiv_next = []
+        indiv_logits = []
+        for row in range(ids.shape[0]):
+            out = model(ids[row:row + 1], use_cache=True, logits_to_keep=1)
+            indiv_states.append(out.past_key_values)
+            indiv_next.append(out.logits[:, -1:].argmax(dim=-1))
+            indiv_logits.append(out.logits)
+        assert_close_logits(f"{mode} prefill batch-vs-individual", batched.logits, torch.cat(indiv_logits, dim=0), max_diff_limit)
+
+        for step in range(decode_steps):
+            batched = step_fn(batched_next, batched_state)
+            batched_state = batched.past_key_values
+            batched_next = batched.logits[:, -1:].argmax(dim=-1)
+
+            expected_logits = []
+            for row in range(ids.shape[0]):
+                out = step_fn(indiv_next[row], indiv_states[row])
+                indiv_states[row] = out.past_key_values
+                indiv_next[row] = out.logits[:, -1:].argmax(dim=-1)
+                expected_logits.append(out.logits)
+            assert_close_logits(
+                f"{mode} heterogeneous decode step={step + 1}",
+                batched.logits,
+                torch.cat(expected_logits, dim=0),
+                max_diff_limit,
+            )
+
+        perm_list = list(reversed(range(ids.shape[0])))
+        if ids.shape[0] >= 3:
+            perm_list = [ids.shape[0] - 1, 0, *range(1, ids.shape[0] - 1)]
+        perm = torch.tensor(perm_list, dtype=torch.long, device=ids.device)
+        batched_state.reorder_cache(perm.detach().cpu())
+        batched_next = batched_next.index_select(0, perm)
+        batched = step_fn(batched_next, batched_state)
+        expected_logits = []
+        for src in perm_list:
+            out = step_fn(indiv_next[src], indiv_states[src])
+            indiv_states[src] = out.past_key_values
+            indiv_next[src] = out.logits[:, -1:].argmax(dim=-1)
+            expected_logits.append(out.logits)
+        expected = torch.cat(expected_logits, dim=0)
+        assert_close_logits(f"{mode} reordered decode", batched.logits, expected, max_diff_limit)
+        assert batched.past_key_values.get_seq_length() == ids.shape[1] + decode_steps + 1
+        print(f"{mode} PASS cache_type={type(batched.past_key_values).__name__} perm={perm_list}")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model", required=True)
+    ap.add_argument("--device", default="cuda")
+    ap.add_argument("--dtype", default="fp16", choices=sorted(DTYPES))
+    ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
+    ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
+    ap.add_argument("--batch-size", type=int, default=3)
+    ap.add_argument("--prompt-tokens", type=int, default=64)
+    ap.add_argument("--decode-steps", type=int, default=4)
+    ap.add_argument("--max-diff", type=float, default=0.2)
+    ap.add_argument("--modes", nargs="+", default=["forward", "fast_token"], choices=["forward", "fast_token"])
+    args = ap.parse_args()
+
+    tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model,
+        trust_remote_code=True,
+        torch_dtype=DTYPES[args.dtype],
+        device_map=args.device if args.device.startswith("cuda") else None,
+    ).eval()
+    if args.fuse_norm != "auto":
+        desired = args.fuse_norm == "true"
+        actual = bool(getattr(model.config, "fuse_norm", False))
+        if actual != desired:
+            raise ValueError(f"Loaded model config has fuse_norm={actual}; use a converted model dir with fuse_norm={desired}")
+    set_attn_mode(model, args.attn_mode)
+
+    ids = build_heterogeneous_ids(tok, args.batch_size, args.prompt_tokens, args.device)
+    print(f"ids_shape={tuple(ids.shape)} modes={args.modes}")
+    for mode in args.modes:
+        run_case(model, ids, mode, args.decode_steps, args.max_diff)
+    print("PASS")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
