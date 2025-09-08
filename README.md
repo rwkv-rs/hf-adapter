@@ -164,6 +164,14 @@ python bench/bench_speed.py \
   --fast-cache true
 ```
 
+
+Full V100 fast-decode validation bundle:
+
+```bash
+./bench/run_v100_fast_decode_validation.sh
+python bench/summarize_results.py --device V100 --last 12
+```
+
 Serving-style speed/memory benchmark using the bsz=1 fast decode API:
 
 ```bash

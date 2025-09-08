@@ -182,6 +182,18 @@ The profile still shows thousands of tiny kernel launches per handful of decode
 tokens, so the next optimization has to reduce/fuse the one-token layer path
 rather than tune sampling.
 
+## Reproducible V100 fast-decode validation
+
+When the V100 server is reachable, run the committed bundle from the repository root:
+
+```bash
+./bench/run_v100_fast_decode_validation.sh
+```
+
+It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_one`,
+`bench_decode_breakdown.py --fast-decode-api true`, and `profile_decode.py --hf-decode-api rwkv7_forward_one`,
+then writes logs under `bench/logs/`. Use `python bench/summarize_results.py --device V100 --last 12` for a compact view of the latest JSONL rows.
+
 ## Current optimization target
 
 The next optimization work should focus on **HF recurrent decode**:

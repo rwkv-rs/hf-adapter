@@ -61,7 +61,7 @@
 5. 性能路径：
    - 继续 profile 单 token decode
    - `RWKV7StateCache` 已减少 generic CacheLayer 开销
-   - 已新增 `rwkv7_forward_one` bsz=1 专用 fast decode entrypoint；服务器恢复后补正式 V100 benchmark 并继续减少 tiny kernel launch
+   - 已新增 `rwkv7_forward_one` bsz=1 专用 fast decode entrypoint；服务器恢复后运行 `./bench/run_v100_fast_decode_validation.sh` 补正式 V100 benchmark 并继续减少 tiny kernel launch
 
 ## 阶段 3：Transformers 原生 PR 方向
 

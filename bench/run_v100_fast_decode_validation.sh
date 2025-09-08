@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# Run the V100 fast-decode validation bundle for the RWKV-7 HF adapter.
+#
+# Expected environment: activated Python env with torch/transformers/fla/rwkv.
+# Optional env vars:
+#   HF_DIR, PTH, DTYPE, DEVICE, PROMPT_TOKENS, DECODE_TOKENS, RESULTS, LOG_DIR
+set -euo pipefail
+
+export RWKV_V7_ON="${RWKV_V7_ON:-1}"
+export PYTHONNOUSERSITE="${PYTHONNOUSERSITE:-1}"
+
+HF_DIR="${HF_DIR:-/home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf}"
+PTH="${PTH:-/home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-20260129-ctx8192.pth}"
+DTYPE="${DTYPE:-fp16}"
+DEVICE="${DEVICE:-cuda}"
+PROMPT_TOKENS="${PROMPT_TOKENS:-512}"
+DECODE_TOKENS="${DECODE_TOKENS:-128}"
+RESULTS="${RESULTS:-bench/results.jsonl}"
+LOG_DIR="${LOG_DIR:-bench/logs}"
+
+mkdir -p "${LOG_DIR}"
+STAMP="$(date +%Y%m%d_%H%M%S)"
+LOG="${LOG_DIR}/v100_fast_decode_${STAMP}.log"
+PROFILE_OUT="${LOG_DIR}/profile_hf_fast_decode_${STAMP}.json"
+
+run() {
+  echo
+  echo "+ $*"
+  "$@"
+}
+
+{
+  echo "date=$(date -Is)"
+  echo "hf_dir=${HF_DIR}"
+  echo "pth=${PTH}"
+  echo "dtype=${DTYPE} device=${DEVICE} prompt_tokens=${PROMPT_TOKENS} decode_tokens=${DECODE_TOKENS}"
+  echo "results=${RESULTS} profile_out=${PROFILE_OUT}"
+
+  run python tests/test_fast_decode_api.py \
+    --model "${HF_DIR}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --fuse-norm false \
+    --decode-steps 32 \
+    --max-diff 0.2
+
+  run python bench/bench_speed.py \
+    --hf-dir "${HF_DIR}" \
+    --pth "${PTH}" \
+    --backend both \
+    --dtype "${DTYPE}" \
+    --prompt-tokens "${PROMPT_TOKENS}" \
+    --decode-tokens "${DECODE_TOKENS}" \
+    --device "${DEVICE}" \
+    --warmup 2 \
+    --runs 3 \
+    --hf-logits-to-keep 1 \
+    --fuse-norm false \
+    --fast-cache true \
+    --hf-decode-api rwkv7_forward_one \
+    --results "${RESULTS}"
+
+  run python bench/bench_decode_breakdown.py \
+    --hf-dir "${HF_DIR}" \
+    --pth "${PTH}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --prompt-tokens "${PROMPT_TOKENS}" \
+    --decode-tokens "${DECODE_TOKENS}" \
+    --warmup 2 \
+    --runs 3 \
+    --attn-modes chunk fused_recurrent \
+    --fuse-norm false \
+    --fast-cache true \
+    --fast-decode-api true \
+    --results "${RESULTS}"
+
+  run python bench/profile_decode.py \
+    --backend hf \
+    --hf-dir "${HF_DIR}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --attn-mode fused_recurrent \
+    --fuse-norm false \
+    --fast-cache true \
+    --fixed-token \
+    --hf-decode-api rwkv7_forward_one \
+    --out "${PROFILE_OUT}"
+
+  run python bench/summarize_results.py \
+    --results "${RESULTS}" \
+    --device V100 \
+    --last 12
+
+  run python bench/summarize_results.py \
+    --results "${RESULTS}" \
+    --device V100 \
+    --require-fast-decode \
+    --last 8
+
+  echo
+  echo "DONE log=${LOG} profile=${PROFILE_OUT}"
+} 2>&1 | tee "${LOG}"
