@@ -27,11 +27,13 @@ tests/
   test_reload_roundtrip.py
   test_fast_cache.py
   test_fast_decode_api.py
+  test_batch_cache.py
   test_peft_lora.py
   test_hf_training_smoke.py
 bench/
   bench_speed.py
   bench_decode_breakdown.py
+  bench_batch_sweep.py
   profile_decode.py
 NEXT_STEPS.md
 BENCHMARK.md
@@ -126,6 +128,17 @@ python tests/test_fast_decode_api.py \
   --fuse-norm false
 ```
 
+Batched recurrent cache smoke test:
+
+```bash
+python tests/test_batch_cache.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --fuse-norm false \
+  --batch-sizes 1 2 4
+```
+
 
 ## Correctness and benchmark tests
 
@@ -186,6 +199,19 @@ python bench/bench_speed.py \
   --hf-decode-api rwkv7_forward_one
 ```
 
+Batch-size sweep for serving-style prefill and recurrent decode:
+
+```bash
+python bench/bench_batch_sweep.py \
+  --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --fast-cache true \
+  --fast-decode-api auto \
+  --batch-sizes 1 2 4 8
+```
+
 Decode bottleneck breakdown:
 
 ```bash
@@ -233,6 +259,7 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - HF Trainer and TRL SFTTrainer one-step LoRA smoke runs work.
 - Fast recurrent cache matches the default FLA cache exactly on prefill and recurrent decode.
 - Inference-only `rwkv7_forward_one` bsz=1 API is available for serving benchmark experiments without changing HF `forward`/`generate`.
+- Batched recurrent cache smoke coverage exists for repeated prompts across bsz=1/2/4; benchmark sweep records total/per-sequence throughput for bsz=1/2/4/8.
 - Save/reload roundtrip works with exact logit equality.
 - Official `rwkv` alignment includes prompt logits and 64-token greedy equality.
 - Official `rwkv` logits comparison on smoke prompts:

@@ -46,8 +46,11 @@ def compact(row: dict[str, Any]) -> dict[str, Any]:
     keys = [
         "_lineno", "axis", "backend", "device", "dtype", "attn_mode",
         "fuse_norm", "fast_cache", "cache_type", "hf_decode_api", "fast_decode_api",
-        "prompt_tokens", "decode_tokens", "prefill_tokps", "prefill_keep1_tokps",
-        "decode_tokps", "decode_greedy_tokps", "decode_fixed_tokps",
+        "decode_api", "batch_size", "prompt_tokens", "decode_tokens",
+        "prefill_tokps", "prefill_keep1_tokps", "prefill_tokps_total",
+        "prefill_tokps_per_seq", "prefill_ms",
+        "decode_tokps", "decode_tokps_total", "decode_tokps_per_seq",
+        "decode_ms_per_step", "decode_greedy_tokps", "decode_fixed_tokps",
         "decode_fast_api_greedy_tokps", "decode_fast_api_fixed_tokps",
         "decode_ms_per_tok", "decode_greedy_ms_per_tok", "decode_fast_api_greedy_ms_per_tok",
         "peak_vram_mb", "top5_match", "argmax_match", "cosine", "max_abs_diff",
