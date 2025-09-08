@@ -8,6 +8,7 @@ This repository converts RWKV-7 weights to a Hugging Face-style directory and pr
 - `AutoModelForCausalLM.from_pretrained(..., trust_remote_code=True)`
 - `model.generate(..., use_cache=True)`
 - PEFT LoRA smoke tests
+- HF Trainer and TRL SFTTrainer one-step smoke tests
 
 The current backend uses the FLA (`flash-linear-attention`) RWKV-7 implementation. The next milestone is a native Transformers implementation without the FLA runtime dependency.
 
@@ -24,10 +25,13 @@ tests/
   smoke_hf_generate.py
   test_official_alignment.py
   test_reload_roundtrip.py
+  test_fast_cache.py
   test_peft_lora.py
+  test_hf_training_smoke.py
 bench/
   bench_speed.py
   bench_decode_breakdown.py
+  profile_decode.py
 NEXT_STEPS.md
 BENCHMARK.md
 ```
@@ -89,6 +93,28 @@ python tests/test_peft_lora.py \
   --attn-mode fused_recurrent
 ```
 
+HF Trainer / TRL SFTTrainer one-step smoke:
+
+```bash
+export TORCHDYNAMO_DISABLE=1
+export PYTHONPATH=/path/to/flash-linear-attention:$PYTHONPATH
+
+python tests/test_hf_training_smoke.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --attn-mode fused_recurrent \
+  --backend both
+```
+
+Fast recurrent cache equivalence test:
+
+```bash
+python tests/test_fast_cache.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --fuse-norm false
+```
+
 
 ## Correctness and benchmark tests
 
@@ -123,7 +149,8 @@ python bench/bench_speed.py \
   --backend both \
   --dtype fp16 \
   --hf-logits-to-keep 1 \
-  --fuse-norm false
+  --fuse-norm false \
+  --fast-cache true
 ```
 
 Decode bottleneck breakdown:
@@ -134,7 +161,8 @@ python bench/bench_decode_breakdown.py \
   --pth /path/to/rwkv7-g1d-0.1b-20260129-ctx8192.pth \
   --dtype fp16 \
   --attn-modes chunk fused_recurrent \
-  --fuse-norm false
+  --fuse-norm false \
+  --fast-cache true
 ```
 
 Profiler for one-token decode hotspots:
@@ -146,7 +174,8 @@ python bench/profile_decode.py \
   --dtype fp16 \
   --attn-mode chunk \
   --fuse-norm false \
-  --fixed-token
+  --fixed-token \
+  --fast-cache true
 ```
 
 ## Current validation
@@ -155,6 +184,8 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 
 - HF `generate()` works.
 - PEFT LoRA forward/loss/backward works.
+- HF Trainer and TRL SFTTrainer one-step LoRA smoke runs work.
+- Fast recurrent cache matches the default FLA cache exactly on prefill and recurrent decode.
 - Save/reload roundtrip works with exact logit equality.
 - Official `rwkv` alignment includes prompt logits and 64-token greedy equality.
 - Official `rwkv` logits comparison on smoke prompts:
@@ -166,5 +197,6 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 
 - This is a wrapper-based first stage, not yet a native upstream Transformers implementation.
 - The backend currently requires FLA.
+- The remote config uses a unique `rwkv7_hf_adapter` model type so `AutoModelForCausalLM` reliably loads this adapter instead of a locally registered FLA `rwkv7` class.
 - V100 serving-style memory is now near parity with official for 0.1B when using `logits_to_keep=1`.
-- V100 native-norm HF decode improved to about 41 tok/s, but official is still about 93 tok/s for 0.1B fp16.
+- V100 native-norm + fast-cache HF decode is about 41 tok/s, but official is still about 92 tok/s for 0.1B fp16.

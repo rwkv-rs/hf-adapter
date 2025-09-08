@@ -90,7 +90,8 @@ Result:
 
 `bench/bench_speed.py` now measures HF prefill with `use_cache=True` and
 `logits_to_keep=1`, which matches serving needs and avoids retaining full prompt
-logits.
+logits. The HF path now uses the adapter remote-code class and the lightweight
+`RWKV7StateCache` hot path by default (`RWKV7_FAST_CACHE=1`).
 
 Command:
 
@@ -106,7 +107,8 @@ python bench/bench_speed.py \
   --warmup 2 \
   --runs 3 \
   --hf-logits-to-keep 1 \
-  --fuse-norm false
+  --fuse-norm false \
+  --fast-cache true
 ```
 
 Result on Tesla V100:
@@ -115,13 +117,15 @@ Result on Tesla V100:
 |---|---:|---:|---:|---:|
 | HF adapter, `fuse_norm=true` | 11852.0 | 31.5 | 31.70 | 406.4 MB |
 | HF adapter, `fuse_norm=false` | 14247.7 | 41.3 | 24.24 | 406.4 MB |
-| official `rwkv` | 228.4 | 92.8 | 10.77 | 406.2 MB |
+| HF adapter, `fuse_norm=false`, `RWKV7StateCache` | 13801.4 | 41.2 | 24.28 | 406.4 MB |
+| official `rwkv` | 225.0 | 92.5 | 10.81 | 406.2 MB |
 
 Interpretation:
 
 - **Memory target is met** for the 0.1B V100 serving-style path: HF is roughly equal to official.
 - HF prefill is much faster than the official pure-torch reference path measured here.
-- Disabling FLA fused norm for inference improved HF decode from `31.5` to `41.3` tok/s (`+31%`).
+- Disabling FLA fused norm for inference improved HF decode from `31.5` to about `41` tok/s (`+31%`).
+- The lightweight `RWKV7StateCache` preserves exact logits/cache behavior and keeps the real remote-code `AutoModelForCausalLM` path at the same ~41 tok/s level while avoiding FLA CacheLayer bookkeeping.
 - **Decode is still not met**: optimized HF decode is about `0.45x` official `rwkv` on this V100 run.
 
 ### Decode breakdown
@@ -140,6 +144,7 @@ python bench/bench_decode_breakdown.py \
   --runs 3 \
   --attn-modes chunk fused_recurrent \
   --fuse-norm false \
+  --fast-cache true \
   --results bench/results.jsonl
 ```
 
@@ -149,8 +154,10 @@ Result on Tesla V100:
 |---|---:|---:|---:|---:|---:|
 | HF `chunk`, `fuse_norm=true` | 11536.2 | 30.4 | 30.4 | 0.05 ms/tok | 439.7 MB |
 | HF `chunk`, `fuse_norm=false` | 13343.7 | 38.2 | 38.0 | ≈0 ms/tok | 439.7 MB |
+| HF `chunk`, `fuse_norm=false`, `RWKV7StateCache` | 13510.3 | 36.7 | 37.4 | 0.51 ms/tok | 439.7 MB |
 | HF `fused_recurrent`, `fuse_norm=false` | 17192.8 | 38.3 | 38.2 | ≈0 ms/tok | 440.2 MB |
-| official `rwkv` | 222.0 | 92.2 | n/a | n/a | 470.0 MB |
+| HF `fused_recurrent`, `fuse_norm=false`, `RWKV7StateCache` | 17198.9 | 38.4 | 38.5 | 0.09 ms/tok | 440.2 MB |
+| official `rwkv` | 222.1 | 91.5 | n/a | n/a | 470.0 MB |
 
 Interpretation:
 
@@ -179,8 +186,9 @@ rather than tune sampling.
 
 The next optimization work should focus on **HF recurrent decode**:
 
-1. Add a specialized fast decode entrypoint that avoids unnecessary full HF
-   `CausalLMOutputWithPast` / dynamic `Cache` overhead for one-token decode.
+1. Continue beyond the first cache optimization: `RWKV7StateCache` removes generic
+   FLA CacheLayer bookkeeping, but the remaining gap requires reducing per-layer
+   tiny kernels and Python dispatch in the one-token path.
 2. Inspect FLA `Cache.update`, per-layer state gather/update, token shift, group norm,
    and output projection overhead in the single-token path.
 3. Profile one-token decode with `torch.profiler` / Nsight and compare against official
@@ -194,5 +202,5 @@ The next optimization work should focus on **HF recurrent decode**:
 - Correctness tests are now strong enough for 0.1B smoke: prompt logits, greedy 64,
   and save/reload roundtrip.
 - Memory for the serving-style HF path is now at parity with official on V100.
-- First decode optimization landed: `fuse_norm=false` gives HF ~41 tok/s vs official ~92-93 tok/s on V100.
+- First decode optimizations landed: `fuse_norm=false` plus the exact-match `RWKV7StateCache` keep the real remote-code HF path at ~41 tok/s vs official ~92 tok/s on V100.
 - The active blocker remains decode throughput: optimized HF is still only ~0.45x official on V100.

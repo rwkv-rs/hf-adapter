@@ -9,7 +9,7 @@ os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
 import torch
 from peft import LoraConfig, get_peft_model
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 def main():
@@ -20,17 +20,19 @@ def main():
     args = ap.parse_args()
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-    cfg = AutoConfig.from_pretrained(args.model, trust_remote_code=True)
-    cfg.attn_mode = args.attn_mode
-    cfg.use_cache = False
-    cfg.fuse_cross_entropy = False
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
         trust_remote_code=True,
-        config=cfg,
         torch_dtype=torch.float16 if args.device.startswith("cuda") else torch.float32,
         device_map=args.device if args.device.startswith("cuda") else None,
     )
+    model.config.attn_mode = args.attn_mode
+    model.config.use_cache = False
+    model.config.fuse_cross_entropy = False
+    for layer in getattr(model.model, "layers", []):
+        attn = getattr(layer, "attn", None)
+        if hasattr(attn, "mode"):
+            attn.mode = args.attn_mode
     lora_cfg = LoraConfig(
         task_type="CAUSAL_LM",
         r=4,

@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["peft"]
+test = ["peft", "accelerate", "datasets", "trl"]
 
 [tool.setuptools.packages.find]
 include = ["rwkv7_hf*"]

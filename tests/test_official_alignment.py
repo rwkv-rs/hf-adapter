@@ -22,7 +22,7 @@ from typing import Any
 os.environ.setdefault("RWKV_V7_ON", "1")
 
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 PROMPTS = [
     "The quick brown fox jumps over the lazy dog.",
@@ -106,16 +106,17 @@ def main() -> int:
     top5_target = DEFAULT_TOP5[args.dtype] if args.top5_target is None else args.top5_target
 
     tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
-    cfg = AutoConfig.from_pretrained(args.hf_dir, trust_remote_code=True)
-    if args.fuse_norm != "auto":
-        cfg.fuse_norm = args.fuse_norm == "true"
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_dir,
         trust_remote_code=True,
-        config=cfg,
         torch_dtype=dtype,
         device_map=args.device if args.device.startswith("cuda") else None,
     ).eval()
+    if args.fuse_norm != "auto":
+        desired = args.fuse_norm == "true"
+        actual = bool(getattr(model.config, "fuse_norm", False))
+        if actual != desired:
+            raise ValueError(f"Loaded model config has fuse_norm={actual}; use a converted model dir with fuse_norm={desired}")
 
     from rwkv.model import RWKV
     pth_name = args.pth[:-4] if args.pth.lower().endswith(".pth") else args.pth
