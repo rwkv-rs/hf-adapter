@@ -42,7 +42,8 @@ python scripts/convert_rwkv7_to_hf.py \
   --output /path/to/rwkv7-g1d-0.1b-hf \
   --vocab-file /path/to/rwkv_vocab_v20230424.txt \
   --precision fp16 \
-  --attn-mode chunk
+  --attn-mode chunk \
+  --no-fuse-norm
 ```
 
 ## Inference smoke test
@@ -100,7 +101,8 @@ python tests/test_official_alignment.py \
   --dtype fp16 \
   --device cuda \
   --official-strategy 'cpu fp32' \
-  --greedy-window 64
+  --greedy-window 64 \
+  --fuse-norm false
 ```
 
 Save/reload roundtrip:
@@ -120,7 +122,8 @@ python bench/bench_speed.py \
   --pth /path/to/rwkv7-g1d-0.1b-20260129-ctx8192.pth \
   --backend both \
   --dtype fp16 \
-  --hf-logits-to-keep 1
+  --hf-logits-to-keep 1 \
+  --fuse-norm false
 ```
 
 Decode bottleneck breakdown:
@@ -130,7 +133,20 @@ python bench/bench_decode_breakdown.py \
   --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
   --pth /path/to/rwkv7-g1d-0.1b-20260129-ctx8192.pth \
   --dtype fp16 \
-  --attn-modes chunk fused_recurrent
+  --attn-modes chunk fused_recurrent \
+  --fuse-norm false
+```
+
+Profiler for one-token decode hotspots:
+
+```bash
+python bench/profile_decode.py \
+  --backend hf \
+  --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --attn-mode chunk \
+  --fuse-norm false \
+  --fixed-token
 ```
 
 ## Current validation
@@ -144,11 +160,11 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - Official `rwkv` logits comparison on smoke prompts:
   - top-5 token IDs match
   - cosine similarity ≈ `0.999998` on V100 fp16
-  - fp16 max absolute difference ≈ `0.101` on V100; fp32 reference ≈ `0.030`
+  - fp16 max absolute difference ≈ `0.072` on V100 with native norm; fp32 reference ≈ `0.030`
 
 ## Known limitations
 
 - This is a wrapper-based first stage, not yet a native upstream Transformers implementation.
 - The backend currently requires FLA.
 - V100 serving-style memory is now near parity with official for 0.1B when using `logits_to_keep=1`.
-- V100 HF decode remains the primary performance gap: about 31 tok/s vs official about 93 tok/s for 0.1B fp16.
+- V100 native-norm HF decode improved to about 41 tok/s, but official is still about 93 tok/s for 0.1B fp16.

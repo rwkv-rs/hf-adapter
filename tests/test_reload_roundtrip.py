@@ -7,7 +7,7 @@ import argparse
 import tempfile
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 
 def main() -> int:
@@ -16,13 +16,18 @@ def main() -> int:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--dtype", default="fp16", choices=["fp16", "bf16", "fp32"])
     ap.add_argument("--max-diff", type=float, default=0.0)
+    ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
     args = ap.parse_args()
     dtype = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[args.dtype]
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    cfg = AutoConfig.from_pretrained(args.model, trust_remote_code=True)
+    if args.fuse_norm != "auto":
+        cfg.fuse_norm = args.fuse_norm == "true"
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
         trust_remote_code=True,
+        config=cfg,
         torch_dtype=dtype,
         device_map=args.device if args.device.startswith("cuda") else None,
     ).eval()

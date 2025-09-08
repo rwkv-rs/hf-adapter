@@ -30,13 +30,16 @@
 - `tests/test_reload_roundtrip.py`：`save_pretrained` / reload roundtrip。
 - `bench/bench_decode_breakdown.py`：decode 瓶颈拆分。
 - `bench/bench_speed.py` 已改成 serving-style prefill：`use_cache=True + logits_to_keep=1`。
+- `bench/profile_decode.py`：单 token decode profiler。
+- `scripts/convert_rwkv7_to_hf.py` 新增 `--no-fuse-norm`，作为当前 V100 推理推荐配置。
 
 当前 V100 结论：
 
-- correctness：top5/argmax/cosine/greedy64 均通过。
+- correctness：`fuse_norm=false` 下 top5/argmax/cosine/greedy64 均通过，fp16 max_abs 约 0.072。
 - memory：HF 406.4 MB vs official 406.2 MB，0.1B serving path 已基本持平。
-- speed：HF decode 约 31.5 tok/s，official 约 92.6 tok/s；decode 是下一步主优化点。
-- breakdown：argmax 开销只有约 0.05-0.08 ms/token，`chunk` 和 `fused_recurrent` 单 token decode 基本一样，瓶颈在 HF/FLA model+state/cache+kernel 路径。
+- speed：`fuse_norm=false` 把 HF decode 从约 31.5 tok/s 提到 41.3 tok/s，official 约 92.8 tok/s；decode 仍是主优化点。
+- profiler：`fuse_norm=true` 的 FLA `LayerNormFunction` CPU 开销很大，native norm 把 norm CPU total 从约 54.8ms/6tok 降到约 6.6ms/6tok。
+- breakdown：argmax 开销约等于 0，`chunk` 和 `fused_recurrent` 单 token decode 基本一样，剩余瓶颈在 HF/FLA model+state/cache+小 kernel launch 路径。
 
 下一步继续补：
 
@@ -51,8 +54,8 @@
    - TRL `SFTTrainer` smoke
    - 明确 `TORCHDYNAMO_DISABLE=1` 或修 FLA backward compile 问题
 5. 性能路径：
-   - profile 单 token decode
-   - 减少 `CausalLMOutputWithPast` / dynamic `Cache` / per-layer update 开销
+   - 继续 profile 单 token decode
+   - 减少 `CausalLMOutputWithPast` / dynamic `Cache` / per-layer update / tiny kernel launch 开销
    - 做专用 fast decode entrypoint
 
 ## 阶段 3：Transformers 原生 PR 方向

@@ -32,7 +32,7 @@ DTYPES = {
 }
 
 
-def infer_config(weights: Dict[str, torch.Tensor], dtype_name: str, attn_mode: str) -> RWKV7Config:
+def infer_config(weights: Dict[str, torch.Tensor], dtype_name: str, attn_mode: str, fuse_norm: bool) -> RWKV7Config:
     hidden_size = weights["blocks.0.ffn.key.weight"].shape[1]
     intermediate_size = weights["blocks.0.ffn.key.weight"].shape[0]
     num_layers = 0
@@ -60,6 +60,7 @@ def infer_config(weights: Dict[str, torch.Tensor], dtype_name: str, attn_mode: s
         eos_token_id=0,
         bos_token_id=1,
         tie_word_embeddings=False,
+        fuse_norm=fuse_norm,
     )
     cfg.torch_dtype = dtype_name
     return cfg
@@ -140,7 +141,7 @@ def convert(args: argparse.Namespace) -> None:
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     weights = torch.load(args.input, weights_only=True, map_location="cpu")
-    config = infer_config(weights, dtype_name=dtype_name, attn_mode=args.attn_mode)
+    config = infer_config(weights, dtype_name=dtype_name, attn_mode=args.attn_mode, fuse_norm=args.fuse_norm)
     model = RWKV7ForCausalLM(config).to(dtype=dtype)
     model_dict = model.state_dict()
     missing = set(model_dict)
@@ -188,6 +189,10 @@ def main() -> None:
     parser.add_argument("--vocab-file", default=None, help="rwkv_vocab_v20230424.txt to copy into the model dir")
     parser.add_argument("--precision", choices=sorted(DTYPES), default="fp16")
     parser.add_argument("--attn-mode", choices=["chunk", "fused_recurrent"], default="chunk")
+    norm_group = parser.add_mutually_exclusive_group()
+    norm_group.add_argument("--fuse-norm", dest="fuse_norm", action="store_true", help="Use FLA fused norm modules in the generated config")
+    norm_group.add_argument("--no-fuse-norm", dest="fuse_norm", action="store_false", help="Use native PyTorch norm modules; faster for V100 decode in current tests")
+    parser.set_defaults(fuse_norm=False)
     parser.add_argument("--max-shard-size", default="1000GB")
     args = parser.parse_args()
     convert(args)
