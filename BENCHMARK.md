@@ -192,7 +192,7 @@ The next optimization work should focus on **HF recurrent decode**:
 2. Inspect FLA `Cache.update`, per-layer state gather/update, token shift, group norm,
    and output projection overhead in the single-token path.
 3. Profile one-token decode with `torch.profiler` / Nsight and compare against official
-   `rwkv` package layer-by-layer.
+   `rwkv` package layer-by-layer. `profile_decode.py --hf-decode-api rwkv7_forward_one` profiles the new bsz=1 API directly.
 4. Benchmark the new bsz=1 `rwkv7_forward_one` API with `bench_speed.py --hf-decode-api rwkv7_forward_one` and `bench_decode_breakdown.py --fast-decode-api true`; if the V100 result is stable, use it as the serving-stack fast path while keeping HF `forward`/`generate` compatibility unchanged.
 5. Keep `logits_to_keep=1` as the default serving benchmark path because it already
    fixes the earlier excess-memory measurement.
