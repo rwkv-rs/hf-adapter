@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+# coding=utf-8
+"""RWKV-7 speed & memory benchmark — HF adapter vs official `rwkv`.
+
+Decode is measured by threading the recurrent state directly (one token at a
+time), NOT via transformers.generate() — that's the true recurrent decode path
+and it matches how the official `rwkv` package decodes, so the two backends are
+compared fairly. Prefill is one full forward. Peak VRAM covers prefill+decode.
+
+Official runs the pure-torch reference path (RWKV_CUDA_ON unset => no fused
+WKV7 kernel, which would need nvcc). That makes official prefill artificially
+slow (sequential), but per-token DECODE is a fair same-box comparison.
+
+Usage:
+  python bench/bench_speed.py --hf-dir <dir> --pth <.pth> --backend both --dtype fp16
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import time
+from pathlib import Path
+
+os.environ.setdefault("RWKV_V7_ON", "1")
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
+SEED = "The quick brown fox jumps over the lazy dog. " * 200
+
+
+def encode(tok, n):
+    ids = tok(SEED, return_tensors="pt", add_special_tokens=False).input_ids
+    return ids[:, :n]
+
+
+def bench_hf(args, dt):
+    tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        args.hf_dir, trust_remote_code=True, torch_dtype=dt,
+        device_map=args.device).eval()
+    ids = encode(tok, args.prompt_tokens).to(args.device)
+    L = ids.shape[1]
+
+    torch.cuda.reset_peak_memory_stats()
+    # prefill
+    with torch.no_grad():
+        for _ in range(args.warmup):
+            _ = model(ids, use_cache=False)
+    torch.cuda.synchronize()
+    t0 = time.time()
+    with torch.no_grad():
+        for _ in range(args.runs):
+            _ = model(ids, use_cache=False)
+    torch.cuda.synchronize()
+    prefill_tokps = L / ((time.time() - t0) / args.runs)
+
+    # decode via direct state threading
+    with torch.no_grad():
+        out = model(ids[:, :8], use_cache=True)
+        state = out.past_key_values
+        nxt = out.logits[:, -1:].argmax(dim=-1)
+        for _ in range(args.warmup):
+            out = model(nxt, past_key_values=state, use_cache=True)
+            state = out.past_key_values
+            nxt = out.logits[:, -1:].argmax(dim=-1)
+    torch.cuda.synchronize()
+    t0 = time.time()
+    with torch.no_grad():
+        for _ in range(args.decode_tokens):
+            out = model(nxt, past_key_values=state, use_cache=True)
+            state = out.past_key_values
+            nxt = out.logits[:, -1:].argmax(dim=-1)
+    torch.cuda.synchronize()
+    dt_decode = time.time() - t0
+    return _res("hf_adapter", args, model, L, prefill_tokps,
+                args.decode_tokens / dt_decode,
+                torch.cuda.max_memory_allocated() / 1024 / 1024,
+                getattr(model.config, "attn_mode", "?"))
+
+
+def bench_official(args, dt):
+    from rwkv.model import RWKV
+    tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
+    pth = args.pth[:-4] if args.pth.lower().endswith(".pth") else args.pth
+    strat = f"{args.device} " + ("fp16" if dt == torch.float16 else
+                                 "bf16" if dt == torch.bfloat16 else "fp32")
+    m = RWKV(model=pth, strategy=strat)
+    id_list = encode(tok, args.prompt_tokens)[0].tolist()
+    L = len(id_list)
+
+    torch.cuda.reset_peak_memory_stats()
+    # prefill (official torch path is sequential => slow; 1 timed run)
+    m.forward(id_list[:8], None)
+    t0 = time.time()
+    logits = m.forward(id_list, None)
+    logits = logits[0] if isinstance(logits, tuple) else logits
+    torch.cuda.synchronize()
+    prefill_tokps = L / (time.time() - t0)
+
+    # decode via state threading
+    logits, state = m.forward(id_list[:8], None)
+    for _ in range(args.warmup):
+        nt = int(logits.argmax())
+        logits, state = m.forward([nt], state)
+    torch.cuda.synchronize()
+    t0 = time.time()
+    for _ in range(args.decode_tokens):
+        nt = int(logits.argmax())
+        logits, state = m.forward([nt], state)
+    torch.cuda.synchronize()
+    dt_decode = time.time() - t0
+    return _res("official_rwkv", args, None, L, prefill_tokps,
+                args.decode_tokens / dt_decode,
+                torch.cuda.max_memory_allocated() / 1024 / 1024,
+                "torch_ref(no_fused_kernel)")
+
+
+def _res(backend, args, model, L, prefill, decode, vram, attn):
+    return {
+        "axis": "speed_mem", "backend": backend, "dtype": args.dtype,
+        "device": torch.cuda.get_device_name(0), "attn_mode": attn,
+        "prompt_tokens": L, "decode_tokens": args.decode_tokens,
+        "prefill_tokps": round(prefill, 1),
+        "decode_tokps": round(decode, 1),
+        "decode_ms_per_tok": round(1000 / decode, 2),
+        "peak_vram_mb": round(vram, 1),
+    }
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--hf-dir", required=True)
+    ap.add_argument("--pth", default=None)
+    ap.add_argument("--backend", default="both", choices=["hf", "official", "both"])
+    ap.add_argument("--dtype", default="fp16", choices=list(DTYPES))
+    ap.add_argument("--prompt-tokens", type=int, default=512)
+    ap.add_argument("--decode-tokens", type=int, default=128)
+    ap.add_argument("--device", default="cuda")
+    ap.add_argument("--warmup", type=int, default=3)
+    ap.add_argument("--runs", type=int, default=5)
+    args = ap.parse_args()
+    dt = DTYPES[args.dtype]
+    out = Path(__file__).parent / "results.jsonl"
+    results = []
+    if args.backend in ("hf", "both"):
+        print(f"\n===== backend: hf_adapter ({args.dtype}) =====", flush=True)
+        r = bench_hf(args, dt); results.append(r); print(json.dumps(r, indent=2), flush=True)
+    if args.backend in ("official", "both"):
+        if not args.pth:
+            print("--pth required for official backend", flush=True)
+        else:
+            print(f"\n===== backend: official_rwkv ({args.dtype}) =====", flush=True)
+            r = bench_official(args, dt); results.append(r); print(json.dumps(r, indent=2), flush=True)
+    with out.open("a", encoding="utf-8") as f:
+        for r in results:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    print(f"\nappended {len(results)} rows -> {out}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
