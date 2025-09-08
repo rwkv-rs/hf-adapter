@@ -129,21 +129,26 @@ def bench_hf_variant(args, tok, dtype, attn_mode: str) -> dict[str, Any]:
 
         fast_greedy_dt = None
         fast_fixed_dt = None
-        run_fast_decode = args.fast_decode_api != "false" and hasattr(model, "rwkv7_forward_one")
-        if args.fast_decode_api == "true" and not hasattr(model, "rwkv7_forward_one"):
-            raise ValueError("Loaded model does not expose rwkv7_forward_one")
+        fast_fn = getattr(model, "rwkv7_forward_token", None)
+        fast_name = "rwkv7_forward_token" if fast_fn is not None else None
+        if fast_fn is None:
+            fast_fn = getattr(model, "rwkv7_forward_one", None)
+            fast_name = "rwkv7_forward_one" if fast_fn is not None else None
+        run_fast_decode = args.fast_decode_api != "false" and fast_fn is not None
+        if args.fast_decode_api == "true" and fast_fn is None:
+            raise ValueError("Loaded model does not expose a fast one-token decode API")
         if run_fast_decode:
             out = model(ids[:, :8], use_cache=True, logits_to_keep=1)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
             for _ in range(args.warmup):
-                out = model.rwkv7_forward_one(nxt, past_key_values=state)
+                out = fast_fn(nxt, past_key_values=state)
                 state = out.past_key_values
                 nxt = out.logits[:, -1:].argmax(dim=-1)
             cuda_sync(args.device)
             t0 = time.time()
             for _ in range(args.decode_tokens):
-                out = model.rwkv7_forward_one(nxt, past_key_values=state)
+                out = fast_fn(nxt, past_key_values=state)
                 state = out.past_key_values
                 nxt = out.logits[:, -1:].argmax(dim=-1)
             cuda_sync(args.device)
@@ -152,12 +157,12 @@ def bench_hf_variant(args, tok, dtype, attn_mode: str) -> dict[str, Any]:
             out = model(ids[:, :8], use_cache=True, logits_to_keep=1)
             state = out.past_key_values
             for _ in range(args.warmup):
-                out = model.rwkv7_forward_one(fixed, past_key_values=state)
+                out = fast_fn(fixed, past_key_values=state)
                 state = out.past_key_values
             cuda_sync(args.device)
             t0 = time.time()
             for _ in range(args.decode_tokens):
-                out = model.rwkv7_forward_one(fixed, past_key_values=state)
+                out = fast_fn(fixed, past_key_values=state)
                 state = out.past_key_values
             cuda_sync(args.device)
             fast_fixed_dt = time.time() - t0
@@ -183,6 +188,7 @@ def bench_hf_variant(args, tok, dtype, attn_mode: str) -> dict[str, Any]:
         "decode_fixed_ms_per_tok": round(1000 * fixed_dt / args.decode_tokens, 2),
         "argmax_sampling_overhead_ms_per_tok": round(1000 * (greedy_dt - fixed_dt) / args.decode_tokens, 2),
         "fast_decode_api": bool(fast_greedy_dt is not None),
+        "fast_decode_api_name": fast_name if fast_greedy_dt is not None else None,
         "decode_fast_api_greedy_tokps": round(args.decode_tokens / fast_greedy_dt, 1) if fast_greedy_dt else None,
         "decode_fast_api_fixed_tokps": round(args.decode_tokens / fast_fixed_dt, 1) if fast_fixed_dt else None,
         "decode_fast_api_greedy_ms_per_tok": round(1000 * fast_greedy_dt / args.decode_tokens, 2) if fast_greedy_dt else None,
@@ -258,7 +264,7 @@ def main() -> int:
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto",
                     help="HF only: use the lightweight RWKV7StateCache hot path (default via model env is enabled)")
     ap.add_argument("--fast-decode-api", choices=["auto", "true", "false"], default="auto",
-                    help="Also benchmark rwkv7_forward_one when the loaded model exposes it")
+                    help="Also benchmark rwkv7_forward_token/rwkv7_forward_one when the loaded model exposes it")
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     args = ap.parse_args()
 

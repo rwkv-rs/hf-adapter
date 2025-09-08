@@ -18,6 +18,38 @@ def set_attn_mode(model, attn_mode: str) -> None:
             attn.mode = attn_mode
 
 
+def run_decode_case(model, input_ids: torch.Tensor, decode_steps: int, max_diff_limit: float, fast_fn, label: str) -> None:
+    prefill_ids = input_ids[:, :-1]
+    next_forward = input_ids[:, -1:]
+    next_fast = next_forward.clone()
+
+    max_diff = 0.0
+    greedy_equal = 0
+    with torch.inference_mode():
+        forward_out = model(prefill_ids, use_cache=True, logits_to_keep=1)
+        fast_out = model(prefill_ids, use_cache=True, logits_to_keep=1)
+        forward_state = forward_out.past_key_values
+        fast_state = fast_out.past_key_values
+        for _ in range(decode_steps):
+            forward_out = model(next_forward, past_key_values=forward_state, use_cache=True, logits_to_keep=1)
+            fast_out = fast_fn(next_fast, past_key_values=fast_state)
+            forward_state = forward_out.past_key_values
+            fast_state = fast_out.past_key_values
+            diff = float((forward_out.logits.float() - fast_out.logits.float()).abs().max().detach().cpu())
+            max_diff = max(max_diff, diff)
+            next_forward = forward_out.logits[:, -1:].argmax(dim=-1)
+            next_fast = fast_out.logits[:, -1:].argmax(dim=-1)
+            greedy_equal += int(torch.equal(next_forward, next_fast))
+
+    print(f"{label} max_abs_diff", max_diff)
+    print(f"{label} greedy_equal", greedy_equal, "/", decode_steps)
+    print(f"{label} seq_length_forward", forward_state.get_seq_length())
+    print(f"{label} seq_length_fast", fast_state.get_seq_length())
+    assert max_diff <= max_diff_limit, (label, max_diff)
+    assert greedy_equal == decode_steps, label
+    assert forward_state.get_seq_length() == fast_state.get_seq_length(), label
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
@@ -28,6 +60,7 @@ def main() -> int:
     ap.add_argument("--prompt", default="The quick brown fox jumps over the lazy dog.")
     ap.add_argument("--decode-steps", type=int, default=32)
     ap.add_argument("--max-diff", type=float, default=0.15)
+    ap.add_argument("--batch-sizes", nargs="+", type=int, default=[1, 2, 4])
     args = ap.parse_args()
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
@@ -43,39 +76,31 @@ def main() -> int:
         if actual != desired:
             raise ValueError(f"Loaded model config has fuse_norm={actual}; use a converted model dir with fuse_norm={desired}")
     assert hasattr(model, "rwkv7_forward_one"), "Model does not expose rwkv7_forward_one"
+    assert hasattr(model, "rwkv7_forward_token"), "Model does not expose rwkv7_forward_token"
     set_attn_mode(model, args.attn_mode)
 
     enc = tok(args.prompt, return_tensors="pt", add_special_tokens=False)
     input_ids = enc.input_ids.to(args.device) if args.device.startswith("cuda") else enc.input_ids
-    prefill_ids = input_ids[:, :-1]
-    next_forward = input_ids[:, -1:]
-    next_fast = next_forward.clone()
+    assert input_ids.shape[1] >= 2, "Prompt must tokenize to at least two tokens"
 
-    max_diff = 0.0
-    greedy_equal = 0
-    with torch.inference_mode():
-        forward_out = model(prefill_ids, use_cache=True, logits_to_keep=1)
-        fast_out = model(prefill_ids, use_cache=True, logits_to_keep=1)
-        forward_state = forward_out.past_key_values
-        fast_state = fast_out.past_key_values
-        for _ in range(args.decode_steps):
-            forward_out = model(next_forward, past_key_values=forward_state, use_cache=True, logits_to_keep=1)
-            fast_out = model.rwkv7_forward_one(next_fast, past_key_values=fast_state)
-            forward_state = forward_out.past_key_values
-            fast_state = fast_out.past_key_values
-            diff = float((forward_out.logits.float() - fast_out.logits.float()).abs().max().detach().cpu())
-            max_diff = max(max_diff, diff)
-            next_forward = forward_out.logits[:, -1:].argmax(dim=-1)
-            next_fast = fast_out.logits[:, -1:].argmax(dim=-1)
-            greedy_equal += int(torch.equal(next_forward, next_fast))
-
-    print("max_abs_diff", max_diff)
-    print("greedy_equal", greedy_equal, "/", args.decode_steps)
-    print("seq_length_forward", forward_state.get_seq_length())
-    print("seq_length_fast", fast_state.get_seq_length())
-    assert max_diff <= args.max_diff, max_diff
-    assert greedy_equal == args.decode_steps
-    assert forward_state.get_seq_length() == fast_state.get_seq_length()
+    for bsz in args.batch_sizes:
+        ids = input_ids.repeat(bsz, 1)
+        run_decode_case(
+            model,
+            ids,
+            args.decode_steps,
+            args.max_diff,
+            model.rwkv7_forward_token,
+            label=f"rwkv7_forward_token bsz={bsz}",
+        )
+    run_decode_case(
+        model,
+        input_ids,
+        args.decode_steps,
+        args.max_diff,
+        model.rwkv7_forward_one,
+        label="rwkv7_forward_one bsz=1",
+    )
     print("PASS")
     return 0
 

@@ -37,7 +37,12 @@ def match(row: dict[str, Any], args: argparse.Namespace) -> bool:
     if args.device and args.device.lower() not in str(row.get("device", "")).lower():
         return False
     if args.require_fast_decode:
-        if not (row.get("hf_decode_api") == "rwkv7_forward_one" or row.get("fast_decode_api") is True):
+        if not (
+            row.get("hf_decode_api") in {"rwkv7_forward_one", "rwkv7_forward_token"}
+            or row.get("fast_decode_api") is True
+            or row.get("fast_decode_api_name") in {"rwkv7_forward_one", "rwkv7_forward_token"}
+            or row.get("decode_api") in {"rwkv7_forward_one", "rwkv7_forward_token"}
+        ):
             return False
     return True
 
@@ -46,10 +51,10 @@ def compact(row: dict[str, Any]) -> dict[str, Any]:
     keys = [
         "_lineno", "axis", "backend", "device", "dtype", "attn_mode",
         "fuse_norm", "fast_cache", "cache_type", "hf_decode_api", "fast_decode_api",
-        "fast_decode_api_requested", "fast_decode_api_available",
+        "fast_decode_api_name", "fast_decode_api_requested", "fast_decode_api_available",
         "decode_api", "batch_size", "prompt_tokens", "decode_tokens",
         "steps", "hf_forward_fixed", "hf_forward_greedy",
-        "rwkv7_forward_one_fixed", "rwkv7_forward_one_greedy",
+        "fast_decode_fixed", "fast_decode_greedy",
         "empty_loop", "embedding", "norm_lm_head", "lm_head", "argmax",
         "prefill_tokps", "prefill_keep1_tokps", "prefill_tokps_total",
         "prefill_tokps_per_seq", "prefill_ms",

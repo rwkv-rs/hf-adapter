@@ -102,13 +102,14 @@ def profile_hf(args, dtype) -> dict[str, Any]:
             attn.mode = args.attn_mode
     ids = _encode(tok, args.prompt_tokens, args.device)
     fixed = ids[:, -1:]
-    use_fast_decode = args.hf_decode_api == "rwkv7_forward_one"
-    if use_fast_decode and not hasattr(model, "rwkv7_forward_one"):
-        raise ValueError("Loaded model does not expose rwkv7_forward_one")
+    use_fast_decode = args.hf_decode_api in {"rwkv7_forward_one", "rwkv7_forward_token"}
+    if use_fast_decode and not hasattr(model, args.hf_decode_api):
+        raise ValueError(f"Loaded model does not expose {args.hf_decode_api}")
+    fast_decode_fn = getattr(model, args.hf_decode_api) if use_fast_decode else None
 
     def decode_step(token, state):
         if use_fast_decode:
-            return model.rwkv7_forward_one(token, past_key_values=state)
+            return fast_decode_fn(token, past_key_values=state)
         return model(token, past_key_values=state, use_cache=True, logits_to_keep=1)
 
     with torch.inference_mode():
@@ -229,8 +230,8 @@ def main() -> int:
                     help="Override config.fuse_norm for HF load; false is faster on V100 in current tests")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto",
                     help="HF only: use the lightweight RWKV7StateCache hot path (default via model env is enabled)")
-    ap.add_argument("--hf-decode-api", choices=["forward", "rwkv7_forward_one"], default="forward",
-                    help="HF decode implementation to profile; rwkv7_forward_one is bsz=1 inference-only fast path")
+    ap.add_argument("--hf-decode-api", choices=["forward", "rwkv7_forward_one", "rwkv7_forward_token"], default="forward",
+                    help="HF decode implementation to profile; rwkv7_forward_token is the batched inference-only fast path")
     ap.add_argument("--prompt-tokens", type=int, default=128)
     ap.add_argument("--prewarm", type=int, default=8)
     ap.add_argument("--wait", type=int, default=2)
