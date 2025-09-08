@@ -45,39 +45,42 @@ def bench_hf(args, dt):
 
     torch.cuda.reset_peak_memory_stats()
     # prefill
-    with torch.no_grad():
+    with torch.inference_mode():
         for _ in range(args.warmup):
-            _ = model(ids, use_cache=False)
+            _ = model(ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
     torch.cuda.synchronize()
     t0 = time.time()
-    with torch.no_grad():
+    with torch.inference_mode():
         for _ in range(args.runs):
-            _ = model(ids, use_cache=False)
+            _ = model(ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
     torch.cuda.synchronize()
     prefill_tokps = L / ((time.time() - t0) / args.runs)
 
     # decode via direct state threading
-    with torch.no_grad():
-        out = model(ids[:, :8], use_cache=True)
+    with torch.inference_mode():
+        out = model(ids[:, :8], use_cache=True, logits_to_keep=args.hf_logits_to_keep)
         state = out.past_key_values
         nxt = out.logits[:, -1:].argmax(dim=-1)
         for _ in range(args.warmup):
-            out = model(nxt, past_key_values=state, use_cache=True)
+            out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
     torch.cuda.synchronize()
     t0 = time.time()
-    with torch.no_grad():
+    with torch.inference_mode():
         for _ in range(args.decode_tokens):
-            out = model(nxt, past_key_values=state, use_cache=True)
+            out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
     torch.cuda.synchronize()
     dt_decode = time.time() - t0
-    return _res("hf_adapter", args, model, L, prefill_tokps,
-                args.decode_tokens / dt_decode,
-                torch.cuda.max_memory_allocated() / 1024 / 1024,
-                getattr(model.config, "attn_mode", "?"))
+    res = _res("hf_adapter", args, model, L, prefill_tokps,
+               args.decode_tokens / dt_decode,
+               torch.cuda.max_memory_allocated() / 1024 / 1024,
+               getattr(model.config, "attn_mode", "?"))
+    res["hf_logits_to_keep"] = args.hf_logits_to_keep
+    res["hf_prefill_use_cache"] = True
+    return res
 
 
 def bench_official(args, dt):
@@ -140,6 +143,8 @@ def main() -> int:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--warmup", type=int, default=3)
     ap.add_argument("--runs", type=int, default=5)
+    ap.add_argument("--hf-logits-to-keep", type=int, default=1,
+                    help="HF prefill/decode logits_to_keep; 1 matches serving needs and reduces memory")
     args = ap.parse_args()
     dt = DTYPES[args.dtype]
     out = Path(__file__).parent / "results.jsonl"

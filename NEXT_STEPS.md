@@ -24,21 +24,36 @@
 
 ## 阶段 2：把 wrapper 做到更完整
 
+已新增并在 V100 跑通：
+
+- `tests/test_official_alignment.py`：官方 `rwkv` vs HF logits + greedy 64 token 对齐。
+- `tests/test_reload_roundtrip.py`：`save_pretrained` / reload roundtrip。
+- `bench/bench_decode_breakdown.py`：decode 瓶颈拆分。
+- `bench/bench_speed.py` 已改成 serving-style prefill：`use_cache=True + logits_to_keep=1`。
+
+当前 V100 结论：
+
+- correctness：top5/argmax/cosine/greedy64 均通过。
+- memory：HF 406.4 MB vs official 406.2 MB，0.1B serving path 已基本持平。
+- speed：HF decode 约 31.5 tok/s，official 约 92.6 tok/s；decode 是下一步主优化点。
+- breakdown：argmax 开销只有约 0.05-0.08 ms/token，`chunk` 和 `fused_recurrent` 单 token decode 基本一样，瓶颈在 HF/FLA model+state/cache+kernel 路径。
+
+下一步继续补：
+
 1. 支持全部已发布尺寸的配置推断和转换：0.4B / 1.5B / 2.9B / 7.2B / 13.3B。
 2. 增加批量转换脚本和 SHA256 manifest。
-3. 加官方 RWKV 对齐测试：
-   - prompt logits top-k
-   - max/mean abs diff
-   - greedy generate token-by-token equality window
-4. 补 HF behavior：
-   - `save_pretrained` / reload roundtrip
+3. 补 HF behavior：
    - `resize_token_embeddings` 禁用或安全处理
    - `gradient_checkpointing_enable`
    - `prepare_inputs_for_generation`/cache shape 文档化
-5. 训练路径：
+4. 训练路径：
    - PEFT LoRA SFT 小数据跑通
    - TRL `SFTTrainer` smoke
    - 明确 `TORCHDYNAMO_DISABLE=1` 或修 FLA backward compile 问题
+5. 性能路径：
+   - profile 单 token decode
+   - 减少 `CausalLMOutputWithPast` / dynamic `Cache` / per-layer update 开销
+   - 做专用 fast decode entrypoint
 
 ## 阶段 3：Transformers 原生 PR 方向
 
