@@ -428,11 +428,14 @@ microbench rows, and a short next-focus list. Current committed V100 rows show:
 |---|---:|---:|---|
 | speed_mem fast-token decode ratio | ~0.64x official | >=0.90x | GAP |
 | decode_breakdown fast-token ratio | ~0.57x official | >=0.90x | GAP |
+| native_graph prototype decode ratio | ~2.76x official | >=0.90x | PASS prototype |
 | speed_mem memory ratio | ~1.00x official | <=1.10x | PASS |
 
 The current next-focus list is: continue reducing tiny kernels/dispatch in the
-fast token path. The profiler still shows thousands of launches over a small
-active decode window.
+fast token path, using the native JIT / CUDA graph result as the next integration
+target. The profiler still shows thousands of launches over a small active decode
+window, while the native graph result proves that reducing launch overhead can
+exceed the official 0.1B decode target on V100.
 
 ## Benchmark regression and target gates
 
@@ -485,12 +488,112 @@ The next optimization work should focus on **HF recurrent decode**:
 - Correctness tests are now strong enough for 0.1B smoke: prompt logits, greedy 64,
   and save/reload roundtrip.
 - Memory for the serving-style HF path is now at parity with official on V100.
-- First decode optimizations landed: `fuse_norm=false` plus the exact-match `RWKV7StateCache` keep the real remote-code HF path at ~41 tok/s vs official ~92 tok/s on V100.
-- Batch correctness and sweep harnesses are in place; V100 bsz=1/2/4/8 fast-token decode runs at about `55 tok/s` per sequence.
-- Dynamic-batch cache reorder/drop correctness and benchmark harnesses are in place; V100 dynamic simulation improves from `205.2` to `345.7` total tok/s with `rwkv7_forward_token`.
-- Decode microbench harness is in place; V100 shows `rwkv7_forward_token` at `16.8 ms/token` vs HF `forward` at `24.5 ms/token`, while `lm_head` and argmax are tiny.
-- Decode component harness is in place; V100 shows `attn_linears_lora` is the largest remaining fast-token component at about `9.87 ms/token`.
-- Projection/LoRA harness is in place; V100 shows naive PyTorch bmm grouping is slower overall, so custom fusion is needed.
-- Benchmark gap analysis is in place and currently identifies decode throughput as the active optimization gap.
-- Benchmark check gate is in place: current regression gate passes, target gate fails only because decode is still `0.6428x` official.
-- The active blocker remains decode throughput: fast-token HF is now ~0.64x official on V100, still below the 0.90x target.
+- First V100 decode optimizations landed: `fuse_norm=false` plus the exact-match
+  `RWKV7StateCache` keep the real remote-code HF path at ~41 tok/s vs official
+  ~92 tok/s on V100.
+- Batch correctness and sweep harnesses are in place; V100 bsz=1/2/4/8
+  fast-token decode runs at about `55 tok/s` per sequence.
+- Dynamic-batch cache reorder/drop correctness and benchmark harnesses are in
+  place; V100 dynamic simulation improves from `205.2` to `345.7` total tok/s
+  with `rwkv7_forward_token`.
+- Decode microbench harness is in place; V100 shows `rwkv7_forward_token` at
+  `16.8 ms/token` vs HF `forward` at `24.5 ms/token`, while `lm_head` and argmax
+  are tiny.
+- Decode component harness is in place; V100 shows `attn_linears_lora` is the
+  largest remaining fast-token component at about `9.87 ms/token`.
+- Projection/LoRA harness is in place; V100 shows naive PyTorch bmm grouping is
+  slower overall, so custom fusion is needed.
+- Benchmark gap analysis is in place and currently identifies decode throughput
+  as the active optimization gap.
+- Benchmark check gate is in place: current regression gate passes, target gate
+  fails only because decode is still `0.6428x` official.
+- Latest `main` added a native RWKV-7 decode experiment for 50-series / Blackwell:
+  `rwkv7_hf/native.py`, `rwkv7_hf/native_jit.py`, and `bench/bench_batch.py`.
+  This is valuable as a next V100 experiment because it attacks the same tiny
+  kernel / dispatch bottleneck with a TorchScript block step and CUDA graph.
+- Formal V100 native-decode row is now recorded: native JIT reaches `103.52 tok/s`
+  and native CUDA graph reaches `254.33 tok/s` on the 0.1B V100 smoke model, with
+  graph-vs-JIT greedy equality `16/16`.
+- The active V100 blocker remains decode throughput: fast-token HF is now
+  ~0.64x official on V100, still below the 0.90x target.
+
+## Latest main native-decode context (50-series / Blackwell)
+
+`rwkv7_hf/native_jit.py` ports the official `RWKV_x070_TMix_one`/`CMix_one`
+per-token math natively (no FLA backend at decode time) and captures the whole
+fixed-shape decode step in a CUDA graph. On the latest `main` branch, this path
+was validated on RTX 5070 Laptop / Blackwell sm_120 and larger smoke models.
+
+Decode speed (0.1B, RTX 5070 Laptop, fp16, single batch):
+
+| path | tok/s | note |
+|---|---:|---|
+| FLA HF adapter (`generate`) | 37 | original wrapper path |
+| native eager | 40 | direct Python native math |
+| native + `torch.jit.script` | ~78 | full-block fused |
+| native + CUDA graph | ~395 | about 4x official `rwkv` at 99 tok/s |
+
+Correctness claims from the latest `main` branch:
+
+- forward logits vs FLA: cosine 1.000000, max_abs approximately 0 at fp32.
+- CUDA-graph greedy decode: 40/40 tokens identical to the JIT path.
+- end-to-end vs `model.generate()` greedy: 32/32 generated tokens identical.
+
+Usage:
+
+```python
+from rwkv7_hf.native_jit import fast_generate
+print(fast_generate(model, tokenizer, "User: Hello!\n\nAssistant:", max_new_tokens=48))
+```
+
+Caveats for the HF adaptation target: the imported CUDA-graph path is currently
+single-batch / fixed-shape greedy decode. Dynamic batching, PEFT/RL integration,
+state-cache serving semantics, and V100 performance still need separate
+validation before it can replace or augment the HF `forward` / `generate` path.
+
+### V100 native JIT / CUDA graph validation
+
+Command:
+
+```bash
+python bench/bench_native_decode.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --prompt-tokens 32 \
+  --decode-tokens 64 \
+  --greedy-check-tokens 16 \
+  --results bench/results.jsonl
+```
+
+Result on Tesla V100-PCIE-32GB:
+
+| Path | Decode tok/s | ms/token | Status |
+|---|---:|---:|---|
+| native JIT block step | 103.52 | 9.6596 | 1.12x official V100 baseline |
+| native CUDA graph | 254.33 | 3.9319 | 2.76x official V100 baseline |
+
+Correctness checks in the same row:
+
+- native logits vs HF logits: cosine `1.00000024`, max_abs `0.03125`, argmax match.
+- native CUDA graph greedy tokens vs native JIT greedy tokens: `16/16` identical.
+- peak VRAM: `400.3 MB`, comparable to the official/HF 0.1B smoke rows.
+
+Interpretation: this does not finish the full HF serving target because it is a
+single-batch fixed-shape greedy path, but it gives a concrete implementation
+direction: move the TorchScript block-step packing / graph-capture idea into the
+HF fast-token API while preserving batched state-cache semantics.
+
+### Larger-model 50-series native results from latest `main`
+
+| model | metric | FLA HF | official | native path |
+|---|---|---:|---:|---:|
+| 0.4B | decode tok/s | 11.5 | 26.0 | 174.7 CUDA graph, 6.7x official |
+| 1.5B | decode tok/s | 13.3 | 30.7 | 26.6 JIT, 87% official |
+
+Interpretation from latest `main`: the native CUDA-graph path wins strongly on
+small launch-bound models, while larger models become compute/bandwidth-bound and
+need a different serving-oriented fusion strategy. For the V100 branch, the next
+useful step is to validate this native JIT/CUDA-graph path on the V100 0.1B model
+and then decide whether to integrate its block-step packing into the HF fast-token
+API.
