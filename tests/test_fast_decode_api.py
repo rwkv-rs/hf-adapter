@@ -95,8 +95,7 @@ def main() -> int:
             os.environ["RWKV7_FAST_TOKEN_BACKEND"] = backend
             for layout in args.fast_token_layouts:
                 os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = layout
-                batch_sizes = [1] if backend == "native_jit" else args.batch_sizes
-                for bsz in batch_sizes:
+                for bsz in args.batch_sizes:
                     ids = input_ids.repeat(bsz, 1)
                     run_decode_case(
                         model,

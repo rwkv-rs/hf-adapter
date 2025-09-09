@@ -76,6 +76,70 @@ def block_step(x: torch.Tensor, xpa: torch.Tensor, xpf: torch.Tensor,
     return x, xpa, xpf, v_first, state
 
 
+@torch.jit.script
+def block_step_batched(x: torch.Tensor, xpa: torch.Tensor, xpf: torch.Tensor,
+                       v_first: torch.Tensor, state: torch.Tensor,
+                       layer_id: int, H: int, N: int, eps: float, has_pre: int,
+                       pre_w: torch.Tensor, pre_b: torch.Tensor,
+                       an_w: torch.Tensor, an_b: torch.Tensor,
+                       fn_w: torch.Tensor, fn_b: torch.Tensor,
+                       x_r: torch.Tensor, x_w: torch.Tensor, x_k: torch.Tensor,
+                       x_v: torch.Tensor, x_a: torch.Tensor, x_g: torch.Tensor,
+                       k_k: torch.Tensor, k_a: torch.Tensor, r_k: torch.Tensor,
+                       Rw: torch.Tensor, Kw: torch.Tensor, Vw: torch.Tensor, Ow: torch.Tensor,
+                       w1: torch.Tensor, w2: torch.Tensor, w0: torch.Tensor,
+                       a1: torch.Tensor, a2: torch.Tensor, a0: torch.Tensor,
+                       v1: torch.Tensor, v2: torch.Tensor, v0: torch.Tensor,
+                       g1: torch.Tensor, g2: torch.Tensor,
+                       gn_w: torch.Tensor, gn_b: torch.Tensor,
+                       fx_k: torch.Tensor, fK: torch.Tensor, fV: torch.Tensor):
+    # Batched variant of block_step. Shapes:
+    # x/xpa/xpf/v_first:[B,H*N], state:[B,H,N,N].
+    B = x.shape[0]
+    if has_pre == 1:
+        residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5)
+    else:
+        residual = x
+    h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
+
+    xx = xpa - h
+    xpa = h
+    xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
+    xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
+    r = F.linear(xr, Rw)
+    w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
+    k = F.linear(xk, Kw)
+    v = F.linear(xv, Vw)
+    a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
+    g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
+    kk = F.normalize((k * k_k).view(B, H, N), dim=-1, p=2.0).view(B, H * N)
+    k = k * (1 + (a - 1) * k_a)
+    if layer_id == 0:
+        v_first = v
+    else:
+        v = v + (v_first - v) * torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
+    w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
+    vk = v.view(B, H, N, 1) @ k.view(B, H, 1, N)
+    ab = (-kk).view(B, H, N, 1) @ (kk * a).view(B, H, 1, N)
+    state = state * w.view(B, H, 1, N) + state @ ab.float() + vk.float()
+    out = state.to(h.dtype) @ r.view(B, H, N, 1)
+    out = out.view(B, H * N)
+    out = F.group_norm(out, H, gn_w, gn_b, eps).view(B, H * N)
+    sk = (r.view(B, H, N) * k.view(B, H, N) * r_k).sum(dim=-1, keepdim=True)
+    out = out + (sk * v.view(B, H, N)).view(B, H * N)
+    out = F.linear(out * g, Ow)
+    x = residual + out
+
+    residual = x
+    h2 = F.layer_norm(x, [H * N], fn_w, fn_b, 1e-5)
+    fxx = xpf - h2
+    xpf = h2
+    fk = h2 + fxx * fx_k
+    fk = torch.relu(F.linear(fk, fK)) ** 2
+    x = residual + F.linear(fk, fV)
+    return x, xpa, xpf, v_first, state
+
+
 def extract(model):
     layers = model.model.layers
     H = layers[0].attn.num_heads
