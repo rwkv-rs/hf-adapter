@@ -196,7 +196,7 @@ When the V100 server is reachable, run the committed bundle from the repository 
 ```
 
 It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_token`,
-`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `profile_decode.py --hf-decode-api rwkv7_forward_token`, and `bench/analyze_results.py`,
+`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
 then writes logs under `bench/logs/`. Use `python bench/summarize_results.py --device V100 --last 12` for a compact view of the latest JSONL rows.
 
 ## Batch-size coverage
@@ -402,6 +402,29 @@ The current next-focus list is: continue reducing tiny kernels/dispatch in the
 fast token path. The profiler still shows thousands of launches over a small
 active decode window.
 
+## Benchmark regression and target gates
+
+`bench/check_results.py` turns the report into an executable gate:
+
+```bash
+# Passing regression gate for the current PR/V100 baseline.
+python bench/check_results.py \
+  --results bench/results.jsonl \
+  --device V100 \
+  --dtype fp16
+
+# Final acceptance gate; expected to fail until decode reaches >=0.9x official.
+python bench/check_results.py \
+  --results bench/results.jsonl \
+  --device V100 \
+  --dtype fp16 \
+  --target
+```
+
+Current committed V100 rows pass the regression gate and fail the target gate
+only on decode ratio: `0.6444 < 0.9`. This makes future optimization iterations
+easy to judge without re-reading every JSONL row.
+
 ## Current optimization target
 
 The next optimization work should focus on **HF recurrent decode**:
@@ -420,9 +443,10 @@ The next optimization work should focus on **HF recurrent decode**:
 8. Use `bench_decode_components.py` to choose the next fusion target inside the fast-token layer path.
 9. Use `bench_projection_lora.py` to verify projection/LoRA fusion candidates before changing model code.
 10. Use `bench/analyze_results.py` after every V100 run to verify target ratios and missing axes before choosing the next optimization.
-11. Keep `logits_to_keep=1` as the default serving benchmark path because it already
+11. Use `bench/check_results.py` as the regression gate, and `bench/check_results.py --target` as the final performance gate.
+12. Keep `logits_to_keep=1` as the default serving benchmark path because it already
    fixes the earlier excess-memory measurement.
-12. After V100 decode approaches official `rwkv`, rerun on newer GPUs and larger models.
+13. After V100 decode approaches official `rwkv`, rerun on newer GPUs and larger models.
 
 ## Loop state
 
@@ -436,4 +460,5 @@ The next optimization work should focus on **HF recurrent decode**:
 - Decode component harness is in place; V100 shows `attn_linears_lora` is the largest remaining fast-token component at about `9.87 ms/token`.
 - Projection/LoRA harness is in place; V100 shows naive PyTorch bmm grouping is slower overall, so custom fusion is needed.
 - Benchmark gap analysis is in place and currently identifies decode throughput as the active optimization gap.
+- Benchmark check gate is in place: current regression gate passes, target gate fails only because decode is still `0.6444x` official.
 - The active blocker remains decode throughput: fast-token HF is now ~0.64x official on V100, still below the 0.90x target.

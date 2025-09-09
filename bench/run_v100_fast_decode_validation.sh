@@ -197,6 +197,11 @@ run() {
     --device V100 \
     --dtype "${DTYPE}"
 
+  run python bench/check_results.py \
+    --results "${RESULTS}" \
+    --device V100 \
+    --dtype "${DTYPE}"
+
   echo
   echo "DONE log=${LOG} profile=${PROFILE_OUT}"
 } 2>&1 | tee "${LOG}"

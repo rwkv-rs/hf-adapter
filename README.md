@@ -40,6 +40,7 @@ bench/
   bench_decode_components.py
   bench_projection_lora.py
   analyze_results.py
+  check_results.py
   profile_decode.py
 NEXT_STEPS.md
 BENCHMARK.md
@@ -302,6 +303,16 @@ python bench/analyze_results.py \
   --dtype fp16
 ```
 
+Benchmark regression/target gate:
+
+```bash
+# Current regression floor: should pass on the committed V100 rows.
+python bench/check_results.py --results bench/results.jsonl --device V100 --dtype fp16
+
+# Final acceptance target: expected to fail until decode reaches >=0.9x official.
+python bench/check_results.py --results bench/results.jsonl --device V100 --dtype fp16 --target
+```
+
 Profiler for one-token decode hotspots:
 
 ```bash
@@ -342,6 +353,7 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - Decode component benchmark coverage times the fast-token layer path by projection, recurrent, norm/output, FFN, and layer totals.
 - Projection/LoRA benchmark coverage times the largest component and compares simple PyTorch bmm fusion candidates.
 - Benchmark analysis coverage reports speed/memory ratios and next optimization focus from `bench/results.jsonl`.
+- Benchmark check coverage provides a passing regression gate and a failing final-target gate until decode reaches >=0.9x official.
 - Latest V100 fast-token results: bsz=1 decode `58.0 tok/s` vs official `90.0 tok/s`; batch sweep fast-token per-seq decode is about `55 tok/s` for bsz=1/2/4/8; dynamic-batch simulation improves from `205.2` to `345.7` total tok/s; component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`; naive PyTorch bmm projection/LoRA candidates are not enough, so the next implementation needs custom fusion/reduced launch count.
 - Save/reload roundtrip works with exact logit equality.
 - Official `rwkv` alignment includes prompt logits and 64-token greedy equality.
