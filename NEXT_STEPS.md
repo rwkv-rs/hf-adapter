@@ -53,6 +53,7 @@
 - correctness：`fuse_norm=false` 下 top5/argmax/cosine/greedy64 均通过，fp16 max_abs 约 0.072。
 - memory：HF 406.4 MB vs official 406.2 MB，0.1B serving path 已基本持平。
 - speed：`fuse_norm=false` + `RWKV7StateCache` 下标准 remote-code HF decode 约 41.2 tok/s；FLA `rwkv7_forward_token` V100 bsz=1 约 59.2 tok/s；`RWKV7_FAST_TOKEN_BACKEND=native_jit` 的 HF fast-token bsz=1 已到 92.1 tok/s，和 official 92.1 tok/s 持平，target gate 已通过。bsz=1/2/4/8 batch sweep 中 native_jit 达到 91.5/195.3/374.5/647.3 aggregate tok/s；dynamic batch native_jit reorder/drop 达到 417.9 total tok/s；component bench 显示 `attn_linears_lora` 最大，约 9.87ms/token。
+- quant：已新增 bitsandbytes 8bit/4bit smoke 和 benchmark。V100 0.1B 上 model footprint 从 fp16 `364.4MB` 降到 8bit `278.4MB`、4bit `235.3MB`；但 generic bnb decode 只有 `9.5` / `27.1 tok/s`，低于 fp16 `40.4 tok/s`，所以仍需自定义/融合量化 serving path 才能满足“不比 16bit 慢”的目标。
 - native decode prototype：`rwkv7_hf.native_jit` 在 V100 0.1B 上已验证，logit cosine≈1.00000024、graph-vs-JIT greedy 16/16 一致；native JIT 约 103.5 tok/s，native CUDA graph 约 254.3 tok/s（2.76x official）。这证明 launch/dispatch 合并能过目标，但当前还是 single-batch fixed-shape greedy prototype，尚未并入 HF serving/dynamic batching 路径。
 - profiler：`fuse_norm=true` 的 FLA `LayerNormFunction` CPU 开销很大，native norm 把 norm CPU total 从约 54.8ms/6tok 降到约 6.6ms/6tok。
 - breakdown：argmax 开销约等于 0，`chunk` 和 `fused_recurrent` 单 token decode 基本一样，剩余瓶颈在 HF/FLA model+state/cache+小 kernel launch 路径。
@@ -62,9 +63,9 @@
 1. 支持全部已发布尺寸的配置推断和转换：0.4B / 1.5B / 2.9B / 7.2B / 13.3B。
 2. 增加批量转换脚本和 SHA256 manifest。
 3. 补 HF behavior：
-   - `resize_token_embeddings` 禁用或安全处理
-   - `gradient_checkpointing_enable`
-   - `prepare_inputs_for_generation`/cache shape 文档化
+   - 已补 `resize_token_embeddings` 固定词表保护
+   - 已新增 `tests/test_hf_api_contract.py` 覆盖 `prepare_inputs_for_generation`、beam cache reorder、`gradient_checkpointing_enable`
+   - 继续补更完整 Transformers 原生 test suite
 4. 训练路径：
    - 已跑通 PEFT LoRA backward、HF Trainer 1-step、TRL `SFTTrainer` 1-step
    - 继续扩大到真实 SFT 小数据、多 batch、gradient accumulation
@@ -75,6 +76,7 @@
    - 已新增 `rwkv7_forward_token` batched one-token fast decode entrypoint，并保留 `rwkv7_forward_one` bsz=1 兼容入口
    - 已新增 batch cache/sweep、dynamic-batch reorder/drop harness、decode microbench、decode component bench、projection/LoRA bench、gap analyzer 和 result gate；V100 bundle 已跑通，native_jit fast-token 已支持 bsz=1/2/4/8 和 dynamic batching，下一轮重点是 CUDA graph / 更少 launch
    - native JIT block-step 已接入 `rwkv7_forward_token`，支持 bsz=1/2/4/8 和 dynamic reorder/drop；下一步做 CUDA graph / 更少 launch 的 batched serving fast path 和更大模型验证
+   - 已新增 bitsandbytes 8bit/4bit 加载、生成、benchmark；下一步需要把量化权重接到 fast-token/native path 或定制 fused int8/int4 projection，解决 generic bnb decode 慢的问题
 
 ## 阶段 3：Transformers 原生 PR 方向
 

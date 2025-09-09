@@ -251,6 +251,33 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     # Transformers >=5 expects dict-like _tied_weights_keys in save_pretrained.
     _tied_weights_keys = {}
 
+    def resize_token_embeddings(self, new_num_tokens: int | None = None, *args, **kwargs):
+        """Keep the official RWKV trie vocabulary fixed.
+
+        RWKV-7 checkpoints are tied to the fixed 65k RWKV trie vocabulary and
+        the remote tokenizer does not have a safe way to initialize new rows.
+        A no-op resize is allowed because some HF/PEFT helpers call it while
+        checking model capabilities; changing the vocabulary size is rejected
+        early instead of silently producing an invalid embedding/head pair.
+        """
+        if new_num_tokens is None or int(new_num_tokens) == int(self.config.vocab_size):
+            return self.get_input_embeddings()
+        raise NotImplementedError(
+            "RWKV-7 uses the fixed official trie vocabulary; changing vocab size "
+            "with resize_token_embeddings is not supported by this adapter."
+        )
+
+    @staticmethod
+    def _reorder_cache(past_key_values, beam_idx: torch.LongTensor):
+        """GenerationMixin beam-search hook for recurrent RWKV state caches."""
+        if past_key_values is None:
+            return None
+        if hasattr(past_key_values, "reorder_cache"):
+            return past_key_values.reorder_cache(beam_idx)
+        if isinstance(past_key_values, (tuple, list)):
+            return RWKV7StateCache.from_legacy_cache(past_key_values).reorder_cache(beam_idx).to_legacy_cache()
+        raise TypeError(f"Unsupported RWKV-7 cache type for beam reorder: {type(past_key_values)!r}")
+
     @torch.no_grad()
     def rwkv7_forward_one(
         self,
