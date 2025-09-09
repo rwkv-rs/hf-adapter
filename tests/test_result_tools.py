@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -56,6 +58,48 @@ def main() -> int:
         path = Path(td) / "results.jsonl"
         write_jsonl(path, rows)
         loaded = load_rows(path)
+        passed = subprocess.run(
+            [
+                sys.executable,
+                "bench/compare_fast_token_layouts.py",
+                "--results",
+                str(path),
+                "--device",
+                "V100",
+                "--dtype",
+                "fp16",
+                "--require-candidate",
+                "--min-speedup",
+                "1.0",
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert passed.returncode == 0, passed.stdout + passed.stderr
+
+        missing_path = Path(td) / "missing.jsonl"
+        write_jsonl(missing_path, rows[:1])
+        failed = subprocess.run(
+            [
+                sys.executable,
+                "bench/compare_fast_token_layouts.py",
+                "--results",
+                str(missing_path),
+                "--device",
+                "V100",
+                "--dtype",
+                "fp16",
+                "--require-candidate",
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert failed.returncode != 0
+        assert "candidate layout rows missing" in failed.stdout
     args = argparse.Namespace(device="V100", dtype="fp16")
     speeds = latest_by_layout(fast_speed_rows(loaded, args))
     micros = latest_by_layout(fast_micro_rows(loaded, args))

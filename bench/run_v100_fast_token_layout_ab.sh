@@ -64,6 +64,6 @@ for layout in 3d 2d; do
     --results "${RESULTS}"
 done
 
-python bench/compare_fast_token_layouts.py --results "${RESULTS}" --device V100 --dtype "${DTYPE}"
+python bench/compare_fast_token_layouts.py --results "${RESULTS}" --device V100 --dtype "${DTYPE}" --require-candidate --min-speedup 1.0
 python bench/analyze_results.py --results "${RESULTS}" --device V100 --dtype "${DTYPE}"
 python bench/check_results.py --results "${RESULTS}" --device V100 --dtype "${DTYPE}"

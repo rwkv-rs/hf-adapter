@@ -217,14 +217,15 @@ RWKV7_FAST_TOKEN_LAYOUT=3d python bench/bench_speed.py \
 
 # Run 3d vs experimental 2d correctness + speed + microbench rows.
 ./bench/run_v100_fast_token_layout_ab.sh
-python bench/compare_fast_token_layouts.py --results bench/results.jsonl --device V100 --dtype fp16
+python bench/compare_fast_token_layouts.py --results bench/results.jsonl --device V100 --dtype fp16 --require-candidate --min-speedup 1.0
 ```
 
 Rows without `fast_token_layout` are treated as `3d` by
 `bench/compare_fast_token_layouts.py`, so older V100 results remain the baseline
 until new A/B rows are appended. Candidate rows are not accepted as an
 optimization until `tests/test_fast_decode_api.py --fast-token-layouts 2d` passes
-and the layout comparison shows a real speedup on V100.
+and the layout comparison command with `--require-candidate --min-speedup 1.0`
+passes on V100.
 
 ## Batch-size coverage
 
