@@ -196,7 +196,7 @@ When the V100 server is reachable, run the committed bundle from the repository 
 ```
 
 It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_token`,
-`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_decode_components.py`, `profile_decode.py --hf-decode-api rwkv7_forward_token`, and `bench/analyze_results.py`,
+`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `profile_decode.py --hf-decode-api rwkv7_forward_token`, and `bench/analyze_results.py`,
 then writes logs under `bench/logs/`. Use `python bench/summarize_results.py --device V100 --last 12` for a compact view of the latest JSONL rows.
 
 ## Batch-size coverage
@@ -344,6 +344,39 @@ This makes the next optimization target concrete: reduce/fuse the many
 one-token attention projection/LoRA calls first, then revisit output projection
 and recurrent/norm groups.
 
+## Projection/LoRA benchmark
+
+`bench_projection_lora.py` drills into the largest component group:
+
+```bash
+python bench/bench_projection_lora.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --fast-cache true \
+  --layers 0 1 11 \
+  --results bench/results.jsonl
+```
+
+Latest V100 projection/LoRA timing for sampled layers:
+
+| Item | ms/layer |
+|---|---:|
+| R/K/V current separate projections | 0.0911 |
+| R/K/V PyTorch bmm candidate | 0.0833 |
+| W/A LoRA current | 0.1449 |
+| W/A LoRA PyTorch bmm candidate | 0.2684 |
+| Avg current linears+LoRA sum | 0.3571 |
+| Avg PyTorch candidate sum | 0.4712 |
+
+Interpretation: simple PyTorch bmm grouping is not enough (`0.76x` of current
+overall for this group). R/K/V batched matmul is only a small win, while W/A
+LoRA bmm is slower and can introduce larger fp16 numerical differences. The
+next real optimization should be a custom fused projection/LoRA path or a
+deeper rewrite that reduces launches without adding stack/bmm overhead.
+
 ## Benchmark gap report
 
 `bench/analyze_results.py` turns accumulated JSONL rows into a target/gap report:
@@ -385,10 +418,11 @@ The next optimization work should focus on **HF recurrent decode**:
 6. Use `tests/test_dynamic_batch_cache.py` and `bench_dynamic_batch.py` to keep heterogeneous-row cache reorder/drop behavior correct while approaching serving-style dynamic batching.
 7. Use `bench_decode_micro.py` to separate recurrent model cost from `lm_head`, argmax, and Python loop overhead before changing the decode implementation.
 8. Use `bench_decode_components.py` to choose the next fusion target inside the fast-token layer path.
-9. Use `bench/analyze_results.py` after every V100 run to verify target ratios and missing axes before choosing the next optimization.
-10. Keep `logits_to_keep=1` as the default serving benchmark path because it already
+9. Use `bench_projection_lora.py` to verify projection/LoRA fusion candidates before changing model code.
+10. Use `bench/analyze_results.py` after every V100 run to verify target ratios and missing axes before choosing the next optimization.
+11. Keep `logits_to_keep=1` as the default serving benchmark path because it already
    fixes the earlier excess-memory measurement.
-11. After V100 decode approaches official `rwkv`, rerun on newer GPUs and larger models.
+12. After V100 decode approaches official `rwkv`, rerun on newer GPUs and larger models.
 
 ## Loop state
 
@@ -400,5 +434,6 @@ The next optimization work should focus on **HF recurrent decode**:
 - Dynamic-batch cache reorder/drop correctness and benchmark harnesses are in place; V100 dynamic simulation improves from `205.2` to `345.7` total tok/s with `rwkv7_forward_token`.
 - Decode microbench harness is in place; V100 shows `rwkv7_forward_token` at `17.5 ms/token` vs HF `forward` at `25.0 ms/token`, while `lm_head` and argmax are tiny.
 - Decode component harness is in place; V100 shows `attn_linears_lora` is the largest remaining fast-token component at about `9.87 ms/token`.
+- Projection/LoRA harness is in place; V100 shows naive PyTorch bmm grouping is slower overall, so custom fusion is needed.
 - Benchmark gap analysis is in place and currently identifies decode throughput as the active optimization gap.
 - The active blocker remains decode throughput: fast-token HF is now ~0.64x official on V100, still below the 0.90x target.

@@ -39,6 +39,7 @@
 - `bench/bench_dynamic_batch.py`：模拟 active batch reorder/drop，记录 dynamic batching 相关 total decoded tok/s。
 - `bench/bench_decode_micro.py`：稳定记录 HF forward decode、fast token API、`lm_head`、argmax、embedding、empty loop 等 micro timing。
 - `bench/bench_decode_components.py`：细分 fast-token layer path 的 projection/recurrent/norm/FFN/top layer 耗时，用于决定下一步 fusion 目标。
+- `bench/bench_projection_lora.py`：专项测 attention projection/LoRA 子模块和简单 PyTorch bmm 候选，确认下一步需要 custom fusion 而不是简单拼 bmm。
 - `bench/analyze_results.py`：从 `bench/results.jsonl` 输出 target/gap report，直接列出 decode/memory ratio、缺失 benchmark axis 和下一步优化焦点。
 - `bench/bench_speed.py` 已改成 serving-style prefill：`use_cache=True + logits_to_keep=1`，并可用 `--hf-decode-api rwkv7_forward_token` 测快 decode API。
 - `bench/profile_decode.py`：单 token decode profiler。
@@ -69,7 +70,7 @@
    - 继续 profile 单 token decode
    - `RWKV7StateCache` 已减少 generic CacheLayer 开销
    - 已新增 `rwkv7_forward_token` batched one-token fast decode entrypoint，并保留 `rwkv7_forward_one` bsz=1 兼容入口
-   - 已新增 batch cache/sweep、dynamic-batch reorder/drop harness、decode microbench、decode component bench 和 gap analyzer；V100 bundle 已跑通，下一轮重点是把 fast-token path 从约 0.64x official 继续推近 0.9x，优先融合/减少 attention projection + LoRA 小矩阵调用，然后继续减少 tiny kernel launch / Python dispatch
+   - 已新增 batch cache/sweep、dynamic-batch reorder/drop harness、decode microbench、decode component bench、projection/LoRA bench 和 gap analyzer；V100 bundle 已跑通，下一轮重点是把 fast-token path 从约 0.64x official 继续推近 0.9x，优先做 custom attention projection + LoRA fusion（简单 PyTorch bmm 候选整体更慢），然后继续减少 tiny kernel launch / Python dispatch
 
 ## 阶段 3：Transformers 原生 PR 方向
 

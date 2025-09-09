@@ -157,6 +157,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     )
     micro = latest(rows, lambda r: r.get("axis") == "decode_micro" and r.get("backend") == "hf_adapter")
     components = latest(rows, lambda r: r.get("axis") == "decode_components" and r.get("backend") == "hf_adapter")
+    projection_lora = latest(rows, lambda r: r.get("axis") == "projection_lora" and r.get("backend") == "hf_adapter")
 
     focus = []
     if speed_decode_ratio is not None and speed_decode_ratio < target_decode_ratio:
@@ -179,6 +180,12 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         top = components["top_components"][0]
         if isinstance(top, (list, tuple)) and len(top) >= 2:
             focus.append(f"largest fast-token component: {top[0]} {top[1]} ms/token")
+    if projection_lora is None:
+        focus.append("projection_lora rows pending")
+    else:
+        speedup = projection_lora.get("avg_candidate_speedup")
+        if speedup is not None and float(speedup) < 1.0:
+            focus.append(f"naive PyTorch projection/LoRA bmm candidate is slower ({float(speedup):.2f}x); custom fusion needed")
     if not focus:
         focus.append("targets met for available rows; rerun larger models/new GPUs")
 
@@ -219,6 +226,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "dynamic_batch": [compact(r, ["_lineno", "decode_api", "initial_batch_size", "final_batch_size", "total_decode_tokens", "reorder_count", "drop_count", "decode_tokps_total", "decode_ms_per_token", "peak_vram_mb"]) for r in dynamic_latest],
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "hf_forward_fixed", "hf_forward_greedy", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
         "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
+        "projection_lora": compact(projection_lora, ["_lineno", "batch_size", "hidden_size", "layers", "avg_timings_ms", "avg_current_linears_lora_sum_ms", "avg_candidate_linears_lora_sum_ms", "avg_candidate_speedup", "peak_vram_mb"]),
         "next_focus": focus,
     }
 
@@ -253,6 +261,8 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["decode_micro"], ensure_ascii=False) if report["decode_micro"] else "PENDING")
     print("\n## decode_components")
     print(json.dumps(report["decode_components"], ensure_ascii=False) if report["decode_components"] else "PENDING")
+    print("\n## projection_lora")
+    print(json.dumps(report["projection_lora"], ensure_ascii=False) if report["projection_lora"] else "PENDING")
     print("\n## next_focus")
     for item in report["next_focus"]:
         print(f"- {item}")

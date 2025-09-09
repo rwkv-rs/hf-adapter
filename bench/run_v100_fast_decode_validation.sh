@@ -156,6 +156,19 @@ run() {
     --fixed-token \
     --results "${RESULTS}"
 
+  run python bench/bench_projection_lora.py \
+    --hf-dir "${HF_DIR}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --attn-mode fused_recurrent \
+    --fuse-norm false \
+    --fast-cache true \
+    --batch-size 1 \
+    --layers 0 1 11 \
+    --warmup 16 \
+    --steps 256 \
+    --results "${RESULTS}"
+
   run python bench/profile_decode.py \
     --backend hf \
     --hf-dir "${HF_DIR}" \
