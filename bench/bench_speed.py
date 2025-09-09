@@ -38,6 +38,8 @@ def encode(tok, n):
 def bench_hf(args, dt):
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
+    if args.fast_token_layout != "auto":
+        os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = args.fast_token_layout
     tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_dir, trust_remote_code=True, torch_dtype=dt,
@@ -101,6 +103,8 @@ def bench_hf(args, dt):
     res["fast_cache"] = os.environ.get("RWKV7_FAST_CACHE", "1") not in {"0", "false", "False", "no", "off"}
     res["cache_type"] = type(state).__name__ if state is not None else None
     res["hf_decode_api"] = args.hf_decode_api
+    if use_fast_decode:
+        res["fast_token_layout"] = os.environ.get("RWKV7_FAST_TOKEN_LAYOUT", "3d")
     return res
 
 
@@ -172,6 +176,8 @@ def main() -> int:
                     help="HF only: use the lightweight RWKV7StateCache hot path (default via model env is enabled)")
     ap.add_argument("--hf-decode-api", choices=["forward", "rwkv7_forward_one", "rwkv7_forward_token"], default="forward",
                     help="HF decode loop implementation; rwkv7_forward_token is the batched inference-only fast path")
+    ap.add_argument("--fast-token-layout", choices=["auto", "3d", "2d"], default="auto",
+                    help="HF fast-token layout; 3d is the validated baseline, 2d is an experimental A/B path")
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"),
                     help="JSONL output path; set empty string to disable appending")
     args = ap.parse_args()
