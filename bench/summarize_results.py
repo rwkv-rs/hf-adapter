@@ -55,6 +55,7 @@ def compact(row: dict[str, Any]) -> dict[str, Any]:
         "decode_api", "batch_size", "prompt_tokens", "decode_tokens", "decode_steps",
         "steps", "hf_forward_fixed", "hf_forward_greedy",
         "fast_decode_fixed", "fast_decode_greedy",
+        "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers",
         "empty_loop", "embedding", "norm_lm_head", "lm_head", "argmax",
         "initial_batch_size", "final_batch_size", "min_batch_size",
         "total_decode_tokens", "reorder_every", "drop_every",

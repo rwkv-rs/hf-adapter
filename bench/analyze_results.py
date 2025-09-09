@@ -156,6 +156,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         lambda r: r.get("decode_tokps_total"),
     )
     micro = latest(rows, lambda r: r.get("axis") == "decode_micro" and r.get("backend") == "hf_adapter")
+    components = latest(rows, lambda r: r.get("axis") == "decode_components" and r.get("backend") == "hf_adapter")
 
     focus = []
     if speed_decode_ratio is not None and speed_decode_ratio < target_decode_ratio:
@@ -172,6 +173,12 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         focus.append("dynamic_batch rows pending")
     if micro is None:
         focus.append("decode_micro rows pending")
+    if components is None:
+        focus.append("decode_components rows pending")
+    elif components.get("top_components"):
+        top = components["top_components"][0]
+        if isinstance(top, (list, tuple)) and len(top) >= 2:
+            focus.append(f"largest fast-token component: {top[0]} {top[1]} ms/token")
     if not focus:
         focus.append("targets met for available rows; rerun larger models/new GPUs")
 
@@ -211,6 +218,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "batch_sweep": [compact(r, ["_lineno", "batch_size", "decode_api", "decode_tokps_total", "decode_tokps_per_seq", "decode_ms_per_step", "peak_vram_mb"]) for r in batch_latest],
         "dynamic_batch": [compact(r, ["_lineno", "decode_api", "initial_batch_size", "final_batch_size", "total_decode_tokens", "reorder_count", "drop_count", "decode_tokps_total", "decode_ms_per_token", "peak_vram_mb"]) for r in dynamic_latest],
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "hf_forward_fixed", "hf_forward_greedy", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
+        "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
         "next_focus": focus,
     }
 
@@ -243,6 +251,8 @@ def print_text(report: dict[str, Any]) -> None:
         print("PENDING")
     print("\n## decode_micro")
     print(json.dumps(report["decode_micro"], ensure_ascii=False) if report["decode_micro"] else "PENDING")
+    print("\n## decode_components")
+    print(json.dumps(report["decode_components"], ensure_ascii=False) if report["decode_components"] else "PENDING")
     print("\n## next_focus")
     for item in report["next_focus"]:
         print(f"- {item}")

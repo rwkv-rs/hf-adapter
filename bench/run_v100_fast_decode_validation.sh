@@ -3,7 +3,7 @@
 #
 # Expected environment: activated Python env with torch/transformers/fla/rwkv.
 # Optional env vars:
-#   HF_DIR, PTH, DTYPE, DEVICE, PROMPT_TOKENS, DECODE_TOKENS, MICRO_STEPS, RESULTS, LOG_DIR
+#   HF_DIR, PTH, DTYPE, DEVICE, PROMPT_TOKENS, DECODE_TOKENS, MICRO_STEPS, COMPONENT_STEPS, RESULTS, LOG_DIR
 set -euo pipefail
 
 export RWKV_V7_ON="${RWKV_V7_ON:-1}"
@@ -16,6 +16,7 @@ DEVICE="${DEVICE:-cuda}"
 PROMPT_TOKENS="${PROMPT_TOKENS:-512}"
 DECODE_TOKENS="${DECODE_TOKENS:-128}"
 MICRO_STEPS="${MICRO_STEPS:-128}"
+COMPONENT_STEPS="${COMPONENT_STEPS:-32}"
 RESULTS="${RESULTS:-bench/results.jsonl}"
 LOG_DIR="${LOG_DIR:-bench/logs}"
 
@@ -34,7 +35,7 @@ run() {
   echo "date=$(date -Is)"
   echo "hf_dir=${HF_DIR}"
   echo "pth=${PTH}"
-  echo "dtype=${DTYPE} device=${DEVICE} prompt_tokens=${PROMPT_TOKENS} decode_tokens=${DECODE_TOKENS} micro_steps=${MICRO_STEPS}"
+  echo "dtype=${DTYPE} device=${DEVICE} prompt_tokens=${PROMPT_TOKENS} decode_tokens=${DECODE_TOKENS} micro_steps=${MICRO_STEPS} component_steps=${COMPONENT_STEPS}"
   echo "results=${RESULTS} profile_out=${PROFILE_OUT}"
 
   run python tests/test_fast_decode_api.py \
@@ -139,6 +140,20 @@ run() {
     --prompt-tokens 128 \
     --warmup 8 \
     --steps "${MICRO_STEPS}" \
+    --results "${RESULTS}"
+
+  run python bench/bench_decode_components.py \
+    --hf-dir "${HF_DIR}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --attn-mode fused_recurrent \
+    --fuse-norm false \
+    --fast-cache true \
+    --batch-size 1 \
+    --prompt-tokens 128 \
+    --warmup 8 \
+    --steps "${COMPONENT_STEPS}" \
+    --fixed-token \
     --results "${RESULTS}"
 
   run python bench/profile_decode.py \
