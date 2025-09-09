@@ -217,6 +217,10 @@ RWKV7_FAST_TOKEN_LAYOUT=3d python bench/bench_speed.py \
 
 # Run 3d vs experimental 2d correctness + speed + microbench rows.
 ./bench/run_v100_fast_token_layout_ab.sh
+
+# Resume only the missing candidate side after an interrupted/flaky-SSH run.
+LAYOUTS=2d SPEED_BACKEND=hf ./bench/run_v100_fast_token_layout_ab.sh
+
 python bench/compare_fast_token_layouts.py --results bench/results.jsonl --device V100 --dtype fp16 --require-candidate --min-speedup 1.0
 ```
 

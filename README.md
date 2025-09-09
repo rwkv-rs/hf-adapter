@@ -211,6 +211,8 @@ Fast-token layout A/B benchmark, for opt-in 2D hot-path experiments after the ba
 
 ```bash
 ./bench/run_v100_fast_token_layout_ab.sh
+# Resume only the candidate side after an interrupted run:
+LAYOUTS=2d SPEED_BACKEND=hf ./bench/run_v100_fast_token_layout_ab.sh
 python bench/compare_fast_token_layouts.py --results bench/results.jsonl --device V100 --dtype fp16 --require-candidate --min-speedup 1.0
 ```
 
