@@ -284,6 +284,62 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
     return residual + F.linear(fk, fV)
 
 
+def _block_ip_batched(x, state, xpa, xpf, v_first, p):
+    """In-place batched block step for CUDA-graph capture.
+
+    Shapes:
+      x/xpa/xpf/v_first: [B, H*N]
+      state: [B, H, N, N]
+
+    This mirrors `block_step_batched` but writes recurrent/cache buffers in
+    place so a captured CUDA graph can replay across decode tokens.
+    """
+    (i, H, N, eps, has_pre,
+     pre_w, pre_b, an_w, an_b, fn_w, fn_b,
+     x_r, x_w, x_k, x_v, x_a, x_g, k_k, k_a, r_k,
+     Rw, Kw, Vw, Ow, w1, w2, w0, a1, a2, a0, v1, v2, v0, g1, g2,
+     gn_w, gn_b, fx_k, fK, fV) = p
+    B = x.shape[0]
+    residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5) if has_pre else x
+    h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
+    xx = xpa - h
+    xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
+    xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
+    r = F.linear(xr, Rw)
+    w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
+    k = F.linear(xk, Kw)
+    v = F.linear(xv, Vw)
+    a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
+    g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
+    kk = F.normalize((k * k_k).view(B, H, N), dim=-1, p=2.0).view(B, H * N)
+    k = k * (1 + (a - 1) * k_a)
+    if i == 0:
+        v_first.copy_(v)
+    else:
+        v = v + (v_first - v) * torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
+    w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
+    vk = v.view(B, H, N, 1) @ k.view(B, H, 1, N)
+    ab = (-kk).view(B, H, N, 1) @ (kk * a).view(B, H, 1, N)
+    new_state = state * w.view(B, H, 1, N) + state @ ab.float() + vk.float()
+    out = new_state.to(h.dtype) @ r.view(B, H, N, 1)
+    out = out.view(B, H * N)
+    out = F.group_norm(out, H, gn_w, gn_b, eps).view(B, H * N)
+    sk = (r.view(B, H, N) * k.view(B, H, N) * r_k).sum(dim=-1, keepdim=True)
+    out = out + (sk * v.view(B, H, N)).view(B, H * N)
+    out = F.linear(out * g, Ow)
+    xpa.copy_(h)
+    state.copy_(new_state)
+    x = residual + out
+
+    residual = x
+    h2 = F.layer_norm(x, [H * N], fn_w, fn_b, 1e-5)
+    fxx = xpf - h2
+    fk = h2 + fxx * fx_k
+    fk = torch.relu(F.linear(fk, fK)) ** 2
+    xpf.copy_(h2)
+    return residual + F.linear(fk, fV)
+
+
 def cuda_graph_decode(model, ids, packs, n=128):
     import time
     base = model.model

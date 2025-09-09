@@ -407,13 +407,13 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - Projection/LoRA benchmark coverage times the largest component and compares simple PyTorch bmm fusion candidates.
 - Benchmark analysis coverage reports speed/memory ratios and next optimization focus from `bench/results.jsonl`.
 - Benchmark check coverage provides passing regression and target gates for the current native-JIT HF fast-token rows; native-graph rows are reported as an optional reduced-launch speed path.
-- Latest V100 fast-token results: FLA bsz=1 decode `59.2 tok/s` vs official `92.1 tok/s`; native-JIT bsz=1 decode reaches `92.1 tok/s` vs official `92.1 tok/s`; HF `native_graph` bsz=1 reaches `255.5 tok/s` in speed_mem and `249.7 tok/s` in batch sweep. Batched native-JIT reaches `195.3` / `374.5` / `647.3` aggregate tok/s for bsz=2/4/8. Dynamic-batch simulation with native-JIT reorder/drop reaches `417.9` total tok/s. Component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`; naive PyTorch bmm projection/LoRA candidates are not enough, so the next implementation needs custom fusion/reduced launch count.
+- Latest V100 fast-token results: FLA bsz=1 decode `59.2 tok/s` vs official `92.1 tok/s`; native-JIT bsz=1 decode reaches `92.1 tok/s` vs official `92.1 tok/s`; HF `native_graph` bsz=1 reaches `255.5 tok/s` in speed_mem. Batched native-graph reaches `253.9` / `434.3` / `852.6` / `1539.1` aggregate tok/s for bsz=1/2/4/8. Dynamic-batch simulation with native-graph reorder/drop reaches `524.7` total tok/s. Component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`; naive PyTorch bmm projection/LoRA candidates are not enough, so the next implementation needs custom fusion/reduced launch count.
 - Bitsandbytes quantization smoke now loads and generates for both 8-bit and
   4-bit on V100. Short benchmark rows show model footprint dropping from
   `364.4 MB` fp16 to `278.4 MB` 8-bit and `235.3 MB` 4-bit; current generic bnb
   decode is slower (`40.4` -> `9.5` / `27.1 tok/s`), so production quantization
   still needs a faster custom path.
-- Native JIT / CUDA graph prototype: V100 fp16 native logits match HF logits (`cosine≈1.00000024`, max_abs `0.03125`), graph-vs-JIT greedy decode is `16/16` identical, native JIT reaches `103.52 tok/s`, and native CUDA graph reaches `254.33 tok/s`. The same reduced-launch idea is now available through HF `rwkv7_forward_token` via `RWKV7_FAST_TOKEN_BACKEND=native_graph` for bsz=1.
+- Native JIT / CUDA graph prototype: V100 fp16 native logits match HF logits (`cosine≈1.00000024`, max_abs `0.03125`), graph-vs-JIT greedy decode is `16/16` identical, native JIT reaches `103.52 tok/s`, and native CUDA graph reaches `254.33 tok/s`. The same reduced-launch idea is now available through HF `rwkv7_forward_token` via `RWKV7_FAST_TOKEN_BACKEND=native_graph` for fixed bsz and dynamic active-batch sizes.
 - Save/reload roundtrip works with exact logit equality.
 - Official `rwkv` alignment includes prompt logits and 64-token greedy equality.
 - Official `rwkv` logits comparison on smoke prompts:
@@ -427,7 +427,7 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - The backend currently requires FLA.
 - The remote config uses a unique `rwkv7_hf_adapter` model type so `AutoModelForCausalLM` reliably loads this adapter instead of a locally registered FLA `rwkv7` class.
 - V100 serving-style memory is now near parity with official for 0.1B when using `logits_to_keep=1`.
-- V100 native-norm + fast-cache HF decode is about 41 tok/s; FLA `rwkv7_forward_token` improves this to about 59 tok/s; native-JIT `rwkv7_forward_token` reaches official parity for bsz=1 and supports batched/dynamic serving; native-graph `rwkv7_forward_token` reaches about 255 tok/s for bsz=1 with extra captured graph buffers.
+- V100 native-norm + fast-cache HF decode is about 41 tok/s; FLA `rwkv7_forward_token` improves this to about 59 tok/s; native-JIT `rwkv7_forward_token` reaches official parity for bsz=1 and supports batched/dynamic serving; native-graph `rwkv7_forward_token` reaches about 255 tok/s for bsz=1 and 1539 aggregate tok/s for bsz=8 with extra captured graph buffers.
 - Generic bnb 8-bit/4-bit loading reduces model footprint but is slower than
   fp16 on the current V100 path; next performance work is CUDA graph / lower
   launch count plus a faster quantized serving path for higher bsz and larger

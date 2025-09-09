@@ -74,7 +74,7 @@ def main() -> int:
     ap.add_argument("--fast-token-layouts", nargs="+", default=["3d"], choices=["3d", "2d"],
                     help="Fast-token tensor layouts to validate; 3d is the current production baseline")
     ap.add_argument("--fast-token-backends", nargs="+", default=["fla"], choices=["fla", "native_jit", "native_graph"],
-                    help="Fast-token backends to validate; native_graph uses CUDA graph for bsz=1 and native_jit for bsz>1")
+                    help="Fast-token backends to validate; native_graph captures one CUDA graph per fixed batch size")
     args = ap.parse_args()
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)

@@ -219,7 +219,7 @@ def main() -> int:
     ap.add_argument("--fast-token-layout", choices=["auto", "3d", "2d"], default="auto",
                     help="HF fast-token layout; 3d is the validated baseline, 2d is an experimental A/B path")
     ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="auto",
-                    help="HF fast-token backend; native_graph uses CUDA graph for bsz=1")
+                    help="HF fast-token backend; native_graph captures a CUDA graph per fixed batch size")
     ap.add_argument("--prompt-tokens", type=int, default=128)
     ap.add_argument("--warmup", type=int, default=8)
     ap.add_argument("--steps", type=int, default=128)
