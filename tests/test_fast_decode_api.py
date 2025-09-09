@@ -64,6 +64,8 @@ def main() -> int:
     ap.add_argument("--batch-sizes", nargs="+", type=int, default=[1, 2, 4])
     ap.add_argument("--fast-token-layouts", nargs="+", default=["3d"], choices=["3d", "2d"],
                     help="Fast-token tensor layouts to validate; 3d is the current production baseline")
+    ap.add_argument("--fast-token-backends", nargs="+", default=["fla"], choices=["fla", "native_jit"],
+                    help="Fast-token backends to validate; native_jit is bsz=1 only")
     args = ap.parse_args()
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
@@ -87,32 +89,40 @@ def main() -> int:
     assert input_ids.shape[1] >= 2, "Prompt must tokenize to at least two tokens"
 
     old_layout = os.environ.get("RWKV7_FAST_TOKEN_LAYOUT")
+    old_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND")
     try:
-        for layout in args.fast_token_layouts:
-            os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = layout
-            for bsz in args.batch_sizes:
-                ids = input_ids.repeat(bsz, 1)
+        for backend in args.fast_token_backends:
+            os.environ["RWKV7_FAST_TOKEN_BACKEND"] = backend
+            for layout in args.fast_token_layouts:
+                os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = layout
+                batch_sizes = [1] if backend == "native_jit" else args.batch_sizes
+                for bsz in batch_sizes:
+                    ids = input_ids.repeat(bsz, 1)
+                    run_decode_case(
+                        model,
+                        ids,
+                        args.decode_steps,
+                        args.max_diff,
+                        model.rwkv7_forward_token,
+                        label=f"rwkv7_forward_token backend={backend} layout={layout} bsz={bsz}",
+                    )
                 run_decode_case(
                     model,
-                    ids,
+                    input_ids,
                     args.decode_steps,
                     args.max_diff,
-                    model.rwkv7_forward_token,
-                    label=f"rwkv7_forward_token layout={layout} bsz={bsz}",
+                    model.rwkv7_forward_one,
+                    label=f"rwkv7_forward_one backend={backend} layout={layout} bsz=1",
                 )
-            run_decode_case(
-                model,
-                input_ids,
-                args.decode_steps,
-                args.max_diff,
-                model.rwkv7_forward_one,
-                label=f"rwkv7_forward_one layout={layout} bsz=1",
-            )
     finally:
         if old_layout is None:
             os.environ.pop("RWKV7_FAST_TOKEN_LAYOUT", None)
         else:
             os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = old_layout
+        if old_backend is None:
+            os.environ.pop("RWKV7_FAST_TOKEN_BACKEND", None)
+        else:
+            os.environ["RWKV7_FAST_TOKEN_BACKEND"] = old_backend
     print("PASS")
     return 0
 

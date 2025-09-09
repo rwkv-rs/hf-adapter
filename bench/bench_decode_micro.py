@@ -76,6 +76,8 @@ def load_model(args, dtype):
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
     if args.fast_token_layout != "auto":
         os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = args.fast_token_layout
+    if args.fast_token_backend != "auto":
+        os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_dir,
         trust_remote_code=True,
@@ -216,6 +218,8 @@ def main() -> int:
     ap.add_argument("--fast-decode-api", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--fast-token-layout", choices=["auto", "3d", "2d"], default="auto",
                     help="HF fast-token layout; 3d is the validated baseline, 2d is an experimental A/B path")
+    ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit"], default="auto",
+                    help="HF fast-token backend; native_jit is bsz=1 only")
     ap.add_argument("--prompt-tokens", type=int, default=128)
     ap.add_argument("--warmup", type=int, default=8)
     ap.add_argument("--steps", type=int, default=128)
@@ -241,6 +245,7 @@ def main() -> int:
         "fast_decode_api_requested": args.fast_decode_api,
         "fast_decode_api_available": hasattr(model, "rwkv7_forward_token") or hasattr(model, "rwkv7_forward_one"),
         "fast_token_layout": os.environ.get("RWKV7_FAST_TOKEN_LAYOUT", "3d"),
+        "fast_token_backend": os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "fla"),
         "prompt_tokens": int(ids.shape[1]),
         "steps": args.steps,
     }

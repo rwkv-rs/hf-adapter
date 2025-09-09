@@ -82,7 +82,7 @@ def extract(model):
     N = layers[0].attn.head_dim
     eps = float(N * 1e-5)
     packs = []
-    z768 = 768
+    hidden = int(layers[0].attn.hidden_size)
     for i, layer in enumerate(layers):
         a = layer.attn
         ref = a.w_lora.lora[0].weight
@@ -93,8 +93,8 @@ def extract(model):
         if hasattr(layer, "pre_norm"):
             pre_w, pre_b, has_pre = layer.pre_norm.weight, layer.pre_norm.bias, 1
         else:
-            pre_w = torch.zeros(z768, device=ref.device, dtype=ref.dtype)
-            pre_b = torch.zeros(z768, device=ref.device, dtype=ref.dtype)
+            pre_w = torch.zeros(hidden, device=ref.device, dtype=ref.dtype)
+            pre_b = torch.zeros(hidden, device=ref.device, dtype=ref.dtype)
             has_pre = 0
         packs.append((
             i, H, N, eps, has_pre,

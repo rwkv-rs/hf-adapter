@@ -119,6 +119,7 @@ Result on Tesla V100:
 | HF adapter, `fuse_norm=false` | 14247.7 | 41.3 | 24.24 | 406.4 MB |
 | HF adapter, `fuse_norm=false`, `RWKV7StateCache` | 13801.4 | 41.2 | 24.28 | 406.4 MB |
 | HF adapter, `rwkv7_forward_token` | 14055.1 | 59.2 | 16.89 | 406.4 MB |
+| HF adapter, `rwkv7_forward_token`, `native_jit` backend | 13755.4 | 92.1 | 10.86 | 406.4 MB |
 | official `rwkv` | 225.6 | 92.1 | 10.86 | 406.2 MB |
 
 Interpretation:
@@ -127,9 +128,10 @@ Interpretation:
 - HF prefill is much faster than the official pure-torch reference path measured here.
 - Disabling FLA fused norm for inference improved HF decode from `31.5` to about `41` tok/s (`+31%`).
 - The lightweight `RWKV7StateCache` preserves exact logits/cache behavior and keeps the real remote-code `AutoModelForCausalLM` path at the same ~41 tok/s level while avoiding FLA CacheLayer bookkeeping.
-- **Decode is still not met**, but the fast token API improves the serving path:
-  standard optimized HF decode is about `0.45x` official, while
-  `rwkv7_forward_token` reaches about `0.64x` official on this V100 run.
+- **bsz=1 decode target is met** with the opt-in `native_jit` fast-token backend:
+  standard optimized HF decode is about `0.45x` official, FLA fast-token reaches
+  about `0.64x` official, and `RWKV7_FAST_TOKEN_BACKEND=native_jit` reaches
+  `1.00x` official on this V100 run.
 
 ### Decode breakdown
 
@@ -197,7 +199,10 @@ When the V100 server is reachable, run the committed bundle from the repository 
 
 It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_token`,
 `test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
-then writes logs under `bench/logs/`. Use `python bench/summarize_results.py --device V100 --last 12` for a compact view of the latest JSONL rows.
+then writes logs under `bench/logs/`. The bundle now also validates the
+`native_jit` fast-token backend and appends a native-JIT HF speed row before
+running the target gate. Use `python bench/summarize_results.py --device V100
+--last 12` for a compact view of the latest JSONL rows.
 
 ## Fast-token layout A/B harness
 
@@ -426,16 +431,15 @@ microbench rows, and a short next-focus list. Current committed V100 rows show:
 
 | Metric | Current | Target | Status |
 |---|---:|---:|---|
-| speed_mem fast-token decode ratio | ~0.64x official | >=0.90x | GAP |
+| speed_mem fast-token decode ratio (`native_jit`, bsz=1) | 1.00x official | >=0.90x | PASS |
 | decode_breakdown fast-token ratio | ~0.57x official | >=0.90x | GAP |
 | native_graph prototype decode ratio | ~2.76x official | >=0.90x | PASS prototype |
 | speed_mem memory ratio | ~1.00x official | <=1.10x | PASS |
 
-The current next-focus list is: continue reducing tiny kernels/dispatch in the
-fast token path, using the native JIT / CUDA graph result as the next integration
-target. The profiler still shows thousands of launches over a small active decode
-window, while the native graph result proves that reducing launch overhead can
-exceed the official 0.1B decode target on V100.
+The current next-focus list is: extend the native-JIT / graph-style launch
+reduction to batched/dynamic serving. The bsz=1 HF fast-token target is now met,
+but bsz>1 still falls back to the FLA fast-token path, and `decode_breakdown`
+still tracks the older FLA fast-token implementation.
 
 ## Benchmark regression and target gates
 
@@ -506,7 +510,8 @@ The next optimization work should focus on **HF recurrent decode**:
 - Benchmark gap analysis is in place and currently identifies decode throughput
   as the active optimization gap.
 - Benchmark check gate is in place: current regression gate passes, target gate
-  fails only because decode is still `0.6428x` official.
+  now passes after the opt-in HF `native_jit` fast-token backend reached
+  `1.00x` official for the bsz=1 V100 speed row.
 - Latest `main` added a native RWKV-7 decode experiment for 50-series / Blackwell:
   `rwkv7_hf/native.py`, `rwkv7_hf/native_jit.py`, and `bench/bench_batch.py`.
   This is valuable as a next V100 experiment because it attacks the same tiny
@@ -514,8 +519,10 @@ The next optimization work should focus on **HF recurrent decode**:
 - Formal V100 native-decode row is now recorded: native JIT reaches `103.52 tok/s`
   and native CUDA graph reaches `254.33 tok/s` on the 0.1B V100 smoke model, with
   graph-vs-JIT greedy equality `16/16`.
-- The active V100 blocker remains decode throughput: fast-token HF is now
-  ~0.64x official on V100, still below the 0.90x target.
+- The active V100 blocker has moved from bsz=1 decode parity to batched/dynamic
+  serving parity: bsz=1 native-JIT HF is at `92.1 tok/s` vs official `92.1`, while
+  bsz=2/4/8 still uses the FLA fast-token backend (`117.7`, `233.3`, `465.5`
+  aggregate tok/s in the latest sweep).
 
 ## Latest main native-decode context (50-series / Blackwell)
 

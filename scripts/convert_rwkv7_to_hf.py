@@ -106,7 +106,7 @@ def translate_name(name: str, num_layers: int) -> Tuple[str, bool]:
 
 def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
     root = Path(__file__).resolve().parents[1]
-    for name in ["configuration_rwkv7.py", "modeling_rwkv7.py", "tokenization_rwkv7.py"]:
+    for name in ["configuration_rwkv7.py", "modeling_rwkv7.py", "tokenization_rwkv7.py", "native_jit.py", "native.py"]:
         shutil.copyfile(root / "rwkv7_hf" / name, output / name)
     if vocab_file is not None:
         shutil.copyfile(vocab_file, output / "rwkv_vocab_v20230424.txt")
