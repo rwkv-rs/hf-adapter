@@ -30,6 +30,18 @@ def _fast_cache_enabled() -> bool:
     return os.environ.get("RWKV7_FAST_CACHE", "1") not in _FALSE_VALUES
 
 
+def _linear_direct(module, x: torch.Tensor) -> torch.Tensor:
+    """Call a Linear module through F.linear to skip small-module dispatch."""
+    return F.linear(x, module.weight, module.bias)
+
+
+def _lora_direct(module, x: torch.Tensor) -> torch.Tensor:
+    """Fast-path FLA LoRA forward used only by inference decode helpers."""
+    h = F.linear(x, module.lora[0].weight, module.lora[0].bias)
+    h = module.lora[1](h)
+    return F.linear(h, module.lora[2].weight, module.lora[2].bias)
+
+
 def _move_first_dim(value: Any, indices: torch.LongTensor) -> Any:
     """Reorder nested tensor state along batch dimension for HF beam helpers."""
     if isinstance(value, torch.Tensor):
@@ -278,7 +290,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
 
         past_key_values._seen_tokens += 1
         hidden_states = self.model.norm(x)
-        logits = self.lm_head(hidden_states)
+        logits = _linear_direct(self.lm_head, hidden_states)
         if not return_dict:
             return logits, past_key_values
         return CausalLMOutputWithPast(logits=logits, past_key_values=past_key_values)
@@ -301,16 +313,16 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         xa = torch.addcmul(hidden_states, delta, attn.x_a)
         xg = torch.addcmul(hidden_states, delta, attn.x_g)
 
-        r = attn.r_proj(xr)
-        w = -0.6065306597126334 * attn.w_lora(xw).sigmoid()
-        k = attn.k_proj(xk)
-        v = attn.v_proj(xv)
+        r = _linear_direct(attn.r_proj, xr)
+        w = -0.6065306597126334 * _lora_direct(attn.w_lora, xw).sigmoid()
+        k = _linear_direct(attn.k_proj, xk)
+        v = _linear_direct(attn.v_proj, xv)
         if attn.layer_idx == 0:
             v_first = v
         else:
-            v = torch.lerp(v, v_first, attn.v_lora(xv).sigmoid())
-        a = attn.a_lora(xa).sigmoid()
-        g = attn.g_lora(xg)
+            v = torch.lerp(v, v_first, _lora_direct(attn.v_lora, xv).sigmoid())
+        a = _lora_direct(attn.a_lora, xa).sigmoid()
+        g = _lora_direct(attn.g_lora, xg)
 
         kk = F.normalize(
             (k * attn.k_k).view(batch_size, seq_len, num_heads, head_dim),
@@ -334,7 +346,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         )
         o = attn.g_norm(o.reshape(batch_size * seq_len, attn.value_dim)).view(batch_size, seq_len, attn.value_dim)
         correction = ((r * k * attn.r_k.view(1, 1, num_heads, head_dim)).sum(-1, keepdim=True) * v).reshape(o.shape)
-        o = attn.o_proj((o + correction) * g)
+        o = _linear_direct(attn.o_proj, (o + correction) * g)
         return o, recurrent_state, hidden_states[:, -1], v_first
 
     @staticmethod
@@ -346,7 +358,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             prev = ffn_cache.unsqueeze(1) if ffn_cache.dim() == 2 else ffn_cache
         delta = prev - hidden_states
         k = torch.addcmul(hidden_states, delta, ffn.x_k.view(1, 1, -1))
-        out = ffn.value(torch.relu(ffn.key(k)) ** 2)
+        out = _linear_direct(ffn.value, torch.relu(_linear_direct(ffn.key, k)) ** 2)
         return out, hidden_states[:, -1]
 
     def forward(self, *args, **kwargs):
