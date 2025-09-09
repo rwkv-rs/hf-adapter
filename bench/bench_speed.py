@@ -35,6 +35,16 @@ def encode(tok, n):
     return ids[:, :n]
 
 
+def set_attn_mode(model, attn_mode: str) -> None:
+    if attn_mode == "auto":
+        return
+    model.config.attn_mode = attn_mode
+    for layer in getattr(model.model, "layers", []):
+        attn = getattr(layer, "attn", None)
+        if hasattr(attn, "mode"):
+            attn.mode = attn_mode
+
+
 def bench_hf(args, dt):
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
@@ -46,6 +56,7 @@ def bench_hf(args, dt):
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_dir, trust_remote_code=True, torch_dtype=dt,
         device_map=args.device).eval()
+    set_attn_mode(model, args.attn_mode)
     if args.fuse_norm != "auto":
         desired = args.fuse_norm == "true"
         actual = bool(getattr(model.config, "fuse_norm", False))
@@ -175,14 +186,16 @@ def main() -> int:
                     help="HF prefill/decode logits_to_keep; 1 matches serving needs and reduces memory")
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto",
                     help="Override config.fuse_norm for HF load; false is faster on V100 in current tests")
+    ap.add_argument("--attn-mode", choices=["auto", "chunk", "fused_recurrent"], default="auto",
+                    help="HF attention mode override; fused_recurrent avoids V100 Triton chunk compile instability")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto",
                     help="HF only: use the lightweight RWKV7StateCache hot path (default via model env is enabled)")
     ap.add_argument("--hf-decode-api", choices=["forward", "rwkv7_forward_one", "rwkv7_forward_token"], default="forward",
                     help="HF decode loop implementation; rwkv7_forward_token is the batched inference-only fast path")
     ap.add_argument("--fast-token-layout", choices=["auto", "3d", "2d"], default="auto",
                     help="HF fast-token layout; 3d is the validated baseline, 2d is an experimental A/B path")
-    ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit"], default="auto",
-                    help="HF fast-token backend; native_jit is bsz=1 only and falls back to FLA for batched requests")
+    ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="auto",
+                    help="HF fast-token backend; native_graph uses CUDA graph for bsz=1 and falls back to native_jit for batched requests")
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"),
                     help="JSONL output path; set empty string to disable appending")
     args = ap.parse_args()

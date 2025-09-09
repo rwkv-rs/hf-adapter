@@ -41,8 +41,17 @@ def run_decode_case(model, input_ids: torch.Tensor, decode_steps: int, max_diff_
             next_forward = forward_out.logits[:, -1:].argmax(dim=-1)
             next_fast = fast_out.logits[:, -1:].argmax(dim=-1)
             greedy_equal += int(torch.equal(next_forward, next_fast))
+        # The optimized cache must remain compatible with the standard HF
+        # recurrent forward path so serving code can fall back after a fast step.
+        forward_out = model(next_forward, past_key_values=forward_state, use_cache=True, logits_to_keep=1)
+        fallback_out = model(next_fast, past_key_values=fast_state, use_cache=True, logits_to_keep=1)
+        forward_state = forward_out.past_key_values
+        fast_state = fallback_out.past_key_values
+        fallback_diff = float((forward_out.logits.float() - fallback_out.logits.float()).abs().max().detach().cpu())
+        max_diff = max(max_diff, fallback_diff)
 
     print(f"{label} max_abs_diff", max_diff)
+    print(f"{label} fallback_max_abs_diff", fallback_diff)
     print(f"{label} greedy_equal", greedy_equal, "/", decode_steps)
     print(f"{label} seq_length_forward", forward_state.get_seq_length())
     print(f"{label} seq_length_fast", fast_state.get_seq_length())
@@ -64,8 +73,8 @@ def main() -> int:
     ap.add_argument("--batch-sizes", nargs="+", type=int, default=[1, 2, 4])
     ap.add_argument("--fast-token-layouts", nargs="+", default=["3d"], choices=["3d", "2d"],
                     help="Fast-token tensor layouts to validate; 3d is the current production baseline")
-    ap.add_argument("--fast-token-backends", nargs="+", default=["fla"], choices=["fla", "native_jit"],
-                    help="Fast-token backends to validate; native_jit is bsz=1 only")
+    ap.add_argument("--fast-token-backends", nargs="+", default=["fla"], choices=["fla", "native_jit", "native_graph"],
+                    help="Fast-token backends to validate; native_graph uses CUDA graph for bsz=1 and native_jit for bsz>1")
     args = ap.parse_args()
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)

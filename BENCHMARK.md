@@ -120,6 +120,7 @@ Result on Tesla V100:
 | HF adapter, `fuse_norm=false`, `RWKV7StateCache` | 13801.4 | 41.2 | 24.28 | 406.4 MB |
 | HF adapter, `rwkv7_forward_token` | 14055.1 | 59.2 | 16.89 | 406.4 MB |
 | HF adapter, `rwkv7_forward_token`, `native_jit` backend | 13755.4 | 92.1 | 10.86 | 406.4 MB |
+| HF adapter, `rwkv7_forward_token`, `native_graph` backend | 18386.6 | 255.5 | 3.91 | 643.7 MB |
 | official `rwkv` | 225.6 | 92.1 | 10.86 | 406.2 MB |
 
 Interpretation:
@@ -132,6 +133,11 @@ Interpretation:
   standard optimized HF decode is about `0.45x` official, FLA fast-token reaches
   about `0.64x` official, and `RWKV7_FAST_TOKEN_BACKEND=native_jit` reaches
   `1.00x` official on this V100 run.
+- `RWKV7_FAST_TOKEN_BACKEND=native_graph` moves the standalone CUDA-graph
+  prototype into the HF `rwkv7_forward_token` API for bsz=1: it reaches
+  `255.5 tok/s` (`2.77x` official) with a deliberate VRAM tradeoff from captured
+  graph buffers. The formal memory target remains anchored to the lower-memory
+  native-JIT row.
 
 ### Decode breakdown
 
@@ -200,8 +206,8 @@ When the V100 server is reachable, run the committed bundle from the repository 
 It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_token`,
 `test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
 then writes logs under `bench/logs/`. The bundle now also validates the
-`native_jit` fast-token backend and appends a native-JIT HF speed row before
-running the target gate. Use `python bench/summarize_results.py --device V100
+`native_jit` and bsz=1 `native_graph` fast-token backends and appends native
+HF speed rows before running the target gate. Use `python bench/summarize_results.py --device V100
 --last 12` for a compact view of the latest JSONL rows.
 
 ## Fast-token layout A/B harness
@@ -484,16 +490,19 @@ committed V100 rows show:
 | Metric | Current | Target | Status |
 |---|---:|---:|---|
 | speed_mem fast-token decode ratio (`native_jit`, bsz=1) | 1.00x official | >=0.90x | PASS |
+| fast_decode best ratio (`native_graph`, bsz=1) | 2.77x official | >=0.90x | PASS |
 | decode_breakdown fast-token ratio | ~0.57x official | >=0.90x | GAP |
 | native_graph prototype decode ratio | ~2.76x official | >=0.90x | PASS prototype |
 | speed_mem memory ratio | ~1.00x official | <=1.10x | PASS |
 | 8-bit / 4-bit footprint ratio | 0.76x / 0.65x fp16 | lower is better | PASS smoke |
 | 8-bit / 4-bit decode ratio | 0.24x / 0.67x fp16 | >=1.00x | GAP |
 
-The current next-focus list is: continue from native-JIT batched decode toward
-CUDA-graph/reduced-launch serving. The bsz=1 HF fast-token target is met, bsz=2/4
-per-sequence decode is at or slightly above the current official bsz=1 reference,
-and bsz=8 reaches 647.3 aggregate tok/s / 80.9 tok/s per sequence.
+The current next-focus list is: extend the HF `native_graph` reduced-launch path
+from fixed bsz=1 to batched/dynamic serving and solve the generic bnb quantized
+decode speed gap. The bsz=1 HF fast-token target is exceeded by `native_graph`,
+bsz=2/4 per-sequence native-JIT decode is at or slightly above the current
+official bsz=1 reference, and bsz=8 reaches 647.3 aggregate tok/s / 80.9 tok/s
+per sequence.
 
 ## Benchmark regression and target gates
 
@@ -516,7 +525,8 @@ python bench/check_results.py \
 
 Current committed V100 rows pass both the regression gate and the target gate.
 The gate now uses the native-JIT HF fast-token speed row (`92.1 tok/s` vs
-official `92.1 tok/s`) for the current 0.1B bsz=1 target.
+official `92.1 tok/s`) for the low-memory 0.1B bsz=1 target, while the
+`fast_decode` section reports the optional native-graph row at `255.5 tok/s`.
 
 ## Current optimization target
 
@@ -551,6 +561,9 @@ The next optimization work should focus on **HF recurrent decode**:
   ~92 tok/s on V100.
 - Batch correctness and sweep harnesses are in place; V100 native-JIT bsz=1/2/4/8
   fast-token decode runs at `91.5` / `195.3` / `374.5` / `647.3` aggregate tok/s.
+- HF native-graph fast-token is now integrated for bsz=1; V100 speed_mem reaches
+  `255.5 tok/s` and batch sweep reaches `249.7 tok/s`, matching the standalone
+  native CUDA-graph prototype while using the normal HF prefill/cache handoff.
 - Dynamic-batch cache reorder/drop correctness and benchmark harnesses are in
   place; V100 dynamic simulation reaches `417.9` total tok/s with native-JIT
   `rwkv7_forward_token`.
@@ -576,10 +589,10 @@ The next optimization work should focus on **HF recurrent decode**:
 - Formal V100 native-decode row is now recorded: native JIT reaches `103.52 tok/s`
   and native CUDA graph reaches `254.33 tok/s` on the 0.1B V100 smoke model, with
   graph-vs-JIT greedy equality `16/16`.
-- The active V100 blocker has moved from parity to further batched/dynamic
-  serving optimization: bsz=1 native-JIT HF is at `92.1 tok/s` vs official
-  `92.1`, and bsz=2/4/8 native-JIT reaches `195.3`, `374.5`, `647.3` aggregate
-  tok/s in the latest sweep.
+- The active V100 blocker has moved from bsz=1 parity to batched/dynamic graph
+  serving and quantized serving: bsz=1 native-graph HF is at `255.5 tok/s` vs
+  official `92.1`, and bsz=2/4/8 native-JIT reaches `195.3`, `374.5`, `647.3`
+  aggregate tok/s in the latest sweep.
 
 ### Batched native-JIT fast-token results
 
@@ -591,6 +604,12 @@ Latest V100 `bench_batch_sweep.py --fast-token-backend native_jit` rows:
 | 2 | 84.0 | 195.3 | 97.7 | 10.24 |
 | 4 | 167.0 | 374.5 | 93.6 | 10.68 |
 | 8 | 331.5 | 647.3 | 80.9 | 12.36 |
+
+Latest V100 `bench_batch_sweep.py --fast-token-backend native_graph` bsz=1 row:
+
+| bsz | HF forward total tok/s | native-graph fast-token total tok/s | per-seq fast tok/s | step ms |
+|---:|---:|---:|---:|---:|
+| 1 | 40.8 | 249.7 | 249.7 | 4.01 |
 
 Dynamic-batch reorder/drop with `RWKV7_FAST_TOKEN_BACKEND=native_jit` now reaches
 `417.9` total tok/s for `832` decoded tokens with active batch dropping from
