@@ -37,6 +37,7 @@ bench/
   bench_batch_sweep.py
   bench_dynamic_batch.py
   bench_decode_micro.py
+  analyze_results.py
   profile_decode.py
 NEXT_STEPS.md
 BENCHMARK.md
@@ -266,6 +267,15 @@ python bench/bench_decode_micro.py \
   --fast-decode-api auto
 ```
 
+Benchmark gap report against current targets:
+
+```bash
+python bench/analyze_results.py \
+  --results bench/results.jsonl \
+  --device V100 \
+  --dtype fp16
+```
+
 Profiler for one-token decode hotspots:
 
 ```bash
@@ -303,6 +313,7 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - Batched recurrent cache smoke coverage exists for repeated prompts across bsz=1/2/4; benchmark sweep records total/per-sequence throughput for bsz=1/2/4/8 and includes the fast token API when available.
 - Dynamic-batch cache reorder coverage exists for heterogeneous prompts; benchmark simulation records reorder/drop counts and total decoded tokens/s.
 - Decode microbench coverage records stable timing for HF recurrent forward, the fast token API, `lm_head`, argmax, embedding, and empty-loop overhead.
+- Benchmark analysis coverage reports speed/memory ratios, missing formal rows, and next optimization focus from `bench/results.jsonl`.
 - Save/reload roundtrip works with exact logit equality.
 - Official `rwkv` alignment includes prompt logits and 64-token greedy equality.
 - Official `rwkv` logits comparison on smoke prompts:
