@@ -313,7 +313,8 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - Batched recurrent cache smoke coverage exists for repeated prompts across bsz=1/2/4; benchmark sweep records total/per-sequence throughput for bsz=1/2/4/8 and includes the fast token API when available.
 - Dynamic-batch cache reorder coverage exists for heterogeneous prompts; benchmark simulation records reorder/drop counts and total decoded tokens/s.
 - Decode microbench coverage records stable timing for HF recurrent forward, the fast token API, `lm_head`, argmax, embedding, and empty-loop overhead.
-- Benchmark analysis coverage reports speed/memory ratios, missing formal rows, and next optimization focus from `bench/results.jsonl`.
+- Benchmark analysis coverage reports speed/memory ratios and next optimization focus from `bench/results.jsonl`.
+- Latest V100 fast-token results: bsz=1 decode `58.0 tok/s` vs official `90.0 tok/s`; batch sweep fast-token per-seq decode is about `55 tok/s` for bsz=1/2/4/8; dynamic-batch simulation improves from `205.2` to `345.7` total tok/s.
 - Save/reload roundtrip works with exact logit equality.
 - Official `rwkv` alignment includes prompt logits and 64-token greedy equality.
 - Official `rwkv` logits comparison on smoke prompts:
@@ -327,4 +328,4 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - The backend currently requires FLA.
 - The remote config uses a unique `rwkv7_hf_adapter` model type so `AutoModelForCausalLM` reliably loads this adapter instead of a locally registered FLA `rwkv7` class.
 - V100 serving-style memory is now near parity with official for 0.1B when using `logits_to_keep=1`.
-- V100 native-norm + fast-cache HF decode is about 41 tok/s, but official is still about 92 tok/s for 0.1B fp16.
+- V100 native-norm + fast-cache HF decode is about 41 tok/s; `rwkv7_forward_token` improves this to about 58 tok/s, but official is still about 90 tok/s for 0.1B fp16.
