@@ -101,6 +101,12 @@ def check_common(report: dict[str, Any], failures: list[str], args: argparse.Nam
         fast_tokps = float(dyn_fast.get("decode_tokps_total") or 0)
         if fwd_tokps <= 0 or fast_tokps / fwd_tokps < args.min_dynamic_fast_speedup:
             fail(failures, f"dynamic fast speedup below floor: {fast_tokps}/{fwd_tokps} < {args.min_dynamic_fast_speedup}x")
+        for row in (dyn_fwd, dyn_fast):
+            if row.get("cache_select_api") is not True:
+                fail(failures, f"dynamic row did not use cache select API: {row}")
+            if row.get("final_cache_batch_size") is not None and row.get("final_batch_size") is not None:
+                if int(row["final_cache_batch_size"]) != int(row["final_batch_size"]):
+                    fail(failures, f"dynamic cache batch size mismatch: {row}")
 
     chunked = report.get("chunked_prefill") or []
     chunked_full = [row for row in chunked if row.get("prefill_mode") == "full"]

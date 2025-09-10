@@ -79,6 +79,9 @@ def run_case(model, ids: torch.Tensor, mode: str, decode_steps: int, max_diff_li
         batched_state = batched.past_key_values
         batched_next = batched.logits[:, -1:].argmax(dim=-1)
         assert hasattr(batched_state, "reorder_cache"), type(batched_state).__name__
+        assert hasattr(batched_state, "select_batch"), type(batched_state).__name__
+        assert hasattr(batched_state, "clone"), type(batched_state).__name__
+        assert batched_state.get_batch_size() == ids.shape[0], batched_state.get_batch_size()
 
         indiv_states = []
         indiv_next = []
@@ -112,7 +115,11 @@ def run_case(model, ids: torch.Tensor, mode: str, decode_steps: int, max_diff_li
         if ids.shape[0] >= 3:
             perm_list = [ids.shape[0] - 1, 0, *range(1, ids.shape[0] - 1)]
         perm = torch.tensor(perm_list, dtype=torch.long, device=ids.device)
-        batched_state.reorder_cache(perm.detach().cpu())
+        original_state = batched_state
+        batched_state = batched_state.select_batch(perm, inplace=False)
+        assert batched_state is not original_state
+        assert batched_state.get_seq_length() == original_state.get_seq_length()
+        assert batched_state.get_batch_size() == ids.shape[0]
         batched_next = batched_next.index_select(0, perm)
         batched = step_fn(batched_next, batched_state)
         expected_logits = []
@@ -124,6 +131,27 @@ def run_case(model, ids: torch.Tensor, mode: str, decode_steps: int, max_diff_li
         expected = torch.cat(expected_logits, dim=0)
         assert_close_logits(f"{mode} reordered decode", batched.logits, expected, max_diff_limit)
         assert batched.past_key_values.get_seq_length() == ids.shape[1] + decode_steps + 1
+
+        if ids.shape[0] > 2:
+            keep_rows = torch.arange(ids.shape[0] - 1, dtype=torch.long, device=ids.device)
+            keep_sources = perm_list[: ids.shape[0] - 1]
+            compact_state = batched.past_key_values.batch_select(keep_rows, inplace=False)
+            compact_next = batched.logits[:, -1:].argmax(dim=-1).index_select(0, keep_rows)
+            assert compact_state.get_batch_size() == len(keep_sources)
+            compact = step_fn(compact_next, compact_state)
+            compact_expected = []
+            for src in keep_sources:
+                out = step_fn(indiv_next[src], indiv_states[src])
+                indiv_states[src] = out.past_key_values
+                indiv_next[src] = out.logits[:, -1:].argmax(dim=-1)
+                compact_expected.append(out.logits)
+            assert_close_logits(
+                f"{mode} compacted decode",
+                compact.logits,
+                torch.cat(compact_expected, dim=0),
+                max_diff_limit,
+            )
+            assert compact.past_key_values.get_seq_length() == ids.shape[1] + decode_steps + 2
         print(f"{mode} PASS cache_type={type(batched.past_key_values).__name__} perm={perm_list}")
 
 
