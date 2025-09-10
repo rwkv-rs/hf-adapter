@@ -543,14 +543,15 @@ The next optimization work should focus on **HF recurrent decode**:
 4. Benchmark the new batched `rwkv7_forward_token` API with `bench_speed.py --hf-decode-api rwkv7_forward_token`, `bench_batch_sweep.py --fast-decode-api true`, and `bench_decode_breakdown.py --fast-decode-api true`; if the V100 result is stable, use it as the serving-stack fast path while keeping HF `forward`/`generate` compatibility unchanged.
 5. Use `bench_batch_sweep.py` to keep bsz=1/2/4/8 regressions visible while optimizing the batched fast decode path.
 6. Use `tests/test_dynamic_batch_cache.py` and `bench_dynamic_batch.py` to keep heterogeneous-row cache reorder/drop behavior correct while approaching serving-style dynamic batching.
-7. Use `bench_decode_micro.py` to separate recurrent model cost from `lm_head`, argmax, and Python loop overhead before changing the decode implementation.
-8. Use `bench_decode_components.py` to choose the next fusion target inside the fast-token layer path.
-9. Use `bench_projection_lora.py` to verify projection/LoRA fusion candidates before changing model code.
-10. Use `bench/analyze_results.py` after every V100 run to verify target ratios and missing axes before choosing the next optimization.
-11. Use `bench/check_results.py` as the regression gate, and `bench/check_results.py --target` as the final performance gate.
-12. Keep `logits_to_keep=1` as the default serving benchmark path because it already
+7. Use `tests/test_chunked_prefill.py` and `bench_chunked_prefill.py` to keep long-prompt chunked prefill logits/cache compatible with full prefill while measuring the memory/throughput tradeoff.
+8. Use `bench_decode_micro.py` to separate recurrent model cost from `lm_head`, argmax, and Python loop overhead before changing the decode implementation.
+9. Use `bench_decode_components.py` to choose the next fusion target inside the fast-token layer path.
+10. Use `bench_projection_lora.py` to verify projection/LoRA fusion candidates before changing model code.
+11. Use `bench/analyze_results.py` after every V100 run to verify target ratios and missing axes before choosing the next optimization.
+12. Use `bench/check_results.py` as the regression gate, and `bench/check_results.py --target` as the final performance gate.
+13. Keep `logits_to_keep=1` as the default serving benchmark path because it already
    fixes the earlier excess-memory measurement.
-13. After V100 decode approaches official `rwkv`, rerun on newer GPUs and larger models.
+14. After V100 decode approaches official `rwkv`, rerun on newer GPUs and larger models.
 
 ## Loop state
 
@@ -572,6 +573,11 @@ The next optimization work should focus on **HF recurrent decode**:
 - Dynamic-batch cache reorder/drop correctness and benchmark harnesses are in
   place; V100 dynamic simulation reaches `417.9` total tok/s with native-JIT
   `rwkv7_forward_token`.
+- Chunked prefill helper, correctness test, benchmark, analyzer section, and
+  regression gate are in place. V100 bsz=2 prompt=512 chunked prefill matches
+  full prefill/decode within fp16 tolerance; chunk sizes 64/128/256 reduce peak
+  VRAM to `0.598x` / `0.616x` / `0.633x` of full prefill while reaching
+  `0.125x` / `0.252x` / `0.499x` of full-prefill throughput.
 - Decode microbench harness is in place; V100 shows `rwkv7_forward_token` at
   `16.8 ms/token` vs HF `forward` at `24.5 ms/token`, while `lm_head` and argmax
   are tiny.
@@ -623,6 +629,17 @@ Dynamic-batch reorder/drop with `RWKV7_FAST_TOKEN_BACKEND=native_graph` now
 reaches `524.7` total tok/s for `832` decoded tokens with active batch dropping
 from 8 to 4, compared with the latest forward row at `209.3` total tok/s and
 the previous native-JIT fast-token row at `417.9` total tok/s.
+
+### Chunked prefill results
+
+Latest V100 `bench_chunked_prefill.py --batch-size 2 --prompt-tokens 512` rows:
+
+| mode | chunk | prefill tok/s | speed vs full | peak VRAM | VRAM vs full | max diff | decode diff |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| full | - | 36447.0 | 1.0000 | 658.9 MB | 1.0000 | - | - |
+| chunked | 64 | 4566.4 | 0.1253 | 394.0 MB | 0.5980 | 0.09375 | 0.09375 |
+| chunked | 128 | 9185.5 | 0.2520 | 405.8 MB | 0.6159 | 0.046875 | 0.0625 |
+| chunked | 256 | 18178.9 | 0.4988 | 417.1 MB | 0.6330 | 0.125 | 0.03125 |
 
 ## Latest main native-decode context (50-series / Blackwell)
 

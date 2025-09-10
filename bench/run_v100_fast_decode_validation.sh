@@ -97,6 +97,16 @@ run() {
     --attn-mode fused_recurrent \
     --beam-new-tokens 2
 
+  run python tests/test_chunked_prefill.py \
+    --model "${HF_DIR}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --fuse-norm false \
+    --attn-mode fused_recurrent \
+    --batch-size 2 \
+    --chunk-sizes 32 64 128 \
+    --max-diff 0.2
+
   run python tests/test_quantized_inference.py \
     --model "${HF_DIR}" \
     --dtype "${DTYPE}" \
@@ -225,6 +235,19 @@ run() {
     --warmup 8 \
     --reorder-every 4 \
     --drop-every 32 \
+    --results "${RESULTS}"
+
+  run python bench/bench_chunked_prefill.py \
+    --hf-dir "${HF_DIR}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --attn-mode fused_recurrent \
+    --fuse-norm false \
+    --batch-size 2 \
+    --prompt-tokens "${PROMPT_TOKENS}" \
+    --chunk-sizes 64 128 256 \
+    --warmup 1 \
+    --runs 3 \
     --results "${RESULTS}"
 
   run python bench/bench_quantization.py \
