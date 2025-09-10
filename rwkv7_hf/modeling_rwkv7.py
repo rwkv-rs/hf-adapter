@@ -138,6 +138,21 @@ def _clone_cache_value(value: Any) -> Any:
     return value
 
 
+def _same_tensor_view(a: torch.Tensor, b: torch.Tensor) -> bool:
+    """Return True when two tensor views already represent the same storage slice."""
+    try:
+        return (
+            a.data_ptr() == b.data_ptr()
+            and a.storage_offset() == b.storage_offset()
+            and tuple(a.shape) == tuple(b.shape)
+            and tuple(a.stride()) == tuple(b.stride())
+            and a.dtype == b.dtype
+            and a.device == b.device
+        )
+    except Exception:
+        return False
+
+
 def _detach_cache_value(value: Any) -> Any:
     """Detach nested cache tensors while preserving the container layout."""
     if isinstance(value, torch.Tensor):
@@ -257,7 +272,12 @@ class _RWKV7NativeGraphTokenRunner:
             src = src.squeeze(0)
         if transpose_last:
             src = src.transpose(-1, -2)
-        dst.copy_(src.to(device=dst.device, dtype=dst.dtype).contiguous())
+        if _same_tensor_view(dst, src):
+            return
+        src = src.to(device=dst.device, dtype=dst.dtype)
+        if _same_tensor_view(dst, src):
+            return
+        dst.copy_(src.contiguous())
 
     def copy_from_cache(self, past_key_values: "RWKV7StateCache") -> None:
         for li, p in enumerate(self.packs):
@@ -345,7 +365,12 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         src = value
         if transpose_last:
             src = src.transpose(-1, -2)
-        dst.copy_(src.to(device=dst.device, dtype=dst.dtype).contiguous())
+        if _same_tensor_view(dst, src):
+            return
+        src = src.to(device=dst.device, dtype=dst.dtype)
+        if _same_tensor_view(dst, src):
+            return
+        dst.copy_(src.contiguous())
 
     def copy_from_cache(self, past_key_values: "RWKV7StateCache") -> None:
         for li, p in enumerate(self.packs):

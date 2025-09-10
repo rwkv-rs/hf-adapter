@@ -57,6 +57,8 @@ def check_present(report: dict[str, Any], failures: list[str]) -> None:
         fail(failures, "missing generate_fast_path row")
     if not report.get("fast_token_warmup"):
         fail(failures, "missing fast_token_warmup row")
+    if not report.get("native_graph_replay_overhead"):
+        fail(failures, "missing native_graph_replay_overhead row")
     if not report.get("decode_components"):
         fail(failures, "missing decode_components row")
     if not report.get("projection_lora"):
@@ -193,6 +195,21 @@ def check_common(report: dict[str, Any], failures: list[str], args: argparse.Nam
     if warmup_s is None or float(warmup_s) <= 0:
         fail(failures, f"fast_token_warmup has invalid warmup_s: {warmup_s}")
 
+    overhead = report.get("native_graph_replay_overhead") or {}
+    if overhead.get("fast_token_backend_effective") != "native_graph":
+        fail(failures, f"native_graph overhead row did not use native_graph: {overhead}")
+    if overhead.get("batch_size") is None or int(overhead.get("batch_size") or 0) < args.min_native_graph_overhead_batch_size:
+        fail(failures, f"native_graph overhead batch size below floor: {overhead.get('batch_size')} < {args.min_native_graph_overhead_batch_size}")
+    overhead_diff = overhead.get("max_abs_diff_runner_vs_api")
+    if overhead_diff is None or float(overhead_diff) > args.max_native_graph_overhead_diff:
+        fail(failures, f"native_graph runner/API diff above floor: {overhead_diff} > {args.max_native_graph_overhead_diff}")
+    api_tokps = overhead.get("api_decode_tokps_total")
+    if api_tokps is None or float(api_tokps) < args.min_native_graph_overhead_api_tokps:
+        fail(failures, f"native_graph overhead API tokps below floor: {api_tokps} < {args.min_native_graph_overhead_api_tokps}")
+    copy_share = overhead.get("copy_share_of_manual_wall")
+    if copy_share is None or float(copy_share) > args.max_native_graph_copy_share:
+        fail(failures, f"native_graph cache-copy share too high: {copy_share} > {args.max_native_graph_copy_share}")
+
     components = report.get("decode_components") or {}
     top_components = components.get("top_components") or []
     if not top_components:
@@ -283,6 +300,10 @@ def main() -> int:
     ap.add_argument("--min-generate-batch-size", type=int, default=2)
     ap.add_argument("--required-warmup-batch-sizes", nargs="+", type=int, default=[1, 2, 4, 8])
     ap.add_argument("--required-warmup-backend", default="native_graph", choices=["native_graph", "native_jit", "fla"])
+    ap.add_argument("--min-native-graph-overhead-batch-size", type=int, default=1)
+    ap.add_argument("--max-native-graph-overhead-diff", type=float, default=0.2)
+    ap.add_argument("--min-native-graph-overhead-api-tokps", type=float, default=150.0)
+    ap.add_argument("--max-native-graph-copy-share", type=float, default=0.15)
     ap.add_argument("--expected-top-component", default="attn_linears_lora")
     ap.add_argument("--expect-naive-candidate-slower", action="store_true", default=True)
     ap.add_argument("--require-quantization", action="store_true",
