@@ -9,7 +9,8 @@
 #   COMPONENT_STEPS, NATIVE_DECODE_TOKENS, RUN_LARGER_MODEL_SMOKE, LARGER_HF_DIR,
 #   LARGER_PTH, LARGER_MODEL_SIZE_LABEL, LARGER_MAX_NEW_TOKENS,
 #   RUN_15B_MODEL_SMOKE, LARGER_15_HF_DIR, LARGER_15_PTH,
-#   LARGER_15_MAX_NEW_TOKENS, RESULTS, LOG_DIR
+#   LARGER_15_MAX_NEW_TOKENS, RUN_29B_MODEL_SMOKE, LARGER_29_HF_DIR,
+#   LARGER_29_PTH, LARGER_29_MAX_NEW_TOKENS, RESULTS, LOG_DIR
 set -euo pipefail
 
 export RWKV_V7_ON="${RWKV_V7_ON:-1}"
@@ -40,6 +41,10 @@ RUN_15B_MODEL_SMOKE="${RUN_15B_MODEL_SMOKE:-auto}"
 LARGER_15_HF_DIR="${LARGER_15_HF_DIR:-/home/data/wangyue/models/rwkv7/rwkv7-g1g-1.5b-hf}"
 LARGER_15_PTH="${LARGER_15_PTH:-/home/data/wangyue/models/rwkv7/rwkv7-g1g-1.5b-20260526-ctx8192.pth}"
 LARGER_15_MAX_NEW_TOKENS="${LARGER_15_MAX_NEW_TOKENS:-2}"
+RUN_29B_MODEL_SMOKE="${RUN_29B_MODEL_SMOKE:-auto}"
+LARGER_29_HF_DIR="${LARGER_29_HF_DIR:-/home/data/wangyue/models/rwkv7/rwkv7-g1g-2.9b-hf}"
+LARGER_29_PTH="${LARGER_29_PTH:-/home/data/wangyue/models/rwkv7/rwkv7-g1g-2.9b-20260526-ctx8192.pth}"
+LARGER_29_MAX_NEW_TOKENS="${LARGER_29_MAX_NEW_TOKENS:-2}"
 RESULTS="${RESULTS:-bench/results.jsonl}"
 LOG_DIR="${LOG_DIR:-bench/logs}"
 
@@ -85,6 +90,7 @@ run_larger_smoke() {
   echo "dtype=${DTYPE} device=${DEVICE} prompt_tokens=${PROMPT_TOKENS} decode_tokens=${DECODE_TOKENS} micro_steps=${MICRO_STEPS} forward_fast_steps=${FORWARD_FAST_STEPS} generate_batch_size=${GENERATE_BATCH_SIZE} generate_new_tokens=${GENERATE_NEW_TOKENS} warmup_batch_sizes=${WARMUP_BATCH_SIZES} native_graph_cache_size=${NATIVE_GRAPH_CACHE_SIZE} native_graph_overhead_batch_sizes=${NATIVE_GRAPH_OVERHEAD_BATCH_SIZES} native_graph_overhead_steps=${NATIVE_GRAPH_OVERHEAD_STEPS} component_steps=${COMPONENT_STEPS}"
   echo "larger_smoke=${RUN_LARGER_MODEL_SMOKE} larger_hf_dir=${LARGER_HF_DIR} larger_pth=${LARGER_PTH} larger_model_size_label=${LARGER_MODEL_SIZE_LABEL} larger_max_new_tokens=${LARGER_MAX_NEW_TOKENS}"
   echo "larger_15_smoke=${RUN_15B_MODEL_SMOKE} larger_15_hf_dir=${LARGER_15_HF_DIR} larger_15_pth=${LARGER_15_PTH} larger_15_max_new_tokens=${LARGER_15_MAX_NEW_TOKENS}"
+  echo "larger_29_smoke=${RUN_29B_MODEL_SMOKE} larger_29_hf_dir=${LARGER_29_HF_DIR} larger_29_pth=${LARGER_29_PTH} larger_29_max_new_tokens=${LARGER_29_MAX_NEW_TOKENS}"
   echo "results=${RESULTS} profile_out=${PROFILE_OUT}"
 
   run python tests/test_fast_decode_api.py \
@@ -440,6 +446,11 @@ run_larger_smoke() {
     run_larger_smoke "${LARGER_15_HF_DIR}" "${LARGER_15_PTH}" "1.5b" "${LARGER_15_MAX_NEW_TOKENS}"
   else
     echo "SKIP 1.5B larger-model smoke: RUN_15B_MODEL_SMOKE=${RUN_15B_MODEL_SMOKE} LARGER_15_HF_DIR=${LARGER_15_HF_DIR} LARGER_15_PTH=${LARGER_15_PTH}"
+  fi
+  if should_run_larger_smoke "${RUN_29B_MODEL_SMOKE}" "${LARGER_29_HF_DIR}" "${LARGER_29_PTH}"; then
+    run_larger_smoke "${LARGER_29_HF_DIR}" "${LARGER_29_PTH}" "2.9b" "${LARGER_29_MAX_NEW_TOKENS}"
+  else
+    echo "SKIP 2.9B larger-model smoke: RUN_29B_MODEL_SMOKE=${RUN_29B_MODEL_SMOKE} LARGER_29_HF_DIR=${LARGER_29_HF_DIR} LARGER_29_PTH=${LARGER_29_PTH}"
   fi
 
   run python bench/profile_decode.py \
