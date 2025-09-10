@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +53,19 @@ def set_attn_mode(model, attn_mode: str) -> None:
         attn = getattr(layer, "attn", None)
         if hasattr(attn, "mode"):
             attn.mode = attn_mode
+
+
+@contextmanager
+def reference_forward_env():
+    old = os.environ.get("RWKV7_FAST_FORWARD")
+    os.environ["RWKV7_FAST_FORWARD"] = "0"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("RWKV7_FAST_FORWARD", None)
+        else:
+            os.environ["RWKV7_FAST_FORWARD"] = old
 
 
 def load_model(args: argparse.Namespace, quantization: str, dtype: torch.dtype):
@@ -124,14 +139,16 @@ def bench_one(args: argparse.Namespace, tok, quantization: str, dtype: torch.dty
         state = out.past_key_values
         nxt = out.logits[:, -1:].argmax(dim=-1)
         for _ in range(args.warmup):
-            out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
+            with reference_forward_env():
+                out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
     cuda_sync(args.device)
     t0 = time.time()
     with torch.inference_mode():
         for _ in range(args.decode_tokens):
-            out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
+            with reference_forward_env():
+                out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
     cuda_sync(args.device)

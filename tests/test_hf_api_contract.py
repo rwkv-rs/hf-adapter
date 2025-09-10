@@ -97,6 +97,11 @@ def main() -> int:
                 use_cache=True,
             )
         assert beam.shape[0] == 1 and beam.shape[1] >= batch["input_ids"].shape[1]
+        backend_getter = getattr(model, "rwkv7_last_fast_token_backend", None)
+        if callable(backend_getter):
+            effective_backend = backend_getter()
+            print("generate_fast_token_backend", effective_backend)
+            assert effective_backend in {"native_graph", "native_jit", "fla"}, effective_backend
         print("beam_ids", beam[0, -args.beam_new_tokens :].tolist())
 
     model.train()

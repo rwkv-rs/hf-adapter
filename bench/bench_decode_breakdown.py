@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +56,19 @@ def timed(fn, device: str, runs: int = 1) -> float:
         fn()
     cuda_sync(device)
     return (time.time() - t0) / runs
+
+
+@contextmanager
+def reference_forward_env():
+    old = os.environ.get("RWKV7_FAST_FORWARD")
+    os.environ["RWKV7_FAST_FORWARD"] = "0"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("RWKV7_FAST_FORWARD", None)
+        else:
+            os.environ["RWKV7_FAST_FORWARD"] = old
 
 
 def load_hf(args, dtype, attn_mode: str):
@@ -102,13 +116,15 @@ def bench_hf_variant(args, tok, dtype, attn_mode: str) -> dict[str, Any]:
         state = out.past_key_values
         nxt = out.logits[:, -1:].argmax(dim=-1)
         for _ in range(args.warmup):
-            out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
+            with reference_forward_env():
+                out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
         cuda_sync(args.device)
         t0 = time.time()
         for _ in range(args.decode_tokens):
-            out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
+            with reference_forward_env():
+                out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
         cuda_sync(args.device)
@@ -117,12 +133,14 @@ def bench_hf_variant(args, tok, dtype, attn_mode: str) -> dict[str, Any]:
         out = model(ids[:, :8], use_cache=True, logits_to_keep=1)
         state = out.past_key_values
         for _ in range(args.warmup):
-            out = model(fixed, past_key_values=state, use_cache=True, logits_to_keep=1)
+            with reference_forward_env():
+                out = model(fixed, past_key_values=state, use_cache=True, logits_to_keep=1)
             state = out.past_key_values
         cuda_sync(args.device)
         t0 = time.time()
         for _ in range(args.decode_tokens):
-            out = model(fixed, past_key_values=state, use_cache=True, logits_to_keep=1)
+            with reference_forward_env():
+                out = model(fixed, past_key_values=state, use_cache=True, logits_to_keep=1)
             state = out.past_key_values
         cuda_sync(args.device)
         fixed_dt = time.time() - t0

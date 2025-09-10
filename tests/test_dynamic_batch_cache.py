@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from contextlib import contextmanager
 
 os.environ.setdefault("RWKV_V7_ON", "1")
 os.environ.setdefault("RWKV7_FAST_CACHE", "1")
@@ -27,6 +28,19 @@ PROMPTS = [
     "Delta report mentions batteries, camera lenses, and market volatility. ",
     "Epsilon story has robots, ancient maps, and a quiet library at night. ",
 ]
+
+
+@contextmanager
+def reference_forward_env():
+    old = os.environ.get("RWKV7_FAST_FORWARD")
+    os.environ["RWKV7_FAST_FORWARD"] = "0"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("RWKV7_FAST_FORWARD", None)
+        else:
+            os.environ["RWKV7_FAST_FORWARD"] = old
 
 
 def set_attn_mode(model, attn_mode: str) -> None:
@@ -82,7 +96,8 @@ def run_case(model, ids: torch.Tensor, mode: str, decode_steps: int, max_diff_li
     assert ids.ndim == 2 and ids.shape[0] >= 2 and ids.shape[1] >= 2
     if mode == "forward":
         def step_fn(token, state):
-            return model(token, past_key_values=state, use_cache=True, logits_to_keep=1)
+            with reference_forward_env():
+                return model(token, past_key_values=state, use_cache=True, logits_to_keep=1)
     elif mode == "fast_token":
         if not hasattr(model, "rwkv7_forward_token"):
             raise AssertionError("Model does not expose rwkv7_forward_token")

@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +83,19 @@ def last_fast_token_backend(model):
     return getattr(model, "_rwkv7_last_fast_token_backend", None)
 
 
+@contextmanager
+def reference_forward_env():
+    old = os.environ.get("RWKV7_FAST_FORWARD")
+    os.environ["RWKV7_FAST_FORWARD"] = "0"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("RWKV7_FAST_FORWARD", None)
+        else:
+            os.environ["RWKV7_FAST_FORWARD"] = old
+
+
 def encode(tok, prompt_tokens: int, bsz: int, device: str) -> torch.Tensor:
     ids = tok(SEED, return_tensors="pt", add_special_tokens=False).input_ids[:, :prompt_tokens]
     ids = ids.repeat(bsz, 1)
@@ -104,13 +118,15 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
         state = out.past_key_values
         nxt = out.logits[:, -1:].argmax(dim=-1)
         for _ in range(args.warmup):
-            out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
+            with reference_forward_env():
+                out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
         cuda_sync(args.device)
         t0 = time.time()
         for _ in range(args.decode_tokens):
-            out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
+            with reference_forward_env():
+                out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
         cuda_sync(args.device)

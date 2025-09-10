@@ -152,6 +152,12 @@ Interpretation:
   non-bitsandbytes weights. Benchmark scripts set the env var even when
   `--fast-token-backend auto` is used and write
   `fast_token_backend_effective` for regression analysis.
+- `RWKV7_FAST_FORWARD=1` (default) routes ordinary eval/no-grad HF cached
+  one-token `forward()` calls through `rwkv7_forward_token`, so
+  `model.generate(..., use_cache=True)` gets the same auto-selected backend.
+  Benchmark baseline loops explicitly set `RWKV7_FAST_FORWARD=0` around
+  reference forward timing so historical forward-vs-fast comparisons stay
+  comparable.
 
 ### Decode breakdown
 
@@ -355,16 +361,21 @@ python bench/bench_decode_micro.py \
   --results bench/results.jsonl
 ```
 
-The row records standard HF fixed/greedy one-token decode, optional fast token API fixed/greedy decode, and isolated `lm_head`, `norm+lm_head`, `argmax`, embedding, and empty-loop costs. This gives an easier regression signal than profiler tables while keeping the profiler for operator-level investigation.
+The row records reference HF fixed/greedy one-token decode, ordinary HF
+fixed/greedy decode with `RWKV7_FAST_FORWARD=1`, optional direct fast-token API
+fixed/greedy decode, and isolated `lm_head`, `norm+lm_head`, `argmax`,
+embedding, and empty-loop costs. This gives an easier regression signal than
+profiler tables while keeping the profiler for operator-level investigation.
 
 Latest V100 microbench:
 
 | Component | ms/token | tok/s |
 |---|---:|---:|
-| HF `forward` fixed-token | 24.5294 | 40.8 |
-| `rwkv7_forward_token` fixed-token | 16.7989 | 59.5 |
-| `lm_head` only | 0.1351 | 7402.3 |
-| argmax only | 0.0234 | 42819.5 |
+| Reference HF `forward` fixed-token (`RWKV7_FAST_FORWARD=0`) | 25.1180 | 39.8 |
+| Ordinary HF `forward` fixed-token (`RWKV7_FAST_FORWARD=1`, auto->native_graph) | 3.9643 | 252.3 |
+| Direct `rwkv7_forward_token` fixed-token (auto->native_graph) | 3.9494 | 253.2 |
+| `lm_head` only | 0.1388 | 7205.2 |
+| argmax only | 0.0249 | 40233.1 |
 
 ## Decode component benchmark
 
@@ -552,7 +563,7 @@ The next optimization work should focus on **HF recurrent decode**:
    and output projection overhead in the single-token path.
 3. Profile one-token decode with `torch.profiler` / Nsight and compare against official
    `rwkv` package layer-by-layer. `profile_decode.py --hf-decode-api rwkv7_forward_token` profiles the fast token API directly.
-4. Benchmark the new batched `rwkv7_forward_token` API with `bench_speed.py --hf-decode-api rwkv7_forward_token`, `bench_batch_sweep.py --fast-decode-api true`, and `bench_decode_breakdown.py --fast-decode-api true`; if the V100 result is stable, use it as the serving-stack fast path while keeping HF `forward`/`generate` compatibility unchanged.
+4. Benchmark the new batched `rwkv7_forward_token` API with `bench_speed.py --hf-decode-api rwkv7_forward_token`, `bench_batch_sweep.py --fast-decode-api true`, and `bench_decode_breakdown.py --fast-decode-api true`; the V100 result is now stable enough that ordinary eval/no-grad HF `forward`/`generate` use the same path by default, while benchmarks can still disable it with `RWKV7_FAST_FORWARD=0` for reference timing.
 5. Use `bench_batch_sweep.py` to keep bsz=1/2/4/8 regressions visible while optimizing the batched fast decode path.
 6. Use `tests/test_dynamic_batch_cache.py` and `bench_dynamic_batch.py` to keep heterogeneous-row cache reorder/drop behavior correct while approaching serving-style dynamic batching.
 7. Use `tests/test_chunked_prefill.py` and `bench_chunked_prefill.py` to keep long-prompt chunked prefill logits/cache compatible with full prefill while measuring the memory/throughput tradeoff.

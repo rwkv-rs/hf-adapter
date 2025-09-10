@@ -67,6 +67,11 @@ def _fast_token_backend() -> str:
     return "native_jit" if backend in {"native", "native_jit", "jit"} else "fla"
 
 
+def _fast_forward_enabled() -> bool:
+    """Allow normal HF forward/generate to use the one-token fast path."""
+    return os.environ.get("RWKV7_FAST_FORWARD", "1") not in _FALSE_VALUES
+
+
 def _cuda_available() -> bool:
     cuda = getattr(torch, "cuda", None)
     is_available = getattr(cuda, "is_available", None)
@@ -1164,6 +1169,30 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         out = _linear_direct(ffn.value, torch.relu(_linear_direct(ffn.key, k)) ** 2)
         return out, hidden_states
 
+    def _rwkv7_forward_fast_candidate(self, args: tuple[Any, ...], kwargs: dict[str, Any], effective_use_cache: bool):
+        if not effective_use_cache or not _fast_forward_enabled():
+            return None
+        if self.training or torch.is_grad_enabled():
+            return None
+        if self._rwkv7_uses_external_quantization():
+            return None
+        if kwargs.get("past_key_values") is None:
+            return None
+        if kwargs.get("inputs_embeds") is not None or kwargs.get("labels") is not None:
+            return None
+        if kwargs.get("output_attentions") is True or kwargs.get("output_hidden_states") is True:
+            return None
+        input_ids = kwargs.get("input_ids")
+        if input_ids is None and args:
+            input_ids = args[0]
+        if not isinstance(input_ids, torch.Tensor):
+            return None
+        if input_ids.dim() == 1:
+            return input_ids if int(input_ids.numel()) > 0 else None
+        if input_ids.dim() == 2 and int(input_ids.shape[1]) == 1 and int(input_ids.shape[0]) > 0:
+            return input_ids
+        return None
+
     def forward(self, *args, **kwargs):
         use_cache = kwargs.get("use_cache")
         effective_use_cache = use_cache if use_cache is not None else (self.config.use_cache if not self.training else False)
@@ -1171,4 +1200,14 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             past_key_values = kwargs.get("past_key_values")
             if not isinstance(past_key_values, RWKV7StateCache):
                 kwargs["past_key_values"] = RWKV7StateCache.from_legacy_cache(past_key_values)
+        fast_input_ids = self._rwkv7_forward_fast_candidate(args, kwargs, effective_use_cache)
+        if fast_input_ids is not None:
+            return_dict = kwargs.get("return_dict")
+            if return_dict is None:
+                return_dict = getattr(self.config, "use_return_dict", True)
+            return self.rwkv7_forward_token(
+                fast_input_ids,
+                past_key_values=kwargs.get("past_key_values"),
+                return_dict=return_dict,
+            )
         return super().forward(*args, **kwargs)

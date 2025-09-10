@@ -17,6 +17,7 @@ import argparse
 import json
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
@@ -99,6 +100,32 @@ def last_fast_token_backend(model):
     return getattr(model, "_rwkv7_last_fast_token_backend", None)
 
 
+@contextmanager
+def reference_forward_env():
+    old = os.environ.get("RWKV7_FAST_FORWARD")
+    os.environ["RWKV7_FAST_FORWARD"] = "0"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("RWKV7_FAST_FORWARD", None)
+        else:
+            os.environ["RWKV7_FAST_FORWARD"] = old
+
+
+@contextmanager
+def fast_forward_env():
+    old = os.environ.get("RWKV7_FAST_FORWARD")
+    os.environ["RWKV7_FAST_FORWARD"] = "1"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("RWKV7_FAST_FORWARD", None)
+        else:
+            os.environ["RWKV7_FAST_FORWARD"] = old
+
+
 def metric(dt_s: float, steps: int) -> dict[str, float]:
     ms = 1000.0 * dt_s / max(steps, 1)
     return {"ms": round(ms, 4), "tokps": round(1000.0 / ms, 1) if ms > 0 else float("inf")}
@@ -119,7 +146,8 @@ def bench_decode_paths(args, model, ids: torch.Tensor) -> dict[str, Any]:
 
     def hf_fixed_step():
         nonlocal state
-        out = model(fixed, past_key_values=state, use_cache=True, logits_to_keep=1)
+        with reference_forward_env():
+            out = model(fixed, past_key_values=state, use_cache=True, logits_to_keep=1)
         state = out.past_key_values
 
     hf_fixed_dt = timed(hf_fixed_step, args.device, args.warmup, args.steps)
@@ -128,7 +156,8 @@ def bench_decode_paths(args, model, ids: torch.Tensor) -> dict[str, Any]:
 
     def hf_greedy_step():
         nonlocal state, nxt
-        out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
+        with reference_forward_env():
+            out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
         state = out.past_key_values
         nxt = out.logits[:, -1:].argmax(dim=-1)
 
@@ -139,6 +168,30 @@ def bench_decode_paths(args, model, ids: torch.Tensor) -> dict[str, Any]:
         "hf_forward_fixed": metric(hf_fixed_dt, args.steps),
         "hf_forward_greedy": metric(hf_greedy_dt, args.steps),
     }
+
+    state, _ = seed_state()
+
+    def hf_auto_fixed_step():
+        nonlocal state
+        with fast_forward_env():
+            out = model(fixed, past_key_values=state, use_cache=True, logits_to_keep=1)
+        state = out.past_key_values
+
+    hf_auto_fixed_dt = timed(hf_auto_fixed_step, args.device, args.warmup, args.steps)
+
+    state, nxt = seed_state()
+
+    def hf_auto_greedy_step():
+        nonlocal state, nxt
+        with fast_forward_env():
+            out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
+        state = out.past_key_values
+        nxt = out.logits[:, -1:].argmax(dim=-1)
+
+    hf_auto_greedy_dt = timed(hf_auto_greedy_step, args.device, args.warmup, args.steps)
+    row["hf_forward_auto_fixed"] = metric(hf_auto_fixed_dt, args.steps)
+    row["hf_forward_auto_greedy"] = metric(hf_auto_greedy_dt, args.steps)
+    row["hf_forward_auto_backend"] = last_fast_token_backend(model)
 
     fast_fn = getattr(model, "rwkv7_forward_token", None)
     fast_name = "rwkv7_forward_token" if fast_fn is not None else None

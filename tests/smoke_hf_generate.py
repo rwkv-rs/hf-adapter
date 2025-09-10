@@ -38,6 +38,9 @@ def main():
         gen = model.generate(**enc, max_new_tokens=args.max_new_tokens, do_sample=False, use_cache=True)
         if args.device.startswith("cuda"):
             torch.cuda.synchronize()
+    getter = getattr(model, "rwkv7_last_fast_token_backend", None)
+    if callable(getter):
+        print("generate_fast_token_backend", getter())
     print("generated_ids_shape", tuple(gen.shape))
     print("decoded_BEGIN")
     print(tok.decode(gen[0].tolist(), skip_special_tokens=True))

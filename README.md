@@ -258,7 +258,10 @@ Native-JIT / native-graph backends for the HF fast-token path. `auto` is the
 serving default for `rwkv7_forward_token`: it picks `native_graph` when CUDA
 graph replay is available for the active batch size, falls back to `native_jit`,
 then to the FLA tensor path. Benchmark rows record both the requested backend
-and `fast_token_backend_effective`.
+and `fast_token_backend_effective`. Normal HF one-token inference calls with
+`past_key_values` also use this path by default, so `model.generate(...,
+use_cache=True)` benefits without changing caller code; set
+`RWKV7_FAST_FORWARD=0` to force the reference HF recurrent forward baseline.
 
 ```bash
 python bench/bench_speed.py \
@@ -441,12 +444,18 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - `rwkv7_prefill_chunks` provides an inference-only chunked prefill helper that
   preserves HF `forward` as the source of truth while carrying
   `RWKV7StateCache` across prompt chunks.
-- Inference-only `rwkv7_forward_token` API supports one-token decode for batched serving experiments without changing HF `forward`/`generate`; `rwkv7_forward_one` remains as the bsz=1 compatibility entrypoint.
+- Inference-only `rwkv7_forward_token` API supports one-token decode for
+  batched serving experiments; normal eval/no-grad HF `forward` and
+  `generate()` automatically route one-token cached decode through it unless
+  `RWKV7_FAST_FORWARD=0` is set. `rwkv7_forward_one` remains as the bsz=1
+  compatibility entrypoint.
 - Batched recurrent cache smoke coverage exists for repeated prompts across bsz=1/2/4; benchmark sweep records total/per-sequence throughput for bsz=1/2/4/8 and includes the fast token API when available.
 - Dynamic-batch cache reorder coverage exists for heterogeneous prompts; benchmark simulation records reorder/drop counts and total decoded tokens/s.
 - Chunked prefill coverage compares full vs chunked logits/cache and records
   throughput/memory tradeoffs for multiple chunk sizes.
-- Decode microbench coverage records stable timing for HF recurrent forward, the fast token API, `lm_head`, argmax, embedding, and empty-loop overhead.
+- Decode microbench coverage records stable timing for reference HF recurrent
+  forward, ordinary HF forward with fast-forward enabled, the direct fast token
+  API, `lm_head`, argmax, embedding, and empty-loop overhead.
 - Decode component benchmark coverage times the fast-token layer path by projection, recurrent, norm/output, FFN, and layer totals.
 - Projection/LoRA benchmark coverage times the largest component and compares simple PyTorch bmm fusion candidates.
 - Benchmark analysis coverage reports speed/memory ratios and next optimization focus from `bench/results.jsonl`.
@@ -456,6 +465,13 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   and exposes the chosen value through `rwkv7_last_fast_token_backend()`.
   Generic bitsandbytes 8-bit/4-bit loads intentionally stay on the FLA path
   until a dedicated quantized native projection path is added.
+- `RWKV7_FAST_FORWARD=1` (default) lets standard HF cached one-token
+  `forward()` / `generate()` use the same fast-token path in eval/no-grad mode;
+  tests and benchmarks can set it to `0` when they need the slower reference
+  recurrent forward baseline. A short V100 microbench with prompt=64/steps=8
+  records reference HF forward at about `40 tok/s`, ordinary HF forward with
+  fast-forward at about `251 tok/s`, and direct `rwkv7_forward_token` at about
+  `252 tok/s`, all resolving to `native_graph`.
 - Latest V100 fast-token results: FLA bsz=1 decode `59.2 tok/s` vs official `92.1 tok/s`; native-JIT bsz=1 decode reaches `92.1 tok/s` vs official `92.1 tok/s`; HF `native_graph` bsz=1 reaches `255.5 tok/s` in speed_mem. Batched native-graph reaches `253.9` / `434.3` / `852.6` / `1539.1` aggregate tok/s for bsz=1/2/4/8. Dynamic-batch simulation with native-graph reorder/drop through `select_batch` reaches `1209.3` total tok/s. Chunked prefill bsz=2 prompt=512 preserves logits/cache within fp16 tolerance and reduces peak VRAM to about `0.60x` / `0.62x` / `0.63x` of full prefill for chunk sizes 64/128/256, trading throughput to `0.13x` / `0.25x` / `0.50x`. Component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`; naive PyTorch bmm projection/LoRA candidates are not enough, so the next implementation needs custom fusion/reduced launch count.
 - Bitsandbytes quantization smoke now loads and generates for both 8-bit and
   4-bit on V100. Short benchmark rows show model footprint dropping from

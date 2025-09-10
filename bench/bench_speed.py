@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 os.environ.setdefault("RWKV_V7_ON", "1")
@@ -56,6 +57,19 @@ def last_fast_token_backend(model):
     if callable(getter):
         return getter()
     return getattr(model, "_rwkv7_last_fast_token_backend", None)
+
+
+@contextmanager
+def reference_forward_env():
+    old = os.environ.get("RWKV7_FAST_FORWARD")
+    os.environ["RWKV7_FAST_FORWARD"] = "0"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("RWKV7_FAST_FORWARD", None)
+        else:
+            os.environ["RWKV7_FAST_FORWARD"] = old
 
 
 def bench_hf(args, dt):
@@ -97,7 +111,8 @@ def bench_hf(args, dt):
     def decode_step(token, state):
         if use_fast_decode:
             return fast_decode_fn(token, past_key_values=state)
-        return model(token, past_key_values=state, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
+        with reference_forward_env():
+            return model(token, past_key_values=state, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
 
     with torch.inference_mode():
         out = model(ids[:, :8], use_cache=True, logits_to_keep=args.hf_logits_to_keep)
