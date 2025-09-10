@@ -51,6 +51,8 @@ def check_present(report: dict[str, Any], failures: list[str]) -> None:
         fail(failures, "missing chunked_prefill rows")
     if not report.get("decode_micro"):
         fail(failures, "missing decode_micro row")
+    if not report.get("forward_fast_path"):
+        fail(failures, "missing forward_fast_path row")
     if not report.get("decode_components"):
         fail(failures, "missing decode_components row")
     if not report.get("projection_lora"):
@@ -130,6 +132,24 @@ def check_common(report: dict[str, Any], failures: list[str], args: argparse.Nam
         fail(failures, f"micro fast tokps below floor: {fast_fixed} < {args.min_micro_fast_tokps}")
     if forward_fixed and fast_fixed and fast_fixed / forward_fixed < args.min_micro_fast_speedup:
         fail(failures, f"micro fast speedup below floor: {fast_fixed}/{forward_fixed} < {args.min_micro_fast_speedup}x")
+
+    forward_fast = report.get("forward_fast_path") or {}
+    ref_tokps = (forward_fast.get("reference_forward") or {}).get("tokps")
+    auto_tokps = (forward_fast.get("hf_forward_fast") or {}).get("tokps")
+    direct_tokps = (forward_fast.get("direct_fast_token") or {}).get("tokps")
+    if ref_tokps is None or auto_tokps is None:
+        fail(failures, f"forward_fast_path missing reference/auto tokps: {forward_fast}")
+    elif float(ref_tokps) <= 0 or float(auto_tokps) / float(ref_tokps) < args.min_forward_fast_speedup:
+        fail(failures, f"HF forward fast speedup below floor: {auto_tokps}/{ref_tokps} < {args.min_forward_fast_speedup}x")
+    if direct_tokps is not None and auto_tokps is not None:
+        if float(auto_tokps) / max(float(direct_tokps), 1e-9) < args.min_forward_fast_vs_direct_ratio:
+            fail(failures, f"HF forward fast below direct fast-token ratio: {auto_tokps}/{direct_tokps} < {args.min_forward_fast_vs_direct_ratio}x")
+    if forward_fast.get("hf_forward_fast_backend") not in {"native_graph", "native_jit", "fla"}:
+        fail(failures, f"unexpected HF forward fast backend: {forward_fast.get('hf_forward_fast_backend')}")
+    for key in ("max_abs_diff_auto_vs_reference", "max_abs_diff_direct_vs_reference"):
+        val = forward_fast.get(key)
+        if val is None or float(val) > args.max_forward_fast_diff:
+            fail(failures, f"forward_fast_path {key} above floor: {val} > {args.max_forward_fast_diff}")
 
     components = report.get("decode_components") or {}
     top_components = components.get("top_components") or []
@@ -214,6 +234,9 @@ def main() -> int:
     ap.add_argument("--max-chunked-prefill-diff", type=float, default=0.2)
     ap.add_argument("--min-micro-fast-tokps", type=float, default=50.0)
     ap.add_argument("--min-micro-fast-speedup", type=float, default=1.25)
+    ap.add_argument("--min-forward-fast-speedup", type=float, default=3.0)
+    ap.add_argument("--min-forward-fast-vs-direct-ratio", type=float, default=0.9)
+    ap.add_argument("--max-forward-fast-diff", type=float, default=0.2)
     ap.add_argument("--expected-top-component", default="attn_linears_lora")
     ap.add_argument("--expect-naive-candidate-slower", action="store_true", default=True)
     ap.add_argument("--require-quantization", action="store_true",
