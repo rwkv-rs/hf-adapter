@@ -123,6 +123,18 @@ def check_native_graph_cache(model, batch_sizes: list[int]) -> None:
     cleared = model.rwkv7_clear_native_graph_cache()
     assert cleared == len(cached), (cleared, cached)
     assert native_graph_cache_batch_sizes(model) == []
+    assert hasattr(model, "rwkv7_warmup_fast_token"), "missing native graph warmup API"
+    warmed = model.rwkv7_warmup_fast_token(expected, backend="native_graph")
+    print("native_graph_warmup", warmed)
+    assert all(warmed[int(b)] == "native_graph" for b in expected), warmed
+    if hasattr(model, "rwkv7_native_graph_cache_batch_sizes"):
+        cached_after_warmup = model.rwkv7_native_graph_cache_batch_sizes()
+    else:
+        cached_after_warmup = native_graph_cache_batch_sizes(model)
+    print("native_graph_cache_batch_sizes_after_warmup", cached_after_warmup)
+    if graph_cache_limit() >= len(expected):
+        assert set(expected).issubset(cached_after_warmup), (expected, cached_after_warmup)
+    assert model.rwkv7_clear_native_graph_cache() == len(cached_after_warmup)
 
 
 def last_fast_token_backend(model):

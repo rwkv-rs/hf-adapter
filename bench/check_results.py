@@ -55,6 +55,8 @@ def check_present(report: dict[str, Any], failures: list[str]) -> None:
         fail(failures, "missing forward_fast_path row")
     if not report.get("generate_fast_path"):
         fail(failures, "missing generate_fast_path row")
+    if not report.get("fast_token_warmup"):
+        fail(failures, "missing fast_token_warmup row")
     if not report.get("decode_components"):
         fail(failures, "missing decode_components row")
     if not report.get("projection_lora"):
@@ -170,6 +172,27 @@ def check_common(report: dict[str, Any], failures: list[str], args: argparse.Nam
     if generate_fast.get("fast_token_backend_effective") not in {"native_graph", "native_jit", "fla"}:
         fail(failures, f"unexpected generate fast backend: {generate_fast.get('fast_token_backend_effective')}")
 
+    warmup = report.get("fast_token_warmup") or {}
+    warmed_batches = {int(v) for v in (warmup.get("batch_sizes") or [])}
+    cached_batches = {int(v) for v in (warmup.get("native_graph_cache_batch_sizes") or [])}
+    backend_by_batch = warmup.get("effective_backend_by_batch") or {}
+    for bsz in args.required_warmup_batch_sizes:
+        if bsz not in warmed_batches:
+            fail(failures, f"fast_token_warmup missing requested bsz={bsz}: {warmup}")
+            continue
+        actual_backend = backend_by_batch.get(str(bsz))
+        if actual_backend != args.required_warmup_backend:
+            fail(failures, f"fast_token_warmup backend mismatch for bsz={bsz}: {actual_backend} != {args.required_warmup_backend}")
+        if args.required_warmup_backend == "native_graph" and bsz not in cached_batches:
+            fail(failures, f"fast_token_warmup did not cache native graph bsz={bsz}: {warmup}")
+    cache_limit = warmup.get("native_graph_cache_size_limit")
+    if args.required_warmup_backend == "native_graph" and cache_limit is not None:
+        if int(cache_limit) < len(set(args.required_warmup_batch_sizes)):
+            fail(failures, f"native graph cache limit too small for required warmup sizes: {cache_limit}")
+    warmup_s = warmup.get("warmup_s")
+    if warmup_s is None or float(warmup_s) <= 0:
+        fail(failures, f"fast_token_warmup has invalid warmup_s: {warmup_s}")
+
     components = report.get("decode_components") or {}
     top_components = components.get("top_components") or []
     if not top_components:
@@ -258,6 +281,8 @@ def main() -> int:
     ap.add_argument("--max-forward-fast-diff", type=float, default=0.2)
     ap.add_argument("--min-generate-fast-speedup", type=float, default=2.0)
     ap.add_argument("--min-generate-batch-size", type=int, default=2)
+    ap.add_argument("--required-warmup-batch-sizes", nargs="+", type=int, default=[1, 2, 4, 8])
+    ap.add_argument("--required-warmup-backend", default="native_graph", choices=["native_graph", "native_jit", "fla"])
     ap.add_argument("--expected-top-component", default="attn_linears_lora")
     ap.add_argument("--expect-naive-candidate-slower", action="store_true", default=True)
     ap.add_argument("--require-quantization", action="store_true",

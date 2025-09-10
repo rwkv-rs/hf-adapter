@@ -185,6 +185,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     micro = latest(rows, lambda r: r.get("axis") == "decode_micro" and r.get("backend") == "hf_adapter")
     forward_fast_path = latest(rows, lambda r: r.get("axis") == "forward_fast_path" and r.get("backend") == "hf_adapter")
     generate_fast_path = latest(rows, lambda r: r.get("axis") == "generate_fast_path" and r.get("backend") == "hf_adapter")
+    fast_token_warmup = latest(rows, lambda r: r.get("axis") == "fast_token_warmup" and r.get("backend") == "hf_adapter")
     components = latest(rows, lambda r: r.get("axis") == "decode_components" and r.get("backend") == "hf_adapter")
     projection_lora = latest(rows, lambda r: r.get("axis") == "projection_lora" and r.get("backend") == "hf_adapter")
     quant_rows = [r for r in rows if r.get("axis") == "quantization" and r.get("backend") == "hf_adapter"]
@@ -233,6 +234,8 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         focus.append("chunked_prefill rows pending")
     if micro is None:
         focus.append("decode_micro rows pending")
+    if fast_token_warmup is None:
+        focus.append("fast_token_warmup rows pending")
     if components is None:
         focus.append("decode_components rows pending")
     elif components.get("top_components"):
@@ -314,6 +317,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "hf_forward_fixed", "hf_forward_greedy", "hf_forward_auto_fixed", "hf_forward_auto_greedy", "hf_forward_auto_backend", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
         "forward_fast_path": compact(forward_fast_path, ["_lineno", "fast_token_backend", "fast_token_layout", "reference_forward", "hf_forward_fast", "direct_fast_token", "hf_forward_fast_backend", "direct_fast_token_backend", "max_abs_diff_auto_vs_reference", "max_abs_diff_direct_vs_reference", "peak_vram_mb"]),
         "generate_fast_path": compact(generate_fast_path, ["_lineno", "fast_token_backend", "fast_token_backend_effective", "batch_size", "reference_generate", "hf_generate_fast", "speedup_vs_reference", "generated_equal", "generated_tokens_matched", "generated_tokens_total", "prompt_tokens", "max_new_tokens", "peak_vram_mb"]),
+        "fast_token_warmup": compact(fast_token_warmup, ["_lineno", "fast_token_backend", "batch_sizes", "effective_backend_by_batch", "native_graph_cache_batch_sizes", "native_graph_cache_size_limit", "cleared_before", "warmup_s", "peak_vram_mb"]),
         "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
         "projection_lora": compact(projection_lora, ["_lineno", "batch_size", "hidden_size", "layers", "avg_timings_ms", "avg_current_linears_lora_sum_ms", "avg_candidate_linears_lora_sum_ms", "avg_candidate_speedup", "peak_vram_mb"]),
         "quantization": [compact(r, ["_lineno", "quantization", "status", "prefill_tokps", "decode_tokps", "decode_ms_per_tok", "model_footprint_mb", "peak_vram_mb", "error"]) for r in quant_latest],
@@ -366,6 +370,8 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["forward_fast_path"], ensure_ascii=False) if report["forward_fast_path"] else "PENDING")
     print("\n## generate_fast_path")
     print(json.dumps(report["generate_fast_path"], ensure_ascii=False) if report["generate_fast_path"] else "PENDING")
+    print("\n## fast_token_warmup")
+    print(json.dumps(report["fast_token_warmup"], ensure_ascii=False) if report["fast_token_warmup"] else "PENDING")
     print("\n## decode_components")
     print(json.dumps(report["decode_components"], ensure_ascii=False) if report["decode_components"] else "PENDING")
     print("\n## projection_lora")
