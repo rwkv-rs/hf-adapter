@@ -6,6 +6,7 @@ Requires flash-linear-attention (`fla`) on PYTHONPATH / installed in the env.
 from __future__ import annotations
 
 import os
+from collections import OrderedDict
 from typing import Any
 
 import torch
@@ -62,6 +63,15 @@ def _fast_token_backend() -> str:
     if backend in {"native_graph", "cuda_graph", "graph"}:
         return "native_graph"
     return "native_jit" if backend in {"native", "native_jit", "jit"} else "fla"
+
+
+def _native_graph_cache_size() -> int:
+    """Maximum per-model native graph runners to keep for dynamic serving."""
+    raw = os.environ.get("RWKV7_NATIVE_GRAPH_CACHE_SIZE", "8").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 8
 
 
 def _linear_direct(module, x: torch.Tensor) -> torch.Tensor:
@@ -576,14 +586,44 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         weight = self.model.embeddings.weight
         key = (weight.device.type, weight.device.index, weight.dtype, len(packs), int(packs[0][1]), int(packs[0][2]), int(batch_size))
         cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
-        if cache is None or cache[0] != key:
-            if int(batch_size) == 1:
-                runner = _RWKV7NativeGraphTokenRunner(self, packs)
-            else:
-                runner = _RWKV7NativeGraphBatchedTokenRunner(self, packs, int(batch_size))
-            self._rwkv7_native_graph_runner_cache = (key, runner)
+        if isinstance(cache, tuple) and len(cache) == 2:
+            cache = OrderedDict([cache])
+        elif not isinstance(cache, OrderedDict):
+            cache = OrderedDict()
+        self._rwkv7_native_graph_runner_cache = cache
+
+        runner = cache.get(key)
+        if runner is not None:
+            cache.move_to_end(key)
             return runner
-        return cache[1]
+
+        if int(batch_size) == 1:
+            runner = _RWKV7NativeGraphTokenRunner(self, packs)
+        else:
+            runner = _RWKV7NativeGraphBatchedTokenRunner(self, packs, int(batch_size))
+        cache[key] = runner
+        cache.move_to_end(key)
+        while len(cache) > _native_graph_cache_size():
+            cache.popitem(last=False)
+        return runner
+
+    def rwkv7_clear_native_graph_cache(self) -> int:
+        """Drop captured native-graph runners and return how many were kept.
+
+        Serving stacks can call this when changing traffic profiles or before
+        a memory-sensitive phase. The cache otherwise behaves as a small LRU
+        keyed by device, dtype, model shape, and active batch size.
+        """
+        cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
+        if isinstance(cache, OrderedDict):
+            size = len(cache)
+            cache.clear()
+            return size
+        if isinstance(cache, tuple):
+            self._rwkv7_native_graph_runner_cache = OrderedDict()
+            return 1
+        self._rwkv7_native_graph_runner_cache = OrderedDict()
+        return 0
 
     @staticmethod
     def _native_state_tensor(
@@ -693,8 +733,9 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         """CUDA-graph replay backend for fixed-batch recurrent decode.
 
         This is an opt-in serving fast path via
-        `RWKV7_FAST_TOKEN_BACKEND=native_graph`. A separate graph is captured
-        for each batch size seen by this model instance.
+        `RWKV7_FAST_TOKEN_BACKEND=native_graph`. Graph runners are cached in a
+        small LRU per model instance, keyed by active batch size. Set
+        `RWKV7_NATIVE_GRAPH_CACHE_SIZE` to tune the retained runner count.
         """
         packs = self._rwkv7_native_jit_packs()
         runner = self._rwkv7_native_graph_runner(packs, int(token.numel()))

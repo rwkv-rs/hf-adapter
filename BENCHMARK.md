@@ -134,10 +134,12 @@ Interpretation:
   about `0.64x` official, and `RWKV7_FAST_TOKEN_BACKEND=native_jit` reaches
   `1.00x` official on this V100 run.
 - `RWKV7_FAST_TOKEN_BACKEND=native_graph` moves the standalone CUDA-graph
-  prototype into the HF `rwkv7_forward_token` API for bsz=1: it reaches
-  `255.5 tok/s` (`2.77x` official) with a deliberate VRAM tradeoff from captured
-  graph buffers. The formal memory target remains anchored to the lower-memory
-  native-JIT row.
+  prototype into the HF `rwkv7_forward_token` API for fixed bsz and dynamic
+  active-batch serving: bsz=1 reaches `255.5 tok/s` (`2.77x` official), with
+  bsz=1/2/4/8 batch sweep rows shown below. Captured graph runners are kept in a
+  per-model LRU controlled by `RWKV7_NATIVE_GRAPH_CACHE_SIZE`; serving code can
+  call `rwkv7_clear_native_graph_cache()` to release retained graph buffers. The
+  formal memory target remains anchored to the lower-memory native-JIT row.
 
 ### Decode breakdown
 
@@ -563,7 +565,10 @@ The next optimization work should focus on **HF recurrent decode**:
 - HF native-graph fast-token is now integrated for fixed bsz=1/2/4/8; V100
   speed_mem reaches `255.5 tok/s`, batch sweep reaches `253.9` / `434.3` /
   `852.6` / `1539.1` aggregate tok/s, and dynamic reorder/drop reaches
-  `524.7` total tok/s while using the normal HF prefill/cache handoff.
+  `524.7` total tok/s while using the normal HF prefill/cache handoff. The graph
+  runner cache is now an LRU over active batch sizes instead of a single most
+  recent runner, so dynamic serving does not recapture when a retained size
+  reappears.
 - Dynamic-batch cache reorder/drop correctness and benchmark harnesses are in
   place; V100 dynamic simulation reaches `417.9` total tok/s with native-JIT
   `rwkv7_forward_token`.

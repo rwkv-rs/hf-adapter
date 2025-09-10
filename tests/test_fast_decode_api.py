@@ -60,6 +60,37 @@ def run_decode_case(model, input_ids: torch.Tensor, decode_steps: int, max_diff_
     assert forward_state.get_seq_length() == fast_state.get_seq_length(), label
 
 
+def graph_cache_limit() -> int:
+    raw = os.environ.get("RWKV7_NATIVE_GRAPH_CACHE_SIZE", "8").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 8
+
+
+def native_graph_cache_batch_sizes(model) -> list[int]:
+    cache = getattr(model, "_rwkv7_native_graph_runner_cache", None)
+    if isinstance(cache, tuple) and len(cache) == 2:
+        key = cache[0]
+        return [int(key[-1])] if isinstance(key, tuple) and key else []
+    if hasattr(cache, "keys"):
+        return sorted({int(key[-1]) for key in cache.keys() if isinstance(key, tuple) and key})
+    return []
+
+
+def check_native_graph_cache(model, batch_sizes: list[int]) -> None:
+    cached = native_graph_cache_batch_sizes(model)
+    print("native_graph_cache_batch_sizes", cached)
+    expected = sorted(set(int(v) for v in batch_sizes))
+    if graph_cache_limit() >= len(expected):
+        assert set(expected).issubset(cached), (expected, cached)
+    assert 1 in cached, cached
+    assert hasattr(model, "rwkv7_clear_native_graph_cache"), "missing native graph cache clear API"
+    cleared = model.rwkv7_clear_native_graph_cache()
+    assert cleared == len(cached), (cleared, cached)
+    assert native_graph_cache_batch_sizes(model) == []
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
@@ -122,6 +153,8 @@ def main() -> int:
                     model.rwkv7_forward_one,
                     label=f"rwkv7_forward_one backend={backend} layout={layout} bsz=1",
                 )
+                if backend == "native_graph":
+                    check_native_graph_cache(model, args.batch_sizes)
     finally:
         if old_layout is None:
             os.environ.pop("RWKV7_FAST_TOKEN_LAYOUT", None)
