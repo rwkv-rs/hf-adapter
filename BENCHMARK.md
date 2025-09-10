@@ -146,6 +146,12 @@ Interpretation:
   per-model LRU controlled by `RWKV7_NATIVE_GRAPH_CACHE_SIZE`; serving code can
   call `rwkv7_clear_native_graph_cache()` to release retained graph buffers. The
   formal memory target remains anchored to the lower-memory native-JIT row.
+- `RWKV7_FAST_TOKEN_BACKEND=auto` now resolves the effective fast-token backend
+  at runtime as `native_graph` -> `native_jit` -> FLA, gated by CUDA/model
+  placement, available native helpers, active batch size, and dense
+  non-bitsandbytes weights. Benchmark scripts set the env var even when
+  `--fast-token-backend auto` is used and write
+  `fast_token_backend_effective` for regression analysis.
 
 ### Decode breakdown
 
@@ -315,7 +321,7 @@ python bench/bench_dynamic_batch.py \
   --attn-mode fused_recurrent \
   --fuse-norm false \
   --fast-cache true \
-  --fast-token-backend native_jit \
+  --fast-token-backend auto \
   --decode-apis forward rwkv7_forward_token \
   --batch-size 8 \
   --min-batch-size 2 \

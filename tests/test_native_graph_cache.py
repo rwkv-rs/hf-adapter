@@ -41,6 +41,7 @@ def _install_runtime_stubs() -> None:
     torch_mod.LongTensor = Tensor
     torch_mod.no_grad = lambda: _NoGrad()
     torch_mod.float32 = "float32"
+    torch_mod.cuda = types.SimpleNamespace(is_available=lambda: True)
     _ensure_module("torch.nn")
     _ensure_module("torch.nn.functional")
 
@@ -118,7 +119,7 @@ def main() -> int:
     modeling._RWKV7NativeGraphBatchedTokenRunner = BatchedRunner
 
     class Device:
-        type = "cpu"
+        type = "cuda"
         index = None
 
     class Weight:
@@ -169,6 +170,64 @@ def main() -> int:
             os.environ.pop("RWKV7_NATIVE_GRAPH_CACHE_SIZE", None)
         else:
             os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = old_limit
+
+    old_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND")
+    old_jit_block_step = modeling._native_jit_block_step
+    old_jit_block_step_batched = modeling._native_jit_block_step_batched
+    old_jit_extract = modeling._native_jit_extract
+    old_graph_block_ip = modeling._native_graph_block_ip
+    old_graph_block_ip_batched = modeling._native_graph_block_ip_batched
+    try:
+        modeling._native_jit_block_step = object()
+        modeling._native_jit_block_step_batched = object()
+        modeling._native_jit_extract = lambda owner: (packs, None, None, None)
+        modeling._native_graph_block_ip = object()
+        modeling._native_graph_block_ip_batched = object()
+
+        owner._rwkv7_native_jit_packs = types.MethodType(modeling.RWKV7ForCausalLM._rwkv7_native_jit_packs, owner)
+        owner._rwkv7_uses_external_quantization = types.MethodType(
+            modeling.RWKV7ForCausalLM._rwkv7_uses_external_quantization, owner
+        )
+        owner._rwkv7_can_use_native_backend = types.MethodType(
+            modeling.RWKV7ForCausalLM._rwkv7_can_use_native_backend, owner
+        )
+        owner._rwkv7_resolve_fast_token_backend = types.MethodType(
+            modeling.RWKV7ForCausalLM._rwkv7_resolve_fast_token_backend, owner
+        )
+        os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "auto"
+        assert modeling._fast_token_backend() == "auto"
+        assert owner._rwkv7_resolve_fast_token_backend(1) == "native_graph"
+        assert owner._rwkv7_resolve_fast_token_backend(4) == "native_graph"
+        assert owner._rwkv7_can_use_native_backend("native_graph", 4) is True
+
+        modeling._native_graph_block_ip_batched = None
+        assert owner._rwkv7_resolve_fast_token_backend(4) == "native_jit"
+
+        owner.is_loaded_in_4bit = True
+        assert owner._rwkv7_resolve_fast_token_backend(1) == "fla"
+        owner.is_loaded_in_4bit = False
+
+        modeling._native_jit_extract = lambda owner: (_ for _ in ()).throw(RuntimeError("extract failed"))
+        modeling._native_graph_block_ip = None
+        owner._rwkv7_native_jit_pack_cache = None
+        assert owner._rwkv7_resolve_fast_token_backend(1) == "fla"
+
+        os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "graph"
+        assert modeling._fast_token_backend() == "native_graph"
+        os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "jit"
+        assert modeling._fast_token_backend() == "native_jit"
+        os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "unknown"
+        assert modeling._fast_token_backend() == "fla"
+    finally:
+        modeling._native_jit_block_step = old_jit_block_step
+        modeling._native_jit_block_step_batched = old_jit_block_step_batched
+        modeling._native_jit_extract = old_jit_extract
+        modeling._native_graph_block_ip = old_graph_block_ip
+        modeling._native_graph_block_ip_batched = old_graph_block_ip_batched
+        if old_backend is None:
+            os.environ.pop("RWKV7_FAST_TOKEN_BACKEND", None)
+        else:
+            os.environ["RWKV7_FAST_TOKEN_BACKEND"] = old_backend
 
     print("PASS")
     return 0

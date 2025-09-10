@@ -254,7 +254,11 @@ python bench/bench_speed.py \
   --hf-decode-api rwkv7_forward_token
 ```
 
-Native-JIT / native-graph backends for the HF fast-token path:
+Native-JIT / native-graph backends for the HF fast-token path. `auto` is the
+serving default for `rwkv7_forward_token`: it picks `native_graph` when CUDA
+graph replay is available for the active batch size, falls back to `native_jit`,
+then to the FLA tensor path. Benchmark rows record both the requested backend
+and `fast_token_backend_effective`.
 
 ```bash
 python bench/bench_speed.py \
@@ -266,7 +270,7 @@ python bench/bench_speed.py \
   --fuse-norm false \
   --fast-cache true \
   --hf-decode-api rwkv7_forward_token \
-  --fast-token-backend native_jit
+  --fast-token-backend auto
 
 python bench/bench_speed.py \
   --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
@@ -447,6 +451,11 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - Projection/LoRA benchmark coverage times the largest component and compares simple PyTorch bmm fusion candidates.
 - Benchmark analysis coverage reports speed/memory ratios and next optimization focus from `bench/results.jsonl`.
 - Benchmark check coverage provides passing regression and target gates for the current native-JIT HF fast-token rows; native-graph rows are reported as an optional reduced-launch speed path.
+- `RWKV7_FAST_TOKEN_BACKEND=auto` now chooses the fastest available dense
+  fast-token backend per active batch (`native_graph` -> `native_jit` -> FLA)
+  and exposes the chosen value through `rwkv7_last_fast_token_backend()`.
+  Generic bitsandbytes 8-bit/4-bit loads intentionally stay on the FLA path
+  until a dedicated quantized native projection path is added.
 - Latest V100 fast-token results: FLA bsz=1 decode `59.2 tok/s` vs official `92.1 tok/s`; native-JIT bsz=1 decode reaches `92.1 tok/s` vs official `92.1 tok/s`; HF `native_graph` bsz=1 reaches `255.5 tok/s` in speed_mem. Batched native-graph reaches `253.9` / `434.3` / `852.6` / `1539.1` aggregate tok/s for bsz=1/2/4/8. Dynamic-batch simulation with native-graph reorder/drop through `select_batch` reaches `1209.3` total tok/s. Chunked prefill bsz=2 prompt=512 preserves logits/cache within fp16 tolerance and reduces peak VRAM to about `0.60x` / `0.62x` / `0.63x` of full prefill for chunk sizes 64/128/256, trading throughput to `0.13x` / `0.25x` / `0.50x`. Component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`; naive PyTorch bmm projection/LoRA candidates are not enough, so the next implementation needs custom fusion/reduced launch count.
 - Bitsandbytes quantization smoke now loads and generates for both 8-bit and
   4-bit on V100. Short benchmark rows show model footprint dropping from

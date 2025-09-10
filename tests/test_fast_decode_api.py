@@ -91,6 +91,13 @@ def check_native_graph_cache(model, batch_sizes: list[int]) -> None:
     assert native_graph_cache_batch_sizes(model) == []
 
 
+def last_fast_token_backend(model):
+    getter = getattr(model, "rwkv7_last_fast_token_backend", None)
+    if callable(getter):
+        return getter()
+    return getattr(model, "_rwkv7_last_fast_token_backend", None)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
@@ -104,8 +111,8 @@ def main() -> int:
     ap.add_argument("--batch-sizes", nargs="+", type=int, default=[1, 2, 4])
     ap.add_argument("--fast-token-layouts", nargs="+", default=["3d"], choices=["3d", "2d"],
                     help="Fast-token tensor layouts to validate; 3d is the current production baseline")
-    ap.add_argument("--fast-token-backends", nargs="+", default=["fla"], choices=["fla", "native_jit", "native_graph"],
-                    help="Fast-token backends to validate; native_graph captures one CUDA graph per fixed batch size")
+    ap.add_argument("--fast-token-backends", nargs="+", default=["fla"], choices=["auto", "fla", "native_jit", "native_graph"],
+                    help="Fast-token backends to validate; auto picks native_graph/native_jit/fla in that order when available")
     args = ap.parse_args()
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
@@ -145,6 +152,12 @@ def main() -> int:
                         model.rwkv7_forward_token,
                         label=f"rwkv7_forward_token backend={backend} layout={layout} bsz={bsz}",
                     )
+                    effective = last_fast_token_backend(model)
+                    print(f"rwkv7_forward_token backend={backend} layout={layout} bsz={bsz} effective_backend", effective)
+                    if backend != "auto":
+                        assert effective == backend, (backend, effective)
+                    else:
+                        assert effective in {"native_graph", "native_jit", "fla"}, effective
                 run_decode_case(
                     model,
                     input_ids,
@@ -153,7 +166,13 @@ def main() -> int:
                     model.rwkv7_forward_one,
                     label=f"rwkv7_forward_one backend={backend} layout={layout} bsz=1",
                 )
-                if backend == "native_graph":
+                effective = last_fast_token_backend(model)
+                print(f"rwkv7_forward_one backend={backend} layout={layout} bsz=1 effective_backend", effective)
+                if backend != "auto":
+                    assert effective == backend, (backend, effective)
+                else:
+                    assert effective in {"native_graph", "native_jit", "fla"}, effective
+                if backend == "native_graph" or effective == "native_graph":
                     check_native_graph_cache(model, args.batch_sizes)
     finally:
         if old_layout is None:
