@@ -33,7 +33,7 @@
 - `tests/test_fast_cache.py`：轻量 `RWKV7StateCache` 与 FLA 默认 cache 的 prefill/decode 等价测试。
 - `tests/test_fast_decode_api.py`：`rwkv7_forward_token` batched one-token decode API 和 `rwkv7_forward_one` bsz=1 兼容入口与 HF recurrent forward 的等价测试。
 - `tests/test_batch_cache.py`：bsz=1/2/4 repeated prompt cache/layout smoke，覆盖批量 recurrent state。
-- `tests/test_dynamic_batch_cache.py`：heterogeneous prompts + cache `select_batch` reorder/drop/compact 后继续 decode，对比逐条 independent states，覆盖 dynamic batching state 管理风险。
+- `tests/test_dynamic_batch_cache.py`：heterogeneous prompts + cache `select_batch` reorder/drop/compact、`detach`、CPU offload/restore 后继续 decode，对比逐条 independent states，覆盖 dynamic batching state 管理风险。
 - `tests/test_chunked_prefill.py`：full prefill vs `rwkv7_prefill_chunks` logits/cache/decode 一致性，覆盖 serving chunked prefill 风险。
 - `tests/test_hf_training_smoke.py`：HF Trainer / TRL SFTTrainer 1-step LoRA smoke。
 - `bench/bench_decode_breakdown.py`：decode 瓶颈拆分。
@@ -79,7 +79,7 @@
    - 当前 smoke 明确 `TORCHDYNAMO_DISABLE=1`，并关闭 `use_l2warp` 避免 Trainer loss 原地缩放与 L2Wrap backward 冲突
 5. 性能路径：
    - 继续 profile 单 token decode
-   - `RWKV7StateCache` 已减少 generic CacheLayer 开销，并提供 `select_batch` / `batch_select` / `clone` / `get_batch_size`，服务动态 batching reorder/drop/compact
+   - `RWKV7StateCache` 已减少 generic CacheLayer 开销，并提供 `select_batch` / `batch_select` / `clone` / `detach` / `to` / `get_batch_size`，服务动态 batching reorder/drop/compact 和 CPU offload/restore
    - 已新增 `rwkv7_forward_token` batched one-token fast decode entrypoint，并保留 `rwkv7_forward_one` bsz=1 兼容入口
    - 已新增 batch cache/sweep、dynamic-batch reorder/drop/compact harness、chunked prefill harness、decode microbench、decode component bench、projection/LoRA bench、gap analyzer 和 result gate；V100 bundle 已跑通，native_jit fast-token 已支持 bsz=1/2/4/8 和 dynamic batching，native_graph 已支持固定 bsz=1/2/4/8 和 dynamic active-batch serving，chunked prefill 已支持 logits/cache 对齐和显存/速度记录；下一轮重点是更大模型、更多 GPU 和量化 fast path
    - native JIT block-step 已接入 `rwkv7_forward_token`，支持 bsz=1/2/4/8 和 dynamic reorder/drop；native graph replay 已接入 `rwkv7_forward_token` 固定 bsz=1/2/4/8 和 dynamic active-batch 场景；graph cache 管理已补 per-model LRU 和清理接口；下一步做更大模型验证和量化 serving fast path

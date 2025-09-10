@@ -121,6 +121,40 @@ def _clone_cache_value(value: Any) -> Any:
     return value
 
 
+def _detach_cache_value(value: Any) -> Any:
+    """Detach nested cache tensors while preserving the container layout."""
+    if isinstance(value, torch.Tensor):
+        return value.detach()
+    if isinstance(value, tuple):
+        return tuple(_detach_cache_value(v) for v in value)
+    if isinstance(value, list):
+        return [_detach_cache_value(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _detach_cache_value(v) for k, v in value.items()}
+    return value
+
+
+def _to_cache_value(
+    value: Any,
+    *,
+    device: torch.device | str | None = None,
+    dtype: torch.dtype | None = None,
+    non_blocking: bool = False,
+    copy: bool = False,
+) -> Any:
+    """Move/cast nested cache tensors for CPU offload or device restore."""
+    if isinstance(value, torch.Tensor):
+        target_dtype = dtype if dtype is not None and value.is_floating_point() else None
+        return value.to(device=device, dtype=target_dtype, non_blocking=non_blocking, copy=copy)
+    if isinstance(value, tuple):
+        return tuple(_to_cache_value(v, device=device, dtype=dtype, non_blocking=non_blocking, copy=copy) for v in value)
+    if isinstance(value, list):
+        return [_to_cache_value(v, device=device, dtype=dtype, non_blocking=non_blocking, copy=copy) for v in value]
+    if isinstance(value, dict):
+        return {k: _to_cache_value(v, device=device, dtype=dtype, non_blocking=non_blocking, copy=copy) for k, v in value.items()}
+    return value
+
+
 def _first_tensor_batch_size(value: Any) -> int | None:
     """Return the leading dimension of the first tensor in a nested cache."""
     if isinstance(value, torch.Tensor):
@@ -458,6 +492,34 @@ class RWKV7StateCache(_FLACache):
         out = type(self)(seen_tokens=self._seen_tokens)
         out.states = [_clone_cache_value(state) for state in self.states]
         return out
+
+    def detach(self, *, inplace: bool = True) -> "RWKV7StateCache":
+        """Detach cache tensors from autograd graphs for inference serving."""
+        target = self if inplace else self.clone()
+        target.states = [_detach_cache_value(state) for state in target.states]
+        return target
+
+    def to(
+        self,
+        device: torch.device | str | None = None,
+        dtype: torch.dtype | None = None,
+        *,
+        non_blocking: bool = False,
+        copy: bool = False,
+        inplace: bool = True,
+    ) -> "RWKV7StateCache":
+        """Move/cache tensors between devices, optionally casting float tensors.
+
+        This is primarily for serving systems that compact active rows, offload
+        inactive states to CPU, and restore them before decode. Integer tensors
+        keep their dtype; floating tensors are cast only when `dtype` is set.
+        """
+        target = self if inplace else self.clone()
+        target.states = [
+            _to_cache_value(state, device=device, dtype=dtype, non_blocking=non_blocking, copy=copy)
+            for state in target.states
+        ]
+        return target
 
     def get_batch_size(self) -> int | None:
         return _first_tensor_batch_size(self.states)
