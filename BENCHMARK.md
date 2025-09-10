@@ -224,7 +224,7 @@ When the V100 server is reachable, run the committed bundle from the repository 
 ```
 
 It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_token`,
-`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
+`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
 then writes logs under `bench/logs/`. The bundle now also validates the
 `native_jit` backend plus fixed-batch and dynamic `native_graph` fast-token
 backends, and appends native HF speed rows before running the target gate. Use
@@ -383,6 +383,14 @@ forward, ordinary HF forward with fast-forward enabled, and direct
 `rwkv7_forward_token`; `check_results.py` requires the ordinary HF fast path to
 be at least `3.0x` faster than reference forward, at least `0.9x` of direct
 fast-token speed, and within fp16 diff tolerance.
+
+`bench_generate_fast_path.py` emits `axis=generate_fast_path` for the top-level
+HF API. It compares greedy `model.generate(..., use_cache=True)` with
+`RWKV7_FAST_FORWARD=0` and `1`; `check_results.py` requires identical generated
+tokens, a valid effective backend, and at least `2.0x` end-to-end new-token
+throughput improvement. The recorded V100 prompt=8/new=16 row is `37.8 tok/s`
+for reference generate vs `162.2 tok/s` with fast-forward (`4.29x`), with
+`generated_equal=true` and effective backend `native_graph`.
 
 ## Decode component benchmark
 
