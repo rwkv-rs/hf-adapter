@@ -61,7 +61,8 @@
 - memory：HF 406.4 MB vs official 406.2 MB，0.1B serving path 已基本持平。
 - speed：`fuse_norm=false` + `RWKV7StateCache` 下标准 remote-code HF decode 约 41.2 tok/s；FLA `rwkv7_forward_token` V100 bsz=1 约 59.2 tok/s；`RWKV7_FAST_TOKEN_BACKEND=native_jit` 的 HF fast-token bsz=1 已到 92.1 tok/s，和 official 92.1 tok/s 持平，target gate 已通过；`RWKV7_FAST_TOKEN_BACKEND=native_graph` 已把 CUDA graph 接入 HF `rwkv7_forward_token` 的固定 bsz=1/2/4/8，speed_mem bsz=1 达到 255.5 tok/s，batch sweep 达到 253.9/434.3/852.6/1539.1 aggregate tok/s，并可用 `rwkv7_warmup_fast_token()` 在 1.389s 内提前捕获 bsz=1/2/4/8 graph runner；native-graph steady decode 已跳过 graph-buffer 自拷贝，overhead rows 覆盖 bsz=1/2/4/8，public API 分别 254.9/449.8/858.5/1546.9 aggregate tok/s、runner/API diff 0.0、cache-copy 占比最高 0.070；`RWKV7_FAST_TOKEN_BACKEND=auto` 现在会按 active batch 自动选择 native_graph/native_jit/FLA 并在 benchmark 里记录 effective backend；`RWKV7_FAST_FORWARD=1` 默认让普通 eval/no-grad HF cached one-token `forward`/`generate` 也自动走 fast-token path，短 V100 microbench 里普通 HF forward 从约 40 tok/s 到约 251 tok/s，正式 generate gate 里 bsz=2 `model.generate` 从 75.3 tok/s 到 303.5 tok/s 且 32/32 greedy tokens 全一致，benchmark baseline 用 `RWKV7_FAST_FORWARD=0` 保持可比；dynamic batch native_graph 通过显式 `select_batch` reorder/drop 达到 1209.3 total tok/s；chunked prefill bsz=2 prompt=512 在 chunk 64/128/256 下显存约为 full prefill 的 0.598x/0.616x/0.633x，速度约为 0.125x/0.252x/0.499x；component bench 显示 `attn_linears_lora` 最大，约 9.87ms/token。
 - quant：已新增 bitsandbytes 8bit/4bit smoke 和 benchmark。V100 0.1B 上 model footprint 从 fp16 `364.4MB` 降到 8bit `278.4MB`、4bit `235.3MB`；但 generic bnb decode 只有 `9.5` / `27.1 tok/s`，低于 fp16 `40.4 tok/s`，所以仍需自定义/融合量化 serving path 才能满足“不比 16bit 慢”的目标。
-- native decode prototype：`rwkv7_hf.native_jit` 在 V100 0.1B 上已验证，logit cosine≈1.00000024、graph-vs-JIT greedy 16/16 一致；native JIT 约 103.5 tok/s，native CUDA graph 约 254.3 tok/s（2.76x official）。这个 reduced-launch 路径已接进 HF 固定 batch 和 dynamic active-batch serving API，graph runner 已改成按 active batch size 的 per-model LRU cache，并提供 `rwkv7_clear_native_graph_cache()` 释放缓存；下一步是更大模型、更多 GPU 和量化 fast path 验证。
+- larger model：真实 0.4B `.pth` 已下载、SHA256 校验并转换到 HF；V100 load/forward/generate smoke 已入 `bench/results.jsonl`，配置为 hidden=1024、layers=24、head_dim=64、value_dim=1024，生成 4 个 token，generation fast path 解析为 native_graph，峰值 VRAM `1124.5MB`。
+- native decode prototype：`rwkv7_hf.native_jit` 在 V100 0.1B 上已验证，logit cosine≈1.00000024、graph-vs-JIT greedy 16/16 一致；native JIT 约 103.5 tok/s，native CUDA graph 约 254.3 tok/s（2.76x official）。这个 reduced-launch 路径已接进 HF 固定 batch 和 dynamic active-batch serving API，graph runner 已改成按 active batch size 的 per-model LRU cache，并提供 `rwkv7_clear_native_graph_cache()` 释放缓存；下一步是更多模型、更多 GPU 和量化 fast path 验证。
 - profiler：`fuse_norm=true` 的 FLA `LayerNormFunction` CPU 开销很大，native norm 把 norm CPU total 从约 54.8ms/6tok 降到约 6.6ms/6tok。
 - breakdown：argmax 开销约等于 0，`chunk` 和 `fused_recurrent` 单 token decode 基本一样，剩余瓶颈在 HF/FLA model+state/cache+小 kernel launch 路径。
 
@@ -69,7 +70,7 @@
 
 1. 支持全部已发布尺寸的配置推断和转换：0.4B / 1.5B / 2.9B / 7.2B / 13.3B。
    - 已把 converter 的 head_dim/value_dim/rank dims 改成权重 shape 推断，并用 `tests/test_convert_config.py` 覆盖非 64 head_dim、value_dim 列表和错误 shape。
-   - 下一步需要拿真实 0.4B+ `.pth` 跑转换、load、alignment 和 speed smoke。
+   - 真实 0.4B `.pth` 已完成转换、load、forward、generate smoke，并加入 regression gate；下一步继续 1.5B+、official alignment 和 speed smoke。
 2. 增加批量转换脚本和 SHA256 manifest。
    - 已新增 `scripts/batch_convert_rwkv7_to_hf.py`，支持 `--input-dir` / `--inputs`、dry-run、跳过已存在输出、追加 manifest，并记录 size / sha256 / 转换选项 / command / status。
    - 已新增 `tests/test_batch_convert_manifest.py` 覆盖 dry-run manifest、append manifest、missing input error。
@@ -85,8 +86,8 @@
    - 继续 profile 单 token decode
    - `RWKV7StateCache` 已减少 generic CacheLayer 开销，并提供 `select_batch` / `batch_select` / `clone` / `detach` / `to` / `get_batch_size`，服务动态 batching reorder/drop/compact 和 CPU offload/restore
    - 已新增 `rwkv7_forward_token` batched one-token fast decode entrypoint，并保留 `rwkv7_forward_one` bsz=1 兼容入口
-   - 已新增 batch cache/sweep、dynamic-batch reorder/drop/compact harness、chunked prefill harness、decode microbench、decode component bench、projection/LoRA bench、gap analyzer 和 result gate；V100 bundle 已跑通，native_jit fast-token 已支持 bsz=1/2/4/8 和 dynamic batching，native_graph 已支持固定 bsz=1/2/4/8 和 dynamic active-batch serving，auto backend 已能按可用能力选择 native_graph/native_jit/FLA，并已接入普通 HF `forward`/`generate` 的 one-token 推理路径；chunked prefill 已支持 logits/cache 对齐和显存/速度记录；下一轮重点是更大模型、更多 GPU 和量化 fast path
-   - native JIT block-step 已接入 `rwkv7_forward_token`，支持 bsz=1/2/4/8 和 dynamic reorder/drop；native graph replay 已接入 `rwkv7_forward_token` 固定 bsz=1/2/4/8 和 dynamic active-batch 场景；graph cache 管理已补 per-model LRU、清理接口、batch-size inspection、`rwkv7_warmup_fast_token()` 预热接口和 graph-buffer 自拷贝跳过；下一步做更大模型验证和量化 serving fast path
+   - 已新增 batch cache/sweep、dynamic-batch reorder/drop/compact harness、chunked prefill harness、decode microbench、decode component bench、projection/LoRA bench、larger-model smoke、gap analyzer 和 result gate；V100 bundle 已跑通，native_jit fast-token 已支持 bsz=1/2/4/8 和 dynamic batching，native_graph 已支持固定 bsz=1/2/4/8 和 dynamic active-batch serving，auto backend 已能按可用能力选择 native_graph/native_jit/FLA，并已接入普通 HF `forward`/`generate` 的 one-token 推理路径；chunked prefill 已支持 logits/cache 对齐和显存/速度记录；下一轮重点是 1.5B+、更多 GPU 和量化 fast path
+   - native JIT block-step 已接入 `rwkv7_forward_token`，支持 bsz=1/2/4/8 和 dynamic reorder/drop；native graph replay 已接入 `rwkv7_forward_token` 固定 bsz=1/2/4/8 和 dynamic active-batch 场景；graph cache 管理已补 per-model LRU、清理接口、batch-size inspection、`rwkv7_warmup_fast_token()` 预热接口和 graph-buffer 自拷贝跳过；0.4B 已通过 larger-model smoke；下一步做 1.5B+ 和量化 serving fast path
    - 已新增 bitsandbytes 8bit/4bit 加载、生成、benchmark；下一步需要把量化权重接到 fast-token/native path 或定制 fused int8/int4 projection，解决 generic bnb decode 慢的问题
 
 ## 阶段 3：Transformers 原生 PR 方向

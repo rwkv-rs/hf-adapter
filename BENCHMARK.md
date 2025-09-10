@@ -224,7 +224,7 @@ When the V100 server is reachable, run the committed bundle from the repository 
 ```
 
 It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_token`,
-`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `bench_fast_token_warmup.py`, `bench_native_graph_overhead.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
+`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `bench_fast_token_warmup.py`, `bench_native_graph_overhead.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `bench_larger_model_smoke.py` when the 0.4B paths exist, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
 then writes logs under `bench/logs/`. The bundle now also validates the
 `native_jit` backend plus fixed-batch and dynamic `native_graph` fast-token
 backends, and appends native HF speed rows before running the target gate. Use
@@ -517,6 +517,38 @@ LoRA bmm is slower and can introduce larger fp16 numerical differences. The
 next real optimization should be a custom fused projection/LoRA path or a
 deeper rewrite that reduces launches without adding stack/bmm overhead.
 
+## Larger converted-model smoke
+
+`bench_larger_model_smoke.py` proves the shape-inferred converter on a real
+checkpoint beyond the 0.1B development model. It loads the generated HF
+directory with AutoConfig/AutoTokenizer/AutoModelForCausalLM, runs cached
+forward, runs greedy generation, records config dimensions, checkpoint
+provenance, backend selection, and memory.
+
+```bash
+python bench/bench_larger_model_smoke.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.4b-hf \
+  --model-size-label 0.4b \
+  --checkpoint-path /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.4b-20260210-ctx8192.pth \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --fast-token-backend auto \
+  --max-new-tokens 4 \
+  --results bench/results.jsonl
+```
+
+Latest V100 0.4B row:
+
+| Model | hidden | layers | head_dim | value_dim | generated | backend | load s | generate s | footprint | peak VRAM |
+|---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|
+| rwkv7-g1d-0.4b-hf | 1024 | 24 | 64 | 1024 | 4 | native_graph | 15.095 | 0.6751 | 859.8 MB | 1124.5 MB |
+
+Checkpoint provenance is recorded in the row: SHA256
+`947cb9b8013224e06b112b72204256bec65096cc935a7767ce63d8e3ddef83bb`, size
+`901776749` bytes. The regression gate now requires this 0.4B smoke row so the
+converter cannot silently regress to 0.1B-only shape assumptions.
+
 ## Quantized inference coverage
 
 `tests/test_quantized_inference.py` checks that the adapter loads and generates
@@ -580,8 +612,9 @@ python bench/analyze_results.py \
 
 It reports HF-vs-official prefill/decode/memory ratios, best decode-breakdown
 rows, fast-token API status, latest correctness row, batch/dynamic rows, decode
-microbench rows, fast-token warmup and native-graph overhead rows, quantization rows, and a short next-focus list. Current
-committed V100 rows show:
+microbench rows, fast-token warmup and native-graph overhead rows, larger-model
+smoke rows, quantization rows, and a short next-focus list. Current committed
+V100 rows show:
 
 | Metric | Current | Target | Status |
 |---|---:|---:|---|
@@ -594,15 +627,17 @@ committed V100 rows show:
 | speed_mem memory ratio | ~1.00x official | <=1.10x | PASS |
 | 8-bit / 4-bit footprint ratio | 0.76x / 0.65x fp16 | lower is better | PASS smoke |
 | 8-bit / 4-bit decode ratio | 0.24x / 0.67x fp16 | >=1.00x | GAP |
+| 0.4B converted-model smoke | hidden=1024, layers=24, generated=4, backend=native_graph | load + generate | PASS |
 
-The current next-focus list is: continue from fixed-shape native-graph serving
-toward larger models and solve the generic bnb quantized decode speed gap. The
-bsz=1 HF fast-token target is exceeded by `native_graph`; bsz=2/4/8 native-graph
-serving now reaches `434.3` / `852.6` / `1539.1` aggregate tok/s, and
-preflight warmup confirms graph runners are captured for bsz=1/2/4/8 before the
-first serving request. The native-graph overhead rows confirm the public API
-scales to `1546.9` aggregate tok/s at bsz=8 while cache-copy overhead stays
-below `7.1%` of measured manual replay wall time for all required batch sizes.
+The current next-focus list is: extend the larger-model smoke from 0.4B to
+additional published sizes/newer GPUs and solve the generic bnb quantized decode
+speed gap. The bsz=1 HF fast-token target is exceeded by `native_graph`;
+bsz=2/4/8 native-graph serving now reaches `434.3` / `852.6` / `1539.1`
+aggregate tok/s, and preflight warmup confirms graph runners are captured for
+bsz=1/2/4/8 before the first serving request. The native-graph overhead rows
+confirm the public API scales to `1546.9` aggregate tok/s at bsz=8 while
+cache-copy overhead stays below `7.1%` of measured manual replay wall time for
+all required batch sizes.
 
 ## Benchmark regression and target gates
 
@@ -627,6 +662,8 @@ Current committed V100 rows pass both the regression gate and the target gate.
 The gate now uses the native-JIT HF fast-token speed row (`92.1 tok/s` vs
 official `92.1 tok/s`) for the low-memory 0.1B bsz=1 target, while the
 `fast_decode` section reports the optional native-graph row at `255.5 tok/s`.
+It also requires a passing 0.4B `larger_model_smoke` row with checkpoint SHA256
+and generated-token evidence.
 
 ## Current optimization target
 
@@ -705,10 +742,11 @@ The next optimization work should focus on **HF recurrent decode**:
 - Formal V100 native-decode row is now recorded: native JIT reaches `103.52 tok/s`
   and native CUDA graph reaches `254.33 tok/s` on the 0.1B V100 smoke model, with
   graph-vs-JIT greedy equality `16/16`.
-- The active V100 blocker has moved from decode parity to larger-model and
-  quantized serving validation: bsz=1 native-graph HF is at `255.5 tok/s` vs
-  official `92.1`, and bsz=2/4/8 native-graph reaches `434.3`, `852.6`,
-  `1539.1` aggregate tok/s in the latest sweep.
+- The active V100 blocker has moved from decode parity to additional
+  larger-model/newer-GPU and quantized serving validation: bsz=1 native-graph HF
+  is at `255.5 tok/s` vs official `92.1`, bsz=2/4/8 native-graph reaches
+  `434.3`, `852.6`, `1539.1` aggregate tok/s in the latest sweep, and the real
+  0.4B converted HF directory now passes load/forward/generate smoke on V100.
 
 ### Batched native-JIT fast-token results
 
