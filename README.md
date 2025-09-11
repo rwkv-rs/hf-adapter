@@ -526,6 +526,10 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   `generate()` automatically route one-token cached decode through it unless
   `RWKV7_FAST_FORWARD=0` is set. `rwkv7_forward_one` remains as the bsz=1
   compatibility entrypoint.
+- Initial HF-compatible `rwkv7_speculative_generate()` supports greedy bsz=1
+  speculative decoding with a RWKV/HF draft model. It verifies draft spans with
+  block HF forwards, reports accepted/proposed/corrected tokens and acceptance
+  rate, and falls back to cache resync on mismatch.
 - Batched recurrent cache smoke coverage exists for repeated prompts across bsz=1/2/4; benchmark sweep records total/per-sequence throughput for bsz=1/2/4/8 and includes the fast token API when available.
 - Dynamic-batch cache reorder coverage exists for heterogeneous prompts; benchmark simulation records reorder/drop counts and total decoded tokens/s.
 - Chunked prefill coverage compares full vs chunked logits/cache and records

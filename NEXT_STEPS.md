@@ -88,6 +88,7 @@
    - 已新增 `rwkv7_forward_token` batched one-token fast decode entrypoint，并保留 `rwkv7_forward_one` bsz=1 兼容入口
    - 已新增 batch cache/sweep、dynamic-batch reorder/drop/compact harness、chunked prefill harness、decode microbench、decode component bench、projection/LoRA bench、larger-model smoke、gap analyzer 和 result gate；V100 bundle 已跑通，native_jit fast-token 已支持 bsz=1/2/4/8 和 dynamic batching，native_graph 已支持固定 bsz=1/2/4/8 和 dynamic active-batch serving，auto backend 已能按可用能力选择 native_graph/native_jit/FLA，并已接入普通 HF `forward`/`generate` 的 one-token 推理路径；chunked prefill 已支持 logits/cache 对齐和显存/速度记录；下一轮重点是 13.3B+、更多 GPU 和量化 fast path
    - native JIT block-step 已接入 `rwkv7_forward_token`，支持 bsz=1/2/4/8 和 dynamic reorder/drop；native graph replay 已接入 `rwkv7_forward_token` 固定 bsz=1/2/4/8 和 dynamic active-batch 场景；graph cache 管理已补 per-model LRU、清理接口、batch-size inspection、`rwkv7_warmup_fast_token()` 预热接口和 graph-buffer 自拷贝跳过；0.4B / 1.5B / 2.9B / 7.2B 已通过 larger-model smoke；下一步做 13.3B+ 和量化 serving fast path
+   - 已新增 HF-only 初步 speculative decoding helper：`rwkv7_speculative_generate()` 用 RWKV/HF draft model 提案，target model 以 block forward 验证并输出 acceptance telemetry；下一步需要真实小模 draft benchmark
    - 已新增 bitsandbytes 8bit/4bit 加载、生成、benchmark；下一步需要把量化权重接到 fast-token/native path 或定制 fused int8/int4 projection，解决 generic bnb decode 慢的问题
 
 ## 阶段 3：Transformers 原生 PR 方向
