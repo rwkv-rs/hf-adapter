@@ -14,7 +14,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["peft"]
+test = ["peft", "accelerate", "datasets", "trl"]
+quant = ["bitsandbytes", "triton>=3.3.0; platform_system == 'Linux'"]
 
 [tool.setuptools.packages.find]
 include = ["rwkv7_hf*"]
