@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # coding=utf-8
-"""Benchmark HF adapter inference under fp16 / bitsandbytes 8bit / 4bit loads."""
+"""Benchmark HF adapter inference under fp16 / bitsandbytes 8bit / 4bit loads.
+
+Decode can compare the reference cached HF forward against the fast-forward
+path. Quantized models resolve to the FLA fast-token fallback because their
+packed bitsandbytes weights are intentionally excluded from native-JIT/graph.
+"""
 from __future__ import annotations
 
 import argparse
@@ -56,9 +61,9 @@ def set_attn_mode(model, attn_mode: str) -> None:
 
 
 @contextmanager
-def reference_forward_env():
+def fast_forward_env(enabled: bool):
     old = os.environ.get("RWKV7_FAST_FORWARD")
-    os.environ["RWKV7_FAST_FORWARD"] = "0"
+    os.environ["RWKV7_FAST_FORWARD"] = "1" if enabled else "0"
     try:
         yield
     finally:
@@ -66,6 +71,24 @@ def reference_forward_env():
             os.environ.pop("RWKV7_FAST_FORWARD", None)
         else:
             os.environ["RWKV7_FAST_FORWARD"] = old
+
+
+def clone_cache(past_key_values):
+    if hasattr(past_key_values, "clone"):
+        return past_key_values.clone()
+    return past_key_values
+
+
+def last_fast_token_backend(model):
+    getter = getattr(model, "rwkv7_last_fast_token_backend", None)
+    if callable(getter):
+        return getter()
+    return getattr(model, "_rwkv7_last_fast_token_backend", None)
+
+
+def clear_last_fast_token_backend(model) -> None:
+    if hasattr(model, "_rwkv7_last_fast_token_backend"):
+        model._rwkv7_last_fast_token_backend = None
 
 
 def load_model(args: argparse.Namespace, quantization: str, dtype: torch.dtype):
@@ -135,27 +158,59 @@ def bench_one(args: argparse.Namespace, tok, quantization: str, dtype: torch.dty
     if not logits.isfinite().all():
         raise RuntimeError(f"{quantization} produced non-finite logits")
 
-    with torch.inference_mode():
-        state = out.past_key_values
+    def decode_timed(enabled: bool) -> tuple[float, Any, str | None]:
+        clear_last_fast_token_backend(model)
+        state = clone_cache(out.past_key_values)
         nxt = out.logits[:, -1:].argmax(dim=-1)
-        for _ in range(args.warmup):
-            with reference_forward_env():
-                out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
-            state = out.past_key_values
-            nxt = out.logits[:, -1:].argmax(dim=-1)
-    cuda_sync(args.device)
-    t0 = time.time()
+        with torch.inference_mode():
+            for _ in range(args.warmup):
+                with fast_forward_env(enabled):
+                    step = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
+                state = step.past_key_values
+                nxt = step.logits[:, -1:].argmax(dim=-1)
+        cuda_sync(args.device)
+        t0 = time.time()
+        with torch.inference_mode():
+            for _ in range(args.decode_tokens):
+                with fast_forward_env(enabled):
+                    step = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
+                state = step.past_key_values
+                nxt = step.logits[:, -1:].argmax(dim=-1)
+        cuda_sync(args.device)
+        backend = last_fast_token_backend(model) if enabled else None
+        return time.time() - t0, step, backend
+
     with torch.inference_mode():
-        for _ in range(args.decode_tokens):
-            with reference_forward_env():
-                out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
-            state = out.past_key_values
-            nxt = out.logits[:, -1:].argmax(dim=-1)
-    cuda_sync(args.device)
-    decode_s = time.time() - t0
+        nxt = out.logits[:, -1:].argmax(dim=-1)
+        with fast_forward_env(False):
+            ref_check = model(nxt, past_key_values=clone_cache(out.past_key_values), use_cache=True, logits_to_keep=1)
+        with fast_forward_env(True):
+            fast_check = model(nxt, past_key_values=clone_cache(out.past_key_values), use_cache=True, logits_to_keep=1)
+    fast_diff = float((ref_check.logits.float() - fast_check.logits.float()).abs().max().detach().cpu())
+    fast_same_token = bool(torch.equal(ref_check.logits[:, -1].argmax(dim=-1), fast_check.logits[:, -1].argmax(dim=-1)))
+    if not fast_check.logits.detach().float().isfinite().all():
+        raise RuntimeError(f"{quantization} produced non-finite fast-forward logits")
+
+    ref_decode_s = None
+    ref_backend = None
+    fast_decode_s = None
+    fast_backend = None
+    if args.decode_mode in {"reference", "compare"}:
+        ref_decode_s, _, ref_backend = decode_timed(False)
+    if args.decode_mode in {"fast", "compare"}:
+        fast_decode_s, _, fast_backend = decode_timed(True)
+    primary_decode_s = fast_decode_s if fast_decode_s is not None else ref_decode_s
+    assert primary_decode_s is not None
     footprint_mb = None
     if hasattr(model, "get_memory_footprint"):
         footprint_mb = round(float(model.get_memory_footprint()) / 1024 / 1024, 1)
+    reference_decode_tokps = round(args.decode_tokens / ref_decode_s, 1) if ref_decode_s is not None else None
+    fast_decode_tokps = round(args.decode_tokens / fast_decode_s, 1) if fast_decode_s is not None else None
+    speedup = (
+        round(fast_decode_tokps / reference_decode_tokps, 4)
+        if fast_decode_tokps is not None and reference_decode_tokps not in (None, 0)
+        else None
+    )
     return {
         "axis": "quantization",
         "backend": "hf_adapter",
@@ -166,8 +221,16 @@ def bench_one(args: argparse.Namespace, tok, quantization: str, dtype: torch.dty
         "prompt_tokens": prompt_tokens,
         "decode_tokens": args.decode_tokens,
         "prefill_tokps": round(prefill_tokps, 1),
-        "decode_tokps": round(args.decode_tokens / decode_s, 1),
-        "decode_ms_per_tok": round(1000 * decode_s / args.decode_tokens, 2),
+        "decode_mode": args.decode_mode,
+        "decode_tokps": round(args.decode_tokens / primary_decode_s, 1),
+        "decode_ms_per_tok": round(1000 * primary_decode_s / args.decode_tokens, 2),
+        "reference_decode_tokps": reference_decode_tokps,
+        "fast_decode_tokps": fast_decode_tokps,
+        "fast_decode_speedup": speedup,
+        "fast_forward_backend": fast_backend,
+        "reference_forward_backend": ref_backend,
+        "fast_forward_max_abs_diff": round(fast_diff, 6),
+        "fast_forward_same_next_token": fast_same_token,
         "model_footprint_mb": footprint_mb,
         "peak_vram_mb": peak_mb(args.device),
         "load_s": round(load_s, 3),
@@ -184,6 +247,7 @@ def main() -> int:
     ap.add_argument("--quantizations", nargs="+", choices=["none", "8bit", "4bit"], default=["none", "8bit", "4bit"])
     ap.add_argument("--prompt-tokens", type=int, default=256)
     ap.add_argument("--decode-tokens", type=int, default=32)
+    ap.add_argument("--decode-mode", choices=["reference", "fast", "compare"], default="compare")
     ap.add_argument("--warmup", type=int, default=1)
     ap.add_argument("--runs", type=int, default=2)
     ap.add_argument("--optional", action="store_true", help="Append skip rows instead of failing when a quant backend is unavailable")
@@ -191,6 +255,8 @@ def main() -> int:
     ap.add_argument("--bnb-4bit-use-double-quant", action="store_true")
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     args = ap.parse_args()
+    if args.decode_tokens <= 0:
+        raise ValueError("--decode-tokens must be positive")
     dtype = DTYPES[args.dtype]
     tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
 

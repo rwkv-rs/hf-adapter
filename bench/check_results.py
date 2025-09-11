@@ -270,6 +270,10 @@ def check_common(report: dict[str, Any], failures: list[str], args: argparse.Nam
             if row.get("status") != "pass":
                 fail(failures, f"quantization {mode} did not pass: {row.get('status')} {row.get('error')}")
                 continue
+            if row.get("fast_forward_same_next_token") is False:
+                fail(failures, f"quantization {mode} fast-forward changed greedy next token")
+            if row.get("fast_decode_speedup") is not None and float(row["fast_decode_speedup"]) < 1.0:
+                fail(failures, f"quantization {mode} fast-forward speedup below 1.0: {row.get('fast_decode_speedup')}")
             if base and base.get("status") == "pass":
                 base_mem = base.get("model_footprint_mb") or base.get("peak_vram_mb")
                 q_mem = row.get("model_footprint_mb") or row.get("peak_vram_mb")
