@@ -215,6 +215,12 @@ def check_common(report: dict[str, Any], failures: list[str], args: argparse.Nam
         copy_share = overhead.get("copy_share_of_manual_wall")
         if copy_share is None or float(copy_share) > args.max_native_graph_copy_share:
             fail(failures, f"native_graph cache-copy share too high for bsz={bsz}: {copy_share} > {args.max_native_graph_copy_share}")
+        cache_hit_rate = overhead.get("native_graph_cache_hit_rate")
+        if cache_hit_rate is None or float(cache_hit_rate) < args.min_native_graph_cache_hit_rate:
+            fail(failures, f"native_graph cache hit rate too low for bsz={bsz}: {cache_hit_rate} < {args.min_native_graph_cache_hit_rate}")
+        cache_requests = overhead.get("native_graph_cache_requests")
+        if cache_requests is None or int(cache_requests) < args.min_native_graph_cache_requests:
+            fail(failures, f"native_graph cache requests too low for bsz={bsz}: {cache_requests} < {args.min_native_graph_cache_requests}")
 
     components = report.get("decode_components") or {}
     top_components = components.get("top_components") or []
@@ -342,6 +348,8 @@ def main() -> int:
     ap.add_argument("--max-native-graph-overhead-diff", type=float, default=0.2)
     ap.add_argument("--min-native-graph-overhead-api-tokps", type=float, default=150.0)
     ap.add_argument("--max-native-graph-copy-share", type=float, default=0.15)
+    ap.add_argument("--min-native-graph-cache-hit-rate", type=float, default=0.80)
+    ap.add_argument("--min-native-graph-cache-requests", type=int, default=8)
     ap.add_argument("--expected-top-component", default="attn_linears_lora")
     ap.add_argument("--expect-naive-candidate-slower", action="store_true", default=True)
     ap.add_argument("--required-larger-models", nargs="+", default=["0.4b", "1.5b", "2.9b", "7.2b", "13.3b"])
