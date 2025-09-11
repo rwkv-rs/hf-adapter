@@ -12,32 +12,35 @@ The upstream task is to build production-quality adapters for RWKV-7:
 
 Original reward target: each track is worth 300,000 RMB if completed to near-production quality.
 
-Current repository focus: **Hugging Face / Transformers adaptation first**.
+Current repository focus: **Hugging Face / Transformers adaptation only** for
+the active deliverable. vLLM and SGLang are future/out-of-scope tracks unless
+the project scope is explicitly reopened.
 
 ## Target Acceptance Criteria
 
-Use this six-part checklist as the authoritative target for the full project,
-not just the current HF-first PR:
+Use this HF-only checklist as the authoritative target for the active
+deliverable:
 
 1. Match or approach the current RWKV-LM and Albatross training/inference
-   performance, speed, precision, and memory use across common batch sizes.
+   performance, speed, precision, and memory use through HF-compatible paths
+   across common batch sizes.
 2. HF adaptation must work with common Transformer-based PEFT, RL, and training
    libraries, including PEFT, TRL, SFT/DPO/GRPO-style workflows, Trainer-style
    loops, gradient accumulation, and real multi-batch training smoke tests.
-3. vLLM and SGLang adaptation must support RWKV recurrent state cache semantics,
-   dynamic batching, chunked prefill, state-cache allocation/reuse/reorder/drop,
-   and a reasonable cache hit rate under serving workloads.
+3. HF serving helpers must expose RWKV recurrent state cache semantics, dynamic
+   batch select/reorder/drop, chunked prefill, state-cache allocation/reuse, and
+   cache-reuse metrics that can later be reused by serving integrations.
 4. Hardware support should cover common professional and consumer GPUs:
    NVIDIA from Pascal onward where feasible, newer NVIDIA generations, and AMD
-   GPUs. Inference should support PP and TP. Training should support ZeRO-2 and
-   ZeRO-3.
+   GPUs. HF inference should keep a path toward PP/TP, and HF training should
+   support DeepSpeed ZeRO-2 and ZeRO-3 where feasible.
 5. Quantized inference must support common W8 and W4 modes, reduce memory
    accordingly, and be faster than W16 on common cards. Older cards may need
    dedicated optimization. Quality should get as close as possible to
    llama.cpp-style Q*_K_M levels.
-6. Add initial speculative decoding support, such as using a smaller RWKV model
-   as the draft model. DFlash and deeper speculative/flash serving work can stay
-   as follow-up projects.
+6. Add initial HF-compatible speculative decoding support, such as using a
+   smaller RWKV model as the draft model. DFlash, native vLLM/SGLang adapters,
+   and deeper standalone serving-engine work stay as follow-up projects.
 
 Benchmark comparisons must separate engine performance from model quality:
 
