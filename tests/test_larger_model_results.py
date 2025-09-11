@@ -46,13 +46,15 @@ def main() -> int:
         row("1.5b", 2048, 2),
         row("2.9b", 2560, 3),
         row("7.2b", 4096, 4),
+        row("13.3b", 4096, 5),
     ], args)
     labels = {r["model_size_label"] for r in report["larger_model_smoke"]}
-    assert labels == {"0.4b", "1.5b", "2.9b", "7.2b"}
+    assert labels == {"0.4b", "1.5b", "2.9b", "7.2b", "13.3b"}
     assert any("0.4B converted HF model loads" in item for item in report["next_focus"])
     assert any("1.5B converted HF model loads" in item for item in report["next_focus"])
     assert any("2.9B converted HF model loads" in item for item in report["next_focus"])
     assert any("7.2B converted HF model loads" in item for item in report["next_focus"])
+    assert any("13.3B converted HF model loads" in item for item in report["next_focus"])
     print("PASS")
     return 0
 
