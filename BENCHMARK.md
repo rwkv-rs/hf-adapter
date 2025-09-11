@@ -228,7 +228,7 @@ When the V100 server is reachable, run the committed bundle from the repository 
 ```
 
 It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_token`,
-`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `tests/test_device_map_generate.py` when at least two CUDA devices are visible, `bench_fast_token_warmup.py`, `bench_native_graph_overhead.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `bench_larger_model_smoke.py` when the 0.4B/1.5B/2.9B/7.2B/13.3B paths exist, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
+`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `tests/test_device_map_generate.py` when at least two CUDA devices are visible, `bench_fast_token_warmup.py`, `bench_native_graph_overhead.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `bench_larger_model_smoke.py` when the 0.4B/1.5B/2.9B/7.2B/13.3B paths exist, `bench_speculative_decode.py` when the target/draft HF dirs exist, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
 then writes logs under `bench/logs/`. The bundle now also validates the
 `native_jit` backend plus fixed-batch and dynamic `native_graph` fast-token
 backends, and appends native HF speed rows before running the target gate. Use
@@ -685,7 +685,25 @@ python tests/test_speculative_decode.py \
 The default smoke uses the same model as target and draft, so every proposed
 token should be accepted and the sequence must match greedy `generate()`.
 Passing `--draft-model /path/to/smaller-hf-rwkv` exercises the same API with a
-real draft model.
+real draft model. The real-draft benchmark records the production gate row:
+
+```bash
+python bench/bench_speculative_decode.py \
+  --target-model /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.4b-hf \
+  --draft-model /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --max-new-tokens 8 \
+  --draft-tokens 4 \
+  --results bench/results.jsonl
+```
+
+Latest V100 row: target greedy and speculative outputs match for 8/8 new
+tokens, the 0.1B draft proposes 9 tokens, accepts 7, corrects 1, resyncs once,
+and reports acceptance `0.7777777777777778`. Latency is not yet a win
+(`0.81x` of target greedy), so the next optimization is draft selection and
+reducing block-verify/resync overhead.
 
 ## HF RL / ZeRO training smoke
 
@@ -812,9 +830,11 @@ The next optimization work should focus on **HF recurrent decode**:
    production traffic.
 14. Use `bench_native_graph_overhead.py` to keep cache-copy/bind overhead around
    the captured graph below the gate while optimizing dynamic serving paths.
-15. Keep `logits_to_keep=1` as the default serving benchmark path because it already
+15. Use `bench_speculative_decode.py` to keep real-draft greedy equality and
+   acceptance telemetry gated while optimizing HF speculative decoding.
+16. Keep `logits_to_keep=1` as the default serving benchmark path because it already
    fixes the earlier excess-memory measurement.
-16. After V100 decode approaches official `rwkv`, rerun on newer GPUs and larger models.
+17. After V100 decode approaches official `rwkv`, rerun on newer GPUs and larger models.
 
 ## Loop state
 
@@ -852,6 +872,10 @@ The next optimization work should focus on **HF recurrent decode**:
 - Quantization smoke and benchmark harnesses are in place; V100 bnb 8-bit/4-bit
   loads pass and reduce model footprint, but current generic bnb decode is
   slower than fp16.
+- Real-draft HF speculative benchmark is in place; V100 0.1B draft -> 0.4B
+  target matches target greedy for 8/8 new tokens with 7/9 accepted proposals
+  and one correction/resync, but is still slower than target greedy until the
+  verification path is optimized.
 - Benchmark gap analysis is in place and currently identifies decode throughput
   as the active optimization gap.
 - Benchmark check gate is in place: current regression gate passes, target gate
