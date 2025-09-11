@@ -16,6 +16,29 @@ Current repository focus: **Hugging Face / Transformers adaptation first**.
 
 ## Target Acceptance Criteria
 
+Use this six-part checklist as the authoritative target for the full project,
+not just the current HF-first PR:
+
+1. Match or approach the current RWKV-LM and Albatross training/inference
+   performance, speed, precision, and memory use across common batch sizes.
+2. HF adaptation must work with common Transformer-based PEFT, RL, and training
+   libraries, including PEFT, TRL, SFT/DPO/GRPO-style workflows, Trainer-style
+   loops, gradient accumulation, and real multi-batch training smoke tests.
+3. vLLM and SGLang adaptation must support RWKV recurrent state cache semantics,
+   dynamic batching, chunked prefill, state-cache allocation/reuse/reorder/drop,
+   and a reasonable cache hit rate under serving workloads.
+4. Hardware support should cover common professional and consumer GPUs:
+   NVIDIA from Pascal onward where feasible, newer NVIDIA generations, and AMD
+   GPUs. Inference should support PP and TP. Training should support ZeRO-2 and
+   ZeRO-3.
+5. Quantized inference must support common W8 and W4 modes, reduce memory
+   accordingly, and be faster than W16 on common cards. Older cards may need
+   dedicated optimization. Quality should get as close as possible to
+   llama.cpp-style Q*_K_M levels.
+6. Add initial speculative decoding support, such as using a smaller RWKV model
+   as the draft model. DFlash and deeper speculative/flash serving work can stay
+   as follow-up projects.
+
 The final implementation should approach the performance, speed, precision, and memory usage of the official RWKV-LM path and Albatross path across different batch sizes.
 
 ### 1. HF Transformers Track
