@@ -8,7 +8,7 @@ This repository converts RWKV-7 weights to a Hugging Face-style directory and pr
 - `AutoModelForCausalLM.from_pretrained(..., trust_remote_code=True)`
 - `model.generate(..., use_cache=True)`
 - PEFT LoRA smoke tests
-- HF Trainer and TRL SFTTrainer one-step smoke tests
+- HF Trainer, TRL SFTTrainer, DPOTrainer, and GRPOTrainer one-step smoke tests
 
 The current backend uses the FLA (`flash-linear-attention`) RWKV-7 implementation. The next milestone is a native Transformers implementation without the FLA runtime dependency.
 
@@ -143,6 +143,30 @@ python tests/test_hf_training_smoke.py \
   --model /path/to/rwkv7-g1d-0.1b-hf \
   --attn-mode fused_recurrent \
   --backend both
+```
+
+TRL DPO / GRPO LoRA one-step smoke:
+
+```bash
+export TORCHDYNAMO_DISABLE=1
+export PYTHONPATH=/path/to/flash-linear-attention:$PYTHONPATH
+
+python tests/test_hf_rl_training_smoke.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --attn-mode fused_recurrent \
+  --backend dpo
+
+python tests/test_hf_rl_training_smoke.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --attn-mode fused_recurrent \
+  --backend grpo \
+  --grpo-max-completion-length 2
+```
+
+DeepSpeed ZeRO preset validation:
+
+```bash
+python tests/test_deepspeed_configs.py
 ```
 
 Fast recurrent cache equivalence test:
@@ -511,6 +535,9 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   `gradient_checkpointing_enable`.
 - PEFT LoRA forward/loss/backward works.
 - HF Trainer and TRL SFTTrainer one-step LoRA smoke runs work.
+- TRL DPOTrainer and GRPOTrainer one-step LoRA smoke scripts are available for
+  preference/RL compatibility checks, and `configs/deepspeed/zero2.json` plus
+  `configs/deepspeed/zero3.json` provide HF Trainer-compatible ZeRO presets.
 - Fast recurrent cache matches the default FLA cache exactly on prefill and recurrent decode.
 - `RWKV7StateCache` exposes serving-friendly `select_batch` / `batch_select`,
   `clone`, `detach`, `to`, and `get_batch_size` helpers so dynamic batching can
