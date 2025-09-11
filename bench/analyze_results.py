@@ -194,6 +194,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     projection_lora = latest(rows, lambda r: r.get("axis") == "projection_lora" and r.get("backend") == "hf_adapter")
     quant_rows = [r for r in rows if r.get("axis") == "quantization" and r.get("backend") == "hf_adapter"]
     quant_latest = latest_by_key(quant_rows, lambda r: r.get("quantization"))
+    device_map_smoke = latest(rows, lambda r: r.get("axis") == "device_map_smoke" and r.get("backend") == "hf_adapter")
     larger_rows = [r for r in rows if r.get("axis") == "larger_model_smoke" and r.get("backend") == "hf_adapter"]
     larger_latest = latest_by_key(
         larger_rows,
@@ -281,6 +282,16 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 slow.append(f"{mode} {q_ratio:.2f}x")
         if slow:
             focus.append("generic bnb quantized decode is slower than fp16: " + ", ".join(slow))
+    if device_map_smoke is None:
+        focus.append("HF device_map multi-GPU generate smoke row pending")
+    elif device_map_smoke.get("status") == "pass":
+        focus.append(
+            "HF device_map generate passes on "
+            f"{device_map_smoke.get('device_count')} CUDA devices with split_layer={device_map_smoke.get('split_layer')}"
+        )
+    else:
+        focus.append(f"HF device_map generate smoke did not pass: {device_map_smoke.get('status')}")
+
     larger_by_label = {str(r.get("model_size_label", "")).lower(): r for r in larger_latest}
     for required_label, display_label in (
         ("0.4b", "0.4B"),
@@ -400,6 +411,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             )
             for r in larger_latest
         ],
+        "device_map_smoke": compact(device_map_smoke, ["_lineno", "status", "dtype", "device", "device_count", "device_map_kind", "split_layer", "num_hidden_layers", "hf_device_map_devices", "multi_cuda_device_map", "fast_forward_env", "last_fast_token_backend", "prompt_tokens", "max_new_tokens", "generated_tokens", "generated_tail", "reference_tail", "generated_equal_reference", "logits_shape", "logits_device", "logits_finite", "load_s", "generate_s", "generate_tokps", "peak_vram_mb_by_device"]),
         "quantization": [
             compact(
                 r,
@@ -491,6 +503,8 @@ def print_text(report: dict[str, Any]) -> None:
             print(json.dumps(row, ensure_ascii=False))
     else:
         print("PENDING")
+    print("\n## device_map_smoke")
+    print(json.dumps(report["device_map_smoke"], ensure_ascii=False) if report["device_map_smoke"] else "PENDING")
     print("\n## quantization")
     if report["quantization"]:
         for row in report["quantization"]:
