@@ -649,12 +649,14 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   tokens after the mismatch, and reaches `2.11x` speedup over target greedy in
   this short correctness benchmark.
 - Bitsandbytes quantization smoke now loads and generates for both 8-bit and
-  4-bit on V100, and cached decode can use the HF fast-forward hook through
-  the FLA fallback. Short benchmark rows show model footprint dropping from
-  `364.4 MB` fp16 to `278.4 MB` 8-bit and `235.3 MB` 4-bit; generic bnb
-  fast-forward improves decode from `7.9 -> 8.4 tok/s` for 8-bit and
-  `22.5 -> 27.1 tok/s` for 4-bit, but production quantization still needs a
-  fused/native quantized projection path to beat fp16 fast decode.
+  4-bit on V100. The adapter keeps tiny RWKV LoRA rank projections dense
+  (`.*_lora.lora.[02]`) because generic bnb kernels are inefficient for those
+  rank-size matrices, while the large projections/FFN weights remain W8/W4.
+  Short benchmark rows show model footprint dropping from `364.4 MB` fp16 to
+  `283.4 MB` 8-bit and `242.9 MB` 4-bit; selected decode reaches `16.3 tok/s`
+  for 8-bit and `32.6 tok/s` for 4-bit while preserving the greedy next token.
+  This is still below fp16 native-graph `217.2 tok/s`, so production
+  quantization still needs a fused/native quantized projection path.
 - Native JIT / CUDA graph prototype: V100 fp16 native logits match HF logits (`cosine≈1.00000024`, max_abs `0.03125`), graph-vs-JIT greedy decode is `16/16` identical, native JIT reaches `103.52 tok/s`, and native CUDA graph reaches `254.33 tok/s`. The same reduced-launch idea is now available through HF `rwkv7_forward_token` via `RWKV7_FAST_TOKEN_BACKEND=native_graph` for fixed bsz and dynamic active-batch sizes; captured runners are retained in a per-model LRU controlled by `RWKV7_NATIVE_GRAPH_CACHE_SIZE` and can be released with `rwkv7_clear_native_graph_cache()`.
 - Save/reload roundtrip works with exact logit equality.
 - Official `rwkv` alignment includes prompt logits and 64-token greedy equality.
@@ -670,7 +672,8 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - The remote config uses a unique `rwkv7_hf_adapter` model type so `AutoModelForCausalLM` reliably loads this adapter instead of a locally registered FLA `rwkv7` class.
 - V100 serving-style memory is now near parity with official for 0.1B when using `logits_to_keep=1`.
 - V100 native-norm + fast-cache HF decode is about 41 tok/s; FLA `rwkv7_forward_token` improves this to about 59 tok/s; native-JIT `rwkv7_forward_token` reaches official parity for bsz=1 and supports batched/dynamic serving; native-graph `rwkv7_forward_token` reaches about 255 tok/s for bsz=1 and 1539 aggregate tok/s for bsz=8 with extra captured graph buffers.
-- Generic bnb 8-bit/4-bit loading reduces model footprint and now benefits
-  from HF fast-forward through the FLA fallback, but it is still slower than
-  fp16 native-graph decode on the current V100 path; next performance work is
-  a fused/native quantized serving path for higher bsz and larger models.
+- Generic bnb 8-bit/4-bit loading reduces model footprint and now skips
+  quantizing the small LoRA rank projections that hit inefficient bnb kernels,
+  but it is still slower than fp16 native-graph decode on the current V100
+  path; next performance work is a fused/native quantized serving path for
+  higher bsz and larger models.

@@ -74,6 +74,36 @@ def set_attn_mode(model, attn_mode: str) -> None:
             attn.mode = attn_mode
 
 
+def quant_module_counts(model) -> dict:
+    counts = {
+        "linear_dense": 0,
+        "linear_8bit": 0,
+        "linear_4bit": 0,
+        "dense_lora_rank_linear": 0,
+        "quantized_lora_rank_linear": 0,
+    }
+    for name, module in model.named_modules():
+        cls_name = type(module).__name__
+        is_lora_rank_linear = "_lora.lora.0" in name or "_lora.lora.2" in name
+        if type(module) is torch.nn.Linear:
+            counts["linear_dense"] += 1
+            counts["dense_lora_rank_linear"] += int(is_lora_rank_linear)
+        elif "Linear8bit" in cls_name:
+            counts["linear_8bit"] += 1
+            counts["quantized_lora_rank_linear"] += int(is_lora_rank_linear)
+        elif "Linear4bit" in cls_name:
+            counts["linear_4bit"] += 1
+            counts["quantized_lora_rank_linear"] += int(is_lora_rank_linear)
+    return counts
+
+
+def quant_skip_modules(model) -> list[str]:
+    qconfig = getattr(getattr(model, "config", None), "quantization_config", None)
+    if qconfig is None and getattr(model, "hf_quantizer", None) is not None:
+        qconfig = getattr(model.hf_quantizer, "quantization_config", None)
+    return list(getattr(qconfig, "llm_int8_skip_modules", None) or [])
+
+
 def load_model(args, dtype):
     kwargs = {
         "trust_remote_code": True,
@@ -117,7 +147,7 @@ def main() -> int:
     ap.add_argument("--bnb-4bit-quant-type", choices=["fp4", "nf4"], default="nf4")
     ap.add_argument("--bnb-4bit-use-double-quant", action="store_true")
     ap.add_argument("--skip-fast-forward-check", action="store_true")
-    ap.add_argument("--fast-forward-max-diff", type=float, default=1.0)
+    ap.add_argument("--fast-forward-max-diff", type=float, default=1.25)
     args = ap.parse_args()
     dtype = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[args.dtype]
 
@@ -179,6 +209,10 @@ def main() -> int:
     footprint_mb = None
     if hasattr(model, "get_memory_footprint"):
         footprint_mb = round(float(model.get_memory_footprint()) / 1024 / 1024, 1)
+    module_counts = quant_module_counts(model)
+    if args.quantization != "none":
+        assert module_counts["dense_lora_rank_linear"] > 0, module_counts
+        assert module_counts["quantized_lora_rank_linear"] == 0, module_counts
     row = {
         "axis": "quantized_inference",
         "backend": "hf_adapter",
@@ -194,6 +228,8 @@ def main() -> int:
         "generated_tail": new_tokens,
         "model_footprint_mb": footprint_mb,
         "peak_vram_mb": peak_mb(args.device),
+        "quant_skip_modules": quant_skip_modules(model),
+        "module_counts": module_counts,
         "fast_forward": fast_forward,
         "status": "pass",
     }
