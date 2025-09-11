@@ -103,6 +103,32 @@ def main() -> int:
             del sys.modules[name]
     modeling = importlib.import_module("rwkv7_hf.modeling_rwkv7")
 
+    state_cache = modeling.RWKV7StateCache()
+    assert state_cache.rwkv7_cache_metrics()["updates"] == 0
+    state_cache.update(recurrent_state="r0", layer_idx=0)
+    state_cache.update(recurrent_state="r1", layer_idx=1)
+    metrics = state_cache.rwkv7_cache_metrics()
+    assert metrics["updates"] == 2, metrics
+    assert metrics["new_layers"] == 2, metrics
+    assert metrics["layers"] == 2, metrics
+    assert metrics["seen_tokens"] == 1, metrics
+    cloned = state_cache.clone()
+    assert cloned.rwkv7_cache_metrics()["clones"] == 1
+    cloned.detach(inplace=True)
+    cloned.to(inplace=True)
+    cloned.select_batch(object(), inplace=True)
+    cloned.batch_select(object(), inplace=True)
+    cloned.reorder_cache(object())
+    metrics = cloned.rwkv7_cache_metrics()
+    assert metrics["detaches"] == 1, metrics
+    assert metrics["device_moves"] == 1, metrics
+    assert metrics["select_batch_calls"] == 3, metrics
+    assert metrics["batch_select_calls"] == 1, metrics
+    assert metrics["reorder_calls"] == 1, metrics
+    cloned.reset()
+    metrics = cloned.rwkv7_cache_metrics()
+    assert metrics["resets"] == 1 and metrics["layers"] == 0 and metrics["seen_tokens"] == 0, metrics
+
     created: list[tuple[str, int]] = []
 
     class ScalarRunner:
@@ -142,6 +168,15 @@ def main() -> int:
     try:
         get_runner = modeling.RWKV7ForCausalLM._rwkv7_native_graph_runner
         clear_cache = modeling.RWKV7ForCausalLM.rwkv7_clear_native_graph_cache
+        owner.rwkv7_native_graph_cache_batch_sizes = types.MethodType(
+            modeling.RWKV7ForCausalLM.rwkv7_native_graph_cache_batch_sizes, owner
+        )
+        owner.rwkv7_native_graph_cache_stats = types.MethodType(
+            modeling.RWKV7ForCausalLM.rwkv7_native_graph_cache_stats, owner
+        )
+        owner.rwkv7_reset_native_graph_cache_stats = types.MethodType(
+            modeling.RWKV7ForCausalLM.rwkv7_reset_native_graph_cache_stats, owner
+        )
 
         r1 = get_runner(owner, packs, 1)
         r2 = get_runner(owner, packs, 2)
@@ -158,6 +193,16 @@ def main() -> int:
         r2_new = get_runner(owner, packs, 2)
         assert r2_new is not r2, "evicted bsz=2 runner should be rebuilt"
         assert [key[-1] for key in owner._rwkv7_native_graph_runner_cache.keys()] == [4, 2]
+        stats = owner.rwkv7_native_graph_cache_stats()
+        assert stats["requests"] == 5, stats
+        assert stats["hits"] == 1, stats
+        assert stats["misses"] == 4, stats
+        assert stats["evictions"] == 2, stats
+        assert stats["batch_sizes"] == [2, 4], stats
+        assert abs(stats["hit_rate"] - 0.2) < 1e-9, stats
+        reset_stats = owner.rwkv7_reset_native_graph_cache_stats()
+        assert reset_stats["requests"] == 0 and reset_stats["hits"] == 0, reset_stats
+        assert reset_stats["batch_sizes"] == [2, 4], reset_stats
 
         assert clear_cache(owner) == 2
         assert len(owner._rwkv7_native_graph_runner_cache) == 0

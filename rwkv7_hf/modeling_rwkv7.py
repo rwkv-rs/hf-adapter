@@ -91,6 +91,10 @@ def _native_graph_cache_size() -> int:
         return 8
 
 
+def _native_graph_stats_template() -> dict[str, int]:
+    return {"requests": 0, "hits": 0, "misses": 0, "evictions": 0}
+
+
 def _linear_direct(module, x: torch.Tensor) -> torch.Tensor:
     """Call a Linear module through F.linear to skip small-module dispatch."""
     return F.linear(x, module.weight, module.bias)
@@ -418,6 +422,17 @@ class RWKV7StateCache(_FLACache):
         # that are unnecessary for RWKV recurrent decode and add CPU overhead.
         self.states: list[dict[str, Any]] = []
         self._seen_tokens = int(seen_tokens)
+        self._rwkv7_cache_metrics: dict[str, int] = {
+            "updates": 0,
+            "new_layers": 0,
+            "clones": 0,
+            "detaches": 0,
+            "device_moves": 0,
+            "select_batch_calls": 0,
+            "batch_select_calls": 0,
+            "reorder_calls": 0,
+            "resets": 0,
+        }
 
     def _ensure_layer(self, layer_idx: int) -> dict[str, Any]:
         empty = {"recurrent_state": None, "attn_state": None, "conv_state": None, "ffn_state": None}
@@ -468,6 +483,8 @@ class RWKV7StateCache(_FLACache):
                 "ffn_state": ffn_state,
             }
             self.states.append(state)
+            self._rwkv7_cache_metrics["updates"] += 1
+            self._rwkv7_cache_metrics["new_layers"] += 1
             return state
 
         state = self.states[layer_idx]
@@ -509,6 +526,7 @@ class RWKV7StateCache(_FLACache):
             state["conv_state"] = conv_state
         if ffn_state is not None:
             state["ffn_state"] = ffn_state
+        self._rwkv7_cache_metrics["updates"] += 1
         return state
 
     def get_seq_length(self, layer_idx: int | None = 0, cache_position=None) -> int:
@@ -526,6 +544,7 @@ class RWKV7StateCache(_FLACache):
     def reset(self) -> None:
         self.states.clear()
         self._seen_tokens = 0
+        self._rwkv7_cache_metrics["resets"] += 1
 
     def to_legacy_cache(self) -> tuple[dict[str, Any], ...]:
         return tuple(self.states)
@@ -533,12 +552,15 @@ class RWKV7StateCache(_FLACache):
     def clone(self) -> "RWKV7StateCache":
         out = type(self)(seen_tokens=self._seen_tokens)
         out.states = [_clone_cache_value(state) for state in self.states]
+        out._rwkv7_cache_metrics = dict(self._rwkv7_cache_metrics)
+        out._rwkv7_cache_metrics["clones"] += 1
         return out
 
     def detach(self, *, inplace: bool = True) -> "RWKV7StateCache":
         """Detach cache tensors from autograd graphs for inference serving."""
         target = self if inplace else self.clone()
         target.states = [_detach_cache_value(state) for state in target.states]
+        target._rwkv7_cache_metrics["detaches"] += 1
         return target
 
     def to(
@@ -561,6 +583,7 @@ class RWKV7StateCache(_FLACache):
             _to_cache_value(state, device=device, dtype=dtype, non_blocking=non_blocking, copy=copy)
             for state in target.states
         ]
+        target._rwkv7_cache_metrics["device_moves"] += 1
         return target
 
     def get_batch_size(self) -> int | None:
@@ -575,13 +598,37 @@ class RWKV7StateCache(_FLACache):
         """
         target = self if inplace else self.clone()
         target.states = [_move_first_dim(state, indices) for state in target.states]
+        target._rwkv7_cache_metrics["select_batch_calls"] += 1
         return target
 
     def batch_select(self, indices: torch.LongTensor, *, inplace: bool = True) -> "RWKV7StateCache":
-        return self.select_batch(indices, inplace=inplace)
+        target = self.select_batch(indices, inplace=inplace)
+        target._rwkv7_cache_metrics["batch_select_calls"] += 1
+        return target
 
     def reorder_cache(self, beam_idx: torch.LongTensor):
-        return self.select_batch(beam_idx, inplace=True)
+        target = self.select_batch(beam_idx, inplace=True)
+        target._rwkv7_cache_metrics["reorder_calls"] += 1
+        return target
+
+    def rwkv7_cache_metrics(self) -> dict[str, Any]:
+        """Return lightweight state-cache reuse/reorder counters.
+
+        Serving integrations can sample this dictionary after prefill/decode to
+        record whether a request reused one recurrent state cache or kept
+        rebuilding/selecting/offloading it. The counters are intentionally
+        framework-neutral so HF, benchmark harnesses, and future serving adapters
+        can share the same signal.
+        """
+        metrics: dict[str, Any] = dict(self._rwkv7_cache_metrics)
+        metrics.update(
+            {
+                "layers": len(self.states),
+                "seen_tokens": int(self._seen_tokens),
+                "batch_size": self.get_batch_size(),
+            }
+        )
+        return metrics
 
     @classmethod
     def from_legacy_cache(
@@ -673,6 +720,26 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         if isinstance(cache, OrderedDict):
             return sorted({int(key[-1]) for key in cache.keys() if isinstance(key, tuple) and key})
         return []
+
+    def rwkv7_native_graph_cache_stats(self) -> dict[str, Any]:
+        """Return native-graph runner LRU reuse counters for serving telemetry."""
+        stats = dict(getattr(self, "_rwkv7_native_graph_cache_stats", _native_graph_stats_template()))
+        requests = int(stats.get("requests", 0))
+        hits = int(stats.get("hits", 0))
+        stats.update(
+            {
+                "size": len(self.rwkv7_native_graph_cache_batch_sizes()),
+                "limit": _native_graph_cache_size(),
+                "batch_sizes": self.rwkv7_native_graph_cache_batch_sizes(),
+                "hit_rate": (float(hits) / float(requests)) if requests else None,
+            }
+        )
+        return stats
+
+    def rwkv7_reset_native_graph_cache_stats(self) -> dict[str, Any]:
+        """Reset and return native-graph cache reuse counters."""
+        self._rwkv7_native_graph_cache_stats = _native_graph_stats_template()
+        return self.rwkv7_native_graph_cache_stats()
 
     def rwkv7_warmup_fast_token(
         self,
@@ -869,12 +936,19 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         elif not isinstance(cache, OrderedDict):
             cache = OrderedDict()
         self._rwkv7_native_graph_runner_cache = cache
+        stats = getattr(self, "_rwkv7_native_graph_cache_stats", None)
+        if not isinstance(stats, dict):
+            stats = _native_graph_stats_template()
+            self._rwkv7_native_graph_cache_stats = stats
+        stats["requests"] = int(stats.get("requests", 0)) + 1
 
         runner = cache.get(key)
         if runner is not None:
+            stats["hits"] = int(stats.get("hits", 0)) + 1
             cache.move_to_end(key)
             return runner
 
+        stats["misses"] = int(stats.get("misses", 0)) + 1
         if int(batch_size) == 1:
             runner = _RWKV7NativeGraphTokenRunner(self, packs)
         else:
@@ -883,6 +957,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         cache.move_to_end(key)
         while len(cache) > _native_graph_cache_size():
             cache.popitem(last=False)
+            stats["evictions"] = int(stats.get("evictions", 0)) + 1
         return runner
 
     def rwkv7_clear_native_graph_cache(self) -> int:

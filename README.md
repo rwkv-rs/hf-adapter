@@ -515,7 +515,9 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - `RWKV7StateCache` exposes serving-friendly `select_batch` / `batch_select`,
   `clone`, `detach`, `to`, and `get_batch_size` helpers so dynamic batching can
   reorder/drop active rows and temporarily CPU-offload inactive states without
-  relying on beam-search-only cache hooks.
+  relying on beam-search-only cache hooks. `rwkv7_cache_metrics()` reports
+  update/select/reorder/offload counters plus current layer, token, and batch
+  sizes for HF serving telemetry.
 - `rwkv7_prefill_chunks` provides an inference-only chunked prefill helper that
   preserves HF `forward` as the source of truth while carrying
   `RWKV7StateCache` across prompt chunks.
@@ -545,6 +547,9 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - `rwkv7_warmup_fast_token()` pre-initializes native fast-token resources for
   requested serving batch sizes, and
   `rwkv7_native_graph_cache_batch_sizes()` reports the native-graph LRU contents.
+  `rwkv7_native_graph_cache_stats()` reports graph-runner requests, hits,
+  misses, evictions, retained batch sizes, and hit rate; the counters can be
+  reset with `rwkv7_reset_native_graph_cache_stats()`.
   `bench_fast_token_warmup.py` records `axis=fast_token_warmup`; the default gate
   requires bsz=1/2/4/8 to resolve to `native_graph` and be present in the graph
   cache.
