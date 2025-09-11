@@ -6,6 +6,7 @@ Requires flash-linear-attention (`fla`) on PYTHONPATH / installed in the env.
 from __future__ import annotations
 
 import os
+import weakref
 from collections import OrderedDict
 from typing import Any
 
@@ -251,6 +252,7 @@ class _RWKV7NativeGraphTokenRunner:
         self.head_bias = owner.lm_head.bias
         self.norm_w = base.norm.weight
         self.norm_b = base.norm.bias
+        self._bound_cache_ref: weakref.ReferenceType[RWKV7StateCache] | None = None
         self.graph = None
         self._capture()
 
@@ -291,12 +293,36 @@ class _RWKV7NativeGraphTokenRunner:
         dst.copy_(src.contiguous())
 
     def copy_from_cache(self, past_key_values: "RWKV7StateCache") -> None:
+        self._detach_bound_cache_if_different(past_key_values)
         for li, p in enumerate(self.packs):
             layer_idx = int(p[0])
             state = past_key_values._ensure_layer(layer_idx)
             self._copy_cache_tensor(self.state[li], state.get("recurrent_state"), transpose_last=True)
             self._copy_cache_tensor(self.xpa[li], state.get("conv_state"))
             self._copy_cache_tensor(self.xpf[li], state.get("ffn_state"))
+
+    def _detach_bound_cache_if_different(self, past_key_values: "RWKV7StateCache") -> None:
+        ref = self._bound_cache_ref
+        previous = ref() if ref is not None else None
+        if previous is None or previous is past_key_values:
+            return
+        for li, p in enumerate(self.packs):
+            layer_idx = int(p[0])
+            if layer_idx >= len(previous.states):
+                continue
+            state = previous.states[layer_idx]
+            if not isinstance(state, dict):
+                continue
+            recurrent_view = self.state[li].transpose(-1, -2).unsqueeze(0)
+            conv_view = self.xpa[li].unsqueeze(0)
+            ffn_view = self.xpf[li].unsqueeze(0)
+            if isinstance(state.get("recurrent_state"), torch.Tensor) and _same_tensor_view(state["recurrent_state"], recurrent_view):
+                state["recurrent_state"] = state["recurrent_state"].contiguous()
+            if isinstance(state.get("conv_state"), torch.Tensor) and _same_tensor_view(state["conv_state"], conv_view):
+                state["conv_state"] = state["conv_state"].clone()
+            if isinstance(state.get("ffn_state"), torch.Tensor) and _same_tensor_view(state["ffn_state"], ffn_view):
+                state["ffn_state"] = state["ffn_state"].clone()
+        self._bound_cache_ref = None
 
     def bind_cache(self, past_key_values: "RWKV7StateCache") -> None:
         for li, p in enumerate(self.packs):
@@ -307,13 +333,14 @@ class _RWKV7NativeGraphTokenRunner:
             state["conv_state"] = self.xpa[li].unsqueeze(0)
             state["ffn_state"] = self.xpf[li].unsqueeze(0)
             state["attn_state"] = None
+        self._bound_cache_ref = weakref.ref(past_key_values)
 
     def replay(self, token: torch.LongTensor, past_key_values: "RWKV7StateCache") -> torch.Tensor:
         self.copy_from_cache(past_key_values)
         self.tok_id.copy_(token.reshape(1))
         self.graph.replay()
         self.bind_cache(past_key_values)
-        return self.logits.view(1, 1, -1)
+        return self.logits.view(1, 1, -1).clone()
 
 
 class _RWKV7NativeGraphBatchedTokenRunner:
@@ -346,6 +373,7 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         self.head_bias = owner.lm_head.bias
         self.norm_w = base.norm.weight
         self.norm_b = base.norm.bias
+        self._bound_cache_ref: weakref.ReferenceType[RWKV7StateCache] | None = None
         self.graph = None
         self._capture()
 
@@ -384,12 +412,36 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         dst.copy_(src.contiguous())
 
     def copy_from_cache(self, past_key_values: "RWKV7StateCache") -> None:
+        self._detach_bound_cache_if_different(past_key_values)
         for li, p in enumerate(self.packs):
             layer_idx = int(p[0])
             state = past_key_values._ensure_layer(layer_idx)
             self._copy_cache_tensor(self.state[li], state.get("recurrent_state"), transpose_last=True)
             self._copy_cache_tensor(self.xpa[li], state.get("conv_state"))
             self._copy_cache_tensor(self.xpf[li], state.get("ffn_state"))
+
+    def _detach_bound_cache_if_different(self, past_key_values: "RWKV7StateCache") -> None:
+        ref = self._bound_cache_ref
+        previous = ref() if ref is not None else None
+        if previous is None or previous is past_key_values:
+            return
+        for li, p in enumerate(self.packs):
+            layer_idx = int(p[0])
+            if layer_idx >= len(previous.states):
+                continue
+            state = previous.states[layer_idx]
+            if not isinstance(state, dict):
+                continue
+            recurrent_view = self.state[li].transpose(-1, -2)
+            conv_view = self.xpa[li]
+            ffn_view = self.xpf[li]
+            if isinstance(state.get("recurrent_state"), torch.Tensor) and _same_tensor_view(state["recurrent_state"], recurrent_view):
+                state["recurrent_state"] = state["recurrent_state"].contiguous()
+            if isinstance(state.get("conv_state"), torch.Tensor) and _same_tensor_view(state["conv_state"], conv_view):
+                state["conv_state"] = state["conv_state"].clone()
+            if isinstance(state.get("ffn_state"), torch.Tensor) and _same_tensor_view(state["ffn_state"], ffn_view):
+                state["ffn_state"] = state["ffn_state"].clone()
+        self._bound_cache_ref = None
 
     def bind_cache(self, past_key_values: "RWKV7StateCache") -> None:
         for li, p in enumerate(self.packs):
@@ -400,6 +452,7 @@ class _RWKV7NativeGraphBatchedTokenRunner:
             state["conv_state"] = self.xpa[li]
             state["ffn_state"] = self.xpf[li]
             state["attn_state"] = None
+        self._bound_cache_ref = weakref.ref(past_key_values)
 
     def replay(self, token: torch.LongTensor, past_key_values: "RWKV7StateCache") -> torch.Tensor:
         if int(token.numel()) != self.batch_size:
@@ -408,7 +461,7 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         self.tok_id.copy_(token.reshape(self.batch_size))
         self.graph.replay()
         self.bind_cache(past_key_values)
-        return self.logits.view(self.batch_size, 1, -1)
+        return self.logits.view(self.batch_size, 1, -1).clone()
 
 
 class RWKV7StateCache(_FLACache):
@@ -1630,6 +1683,15 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         return None
 
     def forward(self, *args, **kwargs):
+        # Normalize `[batch]` single-token input into `[batch, 1]` before the
+        # generic FLA path. The native fast-token shortcut accepts either shape,
+        # but quantized/bitsandbytes models intentionally fall back to FLA; with
+        # 1-D ids the embedding output is `[batch, hidden]`, which makes FLA
+        # attention crash because it expects `[batch, seq, hidden]`.
+        if args and isinstance(args[0], torch.Tensor) and args[0].dim() == 1:
+            args = (args[0].unsqueeze(1),) + tuple(args[1:])
+        elif isinstance(kwargs.get("input_ids"), torch.Tensor) and kwargs["input_ids"].dim() == 1:
+            kwargs["input_ids"] = kwargs["input_ids"].unsqueeze(1)
         use_cache = kwargs.get("use_cache")
         effective_use_cache = use_cache if use_cache is not None else (self.config.use_cache if not self.training else False)
         if effective_use_cache and _fast_cache_enabled():
