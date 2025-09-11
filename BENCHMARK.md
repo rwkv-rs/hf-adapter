@@ -654,17 +654,20 @@ Latest short V100 rows:
 
 | Quantization | Model footprint | Peak VRAM | Prefill tok/s | Reference decode tok/s | Fast-forward decode tok/s | Status |
 |---|---:|---:|---:|---:|---:|---|
-| none/fp16 | 364.4 MB | 633.7 MB | 3844.0 | 33.9 | 251.1 | PASS |
-| 8-bit bnb | 278.4 MB | 316.5 MB | 796.0 | 7.9 | 8.4 | PASS smoke, speed gap |
-| 4-bit bnb | 235.3 MB | 279.1 MB | 2100.9 | 22.5 | 27.1 | PASS smoke, speed gap |
+| none/fp16 | 364.4 MB | 636.2 MB | 8370.4 | 41.0 | 217.2 | PASS |
+| 8-bit bnb + dense LoRA rank | 283.4 MB | 321.6 MB | 3226.6 | 15.9 | 16.3 | PASS smoke, speed gap |
+| 4-bit bnb + dense LoRA rank | 242.9 MB | 286.4 MB | 6075.9 | 32.6 | 32.1 | PASS smoke, speed gap |
 
-The memory direction is correct and generic bitsandbytes cached decode now uses
-the HF fast-forward fallback by default (`RWKV7_FAST_FORWARD_QUANT=1`), improving
-8-bit by about `1.06x` and 4-bit by about `1.20x` on the short V100 run while
-preserving the greedy next token. It is still slower than fp16 native-graph
-decode, so production quantized serving still needs a custom fused/native
-quantized projection path before it can meet the original "not slower than
-fp16" target.
+The adapter appends `lm_head` and `.*_lora\.lora\.[02]` to HF/bnb
+`llm_int8_skip_modules` so tiny RWKV LoRA rank projections are not replaced
+with inefficient quantized kernels, while the large projection/FFN weights
+remain W8/W4. `bench_quantization.py` now records `quant_skip_modules`,
+`module_counts`, and `selected_decode_path`; the latest row selects fast-forward
+for 8-bit and reference cached decode for 4-bit because that path is slightly
+faster on V100. The memory direction is correct, but selected W8/W4 decode is
+still slower than fp16 native-graph decode, so production quantized serving
+still needs a custom fused/native quantized projection path before it can meet
+the original "not slower than fp16" target.
 
 ## HF speculative decoding smoke
 

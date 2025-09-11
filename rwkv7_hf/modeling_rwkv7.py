@@ -663,6 +663,30 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     config_class = RWKV7Config
     # Transformers >=5 expects dict-like _tied_weights_keys in save_pretrained.
     _tied_weights_keys = {}
+    # Generic bitsandbytes quantization is very slow on the tiny RWKV-7 LoRA
+    # rank projections (for example rank=32 is not covered by efficient 4-bit
+    # kernels on V100). Keep those small matrices dense and quantize the large
+    # projections/FFN weights instead; this preserves the memory-saving direction
+    # while avoiding a known low-throughput quantized micro-kernel.
+    _rwkv7_bnb_skip_modules = ["lm_head", r".*_lora\.lora\.[02]"]
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        quantization_config = kwargs.get("quantization_config")
+        if quantization_config is None and (kwargs.get("load_in_8bit") or kwargs.get("load_in_4bit")):
+            from transformers import BitsAndBytesConfig
+
+            bnb_kwargs = {}
+            for key in list(kwargs.keys()):
+                if key.startswith("bnb_4bit_") or key.startswith("llm_int8_") or key in {"load_in_8bit", "load_in_4bit"}:
+                    bnb_kwargs[key] = kwargs.pop(key)
+            quantization_config = BitsAndBytesConfig(**bnb_kwargs)
+            kwargs["quantization_config"] = quantization_config
+        if quantization_config is not None and hasattr(quantization_config, "llm_int8_skip_modules"):
+            existing = list(getattr(quantization_config, "llm_int8_skip_modules", None) or [])
+            merged = list(dict.fromkeys([*existing, *cls._rwkv7_bnb_skip_modules]))
+            quantization_config.llm_int8_skip_modules = merged
+        return super().from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
 
     def resize_token_embeddings(self, new_num_tokens: int | None = None, *args, **kwargs):
         """Keep the official RWKV trie vocabulary fixed.
