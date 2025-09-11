@@ -471,6 +471,16 @@ python bench/bench_larger_model_smoke.py \
   --attn-mode fused_recurrent \
   --fast-token-backend auto \
   --max-new-tokens 2
+
+python bench/bench_larger_model_smoke.py \
+  --hf-dir /path/to/rwkv7-g1g-13.3b-hf \
+  --model-size-label 13.3b \
+  --checkpoint-path /path/to/rwkv7-g1g-13.3b-20260523-ctx8192.pth \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --fast-token-backend native_jit \
+  --max-new-tokens 2
 ```
 
 Benchmark gap report against current targets:
@@ -528,7 +538,7 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   validation errors.
 - Batch conversion wrapper writes a SHA256 manifest and supports dry-run
   enumeration for downloaded 0.4B+ checkpoints before launching heavyweight
-  conversions; the 0.4B, 1.5B, 2.9B, and 7.2B checkpoints have now been converted and
+  conversions; the 0.4B, 1.5B, 2.9B, 7.2B, and 13.3B checkpoints have now been converted and
   smoke-tested from generated HF directories on V100.
 - HF API contract smoke covers fixed-vocab `resize_token_embeddings` handling,
   `prepare_inputs_for_generation`, beam cache reorder, and
@@ -606,7 +616,7 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   Quantized loads use the same fast-forward hook by default through the FLA
   fallback; set `RWKV7_FAST_FORWARD_QUANT=0` to force the slower reference
   path for debugging.
-- Latest V100 fast-token results: FLA bsz=1 decode `59.2 tok/s` vs official `92.1 tok/s`; native-JIT bsz=1 decode reaches `92.1 tok/s` vs official `92.1 tok/s`; HF `native_graph` bsz=1 reaches `255.5 tok/s` in speed_mem. Batched native-graph reaches `253.9` / `434.3` / `852.6` / `1539.1` aggregate tok/s for bsz=1/2/4/8, and warmup pre-captures those graph runners in `1.389s` with cache sizes `[1,2,4,8]`. Native-graph replay overhead rows for bsz=1/2/4/8 show public API `254.9` / `449.8` / `858.5` / `1546.9` aggregate tok/s, runner/API diff `0.0`, and cache-copy share `0.070` / `0.038` / `0.036` / `0.033` after skipping graph-buffer self-copy. Dynamic-batch simulation with native-graph reorder/drop through `select_batch` reaches `1209.3` total tok/s. The converted 0.4B, 1.5B, 2.9B, and 7.2B HF directories load and generate on V100: 0.4B has hidden=1024/layers=24, checkpoint SHA256 `947cb9b8013224e06b112b72204256bec65096cc935a7767ce63d8e3ddef83bb`, peak VRAM `1124.5 MB`; 1.5B has hidden=2048/layers=24, checkpoint SHA256 `441f70b096ad62442b5c33128bfe717c5d8529915c45a9709d4482016e8a0482`, peak VRAM `3178.6 MB`; 2.9B has hidden=2560/layers=32, checkpoint SHA256 `3d118ed77fe94e63e6fc0a6afd5a4fac49fe70da4e3d9d91b628951bb55dd798`, peak VRAM `5888.0 MB`; 7.2B has hidden=4096/layers=32, checkpoint SHA256 `425fc9bda2d12d4ce3b6bfe5c3b3f355be8b14d85960cf40fcca58a19d632630`, peak VRAM `13997.8 MB`; all four resolve generation fast-forward to `native_graph`. Chunked prefill bsz=2 prompt=512 preserves logits/cache within fp16 tolerance and reduces peak VRAM to about `0.60x` / `0.62x` / `0.63x` of full prefill for chunk sizes 64/128/256, trading throughput to `0.13x` / `0.25x` / `0.50x`. Component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`; naive PyTorch bmm projection/LoRA candidates are not enough, so the next implementation needs custom fusion/reduced launch count.
+- Latest V100 fast-token results: FLA bsz=1 decode `59.2 tok/s` vs official `92.1 tok/s`; native-JIT bsz=1 decode reaches `92.1 tok/s` vs official `92.1 tok/s`; HF `native_graph` bsz=1 reaches `255.5 tok/s` in speed_mem. Batched native-graph reaches `253.9` / `434.3` / `852.6` / `1539.1` aggregate tok/s for bsz=1/2/4/8, and warmup pre-captures those graph runners in `1.389s` with cache sizes `[1,2,4,8]`. Native-graph replay overhead rows for bsz=1/2/4/8 show public API `254.9` / `449.8` / `858.5` / `1546.9` aggregate tok/s, runner/API diff `0.0`, and cache-copy share `0.070` / `0.038` / `0.036` / `0.033` after skipping graph-buffer self-copy. Dynamic-batch simulation with native-graph reorder/drop through `select_batch` reaches `1209.3` total tok/s. The converted 0.4B, 1.5B, 2.9B, 7.2B, and 13.3B HF directories load and generate on V100: 0.4B has hidden=1024/layers=24, checkpoint SHA256 `947cb9b8013224e06b112b72204256bec65096cc935a7767ce63d8e3ddef83bb`, peak VRAM `1124.5 MB`; 1.5B has hidden=2048/layers=24, checkpoint SHA256 `441f70b096ad62442b5c33128bfe717c5d8529915c45a9709d4482016e8a0482`, peak VRAM `3178.6 MB`; 2.9B has hidden=2560/layers=32, checkpoint SHA256 `3d118ed77fe94e63e6fc0a6afd5a4fac49fe70da4e3d9d91b628951bb55dd798`, peak VRAM `5888.0 MB`; 7.2B has hidden=4096/layers=32, checkpoint SHA256 `425fc9bda2d12d4ce3b6bfe5c3b3f355be8b14d85960cf40fcca58a19d632630`, peak VRAM `13997.8 MB`; 13.3B has hidden=4096/layers=61, checkpoint SHA256 `0aa686d3ca4bb486e83e3071f4798a210f960e1fc1f5042e6cb418cc463814d6`, peak VRAM `25575.6 MB`, and uses `native_jit` for the V100 smoke because native-graph capture can reserve too much extra memory on 32GB cards. Chunked prefill bsz=2 prompt=512 preserves logits/cache within fp16 tolerance and reduces peak VRAM to about `0.60x` / `0.62x` / `0.63x` of full prefill for chunk sizes 64/128/256, trading throughput to `0.13x` / `0.25x` / `0.50x`. Component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`; naive PyTorch bmm projection/LoRA candidates are not enough, so the next implementation needs custom fusion/reduced launch count.
 - Bitsandbytes quantization smoke now loads and generates for both 8-bit and
   4-bit on V100, and cached decode can use the HF fast-forward hook through
   the FLA fallback. Short benchmark rows show model footprint dropping from

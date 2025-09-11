@@ -9,9 +9,13 @@
 #   COMPONENT_STEPS, NATIVE_DECODE_TOKENS, RUN_LARGER_MODEL_SMOKE, LARGER_HF_DIR,
 #   LARGER_PTH, LARGER_MODEL_SIZE_LABEL, LARGER_MAX_NEW_TOKENS,
 #   RUN_15B_MODEL_SMOKE, LARGER_15_HF_DIR, LARGER_15_PTH,
-#   LARGER_15_MAX_NEW_TOKENS, RUN_29B_MODEL_SMOKE, LARGER_29_HF_DIR,
-#   LARGER_29_PTH, LARGER_29_MAX_NEW_TOKENS, RUN_72B_MODEL_SMOKE,
-#   LARGER_72_HF_DIR, LARGER_72_PTH, LARGER_72_MAX_NEW_TOKENS,
+#   LARGER_FAST_TOKEN_BACKEND, LARGER_15_MAX_NEW_TOKENS,
+#   LARGER_15_FAST_TOKEN_BACKEND, RUN_29B_MODEL_SMOKE, LARGER_29_HF_DIR,
+#   LARGER_29_PTH, LARGER_29_MAX_NEW_TOKENS, LARGER_29_FAST_TOKEN_BACKEND,
+#   RUN_72B_MODEL_SMOKE, LARGER_72_HF_DIR, LARGER_72_PTH,
+#   LARGER_72_MAX_NEW_TOKENS, LARGER_72_FAST_TOKEN_BACKEND,
+#   RUN_133B_MODEL_SMOKE, LARGER_133_HF_DIR, LARGER_133_PTH,
+#   LARGER_133_MAX_NEW_TOKENS, LARGER_133_FAST_TOKEN_BACKEND,
 #   RESULTS, LOG_DIR
 set -euo pipefail
 
@@ -39,18 +43,29 @@ LARGER_HF_DIR="${LARGER_HF_DIR:-/home/data/wangyue/models/rwkv7/rwkv7-g1d-0.4b-h
 LARGER_PTH="${LARGER_PTH:-/home/data/wangyue/models/rwkv7/rwkv7-g1d-0.4b-20260210-ctx8192.pth}"
 LARGER_MODEL_SIZE_LABEL="${LARGER_MODEL_SIZE_LABEL:-0.4b}"
 LARGER_MAX_NEW_TOKENS="${LARGER_MAX_NEW_TOKENS:-4}"
+LARGER_FAST_TOKEN_BACKEND="${LARGER_FAST_TOKEN_BACKEND:-auto}"
 RUN_15B_MODEL_SMOKE="${RUN_15B_MODEL_SMOKE:-auto}"
 LARGER_15_HF_DIR="${LARGER_15_HF_DIR:-/home/data/wangyue/models/rwkv7/rwkv7-g1g-1.5b-hf}"
 LARGER_15_PTH="${LARGER_15_PTH:-/home/data/wangyue/models/rwkv7/rwkv7-g1g-1.5b-20260526-ctx8192.pth}"
 LARGER_15_MAX_NEW_TOKENS="${LARGER_15_MAX_NEW_TOKENS:-2}"
+LARGER_15_FAST_TOKEN_BACKEND="${LARGER_15_FAST_TOKEN_BACKEND:-auto}"
 RUN_29B_MODEL_SMOKE="${RUN_29B_MODEL_SMOKE:-auto}"
 LARGER_29_HF_DIR="${LARGER_29_HF_DIR:-/home/data/wangyue/models/rwkv7/rwkv7-g1g-2.9b-hf}"
 LARGER_29_PTH="${LARGER_29_PTH:-/home/data/wangyue/models/rwkv7/rwkv7-g1g-2.9b-20260526-ctx8192.pth}"
 LARGER_29_MAX_NEW_TOKENS="${LARGER_29_MAX_NEW_TOKENS:-2}"
+LARGER_29_FAST_TOKEN_BACKEND="${LARGER_29_FAST_TOKEN_BACKEND:-auto}"
 RUN_72B_MODEL_SMOKE="${RUN_72B_MODEL_SMOKE:-auto}"
 LARGER_72_HF_DIR="${LARGER_72_HF_DIR:-/home/data/wangyue/models/rwkv7/rwkv7-g1g-7.2b-hf}"
 LARGER_72_PTH="${LARGER_72_PTH:-/home/data/wangyue/models/rwkv7/rwkv7-g1g-7.2b-20260523-ctx8192.pth}"
 LARGER_72_MAX_NEW_TOKENS="${LARGER_72_MAX_NEW_TOKENS:-2}"
+LARGER_72_FAST_TOKEN_BACKEND="${LARGER_72_FAST_TOKEN_BACKEND:-auto}"
+RUN_133B_MODEL_SMOKE="${RUN_133B_MODEL_SMOKE:-auto}"
+LARGER_133_HF_DIR="${LARGER_133_HF_DIR:-/home/data/wangyue/models/rwkv7/rwkv7-g1g-13.3b-hf}"
+LARGER_133_PTH="${LARGER_133_PTH:-/home/data/wangyue/models/rwkv7/rwkv7-g1g-13.3b-20260523-ctx8192.pth}"
+LARGER_133_MAX_NEW_TOKENS="${LARGER_133_MAX_NEW_TOKENS:-2}"
+# 13.3B fits V100 fp16 smoke with native_jit; native_graph capture may reserve
+# too much extra memory on 32GB cards, so keep the default conservative.
+LARGER_133_FAST_TOKEN_BACKEND="${LARGER_133_FAST_TOKEN_BACKEND:-native_jit}"
 RESULTS="${RESULTS:-bench/results.jsonl}"
 LOG_DIR="${LOG_DIR:-bench/logs}"
 
@@ -77,6 +92,7 @@ run_larger_smoke() {
   local pth="$2"
   local label="$3"
   local max_new="$4"
+  local fast_backend="${5:-auto}"
   run python bench/bench_larger_model_smoke.py \
     --hf-dir "${hf_dir}" \
     --model-size-label "${label}" \
@@ -84,7 +100,7 @@ run_larger_smoke() {
     --dtype "${DTYPE}" \
     --device "${DEVICE}" \
     --attn-mode fused_recurrent \
-    --fast-token-backend auto \
+    --fast-token-backend "${fast_backend}" \
     --max-new-tokens "${max_new}" \
     --results "${RESULTS}"
 }
@@ -94,10 +110,11 @@ run_larger_smoke() {
   echo "hf_dir=${HF_DIR}"
   echo "pth=${PTH}"
   echo "dtype=${DTYPE} device=${DEVICE} prompt_tokens=${PROMPT_TOKENS} decode_tokens=${DECODE_TOKENS} micro_steps=${MICRO_STEPS} forward_fast_steps=${FORWARD_FAST_STEPS} generate_batch_size=${GENERATE_BATCH_SIZE} generate_new_tokens=${GENERATE_NEW_TOKENS} warmup_batch_sizes=${WARMUP_BATCH_SIZES} native_graph_cache_size=${NATIVE_GRAPH_CACHE_SIZE} native_graph_overhead_batch_sizes=${NATIVE_GRAPH_OVERHEAD_BATCH_SIZES} native_graph_overhead_steps=${NATIVE_GRAPH_OVERHEAD_STEPS} component_steps=${COMPONENT_STEPS}"
-  echo "larger_smoke=${RUN_LARGER_MODEL_SMOKE} larger_hf_dir=${LARGER_HF_DIR} larger_pth=${LARGER_PTH} larger_model_size_label=${LARGER_MODEL_SIZE_LABEL} larger_max_new_tokens=${LARGER_MAX_NEW_TOKENS}"
-  echo "larger_15_smoke=${RUN_15B_MODEL_SMOKE} larger_15_hf_dir=${LARGER_15_HF_DIR} larger_15_pth=${LARGER_15_PTH} larger_15_max_new_tokens=${LARGER_15_MAX_NEW_TOKENS}"
-  echo "larger_29_smoke=${RUN_29B_MODEL_SMOKE} larger_29_hf_dir=${LARGER_29_HF_DIR} larger_29_pth=${LARGER_29_PTH} larger_29_max_new_tokens=${LARGER_29_MAX_NEW_TOKENS}"
-  echo "larger_72_smoke=${RUN_72B_MODEL_SMOKE} larger_72_hf_dir=${LARGER_72_HF_DIR} larger_72_pth=${LARGER_72_PTH} larger_72_max_new_tokens=${LARGER_72_MAX_NEW_TOKENS}"
+  echo "larger_smoke=${RUN_LARGER_MODEL_SMOKE} larger_hf_dir=${LARGER_HF_DIR} larger_pth=${LARGER_PTH} larger_model_size_label=${LARGER_MODEL_SIZE_LABEL} larger_max_new_tokens=${LARGER_MAX_NEW_TOKENS} larger_fast_token_backend=${LARGER_FAST_TOKEN_BACKEND}"
+  echo "larger_15_smoke=${RUN_15B_MODEL_SMOKE} larger_15_hf_dir=${LARGER_15_HF_DIR} larger_15_pth=${LARGER_15_PTH} larger_15_max_new_tokens=${LARGER_15_MAX_NEW_TOKENS} larger_15_fast_token_backend=${LARGER_15_FAST_TOKEN_BACKEND}"
+  echo "larger_29_smoke=${RUN_29B_MODEL_SMOKE} larger_29_hf_dir=${LARGER_29_HF_DIR} larger_29_pth=${LARGER_29_PTH} larger_29_max_new_tokens=${LARGER_29_MAX_NEW_TOKENS} larger_29_fast_token_backend=${LARGER_29_FAST_TOKEN_BACKEND}"
+  echo "larger_72_smoke=${RUN_72B_MODEL_SMOKE} larger_72_hf_dir=${LARGER_72_HF_DIR} larger_72_pth=${LARGER_72_PTH} larger_72_max_new_tokens=${LARGER_72_MAX_NEW_TOKENS} larger_72_fast_token_backend=${LARGER_72_FAST_TOKEN_BACKEND}"
+  echo "larger_133_smoke=${RUN_133B_MODEL_SMOKE} larger_133_hf_dir=${LARGER_133_HF_DIR} larger_133_pth=${LARGER_133_PTH} larger_133_max_new_tokens=${LARGER_133_MAX_NEW_TOKENS} larger_133_fast_token_backend=${LARGER_133_FAST_TOKEN_BACKEND}"
   echo "results=${RESULTS} profile_out=${PROFILE_OUT}"
 
   run python tests/test_fast_decode_api.py \
@@ -445,24 +462,29 @@ run_larger_smoke() {
     --results "${RESULTS}"
 
   if should_run_larger_smoke "${RUN_LARGER_MODEL_SMOKE}" "${LARGER_HF_DIR}" "${LARGER_PTH}"; then
-    run_larger_smoke "${LARGER_HF_DIR}" "${LARGER_PTH}" "${LARGER_MODEL_SIZE_LABEL}" "${LARGER_MAX_NEW_TOKENS}"
+    run_larger_smoke "${LARGER_HF_DIR}" "${LARGER_PTH}" "${LARGER_MODEL_SIZE_LABEL}" "${LARGER_MAX_NEW_TOKENS}" "${LARGER_FAST_TOKEN_BACKEND}"
   else
     echo "SKIP larger-model smoke: RUN_LARGER_MODEL_SMOKE=${RUN_LARGER_MODEL_SMOKE} LARGER_HF_DIR=${LARGER_HF_DIR} LARGER_PTH=${LARGER_PTH}"
   fi
   if should_run_larger_smoke "${RUN_15B_MODEL_SMOKE}" "${LARGER_15_HF_DIR}" "${LARGER_15_PTH}"; then
-    run_larger_smoke "${LARGER_15_HF_DIR}" "${LARGER_15_PTH}" "1.5b" "${LARGER_15_MAX_NEW_TOKENS}"
+    run_larger_smoke "${LARGER_15_HF_DIR}" "${LARGER_15_PTH}" "1.5b" "${LARGER_15_MAX_NEW_TOKENS}" "${LARGER_15_FAST_TOKEN_BACKEND}"
   else
     echo "SKIP 1.5B larger-model smoke: RUN_15B_MODEL_SMOKE=${RUN_15B_MODEL_SMOKE} LARGER_15_HF_DIR=${LARGER_15_HF_DIR} LARGER_15_PTH=${LARGER_15_PTH}"
   fi
   if should_run_larger_smoke "${RUN_29B_MODEL_SMOKE}" "${LARGER_29_HF_DIR}" "${LARGER_29_PTH}"; then
-    run_larger_smoke "${LARGER_29_HF_DIR}" "${LARGER_29_PTH}" "2.9b" "${LARGER_29_MAX_NEW_TOKENS}"
+    run_larger_smoke "${LARGER_29_HF_DIR}" "${LARGER_29_PTH}" "2.9b" "${LARGER_29_MAX_NEW_TOKENS}" "${LARGER_29_FAST_TOKEN_BACKEND}"
   else
     echo "SKIP 2.9B larger-model smoke: RUN_29B_MODEL_SMOKE=${RUN_29B_MODEL_SMOKE} LARGER_29_HF_DIR=${LARGER_29_HF_DIR} LARGER_29_PTH=${LARGER_29_PTH}"
   fi
   if should_run_larger_smoke "${RUN_72B_MODEL_SMOKE}" "${LARGER_72_HF_DIR}" "${LARGER_72_PTH}"; then
-    run_larger_smoke "${LARGER_72_HF_DIR}" "${LARGER_72_PTH}" "7.2b" "${LARGER_72_MAX_NEW_TOKENS}"
+    run_larger_smoke "${LARGER_72_HF_DIR}" "${LARGER_72_PTH}" "7.2b" "${LARGER_72_MAX_NEW_TOKENS}" "${LARGER_72_FAST_TOKEN_BACKEND}"
   else
     echo "SKIP 7.2B larger-model smoke: RUN_72B_MODEL_SMOKE=${RUN_72B_MODEL_SMOKE} LARGER_72_HF_DIR=${LARGER_72_HF_DIR} LARGER_72_PTH=${LARGER_72_PTH}"
+  fi
+  if should_run_larger_smoke "${RUN_133B_MODEL_SMOKE}" "${LARGER_133_HF_DIR}" "${LARGER_133_PTH}"; then
+    run_larger_smoke "${LARGER_133_HF_DIR}" "${LARGER_133_PTH}" "13.3b" "${LARGER_133_MAX_NEW_TOKENS}" "${LARGER_133_FAST_TOKEN_BACKEND}"
+  else
+    echo "SKIP 13.3B larger-model smoke: RUN_133B_MODEL_SMOKE=${RUN_133B_MODEL_SMOKE} LARGER_133_HF_DIR=${LARGER_133_HF_DIR} LARGER_133_PTH=${LARGER_133_PTH}"
   fi
 
   run python bench/profile_decode.py \
