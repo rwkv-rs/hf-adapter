@@ -47,7 +47,8 @@ def main() -> int:
 
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     target = load_model(args.model, args.dtype, args.device)
-    if args.draft_model is None or args.draft_model == args.model:
+    same_model = args.draft_model is None or args.draft_model == args.model
+    if same_model:
         draft = target
     else:
         draft = load_model(args.draft_model, args.dtype, args.device)
@@ -79,12 +80,23 @@ def main() -> int:
     assert torch.equal(seq, expected), (seq.detach().cpu().tolist(), expected.detach().cpu().tolist())
     assert stats["generated_tokens"] == args.max_new_tokens, stats
     assert stats["proposed_tokens"] >= args.max_new_tokens, stats
-    assert stats["accepted_tokens"] == args.max_new_tokens, stats
-    assert stats["corrected_tokens"] == 0, stats
-    assert stats["acceptance_rate"] == 1.0, stats
-    # With block verification the target performs prompt prefill plus at most
-    # ceil(max_new_tokens / draft_tokens) verification calls when draft==target.
-    assert stats["target_forward_calls"] <= 1 + ((args.max_new_tokens + args.draft_tokens - 1) // args.draft_tokens), stats
+    assert stats["target_forward_calls"] > 0, stats
+    assert stats["draft_forward_calls"] > 0, stats
+    if same_model:
+        assert stats["accepted_tokens"] == args.max_new_tokens, stats
+        assert stats["corrected_tokens"] == 0, stats
+        assert stats["resyncs"] == 0, stats
+        assert stats["resync_tokens"] == 0, stats
+        assert stats["full_resync_tokens"] == 0, stats
+        assert stats["resync_saved_tokens"] == 0, stats
+        assert stats["acceptance_rate"] == 1.0, stats
+        # With block verification the target performs prompt prefill plus at most
+        # ceil(max_new_tokens / draft_tokens) verification calls when draft==target.
+        assert stats["target_forward_calls"] <= 1 + ((args.max_new_tokens + args.draft_tokens - 1) // args.draft_tokens), stats
+    elif stats["corrected_tokens"] > 0 and stats["resyncs"] > 0:
+        assert stats["resync_tokens"] > 0, stats
+        assert stats["full_resync_tokens"] > stats["resync_tokens"], stats
+        assert stats["resync_saved_tokens"] == stats["full_resync_tokens"] - stats["resync_tokens"], stats
     print("PASS")
     return 0
 

@@ -302,9 +302,24 @@ def check_common(report: dict[str, Any], failures: list[str], args: argparse.Nam
         acceptance = speculative.get("stats_acceptance_rate")
         if acceptance is None or float(acceptance) < args.min_speculative_acceptance_rate:
             fail(failures, f"speculative_decode acceptance below floor: {acceptance} < {args.min_speculative_acceptance_rate}")
+        speedup = speculative.get("speedup_vs_target_generate")
+        if speedup is None or float(speedup) < args.min_speculative_speedup:
+            fail(failures, f"speculative_decode speedup below floor: {speedup} < {args.min_speculative_speedup}")
         target_calls = speculative.get("stats_target_forward_calls")
         if target_calls is None or int(target_calls) <= 0:
             fail(failures, f"speculative_decode target_forward_calls invalid: {target_calls}")
+        corrected = int(speculative.get("stats_corrected_tokens") or 0)
+        resyncs = int(speculative.get("stats_resyncs") or 0)
+        if corrected > 0 and resyncs > 0:
+            resync_tokens = int(speculative.get("stats_resync_tokens") or 0)
+            full_resync_tokens = int(speculative.get("stats_full_resync_tokens") or 0)
+            saved_tokens = int(speculative.get("stats_resync_saved_tokens") or 0)
+            if resync_tokens <= 0 or full_resync_tokens <= 0 or saved_tokens <= 0 or resync_tokens >= full_resync_tokens:
+                fail(
+                    failures,
+                    "speculative_decode mismatch resync did not reuse cache prefix: "
+                    f"resync={resync_tokens} full={full_resync_tokens} saved={saved_tokens}",
+                )
 
     if args.require_quantization:
         quant_rows = report.get("quantization") or []
@@ -406,6 +421,7 @@ def main() -> int:
                     help="Require passing real-draft speculative decode benchmark rows")
     ap.add_argument("--min-speculative-new-tokens", type=int, default=4)
     ap.add_argument("--min-speculative-acceptance-rate", type=float, default=0.0)
+    ap.add_argument("--min-speculative-speedup", type=float, default=1.0)
     ap.add_argument("--require-quantization", action="store_true",
                     help="Require passing 8bit/4bit quantization benchmark rows")
     ap.add_argument("--min-quant-decode-ratio", type=float, default=1.0)

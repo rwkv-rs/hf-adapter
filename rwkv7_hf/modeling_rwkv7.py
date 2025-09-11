@@ -1129,6 +1129,9 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                 "accepted_tokens": 0,
                 "corrected_tokens": 0,
                 "resyncs": 0,
+                "resync_tokens": 0,
+                "full_resync_tokens": 0,
+                "resync_saved_tokens": 0,
                 "target_forward_calls": 0,
                 "draft_forward_calls": 0,
                 "acceptance_rate": None,
@@ -1150,6 +1153,9 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             "accepted_tokens": 0,
             "corrected_tokens": 0,
             "resyncs": 0,
+            "resync_tokens": 0,
+            "full_resync_tokens": 0,
+            "resync_saved_tokens": 0,
             "target_forward_calls": 0,
             "draft_forward_calls": 0,
             "acceptance_rate": None,
@@ -1202,6 +1208,11 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
 
         while stats["generated_tokens"] < max_new_tokens:
             proposals: list[torch.LongTensor] = []
+            # Draft proposal generation advances its cache. Keep the cache at
+            # the start of this proposal block so a later mismatch can resync
+            # from the accepted prefix plus target correction instead of
+            # replaying the full prompt/generated sequence.
+            draft_past_before_block = _clone_past(draft_past)
             for _ in range(min(draft_tokens, max_new_tokens - stats["generated_tokens"])):
                 proposal = draft_next.reshape(1).to(input_ids.device)
                 proposals.append(proposal)
@@ -1243,15 +1254,22 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                 stats["generated_tokens"] += 1
                 mismatch = True
                 if not _is_eos(correction) and stats["generated_tokens"] < max_new_tokens:
-                    target_out = _forward(self, generated, prefill=True)
+                    repair_tokens = torch.cat(
+                        [tok.reshape(1, 1).to(input_ids.device) for tok in [*accepted_prefix, correction]],
+                        dim=1,
+                    )
+                    target_out = _forward(self, repair_tokens, past=_clone_past(target_past), keep=1)
                     stats["target_forward_calls"] += 1
                     target_past = target_out.past_key_values
                     target_next = _argmax_token(target_out.logits)
-                    draft_out = _forward(draft_model, generated, prefill=True)
+                    draft_out = _forward(draft_model, repair_tokens, past=draft_past_before_block, keep=1)
                     stats["draft_forward_calls"] += 1
                     draft_past = draft_out.past_key_values
                     draft_next = _argmax_token(draft_out.logits)
                     stats["resyncs"] += 1
+                    stats["resync_tokens"] += int(repair_tokens.shape[1])
+                    stats["full_resync_tokens"] += int(generated.shape[1])
+                    stats["resync_saved_tokens"] = max(0, int(stats["full_resync_tokens"]) - int(stats["resync_tokens"]))
                 stop_after_append = True
                 break
 

@@ -701,9 +701,10 @@ python bench/bench_speculative_decode.py \
 
 Latest V100 row: target greedy and speculative outputs match for 8/8 new
 tokens, the 0.1B draft proposes 9 tokens, accepts 7, corrects 1, resyncs once,
-and reports acceptance `0.7777777777777778`. Latency is not yet a win
-(`0.81x` of target greedy), so the next optimization is draft selection and
-reducing block-verify/resync overhead.
+replays 3 cache-resync tokens instead of 11 full-prefix tokens, and reports
+acceptance `0.7777777777777778`. The short V100 row now reaches `2.1079x`
+speedup over target greedy; next work is validating longer prompts and better
+draft/block-size choices.
 
 ## HF RL / ZeRO training smoke
 
@@ -874,8 +875,8 @@ The next optimization work should focus on **HF recurrent decode**:
   slower than fp16.
 - Real-draft HF speculative benchmark is in place; V100 0.1B draft -> 0.4B
   target matches target greedy for 8/8 new tokens with 7/9 accepted proposals
-  and one correction/resync, but is still slower than target greedy until the
-  verification path is optimized.
+  and one correction/resync; cached-prefix resync saves 8 token replays and the
+  short V100 row reaches `2.1079x` speedup over target greedy.
 - Benchmark gap analysis is in place and currently identifies decode throughput
   as the active optimization gap.
 - Benchmark check gate is in place: current regression gate passes, target gate
