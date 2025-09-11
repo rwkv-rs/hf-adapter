@@ -39,6 +39,19 @@ not just the current HF-first PR:
    as the draft model. DFlash and deeper speculative/flash serving work can stay
    as follow-up projects.
 
+Benchmark comparisons must separate engine performance from model quality:
+
+- Albatross is the high-performance RWKV inference-engine reference. Compare it
+  against this repository on the same checkpoint, hardware, dtype, batch size,
+  prompt length, decode length, and cache policy. Track prefill tok/s, decode
+  tok/s, aggregate tok/s, latency percentiles, memory footprint, peak VRAM,
+  state-cache reuse/hit rate, and dynamic-batch behavior.
+- Qwen3.5 is the model-quality target. The overall model-level goal is to
+  exceed comparable Qwen3.5 baselines on instruction quality, reasoning, math,
+  code, multilingual/Chinese, long-context, and RL/PEFT training workflows. Do
+  not treat an inference-engine speed win as proof of beating Qwen3.5 quality;
+  require explicit evaluation rows and reproducible prompts/datasets.
+
 The final implementation should approach the performance, speed, precision, and memory usage of the official RWKV-LM path and Albatross path across different batch sizes.
 
 ### 1. HF Transformers Track
