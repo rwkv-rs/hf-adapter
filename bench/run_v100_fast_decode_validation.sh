@@ -16,7 +16,9 @@
 #   LARGER_72_MAX_NEW_TOKENS, LARGER_72_FAST_TOKEN_BACKEND,
 #   RUN_133B_MODEL_SMOKE, LARGER_133_HF_DIR, LARGER_133_PTH,
 #   LARGER_133_MAX_NEW_TOKENS, LARGER_133_FAST_TOKEN_BACKEND,
-#   RUN_DEVICE_MAP_SMOKE, DEVICE_MAP_MAX_NEW_TOKENS, RESULTS, LOG_DIR
+#   RUN_DEVICE_MAP_SMOKE, DEVICE_MAP_MAX_NEW_TOKENS,
+#   RUN_SPECULATIVE_BENCH, SPEC_TARGET_HF_DIR, SPEC_DRAFT_HF_DIR,
+#   SPEC_MAX_NEW_TOKENS, SPEC_DRAFT_TOKENS, RESULTS, LOG_DIR
 set -euo pipefail
 
 export RWKV_V7_ON="${RWKV_V7_ON:-1}"
@@ -68,6 +70,11 @@ LARGER_133_MAX_NEW_TOKENS="${LARGER_133_MAX_NEW_TOKENS:-2}"
 LARGER_133_FAST_TOKEN_BACKEND="${LARGER_133_FAST_TOKEN_BACKEND:-native_jit}"
 RUN_DEVICE_MAP_SMOKE="${RUN_DEVICE_MAP_SMOKE:-auto}"
 DEVICE_MAP_MAX_NEW_TOKENS="${DEVICE_MAP_MAX_NEW_TOKENS:-4}"
+RUN_SPECULATIVE_BENCH="${RUN_SPECULATIVE_BENCH:-auto}"
+SPEC_TARGET_HF_DIR="${SPEC_TARGET_HF_DIR:-/home/data/wangyue/models/rwkv7/rwkv7-g1d-0.4b-hf}"
+SPEC_DRAFT_HF_DIR="${SPEC_DRAFT_HF_DIR:-/home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf}"
+SPEC_MAX_NEW_TOKENS="${SPEC_MAX_NEW_TOKENS:-8}"
+SPEC_DRAFT_TOKENS="${SPEC_DRAFT_TOKENS:-4}"
 RESULTS="${RESULTS:-bench/results.jsonl}"
 LOG_DIR="${LOG_DIR:-bench/logs}"
 
@@ -102,6 +109,14 @@ should_run_device_map_smoke() {
   [[ "${mode}" == "auto" ]] && has_two_cuda_devices
 }
 
+should_run_speculative_bench() {
+  local mode="$1"
+  local target_hf_dir="$2"
+  local draft_hf_dir="$3"
+  [[ "${mode}" == "1" || "${mode}" == "true" ]] && return 0
+  [[ "${mode}" == "auto" && -d "${target_hf_dir}" && -d "${draft_hf_dir}" ]]
+}
+
 run_larger_smoke() {
   local hf_dir="$1"
   local pth="$2"
@@ -131,6 +146,7 @@ run_larger_smoke() {
   echo "larger_72_smoke=${RUN_72B_MODEL_SMOKE} larger_72_hf_dir=${LARGER_72_HF_DIR} larger_72_pth=${LARGER_72_PTH} larger_72_max_new_tokens=${LARGER_72_MAX_NEW_TOKENS} larger_72_fast_token_backend=${LARGER_72_FAST_TOKEN_BACKEND}"
   echo "larger_133_smoke=${RUN_133B_MODEL_SMOKE} larger_133_hf_dir=${LARGER_133_HF_DIR} larger_133_pth=${LARGER_133_PTH} larger_133_max_new_tokens=${LARGER_133_MAX_NEW_TOKENS} larger_133_fast_token_backend=${LARGER_133_FAST_TOKEN_BACKEND}"
   echo "device_map_smoke=${RUN_DEVICE_MAP_SMOKE} device_map_max_new_tokens=${DEVICE_MAP_MAX_NEW_TOKENS}"
+  echo "speculative_bench=${RUN_SPECULATIVE_BENCH} spec_target_hf_dir=${SPEC_TARGET_HF_DIR} spec_draft_hf_dir=${SPEC_DRAFT_HF_DIR} spec_max_new_tokens=${SPEC_MAX_NEW_TOKENS} spec_draft_tokens=${SPEC_DRAFT_TOKENS}"
   echo "results=${RESULTS} profile_out=${PROFILE_OUT}"
 
   run python tests/test_fast_decode_api.py \
@@ -513,6 +529,20 @@ run_larger_smoke() {
     run_larger_smoke "${LARGER_133_HF_DIR}" "${LARGER_133_PTH}" "13.3b" "${LARGER_133_MAX_NEW_TOKENS}" "${LARGER_133_FAST_TOKEN_BACKEND}"
   else
     echo "SKIP 13.3B larger-model smoke: RUN_133B_MODEL_SMOKE=${RUN_133B_MODEL_SMOKE} LARGER_133_HF_DIR=${LARGER_133_HF_DIR} LARGER_133_PTH=${LARGER_133_PTH}"
+  fi
+
+  if should_run_speculative_bench "${RUN_SPECULATIVE_BENCH}" "${SPEC_TARGET_HF_DIR}" "${SPEC_DRAFT_HF_DIR}"; then
+    run python bench/bench_speculative_decode.py \
+      --target-model "${SPEC_TARGET_HF_DIR}" \
+      --draft-model "${SPEC_DRAFT_HF_DIR}" \
+      --dtype "${DTYPE}" \
+      --device "${DEVICE}" \
+      --attn-mode fused_recurrent \
+      --max-new-tokens "${SPEC_MAX_NEW_TOKENS}" \
+      --draft-tokens "${SPEC_DRAFT_TOKENS}" \
+      --results "${RESULTS}"
+  else
+    echo "SKIP speculative decode benchmark: RUN_SPECULATIVE_BENCH=${RUN_SPECULATIVE_BENCH} SPEC_TARGET_HF_DIR=${SPEC_TARGET_HF_DIR} SPEC_DRAFT_HF_DIR=${SPEC_DRAFT_HF_DIR}"
   fi
 
   run python bench/profile_decode.py \
