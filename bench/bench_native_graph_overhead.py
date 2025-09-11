@@ -108,6 +108,8 @@ def run_one(args: argparse.Namespace, tok, model, batch_size: int) -> dict[str, 
     fixed = ids[:, -1:]
 
     with torch.inference_mode():
+        if hasattr(model, "rwkv7_reset_native_graph_cache_stats"):
+            model.rwkv7_reset_native_graph_cache_stats()
         out = model(ids, use_cache=True, logits_to_keep=1)
         base_state = out.past_key_values
         token = fixed if args.fixed_token else out.logits[:, -1:].argmax(dim=-1)
@@ -164,6 +166,16 @@ def run_one(args: argparse.Namespace, tok, model, batch_size: int) -> dict[str, 
 
         api_wall_ms = wall_time_ms(api_loop, args.device)
 
+    cache_stats = {}
+    if hasattr(model, "rwkv7_native_graph_cache_stats"):
+        cache_stats = model.rwkv7_native_graph_cache_stats()
+    cache_hit_rate = cache_stats.get("hit_rate") if isinstance(cache_stats, dict) else None
+    cache_batch_sizes = cache_stats.get("batch_sizes") if isinstance(cache_stats, dict) else None
+    cache_requests = cache_stats.get("requests") if isinstance(cache_stats, dict) else None
+    cache_hits = cache_stats.get("hits") if isinstance(cache_stats, dict) else None
+    cache_misses = cache_stats.get("misses") if isinstance(cache_stats, dict) else None
+    cache_evictions = cache_stats.get("evictions") if isinstance(cache_stats, dict) else None
+
     denom = float(args.steps)
     wall_ms_per_token = wall_ms / denom
     api_ms_per_token = api_wall_ms / denom
@@ -192,6 +204,13 @@ def run_one(args: argparse.Namespace, tok, model, batch_size: int) -> dict[str, 
         "manual_decode_tokps_total": round(1000.0 * batch_size / wall_ms_per_token, 1) if wall_ms_per_token > 0 else None,
         "api_decode_tokps_total": round(1000.0 * batch_size / api_ms_per_token, 1) if api_ms_per_token > 0 else None,
         "copy_share_of_manual_wall": round((copy_ms / denom) / wall_ms_per_token, 4) if wall_ms_per_token > 0 else None,
+        "native_graph_cache_requests": cache_requests,
+        "native_graph_cache_hits": cache_hits,
+        "native_graph_cache_misses": cache_misses,
+        "native_graph_cache_evictions": cache_evictions,
+        "native_graph_cache_hit_rate": round(float(cache_hit_rate), 4) if cache_hit_rate is not None else None,
+        "native_graph_cache_batch_sizes": cache_batch_sizes,
+        "native_graph_cache_stats": cache_stats,
         "peak_vram_mb": peak_mb(args.device),
     }
 
