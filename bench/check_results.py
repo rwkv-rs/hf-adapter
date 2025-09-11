@@ -65,6 +65,8 @@ def check_present(report: dict[str, Any], failures: list[str]) -> None:
         fail(failures, "missing projection_lora row")
     if not report.get("larger_model_smoke"):
         fail(failures, "missing larger_model_smoke row")
+    if not report.get("device_map_smoke"):
+        fail(failures, "missing device_map_smoke row")
 
 
 def index_by(rows: list[dict[str, Any]], key: str) -> dict[Any, dict[str, Any]]:
@@ -264,6 +266,23 @@ def check_common(report: dict[str, Any], failures: list[str], args: argparse.Nam
         if row.get("fast_token_backend_effective") not in {"native_graph", "native_jit", "fla"}:
             fail(failures, f"larger_model_smoke {label} missing effective fast-token backend: {row.get('fast_token_backend_effective')}")
 
+    device_map = report.get("device_map_smoke") or {}
+    if device_map.get("status") != "pass":
+        fail(failures, f"device_map_smoke did not pass: {device_map.get('status')}")
+    elif args.require_device_map_smoke:
+        if int(device_map.get("device_count") or 0) < args.min_device_map_cuda_devices:
+            fail(failures, f"device_map_smoke device_count below floor: {device_map.get('device_count')} < {args.min_device_map_cuda_devices}")
+        if device_map.get("multi_cuda_device_map") is not True:
+            fail(failures, f"device_map_smoke did not detect multi CUDA device map: {device_map}")
+        if device_map.get("logits_finite") is not True:
+            fail(failures, "device_map_smoke produced non-finite logits")
+        if int(device_map.get("generated_tokens") or 0) < args.min_device_map_new_tokens:
+            fail(failures, f"device_map_smoke generated too few tokens: {device_map.get('generated_tokens')} < {args.min_device_map_new_tokens}")
+        if device_map.get("generated_equal_reference") is not True:
+            fail(failures, f"device_map_smoke does not match single-device reference: {device_map.get('generated_equal_reference')}")
+        if device_map.get("last_fast_token_backend") is not None:
+            fail(failures, f"device_map_smoke should skip single-device fast-token backend, got {device_map.get('last_fast_token_backend')}")
+
     if args.require_quantization:
         quant_rows = report.get("quantization") or []
         by_mode = {row.get("quantization"): row for row in quant_rows}
@@ -356,6 +375,10 @@ def main() -> int:
     ap.add_argument("--min-larger-model-new-tokens", type=int, default=2)
     ap.add_argument("--min-larger-model-hidden-size", type=int, default=1024)
     ap.add_argument("--min-larger-model-layers", type=int, default=24)
+    ap.add_argument("--require-device-map-smoke", action="store_true", default=True,
+                    help="Require passing HF multi-GPU device_map generate smoke rows")
+    ap.add_argument("--min-device-map-cuda-devices", type=int, default=2)
+    ap.add_argument("--min-device-map-new-tokens", type=int, default=2)
     ap.add_argument("--require-quantization", action="store_true",
                     help="Require passing 8bit/4bit quantization benchmark rows")
     ap.add_argument("--min-quant-decode-ratio", type=float, default=1.0)
