@@ -26,7 +26,7 @@
 - **多卡方向**：2 x V100 手动 `device_map` PP generate smoke 已通过；ZeRO-2/3 配置有结构测试。
 - **大模型**：0.4B / 1.5B / 2.9B / 7.2B / 13.3B 已完成 HF 转换和 V100 load/forward/generate smoke rows。
 - **投机解码**：0.1B draft -> 0.4B target V100 smoke 已保持 target greedy 一致，并用 cached-prefix resync 达到短样例约 `2.1x` target-greedy speedup。
-- **experimental native PyTorch**：已保留为非默认长期底座，覆盖 FLA-free bsz=1 和 batched forward / incremental cache 对齐测试；只作为 upstream / AMD / CPU fallback 方向，不替代当前 wrapper。
+- **experimental native PyTorch**：已保留为非默认长期底座，覆盖 FLA-free bsz=1、batched forward / incremental cache 对齐测试，并把 cached decode 接到 optional native_jit；V100 fp32 smoke 里 native_model cached decode 从约 `61.7 tok/s` 到 `115.5 tok/s`；只作为 upstream / AMD / CPU fallback 方向，不替代当前 wrapper。
 - **量化可用性**：bitsandbytes 8bit/4bit 可加载生成，默认 `memory` policy 跳过 `lm_head` 与 RWKV 小 rank LoRA projection，V100 显存从 fp16 `364.4MB` 降到 8bit `283.4MB`、4bit `242.9MB`。新增 `decode_hot` policy 可继续把 attention r/k/v/o projection 保持 dense，在 V100 4bit smoke 中把 cached decode 从约 `32 tok/s` 提到约 `37 tok/s`，footprint 约 `283MB`，作为量化速度/显存折中探针。
 
 ## 3. 当前最大缺口
