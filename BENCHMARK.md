@@ -228,7 +228,7 @@ When the V100 server is reachable, run the committed bundle from the repository 
 ```
 
 It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_token`,
-`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `tests/test_device_map_generate.py` when at least two CUDA devices are visible, `bench_fast_token_warmup.py`, `bench_native_graph_overhead.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `bench_fused_projection.py`, `bench_fused_shift_mix.py`, `bench_fused_recurrent.py`, `bench_native_graph_fused_recurrent.py`, `bench_larger_model_smoke.py` when the 0.4B/1.5B/2.9B/7.2B/13.3B paths exist, `bench_speculative_decode.py` when the target/draft HF dirs exist, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
+`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `tests/test_device_map_generate.py` when at least two CUDA devices are visible, `bench_fast_token_warmup.py`, `bench_native_graph_overhead.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `bench_fused_projection.py`, `bench_fused_shift_mix.py`, `bench_fused_recurrent.py`, `bench_native_graph_fused_recurrent.py`, `bench_native_quant_gemv.py`, `bench_larger_model_smoke.py` when the 0.4B/1.5B/2.9B/7.2B/13.3B paths exist, `bench_speculative_decode.py` when the target/draft HF dirs exist, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
 then writes logs under `bench/logs/`. The bundle now also validates the
 `native_jit` backend plus fixed-batch and dynamic `native_graph` fast-token
 backends, and appends native HF speed rows before running the target gate. Use
@@ -630,6 +630,33 @@ tokens match `32/32`. End-to-end graph replay is currently neutral
 (`1.0033x`, `4.2878ms` fused vs `4.3018ms` baseline), so this remains opt-in;
 the isolated recurrent kernel is fast, but the captured full-token graph still
 needs deeper fusion around the larger projection/LoRA bottleneck.
+
+## Native W8 dequant-GEMV prototype
+
+`rwkv7_hf/native_quant.py` contains the first RWKV-native W8 serving prototype:
+row-wise int8 weight packing plus a fused dequant GEMV/GEMM. This is separate
+from bitsandbytes; it is intended to become the native quant fast path after the
+kernel is fast enough.
+
+```bash
+python bench/bench_native_quant_gemv.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --batch-size 1 \
+  --layers 0 1 11 \
+  --modules attn.r_proj attn.k_proj attn.v_proj attn.o_proj ffn.key ffn.value \
+  --results bench/results.jsonl
+```
+
+Latest V100 prototype row: `triton_int8_rowwise_gemv` reduces the sampled
+projection/FFN weight footprint to `0.502x` fp16 and keeps output cosine high
+(`min_cosine=0.9999172`, `max_abs_diff=0.044921875`), but the first Triton
+kernel is still slower (`0.3816x`, `0.05409ms` vs `0.02064ms`). This confirms
+the native W8 packing direction while showing the kernel still needs a more
+optimized/tensor-core-aware implementation before it can replace bnb or fp16.
 
 ## Larger converted-model smoke
 
