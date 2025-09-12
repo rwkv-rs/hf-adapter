@@ -163,6 +163,86 @@ def assert_albatross_rows_are_parsed_and_compared(tmpdir: Path) -> None:
     assert any("Albatross A/B decode comparison present" in item for item in report["next_focus"])
 
 
+def assert_quantization_best_variants_are_reported(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "quantization",
+            "backend": "hf_adapter",
+            "quantization": "none",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "decode_tokps": 200.0,
+            "model_footprint_mb": 400.0,
+            "peak_vram_mb": 600.0,
+        },
+        {
+            "axis": "quantization",
+            "backend": "hf_adapter",
+            "quantization": "4bit",
+            "quant_skip_policy": "memory",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "decode_tokps": 40.0,
+            "model_footprint_mb": 240.0,
+            "peak_vram_mb": 300.0,
+        },
+        {
+            "axis": "quantization",
+            "backend": "hf_adapter",
+            "quantization": "4bit",
+            "quant_skip_policy": "decode_hot",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "decode_tokps": 80.0,
+            "model_footprint_mb": 280.0,
+            "peak_vram_mb": 340.0,
+        },
+        {
+            "axis": "quantization",
+            "backend": "hf_adapter",
+            "quantization": "8bit",
+            "quant_skip_policy": "memory",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "decode_tokps": 50.0,
+            "model_footprint_mb": 300.0,
+            "peak_vram_mb": 360.0,
+        },
+    ]
+    path = tmpdir / "quant_results.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    best_by_mode = {row["quantization"]: row for row in report["quantization_best_variants"]}
+    assert best_by_mode["4bit"]["best_speed"]["quant_skip_policy"] == "decode_hot"
+    assert best_by_mode["4bit"]["best_memory"]["quant_skip_policy"] == "memory"
+    assert best_by_mode["4bit"]["decode_ratio_vs_fp16"] == 0.4
+    assert best_by_mode["4bit"]["footprint_ratio_vs_fp16"] == 0.7
+    assert best_by_mode["8bit"]["decode_ratio_vs_fp16"] == 0.25
+    assert any("best 4bit quant variant policy=decode_hot" in item for item in report["next_focus"])
+
+
 def main() -> int:
     rows = [
         {
@@ -249,6 +329,7 @@ def main() -> int:
         assert "candidate layout rows missing" in failed.stdout
         assert_training_smoke_survives_inference_dtype_filter(tmpdir)
         assert_albatross_rows_are_parsed_and_compared(tmpdir)
+        assert_quantization_best_variants_are_reported(tmpdir)
     args = argparse.Namespace(device="V100", dtype="fp16")
     speeds = latest_by_layout(fast_speed_rows(loaded, args))
     micros = latest_by_layout(fast_micro_rows(loaded, args))

@@ -666,6 +666,11 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   Short benchmark rows show model footprint dropping from `364.4 MB` fp16 to
   `283.4 MB` 8-bit and `242.9 MB` 4-bit; selected decode reaches `16.3 tok/s`
   for 8-bit and `32.6 tok/s` for 4-bit while preserving the greedy next token.
+  The hybrid `decode_hot` policy keeps attention projections dense and improves
+  selected decode to `27.0 tok/s` for 8-bit and `39.1 tok/s` for 4-bit, with
+  footprint still below fp16 (`310.4 MB` / `283.4 MB`). Analyzer output now
+  reports these as best W8/W4 variants while keeping the memory policy as the
+  canonical footprint row.
   This is still below fp16 native-graph `217.2 tok/s`, so production
   quantization still needs a fused/native quantized projection path.
 - Native JIT / CUDA graph prototype: V100 fp16 native logits match HF logits (`cosine≈1.00000024`, max_abs `0.03125`), graph-vs-JIT greedy decode is `16/16` identical, native JIT reaches `103.52 tok/s`, and native CUDA graph reaches `254.33 tok/s`. The same reduced-launch idea is now available through HF `rwkv7_forward_token` via `RWKV7_FAST_TOKEN_BACKEND=native_graph` for fixed bsz and dynamic active-batch sizes; captured runners are retained in a per-model LRU controlled by `RWKV7_NATIVE_GRAPH_CACHE_SIZE` and can be released with `rwkv7_clear_native_graph_cache()`.
