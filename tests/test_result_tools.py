@@ -243,6 +243,64 @@ def assert_quantization_best_variants_are_reported(tmpdir: Path) -> None:
     assert any("best 4bit quant variant policy=decode_hot" in item for item in report["next_focus"])
 
 
+def assert_native_model_smoke_is_reported(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "native_model_smoke",
+            "backend": "hf_native_model",
+            "status": "pass",
+            "dtype": "fp32",
+            "device": "Tesla V100-PCIE-32GB",
+            "model_name": "rwkv7-g1d-0.1b-hf",
+            "prompt_count": 3,
+            "forward_min_cos": 1.0,
+            "forward_max_abs": 0.000038,
+            "forward_argmax_match": 3,
+            "forward_argmax_total": 3,
+            "batch_size": 3,
+            "batch_prompt_tokens": 16,
+            "batch_forward_min_cos": 0.999999,
+            "batch_forward_max_abs": 0.000027,
+            "batch_forward_argmax_match": 3,
+            "batch_forward_argmax_total": 3,
+            "batch_decode_max_abs": 0.000019,
+            "batch_decode_argmax_match": 3,
+            "batch_decode_argmax_total": 3,
+            "batch_cache_shape_ok": True,
+            "native_decode_backend": "native_jit",
+            "generate_tokens": 16,
+            "generate_token_match": 16,
+            "generate_token_total": 16,
+            "incremental_cache": True,
+        }
+    ]
+    path = tmpdir / "native_model_results.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    assert report["native_model_smoke"]["status"] == "pass"
+    assert report["native_model_smoke"]["native_decode_backend"] == "native_jit"
+    assert report["native_model_smoke"]["generate_token_match"] == 16
+    assert any("experimental native_model smoke passes" in item for item in report["next_focus"])
+
+
 def main() -> int:
     rows = [
         {
@@ -330,6 +388,7 @@ def main() -> int:
         assert_training_smoke_survives_inference_dtype_filter(tmpdir)
         assert_albatross_rows_are_parsed_and_compared(tmpdir)
         assert_quantization_best_variants_are_reported(tmpdir)
+        assert_native_model_smoke_is_reported(tmpdir)
     args = argparse.Namespace(device="V100", dtype="fp16")
     speeds = latest_by_layout(fast_speed_rows(loaded, args))
     micros = latest_by_layout(fast_micro_rows(loaded, args))
