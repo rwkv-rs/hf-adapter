@@ -83,6 +83,7 @@
    - 已跑通 PEFT LoRA backward、HF Trainer 1-step、TRL `SFTTrainer` 1-step
    - 已新增 TRL `DPOTrainer` / `GRPOTrainer` LoRA 1-step smoke 脚本，并补 `configs/deepspeed/zero2.json` / `zero3.json` 作为 HF Trainer ZeRO-2/3 预设
    - 已把 HF Trainer / TRL SFT / DPO / GRPO smoke 扩大到可配置 batch size、gradient accumulation，并校验 LoRA/trainable 参数更新；V100 fp32 已通过 Trainer/SFT batch=2 grad_accum=2 和 DPO/GRPO batch=2。fp16 batch/gradaccum 曾暴露 grad_norm NaN 且参数未更新，因此 smoke 默认 fp32、保留 `--train-dtype fp16` 显式检查路径；训练 smoke 现可写入 `training_smoke` JSONL telemetry，`bench/analyze_results.py` / `bench/check_results.py` 会汇总并校验 trainable delta；继续扩大到真实 SFT 小数据和训练吞吐 benchmark
+   - 当前新增 `tests/test_deepspeed_training_smoke.py`，把 ZeRO-2/ZeRO-3 从“配置存在”推进到“HF Trainer + PEFT LoRA 可执行 smoke”：会校验有限 loss、LoRA/trainable 参数实际更新，并写入 `deepspeed_training_smoke` telemetry；无卡/无 DeepSpeed 环境可用 `--optional` 记录 skip，真实 V100 双卡 pass rows 等 GPU 恢复后补入。
    - 当前 smoke 明确 `TORCHDYNAMO_DISABLE=1`，并关闭 `use_l2warp` 避免 Trainer loss 原地缩放与 L2Wrap backward 冲突
 5. 性能路径：
    - 继续 profile 单 token decode
