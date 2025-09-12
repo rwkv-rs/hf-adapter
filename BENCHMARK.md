@@ -228,7 +228,7 @@ When the V100 server is reachable, run the committed bundle from the repository 
 ```
 
 It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_token`,
-`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `tests/test_device_map_generate.py` when at least two CUDA devices are visible, `bench_fast_token_warmup.py`, `bench_native_graph_overhead.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `bench_fused_projection.py`, `bench_larger_model_smoke.py` when the 0.4B/1.5B/2.9B/7.2B/13.3B paths exist, `bench_speculative_decode.py` when the target/draft HF dirs exist, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
+`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `tests/test_device_map_generate.py` when at least two CUDA devices are visible, `bench_fast_token_warmup.py`, `bench_native_graph_overhead.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `bench_fused_projection.py`, `bench_fused_shift_mix.py`, `bench_larger_model_smoke.py` when the 0.4B/1.5B/2.9B/7.2B/13.3B paths exist, `bench_speculative_decode.py` when the target/draft HF dirs exist, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
 then writes logs under `bench/logs/`. The bundle now also validates the
 `native_jit` backend plus fixed-batch and dynamic `native_graph` fast-token
 backends, and appends native HF speed rows before running the target gate. Use
@@ -553,6 +553,31 @@ slower (`0.8429x` current linears, `0.11798ms` vs `0.09945ms`). This is useful
 negative evidence: the first integration target should be a more optimized
 shape-specialized/tensor-core-aware projection or a deeper fused time-mix path,
 not this initial GEMV kernel.
+
+## Fused shift-mix prototype
+
+`rwkv7_hf/fused_time_mix.py` contains an optional Triton prototype for the six
+attention time-mix inputs used before RWKV-7 R/W/K/V/A/G projections. It is
+measured separately because the native-graph decode path is launch-sensitive:
+
+```bash
+python bench/bench_fused_shift_mix.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --batch-size 1 \
+  --input-rank 2 \
+  --layers 0 1 11 \
+  --results bench/results.jsonl
+```
+
+Latest V100 prototype row: `triton_attn_shift_mix` is exact (`max_abs_diff=0`)
+with min cosine `0.9999999`, but it is slower than current torch pointwise ops
+(`0.7715x`, `0.13416ms` vs `0.10351ms`). This rules out integrating a standalone
+shift-mix kernel; the next fused fp16 attempt should combine shift-mix with the
+following projection/LoRA/state-update work so one launch does more useful math.
 
 ## Larger converted-model smoke
 

@@ -67,11 +67,18 @@ serving speed.
      as `fused_projection_proto`. The first V100 prototype is correct but still
      slower than three cuBLAS-backed linears, so it is not integrated into the
      HF fast path yet.
-4. Native-graph integration for the fused projection path.
-5. Fused recurrent state update.
-6. Native W8 pack plus fused int8 dequant-GEMV.
-7. Native W4 pack plus fused int4 dequant-GEMV.
-8. V100 + 5070/newer-GPU benchmark matrix.
+4. Fused fp16 attention shift-mix prototype.
+   - `rwkv7_hf.fused_time_mix.fused_attn_shift_mix()` provides an optional
+     Triton single-launch prototype for the six decode time-mix inputs.
+   - `bench/bench_fused_shift_mix.py` records `fused_shift_mix_proto`. The
+     first V100 row is exact but slower than the current torch pointwise ops,
+     so shift-mix alone should stay telemetry; the next implementation should
+     fuse deeper across shift-mix + projection/LoRA/state update.
+5. Native-graph integration for a profitable deeper fused fp16 path.
+6. Fused recurrent state update.
+7. Native W8 pack plus fused int8 dequant-GEMV.
+8. Native W4 pack plus fused int4 dequant-GEMV.
+9. V100 + 5070/newer-GPU benchmark matrix.
 
 ## Backend dispatch requirement
 
