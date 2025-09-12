@@ -781,6 +781,8 @@ V100 rows show:
 | speed_mem memory ratio | ~1.00x official | <=1.10x | PASS |
 | 8-bit / 4-bit footprint ratio | 0.76x / 0.65x fp16 | lower is better | PASS smoke |
 | 8-bit / 4-bit decode ratio | 0.24x / 0.67x fp16 | >=1.00x | GAP |
+| Albatross V100 decode ratio | HF native-graph `0.32x`-`0.47x` Albatross faster3a for bsz=1/2/4/8 | approach Albatross | GAP |
+| Albatross V100 prefill ratio | HF `0.32x` Albatross faster3a for B=1,T=512 | approach Albatross | GAP |
 | 0.4B converted-model smoke | hidden=1024, layers=24, generated=4, backend=native_graph | load + generate | PASS |
 | 1.5B converted-model smoke | hidden=2048, layers=24, generated=2, backend=native_graph | load + generate | PASS |
 | 2.9B converted-model smoke | hidden=2560, layers=32, generated=2, backend=native_graph | load + generate | PASS |
@@ -799,6 +801,34 @@ HF `device_map` row validates the multi-GPU pipeline-parallel direction on
 2 x V100 by splitting the 0.1B model at layer 6; normal cached `generate()`
 keeps finite logits, bypasses the single-device fast-token backend, and matches
 the single-device greedy tail.
+
+### Albatross A/B baseline
+
+`bench/bench_albatross.py` ingests Albatross `RESULT B=... T=...` rows into the
+same JSONL report used by the HF benchmarks:
+
+```bash
+python bench/bench_albatross.py \
+  --engine faster3a \
+  --engine-config wkv=fp32io16 \
+  --model /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-20260129-ctx8192.pth \
+  --model-size-label 0.1b \
+  --device-name 'Tesla V100-PCIE-32GB' \
+  --cases '1x1,1x2,1x4,1x8,1x16,1x32,1x64,1x128,1x256,1x512,2x1,4x1,8x1,16x1,32x1,2x2,4x4,8x8,16x16' \
+  --warmup 1 \
+  --iters 3 \
+  --results bench/results.jsonl \
+  -- --wkv fp32io16
+```
+
+On V100, Albatross faster3a's default fp16 WKV kernel uses `cp.async` and does
+not compile for sm70, so the recorded V100 baseline uses `--wkv fp32io16`.
+Latest 0.1B rows show Albatross decode `741.5` / `1354.5` / `2368.9` /
+`3300.6` tok/s for bsz=1/2/4/8 and B=1,T=512 prefill `39472.6` tok/s.
+The analyzer now reports HF native-graph ratios against those rows: decode
+`0.34` / `0.32` / `0.36` / `0.47` for bsz=1/2/4/8 and prefill `0.32` for
+B=1,T=512. This makes the Albatross gap explicit and keeps the next wrapper
+optimization target measurable.
 
 ## Benchmark regression and target gates
 

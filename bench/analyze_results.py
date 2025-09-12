@@ -220,6 +220,93 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         if r.get("axis") == "training_smoke" and r.get("backend") == "hf_adapter"
     ]
     training_latest = latest_by_key(training_rows, lambda r: r.get("trainer_backend"))
+    albatross_rows = [
+        r for r in rows
+        if r.get("axis") == "albatross_speed" and r.get("backend") == "albatross"
+    ]
+    albatross_latest = latest_by_key(
+        albatross_rows,
+        lambda r: (
+            r.get("engine"),
+            r.get("model_size_label") or r.get("model_path"),
+            r.get("batch_size"),
+            r.get("tokens_per_sequence"),
+        ),
+    )
+    albatross_best_by_case: dict[tuple[int, int], dict[str, Any]] = {}
+    for row in albatross_latest:
+        if row.get("batch_size") is None or row.get("tokens_per_sequence") is None:
+            continue
+        key = (int(row["batch_size"]), int(row["tokens_per_sequence"]))
+        old = albatross_best_by_case.get(key)
+        if old is None or float(row.get("tokps_p50") or 0.0) >= float(old.get("tokps_p50") or 0.0):
+            albatross_best_by_case[key] = row
+
+    hf_decode_by_bsz: dict[int, dict[str, Any]] = {}
+    for row in batch_latest:
+        if row.get("decode_api") != "rwkv7_forward_token" or row.get("batch_size") is None:
+            continue
+        bsz = int(row["batch_size"])
+        old = hf_decode_by_bsz.get(bsz)
+        if old is None or int(row.get("_lineno", 0)) >= int(old.get("_lineno", 0)):
+            hf_decode_by_bsz[bsz] = row
+
+    hf_prefill_by_case: dict[tuple[int, int], dict[str, Any]] = {}
+    for row in rows:
+        if row.get("backend") != "hf_adapter":
+            continue
+        tokps = row.get("prefill_tokps_total")
+        prompt_tokens = row.get("prompt_tokens")
+        batch_size = row.get("batch_size")
+        if tokps is not None and prompt_tokens is not None and batch_size is not None:
+            key = (int(batch_size), int(prompt_tokens))
+        elif row.get("axis") == "speed_mem" and row.get("prefill_tokps") is not None and prompt_tokens is not None:
+            tokps = row.get("prefill_tokps")
+            key = (1, int(prompt_tokens))
+        else:
+            continue
+        old = hf_prefill_by_case.get(key)
+        if old is None or int(row.get("_lineno", 0)) >= int(old.get("_lineno", 0)):
+            hf_prefill_by_case[key] = row
+
+    albatross_decode_comparison = []
+    albatross_prefill_comparison = []
+    for (bsz, tokens), alb in sorted(albatross_best_by_case.items()):
+        alb_tokps = num(alb, "tokps_p50")
+        if tokens == 1:
+            hf = hf_decode_by_bsz.get(bsz)
+            hf_tokps = num(hf, "decode_tokps_total")
+            if hf is not None and hf_tokps is not None:
+                albatross_decode_comparison.append(
+                    {
+                        "batch_size": bsz,
+                        "hf_decode_api": hf.get("decode_api"),
+                        "hf_fast_token_backend_effective": fast_token_backend_effective(hf),
+                        "hf_tokps_total": round(hf_tokps, 4),
+                        "albatross_engine": alb.get("engine"),
+                        "albatross_engine_config": alb.get("engine_config"),
+                        "albatross_tokps_p50": round(alb_tokps, 4) if alb_tokps is not None else None,
+                        "hf_vs_albatross_ratio": round(ratio(hf_tokps, alb_tokps), 4) if alb_tokps else None,
+                    }
+                )
+            continue
+        hf = hf_prefill_by_case.get((bsz, tokens))
+        hf_tokps = num(hf, "prefill_tokps_total") if hf is not None else None
+        if hf_tokps is None and hf is not None:
+            hf_tokps = num(hf, "prefill_tokps")
+        if hf is not None and hf_tokps is not None:
+            albatross_prefill_comparison.append(
+                {
+                    "batch_size": bsz,
+                    "tokens_per_sequence": tokens,
+                    "hf_axis": hf.get("axis"),
+                    "hf_tokps_total": round(hf_tokps, 4),
+                    "albatross_engine": alb.get("engine"),
+                    "albatross_engine_config": alb.get("engine_config"),
+                    "albatross_tokps_p50": round(alb_tokps, 4) if alb_tokps is not None else None,
+                    "hf_vs_albatross_ratio": round(ratio(hf_tokps, alb_tokps), 4) if alb_tokps else None,
+                }
+            )
 
     native_rows = [r for r in rows if r.get("axis") == "native_decode" and r.get("backend") == "hf_native_jit"]
     best_native = max(
@@ -301,6 +388,39 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     for row in training_latest:
         if row.get("status") == "pass" and float(row.get("max_trainable_delta") or 0.0) <= 0.0:
             focus.append(f"training smoke did not update trainable params: {row.get('trainer_backend')}")
+
+    if not albatross_latest:
+        focus.append("Albatross A/B rows pending")
+    elif albatross_decode_comparison:
+        ratios = [
+            float(row["hf_vs_albatross_ratio"])
+            for row in albatross_decode_comparison
+            if row.get("hf_vs_albatross_ratio") is not None
+        ]
+        sizes = "/".join(str(row["batch_size"]) for row in albatross_decode_comparison)
+        if ratios:
+            focus.append(
+                f"Albatross A/B decode comparison present for bsz={sizes}; "
+                f"HF/Albatross ratio min={min(ratios):.2f} max={max(ratios):.2f}"
+            )
+        else:
+            focus.append(f"Albatross A/B decode rows present for bsz={sizes}; ratio pending")
+        prefill_ratios = [
+            float(row["hf_vs_albatross_ratio"])
+            for row in albatross_prefill_comparison
+            if row.get("hf_vs_albatross_ratio") is not None
+        ]
+        if prefill_ratios:
+            cases = "/".join(
+                f"{row['batch_size']}x{row['tokens_per_sequence']}"
+                for row in albatross_prefill_comparison
+            )
+            focus.append(
+                f"Albatross A/B prefill comparison present for cases={cases}; "
+                f"HF/Albatross ratio min={min(prefill_ratios):.2f} max={max(prefill_ratios):.2f}"
+            )
+    else:
+        focus.append("Albatross rows present; add matching HF decode/prefill cases for ratios")
 
     quant_pass_modes = {r.get("quantization") for r in quant_latest if r.get("status") == "pass"}
     if quant_rows and not {"8bit", "4bit"}.issubset(quant_pass_modes):
@@ -484,6 +604,34 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             )
             for r in training_latest
         ],
+        "albatross_speed": [
+            compact(
+                r,
+                [
+                    "_lineno",
+                    "engine",
+                    "engine_config",
+                    "status",
+                    "dtype",
+                    "device",
+                    "model_size_label",
+                    "checkpoint_sha256",
+                    "batch_size",
+                    "tokens_per_sequence",
+                    "tokens_total",
+                    "iters",
+                    "latency_p10_ms",
+                    "latency_p50_ms",
+                    "latency_p90_ms",
+                    "tokps_p50",
+                    "ms_per_token_p50",
+                    "peak_vram_mb",
+                ],
+            )
+            for r in albatross_latest
+        ],
+        "albatross_decode_comparison": albatross_decode_comparison,
+        "albatross_prefill_comparison": albatross_prefill_comparison,
         "quantization": [
             compact(
                 r,
@@ -604,6 +752,25 @@ def print_text(report: dict[str, Any]) -> None:
     print("\n## training_smoke")
     if report.get("training_smoke"):
         for row in report["training_smoke"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+
+    print("\n## albatross_speed")
+    if report.get("albatross_speed"):
+        for row in report["albatross_speed"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+    print("\n## albatross_decode_comparison")
+    if report.get("albatross_decode_comparison"):
+        for row in report["albatross_decode_comparison"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+    print("\n## albatross_prefill_comparison")
+    if report.get("albatross_prefill_comparison"):
+        for row in report["albatross_prefill_comparison"]:
             print(json.dumps(row, ensure_ascii=False))
     else:
         print("PENDING")
