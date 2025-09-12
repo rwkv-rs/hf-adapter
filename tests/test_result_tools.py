@@ -243,6 +243,115 @@ def assert_quantization_best_variants_are_reported(tmpdir: Path) -> None:
     assert any("best 4bit quant variant policy=decode_hot" in item for item in report["next_focus"])
 
 
+def assert_fused_backend_targets_are_reported(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "batch_sweep",
+            "backend": "hf_adapter",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 1,
+            "decode_api": "rwkv7_forward_token",
+            "fast_token_backend_effective": "native_graph",
+            "decode_tokps_total": 50.0,
+            "prompt_tokens": 512,
+            "prefill_tokps_total": 500.0,
+        },
+        {
+            "axis": "albatross_speed",
+            "backend": "albatross",
+            "engine": "faster3a",
+            "engine_config": "wkv=fp32io16",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "model_size_label": "0.1b",
+            "batch_size": 1,
+            "tokens_per_sequence": 1,
+            "tokps_p50": 100.0,
+        },
+        {
+            "axis": "albatross_speed",
+            "backend": "albatross",
+            "engine": "faster3a",
+            "engine_config": "wkv=fp32io16",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "model_size_label": "0.1b",
+            "batch_size": 1,
+            "tokens_per_sequence": 512,
+            "tokps_p50": 1000.0,
+        },
+        {
+            "axis": "quantization",
+            "backend": "hf_adapter",
+            "quantization": "none",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "decode_tokps": 100.0,
+            "model_footprint_mb": 400.0,
+        },
+        {
+            "axis": "quantization",
+            "backend": "hf_adapter",
+            "quantization": "8bit",
+            "quant_skip_policy": "decode_hot",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "decode_tokps": 90.0,
+            "model_footprint_mb": 280.0,
+        },
+        {
+            "axis": "quantization",
+            "backend": "hf_adapter",
+            "quantization": "4bit",
+            "quant_skip_policy": "decode_hot",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "decode_tokps": 120.0,
+            "model_footprint_mb": 200.0,
+        },
+    ]
+    path = tmpdir / "fused_backend_targets.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    targets = report["fused_backend_targets"]
+    assert targets["phase"] == "rwkv7_hf_fused_backend"
+    assert targets["albatross_decode"]["current_ratio_min"] == 0.5
+    assert targets["albatross_decode"]["p1_status"] == "GAP"
+    assert targets["albatross_prefill"]["current_ratio_min"] == 0.5
+    assert targets["albatross_prefill"]["p1_status"] == "GAP"
+    quant = {row["quantization"]: row for row in targets["quantization"]}
+    assert quant["8bit"]["decode_status"] == "GAP"
+    assert quant["8bit"]["footprint_status"] == "PASS"
+    assert quant["4bit"]["decode_status"] == "PASS"
+    assert quant["4bit"]["footprint_status"] == "PASS"
+    assert any("fused backend P1 pending" in item for item in report["next_focus"])
+    assert any("native fused 8bit pending" in item for item in report["next_focus"])
+
+
 def assert_quantization_model_sweep_does_not_override_canonical(tmpdir: Path) -> None:
     rows = [
         {
@@ -530,6 +639,7 @@ def main() -> int:
         assert_training_smoke_survives_inference_dtype_filter(tmpdir)
         assert_albatross_rows_are_parsed_and_compared(tmpdir)
         assert_quantization_best_variants_are_reported(tmpdir)
+        assert_fused_backend_targets_are_reported(tmpdir)
         assert_quantization_model_sweep_does_not_override_canonical(tmpdir)
         assert_native_model_smoke_is_reported(tmpdir)
         assert_deepspeed_smoke_survives_inference_dtype_filter(tmpdir)

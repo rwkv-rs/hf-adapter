@@ -5,6 +5,11 @@ Current scope is HF adapter delivery only: Transformers loading/generation,
 PEFT/TRL/Trainer compatibility, HF state-cache serving primitives, quantized
 inference, and HF-compatible speculative decoding.
 
+The current performance phase is tracked in [`FUSED_BACKEND.md`](FUSED_BACKEND.md):
+keep the HF wrapper as the public compatibility layer, then add native fused
+fp16 and native W8/W4 backends behind `rwkv7_forward_token()` and `generate()`
+to close the Albatross and quantized-decode speed gaps.
+
 This repository converts RWKV-7 weights to a Hugging Face-style directory and provides remote-code wrappers so the result can be loaded with:
 
 - `AutoTokenizer.from_pretrained(..., trust_remote_code=True)`
