@@ -17,6 +17,75 @@ def write_jsonl(path: Path, rows: list[dict]) -> None:
             f.write(json.dumps(row) + "\n")
 
 
+def assert_training_smoke_survives_inference_dtype_filter(tmpdir: Path) -> None:
+    """Guard mixed inference/training benchmark reports.
+
+    The stable V100 training smoke rows currently use train_dtype/dtype=fp32,
+    while most serving gap reports are requested with --dtype fp16.  Training
+    compatibility is an HF deliverable, so analyzer output must keep those rows
+    visible instead of silently hiding Trainer/SFT/DPO/GRPO evidence behind the
+    inference dtype filter.
+    """
+
+    training_rows = [
+        {
+            "axis": "training_smoke",
+            "backend": "hf_adapter",
+            "trainer_backend": backend,
+            "status": "pass",
+            "dtype": "fp32",
+            "train_dtype": "fp32",
+            "device": "Tesla V100-PCIE-32GB",
+            "attn_mode": "fused_recurrent",
+            "batch_size": 2,
+            "gradient_accumulation_steps": grad_accum,
+            "effective_batch_size": 2 * grad_accum,
+            "max_steps": 1,
+            "train_loss": 0.5,
+            "train_runtime_s": 1.0,
+            "train_samples_per_second": 1.0,
+            "train_steps_per_second": 1.0,
+            "max_trainable_delta": 1e-4,
+        }
+        for backend, grad_accum in (
+            ("trainer", 2),
+            ("trl_sft", 2),
+            ("trl_dpo", 1),
+            ("trl_grpo", 1),
+        )
+    ]
+    path = tmpdir / "training_results.jsonl"
+    write_jsonl(path, training_rows)
+
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    backends = {row["trainer_backend"] for row in report["training_smoke"]}
+    assert backends == {"trainer", "trl_sft", "trl_dpo", "trl_grpo"}
+    assert all(row["max_trainable_delta"] > 0 for row in report["training_smoke"])
+    assert any(
+        "HF training telemetry passes for Trainer/SFT/DPO/GRPO" in item
+        for item in report["next_focus"]
+    )
+    assert not any("training smoke telemetry incomplete" in item for item in report["next_focus"])
+
+
 def main() -> int:
     rows = [
         {
@@ -55,7 +124,8 @@ def main() -> int:
         },
     ]
     with tempfile.TemporaryDirectory() as td:
-        path = Path(td) / "results.jsonl"
+        tmpdir = Path(td)
+        path = tmpdir / "results.jsonl"
         write_jsonl(path, rows)
         loaded = load_rows(path)
         passed = subprocess.run(
@@ -100,6 +170,7 @@ def main() -> int:
         )
         assert failed.returncode != 0
         assert "candidate layout rows missing" in failed.stdout
+        assert_training_smoke_survives_inference_dtype_filter(tmpdir)
     args = argparse.Namespace(device="V100", dtype="fp16")
     speeds = latest_by_layout(fast_speed_rows(loaded, args))
     micros = latest_by_layout(fast_micro_rows(loaded, args))
