@@ -13,6 +13,48 @@ The active reward target is the HF/Transformers track: make RWKV-7 usable from
 standard HF APIs with near-production correctness, performance, memory behavior,
 training compatibility, quantized inference, and reproducible benchmarks.
 
+## Active Goal: Finish the Current HF Adapter First
+
+Current priority: finish the RWKV-7 Hugging Face / Transformers adapter with
+the hardware and evidence available now. Do not wait for H100/4090/5090/A100
+access before completing the current repository deliverables. V100 remains the
+active development and regression baseline; newer GPUs are follow-up validation
+targets once available.
+
+The current delivery strategy is:
+
+- Keep the HF wrapper as the production-facing compatibility layer for
+  `AutoModelForCausalLM`, `generate`, PEFT, Trainer, TRL, state cache,
+  dynamic batching, chunked prefill, quantization, speculative decoding, and
+  benchmark gates.
+- Keep optimizing wrapper performance through `RWKV7StateCache`,
+  `native_jit`, `native_graph`, cache reuse, reduced launch count, and future
+  fused/native quantized kernels.
+- Keep `native_model` explicitly experimental. It is the long-term base for
+  removing the mandatory FLA runtime, upstream Transformers work, AMD/CPU
+  fallback, and future kernels. It must not be described as replacing the
+  wrapper until it proves the same HF compatibility, batching, cache semantics,
+  and benchmark coverage.
+- Do not merge older native branches wholesale when they would remove current
+  HF training, quantization, cache, benchmark, or telemetry work. Audit those
+  branches and port only the useful implementation ideas.
+
+Near-term completion, without waiting for extra GPUs:
+
+1. Merge and preserve V100 training telemetry for HF Trainer, TRL SFT, TRL DPO,
+   and TRL GRPO.
+2. Add Albatross A/B benchmark ingestion on the same checkpoint, V100, dtype,
+   batch size, prompt length, decode length, and cache policy.
+3. Continue W8/W4 work beyond generic bitsandbytes toward fused/native fast
+   paths, while reporting current memory wins and speed gaps honestly.
+4. Expand V100 evidence for large-model smoke, speed/precision sweeps,
+   chunked prefill, dynamic batching, state-cache reuse, and speculative
+   decoding.
+5. Keep ZeRO-2/ZeRO-3 and multi-GPU HF smoke runnable on the available 2 x V100
+   server where feasible.
+6. Prepare benchmark commands so H100/4090/5090/A100 can be run later as a
+   validation matrix, not as a blocker for current progress.
+
 ## Target Acceptance Criteria
 
 Use this HF-only checklist as the authoritative target for the active
