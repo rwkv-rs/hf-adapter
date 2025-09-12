@@ -197,6 +197,21 @@ def step(model, x, state, xpa, xpf, v_first, packs):
     return x, state, xpa, xpf, v_first
 
 
+def step_batched(model, x, state, xpa, xpf, v_first, packs):
+    """Batched TorchScript block-step decode for native_model caches.
+
+    Shapes mirror ``rwkv7_hf.native._step_token_batched``: x/xpa/xpf/v_first
+    are ``[B, hidden]`` and recurrent state is ``[B, H, N, N]`` per layer.
+    Keeping this helper in native_jit lets the experimental FLA-free model use
+    the same reduced-dispatch H2 decode idea without importing the wrapper.
+    """
+    for p in packs:
+        x, xpa[p[0]], xpf[p[0]], v_first, state[p[0]] = block_step_batched(
+            x, xpa[p[0]], xpf[p[0]], v_first, state[p[0]], *p
+        )
+    return x, state, xpa, xpf, v_first
+
+
 def forward(model, ids, packs):
     base = model.model
     H, N = packs[0][1], packs[0][2]

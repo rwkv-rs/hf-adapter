@@ -12,6 +12,8 @@ incremental greedy generation, and regression tests against the wrapper.
 """
 from __future__ import annotations
 
+import os
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -21,6 +23,19 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 
 from .native import _init_state_batched, _step_token_batched
+
+_FALSE_VALUES = {"0", "false", "False", "no", "off"}
+
+try:
+    from .native_jit import extract as _native_jit_extract
+    from .native_jit import step_batched as _native_jit_step_batched
+except Exception:  # pragma: no cover - optional native acceleration
+    _native_jit_extract = None
+    _native_jit_step_batched = None
+
+
+def _native_model_jit_enabled() -> bool:
+    return os.environ.get("RWKV7_NATIVE_MODEL_JIT", "1") not in _FALSE_VALUES
 
 
 class NativeRWKV7Config(PretrainedConfig):
@@ -118,7 +133,7 @@ class NativeRWKV7Model(PreTrainedModel):
 
 
 class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
-    """Experimental bsz=1 native PyTorch CausalLM for converted RWKV-7 weights."""
+    """Experimental batched native PyTorch CausalLM for converted RWKV-7 weights."""
 
     config_class = NativeRWKV7Config
     base_model_prefix = "model"
@@ -135,7 +150,24 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         self.model = NativeRWKV7Model(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
-    def _run(self, token_ids: torch.Tensor, state, xpa, xpf, v_first):
+    def rwkv7_native_model_last_decode_backend(self) -> str | None:
+        """Return the backend used by the previous native-model decode call."""
+        return getattr(self, "_rwkv7_native_model_last_decode_backend", None)
+
+    def _native_jit_packs(self):
+        if not _native_model_jit_enabled() or _native_jit_extract is None or _native_jit_step_batched is None:
+            return None
+        weight = self.model.embeddings.weight
+        key = (weight.device.type, weight.device.index, weight.dtype)
+        cache = getattr(self, "_rwkv7_native_model_jit_pack_cache", None)
+        if cache is None or cache[0] != key:
+            extracted = _native_jit_extract(self)
+            packs = extracted[0] if isinstance(extracted, tuple) and len(extracted) == 4 else extracted
+            self._rwkv7_native_model_jit_pack_cache = (key, packs)
+            return packs
+        return cache[1]
+
+    def _run(self, token_ids: torch.Tensor, state, xpa, xpf, v_first, *, use_jit: bool = False):
         """Sequentially advance over token ids shaped ``[batch, seq]``.
 
         The experimental native model is still correctness-first and sequential
@@ -147,11 +179,18 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             raise ValueError("NativeRWKV7ForCausalLM._run expects token ids shaped [batch, seq]")
         base = self.model
         x = None
+        packs = self._native_jit_packs() if use_jit else None
+        backend = "native_jit" if packs is not None else "eager"
         for t in range(token_ids.shape[1]):
             x = F.embedding(token_ids[:, t], base.embeddings.weight)
-            x, state, xpa, xpf, v_first = _step_token_batched(self, x, state, xpa, xpf, v_first)
+            if packs is not None:
+                x, state, xpa, xpf, v_first = _native_jit_step_batched(self, x, state, xpa, xpf, v_first, packs)
+            else:
+                x, state, xpa, xpf, v_first = _step_token_batched(self, x, state, xpa, xpf, v_first)
         if x is None:
             raise ValueError("NativeRWKV7ForCausalLM requires at least one token")
+        if use_jit:
+            self._rwkv7_native_model_last_decode_backend = backend
         x = base.norm(x)
         logits = F.linear(x, self.lm_head.weight).view(token_ids.shape[0], 1, -1)
         return logits, state, xpa, xpf, v_first
@@ -176,10 +215,12 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         if past_key_values is None:
             state, xpa, xpf, v_first = _init_state_batched(self, input_ids.shape[0], device, dtype)
             toks = input_ids
+            use_jit = False
         else:
             state, xpa, xpf, v_first = past_key_values
             toks = input_ids[:, -1:]
-        logits, state, xpa, xpf, v_first = self._run(toks, state, xpa, xpf, v_first)
+            use_jit = True
+        logits, state, xpa, xpf, v_first = self._run(toks, state, xpa, xpf, v_first, use_jit=use_jit)
         new_cache = (state, xpa, xpf, v_first) if use_cache else None
         if not return_dict:
             return (logits, new_cache) if use_cache else (logits,)
