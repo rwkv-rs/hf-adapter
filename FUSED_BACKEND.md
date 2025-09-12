@@ -56,6 +56,10 @@ serving speed.
 
 1. Fused-backend target/reporting gate.
 2. Matrix-level projection/LoRA profiler and candidate shapes.
+   - `bench/bench_projection_lora.py` emits `sample_matrix_profile`,
+     `sample_matrix_profile_summary`, and `fused_kernel_plan`.
+   - `bench/analyze_results.py` surfaces the first fused fp16 target in
+     `projection_lora` and `next_focus`.
 3. Fused fp16 projection prototype.
 4. Native-graph integration for the fused projection path.
 5. Fused recurrent state update.

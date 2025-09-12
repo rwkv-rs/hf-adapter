@@ -523,6 +523,12 @@ LoRA bmm is slower and can introduce larger fp16 numerical differences. The
 next real optimization should be a custom fused projection/LoRA path or a
 deeper rewrite that reduces launches without adding stack/bmm overhead.
 
+Newer rows also emit `sample_matrix_profile`, `sample_matrix_profile_summary`,
+and `fused_kernel_plan`. These fields turn the profiler into the first concrete
+step of `FUSED_BACKEND.md`: they record matrix shapes, per-token FLOPs,
+fp16/int8/int4 weight sizes, timed members, the first fp16 fusion target, and
+the native-quant candidates that should later replace generic bnb kernels.
+
 ## Larger converted-model smoke
 
 `bench_larger_model_smoke.py` proves the shape-inferred converter on real

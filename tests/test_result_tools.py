@@ -352,6 +352,82 @@ def assert_fused_backend_targets_are_reported(tmpdir: Path) -> None:
     assert any("native fused 8bit pending" in item for item in report["next_focus"])
 
 
+def assert_projection_kernel_plan_is_reported(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "projection_lora",
+            "backend": "hf_adapter",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 1,
+            "hidden_size": 768,
+            "layers": [0, 1, 11],
+            "avg_timings_ms": {
+                "rkv_current": 0.8,
+                "rkv_bmm_candidate": 1.2,
+                "wa_lora_current": 0.3,
+                "wa_lora_bmm_candidate": 0.4,
+            },
+            "avg_current_linears_lora_sum_ms": 1.6,
+            "avg_candidate_linears_lora_sum_ms": 2.1,
+            "avg_candidate_speedup": 0.7619,
+            "sample_matrix_profile_summary": {
+                "attn_rkv_dense": {
+                    "matrix_count": 3,
+                    "params": 1769472,
+                    "flops_per_token": 3538944,
+                    "fp16_weight_mb": 3.375,
+                }
+            },
+            "fused_kernel_plan": {
+                "first_fused_fp16_target": {
+                    "group": "attn_time_mix_linears_lora",
+                    "members": ["r_proj", "k_proj", "v_proj", "w_lora", "a_lora", "g_lora"],
+                    "current_ms": 1.6,
+                    "naive_candidate_ms": 2.1,
+                    "naive_candidate_speedup": 0.7619,
+                },
+                "fused_groups": [
+                    {
+                        "name": "attn_rkv_dense",
+                        "members": ["r_proj", "k_proj", "v_proj"],
+                        "current_ms": 0.8,
+                        "naive_candidate_ms": 1.2,
+                    }
+                ],
+                "native_quant_candidates": [
+                    {"name": "ffn_key_value", "status": "planned_not_measured_by_projection_lora"}
+                ],
+            },
+        }
+    ]
+    path = tmpdir / "projection_kernel_plan.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    plan = report["projection_lora"]["fused_kernel_plan"]
+    assert plan["first_fused_fp16_target"]["group"] == "attn_time_mix_linears_lora"
+    assert report["projection_lora"]["sample_matrix_profile_summary"]["attn_rkv_dense"]["matrix_count"] == 3
+    assert any("fused projection first target: attn_time_mix_linears_lora" in item for item in report["next_focus"])
+
+
 def assert_quantization_model_sweep_does_not_override_canonical(tmpdir: Path) -> None:
     rows = [
         {
@@ -640,6 +716,7 @@ def main() -> int:
         assert_albatross_rows_are_parsed_and_compared(tmpdir)
         assert_quantization_best_variants_are_reported(tmpdir)
         assert_fused_backend_targets_are_reported(tmpdir)
+        assert_projection_kernel_plan_is_reported(tmpdir)
         assert_quantization_model_sweep_does_not_override_canonical(tmpdir)
         assert_native_model_smoke_is_reported(tmpdir)
         assert_deepspeed_smoke_survives_inference_dtype_filter(tmpdir)
