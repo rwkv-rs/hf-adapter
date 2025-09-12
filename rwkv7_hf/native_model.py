@@ -7,7 +7,7 @@ It loads the same converted HF checkpoints as the production FLA-backed wrapper,
 so it can serve as the long-term upstream / AMD / CPU fallback base.
 
 Important: this module is intentionally experimental and sequential. It is not a
-replacement for the optimized wrapper path yet. Current scope is bsz=1 forward,
+replacement for the optimized wrapper path yet. Current scope is batched forward,
 incremental greedy generation, and regression tests against the wrapper.
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ from transformers.generation import GenerationMixin
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 
-from .native import _init_state, _step_token
+from .native import _init_state_batched, _step_token_batched
 
 
 class NativeRWKV7Config(PretrainedConfig):
@@ -136,16 +136,24 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
     def _run(self, token_ids: torch.Tensor, state, xpa, xpf, v_first):
-        """Sequentially advance over token ids shaped ``[T]`` and return last logits."""
+        """Sequentially advance over token ids shaped ``[batch, seq]``.
+
+        The experimental native model is still correctness-first and sequential
+        over time, but the per-token math is vectorized over batch rows. This
+        keeps the native/upstream fallback path aligned with wrapper bsz tests
+        without claiming it replaces the optimized wrapper backend.
+        """
+        if token_ids.dim() != 2:
+            raise ValueError("NativeRWKV7ForCausalLM._run expects token ids shaped [batch, seq]")
         base = self.model
         x = None
-        for t in range(token_ids.shape[0]):
-            x = F.embedding(token_ids[t:t + 1], base.embeddings.weight).reshape(-1)
-            x, state, xpa, xpf, v_first = _step_token(self, x, state, xpa, xpf, v_first)
+        for t in range(token_ids.shape[1]):
+            x = F.embedding(token_ids[:, t], base.embeddings.weight)
+            x, state, xpa, xpf, v_first = _step_token_batched(self, x, state, xpa, xpf, v_first)
         if x is None:
             raise ValueError("NativeRWKV7ForCausalLM requires at least one token")
         x = base.norm(x)
-        logits = F.linear(x, self.lm_head.weight).view(1, 1, -1)
+        logits = F.linear(x, self.lm_head.weight).view(token_ids.shape[0], 1, -1)
         return logits, state, xpa, xpf, v_first
 
     def forward(
@@ -158,22 +166,38 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     ):
         if input_ids is None:
             raise ValueError("NativeRWKV7ForCausalLM currently requires input_ids")
-        if input_ids.dim() != 2 or int(input_ids.shape[0]) != 1:
-            raise ValueError("Experimental NativeRWKV7ForCausalLM currently supports batch_size=1 only")
+        if input_ids.dim() != 2:
+            raise ValueError("Experimental NativeRWKV7ForCausalLM expects input_ids shaped [batch, seq]")
+        if int(input_ids.shape[0]) <= 0 or int(input_ids.shape[1]) <= 0:
+            raise ValueError("NativeRWKV7ForCausalLM requires a non-empty batch and sequence")
         use_cache = bool(self.config.use_cache if use_cache is None else use_cache)
         base = self.model
         device, dtype = input_ids.device, base.embeddings.weight.dtype
         if past_key_values is None:
-            state, xpa, xpf, v_first = _init_state(self, device, dtype)
-            toks = input_ids[0]
+            state, xpa, xpf, v_first = _init_state_batched(self, input_ids.shape[0], device, dtype)
+            toks = input_ids
         else:
             state, xpa, xpf, v_first = past_key_values
-            toks = input_ids[0, -1:]
+            toks = input_ids[:, -1:]
         logits, state, xpa, xpf, v_first = self._run(toks, state, xpa, xpf, v_first)
         new_cache = (state, xpa, xpf, v_first) if use_cache else None
         if not return_dict:
             return (logits, new_cache) if use_cache else (logits,)
         return CausalLMOutputWithPast(logits=logits, past_key_values=new_cache)
+
+    @staticmethod
+    def _reorder_cache(past_key_values, beam_idx: torch.LongTensor):
+        """Minimal beam/select helper for experimental batched native caches."""
+        if past_key_values is None:
+            return None
+        state, xpa, xpf, v_first = past_key_values
+        index = beam_idx.to(v_first.device)
+        return (
+            [s.index_select(0, index.to(s.device)) for s in state],
+            [x.index_select(0, index.to(x.device)) for x in xpa],
+            [x.index_select(0, index.to(x.device)) for x in xpf],
+            v_first.index_select(0, index),
+        )
 
     def prepare_inputs_for_generation(self, input_ids, past_key_values=None, **kwargs):
         # Ensure GenerationMixin gets a cache on the first step. Earlier H1 code
