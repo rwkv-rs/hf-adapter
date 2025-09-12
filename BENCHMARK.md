@@ -228,7 +228,7 @@ When the V100 server is reachable, run the committed bundle from the repository 
 ```
 
 It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_token`,
-`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `tests/test_device_map_generate.py` when at least two CUDA devices are visible, `bench_fast_token_warmup.py`, `bench_native_graph_overhead.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `bench_fused_projection.py`, `bench_fused_shift_mix.py`, `bench_fused_recurrent.py`, `bench_larger_model_smoke.py` when the 0.4B/1.5B/2.9B/7.2B/13.3B paths exist, `bench_speculative_decode.py` when the target/draft HF dirs exist, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
+`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `tests/test_device_map_generate.py` when at least two CUDA devices are visible, `bench_fast_token_warmup.py`, `bench_native_graph_overhead.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `bench_fused_projection.py`, `bench_fused_shift_mix.py`, `bench_fused_recurrent.py`, `bench_native_graph_fused_recurrent.py`, `bench_larger_model_smoke.py` when the 0.4B/1.5B/2.9B/7.2B/13.3B paths exist, `bench_speculative_decode.py` when the target/draft HF dirs exist, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
 then writes logs under `bench/logs/`. The bundle now also validates the
 `native_jit` backend plus fixed-batch and dynamic `native_graph` fast-token
 backends, and appends native HF speed rows before running the target gate. Use
@@ -603,6 +603,33 @@ current torch expression (`2.7931x`, `0.07841ms` vs `0.21901ms`) with
 `out_min_cosine=0.9999998`. This is the first fused fp16 prototype worth
 integrating behind the HF native-graph fast-token path, subject to full
 end-to-end greedy/cache correctness gates.
+
+## Native-graph fused recurrent integration
+
+Set `RWKV7_NATIVE_GRAPH_FUSED_RECURRENT=1` to capture native-graph decode with
+the recurrent Triton prototype. The graph-runner cache key includes this flag so
+serving can switch the experiment on/off without accidentally reusing a graph
+captured under the other mode.
+
+```bash
+python bench/bench_native_graph_fused_recurrent.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --batch-size 1 \
+  --prompt-tokens 64 \
+  --fixed-token \
+  --results bench/results.jsonl
+```
+
+Latest V100 integration row: first-step logits are identical
+(`max_abs_diff_first_step=0`, `min_cosine_first_step=1.0000002`) and greedy
+tokens match `32/32`. End-to-end graph replay is currently neutral
+(`1.0033x`, `4.2878ms` fused vs `4.3018ms` baseline), so this remains opt-in;
+the isolated recurrent kernel is fast, but the captured full-token graph still
+needs deeper fusion around the larger projection/LoRA bottleneck.
 
 ## Larger converted-model smoke
 
