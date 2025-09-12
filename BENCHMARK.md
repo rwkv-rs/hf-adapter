@@ -801,6 +801,30 @@ fp16/bf16, and bucket sizing. Validate them with:
 python tests/test_deepspeed_configs.py
 ```
 
+`tests/test_deepspeed_training_smoke.py` is the executable ZeRO training
+harness. It loads the HF adapter through `AutoModelForCausalLM`, attaches PEFT
+LoRA adapters, runs one or more HF `Trainer` steps with `deepspeed=zero2/zero3`,
+checks that loss is finite, checks that trainable parameters changed, and emits
+`deepspeed_training_smoke` rows for the analyzer:
+
+```bash
+export TORCHDYNAMO_DISABLE=1
+export PYTHONPATH=/home/data/wangyue/projects/flash-linear-attention:$PYTHONPATH
+
+python tests/test_deepspeed_training_smoke.py \
+  --model /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --zero-stage both \
+  --train-dtype fp32 \
+  --max-steps 1 \
+  --batch-size 1 \
+  --gradient-accumulation-steps 1 \
+  --results bench/results.jsonl
+```
+
+On machines without DeepSpeed or live GPUs, use `--optional --results
+/tmp/rwkv7_zero_optional.jsonl` to record explicit skip rows while keeping local
+analyzer/report tests green. Real pass rows remain a GPU follow-up item.
+
 ## Benchmark gap report
 
 `bench/analyze_results.py` turns accumulated JSONL rows into a target/gap report:
