@@ -671,6 +671,12 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   footprint still below fp16 (`310.4 MB` / `283.4 MB`). Analyzer output now
   reports these as best W8/W4 variants while keeping the memory policy as the
   canonical footprint row.
+  Larger-model quant sweep rows are reported separately from the 0.1B gate:
+  V100 0.4B fp16 footprint/decode is `859.8 MB` / `107.0 tok/s`; 8-bit memory
+  policy drops footprint to `571.8 MB` but decodes at `8.4 tok/s`, and 4-bit
+  drops footprint to `427.8 MB` but decodes at `16.3 tok/s`. The 0.4B
+  `decode_hot` probes improve selected decode to `13.7 tok/s` (8-bit) and
+  `19.6 tok/s` (4-bit), still far below fp16.
   This is still below fp16 native-graph `217.2 tok/s`, so production
   quantization still needs a fused/native quantized projection path.
 - Native JIT / CUDA graph prototype: V100 fp16 native logits match HF logits (`cosine≈1.00000024`, max_abs `0.03125`), graph-vs-JIT greedy decode is `16/16` identical, native JIT reaches `103.52 tok/s`, and native CUDA graph reaches `254.33 tok/s`. The same reduced-launch idea is now available through HF `rwkv7_forward_token` via `RWKV7_FAST_TOKEN_BACKEND=native_graph` for fixed bsz and dynamic active-batch sizes; captured runners are retained in a per-model LRU controlled by `RWKV7_NATIVE_GRAPH_CACHE_SIZE` and can be released with `rwkv7_clear_native_graph_cache()`. The experimental FLA-free `NativeRWKV7ForCausalLM` now also exposes standard input/output embedding getters and a sequence `labels` loss path so PEFT/Trainer-style smoke tests can exercise its pure-PyTorch training fallback without CUDA/FLA. V100 native-model telemetry is first-class in `bench/results.jsonl`: 0.1B fp32 forward min cosine `0.99999976`, batch-forward min cosine `0.9999994`, cached decode argmax `3/3`, native decode backend `native_jit`, greedy generate `16/16`, and incremental cache enabled.
