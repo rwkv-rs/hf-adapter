@@ -6,7 +6,8 @@
 #   HF_DIR, PTH, DTYPE, DEVICE, PROMPT_TOKENS, DECODE_TOKENS, MICRO_STEPS,
 #   FORWARD_FAST_STEPS, GENERATE_BATCH_SIZE, GENERATE_NEW_TOKENS, WARMUP_BATCH_SIZES,
 #   NATIVE_GRAPH_CACHE_SIZE, NATIVE_GRAPH_OVERHEAD_BATCH_SIZES, NATIVE_GRAPH_OVERHEAD_STEPS,
-#   COMPONENT_STEPS, FUSED_PROJECTION_STEPS, FUSED_SHIFT_MIX_STEPS, NATIVE_DECODE_TOKENS, RUN_LARGER_MODEL_SMOKE, LARGER_HF_DIR,
+#   COMPONENT_STEPS, FUSED_PROJECTION_STEPS, FUSED_SHIFT_MIX_STEPS,
+#   FUSED_RECURRENT_STEPS, NATIVE_DECODE_TOKENS, RUN_LARGER_MODEL_SMOKE, LARGER_HF_DIR,
 #   LARGER_PTH, LARGER_MODEL_SIZE_LABEL, LARGER_MAX_NEW_TOKENS,
 #   RUN_15B_MODEL_SMOKE, LARGER_15_HF_DIR, LARGER_15_PTH,
 #   LARGER_FAST_TOKEN_BACKEND, LARGER_15_MAX_NEW_TOKENS,
@@ -41,6 +42,7 @@ NATIVE_GRAPH_OVERHEAD_STEPS="${NATIVE_GRAPH_OVERHEAD_STEPS:-32}"
 COMPONENT_STEPS="${COMPONENT_STEPS:-32}"
 FUSED_PROJECTION_STEPS="${FUSED_PROJECTION_STEPS:-128}"
 FUSED_SHIFT_MIX_STEPS="${FUSED_SHIFT_MIX_STEPS:-512}"
+FUSED_RECURRENT_STEPS="${FUSED_RECURRENT_STEPS:-256}"
 NATIVE_DECODE_TOKENS="${NATIVE_DECODE_TOKENS:-64}"
 RUN_LARGER_MODEL_SMOKE="${RUN_LARGER_MODEL_SMOKE:-auto}"
 LARGER_HF_DIR="${LARGER_HF_DIR:-/home/data/wangyue/models/rwkv7/rwkv7-g1d-0.4b-hf}"
@@ -141,7 +143,7 @@ run_larger_smoke() {
   echo "date=$(date -Is)"
   echo "hf_dir=${HF_DIR}"
   echo "pth=${PTH}"
-  echo "dtype=${DTYPE} device=${DEVICE} prompt_tokens=${PROMPT_TOKENS} decode_tokens=${DECODE_TOKENS} micro_steps=${MICRO_STEPS} forward_fast_steps=${FORWARD_FAST_STEPS} generate_batch_size=${GENERATE_BATCH_SIZE} generate_new_tokens=${GENERATE_NEW_TOKENS} warmup_batch_sizes=${WARMUP_BATCH_SIZES} native_graph_cache_size=${NATIVE_GRAPH_CACHE_SIZE} native_graph_overhead_batch_sizes=${NATIVE_GRAPH_OVERHEAD_BATCH_SIZES} native_graph_overhead_steps=${NATIVE_GRAPH_OVERHEAD_STEPS} component_steps=${COMPONENT_STEPS} fused_projection_steps=${FUSED_PROJECTION_STEPS} fused_shift_mix_steps=${FUSED_SHIFT_MIX_STEPS}"
+  echo "dtype=${DTYPE} device=${DEVICE} prompt_tokens=${PROMPT_TOKENS} decode_tokens=${DECODE_TOKENS} micro_steps=${MICRO_STEPS} forward_fast_steps=${FORWARD_FAST_STEPS} generate_batch_size=${GENERATE_BATCH_SIZE} generate_new_tokens=${GENERATE_NEW_TOKENS} warmup_batch_sizes=${WARMUP_BATCH_SIZES} native_graph_cache_size=${NATIVE_GRAPH_CACHE_SIZE} native_graph_overhead_batch_sizes=${NATIVE_GRAPH_OVERHEAD_BATCH_SIZES} native_graph_overhead_steps=${NATIVE_GRAPH_OVERHEAD_STEPS} component_steps=${COMPONENT_STEPS} fused_projection_steps=${FUSED_PROJECTION_STEPS} fused_shift_mix_steps=${FUSED_SHIFT_MIX_STEPS} fused_recurrent_steps=${FUSED_RECURRENT_STEPS}"
   echo "larger_smoke=${RUN_LARGER_MODEL_SMOKE} larger_hf_dir=${LARGER_HF_DIR} larger_pth=${LARGER_PTH} larger_model_size_label=${LARGER_MODEL_SIZE_LABEL} larger_max_new_tokens=${LARGER_MAX_NEW_TOKENS} larger_fast_token_backend=${LARGER_FAST_TOKEN_BACKEND}"
   echo "larger_15_smoke=${RUN_15B_MODEL_SMOKE} larger_15_hf_dir=${LARGER_15_HF_DIR} larger_15_pth=${LARGER_15_PTH} larger_15_max_new_tokens=${LARGER_15_MAX_NEW_TOKENS} larger_15_fast_token_backend=${LARGER_15_FAST_TOKEN_BACKEND}"
   echo "larger_29_smoke=${RUN_29B_MODEL_SMOKE} larger_29_hf_dir=${LARGER_29_HF_DIR} larger_29_pth=${LARGER_29_PTH} larger_29_max_new_tokens=${LARGER_29_MAX_NEW_TOKENS} larger_29_fast_token_backend=${LARGER_29_FAST_TOKEN_BACKEND}"
@@ -530,6 +532,18 @@ run_larger_smoke() {
     --layers 0 1 11 \
     --warmup 32 \
     --steps "${FUSED_SHIFT_MIX_STEPS}" \
+    --results "${RESULTS}"
+
+  run python bench/bench_fused_recurrent.py \
+    --hf-dir "${HF_DIR}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --attn-mode fused_recurrent \
+    --fuse-norm false \
+    --batch-size 1 \
+    --layers 0 1 11 \
+    --warmup 16 \
+    --steps "${FUSED_RECURRENT_STEPS}" \
     --results "${RESULTS}"
 
   if should_run_larger_smoke "${RUN_LARGER_MODEL_SMOKE}" "${LARGER_HF_DIR}" "${LARGER_PTH}"; then

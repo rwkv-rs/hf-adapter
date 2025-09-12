@@ -74,8 +74,14 @@ serving speed.
      first V100 row is exact but slower than the current torch pointwise ops,
      so shift-mix alone should stay telemetry; the next implementation should
      fuse deeper across shift-mix + projection/LoRA/state update.
-5. Native-graph integration for a profitable deeper fused fp16 path.
-6. Fused recurrent state update.
+5. Fused recurrent state update prototype.
+   - `rwkv7_hf.fused_recurrent_update.fused_recurrent_update()` exploits the
+     rank-1 structure of the RWKV-7 state transition and fuses state update plus
+     readout in one Triton launch.
+   - `bench/bench_fused_recurrent.py` records `fused_recurrent_proto`. The
+     first V100 row is profitable, so the next implementation step is
+     correctness-gated native-graph integration.
+6. Native-graph integration for the profitable recurrent fused fp16 path.
 7. Native W8 pack plus fused int8 dequant-GEMV.
 8. Native W4 pack plus fused int4 dequant-GEMV.
 9. V100 + 5070/newer-GPU benchmark matrix.
