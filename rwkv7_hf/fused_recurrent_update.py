@@ -176,7 +176,8 @@ def fused_recurrent_update(
         and state.is_cuda
         and state.dtype == torch.float32
         and r3.dtype in (torch.float16, torch.bfloat16, torch.float32)
-        and all(t.dtype == r3.dtype for t in (w3, k3, v3, kk3, a3))
+        and w3.dtype in (r3.dtype, torch.float32)
+        and all(t.dtype == r3.dtype for t in (k3, v3, kk3, a3))
     )
     if not use_triton:
         return torch_recurrent_update(r3.reshape(B, H * N) if flat else r3, w3, k3, v3, kk3, a3, state)
