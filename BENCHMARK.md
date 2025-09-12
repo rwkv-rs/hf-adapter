@@ -1056,6 +1056,35 @@ single-batch fixed-shape greedy path, but it gives a concrete implementation
 direction: move the TorchScript block-step packing / graph-capture idea into the
 HF fast-token API while preserving batched state-cache semantics.
 
+### V100 experimental native-model telemetry
+
+The FLA-free `NativeRWKV7ForCausalLM` remains an experimental fallback, not the
+production wrapper replacement. Its smoke row is nevertheless tracked because it
+is the long-term base for upstream Transformers, AMD/CPU, and small-shared-memory
+training fallback work.
+
+Command:
+
+```bash
+python tests/test_native_model.py \
+  --model /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --expect-jit-decode \
+  --results bench/results.jsonl
+```
+
+Latest V100 row:
+
+| Check | Result |
+|---|---:|
+| forward min cosine vs FLA wrapper | `0.99999976` |
+| forward max abs diff | `0.00003815` |
+| prompt argmax match | `3/3` |
+| batched forward min cosine | `0.9999994` |
+| batched cached-decode argmax match | `3/3` |
+| greedy generate match | `16/16` |
+| incremental cache exercised | `true` |
+| cached decode backend | `native_jit` |
+
 ### Larger-model 50-series native results from latest `main`
 
 | model | metric | FLA HF | official | native path |
