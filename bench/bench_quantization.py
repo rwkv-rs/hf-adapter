@@ -96,6 +96,7 @@ def load_model(args: argparse.Namespace, quantization: str, dtype: torch.dtype):
         "trust_remote_code": True,
         "torch_dtype": dtype,
         "device_map": device_map_for(args.device) if args.device.startswith("cuda") else None,
+        "rwkv7_bnb_skip_policy": args.quant_skip_policy,
     }
     if quantization != "none":
         if importlib.util.find_spec("bitsandbytes") is None:
@@ -156,6 +157,10 @@ def quant_skip_modules(model) -> list[str]:
     if qconfig is None and getattr(model, "hf_quantizer", None) is not None:
         qconfig = getattr(model.hf_quantizer, "quantization_config", None)
     return list(getattr(qconfig, "llm_int8_skip_modules", None) or [])
+
+
+def quant_skip_policy(model) -> str:
+    return str(getattr(model, "_rwkv7_bnb_skip_policy", None) or getattr(getattr(model, "config", None), "rwkv7_bnb_skip_policy", "memory"))
 
 
 def bench_one(args: argparse.Namespace, tok, quantization: str, dtype: torch.dtype) -> dict[str, Any]:
@@ -282,6 +287,7 @@ def bench_one(args: argparse.Namespace, tok, quantization: str, dtype: torch.dty
         "reference_forward_backend": ref_backend,
         "fast_forward_max_abs_diff": round(fast_diff, 6),
         "fast_forward_same_next_token": fast_same_token,
+        "quant_skip_policy": quant_skip_policy(model),
         "quant_skip_modules": quant_skip_modules(model),
         "module_counts": module_counts,
         "model_footprint_mb": footprint_mb,
@@ -306,6 +312,16 @@ def main() -> int:
     ap.add_argument("--optional", action="store_true", help="Append skip rows instead of failing when a quant backend is unavailable")
     ap.add_argument("--bnb-4bit-quant-type", choices=["fp4", "nf4"], default="nf4")
     ap.add_argument("--bnb-4bit-use-double-quant", action="store_true")
+    ap.add_argument(
+        "--quant-skip-policy",
+        choices=["memory", "decode_hot", "dense"],
+        default=os.environ.get("RWKV7_BNB_SKIP_POLICY", "memory"),
+        help=(
+            "bitsandbytes skip policy: memory keeps only lm_head/small LoRA dense; "
+            "decode_hot also keeps attention r/k/v/o projections dense for faster cached decode; "
+            "dense keeps all large projections dense as a diagnostic upper bound"
+        ),
+    )
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     args = ap.parse_args()
     if args.decode_tokens <= 0:

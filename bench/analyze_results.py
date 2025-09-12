@@ -192,8 +192,17 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     )
     components = latest(rows, lambda r: r.get("axis") == "decode_components" and r.get("backend") == "hf_adapter")
     projection_lora = latest(rows, lambda r: r.get("axis") == "projection_lora" and r.get("backend") == "hf_adapter")
-    quant_rows = [r for r in rows if r.get("axis") == "quantization" and r.get("backend") == "hf_adapter"]
+    quant_rows_all = [r for r in rows if r.get("axis") == "quantization" and r.get("backend") == "hf_adapter"]
+    # Keep the target gate anchored to the canonical memory-first quantization
+    # policy. Hybrid policies such as decode_hot are useful optimization probes,
+    # but they trade some W4 footprint for speed and should not overwrite the
+    # memory-target rows just because they were measured later.
+    quant_rows = [r for r in quant_rows_all if r.get("quant_skip_policy") in (None, "", "memory", "small_lora", "minimal")]
     quant_latest = latest_by_key(quant_rows, lambda r: r.get("quantization"))
+    quant_variant_latest = latest_by_key(
+        quant_rows_all,
+        lambda r: (r.get("quantization"), r.get("quant_skip_policy") or "memory"),
+    )
     device_map_smoke = latest(rows, lambda r: r.get("axis") == "device_map_smoke" and r.get("backend") == "hf_adapter")
     speculative_decode = latest(rows, lambda r: r.get("axis") == "speculative_decode" and r.get("backend") == "hf_adapter" and r.get("status") != "skip")
     larger_rows = [r for r in rows if r.get("axis") == "larger_model_smoke" and r.get("backend") == "hf_adapter"]
@@ -444,6 +453,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     "fast_forward_backend",
                     "fast_forward_max_abs_diff",
                     "fast_forward_same_next_token",
+                    "quant_skip_policy",
                     "quant_skip_modules",
                     "module_counts",
                     "decode_ms_per_tok",
@@ -453,6 +463,24 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 ],
             )
             for r in quant_latest
+        ],
+        "quantization_variants": [
+            compact(
+                r,
+                [
+                    "_lineno",
+                    "quantization",
+                    "status",
+                    "quant_skip_policy",
+                    "decode_tokps",
+                    "reference_decode_tokps",
+                    "fast_decode_tokps",
+                    "model_footprint_mb",
+                    "peak_vram_mb",
+                    "module_counts",
+                ],
+            )
+            for r in quant_variant_latest
         ],
         "native_decode": {
             "best_row": compact(best_native, ["_lineno", "device", "prompt_tokens", "decode_tokens", "hidden_size", "num_heads", "head_dim", "native_jit_tokps", "native_jit_ms_per_tok", "native_graph_tokps", "native_graph_ms_per_tok", "graph_vs_jit_tokens_matched", "graph_vs_jit_tokens_total", "logit_cosine", "logit_max_abs_diff", "peak_vram_mb"]),

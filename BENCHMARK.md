@@ -669,6 +669,23 @@ still slower than fp16 native-graph decode, so production quantized serving
 still needs a custom fused/native quantized projection path before it can meet
 the original "not slower than fp16" target.
 
+`RWKV7_BNB_SKIP_POLICY` / `--quant-skip-policy` adds explicit quantization
+speed-memory policies:
+
+- `memory` (default): keep only `lm_head` and tiny LoRA rank projections dense;
+  this is the canonical memory-target row used by result gates.
+- `decode_hot`: additionally keep attention `r_proj/k_proj/v_proj/o_proj`
+  dense while FFN key/value remain quantized. V100 4-bit smoke improved cached
+  decode from about `32 tok/s` to about `37 tok/s` with footprint about
+  `283 MB`, so it is useful as a hybrid speed probe but still far below fp16
+  native-graph.
+- `dense`: keep attention and FFN projections dense; diagnostic upper bound,
+  effectively fp16 footprint.
+
+Analyzer/check gates keep canonical quantization status anchored to `memory`
+policy rows so hybrid probes do not accidentally overwrite W4 memory-target
+evidence.
+
 ## HF speculative decoding smoke
 
 `rwkv7_speculative_generate()` is the initial HF-only speculative decoding

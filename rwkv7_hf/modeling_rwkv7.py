@@ -82,6 +82,17 @@ def _fast_forward_quant_enabled() -> bool:
     return os.environ.get("RWKV7_FAST_FORWARD_QUANT", "1") not in _FALSE_VALUES
 
 
+def _bnb_skip_policy(policy: str | None = None) -> str:
+    policy = (policy or os.environ.get("RWKV7_BNB_SKIP_POLICY", "memory")).strip().lower()
+    if policy in {"", "default", "small_lora", "memory", "minimal"}:
+        return "memory"
+    if policy in {"decode", "decode_hot", "hot", "hybrid"}:
+        return "decode_hot"
+    if policy in {"dense", "all_dense", "no_quant"}:
+        return "dense"
+    return "memory"
+
+
 def _cuda_available() -> bool:
     cuda = getattr(torch, "cuda", None)
     is_available = getattr(cuda, "is_available", None)
@@ -722,9 +733,26 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     # projections/FFN weights instead; this preserves the memory-saving direction
     # while avoiding a known low-throughput quantized micro-kernel.
     _rwkv7_bnb_skip_modules = ["lm_head", r".*_lora\.lora\.[02]"]
+    # Optional speed/memory trade-off policies for bitsandbytes inference:
+    # - memory: quantize all large projection/FFN matrices (smallest footprint).
+    # - decode_hot: keep attention r/k/v/o projections dense; V100 smoke showed
+    #   this improves W4 cached decode while still keeping a lower footprint
+    #   than fp16. FFN key/value remain quantized.
+    # - dense: keep all large Linear modules dense (diagnostic upper bound).
+    _rwkv7_bnb_policy_extra_skips = {
+        "memory": [],
+        "decode_hot": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)"],
+        "dense": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)", r".*ffn\.(key|value)"],
+    }
+
+    @classmethod
+    def rwkv7_bnb_skip_modules(cls, policy: str | None = None) -> list[str]:
+        policy = _bnb_skip_policy(policy)
+        return list(dict.fromkeys([*cls._rwkv7_bnb_skip_modules, *cls._rwkv7_bnb_policy_extra_skips[policy]]))
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        rwkv7_bnb_skip_policy = _bnb_skip_policy(kwargs.pop("rwkv7_bnb_skip_policy", None))
         quantization_config = kwargs.get("quantization_config")
         if quantization_config is None and (kwargs.get("load_in_8bit") or kwargs.get("load_in_4bit")):
             from transformers import BitsAndBytesConfig
@@ -737,9 +765,14 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             kwargs["quantization_config"] = quantization_config
         if quantization_config is not None and hasattr(quantization_config, "llm_int8_skip_modules"):
             existing = list(getattr(quantization_config, "llm_int8_skip_modules", None) or [])
-            merged = list(dict.fromkeys([*existing, *cls._rwkv7_bnb_skip_modules]))
+            merged = list(dict.fromkeys([*existing, *cls.rwkv7_bnb_skip_modules(rwkv7_bnb_skip_policy)]))
             quantization_config.llm_int8_skip_modules = merged
-        return super().from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
+        model = super().from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
+        if quantization_config is not None:
+            setattr(model, "_rwkv7_bnb_skip_policy", rwkv7_bnb_skip_policy)
+            if getattr(model, "config", None) is not None:
+                setattr(model.config, "rwkv7_bnb_skip_policy", rwkv7_bnb_skip_policy)
+        return model
 
     def resize_token_embeddings(self, new_num_tokens: int | None = None, *args, **kwargs):
         """Keep the official RWKV trie vocabulary fixed.
