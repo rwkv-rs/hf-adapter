@@ -54,10 +54,13 @@ Near-term completion, without waiting for extra GPUs:
    smoke harness, analyzer/report ingestion, docs, and local tests. Real pass
    rows can wait for live GPU/DeepSpeed access, but the repository should be
    ready to run them with one command.
-6. Next when GPUs return: expand V100 evidence for large-model smoke,
+6. Current performance phase: follow `FUSED_BACKEND.md` for the native fused
+   fp16 -> native W8/W4 backend. The analyzer must track Albatross ratio
+   ladders and quantized speed/footprint gates under `fused_backend_targets`.
+7. Next when GPUs return: expand V100 evidence for large-model smoke,
    speed/precision sweeps, chunked prefill, dynamic batching, state-cache reuse,
    speculative decoding, and ZeRO-2/ZeRO-3 multi-GPU smoke.
-7. Later validation: run the prepared benchmark matrix on H100/4090/5090/A100.
+8. Later validation: run the prepared benchmark matrix on H100/4090/5090/A100.
    These newer cards are validation targets, not blockers for current progress.
 
 Current no-GPU work mode:

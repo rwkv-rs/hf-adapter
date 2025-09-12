@@ -839,7 +839,8 @@ python bench/analyze_results.py \
 It reports HF-vs-official prefill/decode/memory ratios, best decode-breakdown
 rows, fast-token API status, latest correctness row, batch/dynamic rows, decode
 microbench rows, fast-token warmup and native-graph overhead rows, larger-model
-smoke rows, quantization rows, and a short next-focus list. Current committed
+smoke rows, quantization rows, `fused_backend_targets`, and a short next-focus
+list. Current committed
 V100 rows show:
 
 | Metric | Current | Target | Status |
@@ -856,6 +857,8 @@ V100 rows show:
 | 8-bit / 4-bit decode ratio | 0.24x / 0.67x fp16 | >=1.00x | GAP |
 | Albatross V100 decode ratio | HF native-graph `0.32x`-`0.47x` Albatross faster3a for bsz=1/2/4/8 | approach Albatross | GAP |
 | Albatross V100 prefill ratio | HF `0.32x` Albatross faster3a for B=1,T=512 | approach Albatross | GAP |
+| Fused backend P1 decode ladder | analyzer target min ratio `>=0.55x` Albatross | `FUSED_BACKEND.md` P1 | GAP |
+| Fused backend quant ladder | W8/W4 decode `>=1.0x` fp16 reference with W8 footprint `<=0.75x`, W4 footprint `<=0.55x` | native W8/W4 fused path | GAP |
 | 0.4B converted-model smoke | hidden=1024, layers=24, generated=4, backend=native_graph | load + generate | PASS |
 | 1.5B converted-model smoke | hidden=2048, layers=24, generated=2, backend=native_graph | load + generate | PASS |
 | 2.9B converted-model smoke | hidden=2560, layers=32, generated=2, backend=native_graph | load + generate | PASS |
