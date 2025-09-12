@@ -99,6 +99,7 @@ def fast_token_backend_effective(row: dict[str, Any]) -> str | None:
 
 
 def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, Any]:
+    raw_rows = list(rows)
     rows = filt(rows, device=args.device, dtype=args.dtype)
     target_decode_ratio = args.target_decode_ratio
     target_prefill_ratio = args.target_prefill_ratio
@@ -210,6 +211,16 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         larger_rows,
         lambda r: r.get("model_size_label") or r.get("model_name"),
     )
+    # Training smoke rows intentionally ignore the inference dtype filter: the
+    # stable V100 training smoke currently runs with train_dtype=fp32 while most
+    # serving regression reports are filtered with dtype=fp16. Device filtering
+    # still applies so reports stay tied to the requested hardware.
+    training_rows = [
+        r for r in filt(raw_rows, device=args.device, dtype=None)
+        if r.get("axis") == "training_smoke" and r.get("backend") == "hf_adapter"
+    ]
+    training_latest = latest_by_key(training_rows, lambda r: r.get("trainer_backend"))
+
     native_rows = [r for r in rows if r.get("axis") == "native_decode" and r.get("backend") == "hf_native_jit"]
     best_native = max(
         native_rows,
@@ -277,6 +288,20 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         speedup = projection_lora.get("avg_candidate_speedup")
         if speedup is not None and float(speedup) < 1.0:
             focus.append(f"naive PyTorch projection/LoRA bmm candidate is slower ({float(speedup):.2f}x); custom fusion needed")
+    training_by_backend = {r.get("trainer_backend"): r for r in training_latest if r.get("status") == "pass"}
+    missing_training = sorted({"trainer", "trl_sft", "trl_dpo", "trl_grpo"} - set(training_by_backend))
+    if missing_training:
+        focus.append(f"training smoke telemetry incomplete: missing {missing_training}")
+    else:
+        min_delta = min(float(r.get("max_trainable_delta") or 0.0) for r in training_by_backend.values())
+        focus.append(
+            "HF training telemetry passes for Trainer/SFT/DPO/GRPO "
+            f"with min trainable delta {min_delta:.3g}"
+        )
+    for row in training_latest:
+        if row.get("status") == "pass" and float(row.get("max_trainable_delta") or 0.0) <= 0.0:
+            focus.append(f"training smoke did not update trainable params: {row.get('trainer_backend')}")
+
     quant_pass_modes = {r.get("quantization") for r in quant_latest if r.get("status") == "pass"}
     if quant_rows and not {"8bit", "4bit"}.issubset(quant_pass_modes):
         missing = sorted({"8bit", "4bit"} - quant_pass_modes)
@@ -436,6 +461,29 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         ],
         "device_map_smoke": compact(device_map_smoke, ["_lineno", "status", "dtype", "device", "device_count", "device_map_kind", "split_layer", "num_hidden_layers", "hf_device_map_devices", "multi_cuda_device_map", "fast_forward_env", "last_fast_token_backend", "prompt_tokens", "max_new_tokens", "generated_tokens", "generated_tail", "reference_tail", "generated_equal_reference", "logits_shape", "logits_device", "logits_finite", "load_s", "generate_s", "generate_tokps", "peak_vram_mb_by_device"]),
         "speculative_decode": compact(speculative_decode, ["_lineno", "status", "dtype", "device", "target_model_name", "draft_model_name", "same_model", "prompt_tokens", "max_new_tokens", "draft_tokens", "generated_tokens", "generated_equal", "target_tail", "speculative_tail", "target_generate_s", "speculative_s", "target_generate_tokps", "speculative_tokps", "speedup_vs_target_generate", "stats_generated_tokens", "stats_proposed_tokens", "stats_accepted_tokens", "stats_corrected_tokens", "stats_resyncs", "stats_resync_tokens", "stats_full_resync_tokens", "stats_resync_saved_tokens", "stats_target_forward_calls", "stats_draft_forward_calls", "stats_acceptance_rate", "peak_vram_mb"]),
+        "training_smoke": [
+            compact(
+                r,
+                [
+                    "_lineno",
+                    "trainer_backend",
+                    "status",
+                    "train_dtype",
+                    "device",
+                    "attn_mode",
+                    "batch_size",
+                    "gradient_accumulation_steps",
+                    "effective_batch_size",
+                    "max_steps",
+                    "train_loss",
+                    "train_runtime_s",
+                    "train_samples_per_second",
+                    "train_steps_per_second",
+                    "max_trainable_delta",
+                ],
+            )
+            for r in training_latest
+        ],
         "quantization": [
             compact(
                 r,
@@ -553,6 +601,13 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["device_map_smoke"], ensure_ascii=False) if report["device_map_smoke"] else "PENDING")
     print("\n## speculative_decode")
     print(json.dumps(report["speculative_decode"], ensure_ascii=False) if report["speculative_decode"] else "PENDING")
+    print("\n## training_smoke")
+    if report.get("training_smoke"):
+        for row in report["training_smoke"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+
     print("\n## quantization")
     if report["quantization"]:
         for row in report["quantization"]:
