@@ -932,6 +932,62 @@ def assert_native_graph_fused_recurrent_is_reported(tmpdir: Path) -> None:
     assert any("native_graph fused recurrent integration passes greedy 32/32" in item for item in report["next_focus"])
 
 
+def assert_native_graph_fused_output_is_reported(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "native_graph_fused_output",
+            "backend": "hf_adapter",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 1,
+            "prompt_tokens": 64,
+            "steps": 32,
+            "fixed_token": True,
+            "fused_recurrent_enabled": False,
+            "baseline_effective_backend": "native_graph",
+            "fused_effective_backend": "native_graph",
+            "baseline_fused_output": False,
+            "fused_output": True,
+            "baseline_ms_per_step": 4.4214,
+            "fused_ms_per_step": 4.0205,
+            "speedup": 1.0997,
+            "baseline_tokps_total": 226.2,
+            "fused_tokps_total": 248.7,
+            "max_abs_diff_first_step": 0.0625,
+            "min_cosine_first_step": 1.0,
+            "greedy_match": 32,
+            "greedy_total": 32,
+            "baseline_cache_stats": {"batch_sizes": [1], "hit_rate": 0.97},
+            "fused_cache_stats": {"batch_sizes": [1], "hit_rate": 0.97},
+        }
+    ]
+    path = tmpdir / "native_graph_fused_output.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    assert report["native_graph_fused_output"]["speedup"] == 1.0997
+    assert report["native_graph_fused_output"]["fused_cache_stats"]["batch_sizes"] == [1]
+    assert any("native_graph fused output integration passes greedy 32/32" in item for item in report["next_focus"])
+
+
 def assert_native_quant_gemv_proto_is_reported(tmpdir: Path) -> None:
     rows = [
         {
@@ -1490,6 +1546,7 @@ def main() -> int:
         assert_fused_shift_mix_proto_is_reported(tmpdir)
         assert_fused_recurrent_proto_is_reported(tmpdir)
         assert_native_graph_fused_recurrent_is_reported(tmpdir)
+        assert_native_graph_fused_output_is_reported(tmpdir)
         assert_native_quant_gemv_proto_is_reported(tmpdir)
         assert_native_quant_w4_gemv_proto_is_reported(tmpdir)
         assert_native_quant_rkv_proto_is_reported(tmpdir)

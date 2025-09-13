@@ -181,7 +181,22 @@ def translate_name(name: str, num_layers: int) -> Tuple[str, bool]:
 
 def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
     root = Path(__file__).resolve().parents[1]
-    for name in ["configuration_rwkv7.py", "modeling_rwkv7.py", "tokenization_rwkv7.py", "native_jit.py", "native.py"]:
+    for name in [
+        "configuration_rwkv7.py",
+        "fused_attention_projection.py",
+        "fused_ffn.py",
+        "fused_lora.py",
+        "fused_output.py",
+        "fused_projection.py",
+        "fused_recurrent_update.py",
+        "fused_time_mix.py",
+        "modeling_rwkv7.py",
+        "native.py",
+        "native_jit.py",
+        "native_model.py",
+        "native_quant.py",
+        "tokenization_rwkv7.py",
+    ]:
         shutil.copyfile(root / "rwkv7_hf" / name, output / name)
     if vocab_file is not None:
         shutil.copyfile(vocab_file, output / "rwkv_vocab_v20230424.txt")

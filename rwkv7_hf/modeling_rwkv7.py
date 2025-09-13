@@ -114,6 +114,12 @@ def _native_graph_fused_recurrent_requested() -> bool:
     return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT", "0") not in _FALSE_VALUES
 
 
+def _native_graph_fused_output_requested() -> bool:
+    """Whether native-graph runners should capture the experimental output-prep kernel."""
+
+    return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT", "0") not in _FALSE_VALUES
+
+
 def _native_graph_stats_template() -> dict[str, int]:
     return {"requests": 0, "hits": 0, "misses": 0, "evictions": 0}
 
@@ -1093,8 +1099,9 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             len(packs),
             int(packs[0][1]),
             int(packs[0][2]),
-            int(batch_size),
             _native_graph_fused_recurrent_requested(),
+            _native_graph_fused_output_requested(),
+            int(batch_size),
         )
         cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
         if isinstance(cache, tuple) and len(cache) == 2:
