@@ -139,7 +139,17 @@ serving speed.
      so output fusion is now the native-graph default. The env flag remains as
      a fallback/A-B switch while the 5070/newer device matrix and combined
      fusion are validated.
-13. Native W8 pack plus fused int8 dequant-GEMV prototype.
+13. Native-graph integration guard for the fused R/K/V + W/A/G projection path.
+   - `RWKV7_NATIVE_GRAPH_FUSED_PROJECTION=1` makes native-graph capture use the
+     two-kernel `fused_rkv_wag_projection()` prototype. The graph-runner cache
+     key includes this flag so default runners are never reused for the probe.
+   - `bench/bench_native_graph_fused_projection.py` records
+     `native_graph_fused_projection` A/B rows. The first V100 bsz=1/2/4/8
+     matrix is correctness-clean, but speed is only 0.86-0.93x of the default
+     output-fused graph. This proves the current two-kernel projection grouping
+     is not defaultable; it remains an opt-in guard while the next kernel
+     attempts fewer launches / better tensor-core occupancy / deeper fusion.
+14. Native W8 pack plus fused int8 dequant-GEMV prototype.
    - `rwkv7_hf.native_quant.quantize_int8_rowwise()` packs dense weights as
      signed int8 plus row-wise fp32 scales.
    - `rwkv7_hf.native_quant.int8_rowwise_gemv()` provides an optional Triton
@@ -148,7 +158,7 @@ serving speed.
      first V100 row proves roughly half fp16 weight footprint and good cosine,
      but it is still slower than fp16 cuBLAS, so the W8 path remains telemetry
      until the kernel is optimized.
-14. Native W4 pack plus fused int4 dequant-GEMV prototype.
+15. Native W4 pack plus fused int4 dequant-GEMV prototype.
    - `rwkv7_hf.native_quant.quantize_int4_rowwise()` packs dense weights as
      two signed 4-bit values per byte plus row-wise fp32 scales.
    - `rwkv7_hf.native_quant.int4_rowwise_gemv()` provides an optional Triton
@@ -158,19 +168,19 @@ serving speed.
      fp16 sampled weight footprint, but the prototype is still slower than
      fp16 cuBLAS and needs a better packed reduction / deeper projection fusion
      before it can replace bnb or fp16.
-15. Native W8 fused R/K/V quant projection prototype.
+16. Native W8 fused R/K/V quant projection prototype.
    - `rwkv7_hf.native_quant.int8_fused_rkv_gemv()` computes R/K/V from packed
      row-wise W8 weights in one Triton launch.
    - `bench/bench_native_quant_rkv.py` records `native_quant_rkv_proto`. The
      first V100 row improves over three separate W8 dequant-GEMVs, but is still
      below fp16 cuBLAS, so the next quant step is deeper projection/LoRA fusion.
-16. Native W4 fused R/K/V quant projection prototype.
+17. Native W4 fused R/K/V quant projection prototype.
    - `rwkv7_hf.native_quant.int4_fused_rkv_gemv()` computes R/K/V from packed
      row-wise W4 weights in one Triton launch.
    - `bench/bench_native_quant_w4_rkv.py` records `native_quant_w4_rkv_proto`.
      The first V100 row improves over three separate W4 dequant-GEMVs, but is
      still below fp16 cuBLAS, so W4 also needs deeper group fusion.
-17. V100 + 5070/newer-GPU benchmark matrix.
+18. V100 + 5070/newer-GPU benchmark matrix.
 
 ## Backend dispatch requirement
 

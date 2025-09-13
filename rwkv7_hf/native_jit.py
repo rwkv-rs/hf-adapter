@@ -31,6 +31,15 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_attn_output_prepare = None  # type: ignore[assignment]
         fused_attn_output_prepare_available = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - optional Triton fast path on CUDA hosts
+    from .fused_attention_projection import fused_rkv_wag_projection, fused_rkv_wag_projection_available
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from fused_attention_projection import fused_rkv_wag_projection, fused_rkv_wag_projection_available
+    except Exception:
+        fused_rkv_wag_projection = None  # type: ignore[assignment]
+        fused_rkv_wag_projection_available = None  # type: ignore[assignment]
+
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
 
@@ -57,6 +66,19 @@ def _native_graph_fused_output_enabled() -> bool:
         return False
     try:
         return bool(fused_attn_output_prepare_available())
+    except Exception:
+        return False
+
+
+def _native_graph_fused_projection_enabled() -> bool:
+    """Runtime switch for the experimental native-graph R/K/V + W/A/G projection path."""
+
+    if os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_PROJECTION", "0") in _FALSE_VALUES:
+        return False
+    if fused_rkv_wag_projection is None or fused_rkv_wag_projection_available is None:
+        return False
+    try:
+        return bool(fused_rkv_wag_projection_available())
     except Exception:
         return False
 
@@ -375,12 +397,40 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
     xx = xpa - h
     xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
     xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
-    r = F.linear(xr, Rw)
-    w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
-    k = F.linear(xk, Kw)
-    v = F.linear(xv, Vw)
-    a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
-    g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
+    if _native_graph_fused_projection_enabled():
+        r, k, v, w, a, g = fused_rkv_wag_projection(
+            xr.view(1, H * N),
+            xk.view(1, H * N),
+            xv.view(1, H * N),
+            xw.view(1, H * N),
+            xa.view(1, H * N),
+            xg.view(1, H * N),
+            Rw,
+            Kw,
+            Vw,
+            w1,
+            a1,
+            g1,
+            w2,
+            a2,
+            g2,
+            w0,
+            a0,
+            None,
+        )
+        r = r.view(H * N)
+        k = k.view(H * N)
+        v = v.view(H * N)
+        w = w.view(H * N)
+        a = torch.sigmoid(a.view(H * N))
+        g = g.view(H * N)
+    else:
+        r = F.linear(xr, Rw)
+        w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
+        k = F.linear(xk, Kw)
+        v = F.linear(xv, Vw)
+        a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
+        g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
     kk = F.normalize((k * k_k).view(H, N), dim=-1, p=2.0).view(H * N)
     k = k * (1 + (a - 1) * k_a)
     if i == 0:
@@ -442,12 +492,35 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
     xx = xpa - h
     xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
     xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
-    r = F.linear(xr, Rw)
-    w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
-    k = F.linear(xk, Kw)
-    v = F.linear(xv, Vw)
-    a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
-    g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
+    if _native_graph_fused_projection_enabled():
+        r, k, v, w, a, g = fused_rkv_wag_projection(
+            xr,
+            xk,
+            xv,
+            xw,
+            xa,
+            xg,
+            Rw,
+            Kw,
+            Vw,
+            w1,
+            a1,
+            g1,
+            w2,
+            a2,
+            g2,
+            w0,
+            a0,
+            None,
+        )
+        a = torch.sigmoid(a)
+    else:
+        r = F.linear(xr, Rw)
+        w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
+        k = F.linear(xk, Kw)
+        v = F.linear(xv, Vw)
+        a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
+        g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
     kk = F.normalize((k * k_k).view(B, H, N), dim=-1, p=2.0).view(B, H * N)
     k = k * (1 + (a - 1) * k_a)
     if i == 0:

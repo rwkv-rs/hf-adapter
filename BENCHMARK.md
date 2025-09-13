@@ -642,6 +642,22 @@ LoRA, but the gain is too small for the Albatross gap; next work should fold in
 more of the attention state/update/output path or improve the dense projection
 math path.
 
+`RWKV7_NATIVE_GRAPH_FUSED_PROJECTION=1` wires this prototype into native-graph
+decode as an opt-in integration guard. The V100 bsz=1/2/4/8 fixed-token matrix
+is correctness-clean, but currently slower than the default output-fused graph:
+
+| bsz | default ms/step | projection-fused ms/step | speedup | greedy |
+|---:|---:|---:|---:|---:|
+| 1 | 3.9060 | 4.5563 | 0.8573x | 32/32 |
+| 2 | 4.3770 | 4.7904 | 0.9137x | 64/64 |
+| 4 | 4.5721 | 5.0759 | 0.9008x | 128/128 |
+| 8 | 5.0785 | 5.4719 | 0.9281x | 256/256 |
+
+Therefore this two-kernel projection path must stay opt-in; it is useful
+telemetry, but the next projection attempt needs fewer launches, better
+tensor-core occupancy, or fusion across output/recurrent work before default
+native-graph integration.
+
 ## Fused attention output prototype
 
 `rwkv7_hf/fused_output.py` targets the `attn_norm_out_proj` bucket without

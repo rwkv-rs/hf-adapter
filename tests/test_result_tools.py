@@ -1017,6 +1017,63 @@ def assert_native_graph_fused_output_is_reported(tmpdir: Path) -> None:
     assert any("native_graph fused output batch matrix covers bsz=[1, 2]" in item for item in report["next_focus"])
 
 
+def assert_native_graph_fused_projection_is_reported(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "native_graph_fused_projection",
+            "backend": "hf_adapter",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 8,
+            "prompt_tokens": 64,
+            "steps": 32,
+            "fixed_token": True,
+            "fused_recurrent_enabled": False,
+            "fused_output_enabled": True,
+            "baseline_effective_backend": "native_graph",
+            "fused_effective_backend": "native_graph",
+            "baseline_fused_projection": False,
+            "fused_projection": True,
+            "baseline_ms_per_step": 5.0785,
+            "fused_ms_per_step": 5.4719,
+            "speedup": 0.9281,
+            "baseline_tokps_total": 1575.3,
+            "fused_tokps_total": 1462.0,
+            "max_abs_diff_first_step": 0.03125,
+            "min_cosine_first_step": 1.0,
+            "greedy_match": 256,
+            "greedy_total": 256,
+            "baseline_cache_stats": {"batch_sizes": [8], "hit_rate": 0.97},
+            "fused_cache_stats": {"batch_sizes": [8], "hit_rate": 0.97},
+        }
+    ]
+    path = tmpdir / "native_graph_fused_projection.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    assert report["native_graph_fused_projection"]["speedup"] == 0.9281
+    assert report["native_graph_fused_projection"]["fused_output_enabled"] is True
+    assert any("native_graph fused projection integration passes greedy 256/256 but speedup=0.93x" in item for item in report["next_focus"])
+
+
 def assert_native_quant_gemv_proto_is_reported(tmpdir: Path) -> None:
     rows = [
         {
@@ -1576,6 +1633,7 @@ def main() -> int:
         assert_fused_recurrent_proto_is_reported(tmpdir)
         assert_native_graph_fused_recurrent_is_reported(tmpdir)
         assert_native_graph_fused_output_is_reported(tmpdir)
+        assert_native_graph_fused_projection_is_reported(tmpdir)
         assert_native_quant_gemv_proto_is_reported(tmpdir)
         assert_native_quant_w4_gemv_proto_is_reported(tmpdir)
         assert_native_quant_rkv_proto_is_reported(tmpdir)
