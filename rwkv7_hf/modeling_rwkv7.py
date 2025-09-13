@@ -120,6 +120,23 @@ def _native_graph_fused_output_requested() -> bool:
     return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT", "1") not in _FALSE_VALUES
 
 
+def _native_graph_fused_output_project_requested() -> bool:
+    """Whether native-graph runners should capture fused output-prep plus ``o_proj``."""
+
+    return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT", "0") not in _FALSE_VALUES
+
+
+def _native_graph_fused_output_project_block_m() -> int:
+    raw = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT_BLOCK_M", "16").strip()
+    try:
+        block_m = int(raw)
+    except ValueError:
+        block_m = 16
+    if block_m <= 0:
+        return 16
+    return min(block_m, 128)
+
+
 def _native_graph_fused_projection_requested() -> bool:
     """Whether native-graph runners should capture the experimental projection kernel."""
 
@@ -1107,6 +1124,8 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             int(packs[0][2]),
             _native_graph_fused_recurrent_requested(),
             _native_graph_fused_output_requested(),
+            _native_graph_fused_output_project_requested(),
+            _native_graph_fused_output_project_block_m(),
             _native_graph_fused_projection_requested(),
             int(batch_size),
         )

@@ -222,11 +222,13 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     fused_wag_lora_proto = latest(rows, lambda r: r.get("axis") == "fused_wag_lora_proto" and r.get("backend") == "hf_adapter")
     fused_rkv_wag_projection_proto = latest(rows, lambda r: r.get("axis") == "fused_rkv_wag_projection_proto" and r.get("backend") == "hf_adapter")
     fused_attn_output_proto = latest(rows, lambda r: r.get("axis") == "fused_attn_output_proto" and r.get("backend") == "hf_adapter")
+    fused_attn_output_project_proto = latest(rows, lambda r: r.get("axis") == "fused_attn_output_project_proto" and r.get("backend") == "hf_adapter")
     fused_ffn_proto = latest(rows, lambda r: r.get("axis") == "fused_ffn_proto" and r.get("backend") == "hf_adapter")
     fused_shift_mix_proto = latest(rows, lambda r: r.get("axis") == "fused_shift_mix_proto" and r.get("backend") == "hf_adapter")
     fused_recurrent_proto = latest(rows, lambda r: r.get("axis") == "fused_recurrent_proto" and r.get("backend") == "hf_adapter")
     native_graph_fused_recurrent = latest(rows, lambda r: r.get("axis") == "native_graph_fused_recurrent" and r.get("backend") == "hf_adapter")
     native_graph_fused_output = latest(rows, lambda r: r.get("axis") == "native_graph_fused_output" and r.get("backend") == "hf_adapter")
+    native_graph_fused_output_project = latest(rows, lambda r: r.get("axis") == "native_graph_fused_output_project" and r.get("backend") == "hf_adapter")
     native_graph_fused_projection = latest(rows, lambda r: r.get("axis") == "native_graph_fused_projection" and r.get("backend") == "hf_adapter")
     native_graph_fused_output_sweep = latest_by_key(
         [
@@ -235,6 +237,17 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             if r.get("axis") == "native_graph_fused_output"
             and r.get("backend") == "hf_adapter"
             and not bool(r.get("fused_recurrent_enabled"))
+        ],
+        lambda r: r.get("batch_size"),
+    )
+    native_graph_fused_output_project_sweep = latest_by_key(
+        [
+            r
+            for r in rows
+            if r.get("axis") == "native_graph_fused_output_project"
+            and r.get("backend") == "hf_adapter"
+            and not bool(r.get("fused_recurrent_enabled"))
+            and not bool(r.get("fused_projection_enabled"))
         ],
         lambda r: r.get("batch_size"),
     )
@@ -673,6 +686,25 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 f"fused attention output prototype backend={backend} speedup={float(output_speedup):.2f}x; "
                 "consider integration/full attention fusion"
             )
+    if fused_attn_output_project_proto is None:
+        focus.append("fused_attn_output_project_proto row pending")
+    else:
+        best_project = fused_attn_output_project_proto.get("best_fused_project") or {}
+        project_speedup = best_project.get("speedup_vs_prep_cublas")
+        project_current_speedup = best_project.get("speedup_vs_current")
+        backend = fused_attn_output_project_proto.get("prototype_backend")
+        block_m = best_project.get("block_m")
+        if project_speedup is not None and float(project_speedup) >= 1.0:
+            focus.append(
+                f"fused output+o_proj prototype backend={backend} block_m={block_m} "
+                f"beats prep+cuBLAS by {float(project_speedup):.2f}x "
+                f"({float(project_current_speedup):.2f}x vs current); validate native_graph integration"
+            )
+        elif project_speedup is not None:
+            focus.append(
+                f"fused output+o_proj prototype backend={backend} block_m={block_m} "
+                f"is slower than prep+cuBLAS ({float(project_speedup):.2f}x); keep o_proj on cuBLAS"
+            )
     if fused_ffn_proto is None:
         focus.append("fused_ffn_proto row pending")
     else:
@@ -773,6 +805,46 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 f"native_graph fused output batch matrix covers bsz={sweep_batches} "
                 f"with min_speedup={min(sweep_speeds):.2f}x and greedy exact"
             )
+    if native_graph_fused_output_project is None:
+        focus.append("native_graph fused output+o_proj integration row pending")
+    else:
+        ngop_speedup = native_graph_fused_output_project.get("speedup")
+        greedy_match = native_graph_fused_output_project.get("greedy_match")
+        greedy_total = native_graph_fused_output_project.get("greedy_total")
+        proj_diff = native_graph_fused_output_project.get("max_abs_diff_first_step")
+        block_m = native_graph_fused_output_project.get("output_project_block_m")
+        if ngop_speedup is not None and float(ngop_speedup) >= 1.0:
+            focus.append(
+                f"native_graph fused output+o_proj integration block_m={block_m} passes greedy {greedy_match}/{greedy_total} "
+                f"with speedup={float(ngop_speedup):.2f}x max_abs_diff={proj_diff}; test batch/device matrix before default"
+            )
+        elif ngop_speedup is not None:
+            focus.append(
+                f"native_graph fused output+o_proj integration block_m={block_m} passes greedy {greedy_match}/{greedy_total} "
+                f"but speedup={float(ngop_speedup):.2f}x; keep opt-in and profile kernel occupancy"
+            )
+    if native_graph_fused_output_project_sweep:
+        sweep_speeds = [num(r, "speedup") for r in native_graph_fused_output_project_sweep]
+        sweep_speeds = [v for v in sweep_speeds if v is not None]
+        sweep_batches = [r.get("batch_size") for r in native_graph_fused_output_project_sweep]
+        greedy_ok = all(
+            r.get("greedy_match") is not None
+            and r.get("greedy_total") is not None
+            and int(r.get("greedy_match")) == int(r.get("greedy_total"))
+            for r in native_graph_fused_output_project_sweep
+        )
+        if sweep_speeds and greedy_ok:
+            min_speed = min(sweep_speeds)
+            if min_speed >= 1.0:
+                focus.append(
+                    f"native_graph fused output+o_proj batch matrix covers bsz={sweep_batches} "
+                    f"with min_speedup={min_speed:.2f}x and greedy exact"
+                )
+            else:
+                focus.append(
+                    f"native_graph fused output+o_proj batch matrix covers bsz={sweep_batches} "
+                    f"with greedy exact but min_speedup={min_speed:.2f}x; keep opt-in, not defaultable"
+                )
     if native_graph_fused_projection is None:
         focus.append("native_graph fused projection integration row pending")
     else:
@@ -1094,7 +1166,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             "latest": compact(latest_precision, ["_lineno", "axis", "dtype", "top5_match", "argmax_match", "cosine", "max_abs_diff", "mean_abs_diff", "greedy_window"]),
             "greedy_ratio": round(greedy_ratio, 4) if greedy_ratio is not None else None,
         },
-        "batch_sweep": [compact(r, ["_lineno", "batch_size", "decode_api", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_output", "native_graph_fused_projection", "decode_tokps_total", "decode_tokps_per_seq", "decode_ms_per_step", "peak_vram_mb"]) for r in batch_latest],
+        "batch_sweep": [compact(r, ["_lineno", "batch_size", "decode_api", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_output", "native_graph_fused_output_project", "native_graph_fused_projection", "decode_tokps_total", "decode_tokps_per_seq", "decode_ms_per_step", "peak_vram_mb"]) for r in batch_latest],
         "dynamic_batch": [compact(r, ["_lineno", "decode_api", "fast_token_backend", "fast_token_backend_effective", "initial_batch_size", "final_batch_size", "final_cache_batch_size", "cache_select_api", "total_decode_tokens", "reorder_count", "drop_count", "decode_tokps_total", "decode_ms_per_token", "peak_vram_mb"]) for r in dynamic_latest],
         "chunked_prefill": [compact(r, ["_lineno", "prefill_mode", "batch_size", "prompt_tokens", "chunk_size", "prefill_tokps_total", "speed_ratio_vs_full", "peak_vram_mb", "peak_vram_ratio_vs_full", "max_abs_diff", "decode_max_abs_diff", "seq_length_match"]) for r in chunked_latest],
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "hf_forward_fixed", "hf_forward_greedy", "hf_forward_auto_fixed", "hf_forward_auto_greedy", "hf_forward_auto_backend", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
@@ -1102,7 +1174,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "generate_fast_path": compact(generate_fast_path, ["_lineno", "fast_token_backend", "fast_token_backend_effective", "batch_size", "reference_generate", "hf_generate_fast", "speedup_vs_reference", "generated_equal", "generated_tokens_matched", "generated_tokens_total", "prompt_tokens", "max_new_tokens", "peak_vram_mb"]),
         "fast_token_warmup": compact(fast_token_warmup, ["_lineno", "fast_token_backend", "batch_sizes", "effective_backend_by_batch", "native_graph_cache_batch_sizes", "native_graph_cache_size_limit", "cleared_before", "warmup_s", "peak_vram_mb"]),
         "native_graph_replay_overhead": [
-            compact(r, ["_lineno", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_recurrent", "native_graph_fused_output", "native_graph_fused_projection", "batch_size", "prompt_tokens", "steps", "fixed_token", "max_abs_diff_runner_vs_api", "copy_from_cache_ms", "token_copy_ms", "graph_replay_ms", "bind_cache_ms", "argmax_ms", "manual_wall_ms_per_token", "api_ms_per_token", "manual_decode_tokps_total", "api_decode_tokps_total", "copy_share_of_manual_wall", "native_graph_cache_requests", "native_graph_cache_hits", "native_graph_cache_misses", "native_graph_cache_evictions", "native_graph_cache_hit_rate", "native_graph_cache_batch_sizes", "peak_vram_mb"])
+            compact(r, ["_lineno", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_recurrent", "native_graph_fused_output", "native_graph_fused_output_project", "native_graph_fused_projection", "batch_size", "prompt_tokens", "steps", "fixed_token", "max_abs_diff_runner_vs_api", "copy_from_cache_ms", "token_copy_ms", "graph_replay_ms", "bind_cache_ms", "argmax_ms", "manual_wall_ms_per_token", "api_ms_per_token", "manual_decode_tokps_total", "api_decode_tokps_total", "copy_share_of_manual_wall", "native_graph_cache_requests", "native_graph_cache_hits", "native_graph_cache_misses", "native_graph_cache_evictions", "native_graph_cache_hit_rate", "native_graph_cache_batch_sizes", "peak_vram_mb"])
             for r in native_graph_overhead
         ],
         "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
@@ -1112,15 +1184,21 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "fused_wag_lora_proto": compact(fused_wag_lora_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_rkv_wag_projection_proto": compact(fused_rkv_wag_projection_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_attn_output_proto": compact(fused_attn_output_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "head_dims", "head_v_dims", "layers", "input_scale", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "output_max_abs_diff", "prep_max_abs_diff", "min_cosine", "output_min_cosine", "prep_min_cosine", "layer_rows", "peak_vram_mb"]),
+        "fused_attn_output_project_proto": compact(fused_attn_output_project_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m_values", "input_scale", "steps", "avg_current_ms", "avg_prep_cublas_ms", "avg_prep_cublas_speedup", "best_fused_project", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_ffn_proto": compact(fused_ffn_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "intermediate_sizes", "layers", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_shift_mix_proto": compact(fused_shift_mix_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "input_rank", "hidden_size", "layers", "block_size", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_recurrent_proto": compact(fused_recurrent_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_n", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "out_max_abs_diff", "state_max_abs_diff", "out_min_cosine", "layer_rows", "peak_vram_mb"]),
         "native_graph_fused_recurrent": compact(native_graph_fused_recurrent, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "baseline_effective_backend", "fused_effective_backend", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "peak_vram_mb"]),
         "native_graph_fused_output": compact(native_graph_fused_output, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_output", "fused_output", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
+        "native_graph_fused_output_project": compact(native_graph_fused_output_project, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "fused_output_enabled", "fused_projection_enabled", "output_project_block_m", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_output_project", "fused_output_project", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
         "native_graph_fused_projection": compact(native_graph_fused_projection, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "fused_output_enabled", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_projection", "fused_projection", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
         "native_graph_fused_output_sweep": [
             compact(r, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"])
             for r in native_graph_fused_output_sweep
+        ],
+        "native_graph_fused_output_project_sweep": [
+            compact(r, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "fused_output_enabled", "fused_projection_enabled", "output_project_block_m", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"])
+            for r in native_graph_fused_output_project_sweep
         ],
         "native_quant_gemv_proto": compact(native_quant_gemv_proto, ["_lineno", "prototype_backend", "status", "quantization", "dtype", "device", "batch_size", "layers", "modules", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "mean_abs_diff_max", "min_cosine", "sample_fp16_weight_mb", "sample_int8_weight_mb", "sample_footprint_ratio", "layer_rows", "peak_vram_mb"]),
         "native_quant_w4_gemv_proto": compact(native_quant_w4_gemv_proto, ["_lineno", "prototype_backend", "status", "quantization", "dtype", "device", "batch_size", "layers", "modules", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "mean_abs_diff_max", "min_cosine", "sample_fp16_weight_mb", "sample_int4_weight_mb", "sample_footprint_ratio", "layer_rows", "peak_vram_mb"]),
@@ -1404,6 +1482,8 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["fused_rkv_wag_projection_proto"], ensure_ascii=False) if report["fused_rkv_wag_projection_proto"] else "PENDING")
     print("\n## fused_attn_output_proto")
     print(json.dumps(report["fused_attn_output_proto"], ensure_ascii=False) if report["fused_attn_output_proto"] else "PENDING")
+    print("\n## fused_attn_output_project_proto")
+    print(json.dumps(report["fused_attn_output_project_proto"], ensure_ascii=False) if report["fused_attn_output_project_proto"] else "PENDING")
     print("\n## fused_ffn_proto")
     print(json.dumps(report["fused_ffn_proto"], ensure_ascii=False) if report["fused_ffn_proto"] else "PENDING")
     print("\n## fused_shift_mix_proto")
@@ -1414,11 +1494,19 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["native_graph_fused_recurrent"], ensure_ascii=False) if report["native_graph_fused_recurrent"] else "PENDING")
     print("\n## native_graph_fused_output")
     print(json.dumps(report["native_graph_fused_output"], ensure_ascii=False) if report["native_graph_fused_output"] else "PENDING")
+    print("\n## native_graph_fused_output_project")
+    print(json.dumps(report["native_graph_fused_output_project"], ensure_ascii=False) if report["native_graph_fused_output_project"] else "PENDING")
     print("\n## native_graph_fused_projection")
     print(json.dumps(report["native_graph_fused_projection"], ensure_ascii=False) if report["native_graph_fused_projection"] else "PENDING")
     print("\n## native_graph_fused_output_sweep")
     if report["native_graph_fused_output_sweep"]:
         for row in report["native_graph_fused_output_sweep"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+    print("\n## native_graph_fused_output_project_sweep")
+    if report["native_graph_fused_output_project_sweep"]:
+        for row in report["native_graph_fused_output_project_sweep"]:
             print(json.dumps(row, ensure_ascii=False))
     else:
         print("PENDING")
