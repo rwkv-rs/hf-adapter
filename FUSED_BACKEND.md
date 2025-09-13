@@ -158,6 +158,19 @@ serving speed.
      is useful telemetry but not defaultable yet; next work should profile why
      graph capture loses the isolated win and only fold `o_proj` after a better
      occupancy/deeper-fusion kernel exists.
+12b. Opt-in native-graph probe for W/A/G LoRA-only fusion.
+   - `RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA=1` makes native-graph capture use the
+     existing `fused_wag_lora()` two-kernel W/A/G LoRA grouping while leaving
+     R/K/V dense projections on cuBLAS. Tile envs
+     `RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_{M,R,K}` are part of the
+     graph-runner cache key.
+   - `bench/bench_native_graph_fused_wag_lora.py` records
+     `native_graph_fused_wag_lora` rows. V100 bsz=1/2/4/8 with `block_m=16`,
+     `block_r=64`, `block_k=64` is greedy-exact, but only bsz=8 is slightly
+     faster (`1.0059x`) while bsz=1/2/4 are `0.9406x`/`0.9637x`/`0.9615x`.
+     This proves isolated W/A/G LoRA fusion does not survive full graph replay
+     broadly enough to default; keep it opt-in and fold LoRA into a deeper
+     projection/state/output kernel instead.
 13. Native-graph integration guard for the fused R/K/V + W/A/G projection path.
    - `RWKV7_NATIVE_GRAPH_FUSED_PROJECTION=1` makes native-graph capture use the
      two-kernel `fused_rkv_wag_projection()` prototype. The graph-runner cache

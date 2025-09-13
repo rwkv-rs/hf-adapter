@@ -143,6 +143,28 @@ def _native_graph_fused_projection_requested() -> bool:
     return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_PROJECTION", "0") not in _FALSE_VALUES
 
 
+def _native_graph_fused_wag_lora_requested() -> bool:
+    """Whether native-graph runners should capture the W/A/G LoRA fusion probe."""
+
+    return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA", "0") not in _FALSE_VALUES
+
+
+def _native_graph_fused_wag_lora_blocks() -> tuple[int, int, int]:
+    vals = []
+    for name, default, upper in (
+        ("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_M", 64, 128),
+        ("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_R", 64, 128),
+        ("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_K", 64, 256),
+    ):
+        raw = os.environ.get(name, str(default)).strip()
+        try:
+            val = int(raw)
+        except ValueError:
+            val = default
+        vals.append(min(max(1, val), upper))
+    return vals[0], vals[1], vals[2]
+
+
 def _native_graph_stats_template() -> dict[str, int]:
     return {"requests": 0, "hits": 0, "misses": 0, "evictions": 0}
 
@@ -1127,6 +1149,8 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_fused_output_project_requested(),
             _native_graph_fused_output_project_block_m(),
             _native_graph_fused_projection_requested(),
+            _native_graph_fused_wag_lora_requested(),
+            _native_graph_fused_wag_lora_blocks(),
             int(batch_size),
         )
         cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)

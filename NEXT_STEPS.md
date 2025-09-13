@@ -82,6 +82,13 @@
   结论：isolated 子 kernel 有信号，native_graph 捕获后收益丢失；下一步
   profile occupancy / memory load，并把 `o_proj` fusion 放到更深的
   projection-output fusion 里，而不是单独默认替换 cuBLAS。
+- `RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA=1` 也已作为 opt-in 接入
+  native_graph，cache key 包含
+  `RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_{M,R,K}`；V100 bsz=1/2/4/8
+  greedy 全一致，但 `block_m=16, block_r=64, block_k=64` 只有
+  `0.9406x/0.9637x/0.9615x/1.0059x`，说明 isolated W/A/G LoRA 的正收益
+  只在较大 active batch 勉强保留，不能默认。下一步不要继续单独堆
+  LoRA wrapper，而是把 LoRA 和 R/K/V、recurrent/output 更深融合。
 
 下一步继续补：
 

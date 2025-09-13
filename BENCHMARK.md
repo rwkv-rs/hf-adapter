@@ -909,6 +909,46 @@ Conclusion: the isolated one-launch project kernel is promising, but the
 captured full-token graph does not yet preserve the win. Keep it opt-in and use
 the telemetry to guide a better `o_proj` fusion instead of making it default.
 
+## Native-graph fused W/A/G LoRA integration
+
+`bench_fused_wag_lora.py` showed isolated W/A/G LoRA grouping can beat the three
+separate LoRA modules. The native-graph integration keeps R/K/V projections on
+cuBLAS and tests only the LoRA grouping behind
+`RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA=1`.
+
+```bash
+python bench/bench_native_graph_fused_wag_lora.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --fast-cache true \
+  --batch-size 1 \
+  --prompt-tokens 64 \
+  --fixed-token \
+  --block-m 16 \
+  --block-r 64 \
+  --block-k 64 \
+  --results bench/results.jsonl
+```
+
+The graph-runner cache key includes `RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA` and
+`RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_{M,R,K}`. V100 correctness is clean,
+but the batch matrix is not defaultable:
+
+| bsz | baseline ms/step | fused W/A/G LoRA ms/step | speedup | greedy |
+|---:|---:|---:|---:|---:|
+| 1 | 4.0200 | 4.2737 | 0.9406x | 32/32 |
+| 2 | 4.3872 | 4.5523 | 0.9637x | 64/64 |
+| 4 | 4.5884 | 4.7723 | 0.9615x | 128/128 |
+| 8 | 5.0921 | 5.0624 | 1.0059x | 256/256 |
+
+Conclusion: LoRA-only fusion is only marginally positive at bsz=8 and slower at
+smaller active batches, so it remains opt-in telemetry. The next useful kernel
+needs deeper projection/LoRA/state/output fusion rather than a standalone LoRA
+replacement.
+
 ## Native W8 dequant-GEMV prototype
 
 `rwkv7_hf/native_quant.py` contains the first RWKV-native W8 serving prototype:
