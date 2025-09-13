@@ -766,6 +766,72 @@ def assert_native_quant_w4_gemv_proto_is_reported(tmpdir: Path) -> None:
     assert any("native int4 dequant-GEMV prototype footprint=0.2532x fp16" in item for item in report["next_focus"])
 
 
+def assert_native_quant_rkv_proto_is_reported(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "native_quant_rkv_proto",
+            "backend": "hf_adapter",
+            "prototype_backend": "triton_int8_fused_rkv_gemv",
+            "status": "pass",
+            "quantization": "int8_rowwise_fused_rkv",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 1,
+            "hidden_size": 768,
+            "layers": [0],
+            "block_m": 16,
+            "block_k": 64,
+            "steps": 128,
+            "avg_fp16_current_ms": 0.09,
+            "avg_separate_int8_ms": 0.16,
+            "avg_fused_int8_ms": 0.11,
+            "fused_speedup_vs_fp16": 0.8182,
+            "fused_speedup_vs_separate_int8": 1.4545,
+            "separate_speedup_vs_fp16": 0.5625,
+            "max_abs_diff_fp16_vs_fused": 0.04,
+            "max_abs_diff_separate_vs_fused": 0.001,
+            "min_cosine_fp16_vs_fused": 0.9999,
+            "min_cosine_separate_vs_fused": 1.0,
+            "sample_fp16_weight_mb": 3.375,
+            "sample_int8_weight_mb": 1.69629,
+            "sample_footprint_ratio": 0.5026,
+            "layer_rows": [
+                {
+                    "layer_idx": 0,
+                    "fp16_current_ms": 0.09,
+                    "separate_int8_ms": 0.16,
+                    "fused_int8_ms": 0.11,
+                    "fused_speedup_vs_separate_int8": 1.4545,
+                },
+            ],
+        }
+    ]
+    path = tmpdir / "native_quant_rkv_proto.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    assert report["native_quant_rkv_proto"]["prototype_backend"] == "triton_int8_fused_rkv_gemv"
+    assert report["native_quant_rkv_proto"]["fused_speedup_vs_separate_int8"] == 1.4545
+    assert any("native int8 fused R/K/V quant projection improves separate W8 GEMVs" in item for item in report["next_focus"])
+
+
 def assert_quantization_model_sweep_does_not_override_canonical(tmpdir: Path) -> None:
     rows = [
         {
@@ -1061,6 +1127,7 @@ def main() -> int:
         assert_native_graph_fused_recurrent_is_reported(tmpdir)
         assert_native_quant_gemv_proto_is_reported(tmpdir)
         assert_native_quant_w4_gemv_proto_is_reported(tmpdir)
+        assert_native_quant_rkv_proto_is_reported(tmpdir)
         assert_quantization_model_sweep_does_not_override_canonical(tmpdir)
         assert_native_model_smoke_is_reported(tmpdir)
         assert_deepspeed_smoke_survives_inference_dtype_filter(tmpdir)

@@ -223,6 +223,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     native_graph_fused_recurrent = latest(rows, lambda r: r.get("axis") == "native_graph_fused_recurrent" and r.get("backend") == "hf_adapter")
     native_quant_gemv_proto = latest(rows, lambda r: r.get("axis") == "native_quant_gemv_proto" and r.get("backend") == "hf_adapter")
     native_quant_w4_gemv_proto = latest(rows, lambda r: r.get("axis") == "native_quant_w4_gemv_proto" and r.get("backend") == "hf_adapter")
+    native_quant_rkv_proto = latest(rows, lambda r: r.get("axis") == "native_quant_rkv_proto" and r.get("backend") == "hf_adapter")
     quant_rows_all = [r for r in rows if r.get("axis") == "quantization" and r.get("backend") == "hf_adapter"]
     quant_rows_canonical = [r for r in quant_rows_all if is_canonical_quant_model(r)]
     if not quant_rows_canonical:
@@ -669,6 +670,23 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 f"native int4 dequant-GEMV prototype speed={float(q4_speedup):.2f}x "
                 f"footprint={q4_footprint}x fp16 min_cosine={q4_cos}; validate model-level W4 path"
             )
+    if native_quant_rkv_proto is None:
+        focus.append("native_quant_rkv_proto row pending")
+    else:
+        fused_vs_fp16 = native_quant_rkv_proto.get("fused_speedup_vs_fp16")
+        fused_vs_separate = native_quant_rkv_proto.get("fused_speedup_vs_separate_int8")
+        footprint = native_quant_rkv_proto.get("sample_footprint_ratio")
+        if fused_vs_separate is not None and float(fused_vs_separate) >= 1.0:
+            focus.append(
+                f"native int8 fused R/K/V quant projection improves separate W8 GEMVs by "
+                f"{float(fused_vs_separate):.2f}x, footprint={footprint}x fp16, "
+                f"vs fp16={fused_vs_fp16}x; continue fusing projection groups"
+            )
+        elif fused_vs_separate is not None:
+            focus.append(
+                f"native int8 fused R/K/V quant projection is {float(fused_vs_separate):.2f}x "
+                "of separate W8 GEMVs; optimize before integrating"
+            )
     if albatross_decode_min is None:
         focus.append("fused backend target tracking needs Albatross decode ratios")
     elif albatross_decode_min < 0.55:
@@ -906,6 +924,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "native_graph_fused_recurrent": compact(native_graph_fused_recurrent, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "baseline_effective_backend", "fused_effective_backend", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "peak_vram_mb"]),
         "native_quant_gemv_proto": compact(native_quant_gemv_proto, ["_lineno", "prototype_backend", "status", "quantization", "dtype", "device", "batch_size", "layers", "modules", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "mean_abs_diff_max", "min_cosine", "sample_fp16_weight_mb", "sample_int8_weight_mb", "sample_footprint_ratio", "layer_rows", "peak_vram_mb"]),
         "native_quant_w4_gemv_proto": compact(native_quant_w4_gemv_proto, ["_lineno", "prototype_backend", "status", "quantization", "dtype", "device", "batch_size", "layers", "modules", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "mean_abs_diff_max", "min_cosine", "sample_fp16_weight_mb", "sample_int4_weight_mb", "sample_footprint_ratio", "layer_rows", "peak_vram_mb"]),
+        "native_quant_rkv_proto": compact(native_quant_rkv_proto, ["_lineno", "prototype_backend", "status", "quantization", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m", "block_k", "steps", "avg_fp16_current_ms", "avg_separate_int8_ms", "avg_fused_int8_ms", "fused_speedup_vs_fp16", "fused_speedup_vs_separate_int8", "separate_speedup_vs_fp16", "max_abs_diff_fp16_vs_fused", "max_abs_diff_separate_vs_fused", "min_cosine_fp16_vs_fused", "min_cosine_separate_vs_fused", "sample_fp16_weight_mb", "sample_int8_weight_mb", "sample_footprint_ratio", "layer_rows", "peak_vram_mb"]),
         "larger_model_smoke": [
             compact(
                 r,
@@ -1182,6 +1201,8 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["native_quant_gemv_proto"], ensure_ascii=False) if report["native_quant_gemv_proto"] else "PENDING")
     print("\n## native_quant_w4_gemv_proto")
     print(json.dumps(report["native_quant_w4_gemv_proto"], ensure_ascii=False) if report["native_quant_w4_gemv_proto"] else "PENDING")
+    print("\n## native_quant_rkv_proto")
+    print(json.dumps(report["native_quant_rkv_proto"], ensure_ascii=False) if report["native_quant_rkv_proto"] else "PENDING")
     print("\n## larger_model_smoke")
     if report["larger_model_smoke"]:
         for row in report["larger_model_smoke"]:
