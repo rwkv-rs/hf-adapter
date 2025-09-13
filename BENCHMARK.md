@@ -779,10 +779,11 @@ needs deeper fusion around the larger projection/LoRA bottleneck.
 
 ## Native-graph fused output integration
 
-Set `RWKV7_NATIVE_GRAPH_FUSED_OUTPUT=1` to capture native-graph decode with the
-attention output-prep Triton prototype. The graph-runner cache key includes both
-`RWKV7_NATIVE_GRAPH_FUSED_RECURRENT` and `RWKV7_NATIVE_GRAPH_FUSED_OUTPUT`, while
-keeping the active batch size visible in cache telemetry.
+Native-graph decode now enables fused attention output-prep by default. Set
+`RWKV7_NATIVE_GRAPH_FUSED_OUTPUT=0` to disable it for A/B or fallback testing.
+The graph-runner cache key includes both `RWKV7_NATIVE_GRAPH_FUSED_RECURRENT`
+and `RWKV7_NATIVE_GRAPH_FUSED_OUTPUT`, while keeping the active batch size
+visible in cache telemetry.
 
 ```bash
 python bench/bench_native_graph_fused_output.py \
@@ -801,8 +802,8 @@ Latest V100 integration row: first-step logits remain aligned
 (`max_abs_diff_first_step=0.0625`, `min_cosine_first_step=1.0000001`) and greedy
 tokens match `32/32`. End-to-end native-graph replay improves to `1.0997x`
 (`4.0205ms` fused vs `4.4214ms` baseline, `248.7` vs `226.2` tok/s). This makes
-fused output prep the first opt-in Triton kernel to move full native-graph token
-latency on V100.
+fused output prep the first default Triton kernel to move full native-graph
+token latency on V100.
 
 The V100 fixed-token batch matrix now covers the same active batch sizes used by
 the native-graph serving cache:
@@ -817,6 +818,20 @@ the native-graph serving cache:
 The minimum V100 speedup across bsz=1/2/4/8 is therefore `1.0346x`; next
 validation should cover 5070/newer GPUs and combining this with
 recurrent/projection/LoRA fusion.
+
+Greedy `bench_batch_sweep.py` on an otherwise idle second V100 confirms that
+making output-prep fusion the native-graph default improves the normal
+`rwkv7_forward_token` serving path too. With
+`RWKV7_NATIVE_GRAPH_FUSED_OUTPUT=0`, the no-output-fusion baseline was
+`252.3/451.2/852.9/1542.3` aggregate tok/s for bsz=1/2/4/8. With the default
+output fusion enabled, the same sweep reached:
+
+| bsz | default fused tok/s | default fused ms/step | speedup vs no-output |
+|---:|---:|---:|---:|
+| 1 | 274.7 | 3.64 | 1.0888x |
+| 2 | 492.3 | 4.06 | 1.0911x |
+| 4 | 934.2 | 4.28 | 1.0953x |
+| 8 | 1673.1 | 4.78 | 1.0848x |
 
 ## Native W8 dequant-GEMV prototype
 
