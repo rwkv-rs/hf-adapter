@@ -162,6 +162,68 @@ if _HAS_TRITON:
         tl.store(out_k_ptr + out_base, acc_k * scale_k, mask=mask_m)
         tl.store(out_v_ptr + out_base, acc_v * scale_v, mask=mask_m)
 
+    @triton.jit
+    def _int4_fused_rkv_gemv_kernel(
+        xr_ptr,
+        xk_ptr,
+        xv_ptr,
+        qr_ptr,
+        qk_ptr,
+        qv_ptr,
+        sr_ptr,
+        sk_ptr,
+        sv_ptr,
+        out_r_ptr,
+        out_k_ptr,
+        out_v_ptr,
+        hidden: tl.constexpr,
+        packed_hidden: tl.constexpr,
+        BLOCK_M: tl.constexpr,
+        BLOCK_K: tl.constexpr,
+    ):
+        batch_id = tl.program_id(0)
+        block_id = tl.program_id(1)
+        offs_m = block_id * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_k = tl.arange(0, BLOCK_K)
+        mask_m = offs_m < hidden
+
+        acc_r = tl.zeros((BLOCK_M,), tl.float32)
+        acc_k = tl.zeros((BLOCK_M,), tl.float32)
+        acc_v = tl.zeros((BLOCK_M,), tl.float32)
+        for start in range(0, hidden, BLOCK_K):
+            kidx = start + offs_k
+            mask_k = kidx < hidden
+            xr = tl.load(xr_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
+            xk = tl.load(xk_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
+            xv = tl.load(xv_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
+
+            byte_idx = kidx // 2
+            shift = (kidx & 1) * 4
+            q_offsets = offs_m[:, None] * packed_hidden + byte_idx[None, :]
+            mask_q = mask_m[:, None] & mask_k[None, :]
+
+            qr_packed = tl.load(qr_ptr + q_offsets, mask=mask_q, other=0).to(tl.int32)
+            qk_packed = tl.load(qk_ptr + q_offsets, mask=mask_q, other=0).to(tl.int32)
+            qv_packed = tl.load(qv_ptr + q_offsets, mask=mask_q, other=0).to(tl.int32)
+            qr4 = (qr_packed >> shift[None, :]) & 0xF
+            qk4 = (qk_packed >> shift[None, :]) & 0xF
+            qv4 = (qv_packed >> shift[None, :]) & 0xF
+            qr = tl.where(qr4 >= 8, qr4 - 16, qr4).to(tl.float32)
+            qk = tl.where(qk4 >= 8, qk4 - 16, qk4).to(tl.float32)
+            qv = tl.where(qv4 >= 8, qv4 - 16, qv4).to(tl.float32)
+
+            acc_r += tl.sum(qr * xr[None, :], axis=1)
+            acc_k += tl.sum(qk * xk[None, :], axis=1)
+            acc_v += tl.sum(qv * xv[None, :], axis=1)
+
+        scale_r = tl.load(sr_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
+        scale_k = tl.load(sk_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
+        scale_v = tl.load(sv_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
+        out_base = batch_id * hidden + offs_m
+        tl.store(out_r_ptr + out_base, acc_r * scale_r, mask=mask_m)
+        tl.store(out_k_ptr + out_base, acc_k * scale_k, mask=mask_m)
+        tl.store(out_v_ptr + out_base, acc_v * scale_v, mask=mask_m)
+
 
 def native_int8_gemv_available() -> bool:
     """Return whether the optional Triton int8 dequant-GEMV prototype can run."""
@@ -177,6 +239,12 @@ def native_int4_gemv_available() -> bool:
 
 def native_int8_fused_rkv_available() -> bool:
     """Return whether the optional fused int8 R/K/V prototype can run."""
+
+    return bool(_HAS_TRITON and torch is not None)
+
+
+def native_int4_fused_rkv_available() -> bool:
+    """Return whether the optional fused int4 R/K/V prototype can run."""
 
     return bool(_HAS_TRITON and torch is not None)
 
@@ -378,6 +446,16 @@ def _validate_int8_square_projection(q_weight: Any, scales: Any, hidden: int, *,
         raise ValueError(f"{name} scales must be [{hidden}], got {tuple(scales.shape)}")
 
 
+def _validate_int4_square_projection(q_weight: Any, scales: Any, hidden: int, *, name: str) -> None:
+    packed_hidden = (int(hidden) + 1) // 2
+    if q_weight.dim() != 2 or int(q_weight.shape[0]) != hidden or int(q_weight.shape[1]) != packed_hidden:
+        raise ValueError(f"{name} q_weight must be [{hidden}, {packed_hidden}], got {tuple(q_weight.shape)}")
+    if q_weight.dtype != torch.uint8:
+        raise ValueError(f"{name} q_weight must be torch.uint8, got {q_weight.dtype}")
+    if scales.dim() != 1 or int(scales.shape[0]) != hidden:
+        raise ValueError(f"{name} scales must be [{hidden}], got {tuple(scales.shape)}")
+
+
 def int8_fused_rkv_gemv(
     xr: Any,
     xk: Any,
@@ -460,6 +538,93 @@ def int8_fused_rkv_gemv(
             k,
             v,
             hidden,
+            BLOCK_M=int(block_m),
+            BLOCK_K=int(block_k),
+            num_warps=4,
+        )
+    if had_seq:
+        return r.unsqueeze(1), k.unsqueeze(1), v.unsqueeze(1)
+    return r, k, v
+
+
+def int4_fused_rkv_gemv(
+    xr: Any,
+    xk: Any,
+    xv: Any,
+    q_r_weight: Any,
+    q_k_weight: Any,
+    q_v_weight: Any,
+    r_scales: Any,
+    k_scales: Any,
+    v_scales: Any,
+    *,
+    block_m: int = 16,
+    block_k: int = 64,
+    force_fallback: bool = False,
+):
+    """Compute row-wise int4 R/K/V projections with one optional Triton launch."""
+
+    if torch is None:
+        raise RuntimeError("int4_fused_rkv_gemv requires torch")
+    xr2, had_seq = _flatten_input(xr, _infer_input_features(xr, name="xr"), name="xr")
+    hidden = int(xr2.shape[1])
+    packed_hidden = (hidden + 1) // 2
+    xk2, _ = _flatten_input(xk, hidden, name="xk")
+    xv2, _ = _flatten_input(xv, hidden, name="xv")
+    if tuple(xr2.shape) != tuple(xk2.shape) or tuple(xr2.shape) != tuple(xv2.shape):
+        raise ValueError("xr, xk and xv must have identical flattened shapes")
+    _validate_int4_square_projection(q_r_weight, r_scales, hidden, name="r")
+    _validate_int4_square_projection(q_k_weight, k_scales, hidden, name="k")
+    _validate_int4_square_projection(q_v_weight, v_scales, hidden, name="v")
+
+    use_triton = (
+        not force_fallback
+        and native_int4_fused_rkv_available()
+        and xr2.is_cuda
+        and xk2.is_cuda
+        and xv2.is_cuda
+        and q_r_weight.is_cuda
+        and q_k_weight.is_cuda
+        and q_v_weight.is_cuda
+        and r_scales.is_cuda
+        and k_scales.is_cuda
+        and v_scales.is_cuda
+        and xr2.dtype in (torch.float16, torch.bfloat16, torch.float32)
+    )
+    if not use_triton:
+        r = int4_rowwise_gemv(xr2, q_r_weight, r_scales, force_fallback=True)
+        k = int4_rowwise_gemv(xk2, q_k_weight, k_scales, force_fallback=True)
+        v = int4_rowwise_gemv(xv2, q_v_weight, v_scales, force_fallback=True)
+    else:
+        batch = int(xr2.shape[0])
+        xr_c = xr2.contiguous()
+        xk_c = xk2.contiguous()
+        xv_c = xv2.contiguous()
+        qr_c = q_r_weight.contiguous()
+        qk_c = q_k_weight.contiguous()
+        qv_c = q_v_weight.contiguous()
+        sr_c = r_scales.contiguous()
+        sk_c = k_scales.contiguous()
+        sv_c = v_scales.contiguous()
+        r = torch.empty((batch, hidden), device=xr2.device, dtype=xr2.dtype)
+        k = torch.empty_like(r)
+        v = torch.empty_like(r)
+        grid = (batch, triton.cdiv(hidden, int(block_m)))
+        _int4_fused_rkv_gemv_kernel[grid](
+            xr_c,
+            xk_c,
+            xv_c,
+            qr_c,
+            qk_c,
+            qv_c,
+            sr_c,
+            sk_c,
+            sv_c,
+            r,
+            k,
+            v,
+            hidden,
+            packed_hidden,
             BLOCK_M=int(block_m),
             BLOCK_K=int(block_k),
             num_warps=4,
