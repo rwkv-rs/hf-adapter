@@ -218,6 +218,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     components = latest(rows, lambda r: r.get("axis") == "decode_components" and r.get("backend") == "hf_adapter")
     projection_lora = latest(rows, lambda r: r.get("axis") == "projection_lora" and r.get("backend") == "hf_adapter")
     fused_projection_proto = latest(rows, lambda r: r.get("axis") == "fused_projection_proto" and r.get("backend") == "hf_adapter")
+    fused_wa_lora_proto = latest(rows, lambda r: r.get("axis") == "fused_wa_lora_proto" and r.get("backend") == "hf_adapter")
     fused_shift_mix_proto = latest(rows, lambda r: r.get("axis") == "fused_shift_mix_proto" and r.get("backend") == "hf_adapter")
     fused_recurrent_proto = latest(rows, lambda r: r.get("axis") == "fused_recurrent_proto" and r.get("backend") == "hf_adapter")
     native_graph_fused_recurrent = latest(rows, lambda r: r.get("axis") == "native_graph_fused_recurrent" and r.get("backend") == "hf_adapter")
@@ -586,6 +587,21 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 f"fused R/K/V projection prototype backend={backend} speedup={float(proto_speedup):.2f}x; "
                 "validate end-to-end fast-token integration"
             )
+    if fused_wa_lora_proto is None:
+        focus.append("fused_wa_lora_proto row pending")
+    else:
+        wa_speedup = fused_wa_lora_proto.get("avg_speedup")
+        backend = fused_wa_lora_proto.get("prototype_backend")
+        if wa_speedup is not None and float(wa_speedup) < 1.0:
+            focus.append(
+                f"fused W/A LoRA prototype backend={backend} is slower "
+                f"({float(wa_speedup):.2f}x); two-kernel LoRA grouping is not enough, fuse with R/K/V or more LoRA paths"
+            )
+        elif wa_speedup is not None:
+            focus.append(
+                f"fused W/A LoRA prototype backend={backend} speedup={float(wa_speedup):.2f}x; "
+                "consider grouping with R/K/V projection path"
+            )
     if fused_shift_mix_proto is None:
         focus.append("fused_shift_mix_proto row pending")
     else:
@@ -938,6 +954,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
         "projection_lora": compact(projection_lora, ["_lineno", "batch_size", "hidden_size", "layers", "avg_timings_ms", "avg_current_linears_lora_sum_ms", "avg_candidate_linears_lora_sum_ms", "avg_candidate_speedup", "sample_matrix_profile_summary", "fused_kernel_plan", "peak_vram_mb"]),
         "fused_projection_proto": compact(fused_projection_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
+        "fused_wa_lora_proto": compact(fused_wa_lora_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_shift_mix_proto": compact(fused_shift_mix_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "input_rank", "hidden_size", "layers", "block_size", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_recurrent_proto": compact(fused_recurrent_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_n", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "out_max_abs_diff", "state_max_abs_diff", "out_min_cosine", "layer_rows", "peak_vram_mb"]),
         "native_graph_fused_recurrent": compact(native_graph_fused_recurrent, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "baseline_effective_backend", "fused_effective_backend", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "peak_vram_mb"]),
@@ -1211,6 +1228,8 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["projection_lora"], ensure_ascii=False) if report["projection_lora"] else "PENDING")
     print("\n## fused_projection_proto")
     print(json.dumps(report["fused_projection_proto"], ensure_ascii=False) if report["fused_projection_proto"] else "PENDING")
+    print("\n## fused_wa_lora_proto")
+    print(json.dumps(report["fused_wa_lora_proto"], ensure_ascii=False) if report["fused_wa_lora_proto"] else "PENDING")
     print("\n## fused_shift_mix_proto")
     print(json.dumps(report["fused_shift_mix_proto"], ensure_ascii=False) if report["fused_shift_mix_proto"] else "PENDING")
     print("\n## fused_recurrent_proto")
