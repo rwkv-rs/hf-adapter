@@ -959,6 +959,35 @@ below fp16 cuBLAS (`0.7795x`), so launch fusion works but the final quant
 target needs deeper fusion with LoRA/projection groups or a faster packed
 reduction.
 
+## Native W8/W4 fused R/K/V block sweep
+
+`bench/bench_native_quant_rkv_sweep.py` loads the model once, measures a shared
+fp16 R/K/V baseline, then sweeps the W8/W4 fused R/K/V kernels across
+`block_m`/`block_k`. This avoids the per-config model-load drift that made the
+standalone prototype rows overstate some speedup ratios.
+
+```bash
+python bench/bench_native_quant_rkv_sweep.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --batch-size 1 \
+  --layers 0 1 11 \
+  --quantizations w8 w4 \
+  --block-m 8 16 32 64 \
+  --block-k 32 64 128 \
+  --results bench/results.jsonl
+```
+
+Latest single-load V100 sweep: W8 best latency is `block_m=64, block_k=128`,
+`0.08965ms`, `0.7873x` fp16 and `1.7561x` separate W8, with footprint
+`0.5026x`. W4 best latency is `block_m=8, block_k=64`, `0.09203ms`, `0.7675x`
+fp16 and `1.7931x` separate W4, with footprint `0.2526x`. The sweep confirms
+the gap is not just a block-size choice; the next quant step needs a
+tensor-core-aware packed kernel and/or deeper fusion beyond R/K/V.
+
 ## Larger converted-model smoke
 
 `bench_larger_model_smoke.py` proves the shape-inferred converter on real
