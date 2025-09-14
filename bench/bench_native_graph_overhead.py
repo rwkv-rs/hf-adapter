@@ -159,6 +159,8 @@ def run_one(args: argparse.Namespace, tok, model, batch_size: int) -> dict[str, 
         copy_stats_after = runner.copy_stats() if hasattr(runner, "copy_stats") else {}
         copy_calls_delta = int(copy_stats_after.get("copy_from_cache_calls", 0)) - int(copy_stats_before.get("copy_from_cache_calls", 0))
         copy_fast_skips_delta = int(copy_stats_after.get("copy_from_cache_fast_skips", 0)) - int(copy_stats_before.get("copy_from_cache_fast_skips", 0))
+        bind_calls_delta = int(copy_stats_after.get("bind_cache_calls", 0)) - int(copy_stats_before.get("bind_cache_calls", 0))
+        bind_fast_skips_delta = int(copy_stats_after.get("bind_cache_fast_skips", 0)) - int(copy_stats_before.get("bind_cache_fast_skips", 0))
 
         def api_loop() -> None:
             nonlocal token_api, state_api
@@ -210,6 +212,9 @@ def run_one(args: argparse.Namespace, tok, model, batch_size: int) -> dict[str, 
         "copy_from_cache_calls": copy_calls_delta,
         "copy_from_cache_fast_skips": copy_fast_skips_delta,
         "copy_from_cache_fast_skip_rate": round(copy_fast_skips_delta / copy_calls_delta, 4) if copy_calls_delta > 0 else None,
+        "bind_cache_calls": bind_calls_delta,
+        "bind_cache_fast_skips": bind_fast_skips_delta,
+        "bind_cache_fast_skip_rate": round(bind_fast_skips_delta / bind_calls_delta, 4) if bind_calls_delta > 0 else None,
         "manual_wall_ms_per_token": round(wall_ms_per_token, 4),
         "api_ms_per_token": round(api_ms_per_token, 4),
         "manual_decode_tokps_total": round(1000.0 * batch_size / wall_ms_per_token, 1) if wall_ms_per_token > 0 else None,
