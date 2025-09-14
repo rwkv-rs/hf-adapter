@@ -193,6 +193,12 @@ serving speed.
      the first deeper fusion that wins both isolated and end-to-end, but it
      is now the default V100 native-graph path while newer-GPU coverage and P1
      min-ratio validation continue.
+   - Follow-up flag sweeps with this default path show current opt-in projection
+     and W/A/G LoRA probes are still slower: W/A/G LoRA reaches only
+     `0.94x`-`0.99x` of default and fused projection reaches `0.84x`-`0.91x`.
+     `bench/analyze_results.py` therefore anchors Albatross decode gates to
+     default native-graph batch rows and reports experimental flag rows
+     separately.
 
 13. Native-graph integration guard for the fused R/K/V + W/A/G projection path.
    - `RWKV7_NATIVE_GRAPH_FUSED_PROJECTION=1` makes native-graph capture use the

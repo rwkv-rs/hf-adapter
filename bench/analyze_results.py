@@ -98,6 +98,52 @@ def fast_token_backend_effective(row: dict[str, Any]) -> str | None:
     return row.get("fast_token_backend_effective") or row.get("fast_token_backend")
 
 
+def is_default_native_graph_batch_sweep(row: dict[str, Any]) -> bool:
+    """Return whether a batch_sweep row represents the production native_graph path.
+
+    Experimental flag sweeps are useful telemetry, but they must not overwrite
+    the Albatross gate just because they were appended later in results.jsonl.
+    Treat missing historical flag fields as non-experimental for compatibility,
+    but reject any row that explicitly enables an opt-in probe or disables a
+    default native-graph fusion.
+    """
+
+    if row.get("axis") != "batch_sweep" or row.get("backend") != "hf_adapter":
+        return False
+    if row.get("decode_api") != "rwkv7_forward_token":
+        return False
+    if fast_token_backend_effective(row) != "native_graph":
+        return False
+    for flag in (
+        "native_graph_fused_recurrent",
+        "native_graph_fused_output_project",
+        "native_graph_fused_wag_lora",
+        "native_graph_fused_projection",
+    ):
+        if bool(row.get(flag)):
+            return False
+    if row.get("native_graph_fused_recurrent_output") is False:
+        return False
+    if row.get("native_graph_fused_output") is False:
+        return False
+    return True
+
+
+def native_graph_flag_signature(row: dict[str, Any]) -> str:
+    flags = []
+    for flag in (
+        "native_graph_fused_recurrent",
+        "native_graph_fused_recurrent_output",
+        "native_graph_fused_output",
+        "native_graph_fused_output_project",
+        "native_graph_fused_wag_lora",
+        "native_graph_fused_projection",
+    ):
+        if flag in row:
+            flags.append(f"{flag.replace('native_graph_', '')}={bool(row.get(flag))}")
+    return ",".join(flags) or "native_graph_flags_unreported"
+
+
 def model_label(row: dict[str, Any]) -> str:
     label = row.get("model_size_label")
     if label:
@@ -182,6 +228,20 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     batch_latest = latest_by_key(
         batch_rows,
         lambda r: (r.get("batch_size"), r.get("decode_api")),
+    )
+    batch_default_latest = latest_by_key(
+        [r for r in batch_rows if is_default_native_graph_batch_sweep(r)],
+        lambda r: r.get("batch_size"),
+    )
+    batch_experimental_latest = latest_by_key(
+        [
+            r
+            for r in batch_rows
+            if r.get("decode_api") == "rwkv7_forward_token"
+            and fast_token_backend_effective(r) == "native_graph"
+            and not is_default_native_graph_batch_sweep(r)
+        ],
+        lambda r: (native_graph_flag_signature(r), r.get("batch_size")),
     )
     native_graph_batch_sizes = sorted(
         {
@@ -410,14 +470,19 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         if old is None or float(row.get("tokps_p50") or 0.0) >= float(old.get("tokps_p50") or 0.0):
             albatross_best_by_case[key] = row
 
-    hf_decode_by_bsz: dict[int, dict[str, Any]] = {}
+    hf_decode_by_bsz_all: dict[int, dict[str, Any]] = {}
     for row in batch_latest:
         if row.get("decode_api") != "rwkv7_forward_token" or row.get("batch_size") is None:
             continue
         bsz = int(row["batch_size"])
-        old = hf_decode_by_bsz.get(bsz)
+        old = hf_decode_by_bsz_all.get(bsz)
         if old is None or int(row.get("_lineno", 0)) >= int(old.get("_lineno", 0)):
-            hf_decode_by_bsz[bsz] = row
+            hf_decode_by_bsz_all[bsz] = row
+    hf_decode_by_bsz_default: dict[int, dict[str, Any]] = {}
+    for row in batch_default_latest:
+        if row.get("batch_size") is None:
+            continue
+        hf_decode_by_bsz_default[int(row["batch_size"])] = row
 
     hf_prefill_by_case: dict[tuple[int, int], dict[str, Any]] = {}
     for row in rows:
@@ -442,7 +507,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     for (bsz, tokens), alb in sorted(albatross_best_by_case.items()):
         alb_tokps = num(alb, "tokps_p50")
         if tokens == 1:
-            hf = hf_decode_by_bsz.get(bsz)
+            hf = hf_decode_by_bsz_default.get(bsz) or hf_decode_by_bsz_all.get(bsz)
             hf_tokps = num(hf, "decode_tokps_total")
             if hf is not None and hf_tokps is not None:
                 albatross_decode_comparison.append(
@@ -594,6 +659,24 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         if native_fallback_batches:
             sizes = "/".join(str(b) for b in native_fallback_batches)
             focus.append(f"native_jit fast-token backend did not activate for bsz={sizes}; check backend fallback")
+    if batch_experimental_latest and batch_default_latest:
+        default_by_bsz = {int(r["batch_size"]): r for r in batch_default_latest if r.get("batch_size") is not None}
+        grouped_experimental: dict[str, list[float]] = defaultdict(list)
+        for row in batch_experimental_latest:
+            if row.get("batch_size") is None:
+                continue
+            default = default_by_bsz.get(int(row["batch_size"]))
+            exp_tokps = num(row, "decode_tokps_total")
+            default_tokps = num(default, "decode_tokps_total")
+            exp_ratio = ratio(exp_tokps, default_tokps)
+            if exp_ratio is not None:
+                grouped_experimental[native_graph_flag_signature(row)].append(exp_ratio)
+        for signature, ratios in sorted(grouped_experimental.items()):
+            if ratios:
+                focus.append(
+                    f"experimental native_graph flags {signature} vs default recurrent-output path: "
+                    f"min_ratio={min(ratios):.2f}x max_ratio={max(ratios):.2f}x"
+                )
     if not dynamic_latest:
         focus.append("dynamic_batch rows pending")
     if not chunked_latest:
@@ -1281,6 +1364,14 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             "greedy_ratio": round(greedy_ratio, 4) if greedy_ratio is not None else None,
         },
         "batch_sweep": [compact(r, ["_lineno", "batch_size", "decode_api", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_recurrent", "native_graph_fused_recurrent_output", "native_graph_fused_output", "native_graph_fused_output_project", "native_graph_fused_wag_lora", "native_graph_fused_projection", "decode_tokps_total", "decode_tokps_per_seq", "decode_ms_per_step", "peak_vram_mb"]) for r in batch_latest],
+        "batch_sweep_default_native_graph": [compact(r, ["_lineno", "batch_size", "decode_api", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_recurrent", "native_graph_fused_recurrent_output", "native_graph_fused_output", "native_graph_fused_output_project", "native_graph_fused_wag_lora", "native_graph_fused_projection", "decode_tokps_total", "decode_tokps_per_seq", "decode_ms_per_step", "peak_vram_mb"]) for r in batch_default_latest],
+        "batch_sweep_experimental_native_graph": [
+            {
+                **(compact(r, ["_lineno", "batch_size", "decode_api", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_recurrent", "native_graph_fused_recurrent_output", "native_graph_fused_output", "native_graph_fused_output_project", "native_graph_fused_wag_lora", "native_graph_fused_projection", "decode_tokps_total", "decode_tokps_per_seq", "decode_ms_per_step", "peak_vram_mb"]) or {}),
+                "native_graph_flag_signature": native_graph_flag_signature(r),
+            }
+            for r in batch_experimental_latest
+        ],
         "dynamic_batch": [compact(r, ["_lineno", "decode_api", "fast_token_backend", "fast_token_backend_effective", "initial_batch_size", "final_batch_size", "final_cache_batch_size", "cache_select_api", "total_decode_tokens", "reorder_count", "drop_count", "decode_tokps_total", "decode_ms_per_token", "peak_vram_mb"]) for r in dynamic_latest],
         "chunked_prefill": [compact(r, ["_lineno", "prefill_mode", "batch_size", "prompt_tokens", "chunk_size", "prefill_tokps_total", "speed_ratio_vs_full", "peak_vram_mb", "peak_vram_ratio_vs_full", "max_abs_diff", "decode_max_abs_diff", "seq_length_match"]) for r in chunked_latest],
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "hf_forward_fixed", "hf_forward_greedy", "hf_forward_auto_fixed", "hf_forward_auto_greedy", "hf_forward_auto_backend", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
@@ -1564,6 +1655,18 @@ def print_text(report: dict[str, Any]) -> None:
     print("\n## batch_sweep")
     if report["batch_sweep"]:
         for row in report["batch_sweep"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+    print("\n## batch_sweep_default_native_graph")
+    if report["batch_sweep_default_native_graph"]:
+        for row in report["batch_sweep_default_native_graph"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+    print("\n## batch_sweep_experimental_native_graph")
+    if report["batch_sweep_experimental_native_graph"]:
+        for row in report["batch_sweep_experimental_native_graph"]:
             print(json.dumps(row, ensure_ascii=False))
     else:
         print("PENDING")
