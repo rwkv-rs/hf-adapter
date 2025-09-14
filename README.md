@@ -17,9 +17,15 @@ This repository converts RWKV-7 weights to a Hugging Face-style directory and pr
 - `model.generate(..., use_cache=True)`
 - PEFT LoRA smoke tests
 - HF Trainer, TRL SFTTrainer, DPOTrainer, and GRPOTrainer one-step smoke tests
+- Opt-in native/no-FLA backend smoke tests for Trainer, SFT, DPO, GRPO,
+  PEFT adapter save/load/merge, checkpoint resume, and bnb W8/W4 functional
+  quantized inference
 - HF `device_map` multi-GPU generate smoke for the pipeline-parallel direction
 
-The current backend uses the FLA (`flash-linear-attention`) RWKV-7 implementation. The next milestone is a native Transformers implementation without the FLA runtime dependency.
+The default backend uses the FLA (`flash-linear-attention`) RWKV-7
+implementation. Set `RWKV7_NATIVE_MODEL=1` to route remote-code
+`AutoModelForCausalLM.from_pretrained(...)` into the experimental native
+PyTorch backend for FLA-free compatibility validation.
 
 ## Layout
 
@@ -42,7 +48,17 @@ tests/
   test_dynamic_batch_cache.py
   test_peft_lora.py
   test_hf_training_smoke.py
+  test_hf_rl_training_smoke.py
+  test_native_model.py
+  test_native_trainer_smoke.py
+  test_native_sft_smoke.py
+  test_native_dpo_smoke.py
+  test_native_grpo_smoke.py
+  test_native_peft_save_load_merge.py
+  test_native_trainer_resume_smoke.py
+  test_native_bnb_quant_smoke.py
   test_device_map_generate.py
+  test_quantized_inference.py
   test_result_tools.py
 bench/
   bench_speed.py
@@ -172,6 +188,52 @@ python tests/test_hf_rl_training_smoke.py \
   --attn-mode fused_recurrent \
   --backend grpo \
   --grpo-max-completion-length 2
+```
+
+Native/no-FLA HF ecosystem hardening smoke tests:
+
+```bash
+export TORCHDYNAMO_DISABLE=1
+export RWKV7_NATIVE_MODEL=1
+export PYTHONPATH=/path/to/flash-linear-attention:/path/to/rwkv7-hf-adapter:$PYTHONPATH
+
+python tests/test_native_trainer_smoke.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --max-steps 2 \
+  --batch-size 2
+
+python tests/test_native_sft_smoke.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --max-steps 1 \
+  --batch-size 1 \
+  --max-length 32
+
+python tests/test_native_dpo_smoke.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --max-steps 1 \
+  --batch-size 1 \
+  --max-length 24
+
+python tests/test_native_grpo_smoke.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --max-steps 1 \
+  --batch-size 2 \
+  --max-completion-length 2
+
+python tests/test_native_peft_save_load_merge.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --steps 1
+
+python tests/test_native_trainer_resume_smoke.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --first-steps 1 \
+  --resume-steps 2 \
+  --batch-size 2
+
+python tests/test_native_bnb_quant_smoke.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --quantization both \
+  --dtype fp16
 ```
 
 DeepSpeed ZeRO preset validation:
