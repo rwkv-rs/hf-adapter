@@ -171,14 +171,15 @@ serving speed.
      This proves isolated W/A/G LoRA fusion does not survive full graph replay
      broadly enough to default; keep it opt-in and fold LoRA into a deeper
      projection/state/output kernel instead.
-12c. Opt-in native-graph probe for fused recurrent update plus output-prep.
+12c. Default native-graph fused recurrent update plus output-prep.
    - `rwkv7_hf.fused_recurrent_update.fused_recurrent_output_prepare()` fuses
      rank-1 recurrent state update/readout, group norm, recurrent correction,
      and gate multiply into one Triton launch. The final `o_proj` stays on
      cuBLAS.
-   - `RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT=1` enables this combined path
-     in native-graph capture. The graph-runner cache key includes the flag, so
-     default output-fused runners and recurrent+output runners are isolated.
+   - `RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT=1` is now the native-graph
+     default for this combined path; set it to `0` for A/B or fallback testing.
+     The graph-runner cache key includes the flag, so default output-fused
+     runners and recurrent+output runners are isolated.
    - `bench/bench_fused_recurrent_output.py` records
      `fused_recurrent_output_proto` rows. The first V100 row is
      correctness-clean and reaches `1.7956x` versus split fused
@@ -187,10 +188,11 @@ serving speed.
      `native_graph_fused_recurrent_output` A/B rows. V100 bsz=1/2/4/8 is
      greedy-exact and improves full native-graph decode by
      `1.2129x`/`1.1805x`/`1.2416x`/`1.2504x`. A normal batch sweep with the
-     flag enabled reaches `343.6`/`590.1`/`1179.5`/`2130.6` aggregate tok/s,
-     lifting Albatross decode ratios to min `0.4357x`, max `0.6455x`. This is
+     flag enabled reaches `332.2`/`589.5`/`1177.9`/`2136.7` aggregate tok/s,
+     lifting Albatross decode ratios to min `0.4352x`, max `0.6474x`. This is
      the first deeper fusion that wins both isolated and end-to-end, but it
-     remains opt-in until newer-GPU coverage and P1 min-ratio validation land.
+     is now the default V100 native-graph path while newer-GPU coverage and P1
+     min-ratio validation continue.
 
 13. Native-graph integration guard for the fused R/K/V + W/A/G projection path.
    - `RWKV7_NATIVE_GRAPH_FUSED_PROJECTION=1` makes native-graph capture use the

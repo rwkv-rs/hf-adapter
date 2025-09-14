@@ -826,7 +826,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         if ngro_speedup is not None and float(ngro_speedup) >= 1.0:
             focus.append(
                 f"native_graph fused recurrent+output integration passes greedy {greedy_match}/{greedy_total} "
-                f"with speedup={float(ngro_speedup):.2f}x max_abs_diff={out_diff}; candidate for default after broader matrix"
+                f"with speedup={float(ngro_speedup):.2f}x max_abs_diff={out_diff}; default-on with env fallback while testing broader device matrix"
             )
         elif ngro_speedup is not None:
             focus.append(
@@ -1067,7 +1067,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     elif albatross_decode_min < 0.55:
         focus.append(
             f"fused backend P1 pending: decode min {albatross_decode_min:.2f}x Albatross; "
-            "start fused fp16 projection/recurrent kernels"
+            "continue fused fp16 projection/LoRA and recurrent-output kernels"
         )
     if albatross_prefill_min is not None and albatross_prefill_min < 0.60:
         focus.append(

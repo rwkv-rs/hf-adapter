@@ -183,7 +183,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
             "fast_token_backend": requested_backend,
             "fast_token_backend_effective": last_fast_token_backend(model) or requested_backend,
             "native_graph_fused_recurrent": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT", "0") not in {"0", "false", "False", "no", "off"},
-            "native_graph_fused_recurrent_output": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", "0") not in {"0", "false", "False", "no", "off"},
+            "native_graph_fused_recurrent_output": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", "1") not in {"0", "false", "False", "no", "off"},
             "native_graph_fused_output": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT", "1") not in {"0", "false", "False", "no", "off"},
             "native_graph_fused_output_project": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT", "0") not in {"0", "false", "False", "no", "off"},
             "native_graph_fused_wag_lora": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA", "0") not in {"0", "false", "False", "no", "off"},
