@@ -211,6 +211,19 @@ serving speed.
      state-update/output-prep/norm work that Triton handles well, but do not
      replace cuBLAS GEMV/GEMM subpaths unless a new kernel proves end-to-end
      speedup under `native_graph`.
+   - The native-graph runner now marks a `RWKV7StateCache` as bound to the
+     runner after replay. On the next token, if the cache was not mutated by
+     `update`, `reset`, `detach`, `to`, `select_batch`, or `reorder_cache`,
+     `copy_from_cache()` skips the per-layer state traversal entirely instead
+     of checking 3 tensors per layer for self-copy. The normal cache APIs
+     invalidate the binding, so dynamic batching and HF fallback semantics stay
+     conservative. On RTX 4090 0.4B fp16, the overhead row shows
+     `copy_from_cache_fast_skip_rate=0.9844` and reduces measured
+     `copy_from_cache_ms` to `0.039`/`0.0358`/`0.0358` for bsz=1/4/8
+     (`copy_share_of_manual_wall` about 1%). Public `rwkv7_forward_token`
+     batch sweep after the skip reaches `395.6`/`1143.4`/`2257.5` aggregate
+     tok/s for bsz=1/4/8. `test_fast_decode_api` with native_graph bsz=1/2/4
+     still passes greedy, sequence-length, and fallback compatibility checks.
 
 13. Native-graph integration guard for the fused R/K/V + W/A/G projection path.
    - `RWKV7_NATIVE_GRAPH_FUSED_PROJECTION=1` makes native-graph capture use the

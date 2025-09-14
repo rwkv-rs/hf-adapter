@@ -378,6 +378,8 @@ class _RWKV7NativeGraphTokenRunner:
         self.norm_w = base.norm.weight
         self.norm_b = base.norm.bias
         self._bound_cache_ref: weakref.ReferenceType[RWKV7StateCache] | None = None
+        self.copy_from_cache_calls = 0
+        self.copy_from_cache_fast_skips = 0
         self.graph = None
         self._capture()
 
@@ -418,6 +420,10 @@ class _RWKV7NativeGraphTokenRunner:
         dst.copy_(src.contiguous())
 
     def copy_from_cache(self, past_key_values: "RWKV7StateCache") -> None:
+        self.copy_from_cache_calls += 1
+        if past_key_values._native_graph_bound_to(self):
+            self.copy_from_cache_fast_skips += 1
+            return
         self._detach_bound_cache_if_different(past_key_values)
         for li, p in enumerate(self.packs):
             layer_idx = int(p[0])
@@ -447,6 +453,8 @@ class _RWKV7NativeGraphTokenRunner:
                 state["conv_state"] = state["conv_state"].clone()
             if isinstance(state.get("ffn_state"), torch.Tensor) and _same_tensor_view(state["ffn_state"], ffn_view):
                 state["ffn_state"] = state["ffn_state"].clone()
+        if hasattr(previous, "_invalidate_native_graph_binding"):
+            previous._invalidate_native_graph_binding()
         self._bound_cache_ref = None
 
     def bind_cache(self, past_key_values: "RWKV7StateCache") -> None:
@@ -459,6 +467,13 @@ class _RWKV7NativeGraphTokenRunner:
             state["ffn_state"] = self.xpf[li].unsqueeze(0)
             state["attn_state"] = None
         self._bound_cache_ref = weakref.ref(past_key_values)
+        past_key_values._bind_native_graph_runner(self)
+
+    def copy_stats(self) -> dict[str, int]:
+        return {
+            "copy_from_cache_calls": int(self.copy_from_cache_calls),
+            "copy_from_cache_fast_skips": int(self.copy_from_cache_fast_skips),
+        }
 
     def replay(self, token: torch.LongTensor, past_key_values: "RWKV7StateCache") -> torch.Tensor:
         self.copy_from_cache(past_key_values)
@@ -499,6 +514,8 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         self.norm_w = base.norm.weight
         self.norm_b = base.norm.bias
         self._bound_cache_ref: weakref.ReferenceType[RWKV7StateCache] | None = None
+        self.copy_from_cache_calls = 0
+        self.copy_from_cache_fast_skips = 0
         self.graph = None
         self._capture()
 
@@ -537,6 +554,10 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         dst.copy_(src.contiguous())
 
     def copy_from_cache(self, past_key_values: "RWKV7StateCache") -> None:
+        self.copy_from_cache_calls += 1
+        if past_key_values._native_graph_bound_to(self):
+            self.copy_from_cache_fast_skips += 1
+            return
         self._detach_bound_cache_if_different(past_key_values)
         for li, p in enumerate(self.packs):
             layer_idx = int(p[0])
@@ -566,6 +587,8 @@ class _RWKV7NativeGraphBatchedTokenRunner:
                 state["conv_state"] = state["conv_state"].clone()
             if isinstance(state.get("ffn_state"), torch.Tensor) and _same_tensor_view(state["ffn_state"], ffn_view):
                 state["ffn_state"] = state["ffn_state"].clone()
+        if hasattr(previous, "_invalidate_native_graph_binding"):
+            previous._invalidate_native_graph_binding()
         self._bound_cache_ref = None
 
     def bind_cache(self, past_key_values: "RWKV7StateCache") -> None:
@@ -578,6 +601,13 @@ class _RWKV7NativeGraphBatchedTokenRunner:
             state["ffn_state"] = self.xpf[li]
             state["attn_state"] = None
         self._bound_cache_ref = weakref.ref(past_key_values)
+        past_key_values._bind_native_graph_runner(self)
+
+    def copy_stats(self) -> dict[str, int]:
+        return {
+            "copy_from_cache_calls": int(self.copy_from_cache_calls),
+            "copy_from_cache_fast_skips": int(self.copy_from_cache_fast_skips),
+        }
 
     def replay(self, token: torch.LongTensor, past_key_values: "RWKV7StateCache") -> torch.Tensor:
         if int(token.numel()) != self.batch_size:
@@ -618,6 +648,26 @@ class RWKV7StateCache(_FLACache):
             "reorder_calls": 0,
             "resets": 0,
         }
+        self._rwkv7_cache_version = 0
+        self._rwkv7_native_graph_bound_runner_id: int | None = None
+        self._rwkv7_native_graph_bound_version: int | None = None
+
+    def _invalidate_native_graph_binding(self) -> None:
+        """Mark native-graph runner bindings stale after cache mutations."""
+
+        self._rwkv7_cache_version += 1
+        self._rwkv7_native_graph_bound_runner_id = None
+        self._rwkv7_native_graph_bound_version = None
+
+    def _bind_native_graph_runner(self, runner: object) -> None:
+        self._rwkv7_native_graph_bound_runner_id = id(runner)
+        self._rwkv7_native_graph_bound_version = int(self._rwkv7_cache_version)
+
+    def _native_graph_bound_to(self, runner: object) -> bool:
+        return (
+            self._rwkv7_native_graph_bound_runner_id == id(runner)
+            and self._rwkv7_native_graph_bound_version == int(self._rwkv7_cache_version)
+        )
 
     def _ensure_layer(self, layer_idx: int) -> dict[str, Any]:
         empty = {"recurrent_state": None, "attn_state": None, "conv_state": None, "ffn_state": None}
@@ -648,6 +698,7 @@ class RWKV7StateCache(_FLACache):
         offset: int | None = 1,
         cache_kwargs: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        self._invalidate_native_graph_binding()
         if cache_kwargs is None:
             cache_kwargs = {}
         offset = 1 if offset is None else int(offset)
@@ -727,6 +778,7 @@ class RWKV7StateCache(_FLACache):
         return int(self.get_seq_length(layer_idx)) + query_len, 0
 
     def reset(self) -> None:
+        self._invalidate_native_graph_binding()
         self.states.clear()
         self._seen_tokens = 0
         self._rwkv7_cache_metrics["resets"] += 1
@@ -739,11 +791,13 @@ class RWKV7StateCache(_FLACache):
         out.states = [_clone_cache_value(state) for state in self.states]
         out._rwkv7_cache_metrics = dict(self._rwkv7_cache_metrics)
         out._rwkv7_cache_metrics["clones"] += 1
+        out._rwkv7_cache_version = int(self._rwkv7_cache_version)
         return out
 
     def detach(self, *, inplace: bool = True) -> "RWKV7StateCache":
         """Detach cache tensors from autograd graphs for inference serving."""
         target = self if inplace else self.clone()
+        target._invalidate_native_graph_binding()
         target.states = [_detach_cache_value(state) for state in target.states]
         target._rwkv7_cache_metrics["detaches"] += 1
         return target
@@ -764,6 +818,7 @@ class RWKV7StateCache(_FLACache):
         keep their dtype; floating tensors are cast only when `dtype` is set.
         """
         target = self if inplace else self.clone()
+        target._invalidate_native_graph_binding()
         target.states = [
             _to_cache_value(state, device=device, dtype=dtype, non_blocking=non_blocking, copy=copy)
             for state in target.states
@@ -782,6 +837,7 @@ class RWKV7StateCache(_FLACache):
         active requests are assumed to have advanced together.
         """
         target = self if inplace else self.clone()
+        target._invalidate_native_graph_binding()
         target.states = [_move_first_dim(state, indices) for state in target.states]
         target._rwkv7_cache_metrics["select_batch_calls"] += 1
         return target
