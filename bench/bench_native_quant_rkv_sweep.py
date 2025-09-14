@@ -296,6 +296,7 @@ def run_quantization(args: argparse.Namespace, model, xs: dict[str, torch.Tensor
         "layers": args.layers,
         "block_m_values": [int(v) for v in args.block_m],
         "block_k_values": [int(v) for v in args.block_k],
+        "block_k_unit": "packed_int4_bytes" if quantization == "w4" else "input_features",
         "warmup": args.warmup,
         "steps": args.steps,
         "avg_fp16_baseline_ms": round(avg_fp16_baseline, 5),

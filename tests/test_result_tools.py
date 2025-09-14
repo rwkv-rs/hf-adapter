@@ -2087,6 +2087,7 @@ def assert_native_quant_rkv_sweep_is_reported(tmpdir: Path) -> None:
             "layers": [0, 1, 11],
             "block_m_values": [8, 16, 32],
             "block_k_values": [32, 64],
+            "block_k_unit": "input_features",
             "warmup": 8,
             "steps": 128,
             "avg_fp16_baseline_ms": 0.071,
@@ -2121,6 +2122,7 @@ def assert_native_quant_rkv_sweep_is_reported(tmpdir: Path) -> None:
             "layers": [0, 1, 11],
             "block_m_values": [8, 16, 32],
             "block_k_values": [32, 64],
+            "block_k_unit": "packed_int4_bytes",
             "warmup": 8,
             "steps": 128,
             "avg_fp16_baseline_ms": 0.071,
@@ -2167,6 +2169,8 @@ def assert_native_quant_rkv_sweep_is_reported(tmpdir: Path) -> None:
     by_quant = {row["quantization"]: row for row in report["native_quant_rkv_sweep"]}
     assert set(by_quant) == {"int8_rowwise_fused_rkv", "int4_rowwise_fused_rkv"}
     assert by_quant["int8_rowwise_fused_rkv"]["best_by_latency"]["block_m"] == 32
+    assert by_quant["int8_rowwise_fused_rkv"]["block_k_unit"] == "input_features"
+    assert by_quant["int4_rowwise_fused_rkv"]["block_k_unit"] == "packed_int4_bytes"
     assert any("native W8 R/K/V sweep best block_m=32 block_k=64 is 0.82x fp16" in item for item in report["next_focus"])
     assert any("native W4 R/K/V sweep best block_m=8 block_k=32 is 0.78x fp16" in item for item in report["next_focus"])
 
