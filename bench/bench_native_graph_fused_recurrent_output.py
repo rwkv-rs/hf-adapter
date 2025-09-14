@@ -93,6 +93,7 @@ def run_mode(model, token: torch.Tensor, base_state, args: argparse.Namespace, *
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT"] = "0"
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_PROJECTION"] = "0"
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA"] = "0"
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA"] = "0"
     model.rwkv7_clear_native_graph_cache()
     if hasattr(model, "rwkv7_reset_native_graph_cache_stats"):
         model.rwkv7_reset_native_graph_cache_stats()
@@ -165,6 +166,7 @@ def main() -> int:
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT"] = "0"
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_PROJECTION"] = "0"
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA"] = "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA"] = "0"
         token, base_state = prefill(model, ids)
         baseline = run_mode(model, token, base_state, args, enabled=False)
         fused = run_mode(model, token, base_state, args, enabled=True)

@@ -187,6 +187,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
             "native_graph_fused_output": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT", "1") not in {"0", "false", "False", "no", "off"},
             "native_graph_fused_output_project": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT", "0") not in {"0", "false", "False", "no", "off"},
             "native_graph_fused_wag_lora": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA", "0") not in {"0", "false", "False", "no", "off"},
+            "native_graph_fused_wavg_lora": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA", "0") not in {"0", "false", "False", "no", "off"},
             "native_graph_fused_projection": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_PROJECTION", "0") not in {"0", "false", "False", "no", "off"},
             "decode_tokps_total": round((bsz * args.decode_tokens) / fast_dt, 1),
             "decode_tokps_per_seq": round(args.decode_tokens / fast_dt, 1),

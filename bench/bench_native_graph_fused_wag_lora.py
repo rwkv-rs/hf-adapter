@@ -92,6 +92,7 @@ def run_mode(model, token: torch.Tensor, base_state, args: argparse.Namespace, *
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT"] = "1" if args.fused_output else "0"
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT"] = "1" if args.fused_output_project else "0"
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_PROJECTION"] = "0"
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA"] = "0"
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_M"] = str(args.block_m)
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_R"] = str(args.block_r)
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_K"] = str(args.block_k)
@@ -172,6 +173,7 @@ def main() -> int:
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT"] = "1" if args.fused_output else "0"
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT"] = "1" if args.fused_output_project else "0"
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_PROJECTION"] = "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA"] = "0"
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA"] = "0"
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_M"] = str(args.block_m)
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_R"] = str(args.block_r)

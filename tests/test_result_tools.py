@@ -444,6 +444,7 @@ def assert_albatross_decode_uses_default_native_graph_batch_rows(tmpdir: Path) -
             "native_graph_fused_recurrent_output": True,
             "native_graph_fused_output": True,
             "native_graph_fused_wag_lora": False,
+            "native_graph_fused_wavg_lora": False,
             "native_graph_fused_projection": False,
             "decode_tokps_total": 600.0,
             "prompt_tokens": 64,
@@ -472,8 +473,25 @@ def assert_albatross_decode_uses_default_native_graph_batch_rows(tmpdir: Path) -
             "native_graph_fused_recurrent_output": True,
             "native_graph_fused_output": True,
             "native_graph_fused_wag_lora": True,
+            "native_graph_fused_wavg_lora": False,
             "native_graph_fused_projection": False,
             "decode_tokps_total": 450.0,
+            "prompt_tokens": 64,
+        },
+        {
+            "axis": "batch_sweep",
+            "backend": "hf_adapter",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 2,
+            "decode_api": "rwkv7_forward_token",
+            "fast_token_backend_effective": "native_graph",
+            "native_graph_fused_recurrent_output": True,
+            "native_graph_fused_output": True,
+            "native_graph_fused_wag_lora": False,
+            "native_graph_fused_wavg_lora": True,
+            "native_graph_fused_projection": False,
+            "decode_tokps_total": 300.0,
             "prompt_tokens": 64,
         },
     ]
@@ -501,8 +519,8 @@ def assert_albatross_decode_uses_default_native_graph_batch_rows(tmpdir: Path) -
     assert report["fused_backend_targets"]["albatross_decode"]["current_ratio_min"] == 0.6
     assert report["albatross_decode_comparison"][0]["hf_tokps_total"] == 600.0
     assert report["batch_sweep_default_native_graph"][0]["decode_tokps_total"] == 600.0
-    assert report["batch_sweep_experimental_native_graph"][0]["decode_tokps_total"] == 450.0
-    assert any("experimental native_graph flags" in item and "min_ratio=0.75x" in item for item in report["next_focus"])
+    assert report["batch_sweep_experimental_native_graph"][0]["decode_tokps_total"] == 300.0
+    assert any("experimental native_graph flags" in item and "fused_wavg_lora=True" in item and "min_ratio=0.50x" in item for item in report["next_focus"])
 
 
 def assert_projection_kernel_plan_is_reported(tmpdir: Path) -> None:
@@ -1640,6 +1658,103 @@ def assert_native_graph_fused_wag_lora_is_reported(tmpdir: Path) -> None:
     assert any("native_graph fused W/A/G LoRA batch matrix covers bsz=[1, 2]" in item for item in report["next_focus"])
 
 
+def assert_native_graph_fused_wavg_lora_is_reported(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "native_graph_fused_wavg_lora",
+            "backend": "hf_adapter",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 1,
+            "prompt_tokens": 64,
+            "steps": 32,
+            "fixed_token": True,
+            "fused_recurrent_enabled": False,
+            "fused_recurrent_output_enabled": True,
+            "fused_output_enabled": True,
+            "fused_output_project_enabled": False,
+            "block_m": 64,
+            "block_r": 64,
+            "block_k": 64,
+            "baseline_effective_backend": "native_graph",
+            "fused_effective_backend": "native_graph",
+            "baseline_fused_wavg_lora": False,
+            "fused_wavg_lora": True,
+            "baseline_ms_per_step": 4.0205,
+            "fused_ms_per_step": 3.9501,
+            "speedup": 1.0178,
+            "baseline_tokps_total": 248.7,
+            "fused_tokps_total": 253.2,
+            "max_abs_diff_first_step": 0.03125,
+            "min_cosine_first_step": 1.0,
+            "greedy_match": 32,
+            "greedy_total": 32,
+            "baseline_cache_stats": {"batch_sizes": [1], "hit_rate": 0.97},
+            "fused_cache_stats": {"batch_sizes": [1], "hit_rate": 0.97},
+        },
+        {
+            "axis": "native_graph_fused_wavg_lora",
+            "backend": "hf_adapter",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 2,
+            "prompt_tokens": 64,
+            "steps": 32,
+            "fixed_token": True,
+            "fused_recurrent_enabled": False,
+            "fused_recurrent_output_enabled": True,
+            "fused_output_enabled": True,
+            "fused_output_project_enabled": False,
+            "block_m": 64,
+            "block_r": 64,
+            "block_k": 64,
+            "baseline_effective_backend": "native_graph",
+            "fused_effective_backend": "native_graph",
+            "baseline_fused_wavg_lora": False,
+            "fused_wavg_lora": True,
+            "baseline_ms_per_step": 4.4253,
+            "fused_ms_per_step": 4.3891,
+            "speedup": 1.0082,
+            "baseline_tokps_total": 451.9,
+            "fused_tokps_total": 455.6,
+            "max_abs_diff_first_step": 0.03125,
+            "min_cosine_first_step": 1.0,
+            "greedy_match": 64,
+            "greedy_total": 64,
+            "baseline_cache_stats": {"batch_sizes": [2], "hit_rate": 0.97},
+            "fused_cache_stats": {"batch_sizes": [2], "hit_rate": 0.97},
+        },
+    ]
+    path = tmpdir / "native_graph_fused_wavg_lora.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    assert report["native_graph_fused_wavg_lora"]["speedup"] == 1.0082
+    assert report["native_graph_fused_wavg_lora"]["block_m"] == 64
+    assert [row["batch_size"] for row in report["native_graph_fused_wavg_lora_sweep"]] == [1, 2]
+    assert any("native_graph fused W/A/G/V-gate LoRA latest row passes greedy 64/64" in item for item in report["next_focus"])
+    assert any("native_graph fused W/A/G/V-gate LoRA batch matrix covers bsz=[1, 2]" in item for item in report["next_focus"])
+
+
 def assert_native_graph_fused_projection_is_reported(tmpdir: Path) -> None:
     rows = [
         {
@@ -2363,6 +2478,7 @@ def main() -> int:
         assert_native_graph_fused_output_is_reported(tmpdir)
         assert_native_graph_fused_output_project_is_reported(tmpdir)
         assert_native_graph_fused_wag_lora_is_reported(tmpdir)
+        assert_native_graph_fused_wavg_lora_is_reported(tmpdir)
         assert_native_graph_fused_projection_is_reported(tmpdir)
         assert_native_quant_gemv_proto_is_reported(tmpdir)
         assert_native_quant_w4_gemv_proto_is_reported(tmpdir)
