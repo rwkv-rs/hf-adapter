@@ -1443,7 +1443,42 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             }
             for r in batch_experimental_latest
         ],
-        "dynamic_batch": [compact(r, ["_lineno", "decode_api", "fast_token_backend", "fast_token_backend_effective", "initial_batch_size", "final_batch_size", "final_cache_batch_size", "cache_select_api", "total_decode_tokens", "reorder_count", "drop_count", "decode_tokps_total", "decode_ms_per_token", "peak_vram_mb"]) for r in dynamic_latest],
+        "dynamic_batch": [
+            compact(
+                r,
+                [
+                    "_lineno",
+                    "decode_api",
+                    "fast_token_backend",
+                    "fast_token_backend_effective",
+                    "initial_batch_size",
+                    "final_batch_size",
+                    "final_cache_batch_size",
+                    "cache_select_api",
+                    "total_decode_tokens",
+                    "reorder_count",
+                    "drop_count",
+                    "decode_tokps_total",
+                    "decode_ms_per_token",
+                    "cache_select_batch_calls",
+                    "cache_native_graph_bound_selects",
+                    "cache_seen_tokens",
+                    "native_graph_cache_requests",
+                    "native_graph_cache_hits",
+                    "native_graph_cache_misses",
+                    "native_graph_cache_hit_rate",
+                    "native_graph_cache_batch_sizes",
+                    "native_graph_copy_from_cache_calls",
+                    "native_graph_copy_from_cache_fast_skips",
+                    "native_graph_copy_from_cache_fast_skip_rate",
+                    "native_graph_bind_cache_calls",
+                    "native_graph_bind_cache_fast_skips",
+                    "native_graph_bind_cache_fast_skip_rate",
+                    "peak_vram_mb",
+                ],
+            )
+            for r in dynamic_latest
+        ],
         "chunked_prefill": [compact(r, ["_lineno", "prefill_mode", "batch_size", "prompt_tokens", "chunk_size", "prefill_tokps_total", "speed_ratio_vs_full", "peak_vram_mb", "peak_vram_ratio_vs_full", "max_abs_diff", "decode_max_abs_diff", "seq_length_match"]) for r in chunked_latest],
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "hf_forward_fixed", "hf_forward_greedy", "hf_forward_auto_fixed", "hf_forward_auto_greedy", "hf_forward_auto_backend", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
         "forward_fast_path": compact(forward_fast_path, ["_lineno", "fast_token_backend", "fast_token_layout", "reference_forward", "hf_forward_fast", "direct_fast_token", "hf_forward_fast_backend", "direct_fast_token_backend", "max_abs_diff_auto_vs_reference", "max_abs_diff_direct_vs_reference", "peak_vram_mb"]),

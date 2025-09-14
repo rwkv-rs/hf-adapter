@@ -133,6 +133,32 @@ def main() -> int:
     binding_cache.reset()
     assert not binding_cache._native_graph_bound_to(runner_marker)
 
+    class BoundRunner:
+        def __init__(self):
+            self.reorder_calls = 0
+
+        def reorder_batch_inplace(self, indices):
+            self.reorder_calls += 1
+            return True
+
+    class SameSizeIndices:
+        def numel(self):
+            return 3
+
+    fake_tensor = sys.modules["torch"].Tensor()
+    fake_tensor.shape = (3,)
+    fake_tensor.dim = lambda: 1
+    bound_select_cache = modeling.RWKV7StateCache()
+    bound_select_cache.states = [{"recurrent_state": fake_tensor}]
+    bound_runner = BoundRunner()
+    bound_select_cache._bind_native_graph_runner(bound_runner)
+    assert bound_select_cache.select_batch(SameSizeIndices(), inplace=True) is bound_select_cache
+    assert bound_runner.reorder_calls == 1
+    assert bound_select_cache._native_graph_bound_to(bound_runner)
+    metrics = bound_select_cache.rwkv7_cache_metrics()
+    assert metrics["select_batch_calls"] == 1, metrics
+    assert metrics["native_graph_bound_selects"] == 1, metrics
+
     cloned = state_cache.clone()
     assert cloned.rwkv7_cache_metrics()["clones"] == 1
     cloned.detach(inplace=True)
@@ -155,12 +181,36 @@ def main() -> int:
     class ScalarRunner:
         def __init__(self, owner, packs):
             self.batch_size = 1
+            self.copy_from_cache_calls = 0
+            self.copy_from_cache_fast_skips = 0
+            self.bind_cache_calls = 0
+            self.bind_cache_fast_skips = 0
             created.append(("scalar", 1))
+
+        def copy_stats(self):
+            return {
+                "copy_from_cache_calls": self.copy_from_cache_calls,
+                "copy_from_cache_fast_skips": self.copy_from_cache_fast_skips,
+                "bind_cache_calls": self.bind_cache_calls,
+                "bind_cache_fast_skips": self.bind_cache_fast_skips,
+            }
 
     class BatchedRunner:
         def __init__(self, owner, packs, batch_size: int):
             self.batch_size = int(batch_size)
+            self.copy_from_cache_calls = 10 * int(batch_size)
+            self.copy_from_cache_fast_skips = 5 * int(batch_size)
+            self.bind_cache_calls = 20 * int(batch_size)
+            self.bind_cache_fast_skips = 10 * int(batch_size)
             created.append(("batched", int(batch_size)))
+
+        def copy_stats(self):
+            return {
+                "copy_from_cache_calls": self.copy_from_cache_calls,
+                "copy_from_cache_fast_skips": self.copy_from_cache_fast_skips,
+                "bind_cache_calls": self.bind_cache_calls,
+                "bind_cache_fast_skips": self.bind_cache_fast_skips,
+            }
 
     modeling._RWKV7NativeGraphTokenRunner = ScalarRunner
     modeling._RWKV7NativeGraphBatchedTokenRunner = BatchedRunner
@@ -203,6 +253,9 @@ def main() -> int:
         owner.rwkv7_native_graph_cache_stats = types.MethodType(
             modeling.RWKV7ForCausalLM.rwkv7_native_graph_cache_stats, owner
         )
+        owner.rwkv7_native_graph_runner_copy_stats = types.MethodType(
+            modeling.RWKV7ForCausalLM.rwkv7_native_graph_runner_copy_stats, owner
+        )
         owner.rwkv7_reset_native_graph_cache_stats = types.MethodType(
             modeling.RWKV7ForCausalLM.rwkv7_reset_native_graph_cache_stats, owner
         )
@@ -229,6 +282,14 @@ def main() -> int:
         assert stats["evictions"] == 2, stats
         assert stats["batch_sizes"] == [2, 4], stats
         assert abs(stats["hit_rate"] - 0.2) < 1e-9, stats
+        copy_stats = owner.rwkv7_native_graph_runner_copy_stats()
+        assert copy_stats["totals"]["copy_from_cache_calls"] == 60, copy_stats
+        assert copy_stats["totals"]["copy_from_cache_fast_skips"] == 30, copy_stats
+        assert copy_stats["totals"]["copy_from_cache_fast_skip_rate"] == 0.5, copy_stats
+        assert copy_stats["totals"]["bind_cache_calls"] == 120, copy_stats
+        assert copy_stats["totals"]["bind_cache_fast_skips"] == 60, copy_stats
+        assert copy_stats["totals"]["bind_cache_fast_skip_rate"] == 0.5, copy_stats
+        assert [row["batch_size"] for row in copy_stats["runners"]] == [2, 4], copy_stats
         reset_stats = owner.rwkv7_reset_native_graph_cache_stats()
         assert reset_stats["requests"] == 0 and reset_stats["hits"] == 0, reset_stats
         assert reset_stats["batch_sizes"] == [2, 4], reset_stats

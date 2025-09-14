@@ -226,6 +226,23 @@ serving speed.
      `395.6`/`1143.4`/`2257.5` aggregate tok/s for bsz=1/4/8.
      `test_fast_decode_api` with native_graph bsz=1/2/4 still passes greedy,
      sequence-length, and fallback compatibility checks.
+   - Dynamic batching telemetry is now part of `bench/bench_dynamic_batch.py`.
+     The benchmark records state-cache select counters, native-graph LRU
+     requests/hits/misses, active batch sizes, and runner copy/bind fast-skip
+     rates. `select_batch()` now keeps the cache bound when the active batch is
+     only reordered (same size): it reorders the captured graph buffers in place
+     and falls back to tensor selection only when rows are dropped. On RTX 4090
+     0.4B fp16 with initial bsz=8, `reorder_every=4`, `drop_every=32`, and final
+     bsz=4, the HF forward path reaches `191.9` tok/s while
+     `rwkv7_forward_token` + native_graph reaches `1671.8` tok/s. The timed
+     native-graph decode has `128/128` runner-cache hits (`hit_rate=1.0`) across
+     active batch sizes `[2,3,4,5,6,7,8]`, `28/32` selects preserve the bound
+     graph buffers, and copy/bind fast-skip rates rise to `0.9688`. The only
+     remaining full state copies are the four expected active-size drops.
+     `tests/test_dynamic_batch_cache.py` now also covers an in-place same-size
+     reorder under `fast_token`; the 4090 0.1B native_graph smoke remains within
+     `0.09375` max-abs diff and greedy equality for the reordered/compacted
+     steps.
 
 13. Native-graph integration guard for the fused R/K/V + W/A/G projection path.
    - `RWKV7_NATIVE_GRAPH_FUSED_PROJECTION=1` makes native-graph capture use the

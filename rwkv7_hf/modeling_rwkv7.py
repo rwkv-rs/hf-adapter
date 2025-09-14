@@ -483,6 +483,11 @@ class _RWKV7NativeGraphTokenRunner:
             "bind_cache_fast_skips": int(self.bind_cache_fast_skips),
         }
 
+    def reorder_batch_inplace(self, indices: torch.LongTensor) -> bool:
+        if int(indices.numel()) != 1:
+            return False
+        return True
+
     def replay(self, token: torch.LongTensor, past_key_values: "RWKV7StateCache") -> torch.Tensor:
         self.copy_from_cache(past_key_values)
         self.tok_id.copy_(token.reshape(1))
@@ -625,6 +630,19 @@ class _RWKV7NativeGraphBatchedTokenRunner:
             "bind_cache_fast_skips": int(self.bind_cache_fast_skips),
         }
 
+    def reorder_batch_inplace(self, indices: torch.LongTensor) -> bool:
+        """Reorder captured state buffers without breaking cache binding."""
+
+        if int(indices.numel()) != self.batch_size:
+            return False
+        idx = indices.to(device=self.device, dtype=torch.long)
+        for li in range(len(self.packs)):
+            self.state[li].copy_(self.state[li].index_select(0, idx).contiguous())
+            self.xpa[li].copy_(self.xpa[li].index_select(0, idx).contiguous())
+            self.xpf[li].copy_(self.xpf[li].index_select(0, idx).contiguous())
+        self.v_first.copy_(self.v_first.index_select(0, idx).contiguous())
+        return True
+
     def replay(self, token: torch.LongTensor, past_key_values: "RWKV7StateCache") -> torch.Tensor:
         if int(token.numel()) != self.batch_size:
             raise ValueError(f"native_graph runner batch mismatch: got {int(token.numel())}, expected {self.batch_size}")
@@ -660,6 +678,7 @@ class RWKV7StateCache(_FLACache):
             "detaches": 0,
             "device_moves": 0,
             "select_batch_calls": 0,
+            "native_graph_bound_selects": 0,
             "batch_select_calls": 0,
             "reorder_calls": 0,
             "resets": 0,
@@ -667,6 +686,7 @@ class RWKV7StateCache(_FLACache):
         self._rwkv7_cache_version = 0
         self._rwkv7_native_graph_bound_runner_id: int | None = None
         self._rwkv7_native_graph_bound_version: int | None = None
+        self._rwkv7_native_graph_bound_runner_ref: weakref.ReferenceType | None = None
 
     def _invalidate_native_graph_binding(self) -> None:
         """Mark native-graph runner bindings stale after cache mutations."""
@@ -674,16 +694,30 @@ class RWKV7StateCache(_FLACache):
         self._rwkv7_cache_version += 1
         self._rwkv7_native_graph_bound_runner_id = None
         self._rwkv7_native_graph_bound_version = None
+        self._rwkv7_native_graph_bound_runner_ref = None
 
     def _bind_native_graph_runner(self, runner: object) -> None:
         self._rwkv7_native_graph_bound_runner_id = id(runner)
         self._rwkv7_native_graph_bound_version = int(self._rwkv7_cache_version)
+        try:
+            self._rwkv7_native_graph_bound_runner_ref = weakref.ref(runner)
+        except TypeError:
+            self._rwkv7_native_graph_bound_runner_ref = None
 
     def _native_graph_bound_to(self, runner: object) -> bool:
         return (
             self._rwkv7_native_graph_bound_runner_id == id(runner)
             and self._rwkv7_native_graph_bound_version == int(self._rwkv7_cache_version)
         )
+
+    def _native_graph_bound_runner(self) -> object | None:
+        if self._rwkv7_native_graph_bound_version != int(self._rwkv7_cache_version):
+            return None
+        ref = self._rwkv7_native_graph_bound_runner_ref
+        runner = ref() if ref is not None else None
+        if runner is not None and self._rwkv7_native_graph_bound_runner_id == id(runner):
+            return runner
+        return None
 
     def _ensure_layer(self, layer_idx: int) -> dict[str, Any]:
         empty = {"recurrent_state": None, "attn_state": None, "conv_state": None, "ffn_state": None}
@@ -853,6 +887,18 @@ class RWKV7StateCache(_FLACache):
         active requests are assumed to have advanced together.
         """
         target = self if inplace else self.clone()
+        runner = target._native_graph_bound_runner() if inplace else None
+        if runner is not None and hasattr(runner, "reorder_batch_inplace"):
+            try:
+                same_size = target.get_batch_size() == int(indices.numel())
+            except Exception:
+                same_size = False
+            if same_size and runner.reorder_batch_inplace(indices):
+                target._rwkv7_cache_metrics["select_batch_calls"] += 1
+                target._rwkv7_cache_metrics["native_graph_bound_selects"] = (
+                    int(target._rwkv7_cache_metrics.get("native_graph_bound_selects", 0)) + 1
+                )
+                return target
         target._invalidate_native_graph_binding()
         target.states = [_move_first_dim(state, indices) for state in target.states]
         target._rwkv7_cache_metrics["select_batch_calls"] += 1
@@ -1049,6 +1095,53 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             }
         )
         return stats
+
+    def rwkv7_native_graph_runner_copy_stats(self) -> dict[str, Any]:
+        """Return aggregate native-graph runner cache-copy/binding counters.
+
+        The LRU-level counters above answer whether a captured runner was
+        reused for the active batch size.  These runner-level counters answer
+        the more serving-specific question: once the runner is reused, did the
+        RWKV7StateCache stay bound to the captured buffers or did dynamic
+        batching/reorder force a state copy back into the graph inputs?
+        """
+
+        cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
+        runners: list[tuple[Any, Any]] = []
+        if isinstance(cache, tuple) and len(cache) == 2:
+            runners = [cache]
+        elif isinstance(cache, OrderedDict):
+            runners = list(cache.items())
+
+        totals = {
+            "copy_from_cache_calls": 0,
+            "copy_from_cache_fast_skips": 0,
+            "bind_cache_calls": 0,
+            "bind_cache_fast_skips": 0,
+        }
+        rows: list[dict[str, Any]] = []
+        for key, runner in runners:
+            stats = runner.copy_stats() if hasattr(runner, "copy_stats") else {}
+            batch_size = int(key[-1]) if isinstance(key, tuple) and key else getattr(runner, "batch_size", None)
+            row = {"batch_size": int(batch_size) if batch_size is not None else None}
+            for name in totals:
+                value = int(stats.get(name, 0))
+                row[name] = value
+                totals[name] += value
+            rows.append(row)
+
+        copy_calls = int(totals["copy_from_cache_calls"])
+        bind_calls = int(totals["bind_cache_calls"])
+        totals["copy_from_cache_fast_skip_rate"] = (
+            float(totals["copy_from_cache_fast_skips"]) / float(copy_calls) if copy_calls else None
+        )
+        totals["bind_cache_fast_skip_rate"] = (
+            float(totals["bind_cache_fast_skips"]) / float(bind_calls) if bind_calls else None
+        )
+        return {
+            "totals": totals,
+            "runners": sorted(rows, key=lambda row: (-1 if row["batch_size"] is None else int(row["batch_size"]))),
+        }
 
     def rwkv7_reset_native_graph_cache_stats(self) -> dict[str, Any]:
         """Reset and return native-graph cache reuse counters."""

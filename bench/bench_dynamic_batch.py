@@ -85,6 +85,61 @@ def last_fast_token_backend(model):
     return getattr(model, "_rwkv7_last_fast_token_backend", None)
 
 
+def state_cache_metrics(state: Any) -> dict[str, Any]:
+    getter = getattr(state, "rwkv7_cache_metrics", None)
+    if not callable(getter):
+        return {}
+    metrics = getter()
+    return dict(metrics) if isinstance(metrics, dict) else {}
+
+
+def native_graph_cache_stats(model) -> dict[str, Any]:
+    getter = getattr(model, "rwkv7_native_graph_cache_stats", None)
+    if not callable(getter):
+        return {}
+    stats = getter()
+    return dict(stats) if isinstance(stats, dict) else {}
+
+
+def native_graph_copy_stats(model) -> dict[str, Any]:
+    getter = getattr(model, "rwkv7_native_graph_runner_copy_stats", None)
+    if not callable(getter):
+        return {}
+    stats = getter()
+    return dict(stats) if isinstance(stats, dict) else {}
+
+
+def native_graph_copy_totals(stats: dict[str, Any]) -> dict[str, int]:
+    totals = stats.get("totals") if isinstance(stats, dict) else {}
+    if not isinstance(totals, dict):
+        return {}
+    out: dict[str, int] = {}
+    for key in ("copy_from_cache_calls", "copy_from_cache_fast_skips", "bind_cache_calls", "bind_cache_fast_skips"):
+        try:
+            out[key] = int(totals.get(key, 0))
+        except (TypeError, ValueError):
+            out[key] = 0
+    return out
+
+
+def diff_native_graph_copy_stats(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    before_totals = native_graph_copy_totals(before)
+    after_totals = native_graph_copy_totals(after)
+    deltas = {
+        key: int(after_totals.get(key, 0)) - int(before_totals.get(key, 0))
+        for key in ("copy_from_cache_calls", "copy_from_cache_fast_skips", "bind_cache_calls", "bind_cache_fast_skips")
+    }
+    copy_calls = int(deltas["copy_from_cache_calls"])
+    bind_calls = int(deltas["bind_cache_calls"])
+    deltas["copy_from_cache_fast_skip_rate"] = (
+        float(deltas["copy_from_cache_fast_skips"]) / float(copy_calls) if copy_calls else None
+    )
+    deltas["bind_cache_fast_skip_rate"] = (
+        float(deltas["bind_cache_fast_skips"]) / float(bind_calls) if bind_calls else None
+    )
+    return deltas
+
+
 @contextmanager
 def reference_forward_env():
     old = os.environ.get("RWKV7_FAST_FORWARD")
@@ -183,6 +238,9 @@ def run_loop(args, model, ids: torch.Tensor, decode_api: str) -> dict[str, Any]:
         out = model(ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
         state = out.past_key_values
         token = out.logits[:, -1:].argmax(dim=-1)
+        if hasattr(model, "rwkv7_reset_native_graph_cache_stats"):
+            model.rwkv7_reset_native_graph_cache_stats()
+        copy_stats_before = native_graph_copy_stats(model)
         total_tokens = 0
         reorder_count = 0
         drop_count = 0
@@ -199,6 +257,9 @@ def run_loop(args, model, ids: torch.Tensor, decode_api: str) -> dict[str, Any]:
         cuda_sync(args.device)
         dt = time.time() - t0
 
+    cache_metrics = state_cache_metrics(state)
+    graph_stats = native_graph_cache_stats(model)
+    copy_delta = diff_native_graph_copy_stats(copy_stats_before, native_graph_copy_stats(model))
     row = {
         "axis": "dynamic_batch",
         "backend": "hf_adapter",
@@ -224,6 +285,36 @@ def run_loop(args, model, ids: torch.Tensor, decode_api: str) -> dict[str, Any]:
         "decode_tokps_total": round(total_tokens / dt, 1),
         "decode_ms_per_step": round(1000 * dt / args.decode_steps, 2),
         "decode_ms_per_token": round(1000 * dt / max(total_tokens, 1), 4),
+        "cache_updates": cache_metrics.get("updates"),
+        "cache_new_layers": cache_metrics.get("new_layers"),
+        "cache_select_batch_calls": cache_metrics.get("select_batch_calls"),
+        "cache_native_graph_bound_selects": cache_metrics.get("native_graph_bound_selects"),
+        "cache_batch_select_calls": cache_metrics.get("batch_select_calls"),
+        "cache_reorder_calls": cache_metrics.get("reorder_calls"),
+        "cache_device_moves": cache_metrics.get("device_moves"),
+        "cache_resets": cache_metrics.get("resets"),
+        "cache_seen_tokens": cache_metrics.get("seen_tokens"),
+        "state_cache_metrics": cache_metrics,
+        "native_graph_cache_requests": graph_stats.get("requests"),
+        "native_graph_cache_hits": graph_stats.get("hits"),
+        "native_graph_cache_misses": graph_stats.get("misses"),
+        "native_graph_cache_evictions": graph_stats.get("evictions"),
+        "native_graph_cache_hit_rate": round(float(graph_stats["hit_rate"]), 4)
+        if graph_stats.get("hit_rate") is not None
+        else None,
+        "native_graph_cache_batch_sizes": graph_stats.get("batch_sizes"),
+        "native_graph_cache_stats": graph_stats,
+        "native_graph_copy_from_cache_calls": copy_delta.get("copy_from_cache_calls"),
+        "native_graph_copy_from_cache_fast_skips": copy_delta.get("copy_from_cache_fast_skips"),
+        "native_graph_copy_from_cache_fast_skip_rate": round(float(copy_delta["copy_from_cache_fast_skip_rate"]), 4)
+        if copy_delta.get("copy_from_cache_fast_skip_rate") is not None
+        else None,
+        "native_graph_bind_cache_calls": copy_delta.get("bind_cache_calls"),
+        "native_graph_bind_cache_fast_skips": copy_delta.get("bind_cache_fast_skips"),
+        "native_graph_bind_cache_fast_skip_rate": round(float(copy_delta["bind_cache_fast_skip_rate"]), 4)
+        if copy_delta.get("bind_cache_fast_skip_rate") is not None
+        else None,
+        "native_graph_runner_copy_delta": copy_delta,
         "peak_vram_mb": peak_mb(args.device),
     }
     if decode_api == "rwkv7_forward_token":
