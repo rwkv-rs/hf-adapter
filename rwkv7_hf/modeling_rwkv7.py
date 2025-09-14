@@ -114,6 +114,12 @@ def _native_graph_fused_recurrent_requested() -> bool:
     return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT", "0") not in _FALSE_VALUES
 
 
+def _native_graph_fused_recurrent_output_requested() -> bool:
+    """Whether native-graph runners should capture recurrent+output-prep fusion."""
+
+    return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", "0") not in _FALSE_VALUES
+
+
 def _native_graph_fused_output_requested() -> bool:
     """Whether native-graph runners should capture the experimental output-prep kernel."""
 
@@ -1145,6 +1151,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             int(packs[0][1]),
             int(packs[0][2]),
             _native_graph_fused_recurrent_requested(),
+            _native_graph_fused_recurrent_output_requested(),
             _native_graph_fused_output_requested(),
             _native_graph_fused_output_project_requested(),
             _native_graph_fused_output_project_block_m(),

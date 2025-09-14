@@ -90,6 +90,26 @@
   只在较大 active batch 勉强保留，不能默认。下一步不要继续单独堆
   LoRA wrapper，而是把 LoRA 和 R/K/V、recurrent/output 更深融合。
 
+最新 fused recurrent+output 更新：
+
+- 新增 `fused_recurrent_output_prepare()`：把 recurrent state update/readout、
+  group norm、recurrent correction、gate multiply 合到一个 Triton kernel，
+  `o_proj` 继续走 cuBLAS。V100 isolated row 为 `0.10580ms`，相对 split
+  fused recurrent/output 为 `1.7956x`，相对 torch current 为 `4.1916x`。
+- `RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT=1` 已接入 native_graph cache key
+  和 A/B benchmark。V100 bsz=1/2/4/8 greedy 全一致，端到端 decode speedup
+  为 `1.2129x/1.1805x/1.2416x/1.2504x`。
+- 开启该 flag 后 `bench_batch_sweep.py` 达到
+  `343.6/590.1/1179.5/2130.6` aggregate tok/s，Albatross decode ratio 提升到
+  min `0.4357x`、max `0.6455x`。这说明路线正确，但 P1 仍是 GAP：bsz=8
+  过线，bsz=2 仍卡在 `0.4357x`，prefill 仍为 `0.3148x`。
+- analyzer 现在会报告 `fused_recurrent_output_proto`、
+  `native_graph_fused_recurrent_output` 和对应 sweep，并且忽略 prompt<512
+  的短 prefill probe，避免短 prompt decode sweep 污染 Albatross prefill gate。
+- 下一步不要回到 wrapper 层堆优化；继续沿
+  `native_graph -> fused recurrent+output -> fused projection/LoRA -> fused quant`
+  追 bsz=2/P1 min ratio，然后把同一条深融合路线迁移到 W8/W4。
+
 下一步继续补：
 
 1. 支持全部已发布尺寸的配置推断和转换：0.4B / 1.5B / 2.9B / 7.2B / 13.3B。
