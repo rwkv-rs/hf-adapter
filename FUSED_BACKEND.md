@@ -199,6 +199,18 @@ serving speed.
      `bench/analyze_results.py` therefore anchors Albatross decode gates to
      default native-graph batch rows and reports experimental flag rows
      separately.
+   - RTX 4090 / Ada (`sm_89`) validation now uses
+     `bench/run_4090_fused_backend_validation.sh`. On 0.4B fp16, the default
+     fused recurrent+output path is greedy-exact across bsz=1/2/4/8 and improves
+     full native-graph decode by `1.2408x`/`1.1981x`/`1.2268x`/`1.2226x`
+     versus the output-only baseline. The same run confirms the current
+     opt-in cuBLAS-replacement probes should stay off on Ada too:
+     WAVG-LoRA is `0.9496x`/`0.9963x`/`0.9973x` for bsz=1/4/8, fused projection
+     is `0.9407x` at bsz=4, and fused output-project is `0.9665x` at bsz=4.
+     The Ada rule therefore matches the 5070/V100 evidence: keep fusing the
+     state-update/output-prep/norm work that Triton handles well, but do not
+     replace cuBLAS GEMV/GEMM subpaths unless a new kernel proves end-to-end
+     speedup under `native_graph`.
 
 13. Native-graph integration guard for the fused R/K/V + W/A/G projection path.
    - `RWKV7_NATIVE_GRAPH_FUSED_PROJECTION=1` makes native-graph capture use the
@@ -248,7 +260,17 @@ serving speed.
      `0.7873x` fp16 and best W4 (`block_m=8, block_k=64`) is `0.7675x` fp16.
      The quant path therefore needs tensor-core-aware packing or deeper fusion,
      not just block-size tuning.
-19. V100 + 5070/newer-GPU benchmark matrix.
+19. V100 + Ada/Blackwell benchmark matrix.
+   - `bench/run_v100_fast_decode_validation.sh` remains the broad V100
+     regression gate.
+   - `bench/run_4090_fused_backend_validation.sh` is the Ada/4090 fused-backend
+     gate. It validates the HF-native default path, graph overhead, the default
+     fused recurrent+output A/B matrix, and a small set of negative opt-in
+     probes so future changes do not accidentally default a microbench-only
+     fusion.
+   - Blackwell/5070-specific evidence lives in `BLACKWELL_50SERIES.md`; 5070
+     uses the same software stack but `sm_120`-specific kernel behavior must not
+     be projected onto Ada without the 4090 gate.
 
 ## Backend dispatch requirement
 
