@@ -13,6 +13,35 @@ import os
 import torch
 import torch.nn.functional as F
 
+try:  # pragma: no cover - optional in older converted model dirs
+    from .kernel_policy import current_kernel_policy, env_blocks, env_flag, env_int
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from kernel_policy import current_kernel_policy, env_blocks, env_flag, env_int
+    except Exception:
+        current_kernel_policy = None  # type: ignore[assignment]
+
+        def env_flag(name: str, default: bool) -> bool:
+            raw = os.environ.get(name)
+            if raw is None:
+                return bool(default)
+            return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+        def env_int(name: str, default: int, *, lower: int = 1, upper: int | None = None) -> int:
+            try:
+                value = int(os.environ.get(name, str(default)).strip())
+            except Exception:
+                value = default
+            value = max(lower, value)
+            return min(value, upper) if upper is not None else value
+
+        def env_blocks(names: tuple[str, str, str], defaults: tuple[int, int, int], uppers: tuple[int, int, int]) -> tuple[int, int, int]:
+            return (
+                env_int(names[0], defaults[0], lower=1, upper=uppers[0]),
+                env_int(names[1], defaults[1], lower=1, upper=uppers[1]),
+                env_int(names[2], defaults[2], lower=1, upper=uppers[2]),
+            )
+
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
     from .fused_recurrent_update import (
         fused_recurrent_output_prepare,
@@ -79,10 +108,20 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
 
 
+def _kernel_policy():
+    if current_kernel_policy is None:
+        return None
+    try:
+        return current_kernel_policy(torch_module=torch)
+    except Exception:
+        return None
+
+
 def _native_graph_fused_recurrent_enabled() -> bool:
     """Runtime switch for the experimental native-graph recurrent Triton path."""
 
-    if os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT", "0") in _FALSE_VALUES:
+    policy = _kernel_policy()
+    if not env_flag("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT", bool(getattr(policy, "fused_recurrent", False))):
         return False
     if fused_recurrent_update is None or fused_recurrent_update_available is None:
         return False
@@ -95,7 +134,8 @@ def _native_graph_fused_recurrent_enabled() -> bool:
 def _native_graph_fused_recurrent_output_enabled() -> bool:
     """Runtime switch for fused recurrent update plus output-prep."""
 
-    if os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", "1") in _FALSE_VALUES:
+    policy = _kernel_policy()
+    if not env_flag("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", bool(getattr(policy, "fused_recurrent_output", True))):
         return False
     if fused_recurrent_output_prepare is None or fused_recurrent_output_prepare_available is None:
         return False
@@ -108,7 +148,8 @@ def _native_graph_fused_recurrent_output_enabled() -> bool:
 def _native_graph_fused_output_enabled() -> bool:
     """Runtime switch for the experimental native-graph output-prep Triton path."""
 
-    if os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT", "1") in _FALSE_VALUES:
+    policy = _kernel_policy()
+    if not env_flag("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT", bool(getattr(policy, "fused_output", True))):
         return False
     if fused_attn_output_prepare is None or fused_attn_output_prepare_available is None:
         return False
@@ -121,7 +162,8 @@ def _native_graph_fused_output_enabled() -> bool:
 def _native_graph_fused_output_project_enabled() -> bool:
     """Runtime switch for fused output-prep plus ``o_proj`` in native_graph."""
 
-    if os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT", "0") in _FALSE_VALUES:
+    policy = _kernel_policy()
+    if not env_flag("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT", bool(getattr(policy, "fused_output_project", False))):
         return False
     if fused_attn_output_project is None or fused_attn_output_project_available is None:
         return False
@@ -134,21 +176,16 @@ def _native_graph_fused_output_project_enabled() -> bool:
 def _native_graph_fused_output_project_block_m() -> int:
     """Output-projection row tile used by the prototype fused output-project kernel."""
 
-    raw = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT_BLOCK_M", "16").strip()
-    try:
-        block_m = int(raw)
-    except ValueError:
-        block_m = 16
-    # Keep the grid bounded and power-of-two-ish for Triton specialization reuse.
-    if block_m <= 0:
-        return 16
-    return min(block_m, 128)
+    policy = _kernel_policy()
+    default = int(getattr(policy, "output_project_block_m", 16))
+    return env_int("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT_BLOCK_M", default, lower=1, upper=128)
 
 
 def _native_graph_fused_projection_enabled() -> bool:
     """Runtime switch for the experimental native-graph R/K/V + W/A/G projection path."""
 
-    if os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_PROJECTION", "0") in _FALSE_VALUES:
+    policy = _kernel_policy()
+    if not env_flag("RWKV7_NATIVE_GRAPH_FUSED_PROJECTION", bool(getattr(policy, "fused_projection", False))):
         return False
     if fused_rkv_wag_projection is None or fused_rkv_wag_projection_available is None:
         return False
@@ -161,7 +198,8 @@ def _native_graph_fused_projection_enabled() -> bool:
 def _native_graph_fused_wag_lora_enabled() -> bool:
     """Runtime switch for the native-graph W/A/G LoRA-only fusion probe."""
 
-    if os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA", "0") in _FALSE_VALUES:
+    policy = _kernel_policy()
+    if not env_flag("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA", bool(getattr(policy, "fused_wag_lora", False))):
         return False
     if fused_wag_lora is None or fused_wag_lora_available is None:
         return False
@@ -174,7 +212,8 @@ def _native_graph_fused_wag_lora_enabled() -> bool:
 def _native_graph_fused_wavg_lora_enabled() -> bool:
     """Runtime switch for the native-graph W/A/G/V-gate LoRA fusion probe."""
 
-    if os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA", "0") in _FALSE_VALUES:
+    policy = _kernel_policy()
+    if not env_flag("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA", bool(getattr(policy, "fused_wavg_lora", False))):
         return False
     if fused_wavg_lora is None or fused_wavg_lora_available is None:
         return False
@@ -187,36 +226,35 @@ def _native_graph_fused_wavg_lora_enabled() -> bool:
 def _native_graph_fused_wag_lora_blocks() -> tuple[int, int, int]:
     """Return ``(block_m, block_r, block_k)`` for the W/A/G LoRA probe."""
 
-    vals = []
-    for name, default, upper in (
-        ("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_M", 64, 128),
-        ("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_R", 64, 128),
-        ("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_K", 64, 256),
-    ):
-        raw = os.environ.get(name, str(default)).strip()
-        try:
-            val = int(raw)
-        except ValueError:
-            val = default
-        vals.append(min(max(1, val), upper))
-    return vals[0], vals[1], vals[2]
+    policy = _kernel_policy()
+    defaults = tuple(getattr(policy, "wag_lora_blocks", (64, 64, 64)))
+    return env_blocks(
+        ("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_M", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_R", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_K"),
+        defaults,  # type: ignore[arg-type]
+        (128, 128, 256),
+    )
 
 
 def _native_graph_fused_wavg_lora_blocks() -> tuple[int, int, int]:
     """Return ``(block_m, block_r, block_k)`` for the W/A/G/V-gate probe."""
 
+    policy = _kernel_policy()
+    defaults = tuple(getattr(policy, "wavg_lora_blocks", (64, 64, 64)))
     vals = []
     for name, fallback, default, upper in (
-        ("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_M", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_M", 64, 128),
-        ("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_R", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_R", 64, 128),
-        ("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_K", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_K", 64, 256),
+        ("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_M", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_M", defaults[0], 128),
+        ("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_R", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_R", defaults[1], 128),
+        ("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_K", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_K", defaults[2], 256),
     ):
-        raw = os.environ.get(name, os.environ.get(fallback, str(default))).strip()
-        try:
-            val = int(raw)
-        except ValueError:
-            val = default
-        vals.append(min(max(1, val), upper))
+        raw = os.environ.get(name, os.environ.get(fallback))
+        if raw is None:
+            vals.append(env_int(name, int(default), lower=1, upper=upper))
+        else:
+            try:
+                val = int(str(raw).strip())
+            except ValueError:
+                val = int(default)
+            vals.append(min(max(1, val), upper))
     return vals[0], vals[1], vals[2]
 
 
