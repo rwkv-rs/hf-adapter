@@ -280,6 +280,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     components = latest(rows, lambda r: r.get("axis") == "decode_components" and r.get("backend") == "hf_adapter")
     projection_lora = latest(rows, lambda r: r.get("axis") == "projection_lora" and r.get("backend") == "hf_adapter")
     fused_projection_proto = latest(rows, lambda r: r.get("axis") == "fused_projection_proto" and r.get("backend") == "hf_adapter")
+    albatross_projection_layout = latest_by_key(
+        [r for r in rows if r.get("axis") == "albatross_projection_layout_tune" and r.get("backend") == "hf_adapter"],
+        lambda r: r.get("batch_size"),
+    )
     fused_wa_lora_proto = latest(rows, lambda r: r.get("axis") == "fused_wa_lora_proto" and r.get("backend") == "hf_adapter")
     fused_wag_lora_proto = latest(rows, lambda r: r.get("axis") == "fused_wag_lora_proto" and r.get("backend") == "hf_adapter")
     fused_wavg_lora_proto = latest(rows, lambda r: r.get("axis") == "fused_wavg_lora_proto" and r.get("backend") == "hf_adapter")
@@ -754,6 +758,29 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             focus.append(
                 f"fused R/K/V projection prototype backend={backend} speedup={float(proto_speedup):.2f}x; "
                 "validate end-to-end fast-token integration"
+            )
+    if not albatross_projection_layout:
+        focus.append("Albatross-inspired projection layout sweep pending")
+    else:
+        summaries = []
+        slow_batches = []
+        for row in albatross_projection_layout:
+            best = row.get("best_config") if isinstance(row.get("best_config"), dict) else {}
+            speed = best.get("avg_speedup")
+            label = f"bsz={row.get('batch_size')} {best.get('backend')} m{best.get('block_m')} k{best.get('block_k')} {speed}x"
+            summaries.append(label)
+            if speed is not None and float(speed) < 1.0:
+                slow_batches.append(row.get("batch_size"))
+        if slow_batches:
+            focus.append(
+                "Albatross-inspired simple RKV split-K/layout sweep is slower than cuBLAS "
+                f"for bsz={slow_batches}; best={'; '.join(summaries)}. "
+                "Do not integrate this shallow GEMV; borrow deeper fusion instead (LN+mix+projection/output)."
+            )
+        else:
+            focus.append(
+                "Albatross-inspired projection layout sweep found faster configs: "
+                f"{'; '.join(summaries)}; validate native_graph integration"
             )
     if fused_wa_lora_proto is None:
         focus.append("fused_wa_lora_proto row pending")
@@ -1525,6 +1552,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
         "projection_lora": compact(projection_lora, ["_lineno", "batch_size", "hidden_size", "layers", "avg_timings_ms", "avg_current_linears_lora_sum_ms", "avg_candidate_linears_lora_sum_ms", "avg_candidate_speedup", "sample_matrix_profile_summary", "fused_kernel_plan", "peak_vram_mb"]),
         "fused_projection_proto": compact(fused_projection_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
+        "albatross_projection_layout_tune": [
+            compact(r, ["_lineno", "prototype_backend", "borrowed_from", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "steps", "avg_current_ms", "config_count", "best_config", "top_configs", "peak_vram_mb"])
+            for r in albatross_projection_layout
+        ],
         "fused_wa_lora_proto": compact(fused_wa_lora_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_wag_lora_proto": compact(fused_wag_lora_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_wavg_lora_proto": compact(fused_wavg_lora_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
@@ -1852,6 +1883,8 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["projection_lora"], ensure_ascii=False) if report["projection_lora"] else "PENDING")
     print("\n## fused_projection_proto")
     print(json.dumps(report["fused_projection_proto"], ensure_ascii=False) if report["fused_projection_proto"] else "PENDING")
+    print("\n## albatross_projection_layout_tune")
+    print(json.dumps(report["albatross_projection_layout_tune"], ensure_ascii=False) if report["albatross_projection_layout_tune"] else "PENDING")
     print("\n## fused_wa_lora_proto")
     print(json.dumps(report["fused_wa_lora_proto"], ensure_ascii=False) if report["fused_wa_lora_proto"] else "PENDING")
     print("\n## fused_wag_lora_proto")

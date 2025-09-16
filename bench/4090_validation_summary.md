@@ -121,6 +121,39 @@ For bsz=4 component profiling, top components were:
 
 Component profiler is slower than native_graph because it instruments the decomposed path, but the relative ranking is useful: next decode work should target projection/LoRA and attention output/recurrent fusion, not wrapper/cache plumbing.
 
+### Albatross-inspired R/K/V projection layout sweep
+
+Albatross notes that small B/T performance depends heavily on GPU-specific
+linear layout tuning. We added an HF-safe telemetry prototype instead of
+copying the standalone engine:
+
+- `single`: existing one-launch Triton R/K/V GEMV prototype.
+- `splitk`: new two-launch split-K R/K/V GEMV prototype inspired by
+  Albatross-style small-B K parallelism.
+
+Benchmark command:
+
+```bash
+PYTHONPATH=. python bench/bench_albatross_projection_layout.py \
+  --hf-dir /workspace/models/rwkv7/rwkv7-g1d-0.4b-hf \
+  --dtype fp16 --device cuda --batch-sizes 1 4 --layers 0 1 -1 \
+  --backends single splitk --block-ms 8 16 32 64 \
+  --block-ks 64 128 256 --warmup 4 --steps 32 \
+  --results bench/results.jsonl
+```
+
+| batch | baseline cuBLAS R/K/V ms | best prototype | best prototype ms | prototype / baseline speed |
+|---:|---:|---|---:|---:|
+| 1 | 0.05100 | splitk m8 k64 | 0.09470 | 0.5385x |
+| 4 | 0.05345 | single m64 k128 | 0.06597 | 0.8102x |
+
+Correctness was good (`min_cosine >= 0.99999964`, max abs diff <= `0.00390625`),
+but the simple split-K/layout sweep is still slower than cuBLAS on 4090 for
+0.4B hidden=1024. Conclusion: do **not** integrate shallow R/K/V GEMV split-K
+into `native_graph`. Borrow the deeper Albatross idea instead: fuse
+layernorm + time-mix + projection / LoRA / output so the custom kernel removes
+multiple launches and intermediate tensors, not just the dense GEMV.
+
 ## Native W8/W4 quant route
 
 R/K/V fused quant sweep on layers 0/1/23, batch=1:
@@ -137,6 +170,6 @@ Quant conclusion: memory reduction works, and fused quant is much faster than se
 Priority order from this 4090 validation:
 
 1. **Prefill gap is largest**: HF chunked/full prefill is only 0.08x-0.16x of Albatross at T=512. The new native recurrent scan prototype is promising in isolation (1.48x-5.68x FLA recurrent-only speed), but it is not wired into full HF prefill yet. Next step is full native prefill integration with projection/LoRA/output fusion, not more wrapper changes.
-2. **Decode bsz=1/4 gap remains material**: native_graph is 0.40x-0.47x of Albatross for bsz=1/4. Target fused fp16 projection/LoRA + attention output/recurrent integration first.
+2. **Decode bsz=1/4 gap remains material**: native_graph is 0.40x-0.47x of Albatross for bsz=1/4. The shallow Albatross-inspired R/K/V split-K/layout sweep was slower than cuBLAS, so target deeper fused fp16 layernorm+mix+projection/LoRA and attention output/recurrent integration first.
 3. **Cache plumbing is no longer the bottleneck**: native_graph cache hit rate is ~0.993 and copy/bind share is <1%.
 4. **Quant is a second-stage kernel problem**: W8/W4 footprint targets are partially met, but speed is only ~0.72x fp16. Do not spend more effort on wrapper-level quant; fuse quant with the hot projection/LoRA/recurrent path.
