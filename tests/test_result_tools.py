@@ -109,6 +109,25 @@ def assert_albatross_rows_are_parsed_and_compared(tmpdir: Path) -> None:
     assert albatross_rows[0]["batch_size"] == 1
     assert albatross_rows[0]["tokens_per_sequence"] == 1
     assert albatross_rows[0]["tokps_p50"] == 125.0
+    faster4_rows = parse_result_lines(
+        "bench B4T128 wkv=fp16 ms=6.10028 tok_s=83930.6 gpu_mib=759 cpu_emb_mib=128",
+        engine="faster4_cpp",
+        engine_config="faster4_cpp_sm89_default_fp16wkv",
+        dtype="fp16",
+        device="NVIDIA GeForce RTX 4090",
+        model_path="/models/rwkv7-g1d-0.4b.pth",
+        model_size_label="0.4B",
+        checkpoint_sha256="def456",
+        fallback_iters=10,
+    )
+    assert len(faster4_rows) == 1
+    assert faster4_rows[0]["batch_size"] == 4
+    assert faster4_rows[0]["tokens_per_sequence"] == 128
+    assert faster4_rows[0]["latency_p50_ms"] == 6.10028
+    assert faster4_rows[0]["latency_p10_ms"] == 6.10028
+    assert faster4_rows[0]["tokps_p50"] == 83930.6
+    assert faster4_rows[0]["iters"] == 10
+    assert faster4_rows[0]["wkv"] == "fp16"
 
     hf_rows = [
         {
