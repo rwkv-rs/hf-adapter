@@ -50,6 +50,44 @@ Prompt tokens: 512, dtype fp16, attn mode fused_recurrent, fuse_norm=false.
 
 Chunked prefill conclusion: correctness is good, but current chunked helper is 0.13x-0.52x of full HF prefill and 0.08x-0.16x of Albatross. It is a semantic bridge for future vLLM/sglang-style prefill scheduling, not yet a fast prefill backend. Native graph decode cache hit is not used during chunked prefill; decode/native_graph cache validation separately shows >0.99 graph-cache hit rate in the replay-overhead bench and 1.0 in dynamic-batch runs.
 
+## Native recurrent scan prefill prototype
+
+The first native scan prototype isolates the recurrent part of prefill after
+R/K/V/W/A projection. It is **not wired into the full HF prefill path yet**;
+it is the kernel development target that should replace the slow chunked
+helper once projection/output integration is added.
+
+Benchmark command:
+
+```bash
+PYTHONPATH=. python bench/bench_fused_recurrent_scan.py \
+  --dtype fp16 --device cuda --batch-sizes 1 4 --tokens 128 512 \
+  --heads 16 --head-dim 64 --block-n 64 --chunk-size 64 \
+  --warmup 4 --steps 32 --results bench/results.jsonl
+```
+
+| batch | tokens | native scan ms | native tok/s | FLA chunk ms | FLA tok/s | native / FLA speed |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 128 | 0.08458 | 1,513,286.5 | 0.48032 | 266,490.0 | 5.6786x |
+| 1 | 512 | 0.32533 | 1,573,771.6 | 0.48062 | 1,065,284.1 | 1.4773x |
+| 4 | 128 | 0.08446 | 6,062,324.3 | 0.47362 | 1,081,039.4 | 5.6079x |
+| 4 | 512 | 0.32610 | 6,280,254.5 | 0.48457 | 4,226,414.0 | 1.4860x |
+
+Correctness gate:
+
+- Native Triton scan vs native torch reference passed for T=128:
+  output max abs diff `0.00390625`, state max abs diff <= `0.0002553`,
+  min output cosine >= `0.99999988`.
+- FLA `chunk_rwkv7` is tracked as a recurrent-only speed target. Its interface
+  uses log-decay and DPLR orientation conventions, so strict correctness is
+  checked against the native torch recurrence while FLA cosine is used as a
+  sanity check (`0.9998878`-`0.9999724` in these rows).
+
+Scan prototype conclusion: the recurrent scan kernel itself is no longer the
+obvious prefill blocker in isolation; the next required work is wiring this
+kernel into a full native prefill path and fusing the surrounding projection,
+LoRA, groupnorm/output, and state-cache plumbing.
+
 ## Decode bottleneck profiling
 
 ### End-to-end decode
@@ -98,7 +136,7 @@ Quant conclusion: memory reduction works, and fused quant is much faster than se
 
 Priority order from this 4090 validation:
 
-1. **Prefill gap is largest**: HF chunked/full prefill is only 0.08x-0.16x of Albatross at T=512. Need native fused prefill/scan or a chunked prefill kernel, not more wrapper changes.
+1. **Prefill gap is largest**: HF chunked/full prefill is only 0.08x-0.16x of Albatross at T=512. The new native recurrent scan prototype is promising in isolation (1.48x-5.68x FLA recurrent-only speed), but it is not wired into full HF prefill yet. Next step is full native prefill integration with projection/LoRA/output fusion, not more wrapper changes.
 2. **Decode bsz=1/4 gap remains material**: native_graph is 0.40x-0.47x of Albatross for bsz=1/4. Target fused fp16 projection/LoRA + attention output/recurrent integration first.
 3. **Cache plumbing is no longer the bottleneck**: native_graph cache hit rate is ~0.993 and copy/bind share is <1%.
 4. **Quant is a second-stage kernel problem**: W8/W4 footprint targets are partially met, but speed is only ~0.72x fp16. Do not spend more effort on wrapper-level quant; fuse quant with the hot projection/LoRA/recurrent path.

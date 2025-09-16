@@ -289,6 +289,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     fused_ffn_proto = latest(rows, lambda r: r.get("axis") == "fused_ffn_proto" and r.get("backend") == "hf_adapter")
     fused_shift_mix_proto = latest(rows, lambda r: r.get("axis") == "fused_shift_mix_proto" and r.get("backend") == "hf_adapter")
     fused_recurrent_proto = latest(rows, lambda r: r.get("axis") == "fused_recurrent_proto" and r.get("backend") == "hf_adapter")
+    fused_recurrent_scan_proto = latest_by_key(
+        [r for r in rows if r.get("axis") == "fused_recurrent_scan_proto" and r.get("backend") == "hf_adapter"],
+        lambda r: (r.get("batch_size"), r.get("tokens"), r.get("heads"), r.get("head_dim")),
+    )
     fused_recurrent_output_proto = latest(rows, lambda r: r.get("axis") == "fused_recurrent_output_proto" and r.get("backend") == "hf_adapter")
     native_graph_fused_recurrent = latest(rows, lambda r: r.get("axis") == "native_graph_fused_recurrent" and r.get("backend") == "hf_adapter")
     native_graph_fused_recurrent_output = latest(rows, lambda r: r.get("axis") == "native_graph_fused_recurrent_output" and r.get("backend") == "hf_adapter")
@@ -897,6 +901,36 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 f"fused recurrent prototype backend={backend} is slower "
                 f"({float(rec_speedup):.2f}x); keep optimizing before integration"
             )
+    if not fused_recurrent_scan_proto:
+        focus.append("fused_recurrent_scan_proto row pending")
+    else:
+        scan_speedups = [
+            float(r["native_vs_fla_speedup"])
+            for r in fused_recurrent_scan_proto
+            if r.get("native_vs_fla_speedup") is not None
+        ]
+        scan_cosines = [
+            float(r["native_vs_torch_out_min_cosine"])
+            for r in fused_recurrent_scan_proto
+            if r.get("native_vs_torch_out_min_cosine") is not None
+        ]
+        cases = sorted({(r.get("batch_size"), r.get("tokens")) for r in fused_recurrent_scan_proto})
+        if scan_speedups:
+            focus.append(
+                f"fused recurrent scan prefill prototype present for cases={cases}; "
+                f"native/FLA recurrent-only speedup min={min(scan_speedups):.2f}x max={max(scan_speedups):.2f}x; "
+                "next wire into full native prefill and fuse projection/output"
+            )
+        else:
+            focus.append(
+                f"fused recurrent scan prefill prototype present for cases={cases}; "
+                "add FLA recurrent-only timing for speed ratio"
+            )
+        if scan_cosines and min(scan_cosines) < 0.999:
+            focus.append(
+                f"fused recurrent scan native-vs-torch cosine min={min(scan_cosines):.6f}; "
+                "tighten numerical validation before integration"
+            )
     if fused_recurrent_output_proto is None:
         focus.append("fused_recurrent_output_proto row pending")
     else:
@@ -1500,6 +1534,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "fused_ffn_proto": compact(fused_ffn_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "intermediate_sizes", "layers", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_shift_mix_proto": compact(fused_shift_mix_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "input_rank", "hidden_size", "layers", "block_size", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_recurrent_proto": compact(fused_recurrent_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_n", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "out_max_abs_diff", "state_max_abs_diff", "out_min_cosine", "layer_rows", "peak_vram_mb"]),
+        "fused_recurrent_scan_proto": [
+            compact(r, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "tokens", "heads", "head_dim", "block_n", "chunk_size", "steps", "native_scan_ms", "native_scan_tokps_total", "fla_chunk_ms", "fla_chunk_tokps_total", "native_vs_fla_speedup", "native_vs_torch_speedup", "native_vs_torch_out_max_abs_diff", "native_vs_torch_state_max_abs_diff", "native_vs_torch_out_min_cosine", "native_vs_fla_out_min_cosine", "peak_vram_mb"])
+            for r in fused_recurrent_scan_proto
+        ],
         "fused_recurrent_output_proto": compact(fused_recurrent_output_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "attn_mode", "fuse_norm", "batch_size", "hidden_size", "layers", "block_n", "input_scale", "steps", "avg_current_ms", "avg_split_fused_ms", "avg_fused_ms", "avg_speedup_vs_current", "avg_speedup_vs_split", "out_max_abs_diff", "state_max_abs_diff", "split_out_max_abs_diff", "split_state_max_abs_diff", "out_min_cosine", "split_out_min_cosine", "layer_rows", "peak_vram_mb"]),
         "native_graph_fused_recurrent": compact(native_graph_fused_recurrent, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "baseline_effective_backend", "fused_effective_backend", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "peak_vram_mb"]),
         "native_graph_fused_recurrent_output": compact(native_graph_fused_recurrent_output, ["_lineno", "status", "dtype", "device", "attn_mode", "fuse_norm", "fast_cache", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_output_enabled", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_recurrent_output", "fused_recurrent_output", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
@@ -1832,6 +1870,8 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["fused_shift_mix_proto"], ensure_ascii=False) if report["fused_shift_mix_proto"] else "PENDING")
     print("\n## fused_recurrent_proto")
     print(json.dumps(report["fused_recurrent_proto"], ensure_ascii=False) if report["fused_recurrent_proto"] else "PENDING")
+    print("\n## fused_recurrent_scan_proto")
+    print(json.dumps(report["fused_recurrent_scan_proto"], ensure_ascii=False) if report["fused_recurrent_scan_proto"] else "PENDING")
     print("\n## fused_recurrent_output_proto")
     print(json.dumps(report["fused_recurrent_output_proto"], ensure_ascii=False) if report["fused_recurrent_output_proto"] else "PENDING")
     print("\n## native_graph_fused_recurrent")
