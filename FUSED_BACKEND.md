@@ -85,9 +85,13 @@ serving speed.
      R/K/V dense projection with W/A/G LoRA down in one launch and W/A/G up in a
      second launch.
    - `bench/bench_fused_rkv_wag_projection.py` records
-     `fused_rkv_wag_projection_proto`. The first V100 row is correctness-clean
-     and slightly faster, but the gain is small, so the next step is full
-     attention fusion or a better dense projection kernel before HF integration.
+     `fused_rkv_wag_projection_proto` and now supports prefill-shaped
+     `[B,T,H]` rows. The first V100 decode-shaped row was correctness-clean and
+     slightly faster, but the 4090 / 0.4B / fp16 / prompt512 prefill-shaped
+     rows are slower than cuBLAS/torch (`0.6823x` at bsz=1 and `0.1471x` at
+     bsz=4 with `block_m/r/k=64`). Do not integrate this two-launch projection
+     grouping into prefill; the next step must fuse a larger norm/shift +
+     projection/LoRA + state-prep region or improve the dense projection kernel.
 7. Fused attention output prototype.
    - `rwkv7_hf.fused_output.fused_attn_output_prepare()` fuses group norm over
      recurrent output, recurrent correction, and gate multiply while leaving the
