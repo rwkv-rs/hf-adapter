@@ -1217,13 +1217,17 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 fine = max(fine_bsz1 or fine_rows, key=lambda r: int(r.get("_lineno", 0)))
                 cm = fine.get("component_ms") or {}
                 lora_sum = sum(float(cm.get(k) or 0.0) for k in ("attn_lora_w", "attn_lora_a", "attn_lora_g", "attn_lora_v_gate", "attn_lora_wavg_fused"))
+                dense_rkv_sum = sum(float(cm.get(k) or 0.0) for k in ("attn_dense_r_proj", "attn_dense_k_proj", "attn_dense_v_proj"))
+                if dense_rkv_sum <= 0.0:
+                    dense_rkv_sum = float(cm.get("attn_dense_rkv") or 0.0)
                 scan_ms = cm.get("recurrent_scan")
                 state_ms = cm.get("attn_state_prep_fused", cm.get("attn_lora_state_prep"))
                 norm_ms = cm.get("attn_norm_shift_mix")
                 focus.append(
                     f"fine prefill breakdown bsz={fine.get('batch_size')} prompt={fine.get('prompt_tokens')}: "
-                    f"scan={scan_ms}ms state_prep={state_ms}ms lora_sum={round(lora_sum, 4)}ms "
-                    f"norm_shift_mix={norm_ms}ms; next fusion should target scan plus norm/shift/state prep, not cache"
+                    f"scan={scan_ms}ms state_prep={state_ms}ms dense_rkv_sum={round(dense_rkv_sum, 4)}ms "
+                    f"lora_sum={round(lora_sum, 4)}ms norm_shift_mix={norm_ms}ms; "
+                    "next fusion should target scan plus norm/shift/projection/state prep, not cache"
                 )
         else:
             focus.append("native_prefill_breakdown rows present but top_components missing")

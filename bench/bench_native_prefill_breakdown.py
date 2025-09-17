@@ -196,10 +196,15 @@ def profiled_native_prefill(
 
         residual, h, xr, xw, xk, xv, xa, xg = profiler.measure("attn_norm_shift_mix", norm_shift_mix)
 
-        def dense_rkv():
-            return F.linear(xr, Rw), F.linear(xk, Kw), F.linear(xv, Vw)
+        if fine_attention_breakdown:
+            r = profiler.measure("attn_dense_r_proj", lambda: F.linear(xr, Rw))
+            k = profiler.measure("attn_dense_k_proj", lambda: F.linear(xk, Kw))
+            v = profiler.measure("attn_dense_v_proj", lambda: F.linear(xv, Vw))
+        else:
+            def dense_rkv():
+                return F.linear(xr, Rw), F.linear(xk, Kw), F.linear(xv, Vw)
 
-        r, k, v = profiler.measure("attn_dense_rkv", dense_rkv)
+            r, k, v = profiler.measure("attn_dense_rkv", dense_rkv)
 
         def lora_and_state_prep():
             v_gate_local = None

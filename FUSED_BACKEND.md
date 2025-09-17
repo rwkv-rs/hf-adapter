@@ -370,16 +370,17 @@ serving speed.
      `21773.4` tok/s when enabled. Keep it telemetry-only; do not default it
      until a deeper projection+LoRA design improves full prefill.
    - `bench/bench_native_prefill_breakdown.py --fine-attn` now splits the
-     remaining attention prep bucket into LoRA, fused state-prep, and scan
-     components. With state-prep enabled on 4090 / 0.4B / fp16 / prompt=512,
-     bsz=1 is led by recurrent scan (`7.5836ms`), then norm/shift/mix
-     (`3.8511ms`), FFN (`3.5667ms`), fused state-prep (`3.1326ms`), and the
-     combined W/A/G/V-gate LoRA modules (`6.3300ms` when summed). A follow-up
+     remaining attention prep bucket into LoRA, dense R/K/V projection, fused
+     state-prep, and scan components. With state-prep enabled on 4090 / 0.4B /
+     fp16 / prompt=512, the latest bsz=1 row is led by recurrent scan
+     (`7.6627ms`), LoRA sum (`6.2419ms`), norm/shift/mix (`3.8281ms`), FFN
+     (`3.9687ms`), fused state-prep (`3.1581ms`), and dense R/K/V projection
+     sum (`2.2056ms`; R `0.8844ms`, K `0.6769ms`, V `0.6443ms`). A follow-up
      full-prefill block sweep confirms `RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M=8`
      remains the best recorded Ada tile; `4`, `16`, and `32` are slower for
      both bsz=1 and bsz=4. Next prefill work should therefore be a deeper
-     cross-bucket fusion (scan + norm/shift/state prep and/or projection), not
-     cache work and not shallow WAVG LoRA alone.
+     cross-bucket fusion (scan + norm/shift/projection/state prep), not cache
+     work and not shallow WAVG LoRA alone.
    - Native prefill can also reuse the decode output-prep kernel under
      `RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1`. The 4090 / 0.4B / fp16 /
      prompt=512 A/B is correctness-clean, and fine breakdown shows output prep
