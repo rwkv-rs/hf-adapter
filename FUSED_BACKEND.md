@@ -103,6 +103,10 @@ serving speed.
    - `bench/bench_fused_ffn.py` records `fused_ffn_proto`. The first V100 row is
      correctness-clean but slower than the cuBLAS-backed FFN path, so this
      two-kernel FFN stays telemetry unless it is folded into a larger graph.
+     RTX 4090 prefill-shaped rows confirm the same conclusion more strongly:
+     `B*T=512` reaches only `0.1570x` of the current cuBLAS FFN path, and
+     `B*T=2048` reaches `0.0785x`. Do not wire this FFN-only kernel into native
+     prefill; pursue FFN only as part of a larger graph/layer fusion.
 9. Fused fp16 attention shift-mix prototype.
    - `rwkv7_hf.fused_time_mix.fused_attn_shift_mix()` provides an optional
      Triton single-launch prototype for the six decode time-mix inputs.

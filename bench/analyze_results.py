@@ -750,7 +750,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             "profile projection/LoRA at matrix granularity",
             "prototype fused fp16 projection path",
             "prototype fused attention shift-mix path",
-            "prototype fused FFN path",
+            "skip two-kernel FFN-only path unless it is folded into a larger graph",
             "prototype fused recurrent rank-1 state update",
             "integrate profitable recurrent/output fusion into native_graph and then fuse deeper with projection/LoRA",
             "add native W8/W4 pack plus fused dequant-GEMV and optimize packed kernels until W8/W4 >= fp16",
