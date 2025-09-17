@@ -199,6 +199,8 @@ targets until matching hardware is benchmarked.
 - For every new GPU, run at minimum:
   - `bench_batch_sweep.py` for `bsz=1/2/4/8`;
   - `bench_native_graph_overhead.py`;
+  - `bench_native_prefill_scan.py` for the native layer-wise prefill/cache
+    handoff path when prefill performance is being claimed;
   - fused output/recurrent-output integration smokes;
   - projection/LoRA/layout sweep before enabling projection kernels;
   - W8/W4 footprint + speed rows if quantization is claimed.
@@ -223,6 +225,8 @@ targets until matching hardware is benchmarked.
   - `fused_recurrent_output`: on by default.
   - `fused_output`: on by default.
   - `fused_recurrent`: off by default unless explicitly A/B tested.
+  - `fused_prefill_scan`: off by default; enable only in
+    `bench_native_prefill_scan.py` A/B rows until full prefill beats HF/FLA.
   - `fused_output_project`: off by default.
   - `fused_projection`, `fused_wag_lora`, `fused_wavg_lora`: off by default.
 - Quantization rule: W8/W4 memory rows are valid, but speed is not considered
@@ -260,7 +264,8 @@ targets until matching hardware is benchmarked.
     speedup.
 - Prefill rule: native recurrent scan may be benchmarked, but it is not the
   default full prefill path until projection/output integration is wired and
-  end-to-end prefill rows improve.
+  `native_prefill_scan` end-to-end rows improve. Use
+  `RWKV7_NATIVE_PREFILL_FUSED_SCAN=1` only as an explicit A/B flag.
 
 #### Hopper / H100 (`sm_90`)
 

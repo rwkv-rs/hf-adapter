@@ -50,6 +50,7 @@ class KernelPolicy:
     fast_cache: bool = True
     bnb_skip_policy: str = "memory"
     fused_recurrent: bool = False
+    fused_prefill_scan: bool = False
     fused_recurrent_output: bool = False
     fused_output: bool = False
     fused_output_project: bool = False
@@ -146,6 +147,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             profile=profile,
             fused_recurrent_output=True,
             fused_output=True,
+            fused_prefill_scan=False,
             notes="no live GPU detected: preserve historical request defaults; runtime availability gates still prevent CUDA use",
         )
     if family in {"amd_hip", "legacy_cuda", "pascal", "unknown_cuda"}:
@@ -160,6 +162,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             profile=profile,
             fused_recurrent_output=True,
             fused_output=True,
+            fused_prefill_scan=False,
             output_project_block_m=16,
             quant_policy="memory_first_decode_hot_optional",
             notes="V100 baseline: output/recurrent-output fusions are default; projection/output-project/LoRA fusions remain opt-in",
@@ -169,6 +172,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             profile=profile,
             fused_recurrent_output=True,
             fused_output=True,
+            fused_prefill_scan=False,
             output_project_block_m=16,
             notes="CUDA tensor-core generation: use stable output fusions; require local sweep before projection/LoRA defaults",
         )
@@ -177,6 +181,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             profile=profile,
             fused_recurrent_output=True,
             fused_output=True,
+            fused_prefill_scan=False,
             output_project_block_m=16,
             notes="RTX 40/Ada: stable output fusions on by default; shallow split-K projection stays off",
         )
@@ -185,6 +190,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             profile=profile,
             fused_recurrent_output=True,
             fused_output=True,
+            fused_prefill_scan=False,
             output_project_block_m=32,
             notes="Hopper profile: stable output fusions on; H100-specific projection/quant kernels require sweep rows",
         )
@@ -193,6 +199,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             profile=profile,
             fused_recurrent_output=True,
             fused_output=True,
+            fused_prefill_scan=False,
             output_project_block_m=32,
             notes="RTX 50/Blackwell: prefer native/no-FLA compatibility smokes; keep unvalidated projection/LoRA fusions off",
         )

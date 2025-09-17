@@ -269,6 +269,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         chunked_rows,
         lambda r: (r.get("prefill_mode"), r.get("chunk_size")),
     )
+    native_prefill_scan = latest_by_key(
+        [r for r in rows if r.get("axis") == "native_prefill_scan" and r.get("backend") == "hf_adapter"],
+        lambda r: (r.get("batch_size"), r.get("prompt_tokens"), bool(r.get("fused_scan_requested"))),
+    )
     micro = latest(rows, lambda r: r.get("axis") == "decode_micro" and r.get("backend") == "hf_adapter")
     forward_fast_path = latest(rows, lambda r: r.get("axis") == "forward_fast_path" and r.get("backend") == "hf_adapter")
     generate_fast_path = latest(rows, lambda r: r.get("axis") == "generate_fast_path" and r.get("backend") == "hf_adapter")
@@ -958,6 +962,27 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 f"fused recurrent scan native-vs-torch cosine min={min(scan_cosines):.6f}; "
                 "tighten numerical validation before integration"
             )
+    if not native_prefill_scan:
+        focus.append("native_prefill_scan end-to-end row pending")
+    else:
+        ok_rows = [
+            r for r in native_prefill_scan
+            if r.get("greedy_match") is True and r.get("decode_after_prefill_greedy_match") is True
+        ]
+        speedups = [
+            float(r["native_vs_hf_speedup"])
+            for r in native_prefill_scan
+            if r.get("native_vs_hf_speedup") is not None
+        ]
+        cases = sorted({(r.get("batch_size"), r.get("prompt_tokens"), bool(r.get("fused_scan_requested"))) for r in native_prefill_scan})
+        if speedups:
+            focus.append(
+                f"native_prefill_scan end-to-end rows present for cases={cases}; "
+                f"speedup min={min(speedups):.2f}x max={max(speedups):.2f}x; "
+                f"correct_cache_rows={len(ok_rows)}/{len(native_prefill_scan)}"
+            )
+        else:
+            focus.append(f"native_prefill_scan end-to-end rows present for cases={cases}; add timing fields")
     if fused_recurrent_output_proto is None:
         focus.append("fused_recurrent_output_proto row pending")
     else:
@@ -1541,6 +1566,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             for r in dynamic_latest
         ],
         "chunked_prefill": [compact(r, ["_lineno", "prefill_mode", "batch_size", "prompt_tokens", "chunk_size", "prefill_tokps_total", "speed_ratio_vs_full", "peak_vram_mb", "peak_vram_ratio_vs_full", "max_abs_diff", "decode_max_abs_diff", "seq_length_match"]) for r in chunked_latest],
+        "native_prefill_scan": [
+            compact(r, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "fast_token_backend_after_native_prefill", "hf_prefill_ms", "native_prefill_ms", "native_vs_hf_speedup", "hf_prefill_tokps_total", "native_prefill_tokps_total", "max_abs_diff", "min_cosine", "greedy_match", "decode_after_prefill_max_abs_diff", "decode_after_prefill_greedy_match", "peak_vram_mb"])
+            for r in native_prefill_scan
+        ],
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "hf_forward_fixed", "hf_forward_greedy", "hf_forward_auto_fixed", "hf_forward_auto_greedy", "hf_forward_auto_backend", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
         "forward_fast_path": compact(forward_fast_path, ["_lineno", "fast_token_backend", "fast_token_layout", "reference_forward", "hf_forward_fast", "direct_fast_token", "hf_forward_fast_backend", "direct_fast_token_backend", "max_abs_diff_auto_vs_reference", "max_abs_diff_direct_vs_reference", "peak_vram_mb"]),
         "generate_fast_path": compact(generate_fast_path, ["_lineno", "fast_token_backend", "fast_token_backend_effective", "batch_size", "reference_generate", "hf_generate_fast", "speedup_vs_reference", "generated_equal", "generated_tokens_matched", "generated_tokens_total", "prompt_tokens", "max_new_tokens", "peak_vram_mb"]),
@@ -1860,6 +1889,12 @@ def print_text(report: dict[str, Any]) -> None:
     print("\n## chunked_prefill")
     if report["chunked_prefill"]:
         for row in report["chunked_prefill"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+    print("\n## native_prefill_scan")
+    if report["native_prefill_scan"]:
+        for row in report["native_prefill_scan"]:
             print(json.dumps(row, ensure_ascii=False))
     else:
         print("PENDING")
