@@ -90,9 +90,61 @@ if _HAS_TRITON:
         tl.store(v_out_ptr + offs, v_out, mask=mask)
         tl.store(kk_out_ptr + offs, kk, mask=mask)
 
+    @triton.jit
+    def _prefill_kv_kk_prep_kernel(
+        k_raw_ptr,
+        v_raw_ptr,
+        a_ptr,
+        k_k_ptr,
+        k_a_ptr,
+        v_first_ptr,
+        v_gate_ptr,
+        k_out_ptr,
+        v_out_ptr,
+        kk_out_ptr,
+        hidden: tl.constexpr,
+        head_dim: tl.constexpr,
+        has_v_gate: tl.constexpr,
+        block_n: tl.constexpr,
+    ):
+        row = tl.program_id(0)
+        head = tl.program_id(1)
+        offs_n = tl.arange(0, block_n)
+        mask = offs_n < head_dim
+        offs = row * hidden + head * head_dim + offs_n
+        param_offs = head * head_dim + offs_n
+
+        k_raw = tl.load(k_raw_ptr + offs, mask=mask, other=0.0).to(tl.float32)
+        v_raw = tl.load(v_raw_ptr + offs, mask=mask, other=0.0).to(tl.float32)
+        a_val = tl.load(a_ptr + offs, mask=mask, other=0.0).to(tl.float32)
+        kk_scale = tl.load(k_k_ptr + param_offs, mask=mask, other=0.0).to(tl.float32)
+        ka_scale = tl.load(k_a_ptr + param_offs, mask=mask, other=0.0).to(tl.float32)
+
+        kk_raw = k_raw * kk_scale
+        norm2 = tl.sum(tl.where(mask, kk_raw * kk_raw, 0.0), axis=0)
+        inv_norm = tl.rsqrt(tl.maximum(norm2, 1.0e-20))
+        kk = kk_raw * inv_norm
+        k_adj = k_raw * (1.0 + (a_val - 1.0) * ka_scale)
+
+        v_out = v_raw
+        if has_v_gate:
+            v_first = tl.load(v_first_ptr + offs, mask=mask, other=0.0).to(tl.float32)
+            v_gate = tl.load(v_gate_ptr + offs, mask=mask, other=0.0).to(tl.float32)
+            v_out = v_raw + (v_first - v_raw) * v_gate
+
+        tl.store(k_out_ptr + offs, k_adj, mask=mask)
+        tl.store(v_out_ptr + offs, v_out, mask=mask)
+        tl.store(kk_out_ptr + offs, kk, mask=mask)
+
 
 def fused_prefill_state_prep_available() -> bool:
     """Return whether the optional Triton native-prefill state-prep can run."""
+
+    return bool(_HAS_TRITON and torch is not None)
+
+
+def fused_prefill_kv_kk_prep_available() -> bool:
+    """Return whether no-W native-prefill K/V/KK state-prep can run."""
 
     return bool(_HAS_TRITON and torch is not None)
 
@@ -238,6 +290,115 @@ def fused_prefill_state_prep(
     )
     return (
         _restore_seq_hidden(w_out, prefix),
+        _restore_seq_hidden(k_out, prefix),
+        _restore_seq_hidden(v_out, prefix),
+        _restore_seq_hidden(kk_out, prefix),
+    )
+
+
+def fused_prefill_kv_kk_prep(
+    k_raw: Any,
+    v_raw: Any,
+    a: Any,
+    k_k: Any,
+    k_a: Any,
+    *,
+    v_first: Any | None = None,
+    v_gate: Any | None = None,
+    num_heads: int,
+    head_dim: int,
+    force_fallback: bool = False,
+):
+    """Fuse native-prefill K/V/KK preparation without materializing W decay.
+
+    This is paired with the raw-W ``clampw`` recurrent scan path.  It keeps the
+    exact K adjustment, per-head KK normalization, and optional V interpolation
+    from :func:`fused_prefill_state_prep`, but returns only
+    ``(k_adjusted, v_interpolated, kk_normalized)`` so the scan can compute
+    decay from raw ``w`` internally.
+    """
+
+    if torch is None or F is None:
+        raise RuntimeError("fused_prefill_kv_kk_prep requires torch")
+    hidden = int(num_heads) * int(head_dim)
+    k2, prefix = _flatten_seq_hidden(k_raw, hidden=hidden, name="k_raw")
+    v2, v_prefix = _flatten_seq_hidden(v_raw, hidden=hidden, name="v_raw")
+    a2, a_prefix = _flatten_seq_hidden(a, hidden=hidden, name="a")
+    if v_prefix != prefix or a_prefix != prefix:
+        raise ValueError("k_raw, v_raw and a must have identical layouts")
+    if int(k_k.numel()) != hidden or int(k_a.numel()) != hidden:
+        raise ValueError(f"k_k and k_a must have {hidden} elements")
+
+    has_v_gate = v_first is not None and v_gate is not None
+    if has_v_gate:
+        vf2, vf_prefix = _flatten_seq_hidden(v_first, hidden=hidden, name="v_first")
+        vg2, vg_prefix = _flatten_seq_hidden(v_gate, hidden=hidden, name="v_gate")
+        if vf_prefix != prefix or vg_prefix != prefix:
+            raise ValueError("v_first/v_gate layout must match v_raw")
+    else:
+        vf2 = v2
+        vg2 = v2
+
+    use_triton = (
+        not force_fallback
+        and fused_prefill_kv_kk_prep_available()
+        and k2.is_cuda
+        and v2.is_cuda
+        and a2.is_cuda
+        and k_k.is_cuda
+        and k_a.is_cuda
+        and (not has_v_gate or (vf2.is_cuda and vg2.is_cuda))
+        and k2.dtype in (torch.float16, torch.bfloat16, torch.float32)
+        and v2.dtype == k2.dtype
+        and a2.dtype == k2.dtype
+        and k_k.dtype == k2.dtype
+        and k_a.dtype == k2.dtype
+        and (not has_v_gate or (vf2.dtype == k2.dtype and vg2.dtype == k2.dtype))
+    )
+    if not use_triton:
+        shaped = (int(k2.shape[0]), int(num_heads), int(head_dim))
+        kk = F.normalize((k2 * k_k.reshape(1, hidden)).reshape(shaped), dim=-1, p=2.0).reshape_as(k2)
+        k_out = k2 * (1 + (a2 - 1) * k_a.reshape(1, hidden))
+        if has_v_gate:
+            v_out = v2 + (vf2 - v2) * vg2
+        else:
+            v_out = v2
+        return (
+            _restore_seq_hidden(k_out, prefix),
+            _restore_seq_hidden(v_out, prefix),
+            _restore_seq_hidden(kk, prefix),
+        )
+
+    rows = int(k2.shape[0])
+    k_c = k2.contiguous()
+    v_c = v2.contiguous()
+    a_c = a2.contiguous()
+    kk_c = k_k.reshape(hidden).contiguous()
+    ka_c = k_a.reshape(hidden).contiguous()
+    vf_c = vf2.contiguous()
+    vg_c = vg2.contiguous()
+    k_out = torch.empty_like(k_c)
+    v_out = torch.empty_like(v_c)
+    kk_out = torch.empty_like(k_c)
+    block_n = triton.next_power_of_2(int(head_dim))
+    _prefill_kv_kk_prep_kernel[(rows, int(num_heads))](
+        k_c,
+        v_c,
+        a_c,
+        kk_c,
+        ka_c,
+        vf_c,
+        vg_c,
+        k_out,
+        v_out,
+        kk_out,
+        hidden,
+        int(head_dim),
+        has_v_gate=bool(has_v_gate),
+        block_n=block_n,
+        num_warps=1,
+    )
+    return (
         _restore_seq_hidden(k_out, prefix),
         _restore_seq_hidden(v_out, prefix),
         _restore_seq_hidden(kk_out, prefix),

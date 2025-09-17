@@ -218,6 +218,11 @@ def profiled_native_prefill(
 
             r, k, v = profiler.measure("attn_dense_rkv", dense_rkv)
 
+        use_fused_scan_output = native_jit._native_prefill_fused_scan_output_enabled()
+        use_clampw_scan = native_jit._native_prefill_fused_clampw_scan_enabled() and not use_fused_scan_output
+        if use_clampw_scan and native_jit._native_prefill_fused_state_prep_enabled() and native_jit.fused_prefill_kv_kk_prep is None:
+            use_clampw_scan = False
+
         def lora_and_state_prep():
             v_gate_local = None
             if layer_idx > 0 and native_jit._native_prefill_fused_wavg_lora_enabled(B * T):
@@ -254,34 +259,60 @@ def profiled_native_prefill(
                 if layer_idx != 0:
                     v_gate_local = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
             if native_jit._native_prefill_fused_state_prep_enabled():
-                if layer_idx == 0:
-                    w_local, k_local, v_local, kk_local = native_jit.fused_prefill_state_prep(
-                        w_local,
-                        k,
-                        v,
-                        a_local,
-                        k_k,
-                        k_a,
-                        num_heads=H,
-                        head_dim=N,
-                        w_out_dtype=native_jit._native_prefill_state_prep_w_dtype(),
-                    )
-                    v_first_local = v_local
+                if use_clampw_scan:
+                    if layer_idx == 0:
+                        k_local, v_local, kk_local = native_jit.fused_prefill_kv_kk_prep(
+                            k,
+                            v,
+                            a_local,
+                            k_k,
+                            k_a,
+                            num_heads=H,
+                            head_dim=N,
+                        )
+                        v_first_local = v_local
+                    else:
+                        k_local, v_local, kk_local = native_jit.fused_prefill_kv_kk_prep(
+                            k,
+                            v,
+                            a_local,
+                            k_k,
+                            k_a,
+                            v_first=v_first_seq,
+                            v_gate=v_gate_local,
+                            num_heads=H,
+                            head_dim=N,
+                        )
+                        v_first_local = v_first_seq
                 else:
-                    w_local, k_local, v_local, kk_local = native_jit.fused_prefill_state_prep(
-                        w_local,
-                        k,
-                        v,
-                        a_local,
-                        k_k,
-                        k_a,
-                        v_first=v_first_seq,
-                        v_gate=v_gate_local,
-                        num_heads=H,
-                        head_dim=N,
-                        w_out_dtype=native_jit._native_prefill_state_prep_w_dtype(),
-                    )
-                    v_first_local = v_first_seq
+                    if layer_idx == 0:
+                        w_local, k_local, v_local, kk_local = native_jit.fused_prefill_state_prep(
+                            w_local,
+                            k,
+                            v,
+                            a_local,
+                            k_k,
+                            k_a,
+                            num_heads=H,
+                            head_dim=N,
+                            w_out_dtype=native_jit._native_prefill_state_prep_w_dtype(),
+                        )
+                        v_first_local = v_local
+                    else:
+                        w_local, k_local, v_local, kk_local = native_jit.fused_prefill_state_prep(
+                            w_local,
+                            k,
+                            v,
+                            a_local,
+                            k_k,
+                            k_a,
+                            v_first=v_first_seq,
+                            v_gate=v_gate_local,
+                            num_heads=H,
+                            head_dim=N,
+                            w_out_dtype=native_jit._native_prefill_state_prep_w_dtype(),
+                        )
+                        v_first_local = v_first_seq
             else:
                 kk_local = F.normalize((k * k_k.view(1, 1, hidden)).view(B, T, H, N), dim=-1, p=2.0).view(B, T, hidden)
                 k_local = k * (1 + (a_local - 1) * k_a.view(1, 1, hidden))
@@ -291,7 +322,8 @@ def profiled_native_prefill(
                 else:
                     v_first_local = v_first_seq
                     v_local = v + (v_first_seq - v) * v_gate_local
-                w_local = torch.exp(-0.606531 * torch.sigmoid(w_local.float()))
+                if not use_clampw_scan:
+                    w_local = torch.exp(-0.606531 * torch.sigmoid(w_local.float()))
             return w_local, k_local, v_local, a_local, g_local, kk_local, v_first_local
 
         def fine_lora_and_state_prep():
@@ -337,40 +369,72 @@ def profiled_native_prefill(
                     v_gate_local = profiler.measure("attn_lora_v_gate", lambda: torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2)))
 
             if native_jit._native_prefill_fused_state_prep_enabled():
-                if layer_idx == 0:
-                    w_local, k_local, v_local, kk_local = profiler.measure(
-                        "attn_state_prep_fused",
-                        lambda: native_jit.fused_prefill_state_prep(
-                            w_local,
-                            k,
-                            v,
-                            a_local,
-                            k_k,
-                            k_a,
-                            num_heads=H,
-                            head_dim=N,
-                            w_out_dtype=native_jit._native_prefill_state_prep_w_dtype(),
-                        ),
-                    )
-                    v_first_local = v_local
+                if use_clampw_scan:
+                    if layer_idx == 0:
+                        k_local, v_local, kk_local = profiler.measure(
+                            "attn_state_prep_no_w_fused",
+                            lambda: native_jit.fused_prefill_kv_kk_prep(
+                                k,
+                                v,
+                                a_local,
+                                k_k,
+                                k_a,
+                                num_heads=H,
+                                head_dim=N,
+                            ),
+                        )
+                        v_first_local = v_local
+                    else:
+                        k_local, v_local, kk_local = profiler.measure(
+                            "attn_state_prep_no_w_fused",
+                            lambda: native_jit.fused_prefill_kv_kk_prep(
+                                k,
+                                v,
+                                a_local,
+                                k_k,
+                                k_a,
+                                v_first=v_first_seq,
+                                v_gate=v_gate_local,
+                                num_heads=H,
+                                head_dim=N,
+                            ),
+                        )
+                        v_first_local = v_first_seq
                 else:
-                    w_local, k_local, v_local, kk_local = profiler.measure(
-                        "attn_state_prep_fused",
-                        lambda: native_jit.fused_prefill_state_prep(
-                            w_local,
-                            k,
-                            v,
-                            a_local,
-                            k_k,
-                            k_a,
-                            v_first=v_first_seq,
-                            v_gate=v_gate_local,
-                            num_heads=H,
-                            head_dim=N,
-                            w_out_dtype=native_jit._native_prefill_state_prep_w_dtype(),
-                        ),
-                    )
-                    v_first_local = v_first_seq
+                    if layer_idx == 0:
+                        w_local, k_local, v_local, kk_local = profiler.measure(
+                            "attn_state_prep_fused",
+                            lambda: native_jit.fused_prefill_state_prep(
+                                w_local,
+                                k,
+                                v,
+                                a_local,
+                                k_k,
+                                k_a,
+                                num_heads=H,
+                                head_dim=N,
+                                w_out_dtype=native_jit._native_prefill_state_prep_w_dtype(),
+                            ),
+                        )
+                        v_first_local = v_local
+                    else:
+                        w_local, k_local, v_local, kk_local = profiler.measure(
+                            "attn_state_prep_fused",
+                            lambda: native_jit.fused_prefill_state_prep(
+                                w_local,
+                                k,
+                                v,
+                                a_local,
+                                k_k,
+                                k_a,
+                                v_first=v_first_seq,
+                                v_gate=v_gate_local,
+                                num_heads=H,
+                                head_dim=N,
+                                w_out_dtype=native_jit._native_prefill_state_prep_w_dtype(),
+                            ),
+                        )
+                        v_first_local = v_first_seq
             else:
                 kk_local = profiler.measure(
                     "attn_kk_norm",
@@ -383,7 +447,8 @@ def profiled_native_prefill(
                 else:
                     v_first_local = v_first_seq
                     v_local = profiler.measure("attn_v_interp", lambda: v + (v_first_seq - v) * v_gate_local)
-                w_local = profiler.measure("attn_w_decay", lambda: torch.exp(-0.606531 * torch.sigmoid(w_local.float())))
+                if not use_clampw_scan:
+                    w_local = profiler.measure("attn_w_decay", lambda: torch.exp(-0.606531 * torch.sigmoid(w_local.float())))
             return w_local, k_local, v_local, a_local, g_local, kk_local, v_first_local
 
         if fine_attention_breakdown:
@@ -391,7 +456,6 @@ def profiled_native_prefill(
         else:
             w, k, v, a, g, kk, v_first_seq = profiler.measure("attn_lora_state_prep", lora_and_state_prep)
 
-        use_fused_scan_output = native_jit._native_prefill_fused_scan_output_enabled()
         if use_fused_scan_output:
             out, new_state = profiler.measure(
                 "recurrent_scan_output_prep_fused",
@@ -414,8 +478,8 @@ def profiled_native_prefill(
             out = out.reshape(B, T, hidden)
         else:
             out, new_state = profiler.measure(
-                "recurrent_scan",
-                lambda: native_jit._native_prefill_scan(r, w, k, v, kk, a, state[layer_idx], B, T, H, N),
+                "recurrent_scan_clampw" if use_clampw_scan else "recurrent_scan",
+                lambda: native_jit._native_prefill_scan(r, w, k, v, kk, a, state[layer_idx], B, T, H, N, w_is_raw=use_clampw_scan),
             )
 
         def output_prep_project():
@@ -601,6 +665,8 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "fine_attention_breakdown": bool(args.fine_attn),
         "prefill_fused_scan_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_scan_output_effective": native_jit._native_prefill_fused_scan_output_enabled(),
+        "prefill_fused_clampw_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_CLAMPW_SCAN", "0").lower() not in {"0", "false", "no", "off"},
+        "prefill_fused_clampw_scan_effective": native_jit._native_prefill_fused_clampw_scan_enabled(),
         "prefill_fused_shift_mix_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_shift_mix_effective": native_jit._native_prefill_fused_shift_mix_enabled(),
         "prefill_fused_state_prep_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", "0").lower() not in {"0", "false", "no", "off"},

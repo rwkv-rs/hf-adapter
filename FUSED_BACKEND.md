@@ -395,9 +395,22 @@ serving speed.
      correctness-clean and raises bsz=1 native prefill from `21857.3` to
      `22358.5` tok/s (`0.3723x` Albatross) while leaving bsz=4 essentially
      neutral (`81144.8` tok/s, `0.6889x` Albatross). This is useful but not
-     sufficient for P1; the next real target is deeper LoRA/projection fusion
-     because `attn_lora_state_prep` still leads bsz=1 breakdown
-     (`7.858ms`, share `0.3106`).
+   sufficient for P1; the next real target is deeper LoRA/projection fusion
+   because `attn_lora_state_prep` still leads bsz=1 breakdown
+   (`7.858ms`, share `0.3106`).
+   - Raw-W `clampw` split-row scan is available as an opt-in probe under
+     `RWKV7_NATIVE_PREFILL_FUSED_CLAMPW_SCAN=1` together with fused scan. It
+     keeps raw `w` out of state-prep, computes
+     `exp(-0.606531 * sigmoid(w_raw))` inside the split-row scan, and uses the
+     no-W `fused_prefill_kv_kk_prep()` path for K/V/KK prep. On RTX 4090 /
+     0.4B / fp16 / prompt=512 with `SCAN_BLOCK_M=8`,
+     `SCAN_NUM_WARPS=1`, correctness/cache handoff pass, but end-to-end is
+     slightly slower than the baseline state-prep row: bsz=1 `21548.3` vs
+     `21742.8` tok/s (`0.991x`) and bsz=4 `80880.1` vs `81057.8` tok/s
+     (`0.998x`). Fine breakdown confirms no-W state-prep shrinks
+     `3.2887ms -> 2.8226ms`, but scan grows `7.4649ms -> 7.7147ms`; keep
+     clampw scan opt-in telemetry-only and do not promote unless a future
+     larger fused scan/state-prep kernel wins end-to-end.
    - Prefill W/A/G/V-gate LoRA grouping is also wired as an opt-in adaptive
      probe (`RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA=1`,
      `RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_MAX_M`, default `1024` rows). The

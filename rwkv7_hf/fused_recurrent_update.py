@@ -264,6 +264,120 @@ if _HAS_TRITON:
         )
 
     @triton.jit
+    def _recurrent_scan_clampw_kernel(
+        r_ptr,
+        w_raw_ptr,
+        k_ptr,
+        v_ptr,
+        kk_ptr,
+        a_ptr,
+        state_ptr,
+        out_ptr,
+        final_state_ptr,
+        T,
+        H: tl.constexpr,
+        N: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+    ):
+        bh_id = tl.program_id(0)
+        head_id = bh_id % H
+        batch_id = bh_id // H
+
+        offs_i = tl.arange(0, BLOCK_N)
+        offs_j = tl.arange(0, BLOCK_N)
+        mask_i = offs_i < N
+        mask_j = offs_j < N
+        state_base = (batch_id * H + head_id) * N * N
+        st = tl.load(
+            state_ptr + state_base + offs_i[:, None] * N + offs_j[None, :],
+            mask=mask_i[:, None] & mask_j[None, :],
+            other=0.0,
+        ).to(tl.float32)
+
+        t = 0
+        while t < T:
+            vec_base = ((batch_id * T + t) * H + head_id) * N
+            r = tl.load(r_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            w_raw = tl.load(w_raw_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            w = tl.exp(-0.606531 * tl.sigmoid(w_raw))
+            k = tl.load(k_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            kk = tl.load(kk_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            a = tl.load(a_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            v_cols = tl.load(v_ptr + vec_base + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+
+            state_dot_kk = tl.sum(st * kk[None, :], axis=1)
+            st = st * w[None, :] + v_cols[:, None] * k[None, :] - state_dot_kk[:, None] * kk[None, :] * a[None, :]
+
+            recurrent = tl.sum(st * r[None, :], axis=1)
+            tl.store(out_ptr + vec_base + offs_i, recurrent, mask=mask_i)
+            t += 1
+
+        tl.store(
+            final_state_ptr + state_base + offs_i[:, None] * N + offs_j[None, :],
+            st,
+            mask=mask_i[:, None] & mask_j[None, :],
+        )
+
+    @triton.jit
+    def _recurrent_scan_rows_clampw_kernel(
+        r_ptr,
+        w_raw_ptr,
+        k_ptr,
+        v_ptr,
+        kk_ptr,
+        a_ptr,
+        state_ptr,
+        out_ptr,
+        final_state_ptr,
+        T,
+        H: tl.constexpr,
+        N: tl.constexpr,
+        ROW_BLOCKS: tl.constexpr,
+        BLOCK_M: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+    ):
+        pid = tl.program_id(0)
+        row_block = pid % ROW_BLOCKS
+        bh_id = pid // ROW_BLOCKS
+        head_id = bh_id % H
+        batch_id = bh_id // H
+
+        offs_i = row_block * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_j = tl.arange(0, BLOCK_N)
+        mask_i = offs_i < N
+        mask_j = offs_j < N
+        state_base = (batch_id * H + head_id) * N * N
+        st = tl.load(
+            state_ptr + state_base + offs_i[:, None] * N + offs_j[None, :],
+            mask=mask_i[:, None] & mask_j[None, :],
+            other=0.0,
+        ).to(tl.float32)
+
+        t = 0
+        while t < T:
+            vec_base = ((batch_id * T + t) * H + head_id) * N
+            r = tl.load(r_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            w_raw = tl.load(w_raw_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            w = tl.exp(-0.606531 * tl.sigmoid(w_raw))
+            k = tl.load(k_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            kk = tl.load(kk_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            a = tl.load(a_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            v_rows = tl.load(v_ptr + vec_base + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+
+            state_dot_kk = tl.sum(st * kk[None, :], axis=1)
+            st = st * w[None, :] + v_rows[:, None] * k[None, :] - state_dot_kk[:, None] * kk[None, :] * a[None, :]
+
+            recurrent = tl.sum(st * r[None, :], axis=1)
+            tl.store(out_ptr + vec_base + offs_i, recurrent, mask=mask_i)
+            t += 1
+
+        tl.store(
+            final_state_ptr + state_base + offs_i[:, None] * N + offs_j[None, :],
+            st,
+            mask=mask_i[:, None] & mask_j[None, :],
+        )
+
+    @triton.jit
     def _recurrent_scan_output_prepare_kernel(
         r_ptr,
         w_ptr,
@@ -350,6 +464,12 @@ def fused_recurrent_output_prepare_available() -> bool:
 
 def fused_recurrent_scan_available() -> bool:
     """Return whether the optional Triton recurrent scan prototype can run."""
+
+    return bool(_HAS_TRITON and torch is not None)
+
+
+def fused_recurrent_scan_clampw_available() -> bool:
+    """Return whether the raw-W clampw recurrent scan prototype can run."""
 
     return bool(_HAS_TRITON and torch is not None)
 
@@ -462,6 +582,29 @@ def torch_recurrent_scan(r: Any, w: Any, k: Any, v: Any, kk: Any, a: Any, state:
     if flat:
         return stacked.reshape(B, int(r4.shape[1]), H * N), cur_state
     return stacked, cur_state
+
+
+def torch_recurrent_scan_clampw(r: Any, w_raw: Any, k: Any, v: Any, kk: Any, a: Any, state: Any):
+    """Reference scan that consumes raw W and computes RWKV-7 decay internally."""
+
+    if torch is None:
+        raise RuntimeError("torch_recurrent_scan_clampw requires torch")
+    if state.dim() != 4:
+        raise ValueError("state must be shaped [batch, heads, head_dim, head_dim]")
+    B, H, N, N2 = (int(vv) for vv in state.shape)
+    if N != N2:
+        raise ValueError("state must be square in the last two dimensions")
+    w4, flat = _as_bthn(w_raw, H, N, name="w_raw")
+    w_decay = torch.exp(-0.606531 * torch.sigmoid(w4.float()))
+    return torch_recurrent_scan(
+        r,
+        w_decay.reshape(B, int(w4.shape[1]), H * N) if flat else w_decay,
+        k,
+        v,
+        kk,
+        a,
+        state,
+    )
 
 
 def torch_recurrent_output_prepare(
@@ -869,6 +1012,127 @@ def fused_recurrent_scan(
         )
     else:
         _recurrent_scan_kernel[(B * H,)](
+            r_c,
+            w_c,
+            k_c,
+            v_c,
+            kk_c,
+            a_c,
+            state_c,
+            out,
+            final_state,
+            T,
+            H,
+            N,
+            BLOCK_N=int(block_n),
+            num_warps=int(num_warps),
+        )
+    if flat:
+        return out.reshape(B, T, H * N), final_state
+    return out, final_state
+
+
+def fused_recurrent_scan_clampw(
+    r: Any,
+    w_raw: Any,
+    k: Any,
+    v: Any,
+    kk: Any,
+    a: Any,
+    state: Any,
+    *,
+    block_n: int = 64,
+    block_m: int | None = None,
+    num_warps: int | None = None,
+    force_fallback: bool = False,
+):
+    """Compute a recurrent scan while keeping raw W decay inside the kernel.
+
+    This mirrors :func:`fused_recurrent_scan`, but consumes pre-clamp/pre-decay
+    ``w_raw`` and computes ``exp(-0.606531 * sigmoid(w_raw))`` inside the scan.
+    It is an opt-in prefill experiment for train_temp-style ``clampw`` fusion:
+    state-prep can skip writing a full W-decay tensor that the scan immediately
+    rereads.
+    """
+
+    if torch is None:
+        raise RuntimeError("fused_recurrent_scan_clampw requires torch")
+    if state.dim() != 4:
+        raise ValueError("state must be shaped [batch, heads, head_dim, head_dim]")
+    B, H, N, N2 = (int(vv) for vv in state.shape)
+    if N != N2:
+        raise ValueError("state must be square in the last two dimensions")
+    if int(block_n) < N:
+        raise ValueError(f"block_n must be >= head_dim={N}; got {block_n}")
+    if block_m is None:
+        block_m = N
+    block_m = int(block_m)
+    if block_m <= 0:
+        raise ValueError(f"block_m must be positive; got {block_m}")
+    if num_warps is None:
+        num_warps = 4 if block_m < N else 8
+    num_warps = int(num_warps)
+    if num_warps not in {1, 2, 4, 8}:
+        raise ValueError(f"num_warps must be one of 1, 2, 4, or 8; got {num_warps}")
+    r4, flat = _as_bthn(r, H, N, name="r")
+    w4, _ = _as_bthn(w_raw, H, N, name="w_raw")
+    k4, _ = _as_bthn(k, H, N, name="k")
+    v4, _ = _as_bthn(v, H, N, name="v")
+    kk4, _ = _as_bthn(kk, H, N, name="kk")
+    a4, _ = _as_bthn(a, H, N, name="a")
+    if int(r4.shape[0]) != B:
+        raise ValueError("r/w/k/v/kk/a batch size must match state")
+
+    use_triton = (
+        not force_fallback
+        and fused_recurrent_scan_clampw_available()
+        and r4.is_cuda
+        and w4.is_cuda
+        and k4.is_cuda
+        and v4.is_cuda
+        and kk4.is_cuda
+        and a4.is_cuda
+        and state.is_cuda
+        and state.dtype == torch.float32
+        and r4.dtype in (torch.float16, torch.bfloat16, torch.float32)
+        and w4.dtype == r4.dtype
+        and all(t.dtype == r4.dtype for t in (k4, v4, kk4, a4))
+    )
+    if not use_triton:
+        return torch_recurrent_scan_clampw(r4.reshape(B, int(r4.shape[1]), H * N) if flat else r4, w4, k4, v4, kk4, a4, state)
+
+    T = int(r4.shape[1])
+    r_c = r4.contiguous()
+    w_c = w4.contiguous()
+    k_c = k4.contiguous()
+    v_c = v4.contiguous()
+    kk_c = kk4.contiguous()
+    a_c = a4.contiguous()
+    state_c = state.contiguous()
+    out = torch.empty((B, T, H, N), device=r4.device, dtype=r4.dtype)
+    final_state = torch.empty_like(state_c)
+    if block_m < N:
+        row_blocks = triton.cdiv(N, block_m)
+        _recurrent_scan_rows_clampw_kernel[(B * H * row_blocks,)](
+            r_c,
+            w_c,
+            k_c,
+            v_c,
+            kk_c,
+            a_c,
+            state_c,
+            out,
+            final_state,
+            T,
+            H,
+            N,
+            ROW_BLOCKS=int(row_blocks),
+            BLOCK_M=int(block_m),
+            BLOCK_N=int(block_n),
+            num_warps=int(num_warps),
+        )
+    else:
+        _recurrent_scan_clampw_kernel[(B * H,)](
             r_c,
             w_c,
             k_c,
