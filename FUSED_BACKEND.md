@@ -413,6 +413,16 @@ serving speed.
      row. Keep this opt-in telemetry-only; shallow shift-mix is not the
      missing P1 fix unless folded into a larger norm/shift/projection/state
      kernel.
+   - `RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT=1` tests a larger full-head
+     kernel that fuses the recurrent scan with group-norm, recurrent
+     correction, and gate multiply before the final cuBLAS `o_proj`. It is
+     correctness-clean on RTX 4090 / 0.4B / fp16 / prompt=512, but forcing the
+     scan to own all 64 rows of a head in one Triton program destroys the
+     split-row scan benefit: bsz=1 falls to `224.1` tok/s and bsz=4 to
+     `764.1` tok/s, only `0.009x`-`0.010x` of the best split scan rows. Keep
+     this as negative telemetry only. The next prefill kernel should preserve
+     split-row scan occupancy and attack the larger norm/shift/projection/LoRA
+     and state-prep buckets, not fuse output prep into a full-head scan.
 
 ## Backend dispatch requirement
 

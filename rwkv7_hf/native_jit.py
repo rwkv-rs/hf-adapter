@@ -48,6 +48,8 @@ try:  # pragma: no cover - optional Triton fast path on CUDA hosts
         fused_recurrent_output_prepare_available,
         fused_recurrent_scan,
         fused_recurrent_scan_available,
+        fused_recurrent_scan_output_prepare,
+        fused_recurrent_scan_output_prepare_available,
         fused_recurrent_update,
         fused_recurrent_update_available,
     )
@@ -58,6 +60,8 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
             fused_recurrent_output_prepare_available,
             fused_recurrent_scan,
             fused_recurrent_scan_available,
+            fused_recurrent_scan_output_prepare,
+            fused_recurrent_scan_output_prepare_available,
             fused_recurrent_update,
             fused_recurrent_update_available,
         )
@@ -66,6 +70,8 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_recurrent_output_prepare_available = None  # type: ignore[assignment]
         fused_recurrent_scan = None  # type: ignore[assignment]
         fused_recurrent_scan_available = None  # type: ignore[assignment]
+        fused_recurrent_scan_output_prepare = None  # type: ignore[assignment]
+        fused_recurrent_scan_output_prepare_available = None  # type: ignore[assignment]
         fused_recurrent_update = None  # type: ignore[assignment]
         fused_recurrent_update_available = None  # type: ignore[assignment]
 
@@ -177,6 +183,19 @@ def _native_prefill_fused_scan_enabled() -> bool:
         return False
     try:
         return bool(fused_recurrent_scan_available())
+    except Exception:
+        return False
+
+
+def _native_prefill_fused_scan_output_enabled() -> bool:
+    """Runtime switch for fused prefill scan plus attention output prep."""
+
+    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT", False):
+        return False
+    if fused_recurrent_scan_output_prepare is None or fused_recurrent_scan_output_prepare_available is None:
+        return False
+    try:
+        return bool(fused_recurrent_scan_output_prepare_available())
     except Exception:
         return False
 
@@ -886,8 +905,29 @@ def prefill(
                 v = v + (v_first_seq - v) * v_gate
             w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
 
-        out, new_state = _native_prefill_scan(r, w, k, v, kk, a, state[layer_idx], B, T, H, N)
-        if _native_prefill_fused_output_enabled():
+        use_fused_scan_output = _native_prefill_fused_scan_output_enabled()
+        if use_fused_scan_output:
+            out, new_state = fused_recurrent_scan_output_prepare(
+                r.view(B, T, H, N),
+                w.view(B, T, H, N),
+                k.view(B, T, H, N),
+                v.view(B, T, H, N),
+                kk.view(B, T, H, N),
+                a.view(B, T, H, N),
+                state[layer_idx],
+                g.view(B, T, H, N),
+                r_k,
+                gn_w,
+                gn_b,
+                eps=eps,
+                block_n=N,
+            )
+            out = out.reshape(B, T, hidden)
+        else:
+            out, new_state = _native_prefill_scan(r, w, k, v, kk, a, state[layer_idx], B, T, H, N)
+        if use_fused_scan_output:
+            pass
+        elif _native_prefill_fused_output_enabled():
             out = fused_attn_output_prepare(
                 out.reshape(B * T, hidden),
                 r.reshape(B * T, H, N),

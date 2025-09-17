@@ -302,6 +302,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             r.get("scan_block_m"),
             r.get("scan_num_warps"),
             bool(r.get("fine_attention_breakdown")),
+            bool(r.get("prefill_fused_scan_output_effective")),
             bool(r.get("prefill_fused_shift_mix_effective")),
             bool(r.get("prefill_fused_state_prep_effective")),
             bool(r.get("prefill_fused_output_effective")),
@@ -319,6 +320,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             r.get("scan_block_m"),
             r.get("scan_num_warps"),
             bool(r.get("fine_attention_breakdown")),
+            bool(r.get("prefill_fused_scan_output_effective")),
             bool(r.get("prefill_fused_shift_mix_effective")),
             bool(r.get("prefill_fused_state_prep_effective")),
             bool(r.get("prefill_fused_output_effective")),
@@ -681,6 +683,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     "hf_fused_scan_requested": hf.get("fused_scan_requested"),
                     "hf_scan_block_m": hf.get("scan_block_m"),
                     "hf_scan_num_warps": hf.get("scan_num_warps"),
+                    "hf_prefill_fused_scan_output_effective": hf.get("prefill_fused_scan_output_effective"),
                     "hf_prefill_fused_shift_mix_effective": hf.get("prefill_fused_shift_mix_effective"),
                     "hf_prefill_fused_state_prep_effective": hf.get("prefill_fused_state_prep_effective"),
                     "hf_prefill_fused_output_effective": hf.get("prefill_fused_output_effective"),
@@ -753,13 +756,11 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         },
         "quantization": fused_quant_targets,
         "next_kernel_steps": [
-            "profile projection/LoRA at matrix granularity",
-            "prototype fused fp16 projection path",
-            "prototype fused attention shift-mix path",
-            "skip two-kernel FFN-only path unless it is folded into a larger graph",
-            "prototype fused recurrent rank-1 state update",
-            "integrate profitable recurrent/output fusion into native_graph and then fuse deeper with projection/LoRA",
-            "add native W8/W4 pack plus fused dequant-GEMV and optimize packed kernels until W8/W4 >= fp16",
+            "preserve split-row prefill scan occupancy; do not promote full-head scan+output-prep fusion",
+            "fuse larger norm/shift/projection/LoRA/state-prep regions instead of shallow output or FFN buckets",
+            "keep cuBLAS-backed dense projections unless a deeper kernel wins end-to-end at bsz=1/4",
+            "continue decode P1 with fused recurrent-output plus deeper projection/LoRA work",
+            "add native W8/W4 pack plus fused dequant-GEMV and optimize packed kernels until W8/W4 >= fp16 end-to-end",
         ],
     }
 
@@ -1115,6 +1116,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     bool(r.get("fused_scan_requested")),
                     r.get("scan_block_m"),
                     r.get("scan_num_warps"),
+                    bool(r.get("prefill_fused_scan_output_effective")),
                     bool(r.get("prefill_fused_shift_mix_effective")),
                     bool(r.get("prefill_fused_state_prep_effective")),
                     bool(r.get("prefill_fused_output_effective")),
@@ -1131,7 +1133,34 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 f"speedup min={min(speedups):.2f}x max={max(speedups):.2f}x; "
                 f"correct_cache_rows={len(ok_rows)}/{len(native_prefill_scan)}"
             )
-            output_rows = [r for r in native_prefill_scan if r.get("prefill_fused_output_effective")]
+            scan_output_rows = [r for r in native_prefill_scan if r.get("prefill_fused_scan_output_effective")]
+            scan_output_ratios: list[float] = []
+            for row in scan_output_rows:
+                base_candidates = [
+                    r
+                    for r in native_prefill_scan
+                    if r.get("batch_size") == row.get("batch_size")
+                    and r.get("prompt_tokens") == row.get("prompt_tokens")
+                    and bool(r.get("prefill_fused_state_prep_effective")) == bool(row.get("prefill_fused_state_prep_effective"))
+                    and not bool(r.get("prefill_fused_scan_output_effective"))
+                    and not bool(r.get("prefill_fused_output_effective"))
+                    and not bool(r.get("prefill_fused_wavg_lora_effective"))
+                ]
+                base = max(base_candidates, key=lambda r: float(r.get("native_prefill_tokps_total") or 0.0), default=None)
+                row_tokps = num(row, "native_prefill_tokps_total")
+                base_tokps = num(base, "native_prefill_tokps_total")
+                if row_tokps is not None and base_tokps:
+                    scan_output_ratios.append(float(row_tokps) / float(base_tokps))
+            if scan_output_ratios:
+                focus.append(
+                    f"native prefill fused scan+output-prep opt-in A/B ratio min={min(scan_output_ratios):.3f}x "
+                    f"max={max(scan_output_ratios):.3f}x; promote only if it beats split scan across target bsz"
+                )
+            output_rows = [
+                r
+                for r in native_prefill_scan
+                if r.get("prefill_fused_output_effective") and not r.get("prefill_fused_scan_output_effective")
+            ]
             output_ratios: list[float] = []
             for row in output_rows:
                 base_candidates = [
@@ -1141,6 +1170,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     and r.get("prompt_tokens") == row.get("prompt_tokens")
                     and r.get("scan_block_m") == row.get("scan_block_m")
                     and bool(r.get("prefill_fused_state_prep_effective")) == bool(row.get("prefill_fused_state_prep_effective"))
+                    and not bool(r.get("prefill_fused_scan_output_effective"))
                     and not bool(r.get("prefill_fused_output_effective"))
                     and not bool(r.get("prefill_fused_wavg_lora_effective"))
                 ]
@@ -1164,6 +1194,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     and r.get("prompt_tokens") == row.get("prompt_tokens")
                     and r.get("scan_block_m") == row.get("scan_block_m")
                     and r.get("scan_num_warps") == row.get("scan_num_warps")
+                    and bool(r.get("prefill_fused_scan_output_effective")) == bool(row.get("prefill_fused_scan_output_effective"))
                     and bool(r.get("prefill_fused_state_prep_effective")) == bool(row.get("prefill_fused_state_prep_effective"))
                     and bool(r.get("prefill_fused_output_effective")) == bool(row.get("prefill_fused_output_effective"))
                     and bool(r.get("prefill_fused_wavg_lora_effective")) == bool(row.get("prefill_fused_wavg_lora_effective"))
@@ -1185,6 +1216,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 if r.get("scan_num_warps") is not None
                 and r.get("native_prefill_tokps_total") is not None
                 and bool(r.get("prefill_fused_state_prep_effective"))
+                and not bool(r.get("prefill_fused_scan_output_effective"))
                 and not bool(r.get("prefill_fused_shift_mix_effective"))
                 and not bool(r.get("prefill_fused_output_effective"))
                 and not bool(r.get("prefill_fused_wavg_lora_effective"))
@@ -1228,7 +1260,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 dense_rkv_sum = sum(float(cm.get(k) or 0.0) for k in ("attn_dense_r_proj", "attn_dense_k_proj", "attn_dense_v_proj"))
                 if dense_rkv_sum <= 0.0:
                     dense_rkv_sum = float(cm.get("attn_dense_rkv") or 0.0)
-                scan_ms = cm.get("recurrent_scan")
+                scan_ms = cm.get("recurrent_scan", cm.get("recurrent_scan_output_prep_fused"))
                 state_ms = cm.get("attn_state_prep_fused", cm.get("attn_lora_state_prep"))
                 norm_ms = cm.get("attn_norm_shift_mix")
                 focus.append(
@@ -1857,11 +1889,11 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         ],
         "chunked_prefill": [compact(r, ["_lineno", "prefill_mode", "batch_size", "prompt_tokens", "chunk_size", "prefill_tokps_total", "speed_ratio_vs_full", "peak_vram_mb", "peak_vram_ratio_vs_full", "max_abs_diff", "decode_max_abs_diff", "seq_length_match"]) for r in chunked_latest],
         "native_prefill_scan": [
-            compact(r, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "scan_num_warps", "prefill_fused_shift_mix_requested", "prefill_fused_shift_mix_effective", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_output_requested", "prefill_fused_output_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "fast_token_backend_after_native_prefill", "hf_prefill_ms", "native_prefill_ms", "native_vs_hf_speedup", "hf_prefill_tokps_total", "native_prefill_tokps_total", "max_abs_diff", "min_cosine", "greedy_match", "decode_after_prefill_max_abs_diff", "decode_after_prefill_greedy_match", "peak_vram_mb"])
+            compact(r, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "scan_num_warps", "prefill_fused_scan_output_requested", "prefill_fused_scan_output_effective", "prefill_fused_shift_mix_requested", "prefill_fused_shift_mix_effective", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_output_requested", "prefill_fused_output_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "fast_token_backend_after_native_prefill", "hf_prefill_ms", "native_prefill_ms", "native_vs_hf_speedup", "hf_prefill_tokps_total", "native_prefill_tokps_total", "max_abs_diff", "min_cosine", "greedy_match", "decode_after_prefill_max_abs_diff", "decode_after_prefill_greedy_match", "peak_vram_mb"])
             for r in native_prefill_scan
         ],
         "native_prefill_breakdown": [
-            compact(r, ["_lineno", "status", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "scan_num_warps", "fine_attention_breakdown", "prefill_fused_shift_mix_requested", "prefill_fused_shift_mix_effective", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_output_requested", "prefill_fused_output_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "profiled_total_gpu_ms", "component_sum_ms", "profiled_tokps_total", "component_ms", "component_share", "top_components", "max_abs_diff_vs_native_prefill", "greedy_match_vs_native_prefill", "peak_vram_mb"])
+            compact(r, ["_lineno", "status", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "scan_num_warps", "fine_attention_breakdown", "prefill_fused_scan_output_requested", "prefill_fused_scan_output_effective", "prefill_fused_shift_mix_requested", "prefill_fused_shift_mix_effective", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_output_requested", "prefill_fused_output_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "profiled_total_gpu_ms", "component_sum_ms", "profiled_tokps_total", "component_ms", "component_share", "top_components", "max_abs_diff_vs_native_prefill", "greedy_match_vs_native_prefill", "peak_vram_mb"])
             for r in native_prefill_breakdown
         ],
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "hf_forward_fixed", "hf_forward_greedy", "hf_forward_auto_fixed", "hf_forward_auto_greedy", "hf_forward_auto_backend", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),

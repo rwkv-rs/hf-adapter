@@ -263,6 +263,78 @@ if _HAS_TRITON:
             mask=mask_i[:, None] & mask_j[None, :],
         )
 
+    @triton.jit
+    def _recurrent_scan_output_prepare_kernel(
+        r_ptr,
+        w_ptr,
+        k_ptr,
+        v_ptr,
+        kk_ptr,
+        a_ptr,
+        state_ptr,
+        g_ptr,
+        rk_ptr,
+        gn_weight_ptr,
+        gn_bias_ptr,
+        out_ptr,
+        final_state_ptr,
+        T,
+        H: tl.constexpr,
+        N: tl.constexpr,
+        eps: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+    ):
+        bh_id = tl.program_id(0)
+        head_id = bh_id % H
+        batch_id = bh_id // H
+
+        offs_i = tl.arange(0, BLOCK_N)
+        offs_j = tl.arange(0, BLOCK_N)
+        mask_i = offs_i < N
+        mask_j = offs_j < N
+        state_base = (batch_id * H + head_id) * N * N
+        st = tl.load(
+            state_ptr + state_base + offs_i[:, None] * N + offs_j[None, :],
+            mask=mask_i[:, None] & mask_j[None, :],
+            other=0.0,
+        ).to(tl.float32)
+
+        t = 0
+        while t < T:
+            vec_base = ((batch_id * T + t) * H + head_id) * N
+            r = tl.load(r_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            w = tl.load(w_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            k = tl.load(k_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            kk = tl.load(kk_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            a = tl.load(a_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            v_cols = tl.load(v_ptr + vec_base + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+
+            state_dot_kk = tl.sum(st * kk[None, :], axis=1)
+            st = st * w[None, :] + v_cols[:, None] * k[None, :] - state_dot_kk[:, None] * kk[None, :] * a[None, :]
+
+            recurrent = tl.sum(st * r[None, :], axis=1)
+            mean = tl.sum(tl.where(mask_i, recurrent, 0.0), axis=0) / N
+            centered = tl.where(mask_i, recurrent - mean, 0.0)
+            var = tl.sum(centered * centered, axis=0) / N
+            normed = centered * tl.rsqrt(var + eps)
+
+            r_rows = tl.load(r_ptr + vec_base + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+            k_rows = tl.load(k_ptr + vec_base + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+            g_rows = tl.load(g_ptr + vec_base + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+            rk = tl.load(rk_ptr + head_id * N + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+            weight = tl.load(gn_weight_ptr + head_id * N + offs_i, mask=mask_i, other=1.0).to(tl.float32)
+            bias = tl.load(gn_bias_ptr + head_id * N + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+            corr_scale = tl.sum(r_rows * k_rows * rk, axis=0)
+            prepared = (normed * weight + bias + corr_scale * v_cols) * g_rows
+            tl.store(out_ptr + vec_base + offs_i, prepared, mask=mask_i)
+            t += 1
+
+        tl.store(
+            final_state_ptr + state_base + offs_i[:, None] * N + offs_j[None, :],
+            st,
+            mask=mask_i[:, None] & mask_j[None, :],
+        )
+
 
 def fused_recurrent_update_available() -> bool:
     """Return whether the optional Triton recurrent update prototype can run."""
@@ -278,6 +350,12 @@ def fused_recurrent_output_prepare_available() -> bool:
 
 def fused_recurrent_scan_available() -> bool:
     """Return whether the optional Triton recurrent scan prototype can run."""
+
+    return bool(_HAS_TRITON and torch is not None)
+
+
+def fused_recurrent_scan_output_prepare_available() -> bool:
+    """Return whether fused prefill scan plus attention-output prep can run."""
 
     return bool(_HAS_TRITON and torch is not None)
 
@@ -431,6 +509,55 @@ def torch_recurrent_output_prepare(
     prepared = (normed + correction) * g3
     if flat:
         return prepared.reshape(B, H * N), new_state
+    return prepared, new_state
+
+
+def torch_recurrent_scan_output_prepare(
+    r: Any,
+    w: Any,
+    k: Any,
+    v: Any,
+    kk: Any,
+    a: Any,
+    state: Any,
+    g: Any,
+    r_k: Any,
+    group_norm_weight: Any,
+    group_norm_bias: Any,
+    *,
+    eps: float,
+):
+    """Reference prefill recurrent scan followed by per-token output prep."""
+
+    if torch is None or F is None:
+        raise RuntimeError("torch_recurrent_scan_output_prepare requires torch")
+    if state.dim() != 4:
+        raise ValueError("state must be shaped [batch, heads, head_dim, head_dim]")
+    B, H, N, _ = (int(vv) for vv in state.shape)
+    recurrent, new_state = torch_recurrent_scan(r, w, k, v, kk, a, state)
+    rec4, flat = _as_bthn(recurrent, H, N, name="recurrent")
+    r4, _ = _as_bthn(r, H, N, name="r")
+    k4, _ = _as_bthn(k, H, N, name="k")
+    v4, _ = _as_bthn(v, H, N, name="v")
+    g4, _ = _as_bthn(g, H, N, name="g")
+    T = int(rec4.shape[1])
+    if r_k.dim() != 2 or int(r_k.shape[0]) != H or int(r_k.shape[1]) != N:
+        raise ValueError(f"r_k must be [{H}, {N}], got {tuple(r_k.shape)}")
+    if group_norm_weight.dim() != 1 or int(group_norm_weight.shape[0]) != H * N:
+        raise ValueError(f"group_norm_weight must be [{H * N}], got {tuple(group_norm_weight.shape)}")
+    if group_norm_bias.dim() != 1 or int(group_norm_bias.shape[0]) != H * N:
+        raise ValueError(f"group_norm_bias must be [{H * N}], got {tuple(group_norm_bias.shape)}")
+    normed = F.group_norm(
+        rec4.reshape(B * T, H * N),
+        num_groups=H,
+        weight=group_norm_weight,
+        bias=group_norm_bias,
+        eps=float(eps),
+    ).reshape(B, T, H, N)
+    correction = ((r4 * k4 * r_k.view(1, 1, H, N)).sum(-1, keepdim=True) * v4)
+    prepared = (normed + correction) * g4
+    if flat:
+        return prepared.reshape(B, T, H * N), new_state
     return prepared, new_state
 
 
@@ -757,6 +884,132 @@ def fused_recurrent_scan(
             BLOCK_N=int(block_n),
             num_warps=int(num_warps),
         )
+    if flat:
+        return out.reshape(B, T, H * N), final_state
+    return out, final_state
+
+
+def fused_recurrent_scan_output_prepare(
+    r: Any,
+    w: Any,
+    k: Any,
+    v: Any,
+    kk: Any,
+    a: Any,
+    state: Any,
+    g: Any,
+    r_k: Any,
+    group_norm_weight: Any,
+    group_norm_bias: Any,
+    *,
+    eps: float,
+    block_n: int = 64,
+    force_fallback: bool = False,
+):
+    """Fuse prefill recurrent scan with RWKV-7 attention output prep.
+
+    This is an opt-in full-head prefill prototype.  It intentionally leaves the
+    final ``o_proj`` on cuBLAS, but avoids materializing the intermediate
+    recurrent output before group-norm/correction/gate.  Unlike
+    :func:`fused_recurrent_scan`, this kernel must own all rows of a head in one
+    Triton program so it can compute group-norm statistics for the head.
+    """
+
+    if torch is None:
+        raise RuntimeError("fused_recurrent_scan_output_prepare requires torch")
+    if state.dim() != 4:
+        raise ValueError("state must be shaped [batch, heads, head_dim, head_dim]")
+    B, H, N, N2 = (int(vv) for vv in state.shape)
+    if N != N2:
+        raise ValueError("state must be square in the last two dimensions")
+    if int(block_n) < N:
+        raise ValueError(f"block_n must be >= head_dim={N}; got {block_n}")
+    r4, flat = _as_bthn(r, H, N, name="r")
+    w4, _ = _as_bthn(w, H, N, name="w")
+    k4, _ = _as_bthn(k, H, N, name="k")
+    v4, _ = _as_bthn(v, H, N, name="v")
+    kk4, _ = _as_bthn(kk, H, N, name="kk")
+    a4, _ = _as_bthn(a, H, N, name="a")
+    g4, _ = _as_bthn(g, H, N, name="g")
+    if int(r4.shape[0]) != B:
+        raise ValueError("r/w/k/v/kk/a/g batch size must match state")
+    if r_k.dim() != 2 or int(r_k.shape[0]) != H or int(r_k.shape[1]) != N:
+        raise ValueError(f"r_k must be [{H}, {N}], got {tuple(r_k.shape)}")
+    if group_norm_weight.dim() != 1 or int(group_norm_weight.shape[0]) != H * N:
+        raise ValueError(f"group_norm_weight must be [{H * N}], got {tuple(group_norm_weight.shape)}")
+    if group_norm_bias.dim() != 1 or int(group_norm_bias.shape[0]) != H * N:
+        raise ValueError(f"group_norm_bias must be [{H * N}], got {tuple(group_norm_bias.shape)}")
+
+    use_triton = (
+        not force_fallback
+        and fused_recurrent_scan_output_prepare_available()
+        and r4.is_cuda
+        and w4.is_cuda
+        and k4.is_cuda
+        and v4.is_cuda
+        and kk4.is_cuda
+        and a4.is_cuda
+        and g4.is_cuda
+        and state.is_cuda
+        and r_k.is_cuda
+        and group_norm_weight.is_cuda
+        and group_norm_bias.is_cuda
+        and state.dtype == torch.float32
+        and r4.dtype in (torch.float16, torch.bfloat16, torch.float32)
+        and w4.dtype in (r4.dtype, torch.float32)
+        and all(t.dtype == r4.dtype for t in (k4, v4, kk4, a4, g4, r_k, group_norm_weight, group_norm_bias))
+    )
+    if not use_triton:
+        return torch_recurrent_scan_output_prepare(
+            r4.reshape(B, int(r4.shape[1]), H * N) if flat else r4,
+            w4,
+            k4,
+            v4,
+            kk4,
+            a4,
+            state,
+            g4,
+            r_k,
+            group_norm_weight,
+            group_norm_bias,
+            eps=eps,
+        )
+
+    T = int(r4.shape[1])
+    r_c = r4.contiguous()
+    w_c = w4.contiguous()
+    k_c = k4.contiguous()
+    v_c = v4.contiguous()
+    kk_c = kk4.contiguous()
+    a_c = a4.contiguous()
+    g_c = g4.contiguous()
+    state_c = state.contiguous()
+    rk_c = r_k.contiguous()
+    gnw_c = group_norm_weight.contiguous()
+    gnb_c = group_norm_bias.contiguous()
+    out = torch.empty((B, T, H, N), device=r4.device, dtype=r4.dtype)
+    final_state = torch.empty_like(state_c)
+    _recurrent_scan_output_prepare_kernel[(B * H,)](
+        r_c,
+        w_c,
+        k_c,
+        v_c,
+        kk_c,
+        a_c,
+        state_c,
+        g_c,
+        rk_c,
+        gnw_c,
+        gnb_c,
+        out,
+        final_state,
+        T,
+        H,
+        N,
+        float(eps),
+        BLOCK_N=int(block_n),
+        num_warps=8,
+    )
     if flat:
         return out.reshape(B, T, H * N), final_state
     return out, final_state
