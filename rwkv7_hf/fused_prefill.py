@@ -129,6 +129,7 @@ def fused_prefill_state_prep(
     v_gate: Any | None = None,
     num_heads: int,
     head_dim: int,
+    w_out_dtype: str = "fp32",
     force_fallback: bool = False,
 ):
     """Fuse native-prefill recurrent state preparation.
@@ -144,6 +145,8 @@ def fused_prefill_state_prep(
 
     if torch is None or F is None:
         raise RuntimeError("fused_prefill_state_prep requires torch")
+    if w_out_dtype not in {"fp32", "input"}:
+        raise ValueError(f"w_out_dtype must be 'fp32' or 'input'; got {w_out_dtype!r}")
     hidden = int(num_heads) * int(head_dim)
     w2, prefix = _flatten_seq_hidden(w_raw, hidden=hidden, name="w_raw")
     k2, k_prefix = _flatten_seq_hidden(k_raw, hidden=hidden, name="k_raw")
@@ -191,6 +194,8 @@ def fused_prefill_state_prep(
         else:
             v_out = v2
         w_out = torch.exp(-0.606531 * torch.sigmoid(w2.float()))
+        if w_out_dtype == "input":
+            w_out = w_out.to(w2.dtype)
         return (
             _restore_seq_hidden(w_out, prefix),
             _restore_seq_hidden(k_out, prefix),
@@ -207,7 +212,7 @@ def fused_prefill_state_prep(
     ka_c = k_a.reshape(hidden).contiguous()
     vf_c = vf2.contiguous()
     vg_c = vg2.contiguous()
-    w_out = torch.empty((rows, hidden), device=w2.device, dtype=torch.float32)
+    w_out = torch.empty((rows, hidden), device=w2.device, dtype=torch.float32 if w_out_dtype == "fp32" else w2.dtype)
     k_out = torch.empty_like(k_c)
     v_out = torch.empty_like(v_c)
     kk_out = torch.empty_like(k_c)

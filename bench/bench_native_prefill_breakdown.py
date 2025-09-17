@@ -264,6 +264,7 @@ def profiled_native_prefill(
                         k_a,
                         num_heads=H,
                         head_dim=N,
+                        w_out_dtype=native_jit._native_prefill_state_prep_w_dtype(),
                     )
                     v_first_local = v_local
                 else:
@@ -278,6 +279,7 @@ def profiled_native_prefill(
                         v_gate=v_gate_local,
                         num_heads=H,
                         head_dim=N,
+                        w_out_dtype=native_jit._native_prefill_state_prep_w_dtype(),
                     )
                     v_first_local = v_first_seq
             else:
@@ -347,6 +349,7 @@ def profiled_native_prefill(
                             k_a,
                             num_heads=H,
                             head_dim=N,
+                            w_out_dtype=native_jit._native_prefill_state_prep_w_dtype(),
                         ),
                     )
                     v_first_local = v_local
@@ -364,6 +367,7 @@ def profiled_native_prefill(
                             v_gate=v_gate_local,
                             num_heads=H,
                             head_dim=N,
+                            w_out_dtype=native_jit._native_prefill_state_prep_w_dtype(),
                         ),
                     )
                     v_first_local = v_first_seq
@@ -601,6 +605,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_fused_shift_mix_effective": native_jit._native_prefill_fused_shift_mix_enabled(),
         "prefill_fused_state_prep_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_state_prep_effective": native_jit._native_prefill_fused_state_prep_enabled(),
+        "prefill_state_prep_w_dtype": native_jit._native_prefill_state_prep_w_dtype(),
         "prefill_fused_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_output_effective": native_jit._native_prefill_fused_output_enabled(),
         "prefill_fused_wavg_lora_requested": native_jit._native_prefill_fused_wavg_lora_requested(),

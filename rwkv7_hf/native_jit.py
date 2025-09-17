@@ -244,6 +244,34 @@ def _native_prefill_fused_state_prep_enabled() -> bool:
         return False
 
 
+def _native_prefill_state_prep_w_dtype() -> str:
+    """Output dtype policy for fused native-prefill W decay.
+
+    ``fp32`` preserves the historical torch expression
+    ``exp(... w.float())``. ``input`` stores the decay in the model dtype to
+    reduce bandwidth into the split-row scan; it is opt-in until end-to-end
+    rows prove correctness and speed for a card/model.
+    """
+
+    raw = os.environ.get("RWKV7_NATIVE_PREFILL_STATE_PREP_W_DTYPE", "fp32").strip().lower()
+    aliases = {
+        "fp32": "fp32",
+        "float32": "fp32",
+        "f32": "fp32",
+        "input": "input",
+        "model": "input",
+        "same": "input",
+        "fp16": "input",
+        "bf16": "input",
+    }
+    if raw not in aliases:
+        raise ValueError(
+            "RWKV7_NATIVE_PREFILL_STATE_PREP_W_DTYPE must be 'fp32' or 'input' "
+            f"(aliases: same/model/fp16/bf16); got {raw!r}"
+        )
+    return aliases[raw]
+
+
 def _native_prefill_fused_output_enabled() -> bool:
     """Runtime switch for native prefill output-prep fusion.
 
@@ -881,6 +909,7 @@ def prefill(
                     k_a,
                     num_heads=H,
                     head_dim=N,
+                    w_out_dtype=_native_prefill_state_prep_w_dtype(),
                 )
                 v_first_seq = v
             else:
@@ -895,6 +924,7 @@ def prefill(
                     v_gate=v_gate,
                     num_heads=H,
                     head_dim=N,
+                    w_out_dtype=_native_prefill_state_prep_w_dtype(),
                 )
         else:
             kk = F.normalize((k * k_k.view(1, 1, hidden)).view(B, T, H, N), dim=-1, p=2.0).view(B, T, hidden)

@@ -23,6 +23,38 @@ The current wrapper/native split remains intact:
 - `native_model` remains experimental until it reaches the same compatibility
   and benchmark surface.
 
+## Current next target: HF-compatible native fused backend
+
+The next phase is not another wrapper-speed pass. The target is to keep the HF
+adapter contract intact while replacing the hot math with a native fused backend.
+See `docs/native_fused_roadmap.md` for the agent-readable implementation map.
+
+Required direction:
+
+- Align math against `rwkv_v7_numpy.py` and real-model execution from
+  `run_rwkv7_qwen35.py` before changing kernel layout.
+- Implement around train_temp-style boundaries: `tmix_mix6`,
+  `kk_pre/state_prep`, `lnx_rkvres_xg`, `cmix`, and `clampw`.
+- Use Albatross-style GPU-specific layout/autotune. Promote only exact-card
+  end-to-end wins with correctness rows.
+- Treat DPLR/chunked prefill as the bsz=1 prefill breakthrough path, especially
+  for 4090 fp16 prompt512 where bsz=1 remains the blocker.
+
+Explicit non-goals / bans for this phase:
+
+- No vLLM or SGLang integration work in this repository.
+- No wrapper/cache micro-optimization as the main performance plan.
+- No promotion of the full-head scan+output fused prefill path; current telemetry
+  shows it destroys split-row scan occupancy.
+- No quantized-speed claim until a native fused quant kernel beats fp16/W16
+  end-to-end while preserving memory and correctness.
+- No defaulting shallow projection/LoRA/shift/FFN/output-project probes from
+  isolated microbench wins.
+
+Minimum validation for promotable work: RTX 4090 fp16 bsz=1/4 prompt512 prefill,
+decode, correctness, peak memory/VRAM, and `bench/analyze_results.py` output
+with `fused_backend_targets` / Albatross ratios.
+
 ## Albatross target ladder
 
 Current committed V100 0.1B evidence shows HF native-graph decode at roughly

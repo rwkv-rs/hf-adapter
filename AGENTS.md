@@ -13,6 +13,38 @@ The active reward target is the HF/Transformers track: make RWKV-7 usable from
 standard HF APIs with near-production correctness, performance, memory behavior,
 training compatibility, quantized inference, and reproducible benchmarks.
 
+## Current Agent Contract: Native Fused HF Backend
+
+This is the active contract for the next workers on this branch. Treat
+`FUSED_BACKEND.md` and `docs/native_fused_roadmap.md` as the performance
+roadmap.
+
+- Scope is **HF adapter only**. Do not implement or gate native vLLM/SGLang
+  integrations in this repository.
+- Keep HF compatibility as the invariant: `AutoModelForCausalLM`, `generate`,
+  PEFT, Trainer, TRL, `RWKV7StateCache`, dynamic batching, chunked prefill,
+  save/load, and quantized loading must keep working.
+- Move the speed core to native fused backends: fused fp16 first, then fused
+  quant. The wrapper is the compatibility shell, not the place for the next
+  performance breakthrough.
+- Use official math alignment from `rwkv_v7_numpy.py` and
+  `run_rwkv7_qwen35.py`; preserve exact RWKV-7 recurrence, clamp, state, and
+  output semantics before optimizing layout.
+- Follow train_temp-style fused boundaries: `tmix_mix6`, `kk_pre/state_prep`,
+  `lnx_rkvres_xg`, `cmix`, and `clampw`.
+- Use Albatross-style GPU-specific layout/autotune. Exact-card rows decide
+  defaults; V100, 4090, A100/H100, and Blackwell must not blindly share tile
+  choices.
+- Treat DPLR/chunked prefill as the bsz=1 prompt-prefill breakthrough line.
+  Do not spend the next phase on wrapper/cache micro-optimizations.
+- Forbidden directions: wrapper micro-optimization as the main plan, native
+  vLLM/SGLang work, defaulting the full-head scan+output fused prefill path,
+  and quantized-speed claims before a native fused quant kernel beats fp16
+  end-to-end.
+- Required next validation loop: RTX 4090 fp16, bsz=1/4, prompt512 prefill,
+  decode, correctness, peak memory/VRAM, and `bench/analyze_results.py`
+  reporting.
+
 ## Active Goal: Finish the Current HF Adapter First
 
 Current priority: finish the RWKV-7 Hugging Face / Transformers adapter with
@@ -27,9 +59,12 @@ The current delivery strategy is:
   `AutoModelForCausalLM`, `generate`, PEFT, Trainer, TRL, state cache,
   dynamic batching, chunked prefill, quantization, speculative decoding, and
   benchmark gates.
-- Keep optimizing wrapper performance through `RWKV7StateCache`,
-  `native_jit`, `native_graph`, cache reuse, reduced launch count, and future
-  fused/native quantized kernels.
+- Stop treating wrapper micro-optimization as the performance plan. The
+  wrapper may be changed for HF compatibility, correctness, telemetry, and
+  dispatch, but new speed wins should come from native fused fp16 kernels and
+  later fused native W8/W4 kernels. `native_jit`, `native_graph`, cache reuse,
+  and reduced launch count are fallback/baseline layers, not the next
+  breakthrough by themselves.
 - Keep `native_model` explicitly experimental. It is the long-term base for
   removing the mandatory FLA runtime, upstream Transformers work, AMD/CPU
   fallback, and future kernels. It must not be described as replacing the
@@ -538,8 +573,12 @@ python /home/data/wangyue/projects/rwkv7-hf-adapter/tests/test_peft_lora.py \
 2. Keep official RWKV vs HF logits/generation alignment tests green.
 3. Keep `save_pretrained` / reload roundtrip tests green.
 4. Expand PEFT / Trainer / TRL SFT/DPO/GRPO smoke tests into multi-batch and gradient-accumulation checks.
-5. Continue HF decode-performance work: native graph/JIT, dynamic-batch cache, chunked prefill, and cache telemetry.
-6. Finish HF quantized W8/W4 inference so memory drops and speed is competitive with W16.
+5. Move HF performance work into the native fused backend: train_temp-style
+   fp16 kernel boundaries, GPU-specific layout/autotune, and DPLR/chunked
+   prefill for bsz=1 prompt-prefill. Keep wrapper/cache work to compatibility
+   and telemetry fixes.
+6. Finish HF quantized W8/W4 inference as memory-compatible first, and claim
+   quant speed only after native fused quant kernels beat W16/fp16 end-to-end.
 7. Validate on more GPUs and larger batch sizes.
 8. Start native Transformers implementation under `src/transformers/models/rwkv7/` style layout.
 9. Remove mandatory FLA dependency from the final HF implementation.
