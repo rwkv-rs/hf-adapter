@@ -23,6 +23,8 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from rwkv7_hf import native_jit
+
 
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
 SEED = "The quick brown fox jumps over the lazy dog. " * 256
@@ -128,6 +130,11 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "tokens_total": batch_size * prompt_tokens,
         "fused_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN", "0") not in {"0", "false", "False", "no", "off"},
         "scan_block_m": scan_block_m(model),
+        "prefill_fused_state_prep_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", "0").lower() not in {"0", "false", "no", "off"},
+        "prefill_fused_state_prep_effective": native_jit._native_prefill_fused_state_prep_enabled(),
+        "prefill_fused_wavg_lora_requested": native_jit._native_prefill_fused_wavg_lora_requested(),
+        "prefill_fused_wavg_lora_effective": native_jit._native_prefill_fused_wavg_lora_enabled(batch_size * prompt_tokens),
+        "prefill_fused_wavg_lora_max_m": native_jit._native_prefill_fused_wavg_lora_max_m(),
         "fast_token_backend_after_native_prefill": decode_backend,
         "hf_prefill_ms": round(ref_ms, 4),
         "native_prefill_ms": round(native_ms, 4),

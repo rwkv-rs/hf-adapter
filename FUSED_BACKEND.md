@@ -346,6 +346,25 @@ serving speed.
      `81047.4` tok/s (`0.6881x` Albatross), but bsz=1 remains stuck around
      `0.3668x`; next work must reduce LoRA/state-prep and other full-layer
      overhead rather than assuming scan-only tuning is sufficient.
+   - `rwkv7_hf.fused_prefill.fused_prefill_state_prep()` now provides an
+     opt-in prefill state-prep fusion under
+     `RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP=1`. It fuses W decay, K adjustment,
+     per-head `kk` normalization, and optional V interpolation after the
+     cuBLAS-backed projection/LoRA modules. On RTX 4090 / 0.4B / fp16 /
+     prompt=512 with `RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M=8`, it is
+     correctness-clean and raises bsz=1 native prefill from `21857.3` to
+     `22358.5` tok/s (`0.3723x` Albatross) while leaving bsz=4 essentially
+     neutral (`81144.8` tok/s, `0.6889x` Albatross). This is useful but not
+     sufficient for P1; the next real target is deeper LoRA/projection fusion
+     because `attn_lora_state_prep` still leads bsz=1 breakdown
+     (`7.858ms`, share `0.3106`).
+   - Prefill W/A/G/V-gate LoRA grouping is also wired as an opt-in adaptive
+     probe (`RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA=1`,
+     `RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_MAX_M`, default `1024` rows). The
+     isolated 4090 rows show `B*T=512` faster (`1.2762x`) but `B*T=2048`
+     slower (`0.6626x`), and the end-to-end bsz=1 prefill row regresses to
+     `21773.4` tok/s when enabled. Keep it telemetry-only; do not default it
+     until a deeper projection+LoRA design improves full prefill.
 
 ## Backend dispatch requirement
 
