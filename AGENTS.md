@@ -264,8 +264,9 @@ targets until matching hardware is benchmarked.
     speedup.
 - Prefill rule: native recurrent scan may be benchmarked, but it is not the
   default full prefill path until projection/output integration is wired and
-  `native_prefill_scan` end-to-end rows improve. Use
-  `RWKV7_NATIVE_PREFILL_FUSED_SCAN=1` only as an explicit A/B flag.
+  `native_prefill_scan` end-to-end rows improve. Use `RWKV7_FAST_PREFILL=1`
+  plus `RWKV7_NATIVE_PREFILL_FUSED_SCAN=1` only as explicit A/B flags until the
+  broader card/model matrix is validated.
 
 #### Hopper / H100 (`sm_90`)
 

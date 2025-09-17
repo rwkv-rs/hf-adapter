@@ -277,6 +277,16 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     forward_fast_path = latest(rows, lambda r: r.get("axis") == "forward_fast_path" and r.get("backend") == "hf_adapter")
     generate_fast_path = latest(rows, lambda r: r.get("axis") == "generate_fast_path" and r.get("backend") == "hf_adapter")
     fast_token_warmup = latest(rows, lambda r: r.get("axis") == "fast_token_warmup" and r.get("backend") == "hf_adapter")
+    ttft_tpot = latest_by_key(
+        [r for r in rows if r.get("axis") == "ttft_tpot" and r.get("backend") == "hf_adapter"],
+        lambda r: (
+            r.get("metric"),
+            r.get("batch_size"),
+            r.get("prompt_tokens"),
+            r.get("fast_prefill_env"),
+            r.get("native_prefill_fused_scan_env"),
+        ),
+    )
     native_graph_overhead = latest_by_key(
         [r for r in rows if r.get("axis") == "native_graph_replay_overhead" and r.get("backend") == "hf_adapter"],
         lambda r: r.get("batch_size"),
@@ -983,6 +993,17 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             )
         else:
             focus.append(f"native_prefill_scan end-to-end rows present for cases={cases}; add timing fields")
+    fast_prefill_ttft = [
+        r for r in ttft_tpot
+        if r.get("metric") == "ttft" and str(r.get("fast_prefill_env")) not in {"", "0", "false", "False", "no", "off"}
+    ]
+    if fast_prefill_ttft:
+        best = max(fast_prefill_ttft, key=lambda r: float(r.get("prefill_tokps_p50") or 0.0))
+        focus.append(
+            f"HF forward TTFT fast-prefill row present: prompt={best.get('prompt_tokens')} "
+            f"p50={best.get('p50_ms')} ms tokps={best.get('prefill_tokps_p50')} "
+            f"backend={best.get('fast_prefill_backend_effective')} fused_scan_env={best.get('native_prefill_fused_scan_env')}"
+        )
     if fused_recurrent_output_proto is None:
         focus.append("fused_recurrent_output_proto row pending")
     else:
@@ -1574,6 +1595,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "forward_fast_path": compact(forward_fast_path, ["_lineno", "fast_token_backend", "fast_token_layout", "reference_forward", "hf_forward_fast", "direct_fast_token", "hf_forward_fast_backend", "direct_fast_token_backend", "max_abs_diff_auto_vs_reference", "max_abs_diff_direct_vs_reference", "peak_vram_mb"]),
         "generate_fast_path": compact(generate_fast_path, ["_lineno", "fast_token_backend", "fast_token_backend_effective", "batch_size", "reference_generate", "hf_generate_fast", "speedup_vs_reference", "generated_equal", "generated_tokens_matched", "generated_tokens_total", "prompt_tokens", "max_new_tokens", "peak_vram_mb"]),
         "fast_token_warmup": compact(fast_token_warmup, ["_lineno", "fast_token_backend", "batch_sizes", "effective_backend_by_batch", "native_graph_cache_batch_sizes", "native_graph_cache_size_limit", "cleared_before", "warmup_s", "peak_vram_mb"]),
+        "ttft_tpot": [
+            compact(r, ["_lineno", "metric", "dtype", "device", "fast_forward_env", "fast_prefill_env", "native_prefill_fused_scan_env", "fast_prefill_backend_effective", "fast_token_backend_effective", "prompt_tokens", "decode_tokens", "batch_size", "p50_ms", "p99_ms", "mean_ms", "prefill_tokps_p50", "decode_tokps_p50", "generate_tokps", "peak_vram_mb", "status"])
+            for r in ttft_tpot
+        ],
         "native_graph_replay_overhead": [
             compact(r, ["_lineno", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_recurrent", "native_graph_fused_recurrent_output", "native_graph_fused_output", "native_graph_fused_output_project", "native_graph_fused_wag_lora", "native_graph_fused_wavg_lora", "native_graph_fused_projection", "batch_size", "prompt_tokens", "steps", "fixed_token", "max_abs_diff_runner_vs_api", "copy_from_cache_ms", "token_copy_ms", "graph_replay_ms", "bind_cache_ms", "argmax_ms", "copy_from_cache_calls", "copy_from_cache_fast_skips", "copy_from_cache_fast_skip_rate", "bind_cache_calls", "bind_cache_fast_skips", "bind_cache_fast_skip_rate", "manual_wall_ms_per_token", "api_ms_per_token", "manual_decode_tokps_total", "api_decode_tokps_total", "copy_share_of_manual_wall", "native_graph_cache_requests", "native_graph_cache_hits", "native_graph_cache_misses", "native_graph_cache_evictions", "native_graph_cache_hit_rate", "native_graph_cache_batch_sizes", "peak_vram_mb"])
             for r in native_graph_overhead
@@ -1906,6 +1931,12 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["generate_fast_path"], ensure_ascii=False) if report["generate_fast_path"] else "PENDING")
     print("\n## fast_token_warmup")
     print(json.dumps(report["fast_token_warmup"], ensure_ascii=False) if report["fast_token_warmup"] else "PENDING")
+    print("\n## ttft_tpot")
+    if report["ttft_tpot"]:
+        for row in report["ttft_tpot"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
     print("\n## native_graph_replay_overhead")
     if report["native_graph_replay_overhead"]:
         for row in report["native_graph_replay_overhead"]:
