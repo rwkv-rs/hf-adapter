@@ -58,6 +58,19 @@ def infer_model_size_label(model_path: str) -> str | None:
     return f"{match.group(1)}b" if match else None
 
 
+def scan_block_m(model) -> int | None:
+    raw = os.environ.get("RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M")
+    if raw is not None:
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+    try:
+        return int(model._rwkv7_native_jit_packs()[0][2])
+    except Exception:
+        return None
+
+
 def cosine_min(a: torch.Tensor, b: torch.Tensor) -> float:
     return float(F.cosine_similarity(a.float(), b.float(), dim=-1).min().detach().cpu())
 
@@ -114,6 +127,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prompt_tokens": prompt_tokens,
         "tokens_total": batch_size * prompt_tokens,
         "fused_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN", "0") not in {"0", "false", "False", "no", "off"},
+        "scan_block_m": scan_block_m(model),
         "fast_token_backend_after_native_prefill": decode_backend,
         "hf_prefill_ms": round(ref_ms, 4),
         "native_prefill_ms": round(native_ms, 4),

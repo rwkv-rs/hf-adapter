@@ -75,7 +75,7 @@ def make_inputs(
     return {"r": r, "w_log": w_log, "w_decay": w_decay, "k": k, "v": v, "kk": kk, "a": a, "state": state}
 
 
-def native_scan(xs: dict[str, torch.Tensor], block_n: int):
+def native_scan(xs: dict[str, torch.Tensor], block_n: int, block_m: int | None = None):
     return fused_recurrent_scan(
         xs["r"],
         xs["w_decay"],
@@ -85,6 +85,7 @@ def native_scan(xs: dict[str, torch.Tensor], block_n: int):
         xs["a"],
         xs["state"],
         block_n=block_n,
+        block_m=block_m,
     )
 
 
@@ -156,6 +157,7 @@ def main() -> int:
     ap.add_argument("--heads", type=int, default=16)
     ap.add_argument("--head-dim", type=int, default=64)
     ap.add_argument("--block-n", type=int, default=64)
+    ap.add_argument("--block-m", type=int, default=64)
     ap.add_argument("--chunk-size", type=int, default=64)
     ap.add_argument("--warmup", type=int, default=4)
     ap.add_argument("--steps", type=int, default=32)
@@ -174,11 +176,11 @@ def main() -> int:
         for tokens in args.tokens:
             xs = make_inputs(batch_size, tokens, args.heads, args.head_dim, args.device, dtype, args.seed + batch_size * 1000 + tokens)
             with torch.inference_mode():
-                native_out = native_scan(xs, args.block_n)
+                native_out = native_scan(xs, args.block_n, args.block_m)
                 fla_out = fla_scan(xs, args.chunk_size) if chunk_rwkv7 is not None else None
                 torch_out = torch_scan(xs) if int(tokens) <= int(args.torch_reference_max_tokens) else None
 
-            native_ms = timed(lambda: native_scan(xs, args.block_n), args.device, args.warmup, args.steps)
+            native_ms = timed(lambda: native_scan(xs, args.block_n, args.block_m), args.device, args.warmup, args.steps)
             fla_ms = timed(lambda: fla_scan(xs, args.chunk_size), args.device, args.warmup, args.steps) if chunk_rwkv7 is not None else None
             torch_ms = (
                 timed(lambda: torch_scan(xs), args.device, max(1, args.warmup // 2), max(1, args.steps // 4))
@@ -198,6 +200,7 @@ def main() -> int:
                 "heads": args.heads,
                 "head_dim": args.head_dim,
                 "block_n": args.block_n,
+                "block_m": args.block_m,
                 "chunk_size": args.chunk_size,
                 "warmup": args.warmup,
                 "steps": args.steps,

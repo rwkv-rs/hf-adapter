@@ -295,11 +295,11 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     )
     native_prefill_scan = latest_by_key(
         [r for r in rows if r.get("axis") == "native_prefill_scan" and r.get("backend") == "hf_adapter"],
-        lambda r: (r.get("batch_size"), r.get("prompt_tokens"), bool(r.get("fused_scan_requested"))),
+        lambda r: (r.get("batch_size"), r.get("prompt_tokens"), bool(r.get("fused_scan_requested")), r.get("scan_block_m")),
     )
     native_prefill_breakdown = latest_by_key(
         [r for r in rows if r.get("axis") == "native_prefill_breakdown" and r.get("backend") == "hf_adapter"],
-        lambda r: (model_size_label(r), r.get("batch_size"), r.get("prompt_tokens"), bool(r.get("fused_scan_requested"))),
+        lambda r: (model_size_label(r), r.get("batch_size"), r.get("prompt_tokens"), bool(r.get("fused_scan_requested")), r.get("scan_block_m")),
     )
     micro = latest(rows, lambda r: r.get("axis") == "decode_micro" and r.get("backend") == "hf_adapter")
     forward_fast_path = latest(rows, lambda r: r.get("axis") == "forward_fast_path" and r.get("backend") == "hf_adapter")
@@ -337,7 +337,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     fused_recurrent_proto = latest(rows, lambda r: r.get("axis") == "fused_recurrent_proto" and r.get("backend") == "hf_adapter")
     fused_recurrent_scan_proto = latest_by_key(
         [r for r in rows if r.get("axis") == "fused_recurrent_scan_proto" and r.get("backend") == "hf_adapter"],
-        lambda r: (r.get("batch_size"), r.get("tokens"), r.get("heads"), r.get("head_dim")),
+        lambda r: (r.get("batch_size"), r.get("tokens"), r.get("heads"), r.get("head_dim"), r.get("block_m")),
     )
     fused_recurrent_output_proto = latest(rows, lambda r: r.get("axis") == "fused_recurrent_output_proto" and r.get("backend") == "hf_adapter")
     native_graph_fused_recurrent = latest(rows, lambda r: r.get("axis") == "native_graph_fused_recurrent" and r.get("backend") == "hf_adapter")
@@ -1035,7 +1035,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             for r in fused_recurrent_scan_proto
             if r.get("native_vs_torch_out_min_cosine") is not None
         ]
-        cases = sorted({(r.get("batch_size"), r.get("tokens")) for r in fused_recurrent_scan_proto})
+        cases = sorted(
+            {(r.get("batch_size"), r.get("tokens"), r.get("block_m")) for r in fused_recurrent_scan_proto},
+            key=str,
+        )
         if scan_speedups:
             focus.append(
                 f"fused recurrent scan prefill prototype present for cases={cases}; "
@@ -1064,7 +1067,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             for r in native_prefill_scan
             if r.get("native_vs_hf_speedup") is not None
         ]
-        cases = sorted({(r.get("batch_size"), r.get("prompt_tokens"), bool(r.get("fused_scan_requested"))) for r in native_prefill_scan})
+        cases = sorted(
+            {(r.get("batch_size"), r.get("prompt_tokens"), bool(r.get("fused_scan_requested")), r.get("scan_block_m")) for r in native_prefill_scan},
+            key=str,
+        )
         if speedups:
             focus.append(
                 f"native_prefill_scan end-to-end rows present for cases={cases}; "
@@ -1708,11 +1714,11 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         ],
         "chunked_prefill": [compact(r, ["_lineno", "prefill_mode", "batch_size", "prompt_tokens", "chunk_size", "prefill_tokps_total", "speed_ratio_vs_full", "peak_vram_mb", "peak_vram_ratio_vs_full", "max_abs_diff", "decode_max_abs_diff", "seq_length_match"]) for r in chunked_latest],
         "native_prefill_scan": [
-            compact(r, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "fast_token_backend_after_native_prefill", "hf_prefill_ms", "native_prefill_ms", "native_vs_hf_speedup", "hf_prefill_tokps_total", "native_prefill_tokps_total", "max_abs_diff", "min_cosine", "greedy_match", "decode_after_prefill_max_abs_diff", "decode_after_prefill_greedy_match", "peak_vram_mb"])
+            compact(r, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "fast_token_backend_after_native_prefill", "hf_prefill_ms", "native_prefill_ms", "native_vs_hf_speedup", "hf_prefill_tokps_total", "native_prefill_tokps_total", "max_abs_diff", "min_cosine", "greedy_match", "decode_after_prefill_max_abs_diff", "decode_after_prefill_greedy_match", "peak_vram_mb"])
             for r in native_prefill_scan
         ],
         "native_prefill_breakdown": [
-            compact(r, ["_lineno", "status", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "profiled_total_gpu_ms", "component_sum_ms", "profiled_tokps_total", "component_ms", "component_share", "top_components", "max_abs_diff_vs_native_prefill", "greedy_match_vs_native_prefill", "peak_vram_mb"])
+            compact(r, ["_lineno", "status", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "profiled_total_gpu_ms", "component_sum_ms", "profiled_tokps_total", "component_ms", "component_share", "top_components", "max_abs_diff_vs_native_prefill", "greedy_match_vs_native_prefill", "peak_vram_mb"])
             for r in native_prefill_breakdown
         ],
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "hf_forward_fixed", "hf_forward_greedy", "hf_forward_auto_fixed", "hf_forward_auto_greedy", "hf_forward_auto_backend", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
@@ -1744,7 +1750,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "fused_shift_mix_proto": compact(fused_shift_mix_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "input_rank", "hidden_size", "layers", "block_size", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_recurrent_proto": compact(fused_recurrent_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_n", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "out_max_abs_diff", "state_max_abs_diff", "out_min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_recurrent_scan_proto": [
-            compact(r, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "tokens", "heads", "head_dim", "block_n", "chunk_size", "steps", "native_scan_ms", "native_scan_tokps_total", "fla_chunk_ms", "fla_chunk_tokps_total", "native_vs_fla_speedup", "native_vs_torch_speedup", "native_vs_torch_out_max_abs_diff", "native_vs_torch_state_max_abs_diff", "native_vs_torch_out_min_cosine", "native_vs_fla_out_min_cosine", "peak_vram_mb"])
+            compact(r, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "tokens", "heads", "head_dim", "block_n", "block_m", "chunk_size", "steps", "native_scan_ms", "native_scan_tokps_total", "fla_chunk_ms", "fla_chunk_tokps_total", "native_vs_fla_speedup", "native_vs_torch_speedup", "native_vs_torch_out_max_abs_diff", "native_vs_torch_state_max_abs_diff", "native_vs_torch_out_min_cosine", "native_vs_fla_out_min_cosine", "peak_vram_mb"])
             for r in fused_recurrent_scan_proto
         ],
         "fused_recurrent_output_proto": compact(fused_recurrent_output_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "attn_mode", "fuse_norm", "batch_size", "hidden_size", "layers", "block_n", "input_scale", "steps", "avg_current_ms", "avg_split_fused_ms", "avg_fused_ms", "avg_speedup_vs_current", "avg_speedup_vs_split", "out_max_abs_diff", "state_max_abs_diff", "split_out_max_abs_diff", "split_state_max_abs_diff", "out_min_cosine", "split_out_min_cosine", "layer_rows", "peak_vram_mb"]),

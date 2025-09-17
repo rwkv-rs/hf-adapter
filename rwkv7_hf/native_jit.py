@@ -163,6 +163,12 @@ def _native_prefill_fused_scan_enabled() -> bool:
         return False
 
 
+def _native_prefill_scan_block_m(head_dim: int) -> int:
+    """Row tile for the optional split-row recurrent scan kernel."""
+
+    return env_int("RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M", int(head_dim), lower=1, upper=int(head_dim))
+
+
 def _native_graph_fused_recurrent_output_enabled() -> bool:
     """Runtime switch for fused recurrent update plus output-prep."""
 
@@ -587,6 +593,7 @@ def _native_prefill_scan(
             a.view(B, T, H, N),
             state,
             block_n=N,
+            block_m=_native_prefill_scan_block_m(N),
         )
         return out.reshape(B, T, H * N), new_state
 

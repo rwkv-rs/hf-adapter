@@ -40,6 +40,19 @@ def parse_ints(raw: str) -> list[int]:
     return [int(x.strip()) for x in raw.split(",") if x.strip()]
 
 
+def scan_block_m(model) -> int | None:
+    raw = os.environ.get("RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M")
+    if raw is not None:
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+    try:
+        return int(model._rwkv7_native_jit_packs()[0][2])
+    except Exception:
+        return None
+
+
 def median(vals: list[float]) -> float:
     vals = sorted(vals)
     return vals[len(vals) // 2]
@@ -267,6 +280,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prompt_tokens": prompt_tokens,
         "tokens_total": batch_size * prompt_tokens,
         "fused_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN", "0").lower() not in {"0", "false", "no", "off"},
+        "scan_block_m": scan_block_m(model),
         "profiled_total_gpu_ms": round(total_gpu, 4),
         "component_sum_ms": round(component_sum, 4),
         "profiled_tokps_total": round(1000.0 * batch_size * prompt_tokens / total_gpu, 1) if total_gpu > 0 else None,

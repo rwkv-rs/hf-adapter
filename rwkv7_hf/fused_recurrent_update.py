@@ -205,6 +205,64 @@ if _HAS_TRITON:
             mask=mask_i[:, None] & mask_j[None, :],
         )
 
+    @triton.jit
+    def _recurrent_scan_rows_kernel(
+        r_ptr,
+        w_ptr,
+        k_ptr,
+        v_ptr,
+        kk_ptr,
+        a_ptr,
+        state_ptr,
+        out_ptr,
+        final_state_ptr,
+        T,
+        H: tl.constexpr,
+        N: tl.constexpr,
+        ROW_BLOCKS: tl.constexpr,
+        BLOCK_M: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+    ):
+        pid = tl.program_id(0)
+        row_block = pid % ROW_BLOCKS
+        bh_id = pid // ROW_BLOCKS
+        head_id = bh_id % H
+        batch_id = bh_id // H
+
+        offs_i = row_block * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_j = tl.arange(0, BLOCK_N)
+        mask_i = offs_i < N
+        mask_j = offs_j < N
+        state_base = (batch_id * H + head_id) * N * N
+        st = tl.load(
+            state_ptr + state_base + offs_i[:, None] * N + offs_j[None, :],
+            mask=mask_i[:, None] & mask_j[None, :],
+            other=0.0,
+        ).to(tl.float32)
+
+        t = 0
+        while t < T:
+            vec_base = ((batch_id * T + t) * H + head_id) * N
+            r = tl.load(r_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            w = tl.load(w_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            k = tl.load(k_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            kk = tl.load(kk_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            a = tl.load(a_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            v_rows = tl.load(v_ptr + vec_base + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+
+            state_dot_kk = tl.sum(st * kk[None, :], axis=1)
+            st = st * w[None, :] + v_rows[:, None] * k[None, :] - state_dot_kk[:, None] * kk[None, :] * a[None, :]
+
+            recurrent = tl.sum(st * r[None, :], axis=1)
+            tl.store(out_ptr + vec_base + offs_i, recurrent, mask=mask_i)
+            t += 1
+
+        tl.store(
+            final_state_ptr + state_base + offs_i[:, None] * N + offs_j[None, :],
+            st,
+            mask=mask_i[:, None] & mask_j[None, :],
+        )
+
 
 def fused_recurrent_update_available() -> bool:
     """Return whether the optional Triton recurrent update prototype can run."""
@@ -593,6 +651,7 @@ def fused_recurrent_scan(
     state: Any,
     *,
     block_n: int = 64,
+    block_m: int | None = None,
     force_fallback: bool = False,
 ):
     """Compute a multi-token RWKV-7 recurrent scan with an optional Triton kernel.
@@ -613,6 +672,11 @@ def fused_recurrent_scan(
         raise ValueError("state must be square in the last two dimensions")
     if int(block_n) < N:
         raise ValueError(f"block_n must be >= head_dim={N}; got {block_n}")
+    if block_m is None:
+        block_m = N
+    block_m = int(block_m)
+    if block_m <= 0:
+        raise ValueError(f"block_m must be positive; got {block_m}")
     r4, flat = _as_bthn(r, H, N, name="r")
     w4, _ = _as_bthn(w, H, N, name="w")
     k4, _ = _as_bthn(k, H, N, name="k")
@@ -650,22 +714,43 @@ def fused_recurrent_scan(
     state_c = state.contiguous()
     out = torch.empty((B, T, H, N), device=r4.device, dtype=r4.dtype)
     final_state = torch.empty_like(state_c)
-    _recurrent_scan_kernel[(B * H,)](
-        r_c,
-        w_c,
-        k_c,
-        v_c,
-        kk_c,
-        a_c,
-        state_c,
-        out,
-        final_state,
-        T,
-        H,
-        N,
-        BLOCK_N=int(block_n),
-        num_warps=8,
-    )
+    if block_m < N:
+        row_blocks = triton.cdiv(N, block_m)
+        _recurrent_scan_rows_kernel[(B * H * row_blocks,)](
+            r_c,
+            w_c,
+            k_c,
+            v_c,
+            kk_c,
+            a_c,
+            state_c,
+            out,
+            final_state,
+            T,
+            H,
+            N,
+            ROW_BLOCKS=int(row_blocks),
+            BLOCK_M=int(block_m),
+            BLOCK_N=int(block_n),
+            num_warps=4,
+        )
+    else:
+        _recurrent_scan_kernel[(B * H,)](
+            r_c,
+            w_c,
+            k_c,
+            v_c,
+            kk_c,
+            a_c,
+            state_c,
+            out,
+            final_state,
+            T,
+            H,
+            N,
+            BLOCK_N=int(block_n),
+            num_warps=8,
+        )
     if flat:
         return out.reshape(B, T, H * N), final_state
     return out, final_state
