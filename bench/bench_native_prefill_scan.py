@@ -73,6 +73,20 @@ def scan_block_m(model) -> int | None:
         return None
 
 
+def scan_num_warps(model, block_m: int | None) -> int | None:
+    raw = os.environ.get("RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS")
+    if raw is not None:
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+    try:
+        head_dim = int(model._rwkv7_native_jit_packs()[0][2])
+        return native_jit._native_prefill_scan_num_warps(head_dim, block_m)
+    except Exception:
+        return None
+
+
 def cosine_min(a: torch.Tensor, b: torch.Tensor) -> float:
     return float(F.cosine_similarity(a.float(), b.float(), dim=-1).min().detach().cpu())
 
@@ -117,6 +131,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
     peak = None
     if args.device.startswith("cuda"):
         peak = round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
+    scan_m = scan_block_m(model)
     return {
         "axis": "native_prefill_scan",
         "backend": "hf_adapter",
@@ -129,7 +144,8 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prompt_tokens": prompt_tokens,
         "tokens_total": batch_size * prompt_tokens,
         "fused_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN", "0") not in {"0", "false", "False", "no", "off"},
-        "scan_block_m": scan_block_m(model),
+        "scan_block_m": scan_m,
+        "scan_num_warps": scan_num_warps(model, scan_m),
         "prefill_fused_state_prep_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_state_prep_effective": native_jit._native_prefill_fused_state_prep_enabled(),
         "prefill_fused_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},

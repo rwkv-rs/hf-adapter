@@ -178,6 +178,18 @@ def _native_prefill_scan_block_m(head_dim: int) -> int:
     return env_int("RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M", int(head_dim), lower=1, upper=int(head_dim))
 
 
+def _native_prefill_scan_num_warps(head_dim: int, block_m: int | None = None) -> int:
+    """Triton warp count for the optional native prefill recurrent scan."""
+
+    if block_m is None:
+        block_m = _native_prefill_scan_block_m(head_dim)
+    default = 4 if int(block_m) < int(head_dim) else 8
+    value = env_int("RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS", default, lower=1, upper=8)
+    if value not in {1, 2, 4, 8}:
+        raise ValueError(f"RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS must be one of 1, 2, 4, or 8; got {value}")
+    return value
+
+
 def _native_prefill_fused_state_prep_enabled() -> bool:
     """Runtime switch for the native prefill state-prep fusion probe."""
 
@@ -677,6 +689,7 @@ def _native_prefill_scan(
     """Run the recurrent prefill scan, using Triton only when explicitly enabled."""
 
     if _native_prefill_fused_scan_enabled():
+        scan_block_m = _native_prefill_scan_block_m(N)
         out, new_state = fused_recurrent_scan(
             r.view(B, T, H, N),
             w.view(B, T, H, N),
@@ -686,7 +699,8 @@ def _native_prefill_scan(
             a.view(B, T, H, N),
             state,
             block_n=N,
-            block_m=_native_prefill_scan_block_m(N),
+            block_m=scan_block_m,
+            num_warps=_native_prefill_scan_num_warps(N, scan_block_m),
         )
         return out.reshape(B, T, H * N), new_state
 
