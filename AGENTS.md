@@ -297,7 +297,9 @@ Run this checklist for every new GPU before marking it as supported:
     (`RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP=1`) is a small positive Ada probe:
     4090 / 0.4B / fp16 / prompt512 moves bsz=1 from `21857.3` to `22358.5`
     tok/s and bsz=4 stays neutral (`81144.8` tok/s). Keep it explicit until
-    the larger model/card matrix passes.
+    the larger model/card matrix passes. For this exact Ada shape,
+    `RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M=8` is the best recorded scan tile; `4`,
+    `16`, and `32` were slower end-to-end.
   - Prefill WAVG LoRA grouping must stay telemetry-only:
     `RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA=1` improves isolated `B*T=512`
     microbench but regresses end-to-end bsz=1 prefill (`21773.4` tok/s) and is
