@@ -302,6 +302,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             r.get("scan_block_m"),
             r.get("scan_num_warps"),
             bool(r.get("fine_attention_breakdown")),
+            bool(r.get("layer_breakdown")),
             bool(r.get("prefill_fused_scan_output_effective")),
             bool(r.get("prefill_fused_shift_mix_effective")),
             bool(r.get("prefill_fused_state_prep_effective")),
@@ -1269,6 +1270,26 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     f"lora_sum={round(lora_sum, 4)}ms norm_shift_mix={norm_ms}ms; "
                     "next fusion should target scan plus norm/shift/projection/state prep, not cache"
                 )
+                layer_rows = [r for r in fine_rows if r.get("layer_breakdown") and r.get("top_layers_by_total")]
+                if layer_rows:
+                    layer_bsz1 = [r for r in layer_rows if int(r.get("batch_size") or 0) == 1]
+                    layer_row = max(layer_bsz1 or layer_rows, key=lambda r: int(r.get("_lineno", 0)))
+                    top_layers = layer_row.get("top_layers_by_total") or []
+                    formatted_layers = "; ".join(
+                        f"L{int(layer)}={float(ms):.4f}ms"
+                        for layer, ms in top_layers[:5]
+                    )
+                    layer_components = layer_row.get("layer_top_components") or {}
+                    first_layer = str(top_layers[0][0]) if top_layers else None
+                    first_layer_top = layer_components.get(first_layer, []) if first_layer is not None else []
+                    formatted_components = ", ".join(
+                        f"{name}={float(ms):.4f}ms"
+                        for name, ms in first_layer_top[:3]
+                    )
+                    focus.append(
+                        f"layer prefill breakdown bsz={layer_row.get('batch_size')} prompt={layer_row.get('prompt_tokens')}: "
+                        f"top layers {formatted_layers}; hottest layer top components {formatted_components}"
+                    )
         else:
             focus.append("native_prefill_breakdown rows present but top_components missing")
     fast_prefill_ttft = [
@@ -1893,7 +1914,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             for r in native_prefill_scan
         ],
         "native_prefill_breakdown": [
-            compact(r, ["_lineno", "status", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "scan_num_warps", "fine_attention_breakdown", "prefill_fused_scan_output_requested", "prefill_fused_scan_output_effective", "prefill_fused_shift_mix_requested", "prefill_fused_shift_mix_effective", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_output_requested", "prefill_fused_output_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "profiled_total_gpu_ms", "component_sum_ms", "profiled_tokps_total", "component_ms", "component_share", "top_components", "max_abs_diff_vs_native_prefill", "greedy_match_vs_native_prefill", "peak_vram_mb"])
+            compact(r, ["_lineno", "status", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "scan_num_warps", "fine_attention_breakdown", "layer_breakdown", "prefill_fused_scan_output_requested", "prefill_fused_scan_output_effective", "prefill_fused_shift_mix_requested", "prefill_fused_shift_mix_effective", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_output_requested", "prefill_fused_output_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "profiled_total_gpu_ms", "component_sum_ms", "profiled_tokps_total", "component_ms", "component_share", "top_components", "layer_total_ms", "top_layers_by_total", "layer_top_components", "max_abs_diff_vs_native_prefill", "greedy_match_vs_native_prefill", "peak_vram_mb"])
             for r in native_prefill_breakdown
         ],
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "hf_forward_fixed", "hf_forward_greedy", "hf_forward_auto_fixed", "hf_forward_auto_greedy", "hf_forward_auto_backend", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),

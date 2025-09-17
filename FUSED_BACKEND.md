@@ -423,6 +423,15 @@ serving speed.
      this as negative telemetry only. The next prefill kernel should preserve
      split-row scan occupancy and attack the larger norm/shift/projection/LoRA
      and state-prep buckets, not fuse output prep into a full-head scan.
+   - `bench/bench_native_prefill_breakdown.py --layer-breakdown` now records
+     per-layer component timings without adding extra timed passes. The 4090 /
+     0.4B / fp16 / prompt=512 bsz=1 row shows the bsz=1 bottleneck is broad
+     rather than isolated to one pathological layer: top layer totals are
+     close (`L17=1.2175ms`, `L0=1.2012ms`, `L1=1.1727ms`, `L2=1.1724ms`,
+     `L4=1.1684ms`). The hottest layer is still led by recurrent scan
+     (`0.3052ms`) plus state-prep/FFN/norm-shift work, so the next optimization
+     should be a repeated per-layer fusion pattern that benefits all 24 layers,
+     not a layer-specific special case.
 
 ## Backend dispatch requirement
 

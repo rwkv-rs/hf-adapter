@@ -82,8 +82,10 @@ def build_ids(tok, batch_size: int, prompt_tokens: int, device: str) -> torch.Te
 class EventProfiler:
     def __init__(self, device: torch.device):
         self.use_cuda = device.type == "cuda"
-        self.events: list[tuple[str, torch.cuda.Event, torch.cuda.Event]] = []
+        self.events: list[tuple[str, int | None, torch.cuda.Event, torch.cuda.Event]] = []
         self.timings: dict[str, float] = defaultdict(float)
+        self.layer_timings: dict[int, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+        self.current_layer: int | None = None
         self.total_start = None
         self.total_end = None
         self.total_wall_start = 0.0
@@ -111,23 +113,32 @@ class EventProfiler:
             start.record()
             out = fn()
             end.record()
-            self.events.append((name, start, end))
+            self.events.append((name, self.current_layer, start, end))
             return out
         start_wall = time.perf_counter()
         out = fn()
-        self.timings[name] += (time.perf_counter() - start_wall) * 1000.0
+        elapsed = (time.perf_counter() - start_wall) * 1000.0
+        self.timings[name] += elapsed
+        if self.current_layer is not None:
+            self.layer_timings[int(self.current_layer)][name] += elapsed
         return out
 
-    def finish(self) -> dict[str, float]:
+    def finish(self) -> tuple[dict[str, float], dict[int, dict[str, float]]]:
         if self.use_cuda:
             torch.cuda.synchronize()
             assert self.total_start is not None and self.total_end is not None
             self.timings["total_gpu"] = float(self.total_start.elapsed_time(self.total_end))
-            for name, start, end in self.events:
-                self.timings[name] += float(start.elapsed_time(end))
+            for name, layer_idx, start, end in self.events:
+                elapsed = float(start.elapsed_time(end))
+                self.timings[name] += elapsed
+                if layer_idx is not None:
+                    self.layer_timings[int(layer_idx)][name] += elapsed
         else:
             self.timings["total_gpu"] = self.total_wall_ms
-        return dict(self.timings)
+        return (
+            dict(self.timings),
+            {int(layer): dict(values) for layer, values in self.layer_timings.items()},
+        )
 
 
 def profiled_native_prefill(
@@ -163,6 +174,7 @@ def profiled_native_prefill(
          Rw, Kw, Vw, Ow, w1, w2, w0, a1, a2, a0, v1, v2, v0, g1, g2,
          gn_w, gn_b, fx_k, fK, fV) = p
         layer_idx = int(i)
+        profiler.current_layer = layer_idx
         H = int(H)
         N = int(N)
         hidden = H * N
@@ -481,10 +493,11 @@ def profiled_native_prefill(
         keep = T if logits_to_keep is None or int(logits_to_keep) <= 0 else min(int(logits_to_keep), T)
         return F.linear(normed[:, -keep:, :], model.lm_head.weight, model.lm_head.bias)
 
+    profiler.current_layer = None
     logits = profiler.measure("final_norm_head", final_norm_head)
     profiler.stop_total()
-    timings = profiler.finish()
-    return logits, state, xpa, xpf, timings
+    timings, layer_timings = profiler.finish()
+    return logits, state, xpa, xpf, timings, layer_timings
 
 
 def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_tokens: int) -> dict[str, Any]:
@@ -506,10 +519,18 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
             profiled_native_prefill(model, ids, packs, logits_to_keep=1, fine_attention_breakdown=args.fine_attn)
 
     timing_runs: list[dict[str, float]] = []
+    layer_timing_runs: list[dict[int, dict[str, float]]] = []
     with torch.inference_mode():
         for _ in range(args.steps):
-            _, _, _, _, timings = profiled_native_prefill(model, ids, packs, logits_to_keep=1, fine_attention_breakdown=args.fine_attn)
+            _, _, _, _, timings, layer_timings = profiled_native_prefill(
+                model,
+                ids,
+                packs,
+                logits_to_keep=1,
+                fine_attention_breakdown=args.fine_attn,
+            )
             timing_runs.append(timings)
+            layer_timing_runs.append(layer_timings)
 
     keys = sorted({k for row in timing_runs for k in row})
     med = {k: median([float(row.get(k, 0.0)) for row in timing_runs]) for k in keys}
@@ -526,11 +547,40 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         key=lambda row: float(row[1]),
         reverse=True,
     )
+    layer_component_ms = None
+    layer_total_ms = None
+    top_layers_by_total = None
+    layer_top_components = None
+    if args.layer_breakdown:
+        layer_ids = sorted({int(layer) for run in layer_timing_runs for layer in run})
+        layer_component_ms = {}
+        layer_total_ms = {}
+        layer_top_components = {}
+        for layer_idx in layer_ids:
+            layer_keys = sorted({k for run in layer_timing_runs for k in run.get(layer_idx, {})})
+            layer_med = {
+                k: median([float(run.get(layer_idx, {}).get(k, 0.0)) for run in layer_timing_runs])
+                for k in layer_keys
+            }
+            layer_components = {k: round(float(v), 4) for k, v in layer_med.items()}
+            layer_component_ms[str(layer_idx)] = layer_components
+            total = sum(float(v) for v in layer_med.values())
+            layer_total_ms[str(layer_idx)] = round(total, 4)
+            layer_top_components[str(layer_idx)] = sorted(
+                [[k, round(float(v), 4)] for k, v in layer_med.items()],
+                key=lambda row: float(row[1]),
+                reverse=True,
+            )[:5]
+        top_layers_by_total = sorted(
+            [[int(layer), float(ms)] for layer, ms in layer_total_ms.items()],
+            key=lambda row: float(row[1]),
+            reverse=True,
+        )[:8]
     peak = None
     if args.device.startswith("cuda"):
         peak = round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
     scan_m = scan_block_m(model)
-    return {
+    row = {
         "axis": "native_prefill_breakdown",
         "backend": "hf_adapter",
         "status": "pass" if greedy_match else "fail",
@@ -566,6 +616,17 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "greedy_match_vs_native_prefill": greedy_match,
         "peak_vram_mb": peak,
     }
+    if args.layer_breakdown:
+        row.update(
+            {
+                "layer_breakdown": True,
+                "layer_component_ms": layer_component_ms,
+                "layer_total_ms": layer_total_ms,
+                "top_layers_by_total": top_layers_by_total,
+                "layer_top_components": layer_top_components,
+            }
+        )
+    return row
 
 
 def append_row(path: str, row: dict[str, Any]) -> None:
@@ -586,6 +647,7 @@ def main() -> int:
     ap.add_argument("--prompt-tokens", default="512")
     ap.add_argument("--fused-scan", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--fine-attn", action="store_true", help="split attn_lora_state_prep into LoRA/state-prep subcomponents")
+    ap.add_argument("--layer-breakdown", action="store_true", help="also record per-layer component timings for bsz=1 bottleneck attribution")
     ap.add_argument("--warmup", type=int, default=1)
     ap.add_argument("--steps", type=int, default=3)
     ap.add_argument("--results", default="")
