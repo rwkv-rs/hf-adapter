@@ -545,6 +545,69 @@ def assert_albatross_prefill_uses_fastest_native_prefill_scan(tmpdir: Path) -> N
     assert report["fused_backend_targets"]["albatross_prefill"]["current_ratio_min"] == 0.9
 
 
+def assert_native_prefill_breakdown_is_reported(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "native_prefill_breakdown",
+            "backend": "hf_adapter",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "NVIDIA GeForce RTX 4090",
+            "model_size_label": "0.4b",
+            "batch_size": 1,
+            "prompt_tokens": 512,
+            "tokens_total": 512,
+            "fused_scan_requested": True,
+            "profiled_total_gpu_ms": 24.0,
+            "component_sum_ms": 24.5,
+            "profiled_tokps_total": 21333.3,
+            "component_ms": {
+                "attn_dense_rkv": 8.0,
+                "attn_lora_state_prep": 6.0,
+                "recurrent_scan": 2.0,
+                "attn_output_project": 4.0,
+                "ffn": 4.5,
+            },
+            "component_share": {
+                "attn_dense_rkv": 0.3265,
+                "attn_lora_state_prep": 0.2449,
+                "recurrent_scan": 0.0816,
+                "attn_output_project": 0.1633,
+                "ffn": 0.1837,
+            },
+            "top_components": [["attn_dense_rkv", 8.0, 0.3265]],
+            "max_abs_diff_vs_native_prefill": 0.0,
+            "greedy_match_vs_native_prefill": True,
+            "peak_vram_mb": 1024.0,
+        }
+    ]
+    path = tmpdir / "native_prefill_breakdown.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "RTX 4090",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    row = report["native_prefill_breakdown"][0]
+    assert row["component_ms"]["attn_dense_rkv"] == 8.0
+    assert row["top_components"][0][0] == "attn_dense_rkv"
+    assert any("native_prefill_breakdown top component" in item and "attn_dense_rkv" in item for item in report["next_focus"])
+
+
 def assert_albatross_decode_uses_default_native_graph_batch_rows(tmpdir: Path) -> None:
     rows = [
         {
@@ -2645,6 +2708,7 @@ def main() -> int:
         assert_fused_backend_targets_are_reported(tmpdir)
         assert_albatross_prefill_ignores_short_prompt_probe(tmpdir)
         assert_albatross_prefill_uses_fastest_native_prefill_scan(tmpdir)
+        assert_native_prefill_breakdown_is_reported(tmpdir)
         assert_albatross_decode_uses_default_native_graph_batch_rows(tmpdir)
         assert_projection_kernel_plan_is_reported(tmpdir)
         assert_fused_projection_proto_is_reported(tmpdir)

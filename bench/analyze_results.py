@@ -297,6 +297,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         [r for r in rows if r.get("axis") == "native_prefill_scan" and r.get("backend") == "hf_adapter"],
         lambda r: (r.get("batch_size"), r.get("prompt_tokens"), bool(r.get("fused_scan_requested"))),
     )
+    native_prefill_breakdown = latest_by_key(
+        [r for r in rows if r.get("axis") == "native_prefill_breakdown" and r.get("backend") == "hf_adapter"],
+        lambda r: (model_size_label(r), r.get("batch_size"), r.get("prompt_tokens"), bool(r.get("fused_scan_requested"))),
+    )
     micro = latest(rows, lambda r: r.get("axis") == "decode_micro" and r.get("backend") == "hf_adapter")
     forward_fast_path = latest(rows, lambda r: r.get("axis") == "forward_fast_path" and r.get("backend") == "hf_adapter")
     generate_fast_path = latest(rows, lambda r: r.get("axis") == "generate_fast_path" and r.get("backend") == "hf_adapter")
@@ -1069,6 +1073,23 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             )
         else:
             focus.append(f"native_prefill_scan end-to-end rows present for cases={cases}; add timing fields")
+    if not native_prefill_breakdown:
+        focus.append("native_prefill_breakdown rows pending for bsz=1 prefill bottleneck attribution")
+    else:
+        bsz1_breakdowns = [r for r in native_prefill_breakdown if int(r.get("batch_size") or 0) == 1]
+        chosen = max(bsz1_breakdowns or native_prefill_breakdown, key=lambda r: int(r.get("_lineno", 0)))
+        top = chosen.get("top_components") or []
+        if top:
+            top_name = top[0][0]
+            top_ms = top[0][1]
+            top_share = top[0][2]
+            focus.append(
+                f"native_prefill_breakdown top component for bsz={chosen.get('batch_size')} "
+                f"prompt={chosen.get('prompt_tokens')}: {top_name} {top_ms}ms share={top_share}; "
+                "optimize this before touching cache"
+            )
+        else:
+            focus.append("native_prefill_breakdown rows present but top_components missing")
     fast_prefill_ttft = [
         r for r in ttft_tpot
         if r.get("metric") == "ttft" and str(r.get("fast_prefill_env")) not in {"", "0", "false", "False", "no", "off"}
@@ -1690,6 +1711,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             compact(r, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "fast_token_backend_after_native_prefill", "hf_prefill_ms", "native_prefill_ms", "native_vs_hf_speedup", "hf_prefill_tokps_total", "native_prefill_tokps_total", "max_abs_diff", "min_cosine", "greedy_match", "decode_after_prefill_max_abs_diff", "decode_after_prefill_greedy_match", "peak_vram_mb"])
             for r in native_prefill_scan
         ],
+        "native_prefill_breakdown": [
+            compact(r, ["_lineno", "status", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "profiled_total_gpu_ms", "component_sum_ms", "profiled_tokps_total", "component_ms", "component_share", "top_components", "max_abs_diff_vs_native_prefill", "greedy_match_vs_native_prefill", "peak_vram_mb"])
+            for r in native_prefill_breakdown
+        ],
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "hf_forward_fixed", "hf_forward_greedy", "hf_forward_auto_fixed", "hf_forward_auto_greedy", "hf_forward_auto_backend", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
         "forward_fast_path": compact(forward_fast_path, ["_lineno", "fast_token_backend", "fast_token_layout", "reference_forward", "hf_forward_fast", "direct_fast_token", "hf_forward_fast_backend", "direct_fast_token_backend", "max_abs_diff_auto_vs_reference", "max_abs_diff_direct_vs_reference", "peak_vram_mb"]),
         "generate_fast_path": compact(generate_fast_path, ["_lineno", "fast_token_backend", "fast_token_backend_effective", "batch_size", "reference_generate", "hf_generate_fast", "speedup_vs_reference", "generated_equal", "generated_tokens_matched", "generated_tokens_total", "prompt_tokens", "max_new_tokens", "peak_vram_mb"]),
@@ -2023,6 +2048,12 @@ def print_text(report: dict[str, Any]) -> None:
     print("\n## native_prefill_scan")
     if report["native_prefill_scan"]:
         for row in report["native_prefill_scan"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+    print("\n## native_prefill_breakdown")
+    if report["native_prefill_breakdown"]:
+        for row in report["native_prefill_breakdown"]:
             print(json.dumps(row, ensure_ascii=False))
     else:
         print("PENDING")
