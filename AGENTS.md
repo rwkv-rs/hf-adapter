@@ -300,6 +300,10 @@ Run this checklist for every new GPU before marking it as supported:
     the larger model/card matrix passes. For this exact Ada shape,
     `RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M=8` is the best recorded scan tile; `4`,
     `16`, and `32` were slower end-to-end.
+  - Prefill output-prep fusion (`RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1`) is
+    correctness-clean but not defaultable on the current 4090 prompt512 rows:
+    it reduces the isolated output-prep bucket yet end-to-end bsz=1/4 stays
+    below the state-prep-only path.
   - Prefill WAVG LoRA grouping must stay telemetry-only:
     `RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA=1` improves isolated `B*T=512`
     microbench but regresses end-to-end bsz=1 prefill (`21773.4` tok/s) and is

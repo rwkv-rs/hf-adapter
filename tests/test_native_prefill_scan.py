@@ -149,23 +149,28 @@ def test_prefill_opt_in_lora_state_prep_fallback_matches_token_loop() -> None:
         key: os.environ.get(key)
         for key in (
             "RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP",
+            "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT",
             "RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA",
             "RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_MAX_M",
         )
     }
     old_state_avail = native_jit.fused_prefill_state_prep_available
+    old_output_avail = native_jit.fused_attn_output_prepare_available
     old_wavg_avail = native_jit.fused_wavg_lora_available
     try:
         os.environ["RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP"] = "1"
+        os.environ["RWKV7_NATIVE_PREFILL_FUSED_OUTPUT"] = "1"
         os.environ["RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA"] = "1"
         os.environ["RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_MAX_M"] = "999"
         native_jit.fused_prefill_state_prep_available = lambda: True
+        native_jit.fused_attn_output_prepare_available = lambda: True
         native_jit.fused_wavg_lora_available = lambda: True
         with torch.no_grad():
             ref = native_jit.forward(model, ids, packs).float().view(1, -1)
             logits, state, xpa, xpf = native_jit.prefill(model, ids, packs, logits_to_keep=1)
     finally:
         native_jit.fused_prefill_state_prep_available = old_state_avail
+        native_jit.fused_attn_output_prepare_available = old_output_avail
         native_jit.fused_wavg_lora_available = old_wavg_avail
         for key, value in old_env.items():
             if value is None:

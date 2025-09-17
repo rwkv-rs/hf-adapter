@@ -132,6 +132,8 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "scan_block_m": scan_block_m(model),
         "prefill_fused_state_prep_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_state_prep_effective": native_jit._native_prefill_fused_state_prep_enabled(),
+        "prefill_fused_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
+        "prefill_fused_output_effective": native_jit._native_prefill_fused_output_enabled(),
         "prefill_fused_wavg_lora_requested": native_jit._native_prefill_fused_wavg_lora_requested(),
         "prefill_fused_wavg_lora_effective": native_jit._native_prefill_fused_wavg_lora_enabled(batch_size * prompt_tokens),
         "prefill_fused_wavg_lora_max_m": native_jit._native_prefill_fused_wavg_lora_max_m(),
