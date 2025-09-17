@@ -220,6 +220,11 @@ def profiled_native_prefill(
 
         use_fused_scan_output = native_jit._native_prefill_fused_scan_output_enabled()
         use_clampw_scan = native_jit._native_prefill_fused_clampw_scan_enabled() and not use_fused_scan_output
+        use_dplr_scan = (
+            native_jit._native_prefill_dplr_scan_enabled()
+            and not native_jit._native_prefill_fused_scan_enabled()
+            and not use_fused_scan_output
+        )
         if use_clampw_scan and native_jit._native_prefill_fused_state_prep_enabled() and native_jit.fused_prefill_kv_kk_prep is None:
             use_clampw_scan = False
 
@@ -478,7 +483,7 @@ def profiled_native_prefill(
             out = out.reshape(B, T, hidden)
         else:
             out, new_state = profiler.measure(
-                "recurrent_scan_clampw" if use_clampw_scan else "recurrent_scan",
+                "recurrent_scan_clampw" if use_clampw_scan else ("recurrent_scan_dplr" if use_dplr_scan else "recurrent_scan"),
                 lambda: native_jit._native_prefill_scan(r, w, k, v, kk, a, state[layer_idx], B, T, H, N, w_is_raw=use_clampw_scan),
             )
 
@@ -667,6 +672,13 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_fused_scan_output_effective": native_jit._native_prefill_fused_scan_output_enabled(),
         "prefill_fused_clampw_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_CLAMPW_SCAN", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_clampw_scan_effective": native_jit._native_prefill_fused_clampw_scan_enabled(),
+        "prefill_dplr_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_DPLR_SCAN", "0").lower() not in {"0", "false", "no", "off"},
+        "prefill_dplr_scan_effective": (
+            native_jit._native_prefill_dplr_scan_enabled()
+            and not native_jit._native_prefill_fused_scan_enabled()
+            and not native_jit._native_prefill_fused_scan_output_enabled()
+        ),
+        "prefill_dplr_chunk_size": native_jit._native_prefill_dplr_chunk_size(),
         "prefill_fused_shift_mix_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_shift_mix_effective": native_jit._native_prefill_fused_shift_mix_enabled(),
         "prefill_fused_state_prep_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", "0").lower() not in {"0", "false", "no", "off"},
