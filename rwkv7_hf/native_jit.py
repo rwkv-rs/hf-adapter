@@ -345,6 +345,32 @@ def _native_prefill_fused_output_enabled() -> bool:
         return False
 
 
+def _native_prefill_fused_output_project_enabled() -> bool:
+    """Runtime switch for native prefill output-prep plus ``o_proj`` fusion.
+
+    This is an opt-in experiment for the bsz=1 prompt-prefill gap.  The kernel
+    is intentionally disabled by default because it recomputes the prepared
+    attention output inside the projection tile; exact-card benchmark rows must
+    prove it beats the cuBLAS ``o_proj`` path before it becomes a default.
+    """
+
+    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_PROJECT", False):
+        return False
+    if fused_attn_output_project is None or fused_attn_output_project_available is None:
+        return False
+    try:
+        return bool(fused_attn_output_project_available())
+    except Exception:
+        return False
+
+
+def _native_prefill_fused_output_project_block_m() -> int:
+    """Output tile for the native prefill fused output-project experiment."""
+
+    default = env_int("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT_BLOCK_M", 16, lower=1, upper=128)
+    return env_int("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_PROJECT_BLOCK_M", default, lower=1, upper=128)
+
+
 def _native_prefill_fused_wavg_lora_requested() -> bool:
     """Return whether the prefill W/A/G/V-gate LoRA fusion probe is requested."""
 
@@ -1072,8 +1098,28 @@ def prefill(
             out = out.reshape(B, T, hidden)
         else:
             out, new_state = _native_prefill_scan(r, w, k, v, kk, a, state[layer_idx], B, T, H, N, w_is_raw=use_clampw_scan)
+        out_projected = False
         if use_fused_scan_output:
             pass
+        elif _native_prefill_fused_output_project_enabled():
+            out = fused_attn_output_project(
+                out.reshape(B * T, hidden),
+                r.reshape(B * T, H, N),
+                k.reshape(B * T, H, N),
+                v.reshape(B * T, H, N),
+                g.reshape(B * T, hidden),
+                r_k,
+                gn_w,
+                gn_b,
+                Ow,
+                None,
+                num_heads=H,
+                head_dim=N,
+                head_v_dim=N,
+                eps=eps,
+                block_m=_native_prefill_fused_output_project_block_m(),
+            ).view(B, T, hidden)
+            out_projected = True
         elif _native_prefill_fused_output_enabled():
             out = fused_attn_output_prepare(
                 out.reshape(B * T, hidden),
@@ -1093,7 +1139,8 @@ def prefill(
             out = F.group_norm(out.reshape(B * T, hidden), H, gn_w, gn_b, eps).view(B, T, hidden)
             sk = (r.view(B, T, H, N) * k.view(B, T, H, N) * r_k.view(1, 1, H, N)).sum(dim=-1, keepdim=True)
             out = (out + (sk * v.view(B, T, H, N)).view(B, T, hidden)) * g
-        out = F.linear(out, Ow)
+        if not out_projected:
+            out = F.linear(out, Ow)
         x = residual + out
         xpa[layer_idx] = h[:, -1, :].contiguous()
         state[layer_idx] = new_state.contiguous()

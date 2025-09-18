@@ -2,6 +2,90 @@
 
 This is a short-lived working TODO for the current `wangyue/native-fused-fp16-kernel` branch. Keep the default HF path unchanged unless a benchmark explicitly opts in.
 
+## Temporary TODO: next 4090 push
+
+Use this as the current scratch checklist until the Albatross-ratio item below
+is either checked off or replaced with a more precise kernel task.
+
+- [x] Reproduce the latest 4090 HF/native prefill baseline on repo code:
+  - 0.4B checkpoint
+  - prompt512
+  - bsz1
+  - fp16
+  - `triton_wy`, `triton_dense3`, `triton_wy_compact`
+  - Done: `/tmp/native_4090_todo_sweep_20260702_103919.jsonl`
+    reproduced repo-code DPLR rows:
+    - `triton_wy`: `20,421.7 tok/s`, `0.3916x` Albatross
+    - `triton_dense3`: `18,546.0 tok/s`, `0.3556x` Albatross
+    - `triton_wy_compact`: `17,970.5 tok/s`, `0.3446x` Albatross
+- [x] Treat the current Albatross reference as:
+  - `albatross_speed` / faster3a / 4090 / 0.4B / bsz1 / prompt512:
+    `52148.52 tok/s`
+  - `0.45x` target: `>=23467 tok/s`
+  - `0.60x` stretch target: `>=31289 tok/s`
+  - Done: sweep rows now record `albatross_ref_tokps_total`,
+    `albatross_ratio`, and `target_0_45_met`.
+- [x] Inspect the native prefill env toggles before changing code:
+  - `RWKV7_NATIVE_PREFILL_DPLR_SCAN`
+  - `RWKV7_DPLR_PREFILL_ALGORITHM`
+  - fused output / WAVG-LoRA / shift-mix / state-prep toggles
+  - scan block / warp tuning knobs
+  - Done: inspected `rwkv7_hf/native_jit.py`,
+    `rwkv7_hf/dplr_prefill_triton.py`, and
+    `bench/bench_native_prefill_scan.py`. Benchmark telemetry now records the
+    DPLR algorithm, DPLR Triton knobs, fused WAVG-LoRA knobs, and prefill
+    fused-output-project knobs.
+- [x] Run a small 4090 env/autotune sweep and record the fastest passing row:
+  - pass greedy/cache smoke
+  - pass correctness gates
+  - record tok/s, latency, peak VRAM if available
+  - Done: `/tmp/native_4090_todo_sweep_20260702_103919.jsonl`.
+    Fastest sweep row was `fused_scan_state_bm8_w1`: pass, `22,777.0 tok/s`,
+    `22.4788 ms`, `0.4368x` Albatross, `991.2 MiB` peak VRAM.
+    Confirmation run `/tmp/native_4090_todo_confirm_20260702_104202.jsonl`
+    with warmup=3/steps=9: pass, `22,292.0 tok/s`, `22.9679 ms`,
+    `0.4275x`, `991.2 MiB`.
+- [x] Check whether a no-code setting reaches `>=0.45x`.
+  - Result: no. Best observed setting remained below `23,467 tok/s`, so the
+    HF target below is not checked off.
+- [x] If no setting reaches `>=0.45x`, create the next concrete kernel task:
+  - profile which HF layer/kernel dominates the gap
+  - likely targets: compact apply/output fusion, fused fp16 output path, or
+    launch-count reduction around DPLR prefill
+  - do not continue wrapper-only micro-optimization as the main route
+  - Done: `/tmp/native_4090_todo_breakdown_20260702_104126.jsonl` identifies
+    the top profiled components for the best fused-scan configuration:
+    recurrent scan `7.4571 ms` / `26.34%`, FFN `4.0836 ms` / `14.42%`,
+    attention norm+shift-mix `3.8040 ms` / `13.44%`, fused state prep
+    `3.2982 ms` / `11.65%`. Next real performance task is launch-count and
+    recurrent-scan/state-prep fusion work; DPLR compact apply/output fusion
+    remains the DPLR-specific route.
+  - First opt-in fused-output-project experiment added behind
+    `RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_PROJECT=1` and measured slower:
+    `/tmp/native_4090_output_project_20260702_104430.jsonl`, pass,
+    `18,228.8 tok/s`; keep it disabled by default.
+- [x] Keep default HF behavior unchanged; all experimental paths must stay
+  opt-in through env/benchmark flags.
+  - Done: DPLR, fused scan, fused output, and fused output-project paths are
+    all env/benchmark opt-ins. Default HF path remains unchanged.
+
+## Next concrete kernel TODO from the 4090 sweep
+
+- [ ] Close the remaining `0.45x` Albatross gap on 4090 / 0.4B / prompt512 /
+  bsz1:
+  - current confirmed best: `22,292.0 tok/s` (`0.4275x`)
+  - target: `>=23,467 tok/s`
+  - required delta: about `+5.3%` vs confirmed best, or about `+3.0%` vs
+    fastest short sweep row
+- [ ] Profile and reduce recurrent-scan/state-prep launch count:
+  - profile target row: `fused_scan_state_bm8_w1`
+  - first target is saving at least `0.7 ms` from recurrent scan + state prep
+    without breaking greedy/cache smoke
+  - do not spend this phase on Python wrapper-only changes
+- [ ] Re-test DPLR compact only after apply/output fusion or launch-count
+  reduction is implemented; current HF repo-code compact row is correctness
+  passing but slower than the fused recurrent scan path.
+
 ## Current checkpoint
 
 - Branch: `wangyue/native-fused-fp16-kernel`
