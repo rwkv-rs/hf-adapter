@@ -17,6 +17,7 @@ if "pytest" in sys.modules:  # pragma: no cover - pytest collection metadata
 
 
 CHUNK_SIZES = (1, 2, 3, 8)
+ALGORITHMS = ("sequential", "affine")
 
 
 def _skip_if_no_torch() -> bool:
@@ -51,7 +52,13 @@ def _make_inputs(*, flat: bool):
     return r, w, k, v, kk, a, state
 
 
-def _assert_matches_reference(*, flat: bool, chunk_size: int, force_fallback: bool = False) -> None:
+def _assert_matches_reference(
+    *,
+    flat: bool,
+    chunk_size: int,
+    algorithm: str = "sequential",
+    force_fallback: bool = False,
+) -> None:
     assert torch is not None
     from rwkv7_hf.dplr_prefill import dplr_chunk_scan
     from rwkv7_hf.fused_recurrent_update import torch_recurrent_scan
@@ -69,6 +76,7 @@ def _assert_matches_reference(*, flat: bool, chunk_size: int, force_fallback: bo
             state,
             chunk_size=chunk_size,
             force_fallback=force_fallback,
+            algorithm=algorithm,
         )
     assert got_out.shape == ref_out.shape == r.shape
     assert got_state.shape == ref_state.shape == state.shape
@@ -81,15 +89,17 @@ def _assert_matches_reference(*, flat: bool, chunk_size: int, force_fallback: bo
 def test_dplr_chunk_scan_bthn_matches_torch_recurrent_scan() -> None:
     if _skip_if_no_torch():
         return
-    for chunk_size in CHUNK_SIZES:
-        _assert_matches_reference(flat=False, chunk_size=chunk_size)
+    for algorithm in ALGORITHMS:
+        for chunk_size in CHUNK_SIZES:
+            _assert_matches_reference(flat=False, chunk_size=chunk_size, algorithm=algorithm)
 
 
 def test_dplr_chunk_scan_flat_matches_torch_recurrent_scan() -> None:
     if _skip_if_no_torch():
         return
-    for chunk_size in CHUNK_SIZES:
-        _assert_matches_reference(flat=True, chunk_size=chunk_size)
+    for algorithm in ALGORITHMS:
+        for chunk_size in CHUNK_SIZES:
+            _assert_matches_reference(flat=True, chunk_size=chunk_size, algorithm=algorithm)
 
 
 def test_dplr_chunk_scan_force_fallback_matches_reference() -> None:

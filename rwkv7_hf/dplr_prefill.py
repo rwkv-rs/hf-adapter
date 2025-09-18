@@ -12,15 +12,16 @@ The recurrence is affine over a chunk boundary::
     A_t = diag(w_t) + (-kk_t) (kk_t * a_t)^T
     B_t = v_t k_t^T
 
-A future optimized implementation can compose the per-token ``A_t`` matrices
-inside each chunk (or use a WY-style representation for the diagonal plus
-rank-1 factors) and apply the resulting chunk transform to the incoming state.
-For now, ``dplr_chunk_scan`` exposes the chunked interface while scanning
-sequentially within each chunk so it remains easy to validate against the
-existing recurrent reference.
+``dplr_chunk_scan`` keeps the original correctness-first sequential path as the
+default.  It also exposes an experimental ``algorithm="affine"`` path that
+materializes the per-token affine transitions and composes chunk prefix/suffix
+transforms in torch.  That affine path is intentionally O(T*N^3): it is a
+correctness prototype and the marked replacement point for a future WY/Triton
+implementation.
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
 try:  # pragma: no cover - exercised in lightweight environments without torch
@@ -30,6 +31,10 @@ except Exception:  # pragma: no cover
 
 
 __all__ = ["dplr_chunk_scan"]
+
+
+_ALGORITHM_ENV = "RWKV7_DPLR_PREFILL_ALGORITHM"
+_SUPPORTED_ALGORITHMS = ("sequential", "affine")
 
 
 def _require_torch():
@@ -70,6 +75,25 @@ def _validate_chunk_size(chunk_size: int) -> int:
     return chunk_size_i
 
 
+def _resolve_algorithm(algorithm: Any) -> str:
+    """Normalize the scan algorithm selector.
+
+    Passing ``None`` (the public default) reads
+    ``RWKV7_DPLR_PREFILL_ALGORITHM`` and falls back to ``"sequential"`` when it
+    is unset, so existing callers keep the same behavior unless they opt in.
+    """
+
+    if algorithm is None:
+        algorithm = os.environ.get(_ALGORITHM_ENV, "sequential")
+    if not isinstance(algorithm, str):
+        raise TypeError("algorithm must be 'sequential', 'affine', or None")
+    normalized = algorithm.strip().lower()
+    if normalized not in _SUPPORTED_ALGORITHMS:
+        supported = "', '".join(_SUPPORTED_ALGORITHMS)
+        raise ValueError(f"algorithm must be one of '{supported}', got {algorithm!r}")
+    return normalized
+
+
 def _check_tensor_compat(name: str, x: Any, *, B: int, T: int, device: Any) -> None:
     if int(x.shape[0]) != B or int(x.shape[1]) != T:
         raise ValueError(f"{name} batch/time shape must match r; got {tuple(x.shape)}")
@@ -97,6 +121,153 @@ def _dplr_step(r_t: Any, w_t: Any, k_t: Any, v_t: Any, kk_t: Any, a_t: Any, stat
     return out.view(B, H, N), new_state
 
 
+def _dplr_affine_transition(w_t: Any, k_t: Any, v_t: Any, kk_t: Any, a_t: Any):
+    """Build one explicit affine transition ``S_t = S_{t-1} A_t + B_t``.
+
+    Shapes are ``[B,H,N]`` for inputs and ``[B,H,N,N]`` for returned matrices.
+    This intentionally materializes the dense ``A_t`` matrix even though it is
+    diagonal-plus-rank-1; the future optimized path should replace this with a
+    compact WY-style factorization and/or a Triton kernel.
+    """
+
+    B, H, N = (int(w_t.shape[0]), int(w_t.shape[1]), int(w_t.shape[2]))
+    diag_w = torch.diag_embed(w_t)
+    rank1 = (-kk_t).view(B, H, N, 1) @ (kk_t * a_t).view(B, H, 1, N)
+    affine_a = diag_w + rank1
+    affine_b = v_t.view(B, H, N, 1) @ k_t.view(B, H, 1, N)
+    return affine_a, affine_b
+
+
+def _identity_affine(B: int, H: int, N: int, *, device: Any, dtype: Any):
+    eye = torch.eye(N, device=device, dtype=dtype).view(1, 1, N, N)
+    return eye.expand(B, H, N, N).clone()
+
+
+def _compose_prefix_affines(a_terms: Any, b_terms: Any, identity: Any, zero: Any):
+    """Return inclusive chunk prefixes for ``S_i = S_start P_i + Q_i``."""
+
+    prefix_a = []
+    prefix_b = []
+    cur_a = identity
+    cur_b = zero
+    for a_t, b_t in zip(a_terms, b_terms):
+        cur_a = cur_a @ a_t
+        cur_b = cur_b @ a_t + b_t
+        prefix_a.append(cur_a)
+        prefix_b.append(cur_b)
+    return prefix_a, prefix_b
+
+
+def _compose_suffix_affines(a_terms: Any, b_terms: Any, identity: Any, zero: Any):
+    """Return transforms from each token state to the chunk end.
+
+    ``suffix_a[i]``/``suffix_b[i]`` satisfy
+    ``S_chunk_end = S_after_token_i suffix_a[i] + suffix_b[i]``.  The current
+    prototype builds these explicitly to make the affine chunk contract clear;
+    later WY/Triton work can use the same boundary but avoid dense O(N^3)
+    suffix composition.
+    """
+
+    L = len(a_terms)
+    suffix_a = [identity for _ in range(L)]
+    suffix_b = [zero for _ in range(L)]
+    cur_a = identity
+    cur_b = zero
+    for i in range(L - 1, -1, -1):
+        suffix_a[i] = cur_a
+        suffix_b[i] = cur_b
+        a_t = a_terms[i]
+        b_t = b_terms[i]
+        cur_b = b_t @ cur_a + cur_b
+        cur_a = a_t @ cur_a
+    return suffix_a, suffix_b
+
+
+def _dplr_chunk_scan_sequential(r32: Any, w32: Any, k32: Any, v32: Any, kk32: Any, a32: Any, state32: Any, chunk_size: int):
+    """Original correctness-first chunk loop: sequential scan inside chunks."""
+
+    T = int(r32.shape[1])
+    cur_state = state32
+    outs = []
+    for start in range(0, T, chunk_size):
+        end = min(start + chunk_size, T)
+
+        # Chunk boundary contract:
+        #   incoming state: cur_state
+        #   per-token affine terms: A_t and B_t from _dplr_step comments
+        #   outgoing state after this loop: S_end = S_start Phi + Psi
+        # Future fast path location: compose Phi/Psi (or WY factors) for
+        # [start:end] here, while still materializing per-token outputs.
+        for t in range(start, end):
+            out_t, cur_state = _dplr_step(
+                r32[:, t],
+                w32[:, t],
+                k32[:, t],
+                v32[:, t],
+                kk32[:, t],
+                a32[:, t],
+                cur_state,
+            )
+            outs.append(out_t)
+    return outs, cur_state
+
+
+def _dplr_chunk_scan_affine(r32: Any, w32: Any, k32: Any, v32: Any, kk32: Any, a32: Any, state32: Any, chunk_size: int):
+    """Experimental dense affine chunk prototype.
+
+    For every chunk this path explicitly builds per-token
+    ``A_t = diag(w_t) + (-kk_t)(kk_t*a_t)^T`` and ``B_t = v_t k_t^T``, composes
+    inclusive prefix transforms, and computes every token state from the chunk
+    start state.  Complexity is O(T*N^3) because transforms are dense matrices;
+    the marked construction/composition loops are the intended replacement
+    points for a future WY representation and Triton/CUDA implementation.
+    """
+
+    B, T, H, N = (int(r32.shape[0]), int(r32.shape[1]), int(r32.shape[2]), int(r32.shape[3]))
+    cur_state = state32
+    outs = []
+    identity = _identity_affine(B, H, N, device=r32.device, dtype=r32.dtype)
+    zero = r32.new_zeros((B, H, N, N))
+
+    for start in range(0, T, chunk_size):
+        end = min(start + chunk_size, T)
+        chunk_start_state = cur_state
+
+        # Future WY/Triton hook:
+        #   Replace these dense per-token A_t/B_t materializations with a
+        #   diagonal-plus-low-rank chunk composer.  The public contract should
+        #   still expose prefix states for outputs and a chunk-end transform.
+        a_terms = []
+        b_terms = []
+        for t in range(start, end):
+            a_t, b_t = _dplr_affine_transition(w32[:, t], k32[:, t], v32[:, t], kk32[:, t], a32[:, t])
+            a_terms.append(a_t)
+            b_terms.append(b_t)
+
+        prefix_a, prefix_b = _compose_prefix_affines(a_terms, b_terms, identity, zero)
+
+        # Suffix transforms are not needed for the scalar output below, but are
+        # intentionally constructed to pin down the chunk affine prototype API:
+        # each token's post-update state can be mapped to the chunk-end state.
+        # A production WY/Triton path should generate equivalent suffix/prefix
+        # metadata without dense O(N^3) matrices.
+        suffix_a, suffix_b = _compose_suffix_affines(a_terms, b_terms, identity, zero)
+
+        for local_i, t in enumerate(range(start, end)):
+            state_t = chunk_start_state @ prefix_a[local_i] + prefix_b[local_i]
+            out_t = state_t @ r32[:, t].view(B, H, N, 1)
+            outs.append(out_t.view(B, H, N))
+
+        # Use the inclusive full-prefix transform for the next chunk.  The
+        # suffix transform gives the same mathematical chunk-end state from any
+        # token state; it is built above as a correctness-oriented prototype
+        # artifact for later parallelization.
+        _ = suffix_a, suffix_b
+        cur_state = chunk_start_state @ prefix_a[-1] + prefix_b[-1]
+
+    return outs, cur_state
+
+
 def dplr_chunk_scan(
     r: Any,
     w: Any,
@@ -108,6 +279,7 @@ def dplr_chunk_scan(
     *,
     chunk_size: int = 64,
     force_fallback: bool = False,
+    algorithm: Any = None,
 ):
     """Reference RWKV-7 DPLR/chunked prefill scan using only torch.
 
@@ -128,6 +300,12 @@ def dplr_chunk_scan(
     force_fallback:
         Reserved switch for future optimized paths.  Today both values use the
         same correctness-first torch fallback.
+    algorithm:
+        ``"sequential"`` preserves the original chunked reference behavior.
+        ``"affine"`` enables an experimental dense affine chunk prototype that
+        explicitly composes per-token ``A_t``/``B_t`` transforms.  ``None``
+        (the default) reads ``RWKV7_DPLR_PREFILL_ALGORITHM`` and falls back to
+        ``"sequential"`` when the environment variable is unset.
 
     Returns
     -------
@@ -139,6 +317,7 @@ def dplr_chunk_scan(
 
     _require_torch()
     chunk_size_i = _validate_chunk_size(chunk_size)
+    algorithm_i = _resolve_algorithm(algorithm)
     _ = force_fallback  # Kept in the public signature for future fast paths.
 
     if not hasattr(state, "dim"):
@@ -184,27 +363,10 @@ def dplr_chunk_scan(
         empty = r4.new_empty((B, 0, H, N), dtype=out_dtype)
         return (empty.reshape(B, 0, H * N) if flat else empty), cur_state.to(dtype=state_dtype)
 
-    outs = []
-    for start in range(0, T, chunk_size_i):
-        end = min(start + chunk_size_i, T)
-
-        # Chunk boundary contract:
-        #   incoming state: cur_state
-        #   per-token affine terms: A_t and B_t from _dplr_step comments
-        #   outgoing state after this loop: S_end = S_start Phi + Psi
-        # Future fast path location: compose Phi/Psi (or WY factors) for
-        # [start:end] here, while still materializing per-token outputs.
-        for t in range(start, end):
-            out_t, cur_state = _dplr_step(
-                r32[:, t],
-                w32[:, t],
-                k32[:, t],
-                v32[:, t],
-                kk32[:, t],
-                a32[:, t],
-                cur_state,
-            )
-            outs.append(out_t)
+    if algorithm_i == "sequential":
+        outs, cur_state = _dplr_chunk_scan_sequential(r32, w32, k32, v32, kk32, a32, cur_state, chunk_size_i)
+    else:
+        outs, cur_state = _dplr_chunk_scan_affine(r32, w32, k32, v32, kk32, a32, cur_state, chunk_size_i)
 
     stacked = torch.stack(outs, dim=1).to(dtype=out_dtype)
     if flat:

@@ -515,3 +515,51 @@ else:
 
 The project can claim broad hardware support only through this fallback stack.
 It must not claim the same peak speed on every GPU generation.
+
+## DPLR/chunked prefill prototype benchmark
+
+`bench/bench_dplr_prefill_scan.py` is the standalone validation harness for the
+DPLR/chunked prefill prototype. It is synthetic-only: it creates post-projection
+`r/w/k/v/kk/a` tensors plus native `[B,H,N,N]` state, does not load HF model
+weights, and intentionally does not import or call `native_jit`. JSONL rows use
+`axis="dplr_prefill_scan_proto"` and compare:
+
+- `algorithm="torch_recurrent_scan"`: the pure torch recurrent reference.
+- `algorithm="sequential"`: `dplr_chunk_scan()` with the current sequential
+  within-chunk implementation.
+- `algorithm="affine"`: the dense torch affine prototype. It explicitly
+  constructs each per-token transform
+  `A_t = diag(w_t) + (-kk_t)(kk_t*a_t)^T` and `B_t = v_t k_t^T`, then composes
+  chunk prefix/suffix transforms. This is correctness scaffolding for the
+  future WY/Triton path and is intentionally O(T*N^3), not a promoted speed
+  implementation.
+
+4090 validation for the dense affine prototype:
+
+- `tests/test_dplr_prefill_scan.py`: PASS.
+- Synthetic fp32 `B=1,T=32/64,H=2,N=8,chunk=8/16`: affine max diff
+  `<=3e-8` vs `torch_recurrent_scan`; affine is slower than sequential as
+  expected (`~5.1k`-`5.3k tok/s` vs `~8.6k`-`8.7k tok/s`).
+- Synthetic fp16 `B=1,T=32,H=2,N=8`: affine output max diff
+  `1.22e-4`, state max diff `2.87e-5`, min cosine `0.99999994`.
+- HF native prefill smoke with `RWKV7_DPLR_PREFILL_ALGORITHM=affine`,
+  prompt32, chunk16: `status=pass`, `greedy_match=true`,
+  `decode_after_prefill_greedy_match=true`.
+
+Safe server validation command for the dense affine prototype:
+
+```bash
+PYTHONPATH=. python bench/bench_dplr_prefill_scan.py \
+  --device cuda --dtype fp32 \
+  --batch-sizes 1 --tokens 32 64 \
+  --heads 2 --head-dim 8 --chunk-sizes 8 16 \
+  --algorithms sequential affine \
+  --warmup 1 --steps 2 \
+  --results bench/results.jsonl
+
+PYTHONPATH=. python bench/analyze_results.py --results bench/results.jsonl
+```
+
+Do not run the dense affine prototype at `H=16,N=64,T=512` except deliberately
+as a stress test; it materializes dense chunk transforms and is expected to be
+slower than the sequential reference until the WY/low-rank chunk composer lands.
