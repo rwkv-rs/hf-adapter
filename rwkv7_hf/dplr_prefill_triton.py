@@ -7,20 +7,21 @@ It intentionally keeps the public boundary identical to
 ``dplr_prefill.dplr_chunk_scan`` so the synthetic benchmark can switch between
 pure torch and compiled implementations without touching HF model code.
 
-P0 implementation note
-----------------------
-The current kernel target is a correctness/performance bridge, not the final
-three-stage WY factor scan.  It delegates the per-token rank-1 DPLR recurrence
-to the existing Triton recurrent scan kernel from ``fused_recurrent_update``.
-That kernel is still mathematically the RWKV-7 DPLR update
+Backend notes
+-------------
+The ``triton_wy`` P0 path is a correctness/performance bridge, not the final
+compact WY factor scan.  It delegates the per-token rank-1 DPLR recurrence to
+the existing Triton recurrent scan kernel from ``fused_recurrent_update``.  That
+kernel is still mathematically the RWKV-7 DPLR update
 
     S_t = S_{t-1} (diag(w_t) + (-kk_t)(kk_t*a_t)^T) + v_t k_t^T
 
-and uses fp32 state accumulation, but it does not yet materialize chunk-level
-WY summaries or prefix-combine metadata.  Keeping this in a separate module lets
-benchmarks label it as ``triton_wy``/``cuda_wy`` while the next iteration
-replaces the delegate with explicit chunk-summary, prefix-combine, and
-chunk-apply kernels.
+and uses fp32 state accumulation.
+
+The ``triton_dense3`` path below is the explicit three-stage scaffold:
+chunk-summary, chunk-level prefix combine, and chunk apply/output.  It
+materializes dense ``[N,N]`` summaries to prove the kernel boundaries before the
+next iteration replaces them with compact WY factors.
 """
 from __future__ import annotations
 
@@ -64,6 +65,11 @@ __all__ = [
     "dplr_dense_chunk_summary_triton",
     "dplr_dense_chunk_summary_triton_available",
     "dplr_dense_chunk_summary_torch",
+    "dplr_dense_prefix_combine_torch",
+    "dplr_dense_prefix_combine_triton",
+    "dplr_dense_chunk_apply_torch",
+    "dplr_dense_chunk_apply_triton",
+    "dplr_dense_three_stage_triton",
 ]
 
 
@@ -138,6 +144,148 @@ if _HAS_TRITON:
         mask = mask_i[:, None] & mask_j[None, :]
         tl.store(transition_ptr + summary_base, transition, mask=mask)
         tl.store(additive_ptr + summary_base, additive, mask=mask)
+
+    @triton.jit
+    def _dense_prefix_combine_kernel(
+        state_ptr,
+        transition_ptr,
+        additive_ptr,
+        start_state_ptr,
+        final_state_ptr,
+        H: tl.constexpr,
+        N: tl.constexpr,
+        CHUNKS: tl.constexpr,
+        ROW_BLOCKS: tl.constexpr,
+        BLOCK_M: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+    ):
+        """Compute chunk start states from dense chunk summaries.
+
+        This is stage 2 of the dense three-stage scaffold:
+
+            start[c] = state before chunk c
+            cur = cur @ transition[c] + additive[c]
+
+        The implementation deliberately uses explicit column reductions rather
+        than `tl.dot` to keep fp32 behavior stable for correctness probes.
+        """
+
+        pid = tl.program_id(0)
+        row_block = pid % ROW_BLOCKS
+        bh_id = pid // ROW_BLOCKS
+        head_id = bh_id % H
+        batch_id = bh_id // H
+
+        offs_i = row_block * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_j = tl.arange(0, BLOCK_N)
+        mask_i = offs_i < N
+        mask_j = offs_j < N
+        row_mask = mask_i[:, None] & mask_j[None, :]
+
+        state_base = (batch_id * H + head_id) * N * N
+        cur = tl.load(
+            state_ptr + state_base + offs_i[:, None] * N + offs_j[None, :],
+            mask=row_mask,
+            other=0.0,
+        ).to(tl.float32)
+
+        chunk = 0
+        while chunk < CHUNKS:
+            summary_base = ((batch_id * CHUNKS + chunk) * H + head_id) * N * N
+            row_base = summary_base + offs_i[:, None] * N + offs_j[None, :]
+            tl.store(start_state_ptr + row_base, cur, mask=row_mask)
+
+            next_cur = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+            col = 0
+            while col < N:
+                p_col = tl.load(
+                    transition_ptr + summary_base + offs_j * N + col,
+                    mask=mask_j,
+                    other=0.0,
+                ).to(tl.float32)
+                dot = tl.sum(cur * p_col[None, :], axis=1)
+                q_col = tl.load(
+                    additive_ptr + summary_base + offs_i * N + col,
+                    mask=mask_i,
+                    other=0.0,
+                ).to(tl.float32)
+                val = dot + q_col
+                next_cur = tl.where(offs_j[None, :] == col, val[:, None], next_cur)
+                col += 1
+
+            cur = next_cur
+            chunk += 1
+
+        tl.store(
+            final_state_ptr + state_base + offs_i[:, None] * N + offs_j[None, :],
+            cur,
+            mask=row_mask,
+        )
+
+    @triton.jit
+    def _dense_chunk_apply_kernel(
+        r_ptr,
+        w_ptr,
+        k_ptr,
+        v_ptr,
+        kk_ptr,
+        a_ptr,
+        start_state_ptr,
+        out_ptr,
+        chunk_end_state_ptr,
+        T: tl.constexpr,
+        H: tl.constexpr,
+        N: tl.constexpr,
+        CHUNKS: tl.constexpr,
+        C: tl.constexpr,
+        ROW_BLOCKS: tl.constexpr,
+        BLOCK_M: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+    ):
+        """Apply per-token DPLR scan inside each chunk from chunk start states.
+
+        This is stage 3 of the dense scaffold.  It mirrors the existing
+        row-split recurrent scan, but the grid owns `(batch, chunk, head,
+        row_block)` and starts from the prefix-combined chunk start state.
+        """
+
+        pid = tl.program_id(0)
+        row_block = pid % ROW_BLOCKS
+        tmp = pid // ROW_BLOCKS
+        head_id = tmp % H
+        chunk_id = (tmp // H) % CHUNKS
+        batch_id = tmp // (H * CHUNKS)
+
+        offs_i = row_block * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_j = tl.arange(0, BLOCK_N)
+        mask_i = offs_i < N
+        mask_j = offs_j < N
+        row_mask = mask_i[:, None] & mask_j[None, :]
+        summary_base = ((batch_id * CHUNKS + chunk_id) * H + head_id) * N * N
+        st = tl.load(
+            start_state_ptr + summary_base + offs_i[:, None] * N + offs_j[None, :],
+            mask=row_mask,
+            other=0.0,
+        ).to(tl.float32)
+
+        local_i = 0
+        while local_i < C:
+            t = chunk_id * C + local_i
+            vec_base = ((batch_id * T + t) * H + head_id) * N
+            r = tl.load(r_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            w = tl.load(w_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            key = tl.load(k_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            kk = tl.load(kk_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            a = tl.load(a_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            v_rows = tl.load(v_ptr + vec_base + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+
+            state_dot_kk = tl.sum(st * kk[None, :], axis=1)
+            st = st * w[None, :] + v_rows[:, None] * key[None, :] - state_dot_kk[:, None] * kk[None, :] * a[None, :]
+            recurrent = tl.sum(st * r[None, :], axis=1)
+            tl.store(out_ptr + vec_base + offs_i, recurrent, mask=mask_i)
+            local_i += 1
+
+        tl.store(chunk_end_state_ptr + summary_base + offs_i[:, None] * N + offs_j[None, :], st, mask=row_mask)
 
 
 def dplr_chunk_scan_triton_available() -> bool:
@@ -371,6 +519,298 @@ def dplr_dense_chunk_summary_triton(
         "transition": transition,
         "additive": additive,
     }
+
+
+def dplr_dense_prefix_combine_torch(state: Any, transition: Any, additive: Any):
+    """Reference chunk-prefix combine over dense summaries.
+
+    Returns `(start_states, final_state)` where `start_states[:, c]` is the
+    native VxK state before chunk `c`.
+    """
+
+    if torch is None:
+        raise RuntimeError("dplr_dense_prefix_combine_torch requires torch")
+    if state.dim() != 4 or transition.dim() != 5 or additive.dim() != 5:
+        raise ValueError("state must be [B,H,N,N] and summaries [B,chunks,H,N,N]")
+    B, H, N, N2 = (int(vv) for vv in state.shape)
+    if N != N2:
+        raise ValueError("state must be square in the last two dimensions")
+    if tuple(transition.shape) != tuple(additive.shape):
+        raise ValueError("transition and additive shapes must match")
+    if int(transition.shape[0]) != B or int(transition.shape[2]) != H or int(transition.shape[3]) != N or int(transition.shape[4]) != N:
+        raise ValueError("summary shapes must be [B,chunks,H,N,N] matching state")
+
+    chunks = int(transition.shape[1])
+    cur = state.float()
+    starts = []
+    for chunk in range(chunks):
+        starts.append(cur)
+        cur = cur @ transition[:, chunk].float() + additive[:, chunk].float()
+    return torch.stack(starts, dim=1), cur
+
+
+def dplr_dense_prefix_combine_triton(
+    state: Any,
+    transition: Any,
+    additive: Any,
+    *,
+    block_m: int | None = None,
+    block_n: int | None = None,
+    force_fallback: bool = False,
+):
+    """Triton chunk-prefix combine for dense summaries."""
+
+    if torch is None:
+        raise RuntimeError("dplr_dense_prefix_combine_triton requires torch")
+    if state.dim() != 4 or transition.dim() != 5 or additive.dim() != 5:
+        raise ValueError("state must be [B,H,N,N] and summaries [B,chunks,H,N,N]")
+    B, H, N, N2 = (int(vv) for vv in state.shape)
+    if N != N2:
+        raise ValueError("state must be square in the last two dimensions")
+    if tuple(transition.shape) != tuple(additive.shape):
+        raise ValueError("transition and additive shapes must match")
+    chunks = int(transition.shape[1])
+    if int(transition.shape[0]) != B or int(transition.shape[2]) != H or int(transition.shape[3]) != N or int(transition.shape[4]) != N:
+        raise ValueError("summary shapes must be [B,chunks,H,N,N] matching state")
+    if block_m is None:
+        block_m = _env_int("RWKV7_DPLR_TRITON_PREFIX_BLOCK_M", 8)
+    if block_n is None:
+        block_n = N
+    block_m = int(block_m)
+    block_n = int(block_n)
+    if block_m <= 0:
+        raise ValueError("block_m must be positive")
+    if block_n < N:
+        raise ValueError(f"block_n must be >= head_dim={N}; got {block_n}")
+
+    use_triton = (
+        not force_fallback
+        and dplr_dense_chunk_summary_triton_available()
+        and state.is_cuda
+        and transition.is_cuda
+        and additive.is_cuda
+        and state.dtype == torch.float32
+    )
+    if not use_triton:
+        return dplr_dense_prefix_combine_torch(state, transition, additive)
+
+    state_c = state.contiguous()
+    transition_c = transition.contiguous()
+    additive_c = additive.contiguous()
+    start_states = torch.empty((B, chunks, H, N, N), device=state.device, dtype=torch.float32)
+    final_state = torch.empty_like(state_c)
+    row_blocks = triton.cdiv(N, block_m)
+    _dense_prefix_combine_kernel[(B * H * row_blocks,)](
+        state_c,
+        transition_c,
+        additive_c,
+        start_states,
+        final_state,
+        H,
+        N,
+        chunks,
+        ROW_BLOCKS=int(row_blocks),
+        BLOCK_M=block_m,
+        BLOCK_N=block_n,
+        num_warps=4 if block_m < N else 8,
+    )
+    return start_states, final_state
+
+
+def _torch_dplr_step_bthn(r_t: Any, w_t: Any, k_t: Any, v_t: Any, kk_t: Any, a_t: Any, state_t: Any):
+    B, H, N = (int(r_t.shape[0]), int(r_t.shape[1]), int(r_t.shape[2]))
+    vk = v_t.float().view(B, H, N, 1) @ k_t.float().view(B, H, 1, N)
+    ab = (-kk_t.float()).view(B, H, N, 1) @ (kk_t.float() * a_t.float()).view(B, H, 1, N)
+    new_state = state_t.float() * w_t.float().view(B, H, 1, N) + state_t.float() @ ab + vk
+    out = new_state @ r_t.float().view(B, H, N, 1)
+    return out.view(B, H, N), new_state
+
+
+def dplr_dense_chunk_apply_torch(r: Any, w: Any, k: Any, v: Any, kk: Any, a: Any, start_states: Any, *, chunk_size: int = 64):
+    """Reference chunk-apply stage from prefix-combined start states."""
+
+    if torch is None:
+        raise RuntimeError("dplr_dense_chunk_apply_torch requires torch")
+    chunk_size_i = _validate_chunk_size(chunk_size)
+    if start_states.dim() != 5:
+        raise ValueError("start_states must be [B,chunks,H,N,N]")
+    B, chunks, H, N, N2 = (int(vv) for vv in start_states.shape)
+    if N != N2:
+        raise ValueError("start_states must be square in the last two dimensions")
+    r4, flat = _as_bthn(r, H, N, name="r")
+    w4, _ = _as_bthn(w, H, N, name="w")
+    k4, _ = _as_bthn(k, H, N, name="k")
+    v4, _ = _as_bthn(v, H, N, name="v")
+    kk4, _ = _as_bthn(kk, H, N, name="kk")
+    a4, _ = _as_bthn(a, H, N, name="a")
+    T = int(r4.shape[1])
+    if T != chunks * chunk_size_i:
+        raise ValueError("tokens must equal chunks * chunk_size")
+
+    outs = []
+    chunk_ends = []
+    for chunk in range(chunks):
+        cur = start_states[:, chunk].float()
+        for local_i in range(chunk_size_i):
+            t = chunk * chunk_size_i + local_i
+            out_t, cur = _torch_dplr_step_bthn(r4[:, t], w4[:, t], k4[:, t], v4[:, t], kk4[:, t], a4[:, t], cur)
+            outs.append(out_t.to(dtype=r4.dtype))
+        chunk_ends.append(cur)
+    out = torch.stack(outs, dim=1) if outs else r4.new_empty((B, 0, H, N))
+    if flat:
+        out = out.reshape(B, T, H * N)
+    return out, torch.stack(chunk_ends, dim=1)
+
+
+def dplr_dense_chunk_apply_triton(
+    r: Any,
+    w: Any,
+    k: Any,
+    v: Any,
+    kk: Any,
+    a: Any,
+    start_states: Any,
+    *,
+    chunk_size: int = 64,
+    block_m: int | None = None,
+    block_n: int | None = None,
+    force_fallback: bool = False,
+):
+    """Triton chunk-apply stage for prefix-combined dense summaries."""
+
+    if torch is None:
+        raise RuntimeError("dplr_dense_chunk_apply_triton requires torch")
+    chunk_size_i = _validate_chunk_size(chunk_size)
+    if start_states.dim() != 5:
+        raise ValueError("start_states must be [B,chunks,H,N,N]")
+    B, chunks, H, N, N2 = (int(vv) for vv in start_states.shape)
+    if N != N2:
+        raise ValueError("start_states must be square in the last two dimensions")
+    r4, flat = _as_bthn(r, H, N, name="r")
+    w4, _ = _as_bthn(w, H, N, name="w")
+    k4, _ = _as_bthn(k, H, N, name="k")
+    v4, _ = _as_bthn(v, H, N, name="v")
+    kk4, _ = _as_bthn(kk, H, N, name="kk")
+    a4, _ = _as_bthn(a, H, N, name="a")
+    T = int(r4.shape[1])
+    if T != chunks * chunk_size_i:
+        raise ValueError("tokens must equal chunks * chunk_size")
+    if block_m is None:
+        block_m = _env_int("RWKV7_DPLR_TRITON_APPLY_BLOCK_M", 8)
+    if block_n is None:
+        block_n = N
+    block_m = int(block_m)
+    block_n = int(block_n)
+    if block_m <= 0:
+        raise ValueError("block_m must be positive")
+    if block_n < N:
+        raise ValueError(f"block_n must be >= head_dim={N}; got {block_n}")
+
+    k_kernel = k4 if k4.dtype == r4.dtype else k4.to(dtype=r4.dtype)
+    v_kernel = v4 if v4.dtype == r4.dtype else v4.to(dtype=r4.dtype)
+    kk_kernel = kk4 if kk4.dtype == r4.dtype else kk4.to(dtype=r4.dtype)
+    a_kernel = a4 if a4.dtype == r4.dtype else a4.to(dtype=r4.dtype)
+    use_triton = (
+        not force_fallback
+        and dplr_dense_chunk_summary_triton_available()
+        and r4.is_cuda
+        and w4.is_cuda
+        and k_kernel.is_cuda
+        and v_kernel.is_cuda
+        and kk_kernel.is_cuda
+        and a_kernel.is_cuda
+        and start_states.is_cuda
+        and start_states.dtype == torch.float32
+        and r4.dtype in (torch.float16, torch.bfloat16, torch.float32)
+        and w4.dtype in (r4.dtype, torch.float32)
+    )
+    if not use_triton:
+        return dplr_dense_chunk_apply_torch(r4.reshape(B, T, H * N) if flat else r4, w4, k4, v4, kk4, a4, start_states, chunk_size=chunk_size_i)
+
+    r_c = r4.contiguous()
+    w_c = w4.contiguous()
+    k_c = k_kernel.contiguous()
+    v_c = v_kernel.contiguous()
+    kk_c = kk_kernel.contiguous()
+    a_c = a_kernel.contiguous()
+    start_c = start_states.contiguous()
+    out = torch.empty((B, T, H, N), device=r4.device, dtype=r4.dtype)
+    chunk_ends = torch.empty_like(start_c)
+    row_blocks = triton.cdiv(N, block_m)
+    _dense_chunk_apply_kernel[(B * chunks * H * row_blocks,)](
+        r_c,
+        w_c,
+        k_c,
+        v_c,
+        kk_c,
+        a_c,
+        start_c,
+        out,
+        chunk_ends,
+        T,
+        H,
+        N,
+        chunks,
+        chunk_size_i,
+        ROW_BLOCKS=int(row_blocks),
+        BLOCK_M=block_m,
+        BLOCK_N=block_n,
+        num_warps=4 if block_m < N else 8,
+    )
+    if flat:
+        out = out.reshape(B, T, H * N)
+    return out, chunk_ends
+
+
+def dplr_dense_three_stage_triton(
+    r: Any,
+    w: Any,
+    k: Any,
+    v: Any,
+    kk: Any,
+    a: Any,
+    state: Any,
+    *,
+    chunk_size: int = 64,
+    force_fallback: bool = False,
+):
+    """Dense three-stage DPLR scaffold: summary -> prefix -> chunk apply."""
+
+    if torch is None:
+        raise RuntimeError("dplr_dense_three_stage_triton requires torch")
+    if state.dim() != 4:
+        raise ValueError("state must be [B,H,N,N]")
+    B, H, N, _ = (int(vv) for vv in state.shape)
+    r4, flat = _as_bthn(r, H, N, name="r")
+    w4, _ = _as_bthn(w, H, N, name="w")
+    k4, _ = _as_bthn(k, H, N, name="k")
+    v4, _ = _as_bthn(v, H, N, name="v")
+    kk4, _ = _as_bthn(kk, H, N, name="kk")
+    a4, _ = _as_bthn(a, H, N, name="a")
+    summary = dplr_dense_chunk_summary_triton(w4, k4, v4, kk4, a4, chunk_size=chunk_size, force_fallback=force_fallback)
+    start_states, prefix_final = dplr_dense_prefix_combine_triton(
+        state,
+        summary["transition"],
+        summary["additive"],
+        force_fallback=force_fallback,
+    )
+    out, chunk_ends = dplr_dense_chunk_apply_triton(
+        r4.reshape(B, int(r4.shape[1]), H * N) if flat else r4,
+        w4,
+        k4,
+        v4,
+        kk4,
+        a4,
+        start_states,
+        chunk_size=chunk_size,
+        force_fallback=force_fallback,
+    )
+    final_from_apply = chunk_ends[:, -1].to(dtype=state.dtype)
+    # Prefer the chunk-apply final state because it follows the same token path
+    # as the emitted recurrent outputs; prefix_final is kept as a consistency
+    # check by callers/tests.
+    _ = prefix_final
+    return out, final_from_apply
 
 
 def dplr_chunk_scan_triton(

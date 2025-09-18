@@ -2036,7 +2036,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             for r in fused_recurrent_scan_proto
         ],
         "dplr_prefill_scan_proto": [
-            compact(r, ["_lineno", "status", "dtype", "device", "algorithm", "requested_algorithm", "effective_algorithm", "algorithm_family", "is_dense_affine", "detected_algorithms", "chunk_size", "triton_wy_available", "triton_wy_block_m", "B", "T", "H", "N", "warmup", "steps", "ms", "tokps", "out_max_abs_diff", "state_max_abs_diff", "out_min_cosine", "fallback_reason", "skip_reason", "error", "peak_vram_mb"])
+            compact(r, ["_lineno", "status", "dtype", "device", "algorithm", "requested_algorithm", "effective_algorithm", "algorithm_family", "is_dense_affine", "detected_algorithms", "chunk_size", "triton_wy_available", "triton_wy_block_m", "triton_dense3_available", "triton_summary_block_m", "triton_prefix_block_m", "triton_apply_block_m", "B", "T", "H", "N", "warmup", "steps", "ms", "tokps", "out_max_abs_diff", "state_max_abs_diff", "out_min_cosine", "fallback_reason", "skip_reason", "error", "peak_vram_mb"])
             for r in dplr_prefill_scan_proto
         ],
         "dplr_chunk_summary_proto": [

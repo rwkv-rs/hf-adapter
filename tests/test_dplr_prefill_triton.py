@@ -56,14 +56,33 @@ def _apply_dense_summaries(state, summary):
 def test_dense_chunk_summary_torch_final_state_matches_recurrent_scan() -> None:
     if _skip_if_no_torch():
         return
-    from rwkv7_hf.dplr_prefill_triton import dplr_dense_chunk_summary_torch
+    from rwkv7_hf.dplr_prefill_triton import (
+        dplr_dense_chunk_apply_torch,
+        dplr_dense_chunk_summary_torch,
+        dplr_dense_prefix_combine_torch,
+        dplr_dense_three_stage_triton,
+    )
     from rwkv7_hf.fused_recurrent_update import torch_recurrent_scan
 
     r, w, k, v, kk, a, state = _make_inputs(device="cpu", dtype=torch.float32)
     summary = dplr_dense_chunk_summary_torch(w, k, v, kk, a, chunk_size=4)
-    _out, ref_state = torch_recurrent_scan(r, w, k, v, kk, a, state)
+    ref_out, ref_state = torch_recurrent_scan(r, w, k, v, kk, a, state)
     got_state = _apply_dense_summaries(state, summary)
     assert torch.allclose(got_state, ref_state, atol=2e-6, rtol=2e-6), (got_state - ref_state).abs().max()
+
+    start_states, prefix_final = dplr_dense_prefix_combine_torch(state, summary["transition"], summary["additive"])
+    assert torch.allclose(start_states[:, 0], state.float(), atol=0, rtol=0)
+    assert torch.allclose(prefix_final, ref_state, atol=2e-6, rtol=2e-6), (prefix_final - ref_state).abs().max()
+
+    got_out, chunk_ends = dplr_dense_chunk_apply_torch(r, w, k, v, kk, a, start_states, chunk_size=4)
+    assert torch.allclose(got_out, ref_out, atol=2e-6, rtol=2e-6), (got_out - ref_out).abs().max()
+    assert torch.allclose(chunk_ends[:, -1], ref_state, atol=2e-6, rtol=2e-6), (chunk_ends[:, -1] - ref_state).abs().max()
+
+    dense3_out, dense3_state = dplr_dense_three_stage_triton(
+        r, w, k, v, kk, a, state, chunk_size=4, force_fallback=True
+    )
+    assert torch.allclose(dense3_out, ref_out, atol=2e-6, rtol=2e-6), (dense3_out - ref_out).abs().max()
+    assert torch.allclose(dense3_state, ref_state, atol=2e-6, rtol=2e-6), (dense3_state - ref_state).abs().max()
 
 
 def test_dense_chunk_summary_triton_matches_torch_cuda() -> None:
@@ -76,10 +95,16 @@ def test_dense_chunk_summary_triton_matches_torch_cuda() -> None:
             return
         pytest.skip("cuda unavailable")
     from rwkv7_hf.dplr_prefill_triton import (
+        dplr_dense_chunk_apply_torch,
+        dplr_dense_chunk_apply_triton,
         dplr_dense_chunk_summary_torch,
         dplr_dense_chunk_summary_triton,
         dplr_dense_chunk_summary_triton_available,
+        dplr_dense_prefix_combine_torch,
+        dplr_dense_prefix_combine_triton,
+        dplr_dense_three_stage_triton,
     )
+    from rwkv7_hf.fused_recurrent_update import torch_recurrent_scan
 
     if not dplr_dense_chunk_summary_triton_available():
         try:
@@ -88,7 +113,8 @@ def test_dense_chunk_summary_triton_matches_torch_cuda() -> None:
             return
         pytest.skip("triton summary unavailable")
 
-    _r, w, k, v, kk, a, _state = _make_inputs(device="cuda", dtype=torch.float32)
+    r, w, k, v, kk, a, state = _make_inputs(device="cuda", dtype=torch.float32)
+    ref_out, ref_state = torch_recurrent_scan(r, w, k, v, kk, a, state)
     ref = dplr_dense_chunk_summary_torch(w, k, v, kk, a, chunk_size=4)
     got = dplr_dense_chunk_summary_triton(w, k, v, kk, a, chunk_size=4, block_m=2)
     assert torch.allclose(got["transition"], ref["transition"], atol=2e-6, rtol=2e-6), (
@@ -97,6 +123,27 @@ def test_dense_chunk_summary_triton_matches_torch_cuda() -> None:
     assert torch.allclose(got["additive"], ref["additive"], atol=2e-6, rtol=2e-6), (
         got["additive"] - ref["additive"]
     ).abs().max()
+
+    starts_ref, prefix_final_ref = dplr_dense_prefix_combine_torch(state, ref["transition"], ref["additive"])
+    starts_got, prefix_final_got = dplr_dense_prefix_combine_triton(
+        state, got["transition"], got["additive"], block_m=2
+    )
+    assert torch.allclose(starts_got, starts_ref, atol=2e-6, rtol=2e-6), (starts_got - starts_ref).abs().max()
+    assert torch.allclose(prefix_final_got, prefix_final_ref, atol=2e-6, rtol=2e-6), (
+        prefix_final_got - prefix_final_ref
+    ).abs().max()
+    assert torch.allclose(prefix_final_got, ref_state, atol=2e-6, rtol=2e-6), (prefix_final_got - ref_state).abs().max()
+
+    out_ref, ends_ref = dplr_dense_chunk_apply_torch(r, w, k, v, kk, a, starts_ref, chunk_size=4)
+    out_got, ends_got = dplr_dense_chunk_apply_triton(
+        r, w, k, v, kk, a, starts_got, chunk_size=4, block_m=2
+    )
+    assert torch.allclose(out_got, out_ref, atol=2e-6, rtol=2e-6), (out_got - out_ref).abs().max()
+    assert torch.allclose(ends_got, ends_ref, atol=2e-6, rtol=2e-6), (ends_got - ends_ref).abs().max()
+
+    dense3_out, dense3_state = dplr_dense_three_stage_triton(r, w, k, v, kk, a, state, chunk_size=4)
+    assert torch.allclose(dense3_out, ref_out, atol=2e-6, rtol=2e-6), (dense3_out - ref_out).abs().max()
+    assert torch.allclose(dense3_state, ref_state, atol=2e-6, rtol=2e-6), (dense3_state - ref_state).abs().max()
 
 
 def main() -> int:

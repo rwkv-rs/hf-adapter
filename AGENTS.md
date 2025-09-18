@@ -45,6 +45,67 @@ roadmap.
   decode, correctness, peak memory/VRAM, and `bench/analyze_results.py`
   reporting.
 
+## Current Branch Goal: DPLR/WY Compiled Prefill Prototype
+
+Active branch work is now the opt-in DPLR/WY compiled prefill backend, not
+wrapper micro-optimization. Keep the default HF behavior unchanged unless a
+benchmark explicitly opts in.
+
+Goal:
+
+- Move `dplr_chunk_scan(algorithm="wy"/"lowrank")` from pure torch
+  correctness prototype toward a real Triton/CUDA performance prototype.
+- Maintain native VxK state layout `[B,H,N,N]`, fp16/bf16/fp32 token inputs,
+  and fp32 state accumulation.
+- Synthetic first: support the critical target
+  `B=1,H=16,N=64,T=512,chunk_size=64,fp16` on RTX 4090.
+- Correctness gates: match `torch_recurrent_scan`; for fp16 target require
+  `out_min_cosine >= 0.9999` and keep greedy/cache smoke passing when routed
+  through HF repo-code loading.
+
+Current implementation state:
+
+- `rwkv7_hf/dplr_prefill_triton.py` exposes:
+  - `dplr_chunk_scan_triton(...)` / `dplr_chunk_scan_triton_available()`
+  - dense chunk summary: `dplr_dense_chunk_summary_*`
+  - dense prefix combine: `dplr_dense_prefix_combine_*`
+  - dense chunk apply/output: `dplr_dense_chunk_apply_*`
+  - dense three-stage scaffold: `dplr_dense_three_stage_triton(...)`
+- `algorithm="triton_wy"` is the P0 compiled bridge using the existing fused
+  recurrent scan. It is fast and correctness-passing, but it is not yet compact
+  WY.
+- `algorithm="triton_dense3"` is the explicit dense three-stage scaffold
+  (summary -> prefix -> apply/output). It proves the mathematical kernel
+  boundaries, but it materializes dense `[N,N]` summaries and is expected to be
+  slower than the P0 fused scan until replaced with compact WY factors.
+
+Latest RTX 4090 target evidence:
+
+- Synthetic `B=1,T=512,H=16,N=64,chunk=64,fp16`:
+  - `sequential`: pass, about `55.63 ms`, `9.2k tok/s`
+  - `triton_wy`: pass, about `0.233 ms`, `2.20M tok/s`,
+    `out_min_cosine ~= 0.9999999`
+  - `triton_dense3`: pass, about `0.584 ms`, `877k tok/s`,
+    `out_min_cosine = 1.0`
+  - dense chunk summary stage alone: pass, about `0.322 ms`, summary shape
+    `[1,8,16,64,64]`
+- HF repo-code smoke on 4090 / 0.4B / prompt512 / bsz1:
+  - `RWKV7_DPLR_PREFILL_ALGORITHM=triton_wy`: pass, greedy/cache smoke pass,
+    about `20.4k tok/s` in the latest one-step smoke.
+  - `RWKV7_DPLR_PREFILL_ALGORITHM=triton_dense3`: pass, greedy/cache smoke
+    pass, about `18.0k tok/s` in the latest one-step smoke.
+
+Remaining before this goal is complete:
+
+- Replace dense `[N,N]` transition/additive summaries with compact WY/low-rank
+  factors to reduce memory traffic and close the Albatross gap.
+- Make the explicit three-stage path at least competitive with the P0 fused
+  recurrent scan; current dense3 is correctness-first and slower than P0.
+- Use the 4090 native prefill benchmark to move 0.4B prompt512 bsz1 from the
+  current roughly `0.36x` Albatross band toward `>=0.45x`, then `>=0.60x`.
+- Do not call the DPLR/WY goal finished until compact WY or an equivalent
+  compiled path is verified end-to-end against the original acceptance target.
+
 ## Active Goal: Finish the Current HF Adapter First
 
 Current priority: finish the RWKV-7 Hugging Face / Transformers adapter with
