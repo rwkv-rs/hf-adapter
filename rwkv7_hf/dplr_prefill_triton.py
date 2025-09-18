@@ -65,6 +65,9 @@ __all__ = [
     "dplr_dense_chunk_summary_triton",
     "dplr_dense_chunk_summary_triton_available",
     "dplr_dense_chunk_summary_torch",
+    "dplr_compact_wy_chunk_summary_torch",
+    "dplr_compact_wy_summary_to_dense",
+    "dplr_compact_wy_apply_summaries_torch",
     "dplr_dense_prefix_combine_torch",
     "dplr_dense_prefix_combine_triton",
     "dplr_dense_chunk_apply_torch",
@@ -425,6 +428,196 @@ def dplr_dense_chunk_summary_torch(w: Any, k: Any, v: Any, kk: Any, a: Any, *, c
         "transition": torch.stack(transition_rows, dim=1),
         "additive": torch.stack(additive_rows, dim=1),
     }
+
+
+def _compact_factor_dot(factors: Any, vec: Any):
+    """Return ``factors^T vec`` for compact factors shaped ``[..., N, R]``."""
+
+    if int(factors.shape[-1]) == 0:
+        return vec.new_zeros((*vec.shape[:-1], 0))
+    return torch.einsum("...nr,...n->...r", factors, vec)
+
+
+def _compact_factor_weighted_sum(factors: Any, weights: Any):
+    """Return ``factors weights`` for compact factors shaped ``[..., N, R]``."""
+
+    if int(factors.shape[-1]) == 0:
+        return factors.new_zeros(factors.shape[:-1])
+    return torch.einsum("...nr,...r->...n", factors, weights)
+
+
+def _compact_append_factor_column(factors: Any, col: Any):
+    return torch.cat((factors, col.unsqueeze(-1)), dim=-1)
+
+
+def _compact_outer_to_dense(left: Any, right: Any):
+    if int(left.shape[-1]) == 0:
+        return left.new_zeros((*left.shape[:-1], int(left.shape[-2])))
+    return left @ right.transpose(-1, -2)
+
+
+def _compact_apply_transition_to_state(state: Any, diag: Any, left: Any, right: Any):
+    out = state.float() * diag.float().unsqueeze(-2)
+    if int(left.shape[-1]) != 0:
+        out = out + (state.float() @ left.float()) @ right.float().transpose(-1, -2)
+    return out
+
+
+def dplr_compact_wy_chunk_summary_torch(
+    w: Any,
+    k: Any,
+    v: Any,
+    kk: Any,
+    a: Any,
+    *,
+    chunk_size: int = 64,
+):
+    """Reference compact WY/low-rank chunk summaries.
+
+    Returns compact factors for every chunk, without materializing dense
+    ``[N,N]`` transition/additive summaries:
+
+    ``transition = diag_embed(transition_diag) + transition_left @ transition_right.T``
+    ``additive   = additive_left @ additive_right.T``
+
+    Rank grows by one per token in the chunk, so this is still a correctness
+    reference, but it establishes the compact metadata contract that the next
+    Triton kernels should write directly.
+    """
+
+    if torch is None:
+        raise RuntimeError("dplr_compact_wy_chunk_summary_torch requires torch")
+    chunk_size_i = _validate_chunk_size(chunk_size)
+    if not hasattr(w, "dim"):
+        raise TypeError("w must be a torch.Tensor")
+    if w.dim() != 4:
+        raise ValueError("summary inputs must be shaped [batch,tokens,heads,head_dim]")
+    B, T, H, N = (int(vv) for vv in w.shape)
+    if T % chunk_size_i != 0:
+        raise ValueError(f"T={T} must be divisible by chunk_size={chunk_size_i} for the compact WY prototype")
+    shape = (B, T, H, N)
+    for name, x in (("k", k), ("v", v), ("kk", kk), ("a", a)):
+        _check_same_bthn(name, x, shape=shape, device=w.device)
+    if not w.is_floating_point():
+        raise TypeError("w must be a floating point tensor")
+
+    chunks = T // chunk_size_i
+    diag_rows = []
+    trans_left_rows = []
+    trans_right_rows = []
+    add_left_rows = []
+    add_right_rows = []
+    for chunk in range(chunks):
+        diag = torch.ones((B, H, N), device=w.device, dtype=torch.float32)
+        trans_left = torch.empty((B, H, N, 0), device=w.device, dtype=torch.float32)
+        trans_right = torch.empty((B, H, N, 0), device=w.device, dtype=torch.float32)
+        add_left = torch.empty((B, H, N, 0), device=w.device, dtype=torch.float32)
+        add_right = torch.empty((B, H, N, 0), device=w.device, dtype=torch.float32)
+
+        start = chunk * chunk_size_i
+        for local_i in range(chunk_size_i):
+            t = start + local_i
+            w_i = w[:, t].float()
+            k_i = k[:, t].float()
+            v_i = v[:, t].float()
+            kk_i = kk[:, t].float()
+            a_i = a[:, t].float()
+            p_i = -kk_i
+            q_i = kk_i * a_i
+
+            new_left_col = diag * p_i + _compact_factor_weighted_sum(
+                trans_left,
+                _compact_factor_dot(trans_right, p_i),
+            )
+            trans_right = trans_right * w_i.unsqueeze(-1)
+            diag = diag * w_i
+            trans_left = _compact_append_factor_column(trans_left, new_left_col)
+            trans_right = _compact_append_factor_column(trans_right, q_i)
+
+            if int(add_right.shape[-1]) != 0:
+                add_coeff = _compact_factor_dot(add_right, p_i)
+                add_right = add_right * w_i.unsqueeze(-1) + q_i.unsqueeze(-1) * add_coeff.unsqueeze(-2)
+            add_left = _compact_append_factor_column(add_left, v_i)
+            add_right = _compact_append_factor_column(add_right, k_i)
+
+        diag_rows.append(diag)
+        trans_left_rows.append(trans_left)
+        trans_right_rows.append(trans_right)
+        add_left_rows.append(add_left)
+        add_right_rows.append(add_right)
+
+    return {
+        "algorithm": "torch_compact_wy_summary",
+        "chunk_size": chunk_size_i,
+        "rank": chunk_size_i,
+        "transition_diag": torch.stack(diag_rows, dim=1),
+        "transition_left": torch.stack(trans_left_rows, dim=1),
+        "transition_right": torch.stack(trans_right_rows, dim=1),
+        "additive_left": torch.stack(add_left_rows, dim=1),
+        "additive_right": torch.stack(add_right_rows, dim=1),
+    }
+
+
+def dplr_compact_wy_summary_to_dense(summary: dict[str, Any]):
+    """Materialize dense summaries from compact WY factors for correctness tests."""
+
+    if torch is None:
+        raise RuntimeError("dplr_compact_wy_summary_to_dense requires torch")
+    diag = summary["transition_diag"].float()
+    trans_left = summary["transition_left"].float()
+    trans_right = summary["transition_right"].float()
+    add_left = summary["additive_left"].float()
+    add_right = summary["additive_right"].float()
+    if diag.dim() != 4 or trans_left.dim() != 5 or trans_right.dim() != 5:
+        raise ValueError("compact transition summary must be [B,chunks,H,N] plus [B,chunks,H,N,R] factors")
+    if add_left.dim() != 5 or add_right.dim() != 5:
+        raise ValueError("compact additive summary must be [B,chunks,H,N,R] factors")
+    if tuple(trans_left.shape) != tuple(trans_right.shape):
+        raise ValueError("transition_left and transition_right shapes must match")
+    if tuple(add_left.shape) != tuple(add_right.shape):
+        raise ValueError("additive_left and additive_right shapes must match")
+    B, chunks, H, N = (int(vv) for vv in diag.shape)
+    eye = torch.eye(N, device=diag.device, dtype=torch.float32).view(1, 1, 1, N, N)
+    transition = eye * diag.unsqueeze(-2) + _compact_outer_to_dense(trans_left, trans_right)
+    additive = _compact_outer_to_dense(add_left, add_right)
+    return {
+        "algorithm": "torch_compact_wy_summary_dense_oracle",
+        "chunk_size": int(summary.get("chunk_size", 0)),
+        "rank": int(summary.get("rank", int(trans_left.shape[-1]))),
+        "transition": transition.reshape(B, chunks, H, N, N),
+        "additive": additive.reshape(B, chunks, H, N, N),
+    }
+
+
+def dplr_compact_wy_apply_summaries_torch(state: Any, summary: dict[str, Any]):
+    """Apply compact WY summaries to an initial native VxK state."""
+
+    if torch is None:
+        raise RuntimeError("dplr_compact_wy_apply_summaries_torch requires torch")
+    if state.dim() != 4:
+        raise ValueError("state must be [B,H,N,N]")
+    diag = summary["transition_diag"]
+    trans_left = summary["transition_left"]
+    trans_right = summary["transition_right"]
+    add_left = summary["additive_left"]
+    add_right = summary["additive_right"]
+    B, H, N, N2 = (int(vv) for vv in state.shape)
+    if N != N2:
+        raise ValueError("state must be square in the last two dimensions")
+    if int(diag.shape[0]) != B or int(diag.shape[2]) != H or int(diag.shape[3]) != N:
+        raise ValueError("compact summary shapes must match state")
+
+    cur = state.float()
+    chunks = int(diag.shape[1])
+    for chunk in range(chunks):
+        cur = _compact_apply_transition_to_state(
+            cur,
+            diag[:, chunk],
+            trans_left[:, chunk],
+            trans_right[:, chunk],
+        )
+        cur = cur + _compact_outer_to_dense(add_left[:, chunk].float(), add_right[:, chunk].float())
+    return cur
 
 
 def dplr_dense_chunk_summary_triton(
