@@ -113,9 +113,12 @@ Remaining before this goal is complete:
   `~0.067 ms` with starts diff vs dense `~5.96e-08`. The next required
   step is reusing current chunk apply/output to make a compact three-stage
   route. That route now exists as `dplr_compact_wy_three_stage_triton`; 4090
-  target correctness passes (`out_min_cosine~=0.9999999`, state diff
-  `~1.13e-04`), but current full compact time is `~0.501 ms`, so it is not
-  yet a performance win over dense3/P0.
+  target correctness passes (`out_min_cosine=1.0`, state diff
+  `~1.26e-04` in the benchmark row). It is exposed as
+  `RWKV7_DPLR_PREFILL_ALGORITHM=triton_wy_compact`; latest 4090 synthetic
+  target benchmark is `~0.241 ms`, `~2.12M tok/s`, close to P0 `triton_wy`
+  (`~0.228 ms`). HF repo-code smoke 0.4B/prompt512/bsz1 passes greedy/cache
+  at `~17.5k tok/s`.
 - Replace dense `[N,N]` transition/additive runtime summaries with compact
   WY/low-rank factors to reduce memory traffic and close the Albatross gap.
 - Make the explicit three-stage path at least competitive with the P0 fused

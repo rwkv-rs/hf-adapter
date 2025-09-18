@@ -43,7 +43,16 @@ __all__ = ["dplr_chunk_scan", "lowrank_chunk_summary"]
 
 
 _ALGORITHM_ENV = "RWKV7_DPLR_PREFILL_ALGORITHM"
-_SUPPORTED_ALGORITHMS = ("sequential", "affine", "lowrank", "wy", "triton_wy", "cuda_wy", "triton_dense3")
+_SUPPORTED_ALGORITHMS = (
+    "sequential",
+    "affine",
+    "lowrank",
+    "wy",
+    "triton_wy",
+    "cuda_wy",
+    "triton_dense3",
+    "triton_wy_compact",
+)
 
 
 def _require_torch():
@@ -97,7 +106,7 @@ def _resolve_algorithm(algorithm: Any) -> str:
     if not isinstance(algorithm, str):
         raise TypeError(
             "algorithm must be 'sequential', 'affine', 'lowrank', 'wy', "
-            "'triton_wy', 'cuda_wy', 'triton_dense3', or None"
+            "'triton_wy', 'cuda_wy', 'triton_dense3', 'triton_wy_compact', or None"
         )
     normalized = algorithm.strip().lower()
     if normalized not in _SUPPORTED_ALGORITHMS:
@@ -534,7 +543,9 @@ def dplr_chunk_scan(
         ``"cuda_wy"`` dispatch to the opt-in fused recurrent compiled prototype
         in ``dplr_prefill_triton``.  ``"triton_dense3"`` dispatches to the
         explicit dense three-stage Triton scaffold (summary -> prefix ->
-        chunk-apply) for synthetic benchmarking. ``None`` (the default) reads
+        chunk-apply), while ``"triton_wy_compact"`` dispatches to the compact
+        WY-factor scaffold that reuses the current chunk apply/output kernel.
+        ``None`` (the default) reads
         ``RWKV7_DPLR_PREFILL_ALGORITHM`` and falls back to ``"sequential"``
         when the environment variable is unset.
 
@@ -593,6 +604,26 @@ def dplr_chunk_scan(
             except Exception as exc:
                 raise RuntimeError("triton_dense3 requested but dplr_prefill_triton is unavailable") from exc
         return dplr_dense_three_stage_triton(
+            r,
+            w,
+            k,
+            v,
+            kk,
+            a,
+            state,
+            chunk_size=chunk_size_i,
+            force_fallback=force_fallback,
+        )
+
+    if algorithm_i == "triton_wy_compact":
+        try:
+            from .dplr_prefill_triton import dplr_compact_wy_three_stage_triton
+        except Exception:  # pragma: no cover - direct remote-file execution fallback
+            try:
+                from dplr_prefill_triton import dplr_compact_wy_three_stage_triton  # type: ignore[no-redef]
+            except Exception as exc:
+                raise RuntimeError("triton_wy_compact requested but dplr_prefill_triton is unavailable") from exc
+        return dplr_compact_wy_three_stage_triton(
             r,
             w,
             k,

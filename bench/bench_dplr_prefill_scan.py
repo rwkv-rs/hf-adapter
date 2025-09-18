@@ -35,7 +35,16 @@ else:  # pragma: no cover - exercised by benchmark/test hosts with torch
 
 
 DTYPE_CHOICES = ("bf16", "fp16", "fp32")
-ALGORITHMS = ("sequential", "affine", "wy", "lowrank", "triton_wy", "cuda_wy", "triton_dense3")
+ALGORITHMS = (
+    "sequential",
+    "affine",
+    "wy",
+    "lowrank",
+    "triton_wy",
+    "cuda_wy",
+    "triton_dense3",
+    "triton_wy_compact",
+)
 WY_ALGORITHM_ALIASES = ("wy", "lowrank")
 TRITON_WY_ALIASES = ("triton_wy", "cuda_wy")
 
@@ -98,6 +107,8 @@ def _algorithm_family(name: str | None) -> str | None:
         return "triton_wy"
     if normalized == "triton_dense3":
         return "triton_dense3"
+    if normalized == "triton_wy_compact":
+        return "triton_wy_compact"
     return "unknown"
 
 
