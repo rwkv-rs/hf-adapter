@@ -66,6 +66,8 @@ __all__ = [
     "dplr_dense_chunk_summary_triton_available",
     "dplr_dense_chunk_summary_torch",
     "dplr_compact_wy_chunk_summary_torch",
+    "dplr_compact_wy_chunk_summary_triton",
+    "dplr_compact_wy_chunk_summary_triton_available",
     "dplr_compact_wy_summary_to_dense",
     "dplr_compact_wy_apply_summaries_torch",
     "dplr_dense_prefix_combine_torch",
@@ -147,6 +149,86 @@ if _HAS_TRITON:
         mask = mask_i[:, None] & mask_j[None, :]
         tl.store(transition_ptr + summary_base, transition, mask=mask)
         tl.store(additive_ptr + summary_base, additive, mask=mask)
+
+    @triton.jit
+    def _compact_wy_summary_kernel(
+        w_ptr,
+        k_ptr,
+        v_ptr,
+        kk_ptr,
+        a_ptr,
+        diag_ptr,
+        trans_left_ptr,
+        trans_right_ptr,
+        add_left_ptr,
+        add_right_ptr,
+        T: tl.constexpr,
+        H: tl.constexpr,
+        N: tl.constexpr,
+        CHUNKS: tl.constexpr,
+        C: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        BLOCK_R: tl.constexpr,
+    ):
+        """Build compact WY/low-rank chunk factors for one chunk/head.
+
+        This first target-shape kernel owns a full `(N, C)` factor tile for one
+        `(batch, chunk, head)`.  It is intentionally constrained to
+        `BLOCK_N >= N` and `BLOCK_R >= C` so the compact metadata contract can
+        be validated before splitting the kernel for broader shapes.
+        """
+
+        pid = tl.program_id(0)
+        head_id = pid % H
+        chunk_id = (pid // H) % CHUNKS
+        batch_id = pid // (H * CHUNKS)
+
+        offs_n = tl.arange(0, BLOCK_N)
+        offs_r = tl.arange(0, BLOCK_R)
+        mask_n = offs_n < N
+        mask_r = offs_r < C
+        factor_mask = mask_n[:, None] & mask_r[None, :]
+
+        diag = tl.full((BLOCK_N,), 1.0, dtype=tl.float32)
+        trans_left = tl.zeros((BLOCK_N, BLOCK_R), dtype=tl.float32)
+        trans_right = tl.zeros((BLOCK_N, BLOCK_R), dtype=tl.float32)
+        add_left = tl.zeros((BLOCK_N, BLOCK_R), dtype=tl.float32)
+        add_right = tl.zeros((BLOCK_N, BLOCK_R), dtype=tl.float32)
+
+        i = 0
+        while i < C:
+            t = chunk_id * C + i
+            vec_base = ((batch_id * T + t) * H + head_id) * N
+            w = tl.load(w_ptr + vec_base + offs_n, mask=mask_n, other=0.0).to(tl.float32)
+            key = tl.load(k_ptr + vec_base + offs_n, mask=mask_n, other=0.0).to(tl.float32)
+            val = tl.load(v_ptr + vec_base + offs_n, mask=mask_n, other=0.0).to(tl.float32)
+            kk = tl.load(kk_ptr + vec_base + offs_n, mask=mask_n, other=0.0).to(tl.float32)
+            aval = tl.load(a_ptr + vec_base + offs_n, mask=mask_n, other=0.0).to(tl.float32)
+
+            p = -kk
+            q = kk * aval
+
+            trans_coeff = tl.sum(trans_right * p[:, None], axis=0)
+            new_left_col = diag * p + tl.sum(trans_left * trans_coeff[None, :], axis=1)
+            trans_right = trans_right * w[:, None]
+            diag = diag * w
+            trans_left = tl.where(offs_r[None, :] == i, new_left_col[:, None], trans_left)
+            trans_right = tl.where(offs_r[None, :] == i, q[:, None], trans_right)
+
+            add_coeff = tl.sum(add_right * p[:, None], axis=0)
+            add_right = add_right * w[:, None] + q[:, None] * add_coeff[None, :]
+            add_left = tl.where(offs_r[None, :] == i, val[:, None], add_left)
+            add_right = tl.where(offs_r[None, :] == i, key[:, None], add_right)
+            i += 1
+
+        diag_base = ((batch_id * CHUNKS + chunk_id) * H + head_id) * N
+        tl.store(diag_ptr + diag_base + offs_n, diag, mask=mask_n)
+
+        factor_base = (((batch_id * CHUNKS + chunk_id) * H + head_id) * N + offs_n[:, None]) * C + offs_r[None, :]
+        tl.store(trans_left_ptr + factor_base, trans_left, mask=factor_mask)
+        tl.store(trans_right_ptr + factor_base, trans_right, mask=factor_mask)
+        tl.store(add_left_ptr + factor_base, add_left, mask=factor_mask)
+        tl.store(add_right_ptr + factor_base, add_right, mask=factor_mask)
 
     @triton.jit
     def _dense_prefix_combine_kernel(
@@ -304,6 +386,12 @@ def dplr_chunk_scan_triton_available() -> bool:
 
 def dplr_dense_chunk_summary_triton_available() -> bool:
     """Return whether the dense chunk-summary Triton probe can run."""
+
+    return bool(_HAS_TRITON and torch is not None)
+
+
+def dplr_compact_wy_chunk_summary_triton_available() -> bool:
+    """Return whether the compact WY summary Triton probe can run."""
 
     return bool(_HAS_TRITON and torch is not None)
 
@@ -555,6 +643,103 @@ def dplr_compact_wy_chunk_summary_torch(
         "transition_right": torch.stack(trans_right_rows, dim=1),
         "additive_left": torch.stack(add_left_rows, dim=1),
         "additive_right": torch.stack(add_right_rows, dim=1),
+    }
+
+
+def dplr_compact_wy_chunk_summary_triton(
+    w: Any,
+    k: Any,
+    v: Any,
+    kk: Any,
+    a: Any,
+    *,
+    chunk_size: int = 64,
+    block_n: int | None = None,
+    block_r: int | None = None,
+    force_fallback: bool = False,
+):
+    """Build compact WY/low-rank chunk summaries with a target-shape Triton kernel."""
+
+    if torch is None:
+        raise RuntimeError("dplr_compact_wy_chunk_summary_triton requires torch")
+    chunk_size_i = _validate_chunk_size(chunk_size)
+    if not hasattr(w, "dim"):
+        raise TypeError("w must be a torch.Tensor")
+    if w.dim() != 4:
+        raise ValueError("summary inputs must be shaped [batch,tokens,heads,head_dim]")
+    B, T, H, N = (int(vv) for vv in w.shape)
+    if T % chunk_size_i != 0:
+        raise ValueError(f"T={T} must be divisible by chunk_size={chunk_size_i} for the compact WY prototype")
+    shape = (B, T, H, N)
+    for name, x in (("k", k), ("v", v), ("kk", kk), ("a", a)):
+        _check_same_bthn(name, x, shape=shape, device=w.device)
+    if not w.is_floating_point():
+        raise TypeError("w must be a floating point tensor")
+    if block_n is None:
+        block_n = _env_int("RWKV7_DPLR_TRITON_COMPACT_BLOCK_N", N)
+    if block_r is None:
+        block_r = _env_int("RWKV7_DPLR_TRITON_COMPACT_BLOCK_R", chunk_size_i)
+    block_n = int(block_n)
+    block_r = int(block_r)
+    if block_n < N:
+        raise ValueError(f"block_n must be >= head_dim={N}; got {block_n}")
+    if block_r < chunk_size_i:
+        raise ValueError(f"block_r must be >= chunk_size={chunk_size_i}; got {block_r}")
+
+    target_supported = N <= 64 and chunk_size_i <= 64 and block_n <= 64 and block_r <= 64
+    use_triton = (
+        not force_fallback
+        and target_supported
+        and dplr_compact_wy_chunk_summary_triton_available()
+        and w.is_cuda
+        and k.is_cuda
+        and v.is_cuda
+        and kk.is_cuda
+        and a.is_cuda
+    )
+    if not use_triton:
+        return dplr_compact_wy_chunk_summary_torch(w, k, v, kk, a, chunk_size=chunk_size_i)
+
+    chunks = T // chunk_size_i
+    w_c = w.contiguous()
+    k_c = k.contiguous()
+    v_c = v.contiguous()
+    kk_c = kk.contiguous()
+    a_c = a.contiguous()
+    transition_diag = torch.empty((B, chunks, H, N), device=w.device, dtype=torch.float32)
+    transition_left = torch.empty((B, chunks, H, N, chunk_size_i), device=w.device, dtype=torch.float32)
+    transition_right = torch.empty_like(transition_left)
+    additive_left = torch.empty_like(transition_left)
+    additive_right = torch.empty_like(transition_left)
+    _compact_wy_summary_kernel[(B * chunks * H,)](
+        w_c,
+        k_c,
+        v_c,
+        kk_c,
+        a_c,
+        transition_diag,
+        transition_left,
+        transition_right,
+        additive_left,
+        additive_right,
+        T,
+        H,
+        N,
+        chunks,
+        chunk_size_i,
+        BLOCK_N=block_n,
+        BLOCK_R=block_r,
+        num_warps=8 if max(block_n, block_r) >= 64 else 4,
+    )
+    return {
+        "algorithm": "triton_compact_wy_summary",
+        "chunk_size": chunk_size_i,
+        "rank": chunk_size_i,
+        "transition_diag": transition_diag,
+        "transition_left": transition_left,
+        "transition_right": transition_right,
+        "additive_left": additive_left,
+        "additive_right": additive_right,
     }
 
 
