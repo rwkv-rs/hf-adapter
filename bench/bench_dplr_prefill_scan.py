@@ -295,6 +295,16 @@ def pair_diff(got: tuple[Any, Any], ref: tuple[Any, Any]) -> dict[str, float]:
     }
 
 
+def apply_dense_chunk_summary(state: Any, summary: dict[str, Any]):
+    assert torch is not None
+    cur = state.float()
+    transition = summary["transition"]
+    additive = summary["additive"]
+    for chunk in range(int(transition.shape[1])):
+        cur = cur @ transition[:, chunk] + additive[:, chunk]
+    return cur
+
+
 def append_jsonl(path: str, row: dict[str, Any]) -> None:
     if not path:
         return
@@ -518,6 +528,7 @@ def main() -> int:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--warmup", type=int, default=3)
     ap.add_argument("--steps", type=int, default=10)
+    ap.add_argument("--summary-probe", action="store_true", help="also benchmark the explicit Triton dense chunk-summary kernel boundary")
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     ap.add_argument("--seed", type=int, default=7007)
     args = ap.parse_args()
@@ -547,16 +558,28 @@ def main() -> int:
         print(f"failed to import DPLR benchmark dependencies: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
     try:
-        from rwkv7_hf.dplr_prefill_triton import dplr_chunk_scan_triton_available
+        from rwkv7_hf.dplr_prefill_triton import (
+            dplr_chunk_scan_triton_available,
+            dplr_dense_chunk_summary_torch,
+            dplr_dense_chunk_summary_triton,
+            dplr_dense_chunk_summary_triton_available,
+        )
     except Exception:
         dplr_chunk_scan_triton_available = None  # type: ignore[assignment]
+        dplr_dense_chunk_summary_torch = None  # type: ignore[assignment]
+        dplr_dense_chunk_summary_triton = None  # type: ignore[assignment]
+        dplr_dense_chunk_summary_triton_available = None  # type: ignore[assignment]
 
     dtype = _dtype_from_name(args.dtype)
     dplr_call = DplrInvoker(dplr_chunk_scan)
     triton_wy_available = bool(
         dplr_chunk_scan_triton_available is not None and dplr_chunk_scan_triton_available()
     )
+    triton_summary_available = bool(
+        dplr_dense_chunk_summary_triton_available is not None and dplr_dense_chunk_summary_triton_available()
+    )
     triton_wy_block_m = int(os.environ.get("RWKV7_DPLR_TRITON_BLOCK_M", "8"))
+    triton_summary_block_m = int(os.environ.get("RWKV7_DPLR_TRITON_SUMMARY_BLOCK_M", "8"))
     rows = 0
 
     if dev.type == "cuda":
@@ -624,6 +647,98 @@ def main() -> int:
                 continue
 
             for chunk_size in args.chunk_sizes:
+                if args.summary_probe:
+                    row = base_row(args, B=int(B), T=int(T), H=H, N=N)
+                    row["axis"] = "dplr_chunk_summary_proto"
+                    row.update(
+                        {
+                            "algorithm": "triton_dense_dplr_summary",
+                            "algorithm_family": "triton_dense_summary",
+                            "chunk_size": int(chunk_size),
+                            "triton_summary_available": triton_summary_available,
+                            "triton_summary_block_m": triton_summary_block_m,
+                        }
+                    )
+                    try:
+                        if dplr_dense_chunk_summary_torch is None or dplr_dense_chunk_summary_triton is None:
+                            raise UnsupportedAlgorithmError(
+                                requested_algorithm="triton_dense_dplr_summary",
+                                status="skip_unsupported_algorithm",
+                                reason="dplr_prefill_triton summary helpers are unavailable",
+                            )
+                        if not triton_summary_available or not xs["w"].is_cuda:
+                            row.update(
+                                {
+                                    "status": "skip_triton_unavailable",
+                                    "skip_reason": "dense chunk-summary Triton kernel unavailable on this host/device",
+                                    "ms": None,
+                                    "tokps": None,
+                                    "transition_max_abs_diff": None,
+                                    "additive_max_abs_diff": None,
+                                    "state_max_abs_diff": None,
+                                    "peak_vram_mb": _peak_mb(args.device),
+                                }
+                            )
+                        else:
+                            with torch.inference_mode():
+                                summary_ref = dplr_dense_chunk_summary_torch(
+                                    xs["w"], xs["k"], xs["v"], xs["kk"], xs["a"], chunk_size=int(chunk_size)
+                                )
+                                summary_got = dplr_dense_chunk_summary_triton(
+                                    xs["w"], xs["k"], xs["v"], xs["kk"], xs["a"], chunk_size=int(chunk_size)
+                                )
+                                got_state = apply_dense_chunk_summary(xs["state"], summary_got)
+                            ms = timed(
+                                lambda: dplr_dense_chunk_summary_triton(
+                                    xs["w"], xs["k"], xs["v"], xs["kk"], xs["a"], chunk_size=int(chunk_size)
+                                ),
+                                device=args.device,
+                                warmup=args.warmup,
+                                steps=args.steps,
+                            )
+                            transition_diff = (summary_got["transition"].float() - summary_ref["transition"].float()).abs()
+                            additive_diff = (summary_got["additive"].float() - summary_ref["additive"].float()).abs()
+                            state_diff = (got_state.float() - ref[1].float()).abs()
+                            row.update(
+                                {
+                                    "status": "pass",
+                                    "transition_max_abs_diff": float(transition_diff.max().detach().cpu()),
+                                    "additive_max_abs_diff": float(additive_diff.max().detach().cpu()),
+                                    "state_max_abs_diff": float(state_diff.max().detach().cpu()),
+                                    "summary_shape": list(summary_got["transition"].shape),
+                                    "peak_vram_mb": _peak_mb(args.device),
+                                }
+                            )
+                            finish_timing_row(row, B=int(B), T=int(T), ms=ms)
+                    except UnsupportedAlgorithmError as exc:
+                        row.update(
+                            {
+                                "status": exc.status,
+                                "skip_reason": exc.reason,
+                                "ms": None,
+                                "tokps": None,
+                                "transition_max_abs_diff": None,
+                                "additive_max_abs_diff": None,
+                                "state_max_abs_diff": None,
+                                "peak_vram_mb": _peak_mb(args.device),
+                            }
+                        )
+                    except Exception as exc:
+                        row.update(
+                            {
+                                "status": f"error:{type(exc).__name__}",
+                                "error": str(exc),
+                                "ms": None,
+                                "tokps": None,
+                                "transition_max_abs_diff": None,
+                                "additive_max_abs_diff": None,
+                                "state_max_abs_diff": None,
+                                "peak_vram_mb": _peak_mb(args.device),
+                            }
+                        )
+                    emit(row, results=args.results)
+                    rows += 1
+
                 for algorithm in args.algorithms:
                     requested_algorithm = _normalize_algorithm_name(algorithm)
                     row = base_row(args, B=int(B), T=int(T), H=H, N=N)
