@@ -107,7 +107,12 @@ Remaining before this goal is complete:
   `dplr_compact_wy_apply_summaries_torch`. The first Triton compact kernel is
   target-constrained to `N<=64, chunk_size<=64`; 4090 target factor diff is
   `<=5.96e-08`, final state diff is `~1.13e-04`, and summary time is
-  `~0.155 ms`. The next required step is compact prefix combine.
+  `~0.155 ms`. Compact prefix combine now exists via
+  `dplr_compact_wy_prefix_combine_torch` and
+  `dplr_compact_wy_prefix_combine_triton`; 4090 target prefix time is
+  `~0.067 ms` with starts diff vs dense `~5.96e-08`. The next required
+  step is reusing current chunk apply/output to make a compact three-stage
+  route.
 - Replace dense `[N,N]` transition/additive runtime summaries with compact
   WY/low-rank factors to reduce memory traffic and close the Albatross gap.
 - Make the explicit three-stage path at least competitive with the P0 fused

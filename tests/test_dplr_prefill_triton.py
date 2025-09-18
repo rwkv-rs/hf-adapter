@@ -59,6 +59,7 @@ def test_dense_chunk_summary_torch_final_state_matches_recurrent_scan() -> None:
     from rwkv7_hf.dplr_prefill_triton import (
         dplr_compact_wy_apply_summaries_torch,
         dplr_compact_wy_chunk_summary_torch,
+        dplr_compact_wy_prefix_combine_torch,
         dplr_compact_wy_summary_to_dense,
         dplr_dense_chunk_apply_torch,
         dplr_dense_chunk_summary_torch,
@@ -90,6 +91,11 @@ def test_dense_chunk_summary_torch_final_state_matches_recurrent_scan() -> None:
     assert torch.allclose(compact_state, ref_state, atol=2e-6, rtol=2e-6), (compact_state - ref_state).abs().max()
 
     start_states, prefix_final = dplr_dense_prefix_combine_torch(state, summary["transition"], summary["additive"])
+    compact_starts, compact_prefix_final = dplr_compact_wy_prefix_combine_torch(state, compact)
+    assert torch.allclose(compact_starts, start_states, atol=2e-6, rtol=2e-6), (compact_starts - start_states).abs().max()
+    assert torch.allclose(compact_prefix_final, prefix_final, atol=2e-6, rtol=2e-6), (
+        compact_prefix_final - prefix_final
+    ).abs().max()
     assert torch.allclose(start_states[:, 0], state.float(), atol=0, rtol=0)
     assert torch.allclose(prefix_final, ref_state, atol=2e-6, rtol=2e-6), (prefix_final - ref_state).abs().max()
 
@@ -122,6 +128,8 @@ def test_dense_chunk_summary_triton_matches_torch_cuda() -> None:
         dplr_compact_wy_apply_summaries_torch,
         dplr_compact_wy_chunk_summary_torch,
         dplr_compact_wy_chunk_summary_triton,
+        dplr_compact_wy_prefix_combine_torch,
+        dplr_compact_wy_prefix_combine_triton,
         dplr_compact_wy_summary_to_dense,
         dplr_dense_prefix_combine_torch,
         dplr_dense_prefix_combine_triton,
@@ -165,6 +173,23 @@ def test_dense_chunk_summary_triton_matches_torch_cuda() -> None:
     assert torch.allclose(compact_state, ref_state, atol=2e-6, rtol=2e-6), (compact_state - ref_state).abs().max()
 
     starts_ref, prefix_final_ref = dplr_dense_prefix_combine_torch(state, ref["transition"], ref["additive"])
+    compact_starts_ref, compact_prefix_final_ref = dplr_compact_wy_prefix_combine_torch(state, compact_ref)
+    compact_starts_got, compact_prefix_final_got = dplr_compact_wy_prefix_combine_triton(
+        state, compact_got, block_m=2
+    )
+    assert torch.allclose(compact_starts_ref, starts_ref, atol=2e-6, rtol=2e-6), (
+        compact_starts_ref - starts_ref
+    ).abs().max()
+    assert torch.allclose(compact_prefix_final_ref, prefix_final_ref, atol=2e-6, rtol=2e-6), (
+        compact_prefix_final_ref - prefix_final_ref
+    ).abs().max()
+    assert torch.allclose(compact_starts_got, compact_starts_ref, atol=2e-6, rtol=2e-6), (
+        compact_starts_got - compact_starts_ref
+    ).abs().max()
+    assert torch.allclose(compact_prefix_final_got, compact_prefix_final_ref, atol=2e-6, rtol=2e-6), (
+        compact_prefix_final_got - compact_prefix_final_ref
+    ).abs().max()
+
     starts_got, prefix_final_got = dplr_dense_prefix_combine_triton(
         state, got["transition"], got["additive"], block_m=2
     )
