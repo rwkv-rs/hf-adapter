@@ -307,6 +307,230 @@ def apply_dense_chunk_summary(state: Any, summary: dict[str, Any]):
     return cur
 
 
+def emit_dense3_stage_probe(
+    args: argparse.Namespace,
+    xs: dict[str, Any],
+    ref: tuple[Any, Any],
+    *,
+    B: int,
+    T: int,
+    H: int,
+    N: int,
+    chunk_size: int,
+    triton_summary_available: bool,
+    triton_summary_block_m: int,
+    triton_prefix_block_m: int,
+    triton_apply_block_m: int,
+    dplr_dense_chunk_summary_torch: Callable[..., Any] | None,
+    dplr_dense_chunk_summary_triton: Callable[..., Any] | None,
+    dplr_dense_prefix_combine_torch: Callable[..., Any] | None,
+    dplr_dense_prefix_combine_triton: Callable[..., Any] | None,
+    dplr_dense_chunk_apply_torch: Callable[..., Any] | None,
+    dplr_dense_chunk_apply_triton: Callable[..., Any] | None,
+    dplr_dense_three_stage_triton: Callable[..., Any] | None,
+) -> int:
+    """Emit per-stage rows for the explicit dense3 scaffold.
+
+    The normal algorithm rows answer "is triton_dense3 correct and how fast is
+    it end-to-end?".  These probe rows answer "which of summary, prefix, or
+    apply/output is the bottleneck?" so the next compact-WY iteration can remove
+    the right dense `[N,N]` traffic first.
+    """
+
+    stages = ("dense_chunk_summary", "dense_prefix_combine", "dense_chunk_apply", "dense3_full")
+    required = (
+        dplr_dense_chunk_summary_torch,
+        dplr_dense_chunk_summary_triton,
+        dplr_dense_prefix_combine_torch,
+        dplr_dense_prefix_combine_triton,
+        dplr_dense_chunk_apply_torch,
+        dplr_dense_chunk_apply_triton,
+        dplr_dense_three_stage_triton,
+    )
+    rows = 0
+
+    def make_stage_row(stage: str) -> dict[str, Any]:
+        row = base_row(args, B=B, T=T, H=H, N=N)
+        row["axis"] = "dplr_dense3_stage_proto"
+        row.update(
+            {
+                "algorithm": "triton_dense3",
+                "algorithm_family": "triton_dense3",
+                "stage": stage,
+                "chunk_size": int(chunk_size),
+                "triton_summary_available": triton_summary_available,
+                "triton_summary_block_m": triton_summary_block_m,
+                "triton_prefix_block_m": triton_prefix_block_m,
+                "triton_apply_block_m": triton_apply_block_m,
+            }
+        )
+        return row
+
+    def emit_stage(row: dict[str, Any]) -> None:
+        nonlocal rows
+        emit(row, results=args.results)
+        rows += 1
+
+    def emit_skip(reason: str) -> int:
+        for stage in stages:
+            row = make_stage_row(stage)
+            row.update(
+                {
+                    "status": "skip_triton_unavailable",
+                    "skip_reason": reason,
+                    "ms": None,
+                    "tokps": None,
+                    "out_max_abs_diff": None,
+                    "state_max_abs_diff": None,
+                    "out_min_cosine": None,
+                    "peak_vram_mb": _peak_mb(args.device),
+                }
+            )
+            emit_stage(row)
+        return rows
+
+    if any(fn is None for fn in required):
+        return emit_skip("dense3 stage helpers are unavailable")
+    if not triton_summary_available or not xs["r"].is_cuda:
+        return emit_skip("dense3 Triton stage kernels unavailable on this host/device")
+
+    try:
+        with torch.inference_mode():
+            summary_ref = dplr_dense_chunk_summary_torch(  # type: ignore[misc]
+                xs["w"], xs["k"], xs["v"], xs["kk"], xs["a"], chunk_size=int(chunk_size)
+            )
+            summary_got = dplr_dense_chunk_summary_triton(  # type: ignore[misc]
+                xs["w"], xs["k"], xs["v"], xs["kk"], xs["a"], chunk_size=int(chunk_size)
+            )
+            starts_ref, prefix_final_ref = dplr_dense_prefix_combine_torch(  # type: ignore[misc]
+                xs["state"], summary_ref["transition"], summary_ref["additive"]
+            )
+            starts_got, prefix_final_got = dplr_dense_prefix_combine_triton(  # type: ignore[misc]
+                xs["state"], summary_got["transition"], summary_got["additive"]
+            )
+            apply_ref = dplr_dense_chunk_apply_torch(  # type: ignore[misc]
+                xs["r"], xs["w"], xs["k"], xs["v"], xs["kk"], xs["a"], starts_ref, chunk_size=int(chunk_size)
+            )
+            apply_got = dplr_dense_chunk_apply_triton(  # type: ignore[misc]
+                xs["r"], xs["w"], xs["k"], xs["v"], xs["kk"], xs["a"], starts_got, chunk_size=int(chunk_size)
+            )
+            dense3_got = dplr_dense_three_stage_triton(  # type: ignore[misc]
+                xs["r"], xs["w"], xs["k"], xs["v"], xs["kk"], xs["a"], xs["state"], chunk_size=int(chunk_size)
+            )
+
+        summary_ms = timed(
+            lambda: dplr_dense_chunk_summary_triton(  # type: ignore[misc]
+                xs["w"], xs["k"], xs["v"], xs["kk"], xs["a"], chunk_size=int(chunk_size)
+            ),
+            device=args.device,
+            warmup=args.warmup,
+            steps=args.steps,
+        )
+        prefix_ms = timed(
+            lambda: dplr_dense_prefix_combine_triton(  # type: ignore[misc]
+                xs["state"], summary_got["transition"], summary_got["additive"]
+            ),
+            device=args.device,
+            warmup=args.warmup,
+            steps=args.steps,
+        )
+        apply_ms = timed(
+            lambda: dplr_dense_chunk_apply_triton(  # type: ignore[misc]
+                xs["r"], xs["w"], xs["k"], xs["v"], xs["kk"], xs["a"], starts_got, chunk_size=int(chunk_size)
+            ),
+            device=args.device,
+            warmup=args.warmup,
+            steps=args.steps,
+        )
+        full_ms = timed(
+            lambda: dplr_dense_three_stage_triton(  # type: ignore[misc]
+                xs["r"], xs["w"], xs["k"], xs["v"], xs["kk"], xs["a"], xs["state"], chunk_size=int(chunk_size)
+            ),
+            device=args.device,
+            warmup=args.warmup,
+            steps=args.steps,
+        )
+
+        transition_diff = (summary_got["transition"].float() - summary_ref["transition"].float()).abs()
+        additive_diff = (summary_got["additive"].float() - summary_ref["additive"].float()).abs()
+        summary_state_diff = (apply_dense_chunk_summary(xs["state"], summary_got).float() - ref[1].float()).abs()
+        starts_diff = (starts_got.float() - starts_ref.float()).abs()
+        prefix_state_diff = (prefix_final_got.float() - ref[1].float()).abs()
+        apply_pair_diff = pair_diff((apply_got[0], apply_got[1][:, -1]), ref)
+        full_pair_diff = pair_diff(dense3_got, ref)
+
+        row = make_stage_row("dense_chunk_summary")
+        row.update(
+            {
+                "status": "pass",
+                "summary_shape": list(summary_got["transition"].shape),
+                "transition_max_abs_diff": float(transition_diff.max().detach().cpu()),
+                "additive_max_abs_diff": float(additive_diff.max().detach().cpu()),
+                "state_max_abs_diff": float(summary_state_diff.max().detach().cpu()),
+                "peak_vram_mb": _peak_mb(args.device),
+            }
+        )
+        finish_timing_row(row, B=B, T=T, ms=summary_ms)
+        emit_stage(row)
+
+        row = make_stage_row("dense_prefix_combine")
+        row.update(
+            {
+                "status": "pass",
+                "start_states_shape": list(starts_got.shape),
+                "start_states_max_abs_diff": float(starts_diff.max().detach().cpu()),
+                "state_max_abs_diff": float(prefix_state_diff.max().detach().cpu()),
+                "prefix_vs_torch_summary_state_max_abs_diff": float(
+                    (prefix_final_got.float() - prefix_final_ref.float()).abs().max().detach().cpu()
+                ),
+                "peak_vram_mb": _peak_mb(args.device),
+            }
+        )
+        finish_timing_row(row, B=B, T=T, ms=prefix_ms)
+        emit_stage(row)
+
+        row = make_stage_row("dense_chunk_apply")
+        row.update(
+            {
+                "status": "pass",
+                "chunk_end_shape": list(apply_got[1].shape),
+                "chunk_end_max_abs_diff": float((apply_got[1].float() - apply_ref[1].float()).abs().max().detach().cpu()),
+                "peak_vram_mb": _peak_mb(args.device),
+                **apply_pair_diff,
+            }
+        )
+        finish_timing_row(row, B=B, T=T, ms=apply_ms)
+        emit_stage(row)
+
+        row = make_stage_row("dense3_full")
+        row.update(
+            {
+                "status": "pass",
+                "peak_vram_mb": _peak_mb(args.device),
+                **full_pair_diff,
+            }
+        )
+        finish_timing_row(row, B=B, T=T, ms=full_ms)
+        emit_stage(row)
+    except Exception as exc:
+        for stage in stages:
+            row = make_stage_row(stage)
+            row.update(
+                {
+                    "status": f"error:{type(exc).__name__}",
+                    "error": str(exc),
+                    "ms": None,
+                    "tokps": None,
+                    "out_max_abs_diff": None,
+                    "state_max_abs_diff": None,
+                    "out_min_cosine": None,
+                    "peak_vram_mb": _peak_mb(args.device),
+                }
+            )
+            emit_stage(row)
+    return rows
+
+
 def append_jsonl(path: str, row: dict[str, Any]) -> None:
     if not path:
         return
@@ -531,6 +755,7 @@ def main() -> int:
     ap.add_argument("--warmup", type=int, default=3)
     ap.add_argument("--steps", type=int, default=10)
     ap.add_argument("--summary-probe", action="store_true", help="also benchmark the explicit Triton dense chunk-summary kernel boundary")
+    ap.add_argument("--stage-probe", action="store_true", help="also time dense3 summary/prefix/apply/full stages separately")
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     ap.add_argument("--seed", type=int, default=7007)
     args = ap.parse_args()
@@ -562,15 +787,25 @@ def main() -> int:
     try:
         from rwkv7_hf.dplr_prefill_triton import (
             dplr_chunk_scan_triton_available,
+            dplr_dense_chunk_apply_torch,
+            dplr_dense_chunk_apply_triton,
             dplr_dense_chunk_summary_torch,
             dplr_dense_chunk_summary_triton,
             dplr_dense_chunk_summary_triton_available,
+            dplr_dense_prefix_combine_torch,
+            dplr_dense_prefix_combine_triton,
+            dplr_dense_three_stage_triton,
         )
     except Exception:
         dplr_chunk_scan_triton_available = None  # type: ignore[assignment]
+        dplr_dense_chunk_apply_torch = None  # type: ignore[assignment]
+        dplr_dense_chunk_apply_triton = None  # type: ignore[assignment]
         dplr_dense_chunk_summary_torch = None  # type: ignore[assignment]
         dplr_dense_chunk_summary_triton = None  # type: ignore[assignment]
         dplr_dense_chunk_summary_triton_available = None  # type: ignore[assignment]
+        dplr_dense_prefix_combine_torch = None  # type: ignore[assignment]
+        dplr_dense_prefix_combine_triton = None  # type: ignore[assignment]
+        dplr_dense_three_stage_triton = None  # type: ignore[assignment]
 
     dtype = _dtype_from_name(args.dtype)
     dplr_call = DplrInvoker(dplr_chunk_scan)
@@ -743,6 +978,29 @@ def main() -> int:
                         )
                     emit(row, results=args.results)
                     rows += 1
+
+                if args.stage_probe:
+                    rows += emit_dense3_stage_probe(
+                        args,
+                        xs,
+                        ref,
+                        B=int(B),
+                        T=int(T),
+                        H=H,
+                        N=N,
+                        chunk_size=int(chunk_size),
+                        triton_summary_available=triton_summary_available,
+                        triton_summary_block_m=triton_summary_block_m,
+                        triton_prefix_block_m=triton_prefix_block_m,
+                        triton_apply_block_m=triton_apply_block_m,
+                        dplr_dense_chunk_summary_torch=dplr_dense_chunk_summary_torch,
+                        dplr_dense_chunk_summary_triton=dplr_dense_chunk_summary_triton,
+                        dplr_dense_prefix_combine_torch=dplr_dense_prefix_combine_torch,
+                        dplr_dense_prefix_combine_triton=dplr_dense_prefix_combine_triton,
+                        dplr_dense_chunk_apply_torch=dplr_dense_chunk_apply_torch,
+                        dplr_dense_chunk_apply_triton=dplr_dense_chunk_apply_triton,
+                        dplr_dense_three_stage_triton=dplr_dense_three_stage_triton,
+                    )
 
                 for algorithm in args.algorithms:
                     requested_algorithm = _normalize_algorithm_name(algorithm)

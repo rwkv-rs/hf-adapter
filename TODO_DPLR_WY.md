@@ -16,14 +16,17 @@ This is a short-lived working TODO for the current `wangyue/native-fused-fp16-ke
 
 - [x] Push current branch so the dense3 scaffold is backed up.
   - Done: pushed `wangyue/native-fused-fp16-kernel` through `a8f76a6` to `origin`.
-- [ ] Add/extend benchmark rows that separately time:
-  - [ ] dense chunk summary
-  - [ ] dense prefix combine
-  - [ ] dense chunk apply/output
-  - [ ] full dense3 end-to-end
-- [ ] Run the staged timing split on RTX 4090 target shape:
+- [x] Add/extend benchmark rows that separately time:
+  - [x] dense chunk summary
+  - [x] dense prefix combine
+  - [x] dense chunk apply/output
+  - [x] full dense3 end-to-end
+  - Done: `bench/bench_dplr_prefill_scan.py --stage-probe` emits `axis="dplr_dense3_stage_proto"`; analyzer prints the new section.
+- [x] Run the staged timing split on RTX 4090 target shape:
   - `B=1,T=512,H=16,N=64,chunk_size=64,fp16`
-- [ ] Identify whether the main dense3 bottleneck is summary, prefix, apply, or memory traffic.
+  - Done: `/tmp/dplr_dense3_stage_probe.jsonl`, warmup=1, steps=5.
+- [x] Identify whether the main dense3 bottleneck is summary, prefix, apply, or memory traffic.
+  - Current split: summary `~0.144 ms`, prefix `~0.092 ms`, apply/output `~0.065 ms`, full dense3 `~0.264-0.269 ms`. Dense summary/prefix `[N,N]` traffic is the first compact-WY target.
 
 ## P1 compact WY path
 
@@ -38,27 +41,29 @@ This is a short-lived working TODO for the current `wangyue/native-fused-fp16-ke
 
 ## Correctness gates
 
-- [ ] Local no-CUDA checks:
+- [x] Local no-CUDA checks:
   - `python -m py_compile rwkv7_hf/dplr_prefill_triton.py rwkv7_hf/dplr_prefill.py bench/bench_dplr_prefill_scan.py tests/test_dplr_prefill_triton.py tests/test_dplr_prefill_scan.py`
   - `git diff --check`
-- [ ] 4090 unit tests:
+- [x] 4090 unit tests:
   - `PYTHONPATH=. python tests/test_dplr_prefill_scan.py`
   - `PYTHONPATH=. python tests/test_dplr_prefill_triton.py`
-- [ ] 4090 synthetic fp16 target:
+- [x] 4090 synthetic fp16 target:
   - `out_min_cosine >= 0.9999`
   - state diff comparable to current `triton_wy` / dense3 rows
-- [ ] HF repo-code smoke:
+  - Latest dense3 stage-probe full row: `out_min_cosine=1.0`, `state_max_abs_diff=0.0001257062`.
+- [x] HF repo-code smoke:
   - `RWKV7_NATIVE_PREFILL_DPLR_SCAN=1`
   - `RWKV7_DPLR_PREFILL_ALGORITHM=<candidate>`
   - 0.4B / prompt512 / bsz1
   - greedy/cache smoke must pass
+  - Done for current scaffold: `triton_wy` and `triton_dense3` both passed 4090 / 0.4B / prompt512 / bsz1 smoke.
 
 ## Performance targets
 
 - Baseline evidence from latest 4090 synthetic target:
-  - `sequential`: about `55.63 ms`, `9.2k tok/s`
+  - `sequential`: about `55.63 ms`, `9.2k tok/s` in the earlier mixed run
   - `triton_wy`: about `0.233 ms`, `2.20M tok/s`
-  - `triton_dense3`: about `0.584 ms`, `877k tok/s`
+  - `triton_dense3`: latest stage-probe full row about `0.264-0.269 ms`, `~1.9M tok/s`
 - Short-term compact target:
   - [ ] compact path `< 0.4 ms` on synthetic target
   - [ ] then approach or beat current `triton_wy` P0 `~0.233 ms`

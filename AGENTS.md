@@ -85,10 +85,12 @@ Latest RTX 4090 target evidence:
   - `sequential`: pass, about `55.63 ms`, `9.2k tok/s`
   - `triton_wy`: pass, about `0.233 ms`, `2.20M tok/s`,
     `out_min_cosine ~= 0.9999999`
-  - `triton_dense3`: pass, about `0.584 ms`, `877k tok/s`,
-    `out_min_cosine = 1.0`
-  - dense chunk summary stage alone: pass, about `0.322 ms`, summary shape
-    `[1,8,16,64,64]`
+  - `triton_dense3`: pass; latest stage-probe full row is about
+    `0.264-0.269 ms`, `~1.9M tok/s`, `out_min_cosine = 1.0`
+  - dense stage split from `--stage-probe`: summary `~0.144 ms`, prefix
+    `~0.092 ms`, apply/output `~0.065 ms`, summary shape
+    `[1,8,16,64,64]`. Dense summary/prefix `[N,N]` traffic is the first
+    compact-WY target.
 - HF repo-code smoke on 4090 / 0.4B / prompt512 / bsz1:
   - `RWKV7_DPLR_PREFILL_ALGORITHM=triton_wy`: pass, greedy/cache smoke pass,
     about `20.4k tok/s` in the latest one-step smoke.
