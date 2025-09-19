@@ -136,6 +136,19 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
         release_cuda(torch)
         maybe_barrier(torch)
 
+        # The first Trainer set transformers' global is_deepspeed_zero3_enabled()
+        # flag; deleting the Trainer does NOT reset it. Left set, the next
+        # from_pretrained builds the resume model under DeepSpeed's partitioned
+        # init, which breaks FLA's _initialize_weights (it indexes
+        # param.shape[1], out of range on a partitioned 1-D shard -> IndexError,
+        # the ZeRO3-resume failure). Reset it so the resume model builds at full
+        # shape; the new Trainer re-enables ZeRO3 via deepspeed.initialize.
+        try:
+            from transformers.integrations import unset_hf_deepspeed_config
+            unset_hf_deepspeed_config()
+        except Exception:
+            pass
+
         resumed_model = ds.load_lora_model(args.model, args.attn_mode, args.train_dtype)
         before_resume = ds.trainable_snapshot(resumed_model)
         resumed_trainer = Trainer(
