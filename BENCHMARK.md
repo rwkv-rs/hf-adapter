@@ -8,7 +8,39 @@ and Albatross-style paths in correctness, speed, and memory.
 
 - Development server: **Tesla V100-PCIE-32GB**, CUDA fp16.
 - Local dev box baseline from earlier PR: **NVIDIA RTX 5070 Laptop GPU**, fp16/bf16/fp32.
+- Ada validation server: **NVIDIA GeForce RTX 4090 24GB (sm_89)**, CUDA 12.8.
 - Baseline model: **rwkv7-g1d-0.1b-20260129-ctx8192**.
+
+## Current RTX 4090 / Ada status
+
+Issue #66 (`RTX 4090 / Ada — HF 适配验证`) is validated on the 0.4B HF model
+using repo remote code over `/workspace/models/rwkv7/rwkv7-g1d-0.4b-hf`.
+Results are recorded in:
+
+- `bench/results_4090_issue66_final_20260702_113804.jsonl`
+- appended rows in `bench/results.jsonl`
+- detailed summary in `bench/4090_validation_summary.md`
+
+Environment: PyTorch `2.11.0+cu128`, CUDA `12.8`, Transformers `5.12.1`,
+PEFT `0.19.1`, TRL `1.7.0`, bitsandbytes `0.49.2`, DeepSpeed `0.19.2`.
+
+Issue #66 checklist status:
+
+| Area | Result |
+|---|---|
+| HF generate smoke | PASS (`native_graph` fast-token backend) |
+| HF API contract | PASS, fp16 + bf16 |
+| Quantized inference | PASS, W8 + W4; quantized fast-forward resolves to FLA |
+| Speed benchmark | PASS, fp16 prefill `22,222.6 tok/s`, decode `376.7 tok/s` |
+| Batch sweep | PASS, bsz 1/2/4 decode `377.0` / `549.8` / `1,138.0 tok/s` |
+| PEFT LoRA | PASS, non-zero LoRA grads |
+| HF Trainer / TRL SFT | PASS, trainable delta ≈ `1e-4` |
+| TRL DPO | PASS, trainable delta ≈ `1e-4` |
+
+The 4090 fused-state-scan prefill kernel line separately reaches `25,663.2
+tok/s` (`0.4921x` of the current Albatross reference for 0.4B / bsz1 /
+prompt512), satisfying the near-term `>=0.45x` target. It remains opt-in; the
+default HF path is unchanged.
 
 ## Acceptance targets for 0.1B smoke baseline
 

@@ -7,6 +7,60 @@ Checkpoint SHA256: `947cb9b8013224e06b112b72204256bec65096cc935a7767ce63d8e3ddef
 
 This records the first real 4090 validation loop for the HF wrapper + native fused backend line. Albatross is used as the external performance acceptance line, not as our code path.
 
+## Issue #66 HF adapter validation pass
+
+Final validation artifact:
+`bench/results_4090_issue66_final_20260702_113804.jsonl` (also appended to
+`bench/results.jsonl`). Full remote log:
+`/tmp/issue66_4090_final_20260702_113804.log`.
+
+Environment:
+
+| item | value |
+|---|---|
+| GPU | NVIDIA GeForce RTX 4090, sm_89 |
+| Python | 3.12.3 |
+| PyTorch / CUDA | 2.11.0+cu128 / 12.8 |
+| Transformers | 5.12.1 |
+| PEFT / TRL / DeepSpeed / Accelerate | 0.19.1 / 1.7.0 / 0.19.2 / 1.14.0 |
+| bitsandbytes | 0.49.2 |
+| Base model | `/workspace/models/rwkv7/rwkv7-g1d-0.4b-hf` |
+| Effective repo-code model | `/tmp/rwkv7_issue66_repo_model` |
+
+Issue checklist status:
+
+| check | status | notes |
+|---|---|---|
+| `tests/smoke_hf_generate.py` | PASS | generate uses `native_graph` fast-token backend |
+| `tests/test_hf_api_contract.py` | PASS | fp16 and bf16, `fused_recurrent` |
+| `tests/test_quantized_inference.py` | PASS | 8-bit and 4-bit; quantized fast-forward safely resolves to FLA |
+| `bench/bench_speed.py` | PASS | fp16/bf16 rows appended |
+| `bench/bench_batch_sweep.py` | PASS | bsz 1/2/4 rows appended |
+| `tests/test_peft_lora.py` | PASS | LoRA gradients non-zero |
+| `tests/test_hf_training_smoke.py` | PASS | Trainer + TRL SFT |
+| `tests/test_hf_rl_training_smoke.py` | PASS | TRL DPO |
+
+Issue #66 headline rows:
+
+| row | dtype / quant | result |
+|---|---|---:|
+| speed prefill | fp16 | 22,222.6 tok/s |
+| speed decode | fp16 | 376.7 tok/s |
+| speed prefill | bf16 | 22,242.0 tok/s |
+| speed decode | bf16 | 375.1 tok/s |
+| batch sweep bsz=1 | fp16/native_graph decode | 377.0 tok/s |
+| batch sweep bsz=2 | fp16/native_graph decode | 549.8 tok/s |
+| batch sweep bsz=4 | fp16/native_graph decode | 1,138.0 tok/s |
+| quant footprint | W8 | 571.8 MB model footprint, 622.1 MB peak VRAM |
+| quant footprint | W4 | 427.8 MB model footprint, 494.8 MB peak VRAM |
+| training | Trainer / TRL SFT / TRL DPO | pass, trainable delta ≈ `1e-4` |
+
+Implementation note: bitsandbytes/HF W8/W4 modules have packed int8/int4
+weights. The native dense fast-token runners are intentionally bypassed for
+externally quantized models even when `RWKV7_FAST_TOKEN_BACKEND=native_graph`
+is globally set; quantized fast-forward falls back to the FLA tensor path until
+a dedicated native quant kernel is added.
+
 ## Albatross A/B
 
 Albatross backends built/run on the 4090:

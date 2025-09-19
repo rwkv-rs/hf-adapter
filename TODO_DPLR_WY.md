@@ -71,6 +71,23 @@ is either checked off or replaced with a more precise kernel task.
 
 ## Next concrete kernel TODO from the 4090 sweep
 
+- [x] Complete the RTX 4090 / Ada HF adapter validation issue checklist.
+  - GitHub issue: `#66` (`[card] RTX 4090 / Ada — HF 适配验证`).
+  - Final artifact: `bench/results_4090_issue66_final_20260702_113804.jsonl`
+    and appended rows in `bench/results.jsonl`.
+  - Remote log: `/tmp/issue66_4090_final_20260702_113804.log`.
+  - Environment recorded: RTX 4090 sm_89, Python `3.12.3`, PyTorch
+    `2.11.0+cu128`, CUDA `12.8`, Transformers `5.12.1`, PEFT `0.19.1`,
+    TRL `1.7.0`, bitsandbytes `0.49.2`, DeepSpeed `0.19.2`, Accelerate
+    `1.14.0`.
+  - Passed: `smoke_hf_generate`, `test_hf_api_contract` fp16/bf16,
+    `test_quantized_inference` W8/W4, `bench_speed`, `bench_batch_sweep`,
+    `test_peft_lora`, `test_hf_training_smoke` Trainer/TRL SFT, and
+    `test_hf_rl_training_smoke` DPO.
+  - Note: quantized W8/W4 fast-forward now safely falls back to FLA when a
+    global native fast-token backend is requested, because bitsandbytes packed
+    int8/int4 weights are not dense-native-runner compatible yet.
+
 - [x] Run current 4090 adaptation validation pass before more kernel work.
   - Unit/correctness on RTX 4090 passed:
     - `python -m py_compile ...`
@@ -194,6 +211,27 @@ is either checked off or replaced with a more precise kernel task.
   - [ ] stretch: `>=0.60x` Albatross
     - Current confirmed fused state-scan row is still below the stretch target
       `31,289 tok/s` by about `5,626 tok/s` (`~21.9%` relative uplift).
+
+## Big TODO routing note
+
+- [ ] Keep the FLA/PyTorch path as the compatibility and correctness fallback,
+  not the main Albatross-gap optimization target. Native-unsupported, training,
+  PEFT/TRL, and generic quantized paths may still fall back to FLA/PyTorch.
+- [ ] Keep two performance tracks active:
+  - short-term: native fused fp16 prefill/decode kernels, starting from the
+    confirmed fused state-scan row and pushing 4090 0.4B/prompt512/bsz1 from
+    `0.4921x` to `>=0.60x` Albatross;
+  - high-upside math: DPLR/WY compact chunk prefill, with next work on
+    apply/output fusion, less dense `[N,N]` traffic/materialization, and later
+    fused W8/W4 kernels.
+- [x] Prior-art check: search official RWKV-LM, Albatross, FLA, VKWR/rwkv.cpp,
+  wind_rwkv, and vLLM/SGLang RWKV work before inventing another kernel
+  boundary. Current conclusion: there are strong references, but no merged
+  drop-in HF Transformers solution that satisfies our full PEFT/TRL/training +
+  native fused performance target. Borrow ideas rather than replacing this repo:
+  Albatross/faster3a layout and benchmarks, FLA chunk-DPLR math, wind_rwkv
+  H100/MI300X kernels, vLLM closed PR state/scheduler design, VKWR continuous
+  batching, and rwkv.cpp quant formats.
 
 ## Guardrails
 
