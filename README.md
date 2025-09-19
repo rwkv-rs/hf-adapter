@@ -37,6 +37,10 @@ rwkv7_hf/
 scripts/
   convert_rwkv7_to_hf.py
   batch_convert_rwkv7_to_hf.py
+  run_hf_acceptance.sh
+  run_hf_training_matrix.sh
+  run_zero_training_smoke.sh
+  run_hardware_smoke.sh
 tests/
   smoke_hf_generate.py
   test_official_alignment.py
@@ -124,6 +128,42 @@ export PYTHONPATH=/path/to/flash-linear-attention:$PYTHONPATH
 
 python tests/smoke_hf_generate.py \
   --model /path/to/rwkv7-g1d-0.1b-hf
+```
+
+## One-click validation scripts
+
+For a short HF acceptance pass on one converted model:
+
+```bash
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+RESULTS=bench/results.jsonl \
+bash scripts/run_hf_acceptance.sh
+```
+
+For card-adaptation issues, run the hardware smoke wrapper. It records short
+speed and batch rows and skips static tests by default:
+
+```bash
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DEVICE=cuda DTYPE=fp16 \
+bash scripts/run_hardware_smoke.sh
+```
+
+For PEFT/Trainer/TRL training smoke over one or more model sizes:
+
+```bash
+MODELS="/path/to/rwkv7-g1d-0.4b-hf /path/to/rwkv7-g1g-1.5b-hf" \
+RESULTS=bench/results.jsonl \
+bash scripts/run_hf_training_matrix.sh
+```
+
+For DeepSpeed ZeRO-2/ZeRO-3 smoke on a multi-GPU node:
+
+```bash
+NPROC_PER_NODE=2 ZERO_STAGE=both \
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+RESULTS=bench/results.jsonl \
+bash scripts/run_zero_training_smoke.sh
 ```
 
 Minimal usage:
