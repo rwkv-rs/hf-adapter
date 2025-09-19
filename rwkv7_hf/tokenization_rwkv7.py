@@ -1,14 +1,19 @@
 # coding=utf-8
-"""Slow Hugging Face tokenizer for RWKV vocab v20230424.
+"""Hugging Face tokenizer for RWKV vocab v20230424.
 
 The RWKV vocab is a byte-level trie vocabulary stored as lines:
     <id> <python repr token> <byte length>
 IDs are kept identical to the official RWKV tokenizer.
+
+The internal trie uses a dense 256-way child table per node, following the fast
+Python trie-tokenizer layout used by ChatRWKV while keeping the public
+``PreTrainedTokenizer`` contract unchanged.
 """
 from __future__ import annotations
 
 import os
 import shutil
+from ast import literal_eval
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from transformers import PreTrainedTokenizer
@@ -17,80 +22,122 @@ VOCAB_FILES_NAMES = {"vocab_file": "rwkv_vocab_v20230424.txt"}
 
 
 class _TrieNode:
-    __slots__ = ("children", "value")
+    __slots__ = ("children", "token_plus_one")
 
     def __init__(self):
-        self.children: Dict[int, "_TrieNode"] = {}
-        self.value: Optional[Tuple[bytes, int]] = None
+        # Dense byte-indexed children are faster than a dict for RWKV's byte-level
+        # tokenizer and keep encode() on the pure-Python HF slow-tokenizer path cheap.
+        self.children: List[Optional["_TrieNode"]] = [None] * 256
+        # Store id + 1 so token id 0 remains representable while 0 means no token.
+        self.token_plus_one = 0
 
-    def add(self, key: bytes, value: Tuple[bytes, int]) -> None:
+    def add(self, key: bytes, token_id: int) -> None:
         node = self
         for b in key:
-            node = node.children.setdefault(b, _TrieNode())
-        node.value = value
-
-    def find_longest(self, src: bytes, start: int) -> Tuple[int, Tuple[bytes, int]]:
-        node = self
-        best_pos = start
-        best = None
-        pos = start
-        while pos < len(src):
-            nxt = node.children.get(src[pos])
-            if nxt is None:
-                break
-            node = nxt
-            pos += 1
-            if node.value is not None:
-                best_pos = pos
-                best = node.value
-        if best is None:
-            raise ValueError(f"RWKV tokenizer cannot encode byte at offset {start}: {src[start:start+8]!r}")
-        return best_pos, best
+            child = node.children[b]
+            if child is None:
+                child = _TrieNode()
+                node.children[b] = child
+            node = child
+        node.token_plus_one = int(token_id) + 1
 
 
 class _RWKVTrie:
     def __init__(self, vocab_file: str):
         self.vocab_file = vocab_file
-        self.idx2token: Dict[int, bytes] = {}
+        parsed: Dict[int, bytes] = {}
         with open(vocab_file, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.rstrip("\n")
                 if not line:
                     continue
-                first = line.index(" ")
-                last = line.rindex(" ")
-                idx = int(line[:first])
-                token_obj = eval(line[first + 1:last])  # official RWKV vocab format
-                token = token_obj.encode("utf-8") if isinstance(token_obj, str) else token_obj
-                if not isinstance(token, bytes):
-                    raise TypeError(f"Invalid token type at id={idx}: {type(token)}")
-                expected_len = int(line[last + 1:])
-                if len(token) != expected_len:
-                    raise ValueError(f"Length mismatch at id={idx}: got {len(token)} expected {expected_len}")
-                self.idx2token[idx] = token
-        self.token2idx = {v: k for k, v in self.idx2token.items()}
+                idx, token = self._parse_vocab_line(line)
+                parsed[idx] = token
+
+        self.max_id = max(parsed) if parsed else 0
+        # RWKV-7 checkpoints can have unused embedding rows. Missing ids decode to
+        # empty bytes to preserve the previous "ignore unknown embedding rows" behavior.
+        self.idx2token: List[bytes] = [b""] * (self.max_id + 1)
+        for idx, token in parsed.items():
+            self.idx2token[idx] = token
+        self.token2idx = {token: idx for idx, token in parsed.items()}
         self.root = _TrieNode()
         for token, idx in self.token2idx.items():
-            self.root.add(token, (token, idx))
-        self.max_id = max(self.idx2token) if self.idx2token else 0
+            self.root.add(token, idx)
 
-    def encode(self, text: str) -> List[int]:
-        src = text.encode("utf-8")
-        pos = 0
+    @staticmethod
+    def _parse_vocab_line(line: str) -> Tuple[int, bytes]:
+        first = line.index(" ")
+        last = line.rindex(" ")
+        idx = int(line[:first])
+        token_obj = literal_eval(line[first + 1 : last])
+        token = token_obj.encode("utf-8") if isinstance(token_obj, str) else token_obj
+        if not isinstance(token, bytes):
+            raise TypeError(f"Invalid token type at id={idx}: {type(token)}")
+        expected_len = int(line[last + 1 :])
+        if len(token) != expected_len:
+            raise ValueError(f"Length mismatch at id={idx}: got {len(token)} expected {expected_len}")
+        return idx, token
+
+    def encode_bytes(self, src: bytes) -> List[int]:
+        idx = 0
+        src_len = len(src)
         out: List[int] = []
-        while pos < len(src):
-            pos, (_, idx) = self.root.find_longest(src, pos)
-            out.append(idx)
+        append = out.append
+        root_children = self.root.children
+        while idx < src_len:
+            node = root_children[src[idx]]
+            if node is None:
+                raise ValueError(f"RWKV tokenizer cannot encode byte at offset {idx}: {src[idx:idx+8]!r}")
+
+            pos = idx + 1
+            token_plus_one = node.token_plus_one
+            end = pos
+            children = node.children
+            while pos < src_len:
+                node = children[src[pos]]
+                if node is None:
+                    break
+                pos += 1
+                if node.token_plus_one:
+                    token_plus_one = node.token_plus_one
+                    end = pos
+                children = node.children
+
+            if token_plus_one == 0:
+                raise ValueError(f"RWKV tokenizer cannot encode byte at offset {idx}: {src[idx:idx+8]!r}")
+            append(token_plus_one - 1)
+            idx = end
         return out
 
+    def encode(self, text: str) -> List[int]:
+        return self.encode_bytes(text.encode("utf-8"))
+
+    def decode_bytes(self, ids: Iterable[int]) -> bytes:
+        idx2token = self.idx2token
+        size = len(idx2token)
+        if isinstance(ids, (list, tuple)):
+            if not ids:
+                return b""
+            try:
+                if min(ids) >= 0 and max(ids) < size:
+                    return b"".join(map(idx2token.__getitem__, ids))
+            except TypeError:
+                # Fall back for tensor / numpy scalar ids that need int() conversion.
+                pass
+
+        chunks: List[bytes] = []
+        append = chunks.append
+        for token_id in ids:
+            idx = int(token_id)
+            if 0 <= idx < size:
+                token = idx2token[idx]
+                if token:
+                    append(token)
+        return b"".join(chunks)
+
     def decode(self, ids: Iterable[int], errors: str = "replace") -> str:
-        chunks = []
-        for i in ids:
-            tok = self.idx2token.get(int(i))
-            # RWKV-7 checkpoints have a few unused embedding rows. Treat them as empty specials.
-            if tok is not None:
-                chunks.append(tok)
-        return b"".join(chunks).decode("utf-8", errors=errors)
+        return self.decode_bytes(ids).decode("utf-8", errors=errors)
 
 
 class RWKV7Tokenizer(PreTrainedTokenizer):
@@ -157,7 +204,6 @@ class RWKV7Tokenizer(PreTrainedTokenizer):
             if idx == index:
                 return tok
         return str(index)
-
 
     def convert_tokens_to_ids(self, tokens):
         if tokens is None:
