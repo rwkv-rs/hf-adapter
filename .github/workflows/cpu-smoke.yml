@@ -58,3 +58,4 @@ jobs:
           python tests/test_native_fla_free_import.py
           python tests/test_native_model_training_unit.py
           python tests/test_bnb_skip_policy.py
+          python tests/test_native_quant_mm8_cpu.py
