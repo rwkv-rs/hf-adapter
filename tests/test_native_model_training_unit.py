@@ -70,7 +70,9 @@ def main() -> int:
 
     with torch.no_grad():
         cached = model(input_ids=input_ids[:, :3], use_cache=True)
-        assert cached.logits.shape == (2, 1, 23)
+        # use_cache=True keeps full-sequence logits (HF default behavior);
+        # only logits_to_keep truncates. input (2,3) -> (2,3,23).
+        assert cached.logits.shape == (2, 3, 23)
         assert cached.past_key_values is not None
 
     try:
