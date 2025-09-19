@@ -53,6 +53,7 @@ jobs:
           python tests/test_result_tools.py
           python tests/test_markdown_links.py
           python tests/test_acceptance_scripts.py
+          python tests/test_tokenizer_fast_trie.py
 
       - name: No-CUDA native / quant policy smoke tests
         run: |
