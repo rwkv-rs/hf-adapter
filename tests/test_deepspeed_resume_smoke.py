@@ -73,6 +73,8 @@ def shared_out_dir(args: argparse.Namespace, stage: int) -> str:
 
 
 def make_args(TrainingArguments: Any, out_dir: str, max_steps: int, batch_size: int, grad_accum: int, dtype: str, config_path: Path) -> Any:
+    torch = ds.optional_torch()
+    cuda_available = bool(torch is not None and torch.cuda.is_available())
     return TrainingArguments(
         output_dir=out_dir,
         max_steps=max_steps,
@@ -85,8 +87,8 @@ def make_args(TrainingArguments: Any, out_dir: str, max_steps: int, batch_size: 
         save_total_limit=3,
         report_to=[],
         remove_unused_columns=False,
-        fp16=False,  # keep fp32 smoke deterministic on V100
-        bf16=False,
+        fp16=cuda_available and dtype == "fp16",
+        bf16=cuda_available and dtype == "bf16",
         dataloader_num_workers=0,
         gradient_checkpointing=False,
         deepspeed=str(config_path),
@@ -214,7 +216,7 @@ def main() -> int:
     ap.add_argument("--zero-stage", choices=["2", "3", "both"], default="both")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--max-length", type=int, default=16)
-    ap.add_argument("--train-dtype", choices=["fp32", "fp16"], default="fp32")
+    ap.add_argument("--train-dtype", choices=["fp32", "fp16", "bf16"], default="fp32")
     ap.add_argument("--first-steps", type=int, default=1)
     ap.add_argument("--resume-steps", type=int, default=2)
     ap.add_argument("--batch-size", type=int, default=1)
