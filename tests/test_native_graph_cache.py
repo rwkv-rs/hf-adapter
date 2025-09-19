@@ -365,6 +365,13 @@ def main() -> int:
 
         owner.is_loaded_in_4bit = True
         assert owner._rwkv7_resolve_fast_token_backend(1) == "fla"
+        os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "native_graph"
+        assert owner._rwkv7_resolve_fast_token_backend(1) == "fla"
+        assert owner.rwkv7_warmup_fast_token([1], backend="native_graph") == {1: "fla"}
+        os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "native_jit"
+        assert owner._rwkv7_resolve_fast_token_backend(1) == "fla"
+        assert owner.rwkv7_warmup_fast_token([1], backend="native_jit") == {1: "fla"}
+        os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "auto"
         owner.is_loaded_in_4bit = False
 
         owner.hf_device_map = {"model.embeddings": 0, "model.layers.0": 1}

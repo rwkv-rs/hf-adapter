@@ -50,6 +50,8 @@ try:  # pragma: no cover - optional Triton fast path on CUDA hosts
         fused_recurrent_scan_available,
         fused_recurrent_scan_clampw,
         fused_recurrent_scan_clampw_available,
+        fused_recurrent_scan_state_prep,
+        fused_recurrent_scan_state_prep_available,
         fused_recurrent_scan_output_prepare,
         fused_recurrent_scan_output_prepare_available,
         fused_recurrent_update,
@@ -64,6 +66,8 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
             fused_recurrent_scan_available,
             fused_recurrent_scan_clampw,
             fused_recurrent_scan_clampw_available,
+            fused_recurrent_scan_state_prep,
+            fused_recurrent_scan_state_prep_available,
             fused_recurrent_scan_output_prepare,
             fused_recurrent_scan_output_prepare_available,
             fused_recurrent_update,
@@ -76,6 +80,8 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_recurrent_scan_available = None  # type: ignore[assignment]
         fused_recurrent_scan_clampw = None  # type: ignore[assignment]
         fused_recurrent_scan_clampw_available = None  # type: ignore[assignment]
+        fused_recurrent_scan_state_prep = None  # type: ignore[assignment]
+        fused_recurrent_scan_state_prep_available = None  # type: ignore[assignment]
         fused_recurrent_scan_output_prepare = None  # type: ignore[assignment]
         fused_recurrent_scan_output_prepare_available = None  # type: ignore[assignment]
         fused_recurrent_update = None  # type: ignore[assignment]
@@ -295,6 +301,19 @@ def _native_prefill_fused_state_prep_enabled() -> bool:
         return False
     try:
         return bool(fused_prefill_state_prep_available())
+    except Exception:
+        return False
+
+
+def _native_prefill_fused_state_scan_enabled() -> bool:
+    """Runtime switch for the fused state-prep plus scan probe."""
+
+    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN", False):
+        return False
+    if fused_recurrent_scan_state_prep is None or fused_recurrent_scan_state_prep_available is None:
+        return False
+    try:
+        return bool(fused_recurrent_scan_state_prep_available())
     except Exception:
         return False
 
@@ -1015,9 +1034,43 @@ def prefill(
                 v_gate = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
         use_fused_scan_output = _native_prefill_fused_scan_output_enabled()
         use_clampw_scan = _native_prefill_fused_clampw_scan_enabled() and not use_fused_scan_output
+        use_fused_state_scan = _native_prefill_fused_state_scan_enabled() and not use_fused_scan_output
         if use_clampw_scan and _native_prefill_fused_state_prep_enabled() and fused_prefill_kv_kk_prep is None:
             use_clampw_scan = False
-        if _native_prefill_fused_state_prep_enabled():
+        state_scan_done = False
+        if use_fused_state_scan:
+            if layer_idx == 0:
+                out, new_state, k, v = fused_recurrent_scan_state_prep(
+                    r.view(B, T, H, N),
+                    w.view(B, T, H, N),
+                    k.view(B, T, H, N),
+                    v.view(B, T, H, N),
+                    a.view(B, T, H, N),
+                    state[layer_idx],
+                    k_k,
+                    k_a,
+                    block_n=N,
+                )
+                v_first_seq = v.reshape(B, T, hidden)
+            else:
+                out, new_state, k, v = fused_recurrent_scan_state_prep(
+                    r.view(B, T, H, N),
+                    w.view(B, T, H, N),
+                    k.view(B, T, H, N),
+                    v.view(B, T, H, N),
+                    a.view(B, T, H, N),
+                    state[layer_idx],
+                    k_k,
+                    k_a,
+                    v_first=v_first_seq.view(B, T, H, N),
+                    v_gate=v_gate.view(B, T, H, N),
+                    block_n=N,
+                )
+            out = out.reshape(B, T, hidden)
+            k = k.reshape(B, T, hidden)
+            v = v.reshape(B, T, hidden)
+            state_scan_done = True
+        elif _native_prefill_fused_state_prep_enabled():
             if use_clampw_scan:
                 if layer_idx == 0:
                     k, v, kk = fused_prefill_kv_kk_prep(
@@ -1096,7 +1149,7 @@ def prefill(
                 block_n=N,
             )
             out = out.reshape(B, T, hidden)
-        else:
+        elif not state_scan_done:
             out, new_state = _native_prefill_scan(r, w, k, v, kk, a, state[layer_idx], B, T, H, N, w_is_raw=use_clampw_scan)
         out_projected = False
         if use_fused_scan_output:

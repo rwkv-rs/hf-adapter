@@ -1242,6 +1242,8 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             if batch_size <= 0:
                 raise ValueError("rwkv7_warmup_fast_token batch sizes must be positive")
             chosen = self._rwkv7_resolve_fast_token_backend(batch_size) if requested == "auto" else requested
+            if chosen in {"native_graph", "native_jit"} and self._rwkv7_uses_external_quantization():
+                chosen = "fla"
             if chosen == "native_graph":
                 if not self._rwkv7_can_use_native_backend("native_graph", batch_size):
                     if requested != "auto":
@@ -1341,6 +1343,14 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     def _rwkv7_resolve_fast_token_backend(self, batch_size: int) -> str:
         requested = _fast_token_backend()
         if requested != "auto":
+            if self._rwkv7_uses_external_quantization() and requested in {"native_graph", "native_jit"}:
+                # Bitsandbytes/HF quantization wraps Linear weights in packed
+                # int8/int4 modules. The native paths extract and replay dense
+                # floating-point projection weights, so a global serving env
+                # such as RWKV7_FAST_TOKEN_BACKEND=native_graph must not make
+                # quantized generate crash. Keep quantized fast-forward on the
+                # FLA tensor path until a real native quant kernel exists.
+                return "fla"
             return requested
         if self._rwkv7_can_use_native_backend("native_graph", batch_size):
             return "native_graph"

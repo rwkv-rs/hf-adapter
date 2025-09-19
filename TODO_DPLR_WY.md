@@ -88,20 +88,33 @@ is either checked off or replaced with a more precise kernel task.
     - cache-view experiment: pass but slower, `22,081.8 tok/s`, not kept
     - DPLR compact HF smoke: pass, `17,663.3 tok/s`, `0.3387x`
   - Conclusion: 4090 correctness is stable; no new row reaches `0.45x`.
-- [ ] Close the remaining `0.45x` Albatross gap on 4090 / 0.4B / prompt512 /
+- [x] Close the remaining `0.45x` Albatross gap on 4090 / 0.4B / prompt512 /
   bsz1:
-  - current confirmed best: `22,292.0 tok/s` (`0.4275x`)
+  - previous confirmed best: `22,292.0 tok/s` (`0.4275x`)
   - target: `>=23,467 tok/s`
-  - required delta: about `+5.3%` vs confirmed best, or about `+3.0%` vs
-    fastest short sweep row
-- [ ] Profile and reduce recurrent-scan/state-prep launch count:
+  - Done: opt-in fused state-prep + recurrent scan path
+    (`RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN=1` plus
+    `RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1`) confirmed at
+    `/tmp/native_4090_fused_state_scan_confirm_20260702_111924.jsonl`:
+    pass, `25,663.2 tok/s`, `19.9507 ms`, `0.4921x` Albatross,
+    greedy/cache smoke passing, `989.2 MiB` peak VRAM.
+- [x] Profile and reduce recurrent-scan/state-prep launch count:
   - profile target row: `fused_scan_state_bm8_w1`
-  - first target is saving at least `0.7 ms` from recurrent scan + state prep
+  - first target was saving at least `0.7 ms` from recurrent scan + state prep
     without breaking greedy/cache smoke
-  - do not spend this phase on Python wrapper-only changes
-- [ ] Re-test DPLR compact only after apply/output fusion or launch-count
+  - Done: `fused_recurrent_scan_state_prep(...)` fuses raw W/K/V state prep,
+    KK normalization, optional V-first interpolation, recurrent scan, and
+    adjusted K/V materialization in one full-head Triton kernel. Compared with
+    the prior confirmed best, latency moved from `22.9679 ms` to `19.9507 ms`
+    (about `3.02 ms` saved) and throughput rose about `15.1%`.
+- [x] Re-test DPLR compact only after apply/output fusion or launch-count
   reduction is implemented; current HF repo-code compact row is correctness
   passing but slower than the fused recurrent scan path.
+  - Done: `/tmp/native_4090_dplr_compact_retest_20260702_111924.jsonl`
+    remains correctness-passing but slower: `16,863.4 tok/s`, `30.3616 ms`,
+    `0.3234x` Albatross. Keep DPLR compact as the high-upside line, but its
+    next useful task is DPLR-specific apply/output fusion rather than
+    wrapper-level changes.
 
 ## Current checkpoint
 
@@ -176,8 +189,11 @@ is either checked off or replaced with a more precise kernel task.
   - [x] then approach or beat current `triton_wy` P0 `~0.233 ms`
     - Done/approached: same run `triton_wy_compact ~0.241 ms` vs `triton_wy ~0.228 ms`; close but not yet faster, so later fusion remains useful.
 - HF target:
-  - [ ] 4090 / 0.4B / prompt512 / bsz1 moves toward `>=0.45x` Albatross
+  - [x] 4090 / 0.4B / prompt512 / bsz1 moves toward `>=0.45x` Albatross
+    - Done: fused state-scan confirmation row is `25,663.2 tok/s` (`0.4921x`).
   - [ ] stretch: `>=0.60x` Albatross
+    - Current confirmed fused state-scan row is still below the stretch target
+      `31,289 tok/s` by about `5,626 tok/s` (`~21.9%` relative uplift).
 
 ## Guardrails
 
