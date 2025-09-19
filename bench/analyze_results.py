@@ -296,6 +296,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     native_graph_fused_output_project = latest(rows, lambda r: r.get("axis") == "native_graph_fused_output_project" and r.get("backend") == "hf_adapter")
     native_graph_fused_wag_lora = latest(rows, lambda r: r.get("axis") == "native_graph_fused_wag_lora" and r.get("backend") == "hf_adapter")
     native_graph_fused_wavg_lora = latest(rows, lambda r: r.get("axis") == "native_graph_fused_wavg_lora" and r.get("backend") == "hf_adapter")
+    native_graph_vkwr_rkv_policy = latest(rows, lambda r: r.get("axis") == "native_graph_vkwr_rkv_policy" and r.get("backend") == "hf_adapter")
     native_graph_fused_projection = latest(rows, lambda r: r.get("axis") == "native_graph_fused_projection" and r.get("backend") == "hf_adapter")
     native_graph_fused_output_sweep = latest_by_key(
         [
@@ -1113,6 +1114,32 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     f"native_graph fused W/A/G/V-gate LoRA batch matrix covers bsz={sweep_batches} "
                     f"with greedy exact but min_speedup={min_speed:.2f}x; keep opt-in, not defaultable"
                 )
+    if native_graph_vkwr_rkv_policy is None:
+        focus.append("VKWR-style stacked R/K/V projection policy row pending")
+    else:
+        rkv_speedup = native_graph_vkwr_rkv_policy.get("speedup")
+        greedy_match = native_graph_vkwr_rkv_policy.get("greedy_match")
+        greedy_total = native_graph_vkwr_rkv_policy.get("greedy_total")
+        hidden_size = native_graph_vkwr_rkv_policy.get("hidden_size")
+        active = native_graph_vkwr_rkv_policy.get("policy_active_by_rule")
+        if rkv_speedup is not None and float(rkv_speedup) >= 1.02:
+            focus.append(
+                f"VKWR-style stacked R/K/V projection hidden={hidden_size} active={active} "
+                f"passes greedy {greedy_match}/{greedy_total} with speedup={float(rkv_speedup):.2f}x; "
+                "sweep bsz/model sizes before integration"
+            )
+        elif rkv_speedup is not None and float(rkv_speedup) >= 0.99:
+            focus.append(
+                f"VKWR-style stacked R/K/V projection hidden={hidden_size} active={active} "
+                f"passes greedy {greedy_match}/{greedy_total} but is neutral at speedup={float(rkv_speedup):.2f}x; "
+                "Python/Torch stacked bmm is not enough"
+            )
+        elif rkv_speedup is not None:
+            focus.append(
+                f"VKWR-style stacked R/K/V projection hidden={hidden_size} active={active} "
+                f"passes greedy {greedy_match}/{greedy_total} but speedup={float(rkv_speedup):.2f}x; "
+                "keep opt-in and prefer lower-level CUDA if slower"
+            )
     if native_graph_fused_projection is None:
         focus.append("native_graph fused projection integration row pending")
     else:
@@ -1472,6 +1499,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "native_graph_fused_output_project": compact(native_graph_fused_output_project, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "fused_output_enabled", "fused_projection_enabled", "output_project_block_m", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_output_project", "fused_output_project", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
         "native_graph_fused_wag_lora": compact(native_graph_fused_wag_lora, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "fused_output_enabled", "fused_output_project_enabled", "block_m", "block_r", "block_k", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_wag_lora", "fused_wag_lora", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
         "native_graph_fused_wavg_lora": compact(native_graph_fused_wavg_lora, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "fused_recurrent_output_enabled", "fused_output_enabled", "fused_output_project_enabled", "block_m", "block_r", "block_k", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_wavg_lora", "fused_wavg_lora", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
+        "native_graph_vkwr_rkv_policy": compact(native_graph_vkwr_rkv_policy, ["_lineno", "status", "dtype", "device", "batch_size", "hidden_size", "prompt_tokens", "steps", "fixed_token", "policy_min_hidden", "policy_max_rows", "policy_active_by_rule", "fused_recurrent_enabled", "fused_recurrent_output_enabled", "fused_output_enabled", "fused_output_project_enabled", "baseline_policy", "candidate_policy", "baseline_effective_backend", "candidate_effective_backend", "baseline_ms_per_step", "candidate_ms_per_step", "speedup", "baseline_tokps_total", "candidate_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "candidate_cache_stats", "peak_vram_mb"]),
         "native_graph_fused_projection": compact(native_graph_fused_projection, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "fused_output_enabled", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_projection", "fused_projection", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
         "native_graph_fused_output_sweep": [
             compact(r, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"])
@@ -1811,6 +1839,8 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["native_graph_fused_wag_lora"], ensure_ascii=False) if report["native_graph_fused_wag_lora"] else "PENDING")
     print("\n## native_graph_fused_wavg_lora")
     print(json.dumps(report["native_graph_fused_wavg_lora"], ensure_ascii=False) if report["native_graph_fused_wavg_lora"] else "PENDING")
+    print("\n## native_graph_vkwr_rkv_policy")
+    print(json.dumps(report["native_graph_vkwr_rkv_policy"], ensure_ascii=False) if report["native_graph_vkwr_rkv_policy"] else "PENDING")
     print("\n## native_graph_fused_projection")
     print(json.dumps(report["native_graph_fused_projection"], ensure_ascii=False) if report["native_graph_fused_projection"] else "PENDING")
     print("\n## native_graph_fused_output_sweep")
