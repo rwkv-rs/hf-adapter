@@ -87,22 +87,33 @@ if _HAS_TRITON:
         batch_id = tl.program_id(0)
         block_id = tl.program_id(1)
         offs_m = block_id * BLOCK_M + tl.arange(0, BLOCK_M)
-        offs_k = tl.arange(0, BLOCK_K)
+        # Iterate over packed int4 bytes, not logical input features.  The
+        # earlier prototype iterated over every feature and therefore loaded
+        # each packed byte twice (once for the low nibble and once for the high
+        # nibble).  One program now consumes BLOCK_K packed bytes / 2*BLOCK_K
+        # dense features, preserving row-wise scales while halving q-weight
+        # traffic for W4 decode GEMV.
+        offs_p = tl.arange(0, BLOCK_K)
         mask_m = offs_m < out_features
 
         acc = tl.zeros((BLOCK_M,), tl.float32)
-        for start in range(0, in_features, BLOCK_K):
-            kidx = start + offs_k
-            mask_k = kidx < in_features
-            x = tl.load(x_ptr + batch_id * in_features + kidx, mask=mask_k, other=0.0).to(tl.float32)
+        for start in range(0, packed_in_features, BLOCK_K):
+            pidx = start + offs_p
+            mask_p = pidx < packed_in_features
+            k0 = pidx * 2
+            k1 = k0 + 1
+            mask_k0 = mask_p & (k0 < in_features)
+            mask_k1 = mask_p & (k1 < in_features)
+            x0 = tl.load(x_ptr + batch_id * in_features + k0, mask=mask_k0, other=0.0).to(tl.float32)
+            x1 = tl.load(x_ptr + batch_id * in_features + k1, mask=mask_k1, other=0.0).to(tl.float32)
 
-            byte_idx = kidx // 2
-            shift = (kidx & 1) * 4
-            q_offsets = offs_m[:, None] * packed_in_features + byte_idx[None, :]
-            packed = tl.load(q_weight_ptr + q_offsets, mask=mask_m[:, None] & mask_k[None, :], other=0).to(tl.int32)
-            q4 = (packed >> shift[None, :]) & 0xF
-            q = tl.where(q4 >= 8, q4 - 16, q4).to(tl.float32)
-            acc += tl.sum(q * x[None, :], axis=1)
+            q_offsets = offs_m[:, None] * packed_in_features + pidx[None, :]
+            packed = tl.load(q_weight_ptr + q_offsets, mask=mask_m[:, None] & mask_p[None, :], other=0).to(tl.int32)
+            q0_u4 = packed & 0xF
+            q1_u4 = (packed >> 4) & 0xF
+            q0 = tl.where(q0_u4 >= 8, q0_u4 - 16, q0_u4).to(tl.float32)
+            q1 = tl.where(q1_u4 >= 8, q1_u4 - 16, q1_u4).to(tl.float32)
+            acc += tl.sum(q0 * x0[None, :] + q1 * x1[None, :], axis=1)
 
         scale = tl.load(scale_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
         acc = acc * scale
@@ -184,37 +195,52 @@ if _HAS_TRITON:
         batch_id = tl.program_id(0)
         block_id = tl.program_id(1)
         offs_m = block_id * BLOCK_M + tl.arange(0, BLOCK_M)
-        offs_k = tl.arange(0, BLOCK_K)
+        # Iterate over packed int4 bytes so each weight byte is loaded once and
+        # contributes both low/high nibbles to the dot product.  This is the W4
+        # equivalent of fusing dequant with GEMV, and it avoids the duplicated
+        # byte loads from the original logical-feature loop.
+        offs_p = tl.arange(0, BLOCK_K)
         mask_m = offs_m < hidden
 
         acc_r = tl.zeros((BLOCK_M,), tl.float32)
         acc_k = tl.zeros((BLOCK_M,), tl.float32)
         acc_v = tl.zeros((BLOCK_M,), tl.float32)
-        for start in range(0, hidden, BLOCK_K):
-            kidx = start + offs_k
-            mask_k = kidx < hidden
-            xr = tl.load(xr_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-            xk = tl.load(xk_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
-            xv = tl.load(xv_ptr + batch_id * hidden + kidx, mask=mask_k, other=0.0).to(tl.float32)
+        for start in range(0, packed_hidden, BLOCK_K):
+            pidx = start + offs_p
+            mask_p = pidx < packed_hidden
+            k0 = pidx * 2
+            k1 = k0 + 1
+            mask_k0 = mask_p & (k0 < hidden)
+            mask_k1 = mask_p & (k1 < hidden)
+            xr0 = tl.load(xr_ptr + batch_id * hidden + k0, mask=mask_k0, other=0.0).to(tl.float32)
+            xr1 = tl.load(xr_ptr + batch_id * hidden + k1, mask=mask_k1, other=0.0).to(tl.float32)
+            xk0 = tl.load(xk_ptr + batch_id * hidden + k0, mask=mask_k0, other=0.0).to(tl.float32)
+            xk1 = tl.load(xk_ptr + batch_id * hidden + k1, mask=mask_k1, other=0.0).to(tl.float32)
+            xv0 = tl.load(xv_ptr + batch_id * hidden + k0, mask=mask_k0, other=0.0).to(tl.float32)
+            xv1 = tl.load(xv_ptr + batch_id * hidden + k1, mask=mask_k1, other=0.0).to(tl.float32)
 
-            byte_idx = kidx // 2
-            shift = (kidx & 1) * 4
-            q_offsets = offs_m[:, None] * packed_hidden + byte_idx[None, :]
-            mask_q = mask_m[:, None] & mask_k[None, :]
+            q_offsets = offs_m[:, None] * packed_hidden + pidx[None, :]
+            mask_q = mask_m[:, None] & mask_p[None, :]
 
             qr_packed = tl.load(qr_ptr + q_offsets, mask=mask_q, other=0).to(tl.int32)
             qk_packed = tl.load(qk_ptr + q_offsets, mask=mask_q, other=0).to(tl.int32)
             qv_packed = tl.load(qv_ptr + q_offsets, mask=mask_q, other=0).to(tl.int32)
-            qr4 = (qr_packed >> shift[None, :]) & 0xF
-            qk4 = (qk_packed >> shift[None, :]) & 0xF
-            qv4 = (qv_packed >> shift[None, :]) & 0xF
-            qr = tl.where(qr4 >= 8, qr4 - 16, qr4).to(tl.float32)
-            qk = tl.where(qk4 >= 8, qk4 - 16, qk4).to(tl.float32)
-            qv = tl.where(qv4 >= 8, qv4 - 16, qv4).to(tl.float32)
+            qr0_u4 = qr_packed & 0xF
+            qk0_u4 = qk_packed & 0xF
+            qv0_u4 = qv_packed & 0xF
+            qr1_u4 = (qr_packed >> 4) & 0xF
+            qk1_u4 = (qk_packed >> 4) & 0xF
+            qv1_u4 = (qv_packed >> 4) & 0xF
+            qr0 = tl.where(qr0_u4 >= 8, qr0_u4 - 16, qr0_u4).to(tl.float32)
+            qk0 = tl.where(qk0_u4 >= 8, qk0_u4 - 16, qk0_u4).to(tl.float32)
+            qv0 = tl.where(qv0_u4 >= 8, qv0_u4 - 16, qv0_u4).to(tl.float32)
+            qr1 = tl.where(qr1_u4 >= 8, qr1_u4 - 16, qr1_u4).to(tl.float32)
+            qk1 = tl.where(qk1_u4 >= 8, qk1_u4 - 16, qk1_u4).to(tl.float32)
+            qv1 = tl.where(qv1_u4 >= 8, qv1_u4 - 16, qv1_u4).to(tl.float32)
 
-            acc_r += tl.sum(qr * xr[None, :], axis=1)
-            acc_k += tl.sum(qk * xk[None, :], axis=1)
-            acc_v += tl.sum(qv * xv[None, :], axis=1)
+            acc_r += tl.sum(qr0 * xr0[None, :] + qr1 * xr1[None, :], axis=1)
+            acc_k += tl.sum(qk0 * xk0[None, :] + qk1 * xk1[None, :], axis=1)
+            acc_v += tl.sum(qv0 * xv0[None, :] + qv1 * xv1[None, :], axis=1)
 
         scale_r = tl.load(sr_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
         scale_k = tl.load(sk_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
@@ -562,7 +588,11 @@ def int4_fused_rkv_gemv(
     block_k: int = 64,
     force_fallback: bool = False,
 ):
-    """Compute row-wise int4 R/K/V projections with one optional Triton launch."""
+    """Compute row-wise int4 R/K/V projections with one optional Triton launch.
+
+    ``block_k`` is interpreted as packed int4 bytes for the Triton path, so one
+    loop tile consumes up to ``2 * block_k`` logical input features.
+    """
 
     if torch is None:
         raise RuntimeError("int4_fused_rkv_gemv requires torch")
@@ -649,7 +679,9 @@ def int4_rowwise_gemv(
     Inputs may be shaped ``[batch, in_features]`` or ``[batch, 1, in_features]``.
     Outputs preserve the input rank.  The original dense input dimension is
     inferred from ``x``; the packed weight must have at least
-    ``ceil(in_features / 2)`` bytes per row.
+    ``ceil(in_features / 2)`` bytes per row.  ``block_k`` is interpreted as
+    packed int4 bytes for the Triton path, so one loop tile consumes up to
+    ``2 * block_k`` logical input features.
     """
 
     if torch is None or F is None:

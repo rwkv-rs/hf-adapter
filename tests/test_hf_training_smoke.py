@@ -129,6 +129,22 @@ def max_trainable_delta(before: dict[str, torch.Tensor], model) -> float:
     return max_delta
 
 
+def keep_trainable_params_fp32(model) -> None:
+    """Keep LoRA adapters in fp32 so a one-step smoke observes a real update.
+
+    The base model is still loaded in ``--train-dtype``.  Trainer AMP/GradScaler
+    can legitimately skip a tiny fp16 one-step update when RWKV kernels emit a
+    non-finite global grad norm; for this compatibility smoke we care that the
+    HF/PEFT training stack runs and trainable LoRA weights move.
+    """
+
+    for param in model.parameters():
+        if param.requires_grad:
+            param.data = param.data.float()
+            if param.grad is not None:
+                param.grad.data = param.grad.data.float()
+
+
 def load_lora_model(model_path: str, device: str, attn_mode: str, train_dtype: str):
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
@@ -151,7 +167,9 @@ def load_lora_model(model_path: str, device: str, attn_mode: str, train_dtype: s
         lora_dropout=0.0,
         target_modules=["r_proj", "k_proj", "v_proj", "o_proj", "key", "value"],
     )
-    return get_peft_model(model, lora_cfg)
+    model = get_peft_model(model, lora_cfg)
+    keep_trainable_params_fp32(model)
+    return model
 
 
 def run_trainer(args) -> dict[str, Any]:
@@ -172,8 +190,11 @@ def run_trainer(args) -> dict[str, Any]:
             save_strategy="no",
             report_to=[],
             remove_unused_columns=False,
-            fp16=use_fp16(args.device, args.train_dtype),
-            bf16=use_bf16(args.device, args.train_dtype),
+            # The model itself is loaded in --train-dtype. Keep Trainer mixed
+            # precision off so GradScaler cannot turn the one-step smoke into a
+            # no-op before the trainable-delta assertion.
+            fp16=False,
+            bf16=False,
             dataloader_num_workers=0,
             gradient_checkpointing=False,
             optim="adamw_torch",
@@ -238,8 +259,8 @@ def run_trl(args) -> dict[str, Any]:
             logging_steps=1,
             save_strategy="no",
             report_to=[],
-            fp16=use_fp16(args.device, args.train_dtype),
-            bf16=use_bf16(args.device, args.train_dtype),
+            fp16=False,
+            bf16=False,
             gradient_checkpointing=False,
             max_length=args.max_length,
             dataset_text_field="text",

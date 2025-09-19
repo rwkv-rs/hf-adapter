@@ -138,6 +138,7 @@ def run_one(args: argparse.Namespace, tok, model, batch_size: int) -> dict[str, 
 
         copy_ms = token_ms = replay_ms = bind_ms = argmax_ms = 0.0
         wall_ms = 0.0
+        copy_stats_before = runner.copy_stats() if hasattr(runner, "copy_stats") else {}
         for _ in range(args.steps):
             def step_parts() -> None:
                 nonlocal copy_ms, token_ms, replay_ms, bind_ms, argmax_ms, token_parts
@@ -155,6 +156,11 @@ def run_one(args: argparse.Namespace, tok, model, batch_size: int) -> dict[str, 
                     token_parts = runner.logits.view(batch_size, 1, -1).argmax(dim=-1)
 
             wall_ms += wall_time_ms(step_parts, args.device)
+        copy_stats_after = runner.copy_stats() if hasattr(runner, "copy_stats") else {}
+        copy_calls_delta = int(copy_stats_after.get("copy_from_cache_calls", 0)) - int(copy_stats_before.get("copy_from_cache_calls", 0))
+        copy_fast_skips_delta = int(copy_stats_after.get("copy_from_cache_fast_skips", 0)) - int(copy_stats_before.get("copy_from_cache_fast_skips", 0))
+        bind_calls_delta = int(copy_stats_after.get("bind_cache_calls", 0)) - int(copy_stats_before.get("bind_cache_calls", 0))
+        bind_fast_skips_delta = int(copy_stats_after.get("bind_cache_fast_skips", 0)) - int(copy_stats_before.get("bind_cache_fast_skips", 0))
 
         def api_loop() -> None:
             nonlocal token_api, state_api
@@ -203,6 +209,12 @@ def run_one(args: argparse.Namespace, tok, model, batch_size: int) -> dict[str, 
         "graph_replay_ms": round(replay_ms / denom, 4),
         "bind_cache_ms": round(bind_ms / denom, 4),
         "argmax_ms": round(argmax_ms / denom, 4),
+        "copy_from_cache_calls": copy_calls_delta,
+        "copy_from_cache_fast_skips": copy_fast_skips_delta,
+        "copy_from_cache_fast_skip_rate": round(copy_fast_skips_delta / copy_calls_delta, 4) if copy_calls_delta > 0 else None,
+        "bind_cache_calls": bind_calls_delta,
+        "bind_cache_fast_skips": bind_fast_skips_delta,
+        "bind_cache_fast_skip_rate": round(bind_fast_skips_delta / bind_calls_delta, 4) if bind_calls_delta > 0 else None,
         "manual_wall_ms_per_token": round(wall_ms_per_token, 4),
         "api_ms_per_token": round(api_ms_per_token, 4),
         "manual_decode_tokps_total": round(1000.0 * batch_size / wall_ms_per_token, 1) if wall_ms_per_token > 0 else None,

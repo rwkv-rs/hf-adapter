@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # coding=utf-8
-"""A/B benchmark for native_graph with fused R/K/V + W/A/G projection enabled.
+"""A/B benchmark for native_graph with fused R/K/V + W/A/G/V-gate projection enabled.
 
-`bench_fused_rkv_wag_projection.py` proves the isolated two-kernel projection
-prototype can be correctness-clean. This script checks the production-facing
+`fused_attention_projection.py` provides the isolated two-kernel projection
+prototype. This script checks the production-facing
 question: after capture inside the HF native_graph fast-token backend, does
 enabling `RWKV7_NATIVE_GRAPH_FUSED_PROJECTION=1` preserve logits/greedy behavior
 and move end-to-end decode latency on top of the current output-prep default?
@@ -187,6 +187,7 @@ def main() -> int:
         "prompt_tokens": int(ids.shape[1]),
         "steps": args.steps,
         "fixed_token": args.fixed_token,
+        "projection_variant": "rkv_wavg",
         "fused_recurrent_enabled": bool(args.fused_recurrent),
         "fused_output_enabled": bool(args.fused_output),
         "baseline_effective_backend": baseline["effective_backend"],

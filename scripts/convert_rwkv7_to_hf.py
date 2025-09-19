@@ -190,6 +190,7 @@ def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
         "fused_projection.py",
         "fused_recurrent_update.py",
         "fused_time_mix.py",
+        "kernel_policy.py",
         "modeling_rwkv7.py",
         "native.py",
         "native_jit.py",

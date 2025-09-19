@@ -231,4 +231,3 @@ def quantize_model_mm4(model, *, min_params: int = 8_000_000) -> int:
         parent = model.get_submodule(parent_name) if parent_name else model
         setattr(parent, attr, MM4Linear(getattr(parent, attr)))
     return len(targets)
-

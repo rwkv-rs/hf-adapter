@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
@@ -74,6 +75,29 @@ def ratio(a: float | None, b: float | None) -> float | None:
     if a is None or b in (None, 0):
         return None
     return a / b
+
+
+def model_size_label(row: dict[str, Any] | None) -> str | None:
+    """Best-effort normalized model size label such as ``0.4b``.
+
+    Benchmark rows grew this field over time.  Older HF rows often only contain
+    a checkpoint path (`rwkv7-g1d-0.4b-hf`), while Albatross rows usually record
+    ``model_size_label`` directly.  Use this for apples-to-apples comparisons
+    when possible, and fall back to unlabeled rows only when no exact-size row
+    exists.
+    """
+
+    if not row:
+        return None
+    for key in ("model_size_label", "model_label", "model_path", "model"):
+        raw = row.get(key)
+        if raw is None:
+            continue
+        text = str(raw).lower()
+        match = re.search(r"(\d+(?:\.\d+)?)\s*b", text)
+        if match:
+            return f"{match.group(1)}b"
+    return None
 
 
 def verdict_ge(value: float | None, target: float) -> str:
@@ -269,10 +293,68 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         chunked_rows,
         lambda r: (r.get("prefill_mode"), r.get("chunk_size")),
     )
+    native_prefill_scan = latest_by_key(
+        [r for r in rows if r.get("axis") == "native_prefill_scan" and r.get("backend") == "hf_adapter"],
+        lambda r: (
+            r.get("batch_size"),
+            r.get("prompt_tokens"),
+            r.get("code_source"),
+            r.get("native_jit_module"),
+            bool(r.get("fused_scan_requested")),
+            r.get("scan_block_m"),
+            r.get("scan_num_warps"),
+            bool(r.get("fine_attention_breakdown")),
+            bool(r.get("layer_breakdown")),
+            bool(r.get("prefill_fused_scan_output_effective")),
+            bool(r.get("prefill_fused_clampw_scan_effective")),
+            bool(r.get("prefill_dplr_scan_effective")),
+            r.get("prefill_dplr_chunk_size"),
+            bool(r.get("prefill_fused_shift_mix_effective")),
+            bool(r.get("prefill_fused_state_prep_effective")),
+            bool(r.get("prefill_fused_state_scan_effective")),
+            r.get("prefill_state_prep_w_dtype"),
+            bool(r.get("prefill_fused_output_effective")),
+            bool(r.get("prefill_fused_wavg_lora_effective")),
+            r.get("prefill_fused_wavg_lora_max_m"),
+        ),
+    )
+    native_prefill_breakdown = latest_by_key(
+        [r for r in rows if r.get("axis") == "native_prefill_breakdown" and r.get("backend") == "hf_adapter"],
+        lambda r: (
+            model_size_label(r),
+            r.get("batch_size"),
+            r.get("prompt_tokens"),
+            bool(r.get("fused_scan_requested")),
+            r.get("scan_block_m"),
+            r.get("scan_num_warps"),
+            bool(r.get("fine_attention_breakdown")),
+            bool(r.get("prefill_fused_scan_output_effective")),
+            bool(r.get("prefill_fused_clampw_scan_effective")),
+            bool(r.get("prefill_dplr_scan_effective")),
+            r.get("prefill_dplr_chunk_size"),
+            bool(r.get("prefill_fused_shift_mix_effective")),
+            bool(r.get("prefill_fused_state_prep_effective")),
+            bool(r.get("prefill_fused_state_scan_effective")),
+            r.get("prefill_state_prep_w_dtype"),
+            bool(r.get("prefill_fused_output_effective")),
+            bool(r.get("prefill_fused_wavg_lora_effective")),
+            r.get("prefill_fused_wavg_lora_max_m"),
+        ),
+    )
     micro = latest(rows, lambda r: r.get("axis") == "decode_micro" and r.get("backend") == "hf_adapter")
     forward_fast_path = latest(rows, lambda r: r.get("axis") == "forward_fast_path" and r.get("backend") == "hf_adapter")
     generate_fast_path = latest(rows, lambda r: r.get("axis") == "generate_fast_path" and r.get("backend") == "hf_adapter")
     fast_token_warmup = latest(rows, lambda r: r.get("axis") == "fast_token_warmup" and r.get("backend") == "hf_adapter")
+    ttft_tpot = latest_by_key(
+        [r for r in rows if r.get("axis") == "ttft_tpot" and r.get("backend") == "hf_adapter"],
+        lambda r: (
+            r.get("metric"),
+            r.get("batch_size"),
+            r.get("prompt_tokens"),
+            r.get("fast_prefill_env"),
+            r.get("native_prefill_fused_scan_env"),
+        ),
+    )
     native_graph_overhead = latest_by_key(
         [r for r in rows if r.get("axis") == "native_graph_replay_overhead" and r.get("backend") == "hf_adapter"],
         lambda r: r.get("batch_size"),
@@ -280,6 +362,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     components = latest(rows, lambda r: r.get("axis") == "decode_components" and r.get("backend") == "hf_adapter")
     projection_lora = latest(rows, lambda r: r.get("axis") == "projection_lora" and r.get("backend") == "hf_adapter")
     fused_projection_proto = latest(rows, lambda r: r.get("axis") == "fused_projection_proto" and r.get("backend") == "hf_adapter")
+    albatross_projection_layout = latest_by_key(
+        [r for r in rows if r.get("axis") == "albatross_projection_layout_tune" and r.get("backend") == "hf_adapter"],
+        lambda r: r.get("batch_size"),
+    )
     fused_wa_lora_proto = latest(rows, lambda r: r.get("axis") == "fused_wa_lora_proto" and r.get("backend") == "hf_adapter")
     fused_wag_lora_proto = latest(rows, lambda r: r.get("axis") == "fused_wag_lora_proto" and r.get("backend") == "hf_adapter")
     fused_wavg_lora_proto = latest(rows, lambda r: r.get("axis") == "fused_wavg_lora_proto" and r.get("backend") == "hf_adapter")
@@ -289,6 +375,52 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     fused_ffn_proto = latest(rows, lambda r: r.get("axis") == "fused_ffn_proto" and r.get("backend") == "hf_adapter")
     fused_shift_mix_proto = latest(rows, lambda r: r.get("axis") == "fused_shift_mix_proto" and r.get("backend") == "hf_adapter")
     fused_recurrent_proto = latest(rows, lambda r: r.get("axis") == "fused_recurrent_proto" and r.get("backend") == "hf_adapter")
+    fused_recurrent_scan_proto = latest_by_key(
+        [r for r in rows if r.get("axis") == "fused_recurrent_scan_proto" and r.get("backend") == "hf_adapter"],
+        lambda r: (r.get("batch_size"), r.get("tokens"), r.get("heads"), r.get("head_dim"), r.get("block_m"), r.get("num_warps")),
+    )
+    dplr_prefill_scan_proto = latest_by_key(
+        [r for r in rows if r.get("axis") == "dplr_prefill_scan_proto" and r.get("backend") == "hf_adapter"],
+        lambda r: (
+            r.get("B", r.get("batch_size")),
+            r.get("T", r.get("tokens")),
+            r.get("H", r.get("heads")),
+            r.get("N", r.get("head_dim")),
+            r.get("requested_algorithm", r.get("algorithm")),
+            r.get("effective_algorithm"),
+            r.get("algorithm_family"),
+            r.get("chunk_size"),
+            r.get("dtype"),
+            r.get("device"),
+        ),
+    )
+    dplr_chunk_summary_proto = latest_by_key(
+        [r for r in rows if r.get("axis") == "dplr_chunk_summary_proto" and r.get("backend") == "hf_adapter"],
+        lambda r: (
+            r.get("B", r.get("batch_size")),
+            r.get("T", r.get("tokens")),
+            r.get("H", r.get("heads")),
+            r.get("N", r.get("head_dim")),
+            r.get("algorithm"),
+            r.get("chunk_size"),
+            r.get("dtype"),
+            r.get("device"),
+        ),
+    )
+    dplr_dense3_stage_proto = latest_by_key(
+        [r for r in rows if r.get("axis") == "dplr_dense3_stage_proto" and r.get("backend") == "hf_adapter"],
+        lambda r: (
+            r.get("B", r.get("batch_size")),
+            r.get("T", r.get("tokens")),
+            r.get("H", r.get("heads")),
+            r.get("N", r.get("head_dim")),
+            r.get("algorithm"),
+            r.get("stage"),
+            r.get("chunk_size"),
+            r.get("dtype"),
+            r.get("device"),
+        ),
+    )
     fused_recurrent_output_proto = latest(rows, lambda r: r.get("axis") == "fused_recurrent_output_proto" and r.get("backend") == "hf_adapter")
     native_graph_fused_recurrent = latest(rows, lambda r: r.get("axis") == "native_graph_fused_recurrent" and r.get("backend") == "hf_adapter")
     native_graph_fused_recurrent_output = latest(rows, lambda r: r.get("axis") == "native_graph_fused_recurrent_output" and r.get("backend") == "hf_adapter")
@@ -349,6 +481,17 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             and bool(r.get("fused_recurrent_output_enabled", True))
             and bool(r.get("fused_output_enabled", True))
             and not bool(r.get("fused_output_project_enabled"))
+        ],
+        lambda r: r.get("batch_size"),
+    )
+    native_graph_fused_projection_sweep = latest_by_key(
+        [
+            r
+            for r in rows
+            if r.get("axis") == "native_graph_fused_projection"
+            and r.get("backend") == "hf_adapter"
+            and not bool(r.get("fused_recurrent_enabled"))
+            and bool(r.get("fused_output_enabled", True))
         ],
         lambda r: r.get("batch_size"),
     )
@@ -522,22 +665,58 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             continue
         hf_decode_by_bsz_default[int(row["batch_size"])] = row
 
-    hf_prefill_by_case: dict[tuple[int, int], dict[str, Any]] = {}
+    hf_prefill_by_case: dict[tuple[int, int, str | None], dict[str, Any]] = {}
+
+    def hf_prefill_tokps(row: dict[str, Any] | None) -> tuple[float | None, str | None]:
+        """Return the HF-adapter prefill throughput metric used for A/B.
+
+        Different benchmark axes record different prefill paths.  For the
+        native fused scan axis the useful adapter number is the native prefill
+        throughput, not the FLA/HF reference throughput measured beside it.
+        """
+
+        if row is None:
+            return None, None
+        if row.get("axis") == "native_prefill_scan":
+            val = num(row, "native_prefill_tokps_total")
+            if val is not None:
+                return val, "native_prefill_tokps_total"
+            val = num(row, "hf_prefill_tokps_total")
+            if val is not None:
+                return val, "hf_prefill_tokps_total"
+        val = num(row, "prefill_tokps_total")
+        if val is not None:
+            return val, "prefill_tokps_total"
+        val = num(row, "prefill_tokps")
+        if val is not None:
+            return val, "prefill_tokps"
+        return None, None
+
     for row in rows:
         if row.get("backend") != "hf_adapter":
             continue
-        tokps = row.get("prefill_tokps_total")
         prompt_tokens = row.get("prompt_tokens")
         batch_size = row.get("batch_size")
+        tokps, metric = hf_prefill_tokps(row)
+        label = model_size_label(row)
         if tokps is not None and prompt_tokens is not None and batch_size is not None:
-            key = (int(batch_size), int(prompt_tokens))
-        elif row.get("axis") == "speed_mem" and row.get("prefill_tokps") is not None and prompt_tokens is not None:
-            tokps = row.get("prefill_tokps")
-            key = (1, int(prompt_tokens))
+            key = (int(batch_size), int(prompt_tokens), label)
+        elif row.get("axis") == "speed_mem" and tokps is not None and prompt_tokens is not None:
+            key = (1, int(prompt_tokens), label)
         else:
             continue
         old = hf_prefill_by_case.get(key)
-        if old is None or int(row.get("_lineno", 0)) >= int(old.get("_lineno", 0)):
+        old_tokps, _ = hf_prefill_tokps(old)
+        if (
+            old is None
+            or old_tokps is None
+            or float(tokps) > float(old_tokps)
+            or (float(tokps) == float(old_tokps) and int(row.get("_lineno", 0)) >= int(old.get("_lineno", 0)))
+        ):
+            row = dict(row)
+            row["_prefill_metric"] = metric
+            row["_prefill_tokps_for_compare"] = tokps
+            row["_model_size_label_for_compare"] = label
             hf_prefill_by_case[key] = row
 
     albatross_decode_comparison = []
@@ -563,16 +742,32 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             continue
         if tokens < 512:
             continue
-        hf = hf_prefill_by_case.get((bsz, tokens))
-        hf_tokps = num(hf, "prefill_tokps_total") if hf is not None else None
-        if hf_tokps is None and hf is not None:
-            hf_tokps = num(hf, "prefill_tokps")
+        alb_label = model_size_label(alb)
+        hf = hf_prefill_by_case.get((bsz, tokens, alb_label)) if alb_label is not None else None
+        if hf is None:
+            hf = hf_prefill_by_case.get((bsz, tokens, None))
+        hf_tokps = num(hf, "_prefill_tokps_for_compare") if hf is not None else None
         if hf is not None and hf_tokps is not None:
             albatross_prefill_comparison.append(
                 {
                     "batch_size": bsz,
                     "tokens_per_sequence": tokens,
+                    "model_size_label": alb_label,
                     "hf_axis": hf.get("axis"),
+                    "hf_model_size_label": hf.get("_model_size_label_for_compare"),
+                    "hf_prefill_metric": hf.get("_prefill_metric"),
+                    "hf_fused_scan_requested": hf.get("fused_scan_requested"),
+                    "hf_scan_block_m": hf.get("scan_block_m"),
+                    "hf_scan_num_warps": hf.get("scan_num_warps"),
+                    "hf_prefill_fused_scan_output_effective": hf.get("prefill_fused_scan_output_effective"),
+                    "hf_prefill_fused_clampw_scan_effective": hf.get("prefill_fused_clampw_scan_effective"),
+                    "hf_prefill_dplr_scan_effective": hf.get("prefill_dplr_scan_effective"),
+                    "hf_prefill_dplr_chunk_size": hf.get("prefill_dplr_chunk_size"),
+                    "hf_prefill_fused_shift_mix_effective": hf.get("prefill_fused_shift_mix_effective"),
+                    "hf_prefill_fused_state_prep_effective": hf.get("prefill_fused_state_prep_effective"),
+                    "hf_prefill_state_prep_w_dtype": hf.get("prefill_state_prep_w_dtype"),
+                    "hf_prefill_fused_output_effective": hf.get("prefill_fused_output_effective"),
+                    "hf_prefill_fused_wavg_lora_effective": hf.get("prefill_fused_wavg_lora_effective"),
                     "hf_tokps_total": round(hf_tokps, 4),
                     "albatross_engine": alb.get("engine"),
                     "albatross_engine_config": alb.get("engine_config"),
@@ -642,13 +837,11 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         },
         "quantization": fused_quant_targets,
         "next_kernel_steps": [
-            "profile projection/LoRA at matrix granularity",
-            "prototype fused fp16 projection path",
-            "prototype fused attention shift-mix path",
-            "prototype fused FFN path",
-            "prototype fused recurrent rank-1 state update",
-            "integrate profitable recurrent/output fusion into native_graph and then fuse deeper with projection/LoRA",
-            "add native W8/W4 pack plus fused dequant-GEMV and optimize packed kernels until W8/W4 >= fp16",
+            "preserve split-row prefill scan occupancy; do not promote full-head scan+output-prep fusion",
+            "fuse larger norm/shift/projection/LoRA/state-prep regions instead of shallow output or FFN buckets",
+            "keep cuBLAS-backed dense projections unless a deeper kernel wins end-to-end at bsz=1/4",
+            "continue decode P1 with fused recurrent-output plus deeper projection/LoRA work",
+            "add native W8/W4 pack plus fused dequant-GEMV and optimize packed kernels until W8/W4 >= fp16 end-to-end",
         ],
     }
 
@@ -773,6 +966,29 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 f"fused R/K/V projection prototype backend={backend} speedup={float(proto_speedup):.2f}x; "
                 "validate end-to-end fast-token integration"
             )
+    if not albatross_projection_layout:
+        focus.append("Albatross-inspired projection layout sweep pending")
+    else:
+        summaries = []
+        slow_batches = []
+        for row in albatross_projection_layout:
+            best = row.get("best_config") if isinstance(row.get("best_config"), dict) else {}
+            speed = best.get("avg_speedup")
+            label = f"bsz={row.get('batch_size')} {best.get('backend')} m{best.get('block_m')} k{best.get('block_k')} {speed}x"
+            summaries.append(label)
+            if speed is not None and float(speed) < 1.0:
+                slow_batches.append(row.get("batch_size"))
+        if slow_batches:
+            focus.append(
+                "Albatross-inspired simple RKV split-K/layout sweep is slower than cuBLAS "
+                f"for bsz={slow_batches}; best={'; '.join(summaries)}. "
+                "Do not integrate this shallow GEMV; borrow deeper fusion instead (LN+mix+projection/output)."
+            )
+        else:
+            focus.append(
+                "Albatross-inspired projection layout sweep found faster configs: "
+                f"{'; '.join(summaries)}; validate native_graph integration"
+            )
     if fused_wa_lora_proto is None:
         focus.append("fused_wa_lora_proto row pending")
     else:
@@ -821,16 +1037,24 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     if fused_rkv_wag_projection_proto is None:
         focus.append("fused_rkv_wag_projection_proto row pending")
     else:
+        combo_rows = [r for r in rows if r.get("axis") == "fused_rkv_wag_projection_proto" and r.get("backend") == "hf_adapter"]
+        combo_speedups = [float(r["avg_speedup"]) for r in combo_rows if r.get("avg_speedup") is not None]
+        combo_cases = sorted(
+            {(r.get("batch_size"), r.get("sequence_length"), r.get("tokens_total"), r.get("block_m"), r.get("block_r"), r.get("block_k")) for r in combo_rows},
+            key=str,
+        )
         combo_speedup = fused_rkv_wag_projection_proto.get("avg_speedup")
         backend = fused_rkv_wag_projection_proto.get("prototype_backend")
-        if combo_speedup is not None and float(combo_speedup) < 1.0:
+        if combo_speedups and min(combo_speedups) < 1.0:
             focus.append(
                 f"fused R/K/V + W/A/G projection prototype backend={backend} is slower "
-                f"({float(combo_speedup):.2f}x); optimize two-launch combined projection before HF integration"
+                f"for cases={combo_cases}; speedup min={min(combo_speedups):.2f}x max={max(combo_speedups):.2f}x; "
+                "optimize larger norm/shift/projection fusion before HF integration"
             )
         elif combo_speedup is not None:
             focus.append(
-                f"fused R/K/V + W/A/G projection prototype backend={backend} speedup={float(combo_speedup):.2f}x; "
+                f"fused R/K/V + W/A/G projection prototype backend={backend} "
+                f"speedup={float(combo_speedup):.2f}x tokens_total={fused_rkv_wag_projection_proto.get('tokens_total')}; "
                 "next target full attention fusion/integration"
             )
     if fused_attn_output_proto is None:
@@ -895,7 +1119,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         elif shift_speedup is not None:
             focus.append(
                 f"fused attention shift-mix prototype backend={backend} speedup={float(shift_speedup):.2f}x; "
-                "validate native_graph integration"
+                + ("validate native prefill opt-in" if fused_shift_mix_proto.get("input_rank") == 3 else "validate native_graph integration")
             )
     if fused_recurrent_proto is None:
         focus.append("fused_recurrent_proto row pending")
@@ -919,6 +1143,291 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 f"fused recurrent prototype backend={backend} is slower "
                 f"({float(rec_speedup):.2f}x); keep optimizing before integration"
             )
+    if not fused_recurrent_scan_proto:
+        focus.append("fused_recurrent_scan_proto row pending")
+    else:
+        scan_speedups = [
+            float(r["native_vs_fla_speedup"])
+            for r in fused_recurrent_scan_proto
+            if r.get("native_vs_fla_speedup") is not None
+        ]
+        scan_cosines = [
+            float(r["native_vs_torch_out_min_cosine"])
+            for r in fused_recurrent_scan_proto
+            if r.get("native_vs_torch_out_min_cosine") is not None
+        ]
+        cases = sorted(
+            {(r.get("batch_size"), r.get("tokens"), r.get("block_m"), r.get("num_warps")) for r in fused_recurrent_scan_proto},
+            key=str,
+        )
+        if scan_speedups:
+            scan_next = "use full native-prefill rows for promotion and fuse projection/output" if native_prefill_scan else "next wire into full native prefill and fuse projection/output"
+            focus.append(
+                f"fused recurrent scan prefill prototype present for cases={cases}; "
+                f"native/FLA recurrent-only speedup min={min(scan_speedups):.2f}x max={max(scan_speedups):.2f}x; "
+                + scan_next
+            )
+        else:
+            focus.append(
+                f"fused recurrent scan prefill prototype present for cases={cases}; "
+                "add FLA recurrent-only timing for speed ratio"
+            )
+        if scan_cosines and min(scan_cosines) < 0.999:
+            focus.append(
+                f"fused recurrent scan native-vs-torch cosine min={min(scan_cosines):.6f}; "
+                "tighten numerical validation before integration"
+            )
+    if not native_prefill_scan:
+        focus.append("native_prefill_scan end-to-end row pending")
+    else:
+        ok_rows = [
+            r for r in native_prefill_scan
+            if r.get("greedy_match") is True and r.get("decode_after_prefill_greedy_match") is True
+        ]
+        speedups = [
+            float(r["native_vs_hf_speedup"])
+            for r in native_prefill_scan
+            if r.get("native_vs_hf_speedup") is not None
+        ]
+        cases = sorted(
+            {
+                (
+                    r.get("batch_size"),
+                    r.get("prompt_tokens"),
+                    bool(r.get("fused_scan_requested")),
+                    r.get("scan_block_m"),
+                    r.get("scan_num_warps"),
+                    bool(r.get("prefill_fused_scan_output_effective")),
+                    bool(r.get("prefill_fused_clampw_scan_effective")),
+                    bool(r.get("prefill_fused_shift_mix_effective")),
+                    bool(r.get("prefill_fused_state_prep_effective")),
+                    bool(r.get("prefill_fused_state_scan_effective")),
+                    bool(r.get("prefill_fused_output_effective")),
+                    bool(r.get("prefill_fused_wavg_lora_effective")),
+                    r.get("prefill_fused_wavg_lora_max_m"),
+                )
+                for r in native_prefill_scan
+            },
+            key=str,
+        )
+        if speedups:
+            focus.append(
+                f"native_prefill_scan end-to-end rows present for cases={cases}; "
+                f"speedup min={min(speedups):.2f}x max={max(speedups):.2f}x; "
+                f"correct_cache_rows={len(ok_rows)}/{len(native_prefill_scan)}"
+            )
+            scan_output_rows = [r for r in native_prefill_scan if r.get("prefill_fused_scan_output_effective")]
+            scan_output_ratios: list[float] = []
+            for row in scan_output_rows:
+                base_candidates = [
+                    r
+                    for r in native_prefill_scan
+                    if r.get("batch_size") == row.get("batch_size")
+                    and r.get("prompt_tokens") == row.get("prompt_tokens")
+                    and bool(r.get("prefill_fused_state_prep_effective")) == bool(row.get("prefill_fused_state_prep_effective"))
+                    and not bool(r.get("prefill_fused_clampw_scan_effective"))
+                    and not bool(r.get("prefill_fused_scan_output_effective"))
+                    and not bool(r.get("prefill_fused_output_effective"))
+                    and not bool(r.get("prefill_fused_wavg_lora_effective"))
+                ]
+                base = max(base_candidates, key=lambda r: float(r.get("native_prefill_tokps_total") or 0.0), default=None)
+                row_tokps = num(row, "native_prefill_tokps_total")
+                base_tokps = num(base, "native_prefill_tokps_total")
+                if row_tokps is not None and base_tokps:
+                    scan_output_ratios.append(float(row_tokps) / float(base_tokps))
+            if scan_output_ratios:
+                focus.append(
+                    f"native prefill fused scan+output-prep opt-in A/B ratio min={min(scan_output_ratios):.3f}x "
+                    f"max={max(scan_output_ratios):.3f}x; promote only if it beats split scan across target bsz"
+                )
+            clampw_rows = [r for r in native_prefill_scan if r.get("prefill_fused_clampw_scan_effective")]
+            clampw_ratios: list[float] = []
+            for row in clampw_rows:
+                base_candidates = [
+                    r
+                    for r in native_prefill_scan
+                    if r.get("batch_size") == row.get("batch_size")
+                    and r.get("prompt_tokens") == row.get("prompt_tokens")
+                    and r.get("scan_block_m") == row.get("scan_block_m")
+                    and r.get("scan_num_warps") == row.get("scan_num_warps")
+                    and bool(r.get("prefill_fused_state_prep_effective")) == bool(row.get("prefill_fused_state_prep_effective"))
+                    and bool(r.get("prefill_fused_shift_mix_effective")) == bool(row.get("prefill_fused_shift_mix_effective"))
+                    and bool(r.get("prefill_fused_output_effective")) == bool(row.get("prefill_fused_output_effective"))
+                    and bool(r.get("prefill_fused_wavg_lora_effective")) == bool(row.get("prefill_fused_wavg_lora_effective"))
+                    and not bool(r.get("prefill_fused_scan_output_effective"))
+                    and not bool(r.get("prefill_fused_clampw_scan_effective"))
+                ]
+                base = max(base_candidates, key=lambda r: float(r.get("native_prefill_tokps_total") or 0.0), default=None)
+                row_tokps = num(row, "native_prefill_tokps_total")
+                base_tokps = num(base, "native_prefill_tokps_total")
+                if row_tokps is not None and base_tokps:
+                    clampw_ratios.append(float(row_tokps) / float(base_tokps))
+            if clampw_ratios:
+                focus.append(
+                    f"native prefill raw-W clampw scan opt-in A/B ratio min={min(clampw_ratios):.3f}x "
+                    f"max={max(clampw_ratios):.3f}x; promote only if state-prep+scan component and end-to-end improve"
+                )
+            dplr_rows = [r for r in native_prefill_scan if r.get("prefill_dplr_scan_effective")]
+            if dplr_rows:
+                chunks = sorted({r.get("prefill_dplr_chunk_size") for r in dplr_rows}, key=str)
+                ok = sum(
+                    1
+                    for r in dplr_rows
+                    if r.get("greedy_match") is True and r.get("decode_after_prefill_greedy_match") is True
+                )
+                focus.append(
+                    f"native prefill DPLR/chunked scan rows present for chunk_sizes={chunks}; "
+                    f"correct_cache_rows={ok}/{len(dplr_rows)}; current pure-torch path is correctness-only until affine/WY chunk kernels land"
+                )
+            output_rows = [
+                r
+                for r in native_prefill_scan
+                if r.get("prefill_fused_output_effective") and not r.get("prefill_fused_scan_output_effective")
+            ]
+            output_ratios: list[float] = []
+            for row in output_rows:
+                base_candidates = [
+                    r
+                    for r in native_prefill_scan
+                    if r.get("batch_size") == row.get("batch_size")
+                    and r.get("prompt_tokens") == row.get("prompt_tokens")
+                    and r.get("scan_block_m") == row.get("scan_block_m")
+                    and bool(r.get("prefill_fused_state_prep_effective")) == bool(row.get("prefill_fused_state_prep_effective"))
+                    and bool(r.get("prefill_fused_clampw_scan_effective")) == bool(row.get("prefill_fused_clampw_scan_effective"))
+                    and not bool(r.get("prefill_fused_scan_output_effective"))
+                    and not bool(r.get("prefill_fused_output_effective"))
+                    and not bool(r.get("prefill_fused_wavg_lora_effective"))
+                ]
+                base = max(base_candidates, key=lambda r: float(r.get("native_prefill_tokps_total") or 0.0), default=None)
+                row_tokps = num(row, "native_prefill_tokps_total")
+                base_tokps = num(base, "native_prefill_tokps_total")
+                if row_tokps is not None and base_tokps:
+                    output_ratios.append(float(row_tokps) / float(base_tokps))
+            if output_ratios:
+                focus.append(
+                    f"native prefill fused output-prep opt-in A/B ratio min={min(output_ratios):.3f}x "
+                    f"max={max(output_ratios):.3f}x; keep telemetry-only unless full prefill improves"
+                )
+            shift_rows = [r for r in native_prefill_scan if r.get("prefill_fused_shift_mix_effective")]
+            shift_ratios: list[float] = []
+            for row in shift_rows:
+                base_candidates = [
+                    r
+                    for r in native_prefill_scan
+                    if r.get("batch_size") == row.get("batch_size")
+                    and r.get("prompt_tokens") == row.get("prompt_tokens")
+                    and r.get("scan_block_m") == row.get("scan_block_m")
+                    and r.get("scan_num_warps") == row.get("scan_num_warps")
+                    and bool(r.get("prefill_fused_scan_output_effective")) == bool(row.get("prefill_fused_scan_output_effective"))
+                    and bool(r.get("prefill_fused_clampw_scan_effective")) == bool(row.get("prefill_fused_clampw_scan_effective"))
+                    and bool(r.get("prefill_fused_state_prep_effective")) == bool(row.get("prefill_fused_state_prep_effective"))
+                    and bool(r.get("prefill_fused_output_effective")) == bool(row.get("prefill_fused_output_effective"))
+                    and bool(r.get("prefill_fused_wavg_lora_effective")) == bool(row.get("prefill_fused_wavg_lora_effective"))
+                    and not bool(r.get("prefill_fused_shift_mix_effective"))
+                ]
+                base = max(base_candidates, key=lambda r: float(r.get("native_prefill_tokps_total") or 0.0), default=None)
+                row_tokps = num(row, "native_prefill_tokps_total")
+                base_tokps = num(base, "native_prefill_tokps_total")
+                if row_tokps is not None and base_tokps:
+                    shift_ratios.append(float(row_tokps) / float(base_tokps))
+            if shift_ratios:
+                focus.append(
+                    f"native prefill fused shift-mix opt-in A/B ratio min={min(shift_ratios):.3f}x "
+                    f"max={max(shift_ratios):.3f}x; promote only if full prefill wins across target bsz"
+                )
+            warp_rows = [
+                r
+                for r in native_prefill_scan
+                if r.get("scan_num_warps") is not None
+                and r.get("native_prefill_tokps_total") is not None
+                and bool(r.get("prefill_fused_state_prep_effective"))
+                and not bool(r.get("prefill_fused_scan_output_effective"))
+                and not bool(r.get("prefill_fused_clampw_scan_effective"))
+                and not bool(r.get("prefill_fused_shift_mix_effective"))
+                and not bool(r.get("prefill_fused_output_effective"))
+                and not bool(r.get("prefill_fused_wavg_lora_effective"))
+            ]
+            if warp_rows:
+                best_warp_by_case = []
+                for key in sorted({(r.get("batch_size"), r.get("prompt_tokens")) for r in warp_rows}, key=str):
+                    candidates = [r for r in warp_rows if (r.get("batch_size"), r.get("prompt_tokens")) == key]
+                    best = max(candidates, key=lambda r: float(r.get("native_prefill_tokps_total") or 0.0))
+                    best_warp_by_case.append(
+                        f"bsz={key[0]} tok={key[1]} warps={best.get('scan_num_warps')} tokps={best.get('native_prefill_tokps_total')}"
+                    )
+                focus.append(
+                    "native prefill scan num_warps sweep present; best explicit rows "
+                    + "; ".join(best_warp_by_case)
+                    + "; no default promotion without repeated end-to-end win"
+                )
+        else:
+            focus.append(f"native_prefill_scan end-to-end rows present for cases={cases}; add timing fields")
+    if not native_prefill_breakdown:
+        focus.append("native_prefill_breakdown rows pending for bsz=1 prefill bottleneck attribution")
+    else:
+        bsz1_breakdowns = [r for r in native_prefill_breakdown if int(r.get("batch_size") or 0) == 1]
+        chosen = max(bsz1_breakdowns or native_prefill_breakdown, key=lambda r: int(r.get("_lineno", 0)))
+        top = chosen.get("top_components") or []
+        if top:
+            top_name = top[0][0]
+            top_ms = top[0][1]
+            top_share = top[0][2]
+            focus.append(
+                f"native_prefill_breakdown top component for bsz={chosen.get('batch_size')} "
+                f"prompt={chosen.get('prompt_tokens')}: {top_name} {top_ms}ms share={top_share}; "
+                "optimize this before touching cache"
+            )
+            fine_rows = [r for r in native_prefill_breakdown if r.get("fine_attention_breakdown")]
+            if fine_rows:
+                fine_bsz1 = [r for r in fine_rows if int(r.get("batch_size") or 0) == 1]
+                fine = max(fine_bsz1 or fine_rows, key=lambda r: int(r.get("_lineno", 0)))
+                cm = fine.get("component_ms") or {}
+                lora_sum = sum(float(cm.get(k) or 0.0) for k in ("attn_lora_w", "attn_lora_a", "attn_lora_g", "attn_lora_v_gate", "attn_lora_wavg_fused"))
+                dense_rkv_sum = sum(float(cm.get(k) or 0.0) for k in ("attn_dense_r_proj", "attn_dense_k_proj", "attn_dense_v_proj"))
+                if dense_rkv_sum <= 0.0:
+                    dense_rkv_sum = float(cm.get("attn_dense_rkv") or 0.0)
+                scan_ms = cm.get("recurrent_scan", cm.get("recurrent_scan_output_prep_fused"))
+                state_ms = cm.get("attn_state_prep_fused", cm.get("attn_lora_state_prep"))
+                norm_ms = cm.get("attn_norm_shift_mix")
+                focus.append(
+                    f"fine prefill breakdown bsz={fine.get('batch_size')} prompt={fine.get('prompt_tokens')}: "
+                    f"scan={scan_ms}ms state_prep={state_ms}ms dense_rkv_sum={round(dense_rkv_sum, 4)}ms "
+                    f"lora_sum={round(lora_sum, 4)}ms norm_shift_mix={norm_ms}ms; "
+                    "next fusion should target scan plus norm/shift/projection/state prep, not cache"
+                )
+                layer_rows = [r for r in fine_rows if r.get("layer_breakdown") and r.get("top_layers_by_total")]
+                if layer_rows:
+                    layer_bsz1 = [r for r in layer_rows if int(r.get("batch_size") or 0) == 1]
+                    layer_row = max(layer_bsz1 or layer_rows, key=lambda r: int(r.get("_lineno", 0)))
+                    top_layers = layer_row.get("top_layers_by_total") or []
+                    formatted_layers = "; ".join(
+                        f"L{int(layer)}={float(ms):.4f}ms"
+                        for layer, ms in top_layers[:5]
+                    )
+                    layer_components = layer_row.get("layer_top_components") or {}
+                    first_layer = str(top_layers[0][0]) if top_layers else None
+                    first_layer_top = layer_components.get(first_layer, []) if first_layer is not None else []
+                    formatted_components = ", ".join(
+                        f"{name}={float(ms):.4f}ms"
+                        for name, ms in first_layer_top[:3]
+                    )
+                    focus.append(
+                        f"layer prefill breakdown bsz={layer_row.get('batch_size')} prompt={layer_row.get('prompt_tokens')}: "
+                        f"top layers {formatted_layers}; hottest layer top components {formatted_components}"
+                    )
+        else:
+            focus.append("native_prefill_breakdown rows present but top_components missing")
+    fast_prefill_ttft = [
+        r for r in ttft_tpot
+        if r.get("metric") == "ttft" and str(r.get("fast_prefill_env")) not in {"", "0", "false", "False", "no", "off"}
+    ]
+    if fast_prefill_ttft:
+        best = max(fast_prefill_ttft, key=lambda r: float(r.get("prefill_tokps_p50") or 0.0))
+        focus.append(
+            f"HF forward TTFT fast-prefill row present: prompt={best.get('prompt_tokens')} "
+            f"p50={best.get('p50_ms')} ms tokps={best.get('prefill_tokps_p50')} "
+            f"backend={best.get('fast_prefill_backend_effective')} fused_scan_env={best.get('native_prefill_fused_scan_env')}"
+        )
     if fused_recurrent_output_proto is None:
         focus.append("fused_recurrent_output_proto row pending")
     else:
@@ -1178,6 +1687,29 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 f"native_graph fused projection integration passes greedy {greedy_match}/{greedy_total} "
                 f"but speedup={float(ngp_speedup):.2f}x; keep opt-in and tune R/K/V+LoRA kernels"
             )
+    if native_graph_fused_projection_sweep:
+        sweep_speeds = [num(r, "speedup") for r in native_graph_fused_projection_sweep]
+        sweep_speeds = [v for v in sweep_speeds if v is not None]
+        sweep_batches = [r.get("batch_size") for r in native_graph_fused_projection_sweep]
+        greedy_ok = all(
+            r.get("greedy_match") is not None
+            and r.get("greedy_total") is not None
+            and int(r.get("greedy_match")) == int(r.get("greedy_total"))
+            for r in native_graph_fused_projection_sweep
+        )
+        if sweep_speeds and greedy_ok:
+            min_speed = min(sweep_speeds)
+            variant = native_graph_fused_projection_sweep[-1].get("projection_variant")
+            if min_speed >= 1.0:
+                focus.append(
+                    f"native_graph fused projection ({variant}) batch matrix covers bsz={sweep_batches} "
+                    f"with min_speedup={min_speed:.2f}x and greedy exact"
+                )
+            else:
+                focus.append(
+                    f"native_graph fused projection ({variant}) batch matrix covers bsz={sweep_batches} "
+                    f"with greedy exact but min_speedup={min_speed:.2f}x; keep opt-in, not defaultable"
+                )
     if native_quant_gemv_proto is None:
         focus.append("native_quant_gemv_proto row pending")
     else:
@@ -1560,28 +2092,95 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             }
             for r in batch_experimental_latest
         ],
-        "dynamic_batch": [compact(r, ["_lineno", "decode_api", "fast_token_backend", "fast_token_backend_effective", "initial_batch_size", "final_batch_size", "final_cache_batch_size", "cache_select_api", "total_decode_tokens", "reorder_count", "drop_count", "decode_tokps_total", "decode_ms_per_token", "peak_vram_mb"]) for r in dynamic_latest],
+        "dynamic_batch": [
+            compact(
+                r,
+                [
+                    "_lineno",
+                    "decode_api",
+                    "fast_token_backend",
+                    "fast_token_backend_effective",
+                    "initial_batch_size",
+                    "final_batch_size",
+                    "final_cache_batch_size",
+                    "cache_select_api",
+                    "total_decode_tokens",
+                    "reorder_count",
+                    "drop_count",
+                    "decode_tokps_total",
+                    "decode_ms_per_token",
+                    "cache_select_batch_calls",
+                    "cache_native_graph_bound_selects",
+                    "cache_seen_tokens",
+                    "native_graph_cache_requests",
+                    "native_graph_cache_hits",
+                    "native_graph_cache_misses",
+                    "native_graph_cache_hit_rate",
+                    "native_graph_cache_batch_sizes",
+                    "native_graph_copy_from_cache_calls",
+                    "native_graph_copy_from_cache_fast_skips",
+                    "native_graph_copy_from_cache_fast_skip_rate",
+                    "native_graph_bind_cache_calls",
+                    "native_graph_bind_cache_fast_skips",
+                    "native_graph_bind_cache_fast_skip_rate",
+                    "peak_vram_mb",
+                ],
+            )
+            for r in dynamic_latest
+        ],
         "chunked_prefill": [compact(r, ["_lineno", "prefill_mode", "batch_size", "prompt_tokens", "chunk_size", "prefill_tokps_total", "speed_ratio_vs_full", "peak_vram_mb", "peak_vram_ratio_vs_full", "max_abs_diff", "decode_max_abs_diff", "seq_length_match"]) for r in chunked_latest],
+        "native_prefill_scan": [
+            compact(r, ["_lineno", "status", "dtype", "device", "code_source", "native_jit_module", "effective_model_path", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "scan_num_warps", "prefill_fused_scan_output_requested", "prefill_fused_scan_output_effective", "prefill_fused_clampw_scan_requested", "prefill_fused_clampw_scan_effective", "prefill_dplr_scan_requested", "prefill_dplr_scan_effective", "prefill_dplr_chunk_size", "prefill_fused_shift_mix_requested", "prefill_fused_shift_mix_effective", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_state_scan_requested", "prefill_fused_state_scan_effective", "prefill_fused_output_requested", "prefill_fused_output_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "fast_token_backend_after_native_prefill", "hf_prefill_ms", "native_prefill_ms", "native_vs_hf_speedup", "hf_prefill_tokps_total", "native_prefill_tokps_total", "max_abs_diff", "min_cosine", "greedy_match", "decode_after_prefill_max_abs_diff", "decode_after_prefill_greedy_match", "peak_vram_mb"])
+            for r in native_prefill_scan
+        ],
+        "native_prefill_breakdown": [
+            compact(r, ["_lineno", "status", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "scan_num_warps", "fine_attention_breakdown", "layer_breakdown", "prefill_fused_scan_output_requested", "prefill_fused_scan_output_effective", "prefill_fused_clampw_scan_requested", "prefill_fused_clampw_scan_effective", "prefill_dplr_scan_requested", "prefill_dplr_scan_effective", "prefill_dplr_chunk_size", "prefill_fused_shift_mix_requested", "prefill_fused_shift_mix_effective", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_state_scan_requested", "prefill_fused_state_scan_effective", "prefill_fused_output_requested", "prefill_fused_output_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "profiled_total_gpu_ms", "component_sum_ms", "profiled_tokps_total", "component_ms", "component_share", "top_components", "layer_total_ms", "top_layers_by_total", "layer_top_components", "max_abs_diff_vs_native_prefill", "greedy_match_vs_native_prefill", "peak_vram_mb"])
+            for r in native_prefill_breakdown
+        ],
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "hf_forward_fixed", "hf_forward_greedy", "hf_forward_auto_fixed", "hf_forward_auto_greedy", "hf_forward_auto_backend", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
         "forward_fast_path": compact(forward_fast_path, ["_lineno", "fast_token_backend", "fast_token_layout", "reference_forward", "hf_forward_fast", "direct_fast_token", "hf_forward_fast_backend", "direct_fast_token_backend", "max_abs_diff_auto_vs_reference", "max_abs_diff_direct_vs_reference", "peak_vram_mb"]),
         "generate_fast_path": compact(generate_fast_path, ["_lineno", "fast_token_backend", "fast_token_backend_effective", "batch_size", "reference_generate", "hf_generate_fast", "speedup_vs_reference", "generated_equal", "generated_tokens_matched", "generated_tokens_total", "prompt_tokens", "max_new_tokens", "peak_vram_mb"]),
         "fast_token_warmup": compact(fast_token_warmup, ["_lineno", "fast_token_backend", "batch_sizes", "effective_backend_by_batch", "native_graph_cache_batch_sizes", "native_graph_cache_size_limit", "cleared_before", "warmup_s", "peak_vram_mb"]),
+        "ttft_tpot": [
+            compact(r, ["_lineno", "metric", "dtype", "device", "fast_forward_env", "fast_prefill_env", "native_prefill_fused_scan_env", "fast_prefill_backend_effective", "fast_token_backend_effective", "prompt_tokens", "decode_tokens", "batch_size", "p50_ms", "p99_ms", "mean_ms", "prefill_tokps_p50", "decode_tokps_p50", "generate_tokps", "peak_vram_mb", "status"])
+            for r in ttft_tpot
+        ],
         "native_graph_replay_overhead": [
-            compact(r, ["_lineno", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_recurrent", "native_graph_fused_recurrent_output", "native_graph_fused_output", "native_graph_fused_output_project", "native_graph_fused_wag_lora", "native_graph_fused_wavg_lora", "native_graph_fused_projection", "batch_size", "prompt_tokens", "steps", "fixed_token", "max_abs_diff_runner_vs_api", "copy_from_cache_ms", "token_copy_ms", "graph_replay_ms", "bind_cache_ms", "argmax_ms", "manual_wall_ms_per_token", "api_ms_per_token", "manual_decode_tokps_total", "api_decode_tokps_total", "copy_share_of_manual_wall", "native_graph_cache_requests", "native_graph_cache_hits", "native_graph_cache_misses", "native_graph_cache_evictions", "native_graph_cache_hit_rate", "native_graph_cache_batch_sizes", "peak_vram_mb"])
+            compact(r, ["_lineno", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_recurrent", "native_graph_fused_recurrent_output", "native_graph_fused_output", "native_graph_fused_output_project", "native_graph_fused_wag_lora", "native_graph_fused_wavg_lora", "native_graph_fused_projection", "batch_size", "prompt_tokens", "steps", "fixed_token", "max_abs_diff_runner_vs_api", "copy_from_cache_ms", "token_copy_ms", "graph_replay_ms", "bind_cache_ms", "argmax_ms", "copy_from_cache_calls", "copy_from_cache_fast_skips", "copy_from_cache_fast_skip_rate", "bind_cache_calls", "bind_cache_fast_skips", "bind_cache_fast_skip_rate", "manual_wall_ms_per_token", "api_ms_per_token", "manual_decode_tokps_total", "api_decode_tokps_total", "copy_share_of_manual_wall", "native_graph_cache_requests", "native_graph_cache_hits", "native_graph_cache_misses", "native_graph_cache_evictions", "native_graph_cache_hit_rate", "native_graph_cache_batch_sizes", "peak_vram_mb"])
             for r in native_graph_overhead
         ],
         "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
         "projection_lora": compact(projection_lora, ["_lineno", "batch_size", "hidden_size", "layers", "avg_timings_ms", "avg_current_linears_lora_sum_ms", "avg_candidate_linears_lora_sum_ms", "avg_candidate_speedup", "sample_matrix_profile_summary", "fused_kernel_plan", "peak_vram_mb"]),
         "fused_projection_proto": compact(fused_projection_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
+        "albatross_projection_layout_tune": [
+            compact(r, ["_lineno", "prototype_backend", "borrowed_from", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "steps", "avg_current_ms", "config_count", "best_config", "top_configs", "peak_vram_mb"])
+            for r in albatross_projection_layout
+        ],
         "fused_wa_lora_proto": compact(fused_wa_lora_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_wag_lora_proto": compact(fused_wag_lora_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_wavg_lora_proto": compact(fused_wavg_lora_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
-        "fused_rkv_wag_projection_proto": compact(fused_rkv_wag_projection_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
+        "fused_rkv_wag_projection_proto": compact(fused_rkv_wag_projection_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "sequence_length", "tokens_total", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_attn_output_proto": compact(fused_attn_output_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "head_dims", "head_v_dims", "layers", "input_scale", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "output_max_abs_diff", "prep_max_abs_diff", "min_cosine", "output_min_cosine", "prep_min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_attn_output_project_proto": compact(fused_attn_output_project_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m_values", "input_scale", "steps", "avg_current_ms", "avg_prep_cublas_ms", "avg_prep_cublas_speedup", "best_fused_project", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_ffn_proto": compact(fused_ffn_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "intermediate_sizes", "layers", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
-        "fused_shift_mix_proto": compact(fused_shift_mix_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "input_rank", "hidden_size", "layers", "block_size", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
+        "fused_shift_mix_proto": compact(fused_shift_mix_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "sequence_length", "tokens_total", "input_rank", "hidden_size", "layers", "block_size", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_recurrent_proto": compact(fused_recurrent_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_n", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "out_max_abs_diff", "state_max_abs_diff", "out_min_cosine", "layer_rows", "peak_vram_mb"]),
+        "fused_recurrent_scan_proto": [
+            compact(r, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "tokens", "heads", "head_dim", "block_n", "block_m", "num_warps", "chunk_size", "steps", "native_scan_ms", "native_scan_tokps_total", "fla_chunk_ms", "fla_chunk_tokps_total", "native_vs_fla_speedup", "native_vs_torch_speedup", "native_vs_torch_out_max_abs_diff", "native_vs_torch_state_max_abs_diff", "native_vs_torch_out_min_cosine", "native_vs_fla_out_min_cosine", "peak_vram_mb"])
+            for r in fused_recurrent_scan_proto
+        ],
+        "dplr_prefill_scan_proto": [
+            compact(r, ["_lineno", "status", "dtype", "device", "algorithm", "requested_algorithm", "effective_algorithm", "algorithm_family", "is_dense_affine", "detected_algorithms", "chunk_size", "triton_wy_available", "triton_wy_block_m", "triton_dense3_available", "triton_summary_block_m", "triton_prefix_block_m", "triton_apply_block_m", "B", "T", "H", "N", "warmup", "steps", "ms", "tokps", "out_max_abs_diff", "state_max_abs_diff", "out_min_cosine", "fallback_reason", "skip_reason", "error", "peak_vram_mb"])
+            for r in dplr_prefill_scan_proto
+        ],
+        "dplr_chunk_summary_proto": [
+            compact(r, ["_lineno", "status", "dtype", "device", "algorithm", "algorithm_family", "chunk_size", "triton_summary_available", "triton_summary_block_m", "B", "T", "H", "N", "warmup", "steps", "summary_shape", "ms", "tokps", "transition_max_abs_diff", "additive_max_abs_diff", "state_max_abs_diff", "skip_reason", "error", "peak_vram_mb"])
+            for r in dplr_chunk_summary_proto
+        ],
+        "dplr_dense3_stage_proto": [
+            compact(r, ["_lineno", "status", "dtype", "device", "algorithm", "algorithm_family", "stage", "chunk_size", "triton_summary_available", "triton_summary_block_m", "triton_prefix_block_m", "triton_apply_block_m", "B", "T", "H", "N", "warmup", "steps", "summary_shape", "start_states_shape", "chunk_end_shape", "ms", "tokps", "transition_max_abs_diff", "additive_max_abs_diff", "start_states_max_abs_diff", "prefix_vs_torch_summary_state_max_abs_diff", "chunk_end_max_abs_diff", "out_max_abs_diff", "state_max_abs_diff", "out_min_cosine", "skip_reason", "error", "peak_vram_mb"])
+            for r in dplr_dense3_stage_proto
+        ],
         "fused_recurrent_output_proto": compact(fused_recurrent_output_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "attn_mode", "fuse_norm", "batch_size", "hidden_size", "layers", "block_n", "input_scale", "steps", "avg_current_ms", "avg_split_fused_ms", "avg_fused_ms", "avg_speedup_vs_current", "avg_speedup_vs_split", "out_max_abs_diff", "state_max_abs_diff", "split_out_max_abs_diff", "split_state_max_abs_diff", "out_min_cosine", "split_out_min_cosine", "layer_rows", "peak_vram_mb"]),
         "native_graph_fused_recurrent": compact(native_graph_fused_recurrent, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "baseline_effective_backend", "fused_effective_backend", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "peak_vram_mb"]),
         "native_graph_fused_recurrent_output": compact(native_graph_fused_recurrent_output, ["_lineno", "status", "dtype", "device", "attn_mode", "fuse_norm", "fast_cache", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_output_enabled", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_recurrent_output", "fused_recurrent_output", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
@@ -1590,7 +2189,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "native_graph_fused_wag_lora": compact(native_graph_fused_wag_lora, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "fused_output_enabled", "fused_output_project_enabled", "block_m", "block_r", "block_k", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_wag_lora", "fused_wag_lora", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
         "native_graph_fused_wavg_lora": compact(native_graph_fused_wavg_lora, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "fused_recurrent_output_enabled", "fused_output_enabled", "fused_output_project_enabled", "block_m", "block_r", "block_k", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_wavg_lora", "fused_wavg_lora", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
         "native_graph_vkwr_rkv_policy": compact(native_graph_vkwr_rkv_policy, ["_lineno", "status", "dtype", "device", "batch_size", "hidden_size", "prompt_tokens", "steps", "fixed_token", "policy_min_hidden", "policy_max_rows", "policy_active_by_rule", "fused_recurrent_enabled", "fused_recurrent_output_enabled", "fused_output_enabled", "fused_output_project_enabled", "baseline_policy", "candidate_policy", "baseline_effective_backend", "candidate_effective_backend", "baseline_ms_per_step", "candidate_ms_per_step", "speedup", "baseline_tokps_total", "candidate_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "candidate_cache_stats", "peak_vram_mb"]),
-        "native_graph_fused_projection": compact(native_graph_fused_projection, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "fused_output_enabled", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_projection", "fused_projection", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
+        "native_graph_fused_projection": compact(native_graph_fused_projection, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "projection_variant", "fused_recurrent_enabled", "fused_output_enabled", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_projection", "fused_projection", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
         "native_graph_fused_output_sweep": [
             compact(r, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"])
             for r in native_graph_fused_output_sweep
@@ -1611,12 +2210,16 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             compact(r, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "fused_recurrent_output_enabled", "fused_output_enabled", "fused_output_project_enabled", "block_m", "block_r", "block_k", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"])
             for r in native_graph_fused_wavg_lora_sweep
         ],
+        "native_graph_fused_projection_sweep": [
+            compact(r, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "projection_variant", "fused_recurrent_enabled", "fused_output_enabled", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"])
+            for r in native_graph_fused_projection_sweep
+        ],
         "native_quant_gemv_proto": compact(native_quant_gemv_proto, ["_lineno", "prototype_backend", "status", "quantization", "dtype", "device", "batch_size", "layers", "modules", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "mean_abs_diff_max", "min_cosine", "sample_fp16_weight_mb", "sample_int8_weight_mb", "sample_footprint_ratio", "layer_rows", "peak_vram_mb"]),
         "native_quant_w4_gemv_proto": compact(native_quant_w4_gemv_proto, ["_lineno", "prototype_backend", "status", "quantization", "dtype", "device", "batch_size", "layers", "modules", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "mean_abs_diff_max", "min_cosine", "sample_fp16_weight_mb", "sample_int4_weight_mb", "sample_footprint_ratio", "layer_rows", "peak_vram_mb"]),
         "native_quant_rkv_proto": compact(native_quant_rkv_proto, ["_lineno", "prototype_backend", "status", "quantization", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m", "block_k", "steps", "avg_fp16_current_ms", "avg_separate_int8_ms", "avg_fused_int8_ms", "fused_speedup_vs_fp16", "fused_speedup_vs_separate_int8", "separate_speedup_vs_fp16", "max_abs_diff_fp16_vs_fused", "max_abs_diff_separate_vs_fused", "min_cosine_fp16_vs_fused", "min_cosine_separate_vs_fused", "sample_fp16_weight_mb", "sample_int8_weight_mb", "sample_footprint_ratio", "layer_rows", "peak_vram_mb"]),
         "native_quant_w4_rkv_proto": compact(native_quant_w4_rkv_proto, ["_lineno", "prototype_backend", "status", "quantization", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m", "block_k", "steps", "avg_fp16_current_ms", "avg_separate_int4_ms", "avg_fused_int4_ms", "fused_speedup_vs_fp16", "fused_speedup_vs_separate_int4", "separate_speedup_vs_fp16", "max_abs_diff_fp16_vs_fused", "max_abs_diff_separate_vs_fused", "min_cosine_fp16_vs_fused", "min_cosine_separate_vs_fused", "sample_fp16_weight_mb", "sample_int4_weight_mb", "sample_footprint_ratio", "layer_rows", "peak_vram_mb"]),
         "native_quant_rkv_sweep": [
-            compact(r, ["_lineno", "prototype_backend", "status", "quantization", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m_values", "block_k_values", "warmup", "steps", "avg_fp16_baseline_ms", "best_by_speedup_vs_fp16", "best_by_latency", "sample_fp16_weight_mb", "sample_quant_weight_mb", "sample_footprint_ratio", "peak_vram_mb"])
+            compact(r, ["_lineno", "prototype_backend", "status", "quantization", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m_values", "block_k_values", "block_k_unit", "warmup", "steps", "avg_fp16_baseline_ms", "best_by_speedup_vs_fp16", "best_by_latency", "sample_fp16_weight_mb", "sample_quant_weight_mb", "sample_footprint_ratio", "peak_vram_mb"])
             for r in native_quant_rkv_sweep
         ],
         "larger_model_smoke": [
@@ -1953,6 +2556,18 @@ def print_text(report: dict[str, Any]) -> None:
             print(json.dumps(row, ensure_ascii=False))
     else:
         print("PENDING")
+    print("\n## native_prefill_scan")
+    if report["native_prefill_scan"]:
+        for row in report["native_prefill_scan"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+    print("\n## native_prefill_breakdown")
+    if report["native_prefill_breakdown"]:
+        for row in report["native_prefill_breakdown"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
     print("\n## decode_micro")
     print(json.dumps(report["decode_micro"], ensure_ascii=False) if report["decode_micro"] else "PENDING")
     print("\n## forward_fast_path")
@@ -1961,6 +2576,12 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["generate_fast_path"], ensure_ascii=False) if report["generate_fast_path"] else "PENDING")
     print("\n## fast_token_warmup")
     print(json.dumps(report["fast_token_warmup"], ensure_ascii=False) if report["fast_token_warmup"] else "PENDING")
+    print("\n## ttft_tpot")
+    if report["ttft_tpot"]:
+        for row in report["ttft_tpot"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
     print("\n## native_graph_replay_overhead")
     if report["native_graph_replay_overhead"]:
         for row in report["native_graph_replay_overhead"]:
@@ -1973,6 +2594,8 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["projection_lora"], ensure_ascii=False) if report["projection_lora"] else "PENDING")
     print("\n## fused_projection_proto")
     print(json.dumps(report["fused_projection_proto"], ensure_ascii=False) if report["fused_projection_proto"] else "PENDING")
+    print("\n## albatross_projection_layout_tune")
+    print(json.dumps(report["albatross_projection_layout_tune"], ensure_ascii=False) if report["albatross_projection_layout_tune"] else "PENDING")
     print("\n## fused_wa_lora_proto")
     print(json.dumps(report["fused_wa_lora_proto"], ensure_ascii=False) if report["fused_wa_lora_proto"] else "PENDING")
     print("\n## fused_wag_lora_proto")
@@ -1991,6 +2614,26 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["fused_shift_mix_proto"], ensure_ascii=False) if report["fused_shift_mix_proto"] else "PENDING")
     print("\n## fused_recurrent_proto")
     print(json.dumps(report["fused_recurrent_proto"], ensure_ascii=False) if report["fused_recurrent_proto"] else "PENDING")
+    print("\n## fused_recurrent_scan_proto")
+    print(json.dumps(report["fused_recurrent_scan_proto"], ensure_ascii=False) if report["fused_recurrent_scan_proto"] else "PENDING")
+    print("\n## dplr_prefill_scan_proto")
+    if report["dplr_prefill_scan_proto"]:
+        for row in report["dplr_prefill_scan_proto"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+    print("\n## dplr_chunk_summary_proto")
+    if report["dplr_chunk_summary_proto"]:
+        for row in report["dplr_chunk_summary_proto"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+    print("\n## dplr_dense3_stage_proto")
+    if report["dplr_dense3_stage_proto"]:
+        for row in report["dplr_dense3_stage_proto"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
     print("\n## fused_recurrent_output_proto")
     print(json.dumps(report["fused_recurrent_output_proto"], ensure_ascii=False) if report["fused_recurrent_output_proto"] else "PENDING")
     print("\n## native_graph_fused_recurrent")
@@ -2009,6 +2652,12 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["native_graph_vkwr_rkv_policy"], ensure_ascii=False) if report["native_graph_vkwr_rkv_policy"] else "PENDING")
     print("\n## native_graph_fused_projection")
     print(json.dumps(report["native_graph_fused_projection"], ensure_ascii=False) if report["native_graph_fused_projection"] else "PENDING")
+    print("\n## native_graph_fused_projection_sweep")
+    if report["native_graph_fused_projection_sweep"]:
+        for row in report["native_graph_fused_projection_sweep"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
     print("\n## native_graph_fused_output_sweep")
     if report["native_graph_fused_output_sweep"]:
         for row in report["native_graph_fused_output_sweep"]:
