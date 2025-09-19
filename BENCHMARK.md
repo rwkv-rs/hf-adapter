@@ -36,7 +36,12 @@ and Albatross-style paths in correctness, speed, and memory.
 
 ## Current V100 status
 
-Latest V100 runs are appended in `bench/results.jsonl`.
+Latest V100 runs are appended in `bench/results.jsonl`. The HF training /
+quant / ZeRO matrix from 2026-07-02 is summarized in
+[`docs/validation/V100_HF_VALIDATION.md`](docs/validation/V100_HF_VALIDATION.md): 0.4B/1.5B pass the
+Trainer/SFT/DPO/GRPO/PEFT/ZeRO/quant smoke matrix, 2.9B passes the
+native TRL/PEFT/ZeRO2-resume/ZeRO3-base/quant matrix, and 7.2B passes
+PEFT plus 8/4-bit quantized inference within V100 memory limits.
 
 ### Correctness / precision
 
@@ -525,7 +530,7 @@ deeper rewrite that reduces launches without adding stack/bmm overhead.
 
 Newer rows also emit `sample_matrix_profile`, `sample_matrix_profile_summary`,
 and `fused_kernel_plan`. These fields turn the profiler into the first concrete
-step of `FUSED_BACKEND.md`: they record matrix shapes, per-token FLOPs,
+step of `docs/performance/FUSED_BACKEND.md`: they record matrix shapes, per-token FLOPs,
 fp16/int8/int4 weight sizes, timed members, the first fp16 fusion target, and
 the native-quant candidates that should later replace generic bnb kernels.
 
@@ -1501,7 +1506,7 @@ V100 rows show:
 | 8-bit / 4-bit decode ratio | 0.24x / 0.67x fp16 | >=1.00x | GAP |
 | Albatross V100 decode ratio | HF native-graph `0.32x`-`0.47x` Albatross faster3a for bsz=1/2/4/8 | approach Albatross | GAP |
 | Albatross V100 prefill ratio | HF `0.32x` Albatross faster3a for B=1,T=512 | approach Albatross | GAP |
-| Fused backend P1 decode ladder | analyzer target min ratio `>=0.55x` Albatross | `FUSED_BACKEND.md` P1 | GAP |
+| Fused backend P1 decode ladder | analyzer target min ratio `>=0.55x` Albatross | `docs/performance/FUSED_BACKEND.md` P1 | GAP |
 | Fused backend quant ladder | W8/W4 decode `>=1.0x` fp16 reference with W8 footprint `<=0.75x`, W4 footprint `<=0.55x` | native W8/W4 fused path | GAP |
 | 0.4B converted-model smoke | hidden=1024, layers=24, generated=4, backend=native_graph | load + generate | PASS |
 | 1.5B converted-model smoke | hidden=2048, layers=24, generated=2, backend=native_graph | load + generate | PASS |

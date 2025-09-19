@@ -4,7 +4,7 @@
 
 不要把 native vLLM/SGLang 工作放进本 TODO,那是独立项目。
 
-> 缺口总览见 [`HF_CRITERIA.md`](HF_CRITERIA.md) §3、性能数字见 [`BENCHMARK.md`](BENCHMARK.md)、性能 kernel 路线见 [`FUSED_BACKEND.md`](FUSED_BACKEND.md)、整体状态见 [`HF_STATUS.md`](HF_STATUS.md)。本文件是这些文档的**实操展开**(做什么 + 怎么做 + 完成定义),不重复其内容。
+> 缺口总览见 [`docs/reference/HF_CRITERIA.md`](docs/reference/HF_CRITERIA.md) §3、性能数字见 [`BENCHMARK.md`](BENCHMARK.md)、性能 kernel 路线见 [`docs/performance/FUSED_BACKEND.md`](docs/performance/FUSED_BACKEND.md)、整体状态见 [`HF_STATUS.md`](HF_STATUS.md)。本文件是这些文档的**实操展开**(做什么 + 怎么做 + 完成定义),不重复其内容。
 
 ## 贡献规则
 
@@ -17,16 +17,16 @@
 
 ## P0:闭合 HF 验收证据
 
-### 1. 大模型训练矩阵 【进行中】
+### 1. 大模型训练矩阵 【V100 主体已补,继续扩卡】
 
-小模型 PEFT/Trainer/TRL smoke 已有。下一步是跑并记录模型尺寸矩阵。
+小模型 PEFT/Trainer/TRL smoke 已有。2026-07-02 已补一轮 V100 大模型矩阵,详见 [`docs/validation/V100_HF_VALIDATION.md`](docs/validation/V100_HF_VALIDATION.md)。下一步不是重复跑 0.1B,而是把 7B 训练、ZeRO3 resume 和更多卡补成强证据。
 
 | 模型尺寸 | PEFT | SFT | DPO | GRPO | ZeRO-2 | ZeRO-3 | 备注 |
 |---|---|---|---|---|---|---|---|
-| 0.4B | 进行中 | 进行中 | 待补 | 待补 | 待补 | 待补 | 0.1B 之外首个真实训练目标。 |
-| 1.5B | 进行中 | 进行中 | 待补 | 可选 | 待补 | 待补 | V100 压力目标。 |
-| 2.9B | 待补 | 待补 | 可选 | 可选 | 待补 | 待补 | 可能需短序列 / grad accumulation 调参。 |
-| 7B | 可选 | 可选 | 可选 | 可选 | 可选 | 待补 | 先做 ZeRO-3 小 smoke。 |
+| 0.4B | pass | pass | pass | pass | pass + resume | base pass | V100 主体完成;ZeRO3 resume 仍归专项缺口。 |
+| 1.5B | pass | pass | pass | pass | pass + resume | base pass | V100 主体完成;继续补吞吐/更长 step。 |
+| 2.9B | pass | pass native | pass native | pass native | resume pass | base pass | FLA 路径受限,native/no-FLA 兼容路径通过。 |
+| 7.2B | PEFT pass | V100 limit | V100 limit | V100 limit | 待大卡/多卡 | 待大卡/多卡 | quant 8/4-bit pass;完整训练需 A100/H100/多卡/offload。 |
 
 完成定义:
 
@@ -37,45 +37,52 @@
 - 支持时追加 `bench/results.jsonl` 行;
 - 在 `BENCHMARK.md` 或 PR body 加摘要。
 
-### 2. ZeRO checkpoint resume
+### 2. ZeRO checkpoint resume 【ZeRO2 已补,ZeRO3 待修】
 
-补一个 DeepSpeed resume 专项 smoke:
+`tests/test_deepspeed_resume_smoke.py` 已新增,并在 2×V100 上验证 ZeRO2 resume 到 2.9B。当前专项缺口是 ZeRO3 checkpoint resume。目标流程:
 
-1. ZeRO-2 下初始化 HF Trainer + PEFT LoRA;
+1. ZeRO-3 下初始化 HF Trainer + PEFT LoRA;
 2. 训练一步;
 3. 保存 checkpoint;
-4. 重新初始化 model / trainer;
-5. 从 checkpoint resume;
-6. 再训一步;
-7. 断言有限 loss、预期 global step、trainable 参数 delta;
-8. ZeRO-3 重复。
+4. 释放旧模型 / trainer / engine;
+5. 重新初始化 model / trainer;
+6. 从 checkpoint resume;
+7. 再训一步;
+8. 断言有限 loss、预期 global step、trainable 参数 delta。
 
-建议文件:`tests/test_deepspeed_resume_smoke.py`
-建议结果类型:`deepspeed_resume_smoke`
+已有文件:`tests/test_deepspeed_resume_smoke.py`
+已有结果类型:`deepspeed_resume_smoke`
+当前难点:DeepSpeed ZeRO3 参数分片在 fresh model construction / resume 时的重新进入逻辑。
 
-### 3. 一键 HF 验收脚本
+### 3. 一键 HF 验收脚本 【已完成,继续使用】
 
-加脚本,让新贡献者不用读每个测试文件就能复现当前验收状态。
+已合入脚本,让新贡献者不用读每个测试文件就能复现当前验收状态。
 
-建议脚本:
+已完成脚本:
 
 - `scripts/run_hf_acceptance.sh`
-- `scripts/run_hf_training_matrix.sh`
-- `scripts/run_zero_resume_smoke.sh`
 - `scripts/run_hardware_smoke.sh`
+- `scripts/run_hf_training_matrix.sh`
+- `scripts/run_zero_training_smoke.sh`
 
-完成定义:
+继续使用方式:
 
-- 脚本接受 `MODEL`、`RESULTS`、`CUDA_VISIBLE_DEVICES` 及 dtype 相关 override;
-- 脚本打印环境元数据;
-- 真实失败快速报错,但允许显式 optional skip;
-- 文档给出最小调用示例。
+- card issue:优先跑 `scripts/run_hardware_smoke.sh`;
+- 训练矩阵:优先跑 `scripts/run_hf_training_matrix.sh`;
+- ZeRO base smoke:跑 `scripts/run_zero_training_smoke.sh`;
+- 新脚本/新参数必须继续支持 `MODEL`、`RESULTS`、`CUDA_VISIBLE_DEVICES`、dtype override 和环境元数据打印。
 
 ### 4. 卡适配矩阵 【4090 进行中】
 
 搭一个可复现的卡矩阵。目标是常见专业 / 消费硬件上的生产级信心,而不只是一台服务器。
 
-每卡最小 smoke:
+每卡最小 smoke 优先使用一键脚本:
+
+```bash
+MODEL=/path/to/model DEVICE=cuda DTYPE=fp16 bash scripts/run_hardware_smoke.sh
+```
+
+需要拆分定位时再跑原始命令:
 
 ```bash
 python tests/smoke_hf_generate.py --model /path/to/model
@@ -111,7 +118,7 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 
 | 优先级 | 卡族 | 目标 |
 |---|---|---|
-| P0 | V100 1×/2× | 保持基线绿灯;补 ZeRO resume 与大模型 smoke。 |
+| P0 | V100 1×/2× | 保持基线绿灯;ZeRO2 resume 和 0.4B/1.5B/2.9B 矩阵已补,继续补 ZeRO3 resume。 |
 | P0 | A100 | 补 Ampere 生产吞吐、bf16、量化、ZeRO 行。 |
 | P0 | RTX 4090 | **进行中** —— 补常见消费级 Ada 证据。 |
 | P1 | H100 | 补 Hopper 高端吞吐与 bf16 / 量化行。 |
@@ -163,7 +170,7 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 
 ## P2:闭合性能与量化缺口
 
-> 路线与数字权威见 [`FUSED_BACKEND.md`](FUSED_BACKEND.md) 与 [`BENCHMARK.md`](BENCHMARK.md);本节只列实操动作。
+> 路线与数字权威见 [`docs/performance/FUSED_BACKEND.md`](docs/performance/FUSED_BACKEND.md) 与 [`BENCHMARK.md`](BENCHMARK.md);本节只列实操动作。
 
 ### 10. Albatross / RWKV-LM 速度缺口
 
@@ -195,7 +202,7 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 
 ### 13. Native Transformers 方向
 
-长期 upstream 形态(详见 [`HF_CRITERIA.md`](HF_CRITERIA.md) §3 缺口 5):
+长期 upstream 形态(详见 [`docs/reference/HF_CRITERIA.md`](docs/reference/HF_CRITERIA.md) §3 缺口 5):
 
 ```text
 src/transformers/models/rwkv7/
