@@ -17,16 +17,16 @@
 
 ## P0:闭合 HF 验收证据
 
-### 1. 大模型训练矩阵 【V100 主体已补,继续扩卡】
+### 1. 大模型训练矩阵 【V100 + A100 40GB 主体已补,继续扩卡/长训】
 
-小模型 PEFT/Trainer/TRL smoke 已有。2026-07-02 已补一轮 V100 大模型矩阵,详见 [`docs/validation/V100_HF_VALIDATION.md`](docs/validation/V100_HF_VALIDATION.md)。下一步不是重复跑 0.1B,而是把 7B 训练、ZeRO3 resume 和更多卡补成强证据。
+小模型 PEFT/Trainer/TRL smoke 已有。2026-07-02 已补 V100 大模型矩阵,详见 [`docs/validation/V100_HF_VALIDATION.md`](docs/validation/V100_HF_VALIDATION.md);同日已补 A100 40GB 0.4B/1.5B/2.9B/7.2B 矩阵,详见 [`docs/validation/A100_HF_VALIDATION.md`](docs/validation/A100_HF_VALIDATION.md)。下一步不是重复跑 0.1B,而是把 ZeRO3 resume、A100 80GB、长 step/吞吐和更多卡补成强证据。
 
 | 模型尺寸 | PEFT | SFT | DPO | GRPO | ZeRO-2 | ZeRO-3 | 备注 |
 |---|---|---|---|---|---|---|---|
-| 0.4B | pass | pass | pass | pass | pass + resume | base pass | V100 主体完成;ZeRO3 resume 仍归专项缺口。 |
-| 1.5B | pass | pass | pass | pass | pass + resume | base pass | V100 主体完成;继续补吞吐/更长 step。 |
-| 2.9B | pass | pass native | pass native | pass native | resume pass | base pass | FLA 路径受限,native/no-FLA 兼容路径通过。 |
-| 7.2B | PEFT pass | V100 limit | V100 limit | V100 limit | 待大卡/多卡 | 待大卡/多卡 | quant 8/4-bit pass;完整训练需 A100/H100/多卡/offload。 |
+| 0.4B | pass | pass | pass | pass | pass + resume | base pass | V100 + A100 40GB 主体完成;ZeRO3 resume 仍归专项缺口。 |
+| 1.5B | pass | pass | pass | pass | pass + resume | base pass | V100 + A100 40GB 主体完成;继续补吞吐/更长 step。 |
+| 2.9B | pass | pass native / A100 pass | pass native / A100 pass | pass native | pass + resume | base pass | V100 native/no-FLA 兼容路径通过;A100 40GB Trainer/SFT/DPO/ZeRO 已补。 |
+| 7.2B | PEFT pass | A100 pass | A100 pass | 待大卡/长训 | A100 pass + resume | A100 base pass | V100 单卡受限;A100 40GB smoke 已补,仍需 ZeRO3 resume/长训/80GB。 |
 
 完成定义:
 
@@ -37,9 +37,9 @@
 - 支持时追加 `bench/results.jsonl` 行;
 - 在 `BENCHMARK.md` 或 PR body 加摘要。
 
-### 2. ZeRO checkpoint resume 【ZeRO2 已补,ZeRO3 待修】
+### 2. ZeRO checkpoint resume 【ZeRO2 已补到 A100 7.2B,ZeRO3 待修】
 
-`tests/test_deepspeed_resume_smoke.py` 已新增,并在 2×V100 上验证 ZeRO2 resume 到 2.9B。当前专项缺口是 ZeRO3 checkpoint resume。目标流程:
+`tests/test_deepspeed_resume_smoke.py` 已新增,并在 2×V100 上验证 ZeRO2 resume 到 2.9B、在 2×A100 40GB 上验证 ZeRO2 resume 到 7.2B。当前专项缺口是 ZeRO3 checkpoint resume。目标流程:
 
 1. ZeRO-3 下初始化 HF Trainer + PEFT LoRA;
 2. 训练一步;
@@ -52,7 +52,7 @@
 
 已有文件:`tests/test_deepspeed_resume_smoke.py`
 已有结果类型:`deepspeed_resume_smoke`
-当前难点:DeepSpeed ZeRO3 参数分片在 fresh model construction / resume 时的重新进入逻辑。
+当前难点:DeepSpeed ZeRO3 参数分片在 fresh model construction / resume 时的重新进入逻辑;A100 40GB 复现为 checkpoint epilogue 中 `all_gather_into_tensor` dtype mismatch。
 
 ### 3. 一键 HF 验收脚本 【已完成,继续使用】
 
@@ -119,7 +119,7 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 | 优先级 | 卡族 | 目标 |
 |---|---|---|
 | P0 | V100 1×/2× | 保持基线绿灯;ZeRO2 resume 和 0.4B/1.5B/2.9B 矩阵已补,继续补 ZeRO3 resume。 |
-| P0 | A100 | 0.1B 基础验证已补:fp16/bf16 吞吐、8/4-bit 量化、bf16 Trainer/TRL、2×A100 ZeRO-2/3;继续补更大模型、长 step 与吞吐矩阵。 |
+| P0 | A100 | A100 40GB 已补 0.1B 基线 + 0.4B/1.5B/2.9B/7.2B smoke、fp16/bf16 batch sweep、8/4-bit 量化速度/显存、bf16 Trainer/SFT/DPO、HF checkpoint resume、2×A100 ZeRO-2/3 base、ZeRO2 resume;继续补 A100 80GB、ZeRO3 resume、长 step 与吞吐矩阵。 |
 | P0 | RTX 4090 | **进行中** —— 补常见消费级 Ada 证据。 |
 | P1 | H100 | 补 Hopper 高端吞吐与 bf16 / 量化行。 |
 | P1 | RTX 5090 / 50 系 | 补 Blackwell 消费级验证与回归行。 |
