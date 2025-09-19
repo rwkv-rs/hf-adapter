@@ -184,6 +184,54 @@ def mm8_matmul_triton(x, w_u8, mx, rx, my, ry):
     return torch.stack(outs, dim=0)
 
 
+if _HAS_TRITON:
+
+    @triton.jit
+    def _mm8_gemv_sk_kernel(
+        x_ptr, w_ptr, mx_ptr, rx_ptr, my_ptr, ry_ptr, y_ptr,
+        N, M,
+        BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr,
+    ):
+        """Split-K GEMV: grid = (m_tiles, n_chunks); atomic_add reduction.
+
+        Mirrors the official kernel_mm_one_fp16i8 layout (split the N reduction
+        across blocks, reduce with atomicAdd) so large layers get enough
+        parallelism -- the naive single-program-full-N kernel was
+        parallelism-starved on V100.
+        """
+        pid_m = tl.program_id(0)
+        pid_n = tl.program_id(1)
+        offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+        mask_m = offs_m < M
+        mask_n = offs_n < N
+        rx_m = tl.load(rx_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
+        mx_m = tl.load(mx_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
+        x = tl.load(x_ptr + offs_n, mask=mask_n, other=0.0).to(tl.float32)
+        ry_n = tl.load(ry_ptr + offs_n, mask=mask_n, other=0.0).to(tl.float32)
+        my_n = tl.load(my_ptr + offs_n, mask=mask_n, other=0.0).to(tl.float32)
+        w_addr = offs_n[:, None] * M + offs_m[None, :]
+        w = tl.load(w_ptr + w_addr, mask=mask_n[:, None] & mask_m[None, :], other=0).to(tl.float32)
+        deq = (w + 0.5) * ry_n[:, None] * rx_m[None, :] + my_n[:, None] + mx_m[None, :]
+        acc = tl.sum(x[:, None] * deq, axis=0)  # [BLOCK_M]
+        tl.atomic_add(y_ptr + offs_m, acc, mask=mask_m)
+
+
+def mm8_gemv_triton_sk(x, w_u8, mx, rx, my, ry, *, block_m=64, block_n=128):
+    """Split-K fused int8 dequant GEMV (more parallelism than :func:`mm8_gemv_triton`)."""
+    if not mm8_gemv_available():
+        raise RuntimeError("mm8_gemv_triton_sk requires triton + torch")
+    n, m = w_u8.shape
+    y = torch.zeros(m, device=x.device, dtype=torch.float32)
+    grid = (triton.cdiv(m, block_m), triton.cdiv(n, block_n))
+    _mm8_gemv_sk_kernel[grid](
+        x, w_u8, _as_1d(mx), _as_1d(rx), _as_1d(my), _as_1d(ry), y,
+        n, m, BLOCK_M=block_m, BLOCK_N=block_n, num_warps=4,
+    )
+    return y.to(x.dtype)
+
+
+
 # --------------------------------------------------------------------------- #
 # Model integration: an int8 (mm8) nn.Linear drop-in + size-gated replacement.
 # The speed crossover (launch-bound -> memory-bound) sits around weight.numel()
