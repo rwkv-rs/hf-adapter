@@ -892,10 +892,36 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         "dense": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)", r".*ffn\.(key|value)"],
     }
 
+    @staticmethod
+    def _rwkv7_bnb_concrete_skip_modules(policy: str, config: Any | None = None) -> list[str]:
+        num_layers = int(getattr(config, "num_hidden_layers", 0) or 0)
+        if num_layers <= 0:
+            return []
+        skips: list[str] = []
+        for layer_idx in range(num_layers):
+            for lora_name in ("w_lora", "a_lora", "g_lora", "v_lora"):
+                for linear_idx in (0, 2):
+                    skips.append(f"model.layers.{layer_idx}.attn.{lora_name}.lora.{linear_idx}")
+            if policy in {"decode_hot", "dense"}:
+                for proj_name in ("r_proj", "k_proj", "v_proj", "o_proj"):
+                    skips.append(f"model.layers.{layer_idx}.attn.{proj_name}")
+            if policy == "dense":
+                for ffn_name in ("key", "value"):
+                    skips.append(f"model.layers.{layer_idx}.ffn.{ffn_name}")
+        return skips
+
     @classmethod
-    def rwkv7_bnb_skip_modules(cls, policy: str | None = None) -> list[str]:
+    def rwkv7_bnb_skip_modules(cls, policy: str | None = None, config: Any | None = None) -> list[str]:
         policy = _bnb_skip_policy(policy)
-        return list(dict.fromkeys([*cls._rwkv7_bnb_skip_modules, *cls._rwkv7_bnb_policy_extra_skips[policy]]))
+        return list(
+            dict.fromkeys(
+                [
+                    *cls._rwkv7_bnb_skip_modules,
+                    *cls._rwkv7_bnb_policy_extra_skips[policy],
+                    *cls._rwkv7_bnb_concrete_skip_modules(policy, config),
+                ]
+            )
+        )
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
@@ -922,8 +948,14 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             quantization_config = BitsAndBytesConfig(**bnb_kwargs)
             kwargs["quantization_config"] = quantization_config
         if quantization_config is not None and hasattr(quantization_config, "llm_int8_skip_modules"):
+            config_for_skip = kwargs.get("config")
+            if config_for_skip is None:
+                try:
+                    config_for_skip = cls.config_class.from_pretrained(pretrained_model_name_or_path)
+                except Exception:
+                    config_for_skip = None
             existing = list(getattr(quantization_config, "llm_int8_skip_modules", None) or [])
-            merged = list(dict.fromkeys([*existing, *cls.rwkv7_bnb_skip_modules(rwkv7_bnb_skip_policy)]))
+            merged = list(dict.fromkeys([*existing, *cls.rwkv7_bnb_skip_modules(rwkv7_bnb_skip_policy, config_for_skip)]))
             quantization_config.llm_int8_skip_modules = merged
         model = super().from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
         if quantization_config is not None:
