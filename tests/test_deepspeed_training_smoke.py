@@ -6,6 +6,7 @@ import importlib.util
 import json
 import math
 import os
+import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,12 +14,50 @@ from typing import Any
 
 # Keep the V100 training smoke path out of Dynamo/Triton compile trouble.
 os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+# Some pip/conda CUDA runtimes expose torch CUDA without a full CUDA_HOME.
+# DeepSpeed ZeRO does not need the fp_quantizer CUDA_HOME compatibility probe,
+# so keep this smoke runnable in those environments.
+os.environ.setdefault("DS_IGNORE_CUDA_DETECTION", "1")
+
+
+def ensure_single_process_distributed_env() -> None:
+    """Avoid DeepSpeed falling back to mpi4py for one-process smoke runs."""
+    if any(k in os.environ for k in ("RANK", "WORLD_SIZE", "LOCAL_RANK")):
+        return
+    os.environ.setdefault("RANK", "0")
+    os.environ.setdefault("WORLD_SIZE", "1")
+    os.environ.setdefault("LOCAL_RANK", "0")
+    os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+    os.environ.setdefault("MASTER_PORT", "29500")
 
 
 PROMPTS = [
     "User: Say hello.\n\nAssistant: Hello!",
     "User: Count to three.\n\nAssistant: one two three.",
 ]
+
+TRAIN_DTYPES = {"fp32": "float32", "fp16": "float16", "bf16": "bfloat16"}
+
+
+def infer_model_size_label(model_path: str, explicit: str = "") -> str | None:
+    if explicit:
+        return explicit.lower()
+    match = re.search(r"(\d+(?:\.\d+)?b)", Path(model_path).name.lower())
+    return match.group(1) if match else None
+
+
+def model_metadata(args: argparse.Namespace, model: Any | None = None) -> dict[str, Any]:
+    cfg = getattr(model, "config", None)
+    return {
+        "model_name": Path(args.model).name,
+        "model_size_label": infer_model_size_label(args.model, getattr(args, "model_size_label", "")),
+        "hf_model_dir": args.model,
+        "hidden_size": getattr(cfg, "hidden_size", None),
+        "intermediate_size": getattr(cfg, "intermediate_size", None),
+        "num_hidden_layers": getattr(cfg, "num_hidden_layers", None),
+        "head_dim": getattr(cfg, "head_dim", None),
+        "num_heads": getattr(cfg, "num_heads", None),
+    }
 
 
 def optional_torch() -> Any | None:
@@ -109,21 +148,59 @@ def append_rows(path: str, rows: list[dict[str, Any]]) -> None:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def train_torch_dtype(torch: Any, train_dtype: str) -> Any:
+    return getattr(torch, TRAIN_DTYPES[train_dtype])
+
+
+def use_fp16(torch: Any, train_dtype: str) -> bool:
+    return torch.cuda.is_available() and train_dtype == "fp16"
+
+
+def use_bf16(torch: Any, train_dtype: str) -> bool:
+    return torch.cuda.is_available() and train_dtype == "bf16"
+
+
+def materialize_trainable_param(param) -> Any | None:
+    """Return a full CPU fp32 copy, including DeepSpeed ZeRO-3 shards."""
+    try:
+        if hasattr(param, "ds_id"):
+            from deepspeed.utils import safe_get_full_fp32_param
+
+            full = safe_get_full_fp32_param(param)
+            if full is not None:
+                return full.detach().float().cpu().clone()
+    except Exception:
+        pass
+    if int(param.numel()) == 0:
+        return None
+    return param.detach().float().cpu().clone()
+
+
 def trainable_snapshot(model) -> dict[str, Any]:
-    return {
-        name: param.detach().float().cpu().clone()
-        for name, param in model.named_parameters()
-        if param.requires_grad
-    }
+    out = {}
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        value = materialize_trainable_param(param)
+        if value is not None:
+            out[name] = value
+    return out
 
 
 def max_trainable_delta(before: dict[str, Any], model) -> float:
     max_delta = 0.0
+    compared = 0
     for name, param in model.named_parameters():
         if not param.requires_grad or name not in before:
             continue
-        delta = (param.detach().float().cpu() - before[name]).abs().max().item()
+        value = materialize_trainable_param(param)
+        if value is None or tuple(value.shape) != tuple(before[name].shape):
+            continue
+        delta = (value - before[name]).abs().max().item()
         max_delta = max(max_delta, float(delta))
+        compared += 1
+    if compared == 0:
+        raise RuntimeError("No trainable parameters could be compared after DeepSpeed training")
     return max_delta
 
 
@@ -132,7 +209,7 @@ def load_lora_model(model_path: str, attn_mode: str, train_dtype: str):
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         trust_remote_code=True,
-        torch_dtype=torch.float16 if train_dtype == "fp16" else torch.float32,
+        torch_dtype=train_torch_dtype(torch, train_dtype),
     )
     model.config.use_cache = False
     model.config.fuse_cross_entropy = False
@@ -179,12 +256,16 @@ def skip_row(args: argparse.Namespace, stage: int, reason: str) -> dict[str, Any
         "dtype": args.train_dtype,
         "train_dtype": args.train_dtype,
         "device": device_name(),
+        **model_metadata(args),
         "cuda_device_count": cuda_device_count(),
+        "distributed_world_size": int(os.environ.get("WORLD_SIZE", "1")),
+        "local_rank": int(os.environ.get("LOCAL_RANK", "0")),
     }
 
 
 def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
     config_path = zero_config_path(Path(args.config_dir), stage)
+    ensure_single_process_distributed_env()
     if importlib.util.find_spec("deepspeed") is None:
         if args.optional:
             return skip_row(args, stage, "deepspeed missing")
@@ -219,8 +300,8 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
             save_strategy="no",
             report_to=[],
             remove_unused_columns=False,
-            fp16=torch.cuda.is_available() and args.train_dtype == "fp16",
-            bf16=False,
+            fp16=use_fp16(torch, args.train_dtype),
+            bf16=use_bf16(torch, args.train_dtype),
             dataloader_num_workers=0,
             gradient_checkpointing=False,
             deepspeed=str(config_path),
@@ -248,7 +329,10 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
         "dtype": args.train_dtype,
         "train_dtype": args.train_dtype,
         "device": device_name(),
+        **model_metadata(args, model),
         "cuda_device_count": cuda_device_count(),
+        "distributed_world_size": int(os.environ.get("WORLD_SIZE", "1")),
+        "local_rank": int(os.environ.get("LOCAL_RANK", "0")),
         "attn_mode": args.attn_mode,
         "batch_size": args.batch_size,
         "gradient_accumulation_steps": args.gradient_accumulation_steps,
@@ -268,11 +352,12 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
+    ap.add_argument("--model-size-label", default="", help="Optional size label such as 0.4b; inferred from --model when omitted")
     ap.add_argument("--config-dir", default="configs/deepspeed")
     ap.add_argument("--zero-stage", choices=["2", "3", "both"], default="both")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--max-length", type=int, default=64)
-    ap.add_argument("--train-dtype", choices=["fp32", "fp16"], default="fp32")
+    ap.add_argument("--train-dtype", choices=["fp32", "fp16", "bf16"], default="fp32")
     ap.add_argument("--max-steps", type=int, default=1)
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--gradient-accumulation-steps", type=int, default=1)

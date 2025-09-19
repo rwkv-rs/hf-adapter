@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +25,29 @@ PROMPTS = [
     "User: Say hello.\n\nAssistant: Hello!",
     "User: Count to three.\n\nAssistant: one two three.",
 ]
+
+TRAIN_DTYPES = {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}
+
+
+def infer_model_size_label(model_path: str, explicit: str = "") -> str | None:
+    if explicit:
+        return explicit.lower()
+    match = re.search(r"(\d+(?:\.\d+)?b)", Path(model_path).name.lower())
+    return match.group(1) if match else None
+
+
+def model_metadata(args, model) -> dict[str, Any]:
+    cfg = getattr(model, "config", None)
+    return {
+        "model_name": Path(args.model).name,
+        "model_size_label": infer_model_size_label(args.model, args.model_size_label),
+        "hf_model_dir": args.model,
+        "hidden_size": getattr(cfg, "hidden_size", None),
+        "intermediate_size": getattr(cfg, "intermediate_size", None),
+        "num_hidden_layers": getattr(cfg, "num_hidden_layers", None),
+        "head_dim": getattr(cfg, "head_dim", None),
+        "num_heads": getattr(cfg, "num_heads", None),
+    }
 
 
 class TokenDataset(Dataset):
@@ -65,6 +89,18 @@ def metric(metrics: dict[str, Any], key: str) -> float | None:
     return float(value) if value is not None else None
 
 
+def train_torch_dtype(train_dtype: str) -> torch.dtype:
+    return TRAIN_DTYPES[train_dtype]
+
+
+def use_fp16(device: str, train_dtype: str) -> bool:
+    return device.startswith("cuda") and train_dtype == "fp16"
+
+
+def use_bf16(device: str, train_dtype: str) -> bool:
+    return device.startswith("cuda") and train_dtype == "bf16"
+
+
 def append_rows(path: str, rows: list[dict[str, Any]]) -> None:
     if not path:
         return
@@ -91,14 +127,6 @@ def max_trainable_delta(before: dict[str, torch.Tensor], model) -> float:
         delta = (param.detach().float().cpu() - before[name]).abs().max().item()
         max_delta = max(max_delta, float(delta))
     return max_delta
-
-
-def train_torch_dtype(train_dtype: str) -> torch.dtype:
-    if train_dtype == "fp16":
-        return torch.float16
-    if train_dtype == "bf16":
-        return torch.bfloat16
-    return torch.float32
 
 
 def keep_trainable_params_fp32(model) -> None:
@@ -191,6 +219,7 @@ def run_trainer(args) -> dict[str, Any]:
         "dtype": args.train_dtype,
         "train_dtype": args.train_dtype,
         "device": device_name(args.device),
+        **model_metadata(args, model),
         "attn_mode": args.attn_mode,
         "batch_size": args.batch_size,
         "gradient_accumulation_steps": args.gradient_accumulation_steps,
@@ -251,6 +280,7 @@ def run_trl(args) -> dict[str, Any]:
         "dtype": args.train_dtype,
         "train_dtype": args.train_dtype,
         "device": device_name(args.device),
+        **model_metadata(args, model),
         "attn_mode": args.attn_mode,
         "batch_size": args.batch_size,
         "gradient_accumulation_steps": args.gradient_accumulation_steps,
@@ -271,6 +301,7 @@ def run_trl(args) -> dict[str, Any]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
+    ap.add_argument("--model-size-label", default="", help="Optional size label such as 0.4b; inferred from --model when omitted")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--max-length", type=int, default=64)

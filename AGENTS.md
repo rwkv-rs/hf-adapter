@@ -214,7 +214,7 @@ Near-term completion, without waiting for extra GPUs:
    smoke harness, analyzer/report ingestion, docs, and local tests. Real pass
    rows can wait for live GPU/DeepSpeed access, but the repository should be
    ready to run them with one command.
-7. Current performance phase: follow `FUSED_BACKEND.md` for the native fused
+7. Current performance phase: follow `docs/performance/FUSED_BACKEND.md` for the native fused
    fp16 -> native W8/W4 backend. The analyzer must track Albatross ratio
    ladders and quantized speed/footprint gates under `fused_backend_targets`.
 8. Next when GPUs return: expand V100 evidence for large-model smoke,
@@ -231,7 +231,7 @@ Current no-GPU work mode:
 - Treat existing V100 evidence as the active baseline until GPUs return. Do not
   block merges on new H100/4090/5090/A100 numbers.
 - Keep GPU-only work as explicit follow-up rows in `BENCHMARK.md` /
-  `NEXT_STEPS.md`: fresh speed sweeps, large-model runs, fused W8/W4 kernels,
+  `docs/archive/NEXT_STEPS.md`: fresh speed sweeps, large-model runs, fused W8/W4 kernels,
   ZeRO-2/3 multi-GPU validation, and cross-card validation.
 - The immediate finish line for this repository is a clean HF adapter that can
   be reviewed, installed, tested, and benchmarked reproducibly; vLLM/SGLang and

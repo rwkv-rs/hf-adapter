@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -29,6 +30,28 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
 SEED = "The quick brown fox jumps over the lazy dog. " * 200
+
+
+def infer_model_size_label(hf_dir: str, explicit: str = "") -> str | None:
+    if explicit:
+        return explicit.lower()
+    match = re.search(r"(\d+(?:\.\d+)?b)", Path(hf_dir).name.lower())
+    return match.group(1) if match else None
+
+
+def model_metadata(args, model) -> dict:
+    cfg = getattr(model, "config", None)
+    return {
+        "model_name": Path(args.hf_dir).name,
+        "model_size_label": infer_model_size_label(args.hf_dir, args.model_size_label),
+        "hf_model_dir": args.hf_dir,
+        "checkpoint_path": args.pth,
+        "hidden_size": getattr(cfg, "hidden_size", None),
+        "intermediate_size": getattr(cfg, "intermediate_size", None),
+        "num_hidden_layers": getattr(cfg, "num_hidden_layers", None),
+        "head_dim": getattr(cfg, "head_dim", None),
+        "num_heads": getattr(cfg, "num_heads", None),
+    }
 
 
 def encode(tok, n):
@@ -189,6 +212,7 @@ def _res(backend, args, model, L, prefill, decode, vram, attn):
     return {
         "axis": "speed_mem", "backend": backend, "dtype": args.dtype,
         "device": torch.cuda.get_device_name(0), "attn_mode": attn,
+        **model_metadata(args, model),
         "prompt_tokens": L, "decode_tokens": args.decode_tokens,
         "prefill_tokps": round(prefill, 1),
         "decode_tokps": round(decode, 1),
@@ -200,6 +224,7 @@ def _res(backend, args, model, L, prefill, decode, vram, attn):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hf-dir", required=True)
+    ap.add_argument("--model-size-label", default="", help="Optional size label such as 0.4b; inferred from --hf-dir when omitted")
     ap.add_argument("--pth", default=None)
     ap.add_argument("--backend", default="both", choices=["hf", "official", "both"])
     ap.add_argument("--dtype", default="fp16", choices=list(DTYPES))
