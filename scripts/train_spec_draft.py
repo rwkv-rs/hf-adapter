@@ -34,7 +34,7 @@ After training, measure acceptance with the EXISTING bench (the verify path is
 unchanged)::
 
     python bench/bench_speculative_decode.py \
-        --model /path/to/rwkv7-0.4b-hf \
+        --target-model /path/to/rwkv7-0.4b-hf \
         --draft-model /path/to/rwkv7-0.1b-draft-aligned \
         ... --results bench/results.jsonl
 """
@@ -52,6 +52,56 @@ import torch.nn.functional as F
 
 
 DEFAULT_TARGET_MODULES = ["r_proj", "k_proj", "v_proj", "o_proj", "key", "value"]
+
+
+def _module_has_hf_device_map(model: torch.nn.Module) -> bool:
+    """Return True for Accelerate/HF device_map-dispatched modules.
+
+    Calling ``.to(device)`` on such modules can error or invalidate the dispatch
+    hooks, so movement must be skipped once ``from_pretrained(device_map=...)``
+    has placed the model. PEFT wraps models (``PeftModel -> LoraModel -> base``),
+    while RWKV HF wrappers expose ``model``; walk only those common containers.
+    """
+    stack = [model]
+    seen: set[int] = set()
+    for _ in range(8):
+        if not stack:
+            break
+        obj = stack.pop()
+        if obj is None or id(obj) in seen:
+            continue
+        seen.add(id(obj))
+        if getattr(obj, "hf_device_map", None) is not None:
+            return True
+        for attr in ("base_model", "model", "module"):
+            child = getattr(obj, attr, None)
+            if child is not None and id(child) not in seen:
+                stack.append(child)
+    return False
+
+
+def _move_module_to_device_if_safe(model: torch.nn.Module, device: str) -> bool:
+    """Move ``model`` unless it is already managed by HF/Accelerate device_map."""
+    if _module_has_hf_device_map(model):
+        return False
+    model.to(device)
+    return True
+
+
+def _module_input_device(model: torch.nn.Module, fallback: str) -> torch.device:
+    """Best-effort input device for normal and device_map-dispatched modules."""
+    try:
+        return next(model.parameters()).device
+    except StopIteration:
+        return torch.device(fallback)
+
+
+def _param_identity_fingerprint(model: torch.nn.Module) -> dict[str, tuple[int, tuple[int, ...], torch.dtype, torch.device]]:
+    """Lightweight target guard: metadata only, no full tensor clone."""
+    return {
+        n: (p.data_ptr(), tuple(p.shape), p.dtype, p.device)
+        for n, p in model.named_parameters()
+    }
 
 
 def _forward_logits(model: torch.nn.Module, input_ids: torch.Tensor) -> torch.Tensor:
@@ -129,10 +179,12 @@ def align_draft(
     if seed is not None:
         torch.manual_seed(seed)
 
+    if target is draft:
+        raise ValueError("target and draft must be separate model instances")
+
     target.eval()
     for p in target.parameters():
         p.requires_grad_(False)
-    target_param_clone = {n: p.detach().clone() for n, p in target.named_parameters()}
 
     if target_modules is None:
         target_modules = list(DEFAULT_TARGET_MODULES)
@@ -148,20 +200,30 @@ def align_draft(
     )
     draft = get_peft_model(draft, lora_cfg)
     draft.train()
-    draft.to(device)
-    target.to(device)
+    _move_module_to_device_if_safe(draft, device)
+    _move_module_to_device_if_safe(target, device)
 
-    opt = torch.optim.AdamW(
-        [p for p in draft.parameters() if p.requires_grad], lr=lr
-    )
+    target_param_ids = {id(p) for p in target.parameters()}
+    trainable_params = [p for p in draft.parameters() if p.requires_grad]
+    overlap = [n for n, p in draft.named_parameters() if p.requires_grad and id(p) in target_param_ids]
+    if overlap:
+        raise RuntimeError(
+            "draft optimizer would update target parameters: " + ", ".join(overlap[:8])
+        )
+    if not trainable_params:
+        raise RuntimeError("no trainable draft LoRA parameters were created")
+    target_param_meta = _param_identity_fingerprint(target)
+
+    opt = torch.optim.AdamW(trainable_params, lr=lr)
 
     losses: list[float] = []
     for _ep in range(int(epochs)):
         for ids in prompt_token_ids:
-            ids = ids.to(device).long()
+            target_ids = ids.to(_module_input_device(target, device)).long()
+            draft_ids = ids.to(_module_input_device(draft, device)).long()
             with torch.no_grad():
-                t_logits = _forward_logits(target, ids)
-            d_logits = _forward_logits(draft, ids)
+                t_logits = _forward_logits(target, target_ids).to(draft_ids.device)
+            d_logits = _forward_logits(draft, draft_ids)
             loss = distill_loss(d_logits, t_logits, ce_weight=ce_weight, kl_weight=kl_weight)
             if not torch.isfinite(loss):
                 # Skip unstable steps instead of poisoning params with NaN grads.
@@ -170,9 +232,7 @@ def align_draft(
             opt.zero_grad(set_to_none=True)
             loss.backward()
             if max_grad_norm:
-                torch.nn.utils.clip_grad_norm_(
-                    [p for p in draft.parameters() if p.requires_grad], max_grad_norm
-                )
+                torch.nn.utils.clip_grad_norm_(trainable_params, max_grad_norm)
             opt.step()
             losses.append(float(loss.detach().cpu()))
             if log_every and (len(losses) % log_every == 0):
@@ -182,11 +242,20 @@ def align_draft(
         draft = draft.merge_and_unload()
     draft.eval()
 
-    # Guard the 准则: target weights must not have changed.
+    # Guard the 准则 without cloning the full target: it must remain frozen, have
+    # no gradients, and keep the same parameter storage metadata. This catches
+    # accidental optimizer inclusion / module replacement while avoiding an extra
+    # full target copy that can OOM 0.4B+ real runs.
     for n, p in target.named_parameters():
-        assert torch.equal(p.detach(), target_param_clone[n].to(p.device)), (
-            "target parameters changed during draft alignment — violates the guideline"
-        )
+        if p.requires_grad:
+            raise RuntimeError(f"target parameter unexpectedly trainable: {n}")
+        if p.grad is not None:
+            raise RuntimeError(f"target parameter received a gradient: {n}")
+        meta = target_param_meta.get(n)
+        if meta is None:
+            raise RuntimeError(f"target parameter disappeared or was replaced: {n}")
+        if meta != (p.data_ptr(), tuple(p.shape), p.dtype, p.device):
+            raise RuntimeError(f"target parameter storage metadata changed: {n}")
     return draft, losses
 
 
@@ -267,7 +336,7 @@ def main() -> int:
         regen = []
         for p in prompts:
             enc = tok(p, return_tensors="pt")
-            base = enc["input_ids"].to(args.device)
+            base = enc["input_ids"].to(_module_input_device(target, args.device))
             with torch.inference_mode():
                 full = target.generate(
                     base,
