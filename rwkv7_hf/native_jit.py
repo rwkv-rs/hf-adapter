@@ -13,6 +13,17 @@ import os
 import torch
 import torch.nn.functional as F
 
+
+def _linear_module(module, x: torch.Tensor) -> torch.Tensor:
+    """Linear call that also supports native MM8/MM4Linear lm_head modules."""
+    if type(module) is torch.nn.Linear:
+        return F.linear(x, module.weight, module.bias)
+    return module(x)
+
+
+def _lm_head(model, x: torch.Tensor) -> torch.Tensor:
+    return _linear_module(model.lm_head, x)
+
 try:  # pragma: no cover - optional in older converted model dirs
     from .kernel_policy import current_kernel_policy, env_blocks, env_flag, env_int
 except Exception:  # pragma: no cover - direct remote-file execution fallback
@@ -1305,7 +1316,7 @@ def prefill(
 
     x = F.layer_norm(x, [hidden], base.norm.weight, base.norm.bias, 1e-5)
     keep = T if logits_to_keep is None or int(logits_to_keep) <= 0 else min(int(logits_to_keep), T)
-    logits = F.linear(x[:, -keep:, :], model.lm_head.weight, model.lm_head.bias)
+    logits = _lm_head(model, x[:, -keep:, :])
     return logits, state, xpa, xpf
 
 
@@ -1318,7 +1329,7 @@ def forward(model, ids, packs):
         x = F.embedding(ids[0, t:t + 1], base.embeddings.weight).reshape(-1)
         x, state, xpa, xpf, v_first = step(model, x, state, xpa, xpf, v_first, packs)
     x = F.layer_norm(x, [H * N], base.norm.weight, base.norm.bias, 1e-5)
-    return F.linear(x, model.lm_head.weight)
+    return _lm_head(model, x)
 
 
 def decode_speed(model, ids, packs, n=128):
@@ -1327,24 +1338,24 @@ def decode_speed(model, ids, packs, n=128):
     H, N = packs[0][1], packs[0][2]
     state, xpa, xpf, v_first = _init(model, ids.device, base.embeddings.weight.dtype)
     emb = base.embeddings.weight
-    head = model.lm_head.weight
+    head = model.lm_head
     norm_w = base.norm.weight
     norm_b = base.norm.bias
     x = None
     for t in range(ids.shape[1]):
         x = F.embedding(ids[0, t:t + 1], emb).reshape(-1)
         x, state, xpa, xpf, v_first = step(model, x, state, xpa, xpf, v_first, packs)
-    nx = F.linear(F.layer_norm(x, [H * N], norm_w, norm_b, 1e-5), head).argmax()
+    nx = _linear_module(head, F.layer_norm(x, [H * N], norm_w, norm_b, 1e-5)).argmax()
     with torch.no_grad():
         for _ in range(5):
             x = F.embedding(nx.reshape(1, 1), emb).reshape(-1)
             x, state, xpa, xpf, v_first = step(model, x, state, xpa, xpf, v_first, packs)
-            nx = F.linear(F.layer_norm(x, [H * N], norm_w, norm_b, 1e-5), head).argmax()
+            nx = _linear_module(head, F.layer_norm(x, [H * N], norm_w, norm_b, 1e-5)).argmax()
         torch.cuda.synchronize(); t0 = time.time()
         for _ in range(n):
             x = F.embedding(nx.reshape(1, 1), emb).reshape(-1)
             x, state, xpa, xpf, v_first = step(model, x, state, xpa, xpf, v_first, packs)
-            nx = F.linear(F.layer_norm(x, [H * N], norm_w, norm_b, 1e-5), head).argmax()
+            nx = _linear_module(head, F.layer_norm(x, [H * N], norm_w, norm_b, 1e-5)).argmax()
         torch.cuda.synchronize(); dt = time.time() - t0
     return n / dt
 
@@ -1739,7 +1750,7 @@ def cuda_graph_decode(model, ids, packs, n=128):
     tok_id = torch.zeros(1, dtype=torch.long, device=device)
     logits = torch.zeros(base.embeddings.weight.shape[0], device=device, dtype=dtype)
     emb = base.embeddings.weight
-    head = model.lm_head.weight
+    head = model.lm_head
     nw, nb = base.norm.weight, base.norm.bias
 
     x = None
@@ -1747,13 +1758,13 @@ def cuda_graph_decode(model, ids, packs, n=128):
         x = F.embedding(ids[0, t:t + 1], emb).reshape(-1)
         for li, p in enumerate(packs):
             x = _block_ip(x, state[li], xpa[li], xpf[li], v_first, p)
-    tok_id.copy_(F.linear(F.layer_norm(x, [H * N], nw, nb, 1e-5), head).argmax())
+    tok_id.copy_(_linear_module(head, F.layer_norm(x, [H * N], nw, nb, 1e-5)).argmax())
 
     def one_step():
         x = F.embedding(tok_id, emb).reshape(-1)
         for li, p in enumerate(packs):
             x = _block_ip(x, state[li], xpa[li], xpf[li], v_first, p)
-        logits.copy_(F.linear(F.layer_norm(x, [H * N], nw, nb, 1e-5), head))
+        logits.copy_(_linear_module(head, F.layer_norm(x, [H * N], nw, nb, 1e-5)))
 
     s = torch.cuda.Stream()
     s.wait_stream(torch.cuda.current_stream())
@@ -1784,13 +1795,13 @@ def greedy_jit(model, ids, packs, n=40):
     for t in range(ids.shape[1]):
         x = F.embedding(ids[0, t:t + 1], base.embeddings.weight).reshape(-1)
         x, state, xpa, xpf, v_first = step(model, x, state, xpa, xpf, v_first, packs)
-    nx = F.linear(F.layer_norm(x, [H * N], nw, nb, 1e-5), model.lm_head.weight).argmax().clone()
+    nx = _lm_head(model, F.layer_norm(x, [H * N], nw, nb, 1e-5)).argmax().clone()
     toks = [int(nx)]
     with torch.no_grad():
         for _ in range(n - 1):
             x = F.embedding(nx.reshape(1, 1), base.embeddings.weight).reshape(-1)
             x, state, xpa, xpf, v_first = step(model, x, state, xpa, xpf, v_first, packs)
-            nx = F.linear(F.layer_norm(x, [H * N], nw, nb, 1e-5), model.lm_head.weight).argmax()
+            nx = _lm_head(model, F.layer_norm(x, [H * N], nw, nb, 1e-5)).argmax()
             toks.append(int(nx))
     return toks
 
@@ -1808,14 +1819,14 @@ def greedy_graph(model, ids, packs, n=40):
     v_first = torch.zeros(hid, device=device, dtype=dtype)
     tok_id = torch.zeros(1, dtype=torch.long, device=device)
     logits = torch.zeros(base.embeddings.weight.shape[0], device=device, dtype=dtype)
-    emb, head = base.embeddings.weight, model.lm_head.weight
+    emb, head = base.embeddings.weight, model.lm_head
     nw, nb = base.norm.weight, base.norm.bias
     x = None
     for t in range(ids.shape[1]):
         x = F.embedding(ids[0, t:t + 1], emb).reshape(-1)
         for li, p in enumerate(packs):
             x = _block_ip(x, state[li], xpa[li], xpf[li], v_first, p)
-    tok_id.copy_(F.linear(F.layer_norm(x, [H * N], nw, nb, 1e-5), head).argmax())
+    tok_id.copy_(_linear_module(head, F.layer_norm(x, [H * N], nw, nb, 1e-5)).argmax())
     # snapshot post-prefill state so we can realign after warmup advances it
     st_s = [s.clone() for s in state]
     xpa_s = [s.clone() for s in xpa]
@@ -1827,7 +1838,7 @@ def greedy_graph(model, ids, packs, n=40):
         x = F.embedding(tok_id, emb).reshape(-1)
         for li, p in enumerate(packs):
             x = _block_ip(x, state[li], xpa[li], xpf[li], v_first, p)
-        logits.copy_(F.linear(F.layer_norm(x, [H * N], nw, nb, 1e-5), head))
+        logits.copy_(_linear_module(head, F.layer_norm(x, [H * N], nw, nb, 1e-5)))
 
     s = torch.cuda.Stream(); s.wait_stream(torch.cuda.current_stream())
     with torch.cuda.stream(s):
