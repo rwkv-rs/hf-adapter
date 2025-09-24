@@ -360,7 +360,13 @@ Current exact-card evidence status:
 - RTX 5070 Laptop / 50-series (`sm_120` observed): touched Blackwell path; native
   no-FLA compatibility is important because some FLA training kernels can be
   architecture-limited; fusion wins must be re-proven end-to-end on each 50-card.
-- Pascal/Turing/Ampere/Hopper/AMD: registry rules exist, but support remains TODO
+- A800 (`sm_80`): touched Ampere server validation card; 0.4B / 1.5B /
+  2.9B bsz=1/2/4 batch sweep and W8/W4 memory-policy quantization rows exist
+  on `NVIDIA A800-SXM4-80GB`, plus 2.9B HF `larger_model_smoke` and 0.4B
+  Trainer / TRL SFT smoke rows. Keep the Ampere defaults conservative: output
+  fusions remain allowed, prefill-scan and projection/LoRA fusions stay opt-in
+  until exact-card sweeps prove end-to-end value.
+- Pascal/Turing/Hopper/AMD: registry rules exist, but support remains TODO
   until exact-card rows are added.
 
 #### Per-GPU adaptation checklist
@@ -424,7 +430,7 @@ Run this checklist for every new GPU before marking it as supported:
 - Promotion rule: projection/LoRA fusions stay opt-in until exact-card
   native_graph end-to-end speedup is measured.
 
-#### Ampere / A100 / RTX 30 (`sm_80`/`sm_86`)
+#### Ampere / A100 / A800 / RTX 30 (`sm_80`/`sm_86`)
 
 - Policy family: `ampere`.
 - Default stance: stable output/recurrent-output fusions may be enabled; larger
@@ -432,6 +438,18 @@ Run this checklist for every new GPU before marking it as supported:
 - Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
 - Default-off: prefill-scan by default, output-project, projection, WAG/WAVG LoRA
   fusions.
+- A800 adaptation rule:
+  - `NVIDIA A800-SXM4-80GB` has initial 0.4B / 1.5B / 2.9B fp16 HF adapter
+    evidence for bsz=1/2/4 native_graph decode and W8/W4 memory-policy
+    quantization, plus 2.9B standard loading/generation and 0.4B Trainer / TRL
+    SFT smokes. These rows validate the conservative Ampere defaults only; they
+    do not promote prefill-scan, output-project, projection, LoRA, or
+    quantized-speed kernels.
+  - Latest 2.9B prompt128/decode8 native_graph decode rows are `93.6`,
+    `199.1`, and `388.5` tok/s for bsz=1/2/4, with peak VRAM `6428.9`,
+    `7262.5`, and `8906.6` MiB. W8/W4 reduce 2.9B model footprint from
+    `5622.4` MB to `3222.4`/`2022.4` MB but remain slower than fp16, so quant
+    speed is still unsolved on A800.
 - Required validation: common functional checklist, larger-batch prefill, state
   cache reuse/hit-rate rows, W8/W4 rows, and ZeRO-2/ZeRO-3 smoke when training is
   claimed.

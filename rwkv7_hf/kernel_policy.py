@@ -182,8 +182,8 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     ),
     "ampere": GPUAdaptationRule(
         family="ampere",
-        cards=("A100", "A10", "A6000", "RTX 30-series"),
-        status="TODO validation target",
+        cards=("A100", "A800", "A10", "A6000", "RTX 30-series"),
+        status="initial validation complete",
         default_stance="stable output fusions; tune larger batch and training paths per card",
         default_on=("fast_cache", "fused_recurrent_output", "fused_output"),
         default_off=("fused_prefill_scan", "fused_output_project", "projection/LoRA fusions"),
