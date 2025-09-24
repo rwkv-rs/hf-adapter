@@ -23,8 +23,7 @@ def _converter_adapter_files() -> list[str]:
                             break
                         values.append(item.value)
                     else:
-                        if "configuration_rwkv7.py" in values:
-                            return values
+                        return values
     raise AssertionError("could not find adapter file list in convert_rwkv7_to_hf.py")
 
 
