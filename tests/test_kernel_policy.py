@@ -17,6 +17,7 @@ def test_gpu_family_classification() -> None:
     cases = [
         ("Tesla P100-PCIE-16GB", (6, 0), "pascal"),
         ("Tesla V100-PCIE-32GB", (7, 0), "volta"),
+        ("NVIDIA A800-SXM4-80GB", (8, 0), "ampere"),
         ("NVIDIA GeForce RTX 4090", (8, 9), "ada"),
         ("NVIDIA H100 SXM", (9, 0), "hopper"),
         ("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0), "blackwell"),
@@ -57,6 +58,7 @@ def test_every_policy_family_has_an_adaptation_rule() -> None:
         classify_gpu("Tesla V100-PCIE-32GB", (7, 0)),
         classify_gpu("NVIDIA T4", (7, 5)),
         classify_gpu("NVIDIA A100-SXM4-80GB", (8, 0)),
+        classify_gpu("NVIDIA A800-SXM4-80GB", (8, 0)),
         classify_gpu("NVIDIA GeForce RTX 4090", (8, 9)),
         classify_gpu("NVIDIA H100 SXM", (9, 0)),
         classify_gpu("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0)),

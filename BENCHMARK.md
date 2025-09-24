@@ -1560,6 +1560,50 @@ baseline, and reports larger-model rows separately under
 substantially, but V100 decode speed is still far below fp16 native-graph; the
 next quantization task remains a fused/native W8/W4 serving path.
 
+### A800 validation sweep
+
+A800 rows use `NVIDIA A800-SXM4-80GB`, fp16, `attn_mode=fused_recurrent`, and
+prompt128/decode8. The 0.4B / 1.5B / 2.9B converted HF directories are recorded
+with placeholder paths under `/path/to/...`; use local converted checkpoint
+paths when reproducing.
+
+Latest A800 `bench_batch_sweep.py` native_graph decode rows:
+
+| Model | Batch 1 tok/s | Batch 2 tok/s | Batch 4 tok/s | Batch 4 peak VRAM |
+|---|---:|---:|---:|---:|
+| 0.4B | 233.1 | 325.6 | 737.6 | 1875.7 MiB |
+| 1.5B | 168.0 | 270.0 | 599.2 | 4907.1 MiB |
+| 2.9B | 93.6 | 199.1 | 388.5 | 8906.6 MiB |
+
+Latest A800 2.9B detailed `bench_batch_sweep.py` rows:
+
+| Batch | Prefill tok/s | Forward decode tok/s | `rwkv7_forward_token` tok/s | Peak VRAM |
+|---:|---:|---:|---:|---:|
+| 1 | 848.4 | 19.9 | 93.6 | 6428.9 MiB |
+| 2 | 2313.5 | 39.3 | 199.1 | 7262.5 MiB |
+| 4 | 4261.5 | 77.8 | 388.5 | 8906.6 MiB |
+
+Latest A800 `bench_quantization.py --quant-skip-policy memory` rows:
+
+| Model | fp16 footprint | 8-bit footprint | 4-bit footprint | fp16 decode tok/s | 8-bit decode tok/s | 4-bit decode tok/s |
+|---|---:|---:|---:|---:|---:|---:|
+| 0.4B | 859.8 MB | 571.8 MB | 427.8 MB | 171.2 | 11.5 | 23.4 |
+| 1.5B | 2913.3 MB | 1761.3 MB | 1185.3 MB | 139.7 | 10.9 | 22.7 |
+| 2.9B | 5622.4 MB | 3222.4 MB | 2022.4 MB | 91.3 | 8.0 | 16.7 |
+
+Latest A800 2.9B detailed quantization rows:
+
+| Quantization | Model footprint | Peak VRAM | Prefill tok/s | Selected decode tok/s | Fast backend | Status |
+|---|---:|---:|---:|---:|---|---|
+| none/fp16 | 5622.4 MB | 5771.4 MiB | 1676.4 | 91.3 | native_graph | PASS |
+| 8-bit bnb | 3222.4 MB | 4624.9 MiB | 705.4 | 8.0 | FLA | PASS, speed gap |
+| 4-bit bnb | 2022.4 MB | 4250.6 MiB | 1273.3 | 16.7 | FLA | PASS, speed gap |
+
+The 0.4B A800 Trainer and TRL SFT smoke rows also pass with nonzero trainable
+parameter deltas. These rows validate the conservative Ampere policy on A800.
+They do not promote native prefill-scan or quantized-speed kernels: W8/W4 reduce
+footprint, but fp16 native_graph remains much faster end to end.
+
 ## HF speculative decoding smoke
 
 `rwkv7_speculative_generate()` is the initial HF-only speculative decoding
