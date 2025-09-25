@@ -366,7 +366,13 @@ Current exact-card evidence status:
   Trainer / TRL SFT smoke rows. Keep the Ampere defaults conservative: output
   fusions remain allowed, prefill-scan and projection/LoRA fusions stay opt-in
   until exact-card sweeps prove end-to-end value.
-- Pascal/Turing/Hopper/AMD: registry rules exist, but support remains TODO
+- GTX 1080 Ti (`sm_61`): Pascal smoke evidence exists for 0.1B / fp16 /
+  default policy on one card. The safe default is native/no-FLA compatibility
+  because FLA/Triton RWKV-7 kernels can emit `sm_70` PTX features on Pascal.
+  Bnb 8/4-bit loading and decode speed rows exist but are slower than fp16, so
+  bnb remains a memory/compatibility fallback. Repository-native mm8/mm4 rows
+  exist for 0.1B with `lm_head` quantized and near-fp16 decode.
+- Turing/Hopper/AMD: registry rules exist, but support remains TODO
   until exact-card rows are added.
 
 #### Per-GPU adaptation checklist
@@ -399,9 +405,19 @@ Run this checklist for every new GPU before marking it as supported:
 - Default stance: compatibility-first; Pascal lacks the newer tensor-core path.
 - Default-on: `fast_cache` only.
 - Default-off: fused recurrent/output/projection/LoRA/prefill-scan kernels.
-- Required validation: common functional checklist plus at least one full
-  native_graph decode smoke on the exact card.
-- Quant rule: memory-only until a card-local W8/W4 row beats fp16 end-to-end.
+- Required validation: common functional checklist plus default native/no-FLA
+  decode smoke on the exact card. Native graph / fused-kernel smokes are opt-in
+  only and do not promote defaults without Pascal rows.
+- GTX 1080 Ti evidence: 2026-07-03, 0.1B, fp16, one `sm_61` GPU, driver
+  `550.127.05`, `nvidia-smi` CUDA `12.4`, PyTorch `2.7.1+cu118`,
+  Transformers `5.12.1`, bitsandbytes `0.49.2`, FLA `0.5.1`;
+  `smoke_hf_generate`, `test_hf_api_contract`, bnb W8/W4 quantized inference,
+  bnb W8/W4 speed, native mm8/mm4 speed, `bench_speed`, and bsz 1/2/4
+  `bench_batch_sweep` pass under the default native/no-FLA route. Optional 0.4B
+  fp16 `bench_speed` also passes. Training was not run.
+- Quant rule: current bnb W8/W4 rows are slower than fp16; native mm8/mm4 rows
+  are usable for 0.1B `lm_head` quantization but broader promotion needs
+  card-local rows where more projections cross the quantization gate.
 - Promotion rule: never inherit V100/4090/5070 fused defaults without Pascal rows.
 
 #### Volta / V100 (`sm_70`)

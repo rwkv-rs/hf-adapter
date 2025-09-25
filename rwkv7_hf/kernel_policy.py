@@ -145,13 +145,20 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     "pascal": GPUAdaptationRule(
         family="pascal",
         cards=("Tesla P100", "GTX 10-series"),
-        status="TODO validation target",
+        status="touched; GTX 1080 Ti 0.1B smoke/bnb+native-mm quant speed rows and 0.4B fp16 row exist",
         default_stance="compatibility-first; Pascal lacks the newer tensor-core path",
         default_on=("fast_cache",),
         default_off=("fused_recurrent_output", "fused_output", "projection/LoRA fusions", "fused_prefill_scan"),
-        required_functional=COMMON_FUNCTIONAL_SMOKES,
+        required_functional=(
+            "import_from_pretrained",
+            "generate_use_cache",
+            "default native/no-FLA decode",
+            "batch_cache",
+            "dynamic_batch_cache",
+            "chunked_prefill",
+        ),
         required_benchmarks=COMMON_PERF_BENCHMARKS,
-        quant_rule="memory-only until card-local W8/W4 rows beat fp16",
+        quant_rule="bnb W8/W4 rows are slower than fp16; native mm8/mm4 0.1B lm_head rows pass, broader promotion needs larger exact-card quant rows",
         promotion_rule="require exact-card decode greedy match plus non-negative speed before any default",
     ),
     "volta": GPUAdaptationRule(
@@ -342,7 +349,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             profile=profile,
             fused_recurrent_output=False,
             fused_output=False,
-            notes="compatibility-first: keep experimental Triton/native_graph fusions off until per-card smoke passes",
+            notes="compatibility-first: keep experimental Triton/native_graph fusions off; Pascal uses native/no-FLA fallback unless overridden",
         )
     if family == "volta":
         return KernelPolicy(
