@@ -92,6 +92,17 @@ python bench/bench_speed.py --hf-dir /path/to/model --backend hf --dtype fp16 --
 python bench/bench_batch_sweep.py --hf-dir /path/to/model --dtype fp16 --device cuda --results bench/results.jsonl
 ```
 
+> **量化验证必须同时报 native `mm8`/`mm4` 的 decode tok/s + footprint,不只是 bnb W8/W4。**
+> `test_quantized_inference.py` 只测 bnb(通用慢路径);仓库自有量化是 native `mm8`/`mm4`(融合 Triton dequant-GEMV,PR #85/#88),要单独出速度行对比 fp16 / bnb:
+>
+> ```bash
+> # 加载 → 量化 → bench_speed 计时 decode,追加到 bench/results.jsonl
+> python -c "from rwkv7_hf.native_quant_mm8 import quantize_model_mm8"   # mm4: native_quant_mm4
+> # quantize_model_mm8(model, min_params=8_000_000)  # 大层(含 lm_head)换 int8;然后 bench_speed
+> ```
+>
+> 老卡(sm_61 Pascal 等)上 `mm8`/`mm4` 若因 Triton(`.evict_last` 需 sm_70+)跑不通,记「该卡 mm8/mm4 不可用,bnb 是唯一量化 fallback」也算有效结论,不用硬调。
+
 可训练卡还应跑:
 
 ```bash
