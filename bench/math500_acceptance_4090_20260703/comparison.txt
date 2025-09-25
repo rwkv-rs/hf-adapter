@@ -1,0 +1,10 @@
+MATH500 comparison
+  shape: tasks 500 vs 500, rollout 64 vs 64, generations 32000 vs 32000
+accuracy:
+  correct: HF 4,421.000 vs Albatross 4,670.000 (delta -249)
+  rollout_accuracy: HF 0.138156 vs Albatross 0.145937 (delta -0.00778125)
+  pass@rollout: HF 0.358 vs Albatross 0.37 (delta -0.012)
+speed:
+  summary token/s: HF 9,161.229 vs Albatross 3,903.633 (ratio 2.34685)
+  steady decode token/s: HF 9,215.893 vs Albatross 3,970.135 (ratio 2.3213)
+  sample/s: HF 14.9449 vs Albatross 6.36156 (ratio 2.34925)
