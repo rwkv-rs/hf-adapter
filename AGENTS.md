@@ -577,6 +577,11 @@ Required goals:
 - Quantized speed should be no slower than fp16 as much as possible.
 - V100 may not be ideal for final int4/int8 speed validation because it lacks
   newer tensor core features.
+- Card-validation PRs must report native `mm8`/`mm4` decode tok/s + footprint
+  (PR #85/#88), not just bnb W8/W4. bnb is the generic fallback; `mm8`/`mm4`
+  (fused Triton dequant-GEMV) is this repo's quant path and the one that must
+  be validated per card. If `mm8`/`mm4` cannot run on a card (e.g. Pascal
+  sm_61 Triton `.evict_last` limits), record that as the conclusion instead.
 
 ## Current State
 
