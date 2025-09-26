@@ -40,7 +40,7 @@
 | 417 | 13 | 29 | 42 | Let $f(x)$ be the polynomial \[f(x)=3x^4+5x^2-9x-2.\] If $g(x)$ is equal to the polynomial $f(x-1... |
 | 440 | 13 | 21 | 34 | Simplify $(u+4)(u-1) - (u-3)(u+6)$. |
 | 296 | 12 | 14 | 26 | Assume $0 < r < 3$.  Below are five equations for $x$.  Which equation has the largest solution $... |
-| 255 | 10 | 45 | 55 | Find the curve defined by the equation \[r^2 \cos 2 \theta = 4.\](A) Line (B) Circle (C) Parabola... |
+| 255 | 10 | 45 | 55 | Find the curve defined by the equation \[r^2 \cos 2 \theta = 4.\] (A) Line (B) Circle (C) Parabola... |
 | 146 | 9 | 30 | 39 | Simplify the following:$$\frac{3}{\sqrt{27}}$$ |
 | 487 | 9 | 24 | 33 | Determine the modulo 4 remainder of the following sum: $$ 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10 ... |
 | 150 | 8 | 11 | 19 | For every positive integer $n$, let $\text{mod}_5 (n)$ be the remainder obtained when $n$ is divi... |
