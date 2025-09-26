@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -87,18 +88,22 @@ def fmt(x: Any) -> str:
     return str(x)
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--hf-summary", required=True, help="HF adapter summary.json")
-    ap.add_argument("--albatross-summary", required=True, help="Albatross summary.json")
-    ap.add_argument("--albatross-log", default="", help="Optional Albatross run.log for steady decode_s/tokens")
-    ap.add_argument("--json", action="store_true", help="Emit JSON only")
-    args = ap.parse_args()
+def gate_result(value: float | None, minimum: float | None) -> dict[str, Any]:
+    if minimum is None:
+        return {"required": False, "minimum": None, "actual": value, "passed": True}
+    return {"required": True, "minimum": minimum, "actual": value, "passed": value is not None and value >= minimum}
 
-    hf = load_json(args.hf_summary)
-    alb = load_json(args.albatross_summary)
-    alb_log = parse_albatross_decode_log(args.albatross_log or None)
 
+def build_comparison(
+    hf: dict[str, Any],
+    alb: dict[str, Any],
+    *,
+    alb_log: dict[str, float] | None,
+    min_pass_at_rollout: float | None = None,
+    min_summary_speed_ratio: float | None = None,
+    min_decode_speed_ratio: float | None = None,
+    require_compatible_shape: bool = False,
+) -> dict[str, Any]:
     hf_speed = speed_fields(hf)
     alb_speed = speed_fields(alb, alb_log)
 
@@ -109,18 +114,37 @@ def main() -> None:
     hf_correct = number(hf, "correct_generations")
     alb_correct = number(alb, "correct_generations")
 
-    out: dict[str, Any] = {
+    summary_ratio = ratio(hf_speed["token_per_sec_summary"], alb_speed["token_per_sec_summary"])
+    decode_ratio = ratio(hf_speed["steady_token_per_sec"], alb_speed["steady_token_per_sec"])
+    sample_ratio = ratio(hf_speed["sample_per_sec_summary"], alb_speed["sample_per_sec_summary"])
+
+    shape = {
+        "num_tasks_match": hf.get("num_tasks") == alb.get("num_tasks"),
+        "rollout_match": hf.get("rollout") == alb.get("rollout"),
+        "total_generations_match": hf.get("total_generations") == alb.get("total_generations"),
+        "hf_num_tasks": hf.get("num_tasks"),
+        "albatross_num_tasks": alb.get("num_tasks"),
+        "hf_rollout": hf.get("rollout"),
+        "albatross_rollout": alb.get("rollout"),
+        "hf_total_generations": hf.get("total_generations"),
+        "albatross_total_generations": alb.get("total_generations"),
+    }
+    shape_ok = all([shape["num_tasks_match"], shape["rollout_match"], shape["total_generations_match"]])
+
+    gates = {
         "compatible_shape": {
-            "num_tasks_match": hf.get("num_tasks") == alb.get("num_tasks"),
-            "rollout_match": hf.get("rollout") == alb.get("rollout"),
-            "total_generations_match": hf.get("total_generations") == alb.get("total_generations"),
-            "hf_num_tasks": hf.get("num_tasks"),
-            "albatross_num_tasks": alb.get("num_tasks"),
-            "hf_rollout": hf.get("rollout"),
-            "albatross_rollout": alb.get("rollout"),
-            "hf_total_generations": hf.get("total_generations"),
-            "albatross_total_generations": alb.get("total_generations"),
+            "required": require_compatible_shape,
+            "passed": shape_ok if require_compatible_shape else True,
+            "actual": shape_ok,
         },
+        "pass_at_rollout": gate_result(hf_pass, min_pass_at_rollout),
+        "summary_speed_ratio": gate_result(summary_ratio, min_summary_speed_ratio),
+        "decode_speed_ratio": gate_result(decode_ratio, min_decode_speed_ratio),
+    }
+    gates["overall_pass"] = all(gate["passed"] for gate in gates.values() if isinstance(gate, dict))
+
+    return {
+        "compatible_shape": shape,
         "accuracy": {
             "hf_correct_generations": hf_correct,
             "albatross_correct_generations": alb_correct,
@@ -137,54 +161,127 @@ def main() -> None:
             "albatross": alb_speed,
             "hf_speed_timing": hf.get("speed_timing", "wall"),
             "albatross_speed_timing": alb.get("speed_timing", "wall"),
-            "summary_token_per_sec_ratio_hf_over_albatross": ratio(
-                hf_speed["token_per_sec_summary"], alb_speed["token_per_sec_summary"]
-            ),
-            "steady_decode_token_per_sec_ratio_hf_over_albatross": ratio(
-                hf_speed["steady_token_per_sec"], alb_speed["steady_token_per_sec"]
-            ),
-            "sample_per_sec_ratio_hf_over_albatross": ratio(
-                hf_speed["sample_per_sec_summary"], alb_speed["sample_per_sec_summary"]
-            ),
+            "summary_token_per_sec_ratio_hf_over_albatross": summary_ratio,
+            "steady_decode_token_per_sec_ratio_hf_over_albatross": decode_ratio,
+            "sample_per_sec_ratio_hf_over_albatross": sample_ratio,
         },
+        "gates": gates,
         "albatross_log_decode": alb_log,
     }
 
-    if args.json:
-        print(json.dumps(out, indent=2, ensure_ascii=False))
-        return
 
+def format_text(out: dict[str, Any]) -> str:
     shape = out["compatible_shape"]
-    print("MATH500 comparison")
-    print(f"  shape: tasks {shape['hf_num_tasks']} vs {shape['albatross_num_tasks']}, "
-          f"rollout {shape['hf_rollout']} vs {shape['albatross_rollout']}, "
-          f"generations {shape['hf_total_generations']} vs {shape['albatross_total_generations']}")
-    if not all([shape["num_tasks_match"], shape["rollout_match"], shape["total_generations_match"]]):
-        print("  WARNING: shapes differ; do not use this as final acceptance.")
-    print("accuracy:")
     acc = out["accuracy"]
-    print(f"  correct: HF {fmt(acc['hf_correct_generations'])} vs Albatross {fmt(acc['albatross_correct_generations'])} "
-          f"(delta {fmt(acc['correct_delta'])})")
-    print(f"  rollout_accuracy: HF {fmt(acc['hf_rollout_accuracy'])} vs Albatross {fmt(acc['albatross_rollout_accuracy'])} "
-          f"(delta {fmt(acc['rollout_accuracy_delta'])})")
-    print(f"  pass@rollout: HF {fmt(acc['hf_pass_at_rollout_accuracy'])} vs Albatross {fmt(acc['albatross_pass_at_rollout_accuracy'])} "
-          f"(delta {fmt(acc['pass_at_rollout_delta'])})")
-    print("speed:")
     sp = out["speed"]
-    hf_speed_timing = sp["hf_speed_timing"]
-    alb_speed_timing = sp["albatross_speed_timing"]
-    print(f"  summary token/s: HF {fmt(hf_speed['token_per_sec_summary'])} vs Albatross {fmt(alb_speed['token_per_sec_summary'])} "
-          f"(ratio {fmt(sp['summary_token_per_sec_ratio_hf_over_albatross'])})")
-    print(f"  summary timing: HF {hf_speed_timing} vs Albatross {alb_speed_timing}")
+    hf_speed = sp["hf"]
+    alb_speed = sp["albatross"]
+    lines: list[str] = []
+    lines.append("MATH500 comparison")
+    lines.append(
+        f"  shape: tasks {shape['hf_num_tasks']} vs {shape['albatross_num_tasks']}, "
+        f"rollout {shape['hf_rollout']} vs {shape['albatross_rollout']}, "
+        f"generations {shape['hf_total_generations']} vs {shape['albatross_total_generations']}"
+    )
+    if not all([shape["num_tasks_match"], shape["rollout_match"], shape["total_generations_match"]]):
+        lines.append("  WARNING: shapes differ; do not use this as final acceptance.")
+    lines.append("accuracy:")
+    lines.append(
+        f"  correct: HF {fmt(acc['hf_correct_generations'])} vs Albatross {fmt(acc['albatross_correct_generations'])} "
+        f"(delta {fmt(acc['correct_delta'])})"
+    )
+    lines.append(
+        f"  rollout_accuracy: HF {fmt(acc['hf_rollout_accuracy'])} vs Albatross {fmt(acc['albatross_rollout_accuracy'])} "
+        f"(delta {fmt(acc['rollout_accuracy_delta'])})"
+    )
+    lines.append(
+        f"  pass@rollout: HF {fmt(acc['hf_pass_at_rollout_accuracy'])} vs Albatross {fmt(acc['albatross_pass_at_rollout_accuracy'])} "
+        f"(delta {fmt(acc['pass_at_rollout_delta'])})"
+    )
+    lines.append("speed:")
+    lines.append(
+        f"  summary token/s: HF {fmt(hf_speed['token_per_sec_summary'])} vs Albatross {fmt(alb_speed['token_per_sec_summary'])} "
+        f"(ratio {fmt(sp['summary_token_per_sec_ratio_hf_over_albatross'])})"
+    )
+    lines.append(f"  summary timing: HF {sp['hf_speed_timing']} vs Albatross {sp['albatross_speed_timing']}")
     if hf_speed["generation_token_per_sec"] or alb_speed["generation_token_per_sec"]:
-        print(f"  generation token/s: HF {fmt(hf_speed['generation_token_per_sec'])} vs Albatross {fmt(alb_speed['generation_token_per_sec'])}")
+        lines.append(
+            f"  generation token/s: HF {fmt(hf_speed['generation_token_per_sec'])} vs Albatross {fmt(alb_speed['generation_token_per_sec'])}"
+        )
     if hf_speed["wall_token_per_sec"] or alb_speed["wall_token_per_sec"]:
-        print(f"  wall token/s: HF {fmt(hf_speed['wall_token_per_sec'])} vs Albatross {fmt(alb_speed['wall_token_per_sec'])}")
-    print(f"  steady decode token/s: HF {fmt(hf_speed['steady_token_per_sec'])} vs Albatross {fmt(alb_speed['steady_token_per_sec'])} "
-          f"(ratio {fmt(sp['steady_decode_token_per_sec_ratio_hf_over_albatross'])})")
-    print(f"  sample/s: HF {fmt(hf_speed['sample_per_sec_summary'])} vs Albatross {fmt(alb_speed['sample_per_sec_summary'])} "
-          f"(ratio {fmt(sp['sample_per_sec_ratio_hf_over_albatross'])})")
+        lines.append(f"  wall token/s: HF {fmt(hf_speed['wall_token_per_sec'])} vs Albatross {fmt(alb_speed['wall_token_per_sec'])}")
+    lines.append(
+        f"  steady decode token/s: HF {fmt(hf_speed['steady_token_per_sec'])} vs Albatross {fmt(alb_speed['steady_token_per_sec'])} "
+        f"(ratio {fmt(sp['steady_decode_token_per_sec_ratio_hf_over_albatross'])})"
+    )
+    lines.append(
+        f"  sample/s: HF {fmt(hf_speed['sample_per_sec_summary'])} vs Albatross {fmt(alb_speed['sample_per_sec_summary'])} "
+        f"(ratio {fmt(sp['sample_per_sec_ratio_hf_over_albatross'])})"
+    )
+    gates = out.get("gates") or {}
+    if any(gate.get("required") for gate in gates.values() if isinstance(gate, dict)):
+        lines.append("gates:")
+        for name in ("compatible_shape", "pass_at_rollout", "summary_speed_ratio", "decode_speed_ratio"):
+            gate = gates.get(name, {})
+            if not gate.get("required"):
+                continue
+            actual = gate.get("actual")
+            minimum = gate.get("minimum")
+            if minimum is None:
+                lines.append(f"  {name}: {'PASS' if gate.get('passed') else 'FAIL'} (actual {fmt(actual)})")
+            else:
+                lines.append(
+                    f"  {name}: {'PASS' if gate.get('passed') else 'FAIL'} "
+                    f"(actual {fmt(actual)}, minimum {fmt(minimum)})"
+                )
+        lines.append(f"  overall: {'PASS' if gates.get('overall_pass') else 'FAIL'}")
+    return "\n".join(lines) + "\n"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--hf-summary", required=True, help="HF adapter summary.json")
+    ap.add_argument("--albatross-summary", required=True, help="Albatross summary.json")
+    ap.add_argument("--albatross-log", default="", help="Optional Albatross run.log for steady decode_s/tokens")
+    ap.add_argument("--json", action="store_true", help="Emit JSON only")
+    ap.add_argument("--json-output", default="", help="Optional path to write JSON comparison")
+    ap.add_argument("--text-output", default="", help="Optional path to write text comparison")
+    ap.add_argument("--min-pass-at-rollout", type=float, default=None, help="Gate: minimum HF pass@rollout")
+    ap.add_argument("--min-summary-speed-ratio", type=float, default=None, help="Gate: minimum HF/Albatross summary token/s ratio")
+    ap.add_argument("--min-decode-speed-ratio", type=float, default=None, help="Gate: minimum HF/Albatross steady decode token/s ratio")
+    ap.add_argument("--require-compatible-shape", action="store_true", help="Gate: require matching tasks, rollout, and generation count")
+    ap.add_argument("--fail-on-gate", action="store_true", help="Exit non-zero when any requested gate fails")
+    args = ap.parse_args()
+
+    hf = load_json(args.hf_summary)
+    alb = load_json(args.albatross_summary)
+    alb_log = parse_albatross_decode_log(args.albatross_log or None)
+    out = build_comparison(
+        hf,
+        alb,
+        alb_log=alb_log,
+        min_pass_at_rollout=args.min_pass_at_rollout,
+        min_summary_speed_ratio=args.min_summary_speed_ratio,
+        min_decode_speed_ratio=args.min_decode_speed_ratio,
+        require_compatible_shape=args.require_compatible_shape,
+    )
+    text = format_text(out)
+    json_text = json.dumps(out, indent=2, ensure_ascii=False) + "\n"
+
+    if args.json_output:
+        Path(args.json_output).write_text(json_text, encoding="utf-8")
+    if args.text_output:
+        Path(args.text_output).write_text(text, encoding="utf-8")
+
+    if args.json:
+        sys.stdout.write(json_text)
+    else:
+        sys.stdout.write(text)
+
+    if args.fail_on_gate and not out["gates"]["overall_pass"]:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
