@@ -65,7 +65,12 @@ Current acceptance baseline from `bench/math500_acceptance_4090_20260703`:
    `bench/math500_sampling_variance_4090_20260703/` shows the prefix curve starts near parity (`pass@1` HF
    `0.144` vs Albatross `0.142`) and the empirical repeated-rollout bootstrap delta interval includes zero
    (`p2.5/p50/p97.5 = -14/-7/+1` pass tasks).
-6. Only after sampler/refill and reference-tuning checks, run full MATH500 avg@64 again.
+6. Probe deterministic/active RNG refill variants on high-signal subset. **Done:**
+   `bench/math500_rng_modes_high_signal9_4090_20260704/` shows default full-batch global RNG remains
+   strongest among tested HF modes (`315/576` correct, `8/9` pass@64); `active_global` drops to
+   `297/576` and `per_sample` to `302/576`, so do not switch final acceptance away from
+   Albatross-compatible global sampling yet.
+7. Only after a targeted variant beats the default or the reference tuning is complete, run full MATH500 avg@64 again.
 
 ## Working hypothesis
 
@@ -153,7 +158,23 @@ Artifact: `bench/math500_sampling_variance_4090_20260703/`.
 
 Empirical repeated-rollout bootstrap from observed per-task correct rates (`20,000` draws, seed `7`): expected pass-task delta is `-6.722`; delta quantiles are `p2.5=-14`, `p50=-7`, `p97.5=+1`; `P(delta >= 0)=0.0546`.  This does not prove the full result is accepted, but together with logits parity and the high-signal rerun it supports treating the remaining pass@64 gap as sampling/refill-order sensitive before changing recurrence math.
 
-Next sampler/refill task: test deterministic per-row/per-sample RNG streams and/or an Albatross-matching refill schedule on a targeted subset, then rerun full avg@64 only if that moves the pass curve in the right direction.
+Follow-up sampler/refill task was run in the RNG/refill mode probe below. Since the variants did not beat the default, keep the default global Albatross-compatible RNG for acceptance unless a broader seed/refill sensitivity sweep finds a stronger targeted variant.
+
+
+## RNG/refill mode probe
+
+Artifact: `bench/math500_rng_modes_high_signal9_4090_20260704/`.
+
+The HF dynamic evaluator now has opt-in RNG modes for probing only; default remains `global`, matching the Albatross full-batch sampling behavior.
+
+| Runner / RNG mode | Correct generations | Rollout accuracy | Pass@64 | Summary token/s |
+|---|---:|---:|---:|---:|
+| HF `global` full-batch RNG | `315/576` | `0.54687500` | `0.888889` | `6241.051` |
+| HF `active_global` active-row RNG | `297/576` | `0.51562500` | `0.888889` | `6188.883` |
+| HF `per_sample` deterministic RNG | `302/576` | `0.52430556` | `0.888889` | `6080.989` |
+| Albatross v3a | `325/576` | `0.56423611` | `0.888889` | `3187.349` |
+
+Conclusion: deterministic per-row/per-sample RNG and active-row-only global RNG do not improve this high-signal subset.  The final acceptance path should keep the default Albatross-compatible global full-batch RNG unless a later targeted variant beats it.  The next useful probe is seed/refill sensitivity over a broader stratified subset or a full avg@64 rerun with the current default once reference tuning is finalized.
 
 ## Albatross v3a/v4 reference smoke on RTX 4090
 
