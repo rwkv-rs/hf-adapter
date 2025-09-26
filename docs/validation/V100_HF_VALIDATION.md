@@ -1,9 +1,9 @@
 # V100 HF validation matrix
 
-Validation date: 2026-07-02
+Validation date: 2026-07-02; ZeRO3 resume addendum: 2026-07-03
 Base commit: `4528756` (`tests: record DeepSpeed ZeRO smoke passes (#64)`)
 Server: `2 x Tesla V100-PCIE-32GB`
-Main runtime: `torch 2.5.1+cu124`, `deepspeed 0.19.2`, `fused_recurrent` unless noted.
+Main runtime: `torch 2.5.1+cu124`, `deepspeed 0.19.2`, `fused_recurrent` unless noted. ZeRO3 resume addendum runtime: `torch 2.8.0+cu126`, Transformers `4.57.1`, PEFT `0.19.1`, TRL `1.7.0`, DeepSpeed `0.19.2`.
 
 This file records the additional V100 validation pass for the HF-only RWKV-7 adapter work.  The goal was to close the remaining HF ecosystem evidence gap with the hardware currently available.
 
@@ -20,7 +20,7 @@ Notes:
 
 - 2.9B FLA-backed SFT on a V100 hit the current FLA/Triton path limits (`fp32` autotune OOM; `fp16` produced finite loss but no LoRA update). The native/no-FLA SFT/DPO/GRPO path passed and is the correct HF compatibility route for this size on V100.
 - 7.2B native Trainer resume in fp16 hit V100 32GB memory limits. Manual PEFT LoRA training still works, and quantized inference works.
-- DeepSpeed ZeRO3 base training smoke passes, but ZeRO3 checkpoint-resume still needs a dedicated fix for DeepSpeed parameter-partition re-entry around fresh model construction. ZeRO2 resume is now validated through 2.9B.
+- DeepSpeed ZeRO3 base training smoke passes, and the 2026-07-03 addendum validates ZeRO3 checkpoint-resume on 2×V100 with the 0.1B native/HF path. ZeRO2 resume is validated through 2.9B; ZeRO3 resume still needs scale-up to 0.4B+.
 - 13.3B is inference-only on a single V100-32GB: official alignment + decode speed are validated (see [13.3B inference validation](#133b-inference-validation)). Full training needs >32GB / multi-card / offload.
 
 ## New V100 passes from this run
@@ -49,6 +49,21 @@ Notes:
 - 0.4B ZeRO2 resume on 2 x V100: pass, `global_step=2`, `resume_loss=2.416867`.
 - 1.5B ZeRO2 resume on 2 x V100: pass, `global_step=2`, `resume_loss=2.682713`.
 - 2.9B ZeRO2 resume on 2 x V100: pass, `global_step=2`, `resume_loss=2.671991`.
+- 0.1B ZeRO3 resume on 2 x V100: pass, `global_step=2`, `resume_loss=2.542516`, `first_max_trainable_delta=9.999999e-05` on rank 0, `resume_max_trainable_delta=0.0719312`, fp32 native/HF path, `max_length=8` (`bench/results_v100_zero3_resume_2gpu_20260703.jsonl`, log `bench/v100_zero3_resume_2gpu_20260703.log`).
+
+ZeRO3 resume addendum command:
+
+```bash
+RWKV7_NATIVE_MODEL=1 DS_IGNORE_CUDA_DETECTION=1 DS_BUILD_OPS=0 \
+CUDA_VISIBLE_DEVICES=0,1 NCCL_P2P_DISABLE=1 \
+python -m torch.distributed.run --standalone --nproc_per_node=2 \
+  tests/test_deepspeed_resume_smoke.py \
+  --model /home/wzu/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --zero-stage 3 --attn-mode fused_recurrent --train-dtype fp32 \
+  --first-steps 1 --resume-steps 2 --max-length 8 --batch-size 1 \
+  --gradient-accumulation-steps 1 --dataset-repeats 2 \
+  --results bench/results_v100_zero3_resume_2gpu_20260703.jsonl
+```
 
 The resume harness saves a full DeepSpeed checkpoint, then removes RNG state files to avoid the torch 2.5 `weights_only=True` numpy RNG incompatibility. It only bypasses the torch-load safety guard for checkpoints created locally inside this smoke.
 
@@ -96,9 +111,10 @@ Decode speed — `bench/bench_speed.py`, prompt=128, decode=64, fp16, single V10
 - `tests/test_native_trainer_resume_smoke.py`: release the first Trainer/model and clear CUDA cache before loading the resumed model. This avoids holding two fp32 2.9B models on one 32GB V100.
 - `tests/test_native_peft_save_load_merge.py`: keep only one full base model resident at a time between train, reload, merge, and generation checks. This allows 2.9B fp32 PEFT save/load/merge on V100.
 - `tests/test_deepspeed_resume_smoke.py`: new DeepSpeed ZeRO checkpoint-resume smoke. It validates checkpoint creation, fresh model load, resume to the target global step, finite loss, and trainable LoRA updates.
+- Native ZeRO3 hook fix: the batched native loop now calls attention/FFN modules through `Module.__call__`, so DeepSpeed ZeRO3 pre-forward hooks gather raw TMix/CMix parameters (`x_r`, `r_k`, `g_norm.weight`, `ffn.x_k`) before backward.
 
 ## Remaining V100-bounded gaps
 
 - 7.2B Trainer/SFT/DPO/GRPO on a single V100 32GB is memory-bound; use larger GPU or more aggressive offload for full training proof.
-- ZeRO3 resume needs a follow-up harness fix around DeepSpeed parameter partition re-entry. ZeRO3 base training smoke is already passing.
+- ZeRO3 resume has an initial 0.1B 2×V100 pass; expand the same proof to 0.4B/1.5B/2.9B and then re-run A100 large-model ZeRO3 resume.
 - Quantized inference is functionally validated with lower VRAM. Quantized speed is still not the final Albatross-level performance target; fused quant kernels are still required.
