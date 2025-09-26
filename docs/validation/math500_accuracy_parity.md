@@ -61,7 +61,11 @@ Current acceptance baseline from `bench/math500_acceptance_4090_20260703`:
    `bench/albatross_v3a_v4_4090_tune_20260703/` shows v4 is faster than v3a on this RTX 4090
    smoke (`B1T512` is `58,933.8` tok/s vs `48,311.5`, `1.220x`).  The remaining reference-tuning
    task is an Albatross-side micro sweep of `linear_orig_layout_launch` choices per `(GPU, C, rows, group)`.
-5. Only after sampler/refill and reference-tuning checks, run full MATH500 avg@64 again.
+5. Add a sampler/refill stochasticity report before changing model math. **Done:**
+   `bench/math500_sampling_variance_4090_20260703/` shows the prefix curve starts near parity (`pass@1` HF
+   `0.144` vs Albatross `0.142`) and the empirical repeated-rollout bootstrap delta interval includes zero
+   (`p2.5/p50/p97.5 = -14/-7/+1` pass tasks).
+6. Only after sampler/refill and reference-tuning checks, run full MATH500 avg@64 again.
 
 ## Working hypothesis
 
@@ -131,6 +135,25 @@ Subset task IDs: `73,160,116,67,277,374,383,319,72`.
 
 Interpretation: when the high-signal tasks are rerun from a fresh RNG stream, the pass@64 gap disappears on this subset.  The remaining correct-generation delta is small relative to the full-run gap.  Combined with logits parity, this points to sampler RNG / dynamic refill order / seed sensitivity as the next investigation target.
 
+
+
+## Sampling / refill stochasticity report
+
+Artifact: `bench/math500_sampling_variance_4090_20260703/`.
+
+| k | HF pass@k | Albatross pass@k | HF - Albatross |
+|---:|---:|---:|---:|
+| `1` | `0.144000` | `0.142000` | `+0.002000` |
+| `2` | `0.190000` | `0.182000` | `+0.008000` |
+| `4` | `0.218000` | `0.214000` | `+0.004000` |
+| `8` | `0.246000` | `0.248000` | `-0.002000` |
+| `16` | `0.274000` | `0.298000` | `-0.024000` |
+| `32` | `0.316000` | `0.334000` | `-0.018000` |
+| `64` | `0.358000` | `0.370000` | `-0.012000` |
+
+Empirical repeated-rollout bootstrap from observed per-task correct rates (`20,000` draws, seed `7`): expected pass-task delta is `-6.722`; delta quantiles are `p2.5=-14`, `p50=-7`, `p97.5=+1`; `P(delta >= 0)=0.0546`.  This does not prove the full result is accepted, but together with logits parity and the high-signal rerun it supports treating the remaining pass@64 gap as sampling/refill-order sensitive before changing recurrence math.
+
+Next sampler/refill task: test deterministic per-row/per-sample RNG streams and/or an Albatross-matching refill schedule on a targeted subset, then rerun full avg@64 only if that moves the pass curve in the right direction.
 
 ## Albatross v3a/v4 reference smoke on RTX 4090
 
