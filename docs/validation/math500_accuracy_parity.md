@@ -16,6 +16,38 @@ Current acceptance baseline from `bench/math500_acceptance_4090_20260703`:
 | Correct generations | `4421/32000` | `4670/32000` | `-249` |
 | Summary token/s | `9161.229` | `3903.633` | `2.347x` |
 
+## Execution goal G1: accuracy parity with tuned Albatross reference
+
+**Objective.** Turn the current benchmark result into a passable final acceptance result by closing the MATH500 avg@64 gap while keeping the HF dynamic route speed-competitive against a tuned Albatross reference.
+
+### Done criteria
+
+1. **Reference tuning is explicit**
+   - Run or document an Albatross `v3a` vs `v4` reference check on the target GPU.
+   - Sweep / record `linear_orig_layout_launch` choices per GPU instead of assuming a fixed value.
+   - Store the winning reference config and command beside the benchmark artifact.
+
+2. **Accuracy gap is closed**
+   - Primary gate: full MATH500 avg@64 `pass@64 >= 0.370` under the PR #104 benchmark shape.
+   - Stretch gate: match or exceed the best tuned Albatross reference accuracy if the tuned reference changes the acceptance number.
+   - Track both pass@64 and correct generations; current gaps are `-0.012` pass@64 and `-249/32000` generations.
+
+3. **Speed advantage is preserved**
+   - Keep `>= 2x` throughput vs the committed `v3a` PR #104 reference while iterating.
+   - Final claim must also compare against the best-tuned per-GPU Albatross reference (`v3a`/`v4` + tuned `linear_orig_layout_launch`).
+
+4. **Root cause is identified before broad changes**
+   - Produce a parity report showing whether the gap starts at prefill logits, teacher-forced decode logits, recurrent state update, sampler/refill order, or stop/verification handling.
+   - Any code fix should include the smallest targeted subset run before another full 500-task run.
+
+### Immediate work order
+
+1. Add a lightweight gap-analysis script for committed HF/Albatross `generations.jsonl` artifacts.
+2. Add a logits-parity probe for selected tasks and fixed token continuations.
+3. Run targeted rollout64 subsets on the high-signal tasks listed below.
+4. Run Albatross `v4` / `linear_orig_layout_launch` tuning checks and update the reference table.
+5. Only after the above, run full MATH500 avg@64 again.
+
 ## Working hypothesis
 
 The speed path is already strong.  The next work should focus on numerical / sampling parity:
