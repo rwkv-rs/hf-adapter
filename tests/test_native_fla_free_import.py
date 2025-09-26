@@ -60,6 +60,38 @@ def main() -> int:
 
     modeling = importlib.import_module("rwkv7_hf.modeling_rwkv7")
     assert modeling._FLA_IMPORT_ERROR is not None
+    kernel_policy = importlib.import_module("rwkv7_hf.kernel_policy")
+
+    class FakeQuantConfig:
+        llm_int8_skip_modules = ["existing"]
+
+    quant_config = FakeQuantConfig()
+    kwargs = {"quantization_config": quant_config, "rwkv7_bnb_skip_policy": "memory", "config": cfg}
+    policy, prepared_quant_config = modeling.RWKV7ForCausalLM._rwkv7_prepare_bnb_kwargs("unused", kwargs)
+    assert policy == "memory"
+    assert prepared_quant_config is quant_config
+    assert kwargs["quantization_config"] is quant_config
+    assert "rwkv7_bnb_skip_policy" not in kwargs
+    assert "existing" in quant_config.llm_int8_skip_modules
+    assert "lm_head" in quant_config.llm_int8_skip_modules
+    assert "model.layers.0.attn.w_lora.lora.0" in quant_config.llm_int8_skip_modules
+    assert "model.layers.0.attn.g_lora.lora.2" in quant_config.llm_int8_skip_modules
+
+    old_policy = modeling.current_kernel_policy
+    try:
+        os.environ.pop("RWKV7_NATIVE_MODEL", None)
+        modeling.current_kernel_policy = lambda **_: kernel_policy.policy_for_profile(
+            kernel_policy.classify_gpu("NVIDIA GeForce GTX 1080 Ti", (6, 1))
+        )
+        assert modeling._native_model_backend_requested() is True
+
+        os.environ["RWKV7_NATIVE_MODEL"] = "0"
+        assert modeling._native_model_backend_requested() is False
+
+        os.environ["RWKV7_NATIVE_MODEL"] = "1"
+        assert modeling._native_model_backend_requested() is True
+    finally:
+        modeling.current_kernel_policy = old_policy
 
     if args.model:
         # Exercise the real HF remote-code path too: copy the worktree code
