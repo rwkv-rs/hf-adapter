@@ -70,7 +70,12 @@ Current acceptance baseline from `bench/math500_acceptance_4090_20260703`:
    strongest among tested HF modes (`315/576` correct, `8/9` pass@64); `active_global` drops to
    `297/576` and `per_sample` to `302/576`, so do not switch final acceptance away from
    Albatross-compatible global sampling yet.
-7. Only after a targeted variant beats the default or the reference tuning is complete, run full MATH500 avg@64 again.
+7. Run broader stratified seed/refill sensitivity sweep. **Done:**
+   `bench/math500_stratified64_seed_sweep_4090_20260704/` selects 64 disagreement-enriched tasks from
+   the full runs.  The source full-run restricted reference is pass-parity (`48/64` vs `48/64`), while fresh
+   HF seeds `42` and `43` both reach `46/64`; seed `43` improves correct generations (`981/4096` vs
+   `938/4096`) but does not close selected-task pass parity.
+8. Only after a targeted variant beats the default or the reference tuning is complete, run full MATH500 avg@64 again.
 
 ## Working hypothesis
 
@@ -175,6 +180,29 @@ The HF dynamic evaluator now has opt-in RNG modes for probing only; default rema
 | Albatross v3a | `325/576` | `0.56423611` | `0.888889` | `3187.349` |
 
 Conclusion: deterministic per-row/per-sample RNG and active-row-only global RNG do not improve this high-signal subset.  The final acceptance path should keep the default Albatross-compatible global full-batch RNG unless a later targeted variant beats it.  The next useful probe is seed/refill sensitivity over a broader stratified subset or a full avg@64 rerun with the current default once reference tuning is finalized.
+
+
+## Stratified-64 seed/refill sensitivity sweep
+
+Artifact: `bench/math500_stratified64_seed_sweep_4090_20260704/`.
+
+Subset construction: 64 disagreement-enriched tasks selected from the full PR #104 artifacts, with 16 tasks each from `albatross_only_pass`, `hf_only_pass`, `both_pass_albatross_adv`, and `both_pass_hf_adv`.
+
+Source full-run reference restricted to this subset:
+
+| Reference | Correct generations | Pass tasks | Pass@64 |
+|---|---:|---:|---:|
+| HF full run selected rows | `893/4096` | `48/64` | `0.750000` |
+| Albatross full run selected rows | `1062/4096` | `48/64` | `0.750000` |
+
+Fresh HF default/global RNG reruns on the subset:
+
+| HF seed | Correct generations | Rollout accuracy | Pass tasks | Pass@64 | Summary token/s |
+|---:|---:|---:|---:|---:|---:|
+| `42` | `938/4096` | `0.22900391` | `46/64` | `0.718750` | `5926.511` |
+| `43` | `981/4096` | `0.23950195` | `46/64` | `0.718750` | `5812.783` |
+
+Interpretation: seed sensitivity is real at the correct-generation level, but the two completed fresh seeds did not beat or match the selected-task Albatross pass count.  This argues against changing the final seed/path just to chase subset variance.  Completion still requires the full MATH500 avg@64 gate or a stronger targeted fix.
 
 ## Albatross v3a/v4 reference smoke on RTX 4090
 
