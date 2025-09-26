@@ -1,0 +1,18 @@
+{
+  "artifact": "/tmp/math500_hf_seed43_full_compare_4090_20260704",
+  "created_for": "G1 accuracy parity with tuned Albatross reference",
+  "hf_run": "/tmp/math500_hf_dynamic_full_avg64_seed43_20260704",
+  "albatross_run": "/tmp/albatross_math500_full_avg64_20260703",
+  "committed_files": [
+    "README.md",
+    "albatross_run.log",
+    "albatross_summary.json",
+    "comparison.json",
+    "comparison.txt",
+    "gap_report.json",
+    "gap_report.md",
+    "hf_seed43_run.log",
+    "hf_seed43_summary.json"
+  ],
+  "note": "Full generations.jsonl files intentionally not copied into the repo artifact."
+}

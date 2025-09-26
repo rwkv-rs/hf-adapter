@@ -2,6 +2,45 @@
 
 This is a short-lived working TODO for the current `wangyue/native-fused-fp16-kernel` branch. Keep the default HF path unchanged unless a benchmark explicitly opts in.
 
+## Temporary TODO: G1 MATH500 speed gate after seed43 accuracy pass
+
+- [x] Preserve the full seed43 accuracy evidence:
+  - `bench/math500_hf_seed43_full_compare_4090_20260704/`
+  - HF seed43 `pass@64=0.372` vs Albatross `0.370`
+  - current blocker: same run speed is only `1.608x` summary token/s and
+    `1.686x` decode token/s vs Albatross, below the `>=2x` gate.
+- [x] Add an opt-in deferred verifier path so CPU `math_verify` does not stall
+  the dynamic GPU decode/refill loop.
+  - Implementation: `bench/eval_math500_hf.py --defer-verification`
+  - Default behavior stays unchanged.
+  - Optional speed denominator: `--summary-speed-timing generation`.
+- [x] Validate deferred verification on a 4090 dynamic smoke.
+  - Artifact: `bench/math500_defer_verification_smoke_4090_20260704/`
+  - Completion mismatches: `0`
+  - Correctness mismatches: `0`
+  - Small smoke token/s improved from `358.850` inline to `411.810`
+    generation-timed deferred.
+- [x] Add and validate opt-in deferred text decode.
+  - Implementation: `bench/eval_math500_hf.py --defer-text-decode`
+  - Artifact: `bench/math500_defer_text_decode_smoke_4090_20260704/`
+  - Completion / correctness / stop mismatches: `0`
+  - This removes per-token `tokenizer.decode(...)` from the dynamic
+    decode/refill loop while keeping the default path unchanged.
+- [x] Run a short dynamic-batch sweep before the full speed-gate run.
+  - Artifact: `bench/math500_bsz_sweep_defer_text_4090_20260704/`
+  - Shape: `--limit 4 --rollout 64 --max-new-tokens 256`
+  - Best short-run row: `bsz=128`, `7131.751` generation token/s.
+- [x] Finish the full seed43 avg@64 deferred-verification + deferred-text
+  decode run and compare it with the committed Albatross reference.
+  - Remote output: `/tmp/math500_hf_dynamic_full_avg64_seed43_bsz128_defer_text_20260704`
+  - Remote log: `/tmp/math500_hf_dynamic_full_avg64_seed43_bsz128_defer_text_20260704.log`
+  - Artifact:
+    `bench/math500_hf_seed43_bsz128_defer_text_full_compare_4090_20260704/`
+  - Result: `pass@64=0.380` vs Albatross `0.370`, generation token/s
+    `10426.943` vs `3903.633` (`2.671x`), wall token/s `10053.618`
+    (`2.575x`), decode token/s `11588.182` vs `3970.135` (`2.919x`).
+  - Current G1 gates against the committed full Albatross reference are met.
+
 ## Temporary TODO: next 4090 push
 
 Use this as the current scratch checklist until the Albatross-ratio item below

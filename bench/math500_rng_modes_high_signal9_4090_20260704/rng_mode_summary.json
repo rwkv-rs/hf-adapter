@@ -1,0 +1,76 @@
+{
+  "task_ids": [
+    73,
+    160,
+    116,
+    67,
+    277,
+    374,
+    383,
+    319,
+    72
+  ],
+  "summaries": [
+    {
+      "mode": "global",
+      "correct_generations": 315,
+      "total_generations": 576,
+      "rollout_accuracy": 0.546875,
+      "pass_at_rollout_accuracy": 0.8888888888888888,
+      "pass_tasks": 8,
+      "token_per_sec": 6241.051088250784,
+      "decoded_token_events": 230283,
+      "rng_mode": "albatross/global",
+      "summary_path": "/tmp/math500_hf_dynamic_high_signal9_20260703/summary.json"
+    },
+    {
+      "mode": "active_global",
+      "correct_generations": 297,
+      "total_generations": 576,
+      "rollout_accuracy": 0.515625,
+      "pass_at_rollout_accuracy": 0.8888888888888888,
+      "pass_tasks": 8,
+      "token_per_sec": 6188.88281241577,
+      "decoded_token_events": 231854,
+      "rng_mode": "active_global",
+      "summary_path": "/tmp/math500_hf_rng_active_global_high_signal9_20260704/summary.json"
+    },
+    {
+      "mode": "per_sample",
+      "correct_generations": 302,
+      "total_generations": 576,
+      "rollout_accuracy": 0.5243055555555556,
+      "pass_at_rollout_accuracy": 0.8888888888888888,
+      "pass_tasks": 8,
+      "token_per_sec": 6080.988620237965,
+      "decoded_token_events": 232993,
+      "rng_mode": "per_sample",
+      "summary_path": "/tmp/math500_hf_rng_per_sample_high_signal9_20260704/summary.json"
+    },
+    {
+      "mode": "albatross",
+      "correct_generations": 325,
+      "total_generations": 576,
+      "rollout_accuracy": 0.5642361111111112,
+      "pass_at_rollout_accuracy": 0.8888888888888888,
+      "pass_tasks": 8,
+      "token_per_sec": 3187.348505767332,
+      "decoded_token_events": null,
+      "rng_mode": "albatross/global",
+      "summary_path": "/tmp/math500_albatross_high_signal9_20260703/summary.json"
+    }
+  ],
+  "best_hf_by_pass_then_correct": {
+    "mode": "global",
+    "correct_generations": 315,
+    "total_generations": 576,
+    "rollout_accuracy": 0.546875,
+    "pass_at_rollout_accuracy": 0.8888888888888888,
+    "pass_tasks": 8,
+    "token_per_sec": 6241.051088250784,
+    "decoded_token_events": 230283,
+    "rng_mode": "albatross/global",
+    "summary_path": "/tmp/math500_hf_dynamic_high_signal9_20260703/summary.json"
+  },
+  "interpretation": "Default global Albatross-compatible RNG/refill remains the strongest HF mode on this high-signal subset; active-only global and deterministic per-sample RNG reduce correct generations while pass@64 remains tied at 8/9."
+}

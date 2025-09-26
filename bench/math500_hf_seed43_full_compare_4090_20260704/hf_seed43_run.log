@@ -1,0 +1,80 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+/workspace/venvs/rwkv7/lib/python3.12/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  43%|████▎     | 340/795 [00:00<00:00, 3368.54it/s]Loading weights:  85%|████████▌ | 677/795 [00:00<00:00, 3329.98it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 3383.59it/s]
+math500_hf prefill_cache done prompts=500 elapsed_s=194.828
+math500_hf dynamic step=5000 active=64/64 done=662/32000 pending=31274 tokens=320662 tps=6197.0 window_tps=6197.0
+math500_hf dynamic step=10000 active=64/64 done=1245/32000 pending=30691 tokens=641245 tps=6642.3 window_tps=7156.8
+math500_hf dynamic step=15000 active=64/64 done=1931/32000 pending=30005 tokens=961931 tps=6784.7 window_tps=7088.4
+math500_hf dynamic step=20000 active=64/64 done=2621/32000 pending=29315 tokens=1282621 tps=6877.5 window_tps=7171.7
+math500_hf dynamic step=25000 active=64/64 done=3170/32000 pending=28766 tokens=1603170 tps=6921.0 window_tps=7100.6
+math500_hf dynamic step=30000 active=64/64 done=3878/32000 pending=28058 tokens=1923878 tps=6895.6 window_tps=6771.5
+Timeout during comparison
+Timeout during comparison
+Timeout during comparison
+Timeout during comparison
+math500_hf dynamic step=35000 active=64/64 done=4275/32000 pending=27661 tokens=2244275 tps=5962.6 window_tps=3289.8
+math500_hf dynamic step=40000 active=64/64 done=4805/32000 pending=27131 tokens=2564805 tps=6032.0 window_tps=6567.6
+math500_hf dynamic step=45000 active=64/64 done=5340/32000 pending=26596 tokens=2885340 tps=6088.4 window_tps=6580.9
+math500_hf dynamic step=50000 active=64/64 done=6018/32000 pending=25918 tokens=3206018 tps=6143.7 window_tps=6689.9
+math500_hf dynamic step=55000 active=64/64 done=6347/32000 pending=25589 tokens=3526347 tps=6208.2 window_tps=6936.8
+Timeout during comparison
+math500_hf dynamic step=60000 active=64/64 done=6714/32000 pending=25222 tokens=3846714 tps=6193.6 window_tps=6037.9
+math500_hf dynamic step=65000 active=64/64 done=7052/32000 pending=24884 tokens=4167052 tps=6247.6 window_tps=6977.3
+math500_hf dynamic step=70000 active=64/64 done=7573/32000 pending=24363 tokens=4487573 tps=6296.7 window_tps=7013.8
+math500_hf dynamic step=75000 active=64/64 done=8126/32000 pending=23810 tokens=4808126 tps=6349.6 window_tps=7195.6
+math500_hf dynamic step=80000 active=64/64 done=8695/32000 pending=23241 tokens=5128695 tps=6387.8 window_tps=7022.6
+Timeout during comparison
+math500_hf dynamic step=85000 active=64/64 done=9096/32000 pending=22840 tokens=5449096 tps=6389.5 window_tps=6415.6
+math500_hf dynamic step=90000 active=64/64 done=9567/32000 pending=22369 tokens=5769567 tps=6411.2 window_tps=6805.7
+math500_hf dynamic step=95000 active=64/64 done=9975/32000 pending=21961 tokens=6089975 tps=6437.1 window_tps=6940.8
+math500_hf dynamic step=100000 active=64/64 done=10435/32000 pending=21501 tokens=6410435 tps=6470.8 window_tps=7185.9
+Timeout during comparison
+math500_hf dynamic step=105000 active=64/64 done=10977/32000 pending=20959 tokens=6730977 tps=6459.6 window_tps=6242.7
+math500_hf dynamic step=110000 active=64/64 done=11492/32000 pending=20444 tokens=7051492 tps=6479.5 window_tps=6929.2
+math500_hf dynamic step=115000 active=64/64 done=12010/32000 pending=19926 tokens=7372010 tps=6483.1 window_tps=6562.5
+math500_hf dynamic step=120000 active=64/64 done=12454/32000 pending=19482 tokens=7692454 tps=6510.0 window_tps=7198.6
+math500_hf dynamic step=125000 active=64/64 done=12966/32000 pending=18970 tokens=8012966 tps=6534.2 window_tps=7173.1
+math500_hf dynamic step=130000 active=64/64 done=13353/32000 pending=18583 tokens=8333353 tps=6554.0 window_tps=7091.7
+math500_hf dynamic step=135000 active=64/64 done=13750/32000 pending=18186 tokens=8653750 tps=6555.9 window_tps=6605.6
+math500_hf dynamic step=140000 active=64/64 done=14210/32000 pending=17726 tokens=8974210 tps=6577.4 window_tps=7215.4
+Timeout during comparison
+math500_hf dynamic step=145000 active=64/64 done=14648/32000 pending=17288 tokens=9294648 tps=6556.7 window_tps=6027.0
+Timeout during comparison
+Timeout during comparison
+math500_hf dynamic step=150000 active=64/64 done=15153/32000 pending=16783 tokens=9615153 tps=6524.9 window_tps=5720.4
+math500_hf dynamic step=155000 active=64/64 done=15807/32000 pending=16129 tokens=9935807 tps=6531.0 window_tps=6719.7
+math500_hf dynamic step=160000 active=64/64 done=16366/32000 pending=15570 tokens=10256366 tps=6547.0 window_tps=7082.4
+math500_hf dynamic step=165000 active=64/64 done=17132/32000 pending=14804 tokens=10577132 tps=6562.5 window_tps=7102.9
+math500_hf dynamic step=170000 active=64/64 done=17867/32000 pending=14069 tokens=10897867 tps=6575.7 window_tps=7043.1
+math500_hf dynamic step=175000 active=64/64 done=18260/32000 pending=13676 tokens=11218260 tps=6586.1 window_tps=6958.5
+math500_hf dynamic step=180000 active=64/64 done=18677/32000 pending=13259 tokens=11538677 tps=6598.1 window_tps=7050.1
+math500_hf dynamic step=185000 active=64/64 done=19081/32000 pending=12855 tokens=11859081 tps=6601.5 window_tps=6723.0
+math500_hf dynamic step=190000 active=64/64 done=19572/32000 pending=12364 tokens=12179572 tps=6612.5 window_tps=7050.7
+math500_hf dynamic step=195000 active=64/64 done=20242/32000 pending=11694 tokens=12500242 tps=6621.4 window_tps=6976.5
+math500_hf dynamic step=200000 active=64/64 done=20828/32000 pending=11108 tokens=12820828 tps=6628.9 window_tps=6932.8
+math500_hf dynamic step=205000 active=64/64 done=21226/32000 pending=10710 tokens=13141226 tps=6635.3 window_tps=6902.2
+math500_hf dynamic step=210000 active=64/64 done=21659/32000 pending=10277 tokens=13461659 tps=6646.6 window_tps=7148.5
+math500_hf dynamic step=215000 active=64/64 done=22222/32000 pending=9714 tokens=13782222 tps=6643.9 window_tps=6533.8
+math500_hf dynamic step=220000 active=64/64 done=22697/32000 pending=9239 tokens=14102697 tps=6651.2 window_tps=6977.8
+math500_hf dynamic step=225000 active=64/64 done=23101/32000 pending=8835 tokens=14423101 tps=6653.6 window_tps=6764.0
+math500_hf dynamic step=230000 active=64/64 done=23731/32000 pending=8205 tokens=14743731 tps=6659.2 window_tps=6920.7
+math500_hf dynamic step=235000 active=64/64 done=24128/32000 pending=7808 tokens=15064128 tps=6669.1 window_tps=7155.0
+math500_hf dynamic step=240000 active=64/64 done=24605/32000 pending=7331 tokens=15384605 tps=6675.2 window_tps=6979.3
+math500_hf dynamic step=245000 active=64/64 done=25353/32000 pending=6583 tokens=15705353 tps=6679.5 window_tps=6890.5
+math500_hf dynamic step=250000 active=64/64 done=26078/32000 pending=5858 tokens=16026078 tps=6687.9 window_tps=7127.8
+math500_hf dynamic step=255000 active=64/64 done=26569/32000 pending=5367 tokens=16346569 tps=6694.4 window_tps=7035.8
+math500_hf dynamic step=260000 active=64/64 done=26975/32000 pending=4961 tokens=16666975 tps=6704.0 window_tps=7231.7
+Timeout during comparison
+Timeout during comparison
+math500_hf dynamic step=265000 active=64/64 done=27587/32000 pending=4349 tokens=16987587 tps=6670.6 window_tps=5299.7
+math500_hf dynamic step=270000 active=64/64 done=28080/32000 pending=3856 tokens=17308080 tps=6673.8 window_tps=6845.1
+math500_hf dynamic step=275000 active=64/64 done=28709/32000 pending=3227 tokens=17628709 tps=6682.5 window_tps=7191.5
+math500_hf dynamic step=280000 active=64/64 done=29361/32000 pending=2575 tokens=17949361 tps=6687.2 window_tps=6951.8
+math500_hf dynamic step=285000 active=64/64 done=29917/32000 pending=2019 tokens=18269917 tps=6695.2 window_tps=7178.6
+math500_hf dynamic step=290000 active=64/64 done=30426/32000 pending=1510 tokens=18590426 tps=6698.1 window_tps=6868.9
+math500_hf dynamic step=295000 active=64/64 done=30814/32000 pending=1122 tokens=18910814 tps=6704.6 window_tps=7104.0
+math500_hf dynamic step=300000 active=64/64 done=31415/32000 pending=521 tokens=19231415 tps=6707.4 window_tps=6873.9
+math500_hf dynamic step=305000 active=64/64 done=31866/32000 pending=70 tokens=19551866 tps=6708.3 window_tps=6765.4
+math500_hf dynamic done B=64 rows=32000 decode_s=2937.253 tokens=19659864
+MATH500_HF_ADAPTER_RESULT {"axis": "math500_hf_adapter", "backend": "hf_adapter", "status": "pass", "model": "/tmp/rwkv7_repo_code_model_dynmath_full_avg64", "dataset": "/workspace/projects/Albatross/faster3a_2605/dataset/MATH500.jsonl", "num_tasks": 500, "rollout": 64, "total_generations": 32000, "correct_generations": 4600, "rollout_accuracy": 0.14375, "pass_at_rollout_accuracy": 0.372, "ended_eod": 25132, "ended_user_stop": 0, "truncated": 6868, "truncated_rate": 0.214625, "mean_generated_tokens": 613.585375, "mean_tokens_including_stop": 614.37075, "elapsed_sec": 3132.661814160645, "sample_per_sec": 10.21495517178064, "token_per_sec": 6275.76967010325, "generations_jsonl": "/tmp/math500_hf_dynamic_full_avg64_seed43_20260704/generations.jsonl", "config": {"hf_dir": "/tmp/rwkv7_repo_code_model_dynmath_full_avg64", "dataset": "/workspace/projects/Albatross/faster3a_2605/dataset/MATH500.jsonl", "rollout": 64, "limit": 0, "max_new_tokens": 1500, "ctx_limit": 8192, "temperature": 1.0, "top_p": 0.28, "top_k": 32, "prompt_style": "fake_think", "dtype": "fp16", "device": "cuda", "seed": 43, "dynamic_batching": true, "bsz": 64, "add_bos": true, "prefill_backend": "native", "decode_backend": "fast_token", "rng_mode": "global", "rng_salt": 0}, "prefill_sec": 194.82847165316343, "decode_sec": 2937.25285294652, "decoded_token_events": 19659864, "forward_steps": 307549, "dynamic_bsz": 64, "fast_token_backend_effective": "native_graph", "cache_metrics": {"updates": 0, "new_layers": 0, "clones": 0, "detaches": 0, "device_moves": 0, "select_batch_calls": 0, "native_graph_bound_selects": 0, "batch_select_calls": 0, "reorder_calls": 0, "resets": 0, "layers": 24, "seen_tokens": 307549, "batch_size": 64}, "rng_mode": "global", "rng_salt": 0}

@@ -14,6 +14,7 @@ SCRIPTS = [
     "scripts/run_hardware_smoke.sh",
     "scripts/run_hf_training_matrix.sh",
     "scripts/run_zero_training_smoke.sh",
+    "scripts/run_math500_acceptance.sh",
 ]
 
 
@@ -63,6 +64,17 @@ def test_hardware_wrapper_requires_model() -> None:
     assert "MODEL is required" in proc.stderr
 
 
+def test_math500_acceptance_defaults_are_final_benchmark() -> None:
+    text = (ROOT / "scripts/run_math500_acceptance.sh").read_text(encoding="utf-8")
+    assert 'BSZ="${BSZ:-128}"' in text
+    assert 'SEED="${SEED:-43}"' in text
+    assert 'DEFER_VERIFICATION="${DEFER_VERIFICATION:-1}"' in text
+    assert 'SUMMARY_SPEED_TIMING="${SUMMARY_SPEED_TIMING:-generation}"' in text
+    assert 'DEFER_TEXT_DECODE="${DEFER_TEXT_DECODE:-1}"' in text
+    assert 'ACCEPTANCE_MIN_PASS_AT_ROLLOUT="${ACCEPTANCE_MIN_PASS_AT_ROLLOUT:-0.370}"' in text
+    assert 'ACCEPTANCE_MIN_SUMMARY_SPEED_RATIO="${ACCEPTANCE_MIN_SUMMARY_SPEED_RATIO:-2.0}"' in text
+
+
 def test_common_pythonpath_separator_linux() -> None:
     proc = run_bash(
         "export PYTHONPATH=/tmp/existing; source scripts/_hf_script_common.sh >/dev/null; "
@@ -84,6 +96,7 @@ def main() -> int:
     test_shell_syntax_and_executable_bits()
     test_acceptance_requires_model()
     test_hardware_wrapper_requires_model()
+    test_math500_acceptance_defaults_are_final_benchmark()
     test_common_pythonpath_separator_linux()
     test_common_pythonpath_separator_windows_msys()
     print("ACCEPTANCE SCRIPTS PASS")
