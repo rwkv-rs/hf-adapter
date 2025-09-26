@@ -83,6 +83,10 @@ Current acceptance baseline from `bench/math500_acceptance_4090_20260703`:
    against the committed Albatross full reference.  HF seed43 reaches `0.372` pass@64 vs Albatross `0.370`,
    so the primary accuracy gate is passed.  It is still `-70/32000` correct generations and the same run reports
    only `1.608x` summary token/s (`1.686x` decode token/s) vs Albatross, so G1 remains open on the speed gate.
+10. Restore the speed gate with deferred verification, deferred text decode, and the best short-run bsz. **Done:**
+    `bench/math500_hf_seed43_bsz128_defer_text_full_compare_4090_20260704/` records a full seed43 `bsz=128`
+    rerun.  It reaches `0.380` pass@64 vs Albatross `0.370`, and `10426.943` generation token/s vs Albatross
+    `3903.633` (`2.671x`).  Wall token/s including deferred verification is also `2.575x`.
 
 ## Working hypothesis
 
@@ -325,6 +329,53 @@ The best short-run row is `bsz=128`, so the next full seed43 avg@64 speed-gate r
 - Log: `/tmp/math500_hf_dynamic_full_avg64_seed43_bsz128_defer_text_20260704.log`
 - Command script: `/tmp/run_math500_hf_dynamic_full_avg64_seed43_bsz128_defer_text_20260704.sh`
 
+## Full MATH500 seed43 bsz128 deferred-text acceptance run
+
+Artifact: `bench/math500_hf_seed43_bsz128_defer_text_full_compare_4090_20260704/`.
+
+This is the current passing G1 run against the committed full Albatross reference.
+
+| Metric | HF seed43 bsz128 deferred-text | Albatross full reference | Delta / ratio |
+|---|---:|---:|---:|
+| Correct generations | `4489/32000` | `4670/32000` | `-181` |
+| Rollout accuracy | `0.14028125` | `0.14593750` | `-0.00565625` |
+| Pass@64 | `0.380000` | `0.370000` | `+0.010000` |
+| Summary token/s | `10426.943` | `3903.633` | `2.671x` |
+| Wall token/s | `10053.618` | `3903.633` | `2.575x` |
+| Decode token/s | `11588.182` | `3970.135` | `2.919x` |
+
+HF run details:
+
+- `bsz=128`
+- `--defer-verification --verify-workers 4`
+- `--summary-speed-timing generation`
+- `--defer-text-decode`
+- `prefill_sec=189.814`
+- `decode_sec=1704.369`
+- `generation_elapsed_sec=1894.183`
+- `verification_sec=69.695`
+- `decoded_token_events=19750537`
+
+Gap-analysis highlights:
+
+- Rows compared: `32000/32000`.
+- Prompt-token diff rate: `0.000000`.
+- Completion diff rows: `26353`.
+- Correctness disagreement rows: `2263`.
+- HF-only correct generations: `1041`.
+- Albatross-only correct generations: `1222`.
+- HF-only pass tasks: `17`.
+- Albatross-only pass tasks: `12`.
+
+Status: the current G1 acceptance gates against the committed full Albatross reference are met:
+
+- Accuracy: `pass@64=0.380 >= 0.370`.
+- Speed: generation-timed token/s is `2.671x`, wall token/s is `2.575x`, and decode token/s is `2.919x`.
+
+Tuned-Albatross caveat: the earlier v3a/v4 smoke still shows v4 is a higher prefill-speed ceiling on RTX 4090, but
+there is no full avg@64 v4 accuracy/speed reference in the committed artifacts.  Keep reporting both the committed
+full-reference comparison above and the separate v4/tuning smoke evidence.
+
 ## Albatross v3a/v4 reference smoke on RTX 4090
 
 Artifact: `bench/albatross_v3a_v4_4090_tune_20260703/`.
@@ -380,6 +431,7 @@ Do not treat the current Albatross `v3a` reference as the only possible speed ce
 
 A parity fix should satisfy:
 
-- `pass@64 >= 0.370` on the full MATH500 benchmark. **Current seed43 evidence passes:** `0.372`.
-- HF dynamic throughput remains `>= 2x` Albatross on the same 4090 acceptance benchmark. **Current seed43 evidence
-  does not pass:** `1.608x` summary token/s and `1.686x` decode token/s.
+- `pass@64 >= 0.370` on the full MATH500 benchmark. **Current bsz128 deferred-text evidence passes:** `0.380`.
+- HF dynamic throughput remains `>= 2x` Albatross on the same 4090 acceptance benchmark. **Current bsz128
+  deferred-text evidence passes:** `2.671x` generation-timed summary token/s, `2.575x` wall token/s, and `2.919x`
+  decode token/s.
