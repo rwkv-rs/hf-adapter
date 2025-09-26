@@ -22,7 +22,7 @@ from transformers.generation import GenerationMixin
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
 
-from .native import _init_state_batched, _step_token_batched
+from .native import _init_state_batched, _step_token_batched, attn_step_batched, ffn_step_batched
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
 
@@ -168,6 +168,18 @@ class NativeRWKV7Attention(nn.Module):
             self.v_lora = _LoRA(hidden, config.v_low_rank_dim, bias=True)
         self.g_norm = nn.GroupNorm(self.num_heads, hidden, eps=self.head_dim * 1e-5)
 
+    def forward(self, x: torch.Tensor, x_prev: torch.Tensor, v_first: torch.Tensor, state: torch.Tensor):
+        """Run one native attention step through ``Module.__call__``.
+
+        DeepSpeed ZeRO-3 gathers partitioned parameters from module pre-forward
+        hooks.  The original native loop passed ``self`` into the functional
+        helper directly, which bypassed this module call for raw TMix
+        parameters such as ``x_r`` / ``r_k`` / ``g_norm.weight`` and left them
+        sharded under ZeRO-3.  Keeping this thin forward wrapper makes the same
+        math usable for normal eager execution and ZeRO-3 resume training.
+        """
+        return attn_step_batched(self, self.layer_idx, x, x_prev, v_first, state)
+
 
 class NativeRWKV7FFN(nn.Module):
     """CMix module with attributes consumed by ``rwkv7_hf.native.ffn_step``."""
@@ -177,6 +189,10 @@ class NativeRWKV7FFN(nn.Module):
         self.x_k = nn.Parameter(torch.zeros(config.hidden_size))
         self.key = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
         self.value = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
+
+    def forward(self, x: torch.Tensor, x_prev: torch.Tensor):
+        """Run one native FFN step through ``Module.__call__`` for ZeRO-3 hooks."""
+        return ffn_step_batched(self, x, x_prev)
 
 
 class NativeRWKV7Layer(nn.Module):
