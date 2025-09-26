@@ -42,7 +42,10 @@ Current acceptance baseline from `bench/math500_acceptance_4090_20260703`:
 
 ### Immediate work order
 
-1. Add a lightweight gap-analysis script for committed HF/Albatross `generations.jsonl` artifacts.
+1. Add a lightweight gap-analysis script for HF/Albatross `generations.jsonl` artifacts. **Done:**
+   `bench/analyze_math500_gap.py` and `bench/math500_gap_4090_20260703/{README.md,gap_report.json}`.
+   Result: prompt token counts match on all `32000` rows and verifier errors are empty on both sides, but completions differ on
+   `26265/32000` rows, so the next probe should compare logits/state parity rather than prompt or verifier plumbing.
 2. Add a logits-parity probe for selected tasks and fixed token continuations.
 3. Run targeted rollout64 subsets on the high-signal tasks listed below.
 4. Run Albatross `v4` / `linear_orig_layout_launch` tuning checks and update the reference table.
@@ -56,6 +59,22 @@ The speed path is already strong.  The next work should focus on numerical / sam
 2. Compare teacher-forced decode logits over fixed tokens.
 3. Compare native prefill + fast-token vs forward prefill + forward decode.
 4. Isolate whether the gap comes from native prefill, recurrent state update, logits dtype/cast, sampler RNG/refill order, or verifier/stop handling.
+
+## First gap report
+
+Artifact: `bench/math500_gap_4090_20260703/README.md` and `gap_report.json`.
+
+Key findings from the full HF/Albatross generation diff:
+
+- Rows match: `32000/32000`; tasks match: `500/500`.
+- Prompt token diffs: `0/32000`, so the current gap is not explained by prompt length/BOS truncation differences.
+- Verify errors: empty on both sides for all rows, so the current gap is not explained by verifier exceptions.
+- Completion divergence: `26265/32000` rows (`82.08%`).
+- Correctness disagreement rows: `2395/32000` (`7.48%`).
+- HF-only correct generations: `1073`; Albatross-only correct generations: `1322`; net `-249`.
+- HF-only pass tasks: `17`; Albatross-only pass tasks: `23`; net pass@64 gap `-6` tasks.
+
+Conclusion: continue with logits/state parity probes.
 
 ## Initial high-signal tasks
 
