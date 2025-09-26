@@ -249,6 +249,40 @@ same run does not preserve the `>=2x` throughput gate.  The earlier PR #104 full
 is to restore fair generation-speed accounting, likely by deferring expensive verification out of the decode loop or
 by rerunning the previous fast benchmark path with the accepted seed/settings.
 
+## Deferred verification speed path
+
+Artifact: `bench/math500_defer_verification_smoke_4090_20260704/`.
+
+The HF evaluator now has an opt-in `--defer-verification` mode.  It keeps default behavior unchanged, but when enabled
+it records completions first and runs CPU `math_verify` after the GPU decode/refill loop.  This targets the observed
+seed43 slowdown: inline verification can stall dynamic batching because slot refill waits on CPU verification.
+
+Smoke command shape:
+
+- `--limit 4 --rollout 4 --bsz 4 --max-new-tokens 256`
+- `--seed 43 --rng-mode global`
+- `--prefill-backend native --decode-backend fast_token`
+- deferred variant: `--defer-verification --verify-workers 2 --summary-speed-timing generation`
+
+Smoke result:
+
+| Metric | Inline verification | Deferred verification |
+|---|---:|---:|
+| Rows | `16` | `16` |
+| Correct generations | `3` | `3` |
+| Pass@rollout | `0.25` | `0.25` |
+| Completion mismatches | `0` | `0` |
+| Correctness mismatches | `0` | `0` |
+| Decode seconds | `8.062` | `6.856` |
+| Token/s | `358.850` | `411.810` |
+
+Conclusion: deferred verification preserves completions and correctness on the dynamic-batching smoke and is the right
+next full-run path for the speed gate.  A full seed43 avg@64 run was launched on the 4090 server:
+
+- Output: `/tmp/math500_hf_dynamic_full_avg64_seed43_defer_20260704`
+- Log: `/tmp/math500_hf_dynamic_full_avg64_seed43_defer_20260704.log`
+- Command script: `/tmp/run_math500_hf_dynamic_full_avg64_seed43_defer_20260704.sh`
+
 ## Albatross v3a/v4 reference smoke on RTX 4090
 
 Artifact: `bench/albatross_v3a_v4_4090_tune_20260703/`.

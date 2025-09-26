@@ -62,6 +62,9 @@ def speed_fields(summary: dict[str, Any], log_decode: dict[str, float] | None = 
         "token_per_sec_summary": number(summary, "token_per_sec"),
         "sample_per_sec_summary": number(summary, "sample_per_sec"),
         "elapsed_sec": number(summary, "elapsed_sec"),
+        "speed_elapsed_sec": number(summary, "speed_elapsed_sec"),
+        "wall_token_per_sec": number(summary, "wall_token_per_sec"),
+        "generation_token_per_sec": number(summary, "generation_token_per_sec"),
         "decode_sec": decode_sec,
         "decoded_token_events": decoded,
         "steady_token_per_sec": steady,
@@ -132,6 +135,8 @@ def main() -> None:
         "speed": {
             "hf": hf_speed,
             "albatross": alb_speed,
+            "hf_speed_timing": hf.get("speed_timing", "wall"),
+            "albatross_speed_timing": alb.get("speed_timing", "wall"),
             "summary_token_per_sec_ratio_hf_over_albatross": ratio(
                 hf_speed["token_per_sec_summary"], alb_speed["token_per_sec_summary"]
             ),
@@ -166,8 +171,15 @@ def main() -> None:
           f"(delta {fmt(acc['pass_at_rollout_delta'])})")
     print("speed:")
     sp = out["speed"]
+    hf_speed_timing = sp["hf_speed_timing"]
+    alb_speed_timing = sp["albatross_speed_timing"]
     print(f"  summary token/s: HF {fmt(hf_speed['token_per_sec_summary'])} vs Albatross {fmt(alb_speed['token_per_sec_summary'])} "
           f"(ratio {fmt(sp['summary_token_per_sec_ratio_hf_over_albatross'])})")
+    print(f"  summary timing: HF {hf_speed_timing} vs Albatross {alb_speed_timing}")
+    if hf_speed["generation_token_per_sec"] or alb_speed["generation_token_per_sec"]:
+        print(f"  generation token/s: HF {fmt(hf_speed['generation_token_per_sec'])} vs Albatross {fmt(alb_speed['generation_token_per_sec'])}")
+    if hf_speed["wall_token_per_sec"] or alb_speed["wall_token_per_sec"]:
+        print(f"  wall token/s: HF {fmt(hf_speed['wall_token_per_sec'])} vs Albatross {fmt(alb_speed['wall_token_per_sec'])}")
     print(f"  steady decode token/s: HF {fmt(hf_speed['steady_token_per_sec'])} vs Albatross {fmt(alb_speed['steady_token_per_sec'])} "
           f"(ratio {fmt(sp['steady_decode_token_per_sec_ratio_hf_over_albatross'])})")
     print(f"  sample/s: HF {fmt(hf_speed['sample_per_sec_summary'])} vs Albatross {fmt(alb_speed['sample_per_sec_summary'])} "

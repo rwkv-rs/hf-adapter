@@ -11,7 +11,9 @@ intended for acceptance testing of the HF adapter; full acceptance should use
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
+import multiprocessing as mp
 import os
 import random
 import time
@@ -163,6 +165,65 @@ def verify_completion(answer: str, completion: str) -> tuple[bool, str]:
         return False, f"{type(exc).__name__}: {exc}"
 
 
+def _verify_completion_worker(payload: tuple[int, str, str]) -> tuple[int, bool, str]:
+    """Process-pool friendly wrapper for deferred verification."""
+
+    row_index, answer, completion = payload
+    correct, error = verify_completion(answer, completion)
+    return row_index, correct, error
+
+
+def verify_rows_deferred(
+    rows: list[dict[str, Any]],
+    *,
+    workers: int,
+    progress_every: int,
+) -> dict[str, Any]:
+    """Verify completed generations after the GPU decode loop has finished.
+
+    The default evaluator verifies each row at slot-finish time.  That is fine
+    for correctness, but it can stall dynamic batching because expensive SymPy /
+    math_verify work runs on the main thread while GPU slots wait for refill.
+    This helper keeps the generated completions identical and moves only the
+    CPU verifier to a post-decode phase.
+    """
+
+    started = time.perf_counter()
+    if workers <= 0:
+        workers = min(4, max(1, os.cpu_count() or 1))
+    payloads = [(idx, str(row["answer"]), str(row["completion"])) for idx, row in enumerate(rows)]
+    done = 0
+
+    if workers == 1 or len(payloads) <= 1:
+        for payload in payloads:
+            idx, correct, error = _verify_completion_worker(payload)
+            rows[idx]["correct"] = correct
+            rows[idx]["verify_error"] = error
+            done += 1
+            if progress_every > 0 and done % progress_every == 0:
+                elapsed = time.perf_counter() - started
+                print(f"math500_hf verify {done}/{len(rows)} elapsed_s={elapsed:.3f}", flush=True)
+    else:
+        ctx = mp.get_context("spawn")
+        with concurrent.futures.ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+            chunksize = max(1, len(payloads) // max(1, workers * 16))
+            for idx, correct, error in pool.map(_verify_completion_worker, payloads, chunksize=chunksize):
+                rows[idx]["correct"] = correct
+                rows[idx]["verify_error"] = error
+                done += 1
+                if progress_every > 0 and done % progress_every == 0:
+                    elapsed = time.perf_counter() - started
+                    print(f"math500_hf verify {done}/{len(rows)} elapsed_s={elapsed:.3f}", flush=True)
+
+    elapsed = time.perf_counter() - started
+    print(f"math500_hf verify done rows={len(rows)} workers={workers} elapsed_s={elapsed:.3f}", flush=True)
+    return {
+        "deferred_verification": True,
+        "verify_workers": workers,
+        "verification_sec": elapsed,
+    }
+
+
 def trim_completion(text: str) -> str:
     text = text.split("\nUser:", 1)[0]
     if text.startswith(">"):
@@ -196,7 +257,10 @@ def generate_one(args: argparse.Namespace, model, tokenizer, task: Task, sample_
     elapsed = time.perf_counter() - started
     new_ids = out[0, prompt_tokens:]
     completion = trim_completion(tokenizer.decode(new_ids.detach().cpu().tolist(), skip_special_tokens=False))
-    correct, verify_error = verify_completion(task.answer, completion)
+    if args.defer_verification:
+        correct, verify_error = None, ""
+    else:
+        correct, verify_error = verify_completion(task.answer, completion)
     generated_tokens = int(new_ids.numel())
     ended_eod = bool(generated_tokens > 0 and int(new_ids[-1].detach().cpu()) == args.eos_token_id)
     ended_user_stop = "\nUser:" in tokenizer.decode(new_ids.detach().cpu().tolist(), skip_special_tokens=False)
@@ -335,7 +399,10 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
                 out_texts[row] += pending
         completion = trim_completion(out_texts[row])
         task = task_by_index[task_idx]
-        correct, verify_error = verify_completion(task.answer, completion)
+        if args.defer_verification:
+            correct, verify_error = None, ""
+        else:
+            correct, verify_error = verify_completion(task.answer, completion)
         rows.append(
             {
                 "task_index": task.index,
@@ -507,6 +574,7 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
     stats = {
         "prefill_sec": prefill_sec,
         "decode_sec": decode_sec,
+        "generation_elapsed_sec": prefill_sec + decode_sec,
         "decoded_token_events": decoded_token_events,
         "forward_steps": forward_steps,
         "dynamic_bsz": batch_size,
@@ -538,6 +606,14 @@ def summarize(
     pass_tasks = sum(1 for task_rows in by_task.values() if any(row["correct"] for row in task_rows))
     elapsed = time.perf_counter() - started
     tokens = sum(int(row.get("tokens_including_stop", row["generated_tokens"])) for row in rows)
+    generation_elapsed = None
+    if extra_stats:
+        value = extra_stats.get("generation_elapsed_sec")
+        if value is not None:
+            generation_elapsed = float(value)
+    if generation_elapsed is None:
+        generation_elapsed = elapsed
+    speed_elapsed = generation_elapsed if args.summary_speed_timing == "generation" else elapsed
     summary = {
         "axis": "math500_hf_adapter",
         "backend": "hf_adapter",
@@ -557,8 +633,15 @@ def summarize(
         "mean_generated_tokens": sum(int(row["generated_tokens"]) for row in rows) / max(total, 1),
         "mean_tokens_including_stop": tokens / max(total, 1),
         "elapsed_sec": elapsed,
-        "sample_per_sec": total / max(elapsed, 1e-9),
-        "token_per_sec": tokens / max(elapsed, 1e-9),
+        "speed_timing": args.summary_speed_timing,
+        "speed_elapsed_sec": speed_elapsed,
+        "sample_per_sec": total / max(speed_elapsed, 1e-9),
+        "token_per_sec": tokens / max(speed_elapsed, 1e-9),
+        "wall_sample_per_sec": total / max(elapsed, 1e-9),
+        "wall_token_per_sec": tokens / max(elapsed, 1e-9),
+        "generation_elapsed_sec": generation_elapsed,
+        "generation_sample_per_sec": total / max(generation_elapsed, 1e-9),
+        "generation_token_per_sec": tokens / max(generation_elapsed, 1e-9),
         "generations_jsonl": str(out_dir / "generations.jsonl"),
         "config": {
             "hf_dir": args.hf_dir,
@@ -581,6 +664,9 @@ def summarize(
             "decode_backend": args.decode_backend,
             "rng_mode": args.rng_mode,
             "rng_salt": args.rng_salt,
+            "defer_verification": args.defer_verification,
+            "verify_workers": args.verify_workers,
+            "summary_speed_timing": args.summary_speed_timing,
         },
     }
     if extra_stats:
@@ -623,6 +709,29 @@ def main() -> int:
         ),
     )
     ap.add_argument("--rng-salt", type=int, default=0, help="Extra salt for --rng-mode=per_sample deterministic draws")
+    ap.add_argument(
+        "--defer-verification",
+        action="store_true",
+        help=(
+            "Do not run math_verify inside the generation/refill loop. Generated rows are verified after decode, "
+            "which keeps GPU throughput measurement from being stalled by CPU verifier work."
+        ),
+    )
+    ap.add_argument(
+        "--verify-workers",
+        type=int,
+        default=4,
+        help="Number of deferred verifier worker processes. Use 1 for sequential; only used with --defer-verification.",
+    )
+    ap.add_argument(
+        "--summary-speed-timing",
+        choices=("wall", "generation"),
+        default="wall",
+        help=(
+            "Timing denominator for sample_per_sec/token_per_sec. wall preserves the original end-to-end schema; "
+            "generation uses prefill+decode time and is intended for GPU speed acceptance when verification is deferred."
+        ),
+    )
     args = ap.parse_args()
 
     random.seed(args.seed)
@@ -659,6 +768,16 @@ def main() -> int:
                         f"tokens={tokens} tps={tokens / max(elapsed, 1e-9):.1f}",
                         flush=True,
                     )
+
+    generation_done = time.perf_counter()
+    if extra_stats is None:
+        extra_stats = {}
+    extra_stats.setdefault("generation_elapsed_sec", generation_done - started)
+    extra_stats.setdefault("deferred_verification", False)
+    if args.defer_verification:
+        extra_stats.update(
+            verify_rows_deferred(rows, workers=args.verify_workers, progress_every=args.progress_every)
+        )
 
     rows.sort(key=lambda x: (x["task_index"], x["sample_id"]))
     with (out_dir / "generations.jsonl").open("w", encoding="utf-8") as f:
