@@ -303,6 +303,14 @@ python scripts/mlx_generate.py \
   --prompt "The quick brown fox" \
   --max-new-tokens 8 \
   --dtype fp16
+
+# Serving-shaped MLX session smoke: prefill once, decode in chunks, compare with one-shot.
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DTYPE=fp16 \
+PROMPT="The quick brown fox" \
+STEP_SIZES=4,4 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_smoke.sh
 ```
 
 Include the `torch_mps_built` / `torch_mps_available` lines printed by the
