@@ -75,10 +75,10 @@ def infer_model_size_label(model_path: str, explicit: str = "") -> str:
 
 def choose_device(torch: Any, requested: str) -> str:
     if requested != "auto":
-        if requested == "mps" and not torch.backends.mps.is_available():
-            raise RuntimeError("requested --device mps but torch.backends.mps.is_available() is false")
+        if requested == "mps" and not mps_is_available(torch):
+            raise RuntimeError("requested --device mps but MPS is unavailable")
         return requested
-    return "mps" if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available() else "cpu"
+    return "mps" if mps_is_available(torch) else "cpu"
 
 
 def dtype_for(torch: Any, name: str) -> Any:
@@ -104,8 +104,33 @@ def sync(torch: Any, device: str) -> None:
         torch.cuda.synchronize()
 
 
+
+def mps_backend(torch: Any) -> Any | None:
+    return getattr(getattr(torch, "backends", None), "mps", None)
+
+
+def mps_is_available(torch: Any) -> bool:
+    mps = mps_backend(torch)
+    if mps is None or not hasattr(mps, "is_available"):
+        return False
+    try:
+        return bool(mps.is_available())
+    except Exception:
+        return False
+
+
+def mps_is_built(torch: Any) -> bool:
+    mps = mps_backend(torch)
+    if mps is None or not hasattr(mps, "is_built"):
+        return False
+    try:
+        return bool(mps.is_built())
+    except Exception:
+        return False
+
+
 def mps_memory_stats(torch: Any) -> dict[str, int]:
-    if not getattr(torch.backends, "mps", None) or not torch.backends.mps.is_available():
+    if not mps_is_available(torch):
         return {}
     stats: dict[str, int] = {}
     for key, func_name in (
@@ -233,8 +258,8 @@ def main() -> int:
         "memory_gb": apple_memory_gb(),
         "torch": getattr(torch, "__version__", "unknown"),
         "transformers": package_version("transformers"),
-        "mps_built": bool(torch.backends.mps.is_built()),
-        "mps_available": bool(torch.backends.mps.is_available()),
+        "mps_built": mps_is_built(torch),
+        "mps_available": mps_is_available(torch),
         "device": device,
         "dtype": args.dtype,
         "model": Path(args.model).name,
