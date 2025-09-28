@@ -1,3 +1,19 @@
+### 2026-07-04 — RTX 5090(sm_120) HF adapter smoke:能跑,但需记录环境 workaround
+
+在真实 RTX 5090 32GB 节点补了 HF adapter 运行 smoke,结果已落到 [`bench/5090_blackwell_smoke_20260704`](../../bench/5090_blackwell_smoke_20260704/README.md)。
+
+**环境**:RTX 5090 / driver 610.43.02 / PyTorch `2.6.0a0+ecf3bae40a.nv25.01` / CUDA 12.8 / Triton 3.3.1 / FLA 0.5.1 / Transformers 5.13.0 / bnb 0.49.2。
+
+**结论**:
+- ✅ 0.1B HF adapter 可以在 5090 上 load + generate。
+- ✅ MATH-style smoke 跑通 dynamic batching + deferred verification + deferred text decode,backend 报 `native_graph`。
+- ✅ bsz=8 smoke decode 512 tokens,decode 段约 **522.6 tok/s**。
+- ⚠️ 该节点的 Torch 2.6 + Triton 3.3 + FLA 组合需要 venv 级 `triton_compat_shim` 补 legacy `triton.compiler.compiler.AttrsDescriptor`,同时保留 Triton 3.3 的 `triton.set_allocator`。
+- ⚠️ 需 `TORCH_COMPILE_DISABLE=1` 绕开 Inductor/AttrsDescriptor 代码生成不兼容。
+- ⚠️ native prefill 在这个 0.1B smoke 模型上触发 `ValueError: too many values to unpack (expected 40)`,所以 smoke 用 `--prefill-backend forward --decode-backend forward`。
+
+这不是 MATH500 avg@64 验收数,只是 50 系 Blackwell 真机可运行性证明。完整验收仍以 4090 的 MATH500 acceptance artifact 为准;若要把 5090 纳入正式支持矩阵,下一步是把 Triton/FLA 兼容层和 native prefill 问题固化。
+
 
 ### 2026-07-01 — fused kernel 在 5070 全部跑通(最新 main 16dedd6)
 最新 main 的 fused kernel prototype 在 RTX 5070(sm_120)结果:
