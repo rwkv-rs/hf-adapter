@@ -359,9 +359,11 @@ Current exact-card evidence status:
   fusion patterns rather than layer-specific patches.
 - RTX 5070 Laptop / RTX 5090 / 50-series (`sm_120` observed): touched
   Blackwell path. RTX 5090 now has HF load/generate, HF API, native-prefill,
-  dynamic batching, W8/W4 functional quant, native/no-FLA Trainer + PEFT LoRA,
-  bsz sweep, and Blackwell Triton/torch.compile compatibility evidence under
-  `bench/5090_blackwell_hf_matrix_20260704/`; keep adding exact-card
+  dynamic batching, W8/W4 functional quant, native mm8/mm4 benchmark rows,
+  native/no-FLA Trainer + PEFT LoRA, bsz sweep, and Blackwell
+  Triton/torch.compile compatibility evidence under
+  `bench/5090_blackwell_hf_matrix_20260704/` and
+  `bench/5090_blackwell_native_quant_20260704/`; keep adding exact-card
   rows when new 50-series kernels are claimed. Native no-FLA compatibility is
   important because some FLA training kernels can be architecture-limited;
   fusion wins must be re-proven end-to-end on each 50-card.
