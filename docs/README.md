@@ -9,6 +9,7 @@ lives here to avoid cluttering the repository root.
 - [`validation/V100_HF_VALIDATION.md`](validation/V100_HF_VALIDATION.md): V100 HF training / quant / ZeRO validation matrix.
 - [`performance/FUSED_BACKEND.md`](performance/FUSED_BACKEND.md): native-graph, fused fp16, and fused W8/W4 performance route.
 - [`hardware/BLACKWELL_50SERIES.md`](hardware/BLACKWELL_50SERIES.md): RTX 50-series / Blackwell validation notes.
+- [`hardware/APPLE_SILICON.md`](hardware/APPLE_SILICON.md): Apple Silicon / MPS / MLX adaptation plan and smoke commands.
 - [`reference/HF_CRITERIA.md`](reference/HF_CRITERIA.md): acceptance criteria and optimization rules.
 - [`archive/NEXT_STEPS.md`](archive/NEXT_STEPS.md): historical planning notes retained for context.
 

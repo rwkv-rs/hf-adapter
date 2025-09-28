@@ -1191,15 +1191,33 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             setattr(model, "_rwkv7_bnb_skip_policy", rwkv7_bnb_skip_policy)
             if getattr(model, "config", None) is not None:
                 setattr(model.config, "rwkv7_bnb_skip_policy", rwkv7_bnb_skip_policy)
-        if quantization_config is None and bool(getattr(model.config, "use_native_mm8", False)):
-            # Persisted native int8 (mm8): re-quantize eligible linears from the
-            # fp16 weights. Deterministic, so it round-trips the saved state.
-            from .native_quant_mm8 import quantize_model_mm8
+        use_native_mm8 = bool(getattr(model.config, "use_native_mm8", False))
+        use_native_mm4 = bool(getattr(model.config, "use_native_mm4", False))
+        if quantization_config is None:
+            if use_native_mm8 and use_native_mm4:
+                raise ValueError("use_native_mm8 and use_native_mm4 are mutually exclusive")
+            # Persisted native W8/W4: re-quantize eligible linears from fp
+            # weights. Deterministic, so it round-trips the saved state.
+            # This path is bitsandbytes-free and is also used by Apple/CPU
+            # native fallback smokes.
+            if use_native_mm8:
+                from .native_quant_mm8 import quantize_model_mm8
 
-            quantize_model_mm8(
-                model,
-                min_params=int(getattr(model.config, "native_mm8_min_params", 8_000_000)),
-            )
+                replaced = quantize_model_mm8(
+                    model,
+                    min_params=int(getattr(model.config, "native_mm8_min_params", 8_000_000)),
+                )
+                setattr(model, "_rwkv7_native_mm_quantization", "mm8")
+                setattr(model, "_rwkv7_native_mm_replaced_modules", int(replaced))
+            elif use_native_mm4:
+                from .native_quant_mm4 import quantize_model_mm4
+
+                replaced = quantize_model_mm4(
+                    model,
+                    min_params=int(getattr(model.config, "native_mm4_min_params", 8_000_000)),
+                )
+                setattr(model, "_rwkv7_native_mm_quantization", "mm4")
+                setattr(model, "_rwkv7_native_mm_replaced_modules", int(replaced))
         return model
 
     def resize_token_embeddings(self, new_num_tokens: int | None = None, *args, **kwargs):
