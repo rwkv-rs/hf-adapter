@@ -12,6 +12,7 @@ rwkv7_prepare_results
 DEVICE="${DEVICE:-auto}"
 DTYPE="${DTYPE:-fp32}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-2}"
+MODEL_SIZE_LABEL="${MODEL_SIZE_LABEL:-}"
 if [[ -z "${PROMPT:-}" ]]; then
   PROMPT=$'User: Hello from Apple Silicon.
 
@@ -27,11 +28,18 @@ export RWKV7_FAST_TOKEN_BACKEND="${RWKV7_FAST_TOKEN_BACKEND:-native_jit}"
 
 rwkv7_print_env
 rwkv7_log "Apple Silicon native/MPS smoke"
-rwkv7_run "${PYTHON_BIN}" tests/test_apple_silicon_smoke.py \
+cmd=(
+  "${PYTHON_BIN}" tests/test_apple_silicon_smoke.py
   --model "${MODEL}" \
   --device "${DEVICE}" \
   --dtype "${DTYPE}" \
   --max-new-tokens "${MAX_NEW_TOKENS}" \
   --prompt "${PROMPT}" \
   --results "${RESULTS}" \
+  --model-size-label "${MODEL_SIZE_LABEL}" \
   --require-apple
+)
+if [[ "${SKIP_TINY:-0}" == "1" ]]; then
+  cmd+=(--skip-tiny)
+fi
+rwkv7_run "${cmd[@]}"

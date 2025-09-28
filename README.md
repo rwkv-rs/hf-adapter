@@ -44,6 +44,12 @@ CPU, and other no-CUDA environments can install the adapter. Use
 `pip install -e '.[fla]'` or `pip install -e '.[cuda]'` when validating the
 optimized CUDA/FLA backend.
 
+Apple Silicon evidence is tracked in
+[`docs/hardware/APPLE_SILICON.md`](docs/hardware/APPLE_SILICON.md). The current
+M5 / 16GB MPS lane covers tiny native generate/train, 0.1B HF
+load/forward/generate plus PEFT/Trainer/TRL smokes, and 0.4B HF
+load/forward/short-generate smoke.
+
 ## Layout
 
 ```text
@@ -858,7 +864,8 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 ## Known limitations
 
 - This is a wrapper-based first stage, not yet a native upstream Transformers implementation.
-- The backend currently requires FLA.
+- The default CUDA wrapper backend currently requires FLA; set
+  `RWKV7_NATIVE_MODEL=1` for the FLA-free native PyTorch compatibility path.
 - The remote config uses a unique `rwkv7_hf_adapter` model type so `AutoModelForCausalLM` reliably loads this adapter instead of a locally registered FLA `rwkv7` class.
 - V100 serving-style memory is now near parity with official for 0.1B when using `logits_to_keep=1`.
 - V100 native-norm + fast-cache HF decode is about 41 tok/s; FLA `rwkv7_forward_token` improves this to about 59 tok/s; native-JIT `rwkv7_forward_token` reaches official parity for bsz=1 and supports batched/dynamic serving; native-graph `rwkv7_forward_token` reaches about 255 tok/s for bsz=1 and 1539 aggregate tok/s for bsz=8 with extra captured graph buffers.
