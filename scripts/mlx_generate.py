@@ -9,7 +9,7 @@ import platform
 from pathlib import Path
 from typing import Any
 
-from rwkv7_hf.mlx_bridge import mlx_available
+from rwkv7_hf.mlx_bridge import mlx_available, mlx_memory_telemetry, reset_mlx_peak_memory
 from rwkv7_hf.mlx_model import generate_text_from_hf
 
 
@@ -47,6 +47,7 @@ def main() -> int:
         append_result(args.results, row)
         return 2 if args.require_mlx else 0
 
+    reset_mlx_peak_memory()
     output = generate_text_from_hf(
         args.model,
         args.prompt,
@@ -62,6 +63,7 @@ def main() -> int:
         "prompt_preview": args.prompt[:80],
         "text": output.text,
         **output.telemetry(),
+        **mlx_memory_telemetry(),
     }
     if not args.json_only:
         print(output.text)
@@ -72,4 +74,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
