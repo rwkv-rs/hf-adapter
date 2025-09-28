@@ -54,6 +54,10 @@ def test_apple_smoke_script_static() -> None:
     assert rl_script.exists()
     assert rl_script.stat().st_mode & stat.S_IXUSR
     subprocess.run(["bash", "-n", str(rl_script)], cwd=ROOT, check=True)
+    sweep_script = ROOT / "scripts/run_apple_silicon_model_sweep.sh"
+    assert sweep_script.exists()
+    assert sweep_script.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(sweep_script)], cwd=ROOT, check=True)
 
 
 def test_apple_doc_links_entry_points() -> None:
@@ -66,7 +70,9 @@ def test_apple_doc_links_entry_points() -> None:
     assert "scripts/run_apple_silicon_model_training_smoke.sh" in text
     assert "scripts/run_apple_silicon_model_trl_sft_smoke.sh" in text
     assert "scripts/run_apple_silicon_model_rl_smoke.sh" in text
+    assert "scripts/run_apple_silicon_model_sweep.sh" in text
     assert "tests/test_apple_silicon_model_training_smoke.py" in text
+    assert "tests/test_apple_silicon_model_sweep.py" in text
     train_script = ROOT / "scripts/run_apple_silicon_training_smoke.sh"
     assert train_script.exists()
     assert train_script.stat().st_mode & stat.S_IXUSR
@@ -87,6 +93,10 @@ def test_apple_doc_links_entry_points() -> None:
     assert rl_script.exists()
     assert rl_script.stat().st_mode & stat.S_IXUSR
     subprocess.run(["bash", "-n", str(rl_script)], cwd=ROOT, check=True)
+    sweep_script = ROOT / "scripts/run_apple_silicon_model_sweep.sh"
+    assert sweep_script.exists()
+    assert sweep_script.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(sweep_script)], cwd=ROOT, check=True)
     assert "RafaelUI" in text
     assert "RWKV7_NATIVE_MODEL=1" in text
     assert "rwkv7-g1d-0.4b-hf" in text
