@@ -48,7 +48,10 @@ Apple Silicon evidence is tracked in
 [`docs/hardware/APPLE_SILICON.md`](docs/hardware/APPLE_SILICON.md). The current
 M5 / 16GB MPS lane covers tiny native generate/train, 0.1B HF
 load/forward/generate plus PEFT/Trainer/TRL smokes, and 0.4B HF
-fp32/fp16 load/forward/short-generate, prompt-length sweep, and PEFT/Trainer/TRL smokes.
+fp32/fp16 load/forward/short-generate, prompt-length sweep, and PEFT/Trainer/TRL
+smokes. It also includes first 1.5B rows: fp16 load/forward/short-generate,
+fp16 prompt-16 sweep, and fp32 manual PEFT LoRA backward with finite
+gradient/update checks.
 
 ## Layout
 
@@ -70,6 +73,7 @@ scripts/
   run_apple_silicon_model_training_smoke.sh
   run_apple_silicon_model_trl_sft_smoke.sh
   run_apple_silicon_model_rl_smoke.sh
+  run_apple_silicon_model_sweep.sh
 tests/
   smoke_hf_generate.py
   test_official_alignment.py
