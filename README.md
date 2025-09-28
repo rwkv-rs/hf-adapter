@@ -48,7 +48,7 @@ Apple Silicon evidence is tracked in
 [`docs/hardware/APPLE_SILICON.md`](docs/hardware/APPLE_SILICON.md). The current
 M5 / 16GB MPS lane covers tiny native generate/train, 0.1B HF
 load/forward/generate plus PEFT/Trainer/TRL smokes, and 0.4B HF
-load/forward/short-generate smoke.
+fp32/fp16 load/forward/short-generate plus PEFT/Trainer/TRL smokes.
 
 ## Layout
 

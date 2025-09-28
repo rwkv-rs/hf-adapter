@@ -181,10 +181,10 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 
 ### 9A. Apple Silicon / MPS / MLX
 
-已完成首批 M5/16GB 证据:0.1B load/forward/generate、0.4B load/forward/短 generate、tiny native train、tiny PEFT/Trainer、0.1B 真模型 PEFT LoRA backward + HF Trainer + TRL SFT/DPO/GRPO。继续补:
+已完成首批 M5/16GB 证据:0.1B load/forward/generate、0.4B fp32/fp16 load/forward/短 generate、tiny native train、tiny PEFT/Trainer、0.1B 和 0.4B 真模型 PEFT LoRA backward + HF Trainer + TRL SFT/DPO/GRPO。继续补:
 
 - 扩展 0.4B Apple 到长一点上下文、多 step、fp16/fp32 memory/throughput sweep;
-- 补 0.4B PEFT LoRA / Trainer smoke(16GB 可先 max_length=8 / max_steps=1,必要时 fp16);
+- 补 0.4B 更长 step 的 PEFT/Trainer/TRL 稳定性行;
 - 补 M-series Pro/Max/Ultra 的长上下文、显存峰值、tok/s 行;
 - 评估 RafaelUI Metal WKV7 / MLX 路线是否做 sibling backend;
 - Apple W8/W4 不走 bitsandbytes,需要 MLX/Metal packed quant。
