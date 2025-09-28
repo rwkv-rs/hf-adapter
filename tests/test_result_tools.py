@@ -2180,6 +2180,97 @@ def assert_native_quant_rkv_sweep_is_reported(tmpdir: Path) -> None:
     assert any("native W4 R/K/V sweep best block_m=8 block_k=32 is 0.78x fp16" in item for item in report["next_focus"])
 
 
+def assert_native_quant_e2e_decode_is_reported(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "native_quant_e2e_decode",
+            "backend": "hf_adapter",
+            "status": "pass",
+            "quantization": "none",
+            "dtype": "fp16",
+            "device": "V100",
+            "model_size_label": "0.1b",
+            "batch_size": 1,
+            "prompt_tokens": 32,
+            "decode_tokens": 32,
+            "replaced_modules": 0,
+            "model_footprint_mb": 400.0,
+            "footprint_ratio_vs_fp16": 1.0,
+            "decode_speed_ratio_vs_fp16": 1.0,
+            "decode_tokps_total": 900.0,
+            "decode_ms_per_step": 1.1,
+            "final_logits_cos_vs_fp16": 1.0,
+            "same_next_token_as_fp16": True,
+        },
+        {
+            "axis": "native_quant_e2e_decode",
+            "backend": "hf_adapter",
+            "status": "pass",
+            "quantization": "mm8",
+            "dtype": "fp16",
+            "device": "V100",
+            "model_size_label": "0.1b",
+            "batch_size": 1,
+            "prompt_tokens": 32,
+            "decode_tokens": 32,
+            "replaced_modules": 1,
+            "model_footprint_mb": 320.0,
+            "footprint_ratio_vs_fp16": 0.8,
+            "decode_speed_ratio_vs_fp16": 0.95,
+            "decode_tokps_total": 855.0,
+            "decode_ms_per_step": 1.17,
+            "final_logits_cos_vs_fp16": 0.99999,
+            "same_next_token_as_fp16": True,
+        },
+        {
+            "axis": "native_quant_e2e_decode",
+            "backend": "hf_adapter",
+            "status": "pass",
+            "quantization": "mm4",
+            "dtype": "fp16",
+            "device": "V100",
+            "model_size_label": "0.1b",
+            "batch_size": 1,
+            "prompt_tokens": 32,
+            "decode_tokens": 32,
+            "replaced_modules": 1,
+            "model_footprint_mb": 280.0,
+            "footprint_ratio_vs_fp16": 0.7,
+            "decode_speed_ratio_vs_fp16": 1.02,
+            "decode_tokps_total": 918.0,
+            "decode_ms_per_step": 1.09,
+            "final_logits_cos_vs_fp16": 0.9998,
+            "same_next_token_as_fp16": True,
+        },
+    ]
+    path = tmpdir / "native_quant_e2e_decode.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    by_quant = {row["quantization"]: row for row in report["native_quant_e2e_decode"]}
+    assert set(by_quant) == {"none", "mm8", "mm4"}
+    assert by_quant["mm8"]["footprint_ratio_vs_fp16"] == 0.8
+    assert any("native mm8 e2e decode is 0.95x fp16" in item for item in report["next_focus"])
+    assert any("native mm4 e2e decode reaches 1.02x fp16" in item for item in report["next_focus"])
+
+
 def assert_quantization_model_sweep_does_not_override_canonical(tmpdir: Path) -> None:
     rows = [
         {
@@ -2877,6 +2968,7 @@ def main() -> int:
         assert_native_quant_rkv_proto_is_reported(tmpdir)
         assert_native_quant_w4_rkv_proto_is_reported(tmpdir)
         assert_native_quant_rkv_sweep_is_reported(tmpdir)
+        assert_native_quant_e2e_decode_is_reported(tmpdir)
         assert_quantization_model_sweep_does_not_override_canonical(tmpdir)
         assert_native_model_smoke_is_reported(tmpdir)
         assert_deepspeed_smoke_survives_inference_dtype_filter(tmpdir)

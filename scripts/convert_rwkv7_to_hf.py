@@ -202,6 +202,7 @@ def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
         "native_quant.py",
         "native_quant_mm4.py",
         "native_quant_mm8.py",
+        "triton_compat.py",
         "tokenization_rwkv7.py",
     ]:
         shutil.copyfile(root / "rwkv7_hf" / name, output / name)

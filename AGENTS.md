@@ -357,9 +357,16 @@ Current exact-card evidence status:
   that currently keeps prefill occupancy acceptable. Per-layer bsz=1 breakdown
   shows the prefill gap is broad across layers, so pursue reusable per-layer
   fusion patterns rather than layer-specific patches.
-- RTX 5070 Laptop / 50-series (`sm_120` observed): touched Blackwell path; native
-  no-FLA compatibility is important because some FLA training kernels can be
-  architecture-limited; fusion wins must be re-proven end-to-end on each 50-card.
+- RTX 5070 Laptop / RTX 5090 / 50-series (`sm_120` observed): touched
+  Blackwell path. RTX 5090 now has HF load/generate, HF API, native-prefill,
+  dynamic batching, W8/W4 functional quant, native mm8/mm4 benchmark rows,
+  native/no-FLA Trainer + PEFT LoRA, bsz sweep, and Blackwell
+  Triton/torch.compile compatibility evidence under
+  `bench/5090_blackwell_hf_matrix_20260704/` and
+  `bench/5090_blackwell_native_quant_20260704/`; keep adding exact-card
+  rows when new 50-series kernels are claimed. Native no-FLA compatibility is
+  important because some FLA training kernels can be architecture-limited;
+  fusion wins must be re-proven end-to-end on each 50-card.
 - A800 (`sm_80`): touched Ampere server validation card; 0.4B / 1.5B /
   2.9B bsz=1/2/4 batch sweep and W8/W4 memory-policy quantization rows exist
   on `NVIDIA A800-SXM4-80GB`, plus 2.9B HF `larger_model_smoke` and 0.4B
@@ -565,8 +572,11 @@ Run this checklist for every new GPU before marking it as supported:
   - Quantization must include footprint, long/short decode speed, and greedy or
     quality rows. Treat bnb as a compatibility/memory baseline, not a fast path.
 - Mandatory before claiming support: import/generate, fast decode, dynamic batch,
-  chunked prefill, bnb W8/W4 functional inference, native_model no-FLA fallback,
-  and exact-card fused-kernel A/B rows.
+  chunked prefill, bnb W8/W4 functional inference, `triton_compat` remote-code
+  import on early sm_120 stacks, native_model no-FLA fallback/training smoke,
+  and exact-card fused-kernel A/B rows. For RTX 5090 specifically, keep
+  `bench/run_5090_hf_validation.sh` as the one-command smoke matrix and store
+  its dated output under `bench/5090_blackwell_*`.
 - Promotion rule: promote only kernels with exact-card greedy match and min bsz
   speedup >= 1.0x; otherwise leave them opt-in/telemetry.
 
