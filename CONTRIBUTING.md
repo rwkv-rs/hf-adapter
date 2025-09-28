@@ -304,6 +304,15 @@ python scripts/mlx_generate.py \
   --max-new-tokens 8 \
   --dtype fp16
 
+# Prompt/decode length sweep with MLX memory telemetry.
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=16,64 \
+DECODE_LENGTHS=2,4 \
+CHUNK_SIZE=32 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
 # Serving-shaped MLX session smoke: prefill once, decode in chunks, compare with one-shot.
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
 DTYPE=fp16 \
