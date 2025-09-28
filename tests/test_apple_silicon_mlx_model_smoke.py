@@ -227,6 +227,23 @@ def run_tiny_generation_session_batch(args: argparse.Namespace) -> dict[str, Any
     _, mlx_model, _ = tiny_torch_model_to_mlx()
     tokenizer = TinyTokenizer()
     prompts = ["tiny-a", "tiny-b"]
+    try:
+        MLXGenerationSessionBatch.from_prompts(mlx_model, tokenizer, "tiny-not-a-list")  # type: ignore[arg-type]
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("single-string prompts must be rejected")
+    guard_batch = MLXGenerationSessionBatch.from_prompts(mlx_model, tokenizer, prompts)
+    guard_seen = [int(session.state.seen_tokens) for session in guard_batch.sessions]
+    guard_generated = [int(session.generated_tokens) for session in guard_batch.sessions]
+    try:
+        guard_batch.decode_round([1, -1])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("negative token counts must be rejected")
+    assert [int(session.state.seen_tokens) for session in guard_batch.sessions] == guard_seen
+    assert [int(session.generated_tokens) for session in guard_batch.sessions] == guard_generated
     batch = MLXGenerationSessionBatch.from_prompts(mlx_model, tokenizer, prompts)
     first = batch.decode_round(1)
     second = batch.decode_round(2)

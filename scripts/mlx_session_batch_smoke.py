@@ -129,6 +129,8 @@ def main() -> int:
 
     if not all_token_match:
         raise AssertionError("at least one session differs from one-shot MLX generate token ids")
+    if not all_text_match:
+        raise AssertionError("at least one session differs from one-shot MLX generate text")
     if not all_seen_match:
         raise AssertionError("at least one session has unexpected seen_tokens after interleaved decode")
 
