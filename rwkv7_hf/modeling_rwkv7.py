@@ -17,6 +17,16 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 _FLA_IMPORT_ERROR: Exception | None = None
 
 try:
+    from .triton_compat import apply_runtime_compat as _rwkv7_apply_runtime_compat
+except ImportError:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from triton_compat import apply_runtime_compat as _rwkv7_apply_runtime_compat
+    except Exception:  # pragma: no cover - compatibility helper is optional
+        _rwkv7_apply_runtime_compat = None
+if _rwkv7_apply_runtime_compat is not None:
+    _rwkv7_apply_runtime_compat()
+
+try:
     from fla.models.rwkv7.modeling_rwkv7 import RWKV7Model as _RWKV7Model
     from fla.models.rwkv7.modeling_rwkv7 import RWKV7ForCausalLM as _RWKV7ForCausalLM
     from fla.models.utils import Cache as _FLACache
