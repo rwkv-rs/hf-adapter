@@ -208,6 +208,11 @@ REQUIRE_PEFT=1 \
 DEVICE=auto DTYPE=fp32 \
 RESULTS=bench/results_apple_silicon_training.jsonl \
 bash scripts/run_apple_silicon_training_smoke.sh
+
+REQUIRE_PEFT=1 \
+DEVICE=auto DTYPE=fp32 \
+RESULTS=bench/results_apple_silicon_trainer.jsonl \
+bash scripts/run_apple_silicon_trainer_smoke.sh
 ```
 
 If the model dir has stale remote-code files, sync them first:

@@ -60,6 +60,7 @@ scripts/
   run_hardware_smoke.sh
   run_apple_silicon_smoke.sh
   run_apple_silicon_training_smoke.sh
+  run_apple_silicon_trainer_smoke.sh
 tests/
   smoke_hf_generate.py
   test_official_alignment.py

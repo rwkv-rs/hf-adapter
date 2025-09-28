@@ -4,21 +4,21 @@
 from __future__ import annotations
 
 import stat
+import re
 import subprocess
-import sys
-import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_fla_is_optional_dependency() -> None:
-    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    deps = data["project"].get("dependencies", [])
-    assert "flash-linear-attention" not in deps
-    optional = data["project"].get("optional-dependencies", {})
-    assert "flash-linear-attention" in optional.get("fla", [])
-    assert "flash-linear-attention" in optional.get("cuda", [])
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    deps_match = re.search(r"(?ms)^dependencies\s*=\s*\[(.*?)^\]", text)
+    assert deps_match is not None
+    deps_block = deps_match.group(1)
+    assert "flash-linear-attention" not in deps_block
+    assert "fla = [\"flash-linear-attention\"]" in text
+    assert "cuda = [\"flash-linear-attention\"" in text
 
 
 def test_apple_smoke_script_static() -> None:
@@ -34,6 +34,10 @@ def test_apple_smoke_script_static() -> None:
     assert train_script.exists()
     assert train_script.stat().st_mode & stat.S_IXUSR
     subprocess.run(["bash", "-n", str(train_script)], cwd=ROOT, check=True)
+    trainer_script = ROOT / "scripts/run_apple_silicon_trainer_smoke.sh"
+    assert trainer_script.exists()
+    assert trainer_script.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(trainer_script)], cwd=ROOT, check=True)
 
 
 def test_apple_doc_links_entry_points() -> None:
@@ -41,10 +45,16 @@ def test_apple_doc_links_entry_points() -> None:
     text = doc.read_text(encoding="utf-8")
     assert "scripts/run_apple_silicon_smoke.sh" in text
     assert "tests/test_apple_silicon_smoke.py" in text
+    assert "scripts/run_apple_silicon_trainer_smoke.sh" in text
+    assert "tests/test_apple_silicon_trainer_smoke.py" in text
     train_script = ROOT / "scripts/run_apple_silicon_training_smoke.sh"
     assert train_script.exists()
     assert train_script.stat().st_mode & stat.S_IXUSR
     subprocess.run(["bash", "-n", str(train_script)], cwd=ROOT, check=True)
+    trainer_script = ROOT / "scripts/run_apple_silicon_trainer_smoke.sh"
+    assert trainer_script.exists()
+    assert trainer_script.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(trainer_script)], cwd=ROOT, check=True)
     assert "RafaelUI" in text
     assert "RWKV7_NATIVE_MODEL=1" in text
     assert "MLX" in text

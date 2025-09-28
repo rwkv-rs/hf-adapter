@@ -13,7 +13,7 @@ Metal/MLX backend later.
 | Install without CUDA/FLA | supported by packaging | Base dependencies no longer require `flash-linear-attention`; CUDA users can install `.[fla]` / `.[cuda]`. |
 | Tiny Apple smoke | pass on local M-series | `tests/test_apple_silicon_smoke.py` passes on MacBook Air / Apple M5 / 16GB / macOS 26.5 / PyTorch 2.12.1 MPS; see `bench/results_apple_silicon_m5_20260704.jsonl`. |
 | Converted-model Apple smoke | 0.1B pass on local M-series | `scripts/run_apple_silicon_smoke.sh` loads `rwkv7-g1d-0.1b-hf` through `RWKV7_NATIVE_MODEL=1` on MPS. |
-| HF API coverage | partial | Load + forward + `generate(use_cache=True)` through the native backend; tiny native backward + PEFT LoRA backward on MPS pass. TRL training on MPS is not yet claimed. |
+| HF API coverage | partial | Load + forward + `generate(use_cache=True)` through the native backend; tiny native backward, PEFT LoRA backward, and HF Trainer one-step paths on MPS are covered. TRL training on MPS is not yet claimed. |
 | Quantization | not claimed | `bitsandbytes` W8/W4 is CUDA-oriented; Apple needs MLX/Metal-specific quantization work. |
 | Production speed | not claimed | PyTorch MPS is a compatibility path, not the final Apple performance backend. |
 | MLX / Metal backend | TODO | See RafaelUI references below. |
@@ -46,6 +46,7 @@ Local smoke on 2026-07-04:
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | tiny native RWKV-7 `generate()` | PASS (`elapsed_s=0.1121`, 2 generated tokens) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.1b-hf` load + forward + `generate()` | PASS (`elapsed_s=0.2406`, 11 prompt tokens + 2 generated tokens) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / PEFT 0.19.1 | MPS | tiny native train + PEFT LoRA train | PASS (`loss=3.870411`, LoRA trainable params=1792) |
+| MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 / PEFT 0.19.1 | MPS | tiny native Trainer + PEFT LoRA Trainer | PASS (`training_loss=3.877832`, native `changed_l1=6.063786`, LoRA `changed_l1=0.891996`) |
 
 Commands:
 
@@ -65,7 +66,12 @@ PYTHONPATH=. python tests/test_apple_silicon_smoke.py \
 
 REQUIRE_PEFT=1 RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_training_smoke.sh
+
+REQUIRE_PEFT=1 RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+  scripts/run_apple_silicon_trainer_smoke.sh
 ```
+
+The Trainer wrapper calls `tests/test_apple_silicon_trainer_smoke.py` directly.
 
 Recorded rows: [`../../bench/results_apple_silicon_m5_20260704.jsonl`](../../bench/results_apple_silicon_m5_20260704.jsonl).
 
@@ -176,8 +182,8 @@ For every Apple result, include:
   Apple hardware but does not replace CUDA fused kernels.
 - `bitsandbytes` quantization is not an Apple path. Apple W8/W4 needs MLX/Metal
   packing and kernels.
-- Full Trainer/TRL training on MPS is not claimed yet. Tiny native backward and
-  tiny PEFT LoRA backward pass; next step is 0.1B LoRA/Trainer if memory allows.
+- Full-size Trainer/TRL training on MPS is not claimed yet. Tiny native Trainer
+  and tiny PEFT LoRA Trainer pass; next step is 0.1B LoRA/Trainer if memory allows.
 - 16GB machines should start with tiny / 0.1B only. Close browsers and IDEs
   before running converted-model smoke.
 
@@ -194,7 +200,7 @@ next backend layer:
 ## Next engineering steps
 
 1. Extend tiny native MPS forward/backward and PEFT LoRA smoke to 0.1B when memory allows.
-2. Add Trainer/SFT smoke with `RWKV7_NATIVE_MODEL=1` and `device=mps`.
+2. Extend Trainer smoke to a 0.1B LoRA adapter with `RWKV7_NATIVE_MODEL=1` and `device=mps`.
 3. Add 0.4B load/generate smoke on 16GB+ and larger rows on Max/Ultra machines.
 4. Prototype MLX weight conversion for RWKV-7 HF directories.
 5. Decide whether the Metal WKV-7 kernel belongs in this repo as an optional
