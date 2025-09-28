@@ -75,6 +75,10 @@ def test_apple_smoke_script_static() -> None:
     assert mlx_script.exists()
     assert mlx_script.stat().st_mode & stat.S_IXUSR
     subprocess.run(["bash", "-n", str(mlx_script)], cwd=ROOT, check=True)
+    mlx_model_script = ROOT / "scripts/run_apple_silicon_mlx_model_smoke.sh"
+    assert mlx_model_script.exists()
+    assert mlx_model_script.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(mlx_model_script)], cwd=ROOT, check=True)
     convert_mlx_script = ROOT / "scripts/convert_hf_to_mlx.py"
     assert convert_mlx_script.exists()
     assert convert_mlx_script.stat().st_mode & stat.S_IXUSR
@@ -93,11 +97,13 @@ def test_apple_doc_links_entry_points() -> None:
     assert "scripts/run_apple_silicon_model_sweep.sh" in text
     assert "scripts/run_apple_silicon_quant_smoke.sh" in text
     assert "scripts/run_apple_silicon_mlx_smoke.sh" in text
+    assert "scripts/run_apple_silicon_mlx_model_smoke.sh" in text
     assert "scripts/convert_hf_to_mlx.py" in text
     assert "tests/test_apple_silicon_model_training_smoke.py" in text
     assert "tests/test_apple_silicon_model_sweep.py" in text
     assert "tests/test_apple_silicon_quant_smoke.py" in text
     assert "tests/test_apple_silicon_mlx_smoke.py" in text
+    assert "tests/test_apple_silicon_mlx_model_smoke.py" in text
     train_script = ROOT / "scripts/run_apple_silicon_training_smoke.sh"
     assert train_script.exists()
     assert train_script.stat().st_mode & stat.S_IXUSR
@@ -130,6 +136,10 @@ def test_apple_doc_links_entry_points() -> None:
     assert mlx_script.exists()
     assert mlx_script.stat().st_mode & stat.S_IXUSR
     subprocess.run(["bash", "-n", str(mlx_script)], cwd=ROOT, check=True)
+    mlx_model_script = ROOT / "scripts/run_apple_silicon_mlx_model_smoke.sh"
+    assert mlx_model_script.exists()
+    assert mlx_model_script.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(mlx_model_script)], cwd=ROOT, check=True)
     convert_mlx_script = ROOT / "scripts/convert_hf_to_mlx.py"
     assert convert_mlx_script.exists()
     assert convert_mlx_script.stat().st_mode & stat.S_IXUSR

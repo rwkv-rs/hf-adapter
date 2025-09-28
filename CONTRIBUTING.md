@@ -274,6 +274,19 @@ python scripts/convert_hf_to_mlx.py \
   --dtype fp16 \
   --include model.layers.0.attn.r_proj.weight \
   --copy-metadata
+
+# Full MLX recurrent reference smoke: tiny parity/cache only.
+DTYPE=fp16 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_model_smoke.sh
+
+# Full MLX recurrent reference smoke on converted 0.1B.
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+MODEL_SIZE_LABEL=0.1b \
+DTYPE=fp16 \
+TOKENS=1,2,3,4 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_model_smoke.sh
 ```
 
 Include the `torch_mps_built` / `torch_mps_available` lines printed by the
