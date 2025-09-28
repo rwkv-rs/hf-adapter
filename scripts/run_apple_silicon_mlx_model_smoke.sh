@@ -10,9 +10,11 @@ MODEL="${1:-${MODEL:-}}"
 DTYPE="${DTYPE:-fp16}"
 MODEL_SIZE_LABEL="${MODEL_SIZE_LABEL:-}"
 TOKENS="${TOKENS:-1,2,3,4}"
+PROMPT="${PROMPT:-}"
 CHUNK_SIZE="${CHUNK_SIZE:-2}"
 CHUNK_TOLERANCE="${CHUNK_TOLERANCE:-1e-2}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-1}"
+DYNAMIC_TOLERANCE_VALUE="${DYNAMIC_TOLERANCE:-0.1}"
 TORCH_COMPARE_TOLERANCE="${TORCH_COMPARE_TOLERANCE:-0.2}"
 
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}"
@@ -26,6 +28,7 @@ args=(
   --chunk-size "${CHUNK_SIZE}"
   --chunk-tolerance "${CHUNK_TOLERANCE}"
   --max-new-tokens "${MAX_NEW_TOKENS}"
+  --dynamic-tolerance "${DYNAMIC_TOLERANCE_VALUE}"
   --torch-compare-tolerance "${TORCH_COMPARE_TOLERANCE}"
   --results "${RESULTS}"
   --require-apple
@@ -37,11 +40,17 @@ fi
 if [[ -n "${MODEL_SIZE_LABEL}" ]]; then
   args+=(--model-size-label "${MODEL_SIZE_LABEL}")
 fi
+if [[ -n "${PROMPT}" ]]; then
+  args+=(--prompt "${PROMPT}")
+fi
 if [[ "${SKIP_TINY:-0}" == "1" ]]; then
   args+=(--skip-tiny)
 fi
 if [[ "${COMPARE_TORCH:-0}" == "1" ]]; then
   args+=(--compare-torch)
+fi
+if [[ "${DYNAMIC_BATCH:-1}" == "1" ]]; then
+  args+=(--dynamic-batch)
 fi
 
 rwkv7_print_env

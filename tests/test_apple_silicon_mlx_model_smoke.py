@@ -78,6 +78,24 @@ def max_abs(a, b) -> float:
     return float(np.max(np.abs(np.asarray(a) - np.asarray(b))))
 
 
+def prompt_or_tokens(args: argparse.Namespace) -> tuple[list[int], str]:
+    """Resolve real-model smoke input from --prompt or --tokens."""
+
+    if args.prompt:
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+        encoded = tokenizer(args.prompt, add_special_tokens=False)
+        tokens = [int(tok) for tok in encoded.input_ids]
+        if not tokens:
+            raise ValueError("--prompt produced no token ids")
+        return tokens, "prompt"
+    tokens = [int(tok) for tok in args.tokens.split(",") if tok.strip()]
+    if not tokens:
+        raise ValueError("--tokens must contain at least one token id")
+    return tokens, "tokens"
+
+
 def tiny_torch_model_to_mlx() -> tuple[Any, MLXRWKV7Model, dict[str, Any]]:
     import torch
 
@@ -171,19 +189,24 @@ def run_tiny_state_cache(args: argparse.Namespace) -> dict[str, Any]:
 
 def run_real_model_smoke(args: argparse.Namespace) -> dict[str, Any]:
     mx = require_mlx()
-    tokens = [int(tok) for tok in args.tokens.split(",") if tok.strip()]
-    if not tokens:
-        raise ValueError("--tokens must contain at least one token id")
+    tokens, prompt_source = prompt_or_tokens(args)
     t0 = time.perf_counter()
     model = MLXRWKV7Model.from_hf(args.model, dtype=args.dtype)
     load_s = time.perf_counter() - t0
     ids = np.array([tokens], dtype=np.int64)
-    t1 = time.perf_counter()
+    t_prefill = time.perf_counter()
     full_last, full_state = model.prefill(ids)
+    mx.eval(full_last)
+    prefill_s = time.perf_counter() - t_prefill
+    t_chunk = time.perf_counter()
     chunk_last, chunk_state = model.chunked_prefill(ids, chunk_size=max(1, int(args.chunk_size)))
-    generated, gen_state = model.generate_greedy(ids, max_new_tokens=int(args.max_new_tokens))
+    mx.eval(chunk_last)
+    chunk_s = time.perf_counter() - t_chunk
+    t_decode = time.perf_counter()
+    generated, gen_state = model.decode_greedy(full_last, full_state.clone(), max_new_tokens=int(args.max_new_tokens))
     mx.eval(full_last, chunk_last, generated)
-    run_s = time.perf_counter() - t1
+    decode_s = time.perf_counter() - t_decode
+    run_s = prefill_s + decode_s
     diff = max_abs(full_last, chunk_last)
     assert diff < float(args.chunk_tolerance), f"real-model chunked/full MLX mismatch: {diff}"
     assert int(generated.shape[1]) == int(args.max_new_tokens)
@@ -197,6 +220,8 @@ def run_real_model_smoke(args: argparse.Namespace) -> dict[str, Any]:
         "model": Path(args.model).name,
         "model_size_label": infer_model_size_label(args.model, args.model_size_label),
         "dtype": args.dtype,
+        "prompt_source": prompt_source,
+        "prompt_preview": args.prompt[:40] if args.prompt else "",
         "prompt_tokens": len(tokens),
         "generated_tokens": int(args.max_new_tokens),
         "chunk_size": int(args.chunk_size),
@@ -206,11 +231,40 @@ def run_real_model_smoke(args: argparse.Namespace) -> dict[str, Any]:
         "seen_tokens_after_prefill": int(full_state.seen_tokens),
         "seen_tokens_after_generate": int(gen_state.seen_tokens),
         "load_s": round(load_s, 4),
+        "prefill_s": round(prefill_s, 4),
+        "decode_s": round(decode_s, 4),
+        "chunked_prefill_s": round(chunk_s, 4),
         "elapsed_s": round(run_s, 4),
+        "prefill_tok_s": round(len(tokens) / prefill_s, 4) if prefill_s > 0 else None,
+        "decode_tok_s": round(int(args.max_new_tokens) / decode_s, 4) if decode_s > 0 else None,
         "tensor_count": telemetry["tensor_count"],
         "total_params": telemetry["total_params"],
         "total_bytes": telemetry["total_bytes"],
     }
+    if args.dynamic_batch:
+        batch_ids = np.array([tokens, list(reversed(tokens))], dtype=np.int64)
+        batch_last, batch_state = model.prefill(batch_ids)
+        next_tokens = mx.argmax(batch_last[:, -1, :], axis=-1).astype(mx.int32)
+        batch_decode, _ = model.decode_step(next_tokens, batch_state.clone())
+        selected_state = batch_state.select_batch([1])
+        selected_decode, selected_after = model.decode_step(next_tokens[1:2], selected_state)
+        mx.eval(batch_decode, selected_decode)
+        dynamic_diff = max_abs(batch_decode[1:2], selected_decode)
+        dynamic_argmax_match = (
+            np.asarray(mx.argmax(batch_decode[1:2, -1, :], axis=-1)).astype(int).tolist()
+            == np.asarray(mx.argmax(selected_decode[:, -1, :], axis=-1)).astype(int).tolist()
+        )
+        assert dynamic_diff < float(args.dynamic_tolerance), f"real-model dynamic select mismatch: {dynamic_diff}"
+        assert dynamic_argmax_match
+        row.update(
+            {
+                "dynamic_batch": True,
+                "dynamic_batch_size": 2,
+                "dynamic_select_decode_max_abs": round(dynamic_diff, 8),
+                "dynamic_select_argmax_match": True,
+                "dynamic_selected_seen_tokens": int(selected_after.seen_tokens),
+            }
+        )
     if args.compare_torch:
         import torch
         from transformers import AutoModelForCausalLM
@@ -263,9 +317,12 @@ def main() -> int:
     ap.add_argument("--model-size-label", default="")
     ap.add_argument("--dtype", default="fp16", choices=["keep", "fp32", "fp16", "bf16"])
     ap.add_argument("--tokens", default="1,2,3,4", help="Comma-separated token ids for converted-model smoke.")
+    ap.add_argument("--prompt", default="", help="Optional text prompt; overrides --tokens for converted-model smoke.")
     ap.add_argument("--chunk-size", type=int, default=2)
     ap.add_argument("--chunk-tolerance", type=float, default=1e-2)
     ap.add_argument("--max-new-tokens", type=int, default=1)
+    ap.add_argument("--dynamic-batch", action="store_true", help="Validate real-model state select after a 2-row prefill.")
+    ap.add_argument("--dynamic-tolerance", type=float, default=0.1)
     ap.add_argument("--compare-torch", action="store_true", help="Also compare converted-model final logits with HF native PyTorch on CPU.")
     ap.add_argument("--torch-compare-tolerance", type=float, default=0.2)
     ap.add_argument("--results", default="")

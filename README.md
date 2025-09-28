@@ -54,7 +54,8 @@ prompt 16/64/128/256/512 sweep plus prompt512/new8, and fp32 manual plus
 Trainer/TRL PEFT LoRA 1/2/3/5/10-step smoke, plus native MM8/MM4
 Apple quant smoke for tiny and 0.1B model paths with packed-footprint telemetry,
 an optional MLX tensor bridge/export smoke, and an initial MLX recurrent
-reference backend smoke with state-cache/chunked-prefill checks.
+reference backend smoke with tokenizer prompt, state-cache, dynamic-batch, and
+chunked-prefill checks through 0.1B/0.4B/1.5B short rows.
 
 ## Layout
 
