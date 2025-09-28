@@ -311,6 +311,15 @@ PROMPT="The quick brown fox" \
 STEP_SIZES=4,4 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_smoke.sh
+
+# Interleaved multi-session smoke: prefill multiple prompts and advance them round-by-round.
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DTYPE=fp16 \
+PROMPT_A="The quick brown fox" \
+PROMPT_B="User: Apple Silicon RWKV test. Assistant:" \
+ROUNDS=2,2 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 ```
 
 Include the `torch_mps_built` / `torch_mps_available` lines printed by the

@@ -25,6 +25,7 @@ try:
     from .mlx_model import (
         MLXGenerateOutput,
         MLXGenerationSession,
+        MLXGenerationSessionBatch,
         MLXRWKV7Model,
         MLXRWKV7State,
         MLXSessionStepOutput,
@@ -34,6 +35,7 @@ try:
 except Exception:  # Keep imports working when optional MLX/torch deps are absent.
     MLXGenerateOutput = None
     MLXGenerationSession = None
+    MLXGenerationSessionBatch = None
     MLXRWKV7Model = None
     MLXRWKV7State = None
     MLXSessionStepOutput = None
@@ -50,6 +52,7 @@ __all__ = [
     "NativeRWKV7Model",
     "MLXGenerateOutput",
     "MLXGenerationSession",
+    "MLXGenerationSessionBatch",
     "MLXRWKV7Model",
     "MLXRWKV7State",
     "MLXSessionStepOutput",
