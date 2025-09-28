@@ -310,6 +310,7 @@ DTYPE=fp16 \
 PROMPT_LENGTHS=16,64 \
 DECODE_LENGTHS=2,4 \
 CHUNK_SIZE=32 \
+REPEAT=2 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_generation_sweep.sh
 

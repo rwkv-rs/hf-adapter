@@ -59,7 +59,7 @@ chunked-prefill checks through 0.1B/0.4B/1.5B short rows. `scripts/mlx_generate.
 `scripts/mlx_session_smoke.py`, `scripts/mlx_generation_sweep.py`,
 `rwkv7_hf.mlx_model.generate_text_from_hf`, and `rwkv7_hf.mlx_model.MLXGenerationSession`
 provide reusable tokenizer-integrated MLX text generation, serving-style
-prefill-once/session-decode, and prompt/decode length sweep entry points.
+prefill-once/session-decode, and prompt/decode length sweep and repeat/pressure entry points.
 
 ## Layout
 
