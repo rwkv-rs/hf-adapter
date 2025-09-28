@@ -149,8 +149,9 @@ def _native_model_backend_requested() -> bool:
     policy = _rwkv7_kernel_policy()
     profile = getattr(policy, "profile", None)
     family = getattr(profile, "family", None)
-    # FLA/Triton RWKV-7 kernels can emit sm_70+ PTX features on Pascal. Route
-    # old CUDA cards to the pure PyTorch backend unless the user overrides it.
+    # Some older CUDA families cannot reliably run the optimized FLA/Triton
+    # RWKV-7 kernels. Route them to the pure PyTorch backend unless the user
+    # overrides it.
     return family in {"pascal", "legacy_cuda"}
 
 
@@ -1092,17 +1093,17 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     config_class = RWKV7Config
     # Transformers >=5 expects dict-like _tied_weights_keys in save_pretrained.
     _tied_weights_keys = {}
-    # Generic bitsandbytes quantization is very slow on the tiny RWKV-7 LoRA
-    # rank projections (for example rank=32 is not covered by efficient 4-bit
-    # kernels on V100). Keep those small matrices dense and quantize the large
-    # projections/FFN weights instead; this preserves the memory-saving direction
-    # while avoiding a known low-throughput quantized micro-kernel.
+    # Generic bitsandbytes quantization is very slow on tiny RWKV-7 LoRA rank
+    # projections on some accelerators. Keep those small matrices dense and
+    # quantize the large projections/FFN weights instead; this preserves the
+    # memory-saving direction while avoiding known low-throughput quantized
+    # micro-kernels.
     _rwkv7_bnb_skip_modules = ["lm_head", r".*_lora\.lora\.[02]"]
     # Optional speed/memory trade-off policies for bitsandbytes inference:
     # - memory: quantize all large projection/FFN matrices (smallest footprint).
-    # - decode_hot: keep attention r/k/v/o projections dense; V100 smoke showed
-    #   this improves W4 cached decode while still keeping a lower footprint
-    #   than fp16. FFN key/value remain quantized.
+    # - decode_hot: keep attention r/k/v/o projections dense; validation smoke
+    #   showed this can improve W4 cached decode while still keeping a lower
+    #   footprint than fp16. FFN key/value remain quantized.
     # - dense: keep all large Linear modules dense (diagnostic upper bound).
     _rwkv7_bnb_policy_extra_skips = {
         "memory": [],

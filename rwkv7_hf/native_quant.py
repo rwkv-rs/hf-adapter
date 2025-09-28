@@ -7,9 +7,9 @@ import without Triton/CUDA: CPU-only or unsupported hosts fall back to a torch
 reference that reconstructs the dequantized weight.
 
 The first target is decode-hot linear layers where generic bitsandbytes kernels
-are currently much slower than fp16 on V100.  This prototype is telemetry-first;
-it is not wired into the HF model path until correctness and speed are both
-validated by benchmark rows.
+can be much slower than fp16.  This prototype is telemetry-first; it is not
+wired into the HF model path until correctness and speed are both validated by
+benchmark rows.
 """
 from __future__ import annotations
 

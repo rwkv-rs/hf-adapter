@@ -220,8 +220,8 @@ if _HAS_TRITON:
 
         Mirrors the official kernel_mm_one_fp16i8 layout (split the N reduction
         across blocks, reduce with atomicAdd) so large layers get enough
-        parallelism -- the naive single-program-full-N kernel was
-        parallelism-starved on V100.
+        parallelism -- the naive single-program-full-N kernel can be
+        parallelism-starved on older accelerators.
         """
         pid_m = tl.program_id(0)
         pid_n = tl.program_id(1)

@@ -7,6 +7,7 @@ lives here to avoid cluttering the repository root.
 
 - [`validation/A100_HF_VALIDATION.md`](validation/A100_HF_VALIDATION.md): A100 40GB HF training / quant / ZeRO validation matrix.
 - [`validation/V100_HF_VALIDATION.md`](validation/V100_HF_VALIDATION.md): V100 HF training / quant / ZeRO validation matrix.
+- [`BACKENDS.md`](BACKENDS.md): backend boundaries and hardware-validation rules.
 - [`performance/FUSED_BACKEND.md`](performance/FUSED_BACKEND.md): native-graph, fused fp16, and fused W8/W4 performance route.
 - [`hardware/BLACKWELL_50SERIES.md`](hardware/BLACKWELL_50SERIES.md): RTX 50-series / Blackwell validation notes.
 - [`hardware/APPLE_SILICON.md`](hardware/APPLE_SILICON.md): Apple Silicon / MPS / MLX adaptation plan and smoke commands.
