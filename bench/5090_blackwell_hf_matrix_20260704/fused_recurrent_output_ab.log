@@ -1,0 +1,55 @@
+{
+  "axis": "native_graph_fused_recurrent_output",
+  "backend": "hf_adapter",
+  "status": "pass",
+  "dtype": "fp16",
+  "device": "NVIDIA GeForce RTX 5090",
+  "attn_mode": "fused_recurrent",
+  "fuse_norm": false,
+  "fast_cache": true,
+  "batch_size": 1,
+  "prompt_tokens": 64,
+  "steps": 32,
+  "fixed_token": false,
+  "fused_output_enabled": true,
+  "baseline_effective_backend": "native_graph",
+  "fused_effective_backend": "native_graph",
+  "baseline_fused_recurrent_output": false,
+  "fused_recurrent_output": true,
+  "baseline_ms_per_step": 1.4937,
+  "fused_ms_per_step": 1.2486,
+  "speedup": 1.1963,
+  "baseline_tokps_total": 669.5,
+  "fused_tokps_total": 800.9,
+  "max_abs_diff_first_step": 0.03125,
+  "min_cosine_first_step": 1.0000001192092896,
+  "greedy_match": 32,
+  "greedy_total": 32,
+  "baseline_cache_stats": {
+    "requests": 34,
+    "hits": 33,
+    "misses": 1,
+    "evictions": 0,
+    "size": 1,
+    "limit": 8,
+    "batch_sizes": [
+      1
+    ],
+    "hit_rate": 0.9705882352941176
+  },
+  "fused_cache_stats": {
+    "requests": 34,
+    "hits": 33,
+    "misses": 1,
+    "evictions": 0,
+    "size": 1,
+    "limit": 8,
+    "batch_sizes": [
+      1
+    ],
+    "hit_rate": 0.9705882352941176
+  },
+  "peak_vram_mb": 632.2
+}
+
+appended 1 row -> bench/5090_blackwell_hf_matrix_20260704/results_5090.jsonl
