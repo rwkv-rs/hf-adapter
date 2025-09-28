@@ -39,18 +39,17 @@ def parse_ints(raw: str, *, name: str) -> list[int]:
 
 
 def max_abs(a: Any, b: Any) -> float:
-    import numpy as np
+    import mlx.core as mx
 
-    return float(np.max(np.abs(np.asarray(a) - np.asarray(b))))
+    return float(mx.max(mx.abs(a - b)))
 
 
 def make_prompt_ids(tokenizer: Any, target_tokens: int, seed_text: str) -> list[int]:
-    text = seed_text
-    ids = [int(x) for x in tokenizer(text, add_special_tokens=False).input_ids]
-    while len(ids) < target_tokens:
-        text += seed_text
-        ids = [int(x) for x in tokenizer(text, add_special_tokens=False).input_ids]
-    return ids[:target_tokens]
+    seed_ids = [int(x) for x in tokenizer(seed_text, add_special_tokens=False).input_ids]
+    if not seed_ids:
+        raise ValueError("--seed-text tokenizes to an empty list of tokens")
+    repeats = (int(target_tokens) + len(seed_ids) - 1) // len(seed_ids)
+    return (seed_ids * repeats)[: int(target_tokens)]
 
 
 def main() -> int:

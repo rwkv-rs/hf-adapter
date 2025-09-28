@@ -31,7 +31,7 @@ args=(
   --chunk-size "${CHUNK_SIZE}"
   --chunk-tolerance "${CHUNK_TOLERANCE}"
   --repeat "${REPEAT}"
-  --results "${RESULTS}"
+  --results "${RESULTS:-}"
   --require-mlx
 )
 if [[ "${JSON_ONLY:-0}" == "1" ]]; then
