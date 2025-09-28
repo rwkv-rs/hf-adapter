@@ -163,6 +163,10 @@ class NativeRWKV7Config(PretrainedConfig):
         self.v_low_rank_dim = kwargs.get("v_low_rank_dim", 32)
         self.layer_types = kwargs.get("layer_types", None)
         self.use_cache = kwargs.get("use_cache", True)
+        self.use_native_mm8 = kwargs.get("use_native_mm8", False)
+        self.native_mm8_min_params = kwargs.get("native_mm8_min_params", 8_000_000)
+        self.use_native_mm4 = kwargs.get("use_native_mm4", False)
+        self.native_mm4_min_params = kwargs.get("native_mm4_min_params", 8_000_000)
 
 
 class _LoRA(nn.Module):
@@ -281,6 +285,66 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.gradient_checkpointing = False
 
+    @classmethod
+    def from_pretrained(cls, *model_args, **kwargs):
+        """Load dense weights, then apply optional native W8/W4 quantization.
+
+        The native backend is the Apple/CPU/AMD fallback path, so its quantized
+        route must not depend on bitsandbytes.  Persisted ``use_native_mm8`` or
+        ``use_native_mm4`` config flags re-pack eligible ``nn.Linear`` modules
+        after the fp weights are loaded.  The packed buffers are deterministic
+        from the dense weights and therefore do not need to be stored in the
+        checkpoint.
+        """
+
+        model = super().from_pretrained(*model_args, **kwargs)
+        model.apply_native_mm_quantization_from_config()
+        return model
+
+    def apply_native_mm_quantization_from_config(self) -> int:
+        """Apply config-driven native MM8/MM4 module replacement.
+
+        Returns the number of replaced modules.  This helper is intentionally
+        public-ish for tests and local Apple harnesses that construct a tiny
+        native model directly instead of going through ``from_pretrained``.
+        """
+
+        use_mm8 = bool(getattr(self.config, "use_native_mm8", False))
+        use_mm4 = bool(getattr(self.config, "use_native_mm4", False))
+        if not (use_mm8 or use_mm4):
+            setattr(self, "_rwkv7_native_mm_quantization", None)
+            setattr(self, "_rwkv7_native_mm_replaced_modules", 0)
+            return 0
+        if use_mm8 and use_mm4:
+            raise ValueError("use_native_mm8 and use_native_mm4 are mutually exclusive")
+        if use_mm8:
+            from .native_quant_mm8 import quantize_model_mm8
+
+            replaced = int(
+                quantize_model_mm8(
+                    self,
+                    min_params=int(getattr(self.config, "native_mm8_min_params", 8_000_000)),
+                )
+            )
+            quantization = "mm8"
+        else:
+            from .native_quant_mm4 import quantize_model_mm4
+
+            replaced = int(
+                quantize_model_mm4(
+                    self,
+                    min_params=int(getattr(self.config, "native_mm4_min_params", 8_000_000)),
+                )
+            )
+            quantization = "mm4"
+        setattr(self, "_rwkv7_native_mm_quantization", quantization)
+        setattr(self, "_rwkv7_native_mm_replaced_modules", replaced)
+        # Existing JIT packs are dense-weight dependent; invalidate them after
+        # swapping modules to avoid stale dense packs across manual calls.
+        if hasattr(self, "_rwkv7_native_model_jit_pack_cache"):
+            delattr(self, "_rwkv7_native_model_jit_pack_cache")
+        return replaced
+
     def get_input_embeddings(self):
         return self.model.get_input_embeddings()
 
@@ -308,16 +372,18 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         return getattr(self, "_rwkv7_native_model_last_decode_backend", None)
 
     def _native_model_quantized(self) -> bool:
-        """True if attention projections were replaced by bitsandbytes.
+        """True if layer projections were replaced by quantized modules.
 
-        The JIT decode path extracts raw ``.weight`` tensors into packs, which
-        cannot represent bnb-quantized params (Linear4/8bit). When quantized,
-        decode must use the eager per-token path whose module calls invoke the
-        bnb linears. Detected by class name to avoid importing bitsandbytes.
+        The JIT decode path extracts raw layer ``.weight`` tensors into packs,
+        which cannot represent bnb or native MM8/MM4 layer replacements.  When
+        layers are quantized, decode must use the eager per-token path whose
+        module calls invoke the quantized linears.  ``lm_head``-only quantization
+        is safe for JIT because ``native_jit._lm_head`` calls the module.
+        Detected by class name to avoid importing optional quantization deps.
         """
+        quantized_names = {"Linear4bit", "Linear8bit", "Linear8bitLt", "MM8Linear", "MM4Linear"}
         try:
-            proj = self.model.layers[0].attn.r_proj
-            return type(proj).__name__ in {"Linear4bit", "Linear8bit", "Linear8bitLt"}
+            return any(type(module).__name__ in quantized_names for module in self.model.layers.modules())
         except Exception:
             return False
 

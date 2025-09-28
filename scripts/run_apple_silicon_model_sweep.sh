@@ -3,13 +3,14 @@
 
 set -euo pipefail
 
+USER_DEVICE="${DEVICE:-}"
 source "$(dirname "$0")/_hf_script_common.sh"
 
 MODEL="${1:-${MODEL:-}}"
 rwkv7_require_model "${MODEL}"
 rwkv7_prepare_results
 
-DEVICE="${DEVICE:-auto}"
+DEVICE="${USER_DEVICE:-auto}"
 DTYPE="${DTYPE:-fp32}"
 PROMPT_LENGTHS="${PROMPT_LENGTHS:-16,64,128}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-4}"
