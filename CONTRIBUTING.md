@@ -247,7 +247,7 @@ wrapper. On 16GB machines, start with tiny / 0.1B first, then short 0.4B
 generate, `scripts/run_apple_silicon_model_sweep.sh`, and 0.4B PEFT/Trainer/TRL
 one-step smoke before longer sweeps. For 1.5B on 16GB machines, start with
 fp16 load/forward/short-generate and a prompt-length sweep through 512 tokens;
-then add prompt512/new8 or 5-step Trainer/TRL rows only after closing other
+then add prompt512/new8 or 10-step Trainer/TRL rows only after closing other
 memory-heavy apps, and confirm the result has finite positive
 trainable-gradient or trainable-update totals. Treat non-finite fp16 PEFT
 gradients/updates as a failed row, not as evidence.
