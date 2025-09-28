@@ -18,6 +18,7 @@ cuda = ["flash-linear-attention", "triton>=3.3.0; platform_system == 'Linux'"]
 test = ["peft", "accelerate", "datasets", "trl"]
 train = ["peft", "accelerate", "datasets", "trl", "deepspeed"]
 quant = ["bitsandbytes", "triton>=3.3.0; platform_system == 'Linux'"]
+mlx = ["mlx; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 
 [tool.setuptools.packages.find]
 include = ["rwkv7_hf*"]

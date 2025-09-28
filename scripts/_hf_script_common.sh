@@ -67,16 +67,23 @@ import importlib.util
 import os
 import platform
 import sys
+from importlib import metadata
 
 print(f"python={platform.python_version()} executable={sys.executable}")
 print(f"platform={platform.platform()}")
-for name in ["torch", "transformers", "peft", "trl", "deepspeed", "bitsandbytes", "fla"]:
+for name in ["torch", "transformers", "peft", "trl", "deepspeed", "bitsandbytes", "fla", "mlx"]:
     if importlib.util.find_spec(name) is None:
         print(f"{name}=missing")
         continue
     try:
         mod = __import__(name)
-        print(f"{name}={getattr(mod, '__version__', 'unknown')}")
+        version = getattr(mod, "__version__", None)
+        if version is None:
+            try:
+                version = metadata.version(name)
+            except metadata.PackageNotFoundError:
+                version = "unknown"
+        print(f"{name}={version}")
     except Exception as exc:
         print(f"{name}=import-error:{type(exc).__name__}:{exc}")
 try:

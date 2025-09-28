@@ -252,6 +252,30 @@ RESULTS=bench/results_apple_silicon_quant.jsonl \
 bash scripts/run_apple_silicon_quant_smoke.sh
 ```
 
+Apple MLX bridge/export smoke:
+
+```bash
+python -m pip install -e '.[mlx]'
+
+# Tiny MLX save/load/matmul smoke. Add MODEL for a real HF projection row.
+DTYPE=fp16 \
+RESULTS=bench/results_apple_silicon_mlx.jsonl \
+bash scripts/run_apple_silicon_mlx_smoke.sh
+
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+MODEL_SIZE_LABEL=0.1b \
+DTYPE=fp16 \
+RESULTS=bench/results_apple_silicon_mlx.jsonl \
+bash scripts/run_apple_silicon_mlx_smoke.sh
+
+python scripts/convert_hf_to_mlx.py \
+  /path/to/rwkv7-g1d-0.1b-hf \
+  /tmp/rwkv7-g1d-0.1b-mlx \
+  --dtype fp16 \
+  --include model.layers.0.attn.r_proj.weight \
+  --copy-metadata
+```
+
 Include the `torch_mps_built` / `torch_mps_available` lines printed by the
 wrapper. On 16GB machines, start with tiny / 0.1B first, then short 0.4B
 generate, `scripts/run_apple_silicon_model_sweep.sh`, and 0.4B PEFT/Trainer/TRL

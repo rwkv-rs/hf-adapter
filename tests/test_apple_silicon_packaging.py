@@ -21,6 +21,15 @@ def test_fla_is_optional_dependency() -> None:
     assert "cuda = [\"flash-linear-attention\"" in text
 
 
+def test_mlx_extra_is_apple_optional_dependency() -> None:
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    deps_match = re.search(r"(?ms)^dependencies\s*=\s*\[(.*?)^\]", text)
+    assert deps_match is not None
+    deps_block = deps_match.group(1)
+    assert "mlx" not in deps_block
+    assert 'mlx = ["mlx; platform_system == \'Darwin\' and platform_machine == \'arm64\'"]' in text
+
+
 def test_apple_smoke_script_static() -> None:
     script = ROOT / "scripts/run_apple_silicon_smoke.sh"
     assert script.exists()
@@ -62,6 +71,13 @@ def test_apple_smoke_script_static() -> None:
     assert quant_script.exists()
     assert quant_script.stat().st_mode & stat.S_IXUSR
     subprocess.run(["bash", "-n", str(quant_script)], cwd=ROOT, check=True)
+    mlx_script = ROOT / "scripts/run_apple_silicon_mlx_smoke.sh"
+    assert mlx_script.exists()
+    assert mlx_script.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(mlx_script)], cwd=ROOT, check=True)
+    convert_mlx_script = ROOT / "scripts/convert_hf_to_mlx.py"
+    assert convert_mlx_script.exists()
+    assert convert_mlx_script.stat().st_mode & stat.S_IXUSR
 
 
 def test_apple_doc_links_entry_points() -> None:
@@ -76,9 +92,12 @@ def test_apple_doc_links_entry_points() -> None:
     assert "scripts/run_apple_silicon_model_rl_smoke.sh" in text
     assert "scripts/run_apple_silicon_model_sweep.sh" in text
     assert "scripts/run_apple_silicon_quant_smoke.sh" in text
+    assert "scripts/run_apple_silicon_mlx_smoke.sh" in text
+    assert "scripts/convert_hf_to_mlx.py" in text
     assert "tests/test_apple_silicon_model_training_smoke.py" in text
     assert "tests/test_apple_silicon_model_sweep.py" in text
     assert "tests/test_apple_silicon_quant_smoke.py" in text
+    assert "tests/test_apple_silicon_mlx_smoke.py" in text
     train_script = ROOT / "scripts/run_apple_silicon_training_smoke.sh"
     assert train_script.exists()
     assert train_script.stat().st_mode & stat.S_IXUSR
@@ -107,6 +126,13 @@ def test_apple_doc_links_entry_points() -> None:
     assert quant_script.exists()
     assert quant_script.stat().st_mode & stat.S_IXUSR
     subprocess.run(["bash", "-n", str(quant_script)], cwd=ROOT, check=True)
+    mlx_script = ROOT / "scripts/run_apple_silicon_mlx_smoke.sh"
+    assert mlx_script.exists()
+    assert mlx_script.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(mlx_script)], cwd=ROOT, check=True)
+    convert_mlx_script = ROOT / "scripts/convert_hf_to_mlx.py"
+    assert convert_mlx_script.exists()
+    assert convert_mlx_script.stat().st_mode & stat.S_IXUSR
     assert "RafaelUI" in text
     assert "RWKV7_NATIVE_MODEL=1" in text
     assert "rwkv7-g1d-0.4b-hf" in text
@@ -117,6 +143,7 @@ def test_apple_doc_links_entry_points() -> None:
 
 def main() -> int:
     test_fla_is_optional_dependency()
+    test_mlx_extra_is_apple_optional_dependency()
     test_apple_smoke_script_static()
     test_apple_doc_links_entry_points()
     print("APPLE SILICON PACKAGING PASS")

@@ -23,6 +23,7 @@ SCRIPTS = [
     "scripts/run_apple_silicon_model_rl_smoke.sh",
     "scripts/run_apple_silicon_model_sweep.sh",
     "scripts/run_apple_silicon_quant_smoke.sh",
+    "scripts/run_apple_silicon_mlx_smoke.sh",
 ]
 
 
