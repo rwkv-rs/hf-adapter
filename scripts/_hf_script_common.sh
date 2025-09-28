@@ -87,8 +87,12 @@ try:
         for idx in range(torch.cuda.device_count()):
             cap = torch.cuda.get_device_capability(idx)
             print(f"cuda_device_{idx}={torch.cuda.get_device_name(idx)} sm_{cap[0]}{cap[1]}")
+    mps = getattr(torch.backends, "mps", None)
+    if mps is not None:
+        print(f"torch_mps_built={mps.is_built()}")
+        print(f"torch_mps_available={mps.is_available()}")
 except Exception as exc:
-    print(f"torch_cuda_probe_error={type(exc).__name__}:{exc}")
+    print(f"torch_device_probe_error={type(exc).__name__}:{exc}")
 for key in [
     "CUDA_VISIBLE_DEVICES",
     "PYTHONNOUSERSITE",

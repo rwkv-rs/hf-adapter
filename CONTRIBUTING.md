@@ -16,7 +16,8 @@ for shared helper code or documentation.
 3. For performance or hardware work, read [`BENCHMARK.md`](BENCHMARK.md).
 4. For the current V100 training/quant/ZeRO evidence, read [`docs/validation/V100_HF_VALIDATION.md`](docs/validation/V100_HF_VALIDATION.md).
 5. For kernel/performance experiments, also read [`docs/performance/FUSED_BACKEND.md`](docs/performance/FUSED_BACKEND.md).
-6. Pick an issue, comment that you are working on it, then open a focused PR.
+6. For Apple Silicon work, read [`docs/hardware/APPLE_SILICON.md`](docs/hardware/APPLE_SILICON.md).
+7. Pick an issue, comment that you are working on it, then open a focused PR.
 
 ## Current issue map
 
@@ -32,6 +33,7 @@ with different hardware to help.
 | #70 | Pascal / Turing | Older-card fallback behavior and fp16/quant constraints. |
 | #71 | AMD / ROCm | Native/no-FLA compatibility first, ROCm gaps second. |
 | #72 | CPU fallback | No-CUDA import, tiny native forward/generate, API tests. |
+| Apple Silicon / MPS | Apple native/no-FLA load/generate first, MLX/Metal backend later. |
 | #73 | Jetson AGX Thor | aarch64/Jetson Linux unified-memory validation. |
 | #74 | DGX Spark / GB10 | Grace Blackwell unified-memory validation. |
 
@@ -189,6 +191,28 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
   --max-length 32 \
   --results bench/results.jsonl
 ```
+
+## Minimal Apple Silicon validation
+
+Apple Silicon does not use the CUDA/FLA path. Use the native backend and record
+MPS availability:
+
+```bash
+python -m pip install -e .
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DEVICE=auto DTYPE=fp32 \
+RESULTS=bench/results_apple_silicon.jsonl \
+bash scripts/run_apple_silicon_smoke.sh
+```
+
+If the model dir has stale remote-code files, sync them first:
+
+```bash
+python scripts/sync_hf_adapter_code.py /path/to/rwkv7-g1d-0.1b-hf
+```
+
+Include the `torch_mps_built` / `torch_mps_available` lines printed by the
+wrapper, and start with 0.1B on 16GB machines.
 
 ## Reporting hardware results
 

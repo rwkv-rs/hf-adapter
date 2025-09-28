@@ -10,10 +10,11 @@ dependencies = [
   "torch",
   "transformers",
   "safetensors",
-  "flash-linear-attention",
 ]
 
 [project.optional-dependencies]
+fla = ["flash-linear-attention"]
+cuda = ["flash-linear-attention", "triton>=3.3.0; platform_system == 'Linux'"]
 test = ["peft", "accelerate", "datasets", "trl"]
 train = ["peft", "accelerate", "datasets", "trl", "deepspeed"]
 quant = ["bitsandbytes", "triton>=3.3.0; platform_system == 'Linux'"]

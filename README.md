@@ -19,6 +19,7 @@ Contributor status and roadmap docs:
 - [`BENCHMARK.md`](BENCHMARK.md): numeric evidence and benchmark contract.
 - [`docs/validation/A100_HF_VALIDATION.md`](docs/validation/A100_HF_VALIDATION.md): latest A100 40GB HF training/quant/ZeRO validation matrix.
 - [`docs/validation/V100_HF_VALIDATION.md`](docs/validation/V100_HF_VALIDATION.md): latest V100 HF training/quant/ZeRO validation matrix.
+- [`docs/hardware/APPLE_SILICON.md`](docs/hardware/APPLE_SILICON.md): Apple Silicon / MPS / MLX compatibility lane and smoke commands.
 - [`docs/README.md`](docs/README.md): map of specialized, hardware, validation, and archived docs.
 
 This repository converts RWKV-7 weights to a Hugging Face-style directory and provides remote-code wrappers so the result can be loaded with:
@@ -38,6 +39,11 @@ implementation. Set `RWKV7_NATIVE_MODEL=1` to route remote-code
 `AutoModelForCausalLM.from_pretrained(...)` into the experimental native
 PyTorch backend for FLA-free compatibility validation.
 
+`flash-linear-attention` is optional at package-install time so Apple Silicon,
+CPU, and other no-CUDA environments can install the adapter. Use
+`pip install -e '.[fla]'` or `pip install -e '.[cuda]'` when validating the
+optimized CUDA/FLA backend.
+
 ## Layout
 
 ```text
@@ -52,6 +58,7 @@ scripts/
   run_hf_training_matrix.sh
   run_zero_training_smoke.sh
   run_hardware_smoke.sh
+  run_apple_silicon_smoke.sh
 tests/
   smoke_hf_generate.py
   test_official_alignment.py
