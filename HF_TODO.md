@@ -181,10 +181,10 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 
 ### 9A. Apple Silicon / MPS / MLX
 
-已完成首批 M5/16GB 证据:0.1B load/forward/generate、0.4B fp32/fp16 load/forward/短 generate、0.4B fp32/fp16 prompt 16/64/128 generation sweep、0.4B fp16 prompt 256/512 sweep、tiny native train、tiny PEFT/Trainer、0.1B 和 0.4B 真模型 PEFT LoRA backward + HF Trainer + TRL SFT/DPO/GRPO、0.4B Trainer/TRL 2-step、1.5B fp16 load/forward/短 generate + prompt16/64/128/256/512 sweep、1.5B fp32 PEFT LoRA manual backward + HF Trainer + TRL SFT/DPO/GRPO 1/2/3-step。继续补:
+已完成首批 M5/16GB 证据:0.1B load/forward/generate、0.4B fp32/fp16 load/forward/短 generate、0.4B fp32/fp16 prompt 16/64/128 generation sweep、0.4B fp16 prompt 256/512 sweep、tiny native train、tiny PEFT/Trainer、0.1B 和 0.4B 真模型 PEFT LoRA backward + HF Trainer + TRL SFT/DPO/GRPO、0.4B Trainer/TRL 2-step、1.5B fp16 load/forward/短 generate + prompt16/64/128/256/512 sweep + prompt512/new8、1.5B fp32 PEFT LoRA manual backward + HF Trainer + TRL SFT/DPO/GRPO 1/2/3/5-step。继续补:
 
 - 扩展 0.4B Apple 到更长 decode 和 3+ step 稳定性行;
-- 把 1.5B 从 prompt512/3-step 继续扩到更长 decode、5+ step 训练,并记录 memory-pressure;
+- 把 1.5B 从 prompt512/new8 和 5-step 继续扩到 10+ step 训练,并记录 memory-pressure;
 - 补 M-series Pro/Max/Ultra 的长上下文、显存峰值、tok/s 行;
 - 评估 RafaelUI Metal WKV7 / MLX 路线是否做 sibling backend;
 - Apple W8/W4 不走 bitsandbytes,需要 MLX/Metal packed quant。
