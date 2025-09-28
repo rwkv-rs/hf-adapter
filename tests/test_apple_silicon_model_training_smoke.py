@@ -38,6 +38,7 @@ PROMPTS = [
     "User: Count to two.\n\nAssistant: one two.",
 ]
 LORA_TARGETS = ["r_proj", "k_proj", "v_proj", "o_proj", "key", "value"]
+GRPO_LORA_TARGETS = ["r_proj", "v_proj", "o_proj"]
 
 
 def is_apple_silicon() -> bool:
@@ -177,8 +178,33 @@ def patch_trl_runtime(torch: Any) -> None:
         pass
 
 
-def load_lora_model(args: argparse.Namespace, torch: Any, device: str, dtype: Any):
-    from peft import LoraConfig, get_peft_model
+def configure_base_model(model: Any, args: argparse.Namespace, use_cache: bool) -> Any:
+    model.config.use_cache = use_cache
+    model.config.fuse_cross_entropy = False
+    model.config.use_l2warp = False
+    if hasattr(model.config, "attn_mode"):
+        model.config.attn_mode = args.attn_mode
+    for layer in getattr(getattr(model, "model", None), "layers", []):
+        attn = getattr(layer, "attn", None)
+        if hasattr(attn, "mode"):
+            attn.mode = args.attn_mode
+    return model
+
+
+def lora_config(args: argparse.Namespace, targets: list[str] | None = None):
+    from peft import LoraConfig
+
+    return LoraConfig(
+        task_type="CAUSAL_LM",
+        r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=0.0,
+        bias="none",
+        target_modules=targets or LORA_TARGETS,
+    )
+
+
+def load_base_model(args: argparse.Namespace, torch: Any, device: str, dtype: Any, *, use_cache: bool = False):
     from transformers import AutoModelForCausalLM
 
     t0 = time.perf_counter()
@@ -188,28 +214,20 @@ def load_lora_model(args: argparse.Namespace, torch: Any, device: str, dtype: An
         torch_dtype=dtype,
         device_map=None,
     )
-    model.config.use_cache = False
-    model.config.fuse_cross_entropy = False
-    model.config.use_l2warp = False
-    if hasattr(model.config, "attn_mode"):
-        model.config.attn_mode = args.attn_mode
-    for layer in getattr(getattr(model, "model", None), "layers", []):
-        attn = getattr(layer, "attn", None)
-        if hasattr(attn, "mode"):
-            attn.mode = args.attn_mode
+    configure_base_model(model, args, use_cache=use_cache)
     model.to(device)
-    lora_cfg = LoraConfig(
-        task_type="CAUSAL_LM",
-        r=args.lora_r,
-        lora_alpha=args.lora_alpha,
-        lora_dropout=0.0,
-        bias="none",
-        target_modules=LORA_TARGETS,
-    )
-    model = get_peft_model(model, lora_cfg)
-    keep_trainable_params_fp32(model)
     model.train()
     return model, time.perf_counter() - t0
+
+
+def load_lora_model(args: argparse.Namespace, torch: Any, device: str, dtype: Any):
+    from peft import get_peft_model
+
+    model, load_s = load_base_model(args, torch, device, dtype, use_cache=False)
+    model = get_peft_model(model, lora_config(args))
+    keep_trainable_params_fp32(model)
+    model.train()
+    return model, load_s
 
 
 class PromptDataset:
@@ -430,6 +448,156 @@ def run_trl_sft_lora(args: argparse.Namespace, torch: Any, tokenizer: Any, devic
     return row, trainer.model
 
 
+def run_trl_dpo_lora(args: argparse.Namespace, torch: Any, tokenizer: Any, device: str, dtype: Any) -> tuple[dict[str, Any], Any]:
+    patch_trl_runtime(torch)
+    from datasets import Dataset as HFDataset
+    from trl import DPOConfig, DPOTrainer
+
+    model, load_s = load_base_model(args, torch, device, dtype, use_cache=False)
+    dataset = HFDataset.from_dict(
+        {
+            "prompt": PROMPTS * max(1, int(args.dataset_repeats)),
+            "chosen": [" Hello!", " one two."] * max(1, int(args.dataset_repeats)),
+            "rejected": [" Bye.", " three four."] * max(1, int(args.dataset_repeats)),
+        }
+    )
+    with tempfile.TemporaryDirectory(prefix="apple_model_lora_dpo_") as out_dir:
+        dpo_args = DPOConfig(
+            output_dir=out_dir,
+            max_steps=args.max_steps,
+            per_device_train_batch_size=args.batch_size,
+            gradient_accumulation_steps=1,
+            learning_rate=args.lr,
+            logging_steps=1,
+            save_strategy="no",
+            report_to=[],
+            remove_unused_columns=False,
+            disable_tqdm=True,
+            dataloader_pin_memory=False,
+            dataloader_num_workers=0,
+            use_cpu=False,
+            fp16=False,
+            bf16=False,
+            gradient_checkpointing=False,
+            optim="adamw_torch",
+            max_length=max(16, args.max_length),
+        )
+        trainer = DPOTrainer(
+            model=model,
+            args=dpo_args,
+            train_dataset=dataset,
+            processing_class=tokenizer,
+            peft_config=lora_config(args),
+        )
+        keep_trainable_params_fp32(trainer.model)
+        before = trainable_snapshot(trainer.model)
+        if not before:
+            raise AssertionError("expected TRL DPO LoRA/trainable parameters")
+        t0 = time.perf_counter()
+        result = trainer.train()
+        elapsed = time.perf_counter() - t0
+    loss = float(result.training_loss)
+    if not math.isfinite(loss):
+        raise AssertionError(f"non-finite TRL DPO LoRA loss {loss}")
+    changed = trainable_changed_l1(before, trainer.model)
+    if changed <= 0:
+        raise AssertionError("expected TRL DPO LoRA parameter update")
+    metrics = dict(getattr(result, "metrics", {}) or {})
+    row = {
+        "axis": "apple_silicon_model_peft_lora_trl_dpo",
+        "status": "pass",
+        **base_row(args, trainer.model, device, dtype),
+        "dataset_rows": int(dataset.num_rows),
+        "dpo_max_length": max(16, args.max_length),
+        "training_loss": round(loss, 6),
+        "changed_l1": round(changed, 6),
+        "load_s": round(load_s, 4),
+        "elapsed_s": round(elapsed, 4),
+        "train_runtime_s": metrics.get("train_runtime"),
+        "train_samples_per_second": metrics.get("train_samples_per_second"),
+        "train_steps_per_second": metrics.get("train_steps_per_second"),
+        **mps_memory(torch),
+    }
+    return row, trainer.model
+
+
+def grpo_reward_func(prompts: list[Any], completions: list[Any], **_: Any) -> list[float]:
+    # Deterministic non-constant rewards keep the smoke focused on
+    # Trainer/model compatibility while still producing a parameter update.
+    return [float(i % 2) for i, _ in enumerate(completions)]
+
+
+def run_trl_grpo_lora(args: argparse.Namespace, torch: Any, tokenizer: Any, device: str, dtype: Any) -> tuple[dict[str, Any], Any]:
+    patch_trl_runtime(torch)
+    from datasets import Dataset as HFDataset
+    from trl import GRPOConfig, GRPOTrainer
+
+    model, load_s = load_base_model(args, torch, device, dtype, use_cache=True)
+    dataset = HFDataset.from_dict({"prompt": ["Hi", "Count"] * max(1, int(args.dataset_repeats))})
+    with tempfile.TemporaryDirectory(prefix="apple_model_lora_grpo_") as out_dir:
+        grpo_args = GRPOConfig(
+            output_dir=out_dir,
+            max_steps=args.max_steps,
+            per_device_train_batch_size=max(2, args.batch_size),
+            gradient_accumulation_steps=1,
+            learning_rate=args.lr,
+            logging_steps=1,
+            save_strategy="no",
+            report_to=[],
+            remove_unused_columns=False,
+            disable_tqdm=True,
+            dataloader_pin_memory=False,
+            dataloader_num_workers=0,
+            use_cpu=False,
+            fp16=False,
+            bf16=False,
+            gradient_checkpointing=False,
+            optim="adamw_torch",
+            max_completion_length=args.grpo_max_completion_length,
+            num_generations=2,
+            generation_batch_size=2,
+        )
+        trainer = GRPOTrainer(
+            model=model,
+            reward_funcs=grpo_reward_func,
+            args=grpo_args,
+            train_dataset=dataset,
+            processing_class=tokenizer,
+            peft_config=lora_config(args, GRPO_LORA_TARGETS),
+        )
+        keep_trainable_params_fp32(trainer.model)
+        before = trainable_snapshot(trainer.model)
+        if not before:
+            raise AssertionError("expected TRL GRPO LoRA/trainable parameters")
+        t0 = time.perf_counter()
+        result = trainer.train()
+        elapsed = time.perf_counter() - t0
+    loss = float(result.training_loss)
+    if not math.isfinite(loss):
+        raise AssertionError(f"non-finite TRL GRPO LoRA loss {loss}")
+    changed = trainable_changed_l1(before, trainer.model)
+    if changed <= 0:
+        raise AssertionError("expected TRL GRPO LoRA parameter update")
+    metrics = dict(getattr(result, "metrics", {}) or {})
+    row = {
+        "axis": "apple_silicon_model_peft_lora_trl_grpo",
+        "status": "pass",
+        **base_row(args, trainer.model, device, dtype),
+        "batch_size": max(2, args.batch_size),
+        "dataset_rows": int(dataset.num_rows),
+        "max_completion_length": args.grpo_max_completion_length,
+        "training_loss": round(loss, 6),
+        "changed_l1": round(changed, 6),
+        "load_s": round(load_s, 4),
+        "elapsed_s": round(elapsed, 4),
+        "train_runtime_s": metrics.get("train_runtime"),
+        "train_samples_per_second": metrics.get("train_samples_per_second"),
+        "train_steps_per_second": metrics.get("train_steps_per_second"),
+        **mps_memory(torch),
+    }
+    return row, trainer.model
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True, help="Converted RWKV-7 HF model directory")
@@ -442,9 +610,10 @@ def main() -> int:
     ap.add_argument("--max-steps", type=int, default=1)
     ap.add_argument("--dataset-repeats", type=int, default=2)
     ap.add_argument("--lr", type=float, default=1e-4)
+    ap.add_argument("--grpo-max-completion-length", type=int, default=1)
     ap.add_argument("--lora-r", type=int, default=4)
     ap.add_argument("--lora-alpha", type=int, default=8)
-    ap.add_argument("--backend", choices=["manual", "trainer", "trl_sft", "both", "all"], default="both")
+    ap.add_argument("--backend", choices=["manual", "trainer", "trl_sft", "trl_dpo", "trl_grpo", "rl", "both", "all"], default="both")
     ap.add_argument("--results", default="")
     ap.add_argument("--require-apple", action="store_true")
     ap.add_argument("--require-peft", action="store_true")
@@ -472,7 +641,7 @@ def main() -> int:
             raise SystemExit(3)
         return 0
 
-    needs_trl = args.backend in {"trl_sft", "all"}
+    needs_trl = args.backend in {"trl_sft", "trl_dpo", "trl_grpo", "rl", "all"}
     if needs_trl and (importlib.util.find_spec("trl") is None or importlib.util.find_spec("datasets") is None):
         row = {"axis": "apple_silicon_model_trl_sft", "status": "skip", "reason": "trl or datasets missing"}
         emit(args.results, row)
@@ -523,6 +692,18 @@ def main() -> int:
         release(torch)
     if args.backend in {"trl_sft", "all"}:
         row, model = run_trl_sft_lora(args, torch, tokenizer, device, dtype)
+        rows.append(row)
+        emit(args.results, row)
+        del model
+        release(torch)
+    if args.backend in {"trl_dpo", "rl", "all"}:
+        row, model = run_trl_dpo_lora(args, torch, tokenizer, device, dtype)
+        rows.append(row)
+        emit(args.results, row)
+        del model
+        release(torch)
+    if args.backend in {"trl_grpo", "rl", "all"}:
+        row, model = run_trl_grpo_lora(args, torch, tokenizer, device, dtype)
         rows.append(row)
         emit(args.results, row)
         del model
