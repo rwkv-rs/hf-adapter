@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -116,6 +117,39 @@ class MLXRWKV7State:
         # MLX arrays are eager/lazy value arrays, not torch autograd tensors; a
         # clone gives callers an explicit cache boundary.
         return self.clone()
+
+
+@dataclass
+class MLXGenerateOutput:
+    """Tokenizer-integrated MLX generation result."""
+
+    prompt: str
+    prompt_ids: list[int]
+    generated_ids: list[int]
+    text: str
+    prefill_s: float
+    decode_s: float
+    prompt_tokens: int
+    generated_tokens: int
+
+    @property
+    def prefill_tok_s(self) -> float | None:
+        return self.prompt_tokens / self.prefill_s if self.prefill_s > 0 else None
+
+    @property
+    def decode_tok_s(self) -> float | None:
+        return self.generated_tokens / self.decode_s if self.decode_s > 0 else None
+
+    def telemetry(self) -> dict[str, Any]:
+        return {
+            "prompt_tokens": int(self.prompt_tokens),
+            "generated_tokens": int(self.generated_tokens),
+            "prefill_s": round(float(self.prefill_s), 6),
+            "decode_s": round(float(self.decode_s), 6),
+            "prefill_tok_s": round(float(self.prefill_tok_s), 6) if self.prefill_tok_s is not None else None,
+            "decode_tok_s": round(float(self.decode_tok_s), 6) if self.decode_tok_s is not None else None,
+            "generated_preview": [int(x) for x in self.generated_ids[:16]],
+        }
 
 
 class MLXRWKV7Model:
@@ -403,6 +437,66 @@ class MLXRWKV7Model:
         logits, state = self.prefill(input_ids)
         return self.decode_greedy(logits, state, max_new_tokens=max_new_tokens)
 
+    def generate_text(
+        self,
+        tokenizer: Any,
+        prompt: str,
+        *,
+        max_new_tokens: int,
+        skip_special_tokens: bool = False,
+    ) -> MLXGenerateOutput:
+        """Encode ``prompt`` with an HF tokenizer and greedily decode on MLX.
+
+        This is a lightweight reusable API for Apple-local demos and smoke
+        harnesses.  It intentionally returns generated text only (not prompt +
+        completion) so callers can decide how to display or postprocess.
+        """
+
+        encoded = tokenizer(prompt, add_special_tokens=False)
+        prompt_ids = [int(tok) for tok in encoded.input_ids]
+        if not prompt_ids:
+            raise ValueError("prompt produced no token ids")
+        t0 = time.perf_counter()
+        logits, state = self.prefill([prompt_ids])
+        prefill_s = time.perf_counter() - t0
+        t1 = time.perf_counter()
+        generated, _ = self.decode_greedy(logits, state, max_new_tokens=int(max_new_tokens))
+        decode_s = time.perf_counter() - t1
+        generated_ids = _as_list(generated.reshape(-1))
+        text = tokenizer.decode(generated_ids, skip_special_tokens=skip_special_tokens)
+        return MLXGenerateOutput(
+            prompt=prompt,
+            prompt_ids=prompt_ids,
+            generated_ids=generated_ids,
+            text=text,
+            prefill_s=prefill_s,
+            decode_s=decode_s,
+            prompt_tokens=len(prompt_ids),
+            generated_tokens=len(generated_ids),
+        )
+
 
 def load_mlx_rwkv7_model(model_dir: str | Path, *, dtype: str | None = "fp16") -> MLXRWKV7Model:
     return MLXRWKV7Model.from_hf(model_dir, dtype=dtype)
+
+
+def generate_text_from_hf(
+    model_dir: str | Path,
+    prompt: str,
+    *,
+    max_new_tokens: int,
+    dtype: str | None = "fp16",
+    skip_special_tokens: bool = False,
+) -> MLXGenerateOutput:
+    """Load a converted HF directory and run tokenizer-integrated MLX generate."""
+
+    from transformers import AutoTokenizer
+
+    model = load_mlx_rwkv7_model(model_dir, dtype=dtype)
+    tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
+    return model.generate_text(
+        tokenizer,
+        prompt,
+        max_new_tokens=max_new_tokens,
+        skip_special_tokens=skip_special_tokens,
+    )

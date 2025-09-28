@@ -82,6 +82,9 @@ def test_apple_smoke_script_static() -> None:
     convert_mlx_script = ROOT / "scripts/convert_hf_to_mlx.py"
     assert convert_mlx_script.exists()
     assert convert_mlx_script.stat().st_mode & stat.S_IXUSR
+    mlx_generate_script = ROOT / "scripts/mlx_generate.py"
+    assert mlx_generate_script.exists()
+    assert mlx_generate_script.stat().st_mode & stat.S_IXUSR
 
 
 def test_apple_doc_links_entry_points() -> None:
@@ -99,6 +102,7 @@ def test_apple_doc_links_entry_points() -> None:
     assert "scripts/run_apple_silicon_mlx_smoke.sh" in text
     assert "scripts/run_apple_silicon_mlx_model_smoke.sh" in text
     assert "scripts/convert_hf_to_mlx.py" in text
+    assert "scripts/mlx_generate.py" in text
     assert "tests/test_apple_silicon_model_training_smoke.py" in text
     assert "tests/test_apple_silicon_model_sweep.py" in text
     assert "tests/test_apple_silicon_quant_smoke.py" in text
@@ -143,6 +147,9 @@ def test_apple_doc_links_entry_points() -> None:
     convert_mlx_script = ROOT / "scripts/convert_hf_to_mlx.py"
     assert convert_mlx_script.exists()
     assert convert_mlx_script.stat().st_mode & stat.S_IXUSR
+    mlx_generate_script = ROOT / "scripts/mlx_generate.py"
+    assert mlx_generate_script.exists()
+    assert mlx_generate_script.stat().st_mode & stat.S_IXUSR
     assert "RafaelUI" in text
     assert "RWKV7_NATIVE_MODEL=1" in text
     assert "rwkv7-g1d-0.4b-hf" in text

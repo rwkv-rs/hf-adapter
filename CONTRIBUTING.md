@@ -297,6 +297,12 @@ PROMPT="The quick brown fox" \
 SKIP_TINY=1 DYNAMIC_BATCH=1 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_model_smoke.sh
+
+python scripts/mlx_generate.py \
+  /path/to/rwkv7-g1d-0.1b-hf \
+  --prompt "The quick brown fox" \
+  --max-new-tokens 8 \
+  --dtype fp16
 ```
 
 Include the `torch_mps_built` / `torch_mps_available` lines printed by the
