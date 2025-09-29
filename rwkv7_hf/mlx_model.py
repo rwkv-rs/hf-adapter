@@ -20,7 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from .mlx_bridge import load_selected_hf_tensors_as_mlx, require_mlx, summarize_mlx_arrays
+from .mlx_bridge import load_selected_hf_tensors_as_mlx, mlx_array_nbytes, require_mlx, summarize_mlx_arrays
+from .mlx_quant import MLXQuantizedLinear
 
 
 EXP_HALF = 0.606531  # = exp(-0.5), RWKV-7 decay base used by the native torch path.
@@ -428,6 +429,11 @@ class MLXRWKV7Model:
     def __init__(self, config: dict[str, Any], arrays: dict[str, Any]):
         self.config = dict(config)
         self.arrays = dict(arrays)
+        self.quantized_linears: dict[str, MLXQuantizedLinear] = {}
+        self.quantized_dense_equivalent_bytes = 0
+        self.quantized_linear_bytes = 0
+        self.quantized_linear_bits: int | None = None
+        self.quantized_linear_backend: str | None = None
         self.layer_ids = _layer_indices(self.arrays)
         self.num_hidden_layers = int(self.config.get("num_hidden_layers", len(self.layer_ids)))
         self.hidden_size = int(self.config["hidden_size"])
@@ -445,18 +451,71 @@ class MLXRWKV7Model:
             raise ValueError(f"config has {self.num_hidden_layers} layers but tensors contain {len(self.layer_ids)}")
 
     @classmethod
-    def from_hf(cls, model_dir: str | Path, *, dtype: str | None = "fp16") -> "MLXRWKV7Model":
+    def from_hf(
+        cls,
+        model_dir: str | Path,
+        *,
+        dtype: str | None = "fp16",
+        quantization: str | None = None,
+        quant_min_params: int = 8_000_000,
+        quant_backend: str = "affine",
+    ) -> "MLXRWKV7Model":
         root = Path(model_dir)
         config = json.loads((root / "config.json").read_text(encoding="utf-8"))
         arrays = load_selected_hf_tensors_as_mlx(root, tensor_regex=r".*", dtype=dtype)
-        return cls(config, arrays)
+        model = cls(config, arrays)
+        if quantization and quantization.lower() not in {"none", "off", "false", "0"}:
+            model.quantize_linears(quantization, min_params=quant_min_params, backend=quant_backend)
+        return model
 
     @classmethod
     def from_arrays(cls, config: dict[str, Any], arrays: dict[str, Any]) -> "MLXRWKV7Model":
         return cls(config, arrays)
 
+    def _is_quantizable_linear_weight(self, key: str, value: Any, min_params: int) -> bool:
+        if not key.endswith(".weight"):
+            return False
+        if key == "model.embeddings.weight":
+            return False
+        if getattr(value, "ndim", 0) != 2:
+            return False
+        if int(value.size) < int(min_params):
+            return False
+        return True
+
+    def quantize_linears(self, quantization: str, *, min_params: int = 8_000_000, backend: str = "affine") -> int:
+        """Replace eligible dense MLX Linear weights with packed W8/W4 weights.
+
+        This is the Apple packed-quant projection seam.  ``backend=affine`` runs
+        dequant-matmul via MLX affine decomposition without materializing a dense
+        dequantized fp16/fp32 weight; ``backend=reference`` keeps a correctness
+        fallback.  A future Metal kernel can replace this backend without
+        changing model/cache/generation code.
+        """
+
+        q = quantization.lower().strip()
+        if q in {"mm8", "w8", "8", "int8"}:
+            bits = 8
+        elif q in {"mm4", "w4", "4", "int4"}:
+            bits = 4
+        else:
+            raise ValueError(f"unsupported MLX quantization {quantization!r}; expected mm8/mm4")
+        selected = [
+            key for key, value in list(self.arrays.items())
+            if self._is_quantizable_linear_weight(key, value, min_params)
+        ]
+        for key in selected:
+            dense = self.arrays.pop(key)
+            self.quantized_dense_equivalent_bytes += mlx_array_nbytes(dense)
+            qlinear = MLXQuantizedLinear.from_linear_weight(dense, bits=bits, backend=backend)
+            self.quantized_linears[key] = qlinear
+            self.quantized_linear_bytes += qlinear.storage_bytes
+        self.quantized_linear_bits = bits if selected else None
+        self.quantized_linear_backend = backend if selected else None
+        return len(selected)
+
     def telemetry(self) -> dict[str, Any]:
-        return {
+        out = {
             "num_hidden_layers": self.num_hidden_layers,
             "hidden_size": self.hidden_size,
             "num_heads": self.num_heads,
@@ -464,6 +523,21 @@ class MLXRWKV7Model:
             "vocab_size": self.vocab_size,
             **summarize_mlx_arrays(self.arrays),
         }
+        if self.quantized_linears:
+            out.update(
+                {
+                    "quantized_linear_count": len(self.quantized_linears),
+                    "quantized_linear_bits": self.quantized_linear_bits,
+                    "quantized_linear_backend": self.quantized_linear_backend,
+                    "quantized_linear_bytes": int(self.quantized_linear_bytes),
+                    "quantized_dense_equivalent_bytes": int(self.quantized_dense_equivalent_bytes),
+                    "quantized_footprint_ratio": round(
+                        self.quantized_linear_bytes / max(self.quantized_dense_equivalent_bytes, 1), 6
+                    ),
+                    "quantized_linear_keys_preview": sorted(self.quantized_linears)[:8],
+                }
+            )
+        return out
 
     def _get(self, key: str):
         try:
@@ -472,7 +546,11 @@ class MLXRWKV7Model:
             raise KeyError(f"missing MLX RWKV-7 tensor {key!r}") from exc
 
     def _linear(self, x, weight_key: str, bias_key: str | None = None):
-        y = x @ self._get(weight_key).T
+        qlinear = self.quantized_linears.get(weight_key)
+        if qlinear is not None:
+            y = qlinear(x)
+        else:
+            y = x @ self._get(weight_key).T
         if bias_key is not None and bias_key in self.arrays:
             y = y + self._get(bias_key)
         return y
@@ -732,8 +810,21 @@ class MLXRWKV7Model:
         return session.output()
 
 
-def load_mlx_rwkv7_model(model_dir: str | Path, *, dtype: str | None = "fp16") -> MLXRWKV7Model:
-    return MLXRWKV7Model.from_hf(model_dir, dtype=dtype)
+def load_mlx_rwkv7_model(
+    model_dir: str | Path,
+    *,
+    dtype: str | None = "fp16",
+    quantization: str | None = None,
+    quant_min_params: int = 8_000_000,
+    quant_backend: str = "affine",
+) -> MLXRWKV7Model:
+    return MLXRWKV7Model.from_hf(
+        model_dir,
+        dtype=dtype,
+        quantization=quantization,
+        quant_min_params=quant_min_params,
+        quant_backend=quant_backend,
+    )
 
 
 def load_mlx_generation_session(
@@ -742,12 +833,21 @@ def load_mlx_generation_session(
     *,
     dtype: str | None = "fp16",
     skip_special_tokens: bool = False,
+    quantization: str | None = None,
+    quant_min_params: int = 8_000_000,
+    quant_backend: str = "affine",
 ) -> MLXGenerationSession:
     """Load a converted HF directory and prefill a tokenizer-backed MLX session."""
 
     from transformers import AutoTokenizer
 
-    model = load_mlx_rwkv7_model(model_dir, dtype=dtype)
+    model = load_mlx_rwkv7_model(
+        model_dir,
+        dtype=dtype,
+        quantization=quantization,
+        quant_min_params=quant_min_params,
+        quant_backend=quant_backend,
+    )
     tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
     return MLXGenerationSession.from_prompt(
         model,
@@ -764,12 +864,21 @@ def generate_text_from_hf(
     max_new_tokens: int,
     dtype: str | None = "fp16",
     skip_special_tokens: bool = False,
+    quantization: str | None = None,
+    quant_min_params: int = 8_000_000,
+    quant_backend: str = "affine",
 ) -> MLXGenerateOutput:
     """Load a converted HF directory and run tokenizer-integrated MLX generate."""
 
     from transformers import AutoTokenizer
 
-    model = load_mlx_rwkv7_model(model_dir, dtype=dtype)
+    model = load_mlx_rwkv7_model(
+        model_dir,
+        dtype=dtype,
+        quantization=quantization,
+        quant_min_params=quant_min_params,
+        quant_backend=quant_backend,
+    )
     tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
     return model.generate_text(
         tokenizer,

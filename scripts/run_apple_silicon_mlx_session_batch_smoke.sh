@@ -14,6 +14,9 @@ PROMPT_C="${PROMPT_C:-}"
 PROMPT_D="${PROMPT_D:-}"
 ROUNDS="${ROUNDS:-2,2}"
 REPEAT="${REPEAT:-1}"
+QUANTIZATION="${QUANTIZATION:-none}"
+QUANT_MIN_PARAMS="${QUANT_MIN_PARAMS:-8000000}"
+QUANT_BACKEND="${QUANT_BACKEND:-affine}"
 
 rwkv7_require_model "${MODEL}"
 
@@ -29,6 +32,9 @@ args=(
   --rounds "${ROUNDS}"
   --repeat "${REPEAT}"
   --dtype "${DTYPE}"
+  --quantization "${QUANTIZATION}"
+  --quant-min-params "${QUANT_MIN_PARAMS}"
+  --quant-backend "${QUANT_BACKEND}"
   --results "${RESULTS}"
   --require-mlx
 )

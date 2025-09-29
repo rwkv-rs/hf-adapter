@@ -14,6 +14,9 @@ SEED_TEXT="${SEED_TEXT:-User: Apple Silicon RWKV generation sweep. Assistant: }"
 CHUNK_SIZE="${CHUNK_SIZE:-0}"
 CHUNK_TOLERANCE="${CHUNK_TOLERANCE:-0.2}"
 REPEAT="${REPEAT:-1}"
+QUANTIZATION="${QUANTIZATION:-none}"
+QUANT_MIN_PARAMS="${QUANT_MIN_PARAMS:-8000000}"
+QUANT_BACKEND="${QUANT_BACKEND:-affine}"
 
 rwkv7_require_model "${MODEL}"
 
@@ -31,6 +34,9 @@ args=(
   --chunk-size "${CHUNK_SIZE}"
   --chunk-tolerance "${CHUNK_TOLERANCE}"
   --repeat "${REPEAT}"
+  --quantization "${QUANTIZATION}"
+  --quant-min-params "${QUANT_MIN_PARAMS}"
+  --quant-backend "${QUANT_BACKEND}"
   --results "${RESULTS:-}"
   --require-mlx
 )
