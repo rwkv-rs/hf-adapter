@@ -482,21 +482,21 @@ REPEAT=2 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 
-# Extended 0.4B / 1.5B long-decode matrix: prompt512 + decode32.
+# Extended 0.4B / 1.5B long-decode matrix: prompt1024 + decode64.
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 DTYPE=fp16 \
-PROMPT_LENGTHS=256,512 \
-DECODE_LENGTHS=16,32 \
-CHUNK_SIZE=128 \
+PROMPT_LENGTHS=1024 \
+DECODE_LENGTHS=64 \
+CHUNK_SIZE=256 \
 REPEAT=1 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_generation_sweep.sh
 
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
 DTYPE=fp16 \
-PROMPT_LENGTHS=256,512 \
-DECODE_LENGTHS=16,32 \
-CHUNK_SIZE=128 \
+PROMPT_LENGTHS=1024 \
+DECODE_LENGTHS=64 \
+CHUNK_SIZE=256 \
 REPEAT=1 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_generation_sweep.sh
@@ -549,7 +549,7 @@ wrapper. On 16GB machines, start with tiny / 0.1B first, then short 0.4B
 generate, `scripts/run_apple_silicon_model_sweep.sh`, and 0.4B PEFT/Trainer/TRL
 one-step smoke before longer sweeps. For 1.5B on 16GB machines, start with
 fp16 load/forward/short-generate and a prompt-length sweep through 512 tokens;
-then add prompt512/decode32 or 12-step Trainer/TRL rows only after closing other
+then add prompt1024/decode64 or 12-step Trainer/TRL rows only after closing other
 memory-heavy apps, and confirm the result has finite positive
 trainable-gradient or trainable-update totals. Treat non-finite fp16 PEFT
 gradients/updates as a failed row, not as evidence.
