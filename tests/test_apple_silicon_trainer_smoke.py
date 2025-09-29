@@ -27,76 +27,17 @@ os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 
-def is_apple_silicon() -> bool:
-    return platform.system() == "Darwin" and platform.machine() == "arm64"
-
-
-def append_result(path: str, row: dict[str, Any]) -> None:
-    if not path:
-        return
-    out = Path(path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-
-
-def mps_backend(torch: Any) -> Any | None:
-    return getattr(getattr(torch, "backends", None), "mps", None)
-
-
-def mps_is_available(torch: Any) -> bool:
-    mps = mps_backend(torch)
-    if mps is None or not hasattr(mps, "is_available"):
-        return False
-    try:
-        return bool(mps.is_available())
-    except Exception:
-        return False
-
-
-def mps_is_built(torch: Any) -> bool:
-    mps = mps_backend(torch)
-    if mps is None or not hasattr(mps, "is_built"):
-        return False
-    try:
-        return bool(mps.is_built())
-    except Exception:
-        return False
-
-
-def choose_device(torch: Any, requested: str) -> str:
-    if requested != "auto":
-        if requested == "mps" and not mps_is_available(torch):
-            raise RuntimeError("requested --device mps but MPS is unavailable")
-        return requested
-    return "mps" if mps_is_available(torch) else "cpu"
-
-
-def dtype_for(torch: Any, name: str) -> Any:
-    return {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}[name]
-
-
-def package_version(name: str) -> str:
-    try:
-        return metadata.version(name)
-    except metadata.PackageNotFoundError:
-        return "missing"
-
-
-def darwin_sysctl(name: str) -> str:
-    try:
-        return subprocess.check_output(["sysctl", "-n", name], text=True).strip()
-    except Exception:
-        return "unknown"
-
-
-def apple_memory_gb() -> int | str:
-    raw = darwin_sysctl("hw.memsize")
-    try:
-        return round(int(raw) / 1024 / 1024 / 1024)
-    except Exception:
-        return "unknown"
+from apple_silicon_utils import (
+    darwin_sysctl,
+    append_result,
+    apple_memory_gb,
+    choose_device,
+    dtype_for,
+    is_apple_silicon,
+    mps_is_available,
+    mps_is_built,
+    package_version,
+)
 
 
 def build_tiny_model(torch: Any, device: str, dtype: Any):
