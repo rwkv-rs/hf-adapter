@@ -39,45 +39,40 @@ def parse_rounds(raw: str) -> list[int]:
     return rounds
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("model", help="Converted RWKV-7 HF model directory.")
-    ap.add_argument("--prompt", action="append", required=True, help="Prompt to prefill; pass multiple times.")
-    ap.add_argument("--rounds", default="2,2", help="Comma-separated decode rounds applied to every session.")
-    ap.add_argument("--dtype", default="fp16", choices=["keep", "fp32", "fp16", "bf16"])
-    ap.add_argument("--skip-special-tokens", action="store_true")
-    ap.add_argument("--require-mlx", action="store_true")
-    ap.add_argument("--json-only", action="store_true")
-    ap.add_argument("--results", default="", help="Optional JSONL file to append a generation result row.")
-    args = ap.parse_args()
+def positive_int(raw: int, *, name: str) -> int:
+    value = int(raw)
+    if value <= 0:
+        raise ValueError(f"--{name} must be positive, got {value}")
+    return value
 
-    rounds = parse_rounds(args.rounds)
-    prompts = [str(x) for x in args.prompt]
-    if not mlx_available():
-        row = {
-            "axis": "mlx_session_batch_generate",
-            "status": "skip",
-            "reason": "mlx not installed",
-            "platform": platform.platform(),
-            "machine": platform.machine(),
-            "model": Path(args.model).name,
-            "batch_size": len(prompts),
-            "rounds": rounds,
-        }
-        print(json.dumps(row, ensure_ascii=False))
-        append_result(args.results, row)
-        return 2 if args.require_mlx else 0
 
-    from transformers import AutoTokenizer
+def min_decode_tok_s(rows: list[dict[str, Any]]) -> float | None:
+    values: list[float] = []
+    for row in rows:
+        for value in row.get("decode_tok_s", []):
+            if value is not None:
+                values.append(float(value))
+    return round(min(values), 6) if values else None
 
+
+def run_interleaved_batch(
+    *,
+    model: Any,
+    tokenizer: Any,
+    model_name: str,
+    dtype: str,
+    prompts: list[str],
+    rounds: list[int],
+    repeat_index: int,
+    repeat: int,
+    skip_special_tokens: bool,
+) -> tuple[dict[str, Any], list[str]]:
     reset_mlx_peak_memory()
-    model = load_mlx_rwkv7_model(args.model, dtype=args.dtype)
-    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     batch = MLXGenerationSessionBatch.from_prompts(
         model,
         tokenizer,
         prompts,
-        skip_special_tokens=bool(args.skip_special_tokens),
+        skip_special_tokens=skip_special_tokens,
     )
     round_rows: list[dict[str, Any]] = []
     for round_index, tokens in enumerate(rounds, start=1):
@@ -95,12 +90,13 @@ def main() -> int:
     all_token_match = True
     all_text_match = True
     all_seen_match = True
+    texts: list[str] = []
     for idx, session in enumerate(batch.sessions):
         one_shot = model.generate_text(
             tokenizer,
             session.prompt,
             max_new_tokens=expected_tokens,
-            skip_special_tokens=bool(args.skip_special_tokens),
+            skip_special_tokens=skip_special_tokens,
         )
         token_match = session.generated_ids == one_shot.generated_ids
         text_match = session.text == one_shot.text
@@ -109,6 +105,7 @@ def main() -> int:
         all_token_match = all_token_match and token_match
         all_text_match = all_text_match and text_match
         all_seen_match = all_seen_match and seen_match
+        texts.append(session.text)
         per_session.append(
             {
                 "session_index": int(idx),
@@ -137,8 +134,10 @@ def main() -> int:
     row = {
         "axis": "mlx_session_batch_generate",
         "status": "pass",
-        "model": Path(args.model).name,
-        "dtype": args.dtype,
+        "model": model_name,
+        "dtype": dtype,
+        "repeat_index": int(repeat_index),
+        "repeat": int(repeat),
         "rounds": rounds,
         "expected_generated_tokens_per_session": int(expected_tokens),
         "session_count": len(prompts),
@@ -150,11 +149,103 @@ def main() -> int:
         **batch.telemetry(),
         **mlx_memory_telemetry(),
     }
-    if not args.json_only:
-        for item in per_session:
-            print(item["text"])
-    print(json.dumps(row, ensure_ascii=False))
-    append_result(args.results, row)
+    return row, texts
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("model", help="Converted RWKV-7 HF model directory.")
+    ap.add_argument("--prompt", action="append", required=True, help="Prompt to prefill; pass multiple times.")
+    ap.add_argument("--rounds", default="2,2", help="Comma-separated decode rounds applied to every session.")
+    ap.add_argument("--dtype", default="fp16", choices=["keep", "fp32", "fp16", "bf16"])
+    ap.add_argument("--skip-special-tokens", action="store_true")
+    ap.add_argument("--repeat", type=int, default=1, help="Repeat the full interleaved-session workload for pressure telemetry.")
+    ap.add_argument("--require-mlx", action="store_true")
+    ap.add_argument("--json-only", action="store_true")
+    ap.add_argument("--results", default="", help="Optional JSONL file to append a generation result row.")
+    args = ap.parse_args()
+
+    rounds = parse_rounds(args.rounds)
+    prompts = [str(x) for x in args.prompt]
+    repeat = positive_int(args.repeat, name="repeat")
+    if not mlx_available():
+        row = {
+            "axis": "mlx_session_batch_generate",
+            "status": "skip",
+            "reason": "mlx not installed",
+            "platform": platform.platform(),
+            "machine": platform.machine(),
+            "model": Path(args.model).name,
+            "batch_size": len(prompts),
+            "rounds": rounds,
+            "repeat": int(repeat),
+        }
+        print(json.dumps(row, ensure_ascii=False))
+        append_result(args.results, row)
+        return 2 if args.require_mlx else 0
+
+    from transformers import AutoTokenizer
+
+    reset_mlx_peak_memory()
+    model = load_mlx_rwkv7_model(args.model, dtype=args.dtype)
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    model_name = Path(args.model).name
+    header = {
+        "axis": "mlx_session_batch_env",
+        "status": "info",
+        "model": model_name,
+        "dtype": args.dtype,
+        "session_count": len(prompts),
+        "rounds": rounds,
+        "repeat": int(repeat),
+        **model.telemetry(),
+        **mlx_memory_telemetry(),
+    }
+    print(json.dumps(header, ensure_ascii=False))
+    append_result(args.results, header)
+
+    rows: list[dict[str, Any]] = []
+    for repeat_index in range(1, repeat + 1):
+        row, texts = run_interleaved_batch(
+            model=model,
+            tokenizer=tokenizer,
+            model_name=model_name,
+            dtype=args.dtype,
+            prompts=prompts,
+            rounds=rounds,
+            repeat_index=repeat_index,
+            repeat=repeat,
+            skip_special_tokens=bool(args.skip_special_tokens),
+        )
+        rows.append(row)
+        if not args.json_only:
+            for item in texts:
+                print(item)
+        print(json.dumps(row, ensure_ascii=False))
+        append_result(args.results, row)
+
+    summary = {
+        "axis": "mlx_session_batch_summary",
+        "status": "pass",
+        "model": model_name,
+        "dtype": args.dtype,
+        "repeat": int(repeat),
+        "rows": len(rows),
+        "session_count": len(prompts),
+        "rounds": rounds,
+        "expected_generated_tokens_per_session": int(sum(rounds)),
+        "all_session_one_shot_token_match": all(bool(row["all_session_one_shot_token_match"]) for row in rows),
+        "all_session_one_shot_text_match": all(bool(row["all_session_one_shot_text_match"]) for row in rows),
+        "all_seen_tokens_match": all(bool(row["all_seen_tokens_match"]) for row in rows),
+        "max_prompt_tokens": max(max(int(x) for x in row.get("prompt_tokens", [0])) for row in rows) if rows else None,
+        "max_generated_tokens": max(max(int(x) for x in row.get("generated_tokens", [0])) for row in rows) if rows else None,
+        "max_mlx_active_memory_bytes": max(int(row.get("mlx_active_memory_bytes", 0)) for row in rows) if rows else None,
+        "max_mlx_peak_memory_bytes": max(int(row.get("mlx_peak_memory_bytes", 0)) for row in rows) if rows else None,
+        "max_mlx_cache_memory_bytes": max(int(row.get("mlx_cache_memory_bytes", 0)) for row in rows) if rows else None,
+        "min_decode_tok_s": min_decode_tok_s(rows),
+    }
+    print(json.dumps(summary, ensure_ascii=False))
+    append_result(args.results, summary)
     return 0
 
 
