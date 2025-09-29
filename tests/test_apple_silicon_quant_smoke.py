@@ -142,6 +142,15 @@ def parse_quantizations(raw: str) -> list[str]:
     return values
 
 
+def parse_min_params_list(raw: str) -> list[int]:
+    values = [int(part.strip()) for part in raw.split(",") if part.strip()]
+    if not values:
+        raise ValueError("expected at least one min-params value")
+    if any(value <= 0 for value in values):
+        raise ValueError(f"min-params values must be positive: {values}")
+    return values
+
+
 def module_count(model: Any, class_name: str) -> int:
     return sum(1 for module in model.modules() if type(module).__name__ == class_name)
 
@@ -262,7 +271,15 @@ def run_tiny_quant(torch: Any, args: argparse.Namespace, device: str, dtype: Any
     return row
 
 
-def run_model_quant(torch: Any, args: argparse.Namespace, device: str, dtype: Any, quantization: str) -> dict[str, Any]:
+def run_model_quant(
+    torch: Any,
+    args: argparse.Namespace,
+    device: str,
+    dtype: Any,
+    quantization: str,
+    *,
+    min_params: int,
+) -> dict[str, Any]:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
@@ -273,8 +290,8 @@ def run_model_quant(torch: Any, args: argparse.Namespace, device: str, dtype: An
         device_map=None,
     ).eval()
     model.to(device)
-    dense_bytes = selected_linear_weight_bytes(model, torch, min_params=args.min_params)
-    replaced = configure_quant(model, quantization, args.min_params)
+    dense_bytes = selected_linear_weight_bytes(model, torch, min_params=min_params)
+    replaced = configure_quant(model, quantization, min_params)
     class_name = "MM8Linear" if quantization == "mm8" else "MM4Linear"
     count = module_count(model, class_name)
     quant_bytes = quantized_linear_buffer_bytes(model, class_name)
@@ -304,7 +321,7 @@ def run_model_quant(torch: Any, args: argparse.Namespace, device: str, dtype: An
         "quantization": quantization,
         "device": device,
         "dtype": str(dtype).replace("torch.", ""),
-        "min_params": int(args.min_params),
+        "min_params": int(min_params),
         "replaced_modules": replaced,
         "module_class": class_name,
         "dense_linear_weight_bytes": dense_bytes,
@@ -327,6 +344,11 @@ def main() -> int:
     ap.add_argument("--dtype", default="fp32", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--quantizations", default="mm8,mm4")
     ap.add_argument("--min-params", type=int, default=8_000_000)
+    ap.add_argument(
+        "--min-params-list",
+        default="",
+        help="Optional comma-separated replacement thresholds for real-model quant sweeps.",
+    )
     ap.add_argument("--max-new-tokens", type=int, default=1)
     ap.add_argument("--prompt", default="User: Apple native quant smoke.\n\nAssistant:")
     ap.add_argument("--results", default="")
@@ -335,6 +357,7 @@ def main() -> int:
     args = ap.parse_args()
 
     quantizations = parse_quantizations(args.quantizations)
+    min_params_values = parse_min_params_list(args.min_params_list) if args.min_params_list else [int(args.min_params)]
     if not is_apple_silicon():
         row = {
             "axis": "apple_silicon_native_quant",
@@ -367,6 +390,7 @@ def main() -> int:
         "device": device,
         "dtype": args.dtype,
         "quantizations": quantizations,
+        "min_params_values": min_params_values,
         "model": Path(args.model).name if args.model else "",
     }
     header.update(mps_memory_stats(torch))
@@ -376,8 +400,12 @@ def main() -> int:
         for quantization in quantizations:
             emit(args.results, run_tiny_quant(torch, args, device, dtype, quantization))
     if args.model:
-        for quantization in quantizations:
-            emit(args.results, run_model_quant(torch, args, device, dtype, quantization))
+        for min_params in min_params_values:
+            for quantization in quantizations:
+                emit(
+                    args.results,
+                    run_model_quant(torch, args, device, dtype, quantization, min_params=min_params),
+                )
 
     print("APPLE SILICON NATIVE QUANT SMOKE PASS")
     return 0
