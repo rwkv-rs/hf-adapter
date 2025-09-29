@@ -35,6 +35,7 @@ ADAPTER_FILES = [
     "mlx_bridge.py",
     "mlx_model.py",
     "mlx_quant.py",
+    "mlx_wkv.py",
     "modeling_rwkv7.py",
     "native.py",
     "native_jit.py",

@@ -65,6 +65,7 @@ def main() -> int:
     ap.add_argument("--quantization", default="none", choices=["none", "mm8", "mm4"], help="Optional MLX packed W8/W4 projection path.")
     ap.add_argument("--quant-min-params", type=int, default=8_000_000, help="Minimum dense weight params to replace when MLX quantization is enabled.")
     ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference"], help="MLX quantized matmul backend.")
+    ap.add_argument("--wkv-backend", default="reference", choices=["reference", "metal", "auto"], help="MLX recurrent WKV update backend.")
     ap.add_argument("--require-mlx", action="store_true")
     ap.add_argument("--json-only", action="store_true")
     ap.add_argument("--results", default="", help="Optional JSONL file to append sweep rows.")
@@ -91,6 +92,7 @@ def main() -> int:
             "quantization": args.quantization,
             "quant_min_params": int(args.quant_min_params),
             "quant_backend": args.quant_backend,
+            "wkv_backend": args.wkv_backend,
         }
         print(json.dumps(row, ensure_ascii=False))
         append_result(args.results, row)
@@ -106,6 +108,7 @@ def main() -> int:
         quantization=args.quantization,
         quant_min_params=int(args.quant_min_params),
         quant_backend=args.quant_backend,
+        wkv_backend=args.wkv_backend,
     )
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     load_s = time.perf_counter() - t_load
@@ -121,6 +124,7 @@ def main() -> int:
         "quantization": args.quantization,
         "quant_min_params": int(args.quant_min_params),
         "quant_backend": args.quant_backend,
+        "wkv_backend": args.wkv_backend,
         "load_s": round(float(load_s), 6),
         **model.telemetry(),
         **mlx_memory_telemetry(),
@@ -177,6 +181,7 @@ def main() -> int:
                     "quantization": args.quantization,
                     "quant_min_params": int(args.quant_min_params),
                     "quant_backend": args.quant_backend,
+                    "wkv_backend": args.wkv_backend,
                     "prompt_tokens": int(prompt_tokens),
                     "generated_tokens": int(decode_tokens),
                     "prefill_s": round(float(prefill_s), 6),
@@ -210,6 +215,7 @@ def main() -> int:
         "quantization": args.quantization,
         "quant_min_params": int(args.quant_min_params),
         "quant_backend": args.quant_backend,
+        "wkv_backend": args.wkv_backend,
         "rows": len(rows),
         "max_prompt_tokens": max(prompt_lengths),
         "max_generated_tokens": max(decode_lengths),
