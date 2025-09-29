@@ -12,6 +12,13 @@ PROMPT_A="${PROMPT_A:-The quick brown fox}"
 PROMPT_B="${PROMPT_B:-User: Apple Silicon RWKV test. Assistant:}"
 PROMPT_C="${PROMPT_C:-}"
 PROMPT_D="${PROMPT_D:-}"
+PROMPT_E="${PROMPT_E:-}"
+PROMPT_F="${PROMPT_F:-}"
+PROMPT_G="${PROMPT_G:-}"
+PROMPT_H="${PROMPT_H:-}"
+PROMPTS_FILE="${PROMPTS_FILE:-}"
+EXTRA_PROMPTS="${EXTRA_PROMPTS:-}"
+SESSION_COUNT="${SESSION_COUNT:-0}"
 ROUNDS="${ROUNDS:-2,2}"
 REPEAT="${REPEAT:-1}"
 QUANTIZATION="${QUANTIZATION:-none}"
@@ -25,10 +32,50 @@ export PYTHONNOUSERSITE="${PYTHONNOUSERSITE:-1}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export RWKV7_NATIVE_MODEL_JIT="${RWKV7_NATIVE_MODEL_JIT:-0}"
 
+prompts=()
+rwkv7_add_prompt() {
+  local prompt="$1"
+  if [[ -n "${prompt}" ]]; then
+    prompts+=("${prompt}")
+  fi
+}
+
+rwkv7_add_prompt "${PROMPT_A}"
+rwkv7_add_prompt "${PROMPT_B}"
+rwkv7_add_prompt "${PROMPT_C}"
+rwkv7_add_prompt "${PROMPT_D}"
+rwkv7_add_prompt "${PROMPT_E}"
+rwkv7_add_prompt "${PROMPT_F}"
+rwkv7_add_prompt "${PROMPT_G}"
+rwkv7_add_prompt "${PROMPT_H}"
+
+if [[ -n "${PROMPTS_FILE}" ]]; then
+  if [[ ! -f "${PROMPTS_FILE}" ]]; then
+    echo "PROMPTS_FILE does not exist: ${PROMPTS_FILE}" >&2
+    exit 2
+  fi
+  while IFS= read -r prompt || [[ -n "${prompt}" ]]; do
+    rwkv7_add_prompt "${prompt}"
+  done < "${PROMPTS_FILE}"
+fi
+
+if [[ -n "${EXTRA_PROMPTS}" ]]; then
+  while IFS= read -r prompt || [[ -n "${prompt}" ]]; do
+    rwkv7_add_prompt "${prompt}"
+  done <<< "${EXTRA_PROMPTS}"
+fi
+
+if ! [[ "${SESSION_COUNT}" =~ ^[0-9]+$ ]]; then
+  echo "SESSION_COUNT must be a non-negative integer, got: ${SESSION_COUNT}" >&2
+  exit 2
+fi
+while (( ${#prompts[@]} < SESSION_COUNT )); do
+  next_index=$(( ${#prompts[@]} + 1 ))
+  prompts+=("Synthetic concurrent MLX session ${next_index}: validate RWKV-7 state cache pressure and interleaved decode.")
+done
+
 args=(
   "${MODEL}"
-  --prompt "${PROMPT_A}"
-  --prompt "${PROMPT_B}"
   --rounds "${ROUNDS}"
   --repeat "${REPEAT}"
   --dtype "${DTYPE}"
@@ -38,12 +85,9 @@ args=(
   --results "${RESULTS}"
   --require-mlx
 )
-if [[ -n "${PROMPT_C}" ]]; then
-  args+=(--prompt "${PROMPT_C}")
-fi
-if [[ -n "${PROMPT_D}" ]]; then
-  args+=(--prompt "${PROMPT_D}")
-fi
+for prompt in "${prompts[@]}"; do
+  args+=(--prompt "${prompt}")
+done
 if [[ "${JSON_ONLY:-0}" == "1" ]]; then
   args+=(--json-only)
 fi
