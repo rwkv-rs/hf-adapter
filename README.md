@@ -58,11 +58,15 @@ packed-footprint telemetry, an initial MLX packed W8/W4 affine quant path
 for 0.1B/0.4B/1.5B projection smoke, the first opt-in MLX/Metal fused
 W8/W4 dequant-projection seam (`--quant-backend metal`) with 0.1B short rows
 and 0.4B/1.5B prompt128/256 decode4/8 plus prompt512/1024 decode16 pressure rows,
-an optional MLX tensor bridge/export smoke, an initial MLX recurrent
-reference backend smoke, and the first optional MLX/Metal WKV custom-kernel
-seam (`rwkv7_hf.mlx_wkv`, `--wkv-backend metal|auto`) with 0.1B/0.4B/1.5B
-smoke rows. The Metal paths are opt-in seams, not yet the final production
-long-context fused WKV/projection/packed-quant speed path. `scripts/mlx_generate.py`,
+plus same-shape fp16 Metal baselines for the prompt512/1024 decode16 quant ratio gate
+(0.4B W8/W4 decode≈0.79x/0.81x fp16 with peak memory≈0.71x/0.57x; 1.5B
+W8/W4 decode≈0.75x/0.84x fp16 with peak memory≈0.70x/0.55x), an optional MLX
+tensor bridge/export smoke, an initial MLX recurrent reference backend smoke,
+and the first optional MLX/Metal WKV custom-kernel seam (`rwkv7_hf.mlx_wkv`,
+`--wkv-backend metal|auto`) with 0.1B/0.4B/1.5B smoke rows. The Metal paths are
+opt-in seams, not yet the final production long-context fused WKV/projection/
+packed-quant speed path, and W8/W4 do not yet stably beat fp16 end to end.
+`scripts/mlx_generate.py`,
 `scripts/mlx_session_smoke.py`, `scripts/mlx_session_batch_smoke.py`,
 `scripts/mlx_generation_sweep.py`, `rwkv7_hf.mlx_model.generate_text_from_hf`,
 `rwkv7_hf.mlx_model.MLXGenerationSession`, and

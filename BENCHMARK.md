@@ -1883,6 +1883,15 @@ V100 rows show:
 | 7.2B converted-model smoke | hidden=4096, layers=32, generated=2, backend=native_graph | load + generate | PASS |
 | 13.3B converted-model smoke | hidden=4096, layers=61, generated=2, backend=native_jit | load + generate | PASS |
 
+Apple MLX/Metal quant ratio evidence is recorded separately in
+`bench/results_apple_silicon_m5_20260704.jsonl` and
+`docs/hardware/APPLE_SILICON.md`. On the local M5 / 16GB prompt512/1024 decode16
+matrix, same-shape fp16 Metal baselines show 0.4B W8/W4 decode at
+`0.79x` / `0.81x` fp16 with peak memory `0.71x` / `0.57x`, and 1.5B W8/W4 decode
+at `0.75x` / `0.84x` fp16 with peak memory `0.70x` / `0.55x`. This keeps Apple
+quant in the same state as CUDA quant: memory reduction is proven, but stable
+W8/W4 speed `>=1.0x` fp16 still requires deeper fused kernels.
+
 The current next-focus list is: 13.3B official-alignment/speed sweeps are now
 done (cos~1.0, `native_jit` 18.4 tok/s on V100; see
 [13.3B official alignment + decode speed](#133b-official-alignment--decode-speed));
