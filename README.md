@@ -73,10 +73,12 @@ packed-quant speed path, and W8/W4 do not yet stably beat fp16 end to end.
 `rwkv7_hf.mlx_model.MLXGenerationSessionBatch` provide reusable
 tokenizer-integrated MLX text generation, serving-style prefill-once/session-decode,
 interleaved multi-session decode with 0.1B/0.4B/1.5B 3-session telemetry,
-0.4B/1.5B 4-session repeat-pressure telemetry, and higher-concurrency
-0.4B 6-session / 1.5B 5-session rows, plus prompt/decode length sweep entry
-points including 0.1B prompt256/decode8, 0.4B/1.5B prompt1024/decode64
-matrices, and optional `--quantization mm8/mm4` MLX packed-quant rows.
+0.4B/1.5B 4-session repeat-pressure telemetry, higher-concurrency
+0.4B 6-session / 1.5B 5-session rows, and initial quant+Metal session-batch
+pressure rows (0.4B W8/W4 4-session repeat=2; 1.5B W8/W4 4-session repeat=1),
+plus prompt/decode length sweep entry points including 0.1B prompt256/decode8,
+0.4B/1.5B prompt1024/decode64 matrices, and optional `--quantization mm8/mm4`
+MLX packed-quant rows.
 
 ## Layout
 

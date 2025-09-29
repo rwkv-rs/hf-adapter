@@ -709,6 +709,33 @@ REPEAT=2 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 
+# Quant+Metal interleaved session-batch pressure. Use QUANTIZATION=mm8 or mm4;
+# this validates prefill-once/session state reuse while both WKV and quantized
+# projections use the opt-in Metal paths.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=4 \
+ROUNDS=4,4 \
+REPEAT=2 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=4 \
+ROUNDS=4,4 \
+REPEAT=1 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
 # Extended 0.4B / 1.5B long-decode matrix: prompt1024 + decode64.
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 DTYPE=fp16 \

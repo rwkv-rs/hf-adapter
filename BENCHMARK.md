@@ -1890,7 +1890,11 @@ matrix, same-shape fp16 Metal baselines show 0.4B W8/W4 decode at
 `0.79x` / `0.81x` fp16 with peak memory `0.71x` / `0.57x`, and 1.5B W8/W4 decode
 at `0.75x` / `0.84x` fp16 with peak memory `0.70x` / `0.55x`. This keeps Apple
 quant in the same state as CUDA quant: memory reduction is proven, but stable
-W8/W4 speed `>=1.0x` fp16 still requires deeper fused kernels.
+W8/W4 speed `>=1.0x` fp16 still requires deeper fused kernels. Initial quant+Metal
+session-batch pressure rows also pass: 0.4B W8/W4 4-session repeat=2 reaches
+min decode `40.18` / `41.17 tok/s` with peak `669` / `534 MB`, and 1.5B
+W8/W4 4-session repeat=1 reaches min decode `19.58` / `20.38 tok/s` with
+peak `2185` / `1716 MB`.
 
 The current next-focus list is: 13.3B official-alignment/speed sweeps are now
 done (cos~1.0, `native_jit` 18.4 tok/s on V100; see

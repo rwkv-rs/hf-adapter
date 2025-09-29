@@ -188,7 +188,7 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 - 补 M-series Pro/Max/Ultra 的长上下文、显存峰值、tok/s 行;
 - 把 MLX recurrent reference/session helper 继续扩到更长上下文、更长 repeat 和更多不同 prompt 分布的 memory-pressure 遥测;
 - 初版可选 MLX/Metal WKV seam 已存在;继续把它扩成 production fused WKV/projection/packed quant kernel,并评估 RafaelUI Metal WKV7 / MLX 路线是否做 sibling backend;
-- Apple native MM8/MM4 功能/min-params smoke、初始 MLX packed W8/W4 affine dequant-matmul path、初版 MLX/Metal W8/W4 fused dequant-projection seam 已扩到 1.5B prompt512/1024 decode16，并补了同形状 fp16 Metal ratio gate:0.4B W8/W4 decode≈0.79x/0.81x fp16、peak≈0.71x/0.57x;1.5B W8/W4 decode≈0.75x/0.84x fp16、peak≈0.70x/0.55x。结论:显存下降成立，但生产级 W8/W4 仍需要 repeat/session 压力、更多 M 系列机器和端到端稳定超过 fp16 的证据。
+- Apple native MM8/MM4 功能/min-params smoke、初始 MLX packed W8/W4 affine dequant-matmul path、初版 MLX/Metal W8/W4 fused dequant-projection seam 已扩到 1.5B prompt512/1024 decode16，并补了同形状 fp16 Metal ratio gate:0.4B W8/W4 decode≈0.79x/0.81x fp16、peak≈0.71x/0.57x;1.5B W8/W4 decode≈0.75x/0.84x fp16、peak≈0.70x/0.55x。初版 quant+Metal session-batch 压力行已补:0.4B W8/W4 4-session repeat=2 min decode≈40.18/41.17 tok/s;1.5B W8/W4 4-session repeat=1 min decode≈19.58/20.38 tok/s。结论:显存下降成立，但生产级 W8/W4 仍需要更长 repeat/session、更深 fused kernel、更多 M 系列机器和端到端稳定超过 fp16 的证据。
 
 ## P2:闭合性能与量化缺口
 
