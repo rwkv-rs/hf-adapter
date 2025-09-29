@@ -55,7 +55,7 @@ prompt 16/64/128/256/512 sweep plus MPS prompt512/new8 and MLX prompt512/decode3
 Trainer/TRL PEFT LoRA 1/2/3/5/10/12-step smoke, plus native MM8/MM4
 Apple quant min-params smoke for tiny, 0.1B, 0.4B, and 1.5B model paths with
 packed-footprint telemetry, an initial MLX packed W8/W4 affine quant path
-for 0.1B/0.4B projection smoke,
+for 0.1B/0.4B/1.5B projection smoke,
 an optional MLX tensor bridge/export smoke, and an initial MLX recurrent
 reference backend smoke with tokenizer prompt, state-cache, dynamic-batch, and
 chunked-prefill checks through 0.1B/0.4B/1.5B short rows. `scripts/mlx_generate.py`,
