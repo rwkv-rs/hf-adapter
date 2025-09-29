@@ -62,6 +62,9 @@ def main() -> int:
     ap.add_argument("--chunk-size", type=int, default=0, help="If >0, compare chunked prefill final logits.")
     ap.add_argument("--chunk-tolerance", type=float, default=0.2)
     ap.add_argument("--repeat", type=int, default=1, help="Repeat each prompt/decode point for pressure/stability telemetry.")
+    ap.add_argument("--quantization", default="none", choices=["none", "mm8", "mm4"], help="Optional MLX packed W8/W4 projection path.")
+    ap.add_argument("--quant-min-params", type=int, default=8_000_000, help="Minimum dense weight params to replace when MLX quantization is enabled.")
+    ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference"], help="MLX quantized matmul backend.")
     ap.add_argument("--require-mlx", action="store_true")
     ap.add_argument("--json-only", action="store_true")
     ap.add_argument("--results", default="", help="Optional JSONL file to append sweep rows.")
@@ -85,6 +88,9 @@ def main() -> int:
             "prompt_lengths": prompt_lengths,
             "decode_lengths": decode_lengths,
             "repeat": int(args.repeat),
+            "quantization": args.quantization,
+            "quant_min_params": int(args.quant_min_params),
+            "quant_backend": args.quant_backend,
         }
         print(json.dumps(row, ensure_ascii=False))
         append_result(args.results, row)
@@ -94,7 +100,13 @@ def main() -> int:
     import mlx.core as mx
 
     t_load = time.perf_counter()
-    model = load_mlx_rwkv7_model(args.model, dtype=args.dtype)
+    model = load_mlx_rwkv7_model(
+        args.model,
+        dtype=args.dtype,
+        quantization=args.quantization,
+        quant_min_params=int(args.quant_min_params),
+        quant_backend=args.quant_backend,
+    )
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     load_s = time.perf_counter() - t_load
     header = {
@@ -106,6 +118,9 @@ def main() -> int:
         "decode_lengths": decode_lengths,
         "chunk_size": int(args.chunk_size),
         "repeat": int(args.repeat),
+        "quantization": args.quantization,
+        "quant_min_params": int(args.quant_min_params),
+        "quant_backend": args.quant_backend,
         "load_s": round(float(load_s), 6),
         **model.telemetry(),
         **mlx_memory_telemetry(),
@@ -159,6 +174,9 @@ def main() -> int:
                     "dtype": args.dtype,
                     "repeat_index": int(repeat_index),
                     "repeat": int(args.repeat),
+                    "quantization": args.quantization,
+                    "quant_min_params": int(args.quant_min_params),
+                    "quant_backend": args.quant_backend,
                     "prompt_tokens": int(prompt_tokens),
                     "generated_tokens": int(decode_tokens),
                     "prefill_s": round(float(prefill_s), 6),
@@ -189,6 +207,9 @@ def main() -> int:
         "prompt_lengths": prompt_lengths,
         "decode_lengths": decode_lengths,
         "repeat": int(args.repeat),
+        "quantization": args.quantization,
+        "quant_min_params": int(args.quant_min_params),
+        "quant_backend": args.quant_backend,
         "rows": len(rows),
         "max_prompt_tokens": max(prompt_lengths),
         "max_generated_tokens": max(decode_lengths),

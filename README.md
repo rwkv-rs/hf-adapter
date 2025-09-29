@@ -54,7 +54,8 @@ smokes. It also includes 1.5B rows: fp16 load/forward/short-generate, fp16
 prompt 16/64/128/256/512 sweep plus MPS prompt512/new8 and MLX prompt512/decode32, and fp32 manual plus
 Trainer/TRL PEFT LoRA 1/2/3/5/10/12-step smoke, plus native MM8/MM4
 Apple quant min-params smoke for tiny, 0.1B, 0.4B, and 1.5B model paths with
-packed-footprint telemetry,
+packed-footprint telemetry, an initial MLX packed W8/W4 affine quant path
+for 0.1B/0.4B projection smoke,
 an optional MLX tensor bridge/export smoke, and an initial MLX recurrent
 reference backend smoke with tokenizer prompt, state-cache, dynamic-batch, and
 chunked-prefill checks through 0.1B/0.4B/1.5B short rows. `scripts/mlx_generate.py`,
@@ -63,7 +64,7 @@ chunked-prefill checks through 0.1B/0.4B/1.5B short rows. `scripts/mlx_generate.
 `rwkv7_hf.mlx_model.MLXGenerationSession`, and
 `rwkv7_hf.mlx_model.MLXGenerationSessionBatch` provide reusable
 tokenizer-integrated MLX text generation, serving-style prefill-once/session-decode,
-interleaved multi-session decode with 0.1B/0.4B/1.5B 3-session telemetry plus 0.4B/1.5B 4-session repeat-pressure telemetry, and prompt/decode length sweep entry points including 0.1B prompt256/decode8 and 0.4B/1.5B prompt512/decode32 matrices.
+interleaved multi-session decode with 0.1B/0.4B/1.5B 3-session telemetry plus 0.4B/1.5B 4-session repeat-pressure telemetry, and prompt/decode length sweep entry points including 0.1B prompt256/decode8, 0.4B/1.5B prompt512/decode32 matrices, and optional `--quantization mm8/mm4` MLX packed-quant rows.
 
 ## Layout
 
