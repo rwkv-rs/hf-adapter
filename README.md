@@ -15,6 +15,7 @@ Contributor status and roadmap docs:
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): how to pick an issue, run card validation, report environment/results, and prepare focused PRs.
 - [`HF_STATUS.md`](HF_STATUS.md): what is already done, current evidence, hardware/card adaptation status, and production-readiness gaps.
 - [`HF_TODO.md`](HF_TODO.md): prioritized HF-only TODO list for contributors, including large-model training, ZeRO resume, one-click acceptance scripts, card validation, and productionization tasks.
+- [`docs/BACKENDS.md`](docs/BACKENDS.md): backend boundaries and rules that keep card-specific validation out of core model code.
 - [`docs/reference/HF_CRITERIA.md`](docs/reference/HF_CRITERIA.md): high-level HF acceptance criteria and optimization rules.
 - [`BENCHMARK.md`](BENCHMARK.md): numeric evidence and benchmark contract.
 - [`docs/validation/A100_HF_VALIDATION.md`](docs/validation/A100_HF_VALIDATION.md): latest A100 40GB HF training/quant/ZeRO validation matrix.
@@ -57,9 +58,12 @@ packed-footprint telemetry,
 an optional MLX tensor bridge/export smoke, and an initial MLX recurrent
 reference backend smoke with tokenizer prompt, state-cache, dynamic-batch, and
 chunked-prefill checks through 0.1B/0.4B/1.5B short rows. `scripts/mlx_generate.py`,
-`scripts/mlx_session_smoke.py`, `rwkv7_hf.mlx_model.generate_text_from_hf`, and
-`rwkv7_hf.mlx_model.MLXGenerationSession` provide reusable tokenizer-integrated
-MLX text generation and serving-style prefill-once/session-decode entry points.
+`scripts/mlx_session_smoke.py`, `scripts/mlx_session_batch_smoke.py`,
+`scripts/mlx_generation_sweep.py`, `rwkv7_hf.mlx_model.generate_text_from_hf`,
+`rwkv7_hf.mlx_model.MLXGenerationSession`, and
+`rwkv7_hf.mlx_model.MLXGenerationSessionBatch` provide reusable
+tokenizer-integrated MLX text generation, serving-style prefill-once/session-decode,
+interleaved multi-session decode, and prompt/decode length sweep and repeat/pressure entry points.
 
 ## Layout
 
@@ -76,6 +80,8 @@ scripts/
   convert_hf_to_mlx.py
   mlx_generate.py
   mlx_session_smoke.py
+  mlx_session_batch_smoke.py
+  mlx_generation_sweep.py
   run_hf_acceptance.sh
   run_hf_training_matrix.sh
   run_zero_training_smoke.sh
@@ -91,6 +97,8 @@ scripts/
   run_apple_silicon_mlx_smoke.sh
   run_apple_silicon_mlx_model_smoke.sh
   run_apple_silicon_mlx_session_smoke.sh
+  run_apple_silicon_mlx_session_batch_smoke.sh
+  run_apple_silicon_mlx_generation_sweep.sh
 tests/
   smoke_hf_generate.py
   test_official_alignment.py

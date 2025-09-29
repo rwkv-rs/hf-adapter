@@ -83,6 +83,18 @@ def test_apple_smoke_script_static() -> None:
     assert mlx_session_wrapper.exists()
     assert mlx_session_wrapper.stat().st_mode & stat.S_IXUSR
     subprocess.run(["bash", "-n", str(mlx_session_wrapper)], cwd=ROOT, check=True)
+    mlx_session_batch_wrapper = ROOT / "scripts/run_apple_silicon_mlx_session_batch_smoke.sh"
+    assert mlx_session_batch_wrapper.exists()
+    assert mlx_session_batch_wrapper.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(mlx_session_batch_wrapper)], cwd=ROOT, check=True)
+    mlx_session_batch_wrapper = ROOT / "scripts/run_apple_silicon_mlx_session_batch_smoke.sh"
+    assert mlx_session_batch_wrapper.exists()
+    assert mlx_session_batch_wrapper.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(mlx_session_batch_wrapper)], cwd=ROOT, check=True)
+    mlx_sweep_wrapper = ROOT / "scripts/run_apple_silicon_mlx_generation_sweep.sh"
+    assert mlx_sweep_wrapper.exists()
+    assert mlx_sweep_wrapper.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(mlx_sweep_wrapper)], cwd=ROOT, check=True)
     convert_mlx_script = ROOT / "scripts/convert_hf_to_mlx.py"
     assert convert_mlx_script.exists()
     assert convert_mlx_script.stat().st_mode & stat.S_IXUSR
@@ -92,6 +104,15 @@ def test_apple_smoke_script_static() -> None:
     mlx_session_script = ROOT / "scripts/mlx_session_smoke.py"
     assert mlx_session_script.exists()
     assert mlx_session_script.stat().st_mode & stat.S_IXUSR
+    mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"
+    assert mlx_session_batch_script.exists()
+    assert mlx_session_batch_script.stat().st_mode & stat.S_IXUSR
+    mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"
+    assert mlx_session_batch_script.exists()
+    assert mlx_session_batch_script.stat().st_mode & stat.S_IXUSR
+    mlx_sweep_script = ROOT / "scripts/mlx_generation_sweep.py"
+    assert mlx_sweep_script.exists()
+    assert mlx_sweep_script.stat().st_mode & stat.S_IXUSR
 
 
 def test_apple_doc_links_entry_points() -> None:
@@ -109,9 +130,13 @@ def test_apple_doc_links_entry_points() -> None:
     assert "scripts/run_apple_silicon_mlx_smoke.sh" in text
     assert "scripts/run_apple_silicon_mlx_model_smoke.sh" in text
     assert "scripts/run_apple_silicon_mlx_session_smoke.sh" in text
+    assert "scripts/run_apple_silicon_mlx_session_batch_smoke.sh" in text
+    assert "scripts/run_apple_silicon_mlx_generation_sweep.sh" in text
     assert "scripts/convert_hf_to_mlx.py" in text
     assert "scripts/mlx_generate.py" in text
     assert "scripts/mlx_session_smoke.py" in text
+    assert "scripts/mlx_session_batch_smoke.py" in text
+    assert "scripts/mlx_generation_sweep.py" in text
     assert "tests/test_apple_silicon_model_training_smoke.py" in text
     assert "tests/test_apple_silicon_model_sweep.py" in text
     assert "tests/test_apple_silicon_quant_smoke.py" in text
@@ -157,6 +182,10 @@ def test_apple_doc_links_entry_points() -> None:
     assert mlx_session_wrapper.exists()
     assert mlx_session_wrapper.stat().st_mode & stat.S_IXUSR
     subprocess.run(["bash", "-n", str(mlx_session_wrapper)], cwd=ROOT, check=True)
+    mlx_sweep_wrapper = ROOT / "scripts/run_apple_silicon_mlx_generation_sweep.sh"
+    assert mlx_sweep_wrapper.exists()
+    assert mlx_sweep_wrapper.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(mlx_sweep_wrapper)], cwd=ROOT, check=True)
     convert_mlx_script = ROOT / "scripts/convert_hf_to_mlx.py"
     assert convert_mlx_script.exists()
     assert convert_mlx_script.stat().st_mode & stat.S_IXUSR
@@ -166,6 +195,9 @@ def test_apple_doc_links_entry_points() -> None:
     mlx_session_script = ROOT / "scripts/mlx_session_smoke.py"
     assert mlx_session_script.exists()
     assert mlx_session_script.stat().st_mode & stat.S_IXUSR
+    mlx_sweep_script = ROOT / "scripts/mlx_generation_sweep.py"
+    assert mlx_sweep_script.exists()
+    assert mlx_sweep_script.stat().st_mode & stat.S_IXUSR
     assert "RafaelUI" in text
     assert "RWKV7_NATIVE_MODEL=1" in text
     assert "rwkv7-g1d-0.4b-hf" in text
