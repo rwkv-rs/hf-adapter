@@ -57,7 +57,7 @@ Apple quant min-params smoke for tiny, 0.1B, 0.4B, and 1.5B model paths with
 packed-footprint telemetry, an initial MLX packed W8/W4 affine quant path
 for 0.1B/0.4B/1.5B projection smoke, the first opt-in MLX/Metal fused
 W8/W4 dequant-projection seam (`--quant-backend metal`) with 0.1B short rows
-and 0.4B/1.5B prompt128/256 decode4/8 pressure rows,
+and 0.4B/1.5B prompt128/256 decode4/8 plus prompt512/1024 decode16 pressure rows,
 an optional MLX tensor bridge/export smoke, an initial MLX recurrent
 reference backend smoke, and the first optional MLX/Metal WKV custom-kernel
 seam (`rwkv7_hf.mlx_wkv`, `--wkv-backend metal|auto`) with 0.1B/0.4B/1.5B
