@@ -27,6 +27,7 @@ SCRIPTS = [
     "scripts/run_apple_silicon_mlx_model_smoke.sh",
     "scripts/run_apple_silicon_mlx_session_smoke.sh",
     "scripts/run_apple_silicon_mlx_session_batch_smoke.sh",
+    "scripts/run_apple_silicon_mlx_generation_sweep.sh",
 ]
 
 
@@ -118,6 +119,12 @@ def test_apple_silicon_mlx_session_batch_requires_model() -> None:
     assert "MODEL is required" in proc.stderr
 
 
+def test_apple_silicon_mlx_generation_sweep_requires_model() -> None:
+    proc = run_bash("bash scripts/run_apple_silicon_mlx_generation_sweep.sh")
+    assert proc.returncode == 2, (proc.returncode, proc.stdout, proc.stderr)
+    assert "MODEL is required" in proc.stderr
+
+
 def test_math500_acceptance_defaults_are_final_benchmark() -> None:
     text = (ROOT / "scripts/run_math500_acceptance.sh").read_text(encoding="utf-8")
     assert 'BSZ="${BSZ:-128}"' in text
@@ -157,6 +164,7 @@ def main() -> int:
     test_apple_silicon_model_sweep_requires_model()
     test_apple_silicon_mlx_session_requires_model()
     test_apple_silicon_mlx_session_batch_requires_model()
+    test_apple_silicon_mlx_generation_sweep_requires_model()
     test_math500_acceptance_defaults_are_final_benchmark()
     test_common_pythonpath_separator_linux()
     test_common_pythonpath_separator_windows_msys()
