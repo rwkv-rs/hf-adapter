@@ -736,6 +736,32 @@ WKV_BACKEND=metal \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 
+# Higher-concurrency quant+Metal session pressure. Run both QUANTIZATION=mm8 and
+# QUANTIZATION=mm4 when collecting the full W8/W4 matrix.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=6 \
+ROUNDS=4,4 \
+REPEAT=3 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=5 \
+ROUNDS=4,4 \
+REPEAT=2 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
 # Extended 0.4B / 1.5B long-decode matrix: prompt1024 + decode64.
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 DTYPE=fp16 \
