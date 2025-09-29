@@ -4,8 +4,9 @@ This document tracks the HF adapter work needed for Apple Silicon. It is a
 separate hardware-adaptation lane from the CUDA / Albatross performance route:
 CUDA fused kernels remain the production-speed target for NVIDIA cards, while
 Apple Silicon uses the FLA-free native PyTorch path today plus an optional MLX
-reference backend. Full fused MLX/Metal kernels remain the next Apple
-performance layer.
+reference backend. An initial opt-in MLX/Metal WKV custom-kernel seam now
+exists; production fused MLX/Metal WKV/projection/packed-quant kernels remain
+the next Apple performance layer.
 
 ## Current status
 
@@ -17,7 +18,7 @@ performance layer.
 | HF API coverage | partial | Load + forward + `generate(use_cache=True)` through the native backend; tiny native backward and Trainer paths pass; real 0.1B and 0.4B PEFT LoRA, HF Trainer, and TRL SFT/DPO/GRPO paths on MPS are covered. 0.4B also has fp32/fp16 generation length sweep rows and 2-step Trainer/TRL rows. 1.5B has fp16 MPS inference/sweep rows through prompt 512 / decode 8, MLX prompt1024/decode64 rows, plus fp32 PEFT LoRA manual, HF Trainer, and TRL SFT/DPO/GRPO 1/2/3/5/10/12-step rows with finite trainable updates. |
 | Quantization | broader functional native smoke + initial MLX packed path | `bitsandbytes` W8/W4 is CUDA-oriented and is not the Apple path. Native MM8/MM4 config-driven module replacement now runs on MPS for tiny, 0.1B, 0.4B, and 1.5B smoke rows. MLX now has a packed W8/W4 affine dequant-matmul projection path (`--quantization mm8/mm4`) with 0.1B, 0.4B, and 1.5B smoke rows. Production-speed Apple quant still needs Metal fused projection/WKV kernels and speed rows beating fp16. |
 | Production speed | not claimed | PyTorch MPS is a compatibility path, not the final Apple performance backend. |
-| MLX recurrent backend / Metal backend | initial MLX recurrent + packed quant path, Metal TODO | Optional `.[mlx]` install, `rwkv7_hf.mlx_bridge`, `rwkv7_hf.mlx_model`, `rwkv7_hf.mlx_quant`, `scripts/convert_hf_to_mlx.py`, `scripts/mlx_generate.py`, `scripts/mlx_session_smoke.py`, `scripts/mlx_session_batch_smoke.py`, `scripts/mlx_generation_sweep.py`, `scripts/run_apple_silicon_mlx_smoke.sh`, `scripts/run_apple_silicon_mlx_model_smoke.sh`, `scripts/run_apple_silicon_mlx_session_smoke.sh`, `scripts/run_apple_silicon_mlx_session_batch_smoke.sh`, and `scripts/run_apple_silicon_mlx_generation_sweep.sh` now validate HF safetensor → MLX array/export, tiny torch/MLX recurrent parity, MLX state-cache select/chunked-prefill/session behavior, tokenizer-backed prompt smoke, dynamic-batch state select, reusable MLX text generate, prefill-once/session decode, interleaved multi-session decode, prompt/decode sweeps, and optional MLX packed W8/W4 projection rows. Fused Metal WKV/projection kernels are still TODO. |
+| MLX recurrent backend / Metal backend | initial MLX recurrent + packed quant path + Metal WKV seam | Optional `.[mlx]` install, `rwkv7_hf.mlx_bridge`, `rwkv7_hf.mlx_model`, `rwkv7_hf.mlx_quant`, `rwkv7_hf.mlx_wkv`, `scripts/convert_hf_to_mlx.py`, `scripts/mlx_generate.py`, `scripts/mlx_session_smoke.py`, `scripts/mlx_session_batch_smoke.py`, `scripts/mlx_generation_sweep.py`, `scripts/run_apple_silicon_mlx_smoke.sh`, `scripts/run_apple_silicon_mlx_model_smoke.sh`, `scripts/run_apple_silicon_mlx_session_smoke.sh`, `scripts/run_apple_silicon_mlx_session_batch_smoke.sh`, and `scripts/run_apple_silicon_mlx_generation_sweep.sh` now validate HF safetensor → MLX array/export, tiny torch/MLX recurrent parity, MLX state-cache select/chunked-prefill/session behavior, tokenizer-backed prompt smoke, dynamic-batch state select, reusable MLX text generate, prefill-once/session decode, interleaved multi-session decode, prompt/decode sweeps, optional MLX packed W8/W4 projection rows, and an opt-in `--wkv-backend metal|auto` custom-kernel seam. Production fused Metal WKV/projection/packed-quant kernels are still TODO. |
 
 ## Why the Apple path is native / no-FLA by default
 
@@ -36,7 +37,7 @@ export RWKV7_FAST_TOKEN_BACKEND=native_jit
 `RWKV7_NATIVE_MODEL=1` routes `AutoModelForCausalLM.from_pretrained(...,
 trust_remote_code=True)` into the FLA-free native PyTorch backend. MPS fallback
 keeps unsupported individual ops from aborting the run while the dedicated
-Metal/MLX backend is still future work.
+MLX/Metal path grows from the current opt-in WKV seam into a production backend.
 
 ## Current local evidence
 
@@ -54,6 +55,7 @@ Local smoke on 2026-07-04:
 | MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `rwkv7-g1d-0.1b-hf` HF safetensor → MLX projection matmul | PASS (`axis=apple_silicon_mlx_projection_smoke`, tensor `model.layers.0.attn.r_proj.weight`, fp16 `[1, 768]`, selected tensor bytes=1179648) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `rwkv7-g1d-0.1b-hf` selected HF safetensor → MLX safetensors export | PASS (`axis=mlx_hf_export`, tensor count=1, fp16 bytes=1179648, manifest `mlx_manifest.json`) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | MLX packed W8/W4 affine quant projection path | PASS (`rwkv7-g1d-0.1b-hf` lm_head W8/W4 footprint≈0.502635/0.252635, prompt32/decode2 W8 min decode≈86.07 tok/s and W4≈32.72 tok/s; `rwkv7-g1d-0.4b-hf` 49 FFN/lm_head modules W8/W4 footprint≈0.502327/0.252327, prompt16/decode1 W8 min decode≈22.09 tok/s and W4≈8.14 tok/s; `rwkv7-g1g-1.5b-hf` 49 FFN/lm_head modules W8/W4 footprint≈0.501190/0.251190, prompt32/decode4 with chunk16 W8 min prefill/decode≈5.63/4.65 tok/s and W4≈2.15/1.79 tok/s; current backend=`affine`, Metal fused speed path still TODO) |
+| MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | MLX/Metal WKV custom-kernel seam | PASS (`--wkv-backend metal`; `rwkv7-g1d-0.1b-hf` prompt32/decode2 chunk16 peak≈388MB, prefill≈98.55 tok/s, decode≈116.15 tok/s, chunked/full max_abs=0.0; `rwkv7-g1d-0.4b-hf` prompt16/decode1 peak≈910MB, prefill≈54.34 tok/s, decode≈53.18 tok/s; `rwkv7-g1g-1.5b-hf` prompt16/decode1 peak≈3071MB, prefill≈27.61 tok/s, decode≈26.72 tok/s. This is the initial kernel seam, not the final production fused WKV/projection/packed-quant speed path.) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 / PyTorch 2.12.1 | MLX GPU | tiny full recurrent MLX vs native PyTorch parity | PASS (`axis=apple_silicon_mlx_recurrent_tiny_parity`, batch=2, seq=4, max_abs=0.00282228, argmax match) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | tiny MLX recurrent state cache + chunked prefill + session decode | PASS (`axis=apple_silicon_mlx_state_cache_tiny`, chunked/full max_abs=0.0, select-batch decode max_abs=0.0014168; `axis=apple_silicon_mlx_session_tiny`, step_sizes=2,2, one-shot token/text match) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `rwkv7-g1d-0.1b-hf` full MLX recurrent prefill + greedy decode | PASS (`axis=apple_silicon_mlx_recurrent_model_smoke`, fp16 full 399 tensors, prompt=4, generated=1, chunked/full max_abs=0.0, bytes=382069248) |
@@ -593,6 +595,33 @@ REPEAT=1 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 scripts/run_apple_silicon_mlx_generation_sweep.sh
 
+# Initial MLX/Metal WKV custom-kernel seam smoke. This is an opt-in backend
+# seam (`rwkv7_hf.mlx_wkv`), not the final production fused speed path.
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=32 \
+DECODE_LENGTHS=2 \
+CHUNK_SIZE=16 \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+scripts/run_apple_silicon_mlx_generation_sweep.sh
+
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=16 \
+DECODE_LENGTHS=1 \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+scripts/run_apple_silicon_mlx_generation_sweep.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=16 \
+DECODE_LENGTHS=1 \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+scripts/run_apple_silicon_mlx_generation_sweep.sh
+
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
 DTYPE=fp16 \
 PROMPT="The quick brown fox" \
@@ -696,13 +725,14 @@ test script.
   packed-footprint telemetry, and MLX has an initial packed W8/W4 affine
   dequant-matmul projection path for 0.1B/0.4B/1.5B. Production Apple W8/W4 still
   needs Metal fused projection/WKV kernels and speed rows that beat fp16.
-- The MLX path is now a correctness-first recurrent reference backend, not a
-  production-speed backend. It verifies HF safetensor loading/export, full
+- The MLX path is now a correctness-first recurrent reference backend plus an
+  initial opt-in MLX/Metal WKV custom-kernel seam, not a production-speed
+  backend. It verifies HF safetensor loading/export, full
   recurrent prefill/decode equations, tokenizer prompt handling/API, state-cache
   select, chunked prefill, dynamic-batch row selection, prefill-once/session
   decode equality vs one-shot, interleaved multi-session equality vs one-shot with 0.1B/0.4B/1.5B 3-session rows plus 0.4B/1.5B 4-session repeat-pressure summary rows and higher-concurrency 0.4B 6-session / 1.5B 5-session rows, prompt/decode sweeps through 1024-token prompts and 64-token decode on 0.4B/1.5B plus repeat pressure rows,
-  0.1B/0.4B/1.5B MLX packed W8/W4 affine quant projection rows, and 0.1B/0.4B/1.5B short greedy decode. Fused
-  WKV, Metal fused quant/dequant, still-larger production prompt/decode pressure,
+  0.1B/0.4B/1.5B MLX packed W8/W4 affine quant projection rows, 0.1B/0.4B/1.5B short greedy decode, and 0.1B/0.4B/1.5B `--wkv-backend metal` smoke rows. Production fused
+  WKV/projection, Metal fused quant/dequant, still-larger production prompt/decode pressure,
   and production serving integration are still open.
 - Long-running full-size training on MPS is not claimed yet. Tiny native Trainer
   and tiny PEFT LoRA Trainer pass; 0.1B and 0.4B PEFT LoRA backward, HF Trainer,
@@ -710,7 +740,7 @@ test script.
   fp32 PEFT LoRA manual backward, HF Trainer, and TRL SFT/DPO/GRPO 1/2/3/5/10/12-step
   smoke now pass. Longer MLX 1.5B decode through 64 tokens now passes; longer production-style training/decode and larger Apple machines
   are still open. Native MM8/MM4 functional/min-params smoke through 1.5B and
-  initial MLX recurrent reference smoke plus MLX packed W8/W4 affine projection smoke are present; full MLX/Metal WKV/projection acceleration
+  initial MLX recurrent reference smoke, MLX packed W8/W4 affine projection smoke, and an initial Metal WKV seam are present; full MLX/Metal WKV/projection acceleration
   and production quant speed are still open.
 - 1.5B fp16 PEFT LoRA on the 16GB M5 produced non-finite gradient/update values
   in one local trial. The training smoke now rejects non-finite or zero
@@ -738,6 +768,6 @@ next backend layer:
 4. Extend the MLX recurrent reference and `MLXGenerationSession` beyond the current
    0.1B prompt256/decode8, 0.4B/1.5B prompt1024/decode64 matrices, 0.4B 6-session repeat=5, and 1.5B 5-session repeat=2 rows to longer prompt distributions,
    stronger memory-pressure telemetry, and longer production-style concurrent session reuse.
-5. Replace the correctness-first MLX recurrent inner loop and affine quantized projection path with fused MLX or Metal WKV-7 + packed W8/W4 dequant kernels.
-6. Decide whether the Metal WKV-7 kernel belongs in this repo as an optional
-   backend or in a sibling `rwkv7-mlx` / `rwkv7-metal` package.
+5. Extend the initial Metal WKV seam into production fused WKV/projection kernels and pair it with packed W8/W4 dequant kernels that can beat fp16 end to end.
+6. Decide whether the production Metal WKV-7 kernel belongs in this repo as an
+   optional backend or in a sibling `rwkv7-mlx` / `rwkv7-metal` package.

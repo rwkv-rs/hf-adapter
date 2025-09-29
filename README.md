@@ -56,9 +56,11 @@ Trainer/TRL PEFT LoRA 1/2/3/5/10/12-step smoke, plus native MM8/MM4
 Apple quant min-params smoke for tiny, 0.1B, 0.4B, and 1.5B model paths with
 packed-footprint telemetry, an initial MLX packed W8/W4 affine quant path
 for 0.1B/0.4B/1.5B projection smoke,
-an optional MLX tensor bridge/export smoke, and an initial MLX recurrent
-reference backend smoke with tokenizer prompt, state-cache, dynamic-batch, and
-chunked-prefill checks through 0.1B/0.4B/1.5B short rows. `scripts/mlx_generate.py`,
+an optional MLX tensor bridge/export smoke, an initial MLX recurrent
+reference backend smoke, and the first optional MLX/Metal WKV custom-kernel
+seam (`rwkv7_hf.mlx_wkv`, `--wkv-backend metal|auto`) with 0.1B/0.4B/1.5B
+smoke rows. The Metal path is an opt-in seam, not yet the final production
+fused WKV/projection/packed-quant speed path. `scripts/mlx_generate.py`,
 `scripts/mlx_session_smoke.py`, `scripts/mlx_session_batch_smoke.py`,
 `scripts/mlx_generation_sweep.py`, `rwkv7_hf.mlx_model.generate_text_from_hf`,
 `rwkv7_hf.mlx_model.MLXGenerationSession`, and
@@ -79,6 +81,8 @@ rwkv7_hf/
   tokenization_rwkv7.py
   mlx_bridge.py
   mlx_model.py
+  mlx_quant.py
+  mlx_wkv.py
 scripts/
   convert_rwkv7_to_hf.py
   batch_convert_rwkv7_to_hf.py
