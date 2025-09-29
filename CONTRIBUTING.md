@@ -357,7 +357,9 @@ MODEL=/path/to/rwkv7-g1d-0.1b-hf \
 DTYPE=fp16 \
 PROMPT_A="The quick brown fox" \
 PROMPT_B="User: Apple Silicon RWKV test. Assistant:" \
+PROMPT_C="Repeat pressure prompt for MLX sessions." \
 ROUNDS=2,2 \
+REPEAT=2 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 ```
