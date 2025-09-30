@@ -55,6 +55,15 @@ def min_decode_tok_s(rows: list[dict[str, Any]]) -> float | None:
     return round(min(values), 6) if values else None
 
 
+def min_round_decode_tok_s(rows: list[dict[str, Any]]) -> float | None:
+    values: list[float] = []
+    for row in rows:
+        for value in row.get("round_decode_tok_s", []):
+            if value is not None:
+                values.append(float(value))
+    return round(min(values), 6) if values else None
+
+
 def run_interleaved_batch(
     *,
     model: Any,
@@ -70,6 +79,7 @@ def run_interleaved_batch(
     quant_min_params: int,
     quant_backend: str,
     wkv_backend: str,
+    session_backend: str,
 ) -> tuple[dict[str, Any], list[str]]:
     reset_mlx_peak_memory()
     batch = MLXGenerationSessionBatch.from_prompts(
@@ -80,11 +90,13 @@ def run_interleaved_batch(
     )
     round_rows: list[dict[str, Any]] = []
     for round_index, tokens in enumerate(rounds, start=1):
-        outputs = batch.decode_round(tokens)
+        outputs = batch.decode_round(tokens, backend=session_backend)
         round_rows.append(
             {
                 "round_index": int(round_index),
                 "tokens_per_session": int(tokens),
+                "session_backend": session_backend,
+                "actual_backend": batch.round_backends[-1] if batch.round_backends else None,
                 "sessions": [output.telemetry() for output in outputs],
             }
         )
@@ -152,6 +164,7 @@ def run_interleaved_batch(
         "all_session_one_shot_text_match": bool(all_text_match),
         "all_seen_tokens_match": bool(all_seen_match),
         "wkv_backend": wkv_backend,
+        "session_backend": session_backend,
         "wkv_backend_last": model.wkv_backend_last,
         "wkv_backend_counts": dict(model.wkv_backend_counts),
         "round_telemetry": round_rows,
@@ -174,6 +187,15 @@ def main() -> int:
     ap.add_argument("--quant-min-params", type=int, default=8_000_000)
     ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference", "metal"])
     ap.add_argument("--wkv-backend", default="reference", choices=["reference", "metal", "auto"])
+    ap.add_argument(
+        "--session-backend",
+        default="sequential",
+        choices=["sequential", "batched", "auto"],
+        help=(
+            "Session decode scheduler: sequential preserves historical per-session decode; "
+            "batched stacks equal-size rounds into one MLX batch; auto batches equal positive rounds."
+        ),
+    )
     ap.add_argument("--require-mlx", action="store_true")
     ap.add_argument("--json-only", action="store_true")
     ap.add_argument("--results", default="", help="Optional JSONL file to append a generation result row.")
@@ -197,6 +219,7 @@ def main() -> int:
             "quant_min_params": int(args.quant_min_params),
             "quant_backend": args.quant_backend,
             "wkv_backend": args.wkv_backend,
+            "session_backend": args.session_backend,
         }
         print(json.dumps(row, ensure_ascii=False))
         append_result(args.results, row)
@@ -224,6 +247,7 @@ def main() -> int:
         "quant_min_params": int(args.quant_min_params),
         "quant_backend": args.quant_backend,
         "wkv_backend": args.wkv_backend,
+        "session_backend": args.session_backend,
         "session_count": len(prompts),
         "rounds": rounds,
         "repeat": int(repeat),
@@ -249,6 +273,7 @@ def main() -> int:
             quant_min_params=int(args.quant_min_params),
             quant_backend=args.quant_backend,
             wkv_backend=args.wkv_backend,
+            session_backend=args.session_backend,
         )
         rows.append(row)
         if not args.json_only:
@@ -274,12 +299,15 @@ def main() -> int:
         "all_session_one_shot_text_match": all(bool(row["all_session_one_shot_text_match"]) for row in rows),
         "all_seen_tokens_match": all(bool(row["all_seen_tokens_match"]) for row in rows),
         "wkv_backend": args.wkv_backend,
+        "session_backend": args.session_backend,
+        "round_backends": sorted({backend for row in rows for backend in row.get("round_backends", [])}),
         "max_prompt_tokens": max(max(int(x) for x in row.get("prompt_tokens", [0])) for row in rows) if rows else None,
         "max_generated_tokens": max(max(int(x) for x in row.get("generated_tokens", [0])) for row in rows) if rows else None,
         "max_mlx_active_memory_bytes": max(int(row.get("mlx_active_memory_bytes", 0)) for row in rows) if rows else None,
         "max_mlx_peak_memory_bytes": max(int(row.get("mlx_peak_memory_bytes", 0)) for row in rows) if rows else None,
         "max_mlx_cache_memory_bytes": max(int(row.get("mlx_cache_memory_bytes", 0)) for row in rows) if rows else None,
         "min_decode_tok_s": min_decode_tok_s(rows),
+        "min_round_decode_tok_s": min_round_decode_tok_s(rows),
     }
     print(json.dumps(summary, ensure_ascii=False))
     append_result(args.results, summary)

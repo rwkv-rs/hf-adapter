@@ -98,7 +98,9 @@ def test_apple_smoke_script_static() -> None:
     assert "PROMPT_H" in mlx_session_batch_text
     assert "QUANT_BACKEND" in mlx_session_batch_text
     assert "WKV_BACKEND" in mlx_session_batch_text
+    assert "SESSION_BACKEND" in mlx_session_batch_text
     assert "--wkv-backend" in mlx_session_batch_text
+    assert "--session-backend" in mlx_session_batch_text
     mlx_session_batch_wrapper = ROOT / "scripts/run_apple_silicon_mlx_session_batch_smoke.sh"
     assert mlx_session_batch_wrapper.exists()
     assert mlx_session_batch_wrapper.stat().st_mode & stat.S_IXUSR
@@ -125,8 +127,11 @@ def test_apple_smoke_script_static() -> None:
     mlx_session_batch_text = mlx_session_batch_script.read_text(encoding="utf-8")
     assert 'choices=["affine", "reference", "metal"]' in mlx_session_batch_text
     assert 'choices=["reference", "metal", "auto"]' in mlx_session_batch_text
+    assert 'choices=["sequential", "batched", "auto"]' in mlx_session_batch_text
     assert '"quantization": args.quantization' in mlx_session_batch_text
     assert '"quant_backend": args.quant_backend' in mlx_session_batch_text
+    assert '"session_backend": args.session_backend' in mlx_session_batch_text
+    assert '"min_round_decode_tok_s": min_round_decode_tok_s(rows)' in mlx_session_batch_text
     mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"
     assert mlx_session_batch_script.exists()
     assert mlx_session_batch_script.stat().st_mode & stat.S_IXUSR

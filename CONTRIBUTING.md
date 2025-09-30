@@ -678,6 +678,7 @@ RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_smoke.sh
 
 # Interleaved multi-session smoke: prefill multiple prompts and advance them round-by-round.
+# SESSION_BACKEND defaults to sequential; use batched/auto to exercise equal-round MLX batching.
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
 DTYPE=fp16 \
 PROMPT_A="The quick brown fox" \
@@ -685,6 +686,7 @@ PROMPT_B="User: Apple Silicon RWKV test. Assistant:" \
 PROMPT_C="Repeat pressure prompt for MLX sessions." \
 ROUNDS=2,2 \
 REPEAT=2 \
+SESSION_BACKEND=batched \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 
@@ -721,6 +723,7 @@ QUANTIZATION=mm4 \
 QUANT_MIN_PARAMS=4000000 \
 QUANT_BACKEND=metal \
 WKV_BACKEND=metal \
+SESSION_BACKEND=batched \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 

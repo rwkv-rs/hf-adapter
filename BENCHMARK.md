@@ -1896,7 +1896,13 @@ repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
 `34.33` / `27.14 tok/s` with peak `682` / `547 MB`. 1.5B W8/W4
 4-session repeat=1 reaches min decode `19.58` / `20.38 tok/s` with peak
 `2185` / `1716 MB`, and the 5-session repeat=2 row reaches min decode
-`15.60` / `18.87 tok/s` with peak `2198` / `1728 MB`.
+`15.60` / `18.87 tok/s` with peak `2198` / `1728 MB`. The opt-in equal-round
+`SESSION_BACKEND=batched` path also has initial W4 correctness rows: 0.4B
+6-session repeat=2 passes with per-session min decode `19.00 tok/s`,
+aggregate round min decode `105.44 tok/s`, and peak `617 MB`; 1.5B 5-session
+repeat=1 passes with per-session min decode `6.61 tok/s`, aggregate round min
+decode `32.38 tok/s`, and peak `1841 MB`. These rows validate the batching seam
+and telemetry, not the final fp16-beating quant speed gate.
 
 The current next-focus list is: 13.3B official-alignment/speed sweeps are now
 done (cos~1.0, `native_jit` 18.4 tok/s on V100; see
