@@ -658,6 +658,35 @@ WKV_BACKEND=metal \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_generation_sweep.sh
 
+# Extended long-decode ratio gate. Run the same shape for QUANTIZATION=none,
+# mm8, and mm4 before claiming W8/W4 speed parity. For mm8/mm4 set
+# QUANT_BACKEND=metal and the model-specific QUANT_MIN_PARAMS shown below.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=2048 \
+DECODE_LENGTHS=128 \
+CHUNK_SIZE=512 \
+REPEAT=1 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=2048 \
+DECODE_LENGTHS=128 \
+CHUNK_SIZE=512 \
+REPEAT=1 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
 # Longer 1.5B matrix; close memory-heavy apps first on 16GB machines.
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
 MODEL_SIZE_LABEL=1.5b \

@@ -1888,9 +1888,13 @@ Apple MLX/Metal quant ratio evidence is recorded separately in
 `docs/hardware/APPLE_SILICON.md`. On the local M5 / 16GB prompt512/1024 decode16
 matrix, same-shape fp16 Metal baselines show 0.4B W8/W4 decode at
 `0.79x` / `0.81x` fp16 with peak memory `0.71x` / `0.57x`, and 1.5B W8/W4 decode
-at `0.75x` / `0.84x` fp16 with peak memory `0.70x` / `0.55x`. This keeps Apple
-quant in the same state as CUDA quant: memory reduction is proven, but stable
-W8/W4 speed `>=1.0x` fp16 still requires deeper fused kernels. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
+at `0.75x` / `0.84x` fp16 with peak memory `0.70x` / `0.55x`. The longer
+prompt2048/decode128 ratio row now reaches 0.4B W8/W4 decode `0.88x` /
+`1.04x` fp16 with peak memory `0.71x` / `0.56x`; the same 1.5B row remains
+below fp16 at W8/W4 decode `0.68x` / `0.73x` with peak memory `0.70x` /
+`0.54x`. This gives one local 0.4B W4 fp16-beating long-decode row, but stable
+W8/W4 speed `>=1.0x` fp16 across sizes and modes still requires deeper fused
+kernels. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
 repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
 `534 MB`, and the higher-concurrency 6-session repeat=3 row reaches min decode
 `34.33` / `27.14 tok/s` with peak `682` / `547 MB`. 1.5B W8/W4
