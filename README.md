@@ -95,7 +95,7 @@ sequential-vs-batched token equality and localize the current 0.4B W8 mismatch
 with optional logit tracing (the first mismatch is a near-tie: token 11 vs 261,
 max-abs logit delta≈0.03125) plus an explicit `SESSION_BACKEND=batched_stable`
 W8 row that restores strict token equality on 0.4B 6-session pressure and now
-passes 0.4B 8-session plus 1.5B 5-session rounds8,8 repeat=2 one-shot checks,
+passes 0.4B 8-session repeat=2 plus 1.5B 5-session W8/W4 rounds8,8 repeat=4 one-shot checks,
 and a new conservative `--quant-backend auto` route with backend-count telemetry
 (W4 normal prefill/decode rows choose Metal, W8 defaults to affine unless W8
 Metal is explicitly enabled; `RWKV7_MLX_SESSION_AUTO_W8_STABLE=1` opts W8/Metal

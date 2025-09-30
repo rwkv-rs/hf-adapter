@@ -917,6 +917,34 @@ SESSION_BACKEND=auto \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 
+# Sustained 1.5B quant session pressure: both W8/Metal stable and W4 auto should
+# keep one-shot equality through repeat=4, while recording min aggregate tok/s.
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=5 \
+ROUNDS=8,8 \
+REPEAT=4 \
+QUANTIZATION=mm8 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+SESSION_BACKEND=batched_stable \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=5 \
+ROUNDS=8,8 \
+REPEAT=4 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=auto \
+WKV_BACKEND=metal \
+SESSION_BACKEND=batched \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
 # Conservative quant backend auto route. W4 should report Metal calls in
 # quantized_linear_last_backend_counts; W8 should report affine calls by default and can now batch under SESSION_BACKEND=auto when it resolves to affine.
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
