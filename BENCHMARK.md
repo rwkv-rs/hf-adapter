@@ -1889,12 +1889,17 @@ Apple MLX/Metal quant ratio evidence is recorded separately in
 matrix, same-shape fp16 Metal baselines show 0.4B W8/W4 decode at
 `0.79x` / `0.81x` fp16 with peak memory `0.71x` / `0.57x`, and 1.5B W8/W4 decode
 at `0.75x` / `0.84x` fp16 with peak memory `0.70x` / `0.55x`. The longer
-prompt2048/decode128 ratio row now reaches 0.4B W8/W4 decode `0.88x` /
+prompt2048/decode128 ratio row reaches 0.4B W8/W4 decode `0.88x` /
 `1.04x` fp16 with peak memory `0.71x` / `0.56x`; the same 1.5B row remains
 below fp16 at W8/W4 decode `0.68x` / `0.73x` with peak memory `0.70x` /
-`0.54x`. This gives one local 0.4B W4 fp16-beating long-decode row, but stable
-W8/W4 speed `>=1.0x` fp16 across sizes and modes still requires deeper fused
-kernels. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
+`0.54x`. The W4 `--quant-backend auto` row now caches the auto decision and
+favors Metal for normal prefill/decode rows (`metal=202885`): 0.4B W4 auto
+prompt2048/decode128 reaches prefill/decode `60.61` / `59.73 tok/s`
+(`0.88x` / `1.25x` fp16, peak `0.56x`), while 1.5B W4 auto reaches
+`27.64` / `20.42 tok/s` (`0.93x` / `0.75x` fp16, peak `0.54x`). This
+strengthens the 0.4B fp16-beating W4 long-decode evidence and narrows 1.5B
+prefill, but stable W8/W4 speed `>=1.0x` fp16 across sizes and modes still
+requires deeper fused kernels. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
 repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
 `534 MB`, and the higher-concurrency 6-session repeat=3 row reaches min decode
 `34.33` / `27.14 tok/s` with peak `682` / `547 MB`. 1.5B W8/W4
@@ -1926,14 +1931,14 @@ batched aggregate round min `34.67 tok/s`; 0.4B W8 reproduces the exactness gap
 (`backend_compare_status=mismatch`, first mismatch at token index `6` for the
 short prompt). The MLX quant backend now also has a conservative
 `--quant-backend auto` policy with backend-count telemetry: W4 auto selects the
-small-batch Metal fused dequant-projection path and the 0.4B 3-session
-sequential-vs-batched gate passes with `quantized_linear_last_backend_counts`
-showing `metal=4913` and batched aggregate round mins `78.68` / `69.17 tok/s`;
-W8 auto stays on the affine path by default until the W8/Metal batch-exactness
-gap is fixed, and the matching 0.4B W8 auto gate passes with `affine=4913` and
-batched aggregate round mins `44.40` / `47.04 tok/s`. These rows validate the
-batching seam, safe backend routing, and telemetry, not the final fp16-beating
-quant speed gate.
+Metal fused dequant-projection path for normal row counts and the 0.4B
+3-session sequential-vs-batched gate passes with
+`quantized_linear_last_backend_counts` showing `metal=4913` and batched
+aggregate round mins `78.68` / `69.17 tok/s`; W8 auto stays on the affine path
+by default until the W8/Metal batch-exactness gap is fixed, and the matching
+0.4B W8 auto gate passes with `affine=4913` and batched aggregate round mins
+`44.40` / `47.04 tok/s`. These rows validate the batching seam, safe backend
+routing, and telemetry, not the final fp16-beating quant speed gate.
 
 The current next-focus list is: 13.3B official-alignment/speed sweeps are now
 done (cos~1.0, `native_jit` 18.4 tok/s on V100; see

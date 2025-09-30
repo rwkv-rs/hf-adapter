@@ -81,6 +81,8 @@ def test_mlx_quant_formula_if_available():
     assert tuple(int(v) for v in y4_auto.shape) == (2, 7)
     expected_auto_backend = "metal" if metal_quant_available() else "affine"
     assert lin4_auto.telemetry()["last_backend"] == expected_auto_backend
+    if metal_quant_available():
+        assert lin4_auto.telemetry()["auto_metal_max_rows"] == 4096
 
     old_limit = os.environ.get("RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS")
     os.environ["RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS"] = "1"
@@ -163,6 +165,8 @@ def test_mlx_model_auto_quantized_linear_hook_if_available():
     mx.eval(logits)
     telemetry = model.telemetry()
     assert telemetry["quantized_linear_backend"] == "auto"
+    if metal_quant_available():
+        assert next(iter(model.quantized_linears.values())).telemetry()["auto_metal_max_rows"] == 4096
     expected = "metal" if metal_quant_available() else "affine"
     assert telemetry["quantized_linear_last_backend_counts"][expected] > 0
     assert int(state.seen_tokens) == 3

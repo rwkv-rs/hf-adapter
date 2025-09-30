@@ -63,7 +63,9 @@ quant ratio gates (prompt512/1024 decode16: 0.4B W8/W4 decode≈0.79x/0.81x
 fp16 with peak memory≈0.71x/0.57x; 1.5B W8/W4 decode≈0.75x/0.84x fp16 with
 peak memory≈0.70x/0.55x. prompt2048/decode128: 0.4B W8/W4 decode≈0.88x/1.04x
 fp16 with peak memory≈0.71x/0.56x; 1.5B W8/W4 decode≈0.68x/0.73x fp16 with
-peak memory≈0.70x/0.54x), an optional MLX
+peak memory≈0.70x/0.54x. The optimized W4 `--quant-backend auto` route now
+records 0.4B prefill/decode≈60.61/59.73 tok/s, decode≈1.25x fp16, and 1.5B
+prefill/decode≈27.64/20.42 tok/s, decode≈0.75x fp16), an optional MLX
 tensor bridge/export smoke, an initial MLX recurrent reference backend smoke,
 and the first optional MLX/Metal WKV custom-kernel seam (`rwkv7_hf.mlx_wkv`,
 `--wkv-backend metal|auto`) with 0.1B/0.4B/1.5B smoke rows. The Metal paths are
@@ -90,8 +92,8 @@ repeat=1), and W8/Metal `SESSION_BACKEND=auto` safety rows that fall back with
 plus `mlx_session_batch_backend_compare` rows that prove 0.4B/1.5B W4
 sequential-vs-batched token equality and localize the current 0.4B W8 mismatch,
 and a new conservative `--quant-backend auto` route with backend-count telemetry
-(W4 small batches choose Metal, W8 defaults to affine until the W8/Metal batch
-exactness gap is fixed), plus prompt/decode
+(W4 normal prefill/decode rows choose Metal, W8 defaults to affine until the
+W8/Metal batch exactness gap is fixed), plus prompt/decode
 length sweep entry points including 0.1B prompt256/decode8,
 0.4B/1.5B prompt1024/decode64 matrices, and optional `--quantization mm8/mm4`
 MLX packed-quant rows.

@@ -191,6 +191,7 @@ def main() -> int:
                     "seen_tokens_after_generate": int(gen_state.seen_tokens),
                     "expected_seen_tokens": int(expected_seen),
                     "generated_preview": generated_ids[:16],
+                    "quantized_linear_last_backend_counts": model.telemetry().get("quantized_linear_last_backend_counts"),
                     **mlx_memory_telemetry(),
                 }
                 if chunk_diff is not None:
@@ -228,6 +229,7 @@ def main() -> int:
         "min_decode_tok_s": min(float(row["decode_tok_s"]) for row in rows if row.get("decode_tok_s") is not None)
         if rows
         else None,
+        "quantized_linear_last_backend_counts": model.telemetry().get("quantized_linear_last_backend_counts"),
     }
     print(json.dumps(summary, ensure_ascii=False))
     append_result(args.results, summary)

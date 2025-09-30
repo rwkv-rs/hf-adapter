@@ -845,7 +845,7 @@ bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 # instead of aborting; current 0.4B W8/Metal strict batched decode diverges at
 # token index 6 on the short prompt while SESSION_BACKEND=auto remains safe.
 # Use QUANT_BACKEND=auto to validate the conservative quant backend router:
-# W4 small batches select Metal, while W8 defaults to affine until W8/Metal
+# W4 normal prefill/decode rows select Metal, while W8 defaults to affine until W8/Metal
 # batch exactness is fixed. The result rows expose
 # quantized_linear_last_backend_counts so reviewers can verify the route used.
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \

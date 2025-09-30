@@ -142,12 +142,18 @@ def test_apple_smoke_script_static() -> None:
     assert "all_right_one_shot_match" in mlx_session_batch_text
     assert "if require_match and not strict_match" in mlx_session_batch_text
     assert '"quantization": args.quantization' in mlx_session_batch_text
+    mlx_generation_sweep_text = (ROOT / "scripts/mlx_generation_sweep.py").read_text(encoding="utf-8")
+    assert '"quantized_linear_last_backend_counts": model.telemetry().get("quantized_linear_last_backend_counts")' in mlx_generation_sweep_text
     assert '"quant_backend": args.quant_backend' in mlx_session_batch_text
     assert '"quantized_linear_last_backend_counts": model.telemetry().get("quantized_linear_last_backend_counts")' in mlx_session_batch_text
     assert '"session_backend": args.session_backend' in mlx_session_batch_text
     assert '"min_round_decode_tok_s": min_round_decode_tok_s(rows)' in mlx_session_batch_text
     assert '"round_backend_reasons": sorted(' in mlx_session_batch_text
     model_text = (ROOT / "rwkv7_hf/mlx_model.py").read_text(encoding="utf-8")
+    quant_text = (ROOT / "rwkv7_hf/mlx_quant.py").read_text(encoding="utf-8")
+    assert "auto_metal_max_rows" in quant_text
+    assert 'RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS", 4096' in quant_text
+    assert "@lru_cache(maxsize=1)" in quant_text
     assert "auto_mm8_metal_batch_exactness_guard" in model_text
     assert 'quant_backend in {"metal", "auto"}' in model_text
     assert "round_backend_reasons" in model_text
