@@ -797,6 +797,48 @@ WKV_BACKEND=metal \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 
+# Longer equal-round session pressure. Use mm4 + SESSION_BACKEND=batched for
+# exact batched W4; use mm8 + SESSION_BACKEND=auto to keep W8 on the safe
+# sequential fallback until strict W8/Metal batched exactness is fixed.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=8 \
+ROUNDS=8,8 \
+REPEAT=2 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+SESSION_BACKEND=batched \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=5 \
+ROUNDS=8,8 \
+REPEAT=2 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+SESSION_BACKEND=batched \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=5 \
+ROUNDS=8,8 \
+REPEAT=2 \
+QUANTIZATION=mm8 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+SESSION_BACKEND=auto \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
 # Strict scheduler comparison: compare sequential vs batched without hiding
 # mismatches. Use REQUIRE_SESSION_BACKEND_MATCH=1 for W4 gates. For W8 gap
 # capture, omit REQUIRE_SESSION_BACKEND_MATCH so the row records the mismatch
