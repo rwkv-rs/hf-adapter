@@ -1896,10 +1896,15 @@ below fp16 at W8/W4 decode `0.68x` / `0.73x` with peak memory `0.70x` /
 favors Metal for normal prefill/decode rows (`metal=202885`): 0.4B W4 auto
 prompt2048/decode128 reaches prefill/decode `60.61` / `59.73 tok/s`
 (`0.88x` / `1.25x` fp16, peak `0.56x`), while 1.5B W4 auto reaches
-`27.64` / `20.42 tok/s` (`0.93x` / `0.75x` fp16, peak `0.54x`). This
-strengthens the 0.4B fp16-beating W4 long-decode evidence and narrows 1.5B
-prefill, but stable W8/W4 speed `>=1.0x` fp16 across sizes and modes still
-requires deeper fused kernels. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
+`27.64` / `20.42 tok/s` (`0.93x` / `0.75x` fp16, peak `0.54x`). A newer
+prompt4096/decode256 gate with chunk1024 still passes chunked/full prefill
+(`max_abs=0.0`) and records 0.4B fp16 `94.08` / `75.38 tok/s` versus W4 auto
+`62.01` / `55.29 tok/s` (peak `515 MB`, `0.56x` fp16), and 1.5B fp16
+`35.34` / `33.21 tok/s` versus W4 auto `27.40` / `25.46 tok/s` (peak
+`1677 MB`, `0.54x` fp16). This strengthens the long-context memory evidence
+but also shows W4 does not yet stably beat fp16 at longer prompt/decode sizes;
+stable W8/W4 speed `>=1.0x` fp16 across sizes and modes still requires deeper
+fused kernels. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
 repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
 `534 MB`, and the higher-concurrency 6-session repeat=3 row reaches min decode
 `34.33` / `27.14 tok/s` with peak `682` / `547 MB`. 1.5B W8/W4
@@ -1938,17 +1943,24 @@ left/right max-abs logit delta at that step is only `0.03125`. An explicit
 0.4B W8/Metal compare gate: 3-session and 6-session strict rows both match
 sequential and one-shot tokens, with the 6-session row reaching batched
 aggregate round mins `162.12` / `163.72 tok/s` (`metal=20378`, peak `790 MB`).
-The default W8 auto path remains conservative until this stable policy has
-longer/repeat coverage. The MLX quant backend now also has a conservative
-`--quant-backend auto` policy with backend-count telemetry: W4 auto selects the
-Metal fused dequant-projection path for normal row counts and the 0.4B
-3-session sequential-vs-batched gate passes with
-`quantized_linear_last_backend_counts` showing `metal=4913` and batched
+The stable policy now has longer/repeat coverage too: 0.4B W8/Metal
+`batched_stable` 8-session rounds8,8 repeat=2 matches one-shot tokens with
+aggregate round min `184.62 tok/s` (peak `790 MB`), and 1.5B W8/Metal
+5-session rounds8,8 repeat=2 matches one-shot tokens with aggregate round min
+`53.66 tok/s` (peak `2311 MB`). A 1.5B strict sequential-vs-batched-stable
+compare for rounds8,8 also passes. The default W8/Metal auto path remains
+guarded, but `RWKV7_MLX_SESSION_AUTO_W8_STABLE=1` now opts `SESSION_BACKEND=auto`
+into this stable policy; a 0.4B W8/Metal auto row selects `batched_stable` and
+passes with aggregate round min `90.73 tok/s` (`metal=5126`). The MLX quant
+backend now also has a conservative `--quant-backend auto` policy with
+backend-count telemetry: W4 auto selects the Metal fused dequant-projection path
+for normal row counts and the 0.4B 3-session sequential-vs-batched gate passes
+with `quantized_linear_last_backend_counts` showing `metal=4913` and batched
 aggregate round mins `78.68` / `69.17 tok/s`; W8 auto stays on the affine path
-by default until the W8/Metal batch-exactness gap is fixed, and the matching
-0.4B W8 auto gate passes with `affine=4913` and batched aggregate round mins
-`44.40` / `47.04 tok/s`. These rows validate the batching seam, safe backend
-routing, and telemetry, not the final fp16-beating quant speed gate.
+by default unless W8 Metal is explicitly enabled, and the 0.4B W8 auto
+`SESSION_BACKEND=auto` row batches safely with `affine=5126` and aggregate round
+min `49.76 tok/s`. These rows validate the batching seam, safe backend routing,
+and telemetry, not the final fp16-beating quant speed gate.
 
 The current next-focus list is: 13.3B official-alignment/speed sweeps are now
 done (cos~1.0, `native_jit` 18.4 tok/s on V100; see

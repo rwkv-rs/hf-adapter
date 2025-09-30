@@ -51,7 +51,7 @@ M5 / 16GB MPS lane covers tiny native generate/train, 0.1B HF
 load/forward/generate plus PEFT/Trainer/TRL smokes, and 0.4B HF
 fp32/fp16 load/forward/short-generate, prompt-length sweep, and PEFT/Trainer/TRL
 smokes. It also includes 1.5B rows: fp16 load/forward/short-generate, fp16
-prompt 16/64/128/256/512 sweep plus MPS prompt512/new8 and MLX prompt1024/decode64, and fp32 manual plus
+prompt 16/64/128/256/512 sweep plus MPS prompt512/new8 and MLX prompt4096/decode256, and fp32 manual plus
 Trainer/TRL PEFT LoRA 1/2/3/5/10/12-step smoke, plus native MM8/MM4
 Apple quant min-params smoke for tiny, 0.1B, 0.4B, and 1.5B model paths with
 packed-footprint telemetry, an initial MLX packed W8/W4 affine quant path
@@ -65,7 +65,8 @@ peak memory≈0.70x/0.55x. prompt2048/decode128: 0.4B W8/W4 decode≈0.88x/1.04x
 fp16 with peak memory≈0.71x/0.56x; 1.5B W8/W4 decode≈0.68x/0.73x fp16 with
 peak memory≈0.70x/0.54x. The optimized W4 `--quant-backend auto` route now
 records 0.4B prefill/decode≈60.61/59.73 tok/s, decode≈1.25x fp16, and 1.5B
-prefill/decode≈27.64/20.42 tok/s, decode≈0.75x fp16), an optional MLX
+prefill/decode≈27.64/20.42 tok/s, decode≈0.75x fp16; prompt4096/decode256
+still shows W4 below fp16 but with peak≈0.56x/0.54x for 0.4B/1.5B), an optional MLX
 tensor bridge/export smoke, an initial MLX recurrent reference backend smoke,
 and the first optional MLX/Metal WKV custom-kernel seam (`rwkv7_hf.mlx_wkv`,
 `--wkv-backend metal|auto`) with 0.1B/0.4B/1.5B smoke rows. The Metal paths are
@@ -93,12 +94,14 @@ plus `mlx_session_batch_backend_compare` rows that prove 0.4B/1.5B W4
 sequential-vs-batched token equality and localize the current 0.4B W8 mismatch
 with optional logit tracing (the first mismatch is a near-tie: token 11 vs 261,
 max-abs logit delta≈0.03125) plus an explicit `SESSION_BACKEND=batched_stable`
-W8 row that restores strict token equality on 0.4B 6-session pressure, and a
-new conservative `--quant-backend auto` route with backend-count telemetry
-(W4 normal prefill/decode rows choose Metal, W8 defaults to affine until the
-W8/Metal batch exactness gap is fixed), plus prompt/decode
+W8 row that restores strict token equality on 0.4B 6-session pressure and now
+passes 0.4B 8-session plus 1.5B 5-session rounds8,8 repeat=2 one-shot checks,
+and a new conservative `--quant-backend auto` route with backend-count telemetry
+(W4 normal prefill/decode rows choose Metal, W8 defaults to affine unless W8
+Metal is explicitly enabled; `RWKV7_MLX_SESSION_AUTO_W8_STABLE=1` opts W8/Metal
+auto into the stable policy), plus prompt/decode
 length sweep entry points including 0.1B prompt256/decode8,
-0.4B/1.5B prompt1024/decode64 matrices, and optional `--quantization mm8/mm4`
+0.4B/1.5B prompt4096/decode256 matrices, and optional `--quantization mm8/mm4`
 MLX packed-quant rows.
 
 ## Layout
