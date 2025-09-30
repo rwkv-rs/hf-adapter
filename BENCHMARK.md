@@ -1914,7 +1914,14 @@ kernels. The isolated MLX quant projection microbench
 now makes the bottleneck explicit: W4/Metal reaches `0.39x` dense for rows=1
 and `1.11x` for rows=4 (auto `1.38x`), while W8/Metal reaches `0.87x` /
 `0.67x` dense and W8 auto still routes to affine because the W8 session
-exactness guard remains open. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
+exactness guard remains open. The new grouped-projection prototype
+(`axis=mlx_quant_group_projection_bench`, groups=3) pre-packs grouped weights and
+uses one Metal launch for R/K/V-style projection groups. It preserves exactness
+versus separate Metal (`max_abs_vs_separate_metal=0.0`); W8 rows=1 improves to
+`1.12x` dense and `1.10x` separate-Metal, while W8 rows=4 is still only `0.58x`
+dense (`1.08x` separate). W4 grouped launch does not help yet (`0.75x` dense /
+`0.93x` separate for rows=1; `0.62x` dense / `0.98x` separate for rows=4), so
+W4 still needs a better packed reduction rather than launch fusion alone. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
 repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
 `534 MB`, and the higher-concurrency 6-session repeat=3 row reaches min decode
 `34.33` / `27.14 tok/s` with peak `682` / `547 MB`. 1.5B W8/W4

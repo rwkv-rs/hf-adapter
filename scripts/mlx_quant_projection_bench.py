@@ -8,7 +8,9 @@ model.  It times dense fp16 ``x @ W.T`` and the packed quant backends
 correctness versus the quantized reference path and speed ratios versus dense.
 
 The goal is not to claim production speed; it is to make the current Metal
-projection kernel bottleneck reproducible before fusing projection + WKV.
+projection kernel bottleneck reproducible before fusing projection + WKV. With
+``--groups >1`` it also measures a one-launch grouped projection prototype for
+R/K/V-style decode-hot projection groups.
 """
 from __future__ import annotations
 
@@ -191,6 +193,181 @@ def _bench_one(
             print(json.dumps(row, ensure_ascii=False))
 
 
+def _bench_group(
+    mx: Any,
+    *,
+    bits: int,
+    rows: int,
+    groups: int,
+    in_features: int,
+    out_features: int,
+    dtype: str,
+    warmup: int,
+    runs: int,
+    seed: int,
+    results: str | None,
+    json_only: bool,
+) -> None:
+    from rwkv7_hf.mlx_quant import (
+        MLXQuantizedLinear,
+        metal_quant_available,
+        mm4_group_matmul_metal,
+        mm4_matmul_mlx,
+        mm8_group_matmul_metal,
+        mm8_matmul_mlx,
+        pack_mlx_mm4_group,
+        pack_mlx_mm8_group,
+    )
+
+    dtype_obj = {"fp16": mx.float16, "fp32": mx.float32, "bf16": mx.bfloat16}[dtype]
+    groups = int(groups)
+    if groups <= 1:
+        return
+    mx.random.seed(int(seed) + int(bits) * 2000 + int(rows) * 17 + groups)
+    x = mx.random.normal((int(rows), int(in_features))).astype(dtype_obj)
+    dense_weights = [
+        mx.random.normal((int(out_features), int(in_features))).astype(dtype_obj)
+        for _ in range(groups)
+    ]
+    mx.eval(x, *dense_weights)
+
+    reset_mlx_peak_memory()
+    dense_group_y, dense_group_s = _time_call(
+        mx,
+        lambda: mx.stack([x @ w.T for w in dense_weights], axis=0),
+        warmup=warmup,
+        runs=runs,
+    )
+    mx.eval(dense_group_y)
+    dense_bytes = sum(int(w.nbytes) for w in dense_weights)
+    dense_row = {
+        "axis": "mlx_quant_group_projection_bench",
+        "status": "pass",
+        "backend": "dense_fp_group",
+        "bits": None,
+        "dtype": dtype,
+        "rows": int(rows),
+        "groups": groups,
+        "in_features": int(in_features),
+        "out_features": int(out_features),
+        "warmup": int(warmup),
+        "runs": int(runs),
+        "avg_s": _round_float(dense_group_s, 9),
+        "avg_ms": _round_float(dense_group_s * 1000.0, 6),
+        "tok_s_equiv": _round_float(float(rows * groups) / dense_group_s if dense_group_s > 0 else None, 6),
+        "metal_quant_available": bool(metal_quant_available()),
+        **mlx_memory_telemetry(),
+    }
+    _append_jsonl(results, dense_row)
+    if not json_only:
+        print(json.dumps(dense_row, ensure_ascii=False))
+
+    if not metal_quant_available():
+        row = {
+            "axis": "mlx_quant_group_projection_bench",
+            "status": "skip",
+            "reason": "metal quant kernel unavailable",
+            "backend": "metal_group",
+            "bits": int(bits),
+            "rows": int(rows),
+            "groups": groups,
+            "in_features": int(in_features),
+            "out_features": int(out_features),
+            "metal_quant_available": False,
+        }
+        _append_jsonl(results, row)
+        if not json_only:
+            print(json.dumps(row, ensure_ascii=False))
+        return
+
+    qlines = [
+        MLXQuantizedLinear.from_linear_weight(w, bits=int(bits), backend="metal")
+        for w in dense_weights
+    ]
+    if bits == 8:
+        qref_y = mx.stack([mm8_matmul_mlx(x, q.weight, backend="reference") for q in qlines], axis=0)
+    else:
+        qref_y = mx.stack([mm4_matmul_mlx(x, q.weight, backend="reference") for q in qlines], axis=0)
+    mx.eval(qref_y)
+
+    reset_mlx_peak_memory()
+    separate_y, separate_s = _time_call(
+        mx,
+        lambda: mx.stack([q(x) for q in qlines], axis=0),
+        warmup=warmup,
+        runs=runs,
+    )
+    mx.eval(separate_y)
+    max_abs_sep = mx.max(mx.abs(separate_y.astype(mx.float32) - qref_y.astype(mx.float32)))
+    mx.eval(max_abs_sep)
+    storage_bytes = sum(int(q.storage_bytes) for q in qlines)
+    separate_row = {
+        "axis": "mlx_quant_group_projection_bench",
+        "status": "pass",
+        "backend": "metal_separate",
+        "bits": int(bits),
+        "dtype": dtype,
+        "rows": int(rows),
+        "groups": groups,
+        "in_features": int(in_features),
+        "out_features": int(out_features),
+        "warmup": int(warmup),
+        "runs": int(runs),
+        "avg_s": _round_float(separate_s, 9),
+        "avg_ms": _round_float(separate_s * 1000.0, 6),
+        "tok_s_equiv": _round_float(float(rows * groups) / separate_s if separate_s > 0 else None, 6),
+        "speedup_vs_dense_group": _round_float(dense_group_s / separate_s if separate_s > 0 else None, 6),
+        "max_abs_vs_quant_reference": _round_float(float(max_abs_sep), 8),
+        "storage_bytes": int(storage_bytes),
+        "dense_weight_bytes": int(dense_bytes),
+        "footprint_ratio": _round_float(float(storage_bytes) / max(dense_bytes, 1), 6),
+        **mlx_memory_telemetry(),
+    }
+    _append_jsonl(results, separate_row)
+    if not json_only:
+        print(json.dumps(separate_row, ensure_ascii=False))
+
+    weights = [q.weight for q in qlines]
+    group_weight = pack_mlx_mm8_group(weights) if bits == 8 else pack_mlx_mm4_group(weights)
+    reset_mlx_peak_memory()
+    if bits == 8:
+        grouped_fn = lambda: mm8_group_matmul_metal(x, group_weight)
+    else:
+        grouped_fn = lambda: mm4_group_matmul_metal(x, group_weight)
+    grouped_y, grouped_s = _time_call(mx, grouped_fn, warmup=warmup, runs=runs)
+    mx.eval(grouped_y)
+    max_abs_group = mx.max(mx.abs(grouped_y.astype(mx.float32) - qref_y.astype(mx.float32)))
+    max_abs_group_vs_sep = mx.max(mx.abs(grouped_y.astype(mx.float32) - separate_y.astype(mx.float32)))
+    mx.eval(max_abs_group, max_abs_group_vs_sep)
+    row = {
+        "axis": "mlx_quant_group_projection_bench",
+        "status": "pass",
+        "backend": "metal_group",
+        "bits": int(bits),
+        "dtype": dtype,
+        "rows": int(rows),
+        "groups": groups,
+        "in_features": int(in_features),
+        "out_features": int(out_features),
+        "warmup": int(warmup),
+        "runs": int(runs),
+        "avg_s": _round_float(grouped_s, 9),
+        "avg_ms": _round_float(grouped_s * 1000.0, 6),
+        "tok_s_equiv": _round_float(float(rows * groups) / grouped_s if grouped_s > 0 else None, 6),
+        "speedup_vs_dense_group": _round_float(dense_group_s / grouped_s if grouped_s > 0 else None, 6),
+        "speedup_vs_separate_metal": _round_float(separate_s / grouped_s if grouped_s > 0 else None, 6),
+        "max_abs_vs_quant_reference": _round_float(float(max_abs_group), 8),
+        "max_abs_vs_separate_metal": _round_float(float(max_abs_group_vs_sep), 8),
+        "storage_bytes": int(storage_bytes),
+        "dense_weight_bytes": int(dense_bytes),
+        "footprint_ratio": _round_float(float(storage_bytes) / max(dense_bytes, 1), 6),
+        **mlx_memory_telemetry(),
+    }
+    _append_jsonl(results, row)
+    if not json_only:
+        print(json.dumps(row, ensure_ascii=False))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rows", default="1,4", help="Comma-separated row counts to test.")
@@ -199,6 +376,7 @@ def main() -> int:
     parser.add_argument("--out-features", type=int, default=2048)
     parser.add_argument("--dtype", choices=["fp16", "fp32", "bf16"], default="fp16")
     parser.add_argument("--backends", default="reference,affine,metal,auto")
+    parser.add_argument("--groups", type=int, default=1, help="If >1, also run a grouped Metal projection microbench.")
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--seed", type=int, default=20260705)
@@ -216,6 +394,7 @@ def main() -> int:
             "machine": platform.machine(),
             "rows": _parse_csv_ints(args.rows),
             "bits": _parse_csv_ints(args.bits),
+            "groups": int(args.groups),
             "in_features": int(args.in_features),
             "out_features": int(args.out_features),
             "backends": _parse_csv_strs(args.backends),
@@ -237,6 +416,7 @@ def main() -> int:
         "mlx_version": getattr(mx, "__version__", None),
         "rows": rows_list,
         "bits": bits_list,
+        "groups": int(args.groups),
         "in_features": int(args.in_features),
         "out_features": int(args.out_features),
         "dtype": args.dtype,
@@ -260,6 +440,20 @@ def main() -> int:
                 out_features=args.out_features,
                 dtype=args.dtype,
                 backends=backends,
+                warmup=args.warmup,
+                runs=args.runs,
+                seed=args.seed,
+                results=args.results,
+                json_only=args.json_only,
+            )
+            _bench_group(
+                mx,
+                bits=bits,
+                rows=rows,
+                groups=args.groups,
+                in_features=args.in_features,
+                out_features=args.out_features,
+                dtype=args.dtype,
                 warmup=args.warmup,
                 runs=args.runs,
                 seed=args.seed,

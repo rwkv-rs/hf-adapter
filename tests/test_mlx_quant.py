@@ -28,8 +28,12 @@ def test_mlx_quant_formula_if_available():
     from rwkv7_hf.mlx_quant import (
         MLXQuantizedLinear,
         metal_quant_available,
+        mm4_group_matmul_metal,
         mm4_matmul_mlx,
+        mm8_group_matmul_metal,
         mm8_matmul_mlx,
+        pack_mlx_mm4_group,
+        pack_mlx_mm8_group,
         quantize_mlx_mm4,
         quantize_mlx_mm8,
     )
@@ -48,6 +52,15 @@ def test_mlx_quant_formula_if_available():
         y8_metal = mm8_matmul_mlx(x, q8_metal, backend="metal")
         mx.eval(y8_metal)
         assert float(mx.max(mx.abs(y8_ref - y8_metal))) < 5e-2
+        q8_group = [
+            quantize_mlx_mm8(weight, layout="metal"),
+            quantize_mlx_mm8((weight * 0.5).astype(mx.float16), layout="metal"),
+        ]
+        y8_group = mm8_group_matmul_metal(x, pack_mlx_mm8_group(q8_group))
+        y8_group_expected = mx.stack([mm8_matmul_mlx(x, q, backend="metal") for q in q8_group], axis=0)
+        mx.eval(y8_group, y8_group_expected)
+        assert tuple(int(v) for v in y8_group.shape) == (2, 2, 7)
+        assert float(mx.max(mx.abs(y8_group - y8_group_expected))) < 5e-2
 
     q4 = quantize_mlx_mm4(weight)
     y4_ref = mm4_matmul_mlx(x, q4, backend="reference")
@@ -59,6 +72,15 @@ def test_mlx_quant_formula_if_available():
         y4_metal = mm4_matmul_mlx(x, q4_metal, backend="metal")
         mx.eval(y4_metal)
         assert float(mx.max(mx.abs(y4_ref - y4_metal))) < 5e-2
+        q4_group = [
+            quantize_mlx_mm4(weight, layout="metal"),
+            quantize_mlx_mm4((weight * 0.5).astype(mx.float16), layout="metal"),
+        ]
+        y4_group = mm4_group_matmul_metal(x, pack_mlx_mm4_group(q4_group))
+        y4_group_expected = mx.stack([mm4_matmul_mlx(x, q, backend="metal") for q in q4_group], axis=0)
+        mx.eval(y4_group, y4_group_expected)
+        assert tuple(int(v) for v in y4_group.shape) == (2, 2, 7)
+        assert float(mx.max(mx.abs(y4_group - y4_group_expected))) < 5e-2
 
     # Linear weights are stored [out, in]; the helper quantizes weight.T.
     linear_weight = weight.T

@@ -1045,6 +1045,7 @@ python scripts/mlx_quant_projection_bench.py \
   --out-features 2048 \
   --dtype fp16 \
   --backends reference,affine,metal,auto \
+  --groups 3 \
   --warmup 1 \
   --runs 3 \
   --results bench/results_apple_silicon_mlx_recurrent.jsonl
