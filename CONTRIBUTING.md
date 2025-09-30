@@ -711,8 +711,11 @@ REPEAT=2 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 
-# Quant+Metal interleaved session-batch pressure. Use QUANTIZATION=mm8 or mm4;
-# this validates prefill-once/session state reuse while both WKV and quantized
+# Quant+Metal interleaved session-batch pressure. Use QUANTIZATION=mm4 with
+# SESSION_BACKEND=batched for the current batch-exact path. For QUANTIZATION=mm8
+# use SESSION_BACKEND=auto; it records auto_mm8_metal_batch_exactness_guard and
+# falls back to sequential until strict W8/Metal batched decode is fixed.
+# This validates prefill-once/session state reuse while both WKV and quantized
 # projections use the opt-in Metal paths.
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 DTYPE=fp16 \

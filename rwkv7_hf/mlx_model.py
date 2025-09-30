@@ -361,6 +361,7 @@ class MLXGenerationSessionBatch:
         self.sessions = list(sessions)
         self.round_count = 0
         self.round_backends: list[str] = []
+        self.round_backend_reasons: list[str] = []
         self.round_decode_s: list[float] = []
         self.round_generated_tokens: list[int] = []
 
@@ -403,14 +404,31 @@ class MLXGenerationSessionBatch:
             raise ValueError("all token counts must be non-negative")
         return steps
 
-    def _decode_round_sequential(self, steps: list[int]) -> list[MLXSessionStepOutput]:
+    def _decode_round_sequential(self, steps: list[int], *, reason: str = "requested") -> list[MLXSessionStepOutput]:
         t0 = time.perf_counter()
         outputs = [session.decode(step) for session, step in zip(self.sessions, steps)]
         elapsed = time.perf_counter() - t0
         self.round_decode_s.append(float(elapsed))
         self.round_generated_tokens.append(int(sum(steps)))
         self.round_backends.append("sequential")
+        self.round_backend_reasons.append(str(reason))
         return outputs
+
+    def _auto_batch_disabled_reason(self) -> str | None:
+        """Return why ``backend='auto'`` should avoid batched decode.
+
+        W8/Metal projection is correct for one-shot and sequential session
+        paths, but current long multi-session batched decode can diverge from
+        one-shot greedy tokens on larger real checkpoints.  Keep ``auto`` as the
+        production-safe scheduler and require explicit ``backend='batched'`` for
+        ongoing W8/Metal batch-exactness investigations.
+        """
+
+        bits = getattr(self.model, "quantized_linear_bits", None)
+        quant_backend = getattr(self.model, "quantized_linear_backend", None)
+        if bits == 8 and quant_backend == "metal":
+            return "auto_mm8_metal_batch_exactness_guard"
+        return None
 
     def _stack_state(self) -> tuple[MLXRWKV7State, list[int]]:
         mx = _mx()
@@ -446,7 +464,7 @@ class MLXGenerationSessionBatch:
         mx = _mx()
         n = int(tokens_per_session)
         if n <= 0:
-            return self._decode_round_sequential([n] * self.batch_size)
+            return self._decode_round_sequential([n] * self.batch_size, reason="zero_token_round")
 
         prior_seen = [int(session.state.seen_tokens) for session in self.sessions]
         stacked_state, _ = self._stack_state()
@@ -485,6 +503,7 @@ class MLXGenerationSessionBatch:
         self.round_decode_s.append(float(elapsed))
         self.round_generated_tokens.append(int(n * self.batch_size))
         self.round_backends.append("batched")
+        self.round_backend_reasons.append("equal_positive_round")
         return outputs
 
     def decode_round(
@@ -499,7 +518,8 @@ class MLXGenerationSessionBatch:
         ``backend="batched"`` requires equal positive token counts and decodes
         all sessions as one MLX batch.  ``backend="auto"`` uses the batched path
         when all sessions request the same positive number of tokens and falls
-        back to the sequential path for heterogeneous or zero-token rounds.
+        back to the sequential path for heterogeneous or zero-token rounds, plus
+        W8/Metal until its long batched-session exactness gap is closed.
         """
 
         steps = self._normalize_steps(tokens_per_session)
@@ -508,11 +528,16 @@ class MLXGenerationSessionBatch:
             raise ValueError(f"unsupported MLX session backend {backend!r}; expected sequential, batched, or auto")
 
         if selected_backend == "sequential":
-            outputs = self._decode_round_sequential(steps)
-        elif len(set(steps)) == 1 and steps[0] > 0:
+            outputs = self._decode_round_sequential(steps, reason="requested")
+        elif len(set(steps)) == 1 and steps[0] > 0 and (
+            selected_backend == "batched" or self._auto_batch_disabled_reason() is None
+        ):
             outputs = self._decode_round_batched(steps[0])
         elif selected_backend == "auto":
-            outputs = self._decode_round_sequential(steps)
+            reason = self._auto_batch_disabled_reason()
+            if reason is None:
+                reason = "heterogeneous_or_zero_round"
+            outputs = self._decode_round_sequential(steps, reason=reason)
         else:
             raise ValueError("backend='batched' requires equal positive token counts for every session")
         self.round_count += 1
@@ -531,7 +556,9 @@ class MLXGenerationSessionBatch:
             "batch_size": int(self.batch_size),
             "session_rounds": int(self.round_count),
             "round_backends": list(self.round_backends),
+            "round_backend_reasons": list(self.round_backend_reasons),
             "last_round_backend": self.round_backends[-1] if self.round_backends else None,
+            "last_round_backend_reason": self.round_backend_reasons[-1] if self.round_backend_reasons else None,
             "round_decode_s": round_decode_s,
             "round_generated_tokens": [int(value) for value in self.round_generated_tokens],
             "round_decode_tok_s": [

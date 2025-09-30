@@ -97,6 +97,7 @@ def run_interleaved_batch(
                 "tokens_per_session": int(tokens),
                 "session_backend": session_backend,
                 "actual_backend": batch.round_backends[-1] if batch.round_backends else None,
+                "backend_reason": batch.round_backend_reasons[-1] if batch.round_backend_reasons else None,
                 "sessions": [output.telemetry() for output in outputs],
             }
         )
@@ -301,6 +302,9 @@ def main() -> int:
         "wkv_backend": args.wkv_backend,
         "session_backend": args.session_backend,
         "round_backends": sorted({backend for row in rows for backend in row.get("round_backends", [])}),
+        "round_backend_reasons": sorted(
+            {reason for row in rows for reason in row.get("round_backend_reasons", [])}
+        ),
         "max_prompt_tokens": max(max(int(x) for x in row.get("prompt_tokens", [0])) for row in rows) if rows else None,
         "max_generated_tokens": max(max(int(x) for x in row.get("generated_tokens", [0])) for row in rows) if rows else None,
         "max_mlx_active_memory_bytes": max(int(row.get("mlx_active_memory_bytes", 0)) for row in rows) if rows else None,
