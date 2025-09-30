@@ -883,6 +883,24 @@ MISMATCH_TOPK=5 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 
+# Experimental W8/Metal low-margin stable argmax gate. This should pass strict
+# compare before considering any W8 auto batching rollout.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=6 \
+ROUNDS=4,4 \
+REPEAT=1 \
+QUANTIZATION=mm8 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+SESSION_BACKEND=sequential \
+COMPARE_SESSION_BACKEND=batched_stable \
+COMPARE_ONLY=1 \
+REQUIRE_SESSION_BACKEND_MATCH=1 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
 # Conservative quant backend auto route. W4 should report Metal calls in
 # quantized_linear_last_backend_counts; W8 should report affine calls by default.
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \

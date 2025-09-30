@@ -1933,8 +1933,13 @@ short prompt). A new optional `--trace-mismatch-logits` row localizes that gap:
 at step 6 the sequential path has an exact tie between tokens `11` and `261`
 (logits `8.476562` / `8.476562`, `mx.argmax` selects `11`), while the batched
 Metal path shifts token `11` down to `8.46875` and selects `261`; the traced
-left/right max-abs logit delta at that step is only `0.03125`. The MLX quant
-backend now also has a conservative
+left/right max-abs logit delta at that step is only `0.03125`. An explicit
+`SESSION_BACKEND=batched_stable` low-margin argmax policy closes this traced
+0.4B W8/Metal compare gate: 3-session and 6-session strict rows both match
+sequential and one-shot tokens, with the 6-session row reaching batched
+aggregate round mins `162.12` / `163.72 tok/s` (`metal=20378`, peak `790 MB`).
+The default W8 auto path remains conservative until this stable policy has
+longer/repeat coverage. The MLX quant backend now also has a conservative
 `--quant-backend auto` policy with backend-count telemetry: W4 auto selects the
 Metal fused dequant-projection path for normal row counts and the 0.4B
 3-session sequential-vs-batched gate passes with
