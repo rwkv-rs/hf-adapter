@@ -1907,9 +1907,16 @@ tokens, so `SESSION_BACKEND=auto` now records an
 `auto_mm8_metal_batch_exactness_guard` reason and falls back to sequential for
 W8/Metal while W4 uses the batched path. Safe W8/Metal auto rows pass for 0.4B
 6-session repeat=2 (min decode `39.80 tok/s`, peak `682 MB`) and 1.5B
-5-session repeat=1 (min decode `17.43 tok/s`, peak `2198 MB`). These rows
-validate the batching seam and safety telemetry, not the final fp16-beating
-quant speed gate.
+5-session repeat=1 (min decode `17.43 tok/s`, peak `2198 MB`). A dedicated
+`axis=mlx_session_batch_backend_compare` row now compares sequential vs batched
+without hiding mismatches: 0.4B W4 and 1.5B W4 both match each other and
+one-shot tokens (`all_backend_token_match=true`,
+`all_right_one_shot_token_match=true`) with batched aggregate round mins
+`145.89` and `38.31 tok/s`; 1.5B W8 also matches in this matrix with
+batched aggregate round min `34.67 tok/s`; 0.4B W8 reproduces the exactness gap
+(`backend_compare_status=mismatch`, first mismatch at token index `6` for the
+short prompt). These rows validate the batching seam and safety telemetry, not
+the final fp16-beating quant speed gate.
 
 The current next-focus list is: 13.3B official-alignment/speed sweeps are now
 done (cos~1.0, `native_jit` 18.4 tok/s on V100; see

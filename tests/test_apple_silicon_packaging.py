@@ -99,8 +99,14 @@ def test_apple_smoke_script_static() -> None:
     assert "QUANT_BACKEND" in mlx_session_batch_text
     assert "WKV_BACKEND" in mlx_session_batch_text
     assert "SESSION_BACKEND" in mlx_session_batch_text
+    assert "COMPARE_SESSION_BACKEND" in mlx_session_batch_text
+    assert "COMPARE_ONLY" in mlx_session_batch_text
+    assert "REQUIRE_SESSION_BACKEND_MATCH" in mlx_session_batch_text
     assert "--wkv-backend" in mlx_session_batch_text
     assert "--session-backend" in mlx_session_batch_text
+    assert "--compare-session-backend" in mlx_session_batch_text
+    assert "--compare-only" in mlx_session_batch_text
+    assert "--require-session-backend-match" in mlx_session_batch_text
     mlx_session_batch_wrapper = ROOT / "scripts/run_apple_silicon_mlx_session_batch_smoke.sh"
     assert mlx_session_batch_wrapper.exists()
     assert mlx_session_batch_wrapper.stat().st_mode & stat.S_IXUSR
@@ -128,6 +134,13 @@ def test_apple_smoke_script_static() -> None:
     assert 'choices=["affine", "reference", "metal"]' in mlx_session_batch_text
     assert 'choices=["reference", "metal", "auto"]' in mlx_session_batch_text
     assert 'choices=["sequential", "batched", "auto"]' in mlx_session_batch_text
+    assert 'choices=["none", "sequential", "batched", "auto"]' in mlx_session_batch_text
+    assert '"axis": "mlx_session_batch_backend_compare"' in mlx_session_batch_text
+    assert '"backend_compare_status": "match" if strict_match else "mismatch"' in mlx_session_batch_text
+    assert '"strict_match": bool(strict_match)' in mlx_session_batch_text
+    assert "all_left_one_shot_match" in mlx_session_batch_text
+    assert "all_right_one_shot_match" in mlx_session_batch_text
+    assert "if require_match and not strict_match" in mlx_session_batch_text
     assert '"quantization": args.quantization' in mlx_session_batch_text
     assert '"quant_backend": args.quant_backend' in mlx_session_batch_text
     assert '"session_backend": args.session_backend' in mlx_session_batch_text

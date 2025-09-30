@@ -768,6 +768,42 @@ WKV_BACKEND=metal \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 
+# Strict scheduler comparison: compare sequential vs batched without hiding
+# mismatches. Use REQUIRE_SESSION_BACKEND_MATCH=1 for W4 gates. For W8 gap
+# capture, omit REQUIRE_SESSION_BACKEND_MATCH so the row records the mismatch
+# instead of aborting; current 0.4B W8/Metal strict batched decode diverges at
+# token index 6 on the short prompt while SESSION_BACKEND=auto remains safe.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=6 \
+ROUNDS=4,4 \
+REPEAT=1 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+SESSION_BACKEND=sequential \
+COMPARE_SESSION_BACKEND=batched \
+COMPARE_ONLY=1 \
+REQUIRE_SESSION_BACKEND_MATCH=1 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=6 \
+ROUNDS=4,4 \
+REPEAT=1 \
+QUANTIZATION=mm8 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+SESSION_BACKEND=sequential \
+COMPARE_SESSION_BACKEND=batched \
+COMPARE_ONLY=1 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
 # Extended 0.4B / 1.5B long-decode matrix: prompt1024 + decode64.
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 DTYPE=fp16 \
