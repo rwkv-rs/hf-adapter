@@ -426,7 +426,7 @@ class MLXGenerationSessionBatch:
 
         bits = getattr(self.model, "quantized_linear_bits", None)
         quant_backend = getattr(self.model, "quantized_linear_backend", None)
-        if bits == 8 and quant_backend == "metal":
+        if bits == 8 and quant_backend in {"metal", "auto"}:
             return "auto_mm8_metal_batch_exactness_guard"
         return None
 
@@ -649,10 +649,14 @@ class MLXRWKV7Model:
         This is the Apple packed-quant projection seam.  ``backend=affine`` runs
         dequant-matmul via MLX affine decomposition without materializing a dense
         dequantized fp16/fp32 weight; ``backend=reference`` keeps a correctness
-        fallback.  A future Metal kernel can replace this backend without
-        changing model/cache/generation code.
+        fallback; ``backend=metal`` enables the fused dequant-projection kernel;
+        ``backend=auto`` selects the safe small-batch Metal path where current
+        exactness and speed gates allow it.
         """
 
+        backend = (backend or "affine").lower().strip()
+        if backend not in {"affine", "reference", "metal", "auto"}:
+            raise ValueError(f"unsupported MLX quant backend {backend!r}; expected affine, reference, metal, or auto")
         q = quantization.lower().strip()
         if q in {"mm8", "w8", "8", "int8"}:
             bits = 8
@@ -700,6 +704,11 @@ class MLXRWKV7Model:
                         self.quantized_linear_bytes / max(self.quantized_dense_equivalent_bytes, 1), 6
                     ),
                     "quantized_linear_keys_preview": sorted(self.quantized_linears)[:8],
+                    "quantized_linear_last_backend_counts": {
+                        "reference": sum(int(q.backend_counts.get("reference", 0)) for q in self.quantized_linears.values()),
+                        "affine": sum(int(q.backend_counts.get("affine", 0)) for q in self.quantized_linears.values()),
+                        "metal": sum(int(q.backend_counts.get("metal", 0)) for q in self.quantized_linears.values()),
+                    },
                 }
             )
         return out

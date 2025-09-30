@@ -28,8 +28,9 @@ Weights use the same layout as the native Torch/CUDA helpers: quantize
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
+import os
 from typing import Any
 
 from .mlx_bridge import mlx_array_nbytes, mlx_available, require_mlx
@@ -56,6 +57,40 @@ def metal_quant_available() -> bool:
         return bool(hasattr(mx, "fast") and hasattr(mx.fast, "metal_kernel"))
     except Exception:
         return False
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return int(default)
+    try:
+        return int(raw)
+    except ValueError:
+        return int(default)
+
+
+def _select_auto_backend(bits: int, rows: int) -> str:
+    """Choose a safe MLX quant projection backend for ``backend="auto"``.
+
+    The current one-output-per-thread Metal projection is fastest for recurrent
+    decode-sized batches but loses to the affine MLX decomposition at larger
+    row counts.  W4/Metal is batch-exact in the current session gates, so auto
+    uses it for small batches and falls back to affine for larger batches.
+
+    W8/Metal still has a known session-batch exactness gap.  Keep W8 auto on
+    the affine path by default; developers can opt into row-1 Metal while
+    investigating with ``RWKV7_MLX_QUANT_AUTO_W8_METAL_MAX_ROWS=1``.
+    """
+
+    if not metal_quant_available():
+        return "affine"
+    if int(bits) == 4:
+        max_rows = _env_int("RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS", 16)
+    elif int(bits) == 8:
+        max_rows = _env_int("RWKV7_MLX_QUANT_AUTO_W8_METAL_MAX_ROWS", 0)
+    else:
+        max_rows = 0
+    return "metal" if max_rows > 0 and int(rows) <= max_rows else "affine"
 
 
 def _affine_minmax(weight: Any):
@@ -138,10 +173,12 @@ class MLXMM4Weight:
 
 @dataclass
 class MLXQuantizedLinear:
-    """Quantized MLX Linear weight with reference and affine matmul backends."""
+    """Quantized MLX Linear weight with reference, affine, Metal, and auto backends."""
 
     weight: MLXMM8Weight | MLXMM4Weight
     backend: str = "affine"
+    last_backend: str | None = None
+    backend_counts: dict[str, int] = field(default_factory=lambda: {"reference": 0, "affine": 0, "metal": 0})
 
     @property
     def bits(self) -> int:
@@ -163,22 +200,41 @@ class MLXQuantizedLinear:
     def from_linear_weight(cls, dense_weight: Any, *, bits: int, backend: str = "affine") -> "MLXQuantizedLinear":
         """Quantize an MLX Linear ``weight [out, in]`` for ``linear(x, weight)``."""
 
-        layout = "metal" if backend == "metal" else "standard"
+        backend = (backend or "affine").lower().strip()
+        if backend not in {"reference", "affine", "metal", "auto"}:
+            raise ValueError(f"unsupported MLX quant backend {backend!r}; expected reference, affine, metal, or auto")
+        layout = "metal" if backend in {"metal", "auto"} else "standard"
         if bits == 8:
             return cls(quantize_mlx_mm8(dense_weight.T, layout=layout), backend=backend)
         if bits == 4:
             return cls(quantize_mlx_mm4(dense_weight.T, layout=layout), backend=backend)
         raise ValueError(f"unsupported MLX quant bits {bits}; expected 8 or 4")
 
+    def _selected_backend(self, x: Any) -> str:
+        backend = (self.backend or "affine").lower().strip()
+        if backend == "auto":
+            rows = int(x.reshape(-1, self.in_features).shape[0])
+            return _select_auto_backend(self.bits, rows)
+        if backend in {"reference", "affine", "metal"}:
+            return backend
+        raise ValueError(f"unsupported MLX quant backend {self.backend!r}; expected reference, affine, metal, or auto")
+
     def __call__(self, x: Any) -> Any:
+        backend = self._selected_backend(x)
         if isinstance(self.weight, MLXMM8Weight):
-            return mm8_matmul_mlx(x, self.weight, backend=self.backend)
-        return mm4_matmul_mlx(x, self.weight, backend=self.backend)
+            y = mm8_matmul_mlx(x, self.weight, backend=backend)
+        else:
+            y = mm4_matmul_mlx(x, self.weight, backend=backend)
+        self.last_backend = backend
+        self.backend_counts[backend] = int(self.backend_counts.get(backend, 0)) + 1
+        return y
 
     def telemetry(self) -> dict[str, Any]:
         return {
             "bits": self.bits,
             "backend": self.backend,
+            "last_backend": self.last_backend,
+            "backend_counts": dict(self.backend_counts),
             "in_features": self.in_features,
             "out_features": self.out_features,
             "storage_bytes": self.storage_bytes,
@@ -303,9 +359,12 @@ def mm8_matmul_metal(x: Any, q: MLXMM8Weight) -> Any:
 
 
 def mm8_matmul_mlx(x: Any, q: MLXMM8Weight, *, backend: str = "affine") -> Any:
-    """Run ``x @ dequant(q)`` with a reference, affine, or Metal MLX backend."""
+    """Run ``x @ dequant(q)`` with a reference, affine, Metal, or auto MLX backend."""
 
     mx = _mx()
+    backend = (backend or "affine").lower().strip()
+    if backend == "auto":
+        backend = _select_auto_backend(8, int(x.reshape(-1, q.n).shape[0]))
     if backend == "reference":
         return x @ dequantize_mlx_mm8(q, out_dtype=x.dtype)
     if backend == "metal":
@@ -468,9 +527,12 @@ def mm4_matmul_metal(x: Any, q: MLXMM4Weight) -> Any:
 
 
 def mm4_matmul_mlx(x: Any, q: MLXMM4Weight, *, backend: str = "affine") -> Any:
-    """Run ``x @ dequant(q)`` with a reference, affine, or Metal MLX backend."""
+    """Run ``x @ dequant(q)`` with a reference, affine, Metal, or auto MLX backend."""
 
     mx = _mx()
+    backend = (backend or "affine").lower().strip()
+    if backend == "auto":
+        backend = _select_auto_backend(4, int(x.reshape(-1, q.n).shape[0]))
     if backend == "reference":
         return x @ dequantize_mlx_mm4(q, out_dtype=x.dtype)
     if backend == "metal":
