@@ -1900,11 +1900,16 @@ prompt2048/decode128 reaches prefill/decode `60.61` / `59.73 tok/s`
 prompt4096/decode256 gate with chunk1024 still passes chunked/full prefill
 (`max_abs=0.0`) and records 0.4B fp16 `94.08` / `75.38 tok/s` versus W4 auto
 `62.01` / `55.29 tok/s` (peak `515 MB`, `0.56x` fp16), and 1.5B fp16
-`35.34` / `33.21 tok/s` versus W4 auto `27.40` / `25.46 tok/s` (peak
-`1677 MB`, `0.54x` fp16). This strengthens the long-context memory evidence
-but also shows W4 does not yet stably beat fp16 at longer prompt/decode sizes;
-stable W8/W4 speed `>=1.0x` fp16 across sizes and modes still requires deeper
-fused kernels. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
+`35.34` / `33.21 tok/s` versus W8/Metal `22.52` / `20.54 tok/s` (peak
+`2147 MB`, `0.70x` fp16) and W4 auto `27.40` / `25.46 tok/s` (peak
+`1677 MB`, `0.54x` fp16). The new 1.5B prompt8192/decode512 chunk2048 row
+also passes chunked/full prefill (`max_abs=0.0`): fp16 reaches `27.97` /
+`26.02 tok/s`, while W4 auto reaches `22.77` / `21.20 tok/s` with peak
+`1677 MB` (`0.54x` fp16) and `metal=811525`, or about `0.81x` fp16 for both
+prefill and decode. This strengthens the long-context memory evidence but also
+shows W4 does not yet stably beat fp16 at longer prompt/decode sizes; stable
+W8/W4 speed `>=1.0x` fp16 across sizes and modes still requires deeper fused
+kernels. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
 repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
 `534 MB`, and the higher-concurrency 6-session repeat=3 row reaches min decode
 `34.33` / `27.14 tok/s` with peak `682` / `547 MB`. 1.5B W8/W4

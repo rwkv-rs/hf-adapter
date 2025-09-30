@@ -995,6 +995,45 @@ REPEAT=1 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_generation_sweep.sh
 
+# 1.5B W8 same-shape ratio row for prompt4096 + decode256.
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=4096 \
+DECODE_LENGTHS=256 \
+CHUNK_SIZE=1024 \
+REPEAT=1 \
+QUANTIZATION=mm8 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
+# Extra-long 1.5B W4 long-decode gate: prompt8192 + decode512. Run after the
+# prompt4096 rows on 16GB machines because full+chunk prefill takes minutes.
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=8192 \
+DECODE_LENGTHS=512 \
+CHUNK_SIZE=2048 \
+REPEAT=1 \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=8192 \
+DECODE_LENGTHS=512 \
+CHUNK_SIZE=2048 \
+REPEAT=1 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=auto \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
 # Higher-pressure session matrix: 4 concurrent sessions, longer rounds, repeat=4.
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 DTYPE=fp16 \
@@ -1043,7 +1082,7 @@ wrapper. On 16GB machines, start with tiny / 0.1B first, then short 0.4B
 generate, `scripts/run_apple_silicon_model_sweep.sh`, and 0.4B PEFT/Trainer/TRL
 one-step smoke before longer sweeps. For 1.5B on 16GB machines, start with
 fp16 load/forward/short-generate and a prompt-length sweep through 512 tokens;
-then add prompt4096/decode256 or 12-step Trainer/TRL rows only after closing other
+then add prompt4096/decode256, prompt8192/decode512, or 12-step Trainer/TRL rows only after closing other
 memory-heavy apps, and confirm the result has finite positive
 trainable-gradient or trainable-update totals. Treat non-finite fp16 PEFT
 gradients/updates as a failed row, not as evidence.
