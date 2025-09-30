@@ -15,7 +15,7 @@ import platform
 from pathlib import Path
 from typing import Any
 
-from rwkv7_hf.mlx_bridge import mlx_available, mlx_memory_telemetry, reset_mlx_peak_memory
+from rwkv7_hf.mlx_bridge import mlx_available, mlx_memory_telemetry, require_mlx, reset_mlx_peak_memory
 from rwkv7_hf.mlx_model import MLXGenerationSessionBatch, load_mlx_rwkv7_model
 
 
@@ -73,6 +73,107 @@ def first_mismatch(left: list[int], right: list[int]) -> int | None:
     return None
 
 
+def _logit_snapshot(logits: Any, *, topk: int, token_ids: list[int]) -> dict[str, Any]:
+    mx = require_mlx()
+    vec = logits.reshape(-1).astype(mx.float32)
+    k = max(1, min(int(topk), int(vec.shape[0])))
+    argmax = mx.argmax(vec)
+    order = mx.argsort(vec)[-k:]
+    values = vec[order]
+    mx.eval(argmax, order, values)
+    top_tokens = [int(x) for x in order.tolist()][::-1]
+    top_values = [float(x) for x in values.tolist()][::-1]
+    token_values = {}
+    for token_id in token_ids:
+        if token_id is None:
+            continue
+        tid = int(token_id)
+        token_values[str(tid)] = round(float(vec[tid]), 6)
+    margin = top_values[0] - top_values[1] if len(top_values) > 1 else None
+    return {
+        "argmax": int(argmax.item()),
+        "top": [
+            {"token": int(tok), "logit": round(float(val), 6)}
+            for tok, val in zip(top_tokens, top_values)
+        ],
+        "top1_top2_margin": round(float(margin), 6) if margin is not None else None,
+        "token_logits": token_values,
+    }
+
+
+def trace_backend_mismatch_logits(
+    *,
+    model: Any,
+    tokenizer: Any,
+    prompts: list[str],
+    rounds: list[int],
+    session_backend: str,
+    compare_session_backend: str,
+    skip_special_tokens: bool,
+    target_sessions: list[dict[str, Any]],
+    topk: int,
+) -> list[dict[str, Any]]:
+    """Replay compared schedulers token-by-token and capture logits around mismatches."""
+
+    mx = require_mlx()
+    expected_tokens = int(sum(rounds))
+    targets = [
+        {
+            "session_index": int(item["session_index"]),
+            "first_token_mismatch_index": item.get("first_token_mismatch_index"),
+        }
+        for item in target_sessions
+        if item.get("first_token_mismatch_index") is not None
+    ]
+    if not targets:
+        return []
+    target_indices = {int(item["session_index"]) for item in targets}
+    max_needed = max(int(item["first_token_mismatch_index"]) for item in targets) + 1
+    trace_steps = min(expected_tokens, max_needed)
+    left_batch = MLXGenerationSessionBatch.from_prompts(
+        model, tokenizer, prompts, skip_special_tokens=skip_special_tokens
+    )
+    right_batch = MLXGenerationSessionBatch.from_prompts(
+        model, tokenizer, prompts, skip_special_tokens=skip_special_tokens
+    )
+    traces: dict[int, dict[str, Any]] = {
+        int(item["session_index"]): {
+            "session_index": int(item["session_index"]),
+            "prompt_preview": prompts[int(item["session_index"])][:80],
+            "first_token_mismatch_index": item.get("first_token_mismatch_index"),
+            "steps": [],
+        }
+        for item in targets
+    }
+    for step in range(trace_steps):
+        for session_index in sorted(target_indices):
+            left_logits = left_batch.sessions[session_index].logits[:, -1, :]
+            right_logits = right_batch.sessions[session_index].logits[:, -1, :]
+            left_argmax = int(mx.argmax(left_logits.reshape(-1)).item())
+            right_argmax = int(mx.argmax(right_logits.reshape(-1)).item())
+            interested = sorted({left_argmax, right_argmax})
+            diff = mx.max(mx.abs(left_logits.astype(mx.float32) - right_logits.astype(mx.float32)))
+            mx.eval(diff)
+            traces[session_index]["steps"].append(
+                {
+                    "step_index": int(step),
+                    "left_snapshot": _logit_snapshot(left_logits, topk=topk, token_ids=interested),
+                    "right_snapshot": _logit_snapshot(right_logits, topk=topk, token_ids=interested),
+                    "left_right_logits_max_abs": round(float(diff), 6),
+                }
+            )
+        left_batch.decode_round(1, backend=session_backend)
+        right_batch.decode_round(1, backend=compare_session_backend)
+        for session_index in sorted(target_indices):
+            entry = traces[session_index]["steps"][-1]
+            entry["left_generated_token"] = int(left_batch.sessions[session_index].generated_ids[-1])
+            entry["right_generated_token"] = int(right_batch.sessions[session_index].generated_ids[-1])
+            entry["generated_token_match"] = bool(
+                entry["left_generated_token"] == entry["right_generated_token"]
+            )
+    return [traces[idx] for idx in sorted(traces)]
+
+
 def run_session_backend_sequence(
     *,
     model: Any,
@@ -120,6 +221,8 @@ def run_backend_compare(
     session_backend: str,
     compare_session_backend: str,
     require_match: bool,
+    trace_mismatch_logits: bool = False,
+    mismatch_topk: int = 5,
 ) -> tuple[dict[str, Any], list[str]]:
     """Compare two session scheduling backends without hiding mismatches.
 
@@ -207,6 +310,19 @@ def run_backend_compare(
         and all_right_one_shot_match
         and all_seen_match
     )
+    mismatch_logit_trace = []
+    if trace_mismatch_logits and not strict_match:
+        mismatch_logit_trace = trace_backend_mismatch_logits(
+            model=model,
+            tokenizer=tokenizer,
+            prompts=prompts,
+            rounds=rounds,
+            session_backend=session_backend,
+            compare_session_backend=compare_session_backend,
+            skip_special_tokens=skip_special_tokens,
+            target_sessions=per_session,
+            topk=int(mismatch_topk),
+        )
     row = {
         "axis": "mlx_session_batch_backend_compare",
         "status": "pass",
@@ -233,6 +349,7 @@ def run_backend_compare(
         "left_batch": left_batch.telemetry(),
         "right_batch": right_batch.telemetry(),
         "per_session": per_session,
+        "mismatch_logit_trace": mismatch_logit_trace,
         "wkv_backend_last": model.wkv_backend_last,
         "wkv_backend_counts": dict(model.wkv_backend_counts),
         "quantized_linear_last_backend_counts": model.telemetry().get("quantized_linear_last_backend_counts"),
@@ -384,6 +501,12 @@ def main() -> int:
         action="store_true",
         help="Fail unless both compared backends match each other, one-shot greedy tokens/text, and seen_tokens.",
     )
+    ap.add_argument(
+        "--trace-mismatch-logits",
+        action="store_true",
+        help="When a backend comparison mismatches, replay token-by-token and record top-k logits at the first divergent step.",
+    )
+    ap.add_argument("--mismatch-topk", type=int, default=5, help="Top-k logits to record for --trace-mismatch-logits.")
     ap.add_argument("--require-mlx", action="store_true")
     ap.add_argument("--json-only", action="store_true")
     ap.add_argument("--results", default="", help="Optional JSONL file to append a generation result row.")
@@ -412,6 +535,8 @@ def main() -> int:
             "session_backend": args.session_backend,
             "compare_session_backend": args.compare_session_backend,
             "compare_only": bool(args.compare_only),
+            "trace_mismatch_logits": bool(args.trace_mismatch_logits),
+            "mismatch_topk": int(args.mismatch_topk),
         }
         print(json.dumps(row, ensure_ascii=False))
         append_result(args.results, row)
@@ -442,6 +567,8 @@ def main() -> int:
         "session_backend": args.session_backend,
         "compare_session_backend": args.compare_session_backend,
         "compare_only": bool(args.compare_only),
+        "trace_mismatch_logits": bool(args.trace_mismatch_logits),
+        "mismatch_topk": int(args.mismatch_topk),
         "session_count": len(prompts),
         "rounds": rounds,
         "repeat": int(repeat),
@@ -527,6 +654,8 @@ def main() -> int:
             session_backend=args.session_backend,
             compare_session_backend=args.compare_session_backend,
             require_match=bool(args.require_session_backend_match),
+            trace_mismatch_logits=bool(args.trace_mismatch_logits),
+            mismatch_topk=int(args.mismatch_topk),
         )
         if not args.json_only:
             for item in compare_texts:

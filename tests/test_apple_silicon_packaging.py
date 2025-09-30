@@ -102,11 +102,15 @@ def test_apple_smoke_script_static() -> None:
     assert "COMPARE_SESSION_BACKEND" in mlx_session_batch_text
     assert "COMPARE_ONLY" in mlx_session_batch_text
     assert "REQUIRE_SESSION_BACKEND_MATCH" in mlx_session_batch_text
+    assert "TRACE_MISMATCH_LOGITS" in mlx_session_batch_text
+    assert "MISMATCH_TOPK" in mlx_session_batch_text
     assert "--wkv-backend" in mlx_session_batch_text
     assert "--session-backend" in mlx_session_batch_text
     assert "--compare-session-backend" in mlx_session_batch_text
     assert "--compare-only" in mlx_session_batch_text
     assert "--require-session-backend-match" in mlx_session_batch_text
+    assert "--trace-mismatch-logits" in mlx_session_batch_text
+    assert "--mismatch-topk" in mlx_session_batch_text
     mlx_session_batch_wrapper = ROOT / "scripts/run_apple_silicon_mlx_session_batch_smoke.sh"
     assert mlx_session_batch_wrapper.exists()
     assert mlx_session_batch_wrapper.stat().st_mode & stat.S_IXUSR
@@ -138,6 +142,8 @@ def test_apple_smoke_script_static() -> None:
     assert '"axis": "mlx_session_batch_backend_compare"' in mlx_session_batch_text
     assert '"backend_compare_status": "match" if strict_match else "mismatch"' in mlx_session_batch_text
     assert '"strict_match": bool(strict_match)' in mlx_session_batch_text
+    assert '"mismatch_logit_trace": mismatch_logit_trace' in mlx_session_batch_text
+    assert "trace_backend_mismatch_logits" in mlx_session_batch_text
     assert "all_left_one_shot_match" in mlx_session_batch_text
     assert "all_right_one_shot_match" in mlx_session_batch_text
     assert "if require_match and not strict_match" in mlx_session_batch_text

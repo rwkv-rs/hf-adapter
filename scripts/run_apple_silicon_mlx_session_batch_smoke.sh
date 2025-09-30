@@ -27,6 +27,8 @@ QUANT_BACKEND="${QUANT_BACKEND:-affine}"
 WKV_BACKEND="${WKV_BACKEND:-reference}"
 SESSION_BACKEND="${SESSION_BACKEND:-sequential}"
 COMPARE_SESSION_BACKEND="${COMPARE_SESSION_BACKEND:-none}"
+TRACE_MISMATCH_LOGITS="${TRACE_MISMATCH_LOGITS:-0}"
+MISMATCH_TOPK="${MISMATCH_TOPK:-5}"
 
 rwkv7_require_model "${MODEL}"
 
@@ -88,6 +90,7 @@ args=(
   --wkv-backend "${WKV_BACKEND}"
   --session-backend "${SESSION_BACKEND}"
   --compare-session-backend "${COMPARE_SESSION_BACKEND}"
+  --mismatch-topk "${MISMATCH_TOPK}"
   --results "${RESULTS}"
   --require-mlx
 )
@@ -105,6 +108,9 @@ if [[ "${COMPARE_ONLY:-0}" == "1" ]]; then
 fi
 if [[ "${REQUIRE_SESSION_BACKEND_MATCH:-0}" == "1" ]]; then
   args+=(--require-session-backend-match)
+fi
+if [[ "${TRACE_MISMATCH_LOGITS}" == "1" ]]; then
+  args+=(--trace-mismatch-logits)
 fi
 
 rwkv7_print_env

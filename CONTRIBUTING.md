@@ -844,6 +844,8 @@ bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 # capture, omit REQUIRE_SESSION_BACKEND_MATCH so the row records the mismatch
 # instead of aborting; current 0.4B W8/Metal strict batched decode diverges at
 # token index 6 on the short prompt while SESSION_BACKEND=auto remains safe.
+# Set TRACE_MISMATCH_LOGITS=1 to append a top-k logit trace for the first
+# divergent token.
 # Use QUANT_BACKEND=auto to validate the conservative quant backend router:
 # W4 normal prefill/decode rows select Metal, while W8 defaults to affine until W8/Metal
 # batch exactness is fixed. The result rows expose
@@ -876,6 +878,8 @@ WKV_BACKEND=metal \
 SESSION_BACKEND=sequential \
 COMPARE_SESSION_BACKEND=batched \
 COMPARE_ONLY=1 \
+TRACE_MISMATCH_LOGITS=1 \
+MISMATCH_TOPK=5 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 

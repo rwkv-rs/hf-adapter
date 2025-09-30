@@ -90,8 +90,10 @@ repeat=2), initial W4
 repeat=1), and W8/Metal `SESSION_BACKEND=auto` safety rows that fall back with
 `auto_mm8_metal_batch_exactness_guard` until long batched W8 exactness is fixed,
 plus `mlx_session_batch_backend_compare` rows that prove 0.4B/1.5B W4
-sequential-vs-batched token equality and localize the current 0.4B W8 mismatch,
-and a new conservative `--quant-backend auto` route with backend-count telemetry
+sequential-vs-batched token equality and localize the current 0.4B W8 mismatch
+with optional logit tracing (the first mismatch is a near-tie: token 11 vs 261,
+max-abs logit delta≈0.03125), and a new conservative `--quant-backend auto`
+route with backend-count telemetry
 (W4 normal prefill/decode rows choose Metal, W8 defaults to affine until the
 W8/Metal batch exactness gap is fixed), plus prompt/decode
 length sweep entry points including 0.1B prompt256/decode8,
