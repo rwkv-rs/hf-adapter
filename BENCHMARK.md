@@ -1921,7 +1921,14 @@ versus separate Metal (`max_abs_vs_separate_metal=0.0`); W8 rows=1 improves to
 `1.12x` dense and `1.10x` separate-Metal, while W8 rows=4 is still only `0.58x`
 dense (`1.08x` separate). W4 grouped launch does not help yet (`0.75x` dense /
 `0.93x` separate for rows=1; `0.62x` dense / `0.98x` separate for rows=4), so
-W4 still needs a better packed reduction rather than launch fusion alone. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
+W4 still needs a better packed reduction rather than launch fusion alone.
+The model-level opt-in seam now exists behind
+`RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION=1`: when R/K/V are quantized, share
+bit-width, and resolve to the Metal backend, MLX packs their weights once and
+routes the three distinct R/K/V inputs through the grouped Metal kernel.
+The default path remains unchanged; this is a correctness-gated integration
+point for future end-to-end speed rows, not a claim that W8/W4 now stably beats
+fp16. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
 repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
 `534 MB`, and the higher-concurrency 6-session repeat=3 row reaches min decode
 `34.33` / `27.14 tok/s` with peak `682` / `547 MB`. 1.5B W8/W4
