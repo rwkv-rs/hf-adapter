@@ -1928,7 +1928,21 @@ bit-width, and resolve to the Metal backend, MLX packs their weights once and
 routes the three distinct R/K/V inputs through the grouped Metal kernel.
 The default path remains unchanged; this is a correctness-gated integration
 point for future end-to-end speed rows, not a claim that W8/W4 now stably beats
-fp16. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
+fp16. Initial model-level A/B rows with broader R/K/V quantization show the seam
+does execute end-to-end with `fallback=0`: 0.4B W4 auto prompt128/decode8
+improves from `39.33` / `38.68 tok/s` to `44.33` / `41.38 tok/s`
+(`group_rkv_quant_projection_counts.metal=12672`), 1.5B W4 auto prompt128/decode8
+improves from `19.03` / `18.37` to `20.18` / `19.03 tok/s`
+(`metal=6336`), 0.4B W8/Metal prompt128/decode8 improves from `40.32` /
+`38.93` to `43.01` / `42.80 tok/s` (`metal=6336`), and a shorter 1.5B
+W8/Metal prompt64/decode4 row improves from `17.62` / `17.22` to `19.02` /
+`17.53 tok/s` (`metal=3168`). These rows preserve chunked/full prefill
+exactness (`max_abs=0.0`) and generated previews, but they also increase peak
+memory because grouped packed weights are cached; longer end-to-end ratio gates
+are still required before enabling this path by default. A 0.4B W4 grouped
+session row also passes 4-session `SESSION_BACKEND=batched` rounds4,4 one-shot
+token/text/seen-token checks with aggregate round min `93.35 tok/s` and
+`metal=2592`. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
 repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
 `534 MB`, and the higher-concurrency 6-session repeat=3 row reaches min decode
 `34.33` / `27.14 tok/s` with peak `682` / `547 MB`. 1.5B W8/W4
