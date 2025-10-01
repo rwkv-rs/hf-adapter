@@ -177,7 +177,12 @@ def test_apple_smoke_script_static() -> None:
     assert "equal_positive_round_stable_argmax_tol" in model_text
     assert "auto_mm8_metal_batch_exactness_guard" in model_text
     assert "RWKV7_MLX_SESSION_AUTO_W8_STABLE" in model_text
+    assert "RWKV7_MLX_SESSION_AUTO_W4_STABLE" in model_text
+    assert "auto_mm4_metal_batch_exactness_guard" in model_text
     assert "RWKV7_MLX_SESSION_STABLE_ARGMAX_TOLERANCE" in model_text
+    assert "--stable-argmax-tolerance" in mlx_session_batch_text
+    assert "--stable-argmax-mode" in mlx_session_batch_text
+    assert "RWKV7_MLX_SESSION_STABLE_ARGMAX_MODE" in model_text
     assert "RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION" in model_text
     assert "RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE" in model_text
     assert "group_rkv_quant_projection_mode" in model_text

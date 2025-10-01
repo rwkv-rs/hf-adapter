@@ -1977,8 +1977,13 @@ shows 1.5B W8 direct batched still matches sequential and one-shot tokens
 (`26.02` / `25.04 tok/s` aggregate round decode), but 1.5B W4 direct batched
 mismatches one-shot on two synthetic sessions (first mismatch indices `6` and
 `9`, grouped fallback `0`), so the long 1.5B W4 batched direct route remains a
-correctness gap rather than a production path. Longer end-to-end ratio gates are
-still required before enabling this path by default. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
+correctness gap rather than a production path. `SESSION_BACKEND=auto` now guards
+W4/Metal the same way as W8/Metal and falls back with
+`auto_mm4_metal_batch_exactness_guard`; the new 1.5B W4 direct auto row keeps
+one-shot token/text/seen checks passing for 5 sessions, rounds8,8, repeat=2,
+with aggregate round min `20.67 tok/s`, peak `1126.1 MB`, grouped fallback `0`,
+and `metal=13632`. Longer end-to-end ratio gates are still required before
+enabling true W4 batched direct by default. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
 repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
 `534 MB`, and the higher-concurrency 6-session repeat=3 row reaches min decode
 `34.33` / `27.14 tok/s` with peak `682` / `547 MB`. 1.5B W8/W4

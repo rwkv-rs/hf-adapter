@@ -447,10 +447,10 @@ class MLXGenerationSessionBatch:
         self.round_backend_reasons.append(str(reason))
         return outputs
 
-    def _uses_w8_metal_projection(self) -> bool:
-        bits = getattr(self.model, "quantized_linear_bits", None)
+    def _uses_metal_quant_projection_bits(self, bits: int) -> bool:
+        active_bits = getattr(self.model, "quantized_linear_bits", None)
         quant_backend = getattr(self.model, "quantized_linear_backend", None)
-        if bits != 8:
+        if active_bits != int(bits):
             return False
         if quant_backend == "metal":
             return True
@@ -458,36 +458,50 @@ class MLXGenerationSessionBatch:
             return False
         return any(int(getattr(q, "auto_metal_max_rows", 0)) > 0 for q in self.model.quantized_linears.values())
 
-    def _auto_stable_argmax_tolerance(self) -> float:
-        if not self._uses_w8_metal_projection():
-            return 0.0
-        if not _env_flag("RWKV7_MLX_SESSION_AUTO_W8_STABLE", False):
-            return 0.0
+    def _uses_w8_metal_projection(self) -> bool:
+        return self._uses_metal_quant_projection_bits(8)
+
+    def _uses_w4_metal_projection(self) -> bool:
+        return self._uses_metal_quant_projection_bits(4)
+
+    def _stable_argmax_tolerance_value(self) -> float:
         return max(0.0, _env_float("RWKV7_MLX_SESSION_STABLE_ARGMAX_TOLERANCE", 0.015625))
+
+    def _stable_argmax_mode_value(self) -> str:
+        return _env_choice("RWKV7_MLX_SESSION_STABLE_ARGMAX_MODE", "lower", {"lower", "repair"})
+
+    def _auto_stable_argmax_tolerance(self) -> float:
+        if self._uses_w8_metal_projection() and _env_flag("RWKV7_MLX_SESSION_AUTO_W8_STABLE", False):
+            return self._stable_argmax_tolerance_value()
+        if self._uses_w4_metal_projection() and _env_flag("RWKV7_MLX_SESSION_AUTO_W4_STABLE", False):
+            return self._stable_argmax_tolerance_value()
+        return 0.0
 
     def _auto_batch_disabled_reason(self) -> str | None:
         """Return why ``backend='auto'`` should avoid batched decode.
 
-        W8/Metal projection is correct for one-shot and sequential session
+        Metal quant projection is correct for one-shot and sequential session
         paths, but long multi-session batched decode can diverge from one-shot
-        greedy tokens.  Keep automatic W8/Metal batching guarded by default.
-        W8 ``quant_backend=auto`` still batches when it resolves to the affine
-        path, and developers can opt into W8/Metal stable auto batching with
-        ``RWKV7_MLX_SESSION_AUTO_W8_STABLE=1`` after running the strict gates.
+        greedy tokens in low-margin cases.  Keep automatic W8/W4 Metal batching
+        guarded by default.  Developers can opt into stable auto batching with
+        ``RWKV7_MLX_SESSION_AUTO_W8_STABLE=1`` or
+        ``RWKV7_MLX_SESSION_AUTO_W4_STABLE=1`` after running strict gates.
         """
 
-        if self._uses_w8_metal_projection() and self._auto_stable_argmax_tolerance() <= 0:
+        if self._auto_stable_argmax_tolerance() > 0:
+            return None
+        if self._uses_w8_metal_projection():
             return "auto_mm8_metal_batch_exactness_guard"
+        if self._uses_w4_metal_projection():
+            return "auto_mm4_metal_batch_exactness_guard"
         return None
 
-    def _stable_argmax(self, logits, *, tolerance: float):
-        """Argmax with a deterministic low-margin tie policy for batched W8 bring-up.
+    def _greedy_argmax(self, logits):
+        mx = _mx()
+        scores = logits[:, -1, :].astype(mx.float32)
+        return mx.argmax(scores, axis=-1).astype(mx.int32)
 
-        MLX/Metal W8 batched logits can differ from the one-row path by a few
-        fp16 ulps.  When the top-2 margin is within ``tolerance``, choose the
-        lower token id to mirror MLX's observed exact-tie greedy behavior.
-        """
-
+    def _stable_argmax_lower(self, logits, *, tolerance: float):
         mx = _mx()
         scores = logits[:, -1, :].astype(mx.float32)
         greedy = mx.argmax(scores, axis=-1).astype(mx.int32)
@@ -500,6 +514,84 @@ class MLXGenerationSessionBatch:
         low_margin = margins <= tol
         low_token = mx.min(top2_idx, axis=-1).astype(mx.int32)
         return mx.where(low_margin, low_token, greedy).astype(mx.int32)
+
+    def _low_margin_indices(self, logits, *, tolerance: float) -> list[int]:
+        """Return batch rows whose top-2 logits are close enough to repair.
+
+        Low-margin batched Metal quant logits can differ from the one-row path
+        by enough fp16 ulps to flip greedy tokens.  The optional
+        ``RWKV7_MLX_SESSION_STABLE_ARGMAX_MODE=repair`` path uses this detector
+        to selectively replay those rows through the exact one-row decode path
+        and then argmaxes the repaired logits normally.
+        """
+
+        tol = float(tolerance)
+        if tol <= 0:
+            return []
+        mx = _mx()
+        scores = logits[:, -1, :].astype(mx.float32)
+        top2_idx = mx.argpartition(-scores, kth=2, axis=-1)[:, :2].astype(mx.int32)
+        top2_vals = mx.take_along_axis(scores, top2_idx, axis=-1)
+        margins = mx.max(top2_vals, axis=-1) - mx.min(top2_vals, axis=-1)
+        mx.eval(margins)
+        return [idx for idx, value in enumerate(margins.tolist()) if float(value) <= tol]
+
+    def _concat_state_rows(self, rows: list[MLXRWKV7State], *, seen_tokens: int) -> MLXRWKV7State:
+        mx = _mx()
+        state = MLXRWKV7State(
+            [
+                mx.concatenate([row.recurrent_state[layer] for row in rows], axis=0)
+                for layer in range(self.model.num_hidden_layers)
+            ],
+            [
+                mx.concatenate([row.attn_x_prev[layer] for row in rows], axis=0)
+                for layer in range(self.model.num_hidden_layers)
+            ],
+            [
+                mx.concatenate([row.ffn_x_prev[layer] for row in rows], axis=0)
+                for layer in range(self.model.num_hidden_layers)
+            ],
+            mx.concatenate([row.v_first for row in rows], axis=0),
+            seen_tokens=int(seen_tokens),
+        )
+        mx.eval(state.v_first, *state.recurrent_state, *state.attn_x_prev, *state.ffn_x_prev)
+        return state
+
+    def _repair_low_margin_rows(
+        self,
+        logits,
+        *,
+        state_before: MLXRWKV7State,
+        state_after: MLXRWKV7State,
+        token_ids,
+        tolerance: float,
+    ) -> tuple[Any, MLXRWKV7State, int]:
+        """Replay low-margin batched rows through the one-row decode path.
+
+        The repair is only used by explicit stable backends.  It preserves the
+        batched fast path for ordinary rows while replacing ambiguous row logits
+        and recurrent state with the same values a sequential session would have
+        produced for the just-consumed token.
+        """
+
+        repair_indices = self._low_margin_indices(logits, tolerance=tolerance)
+        if not repair_indices:
+            return logits, state_after, 0
+
+        mx = _mx()
+        token_list = _as_list(token_ids)
+        logit_rows = [mx.take(logits, mx.array([idx], dtype=mx.int32), axis=0) for idx in range(self.batch_size)]
+        state_rows = [state_after.select_batch([idx]) for idx in range(self.batch_size)]
+        for idx in repair_indices:
+            row_state_before = state_before.select_batch([idx])
+            exact_logits, exact_state = self.model.decode_step([int(token_list[idx])], row_state_before)
+            exact_state.seen_tokens = int(state_after.seen_tokens)
+            logit_rows[idx] = exact_logits
+            state_rows[idx] = exact_state
+        repaired_logits = mx.concatenate(logit_rows, axis=0)
+        repaired_state = self._concat_state_rows(state_rows, seen_tokens=int(state_after.seen_tokens))
+        mx.eval(repaired_logits)
+        return repaired_logits, repaired_state, len(repair_indices)
 
     def _stack_state(self) -> tuple[MLXRWKV7State, list[int]]:
         mx = _mx()
@@ -540,14 +632,34 @@ class MLXGenerationSessionBatch:
         prior_seen = [int(session.state.seen_tokens) for session in self.sessions]
         stacked_state, _ = self._stack_state()
         logits = mx.concatenate([session.logits for session in self.sessions], axis=0)
-        next_token = self._stable_argmax(logits, tolerance=stable_argmax_tolerance)
+        stable_mode = self._stable_argmax_mode_value() if stable_argmax_tolerance > 0 else "off"
+        next_token = (
+            self._stable_argmax_lower(logits, tolerance=stable_argmax_tolerance)
+            if stable_mode == "lower"
+            else self._greedy_argmax(logits)
+        )
         generated = []
+        stable_repair_count = 0
 
         t0 = time.perf_counter()
         for _ in range(n):
             generated.append(next_token)
+            state_before = stacked_state.clone() if stable_mode == "repair" else stacked_state
             logits, stacked_state = self.model.decode_step(next_token, stacked_state)
-            next_token = self._stable_argmax(logits, tolerance=stable_argmax_tolerance)
+            if stable_mode == "repair":
+                logits, stacked_state, repaired = self._repair_low_margin_rows(
+                    logits,
+                    state_before=state_before,
+                    state_after=stacked_state,
+                    token_ids=next_token,
+                    tolerance=stable_argmax_tolerance,
+                )
+                stable_repair_count += int(repaired)
+            next_token = (
+                self._stable_argmax_lower(logits, tolerance=stable_argmax_tolerance)
+                if stable_mode == "lower"
+                else self._greedy_argmax(logits)
+            )
         out = mx.stack(generated, axis=1)
         mx.eval(out, logits, stacked_state.v_first, *stacked_state.recurrent_state, *stacked_state.attn_x_prev, *stacked_state.ffn_x_prev)
         elapsed = time.perf_counter() - t0
@@ -574,11 +686,13 @@ class MLXGenerationSessionBatch:
         self.round_decode_s.append(float(elapsed))
         self.round_generated_tokens.append(int(n * self.batch_size))
         self.round_backends.append("batched_stable" if stable_argmax_tolerance > 0 else "batched")
-        self.round_backend_reasons.append(
-            f"equal_positive_round_stable_argmax_tol_{stable_argmax_tolerance:g}"
-            if stable_argmax_tolerance > 0
-            else "equal_positive_round"
-        )
+        if stable_argmax_tolerance > 0 and stable_mode == "repair":
+            reason = f"equal_positive_round_stable_argmax_tol_{stable_argmax_tolerance:g}_mode_repair_repairs_{stable_repair_count}"
+        elif stable_argmax_tolerance > 0:
+            reason = f"equal_positive_round_stable_argmax_tol_{stable_argmax_tolerance:g}"
+        else:
+            reason = "equal_positive_round"
+        self.round_backend_reasons.append(reason)
         return outputs
 
     def decode_round(
@@ -592,11 +706,11 @@ class MLXGenerationSessionBatch:
         ``backend="sequential"`` preserves the historical per-session loop.
         ``backend="batched"`` requires equal positive token counts and decodes
         all sessions as one MLX batch.  ``backend="batched_stable"`` adds a
-        low-margin stable-argmax policy for W8/Metal exactness bring-up.
+        low-margin stable-argmax policy for W8/W4 Metal exactness bring-up.
         ``backend="auto"`` uses the batched path when all sessions request the
         same positive number of tokens and falls back to the sequential path for
-        heterogeneous or zero-token rounds, plus W8/Metal until its long
-        batched-session exactness gap is closed.
+        heterogeneous or zero-token rounds, plus guarded W8/W4 Metal quant
+        paths until their long batched-session exactness gates pass.
         """
 
         steps = self._normalize_steps(tokens_per_session)
@@ -610,7 +724,7 @@ class MLXGenerationSessionBatch:
             selected_backend in {"batched", "batched_stable"} or self._auto_batch_disabled_reason() is None
         ):
             tol = (
-                0.015625
+                self._stable_argmax_tolerance_value()
                 if selected_backend == "batched_stable"
                 else self._auto_stable_argmax_tolerance()
                 if selected_backend == "auto"
