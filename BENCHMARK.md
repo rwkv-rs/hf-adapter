@@ -1990,8 +1990,18 @@ W4/Metal the same way as W8/Metal and falls back with
 `auto_mm4_metal_batch_exactness_guard`; the new 1.5B W4 direct auto row keeps
 one-shot token/text/seen checks passing for 5 sessions, rounds8,8, repeat=2,
 with aggregate round min `20.67 tok/s`, peak `1126.1 MB`, grouped fallback `0`,
-and `metal=13632`. Longer end-to-end ratio gates are still required before
-enabling true W4 batched direct by default. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
+and `metal=13632`. Follow-up direct grouped pressure rows extend the same seam:
+0.4B broad-threshold W4 direct grouped `SESSION_BACKEND=batched` now passes
+12-session rounds8,8 repeat=3 with one-shot token/text/seen-token checks,
+aggregate round min `93.92 tok/s`, peak `583.6 MB`, grouped `metal=50112`,
+fallback `0`, and quantized-linear `metal=301368`; 1.5B direct W4
+`SESSION_BACKEND=auto` now passes 5-session rounds8,8 repeat=4 under
+`auto_mm4_metal_batch_exactness_guard` with aggregate round min `12.77 tok/s`,
+peak `1126.1 MB`, grouped `metal=31296`, fallback `0`, and quantized-linear
+`metal=188456`. The latter is intentionally safe sequential scheduling, not a
+claim that true 1.5B W4 batched direct is production-ready. Longer end-to-end
+ratio gates are still required before enabling true W4 batched direct by
+default. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
 repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
 `534 MB`, and the higher-concurrency 6-session repeat=3 row reaches min decode
 `34.33` / `27.14 tok/s` with peak `682` / `547 MB`. 1.5B W8/W4
