@@ -13,6 +13,7 @@ STEP_SIZES="${STEP_SIZES:-4,4}"
 QUANTIZATION="${QUANTIZATION:-none}"
 QUANT_MIN_PARAMS="${QUANT_MIN_PARAMS:-8000000}"
 QUANT_BACKEND="${QUANT_BACKEND:-affine}"
+WKV_BACKEND="${WKV_BACKEND:-reference}"
 
 rwkv7_require_model "${MODEL}"
 
@@ -29,6 +30,7 @@ args=(
   --quantization "${QUANTIZATION}"
   --quant-min-params "${QUANT_MIN_PARAMS}"
   --quant-backend "${QUANT_BACKEND}"
+  --wkv-backend "${WKV_BACKEND}"
   --results "${RESULTS}"
   --require-mlx
 )

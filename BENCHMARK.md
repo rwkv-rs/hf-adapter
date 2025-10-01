@@ -1883,6 +1883,204 @@ V100 rows show:
 | 7.2B converted-model smoke | hidden=4096, layers=32, generated=2, backend=native_graph | load + generate | PASS |
 | 13.3B converted-model smoke | hidden=4096, layers=61, generated=2, backend=native_jit | load + generate | PASS |
 
+Apple MLX/Metal quant ratio evidence is recorded separately in
+`bench/results_apple_silicon_m5_20260704.jsonl` and
+`docs/hardware/APPLE_SILICON.md`. On the local M5 / 16GB prompt512/1024 decode16
+matrix, same-shape fp16 Metal baselines show 0.4B W8/W4 decode at
+`0.79x` / `0.81x` fp16 with peak memory `0.71x` / `0.57x`, and 1.5B W8/W4 decode
+at `0.75x` / `0.84x` fp16 with peak memory `0.70x` / `0.55x`. The longer
+prompt2048/decode128 ratio row reaches 0.4B W8/W4 decode `0.88x` /
+`1.04x` fp16 with peak memory `0.71x` / `0.56x`; the same 1.5B row remains
+below fp16 at W8/W4 decode `0.68x` / `0.73x` with peak memory `0.70x` /
+`0.54x`. The W4 `--quant-backend auto` row now caches the auto decision and
+favors Metal for normal prefill/decode rows (`metal=202885`): 0.4B W4 auto
+prompt2048/decode128 reaches prefill/decode `60.61` / `59.73 tok/s`
+(`0.88x` / `1.25x` fp16, peak `0.56x`), while 1.5B W4 auto reaches
+`27.64` / `20.42 tok/s` (`0.93x` / `0.75x` fp16, peak `0.54x`). A newer
+prompt4096/decode256 gate with chunk1024 still passes chunked/full prefill
+(`max_abs=0.0`) and records 0.4B fp16 `94.08` / `75.38 tok/s` versus W4 auto
+`62.01` / `55.29 tok/s` (peak `515 MB`, `0.56x` fp16), and 1.5B fp16
+`35.34` / `33.21 tok/s` versus W8/Metal `22.52` / `20.54 tok/s` (peak
+`2147 MB`, `0.70x` fp16) and W4 auto `27.40` / `25.46 tok/s` (peak
+`1677 MB`, `0.54x` fp16). The new 1.5B prompt8192/decode512 chunk2048 row
+also passes chunked/full prefill (`max_abs=0.0`): fp16 reaches `27.97` /
+`26.02 tok/s`, while W4 auto reaches `22.77` / `21.20 tok/s` with peak
+`1677 MB` (`0.54x` fp16) and `metal=811525`, or about `0.81x` fp16 for both
+prefill and decode. A direct grouped R/K/V W4 row extends 1.5B to
+prompt8192/decode1024 with chunk2048 and `quant_min_params=4000000`: it keeps
+chunked/full prefill `max_abs=0.0`, records `21.09` / `20.48 tok/s`, peak
+`1074.6 MB`, quantized-linear `metal=2507781`, grouped `metal=417792`, and
+grouped fallback `0`. This strengthens long-decode and memory evidence but also
+shows W4 does not yet stably beat fp16 at longer prompt/decode sizes; stable
+W8/W4 speed `>=1.0x` fp16 across sizes and modes still requires deeper fused
+kernels. The isolated MLX quant projection microbench
+(`axis=mlx_quant_projection_bench`, 1.5B-sized 2048x2048 projection, rows=1/4)
+now makes the bottleneck explicit: W4/Metal reaches `0.39x` dense for rows=1
+and `1.11x` for rows=4 (auto `1.38x`), while W8/Metal reaches `0.87x` /
+`0.67x` dense and W8 auto still routes to affine because the W8 session
+exactness guard remains open. The new grouped-projection prototype
+(`axis=mlx_quant_group_projection_bench`, groups=3) pre-packs grouped weights and
+uses one Metal launch for R/K/V-style projection groups. It preserves exactness
+versus separate Metal (`max_abs_vs_separate_metal=0.0`); W8 rows=1 improves to
+`1.12x` dense and `1.10x` separate-Metal, while W8 rows=4 is still only `0.58x`
+dense (`1.08x` separate). W4 grouped launch does not help yet (`0.75x` dense /
+`0.93x` separate for rows=1; `0.62x` dense / `0.98x` separate for rows=4), so
+W4 still needs a better packed reduction rather than launch fusion alone.
+The model-level opt-in seam now exists behind
+`RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION=1`: when R/K/V are quantized, share
+bit-width, and resolve to the Metal backend, MLX routes the three distinct R/K/V
+inputs and their three existing packed weights through one Metal launch. The
+new default `RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE=direct` avoids the old
+extra grouped packed-weight cache; `packed` remains available for A/B with the
+prepacked microbench path. The default inference path remains unchanged, and
+this is a correctness-gated integration point rather than a claim that W8/W4 now
+stably beats fp16.
+
+Initial packed-cache A/B rows showed the seam executes end-to-end with
+`fallback=0`: 0.4B W4 auto prompt128/decode8 improved from `39.33` /
+`38.68 tok/s` to `44.33` / `41.38 tok/s` (`metal=12672`), 1.5B W4 auto
+improved from `19.03` / `18.37` to `20.18` / `19.03 tok/s` (`metal=6336`),
+0.4B W8/Metal improved from `40.32` / `38.93` to `43.01` / `42.80 tok/s`
+(`metal=6336`), and a shorter 1.5B W8/Metal prompt64/decode4 row improved from
+`17.62` / `17.22` to `19.02` / `17.53 tok/s` (`metal=3168`). The direct
+no-copy path keeps the useful W4 signal while removing the duplicated-weight
+memory penalty: 0.4B W4 auto prompt128/decode8 records `43.30` / `42.54 tok/s`,
+peak `364.7 MB`, `metal=6336`, and chunked/full prefill `max_abs=0.0`; 1.5B
+W4 auto records `20.95` / `19.52 tok/s`, peak `1074.6 MB`, `metal=6336`, and
+`max_abs=0.0`. These peaks are back near the separate-path baselines and well
+below the old packed-cache grouped peaks (`415.9 MB` / `1226.8 MB`). Longer
+direct rows also pass: 0.4B W4 auto prompt512/decode16 reaches `45.83` /
+`45.17 tok/s`, peak `364.7 MB`, `metal=24960`; 1.5B W4 auto prompt512/decode16
+reaches `20.69` / `19.28 tok/s`, peak `1074.6 MB`, `metal=24960`; 0.4B W8/Metal
+prompt512/decode16 reaches `44.50` / `41.50 tok/s`, peak `549.3 MB`,
+`metal=24960`; and 1.5B W8/Metal prompt512/decode16 reaches `19.81` /
+`19.27 tok/s`, peak `1745.6 MB`, `metal=24960`. The broader-threshold
+prompt2048/decode128 direct rows, which include R/K/V in the quantized set, also
+pass with grouped fallback `0` and chunked/full prefill `max_abs=0.0`: 0.4B W4
+records `46.50` / `43.70 tok/s`, peak `364.7 MB`, `metal=101376`; 0.4B W8
+records `42.52` / `41.36 tok/s`, peak `549.3 MB`, `metal=101376`; 1.5B W4
+records `21.31` / `19.63 tok/s`, peak `1074.6 MB`, `metal=101376`; and 1.5B
+W8 records `20.47` / `19.78 tok/s`, peak `1745.6 MB`, `metal=101376`. Against
+the same-shape fp16 baselines (`47.97 tok/s` decode at 0.4B and `27.20 tok/s`
+at 1.5B), these direct broad-threshold rows improve memory (`~0.40x/0.60x` peak
+for 0.4B W4/W8 and `~0.35x/0.57x` for 1.5B W4/W8) but still do not close the
+stable fp16-beating speed gate. New direct W4 prompt4096/decode256 rows extend
+that matrix while keeping chunked/full prefill `max_abs=0.0`: 0.4B with the
+broader `quant_min_params=500000` threshold records `52.05` / `45.05 tok/s`,
+peak `364.7 MB`, grouped `metal=202752`, fallback `0`; 1.5B with
+`quant_min_params=4000000` records `21.14` / `19.98 tok/s`, peak `1074.6 MB`,
+grouped `metal=202752`, fallback `0`. The same 1.5B direct grouped W4 route now
+also passes prompt8192/decode1024 with chunked/full prefill `max_abs=0.0`,
+`21.09` / `20.48 tok/s`, peak `1074.6 MB`, grouped `metal=417792`, fallback
+`0`, and quantized-linear `metal=2507781`. A 0.4B `quant_min_params=4000000`
+control row records `52.24` / `47.81 tok/s`, peak `514.9 MB`, and grouped
+fallback `202752`, confirming that the lower threshold is needed to include
+0.4B R/K/V in the direct grouped path. Direct grouped session pressure now covers
+0.4B 4-session rounds4,4, 0.4B 6-session rounds8,8 repeat=2, 0.4B 8-session
+rounds8,8 repeat=2, and 1.5B 5-session rounds4,4 / rounds8,8 repeat=2 probes.
+The 0.4B rows keep one-shot token/text/seen-token checks passing with grouped
+fallback `0`: W4 6-session aggregate round min `75.31 tok/s`, peak `466.5 MB`,
+`metal=10176`; W8 6-session aggregate round min `91.71 tok/s`, peak
+`651.1 MB`, `metal=15552`; W4 8-session aggregate round min `97.85 tok/s`, peak
+`505.4 MB`, `metal=17472`; and W8 8-session aggregate round min `91.08 tok/s`,
+peak `690.0 MB`, `metal=17472`. For 1.5B, W4/W8 rounds4,4 direct rows pass
+with aggregate round mins `27.33` / `23.45 tok/s` and peaks `1239.0` /
+`1910.1 MB`. The longer 1.5B rounds8,8 repeat=2 direct path is currently safe
+under sequential scheduling (`19.49` / `18.35 tok/s` aggregate round min for
+W4/W8, peaks `1126.1` / `1797.2 MB`, grouped fallback `0`). A strict compare
+shows 1.5B W8 direct batched still matches sequential and one-shot tokens
+(`26.02` / `25.04 tok/s` aggregate round decode), but 1.5B W4 direct batched
+mismatches one-shot on two synthetic sessions (first mismatch indices `6` and
+`9`, grouped fallback `0`), so the long 1.5B W4 batched direct route remains a
+correctness gap rather than a production path. `SESSION_BACKEND=auto` now guards
+W4/Metal the same way as W8/Metal and falls back with
+`auto_mm4_metal_batch_exactness_guard`; the new 1.5B W4 direct auto row keeps
+one-shot token/text/seen checks passing for 5 sessions, rounds8,8, repeat=2,
+with aggregate round min `20.67 tok/s`, peak `1126.1 MB`, grouped fallback `0`,
+and `metal=13632`. Follow-up direct grouped pressure rows extend the same seam:
+0.4B broad-threshold W4 direct grouped `SESSION_BACKEND=batched` now passes
+12-session rounds8,8 repeat=3 with one-shot token/text/seen-token checks,
+aggregate round min `93.92 tok/s`, peak `583.6 MB`, grouped `metal=50112`,
+fallback `0`, and quantized-linear `metal=301368`; 1.5B direct W4
+`SESSION_BACKEND=auto` now passes 5-session rounds8,8 repeat=4 under
+`auto_mm4_metal_batch_exactness_guard` with aggregate round min `12.77 tok/s`,
+peak `1126.1 MB`, grouped `metal=31296`, fallback `0`, and quantized-linear
+`metal=188456`. The latter is intentionally safe sequential scheduling, not a
+claim that true 1.5B W4 batched direct is production-ready. Longer end-to-end
+ratio gates are still required before enabling true W4 batched direct by
+default. An opt-in 1.5B W4 direct grouped strict compare now closes this same
+matrix with `SESSION_BACKEND=batched_stable`,
+`RWKV7_MLX_SESSION_STABLE_ARGMAX_MODE=repair`, and tolerance `0.0625`:
+sequential vs batched_stable matches backend tokens/text, both sides match
+one-shot, seen-token checks pass for 5 sessions and rounds8,8, the structured
+repair counts are `[2, 3]`, aggregate round min is `25.32 tok/s`, peak is
+`1434.0 MB`, grouped `metal=10320`, fallback `0`, and quantized-linear
+`metal=62116`. This is a correctness bring-up path that selectively replays
+low-margin rows; it is not yet the default production W4 batched route.
+Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
+repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
+`534 MB`, and the higher-concurrency 6-session repeat=3 row reaches min decode
+`34.33` / `27.14 tok/s` with peak `682` / `547 MB`. 1.5B W8/W4
+4-session repeat=1 reaches min decode `19.58` / `20.38 tok/s` with peak
+`2185` / `1716 MB`, and the 5-session repeat=2 row reaches min decode
+`15.60` / `18.87 tok/s` with peak `2198` / `1728 MB`. Longer session
+pressure now also covers 0.4B W4 8-session rounds8,8 repeat=2
+(aggregate round min `103.91 tok/s`, peak `656 MB`) plus 1.5B W4/W8
+5-session rounds8,8 repeat=2 (`29.63 tok/s` batched W4 aggregate round min,
+`18.38 tok/s` safe-auto W8 aggregate round min, peaks `1841` / `2198 MB`).
+The opt-in equal-round
+`SESSION_BACKEND=batched` path also has initial W4 correctness rows: 0.4B
+6-session repeat=2 passes with per-session min decode `19.00 tok/s`,
+aggregate round min decode `105.44 tok/s`, and peak `617 MB`; 1.5B 5-session
+repeat=1 passes with per-session min decode `6.61 tok/s`, aggregate round min
+decode `32.38 tok/s`, and peak `1841 MB`. During W8/Metal strict batched
+decode bring-up, larger 0.4B multi-round exactness diverged from one-shot greedy
+tokens, so `SESSION_BACKEND=auto` now records an
+`auto_mm8_metal_batch_exactness_guard` reason and falls back to sequential for
+W8/Metal while W4 uses the batched path. Safe W8/Metal auto rows pass for 0.4B
+6-session repeat=2 (min decode `39.80 tok/s`, peak `682 MB`) and 1.5B
+5-session repeat=1 (min decode `17.43 tok/s`, peak `2198 MB`). A dedicated
+`axis=mlx_session_batch_backend_compare` row now compares sequential vs batched
+without hiding mismatches: 0.4B W4 and 1.5B W4 both match each other and
+one-shot tokens (`all_backend_token_match=true`,
+`all_right_one_shot_token_match=true`) with batched aggregate round mins
+`145.89` and `38.31 tok/s`; 1.5B W8 also matches in this matrix with
+batched aggregate round min `34.67 tok/s`; 0.4B W8 reproduces the exactness gap
+(`backend_compare_status=mismatch`, first mismatch at token index `6` for the
+short prompt). A new optional `--trace-mismatch-logits` row localizes that gap:
+at step 6 the sequential path has an exact tie between tokens `11` and `261`
+(logits `8.476562` / `8.476562`, `mx.argmax` selects `11`), while the batched
+Metal path shifts token `11` down to `8.46875` and selects `261`; the traced
+left/right max-abs logit delta at that step is only `0.03125`. An explicit
+`SESSION_BACKEND=batched_stable` low-margin argmax policy closes this traced
+0.4B W8/Metal compare gate: 3-session and 6-session strict rows both match
+sequential and one-shot tokens, with the 6-session row reaching batched
+aggregate round mins `162.12` / `163.72 tok/s` (`metal=20378`, peak `790 MB`).
+The stable policy now has longer/repeat coverage too: 0.4B W8/Metal
+`batched_stable` 8-session rounds8,8 repeat=2 matches one-shot tokens with
+aggregate round min `184.62 tok/s` (peak `790 MB`). 1.5B W8/Metal 5-session
+rounds8,8 repeat=2 matches one-shot tokens with aggregate round min
+`53.66 tok/s` (peak `2311 MB`), and the stronger repeat=4 pressure row still
+matches one-shot tokens/text/seen-tokens with aggregate round min `26.11 tok/s`,
+peak `2311 MB`, and `metal=50728`. The same 1.5B W4 auto 5-session
+rounds8,8 repeat=4 pressure row also matches one-shot with aggregate round min
+`30.94 tok/s`, peak `1841 MB`, and `metal=50728`. These repeat=4 rows are
+stability evidence and also show throughput degradation under sustained local
+M5/16GB pressure. A 1.5B strict sequential-vs-batched-stable compare for
+rounds8,8 also passes. The default W8/Metal auto path remains
+guarded, but `RWKV7_MLX_SESSION_AUTO_W8_STABLE=1` now opts `SESSION_BACKEND=auto`
+into this stable policy; a 0.4B W8/Metal auto row selects `batched_stable` and
+passes with aggregate round min `90.73 tok/s` (`metal=5126`). The MLX quant
+backend now also has a conservative `--quant-backend auto` policy with
+backend-count telemetry: W4 auto selects the Metal fused dequant-projection path
+for normal row counts and the 0.4B 3-session sequential-vs-batched gate passes
+with `quantized_linear_last_backend_counts` showing `metal=4913` and batched
+aggregate round mins `78.68` / `69.17 tok/s`; W8 auto stays on the affine path
+by default unless W8 Metal is explicitly enabled, and the 0.4B W8 auto
+`SESSION_BACKEND=auto` row batches safely with `affine=5126` and aggregate round
+min `49.76 tok/s`. These rows validate the batching seam, safe backend routing,
+and telemetry, not the final fp16-beating quant speed gate.
+
 The current next-focus list is: 13.3B official-alignment/speed sweeps are now
 done (cos~1.0, `native_jit` 18.4 tok/s on V100; see
 [13.3B official alignment + decode speed](#133b-official-alignment--decode-speed));

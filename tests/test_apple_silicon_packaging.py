@@ -83,6 +83,10 @@ def test_apple_smoke_script_static() -> None:
     assert mlx_session_wrapper.exists()
     assert mlx_session_wrapper.stat().st_mode & stat.S_IXUSR
     subprocess.run(["bash", "-n", str(mlx_session_wrapper)], cwd=ROOT, check=True)
+    mlx_session_wrapper_text = mlx_session_wrapper.read_text(encoding="utf-8")
+    assert "QUANT_BACKEND" in mlx_session_wrapper_text
+    assert "WKV_BACKEND" in mlx_session_wrapper_text
+    assert "--wkv-backend" in mlx_session_wrapper_text
     mlx_session_batch_wrapper = ROOT / "scripts/run_apple_silicon_mlx_session_batch_smoke.sh"
     assert mlx_session_batch_wrapper.exists()
     assert mlx_session_batch_wrapper.stat().st_mode & stat.S_IXUSR
@@ -92,6 +96,21 @@ def test_apple_smoke_script_static() -> None:
     assert "PROMPTS_FILE" in mlx_session_batch_text
     assert "EXTRA_PROMPTS" in mlx_session_batch_text
     assert "PROMPT_H" in mlx_session_batch_text
+    assert "QUANT_BACKEND" in mlx_session_batch_text
+    assert "WKV_BACKEND" in mlx_session_batch_text
+    assert "SESSION_BACKEND" in mlx_session_batch_text
+    assert "COMPARE_SESSION_BACKEND" in mlx_session_batch_text
+    assert "COMPARE_ONLY" in mlx_session_batch_text
+    assert "REQUIRE_SESSION_BACKEND_MATCH" in mlx_session_batch_text
+    assert "TRACE_MISMATCH_LOGITS" in mlx_session_batch_text
+    assert "MISMATCH_TOPK" in mlx_session_batch_text
+    assert "--wkv-backend" in mlx_session_batch_text
+    assert "--session-backend" in mlx_session_batch_text
+    assert "--compare-session-backend" in mlx_session_batch_text
+    assert "--compare-only" in mlx_session_batch_text
+    assert "--require-session-backend-match" in mlx_session_batch_text
+    assert "--trace-mismatch-logits" in mlx_session_batch_text
+    assert "--mismatch-topk" in mlx_session_batch_text
     mlx_session_batch_wrapper = ROOT / "scripts/run_apple_silicon_mlx_session_batch_smoke.sh"
     assert mlx_session_batch_wrapper.exists()
     assert mlx_session_batch_wrapper.stat().st_mode & stat.S_IXUSR
@@ -109,9 +128,79 @@ def test_apple_smoke_script_static() -> None:
     mlx_session_script = ROOT / "scripts/mlx_session_smoke.py"
     assert mlx_session_script.exists()
     assert mlx_session_script.stat().st_mode & stat.S_IXUSR
+    mlx_session_text = mlx_session_script.read_text(encoding="utf-8")
+    assert 'choices=["affine", "reference", "metal", "auto"]' in mlx_session_text
+    assert 'choices=["reference", "metal", "auto"]' in mlx_session_text
     mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"
     assert mlx_session_batch_script.exists()
     assert mlx_session_batch_script.stat().st_mode & stat.S_IXUSR
+    mlx_session_batch_text = mlx_session_batch_script.read_text(encoding="utf-8")
+    assert 'choices=["affine", "reference", "metal", "auto"]' in mlx_session_batch_text
+    assert 'choices=["reference", "metal", "auto"]' in mlx_session_batch_text
+    assert 'choices=["sequential", "batched", "batched_stable", "auto"]' in mlx_session_batch_text
+    assert 'choices=["none", "sequential", "batched", "batched_stable", "auto"]' in mlx_session_batch_text
+    assert '"axis": "mlx_session_batch_backend_compare"' in mlx_session_batch_text
+    assert '"backend_compare_status": "match" if strict_match else "mismatch"' in mlx_session_batch_text
+    assert '"strict_match": bool(strict_match)' in mlx_session_batch_text
+    assert '"mismatch_logit_trace": mismatch_logit_trace' in mlx_session_batch_text
+    assert "trace_backend_mismatch_logits" in mlx_session_batch_text
+    assert "all_left_one_shot_match" in mlx_session_batch_text
+    assert "all_right_one_shot_match" in mlx_session_batch_text
+    assert "if require_match and not strict_match" in mlx_session_batch_text
+    assert '"quantization": args.quantization' in mlx_session_batch_text
+    mlx_generation_sweep_text = (ROOT / "scripts/mlx_generation_sweep.py").read_text(encoding="utf-8")
+    assert '"quantized_linear_last_backend_counts": telemetry.get("quantized_linear_last_backend_counts")' in mlx_generation_sweep_text
+    assert '"quant_backend": args.quant_backend' in mlx_session_batch_text
+    assert '"quantized_linear_last_backend_counts": telemetry.get("quantized_linear_last_backend_counts")' in mlx_session_batch_text
+    assert "model_quant_runtime_telemetry" in mlx_generation_sweep_text
+    assert "group_rkv_quant_projection_mode" in mlx_generation_sweep_text
+    assert "group_rkv_quant_projection_counts" in mlx_generation_sweep_text
+    assert "model_quant_runtime_telemetry" in mlx_session_batch_text
+    assert "group_rkv_quant_projection_mode" in mlx_session_batch_text
+    assert "group_rkv_quant_projection_counts" in mlx_session_batch_text
+    assert '"session_backend": args.session_backend' in mlx_session_batch_text
+    assert '"min_round_decode_tok_s": min_round_decode_tok_s(rows)' in mlx_session_batch_text
+    assert '"round_backend_reasons": sorted(' in mlx_session_batch_text
+    model_text = (ROOT / "rwkv7_hf/mlx_model.py").read_text(encoding="utf-8")
+    quant_text = (ROOT / "rwkv7_hf/mlx_quant.py").read_text(encoding="utf-8")
+    assert "auto_metal_max_rows" in quant_text
+    assert "mm8_group_matmul_metal" in quant_text
+    assert "mm4_group_matmul_metal" in quant_text
+    assert "mm8_group_matmul_metal_inputs" in quant_text
+    assert "mm4_group_matmul_metal_inputs" in quant_text
+    assert "mm8_triple_matmul_metal_inputs" in quant_text
+    assert "mm4_triple_matmul_metal_inputs" in quant_text
+    assert "pack_mlx_mm8_group" in quant_text
+    assert 'RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS", 4096' in quant_text
+    assert "@lru_cache(maxsize=1)" in quant_text
+    assert "batched_stable" in model_text
+    assert "equal_positive_round_stable_argmax_tol" in model_text
+    assert "auto_mm8_metal_batch_exactness_guard" in model_text
+    assert "RWKV7_MLX_SESSION_AUTO_W8_STABLE" in model_text
+    assert "RWKV7_MLX_SESSION_AUTO_W4_STABLE" in model_text
+    assert "auto_mm4_metal_batch_exactness_guard" in model_text
+    assert "RWKV7_MLX_SESSION_STABLE_ARGMAX_TOLERANCE" in model_text
+    assert "--stable-argmax-tolerance" in mlx_session_batch_text
+    assert "--stable-argmax-mode" in mlx_session_batch_text
+    assert "RWKV7_MLX_SESSION_STABLE_ARGMAX_MODE" in model_text
+    assert "round_stable_repair_counts" in model_text
+    assert '"max_round_stable_repair_count"' in mlx_session_batch_text
+    assert "RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION" in model_text
+    assert "RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE" in model_text
+    assert "group_rkv_quant_projection_mode" in model_text
+    assert "group_rkv_quant_projection_counts" in model_text
+    assert "auto_metal_max_rows" in model_text
+    quant_bench_script = ROOT / "scripts/mlx_quant_projection_bench.py"
+    assert quant_bench_script.exists()
+    assert quant_bench_script.stat().st_mode & stat.S_IXUSR
+    quant_bench_text = quant_bench_script.read_text(encoding="utf-8")
+    assert "mlx_quant_projection_bench" in quant_bench_text
+    assert "speedup_vs_dense" in quant_bench_text
+    assert "max_abs_vs_quant_reference" in quant_bench_text
+    assert "mlx_quant_group_projection_bench" in quant_bench_text
+    assert "speedup_vs_separate_metal" in quant_bench_text
+    assert "_uses_w8_metal_projection" in model_text
+    assert "round_backend_reasons" in model_text
     mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"
     assert mlx_session_batch_script.exists()
     assert mlx_session_batch_script.stat().st_mode & stat.S_IXUSR
@@ -142,6 +231,7 @@ def test_apple_doc_links_entry_points() -> None:
     assert "scripts/mlx_session_smoke.py" in text
     assert "scripts/mlx_session_batch_smoke.py" in text
     assert "scripts/mlx_generation_sweep.py" in text
+    assert "scripts/mlx_quant_projection_bench.py" in text
     assert "tests/test_apple_silicon_model_training_smoke.py" in text
     assert "tests/test_apple_silicon_model_sweep.py" in text
     assert "tests/test_apple_silicon_quant_smoke.py" in text

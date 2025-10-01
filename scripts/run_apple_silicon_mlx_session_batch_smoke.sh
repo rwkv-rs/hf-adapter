@@ -24,6 +24,13 @@ REPEAT="${REPEAT:-1}"
 QUANTIZATION="${QUANTIZATION:-none}"
 QUANT_MIN_PARAMS="${QUANT_MIN_PARAMS:-8000000}"
 QUANT_BACKEND="${QUANT_BACKEND:-affine}"
+WKV_BACKEND="${WKV_BACKEND:-reference}"
+SESSION_BACKEND="${SESSION_BACKEND:-sequential}"
+COMPARE_SESSION_BACKEND="${COMPARE_SESSION_BACKEND:-none}"
+TRACE_MISMATCH_LOGITS="${TRACE_MISMATCH_LOGITS:-0}"
+MISMATCH_TOPK="${MISMATCH_TOPK:-5}"
+STABLE_ARGMAX_TOLERANCE="${STABLE_ARGMAX_TOLERANCE:-}"
+STABLE_ARGMAX_MODE="${STABLE_ARGMAX_MODE:-}"
 
 rwkv7_require_model "${MODEL}"
 
@@ -82,6 +89,10 @@ args=(
   --quantization "${QUANTIZATION}"
   --quant-min-params "${QUANT_MIN_PARAMS}"
   --quant-backend "${QUANT_BACKEND}"
+  --wkv-backend "${WKV_BACKEND}"
+  --session-backend "${SESSION_BACKEND}"
+  --compare-session-backend "${COMPARE_SESSION_BACKEND}"
+  --mismatch-topk "${MISMATCH_TOPK}"
   --results "${RESULTS}"
   --require-mlx
 )
@@ -93,6 +104,21 @@ if [[ "${JSON_ONLY:-0}" == "1" ]]; then
 fi
 if [[ "${SKIP_SPECIAL_TOKENS:-0}" == "1" ]]; then
   args+=(--skip-special-tokens)
+fi
+if [[ "${COMPARE_ONLY:-0}" == "1" ]]; then
+  args+=(--compare-only)
+fi
+if [[ "${REQUIRE_SESSION_BACKEND_MATCH:-0}" == "1" ]]; then
+  args+=(--require-session-backend-match)
+fi
+if [[ "${TRACE_MISMATCH_LOGITS}" == "1" ]]; then
+  args+=(--trace-mismatch-logits)
+fi
+if [[ -n "${STABLE_ARGMAX_TOLERANCE}" ]]; then
+  args+=(--stable-argmax-tolerance "${STABLE_ARGMAX_TOLERANCE}")
+fi
+if [[ -n "${STABLE_ARGMAX_MODE}" ]]; then
+  args+=(--stable-argmax-mode "${STABLE_ARGMAX_MODE}")
 fi
 
 rwkv7_print_env
