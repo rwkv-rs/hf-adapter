@@ -1051,7 +1051,9 @@ python scripts/mlx_quant_projection_bench.py \
   --results bench/results_apple_silicon_mlx_recurrent.jsonl
 
 # Model-level grouped R/K/V quant seam. Keep this as an opt-in A/B row until it
-# has stable end-to-end wins over the default quant path.
+# has stable end-to-end wins over the default quant path. The default mode is
+# direct (no duplicated grouped packed-weight cache); set
+# RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE=packed only for packed-cache A/B.
 RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION=1 \
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 DTYPE=fp16 \

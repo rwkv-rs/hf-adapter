@@ -26,7 +26,9 @@ from .mlx_quant import (
     MLXQuantizedLinear,
     metal_quant_available,
     mm4_group_matmul_metal_inputs,
+    mm4_triple_matmul_metal_inputs,
     mm8_group_matmul_metal_inputs,
+    mm8_triple_matmul_metal_inputs,
     pack_mlx_mm4_group,
     pack_mlx_mm8_group,
 )
@@ -55,6 +57,12 @@ def _env_float(name: str, default: float) -> float:
         return float(raw)
     except ValueError:
         return float(default)
+
+
+def _env_choice(name: str, default: str, choices: set[str]) -> str:
+    raw = os.environ.get(name)
+    value = (raw if raw is not None and raw != "" else default).strip().lower()
+    return value if value in choices else default
 
 
 def _as_list(values: Iterable[int] | Any) -> list[int]:
@@ -670,6 +678,11 @@ class MLXRWKV7Model:
         self.quantized_linear_bits: int | None = None
         self.quantized_linear_backend: str | None = None
         self.group_rkv_quant_projection = _env_flag("RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION", False)
+        self.group_rkv_quant_projection_mode = _env_choice(
+            "RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE",
+            "direct",
+            {"direct", "packed"},
+        )
         self.group_rkv_quant_projection_counts: dict[str, int] = {"metal": 0, "fallback": 0}
         self._rkv_group_quant_cache: dict[tuple[int, int], Any] = {}
         self.layer_ids = _layer_indices(self.arrays)
@@ -790,6 +803,7 @@ class MLXRWKV7Model:
                         "metal": sum(int(q.backend_counts.get("metal", 0)) for q in self.quantized_linears.values()),
                     },
                     "group_rkv_quant_projection": bool(self.group_rkv_quant_projection),
+                    "group_rkv_quant_projection_mode": self.group_rkv_quant_projection_mode,
                     "group_rkv_quant_projection_counts": dict(self.group_rkv_quant_projection_counts),
                 }
             )
@@ -854,14 +868,22 @@ class MLXRWKV7Model:
                 self.group_rkv_quant_projection_counts.get("fallback", 0)
             ) + 1
             return None
-        mx = _mx()
-        group = self._rkv_group_weight(layer, qlines)
-        x_group = mx.stack([xr, xk, xv], axis=0)
-        y_group = (
-            mm8_group_matmul_metal_inputs(x_group, group)
-            if int(qlines[0].bits) == 8
-            else mm4_group_matmul_metal_inputs(x_group, group)
-        )
+        if self.group_rkv_quant_projection_mode == "packed":
+            mx = _mx()
+            group = self._rkv_group_weight(layer, qlines)
+            x_group = mx.stack([xr, xk, xv], axis=0)
+            y_group = (
+                mm8_group_matmul_metal_inputs(x_group, group)
+                if int(qlines[0].bits) == 8
+                else mm4_group_matmul_metal_inputs(x_group, group)
+            )
+        else:
+            weights = [q.weight for q in qlines]
+            y_group = (
+                mm8_triple_matmul_metal_inputs(xr, xk, xv, weights)
+                if int(qlines[0].bits) == 8
+                else mm4_triple_matmul_metal_inputs(xr, xk, xv, weights)
+            )
         for q in qlines:
             q.last_backend = "metal"
             q.backend_counts["metal"] = int(q.backend_counts.get("metal", 0)) + 1

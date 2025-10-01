@@ -1924,25 +1924,31 @@ dense (`1.08x` separate). W4 grouped launch does not help yet (`0.75x` dense /
 W4 still needs a better packed reduction rather than launch fusion alone.
 The model-level opt-in seam now exists behind
 `RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION=1`: when R/K/V are quantized, share
-bit-width, and resolve to the Metal backend, MLX packs their weights once and
-routes the three distinct R/K/V inputs through the grouped Metal kernel.
-The default path remains unchanged; this is a correctness-gated integration
-point for future end-to-end speed rows, not a claim that W8/W4 now stably beats
-fp16. Initial model-level A/B rows with broader R/K/V quantization show the seam
-does execute end-to-end with `fallback=0`: 0.4B W4 auto prompt128/decode8
-improves from `39.33` / `38.68 tok/s` to `44.33` / `41.38 tok/s`
-(`group_rkv_quant_projection_counts.metal=12672`), 1.5B W4 auto prompt128/decode8
-improves from `19.03` / `18.37` to `20.18` / `19.03 tok/s`
-(`metal=6336`), 0.4B W8/Metal prompt128/decode8 improves from `40.32` /
-`38.93` to `43.01` / `42.80 tok/s` (`metal=6336`), and a shorter 1.5B
-W8/Metal prompt64/decode4 row improves from `17.62` / `17.22` to `19.02` /
-`17.53 tok/s` (`metal=3168`). These rows preserve chunked/full prefill
-exactness (`max_abs=0.0`) and generated previews, but they also increase peak
-memory because grouped packed weights are cached; longer end-to-end ratio gates
-are still required before enabling this path by default. A 0.4B W4 grouped
-session row also passes 4-session `SESSION_BACKEND=batched` rounds4,4 one-shot
-token/text/seen-token checks with aggregate round min `93.35 tok/s` and
-`metal=2592`. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
+bit-width, and resolve to the Metal backend, MLX routes the three distinct R/K/V
+inputs and their three existing packed weights through one Metal launch. The
+new default `RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE=direct` avoids the old
+extra grouped packed-weight cache; `packed` remains available for A/B with the
+prepacked microbench path. The default inference path remains unchanged, and
+this is a correctness-gated integration point rather than a claim that W8/W4 now
+stably beats fp16.
+
+Initial packed-cache A/B rows showed the seam executes end-to-end with
+`fallback=0`: 0.4B W4 auto prompt128/decode8 improved from `39.33` /
+`38.68 tok/s` to `44.33` / `41.38 tok/s` (`metal=12672`), 1.5B W4 auto
+improved from `19.03` / `18.37` to `20.18` / `19.03 tok/s` (`metal=6336`),
+0.4B W8/Metal improved from `40.32` / `38.93` to `43.01` / `42.80 tok/s`
+(`metal=6336`), and a shorter 1.5B W8/Metal prompt64/decode4 row improved from
+`17.62` / `17.22` to `19.02` / `17.53 tok/s` (`metal=3168`). The direct
+no-copy path keeps the useful W4 signal while removing the duplicated-weight
+memory penalty: 0.4B W4 auto prompt128/decode8 records `43.30` / `42.54 tok/s`,
+peak `364.7 MB`, `metal=6336`, and chunked/full prefill `max_abs=0.0`; 1.5B
+W4 auto records `20.95` / `19.52 tok/s`, peak `1074.6 MB`, `metal=6336`, and
+`max_abs=0.0`. These peaks are back near the separate-path baselines and well
+below the old packed-cache grouped peaks (`415.9 MB` / `1226.8 MB`). A 0.4B W4
+direct grouped session row also passes 4-session `SESSION_BACKEND=batched`
+rounds4,4 one-shot token/text/seen-token checks with aggregate round min
+`84.50 tok/s`, peak `427.7 MB`, and `metal=2592`. Longer end-to-end ratio gates
+are still required before enabling this path by default. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
 repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
 `534 MB`, and the higher-concurrency 6-session repeat=3 row reaches min decode
 `34.33` / `27.14 tok/s` with peak `682` / `547 MB`. 1.5B W8/W4
