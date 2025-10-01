@@ -664,6 +664,10 @@ def main() -> int:
             "round_backend_reasons": sorted(
                 {reason for row in rows for reason in row.get("round_backend_reasons", [])}
             ),
+            "max_round_stable_repair_count": max(
+                (int(value) for row in rows for value in row.get("round_stable_repair_counts", [])),
+                default=0,
+            ),
             "max_prompt_tokens": max(max(int(x) for x in row.get("prompt_tokens", [0])) for row in rows) if rows else None,
             "max_generated_tokens": max(max(int(x) for x in row.get("generated_tokens", [0])) for row in rows) if rows else None,
             "max_mlx_active_memory_bytes": max(int(row.get("mlx_active_memory_bytes", 0)) for row in rows) if rows else None,

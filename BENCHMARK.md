@@ -2001,7 +2001,16 @@ peak `1126.1 MB`, grouped `metal=31296`, fallback `0`, and quantized-linear
 `metal=188456`. The latter is intentionally safe sequential scheduling, not a
 claim that true 1.5B W4 batched direct is production-ready. Longer end-to-end
 ratio gates are still required before enabling true W4 batched direct by
-default. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
+default. An opt-in 1.5B W4 direct grouped strict compare now closes this same
+matrix with `SESSION_BACKEND=batched_stable`,
+`RWKV7_MLX_SESSION_STABLE_ARGMAX_MODE=repair`, and tolerance `0.0625`:
+sequential vs batched_stable matches backend tokens/text, both sides match
+one-shot, seen-token checks pass for 5 sessions and rounds8,8, the structured
+repair counts are `[2, 3]`, aggregate round min is `25.32 tok/s`, peak is
+`1434.0 MB`, grouped `metal=10320`, fallback `0`, and quantized-linear
+`metal=62116`. This is a correctness bring-up path that selectively replays
+low-margin rows; it is not yet the default production W4 batched route.
+Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
 repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
 `534 MB`, and the higher-concurrency 6-session repeat=3 row reaches min decode
 `34.33` / `27.14 tok/s` with peak `682` / `547 MB`. 1.5B W8/W4
