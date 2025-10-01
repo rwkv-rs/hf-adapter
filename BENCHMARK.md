@@ -1950,8 +1950,17 @@ direct rows also pass: 0.4B W4 auto prompt512/decode16 reaches `45.83` /
 reaches `20.69` / `19.28 tok/s`, peak `1074.6 MB`, `metal=24960`; 0.4B W8/Metal
 prompt512/decode16 reaches `44.50` / `41.50 tok/s`, peak `549.3 MB`,
 `metal=24960`; and 1.5B W8/Metal prompt512/decode16 reaches `19.81` /
-`19.27 tok/s`, peak `1745.6 MB`, `metal=24960`. All of these rows keep
-chunked/full prefill `max_abs=0.0`. Direct grouped session pressure now covers
+`19.27 tok/s`, peak `1745.6 MB`, `metal=24960`. The broader-threshold
+prompt2048/decode128 direct rows, which include R/K/V in the quantized set, also
+pass with grouped fallback `0` and chunked/full prefill `max_abs=0.0`: 0.4B W4
+records `46.50` / `43.70 tok/s`, peak `364.7 MB`, `metal=101376`; 0.4B W8
+records `42.52` / `41.36 tok/s`, peak `549.3 MB`, `metal=101376`; 1.5B W4
+records `21.31` / `19.63 tok/s`, peak `1074.6 MB`, `metal=101376`; and 1.5B
+W8 records `20.47` / `19.78 tok/s`, peak `1745.6 MB`, `metal=101376`. Against
+the same-shape fp16 baselines (`47.97 tok/s` decode at 0.4B and `27.20 tok/s`
+at 1.5B), these direct broad-threshold rows improve memory (`~0.40x/0.60x` peak
+for 0.4B W4/W8 and `~0.35x/0.57x` for 1.5B W4/W8) but still do not close the
+stable fp16-beating speed gate. Direct grouped session pressure now covers
 0.4B 4-session rounds4,4, 0.4B 6-session rounds8,8 repeat=2, and 1.5B 5-session
 rounds4,4 for W4, plus matching direct W8 pressure rows for 0.4B 6-session
 rounds8,8 repeat=2 and 1.5B 5-session rounds4,4: all keep one-shot

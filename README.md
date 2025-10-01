@@ -110,9 +110,10 @@ launch for the three existing R/K/V packed weights without duplicating them into
 a grouped cache; `RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE=packed` keeps the
 older prepacked A/B path. Initial 0.4B/1.5B W4 and W8 rows show positive
 prefill/decode movement with grouped hits and zero fallbacks; the direct path
-now has W4 and W8 prompt512/decode16 rows plus 0.4B/1.5B grouped
-session-pressure rows (grouped fallback=0), but longer end-to-end speed gates
-are still needed before enabling it by default.
+now has W4 and W8 prompt512/decode16 plus broader-threshold
+prompt2048/decode128 rows, and 0.4B/1.5B grouped session-pressure rows
+(grouped fallback=0), but longer end-to-end speed gates are still needed before
+enabling it by default.
 
 ## Layout
 
