@@ -1742,6 +1742,73 @@ parameter deltas. These rows validate the conservative Ampere policy on A800.
 They do not promote native prefill-scan or quantized-speed kernels: W8/W4 reduce
 footprint, but fp16 native_graph remains much faster end to end.
 
+Issue #98 adds the missing A800 rows for 0.1B smoke/alignment/RL training, 7.2B
+large-model smoke, 13.3B bnb W8/W4 80GB quantized smoke, single-GPU and 2-GPU
+ZeRO-2/3 base/resume, and repository-native mm8/mm4 decode through 13.3B. Full details are in
+[`docs/validation/A800_HF_VALIDATION.md`](docs/validation/A800_HF_VALIDATION.md).
+
+0.1B A800 compatibility rows:
+
+| Check | Result |
+|---|---|
+| `smoke_hf_generate` | PASS; fast token backend `native_graph` |
+| `test_hf_api_contract` | PASS |
+| `test_quantized_inference` 8-bit / 4-bit | PASS; footprint `283.4 MB` / `242.9 MB` |
+| `test_peft_lora` | PASS; nonzero LoRA gradients |
+| official alignment | PASS; top5 `1.0`, argmax `1.0`, cosine `0.9999957`, greedy `64/64` |
+| Trainer / TRL SFT / TRL DPO / TRL GRPO | PASS; nonzero trainable deltas |
+
+A800 native mm quantization rows from `bench_native_mm_quant_decode.py`,
+prompt128/decode64, fp16 load, `min_params=8_000_000`:
+
+| Model | Quantization | Replaced modules | Model footprint | Decode tok/s | vs fp16 |
+|---|---|---:|---:|---:|---:|
+| 0.4B | none | 0 | 859.8 MB | 185.2 | 1.00x |
+| 0.4B | native mm8 | 1 | 796.0 MB | 187.9 | 1.01x |
+| 0.4B | native mm4 | 1 | 764.0 MB | 185.8 | 1.00x |
+| 1.5B | none | 0 | 2913.3 MB | 172.7 | 1.00x |
+| 1.5B | native mm8 | 49 | 2019.4 MB | 27.5 | 0.16x |
+| 1.5B | native mm4 | 49 | 1571.4 MB | 27.1 | 0.16x |
+| 2.9B | none | 0 | 5622.4 MB | 110.7 | 1.00x |
+| 2.9B | native mm8 | 65 | 3865.7 MB | 20.5 | 0.19x |
+| 2.9B | native mm4 | 65 | 2985.7 MB | 19.5 | 0.18x |
+| 7.2B | none | 0 | 13731.3 MB | 36.1 | 1.00x |
+| 7.2B | native mm8 | 193 | 7340.5 MB | 17.0 | 0.47x |
+| 7.2B | native mm4 | 193 | 4140.5 MB | 15.9 | 0.44x |
+| 13.3B | none | 0 | 25309.1 MB | 10.2 | 1.00x |
+| 13.3B | native mm8 | 367 | 13358.5 MB | 7.7 | 0.75x |
+| 13.3B | native mm4 | 367 | 7374.5 MB | 8.6 | 0.84x |
+
+Native mm8/mm4 works and reduces model footprint on A800 through 13.3B, but the
+current 1.5B+ rows are slower than fp16. The regression comes from the default
+`8_000_000` parameter gate replacing every per-layer FFN `key`/`value` matrix
+plus `lm_head`; the current Triton dequant-GEMV kernels do not beat A800 fp16
+cuBLAS on those decode shapes. A `50_000_000` gate leaves only `lm_head`
+quantized and is roughly neutral for 1.5B/2.9B decode, but saves far less
+footprint. Quantized speed therefore remains open until a native fused quant
+kernel beats fp16 end to end.
+
+Additional A800 issue #98 rows:
+
+| Area | Model | Result |
+|---|---|---|
+| 7.2B larger smoke | 7.2B fp16 | PASS; footprint `13731.3 MB`, peak `13998.8 MiB`, generate `6.52 tok/s` |
+| 13.3B quantized smoke | 13.3B bnb 8bit | PASS; footprint `13597.1 MB`, peak `20108.6 MiB`, decode `3.9 tok/s` |
+| 13.3B quantized smoke | 13.3B bnb 4bit | PASS; footprint `7741.1 MB`, peak `18998.6 MiB`, decode `8.4 tok/s` |
+| DeepSpeed ZeRO-2 | 0.4B bf16, 1 GPU | PASS; loss `1.9297`, trainable delta `0.000100` |
+| DeepSpeed ZeRO-3 | 0.4B bf16, 1 GPU | PASS; loss `1.9297`, trainable delta `0.000100` |
+| ZeRO-2 checkpoint resume | 0.4B bf16, 1 GPU | PASS; resumed to global step `2`, resume loss `1.5781` |
+| ZeRO-3 checkpoint resume | 0.4B bf16, 1 GPU | PASS; resumed to global step `2`, resume loss `1.5938` |
+| DeepSpeed ZeRO-2 | 0.4B bf16, 2 GPU | PASS; loss `5.1328`, trainable delta `0.000100` |
+| DeepSpeed ZeRO-3 | 0.4B bf16, 2 GPU | PASS; loss `5.1328`, trainable delta `0.000100` |
+| ZeRO-2 checkpoint resume | 0.4B bf16, 2 GPU | PASS; resumed to global step `2`, resume loss `2.4336` |
+| ZeRO-3 checkpoint resume | 0.4B bf16, 2 GPU | PASS; resumed to global step `2`, resume loss `2.4453` |
+
+A800 80GB VRAM coverage now includes fp16 decode/smoke rows for 0.4B / 1.5B /
+2.9B / 7.2B / 13.3B, bnb 8bit/4bit rows through 13.3B, and native mm8/mm4 rows
+through 13.3B. The bnb and current native-mm quant rows are memory evidence,
+not quantized-speed wins.
+
 ## HF speculative decoding smoke
 
 `rwkv7_speculative_generate()` is the initial HF-only speculative decoding

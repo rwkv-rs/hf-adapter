@@ -102,6 +102,7 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
     if ds_error:
         raise RuntimeError(f"DeepSpeed import failed: {ds_error}")
     torch, _, _, _, AutoTokenizer, Trainer, TrainingArguments = ds.require_training_deps()
+    Trainer = ds.single_group_trainer_cls(Trainer, torch)
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     dataset = ds.TokenDataset(tok, args.max_length, repeats=args.dataset_repeats)
@@ -240,8 +241,9 @@ def main() -> int:
     ap.add_argument("--results", default="")
     args = ap.parse_args()
     if args.train_dtype is None:
-        args.train_dtype = "bf16" if args.device.startswith("cuda") else "fp32"
-    
+        torch = ds.optional_torch()
+        args.train_dtype = "bf16" if torch is not None and torch.cuda.is_available() else "fp32"
+
     if args.resume_steps <= args.first_steps:
         raise ValueError("resume-steps must exceed first-steps")
     stages = [2, 3] if args.zero_stage == "both" else [int(args.zero_stage)]
