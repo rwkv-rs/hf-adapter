@@ -78,6 +78,18 @@ def require_training_deps() -> tuple[Any, Any, Any, Any, Any, Any, Any]:
     return torch, LoraConfig, get_peft_model, AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments
 
 
+def single_group_trainer_cls(Trainer: Any, torch: Any) -> Any:
+    class SingleGroupTrainer(Trainer):
+        def create_optimizer(self):
+            if self.optimizer is None:
+                # Keep ZeRO smoke optimizer state aligned with one trainable group.
+                params = [p for p in self.model.parameters() if p.requires_grad]
+                self.optimizer = torch.optim.AdamW(params, lr=self.args.learning_rate)
+            return self.optimizer
+
+    return SingleGroupTrainer
+
+
 def missing_training_deps() -> list[str]:
     missing = []
     for name in ("torch", "peft", "transformers"):
@@ -282,6 +294,7 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
         raise RuntimeError(f"Training dependencies are not installed: {', '.join(missing)}")
 
     torch, _, _, _, AutoTokenizer, Trainer, TrainingArguments = require_training_deps()
+    Trainer = single_group_trainer_cls(Trainer, torch)
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     model = load_lora_model(args.model, args.attn_mode, args.train_dtype)
     dataset = TokenDataset(tok, args.max_length, repeats=args.dataset_repeats)
@@ -366,7 +379,8 @@ def main() -> int:
     ap.add_argument("--results", default="")
     args = ap.parse_args()
     if args.train_dtype is None:
-        args.train_dtype = "bf16" if args.device.startswith("cuda") else "fp32"
+        torch = optional_torch()
+        args.train_dtype = "bf16" if torch is not None and torch.cuda.is_available() else "fp32"
 
     stages = [2, 3] if args.zero_stage == "both" else [int(args.zero_stage)]
     rows = [run_stage(args, stage) for stage in stages]

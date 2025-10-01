@@ -2360,6 +2360,48 @@ def assert_quantization_model_sweep_does_not_override_canonical(tmpdir: Path) ->
     assert any("0.4b quantization sweep rows pass" in item for item in report["next_focus"])
 
 
+def assert_native_mm_quantization_is_reported(tmpdir: Path) -> None:
+    rows = []
+    base = {
+        "axis": "native_mm_quantization",
+        "backend": "hf_adapter",
+        "status": "pass",
+        "dtype": "fp16",
+        "device": "NVIDIA A800-SXM4-80GB",
+        "model_size_label": "1.5b",
+    }
+    for quantization, footprint, replaced in (
+        ("none", 2913.3, 0),
+        ("native_mm8", 2019.4, 49),
+        ("native_mm4", 1571.4, 49),
+    ):
+        rows.append({**base, "quantization": quantization, "model_footprint_mb": footprint, "native_mm_replaced_modules": replaced})
+    path = tmpdir / "native_mm_quant.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "A800",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    by_quant = {row["quantization"]: row for row in report["native_mm_quantization"]}
+    assert by_quant["native_mm8"]["native_mm_replaced_modules"] == 49
+    assert by_quant["native_mm4"]["model_footprint_mb"] == 1571.4
+
+
 def assert_native_model_smoke_is_reported(tmpdir: Path) -> None:
     rows = [
         {
@@ -2970,6 +3012,7 @@ def main() -> int:
         assert_native_quant_rkv_sweep_is_reported(tmpdir)
         assert_native_quant_e2e_decode_is_reported(tmpdir)
         assert_quantization_model_sweep_does_not_override_canonical(tmpdir)
+        assert_native_mm_quantization_is_reported(tmpdir)
         assert_native_model_smoke_is_reported(tmpdir)
         assert_deepspeed_smoke_survives_inference_dtype_filter(tmpdir)
         assert_dynamic_batch_native_graph_telemetry_is_reported(tmpdir)

@@ -369,10 +369,13 @@ Current exact-card evidence status:
   fusion wins must be re-proven end-to-end on each 50-card.
 - A800 (`sm_80`): touched Ampere server validation card; 0.4B / 1.5B /
   2.9B bsz=1/2/4 batch sweep and W8/W4 memory-policy quantization rows exist
-  on `NVIDIA A800-SXM4-80GB`, plus 2.9B HF `larger_model_smoke` and 0.4B
-  Trainer / TRL SFT smoke rows. Keep the Ampere defaults conservative: output
-  fusions remain allowed, prefill-scan and projection/LoRA fusions stay opt-in
-  until exact-card sweeps prove end-to-end value.
+  on `NVIDIA A800-SXM4-80GB`, plus 0.1B generate/API/PEFT/alignment/Trainer/
+  SFT/DPO/GRPO rows, 7.2B HF `larger_model_smoke`, 0.4B single-GPU and
+  2-GPU ZeRO-2/3 base/checkpoint-resume rows, and native mm8/mm4 rows for
+  0.4B / 1.5B / 2.9B / 7.2B / 13.3B.
+  Keep the Ampere defaults conservative: output fusions remain allowed,
+  prefill-scan, projection/LoRA, and quantized-speed fusions stay opt-in until
+  exact-card sweeps prove end-to-end value.
 - GTX 1080 Ti (`sm_61`): Pascal smoke evidence exists for 0.1B / fp16 /
   default policy on one card. The safe default is native/no-FLA compatibility
   because FLA/Triton RWKV-7 kernels can emit `sm_70` PTX features on Pascal.
@@ -462,17 +465,28 @@ Run this checklist for every new GPU before marking it as supported:
 - Default-off: prefill-scan by default, output-project, projection, WAG/WAVG LoRA
   fusions.
 - A800 adaptation rule:
-  - `NVIDIA A800-SXM4-80GB` has initial 0.4B / 1.5B / 2.9B fp16 HF adapter
-    evidence for bsz=1/2/4 native_graph decode and W8/W4 memory-policy
-    quantization, plus 2.9B standard loading/generation and 0.4B Trainer / TRL
-    SFT smokes. These rows validate the conservative Ampere defaults only; they
-    do not promote prefill-scan, output-project, projection, LoRA, or
-    quantized-speed kernels.
+  - `NVIDIA A800-SXM4-80GB` has 0.4B / 1.5B / 2.9B fp16 HF adapter evidence
+    for bsz=1/2/4 native_graph decode and W8/W4 memory-policy quantization,
+    plus 0.1B generate/API/PEFT/alignment/Trainer/SFT/DPO/GRPO smokes, 7.2B
+    standard loading/generation, 13.3B bnb W8/W4 quantized smoke, 0.4B
+    single-GPU and 2-GPU ZeRO-2/3 base/checkpoint resume, and native mm8/mm4
+    rows for 0.4B / 1.5B / 2.9B / 7.2B / 13.3B. These rows validate the
+    conservative Ampere defaults only; they do not promote prefill-scan,
+    output-project, projection, LoRA, or quantized-speed kernels.
   - Latest 2.9B prompt128/decode8 native_graph decode rows are `93.6`,
     `199.1`, and `388.5` tok/s for bsz=1/2/4, with peak VRAM `6428.9`,
     `7262.5`, and `8906.6` MiB. W8/W4 reduce 2.9B model footprint from
-    `5622.4` MB to `3222.4`/`2022.4` MB but remain slower than fp16, so quant
-    speed is still unsolved on A800.
+    `5622.4` MB to `3222.4`/`2022.4` MB but remain slower than fp16. Native
+    mm8/mm4 reduce 2.9B model footprint from `5622.4` MB to `3865.7`/`2985.7`
+    MB, but decode falls from `110.7` tok/s fp16 to `20.5`/`19.5` tok/s. The
+    default `8_000_000` native-mm gate replaces every per-layer FFN
+    `key`/`value` matrix plus `lm_head`; A800 microbench rows show the current
+    Triton dequant-GEMV kernels do not beat fp16 cuBLAS on those shapes. A
+    `50_000_000` gate leaves only `lm_head` quantized and is roughly neutral for
+    1.5B/2.9B decode, but saves much less footprint. Larger native mm8/mm4 rows
+    also reduce footprint but remain slower than fp16: 7.2B falls from `36.1`
+    tok/s fp16 to `17.0`/`15.9` tok/s, and 13.3B falls from `10.2` tok/s fp16
+    to `7.7`/`8.6` tok/s. Quant speed is still unsolved on A800.
 - Required validation: common functional checklist, larger-batch prefill, state
   cache reuse/hit-rate rows, W8/W4 rows, and ZeRO-2/ZeRO-3 smoke when training is
   claimed.
