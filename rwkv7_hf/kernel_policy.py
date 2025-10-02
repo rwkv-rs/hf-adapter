@@ -189,8 +189,8 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     ),
     "ampere": GPUAdaptationRule(
         family="ampere",
-        cards=("A100", "A800", "A10", "A6000", "RTX 30-series"),
-        status="initial validation complete; A800 issue #98 evidence added",
+        cards=("A100", "A800", "RTX A6000", "A10", "RTX 30-series"),
+        status="A100/A800/RTX A6000 validation rows exist; keep conservative Ampere defaults",
         default_stance="stable output fusions; tune larger batch and training paths per card",
         default_on=("fast_cache", "fused_recurrent_output", "fused_output"),
         default_off=("fused_prefill_scan", "fused_output_project", "projection/LoRA fusions"),
@@ -198,7 +198,7 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
         + ("ZeRO-2/ZeRO-3 smoke when training is claimed",),
         required_benchmarks=COMMON_PERF_BENCHMARKS
         + ("larger-batch prefill", "state-cache reuse/hit-rate rows"),
-        quant_rule="bnb and native mm8/mm4 require exact-card footprint and speed rows; A800 native mm8/mm4 reduce footprint but remain slower than fp16",
+        quant_rule="bnb/native W8/W4 require exact-card footprint and speed telemetry rows; current A800/A6000 rows reduce memory but do not satisfy the quantized-speed gate",
         promotion_rule="do not reuse V100/4090 block sizes without an Ampere sweep",
     ),
     "ada": GPUAdaptationRule(

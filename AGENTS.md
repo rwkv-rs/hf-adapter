@@ -376,6 +376,14 @@ Current exact-card evidence status:
   Keep the Ampere defaults conservative: output fusions remain allowed,
   prefill-scan, projection/LoRA, and quantized-speed fusions stay opt-in until
   exact-card sweeps prove end-to-end value.
+- RTX A6000 (`sm_86`): touched Ampere workstation validation card; 2026-07-04
+  rows on `NVIDIA RTX A6000` cover 0.1B core smoke, 0.4B / 1.5B / 2.9B /
+  7.2B fp16+bf16 load/generate and batch sweep, bnb W8/W4 functional/footprint
+  rows with slower decode telemetry, native mm8/mm4 decode telemetry, 0.4B /
+  1.5B / 2.9B Trainer/SFT/DPO and HF checkpoint resume, plus 2x A6000
+  ZeRO-2/ZeRO-3 base and resume to 2.9B.
+  These rows validate the conservative Ampere defaults on `sm_86`; they do not
+  promote prefill-scan, projection/LoRA, or quantized-speed kernels.
 - GTX 1080 Ti (`sm_61`): Pascal smoke evidence exists for 0.1B / fp16 /
   default policy on one card. The safe default is native/no-FLA compatibility
   because FLA/Triton RWKV-7 kernels can emit `sm_70` PTX features on Pascal.
@@ -487,6 +495,19 @@ Run this checklist for every new GPU before marking it as supported:
     also reduce footprint but remain slower than fp16: 7.2B falls from `36.1`
     tok/s fp16 to `17.0`/`15.9` tok/s, and 13.3B falls from `10.2` tok/s fp16
     to `7.7`/`8.6` tok/s. Quant speed is still unsolved on A800.
+- RTX A6000 adaptation rule:
+  - `NVIDIA RTX A6000` (`sm_86`, 48GB) has 2026-07-04 HF adapter rows in
+    `bench/results.jsonl` for 0.4B / 1.5B / 2.9B / 7.2B fp16+bf16 smoke,
+    native_graph batch sweep, bnb W8/W4, and native mm8/mm4 decode. Single-GPU
+    Trainer/SFT/DPO/resume rows pass for 0.4B / 1.5B / 2.9B; 2x A6000
+    ZeRO-2/ZeRO-3 base and resume rows pass to 2.9B.
+  - Latest fp16 native_graph decode rows are: 0.4B bsz1/8 `286.3`/`1750.2`
+    tok/s, 1.5B bsz1/4 `149.9`/`504.1` tok/s, 2.9B bsz1/2
+    `81.7`/`148.1` tok/s, and 7.2B bsz1/2 `41.4`/`78.7` tok/s. 7.2B fp16 and
+    bf16 load/generate fit within 48GB with `13997.8` MiB peak in the smoke
+    row. Bnb W8/W4 reduce footprint but are slower than fp16; native mm8/mm4
+    rows are real decode telemetry, not a production quant-speed win on larger
+    models.
 - Required validation: common functional checklist, larger-batch prefill, state
   cache reuse/hit-rate rows, W8/W4 rows, and ZeRO-2/ZeRO-3 smoke when training is
   claimed.

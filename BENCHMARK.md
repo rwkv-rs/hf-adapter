@@ -1809,6 +1809,124 @@ A800 80GB VRAM coverage now includes fp16 decode/smoke rows for 0.4B / 1.5B /
 through 13.3B. The bnb and current native-mm quant rows are memory evidence,
 not quantized-speed wins.
 
+### RTX A6000 validation sweep
+
+Issue #115 was validated on 2026-07-04 with 1x and 2x `NVIDIA RTX A6000`
+(`sm_86`, 48GB-class visible memory on GPUs 2/3). Rows were appended to
+`bench/results.jsonl` lines 659-786. The card follows the conservative Ampere
+policy: stable output/recurrent-output fusions are allowed, while prefill-scan,
+projection/LoRA fusions, and quantized-speed promotion remain opt-in.
+The quantization rows below are functional, memory-footprint, and decode
+telemetry evidence; they are not a quantized-throughput pass.
+
+Environment captured with `scripts/print_env.sh`:
+
+- GPU: `NVIDIA RTX A6000 sm_86`; ZeRO used `CUDA_VISIBLE_DEVICES=2,3`.
+- Driver / CUDA: NVIDIA driver `580.82.07`, `nvidia-smi` CUDA `13.0`.
+- Runtime: Python `3.10.12` from the draft venv, PyTorch `2.12.1+cu130`,
+  Transformers `5.13.0`, PEFT `0.19.1`, TRL `1.7.1`, DeepSpeed `0.19.2`,
+  bitsandbytes `0.49.2`, FLA `0.5.1`.
+
+Representative commands:
+
+```bash
+PYTHON_BIN=/path/to/python \
+MODEL_ROOT=/path/to/rwkv_models \
+A6000_SINGLE_VISIBLE_DEVICES=2 \
+A6000_MULTI_VISIBLE_DEVICES=2,3 \
+bash bench/run_a6000_hf_validation.sh
+
+CUDA_VISIBLE_DEVICES=2 PYTHON_BIN=/path/to/python \
+  bash scripts/print_env.sh
+
+CUDA_VISIBLE_DEVICES=2,3 PYTHON_BIN=/path/to/python \
+  bash scripts/print_env.sh
+```
+
+Core smoke status:
+
+| Check | Result |
+|---|---|
+| 0.1B `smoke_hf_generate` | PASS |
+| 0.1B `test_hf_api_contract` | PASS |
+| 0.1B `test_quantized_inference` 8-bit / 4-bit | PASS / PASS |
+| 0.1B `bench_speed.py` | PASS; fp16 prefill `6759.0` tok/s, forward decode `90.4` tok/s, peak `636.4` MiB |
+| 0.1B `bench_batch_sweep.py` | PASS; native_graph `rwkv7_forward_token` bsz1/8 `582.5` / `3872.2` tok/s |
+| 0.1B native mm8/mm4 decode telemetry | PASS; none/mm8/mm4 `532.8` / `536.2` / `508.5` tok/s |
+
+Single-GPU large-model smoke, `attn_mode=fused_recurrent`:
+
+| Model | Dtype | Actual param dtype | Footprint | Peak VRAM |
+|---|---|---|---:|---:|
+| 0.4B | fp16 | `torch.float16` | 859.8 MB | 1124.5 MiB |
+| 0.4B | bf16 | `torch.bfloat16` | 859.8 MB | 903.6 MiB |
+| 1.5B | fp16 | `torch.float16` | 2913.3 MB | 3178.6 MiB |
+| 1.5B | bf16 | `torch.bfloat16` | 2913.3 MB | 3178.6 MiB |
+| 2.9B | fp16 | `torch.float16` | 5622.4 MB | 5888.0 MiB |
+| 2.9B | bf16 | `torch.bfloat16` | 5622.4 MB | 5888.0 MiB |
+| 7.2B | fp16 | `torch.float16` | 13731.3 MB | 13997.8 MiB |
+| 7.2B | bf16 | `torch.bfloat16` | 13731.3 MB | 13997.8 MiB |
+
+Latest A6000 `bench_batch_sweep.py` native_graph decode rows
+(`rwkv7_forward_token`):
+
+| Model | Dtype | Batch 1 tok/s | Batch 2 tok/s | Batch 4 tok/s | Batch 8 tok/s | Largest batch peak VRAM |
+|---|---|---:|---:|---:|---:|---:|
+| 0.4B | fp16 | 286.3 | 453.9 | 894.8 | 1750.2 | 2867.4 MiB |
+| 0.4B | bf16 | 284.9 | 437.1 | 861.4 | 1675.7 | 2867.4 MiB |
+| 1.5B | fp16 | 149.9 | 260.4 | 504.1 | - | 4904.1 MiB |
+| 1.5B | bf16 | 149.7 | 245.6 | 476.2 | - | 4904.1 MiB |
+| 2.9B | fp16 | 81.7 | 148.1 | - | - | 7261.5 MiB |
+| 2.9B | bf16 | 80.5 | 143.3 | - | - | 7261.5 MiB |
+| 7.2B | fp16 | 41.4 | 78.7 | - | - | 16336.1 MiB |
+| 7.2B | bf16 | 41.4 | 77.8 | - | - | 16336.1 MiB |
+
+Latest A6000 bnb quantization rows, `--quant-skip-policy memory`
+(footprint improves; decode is slower than fp16):
+
+| Model | fp16 footprint | 8-bit footprint | 4-bit footprint | fp16 decode tok/s | 8-bit decode tok/s | 4-bit decode tok/s |
+|---|---:|---:|---:|---:|---:|---:|
+| 0.4B | 859.8 MB | 571.8 MB | 427.8 MB | 261.9 | 18.5 | 36.2 |
+| 1.5B | 2913.3 MB | 1761.3 MB | 1185.3 MB | 142.9 | 17.2 | 36.1 |
+| 2.9B | 5622.4 MB | 3222.4 MB | 2022.4 MB | 80.1 | 13.1 | 26.8 |
+| 7.2B | 13731.3 MB | 7587.3 MB | 4515.3 MB | 40.8 | 13.0 | 27.2 |
+
+Latest A6000 repository-native mm quant decode telemetry rows:
+
+| Model | Native mm mode | Replaced modules | Footprint | Decode tok/s | Status |
+|---|---|---:|---:|---:|---|
+| 0.1B | none / mm8 / mm4 | 0 / 1 / 1 | 364.4 / 316.6 / 292.6 MB | 532.8 / 536.2 / 508.5 | PASS |
+| 0.4B | none / mm8 / mm4 | 0 / 1 / 1 | 859.8 / 796.0 / 764.0 MB | 261.7 / 265.8 / 264.6 | PASS |
+| 1.5B | none / mm8 / mm4 | 0 / 49 / 49 | 2913.3 / 2019.4 / 1571.4 MB | 142.8 / 38.1 / 35.2 | PASS |
+| 2.9B | none / mm8 / mm4 | 0 / 65 / 65 | 5622.4 / 3865.7 / 2985.7 MB | 78.3 / 25.7 / 31.9 | PASS |
+| 7.2B | none / mm8 / mm4 | 0 / 193 / 193 | 13731.3 / 7340.5 / 4140.5 MB | 41.0 / 26.4 / 23.0 | PASS |
+
+The quantization rows validate functional W8/W4 loading, footprint reduction,
+and real native mm8/mm4 decode coverage. They do not close the quantized-speed
+gate: generic bnb W8/W4 are slower than fp16 on every A6000 model measured, and
+native mm8/mm4 only matches or slightly beats fp16 on the small 0.1B/0.4B cases
+under the current replacement policy. Larger native-mm rows remain slower than
+fp16, so quantized speed stays open pending fused/native quant kernels.
+
+Training rows:
+
+| Model | Single-GPU Trainer/SFT/DPO | HF Trainer resume | 2x A6000 ZeRO-2/3 | 2x A6000 ZeRO-2/3 resume |
+|---|---|---|---|---|
+| 0.1B | PASS | PASS | - | - |
+| 0.4B | PASS | PASS | PASS / PASS | PASS / PASS |
+| 1.5B | PASS | PASS | PASS / PASS | PASS / PASS |
+| 2.9B | PASS | PASS | PASS / PASS | PASS / PASS |
+
+Cross-card summary: A6000 (`sm_86`, 48GB) behaves like a conservative Ampere
+workstation card. It extends the A800/A100 Ampere coverage with a 48GB
+single-card matrix and confirms 7.2B fp16/bf16 inference fits comfortably under
+48GB. Decode throughput is below the 80GB A800 rows for 2.9B bsz1/2
+(`81.7`/`148.1` tok/s on A6000 vs `93.6`/`199.1` tok/s on A800), but A6000 now
+has broader single-card training/resume and 2-card ZeRO-2/3 resume evidence
+than the earlier A800 block. As on V100/A800, bnb quantization is a memory
+fallback, not a speed win; native fused quant kernels remain the performance
+work item before any quantized-speed promotion.
+
 ## HF speculative decoding smoke
 
 `rwkv7_speculative_generate()` is the initial HF-only speculative decoding
