@@ -141,6 +141,30 @@ def infer_config(weights: Dict[str, torch.Tensor], dtype_name: str, attn_mode: s
     return cfg
 
 
+def build_template_model(config: RWKV7Config, dtype: torch.dtype):
+    """Construct the HF-shaped model used as the state_dict template.
+
+    Conversion only needs module names and tensor shapes.  Prefer the optimized
+    FLA wrapper when it is installed, but allow offline/no-FLA conversion through
+    the native backend, which intentionally uses the same converted key layout.
+    """
+
+    try:
+        return RWKV7ForCausalLM(config).to(dtype=dtype)
+    except ImportError as exc:
+        message = str(exc).lower()
+        if (
+            "flash-linear-attention" not in message
+            and "`fla`" not in message
+            and "no module named 'fla'" not in message
+        ):
+            raise
+        from rwkv7_hf.native_model import NativeRWKV7ForCausalLM
+
+        print("FLA unavailable; using native RWKV-7 template for conversion.")
+        return NativeRWKV7ForCausalLM(config).to(dtype=dtype)
+
+
 def translate_name(name: str, num_layers: int) -> Tuple[str, bool]:
     unused_names = {"blocks.0.att.v0", "blocks.0.att.v1", "blocks.0.att.v2"}
     emb_head = {
@@ -245,7 +269,7 @@ def convert(args: argparse.Namespace) -> None:
     output.mkdir(parents=True, exist_ok=True)
     weights = torch.load(args.input, weights_only=True, map_location="cpu")
     config = infer_config(weights, dtype_name=dtype_name, attn_mode=args.attn_mode, fuse_norm=args.fuse_norm)
-    model = RWKV7ForCausalLM(config).to(dtype=dtype)
+    model = build_template_model(config, dtype)
     model_dict = model.state_dict()
     missing = set(model_dict)
 
