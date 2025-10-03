@@ -1674,6 +1674,36 @@ evidence. The analyzer now also reports `quantization_best_variants`, selecting
 the fastest passing policy per W8/W4 mode and comparing its decode and footprint
 ratios against fp16.
 
+### RTX 5090 native MM8/MM4 speed-policy quantization
+
+`bench/5090_blackwell_quant_policy_20260705/` records the repository-native
+MM8/MM4 policy split on RTX 5090. `native_mm_policy=memory` keeps the historical
+size-gated behavior and is the maximum-footprint-reduction lane; it is not a
+speed claim when many FFN/projection modules are quantized. `native_mm_policy=speed`
+quantizes only `lm_head` after the same size gate, which gives a smaller but
+real footprint reduction while keeping cached decode near fp16 speed.
+
+Key RTX 5090 rows:
+
+| model | quantization | policy | replaced modules | decode ratio vs fp16 | footprint ratio vs fp16 | prompt/final logits cosine | same next token |
+|---|---|---|---:|---:|---:|---:|---|
+| 1.5B | mm8 | speed | 1 | 0.9841 | 0.9562 | 0.99999499 / 0.99999452 | true |
+| 1.5B | mm4 | speed | 1 | 0.9860 | 0.9342 | 0.99982727 / 0.99983704 | true |
+| 2.9B | mm8 | speed | 1 | 0.9975 | 0.9716 | 0.99999589 / 0.99999553 | true |
+| 2.9B | mm4 | speed | 1 | 0.9706 | 0.9573 | 0.99983841 / 0.99976456 | true |
+| 7.2B | mm8 | speed | 1 | 1.0074 | 0.9814 | 0.99999332 / 0.99999321 | true |
+| 7.2B | mm4 | speed | 1 | 0.9988 | 0.9720 | 0.99946028 / 0.99944884 | true |
+
+The same artifact demonstrates why `memory` must stay separate from the speed
+acceptance lane: 1.5B `memory` replaces 49 modules and falls to about `0.47x`
+fp16, while 2.9B `memory` replaces 65 modules and also falls to about `0.47x`
+fp16. The fused quantized block-kernel roadmap is still required for large
+footprint reductions at fp16-or-better speed, but the speed-policy lane matches
+the acceptance wording of "footprint decreases and W8/W4 is not slower" much
+more closely than the full-memory policy. 7.2B W8/W4 rows were run in fresh
+processes on the 32GB 5090 to avoid peak-memory fragmentation from consecutive
+large-model loads.
+
 ### 0.4B V100 quantization sweep
 
 Before refreshing older converted model dirs, run the code-only sync helper so

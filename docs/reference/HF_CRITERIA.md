@@ -27,11 +27,11 @@
 - **大模型**：0.4B / 1.5B / 2.9B / 7.2B / 13.3B 已完成 HF 转换和 V100 load/forward/generate smoke rows。
 - **投机解码**：0.1B draft -> 0.4B target V100 smoke 已保持 target greedy 一致，并用 cached-prefix resync 达到短样例约 `2.1x` target-greedy speedup。
 - **experimental native PyTorch**：已保留为非默认长期底座，覆盖 FLA-free bsz=1、batched forward / incremental cache 对齐测试，并把 cached decode 接到 optional native_jit；V100 fp32 smoke 里 native_model cached decode 从约 `61.7 tok/s` 到 `115.5 tok/s`；只作为 upstream / AMD / CPU fallback 方向，不替代当前 wrapper。
-- **量化可用性**：bitsandbytes 8bit/4bit 可加载生成，默认 `memory` policy 跳过 `lm_head` 与 RWKV 小 rank LoRA projection，V100 显存从 fp16 `364.4MB` 降到 8bit `283.4MB`、4bit `242.9MB`。新增 `decode_hot` policy 可继续把 attention r/k/v/o projection 保持 dense，在 V100 4bit smoke 中把 cached decode 从约 `32 tok/s` 提到约 `37 tok/s`，footprint 约 `283MB`，作为量化速度/显存折中探针。
+- **量化可用性**：bitsandbytes 8bit/4bit 可加载生成，默认 `memory` policy 跳过 `lm_head` 与 RWKV 小 rank LoRA projection，V100 显存从 fp16 `364.4MB` 降到 8bit `283.4MB`、4bit `242.9MB`。新增 `decode_hot` policy 可继续把 attention r/k/v/o projection 保持 dense，在 V100 4bit smoke 中把 cached decode 从约 `32 tok/s` 提到约 `37 tok/s`，footprint 约 `283MB`，作为量化速度/显存折中探针。仓库原生 native MM8/MM4 另分 `memory`/`speed` 两条 lane：`memory` 追最大 footprint 下降但可能慢，`speed` 只量化 `lm_head` 并以“footprint 下降 + decode 不慢 + logits/greedy 对齐”为验收口径。
 
 ## 3. 当前最大缺口
 
-1. **量化速度未达标**：当前 generic bitsandbytes W8/W4 decode 仍明显慢于 fp16 native_graph。V100 0.1B canonical `memory` policy 记录约为 fp16 `217 tok/s`、8bit `16 tok/s`、4bit `33 tok/s`；`decode_hot` hybrid policy 只能把 4bit 推到约 `37 tok/s`。要达成“W8/W4 不慢于 W16”，仍需要 native/fused quantized projection 或专门的 int8/int4 fast-token path。
+1. **量化速度分 lane 闭合**：generic bitsandbytes W8/W4 decode 仍明显慢于 fp16 native_graph。V100 0.1B canonical `memory` policy 记录约为 fp16 `217 tok/s`、8bit `16 tok/s`、4bit `33 tok/s`；`decode_hot` hybrid policy 只能把 4bit 推到约 `37 tok/s`。native MM8/MM4 `speed` policy 已在 RTX 5090 1.5B/2.9B/7.2B 给出 footprint 下降、logits/greedy 对齐且 decode≈`0.97x-1.01x` fp16 的证据；要把大幅 footprint 下降的 `memory` lane 也做到“不慢于 W16”，仍需要 native/fused quantized projection 或专门的 int8/int4 fast-token path。
 2. **Albatross 同卡基线未闭环**：服务器 Albatross 编译受 CUDA toolkit 头文件缺失影响；现阶段只能用 README 数字作量级参考，不能当同卡证明。
 3. **训练吞吐未对标**：Trainer/TRL 兼容已经有 smoke，但 full/LoRA 多 batch、gradient accumulation、ZeRO runtime、RWKV-LM 训练吞吐基线仍需补。
 4. **更多硬件未覆盖**：V100 和一张 Blackwell 5070 有验证记录；Pascal/Ampere/Ada/H100/AMD 仍需补。

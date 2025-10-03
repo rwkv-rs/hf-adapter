@@ -38,6 +38,8 @@ try:  # pragma: no cover
 except Exception:  # pragma: no cover
     torch = None  # type: ignore[assignment]
 
+from .native_quant_policy import normalize_native_mm_policy, should_quantize_linear
+
 
 def quantize_mm8(weight):
     """Quantize ``weight: [N, M]`` to the official rwkv fp16i8 format.
@@ -201,6 +203,8 @@ def mm8_matmul_triton(x, w_u8, mx, rx, my, ry, *, max_gemv_rows: int = 4):
         return mm8_gemv_triton(x, w_u8, mx, rx, my, ry)
     if x.dim() != 2:
         return mm8_matmul(x, w_u8, mx, rx, my, ry)
+    if int(x.shape[0]) == 1:
+        return mm8_gemv_triton(x[0], w_u8, mx, rx, my, ry).unsqueeze(0)
     if int(x.shape[0]) > int(max_gemv_rows):
         return mm8_matmul(x, w_u8, mx, rx, my, ry)
     # Small batched decode: loop rows through the GEMV kernel.
@@ -257,9 +261,9 @@ def mm8_gemv_triton_sk(x, w_u8, mx, rx, my, ry, *, block_m=64, block_n=128):
 
 
 # --------------------------------------------------------------------------- #
-# Model integration: an int8 (mm8) nn.Linear drop-in + size-gated replacement.
-# The size gate limits blast radius; exact-card rows decide whether dequant-GEMV
-# beats fp16 for a given shape.
+# Model integration: an int8 (mm8) nn.Linear drop-in + policy-gated replacement.
+# The memory policy keeps the historical size gate. The speed policy only swaps
+# lm_head, avoiding the cached-decode slowdown from replacing every FFN Linear.
 # --------------------------------------------------------------------------- #
 
 class MM8Linear(torch.nn.Module):
@@ -281,6 +285,14 @@ class MM8Linear(torch.nn.Module):
         self.fused = bool(fused)
 
     def forward(self, x):
+        if x.dim() == 1:
+            if self.fused and x.is_cuda and mm8_gemv_available(x.device):
+                y = mm8_gemv_triton(x, self.w_u8, self.mx, self.rx, self.my, self.ry)
+            else:
+                y = mm8_matmul(x, self.w_u8, self.mx, self.rx, self.my, self.ry)
+            if self.bias is not None:
+                y = y + self.bias
+            return y
         leading = x.shape[:-1]
         x2 = x.reshape(-1, self.in_features)
         if self.fused and x2.is_cuda and mm8_gemv_available(x2.device):
@@ -296,19 +308,32 @@ class MM8Linear(torch.nn.Module):
         return f"in={self.in_features}, out={self.out_features}, mm8(fused={self.fused})"
 
 
-def quantize_model_mm8(model, *, min_params: int = 8_000_000, fused: bool = True) -> int:
-    """Swap eligible ``nn.Linear`` modules for :class:`MM8Linear` (size-gated).
+def quantize_model_mm8(
+    model,
+    *,
+    min_params: int = 8_000_000,
+    fused: bool = True,
+    policy: str = "memory",
+) -> int:
+    """Swap eligible ``nn.Linear`` modules for :class:`MM8Linear`.
 
-    Only linears with ``weight.numel() >= min_params`` are quantized. The default
-    ``8M`` keeps small projections in fp16; benchmark the exact card before
-    treating larger replacements as a speed path. Set ``fused=False`` to force
-    the portable reference path. Returns the number of modules replaced.
+    ``policy="memory"`` quantizes every Linear with ``weight.numel() >=
+    min_params``. ``policy="speed"`` quantizes only ``lm_head`` after the same
+    size gate, keeping per-layer FFN/recurrent decode dense. Set
+    ``fused=False`` to force the portable reference path. Returns the number of
+    modules replaced.
     """
     if torch is None:
         raise RuntimeError("quantize_model_mm8 requires torch")
+    policy = normalize_native_mm_policy(policy)
     targets = []
     for name, mod in model.named_modules():
-        if isinstance(mod, torch.nn.Linear) and mod.weight.numel() >= min_params:
+        if isinstance(mod, torch.nn.Linear) and should_quantize_linear(
+            name,
+            int(mod.weight.numel()),
+            min_params=min_params,
+            policy=policy,
+        ):
             targets.append(name)
     for full_name in targets:
         parent_name, _, attr = full_name.rpartition(".")

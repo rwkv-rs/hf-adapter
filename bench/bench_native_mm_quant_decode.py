@@ -82,17 +82,17 @@ def module_counts(model) -> dict[str, int]:
     return counts
 
 
-def apply_native_quant(model, quantization: str, min_params: int) -> int:
+def apply_native_quant(model, quantization: str, min_params: int, policy: str) -> int:
     if quantization == "none":
         return 0
     if quantization == "mm8":
         from rwkv7_hf.native_quant_mm8 import quantize_model_mm8
 
-        return int(quantize_model_mm8(model, min_params=min_params))
+        return int(quantize_model_mm8(model, min_params=min_params, policy=policy))
     if quantization == "mm4":
         from rwkv7_hf.native_quant_mm4 import quantize_model_mm4
 
-        return int(quantize_model_mm4(model, min_params=min_params))
+        return int(quantize_model_mm4(model, min_params=min_params, policy=policy))
     raise ValueError(f"unsupported quantization: {quantization}")
 
 
@@ -107,6 +107,7 @@ def skip_row(args: argparse.Namespace, quantization: str, exc: BaseException) ->
         "prompt_tokens": args.prompt_tokens,
         "decode_tokens": args.decode_tokens,
         "native_mm_min_params": args.min_params,
+        "native_mm_policy": args.policy,
         "status": "skip",
         "error": repr(exc),
     }
@@ -124,7 +125,7 @@ def bench_one(args: argparse.Namespace, tok, quantization: str, dtype: torch.dty
         torch_dtype=dtype,
         device_map=device_map_for(args.device) if args.device.startswith("cuda") else None,
     ).eval()
-    replaced = apply_native_quant(model, quantization, args.min_params)
+    replaced = apply_native_quant(model, quantization, args.min_params, args.policy)
     cuda_sync(args.device)
     load_s = time.time() - t0
 
@@ -178,6 +179,7 @@ def bench_one(args: argparse.Namespace, tok, quantization: str, dtype: torch.dty
         "decode_tokps": round(args.decode_tokens / decode_s, 1),
         "decode_ms_per_tok": round(1000 * decode_s / args.decode_tokens, 2),
         "native_mm_min_params": args.min_params,
+        "native_mm_policy": args.policy,
         "native_mm_replaced_modules": replaced,
         "module_counts": module_counts(model),
         "model_footprint_mb": footprint_mb,
@@ -196,6 +198,12 @@ def main() -> int:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--quantizations", nargs="+", choices=["none", "mm8", "mm4"], default=["mm8", "mm4"])
     ap.add_argument("--min-params", type=int, default=8_000_000)
+    ap.add_argument(
+        "--policy",
+        default="memory",
+        choices=["memory", "speed"],
+        help="native MM module-selection policy: memory=all size-gated linears, speed=lm_head only",
+    )
     ap.add_argument("--prompt-tokens", type=int, default=128)
     ap.add_argument("--decode-tokens", type=int, default=16)
     ap.add_argument("--warmup", type=int, default=1)

@@ -43,6 +43,7 @@ ADAPTER_FILES = [
     "native_quant.py",
     "native_quant_mm4.py",
     "native_quant_mm8.py",
+    "native_quant_policy.py",
     "triton_compat.py",
     "tokenization_rwkv7.py",
 ]

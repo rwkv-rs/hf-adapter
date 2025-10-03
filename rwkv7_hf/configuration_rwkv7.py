@@ -48,8 +48,10 @@ class RWKV7HFAdapterConfig(_RWKV7Config):
         # weights, so this round-trips without serializing the uint8 buffers.
         self.use_native_mm8 = kwargs.pop("use_native_mm8", False)
         self.native_mm8_min_params = kwargs.pop("native_mm8_min_params", 8_000_000)
+        self.native_mm8_policy = kwargs.pop("native_mm8_policy", "memory")
         self.use_native_mm4 = kwargs.pop("use_native_mm4", False)
         self.native_mm4_min_params = kwargs.pop("native_mm4_min_params", 8_000_000)
+        self.native_mm4_policy = kwargs.pop("native_mm4_policy", "memory")
         super().__init__(*args, **kwargs)
 
 

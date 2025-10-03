@@ -27,6 +27,8 @@ try:  # pragma: no cover
 except Exception:  # pragma: no cover
     torch = None  # type: ignore[assignment]
 
+from .native_quant_policy import normalize_native_mm_policy, should_quantize_linear
+
 
 def quantize_mm4(weight):
     """Quantize ``weight: [N, M]`` to the 4-bit affine (mm4) format.
@@ -181,6 +183,8 @@ def mm4_matmul_triton(x, packed, mx, rx_s, my, ry_s, m_orig, *, max_gemv_rows: i
         return mm4_gemv_triton(x, packed, mx, rx_s, my, ry_s, m_orig)
     if x.dim() != 2 or int(x.shape[0]) > int(max_gemv_rows):
         return mm4_matmul(x, packed, mx, rx_s, my, ry_s, m_orig)
+    if int(x.shape[0]) == 1:
+        return mm4_gemv_triton(x[0], packed, mx, rx_s, my, ry_s, m_orig).unsqueeze(0)
     outs = [mm4_gemv_triton(x[i], packed, mx, rx_s, my, ry_s, m_orig) for i in range(x.shape[0])]
     return torch.stack(outs, dim=0)
 
@@ -205,6 +209,14 @@ class MM4Linear(torch.nn.Module):
         self.fused = bool(fused)
 
     def forward(self, x):
+        if x.dim() == 1:
+            if self.fused and x.is_cuda and mm4_gemv_available(x.device):
+                y = mm4_gemv_triton(x, self.packed, self.mx, self.rx_s, self.my, self.ry_s, self.m_orig)
+            else:
+                y = mm4_matmul(x, self.packed, self.mx, self.rx_s, self.my, self.ry_s, self.m_orig)
+            if self.bias is not None:
+                y = y + self.bias
+            return y
         leading = x.shape[:-1]
         x2 = x.reshape(-1, self.in_features)
         if self.fused and x2.is_cuda and mm4_gemv_available(x2.device):
@@ -220,14 +232,30 @@ class MM4Linear(torch.nn.Module):
         return f"in={self.in_features}, out={self.out_features}, mm4(fused={self.fused})"
 
 
-def quantize_model_mm4(model, *, min_params: int = 8_000_000) -> int:
-    """Swap eligible ``nn.Linear`` modules for :class:`MM4Linear` (size-gated)."""
+def quantize_model_mm4(
+    model,
+    *,
+    min_params: int = 8_000_000,
+    fused: bool = True,
+    policy: str = "memory",
+) -> int:
+    """Swap eligible ``nn.Linear`` modules for :class:`MM4Linear`.
+
+    ``policy="memory"`` quantizes every size-gated Linear. ``policy="speed"``
+    quantizes only ``lm_head`` so cached decode stays dense through per-layer
+    FFN/recurrent projections until fused quantized block kernels are available.
+    """
     if torch is None:
         raise RuntimeError("quantize_model_mm4 requires torch")
-    targets = [n for n, m in model.named_modules()
-               if isinstance(m, torch.nn.Linear) and m.weight.numel() >= min_params]
+    policy = normalize_native_mm_policy(policy)
+    targets = [
+        n
+        for n, m in model.named_modules()
+        if isinstance(m, torch.nn.Linear)
+        and should_quantize_linear(n, int(m.weight.numel()), min_params=min_params, policy=policy)
+    ]
     for full_name in targets:
         parent_name, _, attr = full_name.rpartition(".")
         parent = model.get_submodule(parent_name) if parent_name else model
-        setattr(parent, attr, MM4Linear(getattr(parent, attr)))
+        setattr(parent, attr, MM4Linear(getattr(parent, attr), fused=fused))
     return len(targets)
