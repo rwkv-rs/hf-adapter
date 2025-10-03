@@ -13,6 +13,7 @@ and Albatross-style paths in correctness, speed, and memory.
 - Pascal validation box: **4 x NVIDIA GeForce GTX 1080 Ti (sm_61)**, fp16/quant smoke on one GPU.
 - Baseline model: **rwkv7-g1d-0.1b-20260129-ctx8192**.
 - A100 large-model validation: **0.4B / 1.5B / 2.9B / 7.2B**.
+- **Ascend 910B2C 64GB** (华为昇腾, CANN 8.5.1, torch_npu 2.9.0rc1) — fla-free native 后端,详见 [rwkv7-hf-adapter-ascend](https://github.com/dsadsasdaddas/rwkv7-hf-adapter-ascend) 仓库及下文 § Ascend 910B。
 
 ## Current GTX 1080 Ti / Pascal Status
 
@@ -178,6 +179,26 @@ The 4090 fused-state-scan prefill kernel line separately reaches `25,663.2
 tok/s` (`0.4921x` of the current Albatross reference for 0.4B / bsz1 /
 prompt512), satisfying the near-term `>=0.45x` target. It remains opt-in; the
 default HF path is unchanged.
+
+## Ascend 910B status (华为昇腾 NPU)
+
+独立仓库 [rwkv7-hf-adapter-ascend](https://github.com/dsadsasdaddas/rwkv7-hf-adapter-ascend)(PR #2)。fla-free native 后端(`NativeRWKV7ForCausalLM`,纯 PyTorch + `torch_npu`),无需 CUDA/Triton/FLA。
+
+- **硬件**: Ascend 910B2C, 64GB HBM, CANN 8.5.1, torch_npu 2.9.0rc1
+- **C++ op-coalesced forward**(单序列基线): 12 层 TMix+CMix 收进一次 C++ 调用,消除 Python dispatch → **323 tok/s (B=1), cos=1.0**(bit-exact 对齐 Python)
+- **batch decode 2× Albatross(aggregate 吞吐)**: launch 开销被 batch 摊薄 + 投影 GEMM 化,forward 时间 1→128 batch 只涨 ~3×。全规模 aggregate tok/s(B>1 已验证 cos=1.0):
+
+| model | B=1 | B=16 | B=64 | B=128 |
+|---|---|---|---|---|
+| 0.1B | 323 | 3433 | 9446 | **13504** |
+| 1.5B | 87 | 953 | 2121 | — |
+| 2.9B | 69 | 680 | 1748 | — |
+| 7B | 33 | 313 | 793 | — |
+| 13B | 25 | 235 | 585 | — |
+
+- 0.1B B=8/16/64/128 全部进/超 2× Albatross 区间(~1500–3000 aggregate);13B B=64 = 585(31GB/64GB)
+- 复现 + 完整结果见 [rwkv7-hf-adapter-ascend/ASCEND_RESULTS.md](https://github.com/dsadsasdaddas/rwkv7-hf-adapter-ascend/blob/wangyue/ascend-2x-albatross/ASCEND_RESULTS.md)
+- 注:速度用**随机权重**(910B 服务器被墙下不到真实模型),速度数字有效、输出质量未验。单序列延迟(B=1, 25–323 tok/s)未达 2×(需 GEMV-Cube 融合,多月工程)。
 
 ## Acceptance targets for 0.1B smoke baseline
 
