@@ -1704,6 +1704,39 @@ more closely than the full-memory policy. 7.2B W8/W4 rows were run in fresh
 processes on the 32GB 5090 to avoid peak-memory fragmentation from consecutive
 large-model loads.
 
+`bench/5090_blackwell_quant_matrix_20260705/` extends the same speed-policy
+route into the full fresh-process Blackwell matrix requested for acceptance:
+1.5B / 2.9B / 7.2B × fp16 / native MM8 / native MM4 × prompt 128 / 512 / 2048
+× decode 128 / 512 × batch-size 1 / 2 / 4 / 8. All 216 rows pass. Each
+quantized row reloads a cached fp16 baseline from the matching fresh process,
+so the ratios are not affected by the earlier consecutive-load 7B fragmentation
+problem.
+
+Summary of the 144 quantized rows:
+
+| model | quantization | rows | min speed ratio | median speed ratio | max speed ratio | rows >= fp16 | footprint ratio | same next token | min prompt/final logits cosine |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1.5B | mm8 | 24 | 0.9614 | 0.9941 | 1.0646 | 7/24 | 0.9562 | 24/24 | 0.99996233 / 0.99996215 |
+| 1.5B | mm4 | 24 | 0.9516 | 0.9845 | 1.0691 | 6/24 | 0.9342 | 24/24 | 0.99980509 / 0.99976385 |
+| 2.9B | mm8 | 24 | 0.9315 | 0.9908 | 1.0759 | 10/24 | 0.9716 | 24/24 | 0.99995863 / 0.99995917 |
+| 2.9B | mm4 | 24 | 0.9413 | 0.9908 | 1.0352 | 8/24 | 0.9573 | 24/24 | 0.99981976 / 0.99979115 |
+| 7.2B | mm8 | 24 | 0.7619 | 0.9679 | 1.0405 | 3/24 | 0.9814 | 24/24 | 0.99996132 / 0.99996006 |
+| 7.2B | mm4 | 24 | 0.6695 | 0.9610 | 1.0379 | 3/24 | 0.9720 | 24/24 | 0.99944627 / 0.99946213 |
+
+Interpretation: correctness is stable across the full matrix, footprint always
+drops, and many Blackwell rows are already fp16-or-better. The remaining gap is
+shape-dependent rather than a load/correctness blocker: 1.5B/2.9B medians are
+near fp16, while the 7.2B `bsz=8`, prompt-2048, decode-512 pressure rows expose
+the fused/head-dispatch work still needed for a strict all-shapes speed claim.
+
+13.3B boundary probe: the official ModelScope LFS checkpoint was pulled on the
+same 5090 host (`rwkv7-g1g-13.3b-20260523-ctx8192.pth`, about 25GB on disk; LFS
+declares 26,540,868,485 bytes). The current converter holds the full official
+checkpoint and a full HF template at once; on the 48GB-RAM rental this did not
+produce an HF model directory. No 13.3B fp16/MM8/MM4 speed row is claimed here;
+the next step is a low-memory/streaming converter or a larger-RAM host, then the
+same fresh-process boundary probe can be reused.
+
 ### 0.4B V100 quantization sweep
 
 Before refreshing older converted model dirs, run the code-only sync helper so

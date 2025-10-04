@@ -206,10 +206,15 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 ### 11. 量化速度
 
 现状:W8/W4 加载与显存下降可用。RTX 5090 native MM8/MM4 `speed`
-policy 已在 1.5B/2.9B/7.2B 给出 footprint 下降、logits/greedy 对齐、
-decode≈0.97x-1.01x fp16 证据;`memory` policy/通用 bnb 仍慢,不能作为速度达标口径(详见 BENCHMARK 量化段 + FUSED_BACKEND quant target)。需补:
+policy 已在 1.5B/2.9B/7.2B 完成 fresh-process full matrix
+(216/216 pass,quantized same-next 144/144,footprint 全部下降,多行速度超过
+fp16)。但 7.2B 大 bsz/长 prompt 压力行仍低于 fp16;`memory` policy/通用 bnb
+仍慢,不能作为速度达标口径(详见 BENCHMARK 量化段 + FUSED_BACKEND quant
+target)。13.3B LFS 权重已拉取,当前 converter 在 48GB RAM 5090 主机上未
+产出 HF 目录。需补:
 
 - `speed` policy 在更多 GPU/更大模型上稳定 >= fp16 的证据;
+- 13.3B low-memory/streaming converter,再跑 fp16/mm8/mm4 fresh-process 边界行;
 - `memory` policy 的 fused dequant + projection 路径;
 - V100 / A100 / 4090 / H100 / 50 系卡专项调优;
 - 接近 llama.cpp Q*_K_M 实用量级的质量 telemetry;
