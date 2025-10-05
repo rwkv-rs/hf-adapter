@@ -1737,6 +1737,41 @@ produce an HF model directory. No 13.3B fp16/MM8/MM4 speed row is claimed here;
 the next step is a low-memory/streaming converter or a larger-RAM host, then the
 same fresh-process boundary probe can be reused.
 
+### RTX 5090 MATH500 final acceptance artifact
+
+`bench/math500_final_acceptance_5090_1p5b_20260705/` records a full MATH500
+avg@64 run using the final acceptance runner. It includes best-bsz sweep,
+full `500 × 64 = 32000` generation summary, HF-vs-Albatross comparison, and
+the uncheatable teacher-forced compression/logits-alignment report. The large
+`generations.jsonl` byproduct is not committed; summaries and logs are.
+
+Best-bsz sweep selected `bsz=128`:
+
+| requested bsz | generation tok/s | rank |
+|---:|---:|---:|
+| 128 | 4855.721 | 1 |
+| 96 | 4412.250 | 2 |
+| 64 | 3970.580 | 3 |
+| 192 | 3731.191 | 4 |
+| 32 | 2463.453 | 5 |
+
+Full avg@64 result against the current Albatross full reference:
+
+| metric | HF 1.5B bsz128 | Albatross reference | delta / ratio |
+|---|---:|---:|---:|
+| correct generations | 12756 / 32000 | 4670 / 32000 | +8086 |
+| rollout accuracy | 0.398625 | 0.1459375 | +0.2526875 |
+| pass@64 | 0.662000 | 0.370000 | +0.292000 |
+| summary token/s | 5918.906 | 3903.633 | 1.516x |
+| wall token/s | 5854.033 | 3903.633 | 1.500x |
+| steady decode token/s | 7410.107 | 3970.135 | 1.866x |
+
+Interpretation: MATH500 avg@64 accuracy passes strongly and the compression
+identity check is exact (`candidate/reference bits ratio = 1.00000000` over
+43865 external MATH500 tokens). The strict `>=2x` Albatross speed gates do not
+yet pass on this RTX 5090 full artifact, so this result is a high-accuracy
+Blackwell acceptance record plus a clear remaining full-eval speed-gap marker.
+
 ### 0.4B V100 quantization sweep
 
 Before refreshing older converted model dirs, run the code-only sync helper so

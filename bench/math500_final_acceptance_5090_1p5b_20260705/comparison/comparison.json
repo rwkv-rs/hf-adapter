@@ -1,0 +1,84 @@
+{
+  "compatible_shape": {
+    "num_tasks_match": true,
+    "rollout_match": true,
+    "total_generations_match": true,
+    "hf_num_tasks": 500,
+    "albatross_num_tasks": 500,
+    "hf_rollout": 64,
+    "albatross_rollout": 64,
+    "hf_total_generations": 32000,
+    "albatross_total_generations": 32000
+  },
+  "accuracy": {
+    "hf_correct_generations": 12756.0,
+    "albatross_correct_generations": 4670.0,
+    "correct_delta": 8086.0,
+    "hf_rollout_accuracy": 0.398625,
+    "albatross_rollout_accuracy": 0.1459375,
+    "rollout_accuracy_delta": 0.2526875,
+    "hf_pass_at_rollout_accuracy": 0.662,
+    "albatross_pass_at_rollout_accuracy": 0.37,
+    "pass_at_rollout_delta": 0.29200000000000004
+  },
+  "speed": {
+    "hf": {
+      "token_per_sec_summary": 5918.905856165877,
+      "sample_per_sec_summary": 10.245719165487488,
+      "elapsed_sec": 3157.8668101179646,
+      "speed_elapsed_sec": 3123.2556234599324,
+      "wall_token_per_sec": 5854.032836587377,
+      "generation_token_per_sec": 5918.905856165877,
+      "decode_sec": 2494.73530734994,
+      "decoded_token_events": 18486256.0,
+      "steady_token_per_sec": 7410.107174711545
+    },
+    "albatross": {
+      "token_per_sec_summary": 3903.63284569979,
+      "sample_per_sec_summary": 6.361562454287924,
+      "elapsed_sec": 5030.210774466395,
+      "speed_elapsed_sec": 0.0,
+      "wall_token_per_sec": 0.0,
+      "generation_token_per_sec": 0.0,
+      "decode_sec": 4945.952,
+      "decoded_token_events": 19636096.0,
+      "steady_token_per_sec": 3970.1347687967855
+    },
+    "hf_speed_timing": "generation",
+    "albatross_speed_timing": "wall",
+    "summary_token_per_sec_ratio_hf_over_albatross": 1.5162557776626189,
+    "steady_decode_token_per_sec_ratio_hf_over_albatross": 1.8664623762777957,
+    "sample_per_sec_ratio_hf_over_albatross": 1.6105664668247501
+  },
+  "gates": {
+    "compatible_shape": {
+      "required": true,
+      "passed": true,
+      "actual": true
+    },
+    "pass_at_rollout": {
+      "required": true,
+      "minimum": 0.37,
+      "actual": 0.662,
+      "passed": true
+    },
+    "summary_speed_ratio": {
+      "required": true,
+      "minimum": 2.0,
+      "actual": 1.5162557776626189,
+      "passed": false
+    },
+    "decode_speed_ratio": {
+      "required": true,
+      "minimum": 2.0,
+      "actual": 1.8664623762777957,
+      "passed": false
+    },
+    "overall_pass": false
+  },
+  "albatross_log_decode": {
+    "decode_sec_from_log": 4945.952,
+    "decoded_token_events_from_log": 19636096.0,
+    "steady_token_per_sec_from_log": 3970.1347687967855
+  }
+}
