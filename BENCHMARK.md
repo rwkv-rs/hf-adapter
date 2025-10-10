@@ -13,6 +13,7 @@ and Albatross-style paths in correctness, speed, and memory.
 - Pascal validation box: **4 x NVIDIA GeForce GTX 1080 Ti (sm_61)**, fp16/quant smoke on one GPU.
 - Baseline model: **rwkv7-g1d-0.1b-20260129-ctx8192**.
 - A100 large-model validation: **0.4B / 1.5B / 2.9B / 7.2B**.
+- Apple/Qwen3.5 comparison lane: see [QWEN35_APPLE_BASELINE.md](docs/hardware/QWEN35_APPLE_BASELINE.md) for the same-prompt Ollama Qwen3.5 vs RWKV-7 MLX/CoreML JSONL schema.
 - **Ascend 910B2C 64GB** (华为昇腾, CANN 8.5.1, torch_npu 2.9.0rc1) — fla-free native 后端,详见 [rwkv7-hf-adapter-ascend](https://github.com/dsadsasdaddas/rwkv7-hf-adapter-ascend) 仓库及下文 § Ascend 910B。
 
 ## Current GTX 1080 Ti / Pascal Status

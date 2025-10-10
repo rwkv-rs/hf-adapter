@@ -8,6 +8,13 @@ reference backend. An initial opt-in MLX/Metal WKV custom-kernel seam now
 exists; production fused MLX/Metal WKV/projection/packed-quant kernels remain
 the next Apple performance layer.
 
+## Qwen3.5 Apple/mobile comparison lane
+
+The Apple performance target is now tracked against public Qwen3.5 MLX/mobile
+baselines in [QWEN35_APPLE_BASELINE.md](QWEN35_APPLE_BASELINE.md).  That file
+defines the same-prompt JSONL schema, Ollama/Qwen3.5 runner, RWKV MLX runner,
+initial 0.8B/2B/4B/9B comparison matrix, and the follow-up CoreML/ANE lane.
+
 ## Current status
 
 | Area | Status | Evidence / entry point |
