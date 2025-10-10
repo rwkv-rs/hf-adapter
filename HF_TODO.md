@@ -143,7 +143,7 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 
 目标是把“Apple / 移动端超过 Qwen3.5”从口号变成可复现 evidence。入口文档见
 [`docs/hardware/QWEN35_APPLE_BASELINE.md`](docs/hardware/QWEN35_APPLE_BASELINE.md),
-共用 runner 为 `bench/run_qwen35_apple_baseline.py`。
+共用 runner 为 `bench/run_qwen35_apple_baseline.py`;一键 wrapper 为 `scripts/run_qwen35_apple_acceptance.sh`。
 
 完成定义:
 
@@ -176,6 +176,21 @@ PYTHONPATH=. python scripts/export_rwkv7_coreml.py \
   --state-mode wkv-coreml \
   --quantization lut4 \
   --results bench/results_qwen35_apple_baseline.jsonl
+```
+
+一键验收 dry-run / live 入口:
+
+```bash
+DRY_RUN=1 \
+RWKV_MLX_MODELS=/path/to/rwkv7-g1d-0.4b-hf,/path/to/rwkv7-g1g-1.5b-hf \
+COREML_EXPORT_MODELS=/path/to/rwkv7-g1g-1.5b-hf \
+scripts/run_qwen35_apple_acceptance.sh
+
+PULL_QWEN=1 \
+RWKV_MLX_MODELS=/path/to/rwkv7-g1d-0.4b-hf,/path/to/rwkv7-g1g-1.5b-hf \
+COREML_EXPORT_MODELS=/path/to/rwkv7-g1g-1.5b-hf \
+RESULTS=bench/results_qwen35_apple_baseline.jsonl \
+scripts/run_qwen35_apple_acceptance.sh
 ```
 
 ## P1:生产化 HF 体验
@@ -225,6 +240,7 @@ PYTHONPATH=. python scripts/export_rwkv7_coreml.py \
 
 - 扩展 0.4B Apple 到 3+ step / 更长训练稳定性行;
 - 把 1.5B 从 prompt2048/decode128、Trainer/SFT 20-step 和 DPO/GRPO 12-step 继续扩到更长生产式训练/解码,并持续记录 memory-pressure;
+- 用 `scripts/run_qwen35_apple_acceptance.sh` 补真实同机 Qwen3.5 0.8B/2B/4B/9B vs RWKV MLX/CoreML rows,并生成 comparison gate 后再 claim “超过”;
 - 补 M-series Pro/Max/Ultra 的长上下文、显存峰值、tok/s 行;
 - 把 `scripts/export_rwkv7_coreml.py` 从 full-logits export 原型推进到 stateful decode/prefill CoreML multifunction、state correctness、W4/LUT/INT4 ANE benchmark 行;
 - 把 MLX recurrent reference/session helper 继续扩到更长上下文、更长 repeat、更多不同 prompt 分布的 memory-pressure 遥测，并继续验证新加的 `SESSION_BACKEND=batched|auto` 等长 round MLX session batching 路径;

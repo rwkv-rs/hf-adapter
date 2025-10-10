@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -141,6 +142,38 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
     assert rows[1]["axis"] == AXIS + "_plan"
     assert rows[1]["qwen_jobs"] == 4
     assert rows[1]["rwkv_mlx_jobs"] == 8
+
+
+def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
+    out = tmp_path / "acceptance.jsonl"
+    env = os.environ.copy()
+    env.update(
+        {
+            "DRY_RUN": "1",
+            "RUN_QWEN": "0",
+            "RWKV_MLX_MODELS": "/tmp/rwkv-a,/tmp/rwkv-b",
+            "PROMPT_TARGET_CHARS": "16",
+            "DECODE_LENGTHS": "4",
+            "RESULTS": str(out),
+            "PYTHON_BIN": sys.executable,
+            "SKIP_COMPARE": "1",
+        }
+    )
+    result = subprocess.run(
+        ["bash", "scripts/run_qwen35_apple_acceptance.sh"],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert rows[0]["axis"] == AXIS + "_env"
+    assert rows[1]["axis"] == AXIS + "_plan"
+    assert rows[1]["qwen_jobs"] == 0
+    assert rows[1]["rwkv_mlx_jobs"] == 2
+    assert rows[1]["rwkv_mlx_models"] == ["/tmp/rwkv-a", "/tmp/rwkv-b"]
 
 
 def test_compare_rows_reports_decode_and_memory_pass() -> None:
