@@ -240,7 +240,7 @@ scripts/run_qwen35_apple_acceptance.sh
 
 - 扩展 0.4B Apple 到 3+ step / 更长训练稳定性行;
 - 把 1.5B 从 prompt2048/decode128、Trainer/SFT 20-step 和 DPO/GRPO 12-step 继续扩到更长生产式训练/解码,并持续记录 memory-pressure;
-- 用 `scripts/run_qwen35_apple_acceptance.sh` 补真实同机 Qwen3.5 0.8B/2B/4B/9B vs RWKV MLX/CoreML rows,并生成 comparison gate 后再 claim “超过”;
+- 用 `scripts/run_qwen35_apple_acceptance.sh` 补真实同机 Qwen3.5 0.8B/2B/4B/9B vs RWKV MLX/CoreML rows,并生成 speed/memory comparison gate 和 `bench/score_qwen35_quality.py` quality gate 后再 claim “超过”;
 - 补 M-series Pro/Max/Ultra 的长上下文、显存峰值、tok/s 行;
 - 把 `scripts/export_rwkv7_coreml.py` + `bench/run_coreml_apple_baseline.py` 从 full-logits export/runtime partial 原型推进到 stateful decode/prefill CoreML multifunction、state correctness、W4/LUT/INT4 ANE benchmark 行;
 - 把 MLX recurrent reference/session helper 继续扩到更长上下文、更长 repeat、更多不同 prompt 分布的 memory-pressure 遥测，并继续验证新加的 `SESSION_BACKEND=batched|auto` 等长 round MLX session batching 路径;

@@ -19,6 +19,7 @@ DECODE_LENGTHS="${DECODE_LENGTHS:-128,512}"
 PROMPT_SEED="${PROMPT_SEED:-User: Compare RWKV-7 and Qwen3.5 on Apple Silicon. Report TTFT, prefill, decode, memory, state cache, W4/LUT/INT4, and quality gaps. Assistant: }"
 REPEAT="${REPEAT:-1}"
 DRY_RUN="${DRY_RUN:-0}"
+STORE_RESPONSES="${STORE_RESPONSES:-0}"
 
 QWEN_MODELS="${QWEN_MODELS:-qwen3.5:0.8b-mlx,qwen3.5:2b-mlx,qwen3.5:4b-mlx,qwen3.5:9b-mlx}"
 RUN_QWEN="${RUN_QWEN:-auto}"
@@ -49,6 +50,11 @@ MIN_PREFILL_RATIO="${MIN_PREFILL_RATIO:-1.0}"
 MAX_TTFT_RATIO="${MAX_TTFT_RATIO:-1.1}"
 MAX_MEMORY_RATIO="${MAX_MEMORY_RATIO:-1.0}"
 COMPARE_APPEND="${COMPARE_APPEND:-${RESULTS}}"
+QUALITY_RUBRIC="${QUALITY_RUBRIC:-}"
+QUALITY_PAIRS="${QUALITY_PAIRS:-${PAIRS}}"
+QUALITY_APPEND="${QUALITY_APPEND:-${RESULTS}}"
+QUALITY_ALLOW_PREVIEW="${QUALITY_ALLOW_PREVIEW:-0}"
+QUALITY_FAIL_ON_GATE="${QUALITY_FAIL_ON_GATE:-0}"
 
 # Optional CoreML export-manifest lane.  This does not claim ANE performance;
 # it records the export/state/quant contract next to the baseline rows.
@@ -189,6 +195,9 @@ baseline_args=(
   --rwkv-wkv-backend "${RWKV_WKV_BACKEND}"
   --rwkv-chunk-size "${RWKV_CHUNK_SIZE}"
 )
+if [[ "${STORE_RESPONSES}" == "1" ]]; then
+  baseline_args+=(--store-responses)
+fi
 if [[ "${RUN_QWEN}" == "1" ]]; then
   baseline_args+=(--qwen-models "${QWEN_MODELS}")
 else
@@ -207,7 +216,30 @@ rwkv7_print_env
 rwkv7_log "Apple/Qwen3.5 same-prompt baseline matrix"
 rwkv7_run "${PYTHON_BIN}" bench/run_qwen35_apple_baseline.py "${baseline_args[@]}"
 
-if [[ "${DRY_RUN}" == "1" || "${SKIP_COMPARE}" == "1" || -z "${PAIRS}" ]]; then
+if [[ "${DRY_RUN}" == "1" ]]; then
+  exit 0
+fi
+
+if [[ -n "${QUALITY_RUBRIC}" ]]; then
+  quality_args=(
+    --results "${RESULTS}"
+    --rubric "${QUALITY_RUBRIC}"
+    --append "${QUALITY_APPEND}"
+  )
+  while IFS= read -r pair; do
+    quality_args+=(--pair "${pair}")
+  done < <(rwkv7_csv_items "${QUALITY_PAIRS}")
+  if [[ "${QUALITY_ALLOW_PREVIEW}" == "1" ]]; then
+    quality_args+=(--allow-preview)
+  fi
+  if [[ "${QUALITY_FAIL_ON_GATE}" == "1" ]]; then
+    quality_args+=(--fail-on-gate)
+  fi
+  rwkv7_log "Apple/Qwen3.5 quality matrix"
+  rwkv7_run "${PYTHON_BIN}" bench/score_qwen35_quality.py "${quality_args[@]}"
+fi
+
+if [[ "${SKIP_COMPARE}" == "1" || -z "${PAIRS}" ]]; then
   exit 0
 fi
 

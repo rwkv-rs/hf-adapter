@@ -26,6 +26,15 @@ from bench.compare_qwen35_apple_baseline import (
     compare_rows,
     summarize_comparisons,
 )
+from bench.score_qwen35_quality import (
+    COMPARISON_AXIS as QUALITY_COMPARISON_AXIS,
+    QUALITY_AXIS,
+    SUMMARY_AXIS as QUALITY_SUMMARY_AXIS,
+    Pair as QualityPair,
+    compare_quality,
+    score_rows,
+    summarize as summarize_quality,
+)
 
 
 def test_make_prompt_hits_target_chars() -> None:
@@ -68,6 +77,111 @@ def test_ollama_stream_row_uses_final_duration_metrics() -> None:
     assert row["decode_tok_s"] == 4.0
     assert row["first_response_chunk_index"] == 0
     assert row["public_package_gb"] == 1.2
+
+
+def test_ollama_row_can_store_full_response_for_quality() -> None:
+    case = PromptCase(name="chars16", target_chars=16, prompt="0123456789abcdef")
+    row = ollama_row_from_chunks(
+        model="qwen3.5:0.8b-mlx",
+        prompt_case=case,
+        max_new_tokens=4,
+        chunks=[
+            {"response": "answer ", "done": False},
+            {"response": "throughput", "done": False},
+            {"response": "", "done": True, "eval_count": 2, "eval_duration": 1_000_000_000},
+        ],
+        elapsed_s=1.2,
+        store_response=True,
+    )
+    assert row["response_preview"] == "answer throughput"
+    assert row["response_text"] == "answer throughput"
+    assert row["response_chars"] == len("answer throughput")
+
+
+def test_quality_scoring_and_pair_comparison() -> None:
+    rows = [
+        {
+            "axis": AXIS,
+            "status": "pass",
+            "engine": "ollama",
+            "runtime": "ollama_mlx",
+            "model": "qwen3.5:0.8b-mlx",
+            "prompt_case": "chars64",
+            "requested_generated_tokens": 8,
+            "response_text": "throughput memory cache",
+        },
+        {
+            "axis": AXIS,
+            "status": "pass",
+            "engine": "rwkv7_hf",
+            "runtime": "mlx",
+            "model": "rwkv7-g1d-0.4b-hf",
+            "prompt_case": "chars64",
+            "requested_generated_tokens": 8,
+            "response_text": "throughput memory cache",
+        },
+    ]
+    rubric = {
+        "tasks": [
+            {
+                "id": "apple-metrics",
+                "prompt_case": "chars64",
+                "requested_generated_tokens": 8,
+                "required_substrings": ["throughput", "memory", "cache"],
+                "min_response_chars": 8,
+            }
+        ]
+    }
+    scored = score_rows(rows, rubric)
+    assert [row["axis"] for row in scored] == [QUALITY_AXIS, QUALITY_AXIS]
+    assert {row["status"] for row in scored} == {"pass"}
+    assert {row["score"] for row in scored} == {1.0}
+    comparisons = compare_quality(scored, [QualityPair("qwen3.5:0.8b-mlx", "rwkv7-g1d-0.4b-hf")])
+    assert comparisons[0]["axis"] == QUALITY_COMPARISON_AXIS
+    assert comparisons[0]["status"] == "pass"
+    summary = summarize_quality(scored, comparisons)
+    assert summary["axis"] == QUALITY_SUMMARY_AXIS
+    assert summary["status"] == "pass"
+
+
+def test_quality_cli_keeps_missing_response_unknown(tmp_path: Path) -> None:
+    source = tmp_path / "baseline.jsonl"
+    output = tmp_path / "quality.jsonl"
+    source.write_text(
+        json.dumps(
+            {
+                "axis": AXIS,
+                "status": "pass",
+                "model": "rwkv7-g1d-0.4b-hf",
+                "prompt_case": "chars64",
+                "requested_generated_tokens": 8,
+                "response_preview": "truncated",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "bench/score_qwen35_quality.py",
+            "--results",
+            str(source),
+            "--append",
+            str(output),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+    assert rows[0]["axis"] == QUALITY_AXIS
+    assert rows[0]["status"] == "unknown"
+    assert "missing response_text" in rows[0]["reasons"][0]
+    assert rows[-1]["axis"] == QUALITY_SUMMARY_AXIS
+    assert rows[-1]["status"] == "unknown"
 
 
 def test_summary_groups_engines_and_min_decode() -> None:
