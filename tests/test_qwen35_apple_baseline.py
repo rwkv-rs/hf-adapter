@@ -18,6 +18,13 @@ from bench.run_qwen35_apple_baseline import (
     summarize_rows,
     tok_s,
 )
+from bench.compare_qwen35_apple_baseline import (
+    COMPARISON_AXIS,
+    SUMMARY_AXIS,
+    Pair,
+    compare_rows,
+    summarize_comparisons,
+)
 
 
 def test_make_prompt_hits_target_chars() -> None:
@@ -134,3 +141,136 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
     assert rows[1]["axis"] == AXIS + "_plan"
     assert rows[1]["qwen_jobs"] == 4
     assert rows[1]["rwkv_mlx_jobs"] == 8
+
+
+def test_compare_rows_reports_decode_and_memory_pass() -> None:
+    rows = [
+        {
+            "axis": AXIS,
+            "status": "pass",
+            "engine": "ollama",
+            "runtime": "ollama_mlx",
+            "model": "qwen3.5:2b-mlx",
+            "prompt_case": "chars1024",
+            "requested_generated_tokens": 128,
+            "decode_tok_s": 30.0,
+            "prefill_tok_s": 100.0,
+            "ttft_s": 1.0,
+            "peak_memory_bytes": 4_000_000_000,
+        },
+        {
+            "axis": AXIS,
+            "status": "pass",
+            "engine": "rwkv7_hf",
+            "runtime": "mlx",
+            "model": "rwkv7-g1g-1.5b-hf",
+            "prompt_case": "chars1024",
+            "requested_generated_tokens": 128,
+            "decode_tok_s": 45.0,
+            "prefill_tok_s": 110.0,
+            "ttft_s": 0.9,
+            "mlx_peak_memory_bytes": 2_000_000_000,
+        },
+    ]
+    comparisons = compare_rows(
+        rows,
+        pairs=[Pair("qwen3.5:2b-mlx", "rwkv7-g1g-1.5b-hf")],
+        require_prefill=True,
+        require_ttft=True,
+        require_memory=True,
+    )
+    assert len(comparisons) == 1
+    row = comparisons[0]
+    assert row["axis"] == COMPARISON_AXIS
+    assert row["status"] == "pass"
+    assert row["decode_ratio_rwkv_over_qwen"] == 1.5
+    assert row["prefill_ratio_rwkv_over_qwen"] == 1.1
+    assert row["ttft_ratio_rwkv_over_qwen"] == 0.9
+    assert row["memory_ratio_rwkv_over_qwen"] == 0.5
+    assert summarize_comparisons(comparisons)["status"] == "pass"
+
+
+def test_compare_rows_keeps_missing_memory_unknown() -> None:
+    rows = [
+        {
+            "axis": AXIS,
+            "status": "pass",
+            "engine": "ollama",
+            "runtime": "ollama_mlx",
+            "model": "qwen3.5:0.8b-mlx",
+            "prompt_case": "chars1024",
+            "requested_generated_tokens": 128,
+            "decode_tok_s": 40.0,
+        },
+        {
+            "axis": AXIS,
+            "status": "pass",
+            "engine": "rwkv7_hf",
+            "runtime": "mlx",
+            "model": "rwkv7-g1d-0.4b-hf",
+            "prompt_case": "chars1024",
+            "requested_generated_tokens": 128,
+            "decode_tok_s": 50.0,
+            "mlx_peak_memory_bytes": 1_000_000_000,
+        },
+    ]
+    comparisons = compare_rows(
+        rows,
+        pairs=[Pair("qwen3.5:0.8b-mlx", "rwkv7-g1d-0.4b-hf")],
+        require_memory=True,
+    )
+    assert comparisons[0]["status"] == "unknown"
+    assert comparisons[0]["memory_ratio_rwkv_over_qwen"] is None
+    assert summarize_comparisons(comparisons)["status"] == "unknown"
+
+
+def test_compare_cli_writes_comparison_rows(tmp_path: Path) -> None:
+    source = tmp_path / "baseline.jsonl"
+    compared = tmp_path / "compared.jsonl"
+    baseline_rows = [
+        {
+            "axis": AXIS,
+            "status": "pass",
+            "model": "qwen3.5:0.8b-mlx",
+            "prompt_case": "chars64",
+            "requested_generated_tokens": 8,
+            "decode_tok_s": 10.0,
+        },
+        {
+            "axis": AXIS,
+            "status": "pass",
+            "model": "rwkv7-g1d-0.4b-hf",
+            "prompt_case": "chars64",
+            "requested_generated_tokens": 8,
+            "decode_tok_s": 20.0,
+        },
+    ]
+    source.write_text(
+        "".join(json.dumps(row) + "\n" for row in baseline_rows),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "bench/compare_qwen35_apple_baseline.py",
+            "--results",
+            str(source),
+            "--pair",
+            "qwen3.5:0.8b-mlx=rwkv7-g1d-0.4b-hf",
+            "--append",
+            str(compared),
+            "--fail-on-gate",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    output_rows = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+    assert output_rows[0]["axis"] == COMPARISON_AXIS
+    assert output_rows[0]["status"] == "pass"
+    assert output_rows[-1]["axis"] == SUMMARY_AXIS
+    assert output_rows[-1]["status"] == "pass"
+    appended_rows = [json.loads(line) for line in compared.read_text(encoding="utf-8").splitlines()]
+    assert [row["axis"] for row in appended_rows] == [COMPARISON_AXIS, SUMMARY_AXIS]
