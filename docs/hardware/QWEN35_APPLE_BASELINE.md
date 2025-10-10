@@ -66,7 +66,8 @@ scripts/run_qwen35_apple_acceptance.sh
 ```
 
 The wrapper runs `bench/run_qwen35_apple_baseline.py`, optionally runs
-`scripts/export_rwkv7_coreml.py`, then appends
+`scripts/export_rwkv7_coreml.py`, optionally emits CoreML runtime/plan rows via
+`bench/run_coreml_apple_baseline.py`, then appends
 `bench/compare_qwen35_apple_baseline.py` gate rows.  The default comparison
 pairs cover the currently available 0.4B/1.5B RWKV classes; override `PAIRS`,
 `QWEN_MODELS`, and `RWKV_MLX_MODELS` for 4B/9B or distilled-mobile gates.
@@ -78,7 +79,7 @@ It emits rows with `axis=qwen35_apple_baseline` and can run:
 2. RWKV-7 through this repository's optional MLX recurrent backend.
 3. CoreML/ANE rows in the same schema once the CoreML runtime runner lands.
 
-The companion export entry point is `scripts/export_rwkv7_coreml.py`.  It writes
+The companion export entry point is `scripts/export_rwkv7_coreml.py`; the companion runtime row generator is `bench/run_coreml_apple_baseline.py`.  It writes
 a reproducible CoreML export manifest in `--dry-run` mode on any machine, and
 attempts a first `full-logits` `.mlpackage` export when `coremltools`, `torch`,
 and `transformers` are installed.  Stateful `decode`/`prefill` CoreML functions
@@ -142,6 +143,25 @@ PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --rwkv-quant-backend auto \
   --rwkv-wkv-backend metal \
   --rwkv-chunk-size 2048 \
+  --results bench/results_qwen35_apple_baseline.jsonl
+```
+
+Run CoreML runtime rows from an export manifest:
+
+```bash
+# Plan rows only; safe without CoreMLTools or an .mlpackage.
+PYTHONPATH=. python bench/run_coreml_apple_baseline.py \
+  --manifest exports/rwkv7-g1g-1.5b-coreml/coreml_export_manifest.json \
+  --dry-run \
+  --prompt-target-chars 1024,4096 \
+  --decode-lengths 128,512 \
+  --results bench/results_qwen35_apple_baseline.jsonl
+
+# Live full-logits runtime smoke. Rows are marked partial until stateful
+# decode/prefill lands, so comparison gates will not treat them as wins.
+PYTHONPATH=. python bench/run_coreml_apple_baseline.py \
+  --manifest exports/rwkv7-g1g-1.5b-coreml/coreml_export_manifest.json \
+  --compute-units cpu-and-ne \
   --results bench/results_qwen35_apple_baseline.jsonl
 ```
 
