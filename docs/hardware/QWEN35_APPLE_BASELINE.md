@@ -52,7 +52,14 @@ It emits rows with `axis=qwen35_apple_baseline` and can run:
 1. Qwen3.5 through a local Ollama server using the streaming `/api/generate`
    endpoint.
 2. RWKV-7 through this repository's optional MLX recurrent backend.
-3. CoreML/ANE rows in the same schema once the CoreML runner lands.
+3. CoreML/ANE rows in the same schema once the CoreML runtime runner lands.
+
+The companion export entry point is `scripts/export_rwkv7_coreml.py`.  It writes
+a reproducible CoreML export manifest in `--dry-run` mode on any machine, and
+attempts a first `full-logits` `.mlpackage` export when `coremltools`, `torch`,
+and `transformers` are installed.  Stateful `decode`/`prefill` CoreML functions
+remain follow-up work and are tracked in the manifest rather than claimed as
+complete.
 
 Dry-run the matrix without contacting runtimes:
 
@@ -114,6 +121,38 @@ PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --results bench/results_qwen35_apple_baseline.jsonl
 ```
 
+Plan and smoke a CoreML package export:
+
+```bash
+# Import-safe plan: no CoreMLTools required.
+PYTHONPATH=. python scripts/export_rwkv7_coreml.py \
+  /path/to/rwkv7-g1g-1.5b-hf \
+  exports/rwkv7-g1g-1.5b-coreml \
+  --dry-run \
+  --chunks 4 \
+  --prefill-seq-length 2048 \
+  --sample-seq-length 128 \
+  --state-mode wkv-coreml \
+  --quantization lut4 \
+  --results bench/results_qwen35_apple_baseline.jsonl
+
+# Live first-step export when CoreMLTools is installed.
+PYTHONPATH=. python scripts/export_rwkv7_coreml.py \
+  /path/to/rwkv7-g1g-1.5b-hf \
+  exports/rwkv7-g1g-1.5b-coreml \
+  --sample-seq-length 128 \
+  --deployment-target iOS18 \
+  --compute-units cpu-and-ne \
+  --quantization lut4 \
+  --results bench/results_qwen35_apple_baseline.jsonl
+```
+
+The export row uses `axis=rwkv7_coreml_export`.  `status=plan` only records the
+manifest/contract; `status=pass` means a `.mlpackage` was produced.  A CoreML
+export row is **not** a Qwen3.5 performance win until a later CoreML runner adds
+TTFT, prefill/decode tok/s, memory, and correctness fields to the
+`qwen35_apple_baseline` matrix.
+
 Summarize an existing result file:
 
 ```bash
@@ -138,7 +177,7 @@ incomplete row.
 |---|---|---|---|
 | RWKV-7 0.4B W4/MLX | `qwen3.5:0.8b-mlx` | lower memory and higher decode tok/s at prompt 1k/4k/8k, decode 128/512 | needs same-device rows |
 | RWKV-7 1.5B W4/MLX | `qwen3.5:2b-mlx` | lower memory and higher or equal decode tok/s; TTFT no worse by >10% | needs same-device rows |
-| RWKV-7 2.9B W4/MLX/CoreML | `qwen3.5:4b-mlx` | lower memory and higher decode tok/s | CoreML/ANE path not landed |
+| RWKV-7 2.9B W4/MLX/CoreML | `qwen3.5:4b-mlx` | lower memory and higher decode tok/s | CoreML export prototype exists; ANE runtime rows not landed |
 | RWKV-7 larger / distilled mobile | `qwen3.5:9b-mlx` | mobile-useful memory envelope plus quality eval | requires model/quality work |
 
 ## CoreML / ANE follow-up
@@ -151,16 +190,23 @@ incomplete row.
 - async prefill loading
 - int8 / int4 / LUT quantization
 
+The repository now has `scripts/export_rwkv7_coreml.py` as the first
+CoreML/ANE bridge.  It records the intended chunking, state mode, quantization,
+and deployment target, supports a first `full-logits` export, and deliberately
+keeps stateful decode/prefill marked as unimplemented in the manifest.
+
 The next repository lane should add:
 
 1. HF RWKV-7 -> Torch traced decode/prefill -> CoreML multifunction export.
 2. CoreML correctness checks against HF/MLX logits and state.
 3. CoreML W4/LUT/INT4 export rows in the same `qwen35_apple_baseline` schema.
-4. iPhone/iPad rows once device access is available.
+4. A CoreML runtime benchmark runner that emits TTFT, prefill/decode tok/s,
+   memory, chunked-prefill correctness, and state-cache reuse rows.
+5. iPhone/iPad rows once device access is available.
 
 ## Non-goals for the first baseline PR
 
 - It does not claim final quality superiority over Qwen3.5.
-- It does not implement CoreML export yet.
+- It does not implement final stateful CoreML decode/prefill yet; the current CoreML path is an export prototype and manifest contract.
 - It does not mark W8/W4 as fp16-beating until JSONL evidence proves it.
 - It does not replace the existing Apple MLX session and quant regression tests.
