@@ -229,13 +229,18 @@ previews.
 Compare RWKV rows against Qwen3.5 rows and emit explicit gate results:
 
 ```bash
-PYTHONPATH=. python bench/compare_qwen35_apple_baseline.py   --results bench/results_qwen35_apple_baseline.jsonl   --pair qwen3.5:0.8b-mlx=rwkv7-g1d-0.4b-hf   --pair qwen3.5:2b-mlx=rwkv7-g1g-1.5b-hf   --min-decode-ratio 1.0   --require-prefill   --require-ttft   --max-ttft-ratio 1.1   --append bench/results_qwen35_apple_baseline.jsonl
+PYTHONPATH=. python bench/compare_qwen35_apple_baseline.py   --results bench/results_qwen35_apple_baseline.jsonl   --pair qwen3.5:0.8b-mlx=rwkv7-g1d-0.4b-hf   --pair qwen3.5:2b-mlx=rwkv7-g1g-1.5b-hf   --min-decode-ratio 1.0   --require-prefill   --require-ttft   --max-ttft-ratio 1.1   --diagnostics   --append bench/results_qwen35_apple_baseline.jsonl
 ```
 
-The comparison rows use `axis=qwen35_apple_baseline_comparison`; the summary row
-uses `axis=qwen35_apple_baseline_comparison_summary`.  Missing required metrics
-produce `status=unknown`, not `pass`, so a PR cannot claim a Qwen3.5 win from an
-incomplete row.
+The comparison rows use `axis=qwen35_apple_baseline_comparison`; optional
+`--diagnostics` rows use `axis=qwen35_apple_baseline_gap_diagnostic`; the
+summary row uses `axis=qwen35_apple_baseline_comparison_summary`.  Missing
+required metrics produce `status=unknown`, not `pass`, so a PR cannot claim a
+Qwen3.5 win from an incomplete row.  Diagnostic rows translate missing/failing
+gates into concrete actions such as `collect_qwen_baseline_rows`,
+`collect_memory_telemetry`, `optimize_decode_kernel_or_batching`, or
+`reduce_peak_memory_or_quantize_more`; `scripts/run_qwen35_apple_acceptance.sh`
+enables these rows by default with `COMPARE_DIAGNOSTICS=1`.
 
 ## Initial acceptance matrix
 
