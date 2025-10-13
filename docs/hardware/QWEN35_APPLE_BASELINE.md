@@ -166,6 +166,12 @@ on TTFT, prefill, and peak memory, while decode is still below the configured
 1.0x gate (`decode_ratio_rwkv_over_qwen=0.721342`), so the next engineering
 action remains decode-kernel/batching optimization.
 
+The follow-up group-quant projection smoke is recorded in
+[`../../bench/apple_qwen35_mlx_vlm_group_m5_20260707/`](../../bench/apple_qwen35_mlx_vlm_group_m5_20260707/).
+With `RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION=1`, RWKV-7 0.4B/mm4 passes this
+short 0.8B comparison gate (`decode_ratio_rwkv_over_qwen=1.052232`,
+`prefill_ratio_rwkv_over_qwen=3.899691`, `memory_ratio_rwkv_over_qwen=0.671598`).
+
 Run RWKV-7 MLX rows against the same prompt text:
 
 ```bash
