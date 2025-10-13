@@ -57,7 +57,10 @@ COREML_EXPORT_MODELS=/path/to/rwkv7-g1g-1.5b-hf \
 scripts/run_qwen35_apple_acceptance.sh
 
 # Live same-device acceptance. Set PULL_QWEN=1 only when you want the wrapper
-# to run `ollama pull` before collecting rows.
+# to pull Qwen through the local Ollama HTTP API before collecting rows. Pulls
+# are bounded by OLLAMA_PULL_TIMEOUT_S and OLLAMA_PULL_IDLE_TIMEOUT_S so a stuck
+# `pulling manifest` / no-byte-progress registry request records a structured
+# failure instead of hanging the whole acceptance run forever.
 PULL_QWEN=1 \
 RWKV_MLX_MODELS=/path/to/rwkv7-g1d-0.4b-hf,/path/to/rwkv7-g1g-1.5b-hf \
 COREML_EXPORT_MODELS=/path/to/rwkv7-g1g-1.5b-hf \
@@ -99,12 +102,23 @@ PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --results bench/results_qwen35_apple_baseline.jsonl
 ```
 
-Run Qwen3.5 baselines after pulling models into Ollama:
+Run Qwen3.5 baselines after pulling models into Ollama.  For unattended runs,
+prefer `scripts/ollama_pull_with_timeout.py` over the raw CLI spinner:
 
 ```bash
-ollama pull qwen3.5:0.8b-mlx
-ollama pull qwen3.5:2b-mlx
-ollama pull qwen3.5:4b-mlx
+PYTHONPATH=. python scripts/ollama_pull_with_timeout.py \
+  qwen3.5:0.8b-mlx \
+  --host http://127.0.0.1:11434 \
+  --timeout-s 7200 \
+  --idle-timeout-s 120 \
+  --results bench/results_qwen35_apple_baseline.jsonl
+
+PYTHONPATH=. python scripts/ollama_pull_with_timeout.py \
+  qwen3.5:2b-mlx \
+  --host http://127.0.0.1:11434 \
+  --timeout-s 7200 \
+  --idle-timeout-s 120 \
+  --results bench/results_qwen35_apple_baseline.jsonl
 
 PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --prompt-target-chars 1024,4096,8192 \
