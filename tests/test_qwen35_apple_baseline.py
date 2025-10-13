@@ -271,6 +271,8 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
             "4,8",
             "--qwen-models",
             "qwen3.5:0.8b-mlx",
+            "--qwen-mlx-vlm-models",
+            "mlx-community/Qwen3.5-0.8B-MLX-4bit",
             "--rwkv-mlx-models",
             "/tmp/rwkv-a,/tmp/rwkv-b",
         ],
@@ -284,6 +286,8 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
     assert rows[0]["axis"] == AXIS + "_env"
     assert rows[1]["axis"] == AXIS + "_plan"
     assert rows[1]["qwen_jobs"] == 4
+    assert rows[1]["qwen_mlx_vlm_jobs"] == 4
+    assert rows[1]["qwen_mlx_vlm_models"] == ["mlx-community/Qwen3.5-0.8B-MLX-4bit"]
     assert rows[1]["rwkv_mlx_jobs"] == 8
 
 
@@ -294,6 +298,7 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
         {
             "DRY_RUN": "1",
             "RUN_QWEN": "0",
+            "QWEN_MLX_VLM_MODELS": "mlx-community/Qwen3.5-0.8B-MLX-4bit",
             "RWKV_MLX_MODELS": "/tmp/rwkv-a,/tmp/rwkv-b",
             "PROMPT_TARGET_CHARS": "16",
             "DECODE_LENGTHS": "4",
@@ -315,7 +320,9 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
     assert rows[0]["axis"] == AXIS + "_env"
     assert rows[1]["axis"] == AXIS + "_plan"
     assert rows[1]["qwen_jobs"] == 0
+    assert rows[1]["qwen_mlx_vlm_jobs"] == 1
     assert rows[1]["rwkv_mlx_jobs"] == 2
+    assert rows[1]["qwen_mlx_vlm_models"] == ["mlx-community/Qwen3.5-0.8B-MLX-4bit"]
     assert rows[1]["rwkv_mlx_models"] == ["/tmp/rwkv-a", "/tmp/rwkv-b"]
 
 
