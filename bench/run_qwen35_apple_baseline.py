@@ -743,6 +743,7 @@ def run_rwkv_mlx(
                 "quant_rkv_min_params": quant_rkv_min_params,
                 "quant_backend": quant_backend,
                 "wkv_backend": wkv_backend,
+                "step_eval_interval": telemetry.get("step_eval_interval"),
                 "prompt_case": prompt_case.name,
                 "prompt_target_chars": int(prompt_case.target_chars),
                 "prompt_chars": len(prompt_case.prompt),

@@ -241,6 +241,35 @@ def test_mlx_model_rkv_quant_min_params_if_available():
     assert telemetry["quantized_linear_rkv_min_params"] == 1
 
 
+def test_mlx_model_step_eval_interval_if_available():
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    from tests.test_apple_silicon_mlx_model_smoke import tiny_torch_model_to_mlx
+
+    old_interval = os.environ.get("RWKV7_MLX_STEP_EVAL_INTERVAL")
+    try:
+        os.environ["RWKV7_MLX_STEP_EVAL_INTERVAL"] = "1"
+        _, baseline, _ = tiny_torch_model_to_mlx()
+        os.environ["RWKV7_MLX_STEP_EVAL_INTERVAL"] = "4"
+        _, delayed, _ = tiny_torch_model_to_mlx()
+
+        baseline_logits, baseline_state = baseline.forward([[1, 2, 3, 4]], collect_all=False)
+        delayed_logits, delayed_state = delayed.forward([[1, 2, 3, 4]], collect_all=False)
+        mx.eval(baseline_logits, delayed_logits)
+
+        assert baseline.telemetry()["step_eval_interval"] == 1
+        assert delayed.telemetry()["step_eval_interval"] == 4
+        assert int(baseline_state.seen_tokens) == int(delayed_state.seen_tokens) == 4
+        assert float(mx.max(mx.abs(baseline_logits - delayed_logits))) < 1e-5
+    finally:
+        if old_interval is None:
+            os.environ.pop("RWKV7_MLX_STEP_EVAL_INTERVAL", None)
+        else:
+            os.environ["RWKV7_MLX_STEP_EVAL_INTERVAL"] = old_interval
+
+
 def test_mlx_model_grouped_rkv_quant_projection_if_available():
     if importlib.util.find_spec("mlx") is None:
         return
@@ -306,6 +335,7 @@ if __name__ == "__main__":
     test_mlx_model_quantized_linear_hook_if_available()
     test_mlx_model_metal_quantized_linear_hook_if_available()
     test_mlx_model_rkv_quant_min_params_if_available()
+    test_mlx_model_step_eval_interval_if_available()
     test_mlx_model_grouped_rkv_quant_projection_if_available()
     test_mlx_model_auto_quantized_linear_hook_if_available()
     print("MLX QUANT TESTS PASS")
