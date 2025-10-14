@@ -816,6 +816,8 @@ class MLXRWKV7Model:
         self.quantized_linear_min_params: int | None = None
         self.quantized_linear_rkv_min_params: int | None = None
         self.step_eval_interval = max(1, _env_int("RWKV7_MLX_STEP_EVAL_INTERVAL", 1))
+        self.fused_ffn_key_relu2 = _env_flag("RWKV7_MLX_FUSED_FFN_KEY_RELU2", False)
+        self.fused_ffn_key_relu2_counts: dict[str, int] = {"metal": 0, "fallback": 0}
         self.group_rkv_quant_projection = _env_flag("RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION", False)
         self.group_rkv_quant_projection_mode = _env_choice(
             "RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE",
@@ -950,6 +952,7 @@ class MLXRWKV7Model:
 
         self.wkv_backend_last = None
         self.wkv_backend_counts = {"reference": 0, "metal": 0}
+        self.fused_ffn_key_relu2_counts = {"metal": 0, "fallback": 0}
         self.group_rkv_quant_projection_counts = {"metal": 0, "fallback": 0}
         for qlinear in self.quantized_linears.values():
             qlinear.last_backend = None
@@ -968,6 +971,8 @@ class MLXRWKV7Model:
             "wkv_metal_available": metal_wkv_available(),
             "quant_metal_available": metal_quant_available(),
             "step_eval_interval": int(self.step_eval_interval),
+            "fused_ffn_key_relu2": bool(self.fused_ffn_key_relu2),
+            "fused_ffn_key_relu2_counts": dict(self.fused_ffn_key_relu2_counts),
             **summarize_mlx_arrays(self.arrays),
         }
         if self.quantized_linears:
@@ -1204,8 +1209,25 @@ class MLXRWKV7Model:
         prefix = f"model.layers.{layer}.ffn"
         xx = x_prev - x
         k = x + xx * self._get(f"{prefix}.x_k").reshape(1, self.hidden_size)
-        k = mx.maximum(self._linear(k, f"{prefix}.key.weight"), 0)
-        k = k * k
+        key_weight = f"{prefix}.key.weight"
+        key_qlinear = self.quantized_linears.get(key_weight)
+        if (
+            self.fused_ffn_key_relu2
+            and key_qlinear is not None
+            and int(key_qlinear.bits) == 4
+            and key_qlinear._selected_backend(k) == "metal"
+        ):
+            k = key_qlinear.relu2(k)
+            self.fused_ffn_key_relu2_counts["metal"] = int(
+                self.fused_ffn_key_relu2_counts.get("metal", 0)
+            ) + 1
+        else:
+            if self.fused_ffn_key_relu2:
+                self.fused_ffn_key_relu2_counts["fallback"] = int(
+                    self.fused_ffn_key_relu2_counts.get("fallback", 0)
+                ) + 1
+            k = mx.maximum(self._linear(k, key_weight), 0)
+            k = k * k
         return self._linear(k, f"{prefix}.value.weight"), x
 
     def _embedding(self, token_ids):

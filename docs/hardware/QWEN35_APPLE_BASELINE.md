@@ -223,6 +223,16 @@ ranking, not an end-to-end speed row: the next Apple MLX kernel work should
 prioritize FFN step fusion plus attention/norm fusion before spending effort on
 final logits.
 
+The first positive FFN fusion seam is recorded in
+[`../../bench/apple_mlx_fused_ffn_relu2_m5_20260707/`](../../bench/apple_mlx_fused_ffn_relu2_m5_20260707/).
+`RWKV7_MLX_FUSED_FFN_KEY_RELU2=1` fuses the MM4 FFN key projection and `relu²`
+activation into one Metal kernel.  On the same 1.5B/mm4 `512 chars / 64 tokens`
+smoke it keeps the generated preview identical, keeps chunked prefill exact, and
+improves prefill/decode/TTFT by about `1.05x` / `1.026x` / `1.05x`.  This is a
+real speed seam but not yet enough to close the Qwen3.5 2B gap; the one-command
+Apple acceptance wrapper enables it by default while the base model keeps the
+feature opt-in through the environment variable.
+
 The Qwen3.5 2B MLX-4bit snapshot can stall during the large Xet-backed weight
 file after small metadata files have downloaded; `scripts/hf_parallel_download.py`
 provides a bounded, resumable HTTP Range fallback for the single

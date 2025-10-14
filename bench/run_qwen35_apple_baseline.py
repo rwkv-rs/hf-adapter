@@ -782,6 +782,8 @@ def run_rwkv_mlx(
                 "wkv_backend_counts": telemetry.get("wkv_backend_counts"),
                 "wkv_metal_available": telemetry.get("wkv_metal_available"),
                 "step_eval_interval": telemetry.get("step_eval_interval"),
+                "fused_ffn_key_relu2": telemetry.get("fused_ffn_key_relu2"),
+                "fused_ffn_key_relu2_counts": telemetry.get("fused_ffn_key_relu2_counts"),
                 "prompt_case": prompt_case.name,
                 "prompt_target_chars": int(prompt_case.target_chars),
                 "prompt_chars": len(prompt_case.prompt),
@@ -819,6 +821,7 @@ def run_rwkv_mlx(
                         "chunked_prefill_s": round(float(chunk_s), 6) if chunk_s is not None else None,
                         "chunked_prefill_max_abs": round(float(chunk_diff), 8),
                         "chunked_wkv_backend_counts": (chunk_telemetry or {}).get("wkv_backend_counts"),
+                        "chunked_fused_ffn_key_relu2_counts": (chunk_telemetry or {}).get("fused_ffn_key_relu2_counts"),
                         "chunked_quantized_linear_last_backend_counts": (chunk_telemetry or {}).get("quantized_linear_last_backend_counts"),
                         "chunked_group_rkv_quant_projection_counts": (chunk_telemetry or {}).get("group_rkv_quant_projection_counts"),
                         "chunked_mlx_peak_memory_bytes": (chunk_memory or {}).get("mlx_peak_memory_bytes"),
@@ -951,6 +954,7 @@ def main() -> int:
         "rwkv_quant_rkv_min_params": None
         if int(args.rwkv_quant_rkv_min_params) < 0
         else int(args.rwkv_quant_rkv_min_params),
+        "rwkv_fused_ffn_key_relu2_env": os.environ.get("RWKV7_MLX_FUSED_FFN_KEY_RELU2", ""),
         **device_info(),
     }
     print(json.dumps(env, ensure_ascii=False))
@@ -984,6 +988,7 @@ def main() -> int:
             "rwkv_quant_rkv_min_params": None
             if int(args.rwkv_quant_rkv_min_params) < 0
             else int(args.rwkv_quant_rkv_min_params),
+            "rwkv_fused_ffn_key_relu2_env": os.environ.get("RWKV7_MLX_FUSED_FFN_KEY_RELU2", ""),
         }
         print(json.dumps(plan, ensure_ascii=False))
         append_jsonl(args.results, plan)

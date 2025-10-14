@@ -31,6 +31,7 @@ def test_mlx_quant_formula_if_available():
         mm4_group_matmul_metal,
         mm4_group_matmul_metal_inputs,
         mm4_matmul_mlx,
+        mm4_matmul_relu2_metal,
         mm4_triple_matmul_metal_inputs,
         mm8_group_matmul_metal,
         mm8_group_matmul_metal_inputs,
@@ -99,6 +100,11 @@ def test_mlx_quant_formula_if_available():
         y4_metal = mm4_matmul_mlx(x, q4_metal, backend="metal")
         mx.eval(y4_metal)
         assert float(mx.max(mx.abs(y4_ref - y4_metal))) < 5e-2
+        y4_relu2 = mm4_matmul_relu2_metal(x, q4_metal)
+        y4_relu2_expected = mx.maximum(y4_metal, 0)
+        y4_relu2_expected = y4_relu2_expected * y4_relu2_expected
+        mx.eval(y4_relu2, y4_relu2_expected)
+        assert float(mx.max(mx.abs(y4_relu2 - y4_relu2_expected))) < 5e-2
         q4_group = [
             quantize_mlx_mm4(weight, layout="metal"),
             quantize_mlx_mm4((weight * 0.5).astype(mx.float16), layout="metal"),
@@ -307,6 +313,37 @@ def test_mlx_model_grouped_rkv_quant_projection_if_available():
         assert grouped_model._rkv_group_quant_cache == {}
 
 
+def test_mlx_model_fused_ffn_key_relu2_if_available():
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    from rwkv7_hf.mlx_quant import metal_quant_available
+    from tests.test_apple_silicon_mlx_model_smoke import tiny_torch_model_to_mlx
+
+    if not metal_quant_available():
+        return
+
+    _, baseline_model, _ = tiny_torch_model_to_mlx()
+    _, fused_model, _ = tiny_torch_model_to_mlx()
+    assert baseline_model.quantize_linears("mm4", min_params=1, backend="metal") > 0
+    assert fused_model.quantize_linears("mm4", min_params=1, backend="metal") > 0
+    fused_model.fused_ffn_key_relu2 = True
+
+    baseline_logits, baseline_state = baseline_model.forward([[1, 2, 3]], collect_all=False)
+    fused_logits, fused_state = fused_model.forward([[1, 2, 3]], collect_all=False)
+    mx.eval(baseline_logits, fused_logits)
+
+    assert tuple(int(v) for v in fused_logits.shape) == tuple(int(v) for v in baseline_logits.shape)
+    assert int(baseline_state.seen_tokens) == int(fused_state.seen_tokens) == 3
+    assert float(mx.max(mx.abs(baseline_logits - fused_logits))) < 5e-2
+
+    telemetry = fused_model.telemetry()
+    assert telemetry["fused_ffn_key_relu2"] is True
+    assert telemetry["fused_ffn_key_relu2_counts"]["metal"] > 0
+    assert telemetry["fused_ffn_key_relu2_counts"]["fallback"] == 0
+
+
 def test_mlx_model_auto_quantized_linear_hook_if_available():
     if importlib.util.find_spec("mlx") is None:
         return
@@ -337,5 +374,6 @@ if __name__ == "__main__":
     test_mlx_model_rkv_quant_min_params_if_available()
     test_mlx_model_step_eval_interval_if_available()
     test_mlx_model_grouped_rkv_quant_projection_if_available()
+    test_mlx_model_fused_ffn_key_relu2_if_available()
     test_mlx_model_auto_quantized_linear_hook_if_available()
     print("MLX QUANT TESTS PASS")
