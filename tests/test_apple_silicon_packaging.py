@@ -207,6 +207,8 @@ def test_apple_smoke_script_static() -> None:
     assert "group_rkv_quant_projection_mode" in model_text
     assert "group_rkv_quant_projection_counts" in model_text
     assert "quantized_linear_rkv_min_params" in model_text
+    assert "RWKV7_MLX_STEP_EVAL_INTERVAL" in model_text
+    assert "step_eval_interval" in mlx_generation_sweep_text
     assert "auto_metal_max_rows" in model_text
     quant_bench_script = ROOT / "scripts/mlx_quant_projection_bench.py"
     assert quant_bench_script.exists()

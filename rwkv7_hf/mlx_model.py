@@ -59,6 +59,16 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return int(default)
+    try:
+        return int(raw)
+    except ValueError:
+        return int(default)
+
+
 def _env_choice(name: str, default: str, choices: set[str]) -> str:
     raw = os.environ.get(name)
     value = (raw if raw is not None and raw != "" else default).strip().lower()
@@ -805,6 +815,7 @@ class MLXRWKV7Model:
         self.quantized_linear_backend: str | None = None
         self.quantized_linear_min_params: int | None = None
         self.quantized_linear_rkv_min_params: int | None = None
+        self.step_eval_interval = max(1, _env_int("RWKV7_MLX_STEP_EVAL_INTERVAL", 1))
         self.group_rkv_quant_projection = _env_flag("RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION", False)
         self.group_rkv_quant_projection_mode = _env_choice(
             "RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE",
@@ -946,6 +957,7 @@ class MLXRWKV7Model:
             "wkv_backend_counts": dict(self.wkv_backend_counts),
             "wkv_metal_available": metal_wkv_available(),
             "quant_metal_available": metal_quant_available(),
+            "step_eval_interval": int(self.step_eval_interval),
             **summarize_mlx_arrays(self.arrays),
         }
         if self.quantized_linears:
@@ -1191,6 +1203,10 @@ class MLXRWKV7Model:
         ids = token_ids.astype(mx.int32).reshape(-1)
         return self._get("model.embeddings.weight")[ids]
 
+    def _eval_step_state(self, x, state: MLXRWKV7State) -> None:
+        mx = _mx()
+        mx.eval(x, state.v_first, *state.recurrent_state, *state.attn_x_prev, *state.ffn_x_prev)
+
     def _step_token(self, token_ids, state: MLXRWKV7State):
         mx = _mx()
         x = self._embedding(token_ids)
@@ -1210,7 +1226,8 @@ class MLXRWKV7Model:
             f, state.ffn_x_prev[layer] = self._ffn_step(layer, h2, state.ffn_x_prev[layer])
             x = residual + f
         state.seen_tokens += 1
-        mx.eval(x, state.v_first, *state.recurrent_state, *state.attn_x_prev, *state.ffn_x_prev)
+        if int(self.step_eval_interval) <= 1 or int(state.seen_tokens) % int(self.step_eval_interval) == 0:
+            self._eval_step_state(x, state)
         return x, state
 
     def _logits_from_hidden(self, x):
@@ -1248,7 +1265,10 @@ class MLXRWKV7Model:
             out = mx.stack(logits, axis=1)
         else:
             out = self._logits_from_hidden(last).reshape(B, 1, self.vocab_size)
-        mx.eval(out)
+        if int(self.step_eval_interval) > 1:
+            self._eval_step_state(out, state)
+        else:
+            mx.eval(out)
         return out, state
 
     def prefill(self, input_ids: Iterable[Iterable[int]] | Any, state: MLXRWKV7State | None = None):

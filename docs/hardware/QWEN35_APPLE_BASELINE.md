@@ -252,6 +252,14 @@ memory from the earlier ≈514.8MB row to ≈402.2MB, and improves prefill to
 ≈0.23x of the Qwen3.5 0.8B MLX token-only row, so the next work remains deeper
 decode/WKV/projection fusion.
 
+`RWKV7_MLX_STEP_EVAL_INTERVAL` controls how often the MLX recurrent loop forces
+state evaluation.  The model default is `1` for historical behavior; the
+Qwen3.5 Apple acceptance wrapper defaults to `2` after the M5 smoke in
+[`../../bench/apple_step_eval_interval_m5_20260707/`](../../bench/apple_step_eval_interval_m5_20260707/)
+improved the same `512 chars / 64 tokens` 0.4B/mm4 direct R/K/V row from
+≈69.06/50.51 prefill/decode tok/s to ≈76.91/58.36 tok/s at essentially the same
+peak memory and with chunked/full prefill `max_abs=0.0`.
+
 Run CoreML runtime rows from an export manifest:
 
 ```bash
