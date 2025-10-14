@@ -214,6 +214,18 @@ same-prompt Qwen/RWKV MLX, W4 quantization, and chunked/state-cache checks for
 0.8B/2B, but still require speed/latency closure, response-quality rows,
 long-context rows, stateful CoreML decode/prefill runtime rows, and 4B/9B tier
 coverage.
+
+The first explicit 0.8B long-context row is recorded in
+[`../../bench/apple_qwen35_08b_longctx_m5_20260707/`](../../bench/apple_qwen35_08b_longctx_m5_20260707/).
+On the same Apple M5 `4096 chars / 128 tokens` token-only shape, RWKV-7 0.4B/mm4
++ grouped R/K/V quant + fused FFN key/relu² passes the memory gate
+(`memory_ratio_rwkv_over_qwen=0.180759`) and fills the long-context audit slot,
+but it remains far behind the Qwen3.5 0.8B MLX-4bit token-only baseline on
+speed/latency (`decode_ratio_rwkv_over_qwen=0.474667`,
+`prefill_ratio_rwkv_over_qwen=0.034954`, `ttft_ratio_rwkv_over_qwen=30.184709`).
+This makes the next Apple performance target concrete: roughly `2.11x` decode
+and `28.61x` prefill speedup are needed on this long-context 0.8B tier before a
+Qwen3.5-over-Apple claim can pass.
 The component-profile follow-up is recorded in
 [`../../bench/apple_mlx_component_profile_m5_20260707/`](../../bench/apple_mlx_component_profile_m5_20260707/).
 It uses synchronized component boundaries on the same Apple M5 1.5B/mm4 path and
