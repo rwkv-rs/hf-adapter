@@ -146,6 +146,7 @@ def test_apple_smoke_script_static() -> None:
     mlx_session_text = mlx_session_script.read_text(encoding="utf-8")
     assert 'choices=["affine", "reference", "metal", "auto"]' in mlx_session_text
     assert 'choices=["reference", "metal", "auto"]' in mlx_session_text
+    assert "--quant-rkv-min-params" in mlx_session_text
     mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"
     assert mlx_session_batch_script.exists()
     assert mlx_session_batch_script.stat().st_mode & stat.S_IXUSR
@@ -163,6 +164,7 @@ def test_apple_smoke_script_static() -> None:
     assert "all_right_one_shot_match" in mlx_session_batch_text
     assert "if require_match and not strict_match" in mlx_session_batch_text
     assert '"quantization": args.quantization' in mlx_session_batch_text
+    assert "--quant-rkv-min-params" in mlx_session_batch_text
     mlx_generation_sweep_text = (ROOT / "scripts/mlx_generation_sweep.py").read_text(encoding="utf-8")
     assert '"quantized_linear_last_backend_counts": telemetry.get("quantized_linear_last_backend_counts")' in mlx_generation_sweep_text
     assert '"quant_backend": args.quant_backend' in mlx_session_batch_text
@@ -204,6 +206,7 @@ def test_apple_smoke_script_static() -> None:
     assert "RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE" in model_text
     assert "group_rkv_quant_projection_mode" in model_text
     assert "group_rkv_quant_projection_counts" in model_text
+    assert "quantized_linear_rkv_min_params" in model_text
     assert "auto_metal_max_rows" in model_text
     quant_bench_script = ROOT / "scripts/mlx_quant_projection_bench.py"
     assert quant_bench_script.exists()
