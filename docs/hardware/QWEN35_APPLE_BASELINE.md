@@ -226,6 +226,16 @@ speed/latency (`decode_ratio_rwkv_over_qwen=0.474667`,
 This makes the next Apple performance target concrete: roughly `2.11x` decode
 and `28.61x` prefill speedup are needed on this long-context 0.8B tier before a
 Qwen3.5-over-Apple claim can pass.
+
+The chunked-prefill state-only follow-up is recorded in
+[`../../bench/apple_mlx_chunked_state_only_m5_20260707/`](../../bench/apple_mlx_chunked_state_only_m5_20260707/).
+It adds a production-shaped MLX seam where non-final chunks update only the RWKV
+recurrent state and skip final logits/lm_head; the same long-context row records
+`chunked_state_only_prefill_calls=2`, `chunked_state_only_prefill_tokens=1024`,
+and `chunked_prefill_max_abs=0.0`.  This removes two unnecessary chunk-boundary
+logits projections at `chunk_size=512`; it is a correctness/dispatch cleanup,
+not the main prefill-gap solution.  The remaining bottleneck is still the
+per-token/per-layer recurrent WKV and projection launch count.
 The component-profile follow-up is recorded in
 [`../../bench/apple_mlx_component_profile_m5_20260707/`](../../bench/apple_mlx_component_profile_m5_20260707/).
 It uses synchronized component boundaries on the same Apple M5 1.5B/mm4 path and

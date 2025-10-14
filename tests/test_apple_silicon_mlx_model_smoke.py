@@ -141,6 +141,9 @@ def run_tiny_state_cache(args: argparse.Namespace) -> dict[str, Any]:
     mx.eval(full_last, chunk_last)
     chunk_diff = max_abs(full_last, chunk_last)
     assert chunk_diff < 1e-5, f"chunked/full prefill mismatch: {chunk_diff}"
+    telemetry = mlx_model.telemetry()
+    assert telemetry["state_only_prefill_calls"] == 1
+    assert telemetry["state_only_prefill_tokens"] == 2
 
     next_tokens = mx.argmax(full_last[:, -1, :], axis=-1).astype(mx.int32)
     full_decode, _ = mlx_model.decode_step(next_tokens, full_state.clone())
@@ -157,6 +160,8 @@ def run_tiny_state_cache(args: argparse.Namespace) -> dict[str, Any]:
         "chunk_size": 2,
         "chunked_prefill_max_abs": round(chunk_diff, 8),
         "select_batch_decode_max_abs": round(select_diff, 8),
+        "state_only_prefill_calls": int(telemetry["state_only_prefill_calls"]),
+        "state_only_prefill_tokens": int(telemetry["state_only_prefill_tokens"]),
         "seen_tokens": int(chunk_state.seen_tokens),
     }
 
