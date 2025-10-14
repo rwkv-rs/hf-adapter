@@ -206,6 +206,14 @@ prefill/chunked prefill, and TTFT reduction.
 
 The 2B-size token-only row is recorded in
 [`../../bench/apple_qwen35_2b_tokenonly_m5_20260707/`](../../bench/apple_qwen35_2b_tokenonly_m5_20260707/).
+The current goal-level audit over the 0.8B and 2B token-only evidence is
+recorded in
+[`../../bench/apple_qwen35_goal_audit_m5_20260707/`](../../bench/apple_qwen35_goal_audit_m5_20260707/).
+It marks the overall Apple/Qwen3.5 goal as non-passing: the available rows cover
+same-prompt Qwen/RWKV MLX, W4 quantization, and chunked/state-cache checks for
+0.8B/2B, but still require speed/latency closure, response-quality rows,
+long-context rows, stateful CoreML decode/prefill runtime rows, and 4B/9B tier
+coverage.
 The component-profile follow-up is recorded in
 [`../../bench/apple_mlx_component_profile_m5_20260707/`](../../bench/apple_mlx_component_profile_m5_20260707/).
 It uses synchronized component boundaries on the same Apple M5 1.5B/mm4 path and
@@ -389,6 +397,31 @@ gates into concrete actions such as `collect_qwen_baseline_rows`,
 `collect_memory_telemetry`, `optimize_decode_kernel_or_batching`, or
 `reduce_peak_memory_or_quantize_more`; `scripts/run_qwen35_apple_acceptance.sh`
 enables these rows by default with `COMPARE_DIAGNOSTICS=1`.
+
+Audit the full Apple/mobile goal coverage:
+
+```bash
+PYTHONPATH=. python bench/audit_qwen35_apple_goal.py \
+  --results bench/results_qwen35_apple_baseline.jsonl \
+  --results bench/apple_qwen35_2b_tokenonly_m5_20260707 \
+  --required-shape chars1024:128 \
+  --required-shape chars4096:512 \
+  --require-quality \
+  --require-coreml \
+  --append bench/results_qwen35_apple_baseline.jsonl
+```
+
+The audit accepts one or more JSONL files or evidence directories, and emits
+`axis=qwen35_apple_goal_audit` rows plus a
+`qwen35_apple_goal_audit_summary`.  It is intentionally broader than the speed
+comparator: for every configured Qwen3.5/RWKV tier it checks same-prompt Qwen
+coverage, RWKV MLX coverage, decode/prefill/TTFT/memory fields, W8/W4 quantized
+rows, chunked-prefill/state-cache correctness, comparison-gate rows, quality
+comparison rows, long-context rows, and stateful CoreML runtime evidence.  The
+one-command wrapper runs this audit after comparison gates by default; tune it
+with `GOAL_AUDIT_TIERS`, `GOAL_AUDIT_SHAPES`,
+`GOAL_AUDIT_REQUIRE_QUALITY`, `GOAL_AUDIT_REQUIRE_COREML`, and
+`GOAL_AUDIT_FAIL_ON_GATE`.
 
 ## Initial acceptance matrix
 
