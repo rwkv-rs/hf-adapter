@@ -206,6 +206,15 @@ prefill/chunked prefill, and TTFT reduction.
 
 The 2B-size token-only row is recorded in
 [`../../bench/apple_qwen35_2b_tokenonly_m5_20260707/`](../../bench/apple_qwen35_2b_tokenonly_m5_20260707/).
+The component-profile follow-up is recorded in
+[`../../bench/apple_mlx_component_profile_m5_20260707/`](../../bench/apple_mlx_component_profile_m5_20260707/).
+It uses synchronized component boundaries on the same Apple M5 1.5B/mm4 path and
+shows the top profiled buckets as FFN step ≈39.46%, attention/WKV step ≈33.15%,
+attention layernorm ≈18.54%, and FFN layernorm ≈6.83%.  Treat this as a fusion
+ranking, not an end-to-end speed row: the next Apple MLX kernel work should
+prioritize FFN step fusion plus attention/norm fusion before spending effort on
+final logits.
+
 The Qwen3.5 2B MLX-4bit snapshot can stall during the large Xet-backed weight
 file after small metadata files have downloaded; `scripts/hf_parallel_download.py`
 provides a bounded, resumable HTTP Range fallback for the single
