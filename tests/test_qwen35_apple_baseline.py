@@ -586,3 +586,27 @@ def test_compare_cli_writes_comparison_rows(tmp_path: Path) -> None:
     assert output_rows[-1]["status"] == "pass"
     appended_rows = [json.loads(line) for line in compared.read_text(encoding="utf-8").splitlines()]
     assert [row["axis"] for row in appended_rows] == [COMPARISON_AXIS, SUMMARY_AXIS]
+
+
+def test_mlx_model_reset_telemetry_counters_without_mlx_runtime() -> None:
+    from rwkv7_hf.mlx_model import MLXRWKV7Model
+
+    class DummyQLinear:
+        def __init__(self) -> None:
+            self.last_backend = "metal"
+            self.backend_counts = {"reference": 1, "affine": 2, "metal": 3}
+
+    model = object.__new__(MLXRWKV7Model)
+    model.wkv_backend_last = "metal"
+    model.wkv_backend_counts = {"reference": 4, "metal": 5}
+    model.group_rkv_quant_projection_counts = {"metal": 6, "fallback": 7}
+    qlinear = DummyQLinear()
+    model.quantized_linears = {"x.weight": qlinear}
+
+    model.reset_telemetry_counters()
+
+    assert model.wkv_backend_last is None
+    assert model.wkv_backend_counts == {"reference": 0, "metal": 0}
+    assert model.group_rkv_quant_projection_counts == {"metal": 0, "fallback": 0}
+    assert qlinear.last_backend is None
+    assert qlinear.backend_counts == {"reference": 0, "affine": 0, "metal": 0}

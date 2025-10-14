@@ -945,6 +945,16 @@ class MLXRWKV7Model:
         self.quantized_linear_rkv_min_params = effective_rkv_min_params if selected else None
         return len(selected)
 
+    def reset_telemetry_counters(self) -> None:
+        """Reset per-run backend counters without changing weights or caches."""
+
+        self.wkv_backend_last = None
+        self.wkv_backend_counts = {"reference": 0, "metal": 0}
+        self.group_rkv_quant_projection_counts = {"metal": 0, "fallback": 0}
+        for qlinear in self.quantized_linears.values():
+            qlinear.last_backend = None
+            qlinear.backend_counts = {"reference": 0, "affine": 0, "metal": 0}
+
     def telemetry(self) -> dict[str, Any]:
         out = {
             "num_hidden_layers": self.num_hidden_layers,
