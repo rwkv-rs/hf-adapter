@@ -152,12 +152,32 @@ PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --results bench/results_qwen35_apple_baseline.jsonl
 ```
 
+If `mlx-vlm` text streaming hits a tokenizer/detokenizer
+`UnicodeDecodeError`, or when the gate only needs generated-token speed/memory,
+use the token-only lane:
+
+```bash
+PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
+  --prompt-target-chars 1024,4096 \
+  --decode-lengths 128,512 \
+  --qwen-models '' \
+  --qwen-mlx-vlm-models mlx-community/Qwen3.5-0.8B-MLX-4bit \
+  --qwen-mlx-vlm-token-only \
+  --rwkv-mlx-models '' \
+  --results bench/results_qwen35_apple_baseline.jsonl
+```
+
+The one-command wrapper exposes the same path through
+`QWEN_MLX_VLM_TOKEN_ONLY=1`.
+
 The MLX/VLM rows use `engine=mlx_vlm`, `runtime=mlx_vlm`, and the same
 `prefill_tok_s`, `decode_tok_s`, `ttft_s`, response, and MLX peak-memory fields
 as the rest of the `qwen35_apple_baseline` matrix.  Known public model ids are
 `mlx-community/Qwen3.5-0.8B-MLX-4bit`,
 `mlx-community/Qwen3.5-4B-MLX-4bit`, and
 `mlx-community/Qwen3.5-9B-MLX-4bit`.
+Token-only rows use `runtime=mlx_vlm_token_only`, keep the same speed/memory
+fields, and intentionally leave response text empty.
 
 The first local MLX/VLM smoke is recorded in
 [`../../bench/apple_qwen35_mlx_vlm_m5_20260707/`](../../bench/apple_qwen35_mlx_vlm_m5_20260707/).
@@ -171,6 +191,15 @@ The follow-up group-quant projection smoke is recorded in
 With `RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION=1`, RWKV-7 0.4B/mm4 passes this
 short 0.8B comparison gate (`decode_ratio_rwkv_over_qwen=1.052232`,
 `prefill_ratio_rwkv_over_qwen=3.899691`, `memory_ratio_rwkv_over_qwen=0.671598`).
+
+The expanded `512 chars / 64 tokens` token-only smoke is recorded in
+[`../../bench/apple_qwen35_08b_tokenonly_m5_20260707/`](../../bench/apple_qwen35_08b_tokenonly_m5_20260707/).
+This stronger baseline shows RWKV-7 0.4B/mm4 still passing memory
+(`memory_ratio_rwkv_over_qwen=0.576421`) but missing speed/latency gates
+(`decode_ratio_rwkv_over_qwen=0.256284`,
+`prefill_ratio_rwkv_over_qwen=0.039915`, `ttft_ratio_rwkv_over_qwen=26.245268`).
+The next production-performance work therefore remains fused decode, faster
+prefill/chunked prefill, and TTFT reduction.
 
 Run RWKV-7 MLX rows against the same prompt text:
 
