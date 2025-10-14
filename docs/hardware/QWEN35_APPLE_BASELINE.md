@@ -236,6 +236,16 @@ and `chunked_prefill_max_abs=0.0`.  This removes two unnecessary chunk-boundary
 logits projections at `chunk_size=512`; it is a correctness/dispatch cleanup,
 not the main prefill-gap solution.  The remaining bottleneck is still the
 per-token/per-layer recurrent WKV and projection launch count.
+
+The decode synchronization cleanup and attention-mix probe are recorded in
+[`../../bench/apple_mlx_decode_sync_m5_20260707/`](../../bench/apple_mlx_decode_sync_m5_20260707/).
+The baseline harness no longer adds an extra `mx.eval(logits)` after MLX
+`prefill()` / `decode_step()` / `chunked_prefill()` because those paths already
+synchronize returned logits and recurrent state; decode timing now waits for the
+streaming `next_token` sync instead.  The optional `RWKV7_MLX_FUSED_ATTN_MIX=1`
+seam fuses the six attention mix tensors into one Metal kernel and records
+`fused_attn_mix_counts`, but the 512/64 AB row keeps it disabled by default
+because decode regressed while prefill improved only modestly.
 The component-profile follow-up is recorded in
 [`../../bench/apple_mlx_component_profile_m5_20260707/`](../../bench/apple_mlx_component_profile_m5_20260707/).
 It uses synchronized component boundaries on the same Apple M5 1.5B/mm4 path and
