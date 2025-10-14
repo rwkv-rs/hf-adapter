@@ -276,6 +276,10 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
             "--qwen-mlx-vlm-token-only",
             "--rwkv-mlx-models",
             "/tmp/rwkv-a,/tmp/rwkv-b",
+            "--rwkv-quant-min-params",
+            "4000000",
+            "--rwkv-quant-rkv-min-params",
+            "0",
         ],
         cwd=ROOT,
         text=True,
@@ -290,6 +294,8 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
     assert rows[1]["qwen_mlx_vlm_jobs"] == 4
     assert rows[1]["qwen_mlx_vlm_models"] == ["mlx-community/Qwen3.5-0.8B-MLX-4bit"]
     assert rows[1]["qwen_mlx_vlm_token_only"] is True
+    assert rows[1]["rwkv_quant_min_params"] == 4_000_000
+    assert rows[1]["rwkv_quant_rkv_min_params"] == 0
     assert rows[1]["rwkv_mlx_jobs"] == 8
 
 
@@ -303,6 +309,7 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
             "QWEN_MLX_VLM_MODELS": "mlx-community/Qwen3.5-0.8B-MLX-4bit",
             "QWEN_MLX_VLM_TOKEN_ONLY": "1",
             "RWKV_MLX_MODELS": "/tmp/rwkv-a,/tmp/rwkv-b",
+            "RWKV_QUANT_RKV_MIN_PARAMS": "0",
             "PROMPT_TARGET_CHARS": "16",
             "DECODE_LENGTHS": "4",
             "RESULTS": str(out),
@@ -327,6 +334,7 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
     assert rows[1]["rwkv_mlx_jobs"] == 2
     assert rows[1]["qwen_mlx_vlm_models"] == ["mlx-community/Qwen3.5-0.8B-MLX-4bit"]
     assert rows[1]["qwen_mlx_vlm_token_only"] is True
+    assert rows[1]["rwkv_quant_rkv_min_params"] == 0
     assert rows[1]["rwkv_mlx_models"] == ["/tmp/rwkv-a", "/tmp/rwkv-b"]
 
 

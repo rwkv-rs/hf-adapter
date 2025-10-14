@@ -228,11 +228,29 @@ PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --rwkv-dtype fp16 \
   --rwkv-quantization mm4 \
   --rwkv-quant-min-params 4000000 \
+  --rwkv-quant-rkv-min-params 0 \
   --rwkv-quant-backend auto \
   --rwkv-wkv-backend metal \
   --rwkv-chunk-size 2048 \
   --results bench/results_qwen35_apple_baseline.jsonl
 ```
+
+`--rwkv-quant-rkv-min-params 0` is the Apple grouped-projection knob: it keeps
+the general quantization threshold for FFN/lm_head policy, but additionally
+quantizes attention `r_proj`/`k_proj`/`v_proj` so
+`RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION=1` can hit the fused MLX/Metal R/K/V path
+instead of recording grouped fallbacks.  The wrapper defaults
+`RWKV_QUANT_RKV_MIN_PARAMS=0`; set it to `-1` to preserve the historical single
+`RWKV_QUANT_MIN_PARAMS` threshold.
+
+The first M5 evidence for this activation is recorded in
+[`../../bench/apple_rkv_quant_min_m5_20260707/`](../../bench/apple_rkv_quant_min_m5_20260707/).
+On the `512 chars / 64 tokens` 0.4B/mm4 row, the direct R/K/V quant path records
+`group_rkv_quant_projection_counts={"metal":7920,"fallback":0}`, lowers peak
+memory from the earlier ≈514.8MB row to ≈402.2MB, and improves prefill to
+≈69.06 tok/s.  It does not close the Qwen3.5 speed gap yet; decode remains
+≈0.23x of the Qwen3.5 0.8B MLX token-only row, so the next work remains deeper
+decode/WKV/projection fusion.
 
 Run CoreML runtime rows from an export manifest:
 
