@@ -70,26 +70,44 @@ PYTHONPATH=. /Users/wangyue/Documents/vllmsp/.venv-apple-torch/bin/python \
 
 ## Result
 
+### Cold first measured row
+
 | Model | Runtime | Prompt tokens | Generated tokens | TTFT | Prefill tok/s | Decode tok/s | Peak memory | Gate note |
 |---|---|---:|---:|---:|---:|---:|---:|---|
 | Qwen3.5 2B MLX-4bit | mlx-vlm token-only | 127 | 64 | 0.378899s | 335.181414 | 37.070964 | 2,020,245,484 B | baseline |
 | RWKV-7 1.5B mm4 + RKV quant | rwkv7_hf MLX | 133 | 64 | 11.019150s | 12.083573 | 8.979128 | 1,225,111,246 B | memory pass, speed fail |
 
-Comparison gates on this expanded token-only smoke:
+Cold-row comparison gates:
 
 - `decode_ratio_rwkv_over_qwen=0.242215`
 - `prefill_ratio_rwkv_over_qwen=0.036051`
 - `ttft_ratio_rwkv_over_qwen=29.082024`
 - `memory_ratio_rwkv_over_qwen=0.606417`
 
+### Warmed steady-state row (`--warmup-repeats 1`)
+
+| Model | Runtime | Prompt tokens | Generated tokens | TTFT | Prefill tok/s | Decode tok/s | Peak memory | Kernel evidence | Gate note |
+|---|---|---:|---:|---:|---:|---:|---:|---|---|
+| Qwen3.5 2B MLX-4bit | mlx-vlm token-only | 127 | 64 | 0.105343s | 1205.584132 | 110.627117 | 2,193,064,509 B | mlx-vlm token-only | baseline |
+| RWKV-7 1.5B mm4 + RKV quant | rwkv7_hf MLX | 133 | 64 | 3.142316s | 42.328316 | 31.456400 | 1,250,679,010 B | WKV Metal 15840, RKV Metal 15840/fallback 0 | memory pass, speed fail |
+
+Warm-row comparison gates:
+
+- `decode_ratio_rwkv_over_qwen=0.284346`
+- `prefill_ratio_rwkv_over_qwen=0.035110`
+- `ttft_ratio_rwkv_over_qwen=29.829376`
+- `memory_ratio_rwkv_over_qwen=0.570288`
+
 Interpretation:
 
 - The 1.5B RWKV MLX path is runnable with W4/mm4 and RKV quantization on this
   16GB Apple device.
-- Memory is the one passing gate on this row: RWKV peak is about 60.6% of the
-  Qwen3.5 2B MLX-4bit peak.
-- Speed is still the blocker: RWKV needs about `4.13x` decode speedup and
-  `27.74x` prefill speedup on this row to match the measured Qwen3.5 2B token
-  baseline.
+- Memory is the one passing gate: the cold row is about 60.6% of Qwen peak; the
+  warmed row is about 57.0% of Qwen peak.
+- Warmup matters for MLX/Metal rows.  The RWKV warmed row proves WKV and grouped
+  R/K/V quant projection are actually on Metal, but Qwen also speeds up after
+  warmup, so this does not close the speed gate.
+- On the warmed row, RWKV still needs about `3.52x` decode speedup and `28.48x`
+  prefill speedup to match the measured Qwen3.5 2B token baseline.
 - The next optimization lane remains fused recurrent/prefill work first, then
   deeper fused quant projection and TTFT reduction.
