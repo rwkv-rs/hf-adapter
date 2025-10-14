@@ -293,6 +293,8 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
     assert rows[0]["axis"] == AXIS + "_env"
     assert rows[1]["axis"] == AXIS + "_plan"
     assert rows[0]["warmup_repeats"] == 2
+    assert "rwkv_step_eval_interval_env" in rows[0]
+    assert "rwkv_step_eval_interval_env" in rows[1]
     assert rows[1]["qwen_jobs"] == 4
     assert rows[1]["qwen_mlx_vlm_jobs"] == 4
     assert rows[1]["warmup_repeats"] == 2
@@ -336,6 +338,10 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
     assert rows[0]["axis"] == AXIS + "_env"
     assert rows[1]["axis"] == AXIS + "_plan"
     assert rows[0]["warmup_repeats"] == 1
+    assert rows[0]["rwkv_step_eval_interval_env"] == "8"
+    assert rows[1]["rwkv_step_eval_interval_env"] == "8"
+    assert rows[0]["rwkv_fused_ffn_key_relu2_env"] == "1"
+    assert rows[1]["rwkv_fused_ffn_key_relu2_env"] == "1"
     assert rows[1]["qwen_jobs"] == 0
     assert rows[1]["qwen_mlx_vlm_jobs"] == 1
     assert rows[1]["rwkv_mlx_jobs"] == 2
