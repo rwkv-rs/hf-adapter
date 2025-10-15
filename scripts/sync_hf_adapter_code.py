@@ -34,6 +34,7 @@ ADAPTER_FILES = [
     "kernel_policy.py",
     "mlx_bridge.py",
     "mlx_model.py",
+    "mlx_mix.py",
     "mlx_quant.py",
     "mlx_wkv.py",
     "modeling_rwkv7.py",

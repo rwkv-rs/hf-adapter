@@ -371,14 +371,18 @@ def run_ollama_qwen(
     prompt_case: PromptCase,
     decode_lengths: list[int],
     repeats: int,
+    warmup_repeats: int,
     temperature: float,
     timeout_s: float,
     results: str,
     store_response: bool = False,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    warmups = max(0, int(warmup_repeats))
     for max_new_tokens in decode_lengths:
-        for repeat_index in range(1, repeats + 1):
+        for iteration_index in range(1, warmups + repeats + 1):
+            is_warmup = iteration_index <= warmups
+            repeat_index = iteration_index - warmups
             try:
                 chunks, elapsed_s = post_ollama_generate(
                     host=host,
@@ -398,6 +402,7 @@ def run_ollama_qwen(
                 )
                 row["repeat_index"] = int(repeat_index)
                 row["repeat"] = int(repeats)
+                row["warmup_repeats"] = int(warmups)
             except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
                 row = {
                     "axis": AXIS,
@@ -412,8 +417,11 @@ def run_ollama_qwen(
                     "requested_generated_tokens": int(max_new_tokens),
                     "repeat_index": int(repeat_index),
                     "repeat": int(repeats),
+                    "warmup_repeats": int(warmups),
                     "reason": f"ollama request failed: {type(exc).__name__}: {exc}",
                 }
+            if is_warmup:
+                continue
             print(json.dumps(row, ensure_ascii=False))
             append_jsonl(results, row)
             rows.append(row)
@@ -426,6 +434,7 @@ def run_mlx_vlm_qwen(
     prompt_case: PromptCase,
     decode_lengths: list[int],
     repeats: int,
+    warmup_repeats: int,
     temperature: float,
     results: str,
     store_response: bool = False,
@@ -483,8 +492,11 @@ def run_mlx_vlm_qwen(
             rows.append(row)
         return rows
 
+    warmups = max(0, int(warmup_repeats))
     for max_new_tokens in decode_lengths:
-        for repeat_index in range(1, repeats + 1):
+        for iteration_index in range(1, warmups + repeats + 1):
+            is_warmup = iteration_index <= warmups
+            repeat_index = iteration_index - warmups
             try:
                 if token_only:
                     metrics = _token_only_mlx_vlm_generation(
@@ -507,6 +519,7 @@ def run_mlx_vlm_qwen(
                         "requested_generated_tokens": int(max_new_tokens),
                         "repeat_index": int(repeat_index),
                         "repeat": int(repeats),
+                        "warmup_repeats": int(warmups),
                         "load_s": round(float(load_s), 6),
                         **metrics,
                     }
@@ -564,6 +577,7 @@ def run_mlx_vlm_qwen(
                         "requested_generated_tokens": int(max_new_tokens),
                         "repeat_index": int(repeat_index),
                         "repeat": int(repeats),
+                        "warmup_repeats": int(warmups),
                         "load_s": round(float(load_s), 6),
                         "wall_s": round(float(wall_s), 6),
                         "first_token_s": round(float(first_token_s), 6) if first_token_s is not None else None,
@@ -599,6 +613,7 @@ def run_mlx_vlm_qwen(
                     "requested_generated_tokens": int(max_new_tokens),
                     "repeat_index": int(repeat_index),
                     "repeat": int(repeats),
+                    "warmup_repeats": int(warmups),
                     "load_s": round(float(load_s), 6),
                     "text_decode_error": f"{type(exc).__name__}: {exc}",
                     "fallback_after_text_decode_error": True,
@@ -620,8 +635,11 @@ def run_mlx_vlm_qwen(
                     "requested_generated_tokens": int(max_new_tokens),
                     "repeat_index": int(repeat_index),
                     "repeat": int(repeats),
+                    "warmup_repeats": int(warmups),
                     "reason": f"MLX-VLM generation failed: {type(exc).__name__}: {exc}",
                 }
+            if is_warmup:
+                continue
             print(json.dumps(row, ensure_ascii=False))
             append_jsonl(results, row)
             rows.append(row)
@@ -634,6 +652,7 @@ def run_rwkv_mlx(
     prompt_case: PromptCase,
     decode_lengths: list[int],
     repeats: int,
+    warmup_repeats: int,
     dtype: str,
     quantization: str,
     quant_min_params: int,
@@ -687,25 +706,26 @@ def run_rwkv_mlx(
     if not prompt_ids:
         raise ValueError("RWKV tokenizer produced zero prompt tokens")
 
+    warmups = max(0, int(warmup_repeats))
     for max_new_tokens in decode_lengths:
-        for repeat_index in range(1, repeats + 1):
+        for iteration_index in range(1, warmups + repeats + 1):
+            is_warmup = iteration_index <= warmups
+            repeat_index = iteration_index - warmups
+            reset_counters = getattr(model, "reset_telemetry_counters", None)
+            if callable(reset_counters):
+                reset_counters()
             reset_mlx_peak_memory()
             t_prefill = time.perf_counter()
             logits, state = model.prefill([prompt_ids])
-            mx.eval(logits)
+            # model.prefill()/forward() already synchronizes the returned logits
+            # and recurrent state.  A second mx.eval(logits) here only adds a
+            # redundant host/device barrier to TTFT measurement.
+            prefill_logits = logits
             prefill_s = time.perf_counter() - t_prefill
             chunk_diff = None
             chunk_s = None
-            if int(chunk_size) > 0:
-                t_chunk = time.perf_counter()
-                chunk_logits, chunk_state = model.chunked_prefill([prompt_ids], chunk_size=int(chunk_size))
-                mx.eval(chunk_logits)
-                chunk_s = time.perf_counter() - t_chunk
-                chunk_diff = float(mx.max(mx.abs(logits.astype(mx.float32) - chunk_logits.astype(mx.float32))))
-                if int(chunk_state.seen_tokens) != len(prompt_ids):
-                    raise AssertionError(
-                        f"chunked state seen_tokens={chunk_state.seen_tokens}, expected {len(prompt_ids)}"
-                    )
+            chunk_telemetry = None
+            chunk_memory = None
             # Streaming-shaped greedy decode.  The first token is available as
             # soon as the prefill logits are evaluated; then each emitted token
             # is fed once to advance the recurrent state and prepare the next
@@ -722,13 +742,30 @@ def run_rwkv_mlx(
                 generated_preview.extend(int(x) for x in next_token.reshape(-1).tolist())
                 t_step = time.perf_counter()
                 logits, final_state = model.decode_step(next_token, final_state)
-                mx.eval(logits)
-                decode_step_s += time.perf_counter() - t_step
                 next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
                 mx.eval(next_token)
+                decode_step_s += time.perf_counter() - t_step
             decode_s = first_s + decode_step_s
             response_text = tokenizer.decode(generated_preview, skip_special_tokens=True) if store_response else ""
             telemetry = model.telemetry()
+            main_memory = mlx_memory_telemetry()
+            if int(chunk_size) > 0:
+                reset_counters = getattr(model, "reset_telemetry_counters", None)
+                if callable(reset_counters):
+                    reset_counters()
+                reset_mlx_peak_memory()
+                t_chunk = time.perf_counter()
+                chunk_logits, chunk_state = model.chunked_prefill([prompt_ids], chunk_size=int(chunk_size))
+                # chunked_prefill() also synchronizes final logits/state through
+                # forward(); avoid a second barrier before measuring elapsed.
+                chunk_s = time.perf_counter() - t_chunk
+                chunk_diff = float(mx.max(mx.abs(prefill_logits.astype(mx.float32) - chunk_logits.astype(mx.float32))))
+                if int(chunk_state.seen_tokens) != len(prompt_ids):
+                    raise AssertionError(
+                        f"chunked state seen_tokens={chunk_state.seen_tokens}, expected {len(prompt_ids)}"
+                    )
+                chunk_telemetry = model.telemetry()
+                chunk_memory = mlx_memory_telemetry()
             row = {
                 "axis": AXIS,
                 "status": "pass",
@@ -743,7 +780,15 @@ def run_rwkv_mlx(
                 "quant_rkv_min_params": quant_rkv_min_params,
                 "quant_backend": quant_backend,
                 "wkv_backend": wkv_backend,
+                "wkv_backend_last": telemetry.get("wkv_backend_last"),
+                "wkv_backend_counts": telemetry.get("wkv_backend_counts"),
+                "wkv_metal_available": telemetry.get("wkv_metal_available"),
                 "step_eval_interval": telemetry.get("step_eval_interval"),
+                "fused_ffn_key_relu2": telemetry.get("fused_ffn_key_relu2"),
+                "fused_ffn_key_relu2_counts": telemetry.get("fused_ffn_key_relu2_counts"),
+                "fused_attn_mix": telemetry.get("fused_attn_mix"),
+                "fused_attn_mix_counts": telemetry.get("fused_attn_mix_counts"),
+                "fused_attn_mix_metal_available": telemetry.get("fused_attn_mix_metal_available"),
                 "prompt_case": prompt_case.name,
                 "prompt_target_chars": int(prompt_case.target_chars),
                 "prompt_chars": len(prompt_case.prompt),
@@ -752,6 +797,7 @@ def run_rwkv_mlx(
                 "requested_generated_tokens": int(max_new_tokens),
                 "repeat_index": int(repeat_index),
                 "repeat": int(repeats),
+                "warmup_repeats": int(warmups),
                 "load_s": round(float(load_s), 6),
                 "prefill_s": round(float(prefill_s), 6),
                 "first_token_s": round(float(first_s), 6),
@@ -767,7 +813,7 @@ def run_rwkv_mlx(
                 "group_rkv_quant_projection": telemetry.get("group_rkv_quant_projection"),
                 "group_rkv_quant_projection_mode": telemetry.get("group_rkv_quant_projection_mode"),
                 "group_rkv_quant_projection_counts": telemetry.get("group_rkv_quant_projection_counts"),
-                **mlx_memory_telemetry(),
+                **main_memory,
             }
             if store_response:
                 row["generated_token_ids"] = generated_preview
@@ -779,8 +825,18 @@ def run_rwkv_mlx(
                         "chunk_size": int(chunk_size),
                         "chunked_prefill_s": round(float(chunk_s), 6) if chunk_s is not None else None,
                         "chunked_prefill_max_abs": round(float(chunk_diff), 8),
+                        "chunked_wkv_backend_counts": (chunk_telemetry or {}).get("wkv_backend_counts"),
+                        "chunked_fused_ffn_key_relu2_counts": (chunk_telemetry or {}).get("fused_ffn_key_relu2_counts"),
+                        "chunked_fused_attn_mix_counts": (chunk_telemetry or {}).get("fused_attn_mix_counts"),
+                        "chunked_state_only_prefill_calls": (chunk_telemetry or {}).get("state_only_prefill_calls"),
+                        "chunked_state_only_prefill_tokens": (chunk_telemetry or {}).get("state_only_prefill_tokens"),
+                        "chunked_quantized_linear_last_backend_counts": (chunk_telemetry or {}).get("quantized_linear_last_backend_counts"),
+                        "chunked_group_rkv_quant_projection_counts": (chunk_telemetry or {}).get("group_rkv_quant_projection_counts"),
+                        "chunked_mlx_peak_memory_bytes": (chunk_memory or {}).get("mlx_peak_memory_bytes"),
                     }
                 )
+            if is_warmup:
+                continue
             print(json.dumps(row, ensure_ascii=False))
             append_jsonl(results, row)
             rows.append(row)
@@ -833,6 +889,7 @@ def main() -> int:
     ap.add_argument("--prompt-seed", default=DEFAULT_PROMPT_SEED)
     ap.add_argument("--decode-lengths", default="128", help="Comma-separated max_new_tokens values.")
     ap.add_argument("--repeat", type=int, default=1)
+    ap.add_argument("--warmup-repeats", type=int, default=0, help="Unrecorded warmup generations per prompt/decode length before measured repeats.")
     ap.add_argument("--store-responses", action="store_true", help="Store full generated response text/token ids for quality evaluation rows.")
     ap.add_argument("--qwen-models", default=",".join(DEFAULT_QWEN_MODELS), help="Comma-separated Ollama Qwen3.5 models; empty disables Qwen.")
     ap.add_argument(
@@ -875,6 +932,8 @@ def main() -> int:
 
     if args.repeat <= 0:
         raise ValueError("--repeat must be positive")
+    if args.warmup_repeats < 0:
+        raise ValueError("--warmup-repeats must be non-negative")
     if args.summarize:
         rows = load_jsonl(args.summarize)
         print(json.dumps(summarize_rows(rows), ensure_ascii=False))
@@ -896,12 +955,15 @@ def main() -> int:
         "prompt_cases": [{"name": case.name, "target_chars": case.target_chars} for case in prompt_cases],
         "decode_lengths": decode_lengths,
         "repeat": int(args.repeat),
+        "warmup_repeats": int(args.warmup_repeats),
         "store_responses": bool(args.store_responses),
         "ollama_host": args.ollama_host,
         "rwkv_quant_min_params": int(args.rwkv_quant_min_params),
         "rwkv_quant_rkv_min_params": None
         if int(args.rwkv_quant_rkv_min_params) < 0
         else int(args.rwkv_quant_rkv_min_params),
+        "rwkv_step_eval_interval_env": os.environ.get("RWKV7_MLX_STEP_EVAL_INTERVAL", ""),
+        "rwkv_fused_ffn_key_relu2_env": os.environ.get("RWKV7_MLX_FUSED_FFN_KEY_RELU2", ""),
         **device_info(),
     }
     print(json.dumps(env, ensure_ascii=False))
@@ -917,6 +979,13 @@ def main() -> int:
             * len(decode_lengths)
             * int(args.repeat),
             "rwkv_mlx_jobs": len(rwkv_models) * len(prompt_cases) * len(decode_lengths) * int(args.repeat),
+            "warmup_jobs": (
+                len(prompt_cases)
+                * len(decode_lengths)
+                * int(args.warmup_repeats)
+                * (len(qwen_models) + len(qwen_mlx_vlm_models) + len(rwkv_models))
+            ),
+            "warmup_repeats": int(args.warmup_repeats),
             "qwen_models": qwen_models,
             "qwen_mlx_vlm_models": qwen_mlx_vlm_models,
             "qwen_mlx_vlm_token_only": bool(args.qwen_mlx_vlm_token_only),
@@ -928,6 +997,8 @@ def main() -> int:
             "rwkv_quant_rkv_min_params": None
             if int(args.rwkv_quant_rkv_min_params) < 0
             else int(args.rwkv_quant_rkv_min_params),
+            "rwkv_step_eval_interval_env": os.environ.get("RWKV7_MLX_STEP_EVAL_INTERVAL", ""),
+            "rwkv_fused_ffn_key_relu2_env": os.environ.get("RWKV7_MLX_FUSED_FFN_KEY_RELU2", ""),
         }
         print(json.dumps(plan, ensure_ascii=False))
         append_jsonl(args.results, plan)
@@ -943,6 +1014,7 @@ def main() -> int:
                     prompt_case=case,
                     decode_lengths=decode_lengths,
                     repeats=int(args.repeat),
+                    warmup_repeats=int(args.warmup_repeats),
                     temperature=float(args.temperature),
                     timeout_s=float(args.ollama_timeout_s),
                     results=args.results,
@@ -956,6 +1028,7 @@ def main() -> int:
                     prompt_case=case,
                     decode_lengths=decode_lengths,
                     repeats=int(args.repeat),
+                    warmup_repeats=int(args.warmup_repeats),
                     temperature=float(args.temperature),
                     results=args.results,
                     store_response=bool(args.store_responses),
@@ -969,6 +1042,7 @@ def main() -> int:
                     prompt_case=case,
                     decode_lengths=decode_lengths,
                     repeats=int(args.repeat),
+                    warmup_repeats=int(args.warmup_repeats),
                     dtype=args.rwkv_dtype,
                     quantization=args.rwkv_quantization,
                     quant_min_params=int(args.rwkv_quant_min_params),

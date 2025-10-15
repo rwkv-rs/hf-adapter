@@ -3,7 +3,7 @@
 #
 # This wrapper runs the shared same-prompt Qwen3.5-vs-RWKV Apple baseline
 # harness, optionally pulls Ollama models, optionally emits CoreML export
-# manifests, then appends comparison-gate rows.  It is intentionally controlled
+# manifests, then appends comparison-gate and goal-audit rows.  It is intentionally controlled
 # through environment variables so contributors can run small local smoke rows
 # or full 0.8B/2B/4B/9B acceptance matrices without editing the script.
 
@@ -18,6 +18,7 @@ PROMPT_TARGET_CHARS="${PROMPT_TARGET_CHARS:-1024,4096}"
 DECODE_LENGTHS="${DECODE_LENGTHS:-128,512}"
 PROMPT_SEED="${PROMPT_SEED:-User: Compare RWKV-7 and Qwen3.5 on Apple Silicon. Report TTFT, prefill, decode, memory, state cache, W4/LUT/INT4, and quality gaps. Assistant: }"
 REPEAT="${REPEAT:-1}"
+WARMUP_REPEATS="${WARMUP_REPEATS:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 STORE_RESPONSES="${STORE_RESPONSES:-0}"
 
@@ -44,6 +45,8 @@ RWKV_QUANT_RKV_MIN_PARAMS="${RWKV_QUANT_RKV_MIN_PARAMS:-0}"
 RWKV_QUANT_BACKEND="${RWKV_QUANT_BACKEND:-auto}"
 RWKV_WKV_BACKEND="${RWKV_WKV_BACKEND:-metal}"
 RWKV_CHUNK_SIZE="${RWKV_CHUNK_SIZE:-2048}"
+RWKV_FUSED_FFN_KEY_RELU2="${RWKV_FUSED_FFN_KEY_RELU2:-1}"
+RWKV_FUSED_ATTN_MIX="${RWKV_FUSED_ATTN_MIX:-0}"
 
 # Comparison defaults cover the current local/public model classes.  Add the
 # 4B/9B pairs once matching RWKV 2.9B/larger or distilled mobile exports exist.
@@ -64,6 +67,19 @@ QUALITY_PAIRS="${QUALITY_PAIRS:-${PAIRS}}"
 QUALITY_APPEND="${QUALITY_APPEND:-${RESULTS}}"
 QUALITY_ALLOW_PREVIEW="${QUALITY_ALLOW_PREVIEW:-0}"
 QUALITY_FAIL_ON_GATE="${QUALITY_FAIL_ON_GATE:-0}"
+
+# Goal-level audit across public Qwen3.5 0.8B/2B/4B/9B tiers.  This is stricter
+# than pairwise comparison rows: it records missing MLX/CoreML/quant/state-cache/
+# quality/long-context evidence as explicit JSONL rows.
+SKIP_GOAL_AUDIT="${SKIP_GOAL_AUDIT:-0}"
+GOAL_AUDIT_APPEND="${GOAL_AUDIT_APPEND:-${RESULTS}}"
+GOAL_AUDIT_TIERS="${GOAL_AUDIT_TIERS:-}"
+GOAL_AUDIT_SHAPES="${GOAL_AUDIT_SHAPES:-auto}"
+GOAL_AUDIT_LONG_CONTEXT_CHARS="${GOAL_AUDIT_LONG_CONTEXT_CHARS:-4096}"
+GOAL_AUDIT_STATE_CACHE_TOLERANCE="${GOAL_AUDIT_STATE_CACHE_TOLERANCE:-0.0001}"
+GOAL_AUDIT_REQUIRE_QUALITY="${GOAL_AUDIT_REQUIRE_QUALITY:-1}"
+GOAL_AUDIT_REQUIRE_COREML="${GOAL_AUDIT_REQUIRE_COREML:-1}"
+GOAL_AUDIT_FAIL_ON_GATE="${GOAL_AUDIT_FAIL_ON_GATE:-0}"
 
 # Optional CoreML export-manifest lane.  This does not claim ANE performance;
 # it records the export/state/quant contract next to the baseline rows.
@@ -91,7 +107,9 @@ export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export RWKV7_NATIVE_MODEL="${RWKV7_NATIVE_MODEL:-1}"
 export RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION="${RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION:-1}"
-export RWKV7_MLX_STEP_EVAL_INTERVAL="${RWKV7_MLX_STEP_EVAL_INTERVAL:-2}"
+export RWKV7_MLX_STEP_EVAL_INTERVAL="${RWKV7_MLX_STEP_EVAL_INTERVAL:-8}"
+export RWKV7_MLX_FUSED_FFN_KEY_RELU2="${RWKV7_MLX_FUSED_FFN_KEY_RELU2:-${RWKV_FUSED_FFN_KEY_RELU2}}"
+export RWKV7_MLX_FUSED_ATTN_MIX="${RWKV7_MLX_FUSED_ATTN_MIX:-${RWKV_FUSED_ATTN_MIX}}"
 
 rwkv7_csv_items() {
   local raw="$1"
@@ -206,6 +224,7 @@ baseline_args=(
   --prompt-seed "${PROMPT_SEED}"
   --decode-lengths "${DECODE_LENGTHS}"
   --repeat "${REPEAT}"
+  --warmup-repeats "${WARMUP_REPEATS}"
   --ollama-host "${OLLAMA_HOST}"
   --ollama-timeout-s "${OLLAMA_TIMEOUT_S}"
   --temperature "${TEMPERATURE}"
@@ -269,38 +288,76 @@ if [[ -n "${QUALITY_RUBRIC}" ]]; then
   rwkv7_run "${PYTHON_BIN}" bench/score_qwen35_quality.py "${quality_args[@]}"
 fi
 
-if [[ "${SKIP_COMPARE}" == "1" || -z "${PAIRS}" ]]; then
-  exit 0
+if [[ "${SKIP_COMPARE}" != "1" && -n "${PAIRS}" ]]; then
+  compare_args=(
+    --results "${RESULTS}"
+    --min-decode-ratio "${MIN_DECODE_RATIO}"
+    --min-prefill-ratio "${MIN_PREFILL_RATIO}"
+    --max-ttft-ratio "${MAX_TTFT_RATIO}"
+    --max-memory-ratio "${MAX_MEMORY_RATIO}"
+  )
+  while IFS= read -r pair; do
+    compare_args+=(--pair "${pair}")
+  done < <(rwkv7_csv_items "${PAIRS}")
+  if [[ "${REQUIRE_PREFILL}" == "1" ]]; then
+    compare_args+=(--require-prefill)
+  fi
+  if [[ "${REQUIRE_TTFT}" == "1" ]]; then
+    compare_args+=(--require-ttft)
+  fi
+  if [[ "${REQUIRE_MEMORY}" == "1" ]]; then
+    compare_args+=(--require-memory)
+  fi
+  if [[ -n "${COMPARE_APPEND}" ]]; then
+    compare_args+=(--append "${COMPARE_APPEND}")
+  fi
+  if [[ "${COMPARE_DIAGNOSTICS}" == "1" ]]; then
+    compare_args+=(--diagnostics)
+  fi
+  if [[ "${FAIL_ON_GATE}" == "1" ]]; then
+    compare_args+=(--fail-on-gate)
+  fi
+
+  rwkv7_log "Apple/Qwen3.5 comparison gates"
+  rwkv7_run "${PYTHON_BIN}" bench/compare_qwen35_apple_baseline.py "${compare_args[@]}"
 fi
 
-compare_args=(
-  --results "${RESULTS}"
-  --min-decode-ratio "${MIN_DECODE_RATIO}"
-  --min-prefill-ratio "${MIN_PREFILL_RATIO}"
-  --max-ttft-ratio "${MAX_TTFT_RATIO}"
-  --max-memory-ratio "${MAX_MEMORY_RATIO}"
-)
-while IFS= read -r pair; do
-  compare_args+=(--pair "${pair}")
-done < <(rwkv7_csv_items "${PAIRS}")
-if [[ "${REQUIRE_PREFILL}" == "1" ]]; then
-  compare_args+=(--require-prefill)
+if [[ "${SKIP_GOAL_AUDIT}" != "1" ]]; then
+  audit_args=(
+    --results "${RESULTS}"
+    --long-context-chars "${GOAL_AUDIT_LONG_CONTEXT_CHARS}"
+    --state-cache-tolerance "${GOAL_AUDIT_STATE_CACHE_TOLERANCE}"
+  )
+  if [[ -n "${GOAL_AUDIT_APPEND}" ]]; then
+    audit_args+=(--append "${GOAL_AUDIT_APPEND}")
+  fi
+  while IFS= read -r tier; do
+    audit_args+=(--tier "${tier}")
+  done < <(rwkv7_csv_items "${GOAL_AUDIT_TIERS}")
+  if [[ "${GOAL_AUDIT_SHAPES}" == "auto" ]]; then
+    while IFS= read -r prompt_chars; do
+      while IFS= read -r decode_tokens; do
+        if [[ "${prompt_chars}" == chars* ]]; then
+          audit_args+=(--required-shape "${prompt_chars}:${decode_tokens}")
+        else
+          audit_args+=(--required-shape "chars${prompt_chars}:${decode_tokens}")
+        fi
+      done < <(rwkv7_csv_items "${DECODE_LENGTHS}")
+    done < <(rwkv7_csv_items "${PROMPT_TARGET_CHARS}")
+  else
+    while IFS= read -r shape; do
+      audit_args+=(--required-shape "${shape}")
+    done < <(rwkv7_csv_items "${GOAL_AUDIT_SHAPES}")
+  fi
+  if [[ "${GOAL_AUDIT_REQUIRE_QUALITY}" == "1" ]]; then
+    audit_args+=(--require-quality)
+  fi
+  if [[ "${GOAL_AUDIT_REQUIRE_COREML}" == "1" ]]; then
+    audit_args+=(--require-coreml)
+  fi
+  if [[ "${GOAL_AUDIT_FAIL_ON_GATE}" == "1" ]]; then
+    audit_args+=(--fail-on-gate)
+  fi
+  rwkv7_log "Apple/Qwen3.5 goal coverage audit"
+  rwkv7_run "${PYTHON_BIN}" bench/audit_qwen35_apple_goal.py "${audit_args[@]}"
 fi
-if [[ "${REQUIRE_TTFT}" == "1" ]]; then
-  compare_args+=(--require-ttft)
-fi
-if [[ "${REQUIRE_MEMORY}" == "1" ]]; then
-  compare_args+=(--require-memory)
-fi
-if [[ -n "${COMPARE_APPEND}" ]]; then
-  compare_args+=(--append "${COMPARE_APPEND}")
-fi
-if [[ "${COMPARE_DIAGNOSTICS}" == "1" ]]; then
-  compare_args+=(--diagnostics)
-fi
-if [[ "${FAIL_ON_GATE}" == "1" ]]; then
-  compare_args+=(--fail-on-gate)
-fi
-
-rwkv7_log "Apple/Qwen3.5 comparison gates"
-rwkv7_run "${PYTHON_BIN}" bench/compare_qwen35_apple_baseline.py "${compare_args[@]}"

@@ -51,6 +51,12 @@ Explicit non-goals / bans for this phase:
 - No defaulting shallow projection/LoRA/shift/FFN/output-project probes from
   isolated microbench wins.
 
+
+Apple MLX exception: opt-in Apple acceptance rows may enable small positive
+Metal seams after same-device end-to-end evidence.  The first such seam is
+`RWKV7_MLX_FUSED_FFN_KEY_RELU2=1`, which fuses MM4 FFN key projection with
+`relu²`; it is still not a global default for `MLXRWKV7Model`.
+
 Minimum validation for promotable work: RTX 4090 fp16 bsz=1/4 prompt512 prefill,
 decode, correctness, peak memory/VRAM, and `bench/analyze_results.py` output
 with `fused_backend_targets` / Albatross ratios.
