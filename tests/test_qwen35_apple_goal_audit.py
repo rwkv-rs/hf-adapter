@@ -138,6 +138,36 @@ def test_goal_audit_reports_missing_rwkv_and_comparison_actions() -> None:
     assert audits[-1]["action_counts"]["collect_rwkv_mlx_rows"] == 1
 
 
+
+def test_goal_audit_reports_coreml_stateful_contract_prototype() -> None:
+    rows = [
+        {
+            "axis": "rwkv7_coreml_runtime_plan",
+            "status": "plan",
+            "model": "rwkv7-g1d-0.4b-hf",
+            "stateful_contract_present": True,
+            "state_contract_version": "rwkv7_coreml_state_contract_v1",
+            "decode_implemented": False,
+            "prefill_implemented": False,
+        }
+    ]
+    audits = run_audit(
+        rows,
+        tiers=[Tier(("qwen3.5:0.8b-mlx",), ("rwkv7-g1d-0.4b-hf",))],
+        shapes=[Shape("chars64", 8)],
+        state_tolerance=1e-4,
+        long_context_chars=64,
+        require_quality=False,
+        require_coreml=True,
+    )
+    tier_row = audits[1]
+    check = tier_row["checks"]["coreml_stateful_runtime"]
+    assert check["status"] == "prototype"
+    assert check["stateful_contract_rows"] == 1
+    assert "contract exists" in check["reasons"][0]
+    assert any(action["action"] == "add_stateful_coreml_decode_prefill_runtime" for action in tier_row["actions"])
+
+
 def test_goal_audit_cli_appends_and_fail_on_gate(tmp_path: Path) -> None:
     source = tmp_path / "evidence.jsonl"
     local_qwen_row = dict(passing_rows()[0])

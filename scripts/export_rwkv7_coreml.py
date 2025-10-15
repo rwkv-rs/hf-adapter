@@ -89,10 +89,74 @@ def model_shape_summary(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def state_contract(config: dict[str, Any], *, prefill_seq_length: int, sample_seq_length: int, state_mode: str) -> dict[str, Any]:
+    """Return the planned stateful CoreML decode/prefill tensor contract.
+
+    The current exporter still marks these functions unimplemented, but the
+    manifest should already describe the exact recurrent state shape future
+    CoreML/ANE packages must expose.  Keeping this in the manifest makes goal
+    audits distinguish a vague export prototype from a stateful export contract.
+    """
+
+    shape = model_shape_summary(config)
+    layers = int(shape["num_hidden_layers"])
+    hidden = int(shape["hidden_size"])
+    heads = int(shape["num_heads"])
+    head_dim = int(shape["head_dim"])
+    batch = 1
+    recurrent_shape = [batch, heads, head_dim, head_dim]
+    prev_shape = [batch, hidden]
+    return {
+        "version": "rwkv7_coreml_state_contract_v1",
+        "state_mode": state_mode,
+        "batch_size": batch,
+        "num_hidden_layers": layers,
+        "hidden_size": hidden,
+        "num_heads": heads,
+        "head_dim": head_dim,
+        "state_tensors_per_layer": {
+            "wkv_state": {"shape": recurrent_shape, "dtype": "float32"},
+            "attn_x_prev": {"shape": prev_shape, "dtype": "float16"},
+            "ffn_x_prev": {"shape": prev_shape, "dtype": "float16"},
+        },
+        "global_state_tensors": {
+            "v_first": {"shape": prev_shape, "dtype": "float16"},
+            "seen_tokens": {"shape": [batch], "dtype": "int32"},
+        },
+        "decode": {
+            "implemented": False,
+            "input_ids": [batch, 1],
+            "logits": [batch, 1, int(shape["vocab_size"])],
+            "state_in": "rwkv recurrent state tensors",
+            "state_out": "updated rwkv recurrent state tensors",
+        },
+        "prefill": {
+            "implemented": False,
+            "input_ids": [batch, int(prefill_seq_length)],
+            "logits": [batch, int(prefill_seq_length), int(shape["vocab_size"])],
+            "chunk_size": int(sample_seq_length),
+            "state_in": "rwkv recurrent state tensors or zero state",
+            "state_out": "updated rwkv recurrent state tensors",
+        },
+        "runtime_pass_requires": [
+            "CoreML package exposes implemented decode and prefill functions",
+            "state tensors round-trip across decode/prefill calls",
+            "HF/MLX/CoreML logits/state correctness check",
+            "TTFT, prefill tok/s, decode tok/s, memory, and quant rows",
+        ],
+    }
+
+
 def make_manifest(args: argparse.Namespace, config: dict[str, Any]) -> dict[str, Any]:
     model_dir = Path(args.model)
     output_dir = Path(args.output)
     base_name = args.basename or model_dir.name
+    contract = state_contract(
+        config,
+        prefill_seq_length=int(args.prefill_seq_length),
+        sample_seq_length=int(args.sample_seq_length),
+        state_mode=args.state_mode,
+    )
     functions: list[dict[str, Any]] = []
     if args.export_kind == "full-logits":
         functions.append(
@@ -108,14 +172,18 @@ def make_manifest(args: argparse.Namespace, config: dict[str, Any]) -> dict[str,
             {
                 "name": "decode",
                 "implemented": False,
-                "planned_input": {"input_ids": [1, 1]},
+                "planned_input": {"input_ids": contract["decode"]["input_ids"]},
+                "planned_output": {"logits": contract["decode"]["logits"]},
                 "state_mode": args.state_mode,
+                "state_contract_version": contract["version"],
             },
             {
                 "name": "prefill",
                 "implemented": False,
-                "planned_input": {"input_ids": [1, int(args.prefill_seq_length)]},
+                "planned_input": {"input_ids": contract["prefill"]["input_ids"]},
+                "planned_output": {"logits": contract["prefill"]["logits"]},
                 "state_mode": args.state_mode,
+                "state_contract_version": contract["version"],
             },
         ]
     )
@@ -135,6 +203,7 @@ def make_manifest(args: argparse.Namespace, config: dict[str, Any]) -> dict[str,
         "deployment_target": args.deployment_target,
         "minimum_os_note": "Stateful CoreML RWKV decode/prefill is planned for iOS18/macOS15+.",
         "shape": model_shape_summary(config),
+        "state_contract": contract,
         "functions": functions,
         "follow_up_required": [
             "stateful decode/prefill CoreML functions",
@@ -151,6 +220,23 @@ def write_manifest(output_dir: str | Path, manifest: dict[str, Any]) -> Path:
     path = out / "coreml_export_manifest.json"
     path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
+
+
+def manifest_function(manifest: dict[str, Any], name: str) -> dict[str, Any] | None:
+    for item in manifest.get("functions") or []:
+        if isinstance(item, dict) and item.get("name") == name:
+            return item
+    return None
+
+
+def manifest_stateful_contract_fields(manifest: dict[str, Any]) -> dict[str, Any]:
+    contract = manifest.get("state_contract") if isinstance(manifest.get("state_contract"), dict) else {}
+    return {
+        "stateful_contract_present": bool(contract),
+        "state_contract_version": contract.get("version"),
+        "decode_implemented": bool((manifest_function(manifest, "decode") or {}).get("implemented")),
+        "prefill_implemented": bool((manifest_function(manifest, "prefill") or {}).get("implemented")),
+    }
 
 
 def import_coreml_stack(require: bool) -> tuple[Any, Any, Any, Any] | None:
@@ -270,6 +356,7 @@ def export_full_logits(args: argparse.Namespace, manifest: dict[str, Any]) -> di
         "state_mode": args.state_mode,
         "coreml_package": str(output_path),
         "manifest": str(Path(args.output) / "coreml_export_manifest.json"),
+        **manifest_stateful_contract_fields(manifest),
         "elapsed_s": round(float(elapsed), 6),
         "platform": platform.platform(),
         "machine": platform.machine(),
@@ -306,6 +393,7 @@ def main() -> int:
             "quantization": args.quantization,
             "state_mode": args.state_mode,
             "manifest": str(manifest_path),
+            **manifest_stateful_contract_fields(manifest),
             "platform": platform.platform(),
             "machine": platform.machine(),
             "shape": manifest["shape"],
