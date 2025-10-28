@@ -48,9 +48,14 @@ class KernelPolicy:
     profile: GPUProfile
     fast_token_backend: str = "auto"
     fast_cache: bool = True
+    fast_prefill: bool = False
     bnb_skip_policy: str = "memory"
     fused_recurrent: bool = False
     fused_prefill_scan: bool = False
+    fused_prefill_state_prep: bool = False
+    fused_prefill_state_scan: bool = False
+    fused_prefill_state_scan_max_batch: int | None = None
+    fused_prefill_output: bool = False
     fused_recurrent_output: bool = False
     fused_output: bool = False
     fused_output_project: bool = False
@@ -166,8 +171,13 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
         cards=("Tesla V100-PCIE-32GB", "Tesla V100-SXM"),
         status="current regression baseline",
         default_stance="conservative production-smoke baseline",
-        default_on=("fast_cache", "fused_recurrent_output", "fused_output"),
-        default_off=("fused_recurrent", "fused_prefill_scan", "fused_output_project", "projection/LoRA fusions"),
+        default_on=(
+            "fast_cache",
+            "fused_recurrent_output",
+            "fused_output",
+            "batch-routed fused prefill",
+        ),
+        default_off=("fused_recurrent", "fused_output_project", "projection/LoRA fusions"),
         required_functional=COMMON_FUNCTIONAL_SMOKES
         + ("HF Trainer", "TRL SFT/DPO/GRPO", "PEFT save/load/merge"),
         required_benchmarks=COMMON_PERF_BENCHMARKS
@@ -354,12 +364,17 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
     if family == "volta":
         return KernelPolicy(
             profile=profile,
+            fast_prefill=True,
             fused_recurrent_output=True,
             fused_output=True,
-            fused_prefill_scan=False,
+            fused_prefill_scan=True,
+            fused_prefill_state_prep=True,
+            fused_prefill_state_scan=True,
+            fused_prefill_state_scan_max_batch=1,
+            fused_prefill_output=True,
             output_project_block_m=16,
             quant_policy="memory_first_decode_hot_optional",
-            notes="V100 baseline: output/recurrent-output fusions are default; projection/output-project/LoRA fusions remain opt-in",
+            notes="V100 baseline: batch-routed split-row prefill plus output/recurrent-output fusions are default; projection/output-project/LoRA fusions remain opt-in",
         )
     if family in {"turing", "ampere"}:
         return KernelPolicy(

@@ -113,7 +113,7 @@ def infer_model_size_label(model_path: str) -> str | None:
     return f"{match.group(1)}b" if match else None
 
 
-def scan_block_m(model) -> int | None:
+def scan_block_m(model, batch_size: int | None = None) -> int | None:
     raw = os.environ.get("RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M")
     if raw is not None:
         try:
@@ -121,7 +121,8 @@ def scan_block_m(model) -> int | None:
         except ValueError:
             return None
     try:
-        return int(model._rwkv7_native_jit_packs()[0][2])
+        head_dim = int(model._rwkv7_native_jit_packs()[0][2])
+        return model_native_jit_module(model)._native_prefill_scan_block_m(head_dim, batch_size)
     except Exception:
         return None
 
@@ -185,7 +186,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
     peak = None
     if args.device.startswith("cuda"):
         peak = round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
-    scan_m = scan_block_m(model)
+    scan_m = scan_block_m(model, batch_size)
     return {
         "axis": "native_prefill_scan",
         "backend": "hf_adapter",
@@ -202,6 +203,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prompt_tokens": prompt_tokens,
         "tokens_total": batch_size * prompt_tokens,
         "fused_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN", "0") not in {"0", "false", "False", "no", "off"},
+        "fused_scan_effective": nj._native_prefill_fused_scan_enabled(),
         "scan_block_m": scan_m,
         "scan_num_warps": scan_num_warps(model, scan_m),
         "prefill_fused_scan_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
@@ -226,7 +228,8 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_fused_state_prep_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_state_prep_effective": nj._native_prefill_fused_state_prep_enabled(),
         "prefill_fused_state_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN", "0").lower() not in {"0", "false", "no", "off"},
-        "prefill_fused_state_scan_effective": getattr(nj, "_native_prefill_fused_state_scan_enabled", lambda: False)(),
+        "prefill_fused_state_scan_effective": getattr(nj, "_native_prefill_fused_state_scan_enabled", lambda _batch_size=None: False)(batch_size),
+        "prefill_fused_state_scan_max_batch": getattr(nj, "_native_prefill_fused_state_scan_max_batch", lambda: None)(),
         "prefill_state_prep_w_dtype": nj._native_prefill_state_prep_w_dtype(),
         "prefill_fused_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_output_effective": nj._native_prefill_fused_output_enabled(),
