@@ -272,10 +272,29 @@ def _native_prefill_fused_scan_output_enabled() -> bool:
         return False
 
 
-def _native_prefill_scan_block_m(head_dim: int) -> int:
-    """Row tile for the optional split-row recurrent scan kernel."""
+def _native_prefill_default_scan_block_m(head_dim: int, batch_size: int | None = None) -> int:
+    """Architecture-aware default row tile for optional prefill scans."""
 
-    return env_int("RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M", int(head_dim), lower=1, upper=int(head_dim))
+    head_dim = int(head_dim)
+    if head_dim == 64 and torch.cuda.is_available():
+        try:
+            major, minor = torch.cuda.get_device_capability()
+        except Exception:
+            major, minor = 0, 0
+        if (int(major), int(minor)) == (7, 0):
+            return 32 if batch_size is not None and int(batch_size) >= 4 else 16
+    return head_dim
+
+
+def _native_prefill_scan_block_m(head_dim: int, batch_size: int | None = None) -> int:
+    """Row tile for optional recurrent scans; explicit env always wins."""
+
+    return env_int(
+        "RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M",
+        _native_prefill_default_scan_block_m(head_dim, batch_size),
+        lower=1,
+        upper=int(head_dim),
+    )
 
 
 def _native_prefill_scan_num_warps(head_dim: int, block_m: int | None = None) -> int:
@@ -306,7 +325,11 @@ def _native_prefill_fused_shift_mix_enabled() -> bool:
 def _native_prefill_fused_state_prep_enabled() -> bool:
     """Runtime switch for the native prefill state-prep fusion probe."""
 
-    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", False):
+    policy = _kernel_policy()
+    if not env_flag(
+        "RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP",
+        bool(getattr(policy, "fused_prefill_state_prep", False)),
+    ):
         return False
     if fused_prefill_state_prep is None or fused_prefill_state_prep_available is None:
         return False
@@ -316,10 +339,34 @@ def _native_prefill_fused_state_prep_enabled() -> bool:
         return False
 
 
-def _native_prefill_fused_state_scan_enabled() -> bool:
+def _native_prefill_fused_state_scan_max_batch() -> int | None:
+    """Optional batch ceiling for the fused state-prep scan route."""
+
+    raw = os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_MAX_BATCH")
+    if raw is None or not raw.strip():
+        policy = _kernel_policy()
+        value = getattr(policy, "fused_prefill_state_scan_max_batch", None)
+        return None if value is None else int(value)
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_MAX_BATCH must be an integer") from exc
+    if value < 1:
+        raise ValueError("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_MAX_BATCH must be >= 1")
+    return value
+
+
+def _native_prefill_fused_state_scan_enabled(batch_size: int | None = None) -> bool:
     """Runtime switch for the fused state-prep plus scan probe."""
 
-    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN", False):
+    policy = _kernel_policy()
+    if not env_flag(
+        "RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN",
+        bool(getattr(policy, "fused_prefill_state_scan", False)),
+    ):
+        return False
+    max_batch = _native_prefill_fused_state_scan_max_batch()
+    if max_batch is not None and batch_size is not None and int(batch_size) > max_batch:
         return False
     if fused_recurrent_scan_state_prep is None or fused_recurrent_scan_state_prep_available is None:
         return False
@@ -365,7 +412,11 @@ def _native_prefill_fused_output_enabled() -> bool:
     card/model shape.
     """
 
-    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT", False):
+    policy = _kernel_policy()
+    if not env_flag(
+        "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT",
+        bool(getattr(policy, "fused_prefill_output", False)),
+    ):
         return False
     if fused_attn_output_prepare is None or fused_attn_output_prepare_available is None:
         return False
@@ -967,7 +1018,7 @@ def _native_prefill_scan(
     """Run the recurrent prefill scan, using Triton only when explicitly enabled."""
 
     if w_is_raw and _native_prefill_fused_clampw_scan_enabled():
-        scan_block_m = _native_prefill_scan_block_m(N)
+        scan_block_m = _native_prefill_scan_block_m(N, B)
         out, new_state = fused_recurrent_scan_clampw(
             r.view(B, T, H, N),
             w.view(B, T, H, N),
@@ -986,7 +1037,7 @@ def _native_prefill_scan(
         w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
 
     if _native_prefill_fused_scan_enabled():
-        scan_block_m = _native_prefill_scan_block_m(N)
+        scan_block_m = _native_prefill_scan_block_m(N, B)
         out, new_state = fused_recurrent_scan(
             r.view(B, T, H, N),
             w.view(B, T, H, N),
@@ -1141,11 +1192,13 @@ def prefill(
                 v_gate = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
         use_fused_scan_output = _native_prefill_fused_scan_output_enabled()
         use_clampw_scan = _native_prefill_fused_clampw_scan_enabled() and not use_fused_scan_output
-        use_fused_state_scan = _native_prefill_fused_state_scan_enabled() and not use_fused_scan_output
+        use_fused_state_scan = _native_prefill_fused_state_scan_enabled(B) and not use_fused_scan_output
         if use_clampw_scan and _native_prefill_fused_state_prep_enabled() and fused_prefill_kv_kk_prep is None:
             use_clampw_scan = False
         state_scan_done = False
         if use_fused_state_scan:
+            scan_block_m = _native_prefill_scan_block_m(N, B)
+            scan_num_warps = _native_prefill_scan_num_warps(N, scan_block_m)
             if layer_idx == 0:
                 out, new_state, k, v = fused_recurrent_scan_state_prep(
                     r.view(B, T, H, N),
@@ -1157,6 +1210,8 @@ def prefill(
                     k_k,
                     k_a,
                     block_n=N,
+                    block_m=scan_block_m,
+                    num_warps=scan_num_warps,
                 )
                 v_first_seq = v.reshape(B, T, hidden)
             else:
@@ -1172,6 +1227,8 @@ def prefill(
                     v_first=v_first_seq.view(B, T, H, N),
                     v_gate=v_gate.view(B, T, H, N),
                     block_n=N,
+                    block_m=scan_block_m,
+                    num_warps=scan_num_warps,
                 )
             out = out.reshape(B, T, hidden)
             k = k.reshape(B, T, hidden)

@@ -63,9 +63,11 @@ with `fused_backend_targets` / Albatross ratios.
 
 ## Albatross target ladder
 
-Current committed V100 0.1B evidence shows HF native-graph decode at roughly
-`0.32x`-`0.47x` Albatross and B=1,T=512 prefill at roughly `0.316x` Albatross.
-The staged target is:
+Current V100 evidence shows HF native-graph decode at roughly
+`0.32x`-`0.47x` Albatross. The new sm70 split-row native-prefill policy raises
+0.1B B=1/2/4/8,T=512 prefill to `0.815x/0.793x/0.863x/0.796x` Albatross in
+three-process confirmation, while matching-checkpoint 0.4B/1.5B rows reach
+`0.787x`-`0.890x`. The staged target remains:
 
 | Stage | Decode target | Prefill target | Meaning |
 |---|---:|---:|---|
@@ -499,8 +501,29 @@ serving speed.
      close (`L17=1.2175ms`, `L0=1.2012ms`, `L1=1.1727ms`, `L2=1.1724ms`,
      `L4=1.1684ms`). The hottest layer is still led by recurrent scan
      (`0.3052ms`) plus state-prep/FFN/norm-shift work, so the next optimization
-     should be a repeated per-layer fusion pattern that benefits all 24 layers,
-     not a layer-specific special case.
+   should be a repeated per-layer fusion pattern that benefits all 24 layers,
+   not a layer-specific special case.
+21. V100/sm70 split-row state-scan policy promotion.
+   - `rwkv7_hf.fused_recurrent_update` now has a split-row fused
+     state-prep + recurrent-scan kernel. It keeps token recurrence local while
+     tiling the 64 state rows, avoiding the full-head kernel's sm70 register
+     pressure.
+   - Volta defaults are batch-routed: scan tile 16 for bsz 1/2 and 32 for
+     bsz >=4; fused state-prep + state-scan is limited to bsz 1, while larger
+     batches use split scan plus separate fused state-prep. Fused prefill output
+     prep stays enabled. Explicit `RWKV7_*` environment overrides still win.
+   - On V100-32GB, 0.1B fp16 prompt512 reaches median
+     `32058.9/56598.4/94135.9/122043.7` tok/s at bsz 1/2/4/8, or
+     `0.8153x/0.7929x/0.8632x/0.7958x` the same-card Albatross rows. This is
+     `1.162x`-`1.234x` faster than the old full-head fused state-scan route.
+   - Matching-checkpoint 0.4B ratios are `0.8904x/0.8793x/0.8433x/0.7871x`;
+     1.5B ratios are `0.8651x/0.8829x/0.8494x/0.8141x`. Independent token-loop
+     alignment and ordinary HF `generate()` pass at bsz 1/4 for all three
+     models. Raw evidence is in
+     [`bench/v100_sm70_prefill_policy_20260710/README.md`](../../bench/v100_sm70_prefill_policy_20260710/README.md).
+   - This promotes V100 prefill from the old P0-level row to P1 across the
+     matrix and P2 on most measured rows. It does not close Albatross parity,
+     V100 decode, cross-card prefill policy, or W8/W4 speed.
 
 ## Backend dispatch requirement
 
