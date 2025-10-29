@@ -937,13 +937,19 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   Quantized loads use the same fast-forward hook by default through the FLA
   fallback; set `RWKV7_FAST_FORWARD_QUANT=0` to force the slower reference
   path for debugging.
-- Latest V100 fast-token results: FLA bsz=1 decode `59.2 tok/s` vs official `92.1 tok/s`; native-JIT bsz=1 decode reaches `92.1 tok/s` vs official `92.1 tok/s`; HF `native_graph` bsz=1 reaches `255.5 tok/s` in speed_mem. Batched native-graph reaches `253.9` / `434.3` / `852.6` / `1539.1` aggregate tok/s for bsz=1/2/4/8, and warmup pre-captures those graph runners in `1.389s` with cache sizes `[1,2,4,8]`. Native-graph replay overhead rows for bsz=1/2/4/8 show public API `255.1` / `449.8` / `857.2` / `1548.1` aggregate tok/s, runner/API diff `0.0`, cache-copy share `0.052` / `0.032` / `0.030` / `0.028`, and graph-runner cache hit rate `0.9737` after skipping graph-buffer self-copy. Dynamic-batch simulation with native-graph reorder/drop through `select_batch` reaches `1209.3` total tok/s. The converted 0.4B, 1.5B, 2.9B, 7.2B, and 13.3B HF directories load and generate on V100: 0.4B has hidden=1024/layers=24, checkpoint SHA256 `947cb9b8013224e06b112b72204256bec65096cc935a7767ce63d8e3ddef83bb`, peak VRAM `1124.5 MB`; 1.5B has hidden=2048/layers=24, checkpoint SHA256 `441f70b096ad62442b5c33128bfe717c5d8529915c45a9709d4482016e8a0482`, peak VRAM `3178.6 MB`; 2.9B has hidden=2560/layers=32, checkpoint SHA256 `3d118ed77fe94e63e6fc0a6afd5a4fac49fe70da4e3d9d91b628951bb55dd798`, peak VRAM `5888.0 MB`; 7.2B has hidden=4096/layers=32, checkpoint SHA256 `425fc9bda2d12d4ce3b6bfe5c3b3f355be8b14d85960cf40fcca58a19d632630`, peak VRAM `13997.8 MB`; 13.3B has hidden=4096/layers=61, checkpoint SHA256 `0aa686d3ca4bb486e83e3071f4798a210f960e1fc1f5042e6cb418cc463814d6`, peak VRAM `25575.6 MB`, and uses `native_jit` for the V100 smoke because native-graph capture can reserve too much extra memory on 32GB cards. Chunked prefill bsz=2 prompt=512 preserves logits/cache within fp16 tolerance and reduces peak VRAM to about `0.60x` / `0.62x` / `0.63x` of full prefill for chunk sizes 64/128/256, trading throughput to `0.13x` / `0.25x` / `0.50x`. Component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`; naive PyTorch bmm projection/LoRA candidates are not enough, so the next implementation needs custom fusion/reduced launch count.
-- Latest V100 Albatross A/B rows compare the same 0.1B checkpoint against
-  Albatross faster3a (`wkv=fp32io16`): Albatross decode is `741.5` / `1354.5` /
-  `2368.9` / `3300.6` tok/s for bsz=1/2/4/8 and B=1,T=512 prefill is
-  `39472.6` tok/s. Current HF native-graph ratios are `0.34` / `0.32` / `0.36`
-  / `0.47` for decode and `0.32` for matching B=1,T=512 prefill, making the
-  Albatross gap a first-class report item.
+- Latest V100 fused-decode results use norm/mix fusion, shape-routed sm70
+  projection/FFN kernels, and raw recurrent-output preparation. Public
+  `rwkv7_forward_token` throughput for bsz=1/2/4/8 is
+  `637.9/1114.0/1852.8/3531.7` tok/s on 0.1B,
+  `331.5/573.4/970.6/1855.7` on 0.4B, and
+  `162.0/261.1/459.1/874.0` on 1.5B. Matching-checkpoint ratios span
+  `0.629x-1.185x` Albatross: all 12 rows pass P1, all three bsz=8 rows pass P3,
+  and 0.4B/1.5B bsz=8 exceed Albatross. Raw recurrent A/B retains 32-step
+  greedy equality and improves 0.4B/1.5B bsz=2 by `1.356x/1.148x`. See
+  [`bench/v100_sm70_decode_gap_20260710/README.md`](bench/v100_sm70_decode_gap_20260710/README.md).
+- The earlier unfused V100 baseline reached about `255/450/857/1548` aggregate
+  tok/s at bsz=1/2/4/8. It is retained in historical JSONL rows to make the
+  launch-fusion gain reproducible rather than silently replacing the baseline.
 - HF `device_map` smoke on 2 x V100 manually splits 12 layers at layer 6,
   keeps `RWKV7_FAST_FORWARD=1`, skips the single-device fast-token backend,
   and matches the single-device greedy tail `[36786, 34, 308, 459]`.
@@ -987,7 +993,10 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   `RWKV7_NATIVE_MODEL=1` for the FLA-free native PyTorch compatibility path.
 - The remote config uses a unique `rwkv7_hf_adapter` model type so `AutoModelForCausalLM` reliably loads this adapter instead of a locally registered FLA `rwkv7` class.
 - V100 serving-style memory is now near parity with official for 0.1B when using `logits_to_keep=1`.
-- V100 native-norm + fast-cache HF decode is about 41 tok/s; FLA `rwkv7_forward_token` improves this to about 59 tok/s; native-JIT `rwkv7_forward_token` reaches official parity for bsz=1 and supports batched/dynamic serving; native-graph `rwkv7_forward_token` reaches about 255 tok/s for bsz=1 and 1539 aggregate tok/s for bsz=8 with extra captured graph buffers.
+- V100 native-graph fused decode now reaches about `638 tok/s` for 0.1B bsz=1
+  and `3532 tok/s` aggregate for bsz=8. The sm70 extension has a one-time lazy
+  compile/capture cost and additional graph buffers; production launchers
+  should prewarm expected batch sizes with `rwkv7_warmup_fast_token()`.
 - Generic bnb 8-bit/4-bit loading reduces model footprint and now skips
   quantizing the small LoRA rank projections that hit inefficient bnb kernels,
   but it is still slower than fp16 native-graph decode on the current V100

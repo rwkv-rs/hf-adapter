@@ -424,6 +424,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     fused_recurrent_output_proto = latest(rows, lambda r: r.get("axis") == "fused_recurrent_output_proto" and r.get("backend") == "hf_adapter")
     native_graph_fused_recurrent = latest(rows, lambda r: r.get("axis") == "native_graph_fused_recurrent" and r.get("backend") == "hf_adapter")
     native_graph_fused_recurrent_output = latest(rows, lambda r: r.get("axis") == "native_graph_fused_recurrent_output" and r.get("backend") == "hf_adapter")
+    native_graph_fused_recurrent_raw = latest(rows, lambda r: r.get("axis") == "native_graph_fused_recurrent_raw" and r.get("backend") == "hf_adapter")
     native_graph_fused_output = latest(rows, lambda r: r.get("axis") == "native_graph_fused_output" and r.get("backend") == "hf_adapter")
     native_graph_fused_output_project = latest(rows, lambda r: r.get("axis") == "native_graph_fused_output_project" and r.get("backend") == "hf_adapter")
     native_graph_fused_wag_lora = latest(rows, lambda r: r.get("axis") == "native_graph_fused_wag_lora" and r.get("backend") == "hf_adapter")
@@ -660,28 +661,50 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             r.get("tokens_per_sequence"),
         ),
     )
-    albatross_best_by_case: dict[tuple[int, int], dict[str, Any]] = {}
+    albatross_best_by_case: dict[tuple[int, int, str | None], dict[str, Any]] = {}
     for row in albatross_latest:
         if row.get("batch_size") is None or row.get("tokens_per_sequence") is None:
             continue
-        key = (int(row["batch_size"]), int(row["tokens_per_sequence"]))
+        key = (int(row["batch_size"]), int(row["tokens_per_sequence"]), model_size_label(row))
         old = albatross_best_by_case.get(key)
         if old is None or float(row.get("tokps_p50") or 0.0) >= float(old.get("tokps_p50") or 0.0):
             albatross_best_by_case[key] = row
 
-    hf_decode_by_bsz_all: dict[int, dict[str, Any]] = {}
-    for row in batch_latest:
-        if row.get("decode_api") != "rwkv7_forward_token" or row.get("batch_size") is None:
+    # Decode comparison is model-size aware and also accepts the public-API
+    # throughput from native_graph replay-overhead rows.  The latter is the
+    # lower-overhead canonical harness for long steady-state decode sweeps.
+    hf_decode_by_case_all: dict[tuple[int, str | None], dict[str, Any]] = {}
+    hf_decode_by_case_default: dict[tuple[int, str | None], dict[str, Any]] = {}
+    for source in rows:
+        row = source
+        if row.get("backend") != "hf_adapter" or row.get("batch_size") is None:
             continue
-        bsz = int(row["batch_size"])
-        old = hf_decode_by_bsz_all.get(bsz)
+        is_default = False
+        if row.get("axis") == "batch_sweep" and row.get("decode_api") == "rwkv7_forward_token":
+            tokps = num(row, "decode_tokps_total")
+            is_default = is_default_native_graph_batch_sweep(row)
+        elif (
+            row.get("axis") == "native_graph_replay_overhead"
+            and fast_token_backend_effective(row) == "native_graph"
+        ):
+            tokps = num(row, "api_decode_tokps_total")
+            if tokps is not None:
+                row = dict(row)
+                row["decode_tokps_total"] = tokps
+                row["decode_api"] = "rwkv7_forward_token"
+            is_default = True
+        else:
+            continue
+        if tokps is None:
+            continue
+        key = (int(row["batch_size"]), model_size_label(row))
+        old = hf_decode_by_case_all.get(key)
         if old is None or int(row.get("_lineno", 0)) >= int(old.get("_lineno", 0)):
-            hf_decode_by_bsz_all[bsz] = row
-    hf_decode_by_bsz_default: dict[int, dict[str, Any]] = {}
-    for row in batch_default_latest:
-        if row.get("batch_size") is None:
-            continue
-        hf_decode_by_bsz_default[int(row["batch_size"])] = row
+            hf_decode_by_case_all[key] = row
+        if is_default:
+            old = hf_decode_by_case_default.get(key)
+            if old is None or int(row.get("_lineno", 0)) >= int(old.get("_lineno", 0)):
+                hf_decode_by_case_default[key] = row
 
     hf_prefill_by_case: dict[tuple[int, int, str | None], dict[str, Any]] = {}
 
@@ -739,15 +762,21 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
 
     albatross_decode_comparison = []
     albatross_prefill_comparison = []
-    for (bsz, tokens), alb in sorted(albatross_best_by_case.items()):
+    for (bsz, tokens, alb_label), alb in sorted(
+        albatross_best_by_case.items(), key=lambda item: (item[0][2] or "", item[0][0], item[0][1])
+    ):
         alb_tokps = num(alb, "tokps_p50")
         if tokens == 1:
-            hf = hf_decode_by_bsz_default.get(bsz) or hf_decode_by_bsz_all.get(bsz)
+            hf = hf_decode_by_case_default.get((bsz, alb_label)) or hf_decode_by_case_all.get((bsz, alb_label))
+            if hf is None:
+                hf = hf_decode_by_case_default.get((bsz, None)) or hf_decode_by_case_all.get((bsz, None))
             hf_tokps = num(hf, "decode_tokps_total")
             if hf is not None and hf_tokps is not None:
                 albatross_decode_comparison.append(
                     {
                         "batch_size": bsz,
+                        "model_size_label": alb_label,
+                        "hf_model_size_label": model_size_label(hf),
                         "hf_decode_api": hf.get("decode_api"),
                         "hf_fast_token_backend_effective": fast_token_backend_effective(hf),
                         "hf_tokps_total": round(hf_tokps, 4),
@@ -760,7 +789,6 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             continue
         if tokens < 512:
             continue
-        alb_label = model_size_label(alb)
         hf = hf_prefill_by_case.get((bsz, tokens, alb_label)) if alb_label is not None else None
         if hf is None:
             hf = hf_prefill_by_case.get((bsz, tokens, None))
@@ -858,7 +886,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             "preserve split-row prefill scan occupancy; do not promote full-head scan+output-prep fusion",
             "fuse larger norm/shift/projection/LoRA/state-prep regions instead of shallow output or FFN buckets",
             "keep cuBLAS-backed dense projections unless a deeper kernel wins end-to-end at bsz=1/4",
-            "continue decode P1 with fused recurrent-output plus deeper projection/LoRA work",
+            "raise the V100 decode floor from P1 toward universal P2/P3 and reproduce promoted routes cross-card",
             "add native W8/W4 pack plus fused dequant-GEMV and optimize packed kernels until W8/W4 >= fp16 end-to-end",
         ],
     }
@@ -1512,6 +1540,17 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 f"native_graph fused recurrent+output batch matrix covers bsz={sweep_batches} "
                 f"with min_speedup={min(sweep_speeds):.2f}x and greedy exact"
             )
+    if native_graph_fused_recurrent_raw is None:
+        focus.append("native_graph raw recurrent-preparation A/B row pending")
+    else:
+        raw_speedup = native_graph_fused_recurrent_raw.get("speedup")
+        greedy_match = native_graph_fused_recurrent_raw.get("greedy_match")
+        greedy_total = native_graph_fused_recurrent_raw.get("greedy_total")
+        if raw_speedup is not None:
+            focus.append(
+                f"native_graph raw recurrent-preparation A/B passes greedy {greedy_match}/{greedy_total} "
+                f"with speedup={float(raw_speedup):.2f}x"
+            )
     if native_graph_fused_output is None:
         focus.append("native_graph fused output integration row pending")
     else:
@@ -2120,11 +2159,11 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             "latest": compact(latest_precision, ["_lineno", "axis", "dtype", "top5_match", "argmax_match", "cosine", "max_abs_diff", "mean_abs_diff", "greedy_window"]),
             "greedy_ratio": round(greedy_ratio, 4) if greedy_ratio is not None else None,
         },
-        "batch_sweep": [compact(r, ["_lineno", "batch_size", "decode_api", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_recurrent", "native_graph_fused_recurrent_output", "native_graph_fused_output", "native_graph_fused_output_project", "native_graph_fused_wag_lora", "native_graph_fused_wavg_lora", "native_graph_fused_projection", "decode_tokps_total", "decode_tokps_per_seq", "decode_ms_per_step", "peak_vram_mb"]) for r in batch_latest],
-        "batch_sweep_default_native_graph": [compact(r, ["_lineno", "batch_size", "decode_api", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_recurrent", "native_graph_fused_recurrent_output", "native_graph_fused_output", "native_graph_fused_output_project", "native_graph_fused_wag_lora", "native_graph_fused_wavg_lora", "native_graph_fused_projection", "decode_tokps_total", "decode_tokps_per_seq", "decode_ms_per_step", "peak_vram_mb"]) for r in batch_default_latest],
+        "batch_sweep": [compact(r, ["_lineno", "batch_size", "decode_api", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_recurrent", "native_graph_fused_recurrent_output", "native_graph_fused_recurrent_raw", "native_graph_fused_output", "native_graph_fused_output_project", "native_graph_fused_wag_lora", "native_graph_fused_wavg_lora", "native_graph_fused_projection", "decode_tokps_total", "decode_tokps_per_seq", "decode_ms_per_step", "peak_vram_mb"]) for r in batch_latest],
+        "batch_sweep_default_native_graph": [compact(r, ["_lineno", "batch_size", "decode_api", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_recurrent", "native_graph_fused_recurrent_output", "native_graph_fused_recurrent_raw", "native_graph_fused_output", "native_graph_fused_output_project", "native_graph_fused_wag_lora", "native_graph_fused_wavg_lora", "native_graph_fused_projection", "decode_tokps_total", "decode_tokps_per_seq", "decode_ms_per_step", "peak_vram_mb"]) for r in batch_default_latest],
         "batch_sweep_experimental_native_graph": [
             {
-                **(compact(r, ["_lineno", "batch_size", "decode_api", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_recurrent", "native_graph_fused_recurrent_output", "native_graph_fused_output", "native_graph_fused_output_project", "native_graph_fused_wag_lora", "native_graph_fused_wavg_lora", "native_graph_fused_projection", "decode_tokps_total", "decode_tokps_per_seq", "decode_ms_per_step", "peak_vram_mb"]) or {}),
+                **(compact(r, ["_lineno", "batch_size", "decode_api", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_recurrent", "native_graph_fused_recurrent_output", "native_graph_fused_recurrent_raw", "native_graph_fused_output", "native_graph_fused_output_project", "native_graph_fused_wag_lora", "native_graph_fused_wavg_lora", "native_graph_fused_projection", "decode_tokps_total", "decode_tokps_per_seq", "decode_ms_per_step", "peak_vram_mb"]) or {}),
                 "native_graph_flag_signature": native_graph_flag_signature(r),
             }
             for r in batch_experimental_latest
@@ -2183,7 +2222,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             for r in ttft_tpot
         ],
         "native_graph_replay_overhead": [
-            compact(r, ["_lineno", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_recurrent", "native_graph_fused_recurrent_output", "native_graph_fused_output", "native_graph_fused_output_project", "native_graph_fused_wag_lora", "native_graph_fused_wavg_lora", "native_graph_fused_projection", "batch_size", "prompt_tokens", "steps", "fixed_token", "max_abs_diff_runner_vs_api", "copy_from_cache_ms", "token_copy_ms", "graph_replay_ms", "bind_cache_ms", "argmax_ms", "copy_from_cache_calls", "copy_from_cache_fast_skips", "copy_from_cache_fast_skip_rate", "bind_cache_calls", "bind_cache_fast_skips", "bind_cache_fast_skip_rate", "manual_wall_ms_per_token", "api_ms_per_token", "manual_decode_tokps_total", "api_decode_tokps_total", "copy_share_of_manual_wall", "native_graph_cache_requests", "native_graph_cache_hits", "native_graph_cache_misses", "native_graph_cache_evictions", "native_graph_cache_hit_rate", "native_graph_cache_batch_sizes", "peak_vram_mb"])
+            compact(r, ["_lineno", "fast_token_backend", "fast_token_backend_effective", "native_graph_fused_recurrent", "native_graph_fused_recurrent_output", "native_graph_fused_recurrent_raw", "native_graph_fused_output", "native_graph_fused_output_project", "native_graph_fused_wag_lora", "native_graph_fused_wavg_lora", "native_graph_fused_projection", "batch_size", "prompt_tokens", "steps", "fixed_token", "max_abs_diff_runner_vs_api", "copy_from_cache_ms", "token_copy_ms", "graph_replay_ms", "bind_cache_ms", "argmax_ms", "copy_from_cache_calls", "copy_from_cache_fast_skips", "copy_from_cache_fast_skip_rate", "bind_cache_calls", "bind_cache_fast_skips", "bind_cache_fast_skip_rate", "manual_wall_ms_per_token", "api_ms_per_token", "manual_decode_tokps_total", "api_decode_tokps_total", "copy_share_of_manual_wall", "native_graph_cache_requests", "native_graph_cache_hits", "native_graph_cache_misses", "native_graph_cache_evictions", "native_graph_cache_hit_rate", "native_graph_cache_batch_sizes", "peak_vram_mb"])
             for r in native_graph_overhead
         ],
         "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
@@ -2221,6 +2260,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "fused_recurrent_output_proto": compact(fused_recurrent_output_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "attn_mode", "fuse_norm", "batch_size", "hidden_size", "layers", "block_n", "input_scale", "steps", "avg_current_ms", "avg_split_fused_ms", "avg_fused_ms", "avg_speedup_vs_current", "avg_speedup_vs_split", "out_max_abs_diff", "state_max_abs_diff", "split_out_max_abs_diff", "split_state_max_abs_diff", "out_min_cosine", "split_out_min_cosine", "layer_rows", "peak_vram_mb"]),
         "native_graph_fused_recurrent": compact(native_graph_fused_recurrent, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "baseline_effective_backend", "fused_effective_backend", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "peak_vram_mb"]),
         "native_graph_fused_recurrent_output": compact(native_graph_fused_recurrent_output, ["_lineno", "status", "dtype", "device", "attn_mode", "fuse_norm", "fast_cache", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_output_enabled", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_recurrent_output", "fused_recurrent_output", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
+        "native_graph_fused_recurrent_raw": compact(native_graph_fused_recurrent_raw, ["_lineno", "status", "dtype", "device", "attn_mode", "fuse_norm", "fast_cache", "batch_size", "prompt_tokens", "steps", "fixed_token", "baseline_effective_backend", "fused_effective_backend", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "correctness_pass", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
         "native_graph_fused_output": compact(native_graph_fused_output, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_output", "fused_output", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
         "native_graph_fused_output_project": compact(native_graph_fused_output_project, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "fused_output_enabled", "fused_projection_enabled", "output_project_block_m", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_output_project", "fused_output_project", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
         "native_graph_fused_wag_lora": compact(native_graph_fused_wag_lora, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "fused_output_enabled", "fused_output_project_enabled", "block_m", "block_r", "block_k", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_wag_lora", "fused_wag_lora", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
@@ -2685,6 +2725,8 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["native_graph_fused_recurrent"], ensure_ascii=False) if report["native_graph_fused_recurrent"] else "PENDING")
     print("\n## native_graph_fused_recurrent_output")
     print(json.dumps(report["native_graph_fused_recurrent_output"], ensure_ascii=False) if report["native_graph_fused_recurrent_output"] else "PENDING")
+    print("\n## native_graph_fused_recurrent_raw")
+    print(json.dumps(report["native_graph_fused_recurrent_raw"], ensure_ascii=False) if report["native_graph_fused_recurrent_raw"] else "PENDING")
     print("\n## native_graph_fused_output")
     print(json.dumps(report["native_graph_fused_output"], ensure_ascii=False) if report["native_graph_fused_output"] else "PENDING")
     print("\n## native_graph_fused_output_project")

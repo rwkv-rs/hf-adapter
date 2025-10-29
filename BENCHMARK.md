@@ -2173,14 +2173,14 @@ V100 rows show:
 | decode_breakdown fast-token ratio | ~0.57x official | >=0.90x | GAP |
 | native_graph prototype decode ratio | ~2.76x official | >=0.90x | PASS prototype |
 | native_graph warmup bsz=1/2/4/8 | cache contains 1/2/4/8 in 1.389s | preflight complete | PASS |
-| native_graph replay overhead bsz=1/2/4/8 | API `255.1` / `449.8` / `857.2` / `1548.1` tok/s, max copy share `0.052`, hit rate `0.9737` | >=150 tok/s, <=0.15 copy share, >=0.80 hit rate | PASS |
+| native_graph replay overhead bsz=1/2/4/8 (0.1B fused) | API `637.9` / `1114.0` / `1852.8` / `3531.7` tok/s, max copy share `0.014`, hit rate `0.9906` | >=150 tok/s, <=0.15 copy share, >=0.80 hit rate | PASS |
 | HF device_map generate smoke | 2 x V100, split layer 6, greedy tail matches single-device, fast backend skipped | >=2 CUDA devices, finite logits, greedy equality | PASS |
 | speed_mem memory ratio | ~1.00x official | <=1.10x | PASS |
 | 8-bit / 4-bit footprint ratio | 0.76x / 0.65x fp16 | lower is better | PASS smoke |
 | 8-bit / 4-bit decode ratio | 0.24x / 0.67x fp16 | >=1.00x | GAP |
-| Albatross V100 decode ratio | HF native-graph `0.32x`-`0.47x` Albatross faster3a for bsz=1/2/4/8 | approach Albatross | GAP |
-| Albatross V100 prefill ratio | HF `0.32x` Albatross faster3a for B=1,T=512 | approach Albatross | GAP |
-| Fused backend P1 decode ladder | analyzer target min ratio `>=0.55x` Albatross | `docs/performance/FUSED_BACKEND.md` P1 | GAP |
+| Albatross V100 decode ratio | HF fused native-graph `0.629x`-`1.185x` over 0.1B/0.4B/1.5B × bsz1/2/4/8 | approach Albatross | P1 PASS; universal P2/P3 GAP |
+| Albatross V100 prefill ratio | HF `0.787x`-`0.890x` on matching 0.4B/1.5B prompt512 rows | approach Albatross | P1 PASS; universal P2 GAP |
+| Fused backend P1 decode ladder | analyzer target min ratio `>=0.55x` Albatross | `docs/performance/FUSED_BACKEND.md` P1 | PASS |
 | Fused backend quant ladder | W8/W4 decode `>=1.0x` fp16 reference with W8 footprint `<=0.75x`, W4 footprint `<=0.55x` | native W8/W4 fused path | GAP |
 | 0.4B converted-model smoke | hidden=1024, layers=24, generated=4, backend=native_graph | load + generate | PASS |
 | 1.5B converted-model smoke | hidden=2048, layers=24, generated=2, backend=native_graph | load + generate | PASS |
@@ -2393,9 +2393,9 @@ remaining: validate newer GPUs, and solve the generic bnb quantized decode speed
 bsz=2/4/8 native-graph serving now reaches `434.3` / `852.6` / `1539.1`
 aggregate tok/s, and preflight warmup confirms graph runners are captured for
 bsz=1/2/4/8 before the first serving request. The native-graph overhead rows
-confirm the public API scales to `1548.1` aggregate tok/s at bsz=8 while
-cache-copy overhead stays below `5.3%` of measured manual replay wall time and
-graph-runner cache hit rate stays at `0.9737` for all required batch sizes. The
+confirm the fused 0.1B public API scales to `3531.7` aggregate tok/s at bsz=8
+while cache-copy overhead stays below `1.4%` of measured manual replay wall
+time and graph-runner cache hit rate stays at `0.9906` for all required batch sizes. The
 HF `device_map` row validates the multi-GPU pipeline-parallel direction on
 2 x V100 by splitting the 0.1B model at layer 6; normal cached `generate()`
 keeps finite logits, bypasses the single-device fast-token backend, and matches
@@ -2422,12 +2422,13 @@ python bench/bench_albatross.py \
 
 On V100, Albatross faster3a's default fp16 WKV kernel uses `cp.async` and does
 not compile for sm70, so the recorded V100 baseline uses `--wkv fp32io16`.
-Latest 0.1B rows show Albatross decode `741.5` / `1354.5` / `2368.9` /
-`3300.6` tok/s for bsz=1/2/4/8 and B=1,T=512 prefill `39472.6` tok/s.
-The analyzer now reports HF native-graph ratios against those rows: decode
-`0.34` / `0.32` / `0.36` / `0.47` for bsz=1/2/4/8 and prefill `0.32` for
-B=1,T=512. This makes the Albatross gap explicit and keeps the next wrapper
-optimization target measurable.
+Latest 0.1B decode rows show Albatross `788.19` / `1504.72` / `2612.88` /
+`3611.88` tok/s for bsz=1/2/4/8. The fused HF API reaches
+`637.9` / `1114.0` / `1852.8` / `3531.7`, or
+`0.809x` / `0.740x` / `0.709x` / `0.978x`. Matching 0.4B and 1.5B rows are
+also retained; across all 12 rows the ratio spans `0.629x-1.185x` and the P1
+floor passes. Full commands, VRAM, raw JSONL, and excluded-contention notes are
+in [`bench/v100_sm70_decode_gap_20260710/README.md`](bench/v100_sm70_decode_gap_20260710/README.md).
 
 ## Benchmark regression and target gates
 

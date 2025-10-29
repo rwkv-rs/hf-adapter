@@ -38,12 +38,17 @@ def test_policy_defaults_are_conservative() -> None:
     v100 = policy_for_profile(classify_gpu("Tesla V100-PCIE-32GB", (7, 0)))
     assert v100.fused_output
     assert v100.fused_recurrent_output
+    assert v100.fused_recurrent_raw
     assert v100.fast_prefill
     assert v100.fused_prefill_scan
     assert v100.fused_prefill_state_prep
     assert v100.fused_prefill_state_scan
     assert v100.fused_prefill_state_scan_max_batch == 1
     assert v100.fused_prefill_output
+    assert v100.fused_norm_mix
+    assert v100.fused_wavg_lora
+    assert v100.wavg_lora_bsz1_max_hidden == 1024
+    assert v100.sm70_linear
     assert not v100.fused_projection
     assert not v100.fused_output_project
 
