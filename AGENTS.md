@@ -47,7 +47,25 @@ roadmap.
   decode, correctness, peak memory/VRAM, and `bench/analyze_results.py`
   reporting.
 
-## Current Branch Goal: DPLR/WY Compiled Prefill Prototype
+## Current V100 Decode Milestone
+
+The 2026-07-10 sm70 pass adds decode norm/mix fusion, grouped shape-routed
+projection/FFN kernels, and raw recurrent-output preparation. Same-host
+0.1B/0.4B/1.5B × bsz1/2/4/8 measurements now span `0.629x-1.185x`
+Albatross: all 12 rows pass P1, all bsz8 rows pass P3, and 0.4B/1.5B bsz8
+exceed Albatross. The raw recurrent A/B is 32-step greedy-exact at 0.4B and
+1.5B bsz2. Evidence is under
+`bench/v100_sm70_decode_gap_20260710/`.
+
+This closes the V100 decode P1 floor, not the final mission. The next workers
+must pursue, in order:
+
+1. universal V100 P2/P3 for the remaining bsz1/2/4 rows;
+2. native fused W8/W4 with lower footprint and end-to-end speed >= fp16;
+3. exact-card reproduction on 4090/A100/H100/Blackwell and AMD fallback;
+4. continued prefill/DPLR work without regressing the promoted decode routes.
+
+## Parallel Prefill Goal: DPLR/WY Compiled Prototype
 
 Active branch work is now the opt-in DPLR/WY compiled prefill backend, not
 wrapper micro-optimization. Keep the default HF behavior unchanged unless a

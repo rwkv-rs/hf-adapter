@@ -236,9 +236,14 @@ def main() -> int:
     packs = [(0, 12, 64)]
     old_limit = os.environ.get("RWKV7_NATIVE_GRAPH_CACHE_SIZE")
     old_recurrent_output = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT")
+    old_recurrent_raw = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW")
     old_rkv_policy = os.environ.get("RWKV7_NATIVE_GRAPH_RKV_POLICY")
     old_rkv_min_hidden = os.environ.get("RWKV7_NATIVE_GRAPH_RKV_MIN_HIDDEN")
     old_rkv_max_rows = os.environ.get("RWKV7_NATIVE_GRAPH_RKV_MAX_ROWS")
+    old_fused_norm_mix = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX")
+    old_fused_norm_mix_warps = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS")
+    old_sm70_linear = os.environ.get("RWKV7_NATIVE_GRAPH_SM70_LINEAR")
+    old_wavg_bsz1_max_hidden = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BSZ1_MAX_HIDDEN")
     os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = "2"
     try:
         os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", None)
@@ -247,6 +252,10 @@ def main() -> int:
         assert modeling._native_graph_fused_recurrent_output_requested() is False
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT"] = "1"
         assert modeling._native_graph_fused_recurrent_output_requested() is True
+        os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW", None)
+        assert modeling._native_graph_fused_recurrent_raw_requested() is False
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW"] = "1"
+        assert modeling._native_graph_fused_recurrent_raw_requested() is True
         os.environ.pop("RWKV7_NATIVE_GRAPH_RKV_POLICY", None)
         assert modeling._native_graph_rkv_policy() == "manual"
         os.environ["RWKV7_NATIVE_GRAPH_RKV_POLICY"] = "stacked"
@@ -256,6 +265,8 @@ def main() -> int:
         os.environ["RWKV7_NATIVE_GRAPH_RKV_MIN_HIDDEN"] = "bad"
         os.environ["RWKV7_NATIVE_GRAPH_RKV_MAX_ROWS"] = "99999"
         assert modeling._native_graph_vkwr_rkv_thresholds() == (1, 4096)
+        os.environ["RWKV7_NATIVE_GRAPH_RKV_MAX_ROWS"] = "1"
+        assert modeling._native_graph_vkwr_rkv_thresholds() == (1, 1)
 
         get_runner = modeling.RWKV7ForCausalLM._rwkv7_native_graph_runner
         clear_cache = modeling.RWKV7ForCausalLM.rwkv7_clear_native_graph_cache
@@ -309,6 +320,32 @@ def main() -> int:
         assert clear_cache(owner) == 2
         assert len(owner._rwkv7_native_graph_runner_cache) == 0
         assert clear_cache(owner) == 0
+
+        # Every capture-affecting norm/mix setting must produce a distinct
+        # runner. Otherwise an env change can silently replay a stale graph.
+        os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = "8"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX"] = "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS"] = "4"
+        norm_mix_off = get_runner(owner, packs, 1)
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX"] = "1"
+        norm_mix_on = get_runner(owner, packs, 1)
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS"] = "8"
+        norm_mix_w8 = get_runner(owner, packs, 1)
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW"] = "0"
+        recurrent_raw_off = get_runner(owner, packs, 1)
+        os.environ["RWKV7_NATIVE_GRAPH_SM70_LINEAR"] = "1"
+        sm70_linear_on = get_runner(owner, packs, 1)
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BSZ1_MAX_HIDDEN"] = "1024"
+        wavg_bsz1_routed = get_runner(owner, packs, 1)
+        assert norm_mix_off is not norm_mix_on
+        assert norm_mix_on is not norm_mix_w8
+        assert norm_mix_w8 is not recurrent_raw_off
+        assert recurrent_raw_off is not sm70_linear_on
+        assert sm70_linear_on is not wavg_bsz1_routed
+        assert len(owner._rwkv7_native_graph_runner_cache) == 6
+        assert clear_cache(owner) == 6
+
+        os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = "2"
         assert modeling._native_graph_cache_size() == 2
         os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = "not-an-int"
         assert modeling._native_graph_cache_size() == 8
@@ -321,6 +358,10 @@ def main() -> int:
             os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", None)
         else:
             os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT"] = old_recurrent_output
+        if old_recurrent_raw is None:
+            os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW", None)
+        else:
+            os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW"] = old_recurrent_raw
         if old_rkv_policy is None:
             os.environ.pop("RWKV7_NATIVE_GRAPH_RKV_POLICY", None)
         else:
@@ -333,6 +374,22 @@ def main() -> int:
             os.environ.pop("RWKV7_NATIVE_GRAPH_RKV_MAX_ROWS", None)
         else:
             os.environ["RWKV7_NATIVE_GRAPH_RKV_MAX_ROWS"] = old_rkv_max_rows
+        if old_fused_norm_mix is None:
+            os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX", None)
+        else:
+            os.environ["RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX"] = old_fused_norm_mix
+        if old_fused_norm_mix_warps is None:
+            os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS", None)
+        else:
+            os.environ["RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS"] = old_fused_norm_mix_warps
+        if old_sm70_linear is None:
+            os.environ.pop("RWKV7_NATIVE_GRAPH_SM70_LINEAR", None)
+        else:
+            os.environ["RWKV7_NATIVE_GRAPH_SM70_LINEAR"] = old_sm70_linear
+        if old_wavg_bsz1_max_hidden is None:
+            os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BSZ1_MAX_HIDDEN", None)
+        else:
+            os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BSZ1_MAX_HIDDEN"] = old_wavg_bsz1_max_hidden
 
     old_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND")
     old_fast_forward = os.environ.get("RWKV7_FAST_FORWARD")

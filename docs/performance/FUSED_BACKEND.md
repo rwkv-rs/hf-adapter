@@ -63,8 +63,11 @@ with `fused_backend_targets` / Albatross ratios.
 
 ## Albatross target ladder
 
-Current V100 evidence shows HF native-graph decode at roughly
-`0.32x`-`0.47x` Albatross. The new sm70 split-row native-prefill policy raises
+Current V100 evidence after the sm70 decode and raw-recurrent fusion pass spans
+`0.629x`-`1.185x` Albatross for matching 0.1B/0.4B/1.5B checkpoints and
+bsz=1/2/4/8. All 12 rows pass P1, all three bsz=8 rows pass P3, and 0.4B/1.5B
+bsz=8 exceed the measured Albatross throughput. The new sm70 split-row
+native-prefill policy raises
 0.1B B=1/2/4/8,T=512 prefill to `0.815x/0.793x/0.863x/0.796x` Albatross in
 three-process confirmation, while matching-checkpoint 0.4B/1.5B rows reach
 `0.787x`-`0.890x`. The staged target remains:
@@ -522,8 +525,36 @@ serving speed.
      models. Raw evidence is in
      [`bench/v100_sm70_prefill_policy_20260710/README.md`](../../bench/v100_sm70_prefill_policy_20260710/README.md).
    - This promotes V100 prefill from the old P0-level row to P1 across the
-     matrix and P2 on most measured rows. It does not close Albatross parity,
-     V100 decode, cross-card prefill policy, or W8/W4 speed.
+     matrix and P2 on most measured rows. It does not close universal
+     Albatross parity, cross-card prefill policy, or W8/W4 speed.
+22. V100/sm70 deep decode fusion and raw recurrent preparation.
+   - `rwkv7_hf.fused_decode_norm_mix` folds attention layer norm plus six
+     time-mixes into one Triton kernel and folds attention residual add, FFN
+     layer norm, FFN mix, and cache update into a second kernel.
+   - `rwkv7_hf.sm70_linear` supplies an exact-sm70 lazy CUDA extension for
+     grouped R/K/V projection, FFN up + `relu²`, FFN down + residual, and
+     shape-routed decode GEMV. It uses the original projection weights rather
+     than a persistent stacked duplicate. Unsupported devices and build
+     failures fall back to the existing PyTorch/cuBLAS path.
+   - `fused_recurrent_output_prepare_raw()` extends the recurrent-output
+     Triton kernel to consume raw W/K directly. It computes W decay, adjusted
+     K, normalized KK, state update/readout, group norm, recurrent correction,
+     and gate multiply in one launch. On Volta this is enabled by
+     `RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW=1`; set the flag to `0` to capture
+     the previous split-preparation graph. The setting is part of the graph
+     cache key.
+   - End-to-end raw-preparation A/B is greedy-exact for 32 steps at 0.4B and
+     1.5B bsz=2 and improves decode by `1.3560x` and `1.1478x`, respectively.
+     The final public HF API reaches `637.9/1114.0/1852.8/3531.7` tok/s for
+     0.1B, `331.5/573.4/970.6/1855.7` for 0.4B, and
+     `162.0/261.1/459.1/874.0` for 1.5B at bsz=1/2/4/8.
+   - Full raw rows, Albatross references, VRAM, ratios, and excluded-contention
+     notes are retained in
+     [`bench/v100_sm70_decode_gap_20260710/README.md`](../../bench/v100_sm70_decode_gap_20260710/README.md).
+   - The sm70 extension compiles lazily on first capture. Production launchers
+     should call `rwkv7_warmup_fast_token()` for expected batch sizes before
+     accepting traffic. The compile latency is cold-start setup and is not
+     included in steady-state throughput.
 
 ## Backend dispatch requirement
 

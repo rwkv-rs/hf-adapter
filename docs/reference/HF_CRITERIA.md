@@ -19,11 +19,11 @@
 ## 2. 当前已验证进展
 
 - **精度**：V100 fp16 official alignment、reload roundtrip、greedy window 已通过，`fuse_norm=false` 路径稳定。
-- **fp16 decode**：V100 0.1B native_graph fast-token 已达到约 `255 tok/s` 量级，超过已测 RWKV-LM fused bsz=1 decode 基线约 `2.6x`。
+- **fp16 decode**：V100 fused native_graph 的 0.1B bsz1 已达到 `637.9 tok/s`；0.1B/0.4B/1.5B、bsz1/2/4/8 共 12 个同卡 Albatross 对比行全部通过 P1，bsz8 全部通过 P3，0.4B/1.5B bsz8 已超过 Albatross。
 - **HF forward/generate 快路径**：`RWKV7_FAST_FORWARD=1` 默认把 eval/no-grad cached one-token `forward()` / `generate()` 路由到 fast-token backend。
 - **state cache**：已有 `RWKV7StateCache`、dynamic batch select/reorder/drop/compact、chunked prefill、offload/restore、cache metrics、native-graph runner LRU / hit-rate telemetry。
 - **训练兼容**：PEFT LoRA、HF Trainer、TRL SFT、TRL DPO、TRL GRPO smoke 已有脚本覆盖；Trainer/TRL smoke 现支持 batch size / gradient accumulation 参数，并校验 LoRA/trainable 参数确实更新；V100 fp32 smoke 已覆盖 Trainer/SFT batch=2 grad_accum=2 以及 DPO/GRPO batch=2；训练 smoke 可写入 `training_smoke` JSONL telemetry，analyzer/check gate 会汇总并校验 trainable delta。
-- **多卡方向**：2 x V100 手动 `device_map` PP generate smoke 已通过；ZeRO-2/3 配置有结构测试。
+- **多卡方向**：2 x V100 手动 `device_map` PP generate smoke 已通过；ZeRO-2/3 runtime 与 resume 已覆盖到 2.9B 的 V100 native/HF 路径。
 - **大模型**：0.4B / 1.5B / 2.9B / 7.2B / 13.3B 已完成 HF 转换和 V100 load/forward/generate smoke rows。
 - **投机解码**：0.1B draft -> 0.4B target V100 smoke 已保持 target greedy 一致，并用 cached-prefix resync 达到短样例约 `2.1x` target-greedy speedup。
 - **experimental native PyTorch**：已保留为非默认长期底座，覆盖 FLA-free bsz=1、batched forward / incremental cache 对齐测试，并把 cached decode 接到 optional native_jit；V100 fp32 smoke 里 native_model cached decode 从约 `61.7 tok/s` 到 `115.5 tok/s`；只作为 upstream / AMD / CPU fallback 方向，不替代当前 wrapper。
@@ -32,7 +32,7 @@
 ## 3. 当前最大缺口
 
 1. **量化速度分 lane 闭合**：generic bitsandbytes W8/W4 decode 仍明显慢于 fp16 native_graph。V100 0.1B canonical `memory` policy 记录约为 fp16 `217 tok/s`、8bit `16 tok/s`、4bit `33 tok/s`；`decode_hot` hybrid policy 只能把 4bit 推到约 `37 tok/s`。native MM8/MM4 `speed` policy 已在 RTX 5090 1.5B/2.9B/7.2B 给出 footprint 下降、logits/greedy 对齐且 decode≈`0.97x-1.01x` fp16 的证据；要把大幅 footprint 下降的 `memory` lane 也做到“不慢于 W16”，仍需要 native/fused quantized projection 或专门的 int8/int4 fast-token path。
-2. **Albatross 同卡基线未闭环**：服务器 Albatross 编译受 CUDA toolkit 头文件缺失影响；现阶段只能用 README 数字作量级参考，不能当同卡证明。
+2. **Albatross 尚未全矩阵 P3**：V100 同卡、同 checkpoint 的 faster3a 基线已经闭环，当前 decode 比率为 `0.629x-1.185x`；下一步是把 bsz1/2/4 的低位行推进到统一 P2/P3，并在更多架构复现。
 3. **训练吞吐未对标**：Trainer/TRL 兼容已经有 smoke，但 full/LoRA 多 batch、gradient accumulation、ZeRO runtime、RWKV-LM 训练吞吐基线仍需补。
 4. **更多硬件未覆盖**：V100 和一张 Blackwell 5070 有验证记录；Pascal/Ampere/Ada/H100/AMD 仍需补。
 5. **原生 Transformers 形态未完成**：当前仍依赖 FLA remote-code wrapper；最终 upstream 方向需要 pure PyTorch/reference + optional kernels。

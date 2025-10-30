@@ -108,6 +108,7 @@ try:
     from .native_jit import extract as _native_jit_extract
     from .native_jit import _block_ip as _native_graph_block_ip
     from .native_jit import _block_ip_batched as _native_graph_block_ip_batched
+    from .native_jit import _native_graph_linear_dispatch
     from .native_jit import prefill as _native_jit_prefill
 except Exception:  # pragma: no cover - optional remote-code fast path
     try:
@@ -116,6 +117,7 @@ except Exception:  # pragma: no cover - optional remote-code fast path
         from native_jit import extract as _native_jit_extract
         from native_jit import _block_ip as _native_graph_block_ip
         from native_jit import _block_ip_batched as _native_graph_block_ip_batched
+        from native_jit import _native_graph_linear_dispatch
         from native_jit import prefill as _native_jit_prefill
     except Exception:
         _native_jit_block_step = None
@@ -123,6 +125,7 @@ except Exception:  # pragma: no cover - optional remote-code fast path
         _native_jit_extract = None
         _native_graph_block_ip = None
         _native_graph_block_ip_batched = None
+        _native_graph_linear_dispatch = None
         _native_jit_prefill = None
 
 # HF dynamic-module discovery copies files referenced by direct relative
@@ -133,6 +136,8 @@ if False:  # pragma: no cover
     from .dplr_prefill import dplr_chunk_scan as _rwkv7_dplr_dependency_sentinel
     from .dplr_prefill_triton import dplr_chunk_scan_triton as _rwkv7_dplr_triton_dependency_sentinel
     from .fused_attention_projection import fused_rkv_wag_projection as _rwkv7_fused_attn_projection_dependency_sentinel
+    from .fused_decode_norm_mix import fused_attn_norm_mix6_decode as _rwkv7_fused_decode_norm_mix_dependency_sentinel
+    from .sm70_linear import sm70_linear as _rwkv7_sm70_linear_dependency_sentinel
     from .fused_lora import fused_wag_lora as _rwkv7_fused_lora_dependency_sentinel
     from .fused_output import fused_attn_output_prepare as _rwkv7_fused_output_dependency_sentinel
     from .fused_prefill import fused_prefill_state_prep as _rwkv7_fused_prefill_dependency_sentinel
@@ -258,6 +263,14 @@ def _native_graph_fused_recurrent_output_requested() -> bool:
     return env_flag("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", default)
 
 
+def _native_graph_fused_recurrent_raw_requested() -> bool:
+    """Whether W decay and K/KK preparation are folded into recurrence."""
+
+    policy = _rwkv7_kernel_policy()
+    default = bool(getattr(policy, "fused_recurrent_raw", False))
+    return env_flag("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW", default)
+
+
 def _native_graph_fused_output_requested() -> bool:
     """Whether native-graph runners should capture the experimental output-prep kernel."""
 
@@ -304,6 +317,34 @@ def _native_graph_fused_wavg_lora_requested() -> bool:
     return env_flag("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA", default)
 
 
+def _native_graph_fused_wavg_lora_bsz1_max_hidden() -> int:
+    policy = _rwkv7_kernel_policy()
+    default = getattr(policy, "wavg_lora_bsz1_max_hidden", None)
+    return env_int(
+        "RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BSZ1_MAX_HIDDEN",
+        0 if default is None else int(default),
+        lower=0,
+    )
+
+
+def _native_graph_fused_norm_mix_requested() -> bool:
+    policy = _rwkv7_kernel_policy()
+    default = bool(getattr(policy, "fused_norm_mix", False))
+    return env_flag("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX", default)
+
+
+def _native_graph_fused_norm_mix_num_warps() -> int:
+    value = env_int("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS", 4, lower=1, upper=8)
+    if value not in {1, 2, 4, 8}:
+        raise ValueError(f"RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS must be one of 1, 2, 4, or 8; got {value}")
+    return value
+
+
+def _native_graph_sm70_linear_requested() -> bool:
+    policy = _rwkv7_kernel_policy()
+    return env_flag("RWKV7_NATIVE_GRAPH_SM70_LINEAR", bool(getattr(policy, "sm70_linear", False)))
+
+
 def _native_graph_rkv_policy() -> str:
     """Cache-key visible policy for VKWR-inspired stacked R/K/V projection."""
 
@@ -323,7 +364,7 @@ def _native_graph_vkwr_rkv_thresholds() -> tuple[int, int]:
     vals = []
     for name, default, lower, upper in (
         ("RWKV7_NATIVE_GRAPH_RKV_MIN_HIDDEN", 1, 1, None),
-        ("RWKV7_NATIVE_GRAPH_RKV_MAX_ROWS", 64, 4, 4096),
+        ("RWKV7_NATIVE_GRAPH_RKV_MAX_ROWS", 64, 1, 4096),
     ):
         raw = os.environ.get(name, str(default)).strip()
         try:
@@ -377,6 +418,16 @@ def _linear_direct(module, x: torch.Tensor) -> torch.Tensor:
     if type(module) is not torch.nn.Linear:
         return module(x)
     return F.linear(x, module.weight, module.bias)
+
+
+def _native_graph_head_linear(module, x: torch.Tensor) -> torch.Tensor:
+    """Native-graph lm_head with an optional measured sm_70 bsz=1 route."""
+
+    if type(module) is not torch.nn.Linear or module.bias is not None:
+        return module(x)
+    if _native_graph_linear_dispatch is None:
+        return F.linear(x, module.weight)
+    return _native_graph_linear_dispatch(x, module.weight, role="head")
 
 
 def _lora_direct(module, x: torch.Tensor) -> torch.Tensor:
@@ -536,7 +587,7 @@ class _RWKV7NativeGraphTokenRunner:
         for li, p in enumerate(self.packs):
             x = _native_graph_block_ip(x, self.state[li], self.xpa[li], self.xpf[li], self.v_first, p)
         out = F.layer_norm(x, [self.hidden], self.norm_w, self.norm_b, 1e-5)
-        self.logits.copy_(_linear_direct(self.head_module, out).reshape(-1))
+        self.logits.copy_(_native_graph_head_linear(self.head_module, out).reshape(-1))
 
     def _capture(self) -> None:
         warm = torch.cuda.Stream(device=self.device)
@@ -685,7 +736,7 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         for li, p in enumerate(self.packs):
             x = _native_graph_block_ip_batched(x, self.state[li], self.xpa[li], self.xpf[li], self.v_first, p)
         out = F.layer_norm(x, [self.hidden], self.norm_w, self.norm_b, 1e-5)
-        self.logits.copy_(_linear_direct(self.head_module, out).reshape(self.batch_size, self.vocab_size))
+        self.logits.copy_(_native_graph_head_linear(self.head_module, out).reshape(self.batch_size, self.vocab_size))
 
     def _capture(self) -> None:
         warm = torch.cuda.Stream(device=self.device)
@@ -1617,6 +1668,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             int(packs[0][2]),
             _native_graph_fused_recurrent_requested(),
             _native_graph_fused_recurrent_output_requested(),
+            _native_graph_fused_recurrent_raw_requested(),
             _native_graph_fused_output_requested(),
             _native_graph_fused_output_project_requested(),
             _native_graph_fused_output_project_block_m(),
@@ -1624,7 +1676,11 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_fused_wag_lora_requested(),
             _native_graph_fused_wag_lora_blocks(),
             _native_graph_fused_wavg_lora_requested(),
+            _native_graph_fused_wavg_lora_bsz1_max_hidden(),
             _native_graph_fused_wavg_lora_blocks(),
+            _native_graph_fused_norm_mix_requested(),
+            _native_graph_fused_norm_mix_num_warps(),
+            _native_graph_sm70_linear_requested(),
             _native_graph_rkv_policy(),
             _native_graph_vkwr_rkv_thresholds(),
             int(batch_size),

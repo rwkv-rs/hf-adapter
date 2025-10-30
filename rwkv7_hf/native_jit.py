@@ -56,6 +56,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
     from .fused_recurrent_update import (
         fused_recurrent_output_prepare,
+        fused_recurrent_output_prepare_raw,
         fused_recurrent_output_prepare_available,
         fused_recurrent_scan,
         fused_recurrent_scan_available,
@@ -72,6 +73,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
         from fused_recurrent_update import (
             fused_recurrent_output_prepare,
+            fused_recurrent_output_prepare_raw,
             fused_recurrent_output_prepare_available,
             fused_recurrent_scan,
             fused_recurrent_scan_available,
@@ -86,6 +88,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         )
     except Exception:
         fused_recurrent_output_prepare = None  # type: ignore[assignment]
+        fused_recurrent_output_prepare_raw = None  # type: ignore[assignment]
         fused_recurrent_output_prepare_available = None  # type: ignore[assignment]
         fused_recurrent_scan = None  # type: ignore[assignment]
         fused_recurrent_scan_available = None  # type: ignore[assignment]
@@ -188,6 +191,63 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
     except Exception:
         fused_attn_shift_mix = None  # type: ignore[assignment]
         fused_attn_shift_mix_available = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional decode-only norm/mix fast path
+    from .fused_decode_norm_mix import (
+        fused_attn_norm_mix6_decode,
+        fused_decode_norm_mix_available,
+        fused_ffn_add_norm_mix_decode,
+    )
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from fused_decode_norm_mix import (
+            fused_attn_norm_mix6_decode,
+            fused_decode_norm_mix_available,
+            fused_ffn_add_norm_mix_decode,
+        )
+    except Exception:
+        fused_attn_norm_mix6_decode = None  # type: ignore[assignment]
+        fused_decode_norm_mix_available = None  # type: ignore[assignment]
+        fused_ffn_add_norm_mix_decode = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional sm_70 small-row fp16 linear
+    from .sm70_linear import (
+        sm70_linear,
+        sm70_linear_should_use,
+        sm70_linear_threads,
+        sm70_ffn_down_add,
+        sm70_ffn_down_add_should_use,
+        sm70_ffn_up_relu2,
+        sm70_ffn_up_relu2_should_use,
+        sm70_rkv,
+        sm70_rkv_should_use,
+        sm70_rkv_threads,
+    )
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from sm70_linear import (
+            sm70_linear,
+            sm70_linear_should_use,
+            sm70_linear_threads,
+            sm70_ffn_down_add,
+            sm70_ffn_down_add_should_use,
+            sm70_ffn_up_relu2,
+            sm70_ffn_up_relu2_should_use,
+            sm70_rkv,
+            sm70_rkv_should_use,
+            sm70_rkv_threads,
+        )
+    except Exception:
+        sm70_linear = None  # type: ignore[assignment]
+        sm70_linear_should_use = None  # type: ignore[assignment]
+        sm70_linear_threads = None  # type: ignore[assignment]
+        sm70_ffn_down_add = None  # type: ignore[assignment]
+        sm70_ffn_down_add_should_use = None  # type: ignore[assignment]
+        sm70_ffn_up_relu2 = None  # type: ignore[assignment]
+        sm70_ffn_up_relu2_should_use = None  # type: ignore[assignment]
+        sm70_rkv = None  # type: ignore[assignment]
+        sm70_rkv_should_use = None  # type: ignore[assignment]
+        sm70_rkv_threads = None  # type: ignore[assignment]
 
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
@@ -519,6 +579,15 @@ def _native_graph_fused_recurrent_output_enabled() -> bool:
         return False
 
 
+def _native_graph_fused_recurrent_raw_enabled() -> bool:
+    """Fold W decay and K/KK preparation into recurrent output fusion."""
+
+    policy = _kernel_policy()
+    if not env_flag("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW", bool(getattr(policy, "fused_recurrent_raw", False))):
+        return False
+    return bool(fused_recurrent_output_prepare_raw is not None and _native_graph_fused_recurrent_output_enabled())
+
+
 def _native_graph_fused_output_enabled() -> bool:
     """Runtime switch for the experimental native-graph output-prep Triton path."""
 
@@ -583,11 +652,19 @@ def _native_graph_fused_wag_lora_enabled() -> bool:
         return False
 
 
-def _native_graph_fused_wavg_lora_enabled() -> bool:
+def _native_graph_fused_wavg_lora_enabled(rows: int, hidden_size: int) -> bool:
     """Runtime switch for the native-graph W/A/G/V-gate LoRA fusion probe."""
 
     policy = _kernel_policy()
     if not env_flag("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA", bool(getattr(policy, "fused_wavg_lora", False))):
+        return False
+    default_max = getattr(policy, "wavg_lora_bsz1_max_hidden", None)
+    bsz1_max_hidden = env_int(
+        "RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BSZ1_MAX_HIDDEN",
+        0 if default_max is None else int(default_max),
+        lower=0,
+    )
+    if int(rows) == 1 and bsz1_max_hidden > 0 and int(hidden_size) > bsz1_max_hidden:
         return False
     if fused_wavg_lora is None or fused_wavg_lora_available is None:
         return False
@@ -595,6 +672,93 @@ def _native_graph_fused_wavg_lora_enabled() -> bool:
         return bool(fused_wavg_lora_available())
     except Exception:
         return False
+
+
+def _native_graph_fused_norm_mix_enabled() -> bool:
+    """Runtime switch for decode layer-norm/residual/time-mix fusion."""
+
+    policy = _kernel_policy()
+    if not env_flag(
+        "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX",
+        bool(getattr(policy, "fused_norm_mix", False)),
+    ):
+        return False
+    if (
+        fused_attn_norm_mix6_decode is None
+        or fused_ffn_add_norm_mix_decode is None
+        or fused_decode_norm_mix_available is None
+    ):
+        return False
+    try:
+        return bool(fused_decode_norm_mix_available())
+    except Exception:
+        return False
+
+
+def _native_graph_fused_norm_mix_num_warps() -> int:
+    value = env_int("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS", 4, lower=1, upper=8)
+    if value not in {1, 2, 4, 8}:
+        raise ValueError(f"RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS must be one of 1, 2, 4, or 8; got {value}")
+    return value
+
+
+def _native_graph_sm70_linear_enabled() -> bool:
+    """Whether measured sm_70 small-row linear routes may be captured."""
+
+    policy = _kernel_policy()
+    return bool(
+        env_flag("RWKV7_NATIVE_GRAPH_SM70_LINEAR", bool(getattr(policy, "sm70_linear", False)))
+        and sm70_linear is not None
+        and sm70_linear_should_use is not None
+        and sm70_linear_threads is not None
+    )
+
+
+def _native_graph_linear_dispatch(x: torch.Tensor, weight: torch.Tensor, *, role: str) -> torch.Tensor:
+    """Use the exact measured sm_70 route for a native-graph dense linear."""
+
+    if not _native_graph_sm70_linear_enabled():
+        return F.linear(x, weight)
+    rows = 1 if x.dim() == 1 else int(x.shape[0])
+    outputs, inputs = int(weight.shape[0]), int(weight.shape[1])
+    if not sm70_linear_should_use(rows, outputs, inputs, role=role):
+        return F.linear(x, weight)
+    threads = sm70_linear_threads(rows, outputs, inputs, role=role)
+    return sm70_linear(x, weight, threads=threads)
+
+
+def _native_graph_ffn_up_relu2_dispatch(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+    if (
+        not _native_graph_sm70_linear_enabled()
+        or sm70_ffn_up_relu2 is None
+        or sm70_ffn_up_relu2_should_use is None
+    ):
+        return torch.relu(F.linear(x, weight)) ** 2
+    rows = 1 if x.dim() == 1 else int(x.shape[0])
+    outputs, inputs = int(weight.shape[0]), int(weight.shape[1])
+    if not sm70_ffn_up_relu2_should_use(rows, outputs, inputs):
+        return torch.relu(F.linear(x, weight)) ** 2
+    threads = sm70_linear_threads(rows, outputs, inputs, role="ffn_up")
+    return sm70_ffn_up_relu2(x, weight, threads=threads)
+
+
+def _native_graph_ffn_down_add_dispatch(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    residual: torch.Tensor,
+) -> torch.Tensor:
+    if (
+        not _native_graph_sm70_linear_enabled()
+        or sm70_ffn_down_add is None
+        or sm70_ffn_down_add_should_use is None
+    ):
+        return residual + F.linear(x, weight)
+    rows = 1 if x.dim() == 1 else int(x.shape[0])
+    outputs, inputs = int(weight.shape[0]), int(weight.shape[1])
+    if not sm70_ffn_down_add_should_use(rows, outputs, inputs):
+        return residual + F.linear(x, weight)
+    threads = sm70_linear_threads(rows, outputs, inputs, role="ffn_down")
+    return sm70_ffn_down_add(x, weight, residual, threads=threads)
 
 
 def _native_graph_rkv_policy() -> str:
@@ -643,7 +807,7 @@ def _native_graph_vkwr_rkv_dispatch(rows: int, hidden_size: int) -> bool:
     if rows <= 0 or hidden_size <= 0:
         return False
     min_hidden = _native_graph_int_env("RWKV7_NATIVE_GRAPH_RKV_MIN_HIDDEN", 1, lo=1)
-    max_rows = _native_graph_int_env("RWKV7_NATIVE_GRAPH_RKV_MAX_ROWS", 64, lo=4, hi=4096)
+    max_rows = _native_graph_int_env("RWKV7_NATIVE_GRAPH_RKV_MAX_ROWS", 64, lo=1, hi=4096)
     if hidden_size < min_hidden:
         return False
     return rows == 1 or (4 <= rows <= max_rows)
@@ -662,29 +826,42 @@ def _native_graph_rkv_project(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Project R/K/V with either separate linears or VKWR-style stacked bmm."""
 
-    if not _native_graph_vkwr_rkv_dispatch(int(rows), int(hidden_size)) or RKVw.numel() == 0:
-        return F.linear(xr, Rw), F.linear(xk, Kw), F.linear(xv, Vw)
-    if xr.dim() == 1:
+    if _native_graph_vkwr_rkv_dispatch(int(rows), int(hidden_size)) and RKVw.numel() != 0:
+        if xr.dim() == 1:
+            flat = torch.stack(
+                (
+                    xr.reshape(1, hidden_size),
+                    xk.reshape(1, hidden_size),
+                    xv.reshape(1, hidden_size),
+                ),
+                dim=0,
+            )
+            rkv = torch.bmm(flat, RKVw)
+            return rkv[0, 0], rkv[1, 0], rkv[2, 0]
         flat = torch.stack(
             (
-                xr.reshape(1, hidden_size),
-                xk.reshape(1, hidden_size),
-                xv.reshape(1, hidden_size),
+                xr.reshape(rows, hidden_size),
+                xk.reshape(rows, hidden_size),
+                xv.reshape(rows, hidden_size),
             ),
             dim=0,
         )
         rkv = torch.bmm(flat, RKVw)
-        return rkv[0, 0], rkv[1, 0], rkv[2, 0]
-    flat = torch.stack(
-        (
-            xr.reshape(rows, hidden_size),
-            xk.reshape(rows, hidden_size),
-            xv.reshape(rows, hidden_size),
-        ),
-        dim=0,
+        return rkv[0], rkv[1], rkv[2]
+    if (
+        _native_graph_sm70_linear_enabled()
+        and sm70_rkv is not None
+        and sm70_rkv_should_use is not None
+        and sm70_rkv_threads is not None
+        and sm70_rkv_should_use(int(rows), int(hidden_size))
+    ):
+        threads = sm70_rkv_threads(int(rows), int(hidden_size))
+        return sm70_rkv(xr, xk, xv, Rw, Kw, Vw, threads=threads)
+    return (
+        _native_graph_linear_dispatch(xr, Rw, role="hidden"),
+        _native_graph_linear_dispatch(xk, Kw, role="hidden"),
+        _native_graph_linear_dispatch(xv, Vw, role="hidden"),
     )
-    rkv = torch.bmm(flat, RKVw)
-    return rkv[0], rkv[1], rkv[2]
 
 
 def _native_graph_fused_wag_lora_blocks() -> tuple[int, int, int]:
@@ -1426,10 +1603,26 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
      Rw, Kw, Vw, Ow, w1, w2, w0, a1, a2, a0, v1, v2, v0, g1, g2,
      gn_w, gn_b, fx_k, fK, fV, RKVw) = p
     residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5) if has_pre else x
-    h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
-    xx = xpa - h
-    xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
-    xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
+    use_fused_norm_mix = _native_graph_fused_norm_mix_enabled()
+    if use_fused_norm_mix:
+        xr, xw, xk, xv, xa, xg = fused_attn_norm_mix6_decode(
+            residual,
+            xpa,
+            an_w,
+            an_b,
+            x_r,
+            x_w,
+            x_k,
+            x_v,
+            x_a,
+            x_g,
+            num_warps=_native_graph_fused_norm_mix_num_warps(),
+        )
+    else:
+        h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
+        xx = xpa - h
+        xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
+        xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
     v_gate = None
     if _native_graph_fused_projection_enabled():
         r, k, v, w, a, g, v_gate = fused_rkv_wavg_projection(
@@ -1462,7 +1655,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         a = torch.sigmoid(a.view(H * N))
         g = g.view(H * N)
         v_gate = torch.sigmoid(v_gate.view(H * N))
-    elif _native_graph_fused_wavg_lora_enabled():
+    elif _native_graph_fused_wavg_lora_enabled(1, H * N):
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
         if i == 0:
             w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
@@ -1524,16 +1717,38 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
         a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
         g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
-    kk = F.normalize((k * k_k).view(H, N), dim=-1, p=2.0).view(H * N)
-    k = k * (1 + (a - 1) * k_a)
+    use_fused_recurrent_output = _native_graph_fused_recurrent_output_enabled()
+    use_fused_recurrent_raw = use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
+    if not use_fused_recurrent_raw:
+        kk = F.normalize((k * k_k).view(H, N), dim=-1, p=2.0).view(H * N)
+        k = k * (1 + (a - 1) * k_a)
     if i == 0:
         v_first.copy_(v)
     else:
         if v_gate is None:
             v_gate = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
         v = v + (v_first - v) * v_gate
-    w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
-    if _native_graph_fused_recurrent_output_enabled():
+    if use_fused_recurrent_raw:
+        out, new_state = fused_recurrent_output_prepare_raw(
+            r.view(1, H, N),
+            w.view(1, H, N),
+            k.view(1, H, N),
+            v.view(1, H, N),
+            a.view(1, H, N),
+            state.view(1, H, N, N),
+            g.view(1, H, N),
+            k_k,
+            k_a,
+            r_k,
+            gn_w,
+            gn_b,
+            eps=eps,
+            block_n=N,
+        )
+        out = out.view(H * N)
+        new_state = new_state.view(H, N, N)
+    elif use_fused_recurrent_output:
+        w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
         out, new_state = fused_recurrent_output_prepare(
             r.view(1, H, N),
             w.view(1, H, N),
@@ -1552,9 +1767,10 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         out = out.view(H * N)
         new_state = new_state.view(H, N, N)
     else:
+        w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
         out, new_state = _recurrent_update_unbatched(r, w, k, v, kk, a, state, H, N)
-    if _native_graph_fused_recurrent_output_enabled():
-        out = F.linear(out, Ow)
+    if use_fused_recurrent_output:
+        out = _native_graph_linear_dispatch(out, Ow, role="hidden")
     elif _native_graph_fused_output_project_enabled():
         out = fused_attn_output_project(
             out.view(1, H * N),
@@ -1588,22 +1804,32 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
             head_v_dim=N,
             eps=eps,
         ).view(H * N)
-        out = F.linear(out, Ow)
+        out = _native_graph_linear_dispatch(out, Ow, role="hidden")
     else:
         out = F.group_norm(out.view(1, H * N), H, gn_w, gn_b, eps).view(H * N)
         sk = (r.view(H, N) * k.view(H, N) * r_k).sum(dim=-1, keepdim=True)
         out = (out + (sk * v.view(H, N)).view(H * N)) * g
-        out = F.linear(out, Ow)
-    xpa.copy_(h)
+        out = _native_graph_linear_dispatch(out, Ow, role="hidden")
     state.copy_(new_state)
-    x = residual + out
-    residual = x
-    h2 = F.layer_norm(x, [H * N], fn_w, fn_b, 1e-5)
-    fxx = xpf - h2
-    fk = h2 + fxx * fx_k
-    fk = torch.relu(F.linear(fk, fK)) ** 2
-    xpf.copy_(h2)
-    return residual + F.linear(fk, fV)
+    if use_fused_norm_mix:
+        residual, fk = fused_ffn_add_norm_mix_decode(
+            residual,
+            out,
+            xpf,
+            fn_w,
+            fn_b,
+            fx_k,
+            num_warps=_native_graph_fused_norm_mix_num_warps(),
+        )
+    else:
+        xpa.copy_(h)
+        residual = residual + out
+        h2 = F.layer_norm(residual, [H * N], fn_w, fn_b, 1e-5)
+        fxx = xpf - h2
+        fk = h2 + fxx * fx_k
+        xpf.copy_(h2)
+    fk = _native_graph_ffn_up_relu2_dispatch(fk, fK)
+    return _native_graph_ffn_down_add_dispatch(fk, fV, residual)
 
 
 def _block_ip_batched(x, state, xpa, xpf, v_first, p):
@@ -1623,10 +1849,26 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
      gn_w, gn_b, fx_k, fK, fV, RKVw) = p
     B = x.shape[0]
     residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5) if has_pre else x
-    h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
-    xx = xpa - h
-    xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
-    xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
+    use_fused_norm_mix = _native_graph_fused_norm_mix_enabled()
+    if use_fused_norm_mix:
+        xr, xw, xk, xv, xa, xg = fused_attn_norm_mix6_decode(
+            residual,
+            xpa,
+            an_w,
+            an_b,
+            x_r,
+            x_w,
+            x_k,
+            x_v,
+            x_a,
+            x_g,
+            num_warps=_native_graph_fused_norm_mix_num_warps(),
+        )
+    else:
+        h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
+        xx = xpa - h
+        xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
+        xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
     v_gate = None
     if _native_graph_fused_projection_enabled():
         r, k, v, w, a, g, v_gate = fused_rkv_wavg_projection(
@@ -1654,7 +1896,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         )
         a = torch.sigmoid(a)
         v_gate = torch.sigmoid(v_gate)
-    elif _native_graph_fused_wavg_lora_enabled():
+    elif _native_graph_fused_wavg_lora_enabled(B, H * N):
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
         if i == 0:
             w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
@@ -1710,16 +1952,37 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
         a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
         g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
-    kk = F.normalize((k * k_k).view(B, H, N), dim=-1, p=2.0).view(B, H * N)
-    k = k * (1 + (a - 1) * k_a)
+    use_fused_recurrent_output = _native_graph_fused_recurrent_output_enabled()
+    use_fused_recurrent_raw = use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
+    if not use_fused_recurrent_raw:
+        kk = F.normalize((k * k_k).view(B, H, N), dim=-1, p=2.0).view(B, H * N)
+        k = k * (1 + (a - 1) * k_a)
     if i == 0:
         v_first.copy_(v)
     else:
         if v_gate is None:
             v_gate = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
         v = v + (v_first - v) * v_gate
-    w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
-    if _native_graph_fused_recurrent_output_enabled():
+    if use_fused_recurrent_raw:
+        out, new_state = fused_recurrent_output_prepare_raw(
+            r.view(B, H, N),
+            w.view(B, H, N),
+            k.view(B, H, N),
+            v.view(B, H, N),
+            a.view(B, H, N),
+            state,
+            g.view(B, H, N),
+            k_k,
+            k_a,
+            r_k,
+            gn_w,
+            gn_b,
+            eps=eps,
+            block_n=N,
+        )
+        out = out.reshape(B, H * N)
+    elif use_fused_recurrent_output:
+        w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
         out, new_state = fused_recurrent_output_prepare(
             r.view(B, H, N),
             w.view(B, H, N),
@@ -1737,9 +2000,10 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         )
         out = out.reshape(B, H * N)
     else:
+        w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
         out, new_state = _recurrent_update_batched(r, w, k, v, kk, a, state, B, H, N)
-    if _native_graph_fused_recurrent_output_enabled():
-        out = F.linear(out, Ow)
+    if use_fused_recurrent_output:
+        out = _native_graph_linear_dispatch(out, Ow, role="hidden")
     elif _native_graph_fused_output_project_enabled():
         out = fused_attn_output_project(
             out,
@@ -1773,23 +2037,32 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
             head_v_dim=N,
             eps=eps,
         )
-        out = F.linear(out, Ow)
+        out = _native_graph_linear_dispatch(out, Ow, role="hidden")
     else:
         out = F.group_norm(out, H, gn_w, gn_b, eps).view(B, H * N)
         sk = (r.view(B, H, N) * k.view(B, H, N) * r_k).sum(dim=-1, keepdim=True)
         out = (out + (sk * v.view(B, H, N)).view(B, H * N)) * g
-        out = F.linear(out, Ow)
-    xpa.copy_(h)
+        out = _native_graph_linear_dispatch(out, Ow, role="hidden")
     state.copy_(new_state)
-    x = residual + out
-
-    residual = x
-    h2 = F.layer_norm(x, [H * N], fn_w, fn_b, 1e-5)
-    fxx = xpf - h2
-    fk = h2 + fxx * fx_k
-    fk = torch.relu(F.linear(fk, fK)) ** 2
-    xpf.copy_(h2)
-    return residual + F.linear(fk, fV)
+    if use_fused_norm_mix:
+        residual, fk = fused_ffn_add_norm_mix_decode(
+            residual,
+            out,
+            xpf,
+            fn_w,
+            fn_b,
+            fx_k,
+            num_warps=_native_graph_fused_norm_mix_num_warps(),
+        )
+    else:
+        xpa.copy_(h)
+        residual = residual + out
+        h2 = F.layer_norm(residual, [H * N], fn_w, fn_b, 1e-5)
+        fxx = xpf - h2
+        fk = h2 + fxx * fx_k
+        xpf.copy_(h2)
+    fk = _native_graph_ffn_up_relu2_dispatch(fk, fK)
+    return _native_graph_ffn_down_add_dispatch(fk, fV, residual)
 
 
 def cuda_graph_decode(model, ids, packs, n=128):

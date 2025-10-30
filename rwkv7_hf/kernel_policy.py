@@ -57,11 +57,15 @@ class KernelPolicy:
     fused_prefill_state_scan_max_batch: int | None = None
     fused_prefill_output: bool = False
     fused_recurrent_output: bool = False
+    fused_recurrent_raw: bool = False
     fused_output: bool = False
+    fused_norm_mix: bool = False
+    sm70_linear: bool = False
     fused_output_project: bool = False
     fused_projection: bool = False
     fused_wag_lora: bool = False
     fused_wavg_lora: bool = False
+    wavg_lora_bsz1_max_hidden: int | None = None
     output_project_block_m: int = 16
     wag_lora_blocks: tuple[int, int, int] = (64, 64, 64)
     wavg_lora_blocks: tuple[int, int, int] = (64, 64, 64)
@@ -174,10 +178,14 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
         default_on=(
             "fast_cache",
             "fused_recurrent_output",
+            "fused_recurrent_raw",
             "fused_output",
+            "fused_norm_mix",
+            "batch-routed fused_wavg_lora",
+            "shape-routed sm70_linear",
             "batch-routed fused prefill",
         ),
-        default_off=("fused_recurrent", "fused_output_project", "projection/LoRA fusions"),
+        default_off=("fused_recurrent", "fused_output_project", "full projection fusion"),
         required_functional=COMMON_FUNCTIONAL_SMOKES
         + ("HF Trainer", "TRL SFT/DPO/GRPO", "PEFT save/load/merge"),
         required_benchmarks=COMMON_PERF_BENCHMARKS
@@ -366,15 +374,20 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             profile=profile,
             fast_prefill=True,
             fused_recurrent_output=True,
+            fused_recurrent_raw=True,
             fused_output=True,
             fused_prefill_scan=True,
             fused_prefill_state_prep=True,
             fused_prefill_state_scan=True,
             fused_prefill_state_scan_max_batch=1,
             fused_prefill_output=True,
+            fused_norm_mix=True,
+            fused_wavg_lora=True,
+            wavg_lora_bsz1_max_hidden=1024,
+            sm70_linear=True,
             output_project_block_m=16,
             quant_policy="memory_first_decode_hot_optional",
-            notes="V100 baseline: batch-routed split-row prefill plus output/recurrent-output fusions are default; projection/output-project/LoRA fusions remain opt-in",
+            notes="V100 baseline: batch-routed split-row prefill and WAVG-LoRA plus shape-routed sm70 linear/RKV, output/recurrent-output, and decode norm/mix fusions are default; WAVG bsz=1 is limited to hidden<=1024 and full projection/output-project remain opt-in",
         )
     if family in {"turing", "ampere"}:
         return KernelPolicy(

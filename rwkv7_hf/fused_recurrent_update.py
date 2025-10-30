@@ -152,6 +152,83 @@ if _HAS_TRITON:
         tl.store(out_ptr + vec_base + offs_i, prepared, mask=mask_i)
 
     @triton.jit
+    def _recurrent_output_prepare_raw_kernel(
+        r_ptr,
+        w_raw_ptr,
+        k_raw_ptr,
+        v_ptr,
+        a_ptr,
+        state_ptr,
+        g_ptr,
+        kk_scale_ptr,
+        ka_ptr,
+        rk_ptr,
+        gn_weight_ptr,
+        gn_bias_ptr,
+        out_ptr,
+        new_state_ptr,
+        H: tl.constexpr,
+        N: tl.constexpr,
+        eps: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+    ):
+        """Decode recurrence plus W decay, K adjustment/normalization and output prep."""
+
+        bh_id = tl.program_id(0)
+        head_id = bh_id % H
+        offs_i = tl.arange(0, BLOCK_N)
+        offs_j = tl.arange(0, BLOCK_N)
+        mask_i = offs_i < N
+        mask_j = offs_j < N
+        vec_base = bh_id * N
+        state_base = bh_id * N * N
+
+        st = tl.load(
+            state_ptr + state_base + offs_i[:, None] * N + offs_j[None, :],
+            mask=mask_i[:, None] & mask_j[None, :],
+            other=0.0,
+        ).to(tl.float32)
+        r = tl.load(r_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+        w_raw = tl.load(w_raw_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+        k_raw = tl.load(k_raw_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+        a = tl.load(a_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+        kk_scale = tl.load(kk_scale_ptr + head_id * N + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+        ka = tl.load(ka_ptr + head_id * N + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+        kk_unscaled = tl.where(mask_j, k_raw * kk_scale, 0.0)
+        kk_norm = tl.sqrt(tl.sum(kk_unscaled * kk_unscaled, axis=0))
+        kk = kk_unscaled / tl.maximum(kk_norm, 1.0e-12)
+        k = k_raw * (1.0 + (a - 1.0) * ka)
+        w = tl.exp(-0.606531 * tl.sigmoid(w_raw))
+        v_cols = tl.load(v_ptr + vec_base + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+
+        state_dot_kk = tl.sum(st * kk[None, :], axis=1)
+        new_st = st * w[None, :] + v_cols[:, None] * k[None, :] - state_dot_kk[:, None] * kk[None, :] * a[None, :]
+        tl.store(
+            new_state_ptr + state_base + offs_i[:, None] * N + offs_j[None, :],
+            new_st,
+            mask=mask_i[:, None] & mask_j[None, :],
+        )
+
+        recurrent = tl.sum(new_st * r[None, :], axis=1)
+        mean = tl.sum(tl.where(mask_i, recurrent, 0.0), axis=0) / N
+        centered = tl.where(mask_i, recurrent - mean, 0.0)
+        var = tl.sum(centered * centered, axis=0) / N
+        normed = centered * tl.rsqrt(var + eps)
+
+        r_rows = tl.load(r_ptr + vec_base + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+        k_raw_rows = tl.load(k_raw_ptr + vec_base + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+        a_rows = tl.load(a_ptr + vec_base + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+        ka_rows = tl.load(ka_ptr + head_id * N + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+        k_rows = k_raw_rows * (1.0 + (a_rows - 1.0) * ka_rows)
+        rk = tl.load(rk_ptr + head_id * N + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+        corr_scale = tl.sum(r_rows * k_rows * rk, axis=0)
+        gate = tl.load(g_ptr + vec_base + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+        weight = tl.load(gn_weight_ptr + head_id * N + offs_i, mask=mask_i, other=1.0).to(tl.float32)
+        bias = tl.load(gn_bias_ptr + head_id * N + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+        prepared = (normed * weight + bias + corr_scale * v_cols) * gate
+        tl.store(out_ptr + vec_base + offs_i, prepared, mask=mask_i)
+
+    @triton.jit
     def _recurrent_scan_kernel(
         r_ptr,
         w_ptr,
@@ -1000,6 +1077,126 @@ def fused_recurrent_output_prepare(
     return out, new_state
 
 
+def fused_recurrent_output_prepare_raw(
+    r: Any,
+    w_raw: Any,
+    k_raw: Any,
+    v: Any,
+    a: Any,
+    state: Any,
+    g: Any,
+    k_k: Any,
+    k_a: Any,
+    r_k: Any,
+    group_norm_weight: Any,
+    group_norm_bias: Any,
+    *,
+    eps: float,
+    block_n: int = 64,
+    force_fallback: bool = False,
+):
+    """Decode recurrence/output prep directly from raw W/K and sigmoid A.
+
+    This avoids materializing W decay, adjusted K, and normalized KK as three
+    separate decode-time tensor pipelines.  ``a`` is already sigmoid'd; V
+    interpolation, when present, must be applied before this call.
+    """
+
+    if torch is None or F is None:
+        raise RuntimeError("fused_recurrent_output_prepare_raw requires torch")
+    if state.dim() != 4:
+        raise ValueError("state must be shaped [batch, heads, head_dim, head_dim]")
+    B, H, N, N2 = (int(vv) for vv in state.shape)
+    if N != N2:
+        raise ValueError("state must be square in the last two dimensions")
+    if int(block_n) < N:
+        raise ValueError(f"block_n must be >= head_dim={N}; got {block_n}")
+    r3, flat = _as_bhn(r, H, N, name="r")
+    w3, _ = _as_bhn(w_raw, H, N, name="w_raw")
+    k3, _ = _as_bhn(k_raw, H, N, name="k_raw")
+    v3, _ = _as_bhn(v, H, N, name="v")
+    a3, _ = _as_bhn(a, H, N, name="a")
+    g3, _ = _as_bhn(g, H, N, name="g")
+    hidden = H * N
+    for value, name in ((k_k, "k_k"), (k_a, "k_a"), (r_k, "r_k")):
+        if int(value.numel()) != hidden:
+            raise ValueError(f"{name} must contain {hidden} values")
+    for value, name in (
+        (group_norm_weight, "group_norm_weight"),
+        (group_norm_bias, "group_norm_bias"),
+    ):
+        if int(value.numel()) != hidden:
+            raise ValueError(f"{name} must contain {hidden} values")
+
+    use_triton = bool(
+        not force_fallback
+        and fused_recurrent_output_prepare_available()
+        and all(value.is_cuda for value in (r3, w3, k3, v3, a3, state, g3, k_k, k_a, r_k, group_norm_weight, group_norm_bias))
+        and state.dtype == torch.float32
+        and r3.dtype in (torch.float16, torch.bfloat16, torch.float32)
+        and all(value.dtype == r3.dtype for value in (w3, k3, v3, a3, g3, k_k, k_a, r_k, group_norm_weight, group_norm_bias))
+    )
+    if not use_triton:
+        kk = F.normalize((k3 * k_k.reshape(1, H, N)), dim=-1, p=2.0)
+        k = k3 * (1 + (a3 - 1) * k_a.reshape(1, H, N))
+        w = torch.exp(-0.606531 * torch.sigmoid(w3.float()))
+        return fused_recurrent_output_prepare(
+            r3.reshape(B, hidden) if flat else r3,
+            w,
+            k,
+            v3,
+            kk,
+            a3,
+            state,
+            g3,
+            r_k.reshape(H, N),
+            group_norm_weight.reshape(hidden),
+            group_norm_bias.reshape(hidden),
+            eps=eps,
+            block_n=block_n,
+            force_fallback=True,
+        )
+
+    r_c = r3.contiguous()
+    w_c = w3.contiguous()
+    k_c = k3.contiguous()
+    v_c = v3.contiguous()
+    a_c = a3.contiguous()
+    state_c = state.contiguous()
+    g_c = g3.contiguous()
+    kk_c = k_k.reshape(H, N).contiguous()
+    ka_c = k_a.reshape(H, N).contiguous()
+    rk_c = r_k.reshape(H, N).contiguous()
+    gnw_c = group_norm_weight.reshape(hidden).contiguous()
+    gnb_c = group_norm_bias.reshape(hidden).contiguous()
+    out = torch.empty((B, H, N), device=r3.device, dtype=r3.dtype)
+    new_state = torch.empty_like(state_c)
+    _recurrent_output_prepare_raw_kernel[(B * H,)](
+        r_c,
+        w_c,
+        k_c,
+        v_c,
+        a_c,
+        state_c,
+        g_c,
+        kk_c,
+        ka_c,
+        rk_c,
+        gnw_c,
+        gnb_c,
+        out,
+        new_state,
+        H,
+        N,
+        float(eps),
+        BLOCK_N=int(block_n),
+        num_warps=8,
+    )
+    if flat:
+        return out.reshape(B, hidden), new_state
+    return out, new_state
+
+
 def fused_recurrent_update(
     r: Any,
     w: Any,
@@ -1354,7 +1551,7 @@ def fused_recurrent_scan_state_prep(
     ``block_m < head_dim`` selects a split-row Triton kernel.  That variant
     duplicates per-token KK normalization across row blocks, but keeps a much
     smaller fp32 state tile live per program and is intended for
-    register-constrained devices such as V100/sm70.  The default remains the
+    register-constrained devices such as sm_70.  The default remains the
     original full-head path until an architecture policy selects a row tile.
     """
 

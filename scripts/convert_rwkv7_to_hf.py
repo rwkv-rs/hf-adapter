@@ -212,6 +212,7 @@ def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
         "fused_attention_projection.py",
         "fused_ffn.py",
         "fused_lora.py",
+        "fused_decode_norm_mix.py",
         "fused_norm_mix.py",
         "fused_output.py",
         "fused_prefill.py",
@@ -232,6 +233,7 @@ def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
         "native_quant_mm4.py",
         "native_quant_mm8.py",
         "native_quant_policy.py",
+        "sm70_linear.py",
         "triton_compat.py",
         "tokenization_rwkv7.py",
     ]:
