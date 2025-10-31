@@ -61,6 +61,9 @@ class KernelPolicy:
     fused_output: bool = False
     fused_norm_mix: bool = False
     sm70_linear: bool = False
+    ada_linear: bool = False
+    ada_wagv_lora: bool = False
+    ada_sparse_ffn: bool = False
     fused_output_project: bool = False
     fused_projection: bool = False
     fused_wag_lora: bool = False
@@ -222,10 +225,13 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     "ada": GPUAdaptationRule(
         family="ada",
         cards=("RTX 4090", "RTX 4080/4070", "RTX 40-series"),
-        status="touched; 4090 validation rows exist",
-        default_stance="high-end consumer path; cuBLAS beats shallow projection kernels",
-        default_on=("fast_cache", "fused_recurrent_output", "fused_output"),
-        default_off=("fused_output_project", "projection/LoRA fusions", "fused_prefill_scan by default"),
+        status="4090 decode optimized; exact-row B2 and grouped W/A/G/V B1/B2/B4 correctness/speed rows pass",
+        default_stance="high-end consumer path with shape-routed exact-row and grouped low-rank kernels",
+        default_on=(
+            "fast_cache", "fused_recurrent_output", "fused_recurrent_raw", "fused_output",
+            "fused_norm_mix", "ada_linear for rows=2 and rows=4 hidden projections", "ada_wagv_lora for rows<=4",
+        ),
+        default_off=("fused_output_project", "generic Triton projection/LoRA fusions", "ada_sparse_ffn", "fused_prefill_scan by default"),
         required_functional=COMMON_FUNCTIONAL_SMOKES,
         required_benchmarks=COMMON_PERF_BENCHMARKS
         + ("fast-prefill TTFT/TPOT rows when RWKV7_FAST_PREFILL is considered",),
@@ -402,10 +408,15 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
         return KernelPolicy(
             profile=profile,
             fused_recurrent_output=True,
+            fused_recurrent_raw=True,
             fused_output=True,
+            fused_norm_mix=True,
             fused_prefill_scan=False,
+            ada_linear=True,
+            ada_wagv_lora=True,
+            ada_sparse_ffn=False,
             output_project_block_m=16,
-            notes="RTX 40/Ada: stable output fusions on by default; shallow split-K projection stays off",
+            notes="RTX 40/Ada: 4090 rows promote raw recurrent, decode norm/mix, rows=2 exact linear, rows=4 hidden exact linear, and rows<=4 grouped W/A/G/V LoRA; sparse FFN and shallow split-K projection remain off",
         )
     if family == "hopper":
         return KernelPolicy(

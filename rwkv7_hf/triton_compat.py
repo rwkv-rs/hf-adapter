@@ -12,6 +12,7 @@ requiring users to patch site-packages by hand.
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 
@@ -83,6 +84,49 @@ def patch_legacy_attrs_descriptor() -> bool:
     return True
 
 
+def maybe_disable_incompatible_torch_compile(attrs_descriptor_shim: bool) -> bool:
+    """Keep PyTorch 2.6-era Inductor from spawning incompatible Triton jobs.
+
+    PyTorch 2.6 imports ``AttrsDescriptor`` inside Inductor worker subprocesses.
+    A main-process compatibility shim cannot reach those fresh interpreters, so
+    PyTorch 2.6 + Triton 3.3 fails while importing FLA's ``@torch.compile``
+    activations.  Disable only that known-incompatible pair; CUDA graphs and
+    the adapter's direct Triton kernels remain enabled.
+    """
+
+    if not attrs_descriptor_shim:
+        return False
+    if os.environ.get("RWKV7_LEGACY_TORCH_COMPILE", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return False
+    try:
+        import torch
+
+        match = re.match(r"(\d+)\.(\d+)", str(torch.__version__))
+        if match is None or (int(match.group(1)), int(match.group(2))) >= (2, 7):
+            return False
+    except Exception:
+        return False
+
+    os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+    os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
+    try:
+        if not getattr(torch, "_rwkv7_legacy_triton_compile_patched", False):
+            original = getattr(torch, "compile", None)
+            if original is not None:
+                setattr(torch, "_rwkv7_original_compile", original)
+
+                def _rwkv7_identity_compile(model=None, *args, **kwargs):
+                    if model is None:
+                        return lambda fn: fn
+                    return model
+
+                torch.compile = _rwkv7_identity_compile  # type: ignore[assignment]
+                setattr(torch, "_rwkv7_legacy_triton_compile_patched", True)
+    except Exception:
+        pass
+    return True
+
+
 def maybe_disable_blackwell_torch_compile() -> bool:
     """Disable the known-broken FLA torch.compile activation path on sm_120.
 
@@ -131,7 +175,9 @@ def maybe_disable_blackwell_torch_compile() -> bool:
 
 
 def apply_runtime_compat() -> dict[str, bool]:
+    legacy_attrs_descriptor = patch_legacy_attrs_descriptor()
     return {
-        "legacy_attrs_descriptor": patch_legacy_attrs_descriptor(),
+        "legacy_attrs_descriptor": legacy_attrs_descriptor,
+        "legacy_torch_compile_disabled": maybe_disable_incompatible_torch_compile(legacy_attrs_descriptor),
         "blackwell_torch_compile_disabled": maybe_disable_blackwell_torch_compile(),
     }
