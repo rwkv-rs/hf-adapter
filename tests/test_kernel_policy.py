@@ -55,9 +55,14 @@ def test_policy_defaults_are_conservative() -> None:
     ada = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 4090", (8, 9)))
     assert ada.fused_output
     assert ada.fused_recurrent_output
+    assert ada.fused_recurrent_raw
+    assert ada.fused_norm_mix
     assert not ada.fast_prefill
     assert not ada.fused_prefill_state_scan
     assert not ada.fused_projection
+    assert ada.ada_linear
+    assert ada.ada_wagv_lora
+    assert not ada.ada_sparse_ffn
 
     blackwell = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 5090", (12, 0)))
     assert blackwell.fused_output

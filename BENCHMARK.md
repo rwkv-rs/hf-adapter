@@ -181,6 +181,53 @@ tok/s` (`0.4921x` of the current Albatross reference for 0.4B / bsz1 /
 prompt512), satisfying the near-term `>=0.45x` target. It remains opt-in; the
 default HF path is unchanged.
 
+### RTX 4090 native-graph + TorchAO W4 update (2026-07-10)
+
+The 0.4B model now has an optional tensor-core W4 lane through
+`rwkv7_hf.native_quant_torchao`. It combines TorchAO group-128 packed W4
+projections with the adapter's CUDA-graph decode and the fp16/bf16 Ada fused
+W/A/G/V low-rank kernel. The run used bf16 activations because the current
+CUDA `aten::_weight_int4pack_mm` contract requires bf16. All 145 large
+projection/FFN/head modules selected by `min_params=1_000_000` were quantized.
+
+| bsz | bf16 tok/s | TorchAO W4 tok/s | W4 / bf16 | Albatross fp16 tok/s | W4 / Albatross |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 692.7 | **927.0** | **1.338x** | 790.1 | **1.173x** |
+| 2 | 1,056.9 | **1,712.6** | **1.620x** | 1,445.8 | **1.185x** |
+| 4 | 2,003.0 | **3,093.2** | **1.544x** | 2,564.0 | **1.206x** |
+| 8 | 2,746.4 | **3,407.0** | **1.241x** | 2,246.0 | **1.517x** |
+
+Packed model payload falls from `859.8 MB` to `342.8 MB` (`0.3987x`). Across
+bsz 1/2/4/8, prompt-logit cosine is `0.999239-0.999344`, final-logit cosine is
+`0.999460-0.999550`, and the next token matches the bf16 baseline. Evidence:
+`/data/rwkv4090/results/torchao_w4_0.4b_b{1,2,4,8}_bf16ada.jsonl` on the
+validation host.
+
+The same lane generalizes to the 1.5B checkpoint rather than relying on the
+0.4B shape: bsz1 improves from `267.2` to `580.5 tok/s` (`2.173x`) and bsz2
+from `461.6` to `1,094.5 tok/s` (`2.371x`). Packed payload is `1,033.3 MB`
+versus `2,913.3 MB` (`0.3547x`), final-logit cosine is `>=0.999400`, and both
+rows preserve the next token. A matching 4090 Albatross 1.5B baseline has not
+yet been produced, so these two rows are only W4-vs-bf16 evidence.
+
+Reproduce with:
+
+```bash
+python bench/bench_native_quant_e2e_decode.py \
+  --hf-dir /path/to/rwkv7-g1d-0.4b-hf \
+  --dtype bf16 --device cuda --attn-mode chunk \
+  --fast-token-backend native_graph \
+  --quantizations none torchao_w4 \
+  --min-params 1000000 --policy memory \
+  --batch-size 1 --prompt-tokens 32 --decode-tokens 128 --warmup 8
+```
+
+This closes the 0.4B Ada W4 decode-speed lane for bsz 1/2/4/8. It does not
+close quantized prefill: for B1/B4 and T64/T256, W4 prefill is currently
+`0.819x-0.831x` of the same bf16 path. It also does not close W8: full-memory
+native MM8 is `0.369x` fp16 and the first TorchAO W8 probe is about `0.59x`;
+W8 tensor-core/fused projection work remains open.
+
 ## Ascend 910B status (华为昇腾 NPU)
 
 独立仓库 [rwkv7-hf-adapter-ascend](https://github.com/123123213weqw/rwkv7-hf-adapter-ascend)(PR #2)。fla-free native 后端(`NativeRWKV7ForCausalLM`,纯 PyTorch + `torch_npu`),无需 CUDA/Triton/FLA。

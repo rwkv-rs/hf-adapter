@@ -47,6 +47,26 @@ roadmap.
   decode, correctness, peak memory/VRAM, and `bench/analyze_results.py`
   reporting.
 
+## Current RTX 4090 Milestone (2026-07-10)
+
+- 0.4B dense fp16 native-graph decode is now about `694/1344/2419/2984`
+  tok/s for bsz1/2/4/8, approximately `0.88x/0.93x/0.94x/1.33x` of the
+  matching Albatross rows.
+- The optional TorchAO group-128 W4 lane is a real speed lane, not only a
+  memory smoke. With bf16 activations and the Ada bf16 W/A/G/V fusion it reaches
+  `927/1713/3093/3407 tok/s`, or `1.17x-1.52x` Albatross, for 0.4B
+  bsz1/2/4/8. Payload is `0.399x`, logit cosine is `>=0.999239`, and next-token
+  equality passes. 1.5B bsz1/2 is `2.17x/2.37x` its bf16 baseline with
+  `0.355x` payload.
+- Do not generalize the W4 decode result to all quantization: W4 prefill is only
+  `0.819x-0.831x` bf16 for the measured B1/B4 T64/T256 rows, and W8 remains
+  below fp16. The next quant priority is W8 tensor-core/grouped projection,
+  followed by quantized prefill.
+- Evidence and reproduce commands are in the RTX 4090 section of
+  `BENCHMARK.md`; the runtime integration is
+  `rwkv7_hf/native_quant_torchao.py` plus quant-aware native-graph operand
+  extraction in `rwkv7_hf/native_jit.py`.
+
 ## Current V100 Decode Milestone
 
 The 2026-07-10 sm70 pass adds decode norm/mix fusion, grouped shape-routed

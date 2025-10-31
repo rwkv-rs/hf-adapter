@@ -263,7 +263,10 @@ scripts/run_qwen35_apple_acceptance.sh
 
 ### 11. 量化速度
 
-现状:W8/W4 加载与显存下降可用。RTX 5090 native MM8/MM4 `speed`
+现状:W8/W4 加载与显存下降可用。RTX 4090 的 0.4B TorchAO W4 memory lane
+已在 bsz1/2/4/8 达到同口径 bf16 的 `1.24x-1.62x`、Albatross fp16 的
+`1.17x-1.52x`，payload 降至 `0.399x` 且 cosine `>=0.999239`；因此 Ada
+W4 decode 小矩阵已闭合，但 W8 与量化 prefill 仍未闭合。RTX 5090 native MM8/MM4 `speed`
 policy 已在 1.5B/2.9B/7.2B 完成 fresh-process full matrix
 (216/216 pass,quantized same-next 144/144,footprint 全部下降,多行速度超过
 fp16)。但 7.2B 大 bsz/长 prompt 压力行仍低于 fp16;`memory` policy/通用 bnb

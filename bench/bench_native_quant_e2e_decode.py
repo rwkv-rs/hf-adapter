@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # coding=utf-8
-"""End-to-end native mm8/mm4 decode benchmark for the HF adapter.
+"""End-to-end native and TorchAO W8/W4 decode benchmark for the HF adapter.
 
 This complements the isolated RKV/GEMV native-quant microbenchmarks by applying
 ``quantize_model_mm8`` / ``quantize_model_mm4`` to a loaded HF model and timing
@@ -51,15 +51,34 @@ def peak_mb(device: str) -> float | None:
     return round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
 
 
+def _tensor_payload_bytes(tensor, seen: set[int]) -> int:
+    """Count wrapper-subclass payloads instead of their logical dense shape."""
+
+    ident = id(tensor)
+    if ident in seen:
+        return 0
+    seen.add(ident)
+    flatten = getattr(tensor, "__tensor_flatten__", None)
+    if callable(flatten) and type(tensor) not in {torch.Tensor, torch.nn.Parameter}:
+        try:
+            names = flatten()[0]
+            payload = 0
+            for name in names:
+                value = getattr(tensor, name)
+                if isinstance(value, torch.Tensor):
+                    payload += _tensor_payload_bytes(value, seen)
+            if payload:
+                return payload
+        except Exception:
+            pass
+    return int(tensor.numel()) * int(tensor.element_size())
+
+
 def module_footprint_mb(model) -> float:
     total = 0
     seen: set[int] = set()
     for tensor in list(model.parameters()) + list(model.buffers()):
-        ident = id(tensor)
-        if ident in seen:
-            continue
-        seen.add(ident)
-        total += tensor.numel() * tensor.element_size()
+        total += _tensor_payload_bytes(tensor, seen)
     return round(total / 1024 / 1024, 1)
 
 
@@ -171,17 +190,32 @@ def quantize_model(model, quantization: str, min_params: int, policy: str) -> tu
     elif quantization == "mm4":
         from rwkv7_hf.native_quant_mm4 import quantize_model_mm4
         replaced = quantize_model_mm4(model, min_params=min_params, policy=policy)
+    elif quantization in {"torchao_w8", "torchao_w4"}:
+        from rwkv7_hf.native_quant_torchao import quantize_model_torchao
+
+        replaced = quantize_model_torchao(
+            model,
+            quantization,
+            min_params=min_params,
+            policy=policy,
+        )
     else:  # pragma: no cover
         raise ValueError(quantization)
     return int(replaced), count_modules(model)
 
 
 def count_modules(model) -> dict[str, int]:
-    counts = {"linear_dense": 0, "mm8": 0, "mm4": 0}
+    counts = {"linear_dense": 0, "mm8": 0, "mm4": 0, "torchao_w8": 0, "torchao_w4": 0}
     for mod in model.modules():
         name = type(mod).__name__
         if isinstance(mod, torch.nn.Linear):
-            counts["linear_dense"] += 1
+            impl = getattr(getattr(mod, "weight", None), "tensor_impl", None)
+            if hasattr(impl, "packed_weight"):
+                counts["torchao_w4"] += 1
+            elif hasattr(impl, "int_data"):
+                counts["torchao_w8"] += 1
+            else:
+                counts["linear_dense"] += 1
         elif name == "MM8Linear":
             counts["mm8"] += 1
         elif name == "MM4Linear":
@@ -265,10 +299,11 @@ def main() -> int:
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="true")
     ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="native_graph")
-    ap.add_argument("--quantizations", nargs="+", choices=["none", "mm8", "mm4"], default=["none", "mm8", "mm4"])
+    quantization_choices = ["none", "mm8", "mm4", "torchao_w8", "torchao_w4"]
+    ap.add_argument("--quantizations", nargs="+", choices=quantization_choices, default=["none", "mm8", "mm4"])
     ap.add_argument(
         "--single-quantization",
-        choices=["none", "mm8", "mm4"],
+        choices=quantization_choices,
         default=None,
         help="Run exactly one quantization in this process. Useful for fresh-process 7B+ rows.",
     )
