@@ -67,9 +67,9 @@ training-kernel references.
 - Boundary: keep cuBLAS-backed projection valid while fusing the pointwise and
   per-head state-prep work; then use it as the bridge to deeper projection/LoRA
   fusion.
-- Rule: this is a high-priority bsz=1 prefill bucket. Current 4090 prompt512
-  rows show state-prep helps but is not enough; the next step is cross-bucket
-  fusion with projection/LoRA and scan-aware layout.
+- Rule: keep this boundary available for variable-shape/cross-card kernels.
+  Exact-4090 fixed-shape graph replay has closed bsz1 prompt512, while bsz4 and
+  uncaptured paths still need cross-bucket projection/LoRA/scan-aware work.
 
 ### `lnx_rkvres_xg`
 
@@ -118,11 +118,12 @@ layout and block choices are GPU-specific, not universal constants.
   correctness plus non-negative speed across the claimed bsz set. Isolated
   microbench speedups remain telemetry.
 
-## 5. DPLR / chunked prefill as the bsz=1 breakthrough line
+## 5. DPLR / chunked prefill as the variable-shape breakthrough line
 
-The current Ada bsz=1 prompt512 blocker is broad per-layer prefill cost, led by
-recurrent scan plus LoRA/state-prep/norm-shift buckets. Treat DPLR/chunked
-prefill as the algorithmic path, not another wrapper optimization.
+Exact-4090 fixed-shape CUDA Graph replay reaches Albatross parity at bsz1 /
+prompt512, but it does not solve variable prompt shapes, cross-card portability,
+or the remaining bsz4 gap. Treat DPLR/chunked prefill as that algorithmic path,
+not another wrapper optimization.
 
 Roadmap:
 

@@ -176,10 +176,26 @@ Issue #66 checklist status:
 | HF Trainer / TRL SFT | PASS, trainable delta ≈ `1e-4` |
 | TRL DPO | PASS, trainable delta ≈ `1e-4` |
 
-The 4090 fused-state-scan prefill kernel line separately reaches `25,663.2
-tok/s` (`0.4921x` of the current Albatross reference for 0.4B / bsz1 /
-prompt512), satisfying the near-term `>=0.45x` target. It remains opt-in; the
-default HF path is unchanged.
+The exact-4090 policy now promotes fixed-shape native prefill CUDA Graph replay
+with split recurrent scan, fused state prep, fused output prep, and fused shift
+mix. On 0.4B fp16 / prompt512 it reaches `60,736.2 tok/s` at bsz1 and
+`102,417.7 tok/s` at bsz4. Matching Albatross rows are `60,047.8` and
+`117,789.0 tok/s`, so the ratios are **`1.011x`** and **`0.870x`**. Both rows
+pass HF-logit greedy equality and prefill-to-decode cache handoff. The same
+public path reaches `32,357.8 tok/s` on 1.5B / bsz1 / prompt512. Other Ada
+cards retain the compatible fallback until card-local rows exist.
+
+The serving API caches fixed `(batch, prompt_tokens)` graphs and exposes
+`rwkv7_warmup_fast_prefill()` for cold-start preparation. `rwkv7_prefill_chunks`
+can replay a captured chunk shape while carrying `RWKV7StateCache`; full-vs-two
+chunk prompt1024 and the following decode token preserve greedy equality.
+
+```bash
+PYTHONPATH=. python bench/bench_native_prefill_scan.py \
+  --model /path/to/rwkv7-g1d-0.4b-hf --code-source repo \
+  --device cuda --dtype fp16 --batch-sizes 1,4 --prompt-tokens 512 \
+  --fused-scan auto --warmup 20 --steps 50 --results bench/results.jsonl
+```
 
 ### RTX 4090 native-graph + TorchAO W4 update (2026-07-10)
 
@@ -222,11 +238,34 @@ python bench/bench_native_quant_e2e_decode.py \
   --batch-size 1 --prompt-tokens 32 --decode-tokens 128 --warmup 8
 ```
 
-This closes the 0.4B Ada W4 decode-speed lane for bsz 1/2/4/8. It does not
-close quantized prefill: for B1/B4 and T64/T256, W4 prefill is currently
-`0.819x-0.831x` of the same bf16 path. It also does not close W8: full-memory
-native MM8 is `0.369x` fp16 and the first TorchAO W8 probe is about `0.59x`;
-W8 tensor-core/fused projection work remains open.
+This closes the maximum-memory-saving W4 **decode** lane for bsz 1/2/4/8. The
+full-model W4 prefill graph reaches `26,652.9 tok/s`, `0.454x` the dense bf16
+prefill graph, although it is `3.58x` faster than the same quantized HF/FLA
+path. For applications
+that require every inference phase to stay non-negative, the `speed` policy
+quantizes `lm_head` only and uses the new prefill graph:
+
+- native A8/W8 speed lane: payload `0.9258x`, prompt512 prefill `1.011x` fp16,
+  decode ratios `1.001x/1.008x/1.020x/1.015x` at bsz1/2/4/8, prefill cosine
+  `0.999995`, and greedy equality;
+- TorchAO W4 speed lane: payload `0.8907x`, prompt512 prefill `1.010x` bf16,
+  and decode `1.043x/1.058x` bf16 at measured bsz1/4. Real-prompt prefill and
+  decode preserve the next token.
+
+Thus `speed` is the all-phase non-regression lane with moderate memory saving;
+`memory` is the large-footprint-reduction lane (`0.399x` payload) with much
+faster decode but a remaining quantized-prefill kernel gap.
+
+```bash
+# Run once with --quantization none, then repeat with a8w8 or torchao_w4.
+python bench/bench_native_prefill_scan.py \
+  --model /path/to/rwkv7-g1d-0.4b-hf --code-source repo \
+  --device cuda --dtype fp16 --batch-sizes 1 --prompt-tokens 512 \
+  --quantization a8w8 --quant-policy speed --quant-min-params 1 \
+  --warmup 50 --steps 50 --results bench/results.jsonl
+```
+
+Use `--dtype bf16 --quantization torchao_w4` for the W4 speed row.
 
 ## Ascend 910B status (华为昇腾 NPU)
 

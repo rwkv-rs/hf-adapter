@@ -52,6 +52,8 @@ class KernelPolicy:
     bnb_skip_policy: str = "memory"
     fused_recurrent: bool = False
     fused_prefill_scan: bool = False
+    prefill_graph: bool = False
+    fused_prefill_shift_mix: bool = False
     fused_prefill_state_prep: bool = False
     fused_prefill_state_scan: bool = False
     fused_prefill_state_scan_max_batch: int | None = None
@@ -405,18 +407,24 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             notes="CUDA tensor-core generation: use stable output fusions; require local sweep before projection/LoRA defaults",
         )
     if family == "ada":
+        is_4090 = "4090" in profile.name.lower()
         return KernelPolicy(
             profile=profile,
+            fast_prefill=is_4090,
             fused_recurrent_output=True,
             fused_recurrent_raw=True,
             fused_output=True,
             fused_norm_mix=True,
-            fused_prefill_scan=False,
+            fused_prefill_scan=is_4090,
+            prefill_graph=is_4090,
+            fused_prefill_shift_mix=is_4090,
+            fused_prefill_state_prep=is_4090,
+            fused_prefill_output=is_4090,
             ada_linear=True,
             ada_wagv_lora=True,
             ada_sparse_ffn=False,
             output_project_block_m=16,
-            notes="RTX 40/Ada: 4090 rows promote raw recurrent, decode norm/mix, rows=2 exact linear, rows=4 hidden exact linear, and rows<=4 grouped W/A/G/V LoRA; sparse FFN and shallow split-K projection remain off",
+            notes="RTX 40/Ada: exact-4090 rows promote fixed-shape prefill graph with split scan/state-prep/output/shift plus raw recurrent decode, decode norm/mix, rows=2 exact linear, rows=4 hidden exact linear, and rows<=4 grouped W/A/G/V LoRA; other Ada cards retain the compatible fallback until measured",
         )
     if family == "hopper":
         return KernelPolicy(
