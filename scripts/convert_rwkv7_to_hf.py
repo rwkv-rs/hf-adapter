@@ -220,6 +220,7 @@ def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
         "fused_prefill.py",
         "fused_projection.py",
         "fused_recurrent_update.py",
+        "fused_elementwise.py",
         "fused_time_mix.py",
         "kernel_policy.py",
         "mlx_bridge.py",
