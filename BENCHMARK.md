@@ -190,6 +190,48 @@ The serving API caches fixed `(batch, prompt_tokens)` graphs and exposes
 can replay a captured chunk shape while carrying `RWKV7StateCache`; full-vs-two
 chunk prompt1024 and the following decode token preserve greedy equality.
 
+### RTX 4090 dense fp16 decode parity update (2026-07-11)
+
+The exact-4090 dense `native_graph` policy now closes the recorded 0.4B
+Albatross decode rows at every required active batch size. The promoted path
+combines 8-warp norm/mix, copy-free stacked R/K/V input storage, grouped Ada
+W/A/G/V low-rank kernels, and the sparse FFN route for bsz1/2. Sparse value
+weights are packed outside graph capture and keyed by batch shape; this is
+required because sharing one packed allocation across independently replayable
+CUDA graphs corrupts later graph runners. Bsz4/8 retain the safe dense FFN
+contraction selected by the exact-card policy.
+
+| bsz | HF dense fp16 tok/s | Albatross fp16 tok/s | HF / Albatross | cumulative graph-cache peak VRAM |
+|---:|---:|---:|---:|---:|
+| 1 | **795.7** | 790.1 | **1.007x** | 1,414.0 MB |
+| 2 | **1,469.5** | 1,445.8 | **1.016x** | 1,684.5 MB |
+| 4 | **2,585.7** | 2,564.0 | **1.008x** | 1,807.1 MB |
+| 8 | **3,185.3** | 2,246.0 | **1.418x** | 2,047.9 MB |
+
+The peak column is intentionally cumulative: one process retains the B1/B2/B4/B8
+graph runners to validate production dynamic-batch residency. It is not the
+model payload size. A 32-step test with all four runners resident passes
+`32/32` greedy equality for every batch, maximum logits absolute difference
+`<=0.1875`, standard-HF fallback difference `<=0.09375`, and graph-cache
+warmup/retention checks. Evidence on the validation host:
+
+- `/data/rwkv4090/results/dense_albatross_parity_final_memory_fixed.jsonl`
+- `/data/rwkv4090/results/dense_albatross_parity_b1_confirm.jsonl`
+- `/data/rwkv4090/results/dense_multigraph_correctness_final.log`
+
+Post-change quant regression remains non-negative: the W8 speed lane is
+`1.055x` fp16 with `0.9258x` payload and cosine `0.99999428`; the W4 speed lane
+is `1.046x` bf16 with `0.8907x` payload and cosine `0.99990338`. Both preserve
+the next token. Evidence: `quant_w8_regression_final.jsonl` and
+`quant_w4_regression_final.jsonl` in the same validation-host results directory.
+
+```bash
+PYTHONPATH=. python bench/bench_native_graph_overhead.py \
+  --hf-dir /path/to/rwkv7-g1d-0.4b-fp16 --dtype fp16 --device cuda \
+  --attn-mode fused_recurrent --batch-sizes 1 2 4 8 \
+  --warmup 100 --steps 1000 --fixed-token --results bench/results.jsonl
+```
+
 ```bash
 PYTHONPATH=. python bench/bench_native_prefill_scan.py \
   --model /path/to/rwkv7-g1d-0.4b-hf --code-source repo \

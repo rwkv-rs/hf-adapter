@@ -256,6 +256,16 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
             "native_graph_ada_linear": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_LINEAR", "ada_linear", False),
             "native_graph_ada_wagv_lora": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA", "ada_wagv_lora", False),
             "native_graph_ada_sparse_ffn": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN", "ada_sparse_ffn", False),
+            "native_graph_ada_sparse_ffn_max_rows": int(os.environ.get(
+                "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_MAX_ROWS",
+                str(getattr(_model_kernel_policy(model), "ada_sparse_ffn_max_rows", 19)),
+            )),
+            "native_graph_ada_sparse_ffn_inplace": effective_flag(
+                model,
+                "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_INPLACE",
+                "ada_sparse_ffn_inplace",
+                False,
+            ),
             "decode_tokps_total": round((bsz * args.decode_tokens) / fast_dt, 1),
             "decode_tokps_per_seq": round(args.decode_tokens / fast_dt, 1),
             "decode_ms_per_step": round(1000 * fast_dt / args.decode_tokens, 2),

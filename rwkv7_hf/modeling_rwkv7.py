@@ -111,6 +111,7 @@ try:
     from .native_jit import _block_ip_batched as _native_graph_block_ip_batched
     from .native_jit import _native_graph_linear_dispatch
     from .native_jit import prefill as _native_jit_prefill
+    from .native_jit import prewarm_ada_sparse_ffn as _native_graph_prewarm_sparse_ffn
 except Exception:  # pragma: no cover - optional remote-code fast path
     try:
         from native_jit import block_step as _native_jit_block_step
@@ -121,6 +122,7 @@ except Exception:  # pragma: no cover - optional remote-code fast path
         from native_jit import _block_ip_batched as _native_graph_block_ip_batched
         from native_jit import _native_graph_linear_dispatch
         from native_jit import prefill as _native_jit_prefill
+        from native_jit import prewarm_ada_sparse_ffn as _native_graph_prewarm_sparse_ffn
     except Exception:
         _native_jit_block_step = None
         _native_jit_block_step_batched = None
@@ -130,6 +132,7 @@ except Exception:  # pragma: no cover - optional remote-code fast path
         _native_graph_block_ip_batched = None
         _native_graph_linear_dispatch = None
         _native_jit_prefill = None
+        _native_graph_prewarm_sparse_ffn = None
 
 # HF dynamic-module discovery copies files referenced by direct relative
 # imports in this top-level remote-code file.  The native backend reaches
@@ -371,7 +374,9 @@ def _native_graph_fused_norm_mix_requested() -> bool:
 
 
 def _native_graph_fused_norm_mix_num_warps() -> int:
-    value = env_int("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS", 4, lower=1, upper=8)
+    policy = _rwkv7_kernel_policy()
+    default = int(getattr(policy, "norm_mix_num_warps", 4))
+    value = env_int("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS", default, lower=1, upper=8)
     if value not in {1, 2, 4, 8}:
         raise ValueError(f"RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS must be one of 1, 2, 4, or 8; got {value}")
     return value
@@ -388,8 +393,9 @@ def _native_graph_ada_linear_requested() -> bool:
 
 
 def _native_graph_ada_linear_signature() -> tuple[str, str]:
+    policy = _rwkv7_kernel_policy()
     return (
-        os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROWS", "2 4"),
+        os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROWS", str(getattr(policy, "ada_linear_rows", "2 4"))),
         os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROLES", "auto"),
     )
 
@@ -408,10 +414,29 @@ def _native_graph_ada_sparse_ffn_requested() -> bool:
     )
 
 
+def _native_graph_ada_sparse_ffn_signature() -> tuple[int, bool]:
+    policy = _rwkv7_kernel_policy()
+    raw_rows = os.environ.get(
+        "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_MAX_ROWS",
+        str(getattr(policy, "ada_sparse_ffn_max_rows", 19)),
+    )
+    try:
+        max_rows = min(19, max(1, int(raw_rows)))
+    except ValueError:
+        max_rows = int(getattr(policy, "ada_sparse_ffn_max_rows", 19))
+    inplace = env_flag(
+        "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_INPLACE",
+        bool(getattr(policy, "ada_sparse_ffn_inplace", False)),
+    )
+    return max_rows, inplace
+
+
 def _native_graph_rkv_policy() -> str:
     """Cache-key visible policy for VKWR-inspired stacked R/K/V projection."""
 
-    raw = os.environ.get("RWKV7_NATIVE_GRAPH_RKV_POLICY", "manual").strip().lower()
+    policy = _rwkv7_kernel_policy()
+    default = str(getattr(policy, "rkv_policy", "manual"))
+    raw = os.environ.get("RWKV7_NATIVE_GRAPH_RKV_POLICY", default).strip().lower()
     if raw in {"", "manual", "explicit", "env"}:
         return "manual"
     if raw in {"0", "false", "no", "off", "disabled"}:
@@ -639,6 +664,12 @@ class _RWKV7NativeGraphTokenRunner:
         ]
         self.xpa = [torch.zeros(self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
         self.xpf = [torch.zeros(self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
+        # Sparse FFN uses atomic accumulation. Keep one stable destination per
+        # layer/runner so independently captured batch graphs never share an
+        # allocator-owned intermediate buffer.
+        self.sparse_ffn_out = [
+            torch.empty(self.hidden, device=self.device, dtype=self.dtype) for _ in packs
+        ]
         self.v_first = torch.zeros(self.hidden, device=self.device, dtype=self.dtype)
         self.tok_id = torch.zeros(1, dtype=torch.long, device=self.device)
         self.emb = base.embeddings.weight
@@ -658,7 +689,10 @@ class _RWKV7NativeGraphTokenRunner:
     def _one_step(self) -> None:
         x = F.embedding(self.tok_id, self.emb).reshape(self.hidden)
         for li, p in enumerate(self.packs):
-            x = _native_graph_block_ip(x, self.state[li], self.xpa[li], self.xpf[li], self.v_first, p)
+            x = _native_graph_block_ip(
+                x, self.state[li], self.xpa[li], self.xpf[li], self.v_first, p,
+                self.sparse_ffn_out[li],
+            )
         out = F.layer_norm(x, [self.hidden], self.norm_w, self.norm_b, 1e-5)
         if not _native_graph_head_linear_into(self.head_module, out, self.logits):
             self.logits.copy_(_native_graph_head_linear(self.head_module, out).reshape(-1))
@@ -789,6 +823,10 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         ]
         self.xpa = [torch.zeros(self.batch_size, self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
         self.xpf = [torch.zeros(self.batch_size, self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
+        self.sparse_ffn_out = [
+            torch.empty(self.batch_size, self.hidden, device=self.device, dtype=self.dtype)
+            for _ in packs
+        ]
         self.v_first = torch.zeros(self.batch_size, self.hidden, device=self.device, dtype=self.dtype)
         self.tok_id = torch.zeros(self.batch_size, dtype=torch.long, device=self.device)
         self.emb = base.embeddings.weight
@@ -808,7 +846,10 @@ class _RWKV7NativeGraphBatchedTokenRunner:
     def _one_step(self) -> None:
         x = F.embedding(self.tok_id, self.emb).reshape(self.batch_size, self.hidden)
         for li, p in enumerate(self.packs):
-            x = _native_graph_block_ip_batched(x, self.state[li], self.xpa[li], self.xpf[li], self.v_first, p)
+            x = _native_graph_block_ip_batched(
+                x, self.state[li], self.xpa[li], self.xpf[li], self.v_first, p,
+                self.sparse_ffn_out[li],
+            )
         out = F.layer_norm(x, [self.hidden], self.norm_w, self.norm_b, 1e-5)
         if not _native_graph_head_linear_into(self.head_module, out, self.logits):
             self.logits.copy_(_native_graph_head_linear(self.head_module, out).reshape(self.batch_size, self.vocab_size))
@@ -1660,6 +1701,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         self._rwkv7_native_graph_cache_stats = _native_graph_stats_template()
         return self.rwkv7_native_graph_cache_stats()
 
+    @torch.inference_mode()
     def rwkv7_warmup_fast_token(
         self,
         batch_sizes: int | list[int] | tuple[int, ...] = (1,),
@@ -1931,6 +1973,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_ada_linear_signature(),
             _native_graph_ada_wagv_lora_requested(),
             _native_graph_ada_sparse_ffn_requested(),
+            _native_graph_ada_sparse_ffn_signature(),
             _native_graph_rkv_policy(),
             _native_graph_vkwr_rkv_thresholds(),
             int(batch_size),
@@ -1954,6 +1997,8 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return runner
 
         stats["misses"] = int(stats.get("misses", 0)) + 1
+        if _native_graph_ada_sparse_ffn_requested() and _native_graph_prewarm_sparse_ffn is not None:
+            _native_graph_prewarm_sparse_ffn(packs, int(batch_size))
         if int(batch_size) == 1:
             runner = _RWKV7NativeGraphTokenRunner(self, packs)
         else:

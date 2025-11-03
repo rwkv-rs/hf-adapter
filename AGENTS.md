@@ -49,9 +49,13 @@ roadmap.
 
 ## Current RTX 4090 Milestone (2026-07-10)
 
-- 0.4B dense fp16 native-graph decode is now about `694/1344/2419/2984`
-  tok/s for bsz1/2/4/8, approximately `0.88x/0.93x/0.94x/1.33x` of the
-  matching Albatross rows.
+- 0.4B dense fp16 native-graph decode now reaches
+  `795.7/1469.5/2585.7/3185.3 tok/s` for bsz1/2/4/8, or
+  `1.007x/1.016x/1.008x/1.418x` the matching recorded Albatross rows. All four
+  graph runners coexist and pass 32-step greedy plus standard-HF fallback.
+  Exact-4090 sparse FFN is restricted to rows 1/2; batch-keyed packed weights
+  and graph-safe in-place residual accumulation are required to prevent
+  cross-graph state corruption.
 - The optional TorchAO group-128 W4 lane is a real speed lane, not only a
   memory smoke. With bf16 activations and the Ada bf16 W/A/G/V fusion it reaches
   `927/1713/3093/3407 tok/s`, or `1.17x-1.52x` Albatross, for 0.4B

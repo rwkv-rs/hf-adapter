@@ -33,6 +33,18 @@ def test_fallback_matches_reference() -> None:
     for actual, reference in zip(got, expected):
         assert torch.equal(actual, reference)
 
+    stacked_state = previous.clone()
+    stacked = fused_attn_norm_mix6_decode(
+        x, stacked_state, weight, bias, *mixes,
+        stack_rkv=True, force_fallback=True,
+    )
+    for actual, reference in zip(stacked, expected):
+        assert torch.equal(actual, reference)
+    assert stacked[0].untyped_storage().data_ptr() == stacked[2].untyped_storage().data_ptr()
+    assert stacked[0].untyped_storage().data_ptr() == stacked[3].untyped_storage().data_ptr()
+    assert stacked[2].storage_offset() - stacked[0].storage_offset() == batch * hidden
+    assert stacked[3].storage_offset() - stacked[0].storage_offset() == 2 * batch * hidden
+
     attn_out = torch.randn_like(x)
     ffn_previous = torch.randn_like(x)
     ffn_mix = torch.randn(hidden)
