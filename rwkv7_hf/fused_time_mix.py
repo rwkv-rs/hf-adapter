@@ -82,6 +82,93 @@ if _HAS_TRITON:
         tl.store(out_a_ptr + offsets, x + delta * xa, mask=mask)
         tl.store(out_g_ptr + offsets, x + delta * xg, mask=mask)
 
+    @triton.jit
+    def _attn_sequence_shift_mix_kernel(
+        x_ptr,
+        initial_ptr,
+        xr_mix_ptr,
+        xw_mix_ptr,
+        xk_mix_ptr,
+        xv_mix_ptr,
+        xa_mix_ptr,
+        xg_mix_ptr,
+        out_r_ptr,
+        out_w_ptr,
+        out_k_ptr,
+        out_v_ptr,
+        out_a_ptr,
+        out_g_ptr,
+        next_ptr,
+        hidden: tl.constexpr,
+        tokens: tl.constexpr,
+        total: tl.constexpr,
+        BLOCK_SIZE: tl.constexpr,
+    ):
+        offsets = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+        mask = offsets < total
+        columns = offsets % hidden
+        rows = offsets // hidden
+        token_ids = rows % tokens
+        batch_ids = rows // tokens
+        x = tl.load(x_ptr + offsets, mask=mask, other=0.0)
+        seq_prev = tl.load(x_ptr + offsets - hidden, mask=mask & (token_ids > 0), other=0.0)
+        initial_prev = tl.load(
+            initial_ptr + batch_ids * hidden + columns,
+            mask=mask & (token_ids == 0),
+            other=0.0,
+        )
+        delta = seq_prev + initial_prev - x
+        xr = tl.load(xr_mix_ptr + columns, mask=mask, other=0.0)
+        xw = tl.load(xw_mix_ptr + columns, mask=mask, other=0.0)
+        xk = tl.load(xk_mix_ptr + columns, mask=mask, other=0.0)
+        xv = tl.load(xv_mix_ptr + columns, mask=mask, other=0.0)
+        xa = tl.load(xa_mix_ptr + columns, mask=mask, other=0.0)
+        xg = tl.load(xg_mix_ptr + columns, mask=mask, other=0.0)
+        tl.store(out_r_ptr + offsets, x + delta * xr, mask=mask)
+        tl.store(out_w_ptr + offsets, x + delta * xw, mask=mask)
+        tl.store(out_k_ptr + offsets, x + delta * xk, mask=mask)
+        tl.store(out_v_ptr + offsets, x + delta * xv, mask=mask)
+        tl.store(out_a_ptr + offsets, x + delta * xa, mask=mask)
+        tl.store(out_g_ptr + offsets, x + delta * xg, mask=mask)
+        tl.store(
+            next_ptr + batch_ids * hidden + columns,
+            x,
+            mask=mask & (token_ids == tokens - 1),
+        )
+
+    @triton.jit
+    def _ffn_sequence_shift_mix_kernel(
+        x_ptr,
+        initial_ptr,
+        mix_ptr,
+        out_ptr,
+        next_ptr,
+        hidden: tl.constexpr,
+        tokens: tl.constexpr,
+        total: tl.constexpr,
+        BLOCK_SIZE: tl.constexpr,
+    ):
+        offsets = tl.program_id(0) * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+        mask = offsets < total
+        columns = offsets % hidden
+        rows = offsets // hidden
+        token_ids = rows % tokens
+        batch_ids = rows // tokens
+        x = tl.load(x_ptr + offsets, mask=mask, other=0.0)
+        seq_prev = tl.load(x_ptr + offsets - hidden, mask=mask & (token_ids > 0), other=0.0)
+        initial_prev = tl.load(
+            initial_ptr + batch_ids * hidden + columns,
+            mask=mask & (token_ids == 0),
+            other=0.0,
+        )
+        mix = tl.load(mix_ptr + columns, mask=mask, other=0.0)
+        tl.store(out_ptr + offsets, x + (seq_prev + initial_prev - x) * mix, mask=mask)
+        tl.store(
+            next_ptr + batch_ids * hidden + columns,
+            x,
+            mask=mask & (token_ids == tokens - 1),
+        )
+
 
 def fused_attn_shift_mix_available() -> bool:
     """Return whether the optional Triton attention shift-mix prototype can run."""
@@ -190,3 +277,56 @@ def fused_attn_shift_mix(
     if restore_shape is not None:
         return tuple(out.reshape(restore_shape) for out in outs)
     return outs
+
+
+def fused_attn_sequence_shift_mix(x: Any, initial_prev: Any, *mixes: Any, block_size: int = 256):
+    """Shift-mix a full ``[B,T,C]`` sequence without materialising ``cat``."""
+
+    if torch is None:
+        raise RuntimeError("fused_attn_sequence_shift_mix requires torch")
+    if not fused_attn_shift_mix_available() or x.dim() != 3 or not x.is_cuda:
+        prev = torch.cat([initial_prev.reshape(int(x.shape[0]), 1, int(x.shape[2])), x[:, :-1]], dim=1)
+        return (*fused_attn_shift_mix(x, prev, *mixes, force_fallback=True), x[:, -1].contiguous())
+    batch, tokens, hidden = map(int, x.shape)
+    initial = initial_prev.reshape(batch, hidden)
+    flat_mixes = tuple(_flatten_mix(m, hidden, name="mix") for m in mixes)
+    if len(flat_mixes) != 6:
+        raise ValueError("fused_attn_sequence_shift_mix requires six mix vectors")
+    if initial.dtype != x.dtype or any(m.dtype != x.dtype for m in flat_mixes):
+        prev = torch.cat([initial.reshape(batch, 1, hidden), x[:, :-1]], dim=1)
+        return (*fused_attn_shift_mix(x, prev, *flat_mixes, force_fallback=True), x[:, -1].contiguous())
+    source = x.contiguous()
+    outs = tuple(torch.empty_like(source) for _ in range(6))
+    next_state = torch.empty((batch, hidden), device=x.device, dtype=x.dtype)
+    total = int(source.numel())
+    _attn_sequence_shift_mix_kernel[(triton.cdiv(total, int(block_size)),)](
+        source, initial.contiguous(), *flat_mixes, *outs, next_state,
+        hidden, tokens, total, BLOCK_SIZE=int(block_size), num_warps=4,
+    )
+    return (*outs, next_state)
+
+
+def fused_ffn_sequence_shift_mix(x: Any, initial_prev: Any, mix: Any, block_size: int = 256):
+    """Compute the full FFN shift-mix and next state in one launch."""
+
+    if torch is None:
+        raise RuntimeError("fused_ffn_sequence_shift_mix requires torch")
+    if not fused_attn_shift_mix_available() or x.dim() != 3 or not x.is_cuda:
+        batch, _, hidden = map(int, x.shape)
+        prev = torch.cat([initial_prev.reshape(batch, 1, hidden), x[:, :-1]], dim=1)
+        return x + (prev - x) * mix.reshape(1, 1, hidden), x[:, -1].contiguous()
+    batch, tokens, hidden = map(int, x.shape)
+    initial = initial_prev.reshape(batch, hidden)
+    flat_mix = _flatten_mix(mix, hidden, name="mix")
+    if initial.dtype != x.dtype or flat_mix.dtype != x.dtype:
+        prev = torch.cat([initial.reshape(batch, 1, hidden), x[:, :-1]], dim=1)
+        return x + (prev - x) * flat_mix.reshape(1, 1, hidden), x[:, -1].contiguous()
+    source = x.contiguous()
+    out = torch.empty_like(source)
+    next_state = torch.empty((batch, hidden), device=x.device, dtype=x.dtype)
+    total = int(source.numel())
+    _ffn_sequence_shift_mix_kernel[(triton.cdiv(total, int(block_size)),)](
+        source, initial.contiguous(), flat_mix, out, next_state,
+        hidden, tokens, total, BLOCK_SIZE=int(block_size), num_warps=4,
+    )
+    return out, next_state

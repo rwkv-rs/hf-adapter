@@ -556,6 +556,36 @@ serving speed.
      accepting traffic. The compile latency is cold-start setup and is not
      included in steady-state throughput.
 
+23. Fixed-shape native prefill CUDA Graph and 4090 promotion.
+   - `_RWKV7NativeGraphPrefillRunner` captures the complete layer-wise native
+     prefill path for a fixed `(batch, prompt_tokens, logits_to_keep)` shape,
+     including packed projections, split recurrent scan, state prep, output
+     prep, and shift mix. Stable input buffers accept new token IDs and an
+     optional recurrent cache on replay; output state binds to
+     `RWKV7StateCache` without a per-layer copy.
+   - The runner cache is a small LRU and exposes
+     `rwkv7_warmup_fast_prefill()` plus
+     `rwkv7_clear_native_prefill_graph_cache()`. Reusing one chunk shape through
+     `rwkv7_prefill_chunks()` passes full-vs-chunked logits and subsequent
+     decode greedy equality.
+   - On RTX 4090 / 0.4B / fp16 / prompt512, the promoted exact-card policy uses
+     scan tile 4 for bsz1 and tile 8 for larger batches, both with four warps.
+     Public API throughput is `60736.2 tok/s` at bsz1 and `102417.7 tok/s` at
+     bsz4. Matching Albatross rows are `60047.8` and `117789.0 tok/s`, for
+     **`1.0115x`** and **`0.8695x`**. HF logits, greedy token, and
+     prefill-to-decode cache handoff pass. The same route reaches
+     `32357.8 tok/s` on the 1.5B checkpoint at bsz1/prompt512.
+   - Exact 4090 now defaults `fast_prefill`, prefill graph, split scan, fused
+     state prep, fused output prep, and fused shift mix on. Other sm_89 cards
+     retain fallback defaults until card-local rows are supplied. The bsz4
+     Albatross gap remains open; do not report universal prefill parity from the
+     bsz1 pass.
+   - Quant speed policies can reuse this graph. On 0.4B prompt512, head-only
+     native A8/W8 is `1.011x` fp16 with payload `0.9258x`; head-only TorchAO W4
+     is `1.010x` bf16 with payload `0.8907x`. Full-model W4 keeps the stronger
+     `0.399x` payload and decode win but remains a separate memory lane because
+     its quantized prefill is slower.
+
 ## Backend dispatch requirement
 
 Fast paths must be optional and hardware-aware:

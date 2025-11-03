@@ -145,7 +145,38 @@ def cosine_min(a: torch.Tensor, b: torch.Tensor) -> float:
     return float(F.cosine_similarity(a.float(), b.float(), dim=-1).min().detach().cpu())
 
 
+def _tensor_payload_bytes(tensor, seen: set[int]) -> int:
+    ident = id(tensor)
+    if ident in seen:
+        return 0
+    seen.add(ident)
+    flatten = getattr(tensor, "__tensor_flatten__", None)
+    if callable(flatten) and type(tensor) not in {torch.Tensor, torch.nn.Parameter}:
+        try:
+            payload = sum(
+                _tensor_payload_bytes(getattr(tensor, name), seen)
+                for name in flatten()[0]
+                if isinstance(getattr(tensor, name), torch.Tensor)
+            )
+            if payload:
+                return payload
+        except Exception:
+            pass
+    return int(tensor.numel()) * int(tensor.element_size())
+
+
+def model_payload_mb(model) -> float:
+    seen: set[int] = set()
+    total = sum(_tensor_payload_bytes(tensor, seen) for tensor in list(model.parameters()) + list(model.buffers()))
+    return round(total / 1024 / 1024, 1)
+
+
 def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_tokens: int) -> dict[str, Any]:
+    old_fast_prefill = os.environ.get("RWKV7_FAST_PREFILL")
+    # Keep the HF reference on FLA even when an exact-card policy promotes
+    # native prefill for ordinary model.forward(). The explicit native method
+    # below remains enabled and is the path under test.
+    os.environ["RWKV7_FAST_PREFILL"] = "0"
     nj = model_native_jit_module(model)
     ids = build_ids(tok, batch_size, prompt_tokens, args.device)
     if args.device.startswith("cuda"):
@@ -187,7 +218,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
     if args.device.startswith("cuda"):
         peak = round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
     scan_m = scan_block_m(model, batch_size)
-    return {
+    row = {
         "axis": "native_prefill_scan",
         "backend": "hf_adapter",
         "bench_case": os.environ.get("RWKV7_BENCH_CASE"),
@@ -199,9 +230,16 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "code_source": args.code_source,
         "native_jit_module": getattr(nj, "__name__", str(nj)),
         "model_size_label": infer_model_size_label(args.model),
+        "quantization": args.quantization,
+        "quant_policy": args.quant_policy,
+        "quantized_modules": int(getattr(model, "_rwkv7_native_mm_replaced_modules", 0)),
+        "model_payload_mb": model_payload_mb(model),
         "batch_size": batch_size,
         "prompt_tokens": prompt_tokens,
         "tokens_total": batch_size * prompt_tokens,
+        "prefill_graph_requested": os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH", "0").lower() not in {"0", "false", "no", "off"},
+        "prefill_backend_effective": getattr(model, "_rwkv7_last_fast_prefill_backend", None),
+        "prefill_graph_effective": getattr(model, "_rwkv7_last_fast_prefill_backend", None) == "native_prefill_graph",
         "fused_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN", "0") not in {"0", "false", "False", "no", "off"},
         "fused_scan_effective": nj._native_prefill_fused_scan_enabled(),
         "scan_block_m": scan_m,
@@ -255,6 +293,11 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "decode_after_prefill_greedy_match": decode_greedy_match,
         "peak_vram_mb": peak,
     }
+    if old_fast_prefill is None:
+        os.environ.pop("RWKV7_FAST_PREFILL", None)
+    else:
+        os.environ["RWKV7_FAST_PREFILL"] = old_fast_prefill
+    return row
 
 
 def parse_ints(raw: str) -> list[int]:
@@ -278,6 +321,9 @@ def main() -> int:
     ap.add_argument("--batch-sizes", default="1,4")
     ap.add_argument("--prompt-tokens", default="128")
     ap.add_argument("--fused-scan", choices=["auto", "true", "false"], default="auto")
+    ap.add_argument("--quantization", choices=["none", "a8w8", "torchao_w8", "torchao_w4"], default="none")
+    ap.add_argument("--quant-policy", choices=["memory", "speed"], default="speed")
+    ap.add_argument("--quant-min-params", type=int, default=1)
     ap.add_argument("--code-source", choices=["model", "repo"], default="model", help="load trust_remote_code from checkpoint files or overlay current repo rwkv7_hf/*.py")
     ap.add_argument("--warmup", type=int, default=2)
     ap.add_argument("--steps", type=int, default=5)
@@ -297,6 +343,19 @@ def main() -> int:
             torch_dtype=DTYPES[args.dtype],
             device_map=args.device if args.device.startswith("cuda") else None,
         ).eval()
+        if args.quantization == "a8w8":
+            from rwkv7_hf.native_quant_a8w8 import quantize_model_a8w8
+
+            quantize_model_a8w8(model, min_params=args.quant_min_params, policy=args.quant_policy)
+        elif args.quantization in {"torchao_w8", "torchao_w4"}:
+            from rwkv7_hf.native_quant_torchao import quantize_model_torchao
+
+            quantize_model_torchao(
+                model,
+                args.quantization,
+                min_params=args.quant_min_params,
+                policy=args.quant_policy,
+            )
         for bsz in parse_ints(args.batch_sizes):
             for prompt_tokens in parse_ints(args.prompt_tokens):
                 row = run_case(args, tok, model, bsz, prompt_tokens)

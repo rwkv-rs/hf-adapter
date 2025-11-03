@@ -172,6 +172,7 @@ def fused_attn_norm_mix6_decode(
     *,
     eps: float = 1e-5,
     num_warps: int = 4,
+    stack_rkv: bool = False,
     force_fallback: bool = False,
 ) -> tuple[Any, Any, Any, Any, Any, Any]:
     """Layer-normalize ``x``, update ``previous``, and emit six time mixes."""
@@ -201,13 +202,27 @@ def fused_attn_norm_mix6_decode(
         h = F.layer_norm(x2, (hidden,), params[0], params[1], float(eps))
         delta = prev2 - h
         outputs = tuple(h + delta * mix for mix in params[2:])
+        if stack_rkv:
+            stacked_rkv = torch.stack((outputs[0], outputs[2], outputs[3]), dim=0)
+            outputs = (stacked_rkv[0], outputs[1], stacked_rkv[1], stacked_rkv[2], outputs[4], outputs[5])
         previous.copy_(_restore_shape(h, shape))
         return tuple(_restore_shape(value, shape) for value in outputs)  # type: ignore[return-value]
 
     x_c = x2.contiguous()
     if x_c.data_ptr() == prev2.data_ptr():
         raise ValueError("x and previous must not alias")
-    outputs = tuple(torch.empty_like(x_c) for _ in range(6))
+    if stack_rkv:
+        stacked_rkv = torch.empty((3, *tuple(x_c.shape)), device=x_c.device, dtype=x_c.dtype)
+        outputs = (
+            stacked_rkv[0],
+            torch.empty_like(x_c),
+            stacked_rkv[1],
+            stacked_rkv[2],
+            torch.empty_like(x_c),
+            torch.empty_like(x_c),
+        )
+    else:
+        outputs = tuple(torch.empty_like(x_c) for _ in range(6))
     block = triton.next_power_of_2(hidden)
     _attn_norm_mix6_kernel[(int(x_c.shape[0]),)](
         x_c,
