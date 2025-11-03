@@ -13,6 +13,15 @@ import os
 import torch
 import torch.nn.functional as F
 
+try:  # pragma: no cover - optional Triton prefill acceleration
+    from .fused_elementwise import fused_relu_square, fused_relu_square_available
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from fused_elementwise import fused_relu_square, fused_relu_square_available
+    except Exception:
+        fused_relu_square = None  # type: ignore[assignment]
+        fused_relu_square_available = None  # type: ignore[assignment]
+
 
 def _linear_module(module, x: torch.Tensor) -> torch.Tensor:
     """Linear call that also supports native MM8/MM4Linear lm_head modules."""
@@ -227,13 +236,25 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_prefill_state_prep_available = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
-    from .fused_time_mix import fused_attn_shift_mix, fused_attn_shift_mix_available
+    from .fused_time_mix import (
+        fused_attn_sequence_shift_mix,
+        fused_attn_shift_mix,
+        fused_attn_shift_mix_available,
+        fused_ffn_sequence_shift_mix,
+    )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
-        from fused_time_mix import fused_attn_shift_mix, fused_attn_shift_mix_available
+        from fused_time_mix import (
+            fused_attn_sequence_shift_mix,
+            fused_attn_shift_mix,
+            fused_attn_shift_mix_available,
+            fused_ffn_sequence_shift_mix,
+        )
     except Exception:
+        fused_attn_sequence_shift_mix = None  # type: ignore[assignment]
         fused_attn_shift_mix = None  # type: ignore[assignment]
         fused_attn_shift_mix_available = None  # type: ignore[assignment]
+        fused_ffn_sequence_shift_mix = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional decode-only norm/mix fast path
     from .fused_decode_norm_mix import (
@@ -1663,10 +1684,14 @@ def prefill(
 
         residual = F.layer_norm(x, [hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
         h = F.layer_norm(residual, [hidden], an_w, an_b, 1e-5)
-        prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h[:, :-1, :]], dim=1)
-        if _native_prefill_fused_shift_mix_enabled():
-            xr, xw, xk, xv, xa, xg = fused_attn_shift_mix(h, prev_h, x_r, x_w, x_k, x_v, x_a, x_g)
+        use_prefill_shift_mix = _native_prefill_fused_shift_mix_enabled()
+        use_sequence_attn_mix = use_prefill_shift_mix and fused_attn_sequence_shift_mix is not None
+        if use_sequence_attn_mix:
+            xr, xw, xk, xv, xa, xg, next_xpa = fused_attn_sequence_shift_mix(
+                h, xpa[layer_idx], x_r, x_w, x_k, x_v, x_a, x_g
+            )
         else:
+            prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h[:, :-1, :]], dim=1)
             xx = prev_h - h
             xr = h + xx * x_r.view(1, 1, hidden)
             xw = h + xx * x_w.view(1, 1, hidden)
@@ -1882,17 +1907,30 @@ def prefill(
         if not out_projected:
             out = F.linear(out, Ow)
         x = residual + out
-        xpa[layer_idx] = h[:, -1, :].contiguous()
+        xpa[layer_idx] = next_xpa if use_sequence_attn_mix else h[:, -1, :].contiguous()
         state[layer_idx] = new_state.contiguous()
 
         residual = x
         h2 = F.layer_norm(x, [hidden], fn_w, fn_b, 1e-5)
-        prev_h2 = torch.cat([xpf[layer_idx].view(B, 1, hidden), h2[:, :-1, :]], dim=1)
-        fxx = prev_h2 - h2
-        fk = h2 + fxx * fx_k.view(1, 1, hidden)
-        fk = torch.relu(F.linear(fk, fK)) ** 2
+        if use_prefill_shift_mix and fused_ffn_sequence_shift_mix is not None:
+            fk, next_xpf = fused_ffn_sequence_shift_mix(h2, xpf[layer_idx], fx_k)
+        else:
+            prev_h2 = torch.cat([xpf[layer_idx].view(B, 1, hidden), h2[:, :-1, :]], dim=1)
+            fxx = prev_h2 - h2
+            fk = h2 + fxx * fx_k.view(1, 1, hidden)
+            next_xpf = h2[:, -1, :].contiguous()
+        fk = F.linear(fk, fK)
+        if (
+            use_prefill_shift_mix
+            and fused_relu_square is not None
+            and fused_relu_square_available is not None
+            and fused_relu_square_available()
+        ):
+            fk = fused_relu_square(fk)
+        else:
+            fk = torch.relu(fk) ** 2
         x = residual + F.linear(fk, fV)
-        xpf[layer_idx] = h2[:, -1, :].contiguous()
+        xpf[layer_idx] = next_xpf
 
     x = F.layer_norm(x, [hidden], base.norm.weight, base.norm.bias, 1e-5)
     keep = T if logits_to_keep is None or int(logits_to_keep) <= 0 else min(int(logits_to_keep), T)

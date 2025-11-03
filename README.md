@@ -927,10 +927,12 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - Exact RTX 4090 defaults fixed-shape inference prefill to whole-path CUDA Graph
   replay. `rwkv7_warmup_fast_prefill([(1, 512), (4, 512)])` pre-captures common
   serving shapes; `rwkv7_clear_native_prefill_graph_cache()` releases them.
-  On 0.4B fp16/prompt512, public API throughput is `60.7k tok/s` at bsz1
-  (`1.011x` Albatross) and `102.4k tok/s` at bsz4 (`0.870x`). Chunked replay
-  carries `RWKV7StateCache` and passes full-vs-chunked plus following-decode
-  greedy checks. Other Ada cards retain the fallback until measured.
+  The graph now uses no-`cat` attention/FFN sequence shift-mix and one-launch
+  ReLU² kernels. On 0.4B fp16/prompt512, public API throughput is `64.51k tok/s`
+  at bsz1 and `107.87k tok/s` at bsz4; B4 is `1.007x` a same-session Albatross
+  rerun and `0.916x` the older strongest recorded row. Chunked replay carries
+  `RWKV7StateCache` and passes full-vs-chunked, following-decode, and HF
+  `generate` greedy checks. Other Ada cards retain the fallback until measured.
 - Exact RTX 4090 dense fp16 decode now matches or exceeds the recorded
   Albatross 0.4B rows at bsz1/2/4/8: `795.7/1469.5/2585.7/3185.3 tok/s`, or
   `1.007x/1.016x/1.008x/1.418x`. Batch-keyed sparse-FFN packs allow all four
