@@ -2941,3 +2941,110 @@ need a different serving-oriented fusion strategy. For the V100 branch, the next
 useful step is to validate this native JIT/CUDA-graph path on the V100 0.1B model
 and then decide whether to integrate its block-step packing into the HF fast-token
 API.
+
+## Apple M5 stateful CoreML multifunction bring-up (2026-07-10)
+
+The CoreML lane now has a live recurrent-state implementation rather than only
+`full_logits` planning. The export combines fixed masked `prefill` and one-token
+`decode` functions into one deduplicated `.mlpackage`. Core ML 8/9 state is
+fp16-only, so the fp32 WKV cache is stored as fp16 high + fp16 residual tensors;
+attention/FFN previous inputs and `v_first` are separate states. The runtime
+transfers these states between function handles with `MLState.read_state` /
+`write_state`, then performs exact shared-prompt greedy decode.
+
+Live environment: MacBook Air / Apple M5 / 16GB / macOS 26.5, Python 3.11.15,
+PyTorch 2.13.0, Transformers 5.13.0, CoreMLTools 9.0. PyTorch 2.13 is newer than
+the latest version advertised as tested by CoreMLTools 9, so the explicit
+runtime gates below are required.
+
+```bash
+PYTHONPATH=. RWKV7_NATIVE_MODEL=1 python scripts/export_rwkv7_coreml.py \
+  /path/to/rwkv7-g1d-0.1b-hf /tmp/rwkv7-coreml-0.1b \
+  --export-kind stateful-multifunction \
+  --prefill-seq-length 2 \
+  --compute-units cpu-only \
+  --coreml-compute-precision auto \
+  --deployment-target macOS15 \
+  --require-coremltools
+
+PYTHONPATH=. python bench/run_coreml_apple_baseline.py \
+  --manifest /tmp/rwkv7-coreml-0.1b/coreml_export_manifest.json \
+  --prompt-target-chars 16 --decode-lengths 2 \
+  --verify-chunked-prefill --verify-chunk-size 1 \
+  --verify-hf-parity --hf-parity-dtype fp32 \
+  --require-hf-greedy-match \
+  --compute-units cpu-and-ne --require-coremltools
+```
+
+| Compute units | CoreML compute | Prefill tok/s | Decode tok/s | State transfer max abs | Chunk logits/state max abs | HF greedy |
+|---|---|---:|---:|---:|---:|---|
+| CPU only | fp32 | 101.78 | 72.19 | 0.0 | 0.0 / 0.0 | 2/2 |
+| CPU + Neural Engine eligible | fp32 | 99.78 | 70.74 | 0.0 | 0.0 / 0.0 | 2/2 |
+
+The exact short prompt has four RWKV tokens and the generated ids are
+`[1184, 460]`, identical to the source HF native fp32 path. The package is
+`765,660,573` bytes and the transferred recurrent state is `4,795,392` bytes.
+`CPU_AND_NE` only constrains eligible compute units; it is **not** proof that the
+Neural Engine executed the graph. These are correctness bring-up rows, not
+production throughput claims.
+
+An explicit stateful fp16-compute experiment was smaller (`383,414,809` bytes)
+and faster on this short CPU-only shape, but generated `[47, 11]` instead of the
+HF `[1184, 460]`. Therefore `--coreml-compute-precision auto` resolves to fp32
+for stateful exports and fp16 remains opt-in until selective recurrent precision
+or an equivalent numerically stable ANE layout closes that mismatch. The next
+CoreML matrix is prefill chunks 16/64, longer prompts/decode, 0.4B/1.5B,
+LUT4/INT4, and measured runtime placement.
+
+The same stateful package was also exported through the initial CoreMLTools
+weight-compression modes. All rows keep fp32 recurrent compute, verify exact
+state transfer and alternate chunk splitting, and use the same four-token prompt
+plus two-token decode:
+
+| Weight mode | Package bytes | vs fp32 package | Prefill tok/s | Decode tok/s | HF greedy |
+|---|---:|---:|---:|---:|---|
+| fp32 weights | 765,660,573 | 1.000x | 99.78 | 70.74 | 2/2 |
+| INT8 per-channel | 344,882,067 | 0.450x | 104.80 | 67.49 | 2/2 |
+| INT4 per-block | 287,366,795 | 0.375x | 92.25 | 71.40 | 0/2 |
+| INT4 per-block, `lm_head` kept | 461,954,961 | 0.603x | 107.64 | 71.46 | 0/2 |
+| LUT4 grouped-channel | 98,213,860 | 0.128x | 85.36 | 67.06 | 0/2 |
+
+This closes a first **functional W8 CoreML stateful lane**: package footprint
+falls by about 55%, chunk/state gates remain exact, and short greedy tokens still
+match. It does not close the production speed target because decode is about
+`0.95x` the fp32-compute row. The W4/LUT4 lanes prove large package reduction
+and valid stateful execution, but fail the current HF greedy gate; they are
+quality experiments only until calibration/mixed-precision policies and broader
+quality scoring pass. Quantized rows may record the mismatch without failing the
+runtime harness when `--require-hf-greedy-match` is omitted, but acceptance
+runs for unquantized/W8 exactness should keep that flag enabled.
+
+### Apple M5 CoreML 0.4B extension
+
+The same live path also exports and runs `rwkv7-g1d-0.4b-hf` on the 16GB M5.
+The shape remains intentionally short (`prefill_seq_length=2`, shared prompt
+four tokens, decode two) so this row validates model-size generality before the
+long-context sweep:
+
+| 0.4B mode | Package bytes | Prefill tok/s | Decode tok/s | State bytes | Chunk max abs | HF greedy |
+|---|---:|---:|---:|---:|---:|---|
+| fp32 compute / uncompressed | 1,805,544,379 | 29.23 | 20.87 | 12,783,616 | 0.0 | 2/2 |
+| fp32 compute / INT8 per-channel | 657,633,909 | 32.94 | 20.47 | 12,783,616 | 0.0 | 2/2 |
+
+The 0.4B INT8 package is about `0.364x` the uncompressed package and improves
+short prefill to about `1.13x`, while decode is about `0.98x`; it therefore
+still misses the strict "quant decode no slower" production gate despite exact
+short greedy/state/chunk correctness. CoreMLTools emitted zero-scale division
+warnings while annotating a few zero-valued tensors, so larger prompt/quality
+rows must stay mandatory even though this runtime row is finite and passes.
+
+A longer 0.4B correctness row uses a 256-character shared prompt (`67` RWKV
+tokens), `32` generated tokens, ten-plus recurrent state crossings, and an
+alternate one-token chunk verification. Both uncompressed and INT8 keep
+`chunk logits/state max_abs=0.0` and HF greedy `32/32`. On one `CPU_AND_NE`
+run, uncompressed vs INT8 prefill/decode were `50.11/46.31` vs
+`55.96/46.30 tok/s`. Repeated warmed measurements remain variable: INT8 decode
+is near parity rather than a stable win (roughly `0.99x` median in the sampled
+runs), and first model warmup/compilation is much longer for the compressed
+package. The runtime now exposes `--warmup` and records `warmup_s` so cold
+CoreML compilation cannot silently contaminate steady-state throughput rows.

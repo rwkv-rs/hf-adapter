@@ -668,6 +668,33 @@ Run this checklist for every new GPU before marking it as supported:
   claims.
 - Quant rule: no AMD quant performance claim until HIP-specific W8/W4 rows exist.
 
+#### Apple Silicon / MPS / MLX / CoreML
+
+- Policy family: `apple_mps` in `rwkv7_hf/kernel_policy.py`.
+- Default stance: native/no-FLA HF compatibility; all CUDA/Triton fused kernels
+  off. MLX/Metal and CoreML are explicit sibling backends, not CUDA-policy
+  fallbacks.
+- Default-on: `fast_cache` and automatic native-model fallback when MPS is
+  available. Default-off: CUDA native-graph kernels and CUDA/bitsandbytes quant.
+- Current exact-device evidence: MacBook Air / Apple M5 / 16GB / macOS 26.5.
+  MPS HF/PEFT/Trainer/TRL and MLX recurrent/session/quant rows exist. CoreMLTools
+  9.0 now has live 0.1B/0.4B `stateful-multifunction` rows: MLState transfer,
+  alternate chunk split, and HF fp32 greedy tokens all match exactly. Initial
+  CoreML INT8 reduces package size to about `0.45x`/`0.36x` and preserves the
+  short greedy gates, but decode remains about `0.95x`/`0.98x` fp32; 0.1B
+  INT4/LUT4 reduce package size further while failing the current HF greedy gate.
+- CoreML state contract: state is fp16-only, so WKV uses fp16 high + fp16
+  residual tensors; attention/FFN previous inputs and `v_first` are separate
+  states. `--coreml-compute-precision auto` must resolve to fp32 for stateful
+  exports until the fp16 greedy mismatch is fixed.
+- Required validation before Apple production claims: exact M-series identity,
+  MPS/MLX/CoreML versions, prompt/decode matrix, peak memory, chunk/state/HF
+  parity, W8/W4 footprint and speed, and confirmed runtime placement. Never
+  treat `CPU_AND_NE` eligibility as proof that ANE executed the graph.
+- Promotion rule: keep fp16 stateful CoreML and quantized CoreML opt-in until
+  exact-device long-context greedy/quality gates pass; do not generalize M5 Air
+  numbers to M-series Pro/Max/Ultra or iPhone/iPad.
+
 ### Quantized Inference
 
 Required goals:
