@@ -1,5 +1,5 @@
 # coding=utf-8
-"""V100 grouped RWKV-7 W/A/G/V low-rank decode kernels.
+"""sm_70 grouped RWKV-7 W/A/G/V low-rank decode kernels.
 
 The CUDA kernels are derived from Albatross faster3a (Apache-2.0).  This
 self-contained lazy extension keeps HF checkpoints in their native layout and

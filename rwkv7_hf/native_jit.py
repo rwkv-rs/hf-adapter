@@ -203,7 +203,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_rkv_wavg_projection = None  # type: ignore[assignment]
         fused_rkv_wavg_projection_available = None  # type: ignore[assignment]
 
-try:  # pragma: no cover - optional V100 grouped low-rank path
+try:  # pragma: no cover - optional sm_70 grouped low-rank path
     from .sm70_wagv import sm70_orig_linear, sm70_orig_rkv, sm70_wagv_lora, sm70_wagv_lora_available
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
