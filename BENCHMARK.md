@@ -3122,3 +3122,42 @@ PYTHONPATH=. python scripts/mlx_prefill_eval_interval_bench.py \
   --dtype fp16 --quantization none --wkv-backend metal --atol 0 \
   --results bench/results_mlx_prefill_eval.jsonl
 ```
+
+### MLX DPLR/WY three-stage Stage 1
+
+`rwkv7_hf/mlx_dplr_prefill.py` now ports the CUDA compact-WY factor contract
+to MLX and exposes summary, prefix-combine, and chunk-apply/output parity
+oracles. The first custom Metal kernels cover compact chunk summary and chunk
+apply/output for `head_dim<=64` and `chunk_size<=64`; prefix combine currently
+uses high-level MLX. `scripts/mlx_dplr_prefill_bench.py` times each boundary.
+
+M5 production-shaped synthetic row: `B=1,T=512,H=16,N=64,chunk=64,fp16`,
+warmup 2, repeat 5:
+
+| Stage | Median | Effective tok/s | Correctness |
+|---|---:|---:|---|
+| sequential recurrent MLX oracle | 77.207 ms | 6,631.48 | reference |
+| high-level MLX three-stage | 207.038 ms | 2,472.98 | output/final-state parity passes |
+| Metal compact summary | 58.801 ms | 8,707.32 | factor max-abs `3.73e-08` |
+| Metal chunk apply/output | 0.863 ms | 593,308.14 | state parity passes |
+| Metal summary + MLX prefix + Metal apply | 60.249 ms | 8,498.11 | output/final-state max-abs `1.53e-04/1.14e-04` |
+
+The three-stage Metal scaffold is about `1.28x` the synthetic recurrent oracle
+and `3.44x` the high-level three-stage implementation. This does **not** yet
+measure full model prefill: shift-mix, projections, layer execution, FFN, and
+output projection are absent. The summary kernel is still one thread per
+`(batch,chunk,head)` and dominates the staged time. Next gates are tiled
+summary reduction—the current summary is about `97.6%` of full staged
+latency—partial final chunks, layer-major MLX model integration,
+then 0.4B/1.5B exact-token and Qwen comparison rows.
+
+Raw evidence: `bench/results_mlx_dplr_stage1_target_m5_20260710.jsonl`. The
+smaller bring-up matrix remains in
+`bench/results_mlx_dplr_stage1_m5_20260710.jsonl`.
+
+```bash
+PYTHONPATH=. python scripts/mlx_dplr_prefill_bench.py \
+  --batch 1 --tokens 512 --heads 16 --head-dim 64 --chunk-size 64 \
+  --dtype fp16 --warmup 2 --repeat 5 --atol 0.01 \
+  --results bench/results_mlx_dplr_stage1.jsonl
+```
