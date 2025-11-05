@@ -41,3 +41,49 @@ def test_mlx_wkv_scan_formula_if_available():
     assert tuple(int(x) for x in auto_state.shape) == (B, H, N, N)
     assert float(mx.max(mx.abs(auto_out.astype(mx.float32) - ref_out.astype(mx.float32)))) < 5e-3
     assert float(mx.max(mx.abs(auto_state.astype(mx.float32) - ref_state.astype(mx.float32)))) < 5e-3
+
+
+def test_mlx_model_scan_prefill_matches_token_path_if_available(monkeypatch):
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    from rwkv7_hf.mlx_model import MLXRWKV7Model
+    from tests.test_apple_silicon_mlx_model_smoke import tiny_torch_model_to_mlx
+
+    monkeypatch.setenv("RWKV7_MLX_WKV_SCAN_PREFILL", "1")
+    _, token_model, cfg = tiny_torch_model_to_mlx()
+    scan_model = MLXRWKV7Model.from_arrays(cfg, dict(token_model.arrays), wkv_backend="reference")
+    ids = [[1, 2, 3, 4], [4, 3, 2, 1]]
+    token_logits, token_state = token_model.forward(ids, collect_all=True)
+    scan_logits, scan_state = scan_model.forward(ids, collect_all=True)
+    mx.eval(token_logits, scan_logits, *token_state.recurrent_state, *scan_state.recurrent_state)
+    assert tuple(int(x) for x in scan_logits.shape) == tuple(int(x) for x in token_logits.shape)
+    assert float(mx.max(mx.abs(token_logits - scan_logits))) < 1e-4
+    assert int(token_state.seen_tokens) == int(scan_state.seen_tokens) == 4
+    telemetry = scan_model.telemetry()
+    assert telemetry["wkv_scan_prefill"] is True
+    assert telemetry["wkv_scan_prefill_counts"]["reference"] == int(cfg["num_hidden_layers"])
+
+
+def test_mlx_model_scan_prefill_state_only_if_available(monkeypatch):
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    from rwkv7_hf.mlx_model import MLXRWKV7Model
+    from tests.test_apple_silicon_mlx_model_smoke import tiny_torch_model_to_mlx
+
+    monkeypatch.setenv("RWKV7_MLX_WKV_SCAN_PREFILL", "1")
+    _, token_model, cfg = tiny_torch_model_to_mlx()
+    scan_model = MLXRWKV7Model.from_arrays(cfg, dict(token_model.arrays), wkv_backend="reference")
+    ids = [[1, 2, 3, 4]]
+    token_state = token_model.prefill_state_only(ids)
+    scan_state = scan_model.prefill_state_only(ids)
+    mx.eval(*token_state.recurrent_state, *scan_state.recurrent_state)
+    assert int(token_state.seen_tokens) == int(scan_state.seen_tokens) == 4
+    for a, b in zip(token_state.recurrent_state, scan_state.recurrent_state, strict=True):
+        assert float(mx.max(mx.abs(a - b))) < 1e-4
+    telemetry = scan_model.telemetry()
+    assert telemetry["state_only_prefill_calls"] == 1
+    assert telemetry["state_only_prefill_tokens"] == 4
