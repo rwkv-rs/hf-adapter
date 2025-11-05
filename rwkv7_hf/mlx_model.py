@@ -836,6 +836,7 @@ class MLXRWKV7Model:
         self.fused_ffn_key_relu2_counts: dict[str, int] = {"metal": 0, "fallback": 0}
         self.fused_attn_mix = _env_flag("RWKV7_MLX_FUSED_ATTN_MIX", False)
         self.fused_attn_mix_counts: dict[str, int] = {"metal": 0, "fallback": 0}
+        self.fast_layer_norm = _env_flag("RWKV7_MLX_FAST_LAYER_NORM", False)
         self.wkv_scan_prefill_mode = _env_scan_prefill_mode("RWKV7_MLX_WKV_SCAN_PREFILL", "off")
         self.wkv_scan_prefill_min_tokens = max(2, _env_int("RWKV7_MLX_WKV_SCAN_PREFILL_MIN_TOKENS", 32))
         self.wkv_scan_prefill_counts: dict[str, int] = {"reference": 0, "metal": 0, "fallback": 0}
@@ -1005,6 +1006,7 @@ class MLXRWKV7Model:
             "fused_attn_mix": bool(self.fused_attn_mix),
             "fused_attn_mix_counts": dict(self.fused_attn_mix_counts),
             "fused_attn_mix_metal_available": metal_attn_mix_available(),
+            "fast_layer_norm": bool(self.fast_layer_norm),
             "wkv_scan_prefill": self.wkv_scan_prefill_mode != "off",
             "wkv_scan_prefill_mode": self.wkv_scan_prefill_mode,
             "wkv_scan_prefill_min_tokens": int(self.wkv_scan_prefill_min_tokens),
@@ -1126,12 +1128,16 @@ class MLXRWKV7Model:
 
     def _layer_norm(self, x, prefix: str):
         mx = _mx()
+        weight = self._get(f"{prefix}.weight")
+        bias = self._get(f"{prefix}.bias")
+        if self.fast_layer_norm and hasattr(mx, "fast") and hasattr(mx.fast, "layer_norm"):
+            return mx.fast.layer_norm(x, weight, bias, self.norm_eps)
         xf = x.astype(mx.float32)
         mean = mx.mean(xf, axis=-1, keepdims=True)
         var = mx.mean((xf - mean) * (xf - mean), axis=-1, keepdims=True)
         y = (xf - mean) * mx.rsqrt(var + self.norm_eps)
         y = y.astype(x.dtype)
-        return y * self._get(f"{prefix}.weight") + self._get(f"{prefix}.bias")
+        return y * weight + bias
 
     def _group_norm_heads(self, x, layer: int):
         mx = _mx()
@@ -1616,9 +1622,25 @@ class MLXRWKV7Model:
         return self.forward(input_ids, state=state, collect_all=False)
 
     def decode_step(self, token_ids: Iterable[int] | Any, state: MLXRWKV7State):
+        """Advance one decode token without forcing a full state sync every step.
+
+        ``forward(..., T=1)`` is correctness-equivalent but always calls
+        ``_eval_step_state`` before returning.  Streaming decode already
+        materializes the next token from returned logits, while recurrent state
+        can be synchronized by ``_step_token`` according to
+        ``RWKV7_MLX_STEP_EVAL_INTERVAL``.  Keeping decode on this direct path
+        avoids an unnecessary per-token state barrier and makes the eval interval
+        policy effective.
+        """
+
         mx = _mx()
-        ids = mx.array(token_ids, dtype=mx.int32).reshape(-1, 1)
-        return self.forward(ids, state=state, collect_all=False)
+        ids = mx.array(token_ids, dtype=mx.int32).reshape(-1)
+        B = int(ids.shape[0])
+        if state.batch_size != B:
+            raise ValueError(f"state batch size {state.batch_size} does not match input batch size {B}")
+        last, state = self._step_token(ids, state)
+        logits = self._logits_from_hidden(last).reshape(B, 1, self.vocab_size)
+        return logits, state
 
     def decode_greedy(self, logits: Any, state: MLXRWKV7State, *, max_new_tokens: int):
         """Continue decoding from an existing prefill ``logits`` + ``state``.
