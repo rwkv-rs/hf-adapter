@@ -64,7 +64,11 @@ SCAN_PREFILL_COMPARE_FAIL_ON_GATE="${SCAN_PREFILL_COMPARE_FAIL_ON_GATE:-0}"
 RWKV_PREFILL_EVAL_INTERVAL="${RWKV_PREFILL_EVAL_INTERVAL:-2}"
 RWKV_PREFILL_BACKEND="${RWKV_PREFILL_BACKEND:-recurrent}"
 RWKV_DPLR_CHUNK_SIZE="${RWKV_DPLR_CHUNK_SIZE:-64}"
-RWKV_DPLR_MIN_TOKENS="${RWKV_DPLR_MIN_TOKENS:-128}"
+RWKV_DPLR_MIN_TOKENS="${RWKV_DPLR_MIN_TOKENS:-8}"
+RWKV_DPLR_SUMMARY_IMPLEMENTATION="${RWKV_DPLR_SUMMARY_IMPLEMENTATION:-tiled}"
+RWKV_DPLR_LAYER_EVAL_INTERVAL="${RWKV_DPLR_LAYER_EVAL_INTERVAL:-4}"
+RWKV_DPLR_LAYER_EVAL_MIN_TOKENS="${RWKV_DPLR_LAYER_EVAL_MIN_TOKENS:-64}"
+RWKV_DPLR_WINDOW_TOKENS="${RWKV_DPLR_WINDOW_TOKENS:-512}"
 
 # Comparison defaults cover the current local/public model classes.  Add the
 # 4B/9B pairs once matching RWKV 2.9B/larger or distilled mobile exports exist.
@@ -288,6 +292,10 @@ baseline_args=(
   --rwkv-prefill-backend "${RWKV_PREFILL_BACKEND}"
   --rwkv-dplr-chunk-size "${RWKV_DPLR_CHUNK_SIZE}"
   --rwkv-dplr-min-tokens "${RWKV_DPLR_MIN_TOKENS}"
+  --rwkv-dplr-summary-implementation "${RWKV_DPLR_SUMMARY_IMPLEMENTATION}"
+  --rwkv-dplr-layer-eval-interval "${RWKV_DPLR_LAYER_EVAL_INTERVAL}"
+  --rwkv-dplr-layer-eval-min-tokens "${RWKV_DPLR_LAYER_EVAL_MIN_TOKENS}"
+  --rwkv-dplr-window-tokens "${RWKV_DPLR_WINDOW_TOKENS}"
 )
 if [[ "${OLLAMA_THINK}" == "1" ]]; then
   baseline_args+=(--ollama-think)

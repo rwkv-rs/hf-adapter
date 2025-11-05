@@ -95,11 +95,21 @@ logits, all recurrent/cache tensors, seen-token count, and next-token parity as
 a hard gate rather than inferring correctness from throughput alone.
 
 The DPLR model prefill path is deliberately opt-in. Set
-`RWKV_PREFILL_BACKEND=auto`, `RWKV_DPLR_MIN_TOKENS=128`, and
-`RWKV_DPLR_CHUNK_SIZE=64` to use recurrent prefill for short prompts and the
-layer-major Metal DPLR route for longer prompts. Keep the default
-`RWKV_PREFILL_BACKEND=recurrent` for production claims until long-context,
-peak-memory, decode-after-prefill, quality, and cross-device gates pass.
+`RWKV_PREFILL_BACKEND=auto`, `RWKV_DPLR_MIN_TOKENS=8`,
+`RWKV_DPLR_CHUNK_SIZE=64`, `RWKV_DPLR_SUMMARY_IMPLEMENTATION=tiled`,
+`RWKV_DPLR_LAYER_EVAL_INTERVAL=4`,
+`RWKV_DPLR_LAYER_EVAL_MIN_TOKENS=64`, and
+`RWKV_DPLR_WINDOW_TOKENS=512`. This selects DPLR after its measured crossover,
+reclaims intermediates on larger prompts, and bounds long-context graph
+memory. Keep the outer default `RWKV_PREFILL_BACKEND=recurrent` for production
+claims until cross-device and repeated quality gates pass.
+
+The M5 final rows are
+`bench/results_qwen35_apple_m5_20260710_dplr_tiled_final_{fp16,w4}.jsonl`.
+Chars512 produced the first fp16 conservative decode/prefill/TTFT passing row;
+W4 passed prefill and TTFT but decode remained `0.950x`. Chars128 cold compile
+and cross-run stability remain open, so do not generalize the single matrix to
+an unconditional Qwen3.5 win.
 
 It emits rows with `axis=qwen35_apple_baseline` and can run:
 

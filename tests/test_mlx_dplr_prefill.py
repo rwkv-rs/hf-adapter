@@ -19,6 +19,7 @@ def test_mlx_dplr_prefill_import_safe() -> None:
     assert callable(dplr.mlx_compact_wy_prefix_combine)
     assert callable(dplr.mlx_compact_wy_chunk_apply)
     assert callable(dplr.mlx_compact_wy_chunk_apply_metal)
+    assert callable(dplr.mlx_compact_wy_chunk_apply_output_metal)
     assert callable(dplr.mlx_compact_wy_three_stage)
     assert callable(dplr.mlx_compact_wy_three_stage_metal)
 
@@ -32,6 +33,7 @@ def test_mlx_dplr_three_stage_matches_recurrent_scan_if_available() -> None:
         mlx_compact_wy_chunk_summary,
         mlx_compact_wy_chunk_summary_metal,
         mlx_compact_wy_chunk_apply_metal,
+        mlx_compact_wy_chunk_apply_output_metal,
         mlx_compact_wy_prefix_combine,
         mlx_compact_wy_summary_to_dense,
         mlx_compact_wy_three_stage,
@@ -85,26 +87,36 @@ def test_mlx_dplr_three_stage_matches_recurrent_scan_if_available() -> None:
     assert float(mx.max(mx.abs(telemetry["chunk_ends"][:, -1] - ref_state))) < 5e-5
 
     if mlx_dplr_metal_available():
-        metal_summary = mlx_compact_wy_chunk_summary_metal(w, k, v, kk, a, chunk_size=4)
+        scalar_summary = mlx_compact_wy_chunk_summary_metal(
+            w, k, v, kk, a, chunk_size=4, implementation="scalar"
+        )
+        metal_summary = mlx_compact_wy_chunk_summary_metal(
+            w, k, v, kk, a, chunk_size=4, implementation="tiled"
+        )
         metal_starts, metal_state = mlx_compact_wy_prefix_combine(state, metal_summary)
-        mx.eval(*[metal_summary[key] for key in (
+        summary_keys = (
             "transition_diag",
             "transition_left",
             "transition_right",
             "additive_left",
             "additive_right",
-        )], metal_starts, metal_state)
-        for key in (
-            "transition_diag",
-            "transition_left",
-            "transition_right",
-            "additive_left",
-            "additive_right",
-        ):
+        )
+        mx.eval(
+            *[scalar_summary[key] for key in summary_keys],
+            *[metal_summary[key] for key in summary_keys],
+            metal_starts,
+            metal_state,
+        )
+        for key in summary_keys:
+            assert float(mx.max(mx.abs(metal_summary[key] - scalar_summary[key]))) == 0.0, key
+        for key in summary_keys:
             assert float(mx.max(mx.abs(metal_summary[key] - summary[key]))) < 5e-5, key
         assert float(mx.max(mx.abs(metal_starts - start_states))) < 5e-5
         assert float(mx.max(mx.abs(metal_state - ref_state))) < 5e-5
         metal_out, metal_ends = mlx_compact_wy_chunk_apply_metal(
+            r, w, k, v, kk, a, metal_starts, chunk_size=4
+        )
+        metal_out_only = mlx_compact_wy_chunk_apply_output_metal(
             r, w, k, v, kk, a, metal_starts, chunk_size=4
         )
         full_metal_out, full_metal_state, full_metal_telemetry = mlx_compact_wy_three_stage_metal(
@@ -112,6 +124,7 @@ def test_mlx_dplr_three_stage_matches_recurrent_scan_if_available() -> None:
         )
         mx.eval(
             metal_out,
+            metal_out_only,
             metal_ends,
             full_metal_out,
             full_metal_state,
@@ -119,6 +132,7 @@ def test_mlx_dplr_three_stage_matches_recurrent_scan_if_available() -> None:
         )
         # Metal uses fused multiply-add ordering inside each state row.
         assert float(mx.max(mx.abs(metal_out - ref_out))) < 2e-4
+        assert float(mx.max(mx.abs(metal_out_only - metal_out))) == 0.0
         assert float(mx.max(mx.abs(metal_ends[:, -1] - ref_state))) < 2e-4
         assert float(mx.max(mx.abs(full_metal_out - ref_out))) < 2e-4
         assert float(mx.max(mx.abs(full_metal_state - ref_state))) < 2e-4
@@ -153,6 +167,10 @@ def test_mlx_model_dplr_prefill_partial_chunk_and_decode_if_available() -> None:
     recurrent_model.prefill_backend = "recurrent"
     dplr_model.prefill_backend = "dplr_metal"
     dplr_model.dplr_chunk_size = 4
+    dplr_model.dplr_summary_implementation = "tiled"
+    dplr_model.dplr_layer_eval_interval = 1
+    dplr_model.dplr_layer_eval_min_tokens = 1
+    dplr_model.dplr_window_tokens = 4
     ids = [[1, 2, 3, 4, 5], [5, 4, 3, 2, 1]]
     ref_logits, ref_state = recurrent_model.prefill(ids)
     got_logits, got_state = dplr_model.prefill(ids)
@@ -177,12 +195,17 @@ def test_mlx_model_dplr_prefill_partial_chunk_and_decode_if_available() -> None:
     telemetry = dplr_model.telemetry()
     assert telemetry["prefill_backend_last"] == "dplr_metal"
     assert telemetry["prefill_backend_counts"]["dplr_metal"] == 1
+    assert telemetry["dplr_summary_implementation"] == "tiled"
+    assert telemetry["dplr_layer_eval_interval"] == 1
+    assert telemetry["dplr_layer_eval_interval_effective_last"] == 1
+    assert telemetry["dplr_windows_last"] == 2
     dplr_model.prefill_backend = "auto"
     dplr_model.dplr_min_tokens = 6
     dplr_model.prefill(ids)
     telemetry = dplr_model.telemetry()
     assert telemetry["prefill_backend_last"] == "recurrent"
     assert telemetry["prefill_backend_counts"]["fallback"] == 1
+    assert telemetry["dplr_windows_last"] == 0
 
 
 def test_mlx_dplr_prefill_bench_dry_run(tmp_path: Path) -> None:

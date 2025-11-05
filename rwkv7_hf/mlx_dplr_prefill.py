@@ -135,6 +135,109 @@ def _compact_wy_summary_metal_kernel() -> Any:
 
 
 @lru_cache(maxsize=1)
+def _compact_wy_summary_tiled_metal_kernel() -> Any:
+    """Return the head-dimension-parallel compact-summary kernel.
+
+    One threadgroup owns one ``(batch, chunk, head)`` summary and one thread
+    owns one head-dimension row.  Token order remains sequential, as required
+    by the recurrence, while the rank dot-products and factor-row updates run
+    in parallel across the threadgroup.
+    """
+
+    mx = require_mlx()
+    if not mlx_dplr_metal_available():
+        raise RuntimeError("MLX custom Metal kernels are unavailable")
+    source = r'''
+        uint lane = thread_position_in_threadgroup.x;
+        uint summary_id = threadgroup_position_in_grid.x;
+        uint B = uint(dims[0]);
+        uint tokens = uint(dims[1]);
+        uint heads = uint(dims[2]);
+        uint chunks = uint(dims[4]);
+        uint total = B * chunks * heads;
+        if (summary_id >= total || lane >= N) {
+            return;
+        }
+
+        uint head = summary_id % heads;
+        uint chunk = (summary_id / heads) % chunks;
+        uint batch = summary_id / (heads * chunks);
+        uint diag_base = summary_id * N;
+        uint factor_base = summary_id * N * C;
+        uint row_base = factor_base + lane * C;
+
+        transition_diag[diag_base + lane] = 1.0f;
+        for (uint rank = 0; rank < C; ++rank) {
+            uint offset = row_base + rank;
+            transition_left[offset] = 0.0f;
+            transition_right[offset] = 0.0f;
+            additive_left[offset] = 0.0f;
+            additive_right[offset] = 0.0f;
+        }
+        threadgroup_barrier(mem_flags::mem_device);
+
+        threadgroup float transition_coeff[C];
+        threadgroup float additive_coeff[C];
+        for (uint local = 0; local < C; ++local) {
+            uint token = chunk * C + local;
+
+            if (lane < local) {
+                float tc = 0.0f;
+                float ac = 0.0f;
+                for (uint n = 0; n < N; ++n) {
+                    uint input_offset = ((batch * tokens + token) * heads + head) * N + n;
+                    float p = -float(kk[input_offset]);
+                    uint factor_offset = factor_base + n * C + lane;
+                    tc += transition_right[factor_offset] * p;
+                    ac += additive_right[factor_offset] * p;
+                }
+                transition_coeff[lane] = tc;
+                additive_coeff[lane] = ac;
+            }
+            threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
+
+            uint input_offset = ((batch * tokens + token) * heads + head) * N + lane;
+            float wv = float(w[input_offset]);
+            float kv = float(k[input_offset]);
+            float vv = float(v[input_offset]);
+            float kkv = float(kk[input_offset]);
+            float p = -kkv;
+            float q = kkv * float(a[input_offset]);
+            float new_left = transition_diag[diag_base + lane] * p;
+
+            for (uint rank = 0; rank < local; ++rank) {
+                uint factor_offset = row_base + rank;
+                new_left += transition_left[factor_offset] * transition_coeff[rank];
+                transition_right[factor_offset] *= wv;
+                additive_right[factor_offset] = additive_right[factor_offset] * wv
+                                                + q * additive_coeff[rank];
+            }
+
+            transition_diag[diag_base + lane] *= wv;
+            uint new_offset = row_base + local;
+            transition_left[new_offset] = new_left;
+            transition_right[new_offset] = q;
+            additive_left[new_offset] = vv;
+            additive_right[new_offset] = kv;
+            threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
+        }
+    '''
+    return mx.fast.metal_kernel(
+        name="rwkv7_dplr_compact_wy_summary_tiled",
+        input_names=["w", "k", "v", "kk", "a", "dims"],
+        output_names=[
+            "transition_diag",
+            "transition_left",
+            "transition_right",
+            "additive_left",
+            "additive_right",
+        ],
+        source=source,
+        ensure_row_contiguous=True,
+    )
+
+
+@lru_cache(maxsize=1)
 def _compact_wy_chunk_apply_metal_kernel() -> Any:
     mx = require_mlx()
     if not mlx_dplr_metal_available():
@@ -191,6 +294,65 @@ def _compact_wy_chunk_apply_metal_kernel() -> Any:
         name="rwkv7_dplr_compact_wy_chunk_apply",
         input_names=["r", "w", "k", "v", "kk", "a", "start_states", "dims"],
         output_names=["outputs", "chunk_ends"],
+        source=source,
+        ensure_row_contiguous=True,
+    )
+
+
+@lru_cache(maxsize=1)
+def _compact_wy_chunk_apply_output_metal_kernel() -> Any:
+    """Return the serving kernel that omits unused per-chunk end states."""
+
+    mx = require_mlx()
+    if not mlx_dplr_metal_available():
+        raise RuntimeError("MLX custom Metal kernels are unavailable")
+    source = r'''
+        uint row_id = thread_position_in_grid.x;
+        uint B = uint(dims[0]);
+        uint tokens = uint(dims[1]);
+        uint heads = uint(dims[2]);
+        uint chunks = uint(dims[4]);
+        uint total_rows = B * chunks * heads * N;
+        if (row_id >= total_rows) {
+            return;
+        }
+
+        uint row = row_id % N;
+        uint head = (row_id / N) % heads;
+        uint chunk = (row_id / (N * heads)) % chunks;
+        uint batch = row_id / (N * heads * chunks);
+        uint start_base = ((((batch * chunks + chunk) * heads + head) * N + row) * N);
+        float state_row[N];
+        for (uint col = 0; col < N; ++col) {
+            state_row[col] = float(start_states[start_base + col]);
+        }
+
+        for (uint local = 0; local < C; ++local) {
+            uint token = chunk * C + local;
+            uint input_base = ((batch * tokens + token) * heads + head) * N;
+            float dot_kk = 0.0f;
+            for (uint col = 0; col < N; ++col) {
+                dot_kk += state_row[col] * float(kk[input_base + col]);
+            }
+
+            float output = 0.0f;
+            float value_row = float(v[input_base + row]);
+            for (uint col = 0; col < N; ++col) {
+                float kkv = float(kk[input_base + col]);
+                float next = state_row[col] * float(w[input_base + col])
+                           - dot_kk * (kkv * float(a[input_base + col]))
+                           + value_row * float(k[input_base + col]);
+                state_row[col] = next;
+                output += next * float(r[input_base + col]);
+            }
+            uint output_offset = ((batch * tokens + token) * heads + head) * N + row;
+            outputs[output_offset] = output;
+        }
+    '''
+    return mx.fast.metal_kernel(
+        name="rwkv7_dplr_compact_wy_chunk_apply_output",
+        input_names=["r", "w", "k", "v", "kk", "a", "start_states", "dims"],
+        output_names=["outputs"],
         source=source,
         ensure_row_contiguous=True,
     )
@@ -328,13 +490,15 @@ def mlx_compact_wy_chunk_summary_metal(
     a: Any,
     *,
     chunk_size: int = 64,
+    implementation: str = "tiled",
 ) -> dict[str, Any]:
     """Build compact chunk factors in one custom Metal launch.
 
-    The first production-shaped kernel assigns one GPU thread to each
-    ``(batch, chunk, head)`` summary. It removes the Python/MLX operation graph
-    for stage 1 while preserving fp32 factors. Current target bounds are
-    ``head_dim<=64`` and ``chunk_size<=64``.
+    The default tiled implementation assigns one threadgroup to each
+    ``(batch, chunk, head)`` summary and one thread to each head-dimension row.
+    The retained scalar implementation assigns one thread to a whole summary
+    and is useful as an independent Metal oracle. Both preserve fp32 factors.
+    Current target bounds are ``head_dim<=64`` and ``chunk_size<=64``.
     """
 
     mx = require_mlx()
@@ -345,16 +509,27 @@ def mlx_compact_wy_chunk_summary_metal(
     )
     if head_dim > 64 or chunk_size_i > 64:
         raise ValueError("Metal compact summary currently requires head_dim<=64 and chunk_size<=64")
+    implementation_i = str(implementation).lower().strip()
+    if implementation_i not in {"scalar", "tiled"}:
+        raise ValueError("Metal compact summary implementation must be scalar or tiled")
     chunks = tokens // chunk_size_i
     total = batch * chunks * heads
     dims = mx.array([batch, tokens, heads, head_dim, chunks], dtype=mx.uint32)
     factor_shape = (batch, chunks, heads, head_dim, chunk_size_i)
+    if implementation_i == "tiled":
+        kernel = _compact_wy_summary_tiled_metal_kernel()
+        grid = (total * head_dim, 1, 1)
+        threadgroup = (head_dim, 1, 1)
+    else:
+        kernel = _compact_wy_summary_metal_kernel()
+        grid = (total, 1, 1)
+        threadgroup = (min(256, max(1, total)), 1, 1)
     transition_diag, transition_left, transition_right, additive_left, additive_right = (
-        _compact_wy_summary_metal_kernel()(
+        kernel(
             inputs=[w, k, v, kk, a, dims],
             template=[("N", head_dim), ("C", chunk_size_i)],
-            grid=(total, 1, 1),
-            threadgroup=(min(256, max(1, total)), 1, 1),
+            grid=grid,
+            threadgroup=threadgroup,
             output_shapes=[
                 (batch, chunks, heads, head_dim),
                 factor_shape,
@@ -366,7 +541,8 @@ def mlx_compact_wy_chunk_summary_metal(
         )
     )
     return {
-        "algorithm": "mlx_metal_compact_wy_summary",
+        "algorithm": f"mlx_metal_compact_wy_summary_{implementation_i}",
+        "implementation": implementation_i,
         "chunk_size": chunk_size_i,
         "rank": chunk_size_i,
         "transition_diag": transition_diag,
@@ -558,6 +734,45 @@ def mlx_compact_wy_chunk_apply_metal(
     return outputs, chunk_ends
 
 
+def mlx_compact_wy_chunk_apply_output_metal(
+    r: Any,
+    w: Any,
+    k: Any,
+    v: Any,
+    kk: Any,
+    a: Any,
+    start_states: Any,
+    *,
+    chunk_size: int = 64,
+) -> Any:
+    """Run serving-shaped chunk apply without allocating chunk-end telemetry."""
+
+    mx = require_mlx()
+    if not mlx_dplr_metal_available():
+        raise RuntimeError("MLX custom Metal kernels are unavailable")
+    batch, tokens, heads, head_dim, chunk_size_i = _validate_inputs(
+        w, k, v, kk, a, chunk_size=chunk_size
+    )
+    if tuple(int(dim) for dim in r.shape) != (batch, tokens, heads, head_dim):
+        raise ValueError("r shape must match w")
+    chunks = tokens // chunk_size_i
+    if tuple(int(dim) for dim in start_states.shape) != (batch, chunks, heads, head_dim, head_dim):
+        raise ValueError("start_states must be [B,chunks,H,N,N]")
+    if head_dim > 64 or chunk_size_i > 64:
+        raise ValueError("Metal chunk apply currently requires head_dim<=64 and chunk_size<=64")
+    dims = mx.array([batch, tokens, heads, head_dim, chunks], dtype=mx.uint32)
+    total_rows = batch * chunks * heads * head_dim
+    (outputs,) = _compact_wy_chunk_apply_output_metal_kernel()(
+        inputs=[r, w, k, v, kk, a, start_states, dims],
+        template=[("N", head_dim), ("C", chunk_size_i)],
+        grid=(total_rows, 1, 1),
+        threadgroup=(min(256, max(1, total_rows)), 1, 1),
+        output_shapes=[(batch, tokens, heads, head_dim)],
+        output_dtypes=[mx.float32],
+    )
+    return outputs
+
+
 def mlx_compact_wy_three_stage(
     r: Any,
     w: Any,
@@ -593,27 +808,51 @@ def mlx_compact_wy_three_stage_metal(
     state: Any,
     *,
     chunk_size: int = 64,
+    summary_implementation: str = "tiled",
+    return_telemetry: bool = True,
 ) -> tuple[Any, Any, dict[str, Any]]:
     """Run Metal summary -> MLX prefix -> Metal chunk apply/output."""
 
-    summary = mlx_compact_wy_chunk_summary_metal(w, k, v, kk, a, chunk_size=chunk_size)
-    start_states, final_state = mlx_compact_wy_prefix_combine(state, summary)
-    outputs, chunk_ends = mlx_compact_wy_chunk_apply_metal(
-        r, w, k, v, kk, a, start_states, chunk_size=chunk_size
+    summary = mlx_compact_wy_chunk_summary_metal(
+        w,
+        k,
+        v,
+        kk,
+        a,
+        chunk_size=chunk_size,
+        implementation=summary_implementation,
     )
-    return outputs, final_state, {
-        "summary": summary,
-        "start_states": start_states,
-        "chunk_ends": chunk_ends,
-        "summary_backend": "metal",
-        "prefix_backend": "mlx",
-        "apply_backend": "metal",
-    }
+    start_states, final_state = mlx_compact_wy_prefix_combine(state, summary)
+    if return_telemetry:
+        outputs, chunk_ends = mlx_compact_wy_chunk_apply_metal(
+            r, w, k, v, kk, a, start_states, chunk_size=chunk_size
+        )
+        telemetry = {
+            "summary": summary,
+            "start_states": start_states,
+            "chunk_ends": chunk_ends,
+            "summary_backend": "metal",
+            "summary_implementation": str(summary_implementation),
+            "prefix_backend": "mlx",
+            "apply_backend": "metal",
+        }
+    else:
+        outputs = mlx_compact_wy_chunk_apply_output_metal(
+            r, w, k, v, kk, a, start_states, chunk_size=chunk_size
+        )
+        telemetry = {
+            "summary_backend": "metal",
+            "summary_implementation": str(summary_implementation),
+            "prefix_backend": "mlx",
+            "apply_backend": "metal_output_only",
+        }
+    return outputs, final_state, telemetry
 
 
 __all__ = [
     "mlx_compact_wy_chunk_apply",
     "mlx_compact_wy_chunk_apply_metal",
+    "mlx_compact_wy_chunk_apply_output_metal",
     "mlx_compact_wy_chunk_summary",
     "mlx_compact_wy_chunk_summary_metal",
     "mlx_compact_wy_prefix_combine",

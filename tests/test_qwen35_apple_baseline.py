@@ -359,6 +359,14 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
             "32",
             "--rwkv-dplr-min-tokens",
             "96",
+            "--rwkv-dplr-summary-implementation",
+            "tiled",
+            "--rwkv-dplr-layer-eval-interval",
+            "2",
+            "--rwkv-dplr-layer-eval-min-tokens",
+            "192",
+            "--rwkv-dplr-window-tokens",
+            "256",
         ],
         cwd=ROOT,
         text=True,
@@ -386,6 +394,10 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
     assert rows[0]["rwkv_prefill_backend"] == "dplr_metal"
     assert rows[0]["rwkv_dplr_chunk_size"] == 32
     assert rows[0]["rwkv_dplr_min_tokens"] == 96
+    assert rows[0]["rwkv_dplr_summary_implementation"] == "tiled"
+    assert rows[0]["rwkv_dplr_layer_eval_interval"] == 2
+    assert rows[0]["rwkv_dplr_layer_eval_min_tokens"] == 192
+    assert rows[0]["rwkv_dplr_window_tokens"] == 256
 
 
 def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
@@ -409,6 +421,10 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
             "RWKV_PREFILL_BACKEND": "dplr_metal",
             "RWKV_DPLR_CHUNK_SIZE": "32",
             "RWKV_DPLR_MIN_TOKENS": "96",
+            "RWKV_DPLR_SUMMARY_IMPLEMENTATION": "tiled",
+            "RWKV_DPLR_LAYER_EVAL_INTERVAL": "2",
+            "RWKV_DPLR_LAYER_EVAL_MIN_TOKENS": "192",
+            "RWKV_DPLR_WINDOW_TOKENS": "256",
         }
     )
     result = subprocess.run(
@@ -441,6 +457,10 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
     assert rows[0]["rwkv_prefill_backend"] == "dplr_metal"
     assert rows[0]["rwkv_dplr_chunk_size"] == 32
     assert rows[0]["rwkv_dplr_min_tokens"] == 96
+    assert rows[0]["rwkv_dplr_summary_implementation"] == "tiled"
+    assert rows[0]["rwkv_dplr_layer_eval_interval"] == 2
+    assert rows[0]["rwkv_dplr_layer_eval_min_tokens"] == 192
+    assert rows[0]["rwkv_dplr_window_tokens"] == 256
 
 
 def test_mlx_prefill_eval_interval_bench_dry_run(tmp_path: Path) -> None:

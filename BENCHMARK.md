@@ -3205,3 +3205,62 @@ PYTHONPATH=. python scripts/mlx_dplr_model_prefill_bench.py \
   --dtype fp16 --quantization none --wkv-backend metal \
   --results bench/results_mlx_dplr_model.jsonl
 ```
+
+### MLX DPLR/WY tiled summary and bounded long-context prefill
+
+The Stage-2 summary assigned a whole `(batch,chunk,head)` to one Metal thread.
+The tiled kernel instead assigns one threadgroup to the summary and one lane
+to each head-dimension row. Token order stays sequential, while rank dot
+products and factor-row updates run in parallel. The scalar kernel remains an
+independent oracle; all five compact factors are bit-identical on M5.
+
+M5, `B1/T512/H16/N64/C64/fp16`, warmup2/repeat7 medians:
+
+| Stage | Median | Effective tok/s |
+|---|---:|---:|
+| scalar Metal summary | 54.801ms | 9,342.97 |
+| tiled Metal summary | 3.399ms | 150,617.78 |
+| tiled full three-stage | 3.421ms | 149,643.81 |
+| tiled serving three-stage (no chunk-end telemetry) | 3.776ms | 135,582.74 |
+
+The summary speedup is `16.12x`. Real-model defaults within the still-opt-in
+DPLR route are now chunk64, tiled summary, auto threshold 8 tokens, four-layer
+materialization from 64 tokens, and a 512-token outer window. The outer model
+backend default remains `recurrent`.
+
+M5 prompt512 (111 RWKV tokens), fp16, three-repeat medians:
+
+| Model | Recurrent | Tiled DPLR | Speedup | Median peak ratio | Parity |
+|---|---:|---:|---:|---:|---|
+| 0.1B | 257.42 tok/s | 5,058.87 tok/s | 19.65x | 1.161x | 8 tokens exact |
+| 0.4B | 118.62 tok/s | 2,143.54 tok/s | 18.07x | 1.090x | 8 tokens exact |
+| 1.5B | 37.56 tok/s | 1,006.19 tok/s | 26.79x | 1.053x | 8 tokens exact |
+
+The 0.4B long-context gate also passes at 223/888/1774 prompt tokens. In the
+recorded memory-first `eval2/min256/window512` sweep, DPLR medians are
+`2,834/2,734/1,483 tok/s`; all 8-token continuations match recurrent. The
+888/1774-token peak stays around `1.16-1.17GB` rather than growing with the
+entire prompt graph.
+
+The final same-run Qwen3.5 0.8B rows are mixed but materially improved. At
+chars512, fp16 passed that run's conservative decode/prefill/TTFT gates
+(`1.208x/1.107x/0.714x` RWKV/Qwen, where lower TTFT is better); W4 passed
+prefill and TTFT (`1.015x/0.743x`) but decode remained `0.950x`. Chars128 and
+cross-run stability still fail, so this is a first passing row, not a blanket
+Qwen superiority claim.
+
+Evidence:
+
+- `bench/results_mlx_dplr_tiled_stage_m5_20260710.jsonl`
+- `bench/results_mlx_dplr_tiled_model_m5_20260710_final_fp16.jsonl`
+- `bench/results_mlx_dplr_tiled_long_m5_20260710_fp16.jsonl`
+- `bench/results_qwen35_apple_m5_20260710_dplr_tiled_final_{fp16,w4}.jsonl`
+
+```bash
+PYTHONPATH=. python scripts/mlx_dplr_model_prefill_bench.py \
+  --models /path/to/rwkv7-g1d-0.4b-hf \
+  --prompt-target-chars-list 1024,4096,8192 \
+  --dplr-summary-implementations tiled --dplr-chunk-sizes 64 \
+  --dplr-layer-eval-interval 4 --dplr-layer-eval-min-tokens 64 \
+  --dplr-window-tokens 512 --repeat 3 --decode-tokens 8
+```
