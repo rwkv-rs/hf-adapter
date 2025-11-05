@@ -367,6 +367,11 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
             "192",
             "--rwkv-dplr-window-tokens",
             "256",
+            "--rwkv-decode-backend",
+            "compiled",
+            "--rwkv-prepare-compiled-decode",
+            "--rwkv-compiled-decode-validation-tokens",
+            "12",
         ],
         cwd=ROOT,
         text=True,
@@ -398,6 +403,9 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
     assert rows[0]["rwkv_dplr_layer_eval_interval"] == 2
     assert rows[0]["rwkv_dplr_layer_eval_min_tokens"] == 192
     assert rows[0]["rwkv_dplr_window_tokens"] == 256
+    assert rows[0]["rwkv_decode_backend"] == "compiled"
+    assert rows[0]["rwkv_prepare_compiled_decode"] is True
+    assert rows[0]["rwkv_compiled_decode_validation_tokens"] == 12
 
 
 def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
@@ -425,6 +433,9 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
             "RWKV_DPLR_LAYER_EVAL_INTERVAL": "2",
             "RWKV_DPLR_LAYER_EVAL_MIN_TOKENS": "192",
             "RWKV_DPLR_WINDOW_TOKENS": "256",
+            "RWKV_DECODE_BACKEND": "compiled",
+            "RWKV_PREPARE_COMPILED_DECODE": "1",
+            "RWKV_COMPILED_DECODE_VALIDATION_TOKENS": "12",
         }
     )
     result = subprocess.run(
@@ -461,6 +472,9 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
     assert rows[0]["rwkv_dplr_layer_eval_interval"] == 2
     assert rows[0]["rwkv_dplr_layer_eval_min_tokens"] == 192
     assert rows[0]["rwkv_dplr_window_tokens"] == 256
+    assert rows[0]["rwkv_decode_backend"] == "compiled"
+    assert rows[0]["rwkv_prepare_compiled_decode"] is True
+    assert rows[0]["rwkv_compiled_decode_validation_tokens"] == 12
 
 
 def test_mlx_prefill_eval_interval_bench_dry_run(tmp_path: Path) -> None:

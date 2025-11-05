@@ -823,6 +823,18 @@ class MLXRWKV7Model:
             raise ValueError(f"unsupported MLX WKV backend {wkv_backend!r}; expected reference, metal, or auto")
         self.wkv_backend_last: str | None = None
         self.wkv_backend_counts: dict[str, int] = {"reference": 0, "metal": 0}
+        self.decode_backend = _env_choice(
+            "RWKV7_MLX_DECODE_BACKEND",
+            "auto",
+            {"eager", "compiled", "auto"},
+        )
+        self.decode_backend_last: str | None = None
+        self.decode_backend_counts: dict[str, int] = {"eager": 0, "compiled": 0}
+        self.decode_compile_s_by_batch: dict[int, float] = {}
+        self._compiled_decode_functions: dict[int, Any] = {}
+        self._compiled_decode_validated_batches: set[int] = set()
+        self._compiled_decode_rejected_batches: set[int] = set()
+        self.decode_compiled_validation_by_batch: dict[int, dict[str, Any]] = {}
         self.quantized_linears: dict[str, MLXQuantizedLinear] = {}
         self.quantized_dense_equivalent_bytes = 0
         self.quantized_linear_bytes = 0
@@ -1039,6 +1051,14 @@ class MLXRWKV7Model:
             "wkv_backend": self.wkv_backend,
             "wkv_backend_last": self.wkv_backend_last,
             "wkv_backend_counts": dict(self.wkv_backend_counts),
+            "decode_backend": self.decode_backend,
+            "decode_backend_last": self.decode_backend_last,
+            "decode_backend_counts": dict(self.decode_backend_counts),
+            "decode_compiled_batches": sorted(self._compiled_decode_functions),
+            "decode_compiled_validated_batches": sorted(self._compiled_decode_validated_batches),
+            "decode_compiled_rejected_batches": sorted(self._compiled_decode_rejected_batches),
+            "decode_compile_s_by_batch": dict(self.decode_compile_s_by_batch),
+            "decode_compiled_validation_by_batch": dict(self.decode_compiled_validation_by_batch),
             "wkv_metal_available": metal_wkv_available(),
             "quant_metal_available": metal_quant_available(),
             "step_eval_interval": int(self.step_eval_interval),
@@ -1920,6 +1940,204 @@ class MLXRWKV7Model:
     def prefill(self, input_ids: Iterable[Iterable[int]] | Any, state: MLXRWKV7State | None = None):
         return self.forward(input_ids, state=state, collect_all=False)
 
+    def _flatten_compiled_decode_state(self, state: MLXRWKV7State) -> tuple[Any, ...]:
+        return (
+            state.v_first,
+            *state.recurrent_state,
+            *state.attn_x_prev,
+            *state.ffn_x_prev,
+        )
+
+    def _compiled_decode_state_from_outputs(
+        self,
+        outputs: tuple[Any, ...] | list[Any],
+        *,
+        seen_tokens: int,
+    ) -> MLXRWKV7State:
+        layers = self.num_hidden_layers
+        if len(outputs) != 1 + 3 * layers:
+            raise RuntimeError(
+                f"compiled decode returned {len(outputs)} state arrays; expected {1 + 3 * layers}"
+            )
+        return MLXRWKV7State(
+            recurrent_state=list(outputs[1 : 1 + layers]),
+            attn_x_prev=list(outputs[1 + layers : 1 + 2 * layers]),
+            ffn_x_prev=list(outputs[1 + 2 * layers : 1 + 3 * layers]),
+            v_first=outputs[0],
+            seen_tokens=int(seen_tokens),
+        )
+
+    def _build_compiled_decode_function(self, batch_size: int):
+        mx = _mx()
+        batch = int(batch_size)
+        if batch <= 0:
+            raise ValueError("compiled decode batch size must be positive")
+        layers = self.num_hidden_layers
+
+        def pure_decode(token_ids, v_first, *flat_state):
+            state = MLXRWKV7State(
+                recurrent_state=list(flat_state[:layers]),
+                attn_x_prev=list(flat_state[layers : 2 * layers]),
+                ffn_x_prev=list(flat_state[2 * layers : 3 * layers]),
+                v_first=v_first,
+                seen_tokens=0,
+            )
+            hidden, state = self._step_token(token_ids.reshape(batch), state, evaluate=False)
+            logits = self._logits_from_hidden(hidden).reshape(batch, 1, self.vocab_size)
+            return (logits, *self._flatten_compiled_decode_state(state))
+
+        compile_fn = getattr(mx, "compile", None)
+        if not callable(compile_fn):
+            raise RuntimeError("this MLX runtime does not expose mx.compile")
+        return compile_fn(pure_decode)
+
+    def prepare_compiled_decode(self, batch_size: int = 1) -> float:
+        """Compile and warm a pure full-model decode graph for ``batch_size``.
+
+        Compilation is explicit because its one-time latency belongs in model
+        loading/warmup, not in the first interactive token. ``decode_backend``
+        set to ``auto`` uses this graph only after it has also passed
+        :meth:`validate_compiled_decode` for the concrete model and batch size.
+        """
+
+        mx = _mx()
+        batch = int(batch_size)
+        if batch in self._compiled_decode_functions and batch in self.decode_compile_s_by_batch:
+            return float(self.decode_compile_s_by_batch[batch])
+        function = self._compiled_decode_functions.get(batch)
+        if function is None:
+            function = self._build_compiled_decode_function(batch)
+            self._compiled_decode_functions[batch] = function
+        token_ids = mx.zeros((batch,), dtype=mx.int32)
+        state = self.init_state(batch)
+        started = time.perf_counter()
+        outputs = function(token_ids, *self._flatten_compiled_decode_state(state))
+        mx.eval(*outputs)
+        elapsed = time.perf_counter() - started
+        self.decode_compile_s_by_batch[batch] = float(elapsed)
+        return float(elapsed)
+
+    def _compiled_decode_step(self, token_ids: Iterable[int] | Any, state: MLXRWKV7State):
+        mx = _mx()
+        batch = int(state.batch_size)
+        function = self._compiled_decode_functions.get(batch)
+        if function is None:
+            function = self._build_compiled_decode_function(batch)
+            self._compiled_decode_functions[batch] = function
+        ids = mx.array(token_ids, dtype=mx.int32).reshape(-1)
+        if int(ids.shape[0]) != batch:
+            raise ValueError(f"token batch size {int(ids.shape[0])} does not match state batch size {batch}")
+        started = time.perf_counter() if batch not in self.decode_compile_s_by_batch else None
+        outputs = function(ids, *self._flatten_compiled_decode_state(state))
+        logits = outputs[0]
+        next_state = self._compiled_decode_state_from_outputs(
+            outputs[1:],
+            seen_tokens=int(state.seen_tokens) + 1,
+        )
+        mx.eval(logits)
+        if started is not None:
+            self.decode_compile_s_by_batch[batch] = float(time.perf_counter() - started)
+        self.decode_backend_last = "compiled"
+        self.decode_backend_counts["compiled"] = int(self.decode_backend_counts.get("compiled", 0)) + 1
+        return logits, next_state
+
+    def validate_compiled_decode(
+        self,
+        logits: Any,
+        state: MLXRWKV7State,
+        *,
+        steps: int = 32,
+        logits_atol: float = 0.0,
+        state_atol: float = 0.0,
+    ) -> dict[str, Any]:
+        """Parity-gate a prepared compiled graph against eager greedy decode.
+
+        ``auto`` never selects a compiled graph merely because it exists. The
+        graph must first pass this gate for the concrete batch/model/backend.
+        This is necessary because aggressive graph fusion can accumulate
+        model-dependent low-margin drift even when one-step parity looks good.
+        """
+
+        mx = _mx()
+        count = int(steps)
+        if count <= 0:
+            raise ValueError("compiled decode validation steps must be positive")
+        if logits_atol < 0 or state_atol < 0:
+            raise ValueError("compiled decode validation tolerances must be non-negative")
+        batch = int(state.batch_size)
+        self.prepare_compiled_decode(batch)
+        eager_logits = logits
+        compiled_logits = logits
+        eager_state = state.clone()
+        compiled_state = state.clone()
+        eager_tokens: list[list[int]] = []
+        compiled_tokens: list[list[int]] = []
+        previous_backend = self.decode_backend
+        previous_last = self.decode_backend_last
+        previous_counts = dict(self.decode_backend_counts)
+        try:
+            for _ in range(count):
+                eager_token = mx.argmax(eager_logits[:, -1, :], axis=-1).astype(mx.int32)
+                compiled_token = mx.argmax(compiled_logits[:, -1, :], axis=-1).astype(mx.int32)
+                mx.eval(eager_token, compiled_token)
+                eager_tokens.append([int(value) for value in eager_token.tolist()])
+                compiled_tokens.append([int(value) for value in compiled_token.tolist()])
+                self.decode_backend = "eager"
+                eager_logits, eager_state = self.decode_step(eager_token, eager_state)
+                self.decode_backend = "compiled"
+                compiled_logits, compiled_state = self.decode_step(compiled_token, compiled_state)
+            mx.eval(
+                eager_logits,
+                compiled_logits,
+                *self._flatten_compiled_decode_state(eager_state),
+                *self._flatten_compiled_decode_state(compiled_state),
+            )
+        finally:
+            self.decode_backend = previous_backend
+            self.decode_backend_last = previous_last
+            self.decode_backend_counts = previous_counts
+        logits_diff = float(
+            mx.max(mx.abs(eager_logits.astype(mx.float32) - compiled_logits.astype(mx.float32)))
+        )
+        state_diff = max(
+            float(mx.max(mx.abs(left.astype(mx.float32) - right.astype(mx.float32))))
+            for left, right in zip(
+                self._flatten_compiled_decode_state(eager_state),
+                self._flatten_compiled_decode_state(compiled_state),
+                strict=True,
+            )
+        )
+        tokens_match = eager_tokens == compiled_tokens
+        passed = bool(tokens_match and logits_diff <= logits_atol and state_diff <= state_atol)
+        result = {
+            "status": "pass" if passed else "fail",
+            "batch_size": batch,
+            "steps": count,
+            "generated_tokens_match": tokens_match,
+            "first_token_mismatch_step": next(
+                (
+                    index + 1
+                    for index, (eager, compiled) in enumerate(
+                        zip(eager_tokens, compiled_tokens, strict=True)
+                    )
+                    if eager != compiled
+                ),
+                None,
+            ),
+            "logits_max_abs": logits_diff,
+            "state_max_abs": state_diff,
+            "logits_atol": float(logits_atol),
+            "state_atol": float(state_atol),
+        }
+        self.decode_compiled_validation_by_batch[batch] = result
+        if passed:
+            self._compiled_decode_validated_batches.add(batch)
+            self._compiled_decode_rejected_batches.discard(batch)
+        else:
+            self._compiled_decode_rejected_batches.add(batch)
+            self._compiled_decode_validated_batches.discard(batch)
+        return dict(result)
+
     def decode_step(self, token_ids: Iterable[int] | Any, state: MLXRWKV7State):
         """Advance one decode token without forcing a full state sync every step.
 
@@ -1932,6 +2150,14 @@ class MLXRWKV7Model:
         policy effective.
         """
 
+        batch = int(state.batch_size)
+        use_compiled = self.decode_backend == "compiled" or (
+            self.decode_backend == "auto" and batch in self._compiled_decode_validated_batches
+        )
+        if use_compiled:
+            return self._compiled_decode_step(token_ids, state)
+        self.decode_backend_last = "eager"
+        self.decode_backend_counts["eager"] = int(self.decode_backend_counts.get("eager", 0)) + 1
         mx = _mx()
         ids = mx.array(token_ids, dtype=mx.int32).reshape(-1)
         B = int(ids.shape[0])

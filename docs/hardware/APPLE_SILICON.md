@@ -31,8 +31,9 @@ CoreML export manifest/prototype, and the follow-up CoreML/ANE runtime lane.
 | MLX prefill eval batching | pass, limited speedup | `RWKV7_MLX_PREFILL_EVAL_INTERVAL` and `--rwkv-prefill-eval-interval` batch lazy prompt graphs; model default is 1 and Apple acceptance default is 2. `scripts/mlx_prefill_eval_interval_bench.py` reports exact logits/full-state/next-token parity on M5. At 512 chars, interval 2 gives median 0.1B/0.4B/1.5B fp16 speedups≈1.05x/1.28x/1.09x and 0.4B/1.5B W4≈1.38x/1.32x. This is a host-sync optimization, not production chunked prefill. |
 | MLX DPLR/WY Stage 1 | synthetic Metal kernels pass | `rwkv7_hf/mlx_dplr_prefill.py` ports compact summary/prefix/apply math and custom Metal summary + apply/output kernels; `scripts/mlx_dplr_prefill_bench.py` records staged parity/speed. M5 production-shaped `B1/T512/H16/N64/C64/fp16` full scaffold median≈60.249ms/8,498.11 effective tok/s,≈1.28x recurrent oracle and≈3.44x high-level three-stage, with output/final-state max-abs≈1.53e-04/1.14e-04. Summary remains≈97.6% of staged latency. |
 | MLX DPLR/WY model prefill | opt-in real-model pass; first Qwen chars512 gate pass | Tiled Metal summary parallelizes head-dim rows and is≈16.12x the scalar summary on M5 T512/H16/N64/C64. Final prompt512 medians improve recurrent→DPLR by≈19.65x/18.07x/26.79x for 0.1B/0.4B/1.5B fp16; 8-token continuations match and peak ratios are≈1.161x/1.090x/1.053x. Auto starts at 8 tokens, materializes every four layers from T64, and windows at 512 tokens. Backend default remains recurrent. |
+| MLX guarded compiled decode | 0.4B fp16/W4 pass; 0.1B/1.5B safe fallback | Explicit full-model `mx.compile` warmup plus model/batch parity promotion. M5 B1 prompt512/decode64: fp16 `96.39→119.99 tok/s` (1.245x), W4 `97.79→119.46` (1.222x), with final logits/state/tokens exact. 0.1B numeric drift and 1.5B token mismatch reject promotion, so `auto` stays eager. With tiled DPLR, 0.4B fp16 beats Qwen3.5 0.8B on available chars128/512 conservative decode/prefill/TTFT speed gates; peak-memory and cross-M-series gates remain open. |
 | CoreML / ANE export + runtime | stateful 0.1B/0.4B correctness + initial W8 pass; production ANE open | `scripts/export_rwkv7_coreml.py --export-kind stateful-multifunction` now exports deduplicated `prefill` + `decode` functions with packed RWKV state. The WKV fp32 cache is represented as fp16 high + fp16 residual because Core ML state is fp16-only. `bench/run_coreml_apple_baseline.py` transfers `MLState`, runs exact shared prompts, greedy decode, chunk-boundary checks, and optional HF parity. M5/16GB live 0.1B and 0.4B fp32-compute rows pass state transfer (`max_abs=0`), chunk split (`logits/state max_abs=0`), and HF greedy tokens. 0.1B/0.4B INT8 packages are≈0.45x/0.36x and preserve the short greedy gates; decode is≈0.95x/0.98x fp32, so speed acceptance is still open. 0.1B INT4/LUT4 reduce package to≈0.38x/0.13x but fail HF greedy parity. `CPU_AND_NE` eligibility passes but does not prove ANE occupancy; longer/quality/placement rows remain open. |
-| MLX recurrent backend / Metal backend | recurrent + Metal WKV/quant + tiled DPLR prefill | Optional `.[mlx]` install, `rwkv7_hf.mlx_bridge`, `rwkv7_hf.mlx_model`, `rwkv7_hf.mlx_quant`, `rwkv7_hf.mlx_wkv`, `rwkv7_hf.mlx_dplr_prefill`, and the Apple scripts validate HF safetensor → MLX arrays, recurrent/cache/session behavior, packed W8/W4 projections, custom Metal WKV/quant paths, partial chunks, layer-major tiled-DPLR model prefill, bounded long-context windows, and parity gates. Remaining production work is decode fusion, cold compilation, quality pressure, and cross-device tuning. |
+| MLX recurrent backend / Metal backend | recurrent + Metal WKV/quant + tiled DPLR prefill + guarded decode compile | Optional `.[mlx]` install, `rwkv7_hf.mlx_bridge`, `rwkv7_hf.mlx_model`, `rwkv7_hf.mlx_quant`, `rwkv7_hf.mlx_wkv`, `rwkv7_hf.mlx_dplr_prefill`, and the Apple scripts validate HF safetensor → MLX arrays, recurrent/cache/session behavior, packed W8/W4 projections, custom Metal WKV/quant paths, partial chunks, layer-major tiled-DPLR model prefill, bounded long-context windows, and exact model/batch decode promotion gates. Remaining production work is 0.1B/1.5B compiled parity, true peak memory, quality pressure, and cross-device tuning. |
 
 ## Why the Apple path is native / no-FLA by default
 
@@ -834,12 +835,14 @@ test script.
   select, chunked prefill, dynamic-batch row selection, prefill-once/session
   decode equality vs one-shot, interleaved multi-session equality vs one-shot with an opt-in equal-round batched session backend, 0.1B/0.4B/1.5B 3-session rows plus 0.4B/1.5B 4-session repeat-pressure summary rows and higher-concurrency 0.4B 6-session / 1.5B 5-session rows, prompt/decode sweeps through 4096-token prompts on 0.4B and 8192-token prompts / 512-token decode on 1.5B plus repeat pressure rows,
   0.1B/0.4B/1.5B MLX packed W8/W4 affine quant projection rows, 0.1B/0.4B/1.5B `--quant-backend metal` fused dequant-projection rows with 0.4B/1.5B prompt128/256 decode4/8 plus prompt512/1024 decode16 pressure, quant+Metal higher-concurrency session-batch rows, 0.1B/0.4B/1.5B short greedy decode, and 0.1B/0.4B/1.5B `--wkv-backend metal` smoke rows. Production fused
-  Interval-2 lazy graph evaluation is now exact across the local fp16/W4
-  matrix and removes part of the host synchronization cost, but the live Qwen
-  gate still needs about `8x-24x` more prefill throughput depending on mode and
-  prompt. Production DPLR/WY chunk summary/prefix combine/chunk apply,
-  WKV/projection, Metal fused quant/dequant, still-larger production prompt/decode pressure,
-  and production serving integration are still open.
+  Interval-2 lazy graph evaluation remains exact across the local fp16/W4
+  matrix. Tiled DPLR now supplies the production-shaped chunk summary/prefix/
+  apply route, and guarded full-model compile closes the available 0.4B fp16
+  chars128/512 Qwen speed gates. The strict comparison is still incomplete:
+  true Qwen peak memory is not in the structured API rows, 0.1B/1.5B compiled
+  parity falls back to eager, and cross-M-series/quality/longer pressure remain
+  open. Metal fused quant/dequant and production serving integration also need
+  more work.
 - Long-running full-size training on MPS is not claimed yet. Tiny native Trainer
   and tiny PEFT LoRA Trainer pass; 0.1B and 0.4B PEFT LoRA backward, HF Trainer,
   TRL SFT, DPO, and GRPO one-step and 2-step smoke pass on a 16GB M5. 1.5B
@@ -882,9 +885,12 @@ next backend layer:
    fp32 correctness row to prompt/decode sweeps, 0.4B/1.5B, LUT4/INT4, and
    confirmed ANE-placement benchmark rows. Keep fp16 stateful compute opt-in
    until its HF greedy-token mismatch is fixed.
-7. Promote the now-fast tiled DPLR prefill only after cross-M-series gates;
-   the Apple performance mainline is now decode fusion/batching, cold
-   short-prompt compilation, and W8/W4 decode projection fusion. Keep the
+7. Extend guarded compiled decode beyond the exact 0.4B fp16/W4 result: recover
+   strict 0.1B/1.5B parity, validate batch sizes greater than one, and fuse W4
+   decode projection/dequant. Keep explicit compile+validation in load/warmup;
+   never promote a graph solely because it compiled.
+8. Promote the now-fast tiled DPLR prefill and guarded decode only after
+   cross-M-series gates. Collect true peak-to-peak Qwen memory and retain the
    scalar summary only as a correctness oracle.
-8. Decide whether the production Metal WKV-7 kernel belongs in this repo as an
+9. Decide whether the production Metal WKV-7 kernel belongs in this repo as an
    optional backend or in a sibling `rwkv7-mlx` / `rwkv7-metal` package.
