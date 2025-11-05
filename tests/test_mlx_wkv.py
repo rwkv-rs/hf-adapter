@@ -82,10 +82,54 @@ def test_mlx_model_metal_wkv_hook_if_available():
     assert telemetry["wkv_backend_counts"]["metal"] > 0
 
 
+def test_mlx_prefill_eval_interval_parity_if_available():
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    from rwkv7_hf.mlx_model import MLXRWKV7Model
+    from tests.test_apple_silicon_mlx_model_smoke import tiny_torch_model_to_mlx
+
+    _, eager_model, cfg = tiny_torch_model_to_mlx()
+    batched_model = MLXRWKV7Model.from_arrays(cfg, dict(eager_model.arrays))
+    eager_model.prefill_eval_interval = 1
+    batched_model.prefill_eval_interval = 4
+    ids = [[1, 2, 3, 4], [4, 3, 2, 1]]
+    eager_logits, eager_state = eager_model.prefill(ids)
+    batched_logits, batched_state = batched_model.prefill(ids)
+    mx.eval(
+        eager_logits,
+        batched_logits,
+        eager_state.v_first,
+        batched_state.v_first,
+        *eager_state.recurrent_state,
+        *batched_state.recurrent_state,
+        *eager_state.attn_x_prev,
+        *batched_state.attn_x_prev,
+        *eager_state.ffn_x_prev,
+        *batched_state.ffn_x_prev,
+    )
+    assert float(mx.max(mx.abs(eager_logits.astype(mx.float32) - batched_logits.astype(mx.float32)))) < 1e-5
+    assert mx.argmax(eager_logits[:, -1, :], axis=-1).tolist() == mx.argmax(
+        batched_logits[:, -1, :], axis=-1
+    ).tolist()
+    assert float(mx.max(mx.abs(eager_state.v_first - batched_state.v_first))) < 1e-5
+    for eager_arrays, batched_arrays in (
+        (eager_state.recurrent_state, batched_state.recurrent_state),
+        (eager_state.attn_x_prev, batched_state.attn_x_prev),
+        (eager_state.ffn_x_prev, batched_state.ffn_x_prev),
+    ):
+        for eager_layer, batched_layer in zip(eager_arrays, batched_arrays, strict=True):
+            assert float(mx.max(mx.abs(eager_layer - batched_layer))) < 1e-5
+    assert int(eager_state.seen_tokens) == int(batched_state.seen_tokens) == 4
+    assert batched_model.telemetry()["prefill_eval_interval"] == 4
+
+
 if __name__ == "__main__":
     test_mlx_wkv_import_safe()
     test_mlx_wkv_formula_if_available()
     test_mlx_model_metal_wkv_hook_if_available()
+    test_mlx_prefill_eval_interval_parity_if_available()
     print("MLX WKV TESTS PASS")
 
 
