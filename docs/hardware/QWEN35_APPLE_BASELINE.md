@@ -574,3 +574,30 @@ bash scripts/run_qwen35_apple_acceptance.sh
 The gate appends `axis=mlx_scan_prefill_compare` rows and records logit drift,
 state drift, generated-id equality, token-major/scan prefill timing, and WKV
 kernel count reduction.
+
+## 2026-07-08 scan-prefill auto policy
+
+The MLX scan-prefill path now supports a production-shaped auto policy:
+
+```bash
+RWKV_WKV_SCAN_PREFILL=auto
+RWKV_WKV_SCAN_PREFILL_MIN_TOKENS=32
+```
+
+`auto` enables scan prefill for multi-token chunks above the threshold and keeps
+single-token decode on the existing decode path.  Telemetry records
+`wkv_scan_prefill_mode`, `wkv_scan_prefill_min_tokens`, and
+`wkv_scan_prefill_reason_counts`.
+
+Apple M5 evidence in `bench/apple_scan_prefill_auto_m5_20260708/`:
+
+| Model | Shape | Prefill tok/s | Decode tok/s | TTFT s | Peak memory |
+|---|---|---:|---:|---:|---:|
+| RWKV-7 0.4B mm4 | 1024 chars / 128 decode | 254.27 | 61.29 | 1.285 | 602 MB |
+| RWKV-7 1.5B mm4 | 1024 chars / 128 decode | 61.37 | 28.54 | 5.316 | 1.47 GB |
+| RWKV-7 0.4B mm4 | 4096 chars / 128 decode | 247.42 | 60.14 | 5.295 | 1.24 GB |
+| RWKV-7 1.5B mm4 | 4096 chars / 128 decode | 53.60 | 25.40 | 24.443 | 2.08 GB |
+
+The 4096-char rows also validate chunked prefill with three scan chunks
+(`chunked_wkv_scan_prefill_counts.metal=72`) and two state-only intermediate
+chunks.
