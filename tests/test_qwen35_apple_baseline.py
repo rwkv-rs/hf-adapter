@@ -53,8 +53,8 @@ def test_make_prompt_hits_target_chars() -> None:
 def test_ollama_stream_row_uses_final_duration_metrics() -> None:
     case = PromptCase(name="chars16", target_chars=16, prompt="0123456789abcdef")
     chunks = [
-        {"response": "hel", "done": False},
-        {"response": "lo", "done": False},
+        {"response": "hel", "done": False, "_client_elapsed_s": 0.25},
+        {"response": "lo", "done": False, "_client_elapsed_s": 0.5},
         {
             "response": "",
             "done": True,
@@ -81,7 +81,39 @@ def test_ollama_stream_row_uses_final_duration_metrics() -> None:
     assert row["prefill_tok_s"] == 4.0
     assert row["decode_tok_s"] == 4.0
     assert row["first_response_chunk_index"] == 0
+    assert row["first_output_chunk_index"] == 0
+    assert row["ttft_s"] == 0.15
+    assert row["cold_ttft_s"] == 0.25
     assert row["public_package_gb"] == 1.2
+
+
+def test_ollama_row_tracks_thinking_without_treating_it_as_answer() -> None:
+    case = PromptCase(name="chars8", target_chars=8, prompt="12345678")
+    row = ollama_row_from_chunks(
+        model="qwen3.5:0.8b-mlx",
+        prompt_case=case,
+        max_new_tokens=2,
+        chunks=[
+            {"thinking": "plan", "response": "", "done": False, "_client_elapsed_s": 0.1},
+            {
+                "thinking": "",
+                "response": "answer",
+                "done": True,
+                "_client_elapsed_s": 0.2,
+                "prompt_eval_count": 4,
+                "prompt_eval_duration": 1_000_000_000,
+                "eval_count": 2,
+                "eval_duration": 1_000_000_000,
+            },
+        ],
+        elapsed_s=0.2,
+        store_response=True,
+    )
+    assert row["first_output_chunk_index"] == 0
+    assert row["first_response_chunk_index"] == 1
+    assert row["ttft_s"] == 0.1
+    assert row["response_text"] == "answer"
+    assert row["thinking_text"] == "plan"
 
 
 def test_ollama_row_can_store_full_response_for_quality() -> None:

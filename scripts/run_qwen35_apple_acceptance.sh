@@ -34,6 +34,9 @@ OLLAMA_PULL_TIMEOUT_S="${OLLAMA_PULL_TIMEOUT_S:-7200}"
 OLLAMA_PULL_IDLE_TIMEOUT_S="${OLLAMA_PULL_IDLE_TIMEOUT_S:-120}"
 OLLAMA_PULL_FAIL_ON_TIMEOUT="${OLLAMA_PULL_FAIL_ON_TIMEOUT:-1}"
 OLLAMA_PULL_RESULTS="${OLLAMA_PULL_RESULTS:-${RESULTS}}"
+OLLAMA_THINK="${OLLAMA_THINK:-0}"
+OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-0}"
+OLLAMA_CACHE_PROMPT="${OLLAMA_CACHE_PROMPT:-0}"
 TEMPERATURE="${TEMPERATURE:-0.0}"
 
 RWKV_MLX_MODELS="${RWKV_MLX_MODELS:-}"
@@ -264,6 +267,7 @@ baseline_args=(
   --warmup-repeats "${WARMUP_REPEATS}"
   --ollama-host "${OLLAMA_HOST}"
   --ollama-timeout-s "${OLLAMA_TIMEOUT_S}"
+  --ollama-keep-alive "${OLLAMA_KEEP_ALIVE}"
   --temperature "${TEMPERATURE}"
   --rwkv-dtype "${RWKV_DTYPE}"
   --rwkv-quantization "${RWKV_QUANTIZATION}"
@@ -273,6 +277,12 @@ baseline_args=(
   --rwkv-wkv-backend "${RWKV_WKV_BACKEND}"
   --rwkv-chunk-size "${RWKV_CHUNK_SIZE}"
 )
+if [[ "${OLLAMA_THINK}" == "1" ]]; then
+  baseline_args+=(--ollama-think)
+fi
+if [[ "${OLLAMA_CACHE_PROMPT}" == "1" ]]; then
+  baseline_args+=(--ollama-cache-prompt)
+fi
 if [[ "${STORE_RESPONSES}" == "1" ]]; then
   baseline_args+=(--store-responses)
 fi

@@ -52,12 +52,13 @@ MLX/Metal path grows from the current opt-in WKV seam into a production backend.
 
 ## Current local evidence
 
-Local smoke on 2026-07-04:
+Local smoke collected from 2026-07-04 through 2026-07-10:
 
 | Machine | Memory | macOS | PyTorch | Device | Test | Result |
 |---|---:|---|---|---|---|---|
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | tiny native RWKV-7 `generate()` | PASS (`elapsed_s=0.1121`, 2 generated tokens) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.1b-hf` load + forward + `generate()` | PASS (`elapsed_s=0.2406`, 11 prompt tokens + 2 generated tokens) |
+| MacBook Air / Apple M5 | 16GB | 26.5 | Ollama 0.31.1 / MLX 0.32.0 | Ollama MLX vs RWKV MLX | GAP (first live `qwen3.5:0.8b-mlx` vs RWKV-7 0.4B rows, prompt chars 128/512, decode32, repeat2, isolated Ollama cache. RWKV fp16 decode≈0.94x/0.90x Qwen but prefill≈0.105x/0.071x and TTFT fails on the longer row. RWKV W4 peak≈0.568x fp16 but decode≈0.60x Qwen; Qwen runtime memory and formal quality remain unknown. See `bench/results_qwen35_apple_m5_20260710_{fp16,w4}.jsonl`.) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | tiny native MM8/MM4 quant smoke | PASS (config-driven from_pretrained; MM8 footprint ratio=0.391615, MM4 footprint ratio=0.267734; decode backend=eager) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.1b-hf` native MM8/MM4 quant smoke | PASS (`MIN_PARAMS=8000000` lm_head replacement; `MIN_PARAMS=1000000` replaces 25 FFN/lm_head modules; `MIN_PARAMS=500000` replaces 73 attention/FFN/lm_head modules; MM8 footprint ratio≈0.253433, MM4 footprint ratio≈0.128433; 1-token generate) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.4b-hf` native MM8/MM4 quant sweep | PASS (`MIN_PARAMS=4000000` replaces 49 FFN/lm_head modules; MM8 footprint ratio≈0.252327, MM4 footprint ratio≈0.127327; 1-token generate) |
@@ -822,7 +823,7 @@ test script.
   remains near parity rather than a stable speed win.
   INT4/LUT4 reduce package size to≈0.38x/0.13x while failing that greedy gate,
   so W4 is not a quality pass. Longer prompts, 1.5B, calibrated/mixed W4,
-  runtime placement telemetry, and same-device Qwen3.5 rows remain open.
+  runtime placement telemetry, and broader same-device Qwen3.5 2B+ rows remain open.
 - The MLX path is now a correctness-first recurrent reference backend plus an
   initial opt-in MLX/Metal WKV custom-kernel seam, not a production-speed
   backend. It verifies HF safetensor loading/export, full
