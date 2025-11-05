@@ -137,6 +137,54 @@ def test_mlx_dplr_summary_rejects_partial_chunk_if_available() -> None:
         mlx_compact_wy_chunk_summary(x, x, x, x, x, chunk_size=4)
 
 
+def test_mlx_model_dplr_prefill_partial_chunk_and_decode_if_available() -> None:
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    from rwkv7_hf.mlx_dplr_prefill import mlx_dplr_metal_available
+    from rwkv7_hf.mlx_model import MLXRWKV7Model
+    from tests.test_apple_silicon_mlx_model_smoke import tiny_torch_model_to_mlx
+
+    if not mlx_dplr_metal_available():
+        return
+    _, recurrent_model, cfg = tiny_torch_model_to_mlx()
+    dplr_model = MLXRWKV7Model.from_arrays(cfg, dict(recurrent_model.arrays))
+    recurrent_model.prefill_backend = "recurrent"
+    dplr_model.prefill_backend = "dplr_metal"
+    dplr_model.dplr_chunk_size = 4
+    ids = [[1, 2, 3, 4, 5], [5, 4, 3, 2, 1]]
+    ref_logits, ref_state = recurrent_model.prefill(ids)
+    got_logits, got_state = dplr_model.prefill(ids)
+    mx.eval(ref_logits, got_logits, *ref_state.recurrent_state, *got_state.recurrent_state)
+
+    assert float(mx.max(mx.abs(ref_logits.astype(mx.float32) - got_logits.astype(mx.float32)))) < 5e-3
+    assert mx.argmax(ref_logits[:, -1, :], axis=-1).tolist() == mx.argmax(
+        got_logits[:, -1, :], axis=-1
+    ).tolist()
+    for ref_layer, got_layer in zip(ref_state.recurrent_state, got_state.recurrent_state, strict=True):
+        assert float(mx.max(mx.abs(ref_layer - got_layer))) < 5e-3
+    assert int(ref_state.seen_tokens) == int(got_state.seen_tokens) == 5
+
+    next_tokens = mx.argmax(ref_logits[:, -1, :], axis=-1).astype(mx.int32)
+    ref_next_logits, ref_state = recurrent_model.decode_step(next_tokens, ref_state)
+    got_next_logits, got_state = dplr_model.decode_step(next_tokens, got_state)
+    mx.eval(ref_next_logits, got_next_logits)
+    assert float(mx.max(mx.abs(ref_next_logits.astype(mx.float32) - got_next_logits.astype(mx.float32)))) < 1e-2
+    assert mx.argmax(ref_next_logits[:, -1, :], axis=-1).tolist() == mx.argmax(
+        got_next_logits[:, -1, :], axis=-1
+    ).tolist()
+    telemetry = dplr_model.telemetry()
+    assert telemetry["prefill_backend_last"] == "dplr_metal"
+    assert telemetry["prefill_backend_counts"]["dplr_metal"] == 1
+    dplr_model.prefill_backend = "auto"
+    dplr_model.dplr_min_tokens = 6
+    dplr_model.prefill(ids)
+    telemetry = dplr_model.telemetry()
+    assert telemetry["prefill_backend_last"] == "recurrent"
+    assert telemetry["prefill_backend_counts"]["fallback"] == 1
+
+
 def test_mlx_dplr_prefill_bench_dry_run(tmp_path: Path) -> None:
     output = tmp_path / "mlx_dplr_plan.jsonl"
     result = subprocess.run(
@@ -164,8 +212,35 @@ def test_mlx_dplr_prefill_bench_dry_run(tmp_path: Path) -> None:
     assert row["chunk_size"] == 8
 
 
+def test_mlx_dplr_model_prefill_bench_dry_run(tmp_path: Path) -> None:
+    output = tmp_path / "mlx_dplr_model_plan.jsonl"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/mlx_dplr_model_prefill_bench.py",
+            "--models",
+            "/tmp/rwkv-a,/tmp/rwkv-b",
+            "--dplr-chunk-sizes",
+            "32,64",
+            "--results",
+            str(output),
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    row = json.loads(output.read_text(encoding="utf-8").strip())
+    assert row["axis"] == "mlx_dplr_model_prefill_env"
+    assert row["models"] == ["/tmp/rwkv-a", "/tmp/rwkv-b"]
+    assert row["dplr_chunk_sizes"] == [32, 64]
+
+
 if __name__ == "__main__":
     test_mlx_dplr_prefill_import_safe()
     test_mlx_dplr_three_stage_matches_recurrent_scan_if_available()
     test_mlx_dplr_summary_rejects_partial_chunk_if_available()
+    test_mlx_model_dplr_prefill_partial_chunk_and_decode_if_available()
     print("MLX DPLR PREFILL TESTS PASS")

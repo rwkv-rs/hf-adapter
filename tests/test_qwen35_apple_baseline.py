@@ -353,6 +353,12 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
             "0",
             "--rwkv-prefill-eval-interval",
             "3",
+            "--rwkv-prefill-backend",
+            "dplr_metal",
+            "--rwkv-dplr-chunk-size",
+            "32",
+            "--rwkv-dplr-min-tokens",
+            "96",
         ],
         cwd=ROOT,
         text=True,
@@ -377,6 +383,9 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
     assert rows[1]["rwkv_mlx_jobs"] == 8
     assert rows[0]["rwkv_prefill_eval_interval"] == 3
     assert rows[1]["rwkv_prefill_eval_interval"] == 3
+    assert rows[0]["rwkv_prefill_backend"] == "dplr_metal"
+    assert rows[0]["rwkv_dplr_chunk_size"] == 32
+    assert rows[0]["rwkv_dplr_min_tokens"] == 96
 
 
 def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
@@ -397,6 +406,9 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
             "PYTHON_BIN": sys.executable,
             "SKIP_COMPARE": "1",
             "RWKV_PREFILL_EVAL_INTERVAL": "3",
+            "RWKV_PREFILL_BACKEND": "dplr_metal",
+            "RWKV_DPLR_CHUNK_SIZE": "32",
+            "RWKV_DPLR_MIN_TOKENS": "96",
         }
     )
     result = subprocess.run(
@@ -426,6 +438,9 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
     assert rows[1]["rwkv_quant_rkv_min_params"] == 0
     assert rows[1]["rwkv_mlx_models"] == ["/tmp/rwkv-a", "/tmp/rwkv-b"]
     assert rows[0]["rwkv_prefill_eval_interval"] == 3
+    assert rows[0]["rwkv_prefill_backend"] == "dplr_metal"
+    assert rows[0]["rwkv_dplr_chunk_size"] == 32
+    assert rows[0]["rwkv_dplr_min_tokens"] == 96
 
 
 def test_mlx_prefill_eval_interval_bench_dry_run(tmp_path: Path) -> None:
