@@ -470,13 +470,15 @@ _PACK_LOCK = threading.Lock()
 _PACKED_WEIGHTS: dict[tuple[Any, ...], tuple[weakref.ReferenceType[Any], Any]] = {}
 
 
-def _is_sm89(device: Any = None) -> bool:
+def _is_sparse_ffn_device(device: Any = None) -> bool:
     if torch is None or not torch.cuda.is_available():
         return False
     try:
         resolved = torch.device("cuda" if device is None else device)
+        if resolved.type != "cuda":
+            return False
         index = torch.cuda.current_device() if resolved.index is None else int(resolved.index)
-        return tuple(int(v) for v in torch.cuda.get_device_capability(index)) == (8, 9)
+        return tuple(int(v) for v in torch.cuda.get_device_capability(index)) in {(7, 0), (8, 9)}
     except Exception:
         return False
 
@@ -485,7 +487,7 @@ def _load_extension() -> Any | None:
     global _EXTENSION, _EXTENSION_ERROR
     if _EXTENSION is not None:
         return _EXTENSION
-    if _EXTENSION_ERROR is not None or torch is None or not _is_sm89():
+    if _EXTENSION_ERROR is not None or torch is None or not _is_sparse_ffn_device():
         return None
     with _EXTENSION_LOCK:
         if _EXTENSION is not None:
@@ -500,7 +502,8 @@ def _load_extension() -> Any | None:
             nvcc = Path(python_bin) / "nvcc"
             if nvcc.exists() and "CUDA_HOME" not in os.environ:
                 os.environ["CUDA_HOME"] = str(nvcc.parent.parent)
-            os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "8.9")
+            capability = torch.cuda.get_device_capability()
+            os.environ.setdefault("TORCH_CUDA_ARCH_LIST", f"{capability[0]}.{capability[1]}")
             runtime_lib = (
                 Path(sys.prefix)
                 / "lib"
@@ -520,7 +523,7 @@ def _load_extension() -> Any | None:
             from torch.utils.cpp_extension import load_inline
 
             _EXTENSION = load_inline(
-                name="rwkv7_ada_sparse_ffn_v9",
+                name="rwkv7_sparse_ffn_v10",
                 cpp_sources=_CPP_SOURCE,
                 cuda_sources=_CUDA_SOURCE,
                 functions=None,
@@ -556,7 +559,7 @@ def ada_linear_should_use(rows: int, outputs: int, inputs: int) -> bool:
 
 
 def ada_sparse_ffn_available(device: Any = None, *, build: bool = False) -> bool:
-    if not _is_sm89(device):
+    if not _is_sparse_ffn_device(device):
         return False
     return _load_extension() is not None if build else True
 
@@ -646,7 +649,7 @@ def ada_sparse_ffn_down_add(
         and residual2.is_contiguous()
         and tuple(weight.shape) == (outputs, inputs)
         and tuple(residual2.shape) == (rows, outputs)
-        and _is_sm89(preact2.device)
+        and _is_sparse_ffn_device(preact2.device)
     )
     extension = _load_extension() if valid else None
     if extension is None:
@@ -695,7 +698,7 @@ def ada_ffn_up(x: Any, weight: Any, *, force_fallback: bool = False) -> Any:
         and x2.is_contiguous()
         and weight.is_contiguous()
         and tuple(weight.shape) == (outputs, inputs)
-        and _is_sm89(x2.device)
+        and _is_sparse_ffn_device(x2.device)
     )
     extension = _load_extension() if valid else None
     if extension is None:
@@ -724,7 +727,7 @@ def ada_linear(x: Any, weight: Any, *, force_fallback: bool = False) -> Any:
         and x2.is_contiguous()
         and weight.is_contiguous()
         and tuple(weight.shape) == (outputs, inputs)
-        and _is_sm89(x2.device)
+        and _is_sparse_ffn_device(x2.device)
     )
     extension = _load_extension() if valid else None
     if extension is None:

@@ -4,6 +4,19 @@ This file is the persistent benchmark contract for the RWKV-7 HF adapter work.
 The goal is to iterate until the HF path approaches the official `rwkv` package
 and Albatross-style paths in correctness, speed, and memory.
 
+## V100 production-close milestone (2026-07-11)
+
+The exact-sm70 native path now passes the canonical 0.1B/0.4B/1.5B ×
+bsz1/2/4/8 matrix. Dense decode and prompt-512 prefill reach
+`0.908x–1.248x` and `0.930x–1.047x` of the same-host Albatross references.
+Native W8/W4 speed policy reduces payload to `0.803x–0.956x`, reaches
+`1.006x–1.128x` fp16 decode, and stays within `0.996x–1.007x` of fp16
+prefill under paired same-process CUDA-event timing. All correctness, cache
+handoff, generation, and focused regression gates pass.
+
+Canonical rows, method, commands and the fail-closed gate are in
+[`bench/v100_production_close_20260711/README.md`](bench/v100_production_close_20260711/README.md).
+
 ## Hardware currently measured
 
 - Development server: **Tesla V100-PCIE-32GB**, CUDA fp16.

@@ -53,6 +53,7 @@ class KernelPolicy:
     fused_recurrent: bool = False
     fused_prefill_scan: bool = False
     prefill_graph: bool = False
+    prefill_graph_cache_size: int = 2
     fused_prefill_shift_mix: bool = False
     fused_prefill_state_prep: bool = False
     fused_prefill_state_scan: bool = False
@@ -64,12 +65,14 @@ class KernelPolicy:
     fused_norm_mix: bool = False
     norm_mix_num_warps: int = 4
     sm70_linear: bool = False
+    sm70_wagv_lora: bool = False
     ada_linear: bool = False
     ada_linear_rows: str = "2 4"
     ada_wagv_lora: bool = False
     ada_sparse_ffn: bool = False
     ada_sparse_ffn_max_rows: int = 19
     ada_sparse_ffn_inplace: bool = False
+    ada_sparse_ffn_up: bool = True
     rkv_policy: str = "manual"
     fused_output_project: bool = False
     fused_projection: bool = False
@@ -79,6 +82,7 @@ class KernelPolicy:
     output_project_block_m: int = 16
     wag_lora_blocks: tuple[int, int, int] = (64, 64, 64)
     wavg_lora_blocks: tuple[int, int, int] = (64, 64, 64)
+    wavg_lora_num_warps: int = 4
     quant_policy: str = "memory_first"
     notes: str = ""
 
@@ -390,17 +394,27 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_recurrent_raw=True,
             fused_output=True,
             fused_prefill_scan=True,
+            prefill_graph=True,
+            prefill_graph_cache_size=4,
+            fused_prefill_shift_mix=True,
             fused_prefill_state_prep=True,
             fused_prefill_state_scan=True,
             fused_prefill_state_scan_max_batch=1,
             fused_prefill_output=True,
             fused_norm_mix=True,
             fused_wavg_lora=True,
-            wavg_lora_bsz1_max_hidden=1024,
+            wavg_lora_bsz1_max_hidden=4096,
+            wavg_lora_blocks=(32, 64, 256),
+            wavg_lora_num_warps=8,
             sm70_linear=True,
+            sm70_wagv_lora=True,
+            ada_sparse_ffn=True,
+            ada_sparse_ffn_max_rows=4,
+            ada_sparse_ffn_inplace=True,
+            ada_sparse_ffn_up=False,
             output_project_block_m=16,
             quant_policy="memory_first_decode_hot_optional",
-            notes="V100 baseline: batch-routed split-row prefill and WAVG-LoRA plus shape-routed sm70 linear/RKV, output/recurrent-output, and decode norm/mix fusions are default; WAVG bsz=1 is limited to hidden<=1024 and full projection/output-project remain opt-in",
+            notes="V100 production path: four-shape prefill graph cache, fused shift mix, tuned WAVG/WAGV, sparse FFN, shape-routed sm70 linear/RKV, output/recurrent-output, and decode norm/mix are default; full projection/output-project remain opt-in",
         )
     if family in {"turing", "ampere"}:
         return KernelPolicy(
