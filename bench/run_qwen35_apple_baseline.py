@@ -790,6 +790,7 @@ def run_rwkv_mlx(
                 "fused_attn_mix_counts": telemetry.get("fused_attn_mix_counts"),
                 "fused_attn_mix_metal_available": telemetry.get("fused_attn_mix_metal_available"),
                 "fast_layer_norm": telemetry.get("fast_layer_norm"),
+                "fast_group_norm": telemetry.get("fast_group_norm"),
                 "wkv_scan_prefill": telemetry.get("wkv_scan_prefill"),
                 "wkv_scan_prefill_mode": telemetry.get("wkv_scan_prefill_mode"),
                 "wkv_scan_prefill_min_tokens": telemetry.get("wkv_scan_prefill_min_tokens"),

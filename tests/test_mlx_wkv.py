@@ -107,3 +107,24 @@ def test_mlx_model_decode_step_matches_forward_t1_if_available():
     mx.eval(old_logits, new_logits)
     assert float(mx.max(mx.abs(old_logits - new_logits))) < 1e-5
     assert int(old_state.seen_tokens) == int(new_state.seen_tokens) == 4
+
+
+def test_mlx_model_fast_group_norm_matches_manual_if_available(monkeypatch):
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    from rwkv7_hf.mlx_model import MLXRWKV7Model
+    from tests.test_apple_silicon_mlx_model_smoke import tiny_torch_model_to_mlx
+
+    _, base_model, cfg = tiny_torch_model_to_mlx()
+    ids = [[1, 2, 3, 4], [4, 3, 2, 1]]
+    monkeypatch.setenv("RWKV7_MLX_FAST_GROUP_NORM", "0")
+    manual = MLXRWKV7Model.from_arrays(cfg, dict(base_model.arrays), wkv_backend="reference")
+    monkeypatch.setenv("RWKV7_MLX_FAST_GROUP_NORM", "1")
+    fast = MLXRWKV7Model.from_arrays(cfg, dict(base_model.arrays), wkv_backend="reference")
+    manual_logits, _ = manual.forward(ids, collect_all=True)
+    fast_logits, _ = fast.forward(ids, collect_all=True)
+    mx.eval(manual_logits, fast_logits)
+    assert float(mx.max(mx.abs(manual_logits - fast_logits))) < 1e-5
+    assert fast.telemetry()["fast_group_norm"] is True
