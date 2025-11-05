@@ -547,3 +547,30 @@ This is not yet the final Qwen3.5 acceptance win: the flag remains opt-in while
 longer prompts, larger batches, quality drift, and same-device Qwen comparison
 matrices are expanded.  It is the first real end-to-end replacement of the
 prefill token-major WKV loop with a layer-major multi-token scan.
+
+## 2026-07-08 scan-prefill comparison gate
+
+A second Apple M5 evidence batch lives in
+`bench/apple_e2e_scan_prefill_m5_20260708/`.  It adds a reusable correctness and
+speed gate, `scripts/mlx_scan_prefill_compare.py`, which compares the previous
+MLX token-major prefill path against the opt-in scan-prefill path on the same
+HF model, prompt, quantization, and WKV backend.
+
+Recorded real-model rows:
+
+| Model | Token-major prefill tok/s | Scan prefill tok/s | Speedup | Generated ids |
+|---|---:|---:|---:|---|
+| RWKV-7 0.4B mm4 | 57.00 | 221.10 | 3.88x | identical |
+| RWKV-7 1.5B mm4 | 21.93 | 53.52 | 2.44x | identical |
+
+The Apple acceptance wrapper can run this gate with:
+
+```bash
+SCAN_PREFILL_COMPARE_MODELS=/path/to/rwkv7-hf-model \
+SCAN_PREFILL_COMPARE_FAIL_ON_GATE=1 \
+bash scripts/run_qwen35_apple_acceptance.sh
+```
+
+The gate appends `axis=mlx_scan_prefill_compare` rows and records logit drift,
+state drift, generated-id equality, token-major/scan prefill timing, and WKV
+kernel count reduction.
