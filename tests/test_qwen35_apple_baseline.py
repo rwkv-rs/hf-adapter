@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +16,7 @@ from bench.run_qwen35_apple_baseline import (
     PromptCase,
     build_prompt_cases,
     make_prompt,
+    ollama_loaded_model_telemetry,
     ollama_row_from_chunks,
     summarize_rows,
     tok_s,
@@ -114,6 +116,41 @@ def test_ollama_row_tracks_thinking_without_treating_it_as_answer() -> None:
     assert row["ttft_s"] == 0.1
     assert row["response_text"] == "answer"
     assert row["thinking_text"] == "plan"
+
+
+def test_ollama_loaded_model_telemetry_keeps_loaded_memory_distinct_from_peak() -> None:
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "models": [
+                        {
+                            "name": "qwen3.5:0.8b-mlx",
+                            "size": 1_100,
+                            "size_vram": 1_000,
+                            "context_length": 4096,
+                            "details": {"quantization_level": "mxfp8"},
+                        }
+                    ]
+                }
+            ).encode()
+
+    with patch("bench.run_qwen35_apple_baseline.urllib.request.urlopen", return_value=FakeResponse()):
+        telemetry = ollama_loaded_model_telemetry(
+            host="http://127.0.0.1:11434",
+            model="qwen3.5:0.8b-mlx",
+            timeout_s=1,
+        )
+    assert telemetry["ollama_loaded_memory_bytes"] == 1_000
+    assert telemetry["ollama_model_size_bytes"] == 1_100
+    assert telemetry["ollama_quantization_level"] == "mxfp8"
+    assert "ollama_peak_memory_bytes" not in telemetry
 
 
 def test_ollama_row_can_store_full_response_for_quality() -> None:
