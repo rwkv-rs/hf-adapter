@@ -29,6 +29,13 @@ except Exception:  # pragma: no cover
 
 from .native_quant_policy import normalize_native_mm_policy, should_quantize_linear
 
+try:
+    from .sm70_quant import is_sm70, quantize_w4_row, w4_linear as sm70_w4_linear
+except Exception:  # pragma: no cover
+    is_sm70 = lambda _device=None: False  # type: ignore[assignment]
+    quantize_w4_row = None  # type: ignore[assignment]
+    sm70_w4_linear = None  # type: ignore[assignment]
+
 
 def quantize_mm4(weight):
     """Quantize ``weight: [N, M]`` to the 4-bit affine (mm4) format.
@@ -194,14 +201,22 @@ class MM4Linear(torch.nn.Module):
 
     def __init__(self, linear, *, fused=True):
         super().__init__()
-        packed, mx, rx_s, my, ry_s, m_orig, m_padded = quantize_mm4(linear.weight.data.t().contiguous())
         self.in_features, self.out_features = linear.weight.shape[1], linear.weight.shape[0]
-        self.m_orig = m_orig
-        self.register_buffer("packed", packed)   # uint8 [in, ceil(out/2)]
-        self.register_buffer("mx", mx)
-        self.register_buffer("rx_s", rx_s)
-        self.register_buffer("my", my)
-        self.register_buffer("ry_s", ry_s)
+        self.sm70_rowwise = bool(is_sm70(linear.weight.device) and quantize_w4_row is not None)
+        if self.sm70_rowwise:
+            packed_row, row_scale, packed_inputs = quantize_w4_row(linear.weight.data)
+            self.register_buffer("packed_row", packed_row)
+            self.register_buffer("row_scale", row_scale)
+            self.packed_inputs = int(packed_inputs)
+            self.m_orig = self.out_features
+        else:
+            packed, mx, rx_s, my, ry_s, m_orig, m_padded = quantize_mm4(linear.weight.data.t().contiguous())
+            self.m_orig = m_orig
+            self.register_buffer("packed", packed)
+            self.register_buffer("mx", mx)
+            self.register_buffer("rx_s", rx_s)
+            self.register_buffer("my", my)
+            self.register_buffer("ry_s", ry_s)
         if linear.bias is not None:
             self.register_buffer("bias", linear.bias.data.clone())
         else:
@@ -209,6 +224,9 @@ class MM4Linear(torch.nn.Module):
         self.fused = bool(fused)
 
     def forward(self, x):
+        if self.sm70_rowwise and sm70_w4_linear is not None:
+            y = sm70_w4_linear(x, self.packed_row, self.row_scale, self.out_features, self.in_features)
+            return y if self.bias is None else y + self.bias
         if x.dim() == 1:
             if self.fused and x.is_cuda and mm4_gemv_available(x.device):
                 y = mm4_gemv_triton(x, self.packed, self.mx, self.rx_s, self.my, self.ry_s, self.m_orig)
@@ -227,6 +245,13 @@ class MM4Linear(torch.nn.Module):
         if self.bias is not None:
             y = y + self.bias
         return y
+
+    def rwkv7_forward_into(self, x, out):
+        if self.sm70_rowwise and sm70_w4_linear is not None and self.bias is None:
+            return sm70_w4_linear(x, self.packed_row, self.row_scale, self.out_features, self.in_features, out=out)
+        result = self.forward(x)
+        out.copy_(result)
+        return out
 
     def extra_repr(self):
         return f"in={self.in_features}, out={self.out_features}, mm4(fused={self.fused})"
@@ -258,4 +283,15 @@ def quantize_model_mm4(
         parent_name, _, attr = full_name.rpartition(".")
         parent = model.get_submodule(parent_name) if parent_name else model
         setattr(parent, attr, MM4Linear(getattr(parent, attr), fused=fused))
+    setattr(model, "_rwkv7_native_mm_quantization", "mm4")
+    setattr(model, "_rwkv7_native_mm_replaced_modules", len(targets))
+    for cache_attr in (
+        "_rwkv7_native_jit_pack_cache",
+        "_rwkv7_native_graph_pack_cache",
+        "_rwkv7_native_graph_runner_cache",
+        "_rwkv7_native_prefill_graph_runner_cache",
+        "_rwkv7_native_prefill_graph_hot_runner",
+    ):
+        if hasattr(model, cache_attr):
+            delattr(model, cache_attr)
     return len(targets)

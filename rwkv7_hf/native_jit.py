@@ -203,6 +203,18 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_rkv_wavg_projection = None  # type: ignore[assignment]
         fused_rkv_wavg_projection_available = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - optional sm_70 grouped low-rank path
+    from .sm70_wagv import sm70_orig_linear, sm70_orig_rkv, sm70_wagv_lora, sm70_wagv_lora_available
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from sm70_wagv import sm70_orig_linear, sm70_orig_rkv, sm70_wagv_lora, sm70_wagv_lora_available
+    except Exception:
+        sm70_orig_linear = None  # type: ignore[assignment]
+        sm70_orig_rkv = None  # type: ignore[assignment]
+        sm70_wagv_lora = None  # type: ignore[assignment]
+        sm70_wagv_lora_available = None  # type: ignore[assignment]
+
+
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
     from .fused_lora import fused_wag_lora, fused_wag_lora_available, fused_wavg_lora, fused_wavg_lora_available
 except Exception:  # pragma: no cover - direct remote-file execution fallback
@@ -763,6 +775,23 @@ def _native_graph_fused_wag_lora_enabled() -> bool:
         return False
 
 
+def _native_graph_sm70_wagv_lora_enabled(rows: int, hidden_size: int) -> bool:
+    policy = _kernel_policy()
+    if not env_flag(
+        "RWKV7_NATIVE_GRAPH_SM70_WAGV_LORA",
+        bool(getattr(policy, "sm70_wagv_lora", False)),
+    ):
+        return False
+    if int(rows) < 1 or int(rows) > 4 or int(hidden_size) < 1024:
+        return False
+    if sm70_wagv_lora is None or sm70_wagv_lora_available is None:
+        return False
+    try:
+        return bool(sm70_wagv_lora_available())
+    except Exception:
+        return False
+
+
 def _native_graph_fused_wavg_lora_enabled(rows: int, hidden_size: int) -> bool:
     """Runtime switch for the native-graph W/A/G/V-gate LoRA fusion probe."""
 
@@ -906,6 +935,14 @@ def _native_graph_linear_dispatch(x: torch.Tensor, weight, *, role: str) -> torc
         return ada_linear(x, weight)
     if not _graph_linear_is_dense(weight):
         return _graph_linear_call(x, weight)
+    if (
+        sm70_orig_linear is not None
+        and role == "hidden"
+        and rows in {2, 4}
+        and outputs == inputs
+        and inputs >= 2048
+    ):
+        return sm70_orig_linear(x, weight)
     if not _native_graph_sm70_linear_enabled():
         return F.linear(x, weight)
     if not sm70_linear_should_use(rows, outputs, inputs, role=role):
@@ -988,7 +1025,10 @@ def _native_graph_ffn_dispatch(
         )
         and ada_sparse_ffn_should_use(rows, outputs, inputs)
     ):
-        if env_flag("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_UP", True):
+        if env_flag(
+            "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_UP",
+            bool(getattr(_kernel_policy(), "ada_sparse_ffn_up", True)),
+        ):
             preact = ada_ffn_up(x, up_weight)
         else:
             preact = F.linear(x, up_weight)
@@ -1146,6 +1186,13 @@ def _native_graph_rkv_project(
         return rkv[0], rkv[1], rkv[2]
     if (
         dense_rkv
+        and sm70_orig_rkv is not None
+        and int(rows) in {2, 4}
+        and int(hidden_size) >= 2048
+    ):
+        return sm70_orig_rkv(xr, xk, xv, Rw, Kw, Vw)
+    if (
+        dense_rkv
         and _native_graph_sm70_linear_enabled()
         and sm70_rkv is not None
         and sm70_rkv_should_use is not None
@@ -1194,6 +1241,18 @@ def _native_graph_fused_wavg_lora_blocks() -> tuple[int, int, int]:
                 val = int(default)
             vals.append(min(max(1, val), upper))
     return vals[0], vals[1], vals[2]
+
+
+def _native_graph_fused_wavg_lora_num_warps() -> int:
+    policy = _kernel_policy()
+    default = int(getattr(policy, "wavg_lora_num_warps", 4))
+    value = env_int("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_NUM_WARPS", default, lower=1, upper=8)
+    if value not in {1, 2, 4, 8}:
+        raise ValueError(
+            "RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_NUM_WARPS must be one of 1, 2, 4, or 8; "
+            f"got {value}"
+        )
+    return value
 
 
 def _recurrent_update_unbatched(
@@ -2064,6 +2123,15 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
             xw, xa, xg, xg, w1, a1, g1, g1, w2, a2, g2, g2,
             w0, a0, a0, v, v, sigmoid_a=True, compute_v=False,
         )
+    elif i > 0 and lora_dense and _native_graph_sm70_wagv_lora_enabled(1, H * N):
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
+        w, a, g, v = sm70_wagv_lora(
+            xw.view(1, H * N), xa.view(1, H * N), xg.view(1, H * N), xv.view(1, H * N),
+            w1, a1, g1, v1, w2, a2, g2, v2, w0, a0, v0,
+            v.view(1, H * N), v_first.view(1, H * N),
+        )
+        w = w.view(H * N); a = torch.sigmoid(a.view(H * N)); g = g.view(H * N); v = v.view(H * N)
+        v_mixed = True
     elif lora_dense and _native_graph_fused_wavg_lora_enabled(1, H * N):
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
         if i == 0:
@@ -2092,6 +2160,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
                 block_m=block_m,
                 block_r=block_r,
                 block_k=block_k,
+                num_warps=_native_graph_fused_wavg_lora_num_warps(),
             )
             w = w.view(H * N)
             a = a.view(H * N)
@@ -2329,6 +2398,13 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
             xw, xa, xg, xg, w1, a1, g1, g1, w2, a2, g2, g2,
             w0, a0, a0, v, v, sigmoid_a=True, compute_v=False,
         )
+    elif i > 0 and lora_dense and _native_graph_sm70_wagv_lora_enabled(B, H * N):
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
+        w, a, g, v = sm70_wagv_lora(
+            xw, xa, xg, xv, w1, a1, g1, v1, w2, a2, g2, v2, w0, a0, v0, v, v_first,
+        )
+        a = torch.sigmoid(a)
+        v_mixed = True
     elif lora_dense and _native_graph_fused_wavg_lora_enabled(B, H * N):
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
         if i == 0:
@@ -2357,6 +2433,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
                 block_m=block_m,
                 block_r=block_r,
                 block_k=block_k,
+                num_warps=_native_graph_fused_wavg_lora_num_warps(),
             )
         a = torch.sigmoid(a)
     elif lora_dense and _native_graph_fused_wag_lora_enabled():

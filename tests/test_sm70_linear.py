@@ -36,16 +36,32 @@ def main() -> int:
     assert not sm70_linear_should_use(2, 65536, 1024, role="head")
     assert sm70_linear_should_use(1, 2048, 2048, role="hidden")
     assert sm70_linear_should_use(1, 1024, 1024, role="hidden")
+    assert sm70_linear_should_use(2, 768, 768, role="hidden")
+    assert sm70_linear_should_use(2, 1024, 1024, role="hidden")
+    assert sm70_linear_should_use(2, 2048, 2048, role="hidden")
+    assert sm70_linear_should_use(4, 768, 768, role="hidden")
+    assert sm70_linear_should_use(4, 1024, 1024, role="hidden")
+    assert not sm70_linear_should_use(4, 2048, 2048, role="hidden")
     assert sm70_linear_should_use(1, 4096, 1024, role="ffn_up")
     assert not sm70_linear_should_use(2, 4096, 1024, role="ffn_up")
     assert sm70_linear_should_use(2, 1024, 4096, role="ffn_down")
+    assert sm70_linear_threads(1, 65536, 1024, role="head") == 256
     assert sm70_linear_threads(1, 16384, 4096, role="ffn_up") == 64
+    assert sm70_linear_threads(1, 4096, 1024, role="ffn_up") == 128
+    assert sm70_linear_threads(1, 8192, 2048, role="ffn_up") == 256
+    assert sm70_linear_threads(1, 1024, 4096, role="ffn_down") == 64
+    assert sm70_linear_threads(1, 2048, 8192, role="ffn_down") == 64
+    assert sm70_linear_threads(2, 768, 768, role="hidden") == 128
+    assert sm70_linear_threads(2, 2048, 2048, role="hidden") == 128
+    assert sm70_linear_threads(4, 768, 768, role="hidden") == 256
     assert sm70_rkv_should_use(1, 4096)
     assert sm70_rkv_should_use(2, 2048)
     assert not sm70_rkv_should_use(2, 4096)
     assert sm70_rkv_threads(1, 768) == 256
-    assert sm70_rkv_threads(1, 2048) == 64
-    assert sm70_rkv_threads(2, 1024) == 128
+    assert sm70_rkv_threads(1, 2048) == 256
+    assert sm70_rkv_threads(2, 768) == 128
+    assert sm70_rkv_threads(2, 1024) == 256
+    assert sm70_rkv_threads(2, 2048) == 256
     square_weight = weight[:32, :32]
     refs = (
         F.linear(x, square_weight),
