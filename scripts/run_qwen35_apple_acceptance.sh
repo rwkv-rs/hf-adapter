@@ -47,6 +47,13 @@ RWKV_WKV_BACKEND="${RWKV_WKV_BACKEND:-metal}"
 RWKV_CHUNK_SIZE="${RWKV_CHUNK_SIZE:-2048}"
 RWKV_FUSED_FFN_KEY_RELU2="${RWKV_FUSED_FFN_KEY_RELU2:-1}"
 RWKV_FUSED_ATTN_MIX="${RWKV_FUSED_ATTN_MIX:-0}"
+RWKV_WKV_SCAN_PREFILL="${RWKV_WKV_SCAN_PREFILL:-0}"
+RWKV_WKV_SCAN_PREFILL_MIN_TOKENS="${RWKV_WKV_SCAN_PREFILL_MIN_TOKENS:-32}"
+SCAN_PREFILL_COMPARE_MODELS="${SCAN_PREFILL_COMPARE_MODELS:-}"
+SCAN_PREFILL_COMPARE_APPEND="${SCAN_PREFILL_COMPARE_APPEND:-${RESULTS}}"
+SCAN_PREFILL_COMPARE_PROMPT_TARGET_CHARS="${SCAN_PREFILL_COMPARE_PROMPT_TARGET_CHARS:-512}"
+SCAN_PREFILL_COMPARE_MAX_NEW_TOKENS="${SCAN_PREFILL_COMPARE_MAX_NEW_TOKENS:-16}"
+SCAN_PREFILL_COMPARE_FAIL_ON_GATE="${SCAN_PREFILL_COMPARE_FAIL_ON_GATE:-0}"
 
 # Comparison defaults cover the current local/public model classes.  Add the
 # 4B/9B pairs once matching RWKV 2.9B/larger or distilled mobile exports exist.
@@ -110,6 +117,8 @@ export RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION="${RWKV7_MLX_GROUP_RKV_QUANT_PROJECT
 export RWKV7_MLX_STEP_EVAL_INTERVAL="${RWKV7_MLX_STEP_EVAL_INTERVAL:-8}"
 export RWKV7_MLX_FUSED_FFN_KEY_RELU2="${RWKV7_MLX_FUSED_FFN_KEY_RELU2:-${RWKV_FUSED_FFN_KEY_RELU2}}"
 export RWKV7_MLX_FUSED_ATTN_MIX="${RWKV7_MLX_FUSED_ATTN_MIX:-${RWKV_FUSED_ATTN_MIX}}"
+export RWKV7_MLX_WKV_SCAN_PREFILL="${RWKV7_MLX_WKV_SCAN_PREFILL:-${RWKV_WKV_SCAN_PREFILL}}"
+export RWKV7_MLX_WKV_SCAN_PREFILL_MIN_TOKENS="${RWKV7_MLX_WKV_SCAN_PREFILL_MIN_TOKENS:-${RWKV_WKV_SCAN_PREFILL_MIN_TOKENS}}"
 
 rwkv7_csv_items() {
   local raw="$1"
@@ -267,6 +276,33 @@ rwkv7_run "${PYTHON_BIN}" bench/run_qwen35_apple_baseline.py "${baseline_args[@]
 
 if [[ "${DRY_RUN}" == "1" ]]; then
   exit 0
+fi
+
+if [[ -n "${SCAN_PREFILL_COMPARE_MODELS}" ]]; then
+  while IFS= read -r model; do
+    scan_compare_args=(
+      "${model}"
+      --prompt-target-chars "${SCAN_PREFILL_COMPARE_PROMPT_TARGET_CHARS}"
+      --max-new-tokens "${SCAN_PREFILL_COMPARE_MAX_NEW_TOKENS}"
+      --dtype "${RWKV_DTYPE}"
+      --quantization "${RWKV_QUANTIZATION}"
+      --quant-min-params "${RWKV_QUANT_MIN_PARAMS}"
+      --quant-backend "${RWKV_QUANT_BACKEND}"
+      --wkv-backend "${RWKV_WKV_BACKEND}"
+    )
+    if [[ "${RWKV_QUANT_RKV_MIN_PARAMS}" != "" ]]; then
+      scan_compare_args+=(--quant-rkv-min-params "${RWKV_QUANT_RKV_MIN_PARAMS}")
+    fi
+    if [[ -n "${SCAN_PREFILL_COMPARE_APPEND}" ]]; then
+      scan_compare_args+=(--results "${SCAN_PREFILL_COMPARE_APPEND}")
+    fi
+    rwkv7_log "MLX WKV scan prefill vs token-major comparison for ${model}"
+    if [[ "${SCAN_PREFILL_COMPARE_FAIL_ON_GATE}" == "1" ]]; then
+      rwkv7_run "${PYTHON_BIN}" scripts/mlx_scan_prefill_compare.py "${scan_compare_args[@]}"
+    else
+      rwkv7_run "${PYTHON_BIN}" scripts/mlx_scan_prefill_compare.py "${scan_compare_args[@]}" || true
+    fi
+  done < <(rwkv7_csv_items "${SCAN_PREFILL_COMPARE_MODELS}")
 fi
 
 if [[ -n "${QUALITY_RUBRIC}" ]]; then

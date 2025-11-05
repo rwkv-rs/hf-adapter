@@ -246,6 +246,16 @@ streaming `next_token` sync instead.  The optional `RWKV7_MLX_FUSED_ATTN_MIX=1`
 seam fuses the six attention mix tensors into one Metal kernel and records
 `fused_attn_mix_counts`, but the 512/64 AB row keeps it disabled by default
 because decode regressed while prefill improved only modestly.
+
+The first multi-token WKV scan prototype is recorded in
+[`../../bench/apple_mlx_wkv_scan_m5_20260707/`](../../bench/apple_mlx_wkv_scan_m5_20260707/).
+It adds `rwkv7_hf.mlx_scan.wkv_scan()`, a Metal recurrent scan over
+`r/w/v/k/kk/a [B,T,H,N]` for one layer.  In the isolated Apple M5 WKV microbench,
+the scan kernel is `2.49x` faster than a per-token Metal WKV loop at `T=32` and
+`4.09x` faster at `T=128`.  This is the first kernel with the right shape to
+attack the long-context prefill gap, but it is not yet wired into full MLX
+prefill; the next step is a layer-major prefill path with full-model parity and
+Qwen3.5 end-to-end evidence.
 The component-profile follow-up is recorded in
 [`../../bench/apple_mlx_component_profile_m5_20260707/`](../../bench/apple_mlx_component_profile_m5_20260707/).
 It uses synchronized component boundaries on the same Apple M5 1.5B/mm4 path and
@@ -518,3 +528,76 @@ The next repository lane should add:
 - It does not implement final stateful CoreML decode/prefill yet; the current CoreML path is an export prototype and manifest contract.
 - It does not mark W8/W4 as fp16-beating until JSONL evidence proves it.
 - It does not replace the existing Apple MLX session and quant regression tests.
+
+## 2026-07-07 MLX WKV scan prefill end-to-end row
+
+The first opt-in end-to-end MLX multi-token WKV scan path is now wired behind
+`RWKV_WKV_SCAN_PREFILL=1` / `RWKV7_MLX_WKV_SCAN_PREFILL=1`.
+Evidence lives in `bench/apple_e2e_scan_prefill_m5_20260707/`.
+
+Short-prompt Apple M5 smoke rows show the prefill path is active via
+`wkv_scan_prefill=true` and `wkv_scan_prefill_counts={"metal": 24}`:
+
+| Model | Previous token-major prefill tok/s | Scan prefill tok/s | Speedup | Notes |
+|---|---:|---:|---:|---|
+| RWKV-7 0.4B mm4 | 53.62 | 178.51 | 3.33x | decode remains single-token path |
+| RWKV-7 1.5B mm4 | 21.49 | 38.11 | 1.77x | decode remains single-token path |
+
+This is not yet the final Qwen3.5 acceptance win: the flag remains opt-in while
+longer prompts, larger batches, quality drift, and same-device Qwen comparison
+matrices are expanded.  It is the first real end-to-end replacement of the
+prefill token-major WKV loop with a layer-major multi-token scan.
+
+## 2026-07-08 scan-prefill comparison gate
+
+A second Apple M5 evidence batch lives in
+`bench/apple_e2e_scan_prefill_m5_20260708/`.  It adds a reusable correctness and
+speed gate, `scripts/mlx_scan_prefill_compare.py`, which compares the previous
+MLX token-major prefill path against the opt-in scan-prefill path on the same
+HF model, prompt, quantization, and WKV backend.
+
+Recorded real-model rows:
+
+| Model | Token-major prefill tok/s | Scan prefill tok/s | Speedup | Generated ids |
+|---|---:|---:|---:|---|
+| RWKV-7 0.4B mm4 | 57.00 | 221.10 | 3.88x | identical |
+| RWKV-7 1.5B mm4 | 21.93 | 53.52 | 2.44x | identical |
+
+The Apple acceptance wrapper can run this gate with:
+
+```bash
+SCAN_PREFILL_COMPARE_MODELS=/path/to/rwkv7-hf-model \
+SCAN_PREFILL_COMPARE_FAIL_ON_GATE=1 \
+bash scripts/run_qwen35_apple_acceptance.sh
+```
+
+The gate appends `axis=mlx_scan_prefill_compare` rows and records logit drift,
+state drift, generated-id equality, token-major/scan prefill timing, and WKV
+kernel count reduction.
+
+## 2026-07-08 scan-prefill auto policy
+
+The MLX scan-prefill path now supports a production-shaped auto policy:
+
+```bash
+RWKV_WKV_SCAN_PREFILL=auto
+RWKV_WKV_SCAN_PREFILL_MIN_TOKENS=32
+```
+
+`auto` enables scan prefill for multi-token chunks above the threshold and keeps
+single-token decode on the existing decode path.  Telemetry records
+`wkv_scan_prefill_mode`, `wkv_scan_prefill_min_tokens`, and
+`wkv_scan_prefill_reason_counts`.
+
+Apple M5 evidence in `bench/apple_scan_prefill_auto_m5_20260708/`:
+
+| Model | Shape | Prefill tok/s | Decode tok/s | TTFT s | Peak memory |
+|---|---|---:|---:|---:|---:|
+| RWKV-7 0.4B mm4 | 1024 chars / 128 decode | 254.27 | 61.29 | 1.285 | 602 MB |
+| RWKV-7 1.5B mm4 | 1024 chars / 128 decode | 61.37 | 28.54 | 5.316 | 1.47 GB |
+| RWKV-7 0.4B mm4 | 4096 chars / 128 decode | 247.42 | 60.14 | 5.295 | 1.24 GB |
+| RWKV-7 1.5B mm4 | 4096 chars / 128 decode | 53.60 | 25.40 | 24.443 | 2.08 GB |
+
+The 4096-char rows also validate chunked prefill with three scan chunks
+(`chunked_wkv_scan_prefill_counts.metal=72`) and two state-only intermediate
+chunks.
