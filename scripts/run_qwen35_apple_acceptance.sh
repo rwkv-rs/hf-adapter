@@ -73,8 +73,13 @@ RWKV_DECODE_BACKEND="${RWKV_DECODE_BACKEND:-auto}"
 RWKV_DECODE_NORM_BACKEND="${RWKV_DECODE_NORM_BACKEND:-reference}"
 RWKV_PREPARE_COMPILED_DECODE="${RWKV_PREPARE_COMPILED_DECODE:-0}"
 RWKV_COMPILED_DECODE_VALIDATION_TOKENS="${RWKV_COMPILED_DECODE_VALIDATION_TOKENS:-32}"
+RWKV_COMPILED_DECODE_LOGITS_ATOL="${RWKV_COMPILED_DECODE_LOGITS_ATOL:-0.000001}"
+RWKV_COMPILED_DECODE_STATE_ATOL="${RWKV_COMPILED_DECODE_STATE_ATOL:-0.000001}"
 RWKV_COMPILED_DECODE_REFERENCE_LOGITS_ATOL="${RWKV_COMPILED_DECODE_REFERENCE_LOGITS_ATOL:-0.25}"
 RWKV_COMPILED_DECODE_REFERENCE_STATE_ATOL="${RWKV_COMPILED_DECODE_REFERENCE_STATE_ATOL:-0.5}"
+RWKV_DRAFT_MODEL="${RWKV_DRAFT_MODEL:-}"
+RWKV_DRAFT_PROMPT_TOKENS="${RWKV_DRAFT_PROMPT_TOKENS:-0}"
+RWKV_SPECULATIVE_PROPOSAL_TOKENS="${RWKV_SPECULATIVE_PROPOSAL_TOKENS:-32}"
 
 # Comparison defaults cover the current local/public model classes.  Add the
 # 4B/9B pairs once matching RWKV 2.9B/larger or distilled mobile exports exist.
@@ -305,9 +310,18 @@ baseline_args=(
   --rwkv-decode-backend "${RWKV_DECODE_BACKEND}"
   --rwkv-decode-norm-backend "${RWKV_DECODE_NORM_BACKEND}"
   --rwkv-compiled-decode-validation-tokens "${RWKV_COMPILED_DECODE_VALIDATION_TOKENS}"
+  --rwkv-compiled-decode-logits-atol "${RWKV_COMPILED_DECODE_LOGITS_ATOL}"
+  --rwkv-compiled-decode-state-atol "${RWKV_COMPILED_DECODE_STATE_ATOL}"
   --rwkv-compiled-decode-reference-logits-atol "${RWKV_COMPILED_DECODE_REFERENCE_LOGITS_ATOL}"
   --rwkv-compiled-decode-reference-state-atol "${RWKV_COMPILED_DECODE_REFERENCE_STATE_ATOL}"
 )
+if [[ -n "${RWKV_DRAFT_MODEL}" ]]; then
+  baseline_args+=(
+    --rwkv-draft-model "${RWKV_DRAFT_MODEL}"
+    --rwkv-draft-prompt-tokens "${RWKV_DRAFT_PROMPT_TOKENS}"
+    --rwkv-speculative-proposal-tokens "${RWKV_SPECULATIVE_PROPOSAL_TOKENS}"
+  )
+fi
 if [[ "${RWKV_PREPARE_COMPILED_DECODE}" == "1" ]]; then
   baseline_args+=(--rwkv-prepare-compiled-decode)
 fi

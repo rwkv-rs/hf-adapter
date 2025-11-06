@@ -768,7 +768,7 @@ def test_mlx_model_reset_telemetry_counters_without_mlx_runtime() -> None:
     class DummyQLinear:
         def __init__(self) -> None:
             self.last_backend = "metal"
-            self.backend_counts = {"reference": 1, "affine": 2, "metal": 3}
+            self.backend_counts = {"reference": 1, "affine": 2, "metal": 3, "groupwise": 4}
 
     model = object.__new__(MLXRWKV7Model)
     model.wkv_backend_last = "metal"
@@ -785,4 +785,9 @@ def test_mlx_model_reset_telemetry_counters_without_mlx_runtime() -> None:
     assert model.fused_ffn_key_relu2_counts == {"metal": 0, "fallback": 0}
     assert model.group_rkv_quant_projection_counts == {"metal": 0, "fallback": 0}
     assert qlinear.last_backend is None
-    assert qlinear.backend_counts == {"reference": 0, "affine": 0, "metal": 0}
+    assert qlinear.backend_counts == {
+        "reference": 0,
+        "affine": 0,
+        "metal": 0,
+        "groupwise": 0,
+    }

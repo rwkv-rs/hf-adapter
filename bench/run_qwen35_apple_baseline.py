@@ -775,8 +775,13 @@ def run_rwkv_mlx(
     decode_norm_backend: str,
     prepare_compiled_decode: bool,
     compiled_decode_validation_tokens: int,
+    compiled_decode_logits_atol: float,
+    compiled_decode_state_atol: float,
     compiled_decode_reference_logits_atol: float,
     compiled_decode_reference_state_atol: float,
+    draft_model_path: str | None,
+    speculative_proposal_tokens: int,
+    draft_prompt_tokens: int,
     results: str,
     store_response: bool = False,
 ) -> list[dict[str, Any]]:
@@ -788,6 +793,7 @@ def run_rwkv_mlx(
 
         from rwkv7_hf.mlx_bridge import mlx_memory_telemetry, reset_mlx_peak_memory
         from rwkv7_hf.mlx_model import load_mlx_rwkv7_model
+        from rwkv7_hf.mlx_speculative import speculative_decode_greedy
     except Exception as exc:  # pragma: no cover - exercised on non-Apple CI by skip row
         for max_new_tokens in decode_lengths:
             row = {
@@ -830,6 +836,27 @@ def run_rwkv_mlx(
     if prepare_compiled_decode:
         model.prepare_compiled_decode(batch_size=1)
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    draft_model = None
+    if draft_model_path:
+        draft_model = load_mlx_rwkv7_model(
+            draft_model_path,
+            dtype=dtype,
+            quantization=quantization,
+            quant_min_params=int(quant_min_params),
+            quant_rkv_min_params=quant_rkv_min_params,
+            quant_backend=quant_backend,
+            wkv_backend=wkv_backend,
+        )
+        draft_model.prefill_eval_interval = int(prefill_eval_interval)
+        draft_model.prefill_backend = str(prefill_backend)
+        draft_model.dplr_chunk_size = int(dplr_chunk_size)
+        draft_model.dplr_min_tokens = int(dplr_min_tokens)
+        draft_model.dplr_summary_implementation = str(dplr_summary_implementation)
+        draft_model.dplr_layer_eval_interval = int(dplr_layer_eval_interval)
+        draft_model.dplr_layer_eval_min_tokens = int(dplr_layer_eval_min_tokens)
+        draft_model.dplr_window_tokens = int(dplr_window_tokens)
+        draft_model.decode_backend = "eager"
+        draft_model.decode_norm_backend = str(decode_norm_backend)
     prompt_ids = [int(x) for x in tokenizer(prompt_case.prompt, add_special_tokens=False).input_ids]
     if not prompt_ids:
         raise ValueError("RWKV tokenizer produced zero prompt tokens")
@@ -841,6 +868,8 @@ def run_rwkv_mlx(
             validation_logits,
             validation_state,
             steps=int(compiled_decode_validation_tokens),
+            logits_atol=float(compiled_decode_logits_atol),
+            state_atol=float(compiled_decode_state_atol),
             reference_logits_atol=float(compiled_decode_reference_logits_atol),
             reference_state_atol=float(compiled_decode_reference_state_atol),
         )
@@ -848,6 +877,7 @@ def run_rwkv_mlx(
     load_s = time.perf_counter() - t_load
 
     warmups = max(0, int(warmup_repeats))
+    speculative_measured_ids: dict[int, list[list[int]]] = {}
     for max_new_tokens in decode_lengths:
         for iteration_index in range(1, warmups + repeats + 1):
             is_warmup = iteration_index <= warmups
@@ -857,12 +887,34 @@ def run_rwkv_mlx(
                 reset_counters()
             reset_mlx_peak_memory()
             t_prefill = time.perf_counter()
+            model.dplr_chunk_size = int(dplr_chunk_size)
             logits, state = model.prefill([prompt_ids])
+            prefill_s = time.perf_counter() - t_prefill
+            draft_logits = None
+            draft_state = None
+            draft_prefill_s = 0.0
+            streamed_first_s = None
+            if draft_model is not None:
+                # The target's first greedy token is streamable before draft
+                # preparation. Charge draft prefill to speculative decode, not
+                # target prefill/TTFT, and expose it separately below.
+                t_streamed_first = time.perf_counter()
+                streamed_first = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
+                mx.eval(streamed_first)
+                streamed_first_s = time.perf_counter() - t_streamed_first
+                draft_model.dplr_chunk_size = int(dplr_chunk_size)
+                draft_prompt_ids = (
+                    prompt_ids[-int(draft_prompt_tokens) :]
+                    if int(draft_prompt_tokens) > 0
+                    else prompt_ids
+                )
+                t_draft_prefill = time.perf_counter()
+                draft_logits, draft_state = draft_model.prefill([draft_prompt_ids])
+                draft_prefill_s = time.perf_counter() - t_draft_prefill
             # model.prefill()/forward() already synchronizes the returned logits
             # and recurrent state.  A second mx.eval(logits) here only adds a
             # redundant host/device barrier to TTFT measurement.
             prefill_logits = logits
-            prefill_s = time.perf_counter() - t_prefill
             chunk_diff = None
             chunk_s = None
             chunk_telemetry = None
@@ -872,21 +924,51 @@ def run_rwkv_mlx(
             # is fed once to advance the recurrent state and prepare the next
             # logits.  This avoids running decode_greedy twice, which would
             # double-process the first generated token.
-            t_first = time.perf_counter()
-            next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
-            mx.eval(next_token)
-            first_s = time.perf_counter() - t_first
-            generated_preview: list[int] = []
-            decode_step_s = 0.0
-            final_state = state
-            for _ in range(int(max_new_tokens)):
-                generated_preview.extend(int(x) for x in next_token.reshape(-1).tolist())
-                t_step = time.perf_counter()
-                logits, final_state = model.decode_step(next_token, final_state)
+            speculative_telemetry = None
+            if draft_model is not None:
+                if draft_logits is None or draft_state is None:
+                    raise RuntimeError("speculative draft prefill produced no state")
+                width = int(speculative_proposal_tokens)
+                if width < 2:
+                    raise ValueError("--rwkv-speculative-proposal-tokens must be at least 2")
+                model.dplr_chunk_size = width
+                model.dplr_min_tokens = 2
+                draft_model.dplr_chunk_size = width
+                draft_model.dplr_min_tokens = 2
+                speculative = speculative_decode_greedy(
+                    model,
+                    draft_model,
+                    logits,
+                    state,
+                    draft_logits,
+                    draft_state,
+                    max_new_tokens=int(max_new_tokens),
+                    proposal_tokens=width,
+                )
+                generated_preview = list(speculative.generated_ids)
+                logits = speculative.target_logits
+                final_state = speculative.target_state
+                first_s = float(streamed_first_s or speculative.first_token_s)
+                decode_s = float(draft_prefill_s + speculative.elapsed_s)
+                speculative_telemetry = speculative.telemetry()
+                speculative_telemetry["draft_prefill_s"] = round(float(draft_prefill_s), 6)
+                speculative_telemetry["decode_with_draft_prefill_s"] = round(float(decode_s), 6)
+            else:
+                t_first = time.perf_counter()
                 next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
                 mx.eval(next_token)
-                decode_step_s += time.perf_counter() - t_step
-            decode_s = first_s + decode_step_s
+                first_s = time.perf_counter() - t_first
+                generated_preview = []
+                decode_step_s = 0.0
+                final_state = state
+                for _ in range(int(max_new_tokens)):
+                    generated_preview.extend(int(x) for x in next_token.reshape(-1).tolist())
+                    t_step = time.perf_counter()
+                    logits, final_state = model.decode_step(next_token, final_state)
+                    next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
+                    mx.eval(next_token)
+                    decode_step_s += time.perf_counter() - t_step
+                decode_s = first_s + decode_step_s
             response_text = tokenizer.decode(generated_preview, skip_special_tokens=True) if store_response else ""
             telemetry = model.telemetry()
             main_memory = mlx_memory_telemetry()
@@ -911,7 +993,7 @@ def run_rwkv_mlx(
                 "axis": AXIS,
                 "status": "pass",
                 "engine": "rwkv7_hf",
-                "runtime": "mlx",
+                "runtime": "mlx_speculative" if draft_model is not None else "mlx",
                 "model": Path(model_path).name,
                 "model_path": model_path,
                 "family": "rwkv7",
@@ -968,6 +1050,16 @@ def run_rwkv_mlx(
                 ),
                 "decode_compile_s_by_batch": telemetry.get("decode_compile_s_by_batch"),
                 "compiled_decode_validation": compiled_decode_validation,
+                "draft_model": Path(draft_model_path).name if draft_model_path else None,
+                "draft_prompt_tokens": (
+                    min(len(prompt_ids), int(draft_prompt_tokens))
+                    if draft_model is not None and int(draft_prompt_tokens) > 0
+                    else (len(prompt_ids) if draft_model is not None else None)
+                ),
+                "speculative_proposal_tokens": (
+                    int(speculative_proposal_tokens) if draft_model is not None else None
+                ),
+                "speculative_telemetry": speculative_telemetry,
                 "prompt_case": prompt_case.name,
                 "prompt_target_chars": int(prompt_case.target_chars),
                 "prompt_chars": len(prompt_case.prompt),
@@ -979,6 +1071,9 @@ def run_rwkv_mlx(
                 "warmup_repeats": int(warmups),
                 "load_s": round(float(load_s), 6),
                 "prefill_s": round(float(prefill_s), 6),
+                "draft_prefill_s": (
+                    round(float(draft_prefill_s), 6) if draft_model is not None else None
+                ),
                 "first_token_s": round(float(first_s), 6),
                 "ttft_s": round(float(prefill_s + first_s), 6),
                 "cold_ttft_s": round(float(load_s + prefill_s + first_s), 6),
@@ -1019,13 +1114,45 @@ def run_rwkv_mlx(
                 )
             if is_warmup:
                 continue
+            if draft_model is not None:
+                speculative_measured_ids.setdefault(int(max_new_tokens), []).append(
+                    list(generated_preview)
+                )
             print(json.dumps(row, ensure_ascii=False))
             append_jsonl(results, row)
             rows.append(row)
+    for max_new_tokens, measured_repeats in speculative_measured_ids.items():
+        model.dplr_chunk_size = int(dplr_chunk_size)
+        reference_logits, reference_state = model.prefill([prompt_ids])
+        reference_tokens, _ = model.decode_greedy(
+            reference_logits,
+            reference_state,
+            max_new_tokens=int(max_new_tokens),
+        )
+        reference_ids = [int(value) for value in reference_tokens.reshape(-1).tolist()]
+        matches = all(measured_ids == reference_ids for measured_ids in measured_repeats)
+        validation_row = {
+            "axis": AXIS + "_speculative_validation",
+            "status": "pass" if matches else "fail",
+            "model": Path(model_path).name,
+            "draft_model": Path(draft_model_path).name if draft_model_path else None,
+            "prompt_case": prompt_case.name,
+            "prompt_eval_tokens": len(prompt_ids),
+            "generated_tokens": int(max_new_tokens),
+            "measured_repeats": len(measured_repeats),
+            "target_greedy_match": bool(matches),
+            "measured_preview": measured_repeats[0][:16],
+            "target_preview": reference_ids[:16],
+        }
+        print(json.dumps(validation_row, ensure_ascii=False))
+        append_jsonl(results, validation_row)
+        if not matches:
+            raise AssertionError("speculative decode did not reproduce target greedy output")
     # ``main`` invokes this runner once per prompt case. Explicitly release the
     # model and the final lazy arrays before the next case; otherwise MLX keeps
     # both model instances live and the second case reports roughly 2x memory.
     model = None
+    draft_model = None
     tokenizer = None
     logits = None
     state = None
@@ -1141,8 +1268,25 @@ def main() -> int:
     )
     ap.add_argument("--rwkv-prepare-compiled-decode", action="store_true")
     ap.add_argument("--rwkv-compiled-decode-validation-tokens", type=int, default=32)
+    ap.add_argument("--rwkv-compiled-decode-logits-atol", type=float, default=1e-6)
+    ap.add_argument("--rwkv-compiled-decode-state-atol", type=float, default=1e-6)
     ap.add_argument("--rwkv-compiled-decode-reference-logits-atol", type=float, default=0.25)
     ap.add_argument("--rwkv-compiled-decode-reference-state-atol", type=float, default=0.5)
+    ap.add_argument(
+        "--rwkv-draft-model",
+        default="",
+        help="Optional smaller RWKV HF/MLX model for exact-greedy speculative verification.",
+    )
+    ap.add_argument("--rwkv-speculative-proposal-tokens", type=int, default=32)
+    ap.add_argument(
+        "--rwkv-draft-prompt-tokens",
+        type=int,
+        default=0,
+        help=(
+            "Limit the draft to the last N prompt tokens (0 keeps the full prompt). "
+            "Target verification preserves target-greedy output and adaptive fallback bounds poor drafts."
+        ),
+    )
     ap.add_argument("--ollama-cache-prompt", action="store_true", help="Allow Ollama/runner prompt-cache reuse across rows.")
     ap.add_argument("--no-ollama-memory", action="store_true", help="Skip official /api/ps loaded-memory telemetry.")
     ap.add_argument("--temperature", type=float, default=0.0)
@@ -1160,7 +1304,7 @@ def main() -> int:
             "-1 preserves --rwkv-quant-min-params."
         ),
     )
-    ap.add_argument("--rwkv-quant-backend", default="auto", choices=["affine", "reference", "metal", "auto"])
+    ap.add_argument("--rwkv-quant-backend", default="auto", choices=["affine", "reference", "metal", "auto", "groupwise"])
     ap.add_argument("--rwkv-wkv-backend", default="auto", choices=["reference", "metal", "auto"])
     ap.add_argument("--rwkv-chunk-size", type=int, default=0)
     ap.add_argument(
@@ -1190,10 +1334,16 @@ def main() -> int:
     if args.rwkv_compiled_decode_validation_tokens <= 0:
         raise ValueError("--rwkv-compiled-decode-validation-tokens must be positive")
     if min(
+        args.rwkv_compiled_decode_logits_atol,
+        args.rwkv_compiled_decode_state_atol,
         args.rwkv_compiled_decode_reference_logits_atol,
         args.rwkv_compiled_decode_reference_state_atol,
     ) < 0:
-        raise ValueError("compiled decode reference tolerances must be non-negative")
+        raise ValueError("compiled decode tolerances must be non-negative")
+    if args.rwkv_draft_model and args.rwkv_speculative_proposal_tokens < 2:
+        raise ValueError("--rwkv-speculative-proposal-tokens must be at least 2")
+    if args.rwkv_draft_prompt_tokens < 0:
+        raise ValueError("--rwkv-draft-prompt-tokens must be non-negative")
     if args.summarize:
         rows = load_jsonl(args.summarize)
         print(json.dumps(summarize_rows(rows), ensure_ascii=False))
@@ -1243,12 +1393,17 @@ def main() -> int:
         "rwkv_decode_norm_backend": args.rwkv_decode_norm_backend,
         "rwkv_prepare_compiled_decode": bool(args.rwkv_prepare_compiled_decode),
         "rwkv_compiled_decode_validation_tokens": int(args.rwkv_compiled_decode_validation_tokens),
+        "rwkv_compiled_decode_logits_atol": float(args.rwkv_compiled_decode_logits_atol),
+        "rwkv_compiled_decode_state_atol": float(args.rwkv_compiled_decode_state_atol),
         "rwkv_compiled_decode_reference_logits_atol": float(
             args.rwkv_compiled_decode_reference_logits_atol
         ),
         "rwkv_compiled_decode_reference_state_atol": float(
             args.rwkv_compiled_decode_reference_state_atol
         ),
+        "rwkv_draft_model": args.rwkv_draft_model or None,
+        "rwkv_speculative_proposal_tokens": int(args.rwkv_speculative_proposal_tokens),
+        "rwkv_draft_prompt_tokens": int(args.rwkv_draft_prompt_tokens),
         **device_info(),
     }
     print(json.dumps(env, ensure_ascii=False))
@@ -1282,6 +1437,9 @@ def main() -> int:
             "rwkv_quant_rkv_min_params": None
             if int(args.rwkv_quant_rkv_min_params) < 0
             else int(args.rwkv_quant_rkv_min_params),
+            "rwkv_draft_model": args.rwkv_draft_model or None,
+            "rwkv_speculative_proposal_tokens": int(args.rwkv_speculative_proposal_tokens),
+            "rwkv_draft_prompt_tokens": int(args.rwkv_draft_prompt_tokens),
             "rwkv_step_eval_interval_env": os.environ.get("RWKV7_MLX_STEP_EVAL_INTERVAL", ""),
             "rwkv_fused_ffn_key_relu2_env": os.environ.get("RWKV7_MLX_FUSED_FFN_KEY_RELU2", ""),
         "rwkv_wkv_scan_prefill_env": os.environ.get("RWKV7_MLX_WKV_SCAN_PREFILL", ""),
@@ -1373,12 +1531,17 @@ def main() -> int:
                     decode_norm_backend=args.rwkv_decode_norm_backend,
                     prepare_compiled_decode=bool(args.rwkv_prepare_compiled_decode),
                     compiled_decode_validation_tokens=int(args.rwkv_compiled_decode_validation_tokens),
+                    compiled_decode_logits_atol=float(args.rwkv_compiled_decode_logits_atol),
+                    compiled_decode_state_atol=float(args.rwkv_compiled_decode_state_atol),
                     compiled_decode_reference_logits_atol=float(
                         args.rwkv_compiled_decode_reference_logits_atol
                     ),
                     compiled_decode_reference_state_atol=float(
                         args.rwkv_compiled_decode_reference_state_atol
                     ),
+                    draft_model_path=args.rwkv_draft_model or None,
+                    speculative_proposal_tokens=int(args.rwkv_speculative_proposal_tokens),
+                    draft_prompt_tokens=int(args.rwkv_draft_prompt_tokens),
                     results=args.results,
                     store_response=bool(args.store_responses),
                 )

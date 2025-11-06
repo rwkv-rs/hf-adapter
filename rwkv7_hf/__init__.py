@@ -42,6 +42,12 @@ except Exception:  # Keep imports working when optional MLX/torch deps are absen
     generate_text_from_hf = None
     load_mlx_generation_session = None
 
+try:
+    from .mlx_speculative import MLXSpeculativeResult, speculative_decode_greedy
+except Exception:  # Optional MLX runtime.
+    MLXSpeculativeResult = None
+    speculative_decode_greedy = None
+
 __all__ = [
     "RWKV7Config",
     "RWKV7ForCausalLM",
@@ -58,4 +64,6 @@ __all__ = [
     "MLXSessionStepOutput",
     "generate_text_from_hf",
     "load_mlx_generation_session",
+    "MLXSpeculativeResult",
+    "speculative_decode_greedy",
 ]

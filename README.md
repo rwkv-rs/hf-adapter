@@ -32,6 +32,7 @@ Contributor status and roadmap docs:
 - [`docs/validation/A100_HF_VALIDATION.md`](docs/validation/A100_HF_VALIDATION.md): latest A100 40GB HF training/quant/ZeRO validation matrix.
 - [`docs/validation/V100_HF_VALIDATION.md`](docs/validation/V100_HF_VALIDATION.md): latest V100 HF training/quant/ZeRO validation matrix.
 - [`docs/hardware/APPLE_SILICON.md`](docs/hardware/APPLE_SILICON.md): Apple Silicon / MPS / MLX compatibility lane and smoke commands.
+- [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PRODUCTION_CLOSE.md): checked M5 W4/Qwen3.5 production-speed, TTFT, memory, and correctness gate.
 - [`docs/README.md`](docs/README.md): map of specialized, hardware, validation, and archived docs.
 
 This repository converts RWKV-7 weights to a Hugging Face-style directory and provides remote-code wrappers so the result can be loaded with:

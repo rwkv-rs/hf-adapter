@@ -3,9 +3,13 @@
 This document defines the first reproducible gate for the goal: **RWKV-7 HF /
 Apple MLX / CoreML should beat Qwen3.5 on Apple/mobile deployment metrics**.
 
-The current repository does **not** claim that this gate is complete.  The point
-of this lane is to make "beat Qwen3.5" measurable before deeper MLX fused and
-CoreML/ANE optimization work starts.
+The original harness remains the definition of the gate. The bounded Apple M5
+`chars512/decode64` gate is now complete for the locally available 0.8B and 2B
+MLX baselines: both conservative comparisons pass decode, prefill, TTFT, and
+peak-memory requirements. See
+[APPLE_PRODUCTION_CLOSE.md](APPLE_PRODUCTION_CLOSE.md). Longer contexts, other
+M-series generations, 4B/9B classes, and CoreML/ANE are separate extension
+matrices rather than implied by this result.
 
 ## Public comparison targets
 
