@@ -18,6 +18,7 @@ prevents every runner from inventing its own metric names.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import platform
@@ -197,6 +198,16 @@ def parse_int_csv(raw: str) -> list[int]:
     return values
 
 
+def parse_keep_alive(raw: str | int) -> str | int:
+    value = str(raw).strip()
+    try:
+        return int(value)
+    except ValueError:
+        if not value:
+            raise ValueError("--ollama-keep-alive must not be empty")
+        return value
+
+
 def make_prompt(seed: str, target_chars: int) -> str:
     target = int(target_chars)
     if target <= 0:
@@ -278,6 +289,40 @@ def tok_s(count: int | None, duration_ns: int | None) -> float | None:
     return round(float(count) / (float(duration_ns) / 1_000_000_000.0), 6)
 
 
+def ollama_loaded_model_telemetry(*, host: str, model: str, timeout_s: float) -> dict[str, Any]:
+    """Read official `/api/ps` loaded-memory telemetry for one model."""
+
+    request = urllib.request.Request(host.rstrip("/") + "/api/ps", method="GET")
+    with urllib.request.urlopen(request, timeout=float(timeout_s)) as response:  # noqa: S310 - local benchmark endpoint
+        payload = json.loads(response.read().decode("utf-8", errors="replace"))
+    for item in payload.get("models") or []:
+        if str(item.get("name") or item.get("model") or "") != model:
+            continue
+        details = item.get("details") if isinstance(item.get("details"), dict) else {}
+        return {
+            # `size_vram` is the official loaded-runtime allocation, not a
+            # sampled peak. Keep the name distinct from peak memory so strict
+            # peak-to-peak gates cannot pass accidentally.
+            "ollama_loaded_memory_bytes": _safe_int(item.get("size_vram")),
+            "ollama_model_size_bytes": _safe_int(item.get("size")),
+            "ollama_context_length": _safe_int(item.get("context_length")),
+            "ollama_quantization_level": details.get("quantization_level"),
+        }
+    return {"ollama_memory_telemetry_reason": f"model {model!r} missing from /api/ps"}
+
+
+def unload_ollama_model(*, host: str, model: str, timeout_s: float) -> None:
+    data = json.dumps({"model": model, "stream": False, "keep_alive": 0}).encode("utf-8")
+    request = urllib.request.Request(
+        host.rstrip("/") + "/api/generate",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=float(timeout_s)) as response:  # noqa: S310 - local benchmark endpoint
+        response.read()
+
+
 def post_ollama_generate(
     *,
     host: str,
@@ -286,12 +331,29 @@ def post_ollama_generate(
     max_new_tokens: int,
     temperature: float,
     timeout_s: float,
-) -> tuple[list[dict[str, Any]], float]:
+    think: bool = False,
+    keep_alive: str | int = 0,
+    cache_prompt: bool = False,
+    capture_memory: bool = True,
+) -> tuple[list[dict[str, Any]], float, dict[str, Any]]:
     url = host.rstrip("/") + "/api/generate"
+    isolate_after_row = bool(capture_memory and keep_alive == 0)
     payload = {
         "model": model,
         "prompt": prompt,
         "stream": True,
+        # Thinking tokens are valid generated tokens, but they leave
+        # ``response`` empty on short rows and make response-quality scoring
+        # incomparable with RWKV. Keep thinking opt-in for this baseline.
+        "think": bool(think),
+        # Default to an isolated model lifetime. Ollama otherwise reuses a
+        # completed prompt across rows and can report sub-microsecond
+        # prompt_eval_duration, which is a cache-hit metric rather than prefill.
+        # Keep the model alive just long enough to query `/api/ps`, then issue
+        # an explicit unload below. This preserves row isolation and captures
+        # the official loaded-memory value in the same run.
+        "keep_alive": -1 if isolate_after_row else keep_alive,
+        "cache_prompt": bool(cache_prompt),
         "options": {
             "num_predict": int(max_new_tokens),
             "temperature": float(temperature),
@@ -306,10 +368,27 @@ def post_ollama_generate(
             line = raw.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
-            chunks.append(json.loads(line))
+            chunk = json.loads(line)
+            chunk["_client_elapsed_s"] = time.perf_counter() - t0
+            chunks.append(chunk)
             if chunks[-1].get("done"):
                 break
-    return chunks, time.perf_counter() - t0
+    elapsed_s = time.perf_counter() - t0
+    telemetry: dict[str, Any] = {}
+    if capture_memory:
+        try:
+            telemetry.update(ollama_loaded_model_telemetry(host=host, model=model, timeout_s=timeout_s))
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            telemetry["ollama_memory_telemetry_reason"] = f"{type(exc).__name__}: {exc}"
+    if isolate_after_row:
+        try:
+            unload_ollama_model(host=host, model=model, timeout_s=timeout_s)
+        except (urllib.error.URLError, TimeoutError, OSError):
+            # Do not discard a completed performance row solely because the
+            # cleanup request failed; the next row will expose cache reuse in
+            # prompt_eval_duration and the env row records the policy.
+            telemetry["ollama_unload_failed"] = True
+    return chunks, elapsed_s, telemetry
 
 
 def ollama_row_from_chunks(
@@ -323,10 +402,14 @@ def ollama_row_from_chunks(
 ) -> dict[str, Any]:
     final = chunks[-1] if chunks else {}
     first_response_chunk_index = None
+    first_output_chunk_index = None
+    first_output_s = None
     for idx, chunk in enumerate(chunks):
-        if chunk.get("response"):
+        if first_response_chunk_index is None and chunk.get("response"):
             first_response_chunk_index = idx
-            break
+        if first_output_chunk_index is None and (chunk.get("response") or chunk.get("thinking")):
+            first_output_chunk_index = idx
+            first_output_s = _safe_float(chunk.get("_client_elapsed_s"))
     prompt_eval_count = _safe_int(final.get("prompt_eval_count"))
     eval_count = _safe_int(final.get("eval_count"))
     prompt_eval_duration = _safe_int(final.get("prompt_eval_duration"))
@@ -334,6 +417,10 @@ def ollama_row_from_chunks(
     total_duration = _safe_int(final.get("total_duration"))
     load_duration = _safe_int(final.get("load_duration"))
     response_text = "".join(str(chunk.get("response", "")) for chunk in chunks)
+    thinking_text = "".join(str(chunk.get("thinking", "")) for chunk in chunks)
+    display_text = response_text or thinking_text
+    load_s = float(load_duration) / 1_000_000_000.0 if load_duration is not None else 0.0
+    steady_ttft_s = max(0.0, float(first_output_s) - load_s) if first_output_s is not None else None
     row = {
         "axis": AXIS,
         "status": "pass",
@@ -350,17 +437,24 @@ def ollama_row_from_chunks(
         "wall_s": round(float(elapsed_s), 6),
         "total_duration_ns": total_duration,
         "load_duration_ns": load_duration,
+        "load_s": round(load_s, 6) if load_duration is not None else None,
         "prompt_eval_duration_ns": prompt_eval_duration,
         "eval_duration_ns": eval_duration,
         "prefill_tok_s": tok_s(prompt_eval_count, prompt_eval_duration),
         "decode_tok_s": tok_s(eval_count, eval_duration),
+        "first_token_s": round(float(steady_ttft_s), 6) if steady_ttft_s is not None else None,
+        "ttft_s": round(float(steady_ttft_s), 6) if steady_ttft_s is not None else None,
+        "cold_ttft_s": round(float(first_output_s), 6) if first_output_s is not None else None,
         "ollama_chunk_count": len(chunks),
         "first_response_chunk_index": first_response_chunk_index,
-        "response_preview": response_text[:160],
+        "first_output_chunk_index": first_output_chunk_index,
+        "response_preview": display_text[:160],
         "response_chars": len(response_text),
+        "thinking_chars": len(thinking_text),
     }
     if store_response:
         row["response_text"] = response_text
+        row["thinking_text"] = thinking_text
     return row
 
 
@@ -376,6 +470,10 @@ def run_ollama_qwen(
     timeout_s: float,
     results: str,
     store_response: bool = False,
+    think: bool = False,
+    keep_alive: str | int = 0,
+    cache_prompt: bool = False,
+    capture_memory: bool = True,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     warmups = max(0, int(warmup_repeats))
@@ -384,13 +482,17 @@ def run_ollama_qwen(
             is_warmup = iteration_index <= warmups
             repeat_index = iteration_index - warmups
             try:
-                chunks, elapsed_s = post_ollama_generate(
+                chunks, elapsed_s, runtime_telemetry = post_ollama_generate(
                     host=host,
                     model=model,
                     prompt=prompt_case.prompt,
                     max_new_tokens=max_new_tokens,
                     temperature=temperature,
                     timeout_s=timeout_s,
+                    think=think,
+                    keep_alive=keep_alive,
+                    cache_prompt=cache_prompt,
+                    capture_memory=capture_memory,
                 )
                 row = ollama_row_from_chunks(
                     model=model,
@@ -402,6 +504,7 @@ def run_ollama_qwen(
                 )
                 row["repeat_index"] = int(repeat_index)
                 row["repeat"] = int(repeats)
+                row.update(runtime_telemetry)
                 row["warmup_repeats"] = int(warmups)
             except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
                 row = {
@@ -660,6 +763,25 @@ def run_rwkv_mlx(
     quant_backend: str,
     wkv_backend: str,
     chunk_size: int,
+    prefill_eval_interval: int,
+    prefill_backend: str,
+    dplr_chunk_size: int,
+    dplr_min_tokens: int,
+    dplr_summary_implementation: str,
+    dplr_layer_eval_interval: int,
+    dplr_layer_eval_min_tokens: int,
+    dplr_window_tokens: int,
+    decode_backend: str,
+    decode_norm_backend: str,
+    prepare_compiled_decode: bool,
+    compiled_decode_validation_tokens: int,
+    compiled_decode_logits_atol: float,
+    compiled_decode_state_atol: float,
+    compiled_decode_reference_logits_atol: float,
+    compiled_decode_reference_state_atol: float,
+    draft_model_path: str | None,
+    speculative_proposal_tokens: int,
+    draft_prompt_tokens: int,
     results: str,
     store_response: bool = False,
 ) -> list[dict[str, Any]]:
@@ -671,6 +793,7 @@ def run_rwkv_mlx(
 
         from rwkv7_hf.mlx_bridge import mlx_memory_telemetry, reset_mlx_peak_memory
         from rwkv7_hf.mlx_model import load_mlx_rwkv7_model
+        from rwkv7_hf.mlx_speculative import speculative_decode_greedy
     except Exception as exc:  # pragma: no cover - exercised on non-Apple CI by skip row
         for max_new_tokens in decode_lengths:
             row = {
@@ -700,13 +823,61 @@ def run_rwkv_mlx(
         quant_backend=quant_backend,
         wkv_backend=wkv_backend,
     )
+    model.prefill_eval_interval = int(prefill_eval_interval)
+    model.prefill_backend = str(prefill_backend)
+    model.dplr_chunk_size = int(dplr_chunk_size)
+    model.dplr_min_tokens = int(dplr_min_tokens)
+    model.dplr_summary_implementation = str(dplr_summary_implementation)
+    model.dplr_layer_eval_interval = int(dplr_layer_eval_interval)
+    model.dplr_layer_eval_min_tokens = int(dplr_layer_eval_min_tokens)
+    model.dplr_window_tokens = int(dplr_window_tokens)
+    model.decode_backend = str(decode_backend)
+    model.decode_norm_backend = str(decode_norm_backend)
+    if prepare_compiled_decode:
+        model.prepare_compiled_decode(batch_size=1)
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    load_s = time.perf_counter() - t_load
+    draft_model = None
+    if draft_model_path:
+        draft_model = load_mlx_rwkv7_model(
+            draft_model_path,
+            dtype=dtype,
+            quantization=quantization,
+            quant_min_params=int(quant_min_params),
+            quant_rkv_min_params=quant_rkv_min_params,
+            quant_backend=quant_backend,
+            wkv_backend=wkv_backend,
+        )
+        draft_model.prefill_eval_interval = int(prefill_eval_interval)
+        draft_model.prefill_backend = str(prefill_backend)
+        draft_model.dplr_chunk_size = int(dplr_chunk_size)
+        draft_model.dplr_min_tokens = int(dplr_min_tokens)
+        draft_model.dplr_summary_implementation = str(dplr_summary_implementation)
+        draft_model.dplr_layer_eval_interval = int(dplr_layer_eval_interval)
+        draft_model.dplr_layer_eval_min_tokens = int(dplr_layer_eval_min_tokens)
+        draft_model.dplr_window_tokens = int(dplr_window_tokens)
+        draft_model.decode_backend = "eager"
+        draft_model.decode_norm_backend = str(decode_norm_backend)
     prompt_ids = [int(x) for x in tokenizer(prompt_case.prompt, add_special_tokens=False).input_ids]
     if not prompt_ids:
         raise ValueError("RWKV tokenizer produced zero prompt tokens")
+    compiled_decode_validation = None
+    if prepare_compiled_decode:
+        validation_logits, validation_state = model.prefill([prompt_ids])
+        mx.eval(validation_logits, *validation_state.recurrent_state)
+        compiled_decode_validation = model.validate_compiled_decode(
+            validation_logits,
+            validation_state,
+            steps=int(compiled_decode_validation_tokens),
+            logits_atol=float(compiled_decode_logits_atol),
+            state_atol=float(compiled_decode_state_atol),
+            reference_logits_atol=float(compiled_decode_reference_logits_atol),
+            reference_state_atol=float(compiled_decode_reference_state_atol),
+        )
+        mx.clear_cache()
+    load_s = time.perf_counter() - t_load
 
     warmups = max(0, int(warmup_repeats))
+    speculative_measured_ids: dict[int, list[list[int]]] = {}
     for max_new_tokens in decode_lengths:
         for iteration_index in range(1, warmups + repeats + 1):
             is_warmup = iteration_index <= warmups
@@ -716,12 +887,34 @@ def run_rwkv_mlx(
                 reset_counters()
             reset_mlx_peak_memory()
             t_prefill = time.perf_counter()
+            model.dplr_chunk_size = int(dplr_chunk_size)
             logits, state = model.prefill([prompt_ids])
+            prefill_s = time.perf_counter() - t_prefill
+            draft_logits = None
+            draft_state = None
+            draft_prefill_s = 0.0
+            streamed_first_s = None
+            if draft_model is not None:
+                # The target's first greedy token is streamable before draft
+                # preparation. Charge draft prefill to speculative decode, not
+                # target prefill/TTFT, and expose it separately below.
+                t_streamed_first = time.perf_counter()
+                streamed_first = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
+                mx.eval(streamed_first)
+                streamed_first_s = time.perf_counter() - t_streamed_first
+                draft_model.dplr_chunk_size = int(dplr_chunk_size)
+                draft_prompt_ids = (
+                    prompt_ids[-int(draft_prompt_tokens) :]
+                    if int(draft_prompt_tokens) > 0
+                    else prompt_ids
+                )
+                t_draft_prefill = time.perf_counter()
+                draft_logits, draft_state = draft_model.prefill([draft_prompt_ids])
+                draft_prefill_s = time.perf_counter() - t_draft_prefill
             # model.prefill()/forward() already synchronizes the returned logits
             # and recurrent state.  A second mx.eval(logits) here only adds a
             # redundant host/device barrier to TTFT measurement.
             prefill_logits = logits
-            prefill_s = time.perf_counter() - t_prefill
             chunk_diff = None
             chunk_s = None
             chunk_telemetry = None
@@ -731,21 +924,51 @@ def run_rwkv_mlx(
             # is fed once to advance the recurrent state and prepare the next
             # logits.  This avoids running decode_greedy twice, which would
             # double-process the first generated token.
-            t_first = time.perf_counter()
-            next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
-            mx.eval(next_token)
-            first_s = time.perf_counter() - t_first
-            generated_preview: list[int] = []
-            decode_step_s = 0.0
-            final_state = state
-            for _ in range(int(max_new_tokens)):
-                generated_preview.extend(int(x) for x in next_token.reshape(-1).tolist())
-                t_step = time.perf_counter()
-                logits, final_state = model.decode_step(next_token, final_state)
+            speculative_telemetry = None
+            if draft_model is not None:
+                if draft_logits is None or draft_state is None:
+                    raise RuntimeError("speculative draft prefill produced no state")
+                width = int(speculative_proposal_tokens)
+                if width < 2:
+                    raise ValueError("--rwkv-speculative-proposal-tokens must be at least 2")
+                model.dplr_chunk_size = width
+                model.dplr_min_tokens = 2
+                draft_model.dplr_chunk_size = width
+                draft_model.dplr_min_tokens = 2
+                speculative = speculative_decode_greedy(
+                    model,
+                    draft_model,
+                    logits,
+                    state,
+                    draft_logits,
+                    draft_state,
+                    max_new_tokens=int(max_new_tokens),
+                    proposal_tokens=width,
+                )
+                generated_preview = list(speculative.generated_ids)
+                logits = speculative.target_logits
+                final_state = speculative.target_state
+                first_s = float(streamed_first_s or speculative.first_token_s)
+                decode_s = float(draft_prefill_s + speculative.elapsed_s)
+                speculative_telemetry = speculative.telemetry()
+                speculative_telemetry["draft_prefill_s"] = round(float(draft_prefill_s), 6)
+                speculative_telemetry["decode_with_draft_prefill_s"] = round(float(decode_s), 6)
+            else:
+                t_first = time.perf_counter()
                 next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
                 mx.eval(next_token)
-                decode_step_s += time.perf_counter() - t_step
-            decode_s = first_s + decode_step_s
+                first_s = time.perf_counter() - t_first
+                generated_preview = []
+                decode_step_s = 0.0
+                final_state = state
+                for _ in range(int(max_new_tokens)):
+                    generated_preview.extend(int(x) for x in next_token.reshape(-1).tolist())
+                    t_step = time.perf_counter()
+                    logits, final_state = model.decode_step(next_token, final_state)
+                    next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
+                    mx.eval(next_token)
+                    decode_step_s += time.perf_counter() - t_step
+                decode_s = first_s + decode_step_s
             response_text = tokenizer.decode(generated_preview, skip_special_tokens=True) if store_response else ""
             telemetry = model.telemetry()
             main_memory = mlx_memory_telemetry()
@@ -770,7 +993,7 @@ def run_rwkv_mlx(
                 "axis": AXIS,
                 "status": "pass",
                 "engine": "rwkv7_hf",
-                "runtime": "mlx",
+                "runtime": "mlx_speculative" if draft_model is not None else "mlx",
                 "model": Path(model_path).name,
                 "model_path": model_path,
                 "family": "rwkv7",
@@ -789,6 +1012,54 @@ def run_rwkv_mlx(
                 "fused_attn_mix": telemetry.get("fused_attn_mix"),
                 "fused_attn_mix_counts": telemetry.get("fused_attn_mix_counts"),
                 "fused_attn_mix_metal_available": telemetry.get("fused_attn_mix_metal_available"),
+                "fast_layer_norm": telemetry.get("fast_layer_norm"),
+                "fast_group_norm": telemetry.get("fast_group_norm"),
+                "wkv_scan_prefill": telemetry.get("wkv_scan_prefill"),
+                "wkv_scan_prefill_mode": telemetry.get("wkv_scan_prefill_mode"),
+                "wkv_scan_prefill_min_tokens": telemetry.get("wkv_scan_prefill_min_tokens"),
+                "wkv_scan_prefill_counts": telemetry.get("wkv_scan_prefill_counts"),
+                "wkv_scan_prefill_reason_counts": telemetry.get("wkv_scan_prefill_reason_counts"),
+                "wkv_scan_metal_available": telemetry.get("wkv_scan_metal_available"),
+                "prefill_eval_interval": int(model.prefill_eval_interval),
+                "prefill_backend": telemetry.get("prefill_backend"),
+                "prefill_backend_last": telemetry.get("prefill_backend_last"),
+                "prefill_backend_counts": telemetry.get("prefill_backend_counts"),
+                "dplr_chunk_size": telemetry.get("dplr_chunk_size"),
+                "dplr_min_tokens": telemetry.get("dplr_min_tokens"),
+                "dplr_summary_implementation": telemetry.get("dplr_summary_implementation"),
+                "dplr_layer_eval_interval": telemetry.get("dplr_layer_eval_interval"),
+                "dplr_layer_eval_min_tokens": telemetry.get("dplr_layer_eval_min_tokens"),
+                "dplr_layer_eval_interval_effective_last": telemetry.get(
+                    "dplr_layer_eval_interval_effective_last"
+                ),
+                "dplr_window_tokens": telemetry.get("dplr_window_tokens"),
+                "dplr_windows_last": telemetry.get("dplr_windows_last"),
+                "decode_backend": telemetry.get("decode_backend"),
+                "decode_backend_last": telemetry.get("decode_backend_last"),
+                "decode_backend_counts": telemetry.get("decode_backend_counts"),
+                "decode_norm_backend": telemetry.get("decode_norm_backend"),
+                "decode_compiled_batches": telemetry.get("decode_compiled_batches"),
+                "decode_compiled_validated_batches": telemetry.get(
+                    "decode_compiled_validated_batches"
+                ),
+                "decode_compiled_rejected_batches": telemetry.get(
+                    "decode_compiled_rejected_batches"
+                ),
+                "decode_compiled_norm_backend_by_batch": telemetry.get(
+                    "decode_compiled_norm_backend_by_batch"
+                ),
+                "decode_compile_s_by_batch": telemetry.get("decode_compile_s_by_batch"),
+                "compiled_decode_validation": compiled_decode_validation,
+                "draft_model": Path(draft_model_path).name if draft_model_path else None,
+                "draft_prompt_tokens": (
+                    min(len(prompt_ids), int(draft_prompt_tokens))
+                    if draft_model is not None and int(draft_prompt_tokens) > 0
+                    else (len(prompt_ids) if draft_model is not None else None)
+                ),
+                "speculative_proposal_tokens": (
+                    int(speculative_proposal_tokens) if draft_model is not None else None
+                ),
+                "speculative_telemetry": speculative_telemetry,
                 "prompt_case": prompt_case.name,
                 "prompt_target_chars": int(prompt_case.target_chars),
                 "prompt_chars": len(prompt_case.prompt),
@@ -800,8 +1071,12 @@ def run_rwkv_mlx(
                 "warmup_repeats": int(warmups),
                 "load_s": round(float(load_s), 6),
                 "prefill_s": round(float(prefill_s), 6),
+                "draft_prefill_s": (
+                    round(float(draft_prefill_s), 6) if draft_model is not None else None
+                ),
                 "first_token_s": round(float(first_s), 6),
                 "ttft_s": round(float(prefill_s + first_s), 6),
+                "cold_ttft_s": round(float(load_s + prefill_s + first_s), 6),
                 "decode_s": round(float(decode_s), 6),
                 "prefill_tok_s": round(float(len(prompt_ids) / prefill_s), 6) if prefill_s > 0 else None,
                 "decode_tok_s": round(float(max_new_tokens / decode_s), 6) if decode_s > 0 else None,
@@ -828,6 +1103,8 @@ def run_rwkv_mlx(
                         "chunked_wkv_backend_counts": (chunk_telemetry or {}).get("wkv_backend_counts"),
                         "chunked_fused_ffn_key_relu2_counts": (chunk_telemetry or {}).get("fused_ffn_key_relu2_counts"),
                         "chunked_fused_attn_mix_counts": (chunk_telemetry or {}).get("fused_attn_mix_counts"),
+                        "chunked_wkv_scan_prefill_counts": (chunk_telemetry or {}).get("wkv_scan_prefill_counts"),
+                        "chunked_wkv_scan_prefill_reason_counts": (chunk_telemetry or {}).get("wkv_scan_prefill_reason_counts"),
                         "chunked_state_only_prefill_calls": (chunk_telemetry or {}).get("state_only_prefill_calls"),
                         "chunked_state_only_prefill_tokens": (chunk_telemetry or {}).get("state_only_prefill_tokens"),
                         "chunked_quantized_linear_last_backend_counts": (chunk_telemetry or {}).get("quantized_linear_last_backend_counts"),
@@ -837,9 +1114,57 @@ def run_rwkv_mlx(
                 )
             if is_warmup:
                 continue
+            if draft_model is not None:
+                speculative_measured_ids.setdefault(int(max_new_tokens), []).append(
+                    list(generated_preview)
+                )
             print(json.dumps(row, ensure_ascii=False))
             append_jsonl(results, row)
             rows.append(row)
+    for max_new_tokens, measured_repeats in speculative_measured_ids.items():
+        model.dplr_chunk_size = int(dplr_chunk_size)
+        reference_logits, reference_state = model.prefill([prompt_ids])
+        reference_tokens, _ = model.decode_greedy(
+            reference_logits,
+            reference_state,
+            max_new_tokens=int(max_new_tokens),
+        )
+        reference_ids = [int(value) for value in reference_tokens.reshape(-1).tolist()]
+        matches = all(measured_ids == reference_ids for measured_ids in measured_repeats)
+        validation_row = {
+            "axis": AXIS + "_speculative_validation",
+            "status": "pass" if matches else "fail",
+            "model": Path(model_path).name,
+            "draft_model": Path(draft_model_path).name if draft_model_path else None,
+            "prompt_case": prompt_case.name,
+            "prompt_eval_tokens": len(prompt_ids),
+            "generated_tokens": int(max_new_tokens),
+            "measured_repeats": len(measured_repeats),
+            "target_greedy_match": bool(matches),
+            "measured_preview": measured_repeats[0][:16],
+            "target_preview": reference_ids[:16],
+        }
+        print(json.dumps(validation_row, ensure_ascii=False))
+        append_jsonl(results, validation_row)
+        if not matches:
+            raise AssertionError("speculative decode did not reproduce target greedy output")
+    # ``main`` invokes this runner once per prompt case. Explicitly release the
+    # model and the final lazy arrays before the next case; otherwise MLX keeps
+    # both model instances live and the second case reports roughly 2x memory.
+    model = None
+    draft_model = None
+    tokenizer = None
+    logits = None
+    state = None
+    final_state = None
+    next_token = None
+    if int(chunk_size) > 0:
+        chunk_logits = None
+        chunk_state = None
+    gc.collect()
+    clear_cache = getattr(mx, "clear_cache", None)
+    if callable(clear_cache):
+        clear_cache()
     return rows
 
 
@@ -910,6 +1235,60 @@ def main() -> int:
     )
     ap.add_argument("--ollama-host", default=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"))
     ap.add_argument("--ollama-timeout-s", type=float, default=600.0)
+    ap.add_argument("--ollama-think", action="store_true", help="Enable Qwen thinking output; disabled by default for comparable response rows.")
+    ap.add_argument(
+        "--ollama-keep-alive",
+        default="0",
+        help="Ollama keep_alive value. Default 0 unloads after each row to prevent prompt-cache prefill artifacts.",
+    )
+    ap.add_argument(
+        "--rwkv-prefill-backend",
+        default="recurrent",
+        choices=["recurrent", "dplr_metal", "auto"],
+    )
+    ap.add_argument("--rwkv-dplr-chunk-size", type=int, default=64)
+    ap.add_argument("--rwkv-dplr-min-tokens", type=int, default=8)
+    ap.add_argument(
+        "--rwkv-dplr-summary-implementation",
+        default="tiled",
+        choices=["scalar", "tiled"],
+    )
+    ap.add_argument("--rwkv-dplr-layer-eval-interval", type=int, default=4)
+    ap.add_argument("--rwkv-dplr-layer-eval-min-tokens", type=int, default=64)
+    ap.add_argument("--rwkv-dplr-window-tokens", type=int, default=512)
+    ap.add_argument(
+        "--rwkv-decode-backend",
+        default="auto",
+        choices=["eager", "compiled", "auto"],
+    )
+    ap.add_argument(
+        "--rwkv-decode-norm-backend",
+        default="reference",
+        choices=["reference", "fast"],
+    )
+    ap.add_argument("--rwkv-prepare-compiled-decode", action="store_true")
+    ap.add_argument("--rwkv-compiled-decode-validation-tokens", type=int, default=32)
+    ap.add_argument("--rwkv-compiled-decode-logits-atol", type=float, default=1e-6)
+    ap.add_argument("--rwkv-compiled-decode-state-atol", type=float, default=1e-6)
+    ap.add_argument("--rwkv-compiled-decode-reference-logits-atol", type=float, default=0.25)
+    ap.add_argument("--rwkv-compiled-decode-reference-state-atol", type=float, default=0.5)
+    ap.add_argument(
+        "--rwkv-draft-model",
+        default="",
+        help="Optional smaller RWKV HF/MLX model for exact-greedy speculative verification.",
+    )
+    ap.add_argument("--rwkv-speculative-proposal-tokens", type=int, default=32)
+    ap.add_argument(
+        "--rwkv-draft-prompt-tokens",
+        type=int,
+        default=0,
+        help=(
+            "Limit the draft to the last N prompt tokens (0 keeps the full prompt). "
+            "Target verification preserves target-greedy output and adaptive fallback bounds poor drafts."
+        ),
+    )
+    ap.add_argument("--ollama-cache-prompt", action="store_true", help="Allow Ollama/runner prompt-cache reuse across rows.")
+    ap.add_argument("--no-ollama-memory", action="store_true", help="Skip official /api/ps loaded-memory telemetry.")
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--rwkv-mlx-models", default="", help="Comma-separated converted RWKV-7 HF model dirs; empty disables RWKV MLX.")
     ap.add_argument("--rwkv-dtype", default="fp16", choices=["keep", "fp32", "fp16", "bf16"])
@@ -925,15 +1304,46 @@ def main() -> int:
             "-1 preserves --rwkv-quant-min-params."
         ),
     )
-    ap.add_argument("--rwkv-quant-backend", default="auto", choices=["affine", "reference", "metal", "auto"])
+    ap.add_argument("--rwkv-quant-backend", default="auto", choices=["affine", "reference", "metal", "auto", "groupwise"])
     ap.add_argument("--rwkv-wkv-backend", default="auto", choices=["reference", "metal", "auto"])
     ap.add_argument("--rwkv-chunk-size", type=int, default=0)
+    ap.add_argument(
+        "--rwkv-prefill-eval-interval",
+        type=int,
+        default=1,
+        help="Evaluate lazy MLX prefill graphs every N prompt tokens; 1 preserves the reference schedule.",
+    )
     args = ap.parse_args()
 
     if args.repeat <= 0:
         raise ValueError("--repeat must be positive")
     if args.warmup_repeats < 0:
         raise ValueError("--warmup-repeats must be non-negative")
+    if args.rwkv_prefill_eval_interval <= 0:
+        raise ValueError("--rwkv-prefill-eval-interval must be positive")
+    if not 1 <= args.rwkv_dplr_chunk_size <= 64:
+        raise ValueError("--rwkv-dplr-chunk-size must be in [1, 64]")
+    if args.rwkv_dplr_min_tokens <= 0:
+        raise ValueError("--rwkv-dplr-min-tokens must be positive")
+    if args.rwkv_dplr_layer_eval_interval < 0:
+        raise ValueError("--rwkv-dplr-layer-eval-interval must be non-negative")
+    if args.rwkv_dplr_layer_eval_min_tokens <= 0:
+        raise ValueError("--rwkv-dplr-layer-eval-min-tokens must be positive")
+    if args.rwkv_dplr_window_tokens < 0:
+        raise ValueError("--rwkv-dplr-window-tokens must be non-negative")
+    if args.rwkv_compiled_decode_validation_tokens <= 0:
+        raise ValueError("--rwkv-compiled-decode-validation-tokens must be positive")
+    if min(
+        args.rwkv_compiled_decode_logits_atol,
+        args.rwkv_compiled_decode_state_atol,
+        args.rwkv_compiled_decode_reference_logits_atol,
+        args.rwkv_compiled_decode_reference_state_atol,
+    ) < 0:
+        raise ValueError("compiled decode tolerances must be non-negative")
+    if args.rwkv_draft_model and args.rwkv_speculative_proposal_tokens < 2:
+        raise ValueError("--rwkv-speculative-proposal-tokens must be at least 2")
+    if args.rwkv_draft_prompt_tokens < 0:
+        raise ValueError("--rwkv-draft-prompt-tokens must be non-negative")
     if args.summarize:
         rows = load_jsonl(args.summarize)
         print(json.dumps(summarize_rows(rows), ensure_ascii=False))
@@ -944,6 +1354,7 @@ def main() -> int:
     qwen_models = parse_csv(args.qwen_models)
     qwen_mlx_vlm_models = parse_csv(args.qwen_mlx_vlm_models)
     rwkv_models = parse_csv(args.rwkv_mlx_models)
+    ollama_keep_alive = parse_keep_alive(args.ollama_keep_alive)
 
     env = {
         "axis": AXIS + "_env",
@@ -964,6 +1375,35 @@ def main() -> int:
         else int(args.rwkv_quant_rkv_min_params),
         "rwkv_step_eval_interval_env": os.environ.get("RWKV7_MLX_STEP_EVAL_INTERVAL", ""),
         "rwkv_fused_ffn_key_relu2_env": os.environ.get("RWKV7_MLX_FUSED_FFN_KEY_RELU2", ""),
+        "rwkv_wkv_scan_prefill_env": os.environ.get("RWKV7_MLX_WKV_SCAN_PREFILL", ""),
+        "rwkv_wkv_scan_prefill_min_tokens_env": os.environ.get("RWKV7_MLX_WKV_SCAN_PREFILL_MIN_TOKENS", ""),
+        "ollama_think": bool(args.ollama_think),
+        "ollama_keep_alive": ollama_keep_alive,
+        "ollama_cache_prompt": bool(args.ollama_cache_prompt),
+        "ollama_capture_memory": not bool(args.no_ollama_memory),
+        "rwkv_prefill_eval_interval": int(args.rwkv_prefill_eval_interval),
+        "rwkv_prefill_backend": args.rwkv_prefill_backend,
+        "rwkv_dplr_chunk_size": int(args.rwkv_dplr_chunk_size),
+        "rwkv_dplr_min_tokens": int(args.rwkv_dplr_min_tokens),
+        "rwkv_dplr_summary_implementation": args.rwkv_dplr_summary_implementation,
+        "rwkv_dplr_layer_eval_interval": int(args.rwkv_dplr_layer_eval_interval),
+        "rwkv_dplr_layer_eval_min_tokens": int(args.rwkv_dplr_layer_eval_min_tokens),
+        "rwkv_dplr_window_tokens": int(args.rwkv_dplr_window_tokens),
+        "rwkv_decode_backend": args.rwkv_decode_backend,
+        "rwkv_decode_norm_backend": args.rwkv_decode_norm_backend,
+        "rwkv_prepare_compiled_decode": bool(args.rwkv_prepare_compiled_decode),
+        "rwkv_compiled_decode_validation_tokens": int(args.rwkv_compiled_decode_validation_tokens),
+        "rwkv_compiled_decode_logits_atol": float(args.rwkv_compiled_decode_logits_atol),
+        "rwkv_compiled_decode_state_atol": float(args.rwkv_compiled_decode_state_atol),
+        "rwkv_compiled_decode_reference_logits_atol": float(
+            args.rwkv_compiled_decode_reference_logits_atol
+        ),
+        "rwkv_compiled_decode_reference_state_atol": float(
+            args.rwkv_compiled_decode_reference_state_atol
+        ),
+        "rwkv_draft_model": args.rwkv_draft_model or None,
+        "rwkv_speculative_proposal_tokens": int(args.rwkv_speculative_proposal_tokens),
+        "rwkv_draft_prompt_tokens": int(args.rwkv_draft_prompt_tokens),
         **device_info(),
     }
     print(json.dumps(env, ensure_ascii=False))
@@ -997,8 +1437,31 @@ def main() -> int:
             "rwkv_quant_rkv_min_params": None
             if int(args.rwkv_quant_rkv_min_params) < 0
             else int(args.rwkv_quant_rkv_min_params),
+            "rwkv_draft_model": args.rwkv_draft_model or None,
+            "rwkv_speculative_proposal_tokens": int(args.rwkv_speculative_proposal_tokens),
+            "rwkv_draft_prompt_tokens": int(args.rwkv_draft_prompt_tokens),
             "rwkv_step_eval_interval_env": os.environ.get("RWKV7_MLX_STEP_EVAL_INTERVAL", ""),
             "rwkv_fused_ffn_key_relu2_env": os.environ.get("RWKV7_MLX_FUSED_FFN_KEY_RELU2", ""),
+        "rwkv_wkv_scan_prefill_env": os.environ.get("RWKV7_MLX_WKV_SCAN_PREFILL", ""),
+        "rwkv_wkv_scan_prefill_min_tokens_env": os.environ.get("RWKV7_MLX_WKV_SCAN_PREFILL_MIN_TOKENS", ""),
+            "rwkv_prefill_eval_interval": int(args.rwkv_prefill_eval_interval),
+            "rwkv_prefill_backend": args.rwkv_prefill_backend,
+            "rwkv_dplr_chunk_size": int(args.rwkv_dplr_chunk_size),
+            "rwkv_dplr_min_tokens": int(args.rwkv_dplr_min_tokens),
+            "rwkv_dplr_summary_implementation": args.rwkv_dplr_summary_implementation,
+            "rwkv_dplr_layer_eval_interval": int(args.rwkv_dplr_layer_eval_interval),
+            "rwkv_dplr_layer_eval_min_tokens": int(args.rwkv_dplr_layer_eval_min_tokens),
+            "rwkv_dplr_window_tokens": int(args.rwkv_dplr_window_tokens),
+            "rwkv_decode_backend": args.rwkv_decode_backend,
+            "rwkv_decode_norm_backend": args.rwkv_decode_norm_backend,
+            "rwkv_prepare_compiled_decode": bool(args.rwkv_prepare_compiled_decode),
+            "rwkv_compiled_decode_validation_tokens": int(args.rwkv_compiled_decode_validation_tokens),
+            "rwkv_compiled_decode_reference_logits_atol": float(
+                args.rwkv_compiled_decode_reference_logits_atol
+            ),
+            "rwkv_compiled_decode_reference_state_atol": float(
+                args.rwkv_compiled_decode_reference_state_atol
+            ),
         }
         print(json.dumps(plan, ensure_ascii=False))
         append_jsonl(args.results, plan)
@@ -1019,6 +1482,10 @@ def main() -> int:
                     timeout_s=float(args.ollama_timeout_s),
                     results=args.results,
                     store_response=bool(args.store_responses),
+                    think=bool(args.ollama_think),
+                    keep_alive=ollama_keep_alive,
+                    cache_prompt=bool(args.ollama_cache_prompt),
+                    capture_memory=not bool(args.no_ollama_memory),
                 )
             )
         for model in qwen_mlx_vlm_models:
@@ -1052,6 +1519,29 @@ def main() -> int:
                     quant_backend=args.rwkv_quant_backend,
                     wkv_backend=args.rwkv_wkv_backend,
                     chunk_size=int(args.rwkv_chunk_size),
+                    prefill_eval_interval=int(args.rwkv_prefill_eval_interval),
+                    prefill_backend=args.rwkv_prefill_backend,
+                    dplr_chunk_size=int(args.rwkv_dplr_chunk_size),
+                    dplr_min_tokens=int(args.rwkv_dplr_min_tokens),
+                    dplr_summary_implementation=args.rwkv_dplr_summary_implementation,
+                    dplr_layer_eval_interval=int(args.rwkv_dplr_layer_eval_interval),
+                    dplr_layer_eval_min_tokens=int(args.rwkv_dplr_layer_eval_min_tokens),
+                    dplr_window_tokens=int(args.rwkv_dplr_window_tokens),
+                    decode_backend=args.rwkv_decode_backend,
+                    decode_norm_backend=args.rwkv_decode_norm_backend,
+                    prepare_compiled_decode=bool(args.rwkv_prepare_compiled_decode),
+                    compiled_decode_validation_tokens=int(args.rwkv_compiled_decode_validation_tokens),
+                    compiled_decode_logits_atol=float(args.rwkv_compiled_decode_logits_atol),
+                    compiled_decode_state_atol=float(args.rwkv_compiled_decode_state_atol),
+                    compiled_decode_reference_logits_atol=float(
+                        args.rwkv_compiled_decode_reference_logits_atol
+                    ),
+                    compiled_decode_reference_state_atol=float(
+                        args.rwkv_compiled_decode_reference_state_atol
+                    ),
+                    draft_model_path=args.rwkv_draft_model or None,
+                    speculative_proposal_tokens=int(args.rwkv_speculative_proposal_tokens),
+                    draft_prompt_tokens=int(args.rwkv_draft_prompt_tokens),
                     results=args.results,
                     store_response=bool(args.store_responses),
                 )

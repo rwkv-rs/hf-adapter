@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +16,7 @@ from bench.run_qwen35_apple_baseline import (
     PromptCase,
     build_prompt_cases,
     make_prompt,
+    ollama_loaded_model_telemetry,
     ollama_row_from_chunks,
     summarize_rows,
     tok_s,
@@ -53,8 +55,8 @@ def test_make_prompt_hits_target_chars() -> None:
 def test_ollama_stream_row_uses_final_duration_metrics() -> None:
     case = PromptCase(name="chars16", target_chars=16, prompt="0123456789abcdef")
     chunks = [
-        {"response": "hel", "done": False},
-        {"response": "lo", "done": False},
+        {"response": "hel", "done": False, "_client_elapsed_s": 0.25},
+        {"response": "lo", "done": False, "_client_elapsed_s": 0.5},
         {
             "response": "",
             "done": True,
@@ -81,7 +83,74 @@ def test_ollama_stream_row_uses_final_duration_metrics() -> None:
     assert row["prefill_tok_s"] == 4.0
     assert row["decode_tok_s"] == 4.0
     assert row["first_response_chunk_index"] == 0
+    assert row["first_output_chunk_index"] == 0
+    assert row["ttft_s"] == 0.15
+    assert row["cold_ttft_s"] == 0.25
     assert row["public_package_gb"] == 1.2
+
+
+def test_ollama_row_tracks_thinking_without_treating_it_as_answer() -> None:
+    case = PromptCase(name="chars8", target_chars=8, prompt="12345678")
+    row = ollama_row_from_chunks(
+        model="qwen3.5:0.8b-mlx",
+        prompt_case=case,
+        max_new_tokens=2,
+        chunks=[
+            {"thinking": "plan", "response": "", "done": False, "_client_elapsed_s": 0.1},
+            {
+                "thinking": "",
+                "response": "answer",
+                "done": True,
+                "_client_elapsed_s": 0.2,
+                "prompt_eval_count": 4,
+                "prompt_eval_duration": 1_000_000_000,
+                "eval_count": 2,
+                "eval_duration": 1_000_000_000,
+            },
+        ],
+        elapsed_s=0.2,
+        store_response=True,
+    )
+    assert row["first_output_chunk_index"] == 0
+    assert row["first_response_chunk_index"] == 1
+    assert row["ttft_s"] == 0.1
+    assert row["response_text"] == "answer"
+    assert row["thinking_text"] == "plan"
+
+
+def test_ollama_loaded_model_telemetry_keeps_loaded_memory_distinct_from_peak() -> None:
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "models": [
+                        {
+                            "name": "qwen3.5:0.8b-mlx",
+                            "size": 1_100,
+                            "size_vram": 1_000,
+                            "context_length": 4096,
+                            "details": {"quantization_level": "mxfp8"},
+                        }
+                    ]
+                }
+            ).encode()
+
+    with patch("bench.run_qwen35_apple_baseline.urllib.request.urlopen", return_value=FakeResponse()):
+        telemetry = ollama_loaded_model_telemetry(
+            host="http://127.0.0.1:11434",
+            model="qwen3.5:0.8b-mlx",
+            timeout_s=1,
+        )
+    assert telemetry["ollama_loaded_memory_bytes"] == 1_000
+    assert telemetry["ollama_model_size_bytes"] == 1_100
+    assert telemetry["ollama_quantization_level"] == "mxfp8"
+    assert "ollama_peak_memory_bytes" not in telemetry
 
 
 def test_ollama_row_can_store_full_response_for_quality() -> None:
@@ -282,6 +351,33 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
             "4000000",
             "--rwkv-quant-rkv-min-params",
             "0",
+            "--rwkv-prefill-eval-interval",
+            "3",
+            "--rwkv-prefill-backend",
+            "dplr_metal",
+            "--rwkv-dplr-chunk-size",
+            "32",
+            "--rwkv-dplr-min-tokens",
+            "96",
+            "--rwkv-dplr-summary-implementation",
+            "tiled",
+            "--rwkv-dplr-layer-eval-interval",
+            "2",
+            "--rwkv-dplr-layer-eval-min-tokens",
+            "192",
+            "--rwkv-dplr-window-tokens",
+            "256",
+            "--rwkv-decode-backend",
+            "compiled",
+            "--rwkv-decode-norm-backend",
+            "fast",
+            "--rwkv-prepare-compiled-decode",
+            "--rwkv-compiled-decode-validation-tokens",
+            "12",
+            "--rwkv-compiled-decode-reference-logits-atol",
+            "0.3",
+            "--rwkv-compiled-decode-reference-state-atol",
+            "0.6",
         ],
         cwd=ROOT,
         text=True,
@@ -304,6 +400,21 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
     assert rows[1]["rwkv_quant_min_params"] == 4_000_000
     assert rows[1]["rwkv_quant_rkv_min_params"] == 0
     assert rows[1]["rwkv_mlx_jobs"] == 8
+    assert rows[0]["rwkv_prefill_eval_interval"] == 3
+    assert rows[1]["rwkv_prefill_eval_interval"] == 3
+    assert rows[0]["rwkv_prefill_backend"] == "dplr_metal"
+    assert rows[0]["rwkv_dplr_chunk_size"] == 32
+    assert rows[0]["rwkv_dplr_min_tokens"] == 96
+    assert rows[0]["rwkv_dplr_summary_implementation"] == "tiled"
+    assert rows[0]["rwkv_dplr_layer_eval_interval"] == 2
+    assert rows[0]["rwkv_dplr_layer_eval_min_tokens"] == 192
+    assert rows[0]["rwkv_dplr_window_tokens"] == 256
+    assert rows[0]["rwkv_decode_backend"] == "compiled"
+    assert rows[0]["rwkv_decode_norm_backend"] == "fast"
+    assert rows[0]["rwkv_prepare_compiled_decode"] is True
+    assert rows[0]["rwkv_compiled_decode_validation_tokens"] == 12
+    assert rows[0]["rwkv_compiled_decode_reference_logits_atol"] == 0.3
+    assert rows[0]["rwkv_compiled_decode_reference_state_atol"] == 0.6
 
 
 def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
@@ -323,6 +434,20 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
             "RESULTS": str(out),
             "PYTHON_BIN": sys.executable,
             "SKIP_COMPARE": "1",
+            "RWKV_PREFILL_EVAL_INTERVAL": "3",
+            "RWKV_PREFILL_BACKEND": "dplr_metal",
+            "RWKV_DPLR_CHUNK_SIZE": "32",
+            "RWKV_DPLR_MIN_TOKENS": "96",
+            "RWKV_DPLR_SUMMARY_IMPLEMENTATION": "tiled",
+            "RWKV_DPLR_LAYER_EVAL_INTERVAL": "2",
+            "RWKV_DPLR_LAYER_EVAL_MIN_TOKENS": "192",
+            "RWKV_DPLR_WINDOW_TOKENS": "256",
+            "RWKV_DECODE_BACKEND": "compiled",
+            "RWKV_DECODE_NORM_BACKEND": "fast",
+            "RWKV_PREPARE_COMPILED_DECODE": "1",
+            "RWKV_COMPILED_DECODE_VALIDATION_TOKENS": "12",
+            "RWKV_COMPILED_DECODE_REFERENCE_LOGITS_ATOL": "0.3",
+            "RWKV_COMPILED_DECODE_REFERENCE_STATE_ATOL": "0.6",
         }
     )
     result = subprocess.run(
@@ -351,6 +476,49 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
     assert rows[1]["qwen_mlx_vlm_token_only"] is True
     assert rows[1]["rwkv_quant_rkv_min_params"] == 0
     assert rows[1]["rwkv_mlx_models"] == ["/tmp/rwkv-a", "/tmp/rwkv-b"]
+    assert rows[0]["rwkv_prefill_eval_interval"] == 3
+    assert rows[0]["rwkv_prefill_backend"] == "dplr_metal"
+    assert rows[0]["rwkv_dplr_chunk_size"] == 32
+    assert rows[0]["rwkv_dplr_min_tokens"] == 96
+    assert rows[0]["rwkv_dplr_summary_implementation"] == "tiled"
+    assert rows[0]["rwkv_dplr_layer_eval_interval"] == 2
+    assert rows[0]["rwkv_dplr_layer_eval_min_tokens"] == 192
+    assert rows[0]["rwkv_dplr_window_tokens"] == 256
+    assert rows[0]["rwkv_decode_backend"] == "compiled"
+    assert rows[0]["rwkv_decode_norm_backend"] == "fast"
+    assert rows[0]["rwkv_prepare_compiled_decode"] is True
+    assert rows[0]["rwkv_compiled_decode_validation_tokens"] == 12
+    assert rows[0]["rwkv_compiled_decode_reference_logits_atol"] == 0.3
+    assert rows[0]["rwkv_compiled_decode_reference_state_atol"] == 0.6
+
+
+def test_mlx_prefill_eval_interval_bench_dry_run(tmp_path: Path) -> None:
+    out = tmp_path / "prefill_eval_plan.jsonl"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/mlx_prefill_eval_interval_bench.py",
+            "--models",
+            "/tmp/rwkv-a,/tmp/rwkv-b",
+            "--intervals",
+            "1,2,4",
+            "--prompt-target-chars",
+            "64",
+            "--results",
+            str(out),
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    row = json.loads(out.read_text(encoding="utf-8").strip())
+    assert row["axis"] == "mlx_prefill_eval_interval_env"
+    assert row["models"] == ["/tmp/rwkv-a", "/tmp/rwkv-b"]
+    assert row["intervals"] == [1, 2, 4]
+    assert row["prompt_chars"] == 64
 
 
 def test_compare_rows_reports_decode_and_memory_pass() -> None:
@@ -600,7 +768,7 @@ def test_mlx_model_reset_telemetry_counters_without_mlx_runtime() -> None:
     class DummyQLinear:
         def __init__(self) -> None:
             self.last_backend = "metal"
-            self.backend_counts = {"reference": 1, "affine": 2, "metal": 3}
+            self.backend_counts = {"reference": 1, "affine": 2, "metal": 3, "groupwise": 4}
 
     model = object.__new__(MLXRWKV7Model)
     model.wkv_backend_last = "metal"
@@ -617,4 +785,9 @@ def test_mlx_model_reset_telemetry_counters_without_mlx_runtime() -> None:
     assert model.fused_ffn_key_relu2_counts == {"metal": 0, "fallback": 0}
     assert model.group_rkv_quant_projection_counts == {"metal": 0, "fallback": 0}
     assert qlinear.last_backend is None
-    assert qlinear.backend_counts == {"reference": 0, "affine": 0, "metal": 0}
+    assert qlinear.backend_counts == {
+        "reference": 0,
+        "affine": 0,
+        "metal": 0,
+        "groupwise": 0,
+    }

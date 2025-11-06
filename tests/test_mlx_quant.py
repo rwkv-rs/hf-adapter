@@ -175,6 +175,29 @@ def test_mlx_quant_formula_if_available():
         else:
             os.environ["RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS"] = old_limit
 
+    # MLX's native groupwise layout is the production Apple W8/W4 path.  Use
+    # dimensions divisible by the native group size and verify both execution
+    # and the actual packed-storage reduction rather than only the CLI seam.
+    groupwise_weight = mx.arange(128 * 64, dtype=mx.float32).reshape(128, 64)
+    groupwise_weight = ((groupwise_weight % 31) - 15).astype(mx.float16) / 16
+    groupwise_x = mx.ones((3, 64), dtype=mx.float16)
+    groupwise_dense_y = groupwise_x @ groupwise_weight.T
+    for bits in (8, 4):
+        groupwise = MLXQuantizedLinear.from_linear_weight(
+            groupwise_weight,
+            bits=bits,
+            backend="groupwise",
+        )
+        groupwise_y = groupwise(groupwise_x)
+        mx.eval(groupwise_y)
+        assert tuple(int(v) for v in groupwise_y.shape) == (3, 128)
+        assert bool(mx.all(mx.isfinite(groupwise_y)))
+        max_abs = float(mx.max(mx.abs(groupwise_y - groupwise_dense_y)))
+        assert max_abs <= (0.03 if bits == 8 else 0.45)
+        assert groupwise.storage_bytes < int(groupwise_weight.size * groupwise_weight.itemsize)
+        assert groupwise.telemetry()["last_backend"] == "groupwise"
+        assert groupwise.telemetry()["backend_counts"]["groupwise"] == 1
+
 
 def test_mlx_model_quantized_linear_hook_if_available():
     if importlib.util.find_spec("mlx") is None:
@@ -195,7 +218,12 @@ def test_mlx_model_quantized_linear_hook_if_available():
     assert telemetry["quantized_linear_count"] == replaced
     assert telemetry["quantized_linear_bits"] == 8
     assert telemetry["quantized_linear_backend"] == "affine"
-    assert telemetry["quantized_linear_last_backend_counts"] == {"reference": 0, "affine": 0, "metal": 0}
+    assert telemetry["quantized_linear_last_backend_counts"] == {
+        "reference": 0,
+        "affine": 0,
+        "metal": 0,
+        "groupwise": 0,
+    }
     assert telemetry["quantized_linear_bytes"] > 0
     assert telemetry["quantized_dense_equivalent_bytes"] > 0
 
