@@ -18,6 +18,11 @@ from typing import Dict, Tuple
 
 import torch
 
+try:
+    from scripts.adapter_manifest import ADAPTER_FILES
+except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
+    from adapter_manifest import ADAPTER_FILES
+
 # Importing rwkv7_hf imports FLA-backed PreTrainedModel classes.
 from rwkv7_hf import RWKV7Config, RWKV7ForCausalLM
 
@@ -205,47 +210,7 @@ def translate_name(name: str, num_layers: int) -> Tuple[str, bool]:
 
 def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
     root = Path(__file__).resolve().parents[1]
-    for name in [
-        "ada_lora.py",
-        "ada_sparse_ffn.py",
-        "configuration_rwkv7.py",
-        "dplr_prefill.py",
-        "dplr_prefill_triton.py",
-        "fused_attention_projection.py",
-        "fused_ffn.py",
-        "fused_lora.py",
-        "fused_decode_norm_mix.py",
-        "fused_norm_mix.py",
-        "fused_output.py",
-        "fused_prefill.py",
-        "fused_projection.py",
-        "fused_recurrent_update.py",
-        "fused_elementwise.py",
-        "fused_time_mix.py",
-        "kernel_policy.py",
-        "mlx_bridge.py",
-        "mlx_dplr_prefill.py",
-        "mlx_model.py",
-        "mlx_mix.py",
-        "mlx_quant.py",
-        "mlx_scan.py",
-        "mlx_wkv.py",
-        "modeling_rwkv7.py",
-        "native.py",
-        "native_jit.py",
-        "native_model.py",
-        "native_quant.py",
-        "native_quant_a8w8.py",
-        "native_quant_mm4.py",
-        "native_quant_mm8.py",
-        "native_quant_torchao.py",
-        "native_quant_policy.py",
-        "sm70_linear.py",
-        "sm70_quant.py",
-        "sm70_wagv.py",
-        "triton_compat.py",
-        "tokenization_rwkv7.py",
-    ]:
+    for name in ADAPTER_FILES:
         shutil.copyfile(root / "rwkv7_hf" / name, output / name)
     if vocab_file is not None:
         shutil.copyfile(vocab_file, output / "rwkv_vocab_v20230424.txt")

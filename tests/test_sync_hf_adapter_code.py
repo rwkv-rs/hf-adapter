@@ -6,25 +6,27 @@ import json
 import tempfile
 from pathlib import Path
 
-from scripts.sync_hf_adapter_code import ADAPTER_FILES, sync_one
+from scripts.adapter_manifest import ADAPTER_FILES
+from scripts.sync_hf_adapter_code import sync_one
 
 
-def _converter_adapter_files() -> list[str]:
-    """AST-extract the copy_adapter_files list from convert_rwkv7_to_hf.py."""
+def _converter_uses_shared_manifest() -> bool:
+    """Confirm the converter imports and iterates the shared manifest."""
     script = Path(__file__).resolve().parents[1] / "scripts" / "convert_rwkv7_to_hf.py"
     tree = ast.parse(script.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "copy_adapter_files":
-            for child in ast.walk(node):
-                if isinstance(child, ast.For) and isinstance(child.iter, ast.List):
-                    values = []
-                    for item in child.iter.elts:
-                        if not isinstance(item, ast.Constant) or not isinstance(item.value, str):
-                            break
-                        values.append(item.value)
-                    else:
-                        return values
-    raise AssertionError("could not find adapter file list in convert_rwkv7_to_hf.py")
+    imports_manifest = any(
+        isinstance(node, ast.ImportFrom)
+        and node.module in {"scripts.adapter_manifest", "adapter_manifest"}
+        and any(alias.name == "ADAPTER_FILES" for alias in node.names)
+        for node in ast.walk(tree)
+    )
+    iterates_manifest = any(
+        isinstance(node, ast.For)
+        and isinstance(node.iter, ast.Name)
+        and node.iter.id == "ADAPTER_FILES"
+        for node in ast.walk(tree)
+    )
+    return imports_manifest and iterates_manifest
 
 
 def _relative_import_files(path: Path) -> set[str]:
@@ -65,7 +67,7 @@ def main() -> int:
     # shipped files transitively import, and the converter and sync lists must
     # stay aligned. (Does not force optional non-runtime files like sglang_quant.)
     _assert_adapter_file_closure()
-    assert _converter_adapter_files() == ADAPTER_FILES, "convert list != sync list"
+    assert _converter_uses_shared_manifest(), "converter does not use shared adapter manifest"
 
     with tempfile.TemporaryDirectory() as td:
         model_dir = Path(td) / "rwkv7-g1d-0.4b-hf"
