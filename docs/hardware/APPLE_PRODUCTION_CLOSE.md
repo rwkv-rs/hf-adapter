@@ -159,6 +159,10 @@ python bench/run_qwen35_apple_baseline.py \
   --rwkv-dplr-window-tokens 512
 ```
 
+## Runtime maintainability
+
+The production paths are now separated into model math, recurrent state, session/dynamic batching, and dependency-free policy modules while preserving the historical `rwkv7_hf.mlx_model` imports. See [MLX_RUNTIME_ARCHITECTURE.md](../reference/MLX_RUNTIME_ARCHITECTURE.md).
+
 ## Remaining portability work
 
 The M5 gate is closed. Production portability still requires repeating the same

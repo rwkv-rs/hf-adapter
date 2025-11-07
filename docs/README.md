@@ -54,6 +54,7 @@
 | [`hardware/APPLE_SILICON.md`](hardware/APPLE_SILICON.md) | Apple Silicon / MPS / MLX 适配计划、smoke 命令、已知限制。 | [`../bench/INDEX.md`](../bench/INDEX.md) 中 `apple_*` |
 | [`hardware/QWEN35_APPLE_BASELINE.md`](hardware/QWEN35_APPLE_BASELINE.md) | Qwen3.5 Apple/mobile baseline、同机比较指标、runner 和 gate。 | `apple_qwen35_*`, `apple_scan_prefill_*`, `apple_e2e_scan_prefill_*` |
 | [`hardware/APPLE_PRODUCTION_CLOSE.md`](hardware/APPLE_PRODUCTION_CLOSE.md) | Apple M5 上 W4、DPLR、compiled/speculative decode 的生产门槛与复现证据。 | `apple_production_close_*` |
+| [`reference/MLX_RUNTIME_ARCHITECTURE.md`](reference/MLX_RUNTIME_ARCHITECTURE.md) | MLX state/session/policy/model 模块边界、remote-code manifest 与后续安全拆分规则。 | `tests/test_mlx_module_boundaries.py` |
 | [`hardware/APPLE_QWEN35_LIVE_EVIDENCE_20260707.md`](hardware/APPLE_QWEN35_LIVE_EVIDENCE_20260707.md) | 2026-07-07 Apple/Qwen3.5 live evidence notes。 | `apple_qwen35_live_m5_20260707`, `apple_qwen35_2b_tokenonly_m5_20260707` |
 | [`hardware/BLACKWELL_50SERIES.md`](hardware/BLACKWELL_50SERIES.md) | RTX 50 系 / Blackwell 兼容、5090/5070 实测和问题记录。 | `5090_blackwell_*` |
 | [`validation/V100_HF_VALIDATION.md`](validation/V100_HF_VALIDATION.md) | V100 HF 训练/量化/ZeRO 验证矩阵。 | `results_v100_zero3_resume_2gpu_20260703.jsonl` 等 |
