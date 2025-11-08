@@ -81,7 +81,7 @@ def mlx_quant_bits_for_weight(weight_key: str, *, bits: int, profile: str = "uni
     """Return the per-weight bit width for an MLX quantization profile.
 
     ``q4_k_m`` is a Q4_K_M-inspired mixed-precision profile rather than a
-    claim of GGUF bit-for-bit compatibility. RWKV calibration on Apple M5
+    claim of GGUF bit-for-bit compatibility. RWKV calibration on measured MLX hardware
     shows that the output head, FFN value/down projection, and attention
     receptance/value projections are substantially more sensitive than the
     remaining large matrices. They stay at W8 while the rest use W4.
