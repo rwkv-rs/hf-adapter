@@ -29,7 +29,7 @@ if [[ "${SUMMARY_ONLY}" == "1" ]]; then
   args+=(--summary-only)
 fi
 if [[ "${STRICT}" == "1" ]]; then
-  args+=(--fail-on-incomplete)
+  args+=(--strict)
 fi
 
 rwkv7_log "Apple production acceptance audit (strict=${STRICT}, category=${CATEGORY:-all})"
