@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from bench.run_clean_install_acceptance import evidence_row, parse_test_counts
+from bench.run_clean_install_acceptance import evidence_row, parse_clean_environment, parse_test_counts
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_parse_clean_install_counts():
     output = """
 No broken requirements found.
+RWKV7_CLEAN_ENVIRONMENT={"machine":"arm64","modules":{"mlx":true,"triton":false},"cuda_available":false,"mps_available":true}
 installed rwkv7-hf-adapter=0.5.0 from /tmp/venv/site-packages/rwkv7_hf/__init__.py
 193 tests collected in 1.23s
 186 passed, 6 skipped in 9.87s
@@ -26,6 +27,10 @@ SKIPPED Apple executable profile on Darwin arm64
         "skipped": 6,
         "errors": 0,
     }
+    clean = parse_clean_environment(output)
+    assert clean is not None
+    assert clean["modules"]["mlx"] is True
+    assert clean["modules"]["triton"] is False
     row = evidence_row(
         profile="full",
         command=["runner", "full"],
