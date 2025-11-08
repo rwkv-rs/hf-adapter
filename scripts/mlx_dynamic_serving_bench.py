@@ -54,6 +54,24 @@ def apple_device_telemetry() -> dict[str, Any]:
     }
 
 
+def git_provenance() -> dict[str, Any]:
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+        dirty = bool(
+            subprocess.check_output(
+                ["git", "status", "--porcelain", "--untracked-files=no"],
+                cwd=ROOT,
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        )
+    except Exception:
+        commit, dirty = None, None
+    return {"git_commit": commit, "git_dirty": dirty}
+
+
 def append_jsonl(path: str, row: dict[str, Any]) -> None:
     if not path:
         return
@@ -175,6 +193,7 @@ def main() -> int:
         "cache_max_entries": args.cache_max_entries,
         "cache_max_bytes": args.cache_max_bytes,
         **apple_device_telemetry(),
+        **git_provenance(),
     }
     print(json.dumps(env, ensure_ascii=False))
     append_jsonl(args.results, env)
@@ -484,6 +503,7 @@ def main() -> int:
         "seen_matches": seen_matches,
         "scheduler": scheduler_telemetry,
         "prefix_cache": cache_telemetry,
+        **git_provenance(),
         **mlx_memory_telemetry(),
     }
     print(json.dumps(row, ensure_ascii=False))
