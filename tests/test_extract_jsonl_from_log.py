@@ -13,4 +13,4 @@ not a row
 """
     rows = extract_json_rows(text)
     assert [row["axis"] for row in rows] == ["one", "two"]
-    assert [row["source_log_line"] for row in rows] == [4, 6]
+    assert [row["source_log_line"] for row in rows] == [5, 7]
