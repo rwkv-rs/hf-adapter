@@ -761,6 +761,8 @@ def run_rwkv_mlx(
     quant_min_params: int,
     quant_rkv_min_params: int | None,
     quant_backend: str,
+    quant_profile: str,
+    quant_group_size: int,
     wkv_backend: str,
     chunk_size: int,
     prefill_eval_interval: int,
@@ -821,6 +823,8 @@ def run_rwkv_mlx(
         quant_min_params=int(quant_min_params),
         quant_rkv_min_params=quant_rkv_min_params,
         quant_backend=quant_backend,
+        quant_profile=quant_profile,
+        quant_group_size=int(quant_group_size),
         wkv_backend=wkv_backend,
     )
     model.prefill_eval_interval = int(prefill_eval_interval)
@@ -845,6 +849,8 @@ def run_rwkv_mlx(
             quant_min_params=int(quant_min_params),
             quant_rkv_min_params=quant_rkv_min_params,
             quant_backend=quant_backend,
+            quant_profile=quant_profile,
+            quant_group_size=int(quant_group_size),
             wkv_backend=wkv_backend,
         )
         draft_model.prefill_eval_interval = int(prefill_eval_interval)
@@ -1002,6 +1008,8 @@ def run_rwkv_mlx(
                 "quant_min_params": int(quant_min_params),
                 "quant_rkv_min_params": quant_rkv_min_params,
                 "quant_backend": quant_backend,
+                "quant_profile": quant_profile,
+                "quant_group_size": int(quant_group_size),
                 "wkv_backend": wkv_backend,
                 "wkv_backend_last": telemetry.get("wkv_backend_last"),
                 "wkv_backend_counts": telemetry.get("wkv_backend_counts"),
@@ -1305,6 +1313,13 @@ def main() -> int:
         ),
     )
     ap.add_argument("--rwkv-quant-backend", default="auto", choices=["affine", "reference", "metal", "auto", "groupwise"])
+    ap.add_argument(
+        "--rwkv-quant-profile",
+        default="uniform",
+        choices=["uniform", "q4_k_m"],
+        help="Uniform W8/W4 or Q4_K_M-inspired mixed W8/W4 quality profile.",
+    )
+    ap.add_argument("--rwkv-quant-group-size", type=int, default=64, choices=[32, 64, 128])
     ap.add_argument("--rwkv-wkv-backend", default="auto", choices=["reference", "metal", "auto"])
     ap.add_argument("--rwkv-chunk-size", type=int, default=0)
     ap.add_argument(
@@ -1373,6 +1388,8 @@ def main() -> int:
         "rwkv_quant_rkv_min_params": None
         if int(args.rwkv_quant_rkv_min_params) < 0
         else int(args.rwkv_quant_rkv_min_params),
+        "rwkv_quant_profile": args.rwkv_quant_profile,
+        "rwkv_quant_group_size": int(args.rwkv_quant_group_size),
         "rwkv_step_eval_interval_env": os.environ.get("RWKV7_MLX_STEP_EVAL_INTERVAL", ""),
         "rwkv_fused_ffn_key_relu2_env": os.environ.get("RWKV7_MLX_FUSED_FFN_KEY_RELU2", ""),
         "rwkv_wkv_scan_prefill_env": os.environ.get("RWKV7_MLX_WKV_SCAN_PREFILL", ""),
@@ -1437,6 +1454,8 @@ def main() -> int:
             "rwkv_quant_rkv_min_params": None
             if int(args.rwkv_quant_rkv_min_params) < 0
             else int(args.rwkv_quant_rkv_min_params),
+            "rwkv_quant_profile": args.rwkv_quant_profile,
+            "rwkv_quant_group_size": int(args.rwkv_quant_group_size),
             "rwkv_draft_model": args.rwkv_draft_model or None,
             "rwkv_speculative_proposal_tokens": int(args.rwkv_speculative_proposal_tokens),
             "rwkv_draft_prompt_tokens": int(args.rwkv_draft_prompt_tokens),
@@ -1517,6 +1536,8 @@ def main() -> int:
                         None if int(args.rwkv_quant_rkv_min_params) < 0 else int(args.rwkv_quant_rkv_min_params)
                     ),
                     quant_backend=args.rwkv_quant_backend,
+                    quant_profile=args.rwkv_quant_profile,
+                    quant_group_size=int(args.rwkv_quant_group_size),
                     wkv_backend=args.rwkv_wkv_backend,
                     chunk_size=int(args.rwkv_chunk_size),
                     prefill_eval_interval=int(args.rwkv_prefill_eval_interval),
