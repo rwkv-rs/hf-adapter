@@ -262,6 +262,25 @@ def device_info() -> dict[str, Any]:
                 "mac_memsize_bytes": _safe_int(mac_command(["sysctl", "-n", "hw.memsize"])),
             }
         )
+    root = Path(__file__).resolve().parents[1]
+    try:
+        row["git_commit"] = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        row["git_dirty"] = bool(
+            subprocess.check_output(
+                ["git", "status", "--porcelain", "--untracked-files=no"],
+                cwd=root,
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        )
+    except Exception:
+        row["git_commit"] = None
+        row["git_dirty"] = None
     return row
 
 
