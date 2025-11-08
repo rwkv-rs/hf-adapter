@@ -311,7 +311,14 @@ class MLXQuantizedLinear:
         return int(self.weight.storage_bytes)
 
     @classmethod
-    def from_linear_weight(cls, dense_weight: Any, *, bits: int, backend: str = "affine") -> "MLXQuantizedLinear":
+    def from_linear_weight(
+        cls,
+        dense_weight: Any,
+        *,
+        bits: int,
+        backend: str = "affine",
+        group_size: int = 64,
+    ) -> "MLXQuantizedLinear":
         """Quantize an MLX Linear ``weight [out, in]`` for ``linear(x, weight)``."""
 
         backend = (backend or "affine").lower().strip()
@@ -321,7 +328,11 @@ class MLXQuantizedLinear:
             )
         if backend == "groupwise":
             return cls(
-                quantize_mlx_groupwise_linear(dense_weight, bits=int(bits)),
+                quantize_mlx_groupwise_linear(
+                    dense_weight,
+                    bits=int(bits),
+                    group_size=int(group_size),
+                ),
                 backend=backend,
             )
         auto_metal_max_rows = 0
