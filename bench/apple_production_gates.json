@@ -1,6 +1,6 @@
 {
   "schema": "rwkv7.apple.production-gates.v1",
-  "version": "2026-07-12.4",
+  "version": "2026-07-12.5",
   "policy": {
     "completion": "Every required gate must have machine-verifiable passing evidence. Missing, unknown, or failed evidence makes the aggregate incomplete.",
     "no_inference_from_source": true,
@@ -685,7 +685,97 @@
       "category": "release",
       "title": "保守生产默认值",
       "criterion": "未对当前芯片、模型、精度和 bsz 验证的 fused/compiled/quant 路径不得自动启用；必须回退到已验证路径。",
-      "required": true
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "tracked_files",
+            "paths": [
+              "rwkv7_hf/mlx_model.py",
+              "rwkv7_hf/mlx_policy.py",
+              "scripts/mlx_safe_defaults_bench.py",
+              "tests/test_mlx_safe_defaults_bench.py",
+              "bench/results_mlx_safe_defaults_m5_20260712_fp16.jsonl"
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_mlx_safe_defaults_m5_20260712_fp16.jsonl",
+            "axis": "mlx_safe_defaults",
+            "where": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "dtype",
+                "op": "eq",
+                "value": "fp16"
+              }
+            ],
+            "require": [
+              {
+                "field": "process_isolated",
+                "op": "truthy"
+              },
+              {
+                "field": "git_dirty",
+                "op": "falsy"
+              },
+              {
+                "field": "gates.no_implicit_quantization",
+                "op": "truthy"
+              },
+              {
+                "field": "gates.reference_wkv_default",
+                "op": "truthy"
+              },
+              {
+                "field": "gates.recurrent_prefill_default",
+                "op": "truthy"
+              },
+              {
+                "field": "gates.scan_prefill_default_off",
+                "op": "truthy"
+              },
+              {
+                "field": "gates.auto_decode_default",
+                "op": "truthy"
+              },
+              {
+                "field": "gates.single_unvalidated_auto_uses_eager",
+                "op": "truthy"
+              },
+              {
+                "field": "gates.prepared_batch_not_validated",
+                "op": "truthy"
+              },
+              {
+                "field": "gates.prepared_unvalidated_batch_uses_eager",
+                "op": "truthy"
+              },
+              {
+                "field": "gates.seen_tokens_exact",
+                "op": "truthy"
+              }
+            ],
+            "all_matches": true,
+            "min_matches": 3,
+            "coverage": [
+              {
+                "field": "model",
+                "values": [
+                  "rwkv7-g1d-0.1b-hf",
+                  "rwkv7-g1d-0.4b-hf",
+                  "rwkv7-g1g-1.5b-hf"
+                ]
+              }
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "release.backend_telemetry",
