@@ -1,3 +1,14 @@
+### 2026-07-12 — RTX 5090 batched quant + 13.3B low-memory close
+
+最新 5090 artifact: [`bench/5090_blackwell_production_close_20260712`](../../bench/5090_blackwell_production_close_20260712/README.md)。
+
+- Blackwell MM8/MM4 新增 batched GEMV 与 tensor-core dot 路径；非 Blackwell 卡继续走原已验证 dispatch。
+- 2.9B/7.2B 的 bsz8、prompt128/2048、decode128/512 全部进入 fp16 的 1% paired 等价带；旧 7.2B 最差压力行从 `0.7619x/0.6695x` 提升到 `0.9913x/0.9919x`。
+- 1.5B/2.9B/7.2B 合并 36-row 矩阵 footprint 全下降、same-next 全通过，2% fail-closed gate 通过；1.5B W8 仍有单行 `0.9841x`，不宣称所有 shape 严格 `>=1.0x`。
+- `--low-memory` 已在 48GB RAM/no-swap 主机把官方 13.3B 转成 6 个 safetensors shard；5090 load/forward/generate peak `25536.6MiB` 通过。
+- 0.4B full MATH500 `500x64` 已完成：pass@64=`0.38`，generation=`16925.6 tok/s`，steady decode=`19339.5 tok/s`；对提交内 Albatross reference 的两个 2x speed gate分别为 `4.336x/4.871x`。该比较不是同卡实时 Albatross 复跑。
+- fresh Transformers module cache 已直接发现完整 transitive kernel closure，不再需要手工预填 `ada_sparse_ffn.py` / `sm70_quant.py`。
+
 ### 2026-07-04 — RTX 5090(sm_120) HF full smoke matrix 对齐 50-series 支持合约
 
 5090 现在有一键矩阵 artifact: [`bench/5090_blackwell_hf_matrix_20260704`](../../bench/5090_blackwell_hf_matrix_20260704/README.md),由 [`bench/run_5090_hf_validation.sh`](../../bench/run_5090_hf_validation.sh) 生成。它覆盖 Blackwell/50-series 支持合约里当前能在 0.1B HF 模型上验证的项目。

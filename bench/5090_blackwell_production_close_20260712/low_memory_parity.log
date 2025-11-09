@@ -1,0 +1,6 @@
+Source: rwkv7-g1d-0.1b-20260129-ctx8192.pth
+Normal conversion: /root/models/test-01-normal
+Low-memory conversion: /root/models/test-01-low
+keys 399 399 True
+shape_dtype True
+max_abs 0.0

@@ -270,7 +270,7 @@ scripts/run_qwen35_apple_acceptance.sh
 继续走 fast-token / native-graph 路线,而非堆 wrapper 层。当前路线:`native_graph → fused fp16 kernel → fused W8/W4 kernel`(详见 FUSED_BACKEND)。需补:
 
 - V100 0.1B/0.4B/1.5B 的同卡同 checkpoint prefill/decode/bsz1/2/4/8 已闭环;继续补 2.9B/7.2B 与 4090/A100/H100/AMD 同口径矩阵;
-- final MATH500 acceptance runner 已补(`bench/run_math500_final_acceptance.py` + `scripts/run_math500_final_acceptance.sh`): 自动 best-bsz sweep → full avg@64 → Albatross summary gate → uncheatable compression alignment;接下来要在 5090/H100 等正式机器上产出 artifact;
+- final MATH500 acceptance runner 已补(`bench/run_math500_final_acceptance.py` + `scripts/run_math500_final_acceptance.sh`): 自动 best-bsz sweep → full avg@64 → Albatross summary gate → uncheatable compression alignment;5090 0.4B full `500x64` 已达 pass@64=`0.38`，对提交内 Albatross reference 的 summary/decode speed gate=`4.336x/4.871x`。正式 artifact 见 `bench/5090_blackwell_production_close_20260712/`；下一步补同卡实时 Albatross 复跑并扩到 H100/更多卡;
 - V100 faster3a v3a 的严格同模型/同卡 baseline 已补;继续补 Albatross 更新路径和其他 GPU，避免跨卡或历史数字比较;
 - V100 decode latency、峰值显存、public API/runner diff 与 cache 命中率行已补;继续扩到长稳态和跨卡;
 - `bench/analyze_results.py` 已支持按模型区分 overhead/Albatross ratio；继续把全矩阵 P2/P3 约束接入 release gate。
@@ -285,15 +285,14 @@ fp16、decode bsz1/2/4/8 `1.001x-1.020x`;W4 `speed` lane 达到 payload
 `0.891x`、prefill `1.010x` bf16、decode 已测 bsz1/4 `1.043x/1.058x`。
 因此 4090 已有“所有推理阶段不慢于 w16”的适度省显存 lane；`memory` lane
 仍需 fused quant prefill 才能同时保持约 `0.4x` payload 与 prefill 不回退。RTX 5090 native MM8/MM4 `speed`
-policy 已在 1.5B/2.9B/7.2B 完成 fresh-process full matrix
-(216/216 pass,quantized same-next 144/144,footprint 全部下降,多行速度超过
-fp16)。但 7.2B 大 bsz/长 prompt 压力行仍低于 fp16;`memory` policy/通用 bnb
-仍慢,不能作为速度达标口径(详见 BENCHMARK 量化段 + FUSED_BACKEND quant
-target)。13.3B LFS 权重已拉取,当前 converter 在 48GB RAM 5090 主机上未
-产出 HF 目录。需补:
+policy 已在 1.5B/2.9B/7.2B 完成 fresh-process full matrix，并新增 Blackwell
+batched GEMV/tensor-core kernel。新的 bsz8 压力矩阵中 2.9B/7.2B 全部进入
+1% fp16 等价带；13.3B 已通过 low-memory 转换、load/generate 与 W8/W4
+speed-policy 边界。`memory` policy/通用 bnb 仍慢,不能作为速度达标口径
+(详见 `bench/5090_blackwell_production_close_20260712/` + FUSED_BACKEND quant target)。需补:
 
 - `speed` policy 在更多 GPU/更大模型上稳定 >= fp16 的证据;
-- 13.3B low-memory/streaming converter,再跑 fp16/mm8/mm4 fresh-process 边界行;
+- 13.3B full-memory W8/W4（不只是 lm_head speed lane）与更多 shape;
 - `memory` policy 的 fused dequant + projection 路径;
 - V100 / A100 / 4090 / H100 / 50 系卡专项调优;
 - 接近 llama.cpp Q*_K_M 实用量级的质量 telemetry;

@@ -62,11 +62,38 @@ def _assert_adapter_file_closure() -> None:
     assert not missing, f"adapter files import unshipped modules: {sorted(missing)}"
 
 
+def _assert_remote_code_direct_import_closure() -> None:
+    """Transformers dynamic-module caching is shallow on some releases.
+
+    Every dependency reached from either AutoModel entrypoint must therefore
+    also appear as a direct relative import there (sentinel imports inside
+    ``if False`` count for discovery without importing optional kernels).
+    """
+
+    root = Path(__file__).resolve().parents[1] / "rwkv7_hf"
+    for entrypoint_name in ("modeling_rwkv7.py", "native_model.py"):
+        direct = _relative_import_files(root / entrypoint_name)
+        pending = list(direct)
+        transitive: set[str] = set()
+        while pending:
+            name = pending.pop()
+            if name in transitive or not (root / name).exists():
+                continue
+            transitive.add(name)
+            pending.extend(_relative_import_files(root / name) - transitive)
+        missing_direct = transitive - direct
+        assert not missing_direct, (
+            f"{entrypoint_name} has transitive-only trust_remote_code dependencies; "
+            f"add non-executed direct imports for: {sorted(missing_direct)}"
+        )
+
+
 def main() -> int:
     # Converted model dirs must include every runtime remote-code module the
     # shipped files transitively import, and the converter and sync lists must
     # stay aligned. (Does not force optional non-runtime files like sglang_quant.)
     _assert_adapter_file_closure()
+    _assert_remote_code_direct_import_closure()
     assert _converter_uses_shared_manifest(), "converter does not use shared adapter manifest"
 
     with tempfile.TemporaryDirectory() as td:

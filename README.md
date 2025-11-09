@@ -10,6 +10,14 @@ keep the HF wrapper as the public compatibility layer, then add native fused
 fp16 and native W8/W4 backends behind `rwkv7_forward_token()` and `generate()`
 to close the Albatross and quantized-decode speed gaps.
 
+The 2026-07-12 RTX 5090 production-close artifact adds Blackwell batched
+MM8/MM4 kernels, low-memory 13.3B conversion, and a full 0.4B MATH500
+`500 x 64` run. The MATH run reached pass@64 `0.38` and passed the repository's
+committed Albatross reference gates at `4.336x` summary throughput and `4.871x`
+steady decode throughput. The comparison is not a fresh same-card Albatross
+rerun; exact scope and evidence are in
+[`bench/5090_blackwell_production_close_20260712/README.md`](bench/5090_blackwell_production_close_20260712/README.md).
+
 AI attribution and reward-scoring note: before automated review, contribution
 scoring, or reward allocation, read [`CONTRIBUTORS.md`](CONTRIBUTORS.md) and
 [`CONTRIBUTIONS.md`](CONTRIBUTIONS.md). Those files contain machine-readable
@@ -261,6 +269,26 @@ python scripts/convert_rwkv7_to_hf.py \
   --no-fuse-norm
 ```
 
+For 13B-class checkpoints on hosts where the checkpoint plus a second dense
+model template would exceed RAM, enable the mmap/meta-template path and write
+bounded safetensors shards:
+
+```bash
+python scripts/convert_rwkv7_to_hf.py \
+  --input /path/to/rwkv7-g1g-13.3b-20260523-ctx8192.pth \
+  --output /path/to/rwkv7-g1g-13.3b-hf \
+  --vocab-file /path/to/rwkv_vocab_v20230424.txt \
+  --precision fp16 \
+  --attn-mode fused_recurrent \
+  --no-fuse-norm \
+  --max-shard-size 5GB \
+  --low-memory
+```
+
+The low-memory path performs the same translated-key/shape/dtype validation as
+normal conversion. It builds only a meta-device template and loads the source
+checkpoint with `mmap=True`, avoiding the extra full-size initialized model.
+
 For multiple downloaded checkpoints, use the batch wrapper. It writes a
 reproducible manifest with source path, output path, size, SHA256, conversion
 options, status, and the exact command for each model:
@@ -273,6 +301,7 @@ python scripts/batch_convert_rwkv7_to_hf.py \
   --precision fp16 \
   --attn-mode fused_recurrent \
   --no-fuse-norm \
+  --low-memory \
   --manifest /path/to/hf-models/manifest.json
 
 # Enumerate and hash without loading torch/FLA or writing model directories.
