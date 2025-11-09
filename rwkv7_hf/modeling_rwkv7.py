@@ -139,11 +139,16 @@ except Exception:  # pragma: no cover - optional remote-code fast path
 # ``native.py`` through ``native_model.py``; keep an explicit non-executed edge
 # here so fresh caches contain the whole native dependency set.
 if False:  # pragma: no cover
+    from .ada_lora import ada_wagv_lora as _rwkv7_ada_lora_dependency_sentinel
+    from .ada_sparse_ffn import ada_linear as _rwkv7_ada_sparse_ffn_dependency_sentinel
     from .dplr_prefill import dplr_chunk_scan as _rwkv7_dplr_dependency_sentinel
     from .dplr_prefill_triton import dplr_chunk_scan_triton as _rwkv7_dplr_triton_dependency_sentinel
     from .fused_attention_projection import fused_rkv_wag_projection as _rwkv7_fused_attn_projection_dependency_sentinel
     from .fused_decode_norm_mix import fused_attn_norm_mix6_decode as _rwkv7_fused_decode_norm_mix_dependency_sentinel
+    from .fused_elementwise import fused_relu_square as _rwkv7_fused_elementwise_dependency_sentinel
     from .sm70_linear import sm70_linear as _rwkv7_sm70_linear_dependency_sentinel
+    from .sm70_quant import w4_linear as _rwkv7_sm70_quant_dependency_sentinel
+    from .sm70_wagv import sm70_wagv_lora as _rwkv7_sm70_wagv_dependency_sentinel
     from .fused_lora import fused_wag_lora as _rwkv7_fused_lora_dependency_sentinel
     from .fused_output import fused_attn_output_prepare as _rwkv7_fused_output_dependency_sentinel
     from .fused_prefill import fused_prefill_state_prep as _rwkv7_fused_prefill_dependency_sentinel

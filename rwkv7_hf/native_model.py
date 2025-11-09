@@ -24,6 +24,29 @@ from transformers.modeling_utils import PreTrainedModel
 
 from .native import _init_state_batched, _step_token_batched, attn_step_batched, ffn_step_batched
 
+# Some Transformers releases only copy files directly referenced by the
+# remote-code entrypoint. Keep static discovery edges to the dependencies
+# reached through native.py/native_jit.py/native_quant_mm*.py without importing
+# optional Triton kernels at runtime.
+if False:  # pragma: no cover
+    from .ada_lora import ada_wagv_lora as _native_ada_lora_dependency_sentinel
+    from .ada_sparse_ffn import ada_linear as _native_ada_sparse_ffn_dependency_sentinel
+    from .dplr_prefill import dplr_chunk_scan as _native_dplr_dependency_sentinel
+    from .dplr_prefill_triton import dplr_chunk_scan_triton as _native_dplr_triton_dependency_sentinel
+    from .fused_attention_projection import fused_rkv_wag_projection as _native_fused_attn_projection_dependency_sentinel
+    from .fused_decode_norm_mix import fused_attn_norm_mix6_decode as _native_fused_decode_norm_mix_dependency_sentinel
+    from .fused_elementwise import fused_relu_square as _native_fused_elementwise_dependency_sentinel
+    from .fused_lora import fused_wag_lora as _native_fused_lora_dependency_sentinel
+    from .fused_output import fused_attn_output_prepare as _native_fused_output_dependency_sentinel
+    from .fused_prefill import fused_prefill_state_prep as _native_fused_prefill_dependency_sentinel
+    from .fused_recurrent_update import fused_recurrent_update as _native_fused_recurrent_dependency_sentinel
+    from .fused_time_mix import fused_attn_shift_mix as _native_fused_time_mix_dependency_sentinel
+    from .kernel_policy import current_kernel_policy as _native_kernel_policy_dependency_sentinel
+    from .native_quant_policy import normalize_native_mm_policy as _native_quant_policy_dependency_sentinel
+    from .sm70_linear import sm70_linear as _native_sm70_linear_dependency_sentinel
+    from .sm70_quant import w4_linear as _native_sm70_quant_dependency_sentinel
+    from .sm70_wagv import sm70_wagv_lora as _native_sm70_wagv_dependency_sentinel
+
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
 
 try:
@@ -644,6 +667,10 @@ class NativeRWKV7Config(PretrainedConfig):
     model_type = "rwkv7_native"
 
     def __init__(self, **kwargs):
+        # RWKV checkpoints have an independent output head. PretrainedConfig
+        # otherwise defaults this to True, which makes from_pretrained replace
+        # lm_head with the embedding matrix before native MM packing.
+        kwargs.setdefault("tie_word_embeddings", False)
         super().__init__(**kwargs)
         self.vocab_size = kwargs.get("vocab_size", 65536)
         self.hidden_size = kwargs.get("hidden_size", 768)
@@ -660,8 +687,6 @@ class NativeRWKV7Config(PretrainedConfig):
         self.v_low_rank_dim = kwargs.get("v_low_rank_dim", 32)
         self.layer_types = kwargs.get("layer_types", None)
         self.use_cache = kwargs.get("use_cache", True)
-        if not hasattr(self, "tie_word_embeddings"):
-            self.tie_word_embeddings = False
         self.use_native_mm8 = kwargs.get("use_native_mm8", False)
         self.native_mm8_min_params = kwargs.get("native_mm8_min_params", 8_000_000)
         self.native_mm8_policy = kwargs.get("native_mm8_policy", "memory")
@@ -961,8 +986,14 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         checkpoint.
         """
 
-        model = super().from_pretrained(*model_args, **kwargs)
+        loaded = super().from_pretrained(*model_args, **kwargs)
+        # Transformers returns ``(model, loading_info)`` when requested. Keep
+        # that standard API shape while applying config-driven packing to the
+        # actual model instance.
+        model = loaded[0] if isinstance(loaded, tuple) else loaded
         model.apply_native_mm_quantization_from_config()
+        if isinstance(loaded, tuple):
+            return (model, *loaded[1:])
         return model
 
     def apply_native_mm_quantization_from_config(self) -> int:
