@@ -14,9 +14,10 @@ Benchmark evidence should be read together with the rest of the documentation:
 | Full documentation map | [`../docs/README.md`](../docs/README.md) |
 | Current numeric summary | [`../BENCHMARK.md`](../BENCHMARK.md) |
 | HF status / gaps | [`../HF_STATUS.md`](../HF_STATUS.md), [`../HF_TODO.md`](../HF_TODO.md) |
-| Acceptance criteria | [`../docs/reference/HF_CRITERIA.md`](../docs/reference/HF_CRITERIA.md) |
+| Acceptance status / low-level criteria | [`../docs/ACCEPTANCE.md`](../docs/ACCEPTANCE.md), [`../docs/reference/HF_CRITERIA.md`](../docs/reference/HF_CRITERIA.md) |
+| Hardware / quant / training summaries | [`../docs/HARDWARE_MATRIX.md`](../docs/HARDWARE_MATRIX.md), [`../docs/QUANTIZATION.md`](../docs/QUANTIZATION.md), [`../docs/TRAINING.md`](../docs/TRAINING.md) |
 | Fused performance route | [`../docs/performance/FUSED_BACKEND.md`](../docs/performance/FUSED_BACKEND.md), [`../docs/native_fused_roadmap.md`](../docs/native_fused_roadmap.md) |
-| Apple / Qwen3.5 lane | [`../docs/hardware/APPLE_SILICON.md`](../docs/hardware/APPLE_SILICON.md), [`../docs/hardware/QWEN35_APPLE_BASELINE.md`](../docs/hardware/QWEN35_APPLE_BASELINE.md) |
+| Apple / Qwen3.5 lane | [`../docs/hardware/APPLE_PRODUCTION_CLOSE.md`](../docs/hardware/APPLE_PRODUCTION_CLOSE.md), [`../docs/hardware/APPLE_SILICON.md`](../docs/hardware/APPLE_SILICON.md) |
 | MATH500 quality lane | [`../docs/validation/math500_acceptance.md`](../docs/validation/math500_acceptance.md), [`../docs/validation/math500_accuracy_parity.md`](../docs/validation/math500_accuracy_parity.md) |
 
 `bench/INDEX.md` is an inventory. `BENCHMARK.md` is the promoted numeric summary. Platform docs explain why a row matters and what remains blocked.

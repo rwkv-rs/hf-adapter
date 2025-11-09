@@ -2,6 +2,18 @@
 
 Generated inventory of benchmark scripts and evidence directories. Keep this file lightweight: it is an orientation map, not the source of truth for benchmark conclusions.
 
+## Promoted production-close artifacts
+
+| Platform | Artifact | Current conclusion |
+|---|---|---|
+| V100 32GB | [`v100_production_close_20260711/`](v100_production_close_20260711/README.md) | Dense Albatross P1 and native W8/W4 speed lane pass |
+| RTX 4090 | [`4090_validation_summary.md`](4090_validation_summary.md) | Measured dense decode/current-session prefill and quant speed lanes pass |
+| RTX 5090 | [`5090_blackwell_production_close_20260712/`](5090_blackwell_production_close_20260712/README.md) | Quant pressure, 13.3B conversion and full MATH500 pass |
+| Apple M5 | [`../docs/hardware/APPLE_PRODUCTION_CLOSE.md`](../docs/hardware/APPLE_PRODUCTION_CLOSE.md) | Selected MLX/Qwen3.5 production pairs pass |
+
+Canonical cross-platform summary: [`../BENCHMARK.md`](../BENCHMARK.md) and
+[`../docs/HARDWARE_MATRIX.md`](../docs/HARDWARE_MATRIX.md).
+
 ## Apple M5 production-close evidence
 
 The `apple_production_close_*_m5_20260711.jsonl` top-level files contain the
