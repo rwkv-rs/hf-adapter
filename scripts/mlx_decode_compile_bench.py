@@ -69,6 +69,8 @@ def main() -> int:
     parser.add_argument("--quantization", default="none", choices=["none", "mm8", "mm4"])
     parser.add_argument("--quant-min-params", type=int, default=8_000_000)
     parser.add_argument("--quant-backend", default="auto", choices=["reference", "affine", "metal", "auto", "groupwise"])
+    parser.add_argument("--quant-profile", default="uniform", choices=["uniform", "q4_k_m"])
+    parser.add_argument("--quant-group-size", type=int, default=64, choices=[32, 64, 128])
     parser.add_argument("--wkv-backend", default="metal", choices=["reference", "metal", "auto"])
     parser.add_argument("--logits-atol", type=float, default=1e-5)
     parser.add_argument("--state-atol", type=float, default=1e-5)
@@ -111,6 +113,8 @@ def main() -> int:
         "quantization": args.quantization,
         "quant_min_params": int(args.quant_min_params),
         "quant_backend": args.quant_backend,
+        "quant_profile": args.quant_profile,
+        "quant_group_size": int(args.quant_group_size),
         "wkv_backend": args.wkv_backend,
         "logits_atol": float(args.logits_atol),
         "state_atol": float(args.state_atol),
@@ -138,6 +142,8 @@ def main() -> int:
             quantization=args.quantization,
             quant_min_params=args.quant_min_params,
             quant_backend=args.quant_backend,
+            quant_profile=args.quant_profile,
+            quant_group_size=args.quant_group_size,
             wkv_backend=args.wkv_backend,
         )
         model.prefill_backend = "auto"
@@ -203,6 +209,8 @@ def main() -> int:
                     "quantization": args.quantization,
                     "quant_min_params": int(args.quant_min_params),
                     "quant_backend": args.quant_backend,
+                    "quant_profile": args.quant_profile,
+                    "quant_group_size": int(args.quant_group_size),
                     "wkv_backend": args.wkv_backend,
                     "decode_backend": backend,
                     "decode_backend_used": model.decode_backend_last,
@@ -236,6 +244,8 @@ def main() -> int:
                 "quantization": args.quantization,
                 "quant_min_params": int(args.quant_min_params),
                 "quant_backend": args.quant_backend,
+                "quant_profile": args.quant_profile,
+                "quant_group_size": int(args.quant_group_size),
                 "wkv_backend": args.wkv_backend,
                 "decode_backend": backend,
                 "decode_backend_used": selected[-1]["decode_backend_used"],
