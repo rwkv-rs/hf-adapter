@@ -30,6 +30,20 @@ For benchmark directory layout, evidence naming, and the current script/director
 - Apple/Qwen3.5 comparison lane: see [QWEN35_APPLE_BASELINE.md](docs/hardware/QWEN35_APPLE_BASELINE.md) for the same-prompt Ollama Qwen3.5 vs RWKV-7 MLX/CoreML JSONL schema.
 - **Ascend 910B2C 64GB** (华为昇腾, CANN 8.5.1, torch_npu 2.9.0rc1) — fla-free native 后端,详见 [rwkv7-hf-adapter-ascend](https://github.com/123123213weqw/rwkv7-hf-adapter-ascend) 仓库及下文 § Ascend 910B。
 
+## RTX 5090 final MATH500 acceptance (2026-07-12)
+
+The 0.4B HF adapter completed the full `500 x 64 = 32,000` MATH500 run after
+the runner swept bsz64/96/128/192 and selected bsz128. It reached pass@64
+`0.38`, generation throughput `16,925.6 tok/s`, and steady decode throughput
+`19,339.5 tok/s`. Against the committed Albatross full reference (`0.37`,
+`3,903.6 tok/s`, and `3,970.1 decode tok/s`), the fail-closed accuracy and 2x
+speed gates pass at `4.336x` summary speed and `4.871x` steady decode speed.
+
+The comparison uses the repository's committed Albatross reference rather than
+a fresh same-card rerun. Exact environment, quant pressure rows, 13.3B
+conversion boundary, and generated acceptance files are in
+[`bench/5090_blackwell_production_close_20260712/README.md`](bench/5090_blackwell_production_close_20260712/README.md).
+
 ## Current GTX 1080 Ti / Pascal Status
 
 Pascal validation was run on 2026-07-03 on one GTX 1080 Ti (`CUDA_VISIBLE_DEVICES=0`)
@@ -1903,19 +1917,47 @@ Summary of the 144 quantized rows:
 | 7.2B | mm8 | 24 | 0.7619 | 0.9679 | 1.0405 | 3/24 | 0.9814 | 24/24 | 0.99996132 / 0.99996006 |
 | 7.2B | mm4 | 24 | 0.6695 | 0.9610 | 1.0379 | 3/24 | 0.9720 | 24/24 | 0.99944627 / 0.99946213 |
 
-Interpretation: correctness is stable across the full matrix, footprint always
-drops, and many Blackwell rows are already fp16-or-better. The remaining gap is
-shape-dependent rather than a load/correctness blocker: 1.5B/2.9B medians are
-near fp16, while the 7.2B `bsz=8`, prompt-2048, decode-512 pressure rows expose
-the fused/head-dispatch work still needed for a strict all-shapes speed claim.
+Interpretation at the time of that artifact: correctness was stable and
+footprint always dropped, but the 7.2B `bsz=8`, prompt-2048, decode-512 rows
+exposed a fused/head-dispatch gap. The follow-up below closes that historical
+pressure-row regression; keep this table as the before measurement.
 
-13.3B boundary probe: the official ModelScope LFS checkpoint was pulled on the
-same 5090 host (`rwkv7-g1g-13.3b-20260523-ctx8192.pth`, about 25GB on disk; LFS
-declares 26,540,868,485 bytes). The current converter holds the full official
-checkpoint and a full HF template at once; on the 48GB-RAM rental this did not
-produce an HF model directory. No 13.3B fp16/MM8/MM4 speed row is claimed here;
-the next step is a low-memory/streaming converter or a larger-RAM host, then the
-same fresh-process boundary probe can be reused.
+The original 13.3B boundary probe failed because conversion held the official
+checkpoint and a second initialized template at once. That blocker is also
+closed by the follow-up below.
+
+### RTX 5090 batched-quant and 13.3B production-close follow-up
+
+`bench/5090_blackwell_production_close_20260712/` records the next exact-card
+run. MM8/MM4 now use one-launch batched GEMV and Blackwell tensor-core dot
+kernels, while pre-Blackwell dispatch remains on its previously measured path.
+Quant rows use an in-process paired fp16 baseline; a repeat option reports a
+median run for clock-sensitive rows.
+
+The 36-row pressure matrix covers 1.5B/2.9B/7.2B, fp16/MM8/MM4,
+prompt 128/2048, decode 128/512, and bsz8:
+
+| model | quantization | rows | min speed ratio | median speed ratio | footprint ratio | same next |
+|---|---|---:|---:|---:|---:|---:|
+| 1.5B | MM8 | 4 | 0.9841 | 0.9924 | 0.9562 | 4/4 |
+| 1.5B | MM4 | 4 | 0.9932 | 0.9937 | 0.9342 | 4/4 |
+| 2.9B | MM8 | 4 | 0.9925 | 0.9958 | 0.9716 | 4/4 |
+| 2.9B | MM4 | 4 | 0.9967 | 0.9996 | 0.9573 | 4/4 |
+| 7.2B | MM8 | 4 | 0.9913 | 0.9927 | 0.9814 | 4/4 |
+| 7.2B | MM4 | 4 | 0.9919 | 0.9951 | 0.9720 | 4/4 |
+
+All 2.9B/7.2B rows pass a strict 1% paired equivalence gate. The full matrix
+passes a 2% gate; one 1.5B MM8 row remains at 0.9841x, so this is not presented
+as universal strict >=fp16 for every shape. The old worst 7.2B pressure shape
+moves from 0.7619x/0.6695x to 0.9913x/0.9919x MM8/MM4.
+
+The new `--low-memory` converter loads the checkpoint with mmap, validates
+against a meta-device model template, and writes bounded safetensors shards.
+It converted the official 26,540,868,485-byte 13.3B checkpoint on the same
+48GB/no-swap host. The resulting model passed HF load/forward/generate on the
+5090 at 25,309.1 MiB footprint and 25,536.6 MiB peak VRAM. Its bsz8,
+prompt128/decode128 speed-policy boundary is 0.9912x fp16 for MM8 and 0.9889x
+for MM4, with lower footprint and the same next token in both cases.
 
 ### RTX 5090 MATH500 final acceptance artifact
 
