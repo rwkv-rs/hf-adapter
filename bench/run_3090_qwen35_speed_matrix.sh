@@ -45,6 +45,8 @@ matrix_rc=$?
   --expected-cells 216 \
   --min-prefill-speedup 1.05 \
   --min-decode-speedup 1.05 \
+  --min-quant-prefill-speedup 1.00 \
+  --min-quant-decode-speedup 1.00 \
   --json-output "${OUT_DIR}/summary.json" \
   --markdown-output "${OUT_DIR}/summary.md" \
   --fail-on-gate

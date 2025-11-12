@@ -53,6 +53,7 @@ if [[ "${COMPARE_AFTER}" != "0" ]]; then
   "${PYTHON_BIN}" bench/compare_qwen35_speed_matrix.py \
     --results "${OUT_DIR}/results.jsonl" --expected-cells 72 \
     --min-prefill-speedup 1.05 --min-decode-speedup 1.05 \
+    --min-quant-prefill-speedup 1.00 --min-quant-decode-speedup 1.00 \
     --json-output "${OUT_DIR}/summary.json" \
     --markdown-output "${OUT_DIR}/summary.md" --fail-on-gate
   compare_rc=$?
