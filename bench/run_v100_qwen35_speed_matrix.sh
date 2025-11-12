@@ -13,6 +13,7 @@ RUNS="${RUNS:-1}"
 
 mkdir -p "${OUT_DIR}"
 export CUDA_VISIBLE_DEVICES
+export RWKV7_NATIVE_MODEL=0
 export PYTHONPATH="${ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 
 cd "${ROOT}"
