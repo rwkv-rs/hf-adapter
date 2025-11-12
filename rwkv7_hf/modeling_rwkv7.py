@@ -1262,6 +1262,15 @@ class RWKV7StateCache(_FLACache):
     ) -> "RWKV7StateCache":
         if isinstance(past_key_values, cls):
             return past_key_values
+        # FLA/HF cache objects carry sequence length outside their legacy
+        # per-layer tuple. Preserve that telemetry when the fast-token path
+        # converts a standard cache into RWKV7StateCache; otherwise the first
+        # decode step incorrectly resets a completed prefill to length zero.
+        if int(seen_tokens) == 0 and hasattr(past_key_values, "get_seq_length"):
+            try:
+                seen_tokens = int(past_key_values.get_seq_length())
+            except Exception:
+                pass
         cache = cls(seen_tokens=seen_tokens, **kwargs)
         if isinstance(past_key_values, _FLACache) and hasattr(past_key_values, "to_legacy_cache"):
             past_key_values = past_key_values.to_legacy_cache()
