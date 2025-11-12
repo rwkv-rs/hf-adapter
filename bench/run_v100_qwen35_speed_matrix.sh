@@ -39,7 +39,8 @@ matrix_rc=$?
   --min-prefill-speedup 1.05 \
   --min-decode-speedup 1.05 \
   --json-output "${OUT_DIR}/summary.json" \
-  --markdown-output "${OUT_DIR}/summary.md"
+  --markdown-output "${OUT_DIR}/summary.md" \
+  --fail-on-gate
 compare_rc=$?
 
 printf '%s\n' "${matrix_rc}" > "${OUT_DIR}/matrix_exit_code.txt"
