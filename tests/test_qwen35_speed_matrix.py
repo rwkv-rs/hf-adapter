@@ -214,6 +214,10 @@ def test_orchestrator_expands_432_raw_rows() -> None:
     assert specs[0].model_kind == "rwkv"
     assert specs[1].model_kind == "qwen35"
 
+    candidate_specs = [spec for spec in specs if spec.model_role == "candidate"]
+    assert len(candidate_specs) == 216
+    assert len({spec.cell_key for spec in candidate_specs}) == 216
+
 
 def test_orchestrator_existing_keys_are_resumable(tmp_path: Path) -> None:
     result_path = tmp_path / "results.jsonl"
@@ -257,6 +261,8 @@ def test_hardware_entrypoints_are_fail_closed() -> None:
     assert "--fail-on-gate" in pair_script
     assert 'QWEN_BACKEND="${QWEN_BACKEND:-auto}"' in pair_script
     assert '--qwen-backend "${QWEN_BACKEND}"' in pair_script
+    assert '--model-roles "${MODEL_ROLE_ARGS[@]}"' in pair_script
+    assert 'COMPARE_AFTER="${COMPARE_AFTER:-1}"' in pair_script
 
 
 def main() -> int:
