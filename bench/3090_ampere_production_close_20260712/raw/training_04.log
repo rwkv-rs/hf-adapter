@@ -1,0 +1,110 @@
+
+[2026-07-12 16:57:23] environment
+Current Triton version 3.2.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+python=3.10.12 executable=/data/venvs/rwkv3090/bin/python
+platform=Linux-5.15.0-128-generic-x86_64-with-glibc2.35
+torch=2.6.0+cu124
+transformers=4.57.6
+peft=0.19.1
+trl=1.8.0
+deepspeed=0.19.2
+bitsandbytes=0.49.2
+fla=0.5.1
+mlx=missing
+torch_cuda_available=True
+torch_cuda_device_count=1
+cuda_device_0=NVIDIA GeForce RTX 3090 sm_86
+torch_mps_built=False
+torch_mps_available=False
+env_CUDA_VISIBLE_DEVICES=
+env_PYTHONNOUSERSITE=1
+env_RWKV_V7_ON=1
+env_TORCHDYNAMO_DISABLE=1
+env_DS_IGNORE_CUDA_DETECTION=1
+env_RWKV7_NATIVE_MODEL=
+env_RWKV7_FAST_FORWARD=
+env_RWKV7_FAST_TOKEN_BACKEND=
+
+[2026-07-12 16:57:31] HF training matrix models=/data/models/rwkv7-g1d-0.4b-hf device=cuda train_dtype=fp16 results=/data/logs/3090/results.jsonl
+
+[2026-07-12 16:57:31] training matrix model=/data/models/rwkv7-g1d-0.4b-hf
++ /data/venvs/rwkv3090/bin/python tests/test_peft_lora.py --model /data/models/rwkv7-g1d-0.4b-hf --device cuda --attn-mode fused_recurrent 
+Current Triton version 3.2.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+`torch_dtype` is deprecated! Use `dtype` instead!
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+trainable 1769472 total 452537344 pct 0.391
+loss 2.33984375
+nonzero_grad_count 144
+nonzero_grad base_model.model.model.layers.0.attn.r_proj.lora_B.default.weight 1.0567965507507324
+nonzero_grad base_model.model.model.layers.0.attn.k_proj.lora_B.default.weight 2.5811567306518555
+nonzero_grad base_model.model.model.layers.0.attn.v_proj.lora_B.default.weight 7.805710315704346
+nonzero_grad base_model.model.model.layers.0.attn.o_proj.lora_B.default.weight 9.358602523803711
+nonzero_grad base_model.model.model.layers.0.ffn.key.lora_B.default.weight 3.362247943878174
++ /data/venvs/rwkv3090/bin/python tests/test_hf_training_smoke.py --model /data/models/rwkv7-g1d-0.4b-hf --device cuda --attn-mode fused_recurrent --train-dtype fp16 --max-steps 1 --batch-size 1 --gradient-accumulation-steps 1 --dataset-repeats 4 --max-length 32 --backend both --results /data/logs/3090/results.jsonl 
+Current Triton version 3.2.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+`torch_dtype` is deprecated! Use `dtype` instead!
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None}.
+  0%|          | 0/1 [00:00<?, ?it/s]/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+100%|██████████| 1/1 [00:54<00:00, 54.83s/it]                                             100%|██████████| 1/1 [00:54<00:00, 54.83s/it]                                             100%|██████████| 1/1 [00:54<00:00, 54.83s/it]100%|██████████| 1/1 [00:54<00:00, 54.84s/it]
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+{'loss': 1.9209, 'grad_norm': 9.1862154006958, 'learning_rate': 0.0001, 'epoch': 0.12}
+{'train_runtime': 54.8404, 'train_samples_per_second': 0.018, 'train_steps_per_second': 0.018, 'train_loss': 1.9208984375, 'epoch': 0.12}
+trainer_train_loss 1.9208984375 max_trainable_delta 9.999999747378752e-05
+Adding EOS to train dataset:   0%|          | 0/8 [00:00<?, ? examples/s]Adding EOS to train dataset: 100%|██████████| 8/8 [00:00<00:00, 3611.89 examples/s]
+Parameter 'fn_kwargs'={'processing_class': RWKV7Tokenizer(name_or_path='/data/models/rwkv7-g1d-0.4b-hf', vocab_size=65536, model_max_length=1000000000000000019884624838656, is_fast=False, padding_side='right', truncation_side='right', special_tokens={'eos_token': '<|endoftext|>', 'pad_token': '<|padding|>'}, clean_up_tokenization_spaces=False, added_tokens_decoder={
+	65536: AddedToken("<|endoftext|>", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+	65537: AddedToken("<|padding|>", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+}
+), 'dataset_text_field': 'text', 'assistant_only_loss': False, 'chat_template': None} of the transform datasets.arrow_dataset.Dataset._map_single couldn't be hashed properly, a random hash was used instead. Make sure your transforms and parameters are serializable with pickle or dill for the dataset fingerprinting and caching to work. If you reuse this transform, the caching mechanism will consider it to be different from the previous calls and recompute everything. This warning is only shown once. Subsequent hashing failures won't be shown.
+Tokenizing train dataset:   0%|          | 0/8 [00:00<?, ? examples/s]Tokenizing train dataset: 100%|██████████| 8/8 [00:00<00:00, 1770.12 examples/s]
+Building labels for train dataset:   0%|          | 0/8 [00:00<?, ? examples/s]Building labels for train dataset: 100%|██████████| 8/8 [00:00<00:00, 2832.79 examples/s]
+Truncating train dataset:   0%|          | 0/8 [00:00<?, ? examples/s]Truncating train dataset: 100%|██████████| 8/8 [00:00<00:00, 2661.78 examples/s]
+The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None}.
+  0%|          | 0/1 [00:00<?, ?it/s]/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+100%|██████████| 1/1 [00:00<00:00,  2.37it/s]                                             100%|██████████| 1/1 [00:00<00:00,  2.37it/s]                                             100%|██████████| 1/1 [00:00<00:00,  2.37it/s]100%|██████████| 1/1 [00:00<00:00,  2.36it/s]
+{'loss': 2.019, 'grad_norm': 8.447602272033691, 'learning_rate': 0.0001, 'entropy': 2.599374771118164, 'num_tokens': 12.0, 'mean_token_accuracy': 0.5454545617103577, 'epoch': 0.12}
+{'train_runtime': 0.4278, 'train_samples_per_second': 2.338, 'train_steps_per_second': 2.338, 'train_loss': 2.019029140472412, 'epoch': 0.12}
+trl_sft_train_loss 2.019029140472412 max_trainable_delta 9.99999901978299e-05
+{"axis": "training_smoke", "backend": "hf_adapter", "trainer_backend": "trainer", "status": "pass", "dtype": "fp16", "train_dtype": "fp16", "device": "NVIDIA GeForce RTX 3090", "model_name": "rwkv7-g1d-0.4b-hf", "model_size_label": "0.4b", "hf_model_dir": "/data/models/rwkv7-g1d-0.4b-hf", "hidden_size": 1024, "intermediate_size": 4096, "num_hidden_layers": 24, "head_dim": 64, "num_heads": 16, "attn_mode": "fused_recurrent", "batch_size": 1, "gradient_accumulation_steps": 1, "effective_batch_size": 1, "max_steps": 1, "dataset_repeats": 4, "max_length": 32, "train_loss": 1.9208984375, "train_runtime_s": 54.8404, "train_samples_per_second": 0.018, "train_steps_per_second": 0.018, "max_trainable_delta": 9.999999747378752e-05}
+{"axis": "training_smoke", "backend": "hf_adapter", "trainer_backend": "trl_sft", "status": "pass", "dtype": "fp16", "train_dtype": "fp16", "device": "NVIDIA GeForce RTX 3090", "model_name": "rwkv7-g1d-0.4b-hf", "model_size_label": "0.4b", "hf_model_dir": "/data/models/rwkv7-g1d-0.4b-hf", "hidden_size": 1024, "intermediate_size": 4096, "num_hidden_layers": 24, "head_dim": 64, "num_heads": 16, "attn_mode": "fused_recurrent", "batch_size": 1, "gradient_accumulation_steps": 1, "effective_batch_size": 1, "max_steps": 1, "dataset_repeats": 4, "max_length": 32, "train_loss": 2.019029140472412, "train_runtime_s": 0.4278, "train_samples_per_second": 2.338, "train_steps_per_second": 2.338, "max_trainable_delta": 9.99999901978299e-05}
+PASS
++ /data/venvs/rwkv3090/bin/python tests/test_hf_rl_training_smoke.py --model /data/models/rwkv7-g1d-0.4b-hf --device cuda --attn-mode fused_recurrent --train-dtype fp16 --max-steps 1 --batch-size 2 --gradient-accumulation-steps 1 --dataset-repeats 4 --max-length 32 --backend both --results /data/logs/3090/results.jsonl 
+Current Triton version 3.2.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+`torch_dtype` is deprecated! Use `dtype` instead!
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+Adding EOS to train dataset:   0%|          | 0/8 [00:00<?, ? examples/s]Adding EOS to train dataset: 100%|██████████| 8/8 [00:00<00:00, 2731.33 examples/s]
+Parameter 'fn_kwargs'={'processing_class': RWKV7Tokenizer(name_or_path='/data/models/rwkv7-g1d-0.4b-hf', vocab_size=65536, model_max_length=1000000000000000019884624838656, is_fast=False, padding_side='right', truncation_side='right', special_tokens={'eos_token': '<|endoftext|>', 'pad_token': '<|padding|>'}, clean_up_tokenization_spaces=False, added_tokens_decoder={
+	65536: AddedToken("<|endoftext|>", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+	65537: AddedToken("<|padding|>", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+}
+)} of the transform datasets.arrow_dataset.Dataset._map_single couldn't be hashed properly, a random hash was used instead. Make sure your transforms and parameters are serializable with pickle or dill for the dataset fingerprinting and caching to work. If you reuse this transform, the caching mechanism will consider it to be different from the previous calls and recompute everything. This warning is only shown once. Subsequent hashing failures won't be shown.
+Tokenizing train dataset:   0%|          | 0/8 [00:00<?, ? examples/s]Tokenizing train dataset: 100%|██████████| 8/8 [00:00<00:00, 1075.60 examples/s]
+The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None}.
+  0%|          | 0/1 [00:00<?, ?it/s]/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+100%|██████████| 1/1 [00:55<00:00, 55.06s/it]                                             100%|██████████| 1/1 [00:55<00:00, 55.06s/it]                                             100%|██████████| 1/1 [00:55<00:00, 55.06s/it]100%|██████████| 1/1 [00:55<00:00, 55.06s/it]
+{'loss': 0.0, 'grad_norm': nan, 'learning_rate': 0.0001, 'entropy': nan, 'num_tokens': 53.0, 'logits/chosen': nan, 'logits/rejected': -12.4453125, 'mean_token_accuracy': 0.1428571492433548, 'rewards/chosen': nan, 'rewards/rejected': 0.0, 'rewards/accuracies': 0.0, 'rewards/margins': nan, 'logps/chosen': nan, 'logps/rejected': -14.53125, 'epoch': 0.25}
+{'train_runtime': 55.0621, 'train_samples_per_second': 0.036, 'train_steps_per_second': 0.018, 'train_loss': 0.0, 'epoch': 0.25}
+Traceback (most recent call last):
+  File "/home/ubuntu/hf-adapter/tests/test_hf_rl_training_smoke.py", line 332, in <module>
+    raise SystemExit(main())
+  File "/home/ubuntu/hf-adapter/tests/test_hf_rl_training_smoke.py", line 321, in main
+    rows.append(run_dpo(args))
+  File "/home/ubuntu/hf-adapter/tests/test_hf_rl_training_smoke.py", line 197, in run_dpo
+    assert delta > 0.0, "DPO LoRA/trainable parameters did not update"
+AssertionError: DPO LoRA/trainable parameters did not update

@@ -1,0 +1,12 @@
+Current Triton version 3.2.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  20%|██        | 162/795 [00:00<00:00, 1618.20it/s]Loading weights:  41%|████      | 324/795 [00:00<00:00, 1430.61it/s]Loading weights:  59%|█████▉    | 469/795 [00:00<00:00, 1432.67it/s]Loading weights:  77%|███████▋  | 614/795 [00:00<00:00, 1334.31it/s]Loading weights:  94%|█████████▍| 749/795 [00:00<00:00, 1246.71it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 1323.79it/s]
+/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+[transformers] The attention mask is not set and cannot be inferred from input because pad token is same as eos token. As a consequence, you may observe unexpected behavior. Please pass your input's `attention_mask` to obtain reliable results.
+FAST PREFILL FORWARD PASS reference=hf fused_scan=True prefill_graph=True max_abs=0.062500 min_cos=1.00000000 greedy=True decode_max_abs=0.062500 decode_greedy=True chunked_greedy=True chunked_decode=True generate_match=True seen=128
