@@ -144,6 +144,7 @@ def worker_args(**updates) -> Namespace:
         "warmup": 1,
         "runs": 1,
         "rwkv_code_source": "repo",
+        "qwen_backend": "auto",
     }
     values.update(updates)
     return Namespace(**values)
