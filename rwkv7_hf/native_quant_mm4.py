@@ -266,6 +266,28 @@ def _mm4_decode_blocks(x, block_pairs, block_n):
     return int(block_pairs or (128 if blackwell else 64)), int(block_n or (128 if blackwell else 64))
 
 
+def mm4_batched_dot_enabled(device=None) -> bool:
+    """Whether the measured tensor-core W4 batch kernel is enabled.
+
+    Blackwell and Ampere consumer/workstation ``sm_86`` both provide the
+    fp16 tensor-core primitive used by :func:`mm4_batched_dot_triton`.  Older
+    pre-sm120 code dispatched every Ampere batch row as a separate GEMV (or
+    materialized the dequantized weight above four rows), which made the 2.9B
+    lm-head speed-policy lane about 0.65x fp16 at bsz8.
+
+    Keep sm80/A100 and sm89/Ada on their existing routes until exact-card A/B
+    evidence is recorded; capability policy must not silently generalize one
+    measured Ampere route to every architecture.
+    """
+    if torch is None or not torch.cuda.is_available():
+        return False
+    dev = torch.device("cuda" if device is None else device)
+    if dev.type != "cuda":
+        return False
+    major, minor = torch.cuda.get_device_capability(dev)
+    return major >= 12 or (major == 8 and minor == 6)
+
+
 def mm4_gemv_triton(x, packed, mx, rx_s, my, ry_s, m_orig, *, block_pairs=None, block_n=None):
     """Fused int4 dequant GEMV: ``x: [N]`` -> ``[M_orig]``."""
     if not (x.is_cuda and mm4_gemv_available(x.device)):
@@ -337,12 +359,13 @@ def mm4_matmul_triton(x, packed, mx, rx_s, my, ry_s, m_orig, *, max_gemv_rows: i
     if int(x.shape[0]) == 1:
         return mm4_gemv_triton(x[0], packed, mx, rx_s, my, ry_s, m_orig).unsqueeze(0)
     blackwell = torch.cuda.get_device_capability(x.device)[0] >= 12
-    row_limit = int(max_gemv_rows) if max_gemv_rows is not None else (16 if blackwell else 4)
+    batched_dot = mm4_batched_dot_enabled(x.device)
+    row_limit = int(max_gemv_rows) if max_gemv_rows is not None else (16 if blackwell or batched_dot else 4)
     if int(x.shape[0]) > row_limit:
         return mm4_matmul(x, packed, mx, rx_s, my, ry_s, m_orig)
-    if blackwell and int(x.shape[0]) >= 4 and x.dtype == torch.float16:
+    if batched_dot and int(x.shape[0]) >= 4 and x.dtype == torch.float16:
         return mm4_batched_dot_triton(x, packed, mx, rx_s, my, ry_s, m_orig)
-    if blackwell:
+    if blackwell or batched_dot:
         return mm4_batched_gemv_triton(x, packed, mx, rx_s, my, ry_s, m_orig)
     return torch.stack(
         [mm4_gemv_triton(row, packed, mx, rx_s, my, ry_s, m_orig) for row in x], dim=0,

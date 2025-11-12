@@ -100,6 +100,19 @@ def test_policy_defaults_are_conservative() -> None:
     assert other_ada.ada_linear_rows == "2 4"
     assert other_ada.norm_mix_num_warps == 4
 
+    rtx3090 = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 3090", (8, 6)))
+    assert rtx3090.fast_prefill
+    assert rtx3090.fused_prefill_scan
+    assert rtx3090.prefill_graph
+    assert rtx3090.prefill_graph_cache_size == 4
+    assert rtx3090.bnb_skip_policy == "decode_hot"
+
+    a6000 = policy_for_profile(classify_gpu("NVIDIA RTX A6000", (8, 6)))
+    assert not a6000.fast_prefill
+    assert not a6000.fused_prefill_scan
+    assert not a6000.prefill_graph
+    assert a6000.bnb_skip_policy == "memory"
+
     blackwell = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 5090", (12, 0)))
     assert blackwell.fused_output
     assert blackwell.fused_recurrent_output
