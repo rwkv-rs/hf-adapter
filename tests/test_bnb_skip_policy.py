@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from rwkv7_hf import RWKV7Config, RWKV7ForCausalLM
 
 
@@ -32,6 +34,15 @@ def main() -> int:
     assert r".*ffn\.(key|value)" in dense
     assert "model.layers.0.ffn.key" in dense
     assert "model.layers.1.ffn.value" in dense
+
+    qconfig = SimpleNamespace(load_in_8bit=True, llm_int8_skip_modules=[])
+    effective, _ = RWKV7ForCausalLM._rwkv7_prepare_bnb_kwargs(
+        "/unused",
+        {"rwkv7_bnb_skip_policy": "prefill_hot", "quantization_config": qconfig, "config": cfg},
+    )
+    assert effective == "decode_hot"
+    assert "model.layers.0.attn.r_proj" in qconfig.llm_int8_skip_modules
+    assert "model.layers.0.ffn.key" not in qconfig.llm_int8_skip_modules
 
     print("PASS")
     return 0
