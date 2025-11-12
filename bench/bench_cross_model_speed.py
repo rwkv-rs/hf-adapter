@@ -83,7 +83,7 @@ def model_metadata(args: argparse.Namespace, model=None) -> dict[str, Any]:
 def base_row(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "axis": "qwen35_cross_model_speed",
-        "benchmark_matrix": "qwen35_v100_hf",
+        "benchmark_matrix": args.benchmark_matrix,
         "model_pair": args.model_pair,
         "model_role": args.model_role,
         "model_kind": args.model_kind,
@@ -287,6 +287,14 @@ def timed_decode(args: argparse.Namespace, model, ids) -> tuple[float, str, str 
 
 
 def environment_metadata(args: argparse.Namespace) -> dict[str, Any]:
+    qwen_fast_path = None
+    if args.model_kind == "qwen35":
+        try:
+            from transformers.models.qwen3_5.modeling_qwen3_5 import is_fast_path_available
+
+            qwen_fast_path = bool(is_fast_path_available)
+        except Exception:
+            qwen_fast_path = False
     return {
         "device": device_name(args.device),
         "torch_version": torch.__version__,
@@ -297,6 +305,7 @@ def environment_metadata(args: argparse.Namespace) -> dict[str, Any]:
         "causal_conv1d_version": package_version("causal-conv1d"),
         "qwen_fla_importable": importlib.util.find_spec("fla") is not None,
         "qwen_force_torch": QWEN_FORCE_TORCH,
+        "qwen_fast_path_available": qwen_fast_path,
         "rwkv_fast_token_backend_requested": os.environ.get("RWKV7_FAST_TOKEN_BACKEND"),
     }
 
@@ -310,6 +319,14 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         effective_model_path, temporary = prepare_rwkv_model_dir(args.model, args.rwkv_code_source)
     tokenizer = AutoTokenizer.from_pretrained(effective_model_path, trust_remote_code=args.model_kind == "rwkv")
     model = load_model(args, dtype, effective_model_path)
+    if args.model_kind == "qwen35" and args.require_qwen_fast_path:
+        from transformers.models.qwen3_5.modeling_qwen3_5 import is_fast_path_available
+
+        if not bool(is_fast_path_available):
+            raise RuntimeError(
+                "Qwen3.5 optimized fast path is unavailable; install compatible "
+                "flash-linear-attention and causal-conv1d packages"
+            )
     load_s = time.perf_counter() - started
     input_device = str(next(model.parameters()).device)
     ids = build_exact_prompt(tokenizer, args.prompt_tokens, args.batch_size, input_device)
@@ -376,6 +393,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--model-role", required=True, choices=["candidate", "reference"])
     ap.add_argument("--model-pair", required=True)
     ap.add_argument("--model-size-label", required=True)
+    ap.add_argument("--benchmark-matrix", default="qwen35_hf")
     ap.add_argument("--dtype", default="fp16", choices=sorted(DTYPES))
     ap.add_argument("--quantization", default="none", choices=["none", "bnb8", "bnb4"])
     ap.add_argument("--device", default="cuda")
@@ -387,6 +405,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--rwkv-attn-mode", choices=["chunk", "fused_recurrent"], default="fused_recurrent")
     ap.add_argument("--rwkv-code-source", choices=["repo", "model"], default="repo")
     ap.add_argument("--qwen-backend", choices=["auto", "torch"], default="auto")
+    ap.add_argument("--require-qwen-fast-path", action="store_true")
     ap.add_argument("--results", default="")
     ap.add_argument("--optional", action="store_true")
     args = ap.parse_args()

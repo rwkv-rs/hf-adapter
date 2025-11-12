@@ -25,6 +25,7 @@ cd "${ROOT}"
   --decode-tokens 128 512 \
   --batch-sizes 1 2 4 8 \
   --quantizations none bnb8 bnb4 \
+  --benchmark-matrix qwen35_v100_hf \
   --dtype fp16 \
   --qwen-backend torch \
   --warmup "${WARMUP}" \

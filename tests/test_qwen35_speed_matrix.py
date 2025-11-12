@@ -77,7 +77,7 @@ def run_compare(tmp: Path, rows: list[dict], *extra: str) -> subprocess.Complete
     )
 
 
-def test_comparator_passes_complete_matrix(tmp: Path) -> None:
+def test_comparator_passes_complete_matrix(tmp_path: Path) -> None:
     rows = [
         row("candidate", prompt=128, prefill=120.0, decode=220.0),
         row("reference", prompt=128, prefill=100.0, decode=200.0),
@@ -85,7 +85,7 @@ def test_comparator_passes_complete_matrix(tmp: Path) -> None:
         row("reference", prompt=512, prefill=200.0, decode=300.0),
     ]
     proc = run_compare(
-        tmp,
+        tmp_path,
         rows,
         "--expected-cells",
         "2",
@@ -96,22 +96,22 @@ def test_comparator_passes_complete_matrix(tmp: Path) -> None:
         "--fail-on-gate",
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    summary = json.loads((tmp / "summary.json").read_text(encoding="utf-8"))
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
     assert summary["coverage"] == {"expected_cells": 2, "joined_cells": 2, "complete": True}
     assert summary["speed"]["min_prefill_speedup"] == 1.05
     assert summary["speed"]["min_decode_speedup"] == 1.1
     assert summary["gates"]["overall_pass"] is True
-    assert "Overall: PASS" in (tmp / "summary.md").read_text(encoding="utf-8")
+    assert "Overall: PASS" in (tmp_path / "summary.md").read_text(encoding="utf-8")
 
 
-def test_comparator_reports_missing_and_slow_cells(tmp: Path) -> None:
+def test_comparator_reports_missing_and_slow_cells(tmp_path: Path) -> None:
     rows = [
         row("candidate", prompt=128, prefill=90.0, decode=180.0),
         row("reference", prompt=128, prefill=100.0, decode=200.0),
         row("candidate", prompt=512, prefill=210.0, decode=330.0),
     ]
     proc = run_compare(
-        tmp,
+        tmp_path,
         rows,
         "--expected-cells",
         "2",
@@ -122,7 +122,7 @@ def test_comparator_reports_missing_and_slow_cells(tmp: Path) -> None:
         "--fail-on-gate",
     )
     assert proc.returncode == 1, proc.stdout + proc.stderr
-    summary = json.loads((tmp / "summary.json").read_text(encoding="utf-8"))
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
     assert summary["coverage"]["joined_cells"] == 1
     assert summary["coverage"]["complete"] is False
     assert len(summary["missing"]["reference"]) == 1
@@ -142,6 +142,7 @@ def worker_args(**updates) -> Namespace:
         "model_role": "candidate",
         "model_pair": "rwkv-1.5b__qwen3.5-2b",
         "model_size_label": "1.5b",
+        "benchmark_matrix": "qwen35_test",
         "dtype": "fp16",
         "quantization": "none",
         "device": "cpu",
@@ -214,8 +215,8 @@ def test_orchestrator_expands_432_raw_rows() -> None:
     assert specs[1].model_kind == "qwen35"
 
 
-def test_orchestrator_existing_keys_are_resumable(tmp: Path) -> None:
-    result_path = tmp / "results.jsonl"
+def test_orchestrator_existing_keys_are_resumable(tmp_path: Path) -> None:
+    result_path = tmp_path / "results.jsonl"
     rows = [
         row("candidate", prompt=128, prefill=120.0, decode=220.0),
         row("reference", prompt=128, prefill=100.0, decode=200.0, status="fail"),
@@ -235,12 +236,27 @@ def test_orchestrator_forces_production_rwkv_wrapper() -> None:
     assert env["PYTHONPATH"].endswith(f"{os.pathsep}/existing")
 
 
-def test_v100_entrypoint_is_fail_closed() -> None:
-    script = (ROOT / "bench" / "run_v100_qwen35_speed_matrix.sh").read_text(encoding="utf-8")
-    assert "--expected-cells 216" in script
-    assert "--min-prefill-speedup 1.05" in script
-    assert "--min-decode-speedup 1.05" in script
-    assert "--fail-on-gate" in script
+def test_3090_entrypoint_requires_optimized_qwen_path() -> None:
+    for name in ("run_3090_qwen35_pair.sh", "run_3090_qwen35_speed_matrix.sh"):
+        script = (ROOT / "bench" / name).read_text(encoding="utf-8")
+        assert "--require-qwen-fast-path" in script
+
+
+def test_hardware_entrypoints_are_fail_closed() -> None:
+    for name in ("run_v100_qwen35_speed_matrix.sh", "run_3090_qwen35_speed_matrix.sh"):
+        script = (ROOT / "bench" / name).read_text(encoding="utf-8")
+        assert "--expected-cells 216" in script
+        assert "--min-prefill-speedup 1.05" in script
+        assert "--min-decode-speedup 1.05" in script
+        assert "--fail-on-gate" in script
+
+    pair_script = (ROOT / "bench" / "run_3090_qwen35_pair.sh").read_text(encoding="utf-8")
+    assert "--expected-cells 72" in pair_script
+    assert "--min-prefill-speedup 1.05" in pair_script
+    assert "--min-decode-speedup 1.05" in pair_script
+    assert "--fail-on-gate" in pair_script
+    assert 'QWEN_BACKEND="${QWEN_BACKEND:-auto}"' in pair_script
+    assert '--qwen-backend "${QWEN_BACKEND}"' in pair_script
 
 
 def main() -> int:
@@ -254,7 +270,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         test_orchestrator_existing_keys_are_resumable(Path(td))
     test_orchestrator_forces_production_rwkv_wrapper()
-    test_v100_entrypoint_is_fail_closed()
+    test_3090_entrypoint_requires_optimized_qwen_path()
+    test_hardware_entrypoints_are_fail_closed()
     print("QWEN35 SPEED MATRIX TESTS PASS")
     return 0
 

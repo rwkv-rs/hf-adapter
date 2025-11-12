@@ -32,6 +32,8 @@ SCRIPTS = [
 BENCH_RUNNERS = [
     "bench/run_a6000_hf_validation.sh",
     "bench/run_v100_qwen35_speed_matrix.sh",
+    "bench/run_3090_qwen35_speed_matrix.sh",
+    "bench/run_3090_qwen35_pair.sh",
 ]
 
 
