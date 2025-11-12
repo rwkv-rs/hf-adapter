@@ -238,6 +238,8 @@ def _bnb_skip_policy(policy: str | None = None) -> str:
         return "memory"
     if policy in {"decode", "decode_hot", "hot", "hybrid"}:
         return "decode_hot"
+    if policy in {"prefill", "prefill_hot", "throughput"}:
+        return "prefill_hot"
     if policy in {"dense", "all_dense", "no_quant"}:
         return "dense"
     return "memory"
@@ -1463,10 +1465,13 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     # - decode_hot: keep attention r/k/v/o projections dense; validation smoke
     #   showed this can improve W4 cached decode while still keeping a lower
     #   footprint than fp16. FFN key/value remain quantized.
+    # - prefill_hot: additionally keep the FFN up projection dense. This uses
+    #   more memory than decode_hot but retains a material reduction vs fp16.
     # - dense: keep all large Linear modules dense (diagnostic upper bound).
     _rwkv7_bnb_policy_extra_skips = {
         "memory": [],
         "decode_hot": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)"],
+        "prefill_hot": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)", r".*ffn\.key"],
         "dense": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)", r".*ffn\.(key|value)"],
     }
 
@@ -1480,9 +1485,11 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             for lora_name in ("w_lora", "a_lora", "g_lora", "v_lora"):
                 for linear_idx in (0, 2):
                     skips.append(f"model.layers.{layer_idx}.attn.{lora_name}.lora.{linear_idx}")
-            if policy in {"decode_hot", "dense"}:
+            if policy in {"decode_hot", "prefill_hot", "dense"}:
                 for proj_name in ("r_proj", "k_proj", "v_proj", "o_proj"):
                     skips.append(f"model.layers.{layer_idx}.attn.{proj_name}")
+            if policy == "prefill_hot":
+                skips.append(f"model.layers.{layer_idx}.ffn.key")
             if policy == "dense":
                 for ffn_name in ("key", "value"):
                     skips.append(f"model.layers.{layer_idx}.ffn.{ffn_name}")

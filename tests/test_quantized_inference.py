@@ -151,7 +151,11 @@ def main() -> int:
     ap.add_argument("--optional", action="store_true", help="Return success when the quantization backend is not installed/supported")
     ap.add_argument("--bnb-4bit-quant-type", choices=["fp4", "nf4"], default="nf4")
     ap.add_argument("--bnb-4bit-use-double-quant", action="store_true")
-    ap.add_argument("--quant-skip-policy", choices=["memory", "decode_hot", "dense"], default=os.environ.get("RWKV7_BNB_SKIP_POLICY", "memory"))
+    ap.add_argument(
+        "--quant-skip-policy",
+        choices=["memory", "decode_hot", "prefill_hot", "dense"],
+        default=os.environ.get("RWKV7_BNB_SKIP_POLICY", "memory"),
+    )
     ap.add_argument("--skip-fast-forward-check", action="store_true")
     ap.add_argument("--fast-forward-max-diff", type=float, default=1.25)
     args = ap.parse_args()
@@ -222,7 +226,7 @@ def main() -> int:
     if args.quantization != "none":
         assert module_counts["dense_lora_rank_linear"] > 0, module_counts
         assert module_counts["quantized_lora_rank_linear"] == 0, module_counts
-        if args.quant_skip_policy == "decode_hot":
+        if args.quant_skip_policy in {"decode_hot", "prefill_hot"}:
             assert module_counts["linear_4bit"] < 72 or module_counts["linear_8bit"] < 72, module_counts
     row = {
         "axis": "quantized_inference",
