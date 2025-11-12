@@ -5,7 +5,7 @@ exploratory tuning chronology. Raw rows, logs and negative experiments remain
 in [`bench/`](bench/); platform interpretation lives in
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
-Last updated: **2026-07-12**.
+Last updated: **2026-07-13**.
 
 ## Benchmark contract
 
@@ -42,6 +42,16 @@ Canonical matrix: 0.1B/0.4B/1.5B × bsz1/2/4/8.
 | Native W8/W4 paired prefill / fp16 | `0.996x–1.007x` | 1% equivalence PASS |
 
 Evidence: [`bench/v100_production_close_20260711/README.md`](bench/v100_production_close_20260711/README.md).
+
+The larger-model HF comparison matrix additionally covers RWKV-7
+1.5B/2.9B/7.2B against Qwen3.5 2B/4B/9B over prompt 128/512/2048, decode
+128/512, bsz 1/2/4/8 and dense/W8/W4 loads. Its fail-closed result is
+`216/216` cells with no red or missing rows. Overall RWKV/Qwen ratios are
+`1.246x` minimum prefill and `1.003x` minimum decode. This result uses the
+explicitly recorded Qwen Transformers torch-fallback backend rather than an
+FLA/causal-conv optimized Qwen lane.
+
+Evidence: [`bench/v100_qwen35_full_matrix_20260713/README.md`](bench/v100_qwen35_full_matrix_20260713/README.md).
 
 ## RTX 4090 promoted rows
 
