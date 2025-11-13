@@ -39,6 +39,7 @@ def self_chunk_rwkv7(
     state_native,
     *,
     chunk_size: int = 16,
+    w_is_log: bool = False,
 ):
     """Return ``(recurrent_output, final_native_state)`` for equal lengths.
 
@@ -60,7 +61,7 @@ def self_chunk_rwkv7(
     # FLA's generalized DPLR convention for RWKV-7 is a=-kk, b=kk*a.
     dplr_a = -kk
     dplr_b = kk * a_gate
-    log_decay = torch.log(w_decay.float())
+    log_decay = w_decay.float() if w_is_log else torch.log(w_decay.float())
     gi, ge = chunk_rwkv6_fwd_cumsum(log_decay, 16, scale=1.0 / math.log(2.0))
     A_ab, A_qk, A_ak, A_qb, qg, kg, ag, bg = chunk_dplr_fwd_intra(
         q=r,
