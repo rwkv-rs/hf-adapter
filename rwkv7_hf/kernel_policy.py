@@ -53,6 +53,13 @@ class KernelPolicy:
     bnb_skip_policy: str = "memory"
     fused_recurrent: bool = False
     fused_prefill_scan: bool = False
+    fused_prefill_self_chunk: bool = False
+    prefill_self_chunk_min_tokens: int = 1024
+    prefill_scan_block_m: int | None = None
+    prefill_scan_block_m_b2: int | None = None
+    prefill_scan_block_m_b4: int | None = None
+    prefill_scan_num_warps: int | None = None
+    prefill_blas_library: str | None = None
     prefill_graph: bool = False
     prefill_graph_cache_size: int = 2
     fused_prefill_shift_mix: bool = False
@@ -60,6 +67,19 @@ class KernelPolicy:
     fused_prefill_state_scan: bool = False
     fused_prefill_state_scan_max_batch: int | None = None
     fused_prefill_output: bool = False
+    fused_prefill_stacked_rkv: bool = False
+    prefill_stacked_rkv_min_rows: int = 128
+    prefill_stacked_rkv_max_rows: int | None = None
+    prefill_stacked_rkv_extra_rows: tuple[int, ...] = ()
+    fused_prefill_sequence_ffn: bool = False
+    prefill_sequence_ffn_min_rows: int = 128
+    prefill_sequence_ffn_max_rows: int | None = None
+    prefill_sequence_ffn_extra_rows: tuple[int, ...] = ()
+    prefill_sequence_ffn_blocks: tuple[int, int, int, int, int] = (128, 128, 32, 64, 8)
+    prefill_sequence_ffn_large_min_rows: int = 1024
+    prefill_sequence_ffn_large_blocks: tuple[int, int, int, int, int] = (128, 128, 32, 64, 8)
+    prefill_sequence_ffn_num_stages: int = 3
+    prefill_sequence_ffn_num_warps: int = 4
     fused_recurrent_output: bool = False
     fused_recurrent_raw: bool = False
     fused_output: bool = False
@@ -480,11 +500,35 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_recurrent_output=True,
             fused_output=True,
             fused_prefill_scan=is_3090,
+            fused_prefill_self_chunk=is_3090,
+            prefill_self_chunk_min_tokens=1024,
+            prefill_scan_block_m=8 if is_3090 else None,
+            prefill_scan_block_m_b2=16 if is_3090 else None,
+            prefill_scan_block_m_b4=32 if is_3090 else None,
+            prefill_scan_num_warps=4 if is_3090 else None,
+            prefill_blas_library="cublaslt" if is_3090 else None,
             prefill_graph=is_3090,
             prefill_graph_cache_size=4 if is_3090 else 2,
+            fused_prefill_shift_mix=is_3090,
+            fused_prefill_state_prep=is_3090,
+            fused_prefill_output=is_3090,
+            fused_prefill_stacked_rkv=is_3090,
+            prefill_stacked_rkv_min_rows=192 if is_3090 else 128,
+            prefill_stacked_rkv_max_rows=384 if is_3090 else None,
+            prefill_stacked_rkv_extra_rows=(),
+            fused_prefill_sequence_ffn=is_3090,
+            prefill_sequence_ffn_min_rows=192 if is_3090 else 128,
+            prefill_sequence_ffn_max_rows=384 if is_3090 else None,
+            prefill_sequence_ffn_extra_rows=(),
+            prefill_sequence_ffn_blocks=(64, 64, 32, 64, 8) if is_3090 else (128, 128, 32, 64, 8),
+            prefill_sequence_ffn_large_min_rows=1024,
+            prefill_sequence_ffn_large_blocks=(128, 128, 32, 64, 8),
+            prefill_sequence_ffn_num_stages=4 if is_3090 else 3,
+            prefill_sequence_ffn_num_warps=8 if is_3090 else 4,
             output_project_block_m=16,
             notes=(
-                "RTX 3090: measured native fused-scan prefill graphs and prefill-hot bnb routing; "
+                "RTX 3090: measured cublasLt + row-8 scan, sequence shift-mix, state-prep, "
+                "output-prep, native prefill graphs, and prefill-hot bnb routing; "
                 "other CUDA tensor-core cards retain stable output fusions pending a local sweep"
                 if is_3090
                 else "CUDA tensor-core generation: use stable output fusions; require local sweep before projection/LoRA defaults"

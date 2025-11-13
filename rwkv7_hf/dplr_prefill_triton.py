@@ -1004,7 +1004,11 @@ def dplr_compact_wy_prefix_combine_triton(
     ):
         raise ValueError("compact summary shapes must match state")
     if block_m is None:
-        block_m = _env_int("RWKV7_DPLR_TRITON_COMPACT_PREFIX_BLOCK_M", 8)
+        # ``_compact_wy_prefix_combine_kernel`` uses ``tl.dot`` for the
+        # state/factor products. Triton requires every dot dimension to be at
+        # least 16; the old row tile of 8 therefore failed at compile time on
+        # the real N=64 RWKV-7 path before a benchmark could run.
+        block_m = _env_int("RWKV7_DPLR_TRITON_COMPACT_PREFIX_BLOCK_M", 16)
     if block_n is None:
         block_n = N
     block_m = int(block_m)
@@ -1014,7 +1018,7 @@ def dplr_compact_wy_prefix_combine_triton(
     if block_n < N:
         raise ValueError(f"block_n must be >= head_dim={N}; got {block_n}")
 
-    target_supported = 16 <= N <= 64 and 16 <= R <= 64 and block_n <= 64
+    target_supported = 16 <= N <= 64 and 16 <= R <= 64 and block_n <= 64 and block_m >= 16
     use_triton = (
         not force_fallback
         and target_supported

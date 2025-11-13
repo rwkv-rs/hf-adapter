@@ -267,6 +267,31 @@ def _native_prefill_graph_enabled() -> bool:
     return env_flag("RWKV7_NATIVE_PREFILL_GRAPH", bool(getattr(policy, "prefill_graph", False)))
 
 
+def _native_prefill_prepare_blas() -> str | None:
+    """Select the measured large-matrix backend before native prefill.
+
+    PyTorch exposes BLAS selection as a process-wide setting.  The policy is
+    therefore applied only when entering the explicit native prefill API and
+    remains in effect for subsequent fixed-shape graph captures.  Users can
+    set ``RWKV7_NATIVE_PREFILL_BLAS=none`` to retain the process default.
+    """
+
+    policy = _rwkv7_kernel_policy()
+    target = os.environ.get("RWKV7_NATIVE_PREFILL_BLAS")
+    if target is None:
+        target = getattr(policy, "prefill_blas_library", None)
+    target = "" if target is None else str(target).strip().lower()
+    if target in {"", "none", "default", "auto"} or not _cuda_available():
+        return None
+    if target not in {"cublas", "cublaslt"}:
+        raise ValueError("RWKV7_NATIVE_PREFILL_BLAS must be cublas, cublaslt, or none")
+    preferred = getattr(getattr(torch.backends, "cuda", None), "preferred_blas_library", None)
+    if not callable(preferred):
+        return None
+    preferred(target)
+    return target
+
+
 def _native_prefill_graph_cache_size() -> int:
     """Maximum fixed-shape prefill graphs retained by one model."""
 
@@ -280,14 +305,37 @@ def _native_prefill_graph_signature() -> tuple[tuple[str, str | None], ...]:
 
     names = (
         "RWKV7_NATIVE_PREFILL_DPLR_SCAN",
+        "RWKV7_NATIVE_PREFILL_BLAS",
         "RWKV7_NATIVE_PREFILL_FUSED_CLAMPW_SCAN",
         "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT",
         "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_PROJECT",
         "RWKV7_NATIVE_PREFILL_FUSED_SCAN",
+        "RWKV7_NATIVE_PREFILL_SELF_CHUNK",
+        "RWKV7_NATIVE_PREFILL_SELF_CHUNK_MIN_TOKENS",
         "RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT",
         "RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX",
         "RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP",
         "RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN",
+        "RWKV7_NATIVE_PREFILL_FUSED_SEQUENCE_FFN",
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV",
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV_MAX_ROWS",
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV_MIN_ROWS",
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV_EXTRA_ROWS",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_MAX_ROWS",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_MIN_ROWS",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_BLOCK_M",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_BLOCK_N",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_KEY_BLOCK_K",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_VALUE_BLOCK_K",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_GROUP_M",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_NUM_STAGES",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_NUM_WARPS",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_EXTRA_ROWS",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_LARGE_BLOCK_M",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_LARGE_BLOCK_N",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_LARGE_KEY_BLOCK_K",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_LARGE_VALUE_BLOCK_K",
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_LARGE_GROUP_M",
         "RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA",
         "RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M",
         "RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS",
@@ -1305,6 +1353,7 @@ class _RWKV7NativeGraphPrefillRunner:
         self.batch_size = int(batch_size)
         self.prompt_tokens = int(prompt_tokens)
         self.logits_to_keep = int(logits_to_keep)
+        self.runtime_signature = _native_prefill_graph_signature()
         weight = owner.model.embeddings.weight
         self.device = weight.device
         self.dtype = weight.dtype
@@ -1341,6 +1390,7 @@ class _RWKV7NativeGraphPrefillRunner:
             self.batch_size == int(batch_size)
             and self.prompt_tokens == int(prompt_tokens)
             and self.logits_to_keep == int(logits_to_keep)
+            and self.runtime_signature == _native_prefill_graph_signature()
         )
 
     def _run_once(self):
@@ -2117,6 +2167,15 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         self._rwkv7_native_prefill_graph_hot_runner = None
         return size
 
+    def rwkv7_clear_native_prefill_stacked_rkv_cache(self) -> int:
+        """Release lazy packed prefill R/K/V weights and return their bytes."""
+
+        cached = getattr(self, "_rwkv7_native_prefill_stacked_rkv_cache", None)
+        packed = cached[1] if isinstance(cached, tuple) and len(cached) == 2 else None
+        released = sum(int(t.numel()) * int(t.element_size()) for t in packed or [] if isinstance(t, torch.Tensor))
+        self._rwkv7_native_prefill_stacked_rkv_cache = None
+        return released
+
     def rwkv7_warmup_fast_prefill(
         self,
         shapes: tuple[int, int] | list[tuple[int, int]] | tuple[tuple[int, int], ...] = ((1, 512),),
@@ -2224,6 +2283,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         if _native_jit_prefill is None:
             raise RuntimeError("native prefill backend is unavailable; copy native_jit.py into the model repo")
         self._rwkv7_last_fast_prefill_backend = "native_prefill"
+        _native_prefill_prepare_blas()
         if input_ids.dim() == 1:
             input_ids = input_ids.unsqueeze(0)
         if input_ids.dim() != 2:
