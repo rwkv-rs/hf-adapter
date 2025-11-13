@@ -269,15 +269,15 @@ def _mm4_decode_blocks(x, block_pairs, block_n):
 def mm4_batched_dot_enabled(device=None) -> bool:
     """Whether the measured tensor-core W4 batch kernel is enabled.
 
-    Blackwell and Ampere consumer/workstation ``sm_86`` both provide the
-    fp16 tensor-core primitive used by :func:`mm4_batched_dot_triton`.  Older
-    pre-sm120 code dispatched every Ampere batch row as a separate GEMV (or
+    The measured ``sm_120+`` and consumer/workstation ``sm_86`` routes provide
+    the fp16 tensor-core primitive used by :func:`mm4_batched_dot_triton`.
+    Older code dispatched every ``sm_86`` batch row as a separate GEMV (or
     materialized the dequantized weight above four rows), which made the 2.9B
     lm-head speed-policy lane about 0.65x fp16 at bsz8.
 
-    Keep sm80/A100 and sm89/Ada on their existing routes until exact-card A/B
-    evidence is recorded; capability policy must not silently generalize one
-    measured Ampere route to every architecture.
+    Keep ``sm_80`` and ``sm_89`` on their existing routes until exact-device
+    A/B evidence is recorded; capability policy must not silently generalize
+    one measured route to every architecture.
     """
     if torch is None or not torch.cuda.is_available():
         return False
