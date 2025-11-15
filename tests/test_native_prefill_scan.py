@@ -191,6 +191,52 @@ def test_prefill_opt_in_lora_state_prep_fallback_matches_token_loop() -> None:
     assert xpf[1].shape == (1, 8)
 
 
+def test_state_prep_deferred_sigmoid_fallback_matches_materialized() -> None:
+    from rwkv7_hf.fused_prefill import fused_prefill_state_prep
+
+    torch.manual_seed(17)
+    shape = (2, 3, 8)
+    w = torch.randn(shape)
+    k = torch.randn(shape)
+    v = torch.randn(shape)
+    a_raw = torch.randn(shape)
+    v_first = torch.randn(shape)
+    v_gate_raw = torch.randn(shape)
+    k_k = torch.randn(8)
+    k_a = torch.randn(8)
+    common = dict(
+        v_first=v_first,
+        num_heads=2,
+        head_dim=4,
+        w_transform="log_decay",
+        force_fallback=True,
+    )
+    expected = fused_prefill_state_prep(
+        w,
+        k,
+        v,
+        torch.sigmoid(a_raw),
+        k_k,
+        k_a,
+        v_gate=torch.sigmoid(v_gate_raw),
+        **common,
+    )
+    actual = fused_prefill_state_prep(
+        w,
+        k,
+        v,
+        a_raw,
+        k_k,
+        k_a,
+        v_gate=v_gate_raw,
+        a_is_raw=True,
+        v_gate_is_raw=True,
+        **common,
+    )
+    for got, ref in zip(actual, expected):
+        torch.testing.assert_close(got, ref, rtol=0.0, atol=0.0)
+
+
 def test_prefill_opt_in_fused_state_scan_fallback_matches_token_loop() -> None:
     native_jit, model, packs = _build_fake_model_and_packs()
     ids = torch.tensor([[1, 5, 4, 2]], dtype=torch.long)
@@ -276,6 +322,7 @@ def main() -> int:
         return 0
     test_prefill_matches_token_loop()
     test_prefill_opt_in_lora_state_prep_fallback_matches_token_loop()
+    test_state_prep_deferred_sigmoid_fallback_matches_materialized()
     test_prefill_opt_in_fused_state_scan_fallback_matches_token_loop()
     test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch()
     print("PASS")

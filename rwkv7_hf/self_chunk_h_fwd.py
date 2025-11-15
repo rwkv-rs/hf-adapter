@@ -54,6 +54,7 @@ def chunk_dplr_fwd_kernel_h(
     USE_INITIAL_STATE: tl.constexpr,
     STORE_FINAL_STATE: tl.constexpr,
     IS_VARLEN: tl.constexpr,
+    NATIVE_STATE_V_K: tl.constexpr,
 ):
     i_k, i_v, i_nh = tl.program_id(0), tl.program_id(1), tl.program_id(2)
     i_n, i_h = i_nh // H, i_nh % H
@@ -71,7 +72,10 @@ def chunk_dplr_fwd_kernel_h(
     # [BK, BV]
     b_h = tl.zeros([BK, BV], dtype=tl.float32)
     if USE_INITIAL_STATE:
-        p_h0 = tl.make_block_ptr(h0 + i_nh * K*V, (K, V), (V, 1), (i_k * BK, i_v * BV), (BK, BV), (1, 0))
+        if NATIVE_STATE_V_K:
+            p_h0 = tl.make_block_ptr(h0 + i_nh * K*V, (K, V), (1, K), (i_k * BK, i_v * BV), (BK, BV), (0, 1))
+        else:
+            p_h0 = tl.make_block_ptr(h0 + i_nh * K*V, (K, V), (V, 1), (i_k * BK, i_v * BV), (BK, BV), (1, 0))
         b_h = tl.load(p_h0, boundary_check=(0, 1)).to(tl.float32)
 
     for i_t in range(NT):
@@ -103,7 +107,10 @@ def chunk_dplr_fwd_kernel_h(
         b_h += b_hc
 
     if STORE_FINAL_STATE:
-        p_ht = tl.make_block_ptr(ht + i_nh * K*V, (K, V), (V, 1), (i_k * BK, i_v * BV), (BK, BV), (1, 0))
+        if NATIVE_STATE_V_K:
+            p_ht = tl.make_block_ptr(ht + i_nh * K*V, (K, V), (1, K), (i_k * BK, i_v * BV), (BK, BV), (0, 1))
+        else:
+            p_ht = tl.make_block_ptr(ht + i_nh * K*V, (K, V), (V, 1), (i_k * BK, i_v * BV), (BK, BV), (1, 0))
         tl.store(p_ht, b_h.to(p_ht.dtype.element_ty, fp_downcast_rounding="rtne"), boundary_check=(0, 1))
 
 
@@ -119,6 +126,7 @@ def chunk_dplr_fwd_h(
     cu_seqlens: torch.LongTensor | None = None,
     chunk_size: int = 64,
     chunk_indices: torch.LongTensor | None = None,
+    native_state_v_k: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     B, T, H, K, V = *kg.shape, u.shape[-1]
     BT = chunk_size
@@ -150,7 +158,8 @@ def chunk_dplr_fwd_h(
     assert NK == 1, 'NK > 1 is not supported because it involves time-consuming synchronization'
 
     h = kg.new_empty(B, NT, H, K, V)
-    final_state = kg.new_empty(N, H, K, V, dtype=torch.float32) if output_final_state else None
+    final_shape = (N, H, V, K) if native_state_v_k else (N, H, K, V)
+    final_state = kg.new_empty(*final_shape, dtype=torch.float32) if output_final_state else None
     v_new = torch.empty_like(u)
     grid = (NK, NV, N * H)
     chunk_dplr_fwd_kernel_h[grid](
@@ -174,5 +183,6 @@ def chunk_dplr_fwd_h(
         BC=BC,
         BK=BK,
         BV=BV,
+        NATIVE_STATE_V_K=bool(native_state_v_k),
     )
     return h, v_new, final_state

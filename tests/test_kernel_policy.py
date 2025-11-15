@@ -105,6 +105,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert rtx3090.fused_prefill_scan
     assert rtx3090.fused_prefill_self_chunk
     assert rtx3090.prefill_self_chunk_min_tokens == 1024
+    assert rtx3090.prefill_self_chunk_size == 16
     assert rtx3090.prefill_graph
     assert rtx3090.prefill_graph_cache_size == 4
     assert rtx3090.bnb_skip_policy == "prefill_hot"
@@ -113,9 +114,12 @@ def test_policy_defaults_are_conservative() -> None:
     assert rtx3090.prefill_scan_block_m_b4 == 32
     assert rtx3090.prefill_scan_num_warps == 4
     assert rtx3090.prefill_blas_library == "cublaslt"
+    assert rtx3090.prefill_blas_large_library == "cublas"
+    assert rtx3090.prefill_blas_large_min_rows == 4096
     assert rtx3090.fused_prefill_shift_mix
     assert rtx3090.fused_prefill_state_prep
     assert rtx3090.fused_prefill_output
+    assert rtx3090.fused_prefill_residual_gemm
     assert rtx3090.fused_prefill_stacked_rkv
     assert rtx3090.prefill_stacked_rkv_min_rows == 192
     assert rtx3090.prefill_stacked_rkv_max_rows == 384

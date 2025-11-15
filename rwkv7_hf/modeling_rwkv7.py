@@ -267,7 +267,7 @@ def _native_prefill_graph_enabled() -> bool:
     return env_flag("RWKV7_NATIVE_PREFILL_GRAPH", bool(getattr(policy, "prefill_graph", False)))
 
 
-def _native_prefill_prepare_blas() -> str | None:
+def _native_prefill_prepare_blas(total_rows: int | None = None) -> str | None:
     """Select the measured large-matrix backend before native prefill.
 
     PyTorch exposes BLAS selection as a process-wide setting.  The policy is
@@ -279,7 +279,12 @@ def _native_prefill_prepare_blas() -> str | None:
     policy = _rwkv7_kernel_policy()
     target = os.environ.get("RWKV7_NATIVE_PREFILL_BLAS")
     if target is None:
-        target = getattr(policy, "prefill_blas_library", None)
+        large_min = int(getattr(policy, "prefill_blas_large_min_rows", 4096))
+        large_target = getattr(policy, "prefill_blas_large_library", None)
+        if total_rows is not None and int(total_rows) >= large_min and large_target is not None:
+            target = large_target
+        else:
+            target = getattr(policy, "prefill_blas_library", None)
     target = "" if target is None else str(target).strip().lower()
     if target in {"", "none", "default", "auto"} or not _cuda_available():
         return None
@@ -309,9 +314,11 @@ def _native_prefill_graph_signature() -> tuple[tuple[str, str | None], ...]:
         "RWKV7_NATIVE_PREFILL_FUSED_CLAMPW_SCAN",
         "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT",
         "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_PROJECT",
+        "RWKV7_NATIVE_PREFILL_FUSED_RESIDUAL_GEMM",
         "RWKV7_NATIVE_PREFILL_FUSED_SCAN",
         "RWKV7_NATIVE_PREFILL_SELF_CHUNK",
         "RWKV7_NATIVE_PREFILL_SELF_CHUNK_MIN_TOKENS",
+        "RWKV7_NATIVE_PREFILL_SELF_CHUNK_SIZE",
         "RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT",
         "RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX",
         "RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP",
@@ -2283,7 +2290,6 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         if _native_jit_prefill is None:
             raise RuntimeError("native prefill backend is unavailable; copy native_jit.py into the model repo")
         self._rwkv7_last_fast_prefill_backend = "native_prefill"
-        _native_prefill_prepare_blas()
         if input_ids.dim() == 1:
             input_ids = input_ids.unsqueeze(0)
         if input_ids.dim() != 2:
@@ -2291,6 +2297,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         if int(input_ids.shape[1]) <= 0:
             raise ValueError("rwkv7_prefill_native requires at least one token")
         batch_size = int(input_ids.shape[0])
+        _native_prefill_prepare_blas(batch_size * int(input_ids.shape[1]))
         if self._rwkv7_uses_external_quantization():
             raise RuntimeError("native prefill currently requires dense floating-point weights")
         source_seen = None

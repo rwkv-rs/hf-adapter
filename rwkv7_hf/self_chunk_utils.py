@@ -11,8 +11,27 @@ USE_CUDA_GRAPH = False
 autotune_cache_kwargs: dict = {}
 
 
-def check_shared_mem(*_args, **_kwargs) -> bool:
-    # The conservative 16/32-wide tiles fit every supported CUDA generation.
+def check_shared_mem(architecture: str = "", device_index: int | None = None) -> bool:
+    """Report the wider-tile capability used by the vendored forward kernel.
+
+    The original FLA helper distinguishes devices by their available shared
+    memory.  Keep that decision local and dependency-free: CUDA sm80+ devices
+    have enough shared memory for the 32-wide Ampere tile, while sm90+ can use
+    the Hopper branch.  Older CUDA and ROCm devices retain the conservative
+    16-wide fallback.
+    """
+
+    if IS_AMD or not torch.cuda.is_available():
+        return False
+    try:
+        major, _minor = torch.cuda.get_device_capability(device_index)
+    except Exception:
+        return False
+    name = str(architecture).strip().lower()
+    if name == "hopper":
+        return int(major) >= 9
+    if name == "ampere":
+        return int(major) >= 8
     return False
 
 
