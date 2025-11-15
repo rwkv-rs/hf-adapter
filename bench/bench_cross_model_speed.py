@@ -310,6 +310,45 @@ def environment_metadata(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+_QWEN35_FAST_BINDING_PREFIXES = {
+    "causal_conv1d_fn": "causal_conv1d.",
+    "causal_conv1d_update": "causal_conv1d.",
+    "chunk_gated_delta_rule": "fla.",
+    "recurrent_gated_delta_rule": "fla.",
+}
+
+
+def qwen35_fast_path_bindings(model) -> dict[str, Any]:
+    """Verify the operators bound by live Qwen3.5 GatedDeltaNet layers.
+
+    The Transformers module-level ``is_fast_path_available`` flag proves that
+    optional packages imported, but not that a loaded layer retained those
+    callables.  Inspecting the live bindings makes optimized-Qwen comparison a
+    fail-closed contract rather than an availability hint.
+    """
+
+    layers = [
+        module
+        for module in model.modules()
+        if all(hasattr(module, name) for name in _QWEN35_FAST_BINDING_PREFIXES)
+    ]
+    bindings: dict[str, str | None] = {}
+    if layers:
+        first = layers[0]
+        for name in _QWEN35_FAST_BINDING_PREFIXES:
+            fn = getattr(first, name, None)
+            bindings[name] = getattr(fn, "__module__", None) if callable(fn) else None
+    verified = bool(layers) and all(
+        isinstance(bindings.get(name), str) and str(bindings[name]).startswith(prefix)
+        for name, prefix in _QWEN35_FAST_BINDING_PREFIXES.items()
+    )
+    return {
+        "verified": verified,
+        "layer_count": len(layers),
+        "bindings": bindings,
+    }
+
+
 def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     dtype = DTYPES[args.dtype]
     started = time.perf_counter()
@@ -327,6 +366,12 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
                 "Qwen3.5 optimized fast path is unavailable; install compatible "
                 "flash-linear-attention and causal-conv1d packages"
             )
+        binding_check = qwen35_fast_path_bindings(model)
+        if not bool(binding_check["verified"]):
+            raise RuntimeError(
+                "Qwen3.5 optimized packages imported but the loaded GatedDeltaNet "
+                f"layers are not bound to FLA/causal-conv1d: {binding_check}"
+            )
     load_s = time.perf_counter() - started
     input_device = str(next(model.parameters()).device)
     ids = build_exact_prompt(tokenizer, args.prompt_tokens, args.batch_size, input_device)
@@ -342,6 +387,7 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     if not logits_finite:
         raise RuntimeError("model produced non-finite logits")
 
+    qwen_bindings = qwen35_fast_path_bindings(model) if args.model_kind == "qwen35" else None
     row = {
         **base_row(args),
         **model_metadata(args, model),
@@ -358,8 +404,15 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "effective_backend": (
             "transformers_torch_fallback"
             if args.model_kind == "qwen35" and QWEN_FORCE_TORCH
-            else effective_backend or step_backend
+            else (
+                "fla+causal_conv1d"
+                if args.model_kind == "qwen35" and qwen_bindings and qwen_bindings["verified"]
+                else effective_backend or step_backend
+            )
         ),
+        "qwen_fast_path_verified": qwen_bindings["verified"] if qwen_bindings is not None else None,
+        "qwen_fast_path_layer_count": qwen_bindings["layer_count"] if qwen_bindings is not None else None,
+        "qwen_fast_path_bindings": qwen_bindings["bindings"] if qwen_bindings is not None else None,
         "cache_type": cache_type,
         "model_footprint_mb": model_footprint_mb(model),
         "peak_vram_mb": peak_mb(args.device),
