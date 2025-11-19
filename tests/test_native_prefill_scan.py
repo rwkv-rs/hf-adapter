@@ -258,6 +258,15 @@ def test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch() -> None:
         assert native_jit._native_prefill_scan_block_m(64, 4) == 8
         native_jit.torch.cuda.get_device_name = lambda: "NVIDIA GeForce RTX 4070"
         assert native_jit._native_prefill_scan_block_m(64, 1) == 64
+        native_jit.torch.cuda.get_device_capability = lambda: (12, 0)
+        native_jit.torch.cuda.get_device_name = lambda: "NVIDIA GeForce RTX 5070 Laptop GPU"
+        assert native_jit._native_prefill_scan_block_m(64, 1) == 8
+        assert native_jit._native_prefill_scan_block_m(64, 2) == 16
+        assert native_jit._native_prefill_scan_block_m(64, 4) == 32
+        assert native_jit._native_prefill_scan_block_m(64, 8) == 64
+        assert native_jit._native_prefill_scan_num_warps(64, 8) == 1
+        assert native_jit._native_prefill_scan_num_warps(64, 32) == 1
+        assert native_jit._native_prefill_scan_num_warps(64, 64) == 4
         os.environ[key] = "8"
         assert native_jit._native_prefill_scan_block_m(64, 4) == 8
     finally:
@@ -270,6 +279,20 @@ def test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch() -> None:
             os.environ[key] = old_env
 
 
+def test_callable_graph_linear_promotes_vector_input() -> None:
+    from rwkv7_hf import native_jit
+
+    class RequiresMatrixInput:
+        def __call__(self, value: torch.Tensor) -> torch.Tensor:
+            assert value.dim() == 2
+            return value * 2
+
+    vector = torch.tensor([1.0, 2.0])
+    result = native_jit._graph_linear_call(vector, RequiresMatrixInput())
+    assert result.shape == vector.shape
+    assert torch.equal(result, vector * 2)
+
+
 def main() -> int:
     if torch is None:
         print("SKIP native prefill scan test: torch unavailable")
@@ -278,6 +301,7 @@ def main() -> int:
     test_prefill_opt_in_lora_state_prep_fallback_matches_token_loop()
     test_prefill_opt_in_fused_state_scan_fallback_matches_token_loop()
     test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch()
+    test_callable_graph_linear_promotes_vector_input()
     print("PASS")
     return 0
 
