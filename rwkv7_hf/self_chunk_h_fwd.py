@@ -5,6 +5,8 @@
 # For a list of all contributors, visit:
 #   https://github.com/fla-org/flash-linear-attention/graphs/contributors
 
+import os
+
 import torch
 import triton
 import triton.language as tl
@@ -12,6 +14,57 @@ import triton.language as tl
 from .self_chunk_utils import (IS_AMD, USE_CUDA_GRAPH, autotune_cache_kwargs, check_shared_mem, exp2, prepare_chunk_indices, prepare_chunk_offsets)
 
 NUM_WARPS_AUTOTUNE = [2, 4, 8, 16] if IS_AMD else [2, 4, 8, 16, 32]
+
+
+def resolve_chunk_h_tiles(
+    device_index: int | None = None,
+    chunk_size: int | None = None,
+    *,
+    batch_size: int | None = None,
+    tokens: int | None = None,
+) -> tuple[int, int]:
+    """Resolve the recurrent chunk-H ``(BV, BC)`` tiles for this device.
+
+    Consumer Ampere has substantially less shared memory per SM than A100.
+    An exact RTX 3090 B4/P2048 sweep therefore uses a 16x16 tile.  Do not
+    silently apply that route to every sm80 device or unmeasured 3090 shape:
+    A100 and the remaining routes retain the original 32x32 default. Explicit
+    environment overrides remain the highest-priority reproduction mechanism.
+    """
+
+    if check_shared_mem('hopper', device_index):
+        bv, bc = 64, 64
+    elif check_shared_mem('ampere', device_index):
+        bv, bc = 32, 32
+        try:
+            # Only the measured B4/P2048 route benefits from BC16 while still
+            # using a chunk-32 temporal tile. B2 already has chunk_size=16;
+            # retain BC32 for unmeasured RTX 3090 shapes.
+            if (
+                "3090" in torch.cuda.get_device_name(device_index).lower()
+                and (batch_size, tokens) == (4, 2048)
+            ):
+                bv = 16
+                bc = 16
+        except Exception:
+            pass
+    else:
+        bv, bc = 16, 16
+
+    raw_bv = os.environ.get("RWKV7_NATIVE_PREFILL_SELF_CHUNK_H_BV")
+    raw_bc = os.environ.get("RWKV7_NATIVE_PREFILL_SELF_CHUNK_H_BC")
+    try:
+        if raw_bv is not None:
+            bv = int(raw_bv)
+        if raw_bc is not None:
+            bc = int(raw_bc)
+    except ValueError as exc:
+        raise ValueError("self-chunk H BV/BC overrides must be integers") from exc
+    if bv not in {16, 32, 64} or bc not in {16, 32, 64}:
+        raise ValueError("self-chunk H BV/BC overrides must be 16, 32, or 64")
+    if chunk_size is not None:
+        bc = min(int(chunk_size), bc)
+    return int(bv), int(bc)
 
 
 @triton.heuristics({
@@ -140,19 +193,12 @@ def chunk_dplr_fwd_h(
         N, NT, chunk_offsets = len(cu_seqlens) - 1, len(chunk_indices), prepare_chunk_offsets(cu_seqlens, BT)
     BK = max(triton.next_power_of_2(K), 16)
     assert BK <= 256, "current kernel does not support head dimension larger than 256."
-    # H100 can have larger block size
-
-    if check_shared_mem('hopper', kg.device.index):
-        BV = 64
-        BC = 64 if K <= 128 else 32
-    elif check_shared_mem('ampere', kg.device.index):  # A100
-        BV = 32
-        BC = 32
-    else:
-        BV = 16
-        BC = 16
-
-    BC = min(BT, BC)
+    BV, BC = resolve_chunk_h_tiles(
+        kg.device.index,
+        BT,
+        batch_size=B,
+        tokens=T,
+    )
     NK = triton.cdiv(K, BK)
     NV = triton.cdiv(V, BV)
     assert NK == 1, 'NK > 1 is not supported because it involves time-consuming synchronization'

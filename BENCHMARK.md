@@ -76,6 +76,26 @@ dense/W8/W4 matrix remains open.
 
 Evidence: [`bench/3090_self_fused_20260713/README.md`](bench/3090_self_fused_20260713/README.md).
 
+### RTX 3090 native quant production batch
+
+The 7.2B/9B broad matrix now also has a fail-closed `72/72` artifact with zero
+red or missing cells at the historical dense `1.05x` floor. The current
+acceptance policy is stricter and bsz8-only: dense RWKV is compared with dense
+Qwen using pair-specific active-parameter-normalized targets, while RWKV W8/W4
+is gated only against the same RWKV fp16 row. Quantized Qwen is not a quant
+acceptance dependency.
+
+At bsz8, dense decode is `>=1.8924x` Qwen and passes the new 7.2B/9B `1.50x`
+target. Dense prefill is `>=1.0537x`, so the normalized prefill target remains
+open. W8 and W4 are respectively `>=1.7970x/1.0900x` and
+`>=1.0018x/1.0179x` their matching RWKV dense prefill/decode rows, with both
+footprint and peak VRAM lower. External-token quality ratios are `1.001475`
+(W8), `1.001564` (BnB W4) and `1.004745` (TorchAO W4), all within the `1.01`
+gate.
+
+Evidence and exact reproduction:
+[`bench/3090_native_quant_20260713/README.md`](bench/3090_native_quant_20260713/README.md).
+
 ## RTX 4090 promoted rows
 
 0.4B dense fp16 native-graph decode:

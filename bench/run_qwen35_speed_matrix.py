@@ -172,6 +172,12 @@ def worker_command(args: argparse.Namespace, spec: RunSpec) -> list[str]:
         spec.dtype,
         "--quantization",
         spec.quantization,
+        "--native-quant-min-params",
+        str(args.native_quant_min_params),
+        "--native-quant-policy",
+        args.native_quant_policy,
+        "--torchao-group-size",
+        str(args.torchao_group_size),
         "--device",
         args.device,
         "--batch-size",
@@ -180,6 +186,8 @@ def worker_command(args: argparse.Namespace, spec: RunSpec) -> list[str]:
         str(spec.prompt_tokens),
         "--decode-tokens",
         str(spec.decode_tokens),
+        "--prefill-chunk-size",
+        str(args.prefill_chunk_size),
         "--warmup",
         str(args.warmup),
         "--runs",
@@ -203,10 +211,12 @@ def append_orchestrator_failure(
     spec: RunSpec,
     cmd: list[str],
     proc: subprocess.CompletedProcess[str],
+    *,
+    benchmark_matrix: str,
 ) -> None:
     row = {
         "axis": "qwen35_cross_model_speed",
-        "benchmark_matrix": args.benchmark_matrix,
+        "benchmark_matrix": benchmark_matrix,
         "status": "fail",
         "model_pair": spec.model_pair,
         "model_role": spec.model_role,
@@ -246,12 +256,31 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--prompt-tokens", nargs="+", type=int, default=[128, 512, 2048])
     ap.add_argument("--decode-tokens", nargs="+", type=int, default=[128, 512])
     ap.add_argument("--batch-sizes", nargs="+", type=int, default=[1, 2, 4, 8])
-    ap.add_argument("--quantizations", nargs="+", choices=["none", "bnb8", "bnb4"], default=["none", "bnb8", "bnb4"])
+    ap.add_argument(
+        "--quantizations",
+        nargs="+",
+        choices=[
+            "none",
+            "bnb8",
+            "bnb4",
+            "bnb8_a8w8_head",
+            "torchao_w8",
+            "torchao_w4",
+            "a8w8",
+            "mm8",
+            "mm4",
+        ],
+        default=["none", "bnb8", "bnb4"],
+    )
+    ap.add_argument("--native-quant-min-params", type=int, default=1_000_000)
+    ap.add_argument("--native-quant-policy", choices=["memory", "speed"], default="memory")
+    ap.add_argument("--torchao-group-size", type=int, default=128)
     ap.add_argument("--dtype", choices=["fp16", "bf16", "fp32"], default="fp16")
     ap.add_argument("--benchmark-matrix", default="qwen35_hf")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--warmup", type=int, default=1)
     ap.add_argument("--runs", type=int, default=3)
+    ap.add_argument("--prefill-chunk-size", type=int, default=0)
     ap.add_argument("--rwkv-attn-mode", choices=["chunk", "fused_recurrent"], default="fused_recurrent")
     ap.add_argument("--rwkv-code-source", choices=["repo", "model"], default="repo")
     ap.add_argument("--qwen-backend", choices=["auto", "torch"], default="auto")
@@ -301,6 +330,19 @@ def main() -> int:
     )
     validate_matrix(config)
     selected_roles = set(args.model_roles)
+    native_quantizations = {
+        "torchao_w8",
+        "torchao_w4",
+        "a8w8",
+        "mm8",
+        "mm4",
+        "bnb8_a8w8_head",
+    }
+    if "reference" in selected_roles and any(q in native_quantizations for q in args.quantizations):
+        raise ValueError(
+            "Native quant modes are RWKV candidate backends. Run candidate and reference roles separately, "
+            "using the native mode for RWKV and bnb8/bnb4 for the Qwen reference."
+        )
     specs = [spec for spec in build_run_specs(config) if spec.model_role in selected_roles]
     seen = existing_keys(args.results) if args.skip_existing else set()
     env = build_run_environment(args)
@@ -329,7 +371,13 @@ def main() -> int:
             if proc.returncode != 0:
                 failures += 1
                 if spec.raw_key not in current_keys:
-                    append_orchestrator_failure(args.results, spec, cmd, proc)
+                    append_orchestrator_failure(
+                        args.results,
+                        spec,
+                        cmd,
+                        proc,
+                        benchmark_matrix=args.benchmark_matrix,
+                    )
                     current_keys.add(spec.raw_key)
                 if args.fail_fast:
                     return proc.returncode
