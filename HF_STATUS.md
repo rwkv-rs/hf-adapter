@@ -20,7 +20,7 @@ Last updated: **2026-07-13**.
 | Native/no-FLA backend | **PASS as opt-in compatibility path** | load/generate/cache/PEFT/Trainer/TRL smoke; not the default wrapper |
 | W8/W4 functionality and memory | **PASS** | bnb and native/MLX paths load/generate and reduce footprint |
 | Universal W8/W4 speed | **PARTIAL** | selected V100/4090/5090 speed lanes pass; full-memory quant remains open |
-| Production performance | **PARTIAL / strong card-local closes** | V100, measured 4090 lanes, RTX 5090 and Apple M5 have promoted artifacts; V100 Qwen3.5 HF fallback matrix has 216/216 coverage with 207/216 strict speed passes |
+| Production performance | **PARTIAL / strong card-local closes** | V100, measured 4090 lanes, RTX 5090 and Apple M5 have promoted artifacts; RTX 5070 verified-Qwen-FLA decode is >=1.0x in 72/72 cells, but the strict combined gate is only 35/72 because of prefill red cells |
 | Full common-card coverage | **PARTIAL** | H100, AMD/ROCm, Turing and broader Apple/50-series evidence remain open |
 | PP/TP | **PARTIAL** | HF multi-device/device-map smoke exists; production TP matrix is not closed |
 | Speculative decoding | **EXPERIMENTAL PASS** | HF-compatible harness and Apple target-greedy oracle evidence exist |
@@ -29,8 +29,9 @@ Last updated: **2026-07-13**.
 
 | Platform | Status | Canonical evidence / boundary |
 |---|---|---|
-| V100 32GB | **Production-close** | Dense Albatross P1 plus native W8/W4 speed lane; official Qwen3.5 torch-fallback matrix has 216/216 coverage, with nine bnb4 decode rows below the 1.05x gate; [`bench/v100_production_close_20260711/`](bench/v100_production_close_20260711/README.md), [`bench/qwen35_v100_hf_matrix_20260712/`](bench/qwen35_v100_hf_matrix_20260712/README.md) |
+| V100 32GB | **Production-close for RWKV/Albatross lanes** | Dense Albatross P1 plus native W8/W4 speed lane; the Qwen3.5 Torch-fallback matrix is historical only; [`bench/v100_production_close_20260711/`](bench/v100_production_close_20260711/README.md), [`bench/qwen35_v100_hf_matrix_20260712/`](bench/qwen35_v100_hf_matrix_20260712/README.md) |
 | RTX 4090 | **Production-close for measured lanes** | All measured 0.4B decode batches pass; current-session bsz4 prefill passes; historical high-water remains |
+| RTX 5070 Laptop | **PARTIAL for verified Qwen FLA comparison** | 1.5B RWKV vs 2B Qwen: 144/144 raw rows pass, FLA core 72/72, strict speed 35/72, footprint/peak VRAM lower 72/72; Windows convolution remains Torch fallback; [`bench/5070_qwen35_fla_matrix_20260713/`](bench/5070_qwen35_fla_matrix_20260713/README.md) |
 | RTX 5090 | **Production-close** | Quant pressure, 13.3B low-memory conversion and full MATH500; [`bench/5090_blackwell_production_close_20260712/`](bench/5090_blackwell_production_close_20260712/README.md) |
 | Apple M5 | **Production-close for measured MLX pairs** | Selected Qwen3.5 comparison gates and CoreML state correctness; [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PRODUCTION_CLOSE.md) |
 | A100 40GB / A800 80GB / A6000 48GB | **Validated** | Large-model API/training/quant/ZeRO matrices; production performance remains card-specific |
