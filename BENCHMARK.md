@@ -5,7 +5,7 @@ exploratory tuning chronology. Raw rows, logs and negative experiments remain
 in [`bench/`](bench/); platform interpretation lives in
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
-Last updated: **2026-07-12**.
+Last updated: **2026-07-13**.
 
 ## Benchmark contract
 
@@ -42,6 +42,28 @@ Canonical matrix: 0.1B/0.4B/1.5B × bsz1/2/4/8.
 | Native W8/W4 paired prefill / fp16 | `0.996x–1.007x` | 1% equivalence PASS |
 
 Evidence: [`bench/v100_production_close_20260711/README.md`](bench/v100_production_close_20260711/README.md).
+
+### V100 RWKV-7 vs Qwen3.5 HF matrix
+
+The complete official text-only matrix covers three model pairs, fp16/bnb8/
+bnb4, prompt 128/512/2048, decode 128/512, and bsz1/2/4/8: `432/432` raw rows
+pass and all `216/216` comparison cells join.
+
+| Metric | Minimum | Median | Maximum | Strict 1.05x pass |
+|---|---:|---:|---:|---:|
+| Prefill RWKV/Qwen | `1.246x` | `1.936x` | `8.141x` | 216/216 |
+| Decode RWKV/Qwen | `0.947x` | `1.317x` | `10.832x` | 207/216 |
+
+All nine strict-gate misses are bnb4 decode rows; only three are below `1.0x`.
+Static model footprint is lower in `216/216` cells (`0.629x-0.812x`), and peak
+allocated VRAM is lower in `192/216` cells (`0.390x-1.068x`).
+
+Important boundary: all Qwen rows use the official Transformers/PyTorch
+fallback (`qwen3_5_text`, forced torch, FLA not importable), not an optimized
+Qwen FLA/Triton backend. This is an exact V100 HF engine-speed result, not proof
+that RWKV beats Qwen3.5 on newer hardware or model quality.
+
+Evidence: [`bench/qwen35_v100_hf_matrix_20260712/README.md`](bench/qwen35_v100_hf_matrix_20260712/README.md).
 
 ## RTX 4090 promoted rows
 
