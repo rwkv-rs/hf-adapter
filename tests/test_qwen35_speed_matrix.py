@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -15,7 +16,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from bench.bench_cross_model_speed import build_exact_prompt, failure_row, model_metadata, validate_args
-from bench.run_qwen35_speed_matrix import MatrixConfig, build_run_specs, existing_keys, parse_pair_spec
+from bench.run_qwen35_speed_matrix import (
+    MatrixConfig,
+    build_run_environment,
+    build_run_specs,
+    existing_keys,
+    parse_pair_spec,
+)
 
 
 def write_rows(path: Path, rows: list[dict]) -> None:
@@ -220,6 +227,14 @@ def test_orchestrator_existing_keys_are_resumable(tmp: Path) -> None:
     assert any(key[-1] == "reference" for key in keys)
 
 
+def test_orchestrator_forces_production_rwkv_wrapper() -> None:
+    args = Namespace(rwkv_fast_token_backend="native_graph")
+    env = build_run_environment(args, {"RWKV7_NATIVE_MODEL": "1", "PYTHONPATH": "/existing"})
+    assert env["RWKV7_NATIVE_MODEL"] == "0"
+    assert env["RWKV7_FAST_TOKEN_BACKEND"] == "native_graph"
+    assert env["PYTHONPATH"].endswith(f"{os.pathsep}/existing")
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         test_comparator_passes_complete_matrix(Path(td))
@@ -230,6 +245,7 @@ def main() -> int:
     test_orchestrator_expands_432_raw_rows()
     with tempfile.TemporaryDirectory() as td:
         test_orchestrator_existing_keys_are_resumable(Path(td))
+    test_orchestrator_forces_production_rwkv_wrapper()
     print("QWEN35 SPEED MATRIX TESTS PASS")
     return 0
 
