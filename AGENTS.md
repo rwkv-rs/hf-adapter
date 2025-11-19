@@ -789,6 +789,18 @@ Run this checklist for every new GPU before marking it as supported:
     prove both correctness and speed. Isolated kernel wins do not promote.
   - Quantization must include footprint, long/short decode speed, and greedy or
     quality rows. Treat bnb as a compatibility/memory baseline, not a fast path.
+  - Qwen3.5 optimized-reference rows on the RTX 5070 Laptop must use
+    `--qwen-backend fla` and verify every Gated DeltaNet layer binds FLA chunk
+    prefill, fused-recurrent decode, and FLA fused gated normalization.
+    `causal-conv1d` is a separate capability gate because the Windows exact-card
+    environment can run the FLA core while convolution uses the Transformers
+    Torch fallback. Such rows must be labeled `torch_conv`, not fully fused.
+    Forced-Torch rows are diagnostic only.
+  - Exact-card Qwen evidence now exists under
+    `bench/5070_qwen35_fla_matrix_20260713/`: 144/144 raw rows pass and all
+    72/72 Qwen references verify the FLA core. The strict RWKV/Qwen speed gate
+    is only 35/72 because prefill reaches 1.05x in 35/72 cells; decode is
+    >=1.0x in 72/72 and >=1.05x in 71/72. Do not claim universal superiority.
 - Mandatory before claiming support: import/generate, fast decode, dynamic batch,
   chunked prefill, bnb W8/W4 functional inference, `triton_compat` remote-code
   import on early sm_120 stacks, native_model no-FLA fallback/training smoke,

@@ -45,7 +45,7 @@ Evidence: [`bench/v100_production_close_20260711/README.md`](bench/v100_producti
 
 ### V100 RWKV-7 vs Qwen3.5 HF matrix
 
-The complete official text-only matrix covers three model pairs, fp16/bnb8/
+The historical official text-only matrix covers three model pairs, fp16/bnb8/
 bnb4, prompt 128/512/2048, decode 128/512, and bsz1/2/4/8: `432/432` raw rows
 pass and all `216/216` comparison cells join.
 
@@ -58,12 +58,38 @@ All nine strict-gate misses are bnb4 decode rows; only three are below `1.0x`.
 Static model footprint is lower in `216/216` cells (`0.629x-0.812x`), and peak
 allocated VRAM is lower in `192/216` cells (`0.390x-1.068x`).
 
-Important boundary: all Qwen rows use the official Transformers/PyTorch
-fallback (`qwen3_5_text`, forced torch, FLA not importable), not an optimized
-Qwen FLA/Triton backend. This is an exact V100 HF engine-speed result, not proof
-that RWKV beats Qwen3.5 on newer hardware or model quality.
+Important boundary: all recorded Qwen rows use the official
+Transformers/PyTorch fallback (`qwen3_5_text`, forced torch, FLA not
+importable). This artifact is now a historical diagnostic and does not satisfy
+the optimized-Qwen acceptance gate. The replacement matrix defaults to
+`--qwen-backend fla` and fails closed unless every Qwen Gated DeltaNet layer
+binds FLA prefill/decode, causal-convolution, and fused-normalization operators.
+The replacement exact-card run targets the RTX 5070 Laptop. Its required FLA
+core contract covers Gated DeltaNet prefill/decode and fused gated norm;
+`causal-conv1d` is reported separately on Windows. The completed 5070 artifact
+is reported below; it does not retroactively upgrade the historical V100 rows.
 
 Evidence: [`bench/qwen35_v100_hf_matrix_20260712/README.md`](bench/qwen35_v100_hf_matrix_20260712/README.md).
+Design: [`docs/plans/2026-07-13-qwen35-5070-fla-design.md`](docs/plans/2026-07-13-qwen35-5070-fla-design.md).
+
+### RTX 5070 Laptop RWKV-7 vs verified Qwen3.5 FLA
+
+The exact-card 1.5B RWKV vs 2B Qwen matrix covers 144/144 passing raw rows and
+72/72 joined cells across prompt128/512/2048, decode128/512, bsz1/2/4/8, and
+fp16/bnb8/bnb4. Every Qwen row binds all 18 Gated DeltaNet layers to FLA
+prefill, fused-recurrent decode, and fused gated norm. Windows lacks
+`causal-conv1d`, so the honest effective backend is
+`qwen_fla_gated_delta_rule_torch_conv`, not full fusion.
+
+The separate FLA/Torch probe passes 8/8 greedy tokens with prompt/final logits
+cosine `0.99999076` / `0.99999213`. The strict matrix result is **FAIL**:
+prefill is >=1.0x in 41/72 and >=1.05x in 35/72; decode is >=1.0x in 72/72 and
+>=1.05x in 71/72. Model footprint and peak VRAM are lower in 72/72 cells, with
+ratio ranges `0.729x-0.812x` and `0.742x-0.913x`. These are one-warmup,
+one-run, fresh-process laptop rows; retain every red cell and do not replace
+the strict result with the median.
+
+Evidence: [`bench/5070_qwen35_fla_matrix_20260713/README.md`](bench/5070_qwen35_fla_matrix_20260713/README.md).
 
 ## RTX 4090 promoted rows
 

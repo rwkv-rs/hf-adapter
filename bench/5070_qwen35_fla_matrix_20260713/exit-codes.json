@@ -1,0 +1,7 @@
+{
+    "compare-exit-code":  0,
+    "fla-smoke-exit-code":  0,
+    "matrix-exit-code":  0,
+    "probe-compare-exit-code":  0,
+    "torch-smoke-exit-code":  0
+}

@@ -4,6 +4,12 @@ Date: 2026-07-12
 
 Hardware: one `Tesla V100-PCIE-32GB` (`sm_70`) on GPU1.
 
+> Historical diagnostic only: every Qwen row in this artifact used the
+> Transformers Torch fallback. The current optimized-Qwen contract requires a
+> new exact-card result set with `--qwen-backend fla` and verified FLA core
+> operator binding.
+> These rows must not be cited as an FLA comparison.
+
 This artifact compares the RWKV-7 HF adapter against official text-only
 Qwen3.5 HF checkpoints at matched tensor shapes. It measures inference-engine
 speed and memory only. It does not evaluate instruction following, reasoning,
