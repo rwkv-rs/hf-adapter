@@ -1,0 +1,25 @@
+{
+    "date":  "2026-07-14",
+    "gpu":  "NVIDIA GeForce RTX 5070 Laptop GPU",
+    "compute_capability":  [
+                               12,
+                               0
+                           ],
+    "memory_total_mib":  8151,
+    "driver":  "582.05",
+    "torch":  "2.11.0+cu128",
+    "torch_cuda":  "12.8",
+    "triton_distribution":  "triton-windows",
+    "triton":  "3.7.1.post27",
+    "transformers":  "5.12.1",
+    "flash_linear_attention":  "0.5.1",
+    "bitsandbytes":  "0.49.2",
+    "causal_conv1d":  null,
+    "os":  "Microsoft Windows NT 10.0.26200.0",
+    "qwen_model":  "Qwen/Qwen3.5-2B",
+    "qwen_effective_backend":  "qwen_fla_gated_delta_rule_torch_conv",
+    "rwkv_model":  "rwkv7-g1g-1.5b-hf",
+    "source_commit":  "9fe4a5b88efee3f1196f064004ecc2379e32d7dc",
+    "source_branch":  "wangyue/qwen35-5070-fla-benchmark",
+    "source_dirty":  true
+}
