@@ -36,13 +36,22 @@ if False:  # pragma: no cover
     from .fused_attention_projection import fused_rkv_wag_projection as _native_fused_attn_projection_dependency_sentinel
     from .fused_decode_norm_mix import fused_attn_norm_mix6_decode as _native_fused_decode_norm_mix_dependency_sentinel
     from .fused_elementwise import fused_relu_square as _native_fused_elementwise_dependency_sentinel
+    from .fused_ffn import fused_sequence_ffn as _native_fused_ffn_dependency_sentinel
     from .fused_lora import fused_wag_lora as _native_fused_lora_dependency_sentinel
     from .fused_output import fused_attn_output_prepare as _native_fused_output_dependency_sentinel
     from .fused_prefill import fused_prefill_state_prep as _native_fused_prefill_dependency_sentinel
     from .fused_recurrent_update import fused_recurrent_update as _native_fused_recurrent_dependency_sentinel
     from .fused_time_mix import fused_attn_shift_mix as _native_fused_time_mix_dependency_sentinel
     from .kernel_policy import current_kernel_policy as _native_kernel_policy_dependency_sentinel
+    from .native_quant_bnb8 import fused_bnb8_relu_square_quant as _native_bnb8_dependency_sentinel
     from .native_quant_policy import normalize_native_mm_policy as _native_quant_policy_dependency_sentinel
+    from .self_chunk_A_fwd import chunk_dplr_fwd_intra as _native_self_chunk_a_dependency_sentinel
+    from .self_chunk_cumsum import chunk_rwkv6_fwd_cumsum as _native_self_chunk_cumsum_dependency_sentinel
+    from .self_chunk_h_fwd import chunk_dplr_fwd_h as _native_self_chunk_h_dependency_sentinel
+    from .self_chunk_o_fwd import chunk_dplr_fwd_o as _native_self_chunk_o_dependency_sentinel
+    from .self_chunk_rwkv7 import self_chunk_rwkv7 as _native_self_chunk_dependency_sentinel
+    from .self_chunk_utils import check_shared_mem as _native_self_chunk_utils_dependency_sentinel
+    from .self_chunk_wy_fwd import prepare_wy_repr_fwd as _native_self_chunk_wy_dependency_sentinel
     from .sm70_linear import sm70_linear as _native_sm70_linear_dependency_sentinel
     from .sm70_quant import w4_linear as _native_sm70_quant_dependency_sentinel
     from .sm70_wagv import sm70_wagv_lora as _native_sm70_wagv_dependency_sentinel
