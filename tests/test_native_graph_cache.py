@@ -40,6 +40,7 @@ def _install_runtime_stubs() -> None:
     torch_mod.Tensor = Tensor
     torch_mod.LongTensor = Tensor
     torch_mod.no_grad = lambda: _NoGrad()
+    torch_mod.inference_mode = lambda: _NoGrad()
     torch_mod.float32 = "float32"
     torch_mod.cuda = types.SimpleNamespace(is_available=lambda: True)
     _ensure_module("torch.nn")
@@ -102,6 +103,16 @@ def main() -> int:
         if name == "rwkv7_hf" or name.startswith("rwkv7_hf."):
             del sys.modules[name]
     modeling = importlib.import_module("rwkv7_hf.modeling_rwkv7")
+
+    class SourceCache(modeling._FLACache):
+        def get_seq_length(self):
+            return 17
+
+        def to_legacy_cache(self):
+            return [{}]
+
+    converted = modeling.RWKV7StateCache.from_legacy_cache(SourceCache())
+    assert converted.get_seq_length() == 17
 
     state_cache = modeling.RWKV7StateCache()
     assert state_cache.rwkv7_cache_metrics()["updates"] == 0
@@ -321,6 +332,40 @@ def main() -> int:
         assert len(owner._rwkv7_native_graph_runner_cache) == 0
         assert clear_cache(owner) == 0
 
+        # A size-1 prefill cache must release both the LRU entry and the hot
+        # alias before constructing a replacement CUDA graph. Keeping either
+        # reference alive during capture can permanently select a slower,
+        # low-workspace GEMM plan for the new shape.
+        prefill_capture_state = []
+
+        class PrefillRunner:
+            def __init__(self, graph_owner, _packs, batch_size, prompt_tokens, logits_to_keep):
+                prefill_capture_state.append(
+                    (
+                        len(getattr(graph_owner, "_rwkv7_native_prefill_graph_runner_cache", {})),
+                        getattr(graph_owner, "_rwkv7_native_prefill_graph_hot_runner", None),
+                    )
+                )
+                self.shape = (int(batch_size), int(prompt_tokens), int(logits_to_keep))
+
+        modeling._RWKV7NativeGraphPrefillRunner = PrefillRunner
+        get_prefill_runner = modeling.RWKV7ForCausalLM._rwkv7_native_prefill_graph_runner
+        old_prefill_limit = os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH_CACHE_SIZE")
+        os.environ["RWKV7_NATIVE_PREFILL_GRAPH_CACHE_SIZE"] = "1"
+        try:
+            p128 = get_prefill_runner(owner, packs, 1, 128, 1)
+            assert prefill_capture_state[-1] == (0, None), prefill_capture_state
+            p512 = get_prefill_runner(owner, packs, 1, 512, 1)
+            assert p512 is not p128
+            assert prefill_capture_state[-1] == (0, None), prefill_capture_state
+            assert list(owner._rwkv7_native_prefill_graph_runner_cache.values()) == [p512]
+            assert owner._rwkv7_native_prefill_graph_hot_runner is p512
+        finally:
+            if old_prefill_limit is None:
+                os.environ.pop("RWKV7_NATIVE_PREFILL_GRAPH_CACHE_SIZE", None)
+            else:
+                os.environ["RWKV7_NATIVE_PREFILL_GRAPH_CACHE_SIZE"] = old_prefill_limit
+
         # Every capture-affecting norm/mix setting must produce a distinct
         # runner. Otherwise an env change can silently replay a stale graph.
         os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = "8"
@@ -397,12 +442,15 @@ def main() -> int:
     old_jit_block_step = modeling._native_jit_block_step
     old_jit_block_step_batched = modeling._native_jit_block_step_batched
     old_jit_extract = modeling._native_jit_extract
+    old_graph_extract = modeling._native_graph_extract
     old_graph_block_ip = modeling._native_graph_block_ip
     old_graph_block_ip_batched = modeling._native_graph_block_ip_batched
+    old_external_quant_graph = os.environ.get("RWKV7_NATIVE_GRAPH_EXTERNAL_QUANT")
     try:
         modeling._native_jit_block_step = object()
         modeling._native_jit_block_step_batched = object()
         modeling._native_jit_extract = lambda owner: (packs, None, None, None)
+        modeling._native_graph_extract = lambda owner: (packs, None, None, None)
         modeling._native_graph_block_ip = object()
         modeling._native_graph_block_ip_batched = object()
 
@@ -412,6 +460,15 @@ def main() -> int:
         )
         owner._rwkv7_uses_external_quantization = types.MethodType(
             modeling.RWKV7ForCausalLM._rwkv7_uses_external_quantization, owner
+        )
+        owner._rwkv7_external_quant_config = types.MethodType(
+            modeling.RWKV7ForCausalLM._rwkv7_external_quant_config, owner
+        )
+        owner._rwkv7_external_quant_native_safe = types.MethodType(
+            modeling.RWKV7ForCausalLM._rwkv7_external_quant_native_safe, owner
+        )
+        owner._rwkv7_external_quant_graph_safe = types.MethodType(
+            modeling.RWKV7ForCausalLM._rwkv7_external_quant_graph_safe, owner
         )
         owner._rwkv7_external_quant_graph_enabled = types.MethodType(
             modeling.RWKV7ForCausalLM._rwkv7_external_quant_graph_enabled, owner
@@ -453,6 +510,11 @@ def main() -> int:
         os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "native_graph"
         assert owner._rwkv7_resolve_fast_token_backend(1) == "fla"
         assert owner.rwkv7_warmup_fast_token([1], backend="native_graph") == {1: "fla"}
+        os.environ["RWKV7_NATIVE_GRAPH_EXTERNAL_QUANT"] = "1"
+        os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "auto"
+        assert owner._rwkv7_resolve_fast_token_backend(1) == "native_graph"
+        assert owner._rwkv7_can_use_native_backend("native_graph", 1) is True
+        os.environ.pop("RWKV7_NATIVE_GRAPH_EXTERNAL_QUANT", None)
         os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "native_jit"
         assert owner._rwkv7_resolve_fast_token_backend(1) == "fla"
         assert owner.rwkv7_warmup_fast_token([1], backend="native_jit") == {1: "fla"}
@@ -466,6 +528,20 @@ def main() -> int:
         os.environ.pop("RWKV7_FAST_TOKEN_QUANT", None)
         os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "auto"
         owner.is_loaded_in_4bit = False
+
+        owner.is_loaded_in_8bit = True
+        owner.config = types.SimpleNamespace(
+            quantization_config={"load_in_8bit": True, "llm_int8_threshold": 6.0}
+        )
+        os.environ["RWKV7_NATIVE_GRAPH_EXTERNAL_QUANT"] = "1"
+        assert owner._rwkv7_external_quant_graph_safe() is False
+        assert owner._rwkv7_can_use_native_backend("native_graph", 1) is False
+        owner.config.quantization_config["llm_int8_threshold"] = 0.0
+        assert owner._rwkv7_external_quant_graph_safe() is True
+        assert owner._rwkv7_can_use_native_backend("native_graph", 1) is True
+        owner.is_loaded_in_8bit = False
+        owner.config = types.SimpleNamespace()
+        os.environ.pop("RWKV7_NATIVE_GRAPH_EXTERNAL_QUANT", None)
 
         owner.hf_device_map = {"model.embeddings": 0, "model.layers.0": 1}
         assert owner._rwkv7_has_multi_cuda_device_map() is True
@@ -496,6 +572,7 @@ def main() -> int:
         modeling._native_jit_block_step = old_jit_block_step
         modeling._native_jit_block_step_batched = old_jit_block_step_batched
         modeling._native_jit_extract = old_jit_extract
+        modeling._native_graph_extract = old_graph_extract
         modeling._native_graph_block_ip = old_graph_block_ip
         modeling._native_graph_block_ip_batched = old_graph_block_ip_batched
         if old_backend is None:
@@ -506,6 +583,10 @@ def main() -> int:
             os.environ.pop("RWKV7_FAST_FORWARD", None)
         else:
             os.environ["RWKV7_FAST_FORWARD"] = old_fast_forward
+        if old_external_quant_graph is None:
+            os.environ.pop("RWKV7_NATIVE_GRAPH_EXTERNAL_QUANT", None)
+        else:
+            os.environ["RWKV7_NATIVE_GRAPH_EXTERNAL_QUANT"] = old_external_quant_graph
 
     print("PASS")
     return 0

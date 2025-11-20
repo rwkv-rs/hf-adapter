@@ -5,8 +5,10 @@ PyTorch's CUDA int8 GEMM requires more than sixteen activation rows. Cached
 decode normally has only one to eight rows, so this module pads the activation
 matrix to seventeen rows, uses a fused Triton per-row quantizer, dispatches
 ``torch._int_mm``, and fuses output scaling/casting in a second Triton kernel.
-The primary production policy quantizes ``lm_head`` only: it reduces model
-payload while avoiding the small-shape FFN regressions of full-model W8.
+The speed policy quantizes ``lm_head`` only. The memory policy quantizes all
+size-gated linears covered by the native kernel (input width <= 4096), while
+leaving wider FFN-down projections dense instead of dequantizing them on every
+call.
 """
 from __future__ import annotations
 
@@ -20,6 +22,11 @@ except Exception:  # pragma: no cover
     F = None  # type: ignore[assignment]
 
 from .native_quant_policy import normalize_native_mm_policy, should_quantize_linear
+
+try:
+    from .kernel_policy import current_kernel_policy
+except Exception:  # pragma: no cover - remote-code fallback
+    current_kernel_policy = None  # type: ignore[assignment]
 
 try:
     from .sm70_quant import is_sm70, quantize_w8_row, w8_linear as sm70_w8_linear
@@ -77,6 +84,56 @@ if _HAS_TRITON:
         tl.store(output_ptr + offsets_n, output, mask=mask_n)
 
     @triton.jit
+    def _w8a16_batched_gemv_kernel(
+        x_ptr,
+        q_weight_ptr,
+        weight_scale_ptr,
+        bias_ptr,
+        output_ptr,
+        x_row_stride,
+        K: tl.constexpr,
+        N: tl.constexpr,
+        BLOCK_K: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        HAS_BIAS: tl.constexpr,
+    ):
+        """One graph-safe W8A16 launch for the small cached-decode batch."""
+
+        row = tl.program_id(0)
+        tile = tl.program_id(1)
+        offsets_n = tile * BLOCK_N + tl.arange(0, BLOCK_N)
+        mask_n = offsets_n < N
+        accum = tl.zeros((BLOCK_N,), dtype=tl.float32)
+        offsets_k = tl.arange(0, BLOCK_K)
+        for start in range(0, K, BLOCK_K):
+            k = start + offsets_k
+            mask_k = k < K
+            activation = tl.load(
+                x_ptr + row * x_row_stride + k,
+                mask=mask_k,
+                other=0.0,
+            ).to(tl.float32)
+            weight_offsets = k[:, None] * N + offsets_n[None, :]
+            weight = tl.load(
+                q_weight_ptr + weight_offsets,
+                mask=mask_k[:, None] & mask_n[None, :],
+                other=0,
+            ).to(tl.float32)
+            accum += tl.sum(activation[:, None] * weight, axis=0)
+        output = accum * tl.load(
+            weight_scale_ptr + offsets_n,
+            mask=mask_n,
+            other=0.0,
+        ).to(tl.float32)
+        if HAS_BIAS:
+            output += tl.load(
+                bias_ptr + offsets_n,
+                mask=mask_n,
+                other=0.0,
+            ).to(tl.float32)
+        tl.store(output_ptr + row * N + offsets_n, output, mask=mask_n)
+
+    @triton.jit
     def _dynamic_a8_quant_kernel(
         x_ptr,
         q_ptr,
@@ -127,6 +184,29 @@ def a8w8_available(device=None) -> bool:
     return resolved.type == "cuda" and hasattr(torch, "_int_mm")
 
 
+def a8w8_gemv_max_rows(device=None) -> int:
+    """Return the exact-card small-batch W8A16 route limit.
+
+    Multi-row direct GEMV is promoted only on the measured RTX 3090 policy.
+    Other cards retain the previously safe one-row route unless an explicit
+    environment override is supplied for a local sweep.
+    """
+
+    raw = os.environ.get("RWKV7_A8W8_GEMV_MAX_ROWS")
+    if raw is not None:
+        try:
+            return min(max(1, int(raw)), 32)
+        except ValueError:
+            return 1
+    if current_kernel_policy is None or torch is None:
+        return 1
+    try:
+        policy = current_kernel_policy(device=device, torch_module=torch)
+        return min(max(1, int(getattr(policy, "a8w8_gemv_max_rows", 1))), 32)
+    except Exception:
+        return 1
+
+
 def quantize_weight_per_channel_int8(weight):
     """Return contiguous ``[in,out]`` int8 weights and fp32 output scales."""
 
@@ -168,31 +248,52 @@ def a8w8_linear(x, q_weight_t, weight_scale, bias=None, *, out=None):
             return out
         return result
 
-    # A one-row GEMV does not fill tensor-core tiles. Reading W8 directly and
-    # dequantizing in registers is both faster and much less memory hungry than
-    # padding to torch._int_mm's minimum row count. Multi-row decode continues
-    # through dynamic-A8 tensor-core GEMM below.
-    if rows == 1:
-        output = torch.empty((outputs,), device=x.device, dtype=x.dtype) if out is None else out.reshape(outputs)
+    # Small cached-decode batches do not fill tensor-core tiles. Reading W8
+    # directly and dequantizing in registers avoids padding every projection to
+    # seventeen rows. The batched kernel still launches once per projection and
+    # honors non-contiguous last-token row strides.
+    gemv_max_rows = a8w8_gemv_max_rows(x.device)
+    if rows <= gemv_max_rows:
+        output2 = (
+            torch.empty((rows, outputs), device=x.device, dtype=x.dtype)
+            if out is None
+            else out.reshape(rows, outputs)
+        )
         block_k = int(os.environ.get("RWKV7_A8W8_GEMV_BLOCK_K", "256"))
         block_n = int(os.environ.get("RWKV7_A8W8_GEMV_BLOCK_N", "64"))
         num_warps = int(os.environ.get("RWKV7_A8W8_GEMV_WARPS", "1"))
-        _w8a16_gemv_kernel[(triton.cdiv(outputs, block_n),)](
-            x2,
-            q_weight_t,
-            weight_scale,
-            bias if bias is not None else weight_scale,
-            output,
-            K=inputs,
-            N=outputs,
-            BLOCK_K=block_k,
-            BLOCK_N=block_n,
-            HAS_BIAS=bias is not None,
-            num_warps=num_warps,
-        )
+        if rows == 1:
+            _w8a16_gemv_kernel[(triton.cdiv(outputs, block_n),)](
+                x2,
+                q_weight_t,
+                weight_scale,
+                bias if bias is not None else weight_scale,
+                output2,
+                K=inputs,
+                N=outputs,
+                BLOCK_K=block_k,
+                BLOCK_N=block_n,
+                HAS_BIAS=bias is not None,
+                num_warps=num_warps,
+            )
+        else:
+            _w8a16_batched_gemv_kernel[(rows, triton.cdiv(outputs, block_n))](
+                x2,
+                q_weight_t,
+                weight_scale,
+                bias if bias is not None else weight_scale,
+                output2,
+                x2.stride(0),
+                K=inputs,
+                N=outputs,
+                BLOCK_K=block_k,
+                BLOCK_N=block_n,
+                HAS_BIAS=bias is not None,
+                num_warps=num_warps,
+            )
         if scalar:
-            return output
-        return output.reshape(*leading, outputs)
+            return output2.reshape(outputs)
+        return output2.reshape(*leading, outputs)
 
     padded_rows = max(rows, 17)
     q_activation = torch.empty((padded_rows, inputs), device=x.device, dtype=torch.int8)
@@ -284,19 +385,32 @@ def quantize_model_a8w8(
     policy = normalize_native_mm_policy(policy)
     targets = []
     for name, module in model.named_modules():
-        if isinstance(module, torch.nn.Linear) and should_quantize_linear(
+        if not isinstance(module, torch.nn.Linear):
+            continue
+        if not should_quantize_linear(
             name,
             int(module.weight.numel()),
             min_params=int(min_params),
             policy=policy,
         ):
-            targets.append(name)
+            continue
+        # The fused CUDA path is intentionally bounded to width 4096. Keeping
+        # unsupported FFN-down matrices dense is both faster and avoids a
+        # transient full dequantized copy in the fallback path.
+        if int(module.in_features) > 4096:
+            continue
+        targets.append(name)
     for full_name in targets:
         parent_name, _, attribute = full_name.rpartition(".")
         parent = model.get_submodule(parent_name) if parent_name else model
         setattr(parent, attribute, A8W8Linear(getattr(parent, attribute)))
     setattr(model, "_rwkv7_native_mm_quantization", "a8w8")
     setattr(model, "_rwkv7_native_mm_replaced_modules", len(targets))
+    setattr(
+        model,
+        "_rwkv7_native_mm_block_replaced_modules",
+        sum(name.startswith("model.layers.") for name in targets),
+    )
     for attr in (
         "_rwkv7_native_jit_pack_cache",
         "_rwkv7_native_graph_pack_cache",

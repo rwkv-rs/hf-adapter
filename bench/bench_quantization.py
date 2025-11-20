@@ -2,9 +2,10 @@
 # coding=utf-8
 """Benchmark HF adapter inference under fp16 / bitsandbytes 8bit / 4bit loads.
 
-Decode can compare the reference cached HF forward against the fast-forward
-path. Quantized models resolve to the FLA fast-token fallback because their
-packed bitsandbytes weights are intentionally excluded from native-JIT/graph.
+Decode compares the reference cached HF forward against the fast-forward path.
+On promoted hardware, graph-safe bitsandbytes W8/W4 modules remain live
+operands inside native prefill/native-graph execution; unsupported quantizers
+or unsafe W8 outlier settings retain the compatibility fallback.
 """
 from __future__ import annotations
 

@@ -56,6 +56,9 @@ if _HAS_TRITON:
         hidden: tl.constexpr,
         head_dim: tl.constexpr,
         has_v_gate: tl.constexpr,
+        a_is_raw: tl.constexpr,
+        v_gate_is_raw: tl.constexpr,
+        output_log_decay: tl.constexpr,
         block_n: tl.constexpr,
     ):
         row = tl.program_id(0)
@@ -69,6 +72,12 @@ if _HAS_TRITON:
         k_raw = tl.load(k_raw_ptr + offs, mask=mask, other=0.0).to(tl.float32)
         v_raw = tl.load(v_raw_ptr + offs, mask=mask, other=0.0).to(tl.float32)
         a_val = tl.load(a_ptr + offs, mask=mask, other=0.0).to(tl.float32)
+        if a_is_raw:
+            a_val = tl.sigmoid(a_val).to(a_ptr.dtype.element_ty).to(tl.float32)
+            # The recurrent scan also consumes A.  Publish the materialized
+            # gate in-place so the fused state-prep launch replaces, rather
+            # than merely duplicates, the standalone sigmoid kernel.
+            tl.store(a_ptr + offs, a_val, mask=mask)
         kk_scale = tl.load(k_k_ptr + param_offs, mask=mask, other=0.0).to(tl.float32)
         ka_scale = tl.load(k_a_ptr + param_offs, mask=mask, other=0.0).to(tl.float32)
 
@@ -77,12 +86,15 @@ if _HAS_TRITON:
         inv_norm = tl.rsqrt(tl.maximum(norm2, 1.0e-20))
         kk = kk_raw * inv_norm
         k_adj = k_raw * (1.0 + (a_val - 1.0) * ka_scale)
-        w_decay = tl.exp(-0.606531 * tl.sigmoid(w_raw))
+        w_log = -0.606531 * tl.sigmoid(w_raw)
+        w_decay = w_log if output_log_decay else tl.exp(w_log)
 
         v_out = v_raw
         if has_v_gate:
             v_first = tl.load(v_first_ptr + offs, mask=mask, other=0.0).to(tl.float32)
             v_gate = tl.load(v_gate_ptr + offs, mask=mask, other=0.0).to(tl.float32)
+            if v_gate_is_raw:
+                v_gate = tl.sigmoid(v_gate).to(v_gate_ptr.dtype.element_ty).to(tl.float32)
             v_out = v_raw + (v_first - v_raw) * v_gate
 
         tl.store(w_out_ptr + offs, w_decay, mask=mask)
@@ -182,6 +194,9 @@ def fused_prefill_state_prep(
     num_heads: int,
     head_dim: int,
     w_out_dtype: str = "fp32",
+    w_transform: str = "decay",
+    a_is_raw: bool = False,
+    v_gate_is_raw: bool = False,
     force_fallback: bool = False,
 ):
     """Fuse native-prefill recurrent state preparation.
@@ -199,6 +214,8 @@ def fused_prefill_state_prep(
         raise RuntimeError("fused_prefill_state_prep requires torch")
     if w_out_dtype not in {"fp32", "input"}:
         raise ValueError(f"w_out_dtype must be 'fp32' or 'input'; got {w_out_dtype!r}")
+    if w_transform not in {"decay", "log_decay"}:
+        raise ValueError(f"w_transform must be 'decay' or 'log_decay'; got {w_transform!r}")
     hidden = int(num_heads) * int(head_dim)
     w2, prefix = _flatten_seq_hidden(w_raw, hidden=hidden, name="w_raw")
     k2, k_prefix = _flatten_seq_hidden(k_raw, hidden=hidden, name="k_raw")
@@ -238,6 +255,10 @@ def fused_prefill_state_prep(
         and (not has_v_gate or (vf2.dtype == w2.dtype and vg2.dtype == w2.dtype))
     )
     if not use_triton:
+        if a_is_raw:
+            a2.sigmoid_()
+        if has_v_gate and v_gate_is_raw:
+            vg2 = torch.sigmoid(vg2)
         shaped = (int(w2.shape[0]), int(num_heads), int(head_dim))
         kk = F.normalize((k2 * k_k.reshape(1, hidden)).reshape(shaped), dim=-1, p=2.0).reshape_as(k2)
         k_out = k2 * (1 + (a2 - 1) * k_a.reshape(1, hidden))
@@ -245,7 +266,8 @@ def fused_prefill_state_prep(
             v_out = v2 + (vf2 - v2) * vg2
         else:
             v_out = v2
-        w_out = torch.exp(-0.606531 * torch.sigmoid(w2.float()))
+        w_log = -0.606531 * torch.sigmoid(w2.float())
+        w_out = w_log if w_transform == "log_decay" else torch.exp(w_log)
         if w_out_dtype == "input":
             w_out = w_out.to(w2.dtype)
         return (
@@ -285,6 +307,9 @@ def fused_prefill_state_prep(
         hidden,
         int(head_dim),
         has_v_gate=bool(has_v_gate),
+        a_is_raw=bool(a_is_raw),
+        v_gate_is_raw=bool(v_gate_is_raw),
+        output_log_decay=w_transform == "log_decay",
         block_n=block_n,
         num_warps=1,
     )

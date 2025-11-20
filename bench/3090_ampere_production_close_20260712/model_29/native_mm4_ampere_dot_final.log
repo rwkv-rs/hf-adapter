@@ -1,0 +1,13 @@
+Current Triton version 3.2.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+`torch_dtype` is deprecated! Use `dtype` instead!
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+per-layer worst cos = 0.983398 (>= 0.98)
+triton vs torch-ref max_abs = 0.003906 (<= 0.5)
+batched triton bsz=2 vs torch-ref max_abs = 0.003906; dispatcher = 0.003906 (<= 0.5)
+batched triton bsz=8 vs torch-ref max_abs = 0.010742; dispatcher = 0.010742 (<= 0.5)
+e2e (1 layer(s) quantized) cos = 0.998872 (>= 0.998)
+fast-token native_jit used=native_jit cos vs quantized-fla = 0.999995 (>= 0.998)
+fast-token native_graph used=native_graph cos vs quantized-fla = 0.999994 (>= 0.998)
+PASS
