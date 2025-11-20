@@ -51,6 +51,13 @@ def main() -> int:
         else:
             os.environ["RWKV7_BNB_PREFILL_VALUE_STRIDE"] = old_stride
 
+    decode_rk = RWKV7ForCausalLM.rwkv7_bnb_skip_modules("decode_rk", cfg)
+    assert r".*attn\.(r_proj|k_proj)" in decode_rk
+    assert "model.layers.0.attn.r_proj" in decode_rk
+    assert "model.layers.1.attn.k_proj" in decode_rk
+    assert "model.layers.0.attn.v_proj" not in decode_rk
+    assert "model.layers.0.attn.o_proj" not in decode_rk
+
     dense = RWKV7ForCausalLM.rwkv7_bnb_skip_modules("dense", cfg)
     assert r".*ffn\.(key|value)" in dense
     assert "model.layers.0.ffn.key" in dense

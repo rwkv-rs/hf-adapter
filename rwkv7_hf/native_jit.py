@@ -754,6 +754,23 @@ def _native_prefill_self_chunk_size(batch_size: int, tokens: int | None = None) 
     return chunk_size
 
 
+def _native_prefill_self_chunk_h_tiles(
+    batch_size: int,
+    tokens: int,
+) -> tuple[int, int] | None:
+    """Return an exact-shape tile override from the centralized card policy."""
+
+    policy = _kernel_policy()
+    for policy_batch, policy_tokens, policy_bv, policy_bc in getattr(
+        policy,
+        "prefill_self_chunk_h_tile_shapes",
+        (),
+    ):
+        if (int(batch_size), int(tokens)) == (int(policy_batch), int(policy_tokens)):
+            return int(policy_bv), int(policy_bc)
+    return None
+
+
 def _native_prefill_self_chunk_safe_gate() -> bool:
     """Select the numerically conservative tensor-core intra-chunk kernel."""
 
@@ -862,6 +879,15 @@ def _native_prefill_default_scan_block_m(head_dim: int, batch_size: int | None =
                 name = ""
             if "4090" in name:
                 return 8 if batch_size is not None and int(batch_size) >= 2 else 4
+        if int(major) >= 12:
+            batch_size = 1 if batch_size is None else int(batch_size)
+            if batch_size <= 1:
+                return 8
+            if batch_size <= 2:
+                return 16
+            if batch_size <= 4:
+                return 32
+            return 64
     return head_dim
 
 
@@ -883,7 +909,20 @@ def _native_prefill_scan_num_warps(head_dim: int, block_m: int | None = None) ->
         block_m = _native_prefill_scan_block_m(head_dim)
     policy = _kernel_policy()
     policy_value = getattr(policy, "prefill_scan_num_warps", None)
-    default = int(policy_value) if policy_value is not None else (4 if int(block_m) < int(head_dim) else 8)
+    if policy_value is not None:
+        default = int(policy_value)
+    else:
+        is_blackwell = False
+        if torch.cuda.is_available():
+            try:
+                major, _minor = torch.cuda.get_device_capability()
+                is_blackwell = int(major) >= 12
+            except Exception:
+                pass
+        if is_blackwell and int(head_dim) == 64:
+            default = 4 if int(block_m) >= 64 else 1
+        else:
+            default = 4 if int(block_m) < int(head_dim) else 8
     value = env_int("RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS", default, lower=1, upper=8)
     if value not in {1, 2, 4, 8}:
         raise ValueError(f"RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS must be one of 1, 2, 4, or 8; got {value}")
@@ -2292,6 +2331,7 @@ def _native_prefill_scan(
             chunk_size=chunk_size,
             w_is_log=w_is_log,
             safe_gate=_native_prefill_self_chunk_safe_gate(),
+            h_tiles=_native_prefill_self_chunk_h_tiles(B, T),
         )
         return out.reshape(B, T, H * N), new_state
 

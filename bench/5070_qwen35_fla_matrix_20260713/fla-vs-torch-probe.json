@@ -1,0 +1,23 @@
+{
+  "axis": "qwen35_fla_torch_probe",
+  "status": "pass",
+  "min_cosine_required": 0.999,
+  "input_ids_match": true,
+  "greedy_tokens_match": true,
+  "greedy_tokens": [
+    1167,
+    16451,
+    513,
+    3992,
+    3983,
+    24276,
+    440,
+    18922
+  ],
+  "prompt_logits_cosine": 0.9999907612800598,
+  "prompt_logits_max_abs": 0.021484375,
+  "final_logits_cosine": 0.9999921321868896,
+  "final_logits_max_abs": 0.0234375,
+  "fla_backend_requested": "fla",
+  "torch_backend_requested": "torch"
+}

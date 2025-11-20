@@ -42,6 +42,7 @@ def self_chunk_rwkv7(
     chunk_size: int = 16,
     w_is_log: bool = False,
     safe_gate: bool | None = None,
+    h_tiles: tuple[int, int] | None = None,
 ):
     """Return ``(recurrent_output, final_native_state)`` for equal lengths.
 
@@ -98,6 +99,7 @@ def self_chunk_rwkv7(
         output_final_state=True,
         chunk_size=int(chunk_size),
         native_state_v_k=True,
+        preferred_tiles=h_tiles,
     )
     out = chunk_dplr_fwd_o(
         qg=qg,

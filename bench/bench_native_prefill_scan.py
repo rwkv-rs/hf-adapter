@@ -60,16 +60,21 @@ def prepare_model_dir(model_path: str, *, code_source: str) -> tuple[str, tempfi
     if not REPO_CODE_DIR.is_dir():
         raise ValueError(f"repo code directory not found: {REPO_CODE_DIR}")
 
-    tmp = tempfile.TemporaryDirectory(prefix="rwkv7_repo_code_model_")
+    # Keep the staging directory on the checkpoint volume so Windows can use
+    # hardlinks when developer-mode symlink privileges are unavailable.
+    tmp = tempfile.TemporaryDirectory(prefix="rwkv7_repo_code_model_", dir=src.parent)
     dst = Path(tmp.name)
     for item in src.iterdir():
         if item.name == "__pycache__" or item.suffix == ".py":
             continue
         target = dst / item.name
-        if item.is_dir():
-            target.symlink_to(item, target_is_directory=True)
-        else:
-            target.symlink_to(item)
+        try:
+            target.symlink_to(item, target_is_directory=item.is_dir())
+        except OSError:
+            if item.is_dir():
+                shutil.copytree(item, target)
+            else:
+                os.link(item, target)
     for py_file in REPO_CODE_DIR.glob("*.py"):
         shutil.copy2(py_file, dst / py_file.name)
     return str(dst), tmp

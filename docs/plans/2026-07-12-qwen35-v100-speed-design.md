@@ -1,5 +1,9 @@
 # Qwen3.5 V100 Speed Matrix Design
 
+> Superseded for optimized-Qwen acceptance by
+> [`2026-07-13-qwen35-5070-fla-design.md`](2026-07-13-qwen35-5070-fla-design.md).
+> The original matrix remains a forced-Torch diagnostic.
+
 The benchmark compares RWKV-7 HF adapter models with the nearest larger
 official Qwen3.5 dense text models on one Tesla V100-PCIE-32GB.  It is an HF
 Transformers comparison, not an Albatross or serving-engine comparison.  The

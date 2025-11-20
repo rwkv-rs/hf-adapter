@@ -15,9 +15,9 @@ def check_shared_mem(architecture: str = "", device_index: int | None = None) ->
     """Report the wider-tile capability used by the vendored forward kernel.
 
     The original FLA helper distinguishes devices by their available shared
-    memory.  Keep that decision local and dependency-free: CUDA sm80+ devices
-    have enough shared memory for the 32-wide Ampere tile, while sm90+ can use
-    the Hopper branch.  Older CUDA and ROCm devices retain the conservative
+    memory. Keep that decision local and dependency-free: CUDA sm80+ devices
+    use the 32-wide capability tier, while sm90+ can use the 64-wide tier.
+    Older CUDA and ROCm devices retain the conservative
     16-wide fallback.
     """
 

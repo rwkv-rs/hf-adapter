@@ -1,0 +1,13 @@
+2026-07-12T18:20:50+08:00
+Linux wzu-SYS-4029GP-TRT 6.8.0-124-generic #124~22.04.1-Ubuntu SMP PREEMPT_DYNAMIC Tue May 26 21:05:19 UTC  x86_64 x86_64 x86_64 GNU/Linux
+0, Tesla V100-PCIE-32GB, 32768 MiB, 7.0, 580.159.03
+1, Tesla V100-PCIE-32GB, 32768 MiB, 7.0, 580.159.03
+python 3.11.15 (main, Jun 11 2026, 15:20:16) [GCC 14.3.0]
+torch 2.5.1+cu124 cuda 12.4
+transformers 5.12.1
+bitsandbytes 0.49.2
+flash-linear-attention not-installed
+triton 3.3.0
+performance_revision=71f53d4
+harness_revision=2b50bcc
+fla_source_revision=2e6aee2f3bb6272aaabf72d44c92f2cad9ad613a

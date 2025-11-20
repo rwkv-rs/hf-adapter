@@ -1,0 +1,32 @@
+{
+  "status": "pass",
+  "device": "NVIDIA GeForce RTX 5070 Laptop GPU",
+  "capability": [
+    12,
+    0
+  ],
+  "shape": [
+    1,
+    128,
+    16,
+    128,
+    128
+  ],
+  "prefill_s_first_compile": 32.55016800000158,
+  "decode_s_first_compile": 0.33431009999185335,
+  "out_shape": [
+    1,
+    128,
+    16,
+    128
+  ],
+  "state_shape": [
+    1,
+    16,
+    128,
+    128
+  ],
+  "prefill_finite": true,
+  "decode_finite": true,
+  "state_finite": true
+}

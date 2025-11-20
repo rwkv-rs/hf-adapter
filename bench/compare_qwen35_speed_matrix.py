@@ -73,6 +73,28 @@ def median_or_none(values: list[float]) -> float | None:
     return round(float(statistics.median(values)), 6) if values else None
 
 
+def reference_backend_matches(row: dict[str, Any], required: str) -> bool:
+    if required == "any":
+        return True
+    requested = row.get("qwen_backend_requested")
+    effective = row.get("effective_backend")
+    if required == "fla":
+        return bool(
+            requested == "fla"
+            and effective
+            in {
+                "qwen_fla_gated_delta_rule",
+                "qwen_fla_gated_delta_rule_torch_conv",
+            }
+            and row.get("qwen_operator_contract_pass") is True
+        )
+    return bool(
+        requested == "torch"
+        and effective == "transformers_torch_fallback"
+        and row.get("qwen_force_torch") is True
+    )
+
+
 def compare(
     rows: list[dict[str, Any]],
     *,
@@ -86,6 +108,8 @@ def compare(
     require_quant_memory_reduction: bool = False,
     require_prefill_mode_match: bool = False,
     require_quant_not_slower_than_dense: bool = False,
+    required_reference_backend: str = "any",
+    require_memory_not_larger: bool = False,
 ) -> dict[str, Any]:
     indexed: dict[str, dict[tuple[Any, ...], dict[str, Any]]] = {"candidate": {}, "reference": {}}
     for row in rows:
@@ -108,12 +132,28 @@ def compare(
     prefill_mode_failures = 0
     quant_dense_speed_failures = 0
     family_metrics: dict[str, dict[str, list[float]]] = {}
+    footprint_ratios: list[float] = []
+    peak_vram_ratios: list[float] = []
+    backend_matches = 0
     for key in joined_keys:
         candidate = indexed["candidate"][key]
         reference = indexed["reference"][key]
         both_pass = candidate.get("status") == "pass" and reference.get("status") == "pass"
+        reference_backend_pass = reference_backend_matches(reference, required_reference_backend)
+        backend_matches += int(reference_backend_pass)
         prefill_speedup = ratio(candidate.get("prefill_tokps_total"), reference.get("prefill_tokps_total"))
         decode_speedup = ratio(candidate.get("decode_tokps_total"), reference.get("decode_tokps_total"))
+        footprint_ratio = ratio(candidate.get("model_footprint_mb"), reference.get("model_footprint_mb"))
+        peak_vram_ratio = ratio(candidate.get("peak_vram_mb"), reference.get("peak_vram_mb"))
+        memory_pass = bool(
+            not require_memory_not_larger
+            or (
+                footprint_ratio is not None
+                and peak_vram_ratio is not None
+                and footprint_ratio <= 1.0
+                and peak_vram_ratio <= 1.0
+            )
+        )
         if prefill_speedup is not None:
             prefill_ratios.append(prefill_speedup)
         if decode_speedup is not None:
@@ -158,8 +198,11 @@ def compare(
         qwen_backend_pass = bool(
             not require_qwen_fast_path
             or (
-                reference_backend == "fla+causal_conv1d"
-                and reference.get("qwen_fast_path_verified") is True
+                reference.get("qwen_operator_contract_pass") is True
+                or (
+                    reference_backend == "fla+causal_conv1d"
+                    and reference.get("qwen_fast_path_verified") is True
+                )
             )
         )
         candidate_prefill_chunk_size = int(candidate.get("prefill_chunk_size") or 0)
@@ -228,8 +271,13 @@ def compare(
         memory_failures += int(not quant_memory_pass)
         prefill_mode_failures += int(not prefill_mode_pass)
         quant_dense_speed_failures += int(not quant_dense_speed_pass)
+        if footprint_ratio is not None:
+            footprint_ratios.append(footprint_ratio)
+        if peak_vram_ratio is not None:
+            peak_vram_ratios.append(peak_vram_ratio)
         passed = bool(
             both_pass
+            and reference_backend_pass
             and prefill_speedup is not None
             and decode_speedup is not None
             and prefill_speedup >= prefill_gate
@@ -238,19 +286,28 @@ def compare(
             and quant_memory_pass
             and prefill_mode_pass
             and quant_dense_speed_pass
+            and memory_pass
         )
         cell = {
             **key_dict(key),
             "candidate_status": candidate.get("status"),
             "reference_status": reference.get("status"),
+            "reference_backend_requested": reference.get("qwen_backend_requested"),
+            "reference_effective_backend": reference.get("effective_backend"),
+            "reference_backend_pass": reference_backend_pass,
             "candidate_prefill_tokps_total": candidate.get("prefill_tokps_total"),
             "reference_prefill_tokps_total": reference.get("prefill_tokps_total"),
             "prefill_speedup": prefill_speedup,
             "candidate_decode_tokps_total": candidate.get("decode_tokps_total"),
             "reference_decode_tokps_total": reference.get("decode_tokps_total"),
             "decode_speedup": decode_speedup,
+            "candidate_model_footprint_mb": candidate.get("model_footprint_mb"),
+            "reference_model_footprint_mb": reference.get("model_footprint_mb"),
+            "model_footprint_ratio": footprint_ratio,
             "candidate_peak_vram_mb": candidate.get("peak_vram_mb"),
             "reference_peak_vram_mb": reference.get("peak_vram_mb"),
+            "peak_vram_ratio": peak_vram_ratio,
+            "memory_pass": memory_pass,
             "candidate_prefill_backend": candidate_prefill_backend,
             "candidate_decode_backend": candidate_decode_backend,
             "reference_backend": reference_backend,
@@ -279,7 +336,6 @@ def compare(
         len(joined_keys) == expected and not missing_candidate and not missing_reference
     )
     ratios_pass = not red_cells and bool(cells)
-    overall_pass = coverage_complete and ratios_pass
     speed_by_quantization = {}
     for family, metrics in sorted(family_metrics.items()):
         speed_by_quantization[family] = {
@@ -315,6 +371,9 @@ def compare(
                 else None
             ),
         }
+    reference_backend_complete = bool(cells) and backend_matches == len(cells)
+    cells_pass = not red_cells and bool(cells)
+    overall_pass = coverage_complete and reference_backend_complete and cells_pass
     return {
         "axis": "qwen35_cross_model_speed_comparison",
         "coverage": {
@@ -332,12 +391,39 @@ def compare(
             "require_quant_memory_reduction": require_quant_memory_reduction,
             "require_prefill_mode_match": require_prefill_mode_match,
             "require_quant_not_slower_than_dense": require_quant_not_slower_than_dense,
+            "required_reference_backend": required_reference_backend,
+            "require_memory_not_larger": require_memory_not_larger,
+        },
+        "reference_backend": {
+            "required": required_reference_backend,
+            "matching_cells": backend_matches,
+            "total_cells": len(cells),
+            "complete": reference_backend_complete,
         },
         "speed": {
             "min_prefill_speedup": min(prefill_ratios) if prefill_ratios else None,
             "median_prefill_speedup": median_or_none(prefill_ratios),
+            "max_prefill_speedup": max(prefill_ratios) if prefill_ratios else None,
+            "prefill_at_least_equal_cells": sum(value >= 1.0 for value in prefill_ratios),
+            "prefill_gate_cells": sum(value >= min_prefill_speedup for value in prefill_ratios),
             "min_decode_speedup": min(decode_ratios) if decode_ratios else None,
             "median_decode_speedup": median_or_none(decode_ratios),
+            "max_decode_speedup": max(decode_ratios) if decode_ratios else None,
+            "decode_at_least_equal_cells": sum(value >= 1.0 for value in decode_ratios),
+            "decode_gate_cells": sum(value >= min_decode_speedup for value in decode_ratios),
+            "strict_gate_cells": len(cells) - len(red_cells),
+            "total_cells": len(cells),
+        },
+        "memory": {
+            "min_model_footprint_ratio": min(footprint_ratios) if footprint_ratios else None,
+            "median_model_footprint_ratio": median_or_none(footprint_ratios),
+            "max_model_footprint_ratio": max(footprint_ratios) if footprint_ratios else None,
+            "model_footprint_not_larger_cells": sum(value <= 1.0 for value in footprint_ratios),
+            "min_peak_vram_ratio": min(peak_vram_ratios) if peak_vram_ratios else None,
+            "median_peak_vram_ratio": median_or_none(peak_vram_ratios),
+            "max_peak_vram_ratio": max(peak_vram_ratios) if peak_vram_ratios else None,
+            "peak_vram_not_larger_cells": sum(value <= 1.0 for value in peak_vram_ratios),
+            "total_cells": len(cells),
         },
         "speed_by_quantization": speed_by_quantization,
         "missing": {
@@ -353,6 +439,8 @@ def compare(
             "quant_memory_pass": memory_failures == 0,
             "prefill_mode_pass": prefill_mode_failures == 0,
             "quant_dense_speed_pass": quant_dense_speed_failures == 0,
+            "reference_backend_pass": reference_backend_complete,
+            "memory_pass": all(cell["memory_pass"] for cell in cells) and bool(cells),
             "overall_pass": overall_pass,
         },
     }
@@ -368,7 +456,9 @@ def fmt(value: Any, digits: int = 3) -> str:
 
 def render_markdown(summary: dict[str, Any]) -> str:
     coverage = summary["coverage"]
+    backend = summary["reference_backend"]
     speed = summary["speed"]
+    memory = summary["memory"]
     overall = "PASS" if summary["gates"]["overall_pass"] else "FAIL"
     lines = [
         "# RWKV-7 vs Qwen3.5 HF speed matrix",
@@ -377,10 +467,23 @@ def render_markdown(summary: dict[str, Any]) -> str:
         "",
         f"Coverage: `{coverage['joined_cells']}/{coverage['expected_cells']}` cells.",
         "",
-        "| Metric | Minimum | Median |",
-        "|---|---:|---:|",
-        f"| Prefill RWKV/Qwen | {fmt(speed['min_prefill_speedup'])}x | {fmt(speed['median_prefill_speedup'])}x |",
-        f"| Decode RWKV/Qwen | {fmt(speed['min_decode_speedup'])}x | {fmt(speed['median_decode_speedup'])}x |",
+        f"Required Qwen backend: `{backend['required']}`; verified: "
+        f"`{backend['matching_cells']}/{backend['total_cells']}` cells.",
+        "",
+        "| Metric | Minimum | Median | Maximum | Passing cells |",
+        "|---|---:|---:|---:|---:|",
+        f"| Prefill RWKV/Qwen | {fmt(speed['min_prefill_speedup'])}x | {fmt(speed['median_prefill_speedup'])}x | "
+        f"{fmt(speed['max_prefill_speedup'])}x | {speed['prefill_gate_cells']}/{speed['total_cells']} |",
+        f"| Decode RWKV/Qwen | {fmt(speed['min_decode_speedup'])}x | {fmt(speed['median_decode_speedup'])}x | "
+        f"{fmt(speed['max_decode_speedup'])}x | {speed['decode_gate_cells']}/{speed['total_cells']} |",
+        f"| Model footprint RWKV/Qwen | {fmt(memory['min_model_footprint_ratio'])}x | "
+        f"{fmt(memory['median_model_footprint_ratio'])}x | {fmt(memory['max_model_footprint_ratio'])}x | "
+        f"{memory['model_footprint_not_larger_cells']}/{memory['total_cells']} |",
+        f"| Peak VRAM RWKV/Qwen | {fmt(memory['min_peak_vram_ratio'])}x | "
+        f"{fmt(memory['median_peak_vram_ratio'])}x | {fmt(memory['max_peak_vram_ratio'])}x | "
+        f"{memory['peak_vram_not_larger_cells']}/{memory['total_cells']} |",
+        "",
+        f"Strict speed cells: `{speed['strict_gate_cells']}/{speed['total_cells']}`.",
         "",
         "## Precision families",
         "",
@@ -482,6 +585,8 @@ def main() -> int:
     ap.add_argument("--require-quant-memory-reduction", action="store_true")
     ap.add_argument("--require-prefill-mode-match", action="store_true")
     ap.add_argument("--require-quant-not-slower-than-dense", action="store_true")
+    ap.add_argument("--required-reference-backend", choices=["fla", "torch", "any"], default="fla")
+    ap.add_argument("--require-memory-not-larger", action="store_true")
     ap.add_argument("--json-output", default="")
     ap.add_argument("--markdown-output", default="")
     ap.add_argument("--fail-on-gate", action="store_true")
@@ -499,6 +604,8 @@ def main() -> int:
         require_quant_memory_reduction=args.require_quant_memory_reduction,
         require_prefill_mode_match=args.require_prefill_mode_match,
         require_quant_not_slower_than_dense=args.require_quant_not_slower_than_dense,
+        required_reference_backend=args.required_reference_backend,
+        require_memory_not_larger=args.require_memory_not_larger,
     )
     markdown = render_markdown(summary)
     if args.json_output:

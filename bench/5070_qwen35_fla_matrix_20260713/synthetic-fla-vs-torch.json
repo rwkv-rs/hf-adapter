@@ -1,0 +1,22 @@
+{
+  "status": "pass",
+  "device": "NVIDIA GeForce RTX 5070 Laptop GPU",
+  "gpu_arch": "sm_120",
+  "shape": [
+    1,
+    128,
+    16,
+    128,
+    128
+  ],
+  "prefill_out_cosine": 0.9999997615814209,
+  "prefill_out_max_abs": 7.62939453125e-06,
+  "prefill_state_cosine": 0.9999998807907104,
+  "prefill_state_max_abs": 8.652359247207642e-05,
+  "decode_out_cosine": 0.9999998807907104,
+  "decode_out_max_abs": 3.814697265625e-06,
+  "decode_state_cosine": 0.9999998807907104,
+  "decode_state_max_abs": 7.969886064529419e-05,
+  "prefill_steady_ms": 0.9485899994615465,
+  "finite": true
+}
