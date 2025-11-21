@@ -1,0 +1,22 @@
+{
+  "date": "2026-07-14",
+  "os": "Windows",
+  "gpu": "NVIDIA GeForce RTX 5070 Laptop GPU",
+  "gpu_arch": "sm_120",
+  "gpu_memory_mib": 8151,
+  "driver": "582.05",
+  "torch": "2.11.0+cu128",
+  "torch_cuda": "12.8",
+  "triton": "3.7.1.post27",
+  "transformers": "5.12.1",
+  "flash_linear_attention": "0.5.1",
+  "bitsandbytes": "0.49.2",
+  "causal_conv1d": null,
+  "rwkv_model": "D:\\models\\rwkv7\\rwkv7-g1g-1.5b-hf",
+  "qwen_model": "D:\\models\\qwen\\Qwen3.5-2B",
+  "batch_size": 8,
+  "prompt_tokens": [128, 512, 2048],
+  "decode_tokens": [128, 512],
+  "precisions": ["fp16", "bnb8", "bnb4"],
+  "qwen_effective_backend": "qwen_fla_gated_delta_rule_fla_triton_conv"
+}
