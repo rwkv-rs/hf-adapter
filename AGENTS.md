@@ -791,31 +791,34 @@ Run this checklist for every new GPU before marking it as supported:
     quality rows. Treat bnb as a compatibility/memory baseline, not a fast path.
   - Qwen3.5 optimized-reference rows on the RTX 5070 Laptop must use
     `--qwen-backend fla` and verify every Gated DeltaNet layer binds FLA chunk
-    prefill, fused-recurrent decode, and FLA fused gated normalization.
-    `causal-conv1d` is a separate capability gate because the Windows exact-card
-    environment can run the FLA core while convolution uses the Transformers
-    Torch fallback. Such rows must be labeled `torch_conv`, not fully fused.
-    Forced-Torch rows are diagnostic only.
-  - Final exact-card Qwen evidence exists under
-    `bench/5070_qwen35_fla_native_prefill_20260714/`: 144/144 raw rows pass,
-    all 72/72 Qwen references verify the FLA core, and all 72/72 cells pass the
-    strict `>=1.05x` prefill and decode gates plus no-larger footprint and peak
-    VRAM gates. Minimum RWKV/Qwen speedups are `1.109682x` prefill and
-    `1.466175x` decode. The 2026-07-13 35/72 artifact remains historical.
+    prefill, fused-recurrent decode, FLA fused gated normalization, and an
+    accelerated causal-convolution prefill/update path. The Windows exact-card
+    route may use `bench/qwen35_fla_triton_conv.py`, which adapts FLA's Triton
+    convolution kernels without using the Transformers Torch fallback.
+    Performance rows with `torch_conv` are diagnostic only and cannot satisfy
+    the optimized-Qwen gate.
+  - Final bsz8 full-FLA evidence exists under
+    `bench/5070_qwen35_full_fla_bsz8_20260714/`: 36/36 raw rows pass, all 18/18
+    Qwen references verify the full FLA plus Triton-conv contract, and all
+    18/18 cells pass `>=1.05x` prefill/decode, `>=1.0x` tok/s per active-B,
+    and no-larger footprint/peak-VRAM gates. Minimum RWKV/Qwen speedups are
+    `1.082707x` prefill and `1.795119x` decode. The broader 72-cell FLA-core-only
+    artifact remains historical coverage because its convolution uses Torch.
   - The validated Blackwell scan defaults are batch-local: `block_m` 8/16/32/64
     for bsz 1/2/4/8+, with 1 warp below 64 and 4 warps at 64. Explicit
     environment overrides still win, and these tiles must not be projected to
     Ada, Volta, Ampere, Hopper, or another Blackwell card without exact-card
     rows.
   - External-quant native prefill is opt-in through
-    `RWKV7_FAST_PREFILL_QUANT=1`. External BNB4 native-graph decode is opt-in
-    through `RWKV7_FAST_TOKEN_QUANT=1`; BNB8 graph capture is not validated and
-    must fall back to FLA. The accepted BNB8 matrix uses the explicit
-    `decode_rk` hybrid policy. Keep all of these routes disabled by default.
-  - The 72/72 close is an inference speed and memory result for the exact 1.5B
-    RWKV vs official 2B Qwen shapes. It is not evidence of model-quality
-    superiority; instruction, reasoning, math, code, multilingual, and
-    long-context claims still require separate evaluations.
+    `RWKV7_FAST_PREFILL_QUANT=1`; BNB4 external-quant graph capture additionally
+    requires `RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH=1` and is validated for
+    the bsz8 matrix only. External BNB4 native-graph decode is opt-in through
+    `RWKV7_FAST_TOKEN_QUANT=1`. BNB8 uses the explicit `decode_rk` hybrid policy.
+    Keep all of these routes disabled by default.
+  - The 18/18 full-FLA close is an inference speed and memory result for the
+    exact bsz8 1.5B RWKV vs official 2B Qwen shapes. It is not evidence of
+    model-quality superiority; instruction, reasoning, math, code, multilingual,
+    and long-context claims still require separate evaluations.
 - Mandatory before claiming support: import/generate, fast decode, dynamic batch,
   chunked prefill, bnb W8/W4 functional inference, `triton_compat` remote-code
   import on early sm_120 stacks, native_model no-FLA fallback/training smoke,

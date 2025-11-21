@@ -7,6 +7,7 @@ historical rows remain in platform documents and `bench/` artifacts.
 
 | Platform | Dense fp16/bf16 | Quant speed lane | Quality/correctness | Status |
 |---|---|---|---|---|
+| RTX 5070 Laptop | 1.5B RWKV vs full-FLA Qwen3.5 2B bsz8 prefill/decode minimum `1.082707x/1.795119x` | fp16/W8/W4 all pass; footprint and peak VRAM lower in 18/18 | Qwen full-FLA bindings; Qwen and RWKV greedy/cosine probes pass | Production-close for measured bsz8 lane |
 | V100 | Decode `0.908x–1.248x`, prompt-512 prefill `0.930x–1.047x` same-host Albatross | W8/W4 decode `1.006x–1.128x` fp16; paired prefill `0.996x–1.007x` | Greedy/cache handoff and focused regressions pass | Production-close for canonical matrix |
 | RTX 4090 | 0.4B decode bsz1/2/4/8 `1.007x–1.418x` matching Albatross | W8/W4 measured speed lanes are fp16/bf16 equivalent or faster | 32-step greedy and cache handoff pass | Production-close for measured lanes |
 | RTX 5090 | 0.4B MATH500 generation `16,925.6 tok/s`, steady decode `19,339.5 tok/s` | 2.9B/7.2B pressure rows all `>=0.99x` paired fp16; combined matrix `>=0.98x` | pass@64 `0.38`, compression ratio `1.0`, same-next all quant rows | Production-close artifact |

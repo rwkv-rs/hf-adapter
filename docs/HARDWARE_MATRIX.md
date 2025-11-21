@@ -3,7 +3,7 @@
 Canonical current hardware status for the HF adapter. Detailed experiment logs
 remain in `bench/` and platform-specific documents.
 
-Last updated: **2026-07-12**.
+Last updated: **2026-07-14**.
 
 ## Status definitions
 
@@ -24,7 +24,7 @@ Last updated: **2026-07-12**.
 | A800 80GB | **Validated** | 0.1B–13.3B mixed matrix | 13.3B quant smoke, native MM8/MM4, single/dual-card ZeRO | Native quant speed remains below fp16 on larger models |
 | RTX A6000 48GB | **Validated** | 0.1B–7.2B; dual-card training to 2.9B | API/training/resume/ZeRO and quant memory evidence | Quant speed and production performance gate |
 | GTX 1080 Ti, sm61 | **Smoke / compatibility** | 0.1B and 0.4B fp16 | Native/no-FLA fallback, bnb and native-mm smoke, batch sweep | Training, larger models and quant speed |
-| RTX 5070 Laptop | **Smoke** | Blackwell compatibility rows | Load/native prefill/quant support evidence | Full production matrix |
+| RTX 5070 Laptop, sm120 | **Production-close for measured bsz8 lane** | 1.5B RWKV vs full-FLA Qwen3.5 2B, fp16/W8/W4 | 18/18 speed, active-parameter efficiency, footprint, peak-VRAM, full-FLA binding, and greedy/cosine gates pass | Other model pairs, bsz1/2/4 full-FLA, and model-quality evaluation |
 | H100 / Hopper | **Open** | — | — | bf16, large-model, quant, training and performance matrix |
 | AMD / ROCm | **Open** | Native PyTorch direction | Import-safe/no-FLA architecture exists | Real ROCm card validation and kernels |
 | Turing NVIDIA | **Open** | — | — | Compatibility and performance matrix |
@@ -34,6 +34,7 @@ Last updated: **2026-07-12**.
 
 - V100: [`../bench/v100_production_close_20260711/README.md`](../bench/v100_production_close_20260711/README.md)
 - RTX 5090: [`../bench/5090_blackwell_production_close_20260712/README.md`](../bench/5090_blackwell_production_close_20260712/README.md)
+- RTX 5070 Laptop: [`../bench/5070_qwen35_full_fla_bsz8_20260714/README.md`](../bench/5070_qwen35_full_fla_bsz8_20260714/README.md)
 - Apple M5: [`hardware/APPLE_PRODUCTION_CLOSE.md`](hardware/APPLE_PRODUCTION_CLOSE.md)
 - A100: [`validation/A100_HF_VALIDATION.md`](validation/A100_HF_VALIDATION.md)
 - A800: [`validation/A800_HF_VALIDATION.md`](validation/A800_HF_VALIDATION.md)

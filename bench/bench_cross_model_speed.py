@@ -11,6 +11,7 @@ import argparse
 import gc
 import importlib.util
 import json
+import math
 import os
 import shutil
 import statistics
@@ -99,6 +100,11 @@ def validate_args(args: argparse.Namespace) -> None:
         )
     if args.qwen_backend not in {"auto", "fla", "torch"}:
         raise ValueError("--qwen-backend must be auto, fla, or torch")
+    qwen_conv_backend = str(getattr(args, "qwen_conv_backend", "auto"))
+    if qwen_conv_backend not in {"auto", "causal_conv1d", "fla_triton"}:
+        raise ValueError("--qwen-conv-backend must be auto, causal_conv1d, or fla_triton")
+    if args.qwen_backend == "torch" and qwen_conv_backend != "auto":
+        raise ValueError("an accelerated Qwen conv backend cannot be combined with --qwen-backend torch")
     if args.probe_output and args.probe_tokens <= 0:
         raise ValueError("--probe-tokens must be positive when --probe-output is set")
 
@@ -138,6 +144,7 @@ def base_row(args: argparse.Namespace) -> dict[str, Any]:
         "dtype": args.dtype,
         "quantization": args.quantization,
         "qwen_backend_requested": args.qwen_backend,
+        "qwen_conv_backend_requested": getattr(args, "qwen_conv_backend", "auto"),
         "batch_size": args.batch_size,
         "prompt_tokens": args.prompt_tokens,
         "decode_tokens": args.decode_tokens,
@@ -212,6 +219,59 @@ def model_footprint_mb(model) -> float:
     for tensor in list(model.parameters()) + list(model.buffers()):
         total += _tensor_payload_bytes(tensor, seen)
     return round(total / 1024 / 1024, 1)
+
+
+def _logical_parameter_numel(parameter) -> int:
+    """Return the unpacked logical size of dense or bitsandbytes parameters."""
+
+    quant_state = getattr(parameter, "quant_state", None)
+    shape = getattr(quant_state, "shape", None)
+    if shape is not None:
+        try:
+            logical = math.prod(int(dim) for dim in shape)
+            if logical > 0:
+                return logical
+        except (TypeError, ValueError):
+            pass
+    return int(parameter.numel())
+
+
+def model_parameter_metadata(model, args: argparse.Namespace) -> dict[str, Any]:
+    """Count unique total and per-token active logical parameters.
+
+    Dense models activate every parameter. For a future top-k MoE reference,
+    shared parameters stay active while expert parameters are scaled by the
+    configured experts-per-token fraction.
+    """
+
+    unique: dict[int, tuple[str, Any]] = {}
+    for name, parameter in model.named_parameters():
+        unique.setdefault(id(parameter), (name, parameter))
+    total = sum(_logical_parameter_numel(parameter) for _name, parameter in unique.values())
+    expert = sum(
+        _logical_parameter_numel(parameter)
+        for name, parameter in unique.values()
+        if ".experts." in name or ".expert." in name
+    )
+    config = getattr(model, "config", None)
+    num_experts = int(getattr(config, "num_experts", 0) or 0)
+    experts_per_token = int(getattr(config, "num_experts_per_tok", 0) or 0)
+    if expert > 0 and num_experts > 0 and 0 < experts_per_token <= num_experts:
+        active = total - expert + round(expert * experts_per_token / num_experts)
+        method = "moe_topk_logical"
+    else:
+        active = total
+        method = "dense_all_logical"
+    prefill_applications = active * int(args.batch_size) * int(args.prompt_tokens)
+    decode_applications = active * int(args.batch_size) * int(args.decode_tokens)
+    return {
+        "logical_parameter_count": total,
+        "active_parameter_count": active,
+        "active_parameter_fraction": (active / total) if total else None,
+        "active_parameter_method": method,
+        "prefill_active_parameter_applications": prefill_applications,
+        "decode_active_parameter_applications": decode_applications,
+    }
 
 
 def quantization_config(args: argparse.Namespace, dtype: torch.dtype):
@@ -328,7 +388,15 @@ def load_model(args: argparse.Namespace, dtype: torch.dtype, model_path: str | N
         from transformers import Qwen3_5ForCausalLM
     except ImportError as exc:
         raise RuntimeError("installed Transformers does not provide Qwen3_5ForCausalLM") from exc
-    return Qwen3_5ForCausalLM.from_pretrained(args.model, **kwargs).eval()
+    model = Qwen3_5ForCausalLM.from_pretrained(args.model, **kwargs).eval()
+    if getattr(args, "qwen_conv_backend", "auto") == "fla_triton":
+        try:
+            from bench.qwen35_fla_triton_conv import bind_qwen35_fla_triton_conv
+        except ModuleNotFoundError:
+            from qwen35_fla_triton_conv import bind_qwen35_fla_triton_conv
+
+        model._qwen35_fla_triton_conv_layers = bind_qwen35_fla_triton_conv(model)
+    return model
 
 
 def _operator_origin(value: Any) -> str:
@@ -349,6 +417,13 @@ def _origin_is(origin: str, prefixes: tuple[str, ...]) -> bool:
     return any(origin == prefix or origin.startswith(prefix + ".") for prefix in prefixes)
 
 
+_QWEN35_FLA_TRITON_CONV_PREFIXES = (
+    "bench.qwen35_fla_triton_conv",
+    "qwen35_fla_triton_conv",
+)
+_QWEN35_ACCELERATED_CONV_PREFIXES = ("causal_conv1d",) + _QWEN35_FLA_TRITON_CONV_PREFIXES
+
+
 def qwen_fla_operator_contract(model) -> dict[str, Any]:
     """Inspect the operators actually bound by every Qwen3.5 linear layer.
 
@@ -356,8 +431,8 @@ def qwen_fla_operator_contract(model) -> dict[str, Any]:
     FLA or causal-conv1d is unavailable. Package presence alone therefore is
     not sufficient evidence that the benchmark used accelerated kernels. The
     Gated DeltaNet and norm operators form the required FLA core contract;
-    causal-conv1d is tracked as a separate optional acceleration capability so
-    Windows exact-card rows can exercise FLA without overstating full fusion.
+    causal convolution is tracked separately so strict rows can reject the
+    Transformers Torch fallback while older FLA-core-only rows remain readable.
     """
 
     operator_attrs = (
@@ -394,12 +469,18 @@ def qwen_fla_operator_contract(model) -> dict[str, Any]:
         for _, layer in layers
     )
     conv_update_fused_layers = sum(
-        _origin_is(_operator_origin(getattr(layer, "causal_conv1d_update", None)), ("causal_conv1d",))
+        _origin_is(
+            _operator_origin(getattr(layer, "causal_conv1d_update", None)),
+            _QWEN35_ACCELERATED_CONV_PREFIXES,
+        )
         for _, layer in layers
     )
     conv_prefill_fused_layers = sum(
         getattr(layer, "causal_conv1d_fn", None) is not None
-        and _origin_is(_operator_origin(getattr(layer, "causal_conv1d_fn", None)), ("causal_conv1d",))
+        and _origin_is(
+            _operator_origin(getattr(layer, "causal_conv1d_fn", None)),
+            _QWEN35_ACCELERATED_CONV_PREFIXES,
+        )
         for _, layer in layers
     )
     norm_fla_layers = sum(
@@ -423,6 +504,15 @@ def qwen_fla_operator_contract(model) -> dict[str, Any]:
     if conv_update_fused_layers != total:
         conv_missing.append("causal_conv1d cached update")
 
+    conv_backend = "fallback"
+    conv_origins = conv_prefill_origins + conv_update_origins
+    if conv_origins and all(_origin_is(origin, ("causal_conv1d",)) for origin in conv_origins):
+        conv_backend = "causal_conv1d"
+    elif conv_origins and all(_origin_is(origin, _QWEN35_FLA_TRITON_CONV_PREFIXES) for origin in conv_origins):
+        conv_backend = "fla_triton"
+    elif not conv_missing:
+        conv_backend = "mixed_accelerated"
+
     return {
         "qwen_linear_attention_layers": total,
         "qwen_fla_prefill_layers": prefill_fla_layers,
@@ -439,6 +529,7 @@ def qwen_fla_operator_contract(model) -> dict[str, Any]:
         "qwen_fla_core_contract_pass": not core_missing,
         "qwen_causal_conv1d_contract_missing": conv_missing,
         "qwen_causal_conv1d_contract_pass": not conv_missing,
+        "qwen_conv_backend_effective": conv_backend,
         "qwen_full_fused_contract_pass": not core_missing and not conv_missing,
         # Kept as the comparator-facing compatibility key. It intentionally
         # means the required FLA core, not optional causal-conv1d availability.
@@ -468,6 +559,8 @@ def qwen_effective_backend(args: argparse.Namespace, contract: dict[str, Any]) -
         return ""
     if contract.get("qwen_operator_contract_pass"):
         if contract.get("qwen_causal_conv1d_contract_pass"):
+            if contract.get("qwen_conv_backend_effective") == "fla_triton":
+                return "qwen_fla_gated_delta_rule_fla_triton_conv"
             return "qwen_fla_gated_delta_rule"
         return "qwen_fla_gated_delta_rule_torch_conv"
     return "transformers_torch_fallback"
@@ -897,10 +990,10 @@ def effective_quantization_metadata(model, args: argparse.Namespace) -> dict[str
 
 
 _QWEN35_FAST_BINDING_PREFIXES = {
-    "causal_conv1d_fn": "causal_conv1d.",
-    "causal_conv1d_update": "causal_conv1d.",
-    "chunk_gated_delta_rule": "fla.",
-    "recurrent_gated_delta_rule": "fla.",
+    "causal_conv1d_fn": ("causal_conv1d.", "bench.qwen35_fla_triton_conv", "qwen35_fla_triton_conv"),
+    "causal_conv1d_update": ("causal_conv1d.", "bench.qwen35_fla_triton_conv", "qwen35_fla_triton_conv"),
+    "chunk_gated_delta_rule": ("fla.",),
+    "recurrent_gated_delta_rule": ("fla.",),
 }
 
 
@@ -925,8 +1018,9 @@ def qwen35_fast_path_bindings(model) -> dict[str, Any]:
             fn = getattr(first, name, None)
             bindings[name] = getattr(fn, "__module__", None) if callable(fn) else None
     verified = bool(layers) and all(
-        isinstance(bindings.get(name), str) and str(bindings[name]).startswith(prefix)
-        for name, prefix in _QWEN35_FAST_BINDING_PREFIXES.items()
+        isinstance(bindings.get(name), str)
+        and any(str(bindings[name]).startswith(prefix) for prefix in prefixes)
+        for name, prefixes in _QWEN35_FAST_BINDING_PREFIXES.items()
     )
     return {
         "verified": verified,
@@ -938,18 +1032,11 @@ def qwen35_fast_path_bindings(model) -> dict[str, Any]:
 def validate_loaded_model(args: argparse.Namespace, model) -> None:
     if args.model_kind != "qwen35" or not args.require_qwen_fast_path:
         return
-    from transformers.models.qwen3_5.modeling_qwen3_5 import is_fast_path_available
-
-    if not bool(is_fast_path_available):
-        raise RuntimeError(
-            "Qwen3.5 optimized fast path is unavailable; install compatible "
-            "flash-linear-attention and causal-conv1d packages"
-        )
     binding_check = qwen35_fast_path_bindings(model)
     if not bool(binding_check["verified"]):
         raise RuntimeError(
-            "Qwen3.5 optimized packages imported but the loaded GatedDeltaNet "
-            f"layers are not bound to FLA/causal-conv1d: {binding_check}"
+            "Qwen3.5 full optimized path was required but the loaded GatedDeltaNet "
+            f"layers are not bound to FLA plus accelerated causal conv: {binding_check}"
         )
 
 
@@ -994,21 +1081,37 @@ def benchmark_loaded(
     probe_metadata = save_backend_probe(args, model, ids) if args.probe_output else {}
 
     qwen_bindings = qwen35_fast_path_bindings(model) if args.model_kind == "qwen35" else None
+    footprint = model_footprint_mb(model)
+    peak = peak_mb(args.device)
+    runtime_working_set = round(max(0.0, peak - footprint), 1) if peak is not None else None
+    parameter_metadata = model_parameter_metadata(model, args)
+    active_parameters = int(parameter_metadata["active_parameter_count"])
+    active_parameter_billions = active_parameters / 1e9
+    decode_tokps = (args.batch_size * args.decode_tokens) / decode_s
     row = {
         **base_row(args),
         **model_metadata(args, model),
         **environment_metadata(args),
         **effective_quantization_metadata(model, args),
+        **parameter_metadata,
         **qwen_contract,
         **probe_metadata,
         "status": "pass",
         "input_device": input_device,
         "prefill_sec_median": round(prefill_s, 6),
         "prefill_tokps_total": round(prefill_tokps, 3),
+        "prefill_tokps_per_active_billion": round(
+            prefill_tokps / active_parameter_billions, 6
+        ),
+        "prefill_active_parameter_tops": round(prefill_tokps * active_parameters / 1e12, 6),
         "decode_sec_median": round(decode_s, 6),
-        "decode_tokps_total": round((args.batch_size * args.decode_tokens) / decode_s, 3),
+        "decode_tokps_total": round(decode_tokps, 3),
         "decode_tokps_per_seq": round(args.decode_tokens / decode_s, 3),
+        "decode_tokps_per_active_billion": round(
+            decode_tokps / active_parameter_billions, 6
+        ),
         "decode_ms_per_step": round(1000 * decode_s / args.decode_tokens, 6),
+        "decode_active_parameter_tops": round(decode_tokps * active_parameters / 1e12, 6),
         "step_backend": step_backend,
         "prefill_effective_backend": prefill_backend or ("module_call" if args.model_kind == "qwen35" else None),
         "prefill_backend_effective": prefill_backend or ("module_call" if args.model_kind == "qwen35" else None),
@@ -1020,8 +1123,9 @@ def benchmark_loaded(
         "qwen_fast_path_layer_count": qwen_bindings["layer_count"] if qwen_bindings is not None else None,
         "qwen_fast_path_bindings": qwen_bindings["bindings"] if qwen_bindings is not None else None,
         "cache_type": cache_type,
-        "model_footprint_mb": model_footprint_mb(model),
-        "peak_vram_mb": peak_mb(args.device),
+        "model_footprint_mb": footprint,
+        "peak_vram_mb": peak,
+        "runtime_working_set_mb": runtime_working_set,
         "load_s": round(load_s, 3),
         "logits_finite": logits_finite,
         "warmup": args.warmup,
@@ -1119,6 +1223,12 @@ def parse_args() -> argparse.Namespace:
         choices=["auto", "fla", "torch"],
         default="fla",
         help="Require verified FLA operators by default; torch is an explicit diagnostic fallback lane",
+    )
+    ap.add_argument(
+        "--qwen-conv-backend",
+        choices=["auto", "causal_conv1d", "fla_triton"],
+        default="auto",
+        help="Select the Qwen causal-conv implementation independently of the FLA core",
     )
     ap.add_argument("--require-qwen-fast-path", action="store_true")
     ap.add_argument("--results", default="")

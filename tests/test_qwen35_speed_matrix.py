@@ -10,6 +10,7 @@ from argparse import Namespace
 from pathlib import Path
 from types import FunctionType, SimpleNamespace
 
+import pytest
 import torch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,10 +24,18 @@ from bench.bench_cross_model_speed import (  # noqa: E402
     forward_prefill,
     last_rwkv_prefill_backend,
     model_metadata,
+    model_parameter_metadata,
     prepare_rwkv_model_dir,
     qwen35_fast_path_bindings,
+    qwen_effective_backend,
     qwen_fla_operator_contract,
+    validate_loaded_model,
     validate_args,
+)
+from bench.qwen35_fla_triton_conv import (  # noqa: E402
+    bind_qwen35_fla_triton_conv,
+    qwen35_fla_triton_causal_conv1d,
+    qwen35_fla_triton_causal_conv1d_update,
 )
 from bench.bench_cross_model_speed_resident import cell_args, resolve_sweep_cells, resolve_sweep_shapes
 from bench.compare_qwen35_speed_matrix import quantization_family
@@ -728,6 +737,125 @@ def test_comparator_can_gate_memory_per_cell(tmp_path: Path) -> None:
     assert summary["red_cells"][0]["memory_pass"] is False
 
 
+def test_comparator_requires_full_fla_conv_and_active_parameter_work(tmp_path: Path) -> None:
+    candidate = row("candidate", prompt=128, prefill=130.0, decode=130.0, footprint=90.0)
+    reference = row("reference", prompt=128, prefill=100.0, decode=100.0, footprint=100.0)
+    candidate.update(
+        {
+            "runtime_working_set_mb": 20.0,
+            "active_parameter_count": 80,
+            "prefill_active_parameter_tops": 10.4,
+            "decode_active_parameter_tops": 10.4,
+        }
+    )
+    reference.update(
+        {
+            "runtime_working_set_mb": 25.0,
+            "active_parameter_count": 100,
+            "prefill_active_parameter_tops": 10.0,
+            "decode_active_parameter_tops": 10.0,
+            "qwen_full_fused_contract_pass": False,
+            "qwen_conv_backend_effective": "fallback",
+            "effective_backend": "qwen_fla_gated_delta_rule_torch_conv",
+        }
+    )
+    failed = run_compare(
+        tmp_path,
+        [candidate, reference],
+        "--expected-cells",
+        "1",
+        "--require-qwen-full-fused",
+        "--min-active-parameter-throughput-ratio",
+        "1.0",
+        "--fail-on-gate",
+    )
+    assert failed.returncode == 1, failed.stdout + failed.stderr
+    failed_summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert failed_summary["gates"]["backend_pass"] is False
+    assert failed_summary["cells"][0]["qwen_full_fused_pass"] is False
+
+    reference.update(
+        {
+            "qwen_full_fused_contract_pass": True,
+            "qwen_conv_backend_effective": "fla_triton",
+            "effective_backend": "qwen_fla_gated_delta_rule_fla_triton_conv",
+        }
+    )
+    passed = run_compare(
+        tmp_path,
+        [candidate, reference],
+        "--expected-cells",
+        "1",
+        "--require-qwen-full-fused",
+        "--min-active-parameter-throughput-ratio",
+        "1.0",
+        "--fail-on-gate",
+    )
+    assert passed.returncode == 0, passed.stdout + passed.stderr
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["gates"]["backend_pass"] is True
+    assert summary["gates"]["active_parameter_pass"] is True
+    assert summary["active_parameter_work"]["min_prefill_throughput_ratio"] == 1.04
+    assert summary["active_parameter_work"]["min_decode_throughput_ratio"] == 1.04
+
+
+def test_comparator_active_parameter_work_does_not_reward_smaller_model(tmp_path: Path) -> None:
+    candidate = row("candidate", prompt=128, prefill=120.0, decode=120.0)
+    reference = row("reference", prompt=128, prefill=100.0, decode=100.0)
+    candidate.update(
+        {
+            "active_parameter_count": 80,
+            "prefill_active_parameter_tops": 9.6,
+            "decode_active_parameter_tops": 9.6,
+        }
+    )
+    reference.update(
+        {
+            "active_parameter_count": 100,
+            "prefill_active_parameter_tops": 10.0,
+            "decode_active_parameter_tops": 10.0,
+        }
+    )
+    proc = run_compare(
+        tmp_path,
+        [candidate, reference],
+        "--expected-cells",
+        "1",
+        "--min-active-parameter-throughput-ratio",
+        "1.0",
+        "--fail-on-gate",
+    )
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["cells"][0]["prefill_speedup"] == 1.2
+    assert summary["cells"][0]["active_parameter_ratio"] == 0.8
+    assert summary["cells"][0]["active_parameter_pass"] is False
+    assert summary["gates"]["active_parameter_pass"] is False
+
+
+def test_comparator_active_parameter_efficiency_normalizes_smaller_model(tmp_path: Path) -> None:
+    candidate = row("candidate", prompt=128, prefill=120.0, decode=120.0)
+    reference = row("reference", prompt=128, prefill=100.0, decode=100.0)
+    candidate.update({"active_parameter_count": 80})
+    reference.update({"active_parameter_count": 100})
+    proc = run_compare(
+        tmp_path,
+        [candidate, reference],
+        "--expected-cells",
+        "1",
+        "--min-active-parameter-efficiency-ratio",
+        "1.0",
+        "--fail-on-gate",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    cell = summary["cells"][0]
+    assert cell["prefill_active_parameter_efficiency_ratio"] == 1.5
+    assert cell["decode_active_parameter_efficiency_ratio"] == 1.5
+    assert cell["active_parameter_efficiency_pass"] is True
+    assert summary["gates"]["active_parameter_efficiency_pass"] is True
+
+
 def test_rwkv_prefill_probe_requires_greedy_and_logits_alignment() -> None:
     reference = {
         "input_ids": torch.tensor([[1, 2]]),
@@ -1018,6 +1146,120 @@ def test_qwen_fast_path_binding_verification_is_fail_closed() -> None:
     fallback = qwen35_fast_path_bindings(FakeQwenModel(fast=False))
     assert fallback["verified"] is False
     assert fallback["layer_count"] == 1
+
+
+def test_qwen_fla_triton_bridge_preserves_qwen_layout_and_cache(monkeypatch) -> None:
+    convolution = pytest.importorskip("fla.modules.convolution")
+
+    seen: dict[str, tuple[int, ...] | str] = {}
+
+    def fake_prefill(x, *, weight, bias, activation, backend):
+        seen["prefill_shape"] = tuple(x.shape)
+        seen["prefill_backend"] = backend
+        return x + 1, torch.zeros_like(x[:, -2:, :])
+
+    def fake_update(x, state, *, weight, bias, activation):
+        seen["update_shape"] = tuple(x.shape)
+        state.add_(2)
+        return x + 3, state
+
+    monkeypatch.setattr(convolution, "causal_conv1d", fake_prefill)
+    monkeypatch.setattr(convolution, "causal_conv1d_update", fake_update)
+    x = torch.arange(24, dtype=torch.float32).reshape(2, 3, 4)
+    state = torch.zeros((2, 2, 3), dtype=torch.float32)
+    prefill = qwen35_fla_triton_causal_conv1d(
+        x=x,
+        weight=torch.ones((3, 2)),
+        activation="silu",
+    )
+    update = qwen35_fla_triton_causal_conv1d_update(
+        x[:, :, :1],
+        state,
+        torch.ones((3, 2)),
+        activation="silu",
+    )
+    assert seen == {
+        "prefill_shape": (2, 4, 3),
+        "prefill_backend": "triton",
+        "update_shape": (2, 1, 3),
+    }
+    assert prefill.shape == x.shape
+    assert torch.equal(prefill, x + 1)
+    assert update.shape == (2, 3, 1)
+    assert torch.equal(update, x[:, :, :1] + 3)
+    assert torch.equal(state, torch.full_like(state, 2))
+
+    def fake_update_copy(x, state, *, weight, bias, activation):
+        return x + 4, state + 5
+
+    monkeypatch.setattr(convolution, "causal_conv1d_update", fake_update_copy)
+    copied_state = torch.zeros((2, 2, 3), dtype=torch.float32)
+    copied = qwen35_fla_triton_causal_conv1d_update(
+        x[:, :, :1],
+        copied_state,
+        torch.ones((3, 2)),
+        activation="silu",
+    )
+    assert torch.equal(copied, x[:, :, :1] + 4)
+    assert torch.equal(copied_state, torch.full_like(copied_state, 5))
+
+
+def test_qwen_fla_triton_binding_satisfies_live_full_fused_contract() -> None:
+    layer_type = type("Qwen3_5GatedDeltaNet", (), {})
+    layer = layer_type()
+    layer.chunk_gated_delta_rule = _fake_operator("fla.ops.gated_delta_rule.chunk")
+    layer.recurrent_gated_delta_rule = _fake_operator(
+        "fla.ops.gated_delta_rule.fused_recurrent"
+    )
+    layer.norm = _fake_operator("fla.modules.fused_norm_gate")
+    model = SimpleNamespace(
+        modules=lambda: [model, layer],
+        named_modules=lambda: [("model.layers.0.linear_attn", layer)],
+    )
+    assert bind_qwen35_fla_triton_conv(model) == 1
+    contract = qwen_fla_operator_contract(model)
+    assert contract["qwen_full_fused_contract_pass"] is True
+    assert contract["qwen_conv_backend_effective"] == "fla_triton"
+    args = worker_args(
+        model_kind="qwen35",
+        qwen_backend="fla",
+        qwen_conv_backend="fla_triton",
+        require_qwen_fast_path=True,
+    )
+    validate_loaded_model(args, model)
+    assert qwen_effective_backend(args, contract) == "qwen_fla_gated_delta_rule_fla_triton_conv"
+
+
+def test_model_parameter_metadata_counts_logical_and_active_work() -> None:
+    class FakeParameter:
+        def __init__(self, numel: int, logical_shape=None) -> None:
+            self._numel = numel
+            self.quant_state = (
+                SimpleNamespace(shape=logical_shape) if logical_shape is not None else None
+            )
+
+        def numel(self) -> int:
+            return self._numel
+
+    shared = FakeParameter(10)
+    packed_expert = FakeParameter(8, logical_shape=(4, 8))
+    model = SimpleNamespace(
+        config=SimpleNamespace(num_experts=4, num_experts_per_tok=1),
+        named_parameters=lambda: [
+            ("shared.weight", shared),
+            ("tied.weight", shared),
+            ("block.experts.weight", packed_expert),
+        ],
+    )
+    metadata = model_parameter_metadata(
+        model,
+        Namespace(batch_size=8, prompt_tokens=128, decode_tokens=512),
+    )
+    assert metadata["logical_parameter_count"] == 42
+    assert metadata["active_parameter_count"] == 18
+    assert metadata["active_parameter_method"] == "moe_topk_logical"
+    assert metadata["prefill_active_parameter_applications"] == 18 * 8 * 128
+    assert metadata["decode_active_parameter_applications"] == 18 * 8 * 512
 
 
 def test_repo_code_staging_works_without_symlink_privilege(tmp_path: Path) -> None:

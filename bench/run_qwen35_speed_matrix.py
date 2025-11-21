@@ -71,8 +71,13 @@ class RunSpec:
     def raw_key(self) -> tuple[Any, ...]:
         return (*self.cell_key, self.model_role)
 
-    def raw_key_for_backend(self, qwen_backend: str) -> tuple[Any, ...]:
-        return (*self.raw_key, qwen_backend)
+    def raw_key_for_backend(self, qwen_backend: str, qwen_conv_backend: str = "auto") -> tuple[Any, ...]:
+        backend_key = (
+            qwen_backend
+            if qwen_conv_backend == "auto"
+            else f"{qwen_backend}+conv:{qwen_conv_backend}"
+        )
+        return (*self.raw_key, backend_key)
 
 
 def parse_pair_spec(value: str) -> PairSpec:
@@ -134,9 +139,16 @@ def build_run_specs(config: MatrixConfig) -> list[RunSpec]:
 
 
 def row_key(row: dict[str, Any]) -> tuple[Any, ...]:
+    qwen_backend = str(row.get("qwen_backend_requested", "auto"))
+    qwen_conv_backend = str(row.get("qwen_conv_backend_requested", "auto"))
+    backend_key = (
+        qwen_backend
+        if qwen_conv_backend == "auto"
+        else f"{qwen_backend}+conv:{qwen_conv_backend}"
+    )
     return tuple(row.get(field) for field in CELL_FIELDS) + (
         row.get("model_role"),
-        row.get("qwen_backend_requested", "auto"),
+        backend_key,
     )
 
 
@@ -204,6 +216,8 @@ def worker_command(args: argparse.Namespace, spec: RunSpec) -> list[str]:
         args.rwkv_code_source,
         "--qwen-backend",
         args.qwen_backend,
+        "--qwen-conv-backend",
+        args.qwen_conv_backend,
         "--results",
         str(args.results),
     ]
@@ -219,6 +233,7 @@ def append_orchestrator_failure(
     proc: subprocess.CompletedProcess[str],
     *,
     qwen_backend: str = "auto",
+    qwen_conv_backend: str = "auto",
     benchmark_matrix: str,
 ) -> None:
     row = {
@@ -233,6 +248,7 @@ def append_orchestrator_failure(
         "dtype": spec.dtype,
         "quantization": spec.quantization,
         "qwen_backend_requested": qwen_backend,
+        "qwen_conv_backend_requested": qwen_conv_backend,
         "batch_size": spec.batch_size,
         "prompt_tokens": spec.prompt_tokens,
         "decode_tokens": spec.decode_tokens,
@@ -296,6 +312,11 @@ def parse_args() -> argparse.Namespace:
         choices=["auto", "fla", "torch"],
         default="fla",
         help="Require verified Qwen FLA Gated DeltaNet operators by default",
+    )
+    ap.add_argument(
+        "--qwen-conv-backend",
+        choices=["auto", "causal_conv1d", "fla_triton"],
+        default="auto",
     )
     ap.add_argument("--require-qwen-fast-path", action="store_true")
     ap.add_argument(
@@ -390,7 +411,7 @@ def main() -> int:
     failures = 0
     started = time.perf_counter()
     for index, spec in enumerate(specs, 1):
-        raw_key = spec.raw_key_for_backend(args.qwen_backend)
+        raw_key = spec.raw_key_for_backend(args.qwen_backend, args.qwen_conv_backend)
         if raw_key in seen:
             print(f"skip existing {index}/{len(specs)} {raw_key}", flush=True)
             continue
@@ -420,6 +441,7 @@ def main() -> int:
                         cmd,
                         proc,
                         qwen_backend=args.qwen_backend,
+                        qwen_conv_backend=args.qwen_conv_backend,
                         benchmark_matrix=args.benchmark_matrix,
                     )
                     current_keys.add(raw_key)

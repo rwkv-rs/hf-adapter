@@ -139,33 +139,43 @@ Evidence and reproduction:
 
 ## RTX 5070 Laptop RWKV-7 vs verified Qwen3.5 FLA
 
-The final exact-card 1.5B RWKV vs 2B Qwen matrix covers 144/144 passing raw
-rows and 72/72 joined cells across prompt128/512/2048, decode128/512,
-bsz1/2/4/8, and fp16/bnb8/bnb4. Every Qwen row binds all 18 Gated DeltaNet
-layers to FLA prefill, fused-recurrent decode, and fused gated norm. Windows
-lacks `causal-conv1d`, so the honest effective backend is
-`qwen_fla_gated_delta_rule_torch_conv`, not full fusion.
+The promoted exact-card bsz8 matrix compares 1.5B RWKV with official 2B Qwen
+across prompt128/512/2048, decode128/512, and fp16/bnb8/bnb4. All 36 raw rows
+and 18 joined cells pass. Every Qwen performance row binds all 18 Gated
+DeltaNet layers to FLA chunk prefill, FLA fused-recurrent decode, FLA fused
+gated norm, and FLA Triton causal-convolution prefill/update. The effective
+backend is `qwen_fla_gated_delta_rule_fla_triton_conv`; there is no Qwen Torch
+fallback in the performance matrix.
 
 | Metric | Minimum | Median | Maximum | Strict pass |
 |---|---:|---:|---:|---:|
-| Prefill RWKV/Qwen | `1.109682x` | `1.473473x` | `4.298400x` | 72/72 at >=1.05x |
-| Decode RWKV/Qwen | `1.466175x` | `2.720961x` | `6.882948x` | 72/72 at >=1.05x |
-| Model footprint RWKV/Qwen | `0.729146x` | `0.811662x` | `0.856635x` | 72/72 no larger |
-| Peak VRAM RWKV/Qwen | `0.648549x` | `0.823298x` | `0.967497x` | 72/72 no larger |
+| Prefill RWKV/Qwen | `1.082707x` | `1.375135x` | `1.688725x` | 18/18 at >=1.05x |
+| Decode RWKV/Qwen | `1.795119x` | `2.544989x` | `3.456505x` | 18/18 at >=1.05x |
+| Model footprint RWKV/Qwen | `0.729146x` | `0.811662x` | `0.856635x` | 18/18 no larger |
+| Peak VRAM RWKV/Qwen | `0.605574x` | `0.845321x` | `0.955585x` | 18/18 no larger |
+| Prefill tok/s per active-B | `1.333940x` | `1.694224x` | `2.080579x` | 18/18 at >=1.0x |
+| Decode tok/s per active-B | `2.211641x` | `3.135530x` | `4.258556x` | 18/18 at >=1.0x |
 
-The strict result is **PASS** with no red or missing cells. Fp16 and BNB4
-decode use native graph; BNB8 decode conservatively uses FLA with the
-`decode_rk` hybrid policy because BNB8 CUDA graph capture is invalid on this
-stack. All three precisions use opt-in native prefill. The separate Qwen
-FLA/Torch probe passes 8/8 greedy tokens at prompt/final cosine
-`0.99999076`/`0.99999213`; RWKV native-prefill probes also pass 8/8 greedy and
+RWKV/Qwen active parameters are 1,527,404,544/1,881,825,088 (`0.811661x`).
+The model-efficiency gate uses `tok/s / active-B`. Hardware logical work rate
+(`tok/s * active parameters`) remains separate telemetry; its minimum prefill
+ratio is `0.878791x` and is not used to penalize the smaller model. Runtime
+working set is lower in 8/18 cells, while total peak VRAM, the fit constraint,
+is lower in all 18.
+
+Fp16 and BNB4 decode use native graph; BNB4 prefill also uses the opt-in
+external-quant graph. BNB8 uses the conservative `decode_rk` policy. The Qwen
+full-FLA numerical oracle passes 8/8 greedy at prompt/final cosine
+`0.99999022`/`0.99999237`. RWKV bsz8 native-prefill probes pass 8/8 greedy and
 the `0.9999` cosine gate for fp16, BNB8, and BNB4.
 
-This supersedes the 2026-07-13 35/72 performance result while preserving it as
-historical evidence. It is an exact-card performance and memory close, not a
-claim that RWKV exceeds Qwen3.5 model quality.
+This supersedes the broader 72-cell 5070 artifact for the strict bsz8
+optimized-Qwen claim. That older artifact remains useful bsz1/2/4 coverage,
+but its Qwen convolution is a Transformers Torch fallback. The new result is
+an exact-card performance and memory close, not a model-quality claim.
 
-Final evidence: [`bench/5070_qwen35_fla_native_prefill_20260714/README.md`](bench/5070_qwen35_fla_native_prefill_20260714/README.md).
+Final full-FLA evidence: [`bench/5070_qwen35_full_fla_bsz8_20260714/README.md`](bench/5070_qwen35_full_fla_bsz8_20260714/README.md).
+Historical FLA-core-only evidence: [`bench/5070_qwen35_fla_native_prefill_20260714/README.md`](bench/5070_qwen35_fla_native_prefill_20260714/README.md).
 Historical baseline: [`bench/5070_qwen35_fla_matrix_20260713/README.md`](bench/5070_qwen35_fla_matrix_20260713/README.md).
 
 ## RTX 4090 promoted rows
