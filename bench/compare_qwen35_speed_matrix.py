@@ -108,6 +108,7 @@ def compare(
     require_quant_memory_reduction: bool = False,
     require_prefill_mode_match: bool = False,
     require_quant_not_slower_than_dense: bool = False,
+    allow_quant_total_not_slower_than_dense: bool = False,
     required_reference_backend: str = "any",
     require_memory_not_larger: bool = False,
 ) -> dict[str, Any]:
@@ -167,6 +168,7 @@ def compare(
                 "decode": [],
                 "quant_prefill_vs_dense": [],
                 "quant_decode_vs_dense": [],
+                "quant_total_vs_dense": [],
                 "footprint_vs_dense": [],
                 "peak_vram_vs_dense": [],
             },
@@ -216,6 +218,7 @@ def compare(
         quant_memory_pass = True
         quant_prefill_speedup_vs_dense = None
         quant_decode_speedup_vs_dense = None
+        quant_total_speedup_vs_dense = None
         quant_dense_prefill_mode_pass = True
         quant_dense_speed_pass = True
         dense_candidate = None
@@ -255,17 +258,47 @@ def compare(
                 candidate.get("decode_tokps_total"),
                 dense_candidate.get("decode_tokps_total") if dense_candidate else None,
             )
+            candidate_total_s = (
+                float(candidate.get("prefill_sec_median"))
+                + float(candidate.get("decode_sec_median"))
+                if candidate.get("prefill_sec_median") is not None
+                and candidate.get("decode_sec_median") is not None
+                else None
+            )
+            dense_total_s = (
+                float(dense_candidate.get("prefill_sec_median"))
+                + float(dense_candidate.get("decode_sec_median"))
+                if dense_candidate is not None
+                and dense_candidate.get("prefill_sec_median") is not None
+                and dense_candidate.get("decode_sec_median") is not None
+                else None
+            )
+            quant_total_speedup_vs_dense = ratio(dense_total_s, candidate_total_s)
+            phase_speed_pass = bool(
+                quant_prefill_speedup_vs_dense is not None
+                and quant_decode_speedup_vs_dense is not None
+                and quant_prefill_speedup_vs_dense >= 1.0
+                and quant_decode_speedup_vs_dense >= 1.0
+            )
             quant_dense_speed_pass = bool(
                 quant_prefill_speedup_vs_dense is not None
                 and quant_decode_speedup_vs_dense is not None
                 and quant_dense_prefill_mode_pass
-                and quant_prefill_speedup_vs_dense >= 1.0
-                and quant_decode_speedup_vs_dense >= 1.0
+                and (
+                    phase_speed_pass
+                    or (
+                        allow_quant_total_not_slower_than_dense
+                        and quant_total_speedup_vs_dense is not None
+                        and quant_total_speedup_vs_dense >= 1.0
+                    )
+                )
             )
             if quant_prefill_speedup_vs_dense is not None:
                 metrics["quant_prefill_vs_dense"].append(quant_prefill_speedup_vs_dense)
             if quant_decode_speedup_vs_dense is not None:
                 metrics["quant_decode_vs_dense"].append(quant_decode_speedup_vs_dense)
+            if quant_total_speedup_vs_dense is not None:
+                metrics["quant_total_vs_dense"].append(quant_total_speedup_vs_dense)
         backend_pass = native_backend_pass and qwen_backend_pass
         backend_failures += int(not backend_pass)
         memory_failures += int(not quant_memory_pass)
@@ -323,6 +356,7 @@ def compare(
             "prefill_mode_pass": prefill_mode_pass,
             "quant_prefill_speedup_vs_dense": quant_prefill_speedup_vs_dense,
             "quant_decode_speedup_vs_dense": quant_decode_speedup_vs_dense,
+            "quant_total_speedup_vs_dense": quant_total_speedup_vs_dense,
             "quant_dense_prefill_mode_pass": quant_dense_prefill_mode_pass,
             "quant_dense_speed_pass": quant_dense_speed_pass,
             "passed": passed,
@@ -360,6 +394,14 @@ def compare(
             "median_decode_speedup_vs_dense": median_or_none(
                 metrics["quant_decode_vs_dense"]
             ),
+            "min_total_speedup_vs_dense": (
+                min(metrics["quant_total_vs_dense"])
+                if metrics["quant_total_vs_dense"]
+                else None
+            ),
+            "median_total_speedup_vs_dense": median_or_none(
+                metrics["quant_total_vs_dense"]
+            ),
             "max_footprint_ratio_vs_dense": (
                 max(metrics["footprint_vs_dense"])
                 if metrics["footprint_vs_dense"]
@@ -391,6 +433,7 @@ def compare(
             "require_quant_memory_reduction": require_quant_memory_reduction,
             "require_prefill_mode_match": require_prefill_mode_match,
             "require_quant_not_slower_than_dense": require_quant_not_slower_than_dense,
+            "allow_quant_total_not_slower_than_dense": allow_quant_total_not_slower_than_dense,
             "required_reference_backend": required_reference_backend,
             "require_memory_not_larger": require_memory_not_larger,
         },
@@ -487,14 +530,14 @@ def render_markdown(summary: dict[str, Any]) -> str:
         "",
         "## Precision families",
         "",
-        "| Family | Cells | RWKV/Qwen prefill min/median | RWKV/Qwen decode min/median | Quant/fp16 prefill min | Quant/fp16 decode min | Footprint max | Peak max |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| Family | Cells | RWKV/Qwen prefill min/median | RWKV/Qwen decode min/median | Quant/fp16 prefill min | Quant/fp16 decode min | Quant/fp16 total min | Footprint max | Peak max |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for family, metrics in summary.get("speed_by_quantization", {}).items():
         lines.append(
             "| {family} | {cells} | {prefill_min}x / {prefill_median}x | "
             "{decode_min}x / {decode_median}x | {dense_prefill} | {dense_decode} | "
-            "{footprint} | {peak} |".format(
+            "{dense_total} | {footprint} | {peak} |".format(
                 family=family,
                 cells=metrics["cells"],
                 prefill_min=fmt(metrics["min_prefill_speedup"]),
@@ -509,6 +552,11 @@ def render_markdown(summary: dict[str, Any]) -> str:
                 dense_decode=(
                     f"{fmt(metrics['min_decode_speedup_vs_dense'])}x"
                     if metrics["min_decode_speedup_vs_dense"] is not None
+                    else "-"
+                ),
+                dense_total=(
+                    f"{fmt(metrics['min_total_speedup_vs_dense'])}x"
+                    if metrics["min_total_speedup_vs_dense"] is not None
                     else "-"
                 ),
                 footprint=(
@@ -585,6 +633,7 @@ def main() -> int:
     ap.add_argument("--require-quant-memory-reduction", action="store_true")
     ap.add_argument("--require-prefill-mode-match", action="store_true")
     ap.add_argument("--require-quant-not-slower-than-dense", action="store_true")
+    ap.add_argument("--allow-quant-total-not-slower-than-dense", action="store_true")
     ap.add_argument("--required-reference-backend", choices=["fla", "torch", "any"], default="fla")
     ap.add_argument("--require-memory-not-larger", action="store_true")
     ap.add_argument("--json-output", default="")
@@ -604,6 +653,7 @@ def main() -> int:
         require_quant_memory_reduction=args.require_quant_memory_reduction,
         require_prefill_mode_match=args.require_prefill_mode_match,
         require_quant_not_slower_than_dense=args.require_quant_not_slower_than_dense,
+        allow_quant_total_not_slower_than_dense=args.allow_quant_total_not_slower_than_dense,
         required_reference_backend=args.required_reference_backend,
         require_memory_not_larger=args.require_memory_not_larger,
     )
