@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Compose measured dense and quant deployment profiles without hiding gaps.
 
-Each selected W8/W4 row must independently beat the matching Qwen row, avoid
-regressing the measured RWKV fp16 row, reduce both model footprint and peak
-VRAM, and use the declared native candidate/Qwen fast backends.  The original
-quantization implementation is retained in every row and a manifest records
-all eligible alternatives and the deterministic winner.
+Each selected W8/W4 row must independently beat the matching Qwen row, reduce
+both model footprint and peak VRAM, and use the declared native
+candidate/Qwen fast backends.  Relative to the measured RWKV fp16 row, the
+default gate requires both phases to be non-inferior; an explicit opt-in can
+instead gate the exact-cell prefill+decode total latency while retaining both
+phase ratios in telemetry.  The original quantization implementation is
+retained in every row and a manifest records all eligible alternatives and the
+deterministic winner.
 """
 from __future__ import annotations
 
@@ -61,8 +64,22 @@ def evaluate(
     min_qwen_decode: float,
     min_dense_prefill: float,
     min_dense_decode: float,
+    min_dense_total: float,
+    allow_dense_total_noninferiority: bool,
     require_qwen_gate: bool = True,
 ) -> dict[str, Any]:
+    candidate_total_s = (
+        float(candidate.get("prefill_sec_median")) + float(candidate.get("decode_sec_median"))
+        if candidate.get("prefill_sec_median") is not None
+        and candidate.get("decode_sec_median") is not None
+        else None
+    )
+    dense_total_s = (
+        float(dense.get("prefill_sec_median")) + float(dense.get("decode_sec_median"))
+        if dense.get("prefill_sec_median") is not None
+        and dense.get("decode_sec_median") is not None
+        else None
+    )
     metrics = {
         "qwen_prefill_speedup": divided(
             candidate.get("prefill_tokps_total"), reference.get("prefill_tokps_total")
@@ -76,6 +93,7 @@ def evaluate(
         "dense_decode_speedup": divided(
             candidate.get("decode_tokps_total"), dense.get("decode_tokps_total")
         ),
+        "dense_total_speedup": divided(dense_total_s, candidate_total_s),
         "footprint_ratio": divided(
             candidate.get("model_footprint_mb"), dense.get("model_footprint_mb")
         ),
@@ -83,6 +101,15 @@ def evaluate(
             candidate.get("peak_vram_mb"), dense.get("peak_vram_mb")
         ),
     }
+    dense_prefill_pass = metrics["dense_prefill_speedup"] is not None and metrics[
+        "dense_prefill_speedup"
+    ] >= min_dense_prefill
+    dense_decode_pass = metrics["dense_decode_speedup"] is not None and metrics[
+        "dense_decode_speedup"
+    ] >= min_dense_decode
+    dense_total_pass = metrics["dense_total_speedup"] is not None and metrics[
+        "dense_total_speedup"
+    ] >= min_dense_total
     checks = {
         "status": candidate.get("status") == "pass" and reference.get("status") == "pass",
         "finite": candidate.get("logits_finite") is True,
@@ -90,9 +117,16 @@ def evaluate(
             candidate.get("prefill_effective_backend") in {"native_prefill", "native_prefill_graph"}
             and candidate.get("effective_backend") == "native_graph"
         ),
-        "qwen_fast_path": (
-            not require_qwen_gate
-            or
+        "qwen_fast_path": not require_qwen_gate
+        or (
+            reference.get("effective_backend")
+            in {
+                "qwen_fla_gated_delta_rule",
+                "qwen_fla_gated_delta_rule_torch_conv",
+            }
+            and reference.get("qwen_operator_contract_pass") is True
+        )
+        or (
             reference.get("effective_backend") == "fla+causal_conv1d"
             and reference.get("qwen_fast_path_verified") is True
         ),
@@ -109,14 +143,19 @@ def evaluate(
             metrics["qwen_decode_speedup"] is not None
             and metrics["qwen_decode_speedup"] >= min_qwen_decode
         ),
-        "dense_prefill": metrics["dense_prefill_speedup"] is not None
-        and metrics["dense_prefill_speedup"] >= min_dense_prefill,
-        "dense_decode": metrics["dense_decode_speedup"] is not None
-        and metrics["dense_decode_speedup"] >= min_dense_decode,
+        "dense_prefill": dense_prefill_pass,
+        "dense_decode": dense_decode_pass,
+        "dense_total": dense_total_pass,
+        "dense_speed": (dense_prefill_pass and dense_decode_pass)
+        or (allow_dense_total_noninferiority and dense_total_pass),
         "footprint": metrics["footprint_ratio"] is not None and metrics["footprint_ratio"] < 1.0,
         "peak_vram": metrics["peak_vram_ratio"] is not None and metrics["peak_vram_ratio"] < 1.0,
     }
-    margins = [metrics["dense_prefill_speedup"], metrics["dense_decode_speedup"]]
+    margins = (
+        [metrics["dense_prefill_speedup"], metrics["dense_decode_speedup"]]
+        if dense_prefill_pass and dense_decode_pass
+        else [metrics["dense_total_speedup"]]
+    )
     if require_qwen_gate:
         margins = [
             metrics["qwen_prefill_speedup"],
@@ -130,7 +169,21 @@ def evaluate(
         "source_line": candidate.get("_route_source_line"),
         "metrics": metrics,
         "checks": checks,
-        "eligible": all(checks.values()),
+        "eligible": all(
+            checks[name]
+            for name in (
+                "status",
+                "finite",
+                "native_candidate",
+                "qwen_fast_path",
+                "prefill_mode",
+                "qwen_prefill",
+                "qwen_decode",
+                "dense_speed",
+                "footprint",
+                "peak_vram",
+            )
+        ),
         "score": min(available_margins) if available_margins else float("-inf"),
     }
 
@@ -213,6 +266,8 @@ def compose(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str, A
                     min_qwen_decode=args.min_qwen_decode,
                     min_dense_prefill=args.min_dense_prefill,
                     min_dense_decode=args.min_dense_decode,
+                    min_dense_total=args.min_dense_total,
+                    allow_dense_total_noninferiority=args.allow_dense_total_noninferiority,
                     require_qwen_gate=args.quant_qwen_gate,
                 )
                 for variant in variants
@@ -266,6 +321,8 @@ def compose(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str, A
             "min_qwen_decode": args.min_qwen_decode,
             "min_dense_prefill": args.min_dense_prefill,
             "min_dense_decode": args.min_dense_decode,
+            "min_dense_total": args.min_dense_total,
+            "allow_dense_total_noninferiority": args.allow_dense_total_noninferiority,
             "require_footprint_and_peak_reduction": True,
             "require_native_candidate": True,
             "require_qwen_fast_path": args.quant_qwen_gate,
@@ -287,6 +344,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-qwen-decode", type=float, default=1.0)
     parser.add_argument("--min-dense-prefill", type=float, default=1.0)
     parser.add_argument("--min-dense-decode", type=float, default=1.0)
+    parser.add_argument("--min-dense-total", type=float, default=1.0)
+    parser.add_argument(
+        "--allow-dense-total-noninferiority",
+        action="store_true",
+        help=(
+            "Allow a quant route whose exact-cell prefill+decode latency is no worse "
+            "than dense even when one individual phase is marginally slower."
+        ),
+    )
     parser.add_argument(
         "--quant-qwen-gate",
         action=argparse.BooleanOptionalAction,

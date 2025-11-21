@@ -28,7 +28,7 @@ from bench.bench_cross_model_speed import (  # noqa: E402
     qwen_fla_operator_contract,
     validate_args,
 )
-from bench.bench_cross_model_speed_resident import resolve_sweep_cells, resolve_sweep_shapes
+from bench.bench_cross_model_speed_resident import cell_args, resolve_sweep_cells, resolve_sweep_shapes
 from bench.compare_qwen35_speed_matrix import quantization_family
 from bench.compare_qwen35_backend_probe import compare as compare_backend_probe  # noqa: E402
 from bench.compare_rwkv_prefill_probe import compare as compare_rwkv_prefill_probe  # noqa: E402
@@ -261,6 +261,8 @@ def row(
         "batch_size": 1,
         "prefill_tokps_total": prefill,
         "decode_tokps_total": decode,
+        "prefill_sec_median": prompt / prefill,
+        "decode_sec_median": 128 / decode,
         "prefill_effective_backend": "native_prefill" if candidate else "module_call",
         "effective_backend": "native_graph" if candidate else "fla+causal_conv1d",
         "qwen_fast_path_verified": None if candidate else True,
@@ -320,6 +322,39 @@ def test_resident_worker_direct_entrypoint_imports_sibling_worker() -> None:
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "Single-load RWKV/Qwen speed sweep" in proc.stdout
     assert "--shapes" in proc.stdout
+    assert "--probe-output" in proc.stdout
+    assert "{auto,fla,torch}" in proc.stdout
+
+
+def test_resident_worker_forwards_probe_defaults_to_shared_worker() -> None:
+    args = Namespace(
+        model="/models/rwkv",
+        model_kind="rwkv",
+        model_role="candidate",
+        model_pair="rwkv-1.5b__qwen3.5-2b",
+        model_size_label="1.5b",
+        benchmark_matrix="qwen35_test_hf",
+        dtype="fp16",
+        quantization="none",
+        native_quant_min_params=1_000_000,
+        native_quant_policy="memory",
+        torchao_group_size=128,
+        device="cuda",
+        prefill_chunk_size=0,
+        warmup=1,
+        runs=3,
+        rwkv_attn_mode="fused_recurrent",
+        rwkv_code_source="repo",
+        qwen_backend="auto",
+        require_qwen_fast_path=False,
+        probe_output="",
+        probe_tokens=8,
+        results="results.jsonl",
+    )
+    forwarded = cell_args(args, 8, 128, 128)
+    assert forwarded.probe_output == ""
+    assert forwarded.probe_tokens == 8
+    validate_args(forwarded)
 
 
 def test_resident_worker_accepts_exact_non_cartesian_shapes() -> None:
@@ -505,6 +540,48 @@ def test_comparator_fails_quant_vs_dense_chunk_mismatch(tmp_path: Path) -> None:
     assert quant["prefill_mode_pass"] is True
     assert quant["quant_dense_prefill_mode_pass"] is False
     assert quant["quant_dense_speed_pass"] is False
+
+
+def test_comparator_can_gate_quant_on_exact_cell_total_latency(tmp_path: Path) -> None:
+    dense = row("candidate", prompt=128, prefill=100.0, decode=100.0, footprint=200.0)
+    reference = row("reference", prompt=128, prefill=80.0, decode=80.0)
+    quant = row(
+        "candidate",
+        prompt=128,
+        prefill=98.0,
+        decode=104.0,
+        quantization="mm4",
+        footprint=100.0,
+    )
+    quant_reference = row(
+        "reference", prompt=128, prefill=80.0, decode=80.0, quantization="bnb4"
+    )
+    proc = run_compare(
+        tmp_path,
+        [dense, reference, quant, quant_reference],
+        "--expected-cells",
+        "2",
+        "--min-prefill-speedup",
+        "1.0",
+        "--min-decode-speedup",
+        "1.0",
+        "--min-quant-prefill-speedup",
+        "0.0",
+        "--min-quant-decode-speedup",
+        "0.0",
+        "--require-quant-memory-reduction",
+        "--require-quant-not-slower-than-dense",
+        "--allow-quant-total-not-slower-than-dense",
+        "--fail-on-gate",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    cell = next(item for item in summary["cells"] if item["quantization"] == "w4")
+    assert cell["quant_prefill_speedup_vs_dense"] == 0.98
+    assert cell["quant_total_speedup_vs_dense"] > 1.0
+    assert cell["quant_dense_speed_pass"] is True
+    markdown = (tmp_path / "summary.md").read_text(encoding="utf-8")
+    assert "Quant/fp16 total min" in markdown
 
 
 def test_comparator_reports_missing_and_slow_cells(tmp_path: Path) -> None:
@@ -1063,10 +1140,18 @@ def test_3090_entrypoint_requires_optimized_qwen_path() -> None:
     for name in (
         "run_3090_qwen35_pair.sh",
         "run_3090_qwen35_pair_resident.sh",
+        "run_3090_qwen35_pair_acceptance.sh",
         "run_3090_qwen35_speed_matrix.sh",
     ):
         script = (ROOT / "bench" / name).read_text(encoding="utf-8")
         assert "--require-qwen-fast-path" in script
+
+    acceptance = (ROOT / "bench" / "run_3090_qwen35_pair_acceptance.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'qwen_backend="fla"' in acceptance
+    assert 'DENSE_PREFILL_GATE="${DENSE_PREFILL_GATE:-1.00}"' in acceptance
+    assert "DENSE_DECODE_GATE=" in acceptance
 
 
 def test_hardware_entrypoints_are_fail_closed() -> None:

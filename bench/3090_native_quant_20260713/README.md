@@ -2,8 +2,9 @@
 
 Exact-card evidence for RWKV-7 7.2B on an NVIDIA GeForce RTX 3090. The RWKV
 candidate uses the repository `native_graph` / native prefill path; FLA is not
-the RWKV production backend. Qwen3.5 uses its verified
-`fla+causal_conv1d` fast path where a dense cross-model reference is required.
+the RWKV production backend. Qwen3.5 uses its verified FLA Gated DeltaNet path
+with a separately recorded causal-convolution contract where a dense
+cross-model reference is required.
 
 ## Acceptance policy
 
@@ -15,8 +16,11 @@ The current production policy is deliberately asymmetric:
    2.9B/4B pair targets are `1.65x` and `1.75x` respectively.
 2. **Quant:** compare RWKV W8/W4 only with the same RWKV dense fp16 row.
    Matching quantized Qwen performance is optional context, not an acceptance
-   dependency. Require prefill/decode `>=1.00x`, lower model footprint and
-   peak VRAM, finite logits, greedy alignment and the quality gate.
+   dependency. The default requires prefill/decode `>=1.00x`; the explicit
+   total-latency option accepts a row when `dense total latency / quant total
+   latency >=1.00x`, while still reporting both phase ratios. Lower model
+   footprint and peak VRAM, finite logits, greedy alignment and the quality
+   gate remain mandatory.
 3. All promoted performance rows use medians after warmup and retain the raw
    backend/memory telemetry. A fastest-only observation is not sufficient.
 
@@ -74,5 +78,8 @@ PYTHON_BIN=/path/to/python \
   /tmp/rwkv7-3090-72-vs-9
 ```
 
-`DENSE_SPEEDUP_GATE` can override the pair-specific dense gate for an
-exploratory run. Quantized Qwen checkpoints are not loaded by this command.
+`DENSE_PREFILL_GATE` and `DENSE_DECODE_GATE` can override the pair-specific
+dense gates for an exploratory run; the legacy `DENSE_SPEEDUP_GATE` aliases
+the decode override. Quantized Qwen checkpoints are not loaded by this
+command. The completed 1.5B/2B and 2.9B/4B bsz8 evidence is in
+[`../3090_small_bsz8_20260714/README.md`](../3090_small_bsz8_20260714/README.md).
