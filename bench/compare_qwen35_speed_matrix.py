@@ -125,8 +125,20 @@ def compare(
     required_reference_backend: str = "any",
     require_memory_not_larger: bool = False,
     min_active_parameter_throughput_ratio: float | None = None,
+    min_prefill_active_parameter_throughput_ratio: float | None = None,
+    min_decode_active_parameter_throughput_ratio: float | None = None,
     min_active_parameter_efficiency_ratio: float | None = None,
 ) -> dict[str, Any]:
+    prefill_active_work_gate = (
+        min_prefill_active_parameter_throughput_ratio
+        if min_prefill_active_parameter_throughput_ratio is not None
+        else min_active_parameter_throughput_ratio
+    )
+    decode_active_work_gate = (
+        min_decode_active_parameter_throughput_ratio
+        if min_decode_active_parameter_throughput_ratio is not None
+        else min_active_parameter_throughput_ratio
+    )
     indexed: dict[str, dict[tuple[Any, ...], dict[str, Any]]] = {"candidate": {}, "reference": {}}
     for row in rows:
         role = str(row.get("model_role") or "")
@@ -192,14 +204,22 @@ def compare(
             active_parameter_efficiency(candidate, "decode"),
             active_parameter_efficiency(reference, "decode"),
         )
-        active_parameter_work_pass = bool(
-            min_active_parameter_throughput_ratio is None
+        prefill_active_parameter_work_pass = bool(
+            prefill_active_work_gate is None
             or (
                 prefill_parameter_throughput_ratio is not None
-                and decode_parameter_throughput_ratio is not None
-                and prefill_parameter_throughput_ratio >= min_active_parameter_throughput_ratio
-                and decode_parameter_throughput_ratio >= min_active_parameter_throughput_ratio
+                and prefill_parameter_throughput_ratio >= prefill_active_work_gate
             )
+        )
+        decode_active_parameter_work_pass = bool(
+            decode_active_work_gate is None
+            or (
+                decode_parameter_throughput_ratio is not None
+                and decode_parameter_throughput_ratio >= decode_active_work_gate
+            )
+        )
+        active_parameter_work_pass = (
+            prefill_active_parameter_work_pass and decode_active_parameter_work_pass
         )
         active_parameter_efficiency_pass = bool(
             min_active_parameter_efficiency_ratio is None
@@ -444,6 +464,8 @@ def compare(
             "prefill_active_parameter_efficiency_ratio": prefill_parameter_efficiency_ratio,
             "decode_active_parameter_efficiency_ratio": decode_parameter_efficiency_ratio,
             "active_parameter_work_pass": active_parameter_work_pass,
+            "prefill_active_parameter_work_pass": prefill_active_parameter_work_pass,
+            "decode_active_parameter_work_pass": decode_active_parameter_work_pass,
             "active_parameter_efficiency_pass": active_parameter_efficiency_pass,
             "active_parameter_pass": active_parameter_pass,
             "candidate_prefill_backend": candidate_prefill_backend,
@@ -544,6 +566,8 @@ def compare(
             "required_reference_backend": required_reference_backend,
             "require_memory_not_larger": require_memory_not_larger,
             "min_active_parameter_throughput_ratio": min_active_parameter_throughput_ratio,
+            "min_prefill_active_parameter_throughput_ratio": prefill_active_work_gate,
+            "min_decode_active_parameter_throughput_ratio": decode_active_work_gate,
             "min_active_parameter_efficiency_ratio": min_active_parameter_efficiency_ratio,
         },
         "reference_backend": {
@@ -582,7 +606,11 @@ def compare(
             "total_cells": len(cells),
         },
         "active_parameter_work": {
-            "gate_enabled": min_active_parameter_throughput_ratio is not None,
+            "gate_enabled": (
+                prefill_active_work_gate is not None or decode_active_work_gate is not None
+            ),
+            "prefill_gate": prefill_active_work_gate,
+            "decode_gate": decode_active_work_gate,
             "min_active_parameter_ratio": min(active_parameter_ratios) if active_parameter_ratios else None,
             "median_active_parameter_ratio": median_or_none(active_parameter_ratios),
             "max_active_parameter_ratio": max(active_parameter_ratios) if active_parameter_ratios else None,
@@ -833,6 +861,8 @@ def main() -> int:
     ap.add_argument("--required-reference-backend", choices=["fla", "torch", "any"], default="fla")
     ap.add_argument("--require-memory-not-larger", action="store_true")
     ap.add_argument("--min-active-parameter-throughput-ratio", type=float, default=None)
+    ap.add_argument("--min-prefill-active-parameter-throughput-ratio", type=float, default=None)
+    ap.add_argument("--min-decode-active-parameter-throughput-ratio", type=float, default=None)
     ap.add_argument("--min-active-parameter-efficiency-ratio", type=float, default=None)
     ap.add_argument("--json-output", default="")
     ap.add_argument("--markdown-output", default="")
@@ -856,6 +886,12 @@ def main() -> int:
         required_reference_backend=args.required_reference_backend,
         require_memory_not_larger=args.require_memory_not_larger,
         min_active_parameter_throughput_ratio=args.min_active_parameter_throughput_ratio,
+        min_prefill_active_parameter_throughput_ratio=(
+            args.min_prefill_active_parameter_throughput_ratio
+        ),
+        min_decode_active_parameter_throughput_ratio=(
+            args.min_decode_active_parameter_throughput_ratio
+        ),
         min_active_parameter_efficiency_ratio=args.min_active_parameter_efficiency_ratio,
     )
     markdown = render_markdown(summary)

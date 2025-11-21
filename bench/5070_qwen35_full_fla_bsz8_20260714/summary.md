@@ -18,18 +18,18 @@ Required Qwen full fusion: `true`; verified: `18/18` cells.
 | Active parameters RWKV/Qwen | 0.812x | 0.812x | 0.812x | 18/18 |
 | Prefill tok/s per active-B | 1.334x | 1.694x | 2.081x | 18/18 |
 | Decode tok/s per active-B | 2.212x | 3.136x | 4.259x | 18/18 |
-| Prefill active-param work rate | 0.879x | 1.116x | - | reported 18/18 |
-| Decode active-param work rate | 1.457x | 2.066x | - | reported 18/18 |
+| Prefill active-param work rate | 0.879x | 1.116x | - | 18/18 |
+| Decode active-param work rate | 1.457x | 2.066x | - | 18/18 |
 
 Strict speed cells: `18/18`.
 
 ## Precision families
 
-| Family | Cells | RWKV/Qwen prefill min/median | RWKV/Qwen decode min/median | Quant/fp16 prefill min | Quant/fp16 decode min | Footprint max | Peak max |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| none | 6 | 1.107x / 1.332x | 2.490x / 2.624x | - | - | - | - |
-| w4 | 6 | 1.083x / 1.331x | 2.508x / 2.858x | - | - | - | - |
-| w8 | 6 | 1.286x / 1.590x | 1.795x / 1.871x | - | - | - | - |
+| Family | Cells | RWKV/Qwen prefill min/median | RWKV/Qwen decode min/median | Quant/fp16 prefill min | Quant/fp16 decode min | Quant/fp16 total min | Footprint max | Peak max |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| none | 6 | 1.107x / 1.332x | 2.490x / 2.624x | - | - | - | - | - |
+| w4 | 6 | 1.083x / 1.331x | 2.508x / 2.858x | - | - | - | - | - |
+| w8 | 6 | 1.286x / 1.590x | 1.795x / 1.871x | - | - | - | - | - |
 
 ## Red cells
 

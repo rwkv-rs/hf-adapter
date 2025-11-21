@@ -60,6 +60,7 @@ esac
 # decode-only override for existing automation.
 DENSE_PREFILL_GATE="${DENSE_PREFILL_GATE:-1.00}"
 DENSE_DECODE_GATE="${DENSE_DECODE_GATE:-${DENSE_SPEEDUP_GATE:-${default_decode_gate}}}"
+ACTIVE_DECODE_WORK_GATE="${ACTIVE_DECODE_WORK_GATE:-1.00}"
 read -r -a batch_size_args <<< "${BATCH_SIZES}"
 expected_base_cells=$(( ${#batch_size_args[@]} * 3 * 2 ))
 expected_total_cells=$(( expected_base_cells * 3 ))
@@ -165,5 +166,22 @@ printf '%s\n' "${memory_rc}" > "${OUT_DIR}/compare_memory_exit_code.txt"
 speed_rc=$?
 printf '%s\n' "${speed_rc}" > "${OUT_DIR}/compare_speed_exit_code.txt"
 
+# Active-parameter work is a dense decode acceptance axis. It is intentionally
+# evaluated on dense rows only: quantized RWKV lanes compare with matching RWKV
+# fp16 and must not acquire a second, unrelated Qwen gate.
+"${PYTHON_BIN}" bench/compare_qwen35_speed_matrix.py \
+  --results "${OUT_DIR}/dense.jsonl" \
+  --expected-cells "${expected_base_cells}" \
+  --min-prefill-speedup "${DENSE_PREFILL_GATE}" \
+  --min-decode-speedup "${DENSE_DECODE_GATE}" \
+  --require-native-candidate --require-qwen-fast-path --require-qwen-full-fused \
+  --require-prefill-mode-match \
+  --min-decode-active-parameter-throughput-ratio "${ACTIVE_DECODE_WORK_GATE}" \
+  --fail-on-gate \
+  --json-output "${OUT_DIR}/summary_active_work.json" \
+  --markdown-output "${OUT_DIR}/summary_active_work.md"
+active_rc=$?
+printf '%s\n' "${active_rc}" > "${OUT_DIR}/compare_active_work_exit_code.txt"
+
 printf '%s\n' "${failures}" > "${OUT_DIR}/matrix_failures.txt"
-[[ ${failures} -eq 0 && ${compose_rc} -eq 0 && ${memory_rc} -eq 0 && ${speed_rc} -eq 0 ]]
+[[ ${failures} -eq 0 && ${compose_rc} -eq 0 && ${memory_rc} -eq 0 && ${speed_rc} -eq 0 && ${active_rc} -eq 0 ]]
