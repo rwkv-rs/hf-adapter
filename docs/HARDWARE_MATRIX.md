@@ -17,6 +17,7 @@ Last updated: **2026-07-14**.
 | Platform | Status | Models / scope | Strongest current evidence | Open work |
 |---|---|---|---|---|
 | Tesla V100 32GB, sm70 | **Production-close** | 0.1B/0.4B/1.5B performance; larger inference/training smoke | Dense decode/prefill Albatross P1; native W8/W4 speed lane; cache/correctness gates | Larger-model P2/P3 and full-memory quant |
+| RTX 3090 24GB, sm86 | **Production-close for measured bsz8 lanes** | g1h 7.2B vs Qwen3.5-9B plus 1.5B/2B and 2.9B/4B pairs | Latest 7.2B dense/W8/W4 matrix passes 18/18; dense decode active-work, Qwen FLA, quant speed and physical-memory gates pass | bsz1/2/4 latest-g1h matrix, task-quality evaluation, multi-GPU |
 | RTX 4090, sm89 | **Production-close for measured 0.4B lanes** | 0.4B dense and quant speed lanes | All measured decode batches exceed matching Albatross; same-session bsz4 prefill `1.007x` | Historical prefill high-water `0.916x`; full-memory quant |
 | RTX 5090, sm120 | **Production-close** | 0.4B MATH500; 1.5B/2.9B/7.2B quant pressure; 13.3B inference | Full MATH500 gate; 2.9B/7.2B quant within 1% paired fp16; 13.3B low-memory conversion/load | Fresh same-card Albatross rerun; full-memory quant; one 1.5B W8 row at `0.9841x` |
 | Apple M5 16GB | **Production-close for MLX measured pairs** | 0.4B vs Qwen3.5 0.8B; 1.5B vs Qwen3.5 2B; MPS training smoke | Tiled DPLR, guarded compiled/speculative decode, W4 memory and same-device gates | M1–M4/Pro/Max/Ultra, CoreML INT4/ANE, larger quality matrix |
@@ -33,6 +34,7 @@ Last updated: **2026-07-14**.
 ## Promoted artifacts
 
 - V100: [`../bench/v100_production_close_20260711/README.md`](../bench/v100_production_close_20260711/README.md)
+- RTX 3090 g1h 7.2B: [`../bench/3090_g1h_7p2_bsz8_20260714/README.md`](../bench/3090_g1h_7p2_bsz8_20260714/README.md)
 - RTX 5090: [`../bench/5090_blackwell_production_close_20260712/README.md`](../bench/5090_blackwell_production_close_20260712/README.md)
 - RTX 5070 Laptop: [`../bench/5070_qwen35_full_fla_bsz8_20260714/README.md`](../bench/5070_qwen35_full_fla_bsz8_20260714/README.md)
 - Apple M5: [`hardware/APPLE_PRODUCTION_CLOSE.md`](hardware/APPLE_PRODUCTION_CLOSE.md)
