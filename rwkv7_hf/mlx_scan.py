@@ -117,7 +117,7 @@ def _metal_wkv_scan_kernel():
 
 @lru_cache(maxsize=1)
 def _metal_wkv_scan_post_kernel():
-    """FP16 scan with RWKV-7 GroupNorm/bonus/gate fused into the epilogue."""
+    """FP16 scan with optional recurrence prep and the post epilogue fused."""
 
     mx = require_mlx()
     if not metal_wkv_scan_available():
@@ -148,17 +148,17 @@ def _metal_wkv_scan_post_kernel():
 
         float4 state_row[Q];
         threadgroup float4 shared_w[Q];
-        threadgroup float4 shared_k[Q];
-        threadgroup float4 shared_kka[Q];
-        threadgroup float4 shared_r[Q];
-        threadgroup float4 shared_kk[Q];
-        threadgroup float shared_out[N];
+        // K/R/A inputs already cross an fp16 graph boundary.  Keep them in
+        // half4 threadgroup storage and widen only in registers, halving the
+        // dominant per-token shared-memory traffic of the recurrent loop.
+        threadgroup half4 shared_k[Q];
+        threadgroup half4 shared_kka[Q];
+        threadgroup half4 shared_r[Q];
+        threadgroup half4 shared_kk[Q];
         threadgroup float partial_sum[(N + 31) / 32];
         threadgroup float partial_square_sum[(N + 31) / 32];
         threadgroup half partial_sk[(N + 31) / 32];
-        threadgroup float shared_mean[1];
-        threadgroup float shared_inv_std[1];
-        threadgroup half shared_sk[1];
+        threadgroup float shared_kk_inv_norm[1];
         for (uint q = 0; q < Q; ++q) {
             uint j = q * 4;
             state_row[q] = float4(
@@ -171,51 +171,119 @@ def _metal_wkv_scan_post_kernel():
 
         for (uint t = 0; t < T; ++t) {
             uint vec_base = vec_base0 + t * H * N;
-            if (lane < Q) {
+            if (FUSE_PREP) {
+                float kk_square_sum = 0.0f;
+                if (lane < Q) {
+                    uint j = lane * 4;
+                    half4 raw_k = half4(
+                        half(k[vec_base + j]), half(k[vec_base + j + 1]),
+                        half(k[vec_base + j + 2]), half(k[vec_base + j + 3])
+                    );
+                    half4 kk_weight = half4(
+                        half(kk[affine_base + j]), half(kk[affine_base + j + 1]),
+                        half(kk[affine_base + j + 2]), half(kk[affine_base + j + 3])
+                    );
+                    float4 kk_pre = float4(half4(raw_k * kk_weight));
+                    shared_kk[lane] = half4(kk_pre);
+                    kk_square_sum = dot(kk_pre, kk_pre);
+                }
+                float kk_simd_sum = simd_sum(kk_square_sum);
+                if (lane == 0) {
+                    shared_kk_inv_norm[0] = metal::fast::rsqrt(
+                        max(kk_simd_sum, 1.0e-12f)
+                    );
+                }
+                threadgroup_barrier(mem_flags::mem_threadgroup);
+
+                if (lane < Q) {
+                    uint j = lane * 4;
+                    half4 raw_k = half4(
+                        half(k[vec_base + j]), half(k[vec_base + j + 1]),
+                        half(k[vec_base + j + 2]), half(k[vec_base + j + 3])
+                    );
+                    float4 raw_a = float4(
+                        float(a[vec_base + j]), float(a[vec_base + j + 1]),
+                        float(a[vec_base + j + 2]), float(a[vec_base + j + 3])
+                    );
+                    half4 av = half4(
+                        1.0f / (1.0f + metal::fast::exp(-raw_a))
+                    );
+                    half4 ka = half4(
+                        half(k_a[affine_base + j]), half(k_a[affine_base + j + 1]),
+                        half(k_a[affine_base + j + 2]), half(k_a[affine_base + j + 3])
+                    );
+                    half4 normalized_kk = half4(
+                        float4(shared_kk[lane]) * shared_kk_inv_norm[0]
+                    );
+                    half4 adjusted_k = half4(raw_k * half4(half4(1.0h) + (av - half4(1.0h)) * ka));
+                    float4 raw_w = float4(
+                        float(w[vec_base + j]), float(w[vec_base + j + 1]),
+                        float(w[vec_base + j + 2]), float(w[vec_base + j + 3])
+                    );
+                    float4 sigmoid_w = 1.0f / (1.0f + metal::fast::exp(-raw_w));
+                    shared_w[lane] = metal::fast::exp(-0.606531f * sigmoid_w);
+                    shared_k[lane] = adjusted_k;
+                    shared_kk[lane] = normalized_kk;
+                    shared_kka[lane] = half4(normalized_kk * av);
+                    shared_r[lane] = half4(
+                        half(r[vec_base + j]), half(r[vec_base + j + 1]),
+                        half(r[vec_base + j + 2]), half(r[vec_base + j + 3])
+                    );
+                }
+            } else if (lane < Q) {
                 uint j = lane * 4;
                 shared_w[lane] = float4(
                     float(w[vec_base + j]), float(w[vec_base + j + 1]),
                     float(w[vec_base + j + 2]), float(w[vec_base + j + 3])
                 );
-                shared_k[lane] = float4(
-                    float(k[vec_base + j]), float(k[vec_base + j + 1]),
-                    float(k[vec_base + j + 2]), float(k[vec_base + j + 3])
+                shared_k[lane] = half4(
+                    half(k[vec_base + j]), half(k[vec_base + j + 1]),
+                    half(k[vec_base + j + 2]), half(k[vec_base + j + 3])
                 );
-                shared_kka[lane] = float4(
-                    float(kka[vec_base + j]), float(kka[vec_base + j + 1]),
-                    float(kka[vec_base + j + 2]), float(kka[vec_base + j + 3])
+                shared_r[lane] = half4(
+                    half(r[vec_base + j]), half(r[vec_base + j + 1]),
+                    half(r[vec_base + j + 2]), half(r[vec_base + j + 3])
                 );
-                shared_r[lane] = float4(
-                    float(r[vec_base + j]), float(r[vec_base + j + 1]),
-                    float(r[vec_base + j + 2]), float(r[vec_base + j + 3])
+                shared_kk[lane] = half4(
+                    half(kk[vec_base + j]), half(kk[vec_base + j + 1]),
+                    half(kk[vec_base + j + 2]), half(kk[vec_base + j + 3])
                 );
-                shared_kk[lane] = float4(
-                    float(kk[vec_base + j]), float(kk[vec_base + j + 1]),
-                    float(kk[vec_base + j + 2]), float(kk[vec_base + j + 3])
+                half4 av = half4(
+                    half(a[vec_base + j]), half(a[vec_base + j + 1]),
+                    half(a[vec_base + j + 2]), half(a[vec_base + j + 3])
                 );
+                shared_kka[lane] = half4(shared_kk[lane] * av);
             }
-            float v_i = float(v[vec_base + i]);
+            float v_i;
+            if (FUSE_V) {
+                half raw_v_i = half(v[vec_base + i]);
+                half first_v_i = half(v_first[vec_base + i]);
+                float raw_v_mix_i = float(v_mix[vec_base + i]);
+                half v_mix_i = half(
+                    1.0f / (1.0f + metal::fast::exp(-raw_v_mix_i))
+                );
+                v_i = float(half(raw_v_i + half(first_v_i - raw_v_i) * v_mix_i));
+            } else {
+                v_i = float(v[vec_base + i]);
+            }
             threadgroup_barrier(mem_flags::mem_threadgroup);
 
             float dot_kk = 0.0f;
             for (uint q = 0; q < Q; ++q) {
-                dot_kk += dot(state_row[q], shared_kk[q]);
+                dot_kk += dot(state_row[q], float4(shared_kk[q]));
             }
 
             float acc = 0.0f;
             for (uint q = 0; q < Q; ++q) {
                 float4 new_s = state_row[q] * shared_w[q]
-                             - dot_kk * shared_kka[q]
-                             + v_i * shared_k[q];
+                             - dot_kk * float4(shared_kka[q])
+                             + v_i * float4(shared_k[q]);
                 state_row[q] = new_s;
-                acc += dot(new_s, shared_r[q]);
+                acc += dot(new_s, float4(shared_r[q]));
             }
             // The standalone scan stores FP16 before GroupNorm.  Round here
             // at the same boundary so the fused epilogue sees the same data.
-            shared_out[lane] = float(half(acc));
-            threadgroup_barrier(mem_flags::mem_threadgroup);
-
-            float lane_value = shared_out[lane];
+            float lane_value = float(half(acc));
             float lane_sum = simd_sum(lane_value);
             float lane_square_sum = simd_sum(lane_value * lane_value);
             uint lane_q = lane / 4;
@@ -231,33 +299,30 @@ def _metal_wkv_scan_post_kernel():
             }
             threadgroup_barrier(mem_flags::mem_threadgroup);
 
-            if (lane == 0) {
-                constexpr uint simd_groups = (N + 31) / 32;
-                float sum = 0.0f;
-                float square_sum = 0.0f;
-                half sk = half(0.0h);
-                for (uint j = 0; j < simd_groups; ++j) {
-                    sum += partial_sum[j];
-                    square_sum += partial_square_sum[j];
-                    sk += partial_sk[j];
-                }
-                float mean = sum / float(N);
-                float variance = max(square_sum / float(N) - mean * mean, 0.0f);
-                shared_mean[0] = mean;
-                shared_inv_std[0] = metal::precise::rsqrt(variance + float(N) * 1.0e-5f);
-                shared_sk[0] = sk;
+            // Every lane consumes the same two SIMD-group partials for N=64.
+            // Recomputing this tiny scalar epilogue avoids publishing through
+            // lane 0 and removes a full threadgroup barrier per token.
+            constexpr uint simd_groups = (N + 31) / 32;
+            float sum = 0.0f;
+            float square_sum = 0.0f;
+            half sk = half(0.0h);
+            for (uint j = 0; j < simd_groups; ++j) {
+                sum += partial_sum[j];
+                square_sum += partial_square_sum[j];
+                sk += partial_sk[j];
             }
-            threadgroup_barrier(mem_flags::mem_threadgroup);
+            float mean = sum / float(N);
+            float variance = max(square_sum / float(N) - mean * mean, 0.0f);
+            float inv_std = metal::fast::rsqrt(variance + float(N) * 1.0e-5f);
 
             half normalized = half(
-                (shared_out[lane] - shared_mean[0]) * shared_inv_std[0]
+                (lane_value - mean) * inv_std
             );
             half y = normalized * half(norm_weight[affine_base + i])
                    + half(norm_bias[affine_base + i]);
-            half bonus = shared_sk[0] * half(v_i);
+            half bonus = sk * half(v_i);
             half gated = (y + bonus) * half(g[vec_base + i]);
             out[out_row_base + t * H * N] = gated;
-            threadgroup_barrier(mem_flags::mem_threadgroup);
         }
 
         for (uint q = 0; q < Q; ++q) {
@@ -276,8 +341,11 @@ def _metal_wkv_scan_post_kernel():
             "v",
             "k",
             "kk",
-            "kka",
+            "a",
             "r",
+            "k_a",
+            "v_first",
+            "v_mix",
             "norm_weight",
             "norm_bias",
             "r_k",
@@ -364,6 +432,12 @@ def wkv_scan_post_metal_fp16(
     norm_bias: Any,
     r_k: Any,
     g: Any,
+    *,
+    preprocess: bool = False,
+    k_k: Any | None = None,
+    k_a: Any | None = None,
+    v_first: Any | None = None,
+    v_mix: Any | None = None,
 ) -> tuple[Any, Any]:
     """Fuse scan, per-head GroupNorm, RWKV bonus, and output gate for FP16.
 
@@ -379,6 +453,9 @@ def wkv_scan_post_metal_fp16(
         raise ValueError(f"state must be [B,H,N,N] matching w, got {tuple(state.shape)}")
     if r.dtype != mx.float16 or g.dtype != mx.float16:
         raise ValueError("fused WKV scan post epilogue currently requires FP16 r/g inputs")
+    if preprocess and (k_k is None or k_a is None):
+        raise ValueError("fused WKV scan prep requires both k_k and k_a")
+    preprocess_v = bool(preprocess and v_first is not None and v_mix is not None)
     expected_elements = H * N
     for name, value in (
         ("norm_weight", norm_weight),
@@ -400,16 +477,39 @@ def wkv_scan_post_metal_fp16(
             w.reshape(B, T, H, N),
             v.reshape(B, T, H, N),
             k.reshape(B, T, H, N),
-            kk.reshape(B, T, H, N),
-            (kk * a).reshape(B, T, H, N),
+            (
+                k_k.reshape(H * N)
+                if preprocess
+                else kk.reshape(B, T, H, N)
+            ),
+            a.reshape(B, T, H, N),
             r.reshape(B, T, H, N),
+            (
+                k_a.reshape(H * N)
+                if preprocess
+                else r_k.reshape(H * N)
+            ),
+            (
+                v_first.reshape(B, T, H, N)
+                if preprocess_v
+                else v.reshape(B, T, H, N)
+            ),
+            (
+                v_mix.reshape(B, T, H, N)
+                if preprocess_v
+                else v.reshape(B, T, H, N)
+            ),
             norm_weight.reshape(H * N),
             norm_bias.reshape(H * N),
             r_k.reshape(H * N),
             g.reshape(B, T, H, N),
             dims,
         ],
-        template=[("N", N)],
+        template=[
+            ("N", N),
+            ("FUSE_PREP", bool(preprocess)),
+            ("FUSE_V", preprocess_v),
+        ],
         grid=(rows, 1, 1),
         threadgroup=(min(256, max(1, N)), 1, 1),
         output_shapes=[state.shape, (B, T, H, N)],

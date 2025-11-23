@@ -47,9 +47,16 @@ from .mlx_quant import (
     pack_mlx_mm4_group,
     pack_mlx_mm8_group,
     groupwise_embedding,
+    groupwise_w4_relu2_metal_available,
     quantize_mlx_groupwise_linear,
 )
-from .mlx_mix import attn_mix, metal_attn_mix_available
+from .mlx_mix import (
+    attn_mix,
+    attn_sequence_mix_metal,
+    ffn_sequence_mix_metal,
+    metal_attn_mix_available,
+)
+from .mlx_norm import add_layer_norm_metal_fp16, metal_add_layer_norm_available
 from .mlx_wkv import metal_wkv_available, wkv_update
 from .mlx_scan import metal_wkv_scan_available, wkv_scan, wkv_scan_post_metal_fp16
 
@@ -160,6 +167,11 @@ class MLXRWKV7Model:
         self.fused_ffn_key_relu2_counts: dict[str, int] = {"metal": 0, "fallback": 0}
         self.fused_attn_mix = _env_flag("RWKV7_MLX_FUSED_ATTN_MIX", False)
         self.fused_attn_mix_counts: dict[str, int] = {"metal": 0, "fallback": 0}
+        self.fused_sequence_mix = _env_flag("RWKV7_MLX_FUSED_SEQUENCE_MIX", False)
+        self.fused_sequence_mix_counts: dict[str, int] = {"attn": 0, "ffn": 0, "fallback": 0}
+        self.fused_add_layer_norm = _env_flag("RWKV7_MLX_FUSED_ADD_LAYER_NORM", False)
+        self.fused_add_layer_norm_counts: dict[str, int] = {"metal": 0, "fallback": 0}
+        self.fused_square_qmm = _env_flag("RWKV7_MLX_FUSED_SQUARE_QMM", False)
         self.fast_layer_norm = _env_flag("RWKV7_MLX_FAST_LAYER_NORM", False)
         self.fast_group_norm = _env_flag("RWKV7_MLX_FAST_GROUP_NORM", False)
         self.decode_fast_group_norm = _env_flag("RWKV7_MLX_DECODE_FAST_GROUP_NORM", False)
@@ -183,6 +195,8 @@ class MLXRWKV7Model:
         self.wkv_scan_prefill_reason_counts: dict[str, int] = {}
         self.fused_scan_post = _env_flag("RWKV7_MLX_FUSED_SCAN_POST", False)
         self.fused_scan_post_counts: dict[str, int] = {"metal": 0, "fallback": 0}
+        self.fused_scan_prep_post = _env_flag("RWKV7_MLX_FUSED_SCAN_PREP_POST", False)
+        self.fused_scan_prep_post_counts: dict[str, int] = {"metal": 0, "fallback": 0}
         self.compiled_scan_prefill_mode = _env_choice(
             "RWKV7_MLX_COMPILED_SCAN_PREFILL",
             "off",
@@ -435,11 +449,14 @@ class MLXRWKV7Model:
         self.wkv_backend_counts = {"reference": 0, "metal": 0}
         self.fused_ffn_key_relu2_counts = {"metal": 0, "fallback": 0}
         self.fused_attn_mix_counts = {"metal": 0, "fallback": 0}
+        self.fused_sequence_mix_counts = {"attn": 0, "ffn": 0, "fallback": 0}
+        self.fused_add_layer_norm_counts = {"metal": 0, "fallback": 0}
         self.fused_lora_down_counts = {"fused": 0, "fallback": 0}
         self.fused_lora_up_counts = {"fused": 0, "fallback": 0}
         self.wkv_scan_prefill_counts = {"reference": 0, "metal": 0, "fallback": 0}
         self.wkv_scan_prefill_reason_counts = {}
         self.fused_scan_post_counts = {"metal": 0, "fallback": 0}
+        self.fused_scan_prep_post_counts = {"metal": 0, "fallback": 0}
         self.compiled_scan_prefill_backend_last = None
         self.compiled_scan_prefill_backend_counts = {"eager": 0, "compiled": 0}
         self.state_only_prefill_calls = 0
@@ -481,6 +498,11 @@ class MLXRWKV7Model:
             "fused_attn_mix": bool(self.fused_attn_mix),
             "fused_attn_mix_counts": dict(self.fused_attn_mix_counts),
             "fused_attn_mix_metal_available": metal_attn_mix_available(),
+            "fused_sequence_mix": bool(self.fused_sequence_mix),
+            "fused_sequence_mix_counts": dict(self.fused_sequence_mix_counts),
+            "fused_add_layer_norm": bool(self.fused_add_layer_norm),
+            "fused_add_layer_norm_counts": dict(self.fused_add_layer_norm_counts),
+            "fused_square_qmm": bool(self.fused_square_qmm),
             "fast_layer_norm": bool(self.fast_layer_norm),
             "fast_group_norm": bool(self.fast_group_norm),
             "decode_fast_group_norm": bool(self.decode_fast_group_norm),
@@ -501,6 +523,8 @@ class MLXRWKV7Model:
             "wkv_scan_metal_available": metal_wkv_scan_available(),
             "fused_scan_post": bool(self.fused_scan_post),
             "fused_scan_post_counts": dict(self.fused_scan_post_counts),
+            "fused_scan_prep_post": bool(self.fused_scan_prep_post),
+            "fused_scan_prep_post_counts": dict(self.fused_scan_prep_post_counts),
             "compiled_scan_prefill_mode": self.compiled_scan_prefill_mode,
             "compiled_scan_prefill_backend_last": self.compiled_scan_prefill_backend_last,
             "compiled_scan_prefill_backend_counts": dict(self.compiled_scan_prefill_backend_counts),
@@ -672,7 +696,7 @@ class MLXRWKV7Model:
             raise RuntimeError(f"missing fused LoRA-down cache for layer {layer}")
         mx = _mx()
         base_weight, delta_weight, slices = cached
-        packed = x @ base_weight.T + xx @ delta_weight.T
+        packed = mx.addmm(x @ base_weight.T, xx, delta_weight.T)
         self.fused_lora_down_counts["fused"] = int(
             self.fused_lora_down_counts.get("fused", 0)
         ) + 1
@@ -1061,7 +1085,7 @@ class MLXRWKV7Model:
         else:
             v_mix = mx.sigmoid(
                 lora_up["v"]
-                if lora_up is not None
+                if lora_up is not None and "v" in lora_up
                 else self._linear(
                     v_down,
                     f"{prefix}.v_lora.lora.2.weight",
@@ -1146,16 +1170,42 @@ class MLXRWKV7Model:
         H = self.num_heads
         N = self.head_dim
         prefix = f"model.layers.{layer}.attn"
-        xp = self._shift_prev_sequence(x, x_prev)
-        xx = xp - x
+        can_fuse_sequence_mix = bool(
+            self.fused_sequence_mix
+            and self.fused_lora_down
+            and not self.fused_lora_down_include_g
+            and x.dtype == mx.float16
+            and hidden % 16 == 0
+            and metal_attn_mix_available()
+        )
+        if can_fuse_sequence_mix:
+            xx, xr, xk, xv, xg = attn_sequence_mix_metal(
+                x,
+                x_prev,
+                self._get(f"{prefix}.x_r"),
+                self._get(f"{prefix}.x_k"),
+                self._get(f"{prefix}.x_v"),
+                self._get(f"{prefix}.x_g"),
+            )
+            self.fused_sequence_mix_counts["attn"] = int(
+                self.fused_sequence_mix_counts.get("attn", 0)
+            ) + 1
+        else:
+            if self.fused_sequence_mix:
+                self.fused_sequence_mix_counts["fallback"] = int(
+                    self.fused_sequence_mix_counts.get("fallback", 0)
+                ) + 1
+            xp = self._shift_prev_sequence(x, x_prev)
+            xx = xp - x
         lora_down = self._attn_lora_down(layer, x, xx)
-        xr = x + xx * self._get(f"{prefix}.x_r").reshape(1, 1, hidden)
-        xk = x + xx * self._get(f"{prefix}.x_k").reshape(1, 1, hidden)
-        xv = x + xx * self._get(f"{prefix}.x_v").reshape(1, 1, hidden)
+        if not can_fuse_sequence_mix:
+            xr = x + xx * self._get(f"{prefix}.x_r").reshape(1, 1, hidden)
+            xk = x + xx * self._get(f"{prefix}.x_k").reshape(1, 1, hidden)
+            xv = x + xx * self._get(f"{prefix}.x_v").reshape(1, 1, hidden)
         if lora_down is None:
             xw = x + xx * self._get(f"{prefix}.x_w").reshape(1, 1, hidden)
             xa = x + xx * self._get(f"{prefix}.x_a").reshape(1, 1, hidden)
-        if lora_down is None or "g" not in lora_down:
+        if (lora_down is None or "g" not in lora_down) and not can_fuse_sequence_mix:
             xg = x + xx * self._get(f"{prefix}.x_g").reshape(1, 1, hidden)
 
         grouped_rkv = self._grouped_rkv_projection(layer, xr, xk, xv, prefix)
@@ -1192,7 +1242,7 @@ class MLXRWKV7Model:
                 f"{prefix}.w_lora.lora.2.bias",
             )
         )
-        a = mx.sigmoid(
+        a = (
             lora_up["a"]
             if lora_up is not None
             else self._linear(
@@ -1211,25 +1261,20 @@ class MLXRWKV7Model:
             f"{prefix}.g_lora.lora.2.weight",
         )
 
-        kk = self._normalize_last_dim(
-            (k * self._get(f"{prefix}.k_k").reshape(1, 1, hidden)).reshape(B, T, H, N)
-        ).reshape(B, T, hidden)
-        k = k * (1 + (a - 1) * self._get(f"{prefix}.k_a").reshape(1, 1, hidden))
         if layer == 0:
+            v_mix = None
             new_v_first_seq = v
         else:
-            v_mix = mx.sigmoid(
+            v_mix = (
                 lora_up["v"]
-                if lora_up is not None
+                if lora_up is not None and "v" in lora_up
                 else self._linear(
                     v_down,
                     f"{prefix}.v_lora.lora.2.weight",
                     f"{prefix}.v_lora.lora.2.bias",
                 )
             )
-            v = v + (v_first_seq - v) * v_mix
             new_v_first_seq = v_first_seq
-        w = mx.exp(-EXP_HALF * mx.sigmoid(w.astype(mx.float32)))
 
         can_fuse_post = bool(
             self.fused_scan_post
@@ -1238,28 +1283,55 @@ class MLXRWKV7Model:
             and g.dtype == mx.float16
             and metal_wkv_scan_available()
         )
+        can_fuse_prep = bool(can_fuse_post and self.fused_scan_prep_post)
+        if not can_fuse_prep:
+            a = mx.sigmoid(a)
+            if v_mix is not None:
+                v = v + (v_first_seq - v) * mx.sigmoid(v_mix)
+            kk = self._normalize_last_dim(
+                (k * self._get(f"{prefix}.k_k").reshape(1, 1, hidden)).reshape(B, T, H, N)
+            ).reshape(B, T, hidden)
+            k = k * (1 + (a - 1) * self._get(f"{prefix}.k_a").reshape(1, 1, hidden))
+            w = mx.exp(-EXP_HALF * mx.sigmoid(w.astype(mx.float32)))
         if can_fuse_post:
             out_heads, state = wkv_scan_post_metal_fp16(
                 state,
                 w.reshape(B, T, H, N),
                 v.reshape(B, T, H, N),
                 k.reshape(B, T, H, N),
-                kk.reshape(B, T, H, N),
+                (k if can_fuse_prep else kk).reshape(B, T, H, N),
                 a.reshape(B, T, H, N),
                 r.reshape(B, T, H, N),
                 self._get(f"{prefix}.g_norm.weight"),
                 self._get(f"{prefix}.g_norm.bias"),
                 self._get(f"{prefix}.r_k"),
                 g.reshape(B, T, H, N),
+                preprocess=can_fuse_prep,
+                k_k=(self._get(f"{prefix}.k_k") if can_fuse_prep else None),
+                k_a=(self._get(f"{prefix}.k_a") if can_fuse_prep else None),
+                v_first=(v_first_seq if can_fuse_prep and v_mix is not None else None),
+                v_mix=(v_mix if can_fuse_prep else None),
             )
             backend_used = "metal"
             self.fused_scan_post_counts["metal"] = int(
                 self.fused_scan_post_counts.get("metal", 0)
             ) + 1
+            if can_fuse_prep:
+                self.fused_scan_prep_post_counts["metal"] = int(
+                    self.fused_scan_prep_post_counts.get("metal", 0)
+                ) + 1
+            elif self.fused_scan_prep_post:
+                self.fused_scan_prep_post_counts["fallback"] = int(
+                    self.fused_scan_prep_post_counts.get("fallback", 0)
+                ) + 1
         else:
             if self.fused_scan_post:
                 self.fused_scan_post_counts["fallback"] = int(
                     self.fused_scan_post_counts.get("fallback", 0)
+                ) + 1
+            if self.fused_scan_prep_post:
+                self.fused_scan_prep_post_counts["fallback"] = int(
+                    self.fused_scan_prep_post_counts.get("fallback", 0)
                 ) + 1
             out_heads, state, backend_used = wkv_scan(
                 state,
@@ -1291,17 +1363,42 @@ class MLXRWKV7Model:
         mx = _mx()
         B, T, hidden = (int(dim) for dim in x.shape)
         prefix = f"model.layers.{layer}.ffn"
-        xp = self._shift_prev_sequence(x, x_prev)
-        xx = xp - x
-        k = x + xx * self._get(f"{prefix}.x_k").reshape(1, 1, hidden)
+        can_fuse_sequence_mix = bool(
+            self.fused_sequence_mix
+            and x.dtype == mx.float16
+            and hidden % 16 == 0
+            and metal_attn_mix_available()
+        )
+        if can_fuse_sequence_mix:
+            k = ffn_sequence_mix_metal(x, x_prev, self._get(f"{prefix}.x_k"))
+            self.fused_sequence_mix_counts["ffn"] = int(
+                self.fused_sequence_mix_counts.get("ffn", 0)
+            ) + 1
+        else:
+            if self.fused_sequence_mix:
+                self.fused_sequence_mix_counts["fallback"] = int(
+                    self.fused_sequence_mix_counts.get("fallback", 0)
+                ) + 1
+            xp = self._shift_prev_sequence(x, x_prev)
+            xx = xp - x
+            k = x + xx * self._get(f"{prefix}.x_k").reshape(1, 1, hidden)
         key_weight = f"{prefix}.key.weight"
         key_qlinear = self.quantized_linears.get(key_weight)
         value_weight = f"{prefix}.value.weight"
+        groupwise_key_relu2 = bool(
+            key_qlinear is not None
+            and isinstance(key_qlinear.weight, MLXGroupwiseWeight)
+            and int(key_qlinear.bits) == 4
+            and int(key_qlinear.weight.group_size) == 128
+            and (B, T, hidden, int(key_qlinear.out_features)) == (8, 133, 2048, 8192)
+            and k.dtype == mx.float16
+            and groupwise_w4_relu2_metal_available()
+        )
         if (
             self.fused_ffn_key_relu2
             and key_qlinear is not None
             and int(key_qlinear.bits) == 4
-            and key_qlinear._selected_backend(k) == "metal"
+            and (groupwise_key_relu2 or key_qlinear._selected_backend(k) == "metal")
         ):
             k = key_qlinear.relu2(k)
             self.fused_ffn_key_relu2_counts["metal"] = int(
@@ -1627,9 +1724,14 @@ class MLXRWKV7Model:
 
         x = self._embedding(ids)
         v_first_seq = None
+        next_attn_h = None
         for layer in range(self.num_hidden_layers):
             residual = self._layer_norm(x, f"model.layers.{layer}.pre_norm") if layer == 0 else x
-            h = self._layer_norm(residual, f"model.layers.{layer}.attn_norm")
+            h = (
+                next_attn_h
+                if layer > 0 and next_attn_h is not None
+                else self._layer_norm(residual, f"model.layers.{layer}.attn_norm")
+            )
             if layer > 0 and v_first_seq is None:
                 raise RuntimeError("RWKV-7 scan prefill missing layer-0 v_first sequence")
             a, state.attn_x_prev[layer], state.recurrent_state[layer], v_first_seq = self._attn_sequence(
@@ -1639,11 +1741,49 @@ class MLXRWKV7Model:
                 v_first_seq if v_first_seq is not None else state.v_first.reshape(B, 1, self.hidden_size),
                 state.recurrent_state[layer],
             )
-            x = residual + a
-            residual = x
-            h2 = self._layer_norm(x, f"model.layers.{layer}.ffn_norm")
+            can_fuse_add_norm = bool(
+                self.fused_add_layer_norm
+                and residual.dtype == mx.float16
+                and a.dtype == mx.float16
+                and self.hidden_size % 256 == 0
+                and abs(float(self.norm_eps) - 1.0e-5) <= 1.0e-12
+                and metal_add_layer_norm_available()
+            )
+            if can_fuse_add_norm:
+                norm_prefix = f"model.layers.{layer}.ffn_norm"
+                x, h2 = add_layer_norm_metal_fp16(
+                    residual,
+                    a,
+                    self._get(f"{norm_prefix}.weight"),
+                    self._get(f"{norm_prefix}.bias"),
+                    self.norm_eps,
+                )
+                self.fused_add_layer_norm_counts["metal"] = int(
+                    self.fused_add_layer_norm_counts.get("metal", 0)
+                ) + 1
+            else:
+                if self.fused_add_layer_norm:
+                    self.fused_add_layer_norm_counts["fallback"] = int(
+                        self.fused_add_layer_norm_counts.get("fallback", 0)
+                    ) + 1
+                x = residual + a
+                h2 = self._layer_norm(x, f"model.layers.{layer}.ffn_norm")
             f, state.ffn_x_prev[layer] = self._ffn_sequence(layer, h2, state.ffn_x_prev[layer])
-            x = residual + f
+            if can_fuse_add_norm and layer + 1 < self.num_hidden_layers:
+                next_prefix = f"model.layers.{layer + 1}.attn_norm"
+                x, next_attn_h = add_layer_norm_metal_fp16(
+                    x,
+                    f,
+                    self._get(f"{next_prefix}.weight"),
+                    self._get(f"{next_prefix}.bias"),
+                    self.norm_eps,
+                )
+                self.fused_add_layer_norm_counts["metal"] = int(
+                    self.fused_add_layer_norm_counts.get("metal", 0)
+                ) + 1
+            else:
+                x = x + f
+                next_attn_h = None
 
         state.seen_tokens += T
         if v_first_seq is not None:
