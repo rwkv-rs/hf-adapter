@@ -1,6 +1,6 @@
 {
   "schema": "rwkv7.apple.production-gates.v1",
-  "version": "2026-07-12.6",
+  "version": "2026-07-12.7",
   "policy": {
     "completion": "Every required gate must have machine-verifiable passing evidence. Missing, unknown, or failed evidence makes the aggregate incomplete.",
     "no_inference_from_source": true,
@@ -1320,12 +1320,99 @@
       "criterion": "LoRA、AdaLoRA、IA3、prefix/prompt tuning 中适用于 CausalLM 的常见配置能初始化、训练、保存和加载；不支持项有明确技术说明。",
       "required": true
     },
-    {
-      "id": "train.mps.gradient_accumulation",
-      "category": "hf_mps_training",
-      "title": "梯度累积",
-      "criterion": "gradient_accumulation_steps 1/2/4 的有效 batch、loss 缩放和更新次数正确。",
-      "required": true
+  {
+    "id": "train.mps.gradient_accumulation",
+    "category": "hf_mps_training",
+    "title": "梯度累积",
+    "criterion": "gradient_accumulation_steps 1/2/4 的有效 batch、loss 缩放和更新次数正确。",
+    "required": true,
+    "proof": {
+      "type": "all",
+      "proofs": [
+        {
+          "type": "tracked_files",
+          "paths": [
+            "tests/test_hf_training_smoke.py",
+            "bench/apple_mps_training_m5_20260712.jsonl",
+            "bench/logs/apple_mps_training_m5_20260712.log"
+          ]
+        },
+        {
+          "type": "jsonl_query",
+          "path": "bench/apple_mps_training_m5_20260712.jsonl",
+          "axis": "training_smoke",
+          "where": [
+            {
+              "field": "trainer_backend",
+              "op": "eq",
+              "value": "trainer"
+            },
+            {
+              "field": "train_dtype",
+              "op": "eq",
+              "value": "fp32"
+            },
+            {
+              "field": "effective_batch_size",
+              "op": "eq",
+              "value": 4
+            }
+          ],
+          "require": [
+            {
+              "field": "status",
+              "op": "eq",
+              "value": "pass"
+            },
+            {
+              "field": "device",
+              "op": "eq",
+              "value": "mps"
+            },
+            {
+              "field": "parameter_device",
+              "op": "contains",
+              "value": "mps"
+            },
+            {
+              "field": "max_steps",
+              "op": "eq",
+              "value": 2
+            },
+            {
+              "field": "train_loss",
+              "op": "gt",
+              "value": 0.0
+            },
+            {
+              "field": "max_trainable_delta",
+              "op": "gt",
+              "value": 0.0
+            },
+            {
+              "field": "git_dirty",
+              "op": "falsy"
+            },
+            {
+              "field": "process_isolated",
+              "op": "truthy"
+            }
+          ],
+          "all_matches": true,
+          "min_matches": 3,
+          "coverage": [
+            {
+              "field": "gradient_accumulation_steps",
+              "values": [
+                1,
+                2,
+                4
+              ]
+            }
+          ]
+        }
+      ]
+    }
     },
     {
       "id": "train.mps.checkpoint_resume",
