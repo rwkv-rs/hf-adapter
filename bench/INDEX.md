@@ -10,6 +10,7 @@ Generated inventory of benchmark scripts and evidence directories. Keep this fil
 | RTX 3090 | [`3090_g1h_7p2_bsz8_20260714/`](3090_g1h_7p2_bsz8_20260714/README.md) | Latest g1h 7.2B/9B bsz8 dense, active-work, W8/W4 speed and memory gates pass 18/18 |
 | RTX 3090 | [`3090_self_fused_20260713/`](3090_self_fused_20260713/README.md) | 7.2B/9B prompt-2048 batch-1/2 self-fused dense gates pass |
 | RTX 4090 | [`4090_g1h_7p2_bsz8_20260715/`](4090_g1h_7p2_bsz8_20260715/README.md) | Latest g1h 7.2B/9B bsz8 dense, active-work, W8/W4 speed and quant-local memory gates pass 18/18 |
+| RTX 4090 | [`4090_small_bsz8_20260715/`](4090_small_bsz8_20260715/README.md) | 0.4B/0.8B, 1.5B/2B and 2.9B/4B bsz8 dense, active-work, W8/W4 speed and physical-memory gates pass 54/54 |
 | RTX 4090 | [`4090_validation_summary.md`](4090_validation_summary.md) | Measured dense decode/current-session prefill and quant speed lanes pass |
 | RTX 5090 | [`5090_blackwell_production_close_20260712/`](5090_blackwell_production_close_20260712/README.md) | Quant pressure, 13.3B conversion and full MATH500 pass |
 | Apple M5 | [`../docs/hardware/APPLE_PRODUCTION_CLOSE.md`](../docs/hardware/APPLE_PRODUCTION_CLOSE.md) | Selected MLX/Qwen3.5 production pairs pass |
@@ -32,6 +33,7 @@ two-pair conservative gate. Conclusions and reproduction commands are in
 | 3090_g1h_7p2_bsz8_20260714 | RTX 3090 latest-g1h 7.2B vs Qwen3.5-9B bsz8 acceptance | 5 | 5 |
 | 3090_self_fused_20260713 | RTX 3090 self-fused RWKV-7 7.2B long-prefill close | 2 | 0 |
 | 4090_g1h_7p2_bsz8_20260715 | RTX 4090 latest-g1h 7.2B vs Qwen3.5-9B bsz8 acceptance | 6 | 7 |
+| 4090_small_bsz8_20260715 | RTX 4090 0.4B/1.5B/2.9B vs Qwen3.5 bsz8 acceptance | 5 | 1 |
 | 5090_blackwell_hf_matrix_20260704 | RTX 5090 Blackwell HF validation matrix (2026-07-04) | 2 | 12 |
 | 5090_blackwell_native_prefill_smoke_20260704 | RTX 5090 Blackwell native-prefill validation (2026-07-04) | 2 | 3 |
 | 5090_blackwell_native_quant_20260704 | RTX 5090 native quant benchmark (2026-07-04) | 1 | 2 |

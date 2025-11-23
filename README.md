@@ -20,9 +20,9 @@ rerun; exact scope and evidence are in
 
 ## Current status and documentation
 
-The adapter has promoted production-close evidence on V100, an RTX 4090 g1h
-7.2B/Qwen3.5-9B bsz8 dense/W8/W4 lane, RTX 5090, and selected Apple M5 MLX
-pairs. API/training/cache and W8/W4 functionality are broadly validated;
+The adapter has promoted production-close evidence on V100, RTX 4090 bsz8
+dense/W8/W4 lanes covering every published 0.4B–7.2B pair against Qwen3.5,
+RTX 5090, and selected Apple M5 MLX pairs. API/training/cache and W8/W4 functionality are broadly validated;
 universal full-memory W8/W4 speed, missing hardware families, larger Albatross
 matrices and production PP/TP remain open.
 

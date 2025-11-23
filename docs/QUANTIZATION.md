@@ -29,6 +29,25 @@ MM4 or TorchAO per cell for W4.
 
 Evidence: [`../bench/4090_g1h_7p2_bsz8_20260715/README.md`](../bench/4090_g1h_7p2_bsz8_20260715/README.md).
 
+## RTX 4090 small-model promoted result
+
+The 0.4B, 1.5B and 2.9B pair matrices add 36 selected quant cells, all with
+lower model footprint and peak VRAM than matching RWKV fp16. Worst exact-cell
+total-latency speedups are:
+
+| RWKV size | W8 total min | W8 footprint/peak max | W4 total min | W4 footprint/peak max |
+|---|---:|---:|---:|---:|
+| 0.4B | `1.011441x` | `0.925797x / 0.963266x` | `1.029994x` | `0.890672x / 0.945793x` |
+| 1.5B | `1.131672x` | `0.560704x / 0.625465x` | `1.027211x` | `0.935468x / 0.968566x` |
+| 2.9B | `1.176050x` | `0.544714x / 0.509156x` | `1.014959x` | `0.961227x / 0.977123x` |
+
+W4 prefill is not universally faster (`0.930925x` worst at 1.5B), so the
+published claim remains complete-cell non-inferiority, not per-phase
+superiority. Native A8W8 or the BNB8+A8W8-head hybrid supplies W8; native MM4
+and TorchAO W4 are selected per exact cell.
+
+Evidence: [`../bench/4090_small_bsz8_20260715/README.md`](../bench/4090_small_bsz8_20260715/README.md).
+
 ## RTX 5090 promoted result
 
 The 36-row pressure artifact covers 1.5B/2.9B/7.2B × fp16/MM8/MM4 × prompt

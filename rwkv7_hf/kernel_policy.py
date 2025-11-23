@@ -82,6 +82,10 @@ class KernelPolicy:
     prefill_scan_block_m_b2: int | None = None
     prefill_scan_block_m_b4: int | None = None
     prefill_scan_block_m_shapes: tuple[tuple[int, int, int], ...] = ()
+    # Exact HxBxTxM routes, where H is the model hidden size and M is
+    # the recurrent-scan row tile.  Keep model-specific wins out of the
+    # generic BxT table so a smaller checkpoint cannot regress a larger one.
+    prefill_scan_block_m_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
     prefill_scan_num_warps: int | None = None
     prefill_blas_library: str | None = None
     prefill_blas_large_library: str | None = None
@@ -663,10 +667,11 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             mm4_dot_block_pairs=64 if is_4090 else None,
             mm4_dot_block_n=64 if is_4090 else None,
             mm4_dot_warps=4 if is_4090 else None,
-            # Exact g1h 7.2B B8/P128 sweep: row-32 improves resident prefill
-            # over the historical row-8 Ada default. P512 and production
-            # chunk-512 P2048 keep row-8.
+            # Exact 4090 sweeps: row-32 wins at B8/P128 across the measured
+            # models.  The 1.5B (hidden=2048) also needs row-32 at B8/P512;
+            # larger checkpoints retain row-8 for P512/chunk-512 P2048.
             prefill_scan_block_m_shapes=((8, 128, 32),) if is_4090 else (),
+            prefill_scan_block_m_model_shapes=((2048, 8, 512, 32),) if is_4090 else (),
             fused_recurrent_output=True,
             fused_recurrent_raw=True,
             fused_output=True,

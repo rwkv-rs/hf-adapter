@@ -853,11 +853,24 @@ def _native_prefill_default_scan_block_m(
     head_dim: int,
     batch_size: int | None = None,
     tokens: int | None = None,
+    hidden_size: int | None = None,
 ) -> int:
     """Architecture-aware default row tile for optional prefill scans."""
 
     head_dim = int(head_dim)
     policy = _kernel_policy()
+    if hidden_size is not None and batch_size is not None and tokens is not None:
+        for policy_hidden, policy_batch, policy_tokens, policy_block_m in getattr(
+            policy,
+            "prefill_scan_block_m_model_shapes",
+            (),
+        ):
+            if (int(hidden_size), int(batch_size), int(tokens)) == (
+                int(policy_hidden),
+                int(policy_batch),
+                int(policy_tokens),
+            ):
+                return int(policy_block_m)
     if batch_size is not None and tokens is not None:
         for policy_batch, policy_tokens, policy_block_m in getattr(
             policy,
@@ -907,12 +920,13 @@ def _native_prefill_scan_block_m(
     head_dim: int,
     batch_size: int | None = None,
     tokens: int | None = None,
+    hidden_size: int | None = None,
 ) -> int:
     """Row tile for optional recurrent scans; explicit env always wins."""
 
     return env_int(
         "RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M",
-        _native_prefill_default_scan_block_m(head_dim, batch_size, tokens),
+        _native_prefill_default_scan_block_m(head_dim, batch_size, tokens, hidden_size),
         lower=1,
         upper=int(head_dim),
     )
@@ -2312,7 +2326,7 @@ def _native_prefill_scan(
     """Run the recurrent prefill scan, using Triton only when explicitly enabled."""
 
     if w_is_raw and _native_prefill_fused_clampw_scan_enabled():
-        scan_block_m = _native_prefill_scan_block_m(N, B, T)
+        scan_block_m = _native_prefill_scan_block_m(N, B, T, H * N)
         out, new_state = fused_recurrent_scan_clampw(
             r.view(B, T, H, N),
             w.view(B, T, H, N),
@@ -2355,7 +2369,7 @@ def _native_prefill_scan(
         w = torch.exp(w.float())
 
     if _native_prefill_fused_scan_enabled():
-        scan_block_m = _native_prefill_scan_block_m(N, B, T)
+        scan_block_m = _native_prefill_scan_block_m(N, B, T, H * N)
         out, new_state = fused_recurrent_scan(
             r.view(B, T, H, N),
             w.view(B, T, H, N),
@@ -2645,7 +2659,7 @@ def prefill(
             use_clampw_scan = False
         state_scan_done = False
         if use_fused_state_scan:
-            scan_block_m = _native_prefill_scan_block_m(N, B, T)
+            scan_block_m = _native_prefill_scan_block_m(N, B, T, H * N)
             scan_num_warps = _native_prefill_scan_num_warps(N, scan_block_m)
             if layer_idx == 0:
                 out, new_state, k, v = fused_recurrent_scan_state_prep(
