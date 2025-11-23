@@ -82,6 +82,10 @@ class MLXDynamicRequest:
     arrival_tick: int
     submitted_s: float
     deadline_s: float | None = None
+    activated_s: float | None = None
+    first_token_s: float | None = None
+    completed_s: float | None = None
+    prefill_s: float = 0.0
     status: str = "queued"
     session: MLXGenerationSession | None = field(default=None, repr=False)
     generated_ids: list[int] = field(default_factory=list)
@@ -106,12 +110,34 @@ class MLXDynamicRequest:
         return max(0, int(self.max_new_tokens) - self.generated_tokens)
 
     def telemetry(self) -> dict[str, Any]:
+        queue_s = (
+            float(self.activated_s) - float(self.submitted_s)
+            if self.activated_s is not None
+            else None
+        )
+        ttft_s = (
+            float(self.first_token_s) - float(self.submitted_s)
+            if self.first_token_s is not None
+            else None
+        )
+        e2e_s = (
+            float(self.completed_s) - float(self.submitted_s)
+            if self.completed_s is not None
+            else None
+        )
         return {
             "request_id": self.request_id,
             "status": self.status,
             "arrival_tick": self.arrival_tick,
             "submitted_s": round(float(self.submitted_s), 6),
             "deadline_s": round(float(self.deadline_s), 6) if self.deadline_s is not None else None,
+            "activated_s": round(float(self.activated_s), 6) if self.activated_s is not None else None,
+            "first_token_s": round(float(self.first_token_s), 6) if self.first_token_s is not None else None,
+            "completed_s": round(float(self.completed_s), 6) if self.completed_s is not None else None,
+            "prefill_s": round(float(self.prefill_s), 6),
+            "queue_s": round(queue_s, 6) if queue_s is not None else None,
+            "ttft_s": round(ttft_s, 6) if ttft_s is not None else None,
+            "e2e_s": round(e2e_s, 6) if e2e_s is not None else None,
             "completion_tick": self.completion_tick,
             "max_new_tokens": self.max_new_tokens,
             "prompt_tokens": self.prompt_tokens,
@@ -198,6 +224,8 @@ class MLXDynamicBatchScheduler:
         while self._queued and len(self._active) < self.max_batch_size:
             request_id, request = self._queued.popitem(last=False)
             request.status = "active"
+            if request.activated_s is None:
+                request.activated_s = float(self._clock())
             self._active[request_id] = request
 
     def submit(
@@ -241,6 +269,7 @@ class MLXDynamicBatchScheduler:
             arrival_tick=self.tick,
             submitted_s=submitted_s,
             deadline_s=(submitted_s + float(timeout_s)) if timeout_s is not None else None,
+            prefill_s=float(session.prefill_s),
             session=session,
             prompt_tokens=session.prompt_tokens,
             prefix_cache_hit=bool(session.prefix_cache_hit),
@@ -275,6 +304,7 @@ class MLXDynamicBatchScheduler:
         request.session = None
         request.status = status
         request.completion_tick = self.tick
+        request.completed_s = float(self._clock())
 
     def cancel(self, request_id: str, *, reason: str = "cancelled") -> bool:
         request = self._active.pop(request_id, None)
@@ -320,6 +350,10 @@ class MLXDynamicBatchScheduler:
         if self.prepare_policy:
             self._prepare_batch_policy(manager)
         manager.decode_round(1, backend=self.session_backend)
+        first_token_s = float(self._clock())
+        for request in active:
+            if request.first_token_s is None and request.generated_tokens > 0:
+                request.first_token_s = first_token_s
         self.tick += 1
         self.batch_size_history.append(manager.batch_size)
         telemetry = manager.telemetry()
