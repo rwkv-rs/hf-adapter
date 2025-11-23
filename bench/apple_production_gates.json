@@ -1,6 +1,6 @@
 {
   "schema": "rwkv7.apple.production-gates.v1",
-  "version": "2026-07-12.7",
+  "version": "2026-07-12.8",
   "policy": {
     "completion": "Every required gate must have machine-verifiable passing evidence. Missing, unknown, or failed evidence makes the aggregate incomplete.",
     "no_inference_from_source": true,
@@ -1421,12 +1421,108 @@
       "criterion": "Trainer/TRL 保存 optimizer、scheduler、RNG、adapter 与 global step；resume 后与连续训练在声明容差内一致。",
       "required": true
     },
-    {
-      "id": "train.mps.adapter_roundtrip",
-      "category": "hf_mps_training",
-      "title": "Adapter 保存合并与重载",
-      "criterion": "PEFT adapter save/load、merge/unmerge 后固定评测 logits/greedy 与训练前后预期一致。",
-      "required": true
+  {
+    "id": "train.mps.adapter_roundtrip",
+    "category": "hf_mps_training",
+    "title": "Adapter 保存合并与重载",
+    "criterion": "PEFT adapter save/load、merge/unmerge 后固定评测 logits/greedy 与训练前后预期一致。",
+    "required": true,
+    "proof": {
+      "type": "all",
+      "proofs": [
+        {
+          "type": "tracked_files",
+          "paths": [
+            "tests/test_native_peft_save_load_merge.py",
+            "bench/apple_mps_adapter_roundtrip_m5_20260712.jsonl",
+            "bench/logs/apple_mps_adapter_roundtrip_m5_20260712.log"
+          ]
+        },
+        {
+          "type": "jsonl_query",
+          "path": "bench/apple_mps_adapter_roundtrip_m5_20260712.jsonl",
+          "axis": "adapter_roundtrip",
+          "where": [
+            {
+              "field": "status",
+              "op": "eq",
+              "value": "pass"
+            }
+          ],
+          "require": [
+            {
+              "field": "device",
+              "op": "eq",
+              "value": "mps"
+            },
+            {
+              "field": "parameter_device",
+              "op": "contains",
+              "value": "mps"
+            },
+            {
+              "field": "dtype",
+              "op": "eq",
+              "value": "fp32"
+            },
+            {
+              "field": "steps",
+              "op": "ge",
+              "value": 2
+            },
+            {
+              "field": "trainable_parameters",
+              "op": "gt",
+              "value": 0
+            },
+            {
+              "field": "trained_vs_base_logits_max_abs",
+              "op": "gt",
+              "value": 0.0
+            },
+            {
+              "field": "reload_logits_max_abs",
+              "op": "le",
+              "value": 0.0001
+            },
+            {
+              "field": "merge_inplace_logits_max_abs",
+              "op": "le",
+              "value": 0.0001
+            },
+            {
+              "field": "unmerge_logits_max_abs",
+              "op": "le",
+              "value": 0.0001
+            },
+            {
+              "field": "merge_logits_max_abs",
+              "op": "le",
+              "value": 0.0001
+            },
+            {
+              "field": "greedy_token_match",
+              "op": "truthy"
+            },
+            {
+              "field": "generated_tokens",
+              "op": "ge",
+              "value": 2
+            },
+            {
+              "field": "git_dirty",
+              "op": "falsy"
+            },
+            {
+              "field": "process_isolated",
+              "op": "truthy"
+            }
+          ],
+          "all_matches": true,
+          "min_matches": 1
+        }
+      ]
+    }
     },
     {
       "id": "train.mps.mixed_precision",
