@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 MODEL_ROOT="${MODEL_ROOT:-$ROOT/../models}"
 RWKV_01="${RWKV_01:-$MODEL_ROOT/rwkv7-g1d-0.1b-hf}"
@@ -55,9 +56,11 @@ sleep "$COOLDOWN_SECONDS"
 
 "$PYTHON_BIN" "$ROOT/bench/validate_apple_bsz8_fidelity.py" \
   --model "$RWKV_15" \
+  --draft-model "$RWKV_01" \
   --batch-size 8 --prompt-chars 512 --decode-tokens 64 \
-  --quant-group-size 128 --no-fused-lora-down \
-  --no-compare-fp16 --no-compare-fused-post --compare-prefix-cache \
+  --quant-group-size 128 --fused-lora-down \
+  --compare-fp16 --compare-fused-post --compare-prefix-cache --prefix-unique-prompts 2 \
+  --compare-speculative-mismatch \
   --results "$OUT/fidelity_1p5b_cache.jsonl" \
   | tee "$OUT/fidelity_1p5b_cache.stdout"
 
@@ -67,7 +70,7 @@ sleep "$COOLDOWN_SECONDS"
   --warmup 1 --repeat 3 --order qwen-first --cooldown-seconds "$COOLDOWN_SECONDS" \
   --rwkv-quant-min-params 1000000 --rwkv-draft-quant-min-params 100000 \
   --rwkv-quant-group-size 128 --rwkv-proposal-tokens 32 \
-  --no-rwkv-fused-lora-down --rwkv-prefix-cache-dedup \
+  --rwkv-fused-lora-down --rwkv-prefix-cache-dedup \
   --results "$OUT/active_1p5b_cache_vs_qwen_2b.jsonl" \
   | tee "$OUT/active_1p5b_cache_vs_qwen_2b.stdout"
 

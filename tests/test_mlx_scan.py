@@ -248,3 +248,52 @@ def test_mlx_model_compiled_scan_prefill_is_shape_gated_if_available(monkeypatch
     assert telemetry["compiled_scan_prefill_backend_last"] == "compiled"
     assert telemetry["compiled_scan_prefill_validated_shapes"] == ["b2_t4_last"]
     assert telemetry["compiled_scan_prefill_validation"]["b2_t4_last"]["status"] == "pass"
+
+
+def test_mlx_fused_lora_down_evicts_replaced_sources_if_available(monkeypatch):
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    from rwkv7_hf.mlx_model import MLXRWKV7Model
+    from tests.test_apple_silicon_mlx_model_smoke import tiny_torch_model_to_mlx
+
+    monkeypatch.setenv("RWKV7_MLX_FUSED_LORA_DOWN", "0")
+    _, reference, cfg = tiny_torch_model_to_mlx()
+    arrays = dict(reference.arrays)
+    monkeypatch.setenv("RWKV7_MLX_FUSED_LORA_DOWN", "1")
+    monkeypatch.setenv("RWKV7_MLX_FUSED_LORA_DOWN_INCLUDE_G", "0")
+    monkeypatch.setenv("RWKV7_MLX_FUSED_LORA_DOWN_INCLUDE_V", "0")
+    monkeypatch.setenv("RWKV7_MLX_FUSED_LORA_DOWN_EVICT_SOURCE", "1")
+    fused = MLXRWKV7Model.from_arrays(cfg, dict(arrays), wkv_backend="reference")
+
+    replaced = [
+        key
+        for key in arrays
+        if key.endswith((".w_lora.lora.0.weight", ".a_lora.lora.0.weight"))
+    ]
+    assert replaced
+    assert all(key not in fused.arrays for key in replaced)
+    telemetry = fused.telemetry()
+    assert telemetry["fused_lora_down_source_bytes_released"] > 0
+    assert telemetry["fused_lora_down_cache_bytes"] == 2 * telemetry[
+        "fused_lora_down_source_bytes_released"
+    ]
+
+    ids = [[1, 2, 3, 4], [4, 3, 2, 1]]
+    reference_logits, reference_state = reference.forward(ids, collect_all=True)
+    fused_logits, fused_state = fused.forward(ids, collect_all=True)
+    mx.eval(
+        reference_logits,
+        fused_logits,
+        *reference_state.recurrent_state,
+        *fused_state.recurrent_state,
+    )
+    assert mx.argmax(reference_logits, axis=-1).tolist() == mx.argmax(fused_logits, axis=-1).tolist()
+    assert float(mx.max(mx.abs(reference_logits - fused_logits))) < 1e-4
+    for actual, expected in zip(
+        fused_state.recurrent_state,
+        reference_state.recurrent_state,
+        strict=True,
+    ):
+        assert float(mx.max(mx.abs(actual - expected))) < 1e-4

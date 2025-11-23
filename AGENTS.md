@@ -222,31 +222,34 @@ cache row to claim a universal cold-start win.
   scan+GroupNorm+bonus+gate post-processing, quantized Metal embedding lookup,
   guarded compiled zero-state prefill, fast LayerNorm/GroupNorm, exact lockstep
   B8 speculative decode with the 0.1B RWKV draft, and native groupwise W4.
-- 0.4B RWKV versus Qwen3.5 0.8B passes the **cold** row. Current clean medians
-  are `9636.69 vs 5162.62 tok/s` prefill and
-  `940.86 vs 456.21 tok/s` decode. Active-parameter-normalized ratios are
-  `1.1183x` and `1.2356x`; raw peak memory is
-  `1.261 GB vs 1.644 GB`. Keep W/A LoRA-down double-GEMM fusion enabled for
+- 0.4B RWKV versus Qwen3.5 0.8B passes the **cold** row. Current tracked medians
+  are `7942.62 vs 4276.23 tok/s` prefill and
+  `781.66 vs 379.17 tok/s` decode. Active-parameter-normalized ratios are
+  `1.1128x` and `1.2351x`; raw peak memory is
+  `1.253 GB vs 1.644 GB`. Keep W/A LoRA-down double-GEMM fusion enabled for
   this profile.
 - 1.5B RWKV versus Qwen3.5 2B passes the separately labelled
   **87.5%-hit prefix-state coalescing** row. Current medians are
-  `17113.84 vs 2841.44 tok/s` prefill and
-  `872.01 vs 232.10 tok/s` decode. Active-parameter-normalized ratios are
-  `4.8886x` and `3.0494x`; raw peak memory is
-  `1.838 GB vs 2.152 GB`. Disable LoRA-down fusion for this profile because
-  duplicated packed caches increase memory without a useful speed gain.
-- The 1.5B **cold** row is not closed: its best recorded normalized prefill is
-  about `0.88-0.90x` Qwen2. Decode passes by about `3.05x`; after validation
-  allocations are released and LoRA-down fusion is disabled, isolated raw
-  peak memory is about `2.09 GB`, below the `2.15 GB` Qwen row. The remaining
+  `13677.81 vs 2113.13 tok/s` prefill and
+  `686.01 vs 174.40 tok/s` decode. Active-parameter-normalized ratios are
+  `5.2537x` and `3.1928x`; raw peak memory is
+  `1.858 GB vs 2.152 GB`. W/A LoRA-down fusion is enabled; its packed base
+  replaces the original W/A source matrices and releases `18,874,368` bytes,
+  removing the prior duplicate-cache memory penalty.
+- The 1.5B **cold** row is not closed: the current tracked normalized prefill is
+  `0.8999x` Qwen2 (`2478.03 vs 2235.16 tok/s` raw). Decode passes by
+  `3.0567x`; isolated raw peak memory is `2.112 GB`, below the `2.152 GB`
+  Qwen row. The remaining
   cold bottleneck is block compute, especially W4 FFN/projection and WKV/RKV
   launch traffic; the next useful step is a native W4 FFN/block megakernel,
   not another wrapper or cache-only optimization.
-- Correctness gates pass at B8/T133/decode64. For 0.4B, W4 and fp16 greedy
-  tokens are exactly equal; fused-post versus generic W4 and cache versus cold
-  also preserve every greedy token with bounded state/logit drift. The 1.5B
-  cache route preserves every cold W4 greedy token. Compiled prefill is exact
-  for the validated concrete shapes. Quantized linear and embedding payload
+- Correctness gates pass at B8/T133/decode64 for both 0.4B and 1.5B: W4 and
+  fp16 greedy tokens are exactly equal, and fused-post versus generic W4 keeps
+  every token with bounded state/logit drift. A two-distinct-prefix B8 row
+  proves 75% state-cache hits plus reorder/compact with exact greedy output.
+  A real 1.5B-target/0.1B-draft mismatch row reaches `0.116369` acceptance,
+  executes 56 target replays, and remains exactly target-greedy. Compiled
+  prefill is exact for validated shapes. Quantized linear and embedding payload
   ratios are both `0.265625` of dense fp16 storage.
 - Reproduce with `scripts/run_apple_bsz8_active_acceptance.sh`. Permanent raw
   rows and methodology are under `bench/apple_bsz8_active_m5_20260714/`.
@@ -259,9 +262,12 @@ permanent A/B summaries are stored beside the end-to-end evidence.
 
 Rejected A/B routes must remain disabled by default: concatenating LoRA-down
 into one GEMM, adding G/V to the fused down path, fused LoRA-up, grouped RKV W4,
-flattened rank-3 quant matmul, group sizes 32/64, two-lane WKV state ownership,
+blanket rank-3 flattening, group sizes 32/64, SIMD/two-lane WKV state ownership,
+MXFP4/NVFP4, nested local FFN compilation inside the compiled prefill graph,
 fp16 recurrent state, and threadgroup-resident full state all regressed speed,
-memory, or both on this M5.
+memory, or both on this M5. The narrow exception is the exact wide-to-narrow
+groupwise FFN value projection: selective flattening is measured-positive and
+enabled for the Apple B8 candidate.
 
 ## Current Apple Branch Checkpoint: MLX DPLR/WY Stage 1
 
