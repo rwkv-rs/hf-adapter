@@ -10,6 +10,44 @@
 | Apple MLX packed W8/W4 | Apple GPU inference and mobile memory lane | W4 production evidence exists on M5; broader device/shape gates remain |
 | CoreML INT8/INT4 | Apple deployment package/runtime path | Stateful correctness and INT8 evidence exist; INT4 quality/ANE placement remains open |
 
+## RTX 4090 g1h 7.2B promoted result
+
+The bsz8 matrix covers prompt 128/512/2048 and decode 128/512. Route
+composition selects the BNB8+A8W8-head hybrid for all six W8 cells and native
+MM4 or TorchAO per cell for W4.
+
+- W8 minimum prefill/decode/total speed versus RWKV fp16 is
+  `1.472988x/1.356914x/1.360072x`; maximum footprint/peak ratio is
+  `0.533926x/0.455834x`.
+- W4 minimum prefill/decode/total speed is
+  `0.976859x/1.022724x/1.013273x`; maximum footprint/peak ratio is
+  `0.972617x/0.983054x`. W4 therefore uses the disclosed exact-cell total
+  latency fallback rather than claiming every prefill phase is faster.
+- BNB8 and MM4 same-quant native/HF probes pass cosine and greedy-token gates.
+- Full BNB4 offers deeper compression but is not selected because it misses
+  the no-slower speed contract.
+
+Evidence: [`../bench/4090_g1h_7p2_bsz8_20260715/README.md`](../bench/4090_g1h_7p2_bsz8_20260715/README.md).
+
+## RTX 4090 small-model promoted result
+
+The 0.4B, 1.5B and 2.9B pair matrices add 36 selected quant cells, all with
+lower model footprint and peak VRAM than matching RWKV fp16. Worst exact-cell
+total-latency speedups are:
+
+| RWKV size | W8 total min | W8 footprint/peak max | W4 total min | W4 footprint/peak max |
+|---|---:|---:|---:|---:|
+| 0.4B | `1.011441x` | `0.925797x / 0.963266x` | `1.029994x` | `0.890672x / 0.945793x` |
+| 1.5B | `1.131672x` | `0.560704x / 0.625465x` | `1.027211x` | `0.935468x / 0.968566x` |
+| 2.9B | `1.176050x` | `0.544714x / 0.509156x` | `1.014959x` | `0.961227x / 0.977123x` |
+
+W4 prefill is not universally faster (`0.930925x` worst at 1.5B), so the
+published claim remains complete-cell non-inferiority, not per-phase
+superiority. Native A8W8 or the BNB8+A8W8-head hybrid supplies W8; native MM4
+and TorchAO W4 are selected per exact cell.
+
+Evidence: [`../bench/4090_small_bsz8_20260715/README.md`](../bench/4090_small_bsz8_20260715/README.md).
+
 ## RTX 5090 promoted result
 
 The 36-row pressure artifact covers 1.5B/2.9B/7.2B × fp16/MM8/MM4 × prompt

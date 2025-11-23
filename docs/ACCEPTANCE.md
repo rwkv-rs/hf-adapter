@@ -5,13 +5,13 @@ requirements and repository evidence. `PASS` means the named gate has a
 reproducible artifact; `PARTIAL` means the interface works but the complete
 hardware/performance matrix is not closed.
 
-Last updated: **2026-07-12**.
+Last updated: **2026-07-15**.
 
 ## Executive result
 
 | Requirement | Status | Current evidence | Remaining boundary |
 |---|---|---|---|
-| RWKV-LM / Albatross correctness and performance | **PARTIAL / production-close on V100, 4090 and 5090** | V100 production-close matrix; 4090 dense decode and current-session prefill; 5090 full MATH500 and quant pressure artifact | Same-card final Albatross reruns on every target, larger-model P2/P3 matrix, historical 4090 prefill high-water mark |
+| RWKV-LM / Albatross correctness and performance | **PARTIAL / production-close on V100, 4090 and 5090** | V100 production-close matrix; 4090 Albatross lane plus 0.4B–7.2B bsz8 Qwen3.5 matrices; 5090 full MATH500 and quant pressure artifact | Same-card final Albatross reruns on every target, larger-model P2/P3 matrix, historical 4090 prefill high-water mark |
 | Transformers API | **PASS** | Auto classes, save/reload, generation, labels/loss, attention mask and recurrent cache tests | Upstreaming and long-term Transformers-version maintenance |
 | PEFT and RL ecosystem | **PASS for smoke/compatibility** | LoRA lifecycle, Trainer, SFT, DPO and GRPO smoke across CUDA and Apple/MPS | Longer production training and broader model/card combinations |
 | Dynamic batching, chunked prefill and state cache helpers | **PASS in HF adapter scope** | State select/reorder/drop/compact, chunked-prefill parity, serving-like cache telemetry | Native vLLM/SGLang integration remains a separate repository/project |
@@ -31,7 +31,10 @@ Last updated: **2026-07-12**.
 - **RTX 4090:** 0.4B dense decode bsz1/2/4/8 reaches
   `1.007x/1.016x/1.008x/1.418x` of matching Albatross rows. Prompt-512 bsz4 is
   `1.007x` the same-session reference and `0.916x` the retained historical
-  high-water reference.
+  high-water reference. Separately, all published 0.4B/1.5B/2.9B/7.2B pairs
+  pass the batch-8 dense/W8/W4 Qwen3.5 contract: `54/54` small-model cells and
+  `18/18` 7.2B cells, with full-FLA, dense decode active-work, quant speed and
+  quant-local physical-memory gates.
 - **RTX 5090:** full 0.4B MATH500 `500×64` reaches pass@64 `0.38`; against the
   committed Albatross full-run reference, summary/decode throughput ratios are
   `4.336x/4.871x`. This is not a fresh same-card Albatross rerun.
@@ -72,8 +75,9 @@ rows are preserved; load-only smoke is not promoted to that status.
 
 W8/W4 loading and generation work and lower stored/model footprint. Native
 speed and memory policies are deliberately separate. The speed lane is closed
-on selected V100/4090/5090 shapes; the full-memory lane remains the main kernel
-work item. See [`QUANTIZATION.md`](QUANTIZATION.md).
+on selected V100/4090/5090 shapes; RTX 4090 now has batch-8 evidence for every
+published 0.4B–7.2B pair. The full-memory lane remains the main kernel work
+item. See [`QUANTIZATION.md`](QUANTIZATION.md).
 
 ## Release decision
 

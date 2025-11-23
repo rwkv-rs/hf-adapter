@@ -5,7 +5,7 @@ exploratory tuning chronology. Raw rows, logs and negative experiments remain
 in [`bench/`](bench/); platform interpretation lives in
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
-Last updated: **2026-07-14**.
+Last updated: **2026-07-15**.
 
 ## Benchmark contract
 
@@ -28,7 +28,9 @@ Status vocabulary:
 | RTX 3090 | RWKV-7 7.2B vs Qwen3.5-9B, prompt2048, bsz1/2 | finite logits, greedy equality and cosine `>=0.999995`; Qwen fast bindings verified | self-fused dense prefill `1.0519x–1.0846x`; decode `1.9258x–2.1441x` | **PASS measured cells** |
 | RTX 3090 | g1h 7.2B vs Qwen3.5-9B, bsz8, dense/W8/W4 | finite logits, fail-closed Qwen FLA and route contracts; quality is a separate axis | dense prefill/decode min `1.0589x/1.7884x`; decode active work min `1.4379x`; W8/W4 total latency and memory gates pass | **PASS 18/18** |
 | RTX 3090 | 1.5B/2B and 2.9B/4B, bsz8, dense/W8/W4 | finite logits, fail-closed native/Qwen FLA contracts; quality is a separate axis | dense prefill min `1.0306x/1.3559x`, decode min `3.3828x/2.9213x`; W8/W4 total latency and physical-memory gates pass | **PASS 36/36** |
-| RTX 4090 | 0.4B dense and W8/W4 speed lanes | 32-step greedy and cache handoff pass | decode `1.007x–1.418x` matching Albatross; bsz4 prefill `1.007x` current-session / `0.916x` historical high-water | **PASS measured lanes** |
+| RTX 4090 | g1h 7.2B vs Qwen3.5-9B, bsz8, dense/W8/W4 | finite logits, fail-closed Qwen FLA routes, BNB8/MM4 same-quant probes; task quality is separate | dense prefill/decode min `1.0240x/2.2101x`; decode active work min `1.7770x`; W8/W4 total-latency and quant-local memory gates pass | **PASS 18/18** |
+| RTX 4090 | 0.4B/0.8B, 1.5B/2B and 2.9B/4B, bsz8, dense/W8/W4 | finite logits, fail-closed native/full-FLA/route contracts; quality is a separate axis | dense prefill min `1.3704x/1.0420x/1.3051x`, decode min `12.1018x/5.6368x/4.2144x`; W8/W4 total latency and physical-memory gates pass | **PASS 54/54** |
+| RTX 4090 | Historical 0.4B dense and W8/W4 speed lanes | 32-step greedy and cache handoff pass | decode `1.007x–1.418x` matching Albatross; bsz4 prefill `1.007x` current-session / `0.916x` historical high-water | **PASS measured lanes** |
 | RTX 5090 | 0.4B MATH500; 1.5B/2.9B/7.2B quant; 13.3B inference | pass@64 `0.38`; compression ratio `1.0`; all quant same-next | MATH summary/decode `4.336x/4.871x` committed Albatross reference; 2.9B/7.2B quant `>=0.99x` paired fp16 | **PASS artifact** |
 | Apple M5 | 0.4B/1.5B selected MLX vs Qwen3.5 pairs | state/session/greedy and speculative target oracle pass | selected conservative decode/prefill/TTFT/memory gates pass | **PASS measured pairs** |
 
@@ -205,6 +207,55 @@ Historical FLA-core-only evidence: [`bench/5070_qwen35_fla_native_prefill_202607
 Historical baseline: [`bench/5070_qwen35_fla_matrix_20260713/README.md`](bench/5070_qwen35_fla_matrix_20260713/README.md).
 
 ## RTX 4090 promoted rows
+
+The latest g1h 7.2B checkpoint is measured against official Qwen3.5-9B at
+bsz8, prompt 128/512/2048, decode 128/512, shared prefill chunk 512, and
+fp16/W8/W4. All 18 joined cells pass with zero red or missing rows. The six
+dense Qwen rows verify all 24 FLA Gated DeltaNet, fused-gated-norm and
+causal-conv1d operator bindings.
+
+| Family | RWKV/Qwen prefill min | RWKV/Qwen decode min | Quant/fp16 prefill min | Quant/fp16 decode min | Quant/fp16 total min | Footprint max | Peak max |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| fp16 | `1.023951x` | `2.210065x` | — | — | — | — | — |
+| W8 / BNB8+A8W8 head | `1.508672x` | `3.002438x` | `1.472988x` | `1.356914x` | `1.360072x` | `0.533926x` | `0.455834x` |
+| W4 / MM4 or TorchAO | `1.000256x` | `2.260570x` | `0.976859x` | `1.022724x` | `1.013273x` | `0.972617x` | `0.983054x` |
+
+Dense decode passes the explicit active-parameter work gate in 6/6 cells,
+with a minimum `1.776961x` work rate. W4 is not faster in every prefill phase;
+its exact-cell total-latency fallback is stated explicitly. The dense RWKV
+footprint is `0.804034x` Qwen, but dense peak allocated VRAM is
+`1.156353x–1.209017x` Qwen under shared chunk-512, so cross-model peak memory is
+not claimed as a win. Both selected quant families lower footprint and peak
+VRAM versus matching RWKV fp16 in every cell. This is a scoped inference
+speed/memory result, not a model-quality claim.
+
+Evidence and reproduction:
+[`bench/4090_g1h_7p2_bsz8_20260715/README.md`](bench/4090_g1h_7p2_bsz8_20260715/README.md).
+
+### RTX 4090 small-model bsz8 acceptance
+
+The 0.4B/0.8B, 1.5B/2B and 2.9B/4B pairs use the same prompt
+128/512/2048, decode 128/512, batch-8 and dense/W8/W4 contract as the latest
+7.2B lane. All three pair gates pass: `54/54` joined cells, `54/54` verified
+Qwen FLA references, zero red cells and zero missing rows.
+
+| Pair | Dense prefill/decode min vs Qwen | Dense decode active work min | W8 total min vs fp16 | W4 prefill/decode/total min vs fp16 | W8 footprint/peak max | W4 footprint/peak max |
+|---|---:|---:|---:|---:|---:|---:|
+| RWKV 0.4B / Qwen 0.8B | `1.370369x / 12.101818x` | `7.250339x` | `1.011441x` | `0.999344x / 1.041423x / 1.029994x` | `0.925797x / 0.963266x` | `0.890672x / 0.945793x` |
+| RWKV 1.5B / Qwen 2B | `1.041959x / 5.636846x` | `4.575207x` | `1.131672x` | `0.930925x / 1.038061x / 1.027211x` | `0.560704x / 0.625465x` | `0.935468x / 0.968566x` |
+| RWKV 2.9B / Qwen 4B | `1.305103x / 4.214362x` | `2.953767x` | `1.176050x` | `0.986393x / 1.024407x / 1.014959x` | `0.544714x / 0.509156x` | `0.961227x / 0.977123x` |
+
+The W4 prefill deficits are explicitly reported; every complete W4 cell is
+faster than fp16 under the declared exact-cell total-latency gate and uses less
+physical memory. The 1.5B prompt-512 close promotes an exact
+hidden/batch/prompt scan tile (`2048x8x512 -> block_m=32`) without changing the
+7.2B row-8 route. A no-environment-override probe verifies that policy, and the
+focused suite passes 74 tests.
+
+Evidence and reproduction:
+[`bench/4090_small_bsz8_20260715/README.md`](bench/4090_small_bsz8_20260715/README.md).
+
+### Historical RTX 4090 0.4B rows
 
 0.4B dense fp16 native-graph decode:
 
