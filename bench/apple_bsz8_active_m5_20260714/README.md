@@ -38,16 +38,19 @@ not evidence that cold 1.5B prefill beats Qwen2.
 |---|---:|---:|---:|---:|---:|---:|---:|---|
 | 0.4B vs 0.8B, cold | 11650.46 | 5702.27 | 1.2241x | 992.30 | 487.15 | 1.2204x | 1.223 / 1.642 GB | PASS |
 | 1.5B vs 2B, 87.5%-hit prefix cache | 13677.81 | 2113.13 | 5.2537x | 686.01 | 174.40 | 3.1928x | 1.858 / 2.152 GB | PASS |
-| 1.5B target-only vs 2B, cold, ABBA | 2146.21 | 1705.85 | 1.0212x | 161.87 | 136.93 | 0.9595x | 1.7902 / 2.1516 GB | **FAIL** |
+| 1.5B target-only vs 2B, cold, ABBA | 2249.15 | 1600.50 | 1.1406x | 185.59 | 132.20 | 1.1394x | 1.7902 / 2.1516 GB | PASS |
 | 1.5B + 0.1B speculative vs 2B, cold, ABBA | 3631.53 | 2860.13 | 1.0306x | 894.97 | 235.01 | 3.0910x | 2.1510 / 2.1516 GB | PASS |
 
 The target-only row is a separate formal acceptance run with the same isolated
 child-process, B8/T133/decode64, warmup/repeat, initial-cooldown, and ABBA
-contract. It passes normalized prefill and raw memory but misses normalized
-decode by 4.05%. Therefore the closed production row below is explicitly
-**speculative-assisted**; it must not be cited as evidence that target-only
-1.5B passes the Qwen2 gate. The two rows were collected in separate thermal
-sessions, so their medians are not a direct speculative-vs-target-only A/B.
+contract. The B8 decode route now uses a `BM32/BK64/BN64/WM2/WN2` NAX W4
+FFN-key kernel with a fused ReLU-squared epilogue. A same-process alternating
+A/B records `215.23 vs 186.37 tok/s` medians (`1.1549x`) with exact generated
+tokens, final-logit max-abs `0.0625`, and final-state max-abs `0.140709`.
+The resulting formal target-only row passes both normalized speed gates and
+raw memory. The target-only and speculative rows were collected in separate
+thermal sessions, so their medians are not a direct comparison with each
+other.
 
 The historical speculative cold 1.5B pair retained validation/candidate allocations and
 reported 2.468 GB. The release route releases validation state, evicts the
@@ -68,11 +71,11 @@ evidence, not the final end-to-end score.
 - 0.4B W4 versus fp16: exact B8 x 64 greedy token equality (100% match).
 - Fused scan/post versus generic W4: exact greedy tokens. Final 0.4B
   logits/prefill-state/final-state max-abs is `0.0625/0.0625/0.0625`; final
-  1.5B is `0.09375/0.168671/0.168648`.
+  1.5B is `0.09375/0.168671/0.168686`.
 - Mixed-prefix cache versus cold W4: exact greedy tokens with two genuinely
   different equal-length prefixes, six hits (75%), and exact reorder/compact.
   The 0.4B max-abs bounds are 0.0625 logits/state and 0.046875 final state.
-  The 1.5B bounds are 0.0625 logits, 0.193192 prefill state, and 0.186340
+  The 1.5B bounds are 0.0625 logits, 0.193192 prefill state, and 0.186172
   final state.
 - 1.5B W4 versus fp16: exact B8 x 64 greedy equality (100% match). The
   prefill-logit max-abs is 6.125, so this is a token-level gate.
@@ -103,8 +106,9 @@ run, validates fidelity, and then executes the isolated comparisons. It
 enables W/A LoRA-down double-GEMM fusion for both model sizes and evicts the
 now-redundant original W/A down-projection matrices.
 
-Run the stricter target-only gate separately. It exits non-zero on the current
-recorded candidate because normalized decode is `0.9595x`:
+Run the stricter target-only gate separately. It fails closed if either
+active-normalized speed ratio drops below 1.0, any measured row fails, or raw
+peak memory exceeds Qwen:
 
 ```bash
 PYTHON_BIN=/path/to/python \
