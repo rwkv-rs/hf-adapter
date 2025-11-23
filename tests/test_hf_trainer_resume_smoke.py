@@ -6,8 +6,10 @@ import gc
 import json
 import math
 import os
+import platform
 import re
 import shutil
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -92,6 +94,39 @@ class CausalCollator:
 
 def device_name(device: str) -> str:
     return torch.cuda.get_device_name(0) if device.startswith("cuda") and torch.cuda.is_available() else device
+
+
+def runtime_metadata(model) -> dict[str, Any]:
+    root = Path(__file__).resolve().parents[1]
+
+    def git(*args: str) -> str | None:
+        proc = subprocess.run(
+            ["git", *args], cwd=root, text=True, capture_output=True, check=False
+        )
+        return proc.stdout.strip() if proc.returncode == 0 else None
+
+    chip = None
+    if platform.system() == "Darwin":
+        proc = subprocess.run(
+            ["sysctl", "-n", "machdep.cpu.brand_string"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        chip = proc.stdout.strip() or None
+    dirty = git("status", "--porcelain")
+    return {
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "chip": chip,
+        "python": platform.python_version(),
+        "torch_version": torch.__version__,
+        "mps_available": bool(torch.backends.mps.is_available()),
+        "parameter_device": str(next(model.parameters()).device),
+        "git_commit": git("rev-parse", "HEAD"),
+        "git_dirty": bool(dirty) if dirty is not None else None,
+        "process_isolated": True,
+    }
 
 
 def train_torch_dtype(train_dtype: str) -> torch.dtype:
@@ -274,6 +309,7 @@ def run_resume(args: argparse.Namespace) -> dict[str, Any]:
         "first_max_trainable_delta": first_delta,
         "resume_max_trainable_delta": resume_delta,
         "global_step": global_step,
+        **runtime_metadata(metadata_model),
     }
     if not ok:
         raise AssertionError(row)
@@ -295,6 +331,8 @@ def main() -> int:
     ap.add_argument("--dataset-repeats", type=int, default=4)
     ap.add_argument("--results", default="")
     args = ap.parse_args()
+    if args.device == "mps":
+        os.environ.setdefault("RWKV7_NATIVE_MODEL", "1")
     if args.resume_steps <= args.first_steps:
         raise ValueError("resume-steps must exceed first-steps")
     row = run_resume(args)
