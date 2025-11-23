@@ -71,6 +71,170 @@ def _metal_attn_mix_kernel():
     )
 
 
+@lru_cache(maxsize=1)
+def _metal_sequence_mix_kernel():
+    """Fuse sequence shifting with the four materialized attention mixes.
+
+    W/A are already handled algebraically by the packed LoRA-down path.  The
+    sequence prefill graph still needs ``xx`` for that packed GEMM plus the
+    R/K/V/G mixed inputs.  Producing all five tensors directly avoids a
+    concatenate, the standalone subtraction, and four independent
+    elementwise launches per layer.
+    """
+
+    mx = require_mlx()
+    if not metal_attn_mix_available():
+        raise RuntimeError("MLX custom Metal kernels are not available in this runtime")
+    source = r'''
+        uint index16 = thread_position_in_grid.x;
+        uint B = uint(dims[0]);
+        uint T = uint(dims[1]);
+        uint hidden = uint(dims[2]);
+        uint hidden4 = hidden / 4;
+        uint hidden16 = hidden / 16;
+        uint total16 = B * T * hidden16;
+        if (index16 >= total16) {
+            return;
+        }
+
+        uint h16 = index16 % hidden16;
+        uint h4 = h16 * 4;
+        uint row = index16 / hidden16;
+        uint t = row % T;
+        uint b = row / T;
+        uint index4 = index16 * 4;
+        const device half4* x4 = reinterpret_cast<const device half4*>(x);
+        const device half4* x_prev4 = reinterpret_cast<const device half4*>(x_prev);
+        const device half4* mix_r4 = reinterpret_cast<const device half4*>(mix_r);
+        const device half4* mix_k4 = reinterpret_cast<const device half4*>(mix_k);
+        const device half4* mix_v4 = reinterpret_cast<const device half4*>(mix_v);
+        const device half4* mix_g4 = reinterpret_cast<const device half4*>(mix_g);
+        device half4* xx4 = reinterpret_cast<device half4*>(xx);
+        device half4* xr4 = reinterpret_cast<device half4*>(xr);
+        device half4* xk4 = reinterpret_cast<device half4*>(xk);
+        device half4* xv4 = reinterpret_cast<device half4*>(xv);
+        device half4* xg4 = reinterpret_cast<device half4*>(xg);
+        for (uint part = 0; part < 4; ++part) {
+            uint q = index4 + part;
+            uint mh = h4 + part;
+            half4 cur = x4[q];
+            half4 prev = t == 0
+                ? x_prev4[b * hidden4 + mh]
+                : x4[q - hidden4];
+            half4 delta = prev - cur;
+            xx4[q] = delta;
+            xr4[q] = cur + delta * mix_r4[mh];
+            xk4[q] = cur + delta * mix_k4[mh];
+            xv4[q] = cur + delta * mix_v4[mh];
+            xg4[q] = cur + delta * mix_g4[mh];
+        }
+    '''
+    return mx.fast.metal_kernel(
+        name="rwkv7_attn_sequence_shift_mix4",
+        input_names=["x", "x_prev", "mix_r", "mix_k", "mix_v", "mix_g", "dims"],
+        output_names=["xx", "xr", "xk", "xv", "xg"],
+        source=source,
+        ensure_row_contiguous=True,
+    )
+
+
+@lru_cache(maxsize=1)
+def _metal_ffn_sequence_mix_kernel():
+    mx = require_mlx()
+    if not metal_attn_mix_available():
+        raise RuntimeError("MLX custom Metal kernels are not available in this runtime")
+    source = r'''
+        uint index16 = thread_position_in_grid.x;
+        uint B = uint(dims[0]);
+        uint T = uint(dims[1]);
+        uint hidden = uint(dims[2]);
+        uint hidden4 = hidden / 4;
+        uint hidden16 = hidden / 16;
+        uint total16 = B * T * hidden16;
+        if (index16 >= total16) {
+            return;
+        }
+
+        uint h16 = index16 % hidden16;
+        uint h4 = h16 * 4;
+        uint row = index16 / hidden16;
+        uint t = row % T;
+        uint b = row / T;
+        uint index4 = index16 * 4;
+        const device half4* x4 = reinterpret_cast<const device half4*>(x);
+        const device half4* x_prev4 = reinterpret_cast<const device half4*>(x_prev);
+        const device half4* mix4 = reinterpret_cast<const device half4*>(mix);
+        device half4* out4 = reinterpret_cast<device half4*>(out);
+        for (uint part = 0; part < 4; ++part) {
+            uint q = index4 + part;
+            uint mh = h4 + part;
+            half4 cur = x4[q];
+            half4 prev = t == 0
+                ? x_prev4[b * hidden4 + mh]
+                : x4[q - hidden4];
+            out4[q] = cur + (prev - cur) * mix4[mh];
+        }
+    '''
+    return mx.fast.metal_kernel(
+        name="rwkv7_ffn_sequence_shift_mix",
+        input_names=["x", "x_prev", "mix", "dims"],
+        output_names=["out"],
+        source=source,
+        ensure_row_contiguous=True,
+    )
+
+
+def attn_sequence_mix_metal(
+    x: Any,
+    x_prev: Any,
+    mix_r: Any,
+    mix_k: Any,
+    mix_v: Any,
+    mix_g: Any,
+) -> tuple[Any, Any, Any, Any, Any]:
+    """Return ``xx, xr, xk, xv, xg`` for a contiguous ``[B,T,H]`` chunk."""
+
+    mx = require_mlx()
+    B, T, hidden = (int(dim) for dim in x.shape)
+    if hidden % 16:
+        raise ValueError("fused attention sequence mix requires hidden size divisible by 16")
+    dims = mx.array([B, T, hidden], dtype=mx.uint32)
+    outputs = _metal_sequence_mix_kernel()(
+        inputs=[
+            x,
+            x_prev.reshape(B, hidden),
+            mix_r.reshape(hidden),
+            mix_k.reshape(hidden),
+            mix_v.reshape(hidden),
+            mix_g.reshape(hidden),
+            dims,
+        ],
+        grid=(B * T * hidden // 16, 1, 1),
+        threadgroup=(min(256, max(1, hidden)), 1, 1),
+        output_shapes=[x.shape, x.shape, x.shape, x.shape, x.shape],
+        output_dtypes=[x.dtype, x.dtype, x.dtype, x.dtype, x.dtype],
+    )
+    return tuple(outputs)  # type: ignore[return-value]
+
+
+def ffn_sequence_mix_metal(x: Any, x_prev: Any, mix: Any) -> Any:
+    """Fuse the FFN sequence shift and token mix for ``[B,T,H]`` input."""
+
+    mx = require_mlx()
+    B, T, hidden = (int(dim) for dim in x.shape)
+    if hidden % 16:
+        raise ValueError("fused FFN sequence mix requires hidden size divisible by 16")
+    dims = mx.array([B, T, hidden], dtype=mx.uint32)
+    (out,) = _metal_ffn_sequence_mix_kernel()(
+        inputs=[x, x_prev.reshape(B, hidden), mix.reshape(hidden), dims],
+        grid=(B * T * hidden // 16, 1, 1),
+        threadgroup=(min(256, max(1, hidden)), 1, 1),
+        output_shapes=[x.shape],
+        output_dtypes=[x.dtype],
+    )
+    return out
+
+
 def attn_mix_reference(
     x: Any,
     x_prev: Any,

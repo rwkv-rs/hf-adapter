@@ -141,6 +141,12 @@ def component_name(method_name: str, args: tuple[Any, ...]) -> str:
         return "attention_step"
     if method_name == "_ffn_step":
         return "ffn_step"
+    if method_name == "_attn_sequence":
+        return "attention_sequence_scan"
+    if method_name == "_attn_sequence_dplr":
+        return "attention_sequence_dplr"
+    if method_name == "_ffn_sequence":
+        return "ffn_sequence"
     if method_name == "_logits_from_hidden":
         return "final_norm_lm_head"
     return method_name.lstrip("_")
@@ -167,7 +173,16 @@ def install_component_wrappers(model: Any, recorder: ComponentRecorder, *, sync:
     import mlx.core as mx
 
     wrapped: list[tuple[str, Callable[..., Any]]] = []
-    methods = ["_embedding", "_layer_norm", "_attn_step", "_ffn_step", "_logits_from_hidden"]
+    methods = [
+        "_embedding",
+        "_layer_norm",
+        "_attn_step",
+        "_ffn_step",
+        "_attn_sequence",
+        "_attn_sequence_dplr",
+        "_ffn_sequence",
+        "_logits_from_hidden",
+    ]
     for method_name in methods:
         original = getattr(model, method_name)
 
@@ -222,7 +237,7 @@ def run_profile(args: argparse.Namespace) -> dict[str, Any]:
 
     # Warm up kernels/caches outside the component wrappers.
     for _ in range(max(0, int(args.warmup_repeats))):
-        logits, state = model.prefill([prompt_ids])
+        logits, state = model.prefill([prompt_ids] * int(args.batch_size))
         mx.eval(logits)
         next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
         mx.eval(next_token)
@@ -240,7 +255,7 @@ def run_profile(args: argparse.Namespace) -> dict[str, Any]:
     wrapped = install_component_wrappers(model, recorder, sync=not args.no_component_sync)
     try:
         t_prefill = time.perf_counter()
-        logits, state = model.prefill([prompt_ids])
+        logits, state = model.prefill([prompt_ids] * int(args.batch_size))
         mx.eval(logits)
         prefill_s = time.perf_counter() - t_prefill
         next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
@@ -266,15 +281,21 @@ def run_profile(args: argparse.Namespace) -> dict[str, Any]:
         "prompt_target_chars": int(args.prompt_target_chars),
         "prompt_chars": len(prompt),
         "prompt_eval_tokens": len(prompt_ids),
+        "batch_size": int(args.batch_size),
+        "prompt_eval_tokens_total": len(prompt_ids) * int(args.batch_size),
         "decode_length": int(args.decode_length),
-        "generated_tokens": int(args.decode_length),
+        "generated_tokens": int(args.decode_length) * int(args.batch_size),
         "warmup_repeats": int(args.warmup_repeats),
         "component_sync": not bool(args.no_component_sync),
         "load_s": round(float(load_s), 6),
         "prefill_s": round(float(prefill_s), 6),
         "decode_s": round(float(decode_s), 6),
-        "prefill_tok_s": round(float(len(prompt_ids) / prefill_s), 6) if prefill_s > 0 else None,
-        "decode_tok_s": round(float(args.decode_length / decode_s), 6) if decode_s > 0 else None,
+        "prefill_tok_s": round(float(len(prompt_ids) * int(args.batch_size) / prefill_s), 6)
+        if prefill_s > 0
+        else None,
+        "decode_tok_s": round(float(args.decode_length * int(args.batch_size) / decode_s), 6)
+        if decode_s > 0
+        else None,
         "generated_preview": generated[:16],
         "dtype": args.rwkv_dtype,
         "quantization": args.rwkv_quantization,
@@ -299,6 +320,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--prompt-target-chars", type=int, default=512)
     ap.add_argument("--prompt-seed", default=DEFAULT_PROMPT_SEED)
     ap.add_argument("--decode-length", type=int, default=16)
+    ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--warmup-repeats", type=int, default=1)
     ap.add_argument("--rwkv-dtype", default="fp16", choices=["keep", "fp32", "fp16", "bf16"])
     ap.add_argument("--rwkv-quantization", default="mm4", choices=["none", "mm8", "mm4"])
@@ -314,6 +336,8 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--prompt-target-chars must be positive")
     if args.decode_length < 0:
         ap.error("--decode-length must be non-negative")
+    if args.batch_size <= 0:
+        ap.error("--batch-size must be positive")
     if args.warmup_repeats < 0:
         ap.error("--warmup-repeats must be non-negative")
     if args.dry_run:

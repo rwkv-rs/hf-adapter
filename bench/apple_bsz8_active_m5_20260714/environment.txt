@@ -1,0 +1,15 @@
+date=2026-07-14
+device=MacBook Air (Mac17,3)
+chip=Apple M5
+cpu_cores=10 (4 performance, 6 efficiency)
+gpu_cores=8
+memory_gb=16
+metal=Metal 4
+macos=26.5 (25F71)
+python=3.11.15
+mlx=0.31.2
+mlx-lm=0.31.3
+transformers=5.12.1
+numpy=2.4.6
+torch=2.12.1
+pytest=9.1.1
