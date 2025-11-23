@@ -280,6 +280,91 @@ def quantize_mlx_groupwise_linear(
     )
 
 
+@lru_cache(maxsize=1)
+def _metal_groupwise_embedding_kernel():
+    mx = require_mlx()
+    if not metal_quant_available():
+        raise RuntimeError("MLX custom Metal kernels are unavailable")
+    source = r'''
+        uint index = thread_position_in_grid.x;
+        uint rows = uint(dims[0]);
+        uint vocab = uint(dims[1]);
+        uint hidden = uint(dims[2]);
+        uint groups = uint(dims[3]);
+        uint total = rows * hidden;
+        if (index >= total) {
+            return;
+        }
+
+        uint row = index / hidden;
+        uint col = index - row * hidden;
+        uint token = uint(ids[row]);
+        if (token >= vocab) {
+            out[index] = 0.0f;
+            return;
+        }
+        constexpr uint pack_factor = 32 / BITS;
+        constexpr uint mask = (1u << BITS) - 1u;
+        uint packed_cols = hidden / pack_factor;
+        uint word = weight[token * packed_cols + col / pack_factor];
+        uint q = (word >> ((col % pack_factor) * BITS)) & mask;
+        uint group = col / GROUP_SIZE;
+        uint affine_index = token * groups + group;
+        out[index] = float(q) * float(scales[affine_index])
+                   + float(biases[affine_index]);
+    '''
+    return mx.fast.metal_kernel(
+        name="rwkv7_groupwise_embedding",
+        input_names=["weight", "scales", "biases", "ids", "dims"],
+        output_names=["out"],
+        source=source,
+        ensure_row_contiguous=True,
+    )
+
+
+def groupwise_embedding(
+    token_ids: Any,
+    weight: MLXGroupwiseWeight,
+    *,
+    backend: str = "auto",
+) -> tuple[Any, str]:
+    """Gather and dequantize native MLX W4/W8 embedding rows.
+
+    The Metal route performs packed lookup and affine dequantization in one
+    launch.  This avoids the three indexed gathers plus generic dequant graph
+    that otherwise dominate batched recurrent decode.
+    """
+
+    mx = _mx()
+    choice = (backend or "auto").lower().strip()
+    if choice not in {"auto", "metal", "reference"}:
+        raise ValueError("groupwise embedding backend must be auto, metal, or reference")
+    use_metal = choice == "metal" or (choice == "auto" and metal_quant_available())
+    ids = token_ids.astype(mx.int32)
+    if not use_metal:
+        out = mx.dequantize(
+            weight.w_q[ids],
+            scales=weight.scales[ids],
+            biases=weight.biases[ids],
+            group_size=int(weight.group_size),
+            bits=int(weight.bits),
+            mode="affine",
+            dtype=weight.dense_dtype,
+        )
+        return out, "reference"
+    rows = int(ids.size)
+    dims = mx.array([rows, int(weight.w_q.shape[0]), int(weight.n), int(weight.scales.shape[1])], dtype=mx.uint32)
+    (out,) = _metal_groupwise_embedding_kernel()(
+        inputs=[weight.w_q, weight.scales, weight.biases, ids.reshape(-1), dims],
+        template=[("BITS", int(weight.bits)), ("GROUP_SIZE", int(weight.group_size))],
+        grid=(rows * int(weight.n), 1, 1),
+        threadgroup=(min(256, max(1, int(weight.n))), 1, 1),
+        output_shapes=[(*ids.shape, int(weight.n))],
+        output_dtypes=[weight.dense_dtype],
+    )
+    return out, "metal"
+
+
 @dataclass
 class MLXQuantizedLinear:
     """Quantized MLX Linear weight with reference, affine, Metal, and auto backends."""

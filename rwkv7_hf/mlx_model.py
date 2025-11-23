@@ -37,6 +37,7 @@ from .mlx_session import (
 from .mlx_state import MLXRWKV7State, _as_list
 from .mlx_dplr_prefill import mlx_compact_wy_three_stage_metal, mlx_dplr_metal_available
 from .mlx_quant import (
+    MLXGroupwiseWeight,
     MLXQuantizedLinear,
     metal_quant_available,
     mm4_group_matmul_metal_inputs,
@@ -45,10 +46,12 @@ from .mlx_quant import (
     mm8_triple_matmul_metal_inputs,
     pack_mlx_mm4_group,
     pack_mlx_mm8_group,
+    groupwise_embedding,
+    quantize_mlx_groupwise_linear,
 )
 from .mlx_mix import attn_mix, metal_attn_mix_available
 from .mlx_wkv import metal_wkv_available, wkv_update
-from .mlx_scan import metal_wkv_scan_available, wkv_scan
+from .mlx_scan import metal_wkv_scan_available, wkv_scan, wkv_scan_post_metal_fp16
 
 
 EXP_HALF = 0.606531  # = exp(-0.5), RWKV-7 decay base used by the native torch path.
@@ -134,6 +137,11 @@ class MLXRWKV7Model:
         self._compiled_decode_rejected_batches: set[int] = set()
         self.decode_compiled_validation_by_batch: dict[int, dict[str, Any]] = {}
         self.quantized_linears: dict[str, MLXQuantizedLinear] = {}
+        self.quantized_embedding: MLXGroupwiseWeight | None = None
+        self.quantized_embedding_dense_bytes = 0
+        self.quantized_embedding_bytes = 0
+        self.quantized_embedding_backend_last: str | None = None
+        self.quantized_embedding_backend_counts: dict[str, int] = {"reference": 0, "metal": 0}
         self.quantized_dense_equivalent_bytes = 0
         self.quantized_linear_bytes = 0
         self.quantized_linear_bits: int | None = None
@@ -150,10 +158,35 @@ class MLXRWKV7Model:
         self.fused_attn_mix_counts: dict[str, int] = {"metal": 0, "fallback": 0}
         self.fast_layer_norm = _env_flag("RWKV7_MLX_FAST_LAYER_NORM", False)
         self.fast_group_norm = _env_flag("RWKV7_MLX_FAST_GROUP_NORM", False)
+        self.decode_fast_group_norm = _env_flag("RWKV7_MLX_DECODE_FAST_GROUP_NORM", False)
+        self.fused_lora_down = _env_flag("RWKV7_MLX_FUSED_LORA_DOWN", False)
+        self.fused_lora_down_include_g = _env_flag("RWKV7_MLX_FUSED_LORA_DOWN_INCLUDE_G", False)
+        self.fused_lora_down_include_v = _env_flag("RWKV7_MLX_FUSED_LORA_DOWN_INCLUDE_V", False)
+        self._fused_lora_down_cache: dict[int, tuple[Any, Any, dict[str, tuple[int, int]]]] = {}
+        self.fused_lora_down_counts: dict[str, int] = {"fused": 0, "fallback": 0}
+        self.fused_lora_up = _env_flag("RWKV7_MLX_FUSED_LORA_UP", False)
+        self._fused_lora_up_cache: dict[int, tuple[Any, tuple[str, ...], int]] = {}
+        self.fused_lora_up_counts: dict[str, int] = {"fused": 0, "fallback": 0}
         self.wkv_scan_prefill_mode = _env_scan_prefill_mode("RWKV7_MLX_WKV_SCAN_PREFILL", "off")
         self.wkv_scan_prefill_min_tokens = max(2, _env_int("RWKV7_MLX_WKV_SCAN_PREFILL_MIN_TOKENS", 32))
         self.wkv_scan_prefill_counts: dict[str, int] = {"reference": 0, "metal": 0, "fallback": 0}
         self.wkv_scan_prefill_reason_counts: dict[str, int] = {}
+        self.fused_scan_post = _env_flag("RWKV7_MLX_FUSED_SCAN_POST", False)
+        self.fused_scan_post_counts: dict[str, int] = {"metal": 0, "fallback": 0}
+        self.compiled_scan_prefill_mode = _env_choice(
+            "RWKV7_MLX_COMPILED_SCAN_PREFILL",
+            "off",
+            {"off", "auto", "on"},
+        )
+        self.compiled_scan_prefill_backend_last: str | None = None
+        self.compiled_scan_prefill_backend_counts: dict[str, int] = {"eager": 0, "compiled": 0}
+        self._compiled_scan_prefill_functions: dict[tuple[int, int, bool], Any] = {}
+        self._compiled_zero_scan_prefill_functions: dict[tuple[int, int, bool], Any] = {}
+        self.compiled_scan_prefill_compile_s: dict[tuple[int, int, bool], float] = {}
+        self.compiled_zero_scan_prefill_compile_s: dict[tuple[int, int, bool], float] = {}
+        self._compiled_scan_prefill_validated_shapes: set[tuple[int, int, bool]] = set()
+        self._compiled_scan_prefill_rejected_shapes: set[tuple[int, int, bool]] = set()
+        self.compiled_scan_prefill_validation: dict[tuple[int, int, bool], dict[str, Any]] = {}
         self.state_only_prefill_calls = 0
         self.state_only_prefill_tokens = 0
         self.group_rkv_quant_projection = _env_flag("RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION", False)
@@ -162,7 +195,11 @@ class MLXRWKV7Model:
             "direct",
             {"direct", "packed"},
         )
-        self.group_rkv_quant_projection_counts: dict[str, int] = {"metal": 0, "fallback": 0}
+        self.group_rkv_quant_projection_counts: dict[str, int] = {
+            "groupwise": 0,
+            "metal": 0,
+            "fallback": 0,
+        }
         # MLX is lazy, but the historical recurrent reference synchronized all
         # state arrays after every prompt token. Keep interval=1 as the safe
         # default while exposing an opt-in graph-batching seam for prefill.
@@ -220,6 +257,10 @@ class MLXRWKV7Model:
             )
         if len(self.layer_ids) != self.num_hidden_layers:
             raise ValueError(f"config has {self.num_hidden_layers} layers but tensors contain {len(self.layer_ids)}")
+        if self.fused_lora_down:
+            self._prepare_fused_lora_down_weights()
+        if self.fused_lora_up:
+            self._prepare_fused_lora_up_weights()
 
     @classmethod
     def from_hf(
@@ -233,6 +274,7 @@ class MLXRWKV7Model:
         quant_backend: str = "affine",
         quant_profile: str = "uniform",
         quant_group_size: int = 64,
+        quantize_embedding: bool | None = None,
         wkv_backend: str = "reference",
     ) -> "MLXRWKV7Model":
         root = Path(model_dir)
@@ -247,6 +289,7 @@ class MLXRWKV7Model:
                 backend=quant_backend,
                 profile=quant_profile,
                 group_size=quant_group_size,
+                quantize_embedding=quantize_embedding,
             )
         return model
 
@@ -286,6 +329,7 @@ class MLXRWKV7Model:
         backend: str = "affine",
         profile: str = "uniform",
         group_size: int = 64,
+        quantize_embedding: bool | None = None,
     ) -> int:
         """Replace eligible dense MLX Linear weights with packed W8/W4 weights.
 
@@ -324,6 +368,13 @@ class MLXRWKV7Model:
             bits = 4
         else:
             raise ValueError(f"unsupported MLX quantization {quantization!r}; expected mm8/mm4")
+        quantize_embedding_i = (
+            _env_flag("RWKV7_MLX_QUANTIZE_EMBEDDING", False)
+            if quantize_embedding is None
+            else bool(quantize_embedding)
+        )
+        if quantize_embedding_i and backend != "groupwise":
+            raise ValueError("quantized MLX embedding currently requires backend='groupwise'")
         effective_rkv_min_params = None if rkv_min_params is None or int(rkv_min_params) < 0 else int(rkv_min_params)
         selected = [
             key for key, value in list(self.arrays.items())
@@ -341,6 +392,17 @@ class MLXRWKV7Model:
             )
             self.quantized_linears[key] = qlinear
             self.quantized_linear_bytes += qlinear.storage_bytes
+        if quantize_embedding_i:
+            embedding_key = "model.embeddings.weight"
+            if self.quantized_embedding is None:
+                dense_embedding = self.arrays.pop(embedding_key)
+                self.quantized_embedding_dense_bytes = mlx_array_nbytes(dense_embedding)
+                self.quantized_embedding = quantize_mlx_groupwise_linear(
+                    dense_embedding,
+                    bits=bits,
+                    group_size=int(group_size),
+                )
+                self.quantized_embedding_bytes = int(self.quantized_embedding.storage_bytes)
         self._rkv_group_quant_cache.clear()
         self.quantized_linear_bits = bits if selected else None
         self.quantized_linear_backend = backend if selected else None
@@ -352,6 +414,8 @@ class MLXRWKV7Model:
         for qlinear in self.quantized_linears.values():
             histogram[int(qlinear.bits)] = histogram.get(int(qlinear.bits), 0) + 1
         self.quantized_linear_bits_histogram = histogram
+        if self.group_rkv_quant_projection and backend == "groupwise":
+            self._prepare_groupwise_rkv_groups()
         return len(selected)
 
     def reset_telemetry_counters(self) -> None:
@@ -361,11 +425,18 @@ class MLXRWKV7Model:
         self.wkv_backend_counts = {"reference": 0, "metal": 0}
         self.fused_ffn_key_relu2_counts = {"metal": 0, "fallback": 0}
         self.fused_attn_mix_counts = {"metal": 0, "fallback": 0}
+        self.fused_lora_down_counts = {"fused": 0, "fallback": 0}
+        self.fused_lora_up_counts = {"fused": 0, "fallback": 0}
         self.wkv_scan_prefill_counts = {"reference": 0, "metal": 0, "fallback": 0}
         self.wkv_scan_prefill_reason_counts = {}
+        self.fused_scan_post_counts = {"metal": 0, "fallback": 0}
+        self.compiled_scan_prefill_backend_last = None
+        self.compiled_scan_prefill_backend_counts = {"eager": 0, "compiled": 0}
         self.state_only_prefill_calls = 0
         self.state_only_prefill_tokens = 0
-        self.group_rkv_quant_projection_counts = {"metal": 0, "fallback": 0}
+        self.group_rkv_quant_projection_counts = {"groupwise": 0, "metal": 0, "fallback": 0}
+        self.quantized_embedding_backend_last = None
+        self.quantized_embedding_backend_counts = {"reference": 0, "metal": 0}
         for qlinear in self.quantized_linears.values():
             qlinear.last_backend = None
             qlinear.backend_counts = {"reference": 0, "affine": 0, "metal": 0, "groupwise": 0}
@@ -402,12 +473,52 @@ class MLXRWKV7Model:
             "fused_attn_mix_metal_available": metal_attn_mix_available(),
             "fast_layer_norm": bool(self.fast_layer_norm),
             "fast_group_norm": bool(self.fast_group_norm),
+            "decode_fast_group_norm": bool(self.decode_fast_group_norm),
+            "fused_lora_down": bool(self.fused_lora_down),
+            "fused_lora_down_include_g": bool(self.fused_lora_down_include_g),
+            "fused_lora_down_include_v": bool(self.fused_lora_down_include_v),
+            "fused_lora_down_counts": dict(self.fused_lora_down_counts),
+            "fused_lora_up": bool(self.fused_lora_up),
+            "fused_lora_up_counts": dict(self.fused_lora_up_counts),
             "wkv_scan_prefill": self.wkv_scan_prefill_mode != "off",
             "wkv_scan_prefill_mode": self.wkv_scan_prefill_mode,
             "wkv_scan_prefill_min_tokens": int(self.wkv_scan_prefill_min_tokens),
             "wkv_scan_prefill_counts": dict(self.wkv_scan_prefill_counts),
             "wkv_scan_prefill_reason_counts": dict(self.wkv_scan_prefill_reason_counts),
             "wkv_scan_metal_available": metal_wkv_scan_available(),
+            "fused_scan_post": bool(self.fused_scan_post),
+            "fused_scan_post_counts": dict(self.fused_scan_post_counts),
+            "compiled_scan_prefill_mode": self.compiled_scan_prefill_mode,
+            "compiled_scan_prefill_backend_last": self.compiled_scan_prefill_backend_last,
+            "compiled_scan_prefill_backend_counts": dict(self.compiled_scan_prefill_backend_counts),
+            "compiled_scan_prefill_shapes": [
+                self._compiled_scan_prefill_shape_label(key)
+                for key in sorted(self._compiled_scan_prefill_functions)
+            ],
+            "compiled_zero_scan_prefill_shapes": [
+                self._compiled_scan_prefill_shape_label(key)
+                for key in sorted(self._compiled_zero_scan_prefill_functions)
+            ],
+            "compiled_scan_prefill_validated_shapes": [
+                self._compiled_scan_prefill_shape_label(key)
+                for key in sorted(self._compiled_scan_prefill_validated_shapes)
+            ],
+            "compiled_scan_prefill_rejected_shapes": [
+                self._compiled_scan_prefill_shape_label(key)
+                for key in sorted(self._compiled_scan_prefill_rejected_shapes)
+            ],
+            "compiled_scan_prefill_compile_s": {
+                self._compiled_scan_prefill_shape_label(key): value
+                for key, value in self.compiled_scan_prefill_compile_s.items()
+            },
+            "compiled_zero_scan_prefill_compile_s": {
+                self._compiled_scan_prefill_shape_label(key): value
+                for key, value in self.compiled_zero_scan_prefill_compile_s.items()
+            },
+            "compiled_scan_prefill_validation": {
+                self._compiled_scan_prefill_shape_label(key): value
+                for key, value in self.compiled_scan_prefill_validation.items()
+            },
             "state_only_prefill_calls": int(self.state_only_prefill_calls),
             "state_only_prefill_tokens": int(self.state_only_prefill_tokens),
             "prefill_eval_interval": int(self.prefill_eval_interval),
@@ -426,6 +537,22 @@ class MLXRWKV7Model:
             "dplr_windows_last": int(self.dplr_windows_last),
             "dplr_clear_cache": bool(self.dplr_clear_cache),
             "dplr_metal_available": mlx_dplr_metal_available(),
+            "quantized_embedding": self.quantized_embedding is not None,
+            "quantized_embedding_bits": (
+                int(self.quantized_embedding.bits) if self.quantized_embedding is not None else None
+            ),
+            "quantized_embedding_bytes": int(self.quantized_embedding_bytes),
+            "quantized_embedding_dense_bytes": int(self.quantized_embedding_dense_bytes),
+            "quantized_embedding_footprint_ratio": (
+                round(
+                    self.quantized_embedding_bytes / max(self.quantized_embedding_dense_bytes, 1),
+                    6,
+                )
+                if self.quantized_embedding is not None
+                else None
+            ),
+            "quantized_embedding_backend_last": self.quantized_embedding_backend_last,
+            "quantized_embedding_backend_counts": dict(self.quantized_embedding_backend_counts),
             **summarize_mlx_arrays(self.arrays),
         }
         if self.quantized_linears:
@@ -467,6 +594,130 @@ class MLXRWKV7Model:
         except KeyError as exc:
             raise KeyError(f"missing MLX RWKV-7 tensor {key!r}") from exc
 
+    def _prepare_fused_lora_down_weights(self) -> None:
+        """Prepack low-rank down projections into two shared GEMMs.
+
+        Each original projection is ``(x + (x_prev-x)*mix) @ W.T``.  By
+        concatenating the corresponding W/A/V weights, all included LoRA
+        branches share ``x @ W.T + xx @ (W*mix).T``.  G defaults to its direct
+        mixed-input GEMM because its larger rank makes duplicating arithmetic
+        slower at prefill sizes; the environment flag can include it for A/B
+        testing.  The formulation preserves the RWKV-7 math.
+        """
+
+        mx = _mx()
+        packed = []
+        for layer in range(self.num_hidden_layers):
+            prefix = f"model.layers.{layer}.attn"
+            names = ["w", "a"]
+            if self.fused_lora_down_include_g:
+                names.append("g")
+            if self.fused_lora_down_include_v and f"{prefix}.v_lora.lora.0.weight" in self.arrays:
+                names.append("v")
+            base_weights = []
+            delta_weights = []
+            slices: dict[str, tuple[int, int]] = {}
+            offset = 0
+            for name in names:
+                weight = self._get(f"{prefix}.{name}_lora.lora.0.weight")
+                mix = self._get(f"{prefix}.x_{name}").reshape(1, self.hidden_size)
+                rank = int(weight.shape[0])
+                base_weights.append(weight)
+                delta_weights.append(weight * mix)
+                slices[name] = (offset, offset + rank)
+                offset += rank
+            base = mx.concatenate(base_weights, axis=0)
+            delta = mx.concatenate(delta_weights, axis=0)
+            packed.extend((base, delta))
+            self._fused_lora_down_cache[layer] = (base, delta, slices)
+        if packed:
+            mx.eval(*packed)
+
+    def _attn_lora_down(self, layer: int, x, xx) -> dict[str, Any] | None:
+        if not self.fused_lora_down:
+            self.fused_lora_down_counts["fallback"] = int(
+                self.fused_lora_down_counts.get("fallback", 0)
+            ) + 1
+            return None
+        cached = self._fused_lora_down_cache.get(int(layer))
+        if cached is None:
+            raise RuntimeError(f"missing fused LoRA-down cache for layer {layer}")
+        mx = _mx()
+        base_weight, delta_weight, slices = cached
+        packed = x @ base_weight.T + xx @ delta_weight.T
+        self.fused_lora_down_counts["fused"] = int(
+            self.fused_lora_down_counts.get("fused", 0)
+        ) + 1
+        return {name: packed[..., start:end] for name, (start, end) in slices.items()}
+
+    def _prepare_fused_lora_up_weights(self) -> None:
+        """Prepack equal/padded W/A/V LoRA-up matrices for batched GEMM."""
+
+        mx = _mx()
+        packed = []
+        for layer in range(self.num_hidden_layers):
+            prefix = f"model.layers.{layer}.attn"
+            names = ["w", "a"]
+            if f"{prefix}.v_lora.lora.2.weight" in self.arrays:
+                names.append("v")
+            weights = [self._get(f"{prefix}.{name}_lora.lora.2.weight") for name in names]
+            group_rank = max(int(weight.shape[1]) for weight in weights)
+            padded = [
+                mx.pad(weight, ((0, 0), (0, group_rank - int(weight.shape[1]))))
+                if int(weight.shape[1]) < group_rank
+                else weight
+                for weight in weights
+            ]
+            # Store [group, rank, hidden] for batched ``input @ weight``.
+            grouped = mx.stack([weight.T for weight in padded], axis=0)
+            self._fused_lora_up_cache[layer] = (grouped, tuple(names), group_rank)
+            packed.append(grouped)
+        if packed:
+            mx.eval(*packed)
+
+    def _attn_lora_up(
+        self,
+        layer: int,
+        w_down,
+        a_down,
+        v_down=None,
+    ) -> dict[str, Any] | None:
+        if not self.fused_lora_up:
+            self.fused_lora_up_counts["fallback"] = int(
+                self.fused_lora_up_counts.get("fallback", 0)
+            ) + 1
+            return None
+        mx = _mx()
+        grouped_weight, names, group_rank = self._fused_lora_up_cache[int(layer)]
+        inputs = {"w": mx.tanh(w_down), "a": a_down, "v": v_down}
+        padded_inputs = []
+        for name in names:
+            value = inputs[name]
+            if value is None:
+                raise RuntimeError(f"missing {name} LoRA-down input for layer {layer}")
+            rank = int(value.shape[-1])
+            if rank < group_rank:
+                pad_width = [(0, 0)] * (int(value.ndim) - 1) + [(0, group_rank - rank)]
+                value = mx.pad(value, pad_width)
+            padded_inputs.append(value)
+        grouped_input = mx.stack(padded_inputs, axis=0)
+        weight = grouped_weight
+        for _ in range(max(0, int(w_down.ndim) - 2)):
+            weight = mx.expand_dims(weight, axis=1)
+        outputs = mx.matmul(grouped_input, weight)
+        result = {}
+        prefix = f"model.layers.{layer}.attn"
+        for index, name in enumerate(names):
+            value = outputs[index]
+            bias_key = f"{prefix}.{name}_lora.lora.2.bias"
+            if bias_key in self.arrays:
+                value = value + self._get(bias_key)
+            result[name] = value
+        self.fused_lora_up_counts["fused"] = int(
+            self.fused_lora_up_counts.get("fused", 0)
+        ) + 1
+        return result
+
     def _linear(self, x, weight_key: str, bias_key: str | None = None):
         qlinear = self.quantized_linears.get(weight_key)
         if qlinear is not None:
@@ -488,12 +739,42 @@ class MLXRWKV7Model:
         self._rkv_group_quant_cache[cache_key] = group
         return group
 
+    def _prepare_groupwise_rkv_groups(self) -> None:
+        """Stack native MLX R/K/V weights for one batched quantized matmul."""
+
+        mx = _mx()
+        packed = []
+        for layer in range(self.num_hidden_layers):
+            prefix = f"model.layers.{layer}.attn"
+            qlines = [
+                self.quantized_linears.get(f"{prefix}.{name}_proj.weight")
+                for name in ("r", "k", "v")
+            ]
+            if any(q is None or not isinstance(q.weight, MLXGroupwiseWeight) for q in qlines):
+                continue
+            typed = [q for q in qlines if q is not None]
+            weights = [q.weight for q in typed]
+            if len({(int(w.bits), int(w.group_size), int(w.n), int(w.m)) for w in weights}) != 1:
+                continue
+            grouped = (
+                "groupwise",
+                mx.stack([w.w_q for w in weights], axis=0),
+                mx.stack([w.scales for w in weights], axis=0),
+                mx.stack([w.biases for w in weights], axis=0),
+                int(weights[0].group_size),
+                int(weights[0].bits),
+            )
+            self._rkv_group_quant_cache[(int(layer), int(weights[0].bits))] = grouped
+            packed.extend(grouped[1:4])
+        if packed:
+            mx.eval(*packed)
+
     def _grouped_rkv_projection(self, layer: int, xr, xk, xv, prefix: str):
         """Opt-in grouped R/K/V quant projection seam.
 
-        This path is disabled by default and only activates when all three
-        R/K/V projection weights are quantized, route to Metal, and share shape
-        and bit-width. It keeps the default correctness-first path unchanged.
+        The native groupwise route stacks the three packed weights and inputs,
+        allowing MLX to issue one batched quantized matmul instead of three.
+        The older custom-Metal routes remain available for affine weights.
         """
 
         if not self.group_rkv_quant_projection:
@@ -515,6 +796,44 @@ class MLXRWKV7Model:
                 self.group_rkv_quant_projection_counts.get("fallback", 0)
             ) + 1
             return None
+        if all(isinstance(q.weight, MLXGroupwiseWeight) for q in qlines):
+            mx = _mx()
+            cache_key = (int(layer), int(qlines[0].bits))
+            group = self._rkv_group_quant_cache.get(cache_key)
+            if group is None or not isinstance(group, tuple) or group[0] != "groupwise":
+                self._prepare_groupwise_rkv_groups()
+                group = self._rkv_group_quant_cache.get(cache_key)
+            if group is None or not isinstance(group, tuple) or group[0] != "groupwise":
+                self.group_rkv_quant_projection_counts["fallback"] = int(
+                    self.group_rkv_quant_projection_counts.get("fallback", 0)
+                ) + 1
+                return None
+            _, weight_q, scales, biases, group_size, bits = group
+            # ``quantized_matmul`` treats all dimensions before the final two
+            # as broadcast batch dimensions.  Sequence inputs add a token
+            # batch dimension, so insert matching singleton dimensions after
+            # the R/K/V group axis while keeping decode [3,B,H] unchanged.
+            for _ in range(max(0, int(xr.ndim) - 2)):
+                weight_q = mx.expand_dims(weight_q, axis=1)
+                scales = mx.expand_dims(scales, axis=1)
+                biases = mx.expand_dims(biases, axis=1)
+            y_group = mx.quantized_matmul(
+                mx.stack([xr, xk, xv], axis=0),
+                weight_q,
+                scales=scales,
+                biases=biases,
+                transpose=True,
+                group_size=int(group_size),
+                bits=int(bits),
+                mode="affine",
+            )
+            for q in qlines:
+                q.last_backend = "groupwise"
+                q.backend_counts["groupwise"] = int(q.backend_counts.get("groupwise", 0)) + 1
+            self.group_rkv_quant_projection_counts["groupwise"] = int(
+                self.group_rkv_quant_projection_counts.get("groupwise", 0)
+            ) + 1
+            return y_group[0], y_group[1], y_group[2]
         if any(q._selected_backend(x) != "metal" for q, x in zip(qlines, (xr, xk, xv), strict=True)):
             self.group_rkv_quant_projection_counts["fallback"] = int(
                 self.group_rkv_quant_projection_counts.get("fallback", 0)
@@ -594,7 +913,11 @@ class MLXRWKV7Model:
     def init_state(self, batch_size: int, *, dtype: Any | None = None) -> MLXRWKV7State:
         mx = _mx()
         if dtype is None:
-            dtype = self._get("model.embeddings.weight").dtype
+            dtype = (
+                self.quantized_embedding.dense_dtype
+                if self.quantized_embedding is not None
+                else self._get("model.embeddings.weight").dtype
+            )
         B = int(batch_size)
         state = [
             mx.zeros((B, self.num_heads, self.head_dim, self.head_dim), dtype=mx.float32)
@@ -620,7 +943,9 @@ class MLXRWKV7Model:
         H = self.num_heads
         N = self.head_dim
         prefix = f"model.layers.{layer}.attn"
-        if self.fused_attn_mix:
+        xx = x_prev - x
+        lora_down = self._attn_lora_down(layer, x, xx)
+        if self.fused_attn_mix and lora_down is None:
             (xr, xw, xk, xv, xa, xg), mix_backend = attn_mix(
                 x,
                 x_prev,
@@ -637,13 +962,14 @@ class MLXRWKV7Model:
             else:
                 self.fused_attn_mix_counts["fallback"] = int(self.fused_attn_mix_counts.get("fallback", 0)) + 1
         else:
-            xx = x_prev - x
             xr = x + xx * self._get(f"{prefix}.x_r").reshape(1, hidden)
-            xw = x + xx * self._get(f"{prefix}.x_w").reshape(1, hidden)
             xk = x + xx * self._get(f"{prefix}.x_k").reshape(1, hidden)
             xv = x + xx * self._get(f"{prefix}.x_v").reshape(1, hidden)
-            xa = x + xx * self._get(f"{prefix}.x_a").reshape(1, hidden)
-            xg = x + xx * self._get(f"{prefix}.x_g").reshape(1, hidden)
+            if lora_down is None:
+                xw = x + xx * self._get(f"{prefix}.x_w").reshape(1, hidden)
+                xa = x + xx * self._get(f"{prefix}.x_a").reshape(1, hidden)
+            if lora_down is None or "g" not in lora_down:
+                xg = x + xx * self._get(f"{prefix}.x_g").reshape(1, hidden)
 
         grouped_rkv = self._grouped_rkv_projection(layer, xr, xk, xv, prefix)
         if grouped_rkv is None:
@@ -652,20 +978,49 @@ class MLXRWKV7Model:
             v = self._linear(xv, f"{prefix}.v_proj.weight")
         else:
             r, k, v = grouped_rkv
-        w = self._linear(
-            mx.tanh(self._linear(xw, f"{prefix}.w_lora.lora.0.weight")),
-            f"{prefix}.w_lora.lora.2.weight",
-            f"{prefix}.w_lora.lora.2.bias",
+        w_down = (
+            lora_down["w"]
+            if lora_down is not None
+            else self._linear(xw, f"{prefix}.w_lora.lora.0.weight")
+        )
+        a_down = (
+            lora_down["a"]
+            if lora_down is not None
+            else self._linear(xa, f"{prefix}.a_lora.lora.0.weight")
+        )
+        v_down = None
+        if layer > 0:
+            v_down = (
+                lora_down["v"]
+                if lora_down is not None and "v" in lora_down
+                else self._linear(xv, f"{prefix}.v_lora.lora.0.weight")
+            )
+        lora_up = self._attn_lora_up(layer, w_down, a_down, v_down)
+        w = (
+            lora_up["w"]
+            if lora_up is not None
+            else self._linear(
+                mx.tanh(w_down),
+                f"{prefix}.w_lora.lora.2.weight",
+                f"{prefix}.w_lora.lora.2.bias",
+            )
         )
         a = mx.sigmoid(
-            self._linear(
-                self._linear(xa, f"{prefix}.a_lora.lora.0.weight"),
+            lora_up["a"]
+            if lora_up is not None
+            else self._linear(
+                a_down,
                 f"{prefix}.a_lora.lora.2.weight",
                 f"{prefix}.a_lora.lora.2.bias",
             )
         )
+        g_down = (
+            lora_down["g"]
+            if lora_down is not None and "g" in lora_down
+            else self._linear(xg, f"{prefix}.g_lora.lora.0.weight")
+        )
         g = self._linear(
-            mx.sigmoid(self._linear(xg, f"{prefix}.g_lora.lora.0.weight")),
+            mx.sigmoid(g_down),
             f"{prefix}.g_lora.lora.2.weight",
         )
 
@@ -677,8 +1032,10 @@ class MLXRWKV7Model:
             v_first = v
         else:
             v_mix = mx.sigmoid(
-                self._linear(
-                    self._linear(xv, f"{prefix}.v_lora.lora.0.weight"),
+                lora_up["v"]
+                if lora_up is not None
+                else self._linear(
+                    v_down,
                     f"{prefix}.v_lora.lora.2.weight",
                     f"{prefix}.v_lora.lora.2.bias",
                 )
@@ -703,7 +1060,11 @@ class MLXRWKV7Model:
         # parity issue comes from the three standard LayerNorm boundaries;
         # forcing GroupNorm through a separate fast primitive adds launches
         # without improving parity.
-        out = self._group_norm_heads(out, layer, backend="reference")
+        out = self._group_norm_heads(
+            out,
+            layer,
+            backend="fast" if self.decode_fast_group_norm else "reference",
+        )
         sk = (
             r.reshape(B, H, N)
             * k.reshape(B, H, N)
@@ -759,12 +1120,15 @@ class MLXRWKV7Model:
         prefix = f"model.layers.{layer}.attn"
         xp = self._shift_prev_sequence(x, x_prev)
         xx = xp - x
+        lora_down = self._attn_lora_down(layer, x, xx)
         xr = x + xx * self._get(f"{prefix}.x_r").reshape(1, 1, hidden)
-        xw = x + xx * self._get(f"{prefix}.x_w").reshape(1, 1, hidden)
         xk = x + xx * self._get(f"{prefix}.x_k").reshape(1, 1, hidden)
         xv = x + xx * self._get(f"{prefix}.x_v").reshape(1, 1, hidden)
-        xa = x + xx * self._get(f"{prefix}.x_a").reshape(1, 1, hidden)
-        xg = x + xx * self._get(f"{prefix}.x_g").reshape(1, 1, hidden)
+        if lora_down is None:
+            xw = x + xx * self._get(f"{prefix}.x_w").reshape(1, 1, hidden)
+            xa = x + xx * self._get(f"{prefix}.x_a").reshape(1, 1, hidden)
+        if lora_down is None or "g" not in lora_down:
+            xg = x + xx * self._get(f"{prefix}.x_g").reshape(1, 1, hidden)
 
         grouped_rkv = self._grouped_rkv_projection(layer, xr, xk, xv, prefix)
         if grouped_rkv is None:
@@ -773,20 +1137,49 @@ class MLXRWKV7Model:
             v = self._linear(xv, f"{prefix}.v_proj.weight")
         else:
             r, k, v = grouped_rkv
-        w = self._linear(
-            mx.tanh(self._linear(xw, f"{prefix}.w_lora.lora.0.weight")),
-            f"{prefix}.w_lora.lora.2.weight",
-            f"{prefix}.w_lora.lora.2.bias",
+        w_down = (
+            lora_down["w"]
+            if lora_down is not None
+            else self._linear(xw, f"{prefix}.w_lora.lora.0.weight")
+        )
+        a_down = (
+            lora_down["a"]
+            if lora_down is not None
+            else self._linear(xa, f"{prefix}.a_lora.lora.0.weight")
+        )
+        v_down = None
+        if layer > 0:
+            v_down = (
+                lora_down["v"]
+                if lora_down is not None and "v" in lora_down
+                else self._linear(xv, f"{prefix}.v_lora.lora.0.weight")
+            )
+        lora_up = self._attn_lora_up(layer, w_down, a_down, v_down)
+        w = (
+            lora_up["w"]
+            if lora_up is not None
+            else self._linear(
+                mx.tanh(w_down),
+                f"{prefix}.w_lora.lora.2.weight",
+                f"{prefix}.w_lora.lora.2.bias",
+            )
         )
         a = mx.sigmoid(
-            self._linear(
-                self._linear(xa, f"{prefix}.a_lora.lora.0.weight"),
+            lora_up["a"]
+            if lora_up is not None
+            else self._linear(
+                a_down,
                 f"{prefix}.a_lora.lora.2.weight",
                 f"{prefix}.a_lora.lora.2.bias",
             )
         )
+        g_down = (
+            lora_down["g"]
+            if lora_down is not None and "g" in lora_down
+            else self._linear(xg, f"{prefix}.g_lora.lora.0.weight")
+        )
         g = self._linear(
-            mx.sigmoid(self._linear(xg, f"{prefix}.g_lora.lora.0.weight")),
+            mx.sigmoid(g_down),
             f"{prefix}.g_lora.lora.2.weight",
         )
 
@@ -798,8 +1191,10 @@ class MLXRWKV7Model:
             new_v_first_seq = v
         else:
             v_mix = mx.sigmoid(
-                self._linear(
-                    self._linear(xv, f"{prefix}.v_lora.lora.0.weight"),
+                lora_up["v"]
+                if lora_up is not None
+                else self._linear(
+                    v_down,
                     f"{prefix}.v_lora.lora.2.weight",
                     f"{prefix}.v_lora.lora.2.bias",
                 )
@@ -808,28 +1203,60 @@ class MLXRWKV7Model:
             new_v_first_seq = v_first_seq
         w = mx.exp(-EXP_HALF * mx.sigmoid(w.astype(mx.float32)))
 
-        out_heads, state, backend_used = wkv_scan(
-            state,
-            w.reshape(B, T, H, N),
-            v.reshape(B, T, H, N),
-            k.reshape(B, T, H, N),
-            kk.reshape(B, T, H, N),
-            a.reshape(B, T, H, N),
-            r.reshape(B, T, H, N),
-            backend=self.wkv_backend,
+        can_fuse_post = bool(
+            self.fused_scan_post
+            and self.wkv_backend in {"metal", "auto"}
+            and r.dtype == mx.float16
+            and g.dtype == mx.float16
+            and metal_wkv_scan_available()
         )
+        if can_fuse_post:
+            out_heads, state = wkv_scan_post_metal_fp16(
+                state,
+                w.reshape(B, T, H, N),
+                v.reshape(B, T, H, N),
+                k.reshape(B, T, H, N),
+                kk.reshape(B, T, H, N),
+                a.reshape(B, T, H, N),
+                r.reshape(B, T, H, N),
+                self._get(f"{prefix}.g_norm.weight"),
+                self._get(f"{prefix}.g_norm.bias"),
+                self._get(f"{prefix}.r_k"),
+                g.reshape(B, T, H, N),
+            )
+            backend_used = "metal"
+            self.fused_scan_post_counts["metal"] = int(
+                self.fused_scan_post_counts.get("metal", 0)
+            ) + 1
+        else:
+            if self.fused_scan_post:
+                self.fused_scan_post_counts["fallback"] = int(
+                    self.fused_scan_post_counts.get("fallback", 0)
+                ) + 1
+            out_heads, state, backend_used = wkv_scan(
+                state,
+                w.reshape(B, T, H, N),
+                v.reshape(B, T, H, N),
+                k.reshape(B, T, H, N),
+                kk.reshape(B, T, H, N),
+                a.reshape(B, T, H, N),
+                r.reshape(B, T, H, N),
+                backend=self.wkv_backend,
+            )
         self.wkv_backend_last = backend_used
         self.wkv_backend_counts[backend_used] = int(self.wkv_backend_counts.get(backend_used, 0)) + 1
         self.wkv_scan_prefill_counts[backend_used] = int(self.wkv_scan_prefill_counts.get(backend_used, 0)) + 1
         out = out_heads.reshape(B, T, hidden)
-        out = self._group_norm_heads(out, layer)
-        sk = (
-            r.reshape(B, T, H, N)
-            * k.reshape(B, T, H, N)
-            * self._get(f"{prefix}.r_k").reshape(1, 1, H, N)
-        ).sum(axis=-1, keepdims=True)
-        out = out + (sk * v.reshape(B, T, H, N)).reshape(B, T, hidden)
-        out = self._linear(out * g, f"{prefix}.o_proj.weight")
+        if not can_fuse_post:
+            out = self._group_norm_heads(out, layer)
+            sk = (
+                r.reshape(B, T, H, N)
+                * k.reshape(B, T, H, N)
+                * self._get(f"{prefix}.r_k").reshape(1, 1, H, N)
+            ).sum(axis=-1, keepdims=True)
+            out = out + (sk * v.reshape(B, T, H, N)).reshape(B, T, hidden)
+            out = out * g
+        out = self._linear(out, f"{prefix}.o_proj.weight")
         return out, x[:, -1, :], state, new_v_first_seq
 
     def _ffn_sequence(self, layer: int, x, x_prev):
@@ -882,6 +1309,268 @@ class MLXRWKV7Model:
             self.wkv_scan_prefill_reason_counts.get(reason, 0)
         ) + 1
 
+    @staticmethod
+    def _compiled_scan_prefill_shape_label(key: tuple[int, int, bool]) -> str:
+        batch, tokens, collect_all = key
+        suffix = "all" if collect_all else "last"
+        return f"b{batch}_t{tokens}_{suffix}"
+
+    def _build_compiled_scan_prefill_function(
+        self,
+        batch_size: int,
+        tokens: int,
+        *,
+        collect_all: bool,
+    ):
+        """Build a pure static-shape scan-prefill graph for MLX compilation."""
+
+        mx = _mx()
+        batch = int(batch_size)
+        sequence = int(tokens)
+        layers = self.num_hidden_layers
+        if min(batch, sequence) <= 0:
+            raise ValueError("compiled scan prefill requires positive batch and token dimensions")
+
+        def pure_prefill(input_ids, v_first, *flat_state):
+            state = MLXRWKV7State(
+                recurrent_state=list(flat_state[:layers]),
+                attn_x_prev=list(flat_state[layers : 2 * layers]),
+                ffn_x_prev=list(flat_state[2 * layers : 3 * layers]),
+                v_first=v_first,
+                seen_tokens=0,
+            )
+            logits, state = self._forward_scan_prefill(
+                input_ids.reshape(batch, sequence),
+                state,
+                collect_all=bool(collect_all),
+                evaluate=False,
+            )
+            return (logits, *self._flatten_compiled_decode_state(state))
+
+        compile_fn = getattr(mx, "compile", None)
+        if not callable(compile_fn):
+            raise RuntimeError("this MLX runtime does not expose mx.compile")
+        return compile_fn(pure_prefill)
+
+    def _build_compiled_zero_scan_prefill_function(
+        self,
+        batch_size: int,
+        tokens: int,
+        *,
+        collect_all: bool,
+    ):
+        """Build a fresh-prompt graph with zero recurrent state internalized."""
+
+        mx = _mx()
+        batch = int(batch_size)
+        sequence = int(tokens)
+        layers = self.num_hidden_layers
+        if min(batch, sequence) <= 0:
+            raise ValueError("compiled zero-state scan prefill requires positive dimensions")
+        state_dtype = (
+            self.quantized_embedding.dense_dtype
+            if self.quantized_embedding is not None
+            else self._get("model.embeddings.weight").dtype
+        )
+
+        def pure_prefill(input_ids):
+            state = MLXRWKV7State(
+                recurrent_state=[
+                    mx.zeros((batch, self.num_heads, self.head_dim, self.head_dim), dtype=mx.float32)
+                    for _ in range(layers)
+                ],
+                attn_x_prev=[
+                    mx.zeros((batch, self.hidden_size), dtype=state_dtype)
+                    for _ in range(layers)
+                ],
+                ffn_x_prev=[
+                    mx.zeros((batch, self.hidden_size), dtype=state_dtype)
+                    for _ in range(layers)
+                ],
+                v_first=mx.zeros(
+                    (batch, self.hidden_size),
+                    dtype=state_dtype,
+                ),
+                seen_tokens=0,
+            )
+            logits, state = self._forward_scan_prefill(
+                input_ids.reshape(batch, sequence),
+                state,
+                collect_all=bool(collect_all),
+                evaluate=False,
+            )
+            return (logits, *self._flatten_compiled_decode_state(state))
+
+        compile_fn = getattr(mx, "compile", None)
+        if not callable(compile_fn):
+            raise RuntimeError("this MLX runtime does not expose mx.compile")
+        return compile_fn(pure_prefill)
+
+    def prepare_compiled_scan_prefill(
+        self,
+        batch_size: int,
+        tokens: int,
+        *,
+        collect_all: bool = False,
+    ) -> float:
+        """Compile and warm the static ``[B,T]`` Metal scan-prefill graph."""
+
+        mx = _mx()
+        key = (int(batch_size), int(tokens), bool(collect_all))
+        if key in self._compiled_scan_prefill_functions and key in self.compiled_scan_prefill_compile_s:
+            return float(self.compiled_scan_prefill_compile_s[key])
+        function = self._compiled_scan_prefill_functions.get(key)
+        if function is None:
+            function = self._build_compiled_scan_prefill_function(
+                key[0],
+                key[1],
+                collect_all=key[2],
+            )
+            self._compiled_scan_prefill_functions[key] = function
+        ids = mx.zeros((key[0], key[1]), dtype=mx.int32)
+        state = self.init_state(key[0])
+        started = time.perf_counter()
+        outputs = function(ids, *self._flatten_compiled_decode_state(state))
+        mx.eval(*outputs)
+        elapsed = time.perf_counter() - started
+        self.compiled_scan_prefill_compile_s[key] = float(elapsed)
+        return float(elapsed)
+
+    def _compiled_scan_prefill(
+        self,
+        input_ids: Any,
+        state: MLXRWKV7State | None,
+        *,
+        collect_all: bool,
+    ):
+        mx = _mx()
+        ids = mx.array(input_ids, dtype=mx.int32)
+        if ids.ndim == 1:
+            ids = ids.reshape(1, -1)
+        if ids.ndim != 2:
+            raise ValueError("compiled MLX scan prefill expects input ids shaped [batch, seq]")
+        batch, tokens = (int(dim) for dim in ids.shape)
+        zero_state = state is None
+        if state is not None and int(state.batch_size) != batch:
+            raise ValueError(f"state batch size {state.batch_size} does not match input batch size {batch}")
+        key = (batch, tokens, bool(collect_all))
+        if zero_state:
+            function = self._compiled_zero_scan_prefill_functions.get(key)
+            if function is None:
+                function = self._build_compiled_zero_scan_prefill_function(
+                    batch,
+                    tokens,
+                    collect_all=bool(collect_all),
+                )
+                self._compiled_zero_scan_prefill_functions[key] = function
+            started = time.perf_counter() if key not in self.compiled_zero_scan_prefill_compile_s else None
+            outputs = function(ids)
+        else:
+            function = self._compiled_scan_prefill_functions.get(key)
+            if function is None:
+                function = self._build_compiled_scan_prefill_function(
+                    batch,
+                    tokens,
+                    collect_all=bool(collect_all),
+                )
+                self._compiled_scan_prefill_functions[key] = function
+            started = time.perf_counter() if key not in self.compiled_scan_prefill_compile_s else None
+            outputs = function(ids, *self._flatten_compiled_decode_state(state))
+        mx.eval(*outputs)
+        if started is not None:
+            elapsed = float(time.perf_counter() - started)
+            if zero_state:
+                self.compiled_zero_scan_prefill_compile_s[key] = elapsed
+            else:
+                self.compiled_scan_prefill_compile_s[key] = elapsed
+        next_state = self._compiled_decode_state_from_outputs(
+            outputs[1:],
+            seen_tokens=(0 if state is None else int(state.seen_tokens)) + tokens,
+        )
+        self.compiled_scan_prefill_backend_last = "compiled"
+        self.compiled_scan_prefill_backend_counts["compiled"] = int(
+            self.compiled_scan_prefill_backend_counts.get("compiled", 0)
+        ) + 1
+        return outputs[0], next_state
+
+    def validate_compiled_scan_prefill(
+        self,
+        input_ids: Any,
+        state: MLXRWKV7State | None = None,
+        *,
+        collect_all: bool = False,
+        logits_atol: float = 0.0,
+        state_atol: float = 0.0,
+    ) -> dict[str, Any]:
+        """Parity-gate a static compiled scan graph against eager scan math."""
+
+        mx = _mx()
+        if min(float(logits_atol), float(state_atol)) < 0:
+            raise ValueError("compiled scan prefill tolerances must be non-negative")
+        ids = mx.array(input_ids, dtype=mx.int32)
+        if ids.ndim == 1:
+            ids = ids.reshape(1, -1)
+        if ids.ndim != 2:
+            raise ValueError("compiled MLX scan validation expects input ids shaped [batch, seq]")
+        batch, tokens = (int(dim) for dim in ids.shape)
+        zero_state = state is None
+        source_state = self.init_state(batch) if zero_state else state
+        if int(source_state.batch_size) != batch:
+            raise ValueError(
+                f"state batch size {source_state.batch_size} does not match input batch size {batch}"
+            )
+        eager_logits, eager_state = self._forward_scan_prefill(
+            ids,
+            source_state.clone(),
+            collect_all=bool(collect_all),
+        )
+        compiled_logits, compiled_state = self._compiled_scan_prefill(
+            ids,
+            None if zero_state else source_state.clone(),
+            collect_all=bool(collect_all),
+        )
+        eager_flat = self._flatten_compiled_decode_state(eager_state)
+        compiled_flat = self._flatten_compiled_decode_state(compiled_state)
+        mx.eval(eager_logits, compiled_logits, *eager_flat, *compiled_flat)
+        logits_diff = float(
+            mx.max(mx.abs(eager_logits.astype(mx.float32) - compiled_logits.astype(mx.float32)))
+        )
+        state_diff = max(
+            float(mx.max(mx.abs(left.astype(mx.float32) - right.astype(mx.float32))))
+            for left, right in zip(eager_flat, compiled_flat, strict=True)
+        )
+        token_match = mx.argmax(eager_logits[:, -1, :], axis=-1).tolist() == mx.argmax(
+            compiled_logits[:, -1, :], axis=-1
+        ).tolist()
+        key = (batch, tokens, bool(collect_all))
+        passed = bool(
+            token_match
+            and logits_diff <= float(logits_atol)
+            and state_diff <= float(state_atol)
+            and int(eager_state.seen_tokens) == int(compiled_state.seen_tokens)
+        )
+        result = {
+            "status": "pass" if passed else "fail",
+            "shape": self._compiled_scan_prefill_shape_label(key),
+            "batch_size": batch,
+            "tokens": tokens,
+            "collect_all": bool(collect_all),
+            "next_token_match": bool(token_match),
+            "logits_max_abs": logits_diff,
+            "state_max_abs": state_diff,
+            "logits_atol": float(logits_atol),
+            "state_atol": float(state_atol),
+            "seen_tokens_match": int(eager_state.seen_tokens) == int(compiled_state.seen_tokens),
+        }
+        self.compiled_scan_prefill_validation[key] = result
+        if passed:
+            self._compiled_scan_prefill_validated_shapes.add(key)
+            self._compiled_scan_prefill_rejected_shapes.discard(key)
+        else:
+            self._compiled_scan_prefill_rejected_shapes.add(key)
+            self._compiled_scan_prefill_validated_shapes.discard(key)
+        return dict(result)
+
     def _forward_scan_prefill(
         self,
         input_ids: Iterable[Iterable[int]] | Any,
@@ -889,6 +1578,7 @@ class MLXRWKV7Model:
         *,
         collect_all: bool = False,
         state_only: bool = False,
+        evaluate: bool = True,
     ):
         """Layer-major prefill path that calls one multi-token WKV scan per layer."""
 
@@ -906,7 +1596,7 @@ class MLXRWKV7Model:
         elif state.batch_size != B:
             raise ValueError(f"state batch size {state.batch_size} does not match input batch size {B}")
 
-        x = self._get("model.embeddings.weight")[ids]
+        x = self._embedding(ids)
         v_first_seq = None
         for layer in range(self.num_hidden_layers):
             residual = self._layer_norm(x, f"model.layers.{layer}.pre_norm") if layer == 0 else x
@@ -932,26 +1622,23 @@ class MLXRWKV7Model:
         if state_only:
             self.state_only_prefill_calls += 1
             self.state_only_prefill_tokens += T
-            self._eval_step_state(x[:, -1, :], state)
+            if evaluate:
+                self._eval_step_state(x[:, -1, :], state)
             return state
         if collect_all:
             out = self._logits_from_hidden(x)
         else:
             out = self._logits_from_hidden(x[:, -1, :]).reshape(B, 1, self.vocab_size)
-        self._eval_step_state(out, state)
+        if evaluate:
+            self._eval_step_state(out, state)
         return out, state
 
 
     def _group_norm_heads_sequence(self, x, layer: int):
-        mx = _mx()
-        batch, tokens = int(x.shape[0]), int(x.shape[1])
-        xf = x.astype(mx.float32).reshape(batch * tokens, self.num_heads, self.head_dim)
-        mean = mx.mean(xf, axis=-1, keepdims=True)
-        var = mx.mean((xf - mean) * (xf - mean), axis=-1, keepdims=True)
-        y = (xf - mean) * mx.rsqrt(var + self.head_dim * 1e-5)
-        y = y.reshape(batch, tokens, self.hidden_size).astype(x.dtype)
-        prefix = f"model.layers.{layer}.attn.g_norm"
-        return y * self._get(f"{prefix}.weight") + self._get(f"{prefix}.bias")
+        # The common helper already supports arbitrary leading dimensions.
+        # Keeping [B,T] intact lets MLX fuse the reduction/affine graph more
+        # effectively than the historical explicit [B*T,H,N] round-trip.
+        return self._group_norm_heads(x, layer)
 
     def _sequence_shift(self, x, x_prev):
         mx = _mx()
@@ -1069,7 +1756,7 @@ class MLXRWKV7Model:
     ):
         mx = _mx()
         batch, tokens = int(ids.shape[0]), int(ids.shape[1])
-        x = self._get("model.embeddings.weight")[ids]
+        x = self._embedding(ids)
         v_first_sequence = None
         for layer in range(self.num_hidden_layers):
             residual = self._layer_norm(x, f"model.layers.{layer}.pre_norm") if layer == 0 else x
@@ -1136,7 +1823,15 @@ class MLXRWKV7Model:
 
     def _embedding(self, token_ids):
         mx = _mx()
-        ids = token_ids.astype(mx.int32).reshape(-1)
+        ids = token_ids.astype(mx.int32)
+        if self.quantized_embedding is not None:
+            weight = self.quantized_embedding
+            out, backend = groupwise_embedding(ids, weight, backend="auto")
+            self.quantized_embedding_backend_last = backend
+            self.quantized_embedding_backend_counts[backend] = int(
+                self.quantized_embedding_backend_counts.get(backend, 0)
+            ) + 1
+            return out
         return self._get("model.embeddings.weight")[ids]
 
     def _step_token(
@@ -1212,6 +1907,17 @@ class MLXRWKV7Model:
         use_scan, scan_reason = self._should_scan_prefill(T)
         self._record_scan_prefill_reason(scan_reason)
         if use_scan:
+            compiled_key = (B, T, bool(collect_all))
+            use_compiled_scan = self.compiled_scan_prefill_mode == "on" or (
+                self.compiled_scan_prefill_mode == "auto"
+                and compiled_key in self._compiled_scan_prefill_validated_shapes
+            )
+            if use_compiled_scan:
+                return self._compiled_scan_prefill(ids, state, collect_all=collect_all)
+            self.compiled_scan_prefill_backend_last = "eager"
+            self.compiled_scan_prefill_backend_counts["eager"] = int(
+                self.compiled_scan_prefill_backend_counts.get("eager", 0)
+            ) + 1
             return self._forward_scan_prefill(ids, state=state, collect_all=collect_all)
         if state is None:
             state = self.init_state(B)
@@ -1539,9 +2245,20 @@ class MLXRWKV7Model:
         eager_tokens: list[list[int]] = []
         compiled_tokens: list[list[int]] = []
         reference_tokens: list[list[int]] = []
-        require_reference_gate = self.decode_norm_backend == "fast"
+        # ``fast_layer_norm`` directly fuses normalization and affine in the
+        # input dtype, so it must be parity-gated just like the explicit fast
+        # decode backend.  Previously the reference trajectory accidentally
+        # kept this global override enabled and therefore compared the fast
+        # path with itself.
+        require_reference_gate = (
+            self.decode_norm_backend == "fast"
+            or self.fast_layer_norm
+            or self.decode_fast_group_norm
+        )
         previous_backend = self.decode_backend
         previous_norm_backend = self.decode_norm_backend
+        previous_fast_layer_norm = self.fast_layer_norm
+        previous_decode_fast_group_norm = self.decode_fast_group_norm
         previous_last = self.decode_backend_last
         previous_counts = dict(self.decode_backend_counts)
         counter_snapshot = self._decode_kernel_counter_snapshot()
@@ -1556,17 +2273,23 @@ class MLXRWKV7Model:
                 reference_tokens.append([int(value) for value in reference_token.tolist()])
                 self.decode_backend = "eager"
                 self.decode_norm_backend = previous_norm_backend
+                self.fast_layer_norm = previous_fast_layer_norm
+                self.decode_fast_group_norm = previous_decode_fast_group_norm
                 eager_logits, eager_state = self.decode_step(eager_token, eager_state)
                 self.decode_backend = "compiled"
                 compiled_logits, compiled_state = self.decode_step(compiled_token, compiled_state)
                 if require_reference_gate:
                     self.decode_backend = "eager"
                     self.decode_norm_backend = "reference"
+                    self.fast_layer_norm = False
+                    self.decode_fast_group_norm = False
                     reference_logits, reference_state = self.decode_step(
                         reference_token,
                         reference_state,
                     )
                     self.decode_norm_backend = previous_norm_backend
+                    self.fast_layer_norm = previous_fast_layer_norm
+                    self.decode_fast_group_norm = previous_decode_fast_group_norm
                 else:
                     reference_logits, reference_state = eager_logits, eager_state
             mx.eval(
@@ -1580,6 +2303,8 @@ class MLXRWKV7Model:
         finally:
             self.decode_backend = previous_backend
             self.decode_norm_backend = previous_norm_backend
+            self.fast_layer_norm = previous_fast_layer_norm
+            self.decode_fast_group_norm = previous_decode_fast_group_norm
             self.decode_backend_last = previous_last
             self.decode_backend_counts = previous_counts
             self._restore_decode_kernel_counters(counter_snapshot)
@@ -1775,6 +2500,7 @@ def load_mlx_rwkv7_model(
     quant_backend: str = "affine",
     quant_profile: str = "uniform",
     quant_group_size: int = 64,
+    quantize_embedding: bool | None = None,
     wkv_backend: str = "reference",
 ) -> MLXRWKV7Model:
     return MLXRWKV7Model.from_hf(
@@ -1786,6 +2512,7 @@ def load_mlx_rwkv7_model(
         quant_backend=quant_backend,
         quant_profile=quant_profile,
         quant_group_size=quant_group_size,
+        quantize_embedding=quantize_embedding,
         wkv_backend=wkv_backend,
     )
 
