@@ -1434,6 +1434,23 @@ def test_3090_entrypoint_requires_optimized_qwen_path() -> None:
     assert "DENSE_DECODE_GATE=" in acceptance
 
 
+def test_4090_acceptance_entrypoint_is_exact_card_and_chunk_safe() -> None:
+    script = (ROOT / "bench" / "run_4090_qwen35_pair_acceptance.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'PREFILL_CHUNK_SIZE="${PREFILL_CHUNK_SIZE:-512}"' in script
+    assert '"${gpu_name}" != *"RTX 4090"*' in script
+    assert "--require-qwen-fast-path" in script
+    assert 'qwen_backend="fla"' in script
+    assert 'DENSE_PREFILL_GATE="${DENSE_PREFILL_GATE:-1.00}"' in script
+    assert 'ACTIVE_DECODE_WORK_GATE="${ACTIVE_DECODE_WORK_GATE:-1.00}"' in script
+    assert "--min-decode-active-parameter-throughput-ratio" in script
+    assert "RWKV7_NATIVE_GRAPH_EXTERNAL_QUANT=1" in script
+    assert "RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH=1" in script
+    assert "RWKV7_NATIVE_PREFILL_SELF_CHUNK_MIN_TOKENS=128" in script
+    assert "--allow-quant-total-not-slower-than-dense" in script
+
+
 def test_hardware_entrypoints_are_fail_closed() -> None:
     for name in ("run_v100_qwen35_speed_matrix.sh", "run_3090_qwen35_speed_matrix.sh"):
         script = (ROOT / "bench" / name).read_text(encoding="utf-8")

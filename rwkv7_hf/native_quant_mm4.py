@@ -335,18 +335,32 @@ def mm4_effective_launch_config(device=None) -> dict[str, int]:
     }
 
 
+def _mm4_batched_dot_device_supported(major: int, minor: int, name: str) -> bool:
+    """Return whether exact-device tensor-core W4 batch evidence exists."""
+
+    return bool(
+        int(major) >= 12
+        or (int(major), int(minor)) == (8, 6)
+        or (
+            (int(major), int(minor)) == (8, 9)
+            and "4090" in str(name).lower()
+        )
+    )
+
+
 def mm4_batched_dot_enabled(device=None) -> bool:
     """Whether the measured tensor-core W4 batch kernel is enabled.
 
-    The measured ``sm_120+`` and consumer/workstation ``sm_86`` routes provide
-    the fp16 tensor-core primitive used by :func:`mm4_batched_dot_triton`.
+    The measured ``sm_120+``, consumer/workstation ``sm_86``, and exact RTX
+    4090 routes provide the fp16 tensor-core primitive used by
+    :func:`mm4_batched_dot_triton`.
     Older code dispatched every ``sm_86`` batch row as a separate GEMV (or
     materialized the dequantized weight above four rows), which made the 2.9B
     lm-head speed-policy lane about 0.65x fp16 at bsz8.
 
-    Keep ``sm_80`` and ``sm_89`` on their existing routes until exact-device
-    A/B evidence is recorded; capability policy must not silently generalize
-    one measured route to every architecture.
+    Keep ``sm_80`` and non-4090 ``sm_89`` devices on their existing routes;
+    capability policy must not silently generalize one measured card to every
+    architecture peer.
     """
     if torch is None or not torch.cuda.is_available():
         return False
@@ -354,7 +368,11 @@ def mm4_batched_dot_enabled(device=None) -> bool:
     if dev.type != "cuda":
         return False
     major, minor = torch.cuda.get_device_capability(dev)
-    return major >= 12 or (major == 8 and minor == 6)
+    try:
+        name = str(torch.cuda.get_device_name(dev))
+    except Exception:
+        name = ""
+    return _mm4_batched_dot_device_supported(major, minor, name)
 
 
 def mm4_gemv_triton(x, packed, mx, rx_s, my, ry_s, m_orig, *, block_pairs=None, block_n=None):
