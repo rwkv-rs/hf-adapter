@@ -104,7 +104,9 @@ def runtime_metadata(model) -> dict[str, Any]:
             check=False,
         )
         chip = proc.stdout.strip() or None
-    dirty = git("status", "--porcelain")
+    # Evidence/log files are intentionally created during the run. Provenance
+    # tracks source changes while ignoring those new append-only artifacts.
+    dirty = git("status", "--porcelain", "--untracked-files=no")
     return {
         "platform": platform.platform(),
         "machine": platform.machine(),
