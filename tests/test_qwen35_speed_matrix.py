@@ -833,6 +833,44 @@ def test_comparator_active_parameter_work_does_not_reward_smaller_model(tmp_path
     assert summary["gates"]["active_parameter_pass"] is False
 
 
+def test_comparator_can_gate_active_parameter_work_on_decode_only(tmp_path: Path) -> None:
+    candidate = row("candidate", prompt=128, prefill=120.0, decode=130.0)
+    reference = row("reference", prompt=128, prefill=100.0, decode=100.0)
+    candidate.update(
+        {
+            "active_parameter_count": 80,
+            "prefill_active_parameter_tops": 9.6,
+            "decode_active_parameter_tops": 10.4,
+        }
+    )
+    reference.update(
+        {
+            "active_parameter_count": 100,
+            "prefill_active_parameter_tops": 10.0,
+            "decode_active_parameter_tops": 10.0,
+        }
+    )
+    proc = run_compare(
+        tmp_path,
+        [candidate, reference],
+        "--expected-cells",
+        "1",
+        "--min-decode-active-parameter-throughput-ratio",
+        "1.0",
+        "--fail-on-gate",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    cell = summary["cells"][0]
+    assert cell["prefill_active_parameter_throughput_ratio"] == 0.96
+    assert cell["prefill_active_parameter_work_pass"] is True
+    assert cell["decode_active_parameter_throughput_ratio"] == 1.04
+    assert cell["decode_active_parameter_work_pass"] is True
+    assert summary["active_parameter_work"]["prefill_gate"] is None
+    assert summary["active_parameter_work"]["decode_gate"] == 1.0
+    assert summary["gates"]["active_parameter_work_pass"] is True
+
+
 def test_comparator_active_parameter_efficiency_normalizes_smaller_model(tmp_path: Path) -> None:
     candidate = row("candidate", prompt=128, prefill=120.0, decode=120.0)
     reference = row("reference", prompt=128, prefill=100.0, decode=100.0)

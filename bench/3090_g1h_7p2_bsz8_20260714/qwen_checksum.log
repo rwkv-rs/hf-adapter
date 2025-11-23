@@ -1,0 +1,7 @@
+xargs: warning: options --max-args and --replace/-I/-i are mutually exclusive, ignoring previous --max-args value
+model.safetensors-00001-of-00004.safetensors: OK
+model.safetensors-00002-of-00004.safetensors: OK
+model.safetensors-00003-of-00004.safetensors: OK
+model.safetensors-00004-of-00004.safetensors: OK
+QWEN_MS_DOWNLOAD_DONE
+QWEN_MS_RC=0
