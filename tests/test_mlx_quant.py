@@ -55,6 +55,41 @@ def test_mlx_groupwise_w4_nax_relu2_matches_public_qmm_if_available():
     assert float(mx.max(mx.abs(expected.astype(mx.float32) - actual.astype(mx.float32)))) == 0.0
 
 
+def test_mlx_groupwise_w4_nax_relu2_decode_tile_matches_public_qmm_if_available():
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    from rwkv7_hf.mlx_quant import (
+        groupwise_w4_matmul_relu2_metal,
+        groupwise_w4_relu2_metal_available,
+        quantize_mlx_groupwise_linear,
+    )
+
+    if not groupwise_w4_relu2_metal_available():
+        return
+    mx.random.seed(20260717)
+    dense = mx.random.uniform(low=-0.25, high=0.25, shape=(8192, 2048)).astype(mx.float16)
+    weight = quantize_mlx_groupwise_linear(dense, bits=4, group_size=128)
+    x = (mx.random.normal((8, 2048)) * 0.1).astype(mx.float16)
+    expected = mx.quantized_matmul(
+        x,
+        weight.w_q,
+        scales=weight.scales,
+        biases=weight.biases,
+        transpose=True,
+        group_size=128,
+        bits=4,
+        mode="affine",
+    )
+    expected = mx.maximum(expected, 0)
+    expected = expected * expected
+    actual = groupwise_w4_matmul_relu2_metal(x, weight)
+    mx.eval(expected, actual)
+    assert tuple(int(dim) for dim in actual.shape) == (8, 8192)
+    assert bool(mx.allclose(expected, actual, rtol=0.01, atol=0.01))
+
+
 def test_mlx_groupwise_w4_nax_square_matches_public_qmm_if_available():
     if importlib.util.find_spec("mlx") is None:
         return
