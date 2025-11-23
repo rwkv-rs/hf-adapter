@@ -210,7 +210,7 @@ Remaining before this goal is complete:
 - Do not call the DPLR/WY goal finished until compact WY or an equivalent
   compiled path is verified end-to-end against the original acceptance target.
 
-## Current Apple M5 B8 Active-Parameter Milestone (2026-07-14)
+## Current Apple M5 B8 Active-Parameter Milestone (2026-07-15)
 
 The current Apple acceptance axis is **true batch 8**, a 512-character prompt,
 64 generated tokens per sequence, group-128 RWKV W4 versus the published
@@ -238,11 +238,21 @@ cache row to claim a universal cold-start win.
   `1.858 GB vs 2.152 GB`. W/A LoRA-down fusion is enabled; its packed base
   replaces the original W/A source matrices and releases `18,874,368` bytes,
   removing the prior duplicate-cache memory penalty.
-- The 1.5B **cold, no-prefix-coalescing** ABBA row is closed. Current medians
+- A separate 1.5B **target-only, cold, no-prefix-coalescing** ABBA acceptance
+  row does not yet close: medians are `2146.21 vs 1705.85 tok/s` prefill and
+  `161.87 vs 136.93 tok/s` decode. Active-normalized ratios are `1.0212x` and
+  `0.9595x`; raw peak memory passes at `1,790,200,770 vs 2,151,577,894` bytes.
+  The remaining target-only gap is therefore normalized decode, short by
+  4.05%. Reproduce this fail-closed row with
+  `scripts/run_apple_bsz8_target_only_acceptance.sh`.
+- The 1.5B **speculative-assisted cold, no-prefix-coalescing** ABBA row is
+  closed. Current medians
   are `3631.53 vs 2860.13 tok/s` prefill and `894.97 vs 235.01 tok/s` decode.
   Active-normalized ratios are `1.0306x` and `3.0910x`; raw peak memory is
   `2,150,971,348 vs 2,151,577,894` bytes. This is a narrow fixed-shape M5
-  result; do not generalize it to other Apple chips, batch sizes, or lengths.
+  result; do not describe it as target-only and do not generalize it to other
+  Apple chips, batch sizes, or lengths. The target-only and speculative rows
+  were recorded in separate thermal sessions and are not a direct A/B.
 - Correctness gates pass at B8/T133/decode64 for both 0.4B and 1.5B: W4 and
   fp16 greedy tokens are exactly equal, and fused-post versus generic W4 keeps
   every token with bounded state/logit drift. A two-distinct-prefix B8 row
