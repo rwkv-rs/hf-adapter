@@ -58,6 +58,34 @@ def test_mlx_wkv_formula_if_available():
         assert float(mx.max(mx.abs(out_ref.astype(mx.float32) - out_metal.astype(mx.float32)))) < 5e-2
 
 
+def test_mlx_wkv_b1_n64_specialization_if_available():
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    from rwkv7_hf.mlx_wkv import metal_wkv_available, wkv_update_metal, wkv_update_reference
+
+    if not metal_wkv_available():
+        return
+    mx.random.seed(20260715)
+    b, h, n = 1, 4, 64
+    state = (mx.random.normal((b, h, n, n)) * 0.1).astype(mx.float32)
+    w = mx.sigmoid(mx.random.normal((b, h, n))).astype(mx.float32)
+    v = (mx.random.normal((b, h, n)) * 0.1).astype(mx.float16)
+    k = (mx.random.normal((b, h, n)) * 0.1).astype(mx.float16)
+    kk = (mx.random.normal((b, h, n)) * 0.1).astype(mx.float16)
+    a = mx.sigmoid(mx.random.normal((b, h, n))).astype(mx.float16)
+    r = (mx.random.normal((b, h, n)) * 0.1).astype(mx.float16)
+
+    out_ref, state_ref = wkv_update_reference(state, w, v, k, kk, a, r)
+    out_metal, state_metal = wkv_update_metal(state, w, v, k, kk, a, r)
+    mx.eval(out_ref, state_ref, out_metal, state_metal)
+    assert tuple(out_metal.shape) == (b, h, n)
+    assert tuple(state_metal.shape) == (b, h, n, n)
+    assert float(mx.max(mx.abs(state_ref - state_metal))) < 1e-2
+    assert float(mx.max(mx.abs(out_ref.astype(mx.float32) - out_metal.astype(mx.float32)))) < 5e-2
+
+
 def test_mlx_model_metal_wkv_hook_if_available():
     if importlib.util.find_spec("mlx") is None:
         return
@@ -163,6 +191,14 @@ def test_mlx_compiled_decode_matches_eager_if_available():
         steps=4,
     )
     assert validation["status"] == "pass"
+    greedy_validation = compiled_model.validate_compiled_greedy_decode(
+        compiled_logits,
+        compiled_state,
+        steps=4,
+    )
+    assert greedy_validation["status"] == "pass"
+    assert greedy_validation["generated_tokens_match"] is True
+    assert greedy_validation["state_max_abs"] == 0.0
     assert compiled_model.wkv_backend_counts == kernel_counts_before_validation
     eager_tokens: list[list[int]] = []
     compiled_tokens: list[list[int]] = []
@@ -199,6 +235,8 @@ def test_mlx_compiled_decode_matches_eager_if_available():
     assert telemetry["decode_compiled_validated_batches"] == [2]
     assert telemetry["decode_compiled_rejected_batches"] == []
     assert telemetry["decode_compiled_validation_by_batch"][2]["status"] == "pass"
+    assert telemetry["decode_compiled_greedy_batches"] == [2]
+    assert telemetry["decode_compiled_greedy_validation_by_batch"][2]["status"] == "pass"
     assert telemetry["decode_compile_s_by_batch"][2] >= 0.0
     assert telemetry["decode_norm_backend"] == "reference"
     assert telemetry["decode_compiled_norm_backend_by_batch"][2] == "reference"

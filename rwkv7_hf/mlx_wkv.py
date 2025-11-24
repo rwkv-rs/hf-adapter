@@ -80,6 +80,75 @@ def _metal_wkv_kernel():
     )
 
 
+@lru_cache(maxsize=1)
+def _metal_wkv_b1_n64_kernel():
+    """One-simdgroup-per-state-row WKV update for B1/Hx64 decode.
+
+    The generic kernel assigns one thread to a complete 64-element state row.
+    That is a good low-launch-overhead fallback, but adjacent SIMD lanes then
+    read different rows with a 64-float stride.  B1 decode is latency-bound, so
+    use one 32-lane SIMD group per row: every lane handles two contiguous
+    columns and both row reductions stay inside ``simd_sum``.
+    """
+
+    mx = require_mlx()
+    if not metal_wkv_available():
+        raise RuntimeError("MLX custom Metal kernels are not available in this runtime")
+
+    source = r'''
+        constexpr uint rows_per_threadgroup = 2;
+        uint row_id = threadgroup_position_in_grid.x * rows_per_threadgroup
+                    + simdgroup_index_in_threadgroup;
+        uint lane = thread_index_in_simdgroup;
+        uint B = uint(dims[0]);
+        uint H = uint(dims[1]);
+        uint N = uint(dims[2]);
+        uint rows = B * H * N;
+        if (row_id >= rows || lane >= 32 || N != 64) {
+            return;
+        }
+
+        uint i = row_id % N;
+        uint bh = row_id / N;
+        uint hbase = bh * N;
+        uint sbase = row_id * N;
+        uint j0 = lane;
+        uint j1 = lane + 32;
+
+        float s0 = float(state[sbase + j0]);
+        float s1 = float(state[sbase + j1]);
+        float dot_kk = simd_sum(
+            s0 * float(kk[hbase + j0])
+            + s1 * float(kk[hbase + j1])
+        );
+
+        float vi = float(v[hbase + i]);
+        float new0 = s0 * float(w[hbase + j0])
+                   - dot_kk * float(kka[hbase + j0])
+                   + vi * float(k[hbase + j0]);
+        float new1 = s1 * float(w[hbase + j1])
+                   - dot_kk * float(kka[hbase + j1])
+                   + vi * float(k[hbase + j1]);
+        state_out[sbase + j0] = new0;
+        state_out[sbase + j1] = new1;
+
+        float acc = simd_sum(
+            new0 * float(r[hbase + j0])
+            + new1 * float(r[hbase + j1])
+        );
+        if (lane == 0) {
+            out[row_id] = acc;
+        }
+    '''
+    return mx.fast.metal_kernel(
+        name="rwkv7_wkv_update_b1_n64_simd",
+        input_names=["state", "w", "v", "k", "kk", "kka", "r", "dims"],
+        output_names=["state_out", "out"],
+        source=source,
+        ensure_row_contiguous=True,
+    )
+
+
 def wkv_update_reference(state: Any, w: Any, v: Any, k: Any, kk: Any, a: Any, r: Any) -> tuple[Any, Any]:
     """Portable MLX reference update for ``state [B,H,N,N]``.
 
@@ -113,11 +182,12 @@ def wkv_update_metal(state: Any, w: Any, v: Any, k: Any, kk: Any, a: Any, r: Any
         raise ValueError(f"state must be [B,H,N,N], got {tuple(state.shape)}")
     rows = b * h * n
     dims = mx.array([b, h, n], dtype=mx.uint32)
-    kernel = _metal_wkv_kernel()
+    b1_n64 = b == 1 and n == 64
+    kernel = _metal_wkv_b1_n64_kernel() if b1_n64 else _metal_wkv_kernel()
     state_out, out = kernel(
         inputs=[state, w.reshape(b, h, n), v.reshape(b, h, n), k.reshape(b, h, n), kk.reshape(b, h, n), (kk * a).reshape(b, h, n), r.reshape(b, h, n), dims],
-        grid=(rows, 1, 1),
-        threadgroup=(min(256, max(1, rows)), 1, 1),
+        grid=(((((rows + 1) // 2) * 64) if b1_n64 else rows), 1, 1),
+        threadgroup=((64 if b1_n64 else min(256, max(1, rows))), 1, 1),
         output_shapes=[state.shape, (b, h, n)],
         output_dtypes=[mx.float32, r.dtype],
     )
