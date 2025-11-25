@@ -86,6 +86,23 @@ def test_mlx_wkv_b1_n64_specialization_if_available():
     assert float(mx.max(mx.abs(out_ref.astype(mx.float32) - out_metal.astype(mx.float32)))) < 5e-2
 
 
+def test_mlx_model_fp16_decode_state_policy_if_available(monkeypatch):
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    from rwkv7_hf.mlx_model import MLXRWKV7Model
+    from tests.test_apple_silicon_mlx_model_smoke import tiny_torch_model_to_mlx
+
+    monkeypatch.setenv("RWKV7_MLX_DECODE_STATE_DTYPE", "fp16")
+    _, source_model, cfg = tiny_torch_model_to_mlx()
+    model = MLXRWKV7Model.from_arrays(cfg, dict(source_model.arrays), wkv_backend="reference")
+    logits, state = model.prefill([[1, 2, 3, 4]])
+    mx.eval(logits, *state.recurrent_state)
+    assert all(value.dtype == mx.float16 for value in state.recurrent_state)
+    assert model.telemetry()["decode_state_dtype"] == "fp16"
+
+
 def test_mlx_model_metal_wkv_hook_if_available():
     if importlib.util.find_spec("mlx") is None:
         return
