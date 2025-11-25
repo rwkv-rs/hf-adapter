@@ -1,5 +1,11 @@
 # Apple/Qwen3.5 live evidence notes — 2026-07-07
 
+> **Dated historical investigation.** The download and performance blockers in
+> this note were later resolved for selected M5 profiles. Current promoted
+> conclusions are in
+> [`APPLE_PRODUCTION_CLOSE.md`](APPLE_PRODUCTION_CLOSE.md); “current gap” below
+> means the state on 2026-07-07 only.
+
 This is an incremental evidence note for the Apple/Qwen3.5 acceptance lane. It
 does **not** claim the full "beat Qwen3.5" gate is complete; it records the
 current same-device status and the next hard blocker.

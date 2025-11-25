@@ -1,5 +1,12 @@
 # Apple Silicon 生产级硬门清单
 
+> **Strict global audit snapshot, manifest `2026-07-13.2`.** This 149-gate
+> checklist intentionally remains incomplete and is not the source for selected
+> exact-profile production-close claims. Current bounded M5 B1/B8 conclusions
+> are in [`APPLE_PRODUCTION_CLOSE.md`](APPLE_PRODUCTION_CLOSE.md). Re-run the
+> checker before changing the counts below; do not hand-edit them to match a
+> later partial close.
+
 > **结论：尚未达到生产级。** 当前通过 **50 / 149** 个必选硬门。任何 `FAIL`、`MISSING` 或 `UNKNOWN` 都禁止声明 Apple 生产级完成。
 
 Manifest 版本：`2026-07-13.2`。当前状态由已提交 JSONL 和明确登记的文件证据实时计算，不从源码功能名或说明文字推断 PASS。
