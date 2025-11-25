@@ -24,7 +24,7 @@ Status vocabulary:
 
 | Platform | Scope | Correctness / quality | Performance | Result |
 |---|---|---|---|---|
-| V100 32GB | 0.1B/0.4B/1.5B × bsz1/2/4/8 | greedy, cache handoff and focused regressions pass | dense decode `0.908x–1.248x`; prompt512 prefill `0.930x–1.047x` same-host Albatross | **PASS P1** |
+| V100 32GB | 0.1B/0.4B/1.5B × bsz1/2/4/8; 1.5B vs full-FLA Qwen3.5-2B B1/B8 | greedy/cache gates plus 32-token Qwen and RWKV native-route probes pass | Albatross P1; full-FLA Qwen raw prefill/decode min `2.8159x/5.2704x`, active-work min `2.2856x/4.2778x` | **PASS measured lanes** |
 | RTX 3090 | RWKV-7 7.2B vs Qwen3.5-9B, prompt2048, bsz1/2 | finite logits, greedy equality and cosine `>=0.999995`; Qwen fast bindings verified | self-fused dense prefill `1.0519x–1.0846x`; decode `1.9258x–2.1441x` | **PASS measured cells** |
 | RTX 3090 | g1h 7.2B vs Qwen3.5-9B, bsz8, dense/W8/W4 | finite logits, fail-closed Qwen FLA and route contracts; quality is a separate axis | dense prefill/decode min `1.0589x/1.7884x`; decode active work min `1.4379x`; W8/W4 total latency and memory gates pass | **PASS 18/18** |
 | RTX 3090 | 1.5B/2B and 2.9B/4B, bsz8, dense/W8/W4 | finite logits, fail-closed native/Qwen FLA contracts; quality is a separate axis | dense prefill min `1.0306x/1.3559x`, decode min `3.3828x/2.9213x`; W8/W4 total latency and physical-memory gates pass | **PASS 36/36** |
@@ -48,7 +48,34 @@ Canonical matrix: 0.1B/0.4B/1.5B × bsz1/2/4/8.
 
 Evidence: [`bench/v100_production_close_20260711/README.md`](bench/v100_production_close_20260711/README.md).
 
-### V100 RWKV-7 vs Qwen3.5 HF matrix
+### V100 B1/B8 active-parameter comparison against full-FLA Qwen3.5
+
+The current optimized-reference artifact compares RWKV-7 1.5B with the
+official Qwen3.5-2B checkpoint at prompt 512, decode 64 and batch 1/8. Qwen is
+fail-closed on FLA chunk prefill, fused-recurrent decode, fused gated norm and
+the repository Triton causal-convolution kernels; both rows report the full
+operator contract and effective backend
+`qwen_fla_gated_delta_rule_fla_triton_conv`.
+
+RWKV/Qwen active parameters are 1,527,404,544/1,881,825,088 (`0.811661x`).
+The explicit normalized gate uses `aggregate tok/s * active parameters`, so
+RWKV needs at least `1.232041x` raw Qwen throughput to tie. Both phases pass in
+both cells:
+
+| Bsz | Prefill RWKV/Qwen | Prefill active work | Decode RWKV/Qwen | Decode active work | Peak VRAM RWKV/Qwen |
+|---:|---:|---:|---:|---:|---:|
+| 1 | `2.815921x` | `2.285574x` | `5.913307x` | `4.799514x` | `1.024885x` |
+| 8 | `5.407762x` | `4.389270x` | `5.270432x` | `4.277804x` | `0.837248x` |
+
+Qwen full-FLA/Triton-conv versus its oracle and RWKV native graph versus its
+FLA-backed HF route each preserve all 32 greedy tokens and pass their cosine
+gates. This is target-only inference with no draft/speculative path. The B1
+peak-VRAM loss is retained explicitly; memory was not a gate for this dense
+speed artifact.
+
+Evidence: [`bench/v100_active_b1b8_20260715/README.md`](bench/v100_active_b1b8_20260715/README.md).
+
+### Historical V100 RWKV-7 vs Qwen3.5 Torch-fallback matrix
 
 The historical official text-only matrix covers three model pairs, fp16/bnb8/
 bnb4, prompt 128/512/2048, decode 128/512, and bsz1/2/4/8: `432/432` raw rows
@@ -69,10 +96,10 @@ importable). This artifact is now a historical diagnostic and does not satisfy
 the optimized-Qwen acceptance gate. The replacement matrix defaults to
 `--qwen-backend fla` and fails closed unless every Qwen Gated DeltaNet layer
 binds FLA prefill/decode, causal-convolution, and fused-normalization operators.
-The replacement exact-card run targets the RTX 5070 Laptop. Its required FLA
-core contract covers Gated DeltaNet prefill/decode and fused gated norm;
-`causal-conv1d` is reported separately on Windows. The completed 5070 artifact
-is reported below; it does not retroactively upgrade the historical V100 rows.
+The completed RTX 5070 artifact is reported below. The current V100 B1/B8
+artifact above additionally closes the optimized reference on `sm_70`,
+including the Triton causal-convolution contract. Neither result retroactively
+upgrades these historical Torch-fallback rows.
 
 Evidence: [`bench/qwen35_v100_hf_matrix_20260712/README.md`](bench/qwen35_v100_hf_matrix_20260712/README.md).
 Design: [`docs/plans/2026-07-13-qwen35-5070-fla-design.md`](docs/plans/2026-07-13-qwen35-5070-fla-design.md).
