@@ -1,0 +1,33 @@
+# V100 active-parameter B1/B8 environment
+
+captured_utc=2026-07-15T07:25:14Z
+host=wzu-SYS-4029GP-TRT
+uname=Linux wzu-SYS-4029GP-TRT 6.8.0-124-generic #124~22.04.1-Ubuntu SMP PREEMPT_DYNAMIC Tue May 26 21:05:19 UTC  x86_64 x86_64 x86_64 GNU/Linux
+cuda_visible_devices=1
+
+## nvidia-smi
+1, Tesla V100-PCIE-32GB, GPU-f65db2e8-87bb-c88d-363f-23c79f793548, 580.159.03, 88.00.7E.00.03, P0, 32768 MiB
+
+## Python stack
+python=3.11.15 (main, Jun 11 2026, 15:20:16) [GCC 14.3.0]
+torch=2.5.1+cu124
+torch_cuda=12.4
+transformers=5.12.1
+triton=3.4.0
+bitsandbytes=0.49.2
+cuda_name=Tesla V100-PCIE-32GB
+cuda_capability=(7, 0)
+
+## Inputs
+rwkv_model=/home/data/wangyue/models/rwkv7/rwkv7-g1g-1.5b-hf
+qwen_model=/home/data/wangyue/models/qwen/Qwen3.5-2B
+2747f71733fd6d28ddf4bdf37591e35f9d2b2e9ff3cb18b8f3650b291a5fe67a  /home/data/wangyue/models/rwkv7/rwkv7-g1g-1.5b-hf/config.json
+ed1c1723241f23f7f4e23430759cbd7dcfb4103cbdfe052bfe7626b57c2615b4  /home/data/wangyue/models/qwen/Qwen3.5-2B/config.json
+
+## Benchmark sources
+06c88b4ccfb987a909793b3e89dc7855c442470be9f3796c08c82a98402e0aa3  bench/bench_cross_model_speed.py
+abae25a3c85c4401cbbaed21d7ba12630e23494d05b804a1e5f3481e3991ea56  bench/run_qwen35_speed_matrix.py
+8b57062c204db82bf25e3eab482afa7af9c5970216c53941b9436ca37274a31b  bench/compare_qwen35_speed_matrix.py
+fa4b3e5f5bfc42c36e4982097ba75d8628f6f1f00e6603d7ce00e85258fe61bd  bench/compare_qwen35_backend_probe.py
+53c7d365fe1eba538c0502df2d5a33e9d6d158e120a0081041de229f4ce14827  bench/compare_rwkv_prefill_probe.py
+5cf592aaab48bf3aeb425f52225344f86181d998880a243096dc8340057189cc  bench/qwen35_fla_triton_conv.py

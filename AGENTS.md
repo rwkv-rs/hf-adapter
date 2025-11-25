@@ -89,6 +89,29 @@ must pursue, in order:
 3. exact-card reproduction on 4090/A100/H100/Blackwell and AMD fallback;
 4. continued prefill/DPLR work without regressing the promoted decode routes.
 
+## Current V100 Active-Parameter B1/B8 Milestone (2026-07-15)
+
+- RWKV-7 1.5B versus official Qwen3.5-2B now has an exact-card dense-fp16,
+  target-only comparison at prompt 512, decode 64 and batch 1/8.
+- Qwen is not the historical Torch fallback: both reference rows fail closed on
+  FLA chunk prefill, fused-recurrent decode, fused gated norm and the repository
+  Triton causal-convolution kernels. The effective reference backend is
+  `qwen_fla_gated_delta_rule_fla_triton_conv`.
+- Active text parameters are 1,527,404,544/1,881,825,088 (`0.811661x`) for
+  RWKV/Qwen. The acceptance gate is `aggregate tok/s * active parameters >=
+  1.0x Qwen`, separately for prefill and decode. RWKV therefore needs at least
+  `1.232041x` raw speed merely to tie.
+- B1 raw prefill/decode is `2.815921x/5.913307x`; normalized active work is
+  `2.285574x/4.799514x`. B8 is `5.407762x/5.270432x` raw and
+  `4.389270x/4.277804x` normalized. All four phase gates pass.
+- Qwen full-FLA/Triton-conv versus its oracle and RWKV native graph versus its
+  FLA-backed HF route each preserve 32/32 greedy tokens and pass cosine gates.
+- Static RWKV footprint is `0.811662x` Qwen. Peak VRAM is `1.024885x` at B1
+  and `0.837248x` at B8, so do not claim a universal dense peak-memory win.
+- Evidence: `bench/v100_active_b1b8_20260715/README.md`. Quantized V100 claims
+  remain in `bench/v100_production_close_20260711/`; this new artifact does not
+  turn the dense Qwen comparison into a quantized-Qwen claim.
+
 ## Parallel Prefill Goal: DPLR/WY Compiled Prototype
 
 Active branch work is now the opt-in DPLR/WY compiled prefill backend, not
