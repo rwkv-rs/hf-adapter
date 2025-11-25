@@ -22,7 +22,10 @@ rerun; exact scope and evidence are in
 
 The adapter has promoted production-close evidence on V100, RTX 4090 bsz8
 dense/W8/W4 lanes covering every published 0.4B–7.2B pair against Qwen3.5,
-RTX 5090, and selected Apple M5 MLX pairs. API/training/cache and W8/W4 functionality are broadly validated;
+RTX 5090, and selected Apple M5 MLX pairs. V100 additionally has a target-only
+B1/B8 comparison of RWKV-7 1.5B against a fail-closed full-FLA Qwen3.5-2B
+reference, including active-parameter work-rate gates. API/training/cache and
+W8/W4 functionality are broadly validated;
 universal full-memory W8/W4 speed, missing hardware families, larger Albatross
 matrices and production PP/TP remain open.
 
@@ -35,6 +38,29 @@ Start with the canonical documents instead of reading experiment history:
 - [Hardware matrix](docs/HARDWARE_MATRIX.md)
 - [Performance](docs/PERFORMANCE.md), [quantization](docs/QUANTIZATION.md), and [training](docs/TRAINING.md)
 - [Raw benchmark inventory](bench/INDEX.md)
+
+## Latest checked V100 result
+
+On one Tesla V100-PCIE-32GB (`sm_70`), dense-fp16 RWKV-7 1.5B is compared with
+official Qwen3.5-2B at prompt 512, decode 64 and true batch 1/8. This is a
+target-only run with no draft model, speculative acceptance or prefix-state
+reuse. The Qwen reference verifies FLA chunk prefill, fused-recurrent decode,
+fused gated norm and Triton causal-convolution bindings.
+
+The active-parameter gate is `aggregate tok/s * active text parameters`.
+RWKV/Qwen active counts are 1,527,404,544/1,881,825,088 (`0.811661x`), so RWKV
+needs `1.232041x` raw speed merely to tie normalized work:
+
+| Bsz | Prefill raw / active work | Decode raw / active work | Peak VRAM RWKV/Qwen |
+|---:|---:|---:|---:|
+| 1 | `2.815921x / 2.285574x` | `5.913307x / 4.799514x` | `1.024885x` |
+| 8 | `5.407762x / 4.389270x` | `5.270432x / 4.277804x` | `0.837248x` |
+
+Both cells pass the raw and normalized speed gates. Qwen full-FLA versus its
+convolution oracle and RWKV native graph versus its FLA-backed HF route each
+preserve 32/32 greedy tokens and pass cosine gates. The B1 peak-memory loss is
+retained rather than generalized away. See
+[`bench/v100_active_b1b8_20260715/README.md`](bench/v100_active_b1b8_20260715/README.md).
 
 ## Latest checked 1.5B Apple result
 
@@ -838,13 +864,16 @@ Promoted current results are intentionally kept out of this usage guide:
 - The default CUDA wrapper backend currently requires FLA; set
   `RWKV7_NATIVE_MODEL=1` for the FLA-free native PyTorch compatibility path.
 - The remote config uses a unique `rwkv7_hf_adapter` model type so `AutoModelForCausalLM` reliably loads this adapter instead of a locally registered FLA `rwkv7` class.
-- V100 serving-style memory is now near parity with official for 0.1B when using `logits_to_keep=1`.
-- V100 native-graph fused decode now reaches about `638 tok/s` for 0.1B bsz=1
-  and `3532 tok/s` aggregate for bsz=8. The sm70 extension has a one-time lazy
-  compile/capture cost and additional graph buffers; production launchers
-  should prewarm expected batch sizes with `rwkv7_warmup_fast_token()`.
+- V100 production-close evidence now covers 0.1B/0.4B/1.5B dense
+  bsz1/2/4/8 against same-host Albatross plus the separate 1.5B/full-FLA-Qwen
+  B1/B8 active-work gate. Exact numbers and boundaries live in
+  [`bench/v100_production_close_20260711/`](bench/v100_production_close_20260711/README.md)
+  and [`bench/v100_active_b1b8_20260715/`](bench/v100_active_b1b8_20260715/README.md).
+  The sm70 graph path still has one-time lazy compile/capture cost; production
+  launchers should prewarm expected batch sizes with
+  `rwkv7_warmup_fast_token()`.
 - Generic bnb 8-bit/4-bit loading reduces model footprint and now skips
   quantizing the small LoRA rank projections that hit inefficient bnb kernels,
-  but it is still slower than fp16 native-graph decode on the current V100
-  path; next performance work is a fused/native quantized serving path for
-  higher bsz and larger models.
+  but remains a compatibility/memory fallback rather than the V100 speed lane.
+  The card-local native W8/W4 `speed` policy beats fp16 in the promoted matrix;
+  full-memory quantization with the larger footprint reduction remains open.
