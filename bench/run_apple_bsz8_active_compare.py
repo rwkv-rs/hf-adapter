@@ -123,6 +123,7 @@ def run_rwkv_child(args: argparse.Namespace) -> dict[str, Any]:
     os.environ["RWKV7_MLX_FUSED_FFN_KEY_RELU2"] = "1" if args.rwkv_fused_ffn_key_relu2 else "0"
     os.environ["RWKV7_MLX_STEP_EVAL_INTERVAL"] = str(int(args.rwkv_step_eval_interval))
     os.environ["RWKV7_MLX_DECODE_NORM_BACKEND"] = "fast"
+    os.environ["RWKV7_MLX_DECODE_STATE_DTYPE"] = "fp16" if args.rwkv_decode_fp16_state else "fp32"
     os.environ["RWKV7_MLX_DECODE_FAST_GROUP_NORM"] = "1" if args.rwkv_decode_fast_group_norm else "0"
     os.environ["RWKV7_MLX_FUSED_LORA_DOWN"] = "1" if args.rwkv_fused_lora_down else "0"
     os.environ["RWKV7_MLX_FUSED_LORA_DOWN_INCLUDE_V"] = (
@@ -211,6 +212,7 @@ def run_rwkv_child(args: argparse.Namespace) -> dict[str, Any]:
                 )
             draft_model.compiled_scan_prefill_mode = "on"
     compiled_decode_validation = None
+    compiled_greedy_decode_validation = None
     if args.rwkv_decode_backend == "compiled":
         validation_logits, validation_state = model.prefill(ids)
         compiled_decode_validation = model.validate_compiled_decode(
@@ -224,6 +226,16 @@ def run_rwkv_child(args: argparse.Namespace) -> dict[str, Any]:
                 + json.dumps(compiled_decode_validation, ensure_ascii=False)
             )
         model.decode_backend = "compiled"
+        compiled_greedy_decode_validation = model.validate_compiled_greedy_decode(
+            validation_logits,
+            validation_state,
+            steps=int(args.rwkv_decode_validation_steps),
+        )
+        if compiled_greedy_decode_validation.get("status") != "pass":
+            raise RuntimeError(
+                "compiled RWKV greedy decode failed token/state parity: "
+                + json.dumps(compiled_greedy_decode_validation, ensure_ascii=False)
+            )
     speculative_verify_validation = None
     if draft_model is not None:
         target_probe_logits, target_probe_state = prefill_request(model)
@@ -302,22 +314,50 @@ def run_rwkv_child(args: argparse.Namespace) -> dict[str, Any]:
             next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
             generated = []
             started_decode = time.perf_counter()
-            for _ in range(int(args.decode_tokens)):
-                mx.eval(next_token)
+            for token_index in range(int(args.decode_tokens)):
+                # A compiled graph consumes the lazy argmax directly.  Its
+                # bounded eval interval, plus the final result materialization,
+                # prevents unbounded graph growth without a per-token wait.
+                if model.decode_backend != "compiled":
+                    mx.eval(next_token)
                 generated.append(next_token)
-                logits, state = model.decode_step(next_token, state)
-                next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
+                # The final sampled token is already a complete generation
+                # result. Feeding it again computes an unused token N+1.
+                if token_index + 1 == int(args.decode_tokens):
+                    break
+                if model.decode_backend == "compiled":
+                    next_token, state = model.decode_greedy_step(next_token, state)
+                    if (
+                        args.rwkv_async_decode
+                        and (token_index + 1) % int(args.rwkv_async_decode_interval) == 0
+                    ):
+                        mx.async_eval(next_token)
+                else:
+                    logits, state = model.decode_step(next_token, state)
+                    next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
+            # Materialize the complete token stream through one stacked graph
+            # output instead of registering 64 scalar outputs with the command
+            # scheduler.  This still charges every generated token and the
+            # continuation state to decode, while removing avoidable host-side
+            # output bookkeeping from the timed path.
+            generated_array = mx.stack(generated, axis=1)
+            mx.eval(generated_array)
+            # Every continuation-cache value is produced by an operation on
+            # the token dependency chain (the fused WKV kernel is multi-output).
+            # Confirm the cache boundary is materialized without registering
+            # another 73 command-graph roots in the timed scheduler call.
+            started_state_ready = time.perf_counter()
             mx.eval(
-                next_token,
-                *generated,
                 state.v_first,
                 *state.recurrent_state,
                 *state.attn_x_prev,
                 *state.ffn_x_prev,
             )
+            state_ready_s = time.perf_counter() - started_state_ready
+            # The readiness check is part of decode latency.  Its separate
+            # telemetry proves the state-cache boundary is not deferred while
+            # preserving an end-to-end serving measurement.
             decode_s = time.perf_counter() - started_decode
-            generated_array = mx.stack(generated, axis=1)
-            mx.eval(generated_array)
             values = generated_array.tolist()
         telemetry = model.telemetry()
         decode_phase_peak_memory_bytes = int(mx.get_peak_memory())
@@ -336,6 +376,7 @@ def run_rwkv_child(args: argparse.Namespace) -> dict[str, Any]:
             "decode_tokens_per_sequence": int(args.decode_tokens),
             "prefill_s": float(prefill_s),
             "decode_s": float(decode_s),
+            "post_decode_state_ready_s": float(state_ready_s) if draft_model is None else None,
             "draft_prefill_s": draft_prefill_s,
             "decode_with_draft_prefill_s": (
                 float(decode_s + draft_prefill_s) if draft_prefill_s is not None else None
@@ -390,11 +431,14 @@ def run_rwkv_child(args: argparse.Namespace) -> dict[str, Any]:
             "group_rkv_quant_projection_counts": telemetry.get("group_rkv_quant_projection_counts"),
             "decode_backend": telemetry.get("decode_backend_last"),
             "compiled_decode_validation": compiled_decode_validation,
+            "compiled_greedy_decode_validation": compiled_greedy_decode_validation,
             "draft_model": Path(args.rwkv_draft_model).name if args.rwkv_draft_model else None,
             "speculative_verify_validation": speculative_verify_validation,
             "speculative_telemetry": speculative_telemetry,
         }
 
+    if args.rwkv_post_validation_cooldown_seconds > 0:
+        time.sleep(float(args.rwkv_post_validation_cooldown_seconds))
     for _ in range(int(args.warmup)):
         one(0)
     rows = []
@@ -455,6 +499,8 @@ def child_command(args: argparse.Namespace, engine: str) -> list[str]:
         args.rwkv_decode_backend,
         "--rwkv-decode-validation-steps",
         str(args.rwkv_decode_validation_steps),
+        "--rwkv-post-validation-cooldown-seconds",
+        str(args.rwkv_post_validation_cooldown_seconds),
         "--rwkv-draft-model",
         args.rwkv_draft_model,
         "--rwkv-draft-quant-min-params",
@@ -463,6 +509,13 @@ def child_command(args: argparse.Namespace, engine: str) -> list[str]:
         str(args.rwkv_proposal_tokens),
     ]
     command.append("--rwkv-compiled-prefill" if args.rwkv_compiled_prefill else "--no-rwkv-compiled-prefill")
+    command.append("--rwkv-async-decode" if args.rwkv_async_decode else "--no-rwkv-async-decode")
+    command.extend(["--rwkv-async-decode-interval", str(args.rwkv_async_decode_interval)])
+    command.append(
+        "--rwkv-decode-fp16-state"
+        if args.rwkv_decode_fp16_state
+        else "--no-rwkv-decode-fp16-state"
+    )
     command.append(
         "--rwkv-fast-layer-norm" if args.rwkv_fast_layer_norm else "--no-rwkv-fast-layer-norm"
     )
@@ -623,6 +676,33 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--rwkv-decode-backend", choices=["eager", "compiled"], default="eager")
     parser.add_argument("--rwkv-decode-validation-steps", type=int, default=64)
+    parser.add_argument(
+        "--rwkv-async-decode",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Periodically queue the compiled greedy token graph without a host wait.",
+    )
+    parser.add_argument(
+        "--rwkv-async-decode-interval",
+        type=int,
+        default=1,
+        help="Queue an asynchronous token evaluation every N compiled decode steps.",
+    )
+    parser.add_argument(
+        "--rwkv-decode-fp16-state",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Keep the B1 recurrent decode cache in FP16 while accumulating WKV rows in FP32 registers.",
+    )
+    parser.add_argument(
+        "--rwkv-post-validation-cooldown-seconds",
+        type=float,
+        default=0.0,
+        help=(
+            "Idle after compile/parity setup and before RWKV warmup; useful on "
+            "fanless Macs so untimed validation does not thermally bias measured requests."
+        ),
+    )
     parser.add_argument("--rwkv-draft-model", default="")
     parser.add_argument("--rwkv-draft-quant-min-params", type=int, default=100_000)
     parser.add_argument("--rwkv-proposal-tokens", type=int, default=32)
@@ -654,11 +734,13 @@ def main(argv: list[str] | None = None) -> int:
             args.decode_tokens,
             args.repeat,
             args.rwkv_decode_validation_steps,
+            args.rwkv_async_decode_interval,
             args.rwkv_proposal_tokens,
         )
         <= 0
         or args.warmup < 0
         or args.cooldown_seconds < 0
+        or args.rwkv_post_validation_cooldown_seconds < 0
     ):
         parser.error("batch/prompt/decode/repeat must be positive and warmup non-negative")
 

@@ -84,6 +84,13 @@ This closes only the checked M5/B8/T133/decode64 target-only profile. It does
 not establish the same ratio on other M-series chips, batch sizes, prompt
 lengths, decode lengths, or thermal conditions.
 
+The matching B1 target-only run now also passes. Its isolated-process ABBA
+medians are `129.15 tok/s` RWKV versus `89.94 tok/s` Qwen (`1.4360x` raw and
+`1.1655x` active-normalized), with active-normalized prefill at `1.3557x` and
+raw peak memory at `1.190/1.297 GB`. The retained 64-step compiled-greedy and
+reference-norm gates pass without a draft or prefix-state coalescing. See
+[`bench/apple_bsz1_active_m5_20260715/README.md`](../../bench/apple_bsz1_active_m5_20260715/README.md).
+
 ## What changed
 
 ### Native MLX groupwise W8/W4

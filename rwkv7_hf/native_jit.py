@@ -903,6 +903,22 @@ def _native_prefill_default_scan_block_m(
             except Exception:
                 name = ""
             if "4090" in name:
+                if (
+                    batch_size is not None
+                    and int(batch_size) >= 8
+                    and tokens is not None
+                    and int(tokens) == 128
+                ):
+                    return 32
+                if (
+                    batch_size is not None
+                    and int(batch_size) >= 8
+                    and tokens is not None
+                    and int(tokens) >= 512
+                    and hidden_size is not None
+                    and int(hidden_size) == 2048
+                ):
+                    return 32
                 return 8 if batch_size is not None and int(batch_size) >= 2 else 4
         if int(major) >= 12:
             batch_size = 1 if batch_size is None else int(batch_size)
