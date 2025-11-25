@@ -1,5 +1,11 @@
 # Apple Silicon / MPS / MLX adaptation plan
 
+> **Chronological platform detail.** This document contains both current
+> architecture notes and older experiment rows. Promoted conclusions are
+> limited to [`APPLE_PRODUCTION_CLOSE.md`](APPLE_PRODUCTION_CLOSE.md) and the
+> canonical [`../HARDWARE_MATRIX.md`](../HARDWARE_MATRIX.md); dated negative
+> rows below remain useful history rather than current global verdicts.
+
 This document tracks the HF adapter work needed for Apple Silicon. It is a
 separate hardware-adaptation lane from the CUDA / Albatross performance route:
 CUDA fused kernels remain the production-speed target for NVIDIA cards, while

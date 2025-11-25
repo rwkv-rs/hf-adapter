@@ -1,5 +1,10 @@
 # A800 HF validation matrix
 
+> **Exact-card snapshot dated 2026-07-04.** Preserve the measured A800 rows and
+> their card-local gaps. Current repository-wide quant/training status lives in
+> [`../HARDWARE_MATRIX.md`](../HARDWARE_MATRIX.md), [`../QUANTIZATION.md`](../QUANTIZATION.md)
+> and [`../TRAINING.md`](../TRAINING.md).
+
 Validation date: 2026-07-04
 Base branch: `issue98-a800-validation-work` based on `v0.4.0`
 Server: `NVIDIA A800-SXM4-80GB`; inference used one GPU, DeepSpeed used one and two GPUs.

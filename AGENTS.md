@@ -1,5 +1,11 @@
 # AGENTS.md
 
+> **Lifecycle note:** the opening contracts and explicitly dated “Current”
+> milestones are active instructions. Later long-form sections also preserve
+> experiment chronology; their words “next”, “current” and “open” are scoped to
+> their recorded date. For present status use `HF_STATUS.md`, `HF_TODO.md`,
+> `BENCHMARK.md` and `docs/HARDWARE_MATRIX.md` before historical prose.
+
 ## Project Mission
 
 This repository is now scoped to the **RWKV-7 Hugging Face / Transformers adapter only**.
@@ -47,7 +53,11 @@ roadmap.
   decode, correctness, peak memory/VRAM, and `bench/analyze_results.py`
   reporting.
 
-## Current RTX 4090 Milestone (2026-07-10)
+## RTX 4090 Milestone Snapshot (2026-07-10)
+
+This is a dated checkpoint. Current promoted 4090 matrices live in
+`bench/4090_small_bsz8_20260715/` and
+`bench/4090_g1h_7p2_bsz8_20260715/`.
 
 - 0.4B dense fp16 native-graph decode now reaches
   `795.7/1469.5/2585.7/3185.3 tok/s` for bsz1/2/4/8, or
@@ -71,7 +81,7 @@ roadmap.
   `rwkv7_hf/native_quant_torchao.py` plus quant-aware native-graph operand
   extraction in `rwkv7_hf/native_jit.py`.
 
-## Current V100 Decode Milestone
+## V100 Decode Milestone Snapshot (2026-07-10)
 
 The 2026-07-10 sm70 pass adds decode norm/mix fusion, grouped shape-routed
 projection/FFN kernels, and raw recurrent-output preparation. Same-host
@@ -81,8 +91,9 @@ exceed Albatross. The raw recurrent A/B is 32-step greedy-exact at 0.4B and
 1.5B bsz2. Evidence is under
 `bench/v100_sm70_decode_gap_20260710/`.
 
-This closes the V100 decode P1 floor, not the final mission. The next workers
-must pursue, in order:
+At that checkpoint this closed the V100 decode P1 floor, not the final mission.
+The later production-close and optimized-Qwen milestones supersede the old
+priority ordering below; retain it as provenance:
 
 1. universal V100 P2/P3 for the remaining bsz1/2/4 rows;
 2. native fused W8/W4 with lower footprint and end-to-end speed >= fp16;
@@ -233,7 +244,7 @@ Remaining before this goal is complete:
 - Do not call the DPLR/WY goal finished until compact WY or an equivalent
   compiled path is verified end-to-end against the original acceptance target.
 
-## Current Apple M5 B8 Active-Parameter Milestone (2026-07-15)
+## Apple M5 B8 Active-Parameter Measured Lane (2026-07-15)
 
 The current Apple acceptance axis is **true batch 8**, a 512-character prompt,
 64 generated tokens per sequence, group-128 RWKV W4 versus the published

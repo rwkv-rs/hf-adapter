@@ -1,5 +1,12 @@
 # MATH500 accuracy parity exploration
 
+> **Historical investigation.** The 4090 gap and goals below describe the
+> 2026-07-03 branch state. Current promoted MATH500 evidence is the RTX 5090
+> full run in
+> [`../../bench/5090_blackwell_production_close_20260712/README.md`](../../bench/5090_blackwell_production_close_20260712/README.md).
+> Preserve this file for RNG, verifier and logit-parity rationale; do not read
+> its “current gap” as the current project result.
+
 Branch: `wangyue/math500-accuracy-parity`
 
 Base: `wangyue/math500-acceptance-clean` / PR #104.

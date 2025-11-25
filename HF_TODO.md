@@ -4,7 +4,7 @@ Only **unfinished, actionable HF-adapter work** belongs here. Completed
 experiments and historical plans belong in benchmark artifacts or Git history.
 Native vLLM/SGLang scheduler work is out of scope for this file.
 
-Last updated: **2026-07-13**.
+Last updated: **2026-07-15**.
 
 ## P0 — Final production gaps
 
@@ -32,29 +32,22 @@ the declared same-card fp16 equivalence/speed threshold. See
 - [ ] Add larger-model prefill/decode rows with explicit memory ceilings.
 - [ ] Keep shape, dtype, checkpoint and timing method identical.
 
-### 2a. Verified-FLA Qwen3.5 RTX 5070 comparison
+### 2a. Broaden optimized-Qwen exact-card coverage
 
-- [x] Define a 5070-compatible FLA core contract that independently reports
-      the optional Windows `causal-conv1d` capability.
-- [x] Run the Qwen3.5 2B fp16 prompt128/decode8/bsz1 operator-contract smoke on
-      the RTX 5070 Laptop.
-- [x] Compare FLA and explicit Torch oracle logits/greedy decode before speed
-      promotion.
-- [x] Run the first 72-cell 1.5B RWKV vs 2B Qwen matrix with
-      `--qwen-backend fla`; do not merge historical V100 forced-Torch rows.
-- [x] Record exact 5070, driver, CUDA, Torch, Triton, FLA, Transformers, and
-      causal-conv1d versions with operator-origin telemetry.
+The initial optimized-reference milestones are closed: RTX 5070 bsz8 passes
+its 18-cell fp16/W8/W4 matrix, and V100 1.5B/2B target-only B1/B8 passes raw
+and active-work gates against full-FLA/Triton-conv Qwen. Remaining work:
 
-Result: the promoted RTX 5070 Laptop bsz8 matrix passes 36/36 raw rows and
-18/18 strict cells across fp16/W8/W4, prompt128/512/2048, and decode128/512.
-Minimum prefill/decode speedups are `1.082707x/1.795119x`; footprint, peak VRAM,
-and tok/s per active-B gates also pass in 18/18. Larger 4B/9B feasibility and
-bsz1/2/4 full-FLA coverage remain follow-up.
+- [ ] Extend RTX 5070 full-FLA coverage to bsz1/2/4 and larger 4B/9B pairs.
+- [ ] Extend V100 beyond prompt512/decode64 and the 1.5B/2B pair.
+- [ ] Add optimized-Qwen exact-card matrices on Ampere and Hopper.
+- [ ] Keep raw throughput, `tok/s * active parameters`, correctness and memory
+      as separate fail-closed gates; never substitute Torch-fallback rows.
 
-Acceptance: every promoted Qwen reference row reports the full FLA core, norm,
-and FLA Triton causal-conv backend. Rows with
-`qwen_fla_gated_delta_rule_torch_conv` remain historical diagnostics and are
-not full-fusion claims. The 2026-07-12 V100 Torch matrix is diagnostic only.
+Acceptance: every promoted Qwen reference row reports the full FLA core, norm
+and accelerated causal-convolution route. Historical
+`qwen_fla_gated_delta_rule_torch_conv` and forced-Torch V100 rows remain
+diagnostics only.
 
 ### 3. Missing hardware
 
