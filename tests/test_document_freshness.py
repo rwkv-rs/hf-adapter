@@ -41,6 +41,10 @@ def main() -> int:
         for phrase in phrases:
             assert phrase not in text, f"stale phrase in {relative}: {phrase}"
 
+    todo = read("HF_TODO.md")
+    assert "## Current milestone — COMPLETE" in todo
+    assert "per-PR template, not a list of outstanding project tasks" in todo
+
     required_current = [
         "README.md",
         "HF_STATUS.md",
