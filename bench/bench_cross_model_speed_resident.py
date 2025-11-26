@@ -83,6 +83,11 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--rwkv-attn-mode", choices=["chunk", "fused_recurrent"], default="fused_recurrent")
     ap.add_argument("--rwkv-code-source", choices=["repo", "model"], default="repo")
     ap.add_argument("--qwen-backend", choices=["auto", "fla", "torch"], default="auto")
+    ap.add_argument(
+        "--qwen-conv-backend",
+        choices=["auto", "causal_conv1d", "fla_triton"],
+        default="auto",
+    )
     ap.add_argument("--require-qwen-fast-path", action="store_true")
     ap.add_argument(
         "--probe-output",
@@ -166,6 +171,7 @@ def cell_args(args: argparse.Namespace, batch_size: int, prompt_tokens: int, dec
         rwkv_attn_mode=args.rwkv_attn_mode,
         rwkv_code_source=args.rwkv_code_source,
         qwen_backend=args.qwen_backend,
+        qwen_conv_backend=getattr(args, "qwen_conv_backend", "auto"),
         require_qwen_fast_path=args.require_qwen_fast_path,
         probe_output=args.probe_output,
         probe_tokens=args.probe_tokens,
