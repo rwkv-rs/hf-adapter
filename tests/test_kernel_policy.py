@@ -241,7 +241,10 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.fused_prefill_stacked_rkv
     assert blackwell.prefill_stacked_rkv_min_rows == 1
     assert blackwell.prefill_stacked_rkv_max_rows == 1
-    assert blackwell.prefill_stacked_rkv_model_shapes == ((2048, 24, 8, 512),)
+    assert blackwell.prefill_stacked_rkv_model_shapes == (
+        (2048, 24, 8, 512),
+        (4096, 32, 8, 128),
+    )
     assert blackwell.fused_prefill_sequence_ffn
     assert blackwell.prefill_sequence_ffn_min_rows == 1
     assert blackwell.prefill_sequence_ffn_max_rows == 1

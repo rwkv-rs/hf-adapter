@@ -710,16 +710,19 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_recurrent_output=True,
             fused_output=True,
             fused_prefill_scan=False,
-            # Exact RTX 5090 B8/P512 sweep on g1h 1.5B. The fused prefill route
-            # remains opt-in globally; these shape gates only select the
-            # measured row-8 scan and clampw + stacked R/K/V combination.
+            # Exact RTX 5090 B8 sweeps on g1h 1.5B/P512 and 7.2B/P128. The
+            # fused prefill route remains opt-in globally; these shape gates
+            # only select combinations measured end to end on this card.
             prefill_scan_block_m_model_shapes=((2048, 8, 512, 8),) if is_5090 else (),
             fused_prefill_residual_gemm=is_5090,
             prefill_clampw_scan_model_shapes=((2048, 24, 8, 512),) if is_5090 else (),
             fused_prefill_stacked_rkv=is_5090,
             prefill_stacked_rkv_min_rows=1,
             prefill_stacked_rkv_max_rows=1,
-            prefill_stacked_rkv_model_shapes=((2048, 24, 8, 512),) if is_5090 else (),
+            prefill_stacked_rkv_model_shapes=(
+                (2048, 24, 8, 512),
+                (4096, 32, 8, 128),
+            ) if is_5090 else (),
             fused_prefill_sequence_ffn=is_5090,
             prefill_sequence_ffn_min_rows=1,
             prefill_sequence_ffn_max_rows=1,
@@ -728,7 +731,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             prefill_sequence_ffn_num_stages=3,
             prefill_sequence_ffn_num_warps=8 if is_5090 else 4,
             output_project_block_m=32,
-            notes="RTX 50/Blackwell: exact RTX 5090 g1h-1.5B B8/P512 fused-scan row-8 plus clampw, stacked R/K/V, and BM64/BN128 sequence FFN are measured opt-in policy; residual GEMM is enabled on the exact 5090 and remains subject to the full matrix; use triton_compat for early sm_120 stacks, prefer native/no-FLA smokes, keep unvalidated projection/LoRA fusions off",
+            notes="RTX 50/Blackwell: exact RTX 5090 g1h-1.5B B8/P512 fused-scan row-8 plus clampw, stacked R/K/V, and BM64/BN128 sequence FFN are measured opt-in policy; g1h-7.2B B8/P128 selects stacked R/K/V only; residual GEMM is enabled on the exact 5090 and remains subject to the full matrix; use triton_compat for early sm_120 stacks, prefer native/no-FLA smokes, keep unvalidated projection/LoRA fusions off",
         )
     return KernelPolicy(profile=profile)
 
