@@ -49,10 +49,32 @@ class TorchAOW4FP16Linear(torch.nn.Module):
 def _torchao_api():
     try:
         from torchao.quantization import int4_weight_only, int8_weight_only, quantize_
-    except Exception as exc:  # pragma: no cover - environment dependent
-        raise RuntimeError(
-            "TorchAO quantization requires a torch-compatible torchao install"
-        ) from exc
+    except Exception:
+        try:
+            from torchao.quantization import (
+                Int4WeightOnlyConfig,
+                Int8WeightOnlyConfig,
+                quantize_,
+            )
+            from torchao.quantization.quantize_.workflows.int4.int4_packing_format import (
+                Int4PackingFormat,
+            )
+        except Exception as exc:  # pragma: no cover - environment dependent
+            raise RuntimeError(
+                "TorchAO quantization requires a torch-compatible torchao install"
+            ) from exc
+
+        def int4_weight_only(*, group_size: int = 128):
+            # TorchAO 0.17 defaults to the v2 plain layout, which requires the
+            # optional mslk package. The tiled 4D layout preserves the
+            # tinygemm CUDA route exposed by the removed helper.
+            return Int4WeightOnlyConfig(
+                group_size=group_size,
+                int4_packing_format=Int4PackingFormat.TILE_PACKED_TO_4D,
+                version=2,
+            )
+
+        int8_weight_only = Int8WeightOnlyConfig
     return quantize_, int8_weight_only, int4_weight_only
 
 

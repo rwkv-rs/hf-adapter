@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run one bsz=8 RTX 4090 pair with separate dense and RWKV-quant gates.
+# Run one exact-card batch set with separate dense and RWKV-quant gates.
 #
 # The public W8/W4 contract has two independent implementation concerns:
 #   * BnB memory lanes demonstrate material end-to-end footprint reduction.
@@ -24,6 +24,10 @@ WARMUP="${WARMUP:-1}"
 RUNS="${RUNS:-3}"
 PREFILL_CHUNK_SIZE="${PREFILL_CHUNK_SIZE:-512}"
 BATCH_SIZES="${BATCH_SIZES:-8}"
+REQUIRED_GPU_SUBSTRING="${REQUIRED_GPU_SUBSTRING:-RTX 4090}"
+BENCHMARK_MATRIX="${BENCHMARK_MATRIX:-qwen35_4090_hf_final}"
+QWEN_CONV_BACKEND="${QWEN_CONV_BACKEND:-auto}"
+REQUIRE_QWEN_FULL_FUSED="${REQUIRE_QWEN_FULL_FUSED:-0}"
 
 if [[ -z "${PAIR_LABEL}" || -z "${RWKV_MODEL}" || -z "${QWEN_MODEL}" || -z "${OUT_DIR}" ]]; then
   echo "usage: $0 PAIR_LABEL RWKV_MODEL QWEN_MODEL OUT_DIR" >&2
@@ -39,8 +43,8 @@ import torch
 print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "")
 PY
 )"
-if [[ "${ALLOW_NON_4090:-0}" != "1" && "${gpu_name}" != *"RTX 4090"* ]]; then
-  echo "RTX 4090 acceptance requires an exact RTX 4090; detected: ${gpu_name:-no CUDA GPU}" >&2
+if [[ "${ALLOW_NON_4090:-0}" != "1" && "${gpu_name}" != *"${REQUIRED_GPU_SUBSTRING}"* ]]; then
+  echo "acceptance requires ${REQUIRED_GPU_SUBSTRING}; detected: ${gpu_name:-no CUDA GPU}" >&2
   exit 2
 fi
 
@@ -67,7 +71,7 @@ case "${PAIR_LABEL}" in
 esac
 # The active-parameter-normalized multiplier applies to cached decode. Dense
 # prefill remains an apples-to-apples throughput gate: RWKV must be no slower
-# than Qwen on every exact bsz=8 shape. DENSE_SPEEDUP_GATE remains a legacy
+# than Qwen on every configured exact shape. DENSE_SPEEDUP_GATE remains a legacy
 # decode-only override for existing automation.
 DENSE_PREFILL_GATE="${DENSE_PREFILL_GATE:-1.00}"
 DENSE_DECODE_GATE="${DENSE_DECODE_GATE:-${DENSE_SPEEDUP_GATE:-${default_decode_gate}}}"
@@ -81,18 +85,21 @@ run_sweep() {
   shift 7
   local extra=("$@")
   local qwen_backend="auto"
+  local qwen_conv_args=()
   if [[ "${kind}" == "qwen35" ]]; then
     qwen_backend="fla"
+    qwen_conv_args=(--qwen-conv-backend "${QWEN_CONV_BACKEND}")
   fi
   printf 'START %s\n' "${label}" | tee -a "${OUT_DIR}/progress.log"
   "${PYTHON_BIN}" bench/bench_cross_model_speed_resident.py \
     --model "${model}" --model-kind "${kind}" --model-role "${role}" \
     --model-pair "${PAIR_LABEL}" --model-size-label "${size}" \
-    --benchmark-matrix qwen35_4090_hf_final --dtype fp16 --quantization "${quant}" \
+    --benchmark-matrix "${BENCHMARK_MATRIX}" --dtype fp16 --quantization "${quant}" \
     --device cuda --batch-sizes "${batch_size_args[@]}" --prompt-tokens 128 512 2048 \
     --decode-tokens 128 512 --prefill-chunk-size "${PREFILL_CHUNK_SIZE}" \
     --warmup "${WARMUP}" --runs "${RUNS}" --rwkv-attn-mode fused_recurrent \
-    --rwkv-code-source repo --qwen-backend "${qwen_backend}" "${extra[@]}" --results "${output}" \
+    --rwkv-code-source repo --qwen-backend "${qwen_backend}" "${qwen_conv_args[@]}" \
+    "${extra[@]}" --results "${output}" \
     > "${OUT_DIR}/${label}.log" 2>&1
   local rc=$?
   printf 'DONE %s rc=%s\n' "${label}" "${rc}" | tee -a "${OUT_DIR}/progress.log"
@@ -156,6 +163,10 @@ unset \
   RWKV7_NATIVE_PREFILL_SELF_CHUNK_H_BC
 run_sweep native_speed_a8w8 candidate rwkv "${RWKV_MODEL}" "${rwkv_size}" a8w8 \
   "${OUT_DIR}/native_speed.jsonl" --native-quant-policy speed --native-quant-min-params 1
+if [[ "${RUN_NATIVE_MM8:-0}" == "1" ]]; then
+  run_sweep native_speed_mm8 candidate rwkv "${RWKV_MODEL}" "${rwkv_size}" mm8 \
+    "${OUT_DIR}/native_speed.jsonl" --native-quant-policy speed --native-quant-min-params 1
+fi
 run_sweep native_speed_mm4 candidate rwkv "${RWKV_MODEL}" "${rwkv_size}" mm4 \
   "${OUT_DIR}/native_speed.jsonl" --native-quant-policy speed --native-quant-min-params 1
 run_sweep native_speed_torchao_w4 candidate rwkv "${RWKV_MODEL}" "${rwkv_size}" torchao_w4 \
@@ -185,6 +196,9 @@ common_compare=(
   --require-quant-memory-reduction --require-prefill-mode-match
   --fail-on-gate
 )
+if [[ "${REQUIRE_QWEN_FULL_FUSED}" == "1" ]]; then
+  common_compare+=(--require-qwen-full-fused)
+fi
 
 "${PYTHON_BIN}" bench/compare_qwen35_speed_matrix.py \
   --results "${OUT_DIR}/combined_auto.jsonl" "${common_compare[@]}" \
@@ -222,4 +236,7 @@ active_rc=$?
 printf '%s\n' "${active_rc}" > "${OUT_DIR}/compare_active_work_exit_code.txt"
 
 printf '%s\n' "${failures}" > "${OUT_DIR}/matrix_failures.txt"
-[[ ${failures} -eq 0 && ${compose_rc} -eq 0 && ${memory_rc} -eq 0 && ${speed_rc} -eq 0 && ${active_rc} -eq 0 ]]
+pipeline_rc=0
+[[ ${failures} -eq 0 && ${compose_rc} -eq 0 && ${memory_rc} -eq 0 && ${speed_rc} -eq 0 && ${active_rc} -eq 0 ]] || pipeline_rc=1
+printf '%s\n' "${pipeline_rc}" > "${OUT_DIR}/pipeline_exit_code.txt"
+exit "${pipeline_rc}"
