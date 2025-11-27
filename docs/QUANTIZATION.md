@@ -57,10 +57,15 @@ The 36-row pressure artifact covers 1.5B/2.9B/7.2B × fp16/MM8/MM4 × prompt
 - Every 2.9B/7.2B W8/W4 row is within 1% of paired fp16 decode speed.
 - The combined matrix passes a conservative 2% equivalence gate.
 - One 1.5B W8 row is `0.9841x`; universal strict no-slower is not claimed.
-- 13.3B speed-policy boundaries are W8 `0.9912x` and W4 `0.9889x`; these are
-  selected-module speed-policy rows, not full-memory quantization claims.
+- The earlier g1g 13.3B speed-policy boundaries are W8 `0.9912x` and W4
+  `0.9889x`.
+- The latest g1h 13.3B B8 prompt128/decode128 rerun measures MM8 `1.0013x`
+  and MM4 `0.9845x` paired-fp16 decode, with footprint `0.9899x/0.9848x`,
+  cosine above `0.99985`, and matching next tokens. Each row replaces only
+  `lm_head`; neither generation is a full-memory quantization claim.
 
-Evidence: [`../bench/5090_blackwell_production_close_20260712/README.md`](../bench/5090_blackwell_production_close_20260712/README.md).
+Evidence: [`../bench/5090_blackwell_production_close_20260712/README.md`](../bench/5090_blackwell_production_close_20260712/README.md)
+and [`../bench/5090_g1h_13p3_20260715/README.md`](../bench/5090_g1h_13p3_20260715/README.md).
 
 ## Acceptance gate
 

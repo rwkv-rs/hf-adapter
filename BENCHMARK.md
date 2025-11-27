@@ -5,7 +5,7 @@ exploratory tuning chronology. Raw rows, logs and negative experiments remain
 in [`bench/`](bench/); platform interpretation lives in
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
-Last updated: **2026-07-15**.
+Last updated: **2026-07-16**.
 
 ## Benchmark contract
 

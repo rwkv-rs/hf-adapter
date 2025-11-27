@@ -4,7 +4,7 @@ Only **unfinished, actionable HF-adapter work** belongs here. Completed
 experiments and historical plans belong in benchmark artifacts or Git history.
 Native vLLM/SGLang scheduler work is out of scope for this file.
 
-Last updated: **2026-07-15**.
+Last updated: **2026-07-16**.
 
 ## Current milestone — COMPLETE
 
@@ -15,6 +15,7 @@ The active V100/full-FLA/documentation milestone is complete:
   active-parameter work gates;
 - RTX 4090 small-model and 7.2B bsz8 promoted matrices;
 - RTX 5070 full-FLA 1.5B/2B bsz8 promoted matrix;
+- RTX 5090 full-FLA Qwen B1/B8 8/8 matrix and latest g1h 13.3B boundary;
 - PEFT/Trainer/TRL and current ZeRO-2/3 smoke/resume matrix;
 - canonical documentation refresh and full Markdown freshness audit.
 

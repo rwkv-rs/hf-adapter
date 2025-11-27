@@ -4,7 +4,7 @@ Canonical current snapshot. Scope: Transformers loading/generation/training,
 PEFT/TRL, recurrent cache helpers, quantized HF inference, hardware validation
 and reproducible performance evidence. Native vLLM/SGLang work is separate.
 
-Last updated: **2026-07-15**.
+Last updated: **2026-07-16**.
 
 ## Overall status
 
