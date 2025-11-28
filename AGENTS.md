@@ -910,15 +910,23 @@ Run this checklist for every new GPU before marking it as supported:
     and no-larger footprint/peak-VRAM gates. Minimum RWKV/Qwen speedups are
     `1.082707x` prefill and `1.795119x` decode. The broader 72-cell FLA-core-only
     artifact remains historical coverage because its convolution uses Torch.
-  - RTX 5090 staged B1/B8 evidence exists under
-    `bench/5090_g1h_qwen35_b1_b8_20260715/` for the 0.4B/0.8B, 1.5B/2B and
-    2.9B/4B pairs. The six checked batch-pairs contain 108 candidate and 108
-    full-FLA Qwen rows and pass their raw speed, active-work decode, quant total
-    latency, footprint and greedy gates. The exact B8 1.5B prompt-512 policy may
-    opt into clampw scan, stacked RKV and sequence-FFN fusion with the recorded
-    Blackwell tiles. Do not generalize that shape policy to another model,
-    prompt, batch or card. The 7.2B/9B and fresh 13.3B rows remain mandatory
-    before calling the new matrix complete.
+  - RTX 5090 current-main B1/B8 evidence under
+    `bench/5090_g1h_qwen35_b1_b8_20260715/` passes all eight 0.4B/0.8B through
+    7.2B/9B batch-pairs: 144 candidate rows, 144 full-FLA Qwen rows, 32
+    correctness reports and 144/144 dense/W8/W4 cells. Raw prefill/decode and
+    tokens/s per active billion lead in every cell. Active-parameter work-rate
+    prefill and dense peak-VRAM are not universal wins and must remain visible.
+    The exact B8 1.5B prompt-512 policy may use clampw scan, stacked RKV and
+    sequence-FFN fusion. The exact B8 7.2B prompt-128 policy may use stacked RKV
+    only; its formal full-FLA confirmation is `1.0251x` and the full-matrix
+    minimum is `1.0309x`. Do not generalize either shape policy to another
+    model, prompt, batch or card.
+  - Fresh official g1h 13.3B evidence under
+    `bench/5090_g1h_13p3_20260715/` passes load/forward/generate and the B8,
+    prompt128/decode128 speed-policy boundary. MM8/MM4 measure
+    `1.0013x/0.9845x` paired-fp16 decode, `0.9899x/0.9848x` footprint, cosine
+    above `0.99985`, and matching next tokens. Each quant row replaces only
+    `lm_head`; do not describe this as full-memory quantization.
   - The validated Blackwell scan defaults are batch-local: `block_m` 8/16/32/64
     for bsz 1/2/4/8+, with 1 warp below 64 and 4 warps at 64. Explicit
     environment overrides still win, and these tiles must not be projected to
@@ -1153,7 +1161,8 @@ python /home/data/wangyue/projects/rwkv7-hf-adapter/tests/test_peft_lora.py \
 
 ## Next Milestones
 
-1. Convert and validate larger RWKV-7 checkpoints, including the 13.3B gate.
+1. Extend the currently passing 13.3B conversion/inference gate to future
+   larger official checkpoints as they are released.
 2. Keep official RWKV vs HF logits/generation alignment tests green.
 3. Keep `save_pretrained` / reload roundtrip tests green.
 4. Expand PEFT / Trainer / TRL SFT/DPO/GRPO smoke tests into multi-batch and gradient-accumulation checks.

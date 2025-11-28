@@ -21,7 +21,7 @@ def main() -> int:
     ]
     for relative in canonical:
         text = read(relative)
-        assert "2026-07-15" in text, f"missing current audit date: {relative}"
+        assert "2026-07-16" in text, f"missing current audit date: {relative}"
 
     for path in sorted((ROOT / "docs/plans").glob("*.md")):
         text = path.read_text(encoding="utf-8")

@@ -5,7 +5,7 @@ exploratory tuning chronology. Raw rows, logs and negative experiments remain
 in [`bench/`](bench/); platform interpretation lives in
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
-Last updated: **2026-07-15**.
+Last updated: **2026-07-16**.
 
 ## Benchmark contract
 
@@ -32,7 +32,7 @@ Status vocabulary:
 | RTX 4090 | 0.4B/0.8B, 1.5B/2B and 2.9B/4B, bsz8, dense/W8/W4 | finite logits, fail-closed native/full-FLA/route contracts; quality is a separate axis | dense prefill min `1.3704x/1.0420x/1.3051x`, decode min `12.1018x/5.6368x/4.2144x`; W8/W4 total latency and physical-memory gates pass | **PASS 54/54** |
 | RTX 4090 | Historical 0.4B dense and W8/W4 speed lanes | 32-step greedy and cache handoff pass | decode `1.007x–1.418x` matching Albatross; bsz4 prefill `1.007x` current-session / `0.916x` historical high-water | **PASS measured lanes** |
 | RTX 5090 | 0.4B MATH500; 1.5B/2.9B/7.2B quant; 13.3B inference | pass@64 `0.38`; compression ratio `1.0`; all quant same-next | MATH summary/decode `4.336x/4.871x` committed Albatross reference; 2.9B/7.2B quant `>=0.99x` paired fp16 | **PASS artifact** |
-| RTX 5090 | 0.4B/0.8B, 1.5B/2B and 2.9B/4B, B1/B8, dense/W8/W4 | 108/108 Qwen references verify full FLA plus Triton conv; 24/24 greedy checks pass; task quality is separate | dense prefill/decode minima `1.0191x/3.9869x`; active-work decode min `2.7943x`; W8/W4 total-latency and footprint gates pass | **PARTIAL 6/8 batch-pairs** |
+| RTX 5090 | 0.4B/0.8B through 7.2B/9B, B1/B8, dense/W8/W4 | 144/144 Qwen references verify full FLA plus Triton conv; 32/32 greedy checks pass; task quality is separate | raw dense prefill/decode minima `1.0226x/2.8130x`; per-active-B speed leads in all cells; W8/W4 total-latency and footprint gates pass | **PASS 8/8 batch-pairs** |
 | Apple M5 | 0.4B/1.5B selected MLX vs Qwen3.5 pairs | state/session/greedy and speculative target oracle pass | selected conservative decode/prefill/TTFT/memory gates pass | **PASS measured pairs** |
 
 ## V100 production-close
@@ -312,21 +312,18 @@ Quant speed lanes:
 Environment and full evidence:
 [`bench/5090_blackwell_production_close_20260712/README.md`](bench/5090_blackwell_production_close_20260712/README.md).
 
-### Full-FLA Qwen3.5 B1/B8 staged matrix
+### Full-FLA Qwen3.5 B1/B8 matrix
 
-The in-review artifact at
+The current-main artifact at
 [`bench/5090_g1h_qwen35_b1_b8_20260715/`](bench/5090_g1h_qwen35_b1_b8_20260715/README.md)
-covers the completed 0.4B/0.8B, 1.5B/2B and 2.9B/4B pairs at B1 and B8,
-prompt 128/512/2048 and decode 128/512. Its explicit partial summary passes
-6/6 selected batch-pairs with 108 candidate and 108 joined Qwen reference rows;
-all Qwen rows verify FLA chunk prefill, fused-recurrent decode, fused gated norm
-and the FLA Triton causal-convolution bridge. Across the checked scope, minimum
-dense raw prefill/decode ratios are `1.019050x/3.986873x`, and minimum
-active-parameter-normalized decode is `2.794330x`. W8 and W4 pass paired-fp16
-total-latency and footprint gates. Some B8 active-normalized prefill cells are
-below `1.0x`, so no all-cell active-prefill lead is claimed. The 7.2B/9B pair,
-latest-main rerun and separate 13.3B validation remain open; the full matrix is
-not promoted as complete.
+covers 0.4B/0.8B, 1.5B/2B, 2.9B/4B, and 7.2B/9B at B1 and B8, prompt
+128/512/2048 and decode 128/512. The strict summary passes 8/8 batch-pairs,
+144 candidate rows, 144 joined Qwen rows, and 144/144 full-FLA contracts. Raw
+dense prefill/decode minima across pair minima are `1.0226x/2.8130x`; tokens/s
+per active billion parameters also lead in every cell. W8 and W4 pass
+paired-fp16 total-latency and footprint gates. The active-parameter work-rate
+product remains below `1.0x` for some prefill cells, and dense peak VRAM is
+slightly above Qwen for B8 1.5B and 7.2B, so neither boundary is hidden.
 
 ### Quant pressure matrix
 
@@ -345,13 +342,19 @@ All 24 quant rows lower footprint and preserve the fp16 next token. The
 2.9B/7.2B strict 1% gate passes; the combined matrix passes a 2% gate. The one
 1.5B W8 `0.9841x` row prevents a universal strict `>=0.99x` claim.
 
-### Official 13.3B
+### Official g1h 13.3B
 
-The official 26,540,868,485-byte checkpoint was converted on a 48GB/no-swap
-host with the mmap/meta-template low-memory path into six safetensors shards.
-Load/forward/generate on RTX 5090 uses 25,309.1 MiB model footprint and 25,536.6
-MiB peak. Speed-policy boundaries are W8 `0.9912x` and W4 `0.9889x`; these are
-selected-module speed-policy rows, not full-memory quant claims.
+The latest official `rwkv7-g1h-13.3b-20260710-ctx10240.pth` checkpoint is
+26,540,868,485 bytes with SHA256
+`5bd705d13497d23530e544d5afb45bdf542b5f67dffee31e3e2b35e4042cfcfb`.
+The low-memory conversion produced six safetensors shards with 2,016 indexed
+tensor keys. Load/forward/generate passes on RTX 5090 with a 25,309.1 MiB model
+footprint and 25,448.3 MiB smoke peak. At B8, prompt128/decode128, selected
+speed-policy MM8/MM4 measure `1.0013x/0.9845x` paired-fp16 decode speed and
+`0.9899x/0.9848x` footprint, with cosine above `0.99985` and matching next
+tokens. These are one-module speed-policy boundaries, not full-memory quant
+claims. Full evidence:
+[`bench/5090_g1h_13p3_20260715/`](bench/5090_g1h_13p3_20260715/README.md).
 
 ### Full MATH500
 

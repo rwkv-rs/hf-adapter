@@ -1,0 +1,1 @@
+5bd705d13497d23530e544d5afb45bdf542b5f67dffee31e3e2b35e4042cfcfb  /home/ubuntu/models/rwkv7/source-g1h/rwkv7-g1h-13.3b-20260710-ctx10240.pth
