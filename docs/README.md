@@ -9,6 +9,7 @@ and history.
 | Question | Canonical document |
 |---|---|
 | What is done now? | [`../HF_STATUS.md`](../HF_STATUS.md) |
+| How should completion be reported? | [`../HF_STATUS.md#completion-reporting-rule`](../HF_STATUS.md#completion-reporting-rule) |
 | What still needs work? | [`../HF_TODO.md`](../HF_TODO.md) |
 | Do we meet the public HF requirements? | [`ACCEPTANCE.md`](ACCEPTANCE.md) |
 | What are the current promoted numbers? | [`../BENCHMARK.md`](../BENCHMARK.md) |
@@ -31,6 +32,10 @@ If documents appear to conflict, use this order:
 
 A newer experiment does not automatically replace a promoted result. Promotion
 requires compatible shape/reference, correctness and reproducible evidence.
+Likewise, completion is reported for a named scope. The completed current
+milestone must not be conflated with the still-partial universal production
+scope, and roadmap checkbox counts must not be converted into a global
+percentage.
 
 ## Document lifecycle
 
