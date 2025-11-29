@@ -26,6 +26,21 @@ Last updated: **2026-07-16**.
 | PP/TP | **PARTIAL** | HF multi-device/device-map smoke exists; production TP matrix is not closed |
 | Speculative decoding | **EXPERIMENTAL PASS** | HF-compatible harness and Apple target-greedy oracle evidence exist |
 
+## Completion reporting rule
+
+Report completion against an explicitly named scope:
+
+- **Current HF milestone:** `COMPLETE`. This means every item listed under
+  `Current milestone — COMPLETE` in [`HF_TODO.md`](HF_TODO.md) is closed.
+- **Public HF-adapter release milestone:** suitable for release under the
+  boundaries in [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md).
+- **Universal all-card/all-shape production requirements:** `PARTIAL`. The
+  open boundaries are listed below and in [`HF_TODO.md`](HF_TODO.md).
+
+There is **no official repository-wide completion percentage**. Do not turn
+roadmap checkbox counts or the number of `PASS`/`PARTIAL` rows into a percentage;
+the scopes have different acceptance gates and are not equally weighted.
+
 ## Hardware summary
 
 | Platform | Status | Canonical evidence / boundary |

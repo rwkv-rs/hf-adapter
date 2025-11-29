@@ -35,6 +35,14 @@ gates. API/training/cache and W8/W4 functionality are broadly validated;
 universal full-memory W8/W4 speed, missing hardware families, larger Albatross
 matrices and production PP/TP remain open.
 
+Completion is reported by **named scope**, not as a single repository-wide
+percentage. The milestone named in [`HF_TODO.md`](HF_TODO.md) is complete and
+the repository is suitable for the public HF-adapter milestone. That does not
+promote universal all-card/all-shape requirements: the corresponding entries
+in [`HF_STATUS.md`](HF_STATUS.md) and [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)
+remain `PARTIAL`. Do not derive a global percentage from checkbox counts or
+from the number of `PASS`/`PARTIAL` rows.
+
 Start with the canonical documents instead of reading experiment history:
 
 - [Acceptance against the public requirements](docs/ACCEPTANCE.md)
