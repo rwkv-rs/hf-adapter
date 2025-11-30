@@ -1,3 +1,24 @@
+### 2026-07-16 — RTX 5090 7.2B Marlin W4 closes both prefill and decode
+
+The exact-card BF16 speed policy now replaces the 7.2B FFN key/value pair with
+group-128 Marlin W4 while retaining TorchAO asymmetric W4 for `lm_head`.
+Paired prompt128/decode128 results:
+
+| Model | Batch | footprint/BF16 | prefill/BF16 | decode/BF16 | final cosine |
+|---|---:|---:|---:|---:|---:|
+| 1.5B | 1 | `0.9355x` | `1.0083x` | `1.0335x` | `0.99969822` |
+| 1.5B | 8 | `0.9355x` | `1.0090x` | `1.0187x` | `0.99960977` |
+| 7.2B | 1 | `0.5298x` | `1.2240x` | `1.4944x` | `0.99963725` |
+| 7.2B | 8 | `0.5298x` | `1.0835x` | `1.4872x` | `0.99955124` |
+
+All four rows preserve the next token. The preceding TorchAO-only 7.2B route
+was retained as negative evidence because B8 prefill fell to `0.2711x`; Marlin
+removes that regression while preserving the decode and memory wins. Dispatch
+is fail-closed to RTX 5090 + SM120 + BF16 + exact FFN roles/shapes, so other
+50-series and older-card policies are unchanged.
+
+Evidence: [`bench/5090_marlin_w4_hybrid_20260716`](../../bench/5090_marlin_w4_hybrid_20260716/README.md).
+
 ### 2026-07-12 — RTX 5090 batched quant + 13.3B low-memory close
 
 最新 5090 artifact: [`bench/5090_blackwell_production_close_20260712`](../../bench/5090_blackwell_production_close_20260712/README.md)。

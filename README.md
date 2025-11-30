@@ -11,6 +11,12 @@ keep the HF wrapper as the public compatibility layer, then add native fused
 fp16 and native W8/W4 backends behind `rwkv7_forward_token()` and `generate()`
 to close the Albatross and quantized-decode speed gaps.
 
+The 2026-07-16 RTX 5090 Marlin W4 artifact closes paired BF16 prefill, decode,
+footprint and correctness for g1h 1.5B/7.2B at B1/B8; the 7.2B FFN-heavy
+hybrid reaches `0.5298x` model footprint and minimum `1.0835x/1.4872x`
+prefill/decode. See
+[`bench/5090_marlin_w4_hybrid_20260716/README.md`](bench/5090_marlin_w4_hybrid_20260716/README.md).
+
 The 2026-07-12 RTX 5090 production-close artifact adds Blackwell batched
 MM8/MM4 kernels, low-memory 13.3B conversion, and a full 0.4B MATH500
 `500 x 64` run. The MATH run reached pass@64 `0.38` and passed the repository's

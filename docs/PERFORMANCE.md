@@ -13,6 +13,7 @@ historical rows remain in platform documents and `bench/` artifacts.
 | RTX 4090 | g1h 7.2B vs full-FLA Qwen3.5-9B bsz8 prefill/decode minimum `1.023951x/2.210065x`; decode active-work minimum `1.776961x` | W8 total/decode minimum `1.360072x/1.356914x`; W4 `1.013273x/1.022724x`; selected quant footprint and peak lower in 12/12 | finite logits, 24/24 Qwen optimized bindings, BNB8/MM4 cosine+greedy probes; task quality not measured | Production-close for measured bsz8 lane |
 | RTX 4090 small models | 0.4B/0.8B, 1.5B/2B, 2.9B/4B bsz8 dense prefill minima `1.370369x/1.041959x/1.305103x`; decode minima `12.101818x/5.636846x/4.214362x` | W8 total minima `1.011441x/1.131672x/1.176050x`; W4 `1.029994x/1.027211x/1.014959x`; footprint and peak lower in 36/36 selected quant cells | finite logits, full-Qwen-FLA dense contract, active-work and fail-closed route gates; task quality not measured | Production-close for measured bsz8 lanes |
 | RTX 5090 Qwen matrix | 0.4B/0.8B through 7.2B/9B at B1/B8; raw prefill/decode minima `1.0226x/2.8130x`; per-active-B throughput leads in 144/144 cells | W8/W4 exact-cell total-latency and footprint gates pass in all measured cells | 144/144 full-FLA Qwen contracts and 32/32 greedy reports pass; active-work prefill and dense peak-VRAM are not universal wins | Production-close for measured B1/B8 lanes |
+| RTX 5090 BF16/W4 | g1h 1.5B and 7.2B paired BF16 at B1/B8, prompt128/decode128 | 1.5B head-W4 prefill/decode minima `1.0083x/1.0187x`, footprint `0.9355x`; 7.2B Marlin-FFN hybrid minima `1.0835x/1.4872x`, footprint `0.5298x` | final cosine `>=0.99955124`, same-next 4/4; exact-card/shape/role gate | Production-close for measured all-phase W4 lane |
 | RTX 5090 MATH500 / 13.3B | 0.4B MATH500 generation `16,925.6 tok/s`, steady decode `19,339.5 tok/s`; latest g1h 13.3B load/generate passes | 13.3B selected speed-policy MM8/MM4 decode `1.0013x/0.9845x` paired fp16 with footprint `0.9899x/0.9848x` | MATH500 pass@64 `0.38`; 13.3B cosine above `0.99985` and same-next pass | Production-close artifacts |
 | Apple M5 | Tiled DPLR and guarded compiled decode close selected same-device Qwen3.5 gates | W4 lowers memory; selected production pair gates pass | target-greedy oracle and state/session checks pass | Production-close for measured MLX pairs |
 
@@ -21,7 +22,8 @@ V100 optimized-Qwen evidence:
 
 RTX 5090 evidence:
 [`5090_g1h_qwen35_b1_b8_20260715`](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md)
-and [`5090_g1h_13p3_20260715`](../bench/5090_g1h_13p3_20260715/README.md).
+[`5090_g1h_13p3_20260715`](../bench/5090_g1h_13p3_20260715/README.md), and
+[`5090_marlin_w4_hybrid_20260716`](../bench/5090_marlin_w4_hybrid_20260716/README.md).
 
 ## Interpretation rules
 
@@ -34,8 +36,9 @@ and [`5090_g1h_13p3_20260715`](../bench/5090_g1h_13p3_20260715/README.md).
 
 ## Remaining performance work
 
-- Fuse the full-memory W8/W4 projection path instead of limiting the fastest
-  policy to selected modules such as `lm_head`.
+- Extend the RTX 5090 Marlin W4 result from the FFN pair to still-dense square
+  projections, and reproduce an all-phase large-payload win for W8 and the
+  remaining declared cards.
 - Extend P2/P3 Albatross matrices to larger models and more hardware.
 - Rerun the final Albatross workload on the same RTX 5090 session; the current
   MATH500 comparison uses the committed reference.

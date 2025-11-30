@@ -252,6 +252,10 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.prefill_sequence_ffn_large_blocks == (64, 128, 32, 64, 8)
     assert blackwell.prefill_sequence_ffn_num_stages == 3
     assert blackwell.prefill_sequence_ffn_num_warps == 8
+    assert blackwell.marlin_w4_ffn_shapes == (
+        (16384, 4096),
+        (4096, 16384),
+    )
     assert "triton_compat" in blackwell.notes
     other_blackwell = policy_for_profile(
         classify_gpu("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0))
@@ -260,6 +264,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert other_blackwell.prefill_clampw_scan_model_shapes == ()
     assert not other_blackwell.fused_prefill_stacked_rkv
     assert not other_blackwell.fused_prefill_sequence_ffn
+    assert other_blackwell.marlin_w4_ffn_shapes == ()
 
     apple = policy_for_profile(classify_gpu("Apple M5", None, is_mps=True))
     assert apple.profile.family == "apple_mps"
