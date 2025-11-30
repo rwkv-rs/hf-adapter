@@ -8,9 +8,15 @@ inference, and HF-compatible speculative decoding.
 
 ## Five-minute quick start
 
-For normal inference, start here instead of the benchmark sections below.
-The complete instructions are in the [user guide](docs/USER_GUIDE.md) and
-[中文用户指南](docs/USER_GUIDE_ZH.md).
+For normal inference, start here instead of the benchmark sections below:
+
+- [English step-by-step guide](docs/USER_GUIDE.md)
+- [中文零基础逐步指南](docs/USER_GUIDE_ZH.md)
+- [Give the setup to an AI assistant](docs/AI_ASSISTED_SETUP.md)
+
+The guides define success with real environment, model-directory, and
+generation checks. They do not treat installed files as proof that the model
+runs.
 
 ```bash
 git clone https://github.com/rwkv-rs/hf-adapter.git
@@ -20,6 +26,7 @@ source .venv/bin/activate                 # Windows: .venv\Scripts\Activate.ps1
 python -m pip install -U pip
 python -m pip install -e .                # Portable native backend
 # Linux NVIDIA optimized path: python -m pip install -e ".[cuda]"
+python examples/check_environment.py
 ```
 
 Run a converted RWKV-7 HF model directory:
