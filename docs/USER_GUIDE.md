@@ -21,8 +21,6 @@ Setup is complete only when the environment doctor reports `RESULT: READY`,
 the model-directory check passes, and `examples/generate.py` exits with code 0
 and prints newly generated text.
 
-![First-run flow from environment setup to generated text](assets/tutorials/01-first-run.png)
-
 ## What you need
 
 - Python 3.10 or newer.

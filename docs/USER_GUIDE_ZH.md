@@ -25,8 +25,6 @@
 文件存在不等于模型能运行。遇到错误时只处理屏幕上的第一个 `FAIL` 或
 第一段 traceback，然后重新执行同一条命令。
 
-![从创建环境、转换模型到成功生成文本的流程图](assets/tutorials/01-first-run.png)
-
 ## 新手选择规则
 
 - 第一次只用 **0.4B**。不要用 7.2B 或 13.3B 验证环境。
@@ -35,8 +33,6 @@
 - 全程使用仓库里的 `.venv`，不要把依赖安装到系统 Python。
 - fp16 权重大约占用每参数 2 字节，运行时还需要额外 RAM/VRAM。
 - 本文使用公开文件，不需要填写 Hugging Face token。
-
-![按系统与硬件选择 native、FLA 或 MLX](assets/tutorials/14-backend-choice.png)
 
 ## 1. 安装
 
@@ -200,8 +196,6 @@ python scripts/convert_rwkv7_to_hf.py \
   --no-fuse-norm
 ```
 
-![源权重、词表和转换后 HF 模型目录的放置方式](assets/tutorials/13-download-directory-layout.png)
-
 下载中断时重新执行同一条 `hf download`，不要创建第二个文件名。浏览器下载如果
 出现 `.crdownload`、`.part` 或大小持续变化，说明还没完成；不要提前转换。转换
 失败时保留 `models/source/`，先删除或改名不完整的 HF **输出目录**，修复第一处
@@ -329,8 +323,6 @@ print(tokenizer.decode(new_tokens, skip_special_tokens=True))
 管理提示模板、对话历史、请求限流和模型进程。
 
 ## 常见问题
-
-![遇到失败时只定位第一处错误并重跑同一命令](assets/tutorials/15-first-error-recovery.png)
 
 - **提示缺少 `fla`**：增加 `--backend native`，或者在支持的 Linux CUDA
   环境安装 `.[cuda]`。

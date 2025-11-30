@@ -13,8 +13,6 @@ python examples/check_environment.py --model MODEL
 第一次使用 0.1B 或 0.4B，把 `MODEL` 替换为已转换模型目录。训练时关闭循环
 缓存（`use_cache=False`）。
 
-![PEFT、Trainer、恢复、TRL 和分布式训练生命周期](assets/tutorials/08-training-ecosystem.png)
-
 ## 1. 证明 PEFT LoRA 梯度
 
 ```bash

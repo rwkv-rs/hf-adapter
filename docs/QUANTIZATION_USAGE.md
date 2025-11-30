@@ -9,8 +9,6 @@ W8/W4。它们的硬件支持和性能不同。本教程严格区分三个结论
 
 English version: [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md)
 
-![选择和验证 bitsandbytes、原生 MM8/MM4 或 MLX W8/W4](assets/tutorials/09-quantization-paths.png)
-
 ## 1. 安装并建立 dense baseline
 
 ```bash

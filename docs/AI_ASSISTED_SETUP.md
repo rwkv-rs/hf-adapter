@@ -7,8 +7,6 @@
 本页可以覆盖安装、转换、推理、缓存、投机解码、训练、多卡、量化和 Apple
 部署。它不会要求 AI 修改内核、运行全量 benchmark 或自动下载大模型。
 
-![AI 先检查、确认、执行并用真实输出验收](assets/tutorials/06-ai-assisted-setup.png)
-
 ## 使用前的安全规则
 
 - 把已经 clone 的 `hf-adapter` 仓库作为 AI 工作区。
@@ -87,8 +85,6 @@ AI 必须按顺序完成，不允许跳过失败状态：
 | `execute` | 在 `.venv` 中执行，非零退出立即停 | 命令退出 0 |
 | `verify` | 执行该章节定义的对齐/PASS 检查 | 精确通过标记和关键数值存在 |
 | `report` | 用统一格式汇报并复述边界 | 证据与结论一一对应 |
-
-![AI 任务只经过一个入口并路由到一个教程](assets/tutorials/16-ai-task-router.png)
 
 ## 首次安装的固定下载规则
 
