@@ -6,6 +6,40 @@ HF adapter delivery only: Transformers loading/generation,
 PEFT/TRL/Trainer compatibility, HF state-cache serving primitives, quantized
 inference, and HF-compatible speculative decoding.
 
+## Five-minute quick start
+
+For normal inference, start here instead of the benchmark sections below.
+The complete instructions are in the [user guide](docs/USER_GUIDE.md) and
+[中文用户指南](docs/USER_GUIDE_ZH.md).
+
+```bash
+git clone https://github.com/rwkv-rs/hf-adapter.git
+cd hf-adapter
+python -m venv .venv
+source .venv/bin/activate                 # Windows: .venv\Scripts\Activate.ps1
+python -m pip install -U pip
+python -m pip install -e .                # Portable native backend
+# Linux NVIDIA optimized path: python -m pip install -e ".[cuda]"
+```
+
+Run a converted RWKV-7 HF model directory:
+
+```bash
+python examples/generate.py \
+  --model /path/to/rwkv7-model-hf \
+  --prompt "User: Hello! Assistant:" \
+  --max-new-tokens 64
+```
+
+The example automatically selects CUDA, MPS, or CPU. It uses FLA on CUDA when
+available and otherwise uses the native backend. If you only have an official
+RWKV-7 `.pth` checkpoint, follow
+[Download and convert a model](docs/USER_GUIDE.md#2-get-and-convert-a-model).
+Start with 0.1B or 0.4B to validate a new installation.
+
+> `trust_remote_code=True` is required by converted RWKV-7 model directories.
+> Only load model code from a local directory or Hub repository you trust.
+
 The current performance phase is tracked in [`docs/performance/FUSED_BACKEND.md`](docs/performance/FUSED_BACKEND.md):
 keep the HF wrapper as the public compatibility layer, then add native fused
 fp16 and native W8/W4 backends behind `rwkv7_forward_token()` and `generate()`
@@ -356,23 +390,30 @@ RESULTS=bench/results.jsonl \
 bash scripts/run_zero_training_smoke.sh
 ```
 
-Minimal usage:
+Minimal Transformers usage without the optional `accelerate` dependency:
 
 ```python
+import importlib.util
+import os
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 path = "/path/to/rwkv7-g1d-0.1b-hf"
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+dtype = torch.float16 if device.type == "cuda" else torch.float32
+
+# CPU, MPS, or CUDA without FLA uses the native backend.
+if device.type != "cuda" or importlib.util.find_spec("fla") is None:
+    os.environ["RWKV7_NATIVE_MODEL"] = "1"
 
 tok = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
 model = AutoModelForCausalLM.from_pretrained(
     path,
     trust_remote_code=True,
-    torch_dtype=torch.float16,
-    device_map="cuda",
-).eval()
+    dtype=dtype,
+).eval().to(device)
 
-x = tok("User: Hello!\n\nAssistant:", return_tensors="pt").to("cuda")
+x = tok("User: Hello!\n\nAssistant:", return_tensors="pt").to(device)
 y = model.generate(**x, max_new_tokens=32, do_sample=False, use_cache=True)
 print(tok.decode(y[0], skip_special_tokens=True))
 ```
