@@ -37,8 +37,13 @@ remaining fp16-or-faster across representative batch/prompt/decode shapes.
 
 - [ ] Fuse quantized R/K/V/output and FFN projections instead of relying on
       selected-module speed policy.
-- [ ] Add fused quant prefill; decode-only wins are insufficient.
-- [ ] Validate V100, 4090, 5090 and at least one Ampere professional card.
+- [x] Close RTX 5090 g1h 1.5B/7.2B B1/B8 W4 prefill and decode for the
+      exact measured prompt128/decode128 lane; the 7.2B route quantizes all 64
+      FFN key/value matrices and reaches `0.5298x` BF16 footprint.
+- [ ] Add all-phase fused quant prefill for the remaining cards/shapes;
+      decode-only wins are insufficient.
+- [ ] Validate the same large-payload contract on V100, 4090 and at least one
+      Ampere professional card; RTX 5090 exact-lane evidence is complete.
 - [ ] Preserve cosine, same-next, footprint and paired timing gates.
 - [ ] Add 0.4B/1.5B/2.9B/7.2B/13.3B boundary rows where memory permits.
 

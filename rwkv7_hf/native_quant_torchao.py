@@ -15,9 +15,60 @@ except Exception:  # pragma: no cover
     torch = None  # type: ignore[assignment]
 
 from .native_quant_policy import normalize_native_mm_policy, should_quantize_linear
+from .kernel_policy import current_kernel_policy
 
 
 TORCHAO_QUANTIZATIONS = ("torchao_w8", "torchao_w4")
+
+
+def _torchao_w4_5090_speed_shape_supported(
+    name: str,
+    shape: tuple[int, int],
+    dtype,
+    capability: tuple[int, int],
+    enabled_shapes: tuple[tuple[int, int], ...],
+) -> bool:
+    """Return whether a BF16 W4 FFN shape is enabled by exact-card policy.
+
+    TorchAO's tiled INT4 kernel established the safe role/shape boundary but
+    regressed long-prompt prefill.  The production route for this exact gate is
+    therefore Marlin BF16/W4: the measured FFN pair beats dense BF16 at rows
+    1, 8, 128, and 1024.  Keep this deliberately narrow: the generic ``speed``
+    policy remains head-only everywhere except the exact card, dtype, role, and
+    matrix shapes covered by paired-baseline evidence.
+    """
+
+    role = str(name).lower()
+    return bool(
+        dtype == torch.bfloat16
+        and tuple(int(v) for v in capability) == (12, 0)
+        and (role.endswith(".ffn.key") or role.endswith(".ffn.value"))
+        and tuple(int(v) for v in shape) in {
+            tuple(int(v) for v in item) for item in enabled_shapes
+        }
+    )
+
+
+def _torchao_w4_5090_speed_module(name: str, module) -> bool:
+    if torch is None or not torch.cuda.is_available():
+        return False
+    weight = getattr(module, "weight", None)
+    device = getattr(weight, "device", None)
+    if device is None or torch.device(device).type != "cuda":
+        return False
+    try:
+        capability = tuple(torch.cuda.get_device_capability(device))
+        policy = current_kernel_policy(device=device, torch_module=torch)
+        enabled_shapes = tuple(getattr(policy, "marlin_w4_ffn_shapes", ()))
+    except Exception:
+        return False
+    return _torchao_w4_5090_speed_shape_supported(
+        name,
+        tuple(int(v) for v in weight.shape),
+        weight.dtype,
+        capability,
+        enabled_shapes,
+    )
 
 
 class TorchAOW4FP16Linear(torch.nn.Module):
@@ -111,27 +162,44 @@ def quantize_model_torchao(
     policy = normalize_native_mm_policy(policy)
     quantize_, int8_weight_only, int4_weight_only = _torchao_api()
 
-    targets = []
+    targets: list[tuple[str, bool]] = []
+    exact_5090_speed_targets = 0
     for name, module in model.named_modules():
         if not isinstance(module, torch.nn.Linear):
             continue
-        if should_quantize_linear(
+        selected = should_quantize_linear(
             name,
             int(module.weight.numel()),
             min_params=int(min_params),
             policy=policy,
-        ):
-            targets.append((name, module))
+        )
+        exact_5090_speed = bool(
+            quantization == "torchao_w4"
+            and policy == "speed"
+            and int(group_size) == 128
+            and int(module.weight.numel()) >= int(min_params)
+            and _torchao_w4_5090_speed_module(name, module)
+        )
+        if selected or exact_5090_speed:
+            targets.append((name, exact_5090_speed))
+            exact_5090_speed_targets += int(exact_5090_speed)
     fp16_w4_bridge = False
     if quantization == "torchao_w4":
-        bad = [name for name, module in targets if module.weight.dtype != torch.bfloat16]
+        bad = [
+            name
+            for name, _ in targets
+            if model.get_submodule(name).weight.dtype != torch.bfloat16
+        ]
         if bad:
             # The speed policy selects only lm_head.  Exact RTX 3090 evidence
             # shows the bf16 int4pack kernel plus two small casts is 2.2x-3.9x
             # faster than the fp16 head for rows 1..8.  Keep memory-policy block
             # quantization conservative: mixed-dtype wrappers inside every
             # recurrent block need a separate training/correctness contract.
-            fp16_only = all(module.weight.dtype == torch.float16 for _, module in targets)
+            fp16_only = all(
+                model.get_submodule(name).weight.dtype == torch.float16
+                for name, _ in targets
+            )
             if policy != "speed" or not fp16_only:
                 raise ValueError(
                     "torchao_w4 requires a bf16 model, except for the measured "
@@ -143,7 +211,23 @@ def quantize_model_torchao(
     else:
         config = int8_weight_only()
 
-    for name, module in targets:
+    marlin_linear_cls = None
+    if exact_5090_speed_targets:
+        from .native_quant_marlin import MarlinW4Linear
+
+        marlin_linear_cls = MarlinW4Linear
+
+    for name, exact_5090_speed in targets:
+        module = model.get_submodule(name)
+        if exact_5090_speed:
+            parent_name, _, attr = name.rpartition(".")
+            parent = model.get_submodule(parent_name) if parent_name else model
+            setattr(
+                parent,
+                attr,
+                marlin_linear_cls(module, group_size=int(group_size)),
+            )
+            continue
         if fp16_w4_bridge:
             module.to(dtype=torch.bfloat16)
         quantize_(module, config)
@@ -154,9 +238,20 @@ def quantize_model_torchao(
     setattr(
         model,
         "_rwkv7_native_mm_quantization",
-        "torchao_w4_fp16_head" if fp16_w4_bridge else quantization,
+        (
+            "torchao_w4_fp16_head"
+            if fp16_w4_bridge
+            else "marlin_w4_5090_hybrid"
+            if exact_5090_speed_targets
+            else quantization
+        ),
     )
     setattr(model, "_rwkv7_native_mm_replaced_modules", len(targets))
+    setattr(
+        model,
+        "_rwkv7_native_mm_exact_5090_speed_modules",
+        int(exact_5090_speed_targets),
+    )
     setattr(
         model,
         "_rwkv7_native_mm_block_replaced_modules",
