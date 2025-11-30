@@ -22,6 +22,8 @@
 文件存在不等于模型能运行。遇到错误时只处理屏幕上的第一个 `FAIL` 或
 第一段 traceback，然后重新执行同一条命令。
 
+![从创建环境、转换模型到成功生成文本的流程图](assets/tutorials/01-first-run.png)
+
 ## 新手选择规则
 
 - 第一次只用 **0.4B**。不要用 7.2B 或 13.3B 验证环境。
@@ -305,6 +307,8 @@ print(tokenizer.decode(new_tokens, skip_special_tokens=True))
   `python examples/check_environment.py`，提供该命令输出、失败命令和第一段完整
   traceback。不要发送密码、token 或 SSH 私钥。
 
-更多文档：训练见 [`TRAINING.md`](TRAINING.md)，硬件支持见
+更多图文流程：投机解码、训练和多卡使用见
+[`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md)。训练状态见
+[`TRAINING.md`](TRAINING.md)，硬件支持见
 [`HARDWARE_MATRIX.md`](HARDWARE_MATRIX.md)，性能后端见
 [`PERFORMANCE.md`](PERFORMANCE.md)。

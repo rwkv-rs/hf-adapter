@@ -13,6 +13,7 @@ For normal inference, start here instead of the benchmark sections below:
 - [English step-by-step guide](docs/USER_GUIDE.md)
 - [中文零基础逐步指南](docs/USER_GUIDE_ZH.md)
 - [Give the setup to an AI assistant](docs/AI_ASSISTED_SETUP.md)
+- [Visual guide: speculative decoding, training, and multi-GPU](docs/ADVANCED_USAGE.md)
 
 The guides define success with real environment, model-directory, and
 generation checks. They do not treat installed files as proof that the model
