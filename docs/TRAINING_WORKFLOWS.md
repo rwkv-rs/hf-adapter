@@ -1,51 +1,45 @@
-# PEFT, Trainer, and TRL tutorial
+# PEFT、Trainer 和 TRL 教学
 
-This page teaches every currently validated HF training integration. The
-commands are intentionally short smokes: they establish interface, gradient,
-serialization, and resume behavior before a real dataset consumes hours.
+本页覆盖当前已经验证的全部 HF 训练集成。命令有意设计为短 smoke：在真实
+数据集消耗大量时间之前，先证明接口、梯度、序列化和断点恢复可以工作。
 
-Chinese version: [`TRAINING_WORKFLOWS_ZH.md`](TRAINING_WORKFLOWS_ZH.md)
-
-Prerequisites:
+前置条件：
 
 ```bash
 python -m pip install -e ".[train]"
 python examples/check_environment.py --model MODEL
 ```
 
-Use 0.1B or 0.4B first and replace `MODEL` with a converted model directory.
-For training, disable recurrent cache (`use_cache=False`).
+第一次使用 0.1B 或 0.4B，把 `MODEL` 替换为已转换模型目录。训练时关闭循环
+缓存（`use_cache=False`）。
 
-![PEFT, Trainer, resume, TRL, and distributed training lifecycle](assets/tutorials/08-training-ecosystem.png)
+![PEFT、Trainer、恢复、TRL 和分布式训练生命周期](assets/tutorials/08-training-ecosystem.png)
 
-## 1. Prove PEFT LoRA gradients
+## 1. 证明 PEFT LoRA 梯度
 
 ```bash
 python tests/test_peft_lora.py --model MODEL \
   --device cuda --attn-mode fused_recurrent
 ```
 
-Pass conditions are a finite `loss`, `nonzero_grad_count > 0`, and exit code
-0. The smoke targets `r_proj`, `k_proj`, `v_proj`, `o_proj`, `key`, and
-`value`. Review target modules for a real experiment instead of copying them
-without considering trainable size and task.
+通过条件是 `loss` 有限、`nonzero_grad_count > 0` 且退出码为 0。smoke 默认
+目标模块为 `r_proj`、`k_proj`、`v_proj`、`o_proj`、`key` 和 `value`。真实
+实验要根据任务和可训练参数量重新审查，不能不加判断地照抄。
 
-## 2. Save, load, and merge a LoRA adapter
+## 2. 保存、加载和合并 LoRA adapter
 
-The native/no-FLA round-trip test trains a tiny adapter, saves it, loads it onto
-a fresh base model, checks reversible merge/unmerge, runs `merge_and_unload`,
-and compares logits and greedy tokens:
+原生无 FLA round-trip 会训练一个很小的 adapter，保存后加载到新的 base，验证
+merge/unmerge、`merge_and_unload`，并比较 logits 和 greedy token：
 
 ```bash
 python tests/test_native_peft_save_load_merge.py \
   --model MODEL --device cuda --dtype fp32 --steps 2
 ```
 
-Success prints `NATIVE PEFT SAVE/LOAD/MERGE PASS`. This proves serialization
-and functional parity for the tested model; it does not evaluate the adapter's
-task quality.
+必须打印 `NATIVE PEFT SAVE/LOAD/MERGE PASS`。这证明测试模型的序列化和
+函数一致性，不代表 adapter 的任务效果。
 
-The ordinary PEFT deployment pattern is:
+普通 PEFT 部署写法：
 
 ```python
 from peft import PeftModel
@@ -57,12 +51,11 @@ merged = tuned.merge_and_unload()
 merged.save_pretrained("MERGED_DIR", safe_serialization=True)
 ```
 
-Keep the unmerged adapter when you need to switch adapters or continue
-training. A merged directory is convenient for fixed inference deployment.
+需要切换 adapter 或继续训练时保留未合并 adapter；固定推理部署可以使用合并目录。
 
-## 3. HF Trainer and TRL SFT
+## 3. HF Trainer 和 TRL SFT
 
-Run both standard Trainer and `SFTTrainer` on fixed tiny text:
+在固定小文本上同时运行标准 Trainer 和 `SFTTrainer`：
 
 ```bash
 python tests/test_hf_training_smoke.py --model MODEL \
@@ -70,20 +63,19 @@ python tests/test_hf_training_smoke.py --model MODEL \
   --gradient-accumulation-steps 1 --max-length 64 --backend both
 ```
 
-Success produces JSON rows with `status: pass`, finite training loss, a
-positive trainable-parameter delta, and a final `PASS`. On hardware without
-bf16 support, use `--train-dtype fp32` for the first compatibility run.
+通过时，每个 JSON 行都有 `status: pass`、有限 loss 和正的参数变化，最后打印
+`PASS`。不支持 bf16 的硬件，第一次兼容测试使用 `--train-dtype fp32`。
 
-To isolate the native/no-FLA SFT path:
+单独验证原生无 FLA SFT：
 
 ```bash
 python tests/test_native_sft_smoke.py --model MODEL \
   --device cuda --dtype fp32 --max-steps 2 --batch-size 1 --max-length 48
 ```
 
-Success prints `NATIVE SFT PASS`.
+必须打印 `NATIVE SFT PASS`。
 
-## 4. Resume a Trainer checkpoint
+## 4. 恢复 Trainer checkpoint
 
 ```bash
 python tests/test_native_trainer_resume_smoke.py --model MODEL \
@@ -91,17 +83,16 @@ python tests/test_native_trainer_resume_smoke.py --model MODEL \
   --batch-size 2 --length 32
 ```
 
-Success prints `NATIVE TRAINER RESUME PASS`; both phases must update trainable
-parameters and the final global step must equal `--resume-steps`.
+必须打印 `NATIVE TRAINER RESUME PASS`；前后两阶段都要更新参数，最终
+global step 必须等于 `--resume-steps`。
 
-This portable smoke intentionally validates model/adapter and Trainer-state
-continuity. It does not claim complete optimizer, scheduler, RNG, dataloader,
-or distributed resume fidelity for every library version. Preserve and verify
-those states explicitly in a real run.
+这个便携 smoke 主要验证 model/adapter 和 Trainer state。它不代表所有库版本的
+optimizer、scheduler、RNG、dataloader 和分布式状态都完整恢复。真实训练必须
+逐项保存和核验。
 
-## 5. TRL DPO and GRPO
+## 5. TRL DPO 和 GRPO
 
-Run the standard HF adapter paths together:
+同时运行标准 HF adapter 路线：
 
 ```bash
 python tests/test_hf_rl_training_smoke.py --model MODEL \
@@ -109,10 +100,9 @@ python tests/test_hf_rl_training_smoke.py --model MODEL \
   --gradient-accumulation-steps 1 --max-length 64 --backend both
 ```
 
-The command passes when DPO and GRPO each emit a `status: pass` JSON row with
-finite loss and parameter updates, followed by `PASS`.
+DPO/GRPO 都必须输出 `status: pass`、有限 loss 和参数更新，最后打印 `PASS`。
 
-Focused native/no-FLA commands are:
+单独验证原生无 FLA：
 
 ```bash
 python tests/test_native_dpo_smoke.py --model MODEL \
@@ -122,42 +112,37 @@ python tests/test_native_grpo_smoke.py --model MODEL \
   --dtype fp32 --max-steps 2 --batch-size 2 --max-completion-length 8
 ```
 
-They must print `NATIVE DPO PASS` and `NATIVE GRPO PASS`. The included prompts,
-preference pairs, and reward function are deterministic test fixtures. Replace
-them with a reviewed task dataset and evaluation plan for real alignment work.
+必须分别打印 `NATIVE DPO PASS` 和 `NATIVE GRPO PASS`。仓库内 prompt、偏好对和
+reward 只是确定性测试数据，真实对齐训练必须换成经过审查的数据和评估方案。
 
-## 6. Run a repeatable training matrix
+## 6. 运行可重复训练矩阵
 
-On Linux/WSL2, execute PEFT, Trainer/SFT, and DPO/GRPO for one or more models:
+在 Linux/WSL2 上对一个或多个模型运行 PEFT、Trainer/SFT、DPO/GRPO：
 
 ```bash
 DEVICE=cuda TRAIN_DTYPE=bf16 RESULTS=bench/results.jsonl \
   bash scripts/run_hf_training_matrix.sh MODEL_A MODEL_B
 ```
 
-Set `RUN_RESUME=1` to add checkpoint resume. Set `RUN_DEEPSPEED=1` only when
-2+ CUDA GPUs and DeepSpeed are available. The complete ZeRO-2/3 command and its
-boundary are in [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md#4-multi-gpu-training-with-deepspeed-zero).
+设置 `RUN_RESUME=1` 加入恢复。只有至少两张 CUDA 卡并安装 DeepSpeed 时才设置
+`RUN_DEEPSPEED=1`。完整 ZeRO-2/3 命令和边界见
+[`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md)。
 
-## 7. Move from smoke to a real fine-tune
+## 7. 从 smoke 进入真实微调
 
-Do not start a long run until all of the following are explicit:
+开始长训练前，至少固定：
 
-- immutable base checkpoint, tokenizer, adapter config, code revision, and
-  dependency lock;
-- licensed dataset, train/evaluation split, formatting and truncation policy;
-- sequence length, microbatch, gradient accumulation, learning rate, schedule,
-  precision, seed, and checkpoint cadence;
-- held-out quality metrics plus loss, throughput, peak-memory, and NaN logs;
-- tested save/load and resume procedure on a disposable short run;
-- a rollback artifact containing the unmerged adapter and run configuration.
+- base checkpoint、tokenizer、adapter config、代码 revision 和依赖锁；
+- 合法数据集、train/eval 切分、格式化和截断策略；
+- 序列长度、microbatch、梯度累积、学习率、schedule、精度、seed、保存频率；
+- 独立质量指标以及 loss、吞吐、峰值显存和 NaN 日志；
+- 在一次可丢弃短运行中验证过的保存/加载/恢复流程；
+- 包含未合并 adapter 和运行配置的回滚产物。
 
-The status/evidence matrix is in [`TRAINING.md`](TRAINING.md). Production
-tensor-parallel training is not a completed repository claim.
+状态和证据见 [`TRAINING.md`](TRAINING.md)。生产级 Tensor Parallel 训练不是本
+仓库已经完成的结论。
 
-## 8. AI execution rule
+## 8. 交给 AI 执行
 
-Ask an AI assistant to run only one section at a time. It must report the
-trainable parameter count, loss, update/gradient evidence, exact pass marker,
-device and dtype. It must call the command a smoke and must not invent dataset
-quality, convergence, or speed conclusions.
+统一使用 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) 的完整任务模板，选择
+“PEFT/Trainer”“TRL”或“DeepSpeed 训练”。本页不再维护第二套 AI 指令。

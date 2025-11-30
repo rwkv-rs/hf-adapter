@@ -5,7 +5,7 @@
 英文版见 [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md)。
 
 转换/缓存、完整训练生态、量化和 Apple 教程统一从
-[`COMPLETE_ADAPTER_GUIDE_ZH.md`](COMPLETE_ADAPTER_GUIDE_ZH.md) 进入。
+[`COMPLETE_ADAPTER_GUIDE.md`](COMPLETE_ADAPTER_GUIDE.md) 进入。
 
 这些命令主要是短 smoke：通过只能证明当前路径在本机完成了指定操作，不能自动证明
 加速、生产训练收敛、原生张量并行或长期稳定性。
@@ -188,18 +188,7 @@ bash scripts/run_zero_training_smoke.sh
 ZeRO 是训练状态切分，不是多卡推理 tensor parallel。一步 smoke 也不能证明长期收敛、
 checkpoint 连续性或 optimizer/scheduler/RNG 完整恢复。
 
-## 5. 把其中一个流程交给 AI
+## 5. 交给 AI 执行
 
-![AI 先检查、请求确认、执行并用真实输出验收的流程图](assets/tutorials/06-ai-assisted-setup.png)
-
-先使用 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) 的基础提示词，再明确只执行
-本页一个流程。要求 AI：
-
-1. 实际输出 GPU 数量、名称和可用显存，不允许猜；
-2. 运行前复述本页的准确命令；
-3. 少于两张 GPU 时不运行多卡命令；
-4. 非零退出码立即停止，只修复第一个真实错误并重新运行；
-5. 最后汇报命令、退出码、模型路径、设备和对应 PASS 标志；
-6. 明确把一步训练称为 smoke，不能写成“生产训练完成”或“已经加速”。
-
-这些公开模型的本地流程不需要密码、Hugging Face token、SSH key 或其他私密凭据。
+统一使用 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) 的完整任务模板，选择
+“投机解码”“多卡推理”或“DeepSpeed 训练”。本页不再维护第二套 AI 指令。

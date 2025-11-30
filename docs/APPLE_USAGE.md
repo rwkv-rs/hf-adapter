@@ -1,20 +1,17 @@
-# Apple Silicon tutorial: MPS, MLX, and CoreML
+# Apple Silicon 教学：MPS、MLX 和 CoreML
 
-Apple users can choose three layers:
+Apple 用户可以选择三层路线：
 
-- **MPS:** standard Transformers API through the native/no-FLA model;
-- **MLX:** Apple-native recurrent inference, sessions, dynamic batching, and
-  packed W8/W4;
-- **CoreML:** deployment export prototype for macOS/iOS runtimes.
+- **MPS**：通过原生无 FLA 模型使用标准 Transformers API；
+- **MLX**：Apple 原生循环推理、会话、动态批处理和 packed W8/W4；
+- **CoreML**：面向 macOS/iOS runtime 的部署导出原型。
 
-Chinese version: [`APPLE_USAGE_ZH.md`](APPLE_USAGE_ZH.md)
+![MPS 兼容、MLX serving 和 CoreML 部署路线](assets/tutorials/10-apple-deployment.png)
 
-![MPS compatibility, MLX serving, and CoreML deployment paths](assets/tutorials/10-apple-deployment.png)
+需要 Apple Silicon Mac、Python 3.10+ 和检查通过的 HF 模型。第一次用 0.1B 或
+0.4B。Intel Mac 不是 MLX 目标。
 
-Use an Apple Silicon Mac, Python 3.10+, and a checked converted HF model. Start
-with 0.1B or 0.4B. Intel Macs are not the MLX target.
-
-## 1. Standard HF generation on MPS
+## 1. 使用 MPS 做标准 HF 生成
 
 ```bash
 python -m pip install -e .
@@ -23,12 +20,11 @@ python examples/generate.py --model MODEL --prompt "Hello" \
   --device mps --backend native --dtype fp16 --max-new-tokens 8
 ```
 
-The environment check must print `RESULT: READY`; generation must exit 0 and
-print new text. If fp16 produces a model-specific issue, retry the smallest
-model with `--dtype fp32` and report both results rather than silently changing
-precision.
+环境检查必须打印 `RESULT: READY`；生成必须退出 0 并打印新文本。如果 fp16 在
+某个模型上失败，先用最小模型和 `--dtype fp32` 重试，并同时报告两个结果，不能
+静默换精度。
 
-The same route supports PEFT, Trainer, SFT, DPO, and GRPO compatibility smokes:
+同一路线支持 PEFT、Trainer、SFT、DPO、GRPO 兼容 smoke：
 
 ```bash
 python -m pip install -e ".[train]"
@@ -38,12 +34,12 @@ python tests/test_hf_rl_training_smoke.py --model MODEL \
   --device mps --train-dtype fp32 --max-steps 1 --backend both
 ```
 
-Both commands must end in `PASS`. Apple training rows are compatibility
-evidence, not a high-throughput production-training recommendation.
+两条命令都必须以 `PASS` 结束。Apple 训练行只代表兼容，不能写成高吞吐生产
+训练推荐。
 
-## 2. Convert HF safetensors to an MLX directory
+## 2. 把 HF safetensors 转成 MLX 目录
 
-Install MLX and export all tensors plus tokenizer/config metadata:
+安装 MLX，导出全部 tensor 和 tokenizer/config 元数据：
 
 ```bash
 python -m pip install -e ".[mlx]"
@@ -51,13 +47,12 @@ PYTHONPATH=. python scripts/convert_hf_to_mlx.py MODEL MLX_MODEL \
   --dtype fp16 --copy-metadata --require-mlx
 ```
 
-The command must exit 0 and the output directory must contain MLX weights plus
-copied model/tokenizer metadata. `--max-tensors` and `--include` are diagnostic
-export options; do not use a partial export for normal generation.
+命令必须退出 0，输出目录必须包含 MLX 权重和模型/tokenizer 元数据。
+`--max-tensors` 和 `--include` 只用于诊断，普通生成不能使用不完整导出。
 
-## 3. MLX text generation and reusable sessions
+## 3. MLX 文本生成和可复用会话
 
-One-shot generation:
+一次性生成：
 
 ```bash
 PYTHONPATH=. python scripts/mlx_generate.py MLX_MODEL \
@@ -65,10 +60,9 @@ PYTHONPATH=. python scripts/mlx_generate.py MLX_MODEL \
   --dtype fp16 --wkv-backend auto --require-mlx
 ```
 
-The JSON output must have `status: pass`, finite output, generated tokens, and
-memory/timing telemetry.
+JSON 必须包含 `status: pass`、有限输出、生成 token 和内存/时间遥测。
 
-Prefill once and decode in two chunks:
+prefill 一次、分两段 decode：
 
 ```bash
 PYTHONPATH=. python scripts/mlx_session_smoke.py MLX_MODEL \
@@ -76,10 +70,9 @@ PYTHONPATH=. python scripts/mlx_session_smoke.py MLX_MODEL \
   --dtype fp16 --wkv-backend auto --require-mlx
 ```
 
-The session output must match one-shot greedy tokens/text and preserve
-`seen_tokens`.
+session token/text 必须与 one-shot greedy 一致，并保持 `seen_tokens`。
 
-Interleave two independent sessions:
+交错运行两个独立 session：
 
 ```bash
 PYTHONPATH=. python scripts/mlx_session_batch_smoke.py MLX_MODEL \
@@ -88,8 +81,7 @@ PYTHONPATH=. python scripts/mlx_session_batch_smoke.py MLX_MODEL \
   --rounds 2,2 --session-backend auto --dtype fp16 --require-mlx
 ```
 
-Each session must match its one-shot result. For a new backend, compare it to
-sequential before promotion:
+每个 session 都必须匹配各自 one-shot。新 backend 晋升前要和 sequential 比较：
 
 ```bash
 PYTHONPATH=. python scripts/mlx_session_batch_smoke.py MLX_MODEL \
@@ -101,7 +93,7 @@ PYTHONPATH=. python scripts/mlx_session_batch_smoke.py MLX_MODEL \
 
 ## 4. Packed MLX W8/W4
 
-W8:
+W8：
 
 ```bash
 PYTHONPATH=. python scripts/mlx_generate.py MLX_MODEL --prompt "Hello" \
@@ -109,7 +101,7 @@ PYTHONPATH=. python scripts/mlx_generate.py MLX_MODEL --prompt "Hello" \
   --quant-backend auto --wkv-backend auto --require-mlx
 ```
 
-W4:
+W4：
 
 ```bash
 PYTHONPATH=. python scripts/mlx_generate.py MLX_MODEL --prompt "Hello" \
@@ -118,15 +110,14 @@ PYTHONPATH=. python scripts/mlx_generate.py MLX_MODEL --prompt "Hello" \
   --wkv-backend auto --require-mlx
 ```
 
-Run the same prompt/dtype once with `--quantization none`. Accept a memory
-claim only when the quantized peak is lower and greedy/logit quality passes;
-accept a speed claim only with paired same-shape timing. The promoted M5 rows
-are described in [`hardware/APPLE_PRODUCTION_CLOSE.md`](hardware/APPLE_PRODUCTION_CLOSE.md).
-They do not establish all-M-series or all-shape performance.
+同一 prompt/dtype 再用 `--quantization none` 跑 baseline。只有 quant 峰值更低且
+greedy/logit 质量通过，才能写省内存；只有同 shape 配对时间通过，才能写更快。
+已发布 M5 行见 [`hardware/APPLE_PRODUCTION_CLOSE.md`](hardware/APPLE_PRODUCTION_CLOSE.md)，
+不能外推到全部 M 系列和 shape。
 
-## 5. Dynamic batching and prefix-state cache
+## 5. 动态批处理和 prefix-state cache
 
-Run the real-model acceptance harness:
+运行真实模型验收：
 
 ```bash
 PYTHONPATH=. python scripts/mlx_dynamic_serving_bench.py \
@@ -135,27 +126,26 @@ PYTHONPATH=. python scripts/mlx_dynamic_serving_bench.py \
   --results apple-dynamic.jsonl --fail-on-gate
 ```
 
-The command must exit 0, write passing rows, preserve per-request greedy
-results, and report cache/batch telemetry. It validates recurrent state
-selection, ragged batching, and bounded prefix cache for the tested workload;
-HTTP serving and request admission are outside this script.
+命令必须退出 0、写入 pass 行、保持每个请求的 greedy 结果并输出 cache/batch
+遥测。它验证测试 workload 的循环状态选择、ragged batching 和有界 prefix cache；
+HTTP 服务和请求准入不属于这个脚本。
 
-## 6. MLX speculative verification
+## 6. MLX 投机验证
 
-The MLX runtime provides single- and batched-greedy target/draft verification.
-Before a real draft experiment, run the same-model/rejection correctness suite:
+MLX runtime 提供单条和 batch greedy 的 target/draft 验证。真实 draft 实验前，
+先运行同模型和拒绝回放正确性套件：
 
 ```bash
 PYTHONPATH=. python -m pytest tests/test_mlx_speculative.py -q
 ```
 
-On an MLX/Metal machine the tests must execute, preserve exact target greedy
-tokens through accept and replay paths, and pass. A smaller draft is useful only
-when paired timing including draft prefill beats target-only generation.
+在 MLX/Metal 机器上，这些测试必须真实执行，并在 accept/replay 路径保持精确
+target greedy token。较小 draft 只有在包含 draft prefill 的配对总时间快于
+target-only 时才有实际价值。
 
-## 7. CoreML plan and export
+## 7. CoreML 计划和导出
 
-Create and inspect a deployment plan without requiring CoreMLTools:
+不安装 CoreMLTools，先创建部署计划：
 
 ```bash
 PYTHONPATH=. python scripts/export_rwkv7_coreml.py MODEL coreml-plan \
@@ -163,10 +153,9 @@ PYTHONPATH=. python scripts/export_rwkv7_coreml.py MODEL coreml-plan \
   --deployment-target macOS15 --quantization none --dry-run
 ```
 
-The command must exit 0 and write a manifest/plan. A dry run is not a usable
-CoreML package.
+命令必须退出 0 并写出 manifest/plan。dry run 不是可用 CoreML package。
 
-On a compatible Mac with CoreMLTools installed, request a real stateful export:
+在兼容 Mac 上安装 CoreMLTools 并请求真实 stateful export：
 
 ```bash
 python -m pip install coremltools
@@ -177,14 +166,10 @@ PYTHONPATH=. python scripts/export_rwkv7_coreml.py MODEL coreml-output \
   --quantization int8 --require-coremltools
 ```
 
-Require successful package creation and runtime parity on the target device.
-INT4 quality and confirmed ANE placement remain open and must not be inferred
-from an export-only pass.
+必须生成 package，并在目标设备验证 runtime parity。INT4 质量和确认 ANE 放置
+仍未完成，不能从“导出成功”推导出来。
 
-## 8. AI execution rule
+## 8. 交给 AI 执行
 
-Tell an AI assistant which layer you want: MPS, MLX, or CoreML. It must confirm
-Apple Silicon, available memory, model size, and the existing model paths;
-request approval before conversion; run one section; and report exit code,
-exact device/runtime, generated/parity evidence, and memory. It must not convert
-a dry-run plan into a deployment claim or generalize M5 evidence to another Mac.
+统一使用 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) 的完整任务模板，选择
+“Apple MPS/MLX”或“CoreML”。本页不再维护第二套 AI 指令。

@@ -203,20 +203,8 @@ rows written to `bench/results.jsonl`. ZeRO smoke evidence must not be described
 as tensor-parallel inference evidence. One step also does not prove long-run
 convergence, checkpoint continuity, or optimizer/scheduler/RNG resume fidelity.
 
-## 5. Give one workflow to an AI assistant
+## 5. Run this with an AI assistant
 
-![AI-assisted inspect, approve, execute, and verify flow](assets/tutorials/06-ai-assisted-setup.png)
-
-Use the base prompt in [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md), then add
-exactly one task from this page. Require the assistant to:
-
-1. inspect the real GPU count and available memory;
-2. quote the exact documented command before running it;
-3. avoid a multi-GPU command when fewer than two GPUs are visible;
-4. stop at the first non-zero exit and rerun after fixing it;
-5. report command, exit code, device/model paths, and the documented PASS gate;
-6. label a one-step run as a smoke rather than production training or speed
-   evidence.
-
-Do not provide passwords, tokens, SSH keys, or private credentials for these
-local public-model workflows.
+Use the single task template in [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md)
+and select speculative decoding, multi-GPU inference, or DeepSpeed training.
+This page intentionally does not maintain a second AI prompt.

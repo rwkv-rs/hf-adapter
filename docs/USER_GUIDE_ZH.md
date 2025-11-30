@@ -11,7 +11,7 @@
   里的完整提示词发给有终端权限的 Codex、Claude Code、Cursor 等工具。
 - **已经有转换好的 HF 模型目录**：直接跳到[第 4 步](#4-生成第一段文本)。
 - **第一次生成已经成功**：打开
-  [`COMPLETE_ADAPTER_GUIDE_ZH.md`](COMPLETE_ADAPTER_GUIDE_ZH.md)，按总表选择
+  [`COMPLETE_ADAPTER_GUIDE.md`](COMPLETE_ADAPTER_GUIDE.md)，按总表选择
   缓存、训练、量化、Apple、投机解码或多卡教程。
 
 ## 完成标准
@@ -35,6 +35,8 @@
 - 全程使用仓库里的 `.venv`，不要把依赖安装到系统 Python。
 - fp16 权重大约占用每参数 2 字节，运行时还需要额外 RAM/VRAM。
 - 本文使用公开文件，不需要填写 Hugging Face token。
+
+![按系统与硬件选择 native、FLA 或 MLX](assets/tutorials/14-backend-choice.png)
 
 ## 1. 安装
 
@@ -107,11 +109,29 @@ python -m pip install -e ".[mlx]"
 [`BlinkDL/rwkv7-g1`](https://huggingface.co/BlinkDL/rwkv7-g1)。首次验证固定使用
 `rwkv7-g1d-0.4b-20260210-ctx8192.pth`，不要自行替换文件名。
 
+打开网页后先切到 **Files and versions**。只下载下面截图中约 **902 MB** 的
+`rwkv7-g1d-0.4b-20260210-ctx8192.pth`；不要点页面顶部下载整个约 107 GB 的
+仓库，也不要第一次就选 7.2B/13.3B。
+
+![Hugging Face 官方 RWKV-7 模型文件列表和单文件下载位置](assets/tutorials/11-huggingface-model-download.jpg)
+
+推荐使用下面的 `hf download` 命令，因为下载中断后再次执行同一命令可以复用
+缓存继续。必须使用浏览器时，点击准确文件名右侧的下载图标，下载完成后把文件
+移动到 `models/source/`。第一次运行建议至少预留 **3 GB** 磁盘，容纳源权重、
+转换后的 fp16 权重和临时文件。
+
 先安装下载命令：
 
 ```bash
 python -m pip install -U huggingface_hub
 ```
+
+词表来自官方 RWKV-LM 仓库的
+[`rwkv_vocab_v20230424.txt`](https://github.com/BlinkDL/RWKV-LM/blob/main/RWKV-v7/rwkv_vocab_v20230424.txt)。
+网页下载时点击文件内容上方的 **Raw** 或它旁边的下载按钮，不要把 GitHub HTML
+页面另存为 `.txt`。
+
+![GitHub 官方 RWKV-7 词表页面的 Raw 和下载按钮](assets/tutorials/12-github-tokenizer-download.jpg)
 
 ### Windows PowerShell
 
@@ -126,6 +146,12 @@ hf download BlinkDL/rwkv7-g1 rwkv7-g1d-0.4b-20260210-ctx8192.pth --local-dir mod
 
 ```powershell
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/BlinkDL/RWKV-LM/main/RWKV-v7/rwkv_vocab_v20230424.txt" -OutFile "models\source\rwkv_vocab_v20230424.txt"
+```
+
+下载后先确认两个文件都在正确目录，而且大小不是 0：
+
+```powershell
+Get-Item models\source\rwkv7-g1d-0.4b-20260210-ctx8192.pth, models\source\rwkv_vocab_v20230424.txt | Select-Object FullName, Length
 ```
 
 转换模型：
@@ -154,6 +180,14 @@ curl -L \
   -o models/source/rwkv_vocab_v20230424.txt
 ```
 
+下载后检查文件：
+
+```bash
+ls -lh \
+  models/source/rwkv7-g1d-0.4b-20260210-ctx8192.pth \
+  models/source/rwkv_vocab_v20230424.txt
+```
+
 转换模型：
 
 ```bash
@@ -165,6 +199,13 @@ python scripts/convert_rwkv7_to_hf.py \
   --attn-mode fused_recurrent \
   --no-fuse-norm
 ```
+
+![源权重、词表和转换后 HF 模型目录的放置方式](assets/tutorials/13-download-directory-layout.png)
+
+下载中断时重新执行同一条 `hf download`，不要创建第二个文件名。浏览器下载如果
+出现 `.crdownload`、`.part` 或大小持续变化，说明还没完成；不要提前转换。转换
+失败时保留 `models/source/`，先删除或改名不完整的 HF **输出目录**，修复第一处
+错误后重新运行转换命令。不要删除已经完成的源权重。
 
 ## 3. 检查转换结果
 
@@ -279,21 +320,17 @@ print(tokenizer.decode(new_tokens, skip_special_tokens=True))
 
 ## 6. 让 AI 使用
 
-如果你希望 AI 编程助手代替你安装、下载、转换并验证，请不要只说“帮我装一下”。
-打开仓库后，把 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) 中的完整提示词
-原样发给它。该提示词要求 AI：
-
-- 先实际检查系统、Python、磁盘和 GPU，不允许猜测；
-- 下载大文件前说明目标并请求确认；
-- 每一步检查退出码，失败时只处理第一个真实错误；
-- 不运行 benchmark、训练或量化任务；
-- 最后给出真实生成文本和全部验收结果。
+安装、推理、缓存、投机解码、训练、多卡、量化和 Apple 流程共用一个入口：
+[`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md)。从它的任务路由中只选择一个
+`TASK_ID`，再复制同一份完整模板。不要从本页或其他专题页拼装另一套提示词。
 
 如果你是在自己的 AI 应用中调用 RWKV-7，请使用上一节的 Transformers API，
 保留 `use_cache=True`。本仓库提供模型适配器，不提供托管聊天服务；你的应用仍需
 管理提示模板、对话历史、请求限流和模型进程。
 
 ## 常见问题
+
+![遇到失败时只定位第一处错误并重跑同一命令](assets/tutorials/15-first-error-recovery.png)
 
 - **提示缺少 `fla`**：增加 `--backend native`，或者在支持的 Linux CUDA
   环境安装 `.[cuda]`。

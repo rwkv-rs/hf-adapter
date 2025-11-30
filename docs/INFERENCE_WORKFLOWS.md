@@ -1,19 +1,16 @@
-# Inference, conversion, and cache workflows
+# 推理、转换和缓存教学
 
-This tutorial covers the HF adapter capabilities beyond first generation:
-repeatable conversion, native/no-FLA execution, loss and masks, model
-portability, recurrent-state reuse, dynamic batching, and chunked prefill.
+本教程覆盖第一次生成之外的 HF 适配能力：可复现转换、无 FLA 原生后端、
+loss 和 mask、模型保存迁移、循环状态复用、动态批处理以及分块 prefill。
 
-Chinese version: [`INFERENCE_WORKFLOWS_ZH.md`](INFERENCE_WORKFLOWS_ZH.md)
+前置条件：先完成 [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md)，并把下文的 `MODEL`
+替换成已经通过目录检查的 HF 模型路径。
 
-Prerequisite: complete [`USER_GUIDE.md`](USER_GUIDE.md) and replace `MODEL`
-below with a checked converted model directory.
+![转换、便携加载、缓存复用和 serving 验收流程](assets/tutorials/07-inference-and-cache.png)
 
-![Conversion, portable loading, cache reuse, and serving acceptance](assets/tutorials/07-inference-and-cache.png)
+## 1. 批量转换 checkpoint
 
-## 1. Convert more than one checkpoint
-
-Preview the work and create a SHA256 manifest without loading weights:
+先只枚举文件、计算 SHA256 并生成 manifest，不加载模型权重：
 
 ```bash
 python scripts/batch_convert_rwkv7_to_hf.py \
@@ -24,64 +21,56 @@ python scripts/batch_convert_rwkv7_to_hf.py \
   --max-shard-size 5GB --low-memory --dry-run
 ```
 
-Inspect `/path/to/hf-models/manifest.json`, then remove `--dry-run` to convert.
-The command passes when it exits 0, every requested entry is `converted` or an
-intentional `skipped`, and no entry is `failed`. `--force` overwrites an
-existing output and should only be used deliberately.
+检查 `/path/to/hf-models/manifest.json`，确认后删除 `--dry-run` 再正式转换。
+退出码必须为 0，每个请求项都应是 `converted` 或有意的 `skipped`，不能出现
+`failed`。`--force` 会覆盖已有输出，只能在明确需要时使用。
 
-For one checkpoint, use `convert_rwkv7_to_hf.py` as shown in the first-run
-guide. `--low-memory` lowers host RAM during conversion; it does not lower the
-RAM or VRAM required to load the converted model.
+单个模型仍使用第一次运行教程中的 `convert_rwkv7_to_hf.py`。`--low-memory`
+只降低转换过程的主机内存，不会降低加载模型所需的 RAM/VRAM。
 
-Converted directories include a snapshot of the adapter's remote-code files.
-After updating this repository, preview and then refresh only that code without
-rewriting large weights:
+转换目录中包含适配器 remote code 的快照。仓库更新后，可以先预览，再只刷新
+Python 代码，不重写大权重：
 
 ```bash
 python scripts/sync_hf_adapter_code.py MODEL --dry-run
 python scripts/sync_hf_adapter_code.py MODEL
 ```
 
-Both commands must exit 0. Back up or version a model directory before
-refreshing code that is used in production, then rerun generation and reload
-acceptance.
+两条命令都必须退出 0。生产目录刷新前先备份或纳入版本管理，刷新后重新运行
+生成和 reload 验收。
 
-## 2. Select FLA or the portable native backend
+## 2. 选择 FLA 或便携原生后端
 
-Use optimized FLA on a validated Linux NVIDIA environment:
+在已验证的 Linux NVIDIA 环境使用优化 FLA：
 
 ```bash
 python examples/generate.py --model MODEL --prompt "Hello" \
   --device cuda --dtype fp16 --backend fla --max-new-tokens 8
 ```
 
-Use the native/no-FLA backend on CPU, MPS, or CUDA without FLA:
+在 CPU、MPS 或没有 FLA 的 CUDA 环境使用原生后端：
 
 ```bash
 python examples/generate.py --model MODEL --prompt "Hello" \
   --device cpu --dtype fp32 --backend native --max-new-tokens 8
 ```
 
-The command passes when it exits 0 and prints newly generated text. Native is
-a compatibility route and an optimization host; it is not guaranteed to beat
-FLA on every card and shape.
+退出码为 0 且打印新文本才算通过。原生后端是兼容和优化承载路线，不能据此
+宣称它在所有显卡和 shape 上都快于 FLA。
 
-For direct HF API calls, set the environment variable before model loading:
+直接使用 HF API 时，要在加载模型前设置：
 
 ```python
 import os
 os.environ["RWKV7_NATIVE_MODEL"] = "1"
 
 from transformers import AutoModelForCausalLM
-
-model = AutoModelForCausalLM.from_pretrained(
-    "MODEL", trust_remote_code=True
-)
+model = AutoModelForCausalLM.from_pretrained("MODEL", trust_remote_code=True)
 ```
 
-## 3. Compute causal loss and use attention masks
+## 3. 计算 causal loss 并使用 attention mask
 
-The adapter accepts ordinary HF token batches, `attention_mask`, and `labels`:
+适配器接受标准 HF token batch、`attention_mask` 和 `labels`：
 
 ```python
 import torch
@@ -104,56 +93,50 @@ out.loss.backward()
 print("PASS", float(out.loss))
 ```
 
-Use a small model for the first backward pass. Training workflows and their
-stronger gates are in [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md).
+第一次反向传播使用小模型。更完整的训练验收见
+[`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md)。
 
-## 4. Save, reload, and run offline
+## 4. 保存、重载和离线运行
 
-HF save/reload uses the standard directory contract:
+使用标准 HF 目录合同：
 
 ```python
 model.save_pretrained("saved-model", safe_serialization=True)
 tok.save_pretrained("saved-model")
 ```
 
-Verify logits survive a save/reload round trip:
+验证保存前后 logits：
 
 ```bash
 python tests/test_reload_roundtrip.py \
   --model MODEL --device cuda --dtype fp16
 ```
 
-Success prints `PASS`. After the model is local, block network access during a
-normal generation with:
+命令必须打印 `PASS`。模型准备在本地后，可以禁止联网：
 
 ```bash
 python examples/generate.py --model saved-model --prompt "Hello" \
   --local-files-only --max-new-tokens 8
 ```
 
-## 5. Reuse recurrent state
+## 5. 复用循环状态
 
-RWKV cache is recurrent state, not a growing Transformer KV cache. Keep the
-returned object and pass it to the next token:
+RWKV cache 是固定大小的循环状态，不是不断增长的 Transformer KV cache。
+保留 forward 返回的对象并传给下一个 token：
 
 ```python
 with torch.inference_mode():
     prefill = model(**batch, use_cache=True, logits_to_keep=1)
     state = prefill.past_key_values
     next_id = prefill.logits[:, -1:].argmax(dim=-1)
-    step = model(
-        next_id,
-        past_key_values=state,
-        use_cache=True,
-        logits_to_keep=1,
-    )
+    step = model(next_id, past_key_values=state, use_cache=True, logits_to_keep=1)
 
 print(step.past_key_values.rwkv7_cache_metrics())
 ```
 
-The cache supports `clone()`, `detach()`, `select_batch()`/`batch_select()`,
-`reorder_cache()`, `reset()`, and `.to(device=...)`. For example, drop a
-finished request and offload an inactive state without modifying the original:
+cache 支持 `clone()`、`detach()`、`select_batch()`/`batch_select()`、
+`reorder_cache()`、`reset()` 和 `.to(device=...)`。例如删除已结束请求，并在不
+修改原对象的情况下 offload/restore：
 
 ```python
 keep = torch.tensor([0, 2], dtype=torch.long, device=next_id.device)
@@ -162,19 +145,18 @@ parked = active.to(device="cpu", inplace=False)
 restored = parked.to(device=next_id.device, inplace=False)
 ```
 
-Verify batch cache and row parity on the real model:
+在真实模型上验证 batch cache 和逐行一致性：
 
 ```bash
 python tests/test_batch_cache.py --model MODEL --device cuda \
   --dtype fp16 --batch-sizes 1 2 4 --prompt-tokens 64 --decode-steps 8
 ```
 
-Success prints cache telemetry followed by `PASS`.
+最后打印 `PASS` 才算通过。
 
-## 6. Dynamic batching
+## 6. 动态批处理
 
-Dynamic batching can reorder active rows and remove completed requests while
-preserving each request's recurrent state:
+动态批处理可以重排活动请求并移除已结束请求，同时保留各自的循环状态：
 
 ```bash
 python tests/test_dynamic_batch_cache.py --model MODEL --device cuda \
@@ -182,14 +164,12 @@ python tests/test_dynamic_batch_cache.py --model MODEL --device cuda \
   --modes forward fast_token
 ```
 
-Both modes must print their own `PASS`, followed by a final `PASS`. This proves
-cache select/reorder/drop semantics for the tested shape; queueing, admission,
-timeouts, and network serving remain the caller's responsibility.
+两个 mode 都要打印自己的 `PASS`，最后还要有总 `PASS`。这只证明测试 shape
+的 select/reorder/drop 语义；排队、准入、超时和网络 serving 仍由上层负责。
 
-## 7. Chunk a long prefill
+## 7. 对长 prompt 做分块 prefill
 
-The model helper carries recurrent state between prompt chunks and keeps only
-the needed logits:
+模型 helper 会在 prompt chunk 之间携带循环状态，并只保留需要的 logits：
 
 ```python
 with torch.inference_mode():
@@ -201,34 +181,29 @@ with torch.inference_mode():
     )
 ```
 
-Compare chunked and ordinary prefill before deploying a new model/card:
+新模型/新显卡部署前，先比较分块和普通 prefill：
 
 ```bash
 python tests/test_chunked_prefill.py --model MODEL --device cuda \
   --dtype fp16 --batch-size 2 --chunk-sizes 1 2 4 8
 ```
 
-Success prints per-chunk differences and `PASS`. Choose a production chunk size
-with card-local memory and throughput measurements; the smoke defaults are
-correctness probes, not tuning recommendations.
+每个 chunk 的差异输出后必须打印 `PASS`。生产 chunk size 要依据同卡内存和
+吞吐测试选择；smoke 默认值不是性能推荐。
 
-## 8. AI execution rule
+## 8. 交给 AI 执行
 
-Tell an AI assistant to read this page and run exactly one numbered section.
-It must inspect the device first, substitute an existing checked `MODEL`, quote
-the final command, stop on a non-zero exit, and report the documented pass
-marker. It must not claim that cache primitives are a production server or
-that a smoke row is a performance result.
+统一使用 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) 的完整任务模板，选择
+“转换与推理”或“缓存与分块 prefill”。本页不再维护第二套 AI 指令。
 
-## Full HF API contract gate
+## 完整 HF API 合同门槛
 
-Before publishing a newly converted or refreshed model directory, run:
+发布新转换或刚刷新过 remote code 的模型目录前，运行：
 
 ```bash
 python tests/test_hf_api_contract.py --model MODEL \
   --device cuda --dtype fp16 --attn-mode fused_recurrent
 ```
 
-Success prints `PASS` after checking fixed-vocabulary behavior, generation
-input preparation, recurrent-cache reorder/beam generation, and gradient
-checkpointing toggles.
+命令会检查固定词表行为、generation 输入准备、循环 cache 重排/beam 生成和
+gradient checkpointing 开关，最后必须打印 `PASS`。

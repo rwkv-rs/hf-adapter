@@ -12,9 +12,9 @@ For normal inference, start here instead of the benchmark sections below:
 
 - [English step-by-step guide](docs/USER_GUIDE.md)
 - [中文零基础逐步指南](docs/USER_GUIDE_ZH.md)
-- [Give the setup to an AI assistant](docs/AI_ASSISTED_SETUP.md)
+- [唯一 AI 操作入口：安装、推理、训练、量化与多卡](docs/AI_ASSISTED_SETUP.md)
 - [Visual guide: speculative decoding, training, and multi-GPU](docs/ADVANCED_USAGE.md)
-- [Complete adaptation tutorial index / 全部适配教学总表](docs/COMPLETE_ADAPTER_GUIDE_ZH.md)
+- [全部适配教学总表](docs/COMPLETE_ADAPTER_GUIDE.md)
 
 After first generation, use the complete index to find copyable tutorials for
 conversion and cache workflows, PEFT/Trainer/TRL, W8/W4, Apple MPS/MLX/CoreML,
