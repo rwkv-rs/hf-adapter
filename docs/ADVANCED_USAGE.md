@@ -15,8 +15,6 @@ These commands are short compatibility smokes. A smoke pass does not by itself
 prove a speedup, production convergence, tensor parallelism, or long-run
 stability.
 
-![First-run flow from environment creation through generated text](assets/tutorials/01-first-run.png)
-
 ## Common preflight
 
 Use a converted 0.1B or 0.4B model first. Activate the repository virtual
@@ -39,8 +37,6 @@ python -m pip install -e ".[train]"
 RWKV speculative decoding uses a draft model to propose token blocks and the
 target model to verify them. Greedy output must remain identical to normal
 target generation.
-
-![Speculative decoding draft, target verification, and exact output flow](assets/tutorials/02-speculative-decoding.png)
 
 First prove the API and correctness contract with the target also acting as the
 draft:
@@ -110,8 +106,6 @@ speed improvement. Keep the original off-the-shelf draft for an A/B control.
 Start with a short backward pass before using a real dataset. This catches
 unsupported training paths and out-of-memory conditions cheaply.
 
-![Single-GPU LoRA and HF Trainer smoke flow](assets/tutorials/03-single-gpu-training.png)
-
 Run the LoRA backward smoke:
 
 ```bash
@@ -149,8 +143,6 @@ The repository provides an HF layer-sharding smoke for the pipeline-parallel
 direction. It verifies generation across two visible CUDA devices and can
 compare against a single-device reference.
 
-![Two-GPU layer placement and generation acceptance flow](assets/tutorials/04-multi-gpu-inference.png)
-
 Linux or WSL2:
 
 ```bash
@@ -178,8 +170,6 @@ handoff may be slower for small models.
 DeepSpeed ZeRO partitions training state. ZeRO-2 partitions optimizer state and
 gradients; ZeRO-3 also partitions parameters. Run this path on Linux or WSL2
 with at least two visible CUDA GPUs.
-
-![DeepSpeed ZeRO-2 and ZeRO-3 state-sharding flow](assets/tutorials/05-multi-gpu-training.png)
 
 Validate the repository presets first:
 

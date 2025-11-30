@@ -6,8 +6,6 @@ Apple 用户可以选择三层路线：
 - **MLX**：Apple 原生循环推理、会话、动态批处理和 packed W8/W4；
 - **CoreML**：面向 macOS/iOS runtime 的部署导出原型。
 
-![MPS 兼容、MLX serving 和 CoreML 部署路线](assets/tutorials/10-apple-deployment.png)
-
 需要 Apple Silicon Mac、Python 3.10+ 和检查通过的 HF 模型。第一次用 0.1B 或
 0.4B。Intel Mac 不是 MLX 目标。
 
@@ -34,8 +32,8 @@ python tests/test_hf_rl_training_smoke.py --model MODEL \
   --device mps --train-dtype fp32 --max-steps 1 --backend both
 ```
 
-两条命令都必须以 `PASS` 结束。Apple 训练行只代表兼容，不能写成高吞吐生产
-训练推荐。
+两条命令都必须以 `PASS` 结束，表示 Apple 训练接口兼容性通过。高吞吐训练请再用
+目标模型、数据和 batch 运行配对性能验收。
 
 ## 2. 把 HF safetensors 转成 MLX 目录
 
@@ -166,10 +164,10 @@ PYTHONPATH=. python scripts/export_rwkv7_coreml.py MODEL coreml-output \
   --quantization int8 --require-coremltools
 ```
 
-必须生成 package，并在目标设备验证 runtime parity。INT4 质量和确认 ANE 放置
-仍未完成，不能从“导出成功”推导出来。
+必须生成 package，并在目标设备验证 runtime parity。使用 INT4 或指定 ANE 时，
+继续运行对应质量评估与 Core ML 运行时设备检查。
 
 ## 8. 交给 AI 执行
 
-统一使用 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) 的完整任务模板，选择
-“Apple MPS/MLX”或“CoreML”。本页不再维护第二套 AI 指令。
+需要 AI 协助时，请打开 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md)，选择
+“Apple MPS/MLX”或“CoreML”。AI 会返回完整命令、退出码和验收结果。
