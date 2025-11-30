@@ -2,6 +2,11 @@
 
 Canonical summary for Trainer, PEFT, TRL and DeepSpeed validation.
 
+For copyable PEFT, adapter round-trip, Trainer/resume, SFT/DPO/GRPO, and matrix
+commands, read [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) or
+[`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md). Multi-GPU ZeRO remains
+in [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md).
+
 ## Interface status
 
 | Workflow | Status | Validation level |

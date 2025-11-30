@@ -7,6 +7,10 @@ hardware/performance matrix is not closed.
 
 Last updated: **2026-07-16**.
 
+This page reports status. For ordinary-user commands and PASS gates for every
+implemented capability below, start with
+[`COMPLETE_ADAPTER_GUIDE.md`](COMPLETE_ADAPTER_GUIDE.md).
+
 ## Executive result
 
 | Requirement | Status | Current evidence | Remaining boundary |

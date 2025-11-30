@@ -8,6 +8,14 @@ and history.
 
 | Question | Canonical document |
 |---|---|
+| How do I install and run a model? | [`USER_GUIDE.md`](USER_GUIDE.md) / [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) |
+| Where is the tutorial for every implemented adaptation? | [`COMPLETE_ADAPTER_GUIDE.md`](COMPLETE_ADAPTER_GUIDE.md)（单一中文主索引） |
+| Can an AI assistant execute and verify any documented workflow? | [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md)（唯一 AI 操作入口） |
+| How do I use speculative decoding, training, or multiple GPUs? | [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md) / [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) |
+| How do I use conversion, native/no-FLA, cache, batching, and chunked prefill? | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) |
+| How do I use PEFT, Trainer, resume, SFT, DPO, or GRPO? | [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) |
+| How do I run W8/W4 instead of only reading quantization status? | [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md) |
+| How do I run Apple MPS, MLX, sessions, quant, or CoreML? | [`APPLE_USAGE.md`](APPLE_USAGE.md) |
 | What is done now? | [`../HF_STATUS.md`](../HF_STATUS.md) |
 | How should completion be reported? | [`../HF_STATUS.md#completion-reporting-rule`](../HF_STATUS.md#completion-reporting-rule) |
 | What still needs work? | [`../HF_TODO.md`](../HF_TODO.md) |

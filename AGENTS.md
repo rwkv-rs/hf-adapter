@@ -19,6 +19,31 @@ The active reward target is the HF/Transformers track: make RWKV-7 usable from
 standard HF APIs with near-production correctness, performance, memory behavior,
 training compatibility, quantized inference, and reproducible benchmarks.
 
+## Ordinary-user setup requests
+
+When a user asks how to install, run, or troubleshoot their first model, read
+`docs/AI_ASSISTED_SETUP.md` and `docs/USER_GUIDE_ZH.md` or
+`docs/USER_GUIDE.md` before acting. Keep that task separate from benchmark and
+kernel work. Use `examples/check_environment.py` before and after model
+conversion, request confirmation before large downloads, and do not report
+success until `examples/generate.py` exits successfully with generated text.
+For ordinary-user speculative decoding, training, quantization, Apple, or
+multi-GPU requests, use `docs/AI_ASSISTED_SETUP.md` as the only operational AI
+instruction source. Follow its task router to the relevant user tutorial, run
+only the requested workflow, enforce its PASS gate, and preserve the documented
+distinction between a compatibility smoke and production performance,
+convergence, or TP evidence.
+
+For any other user-facing adaptation, read
+`docs/COMPLETE_ADAPTER_GUIDE.md` and the
+linked topical tutorial before acting. Every new implemented or promoted
+user-facing capability must update that index and include prerequisites, a
+smallest safe example, a copyable command/API, an observable PASS gate, failure
+recovery, current limitations, and a link back to the single
+`docs/AI_ASSISTED_SETUP.md` entry. An API
+that exists only in source, tests, benchmark logs, or a PR is not considered
+documented for ordinary users.
+
 ## Current Agent Contract: Native Fused HF Backend
 
 This is the active contract for the next workers on this branch. Treat
