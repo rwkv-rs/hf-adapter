@@ -44,7 +44,7 @@ two-pair conservative gate. Conclusions and reproduction commands are in
 | 5090_blackwell_native_quant_20260704 | RTX 5090 native quant benchmark (2026-07-04) | 1 | 2 |
 | 5090_blackwell_quant_matrix_20260705 | RTX 5090 Blackwell native MM8/MM4 fresh-process quant matrix (2026-07-05) | 1 | 0 |
 | 5090_blackwell_quant_policy_20260705 | RTX 5090 native MM8/MM4 quantization policy sweep (2026-07-05) | 7 | 0 |
-| 5090_bn_tn_20260716 | RTX 5090 explicit CUDA block-N/thread-N W8/W4 sweep; 288/288 correct, no production promotion | 3 | 3 |
+| 5090_bn_tn_20260716 | RTX 5090 explicit CUDA block-N/thread-N W8/W4 sweep; 288/288 correct, 4/32 winners beat old quant, 0/32 beat FP16, no production promotion | 3 | 3 |
 | 5090_blackwell_smoke_20260704 | RTX 5090 Blackwell smoke (2026-07-04) | 0 | 3 |
 | albatross_linear_orig_layout_tune_4090_20260704 | Albatross linear_orig_layout 4090 tuning | 0 | 1 |
 | albatross_v3a_v4_4090_tune_20260703 | Albatross v3a vs v4 4090 tune smoke — 2026-07-03 | 0 | 4 |
