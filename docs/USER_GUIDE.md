@@ -11,6 +11,9 @@ Chinese version: [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md)
 - Follow this page step by step for a manual setup.
 - Give [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) to a terminal-capable AI
   assistant if you want it to perform and verify the setup.
+- After the first generation, use
+  [`COMPLETE_ADAPTER_GUIDE.md`](COMPLETE_ADAPTER_GUIDE.md) to find the tutorial
+  and PASS gate for every other implemented adaptation.
 - If you already have a converted HF model directory, skip to
   [Run generation](#3-run-generation).
 

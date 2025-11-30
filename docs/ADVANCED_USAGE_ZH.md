@@ -4,6 +4,9 @@
 投机解码、单卡训练、多卡推理和 DeepSpeed 多卡训练的可复制命令与验收标准。
 英文版见 [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md)。
 
+转换/缓存、完整训练生态、量化和 Apple 教程统一从
+[`COMPLETE_ADAPTER_GUIDE_ZH.md`](COMPLETE_ADAPTER_GUIDE_ZH.md) 进入。
+
 这些命令主要是短 smoke：通过只能证明当前路径在本机完成了指定操作，不能自动证明
 加速、生产训练收敛、原生张量并行或长期稳定性。
 
@@ -65,6 +68,35 @@ python tests/test_speculative_decode.py \
 
 较小 draft 仍需输出与 target 贪心生成一致。要声明加速，还必须在同一显卡、同一
 prompt 和生成长度上，与 target 普通生成进行配对计时。
+
+### 可选：对齐较小 draft
+
+准备 UTF-8 文本，每行一个代表性 prompt。冻结 target，只训练较小 draft，并保存
+合并后的 draft：
+
+```bash
+python scripts/train_spec_draft.py \
+  --target /path/to/target-model-hf \
+  --draft /path/to/smaller-draft-model-hf \
+  --prompts /path/to/prompts.txt \
+  --output /path/to/aligned-draft-hf \
+  --device cuda --dtype fp16 --epochs 1 --gen-tokens 64
+```
+
+训练必须退出 0、打印有限 loss 遥测和 `saved_aligned_draft`。这只是训练产物
+追踪，不是投机解码验收。继续与普通 target generation 配对测试：
+
+```bash
+python bench/bench_speculative_decode.py \
+  --target-model /path/to/target-model-hf \
+  --draft-model /path/to/aligned-draft-hf \
+  --draft-tag trained --device cuda --dtype fp16 \
+  --max-new-tokens 32 --draft-tokens 4
+```
+
+只有 `status: pass`、与 target greedy 完全一致且配对
+`speedup_vs_target_generate > 1` 时，才能写训练 draft 带来加速。保留原始
+off-the-shelf draft 作为 A/B 对照。
 
 ## 2. 单卡 PEFT LoRA 和 Trainer
 

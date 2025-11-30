@@ -32,6 +32,15 @@ For ordinary-user speculative decoding, training, or multi-GPU requests, read
 workflow, enforce its PASS gate, and preserve the documented distinction between
 a compatibility smoke and production performance, convergence, or TP evidence.
 
+For any other user-facing adaptation, read
+`docs/COMPLETE_ADAPTER_GUIDE.md` or `docs/COMPLETE_ADAPTER_GUIDE_ZH.md` and the
+linked topical tutorial before acting. Every new implemented or promoted
+user-facing capability must update that index and include prerequisites, a
+smallest safe example, a copyable command/API, an observable PASS gate, failure
+recovery, current limitations, and an evidence-based AI instruction. An API
+that exists only in source, tests, benchmark logs, or a PR is not considered
+documented for ordinary users.
+
 ## Current Agent Contract: Native Fused HF Backend
 
 This is the active contract for the next workers on this branch. Treat

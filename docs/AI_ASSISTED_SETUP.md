@@ -105,12 +105,17 @@ and process lifecycle.
 
 ## Advanced AI tasks
 
-After first generation passes, use
-[`ADVANCED_USAGE.md`](ADVANCED_USAGE.md) or
-[`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) for speculative decoding,
-single-GPU training, multi-GPU inference, and DeepSpeed ZeRO training. Give the
-assistant exactly one workflow at a time. It must check the real GPU count,
-quote the documented command, run it, and report its exit code and PASS gate.
+After first generation passes, read
+[`COMPLETE_ADAPTER_GUIDE.md`](COMPLETE_ADAPTER_GUIDE.md) or
+[`COMPLETE_ADAPTER_GUIDE_ZH.md`](COMPLETE_ADAPTER_GUIDE_ZH.md). The index maps
+every implemented adaptation to its user tutorial and PASS gate, including
+cache/dynamic batching, PEFT/Trainer/TRL, W8/W4, Apple MPS/MLX/CoreML,
+speculative decoding, and multi-GPU workflows.
+
+Give the assistant exactly one numbered workflow at a time. It must check the
+real hardware and model path, quote the documented command, run it, and report
+its exit code and exact PASS gate. It must also repeat the tutorial's stated
+boundary instead of converting a local smoke into a production claim.
 
 The assistant must call a one-step training command a compatibility smoke. It
 must not turn that result into a production convergence, speedup, tensor

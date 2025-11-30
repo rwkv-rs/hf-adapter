@@ -1,6 +1,6 @@
 # Tutorial image sources
 
-The six PNG files in this directory are deterministic 1200x675 documentation
+The ten PNG files in this directory are deterministic 1200x675 documentation
 diagrams rendered from [`source.html`](source.html). Keep commands in the images
 short; the adjacent Markdown guide is the copyable source of truth.
 
@@ -22,3 +22,7 @@ Section and output mapping:
 | `multi-gpu-inference` | `04-multi-gpu-inference.png` |
 | `multi-gpu-training` | `05-multi-gpu-training.png` |
 | `ai-assistant` | `06-ai-assisted-setup.png` |
+| `inference-cache` | `07-inference-and-cache.png` |
+| `training-ecosystem` | `08-training-ecosystem.png` |
+| `quantization` | `09-quantization-paths.png` |
+| `apple-deployment` | `10-apple-deployment.png` |
