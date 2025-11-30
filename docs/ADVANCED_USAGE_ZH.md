@@ -52,7 +52,8 @@ python tests\test_speculative_decode.py --model C:\path\to\target-model-hf --dev
 ```
 
 成功时应打印 `speculative_stats`、生成文本和 `PASS`；同模型 smoke 还应满足
-`acceptance_rate=1.0` 且没有 correction。它只证明正确性，不证明更快。
+`acceptance_rate=1.0` 且没有 correction。完成正确性检查后，再运行配对 benchmark
+确认实际加速效果。
 
 再换成同一词表、同一适配器协议的较小 RWKV-7 draft 模型：
 
@@ -157,8 +158,8 @@ $env:CUDA_VISIBLE_DEVICES="0,1"
 python tests\test_device_map_generate.py --model C:\path\to\model-hf --dtype fp16 --attn-mode fused_recurrent --max-new-tokens 4 --compare-single-device
 ```
 
-成功时打印 `PASS`。这证明测试模型的 HF 分层放置和输出一致，不代表已经实现原生
-tensor parallel；小模型还可能因为跨卡传递而变慢。
+成功时打印 `PASS`，表示测试模型的 HF 分层放置和输出一致。该路线按层分配模型；
+性能评估请同时记录单卡参考和跨卡传递开销，小模型通常优先使用单卡。
 
 ## 4. 多卡训练：DeepSpeed ZeRO-2/3
 
@@ -190,5 +191,5 @@ checkpoint 连续性或 optimizer/scheduler/RNG 完整恢复。
 
 ## 5. 交给 AI 执行
 
-统一使用 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) 的完整任务模板，选择
-“投机解码”“多卡推理”或“DeepSpeed 训练”。本页不再维护第二套 AI 指令。
+需要 AI 协助时，请打开 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md)，选择
+“投机解码”“多卡推理”或“DeepSpeed 训练”。AI 会返回完整命令、退出码和验收结果。

@@ -1,5 +1,7 @@
 # RWKV-7 HF Adapter
 
+[**English**](README.md) | [中文](README_ZH.md)
+
 Hugging Face adapter for official RWKV-7 `.pth` checkpoints, with native fused
 performance backends behind the HF-compatible public surface. Current scope is
 HF adapter delivery only: Transformers loading/generation,
@@ -14,16 +16,16 @@ For normal inference, start here instead of the benchmark sections below:
 - [中文零基础逐步指南](docs/USER_GUIDE_ZH.md)
 - [唯一 AI 操作入口：安装、推理、训练、量化与多卡](docs/AI_ASSISTED_SETUP.md)
 - [Visual guide: speculative decoding, training, and multi-GPU](docs/ADVANCED_USAGE.md)
-- [全部适配教学总表](docs/COMPLETE_ADAPTER_GUIDE.md)
+- [全功能使用指南](docs/COMPLETE_ADAPTER_GUIDE.md)
 
 After first generation, use the complete index to find copyable tutorials for
 conversion and cache workflows, PEFT/Trainer/TRL, W8/W4, Apple MPS/MLX/CoreML,
-speculative decoding, and multi-GPU execution. Each tutorial defines its own
-PASS gate and states what the result does not prove.
+speculative decoding, and multi-GPU execution. Each tutorial provides an
+observable PASS gate, recovery steps, and guidance for choosing a suitable
+model and device route.
 
-The guides define success with real environment, model-directory, and
-generation checks. They do not treat installed files as proof that the model
-runs.
+The guides verify the actual environment, model directory, and generated output
+so a first run has a clear, repeatable finish line.
 
 ```bash
 git clone https://github.com/rwkv-rs/hf-adapter.git

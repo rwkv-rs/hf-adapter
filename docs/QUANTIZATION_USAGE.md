@@ -61,8 +61,8 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 ```
 
-本仓库中的 bitsandbytes 首先是 CUDA 兼容/省内存路线。已有数据中它经常慢于
-dense fp16，加载成功不能写成速度领先。
+本仓库中的 bitsandbytes 适合 CUDA 兼容和省显存场景。追求速度时，请使用
+同显卡、同模型、同 batch 的 dense fp16 配对结果选择路线。
 
 ## 3. bitsandbytes + 原生无 FLA 模型
 
@@ -138,5 +138,5 @@ MLX 使用独立 packed runtime，不使用 bitsandbytes。转换、生成、会
 
 ## 7. 交给 AI 执行
 
-统一使用 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) 的完整任务模板并选择
-“量化验收”。本页不再维护第二套 AI 指令。
+需要 AI 协助时，请打开 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) 并选择
+“量化验收”。AI 会返回完整命令、退出码和验收结果。
