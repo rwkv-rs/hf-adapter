@@ -16,6 +16,7 @@ import torch
 import torch.nn.functional as F
 
 from rwkv7_hf.native_model import NativeRWKV7Config, NativeRWKV7ForCausalLM
+from rwkv7_hf.native_quant_mm4 import native_mm4_group_size_for_module
 
 
 def build_tiny_config(*, quantization: str | None = None, policy: str = "memory") -> NativeRWKV7Config:
@@ -104,6 +105,38 @@ def test_native_mm8_mm4_are_mutually_exclusive() -> None:
         assert "mutually exclusive" in str(exc)
     else:
         raise AssertionError("expected mutually-exclusive native quant config to fail")
+
+
+def test_native_mm4_group_size_persists_in_config() -> None:
+    for group_size in (128, 256):
+        config = build_tiny_config(quantization="mm4")
+        config.native_mm4_group_size = group_size
+        config.native_mm4_group_policy = "lm_head"
+        restored = NativeRWKV7Config.from_dict(config.to_dict())
+        assert restored.native_mm4_group_size == group_size
+        assert restored.native_mm4_group_policy == "lm_head"
+
+
+def test_native_mm4_group_policy_selects_only_requested_modules() -> None:
+    assert native_mm4_group_size_for_module("lm_head", 128, "lm_head") == 128
+    assert (
+        native_mm4_group_size_for_module(
+            "model.layers.0.ffn.key", 128, "lm_head"
+        )
+        == 0
+    )
+    assert (
+        native_mm4_group_size_for_module(
+            "model.layers.0.ffn.key", 128, "lm_head_and_key"
+        )
+        == 128
+    )
+    assert (
+        native_mm4_group_size_for_module(
+            "model.layers.0.ffn.value", 128, "lm_head_and_key"
+        )
+        == 0
+    )
 
 
 def test_native_mm_speed_policy_quantizes_lm_head_only() -> None:

@@ -62,6 +62,8 @@ class RWKV7HFAdapterConfig(_RWKV7Config):
         self.use_native_mm4 = kwargs.pop("use_native_mm4", False)
         self.native_mm4_min_params = kwargs.pop("native_mm4_min_params", 8_000_000)
         self.native_mm4_policy = kwargs.pop("native_mm4_policy", "memory")
+        self.native_mm4_group_size = kwargs.pop("native_mm4_group_size", 0)
+        self.native_mm4_group_policy = kwargs.pop("native_mm4_group_policy", "all")
         super().__init__(*args, **kwargs)
 
 
