@@ -106,7 +106,7 @@ This is a dated checkpoint. Current promoted 4090 matrices live in
   `rwkv7_hf/native_quant_torchao.py` plus quant-aware native-graph operand
   extraction in `rwkv7_hf/native_jit.py`.
 
-## RTX 5090 Marlin W4 Milestone Snapshot (2026-07-16)
+## RTX 5090 BN/TN Tensor Core W4 Milestone Snapshot (2026-07-16)
 
 - Do not restore the TorchAO-only 7.2B FFN route. It passes decode but paired
   prefill is only `0.9176x` at B1 and `0.2711x` at B8.
@@ -115,10 +115,21 @@ This is a dated checkpoint. Current promoted 4090 matrices live in
   existing TorchAO asymmetric W4 `lm_head`. The 4096-square projections stay
   dense until their own all-phase rows pass.
 - Paired prompt128/decode128 acceptance is complete for g1h 1.5B and 7.2B at
-  B1/B8. The 7.2B minimum prefill/decode speedups are `1.0835x/1.4872x`,
-  footprint is `0.5298x` BF16, final cosine is `>=0.99955124`, and same-next
-  passes. The 1.5B head-only lane also passes both phases with `0.9355x`
-  footprint.
+  B1/B8. The latest 7.2B production BN/TN route has post-audit minimum
+  prefill/decode speedups `1.0010x/1.4978x` against hot BF16, footprint
+  `0.5298x`, final cosine `>=0.99954909`, and same-next passes. The 1.5B
+  head-only lane also passes both phases with `0.9355x` footprint.
+- Physical 5090 grids are low-row internal launch
+  `BN=128/TN=8/K=128/256 threads/4 stages` and bulk internal launch
+  `BN=256/TN=8/K=64/256 threads/4 stages`. A logical GEMM may mix them (65
+  rows becomes 64+1). TN is the eight BF16 values in one 16-byte epilogue
+  store; historical Marlin `thread_n` is CTA BN, not per-writer TN. CUDA
+  validates every scheduler segment and fails closed on mismatch. The extended
+  5090 contract sweep passes 70/70 rows, including 10 mixed-grid tails.
+- FFN-key ReLU-square is an explicit ABI (`rwkv7_forward_relu2`); generic
+  `MarlinW4Linear.forward` must stay a plain Linear. Recognized FLA FFNs and
+  native graph may use the fused method. Never globally fuse `forward`, which
+  makes FLA square twice and corrupts logits.
 - Dispatch must remain fail-closed to BF16, SM120, device name containing
   `5090`, exact FFN role and exact `(16384,4096)/(4096,16384)` weight shapes.
   Do not project these defaults to 5070, Ada, Volta, Ampere, Hopper or ROCm.
@@ -126,8 +137,10 @@ This is a dated checkpoint. Current promoted 4090 matrices live in
   a local CUDA toolkit matching PyTorch. Preserve the isolated namespace
   `rwkv7_marlin_bf16` so GPTQModel can coexist in one process.
 - Canonical evidence:
-  `bench/5090_marlin_w4_hybrid_20260716/README.md` and the retained negative
-  TorchAO prefill rows under `bench/5090_torchao_w4_hybrid_20260716/`.
+  `bench/5090_bn_tn_tensorcore_20260716/README.md`; historical Marlin and
+  retained negative TorchAO rows remain under
+  `bench/5090_marlin_w4_hybrid_20260716/` and
+  `bench/5090_torchao_w4_hybrid_20260716/`.
 
 ## V100 Decode Milestone Snapshot (2026-07-10)
 

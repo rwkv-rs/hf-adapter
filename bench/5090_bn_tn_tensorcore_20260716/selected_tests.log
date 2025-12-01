@@ -1,0 +1,8 @@
+..........................                                               [100%]
+=============================== warnings summary ===============================
+../venv-rwkv5090/lib/python3.10/site-packages/torch/jit/_script.py:1488: 13 warnings
+  /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/jit/_script.py:1488: DeprecationWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+26 passed, 13 warnings in 5.38s
