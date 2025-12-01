@@ -16,6 +16,7 @@ Benchmark evidence should be read together with the rest of the documentation:
 | HF status / gaps | [`../HF_STATUS.md`](../HF_STATUS.md), [`../HF_TODO.md`](../HF_TODO.md) |
 | Acceptance status / low-level criteria | [`../docs/ACCEPTANCE.md`](../docs/ACCEPTANCE.md), [`../docs/reference/HF_CRITERIA.md`](../docs/reference/HF_CRITERIA.md) |
 | Hardware / quant / training summaries | [`../docs/HARDWARE_MATRIX.md`](../docs/HARDWARE_MATRIX.md), [`../docs/QUANTIZATION.md`](../docs/QUANTIZATION.md), [`../docs/TRAINING.md`](../docs/TRAINING.md) |
+| RTX 5090 production BN/TN W4 | [`5090_bn_tn_tensorcore_20260716/`](5090_bn_tn_tensorcore_20260716/README.md), [`../docs/performance/BN_TN_TUNING.md`](../docs/performance/BN_TN_TUNING.md) |
 | Fused performance route | [`../docs/performance/FUSED_BACKEND.md`](../docs/performance/FUSED_BACKEND.md), [`../docs/native_fused_roadmap.md`](../docs/native_fused_roadmap.md) |
 | Apple / Qwen3.5 lane | [`../docs/hardware/APPLE_PRODUCTION_CLOSE.md`](../docs/hardware/APPLE_PRODUCTION_CLOSE.md), [`../docs/hardware/APPLE_SILICON.md`](../docs/hardware/APPLE_SILICON.md) |
 | MATH500 quality lane | [`../docs/validation/math500_acceptance.md`](../docs/validation/math500_acceptance.md), [`../docs/validation/math500_accuracy_parity.md`](../docs/validation/math500_accuracy_parity.md) |
@@ -70,7 +71,7 @@ Each promoted evidence directory should state:
 |---|---|---|
 | Apple MLX/CoreML | Qwen3.5 comparison, MLX scan prefill, CoreML state contract, mobile-oriented memory/speed | `apple_*`, `bench/run_qwen35_apple_baseline.py`, `bench/compare_qwen35_apple_baseline.py`, `bench/audit_qwen35_apple_goal.py` |
 | Native fused CUDA | Albatross gap, fused recurrent/output/projection experiments | `bench/bench_native_*`, `bench/bench_fused_*`, `albatross_*`, `5090_*` |
-| Quantization | bitsandbytes W8/W4 and native mm8/mm4 policies | `bench/bench_quantization.py`, `bench/bench_native_quant_*`, `5090_blackwell_quant_*` |
+| Quantization | bitsandbytes W8/W4, native mm8/mm4, and exact-card Marlin BN/TN policies | `bench/bench_quantization.py`, `bench/bench_native_quant_*`, `bench/bench_marlin_*`, `5090_blackwell_quant_*`, `5090_bn_tn_tensorcore_20260716/` |
 | HF acceptance | generate/API/Trainer/PEFT/TRL/DeepSpeed and hardware smoke | `scripts/run_hf_acceptance.sh`, `scripts/run_hardware_smoke.sh`, `bench/run_*_hf_validation.sh` |
 | MATH500 / quality | quality and sampling variance against Albatross/HF paths | `math500_*`, `bench/eval_math500_hf.py`, `bench/run_math500_final_acceptance.py` |
 

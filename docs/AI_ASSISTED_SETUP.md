@@ -31,7 +31,7 @@
 | `trl` | SFT、DPO 或 GRPO | [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) | 所选流程 `status: pass` 或 `NATIVE ... PASS` |
 | `multi-gpu-inference` | HF `device_map` 层切分 | [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) | 至少两张可见 GPU、单卡参考一致、`PASS` |
 | `deepspeed` | ZeRO-2/ZeRO-3 smoke | [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) | 至少两张 CUDA 卡、请求的 stage 全部 `PASS`、结果行落盘 |
-| `quantization` | bnb W8/W4 或原生 MM8/MM4 | [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md) | 功能、质量、footprint、速度四类结论分别给证据 |
+| `quantization` | bnb W8/W4、原生 MM8/MM4 或 RTX 5090 BN/TN Marlin W4 | [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md) | 功能、质量、footprint、配对端到端速度四类结论分别给证据 |
 | `apple` | MPS、MLX、packed W8/W4 或 CoreML | [`APPLE_USAGE.md`](APPLE_USAGE.md) | 精确 runtime、生成/对齐、内存和所选章节通过标记 |
 
 全部适配及边界见 [`COMPLETE_ADAPTER_GUIDE.md`](COMPLETE_ADAPTER_GUIDE.md)。

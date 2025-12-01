@@ -15,6 +15,7 @@ and history.
 | How do I use conversion, native/no-FLA, cache, batching, and chunked prefill? | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) |
 | How do I use PEFT, Trainer, resume, SFT, DPO, or GRPO? | [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) |
 | How do I run W8/W4 instead of only reading quantization status? | [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md) |
+| How do I use the promoted RTX 5090 7.2B BN/TN W4 route? | [`QUANTIZATION_USAGE.md#5-rtx-5090-72b-bntn-tensor-core-w4`](QUANTIZATION_USAGE.md#5-rtx-5090-72b-bntn-tensor-core-w4) |
 | How do I run Apple MPS, MLX, sessions, quant, or CoreML? | [`APPLE_USAGE.md`](APPLE_USAGE.md) |
 | What is done now? | [`../HF_STATUS.md`](../HF_STATUS.md) |
 | How should completion be reported? | [`../HF_STATUS.md#completion-reporting-rule`](../HF_STATUS.md#completion-reporting-rule) |
@@ -67,7 +68,7 @@ match later outcomes.
 |---|---|---|
 | V100 | [`validation/V100_HF_VALIDATION.md`](validation/V100_HF_VALIDATION.md) | [`../bench/v100_production_close_20260711/README.md`](../bench/v100_production_close_20260711/README.md), [`../bench/v100_active_b1b8_20260715/README.md`](../bench/v100_active_b1b8_20260715/README.md) |
 | RTX 4090 | [`../bench/4090_validation_summary.md`](../bench/4090_validation_summary.md) | [`../bench/4090_small_bsz8_20260715/README.md`](../bench/4090_small_bsz8_20260715/README.md), [`../bench/4090_g1h_7p2_bsz8_20260715/README.md`](../bench/4090_g1h_7p2_bsz8_20260715/README.md) |
-| RTX 50 / Blackwell | [`hardware/BLACKWELL_50SERIES.md`](hardware/BLACKWELL_50SERIES.md) | [`../bench/5090_blackwell_production_close_20260712/README.md`](../bench/5090_blackwell_production_close_20260712/README.md) |
+| RTX 50 / Blackwell | [`hardware/BLACKWELL_50SERIES.md`](hardware/BLACKWELL_50SERIES.md) | [`../bench/5090_bn_tn_tensorcore_20260716/README.md`](../bench/5090_bn_tn_tensorcore_20260716/README.md), [`../bench/5090_blackwell_production_close_20260712/README.md`](../bench/5090_blackwell_production_close_20260712/README.md) |
 | A100 | [`validation/A100_HF_VALIDATION.md`](validation/A100_HF_VALIDATION.md) | [`HARDWARE_MATRIX.md`](HARDWARE_MATRIX.md) |
 | A800 | [`validation/A800_HF_VALIDATION.md`](validation/A800_HF_VALIDATION.md) | [`HARDWARE_MATRIX.md`](HARDWARE_MATRIX.md) |
 | Apple Silicon | [`hardware/APPLE_SILICON.md`](hardware/APPLE_SILICON.md) | [`hardware/APPLE_PRODUCTION_CLOSE.md`](hardware/APPLE_PRODUCTION_CLOSE.md) |
@@ -83,7 +84,7 @@ matrix and benchmark summary.
 |---|---|
 | [`BACKENDS.md`](BACKENDS.md) | Backend boundaries and rules for hardware-specific dispatch |
 | [`performance/FUSED_BACKEND.md`](performance/FUSED_BACKEND.md) | Fused fp16/quant kernel roadmap and target ladder |
-| [`performance/BN_TN_TUNING.md`](performance/BN_TN_TUNING.md) | Public BN/TN terminology, legal launch table, ratio definitions, RTX 5090 result and promotion contract |
+| [`performance/BN_TN_TUNING.md`](performance/BN_TN_TUNING.md) | Scalar negative evidence plus the promoted RTX 5090 per-launch Tensor Core BN/TN contract |
 | [`native_fused_roadmap.md`](native_fused_roadmap.md) | Native kernel/layout/DPLR architecture notes |
 | [`reference/HF_CRITERIA.md`](reference/HF_CRITERIA.md) | Low-level acceptance criteria reference |
 | [`reference/MLX_RUNTIME_ARCHITECTURE.md`](reference/MLX_RUNTIME_ARCHITECTURE.md) | MLX runtime module and session boundaries |
