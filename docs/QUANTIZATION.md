@@ -15,7 +15,7 @@ boundaries, read [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md) or
 | Apple MLX packed W8/W4 | Apple GPU inference and mobile memory lane | W4 production evidence exists on M5; broader device/shape gates remain |
 | CoreML INT8/INT4 | Apple deployment package/runtime path | Stateful correctness and INT8 evidence exist; INT4 quality/ANE placement remains open |
 
-## RTX 5090 BF16/W4 Marlin hybrid close
+## RTX 5090 production BN/TN BF16/W4 close
 
 The exact RTX 5090 g1h route now uses two complementary packed kernels under
 `torchao_w4 --policy speed`:
@@ -30,8 +30,8 @@ Paired BF16 acceptance at prompt128/decode128 passes every measured phase:
 |---|---:|---:|---:|---:|---:|
 | 1.5B | 1 | `0.9355x` | `1.0083x` | `1.0335x` | `0.99969822` |
 | 1.5B | 8 | `0.9355x` | `1.0090x` | `1.0187x` | `0.99960977` |
-| 7.2B | 1 | `0.5298x` | `1.2240x` | `1.4944x` | `0.99963725` |
-| 7.2B | 8 | `0.5298x` | `1.0835x` | `1.4872x` | `0.99955124` |
+| 7.2B | 1 | `0.5298x` | `1.0010x` | `1.5068x` | `0.99963713` |
+| 7.2B | 8 | `0.5298x` | `1.1561x` | `1.4978x` | `0.99954909` |
 
 All rows preserve the deterministic next token. The route is gated by exact
 device name, SM120 capability, BF16 dtype, module role and measured matrix
@@ -39,7 +39,12 @@ shape. It does not alter fallback dispatch on any other card. The Marlin
 extension is compiled lazily from vendored Apache-2.0 sources and currently
 requires a compatible local CUDA toolkit.
 
-Evidence: [`../bench/5090_marlin_w4_hybrid_20260716/README.md`](../bench/5090_marlin_w4_hybrid_20260716/README.md).
+The latest route asserts physical BN/TN per internal scheduler segment, uses a
+bit-exact fused FFN-key ReLU-square epilogue, and preserves plain-Linear
+semantics for generic HF callers. Its non-aligned/dynamic-row contract passes
+70/70 checks through 8192 rows on both FFN shapes, including mixed `BN=256`
+bulk plus `BN=128` tail launches. Evidence:
+[`../bench/5090_bn_tn_tensorcore_20260716/README.md`](../bench/5090_bn_tn_tensorcore_20260716/README.md).
 
 ## CPU-first native memory loading
 

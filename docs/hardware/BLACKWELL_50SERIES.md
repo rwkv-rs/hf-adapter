@@ -1,4 +1,4 @@
-### 2026-07-16 — RTX 5090 7.2B Marlin W4 closes both prefill and decode
+### 2026-07-16 — RTX 5090 7.2B production BN/TN W4 closes both phases
 
 The exact-card BF16 speed policy now replaces the 7.2B FFN key/value pair with
 group-128 Marlin W4 while retaining TorchAO asymmetric W4 for `lm_head`.
@@ -8,8 +8,8 @@ Paired prompt128/decode128 results:
 |---|---:|---:|---:|---:|---:|
 | 1.5B | 1 | `0.9355x` | `1.0083x` | `1.0335x` | `0.99969822` |
 | 1.5B | 8 | `0.9355x` | `1.0090x` | `1.0187x` | `0.99960977` |
-| 7.2B | 1 | `0.5298x` | `1.2240x` | `1.4944x` | `0.99963725` |
-| 7.2B | 8 | `0.5298x` | `1.0835x` | `1.4872x` | `0.99955124` |
+| 7.2B | 1 | `0.5298x` | `1.0010x` | `1.5068x` | `0.99963713` |
+| 7.2B | 8 | `0.5298x` | `1.1561x` | `1.4978x` | `0.99954909` |
 
 All four rows preserve the next token. The preceding TorchAO-only 7.2B route
 was retained as negative evidence because B8 prefill fell to `0.2711x`; Marlin
@@ -17,7 +17,11 @@ removes that regression while preserving the decode and memory wins. Dispatch
 is fail-closed to RTX 5090 + SM120 + BF16 + exact FFN roles/shapes, so other
 50-series and older-card policies are unchanged.
 
-Evidence: [`bench/5090_marlin_w4_hybrid_20260716`](../../bench/5090_marlin_w4_hybrid_20260716/README.md).
+The production route asserts the Tensor Core CTA/epilogue BN/TN grid per
+internal scheduler segment and uses an explicit bit-exact fused FFN-key
+ReLU-square ABI. Its expanded dynamic-row contract passes 70/70 checks through
+8192 rows across both FFN shapes, including mixed bulk/tail grids. Evidence:
+[`bench/5090_bn_tn_tensorcore_20260716`](../../bench/5090_bn_tn_tensorcore_20260716/README.md).
 
 ### 2026-07-12 — RTX 5090 batched quant + 13.3B low-memory close
 

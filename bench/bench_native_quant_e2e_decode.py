@@ -550,6 +550,10 @@ def main() -> int:
             "quantize_before_device": bool(args.quantize_before_device),
             "replaced_modules": replaced,
             "module_counts": module_counts,
+            "native_mm_kernel": getattr(model, "_rwkv7_native_mm_exact_5090_kernel", None),
+            "fused_relu2_ffn_modules": int(
+                getattr(model, "_rwkv7_native_mm_fused_relu2_ffn_modules", 0)
+            ),
             "model_footprint_mb": footprint,
             "baseline_prefill_tokps_total": round(float(baseline_prefill_tokps), 1) if baseline_prefill_tokps is not None else None,
             "baseline_decode_tokps_total": round(float(baseline_tokps), 1) if baseline_tokps is not None else None,

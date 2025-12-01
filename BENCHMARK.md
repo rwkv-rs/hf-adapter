@@ -33,7 +33,7 @@ Status vocabulary:
 | RTX 4090 | Historical 0.4B dense and W8/W4 speed lanes | 32-step greedy and cache handoff pass | decode `1.007x–1.418x` matching Albatross; bsz4 prefill `1.007x` current-session / `0.916x` historical high-water | **PASS measured lanes** |
 | RTX 5090 | 0.4B MATH500; 1.5B/2.9B/7.2B quant; 13.3B inference | pass@64 `0.38`; compression ratio `1.0`; all quant same-next | MATH summary/decode `4.336x/4.871x` committed Albatross reference; 2.9B/7.2B quant `>=0.99x` paired fp16 | **PASS artifact** |
 | RTX 5090 | 0.4B/0.8B through 7.2B/9B, B1/B8, dense/W8/W4 | 144/144 Qwen references verify full FLA plus Triton conv; 32/32 greedy checks pass; task quality is separate | raw dense prefill/decode minima `1.0226x/2.8130x`; per-active-B speed leads in all cells; W8/W4 total-latency and footprint gates pass | **PASS 8/8 batch-pairs** |
-| RTX 5090 | g1h 1.5B/7.2B BF16 versus W4, B1/B8, prompt128/decode128 | final cosine `0.99955124–0.99969822`, same-next 4/4 | 1.5B prefill/decode minima `1.0083x/1.0187x`, footprint `0.9355x`; 7.2B Marlin-FFN hybrid `1.0835x/1.4872x`, footprint `0.5298x` | **PASS 4/4 all-phase cells** |
+| RTX 5090 | g1h 1.5B/7.2B BF16 versus W4, B1/B8, prompt128/decode128 | final cosine `0.99954909–0.99969822`, same-next 4/4 | 1.5B prefill/decode minima `1.0083x/1.0187x`, footprint `0.9355x`; 7.2B post-audit production BN/TN Marlin `1.0010x/1.4978x`, footprint `0.5298x` | **PASS 4/4 all-phase cells** |
 | Apple M5 | 0.4B/1.5B selected MLX vs Qwen3.5 pairs | state/session/greedy and speculative target oracle pass | selected conservative decode/prefill/TTFT/memory gates pass | **PASS measured pairs** |
 
 ## V100 production-close

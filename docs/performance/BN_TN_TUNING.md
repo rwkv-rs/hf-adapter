@@ -8,11 +8,12 @@ interpreting the RTX 5090 JSONL files or proposing a BN/TN production policy.
 **BN and TN are useful, independent launch parameters, but the tested scalar
 CUDA W8/W4 kernel is not a production fast path.** On RTX 5090 the sweep passed
 correctness in all 288 rows, but the best candidate beat same-shape dense FP16
-in `0/32` cases. No BN/TN candidate was added to runtime dispatch.
+in `0/32` cases. No candidate from that scalar probe was added to runtime
+dispatch.
 
-The later RTX 5090 7.2B W4 speed close uses a tensor-core Marlin FFN kernel. It
-does not promote or reuse this scalar BN/TN probe. See
-[`../../bench/5090_marlin_w4_hybrid_20260716/`](../../bench/5090_marlin_w4_hybrid_20260716/README.md).
+The later RTX 5090 7.2B W4 production route uses BN/TN as physical Tensor Core
+CTA/epilogue contracts inside Marlin; it does not promote or reuse the scalar
+kernel. See the production section below and its canonical artifact.
 
 ## Terminology
 
@@ -174,5 +175,35 @@ A BN/TN candidate may enter card policy only when all of the following pass:
 5. footprint/peak-memory and quality gates;
 6. exact-card/shape/dtype dispatch with fail-closed fallback elsewhere.
 
-The 2026-07-16 RTX 5090 probe passes item 1 only. Its correct status is
-**negative performance evidence; no production dispatch promoted**.
+The scalar probe passes item 1 only. Its correct status is **negative
+performance evidence; no scalar production dispatch is promoted**.
+
+## RTX 5090 production Tensor Core route
+
+The scalar result did not end BN/TN work; it established that a serial-K scalar
+kernel was the wrong architecture. The promoted implementation keeps Marlin's
+Tensor Core accumulation and gives BN/TN explicit physical contracts:
+
+- each internal launch segment with rows `<=16`: `BN=128`, `TN=8`, K tile
+  128, 256 threads, 4 stages;
+- each internal launch segment with rows `>16`: `BN=256`, `TN=8`, K tile 64,
+  256 threads, 4 stages;
+- `TN=8` is one 16-byte `int4` epilogue store containing eight BF16 values;
+- CUDA validates expected BN/TN after forming every scheduler segment and
+  fails closed on disagreement.
+
+The per-segment distinction is required for non-aligned M. A 65-row logical
+GEMM is a 64-row `BN=256` launch plus a 1-row `BN=128` tail. The production
+contract sweep checks 35 row counts through 8192 on both 7.2B FFN shapes:
+70/70 pass, 70/70 are bit-exact against unguarded Marlin, 70/70 intentionally
+wrong BN checks fail closed, and 10 rows exercise mixed-grid tails.
+
+Historical Marlin `thread_n` means CTA output-tile width, not per-writer TN.
+Manual tile, SM-count and two-stage sweeps did not beat auto broadly, so
+production retains auto schedule selection and validates the selected grid.
+
+The exact RTX 5090 7.2B B1/B8 route also fuses FFN-key ReLU-square through an
+explicit ABI. It passes paired hot-BF16 prefill and decode, uses `0.5298x`
+footprint, preserves same-next-token output, and keeps other cards on their
+old fallback. Canonical evidence:
+[`../../bench/5090_bn_tn_tensorcore_20260716/`](../../bench/5090_bn_tn_tensorcore_20260716/README.md).
