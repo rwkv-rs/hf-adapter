@@ -1,15 +1,15 @@
 # BN/TN CUDA kernel tuning
 
-This page is the public reference for the explicit BN/TN probe. Read it before
-interpreting the RTX 5090 JSONL files or proposing a BN/TN production policy.
+This page is the public reference for explicit BN/TN tuning. Read it before
+interpreting card-local JSONL files or proposing a production policy.
 
 ## Current conclusion
 
-**BN and TN are useful, independent launch parameters, but the tested scalar
-CUDA W8/W4 kernel is not a production fast path.** On RTX 5090 the sweep passed
-correctness in all 288 rows, but the best candidate beat same-shape dense FP16
-in `0/32` cases. No candidate from that scalar probe was added to runtime
-dispatch.
+**BN and TN are useful, independent launch parameters, but promotion is
+implementation- and card-specific.** The RTX 5090 scalar CUDA W8/W4 probe is
+negative performance evidence: 288/288 rows are correct, but no case beats
+same-shape dense FP16. The separate V100 packed-W4 A16/DP4A implementation now
+has an exact-shape BN/TN table and passes three end-to-end decode profiles.
 
 The later RTX 5090 7.2B W4 production route uses BN/TN as physical Tensor Core
 CTA/epilogue contracts inside Marlin; it does not promote or reuse the scalar
@@ -56,6 +56,12 @@ candidate is retained only when `BN / TN` produces 32–1024 threads in complete
 | 256 | 8 | 32 | 1 | yes |
 
 This yields nine candidates per mode/batch/shape case.
+
+The V100 implementation uses a separate legal set because each warp or
+half-warp owns an output tile:
+`(1,1),(2,1),(4,1),(4,2),(4,4),(8,1),(8,2),(8,4),(16,1),(16,2),
+(16,4),(32,1),(32,2)`. These values must not be projected onto the RTX 5090
+scalar probe or another GPU family.
 
 ## What the benchmark measures
 
@@ -134,6 +140,39 @@ as a universal kernel even though it validates BN/TN as separate tuning axes.
 Full evidence:
 [`../../bench/5090_bn_tn_20260716/`](../../bench/5090_bn_tn_20260716/README.md).
 
+## V100 packed-W4 result (2026-07-16)
+
+Environment: Tesla V100-PCIE-32GB (`sm_70`), driver `580.159.03`, Torch
+`2.5.1+cu124`, CUDA 12.4, Triton 3.3.0 and fp16. The decode kernel uses A16 at
+B1 and dynamic A8 plus DP4A at B2/B4/B8. Rowwise and groupwise output tiles
+have independent exact `(rows,K,N)` dispatch tables.
+
+The tuning evidence contains 432 rowwise rows, 108 group128 head rows and 52
+group256 head rows. Best correct candidates beat same-shape fp16 in `35/48`,
+`11/12` and `4/4` cases respectively. Microbenchmarks are only used to choose
+tiles; promotion requires the paired end-to-end matrix below.
+
+| Model | Single config | Decode vs fp16 | Footprint | Min final cosine | Gate |
+|---|---|---:|---:|---:|---:|
+| 1.5B | memory + group128 head + fused epilogue | `1.0255x-1.1837x` | `0.5395x` | `0.99828702` | `7/7` |
+| 2.9B | speed + group256 head | `1.0111x-1.0346x` | `0.9573x` | `0.99965668` | `7/7` |
+| 7.2B | memory + group128 head | `1.0810x-1.8422x` | `0.3013x` | `0.99903870` | `7/7` |
+
+All 21 current-main cells preserve the complete timed greedy sequence and
+repeat SHA256. The weakest 1.5B B4, 2.9B B8 and 7.2B B8 cells use five
+repeats. The 1.5B route explicitly enables the fused
+ReLU-squared/residual epilogues; they remain default-off for every other route.
+Group128 was rejected for the 2.9B profile after its independent B8 result fell
+to `0.9984x`; group256 plus `(BN,TN)=(32,1)` records `1.0111x` end to end on
+the rebased code.
+
+This is primarily a cached-decode promotion. Full-memory prefill remains slow
+(`0.0716x-0.3192x` fp16 across the 1.5B/7.2B profiles), so the result must not
+be described as universal W4 or prefill production. The head-only 2.9B speed
+profile separately passes all seven prefill cells at `1.0006x-1.0603x`.
+Evidence:
+[`../../bench/v100_sm70_mm4_bntn_20260716/`](../../bench/v100_sm70_mm4_bntn_20260716/README.md).
+
 ## Reproduce
 
 ```bash
@@ -177,6 +216,10 @@ A BN/TN candidate may enter card policy only when all of the following pass:
 
 The scalar probe passes item 1 only. Its correct status is **negative
 performance evidence; no scalar production dispatch is promoted**.
+
+The V100 packed-W4 implementation passes the named cached-decode profiles;
+its group selection remains explicit and its full-memory prefill path remains
+open.
 
 ## RTX 5090 production Tensor Core route
 

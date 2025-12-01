@@ -15,6 +15,33 @@ boundaries, read [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md) or
 | Apple MLX packed W8/W4 | Apple GPU inference and mobile memory lane | W4 production evidence exists on M5; broader device/shape gates remain |
 | CoreML INT8/INT4 | Apple deployment package/runtime path | Stateful correctness and INT8 evidence exist; INT4 quality/ANE placement remains open |
 
+## V100 packed MM4 decode profiles
+
+Exact-sm70 MM4 now has production-gated cached-decode profiles for the
+official 1.5B, 2.9B and 7.2B checkpoints. The kernel uses card-local BN/TN
+tables, A16 at B1, A8/DP4A at B2/B4/B8, and optional groupwise head scales.
+
+| Model | Policy / head groups | Decode range | Footprint | Complete gate |
+|---|---|---:|---:|---:|
+| 1.5B | memory / 128 / fused epilogue | `1.0255x-1.1837x` | `0.5395x` | `7/7` |
+| 2.9B | speed / 256 / unfused | `1.0111x-1.0346x` | `0.9573x` | `7/7` |
+| 7.2B | memory / 128 / unfused | `1.0810x-1.8422x` | `0.3013x` | `7/7` |
+
+Each profile is one load-time configuration across B1/B2/B4/B8, prompt
+128/512/2048 and decode 128/512. Every row has lower model footprint, final
+cosine `>=0.998`, complete greedy equality and repeat determinism. The weakest
+cell for each profile was independently confirmed with five repeats after the
+latest-main rebase. Fused epilogues remain default-off outside the exact 1.5B
+profile.
+
+This is not a universal full-memory prefill promotion. The 1.5B/7.2B memory
+profiles trade prefill speed for footprint; the 2.9B speed profile replaces
+only `lm_head`, saves less memory, and separately passes its seven paired
+prefill cells at `1.0006x-1.0603x`. Group128 and group256 remain
+explicit opt-ins and do not change non-V100 defaults. Copyable configuration
+is in [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md); raw evidence is in
+[`../bench/v100_sm70_mm4_bntn_20260716/`](../bench/v100_sm70_mm4_bntn_20260716/README.md).
+
 ## RTX 5090 production BN/TN BF16/W4 close
 
 The exact RTX 5090 g1h route now uses two complementary packed kernels under

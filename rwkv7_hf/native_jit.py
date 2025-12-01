@@ -1704,6 +1704,9 @@ def _native_graph_ffn_up_relu2_dispatch(x: torch.Tensor, weight) -> torch.Tensor
         and ada_linear_should_use(rows, outputs, inputs)
     ):
         return torch.relu(ada_linear(x, weight)) ** 2
+    fused_quant = getattr(weight, "rwkv7_forward_relu2", None)
+    if not _graph_linear_is_dense(weight) and callable(fused_quant):
+        return fused_quant(x)
     if not _graph_linear_is_dense(weight):
         fused = getattr(weight, "rwkv7_forward_relu2", None)
         if bool(getattr(weight, "fused_relu2", False)) and callable(fused):
@@ -1734,6 +1737,9 @@ def _native_graph_ffn_down_add_dispatch(
         and ada_linear_should_use(rows, outputs, inputs)
     ):
         return residual + ada_linear(x, weight)
+    fused_quant = getattr(weight, "rwkv7_forward_add", None)
+    if not _graph_linear_is_dense(weight) and callable(fused_quant):
+        return fused_quant(x, residual)
     if not _graph_linear_is_dense(weight):
         return residual + _graph_linear_call(x, weight)
     if (
