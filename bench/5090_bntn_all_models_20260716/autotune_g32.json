@@ -1,0 +1,66 @@
+{
+  "compute_capability": [
+    12,
+    0
+  ],
+  "cuda_version": "12.8",
+  "device": "NVIDIA GeForce RTX 5090",
+  "entries": [
+    {
+      "auto_ms": 0.030206,
+      "candidate_ms": 0.028248,
+      "cosine_vs_auto": 1.0,
+      "group_size": 32,
+      "k": 2048,
+      "n": 8192,
+      "rows": 128,
+      "schedule": [
+        64,
+        128,
+        128,
+        -1,
+        -1
+      ],
+      "speedup_vs_auto": 1.06945
+    },
+    {
+      "auto_ms": 0.044859,
+      "candidate_ms": 0.03051,
+      "cosine_vs_auto": 1.0,
+      "group_size": 32,
+      "k": 8192,
+      "n": 2048,
+      "rows": 128,
+      "schedule": [
+        128,
+        64,
+        128,
+        -1,
+        -1
+      ],
+      "speedup_vs_auto": 1.465448
+    },
+    {
+      "auto_ms": 0.051293,
+      "candidate_ms": 0.041651,
+      "cosine_vs_auto": 1.0,
+      "group_size": 32,
+      "k": 10240,
+      "n": 2560,
+      "rows": 128,
+      "schedule": [
+        128,
+        64,
+        128,
+        -1,
+        -1
+      ],
+      "speedup_vs_auto": 1.23594
+    }
+  ],
+  "min_cosine": 0.99999,
+  "min_speedup": 1.02,
+  "schema_version": 1,
+  "source": "bench/5090_bntn_all_models_20260716/kernel_screen_g32.jsonl",
+  "torch_version": "2.11.0+cu128"
+}

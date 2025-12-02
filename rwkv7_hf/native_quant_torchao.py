@@ -9,6 +9,7 @@ the underlying ``aten::_weight_int4pack_mm`` CUDA contract is bf16.
 """
 from __future__ import annotations
 
+import gc
 import inspect
 import types
 
@@ -22,6 +23,24 @@ from .kernel_policy import current_kernel_policy
 
 
 TORCHAO_QUANTIZATIONS = ("torchao_w8", "torchao_w4")
+_NATIVE_QUANT_CACHE_ATTRS = (
+    "_rwkv7_native_jit_pack_cache",
+    "_rwkv7_native_graph_pack_cache",
+    "_rwkv7_native_graph_runner_cache",
+    "_rwkv7_native_prefill_graph_runner_cache",
+    "_rwkv7_native_prefill_graph_hot_runner",
+)
+
+
+def _clear_native_quant_caches(model, *, release_cuda: bool = False) -> None:
+    """Drop dense operand/graph references before or after in-place packing."""
+
+    for attr in _NATIVE_QUANT_CACHE_ATTRS:
+        if hasattr(model, attr):
+            delattr(model, attr)
+    if release_cuda and torch is not None and torch.cuda.is_available():
+        gc.collect()
+        torch.cuda.empty_cache()
 
 
 def _fla_rwkv7_ffn_forward_fused_relu2(
@@ -220,6 +239,36 @@ def torchao_quantization_available() -> bool:
     return True
 
 
+def _marlin_w4_model_profile(model, group_size: int):
+    """Return an exact-card model profile or ``None`` before target selection."""
+
+    config = getattr(model, "config", None)
+    identity = (
+        int(getattr(config, "hidden_size", 0)),
+        int(getattr(config, "intermediate_size", 0)),
+        int(getattr(config, "num_hidden_layers", 0)),
+        int(group_size),
+    )
+    if not all(identity):
+        return None
+    for module in model.modules():
+        weight = getattr(module, "weight", None)
+        device = getattr(weight, "device", None)
+        if device is None or torch.device(device).type != "cuda":
+            continue
+        try:
+            profiles = current_kernel_policy(
+                device=device, torch_module=torch
+            ).marlin_w4_model_profiles
+        except Exception:
+            return None
+        for profile in profiles:
+            if tuple(int(value) for value in profile[:4]) == identity:
+                return profile
+        return None
+    return None
+
+
 def quantize_model_torchao(
     model,
     quantization: str,
@@ -227,6 +276,8 @@ def quantize_model_torchao(
     min_params: int = 1_000_000,
     policy: str = "memory",
     group_size: int = 128,
+    quantize_head: bool | None = None,
+    marlin_skip_last_layers: int | None = None,
 ) -> int:
     """Quantize selected ``nn.Linear`` weights in place with TorchAO.
 
@@ -245,8 +296,29 @@ def quantize_model_torchao(
     policy = normalize_native_mm_policy(policy)
     quantize_, int8_weight_only, int4_weight_only = _torchao_api()
 
+    model_profile = (
+        _marlin_w4_model_profile(model, int(group_size))
+        if quantization == "torchao_w4" and policy == "speed"
+        else None
+    )
+    effective_quantize_head = (
+        bool(model_profile[4])
+        if quantize_head is None and model_profile is not None
+        else True
+        if quantize_head is None
+        else bool(quantize_head)
+    )
+    skip_last_layers = (
+        int(model_profile[5])
+        if marlin_skip_last_layers is None and model_profile is not None
+        else 0
+        if marlin_skip_last_layers is None
+        else max(0, int(marlin_skip_last_layers))
+    )
+
     targets: list[tuple[str, bool]] = []
     exact_5090_speed_targets = 0
+    num_hidden_layers = int(getattr(getattr(model, "config", None), "num_hidden_layers", 0))
     for name, module in model.named_modules():
         if not isinstance(module, torch.nn.Linear):
             continue
@@ -256,13 +328,23 @@ def quantize_model_torchao(
             min_params=int(min_params),
             policy=policy,
         )
+        if selected and not effective_quantize_head and name.lower().endswith("lm_head"):
+            selected = False
         exact_5090_speed = bool(
             quantization == "torchao_w4"
             and policy == "speed"
-            and int(group_size) == 128
+            and int(group_size) in (32, 64, 128)
             and int(module.weight.numel()) >= int(min_params)
             and _torchao_w4_5090_speed_module(name, module)
         )
+        if exact_5090_speed and skip_last_layers and num_hidden_layers:
+            parts = name.split(".")
+            try:
+                layer_index = int(parts[parts.index("layers") + 1])
+            except (ValueError, IndexError):
+                layer_index = -1
+            if layer_index >= num_hidden_layers - skip_last_layers:
+                exact_5090_speed = False
         if selected or exact_5090_speed:
             targets.append((name, exact_5090_speed))
             exact_5090_speed_targets += int(exact_5090_speed)
@@ -299,6 +381,14 @@ def quantize_model_torchao(
         from .native_quant_marlin import MarlinW4Linear
 
         marlin_linear_cls = MarlinW4Linear
+
+        # Large checkpoints can fit dense BF16 but OOM if the asymmetric
+        # TorchAO head is packed before any block payload has been released.
+        # Replace the Marlin FFN matrices first so every completed layer frees
+        # substantial dense storage before the head's temporary quant buffers
+        # are allocated.  This changes construction peak only, not dispatch.
+        targets.sort(key=lambda item: not item[1])
+        _clear_native_quant_caches(model, release_cuda=True)
 
     for name, exact_5090_speed in targets:
         module = model.get_submodule(name)
@@ -359,6 +449,13 @@ def quantize_model_torchao(
         "_rwkv7_native_mm_fused_relu2_ffn_modules",
         int(fused_relu2_ffn_modules),
     )
+    setattr(model, "_rwkv7_native_mm_group_size", int(group_size))
+    setattr(
+        model,
+        "_rwkv7_native_mm_quantized_head",
+        any(name.lower().endswith("lm_head") for name, _ in targets),
+    )
+    setattr(model, "_rwkv7_native_mm_marlin_skip_last_layers", skip_last_layers)
     setattr(
         model,
         "_rwkv7_native_mm_block_replaced_modules",
@@ -366,15 +463,7 @@ def quantize_model_torchao(
     )
     # Quantization mutates Linear weights in place. Any previously extracted
     # operand packs or captured graphs are now stale.
-    for attr in (
-        "_rwkv7_native_jit_pack_cache",
-        "_rwkv7_native_graph_pack_cache",
-        "_rwkv7_native_graph_runner_cache",
-        "_rwkv7_native_prefill_graph_runner_cache",
-        "_rwkv7_native_prefill_graph_hot_runner",
-    ):
-        if hasattr(model, attr):
-            delattr(model, attr)
+    _clear_native_quant_caches(model)
     return len(targets)
 
 

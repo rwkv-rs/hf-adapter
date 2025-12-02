@@ -47,6 +47,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--shapes", nargs="+", type=parse_shape, default=DEFAULT_SHAPES)
     parser.add_argument("--rows", nargs="+", type=int, default=DEFAULT_ROWS)
+    parser.add_argument("--group-size", type=int, choices=(32, 64, 128), default=128)
     parser.add_argument("--seed", type=int, default=20260716)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -61,7 +62,7 @@ def main() -> int:
         dense = torch.nn.Linear(k, n, bias=False, device="cuda", dtype=torch.bfloat16)
         packed = MarlinW4Linear(
             dense,
-            group_size=128,
+            group_size=args.group_size,
             fp32_reduce=False,
             production_bn_tn=True,
             fuse_relu2=n > k,
@@ -74,6 +75,7 @@ def main() -> int:
                 "rows": rows,
                 "k": k,
                 "n": n,
+                "group_size": int(args.group_size),
                 "declared_plan": packed.effective_bn_tn_plan(rows).as_dict(),
                 "device": torch.cuda.get_device_name(),
                 "compute_capability": list(torch.cuda.get_device_capability()),
