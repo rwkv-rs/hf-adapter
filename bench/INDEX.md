@@ -16,7 +16,7 @@ Generated inventory of benchmark scripts and evidence directories. Keep this fil
 | RTX 5090 | [`5090_blackwell_production_close_20260712/`](5090_blackwell_production_close_20260712/README.md) | Quant pressure, 13.3B conversion and full MATH500 pass |
 | RTX 5090 | [`5090_g1h_qwen35_b1_b8_20260715/`](5090_g1h_qwen35_b1_b8_20260715/README.md) | Current-main 0.4B/0.8B through 7.2B/9B B1/B8 matrix passes 8/8 batch-pairs and 144/144 full-FLA cells |
 | RTX 5090 | [`5090_g1h_13p3_20260715/`](5090_g1h_13p3_20260715/README.md) | Latest official g1h 13.3B load/generate plus B8 paired-fp16 MM8/MM4 speed-policy gate pass |
-| RTX 5090 | [`5090_bn_tn_tensorcore_20260716/`](5090_bn_tn_tensorcore_20260716/README.md) | g1h 7.2B B1/B8 BN/TN Tensor Core W4 passes prefill/decode, `0.5298x` footprint and correctness gates |
+| RTX 5090 | [`5090_bntn_all_models_20260716/`](5090_bntn_all_models_20260716/README.md) | g1h 1.5B/2.9B/7.2B/13.3B B1/B8 BN/TN Tensor Core W4 passes all-phase speed, `0.5298x–0.6250x` footprint and correctness gates |
 | Apple M5 | [`../docs/hardware/APPLE_PRODUCTION_CLOSE.md`](../docs/hardware/APPLE_PRODUCTION_CLOSE.md) | Selected MLX/Qwen3.5 production pairs pass |
 
 Canonical cross-platform summary: [`../BENCHMARK.md`](../BENCHMARK.md) and
@@ -46,6 +46,7 @@ two-pair conservative gate. Conclusions and reproduction commands are in
 | 5090_blackwell_native_quant_20260704 | RTX 5090 native quant benchmark (2026-07-04) | 1 | 2 |
 | 5090_blackwell_quant_matrix_20260705 | RTX 5090 Blackwell native MM8/MM4 fresh-process quant matrix (2026-07-05) | 1 | 0 |
 | 5090_blackwell_quant_policy_20260705 | RTX 5090 native MM8/MM4 quantization policy sweep (2026-07-05) | 7 | 0 |
+| 5090_bntn_all_models_20260716 | RTX 5090 g1h 1.5B/2.9B/7.2B/13.3B production BN/TN W4 model matrix plus 0.4B rejection, automatic-profile smokes and grid/autotune evidence | 13 | 0 |
 | 5090_bn_tn_20260716 | RTX 5090 explicit CUDA block-N/thread-N W8/W4 sweep; 288/288 correct, 4/32 winners beat old quant, 0/32 beat FP16, no production promotion | 3 | 3 |
 | 5090_bn_tn_tensorcore_20260716 | RTX 5090 production BN/TN Tensor Core W4; B1/B8 all-phase close plus 70/70 per-launch contract checks | 10 | 2 |
 | 5090_blackwell_smoke_20260704 | RTX 5090 Blackwell smoke (2026-07-04) | 0 | 3 |

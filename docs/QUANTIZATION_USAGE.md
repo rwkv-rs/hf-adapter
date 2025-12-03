@@ -183,12 +183,12 @@ python tests/test_native_mm8_persist.py --model MODEL
 第一条打印 `NATIVE QUANT CONFIG PASS`；第二条打印 `PASS`，并检查重载后的
 MM8 模块和 cosine。持久化 config 会在重载时重新打包符合条件的 Linear。
 
-## 5. RTX 5090 7.2B BN/TN Tensor Core W4
+## 5. RTX 5090 g1h BN/TN Tensor Core W4
 
-官方 g1h 7.2B BF16 模型在 RTX 5090 上可以使用已晋升的推理路径。先把 BF16
-模型放到 CUDA，再调用 TorchAO W4 的 `speed` policy；精确的 5090 FFN
-角色/shape 会自动进入 Marlin Tensor Core BN/TN，`lm_head` 继续使用 TorchAO
-W4。不要手工指定 BN/TN：运行时会按内部 row segment 自动选择并 fail-close。
+官方 g1h 1.5B、2.9B、7.2B 和 13.3B BF16 模型在 RTX 5090 上可以使用已晋升
+的推理路径。先把 BF16 模型放到 CUDA，再调用 TorchAO W4 的 `speed` policy；
+运行时按模型自动选择 Marlin FFN、`lm_head` 和保留的高敏感层。不要手工指定
+BN/TN 或 layer exception。
 
 ```python
 import torch
@@ -215,6 +215,18 @@ assert model._rwkv7_native_mm_exact_5090_kernel == "bntn_marlin_bf16_w4"
 assert model._rwkv7_native_mm_fused_relu2_ffn_modules == 32
 ```
 
+默认 profile：
+
+| 模型 | 自动配置 | 替换模块数 |
+|---|---|---:|
+| g1h 1.5B | dense head，最后一个 FFN 保持 BF16 | 46 |
+| g1h 2.9B | dense head，全部 32 个 FFN 使用 Marlin | 64 |
+| g1h 7.2B | TorchAO W4 head，全部 32 个 FFN 使用 Marlin | 65 |
+| g1h 13.3B | TorchAO W4 head，最后一个 FFN 保持 BF16 | 121 |
+
+这些差异来自配对质量门，不是临时手工配置。直接调用上面的 API 时会根据
+hidden/intermediate/layer count 自动选择。
+
 首次使用会通过 PyTorch extension cache 编译 vendored Marlin CUDA 源码，需要与
 PyTorch 匹配的本地 CUDA toolkit。该路径仅用于推理。RTX 5090/SM120、BF16、
 group128、精确 FFN 角色/shape 任一不匹配时，不会误入这条生产 kernel。
@@ -237,10 +249,16 @@ python bench/bench_native_quant_e2e_decode.py \
   --results /tmp/rwkv7_5090_bntn_w4.jsonl
 ```
 
-最终配对结果：B1 prefill/decode `1.0010x/1.5068x`，独立 B1 九次复测
-`1.0024x/1.5062x`；B8 为 `1.1561x/1.4978x`；footprint `0.5298x`，
-最低 final cosine `0.99954909`，next-token 一致。原始证据：
-[`../bench/5090_bn_tn_tensorcore_20260716/`](../bench/5090_bn_tn_tensorcore_20260716/README.md)。
+四档 g1h 模型的 B1/B8 prefill、decode、footprint、prompt/final cosine 和
+next-token 均通过精确验收。最紧的 prefill 是 7.2B B1 `1.0010x`，最紧的
+decode 是 1.5B B1 `1.1854x`，最大 footprint 是 1.5B `0.6250x`，最低新增
+prompt/final cosine 是 13.3B B8 `0.99955201/0.99955237`。原始证据：
+[`../bench/5090_bntn_all_models_20260716/`](../bench/5090_bntn_all_models_20260716/README.md)。
+
+需要为新的 shape 做实验时，先运行 `bench/bench_marlin_bn_tn.py`，再用
+`bench/build_marlin_autotune_profile.py` 生成精确 GPU/runtime JSON。只有显式设置
+`RWKV7_MARLIN_AUTOTUNE_PROFILE` 才会读取该文件；未知或版本不匹配的 profile
+自动回退，不会改动生产默认值。
 
 ## 6. 如何验收或否决量化路线
 

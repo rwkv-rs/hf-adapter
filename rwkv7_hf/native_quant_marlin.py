@@ -8,9 +8,9 @@ toolkit compatible with the installed PyTorch build; subsequent processes use
 PyTorch's extension cache.
 
 This module deliberately exposes a small contract: symmetric GPTQ-style W4,
-group size 128, BF16 activations, and inference only.  Hardware selection stays
-in ``native_quant_torchao`` so an unmeasured card cannot enter this path merely
-because it can compile the kernel.
+group sizes 32/64/128, BF16 activations, and inference only. Hardware selection
+stays in ``native_quant_torchao`` so an unmeasured card cannot enter this path
+merely because it can compile the kernel.
 """
 from __future__ import annotations
 
@@ -246,8 +246,8 @@ class MarlinW4Linear(torch.nn.Module):
             raise ValueError("Marlin W4 requires a CUDA-resident Linear")
         if linear.weight.dtype != torch.bfloat16:
             raise ValueError("Marlin W4 currently requires BF16 weights and activations")
-        if int(group_size) != 128:
-            raise ValueError("the measured RWKV7 Marlin route currently requires group_size=128")
+        if int(group_size) not in (32, 64, 128):
+            raise ValueError("RWKV7 Marlin W4 requires group_size 32, 64, or 128")
         load_marlin_bf16_extension()
 
         self.in_features = int(linear.in_features)
@@ -257,6 +257,15 @@ class MarlinW4Linear(torch.nn.Module):
         self.schedule = _normalize_marlin_schedule(schedule)
         self.production_bn_tn = bool(production_bn_tn)
         self.fused_relu2 = bool(fuse_relu2)
+        from .marlin_autotune import schedules_for_linear
+
+        self.autotune_schedules = schedules_for_linear(
+            device=linear.weight.device,
+            in_features=self.in_features,
+            out_features=self.out_features,
+            group_size=self.group_size,
+            torch_module=torch,
+        )
         if self.fused_relu2 and linear.bias is not None:
             raise ValueError("fused ReLU2 requires a bias-free Linear")
         qweight, scales = _pack_symmetric_w4(linear.weight.detach(), group_size=self.group_size)
@@ -289,13 +298,19 @@ class MarlinW4Linear(torch.nn.Module):
         fuse_relu2: bool = False,
     ):
         op = getattr(torch.ops, _MARLIN_NAMESPACE).gptq_marlin_gemm_bf16
-        thread_k, thread_n, num_threads, sms, stages = (
+        profile_schedule = self.autotune_schedules.get(int(x2.shape[0]))
+        normalized_schedule = (
             self.schedule
+            if schedule is None and profile_schedule is None
+            else profile_schedule
             if schedule is None
             else _normalize_marlin_schedule(schedule)
         )
+        thread_k, thread_n, num_threads, sms, stages = normalized_schedule
         if expected_bn_tn is None:
-            if self.production_bn_tn:
+            if self.production_bn_tn and profile_schedule is not None and schedule is None:
+                expected_bn, expected_tn = int(profile_schedule[1]), 8
+            elif self.production_bn_tn:
                 # -2 asks CUDA to validate BN after each internal row segment
                 # has been formed. A logical GEMM can contain both a BN=256
                 # bulk launch and a BN=128 low-row tail launch.
@@ -374,6 +389,7 @@ class MarlinW4Linear(torch.nn.Module):
         return (
             f"in={self.in_features}, out={self.out_features}, "
             f"group_size={self.group_size}, schedule={self.schedule}, "
+            f"autotune_rows={tuple(sorted(self.autotune_schedules))}, "
             f"production_bn_tn={self.production_bn_tn}, fused_relu2={self.fused_relu2}, "
             "bf16_w4_marlin"
         )

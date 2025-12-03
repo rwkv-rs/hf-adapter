@@ -1,27 +1,32 @@
-### 2026-07-16 — RTX 5090 7.2B production BN/TN W4 closes both phases
+### 2026-07-16 — RTX 5090 g1h production BN/TN W4 model matrix
 
-The exact-card BF16 speed policy now replaces the 7.2B FFN key/value pair with
-group-128 Marlin W4 while retaining TorchAO asymmetric W4 for `lm_head`.
-Paired prompt128/decode128 results:
+The exact-card BF16 speed policy now selects model-specific group-128 Marlin
+W4 FFN coverage, head policy and sensitive final-layer exception. Paired
+prompt128/decode128 results:
 
 | Model | Batch | footprint/BF16 | prefill/BF16 | decode/BF16 | final cosine |
 |---|---:|---:|---:|---:|---:|
-| 1.5B | 1 | `0.9355x` | `1.0083x` | `1.0335x` | `0.99969822` |
-| 1.5B | 8 | `0.9355x` | `1.0090x` | `1.0187x` | `0.99960977` |
+| 1.5B | 1 | `0.6250x` | `1.2788x` | `1.1854x` | `0.99984407` |
+| 1.5B | 8 | `0.6250x` | `1.0097x` | `1.2133x` | `0.99975127` |
+| 2.9B | 1 | `0.5776x` | `1.0092x` | `1.2222x` | `0.99965632` |
+| 2.9B | 8 | `0.5776x` | `1.0116x` | `1.2894x` | `0.99958199` |
 | 7.2B | 1 | `0.5298x` | `1.0010x` | `1.5068x` | `0.99963713` |
 | 7.2B | 8 | `0.5298x` | `1.1561x` | `1.4978x` | `0.99954909` |
+| 13.3B | 1 | `0.5347x` | `1.0153x` | `1.4957x` | `0.99966073` |
+| 13.3B | 8 | `0.5347x` | `1.1549x` | `1.4670x` | `0.99955237` |
 
-All four rows preserve the next token. The preceding TorchAO-only 7.2B route
+All eight rows preserve the next token. The preceding TorchAO-only 7.2B route
 was retained as negative evidence because B8 prefill fell to `0.2711x`; Marlin
 removes that regression while preserving the decode and memory wins. Dispatch
-is fail-closed to RTX 5090 + SM120 + BF16 + exact FFN roles/shapes, so other
-50-series and older-card policies are unchanged.
+is fail-closed to RTX 5090 + SM120 + BF16 + exact model/FFN roles/shapes, so
+0.4B, other 50-series and older-card policies are unchanged.
 
 The production route asserts the Tensor Core CTA/epilogue BN/TN grid per
 internal scheduler segment and uses an explicit bit-exact fused FFN-key
-ReLU-square ABI. Its expanded dynamic-row contract passes 70/70 checks through
-8192 rows across both FFN shapes, including mixed bulk/tail grids. Evidence:
-[`bench/5090_bn_tn_tensorcore_20260716`](../../bench/5090_bn_tn_tensorcore_20260716/README.md).
+ReLU-square ABI. Its expanded group-128 contract passes 280/280 checks through
+8192 rows across eight FFN directions; experimental group-32 passes 48/48.
+Evidence:
+[`bench/5090_bntn_all_models_20260716`](../../bench/5090_bntn_all_models_20260716/README.md).
 
 ### 2026-07-12 — RTX 5090 batched quant + 13.3B low-memory close
 

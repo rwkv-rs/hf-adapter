@@ -50,6 +50,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--shapes", nargs="+", type=parse_shape, required=True)
     parser.add_argument("--rows", nargs="+", type=int, default=(1, 8, 128, 1024))
+    parser.add_argument("--group-size", type=int, choices=(32, 64, 128), default=128)
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--runs", type=int, default=50)
     parser.add_argument("--repeats", type=int, default=7)
@@ -64,7 +65,7 @@ def main() -> int:
         linear = torch.nn.Linear(k, n, bias=False, device="cuda", dtype=torch.bfloat16)
         packed = MarlinW4Linear(
             linear,
-            group_size=128,
+            group_size=args.group_size,
             fp32_reduce=False,
             production_bn_tn=True,
             fuse_relu2=True,
@@ -97,6 +98,7 @@ def main() -> int:
                 "rows": int(rows),
                 "k": int(k),
                 "n": int(n),
+                "group_size": int(args.group_size),
                 "block_n": int(grid.block_n),
                 "thread_n": int(grid.thread_n),
                 "tile_k": int(grid.tile_k),
