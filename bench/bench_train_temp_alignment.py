@@ -64,6 +64,39 @@ def save_safetensors_atomic(tensors: dict[str, torch.Tensor], path: str | Path) 
     os.replace(temporary, output)
 
 
+def _make_token_tensor(
+    *,
+    generator: torch.Generator,
+    prefix_shape: tuple[int, ...],
+    seq_len: int,
+    vocab_size: int,
+    pattern: str,
+    active_vocab_size: int | None,
+) -> torch.Tensor:
+    active_vocab = int(active_vocab_size or vocab_size)
+    if active_vocab <= 1 or active_vocab > vocab_size:
+        raise ValueError("active_vocab_size must be in [2, vocab_size]")
+    if pattern == "random":
+        return torch.randint(
+            low=0,
+            high=active_vocab,
+            size=(*prefix_shape, int(seq_len) + 1),
+            dtype=torch.long,
+            generator=generator,
+        )
+    if pattern == "increment":
+        starts = torch.randint(
+            low=0,
+            high=active_vocab,
+            size=(*prefix_shape, 1),
+            dtype=torch.long,
+            generator=generator,
+        )
+        offsets = torch.arange(int(seq_len) + 1, dtype=torch.long)
+        return (starts + offsets) % active_vocab
+    raise ValueError(f"unsupported token pattern: {pattern}")
+
+
 def make_deterministic_batch(
     output: str | Path,
     *,
@@ -71,6 +104,8 @@ def make_deterministic_batch(
     batch_size: int,
     seq_len: int,
     seed: int,
+    pattern: str = "random",
+    active_vocab_size: int | None = None,
 ) -> dict[str, Any]:
     if vocab_size <= 1:
         raise ValueError("vocab_size must be greater than one")
@@ -78,12 +113,13 @@ def make_deterministic_batch(
         raise ValueError("batch_size and seq_len must be positive")
     generator = torch.Generator(device="cpu")
     generator.manual_seed(int(seed))
-    tokens = torch.randint(
-        low=0,
-        high=int(vocab_size),
-        size=(int(batch_size), int(seq_len) + 1),
-        dtype=torch.long,
+    tokens = _make_token_tensor(
         generator=generator,
+        prefix_shape=(int(batch_size),),
+        seq_len=seq_len,
+        vocab_size=vocab_size,
+        pattern=pattern,
+        active_vocab_size=active_vocab_size,
     )
     output = Path(output)
     save_safetensors_atomic(
@@ -97,6 +133,8 @@ def make_deterministic_batch(
         "batch_size": int(batch_size),
         "seq_len": int(seq_len),
         "seed": int(seed),
+        "pattern": pattern,
+        "active_vocab_size": int(active_vocab_size or vocab_size),
         "content_sha256": sha256_file(output),
         "path": str(output),
     }
@@ -110,17 +148,20 @@ def make_deterministic_sequence(
     seq_len: int,
     steps: int,
     seed: int,
+    pattern: str = "random",
+    active_vocab_size: int | None = None,
 ) -> dict[str, Any]:
     if steps <= 0:
         raise ValueError("steps must be positive")
     generator = torch.Generator(device="cpu")
     generator.manual_seed(int(seed))
-    tokens = torch.randint(
-        low=0,
-        high=int(vocab_size),
-        size=(int(steps), int(batch_size), int(seq_len) + 1),
-        dtype=torch.long,
+    tokens = _make_token_tensor(
         generator=generator,
+        prefix_shape=(int(steps), int(batch_size)),
+        seq_len=seq_len,
+        vocab_size=vocab_size,
+        pattern=pattern,
+        active_vocab_size=active_vocab_size,
     )
     output = Path(output)
     save_safetensors_atomic(
@@ -135,6 +176,8 @@ def make_deterministic_sequence(
         "seq_len": int(seq_len),
         "steps": int(steps),
         "seed": int(seed),
+        "pattern": pattern,
+        "active_vocab_size": int(active_vocab_size or vocab_size),
         "content_sha256": sha256_file(output),
         "path": str(output),
     }
@@ -1147,6 +1190,8 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--batch-size", type=int, default=1)
     batch.add_argument("--seq-len", type=int, default=16)
     batch.add_argument("--seed", type=int, default=42)
+    batch.add_argument("--pattern", choices=["random", "increment"], default="random")
+    batch.add_argument("--active-vocab-size", type=int)
 
     sequence = subparsers.add_parser("make-sequence")
     sequence.add_argument("--output", required=True)
@@ -1156,6 +1201,8 @@ def build_parser() -> argparse.ArgumentParser:
     sequence.add_argument("--seq-len", type=int, default=16)
     sequence.add_argument("--steps", type=int, required=True)
     sequence.add_argument("--seed", type=int, required=True)
+    sequence.add_argument("--pattern", choices=["random", "increment"], default="random")
+    sequence.add_argument("--active-vocab-size", type=int)
 
     compare = subparsers.add_parser("compare")
     compare.add_argument("--reference-json", required=True)
@@ -1263,6 +1310,8 @@ def main() -> int:
             batch_size=args.batch_size,
             seq_len=args.seq_len,
             seed=args.seed,
+            pattern=args.pattern,
+            active_vocab_size=args.active_vocab_size,
         )
         if args.metadata:
             write_json_atomic(args.metadata, metadata)
@@ -1276,6 +1325,8 @@ def main() -> int:
             seq_len=args.seq_len,
             steps=args.steps,
             seed=args.seed,
+            pattern=args.pattern,
+            active_vocab_size=args.active_vocab_size,
         )
         if args.metadata:
             write_json_atomic(args.metadata, metadata)

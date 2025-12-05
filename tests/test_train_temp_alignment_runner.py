@@ -69,6 +69,26 @@ def test_make_deterministic_sequence_is_shifted_and_repeatable(tmp_path: Path) -
     assert first_meta["content_sha256"] == second_meta["content_sha256"]
 
 
+def test_increment_sequence_is_learnable_and_vocab_bounded(tmp_path: Path) -> None:
+    output = tmp_path / "increment.safetensors"
+    metadata = make_deterministic_sequence(
+        output,
+        vocab_size=65536,
+        active_vocab_size=256,
+        pattern="increment",
+        batch_size=2,
+        seq_len=16,
+        steps=3,
+        seed=101,
+    )
+    tensors = load_file(output)
+    expected = (tensors["input_ids"] + 1) % 256
+    assert torch.equal(expected, tensors["targets"])
+    assert int(tensors["targets"].max()) < 256
+    assert metadata["pattern"] == "increment"
+    assert metadata["active_vocab_size"] == 256
+
+
 def test_learning_rate_matches_train_temp_cosine_and_warmup_shape() -> None:
     initial = _learning_rate_at_step(
         0,
