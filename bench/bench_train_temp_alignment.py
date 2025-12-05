@@ -212,6 +212,7 @@ def _capture_summary(result: dict[str, Any]) -> dict[str, Any]:
             "runtime_s",
             "raw_grad_norm",
             "clip_returned_grad_norm",
+            "post_step_loss",
             "snapshot_tensor_count",
             "snapshot_sha256",
             "gpu_name",
@@ -242,6 +243,7 @@ def _capture_training_phase(
     beta2: float,
     adam_eps: float,
     grad_clip: float,
+    optimizer_name: str,
     source_commit: str | None,
 ) -> dict[str, Any]:
     if phase not in {"forward", "backward", "step"}:
@@ -270,17 +272,37 @@ def _capture_training_phase(
         group["lr"] = float(learning_rate) * float(group["my_lr_scale"])
     group_metadata = _optimizer_groups_metadata(groups, parameter_name_normalizer)
     optimizer = None
+    optimizer_version = None
     before: dict[str, torch.Tensor] = {}
     if phase == "step":
-        optimizer = torch.optim.AdamW(
-            groups,
-            lr=float(learning_rate),
-            betas=(float(beta1), float(beta2)),
-            eps=float(adam_eps),
-            weight_decay=0.0,
-            foreach=False,
-            fused=False,
-        )
+        if optimizer_name == "fused_adam":
+            import deepspeed
+            from deepspeed.ops.adam import FusedAdam
+
+            optimizer = FusedAdam(
+                groups,
+                lr=float(learning_rate),
+                betas=(float(beta1), float(beta2)),
+                eps=float(adam_eps),
+                weight_decay=0.0,
+                bias_correction=True,
+                adam_w_mode=True,
+                amsgrad=False,
+            )
+            optimizer_version = str(deepspeed.__version__)
+        elif optimizer_name == "torch_adamw":
+            optimizer = torch.optim.AdamW(
+                groups,
+                lr=float(learning_rate),
+                betas=(float(beta1), float(beta2)),
+                eps=float(adam_eps),
+                weight_decay=0.0,
+                foreach=False,
+                fused=False,
+            )
+            optimizer_version = str(torch.__version__)
+        else:
+            raise ValueError(f"unsupported optimizer: {optimizer_name}")
         before = {
             name: parameter.detach().to(device="cpu", dtype=torch.float32).clone()
             for name, parameter in named_parameters
@@ -297,6 +319,7 @@ def _capture_training_phase(
     snapshot: dict[str, torch.Tensor] = {"logits": logits.detach()}
     raw_grad_norm = None
     clipped_grad_norm = None
+    post_step_loss = None
     if phase in {"backward", "step"}:
         loss.backward()
         raw_gradient_tensors = {
@@ -323,6 +346,11 @@ def _capture_training_phase(
                 if parameter.requires_grad
             }
             snapshot.update(normalizer(deltas, "delta::"))
+            with torch.no_grad():
+                post_outputs = model(input_ids)
+                post_logits = post_outputs.logits if hasattr(post_outputs, "logits") else post_outputs
+                post_step_loss = float(loss_fn(post_logits, targets).detach().float().item())
+                snapshot["post_step_logits"] = post_logits.detach()
     if device.startswith("cuda"):
         torch.cuda.synchronize()
     runtime_s = time.perf_counter() - started
@@ -343,8 +371,10 @@ def _capture_training_phase(
         "runtime_s": runtime_s,
         "raw_grad_norm": raw_grad_norm,
         "clip_returned_grad_norm": clipped_grad_norm,
+        "post_step_loss": post_step_loss,
         "grad_clip": float(grad_clip),
-        "optimizer": "torch.optim.AdamW recipe oracle" if phase == "step" else None,
+        "optimizer": optimizer_name if phase == "step" else None,
+        "optimizer_version": optimizer_version,
         "optimizer_groups": group_metadata,
         "betas": [float(beta1), float(beta2)],
         "adam_eps": float(adam_eps),
@@ -458,6 +488,7 @@ def capture_official(args) -> dict[str, Any]:
         beta2=args.beta2,
         adam_eps=args.adam_eps,
         grad_clip=args.grad_clip,
+        optimizer_name=args.optimizer,
         source_commit=_git_commit(args.official_checkout),
     )
 
@@ -498,6 +529,7 @@ def capture_hf(args) -> dict[str, Any]:
         beta2=args.beta2,
         adam_eps=args.adam_eps,
         grad_clip=args.grad_clip,
+        optimizer_name=args.optimizer,
         source_commit=_git_commit(Path(__file__).resolve().parents[1]),
     )
 
@@ -567,6 +599,8 @@ def compare_artifacts(
     failures: list[str] = []
     optimizer_groups_match = None
     if phase == "step":
+        if reference.get("optimizer") != candidate.get("optimizer"):
+            failures.append("optimizer mismatch")
         optimizer_groups_match = _optimizer_group_contract(reference) == _optimizer_group_contract(
             candidate
         )
@@ -612,6 +646,8 @@ def compare_artifacts(
         "max_relative_l2_target": float(max_relative_l2),
         "max_loss_relative_diff_target": float(max_loss_relative_diff),
         "optimizer_groups_match": optimizer_groups_match,
+        "reference_optimizer": reference.get("optimizer"),
+        "candidate_optimizer": candidate.get("optimizer"),
         "worst_cosine": (
             min(float(row["cosine"]) for row in comparable_metrics)
             if comparable_metrics
@@ -674,6 +710,11 @@ def build_parser() -> argparse.ArgumentParser:
         capture.add_argument("--beta2", type=float, default=0.99)
         capture.add_argument("--adam-eps", type=float, default=1.0e-18)
         capture.add_argument("--grad-clip", type=float, default=1.0)
+        capture.add_argument(
+            "--optimizer",
+            choices=["fused_adam", "torch_adamw"],
+            default="fused_adam",
+        )
 
     official = subparsers.add_parser("capture-official")
     add_capture_arguments(official)
