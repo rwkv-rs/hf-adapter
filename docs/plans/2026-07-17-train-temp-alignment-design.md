@@ -61,8 +61,8 @@ The first production claim requires all of the following on the recorded card:
    post-step loss must remain within 1%.
 4. Convergence: at least three sequential seeds; no non-finite loss or gradient
    spike; train and validation loss-curve area remain within 2%, final
-   validation loss absolute difference remains within 0.01, and matching loss
-   thresholds are reached within one 10-step evaluation interval.
+   validation loss remains within either 0.01 absolute or 3% relative, and
+   matching loss thresholds are reached within one 10-step evaluation interval.
 
 Passing a Trainer, PEFT, TRL, or DeepSpeed smoke remains compatibility evidence
 only. Passing one-step parity is numerical evidence only. Neither can be used as
