@@ -474,7 +474,6 @@ def _capture_training_phase(
         "grad_clip": float(grad_clip),
         "optimizer": optimizer_name if phase == "step" else None,
         "optimizer_version": optimizer_version,
-        "eval_interval": int(eval_interval),
         "optimizer_groups": group_metadata,
         "betas": [float(beta1), float(beta2)],
         "adam_eps": float(adam_eps),
@@ -666,6 +665,7 @@ def _run_convergence(
         "grad_clip": float(grad_clip),
         "optimizer": optimizer_name,
         "optimizer_version": optimizer_version,
+        "eval_interval": int(eval_interval),
         "optimizer_groups": group_metadata,
         "train_curve": train_curve,
         "validation_curve": validation_curve,
@@ -710,8 +710,8 @@ def make_official_init(
     metadata_path: str | Path,
     seed: int,
 ) -> dict[str, Any]:
-    official = _load_official_module(checkout)
     config = _load_official_config(config_path)
+    official = _load_official_module(checkout)
     _seed_everything(seed)
     model = official.RWKV(config)
     state = model.generate_init_weight()
@@ -737,8 +737,8 @@ def make_official_init(
 def capture_official(args) -> dict[str, Any]:
     from scripts.convert_rwkv7_to_hf import translate_name
 
-    official = _load_official_module(args.official_checkout)
     config = _load_official_config(args.official_config)
+    official = _load_official_module(args.official_checkout)
     model = official.RWKV(config)
     state = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
     model.load_state_dict(state, strict=True)
@@ -826,8 +826,8 @@ def capture_hf(args) -> dict[str, Any]:
 def converge_official(args) -> dict[str, Any]:
     from scripts.convert_rwkv7_to_hf import translate_name
 
-    official = _load_official_module(args.official_checkout)
     config = _load_official_config(args.official_config)
+    official = _load_official_module(args.official_checkout)
     model = official.RWKV(config)
     state = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
     model.load_state_dict(state, strict=True)
