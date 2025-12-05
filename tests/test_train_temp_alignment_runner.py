@@ -11,11 +11,57 @@ from bench.bench_train_temp_alignment import (
     _learning_rate_at_step,
     compare_artifacts,
     compare_convergence_artifacts,
+    compare_convergence_cohorts,
     make_deterministic_batch,
     make_deterministic_sequence,
     normalize_official_tensors,
     write_json_atomic,
 )
+
+
+def _convergence_artifact(
+    path: Path,
+    *,
+    seed: int,
+    validation_losses: list[float],
+    backend: str,
+) -> None:
+    steps = len(validation_losses) - 1
+    write_json_atomic(
+        path,
+        {
+            "schema_version": 1,
+            "axis": "train_temp_alignment_convergence",
+            "status": "pass",
+            "backend": backend,
+            "precision": "bf16",
+            "seed": seed,
+            "checkpoint_sha256": "checkpoint",
+            "sequence_sha256": f"sequence-{seed}",
+            "validation_batch_sha256": f"validation-{seed}",
+            "steps_requested": steps,
+            "steps_completed": steps,
+            "batch_size": 1,
+            "seq_len": 512,
+            "learning_rate": 6e-4,
+            "learning_rate_final": 1e-5,
+            "schedule_total_steps": 500_000,
+            "warmup_steps": -1,
+            "grad_clip": 1.0,
+            "optimizer": "fused_adam",
+            "eval_interval": 1,
+            "optimizer_groups": [{"group_name": "lr_1x", "param_names": ["weight"]}],
+            "train_curve": [
+                {"step": step, "loss": 4.0 / step, "grad_norm": 2.0}
+                for step in range(1, steps + 1)
+            ],
+            "validation_curve": [
+                {"step": step, "loss": loss}
+                for step, loss in enumerate(validation_losses)
+            ],
+            "runtime_s": 10.0,
+        },
+    )
 
 
 def _artifact(path: Path, snapshot: Path, *, loss: float, phase: str = "backward") -> None:
@@ -263,6 +309,66 @@ def test_compare_convergence_artifacts_gates_curves_and_provenance(tmp_path: Pat
     assert failing["status"] == "fail"
     assert "sequence_sha256" in failing["provenance_mismatches"]
     assert failing["final_validation_relative_diff"] > 0.02
+
+
+def test_compare_convergence_cohorts_accepts_matching_success_distribution(
+    tmp_path: Path,
+) -> None:
+    references: list[Path] = []
+    candidates: list[Path] = []
+    for seed in (11, 22, 33):
+        reference = tmp_path / f"reference-{seed}.json"
+        candidate = tmp_path / f"candidate-{seed}.json"
+        _convergence_artifact(
+            reference,
+            seed=seed,
+            validation_losses=[11.0, 4.0, 0.08],
+            backend="official_train_temp",
+        )
+        _convergence_artifact(
+            candidate,
+            seed=seed,
+            validation_losses=[11.0, 3.8, 0.07],
+            backend="hf_train_temp_cuda",
+        )
+        references.append(reference)
+        candidates.append(candidate)
+
+    report = compare_convergence_cohorts(references, candidates)
+
+    assert report["status"] == "pass"
+    assert report["seeds_match"] is True
+    assert report["runs_complete"] is True
+    assert report["reference_deep_success_count"] == 3
+    assert report["candidate_deep_success_count"] == 3
+
+
+def test_compare_convergence_cohorts_rejects_lower_success_count(tmp_path: Path) -> None:
+    references: list[Path] = []
+    candidates: list[Path] = []
+    for seed in (11, 22, 33):
+        reference = tmp_path / f"reference-{seed}.json"
+        candidate = tmp_path / f"candidate-{seed}.json"
+        _convergence_artifact(
+            reference,
+            seed=seed,
+            validation_losses=[11.0, 4.0, 0.08],
+            backend="official_train_temp",
+        )
+        _convergence_artifact(
+            candidate,
+            seed=seed,
+            validation_losses=[11.0, 8.0, 2.0],
+            backend="hf_train_temp_cuda",
+        )
+        references.append(reference)
+        candidates.append(candidate)
+
+    report = compare_convergence_cohorts(references, candidates)
+
+    assert report["status"] == "fail"
+    assert report["candidate_success_count"] == 0
+    assert "candidate convergence success count is below reference" in report["failures"]
 
 
 def test_compare_artifacts_rejects_provenance_and_tensor_failures(tmp_path: Path) -> None:
