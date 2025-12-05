@@ -164,6 +164,46 @@ def test_step_compare_rejects_optimizer_group_mismatch(tmp_path: Path) -> None:
     assert "optimizer groups mismatch" in report["failures"]
 
 
+def test_step_compare_keeps_bf16_delta_as_telemetry(tmp_path: Path) -> None:
+    official_snapshot = tmp_path / "official.safetensors"
+    hf_snapshot = tmp_path / "hf.safetensors"
+    save_file(
+        {
+            "logits": torch.ones(2),
+            "post_step_logits": torch.ones(2),
+            "delta::weight": torch.tensor([1.0, 0.0]),
+        },
+        official_snapshot,
+    )
+    save_file(
+        {
+            "logits": torch.ones(2),
+            "post_step_logits": torch.ones(2),
+            "delta::weight": torch.tensor([-1.0, 0.0]),
+        },
+        hf_snapshot,
+    )
+    official_json = tmp_path / "official.json"
+    hf_json = tmp_path / "hf.json"
+    _artifact(official_json, official_snapshot, loss=1.0, phase="step")
+    _artifact(hf_json, hf_snapshot, loss=1.0, phase="step")
+    group = {"group_name": "lr_1x", "param_names": ["weight"], "param_count": 1}
+    for path in (official_json, hf_json):
+        artifact = json.loads(path.read_text(encoding="utf-8"))
+        artifact["optimizer"] = "fused_adam"
+        artifact["optimizer_groups"] = [group]
+        artifact["post_step_loss"] = 0.5
+        write_json_atomic(path, artifact)
+
+    report = compare_artifacts(official_json, hf_json)
+
+    assert report["status"] == "pass"
+    assert report["gated_tensor_count"] == 2
+    assert report["delta_tensor_count"] == 1
+    assert report["delta_worst_cosine"] == -1.0
+    assert report["tensor_failures"] == []
+
+
 def test_compare_convergence_artifacts_gates_curves_and_provenance(tmp_path: Path) -> None:
     common = {
         "schema_version": 1,
