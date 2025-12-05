@@ -130,3 +130,18 @@ def test_normalize_official_tensors_applies_converter_transpose() -> None:
         normalized["grad::model.layers.0.attn.w_lora.lora.0.weight"],
         tensors["blocks.0.att.w1"].t(),
     )
+
+
+def test_checked_in_official_config_is_production_shaped() -> None:
+    root = Path(__file__).resolve().parents[1]
+    config = json.loads(
+        (root / "configs" / "train_temp_x070_12x768.json").read_text(encoding="utf-8")
+    )
+    assert config["my_testing"] == "x070"
+    assert config["head_size"] == 64
+    assert config["n_layer"] == 12
+    assert config["n_embd"] == 768
+    assert config["dim_att"] == config["n_embd"]
+    assert config["dim_ffn"] == 2688
+    assert config["ctx_len"] >= 512
+    assert config["vocab_size"] == 65536
