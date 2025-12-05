@@ -104,7 +104,7 @@ def test_write_json_atomic_leaves_valid_json(tmp_path: Path) -> None:
 def test_normalize_official_tensors_applies_converter_transpose() -> None:
     tensors = {
         "blocks.0.att.w1": torch.arange(6, dtype=torch.float32).view(2, 3),
-        "blocks.0.att.w0": torch.ones(3),
+        "blocks.0.att.w0": torch.ones(1, 1, 3),
         "blocks.0.att.v1": torch.full((2, 2), 7.0),
     }
 
@@ -131,6 +131,7 @@ def test_normalize_official_tensors_applies_converter_transpose() -> None:
         normalized["grad::model.layers.0.attn.w_lora.lora.0.weight"],
         tensors["blocks.0.att.w1"].t(),
     )
+    assert tuple(normalized["grad::model.layers.0.attn.w_lora.lora.2.bias"].shape) == (3,)
 
 
 def test_checked_in_official_config_is_production_shaped() -> None:

@@ -117,6 +117,10 @@ def normalize_official_tensors(
         if not destination_name:
             continue
         value = tensor.t().contiguous() if transposed else tensor.contiguous()
+        if value.ndim > 1 and all(int(dim) == 1 for dim in value.shape[:-1]):
+            # The official model stores time-mix vectors as [1, 1, H], while
+            # the converted HF modules expose the same parameters as [H].
+            value = value.reshape(value.shape[-1])
         key = prefix + destination_name
         if key in normalized:
             raise ValueError(f"duplicate normalized tensor key: {key}")
