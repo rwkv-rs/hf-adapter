@@ -66,8 +66,9 @@ def train_temp_cross_entropy(
         )
     if targets.numel() <= 0:
         raise ValueError("train_temp_cross_entropy requires at least one target")
+    loss_logits = logits.float() if logits.dtype in {torch.float16, torch.bfloat16} else logits
     loss = F.cross_entropy(
-        logits.reshape(-1, logits.shape[-1]),
+        loss_logits.reshape(-1, logits.shape[-1]),
         targets.reshape(-1),
         ignore_index=ignore_index,
     )
