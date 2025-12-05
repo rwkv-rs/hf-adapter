@@ -474,6 +474,7 @@ def _capture_training_phase(
         "grad_clip": float(grad_clip),
         "optimizer": optimizer_name if phase == "step" else None,
         "optimizer_version": optimizer_version,
+        "eval_interval": int(eval_interval),
         "optimizer_groups": group_metadata,
         "betas": [float(beta1), float(beta2)],
         "adam_eps": float(adam_eps),
@@ -1092,7 +1093,7 @@ def compare_convergence_artifacts(
     max_train_auc_relative_diff: float = 0.02,
     max_validation_auc_relative_diff: float = 0.02,
     max_final_validation_abs_diff: float = 0.01,
-    max_validation_scaled_diff: float = 0.03,
+    max_validation_threshold_step_diff: int = 10,
     max_grad_norm_ratio: float = 2.0,
 ) -> dict[str, Any]:
     reference = json.loads(Path(reference_json).read_text(encoding="utf-8"))
@@ -1111,6 +1112,7 @@ def compare_convergence_artifacts(
         "warmup_steps",
         "grad_clip",
         "optimizer",
+        "eval_interval",
     )
     provenance_mismatches = [
         key for key in provenance_keys if reference.get(key) != candidate.get(key)
@@ -1180,6 +1182,48 @@ def compare_convergence_artifacts(
     max_observed_validation_scaled_diff = (
         max(validation_scaled_diffs) if validation_scaled_diffs else float("inf")
     )
+    threshold_steps: list[dict[str, Any]] = []
+    for threshold in (10.0, 5.0, 1.0, 0.1, 0.01):
+        reference_step = next(
+            (
+                int(row["step"])
+                for row in reference_validation
+                if float(row["loss"]) <= threshold
+            ),
+            None,
+        )
+        candidate_step = next(
+            (
+                int(row["step"])
+                for row in candidate_validation
+                if float(row["loss"]) <= threshold
+            ),
+            None,
+        )
+        step_diff = (
+            abs(candidate_step - reference_step)
+            if reference_step is not None and candidate_step is not None
+            else None
+        )
+        threshold_steps.append(
+            {
+                "loss_threshold": threshold,
+                "reference_step": reference_step,
+                "candidate_step": candidate_step,
+                "step_diff": step_diff,
+                "comparable": reference_step is not None and candidate_step is not None,
+            }
+        )
+    missing_threshold_crossing = any(
+        (row["reference_step"] is None) != (row["candidate_step"] is None)
+        for row in threshold_steps
+    )
+    comparable_threshold_steps = [row for row in threshold_steps if row["comparable"]]
+    max_observed_threshold_step_diff = (
+        max(int(row["step_diff"]) for row in comparable_threshold_steps)
+        if comparable_threshold_steps
+        else None
+    )
     max_reference_grad_norm = max(reference_grad_norms) if reference_grad_norms else float("nan")
     max_candidate_grad_norm = max(candidate_grad_norms) if candidate_grad_norms else float("nan")
     observed_grad_norm_ratio = max(
@@ -1218,8 +1262,13 @@ def compare_convergence_artifacts(
         failures.append("validation loss AUC relative difference exceeded target")
     if final_validation_abs_diff > max_final_validation_abs_diff:
         failures.append("final validation loss absolute difference exceeded target")
-    if max_observed_validation_scaled_diff > max_validation_scaled_diff:
-        failures.append("validation curve scaled difference exceeded target")
+    if missing_threshold_crossing:
+        failures.append("validation loss threshold crossing missing")
+    elif (
+        max_observed_threshold_step_diff is not None
+        and int(max_observed_threshold_step_diff) > int(max_validation_threshold_step_diff)
+    ):
+        failures.append("validation loss threshold step difference exceeded target")
     if observed_grad_norm_ratio > max_grad_norm_ratio:
         failures.append("gradient norm spike ratio exceeded target")
     return {
@@ -1255,11 +1304,13 @@ def compare_convergence_artifacts(
         "final_validation_abs_diff": final_validation_abs_diff,
         "max_validation_relative_diff": max_observed_validation_relative_diff,
         "max_validation_scaled_diff": max_observed_validation_scaled_diff,
+        "validation_threshold_steps": threshold_steps,
+        "max_validation_threshold_step_diff": max_observed_threshold_step_diff,
         "targets": {
             "max_train_auc_relative_diff": float(max_train_auc_relative_diff),
             "max_validation_auc_relative_diff": float(max_validation_auc_relative_diff),
             "max_final_validation_abs_diff": float(max_final_validation_abs_diff),
-            "max_validation_scaled_diff": float(max_validation_scaled_diff),
+            "max_validation_threshold_step_diff": int(max_validation_threshold_step_diff),
             "max_grad_norm_ratio": float(max_grad_norm_ratio),
         },
         "failures": failures,
@@ -1310,7 +1361,9 @@ def build_parser() -> argparse.ArgumentParser:
     compare_convergence.add_argument(
         "--max-final-validation-abs-diff", type=float, default=0.01
     )
-    compare_convergence.add_argument("--max-validation-scaled-diff", type=float, default=0.03)
+    compare_convergence.add_argument(
+        "--max-validation-threshold-step-diff", type=int, default=10
+    )
     compare_convergence.add_argument("--max-grad-norm-ratio", type=float, default=2.0)
 
     init = subparsers.add_parser("make-official-init")
@@ -1438,7 +1491,7 @@ def main() -> int:
             max_train_auc_relative_diff=args.max_train_auc_relative_diff,
             max_validation_auc_relative_diff=args.max_validation_auc_relative_diff,
             max_final_validation_abs_diff=args.max_final_validation_abs_diff,
-            max_validation_scaled_diff=args.max_validation_scaled_diff,
+            max_validation_threshold_step_diff=args.max_validation_threshold_step_diff,
             max_grad_norm_ratio=args.max_grad_norm_ratio,
         )
         write_json_atomic(args.output, report)
