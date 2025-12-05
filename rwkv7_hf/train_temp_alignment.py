@@ -83,6 +83,20 @@ def _is_train_temp_w0(name: str, naming: ParameterNaming) -> bool:
     raise ValueError(f"unsupported parameter naming: {naming!r}")
 
 
+def _is_translated_train_temp_low_rank_weight(name: str, naming: ParameterNaming) -> bool:
+    if naming != "hf":
+        return False
+    parts = name.split(".")
+    return (
+        len(parts) >= 7
+        and parts[-5] == "attn"
+        and parts[-4] in {"w_lora", "a_lora", "g_lora", "v_lora"}
+        and parts[-3] == "lora"
+        and parts[-2] in {"0", "2"}
+        and parts[-1] == "weight"
+    )
+
+
 def build_train_temp_param_groups(
     named_parameters: Iterable[tuple[str, torch.nn.Parameter]],
     *,
@@ -103,6 +117,10 @@ def build_train_temp_param_groups(
             continue
         if _is_train_temp_w0(name, naming):
             bucket = "lr_2x"
+        elif _is_translated_train_temp_low_rank_weight(name, naming):
+            # Official train_temp names these tensors w1/w2, a1/a2, g1/g2,
+            # and v1/v2, so its `.weight` decay rule does not select them.
+            bucket = "lr_1x"
         elif weight_decay > 0 and ".weight" in name and parameter.squeeze().ndim >= 2:
             bucket = "decay"
         else:

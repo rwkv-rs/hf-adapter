@@ -174,6 +174,26 @@ def _optimizer_groups_metadata(groups: list[dict[str, Any]]) -> list[dict[str, A
     ]
 
 
+def _capture_summary(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: result.get(key)
+        for key in (
+            "status",
+            "backend",
+            "phase",
+            "precision",
+            "loss",
+            "runtime_s",
+            "raw_grad_norm",
+            "clip_returned_grad_norm",
+            "snapshot_tensor_count",
+            "snapshot_sha256",
+            "gpu_name",
+            "peak_memory_mb",
+        )
+    }
+
+
 def _capture_training_phase(
     *,
     model,
@@ -317,7 +337,10 @@ def _load_official_module(checkout: str | Path):
         raise FileNotFoundError(f"official train_temp model not found under {train_temp}")
     os.environ.setdefault("RWKV_MY_TESTING", "x070")
     os.environ.setdefault("RWKV_KERNEL", "@rwkv3")
-    os.environ.setdefault("RWKV_JIT_ON", "0")
+    # Current train_temp reuses module-level helper names between fused stages;
+    # JIT mode binds each scripted wrapper before later definitions replace
+    # those names. The production demo also relies on this route.
+    os.environ.setdefault("RWKV_JIT_ON", "1")
     os.environ.setdefault("RWKV_HEAD_SIZE", "64")
     os.environ.setdefault("RWKV_HEAD_L2WRAP_CE_CHUNK", "0")
     os.environ.setdefault("RWKV_FLOAT_MODE", "bf16")
@@ -652,11 +675,11 @@ def main() -> int:
         return 0
     if args.command == "capture-official":
         result = capture_official(args)
-        print(json.dumps(result, ensure_ascii=False))
+        print(json.dumps(_capture_summary(result), ensure_ascii=False))
         return 0
     if args.command == "capture-hf":
         result = capture_hf(args)
-        print(json.dumps(result, ensure_ascii=False))
+        print(json.dumps(_capture_summary(result), ensure_ascii=False))
         return 0
     raise AssertionError(args.command)
 

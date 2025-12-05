@@ -13,6 +13,8 @@ effect alignment.
 - Hardware: one exact RTX 5090, with both implementations run sequentially.
 - Reference: a pinned RWKV-LM commit and the production `train_temp` model, loss,
   initialization, data order, and optimizer recipe.
+- Runtime: use train_temp JIT mode. The pinned source reuses module-level helper
+  names between fused stages, so non-JIT mode is not a valid production oracle.
 - First model: the smallest production-shaped RWKV-7 configuration that can run
   both implementations with the same vocabulary and head size. Expand to the
   available 0.4B checkpoint only after the one-step gates pass.
