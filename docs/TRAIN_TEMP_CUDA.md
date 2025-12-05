@@ -84,6 +84,8 @@ print({"backend": backend, "loss": float(loss), "finite_grad_tensors": grad_coun
 学习率 schedule。需要严格对齐时使用 `bench/bench_train_temp_alignment.py`；
 机器证据和 runner 顺序见
 [`5090_train_temp_alignment_20260717`](../bench/5090_train_temp_alignment_20260717/README.md)。
+该目录同时包含官方/HF 收敛曲线 PNG、单步对比 CSV 和 cohort CSV，便于直接在
+GitHub PR 中查看或下载复核。
 
 ## 4. 精确通过标准
 

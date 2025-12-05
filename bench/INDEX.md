@@ -171,6 +171,7 @@ two-pair conservative gate. Conclusions and reproduction commands are in
 | compare_qwen35_apple_baseline.py | analysis |
 | eval_math500_hf.py | utility |
 | make_math500_stratified_subset.py | utility |
+| plot_train_temp_alignment.py | analysis |
 | profile_decode.py | profile |
 | profile_mlx_components.py | profile |
 | run_blackwell_quant_matrix.py | orchestrator |
