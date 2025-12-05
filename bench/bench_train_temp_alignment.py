@@ -57,7 +57,7 @@ def save_safetensors_atomic(tensors: dict[str, torch.Tensor], path: str | Path) 
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(output.suffix + ".tmp")
     cpu_tensors = {
-        name: tensor.detach().to(device="cpu").contiguous()
+        name: tensor.detach().to(device="cpu").contiguous().clone()
         for name, tensor in tensors.items()
     }
     save_file(cpu_tensors, temporary)

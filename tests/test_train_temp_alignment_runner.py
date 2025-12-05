@@ -43,6 +43,7 @@ def test_make_deterministic_batch_is_shifted_and_repeatable(tmp_path: Path) -> N
     assert tuple(a["targets"].shape) == (2, 16)
     assert torch.equal(a["input_ids"][:, 1:], a["targets"][:, :-1])
     assert torch.equal(a["input_ids"], b["input_ids"])
+    assert a["input_ids"].untyped_storage().data_ptr() != a["targets"].untyped_storage().data_ptr()
     assert first_meta["content_sha256"] == second_meta["content_sha256"]
 
 
