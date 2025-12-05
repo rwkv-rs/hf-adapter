@@ -956,6 +956,21 @@ def _optimizer_group_contract(artifact: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _effective_eval_interval(artifact: dict[str, Any]) -> int | None:
+    configured = artifact.get("eval_interval")
+    if configured is not None:
+        return int(configured)
+    steps = [int(row["step"]) for row in artifact.get("validation_curve", [])]
+    positive_diffs = [later - earlier for earlier, later in zip(steps, steps[1:]) if later > earlier]
+    return min(positive_diffs) if positive_diffs else None
+
+
+def _convergence_provenance_value(artifact: dict[str, Any], key: str) -> Any:
+    if key == "eval_interval":
+        return _effective_eval_interval(artifact)
+    return artifact.get(key)
+
+
 def compare_artifacts(
     reference_json: str | Path,
     candidate_json: str | Path,
@@ -1155,7 +1170,10 @@ def compare_convergence_artifacts(
         "eval_interval",
     )
     provenance_mismatches = [
-        key for key in provenance_keys if reference.get(key) != candidate.get(key)
+        key
+        for key in provenance_keys
+        if _convergence_provenance_value(reference, key)
+        != _convergence_provenance_value(candidate, key)
     ]
     optimizer_groups_match = _optimizer_group_contract(reference) == _optimizer_group_contract(
         candidate
@@ -1423,7 +1441,8 @@ def compare_convergence_cohorts(
             mismatches := [
                 key
                 for key in provenance_keys
-                if reference_by_seed[seed].get(key) != candidate_by_seed[seed].get(key)
+                if _convergence_provenance_value(reference_by_seed[seed], key)
+                != _convergence_provenance_value(candidate_by_seed[seed], key)
             ]
         )
     ]

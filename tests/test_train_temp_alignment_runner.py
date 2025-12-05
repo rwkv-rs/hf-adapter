@@ -331,6 +331,9 @@ def test_compare_convergence_cohorts_accepts_matching_success_distribution(
             validation_losses=[11.0, 3.8, 0.07],
             backend="hf_train_temp_cuda",
         )
+        reference_payload = json.loads(reference.read_text(encoding="utf-8"))
+        reference_payload.pop("eval_interval")
+        write_json_atomic(reference, reference_payload)
         references.append(reference)
         candidates.append(candidate)
 
