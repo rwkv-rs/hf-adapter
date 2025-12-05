@@ -29,6 +29,7 @@ from rwkv7_hf.train_temp_alignment import (
     build_train_temp_param_groups,
     compare_tensors,
     train_temp_cross_entropy,
+    train_temp_official_parameter_name,
 )
 
 
@@ -379,11 +380,13 @@ def _capture_training_phase(
 
     model.train()
     model.zero_grad(set_to_none=True)
-    named_parameters = [(name, parameter) for name, parameter in model.named_parameters()]
+    parameter_sort_key = lambda name: train_temp_official_parameter_name(name, naming=naming)
+    named_parameters = sorted(model.named_parameters(), key=lambda item: parameter_sort_key(item[0]))
     groups = build_train_temp_param_groups(
         named_parameters,
         weight_decay=float(weight_decay),
         naming=naming,
+        sort_key=parameter_sort_key,
     )
     if not groups:
         raise ValueError("model has no trainable parameter groups")
@@ -555,11 +558,13 @@ def _run_convergence(
     validation_inputs = validation["input_ids"].to(device=device, dtype=torch.long)
     validation_targets = validation["targets"].to(device=device, dtype=torch.long)
 
-    named_parameters = [(name, parameter) for name, parameter in model.named_parameters()]
+    parameter_sort_key = lambda name: train_temp_official_parameter_name(name, naming=naming)
+    named_parameters = sorted(model.named_parameters(), key=lambda item: parameter_sort_key(item[0]))
     groups = build_train_temp_param_groups(
         named_parameters,
         weight_decay=float(weight_decay),
         naming=naming,
+        sort_key=parameter_sort_key,
     )
     for group in groups:
         group["lr"] = float(learning_rate) * float(group["my_lr_scale"])

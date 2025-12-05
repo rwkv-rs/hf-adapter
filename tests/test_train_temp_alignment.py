@@ -9,6 +9,7 @@ from rwkv7_hf.train_temp_alignment import (
     build_train_temp_param_groups,
     compare_tensors,
     train_temp_cross_entropy,
+    train_temp_official_parameter_name,
 )
 
 
@@ -130,6 +131,47 @@ def test_hf_parameter_groups_preserve_translated_w0_semantics() -> None:
         "model.layers.1.attn.v_lora.lora.2.weight",
         "model.layers.0.attn.g_norm.weight",
     }
+
+
+def test_hf_parameter_names_reverse_to_official_optimizer_order() -> None:
+    expected = {
+        "model.embeddings.weight": "emb.weight",
+        "model.norm.bias": "ln_out.bias",
+        "lm_head.weight": "head.weight",
+        "model.layers.3.pre_norm.weight": "blocks.3.ln0.weight",
+        "model.layers.3.attn_norm.bias": "blocks.3.ln1.bias",
+        "model.layers.3.ffn_norm.weight": "blocks.3.ln2.weight",
+        "model.layers.3.attn.r_proj.weight": "blocks.3.att.receptance.weight",
+        "model.layers.3.attn.g_norm.bias": "blocks.3.att.ln_x.bias",
+        "model.layers.3.attn.w_lora.lora.2.bias": "blocks.3.att.w0",
+        "model.layers.3.attn.a_lora.lora.0.weight": "blocks.3.att.a1",
+        "model.layers.3.attn.v_lora.lora.2.weight": "blocks.3.att.v2",
+        "model.layers.3.ffn.key.weight": "blocks.3.ffn.key.weight",
+    }
+    for hf_name, official_name in expected.items():
+        assert train_temp_official_parameter_name(hf_name, naming="hf") == official_name
+
+
+def test_hf_parameter_groups_can_follow_official_tensor_order() -> None:
+    named = [
+        ("lm_head.weight", _parameter(8, 8)),
+        ("model.embeddings.weight", _parameter(8, 8)),
+        ("model.layers.0.ffn.key.weight", _parameter(16, 8)),
+        ("model.layers.0.attn.k_proj.weight", _parameter(8, 8)),
+    ]
+    groups = build_train_temp_param_groups(
+        named,
+        weight_decay=0.001,
+        naming="hf",
+        sort_key=lambda name: train_temp_official_parameter_name(name, naming="hf"),
+    )
+    decay = next(group for group in groups if group["group_name"] == "decay")
+    assert decay["param_names"] == [
+        "model.layers.0.attn.k_proj.weight",
+        "model.layers.0.ffn.key.weight",
+        "model.embeddings.weight",
+        "lm_head.weight",
+    ]
 
 
 def test_frozen_parameters_are_not_grouped() -> None:
