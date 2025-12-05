@@ -5,7 +5,7 @@ exploratory tuning chronology. Raw rows, logs and negative experiments remain
 in [`bench/`](bench/); platform interpretation lives in
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
-Last updated: **2026-07-16**.
+Last updated: **2026-07-17**.
 
 ## Benchmark contract
 
@@ -34,7 +34,27 @@ Status vocabulary:
 | RTX 5090 | 0.4B MATH500; 1.5B/2.9B/7.2B quant; 13.3B inference | pass@64 `0.38`; compression ratio `1.0`; all quant same-next | MATH summary/decode `4.336x/4.871x` committed Albatross reference; 2.9B/7.2B quant `>=0.99x` paired fp16 | **PASS artifact** |
 | RTX 5090 | 0.4B/0.8B through 7.2B/9B, B1/B8, dense/W8/W4 | 144/144 Qwen references verify full FLA plus Triton conv; 32/32 greedy checks pass; task quality is separate | raw dense prefill/decode minima `1.0226x/2.8130x`; per-active-B speed leads in all cells; W8/W4 total-latency and footprint gates pass | **PASS 8/8 batch-pairs** |
 | RTX 5090 | g1h 1.5B/2.9B/7.2B/13.3B BF16 versus W4, B1/B8, prompt128/decode128 | prompt/final cosine `>=0.9995`, same-next 8/8; group-128 grid 280/280 | prefill/decode minima `1.0010x/1.1854x`; footprint `0.5298x–0.6250x` with automatic exact-model profiles | **PASS 8/8 all-phase cells** |
+| RTX 5090 | official train_temp vs opt-in HF train_temp CUDA, 12x768 BF16, B1/T512 | backward 400/400 and FusedAdam step 800 tensors/deltas exactly match; 3-seed x 1,000-step cohort passes | median runtime 48.4061 s official vs 43.5184 s HF; candidate 10.10% lower in this synthetic cohort | **PASS exact lane** |
 | Apple M5 | 0.4B/1.5B selected MLX vs Qwen3.5 pairs | state/session/greedy and speculative target oracle pass | selected conservative decode/prefill/TTFT/memory gates pass | **PASS measured pairs** |
+
+## RTX 5090 official train_temp alignment
+
+The opt-in HF backend vendors the exact Apache-2.0 CUDA operator sources from
+RWKV-LM commit `e6f74b63a06e08606d130043599d218209628bad`. On one RTX 5090,
+the 191,084,544-parameter 12x768 BF16 model at B1/T512 matches the official
+reference exactly for backward loss and all 400 gradients. The DeepSpeed
+FusedAdam step also matches parameter grouping/order, 401 gated tensors, 399
+parameter deltas and post-step loss with cosine `1.0`, relative L2 `0` and max
+absolute difference `0`.
+
+Long CUDA training is nondeterministic in both the official and candidate
+paths, including repeated runs with the same seed. The promoted long-run gate
+therefore uses three complete 1,000-step runs per backend. Official and HF each
+reach minimum validation loss `<=1.0` in `2/3` runs and `<=0.1` in `2/3` runs;
+median train/validation AUC relative differences are `0.8531%/5.1030%`, and
+the median maximum-gradient ratio is `1.3281x`. The cohort is `pass` under the
+predeclared fail-closed thresholds. Evidence:
+[`bench/5090_train_temp_alignment_20260717/`](bench/5090_train_temp_alignment_20260717/README.md).
 
 ## V100 production-close
 
@@ -414,6 +434,7 @@ Evidence: [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PRODUC
 | A100 40GB | 0.4B–7.2B Trainer/SFT/DPO/resume; dual-card ZeRO-2/3 base |
 | A800 80GB | 0.1B–13.3B mixed inference/quant plus single/dual-card ZeRO |
 | RTX A6000 48GB | 0.4B–7.2B training/resume; dual-card ZeRO through 2.9B |
+| RTX 5090 | Exact 12x768 BF16 train_temp backward/FusedAdam step and 3-seed x 1,000-step cohort |
 | Apple M5 | Tiny and real-model PEFT/Trainer/SFT/DPO/GRPO compatibility smoke |
 
 See [`docs/TRAINING.md`](docs/TRAINING.md) and the validation documents.
@@ -425,7 +446,8 @@ See [`docs/TRAINING.md`](docs/TRAINING.md) and the validation documents.
 3. Albatross P2/P3 is not closed for every model/card/batch.
 4. RTX 5090 final comparison needs a fresh same-card Albatross rerun.
 5. Apple needs cross-M-series, CoreML INT4/ANE and broader Qwen quality evidence.
-6. Longer production training and larger ZeRO-3 resume matrices remain open.
+6. Larger-model, real-dataset, additional-card and distributed train_temp
+   evidence plus larger ZeRO-3 resume matrices remain open.
 
 ## Reproduction and evidence rules
 

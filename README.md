@@ -17,6 +17,7 @@ For normal inference, start here instead of the benchmark sections below:
 - [唯一 AI 操作入口：安装、推理、训练、量化与多卡](docs/AI_ASSISTED_SETUP.md)
 - [Visual guide: speculative decoding, training, and multi-GPU](docs/ADVANCED_USAGE.md)
 - [全功能使用指南](docs/COMPLETE_ADAPTER_GUIDE.md)
+- [Official train_temp CUDA alignment](docs/TRAIN_TEMP_CUDA.md)
 
 After first generation, use the complete index to find copyable tutorials for
 conversion and cache workflows, PEFT/Trainer/TRL, W8/W4, Apple MPS/MLX/CoreML,

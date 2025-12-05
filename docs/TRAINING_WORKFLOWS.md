@@ -3,6 +3,10 @@
 本页覆盖当前已经验证的全部 HF 训练集成。命令有意设计为短 smoke：在真实
 数据集消耗大量时间之前，先证明接口、梯度、序列化和断点恢复可以工作。
 
+需要复现官方 RWKV-LM `train_temp` 融合算子、损失、优化器单步和多-seed
+收敛门禁时，使用独立的 [`TRAIN_TEMP_CUDA.md`](TRAIN_TEMP_CUDA.md)。普通
+Trainer/PEFT/TRL smoke 不会自动等价为官方训练效果验收。
+
 前置条件：
 
 ```bash

@@ -12,16 +12,16 @@ def read(relative: str) -> str:
 
 
 def main() -> int:
-    canonical = [
-        "HF_STATUS.md",
-        "HF_TODO.md",
-        "BENCHMARK.md",
-        "docs/ACCEPTANCE.md",
-        "docs/HARDWARE_MATRIX.md",
-    ]
-    for relative in canonical:
+    canonical_dates = {
+        "HF_STATUS.md": "2026-07-17",
+        "HF_TODO.md": "2026-07-16",
+        "BENCHMARK.md": "2026-07-17",
+        "docs/ACCEPTANCE.md": "2026-07-17",
+        "docs/HARDWARE_MATRIX.md": "2026-07-17",
+    }
+    for relative, expected_date in canonical_dates.items():
         text = read(relative)
-        assert "2026-07-16" in text, f"missing current audit date: {relative}"
+        assert expected_date in text, f"missing current audit date: {relative}"
 
     for path in sorted((ROOT / "docs/plans").glob("*.md")):
         text = path.read_text(encoding="utf-8")

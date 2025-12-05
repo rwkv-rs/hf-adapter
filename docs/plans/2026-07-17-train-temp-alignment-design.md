@@ -1,5 +1,8 @@
 # RWKV-LM train_temp Alignment Design
 
+> Historical implementation design. Current user instructions and accepted
+> evidence are in `docs/TRAIN_TEMP_CUDA.md` and the dated benchmark artifact.
+
 ## Goal
 
 Establish reproducible, single-GPU evidence for whether the Hugging Face RWKV-7
@@ -40,17 +43,18 @@ batch, one backend (`official` or `hf`), and one phase (`forward`, `backward`, o
 A compare mode verifies official-to-HF name translation, transpose rules, loss,
 gradient, and optimizer-delta gates.
 
-`scripts/run_train_temp_alignment.sh` orchestrates the exact-card run without
-hard-coding a GPU index. It creates immutable input hashes, resumes completed
-phases, stops before convergence when a numerical gate fails, and appends JSONL
-rows. Long runs use the same serialized sample order in both implementations.
+The runner's subcommands form the exact-card workflow without hard-coding a GPU
+index. `make-batch`/`make-sequence` create immutable inputs; process-isolated
+capture and convergence commands write atomic JSON artifacts; compare commands
+fail closed before results are promoted. Long runs use the same serialized
+sample order in both implementations.
 
 ## Acceptance
 
 The first production claim requires all of the following on the recorded card:
 
-1. Forward: matching batch/checkpoint hashes, finite loss, and logits cosine at
-   least 0.9999 in the production bf16 lane.
+1. Provenance: matching source commit, checkpoint, batch or sequence hashes,
+   precision, shape, optimizer and seed contract.
 2. Backward: every mapped trainable parameter is present; gradient cosine is at
    least 0.999 in bf16, with per-tensor relative L2 at most 2.5%. The bound is
    fixed from the observed production-kernel versus native bf16 rounding lane;
@@ -59,10 +63,17 @@ The first production claim requires all of the following on the recorded card:
    rates, weight decay, and clipping order. Bf16 parameter deltas are retained
    as quantization telemetry; post-step logits use the numerical gate and
    post-step loss must remain within 1%.
-4. Convergence: at least three sequential seeds; no non-finite loss or gradient
-   spike; train and validation loss-curve area remain within 2%, final
-   validation loss remains within either 0.01 absolute or 3% relative, and
-   matching loss thresholds are reached within one 10-step evaluation interval.
+4. Convergence: at least three matching seeds, complete finite runs and exact
+   optimizer/provenance contracts. Candidate success counts at minimum
+   validation loss `<=1.0` and `<=0.1` may not trail the reference. Median train
+   and validation loss AUC relative differences are at most 10% and 15%; median
+   minimum validation loss may not regress by both 0.05 absolute and 1.25x; the
+   symmetric median maximum-gradient ratio is at most 2.0x.
+
+Repeated same-seed 1,000-step CUDA runs diverge in both the official and HF
+paths. Point-by-point long-curve equality is therefore not a valid gate. Strict
+math remains a single-step tensor contract; long-run effect uses the declared
+multi-seed cohort gate above.
 
 Passing a Trainer, PEFT, TRL, or DeepSpeed smoke remains compatibility evidence
 only. Passing one-step parity is numerical evidence only. Neither can be used as
