@@ -105,6 +105,7 @@ def test_normalize_official_tensors_applies_converter_transpose() -> None:
     tensors = {
         "blocks.0.att.w1": torch.arange(6, dtype=torch.float32).view(2, 3),
         "blocks.0.att.w0": torch.ones(1, 1, 3),
+        "blocks.0.att.x_r": torch.full((1, 1, 3), 2.0),
         "blocks.0.att.v1": torch.full((2, 2), 7.0),
     }
 
@@ -113,6 +114,7 @@ def test_normalize_official_tensors_applies_converter_transpose() -> None:
         mapping = {
             "blocks.0.att.w1": ("model.layers.0.attn.w_lora.lora.0.weight", True),
             "blocks.0.att.w0": ("model.layers.0.attn.w_lora.lora.2.bias", False),
+            "blocks.0.att.x_r": ("model.layers.0.attn.x_r", False),
             "blocks.0.att.v1": ("", False),
         }
         return mapping[name]
@@ -126,12 +128,14 @@ def test_normalize_official_tensors_applies_converter_transpose() -> None:
     assert set(normalized) == {
         "grad::model.layers.0.attn.w_lora.lora.0.weight",
         "grad::model.layers.0.attn.w_lora.lora.2.bias",
+        "grad::model.layers.0.attn.x_r",
     }
     torch.testing.assert_close(
         normalized["grad::model.layers.0.attn.w_lora.lora.0.weight"],
         tensors["blocks.0.att.w1"].t(),
     )
     assert tuple(normalized["grad::model.layers.0.attn.w_lora.lora.2.bias"].shape) == (3,)
+    assert tuple(normalized["grad::model.layers.0.attn.x_r"].shape) == (1, 1, 3)
 
 
 def test_checked_in_official_config_is_production_shaped() -> None:

@@ -117,9 +117,19 @@ def normalize_official_tensors(
         if not destination_name:
             continue
         value = tensor.t().contiguous() if transposed else tensor.contiguous()
-        if value.ndim > 1 and all(int(dim) == 1 for dim in value.shape[:-1]):
+        preserves_mix_shape = (
+            ".attn." in destination_name
+            and destination_name.rsplit(".", 1)[-1]
+            in {"x_r", "x_w", "x_k", "x_v", "x_a", "x_g"}
+        )
+        if (
+            not preserves_mix_shape
+            and value.ndim > 1
+            and all(int(dim) == 1 for dim in value.shape[:-1])
+        ):
             # The official model stores time-mix vectors as [1, 1, H], while
-            # the converted HF modules expose the same parameters as [H].
+            # most converted HF modules expose the same parameters as [H].
+            # Attention x_* parameters deliberately preserve [1, 1, H].
             value = value.reshape(value.shape[-1])
         key = prefix + destination_name
         if key in normalized:
