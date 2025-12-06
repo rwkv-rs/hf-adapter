@@ -176,6 +176,7 @@ def test_complete_adapter_user_index_stays_discoverable() -> None:
     topical_docs = (
         "INFERENCE_WORKFLOWS.md",
         "TRAINING_WORKFLOWS.md",
+        "TRAIN_TEMP_CUDA.md",
         "QUANTIZATION_USAGE.md",
         "APPLE_USAGE.md",
         "ADVANCED_USAGE_ZH.md",
@@ -253,6 +254,7 @@ def test_ai_instructions_have_one_canonical_source() -> None:
         "cache",
         "speculative",
         "training",
+        "train-temp-alignment",
         "trl",
         "multi-gpu-inference",
         "deepspeed",
@@ -266,6 +268,7 @@ def test_ai_instructions_have_one_canonical_source() -> None:
     topical_docs = (
         "INFERENCE_WORKFLOWS.md",
         "TRAINING_WORKFLOWS.md",
+        "TRAIN_TEMP_CUDA.md",
         "QUANTIZATION_USAGE.md",
         "APPLE_USAGE.md",
         "ADVANCED_USAGE.md",
@@ -275,3 +278,21 @@ def test_ai_instructions_have_one_canonical_source() -> None:
         text = (root / "docs" / document).read_text(encoding="utf-8")
         assert "AI_ASSISTED_SETUP.md" in text
         assert "TASK_ID:" not in text
+
+
+def test_train_temp_tutorial_has_user_acceptance_contract() -> None:
+    root = Path(__file__).resolve().parents[1]
+    text = (root / "docs" / "TRAIN_TEMP_CUDA.md").read_text(encoding="utf-8")
+
+    for required in (
+        "前置条件和支持环境",
+        "最小安全输入",
+        "可直接复制的 API",
+        "精确通过标准",
+        "失败恢复和当前限制",
+        "AI_ASSISTED_SETUP.md",
+        "train_temp_causal_cross_entropy",
+        "compare_convergence_cohort.json",
+    ):
+        assert required in text
+    assert "TASK_ID:" not in text

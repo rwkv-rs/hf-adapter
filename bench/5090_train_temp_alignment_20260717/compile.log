@@ -1,0 +1,194 @@
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+[1/3] c++ -MMD -MF rwkv7_cmix_bf16_v5.o.d -DTORCH_EXTENSION_NAME=rwkv7_hf_rwkv7_cmix_bf16_v5 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.8/include -isystem /usr/include/python3.10 -fPIC -std=c++17 -O3 -c /home/ubuntu/rwkv7-train-temp-alignment/rwkv7_hf/csrc/train_temp/rwkv7_cmix_bf16_v5.cpp -o rwkv7_cmix_bf16_v5.o
+[2/3] /usr/local/cuda-12.8/bin/nvcc -MD -MF rwkv7_cmix_bf16_v5.cuda.o.d -DTORCH_EXTENSION_NAME=rwkv7_hf_rwkv7_cmix_bf16_v5 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.8/include -isystem /usr/include/python3.10 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_120,code=sm_120 --compiler-options '-fPIC' -res-usage --use_fast_math -O3 -Xptxas -O3 --extra-device-vectorization -std=c++17 -c /home/ubuntu/rwkv7-train-temp-alignment/rwkv7_hf/csrc/train_temp/rwkv7_cmix_bf16_v5.cu -o rwkv7_cmix_bf16_v5.cuda.o
+ptxas info    : 11 bytes gmem
+ptxas info    : Compiling entry function '_ZN54_GLOBAL__N__d7af521a_21_rwkv7_cmix_bf16_v5_cu_01a85e1435cmix_mix_backward_fused_vec2_kernelILi32EEEvPKN3c108BFloat16ES4_S4_PS2_Pflll' for 'sm_120'
+ptxas info    : Function properties for _ZN54_GLOBAL__N__d7af521a_21_rwkv7_cmix_bf16_v5_cu_01a85e1435cmix_mix_backward_fused_vec2_kernelILi32EEEvPKN3c108BFloat16ES4_S4_PS2_Pflll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 0 barriers
+ptxas info    : Compile time = 23.752 ms
+ptxas info    : Compiling entry function '_ZN54_GLOBAL__N__d7af521a_21_rwkv7_cmix_bf16_v5_cu_01a85e1435cmix_mix_backward_fused_vec2_kernelILi128EEEvPKN3c108BFloat16ES4_S4_PS2_Pflll' for 'sm_120'
+ptxas info    : Function properties for _ZN54_GLOBAL__N__d7af521a_21_rwkv7_cmix_bf16_v5_cu_01a85e1435cmix_mix_backward_fused_vec2_kernelILi128EEEvPKN3c108BFloat16ES4_S4_PS2_Pflll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 0 barriers
+ptxas info    : Compile time = 22.943 ms
+ptxas info    : Compiling entry function '_ZN54_GLOBAL__N__d7af521a_21_rwkv7_cmix_bf16_v5_cu_01a85e1435cmix_mix_backward_fused_vec2_kernelILi64EEEvPKN3c108BFloat16ES4_S4_PS2_Pflll' for 'sm_120'
+ptxas info    : Function properties for _ZN54_GLOBAL__N__d7af521a_21_rwkv7_cmix_bf16_v5_cu_01a85e1435cmix_mix_backward_fused_vec2_kernelILi64EEEvPKN3c108BFloat16ES4_S4_PS2_Pflll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 0 barriers
+ptxas info    : Compile time = 22.167 ms
+ptxas info    : Compiling entry function '_ZN54_GLOBAL__N__d7af521a_21_rwkv7_cmix_bf16_v5_cu_01a85e1435cmix_mix_backward_fused_vec2_kernelILi16EEEvPKN3c108BFloat16ES4_S4_PS2_Pflll' for 'sm_120'
+ptxas info    : Function properties for _ZN54_GLOBAL__N__d7af521a_21_rwkv7_cmix_bf16_v5_cu_01a85e1435cmix_mix_backward_fused_vec2_kernelILi16EEEvPKN3c108BFloat16ES4_S4_PS2_Pflll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 32 registers, used 0 barriers
+ptxas info    : Compile time = 22.378 ms
+ptxas info    : Compiling entry function '_ZN54_GLOBAL__N__d7af521a_21_rwkv7_cmix_bf16_v5_cu_01a85e1448relu_sq_backward_from_output_inplace_vec2_kernelEPN3c108BFloat16EPKS1_l' for 'sm_120'
+ptxas info    : Function properties for _ZN54_GLOBAL__N__d7af521a_21_rwkv7_cmix_bf16_v5_cu_01a85e1448relu_sq_backward_from_output_inplace_vec2_kernelEPN3c108BFloat16EPKS1_l
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 12 registers, used 0 barriers
+ptxas info    : Compile time = 2.002 ms
+ptxas info    : Compiling entry function '_ZN54_GLOBAL__N__d7af521a_21_rwkv7_cmix_bf16_v5_cu_01a85e1427relu_sq_inplace_vec2_kernelEPN3c108BFloat16El' for 'sm_120'
+ptxas info    : Function properties for _ZN54_GLOBAL__N__d7af521a_21_rwkv7_cmix_bf16_v5_cu_01a85e1427relu_sq_inplace_vec2_kernelEPN3c108BFloat16El
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 8 registers, used 0 barriers
+ptxas info    : Compile time = 1.716 ms
+ptxas info    : Compiling entry function '_ZN54_GLOBAL__N__d7af521a_21_rwkv7_cmix_bf16_v5_cu_01a85e1430cast_float_to_bf16_vec2_kernelEPKfPN3c108BFloat16El' for 'sm_120'
+ptxas info    : Function properties for _ZN54_GLOBAL__N__d7af521a_21_rwkv7_cmix_bf16_v5_cu_01a85e1430cast_float_to_bf16_vec2_kernelEPKfPN3c108BFloat16El
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 12 registers, used 0 barriers
+ptxas info    : Compile time = 1.622 ms
+ptxas info    : Compiling entry function '_ZN54_GLOBAL__N__d7af521a_21_rwkv7_cmix_bf16_v5_cu_01a85e1428cmix_mix_forward_vec2_kernelEPKN3c108BFloat16ES3_PS1_lll' for 'sm_120'
+ptxas info    : Function properties for _ZN54_GLOBAL__N__d7af521a_21_rwkv7_cmix_bf16_v5_cu_01a85e1428cmix_mix_forward_vec2_kernelEPKN3c108BFloat16ES3_PS1_lll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 20 registers, used 0 barriers
+ptxas info    : Compile time = 11.888 ms
+[3/3] c++ rwkv7_cmix_bf16_v5.o rwkv7_cmix_bf16_v5.cuda.o -shared -L/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda-12.8/lib64 -lcudart -o rwkv7_hf_rwkv7_cmix_bf16_v5.so
+[1/3] c++ -MMD -MF rwkv7_tmix_mix6_bf16_v5.o.d -DTORCH_EXTENSION_NAME=rwkv7_hf_rwkv7_tmix_mix6_bf16_v5 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.8/include -isystem /usr/include/python3.10 -fPIC -std=c++17 -O3 -c /home/ubuntu/rwkv7-train-temp-alignment/rwkv7_hf/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cpp -o rwkv7_tmix_mix6_bf16_v5.o
+[2/3] /usr/local/cuda-12.8/bin/nvcc -MD -MF rwkv7_tmix_mix6_bf16_v5.cuda.o.d -DTORCH_EXTENSION_NAME=rwkv7_hf_rwkv7_tmix_mix6_bf16_v5 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.8/include -isystem /usr/include/python3.10 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_120,code=sm_120 --compiler-options '-fPIC' -res-usage --use_fast_math -O3 -Xptxas -O3 --extra-device-vectorization -std=c++17 -c /home/ubuntu/rwkv7-train-temp-alignment/rwkv7_hf/csrc/train_temp/rwkv7_tmix_mix6_bf16_v5.cu -o rwkv7_tmix_mix6_bf16_v5.cuda.o
+ptxas info    : 11 bytes gmem
+ptxas info    : Compiling entry function '_ZN59_GLOBAL__N__527d432b_26_rwkv7_tmix_mix6_bf16_v5_cu_acb737ba30cast_float_to_bf16_vec2_kernelEPKfPN3c108BFloat16El' for 'sm_120'
+ptxas info    : Function properties for _ZN59_GLOBAL__N__527d432b_26_rwkv7_tmix_mix6_bf16_v5_cu_acb737ba30cast_float_to_bf16_vec2_kernelEPKfPN3c108BFloat16El
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 12 registers, used 0 barriers
+ptxas info    : Compile time = 3.651 ms
+ptxas info    : Compiling entry function '_ZN59_GLOBAL__N__527d432b_26_rwkv7_tmix_mix6_bf16_v5_cu_acb737ba34tmix_mix6_backward_fused_kernel_v5EPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_S3_S3_S3_S3_S3_S3_PS1_PfS5_S5_S5_S5_S5_lll' for 'sm_120'
+ptxas info    : Function properties for _ZN59_GLOBAL__N__527d432b_26_rwkv7_tmix_mix6_bf16_v5_cu_acb737ba34tmix_mix6_backward_fused_kernel_v5EPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_S3_S3_S3_S3_S3_S3_PS1_PfS5_S5_S5_S5_S5_lll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 56 registers, used 0 barriers
+ptxas info    : Compile time = 26.582 ms
+ptxas info    : Compiling entry function '_ZN59_GLOBAL__N__527d432b_26_rwkv7_tmix_mix6_bf16_v5_cu_acb737ba24tmix_mix6_forward_kernelEPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_PS1_S4_S4_S4_S4_S4_lll' for 'sm_120'
+ptxas info    : Function properties for _ZN59_GLOBAL__N__527d432b_26_rwkv7_tmix_mix6_bf16_v5_cu_acb737ba24tmix_mix6_forward_kernelEPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_PS1_S4_S4_S4_S4_S4_lll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 28 registers, used 0 barriers
+ptxas info    : Compile time = 17.526 ms
+[3/3] c++ rwkv7_tmix_mix6_bf16_v5.o rwkv7_tmix_mix6_bf16_v5.cuda.o -shared -L/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda-12.8/lib64 -lcudart -o rwkv7_hf_rwkv7_tmix_mix6_bf16_v5.so
+[1/3] c++ -MMD -MF rwkv7_tmix_kk_pre_bf16_v5.o.d -DTORCH_EXTENSION_NAME=rwkv7_hf_rwkv7_tmix_kk_pre_bf16_v5 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.8/include -isystem /usr/include/python3.10 -fPIC -std=c++17 -O3 -c /home/ubuntu/rwkv7-train-temp-alignment/rwkv7_hf/csrc/train_temp/rwkv7_tmix_kk_pre_bf16_v5.cpp -o rwkv7_tmix_kk_pre_bf16_v5.o
+[2/3] /usr/local/cuda-12.8/bin/nvcc -MD -MF rwkv7_tmix_kk_pre_bf16_v5.cuda.o.d -DTORCH_EXTENSION_NAME=rwkv7_hf_rwkv7_tmix_kk_pre_bf16_v5 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.8/include -isystem /usr/include/python3.10 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_120,code=sm_120 --compiler-options '-fPIC' -res-usage --use_fast_math -O3 -Xptxas -O3 --extra-device-vectorization -std=c++17 -c /home/ubuntu/rwkv7-train-temp-alignment/rwkv7_hf/csrc/train_temp/rwkv7_tmix_kk_pre_bf16_v5.cu -o rwkv7_tmix_kk_pre_bf16_v5.cuda.o
+ptxas info    : 11 bytes gmem
+ptxas info    : Compiling entry function '_ZN61_GLOBAL__N__619d3af7_28_rwkv7_tmix_kk_pre_bf16_v5_cu_c0c4eb7225cast_float_to_bf16_kernelEPKfPN3c108BFloat16El' for 'sm_120'
+ptxas info    : Function properties for _ZN61_GLOBAL__N__619d3af7_28_rwkv7_tmix_kk_pre_bf16_v5_cu_c0c4eb7225cast_float_to_bf16_kernelEPKfPN3c108BFloat16El
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 8 registers, used 0 barriers
+ptxas info    : Compile time = 2.648 ms
+ptxas info    : Compiling entry function '_ZN61_GLOBAL__N__619d3af7_28_rwkv7_tmix_kk_pre_bf16_v5_cu_c0c4eb7232tmix_kk_pre_backward64_v5_kernelEPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_PKfPS1_PfS6_S7_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN61_GLOBAL__N__619d3af7_28_rwkv7_tmix_kk_pre_bf16_v5_cu_c0c4eb7232tmix_kk_pre_backward64_v5_kernelEPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_PKfPS1_PfS6_S7_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 30 registers, used 0 barriers
+ptxas info    : Compile time = 11.087 ms
+ptxas info    : Compiling entry function '_ZN61_GLOBAL__N__619d3af7_28_rwkv7_tmix_kk_pre_bf16_v5_cu_c0c4eb7231tmix_kk_pre_forward64_v5_kernelEPKN3c108BFloat16ES3_S3_S3_PS1_S4_S4_Pfll' for 'sm_120'
+ptxas info    : Function properties for _ZN61_GLOBAL__N__619d3af7_28_rwkv7_tmix_kk_pre_bf16_v5_cu_c0c4eb7231tmix_kk_pre_forward64_v5_kernelEPKN3c108BFloat16ES3_S3_S3_PS1_S4_S4_Pfll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 22 registers, used 0 barriers
+ptxas info    : Compile time = 9.384 ms
+[3/3] c++ rwkv7_tmix_kk_pre_bf16_v5.o rwkv7_tmix_kk_pre_bf16_v5.cuda.o -shared -L/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda-12.8/lib64 -lcudart -o rwkv7_hf_rwkv7_tmix_kk_pre_bf16_v5.so
+[1/3] c++ -MMD -MF rwkv7_tmix_lnx_rkvres_xg_bf16_v1.o.d -DTORCH_EXTENSION_NAME=rwkv7_hf_rwkv7_tmix_lnx_rkvres_xg_bf16_v1 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.8/include -isystem /usr/include/python3.10 -fPIC -std=c++17 -O3 -c /home/ubuntu/rwkv7-train-temp-alignment/rwkv7_hf/csrc/train_temp/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cpp -o rwkv7_tmix_lnx_rkvres_xg_bf16_v1.o
+[2/3] /usr/local/cuda-12.8/bin/nvcc -MD -MF rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cuda.o.d -DTORCH_EXTENSION_NAME=rwkv7_hf_rwkv7_tmix_lnx_rkvres_xg_bf16_v1 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.8/include -isystem /usr/include/python3.10 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_120,code=sm_120 --compiler-options '-fPIC' -res-usage --use_fast_math -O3 -Xptxas -O3 --extra-device-vectorization -std=c++17 -c /home/ubuntu/rwkv7-train-temp-alignment/rwkv7_hf/csrc/train_temp/rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cu -o rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cuda.o
+ptxas info    : 11 bytes gmem
+ptxas info    : Compiling entry function '_ZN68_GLOBAL__N__3caced09_35_rwkv7_tmix_lnx_rkvres_xg_bf16_v1_cu_9f6ee01c25cast_float_to_bf16_kernelEPKfPN3c108BFloat16El' for 'sm_120'
+ptxas info    : Function properties for _ZN68_GLOBAL__N__3caced09_35_rwkv7_tmix_lnx_rkvres_xg_bf16_v1_cu_9f6ee01c25cast_float_to_bf16_kernelEPKfPN3c108BFloat16El
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 8 registers, used 0 barriers
+ptxas info    : Compile time = 2.629 ms
+ptxas info    : Compiling entry function '_ZN68_GLOBAL__N__3caced09_35_rwkv7_tmix_lnx_rkvres_xg_bf16_v1_cu_9f6ee01c37tmix_lnx_rkvres_xg_v1_backward_kernelEPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_S3_S3_PKfS5_PS1_S6_S6_S6_PfS7_S7_S6_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN68_GLOBAL__N__3caced09_35_rwkv7_tmix_lnx_rkvres_xg_bf16_v1_cu_9f6ee01c37tmix_lnx_rkvres_xg_v1_backward_kernelEPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_S3_S3_PKfS5_PS1_S6_S6_S6_PfS7_S7_S6_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 44 registers, used 1 barriers, 12288 bytes smem
+ptxas info    : Compile time = 20.515 ms
+ptxas info    : Compiling entry function '_ZN68_GLOBAL__N__3caced09_35_rwkv7_tmix_lnx_rkvres_xg_bf16_v1_cu_9f6ee01c36tmix_lnx_rkvres_xg_v1_forward_kernelEPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_S3_PS1_PfS5_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN68_GLOBAL__N__3caced09_35_rwkv7_tmix_lnx_rkvres_xg_bf16_v1_cu_9f6ee01c36tmix_lnx_rkvres_xg_v1_forward_kernelEPKN3c108BFloat16ES3_S3_S3_S3_S3_S3_S3_PS1_PfS5_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 30 registers, used 0 barriers
+ptxas info    : Compile time = 5.787 ms
+[3/3] c++ rwkv7_tmix_lnx_rkvres_xg_bf16_v1.o rwkv7_tmix_lnx_rkvres_xg_bf16_v1.cuda.o -shared -L/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda-12.8/lib64 -lcudart -o rwkv7_hf_rwkv7_tmix_lnx_rkvres_xg_bf16_v1.so
+[1/3] c++ -MMD -MF rwkv7_tmix_a_gate_bf16.o.d -DTORCH_EXTENSION_NAME=rwkv7_hf_rwkv7_tmix_a_gate_bf16 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.8/include -isystem /usr/include/python3.10 -fPIC -std=c++17 -O3 -c /home/ubuntu/rwkv7-train-temp-alignment/rwkv7_hf/csrc/train_temp/rwkv7_tmix_a_gate_bf16.cpp -o rwkv7_tmix_a_gate_bf16.o
+[2/3] /usr/local/cuda-12.8/bin/nvcc -MD -MF rwkv7_tmix_a_gate_bf16.cuda.o.d -DTORCH_EXTENSION_NAME=rwkv7_hf_rwkv7_tmix_a_gate_bf16 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.8/include -isystem /usr/include/python3.10 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_120,code=sm_120 --compiler-options '-fPIC' -res-usage --use_fast_math -O3 -Xptxas -O3 --extra-device-vectorization -std=c++17 -c /home/ubuntu/rwkv7-train-temp-alignment/rwkv7_hf/csrc/train_temp/rwkv7_tmix_a_gate_bf16.cu -o rwkv7_tmix_a_gate_bf16.cuda.o
+ptxas info    : 11 bytes gmem
+ptxas info    : Compiling entry function '_ZN58_GLOBAL__N__f3200be9_25_rwkv7_tmix_a_gate_bf16_cu_34105ad023a_gate_reduce_a0_kernelEPKfPN3c108BFloat16Ell' for 'sm_120'
+ptxas info    : Function properties for _ZN58_GLOBAL__N__f3200be9_25_rwkv7_tmix_a_gate_bf16_cu_34105ad023a_gate_reduce_a0_kernelEPKfPN3c108BFloat16Ell
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers
+ptxas info    : Compile time = 9.761 ms
+ptxas info    : Compiling entry function '_ZN58_GLOBAL__N__f3200be9_25_rwkv7_tmix_a_gate_bf16_cu_34105ad027a_gate_backward_full_kernelEPKN3c108BFloat16ES3_S3_PS1_Pfll' for 'sm_120'
+ptxas info    : Function properties for _ZN58_GLOBAL__N__f3200be9_25_rwkv7_tmix_a_gate_bf16_cu_34105ad027a_gate_backward_full_kernelEPKN3c108BFloat16ES3_S3_PS1_Pfll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 27 registers, used 0 barriers
+ptxas info    : Compile time = 13.843 ms
+ptxas info    : Compiling entry function '_ZN58_GLOBAL__N__f3200be9_25_rwkv7_tmix_a_gate_bf16_cu_34105ad027a_gate_forward_pow2c_kernelEPKN3c108BFloat16ES3_PS1_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN58_GLOBAL__N__f3200be9_25_rwkv7_tmix_a_gate_bf16_cu_34105ad027a_gate_forward_pow2c_kernelEPKN3c108BFloat16ES3_PS1_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 12 registers, used 0 barriers
+ptxas info    : Compile time = 2.105 ms
+ptxas info    : Compiling entry function '_ZN58_GLOBAL__N__f3200be9_25_rwkv7_tmix_a_gate_bf16_cu_34105ad021a_gate_forward_kernelEPKN3c108BFloat16ES3_PS1_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN58_GLOBAL__N__f3200be9_25_rwkv7_tmix_a_gate_bf16_cu_34105ad021a_gate_forward_kernelEPKN3c108BFloat16ES3_PS1_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 6.420 ms
+[3/3] c++ rwkv7_tmix_a_gate_bf16.o rwkv7_tmix_a_gate_bf16.cuda.o -shared -L/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda-12.8/lib64 -lcudart -o rwkv7_hf_rwkv7_tmix_a_gate_bf16.so
+[1/3] c++ -MMD -MF rwkv7_tmix_vres_gate_bf16_v3.o.d -DTORCH_EXTENSION_NAME=rwkv7_hf_rwkv7_tmix_vres_gate_bf16_v3 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.8/include -isystem /usr/include/python3.10 -fPIC -std=c++17 -O3 -c /home/ubuntu/rwkv7-train-temp-alignment/rwkv7_hf/csrc/train_temp/rwkv7_tmix_vres_gate_bf16_v3.cpp -o rwkv7_tmix_vres_gate_bf16_v3.o
+[2/3] /usr/local/cuda-12.8/bin/nvcc -MD -MF rwkv7_tmix_vres_gate_bf16_v3.cuda.o.d -DTORCH_EXTENSION_NAME=rwkv7_hf_rwkv7_tmix_vres_gate_bf16_v3 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.8/include -isystem /usr/include/python3.10 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_120,code=sm_120 --compiler-options '-fPIC' -res-usage --use_fast_math -O3 -Xptxas -O3 --extra-device-vectorization -std=c++17 -c /home/ubuntu/rwkv7-train-temp-alignment/rwkv7_hf/csrc/train_temp/rwkv7_tmix_vres_gate_bf16_v3.cu -o rwkv7_tmix_vres_gate_bf16_v3.cuda.o
+ptxas info    : 11 bytes gmem
+ptxas info    : Compiling entry function '_ZN64_GLOBAL__N__5061e50a_31_rwkv7_tmix_vres_gate_bf16_v3_cu_65af584327vres_gate_v3_forward_kernelILb0EEEvPKN3c108BFloat16ES4_S4_S4_PS2_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN64_GLOBAL__N__5061e50a_31_rwkv7_tmix_vres_gate_bf16_v3_cu_65af584327vres_gate_v3_forward_kernelILb0EEEvPKN3c108BFloat16ES4_S4_S4_PS2_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 7.979 ms
+ptxas info    : Compiling entry function '_ZN64_GLOBAL__N__5061e50a_31_rwkv7_tmix_vres_gate_bf16_v3_cu_65af584327vres_gate_v3_forward_kernelILb1EEEvPKN3c108BFloat16ES4_S4_S4_PS2_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN64_GLOBAL__N__5061e50a_31_rwkv7_tmix_vres_gate_bf16_v3_cu_65af584327vres_gate_v3_forward_kernelILb1EEEvPKN3c108BFloat16ES4_S4_S4_PS2_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 16 registers, used 0 barriers
+ptxas info    : Compile time = 2.485 ms
+ptxas info    : Compiling entry function '_ZN64_GLOBAL__N__5061e50a_31_rwkv7_tmix_vres_gate_bf16_v3_cu_65af584329vres_gate_v3_reduce_v0_kernelEPKfPN3c108BFloat16Ell' for 'sm_120'
+ptxas info    : Function properties for _ZN64_GLOBAL__N__5061e50a_31_rwkv7_tmix_vres_gate_bf16_v3_cu_65af584329vres_gate_v3_reduce_v0_kernelEPKfPN3c108BFloat16Ell
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 0 barriers
+ptxas info    : Compile time = 8.652 ms
+ptxas info    : Compiling entry function '_ZN64_GLOBAL__N__5061e50a_31_rwkv7_tmix_vres_gate_bf16_v3_cu_65af584334vres_gate_v3_backward_tiled_kernelEPKN3c108BFloat16ES3_S3_S3_S3_PS1_S4_S4_Pfll' for 'sm_120'
+ptxas info    : Function properties for _ZN64_GLOBAL__N__5061e50a_31_rwkv7_tmix_vres_gate_bf16_v3_cu_65af584334vres_gate_v3_backward_tiled_kernelEPKN3c108BFloat16ES3_S3_S3_S3_PS1_S4_S4_Pfll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 38 registers, used 0 barriers
+ptxas info    : Compile time = 23.825 ms
+[3/3] c++ rwkv7_tmix_vres_gate_bf16_v3.o rwkv7_tmix_vres_gate_bf16_v3.cuda.o -shared -L/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda-12.8/lib64 -lcudart -o rwkv7_hf_rwkv7_tmix_vres_gate_bf16_v3.so
+[1/3] /usr/local/cuda-12.8/bin/nvcc -MD -MF rwkv7_clampw_v3_for_h100.cuda.o.d -DTORCH_EXTENSION_NAME=rwkv7_hf_clampw_v3 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.8/include -isystem /usr/include/python3.10 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_120,code=sm_120 --compiler-options '-fPIC' -res-usage --use_fast_math -O3 -Xptxas -O3 --extra-device-vectorization -D_N_=64 -D_CHUNK_LEN_=16 -std=c++17 -c /home/ubuntu/rwkv7-train-temp-alignment/rwkv7_hf/csrc/train_temp/rwkv7_clampw_v3_for_h100.cu -o rwkv7_clampw_v3_for_h100.cuda.o
+ptxas info    : 0 bytes gmem
+ptxas info    : Compiling entry function '_Z23backward_kernel_preloadILi64ELi16EEviiP13__nv_bfloat16S1_S1_S1_S1_S1_S1_PfS2_S1_S1_S1_S1_S1_S1_' for 'sm_120'
+ptxas info    : Function properties for _Z23backward_kernel_preloadILi64ELi16EEviiP13__nv_bfloat16S1_S1_S1_S1_S1_S1_PfS2_S1_S1_S1_S1_S1_S1_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 255 registers, used 1 barriers, 37120 bytes smem
+ptxas info    : Compile time = 210.002 ms
+ptxas info    : Compiling entry function '_Z22forward_kernel_preloadILi64EEviiP13__nv_bfloat16S1_S1_S1_S1_S1_S1_PfS2_' for 'sm_120'
+ptxas info    : Function properties for _Z22forward_kernel_preloadILi64EEviiP13__nv_bfloat16S1_S1_S1_S1_S1_S1_PfS2_
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 192 registers, used 1 barriers, 24576 bytes smem
+ptxas info    : Compile time = 58.474 ms
+[2/3] c++ -MMD -MF rwkv7_clampw_v3.o.d -DTORCH_EXTENSION_NAME=rwkv7_hf_clampw_v3 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.8/include -isystem /usr/include/python3.10 -fPIC -std=c++17 -O3 -c /home/ubuntu/rwkv7-train-temp-alignment/rwkv7_hf/csrc/train_temp/rwkv7_clampw_v3.cpp -o rwkv7_clampw_v3.o
+[3/3] c++ rwkv7_clampw_v3_for_h100.cuda.o rwkv7_clampw_v3.o -shared -L/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda-12.8/lib64 -lcudart -o rwkv7_hf_clampw_v3.so
+[1/3] c++ -MMD -MF rwkv7_l2wrap_ce_bf16_v2.o.d -DTORCH_EXTENSION_NAME=rwkv7_hf_l2wrap_ce_bf16_v2 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.8/include -isystem /usr/include/python3.10 -fPIC -std=c++17 -O3 -c /home/ubuntu/rwkv7-train-temp-alignment/rwkv7_hf/csrc/train_temp/rwkv7_l2wrap_ce_bf16_v2.cpp -o rwkv7_l2wrap_ce_bf16_v2.o
+[2/3] /usr/local/cuda-12.8/bin/nvcc -MD -MF rwkv7_l2wrap_ce_bf16_v2.cuda.o.d -DTORCH_EXTENSION_NAME=rwkv7_hf_l2wrap_ce_bf16_v2 -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include -isystem /home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda-12.8/include -isystem /usr/include/python3.10 -D__CUDA_NO_HALF_OPERATORS__ -D__CUDA_NO_HALF_CONVERSIONS__ -D__CUDA_NO_BFLOAT16_CONVERSIONS__ -D__CUDA_NO_HALF2_OPERATORS__ --expt-relaxed-constexpr -gencode=arch=compute_120,code=sm_120 --compiler-options '-fPIC' -res-usage --use_fast_math -O3 -Xptxas -O3 --extra-device-vectorization -std=c++17 -c /home/ubuntu/rwkv7-train-temp-alignment/rwkv7_hf/csrc/train_temp/rwkv7_l2wrap_ce_bf16_v2.cu -o rwkv7_l2wrap_ce_bf16_v2.cuda.o
+ptxas info    : 11 bytes gmem
+ptxas info    : Compiling entry function '_ZN59_GLOBAL__N__880916ad_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273128l2wrap_ce_backward_v2_kernelIfLi512EEEvPKfPKT_PKlS2_S2_PKiPS3_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN59_GLOBAL__N__880916ad_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273128l2wrap_ce_backward_v2_kernelIfLi512EEEvPKfPKT_PKlS2_S2_PKiPS3_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 25 registers, used 0 barriers
+ptxas info    : Compile time = 9.815 ms
+ptxas info    : Compiling entry function '_ZN59_GLOBAL__N__880916ad_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273128l2wrap_ce_backward_v2_kernelIN3c108BFloat16ELi512EEEvPKfPKT_PKlS4_S4_PKiPS5_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN59_GLOBAL__N__880916ad_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273128l2wrap_ce_backward_v2_kernelIN3c108BFloat16ELi512EEEvPKfPKT_PKlS4_S4_PKiPS5_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 25 registers, used 0 barriers
+ptxas info    : Compile time = 9.370 ms
+ptxas info    : Compiling entry function '_ZN59_GLOBAL__N__880916ad_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273127l2wrap_ce_forward_v2_kernelIfLi512EEEvPKT_PKlPfS6_PiS6_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN59_GLOBAL__N__880916ad_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273127l2wrap_ce_forward_v2_kernelIfLi512EEEvPKT_PKlPfS6_PiS6_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 40 registers, used 1 barriers, 196 bytes smem
+ptxas info    : Compile time = 38.975 ms
+ptxas info    : Compiling entry function '_ZN59_GLOBAL__N__880916ad_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273127l2wrap_ce_forward_v2_kernelIN3c108BFloat16ELi512EEEvPKT_PKlPfS8_PiS8_ll' for 'sm_120'
+ptxas info    : Function properties for _ZN59_GLOBAL__N__880916ad_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273127l2wrap_ce_forward_v2_kernelIN3c108BFloat16ELi512EEEvPKT_PKlPfS8_PiS8_ll
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 38 registers, used 1 barriers, 196 bytes smem
+ptxas info    : Compile time = 38.542 ms
+ptxas info    : Compiling entry function '_ZN59_GLOBAL__N__880916ad_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273118reduce_loss_kernelEPKfPfl' for 'sm_120'
+ptxas info    : Function properties for _ZN59_GLOBAL__N__880916ad_26_rwkv7_l2wrap_ce_bf16_v2_cu_32ac273118reduce_loss_kernelEPKfPfl
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 39 registers, used 1 barriers, 32 bytes smem
+ptxas info    : Compile time = 10.267 ms
+[3/3] c++ rwkv7_l2wrap_ce_bf16_v2.o rwkv7_l2wrap_ce_bf16_v2.cuda.o -shared -L/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda-12.8/lib64 -lcudart -o rwkv7_hf_l2wrap_ce_bf16_v2.so
+True
