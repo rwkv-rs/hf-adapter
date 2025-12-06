@@ -50,14 +50,18 @@ class FixedLenCollator:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
-    ap.add_argument("--dtype", default="fp32", choices=["fp32", "fp16"])
+    ap.add_argument("--dtype", default="bf16", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--max-steps", type=int, default=6)
     ap.add_argument("--batch-size", type=int, default=2)
     ap.add_argument("--length", type=int, default=32)
     ap.add_argument("--lr", type=float, default=1e-3)
     args = ap.parse_args()
 
-    dt = torch.float32 if args.dtype == "fp32" else torch.float16
+    dt = {
+        "fp32": torch.float32,
+        "fp16": torch.float16,
+        "bf16": torch.bfloat16,
+    }[args.dtype]
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     model = NativeRWKV7ForCausalLM.from_pretrained(
         args.model, torch_dtype=dt, device_map="cuda"
@@ -89,6 +93,7 @@ def main() -> int:
         report_to=[],
         remove_unused_columns=False,
         fp16=(args.dtype == "fp16"),
+        bf16=(args.dtype == "bf16"),
     )
     trainer = Trainer(
         model=model, args=targs, train_dataset=rows, data_collator=FixedLenCollator()
