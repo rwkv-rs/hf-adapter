@@ -69,6 +69,12 @@ def test_promoted_train_temp_evidence_is_self_consistent() -> None:
 
 
 def test_promoted_train_temp_review_attachments_are_complete() -> None:
+    best_png = (EVIDENCE / "official_vs_hf_best_seed131.png").read_bytes()
+    assert best_png[:8] == b"\x89PNG\r\n\x1a\n"
+    best_width, best_height = struct.unpack(">II", best_png[16:24])
+    assert best_width >= 1800
+    assert best_height >= 700
+
     png = (EVIDENCE / "official_vs_hf_convergence.png").read_bytes()
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
     width, height = struct.unpack(">II", png[16:24])

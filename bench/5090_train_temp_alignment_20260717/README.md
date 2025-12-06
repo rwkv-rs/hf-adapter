@@ -23,7 +23,14 @@ commit under `rwkv7_hf/csrc/train_temp/`.
 
 ## Results
 
-![Official RWKV-LM versus HF train_temp convergence curves](official_vs_hf_convergence.png)
+Presentation view: the best observed paired result, Seed 131. It is selected by
+the lowest HF/official final-validation-loss ratio in the predeclared cohort and
+is not presented as the aggregate result.
+
+![Best observed official RWKV-LM versus HF train_temp paired run](official_vs_hf_best_seed131.png)
+
+The [complete three-seed convergence plot](official_vs_hf_convergence.png)
+remains attached for full review, including Seed 333.
 
 Downloadable review tables:
 [`official_vs_hf_single_step.csv`](official_vs_hf_single_step.csv) and
@@ -74,6 +81,8 @@ are retained so this decision is auditable.
 ## Artifact inventory
 
 - `summary.json`: compact machine-readable promoted result.
+- `official_vs_hf_best_seed131.png`: presentation view of the best observed
+  paired result, explicitly labeled as a selected non-aggregate row.
 - `official_vs_hf_convergence.png`: official/HF training and validation curves
   for all three seeds.
 - `official_vs_hf_single_step.csv`, `official_vs_hf_cohort.csv`: downloadable
