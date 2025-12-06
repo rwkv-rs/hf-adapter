@@ -1,6 +1,6 @@
 # Native-Default Backend Architecture
 
-Status: **accepted for implementation; not yet promoted as the repository default**.
+Status: **canonical inference migration implemented; official training gate remains open**.
 
 ## Decision
 
@@ -29,6 +29,20 @@ fp16/B1/prompt32/decode16 recorded pure-native eager at `31.35 tok/s`,
 pure-native JIT at `41.68 tok/s`, and wrapper-hosted native graph at
 `226.3 tok/s`. Changing only an environment-variable default would create a
 5.43x decode regression and is rejected.
+
+The FLA-free migration now owns both compiled prefill and CUDA-graph decode.
+On the same RTX 5070 Laptop / 0.4B / fp16 checkpoint:
+
+- B1 native graph decode is `223.47 tok/s`, or `0.9875x` the retained
+  `226.3 tok/s` wrapper-hosted row; logits cosine is `0.99999988` and greedy
+  matches 32/32.
+- B1/B2/B4/B8 prompt-32 prefill and decode probes all pass greedy alignment.
+  Minimum prefill/decode logits cosine is `0.99999940`/`0.99999875`.
+- Compiled native prefill is `3.44x-6.57x` the eager native fallback for the
+  measured B1/B2/B4/B8 rows.
+
+These rows close the inference migration checkpoint. They do not close the
+official B16/T512 training recipe or the full model/prompt/decode matrix.
 
 ## Runtime Boundaries
 
@@ -68,4 +82,3 @@ dependency of the canonical RWKV model.
   proven graph runtime before that runtime is reusable.
 - **Keep FLA indefinitely as the model superclass:** preserves short-term
   behavior but does not satisfy the native/upstream/AMD/clean-install target.
-

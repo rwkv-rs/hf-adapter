@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import tomllib
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -51,3 +53,22 @@ def test_native_default_performance_gate_rejects_a_flag_only_migration() -> None
     assert "0.95x" in text
     assert "wrapper-hosted native_graph" in text
     assert "pure-native" in text
+
+
+def test_base_and_cuda_install_profiles_do_not_require_fla() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    base = project["dependencies"]
+    extras = project["optional-dependencies"]
+
+    assert not any("flash-linear-attention" in item for item in base)
+    assert not any("flash-linear-attention" in item for item in extras["cuda"])
+    assert any("flash-linear-attention" in item for item in extras["fla-reference"])
+
+
+def test_package_public_classes_are_native() -> None:
+    import rwkv7_hf
+    from rwkv7_hf.native_model import NativeRWKV7Config, NativeRWKV7ForCausalLM, NativeRWKV7Model
+
+    assert rwkv7_hf.RWKV7Config is NativeRWKV7Config
+    assert rwkv7_hf.RWKV7Model is NativeRWKV7Model
+    assert rwkv7_hf.RWKV7ForCausalLM is NativeRWKV7ForCausalLM

@@ -1,25 +1,41 @@
+"""Public package surface for the canonical native RWKV-7 HF adapter."""
+
 try:
-    from .configuration_rwkv7 import RWKV7Config
-except ImportError:  # Allows importing experimental native_model without FLA.
-    RWKV7Config = None
+    from .native_model import (
+        NativeRWKV7Cache,
+        NativeRWKV7Config,
+        NativeRWKV7ForCausalLM,
+        NativeRWKV7Model,
+    )
+except Exception:  # Keep lightweight tooling importable without torch/Transformers.
+    NativeRWKV7Cache = None
+    NativeRWKV7Config = None
+    NativeRWKV7ForCausalLM = None
+    NativeRWKV7Model = None
+
+RWKV7Config = NativeRWKV7Config
+RWKV7Model = NativeRWKV7Model
+RWKV7ForCausalLM = NativeRWKV7ForCausalLM
+RWKV7StateCache = NativeRWKV7Cache
 
 try:
     from .tokenization_rwkv7 import RWKV7Tokenizer
 except ImportError:
     RWKV7Tokenizer = None
 
-try:
-    from .modeling_rwkv7 import RWKV7ForCausalLM, RWKV7Model
-except ImportError:  # Allows importing experimental native_model without FLA.
-    RWKV7ForCausalLM = None
-    RWKV7Model = None
+def __getattr__(name):
+    """Load the historical FLA wrapper only through explicit reference names."""
 
-try:
-    from .native_model import NativeRWKV7Config, NativeRWKV7ForCausalLM, NativeRWKV7Model
-except Exception:  # Keep lightweight cache/unit tests importable with stubs.
-    NativeRWKV7Config = None
-    NativeRWKV7ForCausalLM = None
-    NativeRWKV7Model = None
+    if name == "FLAReferenceRWKV7Config":
+        from .configuration_rwkv7 import RWKV7Config as reference_config
+
+        return reference_config
+    if name in {"FLAReferenceRWKV7Model", "FLAReferenceRWKV7ForCausalLM"}:
+        from .modeling_rwkv7 import RWKV7ForCausalLM as reference_causal_lm
+        from .modeling_rwkv7 import RWKV7Model as reference_model
+
+        return reference_model if name == "FLAReferenceRWKV7Model" else reference_causal_lm
+    raise AttributeError(name)
 
 try:
     from .mlx_model import (
@@ -69,10 +85,12 @@ __all__ = [
     "RWKV7Config",
     "RWKV7ForCausalLM",
     "RWKV7Model",
+    "RWKV7StateCache",
     "RWKV7Tokenizer",
     "NativeRWKV7Config",
     "NativeRWKV7ForCausalLM",
     "NativeRWKV7Model",
+    "NativeRWKV7Cache",
     "MLXGenerateOutput",
     "MLXGenerationSession",
     "MLXGenerationSessionBatch",
