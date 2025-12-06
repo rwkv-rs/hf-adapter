@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
+import tempfile
 import types
 from pathlib import Path
 
@@ -48,6 +50,7 @@ def install_stubs() -> None:
     sys.modules["rwkv7_hf"] = hf_mod
 
     native_mod = types.ModuleType("rwkv7_hf.native_model")
+    native_mod.NativeRWKV7Config = DummyConfig
     native_mod.NativeRWKV7ForCausalLM = DummyModel
     sys.modules["rwkv7_hf.native_model"] = native_mod
 
@@ -101,10 +104,20 @@ def main() -> int:
     assert isinstance(template, DummyModel)
     assert template.dtype == "float16"
 
-    conv.RWKV7ForCausalLM = MissingFlaModel
-    fallback_template = conv.build_template_model(cfg, "float16")
-    assert isinstance(fallback_template, DummyModel)
-    assert fallback_template.dtype == "float16"
+    assert conv.NativeRWKV7ForCausalLM is DummyModel
+
+    with tempfile.TemporaryDirectory() as td:
+        config_path = Path(td) / "config.json"
+        config_path.write_text("{}\n", encoding="utf-8")
+        conv.patch_hf_metadata(Path(td))
+        metadata = json.loads(config_path.read_text(encoding="utf-8"))
+        assert metadata["architectures"] == ["NativeRWKV7ForCausalLM"]
+        assert metadata["model_type"] == "rwkv7_native"
+        assert metadata["auto_map"] == {
+            "AutoConfig": "native_model.NativeRWKV7Config",
+            "AutoModel": "native_model.NativeRWKV7Model",
+            "AutoModelForCausalLM": "native_model.NativeRWKV7ForCausalLM",
+        }
 
     assert conv.infer_num_layers(weights) == 3
     assert conv.infer_head_dim(weights, 1024) == 128

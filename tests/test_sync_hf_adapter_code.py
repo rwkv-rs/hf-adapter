@@ -119,9 +119,13 @@ def main() -> int:
         for name in ADAPTER_FILES:
             assert (model_dir / name).exists(), name
         cfg = json.loads((model_dir / "config.json").read_text(encoding="utf-8"))
-        assert cfg["architectures"] == ["RWKV7ForCausalLM"]
-        assert cfg["model_type"] == "rwkv7_hf_adapter"
-        assert cfg["auto_map"]["AutoModelForCausalLM"] == "modeling_rwkv7.RWKV7ForCausalLM"
+        assert cfg["architectures"] == ["NativeRWKV7ForCausalLM"]
+        assert cfg["model_type"] == "rwkv7_native"
+        assert cfg["auto_map"] == {
+            "AutoConfig": "native_model.NativeRWKV7Config",
+            "AutoModel": "native_model.NativeRWKV7Model",
+            "AutoModelForCausalLM": "native_model.NativeRWKV7ForCausalLM",
+        }
         assert weight.read_bytes() == b"do-not-touch"
 
     print("PASS")
