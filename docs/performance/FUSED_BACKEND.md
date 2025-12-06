@@ -14,6 +14,26 @@ standard HF-facing paths:
 - `model.rwkv7_forward_token(...)`
 - `RWKV7StateCache` dynamic-batch and chunked-prefill helpers
 
+### native-default-5070 migration gate
+
+The canonical model is moving from a FLA-backed wrapper to the FLA-free native
+model. This is a runtime migration, not an environment-flag change. Before the
+default moves, graph/fused decode must run directly on the pure-native model.
+
+The frozen RTX 5070 Laptop 0.4B fp16/B1/prompt32/decode16 baseline is:
+
+| Runtime | Decode throughput |
+|---|---:|
+| pure-native eager | `31.35 tok/s` |
+| pure-native JIT | `41.68 tok/s` |
+| wrapper-hosted native_graph | `226.3 tok/s` |
+
+The native-default row must preserve logits/greedy results and reach at least
+`0.95x` the wrapper-hosted native_graph result on the same shape before it can
+replace the default. B1/B2/B4/B8 and larger fitting checkpoints are required
+after the first shape closes. FLA remains an explicit reference backend during
+migration, while Qwen full-FLA remains the optimized competitor baseline.
+
 The current wrapper/native split remains intact:
 
 - HF wrapper owns compatibility with Transformers, PEFT, Trainer, TRL, cache
