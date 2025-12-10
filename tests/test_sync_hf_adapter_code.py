@@ -77,7 +77,10 @@ def _assert_remote_code_direct_import_closure() -> None:
         transitive: set[str] = set()
         while pending:
             name = pending.pop()
-            if name in transitive or not (root / name).exists():
+            # Type-only imports can point back to the remote-code entrypoint.
+            # The entrypoint is already present, so it is not a dependency that
+            # Transformers needs to discover or copy again.
+            if name == entrypoint_name or name in transitive or not (root / name).exists():
                 continue
             transitive.add(name)
             pending.extend(_relative_import_files(root / name) - transitive)
