@@ -764,13 +764,24 @@ class NativeRWKV7Config(PretrainedConfig):
         self.vocab_size = kwargs.get("vocab_size", 65536)
         self.hidden_size = kwargs.get("hidden_size", 768)
         self.num_hidden_layers = kwargs.get("num_hidden_layers", 12)
-        self.head_dim = kwargs.get("head_dim", 64)
         self.num_heads = kwargs.get("num_heads", None) or kwargs.get("num_attention_heads", None)
+        requested_attention_width = int(
+            kwargs.get("attention_hidden_size", self.hidden_size)
+        )
+        requested_head_dim = kwargs.get("head_dim", None)
+        if self.num_heads is None and requested_head_dim is None:
+            requested_head_dim = (
+                64 if requested_attention_width % 64 == 0 else requested_attention_width
+            )
+        if requested_head_dim is None:
+            if requested_attention_width % int(self.num_heads):
+                raise ValueError("attention_hidden_size must be divisible by num_heads")
+            requested_head_dim = requested_attention_width // int(self.num_heads)
+        self.head_dim = int(requested_head_dim)
         if self.num_heads is None:
-            requested_attention_width = kwargs.get("attention_hidden_size", self.hidden_size)
-            if int(requested_attention_width) % int(self.head_dim):
+            if requested_attention_width % self.head_dim:
                 raise ValueError("attention_hidden_size must be divisible by head_dim")
-            self.num_heads = int(requested_attention_width) // int(self.head_dim)
+            self.num_heads = requested_attention_width // self.head_dim
         self.attention_hidden_size = int(
             kwargs.get("attention_hidden_size", self.num_heads * self.head_dim)
         )
