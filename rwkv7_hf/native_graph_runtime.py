@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import os
 import weakref
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn.functional as F
+
+if TYPE_CHECKING:
+    from .native_model import NativeRWKV7Cache, NativeRWKV7ForCausalLM
 
 try:
     from .native_jit import (
@@ -95,7 +99,10 @@ class NativeGraphRunner:
         if self.device.type != "cuda":
             raise RuntimeError("native_graph requires model weights on CUDA")
         self.dtype = base.embeddings.weight.dtype
-        self.hidden = int(packs[0][1] * packs[0][2])
+        self.hidden = int(owner.config.hidden_size)
+        self.attention_hidden = int(
+            getattr(owner.config, "attention_hidden_size", packs[0][1] * packs[0][2])
+        )
         self.num_layers = len(packs)
         self.single = self.batch_size == 1
         if self.single:
@@ -106,7 +113,7 @@ class NativeGraphRunner:
             self.xpa = [torch.zeros(self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
             self.xpf = [torch.zeros(self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
             self.sparse_ffn_out = [torch.empty(self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
-            self.v_first = torch.zeros(self.hidden, device=self.device, dtype=self.dtype)
+            self.v_first = torch.zeros(self.attention_hidden, device=self.device, dtype=self.dtype)
         else:
             self.state = [
                 torch.zeros(
@@ -128,7 +135,12 @@ class NativeGraphRunner:
             self.sparse_ffn_out = [
                 torch.empty(self.batch_size, self.hidden, device=self.device, dtype=self.dtype) for _ in packs
             ]
-            self.v_first = torch.zeros(self.batch_size, self.hidden, device=self.device, dtype=self.dtype)
+            self.v_first = torch.zeros(
+                self.batch_size,
+                self.attention_hidden,
+                device=self.device,
+                dtype=self.dtype,
+            )
         self.token_ids = torch.zeros(self.batch_size, dtype=torch.long, device=self.device)
         self.embeddings = base.embeddings.weight
         self.head = owner.lm_head

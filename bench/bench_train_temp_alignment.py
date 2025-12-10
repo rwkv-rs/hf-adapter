@@ -35,7 +35,14 @@ from rwkv7_hf.train_temp_alignment import (
 
 
 SCHEMA_VERSION = 1
-PROVENANCE_KEYS = ("phase", "precision", "checkpoint_sha256", "batch_sha256")
+PROVENANCE_KEYS = (
+    "phase",
+    "precision",
+    "checkpoint_sha256",
+    "batch_sha256",
+    "gradient_checkpointing",
+    "snapshot_logits",
+)
 
 
 def sha256_file(path: str | Path) -> str:
@@ -59,7 +66,7 @@ def save_safetensors_atomic(tensors: dict[str, torch.Tensor], path: str | Path) 
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(output.suffix + ".tmp")
     cpu_tensors = {
-        name: tensor.detach().to(device="cpu").contiguous().clone()
+        name: tensor.detach().to(device="cpu").contiguous()
         for name, tensor in tensors.items()
     }
     save_file(cpu_tensors, temporary)
@@ -366,6 +373,8 @@ def _capture_training_phase(
     grad_clip: float,
     optimizer_name: str,
     source_commit: str | None,
+    gradient_checkpointing: bool = False,
+    snapshot_logits: bool = True,
     backend_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if phase not in {"forward", "backward", "step"}:
@@ -408,7 +417,7 @@ def _capture_training_phase(
             adam_eps=adam_eps,
         )
         before = {
-            name: parameter.detach().to(device="cpu", dtype=torch.float32).clone()
+            name: parameter.detach().to(device="cpu").clone()
             for name, parameter in named_parameters
             if parameter.requires_grad
         }
@@ -420,7 +429,9 @@ def _capture_training_phase(
     outputs = model(input_ids)
     logits = outputs.logits if hasattr(outputs, "logits") else outputs
     loss = loss_fn(logits, targets)
-    snapshot: dict[str, torch.Tensor] = {"logits": logits.detach()}
+    snapshot: dict[str, torch.Tensor] = (
+        {"logits": logits.detach()} if snapshot_logits else {}
+    )
     raw_grad_norm = None
     clipped_grad_norm = None
     post_step_loss = None
@@ -444,17 +455,23 @@ def _capture_training_phase(
             )
             assert optimizer is not None
             optimizer.step()
-            deltas = {
-                name: parameter.detach().to(device="cpu", dtype=torch.float32) - before[name]
-                for name, parameter in named_parameters
-                if parameter.requires_grad
-            }
+            deltas: dict[str, torch.Tensor] = {}
+            for name, parameter in named_parameters:
+                if not parameter.requires_grad:
+                    continue
+                previous = before.pop(name)
+                deltas[name] = parameter.detach().to(device="cpu", dtype=torch.float32).sub_(
+                    previous.to(dtype=torch.float32)
+                )
             snapshot.update(normalizer(deltas, "delta::"))
+            if not snapshot_logits:
+                del outputs, logits
             with torch.no_grad():
                 post_outputs = model(input_ids)
                 post_logits = post_outputs.logits if hasattr(post_outputs, "logits") else post_outputs
                 post_step_loss = float(loss_fn(post_logits, targets).detach().float().item())
-                snapshot["post_step_logits"] = post_logits.detach()
+                if snapshot_logits:
+                    snapshot["post_step_logits"] = post_logits.detach()
     if device.startswith("cuda"):
         torch.cuda.synchronize()
     runtime_s = time.perf_counter() - started
@@ -471,6 +488,8 @@ def _capture_training_phase(
         "batch_sha256": sha256_file(batch_path),
         "batch_size": int(input_ids.shape[0]),
         "seq_len": int(input_ids.shape[1]),
+        "gradient_checkpointing": bool(gradient_checkpointing),
+        "snapshot_logits": bool(snapshot_logits),
         "loss": float(loss.detach().float().item()),
         "runtime_s": runtime_s,
         "raw_grad_norm": raw_grad_norm,
@@ -688,9 +707,19 @@ def _run_convergence(
 
 
 def _load_official_module(checkout: str | Path):
+    from scripts.run_train_temp_official_recipe import build_official_runtime_env
+
     train_temp = Path(checkout).resolve() / "RWKV-v7" / "train_temp"
     if not (train_temp / "src" / "model.py").is_file():
         raise FileNotFoundError(f"official train_temp model not found under {train_temp}")
+    extension_dir = Path(
+        os.environ.get(
+            "TORCH_EXTENSIONS_DIR",
+            Path.home() / ".cache" / "torch_extensions",
+        )
+    )
+    runtime_env, build_environment = build_official_runtime_env(extension_dir)
+    os.environ.update(runtime_env)
     os.environ.setdefault("RWKV_MY_TESTING", "x070")
     os.environ.setdefault("RWKV_KERNEL", "@rwkv3")
     # Current train_temp reuses module-level helper names between fused stages;
@@ -702,11 +731,32 @@ def _load_official_module(checkout: str | Path):
     os.environ.setdefault("RWKV_FLOAT_MODE", "bf16")
     os.chdir(train_temp)
     sys.path.insert(0, str(train_temp))
-    return importlib.import_module("src.model")
+    module = importlib.import_module("src.model")
+    module._rwkv7_build_environment = build_environment
+    return module
 
 
 def _load_official_config(path: str | Path) -> SimpleNamespace:
     values = json.loads(Path(path).read_text(encoding="utf-8"))
+    if "model" in values and "run" in values:
+        model = values["model"]
+        run = values["run"]
+        values = {
+            "n_layer": int(model["n_layer"]),
+            "n_embd": int(model["n_embd"]),
+            "dim_att": int(model["dim_att"]),
+            "dim_ffn": int(model["effective_dim_ffn"]),
+            "vocab_size": int(model["vocab_size"]),
+            "head_size": int(model["head_size"]),
+            "ctx_len": int(model["ctx_len"]),
+            "my_testing": str(model["model_type"]),
+            "grad_cp": int(run["grad_cp"]),
+            "accelerator": str(run["accelerator"]),
+            "lr_init": float(run["lr_init"]),
+            "weight_decay": float(run["weight_decay"]),
+            "betas": (float(run["beta1"]), float(run["beta2"])),
+            "adam_eps": float(run["adam_eps"]),
+        }
     if "betas" in values:
         values["betas"] = tuple(values["betas"])
     return SimpleNamespace(**values)
@@ -789,6 +839,11 @@ def capture_official(args) -> dict[str, Any]:
         grad_clip=args.grad_clip,
         optimizer_name=args.optimizer,
         source_commit=_git_commit(args.official_checkout),
+        gradient_checkpointing=bool(int(getattr(config, "grad_cp", 0))),
+        snapshot_logits=not args.omit_logits,
+        backend_metadata={
+            "build_environment": getattr(official, "_rwkv7_build_environment", {})
+        },
     )
 
 
@@ -803,6 +858,8 @@ def capture_hf(args) -> dict[str, Any]:
         torch_dtype=torch.bfloat16,
     ).to(args.device)
     model.config.use_cache = False
+    if args.gradient_checkpointing:
+        model.gradient_checkpointing_enable()
 
     backend = "hf_native" if args.native else "hf_fla"
     loss_fn = train_temp_cross_entropy
@@ -813,7 +870,7 @@ def capture_hf(args) -> dict[str, Any]:
             train_temp_fused_cross_entropy,
         )
 
-        backend = "hf_train_temp_cuda"
+        backend = "hf_native_train_temp_cuda" if args.native else "hf_train_temp_cuda"
         loss_fn = train_temp_fused_cross_entropy
         backend_metadata = enable_train_temp_cuda_backend(model)
 
@@ -843,6 +900,8 @@ def capture_hf(args) -> dict[str, Any]:
         grad_clip=args.grad_clip,
         optimizer_name=args.optimizer,
         source_commit=_git_commit(Path(__file__).resolve().parents[1]),
+        gradient_checkpointing=bool(args.gradient_checkpointing),
+        snapshot_logits=not args.omit_logits,
         backend_metadata=backend_metadata,
     )
 
@@ -886,6 +945,9 @@ def converge_official(args) -> dict[str, Any]:
         optimizer_name=args.optimizer,
         eval_interval=args.eval_interval,
         source_commit=_git_commit(args.official_checkout),
+        backend_metadata={
+            "build_environment": getattr(official, "_rwkv7_build_environment", {})
+        },
     )
 
 
@@ -910,7 +972,7 @@ def converge_hf(args) -> dict[str, Any]:
             train_temp_fused_cross_entropy,
         )
 
-        backend = "hf_train_temp_cuda"
+        backend = "hf_native_train_temp_cuda" if args.native else "hf_train_temp_cuda"
         loss_fn = train_temp_fused_cross_entropy
         backend_metadata = enable_train_temp_cuda_backend(model)
 
@@ -1696,6 +1758,14 @@ def build_parser() -> argparse.ArgumentParser:
         capture.add_argument("--adam-eps", type=float, default=1.0e-18)
         capture.add_argument("--grad-clip", type=float, default=1.0)
         capture.add_argument(
+            "--omit-logits",
+            action="store_true",
+            help=(
+                "Do not retain full logits in the safetensors snapshot. Scalar loss, "
+                "gradients, optimizer deltas and post-step loss remain gated."
+            ),
+        )
+        capture.add_argument(
             "--optimizer",
             choices=["fused_adam", "torch_adamw"],
             default="fused_adam",
@@ -1711,9 +1781,13 @@ def build_parser() -> argparse.ArgumentParser:
     add_capture_arguments(hf)
     hf.add_argument("--model", required=True)
     hf.add_argument("--checkpoint-sha256", required=True)
-    hf_backend = hf.add_mutually_exclusive_group()
-    hf_backend.add_argument("--native", action="store_true")
-    hf_backend.add_argument("--train-temp-cuda", action="store_true")
+    hf.add_argument("--native", action="store_true")
+    hf.add_argument("--train-temp-cuda", action="store_true")
+    hf.add_argument(
+        "--gradient-checkpointing",
+        action="store_true",
+        help="Enable the HF model's checkpointed full-sequence training path.",
+    )
 
     def add_convergence_arguments(convergence: argparse.ArgumentParser) -> None:
         convergence.add_argument("--sequence", required=True)
@@ -1748,9 +1822,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_convergence_arguments(hf_convergence)
     hf_convergence.add_argument("--model", required=True)
     hf_convergence.add_argument("--checkpoint-sha256", required=True)
-    hf_convergence_backend = hf_convergence.add_mutually_exclusive_group()
-    hf_convergence_backend.add_argument("--native", action="store_true")
-    hf_convergence_backend.add_argument("--train-temp-cuda", action="store_true")
+    hf_convergence.add_argument("--native", action="store_true")
+    hf_convergence.add_argument("--train-temp-cuda", action="store_true")
     return parser
 
 

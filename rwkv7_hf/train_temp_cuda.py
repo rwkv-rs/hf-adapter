@@ -2,7 +2,7 @@
 
 The kernels under ``csrc/train_temp`` are vendored from RWKV-LM at the exact
 commit recorded in that directory.  This module keeps them lazy and isolated:
-normal HF/FLA inference and training do not compile or route through these ops.
+normal HF inference and training do not compile or route through these ops.
 """
 
 from __future__ import annotations
@@ -66,6 +66,27 @@ def _source_root() -> Path:
     return Path(__file__).resolve().parent / "csrc" / "train_temp"
 
 
+def _cuda_include_paths(
+    cuda_home: str | os.PathLike[str], *, include_target: bool = False
+) -> list[str]:
+    """Resolve both conventional and pip-split CUDA development headers."""
+
+    home = Path(cuda_home)
+    candidates = [home / "include"]
+    if include_target:
+        candidates.append(home / "targets" / "x86_64-linux" / "include")
+    site_packages = Path(torch.__file__).resolve().parent.parent
+    nvidia_packages = site_packages / "nvidia"
+    if nvidia_packages.is_dir():
+        candidates.extend(sorted(nvidia_packages.glob("*/include")))
+    resolved: list[str] = []
+    for candidate in candidates:
+        value = str(candidate)
+        if candidate.is_dir() and value not in resolved:
+            resolved.append(value)
+    return resolved
+
+
 def _op_registered(namespace: str) -> bool:
     try:
         getattr(getattr(torch.ops, namespace), "forward")
@@ -85,6 +106,21 @@ def _validate_runtime() -> None:
         )
 
 
+def _resolve_cuda_home(cpp_extension: Any) -> Path | None:
+    candidates = [
+        getattr(cpp_extension, "CUDA_HOME", None),
+        os.environ.get("CUDA_HOME"),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate).expanduser().resolve()
+        if (path / "bin" / "nvcc").is_file():
+            cpp_extension.CUDA_HOME = str(path)
+            return path
+    return None
+
+
 def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
     """Build and load the vendored train_temp operators once."""
 
@@ -98,9 +134,10 @@ def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
         if _LOADED:
             return
         try:
-            from torch.utils.cpp_extension import CUDA_HOME, load
+            from torch.utils import cpp_extension
 
-            if CUDA_HOME is None:
+            cuda_home = _resolve_cuda_home(cpp_extension)
+            if cuda_home is None:
                 raise RuntimeError(
                     "train_temp CUDA JIT requires a local CUDA toolkit; set CUDA_HOME "
                     "to the toolkit matching the PyTorch CUDA build"
@@ -111,21 +148,26 @@ def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
                     "true",
                     "yes",
                     "on",
-                }
+            }
             root = _source_root()
+            include_paths = _cuda_include_paths(cuda_home)
+            cuda_cpp_include_paths = _cuda_include_paths(
+                cuda_home, include_target=True
+            )
             for namespace, filenames in _OP_SOURCES.items():
                 if _op_registered(namespace):
                     continue
-                load(
+                cpp_extension.load(
                     name=f"rwkv7_hf_{namespace}",
                     sources=[str(root / filename) for filename in filenames],
                     extra_cflags=["-O3"],
                     extra_cuda_cflags=list(_COMMON_CUDA_FLAGS),
+                    extra_include_paths=include_paths,
                     is_python_module=False,
                     verbose=bool(verbose),
                 )
             if not _op_registered("rwkv7_clampw_v3"):
-                load(
+                cpp_extension.load(
                     name="rwkv7_hf_clampw_v3",
                     sources=[
                         str(root / "rwkv7_clampw_v3_for_h100.cu"),
@@ -137,10 +179,11 @@ def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
                         f"-D_N_={TRAIN_TEMP_HEAD_SIZE}",
                         f"-D_CHUNK_LEN_={TRAIN_TEMP_CHUNK_LEN}",
                     ],
+                    extra_include_paths=cuda_cpp_include_paths,
                     is_python_module=False,
                     verbose=bool(verbose),
                 )
-            _L2WRAP_EXTENSION = load(
+            _L2WRAP_EXTENSION = cpp_extension.load(
                 name="rwkv7_hf_l2wrap_ce_bf16_v2",
                 sources=[
                     str(root / "rwkv7_l2wrap_ce_bf16_v2.cpp"),
@@ -148,6 +191,7 @@ def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
                 ],
                 extra_cflags=["-O3"],
                 extra_cuda_cflags=list(_COMMON_CUDA_FLAGS),
+                extra_include_paths=cuda_cpp_include_paths,
                 verbose=bool(verbose),
             )
             missing = [namespace for namespace in _OP_SOURCES if not _op_registered(namespace)]
@@ -403,20 +447,9 @@ def _dense_mask_only(attention_mask: torch.Tensor | None) -> None:
         raise ValueError("train_temp CUDA backend does not support padded or masked batches")
 
 
-def _attention_forward(
-    self,
-    hidden_states,
-    attention_mask=None,
-    past_key_values=None,
-    use_cache=False,
-    output_attentions=False,
-    v_first=None,
-    cu_seqlens=None,
-    **kwargs,
-):
-    _dense_mask_only(attention_mask)
-    if past_key_values is not None or use_cache or cu_seqlens is not None or output_attentions:
-        raise ValueError("train_temp CUDA backend is a dense no-cache training path")
+def _train_temp_attention_forward(self, hidden_states, v_first, *, native_lora_math: bool):
+    """Run fused TMix while preserving each backend's LoRA activation ownership."""
+
     if hidden_states.dtype != torch.bfloat16 or hidden_states.shape[1] % TRAIN_TEMP_CHUNK_LEN:
         raise ValueError(
             "train_temp CUDA backend requires BF16 and sequence length divisible by "
@@ -432,7 +465,11 @@ def _attention_forward(
         self.x_g.reshape(-1),
     )
     r = self.r_proj(xr)
-    w = self.w_lora(xw)
+    w = (
+        self.w_lora.lora[2](torch.tanh(self.w_lora.lora[0](xw)))
+        if native_lora_math
+        else self.w_lora(xw)
+    )
     k = self.k_proj(xk)
     v = self.v_proj(xv)
     if self.layer_idx == 0:
@@ -442,11 +479,17 @@ def _attention_forward(
         v = _VResGate.apply(v, v_first, self.v_lora.lora[2].bias, v12)
     a12 = F.linear(self.a_lora.lora[0](xa), self.a_lora.lora[2].weight, None)
     a = _AGate.apply(self.a_lora.lora[2].bias, a12)
-    g = self.g_lora(xg)
+    g = (
+        self.g_lora.lora[2](torch.sigmoid(self.g_lora.lora[0](xg)))
+        if native_lora_math
+        else self.g_lora(xg)
+    )
     k, neg_kk, kka = _KkPre.apply(k, self.k_k.reshape(-1), a, self.k_a.reshape(-1))
     batch, tokens, _ = r.shape
     heads = int(self.num_heads)
-    if int(self.head_dim) != TRAIN_TEMP_HEAD_SIZE or int(self.head_v_dim) != TRAIN_TEMP_HEAD_SIZE:
+    head_dim = int(self.head_dim)
+    head_v_dim = int(getattr(self, "head_v_dim", head_dim))
+    if head_dim != TRAIN_TEMP_HEAD_SIZE or head_v_dim != TRAIN_TEMP_HEAD_SIZE:
         raise ValueError("train_temp CUDA backend currently requires K/V head dimensions of 64")
     values = _ClampW.apply(
         r.reshape(batch, tokens, heads, TRAIN_TEMP_HEAD_SIZE),
@@ -466,20 +509,195 @@ def _attention_forward(
         self.g_norm.bias,
         g,
     )
-    return self.o_proj(values), None, past_key_values, v_first
+    return self.o_proj(values), v_first
+
+
+def native_train_temp_attention_forward(self, hidden_states, v_first):
+    """Run one NativeRWKV7Attention over a complete BF16 sequence."""
+
+    return _train_temp_attention_forward(
+        self, hidden_states, v_first, native_lora_math=True
+    )
+
+
+def native_train_temp_ffn_forward(self, hidden_states):
+    """Run one NativeRWKV7FFN over a complete BF16 sequence."""
+
+    return _CMix.apply(
+        hidden_states,
+        self.x_k.reshape(-1),
+        self.key.weight,
+        self.value.weight,
+    )
+
+
+def _attention_forward(
+    self,
+    hidden_states,
+    attention_mask=None,
+    past_key_values=None,
+    use_cache=False,
+    output_attentions=False,
+    v_first=None,
+    cu_seqlens=None,
+    **kwargs,
+):
+    _dense_mask_only(attention_mask)
+    if past_key_values is not None or use_cache or cu_seqlens is not None or output_attentions:
+        raise ValueError("train_temp CUDA backend is a dense no-cache training path")
+    output, v_first = _train_temp_attention_forward(
+        self, hidden_states, v_first, native_lora_math=False
+    )
+    return output, None, past_key_values, v_first
 
 
 def _ffn_forward(self, x, attention_mask=None, state=None, cu_seqlens=None, **kwargs):
     _dense_mask_only(attention_mask)
     if state is not None or cu_seqlens is not None:
         raise ValueError("train_temp CUDA backend is a dense no-cache training path")
-    return _CMix.apply(x, self.x_k.reshape(-1), self.key.weight, self.value.weight), state
+    return native_train_temp_ffn_forward(self, x), state
+
+
+def native_train_temp_causal_lm_forward(
+    model,
+    *,
+    input_ids=None,
+    attention_mask=None,
+    inputs_embeds=None,
+    past_key_values=None,
+    use_cache=None,
+    output_hidden_states=None,
+    output_attentions=None,
+    return_dict=None,
+    labels=None,
+    logits_to_keep=None,
+    num_logits_to_keep=None,
+    **kwargs,
+):
+    """Canonical NativeRWKV7ForCausalLM full-sequence train_temp forward."""
+
+    from transformers.modeling_outputs import CausalLMOutputWithPast
+
+    _dense_mask_only(attention_mask)
+    if past_key_values is not None or bool(use_cache):
+        raise ValueError("train_temp CUDA backend is a dense no-cache training path")
+    if bool(output_attentions) or bool(output_hidden_states):
+        raise ValueError("train_temp CUDA backend does not emit attention or hidden-state histories")
+    if input_ids is not None and inputs_embeds is not None:
+        raise ValueError("train_temp CUDA backend accepts input_ids or inputs_embeds, not both")
+    if input_ids is None and inputs_embeds is None:
+        raise ValueError("train_temp CUDA backend requires input_ids or inputs_embeds")
+    if input_ids is not None:
+        if input_ids.dim() == 1:
+            input_ids = input_ids.unsqueeze(0)
+        if input_ids.dim() != 2:
+            raise ValueError("train_temp CUDA backend expects input_ids shaped [batch, tokens]")
+        hidden_states = model.model.embeddings(input_ids)
+    else:
+        if inputs_embeds.dim() != 3:
+            raise ValueError("train_temp CUDA backend expects inputs_embeds shaped [batch, tokens, hidden]")
+        hidden_states = inputs_embeds
+    if hidden_states.device.type != "cuda" or hidden_states.dtype != torch.bfloat16:
+        raise ValueError("train_temp CUDA backend requires BF16 tensors on CUDA")
+    if int(hidden_states.shape[1]) % TRAIN_TEMP_CHUNK_LEN:
+        raise ValueError(
+            f"train_temp CUDA backend requires sequence length divisible by {TRAIN_TEMP_CHUNK_LEN}"
+        )
+
+    gradient_checkpointing = bool(
+        model.training
+        and (
+            getattr(model, "gradient_checkpointing", False)
+            or getattr(model.model, "gradient_checkpointing", False)
+        )
+    )
+    # Layer zero ignores the incoming value and emits the full V-first tensor.
+    # A scalar placeholder avoids allocating a second BxTxC activation before
+    # the first checkpointed layer runs.
+    v_first = hidden_states.new_zeros(1)
+
+    def layer_forward(layer, x, first_value):
+        residual = layer.pre_norm(x) if hasattr(layer, "pre_norm") else x
+        attn_output, first_value = layer.attn(layer.attn_norm(residual), first_value)
+        x = residual + attn_output
+        residual = x
+        x = residual + layer.ffn(layer.ffn_norm(x))
+        return x, first_value
+
+    for layer in model.model.layers:
+        if gradient_checkpointing:
+            from torch.utils.checkpoint import checkpoint
+
+            hidden_states, v_first = checkpoint(
+                lambda x, first_value, active_layer=layer: layer_forward(active_layer, x, first_value),
+                hidden_states,
+                v_first,
+                use_reentrant=False,
+            )
+        else:
+            hidden_states, v_first = layer_forward(layer, hidden_states, v_first)
+
+    hidden_states = model.model.norm(hidden_states)
+    logits = model.lm_head(hidden_states)
+    requested_keep = logits_to_keep if logits_to_keep is not None else num_logits_to_keep
+    loss = None
+    if labels is not None:
+        loss = train_temp_causal_cross_entropy(logits, labels)
+    elif requested_keep is not None:
+        keep = int(requested_keep.detach().cpu().item()) if isinstance(requested_keep, torch.Tensor) else int(requested_keep)
+        if keep > 0:
+            logits = logits[:, -min(keep, int(logits.shape[1])) :, :]
+    if return_dict is None:
+        return_dict = bool(getattr(model.config, "return_dict", True))
+    if not return_dict:
+        values = (loss, logits) if loss is not None else (logits,)
+        return values
+    return CausalLMOutputWithPast(loss=loss, logits=logits, past_key_values=None)
 
 
 def enable_train_temp_cuda_backend(model) -> dict[str, Any]:
-    """Patch an FLA-backed HF RWKV-7 model with official train_temp kernels."""
+    """Enable official train_temp kernels on the canonical Native or FLA reference model."""
 
     load_train_temp_cuda_extension()
+    config_model_type = str(getattr(getattr(model, "config", None), "model_type", ""))
+    native_model = type(model).__name__ == "NativeRWKV7ForCausalLM" or config_model_type == "rwkv7_native"
+    if native_model:
+        modules = tuple(model.modules())
+        attention_modules = tuple(
+            module for module in modules if type(module).__name__ == "NativeRWKV7Attention"
+        )
+        ffn_modules = tuple(module for module in modules if type(module).__name__ == "NativeRWKV7FFN")
+        if not attention_modules or len(attention_modules) != len(ffn_modules):
+            raise TypeError(
+                "expected a balanced Native RWKV-7 model, found "
+                f"{len(attention_modules)} attention and {len(ffn_modules)} FFN modules"
+            )
+        for module in attention_modules:
+            module._rwkv7_train_temp_cuda_enabled = True
+            module._rwkv7_train_temp_forward = types.MethodType(
+                native_train_temp_attention_forward, module
+            )
+        for module in ffn_modules:
+            module._rwkv7_train_temp_cuda_enabled = True
+            module._rwkv7_train_temp_forward = types.MethodType(
+                native_train_temp_ffn_forward, module
+            )
+        if not hasattr(model, "_rwkv7_train_temp_original_use_cache"):
+            model._rwkv7_train_temp_original_use_cache = model.config.use_cache
+        model.config.use_cache = False
+        model._rwkv7_train_temp_cuda_enabled = True
+        model._rwkv7_train_temp_forward = types.MethodType(
+            native_train_temp_causal_lm_forward, model
+        )
+        return {
+            "backend": "native_train_temp_cuda",
+            "source_commit": TRAIN_TEMP_SOURCE_COMMIT,
+            "attention_modules": len(attention_modules),
+            "ffn_modules": len(ffn_modules),
+            "head_size": TRAIN_TEMP_HEAD_SIZE,
+            "chunk_len": TRAIN_TEMP_CHUNK_LEN,
+        }
+
     from fla.layers.rwkv7 import RWKV7Attention
     from fla.models.rwkv7.modeling_rwkv7 import RWKV7FeedForward
 
@@ -520,13 +738,17 @@ def enable_train_temp_cuda_backend(model) -> dict[str, Any]:
 
 
 def disable_train_temp_cuda_backend(model) -> None:
-    """Restore FLA forwards after :func:`enable_train_temp_cuda_backend`."""
+    """Restore ordinary Native or FLA forwards after backend use."""
 
     for module in model.modules():
         original = getattr(module, "_rwkv7_train_temp_original_forward", None)
         if original is not None:
             module.forward = original
             delattr(module, "_rwkv7_train_temp_original_forward")
+        if hasattr(module, "_rwkv7_train_temp_cuda_enabled"):
+            delattr(module, "_rwkv7_train_temp_cuda_enabled")
+        if hasattr(module, "_rwkv7_train_temp_forward"):
+            delattr(module, "_rwkv7_train_temp_forward")
     if hasattr(model, "_rwkv7_train_temp_original_use_cache"):
         model.config.use_cache = model._rwkv7_train_temp_original_use_cache
         delattr(model, "_rwkv7_train_temp_original_use_cache")
@@ -540,6 +762,9 @@ __all__ = [
     "disable_train_temp_cuda_backend",
     "enable_train_temp_cuda_backend",
     "load_train_temp_cuda_extension",
+    "native_train_temp_attention_forward",
+    "native_train_temp_causal_lm_forward",
+    "native_train_temp_ffn_forward",
     "train_temp_causal_cross_entropy",
     "train_temp_cuda_available",
     "train_temp_fused_cross_entropy",

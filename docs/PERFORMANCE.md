@@ -15,6 +15,7 @@ historical rows remain in platform documents and `bench/` artifacts.
 | RTX 5090 Qwen matrix | 0.4B/0.8B through 7.2B/9B at B1/B8; raw prefill/decode minima `1.0226x/2.8130x`; per-active-B throughput leads in 144/144 cells | W8/W4 exact-cell total-latency and footprint gates pass in all measured cells | 144/144 full-FLA Qwen contracts and 32/32 greedy reports pass; active-work prefill and dense peak-VRAM are not universal wins | Production-close for measured B1/B8 lanes |
 | RTX 5090 BF16/W4 | g1h 1.5B/2.9B/7.2B/13.3B paired BF16 at B1/B8, prompt128/decode128 | all-phase prefill/decode minima `1.0010x/1.1854x`; footprint `0.5298x–0.6250x`; model-level head/final-layer policy is automatic | prompt/final cosine `>=0.9995`, same-next 8/8; 280/280 group-128 grid contract | Production-close for measured all-phase W4 matrix |
 | RTX 5090 MATH500 / 13.3B | 0.4B MATH500 generation `16,925.6 tok/s`, steady decode `19,339.5 tok/s`; latest g1h 13.3B load/generate passes | 13.3B selected speed-policy MM8/MM4 decode `1.0013x/0.9845x` paired fp16 with footprint `0.9899x/0.9848x` | MATH500 pass@64 `0.38`; 13.3B cosine above `0.99985` and same-next pass | Production-close artifacts |
+| RTX 5090 Native HF Gradio | official g1h 7.2B FP16 through the real Space UI: Native `95.2/651.7 tok/s` vs v3a `138.8/841.7` at B1/B8 | not a quant lane; shared graph packs reduce two-graph process memory to 22,530 MiB but remain above v3a | same-prompt UI smoke passes; fastest sparse direct B8 greedy is only 6/8 | Partial; all sparse flags remain opt-in |
 | Apple M5 | Tiled DPLR and guarded compiled decode close selected same-device Qwen3.5 gates | W4 lowers memory; selected production pair gates pass | target-greedy oracle and state/session checks pass | Production-close for measured MLX pairs |
 
 V100 optimized-Qwen evidence:
@@ -24,6 +25,8 @@ RTX 5090 evidence:
 [`5090_g1h_qwen35_b1_b8_20260715`](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md)
 [`5090_g1h_13p3_20260715`](../bench/5090_g1h_13p3_20260715/README.md), and
 [`5090_bntn_all_models_20260716`](../bench/5090_bntn_all_models_20260716/README.md).
+Native HF Gradio and official-shell evidence:
+[`5090_native_hf_gradio_train_temp_20260718`](../bench/5090_native_hf_gradio_train_temp_20260718/README.md).
 
 ## Interpretation rules
 

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 # coding=utf-8
-"""Benchmark experimental NativeRWKV7ForCausalLM cached decode.
+"""Benchmark NativeRWKV7ForCausalLM cached decode.
 
-This is intentionally separate from the production wrapper fast-token benches.
-It tracks the FLA-free native PyTorch fallback path and its optional
-``RWKV7_NATIVE_MODEL_JIT`` cached-decode acceleration so native/upstream/AMD work
-has a reproducible speed row without claiming this path replaces the wrapper.
+This is intentionally separate from the legacy wrapper fast-token benches. It
+tracks the FLA-free eager, JIT, and CUDA-graph paths through the public native
+model API, including fixed-batch graph reuse and greedy-token evidence.
 """
 from __future__ import annotations
 
@@ -27,16 +26,16 @@ SEED = "User: Summarize recurrent neural networks and cache reuse.\n\nAssistant:
 
 
 @contextmanager
-def native_model_jit(enabled: bool):
-    old = os.environ.get("RWKV7_NATIVE_MODEL_JIT")
-    os.environ["RWKV7_NATIVE_MODEL_JIT"] = "1" if enabled else "0"
+def native_model_backend(backend: str):
+    old = os.environ.get("RWKV7_NATIVE_MODEL_BACKEND")
+    os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = backend
     try:
         yield
     finally:
         if old is None:
-            os.environ.pop("RWKV7_NATIVE_MODEL_JIT", None)
+            os.environ.pop("RWKV7_NATIVE_MODEL_BACKEND", None)
         else:
-            os.environ["RWKV7_NATIVE_MODEL_JIT"] = old
+            os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = old
 
 
 def cuda_sync(device: str) -> None:
@@ -54,8 +53,9 @@ def peak_mb(device: str) -> float | None:
     return round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
 
 
-def encode(tok, prompt_tokens: int, device: str) -> torch.Tensor:
+def encode(tok, prompt_tokens: int, batch_size: int, device: str) -> torch.Tensor:
     ids = tok(SEED, return_tensors="pt", add_special_tokens=False).input_ids[:, :prompt_tokens]
+    ids = ids.repeat(batch_size, 1)
     return ids.to(device) if device.startswith("cuda") else ids
 
 
@@ -68,43 +68,65 @@ def load_model(args, dtype: torch.dtype):
     return model
 
 
-def run_backend(args, model, ids: torch.Tensor, *, jit_enabled: bool) -> dict[str, Any]:
+def run_backend(args, model, ids: torch.Tensor, *, backend: str) -> dict[str, Any]:
     if args.device.startswith("cuda"):
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
-    with native_model_jit(jit_enabled), torch.inference_mode():
-        out = model(ids, use_cache=True)
+    if hasattr(model, "rwkv7_clear_native_graph_cache"):
+        model.rwkv7_clear_native_graph_cache()
+    batch_size = int(ids.shape[0])
+    greedy_tokens: list[list[int]] = [[] for _ in range(batch_size)]
+    with native_model_backend(backend), torch.inference_mode():
+        out = model(ids, use_cache=True, logits_to_keep=1)
         state = out.past_key_values
         token = out.logits[:, -1:].argmax(dim=-1)
-        first = model(token, past_key_values=state, use_cache=True)
+        first = model(token, past_key_values=state, use_cache=True, logits_to_keep=1)
         first_backend = model.rwkv7_native_model_last_decode_backend()
         first_next = first.logits[:, -1:].argmax(dim=-1)
         state = first.past_key_values
         token = first_next
         for _ in range(args.warmup):
-            out = model(token, past_key_values=state, use_cache=True)
+            out = model(token, past_key_values=state, use_cache=True, logits_to_keep=1)
             state = out.past_key_values
             token = out.logits[:, -1:].argmax(dim=-1)
         cuda_sync(args.device)
         t0 = time.perf_counter()
         for _ in range(args.decode_steps):
-            out = model(token, past_key_values=state, use_cache=True)
+            out = model(token, past_key_values=state, use_cache=True, logits_to_keep=1)
             state = out.past_key_values
             token = out.logits[:, -1:].argmax(dim=-1)
+            token_values = token.reshape(batch_size).detach().cpu().tolist()
+            for row, value in enumerate(token_values):
+                greedy_tokens[row].append(int(value))
         cuda_sync(args.device)
         dt = time.perf_counter() - t0
+    graph_stats = (
+        model.rwkv7_native_graph_cache_stats()
+        if hasattr(model, "rwkv7_native_graph_cache_stats")
+        else None
+    )
+    graph_overrides = {
+        key: value
+        for key, value in sorted(os.environ.items())
+        if key.startswith(("RWKV7_NATIVE_GRAPH_", "RWKV7_FUSED_"))
+    }
     return {
         "axis": "native_model_decode",
         "backend": "hf_native_model",
-        "decode_backend": "native_jit" if jit_enabled else "eager",
+        "decode_backend": backend,
         "effective_decode_backend": first_backend,
         "dtype": args.dtype,
         "device": device_name(args.device),
+        "batch_size": batch_size,
         "prompt_tokens": int(ids.shape[1]),
         "decode_steps": args.decode_steps,
-        "decode_tokps": round(args.decode_steps / dt, 2),
+        "decode_tokps": round(batch_size * args.decode_steps / dt, 2),
+        "decode_per_sequence_tokps": round(args.decode_steps / dt, 2),
         "decode_ms_per_tok": round(1000 * dt / max(args.decode_steps, 1), 4),
-        "first_next_token": int(first_next.reshape(-1)[0].detach().cpu()),
+        "first_next_tokens": [int(value) for value in first_next.reshape(-1).detach().cpu().tolist()],
+        "greedy_tokens": greedy_tokens,
+        "native_graph_cache": graph_stats,
+        "native_graph_overrides": graph_overrides,
         "peak_vram_mb": peak_mb(args.device),
     }
 
@@ -117,18 +139,29 @@ def main() -> int:
     ap.add_argument("--prompt-tokens", type=int, default=32)
     ap.add_argument("--decode-steps", type=int, default=32)
     ap.add_argument("--warmup", type=int, default=2)
-    ap.add_argument("--backends", nargs="+", default=["eager", "native_jit"], choices=["eager", "native_jit"])
+    ap.add_argument("--batch-size", type=int, default=1)
+    ap.add_argument("--batch-sizes", nargs="+", type=int, default=None)
+    ap.add_argument(
+        "--backends",
+        nargs="+",
+        default=["eager", "native_jit"],
+        choices=["eager", "native_jit", "native_graph"],
+    )
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     args = ap.parse_args()
 
     tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
     model = load_model(args, DTYPES[args.dtype])
-    ids = encode(tok, args.prompt_tokens, args.device)
     rows = []
-    for backend in args.backends:
-        row = run_backend(args, model, ids, jit_enabled=backend == "native_jit")
-        rows.append(row)
-        print(json.dumps(row, indent=2), flush=True)
+    batch_sizes = args.batch_sizes or [args.batch_size]
+    for batch_size in batch_sizes:
+        if batch_size <= 0:
+            raise ValueError("batch sizes must be positive")
+        ids = encode(tok, args.prompt_tokens, batch_size, args.device)
+        for backend in args.backends:
+            row = run_backend(args, model, ids, backend=backend)
+            rows.append(row)
+            print(json.dumps(row, indent=2), flush=True)
 
     if args.results:
         out = Path(args.results)

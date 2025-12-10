@@ -1,0 +1,99 @@
+diff --git a/app.py b/app.py
+index e555147..7259f89 100644
+--- a/app.py
++++ b/app.py
+@@ -15,7 +15,11 @@ from datetime import datetime
+ from huggingface_hub import hf_hub_download
+ from rwkv.utils import PIPELINE
+ 
+-import rwkv7_fast_v3a as v3a
++APP3_BACKEND = os.environ.get("APP3_BACKEND", "v3a").strip().lower()
++if APP3_BACKEND == "native_hf":
++    import native_hf_v3a_compat as v3a
++else:
++    import rwkv7_fast_v3a as v3a
+ 
+ APP_T0 = time.perf_counter()
+ EXTENSIONS_READY_FLAG = "/tmp/app3_extensions_ready.flag"
+@@ -33,7 +37,9 @@ max_bsz = 96
+ CHUNK_LEN = 8192 # chunk prefill, save VRAM
+ SAMPLER_TOP_K = 500
+ YIELD_EVERY = 16
+-USE_CUDA_GRAPH = True
++# Native HF owns its decode graph and cache buffers. Wrapping it in a second
++# application-level graph would capture Python cache replacement incorrectly.
++USE_CUDA_GRAPH = not bool(getattr(v3a, "USES_INTERNAL_CUDA_GRAPH", False))
+ WARM_FIXED_SECONDS = 1.5
+ COLD_EXTENSION_SECONDS = 110.0
+ DURATION_SAFETY = 1.25
+@@ -212,10 +218,17 @@ def get_decode_ctx(B: int, decode_cache):
+     if cached is not None:
+         return cached
+     state = model.zero_state(B)
+-    x = torch.empty((B, 1, v3a.C), device="cuda", dtype=torch.half)
++    if getattr(v3a, "DECODE_USES_TOKEN_IDS", False):
++        x = torch.zeros((B, 1), device="cuda", dtype=torch.long)
++    else:
++        x = torch.empty(
++            (B, 1, v3a.C),
++            device="cuda",
++            dtype=getattr(v3a, "DTYPE", torch.half),
++        )
+     path = v3a.select_path(B, 1)
+     for _ in range(2):
+-        model.forward_from_x(x, state, path)
++        decode_forward(model, x, state, path)
+     torch.cuda.synchronize()
+     graph = None
+     output = None
+@@ -223,7 +236,7 @@ def get_decode_ctx(B: int, decode_cache):
+         try:
+             graph = torch.cuda.CUDAGraph()
+             with torch.cuda.graph(graph):
+-                output = model.forward_from_x(x, state, path)
++                output = decode_forward(model, x, state, path)
+             torch.cuda.synchronize()
+         except Exception as exc:
+             print(f"CUDA graph disabled for B={B}: {exc}", flush=True)
+@@ -233,7 +246,15 @@ def get_decode_ctx(B: int, decode_cache):
+     decode_cache[B] = cached
+     return cached
+ 
++
++def decode_forward(model, decode_input, state, path):
++    if getattr(v3a, "DECODE_USES_TOKEN_IDS", False):
++        return model.forward_tokens(decode_input, state, path)
++    return model.forward_from_x(decode_input, state, path)
++
+ def copy_state_to_batch(dst, src):
++    if hasattr(v3a, "copy_state_to_batch"):
++        return v3a.copy_state_to_batch(dst, src)
+     B = dst[2].shape[0]
+     dst[0].copy_(src[0].expand(-1, -1, B, -1))
+     dst[1].copy_(src[1].expand(-1, B, -1, -1, -1))
+@@ -384,9 +405,12 @@ def generate_batch_text(
+             copy_state_to_batch(decode_state, state)
+             logits = out.view(1, -1).repeat(B, 1)
+         else:
+-            decode_x.copy_(tokens_to_x(next_tokens))
++            if getattr(v3a, "DECODE_USES_TOKEN_IDS", False):
++                decode_x.copy_(torch.as_tensor(next_tokens, device="cuda", dtype=torch.long).view(B, 1))
++            else:
++                decode_x.copy_(tokens_to_x(next_tokens))
+             if decode_graph is None:
+-                decode_output = rwkv_model.forward_from_x(decode_x, decode_state, v3a.select_path(B, 1))
++                decode_output = decode_forward(rwkv_model, decode_x, decode_state, v3a.select_path(B, 1))
+             else:
+                 decode_graph.replay()
+             logits = decode_output.view(B, -1)
+diff --git a/requirements.txt b/requirements.txt
+index 0e79b33..8a4aabb 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -1,5 +1,6 @@
+ torch
+ transformers
++accelerate
+ ninja
+ tokenizers
+ rwkv

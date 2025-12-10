@@ -1895,6 +1895,7 @@ def _native_graph_rkv_project(
     """Project R/K/V with either separate linears or VKWR-style stacked bmm."""
 
     dense_rkv = all(_graph_linear_is_dense(item) for item in (Rw, Kw, Vw))
+    output_size = int(_graph_linear_shape(Rw)[0])
     if dense_rkv and _native_graph_vkwr_rkv_dispatch(int(rows), int(hidden_size)) and RKVw.numel() != 0:
         shared_storage = False
         try:
@@ -1939,6 +1940,7 @@ def _native_graph_rkv_project(
         return rkv[0], rkv[1], rkv[2]
     if (
         dense_rkv
+        and output_size == int(hidden_size)
         and sm70_orig_rkv is not None
         and int(rows) in {2, 4}
         and int(hidden_size) >= 2048
@@ -1946,6 +1948,7 @@ def _native_graph_rkv_project(
         return sm70_orig_rkv(xr, xk, xv, Rw, Kw, Vw)
     if (
         dense_rkv
+        and output_size == int(hidden_size)
         and _native_graph_sm70_linear_enabled()
         and sm70_rkv is not None
         and sm70_rkv_should_use is not None
@@ -2087,12 +2090,14 @@ def block_step(x: torch.Tensor, xpa: torch.Tensor, xpf: torch.Tensor,
                gn_w: torch.Tensor, gn_b: torch.Tensor,
                fx_k: torch.Tensor, fK: torch.Tensor, fV: torch.Tensor,
                RKVw: torch.Tensor):
+    D = int(an_w.numel())
+    A = H * N
     # --- block wiring (fuse_norm=False) ---
     if has_pre == 1:
-        residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5)
+        residual = F.layer_norm(x, [D], pre_w, pre_b, 1e-5)
     else:
         residual = x
-    h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
+    h = F.layer_norm(residual, [D], an_w, an_b, 1e-5)
 
     # --- TMix_one ---
     xx = xpa - h
@@ -2105,7 +2110,7 @@ def block_step(x: torch.Tensor, xpa: torch.Tensor, xpf: torch.Tensor,
     v = F.linear(xv, Vw)
     a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
     g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
-    kk = F.normalize((k * k_k).view(H, N), dim=-1, p=2.0).view(H * N)
+    kk = F.normalize((k * k_k).view(H, N), dim=-1, p=2.0).view(A)
     k = k * (1 + (a - 1) * k_a)
     if layer_id == 0:
         v_first = v
@@ -2116,16 +2121,16 @@ def block_step(x: torch.Tensor, xpa: torch.Tensor, xpf: torch.Tensor,
     ab = (-kk).view(H, N, 1) @ (kk * a).view(H, 1, N)
     state = state * w.view(H, 1, N) + state @ ab.float() + vk.float()
     out = state.to(h.dtype) @ r.view(H, N, 1)
-    out = out.view(H * N)
-    out = F.group_norm(out.view(1, H * N), H, gn_w, gn_b, eps).view(H * N)
+    out = out.view(A)
+    out = F.group_norm(out.view(1, A), H, gn_w, gn_b, eps).view(A)
     sk = (r.view(H, N) * k.view(H, N) * r_k).sum(dim=-1, keepdim=True)
-    out = out + (sk * v.view(H, N)).view(H * N)
+    out = out + (sk * v.view(H, N)).view(A)
     out = F.linear(out * g, Ow)
     x = residual + out
 
     # --- CMix_one ---
     residual = x
-    h2 = F.layer_norm(x, [H * N], fn_w, fn_b, 1e-5)
+    h2 = F.layer_norm(x, [D], fn_w, fn_b, 1e-5)
     fxx = xpf - h2
     xpf = h2
     fk = h2 + fxx * fx_k
@@ -2150,16 +2155,18 @@ def block_step_batched(x: torch.Tensor, xpa: torch.Tensor, xpf: torch.Tensor,
                        v1: torch.Tensor, v2: torch.Tensor, v0: torch.Tensor,
                        g1: torch.Tensor, g2: torch.Tensor,
                        gn_w: torch.Tensor, gn_b: torch.Tensor,
-                       fx_k: torch.Tensor, fK: torch.Tensor, fV: torch.Tensor,
-                       RKVw: torch.Tensor):
+               fx_k: torch.Tensor, fK: torch.Tensor, fV: torch.Tensor,
+               RKVw: torch.Tensor):
     # Batched variant of block_step. Shapes:
-    # x/xpa/xpf/v_first:[B,H*N], state:[B,H,N,N].
+    # x/xpa/xpf:[B,D], v_first:[B,A], state:[B,H,N,N].
     B = x.shape[0]
+    D = int(an_w.numel())
+    A = H * N
     if has_pre == 1:
-        residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5)
+        residual = F.layer_norm(x, [D], pre_w, pre_b, 1e-5)
     else:
         residual = x
-    h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
+    h = F.layer_norm(residual, [D], an_w, an_b, 1e-5)
 
     xx = xpa - h
     xpa = h
@@ -2171,7 +2178,7 @@ def block_step_batched(x: torch.Tensor, xpa: torch.Tensor, xpf: torch.Tensor,
     v = F.linear(xv, Vw)
     a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
     g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
-    kk = F.normalize((k * k_k).view(B, H, N), dim=-1, p=2.0).view(B, H * N)
+    kk = F.normalize((k * k_k).view(B, H, N), dim=-1, p=2.0).view(B, A)
     k = k * (1 + (a - 1) * k_a)
     if layer_id == 0:
         v_first = v
@@ -2182,15 +2189,15 @@ def block_step_batched(x: torch.Tensor, xpa: torch.Tensor, xpf: torch.Tensor,
     ab = (-kk).view(B, H, N, 1) @ (kk * a).view(B, H, 1, N)
     state = state * w.view(B, H, 1, N) + state @ ab.float() + vk.float()
     out = state.to(h.dtype) @ r.view(B, H, N, 1)
-    out = out.view(B, H * N)
-    out = F.group_norm(out, H, gn_w, gn_b, eps).view(B, H * N)
+    out = out.view(B, A)
+    out = F.group_norm(out, H, gn_w, gn_b, eps).view(B, A)
     sk = (r.view(B, H, N) * k.view(B, H, N) * r_k).sum(dim=-1, keepdim=True)
-    out = out + (sk * v.view(B, H, N)).view(B, H * N)
+    out = out + (sk * v.view(B, H, N)).view(B, A)
     out = F.linear(out * g, Ow)
     x = residual + out
 
     residual = x
-    h2 = F.layer_norm(x, [H * N], fn_w, fn_b, 1e-5)
+    h2 = F.layer_norm(x, [D], fn_w, fn_b, 1e-5)
     fxx = xpf - h2
     xpf = h2
     fk = h2 + fxx * fx_k
@@ -2206,6 +2213,7 @@ def extract(model):
     eps = float(N * 1e-5)
     packs = []
     hidden = int(layers[0].attn.hidden_size)
+    attention_hidden = int(getattr(layers[0].attn, "attention_hidden_size", H * N))
     dense_ref = model.model.embeddings.weight
     stack_rkv = _native_graph_rkv_policy() == "vkwr_auto"
     for i, layer in enumerate(layers):
@@ -2213,8 +2221,8 @@ def extract(model):
         ref = a.w_lora.lora[0].weight
         vl = getattr(a, "v_lora", None)
         v1 = vl.lora[0].weight if vl is not None else torch.zeros(1, ref.shape[1], device=ref.device, dtype=ref.dtype)
-        v2 = vl.lora[2].weight if vl is not None else torch.zeros(hidden, 1, device=ref.device, dtype=ref.dtype)
-        v0 = vl.lora[2].bias if vl is not None else torch.zeros(hidden, device=ref.device, dtype=ref.dtype)
+        v2 = vl.lora[2].weight if vl is not None else torch.zeros(attention_hidden, 1, device=ref.device, dtype=ref.dtype)
+        v0 = vl.lora[2].bias if vl is not None else torch.zeros(attention_hidden, device=ref.device, dtype=ref.dtype)
         if hasattr(layer, "pre_norm"):
             pre_w, pre_b, has_pre = layer.pre_norm.weight, layer.pre_norm.bias, 1
         else:
@@ -2257,6 +2265,7 @@ def extract_graph(model):
     eps = float(N * 1e-5)
     packs = []
     hidden = int(layers[0].attn.hidden_size)
+    attention_hidden = int(getattr(layers[0].attn, "attention_hidden_size", H * N))
     stack_rkv = _native_graph_rkv_policy() == "vkwr_auto"
     embed_ref = model.model.embeddings.weight
     for i, layer in enumerate(layers):
@@ -2268,8 +2277,8 @@ def extract_graph(model):
             v0 = vl.lora[2].bias
         else:
             v1 = torch.zeros(1, hidden, device=embed_ref.device, dtype=embed_ref.dtype)
-            v2 = torch.zeros(hidden, 1, device=embed_ref.device, dtype=embed_ref.dtype)
-            v0 = torch.zeros(hidden, device=embed_ref.device, dtype=embed_ref.dtype)
+            v2 = torch.zeros(attention_hidden, 1, device=embed_ref.device, dtype=embed_ref.dtype)
+            v0 = torch.zeros(attention_hidden, device=embed_ref.device, dtype=embed_ref.dtype)
         if hasattr(layer, "pre_norm"):
             pre_w, pre_b, has_pre = layer.pre_norm.weight, layer.pre_norm.bias, 1
         else:
@@ -2317,10 +2326,11 @@ def _init(model, device, dtype):
     H = layers[0].attn.num_heads
     N = layers[0].attn.head_dim
     hid = layers[0].attn.hidden_size
+    attention_hidden = getattr(layers[0].attn, "attention_hidden_size", H * N)
     state = [torch.zeros(H, N, N, device=device, dtype=torch.float32) for _ in range(n)]
     xpa = [torch.zeros(hid, device=device, dtype=dtype) for _ in range(n)]
     xpf = [torch.zeros(hid, device=device, dtype=dtype) for _ in range(n)]
-    v_first = torch.zeros(hid, device=device, dtype=dtype)
+    v_first = torch.zeros(attention_hidden, device=device, dtype=dtype)
     return state, xpa, xpf, v_first
 
 
@@ -2328,7 +2338,7 @@ def _init_batched_from_packs(packs, batch_size: int, device, dtype):
     n = len(packs)
     H = int(packs[0][1])
     N = int(packs[0][2])
-    hid = H * N
+    hid = int(packs[0][7].numel())
     state = [torch.zeros(batch_size, H, N, N, device=device, dtype=torch.float32) for _ in range(n)]
     xpa = [torch.zeros(batch_size, hid, device=device, dtype=dtype) for _ in range(n)]
     xpf = [torch.zeros(batch_size, hid, device=device, dtype=dtype) for _ in range(n)]
@@ -2344,8 +2354,9 @@ def step(model, x, state, xpa, xpf, v_first, packs):
 def step_batched(model, x, state, xpa, xpf, v_first, packs):
     """Batched TorchScript block-step decode for native_model caches.
 
-    Shapes mirror ``rwkv7_hf.native._step_token_batched``: x/xpa/xpf/v_first
-    are ``[B, hidden]`` and recurrent state is ``[B, H, N, N]`` per layer.
+    Shapes mirror ``rwkv7_hf.native._step_token_batched``: x/xpa/xpf are
+    ``[B,D]``, v_first is ``[B,A]``, and recurrent state is
+    ``[B,H,N,N]`` per layer.
     Keeping this helper in native_jit lets the experimental FLA-free model use
     the same reduced-dispatch H2 decode idea without importing the wrapper.
     """
@@ -2498,7 +2509,8 @@ def prefill(
         raise ValueError("native_jit.prefill requires at least one token")
     H = int(packs[0][1])
     N = int(packs[0][2])
-    hidden = H * N
+    attention_hidden = H * N
+    residual_hidden = int(packs[0][7].numel())
     dtype = base.embeddings.weight.dtype
     if state is None or xpa is None or xpf is None:
         state, xpa, xpf = _init_batched_from_packs(packs, B, ids.device, dtype)
@@ -2507,12 +2519,12 @@ def prefill(
         xpa = [s.to(device=ids.device, dtype=dtype).contiguous() for s in xpa]
         xpf = [s.to(device=ids.device, dtype=dtype).contiguous() for s in xpf]
 
-    x = F.embedding(ids, base.embeddings.weight).reshape(B, T, hidden)
-    v_first_seq = torch.zeros(B, T, hidden, device=ids.device, dtype=dtype)
+    x = F.embedding(ids, base.embeddings.weight).reshape(B, T, residual_hidden)
+    v_first_seq = torch.zeros(B, T, attention_hidden, device=ids.device, dtype=dtype)
     use_clampw_scan_requested = _native_prefill_fused_clampw_scan_enabled(
         B,
         T,
-        hidden,
+        attention_hidden,
         len(packs),
     )
     clampw_scan_used = False
@@ -2520,7 +2532,7 @@ def prefill(
         B * T,
         B,
         T,
-        hidden,
+        residual_hidden,
         len(packs),
     )
     sequence_ffn_blocks = _native_prefill_sequence_ffn_blocks(B * T) if use_prefill_sequence_ffn else None
@@ -2537,7 +2549,7 @@ def prefill(
     sequence_ffn_used = False
     stacked_rkv_weights = (
         _native_prefill_stacked_rkv_weights(model, packs)
-        if _native_prefill_stacked_rkv_enabled(B * T, B, T, hidden, len(packs))
+        if _native_prefill_stacked_rkv_enabled(B * T, B, T, residual_hidden, len(packs))
         else None
     )
     stacked_rkv_used = False
@@ -2551,10 +2563,10 @@ def prefill(
         layer_idx = int(i)
         H = int(H)
         N = int(N)
-        hidden = H * N
-
-        residual = F.layer_norm(x, [hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
-        h = F.layer_norm(residual, [hidden], an_w, an_b, 1e-5)
+        attention_hidden = H * N
+        residual_hidden = int(an_w.numel())
+        residual = F.layer_norm(x, [residual_hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
+        h = F.layer_norm(residual, [residual_hidden], an_w, an_b, 1e-5)
         defer_state_sigmoid = bool(
             _native_prefill_fused_state_prep_enabled()
             and not _native_prefill_fused_state_scan_enabled(B)
@@ -2598,7 +2610,7 @@ def prefill(
         elif use_sequence_attn_mix:
             if sequence_attn_mix_workspace is None:
                 sequence_attn_mix_workspace = torch.empty(
-                    (6, B, T, hidden), device=h.device, dtype=h.dtype
+                    (6, B, T, residual_hidden), device=h.device, dtype=h.dtype
                 )
             xr, xw, xk, xv, xa, xg, next_xpa = fused_attn_sequence_shift_mix(
                 h,
@@ -2612,14 +2624,14 @@ def prefill(
                 workspace=sequence_attn_mix_workspace,
             )
         else:
-            prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h[:, :-1, :]], dim=1)
+            prev_h = torch.cat([xpa[layer_idx].view(B, 1, residual_hidden), h[:, :-1, :]], dim=1)
             xx = prev_h - h
-            xr = h + xx * x_r.view(1, 1, hidden)
-            xw = h + xx * x_w.view(1, 1, hidden)
-            xk = h + xx * x_k.view(1, 1, hidden)
-            xv = h + xx * x_v.view(1, 1, hidden)
-            xa = h + xx * x_a.view(1, 1, hidden)
-            xg = h + xx * x_g.view(1, 1, hidden)
+            xr = h + xx * x_r.view(1, 1, residual_hidden)
+            xw = h + xx * x_w.view(1, 1, residual_hidden)
+            xk = h + xx * x_k.view(1, 1, residual_hidden)
+            xv = h + xx * x_v.view(1, 1, residual_hidden)
+            xa = h + xx * x_a.view(1, 1, residual_hidden)
+            xg = h + xx * x_g.view(1, 1, residual_hidden)
 
         use_stacked_rkv = False
         if prequantized_rkv is not None:
@@ -2628,7 +2640,7 @@ def prefill(
             k = _bnb8_prequant_linear(qk, sk, Kw, dtype=h.dtype, output_shape=(B, T))
             v = _bnb8_prequant_linear(qv, sv, Vw, dtype=h.dtype, output_shape=(B, T))
         elif stacked_rkv_weights:
-            row_values = B * T * hidden
+            row_values = B * T * residual_hidden
             use_stacked_rkv = bool(
                 xr.is_contiguous()
                 and xk.is_contiguous()
@@ -2642,11 +2654,14 @@ def prefill(
             pass
         elif use_stacked_rkv:
             stacked_rkv_used = True
-            rkv_inputs = xr.as_strided((3, B * T, hidden), (B * T * hidden, hidden, 1))
+            rkv_inputs = xr.as_strided(
+                (3, B * T, residual_hidden),
+                (B * T * residual_hidden, residual_hidden, 1),
+            )
             rkv = torch.bmm(rkv_inputs, stacked_rkv_weights[layer_idx])
-            r = rkv[0].view(B, T, hidden)
-            k = rkv[1].view(B, T, hidden)
-            v = rkv[2].view(B, T, hidden)
+            r = rkv[0].view(B, T, attention_hidden)
+            k = rkv[1].view(B, T, attention_hidden)
+            v = rkv[2].view(B, T, attention_hidden)
         else:
             r = _native_prefill_linear(xr, Rw)
             k = _native_prefill_linear(xk, Kw)
@@ -2659,10 +2674,10 @@ def prefill(
         if use_prefill_wavg_lora:
             block_m, block_r, block_k = _native_prefill_fused_wavg_lora_blocks()
             w, a, g, v_gate = fused_wavg_lora(
-                xw.reshape(B * T, hidden),
-                xa.reshape(B * T, hidden),
-                xg.reshape(B * T, hidden),
-                xv.reshape(B * T, hidden),
+                xw.reshape(B * T, residual_hidden),
+                xa.reshape(B * T, residual_hidden),
+                xg.reshape(B * T, residual_hidden),
+                xv.reshape(B * T, residual_hidden),
                 w1,
                 a1,
                 g1,
@@ -2679,10 +2694,10 @@ def prefill(
                 block_r=block_r,
                 block_k=block_k,
             )
-            w = w.view(B, T, hidden)
-            a = torch.sigmoid(a.view(B, T, hidden))
-            g = g.view(B, T, hidden)
-            v_gate = v_gate.view(B, T, hidden)
+            w = w.view(B, T, attention_hidden)
+            a = torch.sigmoid(a.view(B, T, attention_hidden))
+            g = g.view(B, T, attention_hidden)
+            v_gate = v_gate.view(B, T, attention_hidden)
         else:
             w_mid = _native_prefill_linear(xw, w1)
             w_mid.tanh_()
@@ -2706,7 +2721,7 @@ def prefill(
             T,
             N,
             B,
-            hidden,
+            attention_hidden,
             len(packs),
         ) and not use_fused_scan_output
         self_chunk_used = bool(self_chunk_used or use_self_chunk)
@@ -2733,7 +2748,7 @@ def prefill(
                     block_m=scan_block_m,
                     num_warps=scan_num_warps,
                 )
-                v_first_seq = v.reshape(B, T, hidden)
+                v_first_seq = v.reshape(B, T, attention_hidden)
             else:
                 out, new_state, k, v = fused_recurrent_scan_state_prep(
                     r.view(B, T, H, N),
@@ -2750,9 +2765,9 @@ def prefill(
                     block_m=scan_block_m,
                     num_warps=scan_num_warps,
                 )
-            out = out.reshape(B, T, hidden)
-            k = k.reshape(B, T, hidden)
-            v = v.reshape(B, T, hidden)
+            out = out.reshape(B, T, attention_hidden)
+            k = k.reshape(B, T, attention_hidden)
+            v = v.reshape(B, T, attention_hidden)
             state_scan_done = True
         elif _native_prefill_fused_state_prep_enabled():
             self_chunk_w_is_log = bool(use_self_chunk and not use_clampw_scan)
@@ -2814,8 +2829,12 @@ def prefill(
                     v_gate_is_raw=state_sigmoid_is_raw,
                 )
         else:
-            kk = F.normalize((k * k_k.view(1, 1, hidden)).view(B, T, H, N), dim=-1, p=2.0).view(B, T, hidden)
-            k = k * (1 + (a - 1) * k_a.view(1, 1, hidden))
+            kk = F.normalize(
+                (k * k_k.view(1, 1, attention_hidden)).view(B, T, H, N),
+                dim=-1,
+                p=2.0,
+            ).view(B, T, attention_hidden)
+            k = k * (1 + (a - 1) * k_a.view(1, 1, attention_hidden))
             if layer_idx == 0:
                 v_first_seq = v
             else:
@@ -2839,7 +2858,7 @@ def prefill(
                 eps=eps,
                 block_n=N,
             )
-            out = out.reshape(B, T, hidden)
+            out = out.reshape(B, T, attention_hidden)
         elif not state_scan_done:
             clampw_scan_used = bool(clampw_scan_used or use_clampw_scan)
             out, new_state = _native_prefill_scan(
@@ -2854,11 +2873,11 @@ def prefill(
             pass
         elif _native_prefill_fused_output_project_enabled() and _graph_linear_is_dense(Ow):
             out = fused_attn_output_project(
-                out.reshape(B * T, hidden),
+                out.reshape(B * T, attention_hidden),
                 r.reshape(B * T, H, N),
                 k.reshape(B * T, H, N),
                 v.reshape(B * T, H, N),
-                g.reshape(B * T, hidden),
+                g.reshape(B * T, attention_hidden),
                 r_k,
                 gn_w,
                 gn_b,
@@ -2869,15 +2888,15 @@ def prefill(
                 head_v_dim=N,
                 eps=eps,
                 block_m=_native_prefill_fused_output_project_block_m(),
-            ).view(B, T, hidden)
+            ).view(B, T, residual_hidden)
             out_projected = True
         elif _native_prefill_fused_output_enabled():
             out = fused_attn_output_prepare(
-                out.reshape(B * T, hidden),
+                out.reshape(B * T, attention_hidden),
                 r.reshape(B * T, H, N),
                 k.reshape(B * T, H, N),
                 v.reshape(B * T, H, N),
-                g.reshape(B * T, hidden),
+                g.reshape(B * T, attention_hidden),
                 r_k,
                 gn_w,
                 gn_b,
@@ -2885,11 +2904,15 @@ def prefill(
                 head_dim=N,
                 head_v_dim=N,
                 eps=eps,
-            ).view(B, T, hidden)
+            ).view(B, T, attention_hidden)
         else:
-            out = F.group_norm(out.reshape(B * T, hidden), H, gn_w, gn_b, eps).view(B, T, hidden)
+            out = F.group_norm(
+                out.reshape(B * T, attention_hidden), H, gn_w, gn_b, eps
+            ).view(B, T, attention_hidden)
             sk = (r.view(B, T, H, N) * k.view(B, T, H, N) * r_k.view(1, 1, H, N)).sum(dim=-1, keepdim=True)
-            out = (out + (sk * v.view(B, T, H, N)).view(B, T, hidden)) * g
+            out = (
+                out + (sk * v.view(B, T, H, N)).view(B, T, attention_hidden)
+            ) * g
         if not out_projected:
             x = _native_prefill_project_residual(out, Ow, residual)
         else:
@@ -2902,7 +2925,7 @@ def prefill(
         state[layer_idx] = new_state.contiguous()
 
         residual = x
-        h2 = F.layer_norm(x, [hidden], fn_w, fn_b, 1e-5)
+        h2 = F.layer_norm(x, [residual_hidden], fn_w, fn_b, 1e-5)
         use_layer_sequence_ffn = bool(
             use_prefill_sequence_ffn and _graph_linears_are_dense(fK, fV)
         )
@@ -2912,7 +2935,7 @@ def prefill(
             assert sequence_ffn_launch is not None
             if sequence_ffn_workspace is None:
                 sequence_ffn_workspace = (
-                    torch.empty((B * T, hidden), device=h2.device, dtype=h2.dtype),
+                    torch.empty((B * T, residual_hidden), device=h2.device, dtype=h2.dtype),
                     torch.empty((B * T, int(fK.shape[0])), device=h2.device, dtype=h2.dtype),
                 )
             ffn_out, next_xpf = fused_sequence_ffn(
@@ -2964,9 +2987,12 @@ def prefill(
                     workspace=sequence_ffn_mix_workspace,
                 )
             else:
-                prev_h2 = torch.cat([xpf[layer_idx].view(B, 1, hidden), h2[:, :-1, :]], dim=1)
+                prev_h2 = torch.cat(
+                    [xpf[layer_idx].view(B, 1, residual_hidden), h2[:, :-1, :]],
+                    dim=1,
+                )
                 fxx = prev_h2 - h2
-                fk = h2 + fxx * fx_k.view(1, 1, hidden)
+                fk = h2 + fxx * fx_k.view(1, 1, residual_hidden)
                 next_xpf = h2[:, -1, :].contiguous()
             fused_up_relu2 = False
             if not ffn_up_prequantized:
@@ -3002,7 +3028,13 @@ def prefill(
     # by the language head, so serving requests that ask for the last logits
     # must not normalize and materialize the entire prompt sequence.
     x_for_logits = x if keep == T else x[:, -keep:, :]
-    x_for_logits = F.layer_norm(x_for_logits, [hidden], base.norm.weight, base.norm.bias, 1e-5)
+    x_for_logits = F.layer_norm(
+        x_for_logits,
+        [residual_hidden],
+        base.norm.weight,
+        base.norm.bias,
+        1e-5,
+    )
     logits = _lm_head(model, x_for_logits)
     setattr(
         model,
@@ -3063,10 +3095,13 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
      x_r, x_w, x_k, x_v, x_a, x_g, k_k, k_a, r_k,
      Rw, Kw, Vw, Ow, w1, w2, w0, a1, a2, a0, v1, v2, v0, g1, g2,
      gn_w, gn_b, fx_k, fK, fV, RKVw) = p
-    residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5) if has_pre else x
+    D = int(an_w.numel())
+    A = int(H * N)
+    equal_width = D == A
+    residual = F.layer_norm(x, [D], pre_w, pre_b, 1e-5) if has_pre else x
     use_fused_norm_mix = _native_graph_fused_norm_mix_enabled()
     if use_fused_norm_mix:
-        stack_rkv = _native_graph_vkwr_rkv_dispatch(1, H * N) and RKVw.numel() != 0
+        stack_rkv = _native_graph_vkwr_rkv_dispatch(1, D) and RKVw.numel() != 0
         xr, xw, xk, xv, xa, xg = fused_attn_norm_mix6_decode(
             residual,
             xpa,
@@ -3082,7 +3117,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
             stack_rkv=stack_rkv,
         )
     else:
-        h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
+        h = F.layer_norm(residual, [D], an_w, an_b, 1e-5)
         xx = xpa - h
         xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
         xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
@@ -3091,12 +3126,12 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
     lora_dense = _graph_linears_are_dense(w1, w2, a1, a2, v1, v2, g1, g2)
     if _native_graph_fused_projection_enabled() and lora_dense and _graph_linears_are_dense(Rw, Kw, Vw):
         r, k, v, w, a, g, v_gate = fused_rkv_wavg_projection(
-            xr.view(1, H * N),
-            xk.view(1, H * N),
-            xv.view(1, H * N),
-            xw.view(1, H * N),
-            xa.view(1, H * N),
-            xg.view(1, H * N),
+            xr.view(1, D),
+            xk.view(1, D),
+            xv.view(1, D),
+            xw.view(1, D),
+            xa.view(1, D),
+            xg.view(1, D),
             Rw,
             Kw,
             Vw,
@@ -3113,45 +3148,45 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
             None,
             v0,
         )
-        r = r.view(H * N)
-        k = k.view(H * N)
-        v = v.view(H * N)
-        w = w.view(H * N)
-        a = torch.sigmoid(a.view(H * N))
-        g = g.view(H * N)
-        v_gate = torch.sigmoid(v_gate.view(H * N))
-    elif i > 0 and lora_dense and _native_graph_ada_wagv_lora_enabled(
+        r = r.view(A)
+        k = k.view(A)
+        v = v.view(A)
+        w = w.view(A)
+        a = torch.sigmoid(a.view(A))
+        g = g.view(A)
+        v_gate = torch.sigmoid(v_gate.view(A))
+    elif equal_width and i > 0 and lora_dense and _native_graph_ada_wagv_lora_enabled(
         1,
-        H * N,
+        D,
         max(_graph_linear_shape(w1)[0], _graph_linear_shape(a1)[0], _graph_linear_shape(g1)[0], _graph_linear_shape(v1)[0]),
     ):
-        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, D)
         w, a, g, v = ada_wagv_lora(
             xw, xa, xg, xv, w1, a1, g1, v1, w2, a2, g2, v2,
             w0, a0, v0, v, v_first, sigmoid_a=True,
         )
         v_mixed = True
-    elif i == 0 and lora_dense and _native_graph_ada_wagv_lora_enabled(
+    elif equal_width and i == 0 and lora_dense and _native_graph_ada_wagv_lora_enabled(
         1,
-        H * N,
+        D,
         max(_graph_linear_shape(w1)[0], _graph_linear_shape(a1)[0], _graph_linear_shape(g1)[0]),
     ):
-        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, D)
         w, a, g, _unused_v = ada_wagv_lora(
             xw, xa, xg, xg, w1, a1, g1, g1, w2, a2, g2, g2,
             w0, a0, a0, v, v, sigmoid_a=True, compute_v=False,
         )
-    elif i > 0 and lora_dense and _native_graph_sm70_wagv_lora_enabled(1, H * N):
-        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
+    elif equal_width and i > 0 and lora_dense and _native_graph_sm70_wagv_lora_enabled(1, D):
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, D)
         w, a, g, v = sm70_wagv_lora(
-            xw.view(1, H * N), xa.view(1, H * N), xg.view(1, H * N), xv.view(1, H * N),
+            xw.view(1, D), xa.view(1, D), xg.view(1, D), xv.view(1, D),
             w1, a1, g1, v1, w2, a2, g2, v2, w0, a0, v0,
-            v.view(1, H * N), v_first.view(1, H * N),
+            v.view(1, A), v_first.view(1, A),
         )
-        w = w.view(H * N); a = torch.sigmoid(a.view(H * N)); g = g.view(H * N); v = v.view(H * N)
+        w = w.view(A); a = torch.sigmoid(a.view(A)); g = g.view(A); v = v.view(A)
         v_mixed = True
-    elif lora_dense and _native_graph_fused_wavg_lora_enabled(1, H * N):
-        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
+    elif lora_dense and _native_graph_fused_wavg_lora_enabled(1, D):
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, D)
         if i == 0:
             w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
             a = a0 + F.linear(F.linear(xa, a1), a2)
@@ -3159,10 +3194,10 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
         else:
             block_m, block_r, block_k = _native_graph_fused_wavg_lora_blocks()
             w, a, g, v_gate = fused_wavg_lora(
-                xw.view(1, H * N),
-                xa.view(1, H * N),
-                xg.view(1, H * N),
-                xv.view(1, H * N),
+                xw.view(1, D),
+                xa.view(1, D),
+                xg.view(1, D),
+                xv.view(1, D),
                 w1,
                 a1,
                 g1,
@@ -3180,18 +3215,18 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
                 block_k=block_k,
                 num_warps=_native_graph_fused_wavg_lora_num_warps(),
             )
-            w = w.view(H * N)
-            a = a.view(H * N)
-            g = g.view(H * N)
-            v_gate = v_gate.view(H * N)
+            w = w.view(A)
+            a = a.view(A)
+            g = g.view(A)
+            v_gate = v_gate.view(A)
         a = torch.sigmoid(a)
     elif lora_dense and _native_graph_fused_wag_lora_enabled():
-        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, D)
         block_m, block_r, block_k = _native_graph_fused_wag_lora_blocks()
         w, a, g = fused_wag_lora(
-            xw.view(1, H * N),
-            xa.view(1, H * N),
-            xg.view(1, H * N),
+            xw.view(1, D),
+            xa.view(1, D),
+            xg.view(1, D),
             w1,
             a1,
             g1,
@@ -3205,18 +3240,18 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
             block_r=block_r,
             block_k=block_k,
         )
-        w = w.view(H * N)
-        a = torch.sigmoid(a.view(H * N))
-        g = g.view(H * N)
+        w = w.view(A)
+        a = torch.sigmoid(a.view(A))
+        g = g.view(A)
     else:
-        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, D)
         w = _graph_linear_call_with_explicit_bias(torch.tanh(_graph_linear_call(xw, w1)), w2, w0)
         a = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xa, a1), a2, a0))
         g = _graph_linear_call(torch.sigmoid(_graph_linear_call(xg, g1)), g2)
     use_fused_recurrent_output = _native_graph_fused_recurrent_output_enabled()
     use_fused_recurrent_raw = use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
     if not use_fused_recurrent_raw:
-        kk = F.normalize((k * k_k).view(H, N), dim=-1, p=2.0).view(H * N)
+        kk = F.normalize((k * k_k).view(H, N), dim=-1, p=2.0).view(A)
         k = k * (1 + (a - 1) * k_a)
     if i == 0:
         v_first.copy_(v)
@@ -3241,7 +3276,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
             eps=eps,
             block_n=N,
         )
-        out = out.view(H * N)
+        out = out.view(A)
         new_state = new_state.view(H, N, N)
     elif use_fused_recurrent_output:
         w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
@@ -3260,7 +3295,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
             eps=eps,
             block_n=N,
         )
-        out = out.view(H * N)
+        out = out.view(A)
         new_state = new_state.view(H, N, N)
     else:
         w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
@@ -3269,11 +3304,11 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
         out = _native_graph_linear_dispatch(out, Ow, role="hidden")
     elif _native_graph_fused_output_project_enabled() and _graph_linear_is_dense(Ow):
         out = fused_attn_output_project(
-            out.view(1, H * N),
+            out.view(1, A),
             r.view(1, H, N),
             k.view(1, H, N),
             v.view(1, H, N),
-            g.view(1, H * N),
+            g.view(1, A),
             r_k,
             gn_w,
             gn_b,
@@ -3284,14 +3319,14 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
             head_v_dim=N,
             eps=eps,
             block_m=_native_graph_fused_output_project_block_m(),
-        ).view(H * N)
+        ).view(D)
     elif _native_graph_fused_output_enabled():
         out = fused_attn_output_prepare(
-            out.view(1, H * N),
+            out.view(1, A),
             r.view(1, H, N),
             k.view(1, H, N),
             v.view(1, H, N),
-            g.view(1, H * N),
+            g.view(1, A),
             r_k,
             gn_w,
             gn_b,
@@ -3299,12 +3334,12 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
             head_dim=N,
             head_v_dim=N,
             eps=eps,
-        ).view(H * N)
+        ).view(A)
         out = _native_graph_linear_dispatch(out, Ow, role="hidden")
     else:
-        out = F.group_norm(out.view(1, H * N), H, gn_w, gn_b, eps).view(H * N)
+        out = F.group_norm(out.view(1, A), H, gn_w, gn_b, eps).view(A)
         sk = (r.view(H, N) * k.view(H, N) * r_k).sum(dim=-1, keepdim=True)
-        out = (out + (sk * v.view(H, N)).view(H * N)) * g
+        out = (out + (sk * v.view(H, N)).view(A)) * g
         out = _native_graph_linear_dispatch(out, Ow, role="hidden")
     state.copy_(new_state)
     if use_fused_norm_mix:
@@ -3320,7 +3355,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
     else:
         xpa.copy_(h)
         residual = residual + out
-        h2 = F.layer_norm(residual, [H * N], fn_w, fn_b, 1e-5)
+        h2 = F.layer_norm(residual, [D], fn_w, fn_b, 1e-5)
         fxx = xpf - h2
         fk = h2 + fxx * fx_k
         xpf.copy_(h2)
@@ -3331,7 +3366,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
     """In-place batched block step for CUDA-graph capture.
 
     Shapes:
-      x/xpa/xpf/v_first: [B, H*N]
+      x/xpa/xpf: [B,D], v_first: [B,A]
       state: [B, H, N, N]
 
     This mirrors `block_step_batched` but writes recurrent/cache buffers in
@@ -3343,10 +3378,13 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
      Rw, Kw, Vw, Ow, w1, w2, w0, a1, a2, a0, v1, v2, v0, g1, g2,
      gn_w, gn_b, fx_k, fK, fV, RKVw) = p
     B = x.shape[0]
-    residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5) if has_pre else x
+    D = int(an_w.numel())
+    A = int(H * N)
+    equal_width = D == A
+    residual = F.layer_norm(x, [D], pre_w, pre_b, 1e-5) if has_pre else x
     use_fused_norm_mix = _native_graph_fused_norm_mix_enabled()
     if use_fused_norm_mix:
-        stack_rkv = _native_graph_vkwr_rkv_dispatch(B, H * N) and RKVw.numel() != 0
+        stack_rkv = _native_graph_vkwr_rkv_dispatch(B, D) and RKVw.numel() != 0
         xr, xw, xk, xv, xa, xg = fused_attn_norm_mix6_decode(
             residual,
             xpa,
@@ -3362,7 +3400,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
             stack_rkv=stack_rkv,
         )
     else:
-        h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
+        h = F.layer_norm(residual, [D], an_w, an_b, 1e-5)
         xx = xpa - h
         xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
         xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
@@ -3395,36 +3433,36 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
         )
         a = torch.sigmoid(a)
         v_gate = torch.sigmoid(v_gate)
-    elif i > 0 and lora_dense and _native_graph_ada_wagv_lora_enabled(
+    elif equal_width and i > 0 and lora_dense and _native_graph_ada_wagv_lora_enabled(
         B,
-        H * N,
+        D,
         max(_graph_linear_shape(w1)[0], _graph_linear_shape(a1)[0], _graph_linear_shape(g1)[0], _graph_linear_shape(v1)[0]),
     ):
-        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, D)
         w, a, g, v = ada_wagv_lora(
             xw, xa, xg, xv, w1, a1, g1, v1, w2, a2, g2, v2,
             w0, a0, v0, v, v_first, sigmoid_a=True,
         )
         v_mixed = True
-    elif i == 0 and lora_dense and _native_graph_ada_wagv_lora_enabled(
+    elif equal_width and i == 0 and lora_dense and _native_graph_ada_wagv_lora_enabled(
         B,
-        H * N,
+        D,
         max(_graph_linear_shape(w1)[0], _graph_linear_shape(a1)[0], _graph_linear_shape(g1)[0]),
     ):
-        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, D)
         w, a, g, _unused_v = ada_wagv_lora(
             xw, xa, xg, xg, w1, a1, g1, g1, w2, a2, g2, g2,
             w0, a0, a0, v, v, sigmoid_a=True, compute_v=False,
         )
-    elif i > 0 and lora_dense and _native_graph_sm70_wagv_lora_enabled(B, H * N):
-        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
+    elif equal_width and i > 0 and lora_dense and _native_graph_sm70_wagv_lora_enabled(B, D):
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, D)
         w, a, g, v = sm70_wagv_lora(
             xw, xa, xg, xv, w1, a1, g1, v1, w2, a2, g2, v2, w0, a0, v0, v, v_first,
         )
         a = torch.sigmoid(a)
         v_mixed = True
-    elif lora_dense and _native_graph_fused_wavg_lora_enabled(B, H * N):
-        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
+    elif lora_dense and _native_graph_fused_wavg_lora_enabled(B, D):
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, D)
         if i == 0:
             w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
             a = a0 + F.linear(F.linear(xa, a1), a2)
@@ -3455,7 +3493,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
             )
         a = torch.sigmoid(a)
     elif lora_dense and _native_graph_fused_wag_lora_enabled():
-        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, D)
         block_m, block_r, block_k = _native_graph_fused_wag_lora_blocks()
         w, a, g = fused_wag_lora(
             xw,
@@ -3476,14 +3514,14 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
         )
         a = torch.sigmoid(a)
     else:
-        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, D)
         w = _graph_linear_call_with_explicit_bias(torch.tanh(_graph_linear_call(xw, w1)), w2, w0)
         a = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xa, a1), a2, a0))
         g = _graph_linear_call(torch.sigmoid(_graph_linear_call(xg, g1)), g2)
     use_fused_recurrent_output = _native_graph_fused_recurrent_output_enabled()
     use_fused_recurrent_raw = use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
     if not use_fused_recurrent_raw:
-        kk = F.normalize((k * k_k).view(B, H, N), dim=-1, p=2.0).view(B, H * N)
+        kk = F.normalize((k * k_k).view(B, H, N), dim=-1, p=2.0).view(B, A)
         k = k * (1 + (a - 1) * k_a)
     if i == 0:
         v_first.copy_(v)
@@ -3508,7 +3546,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
             eps=eps,
             block_n=N,
         )
-        out = out.reshape(B, H * N)
+        out = out.reshape(B, A)
     elif use_fused_recurrent_output:
         w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
         out, new_state = fused_recurrent_output_prepare(
@@ -3526,7 +3564,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
             eps=eps,
             block_n=N,
         )
-        out = out.reshape(B, H * N)
+        out = out.reshape(B, A)
     else:
         w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
         out, new_state = _recurrent_update_batched(r, w, k, v, kk, a, state, B, H, N)
@@ -3567,9 +3605,9 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
         )
         out = _native_graph_linear_dispatch(out, Ow, role="hidden")
     else:
-        out = F.group_norm(out, H, gn_w, gn_b, eps).view(B, H * N)
+        out = F.group_norm(out, H, gn_w, gn_b, eps).view(B, A)
         sk = (r.view(B, H, N) * k.view(B, H, N) * r_k).sum(dim=-1, keepdim=True)
-        out = (out + (sk * v.view(B, H, N)).view(B, H * N)) * g
+        out = (out + (sk * v.view(B, H, N)).view(B, A)) * g
         out = _native_graph_linear_dispatch(out, Ow, role="hidden")
     state.copy_(new_state)
     if use_fused_norm_mix:
@@ -3585,7 +3623,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
     else:
         xpa.copy_(h)
         residual = residual + out
-        h2 = F.layer_norm(residual, [H * N], fn_w, fn_b, 1e-5)
+        h2 = F.layer_norm(residual, [D], fn_w, fn_b, 1e-5)
         fxx = xpf - h2
         fk = h2 + fxx * fx_k
         xpf.copy_(h2)

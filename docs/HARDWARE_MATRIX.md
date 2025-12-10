@@ -3,7 +3,7 @@
 Canonical current hardware status for the HF adapter. Detailed experiment logs
 remain in `bench/` and platform-specific documents.
 
-Last updated: **2026-07-17**.
+Last updated: **2026-07-18**.
 
 ## Status definitions
 
@@ -19,7 +19,7 @@ Last updated: **2026-07-17**.
 | Tesla V100 32GB, sm70 | **Production-close** | dense/Qwen lanes; packed-MM4 cached decode for 1.5B/2.9B/7.2B; larger inference/training smoke | Albatross P1; three exact MM4 profiles pass 7/7 each with lower footprint and complete greedy equality; 1.5B alone opts into fused epilogues | Larger-model P2/P3, full-memory prefill and broader optimized-Qwen shapes |
 | RTX 3090 24GB, sm86 | **Production-close for measured bsz8 lanes** | g1h 7.2B vs Qwen3.5-9B plus 1.5B/2B and 2.9B/4B pairs | Latest 7.2B dense/W8/W4 matrix passes 18/18; dense decode active-work, Qwen FLA, quant speed and physical-memory gates pass | bsz1/2/4 latest-g1h matrix, task-quality evaluation, multi-GPU |
 | RTX 4090 24GB, sm89 | **Production-close for measured bsz8 lanes** | RWKV 0.4B/1.5B/2.9B/7.2B vs Qwen3.5 0.8B/2B/4B/9B, dense/W8/W4 | Small-model matrix passes 54/54 and 7.2B passes 18/18; dense prefill/decode, active-work, full Qwen FLA, quant speed and quant-local memory gates pass | bsz1/2/4 latest matrix, task quality, full-memory W4, other Ada cards |
-| RTX 5090, sm120 | **Production-close for measured lanes** | Existing Qwen/W4/MATH lanes plus single-GPU BF16 train_temp 12x768 B1/T512 | Full-FLA Qwen 8/8 batch-pairs; BN/TN W4 B1/B8; train_temp backward/step exact and 3-seed x 1,000-step cohort pass | Broader task quality/cards; larger or distributed train_temp; remaining quant projections/W8 |
+| RTX 5090, sm120 | **Production-close for measured Qwen/W4/train_temp lanes; Native UI partial** | Existing Qwen/W4/MATH lanes, single-GPU train_temp, Native HF Gradio 7.2B B1/B8 | Full-FLA Qwen 8/8; BN/TN W4 B1/B8; train_temp exact/cohort; real Native UI generation | Native Gradio speed/memory parity and sparse 8/8 greedy; broader quality/cards and distributed train_temp |
 | Apple M5 16GB | **Production-close for MLX measured pairs** | 0.4B vs Qwen3.5 0.8B; 1.5B vs Qwen3.5 2B; MPS training smoke | Tiled DPLR, guarded compiled/speculative decode, W4 memory and same-device gates | M1–M4/Pro/Max/Ultra, CoreML INT4/ANE, larger quality matrix |
 | A100 40GB | **Validated** | 0.1B–7.2B inference/training | fp16/bf16, Trainer/SFT/DPO, resume, ZeRO-2/3 base | 80GB lane, performance close, larger ZeRO-3 resume |
 | A800 80GB | **Validated** | 0.1B–13.3B mixed matrix | 13.3B quant smoke, native MM8/MM4, single/dual-card ZeRO | Native quant speed remains below fp16 on larger models |
@@ -44,6 +44,7 @@ Last updated: **2026-07-17**.
 - RTX 5090 g1h BN/TN Tensor Core W4 matrix: [`../bench/5090_bntn_all_models_20260716/README.md`](../bench/5090_bntn_all_models_20260716/README.md)
 - RTX 5090 MATH500 and quant pressure: [`../bench/5090_blackwell_production_close_20260712/README.md`](../bench/5090_blackwell_production_close_20260712/README.md)
 - RTX 5090 official train_temp alignment: [`../bench/5090_train_temp_alignment_20260717/README.md`](../bench/5090_train_temp_alignment_20260717/README.md)
+- RTX 5090 Native HF Gradio and unchanged official shell: [`../bench/5090_native_hf_gradio_train_temp_20260718/README.md`](../bench/5090_native_hf_gradio_train_temp_20260718/README.md)
 - RTX 5070 Laptop: [`../bench/5070_qwen35_full_fla_bsz8_20260714/README.md`](../bench/5070_qwen35_full_fla_bsz8_20260714/README.md)
 - Apple M5: [`hardware/APPLE_PRODUCTION_CLOSE.md`](hardware/APPLE_PRODUCTION_CLOSE.md)
 - A100: [`validation/A100_HF_VALIDATION.md`](validation/A100_HF_VALIDATION.md)

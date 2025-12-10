@@ -34,29 +34,11 @@ def test_generate_example_cpu_defaults_to_fp32() -> None:
     assert resolve_dtype("bf16", device) == torch.bfloat16
 
 
-def test_backend_auto_falls_back_without_fla() -> None:
-    assert select_native_backend(
-        "auto", device_type="cpu", fla_available=False, native_env_enabled=False
-    )
-    assert select_native_backend(
-        "auto", device_type="cuda", fla_available=False, native_env_enabled=False
-    )
-    assert not select_native_backend(
-        "auto", device_type="cuda", fla_available=True, native_env_enabled=False
-    )
-    assert select_native_backend(
-        "auto", device_type="cuda", fla_available=True, native_env_enabled=True
-    )
-    assert select_native_backend(
-        "native", device_type="cuda", fla_available=True, native_env_enabled=False
-    )
-    assert not select_native_backend(
-        "fla", device_type="cuda", fla_available=True, native_env_enabled=True
-    )
-    with pytest.raises(RuntimeError, match="requires flash-linear-attention"):
-        select_native_backend(
-            "fla", device_type="cuda", fla_available=False, native_env_enabled=False
-        )
+def test_backend_auto_is_native_even_when_fla_is_installed() -> None:
+    assert select_native_backend("auto")
+    assert select_native_backend("native")
+    with pytest.raises(ValueError, match="unsupported user-facing backend"):
+        select_native_backend("fla")
 
 
 def test_environment_doctor_model_directory_contract(tmp_path: Path) -> None:

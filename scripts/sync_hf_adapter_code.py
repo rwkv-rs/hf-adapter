@@ -2,8 +2,8 @@
 # coding=utf-8
 """Sync latest RWKV-7 HF adapter remote-code files into converted model dirs.
 
-Converted checkpoints carry copies of ``configuration_rwkv7.py``,
-``modeling_rwkv7.py``, tokenizer code, and native helper modules so standard
+Converted checkpoints carry ``native_model.py``, tokenizer code, and native
+helper modules so standard
 ``AutoModelForCausalLM.from_pretrained(..., trust_remote_code=True)`` can load
 them without installing this repository.  As the adapter evolves, older
 converted dirs need those small Python files refreshed without rewriting large
@@ -18,9 +18,9 @@ import shutil
 from pathlib import Path
 
 try:
-    from scripts.adapter_manifest import ADAPTER_FILES
+    from scripts.adapter_manifest import ADAPTER_FILES, LEGACY_REMOTE_CODE_FILES
 except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
-    from adapter_manifest import ADAPTER_FILES
+    from adapter_manifest import ADAPTER_FILES, LEGACY_REMOTE_CODE_FILES
 
 
 def sync_one(model_dir: Path, *, dry_run: bool = False) -> dict:
@@ -31,6 +31,14 @@ def sync_one(model_dir: Path, *, dry_run: bool = False) -> dict:
     cfg_path = model_dir / "config.json"
     if not cfg_path.exists():
         raise FileNotFoundError(f"config.json not found in {model_dir}")
+
+    removed = []
+    for name in LEGACY_REMOTE_CODE_FILES:
+        path = model_dir / name
+        if path.exists():
+            removed.append(str(path))
+            if not dry_run:
+                path.unlink()
 
     copied = []
     for name in ADAPTER_FILES:
@@ -53,7 +61,12 @@ def sync_one(model_dir: Path, *, dry_run: bool = False) -> dict:
     if not dry_run:
         cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
-    return {"model_dir": str(model_dir), "copied": copied, "dry_run": dry_run}
+    return {
+        "model_dir": str(model_dir),
+        "copied": copied,
+        "removed": removed,
+        "dry_run": dry_run,
+    }
 
 
 def main() -> int:

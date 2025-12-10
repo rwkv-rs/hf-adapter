@@ -90,8 +90,7 @@ python examples/generate.py --model D:\models\rwkv7-model-hf --prompt "User: 你
 ```
 
 完成标志：命令退出码为 `0`，输出中显示所用 `device` 和 `dtype`，并在输入提示词后
-生成新文本。示例会自动选择 CUDA、MPS 或 CPU；CUDA 环境存在 FLA 时会使用 FLA，
-否则使用仓库原生后端。
+生成新文本。示例会自动选择 CUDA、MPS 或 CPU，并始终使用仓库原生后端。
 
 > 转换后的模型使用仓库代码，因此需要 `trust_remote_code=True`。只加载你信任的
 > 本地目录或 Hugging Face 仓库。
@@ -99,8 +98,6 @@ python examples/generate.py --model D:\models\rwkv7-model-hf --prompt "User: 你
 ## 使用标准 Transformers API
 
 ```python
-import importlib.util
-import os
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -113,9 +110,6 @@ device = torch.device(
     else "cpu"
 )
 dtype = torch.float16 if device.type in {"cuda", "mps"} else torch.float32
-
-if device.type != "cuda" or importlib.util.find_spec("fla") is None:
-    os.environ["RWKV7_NATIVE_MODEL"] = "1"
 
 tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
 model = AutoModelForCausalLM.from_pretrained(
@@ -147,6 +141,7 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 | 批量转换、HF API、缓存和分块 prefill | [推理工作流](docs/INFERENCE_WORKFLOWS.md) |
 | PEFT LoRA、Trainer、SFT、DPO、GRPO | [训练工作流](docs/TRAINING_WORKFLOWS.md) |
 | 对齐官方 train_temp 数学和训练效果 | [train_temp CUDA 训练对齐教程](docs/TRAIN_TEMP_CUDA.md) |
+| 在官方 RWKV-Gradio-3 网页使用 Native HF | [Gradio Native HF 教程](docs/GRADIO_NATIVE_HF.md) |
 | 投机解码、`device_map`、DeepSpeed 多卡 | [高级使用教程](docs/ADVANCED_USAGE_ZH.md) |
 | bitsandbytes W8/W4、原生 MM8/MM4 | [量化使用教程](docs/QUANTIZATION_USAGE.md) |
 | Apple MPS、MLX、CoreML | [Apple 使用教程](docs/APPLE_USAGE.md) |
@@ -207,10 +202,11 @@ python examples/check_environment.py --model /path/to/rwkv7-model-hf
 [量化教程](docs/QUANTIZATION_USAGE.md)中选择 W8/W4 路线。转换大型 `.pth` 时使用
 `--low-memory`。
 
-### FLA 安装或编译失败
+### 旧模型提示缺少 FLA
 
-基础安装 `python -m pip install -e .` 可以使用原生后端继续运行。需要 CUDA 优化
-后，再根据 [中文逐步指南](docs/USER_GUIDE_ZH.md)中的环境检查结果安装匹配版本。
+普通用户不需要安装 FLA。运行
+`python scripts/sync_hf_adapter_code.py /path/to/rwkv7-model-hf` 更新旧模型目录，
+再按 [中文逐步指南](docs/USER_GUIDE_ZH.md)使用原生后端。
 
 ### 下载中断
 

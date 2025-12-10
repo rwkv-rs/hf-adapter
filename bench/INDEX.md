@@ -48,6 +48,7 @@ two-pair conservative gate. Conclusions and reproduction commands are in
 | 5090_blackwell_quant_matrix_20260705 | RTX 5090 Blackwell native MM8/MM4 fresh-process quant matrix (2026-07-05) | 1 | 0 |
 | 5090_blackwell_quant_policy_20260705 | RTX 5090 native MM8/MM4 quantization policy sweep (2026-07-05) | 7 | 0 |
 | 5090_bntn_all_models_20260716 | RTX 5090 g1h 1.5B/2.9B/7.2B/13.3B production BN/TN W4 model matrix plus 0.4B rejection, automatic-profile smokes and grid/autotune evidence | 13 | 0 |
+| 5090_native_hf_gradio_train_temp_20260718 | RTX 5090 real Native HF Gradio UI, official-v3a comparison and unchanged official-shell B16/T512/ZeRO-2 evidence | 4 | 3 |
 | 5090_train_temp_alignment_20260717 | RTX 5090 official train_temp versus opt-in HF CUDA numerical and convergence alignment | 0 | 1 |
 | 5090_bn_tn_20260716 | RTX 5090 explicit CUDA block-N/thread-N W8/W4 sweep; 288/288 correct, 4/32 winners beat old quant, 0/32 beat FP16, no production promotion | 3 | 3 |
 | 5090_bn_tn_tensorcore_20260716 | RTX 5090 production BN/TN Tensor Core W4; B1/B8 all-phase close plus 70/70 per-launch contract checks | 10 | 2 |

@@ -6,7 +6,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from scripts.adapter_manifest import ADAPTER_FILES
+from scripts.adapter_manifest import ADAPTER_FILES, LEGACY_REMOTE_CODE_FILES
 from scripts.sync_hf_adapter_code import sync_one
 
 
@@ -71,7 +71,7 @@ def _assert_remote_code_direct_import_closure() -> None:
     """
 
     root = Path(__file__).resolve().parents[1] / "rwkv7_hf"
-    for entrypoint_name in ("modeling_rwkv7.py", "native_model.py"):
+    for entrypoint_name in ("native_model.py",):
         direct = _relative_import_files(root / entrypoint_name)
         pending = list(direct)
         transitive: set[str] = set()
@@ -112,12 +112,19 @@ def main() -> int:
             + "\n",
             encoding="utf-8",
         )
+        for name in LEGACY_REMOTE_CODE_FILES:
+            (model_dir / name).write_text("stale FLA remote code\n", encoding="utf-8")
 
         result = sync_one(model_dir)
         assert result["model_dir"] == str(model_dir)
         assert result["dry_run"] is False
         for name in ADAPTER_FILES:
             assert (model_dir / name).exists(), name
+        assert sorted(Path(path).name for path in result["removed"]) == sorted(
+            LEGACY_REMOTE_CODE_FILES
+        )
+        for name in LEGACY_REMOTE_CODE_FILES:
+            assert not (model_dir / name).exists(), name
         cfg = json.loads((model_dir / "config.json").read_text(encoding="utf-8"))
         assert cfg["architectures"] == ["NativeRWKV7ForCausalLM"]
         assert cfg["model_type"] == "rwkv7_native"

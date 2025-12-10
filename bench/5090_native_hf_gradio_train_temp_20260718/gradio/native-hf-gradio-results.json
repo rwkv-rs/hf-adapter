@@ -1,0 +1,30 @@
+[
+  {
+    "backend": "native_hf",
+    "model": "rwkv7-g1h-7.2b-hf",
+    "batch_size": 1,
+    "requested_tokens": 96,
+    "elapsed_s": 3.7790996890034876,
+    "client_upper_bound_aggregate_tok_s": 25.402875790586588,
+    "gpu_process_memory_mib": "20415, 14510",
+    "result": {
+      "label": "Output  44.5 token/s @ bsz 1 = 96 tokens, 162 chars",
+      "value": "以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获",
+      "__type__": "update"
+    }
+  },
+  {
+    "backend": "native_hf",
+    "model": "rwkv7-g1h-7.2b-hf",
+    "batch_size": 8,
+    "requested_tokens": 96,
+    "elapsed_s": 4.122490392997861,
+    "client_upper_bound_aggregate_tok_s": 186.29515821418642,
+    "gpu_process_memory_mib": "20415, 15178",
+    "result": {
+      "label": "Output  276.9 token/s @ bsz 8 = 768 tokens, 1266 chars",
+      "value": "以下是一个简单的 Python 程序，用于计算两个数的和、差、积和商，并输出结果。程序包含基本的输入验证和错误处理。\n```python\ndef main():\n    print(\"=== 基本算术运算程序 ===\")\n    print(\"请输入两个数字（用空格分隔）：\")\n    \n    try:\n====\n以下是一个简单的 Python 程序，用于计算两个数的和、差、积和商，并输出结果。程序包含基本的输入验证和错误处理。\n```python\ndef main():\n    print(\"=== 基本算术运算程序 ===\")\n    print(\"请输入两个数字（用空格分隔）：\")\n    \n    try:\n====\n以下是一个简单的 Python 程序，用于计算两个数的和、差、积和商，并输出结果。程序包含基本的输入验证和错误处理。\n```python\ndef main():\n    print(\"=== 基本算术运算程序 ===\")\n    print(\"请输入两个数字（用空格分隔）：\")\n    \n    try:\n====\n以下是一个简单的 Python 程序，用于计算两个数的和、差、积和商，并输出结果。程序包含基本的输入验证和错误处理。\n```python\ndef main():\n    print(\"=== 基本算术运算程序 ===\")\n    print(\"请输入两个数字（用空格分隔）：\")\n    \n    try:\n====\n以下是一个简单的 Python 程序，用于计算两个数的和、差、积和商，并输出结果。程序包含基本的输入验证和错误处理。\n```python\ndef main():\n    print(\"=== 基本算术运算程序 ===\")\n    print(\"请输入两个数字（用空格分隔）：\")\n    \n    try:\n====\n以下是一个简单的 Python 程序，用于计算两个数的和、差、积和商，并输出结果。程序包含基本的输入验证和错误处理。\n```python\ndef main():\n    print(\"=== 基本算术运算程序 ===\")\n    print(\"请输入两个数字（用空格分隔）：\")\n    \n    try:\n====\n以下是一个简单的 Python 程序，用于计算两个数的和、差、积和商，并输出结果。程序包含基本的输入验证和错误处理。\n```python\ndef main():\n    print(\"=== 基本算术运算程序 ===\")\n    print(\"请输入两个数字（用空格分隔）：\")\n    \n    try:\n====\n以下是一个简单的 Python 程序，用于计算两个数的和、差、积和商，并输出结果。程序包含基本的输入验证和错误处理。\n```python\ndef main():\n    print(\"=== 基本算术运算程序 ===\")\n    print(\"请输入两个数字（用空格分隔）：\")\n    \n    try:",
+      "__type__": "update"
+    }
+  }
+]

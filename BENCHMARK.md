@@ -5,7 +5,7 @@ exploratory tuning chronology. Raw rows, logs and negative experiments remain
 in [`bench/`](bench/); platform interpretation lives in
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
-Last updated: **2026-07-17**.
+Last updated: **2026-07-18**.
 
 ## Benchmark contract
 
@@ -35,6 +35,7 @@ Status vocabulary:
 | RTX 5090 | 0.4B/0.8B through 7.2B/9B, B1/B8, dense/W8/W4 | 144/144 Qwen references verify full FLA plus Triton conv; 32/32 greedy checks pass; task quality is separate | raw dense prefill/decode minima `1.0226x/2.8130x`; per-active-B speed leads in all cells; W8/W4 total-latency and footprint gates pass | **PASS 8/8 batch-pairs** |
 | RTX 5090 | g1h 1.5B/2.9B/7.2B/13.3B BF16 versus W4, B1/B8, prompt128/decode128 | prompt/final cosine `>=0.9995`, same-next 8/8; group-128 grid 280/280 | prefill/decode minima `1.0010x/1.1854x`; footprint `0.5298x–0.6250x` with automatic exact-model profiles | **PASS 8/8 all-phase cells** |
 | RTX 5090 | official train_temp vs opt-in HF train_temp CUDA, 12x768 BF16, B1/T512 | backward 400/400 and FusedAdam step 800 tensors/deltas exactly match; 3-seed x 1,000-step cohort passes | median runtime 48.4061 s official vs 43.5184 s HF; candidate 10.10% lower in this synthetic cohort | **PASS exact lane** |
+| RTX 5090 | official RWKV-Gradio-3 v3a vs Native HF, g1h 7.2B FP16, B1/B8 | real browser generation and same-prompt output smoke pass; fastest sparse direct greedy is only 6/8 | Native `95.2/651.7 tok/s` vs v3a `138.8/841.7`; Native process memory is higher | **PARTIAL; sparse opt-in** |
 | Apple M5 | 0.4B/1.5B selected MLX vs Qwen3.5 pairs | state/session/greedy and speculative target oracle pass | selected conservative decode/prefill/TTFT/memory gates pass | **PASS measured pairs** |
 
 ## RTX 5090 official train_temp alignment
@@ -55,6 +56,13 @@ median train/validation AUC relative differences are `0.8531%/5.1030%`, and
 the median maximum-gradient ratio is `1.3281x`. The cohort is `pass` under the
 predeclared fail-closed thresholds. Evidence:
 [`bench/5090_train_temp_alignment_20260717/`](bench/5090_train_temp_alignment_20260717/README.md).
+
+The unchanged official `demo-training-prepare.sh` and
+`demo-training-run.sh` entry points also pass a bounded B16/T512/ZeRO-2 run on
+the same card. The Native equivalent reports finite `399/399` ZeRO gradients
+and a changed model hash. The same artifact records a real Gradio Native HF
+page and its strict performance gap to official v3a:
+[`bench/5090_native_hf_gradio_train_temp_20260718/`](bench/5090_native_hf_gradio_train_temp_20260718/README.md).
 
 ## V100 production-close
 

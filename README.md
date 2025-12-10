@@ -18,6 +18,7 @@ For normal inference, start here instead of the benchmark sections below:
 - [Visual guide: speculative decoding, training, and multi-GPU](docs/ADVANCED_USAGE.md)
 - [全功能使用指南](docs/COMPLETE_ADAPTER_GUIDE.md)
 - [Official train_temp CUDA alignment](docs/TRAIN_TEMP_CUDA.md)
+- [Run the official RWKV-Gradio-3 UI with Native HF](docs/GRADIO_NATIVE_HF.md)
 
 After first generation, use the complete index to find copyable tutorials for
 conversion and cache workflows, PEFT/Trainer/TRL, W8/W4, Apple MPS/MLX/CoreML,
@@ -48,8 +49,8 @@ python examples/generate.py \
   --max-new-tokens 64
 ```
 
-The example automatically selects CUDA, MPS, or CPU. It uses FLA on CUDA when
-available and otherwise uses the native backend. If you only have an official
+The example automatically selects CUDA, MPS, or CPU and always loads the
+canonical native backend. If you only have an official
 RWKV-7 `.pth` checkpoint, follow
 [Download and convert a model](docs/USER_GUIDE.md#2-get-and-convert-a-model).
 Start with 0.1B or 0.4B to validate a new installation.
@@ -193,20 +194,21 @@ This repository converts RWKV-7 weights to a Hugging Face-style directory and pr
 - `model.generate(..., use_cache=True)`
 - PEFT LoRA smoke tests
 - HF Trainer, TRL SFTTrainer, DPOTrainer, and GRPOTrainer one-step smoke tests
-- Opt-in native/no-FLA backend smoke tests for Trainer, SFT, DPO, GRPO,
+- Native/no-FLA backend smoke tests for Trainer, SFT, DPO, GRPO,
   PEFT adapter save/load/merge, checkpoint resume, and bnb W8/W4 functional
   quantized inference
 - HF `device_map` multi-GPU generate smoke for the pipeline-parallel direction
 
-The default backend uses the FLA (`flash-linear-attention`) RWKV-7
-implementation. Set `RWKV7_NATIVE_MODEL=1` to route remote-code
-`AutoModelForCausalLM.from_pretrained(...)` into the experimental native
-PyTorch backend for FLA-free compatibility validation.
+Converted checkpoints use the native RWKV-7 implementation by default.
+`AutoModelForCausalLM.from_pretrained(...)` does not require FLA or
+`RWKV7_NATIVE_MODEL`. The historical FLA wrapper remains an explicit
+developer-only reference for migration A/B tests.
 
 `flash-linear-attention` is optional at package-install time so Apple Silicon,
 CPU, and other no-CUDA environments can install the adapter. Use
-`pip install -e '.[fla]'` or `pip install -e '.[cuda]'` when validating the
-optimized CUDA/FLA backend.
+`pip install -e '.[cuda]'` for native CUDA kernels. Use
+`pip install -e '.[fla-reference]'` only when reproducing a dedicated RWKV FLA
+reference benchmark.
 
 Apple Silicon uses the same converted model contract through MPS/MLX/CoreML.
 The promoted M5 result and its exact scope are summarized in
@@ -414,18 +416,12 @@ bash scripts/run_zero_training_smoke.sh
 Minimal Transformers usage without the optional `accelerate` dependency:
 
 ```python
-import importlib.util
-import os
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 path = "/path/to/rwkv7-g1d-0.1b-hf"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 dtype = torch.float16 if device.type == "cuda" else torch.float32
-
-# CPU, MPS, or CUDA without FLA uses the native backend.
-if device.type != "cuda" or importlib.util.find_spec("fla") is None:
-    os.environ["RWKV7_NATIVE_MODEL"] = "1"
 
 tok = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
 model = AutoModelForCausalLM.from_pretrained(
@@ -486,8 +482,7 @@ Native/no-FLA HF ecosystem hardening smoke tests:
 
 ```bash
 export TORCHDYNAMO_DISABLE=1
-export RWKV7_NATIVE_MODEL=1
-export PYTHONPATH=/path/to/flash-linear-attention:/path/to/rwkv7-hf-adapter:$PYTHONPATH
+export PYTHONPATH=/path/to/rwkv7-hf-adapter:$PYTHONPATH
 
 python tests/test_native_trainer_smoke.py \
   --model /path/to/rwkv7-g1d-0.1b-hf \
@@ -689,7 +684,7 @@ python bench/bench_speed.py \
 Native-JIT / native-graph backends for the HF fast-token path. `auto` is the
 serving default for `rwkv7_forward_token`: it picks `native_graph` when CUDA
 graph replay is available for the active batch size, falls back to `native_jit`,
-then to the FLA tensor path. Benchmark rows record both the requested backend
+then to the native eager tensor path. Benchmark rows record both the requested backend
 and `fast_token_backend_effective`. Normal HF one-token inference calls with
 `past_key_values` also use this path by default, so `model.generate(...,
 use_cache=True)` benefits without changing caller code; set
@@ -946,9 +941,9 @@ Promoted current results are intentionally kept out of this usage guide:
 - The public compatibility shell remains repository code loaded through HF;
   the hot path has native fused backends, but the model is not yet upstreamed
   into the Transformers package itself.
-- The default CUDA wrapper backend currently requires FLA; set
-  `RWKV7_NATIVE_MODEL=1` for the FLA-free native PyTorch compatibility path.
-- The remote config uses a unique `rwkv7_hf_adapter` model type so `AutoModelForCausalLM` reliably loads this adapter instead of a locally registered FLA `rwkv7` class.
+- Converted checkpoints use the unique `rwkv7_native` model type and direct
+  Native Auto* metadata. Older converted directories can be upgraded with
+  `scripts/sync_hf_adapter_code.py` before relying on the native-default claim.
 - V100 production-close evidence now covers 0.1B/0.4B/1.5B dense
   bsz1/2/4/8 against same-host Albatross plus the separate 1.5B/full-FLA-Qwen
   B1/B8 active-work gate. Exact numbers and boundaries live in

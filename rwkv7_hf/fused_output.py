@@ -98,6 +98,7 @@ if _HAS_TRITON:
         head_dim: tl.constexpr,
         head_v_dim: tl.constexpr,
         value_dim: tl.constexpr,
+        output_dim: tl.constexpr,
         eps: tl.constexpr,
         HAS_O_BIAS: tl.constexpr,
         BLOCK_M: tl.constexpr,
@@ -107,7 +108,7 @@ if _HAS_TRITON:
         batch_id = tl.program_id(0)
         block_m = tl.program_id(1)
         offs_m = block_m * BLOCK_M + tl.arange(0, BLOCK_M)
-        mask_m = offs_m < value_dim
+        mask_m = offs_m < output_dim
         offs_n = tl.arange(0, BLOCK_N)
         offs_v = tl.arange(0, BLOCK_V)
         mask_n = offs_n < head_dim
@@ -143,7 +144,7 @@ if _HAS_TRITON:
         if HAS_O_BIAS:
             ob = tl.load(o_bias_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
             acc += ob
-        tl.store(out_ptr + batch_id * value_dim + offs_m, acc, mask=mask_m)
+        tl.store(out_ptr + batch_id * output_dim + offs_m, acc, mask=mask_m)
 
 
 def fused_attn_output_prepare_available() -> bool:
@@ -319,10 +320,11 @@ def fused_attn_output_project(
         raise ValueError(f"group_norm_weight must be [{value_dim}], got {tuple(group_norm_weight.shape)}")
     if group_norm_bias.dim() != 1 or int(group_norm_bias.shape[0]) != value_dim:
         raise ValueError(f"group_norm_bias must be [{value_dim}], got {tuple(group_norm_bias.shape)}")
-    if o_proj_weight.dim() != 2 or int(o_proj_weight.shape[0]) != value_dim or int(o_proj_weight.shape[1]) != value_dim:
-        raise ValueError(f"o_proj_weight must be [{value_dim}, {value_dim}], got {tuple(o_proj_weight.shape)}")
-    if o_proj_bias is not None and (o_proj_bias.dim() != 1 or int(o_proj_bias.shape[0]) != value_dim):
-        raise ValueError(f"o_proj_bias must be [{value_dim}], got {tuple(o_proj_bias.shape)}")
+    if o_proj_weight.dim() != 2 or int(o_proj_weight.shape[1]) != value_dim:
+        raise ValueError(f"o_proj_weight must be [output_dim, {value_dim}], got {tuple(o_proj_weight.shape)}")
+    output_dim = int(o_proj_weight.shape[0])
+    if o_proj_bias is not None and (o_proj_bias.dim() != 1 or int(o_proj_bias.shape[0]) != output_dim):
+        raise ValueError(f"o_proj_bias must be [{output_dim}], got {tuple(o_proj_bias.shape)}")
 
     tensors = [rec2, r3, k3, v3, g2, r_k, group_norm_weight, group_norm_bias, o_proj_weight]
     use_triton = (
@@ -360,10 +362,10 @@ def fused_attn_output_project(
         gnb_c = group_norm_bias.contiguous()
         ow_c = o_proj_weight.contiguous()
         ob_c = o_proj_bias.contiguous() if o_proj_bias is not None else gnw_c
-        out = torch.empty_like(rec2)
+        out = torch.empty((batch, output_dim), device=rec2.device, dtype=rec2.dtype)
         block_n = triton.next_power_of_2(int(head_dim))
         block_v = triton.next_power_of_2(int(head_v_dim))
-        _attn_output_project_kernel[(batch, triton.cdiv(value_dim, int(block_m)))](
+        _attn_output_project_kernel[(batch, triton.cdiv(output_dim, int(block_m)))](
             rec_c,
             r_c,
             k_c,
@@ -379,6 +381,7 @@ def fused_attn_output_project(
             head_dim=int(head_dim),
             head_v_dim=int(head_v_dim),
             value_dim=value_dim,
+            output_dim=output_dim,
             eps=float(eps),
             HAS_O_BIAS=o_proj_bias is not None,
             BLOCK_M=int(block_m),
