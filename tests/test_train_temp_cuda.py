@@ -60,14 +60,30 @@ def test_cuda_include_paths_support_pip_split_toolkit(tmp_path, monkeypatch) -> 
         str(cublas),
         str(cusparse),
     ]
-    assert train_temp_cuda._cuda_include_paths(
-        cuda_home, include_target=True
-    ) == [
+    assert train_temp_cuda._cuda_include_paths(cuda_home, include_target=True) == [
         str(cuda_home / "include"),
         str(target_include),
         str(cublas),
         str(cusparse),
     ]
+
+
+def test_cuda_include_paths_do_not_mix_complete_and_pip_toolkits(
+    tmp_path, monkeypatch
+) -> None:
+    cuda_home = tmp_path / "cuda"
+    include = cuda_home / "include"
+    include.mkdir(parents=True)
+    (include / "cuda_runtime.h").write_text("", encoding="utf-8")
+    site_packages = tmp_path / "site-packages"
+    fake_torch = site_packages / "torch" / "__init__.py"
+    fake_torch.parent.mkdir(parents=True)
+    fake_torch.write_text("", encoding="utf-8")
+    pip_include = site_packages / "nvidia" / "cuda_runtime" / "include"
+    pip_include.mkdir(parents=True)
+    monkeypatch.setattr(train_temp_cuda.torch, "__file__", str(fake_torch))
+
+    assert train_temp_cuda._cuda_include_paths(cuda_home) == [str(include)]
 
 
 def test_resolve_cuda_home_refreshes_cpp_extension_cache(tmp_path, monkeypatch) -> None:
@@ -82,12 +98,30 @@ def test_resolve_cuda_home_refreshes_cpp_extension_cache(tmp_path, monkeypatch) 
     assert cpp_extension.CUDA_HOME == str(cuda_home.resolve())
 
 
+def test_resolve_cuda_home_prefers_explicit_environment_over_cached_value(
+    tmp_path, monkeypatch
+) -> None:
+    selected = tmp_path / "cuda-selected"
+    cached = tmp_path / "cuda-cached"
+    for home in (selected, cached):
+        nvcc = home / "bin" / "nvcc"
+        nvcc.parent.mkdir(parents=True)
+        nvcc.write_text("", encoding="utf-8")
+    cpp_extension = SimpleNamespace(CUDA_HOME=str(cached))
+    monkeypatch.setenv("CUDA_HOME", str(selected))
+
+    assert train_temp_cuda._resolve_cuda_home(cpp_extension) == selected.resolve()
+    assert cpp_extension.CUDA_HOME == str(selected.resolve())
+
+
 def test_train_temp_causal_cross_entropy_shifts_dense_labels(monkeypatch) -> None:
     logits = torch.randn(2, 5, 11)
     labels = torch.randint(0, 11, (2, 5))
     sentinel = torch.tensor(1.25)
 
-    def fake_fused(shifted_logits: torch.Tensor, shifted_labels: torch.Tensor) -> torch.Tensor:
+    def fake_fused(
+        shifted_logits: torch.Tensor, shifted_labels: torch.Tensor
+    ) -> torch.Tensor:
         assert shifted_logits.is_contiguous()
         assert shifted_labels.is_contiguous()
         torch.testing.assert_close(shifted_logits, logits[:, :-1])
@@ -101,16 +135,32 @@ def test_train_temp_causal_cross_entropy_shifts_dense_labels(monkeypatch) -> Non
 @pytest.mark.parametrize(
     ("logits", "labels", "error"),
     [
-        (torch.randn(2, 5), torch.zeros(2, 5, dtype=torch.long), "logits must have shape"),
-        (torch.randn(2, 5, 11), torch.zeros(10, dtype=torch.long), "labels must have shape"),
+        (
+            torch.randn(2, 5),
+            torch.zeros(2, 5, dtype=torch.long),
+            "logits must have shape",
+        ),
+        (
+            torch.randn(2, 5, 11),
+            torch.zeros(10, dtype=torch.long),
+            "labels must have shape",
+        ),
         (
             torch.randn(2, 5, 11),
             torch.zeros(2, 4, dtype=torch.long),
             "share batch/token",
         ),
-        (torch.randn(2, 1, 11), torch.zeros(2, 1, dtype=torch.long), "at least two tokens"),
+        (
+            torch.randn(2, 1, 11),
+            torch.zeros(2, 1, dtype=torch.long),
+            "at least two tokens",
+        ),
         (torch.randn(2, 5, 11), torch.zeros(2, 5, dtype=torch.int32), "torch.int64"),
-        (torch.randn(2, 5, 11), torch.full((2, 5), -100, dtype=torch.long), "-100 is unsupported"),
+        (
+            torch.randn(2, 5, 11),
+            torch.full((2, 5), -100, dtype=torch.long),
+            "-100 is unsupported",
+        ),
     ],
 )
 def test_train_temp_causal_cross_entropy_rejects_unsupported_batches(
@@ -188,7 +238,9 @@ def test_train_temp_backend_rejects_unbalanced_model_before_patching(
     assert model.config.use_cache is True
 
 
-def test_train_temp_backend_enables_native_model_without_fla_patching(monkeypatch) -> None:
+def test_train_temp_backend_enables_native_model_without_fla_patching(
+    monkeypatch,
+) -> None:
     config = NativeRWKV7Config(
         vocab_size=17,
         hidden_size=64,
@@ -217,14 +269,22 @@ def test_train_temp_backend_enables_native_model_without_fla_patching(monkeypatc
     assert metadata["attention_modules"] == metadata["ffn_modules"] == 2
     assert model.config.use_cache is False
     assert model._rwkv7_train_temp_cuda_enabled is True
-    assert all(layer.attn._rwkv7_train_temp_cuda_enabled for layer in model.model.layers)
+    assert all(
+        layer.attn._rwkv7_train_temp_cuda_enabled for layer in model.model.layers
+    )
     assert all(layer.ffn._rwkv7_train_temp_cuda_enabled for layer in model.model.layers)
 
     train_temp_cuda.disable_train_temp_cuda_backend(model)
     assert model.config.use_cache is True
     assert model._rwkv7_train_temp_cuda_enabled is False
-    assert all(not hasattr(layer.attn, "_rwkv7_train_temp_cuda_enabled") for layer in model.model.layers)
-    assert all(not hasattr(layer.ffn, "_rwkv7_train_temp_cuda_enabled") for layer in model.model.layers)
+    assert all(
+        not hasattr(layer.attn, "_rwkv7_train_temp_cuda_enabled")
+        for layer in model.model.layers
+    )
+    assert all(
+        not hasattr(layer.ffn, "_rwkv7_train_temp_cuda_enabled")
+        for layer in model.model.layers
+    )
 
 
 def test_native_causal_lm_dispatches_injected_train_temp_forward() -> None:
@@ -257,7 +317,9 @@ def test_native_causal_lm_dispatches_injected_train_temp_forward() -> None:
 
 
 @pytest.mark.parametrize("command", ["capture-hf", "converge-hf"])
-def test_train_temp_cli_accepts_native_combination(command: str, tmp_path: Path) -> None:
+def test_train_temp_cli_accepts_native_combination(
+    command: str, tmp_path: Path
+) -> None:
     parser = build_parser()
     common = [
         command,

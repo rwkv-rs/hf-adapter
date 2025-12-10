@@ -75,10 +75,14 @@ def _cuda_include_paths(
     candidates = [home / "include"]
     if include_target:
         candidates.append(home / "targets" / "x86_64-linux" / "include")
-    site_packages = Path(torch.__file__).resolve().parent.parent
-    nvidia_packages = site_packages / "nvidia"
-    if nvidia_packages.is_dir():
-        candidates.extend(sorted(nvidia_packages.glob("*/include")))
+    toolkit_headers = any(
+        (candidate / "cuda_runtime.h").is_file() for candidate in candidates
+    )
+    if not toolkit_headers:
+        site_packages = Path(torch.__file__).resolve().parent.parent
+        nvidia_packages = site_packages / "nvidia"
+        if nvidia_packages.is_dir():
+            candidates.extend(sorted(nvidia_packages.glob("*/include")))
     resolved: list[str] = []
     for candidate in candidates:
         value = str(candidate)
@@ -97,7 +101,9 @@ def _op_registered(namespace: str) -> bool:
 
 def _validate_runtime() -> None:
     if os.name == "nt" or not torch.cuda.is_available():
-        raise RuntimeError("train_temp CUDA backend requires Linux with an available CUDA GPU")
+        raise RuntimeError(
+            "train_temp CUDA backend requires Linux with an available CUDA GPU"
+        )
     major, minor = torch.cuda.get_device_capability()
     if (major, minor) < (8, 0):
         raise RuntimeError(
@@ -108,8 +114,9 @@ def _validate_runtime() -> None:
 
 def _resolve_cuda_home(cpp_extension: Any) -> Path | None:
     candidates = [
-        getattr(cpp_extension, "CUDA_HOME", None),
         os.environ.get("CUDA_HOME"),
+        f"/usr/local/cuda-{torch.version.cuda}" if torch.version.cuda else None,
+        getattr(cpp_extension, "CUDA_HOME", None),
     ]
     for candidate in candidates:
         if not candidate:
@@ -129,7 +136,9 @@ def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
     if _LOADED:
         return
     if _LOAD_ERROR is not None:
-        raise RuntimeError("train_temp CUDA extension previously failed to load") from _LOAD_ERROR
+        raise RuntimeError(
+            "train_temp CUDA extension previously failed to load"
+        ) from _LOAD_ERROR
     with _LOAD_LOCK:
         if _LOADED:
             return
@@ -148,12 +157,10 @@ def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
                     "true",
                     "yes",
                     "on",
-            }
+                }
             root = _source_root()
             include_paths = _cuda_include_paths(cuda_home)
-            cuda_cpp_include_paths = _cuda_include_paths(
-                cuda_home, include_target=True
-            )
+            cuda_cpp_include_paths = _cuda_include_paths(cuda_home, include_target=True)
             for namespace, filenames in _OP_SOURCES.items():
                 if _op_registered(namespace):
                     continue
@@ -194,15 +201,21 @@ def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
                 extra_include_paths=cuda_cpp_include_paths,
                 verbose=bool(verbose),
             )
-            missing = [namespace for namespace in _OP_SOURCES if not _op_registered(namespace)]
+            missing = [
+                namespace for namespace in _OP_SOURCES if not _op_registered(namespace)
+            ]
             if not _op_registered("rwkv7_clampw_v3"):
                 missing.append("rwkv7_clampw_v3")
             if missing:
-                raise RuntimeError(f"train_temp extension did not register required ops: {missing}")
+                raise RuntimeError(
+                    f"train_temp extension did not register required ops: {missing}"
+                )
             _LOADED = True
         except BaseException as exc:
             _LOAD_ERROR = exc
-            raise RuntimeError(f"train_temp CUDA extension failed to load: {exc}") from exc
+            raise RuntimeError(
+                f"train_temp CUDA extension failed to load: {exc}"
+            ) from exc
 
 
 def train_temp_cuda_available(*, build: bool = False) -> bool:
@@ -220,21 +233,30 @@ def train_temp_cuda_available(*, build: bool = False) -> bool:
 class _Mix6(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, x_r, x_w, x_k, x_v, x_a, x_g):
-        inputs = tuple(value.contiguous() for value in (x, x_r, x_w, x_k, x_v, x_a, x_g))
+        inputs = tuple(
+            value.contiguous() for value in (x, x_r, x_w, x_k, x_v, x_a, x_g)
+        )
         ctx.save_for_backward(*inputs)
         return tuple(torch.ops.rwkv7_tmix_mix6_bf16_v5.forward(*inputs))
 
     @staticmethod
     def backward(ctx, grad_r, grad_w, grad_k, grad_v, grad_a, grad_g):
-        grads = tuple(value.contiguous() for value in (grad_r, grad_w, grad_k, grad_v, grad_a, grad_g))
-        return tuple(torch.ops.rwkv7_tmix_mix6_bf16_v5.backward(*grads, *ctx.saved_tensors))
+        grads = tuple(
+            value.contiguous()
+            for value in (grad_r, grad_w, grad_k, grad_v, grad_a, grad_g)
+        )
+        return tuple(
+            torch.ops.rwkv7_tmix_mix6_bf16_v5.backward(*grads, *ctx.saved_tensors)
+        )
 
 
 class _KkPre(torch.autograd.Function):
     @staticmethod
     def forward(ctx, k, k_k, a, k_a):
         inputs = tuple(value.contiguous() for value in (k, k_k, a, k_a))
-        outputs = torch.ops.rwkv7_tmix_kk_pre_bf16_v5.forward(*inputs, TRAIN_TEMP_HEAD_SIZE)
+        outputs = torch.ops.rwkv7_tmix_kk_pre_bf16_v5.forward(
+            *inputs, TRAIN_TEMP_HEAD_SIZE
+        )
         ctx.save_for_backward(*inputs, outputs[3])
         return outputs[0], outputs[1], outputs[2]
 
@@ -259,7 +281,9 @@ class _KkPre(torch.autograd.Function):
 class _LnxOutput(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, r, k, v, r_k, weight, bias, g):
-        inputs = tuple(value.contiguous() for value in (x, r, k, v, r_k, weight, bias, g))
+        inputs = tuple(
+            value.contiguous() for value in (x, r, k, v, r_k, weight, bias, g)
+        )
         outputs = torch.ops.rwkv7_tmix_lnx_rkvres_xg_bf16_v1.forward(*inputs)
         ctx.save_for_backward(*inputs, outputs[1], outputs[2])
         return outputs[0]
@@ -326,7 +350,9 @@ class _ClampW(torch.autograd.Function):
             dtype=torch.float32,
             device=w.device,
         )
-        state_aux = torch.empty(batch, tokens, heads, head_size, dtype=torch.float32, device=w.device)
+        state_aux = torch.empty(
+            batch, tokens, heads, head_size, dtype=torch.float32, device=w.device
+        )
         torch.ops.rwkv7_clampw_v3.forward(*inputs, output, state, state_aux)
         ctx.save_for_backward(*inputs, state, state_aux)
         return output
@@ -353,7 +379,9 @@ class _ClampW(torch.autograd.Function):
 class _CMix(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, x_k, key_weight, value_weight):
-        inputs = tuple(value.contiguous() for value in (x, x_k, key_weight, value_weight))
+        inputs = tuple(
+            value.contiguous() for value in (x, x_k, key_weight, value_weight)
+        )
         output, mixed, activation = torch.ops.rwkv7_cmix_bf16_v5.forward(*inputs)
         ctx.save_for_backward(*inputs, mixed, activation)
         return output
@@ -394,7 +422,9 @@ class _L2WrapCrossEntropy(torch.autograd.Function):
         return grad_logits, None
 
 
-def train_temp_fused_cross_entropy(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+def train_temp_fused_cross_entropy(
+    logits: torch.Tensor, targets: torch.Tensor
+) -> torch.Tensor:
     """Run the exact train_temp fused FP32 CE plus L2Wrap gradient."""
 
     load_train_temp_cuda_extension()
@@ -417,7 +447,9 @@ def train_temp_causal_cross_entropy(
             f"logits must have shape [batch, tokens, vocab], got {tuple(logits.shape)}"
         )
     if labels.ndim != 2:
-        raise ValueError(f"labels must have shape [batch, tokens], got {tuple(labels.shape)}")
+        raise ValueError(
+            f"labels must have shape [batch, tokens], got {tuple(labels.shape)}"
+        )
     if logits.shape[:2] != labels.shape:
         raise ValueError(
             "logits and labels must share batch/token dimensions; got "
@@ -444,13 +476,20 @@ def train_temp_causal_cross_entropy(
 
 def _dense_mask_only(attention_mask: torch.Tensor | None) -> None:
     if attention_mask is not None and not bool(torch.all(attention_mask != 0).item()):
-        raise ValueError("train_temp CUDA backend does not support padded or masked batches")
+        raise ValueError(
+            "train_temp CUDA backend does not support padded or masked batches"
+        )
 
 
-def _train_temp_attention_forward(self, hidden_states, v_first, *, native_lora_math: bool):
+def _train_temp_attention_forward(
+    self, hidden_states, v_first, *, native_lora_math: bool
+):
     """Run fused TMix while preserving each backend's LoRA activation ownership."""
 
-    if hidden_states.dtype != torch.bfloat16 or hidden_states.shape[1] % TRAIN_TEMP_CHUNK_LEN:
+    if (
+        hidden_states.dtype != torch.bfloat16
+        or hidden_states.shape[1] % TRAIN_TEMP_CHUNK_LEN
+    ):
         raise ValueError(
             "train_temp CUDA backend requires BF16 and sequence length divisible by "
             f"{TRAIN_TEMP_CHUNK_LEN}; got {hidden_states.dtype} and T={hidden_states.shape[1]}"
@@ -490,7 +529,9 @@ def _train_temp_attention_forward(self, hidden_states, v_first, *, native_lora_m
     head_dim = int(self.head_dim)
     head_v_dim = int(getattr(self, "head_v_dim", head_dim))
     if head_dim != TRAIN_TEMP_HEAD_SIZE or head_v_dim != TRAIN_TEMP_HEAD_SIZE:
-        raise ValueError("train_temp CUDA backend currently requires K/V head dimensions of 64")
+        raise ValueError(
+            "train_temp CUDA backend currently requires K/V head dimensions of 64"
+        )
     values = _ClampW.apply(
         r.reshape(batch, tokens, heads, TRAIN_TEMP_HEAD_SIZE),
         w.reshape(batch, tokens, heads, TRAIN_TEMP_HEAD_SIZE),
@@ -543,7 +584,12 @@ def _attention_forward(
     **kwargs,
 ):
     _dense_mask_only(attention_mask)
-    if past_key_values is not None or use_cache or cu_seqlens is not None or output_attentions:
+    if (
+        past_key_values is not None
+        or use_cache
+        or cu_seqlens is not None
+        or output_attentions
+    ):
         raise ValueError("train_temp CUDA backend is a dense no-cache training path")
     output, v_first = _train_temp_attention_forward(
         self, hidden_states, v_first, native_lora_math=False
@@ -582,20 +628,28 @@ def native_train_temp_causal_lm_forward(
     if past_key_values is not None or bool(use_cache):
         raise ValueError("train_temp CUDA backend is a dense no-cache training path")
     if bool(output_attentions) or bool(output_hidden_states):
-        raise ValueError("train_temp CUDA backend does not emit attention or hidden-state histories")
+        raise ValueError(
+            "train_temp CUDA backend does not emit attention or hidden-state histories"
+        )
     if input_ids is not None and inputs_embeds is not None:
-        raise ValueError("train_temp CUDA backend accepts input_ids or inputs_embeds, not both")
+        raise ValueError(
+            "train_temp CUDA backend accepts input_ids or inputs_embeds, not both"
+        )
     if input_ids is None and inputs_embeds is None:
         raise ValueError("train_temp CUDA backend requires input_ids or inputs_embeds")
     if input_ids is not None:
         if input_ids.dim() == 1:
             input_ids = input_ids.unsqueeze(0)
         if input_ids.dim() != 2:
-            raise ValueError("train_temp CUDA backend expects input_ids shaped [batch, tokens]")
+            raise ValueError(
+                "train_temp CUDA backend expects input_ids shaped [batch, tokens]"
+            )
         hidden_states = model.model.embeddings(input_ids)
     else:
         if inputs_embeds.dim() != 3:
-            raise ValueError("train_temp CUDA backend expects inputs_embeds shaped [batch, tokens, hidden]")
+            raise ValueError(
+                "train_temp CUDA backend expects inputs_embeds shaped [batch, tokens, hidden]"
+            )
         hidden_states = inputs_embeds
     if hidden_states.device.type != "cuda" or hidden_states.dtype != torch.bfloat16:
         raise ValueError("train_temp CUDA backend requires BF16 tensors on CUDA")
@@ -629,7 +683,9 @@ def native_train_temp_causal_lm_forward(
             from torch.utils.checkpoint import checkpoint
 
             hidden_states, v_first = checkpoint(
-                lambda x, first_value, active_layer=layer: layer_forward(active_layer, x, first_value),
+                lambda x, first_value, active_layer=layer: layer_forward(
+                    active_layer, x, first_value
+                ),
                 hidden_states,
                 v_first,
                 use_reentrant=False,
@@ -639,12 +695,18 @@ def native_train_temp_causal_lm_forward(
 
     hidden_states = model.model.norm(hidden_states)
     logits = model.lm_head(hidden_states)
-    requested_keep = logits_to_keep if logits_to_keep is not None else num_logits_to_keep
+    requested_keep = (
+        logits_to_keep if logits_to_keep is not None else num_logits_to_keep
+    )
     loss = None
     if labels is not None:
         loss = train_temp_causal_cross_entropy(logits, labels)
     elif requested_keep is not None:
-        keep = int(requested_keep.detach().cpu().item()) if isinstance(requested_keep, torch.Tensor) else int(requested_keep)
+        keep = (
+            int(requested_keep.detach().cpu().item())
+            if isinstance(requested_keep, torch.Tensor)
+            else int(requested_keep)
+        )
         if keep > 0:
             logits = logits[:, -min(keep, int(logits.shape[1])) :, :]
     if return_dict is None:
@@ -660,13 +722,20 @@ def enable_train_temp_cuda_backend(model) -> dict[str, Any]:
 
     load_train_temp_cuda_extension()
     config_model_type = str(getattr(getattr(model, "config", None), "model_type", ""))
-    native_model = type(model).__name__ == "NativeRWKV7ForCausalLM" or config_model_type == "rwkv7_native"
+    native_model = (
+        type(model).__name__ == "NativeRWKV7ForCausalLM"
+        or config_model_type == "rwkv7_native"
+    )
     if native_model:
         modules = tuple(model.modules())
         attention_modules = tuple(
-            module for module in modules if type(module).__name__ == "NativeRWKV7Attention"
+            module
+            for module in modules
+            if type(module).__name__ == "NativeRWKV7Attention"
         )
-        ffn_modules = tuple(module for module in modules if type(module).__name__ == "NativeRWKV7FFN")
+        ffn_modules = tuple(
+            module for module in modules if type(module).__name__ == "NativeRWKV7FFN"
+        )
         if not attention_modules or len(attention_modules) != len(ffn_modules):
             raise TypeError(
                 "expected a balanced Native RWKV-7 model, found "
