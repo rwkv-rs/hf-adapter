@@ -5,7 +5,7 @@ requirements and repository evidence. `PASS` means the named gate has a
 reproducible artifact; `PARTIAL` means the interface works but the complete
 hardware/performance matrix is not closed.
 
-Last updated: **2026-07-17**.
+Last updated: **2026-07-18**.
 
 This page reports status. For ordinary-user commands and PASS gates for every
 implemented capability below, start with
@@ -39,8 +39,9 @@ bounded training steps. Exact backward/step comparison and a predeclared
 multi-seed cohort are mandatory. `train.py` reports its unused generic 3.5x
 default as `dim_ffn=2688`, while the pinned fast `RWKV_CMix_x070`
 implementation and generated checkpoint use 4x FFN3072. The earlier B1/T512
-FFN3072 cohort therefore matches the official kernel shape, but it does not
-substitute for the official B16 shell recipe.
+FFN3072 cohort matches the official kernel shape; the separate Native B16/T512
+artifact now closes the shell-shape tensor, multi-seed, resume and bounded
+memory-stability gates.
 
 The first RTX 5070 inference migration checkpoint passes on 0.4B/fp16:
 Native Graph B1 reaches `223.47 tok/s` versus the retained wrapper-hosted
@@ -55,7 +56,7 @@ above remains mandatory.
 |---|---|---|---|
 | RWKV-LM / Albatross correctness and performance | **PARTIAL / production-close on measured V100, 4090 and 5090 lanes** | V100 Albatross/native-quant matrix plus 1.5B/full-FLA-Qwen B1/B8 active-work close; 4090 Albatross lane plus 0.4B–7.2B bsz8 Qwen3.5 matrices; 5090 full-FLA Qwen B1/B8, MATH500, quant pressure, and latest g1h 13.3B artifacts | Same-card final Albatross reruns on every target, broader optimized-Qwen shapes/cards, larger-model P2/P3 matrix, historical 4090 prefill high-water mark |
 | Transformers API | **PASS** | Auto classes, save/reload, generation, labels/loss, attention mask and recurrent cache tests | Upstreaming and long-term Transformers-version maintenance |
-| PEFT and RL ecosystem | **PASS for smoke/compatibility; custom B1 train_temp exact lane accepted** | LoRA lifecycle, Trainer, SFT, DPO and GRPO smoke; RTX 5090 BF16 12x768 B1 train_temp backward/step exact plus 3-seed x 1,000-step cohort | Native/no-FLA official-script B16 recipe, larger models, real datasets, additional cards and distributed convergence |
+| PEFT and RL ecosystem | **PASS for smoke/compatibility; B1 and Native B16 train_temp exact lanes accepted** | LoRA lifecycle, Trainer, SFT, DPO and GRPO smoke; RTX 5090 BF16 12x768 B1 plus Native B16/T512 exact tensors, 3-seed x 1,000-step cohort, 500+500 resume and steady-memory evidence | Larger models, real datasets, multi-day runs, additional cards and distributed convergence |
 | Dynamic batching, chunked prefill and state cache helpers | **PASS in HF adapter scope** | State select/reorder/drop/compact, chunked-prefill parity, serving-like cache telemetry | Native vLLM/SGLang integration remains a separate repository/project |
 | Common professional and consumer cards | **PARTIAL** | V100, A100, A800, A6000, 4090, 5090, GTX 1080 Ti and Apple M5 evidence | H100, AMD/ROCm, Turing and broader Apple/50-series coverage |
 | W8/W4 inference and lower memory | **PASS functionally; PARTIAL for universal speed** | bnb compatibility plus native MM8/MM4; RTX 5090 g1h 1.5B/2.9B/7.2B/13.3B BN/TN W4 B1/B8 all-phase closes at `0.5298x–0.6250x` footprint; Apple MLX W4 | Extend the 5090 FFN result to square/W8 paths and make full-memory quantized projections fp16-or-faster across cards/shapes |
@@ -122,8 +123,9 @@ Validated interfaces include:
 - PEFT LoRA forward/backward, adapter save/load/merge;
 - HF Trainer and checkpoint resume;
 - TRL SFTTrainer, DPOTrainer and GRPOTrainer;
-- an opt-in RTX 5090 BF16 `train_temp_cuda` lane with exact official backward
-  and FusedAdam-step parity plus a passing three-seed convergence cohort;
+- opt-in RTX 5090 BF16 `train_temp_cuda` lanes with exact official backward and
+  FusedAdam-step parity; the Native B16/T512 lane also passes three-seed
+  convergence, checkpoint-resume and steady-memory gates;
 - native/no-FLA fallback for compatibility-focused environments.
 
 Training details: [`TRAINING.md`](TRAINING.md). Exact official-kernel usage and

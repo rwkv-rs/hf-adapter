@@ -41,8 +41,13 @@ def run_subtitle(run: dict[str, Any], *, steps: int) -> str:
     )
 
 
-def write_cohort_csv(evidence: Path, output: Path) -> None:
-    report = load_json(evidence / "compare_convergence_cohort.json")
+def write_cohort_csv(
+    evidence: Path,
+    output: Path,
+    *,
+    cohort_report: str = "compare_convergence_cohort.json",
+) -> None:
+    report = load_json(evidence / cohort_report)
     if report.get("status") != "pass":
         raise ValueError("refusing to promote a failed convergence cohort")
     fieldnames = [
@@ -115,13 +120,14 @@ def render_best_observed_plot(
     *,
     reference_template: str = "official_convergence_seed{seed}.json",
     candidate_template: str = "hf_convergence_seed{seed}.json",
+    cohort_report: str = "compare_convergence_cohort.json",
 ) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    report = load_json(evidence / "compare_convergence_cohort.json")
+    report = load_json(evidence / cohort_report)
     if report.get("status") != "pass":
         raise ValueError("refusing to plot a failed convergence cohort")
 
@@ -226,13 +232,14 @@ def render_convergence_plot(
     *,
     reference_template: str = "official_convergence_seed{seed}.json",
     candidate_template: str = "hf_convergence_seed{seed}.json",
+    cohort_report: str = "compare_convergence_cohort.json",
 ) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    report = load_json(evidence / "compare_convergence_cohort.json")
+    report = load_json(evidence / cohort_report)
     if report.get("status") != "pass":
         raise ValueError("refusing to plot a failed convergence cohort")
     seeds = report["reference_seeds"]
@@ -347,6 +354,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="hf_convergence_seed{seed}.json",
         help="Candidate convergence filename template relative to the evidence directory.",
     )
+    parser.add_argument("--cohort-report", default="compare_convergence_cohort.json")
     parser.add_argument("--backward-report", default="compare_backward.json")
     parser.add_argument("--step-report", default="compare_step.json")
     return parser
@@ -374,14 +382,16 @@ def main() -> int:
         outputs["best"],
         reference_template=args.reference_template,
         candidate_template=args.candidate_template,
+        cohort_report=args.cohort_report,
     )
     render_convergence_plot(
         evidence,
         outputs["convergence"],
         reference_template=args.reference_template,
         candidate_template=args.candidate_template,
+        cohort_report=args.cohort_report,
     )
-    write_cohort_csv(evidence, outputs["cohort"])
+    write_cohort_csv(evidence, outputs["cohort"], cohort_report=args.cohort_report)
     write_single_step_csv(
         evidence,
         outputs["single_step"],

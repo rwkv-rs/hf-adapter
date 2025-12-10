@@ -63,6 +63,13 @@ roadmap.
   output semantics before optimizing layout.
 - Follow train_temp-style fused boundaries: `tmix_mix6`, `kk_pre/state_prep`,
   `lnx_rkvres_xg`, `cmix`, and `clampw`.
+- RTX 5090 Native training evidence is closed for the exact L12/D768/FFN3072,
+  BF16, B16/T512 lane: 399/399 gradients and parameter deltas are exact;
+  three seeds x 1,000 steps, 500+500 resume and steady-memory gates pass under
+  `bench/5090_native_train_temp_b16_20260718/`. Do not rerun that matrix unless
+  training math, optimizer grouping, scheduler, checkpointing or CUDA kernels
+  change. Its median throughput is `0.9499x` official, so do not claim training
+  performance parity.
 - Use Albatross-style GPU-specific layout/autotune. Exact-card rows decide
   defaults; V100, 4090, A100/H100, and Blackwell must not blindly share tile
   choices.
