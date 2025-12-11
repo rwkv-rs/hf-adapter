@@ -43,6 +43,30 @@ The current wrapper/native split remains intact:
 - `native_model` remains experimental until it reaches the same compatibility
   and benchmark surface.
 
+### RTX 5090 precision-matched decode checkpoint
+
+Implementation commit `cf42c0e` closes one exact Native/no-FLA decode lane:
+RTX 5090, official g1h 7.2B, FP16 weights, FP32 recurrent state, T1 cached
+decode, and B1/B8. The route combines graph-borrowed logits, FP32 sparse-FFN
+scratch accumulation, SM120 W/A/G grouping, manual RKV selection, and measured
+linear/norm settings.
+
+Three fresh 512-token process repeats reach Native medians of
+`145.06/845.57 tok/s`. Official Space commit `cc57df4` in precision-matched
+`fp32io16` mode measures `144.47/841.77 tok/s`, producing
+`1.0041x/1.0045x`. Both requested CUDA extensions are active in all rows; the
+six runs share one greedy-trace hash. A separate 64-step teacher-forced gate
+passes minimum logits cosine `0.9999934435` and exact top-1 at B1/B8.
+
+This checkpoint does not promote a global default. The official fp16-state
+route is still faster at `146.28/890.21 tok/s`, and prefill, memory parity,
+other checkpoints, and other cards remain open. Reproduce with
+`bench/bench_native_model_decode.py --require-active-extensions` and
+`bench/bench_native_model_decode_alignment.py`; the `cuda` extra installs
+Ninja so extension build failures cannot silently become fallback results.
+Canonical evidence is
+[`bench/5090_native_decode_fused_20260718`](../../bench/5090_native_decode_fused_20260718/README.md).
+
 ## Current next target: HF-compatible native fused backend
 
 The next phase is not another wrapper-speed pass. The target is to keep the HF

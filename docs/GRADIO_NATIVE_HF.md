@@ -48,8 +48,10 @@ RWKV7_NATIVE_MODEL_BACKEND=native_graph \
 python app.py
 ```
 
-浏览器打开终端打印的 Gradio 地址。普通用户先不要设置任何
-`RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN*` 实验变量；5090 sparse FFN 仍是调优探针。
+浏览器打开终端打印的 Gradio 地址。普通用户先使用上述保守配置。RTX 5090、
+官方 g1h 7.2B、FP16 权重和 FP32 state 的精确性能配置见
+[`5090_native_decode_fused_20260718`](../bench/5090_native_decode_fused_20260718/README.md)；
+它不是其他型号或显卡的通用默认值。
 
 ## 4. 精确且可观察的通过标准
 
@@ -69,6 +71,9 @@ python app.py
 
 - `No module named rwkv7_hf`：重新在当前虚拟环境执行
   `python -m pip install -e "$ADAPTER[cuda]"`。
+- `requested CUDA extensions are inactive`：确认当前虚拟环境能执行
+  `ninja --version`，然后重新运行 `python -m pip install -e "$ADAPTER[cuda]"`；
+  严格 benchmark 不允许静默回退。
 - 模型目录错误：确认 `APP3_HF_MODEL_PATH/config.json` 存在，并先运行普通
   `examples/generate.py`。
 - CUDA OOM：停止进程，改用较小模型、B1 和短输出；不要同时保留多个 Gradio
@@ -77,10 +82,12 @@ python app.py
   `git apply -R "$ADAPTER/examples/gradio/rwkv-gradio-3-native-hf.patch"`，删除
   `native_hf_v3a_compat.py`，再按官方方式启动。
 
-5090 7.2B 实测中，Native HF sparse 最好 B1/B8 为 `95.2/651.7 tok/s`，官方 v3a
-为 `138.8/841.7 tok/s`；Native 进程显存也更高。最快 sparse 直测的 B8 greedy
-完整匹配为 `6/8`，因此 sparse 和 shared-pack 均保持默认关闭。网页生成通过只证明
-接口和局部输出，不证明模型质量、长期稳定性或性能领先。
+早期 Gradio 路径的 `95.2/651.7 tok/s` 是保留的历史 UI 证据。当前精确 5090
+配置在三次 512-token 复测中达到 B1/B8 中位 `145.06/845.57 tok/s`，相对官方
+同精度 `fp32io16` state 的 `144.47/841.77 tok/s` 为 `1.0041x/1.0045x`；
+扩展 active、完整 trace hash、logits cosine 和 top-1 门槛均通过。官方更低精度
+fp16-state 仍为 `146.28/890.21 tok/s`，所以这些 sparse/WAG/RKV 配置继续保持
+默认关闭。网页生成通过只证明接口和局部输出，不证明模型质量、其他形状或其他显卡。
 
 ## 6. 让 AI 执行
 

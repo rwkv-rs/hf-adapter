@@ -163,20 +163,29 @@ This is a dated checkpoint. Current promoted 4090 matrices live in
 - The official `BlinkDL/RWKV-Gradio-3` Space at commit `cc57df4` runs through
   `NativeRWKV7ForCausalLM` using the opt-in bridge under `examples/gradio/`.
   Real-browser B1/B8 generation and graph-cache reuse pass on g1h 7.2B FP16.
-- Native decode improved from `44.5/276.9` to `95.2/651.7 tok/s` at B1/B8,
-  but official v3a remains `138.8/841.7 tok/s` and uses less process memory.
-  This is a working UI/compatibility path, not performance parity.
-- The fastest SM120 sparse FFN direct row matches only 6/8 B8 greedy
-  sequences over 48 measured tokens. `RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN` and
-  `RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_SHARE_PACK` must remain independently
-  default-off until exact B1/B8 logits and complete greedy gates pass.
+- The current opt-in Native fast-token candidate is bound to commit `cf42c0e`.
+  With FP16 weights and FP32 recurrent state, three 512-token process repeats
+  reach B1/B8 medians `145.06/845.57 tok/s` versus precision-matched official
+  v3a `144.47/841.77`, or `1.0041x/1.0045x`. Both requested extensions are
+  active in every row and all six rows share one complete greedy-trace hash.
+- The 64-step candidate-versus-conservative-Native gate passes minimum logits
+  cosine `0.9999934435`, max absolute difference `0.0625`, and top-1 `64/64`
+  at B1 plus `512/512` at B8. The rejected half-atomic route remains negative
+  evidence because batch divergence appeared during repeated tuning.
+- The official fp16-state route remains faster at `146.28/890.21 tok/s`.
+  Therefore `RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN`, its FP32 scratch route, the
+  SM120 W/A/G paths, manual RKV policy, and exact linear/norm settings remain
+  independently default-off. Do not generalize this row beyond RTX 5090,
+  g1h 7.2B, T1 cached decode, and B1/B8.
 - The unchanged official `demo-training-prepare.sh` and
   `demo-training-run.sh` commands pass on the 5090 for the pinned B16/T512/
   BF16/ZeRO-2 recipe when the run is bounded to one step externally. The
   equivalent Native runner passes with 399/399 finite ZeRO gradient tensors
   and a changed model hash. Do not compare the two runtime numbers because
   their harness boundaries differ.
-- Canonical evidence is
+- Canonical performance evidence is
+  `bench/5090_native_decode_fused_20260718/README.md`; browser and official
+  shell evidence remains in
   `bench/5090_native_hf_gradio_train_temp_20260718/README.md`. Ordinary users
   start from `docs/GRADIO_NATIVE_HF.md`; AI execution remains centralized in
   `docs/AI_ASSISTED_SETUP.md`.
@@ -1065,6 +1074,15 @@ Run this checklist for every new GPU before marking it as supported:
     environment overrides still win, and these tiles must not be projected to
     Ada, Volta, Ampere, Hopper, or another Blackwell card without exact-card
     rows.
+  - RTX 5090 Native/no-FLA cached decode has one exact precision-matched lane
+    under `bench/5090_native_decode_fused_20260718/`: official g1h 7.2B, FP16
+    weights, FP32 recurrent state, T1, B1/B8. Three 512-token process repeats
+    reach `1.0041x/1.0045x` official v3a `fp32io16`, while minimum logits cosine
+    is `0.9999934435` and top-1 is exact. The faster official fp16-state lane
+    remains open. Every candidate run must use
+    `bench/bench_native_model_decode.py --require-active-extensions`; `ninja`
+    is required through the `cuda` extra. All candidate fusion flags stay
+    default-off outside this exact benchmark command.
   - External-quant native prefill is opt-in through
     `RWKV7_FAST_PREFILL_QUANT=1`; BNB4 external-quant graph capture additionally
     requires `RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH=1` and is validated for

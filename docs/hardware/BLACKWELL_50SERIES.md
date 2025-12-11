@@ -1,3 +1,19 @@
+### 2026-07-18 - RTX 5090 Native FP32-state decode close
+
+The opt-in Native/no-FLA path now has an exact-card cached-decode close for the
+official g1h 7.2B checkpoint with FP16 weights and FP32 recurrent state. Three
+fresh 512-token process repeats produce B1/B8 medians `145.06/845.57 tok/s`
+against precision-matched official v3a `144.47/841.77`, or
+`1.0041x/1.0045x`. Both CUDA extensions are active in every row. All six runs
+share one complete greedy-trace hash; the 64-step alignment gate has minimum
+logits cosine `0.9999934435` and exact top-1 at B1/B8.
+
+This is not a global Blackwell default. The official fp16-state reference is
+still faster at `146.28/890.21 tok/s`, especially at B8. The accepted FP32
+scratch sparse-FFN and SM120 W/A/G paths remain default-off and are limited to
+the exact benchmark command. Evidence:
+[`bench/5090_native_decode_fused_20260718`](../../bench/5090_native_decode_fused_20260718/README.md).
+
 ### 2026-07-18 — RTX 5090 Native train_temp B16 alignment and resume
 
 The Native/no-FLA `train_temp_cuda` route now matches the official shell
