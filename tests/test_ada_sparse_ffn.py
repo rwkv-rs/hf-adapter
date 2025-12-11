@@ -126,3 +126,9 @@ def test_official_boundary_kernel_is_exposed_under_opt_in() -> None:
     assert "sparse_relu2_down_rows_t512_kernel" in sparse_ffn_module._CUDA_SOURCE
     assert "add_residual_half2_kernel" in sparse_ffn_module._CUDA_SOURCE
     assert "sparse_down_add_official" in sparse_ffn_module._CPP_SOURCE
+
+
+def test_deterministic_four_way_kernel_is_exposed_under_opt_in() -> None:
+    assert "sparse_relu2_down_deterministic4_kernel" in sparse_ffn_module._CUDA_SOURCE
+    assert "finalize_sparse_deterministic4_kernel" in sparse_ffn_module._CUDA_SOURCE
+    assert "sparse_down_add_deterministic4" in sparse_ffn_module._CPP_SOURCE

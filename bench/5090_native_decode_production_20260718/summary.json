@@ -1,0 +1,52 @@
+{
+  "axis": "native_official_decode_acceptance",
+  "status": "pass",
+  "device": "NVIDIA GeForce RTX 5090",
+  "checkpoint": "rwkv7-g1h-7.2b-20260710-ctx10240.pth",
+  "precision_mode": "fp16_state_fp16_io",
+  "official_engine": "RWKV-Gradio-3 rwkv7_fast_v3a.py",
+  "official_commit": "cc57df475465c6cacd42ecd4f2f05a588ee5473b",
+  "official_iterations": 20,
+  "native_repetitions": 3,
+  "native_decode_steps": 512,
+  "rows": [
+    {
+      "batch_size": 1,
+      "native_decode_tokps": [
+        146.35,
+        146.3,
+        146.26
+      ],
+      "native_median_tokps": 146.3,
+      "official_p50_tokps": 146.277184,
+      "matched_shape_ratio": 1.000155977845458,
+      "greedy_trace_sha256": [
+        "70c7168872c31c3a6e24ea3c861c1be224447a71b809ac495ae9e51e4f27ad00",
+        "70c7168872c31c3a6e24ea3c861c1be224447a71b809ac495ae9e51e4f27ad00",
+        "70c7168872c31c3a6e24ea3c861c1be224447a71b809ac495ae9e51e4f27ad00"
+      ],
+      "batch_traces_equal": true,
+      "requested_extensions_active": true,
+      "status": "pass"
+    },
+    {
+      "batch_size": 8,
+      "native_decode_tokps": [
+        892.54,
+        892.28,
+        891.69
+      ],
+      "native_median_tokps": 892.28,
+      "official_p50_tokps": 890.210359,
+      "matched_shape_ratio": 1.0023248898185422,
+      "greedy_trace_sha256": [
+        "5e6661eb042fc84456895065cbc29c8f64d6e1008fc6791a8f7debdc5f605802",
+        "5e6661eb042fc84456895065cbc29c8f64d6e1008fc6791a8f7debdc5f605802",
+        "5e6661eb042fc84456895065cbc29c8f64d6e1008fc6791a8f7debdc5f605802"
+      ],
+      "batch_traces_equal": true,
+      "requested_extensions_active": true,
+      "status": "pass"
+    }
+  ]
+}

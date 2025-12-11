@@ -456,12 +456,15 @@ class NativeRWKV7Cache(_HFCache):
             "run a fresh prefill for that prefix instead."
         )
 
-    def has_previous_state(self, layer_idx: int | None = None) -> bool:
+    def is_initialized(self, layer_idx: int | None = None) -> bool:
         if self._state is None or self._xpa is None or self._xpf is None or self._v_first is None:
             return False
         if layer_idx is not None and (int(layer_idx) < 0 or int(layer_idx) >= len(self._state)):
             return False
-        return self._seen_tokens > 0
+        return True
+
+    def has_previous_state(self, layer_idx: int | None = None) -> bool:
+        return self.is_initialized(layer_idx) and self._seen_tokens > 0
 
     def update(self, *args, **kwargs):
         raise NotImplementedError(
@@ -1316,7 +1319,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             return False
         if token_ids.device != self.model.embeddings.weight.device:
             return False
-        if not cache.has_previous_state() or cache.get_batch_size() != int(token_ids.shape[0]):
+        if not cache.is_initialized() or cache.get_batch_size() != int(token_ids.shape[0]):
             return False
         return not self._native_model_has_adapter_layers()
 

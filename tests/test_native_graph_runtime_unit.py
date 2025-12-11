@@ -7,7 +7,11 @@ import os
 
 import torch
 
-from rwkv7_hf.native_graph_runtime import NativeGraphRunner
+from rwkv7_hf.native_graph_runtime import (
+    NativeGraphRunner,
+    native_graph_precompute_embedding_enabled,
+    native_graph_state_dtype,
+)
 from rwkv7_hf.native_model import NativeRWKV7Cache, NativeRWKV7Config, NativeRWKV7ForCausalLM
 
 
@@ -85,6 +89,43 @@ def test_native_graph_cache_management_surface() -> None:
     stats = model.rwkv7_native_graph_cache_stats()
     assert stats["size"] == 0
     assert stats["limit"] >= 1
+
+
+def test_native_graph_state_dtype_is_explicit_and_fail_closed(monkeypatch) -> None:
+    monkeypatch.delenv("RWKV7_NATIVE_GRAPH_STATE_DTYPE", raising=False)
+    assert native_graph_state_dtype(torch.float16) == torch.float32
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_STATE_DTYPE", "fp16")
+    assert native_graph_state_dtype(torch.float16) == torch.float16
+    assert native_graph_state_dtype(torch.bfloat16) == torch.float32
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_STATE_DTYPE", "broken")
+    try:
+        native_graph_state_dtype(torch.float16)
+    except ValueError as exc:
+        assert "RWKV7_NATIVE_GRAPH_STATE_DTYPE" in str(exc)
+    else:
+        raise AssertionError("invalid state dtype must fail closed")
+
+
+def test_allocated_zero_length_cache_is_initialized_without_history() -> None:
+    cache = NativeRWKV7Cache(
+        state=[torch.zeros(1, 2, 4, 4)],
+        xpa=[torch.zeros(1, 8)],
+        xpf=[torch.zeros(1, 8)],
+        v_first=torch.zeros(1, 8),
+        seen_tokens=0,
+    )
+
+    assert cache.is_initialized() is True
+    assert cache.has_previous_state() is False
+    cache.seen_tokens = 1
+    assert cache.has_previous_state() is True
+
+
+def test_embedding_ln0_precompute_is_independent_and_default_off(monkeypatch) -> None:
+    monkeypatch.delenv("RWKV7_NATIVE_GRAPH_PRECOMPUTE_EMB_LN0", raising=False)
+    assert native_graph_precompute_embedding_enabled() is False
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_PRECOMPUTE_EMB_LN0", "1")
+    assert native_graph_precompute_embedding_enabled() is True
 
 
 def test_native_fast_token_cpu_contract_matches_forward() -> None:
