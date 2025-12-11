@@ -277,7 +277,13 @@ class NativeGraphRunner:
         self.v_first.copy_(self.v_first.index_select(0, index).contiguous())
         return True
 
-    def replay(self, token_ids: torch.LongTensor, cache: "NativeRWKV7Cache") -> torch.Tensor:
+    def replay(
+        self,
+        token_ids: torch.LongTensor,
+        cache: "NativeRWKV7Cache",
+        *,
+        copy_logits: bool = True,
+    ) -> torch.Tensor:
         if int(token_ids.numel()) != self.batch_size:
             raise ValueError(
                 f"native_graph runner batch mismatch: got {int(token_ids.numel())}, expected {self.batch_size}"
@@ -288,7 +294,8 @@ class NativeGraphRunner:
             raise RuntimeError("native_graph runner was not captured")
         self.graph.replay()
         self.bind_cache(cache)
-        return self.logits.view(self.batch_size, 1, -1).clone()
+        logits = self.logits.view(self.batch_size, 1, -1)
+        return logits.clone() if copy_logits else logits
 
     def copy_stats(self) -> dict[str, int]:
         return {

@@ -7,6 +7,7 @@ import os
 
 import torch
 
+from rwkv7_hf.native_graph_runtime import NativeGraphRunner
 from rwkv7_hf.native_model import NativeRWKV7Cache, NativeRWKV7Config, NativeRWKV7ForCausalLM
 
 
@@ -86,7 +87,83 @@ def test_native_graph_cache_management_surface() -> None:
     assert stats["limit"] >= 1
 
 
+def test_native_fast_token_cpu_contract_matches_forward() -> None:
+    model = build_tiny_model()
+    prompt = torch.tensor([[1, 2, 3], [4, 5, 6]], dtype=torch.long)
+    with torch.inference_mode():
+        prefill = model(prompt, use_cache=True, logits_to_keep=1)
+        token = prefill.logits[:, -1].argmax(dim=-1)
+        reference = model(
+            token[:, None],
+            past_key_values=prefill.past_key_values.clone(),
+            use_cache=True,
+            logits_to_keep=1,
+        )
+        fast = model.rwkv7_forward_token(
+            token,
+            past_key_values=prefill.past_key_values.clone(),
+        )
+        tuple_logits, tuple_cache = model.rwkv7_forward_token(
+            token[:, None],
+            past_key_values=prefill.past_key_values.clone(),
+            return_dict=False,
+        )
+    torch.testing.assert_close(fast.logits, reference.logits)
+    torch.testing.assert_close(tuple_logits, reference.logits)
+    assert fast.past_key_values.get_seq_length() == 4
+    assert tuple_cache.get_seq_length() == 4
+    assert model.rwkv7_last_fast_token_backend() in {"eager", "native_jit"}
+
+
+def test_native_fast_token_rejects_invalid_usage() -> None:
+    model = build_tiny_model()
+    with torch.inference_mode():
+        try:
+            model.rwkv7_forward_token(torch.ones(1, 2, dtype=torch.long))
+        except ValueError as exc:
+            assert "[batch] or [batch, 1]" in str(exc)
+        else:
+            raise AssertionError("multi-token input must be rejected")
+        try:
+            model.rwkv7_forward_one(torch.ones(2, dtype=torch.long))
+        except ValueError as exc:
+            assert "batch size 1" in str(exc)
+        else:
+            raise AssertionError("rwkv7_forward_one must reject batch > 1")
+    model.train()
+    try:
+        model.rwkv7_forward_token(torch.ones(1, dtype=torch.long))
+    except RuntimeError as exc:
+        assert "inference-only" in str(exc)
+    else:
+        raise AssertionError("training fast-token call must be rejected")
+
+
+def test_native_graph_replay_can_borrow_logits_buffer() -> None:
+    class FakeGraph:
+        def replay(self) -> None:
+            return None
+
+    runner = object.__new__(NativeGraphRunner)
+    runner.batch_size = 2
+    runner.token_ids = torch.zeros(2, dtype=torch.long)
+    runner.logits = torch.randn(2, 17)
+    runner.graph = FakeGraph()
+    runner.copy_from_cache = lambda cache: None
+    runner.bind_cache = lambda cache: None
+    cache = object()
+
+    borrowed = runner.replay(torch.tensor([[1], [2]]), cache, copy_logits=False)
+    owned = runner.replay(torch.tensor([[1], [2]]), cache)
+    assert borrowed.data_ptr() == runner.logits.data_ptr()
+    assert owned.data_ptr() != runner.logits.data_ptr()
+    torch.testing.assert_close(borrowed, owned)
+
+
 if __name__ == "__main__":
     test_native_cache_graph_binding_is_invalidated_by_mutation()
     test_native_graph_never_routes_on_cpu_or_training()
     test_native_graph_cache_management_surface()
+    test_native_fast_token_cpu_contract_matches_forward()
+    test_native_fast_token_rejects_invalid_usage()
+    test_native_graph_replay_can_borrow_logits_buffer()

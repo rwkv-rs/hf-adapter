@@ -40,6 +40,17 @@ torch::Tensor rwkv7_ada_sparse_ffn_cuda(
 torch::Tensor rwkv7_ada_sparse_ffn_out_cuda(
     torch::Tensor preact, torch::Tensor packed_value, torch::Tensor residual,
     torch::Tensor output);
+torch::Tensor rwkv7_ada_sparse_ffn_fp32_cuda(
+    torch::Tensor preact, torch::Tensor packed_value, torch::Tensor residual,
+    torch::Tensor scratch);
+torch::Tensor rwkv7_ada_sparse_ffn_fp32_out_cuda(
+    torch::Tensor preact, torch::Tensor packed_value, torch::Tensor residual,
+    torch::Tensor scratch, torch::Tensor output);
+torch::Tensor rwkv7_ada_sparse_ffn_official_cuda(
+    torch::Tensor preact, torch::Tensor packed_value, torch::Tensor residual);
+torch::Tensor rwkv7_ada_sparse_ffn_official_out_cuda(
+    torch::Tensor preact, torch::Tensor packed_value, torch::Tensor residual,
+    torch::Tensor output);
 torch::Tensor rwkv7_ada_linear_cuda(torch::Tensor x, torch::Tensor weight);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
@@ -47,6 +58,14 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         "RWKV-7 sm_89 sparse ReLU2 FFN down projection + residual");
   m.def("sparse_down_add_out", &rwkv7_ada_sparse_ffn_out_cuda,
         "RWKV-7 sm_89 sparse ReLU2 FFN down projection + residual (out)");
+  m.def("sparse_down_add_fp32", &rwkv7_ada_sparse_ffn_fp32_cuda,
+        "RWKV-7 sparse ReLU2 FFN down projection with FP32 tile accumulation");
+  m.def("sparse_down_add_fp32_out", &rwkv7_ada_sparse_ffn_fp32_out_cuda,
+        "RWKV-7 sparse ReLU2 FFN down projection with FP32 tile accumulation (out)");
+  m.def("sparse_down_add_official", &rwkv7_ada_sparse_ffn_official_cuda,
+        "RWKV-7 sparse ReLU2 FFN with official accumulate-round-add boundary");
+  m.def("sparse_down_add_official_out", &rwkv7_ada_sparse_ffn_official_out_cuda,
+        "RWKV-7 sparse ReLU2 FFN with official accumulate-round-add boundary (out)");
   m.def("ffn_up", &rwkv7_ada_linear_cuda,
         "RWKV-7 sm_89 small-row FFN expansion projection");
   m.def("linear", &rwkv7_ada_linear_cuda,
@@ -284,6 +303,27 @@ __global__ void copy_residual_vec4_kernel(
   }
 }
 
+__global__ void zero_output_vec4_kernel(
+    half* __restrict__ output,
+    int64_t n_vec4) {
+  const int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (index < n_vec4) {
+    reinterpret_cast<int4*>(output)[index] = make_int4(0, 0, 0, 0);
+  }
+}
+
+__global__ void add_residual_half2_kernel(
+    const half* __restrict__ residual,
+    half* __restrict__ output,
+    int64_t pairs) {
+  const int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (index < pairs) {
+    half2* out2 = reinterpret_cast<half2*>(output);
+    const half2* residual2 = reinterpret_cast<const half2*>(residual);
+    out2[index] = __hadd2(out2[index], residual2[index]);
+  }
+}
+
 __global__ __launch_bounds__(THREADS, 4) void sparse_relu2_down_rows_kernel(
     int hidden,
     int ffn,
@@ -347,6 +387,165 @@ __global__ __launch_bounds__(THREADS, 4) void sparse_relu2_down_rows_kernel(
       reinterpret_cast<half2*>(output + static_cast<int64_t>(row) * hidden
                                + hidden_block * (2 * THREADS) + tid * 2),
       accumulator);
+}
+
+__global__ __launch_bounds__(256, 2) void sparse_relu2_down_rows_t512_kernel(
+    int hidden,
+    int ffn,
+    const half* __restrict__ preact,
+    const half* __restrict__ packed_value,
+    half* __restrict__ output) {
+  constexpr int TILE = 512;
+  constexpr int TILE_THREADS = 256;
+  __shared__ __align__(256) half values[TILE];
+  __shared__ __align__(256) int nonzero_ids[TILE];
+  __shared__ int nonzero_count;
+  __shared__ int warp_counts[TILE / 32];
+  __shared__ int warp_prefix[TILE / 32];
+
+  const int f_block = blockIdx.x;
+  const int hidden_block = blockIdx.y;
+  const int row = blockIdx.z;
+  const int tid = threadIdx.x;
+  const int lane = tid & 31;
+  const int warp = tid >> 5;
+  const int start_f = f_block * TILE;
+  const half* pre_row = preact + static_cast<int64_t>(row) * ffn;
+
+  #pragma unroll
+  for (int u = 0; u < 2; ++u) {
+    const int local_f = tid + u * TILE_THREADS;
+    const float positive = fmaxf(load_h1(pre_row + start_f + local_f), 0.0f);
+    values[local_f] = __float2half_rn(positive * positive);
+  }
+  __syncthreads();
+
+  #pragma unroll
+  for (int u = 0; u < 2; ++u) {
+    const int local_f = tid + u * TILE_THREADS;
+    const bool nonzero = (__half_as_ushort(values[local_f]) << 1) != 0;
+    const unsigned mask = __ballot_sync(0xffffffffu, nonzero);
+    if (lane == 0) {
+      warp_counts[warp + u * (TILE_THREADS / 32)] = __popc(mask);
+    }
+  }
+  __syncthreads();
+
+  if (tid == 0) {
+    int prefix = 0;
+    #pragma unroll
+    for (int w = 0; w < TILE / 32; ++w) {
+      warp_prefix[w] = prefix;
+      prefix += warp_counts[w];
+    }
+    nonzero_count = prefix;
+  }
+  __syncthreads();
+
+  #pragma unroll
+  for (int u = 0; u < 2; ++u) {
+    const int local_f = tid + u * TILE_THREADS;
+    const bool nonzero = (__half_as_ushort(values[local_f]) << 1) != 0;
+    const unsigned mask = __ballot_sync(0xffffffffu, nonzero);
+    const int local_position = __popc(mask & ((1u << lane) - 1u));
+    const int group = warp + u * (TILE_THREADS / 32);
+    if (nonzero) {
+      nonzero_ids[warp_prefix[group] + local_position] = local_f;
+    }
+  }
+  __syncthreads();
+
+  half2 accumulator = __float2half2_rn(0.0f);
+  for (int i = 0; i < nonzero_count; ++i) {
+    const int local_f = nonzero_ids[i];
+    const int actual_f = start_f + local_f;
+    const half2 matrix = *reinterpret_cast<const half2*>(
+        packed_value + static_cast<int64_t>(actual_f) * hidden
+        + hidden_block * (2 * TILE_THREADS) + tid * 2);
+    accumulator = __hfma2(__half2half2(values[local_f]), matrix, accumulator);
+  }
+  atomicAdd(
+      reinterpret_cast<half2*>(output + static_cast<int64_t>(row) * hidden
+                               + hidden_block * (2 * TILE_THREADS) + tid * 2),
+      accumulator);
+}
+
+__global__ __launch_bounds__(THREADS, 4) void sparse_relu2_down_fp32_kernel(
+    int hidden,
+    int ffn,
+    const half* __restrict__ preact,
+    const half* __restrict__ packed_value,
+    float* __restrict__ scratch) {
+  __shared__ __align__(256) half values[FFN_TILE];
+  __shared__ __align__(256) int nonzero_ids[FFN_TILE];
+  __shared__ int nonzero_count;
+  __shared__ int warp_counts[FFN_TILE / 32];
+  __shared__ int warp_prefix[FFN_TILE / 32];
+
+  const int f_block = blockIdx.x;
+  const int hidden_block = blockIdx.y;
+  const int row = blockIdx.z;
+  const int tid = threadIdx.x;
+  const int lane = tid & 31;
+  const int warp = tid >> 5;
+  const int start_f = f_block * FFN_TILE;
+  const half* pre_row = preact + static_cast<int64_t>(row) * ffn;
+
+  const float positive = fmaxf(load_h1(pre_row + start_f + tid), 0.0f);
+  values[tid] = __float2half_rn(positive * positive);
+  __syncthreads();
+
+  const bool nonzero = (__half_as_ushort(values[tid]) << 1) != 0;
+  const unsigned mask = __ballot_sync(0xffffffffu, nonzero);
+  const int local_position = __popc(mask & ((1u << lane) - 1u));
+  if (lane == 0) {
+    warp_counts[warp] = __popc(mask);
+  }
+  __syncthreads();
+
+  if (tid == 0) {
+    int prefix = 0;
+    #pragma unroll
+    for (int w = 0; w < FFN_TILE / 32; ++w) {
+      warp_prefix[w] = prefix;
+      prefix += warp_counts[w];
+    }
+    nonzero_count = prefix;
+  }
+  __syncthreads();
+
+  if (nonzero) {
+    nonzero_ids[warp_prefix[warp] + local_position] = tid;
+  }
+  __syncthreads();
+
+  half2 accumulator = __float2half2_rn(0.0f);
+  #pragma unroll 1
+  for (int i = 0; i < nonzero_count; ++i) {
+    const int local_f = nonzero_ids[i];
+    const int actual_f = start_f + local_f;
+    const half2 matrix = *reinterpret_cast<const half2*>(
+        packed_value + static_cast<int64_t>(actual_f) * hidden
+        + hidden_block * (2 * THREADS) + tid * 2);
+    accumulator = __hfma2(__half2half2(values[local_f]), matrix, accumulator);
+  }
+  const float2 value = __half22float2(accumulator);
+  float* destination = scratch + static_cast<int64_t>(row) * hidden
+      + hidden_block * (2 * THREADS) + tid * 2;
+  atomicAdd(destination, value.x);
+  atomicAdd(destination + 1, value.y);
+}
+
+__global__ void finalize_sparse_fp32_add_residual_kernel(
+    int64_t elements,
+    float* __restrict__ scratch,
+    const half* __restrict__ residual,
+    half* __restrict__ output) {
+  const int64_t index = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (index >= elements) return;
+  const float value = scratch[index] + __half2float(residual[index]);
+  output[index] = __float2half_rn(value);
+  scratch[index] = 0.0f;
 }
 
 }  // namespace
@@ -461,6 +660,136 @@ torch::Tensor rwkv7_ada_sparse_ffn_cuda(
   auto output = torch::empty_like(residual);
   return rwkv7_ada_sparse_ffn_out_cuda(preact, packed_value, residual, output);
 }
+
+torch::Tensor rwkv7_ada_sparse_ffn_fp32_out_cuda(
+    torch::Tensor preact,
+    torch::Tensor packed_value,
+    torch::Tensor residual,
+    torch::Tensor scratch,
+    torch::Tensor output) {
+  TORCH_CHECK(preact.is_cuda() && packed_value.is_cuda() && residual.is_cuda() && scratch.is_cuda() && output.is_cuda(),
+              "CUDA tensors required");
+  TORCH_CHECK(preact.scalar_type() == at::kHalf &&
+              packed_value.scalar_type() == at::kHalf &&
+              residual.scalar_type() == at::kHalf &&
+              output.scalar_type() == at::kHalf, "fp16 tensors required");
+  TORCH_CHECK(scratch.scalar_type() == at::kFloat, "scratch must be fp32");
+  TORCH_CHECK(preact.dim() == 2 && packed_value.dim() == 2 && residual.dim() == 2 && scratch.dim() == 2 && output.dim() == 2,
+              "preact, packed_value, residual, scratch, and output must be rank-2");
+  TORCH_CHECK(preact.is_contiguous() && packed_value.is_contiguous() && residual.is_contiguous() && scratch.is_contiguous() && output.is_contiguous(),
+              "contiguous tensors required");
+  const int64_t rows = preact.size(0);
+  const int64_t ffn = preact.size(1);
+  const int64_t hidden = residual.size(1);
+  TORCH_CHECK(rows >= 1 && rows <= 19, "sparse FFN supports 1..19 rows");
+  TORCH_CHECK(residual.size(0) == rows, "residual row mismatch");
+  TORCH_CHECK(output.sizes() == residual.sizes(), "output shape must match residual");
+  TORCH_CHECK(scratch.sizes() == residual.sizes(), "scratch shape must match residual");
+  TORCH_CHECK(packed_value.size(0) == ffn && packed_value.size(1) == hidden,
+              "packed value weight must have shape [ffn, hidden]");
+  TORCH_CHECK(ffn == 4 * hidden, "expected RWKV ffn == 4 * hidden");
+  TORCH_CHECK((ffn % FFN_TILE) == 0 && (hidden % (2 * THREADS)) == 0,
+              "ffn must be divisible by 128 and hidden by 256");
+
+  c10::cuda::CUDAGuard device_guard(preact.device());
+  auto stream = at::cuda::getCurrentCUDAStream(preact.get_device());
+  sparse_relu2_down_fp32_kernel<<<
+      dim3(static_cast<unsigned>(ffn / FFN_TILE),
+           static_cast<unsigned>(hidden / (2 * THREADS)),
+           static_cast<unsigned>(rows)),
+      THREADS, 0, stream>>>(
+      static_cast<int>(hidden),
+      static_cast<int>(ffn),
+      reinterpret_cast<const half*>(preact.data_ptr<at::Half>()),
+      reinterpret_cast<const half*>(packed_value.data_ptr<at::Half>()),
+      scratch.data_ptr<float>());
+  const int64_t elements = output.numel();
+  finalize_sparse_fp32_add_residual_kernel<<<
+      static_cast<int>((elements + 255) / 256), 256, 0, stream>>>(
+      elements,
+      scratch.data_ptr<float>(),
+      reinterpret_cast<const half*>(residual.data_ptr<at::Half>()),
+      reinterpret_cast<half*>(output.data_ptr<at::Half>()));
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return output;
+}
+
+torch::Tensor rwkv7_ada_sparse_ffn_fp32_cuda(
+    torch::Tensor preact,
+    torch::Tensor packed_value,
+    torch::Tensor residual,
+    torch::Tensor scratch) {
+  auto output = torch::empty_like(residual);
+  return rwkv7_ada_sparse_ffn_fp32_out_cuda(
+      preact, packed_value, residual, scratch, output);
+}
+
+torch::Tensor rwkv7_ada_sparse_ffn_official_out_cuda(
+    torch::Tensor preact,
+    torch::Tensor packed_value,
+    torch::Tensor residual,
+    torch::Tensor output) {
+  TORCH_CHECK(preact.is_cuda() && packed_value.is_cuda() && residual.is_cuda() && output.is_cuda(),
+              "CUDA tensors required");
+  TORCH_CHECK(preact.scalar_type() == at::kHalf && packed_value.scalar_type() == at::kHalf
+              && residual.scalar_type() == at::kHalf && output.scalar_type() == at::kHalf,
+              "fp16 tensors required");
+  TORCH_CHECK(preact.dim() == 2 && packed_value.dim() == 2 && residual.dim() == 2 && output.dim() == 2,
+              "preact, packed_value, residual, and output must be rank-2");
+  TORCH_CHECK(preact.is_contiguous() && packed_value.is_contiguous() && residual.is_contiguous() && output.is_contiguous(),
+              "contiguous tensors required");
+  const int64_t rows = preact.size(0);
+  const int64_t ffn = preact.size(1);
+  const int64_t hidden = residual.size(1);
+  TORCH_CHECK(rows >= 1 && rows <= 19, "sparse FFN supports 1..19 rows");
+  TORCH_CHECK(residual.size(0) == rows && output.sizes() == residual.sizes(),
+              "residual/output shape mismatch");
+  TORCH_CHECK(packed_value.size(0) == ffn && packed_value.size(1) == hidden,
+              "packed value weight must have shape [ffn, hidden]");
+  TORCH_CHECK(ffn == 4 * hidden && (ffn % FFN_TILE) == 0 && (hidden % 256) == 0,
+              "expected RWKV ffn == 4 * hidden with supported alignment");
+
+  c10::cuda::CUDAGuard device_guard(preact.device());
+  auto stream = at::cuda::getCurrentCUDAStream(preact.get_device());
+  const int64_t vec4_count = output.numel() / 8;
+  zero_output_vec4_kernel<<<static_cast<int>((vec4_count + 127) / 128), 128, 0, stream>>>(
+      reinterpret_cast<half*>(output.data_ptr<at::Half>()), vec4_count);
+  if (rows >= 8 && (ffn % 512) == 0 && (hidden % 512) == 0) {
+    sparse_relu2_down_rows_t512_kernel<<<
+        dim3(static_cast<unsigned>(ffn / 512), static_cast<unsigned>(hidden / 512), static_cast<unsigned>(rows)),
+        256, 0, stream>>>(
+        static_cast<int>(hidden), static_cast<int>(ffn),
+        reinterpret_cast<const half*>(preact.data_ptr<at::Half>()),
+        reinterpret_cast<const half*>(packed_value.data_ptr<at::Half>()),
+        reinterpret_cast<half*>(output.data_ptr<at::Half>()));
+  } else {
+    sparse_relu2_down_rows_kernel<<<
+        dim3(static_cast<unsigned>(ffn / FFN_TILE),
+             static_cast<unsigned>(hidden / (2 * THREADS)),
+             static_cast<unsigned>(rows)),
+        THREADS, 0, stream>>>(
+        static_cast<int>(hidden), static_cast<int>(ffn),
+        reinterpret_cast<const half*>(preact.data_ptr<at::Half>()),
+        reinterpret_cast<const half*>(packed_value.data_ptr<at::Half>()),
+        reinterpret_cast<half*>(output.data_ptr<at::Half>()));
+  }
+  const int64_t pairs = output.numel() / 2;
+  add_residual_half2_kernel<<<static_cast<int>((pairs + 255) / 256), 256, 0, stream>>>(
+      reinterpret_cast<const half*>(residual.data_ptr<at::Half>()),
+      reinterpret_cast<half*>(output.data_ptr<at::Half>()),
+      pairs);
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return output;
+}
+
+torch::Tensor rwkv7_ada_sparse_ffn_official_cuda(
+    torch::Tensor preact,
+    torch::Tensor packed_value,
+    torch::Tensor residual) {
+  auto output = torch::empty_like(residual);
+  return rwkv7_ada_sparse_ffn_official_out_cuda(
+      preact, packed_value, residual, output);
+}
 """
 
 
@@ -469,6 +798,7 @@ _EXTENSION_ERROR: str | None = None
 _EXTENSION_LOCK = threading.Lock()
 _PACK_LOCK = threading.Lock()
 _PACKED_WEIGHTS: dict[tuple[Any, ...], tuple[weakref.ReferenceType[Any], Any]] = {}
+_FP32_SCRATCH: dict[tuple[Any, ...], tuple[weakref.ReferenceType[Any], Any]] = {}
 
 
 def _is_sparse_ffn_device(device: Any = None) -> bool:
@@ -500,7 +830,10 @@ def _load_extension() -> Any | None:
         if _EXTENSION_ERROR is not None:
             return None
         try:
-            python_bin = str(Path(sys.executable).resolve().parent)
+            # Keep the virtualenv bin directory. Resolving the Python symlink
+            # can incorrectly replace it with /usr/bin and hide venv tools
+            # such as Ninja from torch.utils.cpp_extension.
+            python_bin = str(Path(sys.executable).absolute().parent)
             path_items = os.environ.get("PATH", "").split(os.pathsep)
             if python_bin not in path_items:
                 os.environ["PATH"] = python_bin + os.pathsep + os.environ.get("PATH", "")
@@ -528,7 +861,7 @@ def _load_extension() -> Any | None:
             from torch.utils.cpp_extension import load_inline
 
             _EXTENSION = load_inline(
-                name="rwkv7_sparse_ffn_v10",
+                name="rwkv7_sparse_ffn_v16",
                 cpp_sources=_CPP_SOURCE,
                 cuda_sources=_CUDA_SOURCE,
                 functions=None,
@@ -624,9 +957,37 @@ def ada_sparse_ffn_pack_weight(weight: Any, *, cache_tag: Any = None) -> Any:
         return packed
 
 
+def ada_sparse_ffn_prepare_fp32_scratch(weight: Any, rows: int) -> Any:
+    """Preallocate graph-stable FP32 accumulation storage for one batch shape."""
+
+    rows = int(rows)
+    key = _weight_cache_key(weight, ("fp32_scratch", rows))
+    cached = _FP32_SCRATCH.get(key)
+    if cached is not None and cached[0]() is weight:
+        return cached[1]
+    with _PACK_LOCK:
+        cached = _FP32_SCRATCH.get(key)
+        if cached is not None and cached[0]() is weight:
+            return cached[1]
+        if torch is not None and weight.is_cuda and torch.cuda.is_current_stream_capturing():
+            raise RuntimeError(
+                "sparse FFN FP32 scratch must be allocated before CUDA graph capture; "
+                "call prewarm_ada_sparse_ffn first"
+            )
+        scratch = torch.zeros(
+            rows,
+            int(weight.shape[0]),
+            dtype=torch.float32,
+            device=weight.device,
+        )
+        _FP32_SCRATCH[key] = (weakref.ref(weight), scratch)
+        return scratch
+
+
 def clear_ada_sparse_ffn_weight_cache() -> None:
     with _PACK_LOCK:
         _PACKED_WEIGHTS.clear()
+        _FP32_SCRATCH.clear()
 
 
 def ada_sparse_ffn_down_add(
@@ -678,15 +1039,42 @@ def ada_sparse_ffn_down_add(
     # opt-in shared-pack route is limited to immutable inference weights and
     # must be revalidated when graph capture or the sparse kernel changes.
     packed = ada_sparse_ffn_pack_weight(weight, cache_tag=rows)
+    fp32_accum = os.environ.get(
+        "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_FP32_ACCUM", "0"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    official_boundary = os.environ.get(
+        "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_OFFICIAL_BOUNDARY", "0"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    scratch = ada_sparse_ffn_prepare_fp32_scratch(weight, rows) if fp32_accum else None
     if out is None:
-        output = extension.sparse_down_add(preact2, packed, residual2)
+        if fp32_accum:
+            output = extension.sparse_down_add_fp32(
+                preact2, packed, residual2, scratch
+            )
+        elif official_boundary:
+            output = extension.sparse_down_add_official(
+                preact2, packed, residual2
+            )
+        else:
+            output = extension.sparse_down_add(preact2, packed, residual2)
     else:
         out2 = out.reshape(1, -1) if scalar else out
         if tuple(out2.shape) != tuple(residual2.shape):
             raise ValueError(
                 f"out shape must match residual shape {tuple(residual2.shape)}; got {tuple(out2.shape)}"
             )
-        output = extension.sparse_down_add_out(preact2, packed, residual2, out2)
+        if fp32_accum:
+            output = extension.sparse_down_add_fp32_out(
+                preact2, packed, residual2, scratch, out2
+            )
+        elif official_boundary:
+            output = extension.sparse_down_add_official_out(
+                preact2, packed, residual2, out2
+            )
+        else:
+            output = extension.sparse_down_add_out(
+                preact2, packed, residual2, out2
+            )
     return output.reshape(outputs) if scalar else output
 
 
@@ -757,6 +1145,7 @@ __all__ = [
     "ada_sparse_ffn_build_error",
     "ada_sparse_ffn_down_add",
     "ada_sparse_ffn_pack_weight",
+    "ada_sparse_ffn_prepare_fp32_scratch",
     "ada_sparse_ffn_should_use",
     "clear_ada_sparse_ffn_weight_cache",
 ]

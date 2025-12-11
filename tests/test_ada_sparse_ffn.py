@@ -114,3 +114,15 @@ def test_shared_pack_reuses_read_only_layout_across_batch_tags(monkeypatch) -> N
     second = ada_sparse_ffn_pack_weight(weight, cache_tag=8)
     assert first.data_ptr() == second.data_ptr()
     clear_ada_sparse_ffn_weight_cache()
+
+
+def test_fp32_accumulation_kernel_is_exposed_under_opt_in() -> None:
+    assert "sparse_relu2_down_fp32_kernel" in sparse_ffn_module._CUDA_SOURCE
+    assert "finalize_sparse_fp32_add_residual_kernel" in sparse_ffn_module._CUDA_SOURCE
+    assert "sparse_down_add_fp32" in sparse_ffn_module._CPP_SOURCE
+
+
+def test_official_boundary_kernel_is_exposed_under_opt_in() -> None:
+    assert "sparse_relu2_down_rows_t512_kernel" in sparse_ffn_module._CUDA_SOURCE
+    assert "add_residual_half2_kernel" in sparse_ffn_module._CUDA_SOURCE
+    assert "sparse_down_add_official" in sparse_ffn_module._CPP_SOURCE
