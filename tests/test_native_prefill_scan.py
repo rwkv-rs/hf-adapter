@@ -303,6 +303,36 @@ def test_sequence_ffn_exact_model_shape_does_not_alias_equal_rows(monkeypatch) -
     assert not native_jit._native_prefill_fused_sequence_ffn_enabled(4096, 8, 512, 2560, 24)
 
 
+def test_fp16_accum_ffn_key_is_exact_shape_and_explicitly_disableable(monkeypatch) -> None:
+    from rwkv7_hf import native_jit
+
+    monkeypatch.setattr(
+        native_jit,
+        "_kernel_policy",
+        lambda: types.SimpleNamespace(
+            prefill_fp16_accum_ffn_key_model_shapes=((4096, 32, 8, 128),),
+        ),
+    )
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY", raising=False)
+    monkeypatch.delenv(
+        "RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY_MODEL_SHAPES",
+        raising=False,
+    )
+    assert native_jit._native_prefill_fp16_accum_ffn_key_enabled(
+        8, 128, 4096, 32, torch.float16
+    )
+    assert not native_jit._native_prefill_fp16_accum_ffn_key_enabled(
+        1, 1024, 4096, 32, torch.float16
+    )
+    assert not native_jit._native_prefill_fp16_accum_ffn_key_enabled(
+        8, 128, 4096, 32, torch.bfloat16
+    )
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY", "0")
+    assert not native_jit._native_prefill_fp16_accum_ffn_key_enabled(
+        8, 128, 4096, 32, torch.float16
+    )
+
+
 _TorchModule = torch.nn.Module if torch is not None else object
 
 

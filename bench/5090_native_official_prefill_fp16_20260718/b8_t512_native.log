@@ -1,0 +1,36 @@
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+[transformers] You are using a model of type `rwkv7_hf_adapter` to instantiate a model of type `rwkv7_native`. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+Loading weights:   0%|          | 0/1059 [00:00<?, ?it/s]Loading weights:   6%|▌         | 63/1059 [00:00<00:01, 513.33it/s]Loading weights:  12%|█▏        | 129/1059 [00:00<00:01, 570.84it/s]Loading weights:  18%|█▊        | 187/1059 [00:00<00:01, 572.93it/s]Loading weights:  23%|██▎       | 245/1059 [00:00<00:01, 533.35it/s]Loading weights:  28%|██▊       | 299/1059 [00:00<00:01, 525.44it/s]Loading weights:  34%|███▍      | 360/1059 [00:00<00:01, 545.61it/s]Loading weights:  39%|███▉      | 415/1059 [00:00<00:01, 536.80it/s]Loading weights:  44%|████▍     | 469/1059 [00:00<00:01, 531.17it/s]Loading weights:  50%|████▉     | 526/1059 [00:00<00:01, 514.94it/s]Loading weights:  56%|█████▌    | 589/1059 [00:01<00:00, 536.59it/s]Loading weights:  61%|██████    | 644/1059 [00:01<00:00, 536.33it/s]Loading weights:  66%|██████▌   | 698/1059 [00:01<00:00, 530.34it/s]Loading weights:  71%|███████▏  | 755/1059 [00:01<00:00, 513.87it/s]Loading weights:  78%|███████▊  | 823/1059 [00:01<00:00, 532.80it/s]Loading weights:  83%|████████▎ | 884/1059 [00:01<00:00, 519.45it/s]Loading weights:  90%|█████████ | 954/1059 [00:01<00:00, 556.79it/s]Loading weights:  95%|█████████▌| 1010/1059 [00:01<00:00, 548.52it/s]Loading weights: 100%|██████████| 1059/1059 [00:01<00:00, 534.21it/s]
+{
+  "engine": "native_hf_sequence",
+  "batch_size": 8,
+  "prompt_tokens": 512,
+  "timing": {
+    "times_ms": [
+      292.538818359375,
+      292.5248718261719,
+      292.4891662597656,
+      292.5548095703125,
+      292.6094055175781,
+      292.6986389160156,
+      292.7225036621094,
+      292.7062072753906,
+      292.69830322265625,
+      292.7281494140625,
+      292.7793273925781,
+      292.8374938964844,
+      292.89520263671875,
+      292.8693542480469,
+      292.88885498046875,
+      292.9183349609375,
+      292.9583740234375,
+      293.01837158203125,
+      293.0660705566406,
+      293.0397033691406,
+      293.07623291015625
+    ],
+    "median_ms": 292.7793273925781,
+    "aggregate_tokps": 13990.058780713738
+  },
+  "peak_vram_mb": 14788.72021484375
+}

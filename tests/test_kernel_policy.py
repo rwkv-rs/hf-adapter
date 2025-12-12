@@ -252,6 +252,9 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.prefill_sequence_ffn_large_blocks == (64, 128, 32, 64, 8)
     assert blackwell.prefill_sequence_ffn_num_stages == 3
     assert blackwell.prefill_sequence_ffn_num_warps == 8
+    assert blackwell.prefill_fp16_accum_ffn_key_model_shapes == (
+        (4096, 32, 8, 128),
+    )
     assert blackwell.marlin_w4_ffn_shapes == (
         (8192, 2048),
         (2048, 8192),
@@ -274,6 +277,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert other_blackwell.prefill_clampw_scan_model_shapes == ()
     assert not other_blackwell.fused_prefill_stacked_rkv
     assert not other_blackwell.fused_prefill_sequence_ffn
+    assert other_blackwell.prefill_fp16_accum_ffn_key_model_shapes == ()
     assert other_blackwell.marlin_w4_ffn_shapes == ()
     assert other_blackwell.marlin_w4_model_profiles == ()
 

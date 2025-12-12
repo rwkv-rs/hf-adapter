@@ -91,7 +91,7 @@ def _assert_remote_code_direct_import_closure() -> None:
         )
 
 
-def main() -> int:
+def test_adapter_manifest_closure_and_sync() -> None:
     # Converted model dirs must include every runtime remote-code module the
     # shipped files transitively import, and the converter and sync lists must
     # stay aligned. (Does not force optional non-runtime files like sglang_quant.)
@@ -138,6 +138,9 @@ def main() -> int:
         }
         assert weight.read_bytes() == b"do-not-touch"
 
+
+def main() -> int:
+    test_adapter_manifest_closure_and_sync()
     print("PASS")
     return 0
 

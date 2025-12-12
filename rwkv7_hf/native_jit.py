@@ -298,11 +298,34 @@ def _graph_linear_call(x: torch.Tensor, operand) -> torch.Tensor:
     return operand(x)
 
 
-def _native_prefill_linear(x: torch.Tensor, operand, bias=None) -> torch.Tensor:
+def _native_prefill_linear(
+    x: torch.Tensor,
+    operand,
+    bias=None,
+    *,
+    allow_fp16_accumulation: bool = False,
+) -> torch.Tensor:
     """Sequence linear supporting dense and HF/native quantized operands."""
 
     if _graph_linear_is_dense(operand):
-        return F.linear(x, operand, bias)
+        matmul = getattr(getattr(torch.backends, "cuda", None), "matmul", None)
+        can_select_accumulation = bool(
+            allow_fp16_accumulation
+            and x.is_cuda
+            and x.dtype == torch.float16
+            and matmul is not None
+            and hasattr(matmul, "allow_fp16_accumulation")
+        )
+        if not can_select_accumulation:
+            return F.linear(x, operand, bias)
+        previous = bool(matmul.allow_fp16_accumulation)
+        if not previous:
+            matmul.allow_fp16_accumulation = True
+        try:
+            return F.linear(x, operand, bias)
+        finally:
+            if not previous:
+                matmul.allow_fp16_accumulation = False
     direct = _bnb8_direct_linear(x, operand)
     if direct is not None:
         return direct
@@ -650,12 +673,19 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         ada_wagv_lora_should_use = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional exact-shape FP16 recurrent state
-    from .native_wkv_fp16 import native_fp16_recurrent_output_prepare_raw
+    from .native_wkv_fp16 import (
+        native_fp16_recurrent_output_prepare_raw,
+        native_fp16_sequence,
+    )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
-        from native_wkv_fp16 import native_fp16_recurrent_output_prepare_raw
+        from native_wkv_fp16 import (
+            native_fp16_recurrent_output_prepare_raw,
+            native_fp16_sequence,
+        )
     except Exception:
         native_fp16_recurrent_output_prepare_raw = None  # type: ignore[assignment]
+        native_fp16_sequence = None  # type: ignore[assignment]
 
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
@@ -696,6 +726,21 @@ def _native_prefill_fused_scan_enabled() -> bool:
         return bool(fused_recurrent_scan_available())
     except Exception:
         return False
+
+
+def _native_prefill_fp16_recurrent_requested() -> bool:
+    """Select official-precision sequence recurrence without changing defaults."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_FP16_RECURRENT", False)
+
+
+def _native_prefill_fp16_recurrent_enabled(state: torch.Tensor) -> bool:
+    return bool(
+        _native_prefill_fp16_recurrent_requested()
+        and native_fp16_sequence is not None
+        and state.dtype == torch.float16
+        and int(state.shape[-1]) == 64
+    )
 
 
 def _native_prefill_self_chunk_enabled(
@@ -1296,6 +1341,63 @@ def _native_prefill_fused_sequence_ffn_enabled(
         return bool(fused_sequence_ffn_available())
     except Exception:
         return False
+
+
+def _native_prefill_fp16_accum_ffn_key_enabled(
+    batch_size: int,
+    prompt_tokens: int,
+    hidden_size: int,
+    num_layers: int,
+    dtype: torch.dtype,
+) -> bool:
+    """Select reduced-precision accumulation only for measured FFN-key shapes."""
+
+    if dtype != torch.float16:
+        return False
+    matmul = getattr(getattr(torch.backends, "cuda", None), "matmul", None)
+    if matmul is None or not hasattr(matmul, "allow_fp16_accumulation"):
+        return False
+    policy = _kernel_policy()
+    raw_shapes = os.environ.get(
+        "RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY_MODEL_SHAPES"
+    )
+    if raw_shapes is None:
+        model_shapes = {
+            tuple(int(value) for value in shape)
+            for shape in getattr(
+                policy,
+                "prefill_fp16_accum_ffn_key_model_shapes",
+                (),
+            )
+            if len(shape) == 4
+        }
+    else:
+        model_shapes = set()
+        try:
+            for item in raw_shapes.replace(",", " ").split():
+                values = tuple(int(value) for value in item.lower().split("x"))
+                if len(values) != 4 or any(value <= 0 for value in values):
+                    raise ValueError
+                model_shapes.add(values)
+        except ValueError as exc:
+            raise ValueError(
+                "RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY_MODEL_SHAPES must "
+                "contain HxLxBxT tuples"
+            ) from exc
+    exact_shape = (
+        int(hidden_size),
+        int(num_layers),
+        int(batch_size),
+        int(prompt_tokens),
+    )
+    selected = exact_shape in model_shapes
+    return bool(
+        selected
+        and env_flag(
+            "RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY",
+            selected,
+        )
+    )
 
 
 def _native_prefill_stacked_rkv_enabled(
@@ -2397,12 +2499,21 @@ def _init(model, device, dtype):
     return state, xpa, xpf, v_first
 
 
-def _init_batched_from_packs(packs, batch_size: int, device, dtype):
+def _init_batched_from_packs(
+    packs,
+    batch_size: int,
+    device,
+    dtype,
+    *,
+    state_dtype=None,
+):
     n = len(packs)
     H = int(packs[0][1])
     N = int(packs[0][2])
     hid = int(packs[0][7].numel())
-    state = [torch.zeros(batch_size, H, N, N, device=device, dtype=torch.float32) for _ in range(n)]
+    if state_dtype is None:
+        state_dtype = torch.float32
+    state = [torch.zeros(batch_size, H, N, N, device=device, dtype=state_dtype) for _ in range(n)]
     xpa = [torch.zeros(batch_size, hid, device=device, dtype=dtype) for _ in range(n)]
     xpf = [torch.zeros(batch_size, hid, device=device, dtype=dtype) for _ in range(n)]
     return state, xpa, xpf
@@ -2550,6 +2661,7 @@ def prefill(
     xpa=None,
     xpf=None,
     logits_to_keep: int | None = 1,
+    fp16_elapsed=None,
 ):
     """Layer-wise native RWKV-7 prefill over a full prompt.
 
@@ -2575,16 +2687,40 @@ def prefill(
     attention_hidden = H * N
     residual_hidden = int(packs[0][7].numel())
     dtype = base.embeddings.weight.dtype
+    use_fp16_recurrent_requested = bool(
+        _native_prefill_fp16_recurrent_requested()
+        and native_fp16_sequence is not None
+        and dtype == torch.float16
+        and N == 64
+    )
+    state_dtype = torch.float16 if use_fp16_recurrent_requested else torch.float32
     if state is None or xpa is None or xpf is None:
-        state, xpa, xpf = _init_batched_from_packs(packs, B, ids.device, dtype)
+        state, xpa, xpf = _init_batched_from_packs(
+            packs,
+            B,
+            ids.device,
+            dtype,
+            state_dtype=state_dtype,
+        )
     else:
-        state = [s.to(device=ids.device, dtype=torch.float32).contiguous() for s in state]
+        state = [s.to(device=ids.device, dtype=state_dtype).contiguous() for s in state]
         xpa = [s.to(device=ids.device, dtype=dtype).contiguous() for s in xpa]
         xpf = [s.to(device=ids.device, dtype=dtype).contiguous() for s in xpf]
+    if use_fp16_recurrent_requested:
+        if fp16_elapsed is None:
+            fp16_elapsed = torch.zeros(B, device=ids.device, dtype=torch.int32)
+        elif not (
+            fp16_elapsed.is_cuda
+            and fp16_elapsed.device == ids.device
+            and fp16_elapsed.dtype == torch.int32
+            and fp16_elapsed.is_contiguous()
+            and int(fp16_elapsed.numel()) == B
+        ):
+            raise ValueError("fp16_elapsed must be contiguous CUDA int32 [batch]")
 
     x = F.embedding(ids, base.embeddings.weight).reshape(B, T, residual_hidden)
     v_first_seq = torch.zeros(B, T, attention_hidden, device=ids.device, dtype=dtype)
-    use_clampw_scan_requested = _native_prefill_fused_clampw_scan_enabled(
+    use_clampw_scan_requested = not use_fp16_recurrent_requested and _native_prefill_fused_clampw_scan_enabled(
         B,
         T,
         attention_hidden,
@@ -2610,12 +2746,26 @@ def prefill(
     bnb8_ffn_scale_workspace = None
     self_chunk_used = False
     sequence_ffn_used = False
+    use_fp16_accum_ffn_key = _native_prefill_fp16_accum_ffn_key_enabled(
+        B,
+        T,
+        residual_hidden,
+        len(packs),
+        dtype,
+    )
+    fp16_accum_ffn_key_used = False
+    capture_layer_outputs = env_flag(
+        "RWKV7_NATIVE_PREFILL_CAPTURE_LAYER_OUTPUTS",
+        False,
+    )
+    layer_outputs = [] if capture_layer_outputs else None
     stacked_rkv_weights = (
         _native_prefill_stacked_rkv_weights(model, packs)
         if _native_prefill_stacked_rkv_enabled(B * T, B, T, residual_hidden, len(packs))
         else None
     )
     stacked_rkv_used = False
+    wavg_lora_used = False
 
     for p in packs:
         (i, H, N, eps, has_pre,
@@ -2628,10 +2778,12 @@ def prefill(
         N = int(N)
         attention_hidden = H * N
         residual_hidden = int(an_w.numel())
+        use_fp16_recurrent = _native_prefill_fp16_recurrent_enabled(state[layer_idx])
         residual = F.layer_norm(x, [residual_hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
         h = F.layer_norm(residual, [residual_hidden], an_w, an_b, 1e-5)
         defer_state_sigmoid = bool(
-            _native_prefill_fused_state_prep_enabled()
+            not use_fp16_recurrent
+            and _native_prefill_fused_state_prep_enabled()
             and not _native_prefill_fused_state_scan_enabled(B)
             and not use_clampw_scan_requested
         )
@@ -2730,11 +2882,13 @@ def prefill(
             k = _native_prefill_linear(xk, Kw)
             v = _native_prefill_linear(xv, Vw)
         use_prefill_wavg_lora = bool(
-            layer_idx > 0
+            (not use_fp16_recurrent or T > 16)
+            and layer_idx > 0
             and _native_prefill_fused_wavg_lora_enabled(B * T)
             and _graph_linears_are_dense(w1, w2, a1, a2, g1, g2, v1, v2)
         )
         if use_prefill_wavg_lora:
+            wavg_lora_used = True
             block_m, block_r, block_k = _native_prefill_fused_wavg_lora_blocks()
             w, a, g, v_gate = fused_wavg_lora(
                 xw.reshape(B * T, residual_hidden),
@@ -2764,7 +2918,12 @@ def prefill(
         else:
             w_mid = _native_prefill_linear(xw, w1)
             w_mid.tanh_()
-            w = _native_prefill_linear(w_mid, w2, w0)
+            if use_fp16_recurrent and T <= 16:
+                w = _native_prefill_linear(w_mid, w2)
+                fp16_w0 = w0.reshape(-1).contiguous()
+            else:
+                w = _native_prefill_linear(w_mid, w2, w0)
+                fp16_w0 = None
             a_mid = _native_prefill_linear(xa, a1)
             a = _native_prefill_linear(a_mid, a2, a0)
             if not defer_state_sigmoid:
@@ -2779,18 +2938,24 @@ def prefill(
                 v_gate = _native_prefill_linear(v_mid, v2, v0)
                 if not defer_state_sigmoid:
                     v_gate.sigmoid_()
-        use_fused_scan_output = _native_prefill_fused_scan_output_enabled()
+        use_fused_scan_output = bool(
+            not use_fp16_recurrent and _native_prefill_fused_scan_output_enabled()
+        )
         use_self_chunk = _native_prefill_self_chunk_enabled(
             T,
             N,
             B,
             attention_hidden,
             len(packs),
-        ) and not use_fused_scan_output
+        ) and not use_fused_scan_output and not use_fp16_recurrent
         self_chunk_used = bool(self_chunk_used or use_self_chunk)
         self_chunk_w_is_log = False
         use_clampw_scan = use_clampw_scan_requested and not use_fused_scan_output
-        use_fused_state_scan = _native_prefill_fused_state_scan_enabled(B) and not use_fused_scan_output
+        use_fused_state_scan = bool(
+            not use_fp16_recurrent
+            and _native_prefill_fused_state_scan_enabled(B)
+            and not use_fused_scan_output
+        )
         if use_clampw_scan and _native_prefill_fused_state_prep_enabled() and fused_prefill_kv_kk_prep is None:
             use_clampw_scan = False
         state_scan_done = False
@@ -2832,7 +2997,35 @@ def prefill(
             k = k.reshape(B, T, attention_hidden)
             v = v.reshape(B, T, attention_hidden)
             state_scan_done = True
-        elif _native_prefill_fused_state_prep_enabled():
+        elif _native_prefill_fused_state_prep_enabled() and use_fp16_recurrent:
+            if fused_prefill_kv_kk_prep is None:
+                raise RuntimeError(
+                    "RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP requires the fused K/V/KK prep kernel"
+                )
+            if layer_idx == 0:
+                k, v, kk = fused_prefill_kv_kk_prep(
+                    k,
+                    v,
+                    a,
+                    k_k,
+                    k_a,
+                    num_heads=H,
+                    head_dim=N,
+                )
+                v_first_seq = v
+            else:
+                k, v, kk = fused_prefill_kv_kk_prep(
+                    k,
+                    v,
+                    a,
+                    k_k,
+                    k_a,
+                    v_first=v_first_seq,
+                    v_gate=v_gate,
+                    num_heads=H,
+                    head_dim=N,
+                )
+        elif _native_prefill_fused_state_prep_enabled() and not use_fp16_recurrent:
             self_chunk_w_is_log = bool(use_self_chunk and not use_clampw_scan)
             if use_clampw_scan:
                 if layer_idx == 0:
@@ -2902,10 +3095,25 @@ def prefill(
                 v_first_seq = v
             else:
                 v = v + (v_first_seq - v) * v_gate
-            if not use_clampw_scan:
+            if not use_clampw_scan and not use_fp16_recurrent:
                 w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
 
-        if use_fused_scan_output:
+        if use_fp16_recurrent:
+            assert fp16_elapsed is not None
+            out = native_fp16_sequence(
+                r.view(B, T, H, N).contiguous(),
+                w.view(B, T, H, N).contiguous(),
+                k.view(B, T, H, N).contiguous(),
+                v.view(B, T, H, N).contiguous(),
+                (-kk).view(B, T, H, N).contiguous(),
+                (kk * a).view(B, T, H, N).contiguous(),
+                state[layer_idx],
+                fp16_elapsed,
+                w0=fp16_w0,
+            ).reshape(B, T, attention_hidden)
+            new_state = state[layer_idx]
+            state_scan_done = True
+        elif use_fused_scan_output:
             out, new_state = fused_recurrent_scan_output_prepare(
                 r.view(B, T, H, N),
                 w.view(B, T, H, N),
@@ -3063,7 +3271,17 @@ def prefill(
                 fused_up_relu2 = bool(
                     getattr(fK, "fused_relu2", False) and callable(fused)
                 )
-                fk = fused(fk) if fused_up_relu2 else _native_prefill_linear(fk, fK)
+                if fused_up_relu2:
+                    fk = fused(fk)
+                else:
+                    fp16_accum_ffn_key_used = bool(
+                        use_fp16_accum_ffn_key and _graph_linear_is_dense(fK)
+                    )
+                    fk = _native_prefill_linear(
+                        fk,
+                        fK,
+                        allow_fp16_accumulation=fp16_accum_ffn_key_used,
+                    )
             fused_bnb8_ffn = (
                 None
                 if fused_up_relu2
@@ -3085,6 +3303,8 @@ def prefill(
                 fk = torch.relu(fk) ** 2
                 x = _native_prefill_project_residual(fk, fV, residual)
         xpf[layer_idx] = next_xpf
+        if layer_outputs is not None:
+            layer_outputs.append(x[:, -1, :].detach().clone())
 
     keep = T if logits_to_keep is None or int(logits_to_keep) <= 0 else min(int(logits_to_keep), T)
     # Recurrent/shift state is already complete. Final norm is consumed only
@@ -3105,8 +3325,20 @@ def prefill(
         bool(clampw_scan_used),
     )
     setattr(model, "_rwkv7_native_prefill_stacked_rkv_effective", bool(stacked_rkv_used))
+    setattr(model, "_rwkv7_native_prefill_wavg_lora_effective", bool(wavg_lora_used))
     setattr(model, "_rwkv7_native_prefill_self_chunk_effective", bool(self_chunk_used))
     setattr(model, "_rwkv7_native_prefill_sequence_ffn_effective", bool(sequence_ffn_used))
+    setattr(
+        model,
+        "_rwkv7_native_prefill_fp16_accum_ffn_key_effective",
+        bool(fp16_accum_ffn_key_used),
+    )
+    setattr(
+        model,
+        "_rwkv7_native_prefill_fp16_recurrent_effective",
+        bool(use_fp16_recurrent_requested),
+    )
+    setattr(model, "_rwkv7_native_prefill_layer_outputs", layer_outputs)
     return logits, state, xpa, xpf
 
 
