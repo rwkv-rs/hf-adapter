@@ -28,12 +28,14 @@ try:  # noqa: E402
     from scripts.compare_official_native_inference import (
         DEFAULT_PROMPT,
         load_official,
+        metrics_pass_official_envelope,
         tensor_metrics,
     )
 except ImportError:  # direct ``python scripts/...`` execution
     from compare_official_native_inference import (
         DEFAULT_PROMPT,
         load_official,
+        metrics_pass_official_envelope,
         tensor_metrics,
     )
 
@@ -366,11 +368,35 @@ def compare(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("official capture does not match the required pinned commit")
     if not torch.equal(native["prompt_ids"], official["prompt_ids"]):
         raise ValueError("prompt token IDs differ")
+    official_self_envelope = (
+        json.loads(Path(args.official_self_envelope).read_text(encoding="utf-8"))
+        if args.official_self_envelope
+        else None
+    )
+    if official_self_envelope is not None:
+        for key, expected in (
+            ("axis", "official_prefill_self_repeat"),
+            ("official_commit", official["source_revision"]),
+            ("precision", native["precision"]),
+            ("batch_size", native["batch_size"]),
+            ("prompt_tokens", native["prompt_tokens"]),
+        ):
+            if official_self_envelope.get(key) != expected:
+                raise ValueError(f"official prefill self-envelope mismatch for {key}")
 
     metrics: dict[str, Any] = {}
     for name in ("logits", "first_decode_logits", "layer_outputs"):
         item = tensor_metrics(native[name], official[name])
-        item["threshold_pass"] = metric_pass(item, name)
+        item["standard_threshold_pass"] = metric_pass(item, name)
+        item["official_self_envelope_pass"] = metrics_pass_official_envelope(
+            item,
+            (official_self_envelope or {}).get("envelope", {}).get(name),
+            multiplier=args.official_envelope_multiplier,
+        )
+        item["threshold_pass"] = bool(
+            item["standard_threshold_pass"]
+            or item["official_self_envelope_pass"]
+        )
         metrics[name] = item
     for name in ("state", "xpa", "xpf"):
         item = tensor_metrics(native["prefill"][name], official["prefill"][name])
@@ -402,7 +428,7 @@ def compare(args: argparse.Namespace) -> dict[str, Any]:
         and native["prefill_state_dtype"] == "torch.float16"
         and native["first_decode_state_dtype"] == "torch.float16"
     )
-    return {
+    report = {
         "axis": "official_native_sequence_prefill_alignment",
         "status": "pass" if quality_pass else "fail",
         "quality_pass": quality_pass,
@@ -438,6 +464,17 @@ def compare(args: argparse.Namespace) -> dict[str, Any]:
         },
         "native_over_official_tokps": native_tokps / official_tokps,
     }
+    if official_self_envelope is not None:
+        report["official_self_envelope"] = {
+            "axis": official_self_envelope.get("axis"),
+            "official_commit": official_self_envelope.get("official_commit"),
+            "precision": official_self_envelope.get("precision"),
+            "batch_size": official_self_envelope.get("batch_size"),
+            "prompt_tokens": official_self_envelope.get("prompt_tokens"),
+            "multiplier": args.official_envelope_multiplier,
+            "envelope": official_self_envelope.get("envelope"),
+        }
+    return report
 
 
 def parser() -> argparse.ArgumentParser:
@@ -474,6 +511,8 @@ def parser() -> argparse.ArgumentParser:
     )
     ap.add_argument("--native-capture")
     ap.add_argument("--official-capture")
+    ap.add_argument("--official-self-envelope", default="")
+    ap.add_argument("--official-envelope-multiplier", type=float, default=1.25)
     return ap
 
 

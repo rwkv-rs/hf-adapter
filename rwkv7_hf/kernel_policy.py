@@ -96,7 +96,11 @@ class KernelPolicy:
     prefill_graph: bool = False
     prefill_graph_cache_size: int = 2
     fused_prefill_shift_mix: bool = False
+    prefill_shift_mix_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
     fused_prefill_state_prep: bool = False
+    prefill_state_prep_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    # hidden, layers, batch, tokens, enabled leading-layer count
+    prefill_state_prep_layer_counts: tuple[tuple[int, int, int, int, int], ...] = ()
     fused_prefill_state_scan: bool = False
     fused_prefill_state_scan_max_batch: int | None = None
     fused_prefill_output: bool = False
@@ -721,19 +725,37 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             # fused prefill route remains opt-in globally; these shape gates
             # only select combinations measured end to end on this card.
             prefill_scan_block_m_model_shapes=((2048, 8, 512, 8),) if is_5090 else (),
+            fused_prefill_shift_mix=is_5090,
+            prefill_shift_mix_model_shapes=(
+                (2048, 24, 8, 128),
+                (2048, 24, 8, 512),
+                (2048, 24, 8, 2048),
+            ) if is_5090 else (),
+            fused_prefill_state_prep=is_5090,
+            prefill_state_prep_model_shapes=(
+                (2048, 24, 8, 512),
+                (2048, 24, 8, 2048),
+            ) if is_5090 else (),
+            prefill_state_prep_layer_counts=(
+                (2048, 24, 8, 512, 24),
+                (2048, 24, 8, 2048, 18),
+            ) if is_5090 else (),
             fused_prefill_residual_gemm=is_5090,
             prefill_clampw_scan_model_shapes=((2048, 24, 8, 512),) if is_5090 else (),
             fused_prefill_stacked_rkv=is_5090,
             prefill_stacked_rkv_min_rows=1,
             prefill_stacked_rkv_max_rows=1,
             prefill_stacked_rkv_model_shapes=(
-                (2048, 24, 8, 512),
                 (4096, 32, 8, 128),
             ) if is_5090 else (),
             fused_prefill_sequence_ffn=is_5090,
             prefill_sequence_ffn_min_rows=1,
             prefill_sequence_ffn_max_rows=1,
-            prefill_sequence_ffn_model_shapes=((2048, 24, 8, 512),) if is_5090 else (),
+            prefill_sequence_ffn_model_shapes=(
+                (2048, 24, 8, 128),
+                (2048, 24, 8, 512),
+                (2048, 24, 8, 2048),
+            ) if is_5090 else (),
             prefill_sequence_ffn_large_blocks=(64, 128, 32, 64, 8),
             prefill_sequence_ffn_num_stages=3,
             prefill_sequence_ffn_num_warps=8 if is_5090 else 4,
@@ -758,7 +780,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
                 (4096, 16384, 61, 128, True, 1),
             ) if is_5090 else (),
             output_project_block_m=32,
-            notes="RTX 50/Blackwell: exact RTX 5090 g1h-1.5B B8/P512 fused-scan row-8 plus clampw, stacked R/K/V, and BM64/BN128 sequence FFN are measured opt-in policy; g1h-7.2B B8/P128 uses an exact-shape FFN-key FP16-accumulation route validated against official FP16-state tensors; residual GEMM is enabled on the exact 5090 and remains subject to the full matrix; SM120 sparse FFN stays opt-in after a 6/8 B8 greedy probe; use triton_compat for early sm_120 stacks, prefer native/no-FLA smokes, keep unvalidated projection/LoRA fusions off",
+            notes="RTX 50/Blackwell: exact RTX 5090 g1h-1.5B B8/P128, P512, and P2048 use measured shift-mix and BM64/BN128 sequence FFN routes; P512 uses state-prep in all 24 layers and P2048 in the measured leading 18 layers, while stacked R/K/V stays off to avoid duplicate packed weights. g1h-7.2B B8/P128 retains its exact-shape FFN-key FP16-accumulation route validated against official FP16-state tensors; residual GEMM is enabled on the exact 5090 and remains subject to the full matrix; SM120 sparse FFN stays opt-in after a 6/8 B8 greedy probe; use triton_compat for early sm_120 stacks, prefer native/no-FLA smokes, keep unvalidated projection/LoRA fusions off",
         )
     return KernelPolicy(profile=profile)
 

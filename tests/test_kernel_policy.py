@@ -235,6 +235,21 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.fused_recurrent_output
     assert not blackwell.fused_projection
     assert blackwell.prefill_scan_block_m_model_shapes == ((2048, 8, 512, 8),)
+    assert blackwell.fused_prefill_shift_mix
+    assert blackwell.prefill_shift_mix_model_shapes == (
+        (2048, 24, 8, 128),
+        (2048, 24, 8, 512),
+        (2048, 24, 8, 2048),
+    )
+    assert blackwell.fused_prefill_state_prep
+    assert blackwell.prefill_state_prep_model_shapes == (
+        (2048, 24, 8, 512),
+        (2048, 24, 8, 2048),
+    )
+    assert blackwell.prefill_state_prep_layer_counts == (
+        (2048, 24, 8, 512, 24),
+        (2048, 24, 8, 2048, 18),
+    )
     assert not blackwell.fused_prefill_clampw_scan
     assert blackwell.prefill_clampw_scan_model_shapes == ((2048, 24, 8, 512),)
     assert blackwell.fused_prefill_residual_gemm
@@ -242,13 +257,16 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.prefill_stacked_rkv_min_rows == 1
     assert blackwell.prefill_stacked_rkv_max_rows == 1
     assert blackwell.prefill_stacked_rkv_model_shapes == (
-        (2048, 24, 8, 512),
         (4096, 32, 8, 128),
     )
     assert blackwell.fused_prefill_sequence_ffn
     assert blackwell.prefill_sequence_ffn_min_rows == 1
     assert blackwell.prefill_sequence_ffn_max_rows == 1
-    assert blackwell.prefill_sequence_ffn_model_shapes == ((2048, 24, 8, 512),)
+    assert blackwell.prefill_sequence_ffn_model_shapes == (
+        (2048, 24, 8, 128),
+        (2048, 24, 8, 512),
+        (2048, 24, 8, 2048),
+    )
     assert blackwell.prefill_sequence_ffn_large_blocks == (64, 128, 32, 64, 8)
     assert blackwell.prefill_sequence_ffn_num_stages == 3
     assert blackwell.prefill_sequence_ffn_num_warps == 8

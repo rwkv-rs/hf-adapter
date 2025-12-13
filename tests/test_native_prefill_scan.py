@@ -259,6 +259,44 @@ def test_self_chunk_exact_model_shape_can_lower_the_generic_token_floor(monkeypa
     assert not native_jit._native_prefill_self_chunk_enabled(512, 64, 8, 2560, 24)
 
 
+def test_shift_mix_and_state_prep_honor_exact_model_shapes(monkeypatch) -> None:
+    from rwkv7_hf import native_jit
+
+    policy = types.SimpleNamespace(
+        fused_prefill_shift_mix=True,
+        prefill_shift_mix_model_shapes=((2048, 24, 8, 128),),
+        fused_prefill_state_prep=True,
+        prefill_state_prep_model_shapes=((2048, 24, 8, 512),),
+        prefill_state_prep_layer_counts=((2048, 24, 8, 512, 12),),
+    )
+    monkeypatch.setattr(native_jit, "_kernel_policy", lambda: policy)
+    monkeypatch.setattr(native_jit, "fused_attn_shift_mix", object())
+    monkeypatch.setattr(native_jit, "fused_attn_shift_mix_available", lambda: True)
+    monkeypatch.setattr(native_jit, "fused_prefill_state_prep", object())
+    monkeypatch.setattr(native_jit, "fused_prefill_state_prep_available", lambda: True)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_SHIFT_MIX_MODEL_SHAPES", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_STATE_PREP_MODEL_SHAPES", raising=False)
+
+    assert native_jit._native_prefill_fused_shift_mix_enabled(8, 128, 2048, 24)
+    assert not native_jit._native_prefill_fused_shift_mix_enabled(1, 128, 2048, 24)
+    assert native_jit._native_prefill_fused_state_prep_enabled(8, 512, 2048, 24)
+    assert not native_jit._native_prefill_fused_state_prep_enabled(8, 128, 2048, 24)
+    assert native_jit._native_prefill_state_prep_layers(8, 512, 2048, 24) == set(
+        range(12)
+    )
+
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_STATE_PREP_LAYERS_B8_T512", "0-3,7")
+    assert native_jit._native_prefill_state_prep_layers(8, 512, 2048, 24) == {
+        0,
+        1,
+        2,
+        3,
+        7,
+    }
+
+
 def test_self_chunk_safe_gate_is_explicitly_tunable(monkeypatch) -> None:
     from rwkv7_hf import native_jit
 
