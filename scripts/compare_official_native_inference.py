@@ -370,12 +370,19 @@ def load_official(args: argparse.Namespace):
     module = importlib.import_module(args.official_module)
     module.MODEL_PATH = args.official_model
     module.WKV_MODE = "fp16"
-    module.EMB_DEVICE = args.official_emb
-    module.RKV_MODE = args.official_batched_rkv
-    module.CMIX_SPARSE = args.official_cmix_sparse
-    module.LOWRANK_WEIGHT = args.official_lowrank_weight
+    official_emb = getattr(args, "official_emb", "gpu")
+    official_batched_rkv = getattr(args, "official_batched_rkv", "off")
+    official_cmix_sparse = getattr(args, "official_cmix_sparse", "no-fc")
+    official_lowrank_weight = getattr(args, "official_lowrank_weight", "both")
+    official_orig_linear_groups = getattr(
+        args, "official_orig_linear_groups", "att_c2c,ffn_key,head"
+    )
+    module.EMB_DEVICE = official_emb
+    module.RKV_MODE = official_batched_rkv
+    module.CMIX_SPARSE = official_cmix_sparse
+    module.LOWRANK_WEIGHT = official_lowrank_weight
     module.ORIG_LINEAR_GROUPS = module.parse_orig_linear_groups(
-        args.official_orig_linear_groups
+        official_orig_linear_groups
     )
     os.chdir(args.official_dir)
     torch.set_grad_enabled(False)

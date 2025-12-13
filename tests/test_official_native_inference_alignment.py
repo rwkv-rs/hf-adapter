@@ -10,6 +10,7 @@ from scripts.compare_official_native_inference import (
     verify_official_source,
 )
 from scripts.compare_official_self_repeats import compare_repeats
+from scripts.compare_official_native_prefill import parser as prefill_parser
 
 
 OFFICIAL_COMMIT = "cc57df475465c6cacd42ecd4f2f05a588ee5473b"
@@ -34,6 +35,22 @@ def test_official_capture_exposes_low_memory_runtime_options() -> None:
     assert args.official_emb == "cpu"
     assert args.official_lowrank_weight == "transpose"
     assert args.official_orig_linear_groups == "none"
+
+    prefill_args = prefill_parser().parse_args(
+        [
+            "--mode",
+            "capture-official",
+            "--official-emb",
+            "cpu",
+            "--official-lowrank-weight",
+            "transpose",
+            "--official-orig-linear-groups",
+            "none",
+        ]
+    )
+    assert prefill_args.official_emb == "cpu"
+    assert prefill_args.official_lowrank_weight == "transpose"
+    assert prefill_args.official_orig_linear_groups == "none"
 
 
 def test_official_envelope_gate_is_bounded_by_explicit_multiplier() -> None:
