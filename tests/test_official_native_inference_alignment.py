@@ -12,6 +12,7 @@ from scripts.compare_official_native_inference import (
 )
 from scripts.compare_official_self_repeats import compare_repeats
 from scripts.compare_official_native_prefill import (
+    compare as compare_prefill,
     metric_pass as prefill_metric_pass,
     native_runtime_environment,
     parser as prefill_parser,
@@ -176,6 +177,69 @@ def test_prefill_capture_records_only_explicit_native_runtime_controls(monkeypat
     assert runtime["RWKV7_NATIVE_PREFILL_GRAPH"] == "1"
     assert "RWKV7_UNRELATED" not in runtime
     assert "TORCH_EXTENSIONS_DIR" not in runtime
+
+
+def test_prefill_report_records_capture_hashes_and_source_metadata(tmp_path) -> None:
+    prompt = torch.tensor([[7]])
+    state = torch.zeros(1, 1, 1, 2, 2, dtype=torch.float16)
+    shift = torch.zeros(1, 1, 2, dtype=torch.float16)
+
+    def capture(engine: str, revision: str) -> dict:
+        return {
+            "engine": engine,
+            "source_revision": revision,
+            "source_verification": {"method": "sha256_manifest"},
+            "runtime": {"emb": "cpu"},
+            "precision": "fp16_state_fp16_io",
+            "batch_size": 1,
+            "prompt_tokens": 1,
+            "prompt_ids": prompt,
+            "seen_tokens": 1,
+            "logits": torch.zeros(1, 1, 2, dtype=torch.float16),
+            "first_decode_logits": torch.zeros(1, 1, 2, dtype=torch.float16),
+            "first_token": torch.zeros(1, 1, dtype=torch.long),
+            "first_decode_token": torch.zeros(1, 1, dtype=torch.long),
+            "prefill": {"state": state, "xpa": shift, "xpf": shift},
+            "layer_outputs": torch.zeros(1, 1, 2, dtype=torch.float16),
+            "timing": {"aggregate_tokps": 1.0},
+            "peak_vram_mb": 1.0,
+            "fp16_recurrent_effective": True,
+            "prefill_state_dtype": "torch.float16",
+            "first_decode_state_dtype": "torch.float16",
+            "prefill_backend": "native_graph",
+            "first_decode_backend": "native_graph",
+            "stacked_rkv_effective": True,
+            "wavg_lora_effective": True,
+            "sequence_ffn_effective": True,
+            "fp16_accum_ffn_key_effective": True,
+            "runtime_env": {"RWKV7_NATIVE_PREFILL_GRAPH": "1"},
+        }
+
+    native_path = tmp_path / "native.pt"
+    official_path = tmp_path / "official.pt"
+    torch.save(capture("native_hf", "native-revision"), native_path)
+    torch.save(capture("official_v3a", OFFICIAL_COMMIT), official_path)
+    args = prefill_parser().parse_args(
+        [
+            "--mode",
+            "compare",
+            "--native-capture",
+            str(native_path),
+            "--official-capture",
+            str(official_path),
+        ]
+    )
+
+    report = compare_prefill(args)
+
+    assert len(report["native_capture_sha256"]) == 64
+    assert len(report["official_capture_sha256"]) == 64
+    assert report["native"]["source_revision"] == "native-revision"
+    assert report["official"]["source_revision"] == OFFICIAL_COMMIT
+    assert report["official"]["runtime"] == {"emb": "cpu"}
+    assert report["official"]["source_verification"] == {
+        "method": "sha256_manifest"
+    }
 
 
 def make_capture(engine: str, revision: str) -> dict:
