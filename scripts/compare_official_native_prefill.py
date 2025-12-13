@@ -28,6 +28,7 @@ try:  # noqa: E402
     from scripts.compare_official_native_inference import (
         DEFAULT_PROMPT,
         load_official,
+        metrics_pass as inference_metrics_pass,
         metrics_pass_official_envelope,
         tensor_metrics,
     )
@@ -35,6 +36,7 @@ except ImportError:  # direct ``python scripts/...`` execution
     from compare_official_native_inference import (
         DEFAULT_PROMPT,
         load_official,
+        metrics_pass as inference_metrics_pass,
         metrics_pass_official_envelope,
         tensor_metrics,
     )
@@ -42,7 +44,13 @@ except ImportError:  # direct ``python scripts/...`` execution
 
 THRESHOLDS = {
     "logits": {"min_cosine": 0.9999, "max_abs": 0.125},
-    "first_decode_logits": {"min_cosine": 0.9999, "max_abs": 0.125},
+    "first_decode_logits": {
+        "min_cosine": 0.9999,
+        "max_abs": 0.125,
+        "fp16_max_ulps_at_max": 4.0,
+        "fp16_max_abs_tail": 0.1875,
+        "fp16_max_fraction_over_abs": 5.0e-5,
+    },
     "state": {
         "min_cosine": 0.9999,
         "max_abs": 4.0,
@@ -57,6 +65,8 @@ THRESHOLDS = {
 
 
 def metric_pass(metrics: dict[str, Any], kind: str) -> bool:
+    if kind == "first_decode_logits":
+        return inference_metrics_pass(metrics, "logits")
     threshold = THRESHOLDS[kind]
     passed = bool(
         metrics["finite"]

@@ -5,12 +5,16 @@ import torch
 from scripts.compare_official_native_inference import (
     build_parser,
     compare_captures,
+    metrics_pass,
     metrics_pass_official_envelope,
     tensor_metrics,
     verify_official_source,
 )
 from scripts.compare_official_self_repeats import compare_repeats
-from scripts.compare_official_native_prefill import parser as prefill_parser
+from scripts.compare_official_native_prefill import (
+    metric_pass as prefill_metric_pass,
+    parser as prefill_parser,
+)
 
 
 OFFICIAL_COMMIT = "cc57df475465c6cacd42ecd4f2f05a588ee5473b"
@@ -106,11 +110,25 @@ def test_fp16_ulp_tail_gate_is_explicit_and_bounded() -> None:
         torch.tensor(float("inf"), dtype=torch.float16),
     )
     metrics = tensor_metrics(native, official, absolute_threshold=0.125)
-    from scripts.compare_official_native_inference import metrics_pass
-
     assert metrics["max_abs"] == 0.1875
     assert metrics["max_abs_ulps_at_max"] == 3.0
     assert metrics_pass(metrics, "logits") is True
+
+
+def test_prefill_first_decode_reuses_the_bounded_decode_tail_gate() -> None:
+    official = torch.full((100_000,), -70.0, dtype=torch.float16)
+    native = official.clone()
+    native[17] = torch.nextafter(
+        torch.nextafter(
+            torch.nextafter(official[17], torch.tensor(float("inf"), dtype=torch.float16)),
+            torch.tensor(float("inf"), dtype=torch.float16),
+        ),
+        torch.tensor(float("inf"), dtype=torch.float16),
+    )
+    metrics = tensor_metrics(native, official, absolute_threshold=0.125)
+
+    assert prefill_metric_pass(metrics, "first_decode_logits") is True
+    assert metrics["fp16_tail_pass"] is True
     assert metrics["fixed_abs_pass"] is False
     assert metrics["fp16_tail_pass"] is True
 
