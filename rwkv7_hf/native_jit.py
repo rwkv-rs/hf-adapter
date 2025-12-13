@@ -1185,6 +1185,43 @@ def _native_prefill_fused_shift_mix_enabled(
         return False
 
 
+def _native_prefill_shift_mix_layers(
+    batch_size: int,
+    prompt_tokens: int,
+    num_layers: int,
+) -> set[int] | None:
+    """Return selected shift-mix layers, or ``None`` for every layer."""
+
+    specific = f"RWKV7_NATIVE_PREFILL_SHIFT_MIX_LAYERS_B{batch_size}_T{prompt_tokens}"
+    raw = os.environ.get(
+        specific,
+        os.environ.get("RWKV7_NATIVE_PREFILL_SHIFT_MIX_LAYERS"),
+    )
+    if raw is None:
+        return None
+    selected: set[int] = set()
+    try:
+        for item in raw.replace(" ", ",").split(","):
+            item = item.strip()
+            if not item:
+                continue
+            if "-" in item:
+                start, end = (int(value) for value in item.split("-", 1))
+                if start < 0 or end < start:
+                    raise ValueError
+                selected.update(range(start, end + 1))
+            else:
+                value = int(item)
+                if value < 0:
+                    raise ValueError
+                selected.add(value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{specific} must contain non-negative layers or inclusive ranges"
+        ) from exc
+    return {value for value in selected if value < int(num_layers)}
+
+
 def _native_prefill_fused_state_prep_enabled(
     batch_size: int | None = None,
     prompt_tokens: int | None = None,
@@ -3021,6 +3058,11 @@ def prefill(
     use_prefill_shift_mix = _native_prefill_fused_shift_mix_enabled(
         B, T, residual_hidden, len(packs)
     )
+    prefill_shift_mix_layers = (
+        _native_prefill_shift_mix_layers(B, T, len(packs))
+        if use_prefill_shift_mix
+        else set()
+    )
     use_prefill_state_prep = _native_prefill_fused_state_prep_enabled(
         B, T, residual_hidden, len(packs)
     )
@@ -3061,6 +3103,13 @@ def prefill(
                 or layer_idx in prefill_state_prep_layers
             )
         )
+        use_layer_shift_mix = bool(
+            use_prefill_shift_mix
+            and (
+                prefill_shift_mix_layers is None
+                or layer_idx in prefill_shift_mix_layers
+            )
+        )
         residual = F.layer_norm(x, [residual_hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
         h = F.layer_norm(residual, [residual_hidden], an_w, an_b, 1e-5)
         defer_state_sigmoid = bool(
@@ -3070,7 +3119,9 @@ def prefill(
             and not use_clampw_scan_requested
         )
         state_sigmoid_is_raw = False
-        use_sequence_attn_mix = use_prefill_shift_mix and fused_attn_sequence_shift_mix is not None
+        use_sequence_attn_mix = (
+            use_layer_shift_mix and fused_attn_sequence_shift_mix is not None
+        )
         v_gate = None
         prequantized_rkv = None
         use_bnb8_rkv_mix = bool(
@@ -3508,7 +3559,7 @@ def prefill(
             x = residual + ffn_out
         else:
             ffn_up_prequantized = False
-            if use_prefill_shift_mix and _bnb8_ffn_mix_quant_enabled(fK):
+            if use_layer_shift_mix and _bnb8_ffn_mix_quant_enabled(fK):
                 (
                     qfk,
                     sfk,
@@ -3529,7 +3580,7 @@ def prefill(
                 bnb8_ffn_scale_workspace = sfk
                 fk = _bnb8_prequant_linear(qfk, sfk, fK, dtype=h2.dtype, output_shape=(B, T))
                 ffn_up_prequantized = True
-            elif use_prefill_shift_mix and fused_ffn_sequence_shift_mix is not None:
+            elif use_layer_shift_mix and fused_ffn_sequence_shift_mix is not None:
                 if sequence_ffn_mix_workspace is None:
                     sequence_ffn_mix_workspace = torch.empty_like(h2)
                 fk, next_xpf = fused_ffn_sequence_shift_mix(
@@ -3580,7 +3631,7 @@ def prefill(
             elif fused_up_relu2:
                 x = _native_prefill_project_residual(fk, fV, residual)
             elif (
-                use_prefill_shift_mix
+                use_layer_shift_mix
                 and fused_relu_square is not None
                 and fused_relu_square_available is not None
                 and fused_relu_square_available()
