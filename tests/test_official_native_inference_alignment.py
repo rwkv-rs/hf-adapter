@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 
 from scripts.compare_official_native_inference import (
+    build_parser,
     compare_captures,
     tensor_metrics,
     verify_official_source,
@@ -10,6 +11,27 @@ from scripts.compare_official_native_inference import (
 
 
 OFFICIAL_COMMIT = "cc57df475465c6cacd42ecd4f2f05a588ee5473b"
+
+
+def test_official_capture_exposes_low_memory_runtime_options() -> None:
+    args = build_parser().parse_args(
+        [
+            "capture-official",
+            "--hf-dir",
+            "hf",
+            "--output",
+            "capture.pt",
+            "--official-emb",
+            "cpu",
+            "--official-lowrank-weight",
+            "transpose",
+            "--official-orig-linear-groups",
+            "none",
+        ]
+    )
+    assert args.official_emb == "cpu"
+    assert args.official_lowrank_weight == "transpose"
+    assert args.official_orig_linear_groups == "none"
 
 
 def test_tensor_metrics_reports_exact_and_close_values() -> None:
@@ -22,6 +44,41 @@ def test_tensor_metrics_reports_exact_and_close_values() -> None:
     close = tensor_metrics(left, torch.tensor([[1.0, 2.125]], dtype=torch.float16))
     assert close["max_abs"] == 0.125
     assert close["cosine"] > 0.999
+    assert close["count_over_abs_threshold"] == 0
+
+
+def test_fp16_ulp_tail_gate_is_explicit_and_bounded() -> None:
+    official = torch.full((100_000,), -70.0, dtype=torch.float16)
+    native = official.clone()
+    native[17] = torch.nextafter(
+        torch.nextafter(
+            torch.nextafter(official[17], torch.tensor(float("inf"), dtype=torch.float16)),
+            torch.tensor(float("inf"), dtype=torch.float16),
+        ),
+        torch.tensor(float("inf"), dtype=torch.float16),
+    )
+    metrics = tensor_metrics(native, official, absolute_threshold=0.125)
+    from scripts.compare_official_native_inference import metrics_pass
+
+    assert metrics["max_abs"] == 0.1875
+    assert metrics["max_abs_ulps_at_max"] == 3.0
+    assert metrics_pass(metrics, "logits") is True
+    assert metrics["fixed_abs_pass"] is False
+    assert metrics["fp16_tail_pass"] is True
+
+    official = torch.full((100_000,), 4.0, dtype=torch.float16)
+    native = official.clone()
+    native[17] = 4.15625
+    metrics = tensor_metrics(native, official, absolute_threshold=0.125)
+    assert metrics["max_abs_ulps_at_max"] > 4.0
+    assert metrics_pass(metrics, "logits") is True
+    assert metrics["fixed_abs_pass"] is False
+    assert metrics["fp16_tail_pass"] is True
+
+    native[:10] = native[17]
+    metrics = tensor_metrics(native, official, absolute_threshold=0.125)
+    assert metrics_pass(metrics, "logits") is False
+    assert metrics["fp16_tail_pass"] is False
 
 
 def make_capture(engine: str, revision: str) -> dict:

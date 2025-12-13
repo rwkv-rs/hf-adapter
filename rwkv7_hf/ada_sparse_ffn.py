@@ -58,6 +58,10 @@ torch::Tensor rwkv7_ada_sparse_ffn_deterministic4_out_cuda(
     torch::Tensor preact, torch::Tensor packed_value, torch::Tensor residual,
     torch::Tensor scratch, torch::Tensor output);
 torch::Tensor rwkv7_ada_linear_cuda(torch::Tensor x, torch::Tensor weight);
+torch::Tensor rwkv7_blackwell_ffn_up_cuda(torch::Tensor x, torch::Tensor weight);
+torch::Tensor rwkv7_blackwell_sparse_ffn_out_cuda(
+    torch::Tensor preact, torch::Tensor packed_value, torch::Tensor residual,
+    torch::Tensor output);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("sparse_down_add", &rwkv7_ada_sparse_ffn_cuda,
@@ -80,6 +84,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         "RWKV-7 sm_89 small-row FFN expansion projection");
   m.def("linear", &rwkv7_ada_linear_cuda,
         "RWKV-7 sm_89 small-row fp16 linear");
+  m.def("blackwell_ffn_up", &rwkv7_blackwell_ffn_up_cuda,
+        "RWKV-7 Blackwell row-one FFN expansion projection");
+  m.def("blackwell_sparse_down_add_out", &rwkv7_blackwell_sparse_ffn_out_cuda,
+        "RWKV-7 Blackwell row-one sparse FFN down projection + residual (out)");
 }
 """
 
@@ -98,6 +106,7 @@ namespace {
 
 constexpr int THREADS = 128;
 constexpr int FFN_TILE = 128;
+using blackwell_dtype = at::Half;
 
 __device__ inline float load_h1(const half* ptr) {
   return __half2float(*ptr);
@@ -109,6 +118,123 @@ __device__ inline float warp_sum(float value) {
     value += __shfl_down_sync(0xffffffffu, value, offset);
   }
   return value;
+}
+
+__device__ inline float blackwell_load_h1(const blackwell_dtype* ptr) {
+  return __half2float(*reinterpret_cast<const __half*>(ptr));
+}
+
+template <int Threads, int OutTile>
+__global__ __launch_bounds__(Threads, 1) void blackwell_ffn_up_row1_exact4_kernel(
+    int hidden,
+    int ffn,
+    const blackwell_dtype* __restrict__ x,
+    const blackwell_dtype* __restrict__ weight,
+    blackwell_dtype* __restrict__ output) {
+  const int output_start = blockIdx.x * OutTile;
+  float accumulators[OutTile];
+  #pragma unroll
+  for (int out = 0; out < OutTile; ++out) {
+    accumulators[out] = 0.0f;
+  }
+  for (int k = threadIdx.x << 2; k < hidden; k += Threads << 2) {
+    const float2 x0 = __half22float2(*reinterpret_cast<const __half2*>(x + k));
+    const float2 x1 = __half22float2(*reinterpret_cast<const __half2*>(x + k + 2));
+    #pragma unroll
+    for (int out = 0; out < OutTile; ++out) {
+      const blackwell_dtype* weight_row =
+          weight + static_cast<int64_t>(output_start + out) * hidden + k;
+      const float2 w0 = __half22float2(*reinterpret_cast<const __half2*>(weight_row));
+      const float2 w1 = __half22float2(*reinterpret_cast<const __half2*>(weight_row + 2));
+      accumulators[out] = fmaf(x0.x, w0.x, accumulators[out]);
+      accumulators[out] = fmaf(x0.y, w0.y, accumulators[out]);
+      accumulators[out] = fmaf(x1.x, w1.x, accumulators[out]);
+      accumulators[out] = fmaf(x1.y, w1.y, accumulators[out]);
+    }
+  }
+  __shared__ float partial[Threads / 32][OutTile];
+  const int lane = threadIdx.x & 31;
+  const int warp = threadIdx.x >> 5;
+  #pragma unroll
+  for (int out = 0; out < OutTile; ++out) {
+    const float value = warp_sum(accumulators[out]);
+    if (lane == 0) partial[warp][out] = value;
+  }
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    #pragma unroll
+    for (int out = 0; out < OutTile; ++out) {
+      float sum = 0.0f;
+      #pragma unroll
+      for (int w = 0; w < Threads / 32; ++w) sum += partial[w][out];
+      output[output_start + out] = __float2half_rn(sum);
+    }
+  }
+}
+
+__global__ __launch_bounds__(THREADS, 4) void blackwell_sparse_relu2_down_row1_kernel(
+    int hidden,
+    const blackwell_dtype* __restrict__ preact,
+    const blackwell_dtype* __restrict__ packed_value,
+    blackwell_dtype* __restrict__ output) {
+  __shared__ __align__(256) __half values[FFN_TILE];
+  __shared__ __align__(256) int nonzero_ids[FFN_TILE];
+  __shared__ int nonzero_count;
+  __shared__ int warp_counts[FFN_TILE / 32];
+  __shared__ int warp_prefix[FFN_TILE / 32];
+
+  const int f_block = blockIdx.x;
+  const int hidden_block = blockIdx.y;
+  const int tid = threadIdx.x;
+  const int lane = tid & 31;
+  const int warp = tid >> 5;
+  const int start_f = f_block * FFN_TILE;
+
+  if (tid < FFN_TILE) {
+    const float value = fmaxf(blackwell_load_h1(preact + start_f + tid), 0.0f);
+    values[tid] = __float2half_rn(value * value);
+  }
+  __syncthreads();
+
+  bool nonzero = false;
+  int local_position = 0;
+  if (tid < FFN_TILE) {
+    nonzero = bool(__half_as_ushort(values[tid]) << 1);
+    const unsigned mask = __ballot_sync(0xffffffffu, nonzero);
+    local_position = __popc(mask & ((1u << lane) - 1u));
+    if (lane == 0) warp_counts[warp] = __popc(mask);
+  }
+  __syncthreads();
+
+  if (tid == 0) {
+    int prefix = 0;
+    #pragma unroll
+    for (int w = 0; w < FFN_TILE / 32; ++w) {
+      warp_prefix[w] = prefix;
+      prefix += warp_counts[w];
+    }
+    nonzero_count = prefix;
+  }
+  __syncthreads();
+
+  if (tid < FFN_TILE && nonzero) {
+    nonzero_ids[warp_prefix[warp] + local_position] = tid;
+  }
+  __syncthreads();
+
+  __half2 accumulator;
+  *reinterpret_cast<int*>(&accumulator) = 0;
+  for (int i = 0; i < nonzero_count; ++i) {
+    const int actual_f = start_f + nonzero_ids[i];
+    const __half2 matrix = *reinterpret_cast<const __half2*>(
+        packed_value + static_cast<int64_t>(actual_f) * hidden
+        + hidden_block * (2 * THREADS) + tid * 2);
+    accumulator = __hfma2(__half2half2(values[nonzero_ids[i]]), matrix, accumulator);
+  }
+  atomicAdd(
+      reinterpret_cast<__half2*>(
+          output + hidden_block * (2 * THREADS) + tid * 2),
+      accumulator);
 }
 
 template <int Threads, int OutTile>
@@ -676,6 +802,81 @@ __global__ void finalize_sparse_fp32_add_residual_kernel(
 
 }  // namespace
 
+torch::Tensor rwkv7_blackwell_ffn_up_cuda(
+    torch::Tensor x,
+    torch::Tensor weight) {
+  TORCH_CHECK(x.is_cuda() && weight.is_cuda(), "CUDA tensors required");
+  TORCH_CHECK(x.scalar_type() == at::kHalf && weight.scalar_type() == at::kHalf,
+              "fp16 tensors required");
+  TORCH_CHECK(x.dim() == 2 && weight.dim() == 2, "x and weight must be rank-2");
+  TORCH_CHECK(x.is_contiguous() && weight.is_contiguous(), "contiguous tensors required");
+  const int64_t rows = x.size(0);
+  const int64_t hidden = x.size(1);
+  const int64_t ffn = weight.size(0);
+  TORCH_CHECK(rows == 1, "Blackwell FFN expansion requires exactly one row");
+  TORCH_CHECK(weight.size(1) == hidden && (hidden % 4) == 0 && (ffn % 2) == 0,
+              "unsupported Blackwell FFN expansion shape");
+
+  c10::cuda::CUDAGuard device_guard(x.device());
+  auto output = torch::empty({rows, ffn}, x.options());
+  auto stream = at::cuda::getCurrentCUDAStream(x.get_device());
+  blackwell_ffn_up_row1_exact4_kernel<128, 2><<<
+      dim3(static_cast<unsigned>(ffn / 2), 1, 1), 128, 0, stream>>>(
+      static_cast<int>(hidden), static_cast<int>(ffn),
+      x.data_ptr<at::Half>(),
+      weight.data_ptr<at::Half>(),
+      output.data_ptr<at::Half>());
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return output;
+}
+
+torch::Tensor rwkv7_blackwell_sparse_ffn_out_cuda(
+    torch::Tensor preact,
+    torch::Tensor packed_value,
+    torch::Tensor residual,
+    torch::Tensor output) {
+  TORCH_CHECK(preact.is_cuda() && packed_value.is_cuda() && residual.is_cuda() && output.is_cuda(),
+              "CUDA tensors required");
+  TORCH_CHECK(preact.scalar_type() == at::kHalf && packed_value.scalar_type() == at::kHalf
+              && residual.scalar_type() == at::kHalf && output.scalar_type() == at::kHalf,
+              "fp16 tensors required");
+  TORCH_CHECK(preact.dim() == 2 && packed_value.dim() == 2 && residual.dim() == 2 && output.dim() == 2,
+              "preact, packed_value, residual, and output must be rank-2");
+  TORCH_CHECK(preact.is_contiguous() && packed_value.is_contiguous()
+              && residual.is_contiguous() && output.is_contiguous(),
+              "contiguous tensors required");
+  const int64_t rows = preact.size(0);
+  const int64_t ffn = preact.size(1);
+  const int64_t hidden = residual.size(1);
+  TORCH_CHECK(rows == 1 && residual.size(0) == 1 && output.sizes() == residual.sizes(),
+              "Blackwell sparse FFN requires one matching row");
+  TORCH_CHECK(packed_value.size(0) == ffn && packed_value.size(1) == hidden,
+              "packed value weight must have shape [ffn, hidden]");
+  TORCH_CHECK(ffn == 4 * hidden && (ffn % FFN_TILE) == 0 && (hidden % 256) == 0,
+              "expected RWKV ffn == 4 * hidden with supported alignment");
+
+  c10::cuda::CUDAGuard device_guard(preact.device());
+  auto stream = at::cuda::getCurrentCUDAStream(preact.get_device());
+  const int64_t vec4_count = output.numel() / 8;
+  zero_output_vec4_kernel<<<static_cast<int>((vec4_count + 127) / 128), 128, 0, stream>>>(
+      reinterpret_cast<half*>(output.data_ptr<at::Half>()), vec4_count);
+  blackwell_sparse_relu2_down_row1_kernel<<<
+      dim3(static_cast<unsigned>(ffn / FFN_TILE),
+           static_cast<unsigned>(hidden / (2 * THREADS)), 1),
+      THREADS, 0, stream>>>(
+      static_cast<int>(hidden),
+      preact.data_ptr<at::Half>(),
+      packed_value.data_ptr<at::Half>(),
+      output.data_ptr<at::Half>());
+  const int64_t pairs = output.numel() / 2;
+  add_residual_half2_kernel<<<static_cast<int>((pairs + 255) / 256), 256, 0, stream>>>(
+      reinterpret_cast<const half*>(residual.data_ptr<at::Half>()),
+      reinterpret_cast<half*>(output.data_ptr<at::Half>()),
+      pairs);
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return output;
+}
+
 torch::Tensor rwkv7_ada_linear_cuda(torch::Tensor x, torch::Tensor weight) {
   TORCH_CHECK(x.is_cuda() && weight.is_cuda(), "CUDA tensors required");
   TORCH_CHECK(x.scalar_type() == at::kHalf && weight.scalar_type() == at::kHalf,
@@ -1004,6 +1205,37 @@ def _is_sparse_ffn_device(device: Any = None) -> bool:
         return False
 
 
+def _is_blackwell_device(device: Any = None) -> bool:
+    if torch is None or not torch.cuda.is_available():
+        return False
+    try:
+        resolved = torch.device("cuda" if device is None else device)
+        if resolved.type != "cuda":
+            return False
+        index = torch.cuda.current_device() if resolved.index is None else int(resolved.index)
+        return tuple(int(v) for v in torch.cuda.get_device_capability(index)) == (12, 0)
+    except Exception:
+        return False
+
+
+def blackwell_cmix_should_use(rows: int, outputs: int, inputs: int) -> bool:
+    """Return whether the opt-in SM120 row-one CMIX kernel supports a shape."""
+
+    return (
+        int(rows) == 1
+        and int(inputs) == 4 * int(outputs)
+        and int(outputs) % 256 == 0
+    )
+
+
+def _blackwell_cmix_enabled(device: Any = None) -> bool:
+    return (
+        os.environ.get("RWKV7_NATIVE_GRAPH_BLACKWELL_CMIX", "0").strip().lower()
+        in {"1", "true", "yes", "on"}
+        and _is_blackwell_device(device)
+    )
+
+
 def _load_extension() -> Any | None:
     global _EXTENSION, _EXTENSION_ERROR
     if _EXTENSION is not None:
@@ -1047,7 +1279,7 @@ def _load_extension() -> Any | None:
             from torch.utils.cpp_extension import load_inline
 
             _EXTENSION = load_inline(
-                name="rwkv7_sparse_ffn_v18",
+                name="rwkv7_sparse_ffn_v20",
                 cpp_sources=_CPP_SOURCE,
                 cuda_sources=_CUDA_SOURCE,
                 functions=None,
@@ -1233,7 +1465,7 @@ def ada_sparse_ffn_down_add(
         and weight.dtype == torch.float16
         and residual2.dtype == torch.float16
         and preact2.is_contiguous()
-        and weight.is_contiguous()
+        and (weight.is_contiguous() or weight.transpose(0, 1).is_contiguous())
         and residual2.is_contiguous()
         and tuple(weight.shape) == (outputs, inputs)
         and tuple(residual2.shape) == (rows, outputs)
@@ -1254,6 +1486,22 @@ def ada_sparse_ffn_down_add(
     # opt-in shared-pack route is limited to immutable inference weights and
     # must be revalidated when graph capture or the sparse kernel changes.
     packed = ada_sparse_ffn_pack_weight(weight, cache_tag=rows)
+    blackwell_cmix = bool(
+        _blackwell_cmix_enabled(preact2.device)
+        and blackwell_cmix_should_use(rows, outputs, inputs)
+    )
+    if blackwell_cmix:
+        out2 = torch.empty_like(residual2) if out is None else (
+            out.reshape(1, -1) if scalar else out
+        )
+        if tuple(out2.shape) != tuple(residual2.shape):
+            raise ValueError(
+                f"out shape must match residual shape {tuple(residual2.shape)}; got {tuple(out2.shape)}"
+            )
+        output = extension.blackwell_sparse_down_add_out(
+            preact2, packed, residual2, out2
+        )
+        return output.reshape(outputs) if scalar else output
     fp32_accum = os.environ.get(
         "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_FP32_ACCUM", "0"
     ).strip().lower() in {"1", "true", "yes", "on"}
@@ -1337,7 +1585,15 @@ def ada_ffn_up(x: Any, weight: Any, *, force_fallback: bool = False) -> Any:
     extension = _load_extension() if valid else None
     if extension is None:
         return F.linear(x, weight)
-    output = extension.ffn_up(x2, weight)
+    if (
+        _blackwell_cmix_enabled(x2.device)
+        and rows == 1
+        and outputs == 4 * inputs
+        and inputs % 256 == 0
+    ):
+        output = extension.blackwell_ffn_up(x2, weight)
+    else:
+        output = extension.ffn_up(x2, weight)
     return output.reshape(outputs) if scalar else output
 
 
@@ -1382,5 +1638,6 @@ __all__ = [
     "ada_sparse_ffn_prepare_deterministic_scratch",
     "ada_sparse_ffn_prepare_fp32_scratch",
     "ada_sparse_ffn_should_use",
+    "blackwell_cmix_should_use",
     "clear_ada_sparse_ffn_weight_cache",
 ]

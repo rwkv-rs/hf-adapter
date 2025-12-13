@@ -6,6 +6,7 @@ import torch.nn.functional as F
 import pytest
 
 import rwkv7_hf.ada_sparse_ffn as sparse_ffn_module
+from rwkv7_hf.native_jit import _native_graph_relayout_ffn_value_weight
 from rwkv7_hf.ada_sparse_ffn import (
     ada_ffn_up,
     ada_ffn_up_should_use,
@@ -14,6 +15,7 @@ from rwkv7_hf.ada_sparse_ffn import (
     ada_sparse_ffn_pack_weight,
     ada_sparse_ffn_down_add,
     ada_sparse_ffn_should_use,
+    blackwell_cmix_should_use,
     clear_ada_sparse_ffn_weight_cache,
 )
 
@@ -57,6 +59,9 @@ def test_shape_policy_is_narrow() -> None:
     assert ada_linear_should_use(4, 1024, 1024)
     assert ada_linear_should_use(4, 4096, 1024)
     assert not ada_linear_should_use(4, 1024, 4096)
+    assert blackwell_cmix_should_use(1, 2048, 8192)
+    assert not blackwell_cmix_should_use(2, 2048, 8192)
+    assert not blackwell_cmix_should_use(1, 2048, 4096)
 
 
 def test_cpu_fallback_matches_torch() -> None:
@@ -132,3 +137,25 @@ def test_deterministic_four_way_kernel_is_exposed_under_opt_in() -> None:
     assert "sparse_relu2_down_deterministic4_kernel" in sparse_ffn_module._CUDA_SOURCE
     assert "finalize_sparse_deterministic4_kernel" in sparse_ffn_module._CUDA_SOURCE
     assert "sparse_down_add_deterministic4" in sparse_ffn_module._CPP_SOURCE
+
+
+def test_blackwell_row_one_cmix_kernel_is_exposed_under_opt_in() -> None:
+    assert "blackwell_ffn_up_row1_exact4_kernel" in sparse_ffn_module._CUDA_SOURCE
+    assert "blackwell_sparse_relu2_down_row1_kernel" in sparse_ffn_module._CUDA_SOURCE
+    assert "blackwell_sparse_down_add_out" in sparse_ffn_module._CPP_SOURCE
+
+
+def test_low_memory_ffn_relayout_reuses_transposed_storage() -> None:
+    linear = torch.nn.Linear(16, 8, bias=False)
+    inputs = torch.randn(3, 16)
+    expected = F.linear(inputs, linear.weight)
+
+    weight = _native_graph_relayout_ffn_value_weight(linear)
+
+    assert tuple(weight.shape) == (8, 16)
+    assert not weight.is_contiguous()
+    assert weight.transpose(0, 1).is_contiguous()
+    assert weight.transpose(0, 1).contiguous().data_ptr() == weight.data_ptr()
+    torch.testing.assert_close(F.linear(inputs, weight), expected)
+    assert list(linear.state_dict()) == ["weight"]
+    assert _native_graph_relayout_ffn_value_weight(linear) is weight

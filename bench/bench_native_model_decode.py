@@ -39,7 +39,9 @@ def requested_extension_status(device: str) -> dict[str, dict[str, Any]]:
     """Build and report every CUDA extension requested by benchmark flags."""
 
     status: dict[str, dict[str, Any]] = {}
-    sparse_requested = env_enabled("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN")
+    sparse_requested = env_enabled("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN") or env_enabled(
+        "RWKV7_NATIVE_GRAPH_BLACKWELL_CMIX"
+    )
     if sparse_requested:
         from rwkv7_hf.ada_sparse_ffn import (
             ada_sparse_ffn_available,
@@ -51,6 +53,22 @@ def requested_extension_status(device: str) -> dict[str, dict[str, Any]]:
             "requested": True,
             "active": bool(active),
             "error": ada_sparse_ffn_build_error(),
+        }
+
+    blackwell_norm_requested = env_enabled(
+        "RWKV7_NATIVE_GRAPH_BLACKWELL_NORM_MIX"
+    )
+    if blackwell_norm_requested:
+        from rwkv7_hf.blackwell_norm_mix import (
+            blackwell_norm_mix_available,
+            blackwell_norm_mix_build_error,
+        )
+
+        active = blackwell_norm_mix_available(build=True)
+        status["blackwell_norm_mix"] = {
+            "requested": True,
+            "active": bool(active),
+            "error": blackwell_norm_mix_build_error(),
         }
 
     lora_requested = any(
@@ -271,6 +289,12 @@ def main() -> int:
     ap.add_argument("--prompt-tokens", type=int, default=32)
     ap.add_argument("--decode-steps", type=int, default=32)
     ap.add_argument("--warmup", type=int, default=2)
+    ap.add_argument(
+        "--repetitions",
+        type=int,
+        default=1,
+        help="Repeat every batch/backend row without reloading the checkpoint.",
+    )
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--batch-sizes", nargs="+", type=int, default=None)
     ap.add_argument(
@@ -297,6 +321,8 @@ def main() -> int:
     )
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     args = ap.parse_args()
+    if args.repetitions <= 0:
+        raise ValueError("repetitions must be positive")
 
     args.requested_extensions = requested_extension_status(args.device)
     inactive = {
@@ -314,14 +340,16 @@ def main() -> int:
     model = load_model(args, DTYPES[args.dtype])
     rows = []
     batch_sizes = args.batch_sizes or [args.batch_size]
-    for batch_size in batch_sizes:
-        if batch_size <= 0:
-            raise ValueError("batch sizes must be positive")
-        ids = encode(tok, args.prompt_tokens, batch_size, args.device)
-        for backend in args.backends:
-            row = run_backend(args, model, ids, backend=backend)
-            rows.append(row)
-            print(json.dumps(row, indent=2), flush=True)
+    for repetition in range(1, args.repetitions + 1):
+        for batch_size in batch_sizes:
+            if batch_size <= 0:
+                raise ValueError("batch sizes must be positive")
+            ids = encode(tok, args.prompt_tokens, batch_size, args.device)
+            for backend in args.backends:
+                row = run_backend(args, model, ids, backend=backend)
+                row["repetition"] = repetition
+                rows.append(row)
+                print(json.dumps(row, indent=2), flush=True)
 
     if args.results:
         out = Path(args.results)
