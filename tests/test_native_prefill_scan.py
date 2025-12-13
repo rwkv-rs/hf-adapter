@@ -303,6 +303,13 @@ def test_shift_mix_and_state_prep_honor_exact_model_shapes(monkeypatch) -> None:
         23,
     }
 
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FUSED_ATTN_SHIFT_MIX", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FUSED_FFN_SHIFT_MIX", raising=False)
+    assert native_jit.env_flag("RWKV7_NATIVE_PREFILL_FUSED_ATTN_SHIFT_MIX", True)
+    assert native_jit.env_flag("RWKV7_NATIVE_PREFILL_FUSED_FFN_SHIFT_MIX", True)
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FUSED_FFN_SHIFT_MIX", "0")
+    assert not native_jit.env_flag("RWKV7_NATIVE_PREFILL_FUSED_FFN_SHIFT_MIX", True)
+
 
 def test_self_chunk_safe_gate_is_explicitly_tunable(monkeypatch) -> None:
     from rwkv7_hf import native_jit
