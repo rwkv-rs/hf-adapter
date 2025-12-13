@@ -180,7 +180,7 @@ def capture_native(args: argparse.Namespace) -> dict[str, Any]:
 
     with torch.inference_mode():
         old_capture = os.environ.get("RWKV7_NATIVE_PREFILL_CAPTURE_LAYER_OUTPUTS")
-        os.environ["RWKV7_NATIVE_PREFILL_CAPTURE_LAYER_OUTPUTS"] = "1"
+        os.environ["RWKV7_NATIVE_PREFILL_CAPTURE_LAYER_OUTPUTS"] = "0"
         try:
             if args.native_cuda_graph:
                 warmup_stream = torch.cuda.Stream()
@@ -206,13 +206,18 @@ def capture_native(args: argparse.Namespace) -> dict[str, Any]:
                     end.synchronize()
                     times.append(float(start.elapsed_time(end)))
             else:
-                output = run_prefill()
-                torch.cuda.synchronize()
                 times = cuda_time_discard(
                     run_prefill,
                     warmup=args.warmup,
                     repeats=args.repeats,
                 )
+
+            # Keep audit copies outside the production timing scope, matching
+            # the official capture path below. The final run still exercises
+            # the same public HF forward and cache handoff.
+            os.environ["RWKV7_NATIVE_PREFILL_CAPTURE_LAYER_OUTPUTS"] = "1"
+            output = run_prefill()
+            torch.cuda.synchronize()
         finally:
             if old_capture is None:
                 os.environ.pop("RWKV7_NATIVE_PREFILL_CAPTURE_LAYER_OUTPUTS", None)
