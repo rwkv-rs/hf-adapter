@@ -124,6 +124,7 @@ class KernelPolicy:
     prefill_sequence_ffn_num_stages: int = 3
     prefill_sequence_ffn_num_warps: int = 4
     prefill_fp16_accum_ffn_key_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    prefill_fp16_accum_ffn_key_layer_counts: tuple[tuple[int, int, int, int, int], ...] = ()
     fused_recurrent_output: bool = False
     fused_recurrent_raw: bool = False
     fused_output: bool = False
@@ -759,11 +760,15 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             prefill_sequence_ffn_large_blocks=(64, 128, 32, 64, 8),
             prefill_sequence_ffn_num_stages=3,
             prefill_sequence_ffn_num_warps=8 if is_5090 else 4,
-            # RTX 5090 / g1h-7.2B / B8 / P128: limiting reduced-precision
-            # accumulation to the FFN key GEMM keeps the strict official
-            # FP16-state tensor gates while closing the final prefill gap.
+            # RTX 5090 / B8 / P128: limiting reduced-precision accumulation to
+            # measured FFN-key layers keeps strict official FP16-state tensor
+            # gates while closing the final short-prompt prefill gaps.
             prefill_fp16_accum_ffn_key_model_shapes=(
+                (2560, 32, 8, 128),
                 (4096, 32, 8, 128),
+            ) if is_5090 else (),
+            prefill_fp16_accum_ffn_key_layer_counts=(
+                (2560, 32, 8, 128, 28),
             ) if is_5090 else (),
             marlin_w4_ffn_shapes=(
                 (8192, 2048),
@@ -780,7 +785,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
                 (4096, 16384, 61, 128, True, 1),
             ) if is_5090 else (),
             output_project_block_m=32,
-            notes="RTX 50/Blackwell: exact RTX 5090 g1h-1.5B B8/P128, P512, and P2048 use measured shift-mix and BM64/BN128 sequence FFN routes; P512 uses state-prep in all 24 layers and P2048 in the measured leading 18 layers, while stacked R/K/V stays off to avoid duplicate packed weights. g1h-7.2B B8/P128 retains its exact-shape FFN-key FP16-accumulation route validated against official FP16-state tensors; residual GEMM is enabled on the exact 5090 and remains subject to the full matrix; SM120 sparse FFN stays opt-in after a 6/8 B8 greedy probe; use triton_compat for early sm_120 stacks, prefer native/no-FLA smokes, keep unvalidated projection/LoRA fusions off",
+            notes="RTX 50/Blackwell: exact RTX 5090 g1h-1.5B B8/P128, P512, and P2048 use measured shift-mix and BM64/BN128 sequence FFN routes; P512 uses state-prep in all 24 layers and P2048 in the measured leading 18 layers, while stacked R/K/V stays off to avoid duplicate packed weights. g1h-2.9B B8/P128 uses FFN-key FP16 accumulation in the measured leading 28 layers, and g1h-7.2B B8/P128 uses the measured all-layer route; both retain strict official FP16-state tensor gates. Residual GEMM is enabled on the exact 5090 and remains subject to the full matrix; SM120 sparse FFN stays opt-in after a 6/8 B8 greedy probe; use triton_compat for early sm_120 stacks, prefer native/no-FLA smokes, keep unvalidated projection/LoRA fusions off",
         )
     return KernelPolicy(profile=profile)
 

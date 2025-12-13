@@ -67,6 +67,8 @@ THRESHOLDS = {
 def metric_pass(metrics: dict[str, Any], kind: str) -> bool:
     if kind == "first_decode_logits":
         return inference_metrics_pass(metrics, "logits")
+    if kind in {"xpa", "xpf"}:
+        return inference_metrics_pass(metrics, kind)
     threshold = THRESHOLDS[kind]
     passed = bool(
         metrics["finite"]

@@ -371,6 +371,40 @@ def test_fp16_accum_ffn_key_is_exact_shape_and_explicitly_disableable(monkeypatc
     )
 
 
+def test_fp16_accum_ffn_key_layers_support_policy_and_shape_override(monkeypatch) -> None:
+    from rwkv7_hf import native_jit
+
+    monkeypatch.setattr(
+        native_jit,
+        "_kernel_policy",
+        lambda: types.SimpleNamespace(
+            prefill_fp16_accum_ffn_key_layer_counts=((2560, 32, 8, 128, 20),),
+        ),
+    )
+    monkeypatch.delenv(
+        "RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY_LAYERS_B8_T128",
+        raising=False,
+    )
+    monkeypatch.delenv(
+        "RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY_LAYERS",
+        raising=False,
+    )
+    assert native_jit._native_prefill_fp16_accum_ffn_key_layers(
+        8, 128, 2560, 32
+    ) == set(range(20))
+    assert native_jit._native_prefill_fp16_accum_ffn_key_layers(
+        1, 128, 2560, 32
+    ) is None
+
+    monkeypatch.setenv(
+        "RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY_LAYERS_B8_T128",
+        "0-3,9,40",
+    )
+    assert native_jit._native_prefill_fp16_accum_ffn_key_layers(
+        8, 128, 2560, 32
+    ) == {0, 1, 2, 3, 9}
+
+
 _TorchModule = torch.nn.Module if torch is not None else object
 
 
