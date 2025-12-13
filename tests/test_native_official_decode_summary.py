@@ -40,6 +40,7 @@ def test_summary_requires_every_exact_shape_and_reports_ratios() -> None:
     assert report["official_commit"] == "abc"
     assert report["rows"][0]["matched_shape_ratio"] == 1.02
     assert len(report["rows"][1]["greedy_trace_sha256"]) == 3
+    assert report["rows"][1]["repeat_traces_equal"] is True
 
 
 def test_summary_fails_a_slow_shape_or_inactive_extension() -> None:
@@ -50,3 +51,14 @@ def test_summary_fails_a_slow_shape_or_inactive_extension() -> None:
     assert report["status"] == "fail"
     assert report["rows"][0]["status"] == "fail"
     assert report["rows"][1]["requested_extensions_active"] is False
+
+
+def test_summary_fails_when_repetitions_change_greedy_trace() -> None:
+    rows = [make_row(1, speed) for speed in (101, 102, 103)]
+    rows += [make_row(8, speed) for speed in (801, 802, 803)]
+    rows[1]["greedy_tokens"] = [[1, 3]]
+
+    report = summarize(rows, reference())
+
+    assert report["status"] == "fail"
+    assert report["rows"][0]["repeat_traces_equal"] is False

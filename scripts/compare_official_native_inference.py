@@ -153,6 +153,23 @@ def metrics_pass(metrics: dict[str, Any], kind: str) -> bool:
     )
 
 
+def metrics_pass_official_envelope(
+    metrics: dict[str, Any],
+    envelope: dict[str, Any] | None,
+    *,
+    multiplier: float,
+) -> bool:
+    if not envelope or multiplier < 1.0 or not metrics["finite"]:
+        return False
+    cosine_floor = 1.0 - (1.0 - float(envelope["min_cosine"])) * multiplier
+    return bool(
+        metrics["max_abs"] <= float(envelope["max_abs"]) * multiplier
+        and metrics["fraction_over_abs_threshold"]
+        <= float(envelope["max_fraction_over_abs_threshold"]) * multiplier
+        and metrics["cosine"] >= cosine_floor
+    )
+
+
 def git_revision(path: str | Path) -> str:
     result = subprocess.run(
         ["git", "-C", str(path), "rev-parse", "HEAD"],
@@ -421,6 +438,8 @@ def compare_captures(
     official: dict[str, Any],
     *,
     expected_official_commit: str,
+    official_self_envelope: dict[str, Any] | None = None,
+    envelope_multiplier: float = 1.25,
 ) -> dict[str, Any]:
     if native.get("engine") != "native_hf" or official.get("engine") != "official_v3a":
         raise ValueError("capture engines are missing or reversed")
@@ -449,7 +468,16 @@ def compare_captures(
         logits_metrics["top1_match_rate"] = (
             logits_metrics["top1_matches"] / max(logits_metrics["top1_total"], 1)
         )
-        logits_metrics["threshold_pass"] = metrics_pass(logits_metrics, "logits")
+        logits_metrics["standard_threshold_pass"] = metrics_pass(logits_metrics, "logits")
+        logits_metrics["official_self_envelope_pass"] = metrics_pass_official_envelope(
+            logits_metrics,
+            (official_self_envelope or {}).get("envelope", {}).get("logits"),
+            multiplier=envelope_multiplier,
+        )
+        logits_metrics["threshold_pass"] = bool(
+            logits_metrics["standard_threshold_pass"]
+            or logits_metrics["official_self_envelope_pass"]
+        )
         states: dict[str, Any] = {}
         for phase in ("prefill", "final"):
             states[phase] = {
@@ -461,8 +489,21 @@ def compare_captures(
                 for name in ("state", "xpa", "xpf")
             }
             for name in ("state", "xpa", "xpf"):
-                states[phase][name]["threshold_pass"] = metrics_pass(
+                states[phase][name]["standard_threshold_pass"] = metrics_pass(
                     states[phase][name], name
+                )
+                states[phase][name]["official_self_envelope_pass"] = (
+                    metrics_pass_official_envelope(
+                        states[phase][name],
+                        (official_self_envelope or {})
+                        .get("envelope", {})
+                        .get(f"{phase}.{name}"),
+                        multiplier=envelope_multiplier,
+                    )
+                )
+                states[phase][name]["threshold_pass"] = bool(
+                    states[phase][name]["standard_threshold_pass"]
+                    or states[phase][name]["official_self_envelope_pass"]
                 )
             native_elapsed = nat[phase]["elapsed"]
             expected_elapsed = off[phase]["elapsed"].view(1, batch_size, 1).expand_as(native_elapsed)
@@ -494,7 +535,7 @@ def compare_captures(
         and row["states"]["final"]["elapsed_exact"]
         for row in rows
     )
-    return {
+    report = {
         "axis": "official_native_inference_alignment",
         "status": "pass" if passed else "fail",
         "precision": native["precision"],
@@ -504,6 +545,18 @@ def compare_captures(
         "thresholds": ALIGNMENT_THRESHOLDS,
         "rows": rows,
     }
+    if official_self_envelope is not None:
+        report["official_self_envelope"] = {
+            "axis": official_self_envelope.get("axis"),
+            "official_commit": official_self_envelope.get("official_commit"),
+            "precision": official_self_envelope.get("precision"),
+            "prompt_tokens": official_self_envelope.get("prompt_tokens"),
+            "decode_steps": official_self_envelope.get("decode_steps"),
+            "batch_sizes": official_self_envelope.get("batch_sizes"),
+            "multiplier": envelope_multiplier,
+            "envelope": official_self_envelope.get("envelope"),
+        }
+    return report
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -543,6 +596,8 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--native", required=True)
     compare.add_argument("--official", required=True)
     compare.add_argument("--official-commit", required=True)
+    compare.add_argument("--official-self-envelope", default="")
+    compare.add_argument("--official-envelope-multiplier", type=float, default=1.25)
     compare.add_argument("--output", required=True)
     return parser
 
@@ -567,10 +622,28 @@ def main() -> int:
         return 0
     native = torch.load(args.native, map_location="cpu", weights_only=False)
     official = torch.load(args.official, map_location="cpu", weights_only=False)
+    official_self_envelope = (
+        json.loads(Path(args.official_self_envelope).read_text(encoding="utf-8"))
+        if args.official_self_envelope
+        else None
+    )
+    if official_self_envelope is not None:
+        for key, expected in (
+            ("axis", "official_fp16_self_repeat"),
+            ("official_commit", args.official_commit),
+            ("precision", native["precision"]),
+            ("prompt_tokens", native["prompt_tokens"]),
+            ("decode_steps", native["decode_steps"]),
+            ("batch_sizes", native["batch_sizes"]),
+        ):
+            if official_self_envelope.get(key) != expected:
+                raise ValueError(f"official self-envelope mismatch for {key}")
     report = compare_captures(
         native,
         official,
         expected_official_commit=args.official_commit,
+        official_self_envelope=official_self_envelope,
+        envelope_multiplier=args.official_envelope_multiplier,
     )
     report["native_capture_sha256"] = sha256_file(args.native)
     report["official_capture_sha256"] = sha256_file(args.official)

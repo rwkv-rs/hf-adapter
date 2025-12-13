@@ -5,9 +5,11 @@ import torch
 from scripts.compare_official_native_inference import (
     build_parser,
     compare_captures,
+    metrics_pass_official_envelope,
     tensor_metrics,
     verify_official_source,
 )
+from scripts.compare_official_self_repeats import compare_repeats
 
 
 OFFICIAL_COMMIT = "cc57df475465c6cacd42ecd4f2f05a588ee5473b"
@@ -32,6 +34,22 @@ def test_official_capture_exposes_low_memory_runtime_options() -> None:
     assert args.official_emb == "cpu"
     assert args.official_lowrank_weight == "transpose"
     assert args.official_orig_linear_groups == "none"
+
+
+def test_official_envelope_gate_is_bounded_by_explicit_multiplier() -> None:
+    metrics = {
+        "finite": True,
+        "max_abs": 0.3,
+        "fraction_over_abs_threshold": 2.0e-4,
+        "cosine": 0.9999997,
+    }
+    envelope = {
+        "max_abs": 0.25,
+        "max_fraction_over_abs_threshold": 1.7e-4,
+        "min_cosine": 0.99999975,
+    }
+    assert metrics_pass_official_envelope(metrics, envelope, multiplier=1.25)
+    assert not metrics_pass_official_envelope(metrics, envelope, multiplier=1.0)
 
 
 def test_tensor_metrics_reports_exact_and_close_values() -> None:
@@ -142,6 +160,19 @@ def test_compare_captures_enforces_numeric_thresholds_even_when_top1_matches() -
     assert report["rows"][0]["logits"]["top1_match_rate"] == 1.0
     assert report["rows"][0]["logits"]["threshold_pass"] is False
     assert report["status"] == "fail"
+
+
+def test_official_self_repeat_reports_numeric_envelope() -> None:
+    reference = make_capture("official_v3a", OFFICIAL_COMMIT)
+    repeat = make_capture("official_v3a", OFFICIAL_COMMIT)
+    repeat["captures"]["1"]["logits"][0, 0, 0] = 0.125
+
+    report = compare_repeats(reference, [repeat])
+
+    assert report["status"] == "pass"
+    assert report["envelope"]["logits"]["max_abs"] == 0.125
+    assert report["envelope"]["logits"]["total"] == 1
+    assert report["rows"][0]["greedy_exact"] is True
 
 
 def test_official_source_manifest_is_fail_closed(tmp_path) -> None:
