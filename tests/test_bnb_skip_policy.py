@@ -4,7 +4,8 @@ from __future__ import annotations
 import os
 from types import SimpleNamespace
 
-from rwkv7_hf import RWKV7Config, RWKV7ForCausalLM
+from rwkv7_hf.configuration_rwkv7 import RWKV7Config
+from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
 
 
 def main() -> int:

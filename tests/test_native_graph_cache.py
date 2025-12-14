@@ -473,6 +473,12 @@ def main() -> int:
         owner._rwkv7_external_quant_graph_enabled = types.MethodType(
             modeling.RWKV7ForCausalLM._rwkv7_external_quant_graph_enabled, owner
         )
+        owner._rwkv7_uses_quantized_linear_operands = types.MethodType(
+            modeling.RWKV7ForCausalLM._rwkv7_uses_quantized_linear_operands, owner
+        )
+        owner._rwkv7_uses_native_quant_operands = types.MethodType(
+            modeling.RWKV7ForCausalLM._rwkv7_uses_native_quant_operands, owner
+        )
         owner._rwkv7_can_use_native_backend = types.MethodType(
             modeling.RWKV7ForCausalLM._rwkv7_can_use_native_backend, owner
         )

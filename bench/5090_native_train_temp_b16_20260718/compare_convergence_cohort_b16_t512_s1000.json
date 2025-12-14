@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "axis": "train_temp_alignment_convergence_cohort_compare",
+  "status": "pass",
+  "reference_backend": "official_train_temp",
+  "candidate_backend": "hf_native_train_temp_cuda",
+  "reference_seeds": [
+    131,
+    232,
+    333
+  ],
+  "candidate_seeds": [
+    131,
+    232,
+    333
+  ],
+  "seeds_match": true,
+  "provenance_mismatches": [],
+  "optimizer_groups_match": true,
+  "runs_complete": true,
+  "reference_rows": [
+    {
+      "seed": 131,
+      "status": "pass",
+      "steps_requested": 1000,
+      "steps_completed": 1000,
+      "finite": true,
+      "train_loss_auc": 0.033689758052998516,
+      "validation_loss_auc": 0.5334896262426073,
+      "final_validation_loss": 2.621737075969577e-05,
+      "min_validation_loss": 2.621737075969577e-05,
+      "max_grad_norm": 544.0,
+      "runtime_s": 81.91068848600116
+    },
+    {
+      "seed": 232,
+      "status": "pass",
+      "steps_requested": 1000,
+      "steps_completed": 1000,
+      "finite": true,
+      "train_loss_auc": 0.03369310550127557,
+      "validation_loss_auc": 0.5334854891545893,
+      "final_validation_loss": 3.1261508411262184e-05,
+      "min_validation_loss": 3.1261508411262184e-05,
+      "max_grad_norm": 544.0,
+      "runtime_s": 82.43365635499504
+    },
+    {
+      "seed": 333,
+      "status": "pass",
+      "steps_requested": 1000,
+      "steps_completed": 1000,
+      "finite": true,
+      "train_loss_auc": 0.033693307336299765,
+      "validation_loss_auc": 0.5334936812704698,
+      "final_validation_loss": 3.1153893360169604e-05,
+      "min_validation_loss": 3.1153893360169604e-05,
+      "max_grad_norm": 544.0,
+      "runtime_s": 82.31138783400093
+    }
+  ],
+  "candidate_rows": [
+    {
+      "seed": 131,
+      "status": "pass",
+      "steps_requested": 1000,
+      "steps_completed": 1000,
+      "finite": true,
+      "train_loss_auc": 0.0336892693130103,
+      "validation_loss_auc": 0.5334765278837169,
+      "final_validation_loss": 3.0950010113883764e-05,
+      "min_validation_loss": 3.0950010113883764e-05,
+      "max_grad_norm": 544.0,
+      "runtime_s": 91.36506465399725
+    },
+    {
+      "seed": 232,
+      "status": "pass",
+      "steps_requested": 1000,
+      "steps_completed": 1000,
+      "finite": true,
+      "train_loss_auc": 0.03369249969611701,
+      "validation_loss_auc": 0.5335142040047296,
+      "final_validation_loss": 3.117985761491582e-05,
+      "min_validation_loss": 3.117985761491582e-05,
+      "max_grad_norm": 544.0,
+      "runtime_s": 85.63534678200085
+    },
+    {
+      "seed": 333,
+      "status": "pass",
+      "steps_requested": 1000,
+      "steps_completed": 1000,
+      "finite": true,
+      "train_loss_auc": 0.03369264581693642,
+      "validation_loss_auc": 0.5334647868739488,
+      "final_validation_loss": 3.0763862014282495e-05,
+      "min_validation_loss": 3.0763862014282495e-05,
+      "max_grad_norm": 544.0,
+      "runtime_s": 86.65168149799865
+    }
+  ],
+  "reference_medians": {
+    "train_loss_auc": 0.03369310550127557,
+    "validation_loss_auc": 0.5334896262426073,
+    "final_validation_loss": 3.1153893360169604e-05,
+    "min_validation_loss": 3.1153893360169604e-05,
+    "max_grad_norm": 544.0,
+    "runtime_s": 82.31138783400093
+  },
+  "candidate_medians": {
+    "train_loss_auc": 0.03369249969611701,
+    "validation_loss_auc": 0.5334765278837169,
+    "final_validation_loss": 3.0950010113883764e-05,
+    "min_validation_loss": 3.0950010113883764e-05,
+    "max_grad_norm": 544.0,
+    "runtime_s": 86.65168149799865
+  },
+  "median_train_loss_auc_relative_diff": 1.7980092649390558e-05,
+  "median_validation_loss_auc_relative_diff": 2.455222790864542e-05,
+  "median_grad_norm_ratio": 1.0,
+  "reference_success_count": 3,
+  "candidate_success_count": 3,
+  "reference_deep_success_count": 3,
+  "candidate_deep_success_count": 3,
+  "targets": {
+    "min_runs": 3,
+    "success_threshold": 1.0,
+    "deep_success_threshold": 0.1,
+    "max_median_train_auc_relative_diff": 0.1,
+    "max_median_validation_auc_relative_diff": 0.15,
+    "max_median_min_validation_abs_increase": 0.05,
+    "max_median_min_validation_relative_ratio": 1.25,
+    "max_median_grad_norm_ratio": 2.0
+  },
+  "failures": []
+}

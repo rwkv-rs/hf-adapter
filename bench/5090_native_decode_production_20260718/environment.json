@@ -1,0 +1,18 @@
+{
+  "date": "2026-07-18",
+  "hostname": "gt-ubuntu22-04-cmd-v3-2-120gb-25m",
+  "gpu": "NVIDIA GeForce RTX 5090",
+  "compute_capability": [12, 0],
+  "driver": "595.58.03",
+  "nvidia_smi_cuda": "13.2",
+  "cuda_compiler": "/usr/local/cuda-12.8/bin/nvcc",
+  "python": "3.10.12",
+  "torch": "2.11.0+cu128",
+  "torch_cuda": "12.8",
+  "triton": "3.6.0",
+  "transformers": "5.12.1",
+  "checkpoint": "rwkv7-g1h-7.2b-20260710-ctx10240.pth",
+  "checkpoint_bytes": 14400007869,
+  "official_commit": "cc57df475465c6cacd42ecd4f2f05a588ee5473b",
+  "official_source_verification": "bench/5090_native_official_alignment_20260718/official_source_manifest.json"
+}

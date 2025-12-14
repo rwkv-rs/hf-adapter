@@ -15,6 +15,8 @@ historical rows remain in platform documents and `bench/` artifacts.
 | RTX 5090 Qwen matrix | 0.4B/0.8B through 7.2B/9B at B1/B8; raw prefill/decode minima `1.0226x/2.8130x`; per-active-B throughput leads in 144/144 cells | W8/W4 exact-cell total-latency and footprint gates pass in all measured cells | 144/144 full-FLA Qwen contracts and 32/32 greedy reports pass; active-work prefill and dense peak-VRAM are not universal wins | Production-close for measured B1/B8 lanes |
 | RTX 5090 BF16/W4 | g1h 1.5B/2.9B/7.2B/13.3B paired BF16 at B1/B8, prompt128/decode128 | all-phase prefill/decode minima `1.0010x/1.1854x`; footprint `0.5298x–0.6250x`; model-level head/final-layer policy is automatic | prompt/final cosine `>=0.9995`, same-next 8/8; 280/280 group-128 grid contract | Production-close for measured all-phase W4 matrix |
 | RTX 5090 MATH500 / 13.3B | 0.4B MATH500 generation `16,925.6 tok/s`, steady decode `19,339.5 tok/s`; latest g1h 13.3B load/generate passes | 13.3B selected speed-policy MM8/MM4 decode `1.0013x/0.9845x` paired fp16 with footprint `0.9899x/0.9848x` | MATH500 pass@64 `0.38`; 13.3B cosine above `0.99985` and same-next pass | Production-close artifacts |
+| RTX 5090 Native fp16-state | official g1h 7.2B cached decode B1/B8 is `1.0010x/1.0104x` pinned v3a; 2.9B/13.3B B1/B8 prompt128/512/2048 prefill passes 12/12 at `1.0029x–1.5690x` | not a quant lane; no cross-harness memory-parity claim | decode logits/state/xpa/xpf and greedy pass; prefill logits/layers/state/xpa/xpf/first tokens pass | Exact-card default-policy pass |
+| RTX 5090 Native train_temp | L12/D768/FFN3072 BF16 B16/T512 paired real-MiniPile median is `1.00049x` official; continuous 5,000-step is `1.00255x` | not a quant lane; steady allocated/reserved deltas are `-1.375/-188 MiB` | exact 399 gradients/deltas; 3-seed, 5,000-step and 2,500+2,500 resume gates pass | Exact single-card lane pass |
 | Apple M5 | Tiled DPLR and guarded compiled decode close selected same-device Qwen3.5 gates | W4 lowers memory; selected production pair gates pass | target-greedy oracle and state/session checks pass | Production-close for measured MLX pairs |
 
 V100 optimized-Qwen evidence:
@@ -24,6 +26,13 @@ RTX 5090 evidence:
 [`5090_g1h_qwen35_b1_b8_20260715`](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md)
 [`5090_g1h_13p3_20260715`](../bench/5090_g1h_13p3_20260715/README.md), and
 [`5090_bntn_all_models_20260716`](../bench/5090_bntn_all_models_20260716/README.md).
+Native HF decode and UI/official-shell evidence:
+[`5090_native_decode_fused_20260718`](../bench/5090_native_decode_fused_20260718/README.md) and
+[`5090_native_hf_gradio_train_temp_20260718`](../bench/5090_native_hf_gradio_train_temp_20260718/README.md).
+Native B16 train_temp evidence:
+[`5090_native_train_temp_real_minipile_20260718`](../bench/5090_native_train_temp_real_minipile_20260718/README.md).
+Native same-precision inference evidence:
+[`5090_native_official_fp16_production_20260718`](../bench/5090_native_official_fp16_production_20260718/README.md).
 
 ## Interpretation rules
 
@@ -40,8 +49,8 @@ RTX 5090 evidence:
   square projections and the rejected 0.4B full-FFN shape; reproduce an
   all-phase large-payload win for W8 and the remaining declared cards.
 - Extend P2/P3 Albatross matrices to larger models and more hardware.
-- Rerun the final Albatross workload on the same RTX 5090 session; the current
-  MATH500 comparison uses the committed reference.
+- Extend the exact RTX 5090 Native decode close to prefill, more models/cards,
+  memory telemetry and the faster official fp16-state route.
 - Recover the retained 0.4B RTX 4090 historical prompt-512 prefill high-water
   mark; the separate g1h 7.2B/Qwen3.5 bsz8 lane is closed.
 - Add H100 and AMD/ROCm production evidence.
@@ -53,6 +62,8 @@ RTX 5090 evidence:
 - TTFT/TPOT: `bench/bench_ttft_tpot.py`
 - Albatross ingestion/comparison: `bench/bench_albatross.py`
 - Native quant matrix: `bench/run_blackwell_quant_matrix.py`
+- Native cached decode: `bench/bench_native_model_decode.py`
+- Native fused correctness: `bench/bench_native_model_decode_alignment.py`
 - MATH500 final runner: `bench/run_math500_final_acceptance.py`
 - Apple same-device runner: `scripts/run_qwen35_apple_acceptance.sh`
 

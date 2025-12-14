@@ -1,0 +1,13 @@
+/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/lightning_fabric/__init__.py:29: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  __import__("pkg_resources").declare_namespace(__name__)
+RWKV_MY_TESTING x070
+RWKV_KERNEL @rwkv3
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+{"status": "pass", "backend": "official_train_temp", "steps_completed": 1000, "runtime_s": 82.11428184600663, "peak_memory_mb": 3574.57470703125, "failure": null}

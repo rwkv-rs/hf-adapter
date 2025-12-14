@@ -34,29 +34,11 @@ def test_generate_example_cpu_defaults_to_fp32() -> None:
     assert resolve_dtype("bf16", device) == torch.bfloat16
 
 
-def test_backend_auto_falls_back_without_fla() -> None:
-    assert select_native_backend(
-        "auto", device_type="cpu", fla_available=False, native_env_enabled=False
-    )
-    assert select_native_backend(
-        "auto", device_type="cuda", fla_available=False, native_env_enabled=False
-    )
-    assert not select_native_backend(
-        "auto", device_type="cuda", fla_available=True, native_env_enabled=False
-    )
-    assert select_native_backend(
-        "auto", device_type="cuda", fla_available=True, native_env_enabled=True
-    )
-    assert select_native_backend(
-        "native", device_type="cuda", fla_available=True, native_env_enabled=False
-    )
-    assert not select_native_backend(
-        "fla", device_type="cuda", fla_available=True, native_env_enabled=True
-    )
-    with pytest.raises(RuntimeError, match="requires flash-linear-attention"):
-        select_native_backend(
-            "fla", device_type="cuda", fla_available=False, native_env_enabled=False
-        )
+def test_backend_auto_is_native_even_when_fla_is_installed() -> None:
+    assert select_native_backend("auto")
+    assert select_native_backend("native")
+    with pytest.raises(ValueError, match="unsupported user-facing backend"):
+        select_native_backend("fla")
 
 
 def test_environment_doctor_model_directory_contract(tmp_path: Path) -> None:
@@ -114,6 +96,7 @@ def test_quickstart_relative_links_exist() -> None:
         root / "docs" / "TRAINING_WORKFLOWS.md",
         root / "docs" / "QUANTIZATION_USAGE.md",
         root / "docs" / "APPLE_USAGE.md",
+        root / "docs" / "WINDOWS_CPU.md",
     )
     for document in documents:
         text = document.read_text(encoding="utf-8")
@@ -179,6 +162,7 @@ def test_complete_adapter_user_index_stays_discoverable() -> None:
         "TRAIN_TEMP_CUDA.md",
         "QUANTIZATION_USAGE.md",
         "APPLE_USAGE.md",
+        "WINDOWS_CPU.md",
         "ADVANCED_USAGE_ZH.md",
         "AI_ASSISTED_SETUP.md",
     )
@@ -236,6 +220,11 @@ def test_complete_adapter_user_index_stays_discoverable() -> None:
             "mlx_dynamic_serving_bench.py",
             "export_rwkv7_coreml.py",
         ),
+        "WINDOWS_CPU.md": (
+            "examples/cpu_tiny_demo.py",
+            "scripts/run_cpu_demo.ps1",
+            "examples/generate.py",
+        ),
     }
     for document, commands in commands_by_doc.items():
         text = (root / "docs" / document).read_text(encoding="utf-8")
@@ -250,6 +239,7 @@ def test_ai_instructions_have_one_canonical_source() -> None:
     ai_guide = (root / "docs" / "AI_ASSISTED_SETUP.md").read_text(encoding="utf-8")
     for task_id in (
         "first-run",
+        "windows-cpu",
         "inference",
         "cache",
         "speculative",
@@ -273,6 +263,7 @@ def test_ai_instructions_have_one_canonical_source() -> None:
         "APPLE_USAGE.md",
         "ADVANCED_USAGE.md",
         "ADVANCED_USAGE_ZH.md",
+        "WINDOWS_CPU.md",
     )
     for document in topical_docs:
         text = (root / "docs" / document).read_text(encoding="utf-8")
@@ -296,3 +287,31 @@ def test_train_temp_tutorial_has_user_acceptance_contract() -> None:
     ):
         assert required in text
     assert "TASK_ID:" not in text
+
+
+def test_windows_cpu_tutorial_has_user_acceptance_contract() -> None:
+    root = Path(__file__).resolve().parents[1]
+    text = (root / "docs" / "WINDOWS_CPU.md").read_text(encoding="utf-8")
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    readme_zh = (root / "README_ZH.md").read_text(encoding="utf-8")
+
+    for required in (
+        "前置条件和支持环境",
+        "最小安全模型和输入",
+        "可直接复制的命令和 API",
+        "精确且可观察的通过标准",
+        "失败恢复方法和当前限制",
+        "AI_ASSISTED_SETUP.md",
+        "CPU INFERENCE PASS",
+        "CPU TRAINING PASS",
+        "CPU SAVE/RELOAD PASS",
+        "CPU DEMO PASS",
+        "final_loss < initial_loss",
+        "run_cpu_demo.ps1",
+        "examples/cpu_tiny_demo.py",
+    ):
+        assert required in text
+    assert "TASK_ID:" not in text
+    assert "docs/WINDOWS_CPU.md" in readme
+    assert "docs/WINDOWS_CPU.md" in readme_zh
+    assert (root / "scripts" / "run_cpu_demo.ps1").is_file()

@@ -19,10 +19,14 @@ import argparse
 import json
 import os
 import platform
-import resource
 import time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
+
+try:
+    import resource
+except ImportError:  # Windows can still run the dry-run and static contracts.
+    resource = None
 
 BASELINE_AXIS = "qwen35_apple_baseline"
 PLAN_AXIS = "rwkv7_coreml_runtime_plan"
@@ -175,6 +179,8 @@ def package_nbytes(path: Path) -> int | None:
 
 
 def process_peak_memory_bytes() -> int | None:
+    if resource is None:
+        return None
     try:
         value = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
     except Exception:

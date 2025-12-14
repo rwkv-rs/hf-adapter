@@ -1,0 +1,4 @@
+{"warps": 1, "decode_tokps": 817.64, "ms": 9.7842, "all_equal_512": true}
+{"warps": 2, "decode_tokps": 833.87, "ms": 9.5939, "all_equal_512": true}
+{"warps": 4, "decode_tokps": 841.12, "ms": 9.5111, "all_equal_512": true}
+{"warps": 8, "decode_tokps": 843.51, "ms": 9.4841, "all_equal_512": true}

@@ -1,18 +1,17 @@
 # coding=utf-8
-"""Experimental native RWKV-7 PyTorch model (no mandatory FLA runtime).
+"""Canonical FLA-free RWKV-7 model for Hugging Face Transformers.
 
-This is the H1 native-Transformers track: a correctness-first RWKV-7 model
-implemented with plain ``torch.nn`` modules and the math in ``rwkv7_hf.native``.
-It loads the same converted HF checkpoints as the production FLA-backed wrapper,
-so it can serve as the long-term upstream / AMD / CPU fallback base.
-
-Important: this module is intentionally experimental and sequential. It is not a
-replacement for the optimized wrapper path yet. Current scope is batched forward,
-incremental greedy generation, and regression tests against the wrapper.
+Inference dispatches to compiled full-sequence prefill and fixed-batch CUDA
+graphs when the runtime is eligible, with native JIT and eager PyTorch fallbacks.
+Training keeps the ordinary differentiable PyTorch path unless an explicitly
+selected native training backend owns the full forward/backward contract.
 """
 from __future__ import annotations
 
 import os
+import weakref
+from collections import OrderedDict
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -23,6 +22,7 @@ from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutpu
 from transformers.modeling_utils import PreTrainedModel
 
 from .native import _init_state_batched, _step_token_batched, attn_step_batched, ffn_step_batched
+from .kernel_policy import current_kernel_policy
 
 # Some Transformers releases only copy files directly referenced by the
 # remote-code entrypoint. Keep static discovery edges to the dependencies
@@ -31,6 +31,7 @@ from .native import _init_state_batched, _step_token_batched, attn_step_batched,
 if False:  # pragma: no cover
     from .ada_lora import ada_wagv_lora as _native_ada_lora_dependency_sentinel
     from .ada_sparse_ffn import ada_linear as _native_ada_sparse_ffn_dependency_sentinel
+    from .blackwell_norm_mix import blackwell_ffn_add_norm_mix as _native_sm120_norm_mix_dependency_sentinel
     from .dplr_prefill import dplr_chunk_scan as _native_dplr_dependency_sentinel
     from .dplr_prefill_triton import dplr_chunk_scan_triton as _native_dplr_triton_dependency_sentinel
     from .fused_attention_projection import fused_rkv_wag_projection as _native_fused_attn_projection_dependency_sentinel
@@ -45,6 +46,7 @@ if False:  # pragma: no cover
     from .kernel_policy import current_kernel_policy as _native_kernel_policy_dependency_sentinel
     from .native_quant_bnb8 import fused_bnb8_relu_square_quant as _native_bnb8_dependency_sentinel
     from .native_quant_policy import normalize_native_mm_policy as _native_quant_policy_dependency_sentinel
+    from .native_wkv_fp16 import native_fp16_sequence as _native_wkv_fp16_dependency_sentinel  # noqa: F401
     from .self_chunk_A_fwd import chunk_dplr_fwd_intra as _native_self_chunk_a_dependency_sentinel
     from .self_chunk_cumsum import chunk_rwkv6_fwd_cumsum as _native_self_chunk_cumsum_dependency_sentinel
     from .self_chunk_h_fwd import chunk_dplr_fwd_h as _native_self_chunk_h_dependency_sentinel
@@ -60,19 +62,35 @@ _FALSE_VALUES = {"0", "false", "False", "no", "off"}
 
 try:
     from .native_jit import extract as _native_jit_extract
+    from .native_jit import extract_graph as _native_graph_extract
+    from .native_jit import prefill as _native_jit_prefill
     from .native_jit import step_batched as _native_jit_step_batched
 except Exception:  # pragma: no cover - optional native acceleration
     _native_jit_extract = None
+    _native_graph_extract = None
+    _native_jit_prefill = None
     _native_jit_step_batched = None
 
-try:  # pragma: no cover - optional Cache base for HF GenerationMixin/Trainer compat
-    from fla.models.utils import Cache as _FLACache
+try:
+    from .native_graph_runtime import (
+        NativeGraphRunner as _NativeGraphRunner,
+        native_graph_available as _native_graph_available,
+        native_graph_cache_size as _native_graph_cache_size,
+        native_graph_runtime_signature as _native_graph_runtime_signature,
+        native_graph_stats_template as _native_graph_stats_template,
+    )
+except Exception:  # pragma: no cover - optional CUDA graph acceleration
+    _NativeGraphRunner = None
+    _native_graph_available = lambda: False
+    _native_graph_cache_size = lambda: 8
+    _native_graph_runtime_signature = lambda: ()
+    _native_graph_stats_template = lambda: {"requests": 0, "hits": 0, "misses": 0, "evictions": 0}
+
+try:  # pragma: no cover - Transformers version compatibility
+    from transformers.cache_utils import Cache as _HFCache
 except Exception:  # pragma: no cover
-    try:
-        from transformers.cache_utils import Cache as _FLACache
-    except Exception:
-        class _FLACache:  # minimal fallback so native_model imports without fla or transformers
-            pass
+    class _HFCache:
+        pass
 
 
 class _NativeRWKV7LegacyCache(tuple):
@@ -107,14 +125,14 @@ class _NativeRWKV7LegacyCache(tuple):
         return self
 
 
-class NativeRWKV7Cache(_FLACache):
+class NativeRWKV7Cache(_HFCache):
     """HF Cache-contract wrapper for ``NativeRWKV7ForCausalLM`` recurrent state.
 
     Native decode threads ``(state, xpa, xpf, v_first)`` as its recurrent
     cache (state=list per layer, xpa/xpf=list per layer, v_first is cross-layer).
     That raw tuple does not satisfy the HF ``Cache`` contract that
     ``GenerationMixin``/``Trainer`` want (``get_seq_length`` etc.). This wrapper
-    stores the tuple but subclasses the FLA/HF ``Cache`` base so it is accepted,
+    stores the tuple but subclasses the HF ``Cache`` base so it is accepted,
     and stays **iterable** so existing tuple-unpacking in ``forward`` and
     ``_reorder_cache`` keeps working unchanged.
     """
@@ -122,7 +140,7 @@ class NativeRWKV7Cache(_FLACache):
     is_compileable = True
 
     def __init__(self, state=None, xpa=None, xpf=None, v_first=None, seen_tokens: int = 0):
-        # Skip _FLACache.__init__: it allocates CacheLayer wrappers that RWKV
+        # Skip _HFCache.__init__: it allocates CacheLayer wrappers that RWKV
         # recurrent decode does not need (mirrors RWKV7StateCache).
         self._state = state
         self._xpa = xpa
@@ -141,7 +159,39 @@ class NativeRWKV7Cache(_FLACache):
             "reorder_calls": 0,
             "crops": 0,
             "resets": 0,
+            "native_graph_bound_selects": 0,
         }
+        self._rwkv7_cache_version = 0
+        self._rwkv7_native_graph_bound_runner_id: int | None = None
+        self._rwkv7_native_graph_bound_version: int | None = None
+        self._rwkv7_native_graph_bound_runner_ref: weakref.ReferenceType | None = None
+
+    def _invalidate_native_graph_binding(self) -> None:
+        self._rwkv7_cache_version += 1
+        self._rwkv7_native_graph_bound_runner_id = None
+        self._rwkv7_native_graph_bound_version = None
+        self._rwkv7_native_graph_bound_runner_ref = None
+
+    def _bind_native_graph_runner(self, runner: object) -> None:
+        self._rwkv7_native_graph_bound_runner_id = id(runner)
+        self._rwkv7_native_graph_bound_version = int(self._rwkv7_cache_version)
+        try:
+            self._rwkv7_native_graph_bound_runner_ref = weakref.ref(runner)
+        except TypeError:
+            self._rwkv7_native_graph_bound_runner_ref = None
+
+    def _native_graph_bound_to(self, runner: object) -> bool:
+        return (
+            self._rwkv7_native_graph_bound_runner_id == id(runner)
+            and self._rwkv7_native_graph_bound_version == int(self._rwkv7_cache_version)
+        )
+
+    def _native_graph_bound_runner(self) -> object | None:
+        if self._rwkv7_native_graph_bound_version != int(self._rwkv7_cache_version):
+            return None
+        ref = self._rwkv7_native_graph_bound_runner_ref
+        runner = ref() if ref is not None else None
+        return runner if runner is not None and self._rwkv7_native_graph_bound_runner_id == id(runner) else None
 
     def __repr__(self) -> str:
         return (
@@ -163,7 +213,7 @@ class NativeRWKV7Cache(_FLACache):
 
     @property
     def is_initialized(self) -> bool:
-        return self.has_previous_state()
+        return self._is_initialized()
 
     @property
     def is_sliding(self) -> bool:
@@ -260,6 +310,7 @@ class NativeRWKV7Cache(_FLACache):
         return out
 
     def reset(self) -> None:
+        self._invalidate_native_graph_binding()
         self._state = None
         self._xpa = None
         self._xpf = None
@@ -269,6 +320,7 @@ class NativeRWKV7Cache(_FLACache):
 
     def detach(self, *, inplace: bool = True) -> "NativeRWKV7Cache":
         target = self if inplace else self.clone()
+        target._invalidate_native_graph_binding()
 
         def detach_list(values):
             if values is None:
@@ -293,6 +345,7 @@ class NativeRWKV7Cache(_FLACache):
         inplace: bool = True,
     ) -> "NativeRWKV7Cache":
         target = self if inplace else self.clone()
+        target._invalidate_native_graph_binding()
 
         def move_tensor(value: torch.Tensor) -> torch.Tensor:
             kwargs = {"non_blocking": non_blocking, "copy": copy}
@@ -338,6 +391,13 @@ class NativeRWKV7Cache(_FLACache):
             seen_tokens=self._seen_tokens,
         )
         target._rwkv7_cache_metrics = dict(self._rwkv7_cache_metrics)
+        runner = target._native_graph_bound_runner() if inplace else None
+        if runner is not None and target.get_batch_size() == int(indices.numel()):
+            if hasattr(runner, "reorder_batch_inplace") and runner.reorder_batch_inplace(indices):
+                target._rwkv7_cache_metrics["select_batch_calls"] += 1
+                target._rwkv7_cache_metrics["native_graph_bound_selects"] += 1
+                return target
+        target._invalidate_native_graph_binding()
 
         def select_list(values):
             if values is None:
@@ -370,6 +430,8 @@ class NativeRWKV7Cache(_FLACache):
         if repeats <= 0:
             raise ValueError("NativeRWKV7Cache.batch_repeat_interleave requires repeats > 0")
 
+        self._invalidate_native_graph_binding()
+
         def repeat_list(values):
             if values is None:
                 return None
@@ -397,12 +459,15 @@ class NativeRWKV7Cache(_FLACache):
             "run a fresh prefill for that prefix instead."
         )
 
-    def has_previous_state(self, layer_idx: int | None = None) -> bool:
+    def _is_initialized(self, layer_idx: int | None = None) -> bool:
         if self._state is None or self._xpa is None or self._xpf is None or self._v_first is None:
             return False
         if layer_idx is not None and (int(layer_idx) < 0 or int(layer_idx) >= len(self._state)):
             return False
-        return self._seen_tokens > 0
+        return True
+
+    def has_previous_state(self, layer_idx: int | None = None) -> bool:
+        return self._is_initialized(layer_idx) and self._seen_tokens > 0
 
     def update(self, *args, **kwargs):
         raise NotImplementedError(
@@ -562,6 +627,81 @@ def _native_model_jit_enabled() -> bool:
     return os.environ.get("RWKV7_NATIVE_MODEL_JIT", "1") not in _FALSE_VALUES
 
 
+def _native_model_backend_requested() -> str:
+    raw = os.environ.get("RWKV7_NATIVE_MODEL_BACKEND")
+    if raw is None:
+        return "auto" if _native_model_jit_enabled() else "eager"
+    backend = raw.strip().lower()
+    aliases = {
+        "": "auto",
+        "graph": "native_graph",
+        "cuda_graph": "native_graph",
+        "jit": "native_jit",
+        "torch": "eager",
+    }
+    backend = aliases.get(backend, backend)
+    if backend not in {"auto", "eager", "native_jit", "native_graph"}:
+        raise ValueError(
+            "RWKV7_NATIVE_MODEL_BACKEND must be auto, eager, native_jit, or native_graph; "
+            f"got {raw!r}"
+        )
+    return backend
+
+
+def _native_prefill_graph_enabled(
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> bool:
+    raw = os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH")
+    if raw is not None:
+        selected = raw not in _FALSE_VALUES
+    else:
+        policy = current_kernel_policy(torch_module=torch)
+        selected = bool(getattr(policy, "prefill_graph", False))
+        shapes = {
+            tuple(int(value) for value in shape)
+            for shape in getattr(policy, "prefill_graph_model_shapes", ())
+            if len(shape) == 4
+        }
+        if selected and shapes:
+            if None in (batch_size, prompt_tokens, hidden_size, num_layers):
+                selected = False
+            else:
+                selected = (
+                    int(hidden_size),
+                    int(num_layers),
+                    int(batch_size),
+                    int(prompt_tokens),
+                ) in shapes
+    return bool(
+        selected
+        and torch.cuda.is_available()
+        and _native_jit_prefill is not None
+    )
+
+
+def _native_prefill_graph_cache_size() -> int:
+    try:
+        value = int(os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH_CACHE_SIZE", "2"))
+    except ValueError:
+        value = 2
+    return max(1, min(value, 16))
+
+
+def _native_prefill_graph_signature() -> tuple[tuple[str, str], ...]:
+    """Return every explicit prefill setting that changes a captured graph."""
+
+    return tuple(
+        sorted(
+            (name, value)
+            for name, value in os.environ.items()
+            if name.startswith("RWKV7_NATIVE_PREFILL_")
+        )
+    )
+
+
 def _validate_native_attention_mask(
     attention_mask,
     batch_size: int,
@@ -684,10 +824,29 @@ class NativeRWKV7Config(PretrainedConfig):
         self.vocab_size = kwargs.get("vocab_size", 65536)
         self.hidden_size = kwargs.get("hidden_size", 768)
         self.num_hidden_layers = kwargs.get("num_hidden_layers", 12)
-        self.head_dim = kwargs.get("head_dim", 64)
         self.num_heads = kwargs.get("num_heads", None) or kwargs.get("num_attention_heads", None)
+        requested_attention_width = int(
+            kwargs.get("attention_hidden_size", self.hidden_size)
+        )
+        requested_head_dim = kwargs.get("head_dim", None)
+        if self.num_heads is None and requested_head_dim is None:
+            requested_head_dim = (
+                64 if requested_attention_width % 64 == 0 else requested_attention_width
+            )
+        if requested_head_dim is None:
+            if requested_attention_width % int(self.num_heads):
+                raise ValueError("attention_hidden_size must be divisible by num_heads")
+            requested_head_dim = requested_attention_width // int(self.num_heads)
+        self.head_dim = int(requested_head_dim)
         if self.num_heads is None:
-            self.num_heads = self.hidden_size // self.head_dim
+            if requested_attention_width % self.head_dim:
+                raise ValueError("attention_hidden_size must be divisible by head_dim")
+            self.num_heads = requested_attention_width // self.head_dim
+        self.attention_hidden_size = int(
+            kwargs.get("attention_hidden_size", self.num_heads * self.head_dim)
+        )
+        if self.attention_hidden_size != int(self.num_heads) * int(self.head_dim):
+            raise ValueError("attention_hidden_size must equal num_heads * head_dim")
         self.num_attention_heads = self.num_heads
         self.intermediate_size = kwargs.get("intermediate_size", self.hidden_size * 4)
         self.decay_low_rank_dim = kwargs.get("decay_low_rank_dim", 64)
@@ -715,12 +874,20 @@ class NativeRWKV7Config(PretrainedConfig):
 class _LoRA(nn.Module):
     """Matches converted keys: ``*_lora.lora.{0,2}.weight`` / ``lora.2.bias``."""
 
-    def __init__(self, hidden: int, low_rank: int, bias: bool):
+    def __init__(
+        self,
+        input_size: int,
+        low_rank: int,
+        bias: bool,
+        *,
+        output_size: int | None = None,
+    ):
         super().__init__()
+        output_size = input_size if output_size is None else int(output_size)
         self.lora = nn.Sequential(
-            nn.Linear(hidden, low_rank, bias=False),
+            nn.Linear(input_size, low_rank, bias=False),
             nn.Identity(),
-            nn.Linear(low_rank, hidden, bias=bias),
+            nn.Linear(low_rank, output_size, bias=bias),
         )
 
     def forward(self, x):
@@ -736,24 +903,46 @@ class NativeRWKV7Attention(nn.Module):
         self.num_heads = config.num_heads
         self.head_dim = config.head_dim
         self.hidden_size = config.hidden_size
+        self.attention_hidden_size = getattr(
+            config,
+            "attention_hidden_size",
+            config.num_heads * config.head_dim,
+        )
         hidden = config.hidden_size
+        attention_hidden = self.attention_hidden_size
         for p in ("x_r", "x_w", "x_k", "x_v", "x_a", "x_g"):
             setattr(self, p, nn.Parameter(torch.zeros(1, 1, hidden)))
-        self.k_k = nn.Parameter(torch.zeros(hidden))
-        self.k_a = nn.Parameter(torch.zeros(hidden))
+        self.k_k = nn.Parameter(torch.zeros(attention_hidden))
+        self.k_a = nn.Parameter(torch.zeros(attention_hidden))
         self.r_k = nn.Parameter(torch.zeros(self.num_heads, self.head_dim))
-        self.r_proj = nn.Linear(hidden, hidden, bias=False)
-        self.k_proj = nn.Linear(hidden, hidden, bias=False)
-        self.v_proj = nn.Linear(hidden, hidden, bias=False)
-        self.o_proj = nn.Linear(hidden, hidden, bias=False)
-        self.w_lora = _LoRA(hidden, config.decay_low_rank_dim, bias=True)
-        self.a_lora = _LoRA(hidden, config.a_low_rank_dim, bias=True)
-        self.g_lora = _LoRA(hidden, config.gate_low_rank_dim, bias=False)
+        self.r_proj = nn.Linear(hidden, attention_hidden, bias=False)
+        self.k_proj = nn.Linear(hidden, attention_hidden, bias=False)
+        self.v_proj = nn.Linear(hidden, attention_hidden, bias=False)
+        self.o_proj = nn.Linear(attention_hidden, hidden, bias=False)
+        self.w_lora = _LoRA(
+            hidden, config.decay_low_rank_dim, bias=True, output_size=attention_hidden
+        )
+        self.a_lora = _LoRA(
+            hidden, config.a_low_rank_dim, bias=True, output_size=attention_hidden
+        )
+        self.g_lora = _LoRA(
+            hidden, config.gate_low_rank_dim, bias=False, output_size=attention_hidden
+        )
         if layer_idx != 0:
-            self.v_lora = _LoRA(hidden, config.v_low_rank_dim, bias=True)
-        self.g_norm = nn.GroupNorm(self.num_heads, hidden, eps=self.head_dim * 1e-5)
+            self.v_lora = _LoRA(
+                hidden, config.v_low_rank_dim, bias=True, output_size=attention_hidden
+            )
+        self.g_norm = nn.GroupNorm(
+            self.num_heads, attention_hidden, eps=self.head_dim * 1e-5
+        )
 
-    def forward(self, x: torch.Tensor, x_prev: torch.Tensor, v_first: torch.Tensor, state: torch.Tensor):
+    def forward(
+        self,
+        x: torch.Tensor,
+        x_prev: torch.Tensor | None = None,
+        v_first: torch.Tensor | None = None,
+        state: torch.Tensor | None = None,
+    ):
         """Run one native attention step through ``Module.__call__``.
 
         DeepSpeed ZeRO-3 gathers partitioned parameters from module pre-forward
@@ -763,6 +952,11 @@ class NativeRWKV7Attention(nn.Module):
         sharded under ZeRO-3.  Keeping this thin forward wrapper makes the same
         math usable for normal eager execution and ZeRO-3 resume training.
         """
+        train_temp_forward = getattr(self, "_rwkv7_train_temp_forward", None)
+        if callable(train_temp_forward):
+            return train_temp_forward(x, x_prev)
+        if x_prev is None or v_first is None or state is None:
+            raise ValueError("native token attention requires x_prev, v_first, and recurrent state")
         return attn_step_batched(self, self.layer_idx, x, x_prev, v_first, state)
 
 
@@ -775,8 +969,13 @@ class NativeRWKV7FFN(nn.Module):
         self.key = nn.Linear(config.hidden_size, config.intermediate_size, bias=False)
         self.value = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
 
-    def forward(self, x: torch.Tensor, x_prev: torch.Tensor):
+    def forward(self, x: torch.Tensor, x_prev: torch.Tensor | None = None):
         """Run one native FFN step through ``Module.__call__`` for ZeRO-3 hooks."""
+        train_temp_forward = getattr(self, "_rwkv7_train_temp_forward", None)
+        if callable(train_temp_forward):
+            return train_temp_forward(x)
+        if x_prev is None:
+            raise ValueError("native token FFN requires x_prev recurrent state")
         return ffn_step_batched(self, x, x_prev)
 
 
@@ -956,6 +1155,146 @@ class NativeRWKV7Model(PreTrainedModel):
         )
 
 
+class _NativePrefillGraphRunner:
+    """Fixed-shape CUDA graph for the canonical Native HF prefill path."""
+
+    def __init__(
+        self,
+        owner: "NativeRWKV7ForCausalLM",
+        packs,
+        batch_size: int,
+        prompt_tokens: int,
+        logits_to_keep: int | None,
+    ) -> None:
+        if not _native_prefill_graph_enabled(
+            batch_size,
+            prompt_tokens,
+            int(owner.config.hidden_size),
+            int(owner.config.num_hidden_layers),
+        ):
+            raise RuntimeError("native prefill graph is not enabled or available")
+        self.owner = owner
+        self.packs = packs
+        self.batch_size = int(batch_size)
+        self.prompt_tokens = int(prompt_tokens)
+        self.logits_to_keep = None if logits_to_keep is None else int(logits_to_keep)
+        self.runtime_signature = _native_prefill_graph_signature()
+        weight = owner.model.embeddings.weight
+        self.device = weight.device
+        self.dtype = weight.dtype
+        if self.device.type != "cuda":
+            raise RuntimeError("native prefill graph requires CUDA model weights")
+        self.input_ids = torch.zeros(
+            self.batch_size,
+            self.prompt_tokens,
+            device=self.device,
+            dtype=torch.long,
+        )
+        self.logits: torch.Tensor | None = None
+        self.state_outputs: list[torch.Tensor] = []
+        self.xpa_outputs: list[torch.Tensor] = []
+        self.xpf_outputs: list[torch.Tensor] = []
+        attention_hidden = int(
+            getattr(
+                owner.config,
+                "attention_hidden_size",
+                owner.config.num_heads * owner.config.head_dim,
+            )
+        )
+        self.v_first = torch.zeros(
+            self.batch_size,
+            attention_hidden,
+            device=self.device,
+            dtype=self.dtype,
+        )
+        self.graph: torch.cuda.CUDAGraph | None = None
+        self._bound_cache_ref: weakref.ReferenceType[NativeRWKV7Cache] | None = None
+        self._capture()
+
+    def _run_once(self):
+        return _native_jit_prefill(
+            self.owner,
+            self.input_ids,
+            self.packs,
+            logits_to_keep=self.logits_to_keep,
+        )
+
+    def _capture(self) -> None:
+        warm = torch.cuda.Stream(device=self.device)
+        warm.wait_stream(torch.cuda.current_stream(self.device))
+        with torch.cuda.stream(warm), torch.inference_mode():
+            for _ in range(3):
+                self._run_once()
+        torch.cuda.current_stream(self.device).wait_stream(warm)
+        torch.cuda.synchronize(self.device)
+        self.graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self.graph), torch.inference_mode():
+            outputs = self._run_once()
+        self.logits, self.state_outputs, self.xpa_outputs, self.xpf_outputs = outputs
+
+    def matches(
+        self,
+        batch_size: int,
+        prompt_tokens: int,
+        logits_to_keep: int | None,
+    ) -> bool:
+        normalized_keep = None if logits_to_keep is None else int(logits_to_keep)
+        return bool(
+            self.batch_size == int(batch_size)
+            and self.prompt_tokens == int(prompt_tokens)
+            and self.logits_to_keep == normalized_keep
+            and self.runtime_signature == _native_prefill_graph_signature()
+        )
+
+    def _detach_bound_cache(self) -> None:
+        previous = self._bound_cache_ref() if self._bound_cache_ref is not None else None
+        if previous is None:
+            return
+        # The first decode replay replaces/binds the cache to its own stable
+        # buffers. In that common generate flow this prefill graph no longer
+        # owns the cache and can immediately reuse its outputs.
+        if not previous._native_graph_bound_to(self):
+            self._bound_cache_ref = None
+            return
+        previous._state = [value.clone() for value in previous._state]
+        previous._xpa = [value.clone() for value in previous._xpa]
+        previous._xpf = [value.clone() for value in previous._xpf]
+        previous._v_first = previous._v_first.clone()
+        previous._invalidate_native_graph_binding()
+        self._bound_cache_ref = None
+
+    def replay(
+        self,
+        input_ids: torch.Tensor,
+        *,
+        seen_tokens: int,
+    ) -> tuple[torch.Tensor, NativeRWKV7Cache]:
+        if tuple(input_ids.shape) != (self.batch_size, self.prompt_tokens):
+            raise ValueError("native prefill graph input shape changed after capture")
+        if input_ids.device != self.device or input_ids.dtype != torch.long:
+            raise ValueError("native prefill graph input must be CUDA int64 on the model device")
+        if self.graph is None or self.logits is None:
+            raise RuntimeError("native prefill graph was not captured")
+        self._detach_bound_cache()
+        self.input_ids.copy_(input_ids)
+        self.graph.replay()
+        cache = NativeRWKV7Cache(
+            self.state_outputs,
+            self.xpa_outputs,
+            self.xpf_outputs,
+            self.v_first,
+            seen_tokens=int(seen_tokens),
+        )
+        cache._bind_native_graph_runner(self)
+        self._bound_cache_ref = weakref.ref(cache)
+        # Public HF forward owns its returned logits. A later replay may reuse
+        # the graph buffers before the caller has finished consuming them.
+        return self.logits.clone(), cache
+
+    def detach_bound_cache(self) -> None:
+        self._detach_bound_cache()
+
+
 class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     """Experimental batched native PyTorch CausalLM for converted RWKV-7 weights."""
 
@@ -1059,6 +1398,12 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     def _clear_native_jit_pack_cache(self) -> None:
         if hasattr(self, "_rwkv7_native_model_jit_pack_cache"):
             delattr(self, "_rwkv7_native_model_jit_pack_cache")
+        if hasattr(self, "_rwkv7_native_graph_pack_cache"):
+            delattr(self, "_rwkv7_native_graph_pack_cache")
+        if hasattr(self, "_rwkv7_native_adapter_layers_present"):
+            delattr(self, "_rwkv7_native_adapter_layers_present")
+        self.rwkv7_clear_native_graph_cache()
+        self.rwkv7_clear_native_prefill_graph_cache()
 
     def get_input_embeddings(self):
         return self.model.get_input_embeddings()
@@ -1095,6 +1440,454 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         """Return the backend used by the previous native-model decode call."""
         return getattr(self, "_rwkv7_native_model_last_decode_backend", None)
 
+    def rwkv7_native_model_last_prefill_backend(self) -> str | None:
+        """Return the backend used by the previous native-model prefill call."""
+        return getattr(self, "_rwkv7_native_model_last_prefill_backend", None)
+
+    def rwkv7_last_fast_token_backend(self) -> str | None:
+        """Return the backend selected by the previous fast-token call."""
+
+        return self.rwkv7_native_model_last_decode_backend()
+
+    def _native_prefill_can_run(
+        self,
+        input_ids: torch.Tensor | None,
+        *,
+        attention_mask: torch.Tensor | None,
+        output_hidden_states: bool,
+        use_cache: bool,
+        logits_to_keep,
+    ) -> bool:
+        if _native_model_backend_requested() == "eager":
+            return False
+        if self.training or torch.is_grad_enabled() or _native_jit_prefill is None:
+            return False
+        if not use_cache or input_ids is None or input_ids.dim() != 2 or int(input_ids.shape[1]) <= 1:
+            return False
+        if input_ids.device.type != "cuda" or self.model.embeddings.weight.device.type != "cuda":
+            return False
+        if input_ids.device != self.model.embeddings.weight.device:
+            return False
+        if attention_mask is not None or output_hidden_states or self._native_model_has_adapter_layers():
+            return False
+        if isinstance(logits_to_keep, torch.Tensor) and logits_to_keep.dim() > 0:
+            return False
+        return True
+
+    def _native_prefill(
+        self,
+        input_ids: torch.LongTensor,
+        *,
+        logits_to_keep,
+        seen_tokens: int,
+    ):
+        batch_size = int(input_ids.shape[0])
+        prompt_tokens = int(input_ids.shape[1])
+        if _native_prefill_graph_enabled(
+            batch_size,
+            prompt_tokens,
+            int(self.config.hidden_size),
+            int(self.config.num_hidden_layers),
+        ):
+            runner = getattr(self, "_rwkv7_native_prefill_graph_hot_runner", None)
+            if not isinstance(runner, _NativePrefillGraphRunner) or not runner.matches(
+                batch_size,
+                prompt_tokens,
+                logits_to_keep,
+            ):
+                runner = self._native_prefill_graph_runner(
+                    batch_size,
+                    prompt_tokens,
+                    logits_to_keep,
+                )
+            else:
+                stats = getattr(self, "_rwkv7_native_prefill_graph_cache_stats", None)
+                if not isinstance(stats, dict):
+                    stats = _native_graph_stats_template()
+                    self._rwkv7_native_prefill_graph_cache_stats = stats
+                stats["requests"] = int(stats.get("requests", 0)) + 1
+                stats["hits"] = int(stats.get("hits", 0)) + 1
+            logits, cache = runner.replay(input_ids, seen_tokens=int(seen_tokens))
+            self._rwkv7_native_model_last_prefill_backend = "native_prefill_graph"
+            return logits, cache
+        packs = self._native_graph_packs()
+        logits, state, xpa, xpf = _native_jit_prefill(
+            self,
+            input_ids,
+            packs,
+            logits_to_keep=logits_to_keep,
+        )
+        v_first = torch.zeros(
+            int(input_ids.shape[0]),
+            int(
+                getattr(
+                    self.config,
+                    "attention_hidden_size",
+                    self.config.num_heads * self.config.head_dim,
+                )
+            ),
+            device=input_ids.device,
+            dtype=self.model.embeddings.weight.dtype,
+        )
+        cache = NativeRWKV7Cache(state, xpa, xpf, v_first, seen_tokens=int(seen_tokens))
+        self._rwkv7_native_model_last_prefill_backend = "native_prefill"
+        return logits, cache
+
+    def _native_prefill_graph_runner(
+        self,
+        batch_size: int,
+        prompt_tokens: int,
+        logits_to_keep,
+    ) -> _NativePrefillGraphRunner:
+        packs = self._native_graph_packs()
+        weight = self.model.embeddings.weight
+        normalized_keep = None if logits_to_keep is None else int(logits_to_keep)
+        key = (
+            weight.device.type,
+            weight.device.index,
+            weight.dtype,
+            len(packs),
+            int(packs[0][1]),
+            int(packs[0][2]),
+            int(batch_size),
+            int(prompt_tokens),
+            normalized_keep,
+            _native_prefill_graph_signature(),
+            str(getattr(self, "_rwkv7_native_mm_quantization", "none")),
+        )
+        cache = getattr(self, "_rwkv7_native_prefill_graph_runner_cache", None)
+        if not isinstance(cache, OrderedDict):
+            cache = OrderedDict()
+            self._rwkv7_native_prefill_graph_runner_cache = cache
+        stats = getattr(self, "_rwkv7_native_prefill_graph_cache_stats", None)
+        if not isinstance(stats, dict):
+            stats = _native_graph_stats_template()
+            self._rwkv7_native_prefill_graph_cache_stats = stats
+        stats["requests"] = int(stats.get("requests", 0)) + 1
+        runner = cache.get(key)
+        if runner is not None:
+            stats["hits"] = int(stats.get("hits", 0)) + 1
+            cache.move_to_end(key)
+            self._rwkv7_native_prefill_graph_hot_runner = runner
+            return runner
+        stats["misses"] = int(stats.get("misses", 0)) + 1
+        while len(cache) >= _native_prefill_graph_cache_size():
+            _, evicted = cache.popitem(last=False)
+            if getattr(self, "_rwkv7_native_prefill_graph_hot_runner", None) is evicted:
+                self._rwkv7_native_prefill_graph_hot_runner = None
+            evicted.detach_bound_cache()
+            stats["evictions"] = int(stats.get("evictions", 0)) + 1
+        runner = _NativePrefillGraphRunner(
+            self,
+            packs,
+            int(batch_size),
+            int(prompt_tokens),
+            normalized_keep,
+        )
+        cache[key] = runner
+        self._rwkv7_native_prefill_graph_hot_runner = runner
+        return runner
+
+    def _native_graph_can_run(
+        self,
+        token_ids: torch.Tensor | None,
+        cache: NativeRWKV7Cache,
+        *,
+        attention_mask: torch.Tensor | None,
+        output_hidden_states: bool,
+    ) -> bool:
+        requested = _native_model_backend_requested()
+        if requested not in {"auto", "native_graph"}:
+            return False
+        if self.training or torch.is_grad_enabled() or not _native_graph_available():
+            return False
+        if token_ids is None or token_ids.dim() != 2 or int(token_ids.shape[1]) != 1:
+            return False
+        if attention_mask is not None or output_hidden_states or not isinstance(cache, NativeRWKV7Cache):
+            return False
+        if token_ids.device.type != "cuda" or self.model.embeddings.weight.device.type != "cuda":
+            return False
+        if token_ids.device != self.model.embeddings.weight.device:
+            return False
+        if not cache.is_initialized or cache.get_batch_size() != int(token_ids.shape[0]):
+            return False
+        return not self._native_model_has_adapter_layers()
+
+    def _native_graph_packs(self):
+        if _native_graph_extract is None:
+            raise RuntimeError("native_graph operand extraction is unavailable")
+        weight = self.model.embeddings.weight
+        key = (
+            weight.device.type,
+            weight.device.index,
+            weight.dtype,
+            str(getattr(self, "_rwkv7_native_mm_quantization", "none")),
+            int(getattr(self, "_rwkv7_native_mm_replaced_modules", 0)),
+            _native_graph_runtime_signature(),
+        )
+        cache = getattr(self, "_rwkv7_native_graph_pack_cache", None)
+        if cache is None or cache[0] != key:
+            packs, _, _, _ = _native_graph_extract(self)
+            self._rwkv7_native_graph_pack_cache = (key, packs)
+            return packs
+        return cache[1]
+
+    def _native_graph_runner(self, batch_size: int):
+        if _NativeGraphRunner is None:
+            raise RuntimeError("native_graph runtime is unavailable")
+        packs = self._native_graph_packs()
+        weight = self.model.embeddings.weight
+        key = (
+            weight.device.type,
+            weight.device.index,
+            weight.dtype,
+            len(packs),
+            int(packs[0][1]),
+            int(packs[0][2]),
+            _native_graph_runtime_signature(),
+            int(batch_size),
+        )
+        cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
+        if not isinstance(cache, OrderedDict):
+            cache = OrderedDict()
+            self._rwkv7_native_graph_runner_cache = cache
+        stats = getattr(self, "_rwkv7_native_graph_cache_stats", None)
+        if not isinstance(stats, dict):
+            stats = _native_graph_stats_template()
+            self._rwkv7_native_graph_cache_stats = stats
+        stats["requests"] = int(stats.get("requests", 0)) + 1
+        runner = cache.get(key)
+        if runner is not None:
+            stats["hits"] = int(stats.get("hits", 0)) + 1
+            cache.move_to_end(key)
+            return runner
+        stats["misses"] = int(stats.get("misses", 0)) + 1
+        while len(cache) >= _native_graph_cache_size():
+            _, evicted = cache.popitem(last=False)
+            if hasattr(evicted, "detach_bound_cache"):
+                evicted.detach_bound_cache()
+            stats["evictions"] = int(stats.get("evictions", 0)) + 1
+        runner = _NativeGraphRunner(self, packs, int(batch_size))
+        cache[key] = runner
+        return runner
+
+    def rwkv7_native_graph_cache_batch_sizes(self) -> list[int]:
+        cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
+        if not isinstance(cache, dict):
+            return []
+        return sorted({int(key[-1]) for key in cache if isinstance(key, tuple) and key})
+
+    def rwkv7_native_graph_cache_stats(self) -> dict[str, Any]:
+        stats = dict(getattr(self, "_rwkv7_native_graph_cache_stats", _native_graph_stats_template()))
+        requests = int(stats.get("requests", 0))
+        hits = int(stats.get("hits", 0))
+        stats.update(
+            {
+                "size": len(self.rwkv7_native_graph_cache_batch_sizes()),
+                "limit": _native_graph_cache_size(),
+                "batch_sizes": self.rwkv7_native_graph_cache_batch_sizes(),
+                "hit_rate": float(hits) / float(requests) if requests else None,
+            }
+        )
+        return stats
+
+    def rwkv7_native_prefill_graph_cache_shapes(self) -> list[tuple[int, int]]:
+        cache = getattr(self, "_rwkv7_native_prefill_graph_runner_cache", None)
+        if not isinstance(cache, dict):
+            return []
+        return sorted(
+            {
+                (int(runner.batch_size), int(runner.prompt_tokens))
+                for runner in cache.values()
+            }
+        )
+
+    def rwkv7_native_prefill_graph_cache_stats(self) -> dict[str, Any]:
+        stats = dict(
+            getattr(
+                self,
+                "_rwkv7_native_prefill_graph_cache_stats",
+                _native_graph_stats_template(),
+            )
+        )
+        requests = int(stats.get("requests", 0))
+        hits = int(stats.get("hits", 0))
+        shapes = self.rwkv7_native_prefill_graph_cache_shapes()
+        stats.update(
+            {
+                "size": len(shapes),
+                "limit": _native_prefill_graph_cache_size(),
+                "shapes": shapes,
+                "hit_rate": float(hits) / float(requests) if requests else None,
+            }
+        )
+        return stats
+
+    def rwkv7_native_graph_runner_copy_stats(self) -> dict[str, Any]:
+        cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
+        runners = list(cache.items()) if isinstance(cache, dict) else []
+        totals = {
+            "copy_from_cache_calls": 0,
+            "copy_from_cache_fast_skips": 0,
+            "bind_cache_calls": 0,
+            "bind_cache_fast_skips": 0,
+        }
+        rows = []
+        for key, runner in runners:
+            row = {"batch_size": int(key[-1]) if isinstance(key, tuple) and key else None}
+            runner_stats = runner.copy_stats() if hasattr(runner, "copy_stats") else {}
+            for name in totals:
+                value = int(runner_stats.get(name, 0))
+                row[name] = value
+                totals[name] += value
+            rows.append(row)
+        copy_calls = totals["copy_from_cache_calls"]
+        bind_calls = totals["bind_cache_calls"]
+        totals["copy_from_cache_fast_skip_rate"] = (
+            float(totals["copy_from_cache_fast_skips"]) / float(copy_calls) if copy_calls else None
+        )
+        totals["bind_cache_fast_skip_rate"] = (
+            float(totals["bind_cache_fast_skips"]) / float(bind_calls) if bind_calls else None
+        )
+        return {"totals": totals, "runners": rows}
+
+    def rwkv7_clear_native_graph_cache(self) -> int:
+        cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
+        if not isinstance(cache, dict):
+            self._rwkv7_native_graph_runner_cache = OrderedDict()
+            return 0
+        runners = list(cache.values())
+        for runner in runners:
+            if hasattr(runner, "detach_bound_cache"):
+                runner.detach_bound_cache()
+        cache.clear()
+        if not isinstance(cache, OrderedDict):
+            self._rwkv7_native_graph_runner_cache = OrderedDict()
+        return len(runners)
+
+    def rwkv7_clear_native_prefill_graph_cache(self) -> int:
+        cache = getattr(self, "_rwkv7_native_prefill_graph_runner_cache", None)
+        if not isinstance(cache, dict):
+            self._rwkv7_native_prefill_graph_runner_cache = OrderedDict()
+            self._rwkv7_native_prefill_graph_hot_runner = None
+            return 0
+        runners = list(cache.values())
+        for runner in runners:
+            runner.detach_bound_cache()
+        cache.clear()
+        if not isinstance(cache, OrderedDict):
+            self._rwkv7_native_prefill_graph_runner_cache = OrderedDict()
+        self._rwkv7_native_prefill_graph_hot_runner = None
+        return len(runners)
+
+    def rwkv7_reset_native_graph_cache_stats(self) -> dict[str, Any]:
+        self._rwkv7_native_graph_cache_stats = _native_graph_stats_template()
+        return self.rwkv7_native_graph_cache_stats()
+
+    def rwkv7_reset_native_prefill_graph_cache_stats(self) -> dict[str, Any]:
+        self._rwkv7_native_prefill_graph_cache_stats = _native_graph_stats_template()
+        return self.rwkv7_native_prefill_graph_cache_stats()
+
+    @torch.inference_mode()
+    def rwkv7_warmup_fast_token(
+        self,
+        batch_sizes: int | list[int] | tuple[int, ...] = (1,),
+        backend: str | None = None,
+    ) -> dict[int, str]:
+        sizes = [int(batch_sizes)] if isinstance(batch_sizes, int) else [int(value) for value in batch_sizes]
+        if not sizes or any(value <= 0 for value in sizes):
+            raise ValueError("rwkv7_warmup_fast_token requires positive batch sizes")
+        requested = _native_model_backend_requested() if backend is None else str(backend).strip().lower()
+        warmed = {}
+        for batch_size in sizes:
+            chosen = requested
+            if chosen in {"auto", "native_graph"} and _native_graph_available():
+                self._native_graph_runner(batch_size)
+                chosen = "native_graph"
+            elif chosen in {"auto", "native_jit"} and self._native_jit_packs() is not None:
+                chosen = "native_jit"
+            else:
+                chosen = "eager"
+            warmed[batch_size] = chosen
+        return warmed
+
+    @torch.inference_mode()
+    def rwkv7_forward_token(
+        self,
+        input_ids: torch.LongTensor,
+        past_key_values: NativeRWKV7Cache | tuple | list | None = None,
+        return_dict: bool | None = True,
+        *,
+        copy_logits: bool = True,
+    ):
+        """Decode one token per sequence through the canonical native backend.
+
+        ``copy_logits=False`` exposes the CUDA-graph output buffer directly for
+        serving loops that consume logits before the next replay. The default
+        returns an owning tensor and preserves ordinary HF output semantics.
+        """
+
+        if self.training:
+            raise RuntimeError("rwkv7_forward_token is inference-only; call model.eval() first")
+        if input_ids.dim() == 1:
+            token_ids = input_ids.reshape(-1, 1)
+        elif input_ids.dim() == 2 and int(input_ids.shape[1]) == 1:
+            token_ids = input_ids
+        else:
+            raise ValueError("rwkv7_forward_token expects input_ids shaped [batch] or [batch, 1]")
+        if int(token_ids.shape[0]) == 0:
+            raise ValueError("rwkv7_forward_token requires a non-empty batch")
+
+        cache = past_key_values
+        if cache is not None and not isinstance(cache, NativeRWKV7Cache):
+            cache = NativeRWKV7Cache.from_legacy_cache(cache)
+        if (
+            isinstance(cache, NativeRWKV7Cache)
+            and self._native_graph_can_run(
+                token_ids,
+                cache,
+                attention_mask=None,
+                output_hidden_states=False,
+            )
+        ):
+            runner = self._native_graph_runner(int(token_ids.shape[0]))
+            logits = runner.replay(token_ids, cache, copy_logits=bool(copy_logits))
+            cache.seen_tokens = _cache_seen(cache) + 1
+            self._rwkv7_native_model_last_decode_backend = "native_graph"
+            if not return_dict:
+                return logits, cache
+            return CausalLMOutputWithPast(logits=logits, past_key_values=cache)
+
+        result = self(
+            token_ids,
+            past_key_values=cache,
+            use_cache=True,
+            logits_to_keep=1,
+            return_dict=return_dict,
+        )
+        return result
+
+    @torch.inference_mode()
+    def rwkv7_forward_one(
+        self,
+        input_ids: torch.LongTensor,
+        past_key_values: NativeRWKV7Cache | tuple | list | None = None,
+        return_dict: bool | None = True,
+        *,
+        copy_logits: bool = True,
+    ):
+        """Backward-compatible batch-one alias for ``rwkv7_forward_token``."""
+
+        batch_size = 1 if input_ids.dim() == 1 and input_ids.numel() == 1 else int(input_ids.shape[0])
+        if batch_size != 1:
+            raise ValueError("rwkv7_forward_one expects batch size 1")
+        return self.rwkv7_forward_token(
+            input_ids,
+            past_key_values=past_key_values,
+            return_dict=return_dict,
+            copy_logits=copy_logits,
+        )
+
     def _native_model_quantized(self) -> bool:
         """True if layer projections were replaced by quantized modules.
 
@@ -1114,6 +1907,15 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     def _native_model_has_adapter_layers(self) -> bool:
         """True when PEFT-style adapter wrappers sit inside native layers."""
 
+        adapter_metadata_present = bool(
+            getattr(self, "peft_config", None)
+            or getattr(self, "_hf_peft_config_loaded", False)
+        )
+        cached = getattr(self, "_rwkv7_native_adapter_layers_present", None)
+        if cached is True:
+            return True
+        if cached is False and not adapter_metadata_present:
+            return False
         try:
             modules = self.model.layers.modules()
         except Exception:
@@ -1125,9 +1927,12 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
                 cls_module.startswith("peft.")
                 and (hasattr(module, "base_layer") or hasattr(module, "lora_A") or hasattr(module, "lora_B"))
             ):
+                self._rwkv7_native_adapter_layers_present = True
                 return True
             if hasattr(module, "base_layer") and (hasattr(module, "lora_A") or hasattr(module, "lora_B")):
+                self._rwkv7_native_adapter_layers_present = True
                 return True
+        self._rwkv7_native_adapter_layers_present = False
         return False
 
     def _native_model_requires_eager_decode(self) -> bool:
@@ -1136,6 +1941,8 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         return self._native_model_quantized() or self._native_model_has_adapter_layers()
 
     def _native_jit_packs(self):
+        if _native_model_backend_requested() == "eager":
+            return None
         if not _native_model_jit_enabled() or _native_jit_extract is None or _native_jit_step_batched is None:
             return None
         if self._native_model_requires_eager_decode():
@@ -1166,10 +1973,8 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     ):
         """Sequentially advance over token ids or embeddings.
 
-        The experimental native model is still correctness-first and sequential
-        over time, but the per-token math is vectorized over batch rows. This
-        keeps the native/upstream fallback path aligned with wrapper bsz tests
-        without claiming it replaces the optimized wrapper backend.
+        The eager fallback is sequential over time but vectorized over batch.
+        Optimized inference prefill and decode are selected before this helper.
 
         When ``collect_all`` is enabled, returns per-token logits shaped
         ``[batch, seq, vocab]``. This keeps the FLA-free native path compatible
@@ -1278,6 +2083,27 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         return_legacy_cache: bool | None = None,
         **kwargs,
     ):
+        train_temp_forward = getattr(self, "_rwkv7_train_temp_forward", None)
+        if callable(train_temp_forward):
+            return train_temp_forward(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                inputs_embeds=inputs_embeds,
+                past_key_values=past_key_values,
+                use_cache=use_cache,
+                output_hidden_states=output_hidden_states,
+                output_attentions=output_attentions,
+                return_dict=return_dict,
+                labels=labels,
+                logits_to_keep=logits_to_keep,
+                num_logits_to_keep=num_logits_to_keep,
+                position_ids=position_ids,
+                cache_position=cache_position,
+                token_type_ids=token_type_ids,
+                head_mask=head_mask,
+                return_legacy_cache=return_legacy_cache,
+                **kwargs,
+            )
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("NativeRWKV7ForCausalLM accepts either input_ids or inputs_embeds, not both")
         if input_ids is None and inputs_embeds is None:
@@ -1357,6 +2183,43 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             )
 
         logits_to_keep = _resolve_native_logits_to_keep(logits_to_keep, num_logits_to_keep)
+        if native_cache is None and self._native_prefill_can_run(
+            input_ids,
+            attention_mask=native_attention_mask,
+            output_hidden_states=output_hidden_states,
+            use_cache=use_cache,
+            logits_to_keep=logits_to_keep,
+        ):
+            logits, new_cache = self._native_prefill(
+                input_ids,
+                logits_to_keep=logits_to_keep,
+                seen_tokens=seq_len,
+            )
+            logits = _slice_native_logits(logits, logits_to_keep)
+            new_cache = _maybe_legacy_native_cache(new_cache, return_legacy_cache)
+            if not return_dict:
+                return logits, new_cache
+            return CausalLMOutputWithPast(logits=logits, past_key_values=new_cache)
+        if (
+            native_cache is not None
+            and use_cache
+            and isinstance(past_key_values, NativeRWKV7Cache)
+            and self._native_graph_can_run(
+                input_ids,
+                past_key_values,
+                attention_mask=native_attention_mask,
+                output_hidden_states=output_hidden_states,
+            )
+        ):
+            runner = self._native_graph_runner(batch_size)
+            logits = runner.replay(input_ids, past_key_values)
+            past_key_values.seen_tokens = _cache_seen(past_key_values) + 1
+            self._rwkv7_native_model_last_decode_backend = "native_graph"
+            logits = _slice_native_logits(logits, logits_to_keep)
+            new_cache = _maybe_legacy_native_cache(past_key_values, return_legacy_cache)
+            if not return_dict:
+                return logits, new_cache
+            return CausalLMOutputWithPast(logits=logits, past_key_values=new_cache)
         if native_cache is None:
             state, xpa, xpf, v_first = _init_state_batched(self, batch_size, device, dtype)
             toks = input_ids
@@ -1391,7 +2254,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
 
     @staticmethod
     def _reorder_cache(past_key_values, beam_idx: torch.LongTensor):
-        """Minimal beam/select helper for experimental batched native caches."""
+        """Beam/select helper for batched native recurrent caches."""
         native_cache = _native_cache_tuple_or_none(past_key_values)
         if native_cache is None:
             return None

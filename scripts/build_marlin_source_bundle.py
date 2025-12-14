@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the deterministic remote-code Marlin source bundle."""
+"""Build the remote-code Marlin source bundle from canonical source bytes."""
 from __future__ import annotations
 
 import base64
@@ -113,7 +113,7 @@ __all__ = ["materialize_marlin_sources"]
 
 
 def main() -> int:
-    OUTPUT.write_text(render(), encoding="utf-8")
+    OUTPUT.write_text(render(), encoding="utf-8", newline="\n")
     print(OUTPUT)
     return 0
 

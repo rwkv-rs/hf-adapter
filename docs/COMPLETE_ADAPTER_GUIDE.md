@@ -9,13 +9,15 @@
 | 用户目标 | 教程 | 完成标志 | 使用建议 |
 |---|---|---|---|
 | 安装、检查环境、下载、转换和生成 | [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) | `RESULT: READY`、模型目录 `PASS`、输出新文本 | 新环境建议从 0.1B/0.4B 开始；CUDA、MPS 和 CPU 都有对应路线 |
+| Windows/CPU 无下载推理、微型训练和保存重载 | [`WINDOWS_CPU.md`](WINDOWS_CPU.md) | 四个 `CPU ... PASS` 标记；loss 下降、梯度/参数变化非零、重载 logits 差为 0 | 随机两层 tiny 模型用于接口和更新演示；真实自然语言生成从 0.1B 已转换模型开始 |
 | 单个/批量/大模型转换、保存重载、离线运行 | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) | 转换退出码 0、manifest 成功、重载测试打印 `PASS` | 转换大模型时可使用 `--low-memory` 降低主机内存占用 |
 | 使用 `AutoModelForCausalLM`、loss、mask 和无 FLA 原生后端 | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) | API 命令退出码 0；原生 smoke 打印对应通过标记 | 原生后端适合便携运行；CUDA 优化后端适合已验证的 NVIDIA 环境 |
 | 复用循环状态、批量缓存、动态批处理和分块 prefill | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) | 每个缓存/prefill 测试打印 `PASS` | 可直接用于构建 HF serving 的状态与批处理层 |
 | 投机解码或对齐较小 draft | [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) | 与 target greedy 完全一致并打印 `PASS`；配对 benchmark 给出接受率和速度 | 先验证 token 对齐，再根据目标模型选择 draft 大小 |
 | 多卡 `device_map` 推理 | [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) | 分卡输出与单卡参考一致并打印 `PASS` | 适合按层分配模型；可用 `max_memory` 控制每张卡的预算 |
 | PEFT LoRA、adapter 保存/加载/合并、Trainer 和断点恢复 | [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) | loss/梯度有限且打印对应 `PASS` | 先运行小模型 smoke，再替换为自己的数据和训练配置 |
-| 对齐官方 RWKV-LM train_temp 数学、FusedAdam 单步和收敛效果 | [`TRAIN_TEMP_CUDA.md`](TRAIN_TEMP_CUDA.md) | 单步逐张量 `pass`，至少三组 seed 的 cohort `pass` | RTX 5090 12x768 BF16 已有精确证据；其他卡和模型按教程重新验收 |
+| 对齐官方 RWKV-LM train_temp 数学、FusedAdam、收敛和断点恢复 | [`TRAIN_TEMP_CUDA.md`](TRAIN_TEMP_CUDA.md) | 单步逐张量、至少三组 seed cohort、恢复哈希和稳态显存均 `pass` | RTX 5090 12x768 BF16 B1/B16 已有精确证据；其他卡和模型按教程重新验收 |
+| 在官方 RWKV-Gradio-3 页面运行 Native HF | [`GRADIO_NATIVE_HF.md`](GRADIO_NATIVE_HF.md) | B1/B8 生成、切换后复用、速度标签和截图通过 | 5090 7.2B 页面已通过；当前 Native 仍慢于官方 v3a，实验 sparse 保持关闭 |
 | TRL SFT、DPO 和 GRPO | [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md) | `NATIVE SFT/DPO/GRPO PASS` | 示例提供兼容性起点，正式训练时按数据规模调整 batch 和 checkpoint |
 | DeepSpeed ZeRO-2/ZeRO-3 | [`ADVANCED_USAGE_ZH.md`](ADVANCED_USAGE_ZH.md) | 所请求的结果行为 `PASS` | 推荐 Linux/WSL2 和至少两张 CUDA 卡，并为断点恢复保留输出目录 |
 | bitsandbytes W8/W4、原生 MM8/MM4 或 RTX 5090 BN/TN Marlin W4 | [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md) | 生成、有限 logits、对齐和 footprint 检查通过；5090 精确路线另验配对 prefill/decode | 可先选择省显存路线；追求速度时使用硬件矩阵中对应显卡的已验证配置 |

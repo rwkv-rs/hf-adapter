@@ -33,6 +33,23 @@ Tests / scripts / bench / docs
   CI commands, and validation evidence live here.
 ```
 
+## Runtime selection
+
+Converted checkpoints use `NativeRWKV7Config`, `NativeRWKV7Model`, and
+`NativeRWKV7ForCausalLM` in their Auto* metadata. Base installation and
+`.[cuda]` therefore have no mandatory FLA dependency; CUDA adds Triton/native
+fusion capability without changing the public model class.
+
+The historical FLA wrapper is a separately selected reference implementation.
+Install `.[fla-reference]` only for a benchmark that explicitly verifies the
+reference class and effective operators. Qwen full-FLA comparisons are also
+reference workloads and do not change the RWKV user runtime.
+
+`RWKV7_NATIVE_MODEL` is retained only for old converted directories and
+historical scripts. New conversions and refreshed model directories must work
+without setting it. Use `scripts/sync_hf_adapter_code.py MODEL` to migrate old
+Auto* metadata before reporting a native-default result.
+
 ## Allowed hardware-specific locations
 
 Exact card or chip names are allowed in:
@@ -105,4 +122,3 @@ New optimized defaults require evidence, not assumptions:
 
 The evidence may name cards.  The implementation should remain backend /
 capability based.
-

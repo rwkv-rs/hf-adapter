@@ -17,12 +17,17 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
 os.environ.setdefault("RWKV_V7_ON", "1")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) in sys.path:
+    sys.path.remove(str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT))
 
 import torch
 import torch.nn.functional as F
@@ -118,6 +123,9 @@ def prepare_model_dir(
         if item.name == "__pycache__" or item.suffix == ".py":
             continue
         link = target / item.name
+        if item.name == "config.json":
+            shutil.copy2(item, link)
+            continue
         try:
             link.symlink_to(item, target_is_directory=item.is_dir())
         except OSError:
@@ -127,6 +135,9 @@ def prepare_model_dir(
                 os.link(item, link)
     for py_file in repo_code.glob("*.py"):
         shutil.copy2(py_file, target / py_file.name)
+    from scripts.sync_hf_adapter_code import sync_one
+
+    sync_one(target)
     return str(target), temporary
 
 

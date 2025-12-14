@@ -1,0 +1,36 @@
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+[transformers] You are using a model of type `rwkv7_hf_adapter` to instantiate a model of type `rwkv7_native`. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+Loading weights:   0%|          | 0/1059 [00:00<?, ?it/s]Loading weights:  12%|█▏        | 128/1059 [00:00<00:00, 1232.83it/s]Loading weights:  24%|██▍       | 252/1059 [00:00<00:00, 1218.43it/s]Loading weights:  35%|███▌      | 374/1059 [00:00<00:00, 1181.19it/s]Loading weights:  47%|████▋     | 493/1059 [00:00<00:00, 1154.38it/s]Loading weights:  59%|█████▉    | 623/1059 [00:00<00:00, 1187.99it/s]Loading weights:  70%|███████   | 742/1059 [00:00<00:00, 1188.25it/s]Loading weights:  81%|████████▏ | 861/1059 [00:00<00:00, 1164.95it/s]Loading weights:  93%|█████████▎| 980/1059 [00:00<00:00, 1166.92it/s]Loading weights: 100%|██████████| 1059/1059 [00:00<00:00, 1181.93it/s]
+{
+  "engine": "native_hf_sequence",
+  "batch_size": 8,
+  "prompt_tokens": 128,
+  "timing": {
+    "times_ms": [
+      33.357601165771484,
+      33.346656799316406,
+      33.36518478393555,
+      33.34812927246094,
+      33.40086364746094,
+      33.38230514526367,
+      33.46537780761719,
+      33.41312026977539,
+      33.42153549194336,
+      33.4189453125,
+      33.426910400390625,
+      33.44047927856445,
+      33.44124984741211,
+      33.44086456298828,
+      33.441280364990234,
+      33.463104248046875,
+      33.42915344238281,
+      33.436737060546875,
+      33.44966506958008,
+      33.425697326660156,
+      33.44025421142578
+    ],
+    "median_ms": 33.426910400390625,
+    "aggregate_tokps": 30634.000801582715
+  },
+  "peak_vram_mb": 7829.22509765625
+}

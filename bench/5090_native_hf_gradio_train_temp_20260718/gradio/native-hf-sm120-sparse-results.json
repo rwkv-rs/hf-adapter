@@ -1,0 +1,104 @@
+[
+  {
+    "backend": "native_hf",
+    "profile": "sm120_sparse",
+    "dtype": "float16",
+    "phase": "warmup",
+    "model": "rwkv7-g1h-7.2b-hf",
+    "batch_size": 1,
+    "requested_tokens": 16,
+    "elapsed_s": 2.350686632998986,
+    "client_upper_bound_aggregate_tok_s": 6.806521879774054,
+    "gpu_process_memory_mib": "31407, 21790 MiB",
+    "result": {
+      "label": "Output  86.9 token/s @ bsz 1 = 16 tokens, 21 chars",
+      "value": "以下是一个简单的 Python 程序，用于",
+      "__type__": "update"
+    }
+  },
+  {
+    "backend": "native_hf",
+    "profile": "sm120_sparse",
+    "dtype": "float16",
+    "phase": "capture",
+    "model": "rwkv7-g1h-7.2b-hf",
+    "batch_size": 1,
+    "requested_tokens": 96,
+    "elapsed_s": 1.801782271002594,
+    "client_upper_bound_aggregate_tok_s": 53.28057753980519,
+    "gpu_process_memory_mib": "31407, 21798 MiB",
+    "result": {
+      "label": "Output  95.2 token/s @ bsz 1 = 96 tokens, 162 chars",
+      "value": "以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获",
+      "__type__": "update"
+    }
+  },
+  {
+    "backend": "native_hf",
+    "profile": "sm120_sparse",
+    "dtype": "float16",
+    "phase": "steady",
+    "model": "rwkv7-g1h-7.2b-hf",
+    "batch_size": 1,
+    "requested_tokens": 96,
+    "elapsed_s": 1.3157747119985288,
+    "client_upper_bound_aggregate_tok_s": 72.96081853874946,
+    "gpu_process_memory_mib": "31407, 21798 MiB",
+    "result": {
+      "label": "Output  95.2 token/s @ bsz 1 = 96 tokens, 162 chars",
+      "value": "以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获",
+      "__type__": "update"
+    }
+  },
+  {
+    "backend": "native_hf",
+    "profile": "sm120_sparse",
+    "dtype": "float16",
+    "phase": "warmup",
+    "model": "rwkv7-g1h-7.2b-hf",
+    "batch_size": 8,
+    "requested_tokens": 16,
+    "elapsed_s": 0.7139241429977119,
+    "client_upper_bound_aggregate_tok_s": 179.29075694588218,
+    "gpu_process_memory_mib": "31407, 26586 MiB",
+    "result": {
+      "label": "Output  647.8 token/s @ bsz 8 = 128 tokens, 210 chars",
+      "value": "以下是一个简单的 Python 程序，用于\n====\n以下是一个简单的 Python 程序，用于\n====\n以下是一个简单的 Python 程序，用于\n====\n以下是一个简单的 Python 程序，用于\n====\n以下是一个简单的 Python 程序，用于\n====\n以下是一个简单的 Python 程序，用于\n====\n以下是一个简单的 Python 程序，用于\n====\n以下是一个简单的 Python 程序，用于",
+      "__type__": "update"
+    }
+  },
+  {
+    "backend": "native_hf",
+    "profile": "sm120_sparse",
+    "dtype": "float16",
+    "phase": "capture",
+    "model": "rwkv7-g1h-7.2b-hf",
+    "batch_size": 8,
+    "requested_tokens": 96,
+    "elapsed_s": 1.4700018020012067,
+    "client_upper_bound_aggregate_tok_s": 522.4483391479337,
+    "gpu_process_memory_mib": "31407, 26626 MiB",
+    "result": {
+      "label": "Output  650.3 token/s @ bsz 8 = 768 tokens, 1338 chars",
+      "value": "以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获\n====\n以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获\n====\n以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获\n====\n以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获\n====\n以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获\n====\n以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获\n====\n以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获\n====\n以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获",
+      "__type__": "update"
+    }
+  },
+  {
+    "backend": "native_hf",
+    "profile": "sm120_sparse",
+    "dtype": "float16",
+    "phase": "steady",
+    "model": "rwkv7-g1h-7.2b-hf",
+    "batch_size": 8,
+    "requested_tokens": 96,
+    "elapsed_s": 1.4660853429959388,
+    "client_upper_bound_aggregate_tok_s": 523.8439928951171,
+    "gpu_process_memory_mib": "31407, 26626 MiB",
+    "result": {
+      "label": "Output  651.7 token/s @ bsz 8 = 768 tokens, 1338 chars",
+      "value": "以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获\n====\n以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获\n====\n以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获\n====\n以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获\n====\n以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获\n====\n以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获\n====\n以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获\n====\n以下是一个简单的 Python 程序，用于计算两个数的和。您可以根据需要修改或扩展它。\n```python\n# 计算两个数的和\ndef add_numbers(a, b):\n    \"\"\"返回两个数的和\"\"\"\n    return a + b\n# 主程序\nif __name__ == \"__main__\":\n    # 获",
+      "__type__": "update"
+    }
+  }
+]

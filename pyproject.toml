@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rwkv7-hf-adapter"
-version = "0.5.0"
-description = "First-stage Hugging Face adapter and converter for official RWKV-7 checkpoints."
+version = "0.6.0"
+description = "Native Hugging Face adapter and converter for official RWKV-7 checkpoints."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -17,8 +17,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+cuda = ["triton>=3.3.0; platform_system == 'Linux'", "ninja; platform_system == 'Linux'"]
 fla = ["flash-linear-attention"]
-cuda = ["flash-linear-attention", "triton>=3.3.0; platform_system == 'Linux'"]
+fla-reference = ["flash-linear-attention"]
 test = [
   "pytest>=8.0",
   "numpy",

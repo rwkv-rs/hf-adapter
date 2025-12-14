@@ -5,11 +5,50 @@ requirements and repository evidence. `PASS` means the named gate has a
 reproducible artifact; `PARTIAL` means the interface works but the complete
 hardware/performance matrix is not closed.
 
-Last updated: **2026-07-17**.
+Last updated: **2026-07-18**.
 
 This page reports status. For ordinary-user commands and PASS gates for every
 implemented capability below, start with
 [`COMPLETE_ADAPTER_GUIDE.md`](COMPLETE_ADAPTER_GUIDE.md).
+
+## Native-default and official train_temp promotion gate
+
+The next backend promotion replaces RWKV's implicit FLA runtime with the
+canonical native model. It is not complete when only `RWKV7_NATIVE_MODEL` is
+defaulted: the native model must own the current graph/fused performance path,
+load with FLA imports blocked, and preserve the existing HF ecosystem matrix.
+FLA may remain an explicitly selected RWKV reference backend. Qwen's optimized
+full-FLA benchmark route remains unchanged.
+
+Training acceptance is pinned to official RWKV-LM commit `e6f74b6` and both
+entry scripts: `RWKV-v7/train_temp/demo-training-prepare.sh` and
+`RWKV-v7/train_temp/demo-training-run.sh`. The scripts define two different
+phases and must not be conflated. `prepare.sh` creates the initialization on
+CPU with `micro_bsz=1`, `adam_eps=1e-8`, and zero weight decay. `run.sh` is the
+single-GPU training recipe: `x070`, L12/D768, effective FFN3072, head64,
+vocab65536, `ctx_len=512`, Minipile binidx, `magic_prime=2926181`,
+`micro_bsz=16`, BF16, `lr_init=6e-4`, `lr_final=6e-5`, betas 0.9/0.99,
+`adam_eps=1e-18`, `weight_decay=0.001`, warmup 10, `grad_cp=1`, implicit
+`grad_clip=1.0`, kernel `@rwkv3`, and `deepspeed_stage_2` on one GPU. The
+machine-readable contract is
+[`../configs/train_temp_official_x070_12x768_b16.json`](../configs/train_temp_official_x070_12x768_b16.json).
+
+Promotion requires the native path to use the same initialized checkpoint,
+serialized sample order, optimizer grouping, FusedAdam update, schedule and
+bounded training steps. Exact backward/step comparison and a predeclared
+multi-seed cohort are mandatory. `train.py` reports its unused generic 3.5x
+default as `dim_ffn=2688`, while the pinned fast `RWKV_CMix_x070`
+implementation and generated checkpoint use 4x FFN3072. The earlier B1/T512
+FFN3072 cohort matches the official kernel shape; the separate Native B16/T512
+artifact now closes the shell-shape tensor, multi-seed, resume and bounded
+memory-stability gates.
+
+The first RTX 5070 inference migration checkpoint passes on 0.4B/fp16:
+Native Graph B1 reaches `223.47 tok/s` versus the retained wrapper-hosted
+`226.3 tok/s` row (`0.9875x`), with logits cosine `0.99999988` and 32/32
+greedy alignment. B1/B2/B4/B8 prompt-32 probes pass prefill and decode greedy
+alignment. This is inference evidence only; the shell-recipe training gate
+above remains mandatory.
 
 ## Executive result
 
@@ -17,7 +56,7 @@ implemented capability below, start with
 |---|---|---|---|
 | RWKV-LM / Albatross correctness and performance | **PARTIAL / production-close on measured V100, 4090 and 5090 lanes** | V100 Albatross/native-quant matrix plus 1.5B/full-FLA-Qwen B1/B8 active-work close; 4090 Albatross lane plus 0.4B–7.2B bsz8 Qwen3.5 matrices; 5090 full-FLA Qwen B1/B8, MATH500, quant pressure, and latest g1h 13.3B artifacts | Same-card final Albatross reruns on every target, broader optimized-Qwen shapes/cards, larger-model P2/P3 matrix, historical 4090 prefill high-water mark |
 | Transformers API | **PASS** | Auto classes, save/reload, generation, labels/loss, attention mask and recurrent cache tests | Upstreaming and long-term Transformers-version maintenance |
-| PEFT and RL ecosystem | **PASS for smoke/compatibility; train_temp exact lane accepted** | LoRA lifecycle, Trainer, SFT, DPO and GRPO smoke; RTX 5090 BF16 12x768 train_temp backward/step exact plus 3-seed x 1,000-step cohort | Larger models, real datasets, additional cards and distributed train_temp convergence |
+| PEFT and RL ecosystem | **PASS for smoke/compatibility; B1 and Native B16 train_temp exact lanes accepted** | LoRA lifecycle, Trainer, SFT, DPO and GRPO smoke; RTX 5090 BF16 12x768 B1 plus Native B16/T512 exact tensors, paired real-MiniPile 3-seed x 1,000-step cohort, continuous 5,000-step run, 2,500+2,500 resume and steady-memory evidence | Larger models, multi-day runs, additional cards and distributed convergence |
 | Dynamic batching, chunked prefill and state cache helpers | **PASS in HF adapter scope** | State select/reorder/drop/compact, chunked-prefill parity, serving-like cache telemetry | Native vLLM/SGLang integration remains a separate repository/project |
 | Common professional and consumer cards | **PARTIAL** | V100, A100, A800, A6000, 4090, 5090, GTX 1080 Ti and Apple M5 evidence | H100, AMD/ROCm, Turing and broader Apple/50-series coverage |
 | W8/W4 inference and lower memory | **PASS functionally; PARTIAL for universal speed** | bnb compatibility plus native MM8/MM4; RTX 5090 g1h 1.5B/2.9B/7.2B/13.3B BN/TN W4 B1/B8 all-phase closes at `0.5298x–0.6250x` footprint; Apple MLX W4 | Extend the 5090 FFN result to square/W8 paths and make full-memory quantized projections fp16-or-faster across cards/shapes |
@@ -84,8 +123,11 @@ Validated interfaces include:
 - PEFT LoRA forward/backward, adapter save/load/merge;
 - HF Trainer and checkpoint resume;
 - TRL SFTTrainer, DPOTrainer and GRPOTrainer;
-- an opt-in RTX 5090 BF16 `train_temp_cuda` lane with exact official backward
-  and FusedAdam-step parity plus a passing three-seed convergence cohort;
+- opt-in RTX 5090 BF16 `train_temp_cuda` lanes with exact official backward and
+  FusedAdam-step parity; the Native B16/T512 lane also passes paired real-
+  MiniPile three-seed convergence, continuous 5,000-step, 2,500+2,500 resume
+  and steady-memory gates at `1.00049x` paired-seed median and `1.00255x`
+  continuous-run throughput;
 - native/no-FLA fallback for compatibility-focused environments.
 
 Training details: [`TRAINING.md`](TRAINING.md). Exact official-kernel usage and

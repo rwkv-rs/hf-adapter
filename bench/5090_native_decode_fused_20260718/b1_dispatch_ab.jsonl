@@ -1,0 +1,6 @@
+{"case": "base", "decode_tokps": 135.95, "ms": 7.3558, "peak_vram_mb": 20995.3, "token48": 4811, "token128": 23848}
+{"case": "sparse_up", "decode_tokps": 136.01, "ms": 7.3525, "peak_vram_mb": 20995.3, "token48": 4811, "token128": 23848}
+{"case": "manual_rkv", "decode_tokps": 137.09, "ms": 7.2943, "peak_vram_mb": 17923.3, "token48": 4811, "token128": 23848}
+{"case": "ada_wagv", "decode_tokps": 143.29, "ms": 6.9789, "peak_vram_mb": 20995.3, "token48": 4811, "token128": 23848}
+{"case": "triton_wag", "decode_tokps": 81.11, "ms": 12.3295, "peak_vram_mb": 20995.3, "token48": 4811, "token128": 23848}
+{"case": "fused_projection", "decode_tokps": 58.34, "ms": 17.1414, "peak_vram_mb": 20995.3, "token48": 4811, "token128": 4419}

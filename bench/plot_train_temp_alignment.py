@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_EVIDENCE = Path(__file__).resolve().parent / "5090_train_temp_alignment_20260717"
+DEFAULT_EVIDENCE = (
+    Path(__file__).resolve().parent / "5090_train_temp_alignment_20260717"
+)
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -18,8 +20,34 @@ def load_json(path: Path) -> dict[str, Any]:
         return json.load(handle)
 
 
-def write_cohort_csv(evidence: Path, output: Path) -> None:
-    report = load_json(evidence / "compare_convergence_cohort.json")
+def backend_label(backend: str) -> str:
+    labels = {
+        "official_train_temp": "Official RWKV-LM",
+        "hf_train_temp_cuda": "HF train_temp CUDA",
+        "native_train_temp_cuda": "Native HF train_temp CUDA",
+        "hf_native_train_temp_cuda": "Native HF train_temp CUDA",
+    }
+    return labels.get(backend, backend.replace("_", " "))
+
+
+def run_subtitle(run: dict[str, Any], *, steps: int) -> str:
+    gpu = run.get("gpu_name", "GPU")
+    precision = str(run.get("precision", "unknown")).upper()
+    batch_size = run.get("batch_size", "?")
+    seq_len = run.get("seq_len", "?")
+    return (
+        f"{gpu} | {precision} | batch {batch_size} | sequence {seq_len} | "
+        f"{steps:,} steps per seed"
+    )
+
+
+def write_cohort_csv(
+    evidence: Path,
+    output: Path,
+    *,
+    cohort_report: str = "compare_convergence_cohort.json",
+) -> None:
+    report = load_json(evidence / cohort_report)
     if report.get("status") != "pass":
         raise ValueError("refusing to promote a failed convergence cohort")
     fieldnames = [
@@ -37,18 +65,26 @@ def write_cohort_csv(evidence: Path, output: Path) -> None:
     ]
     rows: list[dict[str, Any]] = []
     for backend, source in (
-        ("official_rwkv_lm_train_temp", report["reference_rows"]),
-        ("hf_train_temp_cuda", report["candidate_rows"]),
+        (report["reference_backend"], report["reference_rows"]),
+        (report["candidate_backend"], report["candidate_rows"]),
     ):
         for row in source:
-            rows.append({"backend": backend, **{key: row[key] for key in fieldnames[1:]}})
+            rows.append(
+                {"backend": backend, **{key: row[key] for key in fieldnames[1:]}}
+            )
     with output.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 
 
-def write_single_step_csv(evidence: Path, output: Path) -> None:
+def write_single_step_csv(
+    evidence: Path,
+    output: Path,
+    *,
+    backward_report: str = "compare_backward.json",
+    step_report: str = "compare_step.json",
+) -> None:
     fieldnames = [
         "phase",
         "status",
@@ -64,8 +100,11 @@ def write_single_step_csv(evidence: Path, output: Path) -> None:
         "post_step_loss_relative_diff",
     ]
     rows = []
-    for phase in ("backward", "step"):
-        report = load_json(evidence / f"compare_{phase}.json")
+    for phase, filename in (
+        ("backward", backward_report),
+        ("step", step_report),
+    ):
+        report = load_json(evidence / filename)
         if report.get("status") != "pass":
             raise ValueError(f"refusing to promote failed {phase} evidence")
         rows.append({key: report.get(key) for key in fieldnames})
@@ -75,13 +114,20 @@ def write_single_step_csv(evidence: Path, output: Path) -> None:
         writer.writerows(rows)
 
 
-def render_best_observed_plot(evidence: Path, output: Path) -> None:
+def render_best_observed_plot(
+    evidence: Path,
+    output: Path,
+    *,
+    reference_template: str = "official_convergence_seed{seed}.json",
+    candidate_template: str = "hf_convergence_seed{seed}.json",
+    cohort_report: str = "compare_convergence_cohort.json",
+) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    report = load_json(evidence / "compare_convergence_cohort.json")
+    report = load_json(evidence / cohort_report)
     if report.get("status") != "pass":
         raise ValueError("refusing to plot a failed convergence cohort")
 
@@ -91,16 +137,26 @@ def render_best_observed_plot(evidence: Path, output: Path) -> None:
         raise ValueError("the presentation plot requires matching paired seeds")
     seed = min(
         reference,
-        key=lambda item: candidate[item]["final_validation_loss"]
-        / max(reference[item]["final_validation_loss"], 1e-12),
+        key=lambda item: (
+            candidate[item]["final_validation_loss"]
+            / max(reference[item]["final_validation_loss"], 1e-12)
+        ),
     )
     runs = {
-        "official": load_json(evidence / f"official_convergence_seed{seed}.json"),
-        "hf": load_json(evidence / f"hf_convergence_seed{seed}.json"),
+        "official": load_json(evidence / reference_template.format(seed=seed)),
+        "hf": load_json(evidence / candidate_template.format(seed=seed)),
     }
     styles = {
-        "official": {"color": "#252525", "linestyle": "-", "label": "Official RWKV-LM"},
-        "hf": {"color": "#1677b8", "linestyle": "--", "label": "HF train_temp CUDA"},
+        "official": {
+            "color": "#252525",
+            "linestyle": "-",
+            "label": backend_label(report["reference_backend"]),
+        },
+        "hf": {
+            "color": "#1677b8",
+            "linestyle": "--",
+            "label": backend_label(report["candidate_backend"]),
+        },
     }
 
     figure, axes = plt.subplots(1, 2, figsize=(15, 6.2))
@@ -135,7 +191,14 @@ def render_best_observed_plot(evidence: Path, output: Path) -> None:
         axis.set_facecolor("#fafafa")
 
     handles, labels = axes[0].get_legend_handles_labels()
-    figure.legend(handles, labels, loc="upper center", ncol=2, frameon=False, bbox_to_anchor=(0.5, 0.89))
+    figure.legend(
+        handles,
+        labels,
+        loc="upper center",
+        ncol=2,
+        frameon=False,
+        bbox_to_anchor=(0.5, 0.89),
+    )
     figure.suptitle(
         f"Best observed paired run: Seed {seed}",
         fontsize=19,
@@ -145,7 +208,7 @@ def render_best_observed_plot(evidence: Path, output: Path) -> None:
     figure.text(
         0.5,
         0.925,
-        "RTX 5090 | BF16 | 12x768 | batch 1 | sequence 512 | 1,000 steps",
+        run_subtitle(runs["official"], steps=int(runs["official"]["steps_completed"])),
         ha="center",
         fontsize=11,
         color="#444444",
@@ -163,13 +226,20 @@ def render_best_observed_plot(evidence: Path, output: Path) -> None:
     plt.close(figure)
 
 
-def render_convergence_plot(evidence: Path, output: Path) -> None:
+def render_convergence_plot(
+    evidence: Path,
+    output: Path,
+    *,
+    reference_template: str = "official_convergence_seed{seed}.json",
+    candidate_template: str = "hf_convergence_seed{seed}.json",
+    cohort_report: str = "compare_convergence_cohort.json",
+) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    report = load_json(evidence / "compare_convergence_cohort.json")
+    report = load_json(evidence / cohort_report)
     if report.get("status") != "pass":
         raise ValueError("refusing to plot a failed convergence cohort")
     seeds = report["reference_seeds"]
@@ -178,14 +248,25 @@ def render_convergence_plot(evidence: Path, output: Path) -> None:
 
     figure, axes = plt.subplots(2, 3, figsize=(18, 10), sharex="col")
     styles = {
-        "official": {"color": "#252525", "linestyle": "-", "label": "Official RWKV-LM"},
-        "hf": {"color": "#1677b8", "linestyle": "--", "label": "HF train_temp CUDA"},
+        "official": {
+            "color": "#252525",
+            "linestyle": "-",
+            "label": backend_label(report["reference_backend"]),
+        },
+        "hf": {
+            "color": "#1677b8",
+            "linestyle": "--",
+            "label": backend_label(report["candidate_backend"]),
+        },
     }
+    first_reference: dict[str, Any] | None = None
     for column, seed in enumerate(seeds):
         runs = {
-            "official": load_json(evidence / f"official_convergence_seed{seed}.json"),
-            "hf": load_json(evidence / f"hf_convergence_seed{seed}.json"),
+            "official": load_json(evidence / reference_template.format(seed=seed)),
+            "hf": load_json(evidence / candidate_template.format(seed=seed)),
         }
+        if first_reference is None:
+            first_reference = runs["official"]
         for backend, run in runs.items():
             style = styles[backend]
             train = run["train_curve"]
@@ -217,9 +298,17 @@ def render_convergence_plot(evidence: Path, output: Path) -> None:
     axes[0, 0].set_ylabel("Training loss (log scale)")
     axes[1, 0].set_ylabel("Validation loss (log scale)")
     handles, labels = axes[0, 0].get_legend_handles_labels()
-    figure.legend(handles, labels, loc="upper center", ncol=2, frameon=False, bbox_to_anchor=(0.5, 0.93))
+    figure.legend(
+        handles,
+        labels,
+        loc="upper center",
+        ncol=2,
+        frameon=False,
+        bbox_to_anchor=(0.5, 0.93),
+    )
     figure.suptitle(
-        "Official RWKV-LM train_temp vs Hugging Face train_temp CUDA",
+        f"{backend_label(report['reference_backend'])} vs "
+        f"{backend_label(report['candidate_backend'])}",
         fontsize=19,
         fontweight="bold",
         y=0.985,
@@ -227,7 +316,10 @@ def render_convergence_plot(evidence: Path, output: Path) -> None:
     figure.text(
         0.5,
         0.945,
-        "RTX 5090 | BF16 | 12x768 | batch 1 | sequence 512 | 1,000 steps per seed",
+        run_subtitle(
+            first_reference or {},
+            steps=int((first_reference or {}).get("steps_completed", 0)),
+        ),
         ha="center",
         fontsize=11,
         color="#444444",
@@ -235,7 +327,7 @@ def render_convergence_plot(evidence: Path, output: Path) -> None:
     figure.text(
         0.5,
         0.015,
-        "Single-step tensors match exactly; three-seed convergence cohort: PASS",
+        "Strict single-step tensors are reported separately; three-seed cohort: PASS",
         ha="center",
         fontsize=10.5,
         color="#333333",
@@ -245,19 +337,186 @@ def render_convergence_plot(evidence: Path, output: Path) -> None:
     plt.close(figure)
 
 
+def render_long_run_plot(
+    evidence: Path,
+    output: Path,
+    *,
+    reference_json: str,
+    candidate_json: str,
+    resumed_json: str | None = None,
+) -> None:
+    """Render uninterrupted official/Native curves and optional resumed Native."""
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    runs = [
+        (
+            backend_label("official_train_temp"),
+            load_json(evidence / reference_json),
+            {"color": "#252525", "linestyle": "-", "linewidth": 1.7},
+        ),
+        (
+            backend_label("hf_native_train_temp_cuda"),
+            load_json(evidence / candidate_json),
+            {"color": "#1677b8", "linestyle": "--", "linewidth": 1.7},
+        ),
+    ]
+    if resumed_json:
+        runs.append(
+            (
+                "Native HF resumed",
+                load_json(evidence / resumed_json),
+                {"color": "#c45a16", "linestyle": ":", "linewidth": 1.6},
+            )
+        )
+    if any(run.get("status") != "pass" for _, run, _ in runs):
+        raise ValueError("refusing to plot a failed long convergence run")
+
+    figure, axes = plt.subplots(1, 2, figsize=(15, 6.2))
+    for label, run, style in runs:
+        train = run["train_curve"]
+        validation = run["validation_curve"]
+        axes[0].plot(
+            [row["step"] for row in train],
+            [row["loss"] for row in train],
+            label=label,
+            alpha=0.82,
+            **style,
+        )
+        axes[1].plot(
+            [row["step"] for row in validation],
+            [row["loss"] for row in validation],
+            label=label,
+            marker="o",
+            markersize=2.8,
+            alpha=0.94,
+            **style,
+        )
+
+    axes[0].set_title("Training loss", fontsize=13, fontweight="bold")
+    axes[1].set_title("Held-out validation loss", fontsize=13, fontweight="bold")
+    for axis in axes:
+        axis.set_yscale("log")
+        axis.set_xlabel("Optimizer step")
+        axis.set_ylabel("Loss (log scale)")
+        axis.grid(True, which="both", color="#d9d9d9", linewidth=0.65)
+        axis.set_facecolor("#fafafa")
+    handles, labels = axes[0].get_legend_handles_labels()
+    figure.legend(
+        handles,
+        labels,
+        loc="upper center",
+        ncol=len(runs),
+        frameon=False,
+        bbox_to_anchor=(0.5, 0.90),
+    )
+    reference = runs[0][1]
+    figure.suptitle(
+        "Official RWKV-LM vs Native HF: long real-data run",
+        fontsize=19,
+        fontweight="bold",
+        y=0.985,
+    )
+    figure.text(
+        0.5,
+        0.93,
+        run_subtitle(reference, steps=int(reference["steps_completed"])),
+        ha="center",
+        fontsize=11,
+        color="#444444",
+    )
+    figure.text(
+        0.5,
+        0.015,
+        "The resumed line reloads model, optimizer and RNG state at step 2,500",
+        ha="center",
+        fontsize=10.5,
+        color="#333333",
+    )
+    figure.tight_layout(rect=(0.03, 0.055, 0.99, 0.87), w_pad=2.2)
+    figure.savefig(output, dpi=160, bbox_inches="tight", facecolor="white")
+    plt.close(figure)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence-dir", type=Path, default=DEFAULT_EVIDENCE)
+    parser.add_argument(
+        "--output-stem",
+        help="Use generic <stem>_{best_observed,convergence,cohort,single_step} names.",
+    )
+    parser.add_argument(
+        "--reference-template",
+        default="official_convergence_seed{seed}.json",
+        help="Reference convergence filename template relative to the evidence directory.",
+    )
+    parser.add_argument(
+        "--candidate-template",
+        default="hf_convergence_seed{seed}.json",
+        help="Candidate convergence filename template relative to the evidence directory.",
+    )
+    parser.add_argument("--cohort-report", default="compare_convergence_cohort.json")
+    parser.add_argument("--backward-report", default="compare_backward.json")
+    parser.add_argument("--step-report", default="compare_step.json")
+    parser.add_argument("--long-reference")
+    parser.add_argument("--long-candidate")
+    parser.add_argument("--long-resumed")
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
     evidence = args.evidence_dir.resolve()
-    render_best_observed_plot(evidence, evidence / "official_vs_hf_best_seed131.png")
-    render_convergence_plot(evidence, evidence / "official_vs_hf_convergence.png")
-    write_cohort_csv(evidence, evidence / "official_vs_hf_cohort.csv")
-    write_single_step_csv(evidence, evidence / "official_vs_hf_single_step.csv")
+    if args.output_stem:
+        outputs = {
+            "best": evidence / f"{args.output_stem}_best_observed.png",
+            "convergence": evidence / f"{args.output_stem}_convergence.png",
+            "cohort": evidence / f"{args.output_stem}_cohort.csv",
+            "single_step": evidence / f"{args.output_stem}_single_step.csv",
+            "long": evidence / f"{args.output_stem}_long_run.png",
+        }
+    else:
+        outputs = {
+            "best": evidence / "official_vs_hf_best_seed131.png",
+            "convergence": evidence / "official_vs_hf_convergence.png",
+            "cohort": evidence / "official_vs_hf_cohort.csv",
+            "single_step": evidence / "official_vs_hf_single_step.csv",
+            "long": evidence / "official_vs_hf_long_run.png",
+        }
+    render_best_observed_plot(
+        evidence,
+        outputs["best"],
+        reference_template=args.reference_template,
+        candidate_template=args.candidate_template,
+        cohort_report=args.cohort_report,
+    )
+    render_convergence_plot(
+        evidence,
+        outputs["convergence"],
+        reference_template=args.reference_template,
+        candidate_template=args.candidate_template,
+        cohort_report=args.cohort_report,
+    )
+    write_cohort_csv(evidence, outputs["cohort"], cohort_report=args.cohort_report)
+    write_single_step_csv(
+        evidence,
+        outputs["single_step"],
+        backward_report=args.backward_report,
+        step_report=args.step_report,
+    )
+    if bool(args.long_reference) != bool(args.long_candidate):
+        raise ValueError("--long-reference and --long-candidate must be provided together")
+    if args.long_reference and args.long_candidate:
+        render_long_run_plot(
+            evidence,
+            outputs["long"],
+            reference_json=args.long_reference,
+            candidate_json=args.long_candidate,
+            resumed_json=args.long_resumed,
+        )
     print(f"wrote train_temp comparison attachments to {evidence}")
     return 0
 

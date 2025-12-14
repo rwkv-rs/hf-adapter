@@ -1,0 +1,200 @@
+{
+  "axis": "official_native_sequence_prefill_alignment",
+  "status": "pass",
+  "quality_pass": true,
+  "performance_gate_pass": true,
+  "batch_size": 1,
+  "prompt_tokens": 2048,
+  "precision": "fp16_state_fp16_io",
+  "official_commit": "cc57df475465c6cacd42ecd4f2f05a588ee5473b",
+  "thresholds": {
+    "logits": {
+      "min_cosine": 0.9999,
+      "max_abs": 0.125
+    },
+    "first_decode_logits": {
+      "min_cosine": 0.9999,
+      "max_abs": 0.125
+    },
+    "state": {
+      "min_cosine": 0.9999,
+      "max_abs": 4.0,
+      "max_mean_abs": 0.001,
+      "outlier_abs": 1.0,
+      "max_outlier_fraction": 1e-05
+    },
+    "xpa": {
+      "min_cosine": 0.9999,
+      "max_abs": 0.125
+    },
+    "xpf": {
+      "min_cosine": 0.9999,
+      "max_abs": 0.125
+    },
+    "layer_outputs": {
+      "min_cosine": 0.9999,
+      "max_abs": 0.25
+    }
+  },
+  "metrics": {
+    "logits": {
+      "shape": [
+        1,
+        65536
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 0.09375,
+      "mean_abs": 0.023572847247123718,
+      "cosine": 0.9999997710149513,
+      "threshold_pass": true
+    },
+    "first_decode_logits": {
+      "shape": [
+        1,
+        65536
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 0.09375,
+      "mean_abs": 0.016922845505177975,
+      "cosine": 0.9999998925685323,
+      "threshold_pass": true
+    },
+    "layer_outputs": {
+      "shape": [
+        32,
+        1,
+        4096
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 0.0703125,
+      "mean_abs": 0.0005810297711832391,
+      "cosine": 0.9999914073330951,
+      "threshold_pass": true
+    },
+    "state": {
+      "shape": [
+        32,
+        1,
+        64,
+        64,
+        64
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 2.5859375,
+      "mean_abs": 0.0002942823132983108,
+      "cosine": 0.9999910179059768,
+      "outlier_abs": 1.0,
+      "outlier_count": 2,
+      "outlier_fraction": 2.384185791015625e-07,
+      "threshold_pass": true
+    },
+    "xpa": {
+      "shape": [
+        32,
+        1,
+        4096
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 0.03125,
+      "mean_abs": 0.0019816548415292345,
+      "cosine": 0.999989385126572,
+      "threshold_pass": true
+    },
+    "xpf": {
+      "shape": [
+        32,
+        1,
+        4096
+      ],
+      "dtype_native": "torch.float16",
+      "dtype_official": "torch.float16",
+      "finite": true,
+      "max_abs": 0.0625,
+      "mean_abs": 0.0031290430733861285,
+      "cosine": 0.9999856078286843,
+      "threshold_pass": true
+    }
+  },
+  "first_token_exact": true,
+  "first_decode_token_exact": true,
+  "native": {
+    "timing": {
+      "times_ms": [
+        172.2758026123047,
+        172.21910095214844,
+        172.1873016357422,
+        172.168701171875,
+        172.23635864257812,
+        172.16323852539062,
+        172.19264221191406,
+        172.20034790039062,
+        172.21881103515625,
+        172.19302368164062,
+        172.17564392089844,
+        172.217529296875,
+        172.23158264160156,
+        172.21670532226562,
+        172.20623779296875,
+        172.19961547851562,
+        172.18301391601562,
+        172.20831298828125,
+        172.20538330078125,
+        172.23394775390625,
+        172.24435424804688
+      ],
+      "median_ms": 172.20623779296875,
+      "aggregate_tokps": 11892.716699740946
+    },
+    "peak_vram_mb": 14218.32177734375,
+    "execution": "eager",
+    "backend": "native_prefill_graph",
+    "first_decode_backend": "native_graph",
+    "prefill_state_dtype": "torch.float16",
+    "first_decode_state_dtype": "torch.float16",
+    "stacked_rkv_effective": false,
+    "wavg_lora_effective": false,
+    "sequence_ffn_effective": false,
+    "fp16_accum_ffn_key_effective": false
+  },
+  "official": {
+    "timing": {
+      "times_ms": [
+        183.43994140625,
+        183.49273681640625,
+        183.52447509765625,
+        183.55795288085938,
+        183.51104736328125,
+        183.51248168945312,
+        183.56329345703125,
+        183.54368591308594,
+        183.57594299316406,
+        183.61654663085938,
+        183.72972106933594,
+        183.6623077392578,
+        183.66700744628906,
+        183.6393280029297,
+        183.7010498046875,
+        183.63388061523438,
+        183.66656494140625,
+        183.65084838867188,
+        183.70326232910156,
+        183.6927032470703,
+        183.71151733398438
+      ],
+      "median_ms": 183.63388061523438,
+      "aggregate_tokps": 11152.626046666994
+    },
+    "peak_vram_mb": 14577.2900390625
+  },
+  "native_over_official_tokps": 1.066360214175309
+}
