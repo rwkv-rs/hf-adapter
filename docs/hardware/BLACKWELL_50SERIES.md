@@ -7,7 +7,6 @@
 | Native vs full-FLA Qwen3.5 | 8/8 B1/B8 model pairs and 144/144 cells; dense prefill/decode minima `1.0226x/2.8130x` |
 | Tensor Core W4 | g1h 1.5B/2.9B/7.2B/13.3B B1/B8: 8/8 all-phase cells, footprint `0.5298x–0.6250x` |
 | Native train_temp | exact 399/399 gradients and updates, three paired seeds, 5,000 steps and 2,500+2,500 recovery |
-| RWKV-Gradio-3 | real-browser B1/B8 screenshots and byte-identical official/Native output |
 | MATH500 | pass@64 `0.38`; committed Albatross summary/decode ratios `4.336x/4.871x` |
 
 ### 2026-07-18 - RTX 5090 Native fp16-state inference close

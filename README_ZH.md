@@ -123,9 +123,6 @@ python examples/generate.py --model D:\models\rwkv7-model-hf --prompt "User: 你
 - **训练：**Native B16/T512 BF16 train_temp 通过 399/399 梯度和参数更新对齐、
   3 个配对 real-MiniPile seed、连续 5,000 steps 和 2,500+2,500 断点恢复；
   配对中位速度为官方 `1.00049x`，5,000-step 速度为官方 `1.00255x`。
-- **官方网页：**RWKV-Gradio-3 已接入 Native HF fast-token 后端。保存的浏览器
-  A/B 输出文本完全一致，B1/B8 页面速度为 Native `138.5/831.8 tok/s`、
-  官方 `137.7/837.7 tok/s`。
 - **MATH500：**完整 `500 x 64` 运行达到 pass@64 `0.38`，对仓库 Albatross
   reference 的 summary/decode 速度为 `4.336x/4.871x`。
 
@@ -133,8 +130,7 @@ python examples/generate.py --model D:\models\rwkv7-model-hf --prompt "User: 你
 [`Native/v3a`](bench/5090_native_official_fp16_production_20260718/README.md)、
 [`Qwen3.5`](bench/5090_g1h_qwen35_b1_b8_20260715/README.md)、
 [`W4`](bench/5090_bntn_all_models_20260716/README.md)、
-[`训练`](bench/5090_native_train_temp_real_minipile_20260718/README.md)和
-[`浏览器 A/B`](bench/5090_gradio_native_hf_frontend_ab_20260719/README.md)。
+以及 [`训练`](bench/5090_native_train_temp_real_minipile_20260718/README.md)。
 
 ## 使用标准 Transformers API
 

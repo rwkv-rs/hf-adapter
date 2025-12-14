@@ -1,4 +1,4 @@
-# RTX 5090 official Gradio vs Native HF browser A/B
+# RTX 5090 official Gradio vs Native HF raw-text browser smoke
 
 This artifact records a real-browser comparison of the current
 `BlinkDL/RWKV-Gradio-3` page at commit
@@ -64,6 +64,7 @@ not try to download an unrelated `.pth`. That startup-only fallback was added
 after the browser A/B and then verified separately with `HF_HUB_OFFLINE=1`; the
 two app hashes are recorded in `environment.json`.
 
-This is a browser generation, interface and local throughput check. It is not a
-general model-quality evaluation, a multi-user serving benchmark, or evidence
-for other models, cards or sampling settings.
+This is a raw-text browser smoke, interface and local throughput check. It is
+not an HTML-generation acceptance result, a general model-quality evaluation,
+a multi-user serving benchmark, or evidence for other models, cards or
+sampling settings.
