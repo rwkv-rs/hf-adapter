@@ -95,18 +95,22 @@ or by counting the table rows above.
   quant-local physical-memory gates.
 - **RTX 5090:** the full-FLA Qwen3.5 matrix passes 8/8 B1/B8 batch-pairs,
   144/144 cells and 32/32 correctness reports from 0.4B/0.8B through 7.2B/9B;
-  raw prefill/decode minima are `1.0226x/2.8130x`. Full 0.4B MATH500 `500×64`
-  reaches pass@64 `0.38`; against the committed Albatross reference,
-  summary/decode throughput ratios are `4.336x/4.871x`. The latest official
-  g1h 13.3B checkpoint also passes conversion, load/generate, and selected
-  speed-policy MM8/MM4 gates. Separately, the exact-model BN/TN W4 matrix
-  passes official g1h 1.5B/2.9B/7.2B/13.3B at B1/B8 with minimum
-  `1.0010x/1.1854x` prefill/decode, `0.5298x–0.6250x` footprint, cosine
-  `>=0.9995`, same-next 8/8 and 280/280 group-128 grid checks. The MATH500
-  reference is not a fresh same-card Albatross rerun. Evidence:
+  raw prefill/decode minima are `1.0226x/2.8130x`; RWKV-7 7.2B versus
+  Qwen3.5-9B B1/B8 minima are `1.1739x/1.0309x` prefill and
+  `2.8934x/2.8130x` decode. The Native/no-FLA g1h 7.2B same-precision v3a
+  comparison passes B1/B8 decode at `1.0010x/1.0104x`, while g1h 2.9B/13.3B
+  prefill passes 12/12 B1/B8 prompt128/512/2048 cells at
+  `1.0029x–1.5690x`. Full 0.4B MATH500 `500×64` reaches pass@64 `0.38` and
+  committed Albatross summary/decode ratios `4.336x/4.871x`. The latest
+  official g1h 13.3B checkpoint passes conversion and load/generate. The
+  exact-model BN/TN W4 matrix passes official g1h 1.5B/2.9B/7.2B/13.3B at
+  B1/B8 with minimum `1.0010x/1.1854x` prefill/decode,
+  `0.5298x–0.6250x` footprint, cosine `>=0.9995`, same-next 8/8 and 280/280
+  group-128 grid checks. Evidence:
   [`../bench/5090_g1h_qwen35_b1_b8_20260715/README.md`](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md)
   [`../bench/5090_g1h_13p3_20260715/README.md`](../bench/5090_g1h_13p3_20260715/README.md),
-  and [`../bench/5090_bntn_all_models_20260716/README.md`](../bench/5090_bntn_all_models_20260716/README.md).
+  [`../bench/5090_bntn_all_models_20260716/README.md`](../bench/5090_bntn_all_models_20260716/README.md),
+  and [`../bench/5090_native_official_fp16_production_20260718/README.md`](../bench/5090_native_official_fp16_production_20260718/README.md).
 - Correctness gates include official/HF alignment, cosine/top-k/greedy checks,
   cache handoff, save/reload, MATH500 shape/accuracy gates and logit-compression
   alignment.
