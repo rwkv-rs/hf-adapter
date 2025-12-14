@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 import torch
 import torch.nn.functional as F
 
+from .kernel_policy import current_kernel_policy, env_flag
+
 if TYPE_CHECKING:
     from .native_model import NativeRWKV7Cache, NativeRWKV7ForCausalLM
 
@@ -53,9 +55,13 @@ def native_graph_stats_template() -> dict[str, int]:
 
 
 def native_graph_state_dtype(model_dtype: torch.dtype) -> torch.dtype:
-    """Resolve the opt-in graph-state dtype without changing safe defaults."""
+    """Resolve graph-state dtype with explicit overrides taking precedence."""
 
-    raw = os.environ.get("RWKV7_NATIVE_GRAPH_STATE_DTYPE", "fp32").strip().lower()
+    policy = current_kernel_policy(torch_module=torch)
+    raw = os.environ.get(
+        "RWKV7_NATIVE_GRAPH_STATE_DTYPE",
+        str(getattr(policy, "native_graph_state_dtype", "fp32")),
+    ).strip().lower()
     if raw in {"fp32", "float32"}:
         return torch.float32
     if raw in {"fp16", "float16", "half"}:
@@ -67,9 +73,19 @@ def native_graph_state_dtype(model_dtype: torch.dtype) -> torch.dtype:
 
 
 def native_graph_precompute_embedding_enabled() -> bool:
-    return os.environ.get(
-        "RWKV7_NATIVE_GRAPH_PRECOMPUTE_EMB_LN0", "0"
-    ).strip().lower() in {"1", "true", "yes", "on"}
+    policy = current_kernel_policy(torch_module=torch)
+    return env_flag(
+        "RWKV7_NATIVE_GRAPH_PRECOMPUTE_EMB_LN0",
+        bool(getattr(policy, "native_graph_precompute_embedding", False)),
+    )
+
+
+def native_graph_fp16_recurrent_enabled() -> bool:
+    policy = current_kernel_policy(torch_module=torch)
+    return env_flag(
+        "RWKV7_NATIVE_GRAPH_FP16_RECURRENT",
+        bool(getattr(policy, "native_graph_fp16_recurrent", False)),
+    )
 
 
 def native_graph_runtime_signature() -> tuple[tuple[str, str], ...]:
@@ -131,12 +147,7 @@ class NativeGraphRunner:
         self.state_dtype = native_graph_state_dtype(self.dtype)
         self.fp16_recurrent = self.state_dtype == torch.float16
         if self.fp16_recurrent:
-            if os.environ.get("RWKV7_NATIVE_GRAPH_FP16_RECURRENT", "0").strip().lower() not in {
-                "1",
-                "true",
-                "yes",
-                "on",
-            }:
+            if not native_graph_fp16_recurrent_enabled():
                 raise RuntimeError(
                     "FP16 native graph state requires "
                     "RWKV7_NATIVE_GRAPH_FP16_RECURRENT=1"
@@ -422,6 +433,7 @@ __all__ = [
     "native_graph_cache_size",
     "native_graph_runtime_signature",
     "native_graph_precompute_embedding_enabled",
+    "native_graph_fp16_recurrent_enabled",
     "native_graph_state_dtype",
     "native_graph_stats_template",
 ]

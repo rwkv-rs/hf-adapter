@@ -95,8 +95,15 @@ class KernelPolicy:
     prefill_blas_large_min_rows: int = 4096
     prefill_graph: bool = False
     prefill_graph_cache_size: int = 2
+    prefill_graph_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    prefill_fp16_recurrent: bool = False
     fused_prefill_shift_mix: bool = False
     prefill_shift_mix_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    prefill_attn_shift_mix_strict_fp16_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    prefill_ffn_shift_mix_strict_fp16_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    # hidden, layers, batch, tokens, block size, warps
+    prefill_attn_shift_mix_launch_profiles: tuple[tuple[int, int, int, int, int, int], ...] = ()
+    prefill_ffn_shift_mix_launch_profiles: tuple[tuple[int, int, int, int, int, int], ...] = ()
     fused_prefill_state_prep: bool = False
     prefill_state_prep_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
     # hidden, layers, batch, tokens, enabled leading-layer count
@@ -104,6 +111,7 @@ class KernelPolicy:
     fused_prefill_state_scan: bool = False
     fused_prefill_state_scan_max_batch: int | None = None
     fused_prefill_output: bool = False
+    prefill_fused_output_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
     fused_prefill_residual_gemm: bool = False
     fused_prefill_clampw_scan: bool = False
     prefill_clampw_scan_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
@@ -130,15 +138,26 @@ class KernelPolicy:
     fused_output: bool = False
     fused_norm_mix: bool = False
     norm_mix_num_warps: int = 4
+    native_graph_state_dtype: str = "fp32"
+    native_graph_fp16_recurrent: bool = False
+    native_graph_precompute_embedding: bool = False
     sm70_linear: bool = False
     sm70_wagv_lora: bool = False
     ada_linear: bool = False
     ada_linear_rows: str = "2 4"
+    ada_linear_roles: str = "auto"
     ada_wagv_lora: bool = False
+    ada_wag_lora: bool = False
     ada_sparse_ffn: bool = False
     ada_sparse_ffn_max_rows: int = 19
     ada_sparse_ffn_inplace: bool = False
     ada_sparse_ffn_up: bool = True
+    ada_sparse_ffn_low_memory_pack: bool = False
+    ada_sparse_ffn_share_pack: bool = False
+    ada_sparse_ffn_fp32_accum: bool = False
+    ada_sparse_ffn_deterministic_splits: int = 0
+    ada_sparse_ffn_official_boundary: bool = False
+    blackwell_cmix: bool = False
     rkv_policy: str = "manual"
     fused_output_project: bool = False
     fused_projection: bool = False
@@ -717,11 +736,35 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
         )
     if family == "blackwell":
         is_5090 = "5090" in profile.name.lower()
+        production_prefill_graph_shapes = (
+            (2560, 32, 1, 128),
+            (2560, 32, 1, 512),
+            (2560, 32, 1, 2048),
+            (2560, 32, 8, 128),
+            (2560, 32, 8, 512),
+            (2560, 32, 8, 2048),
+            (4096, 61, 1, 128),
+            (4096, 61, 1, 512),
+            (4096, 61, 1, 2048),
+            (4096, 61, 8, 128),
+            (4096, 61, 8, 512),
+        )
+        g1h_13b_prefill_shapes = (
+            (4096, 61, 1, 128),
+            (4096, 61, 1, 512),
+            (4096, 61, 1, 2048),
+            (4096, 61, 8, 128),
+            (4096, 61, 8, 512),
+            (4096, 61, 8, 2048),
+        )
         return KernelPolicy(
             profile=profile,
             fused_recurrent_output=True,
             fused_output=True,
-            fused_prefill_scan=False,
+            fused_prefill_scan=is_5090,
+            prefill_graph=is_5090,
+            prefill_graph_model_shapes=production_prefill_graph_shapes if is_5090 else (),
+            prefill_fp16_recurrent=is_5090,
             # Exact RTX 5090 B8 sweeps on g1h 1.5B/P512 and 7.2B/P128. The
             # fused prefill route remains opt-in globally; these shape gates
             # only select combinations measured end to end on this card.
@@ -731,15 +774,42 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
                 (2048, 24, 8, 128),
                 (2048, 24, 8, 512),
                 (2048, 24, 8, 2048),
+                *g1h_13b_prefill_shapes,
+            ) if is_5090 else (),
+            prefill_attn_shift_mix_strict_fp16_model_shapes=(
+                (4096, 61, 1, 128),
+                (4096, 61, 1, 512),
+                (4096, 61, 1, 2048),
+                (4096, 61, 8, 128),
+            ) if is_5090 else (),
+            prefill_ffn_shift_mix_strict_fp16_model_shapes=(
+                (4096, 61, 1, 128),
+            ) if is_5090 else (),
+            prefill_attn_shift_mix_launch_profiles=tuple(
+                (*shape, 2048, 8) for shape in g1h_13b_prefill_shapes
+            ) if is_5090 else (),
+            prefill_ffn_shift_mix_launch_profiles=tuple(
+                (*shape, 2048, 8) for shape in g1h_13b_prefill_shapes
             ) if is_5090 else (),
             fused_prefill_state_prep=is_5090,
             prefill_state_prep_model_shapes=(
                 (2048, 24, 8, 512),
                 (2048, 24, 8, 2048),
+                *g1h_13b_prefill_shapes,
             ) if is_5090 else (),
             prefill_state_prep_layer_counts=(
                 (2048, 24, 8, 512, 24),
                 (2048, 24, 8, 2048, 18),
+            ) if is_5090 else (),
+            fused_prefill_state_scan=is_5090,
+            fused_prefill_state_scan_max_batch=1 if is_5090 else None,
+            fused_prefill_output=is_5090,
+            prefill_fused_output_model_shapes=(
+                (4096, 61, 1, 128),
+                (4096, 61, 1, 2048),
+                (4096, 61, 8, 128),
+                (4096, 61, 8, 512),
+                (4096, 61, 8, 2048),
             ) if is_5090 else (),
             fused_prefill_residual_gemm=is_5090,
             prefill_clampw_scan_model_shapes=((2048, 24, 8, 512),) if is_5090 else (),
@@ -766,10 +836,31 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             prefill_fp16_accum_ffn_key_model_shapes=(
                 (2560, 32, 8, 128),
                 (4096, 32, 8, 128),
+                (4096, 61, 1, 128),
             ) if is_5090 else (),
             prefill_fp16_accum_ffn_key_layer_counts=(
                 (2560, 32, 8, 128, 28),
+                (4096, 61, 1, 128, 12),
             ) if is_5090 else (),
+            fused_norm_mix=is_5090,
+            norm_mix_num_warps=8 if is_5090 else 4,
+            native_graph_state_dtype="fp16" if is_5090 else "fp32",
+            native_graph_fp16_recurrent=is_5090,
+            native_graph_precompute_embedding=is_5090,
+            ada_linear=is_5090,
+            ada_linear_rows="1" if is_5090 else "2 4",
+            ada_linear_roles="hidden,ffn_up,ffn_down" if is_5090 else "auto",
+            ada_wagv_lora=is_5090,
+            ada_wag_lora=is_5090,
+            ada_sparse_ffn=is_5090,
+            ada_sparse_ffn_max_rows=19,
+            ada_sparse_ffn_up=True,
+            ada_sparse_ffn_low_memory_pack=is_5090,
+            ada_sparse_ffn_share_pack=is_5090,
+            ada_sparse_ffn_deterministic_splits=4 if is_5090 else 0,
+            ada_sparse_ffn_official_boundary=is_5090,
+            blackwell_cmix=is_5090,
+            rkv_policy="manual",
             marlin_w4_ffn_shapes=(
                 (8192, 2048),
                 (2048, 8192),
@@ -785,7 +876,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
                 (4096, 16384, 61, 128, True, 1),
             ) if is_5090 else (),
             output_project_block_m=32,
-            notes="RTX 50/Blackwell: exact RTX 5090 g1h-1.5B B8/P128, P512, and P2048 use measured shift-mix and BM64/BN128 sequence FFN routes; P512 uses state-prep in all 24 layers and P2048 in the measured leading 18 layers, while stacked R/K/V stays off to avoid duplicate packed weights. g1h-2.9B B8/P128 uses FFN-key FP16 accumulation in the measured leading 28 layers, and g1h-7.2B B8/P128 uses the measured all-layer route; both retain strict official FP16-state tensor gates. Residual GEMM is enabled on the exact 5090 and remains subject to the full matrix; SM120 sparse FFN stays opt-in after a 6/8 B8 greedy probe; use triton_compat for early sm_120 stacks, prefer native/no-FLA smokes, keep unvalidated projection/LoRA fusions off",
+            notes="RTX 50/Blackwell: exact RTX 5090 rows promote the official-FP16-state native graph decode profile and allowlisted 2.9B/13.3B B1/B8 prefill shapes. The 13.3B B8/P2048 row intentionally stays outside the graph allowlist because graph-private pools exceed 32 GiB; its measured eager fused route remains active. Existing 1.5B/2.9B/7.2B shape-specific prefill and quant routes remain exact-card gates. Other Blackwell cards retain the compatible fallback; use triton_compat for early sm_120 stacks and keep unvalidated projection/LoRA fusions off",
         )
     return KernelPolicy(profile=profile)
 

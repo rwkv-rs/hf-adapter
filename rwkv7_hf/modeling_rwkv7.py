@@ -323,11 +323,35 @@ def _native_graph_cache_size() -> int:
         return 8
 
 
-def _native_prefill_graph_enabled() -> bool:
+def _native_prefill_graph_enabled(
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> bool:
     """Capture fixed-shape inference prefill as one CUDA graph."""
 
     policy = _rwkv7_kernel_policy()
-    return env_flag("RWKV7_NATIVE_PREFILL_GRAPH", bool(getattr(policy, "prefill_graph", False)))
+    raw = os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH")
+    if raw is not None:
+        return env_flag("RWKV7_NATIVE_PREFILL_GRAPH", False)
+    if not bool(getattr(policy, "prefill_graph", False)):
+        return False
+    shapes = {
+        tuple(int(value) for value in shape)
+        for shape in getattr(policy, "prefill_graph_model_shapes", ())
+        if len(shape) == 4
+    }
+    if not shapes:
+        return True
+    if None in (batch_size, prompt_tokens, hidden_size, num_layers):
+        return False
+    return (
+        int(hidden_size),
+        int(num_layers),
+        int(batch_size),
+        int(prompt_tokens),
+    ) in shapes
 
 
 def _native_prefill_external_quant_enabled() -> bool:
@@ -2600,7 +2624,13 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                 source_seen = None
         past = RWKV7StateCache.from_legacy_cache(past_key_values)
         initial_seen = source_seen if source_seen is not None else (int(past.get_seq_length()) if hasattr(past, "get_seq_length") else 0)
-        if _native_prefill_graph_enabled() and (
+        prompt_tokens = int(input_ids.shape[1])
+        if _native_prefill_graph_enabled(
+            batch_size,
+            prompt_tokens,
+            int(self.config.hidden_size),
+            int(self.config.num_hidden_layers),
+        ) and (
             not external_quant
             or (
                 _native_prefill_external_quant_graph_enabled()
@@ -2608,7 +2638,6 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             )
         ):
             keep_value = 0 if logits_to_keep is None else int(logits_to_keep)
-            prompt_tokens = int(input_ids.shape[1])
             runner = getattr(self, "_rwkv7_native_prefill_graph_hot_runner", None)
             if not isinstance(runner, _RWKV7NativeGraphPrefillRunner) or not runner.matches(
                 batch_size, prompt_tokens, keep_value
@@ -2696,7 +2725,12 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                 chunk_kwargs["attention_mask"] = attention_mask[:, start:end]
             chunk_mask = chunk_kwargs.pop("attention_mask", None)
             if (
-                _native_prefill_graph_enabled()
+                _native_prefill_graph_enabled(
+                    int(input_ids.shape[0]),
+                    int(end - start),
+                    int(self.config.hidden_size),
+                    int(self.config.num_hidden_layers),
+                )
                 and chunk_mask is None
                 and (
                     not self._rwkv7_uses_external_quantization()
