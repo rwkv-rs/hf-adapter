@@ -4,6 +4,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import torch
+
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "gradio" / "native_hf_v3a_compat.py"
@@ -40,11 +42,55 @@ def test_native_hf_gradio_state_expands_prompt_cache() -> None:
     assert destination.cache.repeat == 8
 
 
+def test_native_hf_gradio_decode_uses_fast_token_api() -> None:
+    module = _load_example()
+
+    class FakeModel:
+        def __init__(self) -> None:
+            self.fast_calls = 0
+            self.forward_calls = 0
+
+        def rwkv7_forward_token(
+            self,
+            token_ids,
+            *,
+            past_key_values,
+            return_dict,
+            copy_logits,
+        ):
+            self.fast_calls += 1
+            assert token_ids.shape == (2, 1)
+            assert past_key_values == "prompt-cache"
+            assert return_dict is False
+            assert copy_logits is False
+            return torch.arange(10, dtype=torch.float32).view(2, 1, 5), "decode-cache"
+
+        def __call__(self, **_kwargs):
+            self.forward_calls += 1
+            raise AssertionError("single-token cached decode must not use model.forward")
+
+    bridge = object.__new__(module.RWKV7)
+    bridge.model = FakeModel()
+    state = module.NativeHFState(batch_size=2, cache="prompt-cache")
+    logits = bridge._forward(
+        state,
+        input_ids=torch.tensor([[3], [4]], dtype=torch.long),
+    )
+
+    assert logits.shape == (2, 5)
+    assert bridge.model.fast_calls == 1
+    assert bridge.model.forward_calls == 0
+    assert state.cache == "decode-cache"
+
+
 def test_space_patch_routes_token_decode_to_native_hf() -> None:
     text = PATCH.read_text(encoding="utf-8")
     assert 'APP3_BACKEND = os.environ.get("APP3_BACKEND", "v3a")' in text
+    assert 'model_path = os.environ.get("APP3_HF_MODEL_PATH", "").strip()' in text
     assert "DECODE_USES_TOKEN_IDS" in text
     assert "copy_state_to_batch" in text
+    assert 'os.environ.get("APP3_SHARE", "0")' in text
+    assert 'os.environ.get("APP3_SERVER_PORT", "7860")' in text
     assert "+accelerate" in text
 
 

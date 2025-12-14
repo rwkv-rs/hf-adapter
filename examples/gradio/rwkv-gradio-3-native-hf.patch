@@ -26,6 +26,15 @@ index e555147..7259f89 100644
  WARM_FIXED_SECONDS = 1.5
  COLD_EXTENSION_SECONDS = 110.0
  DURATION_SAFETY = 1.25
+@@ -139,6 +145,8 @@ def get_scroll_seconds():
+ 
+ title = "rwkv7-g1i_preview3260-7.2b-20260716-ctx12288"
+ title = os.environ.get("APP3_MODEL_TITLE", title)
+ model_path = os.environ.get("APP3_MODEL_PATH", "").strip()
++if APP3_BACKEND == "native_hf" and not model_path:
++    model_path = os.environ.get("APP3_HF_MODEL_PATH", "").strip()
+ if model_path:
+     title = os.environ.get("APP3_MODEL_TITLE", os.path.basename(model_path).removesuffix(".pth"))
 @@ -212,10 +218,17 @@ def get_decode_ctx(B: int, decode_cache):
      if cached is not None:
          return cached
@@ -86,6 +95,16 @@ index e555147..7259f89 100644
              else:
                  decode_graph.replay()
              logits = decode_output.view(B, -1)
+@@ -836,3 +860,8 @@ with gr.Blocks(title=title) as demo:
+ 
+ demo.queue(default_concurrency_limit=1, max_size=10)
+-demo.launch(share=False, server_name="0.0.0.0", theme=gr.themes.Base(), css=HTML_GRID_CSS)
++share = os.environ.get("APP3_SHARE", "0").strip().lower() in {"1", "true", "yes", "on"}
++server_port = int(os.environ.get("APP3_SERVER_PORT", "7860"))
++demo.launch(
++    share=share, server_name="0.0.0.0", server_port=server_port,
++    theme=gr.themes.Base(), css=HTML_GRID_CSS,
++)
 diff --git a/requirements.txt b/requirements.txt
 index 0e79b33..8a4aabb 100644
 --- a/requirements.txt

@@ -1,0 +1,15 @@
+[app3] model_path=/home/ubuntu/models/rwkv7/source-g1h/rwkv7-g1h-7.2b-20260710-ctx10240.pth
+[app3] t=0.000s model_init_start_module
+[transformers] You are using a model of type `rwkv7_hf_adapter` to instantiate a model of type `rwkv7_native`. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+Loading weights:   0%|          | 0/1059 [00:00<?, ?it/s]Loading weights:  12%|█▏        | 132/1059 [00:00<00:00, 1319.67it/s]Loading weights:  63%|██████▎   | 667/1059 [00:00<00:00, 3689.19it/s]Loading weights: 100%|██████████| 1059/1059 [00:00<00:00, 4027.06it/s]
+[app3] t=10.666s model_init_module_rwkv_done seconds=10.666
+[app3] t=13.023s pipeline_init_module_done seconds=2.357
+* Running on local URL:  http://0.0.0.0:7860
+* To create a public link, set `share=True` in `launch()`.
+[app3] 2026-07-19 07:21:42 B=1 T=100 In=50 TPS=138.4 Time=49.251s Token=100 Char=109 VRAM=15.84G/33.67G
+[app3] 2026-07-19 07:21:59 B=1 T=100 In=50 TPS=138.4 Time=0.805s Token=100 Char=107 VRAM=15.84G/33.67G
+[app3] 2026-07-19 07:24:46 B=1 T=100 In=50 TPS=136.1 Time=0.846s Token=100 Char=109 VRAM=15.84G/33.67G
+[app3] 2026-07-19 07:25:17 B=8 T=100 In=50 TPS=830.0 Time=1.472s Token=800 Char=914 VRAM=16.28G/33.67G
+[app3] 2026-07-19 07:26:20 B=8 T=100 In=50 TPS=831.6 Time=1.075s Token=800 Char=914 VRAM=16.33G/33.67G
+[app3] 2026-07-19 07:27:51 B=1 T=100 In=62 TPS=136.4 Time=0.845s Token=100 Char=253 VRAM=16.33G/33.67G
+[app3] 2026-07-19 07:28:10 B=1 T=100 In=89 TPS=131.6 Time=0.534s Token=54 Char=58 VRAM=16.37G/33.67G
