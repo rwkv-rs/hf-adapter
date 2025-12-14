@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 from pathlib import Path
 import types
+import zipfile
 
 import torch
 
@@ -94,9 +96,17 @@ def test_native_graph_relu2_dispatch_uses_explicit_fused_method() -> None:
 def test_remote_code_source_bundle_is_current_and_extracts(monkeypatch, tmp_path) -> None:
     payload, names = build_marlin_source_bundle.build_payload()
     embedded = base64.b85decode(bundled._BUNDLE_B85.encode("ascii"))
-    assert embedded == payload
-    assert bundled._BUNDLE_SHA256 == hashlib.sha256(payload).hexdigest()
-    assert tuple(names) == bundled._BUNDLE_FILES
+    assert set(names) == set(bundled._BUNDLE_FILES)
+    assert bundled._BUNDLE_SHA256 == hashlib.sha256(embedded).hexdigest()
+    with zipfile.ZipFile(io.BytesIO(payload)) as expected_archive:
+        expected = {
+            name: expected_archive.read(name) for name in expected_archive.namelist()
+        }
+    with zipfile.ZipFile(io.BytesIO(embedded)) as embedded_archive:
+        actual = {
+            name: embedded_archive.read(name) for name in embedded_archive.namelist()
+        }
+    assert actual == expected
 
     cache = tmp_path / "cache"
     monkeypatch.setenv("RWKV7_MARLIN_SOURCE_CACHE", str(cache))

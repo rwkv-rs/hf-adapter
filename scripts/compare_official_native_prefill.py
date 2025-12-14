@@ -87,6 +87,24 @@ def metric_pass(metrics: dict[str, Any], kind: str) -> bool:
     return bool(passed)
 
 
+def metric_pass_official_self_envelope(
+    name: str,
+    metrics: dict[str, Any],
+    envelope: dict[str, Any] | None,
+    *,
+    multiplier: float,
+) -> bool:
+    """Limit process-variance relief to the first cached decode logits."""
+
+    if name != "first_decode_logits":
+        return False
+    return metrics_pass_official_envelope(
+        metrics,
+        envelope,
+        multiplier=multiplier,
+    )
+
+
 def native_runtime_environment() -> dict[str, str]:
     """Capture explicit Native runtime controls needed to replay a row."""
 
@@ -418,7 +436,8 @@ def compare(args: argparse.Namespace) -> dict[str, Any]:
     for name in ("logits", "first_decode_logits", "layer_outputs"):
         item = tensor_metrics(native[name], official[name])
         item["standard_threshold_pass"] = metric_pass(item, name)
-        item["official_self_envelope_pass"] = metrics_pass_official_envelope(
+        item["official_self_envelope_pass"] = metric_pass_official_self_envelope(
+            name,
             item,
             (official_self_envelope or {}).get("envelope", {}).get(name),
             multiplier=args.official_envelope_multiplier,

@@ -719,7 +719,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         native_fp16_recurrent_output_prepare_raw = None  # type: ignore[assignment]
         native_fp16_sequence = None  # type: ignore[assignment]
 
-try:  # pragma: no cover - optional exact official-order Blackwell norm/mix
+try:  # pragma: no cover - optional exact official-order SM120 norm/mix
     from .blackwell_norm_mix import (
         blackwell_ffn_add_norm_mix,
         blackwell_norm_mix_should_use,

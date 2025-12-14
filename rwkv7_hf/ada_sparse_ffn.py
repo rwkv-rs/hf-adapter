@@ -114,9 +114,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("linear", &rwkv7_ada_linear_cuda,
         "RWKV-7 sm_89 small-row fp16 linear");
   m.def("blackwell_ffn_up", &rwkv7_blackwell_ffn_up_cuda,
-        "RWKV-7 Blackwell row-one FFN expansion projection");
+        "RWKV-7 SM120 row-one FFN expansion projection");
   m.def("blackwell_sparse_down_add_out", &rwkv7_blackwell_sparse_ffn_out_cuda,
-        "RWKV-7 Blackwell row-one sparse FFN down projection + residual (out)");
+        "RWKV-7 SM120 row-one sparse FFN down projection + residual (out)");
 }
 """
 
@@ -842,9 +842,9 @@ torch::Tensor rwkv7_blackwell_ffn_up_cuda(
   const int64_t rows = x.size(0);
   const int64_t hidden = x.size(1);
   const int64_t ffn = weight.size(0);
-  TORCH_CHECK(rows == 1, "Blackwell FFN expansion requires exactly one row");
+  TORCH_CHECK(rows == 1, "SM120 FFN expansion requires exactly one row");
   TORCH_CHECK(weight.size(1) == hidden && (hidden % 4) == 0 && (ffn % 2) == 0,
-              "unsupported Blackwell FFN expansion shape");
+              "unsupported SM120 FFN expansion shape");
 
   c10::cuda::CUDAGuard device_guard(x.device());
   auto output = torch::empty({rows, ffn}, x.options());
@@ -878,7 +878,7 @@ torch::Tensor rwkv7_blackwell_sparse_ffn_out_cuda(
   const int64_t ffn = preact.size(1);
   const int64_t hidden = residual.size(1);
   TORCH_CHECK(rows == 1 && residual.size(0) == 1 && output.sizes() == residual.sizes(),
-              "Blackwell sparse FFN requires one matching row");
+              "SM120 sparse FFN requires one matching row");
   TORCH_CHECK(packed_value.size(0) == ffn && packed_value.size(1) == hidden,
               "packed value weight must have shape [ffn, hidden]");
   TORCH_CHECK(ffn == 4 * hidden && (ffn % FFN_TILE) == 0 && (hidden % 256) == 0,
@@ -1353,9 +1353,12 @@ def ada_sparse_ffn_build_error() -> str | None:
 
 
 def _weight_cache_key(weight: Any, cache_tag: Any = None) -> tuple[Any, ...]:
-    index = weight.device.index
-    if index is None and torch is not None:
+    device = weight.device
+    index = device.index
+    if device.type == "cuda" and index is None and torch is not None:
         index = torch.cuda.current_device()
+    if index is None:
+        index = -1
     try:
         version = int(weight._version)
     except RuntimeError:
@@ -1363,6 +1366,7 @@ def _weight_cache_key(weight: Any, cache_tag: Any = None) -> tuple[Any, ...]:
         # version counter.  Their storage is immutable for this route.
         version = -1
     return (
+        str(device.type),
         int(index),
         int(weight.data_ptr()),
         version,

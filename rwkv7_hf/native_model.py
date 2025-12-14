@@ -31,6 +31,7 @@ from .kernel_policy import current_kernel_policy
 if False:  # pragma: no cover
     from .ada_lora import ada_wagv_lora as _native_ada_lora_dependency_sentinel
     from .ada_sparse_ffn import ada_linear as _native_ada_sparse_ffn_dependency_sentinel
+    from .blackwell_norm_mix import blackwell_ffn_add_norm_mix as _native_sm120_norm_mix_dependency_sentinel
     from .dplr_prefill import dplr_chunk_scan as _native_dplr_dependency_sentinel
     from .dplr_prefill_triton import dplr_chunk_scan_triton as _native_dplr_triton_dependency_sentinel
     from .fused_attention_projection import fused_rkv_wag_projection as _native_fused_attn_projection_dependency_sentinel
