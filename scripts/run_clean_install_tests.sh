@@ -148,7 +148,7 @@ if [[ "$PROFILE" != apple ]]; then
 fi
 
 cd "$ROOT"
-"$PY" -m compileall -q rwkv7_hf bench scripts tests
+"$PY" -m compileall -q rwkv7_hf bench examples scripts tests
 while IFS= read -r -d '' script; do
   bash -n "$script"
 done < <(find scripts -maxdepth 1 -name '*.sh' -print0)
@@ -185,6 +185,8 @@ if [[ "$PROFILE" == smoke ]]; then
     tests/test_train_spec_draft_unit.py; do
     PYTHONPATH="$ROOT" "$PY" "$test_script"
   done
+  PYTHONPATH="" "$PY" examples/cpu_tiny_demo.py \
+    --mode all --steps 2 --threads 1 --max-new-tokens 2
   exit 0
 fi
 

@@ -9,6 +9,7 @@
 | 用户目标 | 教程 | 完成标志 | 使用建议 |
 |---|---|---|---|
 | 安装、检查环境、下载、转换和生成 | [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) | `RESULT: READY`、模型目录 `PASS`、输出新文本 | 新环境建议从 0.1B/0.4B 开始；CUDA、MPS 和 CPU 都有对应路线 |
+| Windows/CPU 无下载推理、微型训练和保存重载 | [`WINDOWS_CPU.md`](WINDOWS_CPU.md) | 四个 `CPU ... PASS` 标记；loss 下降、梯度/参数变化非零、重载 logits 差为 0 | 随机两层 tiny 模型用于接口和更新演示；真实自然语言生成从 0.1B 已转换模型开始 |
 | 单个/批量/大模型转换、保存重载、离线运行 | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) | 转换退出码 0、manifest 成功、重载测试打印 `PASS` | 转换大模型时可使用 `--low-memory` 降低主机内存占用 |
 | 使用 `AutoModelForCausalLM`、loss、mask 和无 FLA 原生后端 | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) | API 命令退出码 0；原生 smoke 打印对应通过标记 | 原生后端适合便携运行；CUDA 优化后端适合已验证的 NVIDIA 环境 |
 | 复用循环状态、批量缓存、动态批处理和分块 prefill | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) | 每个缓存/prefill 测试打印 `PASS` | 可直接用于构建 HF serving 的状态与批处理层 |
