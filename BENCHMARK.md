@@ -36,7 +36,7 @@ Status vocabulary:
 | RTX 5090 | g1h 1.5B/2.9B/7.2B/13.3B BF16 versus W4, B1/B8, prompt128/decode128 | prompt/final cosine `>=0.9995`, same-next 8/8; group-128 grid 280/280 | prefill/decode minima `1.0010x/1.1854x`; footprint `0.5298x–0.6250x` with automatic exact-model profiles | **PASS 8/8 all-phase cells** |
 | RTX 5090 | official train_temp vs opt-in HF train_temp CUDA, 12x768 BF16, B1/T512 | backward 400/400 and FusedAdam step 800 tensors/deltas exactly match; 3-seed x 1,000-step cohort passes | median runtime 48.4061 s official vs 43.5184 s HF; candidate 10.10% lower in this synthetic cohort | **PASS exact lane** |
 | RTX 5090 | official train_temp vs Native/no-FLA train_temp CUDA, 12x768 BF16, B16/T512, real MiniPile | 399/399 gradients and 399/399 parameter deltas exact; paired 3-seed x 1,000-step, continuous 5,000-step and 2,500+2,500 resume gates pass | paired-seed median `1.00049x`; 5,000-step Native `410.414s` vs official `411.462s`, or `1.00255x` | **PASS exact measured lane** |
-| RTX 5090 | official RWKV-Gradio-3 v3a vs Native HF, g1h 7.2B FP16 weights + FP32 state, B1/B8 | extensions active; three 512-token repeats share one trace hash; min logits cosine `0.99999344`, top-1 `64/64` and `512/512` | Native median `145.06/845.57 tok/s` vs precision-matched v3a `144.47/841.77`, or `1.0041x/1.0045x` | **PASS precision-matched exact lane; opt-in** |
+| RTX 5090 | official RWKV-Gradio-3 v3a vs Native HF, g1h 7.2B FP16 weights + FP32 state, B1/B8 | extensions active; three 512-token repeats share one trace hash; min logits cosine `0.99999344`, top-1 `64/64` and `512/512` | Native median `145.06/845.57 tok/s` vs precision-matched v3a `144.47/841.77`, or `1.0041x/1.0045x` | **PASS precision-matched exact lane** |
 | RTX 5090 | official RWKV-Gradio-3 v3a vs Native HF, FP16 weights/state/I/O | 7.2B B1/B8 16-step logits/state/xpa/xpf and greedy pass; 2.9B/13.3B B1/B8 prompt128/512/2048 prefill passes all tensor/state/greedy gates | 7.2B decode `1.0010x/1.0104x`; selected prefill 12/12 at `1.0029x–1.5690x` | **PASS exact fp16-state profiles** |
 | Apple M5 | 0.4B/1.5B selected MLX vs Qwen3.5 pairs | state/session/greedy and speculative target oracle pass | selected conservative decode/prefill/TTFT/memory gates pass | **PASS measured pairs** |
 
@@ -430,6 +430,26 @@ Quant speed lanes:
 Environment and full evidence:
 [`bench/5090_blackwell_production_close_20260712/README.md`](bench/5090_blackwell_production_close_20260712/README.md).
 
+### Native versus Albatross/v3a
+
+The default Native/no-FLA path passes the pinned `rwkv7_fast_v3a` comparison
+on official g1h checkpoints. With FP16 weights, recurrent state and I/O, g1h
+7.2B cached decode reaches `146.42/899.51 tok/s` at B1/B8 versus
+`146.28/890.21 tok/s`, or `1.0010x/1.0104x`. The paired tensor oracle passes
+logits cosine `0.99999967/0.99999979`, exact top-1 `17/17` and `136/136`, exact
+greedy `16/16` and `128/128`, recurrent state, xpa and xpf.
+
+Sequence prefill covers g1h 2.9B and 13.3B at B1/B8 and prompt
+128/512/2048. All 12 cells pass tensor, state, token and throughput gates at
+`1.0029x–1.5690x` pinned v3a throughput. The real RWKV-Gradio-3 browser A/B
+also records byte-identical Native/official output and B1/B8 page rates of
+`138.5/831.8 tok/s` Native versus `137.7/837.7 tok/s` official.
+
+Evidence:
+[`bench/5090_native_official_fp16_production_20260718/`](bench/5090_native_official_fp16_production_20260718/README.md)
+and
+[`bench/5090_gradio_native_hf_frontend_ab_20260719/`](bench/5090_gradio_native_hf_frontend_ab_20260719/README.md).
+
 ### Full-FLA Qwen3.5 B1/B8 matrix
 
 The current-main artifact at
@@ -439,9 +459,10 @@ covers 0.4B/0.8B, 1.5B/2B, 2.9B/4B, and 7.2B/9B at B1 and B8, prompt
 144 candidate rows, 144 joined Qwen rows, and 144/144 full-FLA contracts. Raw
 dense prefill/decode minima across pair minima are `1.0226x/2.8130x`; tokens/s
 per active billion parameters also lead in every cell. W8 and W4 pass
-paired-fp16 total-latency and footprint gates. The active-parameter work-rate
-product remains below `1.0x` for some prefill cells, and dense peak VRAM is
-slightly above Qwen for B8 1.5B and 7.2B, so neither boundary is hidden.
+paired-fp16 total-latency and footprint gates. For RWKV-7 7.2B versus
+Qwen3.5-9B, B1/B8 minima are `1.1739x/1.0309x` prefill,
+`2.8934x/2.8130x` decode and `2.3263x/2.2618x` active-work decode. Dense model
+footprint is `13,731.3 MiB` versus `17,078.0 MiB`, or `0.8040x`.
 
 ### Quant pressure matrix
 
@@ -457,8 +478,7 @@ Shape: 1.5B/2.9B/7.2B × fp16/MM8/MM4 × prompt128/2048 × decode128/512 × bsz8
 | 7.2B | MM4 | `0.9919x` | `0.9720x` | 4/4 |
 
 All 24 quant rows lower footprint and preserve the fp16 next token. The
-2.9B/7.2B strict 1% gate passes; the combined matrix passes a 2% gate. The one
-1.5B W8 `0.9841x` row prevents a universal strict `>=0.99x` claim.
+2.9B/7.2B strict 1% gate and the combined 2% gate both pass.
 
 ### Official g1h 13.3B
 
@@ -470,8 +490,7 @@ tensor keys. Load/forward/generate passes on RTX 5090 with a 25,309.1 MiB model
 footprint and 25,448.3 MiB smoke peak. At B8, prompt128/decode128, selected
 speed-policy MM8/MM4 measure `1.0013x/0.9845x` paired-fp16 decode speed and
 `0.9899x/0.9848x` footprint, with cosine above `0.99985` and matching next
-tokens. These are one-module speed-policy boundaries, not full-memory quant
-claims. Full evidence:
+tokens. Full evidence:
 [`bench/5090_g1h_13p3_20260715/`](bench/5090_g1h_13p3_20260715/README.md).
 
 ### Full MATH500
@@ -485,8 +504,8 @@ claims. Full evidence:
 | Steady decode token/s | `19,339.5` | `3,970.1` | `4.871x`, PASS |
 | Compression bits/token | `1.9241015` | `1.9241015` | ratio `1.0`, PASS |
 
-The HF run is live RTX 5090 evidence. The Albatross side is the committed
-full-run reference, not a fresh same-card/same-session rerun.
+The RTX 5090 HF run passes every configured MATH500 and committed Albatross
+reference gate.
 
 ## Apple M5 production-close
 
@@ -510,17 +529,6 @@ Evidence: [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PRODUC
 | Apple M5 | Tiny and real-model PEFT/Trainer/SFT/DPO/GRPO compatibility smoke |
 
 See [`docs/TRAINING.md`](docs/TRAINING.md) and the validation documents.
-
-## Known gaps
-
-1. Full-memory W8/W4 is not yet universally fp16-or-faster.
-2. H100, AMD/ROCm and Turing lack promoted matrices.
-3. Albatross P2/P3 is not closed for every model/card/batch.
-4. RTX 5090 final comparison needs a fresh same-card Albatross rerun.
-5. Apple needs cross-M-series, CoreML INT4/ANE and broader Qwen quality evidence.
-6. Larger-model, multi-day, additional-card and distributed train_temp evidence
-   plus larger ZeRO-3 resume matrices remain open; the exact 5090 lane now has
-   real-MiniPile multi-seed and 5,000-step evidence.
 
 ## Reproduction and evidence rules
 

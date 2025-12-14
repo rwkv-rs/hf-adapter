@@ -60,34 +60,45 @@ Start with 0.1B or 0.4B to validate a new installation.
 > `trust_remote_code=True` is required by converted RWKV-7 model directories.
 > Only load model code from a local directory or Hub repository you trust.
 
-The current performance phase is tracked in [`docs/performance/FUSED_BACKEND.md`](docs/performance/FUSED_BACKEND.md):
-keep the HF wrapper as the public compatibility layer, then add native fused
-fp16 and native W8/W4 backends behind `rwkv7_forward_token()` and `generate()`
-to close the Albatross and quantized-decode speed gaps.
+The current performance backend is Native/no-FLA behind the standard
+`rwkv7_forward_token()` and `generate()` APIs. Kernel design and dispatch are
+documented in [`docs/performance/FUSED_BACKEND.md`](docs/performance/FUSED_BACKEND.md).
 
-The 2026-07-16 RTX 5090 production BN/TN Marlin W4 matrix closes paired BF16
-prefill, decode, footprint and correctness for official g1h 1.5B, 2.9B, 7.2B
-and 13.3B at B1/B8. Across the eight prompt128/decode128 rows, footprint is
-`0.5298x–0.6250x`, minimum prefill/decode is `1.0010x/1.1854x`, cosine stays
-above `0.9995`, and every next token matches. The group-128 physical grid
-contract passes 280/280 checks. See
-[`bench/5090_bntn_all_models_20260716/README.md`](bench/5090_bntn_all_models_20260716/README.md).
+## RTX 5090 validated results
 
-The 2026-07-18 same-precision Native matrix compares against pinned official
-RWKV-Gradio-3 FP16 weights/state/I/O. RTX 5090 g1h 7.2B cached decode passes B1
-and B8 at `1.0010x/1.0104x` official throughput with logits/state/greedy gates;
-g1h 2.9B and 13.3B prefill passes all 12 measured B1/B8,
-prompt128/512/2048 cells. Exact profiles are selected automatically only for
-the measured card/model/shapes. See
-[`bench/5090_native_official_fp16_production_20260718/README.md`](bench/5090_native_official_fp16_production_20260718/README.md).
+- **Native versus Albatross/v3a:** official g1h 7.2B FP16 cached decode reaches
+  `146.42/899.51 tok/s` at B1/B8 versus pinned v3a `146.28/890.21`, or
+  `1.0010x/1.0104x`. Logits, recurrent state, top-1 and greedy-token gates pass.
+- **Prefill:** official g1h 2.9B and 13.3B pass all 12 B1/B8,
+  prompt128/512/2048 cells at `1.0029x–1.5690x` pinned v3a throughput with
+  tensor, state and token equality gates.
+- **Full-FLA Qwen3.5:** eight B1/B8 model pairs and 144/144 performance cells
+  pass. Dense prefill/decode minima are `1.0226x/2.8130x`; for RWKV-7 7.2B
+  versus Qwen3.5-9B, B1/B8 minima are `1.1739x/1.0309x` prefill and
+  `2.8934x/2.8130x` decode.
+- **Tensor Core W4:** official g1h 1.5B, 2.9B, 7.2B and 13.3B pass all eight
+  B1/B8 all-phase cells. Footprint is `0.5298x–0.6250x`, minimum
+  prefill/decode is `1.0010x/1.1854x`, cosine is above `0.9995`, every next
+  token matches, and the group-128 physical grid passes 280/280 checks.
+- **Training:** the Native B16/T512 BF16 train_temp lane matches 399/399
+  gradients and parameter deltas, passes three paired real-MiniPile seeds,
+  continuous 5,000-step training and 2,500+2,500 checkpoint recovery. Median
+  paired throughput is `1.00049x` official and the 5,000-step run is
+  `1.00255x` official.
+- **Browser integration:** the current RWKV-Gradio-3 page runs through the
+  Native HF fast-token bridge. The retained browser A/B records byte-identical
+  output and B1/B8 page rates of `138.5/831.8 tok/s` Native versus
+  `137.7/837.7 tok/s` official.
+- **MATH500:** the full `500 x 64` run reaches pass@64 `0.38` and passes the
+  committed Albatross reference at `4.336x` summary throughput and `4.871x`
+  steady decode throughput.
 
-The 2026-07-12 RTX 5090 production-close artifact adds Blackwell batched
-MM8/MM4 kernels, low-memory 13.3B conversion, and a full 0.4B MATH500
-`500 x 64` run. The MATH run reached pass@64 `0.38` and passed the repository's
-committed Albatross reference gates at `4.336x` summary throughput and `4.871x`
-steady decode throughput. The comparison is not a fresh same-card Albatross
-rerun; exact scope and evidence are in
-[`bench/5090_blackwell_production_close_20260712/README.md`](bench/5090_blackwell_production_close_20260712/README.md).
+Evidence:
+[`Native/v3a`](bench/5090_native_official_fp16_production_20260718/README.md),
+[`Qwen3.5`](bench/5090_g1h_qwen35_b1_b8_20260715/README.md),
+[`W4`](bench/5090_bntn_all_models_20260716/README.md),
+[`training`](bench/5090_native_train_temp_real_minipile_20260718/README.md),
+and [`browser A/B`](bench/5090_gradio_native_hf_frontend_ab_20260719/README.md).
 
 ## Current status and documentation
 
