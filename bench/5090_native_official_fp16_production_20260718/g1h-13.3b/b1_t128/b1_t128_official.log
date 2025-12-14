@@ -1,0 +1,73 @@
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+[rwkv7_fast_v3a] loading CUDA extensions v3a_ops + fast_ops + wkv=fp16
+[rwkv7_fast_v3a] CUDA extensions loaded in 0.064s
+[rwkv7_fast_v3a] loading weights from /home/ubuntu/models/rwkv7/source-g1h/rwkv7-g1h-13.3b-20260710-ctx10240.pth
+[rwkv7_fast_v3a] weights mmap loaded in 0.125s tensors=2019
+[rwkv7_fast_v3a] detected model C=4096 H=64 N=64 V=65536
+[rwkv7_fast_v3a] cmix no-fc path: rows<=19 row20_t<=5
+[rwkv7_fast_v3a] moving and preprocessing weights to CUDA emb=cpu
+[rwkv7_fast_v3a] model ready in 26.538s L=61 C=4096 H=64 N=64 V=65536
+[rwkv7_fast_v3a] gpu_mem used=25.51GiB allocated=24.26GiB reserved=24.90GiB total=31.36GiB
+{
+  "engine": "official_v3a_sequence",
+  "batch_size": 1,
+  "prompt_tokens": 128,
+  "timing": {
+    "times_ms": [
+      29.043615341186523,
+      29.043167114257812,
+      29.021087646484375,
+      29.077760696411133,
+      29.067487716674805,
+      29.049983978271484,
+      29.02992057800293,
+      29.080896377563477,
+      29.077056884765625,
+      29.07689666748047,
+      29.083967208862305,
+      29.10736083984375,
+      29.06483268737793,
+      29.050111770629883,
+      29.062143325805664,
+      29.1691837310791,
+      29.09974479675293,
+      29.096927642822266,
+      29.125919342041016,
+      29.07481575012207,
+      29.0546875,
+      29.08064079284668,
+      29.13327980041504,
+      29.060287475585938,
+      29.08790397644043,
+      29.102783203125,
+      29.14041519165039,
+      29.0631046295166,
+      29.190656661987305,
+      29.096223831176758,
+      29.0710391998291,
+      29.06617546081543,
+      29.065311431884766,
+      29.12508773803711,
+      29.077472686767578,
+      29.053632736206055,
+      29.05936050415039,
+      29.027807235717773,
+      29.06831932067871,
+      29.092384338378906,
+      29.0729923248291,
+      29.110048294067383,
+      29.113311767578125,
+      29.118335723876953,
+      29.16543960571289,
+      29.065471649169922,
+      29.079391479492188,
+      29.099136352539062,
+      29.078975677490234,
+      29.087295532226562,
+      29.06707191467285
+    ],
+    "median_ms": 29.077472686767578,
+    "aggregate_tokps": 4402.033195211273
+  },
+  "peak_vram_mb": 24904.400390625
+}

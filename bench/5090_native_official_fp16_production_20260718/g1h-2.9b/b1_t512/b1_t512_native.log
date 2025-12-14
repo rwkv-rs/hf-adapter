@@ -1,0 +1,36 @@
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+[transformers] You are using a model of type `rwkv7_hf_adapter` to instantiate a model of type `rwkv7_native`. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+Loading weights:   0%|          | 0/1059 [00:00<?, ?it/s]Loading weights:  12%|█▏        | 129/1059 [00:00<00:00, 1164.99it/s]Loading weights:  25%|██▍       | 261/1059 [00:00<00:00, 1230.85it/s]Loading weights:  37%|███▋      | 389/1059 [00:00<00:00, 1178.52it/s]Loading weights:  50%|████▉     | 526/1059 [00:00<00:00, 1236.04it/s]Loading weights:  62%|██████▏   | 656/1059 [00:00<00:00, 1254.53it/s]Loading weights:  75%|███████▍  | 789/1059 [00:00<00:00, 1265.19it/s]Loading weights:  87%|████████▋ | 921/1059 [00:00<00:00, 1229.31it/s]Loading weights:  99%|█████████▉| 1050/1059 [00:00<00:00, 1231.58it/s]Loading weights: 100%|██████████| 1059/1059 [00:00<00:00, 1239.05it/s]
+{
+  "engine": "native_hf_sequence",
+  "batch_size": 1,
+  "prompt_tokens": 512,
+  "timing": {
+    "times_ms": [
+      22.61961555480957,
+      22.611839294433594,
+      22.593503952026367,
+      22.597280502319336,
+      22.625696182250977,
+      22.61187171936035,
+      22.61846351623535,
+      22.593759536743164,
+      22.586912155151367,
+      22.589344024658203,
+      22.59436798095703,
+      22.65724754333496,
+      22.658815383911133,
+      22.622432708740234,
+      22.622655868530273,
+      22.610015869140625,
+      22.640512466430664,
+      22.64022445678711,
+      22.760671615600586,
+      22.76495933532715,
+      22.760799407958984
+    ],
+    "median_ms": 22.61961555480957,
+    "aggregate_tokps": 22635.22113182575
+  },
+  "peak_vram_mb": 7760.51806640625
+}

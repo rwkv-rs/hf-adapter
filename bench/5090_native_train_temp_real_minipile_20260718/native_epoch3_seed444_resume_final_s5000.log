@@ -1,0 +1,3 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights: 100%|██████████| 399/399 [00:00<00:00, 5241.85it/s]
+{"status": "pass", "backend": "hf_native_train_temp_cuda", "steps_completed": 5000, "runtime_s": 204.85654086299473, "peak_memory_mb": 3590.6044921875, "failure": null}

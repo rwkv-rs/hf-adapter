@@ -43,29 +43,36 @@ The current wrapper/native split remains intact:
 - `native_model` remains experimental until it reaches the same compatibility
   and benchmark surface.
 
-### RTX 5090 precision-matched decode checkpoint
+### RTX 5090 official-fp16 production checkpoint
 
-Implementation commit `cf42c0e` closes one exact Native/no-FLA decode lane:
-RTX 5090, official g1h 7.2B, FP16 weights, FP32 recurrent state, T1 cached
-decode, and B1/B8. The route combines graph-borrowed logits, FP32 sparse-FFN
-scratch accumulation, SM120 W/A/G grouping, manual RKV selection, and measured
-linear/norm settings.
+The first exact Native/no-FLA decode close used official g1h 7.2B, FP16
+weights, FP32 recurrent state, T1 cached decode, and B1/B8. Three 512-token
+repeats reached `1.0041x/1.0045x` precision-matched official v3a with minimum
+logits cosine `0.9999934435` and exact top-1.
 
-Three fresh 512-token process repeats reach Native medians of
-`145.06/845.57 tok/s`. Official Space commit `cc57df4` in precision-matched
-`fp32io16` mode measures `144.47/841.77 tok/s`, producing
-`1.0041x/1.0045x`. Both requested CUDA extensions are active in all rows; the
-six runs share one greedy-trace hash. A separate 64-step teacher-forced gate
-passes minimum logits cosine `0.9999934435` and exact top-1 at B1/B8.
+The follow-up closes the lower-precision official lane rather than comparing
+different recurrent-state dtypes. With FP16 weights/state/I/O, three
+deterministic 512-token runs reach Native medians `146.42/899.51 tok/s` versus
+official Space commit `cc57df4` at `146.277/890.21`, or
+`1.00098x/1.01045x` for B1/B8. A separate 16-step gate passes logits, recurrent
+state, xpa/xpf, elapsed-state, and exact greedy checks for both batches.
 
-This checkpoint does not promote a global default. The official fp16-state
-route is still faster at `146.28/890.21 tok/s`, and prefill, memory parity,
-other checkpoints, and other cards remain open. Reproduce with
-`bench/bench_native_model_decode.py --require-active-extensions` and
-`bench/bench_native_model_decode_alignment.py`; the `cuda` extra installs
-Ninja so extension build failures cannot silently become fallback results.
-Canonical evidence is
-[`bench/5090_native_decode_fused_20260718`](../../bench/5090_native_decode_fused_20260718/README.md).
+Same-precision sequence prefill is accepted for exact RTX 5090 g1h 2.9B and
+13.3B shapes at B1/B8 and prompt128/512/2048. All 12 selected cells pass
+prefill logits, per-layer outputs, recurrent state, xpa/xpf, first-token and
+first-decode-token gates; Native throughput spans `1.0029x–1.5690x` official.
+Commit `dcc53fc` promotes only these measured card/model/shape routes through
+`kernel_policy.py`. The 13.3B B8/prompt2048 graph route is deliberately not
+allowed because it exceeds the 32GB card; its measured graph-off route remains
+the exact default. Explicit environment overrides still win, and other cards
+or shapes do not inherit the 5090 profile.
+
+Reproduce with `bench/bench_native_model_decode.py
+--require-active-extensions`, `bench/bench_native_model_decode_alignment.py`,
+and `bench/run_official_native_prefill_matrix.py`. The `cuda` extra installs
+Ninja so extension failures cannot silently become fallback results. Canonical
+evidence is
+[`bench/5090_native_official_fp16_production_20260718`](../../bench/5090_native_official_fp16_production_20260718/README.md).
 
 ## Current next target: HF-compatible native fused backend
 

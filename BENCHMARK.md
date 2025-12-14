@@ -35,8 +35,9 @@ Status vocabulary:
 | RTX 5090 | 0.4B/0.8B through 7.2B/9B, B1/B8, dense/W8/W4 | 144/144 Qwen references verify full FLA plus Triton conv; 32/32 greedy checks pass; task quality is separate | raw dense prefill/decode minima `1.0226x/2.8130x`; per-active-B speed leads in all cells; W8/W4 total-latency and footprint gates pass | **PASS 8/8 batch-pairs** |
 | RTX 5090 | g1h 1.5B/2.9B/7.2B/13.3B BF16 versus W4, B1/B8, prompt128/decode128 | prompt/final cosine `>=0.9995`, same-next 8/8; group-128 grid 280/280 | prefill/decode minima `1.0010x/1.1854x`; footprint `0.5298x–0.6250x` with automatic exact-model profiles | **PASS 8/8 all-phase cells** |
 | RTX 5090 | official train_temp vs opt-in HF train_temp CUDA, 12x768 BF16, B1/T512 | backward 400/400 and FusedAdam step 800 tensors/deltas exactly match; 3-seed x 1,000-step cohort passes | median runtime 48.4061 s official vs 43.5184 s HF; candidate 10.10% lower in this synthetic cohort | **PASS exact lane** |
-| RTX 5090 | official train_temp vs Native/no-FLA train_temp CUDA, 12x768 BF16, B16/T512 | 399/399 gradients and 399/399 parameter deltas exact; 3-seed x 1,000-step, 500+500 resume and steady-memory gates pass | median runtime `82.3114s` official vs `86.6517s` Native; Native throughput `0.9499x` | **PASS alignment; performance partial** |
+| RTX 5090 | official train_temp vs Native/no-FLA train_temp CUDA, 12x768 BF16, B16/T512, real MiniPile | 399/399 gradients and 399/399 parameter deltas exact; paired 3-seed x 1,000-step, continuous 5,000-step and 2,500+2,500 resume gates pass | paired-seed median `1.00049x`; 5,000-step Native `410.414s` vs official `411.462s`, or `1.00255x` | **PASS exact measured lane** |
 | RTX 5090 | official RWKV-Gradio-3 v3a vs Native HF, g1h 7.2B FP16 weights + FP32 state, B1/B8 | extensions active; three 512-token repeats share one trace hash; min logits cosine `0.99999344`, top-1 `64/64` and `512/512` | Native median `145.06/845.57 tok/s` vs precision-matched v3a `144.47/841.77`, or `1.0041x/1.0045x` | **PASS precision-matched exact lane; opt-in** |
+| RTX 5090 | official RWKV-Gradio-3 v3a vs Native HF, FP16 weights/state/I/O | 7.2B B1/B8 16-step logits/state/xpa/xpf and greedy pass; 2.9B/13.3B B1/B8 prompt128/512/2048 prefill passes all tensor/state/greedy gates | 7.2B decode `1.0010x/1.0104x`; selected prefill 12/12 at `1.0029x–1.5690x` | **PASS exact fp16-state profiles** |
 | Apple M5 | 0.4B/1.5B selected MLX vs Qwen3.5 pairs | state/session/greedy and speculative target oracle pass | selected conservative decode/prefill/TTFT/memory gates pass | **PASS measured pairs** |
 
 ## RTX 5090 official train_temp alignment
@@ -61,16 +62,22 @@ predeclared fail-closed thresholds. Evidence:
 The Native/no-FLA route now also has the official shell training shape rather
 than a B1 substitute. At B16/T512 with gradient checkpointing, backward loss,
 all 399 gradients, FusedAdam grouping/order, all 399 parameter deltas and
-post-step loss match exactly. Seeds 131/232/333 complete 1,000 steps on both
-backends: train/validation AUC median relative differences are
-`0.001798%/0.002455%`, and both cohorts have `3/3` finite deep-success runs.
-A Native 500+500 checkpoint resume restores model, optimizer and RNG hashes;
-its validation AUC differs from a continuous run by `0.001481%`. Twenty steady
-CUDA-memory samples from step 50 to 1,000 show `-0.375 MiB` allocated growth and
-zero reserved growth. Native median training throughput is `0.9499x` official,
-so this closes alignment and bounded stability, not training-speed parity.
-Evidence:
-[`bench/5090_native_train_temp_b16_20260718/`](bench/5090_native_train_temp_b16_20260718/README.md).
+post-step loss match exactly. The final paired real-MiniPile cohort runs the
+official backend immediately before Native for seeds 131/232/333. All six runs
+are finite and reach final validation loss `<=4.8`; median train/validation AUC
+relative differences are `0.0784%/0.1029%`, and Native median throughput is
+`1.00049x` official. The p99.9 gradient ratio is `1.4745x`, below the `2x`
+gate; isolated finite pre-clip maxima remain telemetry rather than replacing
+the clipped-update, curve, and validation gates.
+
+The continuous 5,000-step pair records Native `410.414s` versus official
+`411.462s` (`1.00255x`), train/validation AUC differences of
+`0.0953%/0.2200%`, and final validation losses `3.80373/3.81245`. A separate
+Native run stops at 2,500, restores model/optimizer/Python/NumPy/torch
+CPU/CUDA RNG digests, and finishes at 5,000 with `0.99822x` uninterrupted
+Native throughput. This is a single RTX 5090, 12x768, BF16, B16/T512 result,
+not a larger-model, multi-day, or distributed-training claim. Evidence:
+[`bench/5090_native_train_temp_real_minipile_20260718/`](bench/5090_native_train_temp_real_minipile_20260718/README.md).
 
 The unchanged official `demo-training-prepare.sh` and
 `demo-training-run.sh` entry points also pass a bounded B16/T512/ZeRO-2 run on
@@ -96,13 +103,20 @@ greedy-trace SHA256. The repository alignment script passes 64 teacher-forced
 steps with minimum logits cosine `0.9999934435`, max absolute difference
 `0.0625`, and exact top-1 at B1 and B8.
 
-The official lower-precision fp16-state route remains faster at
-`146.28/890.21 tok/s`; Native is `0.9917x/0.9499x` of that reference. The
-official harness reports static T1 graph p50, while the Native loop includes
-autoregressive argmax and GPU trace copies, so the raw timing boundaries are
-retained in the artifact. This is an exact RTX 5090/7.2B/T1 decode close, not a
-prefill, memory-parity, other-model, or other-card claim. Evidence:
-[`bench/5090_native_decode_fused_20260718/`](bench/5090_native_decode_fused_20260718/README.md).
+The follow-up fp16-state profile closes that former gap. Three deterministic
+512-token runs produce Native B1/B8 medians `146.42/899.51 tok/s` against the
+pinned official `146.277/890.21`, or `1.00098x/1.01045x`. A separate 16-step
+same-input comparison passes logits cosine `>=0.99999966`, state cosine
+`>=0.99999919`, xpa/xpf gates, exact greedy `16/16` at B1 and `128/128` at B8.
+
+Same-precision sequence-prefill evidence covers official g1h 2.9B and 13.3B,
+B1/B8, prompt128/512/2048. All 12 selected cells pass prefill logits, layer
+outputs, recurrent state, xpa/xpf, first-token and first-decode-token gates,
+while Native throughput is `1.0029x–1.5690x` official. The measured profiles
+are exact RTX 5090 defaults in `kernel_policy.py`; explicit environment
+overrides still win, and unlisted cards/models/shapes remain conservative.
+Evidence:
+[`bench/5090_native_official_fp16_production_20260718/`](bench/5090_native_official_fp16_production_20260718/README.md).
 
 ## V100 production-close
 
@@ -482,7 +496,7 @@ Evidence: [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PRODUC
 | A100 40GB | 0.4B–7.2B Trainer/SFT/DPO/resume; dual-card ZeRO-2/3 base |
 | A800 80GB | 0.1B–13.3B mixed inference/quant plus single/dual-card ZeRO |
 | RTX A6000 48GB | 0.4B–7.2B training/resume; dual-card ZeRO through 2.9B |
-| RTX 5090 | Exact 12x768 BF16 train_temp backward/FusedAdam step and 3-seed x 1,000-step cohort |
+| RTX 5090 | Exact 12x768 BF16 train_temp backward/FusedAdam step, paired real-MiniPile 3-seed cohort, continuous 5,000-step run and 2,500+2,500 recovery |
 | Apple M5 | Tiny and real-model PEFT/Trainer/SFT/DPO/GRPO compatibility smoke |
 
 See [`docs/TRAINING.md`](docs/TRAINING.md) and the validation documents.
@@ -494,8 +508,9 @@ See [`docs/TRAINING.md`](docs/TRAINING.md) and the validation documents.
 3. Albatross P2/P3 is not closed for every model/card/batch.
 4. RTX 5090 final comparison needs a fresh same-card Albatross rerun.
 5. Apple needs cross-M-series, CoreML INT4/ANE and broader Qwen quality evidence.
-6. Larger-model, real-dataset, additional-card and distributed train_temp
-   evidence plus larger ZeRO-3 resume matrices remain open.
+6. Larger-model, multi-day, additional-card and distributed train_temp evidence
+   plus larger ZeRO-3 resume matrices remain open; the exact 5090 lane now has
+   real-MiniPile multi-seed and 5,000-step evidence.
 
 ## Reproduction and evidence rules
 

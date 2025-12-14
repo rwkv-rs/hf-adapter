@@ -95,6 +95,13 @@ python examples/generate.py --model D:\models\rwkv7-model-hf --prompt "User: 你
 > 转换后的模型使用仓库代码，因此需要 `trust_remote_code=True`。只加载你信任的
 > 本地目录或 Hugging Face 仓库。
 
+RTX 5090 的同精度 Native 证据使用官方 RWKV-Gradio-3 的 FP16 权重、状态和输入输出
+作为对照。g1h 7.2B 缓存解码在 B1/B8 达到官方 `1.0010x/1.0104x`，并通过
+logits、状态和 greedy 门禁；g1h 2.9B/13.3B 在 B1/B8、提示长度
+128/512/2048 的 12 个 prefill 单元全部通过。仓库只会对这些精确卡、模型和形状
+自动选择已验证策略，证据见
+[`bench/5090_native_official_fp16_production_20260718/README.md`](bench/5090_native_official_fp16_production_20260718/README.md)。
+
 ## 使用标准 Transformers API
 
 ```python

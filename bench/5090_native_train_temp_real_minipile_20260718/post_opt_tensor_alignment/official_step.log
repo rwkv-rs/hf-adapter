@@ -1,0 +1,13 @@
+/home/ubuntu/venv-rwkv5090/lib/python3.10/site-packages/lightning_fabric/__init__.py:29: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  __import__("pkg_resources").declare_namespace(__name__)
+RWKV_MY_TESTING x070
+RWKV_KERNEL @rwkv3
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+ninja: no work to do.
+{"status": "pass", "backend": "official_train_temp", "phase": "step", "precision": "bf16", "loss": 11.193662643432617, "runtime_s": 1.0804346369986888, "raw_grad_norm": 541.9493435335517, "clip_returned_grad_norm": 544.0, "post_step_loss": 7.862283706665039, "snapshot_tensor_count": 798, "snapshot_sha256": "5a03211de8be2482e9867f805f11056b85529a41bcd9c6bf44090e480504615b", "gpu_name": "NVIDIA GeForce RTX 5090", "peak_memory_mb": 2735.90380859375}

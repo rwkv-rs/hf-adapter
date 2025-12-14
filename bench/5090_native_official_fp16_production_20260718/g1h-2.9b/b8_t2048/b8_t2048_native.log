@@ -1,0 +1,36 @@
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+[transformers] You are using a model of type `rwkv7_hf_adapter` to instantiate a model of type `rwkv7_native`. This may be expected if you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into `Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible with the model you are instantiating.
+Loading weights:   0%|          | 0/1059 [00:00<?, ?it/s]Loading weights:  12%|█▏        | 126/1059 [00:00<00:00, 1236.48it/s]Loading weights:  24%|██▎       | 250/1059 [00:00<00:00, 1216.72it/s]Loading weights:  35%|███▌      | 372/1059 [00:00<00:00, 1183.83it/s]Loading weights:  47%|████▋     | 493/1059 [00:00<00:00, 1158.99it/s]Loading weights:  59%|█████▊    | 622/1059 [00:00<00:00, 1195.99it/s]Loading weights:  70%|███████   | 743/1059 [00:00<00:00, 1196.65it/s]Loading weights:  81%|████████▏ | 863/1059 [00:00<00:00, 1184.49it/s]Loading weights:  93%|█████████▎| 988/1059 [00:00<00:00, 1177.47it/s]Loading weights: 100%|██████████| 1059/1059 [00:00<00:00, 1189.91it/s]
+{
+  "engine": "native_hf_sequence",
+  "batch_size": 8,
+  "prompt_tokens": 2048,
+  "timing": {
+    "times_ms": [
+      624.1671142578125,
+      624.7769165039062,
+      624.8705444335938,
+      624.358154296875,
+      624.9713134765625,
+      624.583984375,
+      625.0752563476562,
+      625.3982543945312,
+      625.5594482421875,
+      625.458251953125,
+      625.6393432617188,
+      625.8268432617188,
+      625.933837890625,
+      625.8759765625,
+      626.0123291015625,
+      626.0117797851562,
+      626.104248046875,
+      626.2545166015625,
+      626.3550415039062,
+      626.4580078125,
+      626.60888671875
+    ],
+    "median_ms": 625.6393432617188,
+    "aggregate_tokps": 26187.61140337399
+  },
+  "peak_vram_mb": 8546.84130859375
+}
