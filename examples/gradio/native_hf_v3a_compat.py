@@ -112,15 +112,22 @@ class RWKV7:
                     return_dict=False,
                     copy_logits=False,
                 )
-                return logits[:, -1]
-            result = self.model(
-                **inputs,
-                past_key_values=state.cache,
-                use_cache=True,
-                logits_to_keep=1,
-            )
-        state.cache = result.past_key_values
-        return result.logits[:, -1]
+                output = logits[:, -1]
+            else:
+                result = self.model(
+                    **inputs,
+                    past_key_values=state.cache,
+                    use_cache=True,
+                    logits_to_keep=1,
+                )
+                state.cache = result.past_key_values
+
+                output = result.logits[:, -1]
+
+        # The Gradio sampler applies occurrence penalties in place. Cloning
+        # after leaving inference mode returns a normal mutable tensor on new
+        # PyTorch releases while keeping model execution inference-only.
+        return output.clone()
 
     def forward(self, tokens, state: NativeHFState) -> torch.Tensor:
         token_ids = torch.as_tensor(tokens, dtype=torch.long, device=self.device)
