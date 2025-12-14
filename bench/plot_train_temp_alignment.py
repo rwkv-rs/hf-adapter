@@ -337,6 +337,110 @@ def render_convergence_plot(
     plt.close(figure)
 
 
+def render_long_run_plot(
+    evidence: Path,
+    output: Path,
+    *,
+    reference_json: str,
+    candidate_json: str,
+    resumed_json: str | None = None,
+) -> None:
+    """Render uninterrupted official/Native curves and optional resumed Native."""
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    runs = [
+        (
+            backend_label("official_train_temp"),
+            load_json(evidence / reference_json),
+            {"color": "#252525", "linestyle": "-", "linewidth": 1.7},
+        ),
+        (
+            backend_label("hf_native_train_temp_cuda"),
+            load_json(evidence / candidate_json),
+            {"color": "#1677b8", "linestyle": "--", "linewidth": 1.7},
+        ),
+    ]
+    if resumed_json:
+        runs.append(
+            (
+                "Native HF resumed",
+                load_json(evidence / resumed_json),
+                {"color": "#c45a16", "linestyle": ":", "linewidth": 1.6},
+            )
+        )
+    if any(run.get("status") != "pass" for _, run, _ in runs):
+        raise ValueError("refusing to plot a failed long convergence run")
+
+    figure, axes = plt.subplots(1, 2, figsize=(15, 6.2))
+    for label, run, style in runs:
+        train = run["train_curve"]
+        validation = run["validation_curve"]
+        axes[0].plot(
+            [row["step"] for row in train],
+            [row["loss"] for row in train],
+            label=label,
+            alpha=0.82,
+            **style,
+        )
+        axes[1].plot(
+            [row["step"] for row in validation],
+            [row["loss"] for row in validation],
+            label=label,
+            marker="o",
+            markersize=2.8,
+            alpha=0.94,
+            **style,
+        )
+
+    axes[0].set_title("Training loss", fontsize=13, fontweight="bold")
+    axes[1].set_title("Held-out validation loss", fontsize=13, fontweight="bold")
+    for axis in axes:
+        axis.set_yscale("log")
+        axis.set_xlabel("Optimizer step")
+        axis.set_ylabel("Loss (log scale)")
+        axis.grid(True, which="both", color="#d9d9d9", linewidth=0.65)
+        axis.set_facecolor("#fafafa")
+    handles, labels = axes[0].get_legend_handles_labels()
+    figure.legend(
+        handles,
+        labels,
+        loc="upper center",
+        ncol=len(runs),
+        frameon=False,
+        bbox_to_anchor=(0.5, 0.90),
+    )
+    reference = runs[0][1]
+    figure.suptitle(
+        "Official RWKV-LM vs Native HF: long real-data run",
+        fontsize=19,
+        fontweight="bold",
+        y=0.985,
+    )
+    figure.text(
+        0.5,
+        0.93,
+        run_subtitle(reference, steps=int(reference["steps_completed"])),
+        ha="center",
+        fontsize=11,
+        color="#444444",
+    )
+    figure.text(
+        0.5,
+        0.015,
+        "The resumed line reloads model, optimizer and RNG state at step 2,500",
+        ha="center",
+        fontsize=10.5,
+        color="#333333",
+    )
+    figure.tight_layout(rect=(0.03, 0.055, 0.99, 0.87), w_pad=2.2)
+    figure.savefig(output, dpi=160, bbox_inches="tight", facecolor="white")
+    plt.close(figure)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence-dir", type=Path, default=DEFAULT_EVIDENCE)
@@ -357,6 +461,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cohort-report", default="compare_convergence_cohort.json")
     parser.add_argument("--backward-report", default="compare_backward.json")
     parser.add_argument("--step-report", default="compare_step.json")
+    parser.add_argument("--long-reference")
+    parser.add_argument("--long-candidate")
+    parser.add_argument("--long-resumed")
     return parser
 
 
@@ -369,6 +476,7 @@ def main() -> int:
             "convergence": evidence / f"{args.output_stem}_convergence.png",
             "cohort": evidence / f"{args.output_stem}_cohort.csv",
             "single_step": evidence / f"{args.output_stem}_single_step.csv",
+            "long": evidence / f"{args.output_stem}_long_run.png",
         }
     else:
         outputs = {
@@ -376,6 +484,7 @@ def main() -> int:
             "convergence": evidence / "official_vs_hf_convergence.png",
             "cohort": evidence / "official_vs_hf_cohort.csv",
             "single_step": evidence / "official_vs_hf_single_step.csv",
+            "long": evidence / "official_vs_hf_long_run.png",
         }
     render_best_observed_plot(
         evidence,
@@ -398,6 +507,16 @@ def main() -> int:
         backward_report=args.backward_report,
         step_report=args.step_report,
     )
+    if bool(args.long_reference) != bool(args.long_candidate):
+        raise ValueError("--long-reference and --long-candidate must be provided together")
+    if args.long_reference and args.long_candidate:
+        render_long_run_plot(
+            evidence,
+            outputs["long"],
+            reference_json=args.long_reference,
+            candidate_json=args.long_candidate,
+            resumed_json=args.long_resumed,
+        )
     print(f"wrote train_temp comparison attachments to {evidence}")
     return 0
 

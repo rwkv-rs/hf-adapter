@@ -7,6 +7,7 @@ normal HF inference and training do not compile or route through these ops.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import threading
 import types
@@ -60,6 +61,39 @@ _OP_SOURCES = {
         "rwkv7_tmix_vres_gate_bf16_v3.cu",
     ),
 }
+
+
+def _train_temp_checkpoint_backend() -> str:
+    requested = (
+        os.environ.get("RWKV7_TRAIN_TEMP_CHECKPOINT_BACKEND", "auto")
+        .strip()
+        .lower()
+    )
+    if requested not in {"auto", "deepspeed", "torch"}:
+        raise ValueError(
+            "RWKV7_TRAIN_TEMP_CHECKPOINT_BACKEND must be auto, deepspeed or torch"
+        )
+    if requested == "torch":
+        return "torch_non_reentrant"
+    if importlib.util.find_spec("deepspeed") is not None:
+        return "deepspeed"
+    if requested == "deepspeed":
+        raise RuntimeError("DeepSpeed checkpointing was requested but is unavailable")
+    return "torch_non_reentrant"
+
+
+def _train_temp_checkpoint(function, *args):
+    """Checkpoint one layer with the official train_temp backend when present."""
+
+    backend = _train_temp_checkpoint_backend()
+    if backend == "deepspeed":
+        import deepspeed
+
+        return deepspeed.checkpointing.checkpoint(function, *args)
+
+    from torch.utils.checkpoint import checkpoint
+
+    return checkpoint(function, *args, use_reentrant=False)
 
 
 def _source_root() -> Path:
@@ -572,6 +606,16 @@ def native_train_temp_ffn_forward(self, hidden_states):
     )
 
 
+def native_train_temp_layer_forward(self, hidden_states, v_first):
+    """Run one NativeRWKV7Layer with the same checkpoint boundary as train_temp."""
+
+    residual = self.pre_norm(hidden_states) if hasattr(self, "pre_norm") else hidden_states
+    attn_output, v_first = self.attn(self.attn_norm(residual), v_first)
+    hidden_states = residual + attn_output
+    hidden_states = hidden_states + self.ffn(self.ffn_norm(hidden_states))
+    return hidden_states, v_first
+
+
 def _attention_forward(
     self,
     hidden_states,
@@ -606,8 +650,8 @@ def _ffn_forward(self, x, attention_mask=None, state=None, cu_seqlens=None, **kw
 
 def native_train_temp_causal_lm_forward(
     model,
-    *,
     input_ids=None,
+    *,
     attention_mask=None,
     inputs_embeds=None,
     past_key_values=None,
@@ -670,28 +714,15 @@ def native_train_temp_causal_lm_forward(
     # the first checkpointed layer runs.
     v_first = hidden_states.new_zeros(1)
 
-    def layer_forward(layer, x, first_value):
-        residual = layer.pre_norm(x) if hasattr(layer, "pre_norm") else x
-        attn_output, first_value = layer.attn(layer.attn_norm(residual), first_value)
-        x = residual + attn_output
-        residual = x
-        x = residual + layer.ffn(layer.ffn_norm(x))
-        return x, first_value
-
     for layer in model.model.layers:
         if gradient_checkpointing:
-            from torch.utils.checkpoint import checkpoint
-
-            hidden_states, v_first = checkpoint(
-                lambda x, first_value, active_layer=layer: layer_forward(
-                    active_layer, x, first_value
-                ),
+            hidden_states, v_first = _train_temp_checkpoint(
+                layer,
                 hidden_states,
                 v_first,
-                use_reentrant=False,
             )
         else:
-            hidden_states, v_first = layer_forward(layer, hidden_states, v_first)
+            hidden_states, v_first = layer(hidden_states, v_first)
 
     hidden_states = model.model.norm(hidden_states)
     logits = model.lm_head(hidden_states)
@@ -736,35 +767,63 @@ def enable_train_temp_cuda_backend(model) -> dict[str, Any]:
         ffn_modules = tuple(
             module for module in modules if type(module).__name__ == "NativeRWKV7FFN"
         )
+        layer_modules = tuple(
+            module for module in modules if type(module).__name__ == "NativeRWKV7Layer"
+        )
         if not attention_modules or len(attention_modules) != len(ffn_modules):
             raise TypeError(
                 "expected a balanced Native RWKV-7 model, found "
                 f"{len(attention_modules)} attention and {len(ffn_modules)} FFN modules"
             )
+        if len(layer_modules) != len(attention_modules):
+            raise TypeError(
+                "expected one Native RWKV-7 layer per attention module, found "
+                f"{len(layer_modules)} layers and {len(attention_modules)} attention modules"
+            )
         for module in attention_modules:
+            if getattr(module, "_rwkv7_train_temp_original_forward", None) is None:
+                module._rwkv7_train_temp_original_forward = module.forward
             module._rwkv7_train_temp_cuda_enabled = True
             module._rwkv7_train_temp_forward = types.MethodType(
                 native_train_temp_attention_forward, module
             )
+            module.forward = module._rwkv7_train_temp_forward
         for module in ffn_modules:
+            if getattr(module, "_rwkv7_train_temp_original_forward", None) is None:
+                module._rwkv7_train_temp_original_forward = module.forward
             module._rwkv7_train_temp_cuda_enabled = True
             module._rwkv7_train_temp_forward = types.MethodType(
                 native_train_temp_ffn_forward, module
             )
+            module.forward = module._rwkv7_train_temp_forward
+        for module in layer_modules:
+            if getattr(module, "_rwkv7_train_temp_original_forward", None) is None:
+                module._rwkv7_train_temp_original_forward = module.forward
+            module._rwkv7_train_temp_cuda_enabled = True
+            module._rwkv7_train_temp_forward = types.MethodType(
+                native_train_temp_layer_forward, module
+            )
+            module.forward = module._rwkv7_train_temp_forward
         if not hasattr(model, "_rwkv7_train_temp_original_use_cache"):
             model._rwkv7_train_temp_original_use_cache = model.config.use_cache
         model.config.use_cache = False
+        if getattr(model, "_rwkv7_train_temp_original_forward", None) is None:
+            model._rwkv7_train_temp_original_forward = model.forward
         model._rwkv7_train_temp_cuda_enabled = True
         model._rwkv7_train_temp_forward = types.MethodType(
             native_train_temp_causal_lm_forward, model
         )
+        model.forward = model._rwkv7_train_temp_forward
         return {
             "backend": "native_train_temp_cuda",
             "source_commit": TRAIN_TEMP_SOURCE_COMMIT,
             "attention_modules": len(attention_modules),
             "ffn_modules": len(ffn_modules),
+            "layer_modules": len(layer_modules),
             "head_size": TRAIN_TEMP_HEAD_SIZE,
             "chunk_len": TRAIN_TEMP_CHUNK_LEN,
+            "checkpoint_backend": _train_temp_checkpoint_backend(),
+            "forward_dispatch": "direct",
         }
 
     from fla.layers.rwkv7 import RWKV7Attention
@@ -834,6 +893,7 @@ __all__ = [
     "native_train_temp_attention_forward",
     "native_train_temp_causal_lm_forward",
     "native_train_temp_ffn_forward",
+    "native_train_temp_layer_forward",
     "train_temp_causal_cross_entropy",
     "train_temp_cuda_available",
     "train_temp_fused_cross_entropy",
