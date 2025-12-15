@@ -136,6 +136,14 @@ CPU DEMO PASS
 本教程没有证明 CPU 上的生产吞吐、长时间训练稳定性、模型质量或全模型 W8/W4
 加速；它验证的是最小 Native HF 接口和参数更新合同。
 
+### 与官方 train_temp 脚本的区别
+
+本页的 CPU tiny 训练是 Windows 也能运行的最小演示。维护者提到的
+`demo-training-prepare.sh` 和 `demo-training-run.sh` 属于官方 RWKV-LM 仓库的
+`RWKV-v7/train_temp/`，不是本仓库的 Windows CPU 命令：前者只在 CPU 上创建初始
+checkpoint，后者使用 Linux、NVIDIA CUDA 和 DeepSpeed 运行正式训练。配置含义、
+固定版本和安全复现命令见 [`TRAIN_TEMP_CUDA.md`](TRAIN_TEMP_CUDA.md)。
+
 ## 6. 让 AI 执行
 
 AI 的唯一操作入口是 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md)。在其中选择
