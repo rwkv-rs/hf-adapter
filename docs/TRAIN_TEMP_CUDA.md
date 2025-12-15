@@ -103,6 +103,18 @@ print({"backend": backend, "loss": float(loss), "finite_grad_tensors": grad_coun
 使用 B16、BF16、T512、有效 FFN3072、DeepSpeed ZeRO-2、`kernel=@rwkv3` 训练。两条脚本
 不是同一个阶段，不能用 prepare 的 B1 替代 run 的 B16。
 
+这两个 `.sh` 文件位于官方 RWKV-LM checkout，不在本 HF adapter 仓库中，也不能在
+本仓库根目录直接执行。它们的源码位置是：
+
+```text
+/path/to/RWKV-LM/RWKV-v7/train_temp/demo-training-prepare.sh
+/path/to/RWKV-LM/RWKV-v7/train_temp/demo-training-run.sh
+```
+
+Windows/CPU 用户需要的是 [`WINDOWS_CPU.md`](WINDOWS_CPU.md) 的 tiny 演示；官方
+`run.sh` 验收需要 Linux、NVIDIA CUDA 和 DeepSpeed。正式复现时建议使用下面的安全
+runner，由它定位并核对两条官方脚本，而不是从错误目录直接运行 `sh ./...`。
+
 下面的安全 runner 会先核对 commit、脚本 SHA256、Minipile 大小/哈希和
 `magic_prime`，把输出限制在独立目录，并在不执行官方清理命令的情况下复现脚本
 参数。`--max-steps 1` 只给正式训练增加可审计的有界停止点：
