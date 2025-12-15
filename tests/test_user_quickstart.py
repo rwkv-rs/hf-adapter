@@ -283,6 +283,9 @@ def test_train_temp_tutorial_has_user_acceptance_contract() -> None:
         "常见问题与扩展",
         "AI_ASSISTED_SETUP.md",
         "train_temp_causal_cross_entropy",
+        "scripts/train_native.py",
+        "official-x070-12x768-b16",
+        "train_native_example.json",
         "compare_convergence_cohort.json",
     ):
         assert required in text

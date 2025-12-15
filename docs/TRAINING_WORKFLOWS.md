@@ -7,6 +7,10 @@
 收敛门禁时，使用独立的 [`TRAIN_TEMP_CUDA.md`](TRAIN_TEMP_CUDA.md)。普通
 Trainer/PEFT/TRL smoke 不会自动等价为官方训练效果验收。
 
+需要自由调整 batch、ctx、学习率、schedule、seed、训练步数和 checkpoint 频率的
+Native/no-FLA 全参数 CUDA 训练时，使用 `scripts/train_native.py`。官方 preset 与
+用户 JSON/CLI 参数的完整示例也在 [`TRAIN_TEMP_CUDA.md`](TRAIN_TEMP_CUDA.md)。
+
 前置条件：
 
 ```bash
