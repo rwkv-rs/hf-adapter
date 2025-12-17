@@ -75,6 +75,7 @@ class KernelPolicy:
     marlin_w4_model_profiles: tuple[tuple[int, int, int, int, bool, int], ...] = ()
     fused_recurrent: bool = False
     fused_prefill_scan: bool = False
+    prefill_scan_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
     fused_prefill_self_chunk: bool = False
     prefill_self_chunk_min_tokens: int = 1024
     prefill_self_chunk_size: int = 16
@@ -342,20 +343,24 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     "ada": GPUAdaptationRule(
         family="ada",
         cards=("RTX 4090", "RTX 4080/4070", "RTX 40-series"),
-        status="RTX 4090 g1h 7.2B bsz8 dense/W8/W4 acceptance passes 18/18; smaller Ada cards remain card-local validation targets",
-        default_stance="exact RTX 4090 path with shape-routed prefill, grouped low-rank, BnB W8 and native W4 kernels; compatible fallbacks elsewhere",
+        status="RTX 4090 promoted matrices and exact RTX 4080 native/Qwen3.5/training/quant rows exist; unmeasured Ada cards remain card-local validation targets",
+        default_stance="exact RTX 4090 and RTX 4080 shape-routed paths with compatible fallbacks elsewhere",
         default_on=(
             "fast_cache", "fused_recurrent_output", "fused_recurrent_raw", "fused_output",
-            "fused_norm_mix", "exact-4090 prefill graph/scan policy",
-            "ada_linear for rows=1/2/4 hidden projections", "ada_wagv_lora for rows<=4",
+            "fused_norm_mix", "exact-card prefill graph/scan policy",
+            "exact-4080 prefill shift/state/output for measured 0.4B/1.5B shapes",
+            "exact-4090 ada_linear for rows=1/2/4 hidden projections", "ada_wagv_lora for rows<=4",
             "exact-4090 BnB W8 native bridge", "exact-4090 batched MM4 output head",
         ),
-        default_off=("fused_output_project", "generic Triton projection/LoRA fusions", "unmeasured Ada-card promotion"),
+        default_off=(
+            "fused_output_project", "generic Triton projection/LoRA fusions",
+            "RTX 4080 ada_linear and sparse FFN", "unmeasured Ada-card promotion",
+        ),
         required_functional=COMMON_FUNCTIONAL_SMOKES,
         required_benchmarks=COMMON_PERF_BENCHMARKS
         + ("fast-prefill TTFT/TPOT rows when RWKV7_FAST_PREFILL is considered", "exact-card W8/W4 footprint, peak-VRAM and end-to-end speed rows"),
-        quant_rule="RTX 4090 W8 hybrid and W4 native/TorchAO routes have exact bsz8 end-to-end rows; other Ada cards remain memory-first until their own speed matrix passes",
-        promotion_rule="do not generalize RTX 4090 shape/tile policy to another Ada card without its exact-card correctness and speed matrix",
+        quant_rule="RTX 4090 routes and RTX 4080 B8 output-head A8W8/TorchAO-W4 routes have exact end-to-end rows; RTX 4080 full-model BNB8/BNB4 remains memory-only",
+        promotion_rule="do not generalize one Ada card's shapes or tiles without exact-card correctness and speed rows",
     ),
     "hopper": GPUAdaptationRule(
         family="hopper",
@@ -672,9 +677,20 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
         )
     if family == "ada":
         is_4090 = "4090" in profile.name.lower()
+        is_4080 = "4080" in profile.name.lower()
+        rtx4080_prefill_shapes = (
+            tuple(
+                (hidden, 24, batch, tokens)
+                for hidden in (1024, 2048)
+                for batch in (1, 2, 4, 8)
+                for tokens in (128, 512, 2048)
+            )
+            if is_4080
+            else ()
+        )
         return KernelPolicy(
             profile=profile,
-            fast_prefill=is_4090,
+            fast_prefill=is_4090 or is_4080,
             bnb_skip_policy="memory",
             # The exact RTX 4090 W8 lane is graph-safe with threshold zero.
             # It removes the host-synchronizing BnB outlier branch and is a
@@ -710,12 +726,18 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_output=True,
             fused_norm_mix=True,
             norm_mix_num_warps=8 if is_4090 else 4,
-            fused_prefill_scan=is_4090,
-            prefill_graph=is_4090,
-            fused_prefill_shift_mix=is_4090,
-            fused_prefill_state_prep=is_4090,
-            fused_prefill_output=is_4090,
-            ada_linear=True,
+            fused_prefill_scan=is_4090 or is_4080,
+            prefill_scan_model_shapes=rtx4080_prefill_shapes,
+            prefill_graph=is_4090 or is_4080,
+            prefill_graph_cache_size=4 if is_4080 else 2,
+            prefill_graph_model_shapes=rtx4080_prefill_shapes,
+            fused_prefill_shift_mix=is_4090 or is_4080,
+            prefill_shift_mix_model_shapes=rtx4080_prefill_shapes,
+            fused_prefill_state_prep=is_4090 or is_4080,
+            prefill_state_prep_model_shapes=rtx4080_prefill_shapes,
+            fused_prefill_output=is_4090 or is_4080,
+            prefill_fused_output_model_shapes=rtx4080_prefill_shapes,
+            ada_linear=not is_4080,
             ada_linear_rows="1 2 4" if is_4090 else "2 4",
             ada_wagv_lora=True,
             ada_sparse_ffn=is_4090,
@@ -723,7 +745,13 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ada_sparse_ffn_inplace=is_4090,
             rkv_policy="vkwr_auto" if is_4090 else "manual",
             output_project_block_m=16,
-            notes="RTX 40/Ada: exact-4090 rows promote fixed-shape prefill graph plus raw recurrent decode, 8-warp norm/mix, rows=1/2/4 exact linear, stacked-copy-free R/K/V, grouped W/A/G/V including layer 0, graph-safe one/two-row sparse FFN, threshold-zero BnB W8 native prefill/decode, and bsz8 tensor-core MM4 output-head dispatch; other Ada cards retain the compatible fallback until measured",
+            notes=(
+                "RTX 4080: exact 0.4B/1.5B fp16 rows promote shape-routed native prefill "
+                "for B=1/2/4/8 and T=128/512/2048; grouped W/A/G/V remains enabled for "
+                "rows<=4 while the regressing Ada linear route stays disabled"
+                if is_4080
+                else "RTX 40/Ada: exact-4090 rows promote fixed-shape prefill graph plus raw recurrent decode, 8-warp norm/mix, rows=1/2/4 exact linear, stacked-copy-free R/K/V including layer 0, graph-safe one/two-row sparse FFN, threshold-zero BnB W8 native prefill/decode, and bsz8 tensor-core MM4 output-head dispatch; other Ada cards retain the compatible fallback until measured"
+            ),
         )
     if family == "hopper":
         return KernelPolicy(

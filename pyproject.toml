@@ -32,7 +32,7 @@ test = [
 ]
 train = ["peft", "accelerate", "datasets", "trl", "deepspeed"]
 quant = ["bitsandbytes", "triton>=3.3.0; platform_system == 'Linux'"]
-torchao = ["torchao; platform_system == 'Linux'"]
+torchao = ["torchao>=0.16.0; platform_system == 'Linux'"]
 mlx = ["mlx; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 
 [tool.setuptools.packages.find]

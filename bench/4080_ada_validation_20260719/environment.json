@@ -1,0 +1,962 @@
+{
+  "adaptation_rule": {
+    "cards": [
+      "RTX 4090",
+      "RTX 4080/4070",
+      "RTX 40-series"
+    ],
+    "default_off": [
+      "fused_output_project",
+      "generic Triton projection/LoRA fusions",
+      "RTX 4080 ada_linear and sparse FFN",
+      "unmeasured Ada-card promotion"
+    ],
+    "default_on": [
+      "fast_cache",
+      "fused_recurrent_output",
+      "fused_recurrent_raw",
+      "fused_output",
+      "fused_norm_mix",
+      "exact-card prefill graph/scan policy",
+      "exact-4080 prefill shift/state/output for measured 0.4B/1.5B shapes",
+      "exact-4090 ada_linear for rows=1/2/4 hidden projections",
+      "ada_wagv_lora for rows<=4",
+      "exact-4090 BnB W8 native bridge",
+      "exact-4090 batched MM4 output head"
+    ],
+    "default_stance": "exact RTX 4090 and RTX 4080 shape-routed paths with compatible fallbacks elsewhere",
+    "family": "ada",
+    "promotion_rule": "do not generalize one Ada card's shapes or tiles without exact-card correctness and speed rows",
+    "quant_rule": "RTX 4090 routes and RTX 4080 B8 output-head A8W8/TorchAO-W4 routes have exact end-to-end rows; RTX 4080 full-model BNB8/BNB4 remains memory-only",
+    "required_benchmarks": [
+      "bench_batch_sweep.py bsz=1/2/4/8",
+      "bench_native_graph_overhead.py",
+      "bench_native_prefill_scan.py when prefill is claimed",
+      "native_graph fused-output/recurrent-output A/B",
+      "projection/LoRA/layout sweep before projection defaults",
+      "W8/W4 footprint + speed rows before quant speed claims",
+      "fast-prefill TTFT/TPOT rows when RWKV7_FAST_PREFILL is considered",
+      "exact-card W8/W4 footprint, peak-VRAM and end-to-end speed rows"
+    ],
+    "required_functional": [
+      "import_from_pretrained",
+      "generate_use_cache",
+      "rwkv7_forward_token",
+      "batch_cache",
+      "dynamic_batch_cache",
+      "chunked_prefill",
+      "native_graph_decode_greedy_match"
+    ],
+    "status": "RTX 4090 promoted matrices and exact RTX 4080 native/Qwen3.5/training/quant rows exist; unmeasured Ada cards remain card-local validation targets"
+  },
+  "artifact": "bench/4080_ada_validation_20260719",
+  "cuda_available": true,
+  "date": "2026-07-19",
+  "gpu_capability": [
+    8,
+    9
+  ],
+  "gpu_name": "NVIDIA GeForce RTX 4080",
+  "kernel_policy": {
+    "a8w8_gemv_max_rows": 1,
+    "ada_linear": false,
+    "ada_linear_roles": "auto",
+    "ada_linear_rows": "2 4",
+    "ada_sparse_ffn": false,
+    "ada_sparse_ffn_deterministic_splits": 0,
+    "ada_sparse_ffn_fp32_accum": false,
+    "ada_sparse_ffn_inplace": false,
+    "ada_sparse_ffn_low_memory_pack": false,
+    "ada_sparse_ffn_max_rows": 19,
+    "ada_sparse_ffn_official_boundary": false,
+    "ada_sparse_ffn_share_pack": false,
+    "ada_sparse_ffn_up": true,
+    "ada_wag_lora": false,
+    "ada_wagv_lora": true,
+    "blackwell_cmix": false,
+    "bnb_int8_threshold": null,
+    "bnb_skip_policy": "memory",
+    "fast_cache": true,
+    "fast_prefill": true,
+    "fast_token_backend": "auto",
+    "fused_norm_mix": true,
+    "fused_output": true,
+    "fused_output_project": false,
+    "fused_prefill_clampw_scan": false,
+    "fused_prefill_output": true,
+    "fused_prefill_residual_gemm": false,
+    "fused_prefill_scan": true,
+    "fused_prefill_self_chunk": false,
+    "fused_prefill_sequence_ffn": false,
+    "fused_prefill_shift_mix": true,
+    "fused_prefill_stacked_rkv": false,
+    "fused_prefill_state_prep": true,
+    "fused_prefill_state_scan": false,
+    "fused_prefill_state_scan_max_batch": null,
+    "fused_projection": false,
+    "fused_recurrent": false,
+    "fused_recurrent_output": true,
+    "fused_recurrent_raw": true,
+    "fused_wag_lora": false,
+    "fused_wavg_lora": false,
+    "marlin_w4_ffn_shapes": [],
+    "marlin_w4_model_profiles": [],
+    "mm4_dot_block_b": null,
+    "mm4_dot_block_n": null,
+    "mm4_dot_block_pairs": null,
+    "mm4_dot_min_rows": null,
+    "mm4_dot_warps": null,
+    "mm4_fused_max_rows": null,
+    "mm4_gemv_block_n": null,
+    "mm4_gemv_block_pairs": null,
+    "native_bnb8_attn_mix_block": 1024,
+    "native_bnb8_direct": false,
+    "native_bnb8_ffn_mix_block": 1024,
+    "native_bnb8_ffn_mix_quant": false,
+    "native_bnb8_relu_quant": false,
+    "native_bnb8_rkv_mix_quant": false,
+    "native_external_quant_graph": false,
+    "native_external_quant_prefill": false,
+    "native_external_quant_prefill_graph": false,
+    "native_graph_fp16_recurrent": false,
+    "native_graph_precompute_embedding": false,
+    "native_graph_state_dtype": "fp32",
+    "norm_mix_num_warps": 4,
+    "notes": "RTX 4080: exact 0.4B/1.5B fp16 rows promote shape-routed native prefill for B=1/2/4/8 and T=128/512/2048; grouped W/A/G/V remains enabled for rows<=4 while the regressing Ada linear route stays disabled",
+    "output_project_block_m": 16,
+    "prefill_attn_shift_mix_launch_profiles": [],
+    "prefill_attn_shift_mix_strict_fp16_model_shapes": [],
+    "prefill_blas_large_library": null,
+    "prefill_blas_large_min_rows": 4096,
+    "prefill_blas_library": null,
+    "prefill_clampw_scan_model_shapes": [],
+    "prefill_ffn_shift_mix_launch_profiles": [],
+    "prefill_ffn_shift_mix_strict_fp16_model_shapes": [],
+    "prefill_fp16_accum_ffn_key_layer_counts": [],
+    "prefill_fp16_accum_ffn_key_model_shapes": [],
+    "prefill_fp16_recurrent": false,
+    "prefill_fused_output_model_shapes": [
+      [
+        1024,
+        24,
+        1,
+        128
+      ],
+      [
+        1024,
+        24,
+        1,
+        512
+      ],
+      [
+        1024,
+        24,
+        1,
+        2048
+      ],
+      [
+        1024,
+        24,
+        2,
+        128
+      ],
+      [
+        1024,
+        24,
+        2,
+        512
+      ],
+      [
+        1024,
+        24,
+        2,
+        2048
+      ],
+      [
+        1024,
+        24,
+        4,
+        128
+      ],
+      [
+        1024,
+        24,
+        4,
+        512
+      ],
+      [
+        1024,
+        24,
+        4,
+        2048
+      ],
+      [
+        1024,
+        24,
+        8,
+        128
+      ],
+      [
+        1024,
+        24,
+        8,
+        512
+      ],
+      [
+        1024,
+        24,
+        8,
+        2048
+      ],
+      [
+        2048,
+        24,
+        1,
+        128
+      ],
+      [
+        2048,
+        24,
+        1,
+        512
+      ],
+      [
+        2048,
+        24,
+        1,
+        2048
+      ],
+      [
+        2048,
+        24,
+        2,
+        128
+      ],
+      [
+        2048,
+        24,
+        2,
+        512
+      ],
+      [
+        2048,
+        24,
+        2,
+        2048
+      ],
+      [
+        2048,
+        24,
+        4,
+        128
+      ],
+      [
+        2048,
+        24,
+        4,
+        512
+      ],
+      [
+        2048,
+        24,
+        4,
+        2048
+      ],
+      [
+        2048,
+        24,
+        8,
+        128
+      ],
+      [
+        2048,
+        24,
+        8,
+        512
+      ],
+      [
+        2048,
+        24,
+        8,
+        2048
+      ]
+    ],
+    "prefill_graph": true,
+    "prefill_graph_cache_size": 4,
+    "prefill_graph_model_shapes": [
+      [
+        1024,
+        24,
+        1,
+        128
+      ],
+      [
+        1024,
+        24,
+        1,
+        512
+      ],
+      [
+        1024,
+        24,
+        1,
+        2048
+      ],
+      [
+        1024,
+        24,
+        2,
+        128
+      ],
+      [
+        1024,
+        24,
+        2,
+        512
+      ],
+      [
+        1024,
+        24,
+        2,
+        2048
+      ],
+      [
+        1024,
+        24,
+        4,
+        128
+      ],
+      [
+        1024,
+        24,
+        4,
+        512
+      ],
+      [
+        1024,
+        24,
+        4,
+        2048
+      ],
+      [
+        1024,
+        24,
+        8,
+        128
+      ],
+      [
+        1024,
+        24,
+        8,
+        512
+      ],
+      [
+        1024,
+        24,
+        8,
+        2048
+      ],
+      [
+        2048,
+        24,
+        1,
+        128
+      ],
+      [
+        2048,
+        24,
+        1,
+        512
+      ],
+      [
+        2048,
+        24,
+        1,
+        2048
+      ],
+      [
+        2048,
+        24,
+        2,
+        128
+      ],
+      [
+        2048,
+        24,
+        2,
+        512
+      ],
+      [
+        2048,
+        24,
+        2,
+        2048
+      ],
+      [
+        2048,
+        24,
+        4,
+        128
+      ],
+      [
+        2048,
+        24,
+        4,
+        512
+      ],
+      [
+        2048,
+        24,
+        4,
+        2048
+      ],
+      [
+        2048,
+        24,
+        8,
+        128
+      ],
+      [
+        2048,
+        24,
+        8,
+        512
+      ],
+      [
+        2048,
+        24,
+        8,
+        2048
+      ]
+    ],
+    "prefill_scan_block_m": null,
+    "prefill_scan_block_m_b2": null,
+    "prefill_scan_block_m_b4": null,
+    "prefill_scan_block_m_model_shapes": [],
+    "prefill_scan_block_m_shapes": [],
+    "prefill_scan_model_shapes": [
+      [
+        1024,
+        24,
+        1,
+        128
+      ],
+      [
+        1024,
+        24,
+        1,
+        512
+      ],
+      [
+        1024,
+        24,
+        1,
+        2048
+      ],
+      [
+        1024,
+        24,
+        2,
+        128
+      ],
+      [
+        1024,
+        24,
+        2,
+        512
+      ],
+      [
+        1024,
+        24,
+        2,
+        2048
+      ],
+      [
+        1024,
+        24,
+        4,
+        128
+      ],
+      [
+        1024,
+        24,
+        4,
+        512
+      ],
+      [
+        1024,
+        24,
+        4,
+        2048
+      ],
+      [
+        1024,
+        24,
+        8,
+        128
+      ],
+      [
+        1024,
+        24,
+        8,
+        512
+      ],
+      [
+        1024,
+        24,
+        8,
+        2048
+      ],
+      [
+        2048,
+        24,
+        1,
+        128
+      ],
+      [
+        2048,
+        24,
+        1,
+        512
+      ],
+      [
+        2048,
+        24,
+        1,
+        2048
+      ],
+      [
+        2048,
+        24,
+        2,
+        128
+      ],
+      [
+        2048,
+        24,
+        2,
+        512
+      ],
+      [
+        2048,
+        24,
+        2,
+        2048
+      ],
+      [
+        2048,
+        24,
+        4,
+        128
+      ],
+      [
+        2048,
+        24,
+        4,
+        512
+      ],
+      [
+        2048,
+        24,
+        4,
+        2048
+      ],
+      [
+        2048,
+        24,
+        8,
+        128
+      ],
+      [
+        2048,
+        24,
+        8,
+        512
+      ],
+      [
+        2048,
+        24,
+        8,
+        2048
+      ]
+    ],
+    "prefill_scan_num_warps": null,
+    "prefill_self_chunk_h_tile_shapes": [],
+    "prefill_self_chunk_min_tokens": 1024,
+    "prefill_self_chunk_model_shapes": [],
+    "prefill_self_chunk_shape_sizes": [],
+    "prefill_self_chunk_size": 16,
+    "prefill_sequence_ffn_blocks": [
+      128,
+      128,
+      32,
+      64,
+      8
+    ],
+    "prefill_sequence_ffn_extra_rows": [],
+    "prefill_sequence_ffn_large_blocks": [
+      128,
+      128,
+      32,
+      64,
+      8
+    ],
+    "prefill_sequence_ffn_large_min_rows": 1024,
+    "prefill_sequence_ffn_max_rows": null,
+    "prefill_sequence_ffn_min_rows": 128,
+    "prefill_sequence_ffn_model_shapes": [],
+    "prefill_sequence_ffn_num_stages": 3,
+    "prefill_sequence_ffn_num_warps": 4,
+    "prefill_shift_mix_model_shapes": [
+      [
+        1024,
+        24,
+        1,
+        128
+      ],
+      [
+        1024,
+        24,
+        1,
+        512
+      ],
+      [
+        1024,
+        24,
+        1,
+        2048
+      ],
+      [
+        1024,
+        24,
+        2,
+        128
+      ],
+      [
+        1024,
+        24,
+        2,
+        512
+      ],
+      [
+        1024,
+        24,
+        2,
+        2048
+      ],
+      [
+        1024,
+        24,
+        4,
+        128
+      ],
+      [
+        1024,
+        24,
+        4,
+        512
+      ],
+      [
+        1024,
+        24,
+        4,
+        2048
+      ],
+      [
+        1024,
+        24,
+        8,
+        128
+      ],
+      [
+        1024,
+        24,
+        8,
+        512
+      ],
+      [
+        1024,
+        24,
+        8,
+        2048
+      ],
+      [
+        2048,
+        24,
+        1,
+        128
+      ],
+      [
+        2048,
+        24,
+        1,
+        512
+      ],
+      [
+        2048,
+        24,
+        1,
+        2048
+      ],
+      [
+        2048,
+        24,
+        2,
+        128
+      ],
+      [
+        2048,
+        24,
+        2,
+        512
+      ],
+      [
+        2048,
+        24,
+        2,
+        2048
+      ],
+      [
+        2048,
+        24,
+        4,
+        128
+      ],
+      [
+        2048,
+        24,
+        4,
+        512
+      ],
+      [
+        2048,
+        24,
+        4,
+        2048
+      ],
+      [
+        2048,
+        24,
+        8,
+        128
+      ],
+      [
+        2048,
+        24,
+        8,
+        512
+      ],
+      [
+        2048,
+        24,
+        8,
+        2048
+      ]
+    ],
+    "prefill_stacked_rkv_extra_rows": [],
+    "prefill_stacked_rkv_max_rows": null,
+    "prefill_stacked_rkv_min_rows": 128,
+    "prefill_stacked_rkv_model_shapes": [],
+    "prefill_stacked_rkv_shapes": [],
+    "prefill_state_prep_layer_counts": [],
+    "prefill_state_prep_model_shapes": [
+      [
+        1024,
+        24,
+        1,
+        128
+      ],
+      [
+        1024,
+        24,
+        1,
+        512
+      ],
+      [
+        1024,
+        24,
+        1,
+        2048
+      ],
+      [
+        1024,
+        24,
+        2,
+        128
+      ],
+      [
+        1024,
+        24,
+        2,
+        512
+      ],
+      [
+        1024,
+        24,
+        2,
+        2048
+      ],
+      [
+        1024,
+        24,
+        4,
+        128
+      ],
+      [
+        1024,
+        24,
+        4,
+        512
+      ],
+      [
+        1024,
+        24,
+        4,
+        2048
+      ],
+      [
+        1024,
+        24,
+        8,
+        128
+      ],
+      [
+        1024,
+        24,
+        8,
+        512
+      ],
+      [
+        1024,
+        24,
+        8,
+        2048
+      ],
+      [
+        2048,
+        24,
+        1,
+        128
+      ],
+      [
+        2048,
+        24,
+        1,
+        512
+      ],
+      [
+        2048,
+        24,
+        1,
+        2048
+      ],
+      [
+        2048,
+        24,
+        2,
+        128
+      ],
+      [
+        2048,
+        24,
+        2,
+        512
+      ],
+      [
+        2048,
+        24,
+        2,
+        2048
+      ],
+      [
+        2048,
+        24,
+        4,
+        128
+      ],
+      [
+        2048,
+        24,
+        4,
+        512
+      ],
+      [
+        2048,
+        24,
+        4,
+        2048
+      ],
+      [
+        2048,
+        24,
+        8,
+        128
+      ],
+      [
+        2048,
+        24,
+        8,
+        512
+      ],
+      [
+        2048,
+        24,
+        8,
+        2048
+      ]
+    ],
+    "profile": {
+      "capability": [
+        8,
+        9
+      ],
+      "device_index": 0,
+      "family": "ada",
+      "is_cuda": true,
+      "is_hip": false,
+      "is_mps": false,
+      "name": "NVIDIA GeForce RTX 4080",
+      "vendor": "nvidia"
+    },
+    "quant_policy": "memory_first",
+    "rkv_policy": "manual",
+    "sm70_linear": false,
+    "sm70_wagv_lora": false,
+    "wag_lora_blocks": [
+      64,
+      64,
+      64
+    ],
+    "wavg_lora_blocks": [
+      64,
+      64,
+      64
+    ],
+    "wavg_lora_bsz1_max_hidden": null,
+    "wavg_lora_num_warps": 4
+  },
+  "model_pair": {
+    "qwen": "official Qwen3.5-2B",
+    "qwen_weight_sha256": "aa33250c4fc64891ddfaba3a314fd9542ea371843c387178b425fbcc5ed680b1",
+    "rwkv": "RWKV-7 g1g 1.5B converted HF checkpoint"
+  },
+  "nvidia_smi": "NVIDIA GeForce RTX 4080, 595.71.05, 16376",
+  "packages": {
+    "bitsandbytes": "0.49.2",
+    "causal-conv1d": "1.5.0.post8",
+    "fla-core": "0.5.1",
+    "flash-linear-attention": "0.5.1",
+    "peft": "0.19.1",
+    "torch": "2.6.0+cu124",
+    "torchao": "0.16.0",
+    "transformers": "5.12.1",
+    "triton": "3.2.0",
+    "trl": "1.8.0"
+  },
+  "platform": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
+  "python": "3.11.15",
+  "repository_base_commit": "8945395a165c497c2e3eb5f1b6e9284176b48872",
+  "rwkv_environment_overrides": {},
+  "torch_cuda_runtime": "12.4",
+  "workspace": "$PRIVATE_ROOT/repo"
+}

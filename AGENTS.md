@@ -950,16 +950,35 @@ Run this checklist for every new GPU before marking it as supported:
 - Promotion rule: do not assume V100/4090 block sizes; run Ampere block/layout
   sweeps before changing defaults.
 
-#### Ada / RTX 40 / 4090 (`sm_89`)
+#### Ada / RTX 40 / 4080-4090 (`sm_89`)
 
 - Policy family: `ada`.
 - Role: high-end consumer validation target.
 - Exact-4090 default-on: `fast_cache`, `fast_prefill`, fixed-shape prefill
   graph, split prefill scan, fused prefill state prep/output/shift,
   `fused_recurrent_output`, and decode `fused_output`.
+- Exact-4080 default-on: fixed-shape prefill graph/scan plus shift/state/output
+  for 0.4B and 1.5B, B1/B2/B4/B8, prompt128/512/2048; four-warp decode
+  norm/mix and grouped W/A/G/V for rows<=4. RTX 4080 Ada linear and sparse FFN
+  remain off because exact-card A/B rows are neutral or negative.
 - Other Ada default-off: prefill graph/scan and unmeasured prefill fusions;
   all cards keep the compatible dense fallback. `fused_output_project` and
   projection/LoRA experiments remain opt-in everywhere.
+- 4080 adaptation rule:
+  - Native prefill graph correctness/performance passes 12/12 shapes for both
+    0.4B and 1.5B. Out-of-allowlist shapes must retain the compatible fallback.
+  - B8 1.5B versus official Qwen3.5-2B passes six dense cells with full FLA
+    bindings: prefill `1.024180x-1.122658x`, decode
+    `1.435296x-1.472913x`, and active-work decode
+    `1.768344x-1.814687x`.
+  - Full-model BNB8/BNB4 are memory routes only. Output-head A8W8 and
+    TorchAO-W4 pass the existing 3090/4090 quant contract: lower footprint,
+    full greedy/cosine, decode >= fp16, and complete-cell latency >= fp16 in
+    6/6 shapes. Their minimum prefill ratios are disclosed as
+    `0.9988x/0.9996x`; do not claim every quantized prefill phase is faster.
+  - Exact evidence and reproduction live in
+    `bench/4080_ada_validation_20260719/`. Do not project these defaults to a
+    4070 or another Ada card.
 - 4090 adaptation rule:
   - cuBLAS/torch remains the baseline for shallow R/K/V projection; split-K/layout
     prototype rows were slower and must stay telemetry-only.

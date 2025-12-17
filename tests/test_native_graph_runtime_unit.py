@@ -7,6 +7,7 @@ import os
 
 import torch
 
+from rwkv7_hf import native_model as native_model_module
 from rwkv7_hf.native_graph_runtime import (
     NativeGraphRunner,
     native_graph_precompute_embedding_enabled,
@@ -79,6 +80,30 @@ def test_native_graph_never_routes_on_cpu_or_training() -> None:
             os.environ.pop("RWKV7_NATIVE_MODEL_BACKEND", None)
         else:
             os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = old
+
+
+def test_native_graph_consults_quantized_or_adapter_eager_fallback(monkeypatch) -> None:
+    model = build_tiny_model()
+    cache = build_cache(batch_size=1)
+    token = torch.tensor([[1]], dtype=torch.long)
+    consulted = False
+
+    def requires_eager_decode() -> bool:
+        nonlocal consulted
+        consulted = True
+        return True
+
+    monkeypatch.setattr(native_model_module, "_native_graph_available", lambda: True)
+    monkeypatch.setattr(model, "_native_model_requires_eager_decode", requires_eager_decode)
+    monkeypatch.setenv("RWKV7_NATIVE_MODEL_BACKEND", "native_graph")
+    with torch.inference_mode():
+        assert model._native_graph_can_run(
+            token,
+            cache,
+            attention_mask=None,
+            output_hidden_states=False,
+        ) is False
+    assert consulted
 
 
 def test_native_graph_cache_management_surface() -> None:

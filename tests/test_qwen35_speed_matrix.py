@@ -1462,6 +1462,24 @@ def test_4090_acceptance_entrypoint_is_exact_card_and_chunk_safe() -> None:
     assert 'printf \'%s\\n\' "${pipeline_rc}" > "${OUT_DIR}/pipeline_exit_code.txt"' in script
 
 
+def test_4080_acceptance_entrypoint_is_full_prompt_and_fail_closed() -> None:
+    script = (ROOT / "bench" / "run_4080_qwen35_pair_acceptance.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'REQUIRED_GPU_SUBSTRING="${REQUIRED_GPU_SUBSTRING:-RTX 4080}"' in script
+    assert '--benchmark-matrix qwen35_4080_hf_final' in script
+    assert '--batch-sizes 8 --prompt-tokens 128 512 2048' in script
+    assert '--decode-tokens 128 512 --prefill-chunk-size 0' in script
+    assert 'DENSE_DECODE_GATE="${DENSE_DECODE_GATE:-1.40}"' in script
+    assert '--qwen-backend fla' in script
+    assert '--require-qwen-fast-path' in script
+    assert '--paired-baseline' in script
+    assert 'for quant in a8w8 torchao_w4' in script
+    assert 'for quant in bnb8 bnb4' in script
+    assert 'summarize_4080_qwen35_acceptance.py' in script
+    assert 'printf \'%s\\n\' "${pipeline_rc}" > "${OUT_DIR}/pipeline_exit_code.txt"' in script
+
+
 def test_5090_acceptance_reuses_contract_without_4090_policy_defaults() -> None:
     script = (ROOT / "bench" / "run_5090_qwen35_pair_acceptance.sh").read_text(
         encoding="utf-8"

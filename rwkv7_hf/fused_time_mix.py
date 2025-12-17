@@ -40,48 +40,12 @@ _HAS_TRITON = triton is not None and tl is not None
 if _HAS_TRITON:
 
     @triton.jit
-    def _attn_sequence_shift_mix_fp16_rn(
-        x,
-        previous,
-        xr,
-        xw,
-        xk,
-        xv,
-        xa,
-        xg,
-    ):
+    def _sequence_shift_mix_fp16_rn(x, previous, mix):
         # PyTorch eager materialises fp16 subtraction, multiplication, and
         # addition separately. Use explicit half2 instructions so LLVM cannot
-        # contract the expression into a wider/FMA operation.
-        return tl.inline_asm_elementwise(
-            asm="""
-            {
-                .reg .b32 delta;
-                .reg .b32 product;
-                sub.rn.f16x2 delta, $7, $6;
-                mul.rn.f16x2 product, delta, $8;
-                add.rn.f16x2 $0, $6, product;
-                mul.rn.f16x2 product, delta, $9;
-                add.rn.f16x2 $1, $6, product;
-                mul.rn.f16x2 product, delta, $10;
-                add.rn.f16x2 $2, $6, product;
-                mul.rn.f16x2 product, delta, $11;
-                add.rn.f16x2 $3, $6, product;
-                mul.rn.f16x2 product, delta, $12;
-                add.rn.f16x2 $4, $6, product;
-                mul.rn.f16x2 product, delta, $13;
-                add.rn.f16x2 $5, $6, product;
-            }
-            """,
-            constraints="=r,=r,=r,=r,=r,=r,r,r,r,r,r,r,r,r",
-            args=[x, previous, xr, xw, xk, xv, xa, xg],
-            dtype=(tl.float16, tl.float16, tl.float16, tl.float16, tl.float16, tl.float16),
-            is_pure=True,
-            pack=2,
-        )
-
-    @triton.jit
-    def _sequence_shift_mix_fp16_rn(x, previous, mix):
+        # contract the expression into a wider/FMA operation. Keep this helper
+        # single-output: Triton 3.2 can abort while lowering multi-output inline
+        # assembly on otherwise valid CUDA shapes.
         return tl.inline_asm_elementwise(
             asm="""
             {
@@ -186,9 +150,12 @@ if _HAS_TRITON:
         xa = tl.load(xa_mix_ptr + columns, mask=mask, other=0.0)
         xg = tl.load(xg_mix_ptr + columns, mask=mask, other=0.0)
         if STRICT_FP16_ROUNDING:
-            out_r, out_w, out_k, out_v, out_a, out_g = _attn_sequence_shift_mix_fp16_rn(
-                x, previous, xr, xw, xk, xv, xa, xg
-            )
+            out_r = _sequence_shift_mix_fp16_rn(x, previous, xr)
+            out_w = _sequence_shift_mix_fp16_rn(x, previous, xw)
+            out_k = _sequence_shift_mix_fp16_rn(x, previous, xk)
+            out_v = _sequence_shift_mix_fp16_rn(x, previous, xv)
+            out_a = _sequence_shift_mix_fp16_rn(x, previous, xa)
+            out_g = _sequence_shift_mix_fp16_rn(x, previous, xg)
             tl.store(out_r_ptr + offsets, out_r, mask=mask)
             tl.store(out_w_ptr + offsets, out_w, mask=mask)
             tl.store(out_k_ptr + offsets, out_k, mask=mask)
