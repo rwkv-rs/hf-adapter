@@ -69,6 +69,7 @@ def _native_token_loop_generate(model, input_ids, max_new_tokens: int):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="")
+    ap.add_argument("--code-source", choices=("model", "repo"), default="model")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--prompt-tokens", type=int, default=32)
     ap.add_argument("--gen-tokens", type=int, default=4)
@@ -82,9 +83,15 @@ def main() -> int:
         print("SKIP fast prefill forward test: torch/model unavailable")
         return 0
 
-    tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    effective_model = args.model
+    temporary = None
+    if args.code_source == "repo":
+        from bench.bench_cross_model_speed import prepare_rwkv_model_dir
+
+        effective_model, temporary = prepare_rwkv_model_dir(args.model, "repo")
+    tok = AutoTokenizer.from_pretrained(effective_model, trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(
-        args.model,
+        effective_model,
         trust_remote_code=True,
         torch_dtype=torch.float16 if args.device.startswith("cuda") else torch.float32,
         device_map=args.device if args.device.startswith("cuda") else None,
@@ -110,8 +117,10 @@ def main() -> int:
             os.environ["RWKV7_NATIVE_PREFILL_FUSED_SCAN"] = "1" if args.fused_scan else "0"
             os.environ["RWKV7_NATIVE_PREFILL_GRAPH"] = "1" if args.prefill_graph else "0"
             if args.prefill_graph:
-                warmed = model.rwkv7_warmup_fast_prefill((int(ids.shape[0]), int(ids.shape[1])))
-                assert warmed[f"{int(ids.shape[0])}x{int(ids.shape[1])}"] == "native_prefill_graph"
+                warmup_prefill = getattr(model, "rwkv7_warmup_fast_prefill", None)
+                if callable(warmup_prefill):
+                    warmed = warmup_prefill((int(ids.shape[0]), int(ids.shape[1])))
+                    assert warmed[f"{int(ids.shape[0])}x{int(ids.shape[1])}"] == "native_prefill_graph"
             fast = model(ids, use_cache=True, logits_to_keep=1, return_dict=True)
             seen_after_prefill = fast.past_key_values.get_seq_length() if hasattr(fast.past_key_values, "get_seq_length") else None
 
@@ -180,6 +189,8 @@ def main() -> int:
     assert generate_match
     assert seen_after_prefill == int(ids.shape[1])
     assert min_cos >= 0.999
+    if temporary is not None:
+        temporary.cleanup()
     return 0
 
 

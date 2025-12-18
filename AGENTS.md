@@ -958,27 +958,34 @@ Run this checklist for every new GPU before marking it as supported:
   graph, split prefill scan, fused prefill state prep/output/shift,
   `fused_recurrent_output`, and decode `fused_output`.
 - Exact-4080 default-on: fixed-shape prefill graph/scan plus shift/state/output
-  for 0.4B and 1.5B, B1/B2/B4/B8, prompt128/512/2048; four-warp decode
-  norm/mix and grouped W/A/G/V for rows<=4. RTX 4080 Ada linear and sparse FFN
-  remain off because exact-card A/B rows are neutral or negative.
+  for 0.4B and 1.5B at B1/B2/B4/B8 and 2.9B at B1/B8, all at
+  prompt128/512/2048. The 1.5B B1 P512/P2048 rows use exact-card self-chunk;
+  P2048 also uses stacked R/K/V. Four-warp decode norm/mix and grouped W/A/G/V
+  remain enabled for rows<=4. RTX 4080 Ada linear and sparse FFN remain off
+  because exact-card A/B rows are neutral or negative.
 - Other Ada default-off: prefill graph/scan and unmeasured prefill fusions;
   all cards keep the compatible dense fallback. `fused_output_project` and
   projection/LoRA experiments remain opt-in everywhere.
 - 4080 adaptation rule:
   - Native prefill graph correctness/performance passes 12/12 shapes for both
-    0.4B and 1.5B. Out-of-allowlist shapes must retain the compatible fallback.
-  - B8 1.5B versus official Qwen3.5-2B passes six dense cells with full FLA
-    bindings: prefill `1.024180x-1.122658x`, decode
-    `1.435296x-1.472913x`, and active-work decode
-    `1.768344x-1.814687x`.
+    0.4B and 1.5B; 2.9B B1/B8 passes the six exact prompt shapes. Shapes
+    outside the allowlist must retain the compatible fallback.
+  - The 0.4B/0.8B, 1.5B/2B and 2.9B/4B B1/B8 comparisons pass all six pair
+    matrices against official Qwen3.5 full FLA. Across the 36 dense cells,
+    minimum prefill/decode ratios are `1.012285x/1.435296x`; minimum decode
+    active-work ratio is `1.768344x`.
   - Full-model BNB8/BNB4 are memory routes only. Output-head A8W8 and
     TorchAO-W4 pass the existing 3090/4090 quant contract: lower footprint,
     full greedy/cosine, decode >= fp16, and complete-cell latency >= fp16 in
-    6/6 shapes. Their minimum prefill ratios are disclosed as
-    `0.9988x/0.9996x`; do not claim every quantized prefill phase is faster.
+    all 36 exact cells per route. Minimum complete-cell ratios are
+    `1.003101x/1.015996x`; do not claim every quantized prefill phase is faster.
+  - 7.2B fp16 fits through B4/P128 but B8 is a measured capacity boundary.
+    13.3B MM8/MM4 fit and execute deterministically; fp16 does not fit, so the
+    13.3B rows are quantized capacity evidence without an fp16 speed/quality
+    comparison.
   - Exact evidence and reproduction live in
-    `bench/4080_ada_validation_20260719/`. Do not project these defaults to a
-    4070 or another Ada card.
+    `bench/4080_full_model_ladder_20260719/`. Do not project these defaults to
+    a 4070 or another Ada card.
 - 4090 adaptation rule:
   - cuBLAS/torch remains the baseline for shallow R/K/V projection; split-K/layout
     prototype rows were slower and must stay telemetry-only.

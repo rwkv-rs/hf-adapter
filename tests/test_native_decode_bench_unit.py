@@ -7,7 +7,11 @@ from bench.bench_native_model_decode import (
     requested_extension_status,
     summarize_iteration_times,
 )
-from bench.bench_native_model_decode_alignment import compare_traces, decode_environment
+from bench.bench_native_model_decode_alignment import (
+    candidate_environment,
+    compare_traces,
+    decode_environment,
+)
 from rwkv7_hf import blackwell_norm_mix, native_wkv_fp16
 
 
@@ -24,6 +28,31 @@ def test_decode_environment_restores_managed_values(monkeypatch) -> None:
         assert os.environ["RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN"] == "1"
     assert os.environ["RWKV7_NATIVE_GRAPH_RKV_POLICY"] == "original"
     assert "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN" not in os.environ
+
+
+def test_candidate_environment_exposes_boundary_tuning() -> None:
+    values = candidate_environment(
+        sparse_ffn=True,
+        wag_lora=False,
+        wagv_lora=True,
+        ada_linear=False,
+        fp32_accum=False,
+        official_boundary=True,
+        deterministic_splits=4,
+        num_warps=4,
+        precompute_embedding=True,
+        rkv_policy="vkwr_auto",
+    )
+    assert values["RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_FP32_ACCUM"] == "0"
+    assert values["RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_OFFICIAL_BOUNDARY"] == "1"
+    assert values["RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_DETERMINISTIC_SPLITS"] == "4"
+    assert values["RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS"] == "4"
+    assert values["RWKV7_NATIVE_GRAPH_PRECOMPUTE_EMB_LN0"] == "1"
+    assert values["RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN"] == "1"
+    assert values["RWKV7_NATIVE_GRAPH_ADA_WAG_LORA"] == "0"
+    assert values["RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA"] == "1"
+    assert values["RWKV7_NATIVE_GRAPH_ADA_LINEAR"] == "0"
+    assert values["RWKV7_NATIVE_GRAPH_RKV_POLICY"] == "vkwr_auto"
 
 
 def test_compare_traces_reports_cosine_and_top1_contract() -> None:

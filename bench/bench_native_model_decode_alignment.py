@@ -27,12 +27,13 @@ BASELINE_ENV = {
     "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_OFFICIAL_BOUNDARY": "0",
     "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_UP": "0",
     "RWKV7_NATIVE_GRAPH_ADA_WAG_LORA": "0",
-    "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA": "0",
+    "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA": "1",
     "RWKV7_NATIVE_GRAPH_ADA_LINEAR": "0",
     "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX": "1",
-    "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS": "8",
+    "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS": "4",
     "RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW": "1",
-    "RWKV7_NATIVE_GRAPH_RKV_POLICY": "vkwr_auto",
+    "RWKV7_NATIVE_GRAPH_PRECOMPUTE_EMB_LN0": "0",
+    "RWKV7_NATIVE_GRAPH_RKV_POLICY": "manual",
 }
 
 CANDIDATE_ENV = {
@@ -40,6 +41,7 @@ CANDIDATE_ENV = {
     "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN": "1",
     "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_FP32_ACCUM": "1",
     "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_OFFICIAL_BOUNDARY": "0",
+    "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_DETERMINISTIC_SPLITS": "0",
     "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_MAX_ROWS": "19",
     "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_UP": "1",
     "RWKV7_NATIVE_GRAPH_ADA_WAG_LORA": "1",
@@ -50,10 +52,46 @@ CANDIDATE_ENV = {
     "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX": "1",
     "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS": "8",
     "RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW": "1",
+    "RWKV7_NATIVE_GRAPH_PRECOMPUTE_EMB_LN0": "1",
     "RWKV7_NATIVE_GRAPH_RKV_POLICY": "manual",
 }
 
 MANAGED_ENV = frozenset(BASELINE_ENV) | frozenset(CANDIDATE_ENV)
+
+
+def candidate_environment(
+    *,
+    sparse_ffn: bool,
+    wag_lora: bool,
+    wagv_lora: bool,
+    ada_linear: bool,
+    fp32_accum: bool,
+    official_boundary: bool,
+    deterministic_splits: int,
+    num_warps: int,
+    precompute_embedding: bool,
+    rkv_policy: str,
+) -> dict[str, str]:
+    values = dict(CANDIDATE_ENV)
+    values.update(
+        {
+            "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN": str(int(sparse_ffn)),
+            "RWKV7_NATIVE_GRAPH_ADA_WAG_LORA": str(int(wag_lora)),
+            "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA": str(int(wagv_lora)),
+            "RWKV7_NATIVE_GRAPH_ADA_LINEAR": str(int(ada_linear)),
+            "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_FP32_ACCUM": str(int(fp32_accum)),
+            "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_OFFICIAL_BOUNDARY": str(
+                int(official_boundary)
+            ),
+            "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_DETERMINISTIC_SPLITS": str(
+                deterministic_splits
+            ),
+            "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS": str(num_warps),
+            "RWKV7_NATIVE_GRAPH_PRECOMPUTE_EMB_LN0": str(int(precompute_embedding)),
+            "RWKV7_NATIVE_GRAPH_RKV_POLICY": rkv_policy,
+        }
+    )
+    return values
 
 
 @contextmanager
@@ -161,6 +199,18 @@ def main() -> int:
     ap.add_argument("--prompt-tokens", type=int, default=8)
     ap.add_argument("--steps", type=int, default=64)
     ap.add_argument("--min-cosine", type=float, default=0.9999)
+    ap.add_argument("--candidate-sparse-ffn", type=int, choices=(0, 1), default=1)
+    ap.add_argument("--candidate-ada-wag-lora", type=int, choices=(0, 1), default=1)
+    ap.add_argument("--candidate-ada-wagv-lora", type=int, choices=(0, 1), default=1)
+    ap.add_argument("--candidate-ada-linear", type=int, choices=(0, 1), default=1)
+    ap.add_argument("--candidate-fp32-accum", type=int, choices=(0, 1), default=1)
+    ap.add_argument("--candidate-official-boundary", type=int, choices=(0, 1), default=0)
+    ap.add_argument("--candidate-deterministic-splits", type=int, choices=(0, 4), default=0)
+    ap.add_argument("--candidate-num-warps", type=int, choices=(1, 2, 4, 8), default=8)
+    ap.add_argument("--candidate-precompute-embedding", type=int, choices=(0, 1), default=1)
+    ap.add_argument(
+        "--candidate-rkv-policy", choices=("manual", "vkwr_auto"), default="manual"
+    )
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     args = ap.parse_args()
 
@@ -183,6 +233,18 @@ def main() -> int:
         torch_dtype=dtype,
         device_map=args.device,
     ).eval()
+    candidate_env = candidate_environment(
+        sparse_ffn=bool(args.candidate_sparse_ffn),
+        wag_lora=bool(args.candidate_ada_wag_lora),
+        wagv_lora=bool(args.candidate_ada_wagv_lora),
+        ada_linear=bool(args.candidate_ada_linear),
+        fp32_accum=bool(args.candidate_fp32_accum),
+        official_boundary=bool(args.candidate_official_boundary),
+        deterministic_splits=args.candidate_deterministic_splits,
+        num_warps=args.candidate_num_warps,
+        precompute_embedding=bool(args.candidate_precompute_embedding),
+        rkv_policy=args.candidate_rkv_policy,
+    )
 
     rows = []
     passed = True
@@ -198,7 +260,7 @@ def main() -> int:
             model,
             prompt,
             steps=args.steps,
-            environment=CANDIDATE_ENV,
+            environment=candidate_env,
             teacher_tokens=teacher_tokens,
         )
         metrics = compare_traces(baseline_logits, candidate_logits)
@@ -209,8 +271,9 @@ def main() -> int:
             "prompt_tokens": args.prompt_tokens,
             "steps": args.steps,
             **metrics,
-            "baseline_backend": "native_graph_conservative_vkwr_auto",
-            "candidate_backend": "native_graph_fp32_sparse_manual_rkv_wagv_wag",
+            "baseline_backend": "native_graph_rtx4080_default",
+            "candidate_backend": "native_graph_rtx4080_candidate",
+            "candidate_environment": candidate_env,
             "requested_extensions": extensions,
         }
         row_passed = bool(

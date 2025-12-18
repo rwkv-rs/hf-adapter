@@ -7,6 +7,15 @@ import torch
 from rwkv7_hf import native_model
 
 
+def test_prefill_breakdown_accepts_native_model_pack_api() -> None:
+    from bench.bench_native_prefill_breakdown import native_jit_packs
+
+    expected = [(0, 1, 64)]
+    owner = SimpleNamespace(_native_graph_packs=lambda: expected)
+
+    assert native_jit_packs(owner) is expected
+
+
 def test_native_prefill_graph_is_explicit_and_signature_tracks_flags(monkeypatch) -> None:
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(native_model, "_native_jit_prefill", object())
@@ -123,6 +132,57 @@ def test_native_prefill_graph_runner_cache_is_shape_keyed_lru(monkeypatch) -> No
     assert stats["misses"] == 2
     assert stats["evictions"] == 1
     assert stats["shapes"] == [(8, 128)]
+
+
+def test_native_prefill_continuation_forwards_existing_cache_to_jit(monkeypatch) -> None:
+    captured = {}
+
+    def fake_prefill(_owner, ids, _packs, *, state, xpa, xpf, logits_to_keep):
+        captured.update(state=state, xpa=xpa, xpf=xpf, logits_to_keep=logits_to_keep)
+        return (
+            torch.ones(ids.shape[0], 1, 7),
+            [torch.full_like(state[0], 2.0)],
+            [torch.full_like(xpa[0], 3.0)],
+            [torch.full_like(xpf[0], 4.0)],
+        )
+
+    owner = SimpleNamespace(
+        config=SimpleNamespace(
+            hidden_size=4,
+            num_hidden_layers=1,
+            num_heads=1,
+            head_dim=4,
+        ),
+        model=SimpleNamespace(
+            embeddings=SimpleNamespace(weight=torch.empty(8, 4, dtype=torch.float16))
+        ),
+        _native_graph_packs=lambda: [(0, 1, 4)],
+    )
+    cache = native_model.NativeRWKV7Cache(
+        [torch.ones(1, 1, 4, 4)],
+        [torch.ones(1, 4)],
+        [torch.ones(1, 4)],
+        torch.ones(1, 4),
+        seen_tokens=4,
+    )
+    monkeypatch.setattr(native_model, "_native_jit_prefill", fake_prefill)
+    monkeypatch.setattr(native_model, "_native_prefill_graph_enabled", lambda *_args: True)
+
+    logits, continued = native_model.NativeRWKV7ForCausalLM._native_prefill(
+        owner,
+        torch.ones(1, 2, dtype=torch.long),
+        logits_to_keep=1,
+        seen_tokens=6,
+        initial_cache=cache,
+    )
+
+    assert logits.shape == (1, 1, 7)
+    assert captured["state"][0] is cache._state[0]
+    assert captured["xpa"][0] is cache._xpa[0]
+    assert captured["xpf"][0] is cache._xpf[0]
+    assert captured["logits_to_keep"] == 1
+    assert continued.get_seq_length() == 6
+    assert owner._rwkv7_native_model_last_prefill_backend == "native_prefill_continuation"
 
 
 def test_native_prefill_graph_replay_detaches_previous_cache() -> None:

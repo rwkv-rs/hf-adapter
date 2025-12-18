@@ -855,6 +855,9 @@ def _native_prefill_self_chunk_enabled(
         if None not in (hidden_size, num_layers, batch_size)
         else None
     )
+    if bool(getattr(policy, "prefill_self_chunk_model_shapes_only", False)):
+        if exact_model_shape not in model_shapes:
+            return False
     if (
         int(tokens) < min_tokens
         and exact_model_shape not in model_shapes
