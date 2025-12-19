@@ -34,6 +34,7 @@ BENCH_RUNNERS = [
     "bench/run_v100_qwen35_speed_matrix.sh",
     "bench/run_3090_qwen35_speed_matrix.sh",
     "bench/run_3090_qwen35_pair.sh",
+    "bench/run_4080_qwen35_pair_acceptance.sh",
 ]
 
 

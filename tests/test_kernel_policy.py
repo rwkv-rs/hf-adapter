@@ -133,6 +133,66 @@ def test_policy_defaults_are_conservative() -> None:
     assert other_ada.ada_linear_rows == "2 4"
     assert other_ada.norm_mix_num_warps == 4
 
+    rtx4080 = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 4080", (8, 9)))
+    expected_4080_prefill_shapes = tuple(
+        (hidden, 24, batch, tokens)
+        for hidden in (1024, 2048)
+        for batch in (1, 2, 4, 8)
+        for tokens in (128, 512, 2048)
+    ) + tuple(
+        (2560, 32, batch, tokens)
+        for batch in (1, 8)
+        for tokens in (128, 512, 2048)
+    )
+    assert rtx4080.fast_prefill
+    assert rtx4080.fused_prefill_scan
+    assert rtx4080.fused_prefill_self_chunk
+    assert rtx4080.prefill_self_chunk_model_shapes_only
+    assert rtx4080.prefill_self_chunk_model_shapes == (
+        (2048, 24, 1, 512),
+        (2048, 24, 1, 2048),
+    )
+    assert rtx4080.prefill_self_chunk_shape_sizes == (
+        (1, 512, 32),
+        (1, 2048, 32),
+    )
+    assert rtx4080.prefill_self_chunk_h_tile_shapes == (
+        (1, 512, 32, 32),
+        (1, 2048, 32, 32),
+    )
+    assert rtx4080.prefill_scan_model_shapes == expected_4080_prefill_shapes
+    assert rtx4080.prefill_scan_block_m_model_shapes == (
+        (2048, 1, 128, 4),
+        (2048, 1, 512, 4),
+        (2048, 1, 2048, 4),
+    )
+    assert rtx4080.prefill_graph
+    assert rtx4080.prefill_graph_cache_size == 4
+    assert rtx4080.prefill_graph_model_shapes == expected_4080_prefill_shapes
+    assert rtx4080.fused_prefill_shift_mix
+    assert rtx4080.prefill_shift_mix_model_shapes == expected_4080_prefill_shapes
+    assert rtx4080.prefill_attn_shift_mix_launch_profiles == (
+        (2048, 24, 1, 512, 512, 1),
+        (2048, 24, 1, 2048, 512, 1),
+    )
+    assert rtx4080.prefill_ffn_shift_mix_launch_profiles == (
+        (2048, 24, 1, 512, 1024, 1),
+    )
+    assert rtx4080.fused_prefill_stacked_rkv
+    assert rtx4080.prefill_stacked_rkv_min_rows == 1
+    assert rtx4080.prefill_stacked_rkv_max_rows == 1
+    assert rtx4080.prefill_stacked_rkv_model_shapes == (
+        (2048, 24, 1, 2048),
+    )
+    assert rtx4080.fused_prefill_state_prep
+    assert rtx4080.prefill_state_prep_model_shapes == expected_4080_prefill_shapes
+    assert rtx4080.fused_prefill_output
+    assert rtx4080.prefill_fused_output_model_shapes == expected_4080_prefill_shapes
+    assert not rtx4080.ada_linear
+    assert rtx4080.ada_wagv_lora
+    assert not rtx4080.ada_sparse_ffn
+    assert rtx4080.rkv_policy == "manual"
+
     rtx3090 = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 3090", (8, 6)))
     assert rtx3090.fast_prefill
     assert rtx3090.fused_prefill_scan

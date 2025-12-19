@@ -31,13 +31,20 @@ def test_quantize_before_device_accepts_explicit_memory_quant_only_mode() -> Non
     )
 
 
+def test_quantize_before_device_accepts_output_head_a8w8_speed_route() -> None:
+    decode_bench.validate_quantize_before_device(
+        _args(single_quantization="a8w8", policy="speed")
+    )
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     (
         ({"device": "cpu"}, "CUDA target device"),
         ({"single_quantization": None}, "single-quantization"),
         ({"single_quantization": "torchao_w4"}, "single-quantization"),
-        ({"policy": "speed"}, "policy memory"),
+        ({"policy": "speed"}, "MM8/MM4"),
+        ({"single_quantization": "a8w8"}, "A8W8"),
         ({"paired_baseline": True}, "in-process fp16 baseline"),
         ({"allow_missing_baseline": False}, "allow-missing-baseline"),
     ),

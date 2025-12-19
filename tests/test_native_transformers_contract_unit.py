@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 
 import torch
-from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, BitsAndBytesConfig
 
 from rwkv7_hf.native_model import NativeRWKV7Config, NativeRWKV7ForCausalLM
 
@@ -61,6 +61,21 @@ def main() -> int:
     assert roundtrip_config.vocab_size == alias_config.vocab_size
     assert roundtrip_config.num_attention_heads == alias_config.num_attention_heads
     assert roundtrip_config.tie_word_embeddings is False
+    bnb_kwargs = {
+        "config": roundtrip_config,
+        "quantization_config": BitsAndBytesConfig(load_in_8bit=True),
+        "rwkv7_bnb_skip_policy": "memory",
+    }
+    bnb_policy, bnb_config = NativeRWKV7ForCausalLM._rwkv7_prepare_bnb_kwargs(
+        "unused-local-model",
+        bnb_kwargs,
+    )
+    assert bnb_policy == "memory"
+    assert "rwkv7_bnb_skip_policy" not in bnb_kwargs
+    assert bnb_config is bnb_kwargs["quantization_config"]
+    assert "lm_head" in bnb_config.llm_int8_skip_modules
+    assert r".*_lora\.lora\.[02]" in bnb_config.llm_int8_skip_modules
+    assert "model.layers.0.attn.w_lora.lora.0" in bnb_config.llm_int8_skip_modules
     model = build_tiny_model()
     input_ids = torch.tensor([[1, 2, 3], [4, 5, 6]], dtype=torch.long)
     attention_mask = torch.ones_like(input_ids)
@@ -137,6 +152,30 @@ def main() -> int:
         causal_keep_one = model(input_ids=input_ids, logits_to_keep=1)
         causal_keep_two = model(input_ids=input_ids, num_logits_to_keep=2)
         causal_keep_positions = model(input_ids=input_ids, logits_to_keep=torch.tensor([0, 2], dtype=torch.long))
+        native_prefill = model.rwkv7_prefill_native(input_ids, logits_to_keep=1)
+        native_prefill_tuple = model.rwkv7_prefill_native(input_ids, logits_to_keep=1, return_dict=False)
+        assert model.rwkv7_last_fast_prefill_backend() == "native_eager"
+        chunked_prefill = model.rwkv7_prefill_chunks(input_ids, chunk_size=1, logits_to_keep=1)
+        chunked_prefill_tuple = model.rwkv7_prefill_chunks(
+            input_ids,
+            chunk_size=2,
+            logits_to_keep=1,
+            return_dict=False,
+        )
+        speculative = model.rwkv7_speculative_generate(
+            input_ids[:1],
+            model,
+            max_new_tokens=3,
+            draft_tokens=2,
+            return_stats=True,
+        )
+        greedy = model.generate(
+            input_ids[:1],
+            max_new_tokens=3,
+            do_sample=False,
+            use_cache=True,
+            pad_token_id=0,
+        )
         causal_1d = model(
             input_ids=input_ids[0],
             attention_mask=torch.ones(input_ids.shape[1], dtype=torch.long),
@@ -216,6 +255,17 @@ def main() -> int:
     assert causal_keep_two.logits.shape == (2, 2, model.config.vocab_size)
     assert torch.allclose(causal_keep_two.logits, causal_from_ids.logits[:, -2:])
     assert torch.allclose(causal_keep_positions.logits, causal_from_ids.logits[:, [0, 2]])
+    assert torch.allclose(native_prefill.logits, causal_keep_one.logits)
+    assert native_prefill.past_key_values.get_seq_length() == input_ids.shape[1]
+    assert torch.allclose(native_prefill_tuple[0], causal_keep_one.logits)
+    assert native_prefill_tuple[1].get_seq_length() == input_ids.shape[1]
+    assert torch.allclose(chunked_prefill.logits, causal_keep_one.logits)
+    assert chunked_prefill.past_key_values.get_seq_length() == input_ids.shape[1]
+    assert torch.allclose(chunked_prefill_tuple[0], causal_keep_one.logits)
+    assert chunked_prefill_tuple[1].get_seq_length() == input_ids.shape[1]
+    assert torch.equal(speculative["sequences"], greedy)
+    assert speculative["stats"]["generated_tokens"] == 3
+    assert speculative["stats"]["accepted_tokens"] == 3
     assert causal_1d.logits.shape == (1, 1, model.config.vocab_size)
     assert torch.allclose(causal_1d.logits, causal_from_ids.logits[:1, -1:])
     assert embedded_loss.loss is not None

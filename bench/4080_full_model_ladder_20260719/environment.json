@@ -1,0 +1,18 @@
+{
+  "device": "NVIDIA GeForce RTX 4080",
+  "reported_vram_mb": 15923.2,
+  "gpu_arch": "sm_89",
+  "driver": "595.71.05",
+  "os": "Linux",
+  "python": "3.11.15",
+  "torch": "2.6.0+cu124",
+  "cuda_runtime": "12.4",
+  "transformers": "5.12.1",
+  "triton": "3.2.0",
+  "bitsandbytes": "0.49.2",
+  "torchao": "0.16.0",
+  "flash_linear_attention": "0.5.1",
+  "fla_core": "0.5.1",
+  "causal_conv1d": "1.5.0.post8",
+  "base_main_commit": "8945395a165c497c2e3eb5f1b6e9284176b48872"
+}

@@ -60,6 +60,48 @@ if False:  # pragma: no cover
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
 
+
+def _bnb_skip_policy(policy: str | None = None) -> str:
+    if policy is None:
+        env_policy = os.environ.get("RWKV7_BNB_SKIP_POLICY")
+        if env_policy is None:
+            env_policy = str(getattr(current_kernel_policy(), "bnb_skip_policy", "memory"))
+        policy = env_policy
+    policy = str(policy).strip().lower()
+    if policy in {"", "default", "small_lora", "memory", "minimal"}:
+        return "memory"
+    if policy in {"decode", "decode_hot", "hot", "hybrid"}:
+        return "decode_hot"
+    if policy in {"output", "output_hot", "o_proj", "o_proj_hot"}:
+        return "output_hot"
+    if policy in {"prefill", "prefill_hot", "throughput"}:
+        return "prefill_hot"
+    if policy in {"decode_rk", "rk_dense"}:
+        return "decode_rk"
+    if policy in {"dense", "all_dense", "no_quant"}:
+        return "dense"
+    return "memory"
+
+
+def _bnb_prefill_value_stride() -> int:
+    raw = os.environ.get("RWKV7_BNB_PREFILL_VALUE_STRIDE", "8").strip()
+    try:
+        return min(max(1, int(raw)), 4096)
+    except ValueError:
+        return 8
+
+
+def _bnb_int8_threshold_override() -> float | None:
+    raw = os.environ.get("RWKV7_BNB_INT8_THRESHOLD")
+    if raw is None:
+        raw = getattr(current_kernel_policy(), "bnb_int8_threshold", None)
+    if raw is None or str(raw).strip().lower() in {"", "default", "library", "none"}:
+        return None
+    value = float(raw)
+    if value < 0.0:
+        raise ValueError("RWKV7_BNB_INT8_THRESHOLD must be non-negative")
+    return value
+
 try:
     from .native_jit import extract as _native_jit_extract
     from .native_jit import extract_graph as _native_graph_extract
@@ -683,10 +725,17 @@ def _native_prefill_graph_enabled(
 
 
 def _native_prefill_graph_cache_size() -> int:
+    policy = current_kernel_policy(torch_module=torch)
+    default = int(getattr(policy, "prefill_graph_cache_size", 2))
     try:
-        value = int(os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH_CACHE_SIZE", "2"))
+        value = int(
+            os.environ.get(
+                "RWKV7_NATIVE_PREFILL_GRAPH_CACHE_SIZE",
+                str(default),
+            )
+        )
     except ValueError:
-        value = 2
+        value = default
     return max(1, min(value, 16))
 
 
@@ -1305,6 +1354,15 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     supports_gradient_checkpointing = True
     # Transformers >=5 expects dict-like _tied_weights_keys; RWKV-7 ties nothing.
     _tied_weights_keys = {}
+    _rwkv7_bnb_skip_modules = ["lm_head", r".*_lora\.lora\.[02]"]
+    _rwkv7_bnb_policy_extra_skips = {
+        "memory": [],
+        "output_hot": [r".*attn\.o_proj"],
+        "decode_rk": [r".*attn\.(r_proj|k_proj)"],
+        "decode_hot": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)"],
+        "prefill_hot": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)", r".*ffn\.key"],
+        "dense": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)", r".*ffn\.(key|value)"],
+    }
 
     @property
     def all_tied_weights_keys(self):
@@ -1324,8 +1382,118 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.gradient_checkpointing = False
 
+    @staticmethod
+    def _rwkv7_bnb_concrete_skip_modules(
+        policy: str,
+        config: Any | None = None,
+    ) -> list[str]:
+        num_layers = int(getattr(config, "num_hidden_layers", 0) or 0)
+        if num_layers <= 0:
+            return []
+        prefill_value_stride = _bnb_prefill_value_stride()
+        quantized_prefill_values = {
+            layer_idx
+            for layer_idx in range(num_layers)
+            if (layer_idx + 1) % prefill_value_stride == 0
+        }
+        if policy == "prefill_hot" and not quantized_prefill_values:
+            quantized_prefill_values.add(num_layers - 1)
+        skips: list[str] = []
+        for layer_idx in range(num_layers):
+            for lora_name in ("w_lora", "a_lora", "g_lora", "v_lora"):
+                for linear_idx in (0, 2):
+                    skips.append(
+                        f"model.layers.{layer_idx}.attn.{lora_name}.lora.{linear_idx}"
+                    )
+            if policy == "output_hot":
+                skips.append(f"model.layers.{layer_idx}.attn.o_proj")
+            if policy in {"decode_rk", "decode_hot", "prefill_hot", "dense"}:
+                proj_names = (
+                    ("r_proj", "k_proj")
+                    if policy == "decode_rk"
+                    else ("r_proj", "k_proj", "v_proj", "o_proj")
+                )
+                for proj_name in proj_names:
+                    skips.append(f"model.layers.{layer_idx}.attn.{proj_name}")
+            if policy == "prefill_hot":
+                skips.append(f"model.layers.{layer_idx}.ffn.key")
+                if layer_idx not in quantized_prefill_values:
+                    skips.append(f"model.layers.{layer_idx}.ffn.value")
+            if policy == "dense":
+                for ffn_name in ("key", "value"):
+                    skips.append(f"model.layers.{layer_idx}.ffn.{ffn_name}")
+        return skips
+
     @classmethod
-    def from_pretrained(cls, *model_args, **kwargs):
+    def rwkv7_bnb_skip_modules(
+        cls,
+        policy: str | None = None,
+        config: Any | None = None,
+    ) -> list[str]:
+        policy = _bnb_skip_policy(policy)
+        return list(
+            dict.fromkeys(
+                [
+                    *cls._rwkv7_bnb_skip_modules,
+                    *cls._rwkv7_bnb_policy_extra_skips[policy],
+                    *cls._rwkv7_bnb_concrete_skip_modules(policy, config),
+                ]
+            )
+        )
+
+    @classmethod
+    def _rwkv7_prepare_bnb_kwargs(
+        cls,
+        pretrained_model_name_or_path,
+        kwargs: dict[str, Any],
+    ):
+        policy = _bnb_skip_policy(kwargs.pop("rwkv7_bnb_skip_policy", None))
+        quantization_config = kwargs.get("quantization_config")
+        if quantization_config is None and (
+            kwargs.get("load_in_8bit") or kwargs.get("load_in_4bit")
+        ):
+            from transformers import BitsAndBytesConfig
+
+            bnb_kwargs = {}
+            for key in list(kwargs):
+                if (
+                    key.startswith("bnb_4bit_")
+                    or key.startswith("llm_int8_")
+                    or key in {"load_in_8bit", "load_in_4bit"}
+                ):
+                    bnb_kwargs[key] = kwargs.pop(key)
+            quantization_config = BitsAndBytesConfig(**bnb_kwargs)
+            kwargs["quantization_config"] = quantization_config
+        if quantization_config is not None and bool(
+            getattr(quantization_config, "load_in_8bit", False)
+        ):
+            threshold = _bnb_int8_threshold_override()
+            if threshold is not None:
+                quantization_config.llm_int8_threshold = float(threshold)
+        if quantization_config is not None and hasattr(
+            quantization_config,
+            "llm_int8_skip_modules",
+        ):
+            config_for_skip = kwargs.get("config")
+            if config_for_skip is None:
+                try:
+                    config_for_skip = cls.config_class.from_pretrained(
+                        pretrained_model_name_or_path
+                    )
+                except Exception:
+                    config_for_skip = None
+            existing = list(
+                getattr(quantization_config, "llm_int8_skip_modules", None) or []
+            )
+            quantization_config.llm_int8_skip_modules = list(
+                dict.fromkeys(
+                    [*existing, *cls.rwkv7_bnb_skip_modules(policy, config_for_skip)]
+                )
+            )
+        return policy, quantization_config
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
         """Load dense weights, then apply optional native W8/W4 quantization.
 
         The native backend is the Apple/CPU/AMD fallback path, so its quantized
@@ -1336,11 +1504,22 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         checkpoint.
         """
 
-        loaded = super().from_pretrained(*model_args, **kwargs)
+        bnb_skip_policy, quantization_config = cls._rwkv7_prepare_bnb_kwargs(
+            pretrained_model_name_or_path,
+            kwargs,
+        )
+        loaded = super().from_pretrained(
+            pretrained_model_name_or_path,
+            *model_args,
+            **kwargs,
+        )
         # Transformers returns ``(model, loading_info)`` when requested. Keep
         # that standard API shape while applying config-driven packing to the
         # actual model instance.
         model = loaded[0] if isinstance(loaded, tuple) else loaded
+        if quantization_config is not None:
+            setattr(model, "_rwkv7_bnb_skip_policy", bnb_skip_policy)
+            setattr(model.config, "rwkv7_bnb_skip_policy", bnb_skip_policy)
         model.apply_native_mm_quantization_from_config()
         if isinstance(loaded, tuple):
             return (model, *loaded[1:])
@@ -1444,10 +1623,329 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         """Return the backend used by the previous native-model prefill call."""
         return getattr(self, "_rwkv7_native_model_last_prefill_backend", None)
 
+    @torch.inference_mode()
+    def rwkv7_prefill_native(
+        self,
+        input_ids: torch.LongTensor,
+        past_key_values: NativeRWKV7Cache | tuple | list | None = None,
+        logits_to_keep: int = 1,
+        return_dict: bool | None = True,
+    ):
+        """Inference-only prefill through the native model backend.
+
+        CUDA prompts use the compiled prefill/graph route when eligible, and
+        eligible cache continuations reuse compiled prefill with the existing
+        recurrent state. CPU, quantized, adapter, and masked calls retain the
+        same public contract through the native eager implementation.
+        """
+
+        if self.training:
+            raise RuntimeError("rwkv7_prefill_native is inference-only; call model.eval() first")
+        if input_ids.dim() == 1:
+            input_ids = input_ids.unsqueeze(0)
+        if input_ids.dim() != 2:
+            raise ValueError("rwkv7_prefill_native expects input_ids shaped [batch, seq]")
+        if int(input_ids.shape[0]) <= 0 or int(input_ids.shape[1]) <= 0:
+            raise ValueError("rwkv7_prefill_native requires a non-empty batch and sequence")
+
+        self._rwkv7_native_model_last_prefill_backend = "native_eager"
+        out = self(
+            input_ids=input_ids,
+            past_key_values=past_key_values,
+            use_cache=True,
+            logits_to_keep=logits_to_keep,
+            return_dict=True,
+        )
+        self._rwkv7_last_fast_prefill_backend = self.rwkv7_native_model_last_prefill_backend()
+        if not return_dict:
+            return out.logits, out.past_key_values
+        return out
+
+    @torch.inference_mode()
+    def rwkv7_prefill_chunks(
+        self,
+        input_ids: torch.LongTensor,
+        attention_mask: torch.Tensor | None = None,
+        chunk_size: int = 2048,
+        past_key_values: NativeRWKV7Cache | tuple | list | None = None,
+        logits_to_keep: int = 1,
+        return_dict: bool | None = True,
+        **kwargs,
+    ):
+        """Prefill a long prompt in recurrent-cache-preserving chunks."""
+
+        if self.training:
+            raise RuntimeError("rwkv7_prefill_chunks is inference-only; call model.eval() first")
+        if input_ids.dim() != 2:
+            raise ValueError("rwkv7_prefill_chunks expects input_ids shaped [batch, seq]")
+        if int(input_ids.shape[0]) <= 0 or int(input_ids.shape[1]) <= 0:
+            raise ValueError("rwkv7_prefill_chunks requires a non-empty batch and sequence")
+        chunk_size = int(chunk_size)
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
+        if attention_mask is not None and tuple(attention_mask.shape[:2]) != tuple(input_ids.shape[:2]):
+            raise ValueError("attention_mask must have the same [batch, seq] shape as input_ids")
+
+        total = int(input_ids.shape[1])
+        initial_seen = _cache_seen(past_key_values)
+        past = past_key_values
+        out = None
+        kwargs.pop("use_cache", None)
+        kwargs.pop("past_key_values", None)
+        kwargs.pop("return_dict", None)
+        kwargs.pop("logits_to_keep", None)
+        for start in range(0, total, chunk_size):
+            end = min(total, start + chunk_size)
+            chunk_mask = attention_mask[:, start:end] if attention_mask is not None else None
+            out = self(
+                input_ids=input_ids[:, start:end],
+                attention_mask=chunk_mask,
+                past_key_values=past,
+                use_cache=True,
+                logits_to_keep=logits_to_keep if end == total else 1,
+                return_dict=True,
+                **kwargs,
+            )
+            past = out.past_key_values
+        if out is None:
+            raise RuntimeError("unreachable: chunked prefill produced no output")
+        if hasattr(out.past_key_values, "seen_tokens"):
+            out.past_key_values.seen_tokens = initial_seen + total
+        if not return_dict:
+            return out.logits, out.past_key_values
+        return out
+
+    @torch.inference_mode()
+    def rwkv7_speculative_generate(
+        self,
+        input_ids: torch.LongTensor,
+        draft_model: torch.nn.Module,
+        max_new_tokens: int = 32,
+        draft_tokens: int = 4,
+        eos_token_id: int | list[int] | tuple[int, ...] | None = None,
+        return_stats: bool = False,
+        logits_to_keep: int = 1,
+        **forward_kwargs,
+    ):
+        """Greedy batch-one speculative decoding through standard HF calls."""
+
+        if self.training:
+            raise RuntimeError("rwkv7_speculative_generate is inference-only; call model.eval() first")
+        if draft_model is None:
+            raise ValueError("rwkv7_speculative_generate requires a draft_model")
+        if getattr(draft_model, "training", False):
+            raise RuntimeError("draft_model must be in eval mode for speculative decoding")
+        if input_ids.dim() != 2 or int(input_ids.shape[0]) != 1:
+            raise ValueError("rwkv7_speculative_generate currently supports input_ids shaped [1, seq]")
+        if int(input_ids.shape[1]) <= 0:
+            raise ValueError("rwkv7_speculative_generate requires at least one prompt token")
+        max_new_tokens = int(max_new_tokens)
+        draft_tokens = int(draft_tokens)
+        if max_new_tokens < 0:
+            raise ValueError("max_new_tokens must be non-negative")
+        if draft_tokens <= 0:
+            raise ValueError("draft_tokens must be positive")
+
+        stats = {
+            "generated_tokens": 0,
+            "proposed_tokens": 0,
+            "accepted_tokens": 0,
+            "corrected_tokens": 0,
+            "resyncs": 0,
+            "resync_tokens": 0,
+            "full_resync_tokens": 0,
+            "resync_saved_tokens": 0,
+            "target_forward_calls": 0,
+            "draft_forward_calls": 0,
+            "acceptance_rate": None,
+        }
+        if max_new_tokens == 0:
+            return {"sequences": input_ids, "stats": stats} if return_stats else input_ids
+
+        eos_ids = (
+            {int(eos_token_id)}
+            if isinstance(eos_token_id, int)
+            else ({int(value) for value in eos_token_id} if eos_token_id is not None else set())
+        )
+        prefill_kwargs = dict(forward_kwargs)
+        step_kwargs = {
+            key: value
+            for key, value in forward_kwargs.items()
+            if key
+            not in {
+                "attention_mask",
+                "position_ids",
+                "cache_position",
+                "past_key_values",
+                "use_cache",
+                "return_dict",
+                "logits_to_keep",
+            }
+        }
+
+        def _forward(model, tokens, past=None, *, prefill: bool = False, keep: int | None = None):
+            call_kwargs = dict(prefill_kwargs if prefill else step_kwargs)
+            for key in ("past_key_values", "use_cache", "return_dict", "logits_to_keep"):
+                call_kwargs.pop(key, None)
+            return model(
+                tokens,
+                past_key_values=past,
+                use_cache=True,
+                return_dict=True,
+                logits_to_keep=logits_to_keep if keep is None else keep,
+                **call_kwargs,
+            )
+
+        def _argmax_token(logits: torch.Tensor) -> torch.LongTensor:
+            return torch.argmax(logits[:, -1, :], dim=-1).to(device=input_ids.device)
+
+        def _append_token(sequence: torch.LongTensor, token: torch.LongTensor) -> torch.LongTensor:
+            return torch.cat([sequence, token.reshape(1, 1).to(sequence.device)], dim=1)
+
+        def _append_tokens(sequence: torch.LongTensor, tokens: list[torch.LongTensor]) -> torch.LongTensor:
+            if not tokens:
+                return sequence
+            return torch.cat(
+                [sequence] + [token.reshape(1, 1).to(sequence.device) for token in tokens],
+                dim=1,
+            )
+
+        def _is_eos(token: torch.LongTensor) -> bool:
+            return bool(eos_ids and int(token.reshape(-1)[0].detach().cpu()) in eos_ids)
+
+        def _clone_past(past):
+            if hasattr(past, "clone"):
+                return past.clone()
+            return NativeRWKV7Cache.from_legacy_cache(past).clone()
+
+        generated = input_ids
+        target_out = _forward(self, generated, prefill=True)
+        stats["target_forward_calls"] += 1
+        target_past = target_out.past_key_values
+        target_next = _argmax_token(target_out.logits)
+
+        draft_out = _forward(draft_model, generated, prefill=True)
+        stats["draft_forward_calls"] += 1
+        draft_past = draft_out.past_key_values
+        draft_next = _argmax_token(draft_out.logits)
+
+        while stats["generated_tokens"] < max_new_tokens:
+            proposals: list[torch.LongTensor] = []
+            draft_past_before_block = _clone_past(draft_past)
+            for _ in range(min(draft_tokens, max_new_tokens - stats["generated_tokens"])):
+                proposal = draft_next.reshape(1).to(input_ids.device)
+                proposals.append(proposal)
+                stats["proposed_tokens"] += 1
+                draft_out = _forward(draft_model, proposal.reshape(1, 1), past=draft_past)
+                stats["draft_forward_calls"] += 1
+                draft_past = draft_out.past_key_values
+                draft_next = _argmax_token(draft_out.logits)
+            if not proposals:
+                break
+
+            proposal_ids = torch.cat(
+                [proposal.reshape(1, 1).to(input_ids.device) for proposal in proposals],
+                dim=1,
+            )
+            verify_out = _forward(
+                self,
+                proposal_ids,
+                past=_clone_past(target_past),
+                keep=len(proposals),
+            )
+            stats["target_forward_calls"] += 1
+            verify_logits = verify_out.logits
+            target_predictions = [target_next.reshape(1)]
+            for position in range(max(0, len(proposals) - 1)):
+                target_predictions.append(
+                    torch.argmax(verify_logits[:, position, :], dim=-1).to(input_ids.device)
+                )
+
+            accepted_prefix: list[torch.LongTensor] = []
+            mismatch = False
+            stop_after_append = False
+            for index, proposal in enumerate(proposals):
+                expected = target_predictions[index].reshape(1)
+                if int(proposal.reshape(-1)[0]) == int(expected.reshape(-1)[0]):
+                    accepted_prefix.append(proposal)
+                    stats["accepted_tokens"] += 1
+                    stats["generated_tokens"] += 1
+                    if _is_eos(proposal) or stats["generated_tokens"] >= max_new_tokens:
+                        stop_after_append = True
+                        break
+                    continue
+
+                generated = _append_tokens(generated, accepted_prefix)
+                correction = expected
+                generated = _append_token(generated, correction)
+                stats["corrected_tokens"] += 1
+                stats["generated_tokens"] += 1
+                mismatch = True
+                if not _is_eos(correction) and stats["generated_tokens"] < max_new_tokens:
+                    repair_tokens = torch.cat(
+                        [
+                            token.reshape(1, 1).to(input_ids.device)
+                            for token in [*accepted_prefix, correction]
+                        ],
+                        dim=1,
+                    )
+                    target_out = _forward(
+                        self,
+                        repair_tokens,
+                        past=_clone_past(target_past),
+                        keep=1,
+                    )
+                    stats["target_forward_calls"] += 1
+                    target_past = target_out.past_key_values
+                    target_next = _argmax_token(target_out.logits)
+                    draft_out = _forward(
+                        draft_model,
+                        repair_tokens,
+                        past=draft_past_before_block,
+                        keep=1,
+                    )
+                    stats["draft_forward_calls"] += 1
+                    draft_past = draft_out.past_key_values
+                    draft_next = _argmax_token(draft_out.logits)
+                    stats["resyncs"] += 1
+                    stats["resync_tokens"] += int(repair_tokens.shape[1])
+                    stats["full_resync_tokens"] += int(generated.shape[1])
+                    stats["resync_saved_tokens"] = max(
+                        0,
+                        int(stats["full_resync_tokens"]) - int(stats["resync_tokens"]),
+                    )
+                stop_after_append = True
+                break
+
+            if not mismatch:
+                generated = _append_tokens(generated, accepted_prefix)
+                if len(accepted_prefix) == len(proposals):
+                    target_past = verify_out.past_key_values
+                    target_next = _argmax_token(verify_logits)
+                elif not stop_after_append:
+                    target_out = _forward(self, generated, prefill=True)
+                    stats["target_forward_calls"] += 1
+                    target_past = target_out.past_key_values
+                    target_next = _argmax_token(target_out.logits)
+
+            if _is_eos(generated[:, -1]) or stats["generated_tokens"] >= max_new_tokens:
+                break
+
+        if stats["proposed_tokens"]:
+            stats["acceptance_rate"] = float(stats["accepted_tokens"]) / float(
+                stats["proposed_tokens"]
+            )
+        return {"sequences": generated, "stats": stats} if return_stats else generated
+
     def rwkv7_last_fast_token_backend(self) -> str | None:
         """Return the backend selected by the previous fast-token call."""
 
         return self.rwkv7_native_model_last_decode_backend()
+
+    def rwkv7_last_fast_prefill_backend(self) -> str | None:
+        """Return the backend selected by the previous fast-prefill call."""
+
+        return self.rwkv7_native_model_last_prefill_backend()
 
     def _native_prefill_can_run(
         self,
@@ -1480,10 +1978,11 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         *,
         logits_to_keep,
         seen_tokens: int,
+        initial_cache=None,
     ):
         batch_size = int(input_ids.shape[0])
         prompt_tokens = int(input_ids.shape[1])
-        if _native_prefill_graph_enabled(
+        if initial_cache is None and _native_prefill_graph_enabled(
             batch_size,
             prompt_tokens,
             int(self.config.hidden_size),
@@ -1511,10 +2010,16 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             self._rwkv7_native_model_last_prefill_backend = "native_prefill_graph"
             return logits, cache
         packs = self._native_graph_packs()
+        state = xpa = xpf = None
+        if initial_cache is not None:
+            state, xpa, xpf, _ = _copy_native_cache_tuple(initial_cache)
         logits, state, xpa, xpf = _native_jit_prefill(
             self,
             input_ids,
             packs,
+            state=state,
+            xpa=xpa,
+            xpf=xpf,
             logits_to_keep=logits_to_keep,
         )
         v_first = torch.zeros(
@@ -1530,7 +2035,9 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             dtype=self.model.embeddings.weight.dtype,
         )
         cache = NativeRWKV7Cache(state, xpa, xpf, v_first, seen_tokens=int(seen_tokens))
-        self._rwkv7_native_model_last_prefill_backend = "native_prefill"
+        self._rwkv7_native_model_last_prefill_backend = (
+            "native_prefill_continuation" if initial_cache is not None else "native_prefill"
+        )
         return logits, cache
 
     def _native_prefill_graph_runner(
@@ -1601,6 +2108,8 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             return False
         if self.training or torch.is_grad_enabled() or not _native_graph_available():
             return False
+        if self._native_model_requires_eager_decode():
+            return False
         if token_ids is None or token_ids.dim() != 2 or int(token_ids.shape[1]) != 1:
             return False
         if attention_mask is not None or output_hidden_states or not isinstance(cache, NativeRWKV7Cache):
@@ -1611,7 +2120,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             return False
         if not cache.is_initialized or cache.get_batch_size() != int(token_ids.shape[0]):
             return False
-        return not self._native_model_has_adapter_layers()
+        return True
 
     def _native_graph_packs(self):
         if _native_graph_extract is None:
@@ -2194,6 +2703,24 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
                 input_ids,
                 logits_to_keep=logits_to_keep,
                 seen_tokens=seq_len,
+            )
+            logits = _slice_native_logits(logits, logits_to_keep)
+            new_cache = _maybe_legacy_native_cache(new_cache, return_legacy_cache)
+            if not return_dict:
+                return logits, new_cache
+            return CausalLMOutputWithPast(logits=logits, past_key_values=new_cache)
+        if native_cache is not None and self._native_prefill_can_run(
+            input_ids,
+            attention_mask=native_attention_mask,
+            output_hidden_states=output_hidden_states,
+            use_cache=use_cache,
+            logits_to_keep=logits_to_keep,
+        ):
+            logits, new_cache = self._native_prefill(
+                input_ids,
+                logits_to_keep=logits_to_keep,
+                seen_tokens=_cache_seen(past_key_values) + seq_len,
+                initial_cache=native_cache,
             )
             logits = _slice_native_logits(logits, logits_to_keep)
             new_cache = _maybe_legacy_native_cache(new_cache, return_legacy_cache)

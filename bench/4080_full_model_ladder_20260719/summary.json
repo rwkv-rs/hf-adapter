@@ -1,0 +1,32 @@
+{
+  "axis": "rtx4080_full_hf_model_ladder",
+  "base_main_commit": "8945395a165c497c2e3eb5f1b6e9284176b48872",
+  "device": "NVIDIA GeForce RTX 4080",
+  "gpu_arch": "sm_89",
+  "pair_batches_passed": 6,
+  "pair_batches_total": 6,
+  "dense_cells_passed": 36,
+  "dense_cells_total": 36,
+  "qwen_reference_backend": "full FLA with causal-conv1d and fused gated normalization",
+  "dense_minima": {
+    "prefill_speed_ratio": 1.012285,
+    "decode_speed_ratio": 1.435296,
+    "decode_active_work_ratio": 1.768344
+  },
+  "paired_quant": {
+    "a8w8_total_speed_ratio_min": 1.003101,
+    "a8w8_footprint_ratio_max": 0.9716,
+    "torchao_w4_total_speed_ratio_min": 1.015996,
+    "torchao_w4_footprint_ratio_max": 0.9612,
+    "all_greedy_cells_pass": true
+  },
+  "large_model_boundaries": {
+    "rwkv7_7p2_fp16_max_accepted_batch_at_prompt128": 4,
+    "rwkv7_7p2_fp16_batch8": "expected capacity-limit",
+    "rwkv7_13p3_fp16": "expected capacity-limit",
+    "rwkv7_13p3_mm8": "quant-only deterministic execution pass",
+    "rwkv7_13p3_mm4": "quant-only deterministic execution pass",
+    "qwen3p5_9b_fp16": "expected capacity-limit"
+  },
+  "status": "pass"
+}

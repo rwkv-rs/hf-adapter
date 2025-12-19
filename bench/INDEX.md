@@ -13,6 +13,7 @@ Generated inventory of benchmark scripts and evidence directories. Keep this fil
 | RTX 4090 | [`4090_g1h_7p2_bsz8_20260715/`](4090_g1h_7p2_bsz8_20260715/README.md) | Latest g1h 7.2B/9B bsz8 dense, active-work, W8/W4 speed and quant-local memory gates pass 18/18 |
 | RTX 4090 | [`4090_small_bsz8_20260715/`](4090_small_bsz8_20260715/README.md) | 0.4B/0.8B, 1.5B/2B and 2.9B/4B bsz8 dense, active-work, W8/W4 speed and physical-memory gates pass 54/54 |
 | RTX 4090 | [`4090_validation_summary.md`](4090_validation_summary.md) | Measured dense decode/current-session prefill and quant speed lanes pass |
+| RTX 4080 | [`4080_full_model_ladder_20260719/`](4080_full_model_ladder_20260719/README.md) | Native HF 0.4B/1.5B/2.9B B1/B8 full-FLA-Qwen matrices pass 6/6; 7.2B/13.3B capacity and quant routes recorded |
 | RTX 5090 | [`5090_blackwell_production_close_20260712/`](5090_blackwell_production_close_20260712/README.md) | Quant pressure, 13.3B conversion and full MATH500 pass |
 | RTX 5090 | [`5090_g1h_qwen35_b1_b8_20260715/`](5090_g1h_qwen35_b1_b8_20260715/README.md) | Current-main 0.4B/0.8B through 7.2B/9B B1/B8 matrix passes 8/8 batch-pairs and 144/144 full-FLA cells |
 | RTX 5090 | [`5090_g1h_13p3_20260715/`](5090_g1h_13p3_20260715/README.md) | Latest official g1h 13.3B load/generate plus B8 paired-fp16 MM8/MM4 speed-policy gate pass |
@@ -42,6 +43,8 @@ two-pair conservative gate. Conclusions and reproduction commands are in
 | 3090_self_fused_20260713 | RTX 3090 self-fused RWKV-7 7.2B long-prefill close | 2 | 0 |
 | 4090_g1h_7p2_bsz8_20260715 | RTX 4090 latest-g1h 7.2B vs Qwen3.5-9B bsz8 acceptance | 6 | 7 |
 | 4090_small_bsz8_20260715 | RTX 4090 0.4B/1.5B/2.9B vs Qwen3.5 bsz8 acceptance | 5 | 1 |
+| 4080_ada_validation_20260719 | RTX 4080 Native HF, full-FLA Qwen3.5 and quant acceptance | 21 | 9 |
+| 4080_full_model_ladder_20260719 | RTX 4080 B1/B8 full-FLA-Qwen pair matrix and large-model capacity ladder | 28 | 0 |
 | 5070_native_memory_loading_20260716 | RTX 5070 Laptop CPU-first native MM8/MM4 memory-loading smoke | 1 | 0 |
 | 5090_g1h_13p3_20260715 | RTX 5090 latest official g1h 13.3B conversion, smoke, and speed-policy acceptance | 2 | 0 |
 | 5090_g1h_qwen35_b1_b8_20260715 | RTX 5090 complete B1/B8 RWKV-7 vs full-FLA Qwen3.5 acceptance | 107 | 0 |
