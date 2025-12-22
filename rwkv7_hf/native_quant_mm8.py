@@ -40,6 +40,17 @@ except Exception:  # pragma: no cover
 
 from .native_quant_policy import normalize_native_mm_policy, should_quantize_linear
 
+try:
+    from .sm70_quant import (
+        is_sm7x_quant_device,
+        quantize_w8_row,
+        w8_linear as sm7x_w8_linear,
+    )
+except Exception:  # pragma: no cover - remote-code fallback
+    is_sm7x_quant_device = lambda _device=None: False  # type: ignore[assignment]
+    quantize_w8_row = None  # type: ignore[assignment]
+    sm7x_w8_linear = None  # type: ignore[assignment]
+
 
 def quantize_mm8(weight):
     """Quantize ``weight: [N, M]`` to the official rwkv fp16i8 format.
@@ -408,13 +419,25 @@ class MM8Linear(torch.nn.Module):
 
     def __init__(self, linear, *, fused=True):
         super().__init__()
-        wu8, mx, rx, my, ry = quantize_mm8(linear.weight.data.t().contiguous())
         self.in_features, self.out_features = linear.weight.shape[1], linear.weight.shape[0]
-        self.register_buffer("w_u8", wu8)   # uint8 [in, out]
-        self.register_buffer("mx", mx)      # [out]
-        self.register_buffer("rx", rx)      # [out]
-        self.register_buffer("my", my)      # [in, 1]
-        self.register_buffer("ry", ry)      # [in, 1]
+        quant_device = linear.weight.device if linear.weight.is_cuda else None
+        self.sm7x_rowwise = bool(
+            fused
+            and quantize_w8_row is not None
+            and sm7x_w8_linear is not None
+            and is_sm7x_quant_device(quant_device)
+        )
+        if self.sm7x_rowwise:
+            q_row, row_scale = quantize_w8_row(linear.weight.data)
+            self.register_buffer("q_row", q_row)
+            self.register_buffer("row_scale", row_scale)
+        else:
+            wu8, mx, rx, my, ry = quantize_mm8(linear.weight.data.t().contiguous())
+            self.register_buffer("w_u8", wu8)   # uint8 [in, out]
+            self.register_buffer("mx", mx)      # [out]
+            self.register_buffer("rx", rx)      # [out]
+            self.register_buffer("my", my)      # [in, 1]
+            self.register_buffer("ry", ry)      # [in, 1]
         if linear.bias is not None:
             self.register_buffer("bias", linear.bias.data.clone())
         else:
@@ -422,6 +445,9 @@ class MM8Linear(torch.nn.Module):
         self.fused = bool(fused)
 
     def forward(self, x):
+        if self.sm7x_rowwise and sm7x_w8_linear is not None:
+            y = sm7x_w8_linear(x, self.q_row, self.row_scale)
+            return y if self.bias is None else y + self.bias
         if x.dim() == 1:
             if self.fused and x.is_cuda and mm8_gemv_available(x.device):
                 y = mm8_gemv_triton(x, self.w_u8, self.mx, self.rx, self.my, self.ry)
@@ -441,8 +467,18 @@ class MM8Linear(torch.nn.Module):
             y = y + self.bias
         return y
 
+    def rwkv7_forward_into(self, x, out):
+        if self.sm7x_rowwise and sm7x_w8_linear is not None and self.bias is None:
+            return sm7x_w8_linear(x, self.q_row, self.row_scale, out=out)
+        result = self.forward(x)
+        out.copy_(result)
+        return out
+
     def extra_repr(self):
-        return f"in={self.in_features}, out={self.out_features}, mm8(fused={self.fused})"
+        return (
+            f"in={self.in_features}, out={self.out_features}, "
+            f"mm8(fused={self.fused}, sm7x_rowwise={self.sm7x_rowwise})"
+        )
 
 
 def quantize_model_mm8(
@@ -478,9 +514,24 @@ def quantize_model_mm8(
         setattr(parent, attr, MM8Linear(getattr(parent, attr), fused=fused))
     setattr(model, "_rwkv7_native_mm_quantization", "mm8")
     setattr(model, "_rwkv7_native_mm_replaced_modules", len(targets))
+    if any(
+        bool(getattr(module, "sm7x_rowwise", False))
+        for module in model.modules()
+    ):
+        setattr(model, "_rwkv7_native_mm_kernel", "sm7x_dp4a_w8")
     setattr(
         model,
         "_rwkv7_native_mm_block_replaced_modules",
         sum(name.startswith("model.layers.") for name in targets),
     )
+    for cache_attr in (
+        "_rwkv7_native_jit_pack_cache",
+        "_rwkv7_native_graph_pack_cache",
+        "_rwkv7_native_graph_runner_cache",
+        "_rwkv7_native_prefill_graph_runner_cache",
+        "_rwkv7_native_prefill_graph_hot_runner",
+        "_rwkv7_native_model_jit_pack_cache",
+    ):
+        if hasattr(model, cache_attr):
+            delattr(model, cache_attr)
     return len(targets)

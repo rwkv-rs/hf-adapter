@@ -4,7 +4,7 @@ Only **unfinished, actionable HF-adapter work** belongs here. Completed
 experiments and historical plans belong in benchmark artifacts or Git history.
 Native vLLM/SGLang scheduler work is out of scope for this file.
 
-Last updated: **2026-07-18**.
+Last updated: **2026-07-20**.
 
 ## Current milestone — COMPLETE
 
@@ -47,6 +47,11 @@ remaining fp16-or-faster across representative batch/prompt/decode shapes.
       [`bench/5090_bntn_all_models_20260716/`](bench/5090_bntn_all_models_20260716/README.md).
 - [ ] Add all-phase fused quant prefill for the remaining cards/shapes;
       decode-only wins are insufficient.
+- [ ] Close the Tesla T4 full-model lane. Exact-card DP4A W8/W4 now reduces
+      footprint to `0.5291x–0.6331x` / `0.3004x–0.4542x` and wins every B1
+      decode row, but prefill is `0.1272x–0.6984x` and small-model B4/B8 decode
+      remains below fp16. The separate head-only speed lane passes 26/26 decode
+      cells at `>=1.0207x`, but is not a substitute for broad memory closure.
 - [ ] Validate the same large-payload contract on V100, 4090 and at least one
       Ampere professional card; RTX 5090 exact-lane evidence is complete.
 - [ ] Preserve cosine, same-next, footprint and paired timing gates.
@@ -60,6 +65,9 @@ the declared same-card fp16 equivalence/speed threshold. See
 
 ### 2. Final Albatross/RWKV-LM matrix
 
+- [ ] Close the exact Tesla T4 gap measured on 2026-07-20: native-graph decode
+      is `0.4888x–0.8649x` and B1/T512 fused prefill is
+      `0.5385x–0.7671x` same-card Albatross across 0.1B–2.9B.
 - [ ] Fresh same-card/same-session RTX 5090 Albatross full rerun.
 - [ ] Extend P2/P3 beyond the V100 canonical P1 matrix.
 - [ ] Recheck RTX 4090 prompt-512 historical high-water reference.
@@ -87,7 +95,12 @@ diagnostics only.
 
 - [ ] H100/Hopper: bf16, large model, quant, batch and training rows.
 - [ ] AMD/ROCm: native/no-FLA load/generate, training, cache and performance.
-- [ ] Turing NVIDIA: compatibility and fallback policy.
+- [x] Tesla T4: exact-card compatibility, fallback policy, 0.1B–2.9B HF/cache,
+      prefill/decode, quant and declared training-integration matrix. It is
+      `Validated`, not production-close; dense/quant performance gaps remain
+      in the sections above.
+- [ ] Other Turing / RTX 20 products: exact-card validation. Do not inherit T4
+      prefill or DP4A quant routing from compute capability alone.
 - [ ] Additional RTX 50-series and laptop/low-memory cards.
 - [ ] Apple M1–M4, Pro/Max/Ultra reproduction.
 

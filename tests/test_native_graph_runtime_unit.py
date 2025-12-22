@@ -82,19 +82,49 @@ def test_native_graph_never_routes_on_cpu_or_training() -> None:
             os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = old
 
 
-def test_native_graph_consults_quantized_or_adapter_eager_fallback(monkeypatch) -> None:
+def test_native_graph_rejects_adapter_layers(monkeypatch) -> None:
     model = build_tiny_model()
     cache = build_cache(batch_size=1)
     token = torch.tensor([[1]], dtype=torch.long)
     consulted = False
 
-    def requires_eager_decode() -> bool:
+    def has_adapter_layers() -> bool:
         nonlocal consulted
         consulted = True
         return True
 
     monkeypatch.setattr(native_model_module, "_native_graph_available", lambda: True)
-    monkeypatch.setattr(model, "_native_model_requires_eager_decode", requires_eager_decode)
+    monkeypatch.setattr(model, "_native_model_has_adapter_layers", has_adapter_layers)
+    monkeypatch.setenv("RWKV7_NATIVE_MODEL_BACKEND", "native_graph")
+    with torch.inference_mode():
+        assert model._native_graph_can_run(
+            token,
+            cache,
+            attention_mask=None,
+            output_hidden_states=False,
+        ) is False
+    assert consulted
+
+
+def test_native_graph_rejects_non_native_quant_but_consults_native_safety(monkeypatch) -> None:
+    model = build_tiny_model()
+    cache = build_cache(batch_size=1)
+    token = torch.tensor([[1]], dtype=torch.long)
+    consulted = False
+
+    def native_quant_graph_safe() -> bool:
+        nonlocal consulted
+        consulted = True
+        return False
+
+    monkeypatch.setattr(native_model_module, "_native_graph_available", lambda: True)
+    monkeypatch.setattr(model, "_native_model_has_adapter_layers", lambda: False)
+    monkeypatch.setattr(model, "_native_model_quantized", lambda: True)
+    monkeypatch.setattr(
+        model,
+        "_native_model_native_quant_graph_safe",
+        native_quant_graph_safe,
+    )
     monkeypatch.setenv("RWKV7_NATIVE_MODEL_BACKEND", "native_graph")
     with torch.inference_mode():
         assert model._native_graph_can_run(

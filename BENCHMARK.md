@@ -5,7 +5,7 @@ exploratory tuning chronology. Raw rows, logs and negative experiments remain
 in [`bench/`](bench/); platform interpretation lives in
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
-Last updated: **2026-07-19**.
+Last updated: **2026-07-20**.
 
 ## Benchmark contract
 
@@ -25,6 +25,7 @@ Status vocabulary:
 | Platform | Scope | Correctness / quality | Performance | Result |
 |---|---|---|---|---|
 | V100 32GB | dense/Qwen lanes plus 1.5B/2.9B/7.2B packed-MM4 decode | greedy/cache gates; MM4 complete-sequence and repeat hashes pass 21/21 | Albatross P1; full-FLA Qwen gates; MM4 decode minima `1.0255x/1.0111x/1.0810x` | **PASS measured lanes** |
+| Tesla T4 15GB | 0.1B–2.9B HF/cache/fused-prefill/native-graph, exact-T4 W8/W4, training integration | functional/cache/fused rows pass; quant greedy 52/52; official alignment 0.1B/0.4B/1.5B passes | head-speed W8/W4 decode `>=1.0207x` fp16; dense decode `0.4888x–0.8649x` and B1/T512 prefill `0.5385x–0.7671x` Albatross; full-model quant prefill remains slower | **VALIDATED / performance partial** |
 | RTX 3090 | RWKV-7 7.2B vs Qwen3.5-9B, prompt2048, bsz1/2 | finite logits, greedy equality and cosine `>=0.999995`; Qwen fast bindings verified | self-fused dense prefill `1.0519x–1.0846x`; decode `1.9258x–2.1441x` | **PASS measured cells** |
 | RTX 3090 | g1h 7.2B vs Qwen3.5-9B, bsz8, dense/W8/W4 | finite logits, fail-closed Qwen FLA and route contracts; quality is a separate axis | dense prefill/decode min `1.0589x/1.7884x`; decode active work min `1.4379x`; W8/W4 total latency and memory gates pass | **PASS 18/18** |
 | RTX 3090 | 1.5B/2B and 2.9B/4B, bsz8, dense/W8/W4 | finite logits, fail-closed native/Qwen FLA contracts; quality is a separate axis | dense prefill min `1.0306x/1.3559x`, decode min `3.3828x/2.9213x`; W8/W4 total latency and physical-memory gates pass | **PASS 36/36** |
@@ -40,6 +41,26 @@ Status vocabulary:
 | RTX 5090 | official RWKV-Gradio-3 v3a vs Native HF, g1h 7.2B FP16 weights + FP32 state, B1/B8 | extensions active; three 512-token repeats share one trace hash; min logits cosine `0.99999344`, top-1 `64/64` and `512/512` | Native median `145.06/845.57 tok/s` vs precision-matched v3a `144.47/841.77`, or `1.0041x/1.0045x` | **PASS precision-matched exact lane** |
 | RTX 5090 | official RWKV-Gradio-3 v3a vs Native HF, FP16 weights/state/I/O | 7.2B B1/B8 16-step logits/state/xpa/xpf and greedy pass; 2.9B/13.3B B1/B8 prompt128/512/2048 prefill passes all tensor/state/greedy gates | 7.2B decode `1.0010x/1.0104x`; selected prefill 12/12 at `1.0029x–1.5690x` | **PASS exact fp16-state profiles** |
 | Apple M5 | 0.4B/1.5B selected MLX vs Qwen3.5 pairs | state/session/greedy and speculative target oracle pass | selected conservative decode/prefill/TTFT/memory gates pass | **PASS measured pairs** |
+
+## Tesla T4 exact-card validation
+
+One Tesla T4 (`sm_75`, 15 GiB) was validated with PyTorch 2.7.1+cu126,
+Transformers 5.12.1 and Triton 3.3.1 across RWKV-7 0.1B, 0.4B, 1.5B and
+2.9B. The artifact contains 123 dense/cache/prefill/fused rows, 52 final
+quantization rows, same-GPU Albatross, and Trainer/PEFT/TRL/ZeRO evidence.
+
+Same-GPU fixed-token native-graph decode is currently
+`0.4888x–0.8649x` Albatross. Effective fused B1/T512 prefill is
+`0.5385x–0.7671x` Albatross. These numbers establish a fresh acceptance line;
+they do not pass production parity.
+
+The exact-T4 DP4A head-speed lane passes 13/13 W8 and 13/13 W4 decode cells at
+minimum `1.0207x` fp16, with footprint ranges `0.8686x–0.9716x` and
+`0.8043x–0.9578x`. Broad quantization reaches `0.5291x–0.6331x` W8 and
+`0.3004x–0.4542x` W4 footprint and wins all B1 decode rows, but does not pass
+all prefill or B4/B8 decode cells. Tesla T4 is therefore `Validated`, not
+`Production-close`. Other Turing products remain fail-closed. Evidence:
+[`bench/t4_production_close_20260720/`](bench/t4_production_close_20260720/README.md).
 
 ## RTX 5090 official train_temp alignment
 

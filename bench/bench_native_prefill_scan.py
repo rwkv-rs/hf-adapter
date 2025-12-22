@@ -153,6 +153,16 @@ def infer_model_size_label(model_path: str) -> str | None:
     return f"{match.group(1)}b" if match else None
 
 
+def native_jit_packs(model):
+    """Return projection packs from either native or legacy wrapper APIs."""
+
+    for name in ("_native_jit_packs", "_native_graph_packs", "_rwkv7_native_jit_packs"):
+        factory = getattr(model, name, None)
+        if callable(factory):
+            return factory()
+    raise AttributeError("model does not expose native JIT projection packs")
+
+
 def scan_block_m(model, batch_size: int | None = None) -> int | None:
     raw = os.environ.get("RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M")
     if raw is not None:
@@ -161,7 +171,7 @@ def scan_block_m(model, batch_size: int | None = None) -> int | None:
         except ValueError:
             return None
     try:
-        head_dim = int(model._rwkv7_native_jit_packs()[0][2])
+        head_dim = int(native_jit_packs(model)[0][2])
         return model_native_jit_module(model)._native_prefill_scan_block_m(head_dim, batch_size)
     except Exception:
         return None
@@ -175,7 +185,7 @@ def scan_num_warps(model, block_m: int | None) -> int | None:
         except ValueError:
             return None
     try:
-        head_dim = int(model._rwkv7_native_jit_packs()[0][2])
+        head_dim = int(native_jit_packs(model)[0][2])
         return model_native_jit_module(model)._native_prefill_scan_num_warps(head_dim, block_m)
     except Exception:
         return None

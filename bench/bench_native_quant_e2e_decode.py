@@ -230,6 +230,13 @@ def last_native_model_decode_backend(model):
     return getattr(model, "_rwkv7_native_model_last_decode_backend", None)
 
 
+def last_native_model_prefill_backend(model):
+    getter = getattr(model, "rwkv7_last_fast_prefill_backend", None)
+    if callable(getter):
+        return getter()
+    return getattr(model, "_rwkv7_native_model_last_prefill_backend", None)
+
+
 def quantize_model(
     model,
     quantization: str,
@@ -433,6 +440,7 @@ def benchmark_decode(args, tok, model, ids):
                 "next_token": int(nxt[0, -1].detach().cpu()),
                 "fast_token_backend_effective": step_backend,
                 "native_model_decode_backend_effective": last_native_model_decode_backend(model),
+                "native_model_prefill_backend_effective": last_native_model_prefill_backend(model),
                 "cache_type": type(state).__name__ if state is not None else None,
             }
         )
@@ -784,7 +792,11 @@ def main() -> int:
             "quantize_before_device": bool(args.quantize_before_device),
             "replaced_modules": replaced,
             "module_counts": module_counts,
-            "native_mm_kernel": getattr(model, "_rwkv7_native_mm_exact_5090_kernel", None),
+            "native_mm_kernel": getattr(
+                model,
+                "_rwkv7_native_mm_kernel",
+                getattr(model, "_rwkv7_native_mm_exact_5090_kernel", None),
+            ),
             "fused_relu2_ffn_modules": int(
                 getattr(model, "_rwkv7_native_mm_fused_relu2_ffn_modules", 0)
             ),

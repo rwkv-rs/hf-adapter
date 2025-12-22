@@ -10,6 +10,7 @@ from rwkv7_hf.kernel_policy import (
     detect_gpu_profile,
     env_flag,
     env_int,
+    is_tesla_t4_name,
     policy_for_profile,
 )
 
@@ -18,6 +19,7 @@ def test_gpu_family_classification() -> None:
     cases = [
         ("Tesla P100-PCIE-16GB", (6, 0), "pascal"),
         ("Tesla V100-PCIE-32GB", (7, 0), "volta"),
+        ("Tesla T4", (7, 5), "turing"),
         ("NVIDIA A800-SXM4-80GB", (8, 0), "ampere"),
         ("NVIDIA RTX A6000", (8, 6), "ampere"),
         ("NVIDIA GeForce RTX 4090", (8, 9), "ada"),
@@ -35,6 +37,13 @@ def test_gpu_family_classification() -> None:
             is_mps=name.startswith("Apple"),
         )
         assert profile.family == family, (name, profile)
+
+
+def test_exact_t4_name_matching_is_token_scoped() -> None:
+    assert is_tesla_t4_name("Tesla T4")
+    assert is_tesla_t4_name("NVIDIA T4-PCIE-16GB")
+    assert not is_tesla_t4_name("NVIDIA T400")
+    assert not is_tesla_t4_name("GeForce RTX 2080 Ti")
 
 
 def test_policy_defaults_are_conservative() -> None:
@@ -68,6 +77,25 @@ def test_policy_defaults_are_conservative() -> None:
     assert not v100.ada_sparse_ffn_up
     assert not v100.fused_projection
     assert not v100.fused_output_project
+
+    t4 = policy_for_profile(classify_gpu("Tesla T4", (7, 5)))
+    assert t4.fast_cache
+    assert t4.fast_prefill
+    assert t4.fused_output
+    assert t4.fused_recurrent_output
+    assert t4.fused_prefill_scan
+    assert not t4.fused_output_project
+    assert not t4.fused_projection
+    assert not t4.fused_wag_lora
+    assert not t4.fused_wavg_lora
+
+    rtx_2080 = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 2080 Ti", (7, 5)))
+    assert not rtx_2080.fast_prefill
+    assert not rtx_2080.fused_prefill_scan
+
+    t4_rule = ADAPTATION_RULES["turing"]
+    assert "Tesla T4" in t4_rule.cards
+    assert "bench_batch_sweep.py bsz=1/2/4/8" in t4_rule.required_benchmarks
 
     ada = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 4090", (8, 9)))
     assert ada.fused_output

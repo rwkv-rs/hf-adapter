@@ -27,6 +27,12 @@ Generated inventory of benchmark scripts and evidence directories. Keep this fil
 Canonical cross-platform summary: [`../BENCHMARK.md`](../BENCHMARK.md) and
 [`../docs/HARDWARE_MATRIX.md`](../docs/HARDWARE_MATRIX.md).
 
+## Promoted exact-card validation artifacts
+
+| Platform | Artifact | Current conclusion |
+|---|---|---|
+| Tesla T4 15GB | [`t4_production_close_20260720/`](t4_production_close_20260720/README.md) | 0.1B–2.9B HF/cache/prefill/decode, exact-T4 W8/W4 and training integration validated; dense Albatross and broad all-phase quant gaps remain, so this is not production-close |
+
 ## Apple M5 production-close evidence
 
 The `apple_production_close_*_m5_20260711.jsonl` top-level files contain the

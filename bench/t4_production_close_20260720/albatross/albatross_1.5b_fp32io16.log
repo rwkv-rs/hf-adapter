@@ -1,0 +1,20 @@
+[rwkv7_fast_v3a] start model=/opt/models/raw/rwkv7-g1g-1.5b-20260526-ctx8192.pth wkv=fp32io16 emb=gpu batched_rkv=off cmix_sparse=no-fc lowrank_weight=both orig_linear_groups=att_c2c,ffn_key,head pp=off
+[rwkv7_fast_v3a] fixed fast path: ln=v3a linear=v3a/splitk lowrank=7/4 nofc_rows=by_C row20_t=by_C nofc_t512_rows>=8
+[rwkv7_fast_v3a] loading CUDA extensions v3a_ops + fast_ops + wkv=fp32io16
+[rwkv7_fast_v3a] CUDA extensions loaded in 0.048s
+[rwkv7_fast_v3a] loading weights from /opt/models/raw/rwkv7-g1g-1.5b-20260526-ctx8192.pth
+[rwkv7_fast_v3a] weights mmap loaded in 0.076s tensors=798
+[rwkv7_fast_v3a] detected model C=2048 H=32 N=64 V=65536
+[rwkv7_fast_v3a] cmix no-fc path: rows<=19 row20_t<=5
+[rwkv7_fast_v3a] moving and preprocessing weights to CUDA emb=gpu
+[rwkv7_fast_v3a] model ready in 17.558s L=24 C=2048 H=32 N=64 V=65536
+[rwkv7_fast_v3a] gpu_mem used=3.60GiB allocated=2.94GiB reserved=3.48GiB total=14.56GiB
+csv_header,label,B,T,iters,p10_ms,p50_ms,p90_ms,tok_s_p50
+RESULT B=1 T=1 iters=10 p10_ms=9.0020 p50_ms=9.1325 p90_ms=9.2330 tok_s_p50=109.50
+csv,rwkv7_fast_v3a,1,1,10,9.001990,9.132480,9.232979,109.499280
+RESULT B=2 T=1 iters=10 p10_ms=10.4804 p50_ms=10.6907 p90_ms=10.8818 tok_s_p50=187.08
+csv,rwkv7_fast_v3a,2,1,10,10.480442,10.690704,10.881796,187.078421
+RESULT B=4 T=1 iters=10 p10_ms=13.7507 p50_ms=14.7622 p90_ms=14.9188 tok_s_p50=270.96
+csv,rwkv7_fast_v3a,4,1,10,13.750739,14.762208,14.918797,270.962176
+RESULT B=1 T=512 iters=10 p10_ms=75.2228 p50_ms=76.6728 p90_ms=77.8083 tok_s_p50=6677.73
+csv,rwkv7_fast_v3a,1,512,10,75.222783,76.672783,77.808276,6677.728141

@@ -1,7 +1,7 @@
 # coding=utf-8
-"""Runtime compatibility helpers for newer CUDA/Triton remote-code loads.
+"""Runtime compatibility helpers for CUDA/Triton remote-code loads.
 
-Some early newer-GPU images pair PyTorch 2.6-era Inductor/FLA code with newer
+Some CUDA images pair older PyTorch Inductor/FLA code with newer
 Triton 3.3 wheels. That combination removed the legacy
 ``triton.compiler.compiler.AttrsDescriptor`` import path while FLA and PyTorch
 still reference it, and the FLA ``sqrelu`` torch.compile path can fail during
@@ -106,25 +106,66 @@ def patch_legacy_attrs_descriptor() -> bool:
     return True
 
 
-def maybe_disable_incompatible_torch_compile(attrs_descriptor_shim: bool) -> bool:
-    """Keep PyTorch 2.6-era Inductor from spawning incompatible Triton jobs.
+def _version_pair(raw: str) -> tuple[int, int]:
+    match = re.match(r"\s*(\d+)\.(\d+)", str(raw))
+    if match is None:
+        return (0, 0)
+    return (int(match.group(1)), int(match.group(2)))
 
-    PyTorch 2.6 imports ``AttrsDescriptor`` inside Inductor worker subprocesses.
-    A main-process compatibility shim cannot reach those fresh interpreters, so
-    PyTorch 2.6 + Triton 3.3 fails while importing FLA's ``@torch.compile``
-    activations.  Disable only that known-incompatible pair; CUDA graphs and
-    the adapter's direct Triton kernels remain enabled.
+
+def torch_compile_compat_required(
+    *,
+    capability: tuple[int, int],
+    torch_version: str,
+    triton_version: str,
+    legacy_attrs_missing: bool,
+) -> bool:
+    """Return whether a measured Inductor/Triton incompatibility applies.
+
+    PyTorch before 2.7 can import the removed ``AttrsDescriptor`` in fresh
+    Inductor workers on any CUDA family. The measured sm75 PyTorch 2.7 /
+    Triton 3.3 stack reproduces the worker failure; other 2.7 cards remain
+    unchanged.
     """
+
+    if not legacy_attrs_missing or _version_pair(triton_version) < (3, 3):
+        return False
+    torch_pair = _version_pair(torch_version)
+    if torch_pair < (2, 7):
+        return True
+    return bool(
+        tuple(int(value) for value in capability) == (7, 5)
+        and torch_pair <= (2, 7)
+    )
+
+
+def maybe_disable_incompatible_torch_compile(attrs_descriptor_shim: bool) -> bool:
+    """Disable only measured incompatible Inductor/Triton combinations."""
 
     if not attrs_descriptor_shim:
         return False
-    if os.environ.get("RWKV7_LEGACY_TORCH_COMPILE", "").strip().lower() in {"1", "true", "yes", "on"}:
+    true_values = {"1", "true", "yes", "on"}
+    if os.environ.get("RWKV7_LEGACY_TORCH_COMPILE", "").strip().lower() in true_values:
+        return False
+    if os.environ.get("RWKV7_TORCH_COMPILE", "").strip().lower() in true_values:
         return False
     try:
         import torch
+        import triton
 
-        match = re.match(r"(\d+)\.(\d+)", str(torch.__version__))
-        if match is None or (int(match.group(1)), int(match.group(2))) >= (2, 7):
+        capability = (0, 0)
+        cuda = getattr(torch, "cuda", None)
+        if cuda is not None and bool(cuda.is_available()):
+            capability = tuple(
+                int(value)
+                for value in cuda.get_device_capability(cuda.current_device())
+            )
+        if not torch_compile_compat_required(
+            capability=capability,
+            torch_version=str(getattr(torch, "__version__", "")),
+            triton_version=str(getattr(triton, "__version__", "")),
+            legacy_attrs_missing=attrs_descriptor_shim,
+        ):
             return False
     except Exception:
         return False

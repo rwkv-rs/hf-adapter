@@ -26,6 +26,11 @@ and multi-GPU ZeRO remains in [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md).
 
 - **V100:** 0.4B/1.5B/2.9B training ecosystem rows; dual-card ZeRO base/resume,
   including selected ZeRO-3 resume smoke.
+- **Tesla T4:** Trainer + LoRA and TRL SFT/DPO/GRPO pass 0.1B/0.4B/1.5B/2.9B
+  in declared memory-safe shapes; PEFT round-trip/merge passes; 0.1B/0.4B
+  Trainer resume and 0.1B single-GPU ZeRO-2/3 train/resume pass. This does not
+  prove multi-GPU sharding, and official train_temp CUDA is excluded because
+  T4 lacks the required BF16/`sm_80+` contract.
 - **A100 40GB:** Trainer/SFT/DPO and checkpoint resume through 7.2B; dual-card
   ZeRO-2/3 base and ZeRO-2 resume evidence.
 - **A800 80GB:** single/dual-card ZeRO-2/3 base and resume evidence plus
@@ -47,6 +52,7 @@ and multi-GPU ZeRO remains in [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md).
 Detailed matrices:
 
 - [`validation/V100_HF_VALIDATION.md`](validation/V100_HF_VALIDATION.md)
+- [`hardware/TURING_T4.md`](hardware/TURING_T4.md)
 - [`validation/A100_HF_VALIDATION.md`](validation/A100_HF_VALIDATION.md)
 - [`validation/A800_HF_VALIDATION.md`](validation/A800_HF_VALIDATION.md)
 - [`hardware/APPLE_SILICON.md`](hardware/APPLE_SILICON.md)

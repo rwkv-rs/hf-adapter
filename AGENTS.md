@@ -819,8 +819,13 @@ Current exact-card evidence status:
   Bnb 8/4-bit loading and decode speed rows exist but are slower than fp16, so
   bnb remains a memory/compatibility fallback. Repository-native mm8/mm4 rows
   exist for 0.1B with `lm_head` quantized and near-fp16 decode.
-- Turing/Hopper/AMD: registry rules exist, but support remains TODO
-  until exact-card rows are added.
+- Tesla T4 (`sm_75`): exact-card 0.1B/0.4B/1.5B/2.9B HF, cache,
+  fused-prefill, native-graph decode, W8/W4 and declared single-GPU training
+  integration rows are promoted under `bench/t4_production_close_20260720/`.
+  Status is `Validated`, not production-close: same-GPU decode remains
+  `0.4888x–0.8649x` and B1/T512 prefill `0.5385x–0.7671x` Albatross; broad
+  W8/W4 all-phase speed is open. Hopper, AMD and other Turing products remain
+  TODO until exact-card rows are added.
 
 #### Per-GPU adaptation checklist
 
@@ -891,14 +896,33 @@ Run this checklist for every new GPU before marking it as supported:
 #### Turing / RTX 20 / T4 (`sm_75`)
 
 - Policy family: `turing`.
-- Default stance: Volta-safe output fusions can be attempted, but performance is
-  not claimed without Turing rows.
-- Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
-- Default-off: prefill-scan, output-project, projection, WAG/WAVG LoRA fusions.
-- Required validation: common functional checklist, bsz sweep, native_graph
-  overhead, quant footprint/speed, and cache hit-rate rows.
-- Promotion rule: projection/LoRA fusions stay opt-in until exact-card
-  native_graph end-to-end speedup is measured.
+- Exact-card split: Tesla T4 is measured; RTX 20 and other Turing cards remain
+  conservative and do not inherit promotions from compute capability alone.
+- Tesla T4 default-on: `fast_cache`, `fast_prefill`, T4 fused prefill scan,
+  `fused_recurrent_output`, and `fused_output`.
+- Tesla T4 default-off: output-project, projection, WAG/WAVG LoRA fusions.
+  PyTorch 2.7 + Triton 3.3 uses the measured `torch.compile` compatibility
+  fallback. Exact-T4 DP4A W8/W4 dispatch requires a token-exact T4 device name;
+  RTX 2080 and NVIDIA T400 remain fail-closed.
+- Exact evidence: 2026-07-20, one Tesla T4 15 GiB, driver `580.159.03`,
+  PyTorch `2.7.1+cu126`, Transformers `5.12.1`, Triton `3.3.1`, fp16,
+  0.1B/0.4B/1.5B/2.9B. Functional HF/cache/chunked-prefill and fused A/B rows
+  pass; native-graph fixed-token cache hit rate is at least `0.9855`.
+- Dense performance boundary: decode is `0.4888x–0.8649x` and effective fused
+  B1/T512 prefill is `0.5385x–0.7671x` same-card Albatross. Do not report
+  Albatross parity until those gaps close.
+- Quant rule: the head-only speed lane passes W8/W4 decode 26/26 at
+  `>=1.0207x` fp16 with greedy parity, but saves only the selected output
+  projection. Full-model W8/W4 cuts footprint to `0.5291x–0.6331x` /
+  `0.3004x–0.4542x` and wins B1 decode while failing universal prefill and
+  small-model B4/B8 speed. Keep the two lanes separate in every claim.
+- Training boundary: Trainer + LoRA and TRL SFT/DPO/GRPO pass all four measured
+  checkpoints; 0.1B/0.4B resume and 0.1B single-GPU ZeRO-2/3 train/resume pass.
+  This is not multi-GPU sharding evidence. Official train_temp CUDA is not a
+  T4 claim because it requires BF16 and `sm_80+`.
+- Promotion rule: T4 remains `Validated`, not `Production-close`, until dense
+  Albatross parity and full-model all-phase quant speed pass. Projection/LoRA
+  fusions stay opt-in; every other Turing card requires its own matrix.
 
 #### Ampere / A100 / A800 / RTX 30 (`sm_80`/`sm_86`)
 

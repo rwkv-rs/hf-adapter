@@ -1,0 +1,48 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:   0%|          | 1/795 [00:00<01:46,  7.49it/s]Loading weights:  12%|█▏        | 97/795 [00:00<00:01, 490.97it/s]Loading weights:  25%|██▍       | 195/795 [00:00<00:00, 687.40it/s]Loading weights:  37%|███▋      | 295/795 [00:00<00:00, 797.14it/s]Loading weights:  50%|████▉     | 394/795 [00:00<00:00, 854.43it/s]Loading weights:  62%|██████▏   | 493/795 [00:00<00:00, 891.66it/s]Loading weights:  74%|███████▍  | 590/795 [00:00<00:00, 911.99it/s]Loading weights:  87%|████████▋ | 691/795 [00:00<00:00, 935.99it/s]Loading weights:  99%|█████████▉| 786/795 [00:00<00:00, 909.69it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 810.23it/s]
+
+### RWKV-7 "Goose" enabled ###
+
+Loading /opt/models/raw/rwkv7-g1g-1.5b-20260526-ctx8192 (cpu fp32)
+
+'The quick brown fox jumps over the lazy dog.'     top5=1.00 argmax=1 cos=0.999998 max=0.0505 mean=0.00715
+'Once upon a time, in a faraway land,'             top5=1.00 argmax=1 cos=0.999998 max=0.0496 mean=0.00688
+'User: Hello!\n\nAssistant:'                       top5=1.00 argmax=1 cos=0.999998 max=0.0714 mean=0.02810
+'import torch\nx = torch.randn('                   top5=1.00 argmax=1 cos=0.999998 max=0.0612 mean=0.01923
+'The capital of France is'                         top5=0.80 argmax=1 cos=0.999998 max=0.0386 mean=0.01571
+
+=== summary ===
+{
+  "axis": "official_alignment",
+  "backend": "hf_adapter",
+  "status": "pass",
+  "ts": 1784535971,
+  "hf_dir": "/opt/models/rwkv7-g1g-1.5b-hf",
+  "model_name": "rwkv7-g1g-1.5b-hf",
+  "model_size_label": "1.5b",
+  "hf_model_dir": "/opt/models/rwkv7-g1g-1.5b-hf",
+  "pth": "/opt/models/raw/rwkv7-g1g-1.5b-20260526-ctx8192.pth",
+  "dtype": "fp16",
+  "device": "Tesla T4",
+  "official_strategy": "cpu fp32",
+  "fuse_norm": false,
+  "n_prompts": 5,
+  "top5_match": 0.96,
+  "argmax_match": 1.0,
+  "cosine": 0.9999980092048645,
+  "max_abs_diff": 0.07143020629882812,
+  "mean_abs_diff": 0.015412003453820943,
+  "greedy_window": {
+    "requested": 32,
+    "matched": 32,
+    "mismatches": []
+  },
+  "targets": {
+    "top5_match": 0.9,
+    "cosine": 0.9999,
+    "max_abs_diff": 0.15,
+    "greedy_matched": 32
+  }
+}
+appended -> /opt/rwkv7-hf-adapter-t4-final2-20260720/bench/t4_production_close_20260720/training/results_official_alignment.jsonl
+PASS
