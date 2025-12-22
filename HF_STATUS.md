@@ -4,7 +4,7 @@ Canonical current snapshot. Scope: Transformers loading/generation/training,
 PEFT/TRL, recurrent cache helpers, quantized HF inference, hardware validation
 and reproducible performance evidence. Native vLLM/SGLang work is separate.
 
-Last updated: **2026-07-19**.
+Last updated: **2026-07-20**.
 
 ## Overall status
 
@@ -19,10 +19,10 @@ Last updated: **2026-07-19**.
 | Recurrent state cache | **PASS** | select/reorder/drop/compact, offload/restore, chunked prefill and telemetry |
 | Native/no-FLA backend | **PASS for HF compatibility and exact measured 5090 lanes** | load/generate/cache/PEFT/Trainer/TRL pass; exact Native training is `1.00049x` official by paired-seed median and `1.00255x` over 5,000 steps; 7.2B fp16-state decode is `1.0010x/1.0104x`, and 2.9B/13.3B B1/B8 prefill passes 12/12 same-precision cells |
 | W8/W4 functionality and memory | **PASS** | bnb and native/MLX paths load/generate and reduce footprint |
-| Validated W8/W4 speed lanes | **PASS for measured profiles** | V100 MM4 closes 1.5B/2.9B/7.2B cached-decode profiles 7/7 each; RTX 4080 B1/B8 output-head A8W8/W4 pass all 36 exact complete-cell speed/correctness gates per route; RTX 5090 g1h 1.5B/2.9B/7.2B/13.3B pass all-phase exact-model Marlin W4 at `0.5298x–0.6250x` footprint |
+| Validated W8/W4 speed lanes | **PASS for measured profiles** | V100 MM4 closes 1.5B/2.9B/7.2B cached-decode profiles 7/7 each; Tesla T4 exact-card head-speed W8/W4 closes 26/26 decode cells at `>=1.0207x` fp16 with greedy parity; RTX 4080 B1/B8 output-head A8W8/W4 pass all 36 exact complete-cell speed/correctness gates per route; RTX 5090 g1h 1.5B/2.9B/7.2B/13.3B pass all-phase exact-model Marlin W4 at `0.5298x–0.6250x` footprint |
 | Production performance | **PARTIAL / strong card-local closes** | V100 Albatross/native-quant lanes plus 1.5B/full-FLA-Qwen B1/B8 active-work gates; RTX 4080, RTX 4090, RTX 5070, RTX 5090 and Apple M5 have promoted exact-card artifacts for their named shapes; cross-card and model-quality conclusions remain separate |
 | Apple M5 1.5B target-only | **PASS for checked B8 profile** | true B8, T133/decode64, no draft and no prefix coalescing; active-normalized prefill/decode=`1.1406x/1.1394x` Qwen3.5 2B, raw peak=`1.790/2.152GB`, fidelity passes |
-| Full common-card coverage | **PARTIAL** | H100, AMD/ROCm, Turing and broader Apple/50-series evidence remain open |
+| Full common-card coverage | **PARTIAL** | Tesla T4 is validated; H100, AMD/ROCm, other Turing products and broader Apple/50-series evidence remain open |
 | PP/TP | **PARTIAL** | HF multi-device/device-map smoke exists; production TP matrix is not closed |
 | Speculative decoding | **EXPERIMENTAL PASS** | HF-compatible harness and Apple target-greedy oracle evidence exist |
 
@@ -53,7 +53,8 @@ the scopes have different acceptance gates and are not equally weighted.
 | Apple M5 | **Production-close for measured MLX pairs** | B1 speculative gates plus the separate 1.5B B8 target-only cold gate; the latter uses no draft/cache and passes active-normalized prefill/decode at `1.1406x/1.1394x` Qwen3.5 2B with lower raw peak memory; [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PRODUCTION_CLOSE.md) |
 | A100 40GB / A800 80GB / A6000 48GB | **Validated** | Large-model API/training/quant/ZeRO matrices; production performance remains card-specific |
 | GTX 1080 Ti | **Smoke** | compatibility evidence, not full production-close |
-| H100 / AMD / Turing | **Open** | real-card matrix required |
+| Tesla T4 | **Validated, not production-close** | 0.1B–2.9B HF/cache/prefill/decode/training integration passes; head-speed W8/W4 decode passes 26/26. Dense decode remains `0.4888x–0.8649x` and B1/T512 fused prefill `0.5385x–0.7671x` Albatross; full-model all-phase quant speed remains open; [`bench/t4_production_close_20260720/`](bench/t4_production_close_20260720/README.md) |
+| H100 / AMD / other Turing | **Open** | real-card matrix required; other `sm_75` products do not inherit exact-T4 promotion |
 
 Full matrix: [`docs/HARDWARE_MATRIX.md`](docs/HARDWARE_MATRIX.md).
 

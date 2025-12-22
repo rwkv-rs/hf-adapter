@@ -24,6 +24,16 @@ FALSE_VALUES = {"0", "false", "no", "off"}
 TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
+def is_tesla_t4_name(name: str) -> bool:
+    """Match the exact T4 product token without accepting names like T400."""
+
+    normalized = "".join(
+        character if character.isalnum() else " "
+        for character in str(name).lower()
+    )
+    return "t4" in normalized.split()
+
+
 @dataclass(frozen=True)
 class GPUProfile:
     """Normalized hardware identity used by the kernel policy."""
@@ -318,14 +328,25 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     "turing": GPUAdaptationRule(
         family="turing",
         cards=("Tesla T4", "RTX 20-series"),
-        status="TODO validation target",
-        default_stance="Volta-safe output fusions only after card-local smoke",
-        default_on=("fast_cache", "fused_recurrent_output", "fused_output"),
-        default_off=("fused_prefill_scan", "fused_output_project", "projection/LoRA fusions"),
-        required_functional=COMMON_FUNCTIONAL_SMOKES,
-        required_benchmarks=COMMON_PERF_BENCHMARKS,
-        quant_rule="memory-first until exact-card speed rows beat fp16",
-        promotion_rule="require bsz sweep and quant rows before performance claims",
+        status="Tesla T4 0.1B-2.9B fp16 HF/cache/prefill/decode/quant/training integration validated; production performance and RTX 20 remain open",
+        default_stance="card-local defaults: T4 uses native fused prefill; unvalidated RTX 20 stays conservative",
+        default_on=(
+            "fast_cache",
+            "fused_recurrent_output",
+            "fused_output",
+            "Tesla T4 only: fast_prefill and fused_prefill_scan",
+        ),
+        default_off=(
+            "RTX 20: fused_prefill_scan",
+            "fused_output_project",
+            "projection/LoRA fusions",
+        ),
+        required_functional=COMMON_FUNCTIONAL_SMOKES
+        + ("HF Trainer", "PEFT save/load/merge", "TRL SFT/DPO/GRPO"),
+        required_benchmarks=COMMON_PERF_BENCHMARKS
+        + ("prompt512 fused-scan bsz=1/2/4/8", "same-card Albatross decode/prefill"),
+        quant_rule="T4 head-only native W8/W4 is a measured decode-speed lane; full-model W8/W4 remains a memory/B1-decode lane until every prefill and batch row beats fp16",
+        promotion_rule="T4 stays validated, not production-close, until dense Albatross and full-model all-phase quant gates pass; never inherit T4 defaults on RTX 20 without exact-card rows",
     ),
     "ampere": GPUAdaptationRule(
         family="ampere",
@@ -566,8 +587,24 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             quant_policy="memory_first_decode_hot_optional",
             notes="V100 production path: four-shape prefill graph cache, fused shift mix, tuned WAVG/WAGV, sparse FFN, shape-routed sm70 linear/RKV, output/recurrent-output, and decode norm/mix are default; full projection/output-project remain opt-in",
         )
-    if family in {"turing", "ampere"}:
-        is_3090 = family == "ampere" and "3090" in profile.name.lower()
+    if family == "turing":
+        is_tesla_t4 = is_tesla_t4_name(profile.name)
+        return KernelPolicy(
+            profile=profile,
+            fast_prefill=is_tesla_t4,
+            fused_recurrent_output=True,
+            fused_output=True,
+            fused_prefill_scan=is_tesla_t4,
+            output_project_block_m=16,
+            notes=(
+                "Tesla T4: use safe native prefill because the measured FLA 0.5 / Triton 3.3 chunk kernel fails sm_75 lowering; "
+                "the exact-card prompt512 matrix promotes fused prefill scan; projection/LoRA kernels stay off"
+                if is_tesla_t4
+                else "Turing: use stable output fusions; require exact-card rows before native prefill or projection/LoRA defaults"
+            ),
+        )
+    if family == "ampere":
+        is_3090 = "3090" in profile.name.lower()
         return KernelPolicy(
             profile=profile,
             fast_prefill=is_3090,

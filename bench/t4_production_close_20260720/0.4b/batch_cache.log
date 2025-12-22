@@ -1,0 +1,21 @@
+bsz=1 prefill_shape=(1, 1, 65536) row_max_abs_diff=0.0
+bsz=1 step=1 row_max_abs_diff=0.0
+bsz=1 step=2 row_max_abs_diff=0.0
+bsz=1 step=3 row_max_abs_diff=0.0
+bsz=1 step=4 row_max_abs_diff=0.0
+bsz=2 prefill_shape=(2, 1, 65536) row_max_abs_diff=0.0
+bsz=2 step=1 row_max_abs_diff=0.0
+bsz=2 step=2 row_max_abs_diff=0.0
+bsz=2 step=3 row_max_abs_diff=0.0
+bsz=2 step=4 row_max_abs_diff=0.0
+bsz=4 prefill_shape=(4, 1, 65536) row_max_abs_diff=0.0
+bsz=4 step=1 row_max_abs_diff=0.0
+bsz=4 step=2 row_max_abs_diff=0.0
+bsz=4 step=3 row_max_abs_diff=0.0
+bsz=4 step=4 row_max_abs_diff=0.0
+bsz=8 prefill_shape=(8, 1, 65536) row_max_abs_diff=0.0
+bsz=8 step=1 row_max_abs_diff=0.0
+bsz=8 step=2 row_max_abs_diff=0.0
+bsz=8 step=3 row_max_abs_diff=0.0
+bsz=8 step=4 row_max_abs_diff=0.0
+PASS

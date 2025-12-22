@@ -173,6 +173,30 @@ full-memory prefill 尚未晋升、2.9B speed 只量化 `lm_head`、其他显卡
 重新跑精确矩阵。需要 AI 执行时只使用统一入口
 [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md)，选择其中的“量化验收”任务。
 
+### Tesla T4 上的精确卡路线
+
+Tesla T4 默认使用精确设备名保护的 DP4A W8/W4 内核。不要在 RTX 2080 或其他
+`sm_75` 显卡强制打开这条路线。端到端验收：
+
+```bash
+PYTHONPATH=. python bench/bench_native_quant_e2e_decode.py \
+  --hf-dir /path/to/rwkv7-hf --model-size-label 0.4b \
+  --device cuda --dtype fp16 --attn-mode fused_recurrent \
+  --fast-token-backend native_graph \
+  --quantizations none mm8 mm4 --policy speed \
+  --batch-size 8 --prompt-tokens 64 --decode-tokens 32 \
+  --results /tmp/t4-quant-speed.jsonl
+```
+
+`speed` 是 `lm_head` 路线：本次精确 T4 矩阵中 W8/W4 decode 26/26 不慢于
+fp16，但省显存幅度较小。把 `--policy` 改成 `memory` 并降低
+`--min-params` 会量化全模型，footprint 可降到 W8 `0.5291x–0.6331x`、W4
+`0.3004x–0.4542x`，但目前不能保证所有 prefill 和 B4/B8 decode 不慢于
+fp16。服务默认值必须按需求选择这两条互不替代的路线。
+
+完整数字与失败边界：
+[`../bench/t4_production_close_20260720/`](../bench/t4_production_close_20260720/README.md)。
+
 先验证 config round-trip，再验证真实 MM8 持久化：
 
 ```bash

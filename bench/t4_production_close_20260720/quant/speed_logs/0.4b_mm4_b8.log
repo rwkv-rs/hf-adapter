@@ -1,0 +1,96 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  30%|██▉       | 235/795 [00:00<00:00, 2340.90it/s]Loading weights:  59%|█████▉    | 470/795 [00:00<00:00, 2195.94it/s]Loading weights:  87%|████████▋ | 691/795 [00:00<00:00, 2120.81it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 2153.30it/s]
+{
+  "axis": "native_quant_e2e_decode",
+  "backend": "hf_adapter",
+  "code_source": "repo",
+  "effective_hf_dir": "/opt/models/rwkv7_native_quant_repo_code_jznxvj_8",
+  "status": "pass",
+  "quantization": "mm4",
+  "native_mm4_group_size": 128,
+  "native_mm4_group_policy": "lm_head",
+  "sm70_w4_tuning_policy": null,
+  "sm70_w4_fused_epilogue": null,
+  "sm70_w4_block_n": null,
+  "sm70_w4_thread_n": null,
+  "sm70_w4_group_block_n": null,
+  "sm70_w4_group_thread_n": null,
+  "dtype": "fp16",
+  "device": "Tesla T4",
+  "model_name": "rwkv7-g1d-0.4b-hf",
+  "model_size_label": "0.4b",
+  "hf_model_dir": "/opt/models/rwkv7-g1d-0.4b-hf",
+  "hidden_size": 1024,
+  "intermediate_size": 4096,
+  "num_hidden_layers": 24,
+  "head_dim": 64,
+  "num_heads": 16,
+  "attn_mode": "fused_recurrent",
+  "fuse_norm": false,
+  "fast_cache": true,
+  "batch_size": 8,
+  "prompt_tokens": 64,
+  "decode_tokens": 32,
+  "min_params": 8000000,
+  "quant_group_size": 128,
+  "quantized_head": false,
+  "marlin_skip_last_layers": 0,
+  "native_mm_policy": "speed",
+  "paired_baseline": true,
+  "quantize_before_device": false,
+  "replaced_modules": 1,
+  "module_counts": {
+    "linear_dense": 334,
+    "mm8": 0,
+    "mm4": 1,
+    "a8w8": 0,
+    "marlin_w4": 0,
+    "torchao_w8": 0,
+    "torchao_w4": 0
+  },
+  "native_mm_kernel": "sm7x_dp4a_w4_group128",
+  "fused_relu2_ffn_modules": 0,
+  "model_footprint_mb": 764.8,
+  "baseline_prefill_tokps_total": 10001.8,
+  "baseline_decode_tokps_total": 917.8,
+  "baseline_model_footprint_mb": 859.8,
+  "footprint_ratio_vs_fp16": 0.8895,
+  "prefill_speed_ratio_vs_fp16": 0.9854,
+  "decode_speed_ratio_vs_fp16": 1.0266,
+  "prompt_logits_cos_vs_fp16": 0.99982321,
+  "final_logits_cos_vs_fp16": 0.99977386,
+  "same_next_token_as_fp16": true,
+  "same_greedy_tokens_as_fp16": true,
+  "first_greedy_mismatch_flat_index": null,
+  "peak_vram_mb": 933.6,
+  "prefill_sec": 0.051947832107543945,
+  "prefill_tokps_total": 9856.0,
+  "decode_sec": 0.27170658111572266,
+  "decode_tokps_total": 942.2,
+  "decode_tokps_per_seq": 117.8,
+  "decode_ms_per_step": 8.491,
+  "next_token": 47,
+  "fast_token_backend_effective": "native_graph",
+  "native_model_decode_backend_effective": "native_graph",
+  "native_model_prefill_backend_effective": "native_prefill",
+  "cache_type": "NativeRWKV7Cache",
+  "timing_repeats": 3,
+  "prefill_tokps_samples": [
+    9856.0,
+    9856.0,
+    9991.3
+  ],
+  "decode_tokps_samples": [
+    943.7,
+    942.2,
+    940.6
+  ],
+  "greedy_tokens_sha256": "6e4d5af315d67d531fb7888fc5d41bcd7c344c12329d3d2ce3ac7091665b9c70",
+  "greedy_repeat_sha256": [
+    "6e4d5af315d67d531fb7888fc5d41bcd7c344c12329d3d2ce3ac7091665b9c70",
+    "6e4d5af315d67d531fb7888fc5d41bcd7c344c12329d3d2ce3ac7091665b9c70",
+    "6e4d5af315d67d531fb7888fc5d41bcd7c344c12329d3d2ce3ac7091665b9c70"
+  ],
+  "greedy_repeat_deterministic": true
+}
+appended 1 row -> /opt/rwkv7-hf-adapter-t4-final2-20260720/bench/t4_production_close_20260720/quant/results_quant_speed.jsonl

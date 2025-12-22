@@ -35,6 +35,7 @@ BENCH_RUNNERS = [
     "bench/run_3090_qwen35_speed_matrix.sh",
     "bench/run_3090_qwen35_pair.sh",
     "bench/run_4080_qwen35_pair_acceptance.sh",
+    "bench/run_t4_hf_validation.sh",
 ]
 
 
@@ -103,6 +104,69 @@ def test_a6000_validation_runner_contract() -> None:
     assert "--model-size-label" in text
     assert "a6000_hf_validation_$(date" not in text
     assert "OUT_DIR=" not in text
+
+
+def test_t4_validation_runner_contract() -> None:
+    text = (ROOT / "bench/run_t4_hf_validation.sh").read_text(encoding="utf-8")
+    assert 'REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"' in text
+    assert 'export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"' in text
+    assert 'cd "${REPO_ROOT}"' in text
+    assert 'MODEL_ROOT="${MODEL_ROOT:-/opt/models}"' in text
+    assert 'MATRIX_MODE="${MATRIX_MODE:-short}"' in text
+    assert 'FULL_MODEL_LABELS="${FULL_MODEL_LABELS:-0.1b 0.4b 1.5b 2.9b}"' in text
+    assert "rwkv7-g1d-0.1b-hf" in text
+    assert "rwkv7-g1d-0.4b-hf" in text
+    assert "rwkv7-g1g-1.5b-hf" in text
+    assert "rwkv7-g1g-2.9b-hf" in text
+    assert 'RUN_TRAINER_RESUME="${RUN_TRAINER_RESUME:-0}"' in text
+    assert 'RUN_TRL="${RUN_TRL:-0}"' in text
+    assert 'TRAIN_DTYPE="${TRAIN_DTYPE:-auto}"' in text
+    assert 'TRAIN_MAX_LENGTH="${TRAIN_MAX_LENGTH:-auto}"' in text
+    assert 'PEFT_MAX_LOGIT_DIFF="${PEFT_MAX_LOGIT_DIFF:-auto}"' in text
+    assert 'model_train_dtype()' in text
+    assert 'model_train_max_length()' in text
+    assert 'model_peft_max_logit_diff()' in text
+    assert 'TRAIN_DTYPE="${model_training_dtype}"' in text
+    assert 'TRAIN_MAX_LENGTH="${model_training_length}"' in text
+    assert 'PEFT_MAX_LOGIT_DIFF="${model_peft_diff}"' in text
+    assert '--max-steps 6 --batch-size 1 --length "${TRAIN_MAX_LENGTH}"' in text
+    assert '--max-logit-diff "${PEFT_MAX_LOGIT_DIFF}"' in text
+    assert 'RUN_DEEPSPEED="${RUN_DEEPSPEED:-0}"' in text
+    assert 'RUN_LONG_PREFILL="${RUN_LONG_PREFILL:-0}"' in text
+    assert "tests/test_native_trainer_resume_smoke.py" in text
+    assert "tests/test_native_sft_smoke.py" in text
+    assert "tests/test_native_dpo_smoke.py" in text
+    assert "tests/test_native_grpo_smoke.py" in text
+    assert "tests/test_deepspeed_training_smoke.py" in text
+    assert "tests/test_deepspeed_resume_smoke.py" in text
+    assert 'model_batch_sizes "${model_label}"' in text
+    assert 'model_prefill_batch_sizes "${model_label}"' in text
+    assert 'model_dynamic_batch_size "${model_label}"' in text
+    assert 'MODEL_OUT_DIR="${OUT_DIR}/${model_label}"' in text
+    assert 'EXPECTED_GPU_NAME="${EXPECTED_GPU_NAME:-Tesla T4}"' in text
+    assert 'EXPECTED_GPU_CAPABILITY="${EXPECTED_GPU_CAPABILITY:-7.5}"' in text
+    assert 'TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-7.5}"' in text
+    assert 'TORCH_COMPILE_DISABLE="${TORCH_COMPILE_DISABLE:-1}"' in text
+    assert 'ALLOW_GPU_MISMATCH="${ALLOW_GPU_MISMATCH:-0}"' in text
+    assert "tests/smoke_hf_generate.py" in text
+    assert "tests/test_hf_api_contract.py" in text
+    assert "tests/test_batch_cache.py" in text
+    assert "tests/test_dynamic_batch_cache.py" in text
+    assert "tests/test_chunked_prefill.py" in text
+    assert "tests/test_native_trainer_smoke.py" in text
+    assert "tests/test_native_peft_save_load_merge.py" in text
+    assert "bench/bench_batch_sweep.py" in text
+    assert "bench/bench_native_graph_overhead.py" in text
+    assert "bench/bench_chunked_prefill.py" in text
+    assert "bench/bench_native_graph_fused_output.py" in text
+    assert "bench/bench_native_graph_fused_recurrent_output.py" in text
+    assert "bench/bench_quantization.py" in text
+    assert "bench/bench_native_mm_quant_decode.py" in text
+    assert "bench/bench_native_quant_e2e_decode.py" in text
+    assert 'BATCH_SIZES="${BATCH_SIZES:-1 2 4 8}"' in text
+    assert 'PREFILL_BATCH_SIZES="${PREFILL_BATCH_SIZES:-1,2,4,8}"' in text
+    assert "RWKV7_NATIVE_MODEL=1" in text
+    assert '--device "${EXPECTED_GPU_NAME}"' in text
 
 
 def test_acceptance_requires_model() -> None:

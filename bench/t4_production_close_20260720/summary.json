@@ -1,0 +1,400 @@
+{
+  "boundaries": [
+    "Dense HF native_graph decode is 0.4888x-0.8649x Albatross on measured B1/B2/B4/B8 cells.",
+    "Fused B1/T512 prefill is 0.5385x-0.7671x Albatross.",
+    "Head-only W8/W4 speed lane is fp16-or-faster for decode but saves only the selected output projection.",
+    "Full-model W8/W4 substantially reduces footprint and wins B1 decode, but does not preserve fp16 speed for every larger batch or prefill.",
+    "RTX 20-series does not inherit exact-T4 quant or prefill defaults without exact-card evidence."
+  ],
+  "compute_capability": "7.5",
+  "core_axis_counts": {
+    "batch_sweep": 26,
+    "chunked_prefill": 32,
+    "native_graph_fused_output": 13,
+    "native_graph_fused_recurrent_output": 13,
+    "native_graph_replay_overhead": 13,
+    "native_prefill_scan": 26
+  },
+  "core_rows": 123,
+  "dense_decode_ratio_max": 0.864932,
+  "dense_decode_ratio_min": 0.488844,
+  "dense_decode_vs_albatross": [
+    {
+      "albatross_tokps": 586.639635,
+      "batch_size": 1,
+      "graph_cache_hit_rate": 0.9855,
+      "hf_native_graph_tokps": 319.2,
+      "model_size_label": "0.1b",
+      "ratio_vs_albatross": 0.544116
+    },
+    {
+      "albatross_tokps": 949.069127,
+      "batch_size": 2,
+      "graph_cache_hit_rate": 0.9855,
+      "hf_native_graph_tokps": 561.7,
+      "model_size_label": "0.1b",
+      "ratio_vs_albatross": 0.591843
+    },
+    {
+      "albatross_tokps": 1555.645436,
+      "batch_size": 4,
+      "graph_cache_hit_rate": 0.9855,
+      "hf_native_graph_tokps": 1098.6,
+      "model_size_label": "0.1b",
+      "ratio_vs_albatross": 0.706202
+    },
+    {
+      "albatross_tokps": 2400.303335,
+      "batch_size": 8,
+      "graph_cache_hit_rate": 0.9855,
+      "hf_native_graph_tokps": 2076.1,
+      "model_size_label": "0.1b",
+      "ratio_vs_albatross": 0.864932
+    },
+    {
+      "albatross_tokps": 295.390953,
+      "batch_size": 1,
+      "graph_cache_hit_rate": 0.9855,
+      "hf_native_graph_tokps": 144.4,
+      "model_size_label": "0.4b",
+      "ratio_vs_albatross": 0.488844
+    },
+    {
+      "albatross_tokps": 504.162374,
+      "batch_size": 2,
+      "graph_cache_hit_rate": 0.9855,
+      "hf_native_graph_tokps": 247.4,
+      "model_size_label": "0.4b",
+      "ratio_vs_albatross": 0.490715
+    },
+    {
+      "albatross_tokps": 645.786244,
+      "batch_size": 4,
+      "graph_cache_hit_rate": 0.9855,
+      "hf_native_graph_tokps": 480.2,
+      "model_size_label": "0.4b",
+      "ratio_vs_albatross": 0.74359
+    },
+    {
+      "albatross_tokps": 1074.633271,
+      "batch_size": 8,
+      "graph_cache_hit_rate": 0.9855,
+      "hf_native_graph_tokps": 921.3,
+      "model_size_label": "0.4b",
+      "ratio_vs_albatross": 0.857316
+    },
+    {
+      "albatross_tokps": 109.49928,
+      "batch_size": 1,
+      "graph_cache_hit_rate": 0.9855,
+      "hf_native_graph_tokps": 64.5,
+      "model_size_label": "1.5b",
+      "ratio_vs_albatross": 0.589045
+    },
+    {
+      "albatross_tokps": 187.078421,
+      "batch_size": 2,
+      "graph_cache_hit_rate": 0.9855,
+      "hf_native_graph_tokps": 111.8,
+      "model_size_label": "1.5b",
+      "ratio_vs_albatross": 0.59761
+    },
+    {
+      "albatross_tokps": 270.962176,
+      "batch_size": 4,
+      "graph_cache_hit_rate": 0.9855,
+      "hf_native_graph_tokps": 215.9,
+      "model_size_label": "1.5b",
+      "ratio_vs_albatross": 0.79679
+    },
+    {
+      "albatross_tokps": 56.958508,
+      "batch_size": 1,
+      "graph_cache_hit_rate": 0.9855,
+      "hf_native_graph_tokps": 34.1,
+      "model_size_label": "2.9b",
+      "ratio_vs_albatross": 0.598681
+    },
+    {
+      "albatross_tokps": 97.890804,
+      "batch_size": 2,
+      "graph_cache_hit_rate": 0.9855,
+      "hf_native_graph_tokps": 62.7,
+      "model_size_label": "2.9b",
+      "ratio_vs_albatross": 0.64051
+    }
+  ],
+  "dense_performance_gate": "partial_albatross_gap_open",
+  "device": "Tesla T4",
+  "dtype": "fp16",
+  "models": [
+    "0.1b",
+    "0.4b",
+    "1.5b",
+    "2.9b"
+  ],
+  "native_graph_cache_hit_rate_min": 0.9855,
+  "prefill_512_b1_vs_albatross": [
+    {
+      "albatross_tokps": 39083.205803,
+      "batch_size": 1,
+      "fused_scan_effective": true,
+      "greedy_match": true,
+      "hf_fused_prefill_tokps": 21044.7,
+      "model_size_label": "0.1b",
+      "prompt_tokens": 512,
+      "ratio_vs_albatross": 0.538459
+    },
+    {
+      "albatross_tokps": 16075.442074,
+      "batch_size": 1,
+      "fused_scan_effective": true,
+      "greedy_match": true,
+      "hf_fused_prefill_tokps": 10820.2,
+      "model_size_label": "0.4b",
+      "prompt_tokens": 512,
+      "ratio_vs_albatross": 0.673089
+    },
+    {
+      "albatross_tokps": 6677.728141,
+      "batch_size": 1,
+      "fused_scan_effective": true,
+      "greedy_match": true,
+      "hf_fused_prefill_tokps": 5004.1,
+      "model_size_label": "1.5b",
+      "prompt_tokens": 512,
+      "ratio_vs_albatross": 0.749372
+    },
+    {
+      "albatross_tokps": 3747.494243,
+      "batch_size": 1,
+      "fused_scan_effective": true,
+      "greedy_match": true,
+      "hf_fused_prefill_tokps": 2874.7,
+      "model_size_label": "2.9b",
+      "prompt_tokens": 512,
+      "ratio_vs_albatross": 0.767099
+    }
+  ],
+  "prefill_ratio_max": 0.767099,
+  "prefill_ratio_min": 0.538459,
+  "quant_full_model_lane": {
+    "mm4": {
+      "all_rows": 13,
+      "decode_speed_ratio_max": 1.4868,
+      "decode_speed_ratio_min": 0.7509,
+      "final_cosine_min": 0.9969545,
+      "footprint_ratio_max": 0.4542,
+      "footprint_ratio_min": 0.3004,
+      "models": [
+        "0.1b",
+        "0.4b",
+        "1.5b",
+        "2.9b"
+      ],
+      "prefill_speed_ratio_max": 0.6984,
+      "prefill_speed_ratio_min": 0.1272,
+      "prompt_cosine_min": 0.99758512,
+      "replaced_modules_max": 447,
+      "replaced_modules_min": 167,
+      "rows": 13,
+      "same_greedy_rows": 13
+    },
+    "mm8": {
+      "all_rows": 13,
+      "decode_speed_ratio_max": 1.6158,
+      "decode_speed_ratio_min": 0.8118,
+      "final_cosine_min": 0.999731,
+      "footprint_ratio_max": 0.6331,
+      "footprint_ratio_min": 0.5291,
+      "models": [
+        "0.1b",
+        "0.4b",
+        "1.5b",
+        "2.9b"
+      ],
+      "prefill_speed_ratio_max": 0.5939,
+      "prefill_speed_ratio_min": 0.5767,
+      "prompt_cosine_min": 0.99984461,
+      "replaced_modules_max": 447,
+      "replaced_modules_min": 167,
+      "rows": 13,
+      "same_greedy_rows": 13
+    }
+  },
+  "quant_performance_gate": "partial_two_lane",
+  "quant_speed_head_lane": {
+    "mm4": {
+      "all_rows": 13,
+      "decode_speed_ratio_max": 1.1166,
+      "decode_speed_ratio_min": 1.0207,
+      "final_cosine_min": 0.99964672,
+      "footprint_ratio_max": 0.9578,
+      "footprint_ratio_min": 0.8043,
+      "models": [
+        "0.1b",
+        "0.4b",
+        "1.5b",
+        "2.9b"
+      ],
+      "prefill_speed_ratio_max": 1.0078,
+      "prefill_speed_ratio_min": 0.9704,
+      "prompt_cosine_min": 0.99965072,
+      "replaced_modules_max": 1,
+      "replaced_modules_min": 1,
+      "rows": 13,
+      "same_greedy_rows": 13
+    },
+    "mm8": {
+      "all_rows": 13,
+      "decode_speed_ratio_max": 1.095,
+      "decode_speed_ratio_min": 1.0207,
+      "final_cosine_min": 0.99993455,
+      "footprint_ratio_max": 0.9716,
+      "footprint_ratio_min": 0.8686,
+      "models": [
+        "0.1b",
+        "0.4b",
+        "1.5b",
+        "2.9b"
+      ],
+      "prefill_speed_ratio_max": 1.012,
+      "prefill_speed_ratio_min": 0.9716,
+      "prompt_cosine_min": 0.99996871,
+      "replaced_modules_max": 1,
+      "replaced_modules_min": 1,
+      "rows": 13,
+      "same_greedy_rows": 13
+    }
+  },
+  "result": "validated_not_production_close",
+  "schema_version": 1,
+  "scope": "Tesla T4 exact-card HF adapter validation",
+  "training": {
+    "effective_result": "pass_for_declared_single_gpu_smoke_matrix",
+    "official_2.9b": "not_run_host_ram_boundary",
+    "official_alignment_rows": [
+      {
+        "argmax_match": 1.0,
+        "axis": "official_alignment",
+        "backend": "hf_adapter",
+        "cosine": 0.9999978423118592,
+        "device": "Tesla T4",
+        "dtype": "fp16",
+        "fuse_norm": false,
+        "greedy_window": {
+          "matched": 64,
+          "mismatches": [],
+          "requested": 64
+        },
+        "hf_dir": "/opt/models/rwkv7-g1d-0.1b-hf",
+        "hf_model_dir": "/opt/models/rwkv7-g1d-0.1b-hf",
+        "max_abs_diff": 0.14012908935546875,
+        "mean_abs_diff": 0.015785931795835494,
+        "model_name": "rwkv7-g1d-0.1b-hf",
+        "model_size_label": "0.1b",
+        "n_prompts": 5,
+        "official_strategy": "cpu fp32",
+        "pth": "/opt/models/raw/rwkv7-g1d-0.1b-20260129-ctx8192.pth",
+        "status": "pass",
+        "targets": {
+          "cosine": 0.9999,
+          "greedy_matched": 64,
+          "max_abs_diff": 0.15,
+          "top5_match": 0.9
+        },
+        "top5_match": 0.96,
+        "ts": 1784535905
+      },
+      {
+        "argmax_match": 1.0,
+        "axis": "official_alignment",
+        "backend": "hf_adapter",
+        "cosine": 0.9999974727630615,
+        "device": "Tesla T4",
+        "dtype": "fp16",
+        "fuse_norm": false,
+        "greedy_window": {
+          "matched": 64,
+          "mismatches": [],
+          "requested": 64
+        },
+        "hf_dir": "/opt/models/rwkv7-g1d-0.4b-hf",
+        "hf_model_dir": "/opt/models/rwkv7-g1d-0.4b-hf",
+        "max_abs_diff": 0.07336807250976562,
+        "mean_abs_diff": 0.012753262184560299,
+        "model_name": "rwkv7-g1d-0.4b-hf",
+        "model_size_label": "0.4b",
+        "n_prompts": 5,
+        "official_strategy": "cpu fp32",
+        "pth": "/opt/models/raw/rwkv7-g1d-0.4b-20260210-ctx8192.pth",
+        "status": "pass",
+        "targets": {
+          "cosine": 0.9999,
+          "greedy_matched": 64,
+          "max_abs_diff": 0.15,
+          "top5_match": 0.9
+        },
+        "top5_match": 1.0,
+        "ts": 1784535929
+      },
+      {
+        "argmax_match": 1.0,
+        "axis": "official_alignment",
+        "backend": "hf_adapter",
+        "cosine": 0.9999980092048645,
+        "device": "Tesla T4",
+        "dtype": "fp16",
+        "fuse_norm": false,
+        "greedy_window": {
+          "matched": 32,
+          "mismatches": [],
+          "requested": 32
+        },
+        "hf_dir": "/opt/models/rwkv7-g1g-1.5b-hf",
+        "hf_model_dir": "/opt/models/rwkv7-g1g-1.5b-hf",
+        "max_abs_diff": 0.07143020629882812,
+        "mean_abs_diff": 0.015412003453820943,
+        "model_name": "rwkv7-g1g-1.5b-hf",
+        "model_size_label": "1.5b",
+        "n_prompts": 5,
+        "official_strategy": "cpu fp32",
+        "pth": "/opt/models/raw/rwkv7-g1g-1.5b-20260526-ctx8192.pth",
+        "status": "pass",
+        "targets": {
+          "cosine": 0.9999,
+          "greedy_matched": 32,
+          "max_abs_diff": 0.15,
+          "top5_match": 0.9
+        },
+        "top5_match": 0.96,
+        "ts": 1784535971
+      }
+    ],
+    "raw_status_counts": {
+      "fail": 3,
+      "pass": 19
+    },
+    "result_rows": 28,
+    "status_records": 22,
+    "superseding_repairs": [
+      {
+        "case": "1.5b_peft_fp16_gate",
+        "status": "pass",
+        "supersedes": "initial_tolerance_or_shape_probe"
+      },
+      {
+        "case": "2.9b_peft_fp16_gate",
+        "status": "pass",
+        "supersedes": "initial_tolerance_or_shape_probe"
+      },
+      {
+        "case": "2.9b_trl_rl_untruncated",
+        "status": "pass",
+        "supersedes": "initial_tolerance_or_shape_probe"
+      }
+    ],
+    "train_temp_cuda": "unsupported_on_sm75_requires_bf16_sm80_plus",
+    "zero_scope": "single_gpu_integration_and_resume_not_multi_gpu_sharding"
+  }
+}
