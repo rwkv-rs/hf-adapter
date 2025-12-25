@@ -10,6 +10,7 @@ from rwkv7_hf.kernel_policy import (
     detect_gpu_profile,
     env_flag,
     env_int,
+    is_rtx_model_name,
     is_tesla_t4_name,
     policy_for_profile,
 )
@@ -44,6 +45,18 @@ def test_exact_t4_name_matching_is_token_scoped() -> None:
     assert is_tesla_t4_name("NVIDIA T4-PCIE-16GB")
     assert not is_tesla_t4_name("NVIDIA T400")
     assert not is_tesla_t4_name("GeForce RTX 2080 Ti")
+
+
+def test_exact_rtx_model_matching_rejects_adjacent_and_variant_products() -> None:
+    assert is_rtx_model_name("NVIDIA GeForce RTX 4080", "4080")
+    assert is_rtx_model_name("NVIDIA GeForce RTX 4090 GPU", "4090")
+    assert is_rtx_model_name("NVIDIA GeForce RTX 5090", "5090")
+    assert not is_rtx_model_name("NVIDIA GeForce RTX 40800", "4080")
+    assert not is_rtx_model_name("NVIDIA GeForce RTX 4080 Laptop GPU", "4080")
+    assert not is_rtx_model_name("NVIDIA GeForce RTX 4080 SUPER", "4080")
+    assert not is_rtx_model_name("NVIDIA GeForce RTX 4090 Ti", "4090")
+    assert not is_rtx_model_name("NVIDIA GeForce RTX 4090 D", "4090")
+    assert not is_rtx_model_name("NVIDIA GeForce RTX 4080 Max-Q", "4080")
 
 
 def test_policy_defaults_are_conservative() -> None:
@@ -126,6 +139,9 @@ def test_policy_defaults_are_conservative() -> None:
     assert ada.prefill_scan_block_m_model_shapes == ((2048, 8, 512, 32),)
     assert ada.prefill_graph
     assert ada.fused_prefill_scan
+    assert not ada.fused_prefill_self_chunk
+    assert ada.prefill_self_chunk_size == 16
+    assert ada.prefill_self_chunk_model_shapes == ()
     assert ada.fused_prefill_state_prep
     assert ada.fused_prefill_output
     assert ada.fused_prefill_shift_mix
@@ -175,6 +191,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert rtx4080.fast_prefill
     assert rtx4080.fused_prefill_scan
     assert rtx4080.fused_prefill_self_chunk
+    assert rtx4080.prefill_self_chunk_size == 32
     assert rtx4080.prefill_self_chunk_model_shapes_only
     assert rtx4080.prefill_self_chunk_model_shapes == (
         (2048, 24, 1, 512),
@@ -220,6 +237,22 @@ def test_policy_defaults_are_conservative() -> None:
     assert rtx4080.ada_wagv_lora
     assert not rtx4080.ada_sparse_ffn
     assert rtx4080.rkv_policy == "manual"
+
+    # Similar-looking product strings must stay on the conservative Ada
+    # fallback rather than inheriting either exact desktop-card policy.
+    for name in (
+        "NVIDIA GeForce RTX 40800",
+        "NVIDIA GeForce RTX 4080 Laptop GPU",
+        "NVIDIA GeForce RTX 4080 SUPER",
+        "NVIDIA GeForce RTX 40900",
+    ):
+        adjacent_ada = policy_for_profile(classify_gpu(name, (8, 9)))
+        assert not adjacent_ada.fast_prefill
+        assert not adjacent_ada.prefill_graph
+        assert not adjacent_ada.fused_prefill_self_chunk
+        assert adjacent_ada.prefill_self_chunk_size == 16
+        assert adjacent_ada.prefill_scan_model_shapes == ()
+        assert adjacent_ada.prefill_graph_model_shapes == ()
 
     rtx3090 = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 3090", (8, 6)))
     assert rtx3090.fast_prefill
@@ -323,6 +356,9 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.fused_recurrent_output
     assert not blackwell.fused_projection
     assert blackwell.prefill_graph
+    assert not blackwell.fused_prefill_self_chunk
+    assert blackwell.prefill_self_chunk_size == 16
+    assert blackwell.prefill_self_chunk_model_shapes == ()
     assert blackwell.prefill_fp16_recurrent
     assert (4096, 61, 8, 2048) not in blackwell.prefill_graph_model_shapes
     assert (4096, 61, 8, 512) in blackwell.prefill_graph_model_shapes
@@ -445,6 +481,14 @@ def test_policy_defaults_are_conservative() -> None:
     assert other_blackwell.prefill_fp16_accum_ffn_key_layer_counts == ()
     assert other_blackwell.marlin_w4_ffn_shapes == ()
     assert other_blackwell.marlin_w4_model_profiles == ()
+    adjacent_blackwell = policy_for_profile(
+        classify_gpu("NVIDIA GeForce RTX 50900", (12, 0))
+    )
+    assert not adjacent_blackwell.prefill_graph
+    assert not adjacent_blackwell.fused_prefill_scan
+    assert not adjacent_blackwell.fused_prefill_shift_mix
+    assert adjacent_blackwell.prefill_graph_model_shapes == ()
+    assert adjacent_blackwell.marlin_w4_model_profiles == ()
 
     apple = policy_for_profile(classify_gpu("Apple M5", None, is_mps=True))
     assert apple.profile.family == "apple_mps"

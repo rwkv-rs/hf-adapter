@@ -411,6 +411,27 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
                 env_int(names[2], defaults[2], lower=1, upper=uppers[2]),
             )
 
+try:  # Keep this separate so older remote-code policy modules still import.
+    from .kernel_policy import is_rtx_model_name as _is_rtx_model_name
+except Exception:  # pragma: no cover - remote-code/backward-compatible fallback
+    try:
+        from kernel_policy import is_rtx_model_name as _is_rtx_model_name
+    except Exception:
+        def _is_rtx_model_name(name: str, model: str) -> bool:
+            normalized = "".join(
+                character if character.isalnum() else " "
+                for character in str(name).lower()
+            )
+            tokens = tuple(normalized.split())
+            model_token = str(model).lower()
+            if "rtx" not in tokens or model_token not in tokens:
+                return False
+            model_index = tokens.index(model_token)
+            return bool(
+                not {"laptop", "mobile", "maxq", "max", "q", "super", "ti"}.intersection(tokens)
+                and all(token == "gpu" for token in tokens[model_index + 1 :])
+            )
+
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
     from .fused_recurrent_update import (
         fused_recurrent_output_prepare,
@@ -1074,7 +1095,7 @@ def _native_prefill_default_scan_block_m(
                 name = str(torch.cuda.get_device_name()).lower()
             except Exception:
                 name = ""
-            if "4090" in name:
+            if _is_rtx_model_name(name, "4090"):
                 if (
                     batch_size is not None
                     and int(batch_size) >= 8

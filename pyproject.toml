@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-cuda = ["triton>=3.3.0; platform_system == 'Linux'", "ninja; platform_system == 'Linux'"]
+cuda = ["ninja; platform_system == 'Linux'"]
 fla = ["flash-linear-attention"]
 fla-reference = ["flash-linear-attention"]
 test = [
@@ -31,8 +31,8 @@ test = [
   "mlx; platform_system == 'Darwin' and platform_machine == 'arm64'",
 ]
 train = ["peft", "accelerate", "datasets", "trl", "deepspeed"]
-quant = ["bitsandbytes", "triton>=3.3.0; platform_system == 'Linux'"]
-torchao = ["torchao>=0.16.0; platform_system == 'Linux'"]
+quant = ["bitsandbytes"]
+torchao = ["torchao; platform_system == 'Linux'"]
 mlx = ["mlx; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 
 [tool.setuptools.packages.find]

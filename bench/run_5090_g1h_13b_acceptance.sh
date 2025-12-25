@@ -7,7 +7,7 @@ CHECKPOINT="${CHECKPOINT:-${2:-}}"
 OUT_DIR="${OUT_DIR:-${3:-}}"
 ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
-REQUIRED_GPU_SUBSTRING="RTX 5090"
+REQUIRED_GPU_MODEL="5090"
 
 if [[ -z "${HF_MODEL}" || -z "${CHECKPOINT}" || -z "${OUT_DIR}" ]]; then
   echo "usage: $0 HF_MODEL CHECKPOINT OUT_DIR" >&2
@@ -23,8 +23,9 @@ import torch
 print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "")
 PY
 )"
-if [[ "${gpu_name}" != *"${REQUIRED_GPU_SUBSTRING}"* ]]; then
-  echo "acceptance requires ${REQUIRED_GPU_SUBSTRING}; detected: ${gpu_name:-no CUDA GPU}" >&2
+if ! "${PYTHON_BIN}" "${ROOT}/bench/check_exact_gpu.py" \
+  --model "${REQUIRED_GPU_MODEL}" --name "${gpu_name}"; then
+  echo "acceptance requires exact desktop RTX ${REQUIRED_GPU_MODEL}; detected: ${gpu_name:-no CUDA GPU}" >&2
   exit 2
 fi
 

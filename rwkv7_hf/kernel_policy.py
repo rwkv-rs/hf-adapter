@@ -24,14 +24,40 @@ FALSE_VALUES = {"0", "false", "no", "off"}
 TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
-def is_tesla_t4_name(name: str) -> bool:
-    """Match the exact T4 product token without accepting names like T400."""
+def _gpu_name_tokens(name: str) -> tuple[str, ...]:
+    """Return normalized product-name tokens for exact-card policy gates."""
 
     normalized = "".join(
         character if character.isalnum() else " "
         for character in str(name).lower()
     )
-    return "t4" in normalized.split()
+    return tuple(normalized.split())
+
+
+def is_rtx_model_name(name: str, model: str) -> bool:
+    """Match an exact desktop RTX model without accepting adjacent products.
+
+    NVIDIA device strings often add ``GeForce`` and a trailing ``GPU``.  Those
+    words are harmless, but Laptop, SUPER, Ti, Max-Q and similar suffixes
+    identify different products whose measured launch policy must not leak.
+    """
+
+    tokens = _gpu_name_tokens(name)
+    model_token = str(model).lower()
+    if "rtx" not in tokens or model_token not in tokens:
+        return False
+    model_index = tokens.index(model_token)
+    suffix = tokens[model_index + 1 :]
+    return bool(
+        not {"laptop", "mobile", "maxq", "max", "q", "super", "ti"}.intersection(tokens)
+        and all(token == "gpu" for token in suffix)
+    )
+
+
+def is_tesla_t4_name(name: str) -> bool:
+    """Match the exact T4 product token without accepting names like T400."""
+
+    return "t4" in _gpu_name_tokens(name)
 
 
 @dataclass(frozen=True)
@@ -604,7 +630,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ),
         )
     if family == "ampere":
-        is_3090 = "3090" in profile.name.lower()
+        is_3090 = is_rtx_model_name(profile.name, "3090")
         return KernelPolicy(
             profile=profile,
             fast_prefill=is_3090,
@@ -714,8 +740,8 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ),
         )
     if family == "ada":
-        is_4090 = "4090" in profile.name.lower()
-        is_4080 = "4080" in profile.name.lower()
+        is_4090 = is_rtx_model_name(profile.name, "4090")
+        is_4080 = is_rtx_model_name(profile.name, "4080")
         rtx4080_prefill_shapes = (
             tuple(
                 (hidden, 24, batch, tokens)
@@ -782,7 +808,9 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_prefill_scan=is_4090 or is_4080,
             fused_prefill_self_chunk=is_4080,
             prefill_self_chunk_min_tokens=1024,
-            prefill_self_chunk_size=32,
+            # Keep the exact 4080 row-32 tile card-local.  The 4090 acceptance
+            # matrix explicitly selected row 16 when enabling self-chunk.
+            prefill_self_chunk_size=32 if is_4080 else 16,
             prefill_self_chunk_shape_sizes=(
                 ((1, 512, 32), (1, 2048, 32)) if is_4080 else ()
             ),
@@ -847,7 +875,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             notes="Hopper profile: stable output fusions on; H100-specific projection/quant kernels require sweep rows",
         )
     if family == "blackwell":
-        is_5090 = "5090" in profile.name.lower()
+        is_5090 = is_rtx_model_name(profile.name, "5090")
         production_prefill_graph_shapes = (
             (2560, 32, 1, 128),
             (2560, 32, 1, 512),
