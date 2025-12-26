@@ -29,6 +29,14 @@ stack.
 | The RTX 4080 Triton 3.2 workaround replaced one six-output strict-FP16 PTX expression with six one-output expressions globally | RTX 5090 uses strict FP16 shift-mix on Triton 3.6, so its previously validated code generation was changed even though the compiler defect is specific to the older stack | Triton `<3.3` uses the safe six-call lowering; Triton `>=3.3` restores the original one-delta/six-output lowering through a compile-time gate |
 | The 4080 commit changed the global TorchAO extra to `torchao>=0.16.0` | RTX 4090 evidence uses TorchAO 0.9.0 while RTX 5090 uses a newer stack; installing the extra could force an unvalidated upgrade | Removed the global TorchAO minimum and made the exact 4080 acceptance script require TorchAO 0.16.0 |
 | Generic CUDA/quant extras independently required Triton 3.3+ | The measured RTX 4080 and RTX 4090 PyTorch 2.6 stacks use bundled Triton 3.2; pip could replace PyTorch's matched compiler | Extras no longer install/upgrade Triton; the PyTorch-compatible Triton is authoritative |
+| Hardware policy detection without an explicit device read CUDA device 0 | A model resident on `cuda:1` in a heterogeneous process could inherit the 4080/4090/5090 policy of `cuda:0` | Default detection now uses `torch.cuda.current_device()`; native extract/prefill/graph entrypoints guard the actual tensor/model device |
+| BnB load-time policy did not interpret `device_map` | `device_map="cuda:1"` could use device 0's threshold; split or automatic maps could silently pick one exact-card policy | Single-device maps select that CUDA device; automatic and multi-CUDA maps fail closed to generic memory policy and library threshold |
+| Lazy CUDA extension builders left `PATH`, `CUDA_HOME`, `TORCH_CUDA_ARCH_LIST` and runtime-library paths in the process | A later extension build could compile for the first card or race another module's builder | Added one package-wide build lock and a temporary environment scope that forces the requested architecture and restores every caller value |
+| Ada/V100/Blackwell-capable extension modules kept one process-wide binary | The first architecture to build `ada_sparse_ffn`/`ada_lora` could leave an incompatible binary for a later card | Extension names, modules and build errors are now cached independently by SM capability (`sm70`, `sm89`, `sm120`) |
+| Card-specific Triton compatibility paths replaced `torch.compile` globally | A mixed process could disable compilation for an unaffected card | Card-specific global compile workarounds now apply only when every visible CUDA device needs the same workaround; mixed generations fail closed |
+| Exact-5090 FP16 accumulation toggles a process-global PyTorch matmul flag | A concurrent 4080/4090 GEMM could observe the temporary precision mode | The toggle is lock-scoped and restored in `finally`; it is disabled by default whenever more than one CUDA device is visible |
+| The 3090 prefill route selected cuBLAS/cuBLASLt permanently | Subsequent requests/cards inherited the previous prefill's BLAS backend | BLAS selection is now lock-scoped across eager execution/graph capture and restores the previous backend afterward |
+| TorchAO packing called `torch.cuda.empty_cache()` during quantization | Quantizing one model in a heterogeneous worker could discard another card's warm allocator pool | Single-GPU packing retains the memory-peak optimization; multi-GPU workers skip the global flush unless explicitly opted in |
 
 ## Resulting card policy
 
@@ -61,6 +69,15 @@ existing continuation cache.
 The `triton_compat.py` change only annotates Triton 3.2's existing descriptor
 class for PyTorch/DeepSpeed dataclass introspection. Triton 3.6 follows the
 pre-existing missing-class shim path. It does not choose a model kernel or tile.
+The metadata patch is process-local, but regression tests prove that the native
+descriptor constructor, equality, representation and methods are unchanged.
+
+CUDA-graph and packed-weight caches were also re-audited. Graph runner keys
+already include CUDA device index, dtype, shape, quantization mode and runtime
+signature. Sparse-FFN packed/scratch caches include device index, data pointer,
+tensor version, shape and dtype. No cache key can alias a 4080 tensor with a
+4090/5090 tensor. The architecture-specific compiled-module cache was the one
+cross-card cache defect and is now split as described above.
 
 ## Evidence boundary
 
@@ -86,7 +103,11 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q \
   tests/test_native_prefill_scan.py \
   tests/test_native_quant_mm4_policy.py \
   tests/test_fused_sequence_mix.py \
-  tests/test_qwen35_speed_matrix.py
+  tests/test_qwen35_speed_matrix.py \
+  tests/test_cross_card_runtime_isolation.py \
+  tests/test_extension_build_env.py \
+  tests/test_runtime_compat_and_bench_contracts.py \
+  tests/test_triton_compat.py
 ```
 
 For physical no-regression, run each exact card's existing acceptance entrypoint

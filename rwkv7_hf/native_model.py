@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import weakref
 from collections import OrderedDict
+from contextlib import nullcontext
 from typing import Any
 
 import torch
@@ -22,13 +23,14 @@ from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutpu
 from transformers.modeling_utils import PreTrainedModel
 
 from .native import _init_state_batched, _step_token_batched, attn_step_batched, ffn_step_batched
-from .kernel_policy import current_kernel_policy
+from .kernel_policy import current_kernel_policy, single_cuda_device_from_device_map
 
 # Some Transformers releases only copy files directly referenced by the
 # remote-code entrypoint. Keep static discovery edges to the dependencies
 # reached through native.py/native_jit.py/native_quant_mm*.py without importing
 # optional Triton kernels at runtime.
 if False:  # pragma: no cover
+    from .extension_build import cuda_extension_build_environment as _native_extension_build_dependency_sentinel
     from .ada_lora import ada_wagv_lora as _native_ada_lora_dependency_sentinel
     from .ada_sparse_ffn import ada_linear as _native_ada_sparse_ffn_dependency_sentinel
     from .blackwell_norm_mix import blackwell_ffn_add_norm_mix as _native_sm120_norm_mix_dependency_sentinel
@@ -61,11 +63,32 @@ if False:  # pragma: no cover
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
 
 
-def _bnb_skip_policy(policy: str | None = None) -> str:
+def _cuda_device_guard(device):
+    return (
+        torch.cuda.device(device)
+        if getattr(device, "type", None) == "cuda" and torch.cuda.is_available()
+        else nullcontext()
+    )
+
+
+def _bnb_skip_policy(
+    policy: str | None = None,
+    *,
+    policy_device: int | str | None = None,
+    hardware_policy: bool = True,
+) -> str:
     if policy is None:
         env_policy = os.environ.get("RWKV7_BNB_SKIP_POLICY")
+        if env_policy is None and hardware_policy:
+            env_policy = str(
+                getattr(
+                    current_kernel_policy(device=policy_device),
+                    "bnb_skip_policy",
+                    "memory",
+                )
+            )
         if env_policy is None:
-            env_policy = str(getattr(current_kernel_policy(), "bnb_skip_policy", "memory"))
+            env_policy = "memory"
         policy = env_policy
     policy = str(policy).strip().lower()
     if policy in {"", "default", "small_lora", "memory", "minimal"}:
@@ -91,10 +114,18 @@ def _bnb_prefill_value_stride() -> int:
         return 8
 
 
-def _bnb_int8_threshold_override() -> float | None:
+def _bnb_int8_threshold_override(
+    *,
+    policy_device: int | str | None = None,
+    hardware_policy: bool = True,
+) -> float | None:
     raw = os.environ.get("RWKV7_BNB_INT8_THRESHOLD")
-    if raw is None:
-        raw = getattr(current_kernel_policy(), "bnb_int8_threshold", None)
+    if raw is None and hardware_policy:
+        raw = getattr(
+            current_kernel_policy(device=policy_device),
+            "bnb_int8_threshold",
+            None,
+        )
     if raw is None or str(raw).strip().lower() in {"", "default", "library", "none"}:
         return None
     value = float(raw)
@@ -695,12 +726,13 @@ def _native_prefill_graph_enabled(
     prompt_tokens: int | None = None,
     hidden_size: int | None = None,
     num_layers: int | None = None,
+    device: int | str | torch.device | None = None,
 ) -> bool:
     raw = os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH")
     if raw is not None:
         selected = raw not in _FALSE_VALUES
     else:
-        policy = current_kernel_policy(torch_module=torch)
+        policy = current_kernel_policy(device=device, torch_module=torch)
         selected = bool(getattr(policy, "prefill_graph", False))
         shapes = {
             tuple(int(value) for value in shape)
@@ -724,8 +756,10 @@ def _native_prefill_graph_enabled(
     )
 
 
-def _native_prefill_graph_cache_size() -> int:
-    policy = current_kernel_policy(torch_module=torch)
+def _native_prefill_graph_cache_size(
+    device: int | str | torch.device | None = None,
+) -> int:
+    policy = current_kernel_policy(device=device, torch_module=torch)
     default = int(getattr(policy, "prefill_graph_cache_size", 2))
     try:
         value = int(
@@ -1220,6 +1254,7 @@ class _NativePrefillGraphRunner:
             prompt_tokens,
             int(owner.config.hidden_size),
             int(owner.config.num_hidden_layers),
+            owner.model.embeddings.weight.device,
         ):
             raise RuntimeError("native prefill graph is not enabled or available")
         self.owner = owner
@@ -1447,7 +1482,14 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         pretrained_model_name_or_path,
         kwargs: dict[str, Any],
     ):
-        policy = _bnb_skip_policy(kwargs.pop("rwkv7_bnb_skip_policy", None))
+        hardware_policy, policy_device = single_cuda_device_from_device_map(
+            kwargs.get("device_map")
+        )
+        policy = _bnb_skip_policy(
+            kwargs.pop("rwkv7_bnb_skip_policy", None),
+            policy_device=policy_device,
+            hardware_policy=hardware_policy,
+        )
         quantization_config = kwargs.get("quantization_config")
         if quantization_config is None and (
             kwargs.get("load_in_8bit") or kwargs.get("load_in_4bit")
@@ -1467,7 +1509,10 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         if quantization_config is not None and bool(
             getattr(quantization_config, "load_in_8bit", False)
         ):
-            threshold = _bnb_int8_threshold_override()
+            threshold = _bnb_int8_threshold_override(
+                policy_device=policy_device,
+                hardware_policy=hardware_policy,
+            )
             if threshold is not None:
                 quantization_config.llm_int8_threshold = float(threshold)
         if quantization_config is not None and hasattr(
@@ -1987,6 +2032,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             prompt_tokens,
             int(self.config.hidden_size),
             int(self.config.num_hidden_layers),
+            input_ids.device,
         ):
             runner = getattr(self, "_rwkv7_native_prefill_graph_hot_runner", None)
             if not isinstance(runner, _NativePrefillGraphRunner) or not runner.matches(
@@ -2046,6 +2092,22 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         prompt_tokens: int,
         logits_to_keep,
     ) -> _NativePrefillGraphRunner:
+        weight = self.model.embeddings.weight
+        guard = _cuda_device_guard(weight.device)
+        with guard:
+            return NativeRWKV7ForCausalLM._native_prefill_graph_runner_current_device(
+                self,
+                batch_size,
+                prompt_tokens,
+                logits_to_keep,
+            )
+
+    def _native_prefill_graph_runner_current_device(
+        self,
+        batch_size: int,
+        prompt_tokens: int,
+        logits_to_keep,
+    ) -> _NativePrefillGraphRunner:
         packs = self._native_graph_packs()
         weight = self.model.embeddings.weight
         normalized_keep = None if logits_to_keep is None else int(logits_to_keep)
@@ -2078,7 +2140,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             self._rwkv7_native_prefill_graph_hot_runner = runner
             return runner
         stats["misses"] = int(stats.get("misses", 0)) + 1
-        while len(cache) >= _native_prefill_graph_cache_size():
+        while len(cache) >= _native_prefill_graph_cache_size(weight.device):
             _, evicted = cache.popitem(last=False)
             if getattr(self, "_rwkv7_native_prefill_graph_hot_runner", None) is evicted:
                 self._rwkv7_native_prefill_graph_hot_runner = None
@@ -2144,6 +2206,15 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         return cache[1]
 
     def _native_graph_runner(self, batch_size: int):
+        weight = self.model.embeddings.weight
+        guard = _cuda_device_guard(weight.device)
+        with guard:
+            return NativeRWKV7ForCausalLM._native_graph_runner_current_device(
+                self,
+                batch_size,
+            )
+
+    def _native_graph_runner_current_device(self, batch_size: int):
         if _NativeGraphRunner is None:
             raise RuntimeError("native_graph runtime is unavailable")
         packs = self._native_graph_packs()
@@ -2229,7 +2300,9 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         stats.update(
             {
                 "size": len(shapes),
-                "limit": _native_prefill_graph_cache_size(),
+                "limit": _native_prefill_graph_cache_size(
+                    self.model.embeddings.weight.device
+                ),
                 "shapes": shapes,
                 "hit_rate": float(hits) / float(requests) if requests else None,
             }

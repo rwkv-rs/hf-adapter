@@ -43,6 +43,37 @@ def test_cuda_extension_capability_gate_includes_measured_cards(monkeypatch, cap
     assert sparse_ffn_module._is_sparse_ffn_device("cuda")
 
 
+def test_cuda_extensions_are_cached_per_architecture(monkeypatch) -> None:
+    class FakeCuda:
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
+        @staticmethod
+        def current_device() -> int:
+            return 0
+
+        @staticmethod
+        def get_device_capability(index=0):
+            return ((8, 9), (12, 0))[index]
+
+    class FakeTorch:
+        cuda = FakeCuda()
+        device = staticmethod(torch.device)
+
+    ada_extension = object()
+    blackwell_extension = object()
+    monkeypatch.setattr(sparse_ffn_module, "torch", FakeTorch())
+    monkeypatch.setattr(
+        sparse_ffn_module,
+        "_EXTENSIONS",
+        {(8, 9): ada_extension, (12, 0): blackwell_extension},
+    )
+    monkeypatch.setattr(sparse_ffn_module, "_EXTENSION_ERRORS", {})
+    assert sparse_ffn_module._load_extension("cuda:0") is ada_extension
+    assert sparse_ffn_module._load_extension("cuda:1") is blackwell_extension
+
+
 def test_shape_policy_is_narrow() -> None:
     assert ada_sparse_ffn_should_use(1, 768, 3072)
     assert ada_sparse_ffn_should_use(8, 1024, 4096)

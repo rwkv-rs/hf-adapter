@@ -15,6 +15,7 @@ ADAPTER_FILES = [
     "blackwell_norm_mix.py",
     "dplr_prefill.py",
     "dplr_prefill_triton.py",
+    "extension_build.py",
     "fused_attention_projection.py",
     "fused_ffn.py",
     "fused_lora.py",

@@ -24,6 +24,49 @@ FALSE_VALUES = {"0", "false", "no", "off"}
 TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
+def single_cuda_device_from_device_map(
+    device_map: Any,
+) -> tuple[bool, int | str | None]:
+    """Resolve an unambiguous CUDA target for load-time hardware policy.
+
+    ``None`` means the caller did not request placement and may use the
+    process's current CUDA device.  Automatic, CPU-only, or multi-CUDA maps
+    return ``(False, None)`` so exact-card quantization defaults fail closed
+    instead of inheriting CUDA device 0 by accident.
+    """
+
+    if device_map is None:
+        return True, None
+    values = list(device_map.values()) if isinstance(device_map, dict) else [device_map]
+    cuda_devices: set[str] = set()
+    for value in values:
+        if isinstance(value, bool):
+            return False, None
+        if isinstance(value, int):
+            cuda_devices.add(f"cuda:{int(value)}")
+            continue
+        device_type = getattr(value, "type", None)
+        device_index = getattr(value, "index", None)
+        if device_type is not None:
+            if str(device_type).lower() == "cuda":
+                cuda_devices.add(
+                    "cuda" if device_index is None else f"cuda:{int(device_index)}"
+                )
+            continue
+        text = str(value).strip().lower()
+        if text.isdigit():
+            cuda_devices.add(f"cuda:{int(text)}")
+        elif text == "cuda" or text.startswith("cuda:"):
+            cuda_devices.add(text)
+        elif text in {"auto", "balanced", "balanced_low_0", "sequential"}:
+            return False, None
+        # cpu, disk and mps placements are offload targets and do not identify
+        # the CUDA card whose exact kernel/quant policy should be selected.
+    if len(cuda_devices) != 1:
+        return False, None
+    return True, next(iter(cuda_devices))
+
+
 def _gpu_name_tokens(name: str) -> tuple[str, ...]:
     """Return normalized product-name tokens for exact-card policy gates."""
 
@@ -528,9 +571,12 @@ def detect_gpu_profile(device: int | str | None = None, torch_module: Any | None
         return classify_gpu(None, None, is_hip=is_hip)
 
     try:
-        index = 0 if device is None else torch_module.device(device).index
-        if index is None:
+        if device is None:
             index = int(cuda.current_device())
+        else:
+            index = torch_module.device(device).index
+            if index is None:
+                index = int(cuda.current_device())
     except Exception:
         index = 0
     try:

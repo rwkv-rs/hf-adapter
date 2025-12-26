@@ -6,8 +6,10 @@ Requires flash-linear-attention (`fla`) on PYTHONPATH / installed in the env.
 from __future__ import annotations
 
 import os
+import threading
 import weakref
 from collections import OrderedDict
+from contextlib import contextmanager, nullcontext
 from typing import Any
 
 import torch
@@ -74,12 +76,27 @@ except ImportError:  # pragma: no cover - direct remote-file execution fallback
     from configuration_rwkv7 import RWKV7Config
 
 try:
-    from .kernel_policy import current_kernel_policy, env_blocks, env_flag, env_int
+    from .kernel_policy import (
+        current_kernel_policy,
+        env_blocks,
+        env_flag,
+        env_int,
+        single_cuda_device_from_device_map,
+    )
 except ImportError:  # pragma: no cover - direct remote-file execution fallback
     try:
-        from kernel_policy import current_kernel_policy, env_blocks, env_flag, env_int
+        from kernel_policy import (
+            current_kernel_policy,
+            env_blocks,
+            env_flag,
+            env_int,
+            single_cuda_device_from_device_map,
+        )
     except Exception:  # pragma: no cover - older converted model dirs
         current_kernel_policy = None  # type: ignore[assignment]
+
+        def single_cuda_device_from_device_map(device_map):
+            return (device_map is None, None)
 
         def env_flag(name: str, default: bool) -> bool:
             raw = os.environ.get(name)
@@ -139,6 +156,7 @@ except Exception:  # pragma: no cover - optional remote-code fast path
 # ``native.py`` through ``native_model.py``; keep an explicit non-executed edge
 # here so fresh caches contain the whole native dependency set.
 if False:  # pragma: no cover
+    from .extension_build import cuda_extension_build_environment as _rwkv7_extension_build_dependency_sentinel
     from .native_graph_runtime import NativeGraphRunner as _rwkv7_native_graph_runtime_dependency_sentinel
     from .ada_lora import ada_wagv_lora as _rwkv7_ada_lora_dependency_sentinel
     from .ada_sparse_ffn import ada_linear as _rwkv7_ada_sparse_ffn_dependency_sentinel
@@ -170,11 +188,11 @@ if False:  # pragma: no cover
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
 
 
-def _rwkv7_kernel_policy():
+def _rwkv7_kernel_policy(device: int | str | None = None):
     if current_kernel_policy is None:
         return None
     try:
-        return current_kernel_policy(torch_module=torch)
+        return current_kernel_policy(device=device, torch_module=torch)
     except Exception:
         return None
 
@@ -248,12 +266,19 @@ def _fast_prefill_enabled() -> bool:
     return env_flag("RWKV7_FAST_PREFILL", bool(getattr(policy, "fast_prefill", False)))
 
 
-def _bnb_skip_policy(policy: str | None = None) -> str:
+def _bnb_skip_policy(
+    policy: str | None = None,
+    *,
+    policy_device: int | str | None = None,
+    hardware_policy: bool = True,
+) -> str:
     if policy is None:
         env_policy = os.environ.get("RWKV7_BNB_SKIP_POLICY")
-        if env_policy is None:
-            kernel_policy = _rwkv7_kernel_policy()
+        if env_policy is None and hardware_policy:
+            kernel_policy = _rwkv7_kernel_policy(policy_device)
             env_policy = str(getattr(kernel_policy, "bnb_skip_policy", "memory"))
+        if env_policy is None:
+            env_policy = "memory"
         policy = env_policy
     policy = str(policy).strip().lower()
     if policy in {"", "default", "small_lora", "memory", "minimal"}:
@@ -289,7 +314,11 @@ def _bnb_prefill_value_stride() -> int:
         return 8
 
 
-def _bnb_int8_threshold_override() -> float | None:
+def _bnb_int8_threshold_override(
+    *,
+    policy_device: int | str | None = None,
+    hardware_policy: bool = True,
+) -> float | None:
     """Return the hardware-policy LLM.int8 threshold override, if any.
 
     A zero threshold disables bitsandbytes' host-synchronizing outlier branch,
@@ -298,8 +327,12 @@ def _bnb_int8_threshold_override() -> float | None:
     """
 
     raw = os.environ.get("RWKV7_BNB_INT8_THRESHOLD")
-    if raw is None:
-        raw = getattr(_rwkv7_kernel_policy(), "bnb_int8_threshold", None)
+    if raw is None and hardware_policy:
+        raw = getattr(
+            _rwkv7_kernel_policy(policy_device),
+            "bnb_int8_threshold",
+            None,
+        )
     if raw is None or str(raw).strip().lower() in {"", "default", "library", "none"}:
         return None
     value = float(raw)
@@ -312,6 +345,14 @@ def _cuda_available() -> bool:
     cuda = getattr(torch, "cuda", None)
     is_available = getattr(cuda, "is_available", None)
     return bool(callable(is_available) and is_available())
+
+
+def _cuda_device_guard(device):
+    return (
+        torch.cuda.device(device)
+        if getattr(device, "type", None) == "cuda" and _cuda_available()
+        else nullcontext()
+    )
 
 
 def _native_graph_cache_size() -> int:
@@ -328,10 +369,11 @@ def _native_prefill_graph_enabled(
     prompt_tokens: int | None = None,
     hidden_size: int | None = None,
     num_layers: int | None = None,
+    device: int | str | torch.device | None = None,
 ) -> bool:
     """Capture fixed-shape inference prefill as one CUDA graph."""
 
-    policy = _rwkv7_kernel_policy()
+    policy = _rwkv7_kernel_policy(device)
     raw = os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH")
     if raw is not None:
         return env_flag("RWKV7_NATIVE_PREFILL_GRAPH", False)
@@ -384,16 +426,22 @@ def _native_prefill_external_quant_graph_enabled() -> bool:
     )
 
 
-def _native_prefill_prepare_blas(total_rows: int | None = None) -> str | None:
-    """Select the measured large-matrix backend before native prefill.
+_NATIVE_PREFILL_BLAS_LOCK = threading.RLock()
 
-    PyTorch exposes BLAS selection as a process-wide setting.  The policy is
-    therefore applied only when entering the explicit native prefill API and
-    remains in effect for subsequent fixed-shape graph captures.  Users can
-    set ``RWKV7_NATIVE_PREFILL_BLAS=none`` to retain the process default.
+
+def _native_prefill_blas_target(
+    total_rows: int | None = None,
+    device: int | str | torch.device | None = None,
+) -> str | None:
+    """Resolve the measured large-matrix backend for one native prefill.
+
+    PyTorch exposes BLAS selection as a process-wide setting. The caller keeps
+    the selected backend active through eager execution or fixed-shape graph
+    capture, then restores the previous process setting. Users can set
+    ``RWKV7_NATIVE_PREFILL_BLAS=none`` to retain the process default.
     """
 
-    policy = _rwkv7_kernel_policy()
+    policy = _rwkv7_kernel_policy(device)
     target = os.environ.get("RWKV7_NATIVE_PREFILL_BLAS")
     if target is None:
         large_min = int(getattr(policy, "prefill_blas_large_min_rows", 4096))
@@ -407,17 +455,44 @@ def _native_prefill_prepare_blas(total_rows: int | None = None) -> str | None:
         return None
     if target not in {"cublas", "cublaslt"}:
         raise ValueError("RWKV7_NATIVE_PREFILL_BLAS must be cublas, cublaslt, or none")
-    preferred = getattr(getattr(torch.backends, "cuda", None), "preferred_blas_library", None)
-    if not callable(preferred):
-        return None
-    preferred(target)
     return target
 
 
-def _native_prefill_graph_cache_size() -> int:
+@contextmanager
+def _native_prefill_blas_scope(
+    total_rows: int | None = None,
+    device: int | str | torch.device | None = None,
+):
+    """Temporarily select BLAS without leaking it to another card/request."""
+
+    target = _native_prefill_blas_target(total_rows, device)
+    preferred = getattr(
+        getattr(torch.backends, "cuda", None),
+        "preferred_blas_library",
+        None,
+    )
+    if target is None or not callable(preferred):
+        yield target
+        return
+    with _NATIVE_PREFILL_BLAS_LOCK:
+        try:
+            previous = preferred()
+        except Exception:
+            previous = None
+        preferred(target)
+        try:
+            yield target
+        finally:
+            if previous is not None:
+                preferred(previous)
+
+
+def _native_prefill_graph_cache_size(
+    device: int | str | torch.device | None = None,
+) -> int:
     """Maximum fixed-shape prefill graphs retained by one model."""
 
-    policy = _rwkv7_kernel_policy()
+    policy = _rwkv7_kernel_policy(device)
     default = int(getattr(policy, "prefill_graph_cache_size", 2))
     return env_int("RWKV7_NATIVE_PREFILL_GRAPH_CACHE_SIZE", default, lower=1, upper=16)
 
@@ -1749,7 +1824,14 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
 
     @classmethod
     def _rwkv7_prepare_bnb_kwargs(cls, pretrained_model_name_or_path, kwargs: dict[str, Any]):
-        rwkv7_bnb_skip_policy = _bnb_skip_policy(kwargs.pop("rwkv7_bnb_skip_policy", None))
+        hardware_policy, policy_device = single_cuda_device_from_device_map(
+            kwargs.get("device_map")
+        )
+        rwkv7_bnb_skip_policy = _bnb_skip_policy(
+            kwargs.pop("rwkv7_bnb_skip_policy", None),
+            policy_device=policy_device,
+            hardware_policy=hardware_policy,
+        )
         quantization_config = kwargs.get("quantization_config")
         if quantization_config is None and (kwargs.get("load_in_8bit") or kwargs.get("load_in_4bit")):
             from transformers import BitsAndBytesConfig
@@ -1761,7 +1843,10 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             quantization_config = BitsAndBytesConfig(**bnb_kwargs)
             kwargs["quantization_config"] = quantization_config
         if quantization_config is not None and bool(getattr(quantization_config, "load_in_8bit", False)):
-            threshold = _bnb_int8_threshold_override()
+            threshold = _bnb_int8_threshold_override(
+                policy_device=policy_device,
+                hardware_policy=hardware_policy,
+            )
             if threshold is not None:
                 # threshold=0 removes the host-side outlier decision from
                 # Linear8bitLt and makes its low-level kernels capturable.
@@ -2223,6 +2308,24 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         past_key_values: RWKV7StateCache | _FLACache | tuple | list | None = None,
         return_dict: bool | None = True,
     ):
+        """Run fast-token routing under the token tensor's CUDA device."""
+
+        device = input_ids.device
+        guard = _cuda_device_guard(device)
+        with guard:
+            return self._rwkv7_forward_token_current_device(
+                input_ids,
+                past_key_values=past_key_values,
+                return_dict=return_dict,
+            )
+
+    @torch.no_grad()
+    def _rwkv7_forward_token_current_device(
+        self,
+        input_ids: torch.LongTensor,
+        past_key_values: RWKV7StateCache | _FLACache | tuple | list | None = None,
+        return_dict: bool | None = True,
+    ):
         """Inference-only one-token decode path for any batch size.
 
         `input_ids` may be shaped `[batch]` or `[batch, 1]`. This is the batched
@@ -2302,6 +2405,15 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         return CausalLMOutputWithPast(logits=logits, past_key_values=past_key_values)
 
     def _rwkv7_native_jit_packs(self, *, for_graph: bool = False):
+        weight = self.model.embeddings.weight
+        guard = _cuda_device_guard(weight.device)
+        with guard:
+            return RWKV7ForCausalLM._rwkv7_native_jit_packs_current_device(
+                self,
+                for_graph=for_graph,
+            )
+
+    def _rwkv7_native_jit_packs_current_device(self, *, for_graph: bool = False):
         if _native_jit_block_step is None or _native_jit_block_step_batched is None or _native_jit_extract is None:
             raise RuntimeError("native_jit fast-token backend is unavailable; copy native_jit.py into the model repo")
         if for_graph and _native_graph_extract is None:
@@ -2327,6 +2439,16 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         return cache[1]
 
     def _rwkv7_native_graph_runner(self, packs, batch_size: int):
+        weight = self.model.embeddings.weight
+        guard = _cuda_device_guard(weight.device)
+        with guard:
+            return RWKV7ForCausalLM._rwkv7_native_graph_runner_current_device(
+                self,
+                packs,
+                batch_size,
+            )
+
+    def _rwkv7_native_graph_runner_current_device(self, packs, batch_size: int):
         weight = self.model.embeddings.weight
         key = (
             weight.device.type,
@@ -2422,6 +2544,24 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         logits_to_keep: int,
     ) -> _RWKV7NativeGraphPrefillRunner:
         weight = self.model.embeddings.weight
+        guard = _cuda_device_guard(weight.device)
+        with guard:
+            return RWKV7ForCausalLM._rwkv7_native_prefill_graph_runner_current_device(
+                self,
+                packs,
+                batch_size,
+                prompt_tokens,
+                logits_to_keep,
+            )
+
+    def _rwkv7_native_prefill_graph_runner_current_device(
+        self,
+        packs,
+        batch_size: int,
+        prompt_tokens: int,
+        logits_to_keep: int,
+    ) -> _RWKV7NativeGraphPrefillRunner:
+        weight = self.model.embeddings.weight
         key = (
             weight.device.type,
             weight.device.index,
@@ -2444,7 +2584,9 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         # See the token-runner cache above: release the old graph and its hot
         # alias before the replacement capture so cuBLAS can select the same
         # workspace-rich plan as a fresh production process.
-        cache_limit = _native_prefill_graph_cache_size()
+        cache_limit = _native_prefill_graph_cache_size(
+            self.model.embeddings.weight.device
+        )
         while len(cache) >= cache_limit:
             _, evicted_runner = cache.popitem(last=False)
             if getattr(self, "_rwkv7_native_prefill_graph_hot_runner", None) is evicted_runner:
@@ -2582,6 +2724,28 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         logits_to_keep: int = 1,
         return_dict: bool | None = True,
     ):
+        """Run native prefill with device-local policy and temporary BLAS."""
+
+        device = input_ids.device
+        guard = _cuda_device_guard(device)
+        total_rows = int(input_ids.numel()) if input_ids.dim() in {1, 2} else None
+        with guard:
+            with _native_prefill_blas_scope(total_rows, device):
+                return self._rwkv7_prefill_native_current_device(
+                    input_ids,
+                    past_key_values=past_key_values,
+                    logits_to_keep=logits_to_keep,
+                    return_dict=return_dict,
+                )
+
+    @torch.no_grad()
+    def _rwkv7_prefill_native_current_device(
+        self,
+        input_ids: torch.LongTensor,
+        past_key_values: RWKV7StateCache | _FLACache | tuple | list | None = None,
+        logits_to_keep: int = 1,
+        return_dict: bool | None = True,
+    ):
         """Inference-only native prefill path with optional fused recurrent scan.
 
         This is the serving bridge for the native fused prefill work: it runs
@@ -2605,7 +2769,6 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         if int(input_ids.shape[1]) <= 0:
             raise ValueError("rwkv7_prefill_native requires at least one token")
         batch_size = int(input_ids.shape[0])
-        _native_prefill_prepare_blas(batch_size * int(input_ids.shape[1]))
         external_quant = self._rwkv7_uses_external_quantization()
         quantized_operands = self._rwkv7_uses_quantized_linear_operands()
         if external_quant and (
@@ -2630,6 +2793,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             prompt_tokens,
             int(self.config.hidden_size),
             int(self.config.num_hidden_layers),
+            input_ids.device,
         ) and (
             not external_quant
             or (
@@ -2730,6 +2894,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                     int(end - start),
                     int(self.config.hidden_size),
                     int(self.config.num_hidden_layers),
+                    input_ids.device,
                 )
                 and chunk_mask is None
                 and (

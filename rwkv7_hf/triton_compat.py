@@ -139,6 +139,24 @@ def torch_compile_compat_required(
     )
 
 
+def _visible_cuda_capabilities(torch_module: Any) -> tuple[tuple[int, int], ...]:
+    """Return every visible CUDA capability without assuming device zero."""
+
+    cuda = getattr(torch_module, "cuda", None)
+    try:
+        if cuda is None or not bool(cuda.is_available()):
+            return ()
+        count_fn = getattr(cuda, "device_count", None)
+        count = int(count_fn()) if callable(count_fn) else 1
+        count = max(1, count)
+        return tuple(
+            tuple(int(value) for value in cuda.get_device_capability(index))
+            for index in range(count)
+        )
+    except Exception:
+        return ()
+
+
 def maybe_disable_incompatible_torch_compile(attrs_descriptor_shim: bool) -> bool:
     """Disable only measured incompatible Inductor/Triton combinations."""
 
@@ -153,18 +171,15 @@ def maybe_disable_incompatible_torch_compile(attrs_descriptor_shim: bool) -> boo
         import torch
         import triton
 
-        capability = (0, 0)
-        cuda = getattr(torch, "cuda", None)
-        if cuda is not None and bool(cuda.is_available()):
-            capability = tuple(
-                int(value)
-                for value in cuda.get_device_capability(cuda.current_device())
+        capabilities = _visible_cuda_capabilities(torch) or ((0, 0),)
+        if not all(
+            torch_compile_compat_required(
+                capability=capability,
+                torch_version=str(getattr(torch, "__version__", "")),
+                triton_version=str(getattr(triton, "__version__", "")),
+                legacy_attrs_missing=attrs_descriptor_shim,
             )
-        if not torch_compile_compat_required(
-            capability=capability,
-            torch_version=str(getattr(torch, "__version__", "")),
-            triton_version=str(getattr(triton, "__version__", "")),
-            legacy_attrs_missing=attrs_descriptor_shim,
+            for capability in capabilities
         ):
             return False
     except Exception:
@@ -204,12 +219,14 @@ def maybe_disable_blackwell_torch_compile() -> bool:
     try:
         import torch
 
-        if not torch.cuda.is_available():
+        capabilities = _visible_cuda_capabilities(torch)
+        if not capabilities:
             return False
-        major, _minor = torch.cuda.get_device_capability(0)
     except Exception:
         return False
-    if int(major) < 12:
+    # Replacing torch.compile is process-global. Never apply a generation-
+    # specific workaround when any earlier-generation card is also visible.
+    if any(int(major) < 12 for major, _minor in capabilities):
         return False
 
     os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")

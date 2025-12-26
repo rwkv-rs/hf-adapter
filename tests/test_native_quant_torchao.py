@@ -18,6 +18,23 @@ class TinyModel(torch.nn.Module):
         self._rwkv7_native_graph_runner_cache = object()
 
 
+def test_quant_cache_release_does_not_flush_multi_gpu_allocator(monkeypatch) -> None:
+    model = TinyModel()
+    calls = []
+    monkeypatch.setattr(qao.gc, "collect", lambda: calls.append("gc"))
+    monkeypatch.setattr(qao.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(qao.torch.cuda, "device_count", lambda: 2)
+    monkeypatch.setattr(qao.torch.cuda, "empty_cache", lambda: calls.append("empty"))
+    monkeypatch.delenv("RWKV7_TORCHAO_EMPTY_CACHE_MULTI_GPU", raising=False)
+
+    qao._clear_native_quant_caches(model, release_cuda=True)
+    assert calls == ["gc"]
+
+    monkeypatch.setenv("RWKV7_TORCHAO_EMPTY_CACHE_MULTI_GPU", "1")
+    qao._clear_native_quant_caches(model, release_cuda=True)
+    assert calls == ["gc", "gc", "empty"]
+
+
 def fake_api(calls):
     def quantize_(module, config):
         calls.append((module, config))
