@@ -3,11 +3,24 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from rwkv7_hf.fused_elementwise import fused_relu_square
-from rwkv7_hf.fused_time_mix import fused_attn_sequence_shift_mix, fused_ffn_sequence_shift_mix
+from rwkv7_hf.fused_time_mix import (
+    _triton_requires_single_output_fp16_asm,
+    fused_attn_sequence_shift_mix,
+    fused_ffn_sequence_shift_mix,
+)
 
 
 def _shifted(x: torch.Tensor, initial: torch.Tensor) -> torch.Tensor:
     return torch.cat([initial[:, None], x[:, :-1]], dim=1)
+
+
+def test_strict_fp16_inline_asm_route_is_triton_version_scoped() -> None:
+    assert _triton_requires_single_output_fp16_asm("3.2.0")
+    assert _triton_requires_single_output_fp16_asm("3.2.0+git")
+    assert not _triton_requires_single_output_fp16_asm("3.3.0")
+    assert not _triton_requires_single_output_fp16_asm("3.6.0")
+    assert not _triton_requires_single_output_fp16_asm("3.7.1.post27")
+    assert _triton_requires_single_output_fp16_asm("unknown")
 
 
 def test_attention_sequence_shift_mix_cpu_matches_reference_and_updates_state():

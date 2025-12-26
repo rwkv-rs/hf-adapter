@@ -10,10 +10,13 @@ included here; dense projections and recurrence remain repository-native.
 from __future__ import annotations
 
 import os
-from pathlib import Path
-import sys
 import threading
 from typing import Any
+
+try:
+    from .extension_build import cuda_extension_build_environment
+except ImportError:  # pragma: no cover - direct remote-file execution
+    from extension_build import cuda_extension_build_environment
 
 try:  # pragma: no cover - optional in lightweight environments
     import torch
@@ -206,24 +209,23 @@ def _load_extension() -> Any | None:
         if _EXTENSION_ERROR is not None:
             return None
         try:
-            python_bin = str(Path(sys.executable).absolute().parent)
-            if python_bin not in os.environ.get("PATH", "").split(os.pathsep):
-                os.environ["PATH"] = python_bin + os.pathsep + os.environ.get("PATH", "")
             capability = torch.cuda.get_device_capability()
-            os.environ.setdefault("TORCH_CUDA_ARCH_LIST", f"{capability[0]}.{capability[1]}")
-            from torch.utils.cpp_extension import load_inline
+            with cuda_extension_build_environment(
+                arch_list=f"{capability[0]}.{capability[1]}"
+            ):
+                from torch.utils.cpp_extension import load_inline
 
-            _EXTENSION = load_inline(
-                name="rwkv7_blackwell_norm_mix_v1",
-                cpp_sources=_CPP_SOURCE,
-                cuda_sources=_CUDA_SOURCE,
-                functions=None,
-                extra_cflags=["-O3"],
-                extra_cuda_cflags=["-O3", "--extra-device-vectorization"],
-                with_cuda=True,
-                verbose=os.environ.get("RWKV7_BLACKWELL_NORM_MIX_BUILD_VERBOSE", "0").lower()
-                in {"1", "true", "yes", "on"},
-            )
+                _EXTENSION = load_inline(
+                    name="rwkv7_blackwell_norm_mix_v1",
+                    cpp_sources=_CPP_SOURCE,
+                    cuda_sources=_CUDA_SOURCE,
+                    functions=None,
+                    extra_cflags=["-O3"],
+                    extra_cuda_cflags=["-O3", "--extra-device-vectorization"],
+                    with_cuda=True,
+                    verbose=os.environ.get("RWKV7_BLACKWELL_NORM_MIX_BUILD_VERBOSE", "0").lower()
+                    in {"1", "true", "yes", "on"},
+                )
         except Exception as exc:  # pragma: no cover - host toolchain dependent
             _EXTENSION_ERROR = f"{type(exc).__name__}: {exc}"
             return None

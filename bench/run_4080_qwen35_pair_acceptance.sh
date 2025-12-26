@@ -9,7 +9,7 @@ OUT_DIR="${OUT_DIR:-${4:-}}"
 ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
-REQUIRED_GPU_SUBSTRING="${REQUIRED_GPU_SUBSTRING:-RTX 4080}"
+REQUIRED_GPU_MODEL="4080"
 WARMUP="${WARMUP:-3}"
 RUNS="${RUNS:-7}"
 TIMING_REPEATS="${TIMING_REPEATS:-7}"
@@ -65,8 +65,45 @@ import torch
 print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "")
 PY
 )"
-if [[ "${gpu_name}" != *"${REQUIRED_GPU_SUBSTRING}"* ]]; then
-  echo "acceptance requires ${REQUIRED_GPU_SUBSTRING}; detected: ${gpu_name:-no CUDA GPU}" >&2
+if ! "${PYTHON_BIN}" "${ROOT}/bench/check_exact_gpu.py" \
+  --model "${REQUIRED_GPU_MODEL}" --name "${gpu_name}"; then
+  echo "acceptance requires exact desktop RTX ${REQUIRED_GPU_MODEL}; detected: ${gpu_name:-no CUDA GPU}" >&2
+  exit 2
+fi
+runtime_error="$(${PYTHON_BIN} - <<'PY'
+from importlib.metadata import PackageNotFoundError, version
+
+import torch
+import triton
+
+expected = {
+    "torch": "2.6.0+cu124",
+    "triton": "3.2.0",
+    "torchao": "0.16.0",
+}
+try:
+    actual = {
+        "torch": str(torch.__version__),
+        "triton": str(triton.__version__),
+        "torchao": version("torchao"),
+    }
+except PackageNotFoundError as exc:
+    print(f"missing validated RTX 4080 dependency: {exc.name}")
+    raise SystemExit(1)
+mismatches = [
+    f"{name}={actual[name]} (expected {expected[name]})"
+    for name in expected
+    if actual[name] != expected[name]
+]
+if mismatches:
+    print("validated RTX 4080 runtime mismatch: " + ", ".join(mismatches))
+    raise SystemExit(1)
+PY
+)"
+runtime_rc=$?
+if [[ ${runtime_rc} -ne 0 ]]; then
+  echo "${runtime_error}" >&2
+  echo "use the generic benchmark entrypoints for an unvalidated runtime experiment" >&2
   exit 2
 fi
 

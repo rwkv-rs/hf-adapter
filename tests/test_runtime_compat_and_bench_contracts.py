@@ -47,6 +47,7 @@ def test_pytorch26_triton33_disables_worker_compile(monkeypatch) -> None:
     original_compile = object()
     fake_torch = types.SimpleNamespace(__version__="2.6.0", compile=original_compile)
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "triton", types.SimpleNamespace(__version__="3.3.0"))
     monkeypatch.delenv("RWKV7_LEGACY_TORCH_COMPILE", raising=False)
     monkeypatch.delenv("TORCHDYNAMO_DISABLE", raising=False)
     monkeypatch.delenv("TORCH_COMPILE_DISABLE", raising=False)
@@ -63,7 +64,58 @@ def test_pytorch27_keeps_compile_enabled(monkeypatch) -> None:
     original_compile = object()
     fake_torch = types.SimpleNamespace(__version__="2.7.0", compile=original_compile)
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "triton", types.SimpleNamespace(__version__="3.3.0"))
     monkeypatch.delenv("RWKV7_LEGACY_TORCH_COMPILE", raising=False)
 
     assert triton_compat.maybe_disable_incompatible_torch_compile(True) is False
+    assert fake_torch.compile is original_compile
+
+
+def test_card_specific_compile_workaround_does_not_patch_mixed_gpu_process(monkeypatch) -> None:
+    class FakeCuda:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def device_count():
+            return 2
+
+        @staticmethod
+        def get_device_capability(index):
+            return ((7, 5), (8, 9))[index]
+
+    original_compile = object()
+    fake_torch = types.SimpleNamespace(
+        __version__="2.7.0",
+        compile=original_compile,
+        cuda=FakeCuda(),
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setitem(sys.modules, "triton", types.SimpleNamespace(__version__="3.3.0"))
+    monkeypatch.delenv("RWKV7_LEGACY_TORCH_COMPILE", raising=False)
+    assert triton_compat.maybe_disable_incompatible_torch_compile(True) is False
+    assert fake_torch.compile is original_compile
+
+
+def test_blackwell_compile_workaround_does_not_patch_ada_in_same_process(monkeypatch) -> None:
+    class FakeCuda:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def device_count():
+            return 2
+
+        @staticmethod
+        def get_device_capability(index):
+            return ((12, 0), (8, 9))[index]
+
+    original_compile = object()
+    fake_torch = types.SimpleNamespace(compile=original_compile, cuda=FakeCuda())
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.delenv("RWKV7_BLACKWELL_TORCH_COMPILE", raising=False)
+    monkeypatch.delenv("TORCH_COMPILE_DISABLE", raising=False)
+    assert triton_compat.maybe_disable_blackwell_torch_compile() is False
     assert fake_torch.compile is original_compile

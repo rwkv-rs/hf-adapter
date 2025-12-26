@@ -24,14 +24,83 @@ FALSE_VALUES = {"0", "false", "no", "off"}
 TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
-def is_tesla_t4_name(name: str) -> bool:
-    """Match the exact T4 product token without accepting names like T400."""
+def single_cuda_device_from_device_map(
+    device_map: Any,
+) -> tuple[bool, int | str | None]:
+    """Resolve an unambiguous CUDA target for load-time hardware policy.
+
+    ``None`` means the caller did not request placement and may use the
+    process's current CUDA device.  Automatic, CPU-only, or multi-CUDA maps
+    return ``(False, None)`` so exact-card quantization defaults fail closed
+    instead of inheriting CUDA device 0 by accident.
+    """
+
+    if device_map is None:
+        return True, None
+    values = list(device_map.values()) if isinstance(device_map, dict) else [device_map]
+    cuda_devices: set[str] = set()
+    for value in values:
+        if isinstance(value, bool):
+            return False, None
+        if isinstance(value, int):
+            cuda_devices.add(f"cuda:{int(value)}")
+            continue
+        device_type = getattr(value, "type", None)
+        device_index = getattr(value, "index", None)
+        if device_type is not None:
+            if str(device_type).lower() == "cuda":
+                cuda_devices.add(
+                    "cuda" if device_index is None else f"cuda:{int(device_index)}"
+                )
+            continue
+        text = str(value).strip().lower()
+        if text.isdigit():
+            cuda_devices.add(f"cuda:{int(text)}")
+        elif text == "cuda" or text.startswith("cuda:"):
+            cuda_devices.add(text)
+        elif text in {"auto", "balanced", "balanced_low_0", "sequential"}:
+            return False, None
+        # cpu, disk and mps placements are offload targets and do not identify
+        # the CUDA card whose exact kernel/quant policy should be selected.
+    if len(cuda_devices) != 1:
+        return False, None
+    return True, next(iter(cuda_devices))
+
+
+def _gpu_name_tokens(name: str) -> tuple[str, ...]:
+    """Return normalized product-name tokens for exact-card policy gates."""
 
     normalized = "".join(
         character if character.isalnum() else " "
         for character in str(name).lower()
     )
-    return "t4" in normalized.split()
+    return tuple(normalized.split())
+
+
+def is_rtx_model_name(name: str, model: str) -> bool:
+    """Match an exact desktop RTX model without accepting adjacent products.
+
+    NVIDIA device strings often add ``GeForce`` and a trailing ``GPU``.  Those
+    words are harmless, but Laptop, SUPER, Ti, Max-Q and similar suffixes
+    identify different products whose measured launch policy must not leak.
+    """
+
+    tokens = _gpu_name_tokens(name)
+    model_token = str(model).lower()
+    if "rtx" not in tokens or model_token not in tokens:
+        return False
+    model_index = tokens.index(model_token)
+    suffix = tokens[model_index + 1 :]
+    return bool(
+        not {"laptop", "mobile", "maxq", "max", "q", "super", "ti"}.intersection(tokens)
+        and all(token == "gpu" for token in suffix)
+    )
+
+
+def is_tesla_t4_name(name: str) -> bool:
+    """Match the exact T4 product token without accepting names like T400."""
+
+    return "t4" in _gpu_name_tokens(name)
 
 
 @dataclass(frozen=True)
@@ -502,9 +571,12 @@ def detect_gpu_profile(device: int | str | None = None, torch_module: Any | None
         return classify_gpu(None, None, is_hip=is_hip)
 
     try:
-        index = 0 if device is None else torch_module.device(device).index
-        if index is None:
+        if device is None:
             index = int(cuda.current_device())
+        else:
+            index = torch_module.device(device).index
+            if index is None:
+                index = int(cuda.current_device())
     except Exception:
         index = 0
     try:
@@ -604,7 +676,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ),
         )
     if family == "ampere":
-        is_3090 = "3090" in profile.name.lower()
+        is_3090 = is_rtx_model_name(profile.name, "3090")
         return KernelPolicy(
             profile=profile,
             fast_prefill=is_3090,
@@ -714,8 +786,8 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ),
         )
     if family == "ada":
-        is_4090 = "4090" in profile.name.lower()
-        is_4080 = "4080" in profile.name.lower()
+        is_4090 = is_rtx_model_name(profile.name, "4090")
+        is_4080 = is_rtx_model_name(profile.name, "4080")
         rtx4080_prefill_shapes = (
             tuple(
                 (hidden, 24, batch, tokens)
@@ -782,7 +854,9 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_prefill_scan=is_4090 or is_4080,
             fused_prefill_self_chunk=is_4080,
             prefill_self_chunk_min_tokens=1024,
-            prefill_self_chunk_size=32,
+            # Keep the exact 4080 row-32 tile card-local.  The 4090 acceptance
+            # matrix explicitly selected row 16 when enabling self-chunk.
+            prefill_self_chunk_size=32 if is_4080 else 16,
             prefill_self_chunk_shape_sizes=(
                 ((1, 512, 32), (1, 2048, 32)) if is_4080 else ()
             ),
@@ -847,7 +921,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             notes="Hopper profile: stable output fusions on; H100-specific projection/quant kernels require sweep rows",
         )
     if family == "blackwell":
-        is_5090 = "5090" in profile.name.lower()
+        is_5090 = is_rtx_model_name(profile.name, "5090")
         production_prefill_graph_shapes = (
             (2560, 32, 1, 128),
             (2560, 32, 1, 512),

@@ -24,7 +24,7 @@ WARMUP="${WARMUP:-1}"
 RUNS="${RUNS:-3}"
 PREFILL_CHUNK_SIZE="${PREFILL_CHUNK_SIZE:-512}"
 BATCH_SIZES="${BATCH_SIZES:-8}"
-REQUIRED_GPU_SUBSTRING="${REQUIRED_GPU_SUBSTRING:-RTX 4090}"
+REQUIRED_GPU_MODEL="${REQUIRED_GPU_MODEL:-4090}"
 BENCHMARK_MATRIX="${BENCHMARK_MATRIX:-qwen35_4090_hf_final}"
 QWEN_CONV_BACKEND="${QWEN_CONV_BACKEND:-auto}"
 REQUIRE_QWEN_FULL_FUSED="${REQUIRE_QWEN_FULL_FUSED:-0}"
@@ -43,8 +43,9 @@ import torch
 print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "")
 PY
 )"
-if [[ "${ALLOW_NON_4090:-0}" != "1" && "${gpu_name}" != *"${REQUIRED_GPU_SUBSTRING}"* ]]; then
-  echo "acceptance requires ${REQUIRED_GPU_SUBSTRING}; detected: ${gpu_name:-no CUDA GPU}" >&2
+if [[ "${ALLOW_NON_4090:-0}" != "1" ]] && ! "${PYTHON_BIN}" \
+  "${ROOT}/bench/check_exact_gpu.py" --model "${REQUIRED_GPU_MODEL}" --name "${gpu_name}"; then
+  echo "acceptance requires exact desktop RTX ${REQUIRED_GPU_MODEL}; detected: ${gpu_name:-no CUDA GPU}" >&2
   exit 2
 fi
 

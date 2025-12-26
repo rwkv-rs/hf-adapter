@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import gc
 import inspect
+import os
 import types
 
 try:  # pragma: no cover - optional dependency
@@ -40,7 +41,19 @@ def _clear_native_quant_caches(model, *, release_cuda: bool = False) -> None:
             delattr(model, attr)
     if release_cuda and torch is not None and torch.cuda.is_available():
         gc.collect()
-        torch.cuda.empty_cache()
+        try:
+            visible_cuda_devices = int(torch.cuda.device_count())
+        except Exception:
+            visible_cuda_devices = 1
+        allow_multi_gpu = os.environ.get(
+            "RWKV7_TORCHAO_EMPTY_CACHE_MULTI_GPU",
+            "0",
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        # empty_cache has process-wide allocator consequences on multi-GPU
+        # workers. Isolated quantization keeps the lower construction peak;
+        # heterogeneous serving workers retain other cards' warm pools.
+        if visible_cuda_devices <= 1 or allow_multi_gpu:
+            torch.cuda.empty_cache()
 
 
 def _fla_rwkv7_ffn_forward_fused_relu2(

@@ -34,6 +34,24 @@ try:
 except Exception:  # pragma: no cover - remote-code fallback
     current_kernel_policy = None  # type: ignore[assignment]
 
+try:
+    from .kernel_policy import is_rtx_model_name as _is_rtx_model_name
+except Exception:  # pragma: no cover - remote-code/backward-compatible fallback
+    def _is_rtx_model_name(name: str, model: str) -> bool:
+        normalized = "".join(
+            character if character.isalnum() else " "
+            for character in str(name).lower()
+        )
+        tokens = tuple(normalized.split())
+        model_token = str(model).lower()
+        if "rtx" not in tokens or model_token not in tokens:
+            return False
+        model_index = tokens.index(model_token)
+        return bool(
+            not {"laptop", "mobile", "maxq", "max", "q", "super", "ti"}.intersection(tokens)
+            and all(token == "gpu" for token in tokens[model_index + 1 :])
+        )
+
 from .native_quant_policy import normalize_native_mm_policy, should_quantize_linear
 
 try:
@@ -355,7 +373,7 @@ def _mm4_batched_dot_device_supported(major: int, minor: int, name: str) -> bool
         or (int(major), int(minor)) == (8, 6)
         or (
             (int(major), int(minor)) == (8, 9)
-            and "4090" in str(name).lower()
+            and _is_rtx_model_name(name, "4090")
         )
     )
 

@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
-export REQUIRED_GPU_SUBSTRING="RTX 5090"
+export REQUIRED_GPU_MODEL="5090"
 export BENCHMARK_MATRIX="${BENCHMARK_MATRIX:-qwen35_5090_hf_final}"
 # Blackwell validation must not depend on causal-conv1d extension availability.
 # The repository bridge binds FLA's compiled Triton prefill and cached update.
