@@ -96,9 +96,10 @@ def test_prefix_cache_lru_ttl_oversize_and_namespace_isolation() -> None:
 
 def test_generation_session_uses_exact_cache_without_state_aliasing() -> None:
     from rwkv7_hf.mlx_scheduler import create_cached_mlx_generation_session
-    from tests.test_apple_silicon_mlx_model_smoke import TinyTokenizer
 
     model = _mlx_model()
+    from tests.test_apple_silicon_mlx_model_smoke import TinyTokenizer
+
     tokenizer = TinyTokenizer()
     cache = MLXPrefixStateCache(
         model,

@@ -19,6 +19,14 @@ def test_prefill_breakdown_accepts_native_model_pack_api() -> None:
 def test_native_prefill_graph_is_explicit_and_signature_tracks_flags(monkeypatch) -> None:
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
     monkeypatch.setattr(native_model, "_native_jit_prefill", object())
+    monkeypatch.setattr(
+        native_model,
+        "current_kernel_policy",
+        lambda **_kwargs: SimpleNamespace(
+            prefill_graph=False,
+            prefill_graph_model_shapes=(),
+        ),
+    )
     monkeypatch.delenv("RWKV7_NATIVE_PREFILL_GRAPH", raising=False)
     assert not native_model._native_prefill_graph_enabled()
 

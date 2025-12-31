@@ -153,6 +153,11 @@ python tests\test_device_map_generate.py --model C:\path\to\model-hf --dtype fp1
 成功时打印 `PASS`，表示测试模型的 HF 分层放置和输出一致。该路线按层分配模型；
 性能评估请同时记录单卡参考和跨卡传递开销，小模型通常优先使用单卡。
 
+跨卡 recurrent state 默认采用 fail-closed 的主机中转，兼容“驱动报告支持 P2P、
+但大尺寸 peer copy 静默损坏”的虚拟化 PCIe 环境。只有已经单独验证 P2P 的部署才应
+设置 `RWKV7_CUDA_PEER_COPY=1`，并且必须重新执行上面的
+`--compare-single-device` 一致性验收。
+
 ## 4. 多卡训练：DeepSpeed ZeRO-2/3
 
 ZeRO-2 切分 optimizer state 和 gradient，ZeRO-3 进一步切分 parameter。该流程请在
