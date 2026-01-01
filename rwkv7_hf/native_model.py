@@ -829,6 +829,61 @@ def _validate_native_attention_mask(
     return mask
 
 
+def _zero3_pad_native_training_batch(
+    model: nn.Module,
+    input_ids: torch.Tensor | None,
+    inputs_embeds: torch.Tensor | None,
+    attention_mask: torch.Tensor | None,
+    labels: torch.Tensor,
+    *,
+    pad_token_id: int,
+):
+    """Pad rank-local ZeRO-3 training inputs to one global sequence length.
+
+    Native recurrence invokes child modules once per token. ZeRO-3 installs
+    parameter-gather hooks on those children, so every rank must execute the
+    same number of hooks even when its locally padded batch is shorter.
+    """
+
+    try:
+        first_param = next(model.parameters())
+    except StopIteration:
+        return input_ids, inputs_embeds, attention_mask, labels, int(labels.shape[1])
+    is_zero3 = hasattr(first_param, "ds_id") and hasattr(first_param, "ds_status")
+    distributed = torch.distributed
+    if not (
+        is_zero3
+        and distributed.is_available()
+        and distributed.is_initialized()
+        and distributed.get_world_size() > 1
+    ):
+        return input_ids, inputs_embeds, attention_mask, labels, int(labels.shape[1])
+
+    local_seq_len = int(labels.shape[1])
+    device = input_ids.device if input_ids is not None else inputs_embeds.device
+    global_length = torch.tensor(local_seq_len, device=device, dtype=torch.int64)
+    distributed.all_reduce(global_length, op=distributed.ReduceOp.MAX)
+    global_seq_len = int(global_length.item())
+    pad_len = global_seq_len - local_seq_len
+    if pad_len <= 0:
+        return input_ids, inputs_embeds, attention_mask, labels, local_seq_len
+
+    if input_ids is not None:
+        input_ids = F.pad(input_ids, (0, pad_len), value=int(pad_token_id))
+    if inputs_embeds is not None:
+        inputs_embeds = F.pad(inputs_embeds, (0, 0, 0, pad_len), value=0.0)
+    if attention_mask is None:
+        attention_mask = torch.ones(
+            labels.shape[0],
+            local_seq_len,
+            device=device,
+            dtype=torch.long,
+        )
+    attention_mask = F.pad(attention_mask, (0, pad_len), value=0)
+    labels = F.pad(labels, (0, pad_len), value=-100)
+    return input_ids, inputs_embeds, attention_mask, labels, local_seq_len
+
+
 def _blend_native_recurrent_state(mask: torch.Tensor, old_state, state, old_xpa, xpa, old_xpf, xpf, old_v_first, v_first):
     """Keep old recurrent rows where ``mask`` is false."""
 
@@ -2843,6 +2898,21 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
                 raise ValueError("NativeRWKV7ForCausalLM labels must have the same shape as inputs")
             if native_cache is not None:
                 raise ValueError("NativeRWKV7ForCausalLM does not support labels with past_key_values")
+            input_ids, inputs_embeds, attention_mask, labels, local_seq_len = _zero3_pad_native_training_batch(
+                self,
+                input_ids,
+                inputs_embeds,
+                attention_mask,
+                labels,
+                pad_token_id=int(getattr(self.config, "pad_token_id", 0) or 0),
+            )
+            seq_len = int(labels.shape[1])
+            native_attention_mask = _validate_native_attention_mask(
+                attention_mask,
+                batch_size,
+                seq_len,
+                device=device,
+            )
             state, xpa, xpf, v_first = _init_state_batched(self, batch_size, device, dtype)
             logits, state, xpa, xpf, v_first, last_hidden_state, hidden_states = self._run(
                 input_ids,
@@ -2866,7 +2936,11 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
                     shift_labels.view(-1),
                     ignore_index=-100,
                 )
-            new_cache = NativeRWKV7Cache(state, xpa, xpf, v_first, seen_tokens=seq_len) if use_cache else None
+            if seq_len != local_seq_len:
+                logits = logits[:, :local_seq_len]
+                if hidden_states is not None:
+                    hidden_states = tuple(value[:, :local_seq_len] for value in hidden_states)
+            new_cache = NativeRWKV7Cache(state, xpa, xpf, v_first, seen_tokens=local_seq_len) if use_cache else None
             new_cache = _maybe_legacy_native_cache(new_cache, return_legacy_cache)
             if not return_dict:
                 values = (loss, logits, new_cache, hidden_states)

@@ -238,6 +238,12 @@ def load_lora_model(model_path: str, attn_mode: str, train_dtype: str):
         lora_dropout=0.0,
         target_modules=["r_proj", "k_proj", "v_proj", "o_proj", "key", "value"],
     )
+    # DeepSpeed broadcasts rank 0 parameters during initialization. Give every
+    # rank the same LoRA initialization first so the post-step delta measures
+    # optimizer work rather than that expected initialization broadcast.
+    torch.manual_seed(20260703)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(20260703)
     return get_peft_model(model, lora_cfg)
 
 
