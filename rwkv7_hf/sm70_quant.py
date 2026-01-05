@@ -40,7 +40,8 @@ torch::Tensor rwkv7_sm70_w4_relu2_cuda(torch::Tensor,torch::Tensor,torch::Tensor
 torch::Tensor rwkv7_sm70_w4_add_cuda(torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t);
 torch::Tensor rwkv7_sm70_w4_group_cuda(torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t,int64_t);
 torch::Tensor rwkv7_sm70_w4_group_out_cuda(torch::Tensor,torch::Tensor,torch::Tensor,torch::Tensor,int64_t,int64_t,int64_t,int64_t);
-PYBIND11_MODULE(TORCH_EXTENSION_NAME,m){m.def("w8",&rwkv7_sm70_w8_cuda);m.def("w8_out",&rwkv7_sm70_w8_out_cuda);m.def("w4",&rwkv7_sm70_w4_cuda);m.def("w4_out",&rwkv7_sm70_w4_out_cuda);m.def("w4_relu2",&rwkv7_sm70_w4_relu2_cuda);m.def("w4_add",&rwkv7_sm70_w4_add_cuda);m.def("w4_group",&rwkv7_sm70_w4_group_cuda);m.def("w4_group_out",&rwkv7_sm70_w4_group_out_cuda);}
+torch::Tensor rwkv7_sm70_w4_dequant_cuda(torch::Tensor,torch::Tensor,int64_t,int64_t);
+PYBIND11_MODULE(TORCH_EXTENSION_NAME,m){m.def("w8",&rwkv7_sm70_w8_cuda);m.def("w8_out",&rwkv7_sm70_w8_out_cuda);m.def("w4",&rwkv7_sm70_w4_cuda);m.def("w4_out",&rwkv7_sm70_w4_out_cuda);m.def("w4_relu2",&rwkv7_sm70_w4_relu2_cuda);m.def("w4_add",&rwkv7_sm70_w4_add_cuda);m.def("w4_group",&rwkv7_sm70_w4_group_cuda);m.def("w4_group_out",&rwkv7_sm70_w4_group_out_cuda);m.def("w4_dequant",&rwkv7_sm70_w4_dequant_cuda);}
 """
 _CUDA = r"""
 #include <torch/extension.h>
@@ -149,6 +150,12 @@ __global__ void w4g_dp4a_bn_tn(int M,int K,int N,int KH,int G,const signed char*
   for(int m=0;m<8;m++)if(mb+m<M){float v=half_warp_sum(acc[t][m]);if(lane==0)y[(int64_t)(mb+m)*N+n]=__float2half_rn(v*__half2float(xs[mb+m]));}
  }}
 }
+__global__ void w4_dequant_half(int total,int K,int KH,int G,int GS,const unsigned char* q,const half* ws,half* w){
+ int i=blockIdx.x*blockDim.x+threadIdx.x;if(i>=total)return;int n=i/K,k=i-n*K;
+ unsigned char b=q[(int64_t)n*KH+(k>>1)];int v=(k&1)?int(b>>4):int(b&15);
+ float s=GS?__half2float(ws[(int64_t)n*G+k/GS]):__half2float(ws[n]);
+ w[i]=__float2half_rn(float(v-8)*s);
+}
 void check(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int N){TORCH_CHECK(x.is_cuda()&&q.is_cuda()&&s.is_cuda()&&y.is_cuda(),"CUDA required");TORCH_CHECK(x.scalar_type()==at::kHalf&&s.scalar_type()==at::kHalf&&y.scalar_type()==at::kHalf,"fp16 activation/scales/output required");TORCH_CHECK(x.dim()==2&&x.is_contiguous()&&q.is_contiguous()&&s.is_contiguous()&&y.is_contiguous(),"contiguous rank-2 activation required");TORCH_CHECK(x.size(1)%8==0&&x.size(0)>0,"K multiple of 8 and non-empty M required");TORCH_CHECK(y.size(0)==x.size(0)&&y.size(1)==N,"output shape mismatch");}
 torch::Tensor run8(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int th){int M=x.size(0),K=x.size(1),N=q.size(0);check(x,q,s,y,N);TORCH_CHECK(q.scalar_type()==at::kChar&&q.size(1)==K,"int8 weight shape mismatch");auto st=at::cuda::getCurrentCUDAStream();if(M==1){w8_a16_single<<<dim3((N+(th/32)-1)/(th/32)),th,0,st>>>(K,N,(half*)x.data_ptr<at::Half>(),(signed char*)q.data_ptr<int8_t>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());}else{auto qa=torch::empty({M,K},q.options());auto as=torch::empty({M},s.options());quant_a8<<<M,256,0,st>>>(M,K,(half*)x.data_ptr<at::Half>(),(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>());if(M>=16){auto acc=torch::empty({M,N},q.options().dtype(torch::kInt32));int alpha=1,beta=0;auto handle=at::cuda::getCurrentCUDABlasHandle();auto status=cublasGemmEx(handle,CUBLAS_OP_T,CUBLAS_OP_N,N,M,K,&alpha,q.data_ptr<int8_t>(),CUDA_R_8I,K,qa.data_ptr<int8_t>(),CUDA_R_8I,K,&beta,acc.data_ptr<int>(),CUDA_R_32I,N,CUBLAS_COMPUTE_32I,CUBLAS_GEMM_DEFAULT_TENSOR_OP);TORCH_CHECK(status==CUBLAS_STATUS_SUCCESS,"sm75 W8 cublasGemmEx failed with status ",int(status));int total=M*N;w8_i32_dequant<<<(total+255)/256,256,0,st>>>(M,N,acc.data_ptr<int>(),(half*)as.data_ptr<at::Half>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());}else{w8_dp4a<<<dim3((N+(th/32)-1)/(th/32),(M+7)/8),th,0,st>>>(M,K,N,(signed char*)qa.data_ptr<int8_t>(),(half*)as.data_ptr<at::Half>(),(signed char*)q.data_ptr<int8_t>(),(half*)s.data_ptr<at::Half>(),(half*)y.data_ptr<at::Half>());}}C10_CUDA_KERNEL_LAUNCH_CHECK();return y;}
 template<int MODE>
@@ -173,6 +180,7 @@ torch::Tensor rwkv7_sm70_w4_relu2_cuda(torch::Tensor x,torch::Tensor q,torch::Te
 torch::Tensor rwkv7_sm70_w4_add_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor residual,int64_t N,int64_t bn,int64_t tn){auto y=torch::empty_like(residual);return run4<2>(x,q,s,residual,y,N,bn,tn);}
 torch::Tensor rwkv7_sm70_w4_group_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,int64_t N,int64_t gs,int64_t bn,int64_t tn){auto y=torch::empty({x.size(0),N},x.options());return run4g(x,q,s,y,N,gs,bn,tn);}
 torch::Tensor rwkv7_sm70_w4_group_out_cuda(torch::Tensor x,torch::Tensor q,torch::Tensor s,torch::Tensor y,int64_t N,int64_t gs,int64_t bn,int64_t tn){return run4g(x,q,s,y,N,gs,bn,tn);}
+torch::Tensor rwkv7_sm70_w4_dequant_cuda(torch::Tensor q,torch::Tensor s,int64_t K,int64_t gs){int N=q.size(0),KH=q.size(1),G=gs?K/gs:1;TORCH_CHECK(q.is_cuda()&&s.is_cuda()&&q.scalar_type()==at::kByte&&s.scalar_type()==at::kHalf&&q.is_contiguous()&&s.is_contiguous()&&KH*2==K,"sm70 W4 dequant input mismatch");TORCH_CHECK(gs==0||((gs==128||gs==256)&&K%gs==0&&s.dim()==2&&s.size(0)==N&&s.size(1)==G),"sm70 W4 groupwise dequant scale mismatch");if(gs==0)TORCH_CHECK(s.numel()==N,"sm70 W4 rowwise dequant scale mismatch");auto w=torch::empty({N,K},s.options());int total=N*K;w4_dequant_half<<<(total+255)/256,256,0,at::cuda::getCurrentCUDAStream()>>>(total,K,KH,G,gs,(unsigned char*)q.data_ptr<uint8_t>(),(half*)s.data_ptr<at::Half>(),(half*)w.data_ptr<at::Half>());C10_CUDA_KERNEL_LAUNCH_CHECK();return w;}
 """
 
 _EXT = None
@@ -289,6 +297,29 @@ def is_sm70(device=None):
     return tuple(torch.cuda.get_device_capability(i)) == (7, 0)
 
 
+def _w4_prefill_backend(rows: int, *, exact_sm70: bool, requested: str = "auto") -> str:
+    """Resolve the large-row W4 implementation without widening card scope."""
+
+    value = str(requested or "auto").strip().lower().replace("-", "_")
+    if value not in {"auto", "dp4a", "dequant_blas"}:
+        raise ValueError(
+            "RWKV7_SM70_W4_PREFILL_BACKEND must be auto, dp4a, or dequant_blas"
+        )
+    if not exact_sm70 or int(rows) < 16:
+        return "dp4a"
+    return "dequant_blas" if value == "auto" else value
+
+
+def sm70_w4_prefill_backend(rows: int, device=None) -> str:
+    """Return the exact-sm70 large-row W4 route selected for this process."""
+
+    return _w4_prefill_backend(
+        int(rows),
+        exact_sm70=is_sm70(device),
+        requested=os.environ.get("RWKV7_SM70_W4_PREFILL_BACKEND", "auto"),
+    )
+
+
 def is_sm7x_quant_device(device=None):
     """Whether a measured sm7x DP4A quant profile may run."""
 
@@ -397,7 +428,7 @@ def _load():
 
                 ld = [f"-L{rt}", f"-Wl,-rpath,{rt}"] if rt is not None else []
                 _EXT = load_inline(
-                    name="rwkv7_sm7x_quant_v22",
+                    name="rwkv7_sm7x_quant_v23",
                     cpp_sources=_CPP,
                     cuda_sources=_CUDA,
                     functions=None,
@@ -491,6 +522,13 @@ def w4_linear(x, q, s, out_features, in_features, out=None):
             out.copy_(result)
             return out
         return result
+    if (
+        out is None
+        and sm70_w4_prefill_backend(int(x2.shape[0]), x2.device)
+        == "dequant_blas"
+    ):
+        y = F.linear(x2, e.w4_dequant(q, s, int(in_features), 0))
+        return y.reshape(*x.shape[:-1], out_features)
     bn, tn = sm70_w4_bn_tn_config(
         int(x2.shape[0]), int(in_features), int(out_features)
     )
@@ -542,6 +580,16 @@ def w4_groupwise_linear(
             out.copy_(result)
             return out
         return result
+    if (
+        out is None
+        and sm70_w4_prefill_backend(int(x2.shape[0]), x2.device)
+        == "dequant_blas"
+    ):
+        y = F.linear(
+            x2,
+            e.w4_dequant(q, scales, int(in_features), group_size),
+        )
+        return y.reshape(*x.shape[:-1], out_features)
     bn, tn = sm70_w4_group_bn_tn_config(
         int(x2.shape[0]),
         int(in_features),

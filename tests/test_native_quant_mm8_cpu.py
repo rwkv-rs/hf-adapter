@@ -71,6 +71,7 @@ def main() -> int:
     out4_group256 = q4_group256(torch.randn(2, 256))
     assert out4_group256.shape == (2, 16)
     assert q4_group256.group_size == 256
+    assert q4_group256.groupwise
     assert torch.isfinite(out4_group256).all()
 
     # Direct matmul_triton wrapper should also fall back for CPU or large 2D
