@@ -258,6 +258,25 @@ priority ordering below; retain it as provenance:
 - Canonical evidence:
   `bench/v100_sm70_mm4_bntn_20260716/README.md`.
 
+## Current V100 Packed-MM4 Prefill Update (2026-07-23)
+
+- Exact-sm70 W4 prefill with at least 16 logical rows uses temporary FP16
+  dequantization plus cuBLAS. Cached decode, graph/direct-output calls, other
+  compute capabilities and smaller row counts retain DP4A. The override is
+  `RWKV7_SM70_W4_PREFILL_BACKEND={auto,dp4a,dequant_blas}`; `auto` is
+  fail-closed outside exact `sm_70`.
+- 1.5B `memory + group128` P128/D128 B1/B8 prefill improves from forced-DP4A
+  `0.2820x/0.1171x` to `0.7816x/0.9076x` paired FP16 (`2.790x/7.731x`
+  quantized tok/s). Footprint remains `0.5395x`, decode remains
+  `1.1786x/1.0411x`, and complete greedy/repeat gates pass. This remains a
+  capacity lane because prefill is still below fp16.
+- The distinct 1.5B `speed + group256 + lm_head` profile passes the strict
+  P128/D128 B1/B2/B4/B8 all-phase gate: footprint `0.9344x`, prefill
+  `1.0032x-1.0119x`, decode `1.0011x-1.0353x`, final cosine
+  `>=0.99978340`, complete greedy equality and repeat determinism. Group256
+  must instantiate real groupwise storage; rowwise fallback is a bug.
+- Evidence: `bench/v100_sm70_prefill_dequant_20260723/README.md`.
+
 ## Parallel Prefill Goal: DPLR/WY Compiled Prototype
 
 Active branch work is now the opt-in DPLR/WY compiled prefill backend, not
@@ -890,7 +909,11 @@ Run this checklist for every new GPU before marking it as supported:
   card-local footprint, speed, and logits/greedy-token parity rows.
 - Exact MM4 exception: the 2026-07-16 named 1.5B/7.2B memory profiles pass the
   seven-cell cached-decode gate; this does not promote their prefill path or
-  any unmeasured model. The 2.9B promoted profile is speed/group256.
+  any unmeasured model. The 2.9B promoted profile is speed/group256. The
+  2026-07-23 1.5B speed/group256 profile separately passes P128/D128
+  B1/B2/B4/B8 all-phase gates. Exact-sm70 long-row dequant+BLAS is the default
+  packed-W4 prefill backend, but the 1.5B memory profile remains a capacity
+  lane at `0.7816x/0.9076x` paired-fp16 B1/B8 prefill.
 - Promotion rule: any default change must preserve V100 training and decode rows.
 
 #### Turing / RTX 20 / T4 (`sm_75`)

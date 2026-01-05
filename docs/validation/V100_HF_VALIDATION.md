@@ -1,7 +1,7 @@
 # V100 HF validation matrix
 
-Validation date: 2026-07-02; ZeRO3 resume addendum: 2026-07-03; performance
-addenda: 2026-07-10, 2026-07-11 and 2026-07-15
+Validation date: 2026-07-02; ZeRO3 resume addenda: 2026-07-03 and 2026-07-22;
+performance addenda: 2026-07-10, 2026-07-11 and 2026-07-15
 Base commit: `4528756` (`tests: record DeepSpeed ZeRO smoke passes (#64)`)
 Server: `2 x Tesla V100-PCIE-32GB`
 Main runtime: `torch 2.5.1+cu124`, `deepspeed 0.19.2`, `fused_recurrent` unless noted. ZeRO3 resume addendum runtime: `torch 2.8.0+cu126`, Transformers `4.57.1`, PEFT `0.19.1`, TRL `1.7.0`, DeepSpeed `0.19.2`.
@@ -51,6 +51,13 @@ Notes:
 - 1.5B ZeRO2 resume on 2 x V100: pass, `global_step=2`, `resume_loss=2.682713`.
 - 2.9B ZeRO2 resume on 2 x V100: pass, `global_step=2`, `resume_loss=2.671991`.
 - 0.1B ZeRO3 resume on 2 x V100: pass, `global_step=2`, `resume_loss=2.542516`, `first_max_trainable_delta=9.999999e-05` on rank 0, `resume_max_trainable_delta=0.0719312`, fp32 native/HF path, `max_length=8` (`bench/results_v100_zero3_resume_2gpu_20260703.jsonl`, log `bench/v100_zero3_resume_2gpu_20260703.log`).
+- 0.1B variable-rank-length resume on 2 x V100: ZeRO2 and ZeRO3 both pass,
+  `global_step=2`, `first_loss=4.857278`, `resume_loss=2.093085`, and both
+  trainable deltas are `9.9999997e-05` on both ranks. The two rank-local
+  examples tokenize to 11 and 14 tokens with `max_length=16`, directly
+  exercising global-length normalization rather than equal-length truncation.
+  Evidence: `bench/results_v100_zero23_resume_variable_length_20260722.jsonl`.
+  The post-fix V100 suite is `615 passed, 8 skipped`.
 
 ZeRO3 resume addendum command:
 
