@@ -129,6 +129,27 @@ def _native_graph_relayout_ffn_value_weight(module):
     return module.weight
 
 
+def _native_graph_try_relayout_ffn_value_weight(module) -> bool:
+    """Apply the fp16 sparse layout only to its exact dense-module contract.
+
+    Exact-card policy can enable low-memory sparse FFN packing by default, but
+    Hugging Face may replace an FFN projection with a BnB/Marlin/TorchAO
+    module. Those modules must remain callable graph operands; inspecting
+    their packed ``weight`` dtype as if it were a dense parameter makes a
+    validated 5090 policy reject otherwise supported W8/W4 models.
+    """
+
+    if type(module) is not torch.nn.Linear or module.bias is not None:
+        return False
+    weight = module.weight
+    if type(weight) is not torch.nn.Parameter:
+        return False
+    if weight.device.type != "cuda" or weight.dtype != torch.float16:
+        return False
+    _native_graph_relayout_ffn_value_weight(module)
+    return True
+
+
 def _native_bnb8_policy_flag(env_name: str, policy_name: str) -> bool:
     try:
         default = bool(getattr(_kernel_policy(), policy_name, False))
@@ -690,6 +711,7 @@ try:  # pragma: no cover - optional sm_89 sparse FFN contraction
         ada_ffn_up,
         ada_linear,
         ada_linear_should_use,
+        ada_sparse_ffn_deterministic4_should_use,
         ada_sparse_ffn_down_add,
         ada_sparse_ffn_pack_weight,
         ada_sparse_ffn_prepare_deterministic_scratch,
@@ -702,6 +724,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
             ada_ffn_up,
             ada_linear,
             ada_linear_should_use,
+            ada_sparse_ffn_deterministic4_should_use,
             ada_sparse_ffn_down_add,
             ada_sparse_ffn_pack_weight,
             ada_sparse_ffn_prepare_deterministic_scratch,
@@ -712,6 +735,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         ada_ffn_up = None  # type: ignore[assignment]
         ada_linear = None  # type: ignore[assignment]
         ada_linear_should_use = None  # type: ignore[assignment]
+        ada_sparse_ffn_deterministic4_should_use = None  # type: ignore[assignment]
         ada_sparse_ffn_down_add = None  # type: ignore[assignment]
         ada_sparse_ffn_pack_weight = None  # type: ignore[assignment]
         ada_sparse_ffn_prepare_deterministic_scratch = None  # type: ignore[assignment]
@@ -2494,7 +2518,10 @@ def prewarm_ada_sparse_ffn(packs, rows: int = 1) -> int:
                 str(getattr(_kernel_policy(), "ada_sparse_ffn_deterministic_splits", 0)),
             ).strip()
             == "4"
-            and int(rows) >= 8
+            and ada_sparse_ffn_deterministic4_should_use is not None
+            and ada_sparse_ffn_deterministic4_should_use(
+                int(rows), outputs, inputs
+            )
             and ada_sparse_ffn_prepare_deterministic_scratch is not None
         ):
             ada_sparse_ffn_prepare_deterministic_scratch(down_weight, int(rows))
@@ -2952,17 +2979,17 @@ def _extract_graph_current_device(model):
     stack_rkv = _native_graph_rkv_policy() == "vkwr_auto"
     embed_ref = model.model.embeddings.weight
     for i, layer in enumerate(layers):
-        if _native_graph_sparse_ffn_low_memory_pack_enabled():
+        if _native_graph_sparse_ffn_low_memory_pack_enabled() and (
+            type(layer.ffn.value) is torch.nn.Linear
+            and type(layer.ffn.value.weight) is torch.nn.Parameter
+            and layer.ffn.value.weight.device.type == "cuda"
+            and layer.ffn.value.weight.dtype == torch.float16
+        ):
             if model.training or torch.is_grad_enabled():
                 raise RuntimeError(
                     "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_LOW_MEMORY_PACK is inference-only"
                 )
-            value_weight = layer.ffn.value.weight
-            if value_weight.device.type != "cuda" or value_weight.dtype != torch.float16:
-                raise RuntimeError(
-                    "low-memory sparse FFN packing requires CUDA fp16 value weights"
-                )
-            _native_graph_relayout_ffn_value_weight(layer.ffn.value)
+            _native_graph_try_relayout_ffn_value_weight(layer.ffn.value)
         a = layer.attn
         vl = getattr(a, "v_lora", None)
         if vl is not None:
