@@ -1327,6 +1327,22 @@ def ada_sparse_ffn_should_use(rows: int, outputs: int, inputs: int) -> bool:
     return 1 <= rows <= 19 and inputs == 4 * outputs and outputs % 256 == 0
 
 
+def ada_sparse_ffn_deterministic4_should_use(
+    rows: int,
+    outputs: int,
+    inputs: int,
+) -> bool:
+    """Match the stricter CUDA ABI of the four-way deterministic reducer."""
+
+    rows, outputs, inputs = int(rows), int(outputs), int(inputs)
+    return bool(
+        8 <= rows <= 19
+        and inputs == 4 * outputs
+        and inputs % 2048 == 0
+        and outputs % 512 == 0
+    )
+
+
 def ada_ffn_up_should_use(rows: int, outputs: int, inputs: int) -> bool:
     rows, outputs, inputs = int(rows), int(outputs), int(inputs)
     return 1 <= rows <= 2 and outputs == 4 * inputs and inputs % 256 == 0
@@ -1549,7 +1565,10 @@ def ada_sparse_ffn_down_add(
     )
     if deterministic_splits not in {0, 4}:
         raise ValueError("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_DETERMINISTIC_SPLITS must be 0 or 4")
-    deterministic = deterministic_splits == 4 and rows >= 8
+    deterministic = bool(
+        deterministic_splits == 4
+        and ada_sparse_ffn_deterministic4_should_use(rows, outputs, inputs)
+    )
     scratch = ada_sparse_ffn_prepare_fp32_scratch(weight, rows) if fp32_accum else None
     deterministic_scratch = (
         ada_sparse_ffn_prepare_deterministic_scratch(weight, rows)
@@ -1669,6 +1688,7 @@ __all__ = [
     "ada_linear_should_use",
     "ada_sparse_ffn_available",
     "ada_sparse_ffn_build_error",
+    "ada_sparse_ffn_deterministic4_should_use",
     "ada_sparse_ffn_down_add",
     "ada_sparse_ffn_pack_weight",
     "ada_sparse_ffn_prepare_deterministic_scratch",
