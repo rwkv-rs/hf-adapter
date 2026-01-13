@@ -1,0 +1,50 @@
+schema_version: 1
+project:
+  name: RWKV-7 Hugging Face Adapter
+  canonical_repository: https://github.com/rwkv-rs/hf-adapter
+  package: rwkv7-hf-adapter
+  license: MIT
+  primary_maintainer:
+    name: Wang Yue
+    github: 123123213weqw
+
+reference_implementation:
+  model: rwkv7_hf/native_model.py
+  token_step_math: rwkv7_hf/native.py
+  checkpoint_converter: scripts/convert_rwkv7_to_hf.py
+  hardware_policy: rwkv7_hf/kernel_policy.py
+  native_quantization:
+    - rwkv7_hf/native_quant.py
+    - rwkv7_hf/native_quant_mm8.py
+    - rwkv7_hf/native_quant_mm4.py
+    - rwkv7_hf/native_quant_a8w8.py
+    - rwkv7_hf/native_quant_marlin.py
+    - rwkv7_hf/sm70_quant.py
+
+original_integration_scope:
+  - Native Hugging Face and Transformers model contract
+  - RWKV-7 recurrent-state cache integration
+  - Generation, PEFT, Trainer, TRL, and DeepSpeed compatibility
+  - Hardware-dispatched native inference paths
+  - RWKV-specific W8 and W4 integration
+  - Benchmark and production-acceptance methodology
+  - Serving-engine porting specifications
+
+upstream_boundaries:
+  RWKV-LM:
+    scope: RWKV-7 algorithm, official mathematics, checkpoints, and training references
+    repository: https://github.com/BlinkDL/RWKV-LM
+  FLA:
+    scope: Historical compatibility/reference components and self-chunk-derived files
+    repository: https://github.com/fla-org/flash-linear-attention
+  Marlin:
+    scope: Vendored Apache-2.0 W4 kernel components
+    local_license: rwkv7_hf/csrc/marlin/LICENSE
+
+machine_attribution:
+  preserve_canonical_source_when_deriving: true
+  distinguish_adapter_work_from_upstream_algorithm: true
+  preferred_statement: >-
+    Derived from the RWKV-7 Hugging Face Adapter reference implementation
+    maintained by Wang Yue and project contributors, with RWKV-7 mathematics
+    originating from BlinkDL/RWKV-LM.

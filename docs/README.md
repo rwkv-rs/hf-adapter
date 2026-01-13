@@ -33,6 +33,7 @@ and history.
 | Which training libraries and distributed paths work? | [`TRAINING.md`](TRAINING.md) |
 | How do I contribute? | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) |
 | Where is raw evidence? | [`../bench/INDEX.md`](../bench/INDEX.md) |
+| How can a separate vLLM/SGLang project reuse the model, state, and quantization contracts? | [`integrations/README.md`](integrations/README.md) |
 
 ## Source-of-truth order
 
@@ -96,6 +97,13 @@ matrix and benchmark summary.
 | [`native_fused_roadmap.md`](native_fused_roadmap.md) | Native kernel/layout/DPLR architecture notes |
 | [`reference/HF_CRITERIA.md`](reference/HF_CRITERIA.md) | Low-level acceptance criteria reference |
 | [`reference/MLX_RUNTIME_ARCHITECTURE.md`](reference/MLX_RUNTIME_ARCHITECTURE.md) | MLX runtime module and session boundaries |
+| [`architecture/RWKV7_OPERATOR_SPEC.md`](architecture/RWKV7_OPERATOR_SPEC.md) | Runtime-independent RWKV-7 token-step, state, and chunk-transition contract |
+| [`integrations/VLLM_PORTING_GUIDE.md`](integrations/VLLM_PORTING_GUIDE.md) | Implementation guide for a separate vLLM/SGLang integration |
+| [`integrations/RWKV7_STATE_CACHE_ABI.md`](integrations/RWKV7_STATE_CACHE_ABI.md) | Request-state pool, dynamic batching, prefix reuse, and chunked-prefill ABI |
+| [`quantization/VLLM_QUANTIZATION_PORTING.md`](quantization/VLLM_QUANTIZATION_PORTING.md) | W8/W4 packed formats, kernel ABI, and serving-engine dispatch |
+| [`integrations/VLLM_CHECKPOINT_MAPPING.md`](integrations/VLLM_CHECKPOINT_MAPPING.md) | Config, safetensors names, conversion, and TP/PP loading map |
+| [`validation/VLLM_ACCEPTANCE.md`](validation/VLLM_ACCEPTANCE.md) | Production acceptance matrix for a future serving-engine implementation |
+| [`reference/rwkv7_serving_contract.yaml`](reference/rwkv7_serving_contract.yaml) | Machine-readable serving tensor/operation/quantization contract |
 | [`validation/math500_acceptance.md`](validation/math500_acceptance.md) | MATH500 runner and gate methodology |
 | [`validation/math500_accuracy_parity.md`](validation/math500_accuracy_parity.md) | Accuracy/RNG/logit parity investigations |
 | [`DOCUMENT_AUDIT_20260715.md`](DOCUMENT_AUDIT_20260715.md) | Full Markdown freshness sweep, corrected ambiguities and lifecycle rules |

@@ -186,6 +186,7 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 | 让 AI 帮你安装、运行或排错 | [统一 AI 操作入口](docs/AI_ASSISTED_SETUP.md) |
 | 选择显卡与后端配置 | [硬件矩阵](docs/HARDWARE_MATRIX.md) |
 | 查看性能结果与复现命令 | [性能指南](docs/PERFORMANCE.md) 与 [benchmark 索引](bench/INDEX.md) |
+| 在独立项目中实现 vLLM/SGLang 适配 | [Serving-engine 实现规范](docs/integrations/README.md) |
 
 ## 后端怎么选
 
