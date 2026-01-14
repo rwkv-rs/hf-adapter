@@ -1,0 +1,41 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_default_manifest_is_exhaustive_and_rendered_without_drift ________
+
+    def test_default_manifest_is_exhaustive_and_rendered_without_drift() -> None:
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        gates = manifest["gates"]
+        assert len(gates) >= 145
+        assert all(gate.get("required", True) for gate in gates)
+        assert len({gate["id"] for gate in gates}) == len(gates)
+        assert {gate["category"] for gate in gates} == {
+            "release",
+            "hf_mps_inference",
+            "hf_mps_training",
+            "mlx_correctness",
+            "mlx_serving",
+            "performance",
+            "quantization",
+            "coreml_ane",
+            "reliability",
+            "hardware",
+        }
+
+        report = render(manifest, root=ROOT)
+        committed = (ROOT / "docs" / "hardware" / "APPLE_PRODUCTION_ACCEPTANCE.md").read_text(encoding="utf-8")
+>       assert report == committed
+E       AssertionError: assert '# Apple Sili...改硬门后必须重新生成。\n' == '# Apple Sili...改硬门后必须重新生成。\n'
+E
+E         Skipping 452 identical leading characters in diff, use -v to show
+E         - ** 当前通过 **50 / 149** 个必选硬门。任何 `FAIL`、`MISSING` 或 `UNKNOWN` 都禁止声明 Apple 生产级完成。
+E         ?           ^^
+E         + ** 当前通过 **39 / 149** 个必选硬门。任何 `FAIL`、`MISSING` 或 `UNKNOWN` 都禁止声明 Apple 生产级完成。
+E         ?           ^^
+E           ...
+E
+E         ...Full output truncated (291 lines hidden), use '-vv' to show
+
+tests/test_apple_production_acceptance.py:137: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_apple_production_acceptance.py::test_default_manifest_is_exhaustive_and_rendered_without_drift
+1 failed in 0.42s

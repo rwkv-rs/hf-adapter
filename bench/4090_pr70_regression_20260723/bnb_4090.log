@@ -1,0 +1,5 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights:  49%|████▉     | 195/399 [00:00<00:00, 1948.94it/s]Loading weights: 100%|██████████| 399/399 [00:00<00:00, 2214.36it/s]
+{"axis": "bnb_smoke", "quantization": 8, "status": "pass", "decode_backend": "eager", "logits_finite": true, "generated_shape": [1, 18], "module_counts": {"linear8": 72, "linear4": 0}, "peak_vram_mb": 319.5}
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights:  89%|████████▉ | 356/399 [00:00<00:00, 3558.08it/s]Loading weights: 100%|██████████| 399/399 [00:00<00:00, 3630.38it/s]
+{"axis": "bnb_smoke", "quantization": 4, "status": "pass", "decode_backend": "eager", "logits_finite": true, "generated_shape": [1, 18], "module_counts": {"linear8": 0, "linear4": 72}, "peak_vram_mb": 387.9}

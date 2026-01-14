@@ -1,0 +1,5 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+{"axis": "policy", "device": "NVIDIA GeForce RTX 4090", "family": "ada", "prefill_graph": true, "contains_5090_1p5b_graph_shape": false, "state_dtype": "fp32", "deterministic_splits": 0, "low_memory_pack": false}
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights: 100%|██████████| 399/399 [00:00<00:00, 5095.72it/s]
+{"axis": "real_model_smoke", "batch_size": 1, "status": "pass", "prefill_tokps": 23210.1, "decode_tokps": 1170.0, "decode_backend": "native_graph", "prefill_backend": "native_prefill_graph", "cache_type": "NativeRWKV7Cache", "logits_finite": true, "generated_shape": [1, 36], "peak_vram_mb": 491.2}
+{"axis": "real_model_smoke", "batch_size": 8, "status": "pass", "prefill_tokps": 142397.4, "decode_tokps": 6852.4, "decode_backend": "native_graph", "prefill_backend": "native_prefill_graph", "cache_type": "NativeRWKV7Cache", "logits_finite": true, "generated_shape": [1, 36], "peak_vram_mb": 549.6}
