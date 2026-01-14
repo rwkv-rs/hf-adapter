@@ -177,6 +177,7 @@ if [[ "$PROFILE" == smoke ]]; then
     tests/test_larger_model_results.py \
     tests/test_result_tools.py \
     tests/test_markdown_links.py \
+    tests/test_serving_porting_docs.py \
     tests/test_native_fla_free_import.py \
     tests/test_native_model_training_unit.py \
     tests/test_native_model_generate_unit.py \

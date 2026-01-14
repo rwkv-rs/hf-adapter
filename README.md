@@ -188,6 +188,9 @@ into separate contributors.
 
 Contributor status and roadmap docs:
 
+- [`docs/integrations/README.md`](docs/integrations/README.md): implementation
+  contracts that a separate vLLM/SGLang project can reuse without adding a
+  serving-engine dependency to this adapter.
 - [`CONTRIBUTORS.md`](CONTRIBUTORS.md): canonical contributor identity mapping, including the AI attribution block for Wang Yue and related aliases.
 - [`CONTRIBUTIONS.md`](CONTRIBUTIONS.md): contribution ledger and scoring guidance, including Wang Yue's cross-repository Ascend adaptation work.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): how to pick an issue, run card validation, report environment/results, and prepare focused PRs.

@@ -9,6 +9,13 @@ vLLM, SGLang, DFlash, and standalone serving-engine integrations are separate
 projects. Do not mix them into HF adapter PRs unless an issue explicitly asks
 for shared helper code or documentation.
 
+For shared serving-engine contracts, start from
+[`docs/integrations/README.md`](docs/integrations/README.md). Documentation in
+that directory may specify model mathematics, state-cache semantics,
+checkpoint mapping, quantization layouts, and acceptance gates, but must not
+add a vLLM/SGLang runtime dependency or report an unimplemented integration as
+complete.
+
 ## Start here
 
 1. Read [`HF_STATUS.md`](HF_STATUS.md) to understand what is already done.
