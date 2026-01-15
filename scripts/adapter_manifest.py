@@ -47,6 +47,7 @@ ADAPTER_FILES = [
     "mlx_wkv.py",
     "model_cache.py",
     "model_config.py",
+    "model_layers.py",
     "native.py",
     "native_jit.py",
     "native_graph_runtime.py",
