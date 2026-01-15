@@ -14,13 +14,22 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 from pathlib import Path
 
 try:
-    from scripts.adapter_manifest import ADAPTER_FILES, LEGACY_REMOTE_CODE_FILES
+    from scripts.adapter_manifest import (
+        ADAPTER_FILES,
+        LEGACY_REMOTE_CODE_FILES,
+        copy_manifest_files,
+        remove_manifest_files,
+    )
 except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
-    from adapter_manifest import ADAPTER_FILES, LEGACY_REMOTE_CODE_FILES
+    from adapter_manifest import (
+        ADAPTER_FILES,
+        LEGACY_REMOTE_CODE_FILES,
+        copy_manifest_files,
+        remove_manifest_files,
+    )
 
 
 def sync_one(model_dir: Path, *, dry_run: bool = False) -> dict:
@@ -32,23 +41,18 @@ def sync_one(model_dir: Path, *, dry_run: bool = False) -> dict:
     if not cfg_path.exists():
         raise FileNotFoundError(f"config.json not found in {model_dir}")
 
-    removed = []
-    for name in LEGACY_REMOTE_CODE_FILES:
-        path = model_dir / name
-        if path.exists():
-            removed.append(str(path))
-            if not dry_run:
-                path.unlink()
-
-    copied = []
-    for name in ADAPTER_FILES:
-        src = src_dir / name
-        dst = model_dir / name
-        if not src.exists():
-            raise FileNotFoundError(f"adapter source missing: {src}")
-        copied.append(str(dst))
-        if not dry_run:
-            shutil.copyfile(src, dst)
+    removed = [
+        str(path)
+        for path in remove_manifest_files(
+            model_dir, LEGACY_REMOTE_CODE_FILES, dry_run=dry_run
+        )
+    ]
+    copied = [
+        str(path)
+        for path in copy_manifest_files(
+            src_dir, model_dir, ADAPTER_FILES, dry_run=dry_run
+        )
+    ]
 
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
     cfg["architectures"] = ["NativeRWKV7ForCausalLM"]

@@ -71,7 +71,8 @@ Canonical converted `config.json` contains:
 ```
 
 Consequently, `native_model.py` must remain a usable top-level remote-code
-entry even after its implementation is split.
+entry even after its implementation is split. The source package may gain
+nested ownership directories before the converted-model import graph does.
 
 ## Intended package boundaries
 
@@ -133,17 +134,30 @@ This is a migration target, not permission for a mass move.
 
 Before moving runtime modules:
 
-- teach `scripts/adapter_manifest.py` to represent nested paths;
-- copy nested package directories during conversion and sync;
-- verify Hugging Face dynamic-module relative imports;
+- represent manifest paths with platform-independent `/` separators;
+- reject absolute paths, `..`, duplicate destinations and symlink escapes;
+- create nested destination directories during conversion and sync;
+- retain the current flat `auto_map` and runtime dependency graph until a
+  separate compatibility PR proves another layout;
 - load an old flat converted model after sync;
-- load a newly converted nested model offline;
 - verify save/reload and tokenizer loading.
+
+Nested manifest copying and nested Python imports are different contracts.
+Current Transformers dynamic-module discovery reliably follows sibling
+relative imports, but supported releases do not all resolve imports such as
+`from .model.config import ...` from a remote entrypoint. Therefore the initial
+packaging change ships only a nested package marker and must not move runtime
+dependencies behind a nested import. A later model split must either retain a
+flat remote-code dependency namespace or first prove a changed nested
+entrypoint through offline `AutoConfig`, `AutoModel`, save/reload and old-model
+sync tests across the supported Transformers range.
 
 ### 3. Model split
 
 Split `native_model.py` into config, cache, layers, model, and generation while
-retaining top-level re-exports. Do not change tensor names or state-dict keys.
+retaining top-level re-exports. Do not change tensor names or state-dict keys,
+and do not assume the installed-package directory layout can be copied directly
+into a Transformers dynamic-module cache.
 
 ### 4. Runtime and kernel split
 

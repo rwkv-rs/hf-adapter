@@ -8,6 +8,11 @@ import tempfile
 import types
 from pathlib import Path
 
+from scripts.adapter_manifest import (
+    copy_manifest_files as real_copy_manifest_files,
+    remove_manifest_files as real_remove_manifest_files,
+)
+
 
 class ShapeTensor:
     def __init__(self, *shape: int):
@@ -55,8 +60,10 @@ def install_stubs() -> None:
     sys.modules["rwkv7_hf.native_model"] = native_mod
 
     manifest_mod = types.ModuleType("adapter_manifest")
-    manifest_mod.ADAPTER_FILES = ()
-    manifest_mod.LEGACY_REMOTE_CODE_FILES = ()
+    manifest_mod.ADAPTER_FILES = ("remote_code/__init__.py",)
+    manifest_mod.LEGACY_REMOTE_CODE_FILES = ("modeling_rwkv7.py",)
+    manifest_mod.copy_manifest_files = real_copy_manifest_files
+    manifest_mod.remove_manifest_files = real_remove_manifest_files
     sys.modules["adapter_manifest"] = manifest_mod
     sys.modules["scripts.adapter_manifest"] = manifest_mod
 
@@ -124,9 +131,16 @@ def main() -> int:
     assert conv.NativeRWKV7ForCausalLM is DummyModel
 
     with tempfile.TemporaryDirectory() as td:
-        config_path = Path(td) / "config.json"
+        output = Path(td)
+        config_path = output / "config.json"
         config_path.write_text("{}\n", encoding="utf-8")
-        conv.patch_hf_metadata(Path(td))
+        (output / "modeling_rwkv7.py").write_text(
+            "stale legacy adapter\n", encoding="utf-8"
+        )
+        conv.copy_adapter_files(output, None)
+        assert (output / "remote_code" / "__init__.py").is_file()
+        assert not (output / "modeling_rwkv7.py").exists()
+        conv.patch_hf_metadata(output)
         metadata = json.loads(config_path.read_text(encoding="utf-8"))
         assert metadata["architectures"] == ["NativeRWKV7ForCausalLM"]
         assert metadata["model_type"] == "rwkv7_native"

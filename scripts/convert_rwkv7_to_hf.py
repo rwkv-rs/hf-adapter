@@ -19,9 +19,19 @@ from typing import Dict, Tuple
 import torch
 
 try:
-    from scripts.adapter_manifest import ADAPTER_FILES, LEGACY_REMOTE_CODE_FILES
+    from scripts.adapter_manifest import (
+        ADAPTER_FILES,
+        LEGACY_REMOTE_CODE_FILES,
+        copy_manifest_files,
+        remove_manifest_files,
+    )
 except ModuleNotFoundError:  # Direct ``python scripts/...`` execution.
-    from adapter_manifest import ADAPTER_FILES, LEGACY_REMOTE_CODE_FILES
+    from adapter_manifest import (
+        ADAPTER_FILES,
+        LEGACY_REMOTE_CODE_FILES,
+        copy_manifest_files,
+        remove_manifest_files,
+    )
 
 from rwkv7_hf.native_model import NativeRWKV7Config, NativeRWKV7ForCausalLM
 
@@ -269,10 +279,8 @@ def translate_name(name: str, num_layers: int) -> Tuple[str, bool]:
 
 def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
     root = Path(__file__).resolve().parents[1]
-    for name in LEGACY_REMOTE_CODE_FILES:
-        (output / name).unlink(missing_ok=True)
-    for name in ADAPTER_FILES:
-        shutil.copyfile(root / "rwkv7_hf" / name, output / name)
+    remove_manifest_files(output, LEGACY_REMOTE_CODE_FILES)
+    copy_manifest_files(root / "rwkv7_hf", output, ADAPTER_FILES)
     if vocab_file is not None:
         shutil.copyfile(vocab_file, output / "rwkv_vocab_v20230424.txt")
 
