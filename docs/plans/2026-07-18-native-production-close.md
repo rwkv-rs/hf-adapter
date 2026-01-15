@@ -1,5 +1,8 @@
 # Native Production Close Implementation Plan
 
+> **Historical implementation plan.** Preserve this file for rationale and
+> chronology; use `HF_STATUS.md` and `HF_TODO.md` for current work.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Close the remaining RTX 5090 native decode, prefill, inference-alignment, training-throughput, stability, and reproducibility gaps without weakening the existing correctness gates.

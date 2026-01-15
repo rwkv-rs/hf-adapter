@@ -1,5 +1,8 @@
 # Configurable Native train_temp training
 
+> **Historical design record.** Preserve this file for rationale and
+> chronology; use `HF_STATUS.md` and `HF_TODO.md` for current work.
+
 ## Goal
 
 Keep the pinned official runner unchanged while exposing the proven Native

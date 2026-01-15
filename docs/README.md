@@ -91,6 +91,7 @@ matrix and benchmark summary.
 
 | Document | Purpose |
 |---|---|
+| [`architecture/REPOSITORY_LAYOUT.md`](architecture/REPOSITORY_LAYOUT.md) | Current ownership boundaries, stable remote-code surface, and the staged source-layout migration plan |
 | [`BACKENDS.md`](BACKENDS.md) | Backend boundaries and rules for hardware-specific dispatch |
 | [`performance/FUSED_BACKEND.md`](performance/FUSED_BACKEND.md) | Fused fp16/quant kernel roadmap and target ladder |
 | [`performance/BN_TN_TUNING.md`](performance/BN_TN_TUNING.md) | Scalar negative evidence, promoted RTX 5090 exact-model Tensor Core BN/TN matrix, and V100 packed-MM4 decode profiles |
@@ -106,7 +107,9 @@ matrix and benchmark summary.
 | [`reference/rwkv7_serving_contract.yaml`](reference/rwkv7_serving_contract.yaml) | Machine-readable serving tensor/operation/quantization contract |
 | [`validation/math500_acceptance.md`](validation/math500_acceptance.md) | MATH500 runner and gate methodology |
 | [`validation/math500_accuracy_parity.md`](validation/math500_accuracy_parity.md) | Accuracy/RNG/logit parity investigations |
+| [`contributing/APPLE_VALIDATION.md`](contributing/APPLE_VALIDATION.md) | Full Apple contributor validation catalog split from the root contribution guide |
 | [`DOCUMENT_AUDIT_20260715.md`](DOCUMENT_AUDIT_20260715.md) | Full Markdown freshness sweep, corrected ambiguities and lifecycle rules |
+| [`archive/AGENTS_MILESTONES_202607.md`](archive/AGENTS_MILESTONES_202607.md) | Historical agent milestones preserved outside the active root instructions |
 | [`archive/NEXT_STEPS.md`](archive/NEXT_STEPS.md) | Historical plan only; not current TODO |
 
 ## Benchmark evidence workflow

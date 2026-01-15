@@ -13,11 +13,11 @@ def read(relative: str) -> str:
 
 def main() -> int:
     canonical_dates = {
-        "HF_STATUS.md": "2026-07-17",
-        "HF_TODO.md": "2026-07-16",
-        "BENCHMARK.md": "2026-07-17",
-        "docs/ACCEPTANCE.md": "2026-07-17",
-        "docs/HARDWARE_MATRIX.md": "2026-07-17",
+        "HF_STATUS.md": "2026-07-23",
+        "HF_TODO.md": "2026-07-23",
+        "BENCHMARK.md": "2026-07-20",
+        "docs/ACCEPTANCE.md": "2026-07-18",
+        "docs/HARDWARE_MATRIX.md": "2026-07-20",
     }
     for relative, expected_date in canonical_dates.items():
         text = read(relative)
