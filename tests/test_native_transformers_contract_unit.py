@@ -476,6 +476,8 @@ def main() -> int:
         assert saved_config["auto_map"]["AutoModelForCausalLM"] == "native_model.NativeRWKV7ForCausalLM"
         assert saved_config["tie_word_embeddings"] is False
         assert (out_dir / "native_model.py").exists()
+        assert (out_dir / "model_config.py").exists()
+        assert (out_dir / "model_cache.py").exists()
         reloaded_config = AutoConfig.from_pretrained(out_dir, trust_remote_code=True)
         assert reloaded_config.__class__.__name__ == "NativeRWKV7Config"
         reloaded_base = AutoModel.from_pretrained(out_dir, trust_remote_code=True).eval()

@@ -74,6 +74,19 @@ Consequently, `native_model.py` must remain a usable top-level remote-code
 entry even after its implementation is split. The source package may gain
 nested ownership directories before the converted-model import graph does.
 
+The first remote-safe model split keeps sibling modules flat:
+
+```text
+native_model.py      # stable Auto* entrypoint and public re-exports
+model_config.py      # NativeRWKV7Config implementation
+model_cache.py       # NativeRWKV7Cache and recurrent-cache helpers
+```
+
+`native_model.py` preserves the historical public module identity for the
+extracted classes so `save_pretrained()` continues to emit
+`native_model.NativeRWKV7*` metadata. Both implementation files are part of the
+adapter manifest and are copied into converted model directories.
+
 ## Intended package boundaries
 
 The long-term package may be organized as:

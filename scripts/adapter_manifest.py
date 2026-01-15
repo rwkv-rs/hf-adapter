@@ -45,6 +45,8 @@ ADAPTER_FILES = [
     "mlx_session.py",
     "mlx_state.py",
     "mlx_wkv.py",
+    "model_cache.py",
+    "model_config.py",
     "native.py",
     "native_jit.py",
     "native_graph_runtime.py",
