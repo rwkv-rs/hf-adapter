@@ -1,5 +1,8 @@
 # Native-Default RTX 5070 Implementation Plan
 
+> **Historical implementation plan.** Preserve this file for rationale and
+> chronology; use `HF_STATUS.md` and `HF_TODO.md` for current work.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Make the repository's RWKV-7 Hugging Face runtime native and FLA-free by default, connect the official `train_temp` CUDA training path directly to the native model, and validate the complete supported surface on one RTX 5070 Laptop GPU without regressing the existing accelerated decode path.
