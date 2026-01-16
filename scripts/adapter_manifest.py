@@ -49,6 +49,7 @@ ADAPTER_FILES = [
     "model_cache.py",
     "model_config.py",
     "model_layers.py",
+    "model_prefill_graph.py",
     "native.py",
     "native_jit.py",
     "native_graph_runtime.py",
