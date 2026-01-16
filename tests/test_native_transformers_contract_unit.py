@@ -479,6 +479,7 @@ def main() -> int:
         assert (out_dir / "model_config.py").exists()
         assert (out_dir / "model_cache.py").exists()
         assert (out_dir / "model_layers.py").exists()
+        assert (out_dir / "model_backbone.py").exists()
         reloaded_config = AutoConfig.from_pretrained(out_dir, trust_remote_code=True)
         assert reloaded_config.__class__.__name__ == "NativeRWKV7Config"
         reloaded_base = AutoModel.from_pretrained(out_dir, trust_remote_code=True).eval()

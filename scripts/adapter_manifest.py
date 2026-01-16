@@ -45,6 +45,7 @@ ADAPTER_FILES = [
     "mlx_session.py",
     "mlx_state.py",
     "mlx_wkv.py",
+    "model_backbone.py",
     "model_cache.py",
     "model_config.py",
     "model_layers.py",
