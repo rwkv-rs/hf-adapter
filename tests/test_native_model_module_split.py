@@ -16,19 +16,25 @@ def _top_level_definitions(relative: str) -> set[str]:
     }
 
 
-def test_config_and_cache_ownership_is_split_from_entrypoint() -> None:
+def test_native_model_ownership_is_split_from_entrypoint() -> None:
     entrypoint = _top_level_definitions("rwkv7_hf/native_model.py")
+    backbone = _top_level_definitions("rwkv7_hf/model_backbone.py")
     config = _top_level_definitions("rwkv7_hf/model_config.py")
     cache = _top_level_definitions("rwkv7_hf/model_cache.py")
     layers = _top_level_definitions("rwkv7_hf/model_layers.py")
+    prefill_graph = _top_level_definitions("rwkv7_hf/model_prefill_graph.py")
 
     assert "NativeRWKV7Config" not in entrypoint
     assert "NativeRWKV7Cache" not in entrypoint
     assert "NativeRWKV7Attention" not in entrypoint
     assert "NativeRWKV7FFN" not in entrypoint
     assert "NativeRWKV7Layer" not in entrypoint
+    assert "NativeRWKV7Model" not in entrypoint
+    assert "_NativePrefillGraphRunner" not in entrypoint
     assert "NativeRWKV7Config" in config
     assert "NativeRWKV7Cache" in cache
+    assert "NativeRWKV7Model" in backbone
+    assert "_NativePrefillGraphRunner" in prefill_graph
     assert {
         "NativeRWKV7Attention",
         "NativeRWKV7FFN",
@@ -41,10 +47,13 @@ def test_config_and_cache_ownership_is_split_from_entrypoint() -> None:
     assert "from .model_config import NativeRWKV7Config" in entrypoint_text
     assert "from .model_cache import (" in entrypoint_text
     assert "from .model_layers import (" in entrypoint_text
+    assert "from .model_backbone import (" in entrypoint_text
+    assert "from .model_prefill_graph import _NativePrefillGraphRunner" in entrypoint_text
 
 
 def test_public_import_identity_and_remote_module_name_stay_stable() -> None:
     import rwkv7_hf
+    from rwkv7_hf.model_backbone import NativeRWKV7Model as ModelImplementation
     from rwkv7_hf.model_cache import NativeRWKV7Cache as CacheImplementation
     from rwkv7_hf.model_config import NativeRWKV7Config as ConfigImplementation
     from rwkv7_hf.model_layers import (
@@ -52,14 +61,21 @@ def test_public_import_identity_and_remote_module_name_stay_stable() -> None:
         NativeRWKV7FFN as FFNImplementation,
         NativeRWKV7Layer as LayerImplementation,
     )
+    from rwkv7_hf.model_prefill_graph import (
+        _NativePrefillGraphRunner as PrefillGraphImplementation,
+    )
     from rwkv7_hf.native_model import (
         NativeRWKV7Attention,
         NativeRWKV7Cache,
         NativeRWKV7Config,
         NativeRWKV7FFN,
         NativeRWKV7Layer,
+        NativeRWKV7Model,
+        _NativePrefillGraphRunner,
     )
 
+    assert _NativePrefillGraphRunner is PrefillGraphImplementation
+    assert NativeRWKV7Model is ModelImplementation
     assert NativeRWKV7Config is ConfigImplementation
     assert NativeRWKV7Cache is CacheImplementation
     assert NativeRWKV7Attention is AttentionImplementation
@@ -72,6 +88,8 @@ def test_public_import_identity_and_remote_module_name_stay_stable() -> None:
     assert NativeRWKV7Attention.__module__ == "rwkv7_hf.native_model"
     assert NativeRWKV7FFN.__module__ == "rwkv7_hf.native_model"
     assert NativeRWKV7Layer.__module__ == "rwkv7_hf.native_model"
+    assert NativeRWKV7Model.__module__ == "rwkv7_hf.native_model"
+    assert _NativePrefillGraphRunner.__module__ == "rwkv7_hf.native_model"
 
 
 def test_split_files_are_in_remote_adapter_manifest() -> None:
@@ -80,3 +98,5 @@ def test_split_files_are_in_remote_adapter_manifest() -> None:
     assert "model_config.py" in ADAPTER_FILES
     assert "model_cache.py" in ADAPTER_FILES
     assert "model_layers.py" in ADAPTER_FILES
+    assert "model_backbone.py" in ADAPTER_FILES
+    assert "model_prefill_graph.py" in ADAPTER_FILES
