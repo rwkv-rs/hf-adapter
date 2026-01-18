@@ -83,6 +83,7 @@ model_cache.py       # NativeRWKV7Cache and recurrent-cache helpers
 model_layers.py      # attention, FFN and block module definitions
 model_backbone.py    # NativeRWKV7Model and recurrent forward helpers
 model_prefill_graph.py # fixed-shape CUDA graph runner for native prefill
+model_quantization.py # BNB loading policy and native W8/W4 replacement mixin
 model_speculative.py # speculative-generation mixin and acceptance loop
 ```
 
