@@ -16,6 +16,20 @@ def _top_level_definitions(relative: str) -> set[str]:
     }
 
 
+def _class_methods(relative: str, class_name: str) -> set[str]:
+    tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
+    class_node = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == class_name
+    )
+    return {
+        node.name
+        for node in class_node.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
 def test_native_model_ownership_is_split_from_entrypoint() -> None:
     entrypoint = _top_level_definitions("rwkv7_hf/native_model.py")
     backbone = _top_level_definitions("rwkv7_hf/model_backbone.py")
@@ -23,6 +37,13 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     cache = _top_level_definitions("rwkv7_hf/model_cache.py")
     layers = _top_level_definitions("rwkv7_hf/model_layers.py")
     prefill_graph = _top_level_definitions("rwkv7_hf/model_prefill_graph.py")
+    speculative = _top_level_definitions("rwkv7_hf/model_speculative.py")
+    causal_lm_methods = _class_methods(
+        "rwkv7_hf/native_model.py", "NativeRWKV7ForCausalLM"
+    )
+    speculative_methods = _class_methods(
+        "rwkv7_hf/model_speculative.py", "_NativeSpeculativeGenerationMixin"
+    )
 
     assert "NativeRWKV7Config" not in entrypoint
     assert "NativeRWKV7Cache" not in entrypoint
@@ -35,6 +56,9 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     assert "NativeRWKV7Cache" in cache
     assert "NativeRWKV7Model" in backbone
     assert "_NativePrefillGraphRunner" in prefill_graph
+    assert "_NativeSpeculativeGenerationMixin" in speculative
+    assert "rwkv7_speculative_generate" not in causal_lm_methods
+    assert "rwkv7_speculative_generate" in speculative_methods
     assert {
         "NativeRWKV7Attention",
         "NativeRWKV7FFN",
@@ -49,6 +73,7 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     assert "from .model_layers import (" in entrypoint_text
     assert "from .model_backbone import (" in entrypoint_text
     assert "from .model_prefill_graph import _NativePrefillGraphRunner" in entrypoint_text
+    assert "from .model_speculative import _NativeSpeculativeGenerationMixin" in entrypoint_text
 
 
 def test_public_import_identity_and_remote_module_name_stay_stable() -> None:
@@ -64,6 +89,7 @@ def test_public_import_identity_and_remote_module_name_stay_stable() -> None:
     from rwkv7_hf.model_prefill_graph import (
         _NativePrefillGraphRunner as PrefillGraphImplementation,
     )
+    from rwkv7_hf.model_speculative import _NativeSpeculativeGenerationMixin
     from rwkv7_hf.native_model import (
         NativeRWKV7Attention,
         NativeRWKV7Cache,
@@ -71,9 +97,15 @@ def test_public_import_identity_and_remote_module_name_stay_stable() -> None:
         NativeRWKV7FFN,
         NativeRWKV7Layer,
         NativeRWKV7Model,
+        NativeRWKV7ForCausalLM,
         _NativePrefillGraphRunner,
     )
 
+    assert issubclass(NativeRWKV7ForCausalLM, _NativeSpeculativeGenerationMixin)
+    assert (
+        NativeRWKV7ForCausalLM.rwkv7_speculative_generate
+        is _NativeSpeculativeGenerationMixin.rwkv7_speculative_generate
+    )
     assert _NativePrefillGraphRunner is PrefillGraphImplementation
     assert NativeRWKV7Model is ModelImplementation
     assert NativeRWKV7Config is ConfigImplementation
@@ -100,3 +132,4 @@ def test_split_files_are_in_remote_adapter_manifest() -> None:
     assert "model_layers.py" in ADAPTER_FILES
     assert "model_backbone.py" in ADAPTER_FILES
     assert "model_prefill_graph.py" in ADAPTER_FILES
+    assert "model_speculative.py" in ADAPTER_FILES

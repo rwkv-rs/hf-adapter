@@ -481,6 +481,7 @@ def main() -> int:
         assert (out_dir / "model_layers.py").exists()
         assert (out_dir / "model_backbone.py").exists()
         assert (out_dir / "model_prefill_graph.py").exists()
+        assert (out_dir / "model_speculative.py").exists()
         reloaded_config = AutoConfig.from_pretrained(out_dir, trust_remote_code=True)
         assert reloaded_config.__class__.__name__ == "NativeRWKV7Config"
         reloaded_base = AutoModel.from_pretrained(out_dir, trust_remote_code=True).eval()
@@ -488,10 +489,17 @@ def main() -> int:
         with torch.no_grad():
             reloaded_base_hidden = reloaded_base(input_ids=input_ids).last_hidden_state
             reloaded_logits = reloaded(input_ids=input_ids, logits_to_keep=1).logits
+            reloaded_speculative = reloaded.rwkv7_speculative_generate(
+                input_ids[:1],
+                reloaded,
+                max_new_tokens=3,
+                draft_tokens=2,
+            )
         assert reloaded_base.__class__.__name__ == "NativeRWKV7Model"
         assert reloaded.__class__.__name__ == "NativeRWKV7ForCausalLM"
         assert torch.allclose(reloaded_base_hidden, base_out.last_hidden_state)
         assert torch.allclose(reloaded_logits, causal_from_ids.logits[:, -1:])
+        assert torch.equal(reloaded_speculative, greedy)
         reloaded_base.gradient_checkpointing_enable()
         assert getattr(reloaded_base, "is_gradient_checkpointing", True)
 
