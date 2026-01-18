@@ -79,6 +79,132 @@ def test_native_prefill_graph_policy_is_exact_shape_allowlisted(monkeypatch) -> 
     assert native_model._native_prefill_graph_enabled(8, 2048, 4096, 61)
 
 
+def test_external_quant_prefill_graph_requires_explicit_card_policy(
+    monkeypatch,
+) -> None:
+    policy = SimpleNamespace(native_external_quant_prefill_graph=False)
+    monkeypatch.setattr(native_model, "current_kernel_policy", lambda **_kwargs: policy)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH", raising=False)
+
+    assert not native_model._native_prefill_external_quant_graph_enabled("cuda:0")
+
+    policy.native_external_quant_prefill_graph = True
+    assert native_model._native_prefill_external_quant_graph_enabled("cuda:0")
+
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH", "0")
+    assert not native_model._native_prefill_external_quant_graph_enabled("cuda:0")
+
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH", "1")
+    assert native_model._native_prefill_external_quant_graph_enabled("cuda:0")
+
+
+def test_prefill_graph_quant_safety_separates_external_and_native_quant(
+    monkeypatch,
+) -> None:
+    model = native_model.NativeRWKV7ForCausalLM(
+        native_model.NativeRWKV7Config(
+            vocab_size=17,
+            hidden_size=8,
+            num_hidden_layers=1,
+            head_dim=4,
+            intermediate_size=16,
+            decay_low_rank_dim=4,
+            gate_low_rank_dim=4,
+            a_low_rank_dim=4,
+            v_low_rank_dim=4,
+        )
+    ).eval()
+    monkeypatch.setattr(
+        native_model,
+        "current_kernel_policy",
+        lambda **_kwargs: SimpleNamespace(
+            native_external_quant_prefill_graph=False
+        ),
+    )
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH", raising=False)
+
+    assert model._native_prefill_graph_quant_safe("cuda:0")
+
+    monkeypatch.setattr(model, "_native_model_quantized", lambda: True)
+    monkeypatch.setattr(
+        model,
+        "_native_model_native_quant_graph_safe",
+        lambda: False,
+    )
+    assert not model._native_prefill_graph_quant_safe("cuda:0")
+
+    monkeypatch.setattr(
+        model,
+        "_native_model_native_quant_graph_safe",
+        lambda: True,
+    )
+    assert model._native_prefill_graph_quant_safe("cuda:0")
+
+
+def test_external_quant_prefill_bypasses_graph_capture(monkeypatch) -> None:
+    model = native_model.NativeRWKV7ForCausalLM(
+        native_model.NativeRWKV7Config(
+            vocab_size=17,
+            hidden_size=8,
+            num_hidden_layers=1,
+            head_dim=4,
+            intermediate_size=16,
+            decay_low_rank_dim=4,
+            gate_low_rank_dim=4,
+            a_low_rank_dim=4,
+            v_low_rank_dim=4,
+        )
+    ).eval()
+    input_ids = torch.tensor([[1, 2]], dtype=torch.long)
+
+    def fake_jit_prefill(
+        _owner,
+        ids,
+        _packs,
+        *,
+        state,
+        xpa,
+        xpf,
+        logits_to_keep,
+    ):
+        assert state is xpa is xpf is None
+        assert logits_to_keep == 1
+        batch = int(ids.shape[0])
+        return (
+            torch.zeros(batch, 1, 17),
+            [torch.zeros(batch, 2, 4, 4)],
+            [torch.zeros(batch, 8)],
+            [torch.zeros(batch, 8)],
+        )
+
+    def fail_graph_capture(*_args, **_kwargs):
+        raise AssertionError("external quant prefill must not create a graph runner")
+
+    monkeypatch.setattr(native_model, "_native_jit_prefill", fake_jit_prefill)
+    monkeypatch.setattr(
+        native_model,
+        "_native_prefill_graph_enabled",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        model,
+        "_native_prefill_graph_quant_safe",
+        lambda _device=None: False,
+    )
+    monkeypatch.setattr(model, "_native_graph_packs", lambda: [])
+    monkeypatch.setattr(model, "_native_prefill_graph_runner", fail_graph_capture)
+
+    logits, cache = model._native_prefill(
+        input_ids,
+        logits_to_keep=1,
+        seen_tokens=2,
+    )
+
+    assert logits.shape == (1, 1, 17)
+    assert cache.get_seq_length() == 2
+    assert model.rwkv7_native_model_last_prefill_backend() == "native_prefill"
+
+
 def test_native_prefill_graph_cache_size_uses_policy_and_env_override(monkeypatch) -> None:
     policy = SimpleNamespace(prefill_graph_cache_size=4)
     monkeypatch.setattr(native_model, "current_kernel_policy", lambda **_kwargs: policy)

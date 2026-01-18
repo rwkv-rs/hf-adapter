@@ -37,12 +37,16 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     cache = _top_level_definitions("rwkv7_hf/model_cache.py")
     layers = _top_level_definitions("rwkv7_hf/model_layers.py")
     prefill_graph = _top_level_definitions("rwkv7_hf/model_prefill_graph.py")
+    quantization = _top_level_definitions("rwkv7_hf/model_quantization.py")
     speculative = _top_level_definitions("rwkv7_hf/model_speculative.py")
     causal_lm_methods = _class_methods(
         "rwkv7_hf/native_model.py", "NativeRWKV7ForCausalLM"
     )
     speculative_methods = _class_methods(
         "rwkv7_hf/model_speculative.py", "_NativeSpeculativeGenerationMixin"
+    )
+    quantization_methods = _class_methods(
+        "rwkv7_hf/model_quantization.py", "_NativeQuantizationMixin"
     )
 
     assert "NativeRWKV7Config" not in entrypoint
@@ -56,9 +60,26 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     assert "NativeRWKV7Cache" in cache
     assert "NativeRWKV7Model" in backbone
     assert "_NativePrefillGraphRunner" in prefill_graph
+    assert "_NativeQuantizationMixin" in quantization
     assert "_NativeSpeculativeGenerationMixin" in speculative
     assert "rwkv7_speculative_generate" not in causal_lm_methods
     assert "rwkv7_speculative_generate" in speculative_methods
+    assert {
+        "_rwkv7_bnb_concrete_skip_modules",
+        "rwkv7_bnb_skip_modules",
+        "_rwkv7_prepare_bnb_kwargs",
+        "from_pretrained",
+        "apply_native_mm_quantization_from_config",
+        "_clear_native_jit_pack_cache",
+    }.isdisjoint(causal_lm_methods)
+    assert {
+        "_rwkv7_bnb_concrete_skip_modules",
+        "rwkv7_bnb_skip_modules",
+        "_rwkv7_prepare_bnb_kwargs",
+        "from_pretrained",
+        "apply_native_mm_quantization_from_config",
+        "_clear_native_jit_pack_cache",
+    } <= quantization_methods
     assert {
         "NativeRWKV7Attention",
         "NativeRWKV7FFN",
@@ -73,6 +94,7 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     assert "from .model_layers import (" in entrypoint_text
     assert "from .model_backbone import (" in entrypoint_text
     assert "from .model_prefill_graph import _NativePrefillGraphRunner" in entrypoint_text
+    assert "from .model_quantization import _NativeQuantizationMixin" in entrypoint_text
     assert "from .model_speculative import _NativeSpeculativeGenerationMixin" in entrypoint_text
 
 
@@ -89,6 +111,7 @@ def test_public_import_identity_and_remote_module_name_stay_stable() -> None:
     from rwkv7_hf.model_prefill_graph import (
         _NativePrefillGraphRunner as PrefillGraphImplementation,
     )
+    from rwkv7_hf.model_quantization import _NativeQuantizationMixin
     from rwkv7_hf.model_speculative import _NativeSpeculativeGenerationMixin
     from rwkv7_hf.native_model import (
         NativeRWKV7Attention,
@@ -101,7 +124,16 @@ def test_public_import_identity_and_remote_module_name_stay_stable() -> None:
         _NativePrefillGraphRunner,
     )
 
+    assert issubclass(NativeRWKV7ForCausalLM, _NativeQuantizationMixin)
     assert issubclass(NativeRWKV7ForCausalLM, _NativeSpeculativeGenerationMixin)
+    assert (
+        NativeRWKV7ForCausalLM.from_pretrained.__func__
+        is _NativeQuantizationMixin.from_pretrained.__func__
+    )
+    assert (
+        NativeRWKV7ForCausalLM.apply_native_mm_quantization_from_config
+        is _NativeQuantizationMixin.apply_native_mm_quantization_from_config
+    )
     assert (
         NativeRWKV7ForCausalLM.rwkv7_speculative_generate
         is _NativeSpeculativeGenerationMixin.rwkv7_speculative_generate
@@ -132,4 +164,5 @@ def test_split_files_are_in_remote_adapter_manifest() -> None:
     assert "model_layers.py" in ADAPTER_FILES
     assert "model_backbone.py" in ADAPTER_FILES
     assert "model_prefill_graph.py" in ADAPTER_FILES
+    assert "model_quantization.py" in ADAPTER_FILES
     assert "model_speculative.py" in ADAPTER_FILES

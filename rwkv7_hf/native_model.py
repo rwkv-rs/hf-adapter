@@ -45,6 +45,7 @@ from .model_layers import (
     _LoRA,
 )
 from .model_prefill_graph import _NativePrefillGraphRunner
+from .model_quantization import _NativeQuantizationMixin
 from .model_speculative import _NativeSpeculativeGenerationMixin
 from .model_backbone import (
     NativeRWKV7Model,
@@ -88,6 +89,8 @@ if False:  # pragma: no cover
     from .fused_time_mix import fused_attn_shift_mix as _native_fused_time_mix_dependency_sentinel
     from .kernel_policy import current_kernel_policy as _native_kernel_policy_dependency_sentinel
     from .native_quant_bnb8 import fused_bnb8_relu_square_quant as _native_bnb8_dependency_sentinel
+    from .native_quant_mm4 import quantize_model_mm4 as _native_mm4_dependency_sentinel
+    from .native_quant_mm8 import quantize_model_mm8 as _native_mm8_dependency_sentinel
     from .native_quant_policy import normalize_native_mm_policy as _native_quant_policy_dependency_sentinel
     from .native_wkv_fp16 import native_fp16_sequence as _native_wkv_fp16_dependency_sentinel  # noqa: F401
     from .self_chunk_A_fwd import chunk_dplr_fwd_intra as _native_self_chunk_a_dependency_sentinel
@@ -261,6 +264,18 @@ def _native_prefill_graph_enabled(
     )
 
 
+def _native_prefill_external_quant_graph_enabled(
+    device: int | str | torch.device | None = None,
+) -> bool:
+    """Allow external quantized modules in prefill graphs only on proven lanes."""
+
+    raw = os.environ.get("RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH")
+    if raw is not None:
+        return raw not in _FALSE_VALUES
+    policy = current_kernel_policy(device=device, torch_module=torch)
+    return bool(getattr(policy, "native_external_quant_prefill_graph", False))
+
+
 def _native_prefill_graph_cache_size(
     device: int | str | torch.device | None = None,
 ) -> int:
@@ -380,7 +395,10 @@ def _slice_native_logits(logits: torch.Tensor, logits_to_keep):
 
 
 class NativeRWKV7ForCausalLM(
-    _NativeSpeculativeGenerationMixin, PreTrainedModel, GenerationMixin
+    _NativeQuantizationMixin,
+    _NativeSpeculativeGenerationMixin,
+    PreTrainedModel,
+    GenerationMixin,
 ):
     """Experimental batched native PyTorch CausalLM for converted RWKV-7 weights."""
 
@@ -421,218 +439,6 @@ class NativeRWKV7ForCausalLM(
         self.model = NativeRWKV7Model(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.gradient_checkpointing = False
-
-    @staticmethod
-    def _rwkv7_bnb_concrete_skip_modules(
-        policy: str,
-        config: Any | None = None,
-    ) -> list[str]:
-        num_layers = int(getattr(config, "num_hidden_layers", 0) or 0)
-        if num_layers <= 0:
-            return []
-        prefill_value_stride = _bnb_prefill_value_stride()
-        quantized_prefill_values = {
-            layer_idx
-            for layer_idx in range(num_layers)
-            if (layer_idx + 1) % prefill_value_stride == 0
-        }
-        if policy == "prefill_hot" and not quantized_prefill_values:
-            quantized_prefill_values.add(num_layers - 1)
-        skips: list[str] = []
-        for layer_idx in range(num_layers):
-            for lora_name in ("w_lora", "a_lora", "g_lora", "v_lora"):
-                for linear_idx in (0, 2):
-                    skips.append(
-                        f"model.layers.{layer_idx}.attn.{lora_name}.lora.{linear_idx}"
-                    )
-            if policy == "output_hot":
-                skips.append(f"model.layers.{layer_idx}.attn.o_proj")
-            if policy in {"decode_rk", "decode_hot", "prefill_hot", "dense"}:
-                proj_names = (
-                    ("r_proj", "k_proj")
-                    if policy == "decode_rk"
-                    else ("r_proj", "k_proj", "v_proj", "o_proj")
-                )
-                for proj_name in proj_names:
-                    skips.append(f"model.layers.{layer_idx}.attn.{proj_name}")
-            if policy == "prefill_hot":
-                skips.append(f"model.layers.{layer_idx}.ffn.key")
-                if layer_idx not in quantized_prefill_values:
-                    skips.append(f"model.layers.{layer_idx}.ffn.value")
-            if policy == "dense":
-                for ffn_name in ("key", "value"):
-                    skips.append(f"model.layers.{layer_idx}.ffn.{ffn_name}")
-        return skips
-
-    @classmethod
-    def rwkv7_bnb_skip_modules(
-        cls,
-        policy: str | None = None,
-        config: Any | None = None,
-    ) -> list[str]:
-        policy = _bnb_skip_policy(policy)
-        return list(
-            dict.fromkeys(
-                [
-                    *cls._rwkv7_bnb_skip_modules,
-                    *cls._rwkv7_bnb_policy_extra_skips[policy],
-                    *cls._rwkv7_bnb_concrete_skip_modules(policy, config),
-                ]
-            )
-        )
-
-    @classmethod
-    def _rwkv7_prepare_bnb_kwargs(
-        cls,
-        pretrained_model_name_or_path,
-        kwargs: dict[str, Any],
-    ):
-        hardware_policy, policy_device = single_cuda_device_from_device_map(
-            kwargs.get("device_map")
-        )
-        policy = _bnb_skip_policy(
-            kwargs.pop("rwkv7_bnb_skip_policy", None),
-            policy_device=policy_device,
-            hardware_policy=hardware_policy,
-        )
-        quantization_config = kwargs.get("quantization_config")
-        if quantization_config is None and (
-            kwargs.get("load_in_8bit") or kwargs.get("load_in_4bit")
-        ):
-            from transformers import BitsAndBytesConfig
-
-            bnb_kwargs = {}
-            for key in list(kwargs):
-                if (
-                    key.startswith("bnb_4bit_")
-                    or key.startswith("llm_int8_")
-                    or key in {"load_in_8bit", "load_in_4bit"}
-                ):
-                    bnb_kwargs[key] = kwargs.pop(key)
-            quantization_config = BitsAndBytesConfig(**bnb_kwargs)
-            kwargs["quantization_config"] = quantization_config
-        if quantization_config is not None and bool(
-            getattr(quantization_config, "load_in_8bit", False)
-        ):
-            threshold = _bnb_int8_threshold_override(
-                policy_device=policy_device,
-                hardware_policy=hardware_policy,
-            )
-            if threshold is not None:
-                quantization_config.llm_int8_threshold = float(threshold)
-        if quantization_config is not None and hasattr(
-            quantization_config,
-            "llm_int8_skip_modules",
-        ):
-            config_for_skip = kwargs.get("config")
-            if config_for_skip is None:
-                try:
-                    config_for_skip = cls.config_class.from_pretrained(
-                        pretrained_model_name_or_path
-                    )
-                except Exception:
-                    config_for_skip = None
-            existing = list(
-                getattr(quantization_config, "llm_int8_skip_modules", None) or []
-            )
-            quantization_config.llm_int8_skip_modules = list(
-                dict.fromkeys(
-                    [*existing, *cls.rwkv7_bnb_skip_modules(policy, config_for_skip)]
-                )
-            )
-        return policy, quantization_config
-
-    @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
-        """Load dense weights, then apply optional native W8/W4 quantization.
-
-        The native backend is the Apple/CPU/AMD fallback path, so its quantized
-        route must not depend on bitsandbytes.  Persisted ``use_native_mm8`` or
-        ``use_native_mm4`` config flags re-pack eligible ``nn.Linear`` modules
-        after the fp weights are loaded.  The packed buffers are deterministic
-        from the dense weights and therefore do not need to be stored in the
-        checkpoint.
-        """
-
-        bnb_skip_policy, quantization_config = cls._rwkv7_prepare_bnb_kwargs(
-            pretrained_model_name_or_path,
-            kwargs,
-        )
-        loaded = super().from_pretrained(
-            pretrained_model_name_or_path,
-            *model_args,
-            **kwargs,
-        )
-        # Transformers returns ``(model, loading_info)`` when requested. Keep
-        # that standard API shape while applying config-driven packing to the
-        # actual model instance.
-        model = loaded[0] if isinstance(loaded, tuple) else loaded
-        if quantization_config is not None:
-            setattr(model, "_rwkv7_bnb_skip_policy", bnb_skip_policy)
-            setattr(model.config, "rwkv7_bnb_skip_policy", bnb_skip_policy)
-        model.apply_native_mm_quantization_from_config()
-        if isinstance(loaded, tuple):
-            return (model, *loaded[1:])
-        return model
-
-    def apply_native_mm_quantization_from_config(self) -> int:
-        """Apply config-driven native MM8/MM4 module replacement.
-
-        Returns the number of replaced modules.  This helper is intentionally
-        public-ish for tests and local Apple harnesses that construct a tiny
-        native model directly instead of going through ``from_pretrained``.
-        """
-
-        use_mm8 = bool(getattr(self.config, "use_native_mm8", False))
-        use_mm4 = bool(getattr(self.config, "use_native_mm4", False))
-        if not (use_mm8 or use_mm4):
-            setattr(self, "_rwkv7_native_mm_quantization", None)
-            setattr(self, "_rwkv7_native_mm_replaced_modules", 0)
-            return 0
-        if use_mm8 and use_mm4:
-            raise ValueError("use_native_mm8 and use_native_mm4 are mutually exclusive")
-        if use_mm8:
-            from .native_quant_mm8 import quantize_model_mm8
-
-            replaced = int(
-                quantize_model_mm8(
-                    self,
-                    min_params=int(getattr(self.config, "native_mm8_min_params", 8_000_000)),
-                    policy=str(getattr(self.config, "native_mm8_policy", "memory")),
-                )
-            )
-            quantization = "mm8"
-        else:
-            from .native_quant_mm4 import quantize_model_mm4
-
-            replaced = int(
-                quantize_model_mm4(
-                    self,
-                    min_params=int(getattr(self.config, "native_mm4_min_params", 8_000_000)),
-                    policy=str(getattr(self.config, "native_mm4_policy", "memory")),
-                    group_size=int(getattr(self.config, "native_mm4_group_size", 0)),
-                    group_policy=str(
-                        getattr(self.config, "native_mm4_group_policy", "all")
-                    ),
-                )
-            )
-            quantization = "mm4"
-        setattr(self, "_rwkv7_native_mm_quantization", quantization)
-        setattr(self, "_rwkv7_native_mm_replaced_modules", replaced)
-        # Existing JIT packs are dense-weight dependent; invalidate them after
-        # swapping modules to avoid stale dense packs across manual calls.
-        self._clear_native_jit_pack_cache()
-        return replaced
-
-    def _clear_native_jit_pack_cache(self) -> None:
-        if hasattr(self, "_rwkv7_native_model_jit_pack_cache"):
-            delattr(self, "_rwkv7_native_model_jit_pack_cache")
-        if hasattr(self, "_rwkv7_native_graph_pack_cache"):
-            delattr(self, "_rwkv7_native_graph_pack_cache")
-        if hasattr(self, "_rwkv7_native_adapter_layers_present"):
-            delattr(self, "_rwkv7_native_adapter_layers_present")
-        self.rwkv7_clear_native_graph_cache()
-        self.rwkv7_clear_native_prefill_graph_cache()
 
     def get_input_embeddings(self):
         return self.model.get_input_embeddings()
@@ -860,12 +666,18 @@ class NativeRWKV7ForCausalLM(
     ):
         batch_size = int(input_ids.shape[0])
         prompt_tokens = int(input_ids.shape[1])
-        if initial_cache is None and _native_prefill_graph_enabled(
-            batch_size,
-            prompt_tokens,
-            int(self.config.hidden_size),
-            int(self.config.num_hidden_layers),
-            input_ids.device,
+        graph_quant_safe = initial_cache is None and self._native_prefill_graph_quant_safe(
+            input_ids.device
+        )
+        if (
+            graph_quant_safe
+            and _native_prefill_graph_enabled(
+                batch_size,
+                prompt_tokens,
+                int(self.config.hidden_size),
+                int(self.config.num_hidden_layers),
+                input_ids.device,
+            )
         ):
             runner = getattr(self, "_rwkv7_native_prefill_graph_hot_runner", None)
             if not isinstance(runner, _NativePrefillGraphRunner) or not runner.matches(
@@ -1349,6 +1161,24 @@ class NativeRWKV7ForCausalLM(
                 if not callable(getattr(module, "rwkv7_forward_into", None)):
                     return False
         return seen_native
+
+    def _native_prefill_graph_quant_safe(
+        self,
+        device: int | str | torch.device | None = None,
+    ) -> bool:
+        """Fail closed for external quant modules on unvalidated graph lanes.
+
+        Native MM8/MM4 modules expose graph-safe preallocated-output hooks.
+        Bitsandbytes and other external wrappers may synchronize or inspect
+        tensor values during forward, so they require an explicit per-card
+        policy (or environment override) before CUDA graph capture.
+        """
+
+        if not self._native_model_quantized():
+            return True
+        if self._native_model_native_quant_graph_safe():
+            return True
+        return _native_prefill_external_quant_graph_enabled(device)
 
     def _native_model_has_adapter_layers(self) -> bool:
         """True when PEFT-style adapter wrappers sit inside native layers."""
