@@ -48,6 +48,7 @@ ADAPTER_FILES = [
     "model_backbone.py",
     "model_cache.py",
     "model_config.py",
+    "model_generation.py",
     "model_layers.py",
     "model_prefill_graph.py",
     "model_quantization.py",
