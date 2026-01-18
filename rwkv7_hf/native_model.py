@@ -264,6 +264,18 @@ def _native_prefill_graph_enabled(
     )
 
 
+def _native_prefill_external_quant_graph_enabled(
+    device: int | str | torch.device | None = None,
+) -> bool:
+    """Allow external quantized modules in prefill graphs only on proven lanes."""
+
+    raw = os.environ.get("RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH")
+    if raw is not None:
+        return raw not in _FALSE_VALUES
+    policy = current_kernel_policy(device=device, torch_module=torch)
+    return bool(getattr(policy, "native_external_quant_prefill_graph", False))
+
+
 def _native_prefill_graph_cache_size(
     device: int | str | torch.device | None = None,
 ) -> int:
@@ -654,12 +666,18 @@ class NativeRWKV7ForCausalLM(
     ):
         batch_size = int(input_ids.shape[0])
         prompt_tokens = int(input_ids.shape[1])
-        if initial_cache is None and _native_prefill_graph_enabled(
-            batch_size,
-            prompt_tokens,
-            int(self.config.hidden_size),
-            int(self.config.num_hidden_layers),
-            input_ids.device,
+        graph_quant_safe = initial_cache is None and self._native_prefill_graph_quant_safe(
+            input_ids.device
+        )
+        if (
+            graph_quant_safe
+            and _native_prefill_graph_enabled(
+                batch_size,
+                prompt_tokens,
+                int(self.config.hidden_size),
+                int(self.config.num_hidden_layers),
+                input_ids.device,
+            )
         ):
             runner = getattr(self, "_rwkv7_native_prefill_graph_hot_runner", None)
             if not isinstance(runner, _NativePrefillGraphRunner) or not runner.matches(
@@ -1143,6 +1161,24 @@ class NativeRWKV7ForCausalLM(
                 if not callable(getattr(module, "rwkv7_forward_into", None)):
                     return False
         return seen_native
+
+    def _native_prefill_graph_quant_safe(
+        self,
+        device: int | str | torch.device | None = None,
+    ) -> bool:
+        """Fail closed for external quant modules on unvalidated graph lanes.
+
+        Native MM8/MM4 modules expose graph-safe preallocated-output hooks.
+        Bitsandbytes and other external wrappers may synchronize or inspect
+        tensor values during forward, so they require an explicit per-card
+        policy (or environment override) before CUDA graph capture.
+        """
+
+        if not self._native_model_quantized():
+            return True
+        if self._native_model_native_quant_graph_safe():
+            return True
+        return _native_prefill_external_quant_graph_enabled(device)
 
     def _native_model_has_adapter_layers(self) -> bool:
         """True when PEFT-style adapter wrappers sit inside native layers."""
