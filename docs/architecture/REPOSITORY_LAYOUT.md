@@ -79,6 +79,7 @@ The first remote-safe model split keeps sibling modules flat:
 ```text
 native_model.py      # stable Auto* entrypoint and public re-exports
 model_config.py      # NativeRWKV7Config implementation
+model_fast_api.py    # native prefill, chunked-prefill and fast-token serving mixin
 model_generation.py  # HF generation input preparation and cache reordering mixin
 model_cache.py       # NativeRWKV7Cache and recurrent-cache helpers
 model_layers.py      # attention, FFN and block module definitions

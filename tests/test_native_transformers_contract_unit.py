@@ -477,6 +477,7 @@ def main() -> int:
         assert saved_config["tie_word_embeddings"] is False
         assert (out_dir / "native_model.py").exists()
         assert (out_dir / "model_config.py").exists()
+        assert (out_dir / "model_fast_api.py").exists()
         assert (out_dir / "model_generation.py").exists()
         assert (out_dir / "model_cache.py").exists()
         assert (out_dir / "model_layers.py").exists()

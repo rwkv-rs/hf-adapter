@@ -252,6 +252,28 @@ def test_native_fast_token_rejects_invalid_usage() -> None:
         raise AssertionError("training fast-token call must be rejected")
 
 
+def test_fast_api_warmup_preserves_native_model_monkeypatch_surface(monkeypatch) -> None:
+    model = build_tiny_model()
+    warmed_batches: list[int] = []
+    monkeypatch.setattr(native_model_module, "_native_graph_available", lambda: True)
+    monkeypatch.setattr(
+        native_model_module,
+        "_native_model_backend_requested",
+        lambda: "native_graph",
+    )
+    monkeypatch.setattr(
+        model,
+        "_native_graph_runner",
+        lambda batch_size: warmed_batches.append(batch_size),
+    )
+
+    assert model.rwkv7_warmup_fast_token((1, 8)) == {
+        1: "native_graph",
+        8: "native_graph",
+    }
+    assert warmed_batches == [1, 8]
+
+
 def test_native_graph_replay_can_borrow_logits_buffer() -> None:
     class FakeGraph:
         def replay(self) -> None:
