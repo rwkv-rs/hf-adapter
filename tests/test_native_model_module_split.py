@@ -35,6 +35,7 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     backbone = _top_level_definitions("rwkv7_hf/model_backbone.py")
     config = _top_level_definitions("rwkv7_hf/model_config.py")
     generation = _top_level_definitions("rwkv7_hf/model_generation.py")
+    fast_api = _top_level_definitions("rwkv7_hf/model_fast_api.py")
     cache = _top_level_definitions("rwkv7_hf/model_cache.py")
     layers = _top_level_definitions("rwkv7_hf/model_layers.py")
     prefill_graph = _top_level_definitions("rwkv7_hf/model_prefill_graph.py")
@@ -52,6 +53,9 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     generation_methods = _class_methods(
         "rwkv7_hf/model_generation.py", "_NativeGenerationContractMixin"
     )
+    fast_api_methods = _class_methods(
+        "rwkv7_hf/model_fast_api.py", "_NativeFastAPIMixin"
+    )
 
     assert "NativeRWKV7Config" not in entrypoint
     assert "NativeRWKV7Cache" not in entrypoint
@@ -62,6 +66,7 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     assert "_NativePrefillGraphRunner" not in entrypoint
     assert "NativeRWKV7Config" in config
     assert "_NativeGenerationContractMixin" in generation
+    assert "_NativeFastAPIMixin" in fast_api
     assert "NativeRWKV7Cache" in cache
     assert "NativeRWKV7Model" in backbone
     assert "_NativePrefillGraphRunner" in prefill_graph
@@ -77,6 +82,28 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
         "_reorder_cache",
         "prepare_inputs_for_generation",
     } <= generation_methods
+    assert {
+        "rwkv7_native_model_last_decode_backend",
+        "rwkv7_native_model_last_prefill_backend",
+        "rwkv7_prefill_native",
+        "rwkv7_prefill_chunks",
+        "rwkv7_last_fast_token_backend",
+        "rwkv7_last_fast_prefill_backend",
+        "rwkv7_warmup_fast_token",
+        "rwkv7_forward_token",
+        "rwkv7_forward_one",
+    }.isdisjoint(causal_lm_methods)
+    assert {
+        "rwkv7_native_model_last_decode_backend",
+        "rwkv7_native_model_last_prefill_backend",
+        "rwkv7_prefill_native",
+        "rwkv7_prefill_chunks",
+        "rwkv7_last_fast_token_backend",
+        "rwkv7_last_fast_prefill_backend",
+        "rwkv7_warmup_fast_token",
+        "rwkv7_forward_token",
+        "rwkv7_forward_one",
+    } <= fast_api_methods
     assert {
         "_rwkv7_bnb_concrete_skip_modules",
         "rwkv7_bnb_skip_modules",
@@ -104,6 +131,7 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     )
     assert "from .model_config import NativeRWKV7Config" in entrypoint_text
     assert "from .model_generation import _NativeGenerationContractMixin" in entrypoint_text
+    assert "from .model_fast_api import _NativeFastAPIMixin" in entrypoint_text
     assert "from .model_cache import (" in entrypoint_text
     assert "from .model_layers import (" in entrypoint_text
     assert "from .model_backbone import (" in entrypoint_text
@@ -118,6 +146,7 @@ def test_public_import_identity_and_remote_module_name_stay_stable() -> None:
     from rwkv7_hf.model_cache import NativeRWKV7Cache as CacheImplementation
     from rwkv7_hf.model_config import NativeRWKV7Config as ConfigImplementation
     from rwkv7_hf.model_generation import _NativeGenerationContractMixin
+    from rwkv7_hf.model_fast_api import _NativeFastAPIMixin
     from rwkv7_hf.model_layers import (
         NativeRWKV7Attention as AttentionImplementation,
         NativeRWKV7FFN as FFNImplementation,
@@ -140,6 +169,7 @@ def test_public_import_identity_and_remote_module_name_stay_stable() -> None:
     )
 
     assert issubclass(NativeRWKV7ForCausalLM, _NativeGenerationContractMixin)
+    assert issubclass(NativeRWKV7ForCausalLM, _NativeFastAPIMixin)
     assert issubclass(NativeRWKV7ForCausalLM, _NativeQuantizationMixin)
     assert issubclass(NativeRWKV7ForCausalLM, _NativeSpeculativeGenerationMixin)
     assert (
@@ -161,6 +191,14 @@ def test_public_import_identity_and_remote_module_name_stay_stable() -> None:
     assert (
         NativeRWKV7ForCausalLM.prepare_inputs_for_generation
         is _NativeGenerationContractMixin.prepare_inputs_for_generation
+    )
+    assert (
+        NativeRWKV7ForCausalLM.rwkv7_forward_token
+        is _NativeFastAPIMixin.rwkv7_forward_token
+    )
+    assert (
+        NativeRWKV7ForCausalLM.rwkv7_prefill_chunks
+        is _NativeFastAPIMixin.rwkv7_prefill_chunks
     )
     assert _NativePrefillGraphRunner is PrefillGraphImplementation
     assert NativeRWKV7Model is ModelImplementation
@@ -184,6 +222,7 @@ def test_split_files_are_in_remote_adapter_manifest() -> None:
     from scripts.adapter_manifest import ADAPTER_FILES
 
     assert "model_config.py" in ADAPTER_FILES
+    assert "model_fast_api.py" in ADAPTER_FILES
     assert "model_cache.py" in ADAPTER_FILES
     assert "model_generation.py" in ADAPTER_FILES
     assert "model_layers.py" in ADAPTER_FILES
