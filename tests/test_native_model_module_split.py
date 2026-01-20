@@ -34,6 +34,7 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     entrypoint = _top_level_definitions("rwkv7_hf/native_model.py")
     backbone = _top_level_definitions("rwkv7_hf/model_backbone.py")
     config = _top_level_definitions("rwkv7_hf/model_config.py")
+    generation = _top_level_definitions("rwkv7_hf/model_generation.py")
     cache = _top_level_definitions("rwkv7_hf/model_cache.py")
     layers = _top_level_definitions("rwkv7_hf/model_layers.py")
     prefill_graph = _top_level_definitions("rwkv7_hf/model_prefill_graph.py")
@@ -48,6 +49,9 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     quantization_methods = _class_methods(
         "rwkv7_hf/model_quantization.py", "_NativeQuantizationMixin"
     )
+    generation_methods = _class_methods(
+        "rwkv7_hf/model_generation.py", "_NativeGenerationContractMixin"
+    )
 
     assert "NativeRWKV7Config" not in entrypoint
     assert "NativeRWKV7Cache" not in entrypoint
@@ -57,6 +61,7 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     assert "NativeRWKV7Model" not in entrypoint
     assert "_NativePrefillGraphRunner" not in entrypoint
     assert "NativeRWKV7Config" in config
+    assert "_NativeGenerationContractMixin" in generation
     assert "NativeRWKV7Cache" in cache
     assert "NativeRWKV7Model" in backbone
     assert "_NativePrefillGraphRunner" in prefill_graph
@@ -64,6 +69,14 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     assert "_NativeSpeculativeGenerationMixin" in speculative
     assert "rwkv7_speculative_generate" not in causal_lm_methods
     assert "rwkv7_speculative_generate" in speculative_methods
+    assert {
+        "_reorder_cache",
+        "prepare_inputs_for_generation",
+    }.isdisjoint(causal_lm_methods)
+    assert {
+        "_reorder_cache",
+        "prepare_inputs_for_generation",
+    } <= generation_methods
     assert {
         "_rwkv7_bnb_concrete_skip_modules",
         "rwkv7_bnb_skip_modules",
@@ -90,6 +103,7 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
         encoding="utf-8"
     )
     assert "from .model_config import NativeRWKV7Config" in entrypoint_text
+    assert "from .model_generation import _NativeGenerationContractMixin" in entrypoint_text
     assert "from .model_cache import (" in entrypoint_text
     assert "from .model_layers import (" in entrypoint_text
     assert "from .model_backbone import (" in entrypoint_text
@@ -103,6 +117,7 @@ def test_public_import_identity_and_remote_module_name_stay_stable() -> None:
     from rwkv7_hf.model_backbone import NativeRWKV7Model as ModelImplementation
     from rwkv7_hf.model_cache import NativeRWKV7Cache as CacheImplementation
     from rwkv7_hf.model_config import NativeRWKV7Config as ConfigImplementation
+    from rwkv7_hf.model_generation import _NativeGenerationContractMixin
     from rwkv7_hf.model_layers import (
         NativeRWKV7Attention as AttentionImplementation,
         NativeRWKV7FFN as FFNImplementation,
@@ -124,6 +139,7 @@ def test_public_import_identity_and_remote_module_name_stay_stable() -> None:
         _NativePrefillGraphRunner,
     )
 
+    assert issubclass(NativeRWKV7ForCausalLM, _NativeGenerationContractMixin)
     assert issubclass(NativeRWKV7ForCausalLM, _NativeQuantizationMixin)
     assert issubclass(NativeRWKV7ForCausalLM, _NativeSpeculativeGenerationMixin)
     assert (
@@ -137,6 +153,14 @@ def test_public_import_identity_and_remote_module_name_stay_stable() -> None:
     assert (
         NativeRWKV7ForCausalLM.rwkv7_speculative_generate
         is _NativeSpeculativeGenerationMixin.rwkv7_speculative_generate
+    )
+    assert (
+        NativeRWKV7ForCausalLM._reorder_cache
+        is _NativeGenerationContractMixin._reorder_cache
+    )
+    assert (
+        NativeRWKV7ForCausalLM.prepare_inputs_for_generation
+        is _NativeGenerationContractMixin.prepare_inputs_for_generation
     )
     assert _NativePrefillGraphRunner is PrefillGraphImplementation
     assert NativeRWKV7Model is ModelImplementation
@@ -161,6 +185,7 @@ def test_split_files_are_in_remote_adapter_manifest() -> None:
 
     assert "model_config.py" in ADAPTER_FILES
     assert "model_cache.py" in ADAPTER_FILES
+    assert "model_generation.py" in ADAPTER_FILES
     assert "model_layers.py" in ADAPTER_FILES
     assert "model_backbone.py" in ADAPTER_FILES
     assert "model_prefill_graph.py" in ADAPTER_FILES
