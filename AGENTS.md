@@ -42,6 +42,9 @@ The previous long-form agent history is preserved in
 
 For installation, first inference, or troubleshooting:
 
+Start with the **smallest safe example** and expand only after it passes. Each
+action must end in an **observable PASS gate** before reporting success.
+
 1. Read [`docs/AI_ASSISTED_SETUP.md`](docs/AI_ASSISTED_SETUP.md).
 2. Use [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) or
    [`docs/USER_GUIDE_ZH.md`](docs/USER_GUIDE_ZH.md).

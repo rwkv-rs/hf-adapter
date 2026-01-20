@@ -111,3 +111,9 @@ def test_clean_runner_does_not_inherit_pythonpath() -> None:
     assert 'export PYTHONPATH=""' in text
     assert "PYTHONNOUSERSITE=1" in text
     assert "clean-install import leaked into source tree" in text
+    assert "RWKV7_EXPECT_INSTALLED=1" in text
+    assert "--import-mode=importlib" in text
+    compat_block = text.split('if [[ "$PROFILE" == compat ]]', 1)[1].split(
+        'if [[ "$PROFILE" == smoke ]]', 1
+    )[0]
+    assert 'PYTHONPATH="$ROOT"' not in compat_block

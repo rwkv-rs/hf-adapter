@@ -96,7 +96,13 @@ fi
 
 # This is intentionally non-editable: it exercises PEP 517 metadata, wheel
 # contents, dependency resolution, and importability as a user would install it.
-"$PY" -m pip install "${PIP_CONSTRAINT_ARGS[@]}" "${ROOT}[test]"
+if [[ ${#PIP_CONSTRAINT_ARGS[@]} -gt 0 ]]; then
+  "$PY" -m pip install "${PIP_CONSTRAINT_ARGS[@]}" "${ROOT}[test]"
+else
+  # Bash 3.2 treats expansion of an empty array as an unbound variable under
+  # `set -u`; keep the unconstrained/current lane portable to macOS runners.
+  "$PY" -m pip install "${ROOT}[test]"
+fi
 "$PY" -m pip check
 "$PY" - <<'PY'
 import importlib.metadata
@@ -180,14 +186,26 @@ done < <(find scripts -maxdepth 1 -name '*.sh' -print0)
 "$PY" -m pytest --collect-only -q
 
 if [[ "$PROFILE" == compat ]]; then
+  # Runtime compatibility must exercise the wheel installed into the clean
+  # environment, not the source checkout.  Running from the venv with pytest's
+  # importlib mode keeps the repository root off sys.path while still loading
+  # the explicitly named test and conftest files.
+  (
+    cd "$VENV"
+    RWKV7_EXPECT_INSTALLED=1 "$PY" -m pytest --import-mode=importlib \
+      --rootdir="$ROOT" -q -ra -m "cpu and not model_required" \
+      "$ROOT/tests/test_hf_dependency_compat.py"
+    RWKV7_EXPECT_INSTALLED=1 "$PY" "$ROOT/tests/test_native_model_training_unit.py"
+  )
+
+  # Repository-policy tests intentionally inspect the checkout and therefore
+  # remain a separate source-tree gate.
   "$PY" -m pytest -q -ra -m "cpu and not model_required" \
     tests/test_backend_lifecycle.py \
     tests/test_pytest_marker_policy.py \
-    tests/test_hf_dependency_compat.py \
     tests/test_native_model_module_split.py \
     tests/test_native_fla_free_import.py \
     tests/test_clean_install_packaging.py
-  PYTHONPATH="$ROOT" "$PY" tests/test_native_model_training_unit.py
   exit 0
 fi
 

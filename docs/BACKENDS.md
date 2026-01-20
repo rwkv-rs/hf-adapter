@@ -85,7 +85,7 @@ supported release. Silent removal is forbidden.
 | `native_model.NativeRWKV7*` Auto* entrypoints and public re-exports | Stable | None; this is the canonical HF surface | n/a | Next major only |
 | Flat converted-model remote-code dependency namespace | Stable compatibility boundary | Prove nested offline imports across the supported Transformers range first | Not scheduled | Not scheduled |
 | Old module paths kept as import shims after source splits | Compatibility | Import the documented new owner; converted `auto_map` remains stable | First release after replacement | Two minor releases after replacement |
-| `RWKV7_NATIVE_MODEL` selector | Compatibility; deprecated in 0.6 | Refresh the model with `scripts/sync_hf_adapter_code.py MODEL`; native is already the default | 0.7 | 0.8 |
+| `RWKV7_NATIVE_MODEL` selector | Compatibility; deprecated in 0.6 | Refresh the model with `scripts/sync_hf_adapter_code.py MODEL`; native is already the default | 0.6 | 0.8 |
 | `RWKV7_NATIVE_MODEL_BACKEND` and `RWKV7_NATIVE_MODEL_JIT` | Experimental | Use default auto routing unless collecting an explicit A/B artifact | Not scheduled | Not scheduled |
 | Historical FLA-backed RWKV wrapper | Reference only | Canonical Native/no-FLA Auto* model | Not scheduled | Not scheduled |
 

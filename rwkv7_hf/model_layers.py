@@ -29,7 +29,10 @@ class _LoRA(nn.Module):
         )
 
     def forward(self, x):
-        return self.lora(x)
+        # Index 1 is Identity and exists only to preserve official checkpoint
+        # keys.  Calling the two linears explicitly also avoids attaching a TP
+        # gather hook to the parameter-free identity wildcard match.
+        return self.lora[2](self.lora[0](x))
 
 
 class NativeRWKV7Attention(nn.Module):

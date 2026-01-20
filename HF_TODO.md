@@ -5,7 +5,7 @@ experiments and historical plans belong in benchmark artifacts or Git history.
 Native vLLM/SGLang scheduler work is out of scope for this file.
 
 Last updated: **2026-07-26**. Audited against upstream main commit
-`4d1de1733b90e99eaf9c104eb73639eb221e3ad2`.
+`9d7dbc9213f0fb6b021d8dd0e3a828dad5fcd4af`.
 
 ## Scope and current boundary
 
@@ -19,13 +19,16 @@ This audit already includes the July 25 native-model module split, nested
 remote-code manifest support, and card-gated external quant-prefill graphs.
 Those merged changes are not repeated as TODO items.
 
-PP/TP are closed for the declared HF scope: two-V100 manual layer-split
-`device_map` generation matches the single-device reference and keeps recurrent
-state on the owning stages; checkpoint partition, head-sharded recurrent state,
-and pipeline state-ownership contracts are documented under
-[`docs/integrations/`](docs/integrations/README.md). Native serving-engine
-executors remain separate projects, so PP/TP are not tracked below as unfinished
-HF-adapter work.
+PP/TP are closed for the declared dense-inference HF scope. Two-V100 manual
+layer-split `device_map` generation matches the single-device reference and
+keeps recurrent state on the owning stages. Separately, Transformers-native
+`tp_plan="auto"` now shards vocabulary, attention, FFN, and output matrices;
+the two-V100 gate proves shard shapes, logits/generation parity, rank agreement,
+and `0.52031x/0.611611x` B1/B8 local peak-VRAM ratios. Recurrent WKV state
+remains explicitly replicated, and quantized TP plus TP training remain
+separate evidence lanes.
+See [`docs/integrations/HF_TENSOR_PARALLEL.md`](docs/integrations/HF_TENSOR_PARALLEL.md).
+Native serving-engine executors remain separate projects.
 
 The audit also found several other completed lanes that must not be reopened as
 generic TODOs:

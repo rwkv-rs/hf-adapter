@@ -118,16 +118,16 @@ class NativeRWKV7Model(PreTrainedModel):
     supports_gradient_checkpointing = True
     _tied_weights_keys = {}
 
-    @property
-    def all_tied_weights_keys(self):
-        return {}
-
     def __init__(self, config: NativeRWKV7Config):
         super().__init__(config)
         self.embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
         self.layers = nn.ModuleList([NativeRWKV7Layer(config, i) for i in range(config.num_hidden_layers)])
         self.norm = nn.LayerNorm(config.hidden_size)
         self.gradient_checkpointing = False
+        # Populates the Transformers-native TP/PP plans from the config.  All
+        # official model implementations call post_init after constructing
+        # their modules; doing the same is required for ``tp_plan="auto"``.
+        self.post_init()
 
     def get_input_embeddings(self):
         return self.embeddings

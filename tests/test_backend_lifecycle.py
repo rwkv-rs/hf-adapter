@@ -26,5 +26,5 @@ def test_current_experimental_and_compatibility_surfaces_are_registered() -> Non
         "Historical FLA-backed RWKV wrapper",
     ):
         assert surface in text
-    assert "| 0.7 | 0.8 |" in text
+    assert "| 0.6 | 0.8 |" in text
     assert "scripts/sync_hf_adapter_code.py MODEL" in text

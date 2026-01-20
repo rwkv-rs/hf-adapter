@@ -44,9 +44,9 @@ def main() -> int:
     todo = read("HF_TODO.md")
     assert "## Scope and current boundary" in todo
     assert "current HF milestone is complete" in todo
-    assert "4d1de1733b90e99eaf9c104eb73639eb221e3ad2" in todo
+    assert "9d7dbc9213f0fb6b021d8dd0e3a828dad5fcd4af" in todo
     assert "- [x]" not in todo
-    assert "PP/TP are closed for the declared HF scope" in todo
+    assert "PP/TP are closed for the declared dense-inference HF scope" in todo
     assert "PP/TP and multi-device behavior" not in todo
     assert "accepted RTX 5090 full-MATH500" in todo
     assert "promoted Apple M5 MLX pairs/shapes for raw peak-memory" in todo
@@ -67,12 +67,12 @@ def main() -> int:
     status = read("HF_STATUS.md")
     assert "## Completion reporting rule" in status
     assert "no official repository-wide completion percentage" in status
-    assert "| PP/TP boundary | **PASS for HF scope**" in status
+    assert "| PP/TP boundary | **PASS for dense HF inference scope**" in status
 
     acceptance = read("docs/ACCEPTANCE.md")
     assert "## How to report completion" in acceptance
     assert "current HF milestone is complete" in acceptance
-    assert "| PP/TP boundary | **PASS for HF scope**" in acceptance
+    assert "| PP/TP boundary | **PASS for dense HF inference scope**" in acceptance
 
     readme = read("README.md")
     assert "Completion is reported by **named scope**" in readme

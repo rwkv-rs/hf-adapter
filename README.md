@@ -85,7 +85,7 @@ save/reload.
 | Recurrent cache | select, reorder, repeat, reset, offload/restore helpers |
 | Training | PEFT LoRA, Trainer, TRL SFT/DPO/GRPO, gradient checkpointing |
 | Distributed training | DeepSpeed ZeRO-2/3 and checkpoint resume gates |
-| Inference parallelism | `device_map` pipeline-style multi-GPU correctness path |
+| Inference parallelism | `device_map` pipeline-style placement plus Transformers-native dense fp16 `tp_plan="auto"` |
 | Quantization | BnB fallback, native MM8/MM4, A8W8, TorchAO, Marlin, MLX |
 | Hardware | CUDA capability policies, CPU fallback, Apple MPS/MLX/CoreML |
 | Serving references | runtime-independent vLLM/SGLang implementation contracts |

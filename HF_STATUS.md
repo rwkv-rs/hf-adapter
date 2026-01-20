@@ -23,7 +23,7 @@ Last updated: **2026-07-26**.
 | Production performance | **PARTIAL / strong card-local closes** | V100 Albatross/native-quant lanes plus 1.5B/full-FLA-Qwen B1/B8 active-work gates; RTX 4080, RTX 4090, RTX 5070, RTX 5090 and Apple M5 have promoted exact-card artifacts for their named shapes; cross-card and model-quality conclusions remain separate |
 | Apple M5 1.5B target-only | **PASS for checked B8 profile** | true B8, T133/decode64, no draft and no prefix coalescing; active-normalized prefill/decode=`1.1406x/1.1394x` Qwen3.5 2B, raw peak=`1.790/2.152GB`, fidelity passes |
 | Full common-card coverage | **PARTIAL** | Tesla T4 is validated; H100, AMD/ROCm, other Turing products and broader Apple/50-series evidence remain open |
-| PP/TP boundary | **PASS for HF scope** | Two-V100 manual layer-split `device_map` generation matches the single-device reference; TP checkpoint/head-state partition and PP state-ownership contracts are documented; native serving-engine executors are separate projects |
+| PP/TP boundary | **PASS for dense HF inference scope** | Two-V100 `device_map` PP-style generation matches single GPU; actual Transformers `tp_plan="auto"` shards embedding/attention/FFN/head weights at B1/B8 with exact greedy parity, minimum logits cosine `0.99999821`, and `0.52031x/0.611611x` local peak VRAM. Recurrent state is explicitly replicated; quantized TP/training and serving-engine executors are separate lanes |
 | Speculative decoding | **EXPERIMENTAL PASS** | HF-compatible harness and Apple target-greedy oracle evidence exist |
 
 ## Completion reporting rule
