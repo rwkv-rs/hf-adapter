@@ -13,10 +13,10 @@ def read(relative: str) -> str:
 
 def main() -> int:
     canonical_dates = {
-        "HF_STATUS.md": "2026-07-23",
+        "HF_STATUS.md": "2026-07-26",
         "HF_TODO.md": "2026-07-26",
         "BENCHMARK.md": "2026-07-20",
-        "docs/ACCEPTANCE.md": "2026-07-18",
+        "docs/ACCEPTANCE.md": "2026-07-26",
         "docs/HARDWARE_MATRIX.md": "2026-07-20",
     }
     for relative, expected_date in canonical_dates.items():
@@ -46,16 +46,20 @@ def main() -> int:
     assert "current HF milestone is complete" in todo
     assert "4d1de1733b90e99eaf9c104eb73639eb221e3ad2" in todo
     assert "- [x]" not in todo
+    assert "PP/TP are closed for the declared HF scope" in todo
+    assert "PP/TP and multi-device behavior" not in todo
     assert "per-PR template, not a list of outstanding project tasks" in todo
     assert "Do not convert the unchecked roadmap" in todo
 
     status = read("HF_STATUS.md")
     assert "## Completion reporting rule" in status
     assert "no official repository-wide completion percentage" in status
+    assert "| PP/TP boundary | **PASS for HF scope**" in status
 
     acceptance = read("docs/ACCEPTANCE.md")
     assert "## How to report completion" in acceptance
     assert "current HF milestone is complete" in acceptance
+    assert "| PP/TP boundary | **PASS for HF scope**" in acceptance
 
     readme = read("README.md")
     assert "Completion is reported by **named scope**" in readme

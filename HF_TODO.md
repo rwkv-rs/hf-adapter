@@ -13,11 +13,19 @@ The current HF milestone is complete and the repository is suitable for a
 public `0.6.0` HF-adapter release. Universal production scope remains
 `PARTIAL`: the remaining work is cross-card and cross-shape performance,
 full-memory quantized speed, broader task quality, missing hardware, and
-production distributed execution.
+broader distributed-training evidence.
 
 This audit already includes the July 25 native-model module split, nested
 remote-code manifest support, and card-gated external quant-prefill graphs.
 Those merged changes are not repeated as TODO items.
+
+PP/TP are closed for the declared HF scope: two-V100 manual layer-split
+`device_map` generation matches the single-device reference and keeps recurrent
+state on the owning stages; checkpoint partition, head-sharded recurrent state,
+and pipeline state-ownership contracts are documented under
+[`docs/integrations/`](docs/integrations/README.md). Native serving-engine
+executors remain separate projects, so PP/TP are not tracked below as unfinished
+HF-adapter work.
 
 Do not convert the unchecked roadmap, section count, or status-row count into
 a repository-wide completion percentage. Report completion only for a named
@@ -119,16 +127,7 @@ template in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - [ ] Reproduce the accepted native train_temp convergence and resume contract
       on broader model sizes and distributed configurations.
 
-### 7. PP/TP and multi-device behavior
-
-- [ ] Define the exact HF-scope PP and TP acceptance contract.
-- [ ] Promote multi-device generation beyond `device_map` smoke.
-- [ ] Add correctness, recurrent-state ownership, failure recovery, memory,
-      and throughput gates for real TP/PP paths.
-- [ ] Document unsupported combinations and fail explicitly instead of
-      silently falling back to a different execution mode.
-
-### 8. Apple MLX and CoreML completion
+### 7. Apple MLX and CoreML completion
 
 - [ ] Validate Qwen3.5 2B/4B+ pairs with the common formal quality rubric.
 - [ ] Capture true peak-to-peak memory rather than loaded-memory proxies.
@@ -143,7 +142,7 @@ for the promoted M5 boundary.
 
 ## P2 — Packaging and maintenance
 
-### 9. Hub, release, and CI experience
+### 8. Hub, release, and CI experience
 
 - [ ] Publish a clean Hub example with conversion provenance and checkpoint
       checksums.
@@ -152,7 +151,7 @@ for the promoted M5 boundary.
 - [ ] Add scheduled clean-install CPU plus optional CUDA and Apple jobs.
 - [ ] Document migration and deprecation policy for experimental backends.
 
-### 10. Architecture and remote-code maintenance
+### 9. Architecture and remote-code maintenance
 
 - [ ] Continue the runtime/kernel ownership split while keeping
       `native_model.py`, converted `auto_map`, parameter names, and old-model
@@ -167,7 +166,7 @@ for the promoted M5 boundary.
 - [ ] Keep card-specific routing isolated and retain cross-card regression
       tests whenever a policy or kernel default changes.
 
-### 11. Speculative decoding
+### 10. Speculative decoding
 
 - [ ] Add CUDA target/draft end-to-end speed and acceptance artifacts.
 - [ ] Validate multiple draft sizes, acceptance/rejection rates, cache handoff,

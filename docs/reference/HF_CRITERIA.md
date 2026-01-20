@@ -55,4 +55,6 @@ batch, dtype or card family.
 
 The active gaps are maintained only in [`../../HF_TODO.md`](../../HF_TODO.md):
 full-memory fused W8/W4, broader Albatross P2/P3, missing hardware, longer
-training/ZeRO-3 resume, Apple family/CoreML completion and production PP/TP.
+training/ZeRO-3 resume, task-quality evaluation, and Apple family/CoreML
+completion. HF layer-split PP and the TP/PP porting contracts are accepted;
+native serving-engine execution is a separate-project gate.

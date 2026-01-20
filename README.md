@@ -95,8 +95,10 @@ are under [`docs/integrations/`](docs/integrations/README.md).
 Production readiness is scoped to exact models, cards, dtypes, batches, and
 shapes. Promoted evidence currently includes V100, T4, RTX 3090/4080/4090/5090,
 selected Ampere validation, and bounded Apple M5 paths. Universal all-card,
-all-shape quantized speed, every hardware family, and production TP/PP remain
-separate acceptance items.
+all-shape quantized speed, every hardware family, broader task quality, and
+distributed-training breadth remain separate acceptance items. HF layer-split
+PP and the TP/PP porting contracts are complete for this repository; native
+serving-engine executors remain separate projects.
 
 Representative promoted evidence:
 
