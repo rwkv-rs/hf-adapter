@@ -14,7 +14,7 @@ def read(relative: str) -> str:
 def main() -> int:
     canonical_dates = {
         "HF_STATUS.md": "2026-07-23",
-        "HF_TODO.md": "2026-07-23",
+        "HF_TODO.md": "2026-07-26",
         "BENCHMARK.md": "2026-07-20",
         "docs/ACCEPTANCE.md": "2026-07-18",
         "docs/HARDWARE_MATRIX.md": "2026-07-20",
@@ -42,7 +42,10 @@ def main() -> int:
             assert phrase not in text, f"stale phrase in {relative}: {phrase}"
 
     todo = read("HF_TODO.md")
-    assert "## Current milestone — COMPLETE" in todo
+    assert "## Scope and current boundary" in todo
+    assert "current HF milestone is complete" in todo
+    assert "4d1de1733b90e99eaf9c104eb73639eb221e3ad2" in todo
+    assert "- [x]" not in todo
     assert "per-PR template, not a list of outstanding project tasks" in todo
     assert "Do not convert the unchecked roadmap" in todo
 
