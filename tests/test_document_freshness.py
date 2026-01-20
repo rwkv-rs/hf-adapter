@@ -48,6 +48,15 @@ def main() -> int:
     assert "- [x]" not in todo
     assert "PP/TP are closed for the declared HF scope" in todo
     assert "PP/TP and multi-device behavior" not in todo
+    assert "accepted RTX 5090 full-MATH500" in todo
+    assert "promoted Apple M5 MLX pairs/shapes for raw peak-memory" in todo
+    assert "V100 CUDA target/draft speculative artifact" in todo
+    assert "Capture true peak-to-peak memory" not in todo
+    assert "Add CUDA target/draft end-to-end speed" not in todo
+    assert "Add end-user SFT/LoRA/DPO examples" not in todo
+    assert "scheduled clean-install CPU plus optional CUDA and Apple" not in todo
+    assert "Keep card-specific routing isolated" not in todo
+    assert "Leave DFlash and serving-engine scheduler" not in todo
     assert "per-PR template, not a list of outstanding project tasks" in todo
     assert "Do not convert the unchecked roadmap" in todo
 

@@ -27,6 +27,23 @@ and pipeline state-ownership contracts are documented under
 executors remain separate projects, so PP/TP are not tracked below as unfinished
 HF-adapter work.
 
+The audit also found several other completed lanes that must not be reopened as
+generic TODOs:
+
+- the accepted RTX 5090 full-MATH500 and compression-alignment gates;
+- the promoted Apple M5 MLX pairs/shapes for raw peak-memory comparisons,
+  long-context/chunk handoff, sustained multi-session checks, and the MLX
+  policy/module split with fallback telemetry;
+- the exact RTX 5090 native `train_temp` tensor, convergence, long-run, resume,
+  and steady-memory lane (only broader sizes/distributed reproduction remains);
+- the V100 CUDA target/draft speculative artifact with speed, acceptance,
+  correction, memory, and target-greedy equality;
+- end-user PEFT/LoRA/SFT/DPO/GRPO commands backed by deterministic tiny datasets;
+- scheduled clean-install CPU and Apple CI, plus cross-card policy-isolation
+  regression tests; and
+- selected/hybrid B8 W8/W4 speed lanes on RTX 3090 and RTX 4090. These do not
+  close the separate full-memory quantized-speed target below.
+
 Do not convert the unchecked roadmap, section count, or status-row count into
 a repository-wide completion percentage. Report completion only for a named
 scope. Current status and promoted evidence live in
@@ -48,14 +65,14 @@ while remaining fp16-or-faster for every promoted prefill and decode shape.
       remain below fp16.
 - [ ] Close V100 full-memory prefill. The head-only group-256 speed profile is
       accepted, while the broad-memory path remains a separate incomplete lane.
-- [ ] Validate broad-memory all-phase speed on RTX 3090, RTX 4090, and at least
-      one Ampere professional card without inheriting schedules across cards.
-- [ ] Preserve paired fp16 timing, physical footprint, peak VRAM, cosine,
-      same-next, route-provenance, and fallback gates in every promoted row.
+- [ ] Close the *full-memory* (not already accepted selected/hybrid B8)
+      all-phase speed lane on RTX 3090, RTX 4090, and at least one Ampere
+      professional card without inheriting schedules across cards.
 
 Acceptance: every promoted profile lowers physical model footprint, preserves
-the declared quality gates, and is no slower than the matching fp16 row for all
-named prefill/decode cells. See
+the declared cosine/same-next gates, records route/fallback provenance plus
+physical footprint and peak VRAM, and is no slower than the matching fp16 row
+for all named prefill/decode cells. See
 [`docs/QUANTIZATION.md`](docs/QUANTIZATION.md).
 
 ### 2. Final RWKV-LM and Albatross matrices
@@ -69,8 +86,9 @@ named prefill/decode cells. See
       broad matrices on those cards are currently bsz8-scoped.
 - [ ] Recheck the RTX 4090 prompt-512 historical high-water reference under the
       current timing and cache policy.
-- [ ] Extend beyond V100 P1 to larger-model P2/P3 prefill/decode rows with
-      explicit host RAM and VRAM ceilings.
+- [ ] Extend the current V100 P1 floor and existing small-model/B8 P3 cells to
+      larger-model P2/P3 prefill/decode rows with explicit host RAM and VRAM
+      ceilings.
 
 Acceptance: candidate and reference must share the exact card, checkpoint,
 dtype, batch, prompt/decode lengths, cache policy, timing method, and process
@@ -84,9 +102,10 @@ state. Correctness and memory gates remain mandatory alongside throughput.
       current 1.5B/2B pair.
 - [ ] Add fail-closed optimized-Qwen matrices on Ampere professional cards and
       H100/Hopper.
-- [ ] Keep raw throughput, active-parameter-normalized work, correctness,
-      physical footprint, and peak VRAM as separate gates; never promote a
-      Torch-fallback Qwen row as a full-FLA reference.
+
+Acceptance: raw throughput, active-parameter-normalized work, correctness,
+physical footprint, and peak VRAM remain separate gates. A Torch-fallback Qwen
+row is never a full-FLA reference.
 
 ### 4. Missing exact-card hardware
 
@@ -105,15 +124,17 @@ template in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ### 5. Model quality and long-context evaluation
 
-- [ ] Add reproducible instruction, reasoning, math, code, multilingual,
-      Chinese, and long-context evaluations for comparable RWKV-7 and Qwen3.5
-      checkpoints.
-- [ ] Separate model-quality results from engine throughput and
-      active-parameter-normalized performance claims.
+- [ ] Beyond the accepted MATH500 math gate, add reproducible instruction,
+      reasoning, code, multilingual/Chinese, and long-context evaluations for
+      comparable RWKV-7 and Qwen3.5 checkpoints.
 - [ ] Extend quantized quality beyond short cosine/greedy gates with named
       datasets, prompts, decoding parameters, seeds, and retained raw outputs.
-- [ ] Define release gates for long-context state stability, chunk handoff, and
-      quality drift across fp16, W8, and W4.
+- [ ] Generalize the existing functional long-context/chunk-handoff checks into
+      cross-card release gates for state stability and task-quality drift across
+      fp16, W8, and W4.
+
+Acceptance: model-quality results remain separate from engine throughput and
+active-parameter-normalized performance claims.
 
 ## P1 — Training and distributed closure
 
@@ -129,13 +150,11 @@ template in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ### 7. Apple MLX and CoreML completion
 
-- [ ] Validate Qwen3.5 2B/4B+ pairs with the common formal quality rubric.
-- [ ] Capture true peak-to-peak memory rather than loaded-memory proxies.
+- [ ] Add retained formal response-quality scoring to the accepted 1.5B-vs-2B
+      performance pair, then extend the common rubric to 4B+ pairs.
 - [ ] Close CoreML INT4/LUT4 quality and confirm ANE placement and occupancy.
-- [ ] Stabilize full-memory W8/W4 speed at long contexts and batch sizes above
-      one.
-- [ ] Convert remaining guarded experiments into maintainable policy tables
-      with explicit fallback telemetry.
+- [ ] Make broad/full-memory W8/W4 fp16-or-faster on the already validated
+      long-context and multi-session/batched shapes.
 
 See [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PRODUCTION_CLOSE.md)
 for the promoted M5 boundary.
@@ -146,16 +165,18 @@ for the promoted M5 boundary.
 
 - [ ] Publish a clean Hub example with conversion provenance and checkpoint
       checksums.
-- [ ] Add end-user SFT/LoRA/DPO examples with tiny reproducible datasets.
 - [ ] Test a supported Transformers/PEFT/TRL version range in CI.
-- [ ] Add scheduled clean-install CPU plus optional CUDA and Apple jobs.
-- [ ] Document migration and deprecation policy for experimental backends.
+- [ ] Add a scheduled clean-install CUDA job; the weekly clean-install CPU and
+      Apple jobs already exist.
+- [ ] Publish a release-versioned deprecation window for experimental backend
+      flags and compatibility shims.
 
 ### 9. Architecture and remote-code maintenance
 
-- [ ] Continue the runtime/kernel ownership split while keeping
-      `native_model.py`, converted `auto_map`, parameter names, and old-model
-      loading backward compatible.
+- [ ] Continue splitting the remaining `native_jit.py`, `modeling_rwkv7.py`,
+      and MLX runtime/kernel monoliths behind the stable `native_model.py`
+      facade while preserving converted `auto_map`, parameter names, and
+      old-model loading.
 - [ ] Prove any nested runtime import layout offline across the supported
       Transformers range before moving remote-code dependencies out of the
       current flat namespace.
@@ -163,17 +184,20 @@ for the promoted M5 boundary.
       and model-required suites before reorganizing tests or scripts.
 - [ ] Reduce duplicated benchmark/session utilities only after preserving
       artifact readers and historical reproduction commands.
-- [ ] Keep card-specific routing isolated and retain cross-card regression
-      tests whenever a policy or kernel default changes.
+
+Acceptance: card-specific routing remains isolated in the policy layer, and
+every policy/kernel-default change retains the existing cross-card regression
+suite.
 
 ### 10. Speculative decoding
 
-- [ ] Add CUDA target/draft end-to-end speed and acceptance artifacts.
-- [ ] Validate multiple draft sizes, acceptance/rejection rates, cache handoff,
-      and memory behavior.
-- [ ] Preserve exact target-distribution and target-greedy correctness gates.
-- [ ] Leave DFlash and serving-engine scheduler integration to their own
-      projects.
+- [ ] Extend beyond the accepted V100 0.4B-target/0.1B-draft and Apple M5 lanes
+      to multiple CUDA/Apple draft sizes, longer shapes, acceptance/rejection
+      behavior, cache handoff, memory, and repeatable end-to-end speed gains.
+
+Acceptance: exact target-distribution and target-greedy correctness gates remain
+mandatory. DFlash and serving-engine scheduler integration stay in separate
+projects and are not HF-adapter TODOs.
 
 ## PR completion checklist
 
