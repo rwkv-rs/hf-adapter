@@ -50,6 +50,50 @@ historical scripts. New conversions and refreshed model directories must work
 without setting it. Use `scripts/sync_hf_adapter_code.py MODEL` to migrate old
 Auto* metadata before reporting a native-default result.
 
+## Versioned lifecycle and deprecation policy
+
+The public HF surface (`AutoConfig`, `AutoModelForCausalLM`, tokenizer,
+`generate`, recurrent cache, PEFT/Trainer/TRL interfaces, and serialized
+checkpoint keys) follows the package release lifecycle. Experimental runtime
+flags and internal module paths do not become stable merely because a benchmark
+used them.
+
+Lifecycle states are:
+
+| State | Contract |
+|---|---|
+| Stable | Backward compatible within the current major release. A replacement and migration command must ship before removal. |
+| Compatibility | Retained for old converted directories or scripts while users migrate. It may warn, but must preserve the documented behavior. |
+| Experimental | Opt-in and allowed to change, but removal still requires a dated table entry and release-note notice. |
+| Reference only | Kept for correctness/performance A/B evidence; never selected silently by the production runtime. |
+
+Normal removals use this minimum window:
+
+1. mark the surface deprecated in release `X.Y` and document its replacement;
+2. keep it working through at least the next minor release `X.(Y+1)`;
+3. remove it no earlier than `X.(Y+2)` and only after old converted-model
+   sync/load and current save/reload gates pass without it.
+
+Security or correctness emergencies may shorten the window, but the release
+notes must identify the affected surface, reason, replacement, and exact last
+supported release. Silent removal is forbidden.
+
+### Current lifecycle table
+
+| Surface | State in 0.6 | Replacement / migration | Warning release | Earliest removal |
+|---|---|---|---|---|
+| `native_model.NativeRWKV7*` Auto* entrypoints and public re-exports | Stable | None; this is the canonical HF surface | n/a | Next major only |
+| Flat converted-model remote-code dependency namespace | Stable compatibility boundary | Prove nested offline imports across the supported Transformers range first | Not scheduled | Not scheduled |
+| Old module paths kept as import shims after source splits | Compatibility | Import the documented new owner; converted `auto_map` remains stable | First release after replacement | Two minor releases after replacement |
+| `RWKV7_NATIVE_MODEL` selector | Compatibility; deprecated in 0.6 | Refresh the model with `scripts/sync_hf_adapter_code.py MODEL`; native is already the default | 0.7 | 0.8 |
+| `RWKV7_NATIVE_MODEL_BACKEND` and `RWKV7_NATIVE_MODEL_JIT` | Experimental | Use default auto routing unless collecting an explicit A/B artifact | Not scheduled | Not scheduled |
+| Historical FLA-backed RWKV wrapper | Reference only | Canonical Native/no-FLA Auto* model | Not scheduled | Not scheduled |
+
+Adding a new experimental flag does not reserve it forever. Before deleting or
+renaming one, add it to this table with a replacement, warning release, and
+earliest removal release. Compatibility shims must remain thin and must not own
+independent runtime state or kernel registration.
+
 ## Allowed hardware-specific locations
 
 Exact card or chip names are allowed in:

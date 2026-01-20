@@ -57,6 +57,10 @@ def main() -> int:
     assert "scheduled clean-install CPU plus optional CUDA and Apple" not in todo
     assert "Keep card-specific routing isolated" not in todo
     assert "Leave DFlash and serving-engine scheduler" not in todo
+    assert "Test a supported Transformers/PEFT/TRL version range in CI" not in todo
+    assert "Publish a release-versioned deprecation window" not in todo
+    assert "Add and enforce pytest markers" not in todo
+    assert "minimum/current Transformers-PEFT-TRL CI lanes" in todo
     assert "per-PR template, not a list of outstanding project tasks" in todo
     assert "Do not convert the unchecked roadmap" in todo
 

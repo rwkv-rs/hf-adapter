@@ -40,7 +40,9 @@ generic TODOs:
   correction, memory, and target-greedy equality;
 - end-user PEFT/LoRA/SFT/DPO/GRPO commands backed by deterministic tiny datasets;
 - scheduled clean-install CPU and Apple CI, plus cross-card policy-isolation
-  regression tests; and
+  regression tests;
+- the versioned experimental-backend deprecation window, centrally enforced
+  pytest marker policy, and minimum/current Transformers-PEFT-TRL CI lanes; and
 - selected/hybrid B8 W8/W4 speed lanes on RTX 3090 and RTX 4090. These do not
   close the separate full-memory quantized-speed target below.
 
@@ -165,11 +167,8 @@ for the promoted M5 boundary.
 
 - [ ] Publish a clean Hub example with conversion provenance and checkpoint
       checksums.
-- [ ] Test a supported Transformers/PEFT/TRL version range in CI.
 - [ ] Add a scheduled clean-install CUDA job; the weekly clean-install CPU and
       Apple jobs already exist.
-- [ ] Publish a release-versioned deprecation window for experimental backend
-      flags and compatibility shims.
 
 ### 9. Architecture and remote-code maintenance
 
@@ -180,8 +179,6 @@ for the promoted M5 boundary.
 - [ ] Prove any nested runtime import layout offline across the supported
       Transformers range before moving remote-code dependencies out of the
       current flat namespace.
-- [ ] Add and enforce pytest markers for CPU, CUDA, card families, slow tests,
-      and model-required suites before reorganizing tests or scripts.
 - [ ] Reduce duplicated benchmark/session utilities only after preserving
       artifact readers and historical reproduction commands.
 

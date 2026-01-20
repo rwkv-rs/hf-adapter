@@ -11,6 +11,10 @@ evidence.
 The canonical model path is Native/no-FLA. FLA remains an optional developer
 reference for dedicated comparison work.
 
+The supported HF ecosystem range is Transformers `>=5.12.1,<6`, PEFT
+`>=0.19.1,<1`, and TRL `>=1.7,<2`. CI tests the exact lower edge and the newest
+resolver result inside those major-version bounds.
+
 ## Five-minute quick start
 
 ```bash
