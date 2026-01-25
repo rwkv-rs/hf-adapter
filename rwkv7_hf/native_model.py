@@ -8,9 +8,7 @@ selected native training backend owns the full forward/backward contract.
 """
 from __future__ import annotations
 
-import os
 from collections import OrderedDict
-from contextlib import nullcontext
 from typing import Any
 
 import torch
@@ -48,6 +46,19 @@ from .model_layers import (
 )
 from .model_prefill_graph import _NativePrefillGraphRunner
 from .model_quantization import _NativeQuantizationMixin
+from .model_runtime_policy import (
+    FALSE_VALUES as _RUNTIME_FALSE_VALUES,
+    bnb_int8_threshold_override as _runtime_bnb_int8_threshold_override,
+    bnb_prefill_value_stride as _runtime_bnb_prefill_value_stride,
+    bnb_skip_policy as _runtime_bnb_skip_policy,
+    cuda_device_guard as _runtime_cuda_device_guard,
+    native_model_backend_requested as _runtime_native_model_backend_requested,
+    native_model_jit_enabled as _runtime_native_model_jit_enabled,
+    native_prefill_external_quant_graph_enabled as _runtime_external_quant_enabled,
+    native_prefill_graph_cache_size as _runtime_native_prefill_graph_cache_size,
+    native_prefill_graph_enabled as _runtime_native_prefill_graph_enabled,
+    native_prefill_graph_signature as _runtime_native_prefill_graph_signature,
+)
 from .model_speculative import _NativeSpeculativeGenerationMixin
 from .model_backbone import (
     NativeRWKV7Model,
@@ -106,15 +117,11 @@ if False:  # pragma: no cover
     from .sm70_quant import w4_linear as _native_sm70_quant_dependency_sentinel
     from .sm70_wagv import sm70_wagv_lora as _native_sm70_wagv_dependency_sentinel
 
-_FALSE_VALUES = {"0", "false", "False", "no", "off"}
+_FALSE_VALUES = _RUNTIME_FALSE_VALUES
 
 
 def _cuda_device_guard(device):
-    return (
-        torch.cuda.device(device)
-        if getattr(device, "type", None) == "cuda" and torch.cuda.is_available()
-        else nullcontext()
-    )
+    return _runtime_cuda_device_guard(device, torch_module=torch)
 
 
 def _bnb_skip_policy(
@@ -123,41 +130,16 @@ def _bnb_skip_policy(
     policy_device: int | str | None = None,
     hardware_policy: bool = True,
 ) -> str:
-    if policy is None:
-        env_policy = os.environ.get("RWKV7_BNB_SKIP_POLICY")
-        if env_policy is None and hardware_policy:
-            env_policy = str(
-                getattr(
-                    current_kernel_policy(device=policy_device),
-                    "bnb_skip_policy",
-                    "memory",
-                )
-            )
-        if env_policy is None:
-            env_policy = "memory"
-        policy = env_policy
-    policy = str(policy).strip().lower()
-    if policy in {"", "default", "small_lora", "memory", "minimal"}:
-        return "memory"
-    if policy in {"decode", "decode_hot", "hot", "hybrid"}:
-        return "decode_hot"
-    if policy in {"output", "output_hot", "o_proj", "o_proj_hot"}:
-        return "output_hot"
-    if policy in {"prefill", "prefill_hot", "throughput"}:
-        return "prefill_hot"
-    if policy in {"decode_rk", "rk_dense"}:
-        return "decode_rk"
-    if policy in {"dense", "all_dense", "no_quant"}:
-        return "dense"
-    return "memory"
+    return _runtime_bnb_skip_policy(
+        policy,
+        policy_device=policy_device,
+        hardware_policy=hardware_policy,
+        kernel_policy_fn=current_kernel_policy,
+    )
 
 
 def _bnb_prefill_value_stride() -> int:
-    raw = os.environ.get("RWKV7_BNB_PREFILL_VALUE_STRIDE", "8").strip()
-    try:
-        return min(max(1, int(raw)), 4096)
-    except ValueError:
-        return 8
+    return _runtime_bnb_prefill_value_stride()
 
 
 def _bnb_int8_threshold_override(
@@ -165,19 +147,11 @@ def _bnb_int8_threshold_override(
     policy_device: int | str | None = None,
     hardware_policy: bool = True,
 ) -> float | None:
-    raw = os.environ.get("RWKV7_BNB_INT8_THRESHOLD")
-    if raw is None and hardware_policy:
-        raw = getattr(
-            current_kernel_policy(device=policy_device),
-            "bnb_int8_threshold",
-            None,
-        )
-    if raw is None or str(raw).strip().lower() in {"", "default", "library", "none"}:
-        return None
-    value = float(raw)
-    if value < 0.0:
-        raise ValueError("RWKV7_BNB_INT8_THRESHOLD must be non-negative")
-    return value
+    return _runtime_bnb_int8_threshold_override(
+        policy_device=policy_device,
+        hardware_policy=hardware_policy,
+        kernel_policy_fn=current_kernel_policy,
+    )
 
 try:
     from .native_jit import extract as _native_jit_extract
@@ -207,28 +181,13 @@ except Exception:  # pragma: no cover - optional CUDA graph acceleration
 
 
 def _native_model_jit_enabled() -> bool:
-    return os.environ.get("RWKV7_NATIVE_MODEL_JIT", "1") not in _FALSE_VALUES
+    return _runtime_native_model_jit_enabled()
 
 
 def _native_model_backend_requested() -> str:
-    raw = os.environ.get("RWKV7_NATIVE_MODEL_BACKEND")
-    if raw is None:
-        return "auto" if _native_model_jit_enabled() else "eager"
-    backend = raw.strip().lower()
-    aliases = {
-        "": "auto",
-        "graph": "native_graph",
-        "cuda_graph": "native_graph",
-        "jit": "native_jit",
-        "torch": "eager",
-    }
-    backend = aliases.get(backend, backend)
-    if backend not in {"auto", "eager", "native_jit", "native_graph"}:
-        raise ValueError(
-            "RWKV7_NATIVE_MODEL_BACKEND must be auto, eager, native_jit, or native_graph; "
-            f"got {raw!r}"
-        )
-    return backend
+    return _runtime_native_model_backend_requested(
+        jit_enabled_fn=_native_model_jit_enabled,
+    )
 
 
 def _native_prefill_graph_enabled(
@@ -238,73 +197,40 @@ def _native_prefill_graph_enabled(
     num_layers: int | None = None,
     device: int | str | torch.device | None = None,
 ) -> bool:
-    raw = os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH")
-    if raw is not None:
-        selected = raw not in _FALSE_VALUES
-    else:
-        policy = current_kernel_policy(device=device, torch_module=torch)
-        selected = bool(getattr(policy, "prefill_graph", False))
-        shapes = {
-            tuple(int(value) for value in shape)
-            for shape in getattr(policy, "prefill_graph_model_shapes", ())
-            if len(shape) == 4
-        }
-        if selected and shapes:
-            if None in (batch_size, prompt_tokens, hidden_size, num_layers):
-                selected = False
-            else:
-                selected = (
-                    int(hidden_size),
-                    int(num_layers),
-                    int(batch_size),
-                    int(prompt_tokens),
-                ) in shapes
-    return bool(
-        selected
-        and torch.cuda.is_available()
-        and _native_jit_prefill is not None
+    return _runtime_native_prefill_graph_enabled(
+        batch_size,
+        prompt_tokens,
+        hidden_size,
+        num_layers,
+        device,
+        native_jit_prefill_available=_native_jit_prefill is not None,
+        torch_module=torch,
+        kernel_policy_fn=current_kernel_policy,
     )
 
 
 def _native_prefill_external_quant_graph_enabled(
     device: int | str | torch.device | None = None,
 ) -> bool:
-    """Allow external quantized modules in prefill graphs only on proven lanes."""
-
-    raw = os.environ.get("RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH")
-    if raw is not None:
-        return raw not in _FALSE_VALUES
-    policy = current_kernel_policy(device=device, torch_module=torch)
-    return bool(getattr(policy, "native_external_quant_prefill_graph", False))
+    return _runtime_external_quant_enabled(
+        device,
+        torch_module=torch,
+        kernel_policy_fn=current_kernel_policy,
+    )
 
 
 def _native_prefill_graph_cache_size(
     device: int | str | torch.device | None = None,
 ) -> int:
-    policy = current_kernel_policy(device=device, torch_module=torch)
-    default = int(getattr(policy, "prefill_graph_cache_size", 2))
-    try:
-        value = int(
-            os.environ.get(
-                "RWKV7_NATIVE_PREFILL_GRAPH_CACHE_SIZE",
-                str(default),
-            )
-        )
-    except ValueError:
-        value = default
-    return max(1, min(value, 16))
+    return _runtime_native_prefill_graph_cache_size(
+        device,
+        torch_module=torch,
+        kernel_policy_fn=current_kernel_policy,
+    )
 
 
 def _native_prefill_graph_signature() -> tuple[tuple[str, str], ...]:
-    """Return every explicit prefill setting that changes a captured graph."""
-
-    return tuple(
-        sorted(
-            (name, value)
-            for name, value in os.environ.items()
-            if name.startswith("RWKV7_NATIVE_PREFILL_")
-        )
-    )
+    return _runtime_native_prefill_graph_signature()
 
 
 def _zero3_pad_native_training_batch(

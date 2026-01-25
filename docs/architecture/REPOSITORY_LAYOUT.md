@@ -86,6 +86,7 @@ model_layers.py      # attention, FFN and block module definitions
 model_backbone.py    # NativeRWKV7Model and recurrent forward helpers
 model_prefill_graph.py # fixed-shape CUDA graph runner for native prefill
 model_quantization.py # BNB loading policy and native W8/W4 replacement mixin
+model_runtime_policy.py # environment/hardware selection with facade wrappers
 model_speculative.py # speculative-generation mixin and acceptance loop
 ```
 
@@ -93,6 +94,19 @@ model_speculative.py # speculative-generation mixin and acceptance loop
 extracted classes so `save_pretrained()` continues to emit
 `native_model.NativeRWKV7*` metadata. The extracted implementation files are
 part of the adapter manifest and are copied into converted model directories.
+
+Runtime-policy implementation lives in `model_runtime_policy.py`, while the
+historical underscore-prefixed helpers remain as wrappers in `native_model.py`.
+This preserves the existing hardware-test and integration patch surface: a
+caller that replaces `native_model.current_kernel_policy` or
+`native_model._native_jit_prefill` still controls the same decision points.
+
+The non-executed direct dependency imports in `native_model.py` are deliberate.
+They cannot be hidden behind one dependency-registry module: supported older
+Transformers releases may copy only modules directly visible from the Auto*
+entrypoint. Moving those imports would make source layout cleaner while making
+some converted checkpoints unloadable. Keep that compatibility edge until the
+supported Transformers range proves recursive remote-module discovery.
 
 ## Intended package boundaries
 

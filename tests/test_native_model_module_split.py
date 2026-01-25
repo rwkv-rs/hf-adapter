@@ -40,6 +40,7 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     layers = _top_level_definitions("rwkv7_hf/model_layers.py")
     prefill_graph = _top_level_definitions("rwkv7_hf/model_prefill_graph.py")
     quantization = _top_level_definitions("rwkv7_hf/model_quantization.py")
+    runtime_policy = _top_level_definitions("rwkv7_hf/model_runtime_policy.py")
     speculative = _top_level_definitions("rwkv7_hf/model_speculative.py")
     causal_lm_methods = _class_methods(
         "rwkv7_hf/native_model.py", "NativeRWKV7ForCausalLM"
@@ -71,6 +72,11 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     assert "NativeRWKV7Model" in backbone
     assert "_NativePrefillGraphRunner" in prefill_graph
     assert "_NativeQuantizationMixin" in quantization
+    assert {
+        "bnb_skip_policy",
+        "native_model_backend_requested",
+        "native_prefill_graph_enabled",
+    } <= runtime_policy
     assert "_NativeSpeculativeGenerationMixin" in speculative
     assert "rwkv7_speculative_generate" not in causal_lm_methods
     assert "rwkv7_speculative_generate" in speculative_methods
@@ -137,6 +143,7 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     assert "from .model_backbone import (" in entrypoint_text
     assert "from .model_prefill_graph import _NativePrefillGraphRunner" in entrypoint_text
     assert "from .model_quantization import _NativeQuantizationMixin" in entrypoint_text
+    assert "from .model_runtime_policy import (" in entrypoint_text
     assert "from .model_speculative import _NativeSpeculativeGenerationMixin" in entrypoint_text
 
 
@@ -229,4 +236,5 @@ def test_split_files_are_in_remote_adapter_manifest() -> None:
     assert "model_backbone.py" in ADAPTER_FILES
     assert "model_prefill_graph.py" in ADAPTER_FILES
     assert "model_quantization.py" in ADAPTER_FILES
+    assert "model_runtime_policy.py" in ADAPTER_FILES
     assert "model_speculative.py" in ADAPTER_FILES
