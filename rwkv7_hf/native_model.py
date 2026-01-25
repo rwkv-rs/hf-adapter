@@ -396,6 +396,12 @@ def _slice_native_logits(logits: torch.Tensor, logits_to_keep):
     return logits[:, -min(keep, int(logits.shape[1])) :, :]
 
 
+def _native_tensor_parallel_active(model) -> bool:
+    """Detect Transformers TP without requiring a concrete model instance."""
+
+    return int(getattr(model, "_tp_size", 1) or 1) > 1
+
+
 class NativeRWKV7ForCausalLM(
     _NativeQuantizationMixin,
     _NativeSpeculativeGenerationMixin,
@@ -416,6 +422,7 @@ class NativeRWKV7ForCausalLM(
     supports_gradient_checkpointing = True
     # Transformers >=5 expects dict-like _tied_weights_keys; RWKV-7 ties nothing.
     _tied_weights_keys = {}
+    _tp_plan = {"lm_head": "colwise_gather_output"}
     _rwkv7_bnb_skip_modules = ["lm_head", r".*_lora\.lora\.[02]"]
     _rwkv7_bnb_policy_extra_skips = {
         "memory": [],
@@ -425,10 +432,6 @@ class NativeRWKV7ForCausalLM(
         "prefill_hot": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)", r".*ffn\.key"],
         "dense": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)", r".*ffn\.(key|value)"],
     }
-
-    @property
-    def all_tied_weights_keys(self):
-        return {}
 
     @classmethod
     def _supports_default_dynamic_cache(cls) -> bool:
@@ -443,6 +446,10 @@ class NativeRWKV7ForCausalLM(
         self.model = NativeRWKV7Model(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.gradient_checkpointing = False
+        self.post_init()
+        # ``post_init`` composes plans from child models but Transformers 5.x
+        # does not retain a top-level class plan while doing so.
+        self._tp_plan["lm_head"] = "colwise_gather_output"
 
     def get_input_embeddings(self):
         return self.model.get_input_embeddings()
@@ -522,6 +529,11 @@ class NativeRWKV7ForCausalLM(
             self._rwkv7_multi_cuda_device_map_cache = result
         return result
 
+    def _rwkv7_has_tensor_parallel(self) -> bool:
+        """Return whether Transformers distributed this instance over a TP mesh."""
+
+        return _native_tensor_parallel_active(self)
+
     def _native_prefill_can_run(
         self,
         input_ids: torch.Tensor | None,
@@ -532,6 +544,8 @@ class NativeRWKV7ForCausalLM(
         logits_to_keep,
     ) -> bool:
         if _native_model_backend_requested() == "eager":
+            return False
+        if _native_tensor_parallel_active(self):
             return False
         if self._rwkv7_has_multi_cuda_device_map():
             return False
@@ -705,6 +719,8 @@ class NativeRWKV7ForCausalLM(
     ) -> bool:
         requested = _native_model_backend_requested()
         if requested not in {"auto", "native_graph"}:
+            return False
+        if _native_tensor_parallel_active(self):
             return False
         if self._rwkv7_has_multi_cuda_device_map():
             return False
@@ -1011,6 +1027,8 @@ class NativeRWKV7ForCausalLM(
 
     def _native_jit_packs(self):
         if _native_model_backend_requested() == "eager":
+            return None
+        if _native_tensor_parallel_active(self):
             return None
         if self._rwkv7_has_multi_cuda_device_map():
             return None

@@ -186,7 +186,8 @@ old module paths as compatibility shims for at least one migration cycle.
 
 ### 5. Tests and scripts
 
-Add pytest markers before directory moves:
+The centrally enforced pytest markers are now in place and must remain valid
+before and after directory moves:
 
 ```text
 cpu

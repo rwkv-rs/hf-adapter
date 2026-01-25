@@ -95,6 +95,37 @@ Use the project-specific environment and model paths from your issue or PR body.
 Do not hardcode private local paths in committed scripts unless they are examples
 with `/path/to/...` placeholders.
 
+## Test markers and dependency compatibility
+
+Pytest collection uses strict, centrally enforced markers:
+
+```text
+cpu  cuda  sm70  ada  blackwell  apple  slow  model_required
+```
+
+Hardware/domain markers are additive because kernel modules commonly include
+CPU fallback and policy tests. Use `cpu and not model_required` for the portable
+offline lane, and add a hardware marker when selecting a card-specific subset:
+
+```bash
+python -m pytest -m "cpu and not model_required"
+python -m pytest -m "cuda and sm70"
+python -m pytest -m "apple and not model_required"
+```
+
+The supported ecosystem bounds are Transformers `>=5.12.1,<6`, PEFT
+`>=0.19.1,<1`, and TRL `>=1.7,<2`. Reproduce the lower-bound clean install with:
+
+```bash
+RWKV7_CPU_ONLY=1 \
+RWKV7_HF_COMPAT_LANE=minimum \
+RWKV7_CONSTRAINTS_FILE=configs/ci/hf-minimum.txt \
+scripts/run_clean_install_tests.sh compat
+```
+
+Omit `RWKV7_CONSTRAINTS_FILE` to test the newest resolver result inside the
+supported major versions. The scheduled CI workflow runs both lanes.
+
 ## Minimal no-GPU checks
 
 For docs, conversion, and API-contract changes that do not require a live GPU,

@@ -10,6 +10,30 @@ class NativeRWKV7Config(PretrainedConfig):
 
     model_type = "rwkv7_native"
 
+    # Hugging Face's native ``tp_plan`` shards the large dense weights while
+    # preserving RWKV's recurrent math.  Attention projections are gathered
+    # before WKV because the eager/native kernels currently consume complete
+    # head tensors; the output projection then splits that replicated tensor.
+    # FFN key/value use the conventional colwise -> rowwise pair.  This is real
+    # weight tensor parallelism (including the vocabulary tables), not an
+    # Accelerate layer/device_map split.
+    base_model_tp_plan = {
+        "embeddings": "embedding_rowwise",
+        "layers.*.attn.r_proj": "colwise_gather_output",
+        "layers.*.attn.k_proj": "colwise_gather_output",
+        "layers.*.attn.v_proj": "colwise_gather_output",
+        "layers.*.attn.o_proj": "rowwise_split_input",
+        # Transformers normalizes every numeric ModuleList/Sequential index to
+        # ``*`` when matching TP rules.  Both LoRA linears are therefore
+        # sharded-and-gathered; the no-op index 1 is skipped by _LoRA.forward.
+        "layers.*.attn.w_lora.lora.*": "colwise_gather_output",
+        "layers.*.attn.a_lora.lora.*": "colwise_gather_output",
+        "layers.*.attn.g_lora.lora.*": "colwise_gather_output",
+        "layers.*.attn.v_lora.lora.*": "colwise_gather_output",
+        "layers.*.ffn.key": "colwise",
+        "layers.*.ffn.value": "rowwise",
+    }
+
     def __init__(self, **kwargs):
         # RWKV checkpoints have an independent output head. PretrainedConfig
         # otherwise defaults this to True, which makes from_pretrained replace

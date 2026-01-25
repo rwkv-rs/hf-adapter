@@ -5,7 +5,7 @@ requirements and repository evidence. `PASS` means the named gate has a
 reproducible artifact; `PARTIAL` means the interface works but the complete
 hardware/performance matrix is not closed.
 
-Last updated: **2026-07-18**.
+Last updated: **2026-07-26**.
 
 This page reports status. For ordinary-user commands and PASS gates for every
 implemented capability below, start with
@@ -60,7 +60,7 @@ above remains mandatory.
 | Dynamic batching, chunked prefill and state cache helpers | **PASS in HF adapter scope** | State select/reorder/drop/compact, chunked-prefill parity, serving-like cache telemetry | Native vLLM/SGLang integration remains a separate repository/project |
 | Common professional and consumer cards | **PARTIAL** | V100, A100, A800, A6000, 4090, 5090, GTX 1080 Ti and Apple M5 evidence | H100, AMD/ROCm, Turing and broader Apple/50-series coverage |
 | W8/W4 inference and lower memory | **PASS functionally; PARTIAL for universal speed** | bnb compatibility plus native MM8/MM4; RTX 5090 g1h 1.5B/2.9B/7.2B/13.3B BN/TN W4 B1/B8 all-phase closes at `0.5298x–0.6250x` footprint; Apple MLX W4 | Extend the 5090 FFN result to square/W8 paths and make full-memory quantized projections fp16-or-faster across cards/shapes |
-| PP/TP inference | **PARTIAL** | HF `device_map`/multi-device smoke and pipeline-oriented path | Production TP and a complete PP matrix are not closed in this HF repository |
+| PP/TP boundary | **PASS for dense HF inference scope** | Two-V100 layer-split `device_map` matches the single-device reference; separate Transformers-native B1/B8 `tp_plan="auto"` shards embedding/attention/FFN/head matrices with exact greedy parity, minimum logits cosine `0.99999821`, and `0.52031x/0.611611x` local peak VRAM | Recurrent state is replicated; quantized TP, TP training, and native serving-engine execution require separate gates |
 | ZeRO-2/3 training | **PASS for current smoke matrix** | ZeRO-2/3 base and resume evidence on V100/A100/A800/A6000 combinations | Longer training and larger ZeRO-3 resume matrix |
 | Initial speculative decoding | **PASS as experimental HF/Apple path** | HF-compatible target/draft harness and Apple target-greedy oracle evidence | Serving integration and broader quality/speed gates |
 
@@ -69,7 +69,8 @@ above remains mandatory.
 The **current HF milestone is complete**, and the repository is suitable for a
 public HF-adapter milestone under the boundaries below. The broader universal
 requirement remains `PARTIAL`: full-memory quant speed, every target hardware
-family, wider Albatross matrices, and production PP/TP are not all closed.
+family, wider Albatross matrices, and broader task-quality evidence are not all
+closed.
 
 There is no official repository-wide completion percentage. Report the named
 scope and its status instead; do not estimate a percentage from TODO checkboxes

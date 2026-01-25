@@ -11,6 +11,10 @@ evidence.
 The canonical model path is Native/no-FLA. FLA remains an optional developer
 reference for dedicated comparison work.
 
+The supported HF ecosystem range is Transformers `>=5.12.1,<6`, PEFT
+`>=0.19.1,<1`, and TRL `>=1.7,<2`. CI tests the exact lower edge and the newest
+resolver result inside those major-version bounds.
+
 ## Five-minute quick start
 
 ```bash
@@ -81,7 +85,7 @@ save/reload.
 | Recurrent cache | select, reorder, repeat, reset, offload/restore helpers |
 | Training | PEFT LoRA, Trainer, TRL SFT/DPO/GRPO, gradient checkpointing |
 | Distributed training | DeepSpeed ZeRO-2/3 and checkpoint resume gates |
-| Inference parallelism | `device_map` pipeline-style multi-GPU correctness path |
+| Inference parallelism | `device_map` pipeline-style placement plus Transformers-native dense fp16 `tp_plan="auto"` |
 | Quantization | BnB fallback, native MM8/MM4, A8W8, TorchAO, Marlin, MLX |
 | Hardware | CUDA capability policies, CPU fallback, Apple MPS/MLX/CoreML |
 | Serving references | runtime-independent vLLM/SGLang implementation contracts |
@@ -95,8 +99,10 @@ are under [`docs/integrations/`](docs/integrations/README.md).
 Production readiness is scoped to exact models, cards, dtypes, batches, and
 shapes. Promoted evidence currently includes V100, T4, RTX 3090/4080/4090/5090,
 selected Ampere validation, and bounded Apple M5 paths. Universal all-card,
-all-shape quantized speed, every hardware family, and production TP/PP remain
-separate acceptance items.
+all-shape quantized speed, every hardware family, broader task quality, and
+distributed-training breadth remain separate acceptance items. HF layer-split
+PP and the TP/PP porting contracts are complete for this repository; native
+serving-engine executors remain separate projects.
 
 Representative promoted evidence:
 

@@ -11,6 +11,7 @@ PROFILE="${1:-smoke}"
 CPU_ONLY="${RWKV7_CPU_ONLY:-auto}"
 KEEP_VENV="${RWKV7_KEEP_TEST_VENV:-0}"
 REQUIRE_APPLE="${RWKV7_REQUIRE_APPLE:-0}"
+CONSTRAINT_FILE="${RWKV7_CONSTRAINTS_FILE:-}"
 
 if [[ -z "${PYTHON_BIN:-}" ]]; then
   for candidate in python3.11 python3.12 python3.10 python3 python; do
@@ -27,12 +28,24 @@ if [[ -z "${PYTHON_BIN:-}" ]]; then
 fi
 
 case "$PROFILE" in
-  smoke|full|apple) ;;
+  smoke|full|apple|compat) ;;
   *)
-    echo "usage: $0 [smoke|full|apple]" >&2
+    echo "usage: $0 [smoke|full|apple|compat]" >&2
     exit 2
     ;;
 esac
+
+PIP_CONSTRAINT_ARGS=()
+if [[ -n "$CONSTRAINT_FILE" ]]; then
+  if [[ "$CONSTRAINT_FILE" != /* ]]; then
+    CONSTRAINT_FILE="$ROOT/$CONSTRAINT_FILE"
+  fi
+  if [[ ! -f "$CONSTRAINT_FILE" ]]; then
+    echo "constraint file not found: $CONSTRAINT_FILE" >&2
+    exit 2
+  fi
+  PIP_CONSTRAINT_ARGS=(--constraint "$CONSTRAINT_FILE")
+fi
 
 if [[ -n "${RWKV7_TEST_VENV:-}" ]]; then
   VENV="$RWKV7_TEST_VENV"
@@ -83,7 +96,13 @@ fi
 
 # This is intentionally non-editable: it exercises PEP 517 metadata, wheel
 # contents, dependency resolution, and importability as a user would install it.
-"$PY" -m pip install "${ROOT}[test]"
+if [[ ${#PIP_CONSTRAINT_ARGS[@]} -gt 0 ]]; then
+  "$PY" -m pip install "${PIP_CONSTRAINT_ARGS[@]}" "${ROOT}[test]"
+else
+  # Bash 3.2 treats expansion of an empty array as an unbound variable under
+  # `set -u`; keep the unconstrained/current lane portable to macOS runners.
+  "$PY" -m pip install "${ROOT}[test]"
+fi
 "$PY" -m pip check
 "$PY" - <<'PY'
 import importlib.metadata
@@ -98,7 +117,15 @@ modules = {
     for name in ("mlx", "coremltools", "triton", "flash_linear_attention", "fla", "bitsandbytes")
 }
 versions = {}
-for distribution in ("rwkv7-hf-adapter", "torch", "transformers", "mlx", "coremltools"):
+for distribution in (
+    "rwkv7-hf-adapter",
+    "torch",
+    "transformers",
+    "peft",
+    "trl",
+    "mlx",
+    "coremltools",
+):
     try:
         versions[distribution] = importlib.metadata.version(distribution)
     except importlib.metadata.PackageNotFoundError:
@@ -157,6 +184,30 @@ done < <(find scripts -maxdepth 1 -name '*.sh' -print0)
 # just because CUDA, MLX, CoreML, DeepSpeed, a model directory, or a driver is
 # absent. The full run below then reports runtime skips with `-ra`.
 "$PY" -m pytest --collect-only -q
+
+if [[ "$PROFILE" == compat ]]; then
+  # Runtime compatibility must exercise the wheel installed into the clean
+  # environment, not the source checkout.  Running from the venv with pytest's
+  # importlib mode keeps the repository root off sys.path while still loading
+  # the explicitly named test and conftest files.
+  (
+    cd "$VENV"
+    RWKV7_EXPECT_INSTALLED=1 "$PY" -m pytest --import-mode=importlib \
+      --rootdir="$ROOT" -q -ra -m "cpu and not model_required" \
+      "$ROOT/tests/test_hf_dependency_compat.py"
+    RWKV7_EXPECT_INSTALLED=1 "$PY" "$ROOT/tests/test_native_model_training_unit.py"
+  )
+
+  # Repository-policy tests intentionally inspect the checkout and therefore
+  # remain a separate source-tree gate.
+  "$PY" -m pytest -q -ra -m "cpu and not model_required" \
+    tests/test_backend_lifecycle.py \
+    tests/test_pytest_marker_policy.py \
+    tests/test_native_model_module_split.py \
+    tests/test_native_fla_free_import.py \
+    tests/test_clean_install_packaging.py
+  exit 0
+fi
 
 if [[ "$PROFILE" == smoke ]]; then
   "$PY" -m pytest -q -ra \

@@ -171,6 +171,23 @@ larger peer copies. A deployment that has independently validated P2P may set
 `RWKV7_CUDA_PEER_COPY=1`; rerun the command above with
 `--compare-single-device` before retaining that setting.
 
+### Transformers-native tensor parallelism
+
+For matrix sharding rather than layer placement, refresh the converted model
+and launch the dedicated two-rank gate:
+
+```bash
+python scripts/sync_hf_adapter_code.py /path/to/model-hf
+CUDA_VISIBLE_DEVICES=0,1 torchrun --standalone --nproc-per-node=2 \
+  tests/test_tensor_parallel_generate.py \
+  --model /path/to/model-hf --dtype fp16 --max-new-tokens 4
+```
+
+Application loading uses `tp_plan="auto"`. The current dense fp16 plan shards
+embedding, attention, FFN, and output-head weights. Recurrent state is
+replicated, and quantized TP plus TP training are not implied. See
+[`integrations/HF_TENSOR_PARALLEL.md`](integrations/HF_TENSOR_PARALLEL.md).
+
 ## 4. Multi-GPU training with DeepSpeed ZeRO
 
 DeepSpeed ZeRO partitions training state. ZeRO-2 partitions optimizer state and

@@ -6,6 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 PORTING_DOCS = (
+    ROOT / "docs" / "integrations" / "HF_TENSOR_PARALLEL.md",
     ROOT / "docs" / "integrations" / "VLLM_PORTING_GUIDE.md",
     ROOT / "docs" / "architecture" / "RWKV7_OPERATOR_SPEC.md",
     ROOT / "docs" / "integrations" / "RWKV7_STATE_CACHE_ABI.md",

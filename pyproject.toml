@@ -12,7 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "123123213weqw", email = "300659282+123123213weqw@users.noreply.github.com" }]
 dependencies = [
   "torch",
-  "transformers",
+  "transformers>=5.12.1,<6",
   "safetensors",
 ]
 
@@ -24,13 +24,13 @@ test = [
   "pytest>=8.0",
   "numpy",
   "tomli>=2.0; python_version < '3.11'",
-  "peft",
+  "peft>=0.19.1,<1",
   "accelerate",
   "datasets",
-  "trl",
+  "trl>=1.7,<2",
   "mlx; platform_system == 'Darwin' and platform_machine == 'arm64'",
 ]
-train = ["peft", "accelerate", "datasets", "trl", "deepspeed"]
+train = ["peft>=0.19.1,<1", "accelerate", "datasets", "trl>=1.7,<2", "deepspeed"]
 quant = ["bitsandbytes"]
 torchao = ["torchao; platform_system == 'Linux'"]
 mlx = ["mlx; platform_system == 'Darwin' and platform_machine == 'arm64'"]
@@ -40,3 +40,17 @@ include = ["rwkv7_hf*"]
 
 [tool.setuptools.package-data]
 rwkv7_hf = ["csrc/marlin/*", "csrc/marlin/core/*", "csrc/train_temp/*"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]
+markers = [
+  "cpu: safe in the CPU/offline collection lane; hardware-gated items may skip",
+  "cuda: covers a CUDA runtime, kernel, graph, or CUDA-specific integration",
+  "sm70: covers the Volta/V100 sm_70 policy or exact-card evidence contract",
+  "ada: covers Ada/RTX 40 policy or exact-card evidence contracts",
+  "blackwell: covers Blackwell/RTX 50 policy or exact-card evidence contracts",
+  "apple: covers Apple MPS, MLX, Metal, CoreML, or Apple evidence contracts",
+  "slow: integration/evidence test unsuitable for the fast pull-request subset",
+  "model_required: requires an external converted checkpoint or model fixture",
+]

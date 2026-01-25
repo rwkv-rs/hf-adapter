@@ -1,0 +1,4 @@
+# Evidence-backed lower edge of the supported Hugging Face ecosystem range.
+transformers==5.12.1
+peft==0.19.1
+trl==1.7.0

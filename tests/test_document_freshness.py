@@ -13,10 +13,10 @@ def read(relative: str) -> str:
 
 def main() -> int:
     canonical_dates = {
-        "HF_STATUS.md": "2026-07-23",
-        "HF_TODO.md": "2026-07-23",
+        "HF_STATUS.md": "2026-07-26",
+        "HF_TODO.md": "2026-07-26",
         "BENCHMARK.md": "2026-07-20",
-        "docs/ACCEPTANCE.md": "2026-07-18",
+        "docs/ACCEPTANCE.md": "2026-07-26",
         "docs/HARDWARE_MATRIX.md": "2026-07-20",
     }
     for relative, expected_date in canonical_dates.items():
@@ -42,17 +42,37 @@ def main() -> int:
             assert phrase not in text, f"stale phrase in {relative}: {phrase}"
 
     todo = read("HF_TODO.md")
-    assert "## Current milestone — COMPLETE" in todo
+    assert "## Scope and current boundary" in todo
+    assert "current HF milestone is complete" in todo
+    assert "9d7dbc9213f0fb6b021d8dd0e3a828dad5fcd4af" in todo
+    assert "- [x]" not in todo
+    assert "PP/TP are closed for the declared dense-inference HF scope" in todo
+    assert "PP/TP and multi-device behavior" not in todo
+    assert "accepted RTX 5090 full-MATH500" in todo
+    assert "promoted Apple M5 MLX pairs/shapes for raw peak-memory" in todo
+    assert "V100 CUDA target/draft speculative artifact" in todo
+    assert "Capture true peak-to-peak memory" not in todo
+    assert "Add CUDA target/draft end-to-end speed" not in todo
+    assert "Add end-user SFT/LoRA/DPO examples" not in todo
+    assert "scheduled clean-install CPU plus optional CUDA and Apple" not in todo
+    assert "Keep card-specific routing isolated" not in todo
+    assert "Leave DFlash and serving-engine scheduler" not in todo
+    assert "Test a supported Transformers/PEFT/TRL version range in CI" not in todo
+    assert "Publish a release-versioned deprecation window" not in todo
+    assert "Add and enforce pytest markers" not in todo
+    assert "minimum/current Transformers-PEFT-TRL CI lanes" in todo
     assert "per-PR template, not a list of outstanding project tasks" in todo
     assert "Do not convert the unchecked roadmap" in todo
 
     status = read("HF_STATUS.md")
     assert "## Completion reporting rule" in status
     assert "no official repository-wide completion percentage" in status
+    assert "| PP/TP boundary | **PASS for dense HF inference scope**" in status
 
     acceptance = read("docs/ACCEPTANCE.md")
     assert "## How to report completion" in acceptance
     assert "current HF milestone is complete" in acceptance
+    assert "| PP/TP boundary | **PASS for dense HF inference scope**" in acceptance
 
     readme = read("README.md")
     assert "Completion is reported by **named scope**" in readme

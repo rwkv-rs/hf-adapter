@@ -4,7 +4,7 @@ Canonical current snapshot. Scope: Transformers loading/generation/training,
 PEFT/TRL, recurrent cache helpers, quantized HF inference, hardware validation
 and reproducible performance evidence. Native vLLM/SGLang work is separate.
 
-Last updated: **2026-07-23**.
+Last updated: **2026-07-26**.
 
 ## Overall status
 
@@ -23,15 +23,15 @@ Last updated: **2026-07-23**.
 | Production performance | **PARTIAL / strong card-local closes** | V100 Albatross/native-quant lanes plus 1.5B/full-FLA-Qwen B1/B8 active-work gates; RTX 4080, RTX 4090, RTX 5070, RTX 5090 and Apple M5 have promoted exact-card artifacts for their named shapes; cross-card and model-quality conclusions remain separate |
 | Apple M5 1.5B target-only | **PASS for checked B8 profile** | true B8, T133/decode64, no draft and no prefix coalescing; active-normalized prefill/decode=`1.1406x/1.1394x` Qwen3.5 2B, raw peak=`1.790/2.152GB`, fidelity passes |
 | Full common-card coverage | **PARTIAL** | Tesla T4 is validated; H100, AMD/ROCm, other Turing products and broader Apple/50-series evidence remain open |
-| PP/TP | **PARTIAL** | HF multi-device/device-map smoke exists; production TP matrix is not closed |
+| PP/TP boundary | **PASS for dense HF inference scope** | Two-V100 `device_map` PP-style generation matches single GPU; actual Transformers `tp_plan="auto"` shards embedding/attention/FFN/head weights at B1/B8 with exact greedy parity, minimum logits cosine `0.99999821`, and `0.52031x/0.611611x` local peak VRAM. Recurrent state is explicitly replicated; quantized TP/training and serving-engine executors are separate lanes |
 | Speculative decoding | **EXPERIMENTAL PASS** | HF-compatible harness and Apple target-greedy oracle evidence exist |
 
 ## Completion reporting rule
 
 Report completion against an explicitly named scope:
 
-- **Current HF milestone:** `COMPLETE`. This means every item listed under
-  `Current milestone — COMPLETE` in [`HF_TODO.md`](HF_TODO.md) is closed.
+- **Current HF milestone:** `COMPLETE`. The remaining universal work is listed
+  under `Scope and current boundary` in [`HF_TODO.md`](HF_TODO.md).
 - **Public HF-adapter release milestone:** suitable for release under the
   boundaries in [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md).
 - **Universal all-card/all-shape production requirements:** `PARTIAL`. The

@@ -158,6 +158,22 @@ python tests\test_device_map_generate.py --model C:\path\to\model-hf --dtype fp1
 设置 `RWKV7_CUDA_PEER_COPY=1`，并且必须重新执行上面的
 `--compare-single-device` 一致性验收。
 
+### Transformers 原生 Tensor Parallel
+
+如果目标是矩阵切分而不是按层放置，先刷新转换模型中的 remote code，再用两进程验收：
+
+```bash
+python scripts/sync_hf_adapter_code.py /path/to/model-hf
+CUDA_VISIBLE_DEVICES=0,1 torchrun --standalone --nproc-per-node=2 \
+  tests/test_tensor_parallel_generate.py \
+  --model /path/to/model-hf --dtype fp16 --max-new-tokens 4
+```
+
+业务代码加载时使用 `tp_plan="auto"`。当前 dense fp16 方案会切分 embedding、
+attention、FFN 和输出头权重；recurrent state 仍在各 rank 复制。量化 TP 和 TP 训练
+需要独立验收，不能从本结果外推。详见
+[`integrations/HF_TENSOR_PARALLEL.md`](integrations/HF_TENSOR_PARALLEL.md)。
+
 ## 4. 多卡训练：DeepSpeed ZeRO-2/3
 
 ZeRO-2 切分 optimizer state 和 gradient，ZeRO-3 进一步切分 parameter。该流程请在
