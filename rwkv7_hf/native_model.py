@@ -106,6 +106,7 @@ if False:  # pragma: no cover
     from .native_quant_mm8 import quantize_model_mm8 as _native_mm8_dependency_sentinel
     from .native_quant_policy import normalize_native_mm_policy as _native_quant_policy_dependency_sentinel
     from .native_wkv_fp16 import native_fp16_sequence as _native_wkv_fp16_dependency_sentinel  # noqa: F401
+    from .native_jit_linear import graph_linear_operand as _native_jit_linear_dependency_sentinel
     from .self_chunk_A_fwd import chunk_dplr_fwd_intra as _native_self_chunk_a_dependency_sentinel
     from .self_chunk_cumsum import chunk_rwkv6_fwd_cumsum as _native_self_chunk_cumsum_dependency_sentinel
     from .self_chunk_h_fwd import chunk_dplr_fwd_h as _native_self_chunk_h_dependency_sentinel

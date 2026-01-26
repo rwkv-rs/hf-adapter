@@ -15,6 +15,15 @@ from contextlib import nullcontext
 import torch
 import torch.nn.functional as F
 
+from .native_jit_linear import (
+    graph_linear_is_dense as _graph_linear_is_dense,
+    graph_linear_operand as _graph_linear_operand,
+    graph_linear_shape as _graph_linear_shape,
+    linear_module as _linear_module,
+    relayout_ffn_value_weight as _native_graph_relayout_ffn_value_weight,
+    try_relayout_ffn_value_weight as _try_relayout_ffn_value_weight,
+)
+
 
 _FP16_ACCUMULATION_LOCK = threading.RLock()
 
@@ -66,67 +75,12 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_bnb8_relu_square_quant_available = None  # type: ignore[assignment]
 
 
-def _linear_module(module, x: torch.Tensor) -> torch.Tensor:
-    """Linear call that also supports native MM8/MM4Linear lm_head modules."""
-    if type(module) is torch.nn.Linear:
-        return F.linear(x, module.weight, module.bias)
-    return module(x)
-
-
-def _graph_linear_operand(module):
-    """Return a dense weight when possible, otherwise retain the quant module.
-
-    Native CUDA-graph decode historically packed bare ``nn.Linear.weight``
-    tensors. Packed MM8/MM4 and BnB modules must remain live callables, letting
-    graph capture record their quantized GEMV without materialising a second
-    fp16 copy of the model.
-    """
-
-    if type(module) is torch.nn.Linear and type(module.weight) is torch.nn.Parameter:
-        return module.weight
-    return module
-
-
-def _graph_linear_is_dense(operand) -> bool:
-    return isinstance(operand, torch.Tensor)
-
-
-def _graph_linear_shape(operand) -> tuple[int, int]:
-    if _graph_linear_is_dense(operand):
-        return int(operand.shape[0]), int(operand.shape[1])
-    return int(operand.out_features), int(operand.in_features)
-
-
 def _native_graph_sparse_ffn_low_memory_pack_enabled() -> bool:
     policy = _kernel_policy()
     return env_flag(
         "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_LOW_MEMORY_PACK",
         bool(getattr(policy, "ada_sparse_ffn_low_memory_pack", False)),
     )
-
-
-def _native_graph_relayout_ffn_value_weight(module):
-    """Store an FFN down weight in the sparse kernel's transposed layout.
-
-    The exposed parameter keeps its original ``[hidden, ffn]`` shape, so
-    ``F.linear`` and state-dict names remain compatible. Its backing storage is
-    contiguous as ``[ffn, hidden]``, allowing the sparse decode kernel to reuse
-    the same bytes instead of allocating a second full-size model copy.
-    """
-
-    if type(module) is not torch.nn.Linear or module.bias is not None:
-        raise TypeError("low-memory sparse FFN packing requires a bias-free nn.Linear")
-    if getattr(module, "_rwkv7_sparse_low_memory_layout", False):
-        return module.weight
-    weight = module.weight
-    if weight.dim() != 2:
-        raise ValueError("low-memory sparse FFN packing requires a rank-2 weight")
-    packed = weight.detach().transpose(0, 1).contiguous()
-    module.weight = torch.nn.Parameter(
-        packed.transpose(0, 1), requires_grad=bool(weight.requires_grad)
-    )
-    module._rwkv7_sparse_low_memory_layout = True
-    return module.weight
 
 
 def _native_graph_try_relayout_ffn_value_weight(module) -> bool:
@@ -139,15 +93,10 @@ def _native_graph_try_relayout_ffn_value_weight(module) -> bool:
     validated 5090 policy reject otherwise supported W8/W4 models.
     """
 
-    if type(module) is not torch.nn.Linear or module.bias is not None:
-        return False
-    weight = module.weight
-    if type(weight) is not torch.nn.Parameter:
-        return False
-    if weight.device.type != "cuda" or weight.dtype != torch.float16:
-        return False
-    _native_graph_relayout_ffn_value_weight(module)
-    return True
+    return _try_relayout_ffn_value_weight(
+        module,
+        relayout_fn=_native_graph_relayout_ffn_value_weight,
+    )
 
 
 def _native_bnb8_policy_flag(env_name: str, policy_name: str) -> bool:

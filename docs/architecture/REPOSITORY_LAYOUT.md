@@ -88,6 +88,8 @@ model_prefill_graph.py # fixed-shape CUDA graph runner for native prefill
 model_quantization.py # BNB loading policy and native W8/W4 replacement mixin
 model_runtime_policy.py # environment/hardware selection with facade wrappers
 model_speculative.py # speculative-generation mixin and acceptance loop
+native_jit.py        # stable native JIT facade and execution orchestration
+native_jit_linear.py # dense/quant linear operands and low-memory relayout
 ```
 
 `native_model.py` preserves the historical public module identity for the
@@ -107,6 +109,13 @@ Transformers releases may copy only modules directly visible from the Auto*
 entrypoint. Moving those imports would make source layout cleaner while making
 some converted checkpoints unloadable. Keep that compatibility edge until the
 supported Transformers range proves recursive remote-module discovery.
+
+The first native-JIT split follows the same rule. `native_jit_linear.py` owns
+linear operand normalization and sparse FFN storage relayout, while
+`native_jit.py` keeps the historical underscore-prefixed symbols. Hot-path
+helpers are imported as direct aliases, avoiding an additional Python wrapper
+call; the relayout compatibility wrapper retains its existing monkeypatch
+surface outside the token loop.
 
 ## Intended package boundaries
 

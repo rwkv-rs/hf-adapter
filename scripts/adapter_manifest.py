@@ -57,6 +57,7 @@ ADAPTER_FILES = [
     "model_speculative.py",
     "native.py",
     "native_jit.py",
+    "native_jit_linear.py",
     "native_graph_runtime.py",
     "native_model.py",
     "native_quant.py",
