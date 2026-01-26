@@ -23,6 +23,13 @@ from .native_jit_linear import (
     relayout_ffn_value_weight as _native_graph_relayout_ffn_value_weight,
     try_relayout_ffn_value_weight as _try_relayout_ffn_value_weight,
 )
+from .native_jit_prefill_policy import (
+    model_shape_selected as _prefill_model_shape_selected_impl,
+    policy_model_shape_selected as _prefill_policy_model_shape_selected_impl,
+    self_chunk_h_tiles as _prefill_self_chunk_h_tiles_impl,
+    self_chunk_shape_eligible as _prefill_self_chunk_shape_eligible,
+    self_chunk_size as _prefill_self_chunk_size_impl,
+)
 
 
 _FP16_ACCUMULATION_LOCK = threading.RLock()
@@ -839,37 +846,18 @@ def _native_prefill_self_chunk_enabled(
         int(getattr(policy, "prefill_self_chunk_min_tokens", 1024)),
         lower=16,
     )
-    raw_model_shapes = os.environ.get("RWKV7_NATIVE_PREFILL_SELF_CHUNK_MODEL_SHAPES")
-    if raw_model_shapes is None:
-        model_shapes = {
-            tuple(int(value) for value in shape)
-            for shape in getattr(policy, "prefill_self_chunk_model_shapes", ())
-            if len(shape) == 4
-        }
-    else:
-        model_shapes = set()
-        try:
-            for item in raw_model_shapes.replace(",", " ").split():
-                values = tuple(int(value) for value in item.lower().split("x"))
-                if len(values) != 4 or any(value <= 0 for value in values):
-                    raise ValueError
-                model_shapes.add(values)
-        except ValueError as exc:
-            raise ValueError(
-                "RWKV7_NATIVE_PREFILL_SELF_CHUNK_MODEL_SHAPES must contain HxLxBxT tuples"
-            ) from exc
-    exact_model_shape = (
-        (int(hidden_size), int(num_layers), int(batch_size), int(tokens))
-        if None not in (hidden_size, num_layers, batch_size)
-        else None
-    )
-    if bool(getattr(policy, "prefill_self_chunk_model_shapes_only", False)):
-        if exact_model_shape not in model_shapes:
-            return False
-    if (
-        int(tokens) < min_tokens
-        and exact_model_shape not in model_shapes
-    ) or int(tokens) % 16 or int(head_dim) != 64:
+    if not _prefill_self_chunk_shape_eligible(
+        policy=policy,
+        tokens=tokens,
+        head_dim=head_dim,
+        batch_size=batch_size,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        min_tokens=min_tokens,
+        raw_model_shapes=os.environ.get(
+            "RWKV7_NATIVE_PREFILL_SELF_CHUNK_MODEL_SHAPES"
+        ),
+    ):
         return False
     if self_chunk_rwkv7 is None or self_chunk_rwkv7_available is None:
         return False
@@ -882,26 +870,12 @@ def _native_prefill_self_chunk_enabled(
 def _native_prefill_self_chunk_size(batch_size: int, tokens: int | None = None) -> int:
     """Return the exact-card sequence chunk size."""
 
-    policy = _kernel_policy()
-    default = int(getattr(policy, "prefill_self_chunk_size", 16))
-    if tokens is not None:
-        for policy_batch, policy_tokens, policy_size in getattr(
-            policy,
-            "prefill_self_chunk_shape_sizes",
-            (),
-        ):
-            if (int(batch_size), int(tokens)) == (int(policy_batch), int(policy_tokens)):
-                default = int(policy_size)
-                break
-    chunk_size = env_int(
-        "RWKV7_NATIVE_PREFILL_SELF_CHUNK_SIZE",
-        default,
-        lower=16,
-        upper=64,
+    return _prefill_self_chunk_size_impl(
+        policy=_kernel_policy(),
+        batch_size=batch_size,
+        tokens=tokens,
+        env_int_fn=env_int,
     )
-    if chunk_size not in {16, 32, 64}:
-        raise ValueError("RWKV7_NATIVE_PREFILL_SELF_CHUNK_SIZE must be 16, 32, or 64")
-    return chunk_size
 
 
 def _native_prefill_self_chunk_h_tiles(
@@ -910,15 +884,11 @@ def _native_prefill_self_chunk_h_tiles(
 ) -> tuple[int, int] | None:
     """Return an exact-shape tile override from the centralized card policy."""
 
-    policy = _kernel_policy()
-    for policy_batch, policy_tokens, policy_bv, policy_bc in getattr(
-        policy,
-        "prefill_self_chunk_h_tile_shapes",
-        (),
-    ):
-        if (int(batch_size), int(tokens)) == (int(policy_batch), int(policy_tokens)):
-            return int(policy_bv), int(policy_bc)
-    return None
+    return _prefill_self_chunk_h_tiles_impl(
+        policy=_kernel_policy(),
+        batch_size=batch_size,
+        tokens=tokens,
+    )
 
 
 def _native_prefill_self_chunk_safe_gate() -> bool:
@@ -1165,34 +1135,16 @@ def _native_prefill_model_shape_selected(
 ) -> bool:
     """Apply an optional exact model-shape restriction to a prefill route."""
 
-    policy = _kernel_policy()
-    raw = os.environ.get(env_name)
-    if raw is None:
-        shapes = {
-            tuple(int(value) for value in shape)
-            for shape in getattr(policy, policy_name, ())
-            if len(shape) == 4
-        }
-    else:
-        shapes = set()
-        try:
-            for item in raw.replace(",", " ").split():
-                values = tuple(int(value) for value in item.lower().split("x"))
-                if len(values) != 4 or any(value <= 0 for value in values):
-                    raise ValueError
-                shapes.add(values)
-        except ValueError as exc:
-            raise ValueError(f"{env_name} must contain HxLxBxT tuples") from exc
-    if not shapes:
-        return True
-    if None in (batch_size, prompt_tokens, hidden_size, num_layers):
-        return False
-    return (
-        int(hidden_size),
-        int(num_layers),
-        int(batch_size),
-        int(prompt_tokens),
-    ) in shapes
+    return _prefill_model_shape_selected_impl(
+        policy=_kernel_policy(),
+        env_name=env_name,
+        policy_name=policy_name,
+        raw=os.environ.get(env_name),
+        batch_size=batch_size,
+        prompt_tokens=prompt_tokens,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+    )
 
 
 def _native_prefill_policy_model_shape_selected(
@@ -1204,19 +1156,14 @@ def _native_prefill_policy_model_shape_selected(
 ) -> bool:
     """Return whether an exact shape is explicitly promoted by policy."""
 
-    if None in (batch_size, prompt_tokens, hidden_size, num_layers):
-        return False
-    target = (
-        int(hidden_size),
-        int(num_layers),
-        int(batch_size),
-        int(prompt_tokens),
+    return _prefill_policy_model_shape_selected_impl(
+        policy=_kernel_policy(),
+        policy_name=policy_name,
+        batch_size=batch_size,
+        prompt_tokens=prompt_tokens,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
     )
-    return target in {
-        tuple(int(value) for value in shape)
-        for shape in getattr(_kernel_policy(), policy_name, ())
-        if len(shape) == 4
-    }
 
 
 def _native_prefill_fused_shift_mix_enabled(

@@ -90,6 +90,7 @@ model_runtime_policy.py # environment/hardware selection with facade wrappers
 model_speculative.py # speculative-generation mixin and acceptance loop
 native_jit.py        # stable native JIT facade and execution orchestration
 native_jit_linear.py # dense/quant linear operands and low-memory relayout
+native_jit_prefill_policy.py # pure shape allowlists and tiling selection
 ```
 
 `native_model.py` preserves the historical public module identity for the
@@ -116,6 +117,12 @@ linear operand normalization and sparse FFN storage relayout, while
 helpers are imported as direct aliases, avoiding an additional Python wrapper
 call; the relayout compatibility wrapper retains its existing monkeypatch
 surface outside the token loop.
+
+Prefill exact-shape parsing and self-chunk tiling live in
+`native_jit_prefill_policy.py`. The module is intentionally independent from
+Torch, CUDA and optional kernels. `native_jit.py` supplies the current card
+policy, environment helpers and availability checks through stable wrappers,
+so hardware tests and downstream policy overrides retain their old target.
 
 ## Intended package boundaries
 
