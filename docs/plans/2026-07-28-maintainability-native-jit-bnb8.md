@@ -8,7 +8,8 @@ provenance:
 
 # Native JIT BnB W8 split
 
-Status: fourth stacked structural change.
+Status: fourth stacked structural change; local and RTX 4080 regression gates
+pass.
 
 ## Scope
 
@@ -39,5 +40,11 @@ python tests/test_markdown_links.py
 git diff --check
 ```
 
-Before merging into a production branch, run the existing BnB W8 correctness,
-VRAM and B1/B8 performance lane on an Ada or Blackwell GPU.
+## RTX 4080 gate
+
+The existing BnB W8 correctness, VRAM and B1/B8 performance lane was run on an
+RTX 4080 against direct parent `89bc457`. Real-CUDA helper tests pass, output
+correctness and memory are unchanged, and all prefill/decode movement remains
+within 1.1%. Evidence and the explicit remaining full-model BnB speed gap are
+recorded in
+[`../../bench/4080_bnb8_refactor_20260728/README.md`](../../bench/4080_bnb8_refactor_20260728/README.md).
