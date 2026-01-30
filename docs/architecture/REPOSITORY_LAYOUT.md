@@ -89,6 +89,7 @@ model_quantization.py # BNB loading policy and native W8/W4 replacement mixin
 model_runtime_policy.py # environment/hardware selection with facade wrappers
 model_speculative.py # speculative-generation mixin and acceptance loop
 native_jit.py        # stable native JIT facade and execution orchestration
+native_jit_bnb8.py   # BnB W8 detection, direct operators and fused eligibility
 native_jit_linear.py # dense/quant linear operands and low-memory relayout
 native_jit_prefill_policy.py # pure shape allowlists and tiling selection
 ```
@@ -123,6 +124,12 @@ Prefill exact-shape parsing and self-chunk tiling live in
 Torch, CUDA and optional kernels. `native_jit.py` supplies the current card
 policy, environment helpers and availability checks through stable wrappers,
 so hardware tests and downstream policy overrides retain their old target.
+
+BnB W8 inference dispatch lives in `native_jit_bnb8.py`. Its historical
+underscore-prefixed names are direct aliases from `native_jit.py`, avoiding an
+extra Python call for every quantized projection. The module owns only BnB
+eligibility and operator dispatch; mixed-sequence orchestration remains in the
+prefill runtime until that whole execution boundary is moved.
 
 ## Intended package boundaries
 
