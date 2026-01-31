@@ -59,6 +59,7 @@ ADAPTER_FILES = [
     "native_jit.py",
     "native_jit_bnb8.py",
     "native_jit_dense_step.py",
+    "native_jit_graph_dispatch.py",
     "native_jit_linear.py",
     "native_jit_packing.py",
     "native_jit_prefill_policy.py",
