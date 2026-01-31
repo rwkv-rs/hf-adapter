@@ -66,6 +66,7 @@ ADAPTER_FILES = [
     "native_jit_prefill.py",
     "native_jit_prefill_policy.py",
     "native_jit_prefill_runtime_policy.py",
+    "native_jit_recurrent.py",
     "native_graph_runtime.py",
     "native_model.py",
     "native_quant.py",

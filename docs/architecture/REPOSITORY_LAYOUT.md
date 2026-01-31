@@ -98,6 +98,7 @@ native_jit_packing.py # model pack extraction and recurrent-state allocation
 native_jit_prefill.py # sequence prefill execution and cache handoff
 native_jit_prefill_policy.py # pure shape allowlists and tiling selection
 native_jit_prefill_runtime_policy.py # kernel eligibility and launch policy
+native_jit_recurrent.py # recurrent kernel selection and eager fallback math
 ```
 
 `native_model.py` preserves the historical public module identity for the
@@ -166,6 +167,11 @@ Dense-JIT stepping, eager graph blocks, CUDA Graph runners and greedy decode
 live in `native_jit_decode.py`. Their facade names are direct aliases because
 `native_model`, `modeling_rwkv7` and `native_graph_runtime` call the block
 functions inside the token/layer loop.
+
+Recurrent kernel eligibility and the tensor fallback update live in
+`native_jit_recurrent.py`. Both facade names are direct aliases. After this
+split, `native_jit.py` is the 794-line compatibility facade and optional-kernel
+binding registry rather than an execution monolith.
 
 ## Intended package boundaries
 
