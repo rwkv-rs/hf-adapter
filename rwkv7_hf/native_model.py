@@ -112,6 +112,7 @@ if False:  # pragma: no cover
     from .native_jit_graph_dispatch import _native_graph_rkv_policy as _native_jit_graph_dispatch_dependency_sentinel
     from .native_jit_packing import extract_dense_packs as _native_jit_packing_dependency_sentinel
     from .native_jit_prefill_policy import model_shape_selected as _native_jit_prefill_policy_dependency_sentinel
+    from .native_jit_prefill_runtime_policy import _native_prefill_fused_scan_enabled as _native_jit_prefill_runtime_policy_dependency_sentinel
     from .self_chunk_A_fwd import chunk_dplr_fwd_intra as _native_self_chunk_a_dependency_sentinel
     from .self_chunk_cumsum import chunk_rwkv6_fwd_cumsum as _native_self_chunk_cumsum_dependency_sentinel
     from .self_chunk_h_fwd import chunk_dplr_fwd_h as _native_self_chunk_h_dependency_sentinel

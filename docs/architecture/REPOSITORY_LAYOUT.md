@@ -95,6 +95,7 @@ native_jit_graph_dispatch.py # graph policy, projection and FFN dispatch
 native_jit_linear.py # dense/quant linear operands and low-memory relayout
 native_jit_packing.py # model pack extraction and recurrent-state allocation
 native_jit_prefill_policy.py # pure shape allowlists and tiling selection
+native_jit_prefill_runtime_policy.py # kernel eligibility and launch policy
 ```
 
 `native_model.py` preserves the historical public module identity for the
@@ -148,6 +149,11 @@ Native CUDA-graph feature gates and projection/FFN dispatch live in
 `native_jit_graph_dispatch.py`. The facade binds optional kernels and policy
 helpers once, then re-exports direct function aliases. This preserves the hot
 path while separating hardware routing from recurrent orchestration.
+
+Prefill kernel eligibility and launch selection live in
+`native_jit_prefill_runtime_policy.py`. The facade uses compatibility wrappers
+that refresh only referenced dependencies, preserving existing policy and
+optional-kernel overrides without moving sequence execution into policy code.
 
 ## Intended package boundaries
 
