@@ -90,6 +90,7 @@ model_runtime_policy.py # environment/hardware selection with facade wrappers
 model_speculative.py # speculative-generation mixin and acceptance loop
 native_jit.py        # stable native JIT facade and execution orchestration
 native_jit_bnb8.py   # BnB W8 detection, direct operators and fused eligibility
+native_jit_dense_step.py # pure tensor-only TorchScript layer steps
 native_jit_linear.py # dense/quant linear operands and low-memory relayout
 native_jit_prefill_policy.py # pure shape allowlists and tiling selection
 ```
@@ -130,6 +131,11 @@ underscore-prefixed names are direct aliases from `native_jit.py`, avoiding an
 extra Python call for every quantized projection. The module owns only BnB
 eligibility and operator dispatch; mixed-sequence orchestration remains in the
 prefill runtime until that whole execution boundary is moved.
+
+The tensor-only TorchScript layer functions live in
+`native_jit_dense_step.py`. `native_jit.py` re-exports the exact ScriptFunction
+objects, so the dense JIT token loop gains no wrapper call and the historical
+pack ABI remains unchanged.
 
 ## Intended package boundaries
 
