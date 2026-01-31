@@ -593,6 +593,7 @@ Evidence: [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PRODUC
 | RTX A6000 48GB | 0.4B–7.2B training/resume; dual-card ZeRO through 2.9B |
 | RTX 5090 | Exact 12x768 BF16 train_temp backward/FusedAdam step, paired real-MiniPile 3-seed cohort, continuous 5,000-step run and 2,500+2,500 recovery |
 | Apple M5 | Tiny and real-model PEFT/Trainer/SFT/DPO/GRPO compatibility smoke |
+| AMD gfx1100 / ROCm 7.2.1 | 0.1B fully native HF generation, PEFT, cache/chunked prefill and bf16 Trainer compatibility; [`docs/validation/AMD_ROCM_HF_VALIDATION.md`](docs/validation/AMD_ROCM_HF_VALIDATION.md) |
 
 See [`docs/TRAINING.md`](docs/TRAINING.md) and the validation documents.
 

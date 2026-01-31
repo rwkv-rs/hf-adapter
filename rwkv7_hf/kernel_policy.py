@@ -484,7 +484,7 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     "amd_hip": GPUAdaptationRule(
         family="amd_hip",
         cards=("AMD Instinct MI250/MI300", "Radeon ROCm cards"),
-        status="compatibility target; TODO validation",
+        status="gfx1100 / ROCm 7.2.1 native-HF compatibility validated; fused performance and quantization remain open",
         default_stance="pure PyTorch/native_model first; CUDA/Triton kernels off",
         default_on=("fast_cache",),
         default_off=("CUDA native_graph fused kernels", "bnb CUDA-only speed paths"),

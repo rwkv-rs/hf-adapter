@@ -57,7 +57,8 @@ Native same-precision inference evidence:
   memory telemetry and the faster official fp16-state route.
 - Recover the retained 0.4B RTX 4090 historical prompt-512 prefill high-water
   mark; the separate g1h 7.2B/Qwen3.5 bsz8 lane is closed.
-- Add H100 and AMD/ROCm production evidence.
+- Add H100 production evidence and move AMD/ROCm from its fully native
+  compatibility baseline to fused, quantized and same-card reference evidence.
 - Broaden Apple results beyond M5 and complete CoreML/ANE production telemetry.
 
 ## Reproduction entrypoints
