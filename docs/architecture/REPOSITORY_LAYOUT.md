@@ -91,6 +91,7 @@ model_speculative.py # speculative-generation mixin and acceptance loop
 native_jit.py        # stable native JIT facade and execution orchestration
 native_jit_bnb8.py   # BnB W8 detection, direct operators and fused eligibility
 native_jit_dense_step.py # pure tensor-only TorchScript layer steps
+native_jit_decode.py # dense-JIT and CUDA-graph decode execution
 native_jit_graph_dispatch.py # graph policy, projection and FFN dispatch
 native_jit_linear.py # dense/quant linear operands and low-memory relayout
 native_jit_packing.py # model pack extraction and recurrent-state allocation
@@ -160,6 +161,11 @@ Sequence projections, recurrent scan routing, layer-wise prefill math and
 cache handoff live in `native_jit_prefill.py`. The facade binds the current
 policy and optional kernels once per public prefill call; inner layer and scan
 calls remain inside the implementation module without compatibility frames.
+
+Dense-JIT stepping, eager graph blocks, CUDA Graph runners and greedy decode
+live in `native_jit_decode.py`. Their facade names are direct aliases because
+`native_model`, `modeling_rwkv7` and `native_graph_runtime` call the block
+functions inside the token/layer loop.
 
 ## Intended package boundaries
 

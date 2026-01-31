@@ -109,6 +109,7 @@ if False:  # pragma: no cover
     from .native_jit_linear import graph_linear_operand as _native_jit_linear_dependency_sentinel
     from .native_jit_bnb8 import _bnb8_direct_linear as _native_jit_bnb8_dependency_sentinel
     from .native_jit_dense_step import block_step as _native_jit_dense_step_dependency_sentinel
+    from .native_jit_decode import step_batched as _native_jit_decode_dependency_sentinel
     from .native_jit_graph_dispatch import _native_graph_rkv_policy as _native_jit_graph_dispatch_dependency_sentinel
     from .native_jit_packing import extract_dense_packs as _native_jit_packing_dependency_sentinel
     from .native_jit_prefill import _prefill_current_device as _native_jit_prefill_dependency_sentinel
