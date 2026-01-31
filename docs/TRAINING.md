@@ -48,6 +48,10 @@ and multi-GPU ZeRO remains in [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md).
   [`../bench/5090_native_train_temp_real_minipile_20260718/`](../bench/5090_native_train_temp_real_minipile_20260718/README.md).
 - **Apple M5:** tiny and real-model PEFT/Trainer/TRL smoke through tested 1.5B
   workflows. This is compatibility evidence, not high-throughput training.
+- **AMD gfx1100 / ROCm 7.2.1:** fully native 0.1B PEFT backward and six-step
+  HF Trainer + LoRA pass in bf16 with all 72 trainable tensors updated. The
+  tested fp16 Trainer recipe is not promoted because its gradient norm became
+  non-finite.
 
 Detailed matrices:
 
@@ -55,6 +59,7 @@ Detailed matrices:
 - [`hardware/TURING_T4.md`](hardware/TURING_T4.md)
 - [`validation/A100_HF_VALIDATION.md`](validation/A100_HF_VALIDATION.md)
 - [`validation/A800_HF_VALIDATION.md`](validation/A800_HF_VALIDATION.md)
+- [`validation/AMD_ROCM_HF_VALIDATION.md`](validation/AMD_ROCM_HF_VALIDATION.md)
 - [`hardware/APPLE_SILICON.md`](hardware/APPLE_SILICON.md)
 
 ## Remaining production work
@@ -65,6 +70,6 @@ Detailed matrices:
 - Larger ZeRO-3 checkpoint-resume matrix.
 - Optimizer/scheduler/RNG continuity checks after distributed resume; the
   single-GPU Native 2,500+2,500 path is already covered.
-- H100 and AMD/ROCm training validation.
+- H100 training validation and longer/larger AMD bf16 training/TRL matrices.
 - Clear separation between compatibility smoke and production convergence
   evidence in every future report.

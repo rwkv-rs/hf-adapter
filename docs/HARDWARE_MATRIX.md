@@ -3,7 +3,7 @@
 Canonical current hardware status for the HF adapter. Detailed experiment logs
 remain in `bench/` and platform-specific documents.
 
-Last updated: **2026-07-20**.
+Last updated: **2026-07-27**.
 
 ## Status definitions
 
@@ -29,7 +29,7 @@ Last updated: **2026-07-20**.
 | Tesla T4 15GB, sm75 | **Validated** | 0.1B/0.4B/1.5B/2.9B HF, cache, fused prefill, native-graph decode, W8/W4 and training integration | 123 dense/cache rows; exact-T4 DP4A quant; head-speed W8/W4 decode `>=1.0207x` fp16; Trainer/PEFT/TRL and single-GPU ZeRO/resume matrix | Dense decode `0.4888x–0.8649x` and B1/T512 prefill `0.5385x–0.7671x` Albatross; full-model all-phase quant speed |
 | RTX 5070 Laptop, sm120 | **Production-close for measured bsz8 lane** | 1.5B RWKV vs full-FLA Qwen3.5 2B, fp16/W8/W4 | 18/18 speed, active-parameter efficiency, footprint, peak-VRAM, full-FLA binding, and greedy/cosine gates pass | Other model pairs, bsz1/2/4 full-FLA, and model-quality evaluation |
 | H100 / Hopper | **Open** | — | — | bf16, large-model, quant, training and performance matrix |
-| AMD / ROCm | **Open** | Native PyTorch direction | Import-safe/no-FLA architecture exists | Real ROCm card validation and kernels |
+| AMD gfx1100 / ROCm 7.2.1 | **Validated compatibility** | 0.1B fp16 inference and bf16 training | Fully native HF AutoModel/generate, PEFT, API/cache/chunked-prefill, Trainer and B1/B2/B4/B8 baseline | Fused prefill/decode, HIP W8/W4, larger models, MI-series and same-card reference |
 | Other Turing / RTX 20 | **Open** | exact-card validation required | conservative family routing only | Do not inherit Tesla T4 prefill or DP4A quant promotion by `sm_75` alone |
 | CPU | **Experimental fallback** | Tiny/native tests | Import-safe native model and CPU tests | Production performance is not a target yet |
 
@@ -57,6 +57,7 @@ Last updated: **2026-07-20**.
 - A100: [`validation/A100_HF_VALIDATION.md`](validation/A100_HF_VALIDATION.md)
 - A800: [`validation/A800_HF_VALIDATION.md`](validation/A800_HF_VALIDATION.md)
 - V100 training/compatibility: [`validation/V100_HF_VALIDATION.md`](validation/V100_HF_VALIDATION.md)
+- AMD ROCm: [`validation/AMD_ROCM_HF_VALIDATION.md`](validation/AMD_ROCM_HF_VALIDATION.md)
 - Tesla T4: [`hardware/TURING_T4.md`](hardware/TURING_T4.md), [`../bench/t4_production_close_20260720/`](../bench/t4_production_close_20260720/README.md)
 - Blackwell history: [`hardware/BLACKWELL_50SERIES.md`](hardware/BLACKWELL_50SERIES.md)
 

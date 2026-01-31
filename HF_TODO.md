@@ -4,8 +4,8 @@ Only **unfinished, actionable HF-adapter work** belongs here. Completed
 experiments and historical plans belong in benchmark artifacts or Git history.
 Native vLLM/SGLang scheduler work is out of scope for this file.
 
-Last updated: **2026-07-26**. Audited against upstream main commit
-`9d7dbc9213f0fb6b021d8dd0e3a828dad5fcd4af`.
+Last updated: **2026-07-27**. Audited against upstream main commit
+`6f7737f68e01a9a2a587d0b7a59a8719ecd68084`.
 
 ## Scope and current boundary
 
@@ -116,8 +116,10 @@ row is never a full-FLA reference.
 
 - [ ] H100/Hopper: bf16, large-model, quant, batch, cache, training, and
       same-card performance rows.
-- [ ] AMD/ROCm: native/no-FLA load/generate, recurrent cache, training,
-      quantization, and performance on a real ROCm device.
+- [x] AMD gfx1100/ROCm 7.2.1: fully native HF load/generate, PEFT, recurrent
+      cache/chunked prefill, bf16 Trainer and B1/B2/B4/B8 baseline on a real GPU.
+- [ ] AMD/ROCm: fused prefill/decode, HIP W8/W4, larger models, MI-series,
+      longer training and same-card official/Albatross performance.
 - [ ] Other Turing/RTX 20 products: validate independently and do not inherit
       Tesla T4 prefill or DP4A quant routing from `sm_75` alone.
 - [ ] Add exact-card evidence for additional RTX 50-series and constrained
@@ -149,7 +151,7 @@ active-parameter-normalized performance claims.
       smoke steps with loss, throughput, memory, and checkpoint evidence.
 - [ ] Expand ZeRO-3 resume to larger models and more card combinations,
       including distributed optimizer/scheduler and RNG continuity.
-- [ ] Add H100 and AMD training matrices.
+- [ ] Add H100 and longer/larger AMD bf16 training matrices.
 - [ ] Reproduce the accepted native train_temp convergence and resume contract
       on broader model sizes and distributed configurations.
 
