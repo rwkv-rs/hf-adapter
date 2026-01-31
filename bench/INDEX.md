@@ -51,6 +51,7 @@ two-pair conservative gate. Conclusions and reproduction commands are in
 | 4090_small_bsz8_20260715 | RTX 4090 0.4B/1.5B/2.9B vs Qwen3.5 bsz8 acceptance | 5 | 1 |
 | 4080_ada_validation_20260719 | RTX 4080 Native HF, full-FLA Qwen3.5 and quant acceptance | 21 | 9 |
 | 4080_bnb8_refactor_20260728 | RTX 4080 BnB W8 helper-split correctness, memory and B1/B8 A/B regression | 5 | 3 |
+| 4080_native_jit_split_20260728 | RTX 4080 complete native-JIT facade split B1/B8 correctness, memory and performance A/B | 4 | 3 |
 | 4080_full_model_ladder_20260719 | RTX 4080 B1/B8 full-FLA-Qwen pair matrix and large-model capacity ladder | 28 | 0 |
 | 5070_native_memory_loading_20260716 | RTX 5070 Laptop CPU-first native MM8/MM4 memory-loading smoke | 1 | 0 |
 | 5090_g1h_13p3_20260715 | RTX 5090 latest official g1h 13.3B conversion, smoke, and speed-policy acceptance | 2 | 0 |
@@ -112,6 +113,7 @@ two-pair conservative gate. Conclusions and reproduction commands are in
 | math500_rng_modes_high_signal9_4090_20260704 | 4090 MATH500 high-signal-9 RNG/refill probe — 2026-07-04 | 0 | 2 |
 | math500_sampling_variance_4090_20260703 | 4090 MATH500 sampling/refill stochasticity — 2026-07-03 | 0 | 0 |
 | math500_stratified64_seed_sweep_4090_20260704 | 4090 MATH500 stratified-64 HF seed sweep — 2026-07-04 | 0 | 2 |
+| v100_native_jit_split_20260728 | Tesla V100 complete native-JIT facade split CUDA, W8/W4 and B1/B8 A/B regression | 6 | 5 |
 
 ## Top-level benchmark scripts
 

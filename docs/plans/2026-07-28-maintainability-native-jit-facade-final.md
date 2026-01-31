@@ -8,8 +8,7 @@ provenance:
 
 # Native JIT facade completion
 
-Status: final stacked native-JIT structural change; local regression complete,
-exact-card integration pending.
+Status: complete. Local, RTX 4080 and Tesla V100 regression gates pass.
 
 ## Scope
 
@@ -50,5 +49,17 @@ python tests/test_markdown_links.py
 git diff --check
 ```
 
-Final integration requires same-card parent/candidate B1/B8 prefill,
-native-JIT decode, native-graph decode, output correctness and peak-VRAM rows.
+## Exact-card integration
+
+- RTX 4080, RWKV-7 1.5B, fp16, B1/B8: native-JIT decode,
+  native-graph decode and native-graph prefill pass the `-2%` refactor floor;
+  greedy traces, numerical outputs, effective backends and peak VRAM are
+  unchanged. Evidence: [`../../bench/4080_native_jit_split_20260728/`](../../bench/4080_native_jit_split_20260728/README.md).
+- Tesla V100, RWKV-7 0.1B, fp16, B1/B8: CUDA tests, W8/W4 remote-code smoke,
+  native-JIT decode, native-graph decode and native-graph prefill pass. The
+  noisy short graph-B1 row was replaced by a bracketed 1,024-token rerun.
+  Evidence: [`../../bench/v100_native_jit_split_20260728/`](../../bench/v100_native_jit_split_20260728/README.md).
+
+No further split of `native_jit.py` is required. Its remaining 794 lines are
+the intentional remote-code compatibility facade and optional-kernel binding
+boundary.
