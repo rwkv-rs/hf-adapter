@@ -94,6 +94,7 @@ native_jit_dense_step.py # pure tensor-only TorchScript layer steps
 native_jit_graph_dispatch.py # graph policy, projection and FFN dispatch
 native_jit_linear.py # dense/quant linear operands and low-memory relayout
 native_jit_packing.py # model pack extraction and recurrent-state allocation
+native_jit_prefill.py # sequence prefill execution and cache handoff
 native_jit_prefill_policy.py # pure shape allowlists and tiling selection
 native_jit_prefill_runtime_policy.py # kernel eligibility and launch policy
 ```
@@ -154,6 +155,11 @@ Prefill kernel eligibility and launch selection live in
 `native_jit_prefill_runtime_policy.py`. The facade uses compatibility wrappers
 that refresh only referenced dependencies, preserving existing policy and
 optional-kernel overrides without moving sequence execution into policy code.
+
+Sequence projections, recurrent scan routing, layer-wise prefill math and
+cache handoff live in `native_jit_prefill.py`. The facade binds the current
+policy and optional kernels once per public prefill call; inner layer and scan
+calls remain inside the implementation module without compatibility frames.
 
 ## Intended package boundaries
 

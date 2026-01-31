@@ -62,6 +62,7 @@ ADAPTER_FILES = [
     "native_jit_graph_dispatch.py",
     "native_jit_linear.py",
     "native_jit_packing.py",
+    "native_jit_prefill.py",
     "native_jit_prefill_policy.py",
     "native_jit_prefill_runtime_policy.py",
     "native_graph_runtime.py",
