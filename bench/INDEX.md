@@ -32,6 +32,7 @@ Canonical cross-platform summary: [`../BENCHMARK.md`](../BENCHMARK.md) and
 | Platform | Artifact | Current conclusion |
 |---|---|---|
 | Tesla T4 15GB | [`t4_production_close_20260720/`](t4_production_close_20260720/README.md) | 0.1B–2.9B HF/cache/prefill/decode, exact-T4 W8/W4 and training integration validated; dense Albatross and broad all-phase quant gaps remain, so this is not production-close |
+| AMD gfx1100 | [`amd_gfx1100_native_20260727/`](amd_gfx1100_native_20260727/README.md) | Post-split fully native HF load/generate, PEFT, cache/chunked prefill, bf16 Trainer and B1/B2/B4/B8 baseline pass; fused/quantized production performance remains open |
 
 ## Apple M5 production-close evidence
 
@@ -45,6 +46,7 @@ two-pair conservative gate. Conclusions and reproduction commands are in
 
 | Directory | Title / purpose | JSONL | Logs |
 | --- | --- | --- | --- |
+| amd_gfx1100_native_20260727 | AMD gfx1100/ROCm 7.2.1 fully native HF compatibility and baseline | 1 | 13 |
 | 3090_g1h_7p2_bsz8_20260714 | RTX 3090 latest-g1h 7.2B vs Qwen3.5-9B bsz8 acceptance | 5 | 5 |
 | 3090_self_fused_20260713 | RTX 3090 self-fused RWKV-7 7.2B long-prefill close | 2 | 0 |
 | 4090_g1h_7p2_bsz8_20260715 | RTX 4090 latest-g1h 7.2B vs Qwen3.5-9B bsz8 acceptance | 6 | 7 |
