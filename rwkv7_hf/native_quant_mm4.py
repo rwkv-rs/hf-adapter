@@ -307,10 +307,31 @@ def _mm4_policy_int(x, name: str, default: int) -> int:
         return int(default)
 
 
+def _mm4_runtime_is_hip() -> bool:
+    return bool(
+        torch is not None
+        and getattr(getattr(torch, "version", None), "hip", None)
+    )
+
+
+def _mm4_runtime_architecture(device, profile=None) -> str | None:
+    architecture = getattr(profile, "architecture", None)
+    if architecture is not None or torch is None or not _mm4_runtime_is_hip():
+        return architecture
+    try:
+        return getattr(torch.cuda.get_device_properties(device), "gcnArchName", None)
+    except Exception:
+        return None
+
+
 def _mm4_decode_blocks(x, block_pairs, block_n):
     if block_pairs is not None and block_n is not None:
         return int(block_pairs), int(block_n)
-    blackwell = bool(x.is_cuda and torch.cuda.get_device_capability(x.device)[0] >= 12)
+    blackwell = bool(
+        x.is_cuda
+        and not _mm4_runtime_is_hip()
+        and torch.cuda.get_device_capability(x.device)[0] >= 12
+    )
     default = 128 if blackwell else 64
     policy_pairs = _mm4_policy_int(x, "mm4_gemv_block_pairs", default)
     policy_n = _mm4_policy_int(x, "mm4_gemv_block_n", default)
@@ -334,6 +355,7 @@ def mm4_effective_launch_config(device=None) -> dict[str, int]:
     blackwell = bool(
         resolved.type == "cuda"
         and torch.cuda.is_available()
+        and not _mm4_runtime_is_hip()
         and torch.cuda.get_device_capability(resolved)[0] >= 12
     )
     pairs, block_n = _mm4_decode_blocks(probe, None, None)
@@ -378,6 +400,19 @@ def _mm4_batched_dot_device_supported(major: int, minor: int, name: str) -> bool
     )
 
 
+def _mm4_batched_dot_profile_supported(
+    major: int,
+    minor: int,
+    name: str,
+    *,
+    is_hip: bool,
+    architecture: str | None,
+) -> bool:
+    if is_hip:
+        return str(architecture or "").split(":", 1)[0].lower() == "gfx1100"
+    return _mm4_batched_dot_device_supported(major, minor, name)
+
+
 def mm4_batched_dot_enabled(device=None) -> bool:
     """Whether the measured tensor-core W4 batch kernel is enabled.
 
@@ -397,12 +432,27 @@ def mm4_batched_dot_enabled(device=None) -> bool:
     dev = torch.device("cuda" if device is None else device)
     if dev.type != "cuda":
         return False
+    profile = None
+    try:
+        policy = current_kernel_policy(device=dev, torch_module=torch)
+        profile = getattr(policy, "profile", None)
+    except Exception:
+        # An old remote-code policy has no architecture identity. Fail closed
+        # rather than interpreting ROCm's CUDA-compatible capability as NVIDIA.
+        if _mm4_runtime_is_hip():
+            return False
     major, minor = torch.cuda.get_device_capability(dev)
     try:
         name = str(torch.cuda.get_device_name(dev))
     except Exception:
         name = ""
-    return _mm4_batched_dot_device_supported(major, minor, name)
+    return _mm4_batched_dot_profile_supported(
+        major,
+        minor,
+        name,
+        is_hip=_mm4_runtime_is_hip(),
+        architecture=_mm4_runtime_architecture(dev, profile),
+    )
 
 
 def mm4_gemv_triton(x, packed, mx, rx_s, my, ry_s, m_orig, *, block_pairs=None, block_n=None):
@@ -502,7 +552,10 @@ def mm4_matmul_triton(x, packed, mx, rx_s, my, ry_s, m_orig, *, max_gemv_rows: i
         return mm4_matmul(x, packed, mx, rx_s, my, ry_s, m_orig)
     if int(x.shape[0]) == 1:
         return mm4_gemv_triton(x[0], packed, mx, rx_s, my, ry_s, m_orig).unsqueeze(0)
-    blackwell = torch.cuda.get_device_capability(x.device)[0] >= 12
+    blackwell = bool(
+        not _mm4_runtime_is_hip()
+        and torch.cuda.get_device_capability(x.device)[0] >= 12
+    )
     batched_dot = mm4_batched_dot_enabled(x.device)
     launch = mm4_effective_launch_config(x.device)
     if max_gemv_rows is not None:

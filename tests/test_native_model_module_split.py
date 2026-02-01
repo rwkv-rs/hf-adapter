@@ -41,6 +41,7 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     prefill_graph = _top_level_definitions("rwkv7_hf/model_prefill_graph.py")
     quantization = _top_level_definitions("rwkv7_hf/model_quantization.py")
     runtime_policy = _top_level_definitions("rwkv7_hf/model_runtime_policy.py")
+    runtime = _top_level_definitions("rwkv7_hf/model_runtime.py")
     speculative = _top_level_definitions("rwkv7_hf/model_speculative.py")
     causal_lm_methods = _class_methods(
         "rwkv7_hf/native_model.py", "NativeRWKV7ForCausalLM"
@@ -56,6 +57,9 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     )
     fast_api_methods = _class_methods(
         "rwkv7_hf/model_fast_api.py", "_NativeFastAPIMixin"
+    )
+    runtime_methods = _class_methods(
+        "rwkv7_hf/model_runtime.py", "_NativeRuntimeMixin"
     )
 
     assert "NativeRWKV7Config" not in entrypoint
@@ -77,6 +81,7 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
         "native_model_backend_requested",
         "native_prefill_graph_enabled",
     } <= runtime_policy
+    assert "_NativeRuntimeMixin" in runtime
     assert "_NativeSpeculativeGenerationMixin" in speculative
     assert "rwkv7_speculative_generate" not in causal_lm_methods
     assert "rwkv7_speculative_generate" in speculative_methods
@@ -127,6 +132,30 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
         "_clear_native_jit_pack_cache",
     } <= quantization_methods
     assert {
+        "_native_prefill_can_run",
+        "_native_prefill",
+        "_native_prefill_graph_runner",
+        "_native_graph_can_run",
+        "_native_graph_runner",
+        "rwkv7_native_graph_cache_stats",
+        "rwkv7_native_prefill_graph_cache_stats",
+        "_native_model_quantized",
+        "_native_model_has_adapter_layers",
+        "_native_jit_packs",
+    }.isdisjoint(causal_lm_methods)
+    assert {
+        "_native_prefill_can_run",
+        "_native_prefill",
+        "_native_prefill_graph_runner",
+        "_native_graph_can_run",
+        "_native_graph_runner",
+        "rwkv7_native_graph_cache_stats",
+        "rwkv7_native_prefill_graph_cache_stats",
+        "_native_model_quantized",
+        "_native_model_has_adapter_layers",
+        "_native_jit_packs",
+    } <= runtime_methods
+    assert {
         "NativeRWKV7Attention",
         "NativeRWKV7FFN",
         "NativeRWKV7Layer",
@@ -144,6 +173,7 @@ def test_native_model_ownership_is_split_from_entrypoint() -> None:
     assert "from .model_prefill_graph import _NativePrefillGraphRunner" in entrypoint_text
     assert "from .model_quantization import _NativeQuantizationMixin" in entrypoint_text
     assert "from .model_runtime_policy import (" in entrypoint_text
+    assert "from .model_runtime import _NativeRuntimeMixin" in entrypoint_text
     assert "from .model_speculative import _NativeSpeculativeGenerationMixin" in entrypoint_text
 
 
@@ -163,6 +193,7 @@ def test_public_import_identity_and_remote_module_name_stay_stable() -> None:
         _NativePrefillGraphRunner as PrefillGraphImplementation,
     )
     from rwkv7_hf.model_quantization import _NativeQuantizationMixin
+    from rwkv7_hf.model_runtime import _NativeRuntimeMixin
     from rwkv7_hf.model_speculative import _NativeSpeculativeGenerationMixin
     from rwkv7_hf.native_model import (
         NativeRWKV7Attention,
@@ -178,6 +209,7 @@ def test_public_import_identity_and_remote_module_name_stay_stable() -> None:
     assert issubclass(NativeRWKV7ForCausalLM, _NativeGenerationContractMixin)
     assert issubclass(NativeRWKV7ForCausalLM, _NativeFastAPIMixin)
     assert issubclass(NativeRWKV7ForCausalLM, _NativeQuantizationMixin)
+    assert issubclass(NativeRWKV7ForCausalLM, _NativeRuntimeMixin)
     assert issubclass(NativeRWKV7ForCausalLM, _NativeSpeculativeGenerationMixin)
     assert (
         NativeRWKV7ForCausalLM.from_pretrained.__func__
@@ -206,6 +238,18 @@ def test_public_import_identity_and_remote_module_name_stay_stable() -> None:
     assert (
         NativeRWKV7ForCausalLM.rwkv7_prefill_chunks
         is _NativeFastAPIMixin.rwkv7_prefill_chunks
+    )
+    assert (
+        NativeRWKV7ForCausalLM._native_prefill_can_run
+        is _NativeRuntimeMixin._native_prefill_can_run
+    )
+    assert (
+        NativeRWKV7ForCausalLM._native_graph_runner
+        is _NativeRuntimeMixin._native_graph_runner
+    )
+    assert (
+        NativeRWKV7ForCausalLM._native_jit_packs
+        is _NativeRuntimeMixin._native_jit_packs
     )
     assert _NativePrefillGraphRunner is PrefillGraphImplementation
     assert NativeRWKV7Model is ModelImplementation
@@ -237,4 +281,5 @@ def test_split_files_are_in_remote_adapter_manifest() -> None:
     assert "model_prefill_graph.py" in ADAPTER_FILES
     assert "model_quantization.py" in ADAPTER_FILES
     assert "model_runtime_policy.py" in ADAPTER_FILES
+    assert "model_runtime.py" in ADAPTER_FILES
     assert "model_speculative.py" in ADAPTER_FILES

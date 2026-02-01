@@ -54,6 +54,7 @@ ADAPTER_FILES = [
     "model_prefill_graph.py",
     "model_quantization.py",
     "model_runtime_policy.py",
+    "model_runtime.py",
     "model_speculative.py",
     "native.py",
     "native_jit.py",
