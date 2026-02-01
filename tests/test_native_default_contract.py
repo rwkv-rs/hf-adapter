@@ -93,6 +93,9 @@ def test_repo_code_benchmark_overlay_migrates_config_without_touching_source(tmp
     }
     (source / "config.json").write_text(json.dumps(source_config), encoding="utf-8")
     (source / "model.safetensors").write_bytes(b"weights")
+    source_remote_code = source / "remote_code"
+    source_remote_code.mkdir()
+    (source_remote_code / "__init__.py").write_text("STALE = True\n", encoding="utf-8")
 
     prepared, temporary = prepare_model_dir(str(source), "repo")
     try:
@@ -105,6 +108,12 @@ def test_repo_code_benchmark_overlay_migrates_config_without_touching_source(tmp
         )
         assert original == source_config
         assert (Path(prepared) / "model.safetensors").read_bytes() == b"weights"
+        assert "STALE = True" not in (
+            Path(prepared) / "remote_code" / "__init__.py"
+        ).read_text(encoding="utf-8")
+        assert (source_remote_code / "__init__.py").read_text(encoding="utf-8") == (
+            "STALE = True\n"
+        )
     finally:
         assert temporary is not None
         temporary.cleanup()

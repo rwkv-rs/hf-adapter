@@ -119,8 +119,23 @@ def prepare_model_dir(
         prefix="rwkv7_native_quant_repo_code_", dir=source.parent
     )
     target = Path(temporary.name)
+    from scripts.adapter_manifest import ADAPTER_FILES, LEGACY_REMOTE_CODE_FILES
+
+    # Do not symlink any adapter-owned subtree into the temporary overlay.
+    # In particular, converted models now contain ``remote_code/__init__.py``;
+    # writing through a symlinked ``remote_code`` directory would mutate the
+    # source checkpoint and is correctly rejected by the manifest containment
+    # guard.  ``sync_one`` below recreates every managed path inside ``target``.
+    managed_roots = {
+        Path(name).parts[0]
+        for name in (*ADAPTER_FILES, *LEGACY_REMOTE_CODE_FILES)
+    }
     for item in source.iterdir():
-        if item.name == "__pycache__" or item.suffix == ".py":
+        if (
+            item.name == "__pycache__"
+            or item.suffix == ".py"
+            or item.name in managed_roots
+        ):
             continue
         link = target / item.name
         if item.name == "config.json":
