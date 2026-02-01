@@ -142,6 +142,12 @@ class KernelPolicy:
     native_bnb8_attn_mix_block: int = 1024
     native_bnb8_ffn_mix_block: int = 1024
     a8w8_gemv_max_rows: int = 1
+    mm8_fused_max_rows: int | None = None
+    mm8_dot_min_rows: int | None = None
+    mm8_dot_block_b: int | None = None
+    mm8_dot_block_m: int | None = None
+    mm8_dot_block_n: int | None = None
+    mm8_dot_warps: int | None = None
     mm4_fused_max_rows: int | None = None
     mm4_gemv_block_pairs: int | None = None
     mm4_gemv_block_n: int | None = None
@@ -649,13 +655,25 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
         is_gfx1100 = profile.architecture == "gfx1100"
         return KernelPolicy(
             profile=profile,
+            mm8_fused_max_rows=16 if is_gfx1100 else None,
+            mm8_dot_min_rows=2 if is_gfx1100 else None,
+            mm8_dot_block_b=16 if is_gfx1100 else None,
+            mm8_dot_block_m=256 if is_gfx1100 else None,
+            mm8_dot_block_n=16 if is_gfx1100 else None,
+            mm8_dot_warps=8 if is_gfx1100 else None,
+            mm4_fused_max_rows=16 if is_gfx1100 else None,
+            mm4_dot_min_rows=2 if is_gfx1100 else None,
+            mm4_dot_block_b=16 if is_gfx1100 else None,
+            mm4_dot_block_pairs=64 if is_gfx1100 else None,
+            mm4_dot_block_n=32 if is_gfx1100 else None,
+            mm4_dot_warps=2 if is_gfx1100 else None,
             fused_recurrent_output=is_gfx1100,
             fused_recurrent_raw=is_gfx1100,
             fused_output=is_gfx1100,
             fused_norm_mix=is_gfx1100,
             norm_mix_num_warps=4,
             notes=(
-                "Exact gfx1100/ROCm 7.2.1 rows promote recurrent-output, raw recurrent, output-prep and four-warp norm/mix decode fusions for B1/B8; prefill and quant routes remain conservative"
+                "Exact gfx1100/ROCm 7.2.1 rows promote recurrent-output, raw recurrent, output-prep, four-warp norm/mix and output-head MM8/MM4 decode routes; prefill and full-model quant routes remain conservative"
                 if is_gfx1100
                 else "Unmeasured AMD GCN architecture: compatibility-first native path; fused prefill/decode and quant speed routes stay off"
             ),

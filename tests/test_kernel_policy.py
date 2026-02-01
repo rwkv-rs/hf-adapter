@@ -182,6 +182,18 @@ def test_rocm_runtime_detection_preserves_exact_gcn_architecture() -> None:
     assert gfx1100_policy.fused_norm_mix
     assert gfx1100_policy.norm_mix_num_warps == 4
     assert not gfx1100_policy.fused_prefill_scan
+    assert gfx1100_policy.mm8_fused_max_rows == 16
+    assert gfx1100_policy.mm8_dot_min_rows == 2
+    assert gfx1100_policy.mm8_dot_block_b == 16
+    assert gfx1100_policy.mm8_dot_block_m == 256
+    assert gfx1100_policy.mm8_dot_block_n == 16
+    assert gfx1100_policy.mm8_dot_warps == 8
+    assert gfx1100_policy.mm4_fused_max_rows == 16
+    assert gfx1100_policy.mm4_dot_min_rows == 2
+    assert gfx1100_policy.mm4_dot_block_b == 16
+    assert gfx1100_policy.mm4_dot_block_pairs == 64
+    assert gfx1100_policy.mm4_dot_block_n == 32
+    assert gfx1100_policy.mm4_dot_warps == 2
 
 
 def test_policy_defaults_are_conservative() -> None:

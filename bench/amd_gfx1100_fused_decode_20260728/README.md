@@ -11,7 +11,7 @@ promotion: other GCN architectures retain the conservative fallback.
 - ROCm 7.2.1, PyTorch `2.9.1+rocm7.2.1.gitff65f5bc`.
 - Triton `3.5.1+rocm7.2.1.gita272dfa8`.
 - fp16, native HF model, `native_graph` decode.
-- Converted G1D 0.1B and 0.4B checkpoints, batch 1 and 8.
+- Converted G1D 0.1B/0.4B and G1H 1.5B/2.9B checkpoints, batch 1 and 8.
 
 The promoted policy combines:
 
@@ -32,10 +32,14 @@ so device-to-host token reads do not inflate decode latency.
 | 0.1B | 8 | 1307.0 | 2666.5 | 2.0402x | 0.0625 | 1.0000001 | 256/256 |
 | 0.4B | 1 | 81.2 | 141.8 | 1.7458x | 0.03125 | 1.0000001 | 32/32 |
 | 0.4B | 8 | 615.8 | 1073.2 | 1.7428x | 0.03125 | 1.0000000 | 256/256 |
+| 1.5B | 1 | 51.0 | 71.3 | 1.3987x | 0.0625 | 1.0000001 | 32/32 |
+| 1.5B | 8 | 350.1 | 514.2 | 1.4685x | 0.0625 | 1.0000001 | 256/256 |
+| 2.9B | 1 | 35.0 | 47.7 | 1.3658x | 0.0625 | 1.0000001 | 32/32 |
+| 2.9B | 8 | 250.3 | 353.0 | 1.4102x | 0.0625 | 1.0000000 | 256/256 |
 
 Every row used a 128-token prompt, 32 correctness steps, 8 warmup steps and
-256 timed decode steps. Both sides reported `native_graph`; cache hit rate was
-`296/297 = 99.6633%` after capture.
+256 timed decode steps for 0.1B/0.4B and 128 timed steps for 1.5B/2.9B. Both
+sides reported `native_graph`; cache hit rate was above 99% after capture.
 
 `fusion_components.jsonl` contains the preceding component A/B sweep. Every
 component compiled on ROCm, preserved the tested greedy stream, and improved

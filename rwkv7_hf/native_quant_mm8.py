@@ -33,12 +33,19 @@ x @ w.T``), quantize ``weight.t().contiguous()`` (i.e. ``W = weight.T`` with
 """
 from __future__ import annotations
 
+import os
+
 try:  # pragma: no cover
     import torch
 except Exception:  # pragma: no cover
     torch = None  # type: ignore[assignment]
 
 from .native_quant_policy import normalize_native_mm_policy, should_quantize_linear
+
+try:
+    from .kernel_policy import current_kernel_policy
+except Exception:  # pragma: no cover - remote-code fallback
+    current_kernel_policy = None  # type: ignore[assignment]
 
 try:
     from .sm70_quant import (
@@ -271,8 +278,106 @@ def _as_1d(t):
 def _mm8_decode_blocks(x, block_m, block_n):
     if block_m is not None and block_n is not None:
         return int(block_m), int(block_n)
-    blackwell = bool(x.is_cuda and torch.cuda.get_device_capability(x.device)[0] >= 12)
+    blackwell = bool(
+        x.is_cuda
+        and not _mm8_runtime_is_hip()
+        and torch.cuda.get_device_capability(x.device)[0] >= 12
+    )
     return int(block_m or (128 if blackwell else 64)), int(block_n or (128 if blackwell else 64))
+
+
+def _mm8_kernel_policy(device=None):
+    if current_kernel_policy is None or torch is None:
+        return None
+    try:
+        return current_kernel_policy(device=device, torch_module=torch)
+    except Exception:
+        return None
+
+
+def _mm8_runtime_is_hip() -> bool:
+    return bool(
+        torch is not None
+        and getattr(getattr(torch, "version", None), "hip", None)
+    )
+
+
+def _mm8_runtime_architecture(device, profile=None) -> str | None:
+    architecture = getattr(profile, "architecture", None)
+    if architecture is not None or torch is None or not _mm8_runtime_is_hip():
+        return architecture
+    try:
+        return getattr(torch.cuda.get_device_properties(device), "gcnArchName", None)
+    except Exception:
+        return None
+
+
+def _mm8_policy_int(device, name: str, default: int) -> int:
+    policy = _mm8_kernel_policy(device)
+    value = getattr(policy, name, None) if policy is not None else None
+    return int(default if value is None else value)
+
+
+def _mm8_batched_dot_profile_supported(
+    major: int,
+    *,
+    is_hip: bool,
+    architecture: str | None,
+) -> bool:
+    """Pure exact-architecture gate used by tests and runtime dispatch."""
+
+    return bool(
+        (is_hip and str(architecture or "").split(":", 1)[0].lower() == "gfx1100")
+        or (not is_hip and int(major) >= 12)
+    )
+
+
+def mm8_batched_dot_enabled(device=None) -> bool:
+    if torch is None or not torch.cuda.is_available():
+        return False
+    dev = torch.device("cuda" if device is None else device)
+    if dev.type != "cuda":
+        return False
+    major = int(torch.cuda.get_device_capability(dev)[0])
+    policy = _mm8_kernel_policy(dev)
+    profile = getattr(policy, "profile", None)
+    is_hip = _mm8_runtime_is_hip()
+    return _mm8_batched_dot_profile_supported(
+        major,
+        is_hip=is_hip,
+        architecture=_mm8_runtime_architecture(dev, profile),
+    )
+
+
+def mm8_effective_launch_config(device=None) -> dict[str, int]:
+    if torch is None:
+        return {}
+    dev = torch.device(
+        "cuda" if device is None and torch.cuda.is_available() else (device or "cpu")
+    )
+    blackwell = bool(
+        dev.type == "cuda"
+        and torch.cuda.is_available()
+        and not _mm8_runtime_is_hip()
+        and torch.cuda.get_device_capability(dev)[0] >= 12
+    )
+    batched_dot = mm8_batched_dot_enabled(dev)
+    defaults = {
+        "dot_min_rows": _mm8_policy_int(dev, "mm8_dot_min_rows", 4),
+        "dot_block_b": _mm8_policy_int(dev, "mm8_dot_block_b", 16),
+        "dot_block_m": _mm8_policy_int(dev, "mm8_dot_block_m", 128),
+        "dot_block_n": _mm8_policy_int(dev, "mm8_dot_block_n", 64),
+        "dot_warps": _mm8_policy_int(dev, "mm8_dot_warps", 8),
+        "fused_max_rows": _mm8_policy_int(
+            dev,
+            "mm8_fused_max_rows",
+            16 if blackwell or batched_dot else 4,
+        ),
+    }
+    return {
+        name: int(os.environ.get(f"RWKV7_MM8_{name.upper()}", value))
+        for name, value in defaults.items()
+    }
 
 
 def mm8_gemv_triton(x, w_u8, mx, rx, my, ry, *, block_m=None, block_n=None):
@@ -310,7 +415,17 @@ def mm8_batched_gemv_triton(x, w_u8, mx, rx, my, ry, *, block_m=None, block_n=No
 
 
 def mm8_batched_dot_triton(
-    x, w_u8, mx, rx, my, ry, *, block_b=16, block_m=128, block_n=64,
+    x,
+    w_u8,
+    mx,
+    rx,
+    my,
+    ry,
+    *,
+    block_b=None,
+    block_m=None,
+    block_n=None,
+    num_warps=None,
 ):
     """Tensor-core fp16 W8 path for decode batches large enough to reuse weights."""
     if not (x.is_cuda and x.dim() == 2 and mm8_gemv_available(x.device)):
@@ -322,11 +437,30 @@ def mm8_batched_dot_triton(
     wn, m = w_u8.shape
     if int(n) != int(wn):
         raise ValueError(f"input width {n} does not match quantized weight width {wn}")
+    launch = mm8_effective_launch_config(x.device)
+    block_b = int(block_b or launch["dot_block_b"])
+    block_m = int(block_m or launch["dot_block_m"])
+    block_n = int(block_n or launch["dot_block_n"])
+    num_warps = int(num_warps or launch["dot_warps"])
+    if block_b not in {16, 32, 64}:
+        raise ValueError("RWKV7_MM8_DOT_BLOCK_B must be 16, 32, or 64")
+    if block_m not in {16, 32, 64, 128, 256}:
+        raise ValueError("RWKV7_MM8_DOT_BLOCK_M must be 16, 32, 64, 128, or 256")
+    if block_n not in {16, 32, 64, 128, 256}:
+        raise ValueError("RWKV7_MM8_DOT_BLOCK_N must be 16, 32, 64, 128, or 256")
+    if num_warps not in {1, 2, 4, 8}:
+        raise ValueError("RWKV7_MM8_DOT_WARPS must be 1, 2, 4, or 8")
     y = torch.empty((b, m), device=x.device, dtype=x.dtype)
     grid = (triton.cdiv(b, block_b), triton.cdiv(m, block_m))
     _mm8_batched_dot_kernel[grid](
         x, w_u8, _as_1d(mx), _as_1d(rx), _as_1d(my), _as_1d(ry), y,
-        b, n, m, BLOCK_B=block_b, BLOCK_M=block_m, BLOCK_N=block_n, num_warps=8,
+        b,
+        n,
+        m,
+        BLOCK_B=block_b,
+        BLOCK_M=block_m,
+        BLOCK_N=block_n,
+        num_warps=num_warps,
     )
     return y
 
@@ -347,13 +481,26 @@ def mm8_matmul_triton(x, w_u8, mx, rx, my, ry, *, max_gemv_rows: int | None = No
         return mm8_matmul(x, w_u8, mx, rx, my, ry)
     if int(x.shape[0]) == 1:
         return mm8_gemv_triton(x[0], w_u8, mx, rx, my, ry).unsqueeze(0)
-    blackwell = torch.cuda.get_device_capability(x.device)[0] >= 12
-    row_limit = int(max_gemv_rows) if max_gemv_rows is not None else (16 if blackwell else 4)
+    blackwell = bool(
+        not _mm8_runtime_is_hip()
+        and torch.cuda.get_device_capability(x.device)[0] >= 12
+    )
+    batched_dot = mm8_batched_dot_enabled(x.device)
+    launch = mm8_effective_launch_config(x.device)
+    row_limit = (
+        int(max_gemv_rows)
+        if max_gemv_rows is not None
+        else int(launch["fused_max_rows"])
+    )
     if int(x.shape[0]) > row_limit:
         return mm8_matmul(x, w_u8, mx, rx, my, ry)
-    if blackwell and int(x.shape[0]) >= 4 and x.dtype == torch.float16:
+    if (
+        batched_dot
+        and int(x.shape[0]) >= int(launch["dot_min_rows"])
+        and x.dtype == torch.float16
+    ):
         return mm8_batched_dot_triton(x, w_u8, mx, rx, my, ry)
-    if blackwell:
+    if blackwell or batched_dot:
         return mm8_batched_gemv_triton(x, w_u8, mx, rx, my, ry)
     # Preserve the measured pre-sm120 route until every older family has
     # an exact-card batched-kernel A/B artifact.

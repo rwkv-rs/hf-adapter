@@ -118,7 +118,9 @@ row is never a full-FLA reference.
       same-card performance rows.
 - [x] AMD gfx1100/ROCm 7.2.1: fully native HF load/generate, PEFT, recurrent
       cache/chunked prefill, bf16 Trainer and B1/B2/B4/B8 baseline on a real GPU.
-- [ ] AMD/ROCm: fused prefill/decode, HIP W8/W4, larger models, MI-series,
+- [x] AMD gfx1100: exact-architecture fused decode through 2.9B and output-head
+      MM8/MM4 B1/B2/B4/B8 speed/quality rows through 2.9B.
+- [ ] AMD/ROCm: fused prefill, full-model fused W8/W4, 7.2B/13.3B, MI-series,
       longer training and same-card official/Albatross performance.
 - [ ] Other Turing/RTX 20 products: validate independently and do not inherit
       Tesla T4 prefill or DP4A quant routing from `sm_75` alone.

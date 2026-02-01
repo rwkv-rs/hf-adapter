@@ -730,6 +730,22 @@ def main() -> int:
             and torch.cuda.is_available()
             and torch.cuda.get_device_capability(args.device) == (7, 0)
         )
+        native_mm_launch = None
+        if quantization == "mm8":
+            from rwkv7_hf.native_quant_mm8 import mm8_effective_launch_config
+
+            native_mm_launch = mm8_effective_launch_config(args.device)
+        elif quantization == "mm4":
+            from rwkv7_hf.native_quant_mm4 import mm4_effective_launch_config
+
+            native_mm_launch = mm4_effective_launch_config(args.device)
+        gpu_arch = None
+        if args.device.startswith("cuda") and torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(args.device)
+            gpu_arch = getattr(props, "gcnArchName", None)
+            if gpu_arch is None:
+                major, minor = torch.cuda.get_device_capability(args.device)
+                gpu_arch = f"sm_{major}{minor}"
         row = {
             "axis": "native_quant_e2e_decode",
             "backend": "hf_adapter",
@@ -787,6 +803,7 @@ def main() -> int:
             ),
             "dtype": args.dtype,
             "device": device_name(args.device),
+            "gpu_arch": gpu_arch,
             **model_metadata(args, model),
             "attn_mode": args.attn_mode,
             "fuse_norm": getattr(model.config, "fuse_norm", None),
@@ -812,6 +829,7 @@ def main() -> int:
                 "_rwkv7_native_mm_kernel",
                 getattr(model, "_rwkv7_native_mm_exact_5090_kernel", None),
             ),
+            "native_mm_launch": native_mm_launch,
             "fused_relu2_ffn_modules": int(
                 getattr(model, "_rwkv7_native_mm_fused_relu2_ffn_modules", 0)
             ),

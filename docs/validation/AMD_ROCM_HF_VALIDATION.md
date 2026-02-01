@@ -1,8 +1,9 @@
 # AMD ROCm HF validation
 
-This document records the AMD compatibility matrix and the first exact-card
-decode-kernel promotion for the fully native HF, FLA-free RWKV-7 adapter. It is
-a **validated compatibility and gfx1100 decode-performance** result. It is not an Albatross-parity or quantized-speed claim.
+This document records the AMD compatibility matrix and exact-card decode and
+output-head W8/W4 promotions for the fully native HF, FLA-free RWKV-7 adapter.
+It is a **validated compatibility and named-lane gfx1100 performance** result.
+It is not an Albatross-parity or full-model quantized-speed claim.
 
 ## Validated system (2026-07-27)
 
@@ -13,7 +14,7 @@ a **validated compatibility and gfx1100 decode-performance** result. It is not a
 - PyTorch: `2.9.1+rocm7.2.1.gitff65f5bc`.
 - Triton: `3.5.1+rocm7.2.1.gita272dfa8`.
 - Transformers: 5.12.1; PEFT 0.19.1; TRL 1.9.1.
-- Model: converted RWKV-7 g1d 0.1B HF checkpoint.
+- Models: converted RWKV-7 G1D 0.1B/0.4B and G1H 1.5B/2.9B HF checkpoints.
 - Adapter: the native model module split plus exact-GCN-architecture policy on
   branch `wangyue/amd-full-production-close`.
 
@@ -21,8 +22,9 @@ The converter/sync tool writes direct native remote-code metadata:
 `native_model.NativeRWKV7ForCausalLM`. The validation runner fails if the
 legacy `modeling_rwkv7.py` FLA wrapper remains in the converted model. Runtime
 policy separately classifies the live HIP device as `amd_hip` and preserves
-`gcnArchName=gfx1100`. Four existing Triton decode fusions are enabled only for
-that exact architecture. Unmeasured AMD architectures, fused prefill and quant
+`gcnArchName=gfx1100`. Four existing Triton decode fusions and measured
+output-head MM8/MM4 launch profiles are enabled only for that exact
+architecture. Unmeasured AMD architectures, fused prefill and full-model quant
 speed paths remain off. PyTorch's CUDA-compatible graph API is available under
 ROCm, and generation selected the repository `native_graph` route successfully
 on this system.
@@ -81,6 +83,10 @@ policy was then compared against a graph with all four fusions disabled:
 | 0.1B | 8 | 1307.0 | 2666.5 | 2.0402x | 256/256 |
 | 0.4B | 1 | 81.2 | 141.8 | 1.7458x | 32/32 |
 | 0.4B | 8 | 615.8 | 1073.2 | 1.7428x | 256/256 |
+| 1.5B | 1 | 51.0 | 71.3 | 1.3987x | 32/32 |
+| 1.5B | 8 | 350.1 | 514.2 | 1.4685x | 256/256 |
+| 2.9B | 1 | 35.0 | 47.7 | 1.3658x | 32/32 |
+| 2.9B | 8 | 250.3 | 353.0 | 1.4102x | 256/256 |
 
 All rows stayed on `native_graph`; minimum cosine was at least `1.0` within
 floating-point reporting and maximum first-step logit difference was `0.0625`.
@@ -99,6 +105,25 @@ Raw logs, JSONL and checksums:
 [`bench/amd_gfx1100_native_20260727/`](../../bench/amd_gfx1100_native_20260727/README.md).
 The fused-decode promotion evidence is in
 [`bench/amd_gfx1100_fused_decode_20260728/`](../../bench/amd_gfx1100_fused_decode_20260728/README.md).
+
+## Exact-gfx1100 output-head W8/W4 decode
+
+The native MM8/MM4 dispatcher now uses measured gfx1100 batched-dot launches
+for B2-B8 while retaining the fused GEMV route at B1. Across 0.4B, 1.5B and
+2.9B, all 24 output-head rows at B1/B2/B4/B8:
+
+- reduce model footprint;
+- beat the paired fp16 cached-decode baseline;
+- preserve the tested greedy stream;
+- remain on `native_graph`.
+
+Decode speedup ranges were `1.0803x-1.0902x` on 0.4B,
+`1.0396x-1.0487x` on 1.5B, and `1.0210x-1.0261x` on 2.9B. This is deliberately
+an output-head speed policy. Full-model memory quantization remains open: the
+2.9B 8M-threshold W8 row fell to `0.6712x` fp16 decode at B8, while W4 also
+missed the intended quality gate. Raw rows, launch signatures and the negative
+FFN sweep are in
+[`bench/amd_gfx1100_quant_20260728/`](../../bench/amd_gfx1100_quant_20260728/README.md).
 
 ## Reproduce
 
@@ -132,7 +157,9 @@ python scripts/prepare_rwkv7_g1_validation_models.py \
 1. Add repeated same-card Albatross or official RWKV-LM comparisons.
 2. Tune and gate a production HIP/ROCm prefill path; decode has an exact-gfx1100
    promotion but no family-wide AMD claim.
-3. Add HIP-native W8/W4 kernels with footprint, speed and quality gates.
-4. Extend the dense/quant matrix through 1.5B, 2.9B, 7.2B and 13.3B and validate
+3. Fuse quantized FFN/block execution so full-model W8/W4 can retain its memory
+   reduction without losing all-phase speed; close the larger-model W4 quality
+   gate independently.
+4. Extend the dense/quant matrix from 2.9B through 7.2B and 13.3B and validate
    MI-series cards independently.
 5. Add longer bf16 training, TRL and distributed ROCm evidence.
