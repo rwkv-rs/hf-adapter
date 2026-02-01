@@ -100,6 +100,7 @@ run python -m py_compile \
   rwkv7_hf/model_backbone.py \
   rwkv7_hf/model_prefill_graph.py \
   rwkv7_hf/model_quantization.py \
+  rwkv7_hf/model_runtime.py \
   rwkv7_hf/model_speculative.py \
   rwkv7_hf/native_model.py \
   bench/bench_batch_sweep.py \
