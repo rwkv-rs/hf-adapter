@@ -109,6 +109,81 @@ def test_runtime_detection_defaults_to_current_cuda_device() -> None:
     assert explicit.name.endswith("4080")
 
 
+def test_rocm_runtime_detection_preserves_exact_gcn_architecture() -> None:
+    class FakeVersion:
+        hip = "7.2.1"
+
+    class FakeProperties:
+        gcnArchName = "gfx1100:sramecc-:xnack-"
+
+    class FakeDevice:
+        def __init__(self, value):
+            text = str(value)
+            self.index = int(text.split(":", 1)[1]) if ":" in text else None
+
+    class FakeCuda:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def current_device():
+            return 0
+
+        @staticmethod
+        def get_device_name(_index):
+            return "AMD Radeon Graphics"
+
+        @staticmethod
+        def get_device_capability(_index):
+            return (11, 0)
+
+        @staticmethod
+        def get_device_properties(_index):
+            return FakeProperties()
+
+    class FakeTorch:
+        version = FakeVersion()
+        cuda = FakeCuda()
+        device = FakeDevice
+
+    profile = detect_gpu_profile(torch_module=FakeTorch())
+    assert profile.family == "amd_hip"
+    assert profile.is_hip
+    assert not profile.is_cuda
+    assert profile.architecture == "gfx1100"
+
+    # Product names on ROCm can be generic. Architecture therefore remains
+    # the fail-closed identity used by exact-card kernel policy.
+    unmeasured = classify_gpu(
+        "AMD Radeon Graphics",
+        (11, 0),
+        is_hip=True,
+    )
+    assert unmeasured.architecture is None
+
+    generic_policy = policy_for_profile(unmeasured)
+    assert not generic_policy.fused_recurrent_output
+    assert not generic_policy.fused_recurrent_raw
+    assert not generic_policy.fused_output
+    assert not generic_policy.fused_norm_mix
+
+    gfx1100 = classify_gpu(
+        "AMD Radeon Graphics",
+        (11, 0),
+        is_hip=True,
+        architecture="gfx1100:sramecc-:xnack-",
+    )
+    gfx1100_policy = policy_for_profile(gfx1100)
+    assert gfx1100.architecture == "gfx1100"
+    assert gfx1100_policy.fused_recurrent_output
+    assert gfx1100_policy.fused_recurrent_raw
+    assert gfx1100_policy.fused_output
+    assert gfx1100_policy.fused_norm_mix
+    assert gfx1100_policy.norm_mix_num_warps == 4
+    assert not gfx1100_policy.fused_prefill_scan
+
+
 def test_policy_defaults_are_conservative() -> None:
     pascal = policy_for_profile(classify_gpu("Tesla P100", (6, 0)))
     assert not pascal.fused_output

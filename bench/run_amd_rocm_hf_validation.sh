@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # AMD ROCm compatibility and baseline-performance validation for the fully
-# native HF adapter. This keeps CUDA-only extension/fused/quant paths off and
-# fails if model sync does not select the decoupled native class. PyTorch's
-# CUDA-compatible graph API may still select ``native_graph`` on ROCm.
+# native HF adapter. Exact-architecture policy may enable measured Triton/HIP
+# decode fusions, while prefill/quant and every unmeasured AMD architecture
+# fail closed. Model sync must select the decoupled native class.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -48,8 +48,16 @@ assert torch.version.hip, "ROCm PyTorch build required"
 assert torch.cuda.is_available(), "ROCm GPU is not visible; check /dev/kfd and render-group permissions"
 policy = current_kernel_policy(torch_module=torch)
 assert policy.profile.family == "amd_hip", policy.profile
-assert not policy.fused_recurrent_output
-assert not policy.fused_output
+if policy.profile.architecture == "gfx1100":
+    assert policy.fused_recurrent_output
+    assert policy.fused_recurrent_raw
+    assert policy.fused_output
+    assert policy.fused_norm_mix
+else:
+    assert not policy.fused_recurrent_output
+    assert not policy.fused_recurrent_raw
+    assert not policy.fused_output
+    assert not policy.fused_norm_mix
 assert not policy.fused_prefill_scan
 props = torch.cuda.get_device_properties(0)
 print(json.dumps({
@@ -58,8 +66,12 @@ print(json.dumps({
     "device": torch.cuda.get_device_name(0),
     "vram_gib": round(props.total_memory / 2**30, 2),
     "profile_family": policy.profile.family,
+    "architecture": policy.profile.architecture,
     "fused_recurrent_output": policy.fused_recurrent_output,
+    "fused_recurrent_raw": policy.fused_recurrent_raw,
     "fused_output": policy.fused_output,
+    "fused_norm_mix": policy.fused_norm_mix,
+    "norm_mix_num_warps": policy.norm_mix_num_warps,
     "fused_prefill_scan": policy.fused_prefill_scan,
 }, indent=2))
 PY
@@ -104,7 +116,8 @@ run python -m py_compile \
   rwkv7_hf/model_speculative.py \
   rwkv7_hf/native_model.py \
   bench/bench_batch_sweep.py \
-  bench/bench_chunked_prefill.py
+  bench/bench_chunked_prefill.py \
+  bench/bench_native_graph_policy_ab.py
 
 run python tests/test_kernel_policy.py | tee "${OUT_DIR}/kernel_policy.log"
 run python -m pytest -q tests/test_native_model_module_split.py \
@@ -140,6 +153,23 @@ run python bench/bench_chunked_prefill.py \
   --batch-size 1 --prompt-tokens "${CHUNKED_PROMPT_TOKENS}" \
   --chunk-sizes ${CHUNK_SIZES} --warmup 0 --runs 1 --max-diff 0.2 \
   --results "${RESULTS}" | tee "${OUT_DIR}/chunked_prefill_bench.log"
+
+GPU_ARCH="$(python - <<'PY'
+import torch
+print(getattr(torch.cuda.get_device_properties(0), "gcnArchName", "").split(":", 1)[0])
+PY
+)"
+if [[ "${GPU_ARCH}" == "gfx1100" ]]; then
+  for batch in 1 8; do
+    run python bench/bench_native_graph_policy_ab.py \
+      --hf-dir "${HF_DIR}" --dtype "${DTYPE}" --device "${DEVICE}" \
+      --batch-size "${batch}" --prompt-tokens "${PROMPT_TOKENS}" \
+      --correctness-steps 32 --warmup 8 --steps 128 \
+      --min-speedup 1.0 --require-accelerated-policy \
+      --results "${OUT_DIR}/decode_policy_ab.jsonl" \
+      | tee "${OUT_DIR}/decode_policy_ab_b${batch}.log"
+  done
+fi
 
 echo "AMD ROCm HF VALIDATION PASS"
 echo "wrote ${OUT_DIR}"

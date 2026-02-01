@@ -15,6 +15,8 @@ def test_amd_runner_targets_decoupled_native_hf_adapter() -> None:
     assert "test_native_model_module_split.py" in runner
     assert "model_fast_api.py" in runner
     assert 'PYTHONPATH="${ROOT_DIR}' in runner
+    assert "bench_native_graph_policy_ab.py" in runner
+    assert '"${GPU_ARCH}" == "gfx1100"' in runner
     assert "legacy FLA wrapper was not removed" in runner
     assert "RWKV7_NATIVE_MODEL=" not in runner
     assert "rwkv7_hf/modeling_rwkv7.py" not in runner
@@ -27,4 +29,6 @@ def test_amd_validation_doc_does_not_promote_unmeasured_kernels() -> None:
 
     assert "fully native HF" in doc
     assert "not an Albatross-parity or quantized-speed claim" in doc
+    assert "Exact-gfx1100 decode promotion" in doc
+    assert "fails closed" in doc
     assert "HIP-native W8/W4" in doc
