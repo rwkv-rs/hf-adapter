@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # AMD ROCm compatibility and baseline-performance validation for the fully
 # native HF adapter. Exact-architecture policy may enable measured Triton/HIP
-# decode fusions, while prefill/quant and every unmeasured AMD architecture
-# fail closed. Model sync must select the decoupled native class.
+# decode fusions and output-head MM8/MM4 speed routes. Full-model quant,
+# prefill fusions, and every unmeasured AMD architecture fail closed. Model
+# sync must select the decoupled native class.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -53,11 +54,23 @@ if policy.profile.architecture == "gfx1100":
     assert policy.fused_recurrent_raw
     assert policy.fused_output
     assert policy.fused_norm_mix
+    assert policy.mm8_dot_min_rows == 2
+    assert policy.mm8_dot_block_b == 16
+    assert policy.mm8_dot_block_m == 256
+    assert policy.mm8_dot_block_n == 16
+    assert policy.mm8_dot_warps == 8
+    assert policy.mm4_dot_min_rows == 2
+    assert policy.mm4_dot_block_b == 16
+    assert policy.mm4_dot_block_pairs == 64
+    assert policy.mm4_dot_block_n == 32
+    assert policy.mm4_dot_warps == 2
 else:
     assert not policy.fused_recurrent_output
     assert not policy.fused_recurrent_raw
     assert not policy.fused_output
     assert not policy.fused_norm_mix
+    assert policy.mm8_dot_min_rows is None
+    assert policy.mm4_dot_min_rows is None
 assert not policy.fused_prefill_scan
 props = torch.cuda.get_device_properties(0)
 print(json.dumps({
@@ -73,6 +86,20 @@ print(json.dumps({
     "fused_norm_mix": policy.fused_norm_mix,
     "norm_mix_num_warps": policy.norm_mix_num_warps,
     "fused_prefill_scan": policy.fused_prefill_scan,
+    "mm8_dot_launch": {
+        "min_rows": policy.mm8_dot_min_rows,
+        "block_b": policy.mm8_dot_block_b,
+        "block_m": policy.mm8_dot_block_m,
+        "block_n": policy.mm8_dot_block_n,
+        "warps": policy.mm8_dot_warps,
+    },
+    "mm4_dot_launch": {
+        "min_rows": policy.mm4_dot_min_rows,
+        "block_b": policy.mm4_dot_block_b,
+        "block_pairs": policy.mm4_dot_block_pairs,
+        "block_n": policy.mm4_dot_block_n,
+        "warps": policy.mm4_dot_warps,
+    },
 }, indent=2))
 PY
 
@@ -112,14 +139,30 @@ run python -m py_compile \
   rwkv7_hf/model_backbone.py \
   rwkv7_hf/model_prefill_graph.py \
   rwkv7_hf/model_quantization.py \
+  rwkv7_hf/model_runtime_policy.py \
   rwkv7_hf/model_runtime.py \
   rwkv7_hf/model_speculative.py \
+  rwkv7_hf/native_jit.py \
+  rwkv7_hf/native_jit_bnb8.py \
+  rwkv7_hf/native_jit_dense_step.py \
+  rwkv7_hf/native_jit_decode.py \
+  rwkv7_hf/native_jit_graph_dispatch.py \
+  rwkv7_hf/native_jit_linear.py \
+  rwkv7_hf/native_jit_packing.py \
+  rwkv7_hf/native_jit_prefill.py \
+  rwkv7_hf/native_jit_prefill_policy.py \
+  rwkv7_hf/native_jit_prefill_runtime_policy.py \
+  rwkv7_hf/native_jit_recurrent.py \
   rwkv7_hf/native_model.py \
   bench/bench_batch_sweep.py \
   bench/bench_chunked_prefill.py \
   bench/bench_native_graph_policy_ab.py
 
 run python tests/test_kernel_policy.py | tee "${OUT_DIR}/kernel_policy.log"
+run python -m pytest -q \
+  tests/test_native_quant_mm8_policy.py \
+  tests/test_native_quant_mm4_policy.py \
+  | tee "${OUT_DIR}/native_quant_policy.log"
 run python -m pytest -q tests/test_native_model_module_split.py \
   | tee "${OUT_DIR}/native_module_split.log"
 run python tests/test_native_fla_free_import.py --model "${HF_DIR}" | tee "${OUT_DIR}/fla_free_import.log"

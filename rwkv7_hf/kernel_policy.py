@@ -491,9 +491,13 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     "amd_hip": GPUAdaptationRule(
         family="amd_hip",
         cards=("AMD Instinct MI250/MI300", "Radeon ROCm cards"),
-        status="gfx1100 / ROCm 7.2.1 native-HF compatibility and exact-architecture fused decode validated; quantization remains open",
+        status="gfx1100 / ROCm 7.2.1 native-HF compatibility, fused decode, and output-head MM8/MM4 speed lanes validated; full-model quantization remains open",
         default_stance="pure PyTorch/native_model first; exact-gfx1100 decode fusions only; every other AMD architecture fails closed",
-        default_on=("fast_cache", "gfx1100 only: fused recurrent/output/norm-mix decode"),
+        default_on=(
+            "fast_cache",
+            "gfx1100 only: fused recurrent/output/norm-mix decode",
+            "gfx1100 only: output-head MM8/MM4 speed route",
+        ),
         default_off=("unmeasured AMD fused kernels", "bnb CUDA-only speed paths"),
         required_functional=COMMON_FUNCTIONAL_SMOKES
         + ("ROCm import/generate", "pure PyTorch/native_model forward/backward"),

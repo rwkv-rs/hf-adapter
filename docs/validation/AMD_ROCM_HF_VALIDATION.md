@@ -5,7 +5,7 @@ output-head W8/W4 promotions for the fully native HF, FLA-free RWKV-7 adapter.
 It is a **validated compatibility and named-lane gfx1100 performance** result.
 It is not an Albatross-parity or full-model quantized-speed claim.
 
-## Validated system (2026-07-27)
+## Validated system (2026-07-28)
 
 - GPU: AMD Navi 31 / `gfx1100`, PCI device `0x744b`, 47.98 GiB VRAM. The cloud
   image reports the generic marketing name `AMD Radeon Graphics`.
@@ -14,7 +14,8 @@ It is not an Albatross-parity or full-model quantized-speed claim.
 - PyTorch: `2.9.1+rocm7.2.1.gitff65f5bc`.
 - Triton: `3.5.1+rocm7.2.1.gita272dfa8`.
 - Transformers: 5.12.1; PEFT 0.19.1; TRL 1.9.1.
-- Models: converted RWKV-7 G1D 0.1B/0.4B and G1H 1.5B/2.9B HF checkpoints.
+- Models: converted RWKV-7 G1D 0.1B/0.4B and G1H
+  1.5B/2.9B/7.2B/13.3B HF checkpoints.
 - Adapter: the native model module split plus exact-GCN-architecture policy on
   branch `wangyue/amd-full-production-close`.
 
@@ -40,15 +41,16 @@ wrapper.
 - `AutoTokenizer` and `AutoModelForCausalLM(..., trust_remote_code=True)`.
 - fp16 forward and greedy `generate(use_cache=True)`.
 - HF API contract, beam cache reorder and fixed-vocabulary behavior.
-- PEFT LoRA forward/loss/backward: 72 non-zero adapter-gradient tensors.
+- PEFT LoRA forward/loss/backward: 144 non-zero adapter-gradient tensors in
+  the final 0.4B replay.
 - Dynamic batching, select/reorder/in-place reorder/compact and CPU
   offload/restore of `NativeRWKV7Cache`.
 - Native chunked prefill through `model_fast_api.py`. Full and chunked prompt state
   lengths match; fp16 next-decode max absolute difference was at most `0.0625`
   in the tested matrix.
-- HF Trainer + LoRA in bf16: six steps passed, all 72 trainable tensors updated,
-  and sampled loss moved from `3.8036` to `1.1910` (minimum `0.4411`) in the
-  canonical run.
+- HF Trainer + LoRA in bf16: six steps passed, all 144 trainable tensors
+  updated, and sampled loss moved from `3.0271` to `0.9417` (minimum `0.7272`)
+  in the final post-rebase run.
 
 On this ROCm/PyTorch combination, the fp16 Trainer smoke produced a non-finite
 gradient norm and no optimizer update. Use bf16 (preferred) or fp32 for AMD
@@ -67,9 +69,9 @@ Prompt 128, decode 32, one warmup, two measured prefill runs:
 | fp16 | 8 | 3861.4 | 1304.2 | 712.1 |
 
 These are fully native HF baseline rows. No same-card Albatross result exists
-yet, so they are not a production-performance claim. Production AMD promotion
-still requires a pinned same-card reference, larger models and card-local
-tuning.
+yet, so they are not an Albatross-parity claim. Card-local fused decode and
+output-head quant tuning are now validated through 13.3B; a pinned same-card
+official/Albatross reference remains separate.
 
 ## Exact-gfx1100 decode promotion (2026-07-28)
 
@@ -87,6 +89,10 @@ policy was then compared against a graph with all four fusions disabled:
 | 1.5B | 8 | 350.1 | 514.2 | 1.4685x | 256/256 |
 | 2.9B | 1 | 35.0 | 47.7 | 1.3658x | 32/32 |
 | 2.9B | 8 | 250.3 | 353.0 | 1.4102x | 256/256 |
+| 7.2B | 1 | 24.1 | 29.7 | 1.2291x | 16/16 |
+| 7.2B | 8 | 165.6 | 213.9 | 1.2911x | 128/128 |
+| 13.3B | 1 | 12.8 | 15.5 | 1.2131x | 8/8 |
+| 13.3B | 8 | 87.7 | 113.2 | 1.2909x | 64/64 |
 
 All rows stayed on `native_graph`; minimum cosine was at least `1.0` within
 floating-point reporting and maximum first-step logit difference was `0.0625`.
@@ -109,21 +115,25 @@ The fused-decode promotion evidence is in
 ## Exact-gfx1100 output-head W8/W4 decode
 
 The native MM8/MM4 dispatcher now uses measured gfx1100 batched-dot launches
-for B2-B8 while retaining the fused GEMV route at B1. Across 0.4B, 1.5B and
-2.9B, all 24 output-head rows at B1/B2/B4/B8:
+for B2-B8 while retaining the fused GEMV route at B1. Across 0.4B, 1.5B,
+2.9B, 7.2B and 13.3B, all 40 output-head rows at B1/B2/B4/B8:
 
 - reduce model footprint;
 - beat the paired fp16 cached-decode baseline;
 - preserve the tested greedy stream;
 - remain on `native_graph`.
 
-Decode speedup ranges were `1.0803x-1.0902x` on 0.4B,
-`1.0396x-1.0487x` on 1.5B, and `1.0210x-1.0261x` on 2.9B. This is deliberately
+The final post-rebase decode speedup ranges were `1.0797x-1.0922x` on 0.4B,
+`1.0384x-1.0491x` on 1.5B, `1.0226x-1.0273x` on 2.9B,
+`1.0272x-1.0362x` on 7.2B, and `1.0123x-1.0191x` on 13.3B. This is deliberately
 an output-head speed policy. Full-model memory quantization remains open: the
 2.9B 8M-threshold W8 row fell to `0.6712x` fp16 decode at B8, while W4 also
 missed the intended quality gate. Raw rows, launch signatures and the negative
 FFN sweep are in
 [`bench/amd_gfx1100_quant_20260728/`](../../bench/amd_gfx1100_quant_20260728/README.md).
+The complete post-rebase native-HF replay, 40-cell matrix, large-checkpoint
+conversion provenance and checksums are in
+[`bench/amd_gfx1100_rebase_validation_20260728/`](../../bench/amd_gfx1100_rebase_validation_20260728/README.md).
 
 ## Reproduce
 
@@ -160,6 +170,6 @@ python scripts/prepare_rwkv7_g1_validation_models.py \
 3. Fuse quantized FFN/block execution so full-model W8/W4 can retain its memory
    reduction without losing all-phase speed; close the larger-model W4 quality
    gate independently.
-4. Extend the dense/quant matrix from 2.9B through 7.2B and 13.3B and validate
-   MI-series cards independently.
+4. Validate MI-series and other AMD architectures independently; they must not
+   inherit the exact-`gfx1100` launch policy.
 5. Add longer bf16 training, TRL and distributed ROCm evidence.

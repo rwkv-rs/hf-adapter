@@ -68,4 +68,6 @@ done
 - Exact gate: `torch.cuda.get_device_properties(i).gcnArchName == "gfx1100"`.
 - Generic names such as `AMD Radeon Graphics` are not used as identity.
 - `gfx1101`, `gfx1102`, MI-series and unknown HIP devices remain off.
-- Fused prefill and W8/W4 speed promotion are still separate open gates.
+- Fused prefill remains an open gate. Output-head MM8/MM4 speed promotion is
+  validated separately in `../amd_gfx1100_quant_20260728/`; full-model memory
+  quantization remains open.
