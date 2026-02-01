@@ -116,6 +116,17 @@ If PyTorch reports `No HIP GPUs are available` while `rocminfo` works, add the
 runtime user to the numeric groups owning `/dev/kfd` and `/dev/dri/render*`,
 then start a new login session.
 
+The larger-model validation set is pinned by source size and SHA256 and can be
+prepared sequentially without retaining duplicate `.pth` files:
+
+```bash
+python scripts/prepare_rwkv7_g1_validation_models.py \
+  --models all \
+  --checkpoint-dir /workspace/checkpoints \
+  --output-root /workspace/models \
+  --vocab-file /workspace/models/rwkv7-g1d-0.1b-hf/rwkv_vocab_v20230424.txt
+```
+
 ## Open AMD work
 
 1. Add repeated same-card Albatross or official RWKV-LM comparisons.
