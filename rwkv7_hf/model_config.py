@@ -5,6 +5,23 @@ from __future__ import annotations
 from transformers import PretrainedConfig
 
 
+def _resolve_num_heads(kwargs: dict) -> int | None:
+    """Resolve the RWKV and Transformers head-count spellings."""
+
+    num_heads = kwargs.get("num_heads")
+    num_attention_heads = kwargs.get("num_attention_heads")
+    if (
+        num_heads is not None
+        and num_attention_heads is not None
+        and int(num_heads) != int(num_attention_heads)
+    ):
+        raise ValueError(
+            "num_heads and num_attention_heads must match when both are provided"
+        )
+    resolved = num_heads if num_heads is not None else num_attention_heads
+    return None if resolved is None else int(resolved)
+
+
 class NativeRWKV7Config(PretrainedConfig):
     """Standalone RWKV-7 config carrying converted checkpoint fields."""
 
@@ -43,7 +60,7 @@ class NativeRWKV7Config(PretrainedConfig):
         self.vocab_size = kwargs.get("vocab_size", 65536)
         self.hidden_size = kwargs.get("hidden_size", 768)
         self.num_hidden_layers = kwargs.get("num_hidden_layers", 12)
-        self.num_heads = kwargs.get("num_heads", None) or kwargs.get("num_attention_heads", None)
+        self.num_heads = _resolve_num_heads(kwargs)
         requested_attention_width = int(
             kwargs.get("attention_hidden_size", self.hidden_size)
         )

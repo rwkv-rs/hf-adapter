@@ -56,6 +56,12 @@ def main() -> int:
     alias_config_with_null_heads = NativeRWKV7Config(hidden_size=16, head_dim=4, num_heads=None, num_attention_heads=4)
     assert alias_config_with_null_heads.num_heads == 4
     assert alias_config_with_null_heads.num_attention_heads == 4
+    try:
+        NativeRWKV7Config(hidden_size=16, head_dim=4, num_heads=4, num_attention_heads=2)
+    except ValueError as exc:
+        assert "num_heads and num_attention_heads must match" in str(exc)
+    else:
+        raise AssertionError("conflicting head-count aliases must be rejected")
     roundtrip_config = NativeRWKV7Config.from_dict(alias_config.to_dict())
     assert roundtrip_config.model_type == "rwkv7_native"
     assert roundtrip_config.vocab_size == alias_config.vocab_size
