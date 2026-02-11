@@ -17,6 +17,28 @@ except ImportError:  # pragma: no cover - direct remote-file execution fallback
 if _rwkv7_apply_runtime_compat is not None:
     _rwkv7_apply_runtime_compat()
 
+
+def _normalize_head_count_kwargs(kwargs: dict) -> dict:
+    """Keep RWKV ``num_heads`` and HF ``num_attention_heads`` synchronized."""
+
+    normalized = dict(kwargs)
+    num_heads = normalized.get("num_heads")
+    num_attention_heads = normalized.get("num_attention_heads")
+    if (
+        num_heads is not None
+        and num_attention_heads is not None
+        and int(num_heads) != int(num_attention_heads)
+    ):
+        raise ValueError(
+            "num_heads and num_attention_heads must match when both are provided"
+        )
+    resolved = num_heads if num_heads is not None else num_attention_heads
+    if resolved is not None:
+        normalized["num_heads"] = int(resolved)
+        normalized["num_attention_heads"] = int(resolved)
+    return normalized
+
+
 try:
     from fla.models.rwkv7.configuration_rwkv7 import RWKV7Config as _RWKV7Config
 except Exception:  # pragma: no cover - exercised by fla-free native backend tests
@@ -26,10 +48,11 @@ except Exception:  # pragma: no cover - exercised by fla-free native backend tes
         model_type = "rwkv7"
 
         def __init__(self, **kwargs):
+            kwargs = _normalize_head_count_kwargs(kwargs)
             super().__init__(**kwargs)
             self.hidden_size = kwargs.get("hidden_size", 768)
             self.num_hidden_layers = kwargs.get("num_hidden_layers", 12)
-            self.num_heads = kwargs.get("num_heads", None) or kwargs.get("num_attention_heads", None)
+            self.num_heads = kwargs.get("num_heads")
             requested_attention_width = int(
                 kwargs.get("attention_hidden_size", self.hidden_size)
             )
@@ -73,6 +96,7 @@ class RWKV7HFAdapterConfig(_RWKV7Config):
     model_type = "rwkv7_hf_adapter"
 
     def __init__(self, *args, **kwargs):
+        kwargs = _normalize_head_count_kwargs(kwargs)
         # Native W8/W4 persistence: when True, from_pretrained re-quantizes
         # eligible linears into MM8Linear / MM4Linear after loading the fp16
         # weights. The packed state is a deterministic function of the dense
@@ -87,7 +111,19 @@ class RWKV7HFAdapterConfig(_RWKV7Config):
         self.native_mm4_group_policy = kwargs.pop("native_mm4_group_policy", "all")
         super().__init__(*args, **kwargs)
         requested_attention_width = kwargs.get("attention_hidden_size", None)
-        num_heads = int(getattr(self, "num_heads", getattr(self, "num_attention_heads", 0)))
+        num_heads = int(
+            getattr(self, "num_heads", getattr(self, "num_attention_heads", 0))
+        )
+        requested_num_attention_heads = kwargs.get("num_attention_heads")
+        if (
+            requested_num_attention_heads is not None
+            and int(requested_num_attention_heads) != num_heads
+        ):
+            raise ValueError(
+                "num_heads and num_attention_heads must match when both are provided"
+            )
+        self.num_heads = num_heads
+        self.num_attention_heads = num_heads
         head_dim = int(getattr(self, "head_dim", 0))
         if num_heads <= 0 or head_dim <= 0:
             raise ValueError("num_heads and head_dim must be positive")

@@ -347,6 +347,30 @@ def _cuda_available() -> bool:
     return bool(callable(is_available) and is_available())
 
 
+def _resolve_wrapper_logits_to_keep(logits_to_keep=None, num_logits_to_keep=None):
+    """Normalize the deprecated Transformers logits keyword without losing tensor selectors."""
+
+    if num_logits_to_keep is None:
+        return logits_to_keep
+    if logits_to_keep is None or (
+        not isinstance(logits_to_keep, torch.Tensor) and int(logits_to_keep) == 0
+    ):
+        return num_logits_to_keep
+    if isinstance(logits_to_keep, torch.Tensor) or isinstance(num_logits_to_keep, torch.Tensor):
+        try:
+            same = torch.equal(
+                torch.as_tensor(logits_to_keep).detach().cpu(),
+                torch.as_tensor(num_logits_to_keep).detach().cpu(),
+            )
+        except Exception:
+            same = False
+    else:
+        same = int(logits_to_keep) == int(num_logits_to_keep)
+    if not same:
+        raise ValueError("logits_to_keep and num_logits_to_keep must match when both are provided")
+    return logits_to_keep
+
+
 def _cuda_device_guard(device):
     return (
         torch.cuda.device(device)
@@ -3512,15 +3536,55 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return input_ids
         return None
 
-    def forward(self, *args, **kwargs):
+    def forward(
+        self,
+        input_ids: torch.LongTensor | None = None,
+        attention_mask: torch.Tensor | None = None,
+        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: RWKV7StateCache | _FLACache | tuple | list | None = None,
+        labels: torch.LongTensor | None = None,
+        shift_labels: torch.LongTensor | None = None,
+        use_cache: bool | None = None,
+        output_attentions: bool | None = None,
+        output_hidden_states: bool | None = None,
+        return_dict: bool | None = None,
+        logits_to_keep: int | torch.Tensor | None = 0,
+        position_ids: torch.LongTensor | None = None,
+        cache_position: torch.LongTensor | None = None,
+        **kwargs: Any,
+    ) -> tuple | CausalLMOutputWithPast:
+        logits_to_keep = _resolve_wrapper_logits_to_keep(
+            logits_to_keep,
+            kwargs.pop("num_logits_to_keep", None),
+        )
+
+        kwargs.update(
+            {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "inputs_embeds": inputs_embeds,
+                "past_key_values": past_key_values,
+                "labels": labels,
+                "use_cache": use_cache,
+                "output_attentions": output_attentions,
+                "output_hidden_states": output_hidden_states,
+                "return_dict": return_dict,
+                "logits_to_keep": logits_to_keep,
+            }
+        )
+        if shift_labels is not None:
+            kwargs["shift_labels"] = shift_labels
+        if position_ids is not None:
+            kwargs["position_ids"] = position_ids
+        if cache_position is not None:
+            kwargs["cache_position"] = cache_position
+
         # Normalize `[batch]` single-token input into `[batch, 1]` before the
         # generic FLA path. The native fast-token shortcut accepts either shape,
         # but quantized/bitsandbytes models intentionally fall back to FLA; with
         # 1-D ids the embedding output is `[batch, hidden]`, which makes FLA
         # attention crash because it expects `[batch, seq, hidden]`.
-        if args and isinstance(args[0], torch.Tensor) and args[0].dim() == 1:
-            args = (args[0].unsqueeze(1),) + tuple(args[1:])
-        elif isinstance(kwargs.get("input_ids"), torch.Tensor) and kwargs["input_ids"].dim() == 1:
+        if isinstance(kwargs.get("input_ids"), torch.Tensor) and kwargs["input_ids"].dim() == 1:
             kwargs["input_ids"] = kwargs["input_ids"].unsqueeze(1)
         use_cache = kwargs.get("use_cache")
         effective_use_cache = use_cache if use_cache is not None else (self.config.use_cache if not self.training else False)
@@ -3528,7 +3592,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             past_key_values = kwargs.get("past_key_values")
             if not isinstance(past_key_values, RWKV7StateCache):
                 kwargs["past_key_values"] = RWKV7StateCache.from_legacy_cache(past_key_values)
-        prefill_input_ids = self._rwkv7_forward_prefill_candidate(args, kwargs, effective_use_cache)
+        prefill_input_ids = self._rwkv7_forward_prefill_candidate((), kwargs, effective_use_cache)
         if prefill_input_ids is not None:
             return_dict = kwargs.get("return_dict")
             if return_dict is None:
@@ -3539,7 +3603,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                 logits_to_keep=kwargs.get("logits_to_keep", 1),
                 return_dict=return_dict,
             )
-        fast_input_ids = self._rwkv7_forward_fast_candidate(args, kwargs, effective_use_cache)
+        fast_input_ids = self._rwkv7_forward_fast_candidate((), kwargs, effective_use_cache)
         if fast_input_ids is not None:
             return_dict = kwargs.get("return_dict")
             if return_dict is None:
@@ -3549,4 +3613,4 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                 past_key_values=kwargs.get("past_key_values"),
                 return_dict=return_dict,
             )
-        return super().forward(*args, **kwargs)
+        return super().forward(**kwargs)
