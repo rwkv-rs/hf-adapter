@@ -109,7 +109,7 @@ run python tests/test_kernel_policy.py | tee "${OUT_DIR}/kernel_policy.log"
 run python -m pytest -q tests/test_native_model_module_split.py \
   | tee "${OUT_DIR}/native_module_split.log"
 run python tests/test_native_fla_free_import.py --model "${HF_DIR}" | tee "${OUT_DIR}/fla_free_import.log"
-run python tests/smoke_hf_generate.py --model "${HF_DIR}" --device "${DEVICE}" --max-new-tokens 8 \
+run python tests/smoke_hf_generate.py --model "${HF_DIR}" --trust-remote-code --device "${DEVICE}" --max-new-tokens 8 \
   | tee "${OUT_DIR}/generate.log"
 run python tests/test_hf_api_contract.py --model "${HF_DIR}" --device "${DEVICE}" --dtype "${DTYPE}" --beam-new-tokens 2 \
   | tee "${OUT_DIR}/hf_api_contract.log"

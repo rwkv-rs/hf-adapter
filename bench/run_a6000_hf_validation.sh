@@ -282,6 +282,7 @@ run_01b_baseline() {
   rwkv7_log "0.1B core smoke"
   run_single_gpu "${PYTHON_BIN}" tests/smoke_hf_generate.py \
     --model "${model}" \
+    --trust-remote-code \
     --device cuda \
     --max-new-tokens "${SMOKE_MAX_NEW_TOKENS}"
   run_single_gpu "${PYTHON_BIN}" tests/test_hf_api_contract.py \

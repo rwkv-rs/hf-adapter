@@ -157,7 +157,8 @@ If the wrapper fails or you need to bisect, run the underlying commands:
 
 ```bash
 python tests/smoke_hf_generate.py \
-  --model /path/to/rwkv7-g1d-0.1b-hf
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --trust-remote-code
 
 python tests/test_hf_api_contract.py \
   --model /path/to/rwkv7-g1d-0.1b-hf \

@@ -220,6 +220,7 @@ def test_musa_hardware_acceptance_tools_move_and_measure_on_musa() -> None:
     assert 'device.startswith("musa")' in speed
     assert "model.to(args.device)" in speed
     assert "peak_memory_mb(args.device)" in speed
+    assert "m.forward(id_list[:8], None)\n    device_sync(args.device)\n    t0 = time.time()" in speed
     assert 'torch.device(device) if device.startswith(("cuda", "musa"))' in speed
     assert 'device.startswith("musa")' in batch
     assert "model.to(args.device)" in batch
@@ -229,6 +230,8 @@ def test_musa_hardware_acceptance_tools_move_and_measure_on_musa() -> None:
     assert '"musa_wkv_module_loaded": module._MODULE is not None' in batch
     assert 'args.device.startswith(("cuda", "musa", "mps"))' in smoke
     assert "torch.musa.synchronize()" in smoke
+    assert '"--trust-remote-code"' in smoke
+    assert smoke.count("trust_remote_code=args.trust_remote_code") == 2
     assert "model.to(args.device)" in api
     assert "v.to(args.device)" in api
 

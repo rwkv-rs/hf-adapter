@@ -19,7 +19,8 @@ capability.
 - Correctness prerequisites passed before timing: standalone WKV output/state
   parity, HF load/forward/cache/reorder/generate, eager/WKV greedy-token equality,
   a 64-token trace with logits cosine `0.9999946355819702`, and differentiable
-  eager fallback under autograd.
+  eager fallback under autograd. A counter around `try_musa_wkv` observed zero
+  calls during the passing backward run, directly confirming kernel bypass.
 - Three separate paired processes were run in alternating order:
   eager, WKV, eager, WKV, eager, WKV.
 - A separate batch 1/2 smoke confirmed model/input placement, synchronization,
@@ -65,11 +66,16 @@ the differentiable pure-PyTorch recurrence.
 
 ## Files
 
-- `environment.json`: exact hardware, software, model, source and shape record.
-- `raw_{eager,wkv}_run{1,2,3}.jsonl`: exact unmodified performance outputs.
+- `environment.json`: exact hardware, software, model, source and shape record;
+  workstation identifiers and local installation paths are intentionally redacted.
+- `bench_speed_executed.py.txt` and `bench_batch_sweep_executed.py.txt`: exact
+  source snapshots used on the validation host, retained for independent audit.
+- `raw_{eager,wkv}_run{1,2,3}.jsonl`: performance outputs with only the local
+  absolute `hf_model_dir` replaced by the stable model identifier.
 - `batch_smoke.jsonl`: B1/B2 device, memory and route contract rows; throughput
   is deliberately omitted because the two modes ran concurrently.
 - `speed_paired.jsonl`: normalized copies of the six rows with explicit pair
   indices and the batch size, warmup and run count restored from the command.
 - `summary.json`: statistics, route assertions and narrow conclusion.
-- `SHA256SUMS`: integrity hashes for this evidence package.
+- `SHA256SUMS`: integrity hashes for this evidence package. Verify from this
+  directory with `sha256sum --check SHA256SUMS`.

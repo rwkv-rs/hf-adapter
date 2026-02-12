@@ -23,11 +23,15 @@
     "pass": true
   },
   "autograd_fallback": {
+    "route": "eager_autograd_fallback",
+    "musa_wkv_kernel_invoked": false,
+    "try_musa_wkv_calls": 0,
     "loss": 9.86854362487793,
     "embedding_grad_present": true,
     "embedding_grad_finite": true,
     "embedding_grad_max_abs": 55.84375,
     "musa_wkv_module_loaded": false,
+    "musa_wkv_module_error": null,
     "pass": true
   }
 }

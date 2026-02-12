@@ -250,6 +250,7 @@ def bench_official(args, dt):
     reset_peak_memory(args.device)
     # prefill (official torch path is sequential => slow; 1 timed run)
     m.forward(id_list[:8], None)
+    device_sync(args.device)
     t0 = time.time()
     logits = m.forward(id_list, None)
     logits = logits[0] if isinstance(logits, tuple) else logits
