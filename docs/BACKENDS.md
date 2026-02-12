@@ -29,10 +29,14 @@ Apple backend
   Apple chip model.
 
 MUSA backend
-  Moore Threads `torch_musa` compatibility plus the optional MUSA WKV kernel.
-  The MTT S70 lane uses fp16 kernel IO with fp32 recurrent state and compute.
-  CUDA/Triton/FLA and quantized paths are not inherited. Every capability must
-  come from MUSA documentation or retained exact-device evidence.
+  Moore Threads `torch_musa` compatibility plus optional exact-device kernels.
+  MTT S70 is a legacy first-generation validation card with a frozen SDK 4.2.0
+  stack, no Tensor Core, and impractically slow fp16 compute; its retained lane
+  uses fp16 storage/IO with fp32 recurrent state and compute. Those limits are
+  not backend-wide defaults: later S4000/S5000-class devices have more complete
+  capabilities but remain unvalidated here. CUDA/Triton/FLA and quantized paths
+  are not inherited. Every capability must come from MUSA documentation or
+  retained exact-device evidence.
 
 Tests / scripts / bench / docs
   Own the hardware matrix: exact card names, machine names, benchmark rows,

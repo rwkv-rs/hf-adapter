@@ -44,7 +44,6 @@ if [[ "${RUN_MODEL_SMOKE}" == "1" ]]; then
   rwkv7_log "model API/generation checks"
   rwkv7_run "${PYTHON_BIN}" tests/smoke_hf_generate.py \
     --model "${MODEL}" \
-    --trust-remote-code \
     --device "${DEVICE}" \
     --max-new-tokens "${SMOKE_MAX_NEW_TOKENS}"
   rwkv7_run "${PYTHON_BIN}" tests/test_hf_api_contract.py \

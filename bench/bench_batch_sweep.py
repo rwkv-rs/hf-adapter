@@ -172,11 +172,17 @@ def musa_wkv_route(model) -> dict[str, Any]:
     if not str(next(model.parameters()).device).startswith("musa"):
         return {}
     package = model.__class__.__module__.rsplit(".", 1)[0]
-    module = importlib.import_module(package + ".musa_wkv")
+    wkv = importlib.import_module(package + ".musa_wkv")
+    fused = importlib.import_module(package + ".musa_fused")
     return {
-        "musa_wkv_enabled": os.environ.get("RWKV7_MUSA_WKV", "1") not in _FALSE_VALUES,
-        "musa_wkv_module_loaded": module._MODULE is not None,
-        "musa_wkv_module_error": repr(module._MODULE_ERROR),
+        "musa_wkv_mode": wkv._mode(),
+        "musa_wkv_available": bool(wkv.musa_wkv_available(next(model.parameters()).device)),
+        "musa_wkv_module_loaded": wkv._MODULE is not None,
+        "musa_wkv_module_error": repr(wkv._MODULE_ERROR),
+        "musa_attn_shift_mix_enabled": os.environ.get("RWKV7_MUSA_ATTN_SHIFT_MIX", "0").strip().lower() in {"1", "true", "yes", "on"},
+        "musa_attn_shift_mix_module_loaded": fused._MODULE is not None,
+        "musa_attn_shift_mix_module_error": repr(fused._MODULE_ERROR),
+        "musa_attn_shift_mix_calls": int(fused._CALLS),
     }
 
 
@@ -200,6 +206,8 @@ def encode(tok, prompt_tokens: int, bsz: int, device: str) -> torch.Tensor:
 
 
 def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
+    route_before = musa_wkv_route(model)
+    calls_before = int(route_before.get("musa_attn_shift_mix_calls", 0))
     api = accelerator_api(args.device)
     empty_cache = getattr(api, "empty_cache", None)
     reset_peak = getattr(api, "reset_peak_memory_stats", None)
@@ -238,6 +246,10 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
         device_sync(args.device)
         decode_dt = time.time() - t0
 
+    forward_route = musa_wkv_route(model)
+    forward_route["musa_attn_shift_mix_calls_delta"] = int(
+        forward_route.get("musa_attn_shift_mix_calls", 0)
+    ) - calls_before
     rows = [{
         "axis": "batch_sweep",
         "backend": "hf_adapter",
@@ -259,7 +271,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
         "decode_tokps_per_seq": round(args.decode_tokens / decode_dt, 1),
         "decode_ms_per_step": round(1000 * decode_dt / args.decode_tokens, 2),
         "peak_vram_mb": peak_mb(args.device),
-        **musa_wkv_route(model),
+        **forward_route,
     }]
 
     fast_fn = getattr(model, "rwkv7_forward_token", None)
@@ -286,6 +298,10 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
                 nxt = out.logits[:, -1:].argmax(dim=-1)
             device_sync(args.device)
             fast_dt = time.time() - t0
+        fast_route = musa_wkv_route(model)
+        fast_route["musa_attn_shift_mix_calls_delta"] = int(
+            fast_route.get("musa_attn_shift_mix_calls", 0)
+        ) - int(forward_route.get("musa_attn_shift_mix_calls", 0))
         rows.append({**rows[0],
             "decode_api": fast_name,
             "fast_token_backend": requested_backend,
@@ -318,6 +334,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
             "decode_ms_per_step": round(1000 * fast_dt / args.decode_tokens, 2),
             "cache_type": type(state).__name__ if state is not None else None,
             "peak_vram_mb": peak_mb(args.device),
+            **fast_route,
         })
     elif args.fast_decode_api == "true":
         raise ValueError("Loaded model does not expose a fast one-token decode API for this batch size")

@@ -11,24 +11,16 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
-    ap.add_argument(
-        "--trust-remote-code",
-        action="store_true",
-        help="Execute model-provided Python code; use only with an audited model",
-    )
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--max-new-tokens", type=int, default=32)
     ap.add_argument("--prompt", default="User: Hello!\n\nAssistant:")
     args = ap.parse_args()
 
-    tok = AutoTokenizer.from_pretrained(
-        args.model,
-        trust_remote_code=args.trust_remote_code,
-    )
+    tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     accelerator = args.device.startswith(("cuda", "musa", "mps"))
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
-        trust_remote_code=args.trust_remote_code,
+        trust_remote_code=True,
         torch_dtype=torch.float16 if accelerator else torch.float32,
         device_map=args.device if args.device.startswith("cuda") else None,
     ).eval()

@@ -134,11 +134,17 @@ def musa_wkv_route(model) -> dict:
     if not str(next(model.parameters()).device).startswith("musa"):
         return {}
     package = model.__class__.__module__.rsplit(".", 1)[0]
-    module = importlib.import_module(package + ".musa_wkv")
+    wkv = importlib.import_module(package + ".musa_wkv")
+    fused = importlib.import_module(package + ".musa_fused")
     return {
-        "musa_wkv_enabled": os.environ.get("RWKV7_MUSA_WKV", "1") not in {"0", "false", "False", "no", "off"},
-        "musa_wkv_module_loaded": module._MODULE is not None,
-        "musa_wkv_module_error": repr(module._MODULE_ERROR),
+        "musa_wkv_mode": wkv._mode(),
+        "musa_wkv_available": bool(wkv.musa_wkv_available(next(model.parameters()).device)),
+        "musa_wkv_module_loaded": wkv._MODULE is not None,
+        "musa_wkv_module_error": repr(wkv._MODULE_ERROR),
+        "musa_attn_shift_mix_enabled": os.environ.get("RWKV7_MUSA_ATTN_SHIFT_MIX", "0").strip().lower() in {"1", "true", "yes", "on"},
+        "musa_attn_shift_mix_module_loaded": fused._MODULE is not None,
+        "musa_attn_shift_mix_module_error": repr(fused._MODULE_ERROR),
+        "musa_attn_shift_mix_calls": int(fused._CALLS),
     }
 
 

@@ -98,7 +98,7 @@ run python -m py_compile \
   tests/test_quantized_inference.py \
   tests/test_native_trainer_smoke.py
 
-run python tests/smoke_hf_generate.py --model "${HF_DIR}" --trust-remote-code --device "${DEVICE}" --max-new-tokens 4 \
+run python tests/smoke_hf_generate.py --model "${HF_DIR}" --device "${DEVICE}" --max-new-tokens 4 \
   | tee "${OUT_DIR}/smoke_hf_generate.log"
 run python tests/test_hf_api_contract.py --model "${HF_DIR}" --device "${DEVICE}" --dtype "${DTYPE}" --beam-new-tokens 2 \
   | tee "${OUT_DIR}/hf_api_contract.log"

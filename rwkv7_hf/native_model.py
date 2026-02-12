@@ -88,6 +88,7 @@ _LoRA.__module__ = __name__
 if False:  # pragma: no cover
     from .extension_build import cuda_extension_build_environment as _native_extension_build_dependency_sentinel
     from .musa_build import load_musa_inline as _native_musa_build_dependency_sentinel
+    from .musa_fused import try_musa_attn_shift_mix as _native_musa_fused_dependency_sentinel
     from .musa_wkv import musa_wkv as _native_musa_wkv_dependency_sentinel
     from .musa_wkv_source import WKV7_MUSA_HEADER as _native_musa_wkv_source_dependency_sentinel
     from .ada_lora import ada_wagv_lora as _native_ada_lora_dependency_sentinel

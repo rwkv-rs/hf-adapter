@@ -46,6 +46,7 @@ ADAPTER_FILES = [
     "mlx_state.py",
     "mlx_wkv.py",
     "musa_build.py",
+    "musa_fused.py",
     "musa_wkv.py",
     "musa_wkv_source.py",
     "csrc/musa/LICENSE",

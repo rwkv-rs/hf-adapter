@@ -14,6 +14,7 @@ import os
 import torch
 import torch.nn.functional as F
 
+from .musa_fused import try_musa_attn_shift_mix
 from .musa_wkv import musa_wkv_available, try_musa_wkv
 
 
@@ -133,13 +134,20 @@ def attn_step_batched(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tenso
     H, N = layer.num_heads, layer.head_dim
     hidden = layer.hidden_size
     attention_hidden = H * N
-    xx = x_prev - x
-    xr = x + xx * layer.x_r.reshape(1, hidden)
-    xw = x + xx * layer.x_w.reshape(1, hidden)
-    xk = x + xx * layer.x_k.reshape(1, hidden)
-    xv = x + xx * layer.x_v.reshape(1, hidden)
-    xa = x + xx * layer.x_a.reshape(1, hidden)
-    xg = x + xx * layer.x_g.reshape(1, hidden)
+    mixes = (
+        layer.x_r.reshape(1, hidden),
+        layer.x_w.reshape(1, hidden),
+        layer.x_k.reshape(1, hidden),
+        layer.x_v.reshape(1, hidden),
+        layer.x_a.reshape(1, hidden),
+        layer.x_g.reshape(1, hidden),
+    )
+    fused_mixes = try_musa_attn_shift_mix(x, x_prev, *mixes)
+    if fused_mixes is None:
+        xx = x_prev - x
+        xr, xw, xk, xv, xa, xg = (x + xx * mix for mix in mixes)
+    else:
+        xr, xw, xk, xv, xa, xg = fused_mixes
 
     r = layer.r_proj(xr)
     w = layer.w_lora.lora[2](torch.tanh(layer.w_lora.lora[0](xw)))
@@ -164,8 +172,8 @@ def attn_step_batched(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tenso
     state = _eager_recurrent_state(state)
     if (
         not torch.is_grad_enabled()
-        and musa_wkv_available()
         and x.device.type == "musa"
+        and musa_wkv_available(x.device)
         and N == 64
     ):
         w_kernel = w.to(torch.float16).view(B, 1, H, N)

@@ -2,8 +2,10 @@
 """Optional MUSA WKV-7 recurrent kernel bridge.
 
 The implementation is derived from KakaruHayate/RWKV-MUSA and ultimately from
-BlinkDL/RWKV-LM's Apache-2.0 ``wkv7_cuda.cu``. The MUSA path is capability
-gated and falls back to the canonical pure-PyTorch recurrence when unavailable.
+BlinkDL/RWKV-LM's Apache-2.0 ``wkv7_cuda.cu``. The retained fp16-IO/fp32-compute
+contract comes from the legacy first-generation MTT S70; it is not a capability
+claim or scheduling default for later MUSA cards. The path is capability gated
+and falls back to the canonical pure-PyTorch recurrence when unavailable.
 """
 from __future__ import annotations
 
@@ -12,12 +14,15 @@ from typing import Any
 
 import torch
 
+from .kernel_policy import classify_gpu
 from .musa_build import load_musa_inline
 from .musa_wkv_source import WKV7_MUSA_HEADER
 
 _FALSE_VALUES = {"0", "false", "no", "off"}
+_TRUE_VALUES = {"1", "true", "yes", "on"}
 _MODULE: Any | None = None
 _MODULE_ERROR: Exception | None = None
+_VALIDATED_DEVICE_CACHE: dict[int, bool] = {}
 
 _CPP_SOURCE = r"""
 #include <torch/extension.h>
@@ -69,8 +74,13 @@ void wkv7_forward(torch::Tensor w, torch::Tensor q, torch::Tensor k, torch::Tens
 '''
 
 
-def _enabled() -> bool:
-    return os.environ.get("RWKV7_MUSA_WKV", "1").strip().lower() not in _FALSE_VALUES
+def _mode() -> str:
+    value = os.environ.get("RWKV7_MUSA_WKV", "auto").strip().lower()
+    if value in _FALSE_VALUES:
+        return "off"
+    if value in _TRUE_VALUES:
+        return "on"
+    return "auto"
 
 
 def _musa_available() -> bool:
@@ -86,18 +96,49 @@ def _musa_available() -> bool:
         return False
 
 
-def musa_wkv_available() -> bool:
-    """Return whether the validated fp16-IO/fp32-state MUSA route can be tried."""
+def _is_validated_device(device: torch.device) -> bool:
+    index = 0 if device.index is None else int(device.index)
+    cached = _VALIDATED_DEVICE_CACHE.get(index)
+    if cached is not None:
+        return cached
+    musa = getattr(torch, "musa", None)
+    get_device_name = getattr(musa, "get_device_name", None)
+    if not callable(get_device_name):
+        return False
+    try:
+        profile = classify_gpu(str(get_device_name(index)), None, is_musa=True)
+        validated = profile.validation_scope == "exact_card_smoke"
+    except Exception:
+        return False
+    _VALIDATED_DEVICE_CACHE[index] = validated
+    return validated
 
-    return _enabled() and _musa_available() and _MODULE_ERROR is None
+
+def musa_wkv_available(device: torch.device | None = None) -> bool:
+    """Return whether the optional MUSA WKV runtime can be considered.
+
+    ``auto`` is fail-closed to exact-card evidence (currently legacy MTT S70).
+    Later MUSA devices may use ``RWKV7_MUSA_WKV=1`` for explicit bring-up, but
+    are not reported as validated until their own correctness and speed rows
+    are retained. Pass a device when deciding whether to prepare fp16 operands.
+    """
+
+    mode = _mode()
+    if mode == "off" or not _musa_available() or _MODULE_ERROR is not None:
+        return False
+    if mode == "on":
+        return True
+    return device is not None and _is_validated_device(device)
 
 
 def musa_wkv_can_run(*tensors: torch.Tensor) -> bool:
     """Fail closed unless every runtime constraint from RWKV-MUSA is satisfied."""
 
-    if torch.is_grad_enabled() or not musa_wkv_available() or not tensors:
+    if torch.is_grad_enabled() or not tensors:
         return False
     first = tensors[0]
+    if not musa_wkv_available(first.device):
+        return False
     if first.device.type != "musa" or first.dtype != torch.float16 or first.dim() != 4:
         return False
     if int(first.shape[-1]) != 64:
@@ -110,13 +151,13 @@ def musa_wkv_can_run(*tensors: torch.Tensor) -> bool:
     )
 
 
-def _load_module():
+def _load_module(device: torch.device):
     global _MODULE, _MODULE_ERROR
     if _MODULE_ERROR is not None:
         raise RuntimeError("RWKV-7 MUSA extension previously failed to build") from _MODULE_ERROR
     if _MODULE is not None:
         return _MODULE
-    if not musa_wkv_available():
+    if not musa_wkv_available(device):
         raise RuntimeError("RWKV-7 MUSA extension requested without an available MUSA runtime")
     source = _MUSA_SOURCE_TEMPLATE.replace(
         '#include "__WKV7_MUSA_HEADER__"',
@@ -174,7 +215,7 @@ def musa_wkv(
     expected_state = (decay.shape[0], decay.shape[2], decay.shape[3], decay.shape[3])
     if state.device != decay.device or state.dtype != torch.float32 or tuple(state.shape) != expected_state:
         raise ValueError("MUSA WKV state must be fp32 [B,H,64,64] on the input device")
-    module = _load_module()
+    module = _load_module(decay.device)
     packed = [tensor.contiguous() for tensor in operands]
     initial_state = state.contiguous()
     output = torch.empty_like(decay)

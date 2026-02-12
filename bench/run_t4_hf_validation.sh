@@ -274,7 +274,7 @@ run "${PYTHON_BIN}" -m py_compile \
 
 if [[ "${RUN_FUNCTIONAL}" != "0" ]]; then
   run "${PYTHON_BIN}" tests/smoke_hf_generate.py \
-    --model "${HF_DIR}" --trust-remote-code --device "${DEVICE}" --max-new-tokens 4 \
+    --model "${HF_DIR}" --device "${DEVICE}" --max-new-tokens 4 \
     | tee "${OUT_DIR}/smoke_hf_generate.log"
   run "${PYTHON_BIN}" tests/test_hf_api_contract.py \
     --model "${HF_DIR}" --device "${DEVICE}" --dtype "${DTYPE}" --beam-new-tokens 2 \
