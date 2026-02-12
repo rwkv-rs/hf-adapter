@@ -9,6 +9,7 @@ import torch
 
 from rwkv7_hf.kernel_policy import classify_gpu, detect_gpu_profile, policy_for_profile
 
+check_environment_module = importlib.import_module("examples.check_environment")
 musa_build_module = importlib.import_module("rwkv7_hf.musa_build")
 musa_wkv_module = importlib.import_module("rwkv7_hf.musa_wkv")
 musa_wkv_source_module = importlib.import_module("rwkv7_hf.musa_wkv_source")
@@ -69,6 +70,63 @@ def test_musa_runtime_detection_does_not_depend_on_cuda() -> None:
     assert type(explicit.device_index) is int
     assert profile.is_musa
     assert not profile.is_cuda
+
+
+def test_environment_doctor_keeps_musa_available_when_device_count_fails(
+    capsys,
+) -> None:
+    class FakeMusa:
+        @staticmethod
+        def device_count():
+            raise RuntimeError("runtime not fully initialized")
+
+    check_environment_module.report_musa_devices(FakeMusa())
+    output = capsys.readouterr().out
+    assert "[PASS] MUSA: available" in output
+    assert "[WARN] MUSA device count unavailable: RuntimeError" in output
+
+
+def test_environment_doctor_continues_when_one_musa_device_name_fails(capsys) -> None:
+    class FakeMusa:
+        @staticmethod
+        def device_count():
+            return 2
+
+        @staticmethod
+        def get_device_name(index):
+            if index == 0:
+                raise RuntimeError("device metadata unavailable")
+            return "Moore Threads MTT S70"
+
+    check_environment_module.report_musa_devices(FakeMusa())
+    output = capsys.readouterr().out
+    assert "[PASS] MUSA: available (2 device(s))" in output
+    assert "[WARN] MUSA device 0 name unavailable: RuntimeError" in output
+    assert "[INFO] MUSA device 1: Moore Threads MTT S70" in output
+
+
+def test_environment_doctor_completes_when_musa_metadata_fails(
+    monkeypatch,
+    capsys,
+) -> None:
+    class FakeMusa:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def device_count():
+            raise RuntimeError("runtime not fully initialized")
+
+    monkeypatch.setattr(torch, "musa", FakeMusa(), raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(check_environment_module, "package_version", lambda name: "test")
+
+    assert check_environment_module.main([]) == 0
+    output = capsys.readouterr().out
+    assert "[PASS] MUSA: available" in output
+    assert "[WARN] MUSA device count unavailable: RuntimeError" in output
+    assert "RESULT: READY" in output
 
 
 def test_musa_gcc_include_candidates_use_numeric_version_order(monkeypatch) -> None:
