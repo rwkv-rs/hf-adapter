@@ -85,7 +85,7 @@ def _assert_adapter_file_closure() -> None:
     force optional non-runtime modules (e.g. ``sglang_quant``) to ship."""
     root = Path(__file__).resolve().parents[1] / "rwkv7_hf"
     known = set(ADAPTER_FILES)
-    pending = list(ADAPTER_FILES)
+    pending = [name for name in ADAPTER_FILES if PurePosixPath(name).suffix == ".py"]
     seen: set[str] = set()
     missing: set[str] = set()
     while pending:
