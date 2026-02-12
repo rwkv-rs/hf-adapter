@@ -580,9 +580,15 @@ def detect_gpu_profile(device: int | str | None = None, torch_module: Any | None
         musa_available = False
     if musa_available:
         try:
-            musa_index = int(musa.current_device()) if device is None else torch_module.device(device).index
-            if musa_index is None:
+            if device is None:
                 musa_index = int(musa.current_device())
+            else:
+                resolved_index = torch_module.device(device).index
+                musa_index = (
+                    int(resolved_index)
+                    if resolved_index is not None
+                    else int(musa.current_device())
+                )
         except Exception:
             musa_index = 0
         try:

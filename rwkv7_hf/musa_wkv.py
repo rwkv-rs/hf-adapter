@@ -28,6 +28,9 @@ void wkv7_forward(torch::Tensor w, torch::Tensor q, torch::Tensor k, torch::Tens
 
 _MUSA_SOURCE_TEMPLATE = r'''
 #include <torch/extension.h>
+#include "torch_musa/csrc/core/MUSAException.h"
+#include "torch_musa/csrc/core/MUSAGuard.h"
+#include "torch_musa/csrc/core/MUSAStream.h"
 #include "__WKV7_MUSA_HEADER__"
 
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
@@ -52,12 +55,16 @@ void wkv7_forward(torch::Tensor w, torch::Tensor q, torch::Tensor k, torch::Tens
                 "wkv7 MUSA state shape must be [B,H,64,64]");
     TORCH_CHECK(sT.sizes() == s0.sizes(), "wkv7 MUSA output state shape mismatch");
 
-    wkv7_forward_kernel<64, __half><<<dim3(H, B), dim3(64)>>>(
+    const auto device_index = static_cast<c10::DeviceIndex>(w.get_device());
+    const c10::musa::MUSAGuard device_guard(device_index);
+    const auto stream = c10::musa::getCurrentMUSAStream(device_index);
+    wkv7_forward_kernel<64, __half><<<dim3(H, B), dim3(64), 0, stream>>>(
         T, H,
         (const __half*)w.data_ptr(), (const __half*)q.data_ptr(),
         (const __half*)k.data_ptr(), (const __half*)v.data_ptr(),
         (const __half*)a.data_ptr(), (const __half*)b.data_ptr(),
         (__half*)y.data_ptr(), s0.data_ptr<float>(), sT.data_ptr<float>());
+    C10_MUSA_KERNEL_LAUNCH_CHECK();
 }
 '''
 
@@ -105,12 +112,12 @@ def musa_wkv_can_run(*tensors: torch.Tensor) -> bool:
 
 def _load_module():
     global _MODULE, _MODULE_ERROR
-    if not musa_wkv_available():
-        raise RuntimeError("RWKV-7 MUSA extension requested without an available MUSA runtime")
-    if _MODULE is not None:
-        return _MODULE
     if _MODULE_ERROR is not None:
         raise RuntimeError("RWKV-7 MUSA extension previously failed to build") from _MODULE_ERROR
+    if _MODULE is not None:
+        return _MODULE
+    if not musa_wkv_available():
+        raise RuntimeError("RWKV-7 MUSA extension requested without an available MUSA runtime")
     header = Path(__file__).resolve().parent / "csrc" / "musa" / "wkv7_musa.muh"
     source = _MUSA_SOURCE_TEMPLATE.replace("__WKV7_MUSA_HEADER__", header.as_posix())
     try:
@@ -144,7 +151,7 @@ def try_musa_wkv(
         return None
     try:
         return musa_wkv(*operands, state)
-    except RuntimeError:
+    except Exception:  # Optional acceleration must never block the eager fallback.
         return None
 
 

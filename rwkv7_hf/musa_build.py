@@ -19,11 +19,17 @@ _PATCHED_MODULE_IDS: set[int] = set()
 def _gcc_includes() -> list[str]:
     """Return an installed matching libstdc++ include set for mcc."""
 
-    candidates = sorted(glob.glob("/usr/include/c++/*"), reverse=True)
-    for base in candidates:
+    candidates = [
+        base
+        for base in glob.glob("/usr/include/c++/*")
+        if os.path.basename(base).isdigit()
+    ]
+    for base in sorted(
+        candidates,
+        key=lambda path: int(os.path.basename(path)),
+        reverse=True,
+    ):
         version = os.path.basename(base)
-        if not version.isdigit():
-            continue
         target = f"/usr/include/x86_64-linux-gnu/c++/{version}"
         if os.path.isdir(base) and os.path.isdir(target):
             return [

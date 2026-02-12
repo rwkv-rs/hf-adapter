@@ -51,30 +51,52 @@ card.
 
 ## Real-device acceptance gate
 
-Run on the MUSA host before changing the hardware matrix from **Open**:
+Run on the MUSA host before changing the hardware matrix from **Open**. Keep the
+fp32 compatibility row, then run paired inference rows with the optional kernel
+disabled and enabled. The adapter converts the WKV operands to fp16 IO before
+calling the kernel, so record the selected route rather than inferring it from
+the model dtype:
 
 ```bash
 PYTHON_BIN=python DEVICE=musa DTYPE=fp32 \
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
-RESULTS=bench/results_musa.jsonl \
+RESULTS=bench/results_musa_fp32.jsonl \
 bash scripts/run_hardware_smoke.sh
+
+RWKV7_MUSA_WKV=0 PYTHON_BIN=python DEVICE=musa DTYPE=fp16 \
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+RESULTS=bench/results_musa_fp16_eager.jsonl \
+bash scripts/run_hardware_smoke.sh
+
+PYTHON_BIN=python DEVICE=musa DTYPE=fp16 \
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+RESULTS=bench/results_musa_fp16_wkv.jsonl \
+bash scripts/run_hardware_smoke.sh
+
+RWKV7_MUSA_WKV=0 python tests/test_hf_api_contract.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --device musa --dtype fp16
 
 python tests/test_hf_api_contract.py \
   --model /path/to/rwkv7-g1d-0.1b-hf \
-  --device musa --dtype fp32
+  --device musa --dtype fp16
 
 python tests/test_peft_lora.py \
   --model /path/to/rwkv7-g1d-0.1b-hf \
   --device musa --attn-mode native
 ```
 
+The PEFT row must remain on the differentiable pure-PyTorch recurrence because
+the imported WKV extension is inference-only and is disabled while autograd is
+enabled.
+
 Also record:
 
 - exact MTT device, driver, MUSA SDK, torch_musa, PyTorch and Transformers versions;
 - pure-PyTorch versus MUSA-WKV logits, greedy tokens, state maximum error and chunk handoff;
 - prefill and decode separately, including batch and sequence lengths;
-- physical footprint, peak MUSA memory, selected/fallback route;
-- a kernel-disabled row using `RWKV7_MUSA_WKV=0`.
+- physical footprint, peak MUSA memory, and explicit selected/fallback route for every row;
+- both `RWKV7_MUSA_WKV=0` and enabled/default rows in the same environment.
 
 Do not claim bf16, Triton/FLA, quantization, graph capture, multi-device, or a
 different MUSA architecture until that exact capability is documented and

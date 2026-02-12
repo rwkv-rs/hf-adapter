@@ -9,8 +9,8 @@ import torch
 
 from rwkv7_hf.kernel_policy import classify_gpu, detect_gpu_profile, policy_for_profile
 
+musa_build_module = importlib.import_module("rwkv7_hf.musa_build")
 musa_wkv_module = importlib.import_module("rwkv7_hf.musa_wkv")
-
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,16 +50,36 @@ def test_musa_runtime_detection_does_not_depend_on_cuda() -> None:
         def is_available():
             return False
 
+    class FakeDevice:
+        def __init__(self, value):
+            self.index = str(value).split(":", 1)[-1]
+
     class FakeTorch:
         musa = FakeMusa()
         cuda = FakeCuda()
+        device = FakeDevice
         version = type("Version", (), {"hip": None})()
 
     profile = detect_gpu_profile(torch_module=FakeTorch())
+    explicit = detect_gpu_profile(device="musa:1", torch_module=FakeTorch())
     assert profile.family == "musa"
     assert profile.device_index == 0
+    assert explicit.device_index == 1
+    assert type(explicit.device_index) is int
     assert profile.is_musa
     assert not profile.is_cuda
+
+
+def test_musa_gcc_include_candidates_use_numeric_version_order(monkeypatch) -> None:
+    monkeypatch.setattr(
+        musa_build_module.glob,
+        "glob",
+        lambda pattern: ["/usr/include/c++/9", "/usr/include/c++/13"],
+    )
+    monkeypatch.setattr(musa_build_module.os.path, "isdir", lambda path: True)
+    includes = musa_build_module._gcc_includes()
+    assert includes[1] == "/usr/include/c++/13"
+    assert includes[3] == "/usr/include/x86_64-linux-gnu/c++/13"
 
 
 def test_musa_wkv_fails_closed_without_runtime(monkeypatch) -> None:
@@ -93,12 +113,17 @@ def test_musa_wkv_is_disabled_while_autograd_is_enabled(monkeypatch) -> None:
 
 def test_musa_build_failure_returns_to_eager_fallback(monkeypatch) -> None:
     monkeypatch.setattr(musa_wkv_module, "musa_wkv_can_run", lambda *args: True)
-    monkeypatch.setattr(
-        musa_wkv_module,
-        "musa_wkv",
-        lambda *args: (_ for _ in ()).throw(RuntimeError("build failed")),
-    )
-    assert musa_wkv_module.try_musa_wkv(*([object()] * 7)) is None
+    for error in (
+        RuntimeError("build failed"),
+        ValueError("invalid state"),
+        OSError("compiler unavailable"),
+    ):
+        monkeypatch.setattr(
+            musa_wkv_module,
+            "musa_wkv",
+            lambda *args, error=error: (_ for _ in ()).throw(error),
+        )
+        assert musa_wkv_module.try_musa_wkv(*([object()] * 7)) is None
 
 
 def test_musa_extension_is_lazy_and_does_not_import_torch_musa_at_module_import() -> None:
@@ -122,6 +147,9 @@ def test_musa_kernel_keeps_validated_fp16_io_fp32_state_contract() -> None:
     assert "head_size=64" in wrapper
     assert "state shape must be [B,H,64,64]" in wrapper
     assert "PrivateUse1" not in wrapper
+    assert "c10::musa::MUSAGuard" in wrapper
+    assert "c10::musa::getCurrentMUSAStream" in wrapper
+    assert "C10_MUSA_KERNEL_LAUNCH_CHECK" in wrapper
     assert "#include <musa_fp16.h>" in kernel
     assert "__shfl" not in kernel
     assert "musa_bf16" not in kernel

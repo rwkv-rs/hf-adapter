@@ -7,7 +7,7 @@
  * Derived from BlinkDL/RWKV-LM
  * RWKV-v7/train_temp/cuda/wkv7_cuda.cu (Apache-2.0), through
  * KakaruHayate/RWKV-MUSA. Changes for the validated MTT S70 / MUSA SDK 4.2.0
- * lane: fp16 IO, fp32 compute/state, optional initial/final recurrent state,
+ * lane: fp16 IO, fp32 compute/state, explicit initial/final recurrent state,
  * no warp intrinsics, and a fixed head size of 64.
  */
 
