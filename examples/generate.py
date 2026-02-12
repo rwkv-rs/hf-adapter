@@ -20,7 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, help="Converted HF model directory or Hub id")
     parser.add_argument("--prompt", required=True, help="Prompt text")
-    parser.add_argument("--device", choices=["auto", "cuda", "mps", "cpu"], default="auto")
+    parser.add_argument("--device", choices=["auto", "cuda", "mps", "musa", "cpu"], default="auto")
     parser.add_argument("--dtype", choices=["auto", *DTYPES], default="auto")
     parser.add_argument("--backend", choices=["auto", "native"], default="auto")
     parser.add_argument("--max-new-tokens", type=int, default=64)
@@ -31,13 +31,26 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _musa_available() -> bool:
+    musa = getattr(torch, "musa", None)
+    is_available = getattr(musa, "is_available", None)
+    try:
+        return bool(callable(is_available) and is_available())
+    except Exception:
+        return False
+
+
 def resolve_device(requested: str) -> torch.device:
     if requested == "auto":
         if torch.cuda.is_available():
             return torch.device("cuda")
+        if _musa_available():
+            return torch.device("musa")
         if torch.backends.mps.is_available():
             return torch.device("mps")
         return torch.device("cpu")
+    if requested == "musa" and not _musa_available():
+        raise RuntimeError("--device musa was requested, but MUSA is unavailable")
     device = torch.device(requested)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("--device cuda was requested, but CUDA is unavailable")

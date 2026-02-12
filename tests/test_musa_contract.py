@@ -11,6 +11,7 @@ from rwkv7_hf.kernel_policy import classify_gpu, detect_gpu_profile, policy_for_
 
 musa_build_module = importlib.import_module("rwkv7_hf.musa_build")
 musa_wkv_module = importlib.import_module("rwkv7_hf.musa_wkv")
+musa_wkv_source_module = importlib.import_module("rwkv7_hf.musa_wkv_source")
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -139,11 +140,22 @@ def test_musa_extension_is_lazy_and_does_not_import_torch_musa_at_module_import(
     assert "triton" not in source
 
 
-def test_musa_kernel_keeps_validated_fp16_io_fp32_state_contract() -> None:
-    wrapper = (ROOT / "rwkv7_hf" / "musa_wkv.py").read_text(encoding="utf-8")
+def test_musa_remote_code_embeds_the_licensed_kernel_resource() -> None:
+    from scripts.adapter_manifest import ADAPTER_FILES
+
     kernel = (ROOT / "rwkv7_hf" / "csrc" / "musa" / "wkv7_musa.muh").read_text(
         encoding="utf-8"
     )
+    assert musa_wkv_source_module.WKV7_MUSA_HEADER == kernel
+    assert "musa_wkv_source.py" in ADAPTER_FILES
+    assert "from .musa_wkv_source import WKV7_MUSA_HEADER" in (
+        ROOT / "rwkv7_hf" / "musa_wkv.py"
+    ).read_text(encoding="utf-8")
+
+
+def test_musa_kernel_keeps_validated_fp16_io_fp32_state_contract() -> None:
+    wrapper = (ROOT / "rwkv7_hf" / "musa_wkv.py").read_text(encoding="utf-8")
+    kernel = musa_wkv_source_module.WKV7_MUSA_HEADER
     assert "head_size=64" in wrapper
     assert "state shape must be [B,H,64,64]" in wrapper
     assert "PrivateUse1" not in wrapper

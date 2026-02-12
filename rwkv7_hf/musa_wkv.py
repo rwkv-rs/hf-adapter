@@ -8,12 +8,12 @@ gated and falls back to the canonical pure-PyTorch recurrence when unavailable.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from typing import Any
 
 import torch
 
 from .musa_build import load_musa_inline
+from .musa_wkv_source import WKV7_MUSA_HEADER
 
 _FALSE_VALUES = {"0", "false", "no", "off"}
 _MODULE: Any | None = None
@@ -118,8 +118,10 @@ def _load_module():
         return _MODULE
     if not musa_wkv_available():
         raise RuntimeError("RWKV-7 MUSA extension requested without an available MUSA runtime")
-    header = Path(__file__).resolve().parent / "csrc" / "musa" / "wkv7_musa.muh"
-    source = _MUSA_SOURCE_TEMPLATE.replace("__WKV7_MUSA_HEADER__", header.as_posix())
+    source = _MUSA_SOURCE_TEMPLATE.replace(
+        '#include "__WKV7_MUSA_HEADER__"',
+        WKV7_MUSA_HEADER,
+    )
     try:
         _MODULE = load_musa_inline(
             "rwkv7_hf_wkv_musa",

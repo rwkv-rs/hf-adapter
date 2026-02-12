@@ -75,11 +75,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[FAIL] PyTorch import: {type(exc).__name__}: {exc}")
         failures += 1
     else:
+        musa = getattr(torch, "musa", None)
+        musa_is_available = getattr(musa, "is_available", None)
+        try:
+            has_musa = bool(callable(musa_is_available) and musa_is_available())
+        except Exception:
+            has_musa = False
         if torch.cuda.is_available():
             print(f"[PASS] CUDA: available ({torch.cuda.device_count()} device(s))")
             for index in range(torch.cuda.device_count()):
                 print(f"[INFO] CUDA device {index}: {torch.cuda.get_device_name(index)}")
             print("[INFO] Recommended first run: --device cuda --backend auto --dtype fp16")
+        elif has_musa:
+            print(f"[PASS] MUSA: available ({musa.device_count()} device(s))")
+            for index in range(musa.device_count()):
+                print(f"[INFO] MUSA device {index}: {musa.get_device_name(index)}")
+            print("[INFO] Recommended first run: --device musa --backend native --dtype fp16")
         elif (
             getattr(torch.backends, "mps", None) is not None
             and torch.backends.mps.is_available()

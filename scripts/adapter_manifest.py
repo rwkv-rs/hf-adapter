@@ -47,6 +47,7 @@ ADAPTER_FILES = [
     "mlx_wkv.py",
     "musa_build.py",
     "musa_wkv.py",
+    "musa_wkv_source.py",
     "csrc/musa/LICENSE",
     "csrc/musa/wkv7_musa.muh",
     "model_backbone.py",
