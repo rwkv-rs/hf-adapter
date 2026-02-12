@@ -17,27 +17,33 @@ def main():
     args = ap.parse_args()
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    accelerator = args.device.startswith(("cuda", "musa", "mps"))
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
         trust_remote_code=True,
-        torch_dtype=torch.float16 if args.device.startswith("cuda") else torch.float32,
+        torch_dtype=torch.float16 if accelerator else torch.float32,
         device_map=args.device if args.device.startswith("cuda") else None,
     ).eval()
+    if not args.device.startswith("cuda"):
+        model.to(args.device)
     enc = tok(args.prompt, return_tensors="pt")
-    if args.device.startswith("cuda"):
-        enc = {k: v.cuda() for k, v in enc.items()}
+    enc = {k: v.to(args.device) for k, v in enc.items()}
 
     with torch.inference_mode():
         t0 = time.time()
         out = model(**enc, use_cache=True)
         if args.device.startswith("cuda"):
             torch.cuda.synchronize()
+        elif args.device.startswith("musa"):
+            torch.musa.synchronize()
         print("logits_shape", tuple(out.logits.shape))
         print("top5", out.logits[0, -1].float().topk(5).indices.tolist())
         print("forward_sec", round(time.time() - t0, 4))
         gen = model.generate(**enc, max_new_tokens=args.max_new_tokens, do_sample=False, use_cache=True)
         if args.device.startswith("cuda"):
             torch.cuda.synchronize()
+        elif args.device.startswith("musa"):
+            torch.musa.synchronize()
     getter = getattr(model, "rwkv7_last_fast_token_backend", None)
     if callable(getter):
         print("generate_fast_token_backend", getter())

@@ -4,7 +4,7 @@ Only **unfinished, actionable HF-adapter work** belongs here. Completed
 experiments and historical plans belong in benchmark artifacts or Git history.
 Native vLLM/SGLang scheduler work is out of scope for this file.
 
-Last updated: **2026-07-27**. Audited against upstream main commit
+Last updated: **2026-07-28**. Audited against upstream main commit
 `6f7737f68e01a9a2a587d0b7a59a8719ecd68084`.
 
 ## Scope and current boundary
@@ -122,10 +122,12 @@ row is never a full-FLA reference.
       longer training and same-card official/Albatross performance.
 - [ ] Other Turing/RTX 20 products: validate independently and do not inherit
       Tesla T4 prefill or DP4A quant routing from `sm_75` alone.
-- [ ] Moore Threads MUSA: run the imported native/no-FLA and optional WKV
-      implementation through HF load/generate/cache/PEFT, kernel-parity,
-      prefill/decode and peak-memory gates on the exact MTT device; do not
-      inherit CUDA/ROCm dtype, graph, Triton, or quantization behavior.
+- [ ] Moore Threads MUSA: exact-card MTT S70 standalone kernel parity,
+      HF load/forward/cache/generate, 64-token eager/WKV equality, autograd
+      fallback, B1/B2 smoke and one paired B1/T128 performance row now pass.
+      Close real PEFT/LoRA package integration, broader models/shapes and deeper
+      recurrent-state gates; do not inherit bf16, graph, Triton, quantization,
+      multi-device, training-kernel, CUDA or ROCm behavior.
 - [ ] Add exact-card evidence for additional RTX 50-series and constrained
       laptop/low-memory devices.
 - [ ] Reproduce the promoted Apple results on M1–M4 and Pro/Max/Ultra variants.

@@ -45,6 +45,8 @@ def main() -> int:
         torch_dtype=dtype,
         device_map=args.device if args.device.startswith("cuda") else None,
     ).eval()
+    if not args.device.startswith("cuda"):
+        model.to(args.device)
     set_attn_mode(model, args.attn_mode)
     if args.fuse_norm != "auto":
         desired = args.fuse_norm == "true"
@@ -66,8 +68,7 @@ def main() -> int:
 
     prompts = ["User: Alpha.\n\nAssistant:", "User: Beta.\n\nAssistant:"]
     batch = tok(prompts, return_tensors="pt", padding=True)
-    if args.device.startswith("cuda"):
-        batch = {k: v.cuda() for k, v in batch.items()}
+    batch = {k: v.to(args.device) for k, v in batch.items()}
 
     with torch.no_grad():
         out = model(**batch, use_cache=True, logits_to_keep=1)
@@ -101,7 +102,7 @@ def main() -> int:
         if callable(backend_getter):
             effective_backend = backend_getter()
             print("generate_fast_token_backend", effective_backend)
-            assert effective_backend in {"native_graph", "native_jit", "fla"}, effective_backend
+            assert effective_backend in {"native", "native_graph", "native_jit", "fla"}, effective_backend
         print("beam_ids", beam[0, -args.beam_new_tokens :].tolist())
 
     model.train()

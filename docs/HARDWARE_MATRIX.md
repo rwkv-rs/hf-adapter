@@ -3,7 +3,7 @@
 Canonical current hardware status for the HF adapter. Detailed experiment logs
 remain in `bench/` and platform-specific documents.
 
-Last updated: **2026-07-27**.
+Last updated: **2026-07-28**.
 
 ## Status definitions
 
@@ -30,7 +30,7 @@ Last updated: **2026-07-27**.
 | RTX 5070 Laptop, sm120 | **Production-close for measured bsz8 lane** | 1.5B RWKV vs full-FLA Qwen3.5 2B, fp16/W8/W4 | 18/18 speed, active-parameter efficiency, footprint, peak-VRAM, full-FLA binding, and greedy/cosine gates pass | Other model pairs, bsz1/2/4 full-FLA, and model-quality evaluation |
 | H100 / Hopper | **Open** | — | — | bf16, large-model, quant, training and performance matrix |
 | AMD gfx1100 / ROCm 7.2.1 | **Validated compatibility** | 0.1B fp16 inference and bf16 training | Fully native HF AutoModel/generate, PEFT, API/cache/chunked-prefill, Trainer and B1/B2/B4/B8 baseline | Fused prefill/decode, HIP W8/W4, larger models, MI-series and same-card reference |
-| Moore Threads MTT S70 / MUSA 4.2.0 | **Open; implementation imported** | Native/no-FLA plus optional fp16-IO/fp32-state WKV kernel | RWKV-MUSA source evidence retained; this HF revision has no real-device run yet | HF load/generate/cache/PEFT, kernel parity, memory and speed on the exact card; no CUDA/ROCm capability inheritance |
+| Moore Threads MTT S70 / MUSA 4.2.0 | **Smoke; exact-card narrow scope** | 0.1B fp16 HF load/forward/cache/generate plus optional fp16-IO/fp32-state WKV kernel | Standalone parity, 64-token eager/WKV equality, autograd eager fallback, B1/B2 smoke and paired B1/T128 evidence; WKV prefill `1.214072x`, decode `1.000000x`, peak allocated memory equal for that exact row | Real PEFT/LoRA package smoke, broader models/shapes/state gates; no bf16/quant/graph/multi-device/training-kernel or CUDA/ROCm inheritance |
 | Other Turing / RTX 20 | **Open** | exact-card validation required | conservative family routing only | Do not inherit Tesla T4 prefill or DP4A quant promotion by `sm_75` alone |
 | CPU | **Experimental fallback** | Tiny/native tests | Import-safe native model and CPU tests | Production performance is not a target yet |
 
@@ -59,7 +59,7 @@ Last updated: **2026-07-27**.
 - A800: [`validation/A800_HF_VALIDATION.md`](validation/A800_HF_VALIDATION.md)
 - V100 training/compatibility: [`validation/V100_HF_VALIDATION.md`](validation/V100_HF_VALIDATION.md)
 - AMD ROCm: [`validation/AMD_ROCM_HF_VALIDATION.md`](validation/AMD_ROCM_HF_VALIDATION.md)
-- Moore Threads MUSA: [`hardware/MUSA.md`](hardware/MUSA.md)
+- Moore Threads MUSA: [`hardware/MUSA.md`](hardware/MUSA.md), [`../bench/musa_s70_validation_20260728/`](../bench/musa_s70_validation_20260728/README.md)
 - Tesla T4: [`hardware/TURING_T4.md`](hardware/TURING_T4.md), [`../bench/t4_production_close_20260720/`](../bench/t4_production_close_20260720/README.md)
 - Blackwell history: [`hardware/BLACKWELL_50SERIES.md`](hardware/BLACKWELL_50SERIES.md)
 

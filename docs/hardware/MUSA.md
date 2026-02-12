@@ -1,8 +1,9 @@
 # Moore Threads MUSA
 
-This document records the imported MUSA implementation boundary for the RWKV-7
-HF adapter. It does not promote a live-card HF support result: this branch was
-prepared without a local MUSA development environment.
+This document records the MUSA implementation and exact-card validation boundary
+for the RWKV-7 HF adapter. The imported path has now been exercised on one MTT
+S70, but the evidence remains intentionally narrow and does not establish broad
+MUSA platform support.
 
 ## Sources of truth
 
@@ -34,8 +35,9 @@ not modify torch or torch_musa.
 
 ## Retained exact-device facts
 
-RWKV-MUSA reports these results for MTT S70 (`mp_21`, 7 GB), MUSA SDK 4.2.0,
-torch_musa 2.5.0. They are source evidence, not newly reproduced results:
+RWKV-MUSA reports these implementation facts for MTT S70 (`mp_21`, 7 GB), MUSA
+SDK 4.2.0 and torch_musa 2.5.0. The same kernel contract has now also been
+exercised through this HF adapter on one S70:
 
 - fp16 IO with fp32 recurrence compute/state is the validated WKV route;
 - the imported kernel uses block synchronization and no warp shuffle;
@@ -44,10 +46,15 @@ torch_musa 2.5.0. They are source evidence, not newly reproduced results:
 - Triton/FLA and torch quantization are not enabled by this port;
 - CUDA graph, CUDA kernel, ROCm, and other-device policies are not applied to MUSA.
 
-The RWKV-MUSA repository retains forward/state/gradient checks and S70
-performance logs. This HF branch does not copy those numbers into
-`BENCHMARK.md`, because the current adapter revision has not yet been run on the
-card.
+The retained HF evidence is
+[`../../bench/musa_s70_validation_20260728/`](../../bench/musa_s70_validation_20260728/README.md).
+Standalone output/state parity, model load/forward/cache/generate, eager/WKV
+long-trace token equality and differentiable eager fallback passed. In three
+paired processes for the exact 0.1B, batch-1, prompt-128/decode-32 fp16 shape,
+the WKV route had `1.214072x` median prefill throughput, `1.000000x` median
+decode throughput and the same `406.0 MiB` peak allocated memory as eager.
+Therefore this result supports a narrow prefill observation only; it does not
+support a decode-speed or memory-reduction claim.
 
 ## Real-device acceptance gate
 

@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import re
@@ -59,6 +60,53 @@ def encode(tok, n):
     return ids[:, :n]
 
 
+def accelerator_api(device: str):
+    if device.startswith("cuda"):
+        return torch.cuda
+    if device.startswith("musa"):
+        return getattr(torch, "musa", None)
+    if device.startswith("mps"):
+        return getattr(torch, "mps", None)
+    return None
+
+
+def accelerator_device_arg(device: str):
+    return torch.device(device) if device.startswith(("cuda", "musa")) else None
+
+
+def device_sync(device: str) -> None:
+    api = accelerator_api(device)
+    synchronize = getattr(api, "synchronize", None)
+    if callable(synchronize):
+        target = accelerator_device_arg(device)
+        synchronize(target) if target is not None else synchronize()
+
+
+def reset_peak_memory(device: str) -> None:
+    api = accelerator_api(device)
+    reset = getattr(api, "reset_peak_memory_stats", None)
+    if callable(reset):
+        target = accelerator_device_arg(device)
+        reset(target) if target is not None else reset()
+
+
+def peak_memory_mb(device: str) -> float | None:
+    api = accelerator_api(device)
+    maximum = getattr(api, "max_memory_allocated", None)
+    if not callable(maximum):
+        return None
+    target = accelerator_device_arg(device)
+    value = maximum(target) if target is not None else maximum()
+    return float(value) / 1024 / 1024
+
+
+def device_name(device: str) -> str:
+    api = accelerator_api(device)
+    getter = getattr(api, "get_device_name", None)
+    target = accelerator_device_arg(device)
+    return str(getter(target)) if callable(getter) and target is not None else device
+
+
 def set_attn_mode(model, attn_mode: str) -> None:
     if attn_mode == "auto":
         return
@@ -82,6 +130,18 @@ def last_fast_token_backend(model):
     return getattr(model, "_rwkv7_last_fast_token_backend", None)
 
 
+def musa_wkv_route(model) -> dict:
+    if not str(next(model.parameters()).device).startswith("musa"):
+        return {}
+    package = model.__class__.__module__.rsplit(".", 1)[0]
+    module = importlib.import_module(package + ".musa_wkv")
+    return {
+        "musa_wkv_enabled": os.environ.get("RWKV7_MUSA_WKV", "1") not in {"0", "false", "False", "no", "off"},
+        "musa_wkv_module_loaded": module._MODULE is not None,
+        "musa_wkv_module_error": repr(module._MODULE_ERROR),
+    }
+
+
 @contextmanager
 def reference_forward_env():
     old = os.environ.get("RWKV7_FAST_FORWARD")
@@ -101,8 +161,13 @@ def bench_hf(args, dt):
     configure_fast_token_env(args)
     tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(
-        args.hf_dir, trust_remote_code=True, torch_dtype=dt,
-        device_map=args.device).eval()
+        args.hf_dir,
+        trust_remote_code=True,
+        torch_dtype=dt,
+        device_map=args.device if args.device.startswith("cuda") else None,
+    ).eval()
+    if not args.device.startswith("cuda"):
+        model.to(args.device)
     set_attn_mode(model, args.attn_mode)
     if args.fuse_norm != "auto":
         desired = args.fuse_norm == "true"
@@ -112,17 +177,17 @@ def bench_hf(args, dt):
     ids = encode(tok, args.prompt_tokens).to(args.device)
     L = ids.shape[1]
 
-    torch.cuda.reset_peak_memory_stats()
+    reset_peak_memory(args.device)
     # prefill
     with torch.inference_mode():
         for _ in range(args.warmup):
             _ = model(ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
-    torch.cuda.synchronize()
+    device_sync(args.device)
     t0 = time.time()
     with torch.inference_mode():
         for _ in range(args.runs):
             _ = model(ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
-    torch.cuda.synchronize()
+    device_sync(args.device)
     prefill_tokps = L / ((time.time() - t0) / args.runs)
 
     # decode via direct state threading
@@ -145,18 +210,18 @@ def bench_hf(args, dt):
             out = decode_step(nxt, state)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
-    torch.cuda.synchronize()
+    device_sync(args.device)
     t0 = time.time()
     with torch.inference_mode():
         for _ in range(args.decode_tokens):
             out = decode_step(nxt, state)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
-    torch.cuda.synchronize()
+    device_sync(args.device)
     dt_decode = time.time() - t0
     res = _res("hf_adapter", args, model, L, prefill_tokps,
                args.decode_tokens / dt_decode,
-               torch.cuda.max_memory_allocated() / 1024 / 1024,
+               peak_memory_mb(args.device),
                getattr(model.config, "attn_mode", "?"))
     res["hf_logits_to_keep"] = args.hf_logits_to_keep
     res["hf_prefill_use_cache"] = True
@@ -168,6 +233,7 @@ def bench_hf(args, dt):
         res["fast_token_layout"] = os.environ.get("RWKV7_FAST_TOKEN_LAYOUT", "3d")
         res["fast_token_backend"] = os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "auto")
         res["fast_token_backend_effective"] = last_fast_token_backend(model) or res["fast_token_backend"]
+    res.update(musa_wkv_route(model))
     return res
 
 
@@ -181,13 +247,13 @@ def bench_official(args, dt):
     id_list = encode(tok, args.prompt_tokens)[0].tolist()
     L = len(id_list)
 
-    torch.cuda.reset_peak_memory_stats()
+    reset_peak_memory(args.device)
     # prefill (official torch path is sequential => slow; 1 timed run)
     m.forward(id_list[:8], None)
     t0 = time.time()
     logits = m.forward(id_list, None)
     logits = logits[0] if isinstance(logits, tuple) else logits
-    torch.cuda.synchronize()
+    device_sync(args.device)
     prefill_tokps = L / (time.time() - t0)
 
     # decode via state threading
@@ -195,29 +261,29 @@ def bench_official(args, dt):
     for _ in range(args.warmup):
         nt = int(logits.argmax())
         logits, state = m.forward([nt], state)
-    torch.cuda.synchronize()
+    device_sync(args.device)
     t0 = time.time()
     for _ in range(args.decode_tokens):
         nt = int(logits.argmax())
         logits, state = m.forward([nt], state)
-    torch.cuda.synchronize()
+    device_sync(args.device)
     dt_decode = time.time() - t0
     return _res("official_rwkv", args, None, L, prefill_tokps,
                 args.decode_tokens / dt_decode,
-                torch.cuda.max_memory_allocated() / 1024 / 1024,
+                peak_memory_mb(args.device),
                 "torch_ref(no_fused_kernel)")
 
 
 def _res(backend, args, model, L, prefill, decode, vram, attn):
     return {
         "axis": "speed_mem", "backend": backend, "dtype": args.dtype,
-        "device": torch.cuda.get_device_name(0), "attn_mode": attn,
+        "device": device_name(args.device), "attn_mode": attn,
         **model_metadata(args, model),
         "prompt_tokens": L, "decode_tokens": args.decode_tokens,
         "prefill_tokps": round(prefill, 1),
         "decode_tokps": round(decode, 1),
         "decode_ms_per_tok": round(1000 / decode, 2),
-        "peak_vram_mb": round(vram, 1),
+        "peak_vram_mb": round(vram, 1) if vram is not None else None,
     }
 
 

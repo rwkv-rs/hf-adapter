@@ -153,6 +153,28 @@ def test_musa_remote_code_embeds_the_licensed_kernel_resource() -> None:
     ).read_text(encoding="utf-8")
 
 
+def test_musa_hardware_acceptance_tools_move_and_measure_on_musa() -> None:
+    speed = (ROOT / "bench" / "bench_speed.py").read_text(encoding="utf-8")
+    batch = (ROOT / "bench" / "bench_batch_sweep.py").read_text(encoding="utf-8")
+    smoke = (ROOT / "tests" / "smoke_hf_generate.py").read_text(encoding="utf-8")
+    api = (ROOT / "tests" / "test_hf_api_contract.py").read_text(encoding="utf-8")
+
+    assert 'device.startswith("musa")' in speed
+    assert "model.to(args.device)" in speed
+    assert "peak_memory_mb(args.device)" in speed
+    assert 'torch.device(device) if device.startswith(("cuda", "musa"))' in speed
+    assert 'device.startswith("musa")' in batch
+    assert "model.to(args.device)" in batch
+    assert "return ids.to(device)" in batch
+    assert 'torch.device(device) if device.startswith(("cuda", "musa"))' in batch
+    assert 'importlib.import_module(package + ".musa_wkv")' in batch
+    assert '"musa_wkv_module_loaded": module._MODULE is not None' in batch
+    assert 'args.device.startswith(("cuda", "musa", "mps"))' in smoke
+    assert "torch.musa.synchronize()" in smoke
+    assert "model.to(args.device)" in api
+    assert "v.to(args.device)" in api
+
+
 def test_musa_kernel_keeps_validated_fp16_io_fp32_state_contract() -> None:
     wrapper = (ROOT / "rwkv7_hf" / "musa_wkv.py").read_text(encoding="utf-8")
     kernel = musa_wkv_source_module.WKV7_MUSA_HEADER

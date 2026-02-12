@@ -9,6 +9,7 @@ builds fall back to the bsz=1 `rwkv7_forward_one` API.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import re
@@ -81,19 +82,40 @@ def model_metadata(args, model) -> dict[str, Any]:
     }
 
 
-def cuda_sync(device: str) -> None:
+def accelerator_api(device: str):
     if device.startswith("cuda"):
-        torch.cuda.synchronize()
+        return torch.cuda
+    if device.startswith("musa"):
+        return getattr(torch, "musa", None)
+    if device.startswith("mps"):
+        return getattr(torch, "mps", None)
+    return None
+
+
+def accelerator_device_arg(device: str):
+    return torch.device(device) if device.startswith(("cuda", "musa")) else None
+
+
+def device_sync(device: str) -> None:
+    synchronize = getattr(accelerator_api(device), "synchronize", None)
+    if callable(synchronize):
+        target = accelerator_device_arg(device)
+        synchronize(target) if target is not None else synchronize()
 
 
 def device_name(device: str) -> str:
-    return torch.cuda.get_device_name(0) if device.startswith("cuda") else device
+    getter = getattr(accelerator_api(device), "get_device_name", None)
+    target = accelerator_device_arg(device)
+    return str(getter(target)) if callable(getter) and target is not None else device
 
 
 def peak_mb(device: str) -> float | None:
-    if not device.startswith("cuda"):
+    maximum = getattr(accelerator_api(device), "max_memory_allocated", None)
+    if not callable(maximum):
         return None
-    return round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
+    target = accelerator_device_arg(device)
+    value = maximum(target) if target is not None else maximum()
+    return round(float(value) / 1024 / 1024, 1)
 
 
 def set_attn_mode(model, attn_mode: str) -> None:
@@ -105,7 +127,7 @@ def set_attn_mode(model, attn_mode: str) -> None:
 
 
 def timed(fn, device: str, runs: int) -> float:
-    cuda_sync(device)
+    device_sync(device)
     t0 = time.time()
     # Prefill is an inference benchmark.  Keep the measured calls in the same
     # no-grad mode as warmup; otherwise the adapter correctly rejects its
@@ -114,7 +136,7 @@ def timed(fn, device: str, runs: int) -> float:
     with torch.inference_mode():
         for _ in range(runs):
             fn()
-    cuda_sync(device)
+    device_sync(device)
     return (time.time() - t0) / runs
 
 
@@ -134,6 +156,8 @@ def load_model(args, dtype):
         if actual != desired:
             raise ValueError(f"Loaded model config has fuse_norm={actual}; use a converted model dir with fuse_norm={desired}")
     set_attn_mode(model, args.attn_mode)
+    if not args.device.startswith("cuda"):
+        model.to(args.device)
     return model
 
 
@@ -142,6 +166,18 @@ def last_fast_token_backend(model):
     if callable(getter):
         return getter()
     return getattr(model, "_rwkv7_last_fast_token_backend", None)
+
+
+def musa_wkv_route(model) -> dict[str, Any]:
+    if not str(next(model.parameters()).device).startswith("musa"):
+        return {}
+    package = model.__class__.__module__.rsplit(".", 1)[0]
+    module = importlib.import_module(package + ".musa_wkv")
+    return {
+        "musa_wkv_enabled": os.environ.get("RWKV7_MUSA_WKV", "1") not in _FALSE_VALUES,
+        "musa_wkv_module_loaded": module._MODULE is not None,
+        "musa_wkv_module_error": repr(module._MODULE_ERROR),
+    }
 
 
 @contextmanager
@@ -160,13 +196,18 @@ def reference_forward_env():
 def encode(tok, prompt_tokens: int, bsz: int, device: str) -> torch.Tensor:
     ids = tok(SEED, return_tensors="pt", add_special_tokens=False).input_ids[:, :prompt_tokens]
     ids = ids.repeat(bsz, 1)
-    return ids.to(device) if device.startswith("cuda") else ids
+    return ids.to(device)
 
 
 def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
-    if args.device.startswith("cuda"):
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
+    api = accelerator_api(args.device)
+    empty_cache = getattr(api, "empty_cache", None)
+    reset_peak = getattr(api, "reset_peak_memory_stats", None)
+    target = accelerator_device_arg(args.device)
+    if callable(empty_cache):
+        empty_cache()
+    if callable(reset_peak):
+        reset_peak(target) if target is not None else reset_peak()
     ids = encode(tok, args.prompt_tokens, bsz, args.device)
 
     with torch.inference_mode():
@@ -187,14 +228,14 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
                 out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
-        cuda_sync(args.device)
+        device_sync(args.device)
         t0 = time.time()
         for _ in range(args.decode_tokens):
             with reference_forward_env():
                 out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
-        cuda_sync(args.device)
+        device_sync(args.device)
         decode_dt = time.time() - t0
 
     rows = [{
@@ -218,6 +259,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
         "decode_tokps_per_seq": round(args.decode_tokens / decode_dt, 1),
         "decode_ms_per_step": round(1000 * decode_dt / args.decode_tokens, 2),
         "peak_vram_mb": peak_mb(args.device),
+        **musa_wkv_route(model),
     }]
 
     fast_fn = getattr(model, "rwkv7_forward_token", None)
@@ -236,13 +278,13 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
                 out = fast_fn(nxt, past_key_values=state)
                 state = out.past_key_values
                 nxt = out.logits[:, -1:].argmax(dim=-1)
-            cuda_sync(args.device)
+            device_sync(args.device)
             t0 = time.time()
             for _ in range(args.decode_tokens):
                 out = fast_fn(nxt, past_key_values=state)
                 state = out.past_key_values
                 nxt = out.logits[:, -1:].argmax(dim=-1)
-            cuda_sync(args.device)
+            device_sync(args.device)
             fast_dt = time.time() - t0
         rows.append({**rows[0],
             "decode_api": fast_name,
