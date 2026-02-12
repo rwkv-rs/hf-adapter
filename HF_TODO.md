@@ -122,6 +122,10 @@ row is never a full-FLA reference.
       longer training and same-card official/Albatross performance.
 - [ ] Other Turing/RTX 20 products: validate independently and do not inherit
       Tesla T4 prefill or DP4A quant routing from `sm_75` alone.
+- [ ] Moore Threads MUSA: run the imported native/no-FLA and optional WKV
+      implementation through HF load/generate/cache/PEFT, kernel-parity,
+      prefill/decode and peak-memory gates on the exact MTT device; do not
+      inherit CUDA/ROCm dtype, graph, Triton, or quantization behavior.
 - [ ] Add exact-card evidence for additional RTX 50-series and constrained
       laptop/low-memory devices.
 - [ ] Reproduce the promoted Apple results on M1–M4 and Pro/Max/Ultra variants.

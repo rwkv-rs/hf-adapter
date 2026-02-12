@@ -115,6 +115,7 @@ class GPUProfile:
     is_cuda: bool = False
     is_hip: bool = False
     is_mps: bool = False
+    is_musa: bool = False
 
 
 @dataclass(frozen=True)
@@ -306,6 +307,26 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
         required_benchmarks=("CPU smoke only; no GPU performance claim",),
         quant_rule="do not claim W8/W4 speed without a real accelerator row",
         promotion_rule="never promote GPU defaults from CPU-only evidence",
+    ),
+    "musa": GPUAdaptationRule(
+        family="musa",
+        cards=("Moore Threads MTT S70 / S80", "MUSA devices"),
+        status="RWKV-MUSA implementation and S70 evidence imported; HF adapter real-device gate pending",
+        default_stance="native/no-FLA compatibility; optional MUSA WKV kernel; CUDA/Triton paths off",
+        default_on=("fast_cache", "optional fp16-IO/fp32-state MUSA WKV kernel"),
+        default_off=("CUDA native_graph fused kernels", "Triton/FLA", "bnb CUDA-only quantization"),
+        required_functional=(
+            "MUSA import/load/generate",
+            "cache continuation and chunked prefill",
+            "MUSA WKV vs pure-PyTorch recurrence",
+            "PEFT/Trainer smoke when training is claimed",
+        ),
+        required_benchmarks=(
+            "exact MUSA device/runtime/model/dtype rows",
+            "prefill/decode/peak-memory plus selected-route evidence",
+        ),
+        quant_rule="no torch quantization claim without exact MUSA operator, quality, footprint and speed evidence",
+        promotion_rule="do not infer CUDA/ROCm behavior; promote only behavior documented by MUSA sources and proven on the exact device",
     ),
     "apple_mps": GPUAdaptationRule(
         family="apple_mps",
@@ -503,11 +524,14 @@ def classify_gpu(
     *,
     is_hip: bool = False,
     is_mps: bool = False,
+    is_musa: bool = False,
 ) -> GPUProfile:
     """Classify a GPU without requiring torch/CUDA to be available."""
 
     gpu_name = (name or "unknown").strip() or "unknown"
     lower = gpu_name.lower()
+    if is_musa or any(token in lower for token in ("moore threads", "mthreads", "mtt s70", "mtt s80")):
+        return GPUProfile(name=gpu_name, vendor="moore_threads", family="musa", is_musa=True)
     if is_mps or any(token in lower for token in ("apple silicon", "apple m1", "apple m2", "apple m3", "apple m4", "apple m5")):
         return GPUProfile(name=gpu_name, vendor="apple", family="apple_mps", is_mps=True)
     if is_hip or any(token in lower for token in ("amd", "radeon", "instinct", "mi250", "mi300")):
@@ -548,6 +572,31 @@ def detect_gpu_profile(device: int | str | None = None, torch_module: Any | None
         return classify_gpu(None, None)
 
     is_hip = bool(getattr(getattr(torch_module, "version", None), "hip", None))
+    musa = getattr(torch_module, "musa", None)
+    musa_is_available = getattr(musa, "is_available", None)
+    try:
+        musa_available = bool(callable(musa_is_available) and musa_is_available())
+    except Exception:
+        musa_available = False
+    if musa_available:
+        try:
+            musa_index = int(musa.current_device()) if device is None else torch_module.device(device).index
+            if musa_index is None:
+                musa_index = int(musa.current_device())
+        except Exception:
+            musa_index = 0
+        try:
+            musa_name = str(musa.get_device_name(musa_index))
+        except Exception:
+            musa_name = "Moore Threads MUSA"
+        profile = classify_gpu(musa_name, None, is_musa=True)
+        return GPUProfile(
+            name=profile.name,
+            vendor=profile.vendor,
+            family=profile.family,
+            device_index=musa_index,
+            is_musa=True,
+        )
     cuda = getattr(torch_module, "cuda", None)
     is_available = getattr(cuda, "is_available", None)
     try:
@@ -610,6 +659,17 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_output=True,
             fused_prefill_scan=False,
             notes="no live GPU detected: preserve historical request defaults; runtime availability gates still prevent CUDA use",
+        )
+    if family == "musa":
+        return KernelPolicy(
+            profile=profile,
+            fast_token_backend="native",
+            fast_cache=True,
+            fused_recurrent_output=False,
+            fused_output=False,
+            fused_prefill_scan=False,
+            quant_policy="musa_unvalidated",
+            notes="MUSA: use native/no-FLA HF path and optional MUSA WKV kernel; CUDA/Triton/quant defaults remain off",
         )
     if family == "apple_mps":
         return KernelPolicy(

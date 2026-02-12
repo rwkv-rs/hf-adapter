@@ -75,6 +75,8 @@ _LoRA.__module__ = __name__
 # optional Triton kernels at runtime.
 if False:  # pragma: no cover
     from .extension_build import cuda_extension_build_environment as _native_extension_build_dependency_sentinel
+    from .musa_build import load_musa_inline as _native_musa_build_dependency_sentinel
+    from .musa_wkv import musa_wkv as _native_musa_wkv_dependency_sentinel
     from .ada_lora import ada_wagv_lora as _native_ada_lora_dependency_sentinel
     from .ada_sparse_ffn import ada_linear as _native_ada_sparse_ffn_dependency_sentinel
     from .blackwell_norm_mix import blackwell_ffn_add_norm_mix as _native_sm120_norm_mix_dependency_sentinel

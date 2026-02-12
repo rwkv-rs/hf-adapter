@@ -14,7 +14,7 @@ HF public API
   Must not contain per-card branches.
 
 Native PyTorch backend
-  CPU / CUDA / MPS compatibility implementation.
+  CPU / CUDA / MPS / MUSA compatibility implementation.
   May branch on framework capabilities such as device.type, dtype support,
   cache support, and optional package availability.
 
@@ -27,6 +27,12 @@ Apple backend
   fused kernels.
   May branch on backend availability (MPS / MLX / Metal), not on a specific
   Apple chip model.
+
+MUSA backend
+  Moore Threads `torch_musa` compatibility plus the optional MUSA WKV kernel.
+  The MTT S70 lane uses fp16 kernel IO with fp32 recurrent state and compute.
+  CUDA/Triton/FLA and quantized paths are not inherited. Every capability must
+  come from MUSA documentation or retained exact-device evidence.
 
 Tests / scripts / bench / docs
   Own the hardware matrix: exact card names, machine names, benchmark rows,
@@ -111,7 +117,7 @@ They should not be scattered across model implementation files such as
 `rwkv7_hf/modeling_rwkv7.py`, `rwkv7_hf/native_model.py`, or fused kernel
 wrappers.  Those files should ask about capabilities:
 
-- `device.type == "cuda"` / `"mps"` / `"cpu"`
+- `device.type == "cuda"` / `"mps"` / `"musa"` / `"cpu"`
 - optional backend availability (`triton`, `mlx`, Metal extension)
 - dtype support
 - graph-capture support

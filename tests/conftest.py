@@ -8,9 +8,12 @@ import pytest
 
 
 REGISTERED_MARKERS = frozenset(
-    {"cpu", "cuda", "sm70", "ada", "blackwell", "apple", "slow", "model_required"}
+    {"cpu", "cuda", "sm70", "ada", "blackwell", "apple", "musa", "slow", "model_required"}
 )
 
+MUSA_PATTERNS = (
+    "test_musa_*.py",
+)
 APPLE_PATTERNS = (
     "test_apple_*.py",
     "test_mlx_*.py",
@@ -81,6 +84,8 @@ def classify_test_path(path: str | Path) -> frozenset[str]:
 
     name = Path(path).name
     markers = {"cpu"}
+    if _matches(name, MUSA_PATTERNS):
+        markers.add("musa")
     if _matches(name, APPLE_PATTERNS):
         markers.add("apple")
     if _matches(name, CUDA_PATTERNS):

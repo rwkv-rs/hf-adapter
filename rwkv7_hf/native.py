@@ -14,6 +14,8 @@ import os
 import torch
 import torch.nn.functional as F
 
+from .musa_wkv import musa_wkv_available, try_musa_wkv
+
 
 _CUDA_PEER_COPY_USABLE: dict[tuple[int, int], bool] = {}
 
@@ -159,12 +161,43 @@ def attn_step_batched(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tenso
             layer.v_lora.lora[2](layer.v_lora.lora[0](xv)))
     w = torch.exp(-EXP_HALF * torch.sigmoid(w.float()))
 
-    vk = v.view(B, H, N, 1) @ k.view(B, H, 1, N)
-    ab = (-kk).view(B, H, N, 1) @ (kk * a).view(B, H, 1, N)
     state = _eager_recurrent_state(state)
-    state = state * w.view(B, H, 1, N) + state @ ab.float() + vk.float()
-    out = state.to(x.dtype) @ r.view(B, H, N, 1)
-    out = out.view(B, attention_hidden)
+    if (
+        not torch.is_grad_enabled()
+        and musa_wkv_available()
+        and x.device.type == "musa"
+        and N == 64
+    ):
+        w_kernel = w.to(torch.float16).view(B, 1, H, N)
+        r_kernel = r.to(torch.float16).view(B, 1, H, N)
+        k_kernel = k.to(torch.float16).view(B, 1, H, N)
+        v_kernel = v.to(torch.float16).view(B, 1, H, N)
+        a_kernel = (-kk).to(torch.float16).view(B, 1, H, N)
+        b_kernel = (kk * a).to(torch.float16).view(B, 1, H, N)
+    else:
+        w_kernel = r_kernel = k_kernel = v_kernel = a_kernel = b_kernel = None
+    musa_result = (
+        try_musa_wkv(
+            w_kernel,
+            r_kernel,
+            k_kernel,
+            v_kernel,
+            a_kernel,
+            b_kernel,
+            state,
+        )
+        if w_kernel is not None
+        else None
+    )
+    if musa_result is not None:
+        out_kernel, state = musa_result
+        out = out_kernel[:, 0].to(x.dtype).reshape(B, attention_hidden)
+    else:
+        vk = v.view(B, H, N, 1) @ k.view(B, H, 1, N)
+        ab = (-kk).view(B, H, N, 1) @ (kk * a).view(B, H, 1, N)
+        state = state * w.view(B, H, 1, N) + state @ ab.float() + vk.float()
+        out = state.to(x.dtype) @ r.view(B, H, N, 1)
+        out = out.view(B, attention_hidden)
     out = F.group_norm(out, num_groups=H,
                        weight=layer.g_norm.weight, bias=layer.g_norm.bias,
                        eps=N * 1e-5)
