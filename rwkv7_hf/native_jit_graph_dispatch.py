@@ -432,6 +432,11 @@ def _native_graph_ffn_dispatch(
             bool(getattr(_kernel_policy(), "ada_sparse_ffn_inplace", False)),
         ) else sparse_out
         return ada_sparse_ffn_down_add(preact, down_weight, residual, out=target)
+    fused_quant_ffn = getattr(up_weight, "rwkv7_forward_ffn", None)
+    if callable(fused_quant_ffn):
+        fused = fused_quant_ffn(x, down_weight, residual)
+        if fused is not None:
+            return fused
     hidden = _native_graph_ffn_up_relu2_dispatch(x, up_weight)
     return _native_graph_ffn_down_add_dispatch(hidden, down_weight, residual)
 

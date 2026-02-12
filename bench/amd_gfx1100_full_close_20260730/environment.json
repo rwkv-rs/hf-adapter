@@ -1,0 +1,21 @@
+{
+  "date": "2026-07-30",
+  "base_commit": "3f910794d39c7cc2f554c8fd916d19c27ba0c7c0",
+  "platform": "Linux-6.8.0-79-generic-x86_64-with-glibc2.39",
+  "python": "3.12.3",
+  "torch": "2.9.1+rocm7.2.1.gitff65f5bc",
+  "hip": "7.2.53211-e1a6bc5663",
+  "triton": "3.5.1+rocm7.2.1.gita272dfa8",
+  "transformers": "5.14.1",
+  "device": "AMD Radeon Graphics",
+  "vram_gib": 47.98,
+  "gcn_arch": "gfx1100",
+  "policy_family": "amd_hip",
+  "policy_architecture": "gfx1100",
+  "fused_prefill_scan": true,
+  "prefill_scan_shapes": 60,
+  "prefill_scan_block_m": 64,
+  "prefill_scan_num_warps": 8,
+  "a8w8_gemv_max_rows": 0,
+  "a8w8_fused_ffn": true
+}

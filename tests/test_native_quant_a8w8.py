@@ -63,6 +63,36 @@ def test_cuda_kernel_tracks_strided_last_token_slice(batch_size: int) -> None:
     assert cosine >= 0.999
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize("batch_size", [1, 8])
+def test_cuda_fused_ffn_tracks_two_linear_boundary(batch_size: int) -> None:
+    torch.manual_seed(6)
+    up = torch.nn.Linear(
+        1024, 4096, bias=False, dtype=torch.float16, device="cuda"
+    )
+    down = torch.nn.Linear(
+        4096, 1024, bias=False, dtype=torch.float16, device="cuda"
+    )
+    quant_up = A8W8Linear(up)
+    quant_down = A8W8Linear(down)
+    x = torch.randn(batch_size, 1024, dtype=torch.float16, device="cuda")
+    residual = torch.randn_like(x)
+    reference = (residual + down(torch.relu(up(x)) ** 2)).float()
+    actual = quant_up.rwkv7_forward_ffn(x, quant_down, residual)
+    assert actual is not None
+    cosine = torch.nn.functional.cosine_similarity(
+        reference.flatten().unsqueeze(0), actual.float().flatten().unsqueeze(0)
+    ).item()
+    assert cosine >= 0.999
+
+
+def test_fused_ffn_falls_back_off_gpu() -> None:
+    up = A8W8Linear(torch.nn.Linear(16, 32, bias=False))
+    down = A8W8Linear(torch.nn.Linear(32, 16, bias=False))
+    x = torch.randn(2, 16)
+    assert up.rwkv7_forward_ffn(x, down, torch.randn_like(x)) is None
+
+
 def test_speed_policy_replaces_head_only() -> None:
     model = TinyLM()
     replaced = quantize_model_a8w8(model, min_params=1, policy="speed")
@@ -80,6 +110,7 @@ def test_memory_policy_replaces_all_size_gated_linears() -> None:
     assert isinstance(model.proj, A8W8Linear)
     assert isinstance(model.wide, torch.nn.Linear)
     assert isinstance(model.lm_head, A8W8Linear)
+    assert model._rwkv7_native_mm_fused_relu2_ffn_modules == 0
 
 
 def test_native_mm_modules_require_graph_operand_packs() -> None:

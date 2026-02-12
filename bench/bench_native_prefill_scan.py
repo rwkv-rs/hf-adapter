@@ -255,6 +255,9 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
             "RWKV7_FAST_PREFILL": "1",
             "RWKV7_NATIVE_PREFILL_GRAPH": "0",
             "RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX": "0",
+            # Keep native-direct an independent recurrence reference.  The
+            # selected candidate route is restored before candidate timing.
+            "RWKV7_NATIVE_PREFILL_FUSED_SCAN": "0",
         }
     )
     candidate_env = {"RWKV7_FAST_PREFILL": "1"}
@@ -395,7 +398,9 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         ),
         "prefill_backend_effective": getattr(model, "_rwkv7_last_fast_prefill_backend", None),
         "prefill_graph_effective": getattr(model, "_rwkv7_last_fast_prefill_backend", None) == "native_prefill_graph",
-        "fused_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN", "0") not in {"0", "false", "False", "no", "off"},
+        "fused_scan_cli": args.fused_scan,
+        "fused_scan_env": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN"),
+        "fused_scan_requested": args.fused_scan != "false",
         "fused_scan_effective": nj._native_prefill_fused_scan_enabled(
             batch_size,
             prompt_tokens,

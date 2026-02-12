@@ -729,14 +729,26 @@ def test_prefill_opt_in_fused_state_scan_fallback_matches_token_loop() -> None:
 
 def test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch() -> None:
     from rwkv7_hf import native_jit
+    from rwkv7_hf.kernel_policy import classify_gpu, policy_for_profile
 
     key = "RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M"
     old_env = os.environ.get(key)
     old_available = native_jit.torch.cuda.is_available
     old_capability = native_jit.torch.cuda.get_device_capability
     old_device_name = native_jit.torch.cuda.get_device_name
+    old_kernel_policy = native_jit._kernel_policy
     try:
         os.environ.pop(key, None)
+        # This test exercises the capability/name fallback table, independent
+        # of whichever real card is running pytest.  Otherwise an exact-card
+        # policy from the host (for example gfx1100) correctly takes precedence
+        # over the mocked CUDA capability below and makes the test host-bound.
+        native_jit._kernel_policy = lambda: policy_for_profile(
+            classify_gpu(
+                native_jit.torch.cuda.get_device_name(),
+                native_jit.torch.cuda.get_device_capability(),
+            )
+        )
         native_jit.torch.cuda.is_available = lambda: True
         native_jit.torch.cuda.get_device_capability = lambda *_args: (7, 0)
         assert native_jit._native_prefill_scan_block_m(64, 1) == 16
@@ -775,6 +787,7 @@ def test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch() -> None:
         native_jit.torch.cuda.is_available = old_available
         native_jit.torch.cuda.get_device_capability = old_capability
         native_jit.torch.cuda.get_device_name = old_device_name
+        native_jit._kernel_policy = old_kernel_policy
         if old_env is None:
             os.environ.pop(key, None)
         else:
