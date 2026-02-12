@@ -211,6 +211,37 @@ def test_musa_wkv_auto_mode_is_exact_card_fail_closed(monkeypatch) -> None:
     assert musa_wkv_module.musa_wkv_available(device)
 
 
+def test_native_musa_wkv_route_requires_fp16_model_dtype() -> None:
+    source = (ROOT / "rwkv7_hf" / "native.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    route_guard = next(
+        node.test
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and any(
+            isinstance(descendant, ast.Call)
+            and isinstance(descendant.func, ast.Name)
+            and descendant.func.id == "musa_wkv_available"
+            for descendant in ast.walk(node.test)
+        )
+    )
+    assert any(
+        isinstance(node, ast.Compare)
+        and isinstance(node.left, ast.Attribute)
+        and isinstance(node.left.value, ast.Name)
+        and node.left.value.id == "x"
+        and node.left.attr == "dtype"
+        and len(node.ops) == 1
+        and isinstance(node.ops[0], ast.Eq)
+        and len(node.comparators) == 1
+        and isinstance(node.comparators[0], ast.Attribute)
+        and isinstance(node.comparators[0].value, ast.Name)
+        and node.comparators[0].value.id == "torch"
+        and node.comparators[0].attr == "float16"
+        for node in ast.walk(route_guard)
+    )
+
+
 def test_musa_wkv_is_disabled_while_autograd_is_enabled(monkeypatch) -> None:
     monkeypatch.setattr(musa_wkv_module, "_musa_available", lambda: True)
 

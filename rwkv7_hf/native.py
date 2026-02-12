@@ -173,8 +173,9 @@ def attn_step_batched(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tenso
     if (
         not torch.is_grad_enabled()
         and x.device.type == "musa"
-        and musa_wkv_available(x.device)
+        and x.dtype == torch.float16
         and N == 64
+        and musa_wkv_available(x.device)
     ):
         w_kernel = w.to(torch.float16).view(B, 1, H, N)
         r_kernel = r.to(torch.float16).view(B, 1, H, N)
