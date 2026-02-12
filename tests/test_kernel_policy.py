@@ -167,6 +167,9 @@ def test_rocm_runtime_detection_preserves_exact_gcn_architecture() -> None:
     assert not generic_policy.fused_recurrent_raw
     assert not generic_policy.fused_output
     assert not generic_policy.fused_norm_mix
+    assert not generic_policy.fused_prefill_scan
+    assert not generic_policy.prefill_scan_model_shapes
+    assert not generic_policy.a8w8_fused_ffn
 
     gfx1100 = classify_gpu(
         "AMD Radeon Graphics",
@@ -181,7 +184,17 @@ def test_rocm_runtime_detection_preserves_exact_gcn_architecture() -> None:
     assert gfx1100_policy.fused_output
     assert gfx1100_policy.fused_norm_mix
     assert gfx1100_policy.norm_mix_num_warps == 4
-    assert not gfx1100_policy.fused_prefill_scan
+    assert gfx1100_policy.fused_prefill_scan
+    assert gfx1100_policy.prefill_scan_block_m == 64
+    assert gfx1100_policy.prefill_scan_num_warps == 8
+    assert gfx1100_policy.a8w8_gemv_max_rows == 0
+    assert gfx1100_policy.a8w8_fused_ffn
+    assert gfx1100_policy.prefill_scan_model_shapes == tuple(
+        (hidden, layers, batch, tokens)
+        for hidden, layers in ((1024, 24), (2048, 24), (2560, 32))
+        for batch in (1, 2, 4, 8)
+        for tokens in (32, 64, 128, 256, 512)
+    )
     assert gfx1100_policy.mm8_fused_max_rows == 16
     assert gfx1100_policy.mm8_dot_min_rows == 2
     assert gfx1100_policy.mm8_dot_block_b == 16

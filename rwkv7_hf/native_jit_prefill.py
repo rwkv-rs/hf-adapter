@@ -955,8 +955,13 @@ def _prefill_current_device(
                 fxx = prev_h2 - h2
                 fk = h2 + fxx * fx_k.view(1, 1, residual_hidden)
                 next_xpf = h2[:, -1, :].contiguous()
-            fused_up_relu2 = False
+            fused_quant_ffn = None
             if not ffn_up_prequantized:
+                fused_quant = getattr(fK, "rwkv7_forward_ffn", None)
+                if callable(fused_quant):
+                    fused_quant_ffn = fused_quant(fk, fV, residual)
+            fused_up_relu2 = False
+            if fused_quant_ffn is None and not ffn_up_prequantized:
                 fused = getattr(fK, "rwkv7_forward_relu2", None)
                 fused_up_relu2 = bool(
                     getattr(fK, "fused_relu2", False) and callable(fused)
@@ -979,26 +984,29 @@ def _prefill_current_device(
                         fK,
                         allow_fp16_accumulation=fp16_accum_ffn_key_layer,
                     )
-            fused_bnb8_ffn = (
-                None
-                if fused_up_relu2
-                else _bnb8_direct_relu_square_linear(fk, fV)
-            )
-            if fused_bnb8_ffn is not None:
-                x = residual + fused_bnb8_ffn
-            elif fused_up_relu2:
-                x = _native_prefill_project_residual(fk, fV, residual)
-            elif (
-                use_layer_ffn_shift_mix
-                and fused_relu_square is not None
-                and fused_relu_square_available is not None
-                and fused_relu_square_available()
-            ):
-                fk = fused_relu_square(fk)
-                x = _native_prefill_project_residual(fk, fV, residual)
+            if fused_quant_ffn is not None:
+                x = fused_quant_ffn
             else:
-                fk = torch.relu(fk) ** 2
-                x = _native_prefill_project_residual(fk, fV, residual)
+                fused_bnb8_ffn = (
+                    None
+                    if fused_up_relu2
+                    else _bnb8_direct_relu_square_linear(fk, fV)
+                )
+                if fused_bnb8_ffn is not None:
+                    x = residual + fused_bnb8_ffn
+                elif fused_up_relu2:
+                    x = _native_prefill_project_residual(fk, fV, residual)
+                elif (
+                    use_layer_ffn_shift_mix
+                    and fused_relu_square is not None
+                    and fused_relu_square_available is not None
+                    and fused_relu_square_available()
+                ):
+                    fk = fused_relu_square(fk)
+                    x = _native_prefill_project_residual(fk, fV, residual)
+                else:
+                    fk = torch.relu(fk) ** 2
+                    x = _native_prefill_project_residual(fk, fV, residual)
         xpf[layer_idx] = next_xpf
         if layer_outputs is not None:
             layer_outputs.append(x[:, -1, :].detach().clone())

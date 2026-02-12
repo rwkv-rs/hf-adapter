@@ -1,0 +1,10 @@
+{'loss': '3.027', 'grad_norm': '14.5', 'learning_rate': '0.001', 'epoch': '0.04167'}
+{'loss': '2.096', 'grad_norm': '11.34', 'learning_rate': '0.0008333', 'epoch': '0.08333'}
+{'loss': '1.665', 'grad_norm': '15.88', 'learning_rate': '0.0006667', 'epoch': '0.125'}
+{'loss': '0.8129', 'grad_norm': '4.617', 'learning_rate': '0.0005', 'epoch': '0.1667'}
+{'loss': '1.182', 'grad_norm': '7.965', 'learning_rate': '0.0003333', 'epoch': '0.2083'}
+{'loss': '0.9708', 'grad_norm': '7.8', 'learning_rate': '0.0001667', 'epoch': '0.25'}
+{'train_runtime': '8.384', 'train_samples_per_second': '1.431', 'train_steps_per_second': '0.716', 'train_loss': '1.626', 'epoch': '0.25'}
+[native-trainer] loss history: [3.0271, 2.0956, 1.6649, 0.8129, 1.1821, 0.9708]
+[native-trainer] trainable params updated: 144/144
+NATIVE TRAINER PASS

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # AMD ROCm compatibility and baseline-performance validation for the fully
 # native HF adapter. Exact-architecture policy may enable measured Triton/HIP
-# decode fusions and output-head MM8/MM4 speed routes. Full-model quant,
-# prefill fusions, and every unmeasured AMD architecture fail closed. Model
-# sync must select the decoupled native class.
+# decode fusions, measured prefill-scan rows, and output-head MM8/MM4 speed
+# routes. Full-model quant, unmeasured prefill shapes, and every unmeasured AMD
+# architecture fail closed. Model sync must select the decoupled native class.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -54,6 +54,10 @@ if policy.profile.architecture == "gfx1100":
     assert policy.fused_recurrent_raw
     assert policy.fused_output
     assert policy.fused_norm_mix
+    assert policy.fused_prefill_scan
+    assert policy.prefill_scan_block_m == 64
+    assert policy.prefill_scan_num_warps == 8
+    assert policy.prefill_scan_model_shapes
     assert policy.mm8_dot_min_rows == 2
     assert policy.mm8_dot_block_b == 16
     assert policy.mm8_dot_block_m == 256
@@ -69,9 +73,10 @@ else:
     assert not policy.fused_recurrent_raw
     assert not policy.fused_output
     assert not policy.fused_norm_mix
+    assert not policy.fused_prefill_scan
+    assert not policy.prefill_scan_model_shapes
     assert policy.mm8_dot_min_rows is None
     assert policy.mm4_dot_min_rows is None
-assert not policy.fused_prefill_scan
 props = torch.cuda.get_device_properties(0)
 print(json.dumps({
     "torch": torch.__version__,
@@ -154,6 +159,7 @@ run python -m py_compile \
   rwkv7_hf/native_jit_prefill_runtime_policy.py \
   rwkv7_hf/native_jit_recurrent.py \
   rwkv7_hf/native_model.py \
+  rwkv7_hf/native_quant_a8w8.py \
   bench/bench_batch_sweep.py \
   bench/bench_chunked_prefill.py \
   bench/bench_native_graph_policy_ab.py
@@ -162,6 +168,7 @@ run python tests/test_kernel_policy.py | tee "${OUT_DIR}/kernel_policy.log"
 run python -m pytest -q \
   tests/test_native_quant_mm8_policy.py \
   tests/test_native_quant_mm4_policy.py \
+  tests/test_native_quant_a8w8.py \
   | tee "${OUT_DIR}/native_quant_policy.log"
 run python -m pytest -q tests/test_native_model_module_split.py \
   | tee "${OUT_DIR}/native_module_split.log"
@@ -194,7 +201,7 @@ run python bench/bench_batch_sweep.py \
 run python bench/bench_chunked_prefill.py \
   --hf-dir "${HF_DIR}" --dtype "${DTYPE}" --device "${DEVICE}" \
   --batch-size 1 --prompt-tokens "${CHUNKED_PROMPT_TOKENS}" \
-  --chunk-sizes ${CHUNK_SIZES} --warmup 0 --runs 1 --max-diff 0.2 \
+  --chunk-sizes ${CHUNK_SIZES} --warmup 1 --runs 1 --max-diff 0.2 \
   --results "${RESULTS}" | tee "${OUT_DIR}/chunked_prefill_bench.log"
 
 GPU_ARCH="$(python - <<'PY'
@@ -203,6 +210,40 @@ print(getattr(torch.cuda.get_device_properties(0), "gcnArchName", "").split(":",
 PY
 )"
 if [[ "${GPU_ARCH}" == "gfx1100" ]]; then
+  PREFILL_SCAN_ELIGIBLE="$(python - "${HF_DIR}" "${PROMPT_TOKENS}" <<'PY'
+import json
+import sys
+
+config = json.load(open(f"{sys.argv[1]}/config.json", encoding="utf-8"))
+shape = (int(config["hidden_size"]), int(config["num_hidden_layers"]))
+print("1" if shape in {(1024, 24), (2048, 24), (2560, 32)} and int(sys.argv[2]) in {32, 64, 128, 256, 512} else "0")
+PY
+)"
+  if [[ "${PREFILL_SCAN_ELIGIBLE}" == "1" ]]; then
+    PREFILL_SCAN_RESULTS="${OUT_DIR}/prefill_scan_policy_ab.jsonl"
+    BATCH_SIZES_CSV="$(echo "${BATCH_SIZES}" | tr ' ' ',')"
+    run env -u RWKV7_NATIVE_PREFILL_FUSED_SCAN -u RWKV7_NATIVE_PREFILL_SCAN_MODEL_SHAPES \
+      python bench/bench_native_prefill_scan.py \
+      --model "${HF_DIR}" --device "${DEVICE}" --dtype "${DTYPE}" \
+      --batch-sizes "${BATCH_SIZES_CSV}" --prompt-tokens "${PROMPT_TOKENS}" \
+      --fused-scan auto --reference-backend native-direct --code-source repo \
+      --warmup 1 --steps 3 --results "${PREFILL_SCAN_RESULTS}" \
+      | tee "${OUT_DIR}/prefill_scan_policy_ab.log"
+    run python - "${PREFILL_SCAN_RESULTS}" <<'PY'
+import json
+import sys
+
+rows = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
+assert rows
+for row in rows:
+    assert row["status"] == "pass", row
+    assert row["fused_scan_cli"] == "auto", row
+    assert row["fused_scan_env"] is None, row
+    assert row["fused_scan_effective"], row
+    assert row["native_vs_reference_speedup"] >= 1.0, row
+print(json.dumps({"rows": len(rows), "status": "pass"}))
+PY
+  fi
   for batch in 1 8; do
     run python bench/bench_native_graph_policy_ab.py \
       --hf-dir "${HF_DIR}" --dtype "${DTYPE}" --device "${DEVICE}" \

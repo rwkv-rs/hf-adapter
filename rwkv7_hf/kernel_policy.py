@@ -142,6 +142,7 @@ class KernelPolicy:
     native_bnb8_attn_mix_block: int = 1024
     native_bnb8_ffn_mix_block: int = 1024
     a8w8_gemv_max_rows: int = 1
+    a8w8_fused_ffn: bool = False
     mm8_fused_max_rows: int | None = None
     mm8_dot_min_rows: int | None = None
     mm8_dot_block_b: int | None = None
@@ -491,18 +492,19 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     "amd_hip": GPUAdaptationRule(
         family="amd_hip",
         cards=("AMD Instinct MI250/MI300", "Radeon ROCm cards"),
-        status="gfx1100 / ROCm 7.2.1 native-HF compatibility, fused decode, and output-head MM8/MM4 speed lanes validated; full-model quantization remains open",
-        default_stance="pure PyTorch/native_model first; exact-gfx1100 decode fusions only; every other AMD architecture fails closed",
+        status="gfx1100 / ROCm 7.2.1 native-HF compatibility, fused decode, measured fused-prefill scan rows, and output-head MM8/MM4 speed lanes validated; full-model quantization remains open",
+        default_stance="pure PyTorch/native_model first; exact-gfx1100 measured prefill/decode fusions only; every other AMD architecture fails closed",
         default_on=(
             "fast_cache",
             "gfx1100 only: fused recurrent/output/norm-mix decode",
+            "gfx1100 only: recurrent-scan prefill on exact model/BxT rows",
             "gfx1100 only: output-head MM8/MM4 speed route",
         ),
-        default_off=("unmeasured AMD fused kernels", "bnb CUDA-only speed paths"),
+        default_off=("unmeasured AMD fused kernels/shapes", "bnb CUDA-only speed paths"),
         required_functional=COMMON_FUNCTIONAL_SMOKES
         + ("ROCm import/generate", "pure PyTorch/native_model forward/backward"),
-        required_benchmarks=("ROCm smoke rows", "exact-GCN-architecture speed rows before promotion"),
-        quant_rule="no AMD quant performance claim until HIP-specific W8/W4 rows exist",
+        required_benchmarks=("ROCm smoke rows", "independent unfused-reference exact-GCN speed rows before promotion"),
+        quant_rule="exact-gfx1100 output-head MM8/MM4 is the measured speed lane; full-model W8/W4/A8W8 stays a memory/experimental lane until every required phase is >= fp16",
         promotion_rule="never generalize a gfx architecture's kernels or launch policy to another AMD architecture without real-card rows",
     ),
 }
@@ -657,8 +659,26 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
         )
     if family == "amd_hip":
         is_gfx1100 = profile.architecture == "gfx1100"
+        # The gfx1100 recurrent-scan route is promoted only for the exact
+        # checkpoints and BxT rows retained in the ROCm 7.2.1 acceptance
+        # matrix.  Other AMD architectures and unmeasured shapes continue to
+        # use the compatibility-first native recurrence.
+        gfx1100_prefill_shapes = (
+            tuple(
+                (hidden, layers, batch, tokens)
+                for hidden, layers in ((1024, 24), (2048, 24), (2560, 32))
+                for batch in (1, 2, 4, 8)
+                for tokens in (32, 64, 128, 256, 512)
+            )
+            if is_gfx1100
+            else ()
+        )
         return KernelPolicy(
             profile=profile,
+            # gfx1100's rocBLAS int8 path padded to 17 rows beats the direct
+            # W8A16 Triton GEMV even at B1; zero disables that GEMV route.
+            a8w8_gemv_max_rows=0 if is_gfx1100 else 1,
+            a8w8_fused_ffn=is_gfx1100,
             mm8_fused_max_rows=16 if is_gfx1100 else None,
             mm8_dot_min_rows=2 if is_gfx1100 else None,
             mm8_dot_block_b=16 if is_gfx1100 else None,
@@ -676,8 +696,12 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_output=is_gfx1100,
             fused_norm_mix=is_gfx1100,
             norm_mix_num_warps=4,
+            fused_prefill_scan=is_gfx1100,
+            prefill_scan_model_shapes=gfx1100_prefill_shapes,
+            prefill_scan_block_m=64 if is_gfx1100 else None,
+            prefill_scan_num_warps=8 if is_gfx1100 else None,
             notes=(
-                "Exact gfx1100/ROCm 7.2.1 rows promote recurrent-output, raw recurrent, output-prep, four-warp norm/mix and output-head MM8/MM4 decode routes; prefill and full-model quant routes remain conservative"
+                "Exact gfx1100/ROCm 7.2.1 rows promote recurrent-output, raw recurrent, output-prep, four-warp norm/mix, measured recurrent-scan prefill shapes and output-head MM8/MM4 decode routes; paired A8W8 FFNs are available inside the opt-in memory lane, while unmeasured prefill shapes and full-model quant speed claims remain conservative"
                 if is_gfx1100
                 else "Unmeasured AMD GCN architecture: compatibility-first native path; fused prefill/decode and quant speed routes stay off"
             ),

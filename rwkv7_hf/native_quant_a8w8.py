@@ -1,5 +1,5 @@
 # coding=utf-8
-"""Graph-capturable dynamic-A8 / per-channel-W8 Linear for CUDA serving.
+"""Graph-capturable dynamic-A8 / per-channel-W8 Linear for CUDA/HIP serving.
 
 PyTorch's CUDA int8 GEMM requires more than sixteen activation rows. Cached
 decode normally has only one to eight rows, so this module pads the activation
@@ -35,16 +35,14 @@ except Exception:  # pragma: no cover
     quantize_w8_row = None  # type: ignore[assignment]
     sm70_w8_linear = None  # type: ignore[assignment]
 
-try:  # pragma: no cover - optional CUDA dependency
+try:  # pragma: no cover - optional Triton GPU dependency
     import triton
     import triton.language as tl
-    from triton.language.extra import libdevice
 except Exception:  # pragma: no cover
     triton = None  # type: ignore[assignment]
     tl = None  # type: ignore[assignment]
-    libdevice = None  # type: ignore[assignment]
 
-_HAS_TRITON = triton is not None and tl is not None and libdevice is not None
+_HAS_TRITON = triton is not None and tl is not None
 
 
 if _HAS_TRITON:
@@ -148,7 +146,19 @@ if _HAS_TRITON:
         values = tl.load(x_ptr + row * x_row_stride + offsets, mask=mask, other=0.0).to(tl.float32)
         maximum = tl.max(tl.abs(values), axis=0)
         scale = tl.maximum(maximum / 127.0, 1.0e-5)
-        quantized = libdevice.rint(values / scale)
+        # ``libdevice.rint`` is available while compiling the CUDA backend but
+        # is not exported by Triton's HIP libdevice facade on ROCm 7.2.  Keep
+        # the quantizer backend-neutral by expressing round-to-nearest with
+        # core Triton operations instead of calling a vendor libdevice symbol.
+        # Values exactly halfway between integers are vanishingly rare for
+        # scaled activations; rounding them away from zero is also symmetric
+        # and stays within the existing int8 quality tolerance.
+        scaled = values / scale
+        quantized = tl.where(
+            scaled >= 0.0,
+            tl.floor(scaled + 0.5),
+            tl.ceil(scaled - 0.5),
+        )
         quantized = tl.maximum(tl.minimum(quantized, 127.0), -127.0).to(tl.int8)
         tl.store(q_ptr + row * K + offsets, quantized, mask=mask)
         tl.store(scale_ptr + row, scale)
@@ -176,6 +186,83 @@ if _HAS_TRITON:
             output += tl.load(bias_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
         tl.store(output_ptr + row * N + offsets, output, mask=mask)
 
+    @triton.jit
+    def _a8w8_relu2_requant_kernel(
+        accum_ptr,
+        activation_scale_ptr,
+        weight_scale_ptr,
+        bias_ptr,
+        q_ptr,
+        output_scale_ptr,
+        N: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        HAS_BIAS: tl.constexpr,
+    ):
+        """Dequantize W8 FFN-up, apply fp16 ReLU2, and requantize per row."""
+
+        row = tl.program_id(0)
+        offsets = tl.arange(0, BLOCK_N)
+        mask = offsets < N
+        accum = tl.load(accum_ptr + row * N + offsets, mask=mask, other=0).to(tl.float32)
+        activation_scale = tl.load(activation_scale_ptr + row).to(tl.float32)
+        weight_scale = tl.load(
+            weight_scale_ptr + offsets, mask=mask, other=0.0
+        ).to(tl.float32)
+        preactivation = accum * activation_scale * weight_scale
+        if HAS_BIAS:
+            preactivation += tl.load(
+                bias_ptr + offsets, mask=mask, other=0.0
+            ).to(tl.float32)
+        # Match the normal fp16 Linear -> ReLU -> square boundary before the
+        # second dynamic quantizer observes the activation.
+        preactivation = preactivation.to(tl.float16).to(tl.float32)
+        activated = tl.maximum(preactivation, 0.0)
+        activated = (activated * activated).to(tl.float16).to(tl.float32)
+        maximum = tl.max(tl.where(mask, tl.abs(activated), 0.0), axis=0)
+        scale = tl.maximum(maximum / 127.0, 1.0e-5)
+        scaled = activated / scale
+        quantized = tl.where(
+            scaled >= 0.0,
+            tl.floor(scaled + 0.5),
+            tl.ceil(scaled - 0.5),
+        )
+        quantized = tl.maximum(tl.minimum(quantized, 127.0), -127.0).to(tl.int8)
+        tl.store(q_ptr + row * N + offsets, quantized, mask=mask)
+        tl.store(output_scale_ptr + row, scale)
+
+    @triton.jit
+    def _a8w8_dequant_add_kernel(
+        accum_ptr,
+        activation_scale_ptr,
+        weight_scale_ptr,
+        bias_ptr,
+        residual_ptr,
+        output_ptr,
+        N: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        HAS_BIAS: tl.constexpr,
+    ):
+        """Dequantize W8 FFN-down and fuse the residual epilogue."""
+
+        row = tl.program_id(0)
+        tile = tl.program_id(1)
+        offsets = tile * BLOCK_N + tl.arange(0, BLOCK_N)
+        mask = offsets < N
+        accum = tl.load(accum_ptr + row * N + offsets, mask=mask, other=0).to(tl.float32)
+        activation_scale = tl.load(activation_scale_ptr + row).to(tl.float32)
+        weight_scale = tl.load(
+            weight_scale_ptr + offsets, mask=mask, other=0.0
+        ).to(tl.float32)
+        output = accum * activation_scale * weight_scale
+        if HAS_BIAS:
+            output += tl.load(
+                bias_ptr + offsets, mask=mask, other=0.0
+            ).to(tl.float32)
+        output += tl.load(
+            residual_ptr + row * N + offsets, mask=mask, other=0.0
+        ).to(tl.float32)
+        tl.store(output_ptr + row * N + offsets, output, mask=mask)
+
 
 def a8w8_available(device=None) -> bool:
     if not (_HAS_TRITON and torch is not None and torch.cuda.is_available()):
@@ -188,23 +275,38 @@ def a8w8_gemv_max_rows(device=None) -> int:
     """Return the exact-card small-batch W8A16 route limit.
 
     Multi-row direct GEMV is promoted only on the measured RTX 3090 policy.
-    Other cards retain the previously safe one-row route unless an explicit
-    environment override is supplied for a local sweep.
+    Other cards retain the previously safe one-row route unless an exact-card
+    policy or environment override selects zero (disable) or a larger limit.
     """
 
     raw = os.environ.get("RWKV7_A8W8_GEMV_MAX_ROWS")
     if raw is not None:
         try:
-            return min(max(1, int(raw)), 32)
+            return min(max(0, int(raw)), 32)
         except ValueError:
             return 1
     if current_kernel_policy is None or torch is None:
         return 1
     try:
         policy = current_kernel_policy(device=device, torch_module=torch)
-        return min(max(1, int(getattr(policy, "a8w8_gemv_max_rows", 1))), 32)
+        return min(max(0, int(getattr(policy, "a8w8_gemv_max_rows", 1))), 32)
     except Exception:
         return 1
+
+
+def a8w8_fused_ffn_enabled(device=None) -> bool:
+    """Select the paired FFN route only on an explicitly promoted card."""
+
+    raw = os.environ.get("RWKV7_A8W8_FUSED_FFN")
+    if raw is not None:
+        return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+    if current_kernel_policy is None or torch is None:
+        return False
+    try:
+        policy = current_kernel_policy(device=device, torch_module=torch)
+        return bool(getattr(policy, "a8w8_fused_ffn", False))
+    except Exception:
+        return False
 
 
 def quantize_weight_per_channel_int8(weight):
@@ -331,6 +433,98 @@ def a8w8_linear(x, q_weight_t, weight_scale, bias=None, *, out=None):
     return output.reshape(*leading, outputs)
 
 
+def a8w8_ffn(x, up, down, residual):
+    """Fuse a paired A8W8 ``up -> ReLU2 -> down + residual`` boundary.
+
+    The intermediate stays quantized: the up GEMM's int32 accumulator is
+    dequantized, rounded through the normal fp16 activation boundary, squared,
+    and requantized in one Triton launch.  This removes the materialized fp16
+    FFN expansion plus two pointwise launches while retaining the same packed
+    weights and per-row/per-channel A8W8 scheme.
+
+    ``None`` means the exact fast-path contract is not met and lets callers use
+    their existing two-Linear fallback.
+    """
+
+    if torch is None or not _HAS_TRITON:
+        return None
+    if not isinstance(up, A8W8Linear) or not isinstance(down, A8W8Linear):
+        return None
+    if (
+        up.sm70_rowwise
+        or down.sm70_rowwise
+        or not x.is_cuda
+        or not a8w8_fused_ffn_enabled(x.device)
+        or x.dtype != torch.float16
+        or not hasattr(torch, "_int_mm")
+        or int(up.out_features) != int(down.in_features)
+        or int(up.in_features) != int(down.out_features)
+        or int(up.in_features) > 4096
+        or int(up.in_features) % 8
+        or int(up.out_features) % 8
+    ):
+        return None
+    leading = x.shape[:-1]
+    x2 = x.reshape(-1, int(up.in_features))
+    residual2 = residual.reshape(-1, int(down.out_features))
+    rows = int(x2.shape[0])
+    if rows < 1 or int(residual2.shape[0]) != rows or not residual2.is_contiguous():
+        return None
+    padded_rows = max(rows, 17)
+
+    q_input = torch.empty(
+        (padded_rows, int(up.in_features)), device=x.device, dtype=torch.int8
+    )
+    input_scale = torch.empty((rows,), device=x.device, dtype=torch.float32)
+    input_block = triton.next_power_of_2(int(up.in_features))
+    _dynamic_a8_quant_kernel[(rows,)](
+        x2,
+        q_input,
+        input_scale,
+        x2.stride(0),
+        K=int(up.in_features),
+        BLOCK_K=input_block,
+        num_warps=8,
+    )
+    up_accum = torch._int_mm(q_input, up.q_weight_t)
+
+    q_hidden = torch.empty(
+        (padded_rows, int(up.out_features)), device=x.device, dtype=torch.int8
+    )
+    hidden_scale = torch.empty((rows,), device=x.device, dtype=torch.float32)
+    hidden_block = triton.next_power_of_2(int(up.out_features))
+    _a8w8_relu2_requant_kernel[(rows,)](
+        up_accum,
+        input_scale,
+        up.weight_scale,
+        up.bias if up.bias is not None else up.weight_scale,
+        q_hidden,
+        hidden_scale,
+        N=int(up.out_features),
+        BLOCK_N=hidden_block,
+        HAS_BIAS=up.bias is not None,
+        num_warps=8,
+    )
+    down_accum = torch._int_mm(q_hidden, down.q_weight_t)
+    output2 = torch.empty(
+        (rows, int(down.out_features)), device=x.device, dtype=x.dtype
+    )
+    block_n = 256
+    _a8w8_dequant_add_kernel[(rows, triton.cdiv(int(down.out_features), block_n))](
+        down_accum,
+        hidden_scale,
+        down.weight_scale,
+        down.bias if down.bias is not None else down.weight_scale,
+        residual2,
+        output2,
+        N=int(down.out_features),
+        BLOCK_N=block_n,
+        HAS_BIAS=down.bias is not None,
+        num_warps=4,
+    )
+    return output2.reshape(*leading, int(down.out_features))
+
+
 class A8W8Linear(torch.nn.Module):
     """Inference-only ``nn.Linear`` replacement using dynamic A8 and W8."""
 
@@ -338,6 +532,7 @@ class A8W8Linear(torch.nn.Module):
         super().__init__()
         self.in_features = int(linear.in_features)
         self.out_features = int(linear.out_features)
+        self.fused_ffn = a8w8_fused_ffn_enabled(linear.weight.device)
         self.sm70_rowwise = bool(is_sm70(linear.weight.device) and quantize_w8_row is not None)
         if self.sm70_rowwise:
             q_weight_row, weight_scale = quantize_w8_row(linear.weight)
@@ -367,6 +562,13 @@ class A8W8Linear(torch.nn.Module):
             out.copy_(result)
             return out
         return a8w8_linear(x, self.q_weight_t, self.weight_scale, self.bias, out=out)
+
+    def rwkv7_forward_ffn(self, x, down, residual):
+        """Attempt the paired A8W8 FFN route; return ``None`` to fall back."""
+
+        if not self.fused_ffn:
+            return None
+        return a8w8_ffn(x, self, down, residual)
 
     def extra_repr(self) -> str:
         return f"in={self.in_features}, out={self.out_features}, dynamic_a8w8"
@@ -404,12 +606,32 @@ def quantize_model_a8w8(
         parent_name, _, attribute = full_name.rpartition(".")
         parent = model.get_submodule(parent_name) if parent_name else model
         setattr(parent, attribute, A8W8Linear(getattr(parent, attribute)))
+    fused_ffn_modules = 0
+    for name, module in model.named_modules():
+        if not (
+            isinstance(module, A8W8Linear)
+            and module.fused_ffn
+            and name.endswith(".ffn.key")
+        ):
+            continue
+        value_name = name[: -len("key")] + "value"
+        try:
+            down = model.get_submodule(value_name)
+        except AttributeError:
+            continue
+        if isinstance(down, A8W8Linear) and down.fused_ffn:
+            fused_ffn_modules += 1
     setattr(model, "_rwkv7_native_mm_quantization", "a8w8")
     setattr(model, "_rwkv7_native_mm_replaced_modules", len(targets))
     setattr(
         model,
         "_rwkv7_native_mm_block_replaced_modules",
         sum(name.startswith("model.layers.") for name in targets),
+    )
+    setattr(
+        model,
+        "_rwkv7_native_mm_fused_relu2_ffn_modules",
+        fused_ffn_modules,
     )
     for attr in (
         "_rwkv7_native_jit_pack_cache",
