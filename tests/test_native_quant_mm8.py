@@ -27,6 +27,7 @@ from rwkv7_hf.native_quant_mm8 import (
     mm8_gemv_triton_sk,
     mm8_batched_gemv_triton,
     mm8_batched_dot_triton,
+    mm8_batched_dot_enabled,
     mm8_matmul_triton,
     mm8_gemv_available,
     quantize_model_mm8,
@@ -78,11 +79,11 @@ def main() -> int:
         print(f"triton vs torch-ref max_abs = {d:.6f}; split-K = {dsk:.6f} (<= {args.triton_max_abs})", flush=True)
         ok = ok and d <= args.triton_max_abs and dsk <= args.triton_max_abs
 
-        # Blackwell decode uses one launch for the complete batch.  Exercise
-        # both the low-batch GEMV kernel and the tensor-core path selected for
-        # bsz>=4, including the public dispatcher used by MM8Linear.forward.
+        # Measured exact-device routes use one launch for the complete batch.
+        # Exercise both the low-batch GEMV kernel and the tensor-core path,
+        # including the public dispatcher used by MM8Linear.forward.
         batched_cases = [(2, mm8_batched_gemv_triton)]
-        if torch.cuda.get_device_capability(x1.device)[0] >= 12:
+        if mm8_batched_dot_enabled(x1.device):
             batched_cases.append((8, mm8_batched_dot_triton))
         for batch, kernel in batched_cases:
             xb = torch.randn(batch, w.shape[1], dtype=w.dtype, device=w.device)
@@ -112,32 +113,38 @@ def main() -> int:
     print(f"e2e ({n} layer(s) quantized) cos = {e2e:.6f} (>= {args.e2e_cos_min})", flush=True)
     ok = ok and e2e >= args.e2e_cos_min and n >= 1
 
-    # 4. Native fast-token backends must accept quantized lm_head modules.
-    # Regression coverage for MM8/MM4Linear, which intentionally do not expose
-    # a dense `.weight` tensor. Compare native decode to the quantized FLA
-    # one-token fallback from the same empty recurrent state.
+    # 4. The native CUDA graph must accept a quantized lm_head module, which
+    # intentionally does not expose a dense `.weight` tensor. Compare one
+    # cached token against the native eager route from the same one-token
+    # prefix. The former FLA wrapper backend no longer exists in native HF.
     one = ids[:, :1]
-    old_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND")
+    old_backend = os.environ.get("RWKV7_NATIVE_MODEL_BACKEND")
     try:
+        def cached_decode(backend):
+            os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = backend
+            prefix = model(one, use_cache=True, logits_to_keep=1, return_dict=True)
+            result = model.rwkv7_forward_token(
+                one,
+                past_key_values=prefix.past_key_values,
+                return_dict=True,
+            )
+            return result.logits[0, -1].float().cpu(), model.rwkv7_last_fast_token_backend()
+
         with torch.no_grad():
-            os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "fla"
-            fast_ref = model.rwkv7_forward_token(one, past_key_values=None).logits[0, -1].float().cpu()
-            for backend in ("native_jit", "native_graph"):
-                os.environ["RWKV7_FAST_TOKEN_BACKEND"] = backend
-                fast_q = model.rwkv7_forward_token(one, past_key_values=None).logits[0, -1].float().cpu()
-                used = getattr(model, "_rwkv7_last_fast_token_backend", None)
-                fast_cos = F.cosine_similarity(fast_ref.unsqueeze(0), fast_q.unsqueeze(0)).item()
-                print(
-                    f"fast-token {backend} used={used} cos vs quantized-fla = "
-                    f"{fast_cos:.6f} (>= {args.fast_token_cos_min})",
-                    flush=True,
-                )
-                ok = ok and used == backend and fast_cos >= args.fast_token_cos_min
+            fast_ref, eager_used = cached_decode("eager")
+            fast_q, used = cached_decode("native_graph")
+        fast_cos = F.cosine_similarity(fast_ref.unsqueeze(0), fast_q.unsqueeze(0)).item()
+        print(
+            f"cached native graph used={used} vs eager={eager_used} cosine = "
+            f"{fast_cos:.6f} (>= {args.fast_token_cos_min})",
+            flush=True,
+        )
+        ok = ok and eager_used == "eager" and used == "native_graph" and fast_cos >= args.fast_token_cos_min
     finally:
         if old_backend is None:
-            os.environ.pop("RWKV7_FAST_TOKEN_BACKEND", None)
+            os.environ.pop("RWKV7_NATIVE_MODEL_BACKEND", None)
         else:
-            os.environ["RWKV7_FAST_TOKEN_BACKEND"] = old_backend
+            os.environ["RWKV7_NATIVE_MODEL_BACKEND"] = old_backend
 
     if not ok:
         print("FAIL", flush=True)

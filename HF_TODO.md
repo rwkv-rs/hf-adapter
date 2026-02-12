@@ -5,7 +5,7 @@ experiments and historical plans belong in benchmark artifacts or Git history.
 Native vLLM/SGLang scheduler work is out of scope for this file.
 
 Last updated: **2026-07-28**. Audited against upstream main commit
-`6f7737f68e01a9a2a587d0b7a59a8719ecd68084`.
+`22237b6b66ec492fefba5669cb3fa6f5bb518007`.
 
 ## Scope and current boundary
 
@@ -118,8 +118,10 @@ row is never a full-FLA reference.
       same-card performance rows.
 - [x] AMD gfx1100/ROCm 7.2.1: fully native HF load/generate, PEFT, recurrent
       cache/chunked prefill, bf16 Trainer and B1/B2/B4/B8 baseline on a real GPU.
-- [ ] AMD/ROCm: fused prefill/decode, HIP W8/W4, larger models, MI-series,
-      longer training and same-card official/Albatross performance.
+- [x] AMD gfx1100: exact-architecture fused decode and output-head MM8/MM4
+      B1/B2/B4/B8 speed/quality rows through 13.3B; all 40 quant cells pass.
+- [ ] AMD/ROCm: fused prefill, full-model fused W8/W4, MI-series, longer
+      training and same-card official/Albatross performance.
 - [ ] Other Turing/RTX 20 products: validate independently and do not inherit
       Tesla T4 prefill or DP4A quant routing from `sm_75` alone.
 - [ ] Moore Threads MUSA: exact-card MTT S70 standalone kernel parity,

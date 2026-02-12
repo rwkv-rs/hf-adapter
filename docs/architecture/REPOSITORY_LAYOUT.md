@@ -86,13 +86,92 @@ model_layers.py      # attention, FFN and block module definitions
 model_backbone.py    # NativeRWKV7Model and recurrent forward helpers
 model_prefill_graph.py # fixed-shape CUDA graph runner for native prefill
 model_quantization.py # BNB loading policy and native W8/W4 replacement mixin
+model_runtime_policy.py # environment/hardware selection with facade wrappers
 model_speculative.py # speculative-generation mixin and acceptance loop
+native_jit.py        # stable native JIT facade and execution orchestration
+native_jit_bnb8.py   # BnB W8 detection, direct operators and fused eligibility
+native_jit_dense_step.py # pure tensor-only TorchScript layer steps
+native_jit_decode.py # dense-JIT and CUDA-graph decode execution
+native_jit_graph_dispatch.py # graph policy, projection and FFN dispatch
+native_jit_linear.py # dense/quant linear operands and low-memory relayout
+native_jit_packing.py # model pack extraction and recurrent-state allocation
+native_jit_prefill.py # sequence prefill execution and cache handoff
+native_jit_prefill_policy.py # pure shape allowlists and tiling selection
+native_jit_prefill_runtime_policy.py # kernel eligibility and launch policy
+native_jit_recurrent.py # recurrent kernel selection and eager fallback math
 ```
 
 `native_model.py` preserves the historical public module identity for the
 extracted classes so `save_pretrained()` continues to emit
 `native_model.NativeRWKV7*` metadata. The extracted implementation files are
 part of the adapter manifest and are copied into converted model directories.
+
+Runtime-policy implementation lives in `model_runtime_policy.py`, while the
+historical underscore-prefixed helpers remain as wrappers in `native_model.py`.
+This preserves the existing hardware-test and integration patch surface: a
+caller that replaces `native_model.current_kernel_policy` or
+`native_model._native_jit_prefill` still controls the same decision points.
+
+The non-executed direct dependency imports in `native_model.py` are deliberate.
+They cannot be hidden behind one dependency-registry module: supported older
+Transformers releases may copy only modules directly visible from the Auto*
+entrypoint. Moving those imports would make source layout cleaner while making
+some converted checkpoints unloadable. Keep that compatibility edge until the
+supported Transformers range proves recursive remote-module discovery.
+
+The first native-JIT split follows the same rule. `native_jit_linear.py` owns
+linear operand normalization and sparse FFN storage relayout, while
+`native_jit.py` keeps the historical underscore-prefixed symbols. Hot-path
+helpers are imported as direct aliases, avoiding an additional Python wrapper
+call; the relayout compatibility wrapper retains its existing monkeypatch
+surface outside the token loop.
+
+Prefill exact-shape parsing and self-chunk tiling live in
+`native_jit_prefill_policy.py`. The module is intentionally independent from
+Torch, CUDA and optional kernels. `native_jit.py` supplies the current card
+policy, environment helpers and availability checks through stable wrappers,
+so hardware tests and downstream policy overrides retain their old target.
+
+BnB W8 inference dispatch lives in `native_jit_bnb8.py`. Its historical
+underscore-prefixed names are direct aliases from `native_jit.py`, avoiding an
+extra Python call for every quantized projection. The module owns only BnB
+eligibility and operator dispatch; mixed-sequence orchestration remains in the
+prefill runtime until that whole execution boundary is moved.
+
+The tensor-only TorchScript layer functions live in
+`native_jit_dense_step.py`. `native_jit.py` re-exports the exact ScriptFunction
+objects, so the dense JIT token loop gains no wrapper call and the historical
+pack ABI remains unchanged.
+
+Model-container traversal and recurrent-state allocation live in
+`native_jit_packing.py`. Policy and operand adapters are passed explicitly by
+the facade, preserving the existing `native_jit` monkeypatch points while
+keeping checkpoint-specific packing outside execution math.
+
+Native CUDA-graph feature gates and projection/FFN dispatch live in
+`native_jit_graph_dispatch.py`. The facade binds optional kernels and policy
+helpers once, then re-exports direct function aliases. This preserves the hot
+path while separating hardware routing from recurrent orchestration.
+
+Prefill kernel eligibility and launch selection live in
+`native_jit_prefill_runtime_policy.py`. The facade uses compatibility wrappers
+that refresh only referenced dependencies, preserving existing policy and
+optional-kernel overrides without moving sequence execution into policy code.
+
+Sequence projections, recurrent scan routing, layer-wise prefill math and
+cache handoff live in `native_jit_prefill.py`. The facade binds the current
+policy and optional kernels once per public prefill call; inner layer and scan
+calls remain inside the implementation module without compatibility frames.
+
+Dense-JIT stepping, eager graph blocks, CUDA Graph runners and greedy decode
+live in `native_jit_decode.py`. Their facade names are direct aliases because
+`native_model`, `modeling_rwkv7` and `native_graph_runtime` call the block
+functions inside the token/layer loop.
+
+Recurrent kernel eligibility and the tensor fallback update live in
+`native_jit_recurrent.py`. Both facade names are direct aliases. After this
+split, `native_jit.py` is the 794-line compatibility facade and optional-kernel
+binding registry rather than an execution monolith.
 
 ## Intended package boundaries
 

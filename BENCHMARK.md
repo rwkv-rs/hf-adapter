@@ -5,7 +5,7 @@ exploratory tuning chronology. Raw rows, logs and negative experiments remain
 in [`bench/`](bench/); platform interpretation lives in
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
-Last updated: **2026-07-20**.
+Last updated: **2026-07-28**.
 
 ## Benchmark contract
 
@@ -593,7 +593,7 @@ Evidence: [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PRODUC
 | RTX A6000 48GB | 0.4B–7.2B training/resume; dual-card ZeRO through 2.9B |
 | RTX 5090 | Exact 12x768 BF16 train_temp backward/FusedAdam step, paired real-MiniPile 3-seed cohort, continuous 5,000-step run and 2,500+2,500 recovery |
 | Apple M5 | Tiny and real-model PEFT/Trainer/SFT/DPO/GRPO compatibility smoke |
-| AMD gfx1100 / ROCm 7.2.1 | 0.1B fully native HF generation, PEFT, cache/chunked prefill and bf16 Trainer compatibility; [`docs/validation/AMD_ROCM_HF_VALIDATION.md`](docs/validation/AMD_ROCM_HF_VALIDATION.md) |
+| AMD gfx1100 / ROCm 7.2.1 | Fully native HF generation, PEFT, cache/chunked prefill and bf16 Trainer compatibility; exact-card fused decode through 13.3B; output-head W8/W4 beats paired fp16 decode in 40/40 0.4B-13.3B B1/B2/B4/B8 rows; [`docs/validation/AMD_ROCM_HF_VALIDATION.md`](docs/validation/AMD_ROCM_HF_VALIDATION.md) |
 
 See [`docs/TRAINING.md`](docs/TRAINING.md) and the validation documents.
 

@@ -111,6 +111,7 @@ class GPUProfile:
     vendor: str
     family: str
     capability: tuple[int, int] | None = None
+    architecture: str | None = None
     device_index: int | None = None
     is_cuda: bool = False
     is_hip: bool = False
@@ -142,6 +143,12 @@ class KernelPolicy:
     native_bnb8_attn_mix_block: int = 1024
     native_bnb8_ffn_mix_block: int = 1024
     a8w8_gemv_max_rows: int = 1
+    mm8_fused_max_rows: int | None = None
+    mm8_dot_min_rows: int | None = None
+    mm8_dot_block_b: int | None = None
+    mm8_dot_block_m: int | None = None
+    mm8_dot_block_n: int | None = None
+    mm8_dot_warps: int | None = None
     mm4_fused_max_rows: int | None = None
     mm4_gemv_block_pairs: int | None = None
     mm4_gemv_block_n: int | None = None
@@ -311,7 +318,7 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     "musa": GPUAdaptationRule(
         family="musa",
         cards=("Moore Threads MTT S70 / S80", "MUSA devices"),
-        status="RWKV-MUSA implementation and S70 evidence imported; HF adapter real-device gate pending",
+        status="MTT S70 exact-card narrow HF smoke and paired B1/T128 evidence validated; broader MUSA coverage remains open",
         default_stance="native/no-FLA compatibility; optional MUSA WKV kernel; CUDA/Triton paths off",
         default_on=("fast_cache", "optional fp16-IO/fp32-state MUSA WKV kernel"),
         default_off=("CUDA native_graph fused kernels", "Triton/FLA", "bnb CUDA-only quantization"),
@@ -505,15 +512,19 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     "amd_hip": GPUAdaptationRule(
         family="amd_hip",
         cards=("AMD Instinct MI250/MI300", "Radeon ROCm cards"),
-        status="gfx1100 / ROCm 7.2.1 native-HF compatibility validated; fused performance and quantization remain open",
-        default_stance="pure PyTorch/native_model first; CUDA/Triton kernels off",
-        default_on=("fast_cache",),
-        default_off=("CUDA native_graph fused kernels", "bnb CUDA-only speed paths"),
+        status="gfx1100 / ROCm 7.2.1 native-HF compatibility, fused decode, and output-head MM8/MM4 speed lanes validated; full-model quantization remains open",
+        default_stance="pure PyTorch/native_model first; exact-gfx1100 decode fusions only; every other AMD architecture fails closed",
+        default_on=(
+            "fast_cache",
+            "gfx1100 only: fused recurrent/output/norm-mix decode",
+            "gfx1100 only: output-head MM8/MM4 speed route",
+        ),
+        default_off=("unmeasured AMD fused kernels", "bnb CUDA-only speed paths"),
         required_functional=COMMON_FUNCTIONAL_SMOKES
         + ("ROCm import/generate", "pure PyTorch/native_model forward/backward"),
-        required_benchmarks=("ROCm smoke rows", "HIP-specific speed rows before parity claims"),
+        required_benchmarks=("ROCm smoke rows", "exact-GCN-architecture speed rows before promotion"),
         quant_rule="no AMD quant performance claim until HIP-specific W8/W4 rows exist",
-        promotion_rule="add ROCm-specific kernels or proven fallbacks before enabling accelerated defaults",
+        promotion_rule="never generalize a gfx architecture's kernels or launch policy to another AMD architecture without real-card rows",
     ),
 }
 
@@ -525,6 +536,7 @@ def classify_gpu(
     is_hip: bool = False,
     is_mps: bool = False,
     is_musa: bool = False,
+    architecture: str | None = None,
 ) -> GPUProfile:
     """Classify a GPU without requiring torch/CUDA to be available."""
 
@@ -535,7 +547,15 @@ def classify_gpu(
     if is_mps or any(token in lower for token in ("apple silicon", "apple m1", "apple m2", "apple m3", "apple m4", "apple m5")):
         return GPUProfile(name=gpu_name, vendor="apple", family="apple_mps", is_mps=True)
     if is_hip or any(token in lower for token in ("amd", "radeon", "instinct", "mi250", "mi300")):
-        return GPUProfile(name=gpu_name, vendor="amd", family="amd_hip", capability=capability, is_cuda=False, is_hip=True)
+        return GPUProfile(
+            name=gpu_name,
+            vendor="amd",
+            family="amd_hip",
+            capability=capability,
+            architecture=(str(architecture).split(":", 1)[0].lower() if architecture else None),
+            is_cuda=False,
+            is_hip=True,
+        )
     if capability is None:
         return GPUProfile(name=gpu_name, vendor="unknown", family="cpu_or_unknown", capability=None)
 
@@ -642,12 +662,25 @@ def detect_gpu_profile(device: int | str | None = None, torch_module: Any | None
         capability = tuple(int(v) for v in cuda.get_device_capability(index))  # type: ignore[arg-type]
     except Exception:
         capability = None
-    profile = classify_gpu(name, capability, is_hip=is_hip)
+    architecture = None
+    if is_hip:
+        try:
+            properties = cuda.get_device_properties(index)
+            architecture = getattr(properties, "gcnArchName", None)
+        except Exception:
+            architecture = None
+    profile = classify_gpu(
+        name,
+        capability,
+        is_hip=is_hip,
+        architecture=architecture,
+    )
     return GPUProfile(
         name=profile.name,
         vendor=profile.vendor,
         family=profile.family,
         capability=profile.capability,
+        architecture=profile.architecture,
         device_index=index,
         is_cuda=profile.is_cuda,
         is_hip=profile.is_hip,
@@ -688,7 +721,34 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             quant_policy="apple_native_mlx_coreml",
             notes="Apple MPS: use native/no-FLA HF compatibility; CUDA/Triton fusions off; MLX/CoreML selected explicitly",
         )
-    if family in {"amd_hip", "legacy_cuda", "pascal", "unknown_cuda"}:
+    if family == "amd_hip":
+        is_gfx1100 = profile.architecture == "gfx1100"
+        return KernelPolicy(
+            profile=profile,
+            mm8_fused_max_rows=16 if is_gfx1100 else None,
+            mm8_dot_min_rows=2 if is_gfx1100 else None,
+            mm8_dot_block_b=16 if is_gfx1100 else None,
+            mm8_dot_block_m=256 if is_gfx1100 else None,
+            mm8_dot_block_n=16 if is_gfx1100 else None,
+            mm8_dot_warps=8 if is_gfx1100 else None,
+            mm4_fused_max_rows=16 if is_gfx1100 else None,
+            mm4_dot_min_rows=2 if is_gfx1100 else None,
+            mm4_dot_block_b=16 if is_gfx1100 else None,
+            mm4_dot_block_pairs=64 if is_gfx1100 else None,
+            mm4_dot_block_n=32 if is_gfx1100 else None,
+            mm4_dot_warps=2 if is_gfx1100 else None,
+            fused_recurrent_output=is_gfx1100,
+            fused_recurrent_raw=is_gfx1100,
+            fused_output=is_gfx1100,
+            fused_norm_mix=is_gfx1100,
+            norm_mix_num_warps=4,
+            notes=(
+                "Exact gfx1100/ROCm 7.2.1 rows promote recurrent-output, raw recurrent, output-prep, four-warp norm/mix and output-head MM8/MM4 decode routes; prefill and full-model quant routes remain conservative"
+                if is_gfx1100
+                else "Unmeasured AMD GCN architecture: compatibility-first native path; fused prefill/decode and quant speed routes stay off"
+            ),
+        )
+    if family in {"legacy_cuda", "pascal", "unknown_cuda"}:
         return KernelPolicy(
             profile=profile,
             fused_recurrent_output=False,
