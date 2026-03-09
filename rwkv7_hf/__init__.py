@@ -19,6 +19,31 @@ RWKV7ForCausalLM = NativeRWKV7ForCausalLM
 RWKV7StateCache = NativeRWKV7Cache
 
 try:
+    from .biren_runtime import (
+        BirenDTypeError,
+        BirenRuntimeInfo,
+        BirenRuntimePolicy,
+        biren_available,
+        biren_runtime_policy,
+        configure_biren_defaults,
+        enable_biren,
+        memory_stats as biren_memory_stats,
+        synchronize as biren_synchronize,
+        validate_biren_model_dtype,
+    )
+except Exception:  # Keep lightweight tooling importable without torch_br.
+    BirenDTypeError = None
+    BirenRuntimeInfo = None
+    BirenRuntimePolicy = None
+    biren_available = None
+    biren_runtime_policy = None
+    configure_biren_defaults = None
+    enable_biren = None
+    biren_memory_stats = None
+    biren_synchronize = None
+    validate_biren_model_dtype = None
+
+try:
     from .metax_runtime import (
         MetaXRuntimeInfo,
         configure_metax_defaults,
@@ -148,6 +173,16 @@ __all__ = [
     "NativeRWKV7ForCausalLM",
     "NativeRWKV7Model",
     "NativeRWKV7Cache",
+    "BirenDTypeError",
+    "BirenRuntimeInfo",
+    "BirenRuntimePolicy",
+    "biren_available",
+    "biren_runtime_policy",
+    "configure_biren_defaults",
+    "enable_biren",
+    "biren_memory_stats",
+    "biren_synchronize",
+    "validate_biren_model_dtype",
     "MetaXRuntimeInfo",
     "configure_metax_defaults",
     "enable_metax",

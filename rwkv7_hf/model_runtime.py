@@ -698,6 +698,8 @@ class _NativeRuntimeMixin:
         if self._native_model_requires_eager_decode():
             return None
         weight = self.model.embeddings.weight
+        if weight.device.type == "supa":
+            return None
         key = (weight.device.type, weight.device.index, weight.dtype)
         cache = getattr(self, "_rwkv7_native_model_jit_pack_cache", None)
         if cache is None or cache[0] != key:

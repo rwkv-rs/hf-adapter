@@ -21,6 +21,7 @@ ADAPTER_FILES = [
     "ascend_quant_w4.py",
     "ascend_runtime.py",
     "ascend_w4_cle.py",
+    "biren_runtime.py",
     "blackwell_norm_mix.py",
     "dplr_prefill.py",
     "dplr_prefill_triton.py",

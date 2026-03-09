@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt", required=True, help="Prompt text")
     parser.add_argument(
         "--device",
-        choices=["auto", "cuda", "metax", "npu", "mps", "musa", "cpu"],
+        choices=["auto", "biren", "cuda", "metax", "npu", "mps", "musa", "cpu"],
         default="auto",
     )
     parser.add_argument("--dtype", choices=["auto", *DTYPES], default="auto")
@@ -65,6 +65,22 @@ def _metax_available() -> bool:
         return False
 
 
+def _biren_available() -> bool:
+    try:
+        from rwkv7_hf.biren_runtime import biren_available
+
+        return bool(biren_available())
+    except Exception:
+        return False
+
+
+def _enable_biren() -> torch.device:
+    from rwkv7_hf.biren_runtime import enable_biren
+
+    info = enable_biren("supa:0", required=True)
+    return torch.device(info.device)
+
+
 def _enable_metax() -> torch.device:
     from rwkv7_hf.metax_runtime import enable_metax
 
@@ -81,6 +97,8 @@ def _enable_ascend() -> torch.device:
 
 def resolve_device(requested: str) -> torch.device:
     if requested == "auto":
+        if _biren_available():
+            return _enable_biren()
         if _metax_available():
             return _enable_metax()
         if torch.cuda.is_available():
@@ -96,6 +114,8 @@ def resolve_device(requested: str) -> torch.device:
         raise RuntimeError("--device musa was requested, but MUSA is unavailable")
     if requested == "npu":
         return _enable_ascend()
+    if requested == "biren":
+        return _enable_biren()
     if requested == "metax" or (requested == "cuda" and _metax_available()):
         return _enable_metax()
     device = torch.device(requested)
@@ -108,10 +128,15 @@ def resolve_device(requested: str) -> torch.device:
 
 def resolve_dtype(requested: str, device: torch.device) -> torch.dtype:
     if requested != "auto":
-        return DTYPES[requested]
+        selected = DTYPES[requested]
+        if device.type == "supa":
+            from rwkv7_hf.biren_runtime import validate_biren_model_dtype
+
+            return validate_biren_model_dtype(selected, device_type="supa")
+        return selected
     if device.type == "cpu":
         return torch.float32
-    if device.type == "npu":
+    if device.type in {"npu", "supa"}:
         return torch.bfloat16
     return torch.float16
 

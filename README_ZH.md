@@ -48,6 +48,12 @@ python -m pip install -e ".[cuda]"
 python -m pip install -e ".[ascend]"
 ```
 
+壁仞 BR106M 用户需先加载匹配的 BIRENSUPA/torch_br 环境，再安装适配器入口：
+
+```bash
+python -m pip install -e ".[biren]"
+```
+
 沐曦 MetaX C500 用户需先进入官方 MXMACA/PyTorch 环境，再安装适配器入口：
 
 ```bash
@@ -196,6 +202,7 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 | 投机解码、`device_map`、DeepSpeed 多卡 | [高级使用教程](docs/ADVANCED_USAGE_ZH.md) |
 | bitsandbytes W8/W4、原生 MM8/MM4 | [量化使用教程](docs/QUANTIZATION_USAGE.md) |
 | 华为昇腾 NPU、NPUGraph 与 W8 | [华为昇腾使用与验收边界](docs/hardware/HUAWEI_ASCEND.md) |
+| 壁仞 BR106M、BIRENSUPA | [壁仞 BR106M 使用与验收边界](docs/hardware/BIREN_BR106M.md) |
 | 沐曦 MetaX C500、MXMACA | [MetaX C500 使用与验收边界](docs/hardware/METAX_C500.md) |
 | Apple MPS、MLX、CoreML | [Apple 使用教程](docs/APPLE_USAGE.md) |
 | 让 AI 帮你安装、运行或排错 | [统一 AI 操作入口](docs/AI_ASSISTED_SETUP.md) |
@@ -210,6 +217,9 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 - **华为昇腾：** 先安装与 CANN 精确匹配的 PyTorch/torch-npu，再从
   [Ascend 文档](docs/hardware/HUAWEI_ASCEND.md) 的 BF16 eager 验收开始；
   NPUGraph 和 W8 只继承精确 910B3/软件栈/模型/batch 的证据。
+- **壁仞 BR106M：** 使用 `torch_br` 注册的 `supa` 设备，模型使用 BF16、
+  recurrent state 使用 FP32，并保持 native eager；FP16、图执行、量化与性能
+  结论需按 [BR106M 文档](docs/hardware/BIREN_BR106M.md) 的边界验收。
 - **沐曦 MetaX C500：** 使用 MXMACA 提供的 `torch.cuda` 兼容接口，但不会
   继承 NVIDIA Ampere 算子策略；先按 [C500 文档](docs/hardware/METAX_C500.md)
   运行 native eager FP16 验收。

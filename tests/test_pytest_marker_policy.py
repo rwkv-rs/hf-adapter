@@ -35,6 +35,11 @@ def test_path_policy_assigns_execution_and_hardware_relationships() -> None:
         "cpu",
         "metax",
     }
+    assert classify_test_path("tests/test_biren_runtime.py") == {"cpu", "biren"}
+    assert classify_test_path("tests/test_biren_br106m_smoke.py") == {
+        "cpu",
+        "biren",
+    }
     assert classify_test_path("tests/test_v100_sm70_mm4_production_gate.py") == {
         "cpu",
         "cuda",
