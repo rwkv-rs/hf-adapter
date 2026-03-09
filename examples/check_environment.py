@@ -111,6 +111,43 @@ def report_ascend_devices(npu: object) -> None:
             print(f"[INFO] Ascend NPU {index}: {name}")
 
 
+def report_metax_devices(torch_module: object) -> None:
+    """Report C500 identity without treating it as an NVIDIA Ampere card."""
+
+    from rwkv7_hf.metax_runtime import (
+        detect_metax_driver_version,
+        detect_mx_smi_version,
+        detect_mxmaca_version,
+        is_metax_c500_name,
+        validate_metax_stack,
+    )
+
+    cuda = getattr(torch_module, "cuda")
+    count = int(cuda.device_count())
+    names = [str(cuda.get_device_name(index)) for index in range(count)]
+    metax = [
+        (index, name) for index, name in enumerate(names) if is_metax_c500_name(name)
+    ]
+    print(f"[PASS] MetaX C500 / MXMACA: available ({len(metax)} C500 device(s))")
+    for index, name in metax:
+        print(f"[INFO] MetaX device {index}: {name}")
+    mxmaca = detect_mxmaca_version()
+    driver = detect_metax_driver_version()
+    mx_smi = detect_mx_smi_version()
+    print(f"[INFO] MXMACA: {mxmaca or 'unknown'}")
+    print(f"[INFO] MetaX driver: {driver or 'unknown'}")
+    print(f"[INFO] mx-smi: {mx_smi or 'unknown'}")
+    torch_version = str(getattr(torch_module, "__version__", ""))
+    torch_cuda = str(getattr(getattr(torch_module, "version", None), "cuda", "") or "")
+    validated, reason = validate_metax_stack(
+        device_name=metax[0][1] if metax else None,
+        torch_version=torch_version,
+        torch_cuda_version=torch_cuda,
+        mxmaca_version=mxmaca,
+    )
+    print(f"[{'PASS' if validated else 'WARN'}] MetaX stack: {reason}")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     failures = 0
@@ -159,12 +196,29 @@ def main(argv: list[str] | None = None) -> int:
             has_musa = bool(callable(musa_is_available) and musa_is_available())
         except Exception:
             has_musa = False
-        if torch.cuda.is_available():
+        cuda_names = (
+            [
+                torch.cuda.get_device_name(index)
+                for index in range(torch.cuda.device_count())
+            ]
+            if torch.cuda.is_available()
+            else []
+        )
+        try:
+            from rwkv7_hf.metax_runtime import is_metax_c500_name
+
+            has_metax = any(is_metax_c500_name(name) for name in cuda_names)
+        except Exception:
+            has_metax = False
+        if has_metax:
+            report_metax_devices(torch)
+            print(
+                "[INFO] Recommended first run: --device metax --backend native --dtype fp16"
+            )
+        elif torch.cuda.is_available():
             print(f"[PASS] CUDA: available ({torch.cuda.device_count()} device(s))")
-            for index in range(torch.cuda.device_count()):
-                print(
-                    f"[INFO] CUDA device {index}: {torch.cuda.get_device_name(index)}"
-                )
+            for index, name in enumerate(cuda_names):
+                print(f"[INFO] CUDA device {index}: {name}")
             print(
                 "[INFO] Recommended first run: --device cuda --backend auto --dtype fp16"
             )

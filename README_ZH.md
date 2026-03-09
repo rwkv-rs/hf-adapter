@@ -48,6 +48,12 @@ python -m pip install -e ".[cuda]"
 python -m pip install -e ".[ascend]"
 ```
 
+沐曦 MetaX C500 用户需先进入官方 MXMACA/PyTorch 环境，再安装适配器入口：
+
+```bash
+python -m pip install -e ".[metax]"
+```
+
 看到下面的输出说明基础环境已经可用：
 
 ```text
@@ -190,6 +196,7 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 | 投机解码、`device_map`、DeepSpeed 多卡 | [高级使用教程](docs/ADVANCED_USAGE_ZH.md) |
 | bitsandbytes W8/W4、原生 MM8/MM4 | [量化使用教程](docs/QUANTIZATION_USAGE.md) |
 | 华为昇腾 NPU、NPUGraph 与 W8 | [华为昇腾使用与验收边界](docs/hardware/HUAWEI_ASCEND.md) |
+| 沐曦 MetaX C500、MXMACA | [MetaX C500 使用与验收边界](docs/hardware/METAX_C500.md) |
 | Apple MPS、MLX、CoreML | [Apple 使用教程](docs/APPLE_USAGE.md) |
 | 让 AI 帮你安装、运行或排错 | [统一 AI 操作入口](docs/AI_ASSISTED_SETUP.md) |
 | 选择显卡与后端配置 | [硬件矩阵](docs/HARDWARE_MATRIX.md) |
@@ -203,6 +210,9 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 - **华为昇腾：** 先安装与 CANN 精确匹配的 PyTorch/torch-npu，再从
   [Ascend 文档](docs/hardware/HUAWEI_ASCEND.md) 的 BF16 eager 验收开始；
   NPUGraph 和 W8 只继承精确 910B3/软件栈/模型/batch 的证据。
+- **沐曦 MetaX C500：** 使用 MXMACA 提供的 `torch.cuda` 兼容接口，但不会
+  继承 NVIDIA Ampere 算子策略；先按 [C500 文档](docs/hardware/METAX_C500.md)
+  运行 native eager FP16 验收。
 - **Apple Silicon：** 普通 Transformers 工作流使用 MPS；追求 Apple 原生性能时
   使用 MLX 教程。
 - **CPU 或便携环境：** 原生后端可以完成转换、接口检查、真实小模型生成和无下载

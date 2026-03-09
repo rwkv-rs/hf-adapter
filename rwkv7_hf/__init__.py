@@ -19,6 +19,23 @@ RWKV7ForCausalLM = NativeRWKV7ForCausalLM
 RWKV7StateCache = NativeRWKV7Cache
 
 try:
+    from .metax_runtime import (
+        MetaXRuntimeInfo,
+        configure_metax_defaults,
+        enable_metax,
+        memory_stats as metax_memory_stats,
+        metax_available,
+        synchronize as metax_synchronize,
+    )
+except Exception:  # Keep lightweight tooling importable without a MetaX stack.
+    MetaXRuntimeInfo = None
+    configure_metax_defaults = None
+    enable_metax = None
+    metax_available = None
+    metax_memory_stats = None
+    metax_synchronize = None
+
+try:
     from .ascend_runtime import (
         AscendRuntimeInfo,
         ascend_available,
@@ -131,6 +148,12 @@ __all__ = [
     "NativeRWKV7ForCausalLM",
     "NativeRWKV7Model",
     "NativeRWKV7Cache",
+    "MetaXRuntimeInfo",
+    "configure_metax_defaults",
+    "enable_metax",
+    "metax_available",
+    "metax_memory_stats",
+    "metax_synchronize",
     "AscendRuntimeInfo",
     "ascend_available",
     "configure_ascend_defaults",

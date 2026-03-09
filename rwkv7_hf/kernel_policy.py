@@ -110,6 +110,12 @@ def is_mtt_s70_name(name: str) -> bool:
     return "mtt" in tokens and "s70" in tokens
 
 
+def is_metax_c500_name(name: str) -> bool:
+    """Match the exact C500 product without capability-family guessing."""
+
+    return _gpu_name_tokens(name) == ("metax", "c500")
+
+
 def _musa_hardware_metadata(name: str) -> tuple[str, str, str]:
     """Return generation, evidence scope, and compute profile for MUSA.
 
@@ -371,6 +377,27 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
         quant_rule="no torch quantization claim without exact MUSA operator, quality, footprint and speed evidence",
         promotion_rule="do not infer CUDA/ROCm behavior or later-card capability from S70; promote only behavior documented by MUSA sources and proven on the exact device",
     ),
+    "metax": GPUAdaptationRule(
+        family="metax",
+        cards=("MetaX C500 64GB",),
+        status="exact-card HF compatibility and 0.4B real-checkpoint smoke validated in the standalone repository",
+        default_stance="MXMACA torch.cuda compatibility with native eager/no-FLA routing; never inherit NVIDIA CUDA kernels from reported capability 8.0",
+        default_on=("native eager", "recurrent cache", "chunked prefill"),
+        default_off=(
+            "native JIT/graph",
+            "NVIDIA CUDA extensions",
+            "Triton/FLA fusions",
+            "unvalidated W8/W4 speed routes",
+        ),
+        required_functional=COMMON_FUNCTIONAL_SMOKES
+        + ("CPU-oracle FP16/BF16", "HF Trainer", "PEFT save/load/merge"),
+        required_benchmarks=(
+            "same-card RWKV-LM/Albatross B1/B2/B4/B8 prefill/decode",
+            "W8/W4 footprint, quality and speed before promotion",
+        ),
+        quant_rule="no production W8/W4 route is promoted from the current compatibility evidence",
+        promotion_rule="require a current-main exact-C500 rerun; do not treat CUDA capability 8.0 as NVIDIA hardware evidence",
+    ),
     "apple_mps": GPUAdaptationRule(
         family="apple_mps",
         cards=("Apple Silicon M-series / MPS", "Apple MLX / Metal", "CoreML / ANE"),
@@ -590,6 +617,17 @@ def classify_gpu(
             compute_profile=compute_profile,
             is_musa=True,
         )
+    if is_metax_c500_name(gpu_name):
+        return GPUProfile(
+            name=gpu_name,
+            vendor="metax",
+            family="metax",
+            capability=capability,
+            is_cuda=True,
+            hardware_generation="metax_c500",
+            validation_scope="exact_card_smoke",
+            compute_profile="mxmaca_cuda_compatible",
+        )
     if is_mps or any(token in lower for token in ("apple silicon", "apple m1", "apple m2", "apple m3", "apple m4", "apple m5")):
         return GPUProfile(name=gpu_name, vendor="apple", family="apple_mps", is_mps=True)
     if is_hip or any(token in lower for token in ("amd", "radeon", "instinct", "mi250", "mi300")):
@@ -731,6 +769,9 @@ def detect_gpu_profile(device: int | str | None = None, torch_module: Any | None
         capability=profile.capability,
         architecture=profile.architecture,
         device_index=index,
+        hardware_generation=profile.hardware_generation,
+        validation_scope=profile.validation_scope,
+        compute_profile=profile.compute_profile,
         is_cuda=profile.is_cuda,
         is_hip=profile.is_hip,
     )
@@ -764,6 +805,25 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
                 if s70_validated
                 else "MUSA unvalidated device: use conservative native/no-FLA compatibility; "
                 "do not inherit legacy S70 compute limits or exact-card kernels"
+            ),
+        )
+    if family == "metax":
+        return KernelPolicy(
+            profile=profile,
+            fast_token_backend="native",
+            fast_cache=True,
+            fast_prefill=False,
+            fused_recurrent_output=False,
+            fused_recurrent_raw=False,
+            fused_output=False,
+            fused_norm_mix=False,
+            fused_prefill_scan=False,
+            prefill_graph=False,
+            quant_policy="metax_unvalidated",
+            notes=(
+                "MetaX C500 uses MXMACA's torch.cuda-compatible API but must "
+                "not inherit NVIDIA kernels from capability 8.0; the validated "
+                "compatibility route is native eager/no-FLA"
             ),
         )
     if family == "apple_mps":

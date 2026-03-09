@@ -91,6 +91,7 @@ if False:  # pragma: no cover
     from .musa_fused import try_musa_attn_shift_mix as _native_musa_fused_dependency_sentinel
     from .musa_wkv import musa_wkv as _native_musa_wkv_dependency_sentinel
     from .musa_wkv_source import WKV7_MUSA_HEADER as _native_musa_wkv_source_dependency_sentinel
+    from .metax_runtime import enable_metax as _native_metax_runtime_dependency_sentinel
     from .ascend_graph_runtime import AscendGraphRunner as _native_ascend_graph_dependency_sentinel
     from .ascend_quant import AscendW8A16Linear as _native_ascend_w8_dependency_sentinel
     from .ascend_quant_w4 import AscendWeightOnlyLinear as _native_ascend_w4_dependency_sentinel

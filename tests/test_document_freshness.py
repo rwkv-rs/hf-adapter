@@ -17,7 +17,7 @@ def main() -> int:
         "HF_TODO.md": "2026-07-28",
         "BENCHMARK.md": "2026-07-28",
         "docs/ACCEPTANCE.md": "2026-07-26",
-        "docs/HARDWARE_MATRIX.md": "2026-07-28",
+        "docs/HARDWARE_MATRIX.md": "2026-08-04",
     }
     for relative, expected_date in canonical_dates.items():
         text = read(relative)
