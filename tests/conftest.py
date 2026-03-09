@@ -1,4 +1,5 @@
 """Central pytest marker policy for the mixed CPU/hardware test tree."""
+
 from __future__ import annotations
 
 from fnmatch import fnmatch
@@ -8,11 +9,24 @@ import pytest
 
 
 REGISTERED_MARKERS = frozenset(
-    {"cpu", "cuda", "sm70", "ada", "blackwell", "apple", "musa", "slow", "model_required"}
+    {
+        "cpu",
+        "cuda",
+        "sm70",
+        "ada",
+        "blackwell",
+        "apple",
+        "musa",
+        "ascend",
+        "slow",
+        "model_required",
+    }
 )
 
-MUSA_PATTERNS = (
-    "test_musa_*.py",
+MUSA_PATTERNS = ("test_musa_*.py",)
+ASCEND_PATTERNS = (
+    "test_ascend_*.py",
+    "test_huawei_ascend_*.py",
 )
 APPLE_PATTERNS = (
     "test_apple_*.py",
@@ -86,6 +100,8 @@ def classify_test_path(path: str | Path) -> frozenset[str]:
     markers = {"cpu"}
     if _matches(name, MUSA_PATTERNS):
         markers.add("musa")
+    if _matches(name, ASCEND_PATTERNS):
+        markers.add("ascend")
     if _matches(name, APPLE_PATTERNS):
         markers.add("apple")
     if _matches(name, CUDA_PATTERNS):
@@ -106,7 +122,9 @@ def validate_marker_set(markers: set[str] | frozenset[str]) -> None:
     if unknown:
         raise pytest.UsageError(f"unknown RWKV7 pytest markers: {sorted(unknown)}")
     if "cpu" not in markers:
-        raise pytest.UsageError("every collected test must be classified for CPU/offline collection")
+        raise pytest.UsageError(
+            "every collected test must be classified for CPU/offline collection"
+        )
     if set(markers) & {"sm70", "ada", "blackwell"} and "cuda" not in markers:
         raise pytest.UsageError("GPU-family markers require the cuda marker")
     if "model_required" in markers and "slow" not in markers:

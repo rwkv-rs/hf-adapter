@@ -71,7 +71,7 @@ from importlib import metadata
 
 print(f"python={platform.python_version()} executable={sys.executable}")
 print(f"platform={platform.platform()}")
-for name in ["torch", "torch_musa", "transformers", "peft", "trl", "deepspeed", "bitsandbytes", "fla", "mlx"]:
+for name in ["torch", "torch_npu", "torch_musa", "transformers", "peft", "trl", "deepspeed", "bitsandbytes", "fla", "mlx"]:
     if importlib.util.find_spec(name) is None:
         print(f"{name}=missing")
         continue
@@ -88,6 +88,22 @@ for name in ["torch", "torch_musa", "transformers", "peft", "trl", "deepspeed", 
         print(f"{name}=import-error:{type(exc).__name__}:{exc}")
 try:
     import torch
+    try:
+        from rwkv7_hf.ascend_runtime import import_torch_npu
+        import_torch_npu(required=False)
+    except Exception:
+        pass
+    npu = getattr(torch, "npu", None)
+    npu_available = False
+    if npu is not None:
+        npu_is_available = getattr(npu, "is_available", None)
+        npu_available = bool(callable(npu_is_available) and npu_is_available())
+    print(f"torch_npu_available={npu_available}")
+    if npu_available:
+        npu_count = int(npu.device_count())
+        print(f"torch_npu_device_count={npu_count}")
+        for idx in range(npu_count):
+            print(f"npu_device_{idx}={npu.get_device_name(idx)}")
     musa = getattr(torch, "musa", None)
     musa_available = False
     if musa is not None:
@@ -117,6 +133,8 @@ except Exception as exc:
     print(f"torch_device_probe_error={type(exc).__name__}:{exc}")
 for key in [
     "CUDA_VISIBLE_DEVICES",
+    "ASCEND_RT_VISIBLE_DEVICES",
+    "ASCEND_TOOLKIT_VERSION",
     "PYTHONNOUSERSITE",
     "RWKV_V7_ON",
     "TORCHDYNAMO_DISABLE",

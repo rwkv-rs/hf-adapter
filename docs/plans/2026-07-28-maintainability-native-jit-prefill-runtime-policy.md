@@ -8,6 +8,8 @@ provenance:
 
 # Native JIT prefill runtime policy split
 
+> Historical implementation record. Current status is tracked in `HF_STATUS.md` and `HF_TODO.md`.
+
 Status: eighth stacked structural change.
 
 ## Scope

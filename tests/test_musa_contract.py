@@ -386,7 +386,7 @@ def test_musa_hardware_acceptance_tools_move_and_measure_on_musa() -> None:
     assert '"musa_attn_shift_mix_calls": int(fused._CALLS)' in batch
     assert 'forward_route["musa_attn_shift_mix_calls_delta"]' in batch
     assert 'fast_route["musa_attn_shift_mix_calls_delta"]' in batch
-    assert 'args.device.startswith(("cuda", "musa", "mps"))' in smoke
+    assert 'args.device.startswith(("cuda", "npu", "musa", "mps"))' in smoke
     assert "torch.musa.synchronize()" in smoke
     assert '"--trust-remote-code"' not in smoke
     assert smoke.count("trust_remote_code=True") == 2

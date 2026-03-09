@@ -8,6 +8,8 @@ provenance:
 
 # Native JIT BnB W8 split
 
+> Historical implementation record. Current status is tracked in `HF_STATUS.md` and `HF_TODO.md`.
+
 Status: fourth stacked structural change; local and RTX 4080 regression gates
 pass.
 

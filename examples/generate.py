@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Generate text from a converted RWKV-7 Hugging Face model."""
+
 from __future__ import annotations
 
 import argparse
@@ -18,9 +19,15 @@ DTYPES = {
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", required=True, help="Converted HF model directory or Hub id")
+    parser.add_argument(
+        "--model", required=True, help="Converted HF model directory or Hub id"
+    )
     parser.add_argument("--prompt", required=True, help="Prompt text")
-    parser.add_argument("--device", choices=["auto", "cuda", "mps", "musa", "cpu"], default="auto")
+    parser.add_argument(
+        "--device",
+        choices=["auto", "cuda", "npu", "mps", "musa", "cpu"],
+        default="auto",
+    )
     parser.add_argument("--dtype", choices=["auto", *DTYPES], default="auto")
     parser.add_argument("--backend", choices=["auto", "native"], default="auto")
     parser.add_argument("--max-new-tokens", type=int, default=64)
@@ -40,10 +47,28 @@ def _musa_available() -> bool:
         return False
 
 
+def _ascend_available() -> bool:
+    try:
+        from rwkv7_hf.ascend_runtime import ascend_available
+
+        return bool(ascend_available())
+    except Exception:
+        return False
+
+
+def _enable_ascend() -> torch.device:
+    from rwkv7_hf.ascend_runtime import enable_ascend
+
+    info = enable_ascend("npu:0", backend="eager", required=True)
+    return torch.device(info.device)
+
+
 def resolve_device(requested: str) -> torch.device:
     if requested == "auto":
         if torch.cuda.is_available():
             return torch.device("cuda")
+        if _ascend_available():
+            return _enable_ascend()
         if _musa_available():
             return torch.device("musa")
         if torch.backends.mps.is_available():
@@ -51,6 +76,8 @@ def resolve_device(requested: str) -> torch.device:
         return torch.device("cpu")
     if requested == "musa" and not _musa_available():
         raise RuntimeError("--device musa was requested, but MUSA is unavailable")
+    if requested == "npu":
+        return _enable_ascend()
     device = torch.device(requested)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("--device cuda was requested, but CUDA is unavailable")
@@ -62,7 +89,11 @@ def resolve_device(requested: str) -> torch.device:
 def resolve_dtype(requested: str, device: torch.device) -> torch.dtype:
     if requested != "auto":
         return DTYPES[requested]
-    return torch.float32 if device.type == "cpu" else torch.float16
+    if device.type == "cpu":
+        return torch.float32
+    if device.type == "npu":
+        return torch.bfloat16
+    return torch.float16
 
 
 def select_native_backend(
@@ -96,7 +127,10 @@ def main(argv: list[str] | None = None) -> int:
     torch.manual_seed(args.seed)
     if device.type == "cuda":
         torch.cuda.manual_seed_all(args.seed)
-    print(f"Loading {args.model} on {device} as {dtype} with native backend", file=sys.stderr)
+    print(
+        f"Loading {args.model} on {device} as {dtype} with native backend",
+        file=sys.stderr,
+    )
 
     tokenizer = AutoTokenizer.from_pretrained(
         args.model,

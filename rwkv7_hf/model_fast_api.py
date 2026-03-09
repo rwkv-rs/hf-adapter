@@ -19,6 +19,10 @@ def _native_graph_available() -> bool:
     return bool(_native_model_entrypoint()._native_graph_available())
 
 
+def _ascend_graph_available() -> bool:
+    return bool(_native_model_entrypoint()._ascend_graph_available())
+
+
 def _native_model_backend_requested() -> str:
     return _native_model_entrypoint()._native_model_backend_requested()
 
@@ -147,7 +151,13 @@ class _NativeFastAPIMixin:
         warmed = {}
         for batch_size in sizes:
             chosen = requested
-            if chosen in {"auto", "native_graph"} and _native_graph_available():
+            weight_device = self.model.embeddings.weight.device.type
+            graph_available = (
+                _ascend_graph_available()
+                if weight_device == "npu"
+                else _native_graph_available()
+            )
+            if chosen in {"auto", "native_graph"} and graph_available:
                 self._native_graph_runner(batch_size)
                 chosen = "native_graph"
             elif chosen in {"auto", "native_jit"} and self._native_jit_packs() is not None:
