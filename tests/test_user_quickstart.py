@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+from types import SimpleNamespace
 
 import torch
 import pytest
@@ -32,6 +33,42 @@ def test_generate_example_cpu_defaults_to_fp32() -> None:
     assert device.type == "cpu"
     assert resolve_dtype("auto", device) == torch.float32
     assert resolve_dtype("bf16", device) == torch.bfloat16
+
+
+def test_generate_example_accepts_explicit_musa(monkeypatch) -> None:
+    fake_musa = SimpleNamespace(is_available=lambda: True)
+    musa_device = SimpleNamespace(type="musa")
+    original_device = torch.device
+    monkeypatch.setattr(torch, "musa", fake_musa, raising=False)
+    monkeypatch.setattr(
+        torch,
+        "device",
+        lambda value: musa_device if value == "musa" else original_device(value),
+    )
+    device = resolve_device("musa")
+    assert device.type == "musa"
+    assert resolve_dtype("auto", device) == torch.float16
+
+
+def test_generate_example_auto_uses_musa_without_cuda(monkeypatch) -> None:
+    fake_musa = SimpleNamespace(is_available=lambda: True)
+    musa_device = SimpleNamespace(type="musa")
+    original_device = torch.device
+    monkeypatch.setattr(torch, "musa", fake_musa, raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(
+        torch,
+        "device",
+        lambda value: musa_device if value == "musa" else original_device(value),
+    )
+    assert resolve_device("auto").type == "musa"
+
+
+def test_generate_example_rejects_unavailable_musa(monkeypatch) -> None:
+    fake_musa = SimpleNamespace(is_available=lambda: False)
+    monkeypatch.setattr(torch, "musa", fake_musa, raising=False)
+    with pytest.raises(RuntimeError, match="MUSA is unavailable"):
+        resolve_device("musa")
 
 
 def test_backend_auto_is_native_even_when_fla_is_installed() -> None:

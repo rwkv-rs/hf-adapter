@@ -100,7 +100,7 @@ with `/path/to/...` placeholders.
 Pytest collection uses strict, centrally enforced markers:
 
 ```text
-cpu  cuda  sm70  ada  blackwell  apple  slow  model_required
+cpu  cuda  sm70  ada  blackwell  apple  musa  slow  model_required
 ```
 
 Hardware/domain markers are additive because kernel modules commonly include
@@ -111,6 +111,7 @@ offline lane, and add a hardware marker when selecting a card-specific subset:
 python -m pytest -m "cpu and not model_required"
 python -m pytest -m "cuda and sm70"
 python -m pytest -m "apple and not model_required"
+python -m pytest -m "musa and not model_required"
 ```
 
 The supported ecosystem bounds are Transformers `>=5.12.1,<6`, PEFT

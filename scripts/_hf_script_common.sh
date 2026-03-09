@@ -71,7 +71,7 @@ from importlib import metadata
 
 print(f"python={platform.python_version()} executable={sys.executable}")
 print(f"platform={platform.platform()}")
-for name in ["torch", "transformers", "peft", "trl", "deepspeed", "bitsandbytes", "fla", "mlx"]:
+for name in ["torch", "torch_musa", "transformers", "peft", "trl", "deepspeed", "bitsandbytes", "fla", "mlx"]:
     if importlib.util.find_spec(name) is None:
         print(f"{name}=missing")
         continue
@@ -88,6 +88,21 @@ for name in ["torch", "transformers", "peft", "trl", "deepspeed", "bitsandbytes"
         print(f"{name}=import-error:{type(exc).__name__}:{exc}")
 try:
     import torch
+    musa = getattr(torch, "musa", None)
+    musa_available = False
+    if musa is not None:
+        musa_is_available = getattr(musa, "is_available", None)
+        musa_available = bool(callable(musa_is_available) and musa_is_available())
+    print(f"torch_musa_available={musa_available}")
+    if musa_available:
+        musa_count = int(musa.device_count())
+        print(f"torch_musa_device_count={musa_count}")
+        for idx in range(musa_count):
+            props = musa.get_device_properties(idx)
+            name = getattr(props, "name", None) or musa.get_device_name(idx)
+            architecture = getattr(props, "architecture", None)
+            suffix = f" arch={architecture}" if architecture is not None else ""
+            print(f"musa_device_{idx}={name}{suffix}")
     print(f"torch_cuda_available={torch.cuda.is_available()}")
     print(f"torch_cuda_device_count={torch.cuda.device_count() if torch.cuda.is_available() else 0}")
     if torch.cuda.is_available():

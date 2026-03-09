@@ -1,0 +1,84 @@
+/*
+ * RWKV-7 forward kernel for Moore Threads MUSA.
+ *
+ * Copyright 2026 RWKV-MUSA contributors
+ * Licensed under the Apache License, Version 2.0.
+ *
+ * Derived from BlinkDL/RWKV-LM
+ * RWKV-v7/train_temp/cuda/wkv7_cuda.cu (Apache-2.0), through
+ * KakaruHayate/RWKV-MUSA. Changes for the validated MTT S70 / MUSA SDK 4.2.0
+ * lane: fp16 IO, fp32 compute/state, explicit initial/final recurrent state,
+ * no warp intrinsics, and a fixed head size of 64.
+ */
+
+#pragma once
+
+#include <musa_fp16.h>
+
+template <int C, typename T>
+__global__ void wkv7_forward_kernel(
+    const int token_count,
+    const int head_count,
+    const T *__restrict__ decay,
+    const T *__restrict__ receptance,
+    const T *__restrict__ key,
+    const T *__restrict__ value,
+    const T *__restrict__ a,
+    const T *__restrict__ b,
+    T *__restrict__ output,
+    const float *__restrict__ initial_state,
+    float *__restrict__ final_state) {
+    const int batch = blockIdx.y;
+    const int head = blockIdx.x;
+    const int row = threadIdx.x;
+
+    float state[C];
+    const int state_base = ((batch * head_count + head) * C + row) * C;
+#pragma unroll
+    for (int column = 0; column < C; ++column) {
+        state[column] = initial_state[state_base + column];
+    }
+
+    __shared__ float q_shared[C];
+    __shared__ float k_shared[C];
+    __shared__ float w_shared[C];
+    __shared__ float a_shared[C];
+    __shared__ float b_shared[C];
+
+    for (int token = 0; token < token_count; ++token) {
+        const int index =
+            batch * token_count * head_count * C +
+            token * head_count * C + head * C + row;
+        __syncthreads();
+        q_shared[row] = __half2float(receptance[index]);
+        k_shared[row] = __half2float(key[index]);
+        w_shared[row] = __half2float(decay[index]);
+        a_shared[row] = __half2float(a[index]);
+        b_shared[row] = __half2float(b[index]);
+        __syncthreads();
+
+        float state_a = 0.0f;
+#pragma unroll
+        for (int column = 0; column < C; ++column) {
+            state_a += a_shared[column] * state[column];
+        }
+
+        const float value_element = __half2float(value[index]);
+        float output_element = 0.0f;
+#pragma unroll
+        for (int column = 0; column < C; ++column) {
+            float &state_element = state[column];
+            state_element =
+                state_element * w_shared[column] +
+                state_a * b_shared[column] +
+                k_shared[column] * value_element;
+            output_element += state_element * q_shared[column];
+        }
+        output[index] = __float2half(output_element);
+    }
+
+#pragma unroll
+    for (int column = 0; column < C; ++column) {
+        final_state[state_base + column] = state[column];
+    }
+}

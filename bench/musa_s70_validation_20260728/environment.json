@@ -1,0 +1,60 @@
+{
+  "artifact_date": "2026-07-28",
+  "hardware": {
+    "device": "MTT S70",
+    "architecture": "mp_21",
+    "memory_bytes": 7427821568,
+    "driver_package": "musa 3.1.0-rc4.2.0-server-Ubuntu"
+  },
+  "host": {
+    "hostname": "redacted-validation-host",
+    "os": "Ubuntu 22.04.5 LTS; Linux 5.15.0-105-generic x86_64",
+    "python": "3.10.18"
+  },
+  "software": {
+    "torch": "2.5.0",
+    "torch_musa": "2.5.0+0dbf6f1",
+    "musa_sdk": "4.2.0",
+    "musa_install_path": "redacted-system-sdk-path",
+    "transformers": "5.12.1",
+    "numpy": "1.26.4"
+  },
+  "source": {
+    "validated_base_commit": "b3d93fedacbcc939f4a951b097cb46a263c02837",
+    "remote_code_fix_commit": "2b993f721d486dc86d01d377144ebedafc069d0a",
+    "executed_bench_speed_source": "bench_speed_executed.py.txt",
+    "executed_bench_speed_sha256": "0fa4da4acffa83ce4f8374cf172f719e045a7c06a6c638326b6057761434f81c",
+    "executed_batch_sweep_source": "bench_batch_sweep_executed.py.txt",
+    "executed_batch_sweep_sha256": "9e29fb3889c3014ffeda984a9513ba52860573b40d6f3da39469ccdf7a1dcd03",
+    "audit_note": "The exact executed sources are included in this package. Later checked-in changes add explicit accelerator indices; bench_speed.py also synchronizes the separate official-RWKV warmup. Neither changes the recorded HF-adapter B1/T128 paired measurements."
+  },
+  "model": {
+    "name": "rwkv7-g1d-0.1b-hf-b3d93fe-tf5-np126",
+    "hidden_size": 768,
+    "intermediate_size": 3072,
+    "num_hidden_layers": 12,
+    "head_dim": 64,
+    "num_heads": 12,
+    "tokenizer": "official RWKV trie vocabulary"
+  },
+  "matrix": {
+    "batch_size": 1,
+    "prompt_tokens": 128,
+    "decode_tokens": 32,
+    "dtype": "fp16",
+    "attn_mode": "chunk",
+    "fuse_norm": false,
+    "fast_cache": true,
+    "hf_decode_api": "forward",
+    "warmup": 3,
+    "runs_per_process": 5,
+    "paired_processes": 3,
+    "order": ["eager", "wkv", "eager", "wkv", "eager", "wkv"]
+  },
+  "red_lines": {
+    "torch_modified": false,
+    "torch_musa_modified": false,
+    "global_site_packages_modified": false,
+    "transformers_numpy_isolation": "isolated-target:transformers5-numpy126"
+  }
+}

@@ -39,7 +39,7 @@ mlx = ["mlx; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 include = ["rwkv7_hf*"]
 
 [tool.setuptools.package-data]
-rwkv7_hf = ["csrc/marlin/*", "csrc/marlin/core/*", "csrc/train_temp/*"]
+rwkv7_hf = ["csrc/marlin/*", "csrc/marlin/core/*", "csrc/musa/*", "csrc/train_temp/*"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers"
@@ -51,6 +51,7 @@ markers = [
   "ada: covers Ada/RTX 40 policy or exact-card evidence contracts",
   "blackwell: covers Blackwell/RTX 50 policy or exact-card evidence contracts",
   "apple: covers Apple MPS, MLX, Metal, CoreML, or Apple evidence contracts",
+  "musa: covers Moore Threads MUSA runtime, kernel, or evidence contracts",
   "slow: integration/evidence test unsuitable for the fast pull-request subset",
   "model_required: requires an external converted checkpoint or model fixture",
 ]

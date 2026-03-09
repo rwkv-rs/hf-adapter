@@ -30,6 +30,7 @@ Last updated: **2026-07-28**.
 | RTX 5070 Laptop, sm120 | **Production-close for measured bsz8 lane** | 1.5B RWKV vs full-FLA Qwen3.5 2B, fp16/W8/W4 | 18/18 speed, active-parameter efficiency, footprint, peak-VRAM, full-FLA binding, and greedy/cosine gates pass | Other model pairs, bsz1/2/4 full-FLA, and model-quality evaluation |
 | H100 / Hopper | **Open** | — | — | bf16, large-model, quant, training and performance matrix |
 | AMD gfx1100 / ROCm 7.2.1 | **Validated with exact-card decode lanes** | 0.1B compatibility/training; 0.1B-13.3B fused decode; 0.4B-13.3B output-head W8/W4 | Fully native HF/PEFT/cache/chunked-prefill/Trainer; dense fused decode remains positive through 13.3B; 40/40 output-head quant B1/B2/B4/B8 decode rows beat fp16 with greedy parity | Fused prefill, full-model quant speed/2.9B W4 quality, MI-series and same-card Albatross |
+| Moore Threads MTT S70 / MUSA 4.2.0 | **Smoke; exact-card legacy scope** | First-generation 0.1B HF lane; no Tensor Core and slow fp16 compute, so retained kernels use fp16 storage/IO with fp32 compute/state | Standalone parity, 64-token eager/WKV equality, autograd eager fallback, B1/B2 smoke and paired evidence; WKV prefill `1.214072x`, decode `1.000000x`; opt-in shift-mix prefill median `1.050809x`, decode neutral, peak memory equal | SDK 4.2.0 is frozen; S4000/S5000 capabilities require independent exact-card validation and must not inherit S70 limits; no broad bf16/quant/graph/multi-device/training-kernel claim |
 | Other Turing / RTX 20 | **Open** | exact-card validation required | conservative family routing only | Do not inherit Tesla T4 prefill or DP4A quant promotion by `sm_75` alone |
 | CPU | **Experimental fallback** | Tiny/native tests | Import-safe native model and CPU tests | Production performance is not a target yet |
 
@@ -58,6 +59,7 @@ Last updated: **2026-07-28**.
 - A800: [`validation/A800_HF_VALIDATION.md`](validation/A800_HF_VALIDATION.md)
 - V100 training/compatibility: [`validation/V100_HF_VALIDATION.md`](validation/V100_HF_VALIDATION.md)
 - AMD ROCm: [`validation/AMD_ROCM_HF_VALIDATION.md`](validation/AMD_ROCM_HF_VALIDATION.md)
+- Moore Threads MUSA: [`hardware/MUSA.md`](hardware/MUSA.md), [`../bench/musa_s70_validation_20260728/`](../bench/musa_s70_validation_20260728/README.md), [`../bench/musa_s70_shift_mix_20260728/`](../bench/musa_s70_shift_mix_20260728/README.md)
 - Tesla T4: [`hardware/TURING_T4.md`](hardware/TURING_T4.md), [`../bench/t4_production_close_20260720/`](../bench/t4_production_close_20260720/README.md)
 - Blackwell history: [`hardware/BLACKWELL_50SERIES.md`](hardware/BLACKWELL_50SERIES.md)
 

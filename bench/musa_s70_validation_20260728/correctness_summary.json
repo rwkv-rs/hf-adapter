@@ -1,0 +1,37 @@
+{
+  "standalone_wkv_parity": {
+    "shapes": [[1, 1, 1], [2, 1, 2], [1, 7, 2]],
+    "output_max_abs": 0.0,
+    "state_max_abs_upper_bound": 1.1175870895385742e-08,
+    "pass": true
+  },
+  "hf_short_trace": {
+    "generated_ids_equal": true,
+    "cache_contract_equal": true,
+    "logits_max_abs_diff": 0.03125,
+    "logits_mean_abs_diff": 0.006982624065130949,
+    "logits_cosine": 0.999997079372406,
+    "pass": true
+  },
+  "hf_long_trace": {
+    "generated_length": 68,
+    "generated_ids_equal": true,
+    "cache_seen_equal": true,
+    "logits_max_abs_diff": 0.03125,
+    "logits_mean_abs_diff": 0.0058772265911102295,
+    "logits_cosine": 0.9999946355819702,
+    "pass": true
+  },
+  "autograd_fallback": {
+    "route": "eager_autograd_fallback",
+    "musa_wkv_kernel_invoked": false,
+    "try_musa_wkv_calls": 0,
+    "loss": 9.86854362487793,
+    "embedding_grad_present": true,
+    "embedding_grad_finite": true,
+    "embedding_grad_max_abs": 55.84375,
+    "musa_wkv_module_loaded": false,
+    "musa_wkv_module_error": null,
+    "pass": true
+  }
+}

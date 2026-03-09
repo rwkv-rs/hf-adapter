@@ -24,6 +24,7 @@ def test_pyproject_registers_and_strictly_enforces_every_policy_marker() -> None
 def test_path_policy_assigns_execution_and_hardware_relationships() -> None:
     assert classify_test_path("tests/test_kernel_policy.py") == {"cpu"}
     assert classify_test_path("tests/test_mlx_quant.py") == {"cpu", "apple"}
+    assert classify_test_path("tests/test_musa_contract.py") == {"cpu", "musa"}
     assert classify_test_path("tests/test_v100_sm70_mm4_production_gate.py") == {
         "cpu",
         "cuda",

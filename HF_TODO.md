@@ -5,7 +5,7 @@ experiments and historical plans belong in benchmark artifacts or Git history.
 Native vLLM/SGLang scheduler work is out of scope for this file.
 
 Last updated: **2026-07-28**. Audited against upstream main commit
-`c8a29d93291cf090bbdac66d7ed9f79a11510a56`.
+`22237b6b66ec492fefba5669cb3fa6f5bb518007`.
 
 ## Scope and current boundary
 
@@ -124,6 +124,15 @@ row is never a full-FLA reference.
       training and same-card official/Albatross performance.
 - [ ] Other Turing/RTX 20 products: validate independently and do not inherit
       Tesla T4 prefill or DP4A quant routing from `sm_75` alone.
+- [ ] Moore Threads MUSA: legacy first-generation MTT S70 standalone parity,
+      HF load/forward/cache/generate, 64-token eager/WKV equality, autograd
+      fallback, B1/B2 smoke and paired WKV/shift-mix evidence now pass. S70 has
+      no Tensor Core, fp16 compute is impractically slow, and its SDK 4.2.0 is
+      frozen; retained kernels therefore use fp16 storage/IO with fp32 compute.
+      Close real PEFT/LoRA integration and broader S70 models/shapes/state gates.
+      Independently validate later S4000/S5000-class hardware when accessible:
+      do not inherit S70 compute limits, but do not claim its bf16/quant/graph/
+      multi-device/training capabilities without exact-card evidence either.
 - [ ] Add exact-card evidence for additional RTX 50-series and constrained
       laptop/low-memory devices.
 - [ ] Reproduce the promoted Apple results on M1–M4 and Pro/Max/Ultra variants.

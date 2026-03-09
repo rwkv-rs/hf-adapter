@@ -103,6 +103,38 @@ def is_tesla_t4_name(name: str) -> bool:
     return "t4" in _gpu_name_tokens(name)
 
 
+def is_mtt_s70_name(name: str) -> bool:
+    """Match the exact first-generation MTT S70 product tokens."""
+
+    tokens = _gpu_name_tokens(name)
+    return "mtt" in tokens and "s70" in tokens
+
+
+def _musa_hardware_metadata(name: str) -> tuple[str, str, str]:
+    """Return generation, evidence scope, and compute profile for MUSA.
+
+    The available development card is a legacy first-generation MTT S70. Its
+    exact-card evidence must not become a capability ceiling or default for
+    later MUSA accelerators such as MTT S4000/S5000, which require their own
+    runtime probes and real-device acceptance rows.
+    """
+
+    tokens = _gpu_name_tokens(name)
+    if is_mtt_s70_name(name):
+        return (
+            "musa_legacy_s70",
+            "exact_card_smoke",
+            "fp32_compute_fp16_io",
+        )
+    if "mtt" in tokens and any(model in tokens for model in ("s4000", "s5000")):
+        return (
+            "musa_post_s70",
+            "unvalidated",
+            "device_specific_unvalidated",
+        )
+    return ("musa_unknown", "unvalidated", "device_specific_unvalidated")
+
+
 @dataclass(frozen=True)
 class GPUProfile:
     """Normalized hardware identity used by the kernel policy."""
@@ -116,6 +148,10 @@ class GPUProfile:
     is_cuda: bool = False
     is_hip: bool = False
     is_mps: bool = False
+    is_musa: bool = False
+    hardware_generation: str | None = None
+    validation_scope: str = "unvalidated"
+    compute_profile: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -314,6 +350,26 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
         required_benchmarks=("CPU smoke only; no GPU performance claim",),
         quant_rule="do not claim W8/W4 speed without a real accelerator row",
         promotion_rule="never promote GPU defaults from CPU-only evidence",
+    ),
+    "musa": GPUAdaptationRule(
+        family="musa",
+        cards=("legacy first-generation MTT S70", "unvalidated later MUSA devices including MTT S4000/S5000"),
+        status="MTT S70 exact-card narrow HF smoke and paired evidence validated; later MUSA generations remain unvalidated",
+        default_stance="backend compatibility only; S70-specific routes remain exact-card gated and must not constrain or promote later MUSA hardware",
+        default_on=("fast_cache", "S70-only optional fp16-IO/fp32-compute MUSA WKV kernel"),
+        default_off=("unvalidated MUSA card-specific kernels", "CUDA native_graph fused kernels", "Triton/FLA", "bnb CUDA-only quantization"),
+        required_functional=(
+            "MUSA import/load/generate",
+            "cache continuation and chunked prefill",
+            "MUSA WKV vs pure-PyTorch recurrence",
+            "PEFT/Trainer smoke when training is claimed",
+        ),
+        required_benchmarks=(
+            "exact MUSA device/runtime/model/dtype rows",
+            "prefill/decode/peak-memory plus selected-route evidence",
+        ),
+        quant_rule="no torch quantization claim without exact MUSA operator, quality, footprint and speed evidence",
+        promotion_rule="do not infer CUDA/ROCm behavior or later-card capability from S70; promote only behavior documented by MUSA sources and proven on the exact device",
     ),
     "apple_mps": GPUAdaptationRule(
         family="apple_mps",
@@ -516,12 +572,24 @@ def classify_gpu(
     *,
     is_hip: bool = False,
     is_mps: bool = False,
+    is_musa: bool = False,
     architecture: str | None = None,
 ) -> GPUProfile:
     """Classify a GPU without requiring torch/CUDA to be available."""
 
     gpu_name = (name or "unknown").strip() or "unknown"
     lower = gpu_name.lower()
+    if is_musa or any(token in lower for token in ("moore threads", "mthreads", "mtt s70", "mtt s80", "mtt s4000", "mtt s5000")):
+        generation, validation_scope, compute_profile = _musa_hardware_metadata(gpu_name)
+        return GPUProfile(
+            name=gpu_name,
+            vendor="moore_threads",
+            family="musa",
+            hardware_generation=generation,
+            validation_scope=validation_scope,
+            compute_profile=compute_profile,
+            is_musa=True,
+        )
     if is_mps or any(token in lower for token in ("apple silicon", "apple m1", "apple m2", "apple m3", "apple m4", "apple m5")):
         return GPUProfile(name=gpu_name, vendor="apple", family="apple_mps", is_mps=True)
     if is_hip or any(token in lower for token in ("amd", "radeon", "instinct", "mi250", "mi300")):
@@ -570,6 +638,40 @@ def detect_gpu_profile(device: int | str | None = None, torch_module: Any | None
         return classify_gpu(None, None)
 
     is_hip = bool(getattr(getattr(torch_module, "version", None), "hip", None))
+    musa = getattr(torch_module, "musa", None)
+    musa_is_available = getattr(musa, "is_available", None)
+    try:
+        musa_available = bool(callable(musa_is_available) and musa_is_available())
+    except Exception:
+        musa_available = False
+    if musa_available:
+        try:
+            if device is None:
+                musa_index = int(musa.current_device())
+            else:
+                resolved_index = torch_module.device(device).index
+                musa_index = (
+                    int(resolved_index)
+                    if resolved_index is not None
+                    else int(musa.current_device())
+                )
+        except Exception:
+            musa_index = 0
+        try:
+            musa_name = str(musa.get_device_name(musa_index))
+        except Exception:
+            musa_name = "Moore Threads MUSA"
+        profile = classify_gpu(musa_name, None, is_musa=True)
+        return GPUProfile(
+            name=profile.name,
+            vendor=profile.vendor,
+            family=profile.family,
+            device_index=musa_index,
+            hardware_generation=profile.hardware_generation,
+            validation_scope=profile.validation_scope,
+            compute_profile=profile.compute_profile,
+            is_musa=True,
+        )
     cuda = getattr(torch_module, "cuda", None)
     is_available = getattr(cuda, "is_available", None)
     try:
@@ -645,6 +747,24 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_output=True,
             fused_prefill_scan=False,
             notes="no live GPU detected: preserve historical request defaults; runtime availability gates still prevent CUDA use",
+        )
+    if family == "musa":
+        s70_validated = profile.hardware_generation == "musa_legacy_s70"
+        return KernelPolicy(
+            profile=profile,
+            fast_token_backend="native",
+            fast_cache=True,
+            fused_recurrent_output=False,
+            fused_output=False,
+            fused_prefill_scan=False,
+            quant_policy="musa_unvalidated",
+            notes=(
+                "MUSA exact-card S70: legacy SDK 4.2.0 lane with fp16 storage/IO "
+                "and fp32 compute; optional S70-validated kernels remain fail-safe"
+                if s70_validated
+                else "MUSA unvalidated device: use conservative native/no-FLA compatibility; "
+                "do not inherit legacy S70 compute limits or exact-card kernels"
+            ),
         )
     if family == "apple_mps":
         return KernelPolicy(

@@ -51,6 +51,36 @@ def package_version(name: str) -> str | None:
         return None
 
 
+def report_musa_devices(musa: object) -> None:
+    """Report optional MUSA metadata without overriding availability."""
+    try:
+        device_count = getattr(musa, "device_count")
+        if not callable(device_count):
+            raise TypeError("device_count is not callable")
+        count = int(device_count())
+    except Exception as exc:
+        print("[PASS] MUSA: available")
+        print(
+            f"[WARN] MUSA device count unavailable: {type(exc).__name__}: {exc}"
+        )
+        return
+
+    print(f"[PASS] MUSA: available ({count} device(s))")
+    get_device_name = getattr(musa, "get_device_name", None)
+    for index in range(count):
+        try:
+            if not callable(get_device_name):
+                raise TypeError("get_device_name is not callable")
+            name = get_device_name(index)
+        except Exception as exc:
+            print(
+                f"[WARN] MUSA device {index} name unavailable: "
+                f"{type(exc).__name__}: {exc}"
+            )
+        else:
+            print(f"[INFO] MUSA device {index}: {name}")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     failures = 0
@@ -75,11 +105,20 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[FAIL] PyTorch import: {type(exc).__name__}: {exc}")
         failures += 1
     else:
+        musa = getattr(torch, "musa", None)
+        musa_is_available = getattr(musa, "is_available", None)
+        try:
+            has_musa = bool(callable(musa_is_available) and musa_is_available())
+        except Exception:
+            has_musa = False
         if torch.cuda.is_available():
             print(f"[PASS] CUDA: available ({torch.cuda.device_count()} device(s))")
             for index in range(torch.cuda.device_count()):
                 print(f"[INFO] CUDA device {index}: {torch.cuda.get_device_name(index)}")
             print("[INFO] Recommended first run: --device cuda --backend auto --dtype fp16")
+        elif has_musa:
+            report_musa_devices(musa)
+            print("[INFO] Recommended first run: --device musa --backend native --dtype fp16")
         elif (
             getattr(torch.backends, "mps", None) is not None
             and torch.backends.mps.is_available()

@@ -40,6 +40,15 @@ upstream_boundaries:
   Marlin:
     scope: Vendored Apache-2.0 W4 kernel components
     local_license: rwkv7_hf/csrc/marlin/LICENSE
+  RWKV-MUSA:
+    scope: Apache-2.0 MUSA WKV implementation and MTT S70 validation evidence
+    repository: https://github.com/KakaruHayate/RWKV-MUSA
+    derived_from: BlinkDL/RWKV-LM RWKV-v7/train_temp/cuda/wkv7_cuda.cu
+    local_license: rwkv7_hf/csrc/musa/LICENSE
+    local_files:
+      - rwkv7_hf/musa_build.py
+      - rwkv7_hf/musa_wkv.py
+      - rwkv7_hf/csrc/musa/wkv7_musa.muh
 
 machine_attribution:
   preserve_canonical_source_when_deriving: true
