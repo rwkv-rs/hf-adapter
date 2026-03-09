@@ -50,6 +50,7 @@ User guides:
 - [AI-assisted setup and troubleshooting](docs/AI_ASSISTED_SETUP.md)
 - [Advanced training, speculative decoding, and multi-GPU](docs/ADVANCED_USAGE.md)
 - [Apple MPS, MLX, and CoreML](docs/APPLE_USAGE.md)
+- [Huawei Ascend NPU / torch-npu](docs/hardware/HUAWEI_ASCEND.md)
 
 ## Convert an official checkpoint
 
@@ -87,7 +88,7 @@ save/reload.
 | Distributed training | DeepSpeed ZeRO-2/3 and checkpoint resume gates |
 | Inference parallelism | `device_map` pipeline-style placement plus Transformers-native dense fp16 `tp_plan="auto"` |
 | Quantization | BnB fallback, native MM8/MM4, A8W8, TorchAO, Marlin, MLX |
-| Hardware | CUDA capability policies, CPU fallback, Apple MPS/MLX/CoreML |
+| Hardware | CUDA/ROCm, Huawei Ascend NPU, Moore Threads MUSA, CPU fallback, Apple MPS/MLX/CoreML |
 | Serving references | runtime-independent vLLM/SGLang implementation contracts |
 
 The repository does not contain a native vLLM or SGLang runtime. Their model,
@@ -98,7 +99,9 @@ are under [`docs/integrations/`](docs/integrations/README.md).
 
 Production readiness is scoped to exact models, cards, dtypes, batches, and
 shapes. Promoted evidence currently includes V100, T4, RTX 3090/4080/4090/5090,
-selected Ampere validation, and bounded Apple M5 paths. Universal all-card,
+selected Ampere validation, and bounded Apple M5 paths. Huawei Ascend 910B3
+HF/NPUGraph/W8 support is ported from the dedicated validated Ascend repository;
+a current-main hardware rerun remains explicit. Universal all-card,
 all-shape quantized speed, every hardware family, broader task quality, and
 distributed-training breadth remain separate acceptance items. HF layer-split
 PP and the TP/PP porting contracts are complete for this repository; native
@@ -138,6 +141,7 @@ Canonical project state:
 ```bash
 python -m pip install -e .                    # core native HF path
 python -m pip install -e ".[cuda]"            # CUDA build helper
+python -m pip install -e ".[ascend]"          # install CANN-matched torch-npu first
 python -m pip install -e ".[train]"           # PEFT/TRL/DeepSpeed
 python -m pip install -e ".[quant]"           # bitsandbytes fallback
 python -m pip install -e ".[torchao]"         # supported Linux TorchAO path

@@ -82,6 +82,7 @@ match later outcomes.
 | A800 | [`validation/A800_HF_VALIDATION.md`](validation/A800_HF_VALIDATION.md) | [`HARDWARE_MATRIX.md`](HARDWARE_MATRIX.md) |
 | AMD gfx1100 | [`validation/AMD_ROCM_HF_VALIDATION.md`](validation/AMD_ROCM_HF_VALIDATION.md) | [`../bench/amd_gfx1100_native_20260727/README.md`](../bench/amd_gfx1100_native_20260727/README.md) |
 | Moore Threads MUSA | [`hardware/MUSA.md`](hardware/MUSA.md) | Source implementation imported; HF real-device artifact pending |
+| Huawei Ascend NPU | [`hardware/HUAWEI_ASCEND.md`](hardware/HUAWEI_ASCEND.md) | HF runtime ported from the pinned standalone 910B3 evidence repository; current-main rerun pending |
 | Apple Silicon | [`hardware/APPLE_SILICON.md`](hardware/APPLE_SILICON.md) | [`hardware/APPLE_PRODUCTION_CLOSE.md`](hardware/APPLE_PRODUCTION_CLOSE.md) |
 | Apple/Qwen methodology | [`hardware/QWEN35_APPLE_BASELINE.md`](hardware/QWEN35_APPLE_BASELINE.md) | [`hardware/APPLE_PRODUCTION_CLOSE.md`](hardware/APPLE_PRODUCTION_CLOSE.md) |
 

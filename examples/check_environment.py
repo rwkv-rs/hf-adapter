@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Check whether this machine is ready to run an RWKV-7 HF model."""
+
 from __future__ import annotations
 
 import argparse
@@ -60,9 +61,7 @@ def report_musa_devices(musa: object) -> None:
         count = int(device_count())
     except Exception as exc:
         print("[PASS] MUSA: available")
-        print(
-            f"[WARN] MUSA device count unavailable: {type(exc).__name__}: {exc}"
-        )
+        print(f"[WARN] MUSA device count unavailable: {type(exc).__name__}: {exc}")
         return
 
     print(f"[PASS] MUSA: available ({count} device(s))")
@@ -81,6 +80,37 @@ def report_musa_devices(musa: object) -> None:
             print(f"[INFO] MUSA device {index}: {name}")
 
 
+def report_ascend_devices(npu: object) -> None:
+    """Report torch-npu devices after its optional private backend is loaded."""
+
+    try:
+        device_count = getattr(npu, "device_count")
+        if not callable(device_count):
+            raise TypeError("device_count is not callable")
+        count = int(device_count())
+    except Exception as exc:
+        print("[PASS] Huawei Ascend NPU: available")
+        print(
+            f"[WARN] Ascend NPU device count unavailable: {type(exc).__name__}: {exc}"
+        )
+        return
+
+    print(f"[PASS] Huawei Ascend NPU: available ({count} device(s))")
+    get_device_name = getattr(npu, "get_device_name", None)
+    for index in range(count):
+        try:
+            if not callable(get_device_name):
+                raise TypeError("get_device_name is not callable")
+            name = get_device_name(index)
+        except Exception as exc:
+            print(
+                f"[WARN] Ascend NPU {index} name unavailable: "
+                f"{type(exc).__name__}: {exc}"
+            )
+        else:
+            print(f"[INFO] Ascend NPU {index}: {name}")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     failures = 0
@@ -96,15 +126,33 @@ def main(argv: list[str] | None = None) -> int:
 
     for package in ("torch", "transformers", "safetensors"):
         version = package_version(package)
-        print(f"[{'PASS' if version else 'FAIL'}] {package}: {version or 'not installed'}")
+        print(
+            f"[{'PASS' if version else 'FAIL'}] {package}: {version or 'not installed'}"
+        )
         failures += version is None
+    torch_npu_version = package_version("torch-npu")
+    print(f"[INFO] torch-npu: {torch_npu_version or 'not installed (optional)'}")
 
     try:
         import torch
-    except Exception as exc:  # Import failures can include missing CUDA/DLL dependencies.
+    except (
+        Exception
+    ) as exc:  # Import failures can include missing CUDA/DLL dependencies.
         print(f"[FAIL] PyTorch import: {type(exc).__name__}: {exc}")
         failures += 1
     else:
+        try:
+            from rwkv7_hf.ascend_runtime import import_torch_npu
+
+            import_torch_npu(required=False)
+        except Exception:
+            pass
+        npu = getattr(torch, "npu", None)
+        npu_is_available = getattr(npu, "is_available", None)
+        try:
+            has_ascend = bool(callable(npu_is_available) and npu_is_available())
+        except Exception:
+            has_ascend = False
         musa = getattr(torch, "musa", None)
         musa_is_available = getattr(musa, "is_available", None)
         try:
@@ -114,20 +162,35 @@ def main(argv: list[str] | None = None) -> int:
         if torch.cuda.is_available():
             print(f"[PASS] CUDA: available ({torch.cuda.device_count()} device(s))")
             for index in range(torch.cuda.device_count()):
-                print(f"[INFO] CUDA device {index}: {torch.cuda.get_device_name(index)}")
-            print("[INFO] Recommended first run: --device cuda --backend auto --dtype fp16")
+                print(
+                    f"[INFO] CUDA device {index}: {torch.cuda.get_device_name(index)}"
+                )
+            print(
+                "[INFO] Recommended first run: --device cuda --backend auto --dtype fp16"
+            )
+        elif has_ascend:
+            report_ascend_devices(npu)
+            print(
+                "[INFO] Recommended first run: --device npu --backend native --dtype bf16"
+            )
         elif has_musa:
             report_musa_devices(musa)
-            print("[INFO] Recommended first run: --device musa --backend native --dtype fp16")
+            print(
+                "[INFO] Recommended first run: --device musa --backend native --dtype fp16"
+            )
         elif (
             getattr(torch.backends, "mps", None) is not None
             and torch.backends.mps.is_available()
         ):
             print("[PASS] Apple MPS: available")
-            print("[INFO] Recommended first run: --device mps --backend native --dtype fp16")
+            print(
+                "[INFO] Recommended first run: --device mps --backend native --dtype fp16"
+            )
         else:
             print("[INFO] GPU backend: unavailable; CPU fallback will be used")
-            print("[INFO] Recommended first run: --device cpu --backend native --dtype fp32")
+            print(
+                "[INFO] Recommended first run: --device cpu --backend native --dtype fp32"
+            )
 
     if args.model is not None:
         problems = inspect_model_directory(args.model)

@@ -13,11 +13,11 @@ def read(relative: str) -> str:
 
 def main() -> int:
     canonical_dates = {
-        "HF_STATUS.md": "2026-07-26",
-        "HF_TODO.md": "2026-07-26",
-        "BENCHMARK.md": "2026-07-20",
+        "HF_STATUS.md": "2026-08-04",
+        "HF_TODO.md": "2026-07-28",
+        "BENCHMARK.md": "2026-07-28",
         "docs/ACCEPTANCE.md": "2026-07-26",
-        "docs/HARDWARE_MATRIX.md": "2026-07-20",
+        "docs/HARDWARE_MATRIX.md": "2026-07-28",
     }
     for relative, expected_date in canonical_dates.items():
         text = read(relative)
@@ -44,7 +44,7 @@ def main() -> int:
     todo = read("HF_TODO.md")
     assert "## Scope and current boundary" in todo
     assert "current HF milestone is complete" in todo
-    assert "9d7dbc9213f0fb6b021d8dd0e3a828dad5fcd4af" in todo
+    assert "22237b6b66ec492fefba5669cb3fa6f5bb518007" in todo
     assert "- [x]" not in todo
     assert "PP/TP are closed for the declared dense-inference HF scope" in todo
     assert "PP/TP and multi-device behavior" not in todo

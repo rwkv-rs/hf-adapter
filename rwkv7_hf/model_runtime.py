@@ -80,6 +80,22 @@ def _native_graph_stats_template():
     return _entrypoint_call("_native_graph_stats_template")
 
 
+def _ascend_graph_available() -> bool:
+    return _entrypoint_call("_ascend_graph_available")
+
+
+def _ascend_graph_cache_size() -> int:
+    return _entrypoint_call("_ascend_graph_cache_size")
+
+
+def _ascend_graph_module_signature(owner):
+    return _entrypoint_call("_ascend_graph_module_signature", owner)
+
+
+def _ascend_graph_runtime_signature():
+    return _entrypoint_call("_ascend_graph_runtime_signature")
+
+
 class _NativeRuntimeMixin:
     """Prefill/decode backend selection, graph caches, and route safety."""
 
@@ -280,19 +296,30 @@ class _NativeRuntimeMixin:
             return False
         if self._rwkv7_has_multi_cuda_device_map():
             return False
-        if self.training or torch.is_grad_enabled() or not _native_graph_available():
+        weight_device = self.model.embeddings.weight.device
+        graph_available = (
+            _ascend_graph_available()
+            if weight_device.type == "npu"
+            else _native_graph_available()
+        )
+        if self.training or torch.is_grad_enabled() or not graph_available:
             return False
         if self._native_model_has_adapter_layers():
             return False
-        if self._native_model_quantized() and not self._native_model_native_quant_graph_safe():
+        if (
+            self._native_model_quantized()
+            and not self._native_model_quant_graph_safe(weight_device.type)
+        ):
             return False
         if token_ids is None or token_ids.dim() != 2 or int(token_ids.shape[1]) != 1:
             return False
         if attention_mask is not None or output_hidden_states or not isinstance(cache, NativeRWKV7Cache):
             return False
-        if token_ids.device.type != "cuda" or self.model.embeddings.weight.device.type != "cuda":
+        if weight_device.type not in {"cuda", "npu"}:
             return False
-        if token_ids.device != self.model.embeddings.weight.device:
+        if token_ids.device.type != weight_device.type:
+            return False
+        if token_ids.device != weight_device:
             return False
         if not cache.is_initialized or cache.get_batch_size() != int(token_ids.shape[0]):
             return False
@@ -320,6 +347,11 @@ class _NativeRuntimeMixin:
 
     def _native_graph_runner(self, batch_size: int):
         weight = self.model.embeddings.weight
+        if weight.device.type == "npu":
+            return _NativeRuntimeMixin._native_graph_runner_current_device(
+                self,
+                batch_size,
+            )
         guard = _cuda_device_guard(weight.device)
         with guard:
             return _NativeRuntimeMixin._native_graph_runner_current_device(
@@ -328,23 +360,44 @@ class _NativeRuntimeMixin:
             )
 
     def _native_graph_runner_current_device(self, batch_size: int):
-        native_graph_runner_cls = getattr(_native_model_entrypoint(), "_NativeGraphRunner", None)
-        if native_graph_runner_cls is None:
-            raise RuntimeError("native_graph runtime is unavailable")
-        packs = self._native_graph_packs()
+        entrypoint = _native_model_entrypoint()
         weight = self.model.embeddings.weight
-        key = (
-            weight.device.type,
-            weight.device.index,
-            weight.dtype,
-            len(packs),
-            int(packs[0][1]),
-            int(packs[0][2]),
-            str(getattr(self, "_rwkv7_native_mm_quantization", "none")),
-            int(getattr(self, "_rwkv7_native_mm_replaced_modules", 0)),
-            _native_graph_runtime_signature(),
-            int(batch_size),
-        )
+        if weight.device.type == "npu":
+            runner_cls = getattr(entrypoint, "_AscendGraphRunner", None)
+            if runner_cls is None:
+                raise RuntimeError("Ascend native_graph runtime is unavailable")
+            key = (
+                weight.device.type,
+                weight.device.index,
+                weight.dtype,
+                len(self.model.layers),
+                str(getattr(self, "_rwkv7_native_mm_quantization", "none")),
+                int(getattr(self, "_rwkv7_native_mm_replaced_modules", 0)),
+                _ascend_graph_module_signature(self),
+                _ascend_graph_runtime_signature(),
+                int(batch_size),
+            )
+            cache_limit = _ascend_graph_cache_size()
+            runner_args = (self, int(batch_size))
+        else:
+            runner_cls = getattr(entrypoint, "_NativeGraphRunner", None)
+            if runner_cls is None:
+                raise RuntimeError("native_graph runtime is unavailable")
+            packs = self._native_graph_packs()
+            key = (
+                weight.device.type,
+                weight.device.index,
+                weight.dtype,
+                len(packs),
+                int(packs[0][1]),
+                int(packs[0][2]),
+                str(getattr(self, "_rwkv7_native_mm_quantization", "none")),
+                int(getattr(self, "_rwkv7_native_mm_replaced_modules", 0)),
+                _native_graph_runtime_signature(),
+                int(batch_size),
+            )
+            cache_limit = _native_graph_cache_size()
+            runner_args = (self, packs, int(batch_size))
         cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
         if not isinstance(cache, OrderedDict):
             cache = OrderedDict()
@@ -360,12 +413,12 @@ class _NativeRuntimeMixin:
             cache.move_to_end(key)
             return runner
         stats["misses"] = int(stats.get("misses", 0)) + 1
-        while len(cache) >= _native_graph_cache_size():
+        while len(cache) >= cache_limit:
             _, evicted = cache.popitem(last=False)
             if hasattr(evicted, "detach_bound_cache"):
                 evicted.detach_bound_cache()
             stats["evictions"] = int(stats.get("evictions", 0)) + 1
-        runner = native_graph_runner_cls(self, packs, int(batch_size))
+        runner = runner_cls(*runner_args)
         cache[key] = runner
         return runner
 
@@ -379,10 +432,15 @@ class _NativeRuntimeMixin:
         stats = dict(getattr(self, "_rwkv7_native_graph_cache_stats", _native_graph_stats_template()))
         requests = int(stats.get("requests", 0))
         hits = int(stats.get("hits", 0))
+        graph_cache_limit = (
+            _ascend_graph_cache_size()
+            if self.model.embeddings.weight.device.type == "npu"
+            else _native_graph_cache_size()
+        )
         stats.update(
             {
                 "size": len(self.rwkv7_native_graph_cache_batch_sizes()),
-                "limit": _native_graph_cache_size(),
+                "limit": graph_cache_limit,
                 "batch_sizes": self.rwkv7_native_graph_cache_batch_sizes(),
                 "hit_rate": float(hits) / float(requests) if requests else None,
             }
@@ -498,7 +556,16 @@ class _NativeRuntimeMixin:
         is safe for JIT because ``native_jit._lm_head`` calls the module.
         Detected by class name to avoid importing optional quantization deps.
         """
-        quantized_names = {"Linear4bit", "Linear8bit", "Linear8bitLt", "MM8Linear", "MM4Linear"}
+        quantized_names = {
+            "Linear4bit",
+            "Linear8bit",
+            "Linear8bitLt",
+            "MM8Linear",
+            "MM4Linear",
+            "AscendW8A16Linear",
+            "AscendWeightOnlyLinear",
+            "AscendW4A16Linear",
+        }
         try:
             return any(type(module).__name__ in quantized_names for module in self.model.layers.modules())
         except Exception:
@@ -528,6 +595,39 @@ class _NativeRuntimeMixin:
                 if not callable(getattr(module, "rwkv7_forward_into", None)):
                     return False
         return seen_native
+
+    def _native_model_ascend_quant_graph_safe(self) -> bool:
+        """Allow only adapter-owned Ascend packed modules in NPUGraph decode."""
+
+        ascend_names = {
+            "AscendW8A16Linear",
+            "AscendWeightOnlyLinear",
+            "AscendW4A16Linear",
+        }
+        external_names = {
+            "Linear4bit",
+            "Linear8bit",
+            "Linear8bitLt",
+            "MM8Linear",
+            "MM4Linear",
+        }
+        seen_ascend = False
+        try:
+            modules = self.model.layers.modules()
+        except Exception:
+            return False
+        for module in modules:
+            name = type(module).__name__
+            if name in external_names:
+                return False
+            if name in ascend_names:
+                seen_ascend = True
+        return seen_ascend
+
+    def _native_model_quant_graph_safe(self, device_type: str) -> bool:
+        if str(device_type) == "npu":
+            return self._native_model_ascend_quant_graph_safe()
+        return self._native_model_native_quant_graph_safe()
 
     def _native_prefill_graph_quant_safe(
         self,

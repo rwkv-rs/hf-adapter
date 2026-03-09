@@ -8,6 +8,8 @@ provenance:
 
 # Native JIT decode engine split
 
+> Historical implementation record. Current status is tracked in `HF_STATUS.md` and `HF_TODO.md`.
+
 Status: tenth stacked structural change.
 
 ## Scope

@@ -16,8 +16,12 @@ def main():
     ap.add_argument("--prompt", default="User: Hello!\n\nAssistant:")
     args = ap.parse_args()
 
+    if args.device.startswith("npu"):
+        from rwkv7_hf.ascend_runtime import enable_ascend
+
+        enable_ascend(args.device, backend="eager", required=True)
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-    accelerator = args.device.startswith(("cuda", "musa", "mps"))
+    accelerator = args.device.startswith(("cuda", "npu", "musa", "mps"))
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
         trust_remote_code=True,
@@ -34,6 +38,8 @@ def main():
         out = model(**enc, use_cache=True)
         if args.device.startswith("cuda"):
             torch.cuda.synchronize()
+        elif args.device.startswith("npu"):
+            torch.npu.synchronize()
         elif args.device.startswith("musa"):
             torch.musa.synchronize()
         print("logits_shape", tuple(out.logits.shape))
@@ -42,6 +48,8 @@ def main():
         gen = model.generate(**enc, max_new_tokens=args.max_new_tokens, do_sample=False, use_cache=True)
         if args.device.startswith("cuda"):
             torch.cuda.synchronize()
+        elif args.device.startswith("npu"):
+            torch.npu.synchronize()
         elif args.device.startswith("musa"):
             torch.musa.synchronize()
     getter = getattr(model, "rwkv7_last_fast_token_backend", None)

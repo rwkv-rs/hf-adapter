@@ -16,6 +16,11 @@ from typing import Iterable
 ADAPTER_FILES = [
     "ada_lora.py",
     "ada_sparse_ffn.py",
+    "ascend_graph_runtime.py",
+    "ascend_quant.py",
+    "ascend_quant_w4.py",
+    "ascend_runtime.py",
+    "ascend_w4_cle.py",
     "blackwell_norm_mix.py",
     "dplr_prefill.py",
     "dplr_prefill_triton.py",

@@ -91,6 +91,11 @@ if False:  # pragma: no cover
     from .musa_fused import try_musa_attn_shift_mix as _native_musa_fused_dependency_sentinel
     from .musa_wkv import musa_wkv as _native_musa_wkv_dependency_sentinel
     from .musa_wkv_source import WKV7_MUSA_HEADER as _native_musa_wkv_source_dependency_sentinel
+    from .ascend_graph_runtime import AscendGraphRunner as _native_ascend_graph_dependency_sentinel
+    from .ascend_quant import AscendW8A16Linear as _native_ascend_w8_dependency_sentinel
+    from .ascend_quant_w4 import AscendWeightOnlyLinear as _native_ascend_w4_dependency_sentinel
+    from .ascend_runtime import enable_ascend as _native_ascend_runtime_dependency_sentinel
+    from .ascend_w4_cle import calibrate_sqrelu_value_w4 as _native_ascend_w4_cle_dependency_sentinel
     from .ada_lora import ada_wagv_lora as _native_ada_lora_dependency_sentinel
     from .ada_sparse_ffn import ada_linear as _native_ada_sparse_ffn_dependency_sentinel
     from .blackwell_norm_mix import blackwell_ffn_add_norm_mix as _native_sm120_norm_mix_dependency_sentinel
@@ -193,6 +198,21 @@ except Exception:  # pragma: no cover - optional CUDA graph acceleration
     _native_graph_cache_size = lambda: 8
     _native_graph_runtime_signature = lambda: ()
     _native_graph_stats_template = lambda: {"requests": 0, "hits": 0, "misses": 0, "evictions": 0}
+
+try:
+    from .ascend_graph_runtime import (
+        AscendGraphRunner as _AscendGraphRunner,
+        ascend_graph_available as _ascend_graph_available,
+        ascend_graph_cache_size as _ascend_graph_cache_size,
+        ascend_graph_module_signature as _ascend_graph_module_signature,
+        ascend_graph_runtime_signature as _ascend_graph_runtime_signature,
+    )
+except Exception:  # pragma: no cover - optional torch-npu graph acceleration
+    _AscendGraphRunner = None
+    _ascend_graph_available = lambda: False
+    _ascend_graph_cache_size = lambda: 3
+    _ascend_graph_module_signature = lambda owner: ()
+    _ascend_graph_runtime_signature = lambda: ()
 
 
 def _native_model_jit_enabled() -> bool:

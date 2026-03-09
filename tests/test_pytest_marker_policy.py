@@ -25,6 +25,11 @@ def test_path_policy_assigns_execution_and_hardware_relationships() -> None:
     assert classify_test_path("tests/test_kernel_policy.py") == {"cpu"}
     assert classify_test_path("tests/test_mlx_quant.py") == {"cpu", "apple"}
     assert classify_test_path("tests/test_musa_contract.py") == {"cpu", "musa"}
+    assert classify_test_path("tests/test_ascend_runtime.py") == {"cpu", "ascend"}
+    assert classify_test_path("tests/test_huawei_ascend_smoke.py") == {
+        "cpu",
+        "ascend",
+    }
     assert classify_test_path("tests/test_v100_sm70_mm4_production_gate.py") == {
         "cpu",
         "cuda",

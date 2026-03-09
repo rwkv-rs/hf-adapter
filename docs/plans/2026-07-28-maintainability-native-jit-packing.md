@@ -8,6 +8,8 @@ provenance:
 
 # Native JIT packing split
 
+> Historical implementation record. Current status is tracked in `HF_STATUS.md` and `HF_TODO.md`.
+
 Status: sixth stacked structural change.
 
 ## Scope

@@ -116,10 +116,6 @@ row is never a full-FLA reference.
 
 - [ ] H100/Hopper: bf16, large-model, quant, batch, cache, training, and
       same-card performance rows.
-- [x] AMD gfx1100/ROCm 7.2.1: fully native HF load/generate, PEFT, recurrent
-      cache/chunked prefill, bf16 Trainer and B1/B2/B4/B8 baseline on a real GPU.
-- [x] AMD gfx1100: exact-architecture fused decode and output-head MM8/MM4
-      B1/B2/B4/B8 speed/quality rows through 13.3B; all 40 quant cells pass.
 - [ ] AMD/ROCm: fused prefill, full-model fused W8/W4, MI-series, longer
       training and same-card official/Albatross performance.
 - [ ] Other Turing/RTX 20 products: validate independently and do not inherit
@@ -133,6 +129,12 @@ row is never a full-FLA reference.
       Independently validate later S4000/S5000-class hardware when accessible:
       do not inherit S70 compute limits, but do not claim its bf16/quant/graph/
       multi-device/training capabilities without exact-card evidence either.
+- [ ] Huawei Ascend 910B3: the import-safe HF runtime, fixed-batch NPUGraph,
+      exact-stack W8 route, candidate-only W4 and hardware smoke are ported from
+      standalone commit `b6391271f`. Rerun the real 7.2B eager/graph/W8 matrix
+      against current main, then add real PEFT/Trainer/TRL, graph-prefill,
+      multi-NPU and long-soak evidence. Do not promote W4 or other Ascend
+      cards/software stacks from the 910B3 row.
 - [ ] Add exact-card evidence for additional RTX 50-series and constrained
       laptop/low-memory devices.
 - [ ] Reproduce the promoted Apple results on M1–M4 and Pro/Max/Ultra variants.

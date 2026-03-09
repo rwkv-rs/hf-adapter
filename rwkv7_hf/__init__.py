@@ -19,6 +19,46 @@ RWKV7ForCausalLM = NativeRWKV7ForCausalLM
 RWKV7StateCache = NativeRWKV7Cache
 
 try:
+    from .ascend_runtime import (
+        AscendRuntimeInfo,
+        ascend_available,
+        configure_ascend_defaults,
+        enable_ascend,
+        memory_stats as ascend_memory_stats,
+        synchronize as ascend_synchronize,
+    )
+except Exception:  # Keep package importable without the optional torch-npu stack.
+    AscendRuntimeInfo = None
+    ascend_available = None
+    configure_ascend_defaults = None
+    enable_ascend = None
+    ascend_memory_stats = None
+    ascend_synchronize = None
+
+try:
+    from .ascend_quant import (
+        ASCEND_910B3_W8_SPEED_ROWS,
+        AscendQuantDecision,
+        AscendW8A16Linear,
+        ascend_w8a16_decision,
+        quantize_ascend_w8a16,
+    )
+    from .ascend_quant_w4 import (
+        AscendW4A16Linear,
+        AscendWeightOnlyLinear,
+        quantize_ascend_w4a16_candidate,
+    )
+except Exception:  # Optional PyTorch-backed Ascend quantization surface.
+    ASCEND_910B3_W8_SPEED_ROWS = None
+    AscendQuantDecision = None
+    AscendW8A16Linear = None
+    AscendW4A16Linear = None
+    AscendWeightOnlyLinear = None
+    ascend_w8a16_decision = None
+    quantize_ascend_w8a16 = None
+    quantize_ascend_w4a16_candidate = None
+
+try:
     from .tokenization_rwkv7 import RWKV7Tokenizer
 except ImportError:
     RWKV7Tokenizer = None
@@ -91,6 +131,20 @@ __all__ = [
     "NativeRWKV7ForCausalLM",
     "NativeRWKV7Model",
     "NativeRWKV7Cache",
+    "AscendRuntimeInfo",
+    "ascend_available",
+    "configure_ascend_defaults",
+    "enable_ascend",
+    "ascend_memory_stats",
+    "ascend_synchronize",
+    "ASCEND_910B3_W8_SPEED_ROWS",
+    "AscendQuantDecision",
+    "AscendW8A16Linear",
+    "AscendW4A16Linear",
+    "AscendWeightOnlyLinear",
+    "ascend_w8a16_decision",
+    "quantize_ascend_w8a16",
+    "quantize_ascend_w4a16_candidate",
     "MLXGenerateOutput",
     "MLXGenerationSession",
     "MLXGenerationSessionBatch",

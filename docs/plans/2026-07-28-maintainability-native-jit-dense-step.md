@@ -8,6 +8,8 @@ provenance:
 
 # Native JIT dense TorchScript step split
 
+> Historical implementation record. Current status is tracked in `HF_STATUS.md` and `HF_TODO.md`.
+
 Status: fifth stacked structural change.
 
 ## Scope
