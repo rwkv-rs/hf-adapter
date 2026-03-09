@@ -10,6 +10,7 @@ from rwkv7_hf.kernel_policy import (
     detect_gpu_profile,
     env_flag,
     env_int,
+    is_metax_c500_name,
     is_rtx_model_name,
     is_tesla_t4_name,
     policy_for_profile,
@@ -28,6 +29,7 @@ def test_gpu_family_classification() -> None:
         ("NVIDIA H100 SXM", (9, 0), "hopper"),
         ("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0), "blackwell"),
         ("NVIDIA GeForce RTX 5090", (12, 0), "blackwell"),
+        ("MetaX C500", (8, 0), "metax"),
         ("AMD Instinct MI300X", None, "amd_hip"),
         ("Apple M5", None, "apple_mps"),
     ]
@@ -46,6 +48,12 @@ def test_exact_t4_name_matching_is_token_scoped() -> None:
     assert is_tesla_t4_name("NVIDIA T4-PCIE-16GB")
     assert not is_tesla_t4_name("NVIDIA T400")
     assert not is_tesla_t4_name("GeForce RTX 2080 Ti")
+
+
+def test_exact_metax_name_matching_rejects_adjacent_products() -> None:
+    assert is_metax_c500_name("MetaX C500")
+    assert not is_metax_c500_name("MetaX C5000")
+    assert not is_metax_c500_name("NVIDIA C500")
 
 
 def test_exact_rtx_model_matching_rejects_adjacent_and_variant_products() -> None:
@@ -207,6 +215,56 @@ def test_rocm_runtime_detection_preserves_exact_gcn_architecture() -> None:
     assert gfx1100_policy.mm4_dot_block_pairs == 64
     assert gfx1100_policy.mm4_dot_block_n == 32
     assert gfx1100_policy.mm4_dot_warps == 2
+
+
+def test_metax_runtime_detection_never_inherits_nvidia_policy() -> None:
+    class FakeVersion:
+        cuda = "11.6"
+        hip = None
+
+    class FakeDevice:
+        def __init__(self, value):
+            text = str(value)
+            self.index = int(text.split(":", 1)[1]) if ":" in text else None
+
+    class FakeCuda:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def current_device():
+            return 0
+
+        @staticmethod
+        def get_device_name(_index):
+            return "MetaX C500"
+
+        @staticmethod
+        def get_device_capability(_index):
+            return (8, 0)
+
+    class FakeTorch:
+        version = FakeVersion()
+        cuda = FakeCuda()
+        device = FakeDevice
+
+    profile = detect_gpu_profile(torch_module=FakeTorch())
+    assert profile.family == "metax"
+    assert profile.vendor == "metax"
+    assert profile.is_cuda
+    assert profile.hardware_generation == "metax_c500"
+    policy = policy_for_profile(profile)
+    assert policy.fast_token_backend == "native"
+    assert policy.fast_cache
+    assert not policy.fast_prefill
+    assert not policy.fused_recurrent_output
+    assert not policy.fused_recurrent_raw
+    assert not policy.fused_output
+    assert not policy.fused_norm_mix
+    assert not policy.fused_prefill_scan
+    assert not policy.prefill_graph
+    assert policy.quant_policy == "metax_unvalidated"
 
 
 def test_policy_defaults_are_conservative() -> None:
@@ -680,6 +738,7 @@ def test_every_policy_family_has_an_adaptation_rule() -> None:
         classify_gpu("NVIDIA H100 SXM", (9, 0)),
         classify_gpu("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0)),
         classify_gpu("NVIDIA GeForce RTX 5090", (12, 0)),
+        classify_gpu("MetaX C500", (8, 0)),
         classify_gpu("AMD Instinct MI300X", None, is_hip=True),
         classify_gpu("Apple M5", None, is_mps=True),
     ]
@@ -692,7 +751,17 @@ def test_every_policy_family_has_an_adaptation_rule() -> None:
 
     # The registry is intentionally broader than the live test cases because it
     # also documents unvalidated fallback families.
-    for family in ("unknown_cuda", "legacy_cuda", "pascal", "volta", "ada", "blackwell", "amd_hip", "apple_mps"):
+    for family in (
+        "unknown_cuda",
+        "legacy_cuda",
+        "pascal",
+        "volta",
+        "ada",
+        "blackwell",
+        "amd_hip",
+        "metax",
+        "apple_mps",
+    ):
         assert family in ADAPTATION_RULES
     assert any("A6000" in card for card in ADAPTATION_RULES["ampere"].cards)
 

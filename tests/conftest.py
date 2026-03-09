@@ -18,6 +18,7 @@ REGISTERED_MARKERS = frozenset(
         "apple",
         "musa",
         "ascend",
+        "metax",
         "slow",
         "model_required",
     }
@@ -27,6 +28,10 @@ MUSA_PATTERNS = ("test_musa_*.py",)
 ASCEND_PATTERNS = (
     "test_ascend_*.py",
     "test_huawei_ascend_*.py",
+)
+METAX_PATTERNS = (
+    "test_metax_*.py",
+    "test_*metax_c500*.py",
 )
 APPLE_PATTERNS = (
     "test_apple_*.py",
@@ -102,6 +107,8 @@ def classify_test_path(path: str | Path) -> frozenset[str]:
         markers.add("musa")
     if _matches(name, ASCEND_PATTERNS):
         markers.add("ascend")
+    if _matches(name, METAX_PATTERNS):
+        markers.add("metax")
     if _matches(name, APPLE_PATTERNS):
         markers.add("apple")
     if _matches(name, CUDA_PATTERNS):

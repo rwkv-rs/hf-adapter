@@ -3,7 +3,7 @@
 Canonical current hardware status for the HF adapter. Detailed experiment logs
 remain in `bench/` and platform-specific documents.
 
-Last updated: **2026-07-28**.
+Last updated: **2026-08-04**.
 
 ## Status definitions
 
@@ -32,6 +32,7 @@ Last updated: **2026-07-28**.
 | AMD gfx1100 / ROCm 7.2.1 | **Validated with exact-card decode lanes** | 0.1B compatibility/training; 0.1B-13.3B fused decode; 0.4B-13.3B output-head W8/W4 | Fully native HF/PEFT/cache/chunked-prefill/Trainer; dense fused decode remains positive through 13.3B; 40/40 output-head quant B1/B2/B4/B8 decode rows beat fp16 with greedy parity | Fused prefill, full-model quant speed/2.9B W4 quality, MI-series and same-card Albatross |
 | Moore Threads MTT S70 / MUSA 4.2.0 | **Smoke; exact-card legacy scope** | First-generation 0.1B HF lane; no Tensor Core and slow fp16 compute, so retained kernels use fp16 storage/IO with fp32 compute/state | Standalone parity, 64-token eager/WKV equality, autograd eager fallback, B1/B2 smoke and paired evidence; WKV prefill `1.214072x`, decode `1.000000x`; opt-in shift-mix prefill median `1.050809x`, decode neutral, peak memory equal | SDK 4.2.0 is frozen; S4000/S5000 capabilities require independent exact-card validation and must not inherit S70 limits; no broad bf16/quant/graph/multi-device/training-kernel claim |
 | Huawei Ascend 910B3 / CANN 8.5.0 | **HF integration ported; standalone exact-stack validation** | Native eager/JIT, recurrent cache, chunked prefill, fixed-batch NPUGraph decode, exact 7.2B W8 B1/B4/B8 | Import-safe torch-npu runtime; standalone real-7.2B alignment and graph/W8 evidence at pinned commit `b6391271f` | Current-main 7.2B rerun, PEFT/TRL, multi-NPU, graph prefill, W4 promotion and every other Ascend card/stack |
+| MetaX C500 64GB / MXMACA 3.5.3.20 | **HF compatibility ported; standalone exact-card validation** | Native eager FP32/FP16/BF16 tiny; real 0.4B FP16 inference and BF16 Trainer/LoRA | Exact product routing prevents CUDA capability 8.0 from inheriting NVIDIA Ampere kernels; CPU-oracle, cache/chunked-prefill/generation/backward/save-reload and FP32 PEFT merge evidence at `f2653e2` | Current-main rerun, all-model B1-B8 matrix, same-card RWKV-LM/Albatross, W8/W4, TRL/ZeRO and multi-card |
 | Other Turing / RTX 20 | **Open** | exact-card validation required | conservative family routing only | Do not inherit Tesla T4 prefill or DP4A quant promotion by `sm_75` alone |
 | CPU | **Experimental fallback** | Tiny/native tests | Import-safe native model and CPU tests | Production performance is not a target yet |
 
@@ -62,6 +63,7 @@ Last updated: **2026-07-28**.
 - AMD ROCm: [`validation/AMD_ROCM_HF_VALIDATION.md`](validation/AMD_ROCM_HF_VALIDATION.md)
 - Moore Threads MUSA: [`hardware/MUSA.md`](hardware/MUSA.md), [`../bench/musa_s70_validation_20260728/`](../bench/musa_s70_validation_20260728/README.md), [`../bench/musa_s70_shift_mix_20260728/`](../bench/musa_s70_shift_mix_20260728/README.md)
 - Huawei Ascend NPU: [`hardware/HUAWEI_ASCEND.md`](hardware/HUAWEI_ASCEND.md), [standalone source and raw evidence](https://github.com/rwkv-rs/rwkv7-ascend-npu/tree/b6391271f0ddb606dad5e97a65fa4742e82fcd50)
+- MetaX C500: [`hardware/METAX_C500.md`](hardware/METAX_C500.md), [standalone source and raw evidence](https://github.com/123123213weqw/rwkv7-metax-c500/tree/f2653e20250821ec48534e5e08b07d59effb985c)
 - Tesla T4: [`hardware/TURING_T4.md`](hardware/TURING_T4.md), [`../bench/t4_production_close_20260720/`](../bench/t4_production_close_20260720/README.md)
 - Blackwell history: [`hardware/BLACKWELL_50SERIES.md`](hardware/BLACKWELL_50SERIES.md)
 

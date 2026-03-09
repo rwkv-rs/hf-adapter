@@ -135,6 +135,12 @@ row is never a full-FLA reference.
       against current main, then add real PEFT/Trainer/TRL, graph-prefill,
       multi-NPU and long-soak evidence. Do not promote W4 or other Ascend
       cards/software stacks from the 910B3 row.
+- [ ] MetaX C500: exact-card detection, conservative native eager routing,
+      FP32 key normalization and a hardware smoke are ported from standalone
+      commit `f2653e2`. Rerun the tiny and real 0.4B matrix against current
+      main, then cover all released models/B1-B8, TRL/resume/ZeRO, paired
+      RWKV-LM/Albatross performance, W8/W4 and multi-C500. Never inherit
+      NVIDIA Ampere kernels from MXMACA's reported CUDA capability 8.0.
 - [ ] Add exact-card evidence for additional RTX 50-series and constrained
       laptop/low-memory devices.
 - [ ] Reproduce the promoted Apple results on M1–M4 and Pro/Max/Ultra variants.

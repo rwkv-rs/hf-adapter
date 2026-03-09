@@ -16,6 +16,10 @@ def main():
     ap.add_argument("--prompt", default="User: Hello!\n\nAssistant:")
     args = ap.parse_args()
 
+    if args.device.startswith("metax"):
+        from rwkv7_hf.metax_runtime import enable_metax
+
+        args.device = enable_metax(args.device, required=True).device
     if args.device.startswith("npu"):
         from rwkv7_hf.ascend_runtime import enable_ascend
 

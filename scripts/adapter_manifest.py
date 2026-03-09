@@ -50,6 +50,7 @@ ADAPTER_FILES = [
     "mlx_session.py",
     "mlx_state.py",
     "mlx_wkv.py",
+    "metax_runtime.py",
     "musa_build.py",
     "musa_fused.py",
     "musa_wkv.py",

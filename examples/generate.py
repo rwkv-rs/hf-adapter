@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt", required=True, help="Prompt text")
     parser.add_argument(
         "--device",
-        choices=["auto", "cuda", "npu", "mps", "musa", "cpu"],
+        choices=["auto", "cuda", "metax", "npu", "mps", "musa", "cpu"],
         default="auto",
     )
     parser.add_argument("--dtype", choices=["auto", *DTYPES], default="auto")
@@ -56,6 +56,22 @@ def _ascend_available() -> bool:
         return False
 
 
+def _metax_available() -> bool:
+    try:
+        from rwkv7_hf.metax_runtime import metax_available
+
+        return bool(metax_available())
+    except Exception:
+        return False
+
+
+def _enable_metax() -> torch.device:
+    from rwkv7_hf.metax_runtime import enable_metax
+
+    info = enable_metax("cuda:0", required=True)
+    return torch.device(info.device)
+
+
 def _enable_ascend() -> torch.device:
     from rwkv7_hf.ascend_runtime import enable_ascend
 
@@ -65,6 +81,8 @@ def _enable_ascend() -> torch.device:
 
 def resolve_device(requested: str) -> torch.device:
     if requested == "auto":
+        if _metax_available():
+            return _enable_metax()
         if torch.cuda.is_available():
             return torch.device("cuda")
         if _ascend_available():
@@ -78,6 +96,8 @@ def resolve_device(requested: str) -> torch.device:
         raise RuntimeError("--device musa was requested, but MUSA is unavailable")
     if requested == "npu":
         return _enable_ascend()
+    if requested == "metax" or (requested == "cuda" and _metax_available()):
+        return _enable_metax()
     device = torch.device(requested)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("--device cuda was requested, but CUDA is unavailable")

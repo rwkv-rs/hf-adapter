@@ -51,6 +51,7 @@ User guides:
 - [Advanced training, speculative decoding, and multi-GPU](docs/ADVANCED_USAGE.md)
 - [Apple MPS, MLX, and CoreML](docs/APPLE_USAGE.md)
 - [Huawei Ascend NPU / torch-npu](docs/hardware/HUAWEI_ASCEND.md)
+- [MetaX C500 / MXMACA](docs/hardware/METAX_C500.md)
 
 ## Convert an official checkpoint
 
@@ -88,7 +89,7 @@ save/reload.
 | Distributed training | DeepSpeed ZeRO-2/3 and checkpoint resume gates |
 | Inference parallelism | `device_map` pipeline-style placement plus Transformers-native dense fp16 `tp_plan="auto"` |
 | Quantization | BnB fallback, native MM8/MM4, A8W8, TorchAO, Marlin, MLX |
-| Hardware | CUDA/ROCm, Huawei Ascend NPU, Moore Threads MUSA, CPU fallback, Apple MPS/MLX/CoreML |
+| Hardware | CUDA/ROCm, MetaX C500/MXMACA, Huawei Ascend NPU, Moore Threads MUSA, CPU fallback, Apple MPS/MLX/CoreML |
 | Serving references | runtime-independent vLLM/SGLang implementation contracts |
 
 The repository does not contain a native vLLM or SGLang runtime. Their model,
@@ -101,7 +102,10 @@ Production readiness is scoped to exact models, cards, dtypes, batches, and
 shapes. Promoted evidence currently includes V100, T4, RTX 3090/4080/4090/5090,
 selected Ampere validation, and bounded Apple M5 paths. Huawei Ascend 910B3
 HF/NPUGraph/W8 support is ported from the dedicated validated Ascend repository;
-a current-main hardware rerun remains explicit. Universal all-card,
+a current-main hardware rerun remains explicit. MetaX C500 native eager HF
+compatibility is likewise ported from its pinned exact-card evidence repository,
+without inheriting NVIDIA Ampere policy from the CUDA-compatible device API.
+Universal all-card,
 all-shape quantized speed, every hardware family, broader task quality, and
 distributed-training breadth remain separate acceptance items. HF layer-split
 PP and the TP/PP porting contracts are complete for this repository; native
@@ -142,6 +146,7 @@ Canonical project state:
 python -m pip install -e .                    # core native HF path
 python -m pip install -e ".[cuda]"            # CUDA build helper
 python -m pip install -e ".[ascend]"          # install CANN-matched torch-npu first
+python -m pip install -e ".[metax]"           # install the MXMACA PyTorch stack first
 python -m pip install -e ".[train]"           # PEFT/TRL/DeepSpeed
 python -m pip install -e ".[quant]"           # bitsandbytes fallback
 python -m pip install -e ".[torchao]"         # supported Linux TorchAO path

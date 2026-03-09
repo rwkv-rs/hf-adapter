@@ -89,7 +89,12 @@ def attn_step(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tensor,
     a = torch.sigmoid(layer.a_lora.lora[2](layer.a_lora.lora[0](xa)))
     g = layer.g_lora.lora[2](torch.sigmoid(layer.g_lora.lora[0](xg)))
 
-    kk = F.normalize((k * layer.k_k).view(H, N), dim=-1, p=2).view(attention_hidden)
+    # FP16 cannot represent F.normalize's default eps=1e-12. Keep the
+    # reduction/epsilon in FP32 and restore the projection dtype afterward so
+    # zero or near-zero key norms remain finite on CUDA-compatible runtimes.
+    kk = F.normalize(
+        (k * layer.k_k).view(H, N).float(), dim=-1, p=2
+    ).to(dtype=k.dtype).view(attention_hidden)
     k = k * (1 + (a - 1) * layer.k_a)
     if layer_id == 0:
         v_first = v
@@ -157,10 +162,10 @@ def attn_step_batched(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tenso
     g = layer.g_lora.lora[2](torch.sigmoid(layer.g_lora.lora[0](xg)))
 
     kk = F.normalize(
-        (k * layer.k_k.reshape(1, attention_hidden)).view(B, H, N),
+        (k * layer.k_k.reshape(1, attention_hidden)).view(B, H, N).float(),
         dim=-1,
         p=2,
-    ).view(B, attention_hidden)
+    ).to(dtype=k.dtype).view(B, attention_hidden)
     k = k * (1 + (a - 1) * layer.k_a.reshape(1, attention_hidden))
     if layer_id == 0:
         v_first = v

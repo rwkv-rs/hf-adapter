@@ -21,6 +21,8 @@ cuda = ["ninja; platform_system == 'Linux'"]
 # torch_npu wheels are CANN-, architecture-, and Python-specific.  Install the
 # matching Huawei wheel first; this empty extra provides a stable adapter lane.
 ascend = []
+# MetaX PyTorch/MXMACA wheels are distributed with the vendor runtime image.
+metax = []
 fla = ["flash-linear-attention"]
 fla-reference = ["flash-linear-attention"]
 test = [
@@ -56,6 +58,7 @@ markers = [
   "apple: covers Apple MPS, MLX, Metal, CoreML, or Apple evidence contracts",
   "musa: covers Moore Threads MUSA runtime, kernel, or evidence contracts",
   "ascend: covers Huawei Ascend NPU runtime, graph, quantization, or evidence contracts",
+  "metax: covers MetaX C500/MXMACA runtime, policy, or evidence contracts",
   "slow: integration/evidence test unsuitable for the fast pull-request subset",
   "model_required: requires an external converted checkpoint or model fixture",
 ]

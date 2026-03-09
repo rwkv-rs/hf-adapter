@@ -93,8 +93,19 @@ def bnb_int8_threshold_override(
     return value
 
 
-def native_model_jit_enabled() -> bool:
-    return os.environ.get("RWKV7_NATIVE_MODEL_JIT", "1") not in FALSE_VALUES
+def native_model_jit_enabled(
+    *,
+    kernel_policy_fn: Callable[..., Any] = current_kernel_policy,
+) -> bool:
+    raw = os.environ.get("RWKV7_NATIVE_MODEL_JIT")
+    if raw is not None:
+        return raw not in FALSE_VALUES
+    try:
+        # MXMACA reports a CUDA-compatible capability of 8.0. Its validated HF
+        # route is eager/no-FLA and must not inherit another vendor's JIT path.
+        return getattr(kernel_policy_fn().profile, "family", None) != "metax"
+    except Exception:
+        return True
 
 
 def native_model_backend_requested(

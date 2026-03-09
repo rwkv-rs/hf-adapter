@@ -30,6 +30,11 @@ def test_path_policy_assigns_execution_and_hardware_relationships() -> None:
         "cpu",
         "ascend",
     }
+    assert classify_test_path("tests/test_metax_runtime.py") == {"cpu", "metax"}
+    assert classify_test_path("tests/test_metax_c500_smoke.py") == {
+        "cpu",
+        "metax",
+    }
     assert classify_test_path("tests/test_v100_sm70_mm4_production_gate.py") == {
         "cpu",
         "cuda",

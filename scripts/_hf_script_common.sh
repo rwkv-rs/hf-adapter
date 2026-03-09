@@ -121,10 +121,18 @@ try:
             print(f"musa_device_{idx}={name}{suffix}")
     print(f"torch_cuda_available={torch.cuda.is_available()}")
     print(f"torch_cuda_device_count={torch.cuda.device_count() if torch.cuda.is_available() else 0}")
+    metax_available = False
     if torch.cuda.is_available():
+        try:
+            from rwkv7_hf.metax_runtime import is_metax_c500_name
+        except Exception:
+            is_metax_c500_name = lambda _name: False
         for idx in range(torch.cuda.device_count()):
             cap = torch.cuda.get_device_capability(idx)
-            print(f"cuda_device_{idx}={torch.cuda.get_device_name(idx)} sm_{cap[0]}{cap[1]}")
+            name = torch.cuda.get_device_name(idx)
+            metax_available = metax_available or bool(is_metax_c500_name(name))
+            print(f"cuda_device_{idx}={name} sm_{cap[0]}{cap[1]}")
+    print(f"metax_c500_available={metax_available}")
     mps = getattr(torch.backends, "mps", None)
     if mps is not None:
         print(f"torch_mps_built={mps.is_built()}")
@@ -135,6 +143,10 @@ for key in [
     "CUDA_VISIBLE_DEVICES",
     "ASCEND_RT_VISIBLE_DEVICES",
     "ASCEND_TOOLKIT_VERSION",
+    "MACA_PATH",
+    "CUCC_PATH",
+    "MXMACA_VERSION",
+    "RWKV7_ALLOW_UNVALIDATED_METAX",
     "PYTHONNOUSERSITE",
     "RWKV_V7_ON",
     "TORCHDYNAMO_DISABLE",
