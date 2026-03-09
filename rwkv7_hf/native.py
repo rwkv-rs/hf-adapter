@@ -65,6 +65,57 @@ def _eager_recurrent_state(state: torch.Tensor) -> torch.Tensor:
     return state if state.dtype == torch.float32 else state.float()
 
 
+def _decomposed_group_norm(
+    value: torch.Tensor,
+    num_groups: int,
+    *,
+    weight: torch.Tensor | None,
+    bias: torch.Tensor | None,
+    eps: float,
+) -> torch.Tensor:
+    """Reference GroupNorm decomposition for private-use backends."""
+
+    batch, channels = int(value.shape[0]), int(value.shape[1])
+    if channels % int(num_groups):
+        raise ValueError("group norm channels must be divisible by num_groups")
+    work = value.float().reshape(batch, int(num_groups), -1)
+    mean = work.mean(dim=-1, keepdim=True)
+    centered = work - mean
+    variance = (centered * centered).mean(dim=-1, keepdim=True)
+    normalized = (centered * torch.rsqrt(variance + float(eps))).reshape_as(value)
+    affine_shape = (1, channels) + (1,) * (value.dim() - 2)
+    if weight is not None:
+        normalized = normalized * weight.float().reshape(affine_shape)
+    if bias is not None:
+        normalized = normalized + bias.float().reshape(affine_shape)
+    return normalized.to(value.dtype)
+
+
+def _portable_group_norm(
+    value: torch.Tensor,
+    num_groups: int,
+    *,
+    weight: torch.Tensor | None,
+    bias: torch.Tensor | None,
+    eps: float,
+) -> torch.Tensor:
+    if value.device.type == "supa":
+        return _decomposed_group_norm(
+            value,
+            num_groups,
+            weight=weight,
+            bias=bias,
+            eps=eps,
+        )
+    return F.group_norm(
+        value,
+        num_groups=num_groups,
+        weight=weight,
+        bias=bias,
+        eps=eps,
+    )
+
+
 def attn_step(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tensor,
               v_first: torch.Tensor, state: torch.Tensor):
     """Port of RWKV_x070_TMix_one with independent residual/attention widths.
@@ -109,7 +160,7 @@ def attn_step(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tensor,
     state = state * w.view(H, 1, N) + state @ ab.float() + vk.float()
     out = state.to(x.dtype) @ r.view(H, N, 1)
     out = out.view(attention_hidden)
-    out = F.group_norm(out.view(1, attention_hidden), num_groups=H,
+    out = _portable_group_norm(out.view(1, attention_hidden), num_groups=H,
                        weight=layer.g_norm.weight, bias=layer.g_norm.bias,
                        eps=N * 1e-5).view(attention_hidden)
     sk = (r.view(H, N) * k.view(H, N) * layer.r_k).sum(dim=-1, keepdim=True)
@@ -212,7 +263,7 @@ def attn_step_batched(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tenso
         state = state * w.view(B, H, 1, N) + state @ ab.float() + vk.float()
         out = state.to(x.dtype) @ r.view(B, H, N, 1)
         out = out.view(B, attention_hidden)
-    out = F.group_norm(out, num_groups=H,
+    out = _portable_group_norm(out, num_groups=H,
                        weight=layer.g_norm.weight, bias=layer.g_norm.bias,
                        eps=N * 1e-5)
     sk = (r.view(B, H, N) * k.view(B, H, N) * layer.r_k.reshape(1, H, N)).sum(dim=-1, keepdim=True)

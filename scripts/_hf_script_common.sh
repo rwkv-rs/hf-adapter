@@ -119,6 +119,22 @@ try:
             architecture = getattr(props, "architecture", None)
             suffix = f" arch={architecture}" if architecture is not None else ""
             print(f"musa_device_{idx}={name}{suffix}")
+    try:
+        from rwkv7_hf.biren_runtime import import_torch_br
+        import_torch_br(required=False)
+    except Exception:
+        pass
+    supa = getattr(torch, "supa", None)
+    supa_available = False
+    if supa is not None:
+        supa_is_available = getattr(supa, "is_available", None)
+        supa_available = bool(callable(supa_is_available) and supa_is_available())
+    print(f"torch_supa_available={supa_available}")
+    if supa_available:
+        supa_count = int(supa.device_count())
+        print(f"torch_supa_device_count={supa_count}")
+        for idx in range(supa_count):
+            print(f"supa_device_{idx}={supa.get_device_name(idx)}")
     print(f"torch_cuda_available={torch.cuda.is_available()}")
     print(f"torch_cuda_device_count={torch.cuda.device_count() if torch.cuda.is_available() else 0}")
     metax_available = False
@@ -143,6 +159,11 @@ for key in [
     "CUDA_VISIBLE_DEVICES",
     "ASCEND_RT_VISIBLE_DEVICES",
     "ASCEND_TOOLKIT_VERSION",
+    "BIRENSUPA_SDK_VERSION",
+    "BIREN_DRIVER_VERSION",
+    "BIREN_SUPA_VERSION",
+    "ACCELERATE_TORCH_DEVICE",
+    "RWKV7_ALLOW_UNVALIDATED_BIREN",
     "MACA_PATH",
     "CUCC_PATH",
     "MXMACA_VERSION",

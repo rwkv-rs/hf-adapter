@@ -16,6 +16,10 @@ def main():
     ap.add_argument("--prompt", default="User: Hello!\n\nAssistant:")
     args = ap.parse_args()
 
+    if args.device.startswith(("biren", "supa")):
+        from rwkv7_hf.biren_runtime import enable_biren
+
+        args.device = enable_biren(args.device, required=True).device
     if args.device.startswith("metax"):
         from rwkv7_hf.metax_runtime import enable_metax
 
@@ -26,10 +30,14 @@ def main():
         enable_ascend(args.device, backend="eager", required=True)
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     accelerator = args.device.startswith(("cuda", "npu", "musa", "mps"))
+    accelerator = accelerator or args.device.startswith("supa")
+    model_dtype = torch.bfloat16 if args.device.startswith("supa") else (
+        torch.float16 if accelerator else torch.float32
+    )
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
         trust_remote_code=True,
-        torch_dtype=torch.float16 if accelerator else torch.float32,
+        torch_dtype=model_dtype,
         device_map=args.device if args.device.startswith("cuda") else None,
     ).eval()
     if not args.device.startswith("cuda"):
@@ -46,6 +54,8 @@ def main():
             torch.npu.synchronize()
         elif args.device.startswith("musa"):
             torch.musa.synchronize()
+        elif args.device.startswith("supa"):
+            torch.supa.synchronize()
         print("logits_shape", tuple(out.logits.shape))
         print("top5", out.logits[0, -1].float().topk(5).indices.tolist())
         print("forward_sec", round(time.time() - t0, 4))
@@ -56,6 +66,8 @@ def main():
             torch.npu.synchronize()
         elif args.device.startswith("musa"):
             torch.musa.synchronize()
+        elif args.device.startswith("supa"):
+            torch.supa.synchronize()
     getter = getattr(model, "rwkv7_last_fast_token_backend", None)
     if callable(getter):
         print("generate_fast_token_backend", getter())

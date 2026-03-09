@@ -23,6 +23,7 @@ from .native import (
     _ordered_to_device,
     _step_token_batched,
 )
+from .biren_runtime import validate_biren_forward_dtype
 from .kernel_policy import current_kernel_policy, single_cuda_device_from_device_map
 from .model_cache import (
     NativeRWKV7Cache,
@@ -86,6 +87,7 @@ _LoRA.__module__ = __name__
 # reached through native.py/native_jit.py/native_quant_mm*.py without importing
 # optional Triton kernels at runtime.
 if False:  # pragma: no cover
+    from .biren_runtime import enable_biren as _native_biren_runtime_dependency_sentinel
     from .extension_build import cuda_extension_build_environment as _native_extension_build_dependency_sentinel
     from .musa_build import load_musa_inline as _native_musa_build_dependency_sentinel
     from .musa_fused import try_musa_attn_shift_mix as _native_musa_fused_dependency_sentinel
@@ -677,6 +679,12 @@ class NativeRWKV7ForCausalLM(
         base = self.model
         device = input_ids.device if input_ids is not None else inputs_embeds.device
         dtype = inputs_embeds.dtype if inputs_embeds is not None else base.embeddings.weight.dtype
+        validate_biren_forward_dtype(
+            dtype,
+            input_device=device,
+            model_device=base.embeddings.weight.device,
+            model_dtype=base.embeddings.weight.dtype,
+        )
         native_attention_mask = _validate_native_attention_mask(
             attention_mask,
             batch_size,

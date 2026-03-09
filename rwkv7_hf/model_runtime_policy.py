@@ -101,9 +101,12 @@ def native_model_jit_enabled(
     if raw is not None:
         return raw not in FALSE_VALUES
     try:
-        # MXMACA reports a CUDA-compatible capability of 8.0. Its validated HF
-        # route is eager/no-FLA and must not inherit another vendor's JIT path.
-        return getattr(kernel_policy_fn().profile, "family", None) != "metax"
+        # Compatibility/private-use runtimes with no validated JIT path must
+        # not inherit another vendor's packed execution assumptions.
+        return getattr(kernel_policy_fn().profile, "family", None) not in {
+            "metax",
+            "biren",
+        }
     except Exception:
         return True
 

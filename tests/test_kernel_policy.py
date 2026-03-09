@@ -10,6 +10,7 @@ from rwkv7_hf.kernel_policy import (
     detect_gpu_profile,
     env_flag,
     env_int,
+    is_biren_br106m_name,
     is_metax_c500_name,
     is_rtx_model_name,
     is_tesla_t4_name,
@@ -29,6 +30,7 @@ def test_gpu_family_classification() -> None:
         ("NVIDIA H100 SXM", (9, 0), "hopper"),
         ("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0), "blackwell"),
         ("NVIDIA GeForce RTX 5090", (12, 0), "blackwell"),
+        ("Biren106M", None, "biren"),
         ("MetaX C500", (8, 0), "metax"),
         ("AMD Instinct MI300X", None, "amd_hip"),
         ("Apple M5", None, "apple_mps"),
@@ -54,6 +56,13 @@ def test_exact_metax_name_matching_rejects_adjacent_products() -> None:
     assert is_metax_c500_name("MetaX C500")
     assert not is_metax_c500_name("MetaX C5000")
     assert not is_metax_c500_name("NVIDIA C500")
+
+
+def test_exact_biren_name_matching_rejects_adjacent_products() -> None:
+    assert is_biren_br106m_name("Biren106M")
+    assert is_biren_br106m_name("Biren-106M")
+    assert not is_biren_br106m_name("Biren106M2")
+    assert not is_biren_br106m_name("BR106M")
 
 
 def test_exact_rtx_model_matching_rejects_adjacent_and_variant_products() -> None:
@@ -265,6 +274,45 @@ def test_metax_runtime_detection_never_inherits_nvidia_policy() -> None:
     assert not policy.fused_prefill_scan
     assert not policy.prefill_graph
     assert policy.quant_policy == "metax_unvalidated"
+
+
+def test_biren_runtime_detection_selects_conservative_supa_policy() -> None:
+    class FakeSupa:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def current_device():
+            return 0
+
+        @staticmethod
+        def get_device_name(_index):
+            return "Biren106M"
+
+    class FakeVersion:
+        hip = None
+
+    class FakeTorch:
+        version = FakeVersion()
+        supa = FakeSupa()
+
+    profile = detect_gpu_profile(torch_module=FakeTorch())
+    assert profile.family == "biren"
+    assert profile.vendor == "biren"
+    assert profile.is_supa
+    assert profile.hardware_generation == "br10x_br106m"
+    policy = policy_for_profile(profile)
+    assert policy.fast_token_backend == "native"
+    assert policy.fast_cache
+    assert not policy.fast_prefill
+    assert not policy.fused_recurrent_output
+    assert not policy.fused_recurrent_raw
+    assert not policy.fused_output
+    assert not policy.fused_norm_mix
+    assert not policy.fused_prefill_scan
+    assert not policy.prefill_graph
+    assert policy.quant_policy == "biren_unvalidated"
 
 
 def test_policy_defaults_are_conservative() -> None:
@@ -738,6 +786,7 @@ def test_every_policy_family_has_an_adaptation_rule() -> None:
         classify_gpu("NVIDIA H100 SXM", (9, 0)),
         classify_gpu("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0)),
         classify_gpu("NVIDIA GeForce RTX 5090", (12, 0)),
+        classify_gpu("Biren106M", None),
         classify_gpu("MetaX C500", (8, 0)),
         classify_gpu("AMD Instinct MI300X", None, is_hip=True),
         classify_gpu("Apple M5", None, is_mps=True),
@@ -759,6 +808,7 @@ def test_every_policy_family_has_an_adaptation_rule() -> None:
         "ada",
         "blackwell",
         "amd_hip",
+        "biren",
         "metax",
         "apple_mps",
     ):

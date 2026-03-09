@@ -319,7 +319,7 @@ def prepare_translated_weight(
     expected: torch.Tensor,
     dtype: torch.dtype,
 ) -> torch.Tensor:
-    """Translate one tensor without cloning when its dtype/layout already fit."""
+    """Translate one tensor, cloning only when dtype/layout/storage require it."""
 
     weight = src_weight.detach()
     if transposed:
@@ -338,6 +338,13 @@ def prepare_translated_weight(
             )
     if weight.dtype != dtype:
         weight = weight.to(dtype=dtype)
+    # mmap-loaded checkpoints may expose a contiguous tensor as a view into a
+    # larger storage. Safetensors rejects those partial-storage views because
+    # serializing the backing allocation would retain unrelated bytes.
+    storage_nbytes = weight.untyped_storage().nbytes()
+    tensor_nbytes = weight.numel() * weight.element_size()
+    if weight.storage_offset() != 0 or storage_nbytes != tensor_nbytes:
+        weight = weight.clone()
     return weight
 
 

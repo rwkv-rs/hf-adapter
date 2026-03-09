@@ -148,6 +148,37 @@ def report_metax_devices(torch_module: object) -> None:
     print(f"[{'PASS' if validated else 'WARN'}] MetaX stack: {reason}")
 
 
+def report_biren_devices(torch_module: object) -> None:
+    from rwkv7_hf.biren_runtime import (
+        detect_biren_driver_versions,
+        detect_biren_sdk_version,
+        validate_biren_stack,
+    )
+
+    supa = getattr(torch_module, "supa")
+    count = int(supa.device_count())
+    names = [str(supa.get_device_name(index)) for index in range(count)]
+    print(f"[PASS] Biren SUPA: available ({count} device(s))")
+    for index, name in enumerate(names):
+        print(f"[INFO] Biren device {index}: {name}")
+    versions = detect_biren_driver_versions()
+    sdk = detect_biren_sdk_version()
+    torch_br_version = package_version("torch_br")
+    validated, reason = validate_biren_stack(
+        device_name=names[0] if names else None,
+        visible_devices=count,
+        torch_version=str(getattr(torch_module, "__version__", "")),
+        torch_br_version=torch_br_version,
+        sdk_version=sdk,
+        driver_version=versions["driver"],
+        supa_version=versions["supa"],
+    )
+    print(f"[INFO] BIRENSUPA SDK: {sdk or 'unknown'}")
+    print(f"[INFO] torch_br: {torch_br_version or 'unknown'}")
+    print(f"[INFO] Biren driver/SUPA: {versions['driver'] or 'unknown'} / {versions['supa'] or 'unknown'}")
+    print(f"[{'PASS' if validated else 'WARN'}] Biren stack: {reason}")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     failures = 0
@@ -184,6 +215,12 @@ def main(argv: list[str] | None = None) -> int:
             import_torch_npu(required=False)
         except Exception:
             pass
+        try:
+            from rwkv7_hf.biren_runtime import import_torch_br
+
+            import_torch_br(required=False)
+        except Exception:
+            pass
         npu = getattr(torch, "npu", None)
         npu_is_available = getattr(npu, "is_available", None)
         try:
@@ -196,6 +233,14 @@ def main(argv: list[str] | None = None) -> int:
             has_musa = bool(callable(musa_is_available) and musa_is_available())
         except Exception:
             has_musa = False
+        supa = getattr(torch, "supa", None)
+        supa_is_available = getattr(supa, "is_available", None)
+        try:
+            has_biren = bool(
+                callable(supa_is_available) and supa_is_available()
+            )
+        except Exception:
+            has_biren = False
         cuda_names = (
             [
                 torch.cuda.get_device_name(index)
@@ -210,7 +255,12 @@ def main(argv: list[str] | None = None) -> int:
             has_metax = any(is_metax_c500_name(name) for name in cuda_names)
         except Exception:
             has_metax = False
-        if has_metax:
+        if has_biren:
+            report_biren_devices(torch)
+            print(
+                "[INFO] Recommended first run: --device biren --backend native --dtype bf16"
+            )
+        elif has_metax:
             report_metax_devices(torch)
             print(
                 "[INFO] Recommended first run: --device metax --backend native --dtype fp16"

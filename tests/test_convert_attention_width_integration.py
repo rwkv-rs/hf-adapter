@@ -8,7 +8,7 @@ import torch
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from rwkv7_hf.native_model import NativeRWKV7Config, NativeRWKV7ForCausalLM
-from scripts.convert_rwkv7_to_hf import convert
+from scripts.convert_rwkv7_to_hf import convert, prepare_translated_weight
 
 
 def _official_checkpoint_from_native(model: NativeRWKV7ForCausalLM) -> dict[str, torch.Tensor]:
@@ -139,3 +139,28 @@ def test_real_width_split_checkpoint_conversion_and_hf_reload() -> None:
         with torch.no_grad():
             reloaded_logits = reloaded(input_ids=input_ids, use_cache=True).logits
         assert torch.allclose(reloaded_logits, actual, atol=1e-6, rtol=1e-6)
+
+
+def test_prepare_translated_weight_materializes_partial_storage_view() -> None:
+    backing = torch.arange(24, dtype=torch.float32).reshape(6, 4)
+    partial = backing[1:3]
+    assert partial.is_contiguous()
+    assert partial.untyped_storage().nbytes() > (
+        partial.numel() * partial.element_size()
+    )
+
+    translated = prepare_translated_weight(
+        partial,
+        src_name="emb.weight",
+        dst_name="model.embeddings.weight",
+        transposed=False,
+        expected=torch.empty_like(partial),
+        dtype=torch.float32,
+    )
+
+    torch.testing.assert_close(translated, partial)
+    assert translated.storage_offset() == 0
+    assert translated.untyped_storage().nbytes() == (
+        translated.numel() * translated.element_size()
+    )
+    assert translated.data_ptr() != partial.data_ptr()

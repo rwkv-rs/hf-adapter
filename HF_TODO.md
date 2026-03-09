@@ -135,6 +135,12 @@ row is never a full-FLA reference.
       against current main, then add real PEFT/Trainer/TRL, graph-prefill,
       multi-NPU and long-soak evidence. Do not promote W4 or other Ascend
       cards/software stacks from the 910B3 row.
+- [ ] Biren BR106M: exact-card SUPA detection, BF16/FP32-state eager routing,
+      FP16 fail-closed behavior, decomposed GroupNorm, low-memory conversion
+      and a hardware smoke are ported from standalone commit `47322bf`. Rerun
+      all released 0.1B-13.3B checkpoints against current main, then add
+      B1-B8 paired RWKV-LM/Albatross performance, TRL/resume/ZeRO, W8/W4 and
+      multi-BR106M. Other SUPA products must receive independent evidence.
 - [ ] MetaX C500: exact-card detection, conservative native eager routing,
       FP32 key normalization and a hardware smoke are ported from standalone
       commit `f2653e2`. Rerun the tiny and real 0.4B matrix against current

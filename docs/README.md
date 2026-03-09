@@ -83,6 +83,7 @@ match later outcomes.
 | AMD gfx1100 | [`validation/AMD_ROCM_HF_VALIDATION.md`](validation/AMD_ROCM_HF_VALIDATION.md) | [`../bench/amd_gfx1100_native_20260727/README.md`](../bench/amd_gfx1100_native_20260727/README.md) |
 | Moore Threads MUSA | [`hardware/MUSA.md`](hardware/MUSA.md) | Source implementation imported; HF real-device artifact pending |
 | Huawei Ascend NPU | [`hardware/HUAWEI_ASCEND.md`](hardware/HUAWEI_ASCEND.md) | HF runtime ported from the pinned standalone 910B3 evidence repository; current-main rerun pending |
+| Biren BR106M | [`hardware/BIREN_BR106M.md`](hardware/BIREN_BR106M.md) | BF16/FP32-state native eager HF compatibility ported from the pinned standalone evidence repository; current-main rerun pending |
 | MetaX C500 | [`hardware/METAX_C500.md`](hardware/METAX_C500.md) | Native eager HF compatibility ported from the pinned standalone C500 evidence repository; current-main rerun pending |
 | Apple Silicon | [`hardware/APPLE_SILICON.md`](hardware/APPLE_SILICON.md) | [`hardware/APPLE_PRODUCTION_CLOSE.md`](hardware/APPLE_PRODUCTION_CLOSE.md) |
 | Apple/Qwen methodology | [`hardware/QWEN35_APPLE_BASELINE.md`](hardware/QWEN35_APPLE_BASELINE.md) | [`hardware/APPLE_PRODUCTION_CLOSE.md`](hardware/APPLE_PRODUCTION_CLOSE.md) |

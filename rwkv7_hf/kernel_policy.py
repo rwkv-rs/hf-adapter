@@ -116,6 +116,12 @@ def is_metax_c500_name(name: str) -> bool:
     return _gpu_name_tokens(name) == ("metax", "c500")
 
 
+def is_biren_br106m_name(name: str) -> bool:
+    """Match the exact BR106M runtime product with harmless separators."""
+
+    return "".join(_gpu_name_tokens(name)) == "biren106m"
+
+
 def _musa_hardware_metadata(name: str) -> tuple[str, str, str]:
     """Return generation, evidence scope, and compute profile for MUSA.
 
@@ -155,6 +161,7 @@ class GPUProfile:
     is_hip: bool = False
     is_mps: bool = False
     is_musa: bool = False
+    is_supa: bool = False
     hardware_generation: str | None = None
     validation_scope: str = "unvalidated"
     compute_profile: str = "unknown"
@@ -398,6 +405,31 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
         quant_rule="no production W8/W4 route is promoted from the current compatibility evidence",
         promotion_rule="require a current-main exact-C500 rerun; do not treat CUDA capability 8.0 as NVIDIA hardware evidence",
     ),
+    "biren": GPUAdaptationRule(
+        family="biren",
+        cards=("Biren106M 32GB", "unvalidated other BIRENSUPA devices"),
+        status="all released 0.1B-13.3B checkpoints have exact-card standalone HF functional evidence",
+        default_stance="BF16 model math, FP32 recurrent state and native eager/no-FLA execution; exact BR106M evidence must not promote other SUPA products",
+        default_on=("native eager", "recurrent cache", "chunked prefill"),
+        default_off=(
+            "FP16 GEMM",
+            "native JIT/graph/torch.compile",
+            "CUDA/Triton/FLA fusions",
+            "unvalidated W8/W4 routes",
+        ),
+        required_functional=COMMON_FUNCTIONAL_SMOKES
+        + (
+            "BF16 auto-load/generate for 0.1B-13.3B",
+            "FP32 recurrent state",
+            "PEFT/Trainer",
+        ),
+        required_benchmarks=(
+            "same-card RWKV-LM/Albatross B1/B2/B4/B8 prefill/decode",
+            "W8/W4 footprint, quality and speed before promotion",
+        ),
+        quant_rule="no production quantized route is promoted from functional-only evidence",
+        promotion_rule="require a current-main exact-BR106M rerun; do not infer other SUPA devices from BR10x evidence",
+    ),
     "apple_mps": GPUAdaptationRule(
         family="apple_mps",
         cards=("Apple Silicon M-series / MPS", "Apple MLX / Metal", "CoreML / ANE"),
@@ -600,12 +632,24 @@ def classify_gpu(
     is_hip: bool = False,
     is_mps: bool = False,
     is_musa: bool = False,
+    is_supa: bool = False,
     architecture: str | None = None,
 ) -> GPUProfile:
     """Classify a GPU without requiring torch/CUDA to be available."""
 
     gpu_name = (name or "unknown").strip() or "unknown"
     lower = gpu_name.lower()
+    if is_supa or is_biren_br106m_name(gpu_name):
+        exact = is_biren_br106m_name(gpu_name)
+        return GPUProfile(
+            name=gpu_name,
+            vendor="biren",
+            family="biren",
+            hardware_generation="br10x_br106m" if exact else "biren_unknown",
+            validation_scope="exact_card_smoke" if exact else "unvalidated",
+            compute_profile="bf16_model_fp32_state" if exact else "unvalidated",
+            is_supa=True,
+        )
     if is_musa or any(token in lower for token in ("moore threads", "mthreads", "mtt s70", "mtt s80", "mtt s4000", "mtt s5000")):
         generation, validation_scope, compute_profile = _musa_hardware_metadata(gpu_name)
         return GPUProfile(
@@ -709,6 +753,48 @@ def detect_gpu_profile(device: int | str | None = None, torch_module: Any | None
             validation_scope=profile.validation_scope,
             compute_profile=profile.compute_profile,
             is_musa=True,
+        )
+    supa = getattr(torch_module, "supa", None)
+    supa_is_available = getattr(supa, "is_available", None)
+    try:
+        supa_available = bool(
+            callable(supa_is_available) and supa_is_available()
+        )
+    except Exception:
+        supa_available = False
+    if supa_available:
+        try:
+            if device is None:
+                supa_index = int(supa.current_device())
+            else:
+                text = str(device).strip().lower()
+                if text in {"biren", "supa"}:
+                    supa_index = 0
+                elif text.startswith(("biren:", "supa:")):
+                    supa_index = int(text.split(":", 1)[1])
+                else:
+                    resolved_index = torch_module.device(device).index
+                    supa_index = (
+                        int(resolved_index)
+                        if resolved_index is not None
+                        else int(supa.current_device())
+                    )
+        except Exception:
+            supa_index = 0
+        try:
+            supa_name = str(supa.get_device_name(supa_index))
+        except Exception:
+            supa_name = "BIRENSUPA device"
+        profile = classify_gpu(supa_name, None, is_supa=True)
+        return GPUProfile(
+            name=profile.name,
+            vendor=profile.vendor,
+            family=profile.family,
+            device_index=supa_index,
+            hardware_generation=profile.hardware_generation,
+            validation_scope=profile.validation_scope,
+            compute_profile=profile.compute_profile,
+            is_supa=True,
         )
     cuda = getattr(torch_module, "cuda", None)
     is_available = getattr(cuda, "is_available", None)
@@ -824,6 +910,24 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
                 "MetaX C500 uses MXMACA's torch.cuda-compatible API but must "
                 "not inherit NVIDIA kernels from capability 8.0; the validated "
                 "compatibility route is native eager/no-FLA"
+            ),
+        )
+    if family == "biren":
+        return KernelPolicy(
+            profile=profile,
+            fast_token_backend="native",
+            fast_cache=True,
+            fast_prefill=False,
+            fused_recurrent_output=False,
+            fused_recurrent_raw=False,
+            fused_output=False,
+            fused_norm_mix=False,
+            fused_prefill_scan=False,
+            prefill_graph=False,
+            quant_policy="biren_unvalidated",
+            notes=(
+                "BIRENSUPA compatibility uses BF16 model math, FP32 recurrent "
+                "state, decomposed GroupNorm, and native eager/no-FLA execution"
             ),
         )
     if family == "apple_mps":
