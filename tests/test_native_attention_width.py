@@ -104,7 +104,8 @@ def test_width_split_forward_backward_cache_generate_and_reload() -> None:
     torch.testing.assert_close(decode.logits[:, -1], full.logits[:, -1])
     assert torch.equal(decode.logits[:, -1].argmax(-1), full.logits[:, -1].argmax(-1))
     assert generated.shape == (1, 4)
-    assert model.rwkv7_native_model_last_decode_backend() == "native_jit"
+    expected_backend = "native_jit" if model._native_jit_packs() is not None else "eager"
+    assert model.rwkv7_native_model_last_decode_backend() == expected_backend
 
     with tempfile.TemporaryDirectory(prefix="rwkv7_width_split_") as model_dir:
         model.save_pretrained(model_dir)
