@@ -64,6 +64,7 @@ python bench/compare_qwen35_speed_matrix.py \
   --min-decode-speedup 1.05 \
   --min-quant-prefill-speedup 1.00 \
   --min-quant-decode-speedup 1.00 \
+  --required-reference-backend torch \
   --json-output /tmp/v100-qwen35-summary.json \
   --markdown-output /tmp/v100-qwen35-summary.md \
   --fail-on-gate

@@ -176,3 +176,20 @@ be presented as a universal memory win.
 
 Canonical evidence and reproduction commands:
 [`bench/v100_active_b1b8_20260715/README.md`](../../bench/v100_active_b1b8_20260715/README.md).
+
+## 2026-07-16 historical evidence snapshot
+
+The repository can revalidate this dated V100 evidence bundle without a GPU
+via `bench/summarize_v100_acceptance.py`. The snapshot keeps these contracts
+separate without overriding later V100 work:
+
+- production-close: dense Albatross P1, selected-module W8/W4, serving and
+  training smokes;
+- optimized Qwen: exactly 2/2 full-FLA cells for 1.5B/2B, P512/D64 and B1/B8;
+- historical Qwen: 216/216 cells pinned to Transformers torch fallback.
+
+At the snapshot date, remaining V100 work included broader full-FLA coverage,
+quality-safe full-memory MM4, a real Volta W8A16/deeper MM8 fusion, and
+larger/longer training plus Albatross P2/P3. Historical PR #21 execution
+completeness was not quant acceptance. Use current status documents and newer
+packed-MM4 artifacts for the post-snapshot conclusion.
