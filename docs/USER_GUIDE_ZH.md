@@ -305,6 +305,29 @@ print(tokenizer.decode(new_tokens, skip_special_tokens=True))
 转换后的模型目录包含 remote-code 适配文件，因此必须设置
 `trust_remote_code=True`。只对可信的本地目录或 Hugging Face 仓库使用该选项。
 
+### 公开参数与配置命名
+
+因果语言模型接口使用可检查的 Transformers 风格参数名，包括 `input_ids`、
+`attention_mask`、`inputs_embeds`、`past_key_values`、`labels`、`use_cache`、
+`output_hidden_states`、`return_dict`、`logits_to_keep`、`position_ids` 和
+`cache_position`。可选的 FLA reference 包装器仍保留 `**kwargs`，以兼容不同 Transformers
+版本新增的参数。新代码应使用 `logits_to_keep`；已弃用的
+`num_logits_to_keep` 仍作为兼容别名保留。
+
+RWKV checkpoint 和 kernel 历史上使用 `num_heads`，而 Transformers 工具通常读取
+`num_attention_heads`。原生和 FLA 配置均接受任一名称，并通过两个属性暴露相同值：
+
+```python
+from transformers import AutoConfig
+
+config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+assert config.num_heads == config.num_attention_heads
+```
+
+只有 `num_heads` 的旧配置仍然有效；新代码可以使用任一名称，但两个非空值不一致时
+会直接报错。配置序列化会同时写出两个字段。内部参数名、state-dict key 和 kernel
+中的 RWKV 局部记号不会因此改名。
+
 ## 6. 让 AI 使用
 
 安装、推理、缓存、投机解码、训练、多卡、量化和 Apple 流程共用一个入口：
