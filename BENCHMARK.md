@@ -227,20 +227,24 @@ speed artifact.
 
 Evidence: [`bench/v100_active_b1b8_20260715/README.md`](bench/v100_active_b1b8_20260715/README.md).
 
-### Historical V100 RWKV-7 vs Qwen3.5 Torch-fallback matrix
+### Historical V100 RWKV-7 vs Qwen3.5 Torch-fallback matrices
 
-The historical official text-only matrix covers three model pairs, fp16/bnb8/
+The original official text-only matrix covers three model pairs, fp16/bnb8/
 bnb4, prompt 128/512/2048, decode 128/512, and bsz1/2/4/8: `432/432` raw rows
-pass and all `216/216` comparison cells join.
+pass and all `216/216` comparison cells join. Its strict 1.05x report has nine
+bnb4 decode misses and three true losses.
 
 | Metric | Minimum | Median | Maximum | Strict 1.05x pass |
 |---|---:|---:|---:|---:|
 | Prefill RWKV/Qwen | `1.246x` | `1.936x` | `8.141x` | 216/216 |
 | Decode RWKV/Qwen | `0.947x` | `1.317x` | `10.832x` | 207/216 |
 
-All nine strict-gate misses are bnb4 decode rows; only three are below `1.0x`.
-Static model footprint is lower in `216/216` cells (`0.629x-0.812x`), and peak
-allocated VRAM is lower in `192/216` cells (`0.390x-1.068x`).
+The append-only 2026-07-13 follow-up adds three `prefill_hot` candidate reruns
+and uses a non-regression 1.00x gate for W8/W4 while retaining 1.05x for dense.
+With `--required-reference-backend torch`, the current comparator passes all
+216 cells at minimum prefill/decode `1.246447x/1.002879x`. The combined input
+has 435 rows. Memory was not a gate: final model footprint is no larger in
+213/216 cells and peak VRAM is no larger in 189/216.
 
 Important boundary: all recorded Qwen rows use the official
 Transformers/PyTorch fallback (`qwen3_5_text`, forced torch, FLA not
@@ -253,7 +257,9 @@ artifact above additionally closes the optimized reference on `sm_70`,
 including the Triton causal-convolution contract. Neither result retroactively
 upgrades these historical Torch-fallback rows.
 
-Evidence: [`bench/qwen35_v100_hf_matrix_20260712/README.md`](bench/qwen35_v100_hf_matrix_20260712/README.md).
+Evidence: [`bench/qwen35_v100_hf_matrix_20260712/README.md`](bench/qwen35_v100_hf_matrix_20260712/README.md)
+and [`bench/v100_qwen35_full_matrix_20260713/README.md`](bench/v100_qwen35_full_matrix_20260713/README.md).
+Historical 2026-07-16 boundary snapshot: [`bench/v100_acceptance_20260716/README.md`](bench/v100_acceptance_20260716/README.md).
 Design: [`docs/plans/2026-07-13-qwen35-5070-fla-design.md`](docs/plans/2026-07-13-qwen35-5070-fla-design.md).
 
 ## RTX 3090 self-fused long-prefill rows
