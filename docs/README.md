@@ -87,6 +87,8 @@ match later outcomes.
 | MetaX C500 | [`hardware/METAX_C500.md`](hardware/METAX_C500.md) | Native eager HF compatibility ported from the pinned standalone C500 evidence repository; current-main rerun pending |
 | Apple Silicon | [`hardware/APPLE_SILICON.md`](hardware/APPLE_SILICON.md) | [`hardware/APPLE_PRODUCTION_CLOSE.md`](hardware/APPLE_PRODUCTION_CLOSE.md) |
 | Apple/Qwen methodology | [`hardware/QWEN35_APPLE_BASELINE.md`](hardware/QWEN35_APPLE_BASELINE.md) | [`hardware/APPLE_PRODUCTION_CLOSE.md`](hardware/APPLE_PRODUCTION_CLOSE.md) |
+| Apple strict global audit | [`hardware/APPLE_PRODUCTION_ACCEPTANCE.md`](hardware/APPLE_PRODUCTION_ACCEPTANCE.md) | Historical `2026-07-13.2` 149-gate snapshot; it does not override the bounded current close |
+| Apple/Qwen dated investigation | [`hardware/APPLE_QWEN35_LIVE_EVIDENCE_20260707.md`](hardware/APPLE_QWEN35_LIVE_EVIDENCE_20260707.md) | Historical 2026-07-07 blocker record; use the production-close page for current conclusions |
 
 Platform detail files contain experiment chronology and may include superseded
 or negative rows. Their promoted conclusion must agree with the canonical
@@ -97,6 +99,7 @@ matrix and benchmark summary.
 | Document | Purpose |
 |---|---|
 | [`architecture/REPOSITORY_LAYOUT.md`](architecture/REPOSITORY_LAYOUT.md) | Current ownership boundaries, stable remote-code surface, and the staged source-layout migration plan |
+| [`architecture/NATIVE_DEFAULT_BACKEND.md`](architecture/NATIVE_DEFAULT_BACKEND.md) | Canonical Native/no-FLA backend decision, accepted migration gates, and retained FLA reference boundary |
 | [`BACKENDS.md`](BACKENDS.md) | Backend boundaries and rules for hardware-specific dispatch |
 | [`performance/FUSED_BACKEND.md`](performance/FUSED_BACKEND.md) | Fused fp16/quant kernel roadmap and target ladder |
 | [`performance/BN_TN_TUNING.md`](performance/BN_TN_TUNING.md) | Scalar negative evidence, promoted RTX 5090 exact-model Tensor Core BN/TN matrix, and V100 packed-MM4 decode profiles |

@@ -249,6 +249,32 @@ print(tokenizer.decode(new_tokens, skip_special_tokens=True))
 RWKV-7 adapter classes. Only enable it for a model directory or Hub repository
 you trust.
 
+### Public argument and config names
+
+The causal-LM API uses inspectable Transformers-style argument names such as
+`input_ids`, `attention_mask`, `inputs_embeds`, `past_key_values`, `labels`,
+`use_cache`, `output_hidden_states`, `return_dict`, `logits_to_keep`,
+`position_ids`, and `cache_position`. The optional FLA reference wrapper also
+keeps `**kwargs` for version-specific Transformers arguments. Use
+`logits_to_keep`; the deprecated `num_logits_to_keep` spelling remains a
+compatibility alias.
+
+RWKV checkpoints and kernels historically use `num_heads`, while Transformers
+tools commonly inspect `num_attention_heads`. Both native and FLA-reference
+configs accept either spelling and expose both attributes with the same value:
+
+```python
+from transformers import AutoConfig
+
+config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+assert config.num_heads == config.num_attention_heads
+```
+
+Existing `num_heads`-only configs remain valid. New code may supply either
+name, but supplying different non-null values is an error. Both fields are
+written during config serialization. Internal parameter names, state-dict
+keys, and kernel-local RWKV notation are intentionally unchanged.
+
 ## 5. Verify the installation
 
 Check the example and focused tests without loading a large checkpoint:

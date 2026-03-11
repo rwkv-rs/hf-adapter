@@ -188,6 +188,14 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 
 通过标准：输出 tensor 的 batch 与输入一致，生成长度增加，并且文本解码成功。
 
+### 公开参数与配置命名
+
+公开的因果语言模型 `forward` 使用 Transformers 风格的显式参数名，并保留
+`**kwargs` 接收不同 Transformers 版本的扩展参数。配置同时接受 `num_heads` 和
+`num_attention_heads`，两者冲突时会报错，保存时会同时写出；RWKV checkpoint 与
+kernel 内部变量名保持不变。完整规则见
+[中文普通用户指南](docs/USER_GUIDE_ZH.md#公开参数与配置命名)。
+
 ## 按目标选择教程
 
 | 你要完成的任务 | 从这里开始 |
