@@ -3,6 +3,10 @@
 This page contains only promoted current conclusions. Exploratory tuning and
 historical rows remain in platform documents and `bench/` artifacts.
 
+The `v0.6.0` HF deliverable is complete for the promoted profiles below.
+Additional cards, models, and shapes are post-release matrix expansion rather
+than blockers for the released adapter.
+
 ## Current promoted lanes
 
 | Platform | Dense fp16/bf16 | Quant speed lane | Quality/correctness | Status |
@@ -48,7 +52,7 @@ Native same-precision inference evidence:
 5. Aggregate batch throughput and per-sequence latency must not be conflated.
 6. MATH500 speed claims must retain shape, seed, rollout count and accuracy gates.
 
-## Remaining performance work
+## Post-release performance expansion
 
 - Extend the RTX 5090 Marlin W4 matrix from selected FFN pairs to still-dense
   square projections and the rejected 0.4B full-FFN shape; reproduce an

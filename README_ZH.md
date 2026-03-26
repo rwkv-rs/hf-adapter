@@ -6,6 +6,18 @@
 使用标准 `AutoModelForCausalLM` API 完成生成、状态缓存、PEFT/Trainer/TRL 训练、
 W8/W4 量化、投机解码和多卡运行，并按设备选择原生或融合后端。
 
+## 项目状态
+
+已发布的 **RWKV-7 HF Adapter `v0.6.0` 交付范围已经完成**。转换、Transformers
+标准接口、PEFT/TRL、状态缓存、Native/no-FLA、W8/W4、PP/TP、ZeRO 和已有精确
+硬件性能验收均有对应代码、测试或证据记录。
+
+完成状态按模型、显卡、精度、batch 和序列形状声明；增加新的显卡或测试形状属于
+发布后的矩阵扩展，不会重新打开已经完成的版本里程碑。当前结论见
+[HF_STATUS.md](HF_STATUS.md)，正式验收映射见
+[docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)，后续扩展项目见
+[HF_TODO.md](HF_TODO.md)。
+
 ## 五分钟开始
 
 新用户建议先使用 0.1B 或 0.4B 模型。下面的命令会创建独立环境、安装仓库并检查

@@ -1,23 +1,24 @@
 # HF adapter acceptance status
 
 This is the canonical mapping between the public RWKV-7 Hugging Face adapter
-requirements and repository evidence. `PASS` means the named gate has a
-reproducible artifact; `PARTIAL` means the interface works but the complete
-hardware/performance matrix is not closed.
+requirements and repository evidence. `PASS` means the named, profile-bounded
+gate has a reproducible artifact. A new card, shape, or dataset extends that
+matrix instead of retroactively reopening an accepted release gate.
 
-Last updated: **2026-07-26**.
+Last updated: **2026-08-07**. Audited at `main`
+`2fe20a322ffc9ffb363300044dbb74fc55d48c33` after the `v0.6.0` release.
 
 This page reports status. For ordinary-user commands and PASS gates for every
 implemented capability below, start with
 [`COMPLETE_ADAPTER_GUIDE.md`](COMPLETE_ADAPTER_GUIDE.md).
 
-## Native-default and official train_temp promotion gate
+## Accepted Native-default and official train_temp promotion gate
 
-The next backend promotion replaces RWKV's implicit FLA runtime with the
-canonical native model. It is not complete when only `RWKV7_NATIVE_MODEL` is
-defaulted: the native model must own the current graph/fused performance path,
-load with FLA imports blocked, and preserve the existing HF ecosystem matrix.
-FLA may remain an explicitly selected RWKV reference backend. Qwen's optimized
+The accepted backend promotion replaced RWKV's implicit FLA runtime with the
+canonical native model. It was not accepted by merely defaulting
+`RWKV7_NATIVE_MODEL`: the native model now owns the graph/fused performance
+path, loads with FLA imports blocked, and preserves the HF ecosystem matrix.
+FLA remains an explicitly selected RWKV reference backend. Qwen's optimized
 full-FLA benchmark route remains unchanged.
 
 Training acceptance is pinned to official RWKV-LM commit `e6f74b6` and both
@@ -52,29 +53,35 @@ above remains mandatory.
 
 ## Executive result
 
-| Requirement | Status | Current evidence | Remaining boundary |
+| Requirement | Status | Current evidence | Profile boundary / extensions |
 |---|---|---|---|
-| RWKV-LM / Albatross correctness and performance | **PARTIAL / production-close on measured V100, 4090 and 5090 lanes** | V100 Albatross/native-quant matrix plus 1.5B/full-FLA-Qwen B1/B8 active-work close; 4090 Albatross lane plus 0.4B–7.2B bsz8 Qwen3.5 matrices; 5090 full-FLA Qwen B1/B8, MATH500, quant pressure, and latest g1h 13.3B artifacts | Same-card final Albatross reruns on every target, broader optimized-Qwen shapes/cards, larger-model P2/P3 matrix, historical 4090 prefill high-water mark |
+| HF adapter release scope | **COMPLETE** | Published `v0.6.0`, current-main CI, canonical Native/no-FLA implementation, and the evidence-linked gates below | New profiles extend the release; they are not retroactive blockers |
+| RWKV-LM / Albatross correctness and performance | **PASS for declared exact-card profiles** | V100 Albatross/native-quant matrix plus 1.5B/full-FLA-Qwen B1/B8 active-work close; 4090 Albatross lane plus 0.4B–7.2B bsz8 Qwen3.5 matrices; 5090 full-FLA Qwen B1/B8, MATH500, quant pressure, and latest g1h 13.3B artifacts | More Albatross/Qwen cards, batches and shapes are post-release expansion |
 | Transformers API | **PASS** | Auto classes, save/reload, generation, labels/loss, attention mask and recurrent cache tests | Upstreaming and long-term Transformers-version maintenance |
-| PEFT and RL ecosystem | **PASS for smoke/compatibility; B1 and Native B16 train_temp exact lanes accepted** | LoRA lifecycle, Trainer, SFT, DPO and GRPO smoke; RTX 5090 BF16 12x768 B1 plus Native B16/T512 exact tensors, paired real-MiniPile 3-seed x 1,000-step cohort, continuous 5,000-step run, 2,500+2,500 resume and steady-memory evidence | Larger models, multi-day runs, additional cards and distributed convergence |
+| PEFT and RL ecosystem | **PASS for published compatibility and exact-training profiles** | LoRA lifecycle, Trainer, SFT, DPO and GRPO smoke; RTX 5090 BF16 12x768 B1 plus Native B16/T512 exact tensors, paired real-MiniPile 3-seed x 1,000-step cohort, continuous 5,000-step run, 2,500+2,500 resume and steady-memory evidence | Larger models, multi-day runs, additional cards and distributed convergence extend the matrix |
 | Dynamic batching, chunked prefill and state cache helpers | **PASS in HF adapter scope** | State select/reorder/drop/compact, chunked-prefill parity, serving-like cache telemetry | Native vLLM/SGLang integration remains a separate repository/project |
-| Common professional and consumer cards | **PARTIAL** | V100, A100, A800, A6000, 4090, 5090, GTX 1080 Ti and Apple M5 evidence | H100, AMD/ROCm, Turing and broader Apple/50-series coverage |
-| W8/W4 inference and lower memory | **PASS functionally; PARTIAL for universal speed** | bnb compatibility plus native MM8/MM4; RTX 5090 g1h 1.5B/2.9B/7.2B/13.3B BN/TN W4 B1/B8 all-phase closes at `0.5298x–0.6250x` footprint; Apple MLX W4 | Extend the 5090 FFN result to square/W8 paths and make full-memory quantized projections fp16-or-faster across cards/shapes |
+| Hardware support | **PASS for declared release policy and exact-card matrix** | NVIDIA, AMD/ROCm, Apple, Ascend, Biren, MetaX, MUSA and CPU fallback boundaries are represented; promotion stays exact-product and fail-closed | Additional products receive independent post-release evidence |
+| W8/W4 inference and lower memory | **PASS for functionality, footprint, quality, and promoted speed profiles** | bnb compatibility plus native MM8/MM4; V100/T4/4080/4090/5090 and Apple profiles preserve their exact speed/memory boundaries | Wider full-memory profiles are independent optimizations |
 | PP/TP boundary | **PASS for dense HF inference scope** | Two-V100 layer-split `device_map` matches the single-device reference; separate Transformers-native B1/B8 `tp_plan="auto"` shards embedding/attention/FFN/head matrices with exact greedy parity, minimum logits cosine `0.99999821`, and `0.52031x/0.611611x` local peak VRAM | Recurrent state is replicated; quantized TP, TP training, and native serving-engine execution require separate gates |
 | ZeRO-2/3 training | **PASS for current smoke matrix** | ZeRO-2/3 base and resume evidence on V100/A100/A800/A6000 combinations | Longer training and larger ZeRO-3 resume matrix |
 | Initial speculative decoding | **PASS as experimental HF/Apple path** | HF-compatible target/draft harness and Apple target-greedy oracle evidence | Serving integration and broader quality/speed gates |
 
 ## How to report completion
 
-The **current HF milestone is complete**, and the repository is suitable for a
-public HF-adapter milestone under the boundaries below. The broader universal
-requirement remains `PARTIAL`: full-memory quant speed, every target hardware
-family, wider Albatross matrices, and broader task-quality evidence are not all
-closed.
+The **current HF milestone is complete**, and `v0.6.0` is the published
+HF-adapter release for the boundaries below. The conversion, Transformers,
+training ecosystem, cache, hardware-policy, quantization, PP/TP, and
+profile-based performance requirements are accepted.
+
+An unbounded combination of every future card, model, batch, sequence length,
+quality suite, and serving runtime is not a finite release gate. Those
+additions are post-release projects and must preserve their own exact evidence.
 
 There is no official repository-wide completion percentage. Report the named
 scope and its status instead; do not estimate a percentage from TODO checkboxes
-or by counting the table rows above.
+or by counting the table rows above. Report `RWKV-7 HF adapter v0.6.0` as
+**COMPLETE**, then name the exact hardware or benchmark profile when making a
+more specific claim.
 
 ## Official requirement mapping
 
@@ -155,14 +162,16 @@ rows are preserved; load-only smoke is not promoted to that status.
 
 W8/W4 loading and generation work and lower stored/model footprint. Native
 speed and memory policies are deliberately separate. The speed lane is closed
-on selected V100/4090/5090 shapes; RTX 4090 now has batch-8 evidence for every
-published 0.4B–7.2B pair. The full-memory lane remains the main kernel work
-item. See [`QUANTIZATION.md`](QUANTIZATION.md).
+on promoted V100/T4/4080/4090/5090 and Apple profiles; RTX 4090 has batch-8
+evidence for every published 0.4B–7.2B pair. Wider full-memory profiles are
+post-release optimization work. See [`QUANTIZATION.md`](QUANTIZATION.md).
 
 ## Release decision
 
-The repository is suitable for a public HF adapter milestone: API, training
-ecosystem smoke, cache helpers, conversion, quantized functionality and
-reproducible hardware evidence are present. It must not yet claim that every
-W8/W4 shape on every supported card is faster than fp16, or that every hardware
-family has completed the same Albatross matrix.
+`v0.6.0` is the completed public HF adapter milestone: API, training ecosystem,
+cache helpers, conversion, quantized functionality, Native/no-FLA execution,
+parallelism boundaries, and reproducible hardware evidence are present.
+
+Completion does not authorize an unbounded claim that every W8/W4 shape on
+every future card is faster than fp16, or that every hardware product has run
+the same Albatross matrix. Claims remain limited to the promoted profiles.

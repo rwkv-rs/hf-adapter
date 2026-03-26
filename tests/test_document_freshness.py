@@ -13,11 +13,11 @@ def read(relative: str) -> str:
 
 def main() -> int:
     canonical_dates = {
-        "HF_STATUS.md": "2026-08-04",
-        "HF_TODO.md": "2026-07-28",
+        "HF_STATUS.md": "2026-08-07",
+        "HF_TODO.md": "2026-08-07",
         "BENCHMARK.md": "2026-07-28",
-        "docs/ACCEPTANCE.md": "2026-07-26",
-        "docs/HARDWARE_MATRIX.md": "2026-08-04",
+        "docs/ACCEPTANCE.md": "2026-08-07",
+        "docs/HARDWARE_MATRIX.md": "2026-08-07",
     }
     for relative, expected_date in canonical_dates.items():
         text = read(relative)
@@ -34,7 +34,11 @@ def main() -> int:
             "ZeRO3 resume remains a follow-up gap",
             "This is a wrapper-based first stage",
         ],
-        "HF_TODO.md": ["### 2a. Verified-FLA Qwen3.5 RTX 5070 comparison"],
+        "HF_TODO.md": [
+            "### 2a. Verified-FLA Qwen3.5 RTX 5070 comparison",
+            "## P0 — Universal production gaps",
+        ],
+        "docs/ACCEPTANCE.md": ["The next backend promotion replaces"],
     }
     for relative, phrases in stale_exact.items():
         text = read(relative)
@@ -42,40 +46,35 @@ def main() -> int:
             assert phrase not in text, f"stale phrase in {relative}: {phrase}"
 
     todo = read("HF_TODO.md")
+    normalized_todo = " ".join(todo.split())
     assert "## Scope and current boundary" in todo
-    assert "current HF milestone is complete" in todo
-    assert "22237b6b66ec492fefba5669cb3fa6f5bb518007" in todo
+    assert "The current HF milestone is complete" in todo
+    assert "there are **no remaining blocking items**".lower() in normalized_todo.lower()
+    assert "2fe20a322ffc9ffb363300044dbb74fc55d48c33" in todo
+    assert "## Post-release expansion projects" in todo
     assert "- [x]" not in todo
-    assert "PP/TP are closed for the declared dense-inference HF scope" in todo
-    assert "PP/TP and multi-device behavior" not in todo
-    assert "accepted RTX 5090 full-MATH500" in todo
-    assert "promoted Apple M5 MLX pairs/shapes for raw peak-memory" in todo
-    assert "V100 CUDA target/draft speculative artifact" in todo
-    assert "Capture true peak-to-peak memory" not in todo
-    assert "Add CUDA target/draft end-to-end speed" not in todo
-    assert "Add end-user SFT/LoRA/DPO examples" not in todo
-    assert "scheduled clean-install CPU plus optional CUDA and Apple" not in todo
-    assert "Keep card-specific routing isolated" not in todo
-    assert "Leave DFlash and serving-engine scheduler" not in todo
-    assert "Test a supported Transformers/PEFT/TRL version range in CI" not in todo
-    assert "Publish a release-versioned deprecation window" not in todo
-    assert "Add and enforce pytest markers" not in todo
-    assert "minimum/current Transformers-PEFT-TRL CI lanes" in todo
-    assert "per-PR template, not a list of outstanding project tasks" in todo
-    assert "Do not convert the unchecked roadmap" in todo
+    assert "- [ ]" not in todo
+    assert "Dense HF inference PP/TP is closed for the declared scope" in todo
+    assert "RWKV-7 HF adapter v0.6.0`: **COMPLETE**" in todo
 
     status = read("HF_STATUS.md")
     assert "## Completion reporting rule" in status
     assert "no official repository-wide completion percentage" in status
+    assert "| HF v0.6 adapter deliverable | **COMPLETE**" in status
     assert "| PP/TP boundary | **PASS for dense HF inference scope**" in status
 
     acceptance = read("docs/ACCEPTANCE.md")
     assert "## How to report completion" in acceptance
     assert "current HF milestone is complete" in acceptance
+    assert "| HF adapter release scope | **COMPLETE**" in acceptance
     assert "| PP/TP boundary | **PASS for dense HF inference scope**" in acceptance
 
     readme = read("README.md")
     assert "Completion is reported by **named scope**" in readme
+    assert "HF adapter `v0.6.0` deliverable is complete" in readme
+
+    readme_zh = read("README_ZH.md")
+    assert "RWKV-7 HF Adapter `v0.6.0` 交付范围已经完成" in readme_zh
 
     required_current = [
         "README.md",
