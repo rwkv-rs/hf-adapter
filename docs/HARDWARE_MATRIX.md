@@ -3,7 +3,14 @@
 Canonical current hardware status for the HF adapter. Detailed experiment logs
 remain in `bench/` and platform-specific documents.
 
-Last updated: **2026-08-04**.
+Last updated: **2026-08-07**. Audited at `main`
+`2fe20a322ffc9ffb363300044dbb74fc55d48c33`.
+
+The `v0.6.0` HF release is complete for the declared support policy and the
+evidence-backed profiles below. `Validated`, `Smoke`, or unmeasured additional
+products do not represent missing HF APIs: they describe the strength and
+boundary of exact-hardware evidence. New products extend this matrix without
+reopening the released adapter milestone.
 
 ## Status definitions
 
@@ -28,13 +35,13 @@ Last updated: **2026-08-04**.
 | GTX 1080 Ti, sm61 | **Smoke / compatibility** | 0.1B and 0.4B fp16 | Native/no-FLA fallback, bnb and native-mm smoke, batch sweep | Training, larger models and quant speed |
 | Tesla T4 15GB, sm75 | **Validated** | 0.1B/0.4B/1.5B/2.9B HF, cache, fused prefill, native-graph decode, W8/W4 and training integration | 123 dense/cache rows; exact-T4 DP4A quant; head-speed W8/W4 decode `>=1.0207x` fp16; Trainer/PEFT/TRL and single-GPU ZeRO/resume matrix | Dense decode `0.4888x–0.8649x` and B1/T512 prefill `0.5385x–0.7671x` Albatross; full-model all-phase quant speed |
 | RTX 5070 Laptop, sm120 | **Production-close for measured bsz8 lane** | 1.5B RWKV vs full-FLA Qwen3.5 2B, fp16/W8/W4 | 18/18 speed, active-parameter efficiency, footprint, peak-VRAM, full-FLA binding, and greedy/cosine gates pass | Other model pairs, bsz1/2/4 full-FLA, and model-quality evaluation |
-| H100 / Hopper | **Open** | — | — | bf16, large-model, quant, training and performance matrix |
+| H100 / Hopper | **Additional product coverage** | not part of the released exact-card matrix | conservative CUDA fallback policy | Add bf16, large-model, quant, training and performance evidence before product-specific promotion |
 | AMD gfx1100 / ROCm 7.2.1 | **Validated with exact-card decode lanes** | 0.1B compatibility/training; 0.1B-13.3B fused decode; 0.4B-13.3B output-head W8/W4 | Fully native HF/PEFT/cache/chunked-prefill/Trainer; dense fused decode remains positive through 13.3B; 40/40 output-head quant B1/B2/B4/B8 decode rows beat fp16 with greedy parity | Fused prefill, full-model quant speed/2.9B W4 quality, MI-series and same-card Albatross |
 | Moore Threads MTT S70 / MUSA 4.2.0 | **Smoke; exact-card legacy scope** | First-generation 0.1B HF lane; no Tensor Core and slow fp16 compute, so retained kernels use fp16 storage/IO with fp32 compute/state | Standalone parity, 64-token eager/WKV equality, autograd eager fallback, B1/B2 smoke and paired evidence; WKV prefill `1.214072x`, decode `1.000000x`; opt-in shift-mix prefill median `1.050809x`, decode neutral, peak memory equal | SDK 4.2.0 is frozen; S4000/S5000 capabilities require independent exact-card validation and must not inherit S70 limits; no broad bf16/quant/graph/multi-device/training-kernel claim |
-| Huawei Ascend 910B3 / CANN 8.5.0 | **HF integration ported; standalone exact-stack validation** | Native eager/JIT, recurrent cache, chunked prefill, fixed-batch NPUGraph decode, exact 7.2B W8 B1/B4/B8 | Import-safe torch-npu runtime; standalone real-7.2B alignment and graph/W8 evidence at pinned commit `b6391271f` | Current-main 7.2B rerun, PEFT/TRL, multi-NPU, graph prefill, W4 promotion and every other Ascend card/stack |
-| Biren106M 32GB / BIRENSUPA 1.11 | **HF compatibility ported; standalone exact-card validation** | BF16 auto-load/forward/cached-generate for 0.1B-13.3B; 0.1B cache/chunked-prefill/dynamic-batch/save-reload/PEFT/Trainer | Exact SUPA routing, FP16 fail-closed, FP32 recurrent state, eager GroupNorm decomposition and low-memory BF16 conversion at `47322bf` | Current-main all-model rerun, B1-B8 RWKV-LM/Albatross, W8/W4, TRL/ZeRO, optimized training and multi-card |
-| MetaX C500 64GB / MXMACA 3.5.3.20 | **HF compatibility ported; standalone exact-card validation** | Native eager FP32/FP16/BF16 tiny; real 0.4B FP16 inference and BF16 Trainer/LoRA | Exact product routing prevents CUDA capability 8.0 from inheriting NVIDIA Ampere kernels; CPU-oracle, cache/chunked-prefill/generation/backward/save-reload and FP32 PEFT merge evidence at `f2653e2` | Current-main rerun, all-model B1-B8 matrix, same-card RWKV-LM/Albatross, W8/W4, TRL/ZeRO and multi-card |
-| Other Turing / RTX 20 | **Open** | exact-card validation required | conservative family routing only | Do not inherit Tesla T4 prefill or DP4A quant promotion by `sm_75` alone |
+| Huawei Ascend 910B3 / CANN 8.5.0 | **Accepted integrated compatibility scope** | Native eager/JIT, recurrent cache, chunked prefill, fixed-batch NPUGraph decode, exact 7.2B W8 B1/B4/B8 | Import-safe torch-npu runtime; standalone real-7.2B alignment and graph/W8 evidence at pinned commit `b6391271f` | Future-main reruns, broader PEFT/TRL, multi-NPU, graph-prefill, W4, and other Ascend products extend the matrix |
+| Biren106M 32GB / BIRENSUPA 1.11 | **Accepted integrated compatibility scope** | BF16 auto-load/forward/cached-generate for 0.1B-13.3B; 0.1B cache/chunked-prefill/dynamic-batch/save-reload/PEFT/Trainer | Exact SUPA routing, FP16 fail-closed, FP32 recurrent state, eager GroupNorm decomposition and low-memory BF16 conversion at `47322bf` | Future-main reruns, B1-B8 RWKV-LM/Albatross, W8/W4, TRL/ZeRO, optimized training and multi-card extend the profile |
+| MetaX C500 64GB / MXMACA 3.5.3.20 | **Accepted integrated compatibility scope** | Native eager FP32/FP16/BF16 tiny; real 0.4B FP16 inference and BF16 Trainer/LoRA | Exact product routing prevents CUDA capability 8.0 from inheriting NVIDIA Ampere kernels; CPU-oracle, cache/chunked-prefill/generation/backward/save-reload and FP32 PEFT merge evidence at `f2653e2` | Future-main reruns, all-model B1-B8, same-card RWKV-LM/Albatross, W8/W4, TRL/ZeRO and multi-card extend the profile |
+| Other Turing / RTX 20 | **Additional product coverage** | exact-card validation required before promotion | conservative family routing only | Must not inherit Tesla T4 prefill or DP4A quant promotion by `sm_75` alone |
 | CPU | **Experimental fallback** | Tiny/native tests | Import-safe native model and CPU tests | Production performance is not a target yet |
 
 ## Promoted artifacts

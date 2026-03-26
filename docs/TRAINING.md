@@ -7,6 +7,10 @@ commands, read [`TRAINING_WORKFLOWS.md`](TRAINING_WORKFLOWS.md). Official
 full-parameter kernel alignment is in [`TRAIN_TEMP_CUDA.md`](TRAIN_TEMP_CUDA.md),
 and multi-GPU ZeRO remains in [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md).
 
+The `v0.6.0` HF training deliverable is complete for the published
+Trainer/PEFT/TRL/ZeRO compatibility matrix and exact `train_temp` profiles.
+Larger models, longer runs, and new distributed topologies extend this matrix.
+
 ## Interface status
 
 | Workflow | Status | Validation level |
@@ -20,7 +24,7 @@ and multi-GPU ZeRO remains in [`ADVANCED_USAGE.md`](ADVANCED_USAGE.md).
 | TRL GRPOTrainer | **PASS** | CUDA and Apple/MPS smoke |
 | DeepSpeed ZeRO-2 | **PASS for current matrix** | base and resume evidence on multiple CUDA setups |
 | DeepSpeed ZeRO-3 | **PASS for current smoke matrix** | base plus selected resume paths |
-| PP/TP training | **Not a completed claim** | ZeRO/device-map evidence does not equal full TP training support |
+| PP/TP training | **Separate post-release profile** | Dense HF inference PP/TP is accepted; ZeRO/device-map evidence does not imply full TP training support |
 
 ## Hardware/model evidence
 
@@ -62,7 +66,7 @@ Detailed matrices:
 - [`validation/AMD_ROCM_HF_VALIDATION.md`](validation/AMD_ROCM_HF_VALIDATION.md)
 - [`hardware/APPLE_SILICON.md`](hardware/APPLE_SILICON.md)
 
-## Remaining production work
+## Post-release training expansion
 
 - Extend exact `train_temp` alignment beyond the current real-MiniPile evidence
   to larger checkpoints, multi-day runs and additional cards; current accepted

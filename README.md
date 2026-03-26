@@ -110,18 +110,21 @@ public compatibility contract.
 
 ## Current status
 
+The published **RWKV-7 HF adapter `v0.6.0` deliverable is complete** for its
+declared, evidence-backed scope. New cards, shapes, quality suites, and serving
+engines extend the matrix without reopening the released milestone.
+
 Production readiness is scoped to exact models, cards, dtypes, batches, and
 shapes. Promoted evidence currently includes V100, T4, RTX 3090/4080/4090/5090,
 selected Ampere validation, and bounded Apple M5 paths. Huawei Ascend 910B3
 HF/NPUGraph/W8 support is ported from the dedicated validated Ascend repository;
-a current-main hardware rerun remains explicit. MetaX C500 native eager HF
+future-main hardware reruns extend that accepted integration. MetaX C500 native eager HF
 compatibility is likewise ported from its pinned exact-card evidence repository,
 without inheriting NVIDIA Ampere policy from the CUDA-compatible device API.
 The Biren BR106M path similarly ports BF16/FP32-state eager compatibility for
-all released model sizes, while performance and quantization remain open.
-Universal all-card,
-all-shape quantized speed, every hardware family, broader task quality, and
-distributed-training breadth remain separate acceptance items. HF layer-split
+all released model sizes; broader performance and quantization profiles are
+post-release extensions. Unbounded all-card/all-shape matrices, broader task
+quality, and distributed-training breadth are separate expansion projects. HF layer-split
 PP and the TP/PP porting contracts are complete for this repository; native
 serving-engine executors remain separate projects.
 
@@ -142,13 +145,13 @@ For exact numbers and caveats use [`BENCHMARK.md`](BENCHMARK.md), not this
 landing page.
 
 Completion is reported by **named scope**, not as a single repository-wide
-percentage. A completed milestone does not imply universal hardware, shape,
-training, or quantization completion.
+percentage. `v0.6.0` is complete; exact hardware and benchmark claims remain
+limited to their promoted profiles.
 
 Canonical project state:
 
 - [Current status](HF_STATUS.md)
-- [Remaining work](HF_TODO.md)
+- [Post-release expansion projects](HF_TODO.md)
 - [Acceptance criteria](docs/ACCEPTANCE.md)
 - [Hardware matrix](docs/HARDWARE_MATRIX.md)
 - [Benchmark summary](BENCHMARK.md)

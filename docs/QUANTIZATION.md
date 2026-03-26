@@ -5,15 +5,20 @@ native MM8/MM4, Apple MLX W8/W4 commands, acceptance gates, and failure
 boundaries, read [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md) or
 [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md).
 
+The `v0.6.0` HF quantization deliverable is complete for functional W8/W4,
+reduced physical footprint, quality checks, and the promoted exact-card speed
+profiles. Wider full-memory and future-card profiles are post-release
+optimizations, not release blockers.
+
 ## Supported paths
 
 | Path | Purpose | Current status |
 |---|---|---|
 | bitsandbytes 8-bit / 4-bit | Standard HF compatibility and memory reduction | Functional across tested CUDA cards; not generally faster than native fp16 |
 | Native MM8/MM4 `speed` policy | Preserve dense block speed and quantize selected expensive projections | Promoted on measured V100/Tesla-T4/4080/4090/5090 lanes |
-| Native MM8/MM4 `memory` policy | Quantize many eligible Linear modules for larger footprint reduction | Functional and memory-saving; universal fp16-or-faster speed is open |
-| Apple MLX packed W8/W4 | Apple GPU inference and mobile memory lane | W4 production evidence exists on M5; broader device/shape gates remain |
-| CoreML INT8/INT4 | Apple deployment package/runtime path | Stateful correctness and INT8 evidence exist; INT4 quality/ANE placement remains open |
+| Native MM8/MM4 `memory` policy | Quantize many eligible Linear modules for larger footprint reduction | Functional and memory-saving; wider fp16-or-faster profiles are post-release optimization |
+| Apple MLX packed W8/W4 | Apple GPU inference and mobile memory lane | W4 production evidence exists on M5; broader device/shape gates extend the matrix |
+| CoreML INT8/INT4 | Apple deployment package/runtime path | Stateful correctness and INT8 evidence exist; additional INT4 quality/ANE profiles are post-release work |
 
 ## V100 packed MM4 profiles
 

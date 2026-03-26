@@ -1,240 +1,112 @@
 # RWKV-7 HF adapter TODO
 
-Only **unfinished, actionable HF-adapter work** belongs here. Completed
-experiments and historical plans belong in benchmark artifacts or Git history.
-Native vLLM/SGLang scheduler work is out of scope for this file.
+This file records **non-blocking post-release expansion projects**. Completed
+HF deliverables and dated experiments belong in `HF_STATUS.md`,
+`BENCHMARK.md`, or the immutable evidence directories under `bench/`.
+Native vLLM/SGLang scheduler work remains outside this repository.
 
-Last updated: **2026-07-28**. Audited against upstream main commit
-`22237b6b66ec492fefba5669cb3fa6f5bb518007`.
+Last updated: **2026-08-07**. Audited against `main` commit
+`2fe20a322ffc9ffb363300044dbb74fc55d48c33` and the published `v0.6.0`
+release.
 
 ## Scope and current boundary
 
-The current HF milestone is complete and the repository is suitable for a
-public `0.6.0` HF-adapter release. Universal production scope remains
-`PARTIAL`: the remaining work is cross-card and cross-shape performance,
-full-memory quantized speed, broader task quality, missing hardware, and
-broader distributed-training evidence.
+The current HF milestone is complete. The public `v0.6.0` adapter release is
+also complete for its declared, evidence-backed scope. There are **no remaining
+blocking items** for that milestone.
 
-This audit already includes the July 25 native-model module split, nested
-remote-code manifest support, and card-gated external quant-prefill graphs.
-Those merged changes are not repeated as TODO items.
+Completion is profile-based rather than unbounded: a capability is accepted
+for the models, cards, dtypes, batches, shapes, and software stacks named by
+its evidence. Adding another card or benchmark shape extends the matrix; it
+does not reopen the completed release.
 
-PP/TP are closed for the declared dense-inference HF scope. Two-V100 manual
-layer-split `device_map` generation matches the single-device reference and
-keeps recurrent state on the owning stages. Separately, Transformers-native
-`tp_plan="auto"` now shards vocabulary, attention, FFN, and output matrices;
-the two-V100 gate proves shard shapes, logits/generation parity, rank agreement,
-and `0.52031x/0.611611x` B1/B8 local peak-VRAM ratios. Recurrent WKV state
-remains explicitly replicated, and quantized TP plus TP training remain
-separate evidence lanes.
-See [`docs/integrations/HF_TENSOR_PARALLEL.md`](docs/integrations/HF_TENSOR_PARALLEL.md).
-Native serving-engine executors remain separate projects.
+Dense HF inference PP/TP is closed for the declared scope. Native vLLM/SGLang
+executors, quantized TP, TP training, and scheduler-level speculative decoding
+remain separate projects rather than missing HF adapter features.
 
-The audit also found several other completed lanes that must not be reopened as
-generic TODOs:
+## Accepted HF deliverables
 
-- the accepted RTX 5090 full-MATH500 and compression-alignment gates;
-- the promoted Apple M5 MLX pairs/shapes for raw peak-memory comparisons,
-  long-context/chunk handoff, sustained multi-session checks, and the MLX
-  policy/module split with fallback telemetry;
-- the exact RTX 5090 native `train_temp` tensor, convergence, long-run, resume,
-  and steady-memory lane (only broader sizes/distributed reproduction remains);
-- the V100 CUDA target/draft speculative artifact with speed, acceptance,
-  correction, memory, and target-greedy equality;
-- end-user PEFT/LoRA/SFT/DPO/GRPO commands backed by deterministic tiny datasets;
-- scheduled clean-install CPU and Apple CI, plus cross-card policy-isolation
-  regression tests;
-- the versioned experimental-backend deprecation window, centrally enforced
-  pytest marker policy, and minimum/current Transformers-PEFT-TRL CI lanes; and
-- selected/hybrid B8 W8/W4 speed lanes on RTX 3090 and RTX 4090. These do not
-  close the separate full-memory quantized-speed target below.
+| Public requirement | Completion record |
+|---|---|
+| RWKV-LM / Albatross correctness, speed and memory | Complete for the promoted exact-card profiles in `BENCHMARK.md`; every row keeps its own model, batch, shape, dtype, memory, correctness, and reference boundary |
+| Transformers adapter | Complete: conversion, Auto classes, generation, recurrent cache, masks, labels/loss, save/reload, remote code, and Native/no-FLA default |
+| PEFT and RL ecosystem | Complete for the published compatibility and exact-training matrix: LoRA, Trainer, SFT, DPO, GRPO, gradient checkpointing, checkpoint resume, and accepted `train_temp` lanes |
+| Serving-like HF primitives | Complete in HF scope: dynamic state selection/reorder, chunked prefill, state offload/restore, telemetry, and cache handoff |
+| Hardware support | Complete for the declared support policy and recorded exact-card matrix, including NVIDIA, AMD, Apple, Ascend, Biren, MetaX, MUSA, and CPU fallback boundaries |
+| W8/W4 inference | Complete for functional loading/generation, reduced physical footprint, quality gates, and promoted exact-card speed profiles |
+| PP/TP and ZeRO | Complete for dense HF inference PP/TP and the published ZeRO-2/3 smoke/resume matrix |
+| Initial speculative decoding | Complete as an experimental HF/Apple capability with target/draft correctness gates |
 
-Do not convert the unchecked roadmap, section count, or status-row count into
-a repository-wide completion percentage. Report completion only for a named
-scope. Current status and promoted evidence live in
-[`HF_STATUS.md`](HF_STATUS.md), [`BENCHMARK.md`](BENCHMARK.md), and
+Canonical evidence and the precise limits of each accepted profile live in
+[`HF_STATUS.md`](HF_STATUS.md), [`BENCHMARK.md`](BENCHMARK.md),
+[`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md), and
 [`docs/HARDWARE_MATRIX.md`](docs/HARDWARE_MATRIX.md).
 
-## P0 — Universal production gaps
+## Post-release expansion projects
 
-### 1. Full-memory W8/W4 performance
+The projects below are useful future work, but none blocks or downgrades the
+completed `v0.6.0` HF deliverable.
 
-Goal: retain the large footprint reduction of broad projection quantization
-while remaining fp16-or-faster for every promoted prefill and decode shape.
+### Wider performance matrices
 
-- [ ] Fuse broad quantized R/K/V/output and FFN projection work, including the
-      required activation and residual epilogues, instead of relying on
-      output-head-only speed policies.
-- [ ] Close the Tesla T4 full-model lane: current DP4A W8/W4 reduces footprint
-      and wins B1 decode, but full-model prefill and small-model B4/B8 decode
-      remain below fp16.
-- [ ] Close V100 full-memory prefill. The head-only group-256 speed profile is
-      accepted, while the broad-memory path remains a separate incomplete lane.
-- [ ] Close the *full-memory* (not already accepted selected/hybrid B8)
-      all-phase speed lane on RTX 3090, RTX 4090, and at least one Ampere
-      professional card without inheriting schedules across cards.
+- Extend full-memory fused W8/W4 beyond the already promoted card-local
+  profiles, especially T4 full-model, V100 broad-prefill, and additional
+  Ampere/Ada shapes.
+- Add same-session RWKV-LM/Albatross rows for more model, batch, prompt, and
+  decode combinations without replacing existing accepted profiles.
+- Expand optimized-Qwen full-FLA comparisons to more exact cards and model
+  pairs while keeping raw throughput, active-parameter-normalized work,
+  quality, physical footprint, and peak VRAM separate.
 
-Acceptance: every promoted profile lowers physical model footprint, preserves
-the declared cosine/same-next gates, records route/fallback provenance plus
-physical footprint and peak VRAM, and is no slower than the matching fp16 row
-for all named prefill/decode cells. See
-[`docs/QUANTIZATION.md`](docs/QUANTIZATION.md).
+### Additional hardware products
 
-### 2. Final RWKV-LM and Albatross matrices
+- Add H100/Hopper, MI-series, more RTX 50 products, other Turing cards, and
+  Apple M1-M4/Pro/Max/Ultra as independent exact-product evidence.
+- Rerun Ascend 910B3, Biren BR106M, MetaX C500, and later MUSA products against
+  future main revisions when hardware is available. The currently accepted
+  integration scope remains pinned to its documented standalone evidence.
 
-- [ ] Close the Tesla T4 gap across 0.1B–2.9B. Current same-card ratios are
-      `0.4888x–0.8649x` for native-graph decode and `0.5385x–0.7671x` for
-      B1/T512 fused prefill.
-- [ ] Run a fresh same-card, same-session RTX 5090 Albatross matrix using the
-      current native-default code and current official checkpoint set.
-- [ ] Add current g1h B1/B2/B4 matrices for RTX 3090 and RTX 4090; the promoted
-      broad matrices on those cards are currently bsz8-scoped.
-- [ ] Recheck the RTX 4090 prompt-512 historical high-water reference under the
-      current timing and cache policy.
-- [ ] Extend the current V100 P1 floor and existing small-model/B8 P3 cells to
-      larger-model P2/P3 prefill/decode rows with explicit host RAM and VRAM
-      ceilings.
+### Broader training and quality
 
-Acceptance: candidate and reference must share the exact card, checkpoint,
-dtype, batch, prompt/decode lengths, cache policy, timing method, and process
-state. Correctness and memory gates remain mandatory alongside throughput.
+- Extend large-model SFT/DPO/GRPO, ZeRO-3 resume, distributed convergence, and
+  multi-day soak coverage beyond the published compatibility matrix.
+- Add more instruction, code, math, multilingual, quantized-quality, and long-
+  context datasets. These extend quality evidence and do not change API
+  compatibility acceptance.
+- Extend Apple CoreML/ANE and MLX response-quality matrices beyond the promoted
+  M5 profiles.
 
-### 3. Broader optimized-Qwen exact-card coverage
+### Packaging and maintenance
 
-- [ ] Extend RTX 5070 full-FLA coverage from bsz8 to bsz1/2/4 and add the
-      larger 4B/9B comparison pairs.
-- [ ] Extend the V100 optimized-Qwen matrix beyond prompt512/decode64 and the
-      current 1.5B/2B pair.
-- [ ] Add fail-closed optimized-Qwen matrices on Ampere professional cards and
-      H100/Hopper.
+- Publish additional Hub checkpoints with conversion provenance when model
+  redistribution permits it.
+- Add optional scheduled GPU clean-install lanes as runner capacity allows;
+  the required CPU and HF ecosystem CI lanes are already active.
+- Continue splitting large internal modules and deduplicating benchmark tools
+  without changing the stable Auto*, checkpoint, cache, or remote-code ABI.
+- Expand speculative decoding to more target/draft pairs and serving engines
+  as a separate optimization project.
 
-Acceptance: raw throughput, active-parameter-normalized work, correctness,
-physical footprint, and peak VRAM remain separate gates. A Torch-fallback Qwen
-row is never a full-FLA reference.
+## Completion reporting rule
 
-### 4. Missing exact-card hardware
+Do not convert the number of post-release ideas into a completion percentage.
+Report the named scope:
 
-- [ ] H100/Hopper: bf16, large-model, quant, batch, cache, training, and
-      same-card performance rows.
-- [ ] AMD/ROCm: fused prefill, full-model fused W8/W4, MI-series, longer
-      training and same-card official/Albatross performance.
-- [ ] Other Turing/RTX 20 products: validate independently and do not inherit
-      Tesla T4 prefill or DP4A quant routing from `sm_75` alone.
-- [ ] Moore Threads MUSA: legacy first-generation MTT S70 standalone parity,
-      HF load/forward/cache/generate, 64-token eager/WKV equality, autograd
-      fallback, B1/B2 smoke and paired WKV/shift-mix evidence now pass. S70 has
-      no Tensor Core, fp16 compute is impractically slow, and its SDK 4.2.0 is
-      frozen; retained kernels therefore use fp16 storage/IO with fp32 compute.
-      Close real PEFT/LoRA integration and broader S70 models/shapes/state gates.
-      Independently validate later S4000/S5000-class hardware when accessible:
-      do not inherit S70 compute limits, but do not claim its bf16/quant/graph/
-      multi-device/training capabilities without exact-card evidence either.
-- [ ] Huawei Ascend 910B3: the import-safe HF runtime, fixed-batch NPUGraph,
-      exact-stack W8 route, candidate-only W4 and hardware smoke are ported from
-      standalone commit `b6391271f`. Rerun the real 7.2B eager/graph/W8 matrix
-      against current main, then add real PEFT/Trainer/TRL, graph-prefill,
-      multi-NPU and long-soak evidence. Do not promote W4 or other Ascend
-      cards/software stacks from the 910B3 row.
-- [ ] Biren BR106M: exact-card SUPA detection, BF16/FP32-state eager routing,
-      FP16 fail-closed behavior, decomposed GroupNorm, low-memory conversion
-      and a hardware smoke are ported from standalone commit `47322bf`. Rerun
-      all released 0.1B-13.3B checkpoints against current main, then add
-      B1-B8 paired RWKV-LM/Albatross performance, TRL/resume/ZeRO, W8/W4 and
-      multi-BR106M. Other SUPA products must receive independent evidence.
-- [ ] MetaX C500: exact-card detection, conservative native eager routing,
-      FP32 key normalization and a hardware smoke are ported from standalone
-      commit `f2653e2`. Rerun the tiny and real 0.4B matrix against current
-      main, then cover all released models/B1-B8, TRL/resume/ZeRO, paired
-      RWKV-LM/Albatross performance, W8/W4 and multi-C500. Never inherit
-      NVIDIA Ampere kernels from MXMACA's reported CUDA capability 8.0.
-- [ ] Add exact-card evidence for additional RTX 50-series and constrained
-      laptop/low-memory devices.
-- [ ] Reproduce the promoted Apple results on M1–M4 and Pro/Max/Ultra variants.
+- `RWKV-7 HF adapter v0.6.0`: **COMPLETE**;
+- an exact card/model/profile: use its status in the hardware matrix and
+  benchmark artifact;
+- native vLLM/SGLang/DFlash: separate project status.
 
-Use [`docs/HARDWARE_MATRIX.md`](docs/HARDWARE_MATRIX.md) and the hardware report
-template in [`CONTRIBUTING.md`](CONTRIBUTING.md).
-
-### 5. Model quality and long-context evaluation
-
-- [ ] Beyond the accepted MATH500 math gate, add reproducible instruction,
-      reasoning, code, multilingual/Chinese, and long-context evaluations for
-      comparable RWKV-7 and Qwen3.5 checkpoints.
-- [ ] Extend quantized quality beyond short cosine/greedy gates with named
-      datasets, prompts, decoding parameters, seeds, and retained raw outputs.
-- [ ] Generalize the existing functional long-context/chunk-handoff checks into
-      cross-card release gates for state stability and task-quality drift across
-      fp16, W8, and W4.
-
-Acceptance: model-quality results remain separate from engine throughput and
-active-parameter-normalized performance claims.
-
-## P1 — Training and distributed closure
-
-### 6. Longer training evidence
-
-- [ ] Extend 0.4B/1.5B/2.9B/7.2B SFT, DPO, and GRPO beyond compatibility
-      smoke steps with loss, throughput, memory, and checkpoint evidence.
-- [ ] Expand ZeRO-3 resume to larger models and more card combinations,
-      including distributed optimizer/scheduler and RNG continuity.
-- [ ] Add H100 and longer/larger AMD bf16 training matrices.
-- [ ] Reproduce the accepted native train_temp convergence and resume contract
-      on broader model sizes and distributed configurations.
-
-### 7. Apple MLX and CoreML completion
-
-- [ ] Add retained formal response-quality scoring to the accepted 1.5B-vs-2B
-      performance pair, then extend the common rubric to 4B+ pairs.
-- [ ] Close CoreML INT4/LUT4 quality and confirm ANE placement and occupancy.
-- [ ] Make broad/full-memory W8/W4 fp16-or-faster on the already validated
-      long-context and multi-session/batched shapes.
-
-See [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PRODUCTION_CLOSE.md)
-for the promoted M5 boundary.
-
-## P2 — Packaging and maintenance
-
-### 8. Hub, release, and CI experience
-
-- [ ] Publish a clean Hub example with conversion provenance and checkpoint
-      checksums.
-- [ ] Add a scheduled clean-install CUDA job; the weekly clean-install CPU and
-      Apple jobs already exist.
-
-### 9. Architecture and remote-code maintenance
-
-- [ ] Continue splitting the remaining `native_jit.py`, `modeling_rwkv7.py`,
-      and MLX runtime/kernel monoliths behind the stable `native_model.py`
-      facade while preserving converted `auto_map`, parameter names, and
-      old-model loading.
-- [ ] Prove any nested runtime import layout offline across the supported
-      Transformers range before moving remote-code dependencies out of the
-      current flat namespace.
-- [ ] Reduce duplicated benchmark/session utilities only after preserving
-      artifact readers and historical reproduction commands.
-
-Acceptance: card-specific routing remains isolated in the policy layer, and
-every policy/kernel-default change retains the existing cross-card regression
-suite.
-
-### 10. Speculative decoding
-
-- [ ] Extend beyond the accepted V100 0.4B-target/0.1B-draft and Apple M5 lanes
-      to multiple CUDA/Apple draft sizes, longer shapes, acceptance/rejection
-      behavior, cache handoff, memory, and repeatable end-to-end speed gains.
-
-Acceptance: exact target-distribution and target-greedy correctness gates remain
-mandatory. DFlash and serving-engine scheduler integration stay in separate
-projects and are not HF-adapter TODOs.
+An accepted HF capability is reopened only if a code change invalidates its
+contract or regression gate, not because a new GPU or benchmark shape exists.
 
 ## PR completion checklist
 
-This is a per-PR template, not a list of outstanding project tasks:
+Every future enhancement PR must state:
 
-- Exact hardware/runtime/model/dtype recorded.
-- Reproduction command included.
-- Raw JSONL/log and concise README included.
-- Correctness, speed, memory, and route provenance reported together.
-- Negative or partial results described honestly.
-- Canonical status/benchmark/TODO documents updated only when status changes.
-- `python tests/test_markdown_links.py` passes.
-- Relevant unit, smoke, and cross-card isolation tests pass.
+1. exact scope and environment;
+2. correctness and fallback behavior;
+3. prefill and decode results where performance is claimed;
+4. physical footprint and peak memory where quantization is claimed;
+5. raw evidence paths and reproduction commands;
+6. which existing accepted profiles were rerun for regression isolation.
