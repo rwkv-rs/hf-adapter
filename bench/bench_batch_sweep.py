@@ -24,6 +24,8 @@ os.environ.setdefault("RWKV_V7_ON", "1")
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from rwkv7_hf.native_model import NativeRWKV7ForCausalLM
+
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
 SEED = "The quick brown fox jumps over the lazy dog. " * 256
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
@@ -74,6 +76,7 @@ def model_metadata(args, model) -> dict[str, Any]:
         "model_name": Path(args.hf_dir).name,
         "model_size_label": infer_model_size_label(args.hf_dir, args.model_size_label),
         "hf_model_dir": args.hf_dir,
+        "code_source": args.code_source,
         "hidden_size": getattr(cfg, "hidden_size", None),
         "intermediate_size": getattr(cfg, "intermediate_size", None),
         "num_hidden_layers": getattr(cfg, "num_hidden_layers", None),
@@ -144,11 +147,18 @@ def load_model(args, dtype):
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
-    model = AutoModelForCausalLM.from_pretrained(
+    model_cls = (
+        NativeRWKV7ForCausalLM if args.code_source == "repo" else AutoModelForCausalLM
+    )
+    load_kwargs = {
+        "torch_dtype": dtype,
+        "device_map": args.device if args.device.startswith("cuda") else None,
+    }
+    if args.code_source == "model":
+        load_kwargs["trust_remote_code"] = True
+    model = model_cls.from_pretrained(
         args.hf_dir,
-        trust_remote_code=True,
-        torch_dtype=dtype,
-        device_map=args.device if args.device.startswith("cuda") else None,
+        **load_kwargs,
     ).eval()
     if args.fuse_norm != "auto":
         desired = args.fuse_norm == "true"
@@ -347,6 +357,12 @@ def main() -> int:
     ap.add_argument("--model-size-label", default="", help="Optional size label such as 0.4b; inferred from --hf-dir when omitted")
     ap.add_argument("--dtype", default="fp16", choices=sorted(DTYPES))
     ap.add_argument("--device", default="cuda")
+    ap.add_argument(
+        "--code-source",
+        choices=("model", "repo"),
+        default="model",
+        help="load checkpoint-bundled remote code or the current repository implementation",
+    )
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto")

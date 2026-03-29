@@ -15,7 +15,8 @@ from rwkv7_hf.ada_lora import (
 def test_shape_policy() -> None:
     assert ada_wagv_lora_should_use(1, 1024, 64)
     assert ada_wagv_lora_should_use(4, 4096, 512)
-    assert not ada_wagv_lora_should_use(8, 1024, 64)
+    assert ada_wagv_lora_should_use(8, 1024, 64)
+    assert not ada_wagv_lora_should_use(9, 1024, 64)
     assert not ada_wagv_lora_should_use(1, 768, 64)
 
 

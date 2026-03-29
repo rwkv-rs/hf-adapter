@@ -103,6 +103,12 @@ def is_tesla_t4_name(name: str) -> bool:
     return "t4" in _gpu_name_tokens(name)
 
 
+def is_tesla_v100_name(name: str) -> bool:
+    """Match V100 product strings without promoting other sm_70 cards."""
+
+    return "v100" in _gpu_name_tokens(name)
+
+
 def is_mtt_s70_name(name: str) -> bool:
     """Match the exact first-generation MTT S70 product tokens."""
 
@@ -285,6 +291,7 @@ class KernelPolicy:
     ada_linear_rows: str = "2 4"
     ada_linear_roles: str = "auto"
     ada_wagv_lora: bool = False
+    ada_wagv_lora_max_rows: int = 4
     ada_wag_lora: bool = False
     ada_sparse_ffn: bool = False
     ada_sparse_ffn_max_rows: int = 19
@@ -306,6 +313,8 @@ class KernelPolicy:
     wag_lora_blocks: tuple[int, int, int] = (64, 64, 64)
     wavg_lora_blocks: tuple[int, int, int] = (64, 64, 64)
     wavg_lora_num_warps: int = 4
+    wavg_lora_b8_blocks: tuple[int, int, int] | None = None
+    wavg_lora_b8_num_warps: int | None = None
     quant_policy: str = "memory_first"
     notes: str = ""
 
@@ -998,6 +1007,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             notes="compatibility-first: keep experimental Triton/native_graph fusions off; Pascal uses native/no-FLA fallback unless overridden",
         )
     if family == "volta":
+        is_v100 = is_tesla_v100_name(profile.name)
         return KernelPolicy(
             profile=profile,
             fast_prefill=True,
@@ -1017,6 +1027,11 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             wavg_lora_bsz1_max_hidden=4096,
             wavg_lora_blocks=(32, 64, 256),
             wavg_lora_num_warps=8,
+            # Keep the established B1/B2/B4 launch.  On V100, B8 benefits
+            # from a smaller rank tile and four warps without changing the
+            # fused kernel's numerical contract.
+            wavg_lora_b8_blocks=(32, 32, 256) if is_v100 else None,
+            wavg_lora_b8_num_warps=4 if is_v100 else None,
             sm70_linear=True,
             sm70_wagv_lora=True,
             ada_sparse_ffn=True,
@@ -1265,6 +1280,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ada_linear=not is_4080,
             ada_linear_rows="1 2 4" if is_4090 else "2 4",
             ada_wagv_lora=True,
+            ada_wagv_lora_max_rows=8 if is_4080 else 4,
             ada_sparse_ffn=is_4090,
             ada_sparse_ffn_max_rows=2 if is_4090 else 19,
             ada_sparse_ffn_inplace=is_4090,

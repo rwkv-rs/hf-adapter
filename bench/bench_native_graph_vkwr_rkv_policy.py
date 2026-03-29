@@ -72,20 +72,27 @@ def run_policy(model: Any, token: Any, base_state: Any, args: argparse.Namespace
         effective_backend = getattr(model, "rwkv7_last_fast_token_backend", lambda: None)()
         state = base_state.clone()
         tok = token.clone()
+        greedy_tokens: list[int] = []
+        for _ in range(args.correctness_steps):
+            out = model.rwkv7_forward_token(tok, past_key_values=state)
+            next_token = out.logits[:, -1:].argmax(dim=-1)
+            greedy_tokens.extend(int(v) for v in next_token.detach().cpu().reshape(-1))
+            tok = token if args.fixed_token else next_token
+
+        state = base_state.clone()
+        tok = token.clone()
         for _ in range(args.warmup):
             out = model.rwkv7_forward_token(tok, past_key_values=state)
             if not args.fixed_token:
                 tok = out.logits[:, -1:].argmax(dim=-1)
         cuda_sync(args.device)
         t0 = time.perf_counter()
-        greedy_tokens: list[int] = []
         for _ in range(args.steps):
             out = model.rwkv7_forward_token(tok, past_key_values=state)
             if not args.fixed_token:
                 tok = out.logits[:, -1:].argmax(dim=-1)
             else:
                 tok = token
-            greedy_tokens.extend(int(v) for v in out.logits[:, -1, :].argmax(dim=-1).detach().cpu().reshape(-1))
         cuda_sync(args.device)
 
     ms_per_step = (time.perf_counter() - t0) * 1000.0 / float(args.steps)
@@ -106,6 +113,12 @@ def main() -> int:
     ap.add_argument("--hf-dir", required=True)
     ap.add_argument("--dtype", default="fp16", choices=sorted(DTYPES))
     ap.add_argument("--device", default="cuda")
+    ap.add_argument(
+        "--code-source",
+        choices=("model", "repo"),
+        default="model",
+        help="load checkpoint-bundled remote code or the current repository implementation",
+    )
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto")
@@ -113,6 +126,7 @@ def main() -> int:
     ap.add_argument("--prompt-tokens", type=int, default=64)
     ap.add_argument("--warmup", type=int, default=4)
     ap.add_argument("--steps", type=int, default=32)
+    ap.add_argument("--correctness-steps", type=int, default=32)
     ap.add_argument("--fixed-token", action="store_true")
     ap.add_argument("--native-graph-cache-size", type=int, default=8)
     ap.add_argument("--fused-recurrent-output", action=argparse.BooleanOptionalAction, default=True)
@@ -160,6 +174,7 @@ def main() -> int:
         "status": "pass",
         "dtype": args.dtype,
         "device": device_name(args.device),
+        "code_source": args.code_source,
         "attn_mode": args.attn_mode,
         "fuse_norm": getattr(model.config, "fuse_norm", None),
         "fast_cache": os.environ.get("RWKV7_FAST_CACHE", "1") not in _FALSE_VALUES,
@@ -167,6 +182,7 @@ def main() -> int:
         "hidden_size": hidden_size,
         "prompt_tokens": int(ids.shape[1]),
         "steps": args.steps,
+        "correctness_steps": args.correctness_steps,
         "fixed_token": args.fixed_token,
         "policy_min_hidden": int(args.policy_min_hidden),
         "policy_max_rows": int(args.policy_max_rows),

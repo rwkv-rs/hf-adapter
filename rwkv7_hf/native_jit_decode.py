@@ -200,7 +200,7 @@ def _block_ip(
             a = a0 + F.linear(F.linear(xa, a1), a2)
             g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
         else:
-            block_m, block_r, block_k = _native_graph_fused_wavg_lora_blocks()
+            block_m, block_r, block_k = _native_graph_fused_wavg_lora_blocks(1)
             w, a, g, v_gate = fused_wavg_lora(
                 xw.view(1, D),
                 xa.view(1, D),
@@ -221,7 +221,7 @@ def _block_ip(
                 block_m=block_m,
                 block_r=block_r,
                 block_k=block_k,
-                num_warps=_native_graph_fused_wavg_lora_num_warps(),
+                num_warps=_native_graph_fused_wavg_lora_num_warps(1),
             )
             w = w.view(A)
             a = a.view(A)
@@ -523,7 +523,7 @@ def _block_ip_batched(
             a = a0 + F.linear(F.linear(xa, a1), a2)
             g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
         else:
-            block_m, block_r, block_k = _native_graph_fused_wavg_lora_blocks()
+            block_m, block_r, block_k = _native_graph_fused_wavg_lora_blocks(B)
             w, a, g, v_gate = fused_wavg_lora(
                 xw,
                 xa,
@@ -544,7 +544,7 @@ def _block_ip_batched(
                 block_m=block_m,
                 block_r=block_r,
                 block_k=block_k,
-                num_warps=_native_graph_fused_wavg_lora_num_warps(),
+                num_warps=_native_graph_fused_wavg_lora_num_warps(B),
             )
         a = torch.sigmoid(a)
     elif lora_dense and _native_graph_fused_wag_lora_enabled():

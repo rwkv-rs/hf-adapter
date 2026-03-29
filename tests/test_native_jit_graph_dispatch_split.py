@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from types import SimpleNamespace
 
 from rwkv7_hf import native_jit, native_jit_graph_dispatch
 
@@ -47,6 +48,58 @@ def test_graph_rkv_policy_and_shape_gate_remain_bound_to_facade(monkeypatch) -> 
     assert native_jit._native_graph_vkwr_rkv_dispatch(8, 2048)
     assert not native_jit._native_graph_vkwr_rkv_dispatch(16, 2048)
     assert not native_jit._native_graph_vkwr_rkv_dispatch(8, 512)
+
+
+def test_ada_wagv_row_limit_is_policy_and_override_gated(monkeypatch) -> None:
+    monkeypatch.setattr(
+        native_jit_graph_dispatch,
+        "_kernel_policy",
+        lambda: SimpleNamespace(ada_wagv_lora=True, ada_wagv_lora_max_rows=8),
+    )
+    monkeypatch.setattr(native_jit_graph_dispatch, "ada_wagv_lora", object())
+    monkeypatch.setattr(
+        native_jit_graph_dispatch,
+        "ada_wagv_lora_should_use",
+        lambda rows, hidden, rank: 1 <= rows <= 8 and hidden >= 1024 and rank <= 512,
+    )
+    monkeypatch.delenv("RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA_MAX_ROWS", raising=False)
+
+    assert native_jit_graph_dispatch._native_graph_ada_wagv_lora_enabled(8, 2048, 128)
+    assert not native_jit_graph_dispatch._native_graph_ada_wagv_lora_enabled(9, 2048, 128)
+
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA_MAX_ROWS", "4")
+    assert not native_jit_graph_dispatch._native_graph_ada_wagv_lora_enabled(8, 2048, 128)
+    assert native_jit_graph_dispatch._native_graph_ada_wagv_lora_enabled(4, 2048, 128)
+
+
+def test_wavg_lora_launch_policy_can_specialize_batch_eight(monkeypatch) -> None:
+    monkeypatch.setattr(
+        native_jit_graph_dispatch,
+        "_kernel_policy",
+        lambda: SimpleNamespace(
+            wavg_lora_blocks=(32, 64, 256),
+            wavg_lora_num_warps=8,
+            wavg_lora_b8_blocks=(32, 32, 256),
+            wavg_lora_b8_num_warps=4,
+        ),
+    )
+    for name in (
+        "RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_M",
+        "RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_R",
+        "RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_K",
+        "RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_NUM_WARPS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    assert native_jit_graph_dispatch._native_graph_fused_wavg_lora_blocks(4) == (32, 64, 256)
+    assert native_jit_graph_dispatch._native_graph_fused_wavg_lora_num_warps(4) == 8
+    assert native_jit_graph_dispatch._native_graph_fused_wavg_lora_blocks(8) == (32, 32, 256)
+    assert native_jit_graph_dispatch._native_graph_fused_wavg_lora_num_warps(8) == 4
+
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_R", "16")
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_NUM_WARPS", "2")
+    assert native_jit_graph_dispatch._native_graph_fused_wavg_lora_blocks(8) == (32, 16, 256)
+    assert native_jit_graph_dispatch._native_graph_fused_wavg_lora_num_warps(8) == 2
 
 
 def test_graph_dispatch_module_is_shipped_with_remote_adapter() -> None:

@@ -794,9 +794,14 @@ def _native_graph_fused_wag_lora_blocks() -> tuple[int, int, int]:
     )
 
 
-def _native_graph_fused_wavg_lora_blocks() -> tuple[int, int, int]:
+def _native_graph_fused_wavg_lora_blocks(rows: int = 1) -> tuple[int, int, int]:
     policy = _rwkv7_kernel_policy()
-    defaults = tuple(getattr(policy, "wavg_lora_blocks", (64, 64, 64)))
+    batch_defaults = getattr(policy, "wavg_lora_b8_blocks", None)
+    defaults = tuple(
+        batch_defaults
+        if int(rows) == 8 and batch_defaults is not None
+        else getattr(policy, "wavg_lora_blocks", (64, 64, 64))
+    )
     vals = []
     for name, fallback, default, upper in (
         ("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_M", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_M", defaults[0], 128),
@@ -2492,7 +2497,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_fused_wag_lora_blocks(),
             _native_graph_fused_wavg_lora_requested(),
             _native_graph_fused_wavg_lora_bsz1_max_hidden(),
-            _native_graph_fused_wavg_lora_blocks(),
+            _native_graph_fused_wavg_lora_blocks(batch_size),
             _native_graph_fused_norm_mix_requested(),
             _native_graph_fused_norm_mix_num_warps(),
             _native_graph_sm70_linear_requested(),

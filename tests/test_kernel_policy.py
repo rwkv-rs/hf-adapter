@@ -338,6 +338,8 @@ def test_policy_defaults_are_conservative() -> None:
     assert v100.wavg_lora_bsz1_max_hidden == 4096
     assert v100.wavg_lora_blocks == (32, 64, 256)
     assert v100.wavg_lora_num_warps == 8
+    assert v100.wavg_lora_b8_blocks == (32, 32, 256)
+    assert v100.wavg_lora_b8_num_warps == 4
     assert v100.sm70_linear
     assert v100.sm70_wagv_lora
     assert v100.ada_sparse_ffn
@@ -346,6 +348,10 @@ def test_policy_defaults_are_conservative() -> None:
     assert not v100.ada_sparse_ffn_up
     assert not v100.fused_projection
     assert not v100.fused_output_project
+
+    other_volta = policy_for_profile(classify_gpu("Quadro GV100", (7, 0)))
+    assert other_volta.wavg_lora_b8_blocks is None
+    assert other_volta.wavg_lora_b8_num_warps is None
 
     t4 = policy_for_profile(classify_gpu("Tesla T4", (7, 5)))
     assert t4.fast_cache
@@ -406,6 +412,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert ada.ada_linear
     assert ada.ada_linear_rows == "1 2 4"
     assert ada.ada_wagv_lora
+    assert ada.ada_wagv_lora_max_rows == 4
     assert ada.ada_sparse_ffn
     assert ada.ada_sparse_ffn_max_rows == 2
     assert ada.ada_sparse_ffn_inplace
@@ -431,6 +438,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert not other_ada.ada_sparse_ffn
     assert other_ada.rkv_policy == "manual"
     assert other_ada.ada_linear_rows == "2 4"
+    assert other_ada.ada_wagv_lora_max_rows == 4
     assert other_ada.norm_mix_num_warps == 4
 
     rtx4080 = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 4080", (8, 9)))
@@ -491,6 +499,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert rtx4080.prefill_fused_output_model_shapes == expected_4080_prefill_shapes
     assert not rtx4080.ada_linear
     assert rtx4080.ada_wagv_lora
+    assert rtx4080.ada_wagv_lora_max_rows == 8
     assert not rtx4080.ada_sparse_ffn
     assert rtx4080.rkv_policy == "manual"
 
