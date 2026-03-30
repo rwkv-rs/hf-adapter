@@ -284,11 +284,16 @@ def _native_graph_ada_wagv_lora_enabled(rows: int, hidden_size: int, max_rank: i
     """Whether the no-copy sm_89 grouped low-rank route may be captured."""
 
     policy = _kernel_policy()
+    max_rows = _native_graph_int_env(
+        "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA_MAX_ROWS",
+        int(getattr(policy, "ada_wagv_lora_max_rows", 4)),
+    )
     return bool(
         env_flag(
             "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA",
             bool(getattr(policy, "ada_wagv_lora", False)),
         )
+        and 1 <= int(rows) <= max_rows
         and ada_wagv_lora is not None
         and ada_wagv_lora_should_use is not None
         and ada_wagv_lora_should_use(int(rows), int(hidden_size), int(max_rank))
@@ -637,11 +642,16 @@ def _native_graph_fused_wag_lora_blocks() -> tuple[int, int, int]:
         (128, 128, 256),
     )
 
-def _native_graph_fused_wavg_lora_blocks() -> tuple[int, int, int]:
+def _native_graph_fused_wavg_lora_blocks(rows: int = 1) -> tuple[int, int, int]:
     """Return ``(block_m, block_r, block_k)`` for the W/A/G/V-gate probe."""
 
     policy = _kernel_policy()
-    defaults = tuple(getattr(policy, "wavg_lora_blocks", (64, 64, 64)))
+    batch_defaults = getattr(policy, "wavg_lora_b8_blocks", None)
+    defaults = tuple(
+        batch_defaults
+        if int(rows) == 8 and batch_defaults is not None
+        else getattr(policy, "wavg_lora_blocks", (64, 64, 64))
+    )
     vals = []
     for name, fallback, default, upper in (
         ("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_M", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_M", defaults[0], 128),
@@ -659,9 +669,14 @@ def _native_graph_fused_wavg_lora_blocks() -> tuple[int, int, int]:
             vals.append(min(max(1, val), upper))
     return vals[0], vals[1], vals[2]
 
-def _native_graph_fused_wavg_lora_num_warps() -> int:
+def _native_graph_fused_wavg_lora_num_warps(rows: int = 1) -> int:
     policy = _kernel_policy()
-    default = int(getattr(policy, "wavg_lora_num_warps", 4))
+    batch_default = getattr(policy, "wavg_lora_b8_num_warps", None)
+    default = int(
+        batch_default
+        if int(rows) == 8 and batch_default is not None
+        else getattr(policy, "wavg_lora_num_warps", 4)
+    )
     value = env_int("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_NUM_WARPS", default, lower=1, upper=8)
     if value not in {1, 2, 4, 8}:
         raise ValueError(

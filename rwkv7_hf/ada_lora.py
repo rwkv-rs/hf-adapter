@@ -2,10 +2,12 @@
 """Optional sm_89/sm_120 fused W/A/G/V low-rank decode kernels.
 
 The layer>0 RWKV-7 time-mix path contains four independent rank-in projections
-and four rank-out projections.  For one to four decode rows, launching each as
-a separate GEMV plus separate tanh/sigmoid/interpolation kernels is expensive.
-This module groups rank-in into one launch and rank-out, activations, biases,
-and V interpolation into a second launch.
+and four rank-out projections.  For one to eight decode rows, separate
+tanh/sigmoid/interpolation launches around every projection are expensive.
+This module provides a grouped graph formulation through B8.  The custom
+rank-in/rank-out CUDA extension remains separately gated to its measured B1-B4
+range; B8 keeps cuBLAS projections and only folds the surrounding pointwise
+work.
 
 The CUDA implementation is derived from Albatross' Apache-2.0
 ``linear_wagv_rank_{in,out}_f16_kernel``.  It uses the HF ``nn.Linear`` weight
@@ -535,6 +537,18 @@ def ada_wagv_lora_build_error(device: Any = None) -> str | None:
 
 
 def ada_wagv_lora_should_use(rows: int, hidden: int, max_rank: int) -> bool:
+    return 1 <= int(rows) <= 8 and int(hidden) >= 1024 and int(hidden) % 4 == 0 and 1 <= int(max_rank) <= 512
+
+
+def _ada_wagv_lora_extension_should_use(rows: int, hidden: int, max_rank: int) -> bool:
+    """Return whether the measured small-row CUDA extension may be used.
+
+    B8 can still use the grouped graph formulation, which removes pointwise
+    launches around the ordinary cuBLAS LoRA calls.  The custom Albatross-
+    derived GEMV kernels remain limited to their separately validated B1-B4
+    range instead of being widened implicitly with the graph policy.
+    """
+
     return 1 <= int(rows) <= 4 and int(hidden) >= 1024 and int(hidden) % 4 == 0 and 1 <= int(max_rank) <= 512
 
 
@@ -589,7 +603,7 @@ def ada_wagv_lora(
     valid = bool(
         not force_fallback
         and not torch.is_grad_enabled()
-        and ada_wagv_lora_should_use(rows, hidden, max_rank)
+        and _ada_wagv_lora_extension_should_use(rows, hidden, max_rank)
         and xw2.dtype in {torch.float16, torch.bfloat16}
         and all(item.is_cuda and item.dtype == xw2.dtype and item.is_contiguous() for item in all_tensors)
         and all(tuple(item.shape) == (rows, hidden) for item in flat)
@@ -665,7 +679,7 @@ def ada_wag_lora(
     valid = bool(
         not force_fallback
         and not torch.is_grad_enabled()
-        and ada_wagv_lora_should_use(rows, hidden, max_rank)
+        and _ada_wagv_lora_extension_should_use(rows, hidden, max_rank)
         and xw2.dtype in {torch.float16, torch.bfloat16}
         and all(
             item.is_cuda and item.dtype == xw2.dtype and item.is_contiguous()

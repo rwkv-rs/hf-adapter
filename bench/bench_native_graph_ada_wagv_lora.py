@@ -23,6 +23,8 @@ os.environ.setdefault("RWKV7_FAST_TOKEN_BACKEND", "native_graph")
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from rwkv7_hf.native_model import NativeRWKV7ForCausalLM
+
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
 SEED = "The quick brown fox jumps over the lazy dog. " * 128
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
@@ -56,11 +58,18 @@ def load_model(args: argparse.Namespace, dtype: torch.dtype):
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "native_graph"
     os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = str(args.native_graph_cache_size)
-    model = AutoModelForCausalLM.from_pretrained(
+    model_cls = (
+        NativeRWKV7ForCausalLM if args.code_source == "repo" else AutoModelForCausalLM
+    )
+    load_kwargs = {
+        "torch_dtype": dtype,
+        "device_map": args.device if args.device.startswith("cuda") else None,
+    }
+    if args.code_source == "model":
+        load_kwargs["trust_remote_code"] = True
+    model = model_cls.from_pretrained(
         args.hf_dir,
-        trust_remote_code=True,
-        torch_dtype=dtype,
-        device_map=args.device if args.device.startswith("cuda") else None,
+        **load_kwargs,
     ).eval()
     if args.fuse_norm != "auto":
         desired = args.fuse_norm == "true"
@@ -150,6 +159,12 @@ def main() -> int:
     ap.add_argument("--hf-dir", required=True)
     ap.add_argument("--dtype", default="fp16", choices=sorted(DTYPES))
     ap.add_argument("--device", default="cuda")
+    ap.add_argument(
+        "--code-source",
+        choices=("model", "repo"),
+        default="model",
+        help="load checkpoint-bundled remote code or the current repository implementation",
+    )
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto")
@@ -196,6 +211,7 @@ def main() -> int:
         "status": "pass" if correctness_pass else "fail",
         "dtype": args.dtype,
         "device": device_name(args.device),
+        "code_source": args.code_source,
         "attn_mode": args.attn_mode,
         "fuse_norm": getattr(model.config, "fuse_norm", None),
         "fast_cache": os.environ.get("RWKV7_FAST_CACHE", "1") not in _FALSE_VALUES,
