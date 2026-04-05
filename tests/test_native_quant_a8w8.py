@@ -65,7 +65,13 @@ def test_cuda_kernel_tracks_strided_last_token_slice(batch_size: int) -> None:
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("batch_size", [1, 8])
-def test_cuda_fused_ffn_tracks_two_linear_boundary(batch_size: int) -> None:
+def test_cuda_fused_ffn_tracks_two_linear_boundary(
+    batch_size: int,
+    monkeypatch,
+) -> None:
+    # The functional kernel test is independent of exact-card performance
+    # promotion.  Force the route before constructing the packed modules.
+    monkeypatch.setenv("RWKV7_A8W8_FUSED_FFN", "1")
     torch.manual_seed(6)
     up = torch.nn.Linear(
         1024, 4096, bias=False, dtype=torch.float16, device="cuda"
