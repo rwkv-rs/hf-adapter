@@ -21,8 +21,10 @@ def test_shape_policy() -> None:
     assert not ada_wagv_lora_should_use(9, 1024, 64)
     assert not ada_wagv_lora_should_use(1, 768, 64)
     assert ada_wagv_bmm_should_use(8, 1024, 128)
+    assert ada_wagv_bmm_should_use(8, 2560, 480)
     assert not ada_wagv_bmm_should_use(4, 1024, 128)
     assert not ada_wagv_bmm_should_use(8, 768, 128)
+    assert not ada_wagv_bmm_should_use(8, 4096, 480)
 
 
 def test_cpu_fallback_shapes_and_values() -> None:

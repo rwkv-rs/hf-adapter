@@ -545,8 +545,7 @@ def ada_wagv_bmm_should_use(rows: int, hidden: int, max_rank: int) -> bool:
 
     return (
         int(rows) == 8
-        and int(hidden) >= 1024
-        and int(hidden) % 8 == 0
+        and int(hidden) in (1024, 2048, 2560)
         and 1 <= int(max_rank) <= 512
     )
 
