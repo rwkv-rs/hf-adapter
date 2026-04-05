@@ -503,6 +503,10 @@ def test_policy_defaults_are_conservative() -> None:
     assert rtx4080.ada_wagv_lora
     assert rtx4080.ada_wagv_lora_max_rows == 8
     assert rtx4080.ada_wagv_bmm
+    assert rtx4080.native_graph_triton_fp16_state
+    assert rtx4080.native_graph_triton_fp16_state_model_shapes == (
+        (4096, 32, 8),
+    )
     assert not rtx4080.ada_sparse_ffn
     assert rtx4080.rkv_policy == "manual"
 
@@ -522,6 +526,8 @@ def test_policy_defaults_are_conservative() -> None:
         assert adjacent_ada.prefill_scan_model_shapes == ()
         assert adjacent_ada.prefill_graph_model_shapes == ()
         assert not adjacent_ada.ada_wagv_bmm
+        assert not adjacent_ada.native_graph_triton_fp16_state
+        assert adjacent_ada.native_graph_triton_fp16_state_model_shapes == ()
 
     rtx3090 = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 3090", (8, 6)))
     assert rtx3090.fast_prefill

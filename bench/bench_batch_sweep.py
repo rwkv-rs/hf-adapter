@@ -129,6 +129,24 @@ def peak_mb(device: str) -> float | None:
     return round(float(value) / 1024 / 1024, 1)
 
 
+def native_graph_state_route(state) -> dict[str, Any]:
+    """Report the state backend selected by a graph-bound native cache."""
+
+    bound_runner = getattr(state, "_native_graph_bound_runner", None)
+    runner = bound_runner() if callable(bound_runner) else None
+    if runner is None:
+        return {}
+    return {
+        "native_graph_state_dtype": str(getattr(runner, "state_dtype", "unknown")),
+        "native_graph_triton_fp16_state": bool(
+            getattr(runner, "triton_fp16_state", False)
+        ),
+        "native_graph_native_fp16_recurrent": bool(
+            getattr(runner, "fp16_recurrent", False)
+        ),
+    }
+
+
 def set_attn_mode(model, attn_mode: str) -> None:
     model.config.attn_mode = attn_mode
     for layer in getattr(model.model, "layers", []):
@@ -289,6 +307,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
         "decode_tokps_per_seq": round(args.decode_tokens / decode_dt, 1),
         "decode_ms_per_step": round(1000 * decode_dt / args.decode_tokens, 2),
         "peak_vram_mb": peak_mb(args.device),
+        **native_graph_state_route(state),
         **forward_route,
     }]
 
@@ -317,6 +336,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
             device_sync(args.device)
             fast_dt = time.time() - t0
         fast_route = musa_wkv_route(model)
+        state_route = native_graph_state_route(state)
         fast_route["musa_attn_shift_mix_calls_delta"] = int(
             fast_route.get("musa_attn_shift_mix_calls", 0)
         ) - int(forward_route.get("musa_attn_shift_mix_calls", 0))
@@ -353,6 +373,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
             "decode_ms_per_step": round(1000 * fast_dt / args.decode_tokens, 2),
             "cache_type": type(state).__name__ if state is not None else None,
             "peak_vram_mb": peak_mb(args.device),
+            **state_route,
             **fast_route,
         })
     elif args.fast_decode_api == "true":

@@ -14,6 +14,7 @@ from rwkv7_hf.native_graph_runtime import (
     NativeGraphRunner,
     native_graph_precompute_embedding_enabled,
     native_graph_state_dtype,
+    native_graph_triton_fp16_state_enabled,
 )
 from rwkv7_hf.native_model import NativeRWKV7Cache, NativeRWKV7Config, NativeRWKV7ForCausalLM
 
@@ -169,6 +170,64 @@ def test_native_graph_state_dtype_is_explicit_and_fail_closed(monkeypatch) -> No
         assert "RWKV7_NATIVE_GRAPH_STATE_DTYPE" in str(exc)
     else:
         raise AssertionError("invalid state dtype must fail closed")
+
+
+def test_native_graph_triton_fp16_state_is_exact_shape_and_overridable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        native_graph_runtime_module,
+        "current_kernel_policy",
+        lambda **_: SimpleNamespace(
+            native_graph_state_dtype="fp32",
+            native_graph_triton_fp16_state=True,
+            native_graph_triton_fp16_state_model_shapes=((4096, 32, 8),),
+        ),
+    )
+    monkeypatch.delenv("RWKV7_NATIVE_GRAPH_STATE_DTYPE", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_GRAPH_TRITON_FP16_STATE", raising=False)
+
+    assert native_graph_triton_fp16_state_enabled(4096, 32, 8)
+    assert not native_graph_triton_fp16_state_enabled(4096, 32, 1)
+    assert not native_graph_triton_fp16_state_enabled()
+    assert native_graph_state_dtype(
+        torch.float16,
+        hidden_size=4096,
+        num_layers=32,
+        batch_size=8,
+    ) == torch.float16
+    assert native_graph_state_dtype(
+        torch.float16,
+        hidden_size=4096,
+        num_layers=32,
+        batch_size=1,
+    ) == torch.float32
+
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_TRITON_FP16_STATE", "0")
+    assert not native_graph_triton_fp16_state_enabled(4096, 32, 8)
+    assert native_graph_state_dtype(
+        torch.float16,
+        hidden_size=4096,
+        num_layers=32,
+        batch_size=8,
+    ) == torch.float32
+
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_TRITON_FP16_STATE", "1")
+    assert native_graph_triton_fp16_state_enabled(2560, 32, 8)
+    assert native_graph_state_dtype(
+        torch.float16,
+        hidden_size=2560,
+        num_layers=32,
+        batch_size=8,
+    ) == torch.float16
+
+    # The explicit dtype override has the final say even when the Triton route
+    # itself is selected for an exploratory A/B run.
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_STATE_DTYPE", "fp32")
+    assert native_graph_state_dtype(
+        torch.float16,
+        hidden_size=4096,
+        num_layers=32,
+        batch_size=8,
+    ) == torch.float32
 
 
 def test_allocated_zero_length_cache_is_initialized_without_history() -> None:

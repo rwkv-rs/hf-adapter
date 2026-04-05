@@ -305,7 +305,7 @@ def _native_graph_ada_wagv_bmm_enabled(
     hidden_size: int,
     max_rank: int,
 ) -> bool:
-    """Whether the exact RTX 4080 B8 tensor-core LoRA route is enabled."""
+    """Whether the exact sm89 B8 tensor-core LoRA route is enabled."""
 
     policy = _kernel_policy()
     return bool(

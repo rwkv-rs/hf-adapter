@@ -44,7 +44,9 @@ The machine-readable dataclass diff now has the following result:
 
 - **RTX 4080:** retains its exact shape allowlists, graph cache size 4,
   self-chunk tile 32, row-4 scan selections, and disabled regressing Ada linear
-  and sparse-FFN routes.
+  and sparse-FFN routes. A later exact-shape addition selects Triton FP16
+  recurrent state only for hidden 4096, 32 layers and B8; the paired 7.2B
+  evidence is in `bench/4080_7p2b_fp16_state_20260809/`.
 - **RTX 4090:** no executable policy value differs from the pre-4080 policy.
   Only later-added inert schema fields (`None`, `False`, or empty tuples) and
   explanatory notes differ. Self-chunk remains off by default and its fallback

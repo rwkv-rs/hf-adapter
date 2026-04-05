@@ -1132,7 +1132,7 @@ def fused_recurrent_output_prepare_raw(
         not force_fallback
         and fused_recurrent_output_prepare_available()
         and all(value.is_cuda for value in (r3, w3, k3, v3, a3, state, g3, k_k, k_a, r_k, group_norm_weight, group_norm_bias))
-        and state.dtype == torch.float32
+        and state.dtype in (torch.float32, torch.float16)
         and r3.dtype in (torch.float16, torch.bfloat16, torch.float32)
         and all(value.dtype == r3.dtype for value in (w3, k3, v3, a3, g3, k_k, k_a, r_k, group_norm_weight, group_norm_bias))
     )

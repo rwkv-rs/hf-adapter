@@ -54,14 +54,58 @@ def native_graph_stats_template() -> dict[str, int]:
     return {"requests": 0, "hits": 0, "misses": 0, "evictions": 0}
 
 
-def native_graph_state_dtype(model_dtype: torch.dtype) -> torch.dtype:
+def native_graph_triton_fp16_state_enabled(
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+    batch_size: int | None = None,
+) -> bool:
+    """Select the measured Triton FP16-state route, failing closed by shape.
+
+    An explicit environment override remains available for benchmarking new
+    cards and shapes.  Hardware defaults require the complete model signature
+    to match a policy allowlist.
+    """
+
+    policy = current_kernel_policy(torch_module=torch)
+    selected = False
+    if hidden_size is not None and num_layers is not None and batch_size is not None:
+        signature = (int(hidden_size), int(num_layers), int(batch_size))
+        selected = bool(
+            getattr(policy, "native_graph_triton_fp16_state", False)
+            and signature
+            in tuple(
+                getattr(
+                    policy,
+                    "native_graph_triton_fp16_state_model_shapes",
+                    (),
+                )
+            )
+        )
+    return env_flag("RWKV7_NATIVE_GRAPH_TRITON_FP16_STATE", selected)
+
+
+def native_graph_state_dtype(
+    model_dtype: torch.dtype,
+    *,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+    batch_size: int | None = None,
+) -> torch.dtype:
     """Resolve graph-state dtype with explicit overrides taking precedence."""
 
     policy = current_kernel_policy(torch_module=torch)
-    raw = os.environ.get(
-        "RWKV7_NATIVE_GRAPH_STATE_DTYPE",
-        str(getattr(policy, "native_graph_state_dtype", "fp32")),
-    ).strip().lower()
+    raw = os.environ.get("RWKV7_NATIVE_GRAPH_STATE_DTYPE")
+    if raw is None:
+        raw = (
+            "fp16"
+            if native_graph_triton_fp16_state_enabled(
+                hidden_size,
+                num_layers,
+                batch_size,
+            )
+            else str(getattr(policy, "native_graph_state_dtype", "fp32"))
+        )
+    raw = raw.strip().lower()
     if raw in {"fp32", "float32"}:
         return torch.float32
     if raw in {"fp16", "float16", "half"}:
@@ -144,9 +188,29 @@ class NativeGraphRunner:
         if self.device.type != "cuda":
             raise RuntimeError("native_graph requires model weights on CUDA")
         self.dtype = base.embeddings.weight.dtype
-        self.state_dtype = native_graph_state_dtype(self.dtype)
-        self.fp16_recurrent = self.state_dtype == torch.float16
-        if self.fp16_recurrent:
+        self.hidden = int(owner.config.hidden_size)
+        self.attention_hidden = int(
+            getattr(owner.config, "attention_hidden_size", packs[0][1] * packs[0][2])
+        )
+        self.num_layers = len(packs)
+        triton_fp16_state_requested = native_graph_triton_fp16_state_enabled(
+            self.hidden,
+            self.num_layers,
+            self.batch_size,
+        )
+        self.state_dtype = native_graph_state_dtype(
+            self.dtype,
+            hidden_size=self.hidden,
+            num_layers=self.num_layers,
+            batch_size=self.batch_size,
+        )
+        self.triton_fp16_state = bool(
+            triton_fp16_state_requested and self.state_dtype == torch.float16
+        )
+        self.fp16_recurrent = bool(
+            self.state_dtype == torch.float16 and not self.triton_fp16_state
+        )
+        if self.state_dtype == torch.float16 and not self.triton_fp16_state:
             if not native_graph_fp16_recurrent_enabled():
                 raise RuntimeError(
                     "FP16 native graph state requires "
@@ -164,11 +228,6 @@ class NativeGraphRunner:
                 raise RuntimeError(
                     f"FP16 native recurrent extension is unavailable: {error}"
                 )
-        self.hidden = int(owner.config.hidden_size)
-        self.attention_hidden = int(
-            getattr(owner.config, "attention_hidden_size", packs[0][1] * packs[0][2])
-        )
-        self.num_layers = len(packs)
         self.embeddings = base.embeddings.weight
         self.precomputed_embedding_ln0 = False
         if native_graph_precompute_embedding_enabled():
@@ -434,6 +493,7 @@ __all__ = [
     "native_graph_runtime_signature",
     "native_graph_precompute_embedding_enabled",
     "native_graph_fp16_recurrent_enabled",
+    "native_graph_triton_fp16_state_enabled",
     "native_graph_state_dtype",
     "native_graph_stats_template",
 ]
