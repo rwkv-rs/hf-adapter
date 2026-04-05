@@ -725,6 +725,13 @@ def _native_graph_ada_wagv_lora_requested() -> bool:
     )
 
 
+def _native_graph_ada_wagv_bmm_requested() -> bool:
+    policy = _rwkv7_kernel_policy()
+    return env_flag(
+        "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM", bool(getattr(policy, "ada_wagv_bmm", False))
+    )
+
+
 def _native_graph_ada_sparse_ffn_requested() -> bool:
     policy = _rwkv7_kernel_policy()
     return env_flag(
@@ -2504,6 +2511,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_ada_linear_requested(),
             _native_graph_ada_linear_signature(),
             _native_graph_ada_wagv_lora_requested(),
+            _native_graph_ada_wagv_bmm_requested(),
             _native_graph_ada_sparse_ffn_requested(),
             _native_graph_ada_sparse_ffn_signature(),
             _native_graph_rkv_policy(),

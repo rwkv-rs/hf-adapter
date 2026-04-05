@@ -5,7 +5,7 @@ exploratory tuning chronology. Raw rows, logs and negative experiments remain
 in [`bench/`](bench/); platform interpretation lives in
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
-Last updated: **2026-07-28**.
+Last updated: **2026-08-09**.
 
 ## Benchmark contract
 
@@ -33,6 +33,7 @@ Status vocabulary:
 | RTX 4090 | 0.4B/0.8B, 1.5B/2B and 2.9B/4B, bsz8, dense/W8/W4 | finite logits, fail-closed native/full-FLA/route contracts; quality is a separate axis | dense prefill min `1.3704x/1.0420x/1.3051x`, decode min `12.1018x/5.6368x/4.2144x`; W8/W4 total latency and physical-memory gates pass | **PASS 54/54** |
 | RTX 4090 | Historical 0.4B dense and W8/W4 speed lanes | 32-step greedy and cache handoff pass | decode `1.007x–1.418x` matching Albatross; bsz4 prefill `1.007x` current-session / `0.916x` historical high-water | **PASS measured lanes** |
 | RTX 4080 | Native HF 0.4B/1.5B/2.9B vs full-FLA Qwen3.5 0.8B/2B/4B, B1/B8; 7.2B/13.3B capacity | fail-closed optimized-Qwen contracts; paired quant cosine/greedy gates; exact-card capacity probes | 6/6 pair matrices pass; dense prefill/decode minima `1.0123x/1.4353x`; A8W8/W4 complete-cell minima `1.0031x/1.0160x`; 13.3B MM8/MM4 fit | **PASS measured lanes** |
+| RTX 4080 | Exact B8 FP16 grouped W/A/V tensor-core projection, 0.4B/1.5B/2.9B | three independent loads per model; first-step logits exact; greedy `4,608/4,608` | median decode gains `1.1267x/1.0942x/1.0809x`; process peak-memory deltas `+2.39%/+1.90%/+1.55%` | **PASS exact B8 lane** |
 | RTX 5090 | 0.4B MATH500; 1.5B/2.9B/7.2B quant; 13.3B inference | pass@64 `0.38`; compression ratio `1.0`; all quant same-next | MATH summary/decode `4.336x/4.871x` committed Albatross reference; 2.9B/7.2B quant `>=0.99x` paired fp16 | **PASS artifact** |
 | RTX 5090 | 0.4B/0.8B through 7.2B/9B, B1/B8, dense/W8/W4 | 144/144 Qwen references verify full FLA plus Triton conv; 32/32 greedy checks pass; task quality is separate | raw dense prefill/decode minima `1.0226x/2.8130x`; per-active-B speed leads in all cells; W8/W4 total-latency and footprint gates pass | **PASS 8/8 batch-pairs** |
 | RTX 5090 | g1h 1.5B/2.9B/7.2B/13.3B BF16 versus W4, B1/B8, prompt128/decode128 | prompt/final cosine `>=0.9995`, same-next 8/8; group-128 grid 280/280 | prefill/decode minima `1.0010x/1.1854x`; footprint `0.5298x–0.6250x` with automatic exact-model profiles | **PASS 8/8 all-phase cells** |
@@ -409,6 +410,17 @@ normalization are live.
 | 0.4B / 0.8B | B1 / B8 | `1.385151x / 1.376179x` | `4.859517x / 3.550845x` | `8.111217x / 5.926843x` |
 | 1.5B / 2B | B1 / B8 | `1.012285x / 1.024180x` | `1.902894x / 1.435296x` | `2.344436x / 1.768344x` |
 | 2.9B / 4B | B1 / B8 | `1.062111x / 1.243909x` | `1.612078x / 1.537228x` | `2.300076x / 2.193280x` |
+
+The follow-up exact-B8 projection route groups the nearby W/A/V low-rank
+projections into two tensor-core BMMs while retaining G on its original GEMMs.
+Fused norm/mix provides a zero-copy W/A/V input view, and layer zero uses a
+smaller W/A-only pack. Across three independent 512-step runs per checkpoint,
+0.4B/1.5B/2.9B improve by median `1.1267x/1.0942x/1.0809x`, with process
+peak-memory deltas of `+27.0/+65.0/+100.2 MiB`. First-step logits are exact and
+all `4,608/4,608` generated tokens match. The route is fail-closed to desktop
+RTX 4080, FP16 and B8; other batches/cards retain their existing policy.
+Evidence:
+[`bench/4080_b8_projection_bmm_20260809/README.md`](bench/4080_b8_projection_bmm_20260809/README.md).
 
 The output-head A8W8/TorchAO-W4 routes pass all 36 exact cells per route with
 minimum complete-cell ratios `1.003101x/1.015996x`, lower footprints and full

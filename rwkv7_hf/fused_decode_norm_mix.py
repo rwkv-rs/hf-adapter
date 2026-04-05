@@ -173,6 +173,7 @@ def fused_attn_norm_mix6_decode(
     eps: float = 1e-5,
     num_warps: int = 4,
     stack_rkv: bool = False,
+    stack_wav: bool = False,
     force_fallback: bool = False,
 ) -> tuple[Any, Any, Any, Any, Any, Any]:
     """Layer-normalize ``x``, update ``previous``, and emit six time mixes."""
@@ -205,6 +206,21 @@ def fused_attn_norm_mix6_decode(
         if stack_rkv:
             stacked_rkv = torch.stack((outputs[0], outputs[2], outputs[3]), dim=0)
             outputs = (stacked_rkv[0], outputs[1], stacked_rkv[1], stacked_rkv[2], outputs[4], outputs[5])
+        elif stack_wav:
+            # W/A/V are consumed by the exact B8 grouped LoRA route in this
+            # order. Preserve the public R/W/K/V/A/G tuple while sharing one
+            # backing allocation for a zero-copy batched-matmul view.
+            stacked_wav = torch.stack(
+                (outputs[1], outputs[4], outputs[3]), dim=0
+            )
+            outputs = (
+                outputs[0],
+                stacked_wav[0],
+                outputs[2],
+                stacked_wav[2],
+                stacked_wav[1],
+                outputs[5],
+            )
         previous.copy_(_restore_shape(h, shape))
         return tuple(_restore_shape(value, shape) for value in outputs)  # type: ignore[return-value]
 
@@ -219,6 +235,18 @@ def fused_attn_norm_mix6_decode(
             stacked_rkv[1],
             stacked_rkv[2],
             torch.empty_like(x_c),
+            torch.empty_like(x_c),
+        )
+    elif stack_wav:
+        stacked_wav = torch.empty(
+            (3, *tuple(x_c.shape)), device=x_c.device, dtype=x_c.dtype
+        )
+        outputs = (
+            torch.empty_like(x_c),
+            stacked_wav[0],
+            torch.empty_like(x_c),
+            stacked_wav[2],
+            stacked_wav[1],
             torch.empty_like(x_c),
         )
     else:

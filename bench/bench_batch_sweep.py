@@ -39,7 +39,15 @@ def _model_kernel_policy(model):
             return getter()
         except Exception:
             return None
-    return None
+    try:
+        from rwkv7_hf.kernel_policy import current_kernel_policy
+
+        return current_kernel_policy(
+            device=next(model.parameters()).device,
+            torch_module=torch,
+        )
+    except Exception:
+        return None
 
 
 def effective_flag(model, env_name: str, policy_attr: str, fallback: bool) -> bool:
@@ -328,6 +336,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
             "native_graph_sm70_linear": effective_flag(model, "RWKV7_NATIVE_GRAPH_SM70_LINEAR", "sm70_linear", False),
             "native_graph_ada_linear": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_LINEAR", "ada_linear", False),
             "native_graph_ada_wagv_lora": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA", "ada_wagv_lora", False),
+            "native_graph_ada_wagv_bmm": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM", "ada_wagv_bmm", False),
             "native_graph_ada_sparse_ffn": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN", "ada_sparse_ffn", False),
             "native_graph_ada_sparse_ffn_max_rows": int(os.environ.get(
                 "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_MAX_ROWS",

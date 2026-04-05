@@ -14,7 +14,7 @@ import torch
 import torch.nn.functional as F
 
 
-_OWNED_NAMES = {'_native_graph_fused_recurrent_raw_enabled', '_native_graph_linear_dispatch', '_native_graph_fused_output_project_block_m', '_native_graph_ada_sparse_ffn_enabled', '_native_graph_ada_linear_should_route', '_native_graph_fused_wavg_lora_blocks', '_native_graph_blackwell_norm_mix_enabled', '_native_graph_rkv_project', '_native_graph_ada_wagv_lora_enabled', '_native_graph_fused_recurrent_output_enabled', '_native_graph_fp16_recurrent_enabled', '_native_graph_fused_wag_lora_blocks', '_native_graph_vkwr_rkv_dispatch', '_native_graph_ffn_dispatch', '_native_graph_fused_projection_enabled', '_native_graph_ada_wag_lora_enabled', '_native_graph_int_env', '_native_graph_fused_output_project_enabled', '_native_graph_ffn_down_add_dispatch', 'prewarm_ada_sparse_ffn', '_native_graph_fused_wavg_lora_enabled', '_native_graph_ffn_up_relu2_dispatch', '_native_graph_sm70_linear_enabled', '_native_graph_fused_wavg_lora_num_warps', '_native_graph_fused_output_enabled', '_native_graph_fused_norm_mix_num_warps', '_native_graph_fused_norm_mix_enabled', '_native_graph_fused_wag_lora_enabled', '_native_graph_rkv_policy', '_native_graph_ada_linear_enabled', '_native_graph_sm70_wagv_lora_enabled'} | {"bind_runtime", "_facade_value"}
+_OWNED_NAMES = {'_native_graph_fused_recurrent_raw_enabled', '_native_graph_linear_dispatch', '_native_graph_fused_output_project_block_m', '_native_graph_ada_sparse_ffn_enabled', '_native_graph_ada_linear_should_route', '_native_graph_fused_wavg_lora_blocks', '_native_graph_blackwell_norm_mix_enabled', '_native_graph_rkv_project', '_native_graph_ada_wagv_bmm_enabled', '_native_graph_ada_wagv_lora_enabled', '_native_graph_fused_recurrent_output_enabled', '_native_graph_fp16_recurrent_enabled', '_native_graph_fused_wag_lora_blocks', '_native_graph_vkwr_rkv_dispatch', '_native_graph_ffn_dispatch', '_native_graph_fused_projection_enabled', '_native_graph_ada_wag_lora_enabled', '_native_graph_int_env', '_native_graph_fused_output_project_enabled', '_native_graph_ffn_down_add_dispatch', 'prewarm_ada_sparse_ffn', '_native_graph_fused_wavg_lora_enabled', '_native_graph_ffn_up_relu2_dispatch', '_native_graph_sm70_linear_enabled', '_native_graph_fused_wavg_lora_num_warps', '_native_graph_fused_output_enabled', '_native_graph_fused_norm_mix_num_warps', '_native_graph_fused_norm_mix_enabled', '_native_graph_fused_wag_lora_enabled', '_native_graph_rkv_policy', '_native_graph_ada_linear_enabled', '_native_graph_sm70_wagv_lora_enabled'} | {"bind_runtime", "_facade_value"}
 
 
 def bind_runtime(runtime: dict[str, object]) -> None:
@@ -297,6 +297,25 @@ def _native_graph_ada_wagv_lora_enabled(rows: int, hidden_size: int, max_rank: i
         and ada_wagv_lora is not None
         and ada_wagv_lora_should_use is not None
         and ada_wagv_lora_should_use(int(rows), int(hidden_size), int(max_rank))
+    )
+
+
+def _native_graph_ada_wagv_bmm_enabled(
+    rows: int,
+    hidden_size: int,
+    max_rank: int,
+) -> bool:
+    """Whether the exact RTX 4080 B8 tensor-core LoRA route is enabled."""
+
+    policy = _kernel_policy()
+    return bool(
+        env_flag(
+            "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM",
+            bool(getattr(policy, "ada_wagv_bmm", False)),
+        )
+        and ada_wagv_bmm is not None
+        and ada_wagv_bmm_should_use is not None
+        and ada_wagv_bmm_should_use(int(rows), int(hidden_size), int(max_rank))
     )
 
 def _native_graph_ada_wag_lora_enabled() -> bool:

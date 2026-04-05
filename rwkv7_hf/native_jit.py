@@ -484,6 +484,8 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
 try:  # pragma: no cover - optional sm_89/sm_120 grouped W/A/G/V LoRA
     from .ada_lora import (
         ada_wag_lora,
+        ada_wagv_bmm,
+        ada_wagv_bmm_should_use,
         ada_wagv_lora,
         ada_wagv_lora_available,
         ada_wagv_lora_should_use,
@@ -492,12 +494,16 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
         from ada_lora import (
             ada_wag_lora,
+            ada_wagv_bmm,
+            ada_wagv_bmm_should_use,
             ada_wagv_lora,
             ada_wagv_lora_available,
             ada_wagv_lora_should_use,
         )
     except Exception:
         ada_wag_lora = None  # type: ignore[assignment]
+        ada_wagv_bmm = None  # type: ignore[assignment]
+        ada_wagv_bmm_should_use = None  # type: ignore[assignment]
         ada_wagv_lora = None  # type: ignore[assignment]
         ada_wagv_lora_available = None  # type: ignore[assignment]
         ada_wagv_lora_should_use = None  # type: ignore[assignment]
@@ -632,6 +638,7 @@ _native_graph_ada_sparse_ffn_enabled = _native_jit_graph_dispatch_impl._native_g
 _native_graph_ada_linear_enabled = _native_jit_graph_dispatch_impl._native_graph_ada_linear_enabled
 _native_graph_ada_linear_should_route = _native_jit_graph_dispatch_impl._native_graph_ada_linear_should_route
 _native_graph_ada_wagv_lora_enabled = _native_jit_graph_dispatch_impl._native_graph_ada_wagv_lora_enabled
+_native_graph_ada_wagv_bmm_enabled = _native_jit_graph_dispatch_impl._native_graph_ada_wagv_bmm_enabled
 _native_graph_ada_wag_lora_enabled = _native_jit_graph_dispatch_impl._native_graph_ada_wag_lora_enabled
 _native_graph_linear_dispatch = _native_jit_graph_dispatch_impl._native_graph_linear_dispatch
 _native_graph_ffn_up_relu2_dispatch = _native_jit_graph_dispatch_impl._native_graph_ffn_up_relu2_dispatch

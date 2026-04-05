@@ -45,6 +45,25 @@ def test_fallback_matches_reference() -> None:
     assert stacked[2].storage_offset() - stacked[0].storage_offset() == batch * hidden
     assert stacked[3].storage_offset() - stacked[0].storage_offset() == 2 * batch * hidden
 
+    wav_state = previous.clone()
+    wav = fused_attn_norm_mix6_decode(
+        x, wav_state, weight, bias, *mixes,
+        stack_wav=True, force_fallback=True,
+    )
+    for actual, reference in zip(wav, expected):
+        assert torch.equal(actual, reference)
+    # Public order is R/W/K/V/A/G; backing storage is deliberately W/A/V.
+    assert (
+        wav[1].untyped_storage().data_ptr()
+        == wav[4].untyped_storage().data_ptr()
+    )
+    assert (
+        wav[1].untyped_storage().data_ptr()
+        == wav[3].untyped_storage().data_ptr()
+    )
+    assert wav[4].storage_offset() - wav[1].storage_offset() == batch * hidden
+    assert wav[3].storage_offset() - wav[1].storage_offset() == 2 * batch * hidden
+
     attn_out = torch.randn_like(x)
     ffn_previous = torch.randn_like(x)
     ffn_mix = torch.randn(hidden)
@@ -85,6 +104,23 @@ def test_cuda_matches_fallback() -> None:
         for got, ref in zip(actual, reference):
             assert torch.allclose(got.float(), ref.float(), atol=2e-2, rtol=3e-3)
             assert float(torch.nn.functional.cosine_similarity(got.float(), ref.float(), dim=-1).min()) >= 0.9999
+
+        if batch == 4 and hidden == 768:
+            wav_state = previous.clone()
+            wav = fused_attn_norm_mix6_decode(
+                x, wav_state, weight, bias, *mixes, stack_wav=True
+            )
+            torch.cuda.synchronize()
+            for got, ref in zip(wav, reference):
+                assert torch.allclose(got.float(), ref.float(), atol=2e-2, rtol=3e-3)
+            assert (
+                wav[1].untyped_storage().data_ptr()
+                == wav[4].untyped_storage().data_ptr()
+            )
+            assert (
+                wav[1].untyped_storage().data_ptr()
+                == wav[3].untyped_storage().data_ptr()
+            )
 
         attn_out = torch.randn_like(x)
         ffn_previous = torch.randn_like(x)
