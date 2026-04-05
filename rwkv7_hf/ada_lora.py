@@ -540,6 +540,263 @@ def ada_wagv_lora_should_use(rows: int, hidden: int, max_rank: int) -> bool:
     return 1 <= int(rows) <= 8 and int(hidden) >= 1024 and int(hidden) % 4 == 0 and 1 <= int(max_rank) <= 512
 
 
+def ada_wagv_bmm_should_use(rows: int, hidden: int, max_rank: int) -> bool:
+    """Return whether the measured RTX 4080 tensor-core B8 route fits."""
+
+    return (
+        int(rows) == 8
+        and int(hidden) >= 1024
+        and int(hidden) % 8 == 0
+        and 1 <= int(max_rank) <= 512
+    )
+
+
+def _tensor_pack_identity(value: Any) -> tuple[Any, ...]:
+    try:
+        version = int(value._version)
+    except Exception:
+        version = -1
+    return (
+        int(value.data_ptr()),
+        version,
+        tuple(value.shape),
+        tuple(value.stride()),
+        value.dtype,
+        value.device,
+    )
+
+
+def _ada_wagv_bmm_pack(
+    w1: Any,
+    a1: Any,
+    v1: Any,
+    w2: Any,
+    a2: Any,
+    v2: Any,
+    w0: Any,
+    a0: Any,
+    v0: Any,
+    *,
+    include_v: bool = True,
+) -> tuple[Any, Any, Any]:
+    """Pad W/A[/V] ranks once for two grouped tensor-core BMMs.
+
+    The cache is attached to ``w1`` so it follows the source parameter's
+    lifetime and is ignored automatically after a device move or in-place
+    weight update. It is not part of the state dict or converted checkpoint.
+    """
+
+    down_weights = (w1, a1, v1) if include_v else (w1, a1)
+    up_weights = (w2, a2, v2) if include_v else (w2, a2)
+    biases = (w0, a0, v0) if include_v else (w0, a0)
+    weights = (*down_weights, *up_weights, *biases)
+    identity = tuple(_tensor_pack_identity(value) for value in weights)
+    cache_name = (
+        "_rwkv7_ada_wagv_bmm_pack" if include_v else "_rwkv7_ada_wa_bmm_pack"
+    )
+    cached = getattr(w1, cache_name, None)
+    if isinstance(cached, tuple) and len(cached) == 4 and cached[0] == identity:
+        return cached[1], cached[2], cached[3]
+
+    hidden = int(w1.shape[1])
+    ranks = tuple(int(value.shape[0]) for value in down_weights)
+    max_rank = max(ranks)
+    groups = len(ranks)
+    down = w1.new_zeros((groups, max_rank, hidden))
+    up = w1.new_zeros((groups, hidden, max_rank))
+    for group, (rank, down_weight, up_weight) in enumerate(
+        zip(ranks, down_weights, up_weights, strict=True)
+    ):
+        down[group, :rank].copy_(down_weight)
+        up[group, :, :rank].copy_(up_weight)
+    bias = torch.stack(biases).unsqueeze(1).contiguous()
+    packed = (identity, down, up.transpose(1, 2), bias)
+    try:
+        setattr(w1, cache_name, packed)
+    except Exception:
+        # Parameters and ordinary tensors support attributes. Keep a correct
+        # one-shot pack for unusual tensor subclasses rather than making the
+        # optional route mandatory.
+        pass
+    return down, packed[2], bias
+
+
+def _stack_wav_inputs(
+    xw: Any,
+    xa: Any,
+    xv: Any,
+    *,
+    include_v: bool = True,
+) -> Any:
+    """Return contiguous W/A[/V] input, reusing fused storage when possible."""
+
+    rows, hidden = int(xw.shape[0]), int(xw.shape[1])
+    row_values = rows * hidden
+    try:
+        storage = xw.untyped_storage()
+        shared_storage = xa.untyped_storage().data_ptr() == storage.data_ptr()
+        if include_v:
+            shared_storage = bool(
+                shared_storage
+                and xv.untyped_storage().data_ptr() == storage.data_ptr()
+            )
+    except Exception:
+        shared_storage = False
+    if (
+        shared_storage
+        and xw.is_contiguous()
+        and xa.is_contiguous()
+        and int(xa.storage_offset()) == int(xw.storage_offset()) + row_values
+        and (
+            not include_v
+            or (
+                xv.is_contiguous()
+                and int(xv.storage_offset())
+                == int(xw.storage_offset()) + 2 * row_values
+            )
+        )
+    ):
+        return xw.as_strided(
+            (3 if include_v else 2, rows, hidden),
+            (row_values, hidden, 1),
+            storage_offset=int(xw.storage_offset()),
+        )
+    return torch.stack((xw, xa, xv) if include_v else (xw, xa))
+
+
+def ada_wagv_bmm(
+    xw: Any,
+    xa: Any,
+    xg: Any,
+    xv: Any,
+    w1: Any,
+    a1: Any,
+    g1: Any,
+    v1: Any,
+    w2: Any,
+    a2: Any,
+    g2: Any,
+    v2: Any,
+    w0: Any,
+    a0: Any,
+    v0: Any,
+    v: Any,
+    v_first: Any,
+    *,
+    sigmoid_a: bool = False,
+    compute_v: bool = True,
+    force_fallback: bool = False,
+) -> tuple[Any, Any, Any, Any]:
+    """Grouped B8 W/A/V LoRA using two padded tensor-core BMMs.
+
+    W/A/V have nearby ranks in released RWKV-7 checkpoints, so they share a
+    compact padded pack. The larger G projection stays on its original GEMMs;
+    this preserves most of the speedup without padding every group to G's
+    maximum rank. Dense full-rank weights remain untouched, and unsupported
+    shapes preserve the existing no-copy implementation.
+    """
+
+    if torch is None or F is None:
+        raise RuntimeError("ada_wagv_bmm requires torch")
+    rows = 1 if xw.dim() == 1 else int(xw.shape[0])
+    hidden = int(xw.numel()) if xw.dim() == 1 else int(xw.shape[1])
+    max_rank = max(int(item.shape[0]) for item in (w1, a1, g1, v1))
+    values = (
+        xw,
+        xa,
+        xg,
+        xv,
+        w1,
+        a1,
+        g1,
+        v1,
+        w2,
+        a2,
+        g2,
+        v2,
+        w0,
+        a0,
+        v0,
+        v,
+        v_first,
+    )
+    valid = bool(
+        not force_fallback
+        and not torch.is_grad_enabled()
+        and ada_wagv_bmm_should_use(rows, hidden, max_rank)
+        and xw.dtype == torch.float16
+        and _small_row_capability(xw.device) == (8, 9)
+        and all(
+            item.is_cuda and item.dtype == xw.dtype and item.is_contiguous()
+            for item in values
+        )
+        and all(
+            tuple(item.shape) == (rows, hidden)
+            for item in (xw, xa, xg, xv, v, v_first)
+        )
+        and all(int(item.shape[1]) == hidden for item in (w1, a1, g1, v1))
+        and tuple(w2.shape) == (hidden, int(w1.shape[0]))
+        and tuple(a2.shape) == (hidden, int(a1.shape[0]))
+        and tuple(g2.shape) == (hidden, int(g1.shape[0]))
+        and tuple(v2.shape) == (hidden, int(v1.shape[0]))
+        and all(int(item.numel()) == hidden for item in (w0, a0, v0))
+    )
+    if not valid:
+        return ada_wagv_lora(
+            xw,
+            xa,
+            xg,
+            xv,
+            w1,
+            a1,
+            g1,
+            v1,
+            w2,
+            a2,
+            g2,
+            v2,
+            w0,
+            a0,
+            v0,
+            v,
+            v_first,
+            sigmoid_a=sigmoid_a,
+            compute_v=compute_v,
+            force_fallback=True,
+        )
+
+    down, up_transposed, bias = _ada_wagv_bmm_pack(
+        w1,
+        a1,
+        v1,
+        w2,
+        a2,
+        v2,
+        w0,
+        a0,
+        v0,
+        include_v=compute_v,
+    )
+    mixed = _stack_wav_inputs(xw, xa, xv, include_v=compute_v)
+    hidden_states = torch.bmm(mixed, down.transpose(1, 2))
+    # The grouped BMM result is private to this route. Apply W's activation in
+    # place so A/V do not need a second stacked copy before the rank-out BMM.
+    hidden_states[0].tanh_()
+    outputs = torch.baddbmm(bias, hidden_states, up_transposed)
+    if sigmoid_a:
+        outputs[1].sigmoid_()
+    a = outputs[1]
+    g_hidden = F.linear(xg, g1)
+    g_hidden.sigmoid_()
+    g = F.linear(g_hidden, g2)
+    if compute_v:
+        outputs[2].sigmoid_()
+        v_out = v + (v_first - v) * outputs[2]
+    else:
+        v_out = v
+    return outputs[0], a, g, v_out
+
+
 def _ada_wagv_lora_extension_should_use(rows: int, hidden: int, max_rank: int) -> bool:
     """Return whether the measured small-row CUDA extension may be used.
 
@@ -731,6 +988,8 @@ def ada_wag_lora(
 
 __all__ = [
     "ada_wag_lora",
+    "ada_wagv_bmm",
+    "ada_wagv_bmm_should_use",
     "ada_wagv_lora",
     "ada_wagv_lora_available",
     "ada_wagv_lora_build_error",

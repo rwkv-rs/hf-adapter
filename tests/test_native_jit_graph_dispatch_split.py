@@ -72,6 +72,26 @@ def test_ada_wagv_row_limit_is_policy_and_override_gated(monkeypatch) -> None:
     assert native_jit_graph_dispatch._native_graph_ada_wagv_lora_enabled(4, 2048, 128)
 
 
+def test_ada_wagv_bmm_is_exact_batch_and_policy_gated(monkeypatch) -> None:
+    monkeypatch.setattr(
+        native_jit_graph_dispatch,
+        "_kernel_policy",
+        lambda: SimpleNamespace(ada_wagv_bmm=True),
+    )
+    monkeypatch.setattr(native_jit_graph_dispatch, "ada_wagv_bmm", object())
+    monkeypatch.setattr(
+        native_jit_graph_dispatch,
+        "ada_wagv_bmm_should_use",
+        lambda rows, hidden, rank: rows == 8 and hidden >= 1024 and rank <= 512,
+    )
+    monkeypatch.delenv("RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM", raising=False)
+
+    assert native_jit_graph_dispatch._native_graph_ada_wagv_bmm_enabled(8, 2048, 256)
+    assert not native_jit_graph_dispatch._native_graph_ada_wagv_bmm_enabled(4, 2048, 256)
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM", "0")
+    assert not native_jit_graph_dispatch._native_graph_ada_wagv_bmm_enabled(8, 2048, 256)
+
+
 def test_wavg_lora_launch_policy_can_specialize_batch_eight(monkeypatch) -> None:
     monkeypatch.setattr(
         native_jit_graph_dispatch,

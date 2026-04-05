@@ -12,7 +12,7 @@ import torch.nn.functional as F
 
 
 _OWNED_NAMES = {'cuda_graph_decode', 'fast_generate', 'step', 'step_batched', '_block_ip_batched', 'greedy_graph', 'decode_speed', '_block_ip', 'greedy_jit', 'forward'} | {"bind_runtime"}
-_RUNTIME_NAMES = ('_graph_linear_call', '_graph_linear_call_with_explicit_bias', '_graph_linear_is_dense', '_graph_linear_shape', '_graph_linears_are_dense', '_init', '_linear_module', '_lm_head', '_native_graph_ada_wag_lora_enabled', '_native_graph_ada_wagv_lora_enabled', '_native_graph_blackwell_norm_mix_enabled', '_native_graph_ffn_dispatch', '_native_graph_fp16_recurrent_enabled', '_native_graph_fused_norm_mix_enabled', '_native_graph_fused_norm_mix_num_warps', '_native_graph_fused_output_enabled', '_native_graph_fused_output_project_block_m', '_native_graph_fused_output_project_enabled', '_native_graph_fused_projection_enabled', '_native_graph_fused_recurrent_output_enabled', '_native_graph_fused_recurrent_raw_enabled', '_native_graph_fused_wag_lora_blocks', '_native_graph_fused_wag_lora_enabled', '_native_graph_fused_wavg_lora_blocks', '_native_graph_fused_wavg_lora_enabled', '_native_graph_fused_wavg_lora_num_warps', '_native_graph_linear_dispatch', '_native_graph_rkv_project', '_native_graph_sm70_wagv_lora_enabled', '_native_graph_vkwr_rkv_dispatch', '_recurrent_update_batched', '_recurrent_update_unbatched', 'ada_wag_lora', 'ada_wagv_lora', 'blackwell_ffn_add_norm_mix', 'block_step', 'block_step_batched', 'extract', 'fused_attn_norm_mix6_decode', 'fused_attn_output_prepare', 'fused_attn_output_project', 'fused_ffn_add_norm_mix_decode', 'fused_recurrent_output_prepare', 'fused_recurrent_output_prepare_raw', 'fused_rkv_wavg_projection', 'fused_wag_lora', 'fused_wavg_lora', 'native_fp16_recurrent_output_prepare_raw', 'sm70_wagv_lora')
+_RUNTIME_NAMES = ('_graph_linear_call', '_graph_linear_call_with_explicit_bias', '_graph_linear_is_dense', '_graph_linear_shape', '_graph_linears_are_dense', '_init', '_linear_module', '_lm_head', '_native_graph_ada_wag_lora_enabled', '_native_graph_ada_wagv_bmm_enabled', '_native_graph_ada_wagv_lora_enabled', '_native_graph_blackwell_norm_mix_enabled', '_native_graph_ffn_dispatch', '_native_graph_fp16_recurrent_enabled', '_native_graph_fused_norm_mix_enabled', '_native_graph_fused_norm_mix_num_warps', '_native_graph_fused_output_enabled', '_native_graph_fused_output_project_block_m', '_native_graph_fused_output_project_enabled', '_native_graph_fused_projection_enabled', '_native_graph_fused_recurrent_output_enabled', '_native_graph_fused_recurrent_raw_enabled', '_native_graph_fused_wag_lora_blocks', '_native_graph_fused_wag_lora_enabled', '_native_graph_fused_wavg_lora_blocks', '_native_graph_fused_wavg_lora_enabled', '_native_graph_fused_wavg_lora_num_warps', '_native_graph_linear_dispatch', '_native_graph_rkv_project', '_native_graph_sm70_wagv_lora_enabled', '_native_graph_vkwr_rkv_dispatch', '_recurrent_update_batched', '_recurrent_update_unbatched', 'ada_wag_lora', 'ada_wagv_bmm', 'ada_wagv_lora', 'blackwell_ffn_add_norm_mix', 'block_step', 'block_step_batched', 'extract', 'fused_attn_norm_mix6_decode', 'fused_attn_output_prepare', 'fused_attn_output_project', 'fused_ffn_add_norm_mix_decode', 'fused_recurrent_output_prepare', 'fused_recurrent_output_prepare_raw', 'fused_rkv_wavg_projection', 'fused_wag_lora', 'fused_wavg_lora', 'native_fp16_recurrent_output_prepare_raw', 'sm70_wagv_lora')
 
 
 def bind_runtime(runtime: dict[str, object]) -> None:
@@ -431,6 +431,26 @@ def _block_ip_batched(
     A = int(H * N)
     equal_width = D == A
     residual = F.layer_norm(x, [D], pre_w, pre_b, 1e-5) if has_pre else x
+    lora_dense = _graph_linears_are_dense(w1, w2, a1, a2, v1, v2, g1, g2)
+    bmm_max_rank = (
+        max(
+            _graph_linear_shape(w1)[0],
+            _graph_linear_shape(a1)[0],
+            _graph_linear_shape(g1)[0],
+            _graph_linear_shape(v1)[0],
+        )
+        if i > 0
+        else max(
+            _graph_linear_shape(w1)[0],
+            _graph_linear_shape(a1)[0],
+            _graph_linear_shape(g1)[0],
+        )
+    )
+    use_ada_wagv_bmm = bool(
+        equal_width
+        and lora_dense
+        and _native_graph_ada_wagv_bmm_enabled(B, D, bmm_max_rank)
+    )
     use_fused_norm_mix = _native_graph_fused_norm_mix_enabled()
     if use_fused_norm_mix:
         stack_rkv = _native_graph_vkwr_rkv_dispatch(B, D) and RKVw.numel() != 0
@@ -447,6 +467,9 @@ def _block_ip_batched(
             x_g,
             num_warps=_native_graph_fused_norm_mix_num_warps(),
             stack_rkv=stack_rkv,
+            # The grouped route consumes a W/A prefix in layer zero and W/A/V
+            # elsewhere, so both cases can reuse this contiguous allocation.
+            stack_wav=bool(use_ada_wagv_bmm and not stack_rkv),
         )
     else:
         h = F.layer_norm(residual, [D], an_w, an_b, 1e-5)
@@ -455,7 +478,6 @@ def _block_ip_batched(
         xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
     v_gate = None
     v_mixed = False
-    lora_dense = _graph_linears_are_dense(w1, w2, a1, a2, v1, v2, g1, g2)
     if _native_graph_fused_projection_enabled() and lora_dense and _graph_linears_are_dense(Rw, Kw, Vw):
         r, k, v, w, a, g, v_gate = fused_rkv_wavg_projection(
             xr,
@@ -482,6 +504,19 @@ def _block_ip_batched(
         )
         a = torch.sigmoid(a)
         v_gate = torch.sigmoid(v_gate)
+    elif i > 0 and use_ada_wagv_bmm:
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, D)
+        w, a, g, v = ada_wagv_bmm(
+            xw, xa, xg, xv, w1, a1, g1, v1, w2, a2, g2, v2,
+            w0, a0, v0, v, v_first, sigmoid_a=True,
+        )
+        v_mixed = True
+    elif i == 0 and use_ada_wagv_bmm:
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, D)
+        w, a, g, _unused_v = ada_wagv_bmm(
+            xw, xa, xg, xv, w1, a1, g1, g1, w2, a2, g2, g2,
+            w0, a0, a0, v, v, sigmoid_a=True, compute_v=False,
+        )
     elif equal_width and i > 0 and lora_dense and _native_graph_ada_wagv_lora_enabled(
         B,
         D,

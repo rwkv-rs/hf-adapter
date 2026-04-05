@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # coding=utf-8
-"""End-to-end A/B for RTX 4090 grouped W/A/G/V low-rank decode.
+"""End-to-end A/B for Ada grouped W/A/G/V low-rank decode.
 
-The benchmark changes only ``RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA`` between
-captures. Sparse FFN and the Ada exact-row linear probe stay disabled, while
-output/recurrent-output, raw recurrent, and decode norm/mix routes remain
-enabled. It records correctness, cache telemetry, latency, throughput, and
-peak memory.
+The default axis changes only ``RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA`` between
+captures. ``--axis ada_wagv_bmm`` instead holds that grouped route on and
+changes only the exact RTX 4080 B8 tensor-core BMM switch. Sparse FFN and the
+Ada exact-row linear probe stay disabled, while output/recurrent-output, raw
+recurrent, and decode norm/mix routes remain enabled. It records correctness,
+cache telemetry, latency, throughput, and peak memory.
 """
 from __future__ import annotations
 
@@ -98,7 +99,12 @@ def prefill(model, ids: torch.Tensor):
 
 
 def run_mode(model, token: torch.Tensor, base_state, args: argparse.Namespace, *, enabled: bool) -> dict[str, Any]:
-    os.environ["RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA"] = "1" if enabled else "0"
+    if args.axis == "ada_wagv_bmm":
+        os.environ["RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA"] = "1"
+        os.environ["RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM"] = "1" if enabled else "0"
+    else:
+        os.environ["RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA"] = "1" if enabled else "0"
+        os.environ["RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM"] = "0"
     os.environ["RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN"] = "0"
     os.environ["RWKV7_NATIVE_GRAPH_ADA_LINEAR"] = "0"
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX"] = "1"
@@ -169,6 +175,11 @@ def main() -> int:
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--batch-size", type=int, default=1)
+    ap.add_argument(
+        "--axis",
+        choices=("ada_wagv_lora", "ada_wagv_bmm"),
+        default="ada_wagv_lora",
+    )
     ap.add_argument("--prompt-tokens", type=int, default=64)
     ap.add_argument("--warmup", type=int, default=8)
     ap.add_argument("--steps", type=int, default=64)
@@ -206,7 +217,7 @@ def main() -> int:
     )
     correctness_pass = bool(greedy_match == greedy_total and cosine >= 0.999)
     row = {
-        "axis": "native_graph_ada_wagv_lora",
+        "axis": f"native_graph_{args.axis}",
         "backend": "hf_adapter",
         "status": "pass" if correctness_pass else "fail",
         "dtype": args.dtype,

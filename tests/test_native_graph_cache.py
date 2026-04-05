@@ -254,6 +254,7 @@ def main() -> int:
     old_fused_norm_mix = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX")
     old_fused_norm_mix_warps = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS")
     old_sm70_linear = os.environ.get("RWKV7_NATIVE_GRAPH_SM70_LINEAR")
+    old_ada_wagv_bmm = os.environ.get("RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM")
     old_wavg_bsz1_max_hidden = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BSZ1_MAX_HIDDEN")
     os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = "2"
     try:
@@ -267,6 +268,10 @@ def main() -> int:
         assert modeling._native_graph_fused_recurrent_raw_requested() is False
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW"] = "1"
         assert modeling._native_graph_fused_recurrent_raw_requested() is True
+        os.environ.pop("RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM", None)
+        assert modeling._native_graph_ada_wagv_bmm_requested() is False
+        os.environ["RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM"] = "1"
+        assert modeling._native_graph_ada_wagv_bmm_requested() is True
         os.environ.pop("RWKV7_NATIVE_GRAPH_RKV_POLICY", None)
         assert modeling._native_graph_rkv_policy() == "manual"
         os.environ["RWKV7_NATIVE_GRAPH_RKV_POLICY"] = "stacked"
@@ -431,6 +436,10 @@ def main() -> int:
             os.environ.pop("RWKV7_NATIVE_GRAPH_SM70_LINEAR", None)
         else:
             os.environ["RWKV7_NATIVE_GRAPH_SM70_LINEAR"] = old_sm70_linear
+        if old_ada_wagv_bmm is None:
+            os.environ.pop("RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM", None)
+        else:
+            os.environ["RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM"] = old_ada_wagv_bmm
         if old_wavg_bsz1_max_hidden is None:
             os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BSZ1_MAX_HIDDEN", None)
         else:

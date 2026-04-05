@@ -292,6 +292,7 @@ class KernelPolicy:
     ada_linear_roles: str = "auto"
     ada_wagv_lora: bool = False
     ada_wagv_lora_max_rows: int = 4
+    ada_wagv_bmm: bool = False
     ada_wag_lora: bool = False
     ada_sparse_ffn: bool = False
     ada_sparse_ffn_max_rows: int = 19
@@ -1281,6 +1282,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ada_linear_rows="1 2 4" if is_4090 else "2 4",
             ada_wagv_lora=True,
             ada_wagv_lora_max_rows=8 if is_4080 else 4,
+            ada_wagv_bmm=is_4080,
             ada_sparse_ffn=is_4090,
             ada_sparse_ffn_max_rows=2 if is_4090 else 19,
             ada_sparse_ffn_inplace=is_4090,
@@ -1290,7 +1292,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
                 "RTX 4080: exact 0.4B/1.5B fp16 rows promote B=1/2/4/8 and exact "
                 "2.9B rows promote B=1/8 at T=128/512/2048; 1.5B/B1/P512 and P2048 use "
                 "exact-card self-chunk routes, with stacked R/K/V at P2048; grouped W/A/G/V remains enabled for "
-                "rows<=4 while the regressing Ada linear route stays disabled"
+                "rows<=4, with a tensor-core grouped BMM at B8, while the regressing Ada linear route stays disabled"
                 if is_4080
                 else "RTX 40/Ada: exact-4090 rows promote fixed-shape prefill graph plus raw recurrent decode, 8-warp norm/mix, rows=1/2/4 exact linear, stacked-copy-free R/K/V including layer 0, graph-safe one/two-row sparse FFN, threshold-zero BnB W8 native prefill/decode, and bsz8 tensor-core MM4 output-head dispatch; other Ada cards retain the compatible fallback until measured"
             ),

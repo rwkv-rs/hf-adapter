@@ -15,7 +15,7 @@ def main() -> int:
     canonical_dates = {
         "HF_STATUS.md": "2026-08-07",
         "HF_TODO.md": "2026-08-07",
-        "BENCHMARK.md": "2026-07-28",
+        "BENCHMARK.md": "2026-08-09",
         "docs/ACCEPTANCE.md": "2026-08-07",
         "docs/HARDWARE_MATRIX.md": "2026-08-07",
     }

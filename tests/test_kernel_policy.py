@@ -413,6 +413,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert ada.ada_linear_rows == "1 2 4"
     assert ada.ada_wagv_lora
     assert ada.ada_wagv_lora_max_rows == 4
+    assert not ada.ada_wagv_bmm
     assert ada.ada_sparse_ffn
     assert ada.ada_sparse_ffn_max_rows == 2
     assert ada.ada_sparse_ffn_inplace
@@ -439,6 +440,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert other_ada.rkv_policy == "manual"
     assert other_ada.ada_linear_rows == "2 4"
     assert other_ada.ada_wagv_lora_max_rows == 4
+    assert not other_ada.ada_wagv_bmm
     assert other_ada.norm_mix_num_warps == 4
 
     rtx4080 = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 4080", (8, 9)))
@@ -500,6 +502,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert not rtx4080.ada_linear
     assert rtx4080.ada_wagv_lora
     assert rtx4080.ada_wagv_lora_max_rows == 8
+    assert rtx4080.ada_wagv_bmm
     assert not rtx4080.ada_sparse_ffn
     assert rtx4080.rkv_policy == "manual"
 
@@ -518,6 +521,7 @@ def test_policy_defaults_are_conservative() -> None:
         assert adjacent_ada.prefill_self_chunk_size == 16
         assert adjacent_ada.prefill_scan_model_shapes == ()
         assert adjacent_ada.prefill_graph_model_shapes == ()
+        assert not adjacent_ada.ada_wagv_bmm
 
     rtx3090 = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 3090", (8, 6)))
     assert rtx3090.fast_prefill
