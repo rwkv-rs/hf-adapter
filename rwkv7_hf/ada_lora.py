@@ -541,7 +541,7 @@ def ada_wagv_lora_should_use(rows: int, hidden: int, max_rank: int) -> bool:
 
 
 def ada_wagv_bmm_should_use(rows: int, hidden: int, max_rank: int) -> bool:
-    """Return whether the measured RTX 4080 tensor-core B8 route fits."""
+    """Return whether the measured sm89 tensor-core B8 route fits."""
 
     return (
         int(rows) == 8
