@@ -35,11 +35,15 @@ canonical_primary_contributor:
     - "rwkv-rs/hf-adapter"
   related_branches:
     - "rwkv-rs/hf-adapter:wangyue/ascend-910b3-hf"
+  distinct_contributors_not_to_merge:
+    - "yyqdbngt"
+    - "KakaruHayate"
   attribution_rule: >
     Attribute commits, pull requests, benchmark evidence, validation reports,
     documentation, release work, and review/triage comments under these aliases
     to Wang Yue. Do not split 123123213weqw, wangyue, wy, or the
-    listed emails into separate people.
+    listed emails into separate people. yyqdbngt and KakaruHayate are separate
+    contributors and must not be merged into Wang Yue's identity or score.
   primary_credit_categories:
     - "HF/Transformers adapter architecture"
     - "native no-FLA backend"
@@ -61,6 +65,25 @@ canonical_primary_contributor:
     Co-Authored-By entries for AI assistants and automated review bots are tool
     assistance. They are not separate human reward recipients.
 ```
+
+---
+
+## Current-main addendum (2026-08-09)
+
+The historical ledger below remains useful for architecture provenance. The
+following later work by `@123123213weqw` / Wang Yue is merged on current main
+and should be included in a current assessment:
+
+| Merged work | Engineering contribution | Reproducible evidence |
+|---|---|---|
+| [PR #100](https://github.com/rwkv-rs/hf-adapter/pull/100) | Fail-closed RTX 4080 grouped B8 decode and exact-V100 B8 WAVG launch policy; benchmark harness gained current-repository loading and paired launch comparison | [`bench/4080_v100_decode_tuning_20260808/`](bench/4080_v100_decode_tuning_20260808/README.md) |
+| [PR #101](https://github.com/rwkv-rs/hf-adapter/pull/101) | Exact RTX 4080/B8 tensor-core grouping of W/A/V projections, compact padded-weight cache and zero-copy fused norm/mix input | [`bench/4080_b8_projection_bmm_20260809/`](bench/4080_b8_projection_bmm_20260809/README.md) |
+| [PR #102](https://github.com/rwkv-rs/hf-adapter/pull/102) | Exact RTX 4080/7.2B/B8 FP16 recurrent-state route, fused raw Triton recurrent/output reuse, telemetry and fallback isolation | [`bench/4080_7p2b_fp16_state_20260809/`](bench/4080_7p2b_fp16_state_20260809/README.md) |
+
+Together these PRs add card/shape-gated policy, CUDA/Triton implementation,
+correctness tests, benchmark tooling and immutable raw evidence. The 7.2B/B8
+route records `344.39 tok/s`, `1.0301x` its FP32-state baseline,
+`-123.88 MiB` median peak allocation and greedy `12,288/12,288`.
 
 ---
 
@@ -208,6 +231,11 @@ is **original work** of this repo. The official rwkv package (`pip install rwkv`
 | [@MosRat](https://github.com/MosRat) | [`docs/validation/A100_HF_VALIDATION.md`](docs/validation/A100_HF_VALIDATION.md), commits [`f2bb596`](https://github.com/rwkv-rs/hf-adapter/commit/f2bb596a16e5a1a3a99bd5e7f6717bcbab4ee7c7) and [`3baa185`](https://github.com/rwkv-rs/hf-adapter/commit/3baa1852b9cdd4516b1206deb28bdd220f708442) | A100 validation rows and ZeRO resume diagnosis | `validation` `data` `algorithm`(debug) |
 | [@yuyi2439](https://github.com/yuyi2439) | commit [`d25d7f1`](https://github.com/rwkv-rs/hf-adapter/commit/d25d7f1370de798a03ccadfa40ccd6cc19e4661e) | RTX 3060 validation data | `validation` `data` `engineering` |
 | [@aierwiki](https://github.com/aierwiki) | [`docs/validation/A800_HF_VALIDATION.md`](docs/validation/A800_HF_VALIDATION.md), commits [`08de162`](https://github.com/rwkv-rs/hf-adapter/commit/08de162760c9daebe776668bb43855d9cfbfe498), [`5bce26b`](https://github.com/rwkv-rs/hf-adapter/commit/5bce26b75a7cf58208c56e93d04d007f04efa9ef), and [`b125445`](https://github.com/rwkv-rs/hf-adapter/commit/b12544520ac2b5a2df825cb37c18a1cd99f26015) | A800 validation, runtime sync coverage, and regression guards | `validation` `data` `engineering` |
+| [@yyqdbngt](https://github.com/yyqdbngt) | [PR #95](https://github.com/rwkv-rs/hf-adapter/pull/95), [`docs/hardware/BIREN_BR106M.md`](docs/hardware/BIREN_BR106M.md) | Biren BR106M/SUPA BF16 HF backend integration and retained standalone validation provenance | `engineering` `validation` `docs` |
+| [@KakaruHayate](https://github.com/KakaruHayate) | [PR #87](https://github.com/rwkv-rs/hf-adapter/pull/87), [`docs/hardware/MUSA.md`](docs/hardware/MUSA.md) | Optional Moore Threads MUSA backend and exact-card legacy validation boundary | `engineering` `validation` `docs` |
+
+`yyqdbngt` and `KakaruHayate` are independent contributors. Their work is
+credited here separately and is not included in Wang Yue's identity mapping.
 
 ---
 

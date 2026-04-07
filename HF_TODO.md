@@ -5,8 +5,8 @@ HF deliverables and dated experiments belong in `HF_STATUS.md`,
 `BENCHMARK.md`, or the immutable evidence directories under `bench/`.
 Native vLLM/SGLang scheduler work remains outside this repository.
 
-Last updated: **2026-08-07**. Audited against `main` commit
-`2fe20a322ffc9ffb363300044dbb74fc55d48c33` and the published `v0.6.0`
+Last updated: **2026-08-09**. Audited against `main` commit
+`045bac1b769240facd290e1ac8232e8b1ca39778` and the published `v0.6.0`
 release.
 
 ## Scope and current boundary
@@ -42,26 +42,50 @@ Canonical evidence and the precise limits of each accepted profile live in
 [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md), and
 [`docs/HARDWARE_MATRIX.md`](docs/HARDWARE_MATRIX.md).
 
+## Completed current-main expansions
+
+The following work landed after the `v0.6.0` release and is therefore no
+longer an open item:
+
+- **RTX 4080/V100 B8 decode policy:** exact-card grouped decode and V100 WAVG
+  launch tuning landed with paired speed and greedy gates in
+  [`bench/4080_v100_decode_tuning_20260808/`](bench/4080_v100_decode_tuning_20260808/README.md).
+- **RTX 4080 B8 grouped projections:** 0.4B/1.5B/2.9B W/A/V tensor-core BMM
+  routes pass repeated A/B timing, exact first-step logits and greedy
+  `4,608/4,608`; see
+  [`bench/4080_b8_projection_bmm_20260809/`](bench/4080_b8_projection_bmm_20260809/README.md).
+- **RTX 4080 7.2B/B8 dense capacity and state traffic:** the fail-closed
+  FP16-state route reaches `344.39 tok/s`, `1.0301x` its FP32-state route,
+  saves `123.88 MiB`, and matches greedy `12,288/12,288`; see
+  [`bench/4080_7p2b_fp16_state_20260809/`](bench/4080_7p2b_fp16_state_20260809/README.md).
+- **Domestic accelerator integration:** Ascend 910B3, Biren BR106M, MetaX
+  C500 and Moore Threads MUSA have repository-integrated, fail-closed support
+  boundaries. Their broader performance matrices remain optional extensions,
+  not missing HF adapter APIs.
+
 ## Post-release expansion projects
 
 The projects below are useful future work, but none blocks or downgrades the
 completed `v0.6.0` HF deliverable.
 
-### Wider performance matrices
+### Wider performance evidence
 
-- Extend full-memory fused W8/W4 beyond the already promoted card-local
-  profiles, especially T4 full-model, V100 broad-prefill, and additional
-  Ampere/Ada shapes.
-- Add same-session RWKV-LM/Albatross rows for more model, batch, prompt, and
-  decode combinations without replacing existing accepted profiles.
-- Expand optimized-Qwen full-FLA comparisons to more exact cards and model
-  pairs while keeping raw throughput, active-parameter-normalized work,
-  quality, physical footprint, and peak VRAM separate.
+- Close only the still-unmeasured **full-model** W8/W4 cells, especially T4
+  all-phase quant, broader V100 prefill and RTX 4080 7.2B full-model quant.
+  Existing head-only, packed-MM4, Marlin and MLX speed lanes remain accepted.
+- Add same-session RWKV-LM/Albatross rows only where an exact card/model/batch
+  profile lacks them. V100, RTX 4090 and RTX 5090 already have promoted
+  reference lanes; the principal current Ada hole is RTX 4080 7.2B/B8 against
+  a same-card reference rather than its now-closed internal FP32-state route.
+- Expand optimized-Qwen full-FLA comparisons only to new exact cards or model
+  pairs. RTX 3090/4080/4090/5070/5090 already have promoted model-pair evidence
+  for their named scopes.
 
 ### Additional hardware products
 
 - Add H100/Hopper, MI-series, more RTX 50 products, other Turing cards, and
-  Apple M1-M4/Pro/Max/Ultra as independent exact-product evidence.
+  Apple M1-M4/Pro/Max/Ultra as independent exact-product evidence. These are
+  new-product validations, not unresolved support on already promoted cards.
 - Rerun Ascend 910B3, Biren BR106M, MetaX C500, and later MUSA products against
   future main revisions when hardware is available. The currently accepted
   integration scope remains pinned to its documented standalone evidence.
@@ -69,7 +93,8 @@ completed `v0.6.0` HF deliverable.
 ### Broader training and quality
 
 - Extend large-model SFT/DPO/GRPO, ZeRO-3 resume, distributed convergence, and
-  multi-day soak coverage beyond the published compatibility matrix.
+  multi-day soak coverage beyond the already-passing Trainer/TRL/ZeRO smoke,
+  checkpoint-resume and RTX 5090 5,000-step matrices.
 - Add more instruction, code, math, multilingual, quantized-quality, and long-
   context datasets. These extend quality evidence and do not change API
   compatibility acceptance.

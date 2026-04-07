@@ -13,11 +13,13 @@ def read(relative: str) -> str:
 
 def main() -> int:
     canonical_dates = {
-        "HF_STATUS.md": "2026-08-07",
-        "HF_TODO.md": "2026-08-07",
+        "HF_STATUS.md": "2026-08-09",
+        "HF_TODO.md": "2026-08-09",
         "BENCHMARK.md": "2026-08-09",
-        "docs/ACCEPTANCE.md": "2026-08-07",
-        "docs/HARDWARE_MATRIX.md": "2026-08-07",
+        "docs/ACCEPTANCE.md": "2026-08-09",
+        "docs/HARDWARE_MATRIX.md": "2026-08-09",
+        "docs/PROJECT_SUMMARY.md": "2026-08-09",
+        "docs/RESULTS_INDEX.md": "2026-08-09",
     }
     for relative, expected_date in canonical_dates.items():
         text = read(relative)
@@ -38,6 +40,8 @@ def main() -> int:
             "### 2a. Verified-FLA Qwen3.5 RTX 5070 comparison",
             "## P0 — Universal production gaps",
         ],
+        "HF_STATUS.md": ["7.2B fp16 fits through B4/P128"],
+        "BENCHMARK.md": ["7.2B fp16 fits through B4/P128"],
         "docs/ACCEPTANCE.md": ["The next backend promotion replaces"],
     }
     for relative, phrases in stale_exact.items():
@@ -50,7 +54,7 @@ def main() -> int:
     assert "## Scope and current boundary" in todo
     assert "The current HF milestone is complete" in todo
     assert "there are **no remaining blocking items**".lower() in normalized_todo.lower()
-    assert "2fe20a322ffc9ffb363300044dbb74fc55d48c33" in todo
+    assert "045bac1b769240facd290e1ac8232e8b1ca39778" in todo
     assert "## Post-release expansion projects" in todo
     assert "- [x]" not in todo
     assert "- [ ]" not in todo
@@ -62,12 +66,37 @@ def main() -> int:
     assert "no official repository-wide completion percentage" in status
     assert "| HF v0.6 adapter deliverable | **COMPLETE**" in status
     assert "| PP/TP boundary | **PASS for dense HF inference scope**" in status
+    assert "4080_7p2b_fp16_state_20260809" in status
 
     acceptance = read("docs/ACCEPTANCE.md")
     assert "## How to report completion" in acceptance
     assert "current HF milestone is complete" in acceptance
     assert "| HF adapter release scope | **COMPLETE**" in acceptance
     assert "| PP/TP boundary | **PASS for dense HF inference scope**" in acceptance
+    assert "4080_7p2b_fp16_state_20260809" in acceptance
+
+    benchmark = read("BENCHMARK.md")
+    assert "344.39 tok/s" in benchmark
+    assert "12,288/12,288" in benchmark
+
+    bench_index = read("bench/INDEX.md")
+    for artifact in (
+        "4080_v100_decode_tuning_20260808",
+        "4080_b8_projection_bmm_20260809",
+        "4080_7p2b_fp16_state_20260809",
+    ):
+        assert artifact in bench_index, f"current promoted artifact missing: {artifact}"
+
+    project_summary = read("docs/PROJECT_SUMMARY.md")
+    results_index = read("docs/RESULTS_INDEX.md")
+    for current_doc in (project_summary, results_index):
+        assert "045bac1b769240facd290e1ac8232e8b1ca39778" in current_doc
+        assert "4080_7p2b_fp16_state_20260809" in current_doc
+
+    changelog = read("CHANGELOG.md")
+    assert "## Unreleased" in changelog
+    assert "PR #102" in changelog
+    assert "yyqdbngt" in changelog
 
     readme = read("README.md")
     assert "Completion is reported by **named scope**" in readme
