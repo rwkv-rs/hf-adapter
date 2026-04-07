@@ -128,6 +128,11 @@ quality, and distributed-training breadth are separate expansion projects. HF la
 PP and the TP/PP porting contracts are complete for this repository; native
 serving-engine executors remain separate projects.
 
+Current main additionally includes exact-card B8 decode tuning for V100 and
+RTX 4080, grouped RTX 4080 W/A/V projections for 0.4B/1.5B/2.9B, and an RTX
+4080 7.2B/B8 FP16-state route. These are promoted, evidence-backed expansions,
+not unfinished release items.
+
 Representative promoted evidence:
 
 | Scope | Evidence |
@@ -138,6 +143,9 @@ Representative promoted evidence:
 | RTX 5090 train_temp alignment | [`bench/5090_native_train_temp_real_minipile_20260718/`](bench/5090_native_train_temp_real_minipile_20260718/README.md) |
 | V100 B1/B8 active-parameter comparison | [`bench/v100_active_b1b8_20260715/`](bench/v100_active_b1b8_20260715/README.md) |
 | V100 production close | [`bench/v100_production_close_20260711/`](bench/v100_production_close_20260711/README.md) |
+| V100 / RTX 4080 B8 decode tuning | [`bench/4080_v100_decode_tuning_20260808/`](bench/4080_v100_decode_tuning_20260808/README.md) |
+| RTX 4080 B8 grouped projections | [`bench/4080_b8_projection_bmm_20260809/`](bench/4080_b8_projection_bmm_20260809/README.md) |
+| RTX 4080 7.2B/B8 FP16 state | [`bench/4080_7p2b_fp16_state_20260809/`](bench/4080_7p2b_fp16_state_20260809/README.md) |
 | RTX 4090 B8 matrices | [`bench/4090_small_bsz8_20260715/`](bench/4090_small_bsz8_20260715/README.md) |
 | Apple M5 bounded production result | [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PRODUCTION_CLOSE.md) |
 
@@ -258,6 +266,9 @@ for the specialized Apple evidence command catalog.
 ## Documentation map
 
 - [`docs/README.md`](docs/README.md) — complete document lifecycle/index
+- [`docs/PROJECT_SUMMARY.md`](docs/PROJECT_SUMMARY.md) — one-page project overview
+- [`docs/RESULTS_INDEX.md`](docs/RESULTS_INDEX.md) — cross-platform evidence index
+- [`CHANGELOG.md`](CHANGELOG.md) — release and current-main history
 - [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) — performance boundaries
 - [`docs/BACKENDS.md`](docs/BACKENDS.md) — backend and hardware isolation
 - [`docs/reference/HF_CRITERIA.md`](docs/reference/HF_CRITERIA.md) — HF criteria

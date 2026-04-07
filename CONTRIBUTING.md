@@ -27,26 +27,24 @@ complete.
 7. For Apple Silicon work, read [`docs/hardware/APPLE_SILICON.md`](docs/hardware/APPLE_SILICON.md).
 8. Pick an issue, comment that you are working on it, then open a focused PR.
 
-## Current issue map
+## Current contribution map
 
-The open card-adaptation issues are designed to make it easy for contributors
-with different hardware to help.
+Do not use old issue numbers as a roadmap. Check the repository's current open
+issues and [`HF_TODO.md`](HF_TODO.md) before claiming work; several historical
+card tasks are already complete on current main.
 
-| Issue | Target | Main contribution |
+| Area | Useful next contribution | Already completed; do not duplicate |
 |---|---|---|
-| #66 | RTX 4090 / Ada | Consumer Ada smoke, speed, quant, and training rows. |
-| #67 | RTX 5090 / 50-series / Blackwell | Blackwell decode/prefill/quant regression and 5090 rows. |
-| #68 | A100 / Ampere | Production batch sweeps, bf16, int8, ZeRO-2/3 rows. |
-| #69 | H100 / Hopper | High-end bf16/fp8-aware validation, large-model rows. |
-| #70 | Pascal / Turing | Older-card fallback behavior and fp16/quant constraints. |
-| #71 | AMD / ROCm | Native/no-FLA compatibility first, ROCm gaps second. |
-| #72 | CPU fallback | No-CUDA import, tiny native forward/generate, API tests. |
-| Apple Silicon / MPS | Apple native/no-FLA load/generate first, MLX/Metal backend later. |
-| #73 | Jetson AGX Thor | aarch64/Jetson Linux unified-memory validation. |
-| #74 | DGX Spark / GB10 | Grace Blackwell unified-memory validation. |
+| Full-model quant performance | Close still-unmeasured T4 all-phase, broader V100 prefill, or RTX 4080 7.2B W8/W4 cells with exact fp16 pairing | Existing V100 packed-MM4, T4 output-head, 4080 output-head, 4090/5090 and Apple promoted profiles |
+| Same-card references | Add a missing model/batch/shape Albatross or optimized-Qwen comparison, especially RTX 4080 7.2B/B8 | V100, RTX 3090/4090/5090 and the published RTX 4080 small-model pairs |
+| New hardware products | Add independent H100/Hopper, MI-series, additional RTX 50, Apple M1-M4, Jetson or DGX Spark evidence | Existing exact-product V100/T4/3090/4080/4090/5070/5090/M5 plus integrated Ascend/Biren/MetaX/MUSA boundaries |
+| Training breadth | Add larger-model or longer SFT/DPO/GRPO, distributed convergence, or broader ZeRO-3 resume evidence | Trainer/TRL compatibility, selected ZeRO-2/3 resume and RTX 5090 exact/5,000-step train_temp lanes |
+| Maintenance | Reduce module duplication, add clean-install GPU lanes, or publish conversion provenance without changing stable remote-code ABI | Current conversion, Auto*, cache, PP/TP and quantization contracts |
 
-If your card is not listed, open a new `[card] ...` issue using the same shape:
-status, checklist, card-specific risks, and definition of done.
+If no current issue covers the proposed work, open a focused issue containing
+the exact card/runtime, model, batch/shape, baseline, known risk and definition
+of done. Link the planned evidence directory before starting a large hardware
+run.
 
 ## What a good contribution looks like
 
@@ -54,8 +52,8 @@ A good PR is small, reproducible, and tied to one acceptance gap.
 
 Examples:
 
-- Add A100 benchmark rows and update `BENCHMARK.md`.
-- Add a ZeRO checkpoint-resume smoke test.
+- Add H100 or MI-series benchmark rows and update `BENCHMARK.md`.
+- Extend an existing ZeRO checkpoint-resume gate to a larger model or longer run.
 - Add a one-click acceptance script.
 - Fix a `generate()` / `attention_mask` / cache behavior bug with a regression
   test.

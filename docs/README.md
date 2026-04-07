@@ -21,11 +21,13 @@ and history.
 | How do I use the promoted RTX 5090 g1h BN/TN W4 route? | [`QUANTIZATION_USAGE.md#5-rtx-5090-g1h-bntn-tensor-core-w4`](QUANTIZATION_USAGE.md#5-rtx-5090-g1h-bntn-tensor-core-w4) |
 | How do I reproduce the RTX 4080 B1/B8 dense/quant acceptance? | [`QUANTIZATION_USAGE.md#6-rtx-4080-b1b8-配对验收`](QUANTIZATION_USAGE.md#6-rtx-4080-b1b8-配对验收) |
 | How do I run Apple MPS, MLX, sessions, quant, or CoreML? | [`APPLE_USAGE.md`](APPLE_USAGE.md) |
+| What is the one-page project and architecture summary? | [`PROJECT_SUMMARY.md`](PROJECT_SUMMARY.md) |
 | What is done now? | [`../HF_STATUS.md`](../HF_STATUS.md) |
 | How should completion be reported? | [`../HF_STATUS.md#completion-reporting-rule`](../HF_STATUS.md#completion-reporting-rule) |
 | What can be extended after the release? | [`../HF_TODO.md`](../HF_TODO.md) |
 | Do we meet the public HF requirements? | [`ACCEPTANCE.md`](ACCEPTANCE.md) |
 | What are the current promoted numbers? | [`../BENCHMARK.md`](../BENCHMARK.md) |
+| Where is the cross-platform evidence index? | [`RESULTS_INDEX.md`](RESULTS_INDEX.md) |
 | Which cards are validated? | [`HARDWARE_MATRIX.md`](HARDWARE_MATRIX.md) |
 | Are RTX 4080 defaults isolated from RTX 4090/5090? | [`validation/RTX4080_CROSS_CARD_AUDIT.md`](validation/RTX4080_CROSS_CARD_AUDIT.md) |
 | What is the performance boundary? | [`PERFORMANCE.md`](PERFORMANCE.md) |
@@ -33,6 +35,7 @@ and history.
 | Which training libraries and distributed paths work? | [`TRAINING.md`](TRAINING.md) |
 | How do I contribute? | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) |
 | Where is raw evidence? | [`../bench/INDEX.md`](../bench/INDEX.md) |
+| What changed between releases and current main? | [`../CHANGELOG.md`](../CHANGELOG.md) |
 | How can a separate vLLM/SGLang project reuse the model, state, and quantization contracts? | [`integrations/README.md`](integrations/README.md) |
 
 ## Source-of-truth order
@@ -74,7 +77,7 @@ match later outcomes.
 | Windows / CPU | [`WINDOWS_CPU.md`](WINDOWS_CPU.md) | Download-free Native HF interface/update/save-reload smoke; not a quality or speed claim |
 | V100 | [`validation/V100_HF_VALIDATION.md`](validation/V100_HF_VALIDATION.md) | [`../bench/v100_production_close_20260711/README.md`](../bench/v100_production_close_20260711/README.md), [`../bench/v100_active_b1b8_20260715/README.md`](../bench/v100_active_b1b8_20260715/README.md) |
 | Tesla T4 | [`hardware/TURING_T4.md`](hardware/TURING_T4.md) | [`../bench/t4_production_close_20260720/README.md`](../bench/t4_production_close_20260720/README.md) (`Validated`, performance gaps retained) |
-| RTX 4080 | [`HARDWARE_MATRIX.md`](HARDWARE_MATRIX.md) | [`../bench/4080_full_model_ladder_20260719/README.md`](../bench/4080_full_model_ladder_20260719/README.md) |
+| RTX 4080 | [`HARDWARE_MATRIX.md`](HARDWARE_MATRIX.md) | [`../bench/4080_full_model_ladder_20260719/README.md`](../bench/4080_full_model_ladder_20260719/README.md), [`../bench/4080_b8_projection_bmm_20260809/README.md`](../bench/4080_b8_projection_bmm_20260809/README.md), [`../bench/4080_7p2b_fp16_state_20260809/README.md`](../bench/4080_7p2b_fp16_state_20260809/README.md) |
 | RTX 4090 | [`../bench/4090_validation_summary.md`](../bench/4090_validation_summary.md) | [`../bench/4090_small_bsz8_20260715/README.md`](../bench/4090_small_bsz8_20260715/README.md), [`../bench/4090_g1h_7p2_bsz8_20260715/README.md`](../bench/4090_g1h_7p2_bsz8_20260715/README.md) |
 | RTX 50 / Blackwell | [`hardware/BLACKWELL_50SERIES.md`](hardware/BLACKWELL_50SERIES.md) | [`../bench/5090_bntn_all_models_20260716/README.md`](../bench/5090_bntn_all_models_20260716/README.md), [`../bench/5090_native_official_fp16_production_20260718/README.md`](../bench/5090_native_official_fp16_production_20260718/README.md), [`../bench/5090_native_train_temp_real_minipile_20260718/README.md`](../bench/5090_native_train_temp_real_minipile_20260718/README.md), [`../bench/5090_native_hf_gradio_train_temp_20260718/README.md`](../bench/5090_native_hf_gradio_train_temp_20260718/README.md) |
 | A100 | [`validation/A100_HF_VALIDATION.md`](validation/A100_HF_VALIDATION.md) | [`HARDWARE_MATRIX.md`](HARDWARE_MATRIX.md) |

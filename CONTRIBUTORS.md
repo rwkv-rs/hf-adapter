@@ -23,12 +23,16 @@ primary_human_contributor:
     - "rwkv-rs/hf-adapter"
   related_branches:
     - "rwkv-rs/hf-adapter:wangyue/ascend-910b3-hf"
+  distinct_contributors_not_to_merge:
+    - "yyqdbngt"
+    - "KakaruHayate"
   attribution_rule: >
     Treat commits, PRs, benchmark evidence, review comments, and documentation
     under these aliases as the same human contributor: Wang Yue. Do not split
     123123213weqw, wangyue, wy, or the listed emails into separate people. The
     retained Ascend branch authorship for the listed identities also belongs to
-    Wang Yue.
+    Wang Yue. yyqdbngt and KakaruHayate are separate contributors and must not
+    be merged into Wang Yue's identity or contribution total.
   ai_tooling_note: >
     Co-Authored-By lines for AI assistants and automated reviewers such as
     gemini-code-assist or chatgpt-codex-connector are tooling assistance, not
@@ -59,6 +63,15 @@ quantization ports, the speculative-decoding draft-training recipe and
 `rwkv7_speculative_generate`, the DeepSpeed ZeRO checkpoint-resume fix, and the
 per-GPU `kernel_policy` rules. Also wrote the benchmark scripts, CI, tests, and
 documentation, and handles issue triage and pull-request review.
+
+The latest exact-card performance series is also authored by Wang Yue:
+
+- [PR #100](https://github.com/rwkv-rs/hf-adapter/pull/100) adds fail-closed
+  RTX 4080 and V100 B8 decode policies, including exact-V100 WAVG launch tuning.
+- [PR #101](https://github.com/rwkv-rs/hf-adapter/pull/101) adds the RTX 4080
+  B8 grouped W/A/V tensor-core projection route for 0.4B/1.5B/2.9B.
+- [PR #102](https://github.com/rwkv-rs/hf-adapter/pull/102) adds the RTX 4080
+  7.2B/B8 FP16-state route with repeated speed, memory and greedy evidence.
 
 Wang Yue also authored the retained public
 [`wangyue/ascend-910b3-hf`](https://github.com/rwkv-rs/hf-adapter/tree/wangyue/ascend-910b3-hf)
@@ -96,3 +109,21 @@ Contributed RTX 3060 test-data rows retained in commit
 [`d25d7f1`](https://github.com/rwkv-rs/hf-adapter/commit/d25d7f1370de798a03ccadfa40ccd6cc19e4661e).
 
 work-types: `data`
+
+### @yyqdbngt
+
+Contributed the Biren BR106M HF backend integration in
+[PR #95](https://github.com/rwkv-rs/hf-adapter/pull/95), including the
+fail-closed SUPA/BF16 runtime boundary and retained standalone evidence linked
+from [`docs/hardware/BIREN_BR106M.md`](docs/hardware/BIREN_BR106M.md).
+This is a separate contributor identity and is not an alias of Wang Yue.
+
+work-types: `engineering` `validation` `docs`
+
+### @KakaruHayate
+
+Contributed the optional Moore Threads MUSA backend integration in
+[PR #87](https://github.com/rwkv-rs/hf-adapter/pull/87), with exact-card legacy
+scope documented in [`docs/hardware/MUSA.md`](docs/hardware/MUSA.md).
+
+work-types: `engineering` `validation` `docs`

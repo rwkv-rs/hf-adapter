@@ -5,8 +5,9 @@ requirements and repository evidence. `PASS` means the named, profile-bounded
 gate has a reproducible artifact. A new card, shape, or dataset extends that
 matrix instead of retroactively reopening an accepted release gate.
 
-Last updated: **2026-08-07**. Audited at `main`
-`2fe20a322ffc9ffb363300044dbb74fc55d48c33` after the `v0.6.0` release.
+Last updated: **2026-08-09**. Audited at `main`
+`045bac1b769240facd290e1ac8232e8b1ca39778` after the `v0.6.0` release and
+the merged RTX 4080/V100 B8 optimization series.
 
 This page reports status. For ordinary-user commands and PASS gates for every
 implemented capability below, start with
@@ -56,7 +57,7 @@ above remains mandatory.
 | Requirement | Status | Current evidence | Profile boundary / extensions |
 |---|---|---|---|
 | HF adapter release scope | **COMPLETE** | Published `v0.6.0`, current-main CI, canonical Native/no-FLA implementation, and the evidence-linked gates below | New profiles extend the release; they are not retroactive blockers |
-| RWKV-LM / Albatross correctness and performance | **PASS for declared exact-card profiles** | V100 Albatross/native-quant matrix plus 1.5B/full-FLA-Qwen B1/B8 active-work close; 4090 Albatross lane plus 0.4B–7.2B bsz8 Qwen3.5 matrices; 5090 full-FLA Qwen B1/B8, MATH500, quant pressure, and latest g1h 13.3B artifacts | More Albatross/Qwen cards, batches and shapes are post-release expansion |
+| RWKV-LM / Albatross correctness and performance | **PASS for declared exact-card profiles** | V100 Albatross/native-quant matrix plus 1.5B/full-FLA-Qwen B1/B8 active-work close; RTX 4080 0.4B-2.9B Qwen pairs, exact-B8 grouped projections and 7.2B/B8 FP16-state decode; 4090 Albatross lane plus 0.4B-7.2B bsz8 Qwen3.5 matrices; 5090 full-FLA Qwen B1/B8, MATH500, quant pressure, and latest g1h 13.3B artifacts | More Albatross/Qwen cards, batches and shapes are post-release expansion |
 | Transformers API | **PASS** | Auto classes, save/reload, generation, labels/loss, attention mask and recurrent cache tests | Upstreaming and long-term Transformers-version maintenance |
 | PEFT and RL ecosystem | **PASS for published compatibility and exact-training profiles** | LoRA lifecycle, Trainer, SFT, DPO and GRPO smoke; RTX 5090 BF16 12x768 B1 plus Native B16/T512 exact tensors, paired real-MiniPile 3-seed x 1,000-step cohort, continuous 5,000-step run, 2,500+2,500 resume and steady-memory evidence | Larger models, multi-day runs, additional cards and distributed convergence extend the matrix |
 | Dynamic batching, chunked prefill and state cache helpers | **PASS in HF adapter scope** | State select/reorder/drop/compact, chunked-prefill parity, serving-like cache telemetry | Native vLLM/SGLang integration remains a separate repository/project |
@@ -94,6 +95,16 @@ more specific claim.
   prefill/decode minima `2.815921x/5.270432x` and active-parameter work minima
   `2.285574x/4.277804x`; the B1 peak-VRAM loss remains disclosed. Evidence:
   [`../bench/v100_active_b1b8_20260715/README.md`](../bench/v100_active_b1b8_20260715/README.md).
+- **RTX 4080:** 0.4B/1.5B/2.9B versus full-FLA Qwen3.5 0.8B/2B/4B passes
+  six B1/B8 pair matrices with dense prefill/decode minima
+  `1.012285x/1.435296x`. The exact-B8 grouped W/A/V projection route improves
+  those RWKV checkpoints by `1.1267x/1.0942x/1.0809x` with exact first-step
+  logits and greedy `4,608/4,608`. The separate 7.2B/B8 FP16-state decode
+  route reaches `344.39 tok/s`, `1.0301x` its FP32-state route, saves
+  `123.88 MiB`, and matches greedy `12,288/12,288`. Evidence:
+  [`../bench/4080_b8_projection_bmm_20260809/README.md`](../bench/4080_b8_projection_bmm_20260809/README.md)
+  and
+  [`../bench/4080_7p2b_fp16_state_20260809/README.md`](../bench/4080_7p2b_fp16_state_20260809/README.md).
 - **RTX 4090:** 0.4B dense decode bsz1/2/4/8 reaches
   `1.007x/1.016x/1.008x/1.418x` of matching Albatross rows. Prompt-512 bsz4 is
   `1.007x` the same-session reference and `0.916x` the retained historical

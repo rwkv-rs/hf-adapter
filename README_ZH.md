@@ -18,6 +18,11 @@ W8/W4 量化、投机解码和多卡运行，并按设备选择原生或融合�
 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)，后续扩展项目见
 [HF_TODO.md](HF_TODO.md)。
 
+当前主线还已合入 V100/RTX 4080 的精确 B8 解码调优、RTX 4080
+0.4B/1.5B/2.9B 的 B8 分组 W/A/V 投影，以及 RTX 4080 7.2B/B8
+FP16-state 路径。这些均已有配对性能、正确性和回退边界证据，不再列为待完成缺口；
+具体结果见 [BENCHMARK.md](BENCHMARK.md)。
+
 ## 五分钟开始
 
 新用户建议先使用 0.1B 或 0.4B 模型。下面的命令会创建独立环境、安装仓库并检查
@@ -318,6 +323,9 @@ python examples/check_environment.py --model /path/to/rwkv7-model-hf
 
 - [完整英文工程说明](README.md)
 - [文档目录](docs/README.md)
+- [项目与架构总览](docs/PROJECT_SUMMARY.md)
+- [跨平台结果与证据索引](docs/RESULTS_INDEX.md)
+- [版本变更记录](CHANGELOG.md)
 - [贡献归属](CONTRIBUTIONS.md)
 - [贡献者名单](CONTRIBUTORS.md)
 - [许可证](LICENSE)

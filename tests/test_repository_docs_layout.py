@@ -52,10 +52,29 @@ def test_stable_remote_code_contract_is_documented() -> None:
         assert required in layout
 
 
+def test_project_review_documents_are_linked() -> None:
+    readme = _read("README.md")
+    readme_zh = _read("README_ZH.md")
+    docs_index = _read("docs/README.md")
+    for relative in (
+        "CHANGELOG.md",
+        "docs/PROJECT_SUMMARY.md",
+        "docs/RESULTS_INDEX.md",
+    ):
+        assert (ROOT / relative).is_file(), relative
+        assert relative in readme, relative
+
+    assert "docs/PROJECT_SUMMARY.md" in readme_zh
+    assert "docs/RESULTS_INDEX.md" in readme_zh
+    assert "PROJECT_SUMMARY.md" in docs_index
+    assert "RESULTS_INDEX.md" in docs_index
+
+
 def main() -> int:
     test_root_entry_documents_stay_navigable()
     test_split_documents_exist_and_are_linked()
     test_stable_remote_code_contract_is_documented()
+    test_project_review_documents_are_linked()
     print("REPOSITORY DOCS LAYOUT PASS")
     return 0
 
