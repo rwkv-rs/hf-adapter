@@ -42,11 +42,14 @@ select candidates; only full-model A/B rows can establish a speed result.
 5. Promote only repeated end-to-end wins, then rerun the full exact-card matrix.
 6. Repeat on the new baseline until the plateau rule is satisfied.
 
-The first 5070 candidate is the grouped B8 W/A/V tensor-core BMM path recently
-accepted for desktop RTX 4080. It will be enabled only through the existing
-override and benchmarked on 5070 before any policy change. Subsequent work is
-chosen from the measured top hotspot, with priority given to deeper native
-fusion and reduced state/activation traffic rather than wrapper changes.
+The first 5070 candidate is the grouped W/A/G/V CUDA extension that explicitly
+supports `sm_120`. The newer B8 tensor-core BMM accepted for desktop RTX 4080
+is excluded because its implementation deliberately requires `sm_89` and
+would silently use the fallback on 5070. The selected candidate will be enabled
+only through the existing override and benchmarked before any policy change.
+Subsequent work is chosen from the measured top hotspot, with priority given to
+deeper native fusion and reduced state/activation traffic rather than wrapper
+changes.
 
 ## Correctness and Promotion Gates
 
@@ -71,4 +74,3 @@ candidate has either failed a correctness/memory gate or produced less than a
 1% repeated end-to-end gain, and a final baseline rerun reproduces within 3%.
 The artifact records the rejected candidates and limiting hardware resource so
 future CUDA, Triton, driver, or power-envelope changes can reopen the profile.
-

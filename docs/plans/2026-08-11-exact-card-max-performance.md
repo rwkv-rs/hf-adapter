@@ -89,11 +89,11 @@ python bench/analyze_results.py --input bench/5070_max_perf_20260811/baseline.js
 
 Expected: analyzer PASS and all required hardware/policy fields present.
 
-### Task 3: A/B the Grouped B8 Projection Candidate on RTX 5070
+### Task 3: A/B the Grouped W/A/G/V Candidate on RTX 5070
 
 **Files:**
 - Reuse: `bench/bench_native_graph_ada_wagv_lora.py`
-- Create: `bench/5070_max_perf_20260811/b8_projection_bmm_ab.jsonl`
+- Create: `bench/5070_max_perf_20260811/grouped_wagv_ab.jsonl`
 - Test: `tests/test_ada_lora.py`
 - Test: `tests/test_native_jit_graph_dispatch_split.py`
 
@@ -109,9 +109,10 @@ Expected: PASS.
 
 **Step 2: Run 0.4B opt-in A/B**
 
-Use `bench_native_graph_ada_wagv_lora.py --axis ada_wagv_bmm` at B8, prompt
-64, 16 warmups, 512 fixed-token timing steps, and 128 greedy correctness steps.
-Run three independent model loads.
+Use `bench_native_graph_ada_wagv_lora.py --axis ada_wagv_lora` at B1 and B8,
+prompt 64, 16 warmups, 512 fixed-token timing steps, and 128 greedy correctness
+steps. Run three independent model loads. Confirm route telemetry and extension
+load state so an environment-enabled fallback cannot be counted as a candidate.
 
 Expected: first-step logits pass, greedy `3072/3072`, and complete baseline and
 candidate timing/memory/policy telemetry.
@@ -121,7 +122,7 @@ candidate timing/memory/policy telemetry.
 Repeat for 1.5B and 2.9B. Reject the candidate for any model whose median is
 below `1.01x` or any repeated run is below `1.00x`.
 
-### Task 4: Promote a Passing RTX 5070 Projection Route
+### Task 4: Promote a Passing RTX 5070 Grouped W/A/G/V Route
 
 **Files:**
 - Modify: `rwkv7_hf/kernel_policy.py`
@@ -283,4 +284,3 @@ reproduction commands are complete for every promoted profile.
 
 Keep kernel, evidence, and documentation commits reviewable and do not mix
 unrelated hardware profiles.
-
