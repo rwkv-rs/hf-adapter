@@ -42,7 +42,10 @@ def _install_runtime_stubs() -> None:
     torch_mod.no_grad = lambda: _NoGrad()
     torch_mod.inference_mode = lambda: _NoGrad()
     torch_mod.float32 = "float32"
-    torch_mod.cuda = types.SimpleNamespace(is_available=lambda: True)
+    torch_mod.cuda = types.SimpleNamespace(
+        is_available=lambda: True,
+        device=lambda _device: _NoGrad(),
+    )
     _ensure_module("torch.nn")
     _ensure_module("torch.nn.functional")
 
