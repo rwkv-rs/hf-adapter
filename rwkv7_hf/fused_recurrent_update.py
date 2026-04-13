@@ -707,6 +707,15 @@ def fused_recurrent_output_prepare_available() -> bool:
     return bool(_HAS_TRITON and torch is not None)
 
 
+def fused_recurrent_output_state_dtype_supported(dtype) -> bool:
+    """Return whether the Triton output-prep kernel supports this state dtype."""
+
+    return bool(
+        torch is not None
+        and dtype in (torch.float32, torch.float16)
+    )
+
+
 def fused_recurrent_scan_available() -> bool:
     """Return whether the optional Triton recurrent scan prototype can run."""
 
@@ -1018,7 +1027,7 @@ def fused_recurrent_output_prepare(
         and r_k.is_cuda
         and group_norm_weight.is_cuda
         and group_norm_bias.is_cuda
-        and state.dtype == torch.float32
+        and fused_recurrent_output_state_dtype_supported(state.dtype)
         and r3.dtype in (torch.float16, torch.bfloat16, torch.float32)
         and w3.dtype in (r3.dtype, torch.float32)
         and all(t.dtype == r3.dtype for t in (k3, v3, kk3, a3, g3, r_k, group_norm_weight, group_norm_bias))
@@ -1093,6 +1102,7 @@ def fused_recurrent_output_prepare_raw(
     *,
     eps: float,
     block_n: int = 64,
+    num_warps: int = 8,
     force_fallback: bool = False,
 ):
     """Decode recurrence/output prep directly from raw W/K and sigmoid A.
@@ -1111,6 +1121,10 @@ def fused_recurrent_output_prepare_raw(
         raise ValueError("state must be square in the last two dimensions")
     if int(block_n) < N:
         raise ValueError(f"block_n must be >= head_dim={N}; got {block_n}")
+    if int(num_warps) not in {1, 2, 4, 8}:
+        raise ValueError(
+            f"num_warps must be one of 1, 2, 4, or 8; got {num_warps}"
+        )
     r3, flat = _as_bhn(r, H, N, name="r")
     w3, _ = _as_bhn(w_raw, H, N, name="w_raw")
     k3, _ = _as_bhn(k_raw, H, N, name="k_raw")
@@ -1190,7 +1204,7 @@ def fused_recurrent_output_prepare_raw(
         N,
         float(eps),
         BLOCK_N=int(block_n),
-        num_warps=8,
+        num_warps=int(num_warps),
     )
     if flat:
         return out.reshape(B, hidden), new_state

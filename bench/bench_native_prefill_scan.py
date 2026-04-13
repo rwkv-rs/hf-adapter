@@ -38,15 +38,15 @@ REPO_CODE_DIR = REPO_ROOT / "rwkv7_hf"
 
 
 def prepare_model_dir(model_path: str, *, code_source: str) -> tuple[str, tempfile.TemporaryDirectory[str] | None]:
-    """Return a model directory, optionally overlaying repo remote-code files.
+    """Return a model directory, optionally overlaying canonical repo code.
 
     Local HF checkpoints usually carry their own ``modeling_rwkv7.py`` and
-    ``native_jit.py`` next to the weights.  That is correct for release
-    validation, but it hides in-repo experiments such as ``dplr_prefill.py`` and
-    ``dplr_prefill_triton.py`` from ``trust_remote_code=True``.  ``code_source=
-    repo`` creates a temporary checkpoint directory that symlinks the original
-    non-code files and copies the current repo's ``rwkv7_hf/*.py`` files to the
-    checkpoint root, so the benchmark measures the current worktree code.
+    ``native_jit.py`` next to the weights. That is correct for release
+    validation, but it can retain the retired wrapper ``auto_map`` and hide
+    in-repo experiments. ``code_source=repo`` creates a temporary checkpoint,
+    links the immutable payloads, and runs the same adapter sync used for
+    converted checkpoints. This both copies current code and migrates
+    ``config.json`` to the canonical Native model before ``AutoModel`` loads it.
     """
 
     if code_source == "model":
@@ -60,14 +60,27 @@ def prepare_model_dir(model_path: str, *, code_source: str) -> tuple[str, tempfi
     if not REPO_CODE_DIR.is_dir():
         raise ValueError(f"repo code directory not found: {REPO_CODE_DIR}")
 
+    from scripts.adapter_manifest import ADAPTER_FILES, LEGACY_REMOTE_CODE_FILES
+
     # Keep the staging directory on the checkpoint volume so Windows can use
     # hardlinks when developer-mode symlink privileges are unavailable.
     tmp = tempfile.TemporaryDirectory(prefix="rwkv7_repo_code_model_", dir=src.parent)
     dst = Path(tmp.name)
+    managed_roots = {
+        Path(name).parts[0]
+        for name in (*ADAPTER_FILES, *LEGACY_REMOTE_CODE_FILES)
+    }
     for item in src.iterdir():
-        if item.name == "__pycache__" or item.suffix == ".py":
+        if (
+            item.name == "__pycache__"
+            or item.suffix == ".py"
+            or item.name in managed_roots
+        ):
             continue
         target = dst / item.name
+        if item.name == "config.json":
+            shutil.copy2(item, target)
+            continue
         try:
             target.symlink_to(item, target_is_directory=item.is_dir())
         except OSError:
@@ -77,6 +90,9 @@ def prepare_model_dir(model_path: str, *, code_source: str) -> tuple[str, tempfi
                 os.link(item, target)
     for py_file in REPO_CODE_DIR.glob("*.py"):
         shutil.copy2(py_file, dst / py_file.name)
+    from scripts.sync_hf_adapter_code import sync_one
+
+    sync_one(dst)
     return str(dst), tmp
 
 
@@ -151,6 +167,13 @@ def median(vals: list[float]) -> float:
 def infer_model_size_label(model_path: str) -> str | None:
     match = re.search(r"(\d+(?:\.\d+)?)\s*b", str(model_path).lower())
     return f"{match.group(1)}b" if match else None
+
+
+def reported_effective_model_path(args) -> str:
+    """Avoid leaking the randomly named absolute repo-code overlay path."""
+    if args.code_source == "repo":
+        return "<temporary-repo-code-overlay>"
+    return getattr(args, "effective_model_path", args.model)
 
 
 def native_jit_packs(model):
@@ -333,7 +356,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "dtype": args.dtype,
         "device": torch.cuda.get_device_name(0) if args.device.startswith("cuda") else args.device,
         "model_path": args.model,
-        "effective_model_path": getattr(args, "effective_model_path", args.model),
+        "effective_model_path": reported_effective_model_path(args),
         "code_source": args.code_source,
         "reference_backend": args.reference_backend,
         "timing": args.timing,

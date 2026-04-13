@@ -14,7 +14,7 @@ import torch
 import torch.nn.functional as F
 
 
-_OWNED_NAMES = {'_native_graph_fused_recurrent_raw_enabled', '_native_graph_linear_dispatch', '_native_graph_fused_output_project_block_m', '_native_graph_ada_sparse_ffn_enabled', '_native_graph_ada_linear_should_route', '_native_graph_fused_wavg_lora_blocks', '_native_graph_blackwell_norm_mix_enabled', '_native_graph_rkv_project', '_native_graph_ada_wagv_bmm_enabled', '_native_graph_ada_wagv_lora_enabled', '_native_graph_fused_recurrent_output_enabled', '_native_graph_fp16_recurrent_enabled', '_native_graph_fused_wag_lora_blocks', '_native_graph_vkwr_rkv_dispatch', '_native_graph_ffn_dispatch', '_native_graph_fused_projection_enabled', '_native_graph_ada_wag_lora_enabled', '_native_graph_int_env', '_native_graph_fused_output_project_enabled', '_native_graph_ffn_down_add_dispatch', 'prewarm_ada_sparse_ffn', '_native_graph_fused_wavg_lora_enabled', '_native_graph_ffn_up_relu2_dispatch', '_native_graph_sm70_linear_enabled', '_native_graph_fused_wavg_lora_num_warps', '_native_graph_fused_output_enabled', '_native_graph_fused_norm_mix_num_warps', '_native_graph_fused_norm_mix_enabled', '_native_graph_fused_wag_lora_enabled', '_native_graph_rkv_policy', '_native_graph_ada_linear_enabled', '_native_graph_sm70_wagv_lora_enabled'} | {"bind_runtime", "_facade_value"}
+_OWNED_NAMES = {'_native_graph_fused_recurrent_raw_enabled', '_native_graph_fused_recurrent_raw_num_warps', '_native_graph_linear_dispatch', '_native_graph_fused_output_project_block_m', '_native_graph_ada_sparse_ffn_enabled', '_native_graph_ada_linear_should_route', '_native_graph_fused_wavg_lora_blocks', '_native_graph_blackwell_norm_mix_enabled', '_native_graph_rkv_project', '_native_graph_ada_wagv_bmm_enabled', '_native_graph_ada_wagv_lora_enabled', '_native_graph_fused_recurrent_output_enabled', '_native_graph_fp16_recurrent_enabled', '_native_graph_fused_wag_lora_blocks', '_native_graph_vkwr_rkv_dispatch', '_native_graph_ffn_dispatch', '_native_graph_fused_projection_enabled', '_native_graph_ada_wag_lora_enabled', '_native_graph_int_env', '_native_graph_fused_output_project_enabled', '_native_graph_ffn_down_add_dispatch', 'prewarm_ada_sparse_ffn', '_native_graph_fused_wavg_lora_enabled', '_native_graph_ffn_up_relu2_dispatch', '_native_graph_sm70_linear_enabled', '_native_graph_fused_wavg_lora_num_warps', '_native_graph_fused_output_enabled', '_native_graph_fused_norm_mix_num_warps', '_native_graph_fused_norm_mix_enabled', '_native_graph_fused_wag_lora_enabled', '_native_graph_rkv_policy', '_native_graph_ada_linear_enabled', '_native_graph_sm70_wagv_lora_enabled'} | {"bind_runtime", "_facade_value"}
 
 
 def bind_runtime(runtime: dict[str, object]) -> None:
@@ -43,13 +43,53 @@ def _native_graph_fused_recurrent_output_enabled() -> bool:
     except Exception:
         return False
 
-def _native_graph_fused_recurrent_raw_enabled() -> bool:
+def _native_graph_fused_recurrent_raw_enabled(
+    rows: int | None = None,
+    hidden_size: int | None = None,
+) -> bool:
     """Fold W decay and K/KK preparation into recurrent output fusion."""
 
     policy = _kernel_policy()
-    if not env_flag("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW", bool(getattr(policy, "fused_recurrent_raw", False))):
+    raw = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW")
+    if raw is not None:
+        selected = env_flag("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW", False)
+    else:
+        selected = bool(getattr(policy, "fused_recurrent_raw", False))
+        shapes = {
+            tuple(int(value) for value in shape)
+            for shape in getattr(
+                policy,
+                "native_graph_fused_recurrent_raw_shapes",
+                (),
+            )
+            if len(shape) == 2
+        }
+        if shapes:
+            selected = bool(
+                rows is not None
+                and hidden_size is not None
+                and (int(hidden_size), int(rows)) in shapes
+            )
+    if not selected:
         return False
     return bool(fused_recurrent_output_prepare_raw is not None and _native_graph_fused_recurrent_output_enabled())
+
+
+def _native_graph_fused_recurrent_raw_num_warps() -> int:
+    policy = _kernel_policy()
+    default = int(getattr(policy, "recurrent_raw_num_warps", 8))
+    value = env_int(
+        "RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW_NUM_WARPS",
+        default,
+        lower=1,
+        upper=8,
+    )
+    if value not in {1, 2, 4, 8}:
+        raise ValueError(
+            "RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW_NUM_WARPS must be one of "
+            f"1, 2, 4, or 8; got {value}"
+        )
+    return value
 
 def _native_graph_fp16_recurrent_enabled(state: torch.Tensor, elapsed) -> bool:
     policy = _kernel_policy()
@@ -160,14 +200,30 @@ def _native_graph_fused_wavg_lora_enabled(rows: int, hidden_size: int) -> bool:
     except Exception:
         return False
 
-def _native_graph_fused_norm_mix_enabled() -> bool:
+def _native_graph_fused_norm_mix_enabled(
+    rows: int | None = None,
+    hidden_size: int | None = None,
+) -> bool:
     """Runtime switch for decode layer-norm/residual/time-mix fusion."""
 
     policy = _kernel_policy()
-    if not env_flag(
-        "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX",
-        bool(getattr(policy, "fused_norm_mix", False)),
-    ):
+    raw = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX")
+    if raw is not None:
+        selected = env_flag("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX", False)
+    else:
+        selected = bool(getattr(policy, "fused_norm_mix", False))
+        shapes = {
+            tuple(int(value) for value in shape)
+            for shape in getattr(policy, "native_graph_fused_norm_mix_shapes", ())
+            if len(shape) == 2
+        }
+        if shapes:
+            selected = bool(
+                rows is not None
+                and hidden_size is not None
+                and (int(hidden_size), int(rows)) in shapes
+            )
+    if not selected:
         return False
     if (
         fused_attn_norm_mix6_decode is None
@@ -704,4 +760,4 @@ def _native_graph_fused_wavg_lora_num_warps(rows: int = 1) -> int:
         )
     return value
 
-__all__ = ['_native_graph_fused_recurrent_output_enabled', '_native_graph_fused_recurrent_raw_enabled', '_native_graph_fp16_recurrent_enabled', '_native_graph_fused_output_enabled', '_native_graph_fused_output_project_enabled', '_native_graph_fused_output_project_block_m', '_native_graph_fused_projection_enabled', '_native_graph_fused_wag_lora_enabled', '_native_graph_sm70_wagv_lora_enabled', '_native_graph_fused_wavg_lora_enabled', '_native_graph_fused_norm_mix_enabled', '_native_graph_fused_norm_mix_num_warps', '_native_graph_blackwell_norm_mix_enabled', '_native_graph_sm70_linear_enabled', '_native_graph_ada_sparse_ffn_enabled', '_native_graph_ada_linear_enabled', '_native_graph_ada_linear_should_route', '_native_graph_ada_wagv_lora_enabled', '_native_graph_ada_wag_lora_enabled', '_native_graph_linear_dispatch', '_native_graph_ffn_up_relu2_dispatch', '_native_graph_ffn_down_add_dispatch', '_native_graph_ffn_dispatch', 'prewarm_ada_sparse_ffn', '_native_graph_rkv_policy', '_native_graph_int_env', '_native_graph_vkwr_rkv_dispatch', '_native_graph_rkv_project', '_native_graph_fused_wag_lora_blocks', '_native_graph_fused_wavg_lora_blocks', '_native_graph_fused_wavg_lora_num_warps']
+__all__ = ['_native_graph_fused_recurrent_output_enabled', '_native_graph_fused_recurrent_raw_enabled', '_native_graph_fused_recurrent_raw_num_warps', '_native_graph_fp16_recurrent_enabled', '_native_graph_fused_output_enabled', '_native_graph_fused_output_project_enabled', '_native_graph_fused_output_project_block_m', '_native_graph_fused_projection_enabled', '_native_graph_fused_wag_lora_enabled', '_native_graph_sm70_wagv_lora_enabled', '_native_graph_fused_wavg_lora_enabled', '_native_graph_fused_norm_mix_enabled', '_native_graph_fused_norm_mix_num_warps', '_native_graph_blackwell_norm_mix_enabled', '_native_graph_sm70_linear_enabled', '_native_graph_ada_sparse_ffn_enabled', '_native_graph_ada_linear_enabled', '_native_graph_ada_linear_should_route', '_native_graph_ada_wagv_lora_enabled', '_native_graph_ada_wag_lora_enabled', '_native_graph_linear_dispatch', '_native_graph_ffn_up_relu2_dispatch', '_native_graph_ffn_down_add_dispatch', '_native_graph_ffn_dispatch', 'prewarm_ada_sparse_ffn', '_native_graph_rkv_policy', '_native_graph_int_env', '_native_graph_vkwr_rkv_dispatch', '_native_graph_rkv_project', '_native_graph_fused_wag_lora_blocks', '_native_graph_fused_wavg_lora_blocks', '_native_graph_fused_wavg_lora_num_warps']

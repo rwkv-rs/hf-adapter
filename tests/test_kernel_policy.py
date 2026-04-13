@@ -744,12 +744,58 @@ def test_policy_defaults_are_conservative() -> None:
     other_blackwell = policy_for_profile(
         classify_gpu("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0))
     )
+    expected_5070_prefill_shapes = (
+        (1024, 24, 1, 128),
+        (1024, 24, 1, 512),
+        (1024, 24, 2, 128),
+        (1024, 24, 2, 512),
+        (1024, 24, 4, 128),
+        (1024, 24, 4, 512),
+        (1024, 24, 8, 128),
+        (1024, 24, 8, 512),
+        (2048, 24, 1, 128),
+        (2048, 24, 1, 512),
+        (2048, 24, 2, 128),
+        (2048, 24, 2, 512),
+        (2048, 24, 4, 128),
+        (2048, 24, 4, 512),
+        (2048, 24, 8, 128),
+        (2048, 24, 8, 512),
+    )
     assert other_blackwell.prefill_scan_block_m_model_shapes == ()
     assert other_blackwell.prefill_clampw_scan_model_shapes == ()
     assert not other_blackwell.fused_prefill_stacked_rkv
     assert not other_blackwell.fused_prefill_sequence_ffn
-    assert not other_blackwell.prefill_graph
-    assert other_blackwell.prefill_graph_model_shapes == ()
+    assert other_blackwell.fused_prefill_scan
+    assert other_blackwell.prefill_scan_model_shapes == expected_5070_prefill_shapes
+    assert other_blackwell.prefill_graph
+    assert other_blackwell.prefill_graph_model_shapes == expected_5070_prefill_shapes
+    assert other_blackwell.native_graph_triton_fp16_state
+    assert other_blackwell.native_graph_triton_fp16_state_model_shapes == (
+        (1024, 24, 8),
+        (2048, 24, 8),
+    )
+    assert other_blackwell.fused_recurrent_raw
+    assert other_blackwell.native_graph_fused_recurrent_raw_shapes == (
+        (1024, 1),
+        (1024, 2),
+        (1024, 4),
+        (1024, 8),
+        (2048, 1),
+        (2048, 2),
+        (2048, 4),
+        (2048, 8),
+    )
+    assert other_blackwell.fused_norm_mix
+    assert other_blackwell.native_graph_fused_norm_mix_shapes == (
+        (1024, 1),
+        (1024, 2),
+        (1024, 4),
+        (1024, 8),
+        (2048, 1),
+        (2048, 2),
+        (2048, 8),
+    )
     assert other_blackwell.native_graph_state_dtype == "fp32"
     assert not other_blackwell.native_graph_fp16_recurrent
     assert not other_blackwell.ada_sparse_ffn_low_memory_pack
@@ -757,6 +803,22 @@ def test_policy_defaults_are_conservative() -> None:
     assert other_blackwell.prefill_fp16_accum_ffn_key_layer_counts == ()
     assert other_blackwell.marlin_w4_ffn_shapes == ()
     assert other_blackwell.marlin_w4_model_profiles == ()
+    for adjacent_name in (
+        "NVIDIA GeForce RTX 5070",
+        "NVIDIA GeForce RTX 5070 Ti Laptop GPU",
+        "NVIDIA GeForce RTX 5070 SUPER Laptop GPU",
+    ):
+        adjacent_5070 = policy_for_profile(classify_gpu(adjacent_name, (12, 0)))
+        assert not adjacent_5070.prefill_graph
+        assert not adjacent_5070.fused_prefill_scan
+        assert not adjacent_5070.native_graph_triton_fp16_state
+        assert adjacent_5070.native_graph_triton_fp16_state_model_shapes == ()
+        assert not adjacent_5070.fused_recurrent_raw
+        assert adjacent_5070.native_graph_fused_recurrent_raw_shapes == ()
+        assert not adjacent_5070.fused_norm_mix
+        assert adjacent_5070.native_graph_fused_norm_mix_shapes == ()
+        assert adjacent_5070.prefill_scan_model_shapes == ()
+        assert adjacent_5070.prefill_graph_model_shapes == ()
     adjacent_blackwell = policy_for_profile(
         classify_gpu("NVIDIA GeForce RTX 50900", (12, 0))
     )

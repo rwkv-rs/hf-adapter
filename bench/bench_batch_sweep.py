@@ -31,6 +31,10 @@ SEED = "The quick brown fox jumps over the lazy dog. " * 256
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
 
 
+def current_bench_case() -> str | None:
+    return os.environ.get("RWKV7_BENCH_CASE")
+
+
 def _model_kernel_policy(model):
     module = sys.modules.get(model.__class__.__module__)
     getter = getattr(module, "_rwkv7_kernel_policy", None)
@@ -69,6 +73,64 @@ def effective_wavg_lora(model, batch_size: int) -> bool:
         max_hidden = 0 if default_max is None else int(default_max)
     hidden = int(getattr(model.config, "hidden_size", 0))
     return not (int(batch_size) == 1 and max_hidden > 0 and hidden > max_hidden)
+
+
+def effective_fused_norm_mix(model, batch_size: int) -> bool:
+    """Report the shape-aware decode norm/mix route selected at runtime."""
+
+    package = model.__class__.__module__.rsplit(".", 1)[0]
+    try:
+        native_jit = importlib.import_module(package + ".native_jit")
+    except Exception:
+        native_jit = None
+    enabled = getattr(native_jit, "_native_graph_fused_norm_mix_enabled", None)
+    if callable(enabled):
+        try:
+            return bool(
+                enabled(
+                    int(batch_size),
+                    int(getattr(model.config, "hidden_size", 0)),
+                )
+            )
+        except Exception:
+            pass
+    return effective_flag(
+        model,
+        "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX",
+        "fused_norm_mix",
+        False,
+    )
+
+
+def effective_fused_recurrent_raw(model, batch_size: int) -> bool:
+    """Report the shape-aware raw recurrent route selected at runtime."""
+
+    package = model.__class__.__module__.rsplit(".", 1)[0]
+    try:
+        native_jit = importlib.import_module(package + ".native_jit")
+    except Exception:
+        native_jit = None
+    enabled = getattr(
+        native_jit,
+        "_native_graph_fused_recurrent_raw_enabled",
+        None,
+    )
+    if callable(enabled):
+        try:
+            return bool(
+                enabled(
+                    int(batch_size),
+                    int(getattr(model.config, "hidden_size", 0)),
+                )
+            )
+        except Exception:
+            pass
+    return effective_flag(
+        model,
+        "RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW",
+        "fused_recurrent_raw",
+        False,
+    )
 
 
 def infer_model_size_label(hf_dir: str, explicit: str = "") -> str | None:
@@ -197,11 +259,90 @@ def load_model(args, dtype):
     return model
 
 
+def load_tokenizer(args):
+    if args.code_source == "repo":
+        from rwkv7_hf.tokenization_rwkv7 import RWKV7Tokenizer
+
+        return RWKV7Tokenizer.from_pretrained(args.hf_dir)
+    return AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
+
+
 def last_fast_token_backend(model):
     getter = getattr(model, "rwkv7_last_fast_token_backend", None)
     if callable(getter):
         return getter()
     return getattr(model, "_rwkv7_last_fast_token_backend", None)
+
+
+def last_fast_prefill_backend(model):
+    for name in (
+        "rwkv7_last_fast_prefill_backend",
+        "rwkv7_native_model_last_prefill_backend",
+    ):
+        getter = getattr(model, name, None)
+        if callable(getter):
+            value = getter()
+            if value is not None:
+                return value
+    return getattr(
+        model,
+        "_rwkv7_last_fast_prefill_backend",
+        getattr(model, "_rwkv7_native_model_last_prefill_backend", None),
+    )
+
+
+def native_prefill_route(model, batch_size: int, prompt_tokens: int) -> dict[str, Any]:
+    """Report the effective compiled-prefill route for one measured shape."""
+
+    backend = last_fast_prefill_backend(model)
+    route: dict[str, Any] = {
+        "prefill_backend_effective": backend,
+        "prefill_graph_requested": effective_flag(
+            model, "RWKV7_NATIVE_PREFILL_GRAPH", "prefill_graph", False
+        ),
+        "prefill_graph_effective": backend == "native_prefill_graph",
+        "prefill_fused_scan_requested": effective_flag(
+            model,
+            "RWKV7_NATIVE_PREFILL_FUSED_SCAN",
+            "fused_prefill_scan",
+            False,
+        ),
+        "prefill_sequence_ffn_effective": bool(
+            getattr(model, "_rwkv7_native_prefill_sequence_ffn_effective", False)
+        ),
+        "prefill_fp16_accum_ffn_key_effective": bool(
+            getattr(
+                model,
+                "_rwkv7_native_prefill_fp16_accum_ffn_key_effective",
+                False,
+            )
+        ),
+    }
+    method = getattr(model, "rwkv7_prefill_native", None)
+    fn = getattr(method, "__func__", method)
+    native_jit = getattr(fn, "__globals__", {}).get("native_jit")
+    if native_jit is None:
+        try:
+            package = model.__class__.__module__.rsplit(".", 1)[0]
+            native_jit = importlib.import_module(package + ".native_jit")
+        except Exception:
+            native_jit = None
+    fused_scan = getattr(native_jit, "_native_prefill_fused_scan_enabled", None)
+    if callable(fused_scan):
+        try:
+            route["prefill_fused_scan_effective"] = bool(
+                fused_scan(
+                    int(batch_size),
+                    int(prompt_tokens),
+                    int(model.config.hidden_size),
+                    int(model.config.num_hidden_layers),
+                )
+            )
+        except Exception:
+            route["prefill_fused_scan_effective"] = None
+    else:
+        route["prefill_fused_scan_effective"] = None
+    return route
 
 
 def musa_wkv_route(model) -> dict[str, Any]:
@@ -262,6 +403,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
             args.device,
             args.runs,
         )
+    prefill_route = native_prefill_route(model, bsz, int(ids.shape[1]))
 
     with torch.inference_mode():
         out = model(ids[:, :8], use_cache=True, logits_to_keep=args.hf_logits_to_keep)
@@ -289,6 +431,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
     rows = [{
         "axis": "batch_sweep",
         "backend": "hf_adapter",
+        "bench_case": current_bench_case(),
         "decode_api": "forward",
         "dtype": args.dtype,
         "device": device_name(args.device),
@@ -307,6 +450,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
         "decode_tokps_per_seq": round(args.decode_tokens / decode_dt, 1),
         "decode_ms_per_step": round(1000 * decode_dt / args.decode_tokens, 2),
         "peak_vram_mb": peak_mb(args.device),
+        **prefill_route,
         **native_graph_state_route(state),
         **forward_route,
     }]
@@ -346,13 +490,13 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
             "fast_token_backend_effective": last_fast_token_backend(model) or requested_backend,
             "native_graph_fused_recurrent": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT", "0") not in {"0", "false", "False", "no", "off"},
             "native_graph_fused_recurrent_output": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", "1") not in {"0", "false", "False", "no", "off"},
-            "native_graph_fused_recurrent_raw": effective_flag(model, "RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW", "fused_recurrent_raw", False),
+            "native_graph_fused_recurrent_raw": effective_fused_recurrent_raw(model, bsz),
             "native_graph_fused_output": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT", "1") not in {"0", "false", "False", "no", "off"},
             "native_graph_fused_output_project": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT", "0") not in {"0", "false", "False", "no", "off"},
             "native_graph_fused_wag_lora": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA", "0") not in {"0", "false", "False", "no", "off"},
             "native_graph_fused_wavg_lora": effective_wavg_lora(model, bsz),
             "native_graph_fused_projection": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_PROJECTION", "0") not in {"0", "false", "False", "no", "off"},
-            "native_graph_fused_norm_mix": effective_flag(model, "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX", "fused_norm_mix", False),
+            "native_graph_fused_norm_mix": effective_fused_norm_mix(model, bsz),
             "native_graph_sm70_linear": effective_flag(model, "RWKV7_NATIVE_GRAPH_SM70_LINEAR", "sm70_linear", False),
             "native_graph_ada_linear": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_LINEAR", "ada_linear", False),
             "native_graph_ada_wagv_lora": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA", "ada_wagv_lora", False),
@@ -409,7 +553,7 @@ def main() -> int:
     args = ap.parse_args()
 
     dtype = DTYPES[args.dtype]
-    tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
+    tok = load_tokenizer(args)
     model = load_model(args, dtype)
     all_rows: list[dict[str, Any]] = []
     for bsz in args.batch_sizes:

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # coding=utf-8
-"""Paired native-graph decode A/B for recurrent-state precision.
+"""Balanced native-graph decode A/B for state precision and fused features.
 
 The baseline explicitly uses FP32 state.  The candidate either follows the
-hardware policy (the default) or forces the Triton FP16-state route for an
-exploratory shape.  Graph-bound caches are detached and graph pools are
-released between modes so large checkpoints can be compared on 16 GiB cards.
+hardware policy (the default) or forces one exploratory feature. Graph-bound
+caches are detached and graph pools are released between modes so candidates
+can be compared without reloading the model or reusing a stale capture.
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import argparse
 import gc
 import json
 import os
+from statistics import median
 from pathlib import Path
 from typing import Any
 
@@ -21,15 +22,88 @@ os.environ.setdefault("RWKV7_FAST_TOKEN_BACKEND", "native_graph")
 
 import torch
 import torch.nn.functional as F
-from transformers import AutoTokenizer
 
+from rwkv7_hf import native_jit
 from rwkv7_hf.native_model import NativeRWKV7ForCausalLM
+from rwkv7_hf.tokenization_rwkv7 import RWKV7Tokenizer
 
 
 SEED = "The quick brown fox jumps over the lazy dog. " * 128
 
 
-def _set_mode(*, candidate: bool, force_candidate: bool) -> None:
+def balanced_mode_order(rounds: int, *, candidate_first: bool) -> tuple[bool, ...]:
+    """Alternate pair order so each mode occupies early and late positions."""
+
+    if rounds <= 0:
+        raise ValueError("paired rounds must be positive")
+    order: list[bool] = []
+    starts_with_candidate = bool(candidate_first)
+    for round_index in range(rounds):
+        first = starts_with_candidate if round_index % 2 == 0 else not starts_with_candidate
+        order.extend((first, not first))
+    return tuple(order)
+
+
+def aggregate_mode_results(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate repeated mode runs while retaining one correctness payload."""
+
+    if not results:
+        raise ValueError("cannot aggregate an empty mode result list")
+    first = dict(results[0])
+    first["ms_per_step"] = median(float(row["ms_per_step"]) for row in results)
+    first["tokps_total"] = median(float(row["tokps_total"]) for row in results)
+    first["peak_vram_mb"] = max(float(row["peak_vram_mb"]) for row in results)
+    first["cache_stats"] = results[-1]["cache_stats"]
+    first["timing_samples_ms"] = [float(row["ms_per_step"]) for row in results]
+    return first
+
+
+def _set_mode(
+    *,
+    candidate: bool,
+    force_candidate: bool,
+    candidate_feature: str,
+) -> None:
+    if candidate_feature == "fused-norm-mix":
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX"] = "1" if candidate else "0"
+        return
+    if candidate_feature == "fused-recurrent-raw":
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW"] = "1" if candidate else "0"
+        return
+    if candidate_feature == "precompute-embedding":
+        os.environ["RWKV7_NATIVE_GRAPH_PRECOMPUTE_EMB_LN0"] = "1" if candidate else "0"
+        return
+    if candidate_feature == "fused-output-project":
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT"] = "1" if candidate else "0"
+        return
+    if candidate_feature == "fused-projection":
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_PROJECTION"] = "1" if candidate else "0"
+        return
+    if candidate_feature == "ada-linear":
+        os.environ["RWKV7_NATIVE_GRAPH_ADA_LINEAR"] = "1" if candidate else "0"
+        return
+    if candidate_feature == "fused-wavg-lora":
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA"] = "1" if candidate else "0"
+        return
+    if candidate_feature == "fused-wag-lora":
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA"] = "1" if candidate else "0"
+        return
+    if candidate_feature.startswith("norm-mix-warps-"):
+        target = int(candidate_feature.rsplit("-", 1)[1])
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX"] = "1"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS"] = str(
+            target if candidate else 4
+        )
+        return
+    if candidate_feature.startswith("recurrent-raw-warps-"):
+        target = int(candidate_feature.rsplit("-", 1)[1])
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW"] = "1"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW_NUM_WARPS"] = str(
+            target if candidate else 8
+        )
+        return
+    if candidate_feature != "fp16-state":
+        raise ValueError(f"unsupported candidate feature: {candidate_feature}")
     if not candidate:
         os.environ["RWKV7_NATIVE_GRAPH_STATE_DTYPE"] = "fp32"
         os.environ["RWKV7_NATIVE_GRAPH_TRITON_FP16_STATE"] = "0"
@@ -62,7 +136,11 @@ def _run_mode(
     *,
     candidate: bool,
 ) -> dict[str, Any]:
-    _set_mode(candidate=candidate, force_candidate=args.force_candidate)
+    _set_mode(
+        candidate=candidate,
+        force_candidate=args.force_candidate,
+        candidate_feature=args.candidate_feature,
+    )
     model.rwkv7_clear_native_graph_cache()
     if hasattr(model, "rwkv7_reset_native_graph_cache_stats"):
         model.rwkv7_reset_native_graph_cache_stats()
@@ -107,6 +185,43 @@ def _run_mode(
         "state_dtype": str(getattr(runner, "state_dtype", "unknown")),
         "triton_fp16_state": bool(getattr(runner, "triton_fp16_state", False)),
         "native_fp16_recurrent": bool(getattr(runner, "fp16_recurrent", False)),
+        "fused_norm_mix": bool(
+            native_jit._native_graph_fused_norm_mix_enabled(
+                int(start_token.shape[0]),
+                int(model.config.hidden_size),
+            )
+        ),
+        "fused_recurrent_raw": bool(
+            native_jit._native_graph_fused_recurrent_raw_enabled(
+                int(start_token.shape[0]),
+                int(model.config.hidden_size),
+            )
+        ),
+        "precomputed_embedding_ln0": bool(
+            getattr(runner, "precomputed_embedding_ln0", False)
+        ),
+        "fused_output_project": bool(
+            native_jit._native_graph_fused_output_project_enabled()
+        ),
+        "fused_projection": bool(
+            native_jit._native_graph_fused_projection_enabled()
+        ),
+        "ada_linear": bool(native_jit._native_graph_ada_linear_enabled()),
+        "fused_wavg_lora": bool(
+            native_jit._native_graph_fused_wavg_lora_enabled(
+                int(start_token.shape[0]),
+                int(model.config.hidden_size),
+            )
+        ),
+        "fused_wag_lora": bool(
+            native_jit._native_graph_fused_wag_lora_enabled()
+        ),
+        "norm_mix_num_warps": int(
+            native_jit._native_graph_fused_norm_mix_num_warps()
+        ),
+        "recurrent_raw_num_warps": int(
+            native_jit._native_graph_fused_recurrent_raw_num_warps()
+        ),
     }
     result = {
         "first_logits": first_logits,
@@ -131,6 +246,33 @@ def main() -> int:
     parser.add_argument("--steps", type=int, default=512)
     parser.add_argument("--candidate-first", action="store_true")
     parser.add_argument(
+        "--candidate-feature",
+        choices=(
+            "fp16-state",
+            "fused-norm-mix",
+            "fused-recurrent-raw",
+            "precompute-embedding",
+            "fused-output-project",
+            "fused-projection",
+            "ada-linear",
+            "fused-wavg-lora",
+            "fused-wag-lora",
+            "norm-mix-warps-1",
+            "norm-mix-warps-2",
+            "norm-mix-warps-8",
+            "recurrent-raw-warps-1",
+            "recurrent-raw-warps-2",
+            "recurrent-raw-warps-4",
+        ),
+        default="fp16-state",
+    )
+    parser.add_argument(
+        "--paired-rounds",
+        type=int,
+        default=1,
+        help="number of paired runs; 2 uses an ABBA-balanced order",
+    )
+    parser.add_argument(
         "--force-candidate",
         action="store_true",
         help="force Triton FP16 state instead of exercising the default policy",
@@ -140,7 +282,7 @@ def main() -> int:
 
     if not torch.cuda.is_available():
         raise RuntimeError("this benchmark requires CUDA")
-    tokenizer = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
+    tokenizer = RWKV7Tokenizer.from_pretrained(args.hf_dir)
     model = NativeRWKV7ForCausalLM.from_pretrained(
         args.hf_dir,
         torch_dtype=torch.float16,
@@ -158,18 +300,21 @@ def main() -> int:
         start_token = prefill.logits[:, -1:].argmax(dim=-1)
     del prefill
 
-    order = (True, False) if args.candidate_first else (False, True)
-    modes: dict[bool, dict[str, Any]] = {}
+    mode_runs: dict[bool, list[dict[str, Any]]] = {False: [], True: []}
+    order = balanced_mode_order(
+        args.paired_rounds,
+        candidate_first=args.candidate_first,
+    )
     for candidate in order:
-        modes[candidate] = _run_mode(
+        mode_runs[candidate].append(_run_mode(
             model,
             base_state,
             start_token,
             args,
             candidate=candidate,
-        )
-    baseline = modes[False]
-    candidate = modes[True]
+        ))
+    baseline = aggregate_mode_results(mode_runs[False])
+    candidate = aggregate_mode_results(mode_runs[True])
 
     max_abs = float(
         (baseline["first_logits"] - candidate["first_logits"]).abs().max()
@@ -190,14 +335,46 @@ def main() -> int:
             strict=False,
         )
     )
-    route_pass = bool(
-        candidate["route"]["state_dtype"] == "torch.float16"
-        and candidate["route"]["triton_fp16_state"]
-        and not candidate["route"]["native_fp16_recurrent"]
-    )
+    if args.candidate_feature == "fp16-state":
+        route_pass = bool(
+            candidate["route"]["state_dtype"] == "torch.float16"
+            and candidate["route"]["triton_fp16_state"]
+            and not candidate["route"]["native_fp16_recurrent"]
+        )
+    elif args.candidate_feature.startswith("norm-mix-warps-"):
+        target_warps = int(args.candidate_feature.rsplit("-", 1)[1])
+        route_pass = bool(
+            baseline["route"]["fused_norm_mix"]
+            and candidate["route"]["fused_norm_mix"]
+            and baseline["route"]["norm_mix_num_warps"] == 4
+            and candidate["route"]["norm_mix_num_warps"] == target_warps
+        )
+    elif args.candidate_feature.startswith("recurrent-raw-warps-"):
+        target_warps = int(args.candidate_feature.rsplit("-", 1)[1])
+        route_pass = bool(
+            baseline["route"]["fused_recurrent_raw"]
+            and candidate["route"]["fused_recurrent_raw"]
+            and baseline["route"]["recurrent_raw_num_warps"] == 8
+            and candidate["route"]["recurrent_raw_num_warps"] == target_warps
+        )
+    else:
+        route_key = {
+            "fused-norm-mix": "fused_norm_mix",
+            "fused-recurrent-raw": "fused_recurrent_raw",
+            "precompute-embedding": "precomputed_embedding_ln0",
+            "fused-output-project": "fused_output_project",
+            "fused-projection": "fused_projection",
+            "ada-linear": "ada_linear",
+            "fused-wavg-lora": "fused_wavg_lora",
+            "fused-wag-lora": "fused_wag_lora",
+        }[args.candidate_feature]
+        route_pass = bool(
+            candidate["route"][route_key]
+            and not baseline["route"][route_key]
+        )
     correctness_pass = bool(greedy_match == greedy_total and cosine >= 0.999)
     row = {
-        "axis": "native_graph_triton_fp16_state",
+        "axis": "native_graph_" + args.candidate_feature.replace("-", "_"),
         "status": "pass" if route_pass and correctness_pass else "fail",
         "device": torch.cuda.get_device_name(0),
         "torch": torch.__version__,
@@ -209,11 +386,16 @@ def main() -> int:
         "correctness_steps": args.correctness_steps,
         "timing_steps": args.steps,
         "candidate_forced": args.force_candidate,
+        "candidate_feature": args.candidate_feature,
         "candidate_first": args.candidate_first,
+        "paired_rounds": args.paired_rounds,
+        "mode_order": ["candidate" if value else "baseline" for value in order],
         "baseline_route": baseline["route"],
         "candidate_route": candidate["route"],
         "baseline_ms_per_step": baseline["ms_per_step"],
         "candidate_ms_per_step": candidate["ms_per_step"],
+        "baseline_timing_samples_ms": baseline["timing_samples_ms"],
+        "candidate_timing_samples_ms": candidate["timing_samples_ms"],
         "speedup": baseline["ms_per_step"] / candidate["ms_per_step"],
         "baseline_tokps_total": baseline["tokps_total"],
         "candidate_tokps_total": candidate["tokps_total"],
