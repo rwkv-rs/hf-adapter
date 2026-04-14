@@ -1049,6 +1049,10 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_prefill_state_scan_max_batch=1,
             fused_prefill_output=True,
             fused_norm_mix=True,
+            native_graph_triton_fp16_state=is_v100,
+            native_graph_triton_fp16_state_model_shapes=(
+                ((1024, 24, 8), (2048, 24, 8)) if is_v100 else ()
+            ),
             fused_wavg_lora=True,
             wavg_lora_bsz1_max_hidden=4096,
             wavg_lora_blocks=(32, 64, 256),
@@ -1066,7 +1070,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ada_sparse_ffn_up=False,
             output_project_block_m=16,
             quant_policy="memory_first_decode_hot_optional",
-            notes="V100 production path: four-shape prefill graph cache, fused shift mix, tuned WAVG/WAGV, sparse FFN, shape-routed sm70 linear/RKV, output/recurrent-output, and decode norm/mix are default; full projection/output-project remain opt-in",
+            notes="V100 production path: four-shape prefill graph cache, fused shift mix, tuned WAVG/WAGV, sparse FFN, shape-routed sm70 linear/RKV, output/recurrent-output, decode norm/mix, and exact 0.4B/1.5B B8 FP16 state are default; full projection/output-project remain opt-in",
         )
     if family == "turing":
         is_tesla_t4 = is_tesla_t4_name(profile.name)

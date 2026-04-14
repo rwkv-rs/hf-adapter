@@ -334,6 +334,11 @@ def test_policy_defaults_are_conservative() -> None:
     assert v100.fused_prefill_state_scan_max_batch == 1
     assert v100.fused_prefill_output
     assert v100.fused_norm_mix
+    assert v100.native_graph_triton_fp16_state
+    assert v100.native_graph_triton_fp16_state_model_shapes == (
+        (1024, 24, 8),
+        (2048, 24, 8),
+    )
     assert v100.fused_wavg_lora
     assert v100.wavg_lora_bsz1_max_hidden == 4096
     assert v100.wavg_lora_blocks == (32, 64, 256)
@@ -352,6 +357,8 @@ def test_policy_defaults_are_conservative() -> None:
     other_volta = policy_for_profile(classify_gpu("Quadro GV100", (7, 0)))
     assert other_volta.wavg_lora_b8_blocks is None
     assert other_volta.wavg_lora_b8_num_warps is None
+    assert not other_volta.native_graph_triton_fp16_state
+    assert other_volta.native_graph_triton_fp16_state_model_shapes == ()
 
     t4 = policy_for_profile(classify_gpu("Tesla T4", (7, 5)))
     assert t4.fast_cache
