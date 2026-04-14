@@ -629,6 +629,23 @@ def _native_graph_fused_recurrent_raw_requested() -> bool:
     return env_flag("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW", default)
 
 
+def _native_graph_fused_recurrent_raw_num_warps() -> int:
+    policy = _rwkv7_kernel_policy()
+    default = int(getattr(policy, "recurrent_raw_num_warps", 8))
+    value = env_int(
+        "RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW_NUM_WARPS",
+        default,
+        lower=1,
+        upper=8,
+    )
+    if value not in {1, 2, 4, 8}:
+        raise ValueError(
+            "RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW_NUM_WARPS must be one of "
+            f"1, 2, 4, or 8; got {value}"
+        )
+    return value
+
+
 def _native_graph_fused_output_requested() -> bool:
     """Whether native-graph runners should capture the experimental output-prep kernel."""
 
@@ -2496,6 +2513,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_fused_recurrent_requested(),
             _native_graph_fused_recurrent_output_requested(),
             _native_graph_fused_recurrent_raw_requested(),
+            _native_graph_fused_recurrent_raw_num_warps(),
             _native_graph_fused_output_requested(),
             _native_graph_fused_output_project_requested(),
             _native_graph_fused_output_project_block_m(),

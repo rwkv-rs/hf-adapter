@@ -3,7 +3,7 @@
 Canonical current hardware status for the HF adapter. Detailed experiment logs
 remain in `bench/` and platform-specific documents.
 
-Last updated: **2026-08-09**. Audited at `main`
+Last updated: **2026-08-11**. The released baseline was audited at `main`
 `045bac1b769240facd290e1ac8232e8b1ca39778`.
 
 The `v0.6.0` HF release is complete for the declared support policy and the
@@ -23,7 +23,7 @@ reopening the released adapter milestone.
 
 | Platform | Status | Models / scope | Strongest current evidence | Open work |
 |---|---|---|---|---|
-| Tesla V100 32GB, sm70 | **Production-close** | dense/Qwen lanes; packed-MM4 cached decode for 1.5B/2.9B/7.2B; exact-B8 WAVG launch tuning; larger inference/training smoke | Albatross P1; three exact MM4 profiles pass 7/7 each with lower footprint and complete greedy equality; 1.5B alone opts into fused epilogues; exact-V100 B8 tuning adds `1.0114x-1.0312x` on 0.4B/1.5B/2.9B with greedy parity | Larger-model P2/P3, full-memory prefill and broader optimized-Qwen shapes |
+| Tesla V100 32GB, sm70 | **Production-close** | dense/Qwen lanes; packed-MM4 cached decode for 1.5B/2.9B/7.2B; exact-B8 WAVG; exact 0.4B/1.5B B8 FP16 state; larger inference/training smoke | Albatross P1 and MM4 gates remain; FP16 state passes both A/B orders at `1.0216x-1.0288x`, saves `16.875-58.125 MiB`, and matches `4,096/4,096` greedy tokens per model; other batches and Volta cards remain FP32 | Larger-model FP16-state rows, P2/P3, full-memory prefill and broader optimized-Qwen shapes |
 | RTX 3090 24GB, sm86 | **Production-close for measured bsz8 lanes** | g1h 7.2B vs Qwen3.5-9B plus 1.5B/2B and 2.9B/4B pairs | Latest 7.2B dense/W8/W4 matrix passes 18/18; dense decode active-work, Qwen FLA, quant speed and physical-memory gates pass | bsz1/2/4 latest-g1h matrix, task-quality evaluation, multi-GPU |
 | RTX 4090 24GB, sm89 | **Production-close for measured bsz8 lanes** | RWKV 0.4B/1.5B/2.9B/7.2B vs Qwen3.5 0.8B/2B/4B/9B, dense/W8/W4 | Small-model matrix passes 54/54 and 7.2B passes 18/18; dense prefill/decode, active-work, full Qwen FLA, quant speed and quant-local memory gates pass | bsz1/2/4 latest matrix, task quality, full-memory W4, other Ada cards |
 | RTX 4080 16GB, sm89 | **Production-close for measured Native HF B1/B8 and capacity lanes** | Native HF 0.4B/1.5B/2.9B vs full-FLA Qwen3.5 0.8B/2B/4B; optimized 7.2B/B8 decode; 13.3B capacity | six pair matrices pass with dense prefill/decode minima `1.012285x/1.435296x`; output-head quant complete-cell minima `1.003101x/1.015996x`; 7.2B/B8 FP16-state decode is median `344.39 tok/s`, `1.0301x` FP32 state, `-123.88 MiB`, and greedy `12288/12288`; 13.3B MM8/MM4 fit | 7.2B same-card Qwen/Albatross close, task quality, long-run/distributed training and full-model quant speed |
@@ -34,7 +34,7 @@ reopening the released adapter milestone.
 | RTX A6000 48GB | **Validated** | 0.1B–7.2B; dual-card training to 2.9B | API/training/resume/ZeRO and quant memory evidence | Quant speed and production performance gate |
 | GTX 1080 Ti, sm61 | **Smoke / compatibility** | 0.1B and 0.4B fp16 | Native/no-FLA fallback, bnb and native-mm smoke, batch sweep | Training, larger models and quant speed |
 | Tesla T4 15GB, sm75 | **Validated** | 0.1B/0.4B/1.5B/2.9B HF, cache, fused prefill, native-graph decode, W8/W4 and training integration | 123 dense/cache rows; exact-T4 DP4A quant; head-speed W8/W4 decode `>=1.0207x` fp16; Trainer/PEFT/TRL and single-GPU ZeRO/resume matrix | Dense decode `0.4888x–0.8649x` and B1/T512 prefill `0.5385x–0.7671x` Albatross; full-model all-phase quant speed |
-| RTX 5070 Laptop, sm120 | **Production-close for measured bsz8 lane** | 1.5B RWKV vs full-FLA Qwen3.5 2B, fp16/W8/W4 | 18/18 speed, active-parameter efficiency, footprint, peak-VRAM, full-FLA binding, and greedy/cosine gates pass | Other model pairs, bsz1/2/4 full-FLA, and model-quality evaluation |
+| RTX 5070 Laptop, sm120 | **Production-close for measured full-FLA and Native lanes** | 1.5B RWKV vs full-FLA Qwen3.5 2B at B8; Native 0.4B/1.5B B1/B2/B4/B8, P128/P512 | full-FLA matrix passes 18/18; Native graph+scan handoff passes; raw recurrent gains `1.0272x-1.1265x`; promoted norm/mix gains `1.0373x-1.1630x`; B8 FP16 state saves `16.875-58.125 MiB` | Other model pairs, broader full-FLA batches, 2.9B Native matrix, and model-quality evaluation |
 | H100 / Hopper | **Additional product coverage** | not part of the released exact-card matrix | conservative CUDA fallback policy | Add bf16, large-model, quant, training and performance evidence before product-specific promotion |
 | AMD gfx1100 / ROCm 7.2.1 | **Validated with exact-card decode lanes** | 0.1B compatibility/training; 0.1B-13.3B fused decode; 0.4B-13.3B output-head W8/W4 | Fully native HF/PEFT/cache/chunked-prefill/Trainer; dense fused decode remains positive through 13.3B; 40/40 output-head quant B1/B2/B4/B8 decode rows beat fp16 with greedy parity | Fused prefill, full-model quant speed/2.9B W4 quality, MI-series and same-card Albatross |
 | Moore Threads MTT S70 / MUSA 4.2.0 | **Smoke; exact-card legacy scope** | First-generation 0.1B HF lane; no Tensor Core and slow fp16 compute, so retained kernels use fp16 storage/IO with fp32 compute/state | Standalone parity, 64-token eager/WKV equality, autograd eager fallback, B1/B2 smoke and paired evidence; WKV prefill `1.214072x`, decode `1.000000x`; opt-in shift-mix prefill median `1.050809x`, decode neutral, peak memory equal | SDK 4.2.0 is frozen; S4000/S5000 capabilities require independent exact-card validation and must not inherit S70 limits; no broad bf16/quant/graph/multi-device/training-kernel claim |
@@ -50,6 +50,7 @@ reopening the released adapter milestone.
 - V100 packed MM4 BN/TN: [`../bench/v100_sm70_mm4_bntn_20260716/README.md`](../bench/v100_sm70_mm4_bntn_20260716/README.md)
 - V100 full-FLA Qwen B1/B8: [`../bench/v100_active_b1b8_20260715/README.md`](../bench/v100_active_b1b8_20260715/README.md)
 - V100 / RTX 4080 exact-B8 decode tuning: [`../bench/4080_v100_decode_tuning_20260808/README.md`](../bench/4080_v100_decode_tuning_20260808/README.md)
+- V100 exact 0.4B/1.5B B8 FP16 state: [`../bench/v100_exact_card_20260811/README.md`](../bench/v100_exact_card_20260811/README.md)
 - RTX 3090 g1h 7.2B: [`../bench/3090_g1h_7p2_bsz8_20260714/README.md`](../bench/3090_g1h_7p2_bsz8_20260714/README.md)
 - RTX 4090 g1h 7.2B: [`../bench/4090_g1h_7p2_bsz8_20260715/README.md`](../bench/4090_g1h_7p2_bsz8_20260715/README.md)
 - RTX 4090 small models: [`../bench/4090_small_bsz8_20260715/README.md`](../bench/4090_small_bsz8_20260715/README.md)
@@ -67,6 +68,7 @@ reopening the released adapter milestone.
 - RTX 5090 Native fp16-state official inference: [`../bench/5090_native_official_fp16_production_20260718/README.md`](../bench/5090_native_official_fp16_production_20260718/README.md)
 - RTX 5090 Native real-MiniPile train_temp: [`../bench/5090_native_train_temp_real_minipile_20260718/README.md`](../bench/5090_native_train_temp_real_minipile_20260718/README.md)
 - RTX 5070 Laptop: [`../bench/5070_qwen35_full_fla_bsz8_20260714/README.md`](../bench/5070_qwen35_full_fla_bsz8_20260714/README.md)
+- RTX 5070 Laptop exact Native backend: [`../bench/5070_max_perf_20260811/README.md`](../bench/5070_max_perf_20260811/README.md)
 - Apple M5: [`hardware/APPLE_PRODUCTION_CLOSE.md`](hardware/APPLE_PRODUCTION_CLOSE.md)
 - A100: [`validation/A100_HF_VALIDATION.md`](validation/A100_HF_VALIDATION.md)
 - A800: [`validation/A800_HF_VALIDATION.md`](validation/A800_HF_VALIDATION.md)

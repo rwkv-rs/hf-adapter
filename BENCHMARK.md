@@ -5,7 +5,7 @@ exploratory tuning chronology. Raw rows, logs and negative experiments remain
 in [`bench/`](bench/); platform interpretation lives in
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
-Last updated: **2026-08-09**.
+Last updated: **2026-08-11**.
 
 ## Benchmark contract
 
@@ -24,7 +24,7 @@ Status vocabulary:
 
 | Platform | Scope | Correctness / quality | Performance | Result |
 |---|---|---|---|---|
-| V100 32GB | dense/Qwen lanes plus 1.5B/2.9B/7.2B packed-MM4 and exact-B8 WAVG tuning | greedy/cache gates; MM4 complete-sequence and repeat hashes pass 21/21 decode-profile cells plus 4/4 1.5B group256 all-phase cells; tuned B8 rows retain greedy parity | Albatross P1; full-FLA Qwen gates; MM4 decode minima `1.0255x/1.0111x/1.0810x`; 1.5B speed-profile prefill/decode minima `1.0032x/1.0011x`; exact-V100 B8 launch adds `1.0114x-1.0312x` on 0.4B/1.5B/2.9B | **PASS measured lanes** |
+| V100 32GB | dense/Qwen lanes plus 1.5B/2.9B/7.2B packed-MM4, exact-B8 WAVG, and exact 0.4B/1.5B B8 FP16 state | greedy/cache gates; MM4 complete-sequence and repeat hashes pass 21/21 decode-profile cells plus 4/4 1.5B group256 all-phase cells; FP16-state A/B matches `4,096/4,096` greedy tokens per model across two process orders | Albatross P1; full-FLA Qwen gates; MM4 decode minima `1.0255x/1.0111x/1.0810x`; B8 FP16 state adds `1.0216x-1.0288x` and saves `16.875-58.125 MiB` | **PASS measured lanes** |
 | Tesla T4 15GB | 0.1B–2.9B HF/cache/fused-prefill/native-graph, exact-T4 W8/W4, training integration | functional/cache/fused rows pass; quant greedy 52/52; official alignment 0.1B/0.4B/1.5B passes | head-speed W8/W4 decode `>=1.0207x` fp16; dense decode `0.4888x–0.8649x` and B1/T512 prefill `0.5385x–0.7671x` Albatross; full-model quant prefill remains slower | **VALIDATED / performance partial** |
 | RTX 3090 | RWKV-7 7.2B vs Qwen3.5-9B, prompt2048, bsz1/2 | finite logits, greedy equality and cosine `>=0.999995`; Qwen fast bindings verified | self-fused dense prefill `1.0519x–1.0846x`; decode `1.9258x–2.1441x` | **PASS measured cells** |
 | RTX 3090 | g1h 7.2B vs Qwen3.5-9B, bsz8, dense/W8/W4 | finite logits, fail-closed Qwen FLA and route contracts; quality is a separate axis | dense prefill/decode min `1.0589x/1.7884x`; decode active work min `1.4379x`; W8/W4 total latency and memory gates pass | **PASS 18/18** |
@@ -35,6 +35,7 @@ Status vocabulary:
 | RTX 4080 | Native HF 0.4B/1.5B/2.9B vs full-FLA Qwen3.5 0.8B/2B/4B, B1/B8; 7.2B/13.3B capacity | fail-closed optimized-Qwen contracts; paired quant cosine/greedy gates; exact-card capacity probes | 6/6 pair matrices pass; dense prefill/decode minima `1.0123x/1.4353x`; A8W8/W4 complete-cell minima `1.0031x/1.0160x`; 13.3B MM8/MM4 fit | **PASS measured lanes** |
 | RTX 4080 | Exact B8 FP16 grouped W/A/V tensor-core projection, 0.4B/1.5B/2.9B | three independent loads per model; first-step logits exact; greedy `4,608/4,608` | median decode gains `1.1267x/1.0942x/1.0809x`; process peak-memory deltas `+2.39%/+1.90%/+1.55%` | **PASS exact B8 lane** |
 | RTX 4080 | Exact 7.2B/B8 FP16-weight, FP16-state native-graph decode | three independent processes; greedy `12,288/12,288`; minimum first-step cosine `0.99999475`; graph-cache hit `99.9039%` | `344.39 tok/s`, `23.2292 ms/step`, `1.0301x` the FP32-state route and `-123.88 MiB` median peak allocated VRAM | **PASS exact 7.2B/B8 lane** |
+| RTX 5070 Laptop | Exact Native/no-FLA 0.4B/1.5B B1/B2/B4/B8, prompt128/512 | prefill output and cache-handoff cosine pass; greedy matches; decode candidates use balanced A/B and fail-closed model/batch routing | raw recurrent `1.0272x-1.1265x`; promoted norm/mix `1.0373x-1.1630x`; B8 FP16 state up to `1.0478x` with `16.875-58.125 MiB` lower allocation | **PASS exact measured shapes** |
 | RTX 5090 | 0.4B MATH500; 1.5B/2.9B/7.2B quant; 13.3B inference | pass@64 `0.38`; compression ratio `1.0`; all quant same-next | MATH summary/decode `4.336x/4.871x` committed Albatross reference; 2.9B/7.2B quant `>=0.99x` paired fp16 | **PASS artifact** |
 | RTX 5090 | 0.4B/0.8B through 7.2B/9B, B1/B8, dense/W8/W4 | 144/144 Qwen references verify full FLA plus Triton conv; 32/32 greedy checks pass; task quality is separate | raw dense prefill/decode minima `1.0226x/2.8130x`; per-active-B speed leads in all cells; W8/W4 total-latency and footprint gates pass | **PASS 8/8 batch-pairs** |
 | RTX 5090 | g1h 1.5B/2.9B/7.2B/13.3B BF16 versus W4, B1/B8, prompt128/decode128 | prompt/final cosine `>=0.9995`, same-next 8/8; group-128 grid 280/280 | prefill/decode minima `1.0010x/1.1854x`; footprint `0.5298x–0.6250x` with automatic exact-model profiles | **PASS 8/8 all-phase cells** |
@@ -165,6 +166,25 @@ Canonical matrix: 0.1B/0.4B/1.5B × bsz1/2/4/8.
 | Native W8/W4 paired prefill / fp16 | `0.996x–1.007x` | 1% equivalence PASS |
 
 Evidence: [`bench/v100_production_close_20260711/README.md`](bench/v100_production_close_20260711/README.md).
+
+### V100 exact 0.4B/1.5B B8 FP16 recurrent state
+
+The 2026-08-11 exact-card follow-up enables Triton FP16 recurrent state only
+for `(hidden=1024, layers=24, batch=8)` and
+`(hidden=2048, layers=24, batch=8)` on the exact Tesla V100 name. Two
+processes per model reverse candidate/baseline order and retain FP32 weights,
+the same prefilled cache, and the same native graph route.
+
+| Model | Candidate-first | Baseline-first | Allocated VRAM delta | Minimum cosine | Greedy per process |
+|---|---:|---:|---:|---:|---:|
+| 0.4B/B8 | `1.02879x` | `1.02176x` | `-16.875` to `-33.125 MiB` | `0.99999344` | `2,048/2,048` |
+| 1.5B/B8 | `1.02163x` | `1.02403x` | `-41.875` to `-58.125 MiB` | `0.99999547` | `2,048/2,048` |
+
+The no-override endpoint selects FP16 state only at B8 and records
+`2,028.6/955.1 tok/s` decode for 0.4B/1.5B. B1 remains FP32. Prefill tile and
+decode warp alternatives did not repeat above the `1.01x` gate, so their
+existing defaults remain unchanged. Evidence:
+[`bench/v100_exact_card_20260811/`](bench/v100_exact_card_20260811/README.md).
 
 ### V100 packed-MM4 BN/TN decode matrix
 
@@ -392,6 +412,28 @@ an exact-card performance and memory close, not a model-quality claim.
 Final full-FLA evidence: [`bench/5070_qwen35_full_fla_bsz8_20260714/README.md`](bench/5070_qwen35_full_fla_bsz8_20260714/README.md).
 Historical FLA-core-only evidence: [`bench/5070_qwen35_fla_native_prefill_20260714/README.md`](bench/5070_qwen35_fla_native_prefill_20260714/README.md).
 Historical baseline: [`bench/5070_qwen35_fla_matrix_20260713/README.md`](bench/5070_qwen35_fla_matrix_20260713/README.md).
+
+### RTX 5070 Laptop exact-card Native backend routing
+
+The 2026-08-11 Native/no-FLA pass separately closes the repository backend,
+without changing the full-FLA Qwen comparison above. Exact 0.4B/1.5B
+P128/P512 B1/B2/B4/B8 shapes use native prefill graph plus fused scan. The
+paired P128 representative speedups over `native-direct` range from
+`4.242x` to `89.249x`, with output, greedy, and decode-after-prefill handoff
+passing. This comparison isolates the former sequential native reference; it
+is not an Albatross or Qwen claim.
+
+Decode promotes raw recurrent preparation for both models at B1/B2/B4/B8
+(`1.0272x-1.1265x`) and norm/mix for all measured 0.4B batches plus 1.5B
+B1/B2/B8 (`1.0373x-1.1630x`). The 1.5B/B4 norm/mix row is fail-closed at
+`0.97337x`. B8 FP16 state is exact-shape-only and records repeated
+`1.0082x-1.0478x` with `16.875-58.125 MiB` lower allocation.
+
+Projection, WAVG/WAG LoRA, output-project, embedding precompute, and alternate
+warp counts stay disabled because none pass the repeated end-to-end promotion
+gate. Final P128 no-override decode reaches `301.9/2,059.2 tok/s` for 0.4B
+B1/B8 and `113.4/799.1 tok/s` for 1.5B B1/B8. Evidence and commands:
+[`bench/5070_max_perf_20260811/`](bench/5070_max_perf_20260811/README.md).
 
 ## RTX 4080 Native HF production validation
 

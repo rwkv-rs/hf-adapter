@@ -5,7 +5,7 @@ HF deliverables and dated experiments belong in `HF_STATUS.md`,
 `BENCHMARK.md`, or the immutable evidence directories under `bench/`.
 Native vLLM/SGLang scheduler work remains outside this repository.
 
-Last updated: **2026-08-09**. Audited against `main` commit
+Last updated: **2026-08-11**. The released baseline was audited against `main` commit
 `045bac1b769240facd290e1ac8232e8b1ca39778` and the published `v0.6.0`
 release.
 
@@ -50,6 +50,13 @@ longer an open item:
 - **RTX 4080/V100 B8 decode policy:** exact-card grouped decode and V100 WAVG
   launch tuning landed with paired speed and greedy gates in
   [`bench/4080_v100_decode_tuning_20260808/`](bench/4080_v100_decode_tuning_20260808/README.md).
+- **RTX 5070 Laptop / V100 exact-card Native close:** RTX 5070 0.4B/1.5B
+  prefill graph+scan, raw recurrent, shape-gated norm/mix and B8 FP16-state
+  routes are fail-closed to measured shapes. V100 0.4B/1.5B B8 FP16 state
+  passes both A/B orders with speed, memory and greedy gates. Rejected
+  tile/warp/projection/LoRA candidates remain disabled; see
+  [`bench/5070_max_perf_20260811/`](bench/5070_max_perf_20260811/README.md) and
+  [`bench/v100_exact_card_20260811/`](bench/v100_exact_card_20260811/README.md).
 - **RTX 4080 B8 grouped projections:** 0.4B/1.5B/2.9B W/A/V tensor-core BMM
   routes pass repeated A/B timing, exact first-step logits and greedy
   `4,608/4,608`; see

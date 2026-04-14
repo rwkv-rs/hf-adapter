@@ -97,6 +97,21 @@ def is_rtx_model_name(name: str, model: str) -> bool:
     )
 
 
+def is_rtx_laptop_model_name(name: str, model: str) -> bool:
+    """Match one exact RTX Laptop product without accepting desktop/Ti variants."""
+
+    tokens = _gpu_name_tokens(name)
+    model_token = str(model).lower()
+    if "rtx" not in tokens or model_token not in tokens or "laptop" not in tokens:
+        return False
+    model_index = tokens.index(model_token)
+    suffix = tokens[model_index + 1 :]
+    return bool(
+        not {"mobile", "maxq", "max", "q", "super", "ti"}.intersection(tokens)
+        and suffix in (("laptop",), ("laptop", "gpu"))
+    )
+
+
 def is_tesla_t4_name(name: str) -> bool:
     """Match the exact T4 product token without accepting names like T400."""
 
@@ -279,8 +294,15 @@ class KernelPolicy:
     prefill_fp16_accum_ffn_key_layer_counts: tuple[tuple[int, int, int, int, int], ...] = ()
     fused_recurrent_output: bool = False
     fused_recurrent_raw: bool = False
+    # Exact hidden-size x batch routes for raw recurrent preparation. Empty
+    # preserves the historical card-wide behavior on existing policies.
+    native_graph_fused_recurrent_raw_shapes: tuple[tuple[int, int], ...] = ()
+    recurrent_raw_num_warps: int = 8
     fused_output: bool = False
     fused_norm_mix: bool = False
+    # Exact hidden-size x batch routes for decode norm/mix fusion. Empty keeps
+    # the historical card-wide behavior for already validated policies.
+    native_graph_fused_norm_mix_shapes: tuple[tuple[int, int], ...] = ()
     norm_mix_num_warps: int = 4
     native_graph_state_dtype: str = "fp32"
     native_graph_fp16_recurrent: bool = False
@@ -1027,6 +1049,10 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_prefill_state_scan_max_batch=1,
             fused_prefill_output=True,
             fused_norm_mix=True,
+            native_graph_triton_fp16_state=is_v100,
+            native_graph_triton_fp16_state_model_shapes=(
+                ((1024, 24, 8), (2048, 24, 8)) if is_v100 else ()
+            ),
             fused_wavg_lora=True,
             wavg_lora_bsz1_max_hidden=4096,
             wavg_lora_blocks=(32, 64, 256),
@@ -1044,7 +1070,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ada_sparse_ffn_up=False,
             output_project_block_m=16,
             quant_policy="memory_first_decode_hot_optional",
-            notes="V100 production path: four-shape prefill graph cache, fused shift mix, tuned WAVG/WAGV, sparse FFN, shape-routed sm70 linear/RKV, output/recurrent-output, and decode norm/mix are default; full projection/output-project remain opt-in",
+            notes="V100 production path: four-shape prefill graph cache, fused shift mix, tuned WAVG/WAGV, sparse FFN, shape-routed sm70 linear/RKV, output/recurrent-output, decode norm/mix, and exact 0.4B/1.5B B8 FP16 state are default; full projection/output-project remain opt-in",
         )
     if family == "turing":
         is_tesla_t4 = is_tesla_t4_name(profile.name)
@@ -1320,6 +1346,25 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
         )
     if family == "blackwell":
         is_5090 = is_rtx_model_name(profile.name, "5090")
+        is_5070_laptop = is_rtx_laptop_model_name(profile.name, "5070")
+        rtx5070_laptop_prefill_shapes = (
+            (1024, 24, 1, 128),
+            (1024, 24, 1, 512),
+            (1024, 24, 2, 128),
+            (1024, 24, 2, 512),
+            (1024, 24, 4, 128),
+            (1024, 24, 4, 512),
+            (1024, 24, 8, 128),
+            (1024, 24, 8, 512),
+            (2048, 24, 1, 128),
+            (2048, 24, 1, 512),
+            (2048, 24, 2, 128),
+            (2048, 24, 2, 512),
+            (2048, 24, 4, 128),
+            (2048, 24, 4, 512),
+            (2048, 24, 8, 128),
+            (2048, 24, 8, 512),
+        )
         production_prefill_graph_shapes = (
             # g1h 1.5B B8/P128: the graph removes Python/custom-op launch
             # overhead from the Marlin W4 FFN route.  An exclusive 5090
@@ -1349,10 +1394,30 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
         return KernelPolicy(
             profile=profile,
             fused_recurrent_output=True,
+            fused_recurrent_raw=is_5070_laptop,
+            native_graph_fused_recurrent_raw_shapes=(
+                (1024, 1),
+                (1024, 2),
+                (1024, 4),
+                (1024, 8),
+                (2048, 1),
+                (2048, 2),
+                (2048, 4),
+                (2048, 8),
+            ) if is_5070_laptop else (),
             fused_output=True,
-            fused_prefill_scan=is_5090,
-            prefill_graph=is_5090,
-            prefill_graph_model_shapes=production_prefill_graph_shapes if is_5090 else (),
+            fused_prefill_scan=is_5090 or is_5070_laptop,
+            prefill_scan_model_shapes=(
+                rtx5070_laptop_prefill_shapes if is_5070_laptop else ()
+            ),
+            prefill_graph=is_5090 or is_5070_laptop,
+            prefill_graph_model_shapes=(
+                production_prefill_graph_shapes
+                if is_5090
+                else rtx5070_laptop_prefill_shapes
+                if is_5070_laptop
+                else ()
+            ),
             prefill_fp16_recurrent=is_5090,
             # Exact RTX 5090 B8 sweeps on g1h 1.5B/P512 and 7.2B/P128. The
             # fused prefill route remains opt-in globally; these shape gates
@@ -1431,8 +1496,22 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
                 (2560, 32, 8, 128, 28),
                 (4096, 61, 1, 128, 12),
             ) if is_5090 else (),
-            fused_norm_mix=is_5090,
+            fused_norm_mix=is_5090 or is_5070_laptop,
+            native_graph_fused_norm_mix_shapes=(
+                (1024, 1),
+                (1024, 2),
+                (1024, 4),
+                (1024, 8),
+                (2048, 1),
+                (2048, 2),
+                (2048, 8),
+            ) if is_5070_laptop else (),
             norm_mix_num_warps=8 if is_5090 else 4,
+            native_graph_triton_fp16_state=is_5070_laptop,
+            native_graph_triton_fp16_state_model_shapes=(
+                (1024, 24, 8),
+                (2048, 24, 8),
+            ) if is_5070_laptop else (),
             native_graph_state_dtype="fp16" if is_5090 else "fp32",
             native_graph_fp16_recurrent=is_5090,
             native_graph_precompute_embedding=is_5090,
@@ -1465,7 +1544,14 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
                 (4096, 16384, 61, 128, True, 1),
             ) if is_5090 else (),
             output_project_block_m=32,
-            notes="RTX 50/Blackwell: exact RTX 5090 rows promote the official-FP16-state native graph decode profile and allowlisted 1.5B/2.9B/13.3B B1/B8 prefill shapes. The 1.5B B8/P128 graph is shared by dense and Marlin W4 and restores the measured W4 prefill win by removing custom-op launch overhead. The 13.3B B8/P2048 row intentionally stays outside the graph allowlist because graph-private pools exceed 32 GiB; its measured eager fused route remains active. Existing 1.5B/2.9B/7.2B shape-specific prefill and quant routes remain exact-card gates. Other Blackwell cards retain the compatible fallback; use triton_compat for early sm_120 stacks and keep unvalidated projection/LoRA fusions off",
+            notes=(
+                "RTX 5070 Laptop: exact fp16 0.4B/1.5B B1/B2/B4/B8 P128/P512 rows promote only "
+                "the allowlisted fused-scan prefill graph plus B8-only Triton FP16 decode "
+                "state for hidden 1024/2048; B1/B2/B4 keep FP32 recurrent state and all "
+                "other Blackwell fusions remain conservative"
+                if is_5070_laptop
+                else "RTX 50/Blackwell: exact RTX 5090 rows promote the official-FP16-state native graph decode profile and allowlisted 1.5B/2.9B/13.3B B1/B8 prefill shapes. The 1.5B B8/P128 graph is shared by dense and Marlin W4 and restores the measured W4 prefill win by removing custom-op launch overhead. The 13.3B B8/P2048 row intentionally stays outside the graph allowlist because graph-private pools exceed 32 GiB; its measured eager fused route remains active. Existing 1.5B/2.9B/7.2B shape-specific prefill and quant routes remain exact-card gates. Other Blackwell cards retain the compatible fallback; use triton_compat for early sm_120 stacks and keep unvalidated projection/LoRA fusions off"
+            ),
         )
     return KernelPolicy(profile=profile)
 

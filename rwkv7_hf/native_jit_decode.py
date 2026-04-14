@@ -12,7 +12,7 @@ import torch.nn.functional as F
 
 
 _OWNED_NAMES = {'cuda_graph_decode', 'fast_generate', 'step', 'step_batched', '_block_ip_batched', 'greedy_graph', 'decode_speed', '_block_ip', 'greedy_jit', 'forward'} | {"bind_runtime"}
-_RUNTIME_NAMES = ('_graph_linear_call', '_graph_linear_call_with_explicit_bias', '_graph_linear_is_dense', '_graph_linear_shape', '_graph_linears_are_dense', '_init', '_linear_module', '_lm_head', '_native_graph_ada_wag_lora_enabled', '_native_graph_ada_wagv_bmm_enabled', '_native_graph_ada_wagv_lora_enabled', '_native_graph_blackwell_norm_mix_enabled', '_native_graph_ffn_dispatch', '_native_graph_fp16_recurrent_enabled', '_native_graph_fused_norm_mix_enabled', '_native_graph_fused_norm_mix_num_warps', '_native_graph_fused_output_enabled', '_native_graph_fused_output_project_block_m', '_native_graph_fused_output_project_enabled', '_native_graph_fused_projection_enabled', '_native_graph_fused_recurrent_output_enabled', '_native_graph_fused_recurrent_raw_enabled', '_native_graph_fused_wag_lora_blocks', '_native_graph_fused_wag_lora_enabled', '_native_graph_fused_wavg_lora_blocks', '_native_graph_fused_wavg_lora_enabled', '_native_graph_fused_wavg_lora_num_warps', '_native_graph_linear_dispatch', '_native_graph_rkv_project', '_native_graph_sm70_wagv_lora_enabled', '_native_graph_vkwr_rkv_dispatch', '_recurrent_update_batched', '_recurrent_update_unbatched', 'ada_wag_lora', 'ada_wagv_bmm', 'ada_wagv_lora', 'blackwell_ffn_add_norm_mix', 'block_step', 'block_step_batched', 'extract', 'fused_attn_norm_mix6_decode', 'fused_attn_output_prepare', 'fused_attn_output_project', 'fused_ffn_add_norm_mix_decode', 'fused_recurrent_output_prepare', 'fused_recurrent_output_prepare_raw', 'fused_rkv_wavg_projection', 'fused_wag_lora', 'fused_wavg_lora', 'native_fp16_recurrent_output_prepare_raw', 'sm70_wagv_lora')
+_RUNTIME_NAMES = ('_graph_linear_call', '_graph_linear_call_with_explicit_bias', '_graph_linear_is_dense', '_graph_linear_shape', '_graph_linears_are_dense', '_init', '_linear_module', '_lm_head', '_native_graph_ada_wag_lora_enabled', '_native_graph_ada_wagv_bmm_enabled', '_native_graph_ada_wagv_lora_enabled', '_native_graph_blackwell_norm_mix_enabled', '_native_graph_ffn_dispatch', '_native_graph_fp16_recurrent_enabled', '_native_graph_fused_norm_mix_enabled', '_native_graph_fused_norm_mix_num_warps', '_native_graph_fused_output_enabled', '_native_graph_fused_output_project_block_m', '_native_graph_fused_output_project_enabled', '_native_graph_fused_projection_enabled', '_native_graph_fused_recurrent_output_enabled', '_native_graph_fused_recurrent_raw_enabled', '_native_graph_fused_recurrent_raw_num_warps', '_native_graph_fused_wag_lora_blocks', '_native_graph_fused_wag_lora_enabled', '_native_graph_fused_wavg_lora_blocks', '_native_graph_fused_wavg_lora_enabled', '_native_graph_fused_wavg_lora_num_warps', '_native_graph_linear_dispatch', '_native_graph_rkv_project', '_native_graph_sm70_wagv_lora_enabled', '_native_graph_vkwr_rkv_dispatch', '_recurrent_update_batched', '_recurrent_update_unbatched', 'ada_wag_lora', 'ada_wagv_bmm', 'ada_wagv_lora', 'blackwell_ffn_add_norm_mix', 'block_step', 'block_step_batched', 'extract', 'fused_attn_norm_mix6_decode', 'fused_attn_output_prepare', 'fused_attn_output_project', 'fused_ffn_add_norm_mix_decode', 'fused_recurrent_output_prepare', 'fused_recurrent_output_prepare_raw', 'fused_rkv_wavg_projection', 'fused_wag_lora', 'fused_wavg_lora', 'native_fp16_recurrent_output_prepare_raw', 'sm70_wagv_lora')
 
 
 def bind_runtime(runtime: dict[str, object]) -> None:
@@ -101,7 +101,7 @@ def _block_ip(
     A = int(H * N)
     equal_width = D == A
     residual = F.layer_norm(x, [D], pre_w, pre_b, 1e-5) if has_pre else x
-    use_fused_norm_mix = _native_graph_fused_norm_mix_enabled()
+    use_fused_norm_mix = _native_graph_fused_norm_mix_enabled(1, D)
     if use_fused_norm_mix:
         stack_rkv = _native_graph_vkwr_rkv_dispatch(1, D) and RKVw.numel() != 0
         xr, xw, xk, xv, xa, xg = fused_attn_norm_mix6_decode(
@@ -261,7 +261,7 @@ def _block_ip(
         use_fp16_recurrent or _native_graph_fused_recurrent_output_enabled()
     )
     use_fused_recurrent_raw = use_fp16_recurrent or (
-        use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
+        use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled(1, D)
     )
     if not use_fused_recurrent_raw:
         kk = F.normalize((k * k_k).view(H, N), dim=-1, p=2.0).view(A)
@@ -307,6 +307,7 @@ def _block_ip(
             gn_b,
             eps=eps,
             block_n=N,
+            num_warps=_native_graph_fused_recurrent_raw_num_warps(),
         )
         out = out.view(A)
         new_state = new_state.view(H, N, N)
@@ -326,6 +327,7 @@ def _block_ip(
             gn_b,
             eps=eps,
             block_n=N,
+            num_warps=_native_graph_fused_recurrent_raw_num_warps(),
         )
         out = out.view(A)
         new_state = new_state.view(H, N, N)
@@ -451,7 +453,7 @@ def _block_ip_batched(
         and lora_dense
         and _native_graph_ada_wagv_bmm_enabled(B, D, bmm_max_rank)
     )
-    use_fused_norm_mix = _native_graph_fused_norm_mix_enabled()
+    use_fused_norm_mix = _native_graph_fused_norm_mix_enabled(B, D)
     if use_fused_norm_mix:
         stack_rkv = _native_graph_vkwr_rkv_dispatch(B, D) and RKVw.numel() != 0
         xr, xw, xk, xv, xa, xg = fused_attn_norm_mix6_decode(
@@ -613,7 +615,7 @@ def _block_ip_batched(
         use_fp16_recurrent or _native_graph_fused_recurrent_output_enabled()
     )
     use_fused_recurrent_raw = use_fp16_recurrent or (
-        use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
+        use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled(B, D)
     )
     if not use_fused_recurrent_raw:
         kk = F.normalize((k * k_k).view(B, H, N), dim=-1, p=2.0).view(B, A)

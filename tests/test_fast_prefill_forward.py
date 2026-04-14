@@ -86,9 +86,9 @@ def main() -> int:
     effective_model = args.model
     temporary = None
     if args.code_source == "repo":
-        from bench.bench_cross_model_speed import prepare_rwkv_model_dir
+        from bench.bench_native_prefill_scan import prepare_model_dir
 
-        effective_model, temporary = prepare_rwkv_model_dir(args.model, "repo")
+        effective_model, temporary = prepare_model_dir(args.model, code_source="repo")
     tok = AutoTokenizer.from_pretrained(effective_model, trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(
         effective_model,

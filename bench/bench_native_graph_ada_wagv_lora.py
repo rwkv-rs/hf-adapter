@@ -12,6 +12,7 @@ cache telemetry, latency, throughput, and peak memory.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import time
@@ -44,6 +45,35 @@ def peak_mb(device: str) -> float | None:
     if not device.startswith("cuda"):
         return None
     return round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
+
+
+def model_metadata(args: argparse.Namespace, model: Any) -> dict[str, Any]:
+    cfg = getattr(model, "config", None)
+    return {
+        "model_name": Path(args.hf_dir).name,
+        "hidden_size": getattr(cfg, "hidden_size", None),
+        "intermediate_size": getattr(cfg, "intermediate_size", None),
+        "num_hidden_layers": getattr(cfg, "num_hidden_layers", None),
+        "head_dim": getattr(cfg, "head_dim", None),
+        "num_heads": getattr(cfg, "num_heads", None),
+    }
+
+
+def wagv_extension_status(model: Any, device: str) -> dict[str, Any]:
+    """Report whether the selected model package can build the grouped extension."""
+
+    package = model.__class__.__module__.rsplit(".", 1)[0]
+    try:
+        module = importlib.import_module(package + ".ada_lora")
+        available = bool(module.ada_wagv_lora_available(device, build=True))
+        error = module.ada_wagv_lora_build_error(device)
+    except Exception as exc:
+        available = False
+        error = repr(exc)
+    return {
+        "wagv_extension_available": available,
+        "wagv_extension_error": error,
+    }
 
 
 def set_attn_mode(model, attn_mode: str) -> None:
@@ -196,6 +226,7 @@ def main() -> int:
         torch.cuda.reset_peak_memory_stats()
     tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
     model = load_model(args, dtype)
+    extension_status = wagv_extension_status(model, args.device)
     ids = encode(tok, args.prompt_tokens, args.batch_size, args.device)
     with torch.inference_mode():
         os.environ["RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA"] = "0"
@@ -223,6 +254,7 @@ def main() -> int:
         "dtype": args.dtype,
         "device": device_name(args.device),
         "code_source": args.code_source,
+        **model_metadata(args, model),
         "attn_mode": args.attn_mode,
         "fuse_norm": getattr(model.config, "fuse_norm", None),
         "fast_cache": os.environ.get("RWKV7_FAST_CACHE", "1") not in _FALSE_VALUES,
@@ -232,6 +264,7 @@ def main() -> int:
         "correctness_steps": args.correctness_steps,
         "fixed_token": args.fixed_token,
         "num_warps": args.num_warps,
+        **extension_status,
         "baseline_effective_backend": baseline["effective_backend"],
         "fused_effective_backend": fused["effective_backend"],
         "baseline_ms_per_step": round(float(baseline["ms_per_step"]), 4),

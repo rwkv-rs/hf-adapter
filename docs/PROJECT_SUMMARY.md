@@ -1,6 +1,6 @@
 # RWKV-7 Hugging Face adapter project summary
 
-Last updated: **2026-08-09**. Audited at `main`
+Last updated: **2026-08-11**. The released baseline was audited at `main`
 `045bac1b769240facd290e1ac8232e8b1ca39778`.
 
 ## Project purpose
@@ -67,6 +67,13 @@ The latest merged series by `@123123213weqw` / Wang Yue adds:
 The implementation, route telemetry, correctness checks, process-repeated
 timing and raw artifacts landed together. See
 [`RESULTS_INDEX.md`](RESULTS_INDEX.md) for the cross-platform evidence map.
+
+The 2026-08-11 post-release expansion by `@yyqdbngt` adds exact RTX 5070
+Laptop Native prefill/decode shape routing and exact Tesla V100 0.4B/1.5B B8
+FP16 recurrent state. Both additions are fail-closed to measured product and
+model shapes; rejected launch and fusion candidates remain disabled. Evidence
+is recorded in [`5070_max_perf_20260811`](../bench/5070_max_perf_20260811/README.md)
+and [`v100_exact_card_20260811`](../bench/v100_exact_card_20260811/README.md).
 
 ## Production evidence discipline
 

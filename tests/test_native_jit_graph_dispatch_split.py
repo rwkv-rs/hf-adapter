@@ -122,6 +122,59 @@ def test_wavg_lora_launch_policy_can_specialize_batch_eight(monkeypatch) -> None
     assert native_jit_graph_dispatch._native_graph_fused_wavg_lora_num_warps(8) == 2
 
 
+def test_fused_norm_mix_can_be_exact_hidden_batch_gated(monkeypatch) -> None:
+    monkeypatch.setattr(
+        native_jit_graph_dispatch,
+        "_kernel_policy",
+        lambda: SimpleNamespace(
+            fused_norm_mix=True,
+            native_graph_fused_norm_mix_shapes=((1024, 4), (2048, 2)),
+        ),
+    )
+    monkeypatch.setattr(native_jit_graph_dispatch, "fused_attn_norm_mix6_decode", object())
+    monkeypatch.setattr(native_jit_graph_dispatch, "fused_ffn_add_norm_mix_decode", object())
+    monkeypatch.setattr(native_jit_graph_dispatch, "fused_decode_norm_mix_available", lambda: True)
+    monkeypatch.delenv("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX", raising=False)
+
+    assert native_jit_graph_dispatch._native_graph_fused_norm_mix_enabled(4, 1024)
+    assert native_jit_graph_dispatch._native_graph_fused_norm_mix_enabled(2, 2048)
+    assert not native_jit_graph_dispatch._native_graph_fused_norm_mix_enabled(4, 2048)
+    assert not native_jit_graph_dispatch._native_graph_fused_norm_mix_enabled()
+
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX", "1")
+    assert native_jit_graph_dispatch._native_graph_fused_norm_mix_enabled(4, 2048)
+
+
+def test_fused_recurrent_raw_can_be_exact_hidden_batch_gated(monkeypatch) -> None:
+    monkeypatch.setattr(
+        native_jit_graph_dispatch,
+        "_kernel_policy",
+        lambda: SimpleNamespace(
+            fused_recurrent_raw=True,
+            native_graph_fused_recurrent_raw_shapes=((1024, 4), (2048, 2)),
+        ),
+    )
+    monkeypatch.setattr(
+        native_jit_graph_dispatch,
+        "fused_recurrent_output_prepare_raw",
+        object(),
+    )
+    monkeypatch.setattr(
+        native_jit_graph_dispatch,
+        "_native_graph_fused_recurrent_output_enabled",
+        lambda: True,
+    )
+    monkeypatch.delenv("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW", raising=False)
+
+    assert native_jit_graph_dispatch._native_graph_fused_recurrent_raw_enabled(4, 1024)
+    assert native_jit_graph_dispatch._native_graph_fused_recurrent_raw_enabled(2, 2048)
+    assert not native_jit_graph_dispatch._native_graph_fused_recurrent_raw_enabled(4, 2048)
+    assert not native_jit_graph_dispatch._native_graph_fused_recurrent_raw_enabled()
+
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW", "1")
+    assert native_jit_graph_dispatch._native_graph_fused_recurrent_raw_enabled(4, 2048)
+
+
 def test_graph_dispatch_module_is_shipped_with_remote_adapter() -> None:
     from scripts.adapter_manifest import ADAPTER_FILES
 
