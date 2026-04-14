@@ -12,9 +12,9 @@ than blockers for the released adapter.
 | Platform | Dense fp16/bf16 | Quant speed lane | Quality/correctness | Status |
 |---|---|---|---|---|
 | RTX 3090 | g1h 7.2B vs full-FLA Qwen3.5-9B bsz8 prefill/decode minimum `1.058907x/1.788418x`; decode active-work minimum `1.437946x` | W8 total/decode minimum `1.098658x/1.084305x`; W4 `1.014527x/1.025666x`; footprint and peak lower in 18/18 | finite logits, 24/24 Qwen FLA bindings and fail-closed route checks; task quality not measured | Production-close for measured bsz8 lane |
-| RTX 5070 Laptop | 1.5B RWKV vs full-FLA Qwen3.5 2B bsz8 prefill/decode minimum `1.082707x/1.795119x` | fp16/W8/W4 all pass; footprint and peak VRAM lower in 18/18 | Qwen full-FLA bindings; Qwen and RWKV greedy/cosine probes pass | Production-close for measured bsz8 lane |
+| RTX 5070 Laptop | 1.5B/full-FLA-Qwen B8 minimum `1.082707x/1.795119x`; exact Native 0.4B/1.5B graph+scan, raw recurrent `1.0272x-1.1265x`, promoted norm/mix `1.0373x-1.1630x` | full-FLA fp16/W8/W4 pass; Native B8 FP16 state saves `16.875-58.125 MiB` | full-FLA bindings pass; Native prefill handoff and decode greedy/cosine gates pass; 1.5B/B4 norm/mix fails closed | Production-close for measured full-FLA and Native lanes |
 | RTX 4080 | 0.4B/0.8B, 1.5B/2B and 2.9B/4B B1/B8 full-FLA-Qwen matrices; dense prefill/decode minimum `1.012285x/1.435296x`, active-work decode `1.768344x`; exact-B8 grouped projection adds `1.1267x/1.0942x/1.0809x` over the prior route; 7.2B/B8 Triton FP16-state decode reaches `344.39 tok/s` at median `1.0301x` its FP32-state route | output-head A8W8/W4 complete-cell minima `1.003101x/1.015996x`; full-model BNB routes lower footprint; 7.2B/B8 FP16 state saves median `123.88 MiB`; 13.3B MM8/MM4 fit | Qwen full-FLA contracts 36/36; small-model exact-B8 greedy `4,608/4,608`; 7.2B state A/B greedy `12,288/12,288`, minimum cosine `0.99999475`; output-head cosine/greedy gates pass; 13.3B is capacity-only without fp16 parity | Production-close for measured Native HF B1/B8 and capacity lanes |
-| V100 | Albatross P1 plus 1.5B vs full-FLA Qwen3.5-2B B1/B8 raw prefill/decode minima `2.815921x/5.270432x`; active-work minima `2.285574x/4.277804x`; exact-V100 B8 WAVG launch adds `1.0114x-1.0312x` on 0.4B/1.5B/2.9B | W8/W4 decode `1.006x-1.128x` fp16; paired prefill `0.996x-1.007x` | Greedy/cache gates; Qwen and RWKV 32-token native-route probes pass; tuned B8 launch preserves greedy parity | Production-close for measured lanes |
+| V100 | Albatross/full-FLA-Qwen lanes remain; exact-B8 WAVG adds `1.0114x-1.0312x`; exact 0.4B/1.5B B8 FP16 state adds `1.0216x-1.0288x` | W8/W4 lanes remain; FP16 state saves `16.875-58.125 MiB` | Existing greedy/cache gates pass; FP16-state processes match `4,096/4,096` greedy tokens per model across both orders | Production-close for measured lanes |
 | RTX 4090 | g1h 7.2B vs full-FLA Qwen3.5-9B bsz8 prefill/decode minimum `1.023951x/2.210065x`; decode active-work minimum `1.776961x` | W8 total/decode minimum `1.360072x/1.356914x`; W4 `1.013273x/1.022724x`; selected quant footprint and peak lower in 12/12 | finite logits, 24/24 Qwen optimized bindings, BNB8/MM4 cosine+greedy probes; task quality not measured | Production-close for measured bsz8 lane |
 | RTX 4090 small models | 0.4B/0.8B, 1.5B/2B, 2.9B/4B bsz8 dense prefill minima `1.370369x/1.041959x/1.305103x`; decode minima `12.101818x/5.636846x/4.214362x` | W8 total minima `1.011441x/1.131672x/1.176050x`; W4 `1.029994x/1.027211x/1.014959x`; footprint and peak lower in 36/36 selected quant cells | finite logits, full-Qwen-FLA dense contract, active-work and fail-closed route gates; task quality not measured | Production-close for measured bsz8 lanes |
 | RTX 5090 Qwen matrix | 0.4B/0.8B through 7.2B/9B at B1/B8; raw prefill/decode minima `1.0226x/2.8130x`; per-active-B throughput leads in 144/144 cells | W8/W4 exact-cell total-latency and footprint gates pass in all measured cells | 144/144 full-FLA Qwen contracts and 32/32 greedy reports pass; active-work prefill and dense peak-VRAM are not universal wins | Production-close for measured B1/B8 lanes |
@@ -28,7 +28,12 @@ than blockers for the released adapter.
 V100 optimized-Qwen evidence:
 [`v100_active_b1b8_20260715`](../bench/v100_active_b1b8_20260715/README.md),
 plus exact-B8 launch evidence:
-[`4080_v100_decode_tuning_20260808`](../bench/4080_v100_decode_tuning_20260808/README.md).
+[`4080_v100_decode_tuning_20260808`](../bench/4080_v100_decode_tuning_20260808/README.md),
+and exact B8 state evidence:
+[`v100_exact_card_20260811`](../bench/v100_exact_card_20260811/README.md).
+
+RTX 5070 exact Native evidence:
+[`5070_max_perf_20260811`](../bench/5070_max_perf_20260811/README.md).
 
 RTX 4080 Native HF and optimized-Qwen evidence:
 [`4080_full_model_ladder_20260719`](../bench/4080_full_model_ladder_20260719/README.md)

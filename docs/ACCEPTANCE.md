@@ -5,7 +5,7 @@ requirements and repository evidence. `PASS` means the named, profile-bounded
 gate has a reproducible artifact. A new card, shape, or dataset extends that
 matrix instead of retroactively reopening an accepted release gate.
 
-Last updated: **2026-08-09**. Audited at `main`
+Last updated: **2026-08-11**. The released baseline was audited at `main`
 `045bac1b769240facd290e1ac8232e8b1ca39778` after the `v0.6.0` release and
 the merged RTX 4080/V100 B8 optimization series.
 
@@ -57,7 +57,7 @@ above remains mandatory.
 | Requirement | Status | Current evidence | Profile boundary / extensions |
 |---|---|---|---|
 | HF adapter release scope | **COMPLETE** | Published `v0.6.0`, current-main CI, canonical Native/no-FLA implementation, and the evidence-linked gates below | New profiles extend the release; they are not retroactive blockers |
-| RWKV-LM / Albatross correctness and performance | **PASS for declared exact-card profiles** | V100 Albatross/native-quant matrix plus 1.5B/full-FLA-Qwen B1/B8 active-work close; RTX 4080 0.4B-2.9B Qwen pairs, exact-B8 grouped projections and 7.2B/B8 FP16-state decode; 4090 Albatross lane plus 0.4B-7.2B bsz8 Qwen3.5 matrices; 5090 full-FLA Qwen B1/B8, MATH500, quant pressure, and latest g1h 13.3B artifacts | More Albatross/Qwen cards, batches and shapes are post-release expansion |
+| RWKV-LM / Albatross correctness and performance | **PASS for declared exact-card profiles** | Existing V100/4080/4090/5090 reference lanes remain; V100 adds exact 0.4B/1.5B B8 FP16 state; RTX 5070 Laptop adds exact Native 0.4B/1.5B prefill/decode schedules while retaining its 18/18 full-FLA Qwen matrix | More Albatross/Qwen cards, batches and shapes are post-release expansion |
 | Transformers API | **PASS** | Auto classes, save/reload, generation, labels/loss, attention mask and recurrent cache tests | Upstreaming and long-term Transformers-version maintenance |
 | PEFT and RL ecosystem | **PASS for published compatibility and exact-training profiles** | LoRA lifecycle, Trainer, SFT, DPO and GRPO smoke; RTX 5090 BF16 12x768 B1 plus Native B16/T512 exact tensors, paired real-MiniPile 3-seed x 1,000-step cohort, continuous 5,000-step run, 2,500+2,500 resume and steady-memory evidence | Larger models, multi-day runs, additional cards and distributed convergence extend the matrix |
 | Dynamic batching, chunked prefill and state cache helpers | **PASS in HF adapter scope** | State select/reorder/drop/compact, chunked-prefill parity, serving-like cache telemetry | Native vLLM/SGLang integration remains a separate repository/project |
@@ -95,6 +95,15 @@ more specific claim.
   prefill/decode minima `2.815921x/5.270432x` and active-parameter work minima
   `2.285574x/4.277804x`; the B1 peak-VRAM loss remains disclosed. Evidence:
   [`../bench/v100_active_b1b8_20260715/README.md`](../bench/v100_active_b1b8_20260715/README.md).
+  Exact 0.4B/1.5B B8 FP16 state separately passes opposite A/B orders at
+  `1.0216x-1.0288x`, saves `16.875-58.125 MiB`, and preserves the recorded
+  greedy traces. Evidence:
+  [`../bench/v100_exact_card_20260811/README.md`](../bench/v100_exact_card_20260811/README.md).
+- **RTX 5070 Laptop:** the accepted B8 full-FLA-Qwen lane remains unchanged.
+  The exact Native/no-FLA expansion promotes 0.4B/1.5B P128/P512 graph+scan,
+  raw recurrent, shape-gated norm/mix, and B8 FP16 state. Its rejected
+  projection/LoRA/warp candidates remain disabled. Evidence:
+  [`../bench/5070_max_perf_20260811/README.md`](../bench/5070_max_perf_20260811/README.md).
 - **RTX 4080:** 0.4B/1.5B/2.9B versus full-FLA Qwen3.5 0.8B/2B/4B passes
   six B1/B8 pair matrices with dense prefill/decode minima
   `1.012285x/1.435296x`. The exact-B8 grouped W/A/V projection route improves

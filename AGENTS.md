@@ -101,6 +101,20 @@ contract is [`docs/architecture/RWKV7_OPERATOR_SPEC.md`](docs/architecture/RWKV7
   without same-card correctness, memory, and speed evidence.
 - Keep card-specific routes isolated so one card cannot regress another.
 
+Current exact-card dispatch additions:
+
+- Tesla V100-PCIE-32GB (`sm_70`): FP16 recurrent state is default only for
+  `(hidden=1024, layers=24, batch=8)` and
+  `(hidden=2048, layers=24, batch=8)`. Other batches, model shapes, and Volta
+  product names remain on FP32 state. Prefill tile and decode warp probes from
+  2026-08-11 did not clear the promotion gate and must remain unchanged.
+- NVIDIA GeForce RTX 5070 Laptop GPU (`sm_120`): the 2026-08-11 policy may use
+  exact 0.4B/1.5B prefill graph+scan, raw recurrent, shape-gated norm/mix, and
+  B8 FP16-state routes recorded in
+  `bench/5070_max_perf_20260811/`. RTX 5070 desktop, RTX 5070 Ti Laptop, RTX
+  5070 SUPER Laptop, unlisted models, and unlisted batches must not inherit
+  those defaults.
+
 ### Quantization
 
 - Distinguish physical packed footprint from end-to-end peak VRAM.

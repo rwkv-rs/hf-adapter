@@ -5,7 +5,7 @@ not replace [`../BENCHMARK.md`](../BENCHMARK.md), the hardware matrix, or raw
 dated artifacts. A row means only that the linked, exact profile has evidence;
 it does not imply an unbounded all-card or all-shape claim.
 
-Last updated: **2026-08-09**. Audited at `main`
+Last updated: **2026-08-11**. The released baseline was audited at `main`
 `045bac1b769240facd290e1ac8232e8b1ca39778`.
 
 ## Inference performance and quantization
@@ -15,6 +15,7 @@ Last updated: **2026-08-09**. Audited at `main`
 | `v100-dense-ref` | V100 32GB | Dense Albatross and 1.5B/Qwen B1/B8 | Production-close for the recorded reference lanes | [`v100_production_close_20260711`](../bench/v100_production_close_20260711/README.md), [`v100_active_b1b8_20260715`](../bench/v100_active_b1b8_20260715/README.md) |
 | `v100-mm4` | V100 32GB | 1.5B/2.9B/7.2B packed-MM4 decode | Three exact profiles pass speed, footprint and complete greedy gates | [`v100_sm70_mm4_bntn_20260716`](../bench/v100_sm70_mm4_bntn_20260716/README.md) |
 | `v100-b8-wavg` | V100 32GB | 0.4B/1.5B/2.9B B8 | Exact-card launch tuning adds `1.0114x-1.0312x` with greedy parity | [`4080_v100_decode_tuning_20260808`](../bench/4080_v100_decode_tuning_20260808/README.md) |
+| `v100-b8-fp16-state` | V100 32GB | 0.4B/1.5B B8 | Both process orders pass at `1.0216x-1.0288x`, `-16.875` to `-58.125 MiB`, with exact greedy traces | [`v100_exact_card_20260811`](../bench/v100_exact_card_20260811/README.md) |
 | `t4-production` | Tesla T4 | 0.1B-2.9B dense/cache/quant/training | Compatibility and head-quant lanes pass; dense/full-model performance limits remain explicit | [`t4_production_close_20260720`](../bench/t4_production_close_20260720/README.md) |
 | `3090-g1h-b8` | RTX 3090 | 7.2B vs Qwen3.5-9B, dense/W8/W4 B8 | Strict current B8 matrix passes 18/18 | [`3090_g1h_7p2_bsz8_20260714`](../bench/3090_g1h_7p2_bsz8_20260714/README.md) |
 | `4080-qwen-pairs` | RTX 4080 | 0.4B/1.5B/2.9B versus Qwen3.5 B1/B8 | Six dense pair matrices and exact output-head quant lanes pass | [`4080_full_model_ladder_20260719`](../bench/4080_full_model_ladder_20260719/README.md) |
@@ -22,6 +23,7 @@ Last updated: **2026-08-09**. Audited at `main`
 | `4080-7p2-state` | RTX 4080 | 7.2B/B8 FP16 state | `344.39 tok/s`, `1.0301x`, `-123.88 MiB`, greedy `12,288/12,288` | [`4080_7p2b_fp16_state_20260809`](../bench/4080_7p2b_fp16_state_20260809/README.md) |
 | `4090-b8-matrix` | RTX 4090 | 0.4B-7.2B pair ladder, dense/W8/W4 B8 | Small-model 54/54 and 7.2B 18/18 matrices pass | [`4090_small_bsz8_20260715`](../bench/4090_small_bsz8_20260715/README.md), [`4090_g1h_7p2_bsz8_20260715`](../bench/4090_g1h_7p2_bsz8_20260715/README.md) |
 | `5070-b8-qwen` | RTX 5070 Laptop | 1.5B versus Qwen3.5-2B B8 | Full-FLA dense and fp16/W8/W4 gates pass for the measured lane | [`5070_qwen35_full_fla_bsz8_20260714`](../bench/5070_qwen35_full_fla_bsz8_20260714/README.md) |
+| `5070-native-exact` | RTX 5070 Laptop | Native 0.4B/1.5B B1/B2/B4/B8, P128/P512 | Graph+scan prefill, raw recurrent, shape-gated norm/mix and B8 FP16 state pass; negative fusion candidates fail closed | [`5070_max_perf_20260811`](../bench/5070_max_perf_20260811/README.md) |
 | `5090-qwen-matrix` | RTX 5090 | 0.4B-7.2B versus Qwen3.5, B1/B8 | 8/8 model/batch pairs and 144/144 full-FLA cells pass | [`5090_g1h_qwen35_b1_b8_20260715`](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
 | `5090-w4` | RTX 5090 | g1h 1.5B/2.9B/7.2B/13.3B, B1/B8 | All-phase W4 speed, footprint and correctness pass 8/8 | [`5090_bntn_all_models_20260716`](../bench/5090_bntn_all_models_20260716/README.md) |
 | `5090-native-official` | RTX 5090 | Native versus official v3a decode/prefill | 7.2B decode and 2.9B/13.3B 12-cell prefill scopes pass | [`5090_native_official_fp16_production_20260718`](../bench/5090_native_official_fp16_production_20260718/README.md) |

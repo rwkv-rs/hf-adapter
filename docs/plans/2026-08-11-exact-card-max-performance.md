@@ -1,5 +1,9 @@
 # Exact-Card Maximum Performance Implementation Plan
 
+> **Historical implementation plan (2026-08-11).** The accepted results and
+> fail-closed routes are recorded in the canonical benchmark and hardware
+> documents. This plan is retained for execution traceability only.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Maximize reproducible RWKV-7 HF prefill and cached-decode performance on the exact RTX 5070 Laptop and V100 profiles while preserving HF, cache, state, logits, and greedy correctness.

@@ -21,6 +21,14 @@ model, dtype, batch and sequence shape named by their linked artifact.
 
 ### Performance
 
+- Added exact RTX 5070 Laptop Native/no-FLA routes for measured 0.4B/1.5B
+  prefill and decode shapes. Raw recurrent, shape-gated norm/mix and B8 FP16
+  state are promoted; projection/LoRA and sub-threshold launch probes remain
+  disabled.
+- Added exact Tesla V100 0.4B/1.5B B8 FP16 recurrent state. Opposite-order
+  paired processes measure `1.0216x-1.0288x`, save
+  `16.875-58.125 MiB`, and retain exact recorded greedy traces.
+
 - Added exact-card RTX 4080 and V100 B8 decode tuning in
   [PR #100](https://github.com/rwkv-rs/hf-adapter/pull/100). The V100 WAVG
   launch improves paired 0.4B/1.5B/2.9B B8 decode by

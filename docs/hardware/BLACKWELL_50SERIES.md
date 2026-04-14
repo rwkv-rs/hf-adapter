@@ -445,3 +445,29 @@ fused gated norm, and the FLA Triton causal-conv bridge. No performance row
 uses the Transformers Torch conv fallback. RWKV BNB4 external-quant prefill
 graph is an exact-card opt-in; it and the other matrix fusions remain disabled
 by default.
+
+## 2026-08-11 RTX 5070 Laptop exact Native backend close
+
+The current exact-card Native/no-FLA artifact is
+[`bench/5070_max_perf_20260811`](../../bench/5070_max_perf_20260811/README.md).
+It supersedes the older exploratory Native launch notes for policy decisions;
+the full-FLA Qwen comparison above remains a separate accepted lane.
+
+The exact laptop name now fail-closes these measured 0.4B/1.5B shapes:
+
+- prefill graph plus fused recurrent scan at B1/B2/B4/B8 and P128/P512;
+- raw recurrent decode at B1/B2/B4/B8;
+- norm/mix at all four 0.4B batches and 1.5B B1/B2/B8;
+- Triton FP16 recurrent state at B8 only.
+
+Raw recurrent improves end-to-end decode by `1.0272x-1.1265x`; accepted
+norm/mix rows improve by `1.0373x-1.1630x`. The deliberately excluded 1.5B/B4
+norm/mix row is `0.97337x`. B8 FP16 state measures
+`1.0082x-1.0478x` and saves `16.875-58.125 MiB`, with first-step cosine above
+`0.99999` and exact recorded greedy traces.
+
+Final P128 no-override decode is `301.9/2,059.2 tok/s` for 0.4B B1/B8 and
+`113.4/799.1 tok/s` for 1.5B B1/B8. Projection, output-project, WAVG/WAG LoRA,
+embedding precompute, and alternate warp counts remain disabled because their
+paired end-to-end rows do not clear `1.01x`. Adjacent RTX 5070 desktop, RTX
+5070 Ti Laptop, and RTX 5070 SUPER Laptop products do not inherit this route.

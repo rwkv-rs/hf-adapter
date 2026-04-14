@@ -1,5 +1,10 @@
 # Exact-Card Maximum Performance Design
 
+> **Historical design record (2026-08-11).** The accepted implementation and
+> exact-card boundaries are now documented in `BENCHMARK.md`,
+> `bench/5070_max_perf_20260811/`, and `bench/v100_exact_card_20260811/`.
+> This file preserves the design intent and does not override current policy.
+
 ## Scope
 
 Drive the RWKV-7 Hugging Face adapter to the highest reproducible end-to-end
