@@ -26,6 +26,7 @@ and history.
 | How should completion be reported? | [`../HF_STATUS.md#completion-reporting-rule`](../HF_STATUS.md#completion-reporting-rule) |
 | What can be extended after the release? | [`../HF_TODO.md`](../HF_TODO.md) |
 | Do we meet the public HF requirements? | [`ACCEPTANCE.md`](ACCEPTANCE.md) |
+| How fast is RWKV-7 versus Qwen3.5, and how do I reproduce it? | [`QWEN35_SPEED_COMPARISON_ZH.md`](QWEN35_SPEED_COMPARISON_ZH.md)（中文完整参数版） |
 | What are the current promoted numbers? | [`../BENCHMARK.md`](../BENCHMARK.md) |
 | Where is the cross-platform evidence index? | [`RESULTS_INDEX.md`](RESULTS_INDEX.md) |
 | Which cards are validated? | [`HARDWARE_MATRIX.md`](HARDWARE_MATRIX.md) |

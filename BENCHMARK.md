@@ -7,6 +7,10 @@ in [`bench/`](bench/); platform interpretation lives in
 
 Last updated: **2026-08-11**.
 
+如需集中查看 RWKV-7 与 Qwen3.5 的完整参数、速度表和复现命令，请读
+[`docs/QWEN35_SPEED_COMPARISON_ZH.md`](docs/QWEN35_SPEED_COMPARISON_ZH.md)；
+本文继续保留全部平台、量化和验收细节。
+
 ## Benchmark contract
 
 A result may be promoted here only when it records hardware/runtime versions,
