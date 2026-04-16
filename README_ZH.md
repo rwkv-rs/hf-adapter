@@ -230,6 +230,7 @@ kernel 内部变量名保持不变。完整规则见
 | 壁仞 BR106M、BIRENSUPA | [壁仞 BR106M 使用与验收边界](docs/hardware/BIREN_BR106M.md) |
 | 沐曦 MetaX C500、MXMACA | [MetaX C500 使用与验收边界](docs/hardware/METAX_C500.md) |
 | Apple MPS、MLX、CoreML | [Apple 使用教程](docs/APPLE_USAGE.md) |
+| RWKV-7 与 Qwen3.5 谁更快、如何复现 | [完整参数、速度对比及复现](docs/QWEN35_SPEED_COMPARISON_ZH.md) |
 | 让 AI 帮你安装、运行或排错 | [统一 AI 操作入口](docs/AI_ASSISTED_SETUP.md) |
 | 选择显卡与后端配置 | [硬件矩阵](docs/HARDWARE_MATRIX.md) |
 | 查看性能结果与复现命令 | [性能指南](docs/PERFORMANCE.md) 与 [benchmark 索引](bench/INDEX.md) |
