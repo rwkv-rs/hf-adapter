@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 
@@ -73,6 +74,74 @@ def test_prefill_execution_matches_eager_and_preserves_cache_handoff() -> None:
     torch.testing.assert_close(logits, reference, atol=1e-6, rtol=1e-6)
     assert state[0].shape == (2, 2, 4, 4)
     assert xpa[0].shape == xpf[0].shape == (2, 8)
+
+
+def test_full_prefill_fp16_accumulation_is_scoped_and_reported(monkeypatch) -> None:
+    matmul = SimpleNamespace(allow_fp16_accumulation=False)
+    monkeypatch.setattr(native_jit_prefill.torch.backends.cuda, "matmul", matmul)
+    monkeypatch.setattr(
+        native_jit_prefill,
+        "_native_prefill_global_fp16_accum_enabled",
+        lambda *_args: True,
+    )
+    observed = []
+
+    def fake_impl(*_args, **_kwargs):
+        observed.append(matmul.allow_fp16_accumulation)
+        return "sentinel"
+
+    monkeypatch.setattr(native_jit_prefill, "_prefill_current_device_impl", fake_impl)
+    model = SimpleNamespace(
+        model=SimpleNamespace(
+            embeddings=SimpleNamespace(weight=torch.empty(1, dtype=torch.float16))
+        )
+    )
+    packs = [(None, None, None, None, None, None, None, torch.empty(8))]
+
+    result = native_jit_prefill._prefill_current_device(
+        model,
+        torch.ones((8, 512), dtype=torch.long),
+        packs,
+    )
+
+    assert result == "sentinel"
+    assert observed == [True]
+    assert matmul.allow_fp16_accumulation is False
+    assert model._rwkv7_native_prefill_global_fp16_accum_effective is True
+
+
+def test_full_prefill_fp16_accumulation_restores_backend_after_error(monkeypatch) -> None:
+    matmul = SimpleNamespace(allow_fp16_accumulation=False)
+    monkeypatch.setattr(native_jit_prefill.torch.backends.cuda, "matmul", matmul)
+    monkeypatch.setattr(
+        native_jit_prefill,
+        "_native_prefill_global_fp16_accum_enabled",
+        lambda *_args: True,
+    )
+
+    def fail_impl(*_args, **_kwargs):
+        assert matmul.allow_fp16_accumulation is True
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(native_jit_prefill, "_prefill_current_device_impl", fail_impl)
+    model = SimpleNamespace(
+        model=SimpleNamespace(
+            embeddings=SimpleNamespace(weight=torch.empty(1, dtype=torch.float16))
+        )
+    )
+    packs = [(None, None, None, None, None, None, None, torch.empty(8))]
+
+    try:
+        native_jit_prefill._prefill_current_device(
+            model,
+            torch.ones((8, 512), dtype=torch.long),
+            packs,
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "boom"
+    else:
+        raise AssertionError("expected scoped prefill failure")
+    assert matmul.allow_fp16_accumulation is False
 
 
 def test_prefill_execution_module_is_shipped_with_remote_adapter() -> None:

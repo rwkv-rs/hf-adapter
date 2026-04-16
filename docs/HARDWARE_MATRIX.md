@@ -58,6 +58,7 @@ reopening the released adapter milestone.
 - RTX 4080 grouped B8 W/A/V projection: [`../bench/4080_b8_projection_bmm_20260809/README.md`](../bench/4080_b8_projection_bmm_20260809/README.md)
 - RTX 4080 7.2B/B8 Triton FP16 state: [`../bench/4080_7p2b_fp16_state_20260809/README.md`](../bench/4080_7p2b_fp16_state_20260809/README.md)
 - RTX 5090 full-FLA Qwen B1/B8: [`../bench/5090_g1h_qwen35_b1_b8_20260715/README.md`](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md)
+- RTX 5090 latest-checkpoint parameter-adjusted prefill: [`../bench/5090_g1i_qwen35_prefill_pd_20260811/README.md`](../bench/5090_g1i_qwen35_prefill_pd_20260811/README.md)
 - RTX 5090 latest g1h 13.3B: [`../bench/5090_g1h_13p3_20260715/README.md`](../bench/5090_g1h_13p3_20260715/README.md)
 - RTX 5090 g1h BN/TN Tensor Core W4 matrix: [`../bench/5090_bntn_all_models_20260716/README.md`](../bench/5090_bntn_all_models_20260716/README.md)
 - RTX 5090 MATH500 and quant pressure: [`../bench/5090_blackwell_production_close_20260712/README.md`](../bench/5090_blackwell_production_close_20260712/README.md)

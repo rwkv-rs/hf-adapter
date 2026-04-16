@@ -292,6 +292,10 @@ class KernelPolicy:
     prefill_sequence_ffn_num_warps: int = 4
     prefill_fp16_accum_ffn_key_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
     prefill_fp16_accum_ffn_key_layer_counts: tuple[tuple[int, int, int, int, int], ...] = ()
+    # Exact HxLxBxT fp16 prefill routes where every dense GEMM may use fp16
+    # accumulation. This is intentionally separate from the narrower FFN-key
+    # lane because it changes every cuBLAS projection in the sequence graph.
+    prefill_global_fp16_accum_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
     fused_recurrent_output: bool = False
     fused_recurrent_raw: bool = False
     # Exact hidden-size x batch routes for raw recurrent preparation. Empty
@@ -1366,6 +1370,19 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             (2048, 24, 8, 512),
         )
         production_prefill_graph_shapes = (
+            # Exact 5090 graph rows remove enough launch overhead to keep every
+            # latest-checkpoint B1/B8 prefill-PD cell above its Qwen3.5 pair.
+            (1024, 24, 1, 128),
+            (1024, 24, 1, 512),
+            (1024, 24, 1, 2048),
+            (1024, 24, 8, 128),
+            (1024, 24, 8, 512),
+            (1024, 24, 8, 2048),
+            (2048, 24, 1, 128),
+            (2048, 24, 1, 512),
+            (2048, 24, 1, 2048),
+            (2048, 24, 8, 512),
+            (2048, 24, 8, 2048),
             # g1h 1.5B B8/P128: the graph removes Python/custom-op launch
             # overhead from the Marlin W4 FFN route.  An exclusive 5090
             # paired run measured W4 at 1.0633x dense BF16 prefill while
@@ -1377,6 +1394,9 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             (2560, 32, 8, 128),
             (2560, 32, 8, 512),
             (2560, 32, 8, 2048),
+            (4096, 32, 1, 128),
+            (4096, 32, 1, 512),
+            (4096, 32, 1, 2048),
             (4096, 61, 1, 128),
             (4096, 61, 1, 512),
             (4096, 61, 1, 2048),
@@ -1425,9 +1445,15 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             prefill_scan_block_m_model_shapes=((2048, 8, 512, 8),) if is_5090 else (),
             fused_prefill_shift_mix=is_5090,
             prefill_shift_mix_model_shapes=(
+                (1024, 24, 8, 512),
+                (1024, 24, 8, 2048),
                 (2048, 24, 8, 128),
                 (2048, 24, 8, 512),
                 (2048, 24, 8, 2048),
+                (4096, 32, 1, 128),
+                (4096, 32, 1, 512),
+                (4096, 32, 8, 128),
+                (4096, 32, 8, 512),
                 *g1h_13b_prefill_shapes,
             ) if is_5090 else (),
             prefill_attn_shift_mix_strict_fp16_model_shapes=(
@@ -1447,8 +1473,14 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ) if is_5090 else (),
             fused_prefill_state_prep=is_5090,
             prefill_state_prep_model_shapes=(
+                (1024, 24, 8, 512),
+                (1024, 24, 8, 2048),
                 (2048, 24, 8, 512),
                 (2048, 24, 8, 2048),
+                (4096, 32, 1, 128),
+                (4096, 32, 1, 512),
+                (4096, 32, 8, 128),
+                (4096, 32, 8, 512),
                 *g1h_13b_prefill_shapes,
             ) if is_5090 else (),
             prefill_state_prep_layer_counts=(
@@ -1459,6 +1491,14 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_prefill_state_scan_max_batch=1 if is_5090 else None,
             fused_prefill_output=is_5090,
             prefill_fused_output_model_shapes=(
+                (1024, 24, 8, 512),
+                (1024, 24, 8, 2048),
+                (2048, 24, 8, 512),
+                (2048, 24, 8, 2048),
+                (4096, 32, 1, 128),
+                (4096, 32, 1, 512),
+                (4096, 32, 8, 128),
+                (4096, 32, 8, 512),
                 (4096, 61, 1, 128),
                 (4096, 61, 1, 2048),
                 (4096, 61, 8, 128),
@@ -1471,7 +1511,14 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             prefill_stacked_rkv_min_rows=1,
             prefill_stacked_rkv_max_rows=1,
             prefill_stacked_rkv_model_shapes=(
+                (1024, 24, 8, 512),
+                (1024, 24, 8, 2048),
+                (2048, 24, 8, 512),
+                (2048, 24, 8, 2048),
+                (4096, 32, 1, 128),
+                (4096, 32, 1, 512),
                 (4096, 32, 8, 128),
+                (4096, 32, 8, 512),
             ) if is_5090 else (),
             fused_prefill_sequence_ffn=is_5090,
             prefill_sequence_ffn_min_rows=1,
@@ -1495,6 +1542,23 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             prefill_fp16_accum_ffn_key_layer_counts=(
                 (2560, 32, 8, 128, 28),
                 (4096, 61, 1, 128, 12),
+            ) if is_5090 else (),
+            # Scoped full-prefill accumulation is independently correctness-
+            # gated and is restored after each call. Never inherit by family.
+            prefill_global_fp16_accum_model_shapes=(
+                (1024, 24, 8, 512),
+                (1024, 24, 8, 2048),
+                (2048, 24, 8, 512),
+                (2048, 24, 8, 2048),
+                (2560, 32, 8, 128),
+                (2560, 32, 8, 512),
+                (2560, 32, 8, 2048),
+                (4096, 32, 1, 128),
+                (4096, 32, 1, 512),
+                (4096, 32, 1, 2048),
+                (4096, 32, 8, 128),
+                (4096, 32, 8, 512),
+                (4096, 32, 8, 2048),
             ) if is_5090 else (),
             fused_norm_mix=is_5090 or is_5070_laptop,
             native_graph_fused_norm_mix_shapes=(
@@ -1550,7 +1614,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
                 "state for hidden 1024/2048; B1/B2/B4 keep FP32 recurrent state and all "
                 "other Blackwell fusions remain conservative"
                 if is_5070_laptop
-                else "RTX 50/Blackwell: exact RTX 5090 rows promote the official-FP16-state native graph decode profile and allowlisted 1.5B/2.9B/13.3B B1/B8 prefill shapes. The 1.5B B8/P128 graph is shared by dense and Marlin W4 and restores the measured W4 prefill win by removing custom-op launch overhead. The 13.3B B8/P2048 row intentionally stays outside the graph allowlist because graph-private pools exceed 32 GiB; its measured eager fused route remains active. Existing 1.5B/2.9B/7.2B shape-specific prefill and quant routes remain exact-card gates. Other Blackwell cards retain the compatible fallback; use triton_compat for early sm_120 stacks and keep unvalidated projection/LoRA fusions off"
+                else "RTX 50/Blackwell: exact RTX 5090 rows promote the official-FP16-state native graph decode profile and allowlisted 0.4B/1.5B/2.9B/7.2B/13.3B B1/B8 prefill shapes. Latest-checkpoint dense FP16 rows use scoped full-prefill accumulation only on the exact shapes that pass the 24/24 parameter-adjusted Qwen3.5 gate; 7.2B keeps B8 graph disabled because eager is faster. The 1.5B B8/P128 graph is shared by dense and Marlin W4. The 13.3B B8/P2048 row intentionally stays outside the graph allowlist because graph-private pools exceed 32 GiB. Other Blackwell cards retain the compatible fallback; use triton_compat for early sm_120 stacks and keep unvalidated projection/LoRA fusions off"
             ),
         )
     return KernelPolicy(profile=profile)

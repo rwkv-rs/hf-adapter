@@ -13,7 +13,7 @@ import torch.nn.functional as F
 
 _EXECUTION_NAMES = {'_native_prefill_project_residual', '_prefill_current_device', '_native_prefill_linear', '_native_prefill_scan', '_native_prefill_linear_add_residual', '_native_prefill_stacked_rkv_weights'}
 _OWNED_NAMES = _EXECUTION_NAMES | {"bind_runtime"}
-_RUNTIME_NAMES = ('_FP16_ACCUMULATION_LOCK', '_bnb8_direct_linear', '_bnb8_direct_relu_square_linear', '_bnb8_ffn_mix_quant_enabled', '_bnb8_prequant_linear', '_bnb8_rkv_mix_quant_enabled', '_graph_linear_is_dense', '_graph_linears_are_dense', '_init_batched_from_packs', '_lm_head', '_native_bnb8_policy_block', '_native_prefill_attn_shift_mix_block_size', '_native_prefill_dplr_chunk_size', '_native_prefill_dplr_scan_enabled', '_native_prefill_ffn_shift_mix_block_size', '_native_prefill_fp16_accum_ffn_key_enabled', '_native_prefill_fp16_accum_ffn_key_layers', '_native_prefill_fp16_recurrent_enabled', '_native_prefill_fp16_recurrent_requested', '_native_prefill_fused_clampw_scan_enabled', '_native_prefill_fused_output_enabled', '_native_prefill_fused_output_project_block_m', '_native_prefill_fused_output_project_enabled', '_native_prefill_fused_residual_gemm_enabled', '_native_prefill_fused_scan_enabled', '_native_prefill_fused_scan_output_enabled', '_native_prefill_fused_sequence_ffn_enabled', '_native_prefill_fused_shift_mix_enabled', '_native_prefill_fused_state_prep_enabled', '_native_prefill_fused_state_scan_enabled', '_native_prefill_fused_wavg_lora_blocks', '_native_prefill_fused_wavg_lora_enabled', '_native_prefill_model_shape_selected', '_native_prefill_policy_model_shape_selected', '_native_prefill_scan_block_m', '_native_prefill_scan_num_warps', '_native_prefill_self_chunk_enabled', '_native_prefill_self_chunk_h_tiles', '_native_prefill_self_chunk_safe_gate', '_native_prefill_self_chunk_size', '_native_prefill_sequence_ffn_blocks', '_native_prefill_sequence_ffn_launch', '_native_prefill_shift_mix_layers', '_native_prefill_shift_mix_num_warps', '_native_prefill_stacked_rkv_enabled', '_native_prefill_state_prep_layers', '_native_prefill_state_prep_w_dtype', '_recurrent_update_batched', 'dplr_chunk_scan', 'env_flag', 'fused_attn_output_prepare', 'fused_attn_output_project', 'fused_attn_sequence_shift_mix', 'fused_bnb8_attn_sequence_mix_quant', 'fused_bnb8_ffn_sequence_mix_quant', 'fused_ffn_sequence_shift_mix', 'fused_prefill_kv_kk_prep', 'fused_prefill_state_prep', 'fused_recurrent_scan', 'fused_recurrent_scan_clampw', 'fused_recurrent_scan_output_prepare', 'fused_recurrent_scan_state_prep', 'fused_relu_square', 'fused_relu_square_available', 'fused_sequence_ffn', 'fused_wavg_lora', 'native_fp16_sequence', 'self_chunk_rwkv7')
+_RUNTIME_NAMES = ('_FP16_ACCUMULATION_LOCK', '_bnb8_direct_linear', '_bnb8_direct_relu_square_linear', '_bnb8_ffn_mix_quant_enabled', '_bnb8_prequant_linear', '_bnb8_rkv_mix_quant_enabled', '_graph_linear_is_dense', '_graph_linears_are_dense', '_init_batched_from_packs', '_lm_head', '_native_bnb8_policy_block', '_native_prefill_attn_shift_mix_block_size', '_native_prefill_dplr_chunk_size', '_native_prefill_dplr_scan_enabled', '_native_prefill_ffn_shift_mix_block_size', '_native_prefill_fp16_accum_ffn_key_enabled', '_native_prefill_fp16_accum_ffn_key_layers', '_native_prefill_fp16_recurrent_enabled', '_native_prefill_fp16_recurrent_requested', '_native_prefill_global_fp16_accum_enabled', '_native_prefill_fused_clampw_scan_enabled', '_native_prefill_fused_output_enabled', '_native_prefill_fused_output_project_block_m', '_native_prefill_fused_output_project_enabled', '_native_prefill_fused_residual_gemm_enabled', '_native_prefill_fused_scan_enabled', '_native_prefill_fused_scan_output_enabled', '_native_prefill_fused_sequence_ffn_enabled', '_native_prefill_fused_shift_mix_enabled', '_native_prefill_fused_state_prep_enabled', '_native_prefill_fused_state_scan_enabled', '_native_prefill_fused_wavg_lora_blocks', '_native_prefill_fused_wavg_lora_enabled', '_native_prefill_model_shape_selected', '_native_prefill_policy_model_shape_selected', '_native_prefill_scan_block_m', '_native_prefill_scan_num_warps', '_native_prefill_self_chunk_enabled', '_native_prefill_self_chunk_h_tiles', '_native_prefill_self_chunk_safe_gate', '_native_prefill_self_chunk_size', '_native_prefill_sequence_ffn_blocks', '_native_prefill_sequence_ffn_launch', '_native_prefill_shift_mix_layers', '_native_prefill_shift_mix_num_warps', '_native_prefill_stacked_rkv_enabled', '_native_prefill_state_prep_layers', '_native_prefill_state_prep_w_dtype', '_recurrent_update_batched', 'dplr_chunk_scan', 'env_flag', 'fused_attn_output_prepare', 'fused_attn_output_project', 'fused_attn_sequence_shift_mix', 'fused_bnb8_attn_sequence_mix_quant', 'fused_bnb8_ffn_sequence_mix_quant', 'fused_ffn_sequence_shift_mix', 'fused_prefill_kv_kk_prep', 'fused_prefill_state_prep', 'fused_recurrent_scan', 'fused_recurrent_scan_clampw', 'fused_recurrent_scan_output_prepare', 'fused_recurrent_scan_state_prep', 'fused_relu_square', 'fused_relu_square_available', 'fused_sequence_ffn', 'fused_wavg_lora', 'native_fp16_sequence', 'self_chunk_rwkv7')
 
 
 def bind_runtime(runtime: dict[str, object]) -> None:
@@ -220,7 +220,7 @@ def _native_prefill_scan(
         outs.append(out)
     return torch.stack(outs, dim=1), cur_state
 
-def _prefill_current_device(
+def _prefill_current_device_impl(
     model,
     ids,
     packs,
@@ -301,6 +301,7 @@ def _prefill_current_device(
         T,
         residual_hidden,
         len(packs),
+        dtype,
     )
     sequence_ffn_blocks = _native_prefill_sequence_ffn_blocks(B * T) if use_prefill_sequence_ffn else None
     sequence_ffn_launch = _native_prefill_sequence_ffn_launch() if use_prefill_sequence_ffn else None
@@ -1045,6 +1046,68 @@ def _prefill_current_device(
     )
     setattr(model, "_rwkv7_native_prefill_layer_outputs", layer_outputs)
     return logits, state, xpa, xpf
+
+
+def _prefill_current_device(
+    model,
+    ids,
+    packs,
+    *,
+    state=None,
+    xpa=None,
+    xpf=None,
+    logits_to_keep: int | None = 1,
+    fp16_elapsed=None,
+):
+    """Run exact-shape prefill under a scoped full-GEMM fp16 policy."""
+
+    ids_shape = tuple(ids.shape)
+    batch_size = int(ids_shape[0]) if len(ids_shape) == 2 else 1
+    prompt_tokens = int(ids_shape[-1])
+    hidden_size = int(packs[0][7].numel())
+    num_layers = len(packs)
+    dtype = model.model.embeddings.weight.dtype
+    selected = _native_prefill_global_fp16_accum_enabled(
+        batch_size,
+        prompt_tokens,
+        hidden_size,
+        num_layers,
+        dtype,
+    )
+    matmul = getattr(getattr(torch.backends, "cuda", None), "matmul", None)
+    if not selected or matmul is None:
+        setattr(model, "_rwkv7_native_prefill_global_fp16_accum_effective", False)
+        return _prefill_current_device_impl(
+            model,
+            ids,
+            packs,
+            state=state,
+            xpa=xpa,
+            xpf=xpf,
+            logits_to_keep=logits_to_keep,
+            fp16_elapsed=fp16_elapsed,
+        )
+
+    with _FP16_ACCUMULATION_LOCK:
+        previous = bool(matmul.allow_fp16_accumulation)
+        if not previous:
+            matmul.allow_fp16_accumulation = True
+        try:
+            result = _prefill_current_device_impl(
+                model,
+                ids,
+                packs,
+                state=state,
+                xpa=xpa,
+                xpf=xpf,
+                logits_to_keep=logits_to_keep,
+                fp16_elapsed=fp16_elapsed,
+            )
+        finally:
+            if not previous:
+                matmul.allow_fp16_accumulation = False
+    setattr(model, "_rwkv7_native_prefill_global_fp16_accum_effective", True)
+    return result
 
 __all__ = ['_native_prefill_linear', '_native_prefill_linear_add_residual', '_native_prefill_project_residual', '_native_prefill_stacked_rkv_weights', '_native_prefill_scan', '_prefill_current_device']
 

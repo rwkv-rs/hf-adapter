@@ -317,6 +317,13 @@ def native_prefill_route(model, batch_size: int, prompt_tokens: int) -> dict[str
                 False,
             )
         ),
+        "prefill_global_fp16_accum_effective": bool(
+            getattr(
+                model,
+                "_rwkv7_native_prefill_global_fp16_accum_effective",
+                False,
+            )
+        ),
     }
     method = getattr(model, "rwkv7_prefill_native", None)
     fn = getattr(method, "__func__", method)
