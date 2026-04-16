@@ -2,20 +2,21 @@
 
 更新日期：**2026-08-11**。数字来自当前主分支已提升的同卡证据。
 完整历史、量化路线和逐项遥测仍以 [`BENCHMARK.md`](../BENCHMARK.md) 为准。
+[English version](QWEN35_SPEED_COMPARISON.md)
 
 ## 先看结论
 
 > 当前正式的 NVIDIA dense FP16 optimized-Qwen 同卡对照共有 **24 个
 > GPU/模型/Batch 组合**，另列 **3 个 Apple M5 target-only W4 组合**。
-> 表内每一行的 RWKV-7 原始 Prefill、原始 Decode 和每活跃 B 参数效率中位值
-> 均高于 Qwen3.5。原始 Prefill/Decode 可达 **5.47x / 12.15x**，每活跃 B
-> 参数效率可达 **9.13x / 20.28x**。
+> 表内每一行的 RWKV-7 原始 Prefill 和原始 Decode 中位值均高于 Qwen3.5。
+> 原始 Prefill/Decode 可达 **5.47x / 12.15x**；扣除较小参数量带来的天然速度
+> 优势后，参数规模校正 Prefill/Decode 可达 **4.39x / 7.28x**。
 
 - `1.02x` 表示 RWKV 吞吐是 Qwen 的 1.02 倍，即约快 2%。
 - Prefill 是处理输入提示词；Decode 是逐 token 生成，后者更接近日常聊天的
   持续生成速度。
-- NVIDIA 主表的速度基线只采用 **dense FP16 原始 tok/s**，同时补充按活跃
-  参数量归一的效率。除 V100 明示的固定形状外，`6格`表示
+- NVIDIA 主表的速度基线只采用 **dense FP16 原始 tok/s**，同时补充参数规模
+  校正速度。除 V100 明示的固定形状外，`6格`表示
   `P128/512/2048 × D128/512` 六个形状的中位值。
 
 ## 参数口径
@@ -30,57 +31,57 @@
 | 7.2B / 9B | `7,199,141,888` | `8,953,803,264` | `0.804032` |
 
 - **原始速度比** = RWKV tok/s ÷ Qwen tok/s，代表用户实际拿到的吞吐。
-- **每活跃 B 参数效率比** = 原始速度比 ÷ RWKV/Qwen 活跃参数比。它回答
-  “每十亿活跃参数能产生多少 token”，把双方参数规模差异直接算入比较。
-- 证据还保留 **active-work** = 原始速度比 × 活跃参数比，用于衡量单位时间
-  完成的参数工作量；它不是用户实际生成速度，也不是主表的展示口径。
+- **参数规模校正速度比** = 原始速度比 × RWKV/Qwen 活跃参数比。它把 Qwen
+  线性缩放到 RWKV 的活跃参数规模，用于扣除“小模型本来就更快”的天然优势。
+- 例如 RTX 4090 的 0.4B/0.8B B8：原始 Prefill `1.75x`，参数比
+  `0.599112`，校正后为 `1.75 × 0.599112 ≈ 1.05x`。
 
 ## NVIDIA：全部正式同卡模型参数与速度
 
 下面不再筛选代表项，而是逐行列出当前正式 optimized-Qwen 对照中所有
-GPU、模型对和 Batch。`原始 P / D` 与 `每活跃 B 效率 P / D` 都是
+GPU、模型对和 Batch。`原始 P / D` 与 `参数规模校正 P / D` 都是
 Prefill/Decode 中位值。
 
-| GPU | 模型对 | Batch | 范围 | RWKV 活跃参数 | Qwen 活跃参数 | 参数比 | 原始 P / D | 每活跃 B 效率 P / D | 证据 |
+| GPU | 模型对 | Batch | 范围 | RWKV 活跃参数 | Qwen 活跃参数 | 参数比 | 原始 P / D | 参数规模校正 P / D | 证据 |
 |---|---|---:|---|---:|---:|---:|---:|---:|---|
-| V100 32GB | 1.5B / 2B | B1 | P512/D64 | 1.527405B | 1.881825B | `0.811661` | **2.82x / 5.91x** | **3.47x / 7.29x** | [V100](../bench/v100_active_b1b8_20260715/README.md) |
-| V100 32GB | 1.5B / 2B | B8 | P512/D64 | 1.527405B | 1.881825B | `0.811661` | **5.41x / 5.27x** | **6.66x / 6.49x** | [V100](../bench/v100_active_b1b8_20260715/README.md) |
-| RTX 3090 | 1.5B / 2B | B8 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.08x / 3.42x** | **1.34x / 4.21x** | [3090 small](../bench/3090_small_bsz8_20260714/README.md) |
-| RTX 3090 | 2.9B / 4B | B8 | 6格 | 2.947735B | 4.205751B | `0.700882` | **1.36x / 2.96x** | **1.95x / 4.22x** | [3090 small](../bench/3090_small_bsz8_20260714/README.md) |
-| RTX 3090 | 7.2B / 9B | B8 | 6格 | 7.199142B | 8.953803B | `0.804032` | **1.06x / 1.81x** | **1.32x / 2.25x** | [3090 7.2B](../bench/3090_g1h_7p2_bsz8_20260714/README.md) |
-| RTX 4080 | 0.4B / 0.8B | B1 | 6格 | 0.450768B | 0.752393B | `0.599112` | **1.39x / 4.89x** | **2.32x / 8.16x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
-| RTX 4080 | 0.4B / 0.8B | B8 | 6格 | 0.450768B | 0.752393B | `0.599112` | **1.46x / 3.56x** | **2.44x / 5.95x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
-| RTX 4080 | 1.5B / 2B | B1 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.22x / 1.91x** | **1.50x / 2.35x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
-| RTX 4080 | 1.5B / 2B | B8 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.07x / 1.44x** | **1.32x / 1.78x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
-| RTX 4080 | 2.9B / 4B | B1 | 6格 | 2.947735B | 4.205751B | `0.700882` | **1.18x / 1.62x** | **1.69x / 2.31x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
-| RTX 4080 | 2.9B / 4B | B8 | 6格 | 2.947735B | 4.205751B | `0.700882` | **1.37x / 1.58x** | **1.95x / 2.26x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
-| RTX 4090 | 0.4B / 0.8B | B8 | 6格 | 0.450768B | 0.752393B | `0.599112` | **1.75x / 12.15x** | **2.92x / 20.28x** | [4090 small](../bench/4090_small_bsz8_20260715/README.md) |
-| RTX 4090 | 1.5B / 2B | B8 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.11x / 5.66x** | **1.37x / 6.97x** | [4090 small](../bench/4090_small_bsz8_20260715/README.md) |
-| RTX 4090 | 2.9B / 4B | B8 | 6格 | 2.947735B | 4.205751B | `0.700882` | **1.42x / 4.24x** | **2.03x / 6.05x** | [4090 small](../bench/4090_small_bsz8_20260715/README.md) |
-| RTX 4090 | 7.2B / 9B | B8 | 6格 | 7.199142B | 8.953803B | `0.804032` | **1.12x / 2.22x** | **1.39x / 2.76x** | [4090 7.2B](../bench/4090_g1h_7p2_bsz8_20260715/README.md) |
-| RTX 5070 Laptop | 1.5B / 2B | B8 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.33x / 2.62x** | **1.64x / 3.23x** | [5070](../bench/5070_qwen35_full_fla_bsz8_20260714/README.md) |
-| RTX 5090 | 0.4B / 0.8B | B1 | 6格 | 0.450768B | 0.752393B | `0.599112` | **5.47x / 10.90x** | **9.13x / 18.20x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
-| RTX 5090 | 1.5B / 2B | B1 | 6格 | 1.527405B | 1.881825B | `0.811661` | **3.26x / 6.74x** | **4.01x / 8.30x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
-| RTX 5090 | 2.9B / 4B | B1 | 6格 | 2.947735B | 4.205751B | `0.700882` | **2.72x / 5.24x** | **3.87x / 7.47x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
-| RTX 5090 | 7.2B / 9B | B1 | 6格 | 7.199142B | 8.953803B | `0.804032` | **1.21x / 2.91x** | **1.51x / 3.62x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
-| RTX 5090 | 0.4B / 0.8B | B8 | 6格 | 0.450768B | 0.752393B | `0.599112` | **1.61x / 7.20x** | **2.69x / 12.02x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
-| RTX 5090 | 1.5B / 2B | B8 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.19x / 4.59x** | **1.47x / 5.66x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
-| RTX 5090 | 2.9B / 4B | B8 | 6格 | 2.947735B | 4.205751B | `0.700882` | **1.48x / 3.81x** | **2.11x / 5.44x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
-| RTX 5090 | 7.2B / 9B | B8 | 6格 | 7.199142B | 8.953803B | `0.804032` | **1.04x / 2.83x** | **1.30x / 3.52x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
+| V100 32GB | 1.5B / 2B | B1 | P512/D64 | 1.527405B | 1.881825B | `0.811661` | **2.82x / 5.91x** | **2.29x / 4.80x** | [V100](../bench/v100_active_b1b8_20260715/README.md) |
+| V100 32GB | 1.5B / 2B | B8 | P512/D64 | 1.527405B | 1.881825B | `0.811661` | **5.41x / 5.27x** | **4.39x / 4.28x** | [V100](../bench/v100_active_b1b8_20260715/README.md) |
+| RTX 3090 | 1.5B / 2B | B8 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.08x / 3.42x** | **0.88x / 2.77x** | [3090 small](../bench/3090_small_bsz8_20260714/README.md) |
+| RTX 3090 | 2.9B / 4B | B8 | 6格 | 2.947735B | 4.205751B | `0.700882` | **1.36x / 2.96x** | **0.96x / 2.07x** | [3090 small](../bench/3090_small_bsz8_20260714/README.md) |
+| RTX 3090 | 7.2B / 9B | B8 | 6格 | 7.199142B | 8.953803B | `0.804032` | **1.06x / 1.81x** | **0.86x / 1.45x** | [3090 7.2B](../bench/3090_g1h_7p2_bsz8_20260714/README.md) |
+| RTX 4080 | 0.4B / 0.8B | B1 | 6格 | 0.450768B | 0.752393B | `0.599112` | **1.39x / 4.89x** | **0.83x / 2.93x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
+| RTX 4080 | 0.4B / 0.8B | B8 | 6格 | 0.450768B | 0.752393B | `0.599112` | **1.46x / 3.56x** | **0.87x / 2.13x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
+| RTX 4080 | 1.5B / 2B | B1 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.22x / 1.91x** | **0.99x / 1.55x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
+| RTX 4080 | 1.5B / 2B | B8 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.07x / 1.44x** | **0.87x / 1.17x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
+| RTX 4080 | 2.9B / 4B | B1 | 6格 | 2.947735B | 4.205751B | `0.700882` | **1.18x / 1.62x** | **0.83x / 1.14x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
+| RTX 4080 | 2.9B / 4B | B8 | 6格 | 2.947735B | 4.205751B | `0.700882` | **1.37x / 1.58x** | **0.96x / 1.11x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
+| RTX 4090 | 0.4B / 0.8B | B8 | 6格 | 0.450768B | 0.752393B | `0.599112` | **1.75x / 12.15x** | **1.05x / 7.28x** | [4090 small](../bench/4090_small_bsz8_20260715/README.md) |
+| RTX 4090 | 1.5B / 2B | B8 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.11x / 5.66x** | **0.90x / 4.59x** | [4090 small](../bench/4090_small_bsz8_20260715/README.md) |
+| RTX 4090 | 2.9B / 4B | B8 | 6格 | 2.947735B | 4.205751B | `0.700882` | **1.42x / 4.24x** | **1.00x / 2.97x** | [4090 small](../bench/4090_small_bsz8_20260715/README.md) |
+| RTX 4090 | 7.2B / 9B | B8 | 6格 | 7.199142B | 8.953803B | `0.804032` | **1.12x / 2.22x** | **0.90x / 1.79x** | [4090 7.2B](../bench/4090_g1h_7p2_bsz8_20260715/README.md) |
+| RTX 5070 Laptop | 1.5B / 2B | B8 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.33x / 2.62x** | **1.08x / 2.13x** | [5070](../bench/5070_qwen35_full_fla_bsz8_20260714/README.md) |
+| RTX 5090 | 0.4B / 0.8B | B1 | 6格 | 0.450768B | 0.752393B | `0.599112` | **5.47x / 10.90x** | **3.28x / 6.53x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
+| RTX 5090 | 1.5B / 2B | B1 | 6格 | 1.527405B | 1.881825B | `0.811661` | **3.26x / 6.74x** | **2.64x / 5.47x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
+| RTX 5090 | 2.9B / 4B | B1 | 6格 | 2.947735B | 4.205751B | `0.700882` | **2.72x / 5.24x** | **1.90x / 3.67x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
+| RTX 5090 | 7.2B / 9B | B1 | 6格 | 7.199142B | 8.953803B | `0.804032` | **1.21x / 2.91x** | **0.97x / 2.34x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
+| RTX 5090 | 0.4B / 0.8B | B8 | 6格 | 0.450768B | 0.752393B | `0.599112` | **1.61x / 7.20x** | **0.97x / 4.31x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
+| RTX 5090 | 1.5B / 2B | B8 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.19x / 4.59x** | **0.97x / 3.73x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
+| RTX 5090 | 2.9B / 4B | B8 | 6格 | 2.947735B | 4.205751B | `0.700882` | **1.48x / 3.81x** | **1.04x / 2.67x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
+| RTX 5090 | 7.2B / 9B | B8 | 6格 | 7.199142B | 8.953803B | `0.804032` | **1.04x / 2.83x** | **0.84x / 2.28x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
 
 这张长表按 GPU、模型和 Batch 保留全部正式对照，便于直接查看不同参数档位的
-原始吞吐和参数效率。
+原始吞吐和参数规模校正速度。
 
 ### Apple M5：全部正式 target-only W4 对照
 
 Apple MLX W4 单独成表，以保持每张表内部的后端和精度一致；这里同样同时给出
-原始速度和每活跃 B 参数效率：
+原始速度和参数规模校正速度：
 
-| 模型对 | Batch / 形状 | RWKV 活跃参数 | Qwen 活跃参数 | 原始 P / D | 每活跃 B 效率 P / D | 证据 |
+| 模型对 | Batch / 形状 | RWKV 活跃参数 | Qwen 活跃参数 | 原始 P / D | 参数规模校正 P / D | 证据 |
 |---|---|---:|---:|---:|---:|---|
-| 0.4B / 0.8B | B8，cold，P512 字符/D64 | 0.450768B | 0.752393B | **2.04x / 2.04x** | **3.41x / 3.40x** | [M5 B8](../bench/apple_bsz8_active_m5_20260714/README.md) |
-| 1.5B / 2B | B1，P512 字符/D64 | 1.527405B | 1.881825B | **1.67x / 1.44x** | **2.06x / 1.77x** | [M5 B1](../bench/apple_bsz1_active_m5_20260715/README.md) |
-| 1.5B / 2B | B8，cold，P512 字符/D64 | 1.527405B | 1.881825B | **1.41x / 1.40x** | **1.73x / 1.73x** | [M5 B8](../bench/apple_bsz8_active_m5_20260714/README.md) |
+| 0.4B / 0.8B | B8，cold，P512 字符/D64 | 0.450768B | 0.752393B | **2.04x / 2.04x** | **1.22x / 1.22x** | [M5 B8](../bench/apple_bsz8_active_m5_20260714/README.md) |
+| 1.5B / 2B | B1，P512 字符/D64 | 1.527405B | 1.881825B | **1.67x / 1.44x** | **1.36x / 1.17x** | [M5 B1](../bench/apple_bsz1_active_m5_20260715/README.md) |
+| 1.5B / 2B | B8，cold，P512 字符/D64 | 1.527405B | 1.881825B | **1.41x / 1.40x** | **1.14x / 1.14x** | [M5 B8](../bench/apple_bsz8_active_m5_20260714/README.md) |
 
 ## AMD 和其他硬件
 
@@ -126,14 +127,14 @@ Apple MLX W4 单独成表，以保持每张表内部的后端和精度一致；�
 - NVIDIA 的 RWKV 使用仓库的 Native prefill 与 native-graph cached decode；
   Apple 两边均为 MLX W4 target-only 路线。
 - 模型按发布档位配对，例如 7.2B 对 9B；表中同时展示原始 tok/s、精确活跃
-  参数和每活跃 B 参数效率。
+  参数和参数规模校正速度。
 - NVIDIA 主表统一使用 dense FP16；Apple 表统一使用双方正式的 MLX W4，
   每张表内部保持一致口径。
 
 ## GPU 实测复现
 
 下面的命令会在 GPU 上重新加载 RWKV-7 与 Qwen3.5、执行 warmup 和正式计时，
-并重新生成 Prefill、Decode、活跃参数效率和后端绑定结果。
+并重新生成 Prefill、Decode、参数规模校正速度和后端绑定结果。
 
 ### 1. 准备环境和模型
 
@@ -187,22 +188,16 @@ import json, sys
 
 summary = json.load(open(sys.argv[1], encoding="utf-8"))
 speed = summary["speed"]
-efficiency = summary["active_parameter_efficiency"]
-work = summary["active_parameter_work"]
+adjusted = summary["active_parameter_work"]
 print(
     "raw prefill/decode median:",
     speed["median_prefill_speedup"],
     speed["median_decode_speedup"],
 )
 print(
-    "per-active-B prefill/decode:",
-    efficiency["median_prefill_ratio"],
-    efficiency["median_decode_ratio"],
-)
-print(
-    "active-work prefill/decode:",
-    work["median_prefill_throughput_ratio"],
-    work["median_decode_throughput_ratio"],
+    "parameter-adjusted prefill/decode:",
+    adjusted["median_prefill_throughput_ratio"],
+    adjusted["median_decode_throughput_ratio"],
 )
 print("red cells:", len(summary["red_cells"]))
 PY
@@ -237,7 +232,7 @@ INITIAL_COOLDOWN_SECONDS=60 \
 ```
 
 脚本会在 Apple GPU 上分别运行 RWKV-7 0.4B/1.5B 与 Qwen3.5 0.8B/2B，输出
-原始 Prefill/Decode、活跃参数口径、峰值内存和 token 一致性结果。
+原始 Prefill/Decode、参数规模校正口径、峰值内存和 token 一致性结果。
 
 ### 5. AMD `gfx1100` GPU 实测
 

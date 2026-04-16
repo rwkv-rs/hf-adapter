@@ -7,9 +7,10 @@ in [`bench/`](bench/); platform interpretation lives in
 
 Last updated: **2026-08-11**.
 
-如需集中查看 RWKV-7 与 Qwen3.5 的完整参数、速度表和复现命令，请读
-[`docs/QWEN35_SPEED_COMPARISON_ZH.md`](docs/QWEN35_SPEED_COMPARISON_ZH.md)；
-本文继续保留全部平台、量化和验收细节。
+For a consolidated RWKV-7 vs Qwen3.5 parameter/speed table and live GPU
+reproduction workflow, see the [English guide](docs/QWEN35_SPEED_COMPARISON.md)
+or [中文完整参数版](docs/QWEN35_SPEED_COMPARISON_ZH.md). This document retains
+the full platform, quantization, and acceptance details.
 
 ## Benchmark contract
 
