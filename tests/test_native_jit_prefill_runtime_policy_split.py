@@ -31,6 +31,7 @@ def test_prefill_runtime_policy_ownership_moves_behind_compatibility_wrappers() 
         "_native_prefill_fused_state_prep_enabled",
         "_native_prefill_fused_output_enabled",
         "_native_prefill_fused_sequence_ffn_enabled",
+        "_native_prefill_global_fp16_accum_enabled",
         "_native_prefill_stacked_rkv_enabled",
     }
 

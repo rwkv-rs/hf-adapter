@@ -642,6 +642,20 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.prefill_self_chunk_size == 16
     assert blackwell.prefill_self_chunk_model_shapes == ()
     assert blackwell.prefill_fp16_recurrent
+    assert (1024, 24, 1, 128) in blackwell.prefill_graph_model_shapes
+    assert (1024, 24, 1, 512) in blackwell.prefill_graph_model_shapes
+    assert (1024, 24, 1, 2048) in blackwell.prefill_graph_model_shapes
+    assert (1024, 24, 8, 128) in blackwell.prefill_graph_model_shapes
+    assert (1024, 24, 8, 512) in blackwell.prefill_graph_model_shapes
+    assert (1024, 24, 8, 2048) in blackwell.prefill_graph_model_shapes
+    assert (2048, 24, 1, 128) in blackwell.prefill_graph_model_shapes
+    assert (2048, 24, 1, 512) in blackwell.prefill_graph_model_shapes
+    assert (2048, 24, 1, 2048) in blackwell.prefill_graph_model_shapes
+    assert (2048, 24, 8, 512) in blackwell.prefill_graph_model_shapes
+    assert (2048, 24, 8, 2048) in blackwell.prefill_graph_model_shapes
+    assert (4096, 32, 1, 128) in blackwell.prefill_graph_model_shapes
+    assert (4096, 32, 1, 512) in blackwell.prefill_graph_model_shapes
+    assert (4096, 32, 1, 2048) in blackwell.prefill_graph_model_shapes
     assert (2048, 24, 8, 128) in blackwell.prefill_graph_model_shapes
     assert (4096, 61, 8, 2048) not in blackwell.prefill_graph_model_shapes
     assert (4096, 61, 8, 512) in blackwell.prefill_graph_model_shapes
@@ -664,9 +678,15 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.prefill_scan_block_m_model_shapes == ((2048, 8, 512, 8),)
     assert blackwell.fused_prefill_shift_mix
     assert blackwell.prefill_shift_mix_model_shapes == (
+        (1024, 24, 8, 512),
+        (1024, 24, 8, 2048),
         (2048, 24, 8, 128),
         (2048, 24, 8, 512),
         (2048, 24, 8, 2048),
+        (4096, 32, 1, 128),
+        (4096, 32, 1, 512),
+        (4096, 32, 8, 128),
+        (4096, 32, 8, 512),
         (4096, 61, 1, 128),
         (4096, 61, 1, 512),
         (4096, 61, 1, 2048),
@@ -691,8 +711,14 @@ def test_policy_defaults_are_conservative() -> None:
     )
     assert blackwell.fused_prefill_state_prep
     assert blackwell.prefill_state_prep_model_shapes == (
+        (1024, 24, 8, 512),
+        (1024, 24, 8, 2048),
         (2048, 24, 8, 512),
         (2048, 24, 8, 2048),
+        (4096, 32, 1, 128),
+        (4096, 32, 1, 512),
+        (4096, 32, 8, 128),
+        (4096, 32, 8, 512),
         (4096, 61, 1, 128),
         (4096, 61, 1, 512),
         (4096, 61, 1, 2048),
@@ -704,6 +730,10 @@ def test_policy_defaults_are_conservative() -> None:
         (2048, 24, 8, 512, 24),
         (2048, 24, 8, 2048, 18),
     )
+    assert (4096, 32, 1, 128) in blackwell.prefill_fused_output_model_shapes
+    assert (4096, 32, 1, 512) in blackwell.prefill_fused_output_model_shapes
+    assert (4096, 32, 8, 128) in blackwell.prefill_fused_output_model_shapes
+    assert (4096, 32, 8, 512) in blackwell.prefill_fused_output_model_shapes
     assert not blackwell.fused_prefill_clampw_scan
     assert blackwell.prefill_clampw_scan_model_shapes == ((2048, 24, 8, 512),)
     assert blackwell.fused_prefill_residual_gemm
@@ -711,7 +741,14 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.prefill_stacked_rkv_min_rows == 1
     assert blackwell.prefill_stacked_rkv_max_rows == 1
     assert blackwell.prefill_stacked_rkv_model_shapes == (
+        (1024, 24, 8, 512),
+        (1024, 24, 8, 2048),
+        (2048, 24, 8, 512),
+        (2048, 24, 8, 2048),
+        (4096, 32, 1, 128),
+        (4096, 32, 1, 512),
         (4096, 32, 8, 128),
+        (4096, 32, 8, 512),
     )
     assert blackwell.fused_prefill_sequence_ffn
     assert blackwell.prefill_sequence_ffn_min_rows == 1
@@ -732,6 +769,21 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.prefill_fp16_accum_ffn_key_layer_counts == (
         (2560, 32, 8, 128, 28),
         (4096, 61, 1, 128, 12),
+    )
+    assert blackwell.prefill_global_fp16_accum_model_shapes == (
+        (1024, 24, 8, 512),
+        (1024, 24, 8, 2048),
+        (2048, 24, 8, 512),
+        (2048, 24, 8, 2048),
+        (2560, 32, 8, 128),
+        (2560, 32, 8, 512),
+        (2560, 32, 8, 2048),
+        (4096, 32, 1, 128),
+        (4096, 32, 1, 512),
+        (4096, 32, 1, 2048),
+        (4096, 32, 8, 128),
+        (4096, 32, 8, 512),
+        (4096, 32, 8, 2048),
     )
     assert blackwell.marlin_w4_ffn_shapes == (
         (8192, 2048),
@@ -808,6 +860,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert not other_blackwell.ada_sparse_ffn_low_memory_pack
     assert other_blackwell.prefill_fp16_accum_ffn_key_model_shapes == ()
     assert other_blackwell.prefill_fp16_accum_ffn_key_layer_counts == ()
+    assert other_blackwell.prefill_global_fp16_accum_model_shapes == ()
     assert other_blackwell.marlin_w4_ffn_shapes == ()
     assert other_blackwell.marlin_w4_model_profiles == ()
     for adjacent_name in (

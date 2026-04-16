@@ -780,6 +780,9 @@ def environment_metadata(args: argparse.Namespace, model=None) -> dict[str, Any]
         "rwkv_fast_prefill_quant_requested": os.environ.get("RWKV7_FAST_PREFILL_QUANT"),
         "rwkv_prefill_graph_requested": os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH"),
         "rwkv_prefill_fused_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN"),
+        "rwkv_prefill_global_fp16_accum_requested": os.environ.get(
+            "RWKV7_NATIVE_PREFILL_GLOBAL_FP16_ACCUM"
+        ),
         "rwkv_prefill_external_quant_graph_requested": os.environ.get(
             "RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH"
         ),
@@ -1093,6 +1096,17 @@ def benchmark_loaded(
         if args.model_kind == "rwkv"
         else None
     )
+    prefill_global_fp16_accum = (
+        bool(
+            getattr(
+                model,
+                "_rwkv7_native_prefill_global_fp16_accum_effective",
+                False,
+            )
+        )
+        if args.model_kind == "rwkv"
+        else None
+    )
     decode_s, step_backend, effective_backend, cache_type = timed_decode(args, model, ids)
     logits_finite = True
     with torch.inference_mode():
@@ -1141,6 +1155,7 @@ def benchmark_loaded(
         "rwkv_prefill_stacked_rkv_effective": prefill_stacked_rkv,
         "rwkv_prefill_self_chunk_effective": prefill_self_chunk,
         "rwkv_prefill_sequence_ffn_effective": prefill_sequence_ffn,
+        "rwkv_prefill_global_fp16_accum_effective": prefill_global_fp16_accum,
         "effective_backend": qwen_effective_backend(args, qwen_contract) or effective_backend or step_backend,
         "qwen_fast_path_verified": qwen_bindings["verified"] if qwen_bindings is not None else None,
         "qwen_fast_path_layer_count": qwen_bindings["layer_count"] if qwen_bindings is not None else None,

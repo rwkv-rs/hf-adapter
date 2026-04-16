@@ -114,6 +114,13 @@ Current exact-card dispatch additions:
   `bench/5070_max_perf_20260811/`. RTX 5070 desktop, RTX 5070 Ti Laptop, RTX
   5070 SUPER Laptop, unlisted models, and unlisted batches must not inherit
   those defaults.
+- NVIDIA GeForce RTX 5090 (`sm_120`): exact dense-FP16 0.4B/1.5B/2.9B/7.2B
+  B1/B8 P128/P512/P2048 rows may use the graph, scoped full-prefill FP16 GEMM
+  accumulation, and fused boundaries allowlisted in `kernel_policy.py`. The
+  24/24 parameter-adjusted Qwen3.5 prefill gate and changed-route correctness
+  evidence live in `bench/5090_g1i_qwen35_prefill_pd_20260811/`. The global
+  accumulation switch must remain exact-shape, scoped, single-GPU by default,
+  and empty for other cards; do not promote it by Blackwell family alone.
 
 ### Quantization
 

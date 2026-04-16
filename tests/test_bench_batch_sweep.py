@@ -135,6 +135,7 @@ def test_native_prefill_route_reports_candidate_feature_effective_flags() -> Non
             "config": config,
             "_rwkv7_native_prefill_sequence_ffn_effective": True,
             "_rwkv7_native_prefill_fp16_accum_ffn_key_effective": True,
+            "_rwkv7_native_prefill_global_fp16_accum_effective": True,
             "rwkv7_last_fast_prefill_backend": lambda self: "native_prefill_graph",
         },
     )()
@@ -142,3 +143,4 @@ def test_native_prefill_route_reports_candidate_feature_effective_flags() -> Non
     route = native_prefill_route(model, 8, 512)
     assert route["prefill_sequence_ffn_effective"] is True
     assert route["prefill_fp16_accum_ffn_key_effective"] is True
+    assert route["prefill_global_fp16_accum_effective"] is True

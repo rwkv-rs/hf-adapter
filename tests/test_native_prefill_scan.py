@@ -513,6 +513,106 @@ def test_fp16_accum_ffn_key_is_exact_shape_and_explicitly_disableable(monkeypatc
     )
 
 
+def test_global_fp16_accum_is_exact_shape_dtype_and_device_scoped(monkeypatch) -> None:
+    from rwkv7_hf import native_jit
+
+    monkeypatch.setattr(native_jit.torch.cuda, "device_count", lambda: 1)
+    monkeypatch.setattr(
+        native_jit.torch.backends.cuda,
+        "matmul",
+        types.SimpleNamespace(allow_fp16_accumulation=False),
+    )
+    monkeypatch.setattr(
+        native_jit,
+        "_kernel_policy",
+        lambda: types.SimpleNamespace(
+            prefill_global_fp16_accum_model_shapes=(
+                (1024, 24, 8, 512),
+                (1024, 24, 8, 2048),
+            ),
+        ),
+    )
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_GLOBAL_FP16_ACCUM", raising=False)
+    monkeypatch.delenv(
+        "RWKV7_NATIVE_PREFILL_GLOBAL_FP16_ACCUM_MODEL_SHAPES",
+        raising=False,
+    )
+
+    assert native_jit._native_prefill_global_fp16_accum_enabled(
+        8, 512, 1024, 24, torch.float16
+    )
+    assert native_jit._native_prefill_global_fp16_accum_enabled(
+        8, 2048, 1024, 24, torch.float16
+    )
+    assert not native_jit._native_prefill_global_fp16_accum_enabled(
+        1, 512, 1024, 24, torch.float16
+    )
+    assert not native_jit._native_prefill_global_fp16_accum_enabled(
+        8, 512, 1024, 24, torch.bfloat16
+    )
+
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_GLOBAL_FP16_ACCUM", "0")
+    assert not native_jit._native_prefill_global_fp16_accum_enabled(
+        8, 512, 1024, 24, torch.float16
+    )
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_GLOBAL_FP16_ACCUM", "1")
+    monkeypatch.setenv(
+        "RWKV7_NATIVE_PREFILL_GLOBAL_FP16_ACCUM_MODEL_SHAPES",
+        "2048x24x8x512",
+    )
+    assert native_jit._native_prefill_global_fp16_accum_enabled(
+        8, 512, 2048, 24, torch.float16
+    )
+    monkeypatch.setattr(native_jit.torch.cuda, "device_count", lambda: 2)
+    assert not native_jit._native_prefill_global_fp16_accum_enabled(
+        8, 512, 2048, 24, torch.float16
+    )
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_FP16_ACCUM_MULTI_GPU", "1")
+    assert native_jit._native_prefill_global_fp16_accum_enabled(
+        8, 512, 2048, 24, torch.float16
+    )
+
+
+def test_global_fp16_accum_disables_sequence_ffn_only_for_selected_fp16_shape(
+    monkeypatch,
+) -> None:
+    from rwkv7_hf import native_jit
+
+    monkeypatch.setattr(native_jit.torch.cuda, "device_count", lambda: 1)
+    monkeypatch.setattr(
+        native_jit.torch.backends.cuda,
+        "matmul",
+        types.SimpleNamespace(allow_fp16_accumulation=False),
+    )
+    monkeypatch.setattr(native_jit, "fused_sequence_ffn", object())
+    monkeypatch.setattr(native_jit, "fused_sequence_ffn_available", lambda: True)
+    monkeypatch.setattr(
+        native_jit,
+        "_kernel_policy",
+        lambda: types.SimpleNamespace(
+            fused_prefill_sequence_ffn=True,
+            prefill_sequence_ffn_min_rows=1,
+            prefill_sequence_ffn_max_rows=1,
+            prefill_sequence_ffn_extra_rows=(),
+            prefill_sequence_ffn_model_shapes=((2048, 24, 8, 512),),
+            prefill_global_fp16_accum_model_shapes=((2048, 24, 8, 512),),
+        ),
+    )
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_GLOBAL_FP16_ACCUM", raising=False)
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_FUSED_SEQUENCE_FFN", raising=False)
+
+    assert not native_jit._native_prefill_fused_sequence_ffn_enabled(
+        4096, 8, 512, 2048, 24, torch.float16
+    )
+    assert native_jit._native_prefill_fused_sequence_ffn_enabled(
+        4096, 8, 512, 2048, 24, torch.bfloat16
+    )
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_GLOBAL_FP16_ACCUM", "0")
+    assert native_jit._native_prefill_fused_sequence_ffn_enabled(
+        4096, 8, 512, 2048, 24, torch.float16
+    )
+
+
 def test_fp16_accum_ffn_key_layers_support_policy_and_shape_override(monkeypatch) -> None:
     from rwkv7_hf import native_jit
 

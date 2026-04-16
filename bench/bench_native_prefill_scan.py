@@ -484,6 +484,16 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
             int(model.config.hidden_size),
             int(model.config.num_hidden_layers),
         ),
+        "prefill_global_fp16_accum_requested": os.environ.get(
+            "RWKV7_NATIVE_PREFILL_GLOBAL_FP16_ACCUM"
+        ),
+        "prefill_global_fp16_accum_effective": bool(
+            getattr(
+                model,
+                "_rwkv7_native_prefill_global_fp16_accum_effective",
+                False,
+            )
+        ),
         "prefill_fused_output_project_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_PROJECT", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_output_project_effective": getattr(nj, "_native_prefill_fused_output_project_enabled", lambda: False)(),
         "prefill_fused_output_project_block_m": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_PROJECT_BLOCK_M"),
