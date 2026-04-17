@@ -633,6 +633,9 @@ class NativeRWKV7ForCausalLM(
         return_legacy_cache: bool | None = None,
         **kwargs,
     ):
+        prefill_graph_continuation = bool(
+            kwargs.pop("_rwkv7_prefill_graph_continuation", False)
+        )
         train_temp_forward = getattr(self, "_rwkv7_train_temp_forward", None)
         if callable(train_temp_forward):
             return train_temp_forward(
@@ -769,6 +772,7 @@ class NativeRWKV7ForCausalLM(
                 input_ids,
                 logits_to_keep=logits_to_keep,
                 seen_tokens=seq_len,
+                graph_continuation=prefill_graph_continuation,
             )
             logits = _slice_native_logits(logits, logits_to_keep)
             new_cache = _maybe_legacy_native_cache(new_cache, return_legacy_cache)
@@ -787,6 +791,7 @@ class NativeRWKV7ForCausalLM(
                 logits_to_keep=logits_to_keep,
                 seen_tokens=_cache_seen(past_key_values) + seq_len,
                 initial_cache=native_cache,
+                graph_continuation=prefill_graph_continuation,
             )
             logits = _slice_native_logits(logits, logits_to_keep)
             new_cache = _maybe_legacy_native_cache(new_cache, return_legacy_cache)

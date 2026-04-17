@@ -117,6 +117,7 @@ class _NativeFastAPIMixin:
                 use_cache=True,
                 logits_to_keep=logits_to_keep if end == total else 1,
                 return_dict=True,
+                _rwkv7_prefill_graph_continuation=True,
                 **kwargs,
             )
             past = out.past_key_values

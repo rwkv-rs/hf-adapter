@@ -136,6 +136,7 @@ class _NativeRuntimeMixin:
         logits_to_keep,
         seen_tokens: int,
         initial_cache=None,
+        graph_continuation: bool = False,
     ):
         entrypoint = _native_model_entrypoint()
         prefill_graph_runner_cls = entrypoint._NativePrefillGraphRunner
@@ -144,11 +145,14 @@ class _NativeRuntimeMixin:
             raise RuntimeError("native prefill runtime is unavailable")
         batch_size = int(input_ids.shape[0])
         prompt_tokens = int(input_ids.shape[1])
-        graph_quant_safe = initial_cache is None and self._native_prefill_graph_quant_safe(
-            input_ids.device
+        graph_quant_safe = self._native_prefill_graph_quant_safe(input_ids.device)
+        graph_continuation_safe = bool(
+            initial_cache is None
+            or (graph_continuation and not self._native_model_quantized())
         )
         if (
             graph_quant_safe
+            and graph_continuation_safe
             and _native_prefill_graph_enabled(
                 batch_size,
                 prompt_tokens,
@@ -162,11 +166,13 @@ class _NativeRuntimeMixin:
                 batch_size,
                 prompt_tokens,
                 logits_to_keep,
+                graph_continuation,
             ):
                 runner = self._native_prefill_graph_runner(
                     batch_size,
                     prompt_tokens,
                     logits_to_keep,
+                    graph_continuation,
                 )
             else:
                 stats = getattr(self, "_rwkv7_native_prefill_graph_cache_stats", None)
@@ -175,13 +181,27 @@ class _NativeRuntimeMixin:
                     self._rwkv7_native_prefill_graph_cache_stats = stats
                 stats["requests"] = int(stats.get("requests", 0)) + 1
                 stats["hits"] = int(stats.get("hits", 0)) + 1
-            logits, cache = runner.replay(input_ids, seen_tokens=int(seen_tokens))
+            logits, cache = runner.replay(
+                input_ids,
+                seen_tokens=int(seen_tokens),
+                initial_cache=initial_cache,
+            )
             self._rwkv7_native_model_last_prefill_backend = "native_prefill_graph"
             return logits, cache
         packs = self._native_graph_packs()
         state = xpa = xpf = None
         if initial_cache is not None:
             state, xpa, xpf, _ = _copy_native_cache_tuple(initial_cache)
+        fp16_elapsed = (
+            torch.full(
+                (batch_size,),
+                int(seen_tokens) - prompt_tokens,
+                device=input_ids.device,
+                dtype=torch.int32,
+            )
+            if initial_cache is not None
+            else None
+        )
         logits, state, xpa, xpf = native_jit_prefill(
             self,
             input_ids,
@@ -190,6 +210,7 @@ class _NativeRuntimeMixin:
             xpa=xpa,
             xpf=xpf,
             logits_to_keep=logits_to_keep,
+            fp16_elapsed=fp16_elapsed,
         )
         v_first = torch.zeros(
             int(input_ids.shape[0]),
@@ -214,6 +235,7 @@ class _NativeRuntimeMixin:
         batch_size: int,
         prompt_tokens: int,
         logits_to_keep,
+        carry_state: bool = False,
     ) -> _NativePrefillGraphRunner:
         weight = self.model.embeddings.weight
         guard = _cuda_device_guard(weight.device)
@@ -223,6 +245,7 @@ class _NativeRuntimeMixin:
                 batch_size,
                 prompt_tokens,
                 logits_to_keep,
+                carry_state,
             )
 
     def _native_prefill_graph_runner_current_device(
@@ -230,6 +253,7 @@ class _NativeRuntimeMixin:
         batch_size: int,
         prompt_tokens: int,
         logits_to_keep,
+        carry_state: bool = False,
     ) -> _NativePrefillGraphRunner:
         prefill_graph_runner_cls = _native_model_entrypoint()._NativePrefillGraphRunner
         packs = self._native_graph_packs()
@@ -245,6 +269,7 @@ class _NativeRuntimeMixin:
             int(batch_size),
             int(prompt_tokens),
             normalized_keep,
+            bool(carry_state),
             _native_prefill_graph_signature(),
             str(getattr(self, "_rwkv7_native_mm_quantization", "none")),
         )
@@ -276,6 +301,7 @@ class _NativeRuntimeMixin:
             int(batch_size),
             int(prompt_tokens),
             normalized_keep,
+            bool(carry_state),
         )
         cache[key] = runner
         self._rwkv7_native_prefill_graph_hot_runner = runner
