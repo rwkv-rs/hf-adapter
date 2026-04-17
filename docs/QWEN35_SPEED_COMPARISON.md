@@ -9,10 +9,10 @@ history, quantization lanes, and cell-level telemetry. [中文版](QWEN35_SPEED_
 > The promoted NVIDIA dense-FP16 comparison contains **24 GPU/model/batch
 > combinations**, plus **3 Apple M5 target-only W4 combinations**. Every row
 > has RWKV-7 ahead of Qwen3.5 in median raw Prefill and Decode throughput.
-> Raw Prefill/Decode reaches **5.47x / 12.15x**. After discounting the natural
+> Raw Prefill/Decode reaches **5.41x / 19.79x**. After discounting the natural
 > speed advantage of the smaller model, parameter-size-adjusted
-> Prefill/Decode reaches **4.39x / 7.28x**. In the more direct Prefill + Decode
-> end-to-end result, all **134/134 measured NVIDIA cells** and all **24/24
+> Prefill/Decode reaches **4.39x / 11.85x**. In the more direct Prefill + Decode
+> end-to-end result, all **110/110 measured NVIDIA cells** and all **24/24
 > combination medians** beat Qwen3.5 both raw and after parameter-size
 > adjustment; all **3/3 Apple M5 combinations** also remain ahead after
 > adjustment.
@@ -26,9 +26,13 @@ E2E median also remains ahead.**
 - Prefill processes the input prompt. Decode generates tokens one at a time
   and is the closer match for sustained chat generation.
 - The NVIDIA table uses **raw dense-FP16 tok/s** and also reports
-  parameter-size-adjusted speed. Except for the explicitly labeled V100
-  shapes, `6 cells` means the median across
-  `P128/512/2048 × D128/512`.
+  parameter-size-adjusted speed. Except for the explicitly labeled V100 and
+  latest RTX 5090 shapes, `6 cells` means the median across
+  `P128/512/2048 × D128/512`; the latest RTX 5090 `3 cells` use
+  `P128/512/2048 × D128`.
+- These are inference throughput comparisons. They do not claim that one
+  model has better instruction following, reasoning, coding, multilingual, or
+  other task quality; those require separate evaluation rows.
 
 ## Parameter accounting
 
@@ -79,17 +83,40 @@ Prefill and Decode time within every measured cell.
 | RTX 4090 | 2.9B / 4B | B8 | 6 cells | 2.947735B | 4.205751B | `0.700882` | **1.42x / 4.24x** | **1.00x / 2.97x** | **3.99x / 2.80x** | [4090 small](../bench/4090_small_bsz8_20260715/README.md) |
 | RTX 4090 | 7.2B / 9B | B8 | 6 cells | 7.199142B | 8.953803B | `0.804032` | **1.12x / 2.22x** | **0.90x / 1.79x** | **2.11x / 1.69x** | [4090 7.2B](../bench/4090_g1h_7p2_bsz8_20260715/README.md) |
 | RTX 5070 Laptop | 1.5B / 2B | B8 | 6 cells | 1.527405B | 1.881825B | `0.811661` | **1.33x / 2.62x** | **1.08x / 2.13x** | **2.48x / 2.02x** | [5070](../bench/5070_qwen35_full_fla_bsz8_20260714/README.md) |
-| RTX 5090 | 0.4B / 0.8B | B1 | 6 cells | 0.450768B | 0.752393B | `0.599112` | **5.47x / 10.90x** | **3.28x / 6.53x** | **10.80x / 6.47x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
-| RTX 5090 | 1.5B / 2B | B1 | 6 cells | 1.527405B | 1.881825B | `0.811661` | **3.26x / 6.74x** | **2.64x / 5.47x** | **6.67x / 5.41x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
-| RTX 5090 | 2.9B / 4B | B1 | 6 cells | 2.947735B | 4.205751B | `0.700882` | **2.72x / 5.24x** | **1.90x / 3.67x** | **5.12x / 3.59x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
-| RTX 5090 | 7.2B / 9B | B1 | 6 cells | 7.199142B | 8.953803B | `0.804032` | **1.21x / 2.91x** | **0.97x / 2.34x** | **2.88x / 2.31x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
-| RTX 5090 | 0.4B / 0.8B | B8 | 6 cells | 0.450768B | 0.752393B | `0.599112` | **1.61x / 7.20x** | **0.97x / 4.31x** | **6.99x / 4.19x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
-| RTX 5090 | 1.5B / 2B | B8 | 6 cells | 1.527405B | 1.881825B | `0.811661` | **1.19x / 4.59x** | **0.97x / 3.73x** | **4.40x / 3.57x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
-| RTX 5090 | 2.9B / 4B | B8 | 6 cells | 2.947735B | 4.205751B | `0.700882` | **1.48x / 3.81x** | **1.04x / 2.67x** | **3.65x / 2.56x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
-| RTX 5090 | 7.2B / 9B | B8 | 6 cells | 7.199142B | 8.953803B | `0.804032` | **1.04x / 2.83x** | **0.84x / 2.28x** | **2.66x / 2.14x** | [5090](../bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
+| RTX 5090 | 0.4B / 0.8B | B1 | 3 cells | 0.450768B | 0.752393B | `0.599112` | **3.86x / 19.79x** | **2.31x / 11.85x** | **18.63x / 11.16x** | [5090 latest](../bench/5090_g1i_qwen35_prefill_pd_sota_20260811/README.md) |
+| RTX 5090 | 1.5B / 2B | B1 | 3 cells | 1.527405B | 1.881825B | `0.811661` | **2.16x / 9.63x** | **1.75x / 7.82x** | **9.34x / 7.58x** | [5090 latest](../bench/5090_g1i_qwen35_prefill_pd_sota_20260811/README.md) |
+| RTX 5090 | 2.9B / 4B | B1 | 3 cells | 2.947735B | 4.205751B | `0.700882` | **1.87x / 7.49x** | **1.31x / 5.25x** | **7.13x / 5.00x** | [5090 latest](../bench/5090_g1i_qwen35_prefill_pd_sota_20260811/README.md) |
+| RTX 5090 | 7.2B / 9B | B1 | 3 cells | 7.199142B | 8.953803B | `0.804032` | **1.42x / 3.50x** | **1.14x / 2.81x** | **3.43x / 2.76x** | [5090 latest](../bench/5090_g1i_qwen35_prefill_pd_sota_20260811/README.md) |
+| RTX 5090 | 0.4B / 0.8B | B8 | 3 cells | 0.450768B | 0.752393B | `0.599112` | **2.24x / 7.99x** | **1.34x / 4.79x** | **7.61x / 4.56x** | [5090 latest](../bench/5090_g1i_qwen35_prefill_pd_sota_20260811/README.md) |
+| RTX 5090 | 1.5B / 2B | B8 | 3 cells | 1.527405B | 1.881825B | `0.811661` | **1.43x / 4.77x** | **1.16x / 3.87x** | **4.48x / 3.63x** | [5090 latest](../bench/5090_g1i_qwen35_prefill_pd_sota_20260811/README.md) |
+| RTX 5090 | 2.9B / 4B | B8 | 3 cells | 2.947735B | 4.205751B | `0.700882` | **1.69x / 3.92x** | **1.19x / 2.75x** | **3.68x / 2.58x** | [5090 latest](../bench/5090_g1i_qwen35_prefill_pd_sota_20260811/README.md) |
+| RTX 5090 | 7.2B / 9B | B8 | 3 cells | 7.199142B | 8.953803B | `0.804032` | **1.54x / 2.72x** | **1.24x / 2.19x** | **2.54x / 2.05x** | [5090 latest](../bench/5090_g1i_qwen35_prefill_pd_sota_20260811/README.md) |
 
 This complete table preserves every promoted GPU/model/batch result and makes
 the raw and parameter-size-adjusted ratios directly comparable.
+
+### RTX 5090 latest-checkpoint strict gate
+
+The latest RTX 5090 rows use RWKV-7 g1d 0.4B plus the 2026-08-05 g1i
+1.5B/2.9B/7.2B checkpoints against official Qwen3.5 0.8B/2B/4B/9B. All 24
+Qwen reference cells verify FLA, Triton causal convolution, live fused
+bindings, and the full-fused contract.
+
+Unlike the row medians above, the strict gate checks every B1/B8 and
+P128/P512/P2048 cell independently. All `24/24` cells pass: raw Prefill has
+minimum/median `1.347871x/1.819072x`, and parameter-adjusted Prefill has
+minimum/median `1.072987x/1.317515x`. Raw Decode has minimum/median
+`2.710952x/6.104568x`, while parameter-adjusted Decode has minimum/median
+`2.179692x/4.330813x`. Raw and adjusted E2E are also above `1.00x` in all
+`24/24` cells.
+
+The 0.4B/B1/P2048 candidate reaches `61,343.8 tok/s`, `2.2495x` its prior
+candidate row. The graph-versus-eager P2048 oracle passes `8/8` model/batch
+rows with prompt/post-cache-handoff cosine minima
+`0.99999988/0.99999994` and exact greedy tokens. Removing the negative 7.2B
+stacked-RKV route lowers its candidate peak from `17.4-18.6 GiB` to
+`14.3-15.5 GiB`. See the
+[immutable evidence](../bench/5090_g1i_qwen35_prefill_pd_sota_20260811/README.md).
 
 ### Apple M5: complete target-only W4 comparison
 
@@ -257,6 +284,7 @@ A complete run reports exit code 0, `pipeline_exit_code.txt=0`,
 | RTX 4080 | [`bench/run_4080_adjusted_pd.sh`](../bench/run_4080_adjusted_pd.sh) | Runs all three pairs at B1/B8 and requires adjusted P/D `>1.00x` for all six groups |
 | RTX 5070 Laptop | [`bench/run_5070_qwen35_full_fla_bsz8.ps1`](../bench/run_5070_qwen35_full_fla_bsz8.ps1) | PowerShell with `-RwkvModel`, `-QwenModel`, and `-OutDir` |
 | RTX 5090 | [`bench/run_5090_qwen35_full_matrix.sh`](../bench/run_5090_qwen35_full_matrix.sh) | Four model pairs, B1/B8 full matrix |
+| RTX 5090 latest checkpoints | [Commands in the strict-gate evidence](../bench/5090_g1i_qwen35_prefill_pd_sota_20260811/README.md#reproduce-the-gate) | Four model pairs, B1/B8, P128/512/2048, D128 |
 
 Each runner verifies the exact GPU, backend bindings, matrix coverage, and
 acceptance gates, and writes `pipeline_exit_code.txt`,
