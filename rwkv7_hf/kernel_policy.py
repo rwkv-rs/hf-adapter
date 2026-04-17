@@ -1150,6 +1150,17 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             prefill_scan_block_m=8 if is_3090 else None,
             prefill_scan_block_m_b2=8 if is_3090 else None,
             prefill_scan_block_m_b4=8 if is_3090 else None,
+            # Exact RTX 3090 g1d/g1i full-model sweeps: row-32 reaches
+            # ~78.9k tok/s for 0.4B B8/P512 and improves 1.5B B8/P128/P512.
+            prefill_scan_block_m_model_shapes=(
+                (
+                    (1024, 8, 512, 32),
+                    (2048, 8, 128, 32),
+                    (2048, 8, 512, 32),
+                )
+                if is_3090
+                else ()
+            ),
             prefill_scan_num_warps=4 if is_3090 else None,
             prefill_blas_library="cublaslt" if is_3090 else None,
             prefill_blas_large_library="cublas" if is_3090 else None,
@@ -1193,10 +1204,28 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             prefill_sequence_ffn_large_blocks=(128, 128, 32, 64, 8),
             prefill_sequence_ffn_num_stages=4 if is_3090 else 3,
             prefill_sequence_ffn_num_warps=8 if is_3090 else 4,
+            # PyTorch >=2.7 only. These exact shapes pass prompt and cache-
+            # handoff cosine >=0.9999 plus greedy parity while closing their
+            # parameter-adjusted Qwen3.5 prefill-PD cells.
+            prefill_global_fp16_accum_model_shapes=(
+                (
+                    (1024, 24, 8, 512),
+                    (2048, 24, 8, 128),
+                    (2048, 24, 8, 512),
+                    (2560, 32, 1, 512),
+                    (2560, 32, 8, 512),
+                    (4096, 32, 1, 128),
+                    (4096, 32, 1, 512),
+                    (4096, 32, 8, 128),
+                    (4096, 32, 8, 512),
+                )
+                if is_3090
+                else ()
+            ),
             output_project_block_m=16,
             notes=(
                 "RTX 3090: measured cublasLt + row-8 scan, sequence shift-mix, state-prep, "
-                "output-prep, row-8 scan, shape-routed DPLR/stacked R/K/V/sequence FFN, fused BnB W8 activation preparation, native quant prefill/decode, and memory-first bnb routing; "
+                "output-prep, shape-routed row-32 scan/FP16 accumulation, DPLR/stacked R/K/V/sequence FFN, fused BnB W8 activation preparation, native quant prefill/decode, and memory-first bnb routing; "
                 "other CUDA tensor-core cards retain stable output fusions pending a local sweep"
                 if is_3090
                 else "CUDA tensor-core generation: use stable output fusions; require local sweep before projection/LoRA defaults"

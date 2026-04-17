@@ -34,6 +34,7 @@ BENCH_RUNNERS = [
     "bench/run_v100_qwen35_speed_matrix.sh",
     "bench/run_3090_qwen35_speed_matrix.sh",
     "bench/run_3090_qwen35_pair.sh",
+    "bench/run_3090_adjusted_prefill_pd.sh",
     "bench/run_4080_qwen35_pair_acceptance.sh",
     "bench/run_t4_hf_validation.sh",
 ]
@@ -167,6 +168,26 @@ def test_t4_validation_runner_contract() -> None:
     assert 'PREFILL_BATCH_SIZES="${PREFILL_BATCH_SIZES:-1,2,4,8}"' in text
     assert "RWKV7_NATIVE_MODEL=1" in text
     assert '--device "${EXPECTED_GPU_NAME}"' in text
+
+
+def test_3090_adjusted_prefill_runner_contract() -> None:
+    text = (ROOT / "bench/run_3090_adjusted_prefill_pd.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "RWKV_PYTHON_BIN" in text
+    assert "QWEN_PYTHON_BIN" in text
+    assert "SOURCE_COMMIT" in text
+    assert 'expected = ("2.7.1+cu126", "12.6", "3.3.1", "5.12.1", "1.14.0")' in text
+    assert '"2.6.0+cu124", "12.4", "3.2.0", "5.12.1", "0.5.1", "0.49.2"' in text
+    assert "--batch-sizes 1 8 --prompt-tokens 128 512 2048" in text
+    assert "--decode-tokens 128 --prefill-chunk-size 512" in text
+    assert "--qwen-backend fla --qwen-conv-backend fla_triton" in text
+    assert "--expected-cells 24" in text
+    assert "--min-prefill-active-parameter-throughput-ratio 1.0" in text
+    assert "--fail-on-gate" in text
+    assert "bench/bench_native_prefill_accum_correctness.py" in text
+    assert 'assert len(rows) == 15' in text
+    assert 'row.get("status") == "pass"' in text
 
 
 def test_acceptance_requires_model() -> None:

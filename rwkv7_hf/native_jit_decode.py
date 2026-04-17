@@ -327,7 +327,6 @@ def _block_ip(
             gn_b,
             eps=eps,
             block_n=N,
-            num_warps=_native_graph_fused_recurrent_raw_num_warps(),
         )
         out = out.view(A)
         new_state = new_state.view(H, N, N)
