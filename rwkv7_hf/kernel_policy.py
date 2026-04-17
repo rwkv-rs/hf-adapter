@@ -1220,6 +1220,23 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             if is_4080
             else ()
         )
+        rtx4080_global_fp16_accum_shapes = (
+            # Exact parity sweep: these three shapes crossed a greedy-token
+            # boundary, so they retain FP32 accumulation. Every promoted
+            # shape kept greedy prefill/decode parity and >0.9999 cosine.
+            tuple(
+                shape
+                for shape in rtx4080_prefill_shapes
+                if shape
+                not in {
+                    (1024, 24, 8, 512),
+                    (2048, 24, 8, 512),
+                    (2560, 32, 1, 512),
+                }
+            )
+            if is_4080
+            else ()
+        )
         return KernelPolicy(
             profile=profile,
             fast_prefill=is_4090 or is_4080,
@@ -1288,6 +1305,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             prefill_graph=is_4090 or is_4080,
             prefill_graph_cache_size=4 if is_4080 else 2,
             prefill_graph_model_shapes=rtx4080_prefill_shapes,
+            prefill_global_fp16_accum_model_shapes=rtx4080_global_fp16_accum_shapes,
             fused_prefill_shift_mix=is_4090 or is_4080,
             prefill_shift_mix_model_shapes=rtx4080_prefill_shapes,
             prefill_attn_shift_mix_launch_profiles=(
@@ -1334,6 +1352,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
                 "2.9B rows promote B=1/8 at T=128/512/2048; 1.5B/B1/P512 and P2048 use "
                 "exact-card self-chunk routes, with stacked R/K/V at P2048; grouped W/A/G/V remains enabled for "
                 "rows<=4, with a tensor-core grouped BMM on measured B8 model shapes; "
+                "parity-approved prefill shapes use scoped full-GEMM FP16 accumulation; "
                 "7.2B/B8 decode uses exact-shape Triton FP16 state, while the regressing Ada linear route stays disabled"
                 if is_4080
                 else "RTX 40/Ada: exact-4090 rows promote fixed-shape prefill graph plus raw recurrent decode, 8-warp norm/mix, rows=1/2/4 exact linear, stacked-copy-free R/K/V including layer 0, graph-safe one/two-row sparse FFN, threshold-zero BnB W8 native prefill/decode, and bsz8 tensor-core MM4 output-head dispatch; other Ada cards retain the compatible fallback until measured"

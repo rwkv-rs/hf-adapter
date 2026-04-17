@@ -1,0 +1,24 @@
+{
+  "decode_greedy_matches": 15,
+  "gate": "all promoted shapes require prefill and decode greedy match plus cosine > 0.9999",
+  "minimum_decode_cosine": 0.9999900460243225,
+  "minimum_prefill_cosine": 0.9999774098396301,
+  "prefill_greedy_matches": 15,
+  "promoted_shapes": 15,
+  "retained_fp32_accumulation_shapes": [
+    {
+      "model": "0.4b",
+      "shape": "8x512"
+    },
+    {
+      "model": "1.5b",
+      "shape": "8x512"
+    },
+    {
+      "model": "2.9b",
+      "shape": "1x512"
+    }
+  ],
+  "scope": "RTX 4080 exact-shape FP16 accumulation promotion parity",
+  "status": "pass"
+}

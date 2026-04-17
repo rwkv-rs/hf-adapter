@@ -17,6 +17,10 @@ history, quantization lanes, and cell-level telemetry. [中文版](QWEN35_SPEED_
 > adjustment; all **3/3 Apple M5 combinations** also remain ahead after
 > adjustment.
 
+**RTX 4080 is now complete: parameter-size-adjusted Prefill and Decode medians
+exceed `1.00x` for all three model pairs at both B1 and B8, and every adjusted
+E2E median also remains ahead.**
+
 - `1.02x` means RWKV throughput is 1.02 times Qwen throughput, or about 2%
   faster.
 - Prefill processes the input prompt. Decode generates tokens one at a time
@@ -64,12 +68,12 @@ Prefill and Decode time within every measured cell.
 | RTX 3090 | 1.5B / 2B | B8 | 6 cells | 1.527405B | 1.881825B | `0.811661` | **1.08x / 3.42x** | **0.88x / 2.77x** | **3.18x / 2.58x** | [3090 small](../bench/3090_small_bsz8_20260714/README.md) |
 | RTX 3090 | 2.9B / 4B | B8 | 6 cells | 2.947735B | 4.205751B | `0.700882` | **1.36x / 2.96x** | **0.96x / 2.07x** | **2.77x / 1.94x** | [3090 small](../bench/3090_small_bsz8_20260714/README.md) |
 | RTX 3090 | 7.2B / 9B | B8 | 6 cells | 7.199142B | 8.953803B | `0.804032` | **1.06x / 1.81x** | **0.86x / 1.45x** | **1.70x / 1.36x** | [3090 7.2B](../bench/3090_g1h_7p2_bsz8_20260714/README.md) |
-| RTX 4080 | 0.4B / 0.8B | B1 | 6 cells | 0.450768B | 0.752393B | `0.599112` | **1.39x / 4.89x** | **0.83x / 2.93x** | **4.76x / 2.85x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
-| RTX 4080 | 0.4B / 0.8B | B8 | 6 cells | 0.450768B | 0.752393B | `0.599112` | **1.46x / 3.56x** | **0.87x / 2.13x** | **3.40x / 2.03x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
-| RTX 4080 | 1.5B / 2B | B1 | 6 cells | 1.527405B | 1.881825B | `0.811661` | **1.22x / 1.91x** | **0.99x / 1.55x** | **1.89x / 1.54x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
-| RTX 4080 | 1.5B / 2B | B8 | 6 cells | 1.527405B | 1.881825B | `0.811661` | **1.07x / 1.44x** | **0.87x / 1.17x** | **1.42x / 1.15x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
-| RTX 4080 | 2.9B / 4B | B1 | 6 cells | 2.947735B | 4.205751B | `0.700882` | **1.18x / 1.62x** | **0.83x / 1.14x** | **1.61x / 1.13x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
-| RTX 4080 | 2.9B / 4B | B8 | 6 cells | 2.947735B | 4.205751B | `0.700882` | **1.37x / 1.58x** | **0.96x / 1.11x** | **1.57x / 1.10x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
+| RTX 4080 | 0.4B / 0.8B | B1 | 6 cells | 0.450768B | 0.752393B | `0.599112` | **1.82x / 4.89x** | **1.09x / 2.93x** | **4.81x / 2.88x** | [4080 all P/D](../bench/4080_adjusted_pd_20260811/README.md) |
+| RTX 4080 | 0.4B / 0.8B | B8 | 6 cells | 0.450768B | 0.752393B | `0.599112` | **1.77x / 4.16x** | **1.06x / 2.49x** | **3.93x / 2.36x** | [4080 all P/D](../bench/4080_adjusted_pd_20260811/README.md) |
+| RTX 4080 | 1.5B / 2B | B1 | 6 cells | 1.527405B | 1.881825B | `0.811661` | **1.54x / 1.90x** | **1.25x / 1.55x** | **1.90x / 1.54x** | [4080 all P/D](../bench/4080_adjusted_pd_20260811/README.md) |
+| RTX 4080 | 1.5B / 2B | B8 | 6 cells | 1.527405B | 1.881825B | `0.811661` | **1.76x / 1.77x** | **1.43x / 1.44x** | **1.77x / 1.44x** | [4080 all P/D](../bench/4080_adjusted_pd_20260811/README.md) |
+| RTX 4080 | 2.9B / 4B | B1 | 6 cells | 2.947735B | 4.205751B | `0.700882` | **1.75x / 1.63x** | **1.22x / 1.15x** | **1.63x / 1.14x** | [4080 all P/D](../bench/4080_adjusted_pd_20260811/README.md) |
+| RTX 4080 | 2.9B / 4B | B8 | 6 cells | 2.947735B | 4.205751B | `0.700882` | **1.99x / 1.75x** | **1.40x / 1.23x** | **1.77x / 1.24x** | [4080 all P/D](../bench/4080_adjusted_pd_20260811/README.md) |
 | RTX 4090 | 0.4B / 0.8B | B8 | 6 cells | 0.450768B | 0.752393B | `0.599112` | **1.75x / 12.15x** | **1.05x / 7.28x** | **11.46x / 6.86x** | [4090 small](../bench/4090_small_bsz8_20260715/README.md) |
 | RTX 4090 | 1.5B / 2B | B8 | 6 cells | 1.527405B | 1.881825B | `0.811661` | **1.11x / 5.66x** | **0.90x / 4.59x** | **5.30x / 4.30x** | [4090 small](../bench/4090_small_bsz8_20260715/README.md) |
 | RTX 4090 | 2.9B / 4B | B8 | 6 cells | 2.947735B | 4.205751B | `0.700882` | **1.42x / 4.24x** | **1.00x / 2.97x** | **3.99x / 2.80x** | [4090 small](../bench/4090_small_bsz8_20260715/README.md) |
@@ -141,6 +145,10 @@ and [0.4B–13.3B regression evidence](../bench/amd_gfx1100_rebase_validation_20
   **FLA + Triton causal-conv** path and fused operator bindings.
 - NVIDIA RWKV uses repository Native prefill and native-graph cached decode.
   Apple uses target-only MLX W4 for both sides.
+- RTX 4080 uses each model's validated optimized runtime: PyTorch 2.11 with
+  exact-shape FP16 accumulation for RWKV, and PyTorch 2.6 with full FLA for
+  Qwen. Versions and backend telemetry are recorded; GPU, shapes, batch, and
+  FP16 precision are identical.
 - Release tiers are paired directly, such as 7.2B versus 9B. The tables expose
   raw tok/s, exact active parameter counts, parameter-size-adjusted speed, and
   Prefill + Decode end-to-end speed.
@@ -246,7 +254,7 @@ A complete run reports exit code 0, `pipeline_exit_code.txt=0`,
 |---|---|---|
 | V100 | [Commands in the V100 evidence](../bench/v100_active_b1b8_20260715/README.md#reproduce) | 1.5B/2B, B1/B8 |
 | RTX 3090 | [`bench/run_3090_qwen35_pair_acceptance.sh`](../bench/run_3090_qwen35_pair_acceptance.sh) | Same arguments as the 4090 runner |
-| RTX 4080 | [`bench/run_4080_qwen35_pair_acceptance.sh`](../bench/run_4080_qwen35_pair_acceptance.sh) | Set `BATCH_SIZE=1` and `8` separately |
+| RTX 4080 | [`bench/run_4080_adjusted_pd.sh`](../bench/run_4080_adjusted_pd.sh) | Runs all three pairs at B1/B8 and requires adjusted P/D `>1.00x` for all six groups |
 | RTX 5070 Laptop | [`bench/run_5070_qwen35_full_fla_bsz8.ps1`](../bench/run_5070_qwen35_full_fla_bsz8.ps1) | PowerShell with `-RwkvModel`, `-QwenModel`, and `-OutDir` |
 | RTX 5090 | [`bench/run_5090_qwen35_full_matrix.sh`](../bench/run_5090_qwen35_full_matrix.sh) | Four model pairs, B1/B8 full matrix |
 

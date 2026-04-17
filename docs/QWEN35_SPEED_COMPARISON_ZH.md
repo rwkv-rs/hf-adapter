@@ -15,6 +15,9 @@
 > 组合中位值**在原始及参数规模校正后都超过 Qwen3.5；Apple M5 的 **3/3 个
 > 组合**在校正后也全部超过。
 
+**RTX 4080 已完成全部六组：3 个模型对 × B1/B8 的参数规模校正 Prefill 和
+Decode 中位值现在均超过 `1.00x`，端到端校正结果也全部超过。**
+
 - `1.02x` 表示 RWKV 吞吐是 Qwen 的 1.02 倍，即约快 2%。
 - Prefill 是处理输入提示词；Decode 是逐 token 生成，后者更接近日常聊天的
   持续生成速度。
@@ -57,12 +60,12 @@ Prefill/Decode 中位值；`E2E 原始 / 校正`是逐格合并 Prefill 与 Deco
 | RTX 3090 | 1.5B / 2B | B8 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.08x / 3.42x** | **0.88x / 2.77x** | **3.18x / 2.58x** | [3090 small](../bench/3090_small_bsz8_20260714/README.md) |
 | RTX 3090 | 2.9B / 4B | B8 | 6格 | 2.947735B | 4.205751B | `0.700882` | **1.36x / 2.96x** | **0.96x / 2.07x** | **2.77x / 1.94x** | [3090 small](../bench/3090_small_bsz8_20260714/README.md) |
 | RTX 3090 | 7.2B / 9B | B8 | 6格 | 7.199142B | 8.953803B | `0.804032` | **1.06x / 1.81x** | **0.86x / 1.45x** | **1.70x / 1.36x** | [3090 7.2B](../bench/3090_g1h_7p2_bsz8_20260714/README.md) |
-| RTX 4080 | 0.4B / 0.8B | B1 | 6格 | 0.450768B | 0.752393B | `0.599112` | **1.39x / 4.89x** | **0.83x / 2.93x** | **4.76x / 2.85x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
-| RTX 4080 | 0.4B / 0.8B | B8 | 6格 | 0.450768B | 0.752393B | `0.599112` | **1.46x / 3.56x** | **0.87x / 2.13x** | **3.40x / 2.03x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
-| RTX 4080 | 1.5B / 2B | B1 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.22x / 1.91x** | **0.99x / 1.55x** | **1.89x / 1.54x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
-| RTX 4080 | 1.5B / 2B | B8 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.07x / 1.44x** | **0.87x / 1.17x** | **1.42x / 1.15x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
-| RTX 4080 | 2.9B / 4B | B1 | 6格 | 2.947735B | 4.205751B | `0.700882` | **1.18x / 1.62x** | **0.83x / 1.14x** | **1.61x / 1.13x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
-| RTX 4080 | 2.9B / 4B | B8 | 6格 | 2.947735B | 4.205751B | `0.700882` | **1.37x / 1.58x** | **0.96x / 1.11x** | **1.57x / 1.10x** | [4080](../bench/4080_full_model_ladder_20260719/README.md) |
+| RTX 4080 | 0.4B / 0.8B | B1 | 6格 | 0.450768B | 0.752393B | `0.599112` | **1.82x / 4.89x** | **1.09x / 2.93x** | **4.81x / 2.88x** | [4080 全部 P/D](../bench/4080_adjusted_pd_20260811/README.md) |
+| RTX 4080 | 0.4B / 0.8B | B8 | 6格 | 0.450768B | 0.752393B | `0.599112` | **1.77x / 4.16x** | **1.06x / 2.49x** | **3.93x / 2.36x** | [4080 全部 P/D](../bench/4080_adjusted_pd_20260811/README.md) |
+| RTX 4080 | 1.5B / 2B | B1 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.54x / 1.90x** | **1.25x / 1.55x** | **1.90x / 1.54x** | [4080 全部 P/D](../bench/4080_adjusted_pd_20260811/README.md) |
+| RTX 4080 | 1.5B / 2B | B8 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.76x / 1.77x** | **1.43x / 1.44x** | **1.77x / 1.44x** | [4080 全部 P/D](../bench/4080_adjusted_pd_20260811/README.md) |
+| RTX 4080 | 2.9B / 4B | B1 | 6格 | 2.947735B | 4.205751B | `0.700882` | **1.75x / 1.63x** | **1.22x / 1.15x** | **1.63x / 1.14x** | [4080 全部 P/D](../bench/4080_adjusted_pd_20260811/README.md) |
+| RTX 4080 | 2.9B / 4B | B8 | 6格 | 2.947735B | 4.205751B | `0.700882` | **1.99x / 1.75x** | **1.40x / 1.23x** | **1.77x / 1.24x** | [4080 全部 P/D](../bench/4080_adjusted_pd_20260811/README.md) |
 | RTX 4090 | 0.4B / 0.8B | B8 | 6格 | 0.450768B | 0.752393B | `0.599112` | **1.75x / 12.15x** | **1.05x / 7.28x** | **11.46x / 6.86x** | [4090 small](../bench/4090_small_bsz8_20260715/README.md) |
 | RTX 4090 | 1.5B / 2B | B8 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.11x / 5.66x** | **0.90x / 4.59x** | **5.30x / 4.30x** | [4090 small](../bench/4090_small_bsz8_20260715/README.md) |
 | RTX 4090 | 2.9B / 4B | B8 | 6格 | 2.947735B | 4.205751B | `0.700882` | **1.42x / 4.24x** | **1.00x / 2.97x** | **3.99x / 2.80x** | [4090 small](../bench/4090_small_bsz8_20260715/README.md) |
@@ -134,6 +137,9 @@ Apple MLX W4 单独成表，以保持每张表内部的后端和精度一致；�
   fused operator 绑定。
 - NVIDIA 的 RWKV 使用仓库的 Native prefill 与 native-graph cached decode；
   Apple 两边均为 MLX W4 target-only 路线。
+- RTX 4080 采用双方各自已验证的优化运行时：RWKV 使用 PyTorch 2.11 的精确
+  形状 FP16 accumulation，Qwen 使用 PyTorch 2.6 的 full-FLA 路线；版本和
+  后端均记录在证据中，GPU、形状、Batch 和 FP16 精度保持一致。
 - 模型按发布档位配对，例如 7.2B 对 9B；表中同时展示原始 tok/s、精确活跃
   参数、参数规模校正速度和 Prefill + Decode 端到端速度。
 - NVIDIA 主表统一使用 dense FP16；Apple 表统一使用双方正式的 MLX W4，
@@ -237,7 +243,7 @@ Qwen 行显示 full-FLA 优化路径；结果按中位值和两位小数进行�
 |---|---|---|
 | V100 | [V100 证据中的命令](../bench/v100_active_b1b8_20260715/README.md#reproduce) | 1.5B/2B，B1/B8 |
 | RTX 3090 | [`bench/run_3090_qwen35_pair_acceptance.sh`](../bench/run_3090_qwen35_pair_acceptance.sh) | 参数形式与 4090 相同 |
-| RTX 4080 | [`bench/run_4080_qwen35_pair_acceptance.sh`](../bench/run_4080_qwen35_pair_acceptance.sh) | 分别设置 `BATCH_SIZE=1` 和 `8` |
+| RTX 4080 | [`bench/run_4080_adjusted_pd.sh`](../bench/run_4080_adjusted_pd.sh) | 一次运行 3 个模型对、B1/B8 全部六组，并强制参数校正 P/D 均 `>1.00x` |
 | RTX 5070 Laptop | [`bench/run_5070_qwen35_full_fla_bsz8.ps1`](../bench/run_5070_qwen35_full_fla_bsz8.ps1) | Windows PowerShell；通过 `-RwkvModel`、`-QwenModel`、`-OutDir` 传路径 |
 | RTX 5090 | [`bench/run_5090_qwen35_full_matrix.sh`](../bench/run_5090_qwen35_full_matrix.sh) | 四个模型对、B1/B8 的完整矩阵 |
 

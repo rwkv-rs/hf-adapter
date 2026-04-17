@@ -105,12 +105,14 @@ more specific claim.
   projection/LoRA/warp candidates remain disabled. Evidence:
   [`../bench/5070_max_perf_20260811/README.md`](../bench/5070_max_perf_20260811/README.md).
 - **RTX 4080:** 0.4B/1.5B/2.9B versus full-FLA Qwen3.5 0.8B/2B/4B passes
-  six B1/B8 pair matrices with dense prefill/decode minima
-  `1.012285x/1.435296x`. The exact-B8 grouped W/A/V projection route improves
+  all six B1/B8 groups after parameter adjustment: Prefill medians are
+  `1.06x–1.43x`, Decode medians are `1.15x–2.93x`, and adjusted E2E medians
+  are `1.14x–2.88x`. The exact-B8 grouped W/A/V projection route improves
   those RWKV checkpoints by `1.1267x/1.0942x/1.0809x` with exact first-step
   logits and greedy `4,608/4,608`. The separate 7.2B/B8 FP16-state decode
   route reaches `344.39 tok/s`, `1.0301x` its FP32-state route, saves
   `123.88 MiB`, and matches greedy `12,288/12,288`. Evidence:
+  [`../bench/4080_adjusted_pd_20260811/README.md`](../bench/4080_adjusted_pd_20260811/README.md),
   [`../bench/4080_b8_projection_bmm_20260809/README.md`](../bench/4080_b8_projection_bmm_20260809/README.md)
   and
   [`../bench/4080_7p2b_fp16_state_20260809/README.md`](../bench/4080_7p2b_fp16_state_20260809/README.md).
