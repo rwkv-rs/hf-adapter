@@ -43,7 +43,7 @@ Status vocabulary:
 | RTX 5070 Laptop | Exact Native/no-FLA 0.4B/1.5B B1/B2/B4/B8, prompt128/512 | prefill output and cache-handoff cosine pass; greedy matches; decode candidates use balanced A/B and fail-closed model/batch routing | raw recurrent `1.0272x-1.1265x`; promoted norm/mix `1.0373x-1.1630x`; B8 FP16 state up to `1.0478x` with `16.875-58.125 MiB` lower allocation | **PASS exact measured shapes** |
 | RTX 5090 | 0.4B MATH500; 1.5B/2.9B/7.2B quant; 13.3B inference | pass@64 `0.38`; compression ratio `1.0`; all quant same-next | MATH summary/decode `4.336x/4.871x` committed Albatross reference; 2.9B/7.2B quant `>=0.99x` paired fp16 | **PASS artifact** |
 | RTX 5090 | 0.4B/0.8B through 7.2B/9B, B1/B8, dense/W8/W4 | 144/144 Qwen references verify full FLA plus Triton conv; 32/32 greedy checks pass; task quality is separate | raw dense prefill/decode minima `1.0226x/2.8130x`; per-active-B speed leads in all cells; W8/W4 total-latency and footprint gates pass | **PASS 8/8 batch-pairs** |
-| RTX 5090 | latest g1d/g1i 0.4B/1.5B/2.9B/7.2B vs Qwen3.5, B1/B8, dense FP16 | 24/24 full-FLA references; 21/21 changed-route logits/greedy/cache gates pass | per-cell parameter-adjusted prefill PD min/median `1.028427x/1.269319x`; raw prefill min `1.320082x` | **PASS 24/24** |
+| RTX 5090 | latest g1d/g1i 0.4B/1.5B/2.9B/7.2B vs Qwen3.5, B1/B8, dense FP16 | 24/24 full-FLA references; 8/8 P2048 graph/eager continuation and cache-handoff gates pass | per-cell parameter-adjusted prefill PD min/median `1.072987x/1.317515x`; raw prefill min `1.347871x`; 0.4B/B1/P2048 `61.34k tok/s` | **PASS 24/24** |
 | RTX 5090 | g1h 1.5B/2.9B/7.2B/13.3B BF16 versus W4, B1/B8, prompt128/decode128 | prompt/final cosine `>=0.9995`, same-next 8/8; group-128 grid 280/280 | prefill/decode minima `1.0010x/1.1854x`; footprint `0.5298x–0.6250x` with automatic exact-model profiles | **PASS 8/8 all-phase cells** |
 | RTX 5090 | official train_temp vs opt-in HF train_temp CUDA, 12x768 BF16, B1/T512 | backward 400/400 and FusedAdam step 800 tensors/deltas exactly match; 3-seed x 1,000-step cohort passes | median runtime 48.4061 s official vs 43.5184 s HF; candidate 10.10% lower in this synthetic cohort | **PASS exact lane** |
 | RTX 5090 | official train_temp vs Native/no-FLA train_temp CUDA, 12x768 BF16, B16/T512, real MiniPile | 399/399 gradients and 399/399 parameter deltas exact; paired 3-seed x 1,000-step, continuous 5,000-step and 2,500+2,500 resume gates pass | paired-seed median `1.00049x`; 5,000-step Native `410.414s` vs official `411.462s`, or `1.00255x` | **PASS exact measured lane** |
@@ -627,6 +627,18 @@ has minimum `1.028427x` and median `1.269319x`, while raw prefill has minimum
 `1.320082x`. All 24 Qwen rows verify full FLA plus Triton causal convolution;
 the 21 changed-route correctness rows have minimum cosine `0.99999994` with
 exact prefill and post-cache-handoff greedy tokens.
+
+The same-day ceiling follow-up at
+[`bench/5090_g1i_qwen35_prefill_pd_sota_20260811/`](bench/5090_g1i_qwen35_prefill_pd_sota_20260811/README.md)
+keeps the 24 verified full-FLA reference rows and reruns all candidate cells
+after adding recurrent-cache continuation to the native prefill CUDA graph.
+It passes 24/24 at adjusted prefill PD minimum/median
+`1.072987x/1.317515x`; raw prefill minimum is `1.347871x`. The
+0.4B/B1/P2048 candidate rises from `27.27k` to `61.34k tok/s` (`2.2495x`),
+and the 8/8 graph-versus-eager P2048 oracle retains prompt/post-handoff cosine
+minima `0.99999988/0.99999994` with exact greedy tokens. Removing the negative
+7.2B stacked-RKV route reduces its final candidate peak from
+`17.4-18.6 GiB` to `14.3-15.5 GiB`.
 
 ### Quant pressure matrix
 
