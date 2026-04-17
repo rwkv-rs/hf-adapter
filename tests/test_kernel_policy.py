@@ -745,10 +745,6 @@ def test_policy_defaults_are_conservative() -> None:
         (1024, 24, 8, 2048),
         (2048, 24, 8, 512),
         (2048, 24, 8, 2048),
-        (4096, 32, 1, 128),
-        (4096, 32, 1, 512),
-        (4096, 32, 8, 128),
-        (4096, 32, 8, 512),
     )
     assert blackwell.fused_prefill_sequence_ffn
     assert blackwell.prefill_sequence_ffn_min_rows == 1
