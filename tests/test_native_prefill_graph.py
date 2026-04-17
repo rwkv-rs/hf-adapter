@@ -166,6 +166,7 @@ def test_external_quant_prefill_bypasses_graph_capture(monkeypatch) -> None:
         xpa,
         xpf,
         logits_to_keep,
+        fp16_elapsed=None,
     ):
         assert state is xpa is xpf is None
         assert logits_to_keep == 1
@@ -223,10 +224,19 @@ def test_native_prefill_graph_runner_cache_is_shape_keyed_lru(monkeypatch) -> No
     created = []
 
     class FakeRunner:
-        def __init__(self, owner, packs, batch_size, prompt_tokens, logits_to_keep):
+        def __init__(
+            self,
+            owner,
+            packs,
+            batch_size,
+            prompt_tokens,
+            logits_to_keep,
+            carry_state=False,
+        ):
             self.batch_size = int(batch_size)
             self.prompt_tokens = int(prompt_tokens)
             self.logits_to_keep = logits_to_keep
+            self.carry_state = bool(carry_state)
             self.detached = 0
             created.append((self.batch_size, self.prompt_tokens, self.logits_to_keep))
 
@@ -271,8 +281,24 @@ def test_native_prefill_graph_runner_cache_is_shape_keyed_lru(monkeypatch) -> No
 def test_native_prefill_continuation_forwards_existing_cache_to_jit(monkeypatch) -> None:
     captured = {}
 
-    def fake_prefill(_owner, ids, _packs, *, state, xpa, xpf, logits_to_keep):
-        captured.update(state=state, xpa=xpa, xpf=xpf, logits_to_keep=logits_to_keep)
+    def fake_prefill(
+        _owner,
+        ids,
+        _packs,
+        *,
+        state,
+        xpa,
+        xpf,
+        logits_to_keep,
+        fp16_elapsed=None,
+    ):
+        captured.update(
+            state=state,
+            xpa=xpa,
+            xpf=xpf,
+            logits_to_keep=logits_to_keep,
+            fp16_elapsed=fp16_elapsed,
+        )
         return (
             torch.ones(ids.shape[0], 1, 7),
             [torch.full_like(state[0], 2.0)],
@@ -291,6 +317,9 @@ def test_native_prefill_continuation_forwards_existing_cache_to_jit(monkeypatch)
             embeddings=SimpleNamespace(weight=torch.empty(8, 4, dtype=torch.float16))
         ),
         _native_graph_packs=lambda: [(0, 1, 4)],
+        _native_prefill_graph_quant_safe=lambda _device=None: True,
+        # Quantized continuation remains on the eager compatibility path.
+        _native_model_quantized=lambda: True,
     )
     cache = native_model.NativeRWKV7Cache(
         [torch.ones(1, 1, 4, 4)],
@@ -315,8 +344,73 @@ def test_native_prefill_continuation_forwards_existing_cache_to_jit(monkeypatch)
     assert captured["xpa"][0] is cache._xpa[0]
     assert captured["xpf"][0] is cache._xpf[0]
     assert captured["logits_to_keep"] == 1
+    assert torch.equal(captured["fp16_elapsed"], torch.tensor([4], dtype=torch.int32))
     assert continued.get_seq_length() == 6
     assert owner._rwkv7_native_model_last_prefill_backend == "native_prefill_continuation"
+
+
+def test_dense_native_prefill_continuation_reuses_graph_runner(monkeypatch) -> None:
+    captured = {}
+
+    class FakeRunner:
+        def matches(self, batch_size, prompt_tokens, logits_to_keep, carry_state=False):
+            return (batch_size, prompt_tokens, logits_to_keep, carry_state) == (
+                1,
+                2,
+                1,
+                True,
+            )
+
+        def replay(self, ids, *, seen_tokens, initial_cache=None):
+            captured.update(
+                ids=ids,
+                seen_tokens=seen_tokens,
+                initial_cache=initial_cache,
+            )
+            return torch.ones(1, 1, 7), native_model.NativeRWKV7Cache(
+                [torch.full((1, 1, 4, 4), 2.0)],
+                [torch.full((1, 4), 3.0)],
+                [torch.full((1, 4), 4.0)],
+                torch.zeros(1, 4),
+                seen_tokens=seen_tokens,
+            )
+
+    runner = FakeRunner()
+    owner = SimpleNamespace(
+        config=SimpleNamespace(hidden_size=4, num_hidden_layers=1),
+        model=SimpleNamespace(
+            embeddings=SimpleNamespace(weight=torch.empty(8, 4, dtype=torch.float16))
+        ),
+        _native_prefill_graph_quant_safe=lambda _device=None: True,
+        _native_model_quantized=lambda: False,
+        _native_prefill_graph_hot_runner=runner,
+        _native_prefill_graph_runner=lambda *_args: runner,
+    )
+    cache = native_model.NativeRWKV7Cache(
+        [torch.ones(1, 1, 4, 4)],
+        [torch.ones(1, 4)],
+        [torch.ones(1, 4)],
+        torch.ones(1, 4),
+        seen_tokens=4,
+    )
+    monkeypatch.setattr(native_model, "_NativePrefillGraphRunner", FakeRunner)
+    monkeypatch.setattr(native_model, "_native_jit_prefill", object())
+    monkeypatch.setattr(native_model, "_native_prefill_graph_enabled", lambda *_args: True)
+
+    logits, continued = native_model.NativeRWKV7ForCausalLM._native_prefill(
+        owner,
+        torch.ones(1, 2, dtype=torch.long),
+        logits_to_keep=1,
+        seen_tokens=6,
+        initial_cache=cache,
+        graph_continuation=True,
+    )
+
+    assert logits.shape == (1, 1, 7)
+    assert captured["initial_cache"] is cache
+    assert captured["seen_tokens"] == 6
+    assert continued.get_seq_length() == 6
+    assert owner._rwkv7_native_model_last_prefill_backend == "native_prefill_graph"
 
 
 def test_native_prefill_graph_replay_detaches_previous_cache() -> None:
@@ -333,18 +427,34 @@ def test_native_prefill_graph_replay_detaches_previous_cache() -> None:
     runner.device = torch.device("cpu")
     runner.input_ids = torch.zeros(1, 2, dtype=torch.long)
     runner.logits = torch.tensor([[[3.0]]])
-    runner.state_outputs = [torch.zeros(1, 1, 1, 1)]
-    runner.xpa_outputs = [torch.zeros(1, 1)]
-    runner.xpf_outputs = [torch.zeros(1, 1)]
+    runner.state_inputs = [torch.zeros(1, 1, 1, 1)]
+    runner.xpa_inputs = [torch.zeros(1, 1)]
+    runner.xpf_inputs = [torch.zeros(1, 1)]
+    runner.state_outputs = runner.state_inputs
+    runner.xpa_outputs = runner.xpa_inputs
+    runner.xpf_outputs = runner.xpf_inputs
+    runner.carry_state = True
+    runner.inputs_are_zero = True
+    runner.fp16_elapsed = torch.zeros(1, dtype=torch.int32)
     runner.v_first = torch.zeros(1, 1)
-    runner.graph = FakeGraph(runner.state_outputs[0])
+    runner.graph = FakeGraph(runner.state_inputs[0])
     runner._bound_cache_ref = None
 
     _, first = runner.replay(torch.ones(1, 2, dtype=torch.long), seen_tokens=2)
     assert first._state[0].item() == 1
+    _, continued = runner.replay(
+        torch.full((1, 2), 2, dtype=torch.long),
+        seen_tokens=4,
+        initial_cache=first,
+    )
+    assert continued._state[0].item() == 2
+    assert continued.get_seq_length() == 4
+    assert runner.fp16_elapsed.item() == 2
+
     _, second = runner.replay(torch.full((1, 2), 2, dtype=torch.long), seen_tokens=2)
-    assert first._state[0].item() == 1
-    assert second._state[0].item() == 2
+    assert first._state[0].item() == 2
+    assert second._state[0].item() == 1
+    assert runner.fp16_elapsed.item() == 0
     assert not first._native_graph_bound_to(runner)
     assert second._native_graph_bound_to(runner)
 
@@ -357,8 +467,8 @@ def test_native_prefill_graph_replay_detaches_previous_cache() -> None:
     second._v_first = second._v_first.clone()
     second._bind_native_graph_runner(object())
     _, third = runner.replay(torch.full((1, 2), 3, dtype=torch.long), seen_tokens=2)
-    assert second._state[0].item() == 2
-    assert third._state[0].item() == 3
+    assert second._state[0].item() == 1
+    assert third._state[0].item() == 1
 
 
 def test_adapter_scan_caches_negative_but_peft_metadata_invalidates_it() -> None:

@@ -117,8 +117,13 @@ Current exact-card dispatch additions:
 - NVIDIA GeForce RTX 5090 (`sm_120`): exact dense-FP16 0.4B/1.5B/2.9B/7.2B
   B1/B8 P128/P512/P2048 rows may use the graph, scoped full-prefill FP16 GEMM
   accumulation, and fused boundaries allowlisted in `kernel_policy.py`. The
-  24/24 parameter-adjusted Qwen3.5 prefill gate and changed-route correctness
-  evidence live in `bench/5090_g1i_qwen35_prefill_pd_20260811/`. The global
+  latest 24/24 parameter-adjusted Qwen3.5 prefill gate and P2048
+  graph-versus-eager continuation evidence live in
+  `bench/5090_g1i_qwen35_prefill_pd_sota_20260811/`. Dense chunk continuation
+  may carry recurrent state inside its exact-shape CUDA graph, but quantized
+  continuation must remain eager until it has a matching correctness route.
+  Stacked RKV must remain disabled for 7.2B because exact-card rows show lower
+  latency and roughly 2.4-3.2 GiB lower peak VRAM without it. The global
   accumulation switch must remain exact-shape, scoped, single-GPU by default,
   and empty for other cards; do not promote it by Blackwell family alone.
 
