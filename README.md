@@ -140,6 +140,7 @@ Representative promoted evidence:
 |---|---|
 | RTX 5090 Native vs official/Albatross | [`bench/5090_native_official_fp16_production_20260718/`](bench/5090_native_official_fp16_production_20260718/README.md) |
 | RTX 5090 Qwen3.5 comparison | [`bench/5090_g1h_qwen35_b1_b8_20260715/`](bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
+| RTX 5090 latest-checkpoint Qwen3.5 prefill PD | [`bench/5090_g1i_qwen35_prefill_pd_sota_20260811/`](bench/5090_g1i_qwen35_prefill_pd_sota_20260811/README.md) |
 | RTX 5090 Tensor Core W4 | [`bench/5090_bntn_all_models_20260716/`](bench/5090_bntn_all_models_20260716/README.md) |
 | RTX 5090 train_temp alignment | [`bench/5090_native_train_temp_real_minipile_20260718/`](bench/5090_native_train_temp_real_minipile_20260718/README.md) |
 | V100 B1/B8 active-parameter comparison | [`bench/v100_active_b1b8_20260715/`](bench/v100_active_b1b8_20260715/README.md) |

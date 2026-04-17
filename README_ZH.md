@@ -152,6 +152,11 @@ python examples/generate.py --model D:\models\rwkv7-model-hf --prompt "User: 你
   dense prefill/decode 最低为 `1.0226x/2.8130x`；RWKV-7 7.2B 对
   Qwen3.5-9B 的 B1/B8 最低 prefill 为 `1.1739x/1.0309x`，decode 为
   `2.8934x/2.8130x`。
+- **最新检查点 Qwen3.5 Prefill PD：**g1d/g1i 0.4B/1.5B/2.9B/7.2B
+  对官方 Qwen3.5 0.8B/2B/4B/9B，在 B1/B8、P128/512/2048 的 24 个
+  dense-FP16 单元全部通过。参数规模校正 Prefill 最低/中位为
+  `1.072987x/1.317515x`，原始 Prefill 最低为 `1.347871x`；Qwen
+  full-FLA contract 为 24/24，P2048 graph/eager 正确性为 8/8。
 - **Tensor Core W4：**官方 g1h 1.5B/2.9B/7.2B/13.3B 的 B1/B8 共
   8 个 all-phase 单元全部通过；footprint 为 `0.5298x–0.6250x`，最低
   prefill/decode 为 `1.0010x/1.1854x`，cosine 高于 `0.9995`，next token
@@ -165,6 +170,7 @@ python examples/generate.py --model D:\models\rwkv7-model-hf --prompt "User: 你
 证据：
 [`Native/v3a`](bench/5090_native_official_fp16_production_20260718/README.md)、
 [`Qwen3.5`](bench/5090_g1h_qwen35_b1_b8_20260715/README.md)、
+[`最新检查点 Qwen3.5 Prefill PD`](bench/5090_g1i_qwen35_prefill_pd_sota_20260811/README.md)、
 [`W4`](bench/5090_bntn_all_models_20260716/README.md)、
 以及 [`训练`](bench/5090_native_train_temp_real_minipile_20260718/README.md)。
 
