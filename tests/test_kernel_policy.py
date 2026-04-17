@@ -487,6 +487,16 @@ def test_policy_defaults_are_conservative() -> None:
     assert rtx4080.prefill_graph
     assert rtx4080.prefill_graph_cache_size == 4
     assert rtx4080.prefill_graph_model_shapes == expected_4080_prefill_shapes
+    assert rtx4080.prefill_global_fp16_accum_model_shapes == tuple(
+        shape
+        for shape in expected_4080_prefill_shapes
+        if shape
+        not in {
+            (1024, 24, 8, 512),
+            (2048, 24, 8, 512),
+            (2560, 32, 1, 512),
+        }
+    )
     assert rtx4080.fused_prefill_shift_mix
     assert rtx4080.prefill_shift_mix_model_shapes == expected_4080_prefill_shapes
     assert rtx4080.prefill_attn_shift_mix_launch_profiles == (
@@ -528,6 +538,7 @@ def test_policy_defaults_are_conservative() -> None:
         adjacent_ada = policy_for_profile(classify_gpu(name, (8, 9)))
         assert not adjacent_ada.fast_prefill
         assert not adjacent_ada.prefill_graph
+        assert adjacent_ada.prefill_global_fp16_accum_model_shapes == ()
         assert not adjacent_ada.fused_prefill_self_chunk
         assert adjacent_ada.prefill_self_chunk_size == 16
         assert adjacent_ada.prefill_scan_model_shapes == ()

@@ -34,7 +34,7 @@ stack.
 | Lazy CUDA extension builders left `PATH`, `CUDA_HOME`, `TORCH_CUDA_ARCH_LIST` and runtime-library paths in the process | A later extension build could compile for the first card or race another module's builder | Added one package-wide build lock and a temporary environment scope that forces the requested architecture and restores every caller value |
 | Ada/V100/Blackwell-capable extension modules kept one process-wide binary | The first architecture to build `ada_sparse_ffn`/`ada_lora` could leave an incompatible binary for a later card | Extension names, modules and build errors are now cached independently by SM capability (`sm70`, `sm89`, `sm120`) |
 | Card-specific Triton compatibility paths replaced `torch.compile` globally | A mixed process could disable compilation for an unaffected card | Card-specific global compile workarounds now apply only when every visible CUDA device needs the same workaround; mixed generations fail closed |
-| Exact-5090 FP16 accumulation toggles a process-global PyTorch matmul flag | A concurrent 4080/4090 GEMM could observe the temporary precision mode | The toggle is lock-scoped and restored in `finally`; it is disabled by default whenever more than one CUDA device is visible |
+| Exact-card FP16 accumulation toggles a process-global PyTorch matmul flag | A concurrent model/GPU GEMM could observe the temporary precision mode | The native prefill engine uses the package accumulation lock, scopes the setting to exact allowlisted shapes, restores it in `finally`, and defaults off when multiple CUDA devices are visible |
 | The 3090 prefill route selected cuBLAS/cuBLASLt permanently | Subsequent requests/cards inherited the previous prefill's BLAS backend | BLAS selection is now lock-scoped across eager execution/graph capture and restores the previous backend afterward |
 | TorchAO packing called `torch.cuda.empty_cache()` during quantization | Quantizing one model in a heterogeneous worker could discard another card's warm allocator pool | Single-GPU packing retains the memory-peak optimization; multi-GPU workers skip the global flush unless explicitly opted in |
 
@@ -44,9 +44,12 @@ The machine-readable dataclass diff now has the following result:
 
 - **RTX 4080:** retains its exact shape allowlists, graph cache size 4,
   self-chunk tile 32, row-4 scan selections, and disabled regressing Ada linear
-  and sparse-FFN routes. A later exact-shape addition selects Triton FP16
-  recurrent state only for hidden 4096, 32 layers and B8; the paired 7.2B
-  evidence is in `bench/4080_7p2b_fp16_state_20260809/`.
+  and sparse-FFN routes. PyTorch native FP16 accumulation is promoted only for
+  the 15 exact shapes with prefill/decode greedy parity and cosine above
+  `0.9999`; three boundary shapes retain FP32 accumulation. A later exact-shape
+  addition selects Triton FP16 recurrent state only for hidden 4096, 32 layers
+  and B8; the paired 7.2B evidence is in
+  `bench/4080_7p2b_fp16_state_20260809/`.
 - **RTX 4090:** no executable policy value differs from the pre-4080 policy.
   Only later-added inert schema fields (`None`, `False`, or empty tuples) and
   explanatory notes differ. Self-chunk remains off by default and its fallback
@@ -87,6 +90,9 @@ Historical hardware artifacts establish the software stacks being protected:
 
 - RTX 4080: PyTorch 2.6.0+cu124, Triton 3.2.0, TorchAO 0.16.0 in
   `bench/4080_full_model_ladder_20260719/environment.json`.
+- RTX 4080 adjusted-P/D candidate: PyTorch 2.11.0+cu130 and Triton 3.6.0 in
+  `bench/4080_adjusted_pd_20260811/environment.json`; the paired optimized-Qwen
+  reference retains the recorded PyTorch 2.6/full-FLA stack.
 - RTX 4090: PyTorch 2.6.0+cu124, Triton 3.2.0, TorchAO 0.9.0 in
   `bench/4090_g1h_7p2_bsz8_20260715/environment.json`.
 - RTX 5090: PyTorch 2.11.0+cu128 and Triton 3.6.0 in
