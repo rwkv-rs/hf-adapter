@@ -186,7 +186,11 @@ def native_jit_packs(model):
     raise AttributeError("model does not expose native JIT projection packs")
 
 
-def scan_block_m(model, batch_size: int | None = None) -> int | None:
+def scan_block_m(
+    model,
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+) -> int | None:
     raw = os.environ.get("RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M")
     if raw is not None:
         try:
@@ -195,7 +199,12 @@ def scan_block_m(model, batch_size: int | None = None) -> int | None:
             return None
     try:
         head_dim = int(native_jit_packs(model)[0][2])
-        return model_native_jit_module(model)._native_prefill_scan_block_m(head_dim, batch_size)
+        return model_native_jit_module(model)._native_prefill_scan_block_m(
+            head_dim,
+            batch_size,
+            prompt_tokens,
+            int(model.config.hidden_size),
+        )
     except Exception:
         return None
 
@@ -278,6 +287,9 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
             "RWKV7_FAST_PREFILL": "1",
             "RWKV7_NATIVE_PREFILL_GRAPH": "0",
             "RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX": "0",
+            "RWKV7_NATIVE_PREFILL_GLOBAL_FP16_ACCUM": "0",
+            "RWKV7_NATIVE_PREFILL_BLOCK_FP16_ACCUM": "0",
+            "RWKV7_NATIVE_PREFILL_FP16_ACCUM_FFN_KEY": "0",
             # Keep native-direct an independent recurrence reference.  The
             # selected candidate route is restored before candidate timing.
             "RWKV7_NATIVE_PREFILL_FUSED_SCAN": "0",
@@ -340,7 +352,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
     peak = None
     if args.device.startswith("cuda"):
         peak = round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
-    scan_m = scan_block_m(model, batch_size)
+    scan_m = scan_block_m(model, batch_size, prompt_tokens)
     row = {
         "axis": "native_prefill_scan",
         "backend": "hf_adapter",
@@ -491,6 +503,16 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
             getattr(
                 model,
                 "_rwkv7_native_prefill_global_fp16_accum_effective",
+                False,
+            )
+        ),
+        "prefill_block_fp16_accum_requested": os.environ.get(
+            "RWKV7_NATIVE_PREFILL_BLOCK_FP16_ACCUM"
+        ),
+        "prefill_block_fp16_accum_effective": bool(
+            getattr(
+                model,
+                "_rwkv7_native_prefill_block_fp16_accum_effective",
                 False,
             )
         ),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarize the six RTX 4080 parameter-adjusted P/D matrix medians."""
+"""Gate every RTX 4080 parameter-adjusted Prefill/Decode matrix cell."""
 from __future__ import annotations
 
 import argparse
@@ -162,11 +162,13 @@ def summarize(
             assert param_ratio is not None
             p_med = median(adjusted_prefill)
             d_med = median(adjusted_decode)
-            passed = p_med > gate and d_med > gate
+            p_min = min(adjusted_prefill)
+            d_min = min(adjusted_decode)
+            passed = p_min > gate and d_min > gate
             if not passed:
                 errors.append(
-                    f"{pair} B{batch_size}: adjusted P/D medians "
-                    f"{p_med:.4f}/{d_med:.4f} are not both > {gate:.4f}"
+                    f"{pair} B{batch_size}: adjusted P/D cell minima "
+                    f"{p_min:.4f}/{d_min:.4f} are not both > {gate:.4f}"
                 )
             groups.append(
                 {
@@ -180,6 +182,14 @@ def summarize(
                     "raw_decode_median": rounded(median(raw_decode)),
                     "adjusted_prefill_median": rounded(p_med),
                     "adjusted_decode_median": rounded(d_med),
+                    "adjusted_prefill_min": rounded(p_min),
+                    "adjusted_decode_min": rounded(d_min),
+                    "adjusted_prefill_cells_passed": sum(
+                        value > gate for value in adjusted_prefill
+                    ),
+                    "adjusted_decode_cells_passed": sum(
+                        value > gate for value in adjusted_decode
+                    ),
                     "raw_e2e_median": rounded(median(raw_e2e)),
                     "adjusted_e2e_median": rounded(median(adjusted_e2e)),
                     "adjusted_pd_pass": passed,
@@ -201,11 +211,20 @@ def summarize(
                 }
             )
 
+    prefill_cells_passed = sum(
+        int(group["adjusted_prefill_cells_passed"]) for group in groups
+    )
+    decode_cells_passed = sum(
+        int(group["adjusted_decode_cells_passed"]) for group in groups
+    )
     return {
         "axis": "rtx4080_parameter_adjusted_pd",
         "status": "pass" if not errors else "fail",
-        "gate": "six-cell median adjusted Prefill > 1.0 and Decode > 1.0",
+        "gate": "every adjusted Prefill cell > 1.0 and every adjusted Decode cell > 1.0",
         "formula": "raw_speed_ratio * candidate_active_parameters / reference_active_parameters",
+        "adjusted_prefill_cells_passed": prefill_cells_passed,
+        "adjusted_decode_cells_passed": decode_cells_passed,
+        "cells_total": 36,
         "groups": groups,
         "errors": errors,
     }
@@ -217,8 +236,8 @@ def markdown(report: dict[str, Any]) -> str:
         "",
         f"Status: **{report['status']}**",
         "",
-        "| Pair | Batch | Raw P / D | Adjusted P / D | E2E raw / adjusted |",
-        "|---|---:|---:|---:|---:|",
+        "| Pair | Batch | Raw P / D median | Adjusted P / D median | Adjusted P / D minimum | E2E raw / adjusted |",
+        "|---|---:|---:|---:|---:|---:|",
     ]
     for row in report["groups"]:
         pair = row["model_pair"].replace("rwkv-", "").replace("__qwen3.5-", " / ")
@@ -226,6 +245,7 @@ def markdown(report: dict[str, Any]) -> str:
             f"| {pair} | B{row['batch_size']} | "
             f"**{row['raw_prefill_median']:.2f}x / {row['raw_decode_median']:.2f}x** | "
             f"**{row['adjusted_prefill_median']:.2f}x / {row['adjusted_decode_median']:.2f}x** | "
+            f"**{row['adjusted_prefill_min']:.2f}x / {row['adjusted_decode_min']:.2f}x** | "
             f"**{row['raw_e2e_median']:.2f}x / {row['adjusted_e2e_median']:.2f}x** |"
         )
     if report["errors"]:

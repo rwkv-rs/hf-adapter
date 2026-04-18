@@ -66,7 +66,7 @@ def write_matrix(root: Path, adjusted_ratio: float = 1.1) -> tuple[Path, Path]:
     return candidate_path, reference_path
 
 
-def test_adjusted_pd_summary_passes_all_six_group_medians(tmp_path: Path) -> None:
+def test_adjusted_pd_summary_passes_all_36_cells(tmp_path: Path) -> None:
     candidate, reference = write_matrix(tmp_path, adjusted_ratio=1.1)
     report = summarize(candidate, reference)
 
@@ -74,6 +74,8 @@ def test_adjusted_pd_summary_passes_all_six_group_medians(tmp_path: Path) -> Non
     assert len(report["groups"]) == 6
     assert all(row["adjusted_pd_pass"] for row in report["groups"])
     assert all(row["adjusted_prefill_median"] == 1.1 for row in report["groups"])
+    assert report["adjusted_prefill_cells_passed"] == 36
+    assert report["adjusted_decode_cells_passed"] == 36
 
 
 def test_adjusted_pd_summary_fails_below_one(tmp_path: Path) -> None:
@@ -96,3 +98,18 @@ def test_adjusted_pd_summary_rejects_parameter_count_drift(tmp_path: Path) -> No
 
     assert report["status"] == "fail"
     assert any("parameter count drifted" in error for error in report["errors"])
+
+
+def test_adjusted_pd_summary_rejects_one_cell_below_gate(tmp_path: Path) -> None:
+    candidate, reference = write_matrix(tmp_path, adjusted_ratio=1.1)
+    rows = [json.loads(line) for line in candidate.read_text().splitlines()]
+    rows[0]["prefill_tokps_total"] *= 0.8
+    candidate.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+
+    report = summarize(candidate, reference)
+
+    assert report["status"] == "fail"
+    assert report["adjusted_prefill_cells_passed"] == 35
+    assert any("cell minima" in error for error in report["errors"])

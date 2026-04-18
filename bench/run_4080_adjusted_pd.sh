@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reproduce the six RTX 4080 parameter-adjusted Prefill/Decode rows.
+# Reproduce and gate all 36 RTX 4080 parameter-adjusted Prefill/Decode cells.
 set -euo pipefail
 
 ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
