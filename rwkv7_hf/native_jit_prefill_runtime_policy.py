@@ -12,7 +12,7 @@ import os
 import torch
 
 
-_POLICY_NAMES = {'_native_prefill_state_prep_layers', '_native_prefill_shift_mix_num_warps', '_native_prefill_dplr_scan_enabled', '_native_prefill_fused_sequence_ffn_enabled', '_native_prefill_fused_wavg_lora_requested', '_native_prefill_self_chunk_size', '_native_prefill_shift_mix_launch_profile', '_native_prefill_policy_model_shape_selected', '_native_prefill_sequence_ffn_blocks', '_native_prefill_fused_state_scan_enabled', '_native_prefill_fp16_accum_ffn_key_layers', '_native_prefill_fp16_recurrent_requested', '_native_prefill_fused_residual_gemm_enabled', '_native_prefill_attn_shift_mix_block_size', '_native_prefill_fused_wavg_lora_max_m', '_native_prefill_default_scan_block_m', '_native_prefill_stacked_rkv_enabled', '_native_prefill_ffn_shift_mix_block_size', '_native_prefill_fused_clampw_scan_enabled', '_native_prefill_self_chunk_enabled', '_native_prefill_fused_wavg_lora_enabled', '_native_prefill_scan_num_warps', '_native_prefill_sequence_ffn_launch', '_native_prefill_scan_block_m', '_native_prefill_fused_shift_mix_enabled', '_native_prefill_fused_wavg_lora_blocks', '_native_prefill_fused_output_project_block_m', '_native_prefill_model_shape_selected', '_native_prefill_fused_output_enabled', '_native_prefill_dplr_chunk_size', '_native_prefill_fused_state_scan_max_batch', '_native_prefill_fp16_recurrent_enabled', '_native_prefill_self_chunk_safe_gate', '_native_prefill_fused_state_prep_enabled', '_native_prefill_state_prep_w_dtype', '_native_prefill_shift_mix_layers', '_native_prefill_fused_scan_enabled', '_native_prefill_fp16_accum_ffn_key_enabled', '_native_prefill_global_fp16_accum_enabled', '_native_prefill_fused_output_project_enabled', '_native_prefill_fused_scan_output_enabled', '_native_prefill_self_chunk_h_tiles'}
+_POLICY_NAMES = {'_native_prefill_state_prep_layers', '_native_prefill_shift_mix_num_warps', '_native_prefill_dplr_scan_enabled', '_native_prefill_fused_sequence_ffn_enabled', '_native_prefill_fused_wavg_lora_requested', '_native_prefill_self_chunk_size', '_native_prefill_shift_mix_launch_profile', '_native_prefill_policy_model_shape_selected', '_native_prefill_sequence_ffn_blocks', '_native_prefill_fused_state_scan_enabled', '_native_prefill_fp16_accum_ffn_key_layers', '_native_prefill_fp16_recurrent_requested', '_native_prefill_fused_residual_gemm_enabled', '_native_prefill_attn_shift_mix_block_size', '_native_prefill_fused_wavg_lora_max_m', '_native_prefill_default_scan_block_m', '_native_prefill_stacked_rkv_enabled', '_native_prefill_ffn_shift_mix_block_size', '_native_prefill_fused_clampw_scan_enabled', '_native_prefill_self_chunk_enabled', '_native_prefill_fused_wavg_lora_enabled', '_native_prefill_scan_num_warps', '_native_prefill_sequence_ffn_launch', '_native_prefill_scan_block_m', '_native_prefill_fused_shift_mix_enabled', '_native_prefill_fused_wavg_lora_blocks', '_native_prefill_fused_output_project_block_m', '_native_prefill_model_shape_selected', '_native_prefill_fused_output_enabled', '_native_prefill_dplr_chunk_size', '_native_prefill_fused_state_scan_max_batch', '_native_prefill_fp16_recurrent_enabled', '_native_prefill_self_chunk_safe_gate', '_native_prefill_fused_state_prep_enabled', '_native_prefill_state_prep_w_dtype', '_native_prefill_shift_mix_layers', '_native_prefill_fused_scan_enabled', '_native_prefill_fp16_accum_ffn_key_enabled', '_native_prefill_global_fp16_accum_enabled', '_native_prefill_block_fp16_accum_enabled', '_native_prefill_fused_output_project_enabled', '_native_prefill_fused_scan_output_enabled', '_native_prefill_self_chunk_h_tiles'}
 _OWNED_NAMES = _POLICY_NAMES | {"bind_runtime"}
 _RUNTIME_NAMES = ('_is_rtx_model_name', '_kernel_policy', '_prefill_model_shape_selected_impl', '_prefill_policy_model_shape_selected_impl', '_prefill_self_chunk_h_tiles_impl', '_prefill_self_chunk_shape_eligible', '_prefill_self_chunk_size_impl', 'dplr_chunk_scan', 'env_flag', 'env_int', 'fused_attn_output_prepare', 'fused_attn_output_prepare_available', 'fused_attn_output_project', 'fused_attn_output_project_available', 'fused_attn_shift_mix', 'fused_attn_shift_mix_available', 'fused_prefill_state_prep', 'fused_prefill_state_prep_available', 'fused_recurrent_scan', 'fused_recurrent_scan_available', 'fused_recurrent_scan_clampw', 'fused_recurrent_scan_clampw_available', 'fused_recurrent_scan_output_prepare', 'fused_recurrent_scan_output_prepare_available', 'fused_recurrent_scan_state_prep', 'fused_recurrent_scan_state_prep_available', 'fused_sequence_ffn', 'fused_sequence_ffn_available', 'fused_wavg_lora', 'fused_wavg_lora_available', 'native_fp16_sequence', 'self_chunk_rwkv7', 'self_chunk_rwkv7_available')
 
@@ -148,6 +148,74 @@ def _native_prefill_global_fp16_accum_enabled(
             selected,
         )
     )
+
+
+def _native_prefill_block_fp16_accum_enabled(
+    batch_size: int,
+    prompt_tokens: int,
+    hidden_size: int,
+    num_layers: int,
+    dtype: torch.dtype,
+) -> bool:
+    """Select block-only FP16 accumulation with an FP32-accumulation head."""
+
+    if dtype != torch.float16:
+        return False
+    matmul = getattr(getattr(torch.backends, "cuda", None), "matmul", None)
+    if matmul is None or not hasattr(matmul, "allow_fp16_accumulation"):
+        return False
+    try:
+        visible_cuda_devices = int(torch.cuda.device_count())
+    except Exception:
+        visible_cuda_devices = 1
+    if visible_cuda_devices > 1 and not env_flag(
+        "RWKV7_NATIVE_PREFILL_FP16_ACCUM_MULTI_GPU",
+        False,
+    ):
+        return False
+
+    policy = _kernel_policy()
+    raw_shapes = os.environ.get(
+        "RWKV7_NATIVE_PREFILL_BLOCK_FP16_ACCUM_MODEL_SHAPES"
+    )
+    if raw_shapes is None:
+        model_shapes = {
+            tuple(int(value) for value in shape)
+            for shape in getattr(
+                policy,
+                "prefill_block_fp16_accum_model_shapes",
+                (),
+            )
+            if len(shape) == 4
+        }
+    else:
+        model_shapes = set()
+        try:
+            for item in raw_shapes.replace(",", " ").split():
+                values = tuple(int(value) for value in item.lower().split("x"))
+                if len(values) != 4 or any(value <= 0 for value in values):
+                    raise ValueError
+                model_shapes.add(values)
+        except ValueError as exc:
+            raise ValueError(
+                "RWKV7_NATIVE_PREFILL_BLOCK_FP16_ACCUM_MODEL_SHAPES must "
+                "contain HxLxBxT tuples"
+            ) from exc
+    target = (
+        int(hidden_size),
+        int(num_layers),
+        int(batch_size),
+        int(prompt_tokens),
+    )
+    selected = target in model_shapes
+    return bool(
+        selected
+        and env_flag(
+            "RWKV7_NATIVE_PREFILL_BLOCK_FP16_ACCUM",
+            selected,
+        )
+    )
+
 
 def _native_prefill_self_chunk_enabled(
     tokens: int,

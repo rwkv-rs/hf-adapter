@@ -69,7 +69,7 @@ def test_recurrent_module_and_runtime_dependency_lists_are_clean() -> None:
 
     assert "native_jit_recurrent.py" in ADAPTER_FILES
     assert len(native_jit_prefill_runtime_policy._RUNTIME_NAMES) == 33
-    assert len(native_jit_prefill._RUNTIME_NAMES) == 69
+    assert len(native_jit_prefill._RUNTIME_NAMES) == 70
     assert len(native_jit_decode._RUNTIME_NAMES) == 52
     entrypoint = (ROOT / "rwkv7_hf" / "native_model.py").read_text(encoding="utf-8")
     assert "from .native_jit_recurrent import" in entrypoint

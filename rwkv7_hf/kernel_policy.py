@@ -296,6 +296,11 @@ class KernelPolicy:
     # accumulation. This is intentionally separate from the narrower FFN-key
     # lane because it changes every cuBLAS projection in the sequence graph.
     prefill_global_fp16_accum_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
+    # Exact HxLxBxT routes where transformer-block GEMMs use fp16
+    # accumulation, while the final norm and vocabulary head retain the
+    # default FP32 accumulation. This narrower boundary can preserve greedy
+    # parity for shapes where the full-prefill route crosses a token boundary.
+    prefill_block_fp16_accum_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
     fused_recurrent_output: bool = False
     fused_recurrent_raw: bool = False
     # Exact hidden-size x batch routes for raw recurrent preparation. Empty
@@ -1251,8 +1256,8 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
         )
         rtx4080_global_fp16_accum_shapes = (
             # Exact parity sweep: these three shapes crossed a greedy-token
-            # boundary, so they retain FP32 accumulation. Every promoted
-            # shape kept greedy prefill/decode parity and >0.9999 cosine.
+            # boundary only when the final vocabulary head also used FP16
+            # accumulation. They use the block-only route below instead.
             tuple(
                 shape
                 for shape in rtx4080_prefill_shapes
@@ -1262,6 +1267,15 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
                     (2048, 24, 8, 512),
                     (2560, 32, 1, 512),
                 }
+            )
+            if is_4080
+            else ()
+        )
+        rtx4080_block_fp16_accum_shapes = (
+            (
+                (1024, 24, 8, 512),
+                (2048, 24, 8, 512),
+                (2560, 32, 1, 512),
             )
             if is_4080
             else ()
@@ -1305,6 +1319,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
                     (2048, 1, 128, 4),
                     (2048, 1, 512, 4),
                     (2048, 1, 2048, 4),
+                    (2560, 1, 512, 8),
                 )
                 if is_4080
                 else ()
@@ -1335,6 +1350,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             prefill_graph_cache_size=4 if is_4080 else 2,
             prefill_graph_model_shapes=rtx4080_prefill_shapes,
             prefill_global_fp16_accum_model_shapes=rtx4080_global_fp16_accum_shapes,
+            prefill_block_fp16_accum_model_shapes=rtx4080_block_fp16_accum_shapes,
             fused_prefill_shift_mix=is_4090 or is_4080,
             prefill_shift_mix_model_shapes=rtx4080_prefill_shapes,
             prefill_attn_shift_mix_launch_profiles=(

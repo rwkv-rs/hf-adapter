@@ -483,6 +483,7 @@ def test_policy_defaults_are_conservative() -> None:
         (2048, 1, 128, 4),
         (2048, 1, 512, 4),
         (2048, 1, 2048, 4),
+        (2560, 1, 512, 8),
     )
     assert rtx4080.prefill_graph
     assert rtx4080.prefill_graph_cache_size == 4
@@ -496,6 +497,11 @@ def test_policy_defaults_are_conservative() -> None:
             (2048, 24, 8, 512),
             (2560, 32, 1, 512),
         }
+    )
+    assert rtx4080.prefill_block_fp16_accum_model_shapes == (
+        (1024, 24, 8, 512),
+        (2048, 24, 8, 512),
+        (2560, 32, 1, 512),
     )
     assert rtx4080.fused_prefill_shift_mix
     assert rtx4080.prefill_shift_mix_model_shapes == expected_4080_prefill_shapes

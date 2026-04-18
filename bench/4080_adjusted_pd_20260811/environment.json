@@ -22,7 +22,7 @@
   "candidate_runtime": {
     "bitsandbytes": "0.50.0",
     "cuda": "13.0",
-    "rwkv_backend": "native prefill + native_graph cached decode",
+    "rwkv_backend": "native prefill + exact full/block-only FP16 accumulation + native_graph cached decode",
     "torch": "2.11.0+cu130",
     "transformers": "5.8.0",
     "triton": "3.6.0"
@@ -35,7 +35,7 @@
     "gpu_arch": "sm_89",
     "name": "NVIDIA GeForce RTX 4080"
   },
-  "gate": "each of six model-pair/batch groups requires six-cell median adjusted Prefill > 1.0 and adjusted Decode > 1.0",
+  "gate": "all 36 joined cells require adjusted Prefill > 1.0 and adjusted Decode > 1.0",
   "parameter_adjustment": "raw_speed_ratio * candidate_active_parameters / reference_active_parameters",
   "prefill_chunk_size": {
     "rwkv_0.4b_b1_b8": 512,

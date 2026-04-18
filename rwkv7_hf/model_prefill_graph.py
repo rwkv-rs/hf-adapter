@@ -217,6 +217,20 @@ class _NativePrefillGraphRunner:
         self.xpf_outputs = (
             list(self.xpf_inputs) if self.carry_state else list(xpf_outputs)
         )
+        self.global_fp16_accum_effective = bool(
+            getattr(
+                self.owner,
+                "_rwkv7_native_prefill_global_fp16_accum_effective",
+                False,
+            )
+        )
+        self.block_fp16_accum_effective = bool(
+            getattr(
+                self.owner,
+                "_rwkv7_native_prefill_block_fp16_accum_effective",
+                False,
+            )
+        )
         # Warmup/capture executes the graph body and therefore advances the
         # stable state buffers. The first real replay must still start empty.
         if self.carry_state:
@@ -328,6 +342,18 @@ class _NativePrefillGraphRunner:
             self.fp16_elapsed.fill_(int(seen_tokens) - self.prompt_tokens)
         self.input_ids.copy_(input_ids)
         self.graph.replay()
+        owner = getattr(self, "owner", None)
+        if owner is not None:
+            setattr(
+                owner,
+                "_rwkv7_native_prefill_global_fp16_accum_effective",
+                bool(getattr(self, "global_fp16_accum_effective", False)),
+            )
+            setattr(
+                owner,
+                "_rwkv7_native_prefill_block_fp16_accum_effective",
+                bool(getattr(self, "block_fp16_accum_effective", False)),
+            )
         previous = self._bound_cache_ref() if self._bound_cache_ref is not None else None
         if (
             previous is not None

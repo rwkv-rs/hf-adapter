@@ -105,9 +105,9 @@ more specific claim.
   projection/LoRA/warp candidates remain disabled. Evidence:
   [`../bench/5070_max_perf_20260811/README.md`](../bench/5070_max_perf_20260811/README.md).
 - **RTX 4080:** 0.4B/1.5B/2.9B versus full-FLA Qwen3.5 0.8B/2B/4B passes
-  all six B1/B8 groups after parameter adjustment: Prefill medians are
-  `1.06x–1.43x`, Decode medians are `1.15x–2.93x`, and adjusted E2E medians
-  are `1.14x–2.88x`. The exact-B8 grouped W/A/V projection route improves
+  all 36/36 parameter-adjusted Prefill and 36/36 Decode cells. Full-matrix
+  minima are `1.068520x/1.140700x`; all six group medians and adjusted E2E
+  medians also remain ahead. The exact-B8 grouped W/A/V projection route improves
   those RWKV checkpoints by `1.1267x/1.0942x/1.0809x` with exact first-step
   logits and greedy `4,608/4,608`. The separate 7.2B/B8 FP16-state decode
   route reaches `344.39 tok/s`, `1.0301x` its FP32-state route, saves

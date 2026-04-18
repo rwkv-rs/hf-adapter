@@ -566,6 +566,8 @@ def _native_prefill_graph_signature() -> tuple[tuple[str, str | None], ...]:
         "RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP",
         "RWKV7_NATIVE_PREFILL_GLOBAL_FP16_ACCUM",
         "RWKV7_NATIVE_PREFILL_GLOBAL_FP16_ACCUM_MODEL_SHAPES",
+        "RWKV7_NATIVE_PREFILL_BLOCK_FP16_ACCUM",
+        "RWKV7_NATIVE_PREFILL_BLOCK_FP16_ACCUM_MODEL_SHAPES",
         "RWKV7_NATIVE_PREFILL_FP16_ACCUM_MULTI_GPU",
         "RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN",
         "RWKV7_NATIVE_PREFILL_FUSED_SEQUENCE_FFN",
@@ -1718,6 +1720,20 @@ class _RWKV7NativeGraphPrefillRunner:
         with torch.cuda.graph(self.graph):
             outputs = self._run_once()
         self.logits, self.state_outputs, self.xpa_outputs, self.xpf_outputs = outputs
+        self.global_fp16_accum_effective = bool(
+            getattr(
+                self.owner,
+                "_rwkv7_native_prefill_global_fp16_accum_effective",
+                False,
+            )
+        )
+        self.block_fp16_accum_effective = bool(
+            getattr(
+                self.owner,
+                "_rwkv7_native_prefill_block_fp16_accum_effective",
+                False,
+            )
+        )
 
     @staticmethod
     def _copy_or_zero(dst: torch.Tensor, src: torch.Tensor | None, *, transpose_last: bool = False) -> None:
@@ -1792,6 +1808,18 @@ class _RWKV7NativeGraphPrefillRunner:
         self.input_ids.copy_(input_ids.to(device=self.device))
         assert self.graph is not None and self.logits is not None
         self.graph.replay()
+        owner = getattr(self, "owner", None)
+        if owner is not None:
+            setattr(
+                owner,
+                "_rwkv7_native_prefill_global_fp16_accum_effective",
+                bool(getattr(self, "global_fp16_accum_effective", False)),
+            )
+            setattr(
+                owner,
+                "_rwkv7_native_prefill_block_fp16_accum_effective",
+                bool(getattr(self, "block_fp16_accum_effective", False)),
+            )
         self._bind_cache(past, int(initial_seen) + self.prompt_tokens)
         return self.logits.clone(), past
 
