@@ -588,6 +588,9 @@ def test_policy_defaults_are_conservative() -> None:
         (1024, 8, 512, 32),
         (2048, 8, 128, 32),
         (2048, 8, 512, 32),
+        (2560, 1, 512, 32),
+        (2560, 8, 128, 64),
+        (2560, 8, 512, 64),
     )
     assert rtx3090.prefill_scan_num_warps == 4
     assert rtx3090.prefill_blas_library == "cublaslt"
