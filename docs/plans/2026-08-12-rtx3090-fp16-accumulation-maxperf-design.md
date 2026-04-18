@@ -1,7 +1,7 @@
 # RTX 3090 exact-shape FP16 accumulation max-performance design
 
-> Lifecycle: active implementation design as of 2026-08-12. It becomes a
-> historical decision record after the promoted evidence is merged.
+> Lifecycle: implemented and validated on 2026-08-12; retained as a historical
+> decision record for the exact-card policy and evidence review.
 
 ## Context and decision
 

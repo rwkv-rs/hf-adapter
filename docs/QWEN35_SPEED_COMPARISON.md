@@ -23,7 +23,8 @@ Prefill cells and 36/36 Decode cells exceed `1.00x`; the minima are
 
 **RTX 3090 now also closes the latest g1d/g1i checkpoint matrix: every one of
 the 24 B1/B8, P128/P512/P2048 cells has parameter-adjusted Prefill `>=1.00x`
-against fail-closed full-FLA Qwen3.5.**
+against fail-closed full-FLA Qwen3.5; the minimum/median is now
+`1.227477x/1.467758x`.**
 
 - `1.02x` means RWKV throughput is 1.02 times Qwen throughput, or about 2%
   faster.
@@ -77,14 +78,14 @@ Prefill cells and 36/36 adjusted Decode cells**; the full-matrix minima are
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|---|
 | V100 32GB | 1.5B / 2B | B1 | P512/D64 | 1.527405B | 1.881825B | `0.811661` | **2.82x / 5.91x** | **2.29x / 4.80x** | **5.59x / 4.54x** | [V100](../bench/v100_active_b1b8_20260715/README.md) |
 | V100 32GB | 1.5B / 2B | B8 | P512/D64 | 1.527405B | 1.881825B | `0.811661` | **5.41x / 5.27x** | **4.39x / 4.28x** | **5.30x / 4.30x** | [V100](../bench/v100_active_b1b8_20260715/README.md) |
-| RTX 3090 | 0.4B / 0.8B | B1 | 3 cells | 0.450768B | 0.752393B | `0.599112` | **3.03x / 10.07x** | **1.82x / 6.03x** | **9.69x / 5.81x** | [3090 latest](../bench/3090_g1i_qwen35_prefill_pd_20260812/README.md) |
-| RTX 3090 | 0.4B / 0.8B | B8 | 3 cells | 0.450768B | 0.752393B | `0.599112` | **2.45x / 7.65x** | **1.47x / 4.58x** | **7.20x / 4.31x** | [3090 latest](../bench/3090_g1i_qwen35_prefill_pd_20260812/README.md) |
-| RTX 3090 | 1.5B / 2B | B1 | 3 cells | 1.527405B | 1.881825B | `0.811661` | **1.41x / 5.68x** | **1.15x / 4.61x** | **5.46x / 4.43x** | [3090 latest](../bench/3090_g1i_qwen35_prefill_pd_20260812/README.md) |
-| RTX 3090 | 1.5B / 2B | B8 | 3 cells | 1.527405B | 1.881825B | `0.811661` | **1.64x / 4.45x** | **1.33x / 3.62x** | **4.12x / 3.34x** | [3090 latest](../bench/3090_g1i_qwen35_prefill_pd_20260812/README.md) |
-| RTX 3090 | 2.9B / 4B | B1 | 3 cells | 2.947735B | 4.205751B | `0.700882` | **1.91x / 4.28x** | **1.34x / 3.00x** | **4.22x / 2.95x** | [3090 latest](../bench/3090_g1i_qwen35_prefill_pd_20260812/README.md) |
-| RTX 3090 | 2.9B / 4B | B8 | 3 cells | 2.947735B | 4.205751B | `0.700882` | **1.95x / 3.67x** | **1.36x / 2.57x** | **3.52x / 2.47x** | [3090 latest](../bench/3090_g1i_qwen35_prefill_pd_20260812/README.md) |
-| RTX 3090 | 7.2B / 9B | B1 | 3 cells | 7.199142B | 8.953803B | `0.804032` | **1.63x / 2.40x** | **1.31x / 1.93x** | **2.38x / 1.91x** | [3090 latest](../bench/3090_g1i_qwen35_prefill_pd_20260812/README.md) |
-| RTX 3090 | 7.2B / 9B | B8 | 3 cells | 7.199142B | 8.953803B | `0.804032` | **1.60x / 2.11x** | **1.28x / 1.70x** | **2.01x / 1.62x** | [3090 latest](../bench/3090_g1i_qwen35_prefill_pd_20260812/README.md) |
+| RTX 3090 | 0.4B / 0.8B | B1 | 3 cells | 0.450768B | 0.752393B | `0.599112` | **4.10x / 11.05x** | **2.46x / 6.62x** | **10.91x / 6.54x** | [3090 maxperf](../bench/3090_g1i_qwen35_maxperf_20260812/README.md) |
+| RTX 3090 | 0.4B / 0.8B | B8 | 3 cells | 0.450768B | 0.752393B | `0.599112` | **2.47x / 7.93x** | **1.48x / 4.75x** | **7.46x / 4.47x** | [3090 maxperf](../bench/3090_g1i_qwen35_maxperf_20260812/README.md) |
+| RTX 3090 | 1.5B / 2B | B1 | 3 cells | 1.527405B | 1.881825B | `0.811661` | **2.12x / 5.75x** | **1.72x / 4.67x** | **5.62x / 4.56x** | [3090 maxperf](../bench/3090_g1i_qwen35_maxperf_20260812/README.md) |
+| RTX 3090 | 1.5B / 2B | B8 | 3 cells | 1.527405B | 1.881825B | `0.811661` | **1.66x / 4.47x** | **1.34x / 3.63x** | **4.14x / 3.36x** | [3090 maxperf](../bench/3090_g1i_qwen35_maxperf_20260812/README.md) |
+| RTX 3090 | 2.9B / 4B | B1 | 3 cells | 2.947735B | 4.205751B | `0.700882` | **2.08x / 4.61x** | **1.46x / 3.23x** | **4.50x / 3.15x** | [3090 maxperf](../bench/3090_g1i_qwen35_maxperf_20260812/README.md) |
+| RTX 3090 | 2.9B / 4B | B8 | 3 cells | 2.947735B | 4.205751B | `0.700882` | **2.14x / 3.96x** | **1.50x / 2.78x** | **3.72x / 2.61x** | [3090 maxperf](../bench/3090_g1i_qwen35_maxperf_20260812/README.md) |
+| RTX 3090 | 7.2B / 9B | B1 | 3 cells | 7.199142B | 8.953803B | `0.804032` | **1.63x / 2.35x** | **1.31x / 1.89x** | **2.33x / 1.87x** | [3090 maxperf](../bench/3090_g1i_qwen35_maxperf_20260812/README.md) |
+| RTX 3090 | 7.2B / 9B | B8 | 3 cells | 7.199142B | 8.953803B | `0.804032` | **1.60x / 2.08x** | **1.28x / 1.67x** | **1.99x / 1.60x** | [3090 maxperf](../bench/3090_g1i_qwen35_maxperf_20260812/README.md) |
 | RTX 4080 | 0.4B / 0.8B | B1 | 6 cells, all pass | 0.450768B | 0.752393B | `0.599112` | **1.83x / 4.91x** | **1.10x / 2.94x** | **4.82x / 2.88x** | [4080 all P/D](../bench/4080_adjusted_pd_20260811/README.md) |
 | RTX 4080 | 0.4B / 0.8B | B8 | 6 cells, all pass | 0.450768B | 0.752393B | `0.599112` | **1.98x / 4.17x** | **1.19x / 2.50x** | **4.04x / 2.42x** | [4080 all P/D](../bench/4080_adjusted_pd_20260811/README.md) |
 | RTX 4080 | 1.5B / 2B | B1 | 6 cells, all pass | 1.527405B | 1.881825B | `0.811661` | **1.55x / 1.90x** | **1.26x / 1.55x** | **1.90x / 1.54x** | [4080 all P/D](../bench/4080_adjusted_pd_20260811/README.md) |
@@ -117,18 +118,18 @@ verify FLA, Triton causal convolution, live fused bindings and the full-fused
 contract.
 
 The strict prefill gate passes `24/24`: raw Prefill minimum/median is
-`1.393044x/1.856646x`, while parameter-adjusted Prefill minimum/median is
-`1.037869x/1.351562x`. Raw Decode minimum/median is
-`2.105217x/4.361090x`, and adjusted Decode minimum/median is
-`1.692661x/3.301953x`. The weakest cell is 2.9B/4B B8/P128, where RWKV
-delivers `9,860.98 tok/s` versus Qwen `6,659.207 tok/s`, or `1.037869x`
-after parameter adjustment.
+`1.531589x/2.076170x`, while parameter-adjusted Prefill minimum/median is
+`1.227477x/1.467758x`. Raw Decode minimum/median is
+`2.069838x/4.524636x`, and adjusted Decode minimum/median is
+`1.664218x/3.433680x`. The narrowest adjusted cell is 0.4B/0.8B B8/P512,
+where RWKV delivers `78,949.489 tok/s` versus Qwen `38,534.012 tok/s`, or
+`1.227477x` after parameter adjustment.
 
-The exact-shape FP16-accumulation oracle passes `15/15` direct and
+The exact-shape FP16-accumulation oracle passes `25/25` direct and
 chunk-carried prompt/cache-handoff rows at cosine `>=0.9999` with exact greedy
 tokens. The promoted route is restricted to exact RTX 3090 model, batch and
 token-block shapes. See the
-[immutable evidence](../bench/3090_g1i_qwen35_prefill_pd_20260812/README.md).
+[immutable evidence](../bench/3090_g1i_qwen35_maxperf_20260812/README.md).
 
 ### RTX 5090 latest-checkpoint strict gate
 
@@ -315,7 +316,7 @@ A complete run reports exit code 0, `pipeline_exit_code.txt=0`,
 | GPU | Live measurement entry point | Scope |
 |---|---|---|
 | V100 | [Commands in the V100 evidence](../bench/v100_active_b1b8_20260715/README.md#reproduce) | 1.5B/2B, B1/B8 |
-| RTX 3090 latest checkpoints | [`bench/run_3090_adjusted_prefill_pd.sh`](../bench/run_3090_adjusted_prefill_pd.sh) | Four model pairs, B1/B8, P128/512/2048, D128; strict per-cell adjusted-Prefill gate plus 15 correctness rows |
+| RTX 3090 latest checkpoints | [`bench/run_3090_adjusted_prefill_pd.sh`](../bench/run_3090_adjusted_prefill_pd.sh) | Four model pairs, B1/B8, P128/512/2048, D128; strict per-cell adjusted-Prefill gate plus 25 correctness rows |
 | RTX 4080 | [`bench/run_4080_adjusted_pd.sh`](../bench/run_4080_adjusted_pd.sh) | Runs all three pairs at B1/B8 and requires adjusted P/D `>1.00x` in every one of the 36 cells |
 | RTX 5070 Laptop | [`bench/run_5070_qwen35_full_fla_bsz8.ps1`](../bench/run_5070_qwen35_full_fla_bsz8.ps1) | PowerShell with `-RwkvModel`, `-QwenModel`, and `-OutDir` |
 | RTX 5090 | [`bench/run_5090_qwen35_full_matrix.sh`](../bench/run_5090_qwen35_full_matrix.sh) | Four model pairs, B1/B8 full matrix |

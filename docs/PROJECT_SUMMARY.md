@@ -77,10 +77,11 @@ and [`v100_exact_card_20260811`](../bench/v100_exact_card_20260811/README.md).
 
 The 2026-08-12 RTX 3090 expansion by `@123123213weqw` closes all 24
 latest-checkpoint B1/B8 parameter-adjusted prefill cells against official
-full-FLA Qwen3.5 and adds a 15-row prompt/cache-handoff correctness oracle.
-The row-32 scan and scoped FP16-accumulation schedules remain exact-card and
-exact-shape only. Evidence is recorded in
-[`3090_g1i_qwen35_prefill_pd_20260812`](../bench/3090_g1i_qwen35_prefill_pd_20260812/README.md).
+full-FLA Qwen3.5 at minimum/median `1.227477x/1.467758x` and adds a 25-row
+prompt/cache-handoff correctness oracle. Exact scan tiles and scoped
+FP16-accumulation schedules remain exact-card and exact-shape only. Evidence
+is recorded in
+[`3090_g1i_qwen35_maxperf_20260812`](../bench/3090_g1i_qwen35_maxperf_20260812/README.md).
 
 ## Production evidence discipline
 
