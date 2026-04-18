@@ -5,7 +5,7 @@ requirements and repository evidence. `PASS` means the named, profile-bounded
 gate has a reproducible artifact. A new card, shape, or dataset extends that
 matrix instead of retroactively reopening an accepted release gate.
 
-Last updated: **2026-08-11**. The released baseline was audited at `main`
+Last updated: **2026-08-12**. The released baseline was audited at `main`
 `045bac1b769240facd290e1ac8232e8b1ca39778` after the `v0.6.0` release and
 the merged RTX 4080/V100 B8 optimization series.
 
@@ -116,6 +116,15 @@ more specific claim.
   [`../bench/4080_b8_projection_bmm_20260809/README.md`](../bench/4080_b8_projection_bmm_20260809/README.md)
   and
   [`../bench/4080_7p2b_fp16_state_20260809/README.md`](../bench/4080_7p2b_fp16_state_20260809/README.md).
+- **RTX 3090:** latest g1d 0.4B and 2026-08-05 g1i 1.5B/2.9B/7.2B versus
+  official Qwen3.5 0.8B/2B/4B/9B passes all `24/24` B1/B8,
+  P128/P512/P2048, D128 dense-FP16 cells at the strict parameter-adjusted
+  prefill gate. Minimum/median adjusted prefill PD is
+  `1.037869x/1.351562x`; all Qwen rows verify full FLA plus Triton causal
+  convolution. The exact-shape FP16-accumulation oracle passes `15/15` prompt
+  and cache-handoff rows with cosine `>=0.9999` and exact greedy tokens.
+  Evidence:
+  [`../bench/3090_g1i_qwen35_prefill_pd_20260812/README.md`](../bench/3090_g1i_qwen35_prefill_pd_20260812/README.md).
 - **RTX 4090:** 0.4B dense decode bsz1/2/4/8 reaches
   `1.007x/1.016x/1.008x/1.418x` of matching Albatross rows. Prompt-512 bsz4 is
   `1.007x` the same-session reference and `0.916x` the retained historical

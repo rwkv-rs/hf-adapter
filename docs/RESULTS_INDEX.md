@@ -5,7 +5,7 @@ not replace [`../BENCHMARK.md`](../BENCHMARK.md), the hardware matrix, or raw
 dated artifacts. A row means only that the linked, exact profile has evidence;
 it does not imply an unbounded all-card or all-shape claim.
 
-Last updated: **2026-08-11**. The released baseline was audited at `main`
+Last updated: **2026-08-12**. The released baseline was audited at `main`
 `045bac1b769240facd290e1ac8232e8b1ca39778`.
 
 ## Inference performance and quantization
@@ -18,6 +18,7 @@ Last updated: **2026-08-11**. The released baseline was audited at `main`
 | `v100-b8-fp16-state` | V100 32GB | 0.4B/1.5B B8 | Both process orders pass at `1.0216x-1.0288x`, `-16.875` to `-58.125 MiB`, with exact greedy traces | [`v100_exact_card_20260811`](../bench/v100_exact_card_20260811/README.md) |
 | `t4-production` | Tesla T4 | 0.1B-2.9B dense/cache/quant/training | Compatibility and head-quant lanes pass; dense/full-model performance limits remain explicit | [`t4_production_close_20260720`](../bench/t4_production_close_20260720/README.md) |
 | `3090-g1h-b8` | RTX 3090 | 7.2B vs Qwen3.5-9B, dense/W8/W4 B8 | Strict current B8 matrix passes 18/18 | [`3090_g1h_7p2_bsz8_20260714`](../bench/3090_g1h_7p2_bsz8_20260714/README.md) |
+| `3090-latest-prefill-pd` | RTX 3090 | latest g1d/g1i 0.4B-7.2B versus full-FLA Qwen3.5, B1/B8 | Strict parameter-adjusted prefill passes 24/24; prompt/cache-handoff correctness passes 15/15 | [`3090_g1i_qwen35_prefill_pd_20260812`](../bench/3090_g1i_qwen35_prefill_pd_20260812/README.md) |
 | `4080-qwen-pairs` | RTX 4080 | 0.4B/1.5B/2.9B versus Qwen3.5 B1/B8 | Six dense pair matrices and exact output-head quant lanes pass | [`4080_full_model_ladder_20260719`](../bench/4080_full_model_ladder_20260719/README.md) |
 | `4080-adjusted-pd` | RTX 4080 | 0.4B/1.5B/2.9B versus Qwen3.5 B1/B8 | All six group medians exceed Qwen in parameter-adjusted Prefill and Decode; adjusted E2E also passes 6/6 | [`4080_adjusted_pd_20260811`](../bench/4080_adjusted_pd_20260811/README.md) |
 | `4080-b8-projection` | RTX 4080 | 0.4B/1.5B/2.9B B8 | Grouped W/A/V projection gains `1.1267x/1.0942x/1.0809x`, greedy `4,608/4,608` | [`4080_b8_projection_bmm_20260809`](../bench/4080_b8_projection_bmm_20260809/README.md) |

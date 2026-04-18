@@ -21,6 +21,10 @@ model, dtype, batch and sequence shape named by their linked artifact.
 
 ### Performance
 
+- Added the exact RTX 3090 latest-checkpoint B1/B8 dense-FP16 prefill lane.
+  All 24 parameter-adjusted Qwen3.5 cells and all 15 FP16-accumulation
+  prompt/cache-handoff correctness rows pass; unmeasured Ampere products and
+  shapes remain on conservative routes.
 - Added exact RTX 5070 Laptop Native/no-FLA routes for measured 0.4B/1.5B
   prefill and decode shapes. Raw recurrent, shape-gated norm/mix and B8 FP16
   state are promoted; projection/LoRA and sub-threshold launch probes remain

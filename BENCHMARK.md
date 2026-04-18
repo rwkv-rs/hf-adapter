@@ -5,7 +5,7 @@ exploratory tuning chronology. Raw rows, logs and negative experiments remain
 in [`bench/`](bench/); platform interpretation lives in
 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
 
-Last updated: **2026-08-11**.
+Last updated: **2026-08-12**.
 
 For a consolidated RWKV-7 vs Qwen3.5 parameter/speed table and live GPU
 reproduction workflow, see the [English guide](docs/QWEN35_SPEED_COMPARISON.md)
@@ -34,6 +34,7 @@ Status vocabulary:
 | RTX 3090 | RWKV-7 7.2B vs Qwen3.5-9B, prompt2048, bsz1/2 | finite logits, greedy equality and cosine `>=0.999995`; Qwen fast bindings verified | self-fused dense prefill `1.0519x–1.0846x`; decode `1.9258x–2.1441x` | **PASS measured cells** |
 | RTX 3090 | g1h 7.2B vs Qwen3.5-9B, bsz8, dense/W8/W4 | finite logits, fail-closed Qwen FLA and route contracts; quality is a separate axis | dense prefill/decode min `1.0589x/1.7884x`; decode active work min `1.4379x`; W8/W4 total latency and memory gates pass | **PASS 18/18** |
 | RTX 3090 | 1.5B/2B and 2.9B/4B, bsz8, dense/W8/W4 | finite logits, fail-closed native/Qwen FLA contracts; quality is a separate axis | dense prefill min `1.0306x/1.3559x`, decode min `3.3828x/2.9213x`; W8/W4 total latency and physical-memory gates pass | **PASS 36/36** |
+| RTX 3090 | latest g1d/g1i 0.4B/1.5B/2.9B/7.2B vs Qwen3.5, B1/B8, dense FP16 | 24/24 full-FLA references; 15/15 FP32-vs-FP16-accum prompt/cache-handoff rows pass | per-cell parameter-adjusted prefill PD min/median `1.037869x/1.351562x`; raw prefill min `1.393044x` | **PASS 24/24** |
 | RTX 4090 | g1h 7.2B vs Qwen3.5-9B, bsz8, dense/W8/W4 | finite logits, fail-closed Qwen FLA routes, BNB8/MM4 same-quant probes; task quality is separate | dense prefill/decode min `1.0240x/2.2101x`; decode active work min `1.7770x`; W8/W4 total-latency and quant-local memory gates pass | **PASS 18/18** |
 | RTX 4090 | 0.4B/0.8B, 1.5B/2B and 2.9B/4B, bsz8, dense/W8/W4 | finite logits, fail-closed native/full-FLA/route contracts; quality is a separate axis | dense prefill min `1.3704x/1.0420x/1.3051x`, decode min `12.1018x/5.6368x/4.2144x`; W8/W4 total latency and physical-memory gates pass | **PASS 54/54** |
 | RTX 4090 | Historical 0.4B dense and W8/W4 speed lanes | 32-step greedy and cache handoff pass | decode `1.007x–1.418x` matching Albatross; bsz4 prefill `1.007x` current-session / `0.916x` historical high-water | **PASS measured lanes** |
@@ -289,6 +290,32 @@ Evidence: [`bench/qwen35_v100_hf_matrix_20260712/README.md`](bench/qwen35_v100_h
 and [`bench/v100_qwen35_full_matrix_20260713/README.md`](bench/v100_qwen35_full_matrix_20260713/README.md).
 Historical 2026-07-16 boundary snapshot: [`bench/v100_acceptance_20260716/README.md`](bench/v100_acceptance_20260716/README.md).
 Design: [`docs/plans/2026-07-13-qwen35-5070-fla-design.md`](docs/plans/2026-07-13-qwen35-5070-fla-design.md).
+
+## RTX 3090 latest-checkpoint strict prefill gate
+
+One RTX 3090 now covers RWKV-7 g1d 0.4B and 2026-08-05 g1i
+1.5B/2.9B/7.2B against official Qwen3.5 0.8B/2B/4B/9B. The dense-FP16
+matrix uses B1/B8, prompt 128/512/2048, decode 128 and chunk size 512 with
+two warmups and five measured runs. All 24 Qwen rows verify FLA Gated
+DeltaNet, Triton causal convolution, live fused bindings and the full-fused
+contract.
+
+The strict per-cell gate passes `24/24` with zero red or missing rows. Raw
+prefill has minimum/median `1.393044x/1.856646x`; parameter-adjusted prefill PD
+has minimum/median `1.037869x/1.351562x`. Raw decode has minimum/median
+`2.105217x/4.361090x`, while parameter-adjusted decode is
+`1.692661x/3.301953x`. The weakest cell is 2.9B/4B B8/P128: RWKV reaches
+`9,860.98 tok/s` versus Qwen `6,659.207 tok/s`, or `1.037869x` after active
+parameter adjustment.
+
+The exact row-32 scan and scoped FP16 GEMM-accumulation routes are restricted
+to measured RTX 3090 shapes. The separate oracle covers every opted-in direct
+or chunk-carried shape: `15/15` prompt and post-prefill cache-handoff rows pass
+cosine `>=0.9999` and exact greedy-token gates. This is an inference
+throughput result, not a model-quality claim.
+
+Evidence and one-command reproduction:
+[`bench/3090_g1i_qwen35_prefill_pd_20260812/README.md`](bench/3090_g1i_qwen35_prefill_pd_20260812/README.md).
 
 ## RTX 3090 self-fused long-prefill rows
 

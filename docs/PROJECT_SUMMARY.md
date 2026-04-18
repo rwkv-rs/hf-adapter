@@ -1,6 +1,6 @@
 # RWKV-7 Hugging Face adapter project summary
 
-Last updated: **2026-08-11**. The released baseline was audited at `main`
+Last updated: **2026-08-12**. The released baseline was audited at `main`
 `045bac1b769240facd290e1ac8232e8b1ca39778`.
 
 ## Project purpose
@@ -74,6 +74,13 @@ FP16 recurrent state. Both additions are fail-closed to measured product and
 model shapes; rejected launch and fusion candidates remain disabled. Evidence
 is recorded in [`5070_max_perf_20260811`](../bench/5070_max_perf_20260811/README.md)
 and [`v100_exact_card_20260811`](../bench/v100_exact_card_20260811/README.md).
+
+The 2026-08-12 RTX 3090 expansion by `@123123213weqw` closes all 24
+latest-checkpoint B1/B8 parameter-adjusted prefill cells against official
+full-FLA Qwen3.5 and adds a 15-row prompt/cache-handoff correctness oracle.
+The row-32 scan and scoped FP16-accumulation schedules remain exact-card and
+exact-shape only. Evidence is recorded in
+[`3090_g1i_qwen35_prefill_pd_20260812`](../bench/3090_g1i_qwen35_prefill_pd_20260812/README.md).
 
 ## Production evidence discipline
 
