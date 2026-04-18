@@ -634,16 +634,25 @@ def test_policy_defaults_are_conservative() -> None:
     assert rtx3090.prefill_sequence_ffn_num_stages == 4
     assert rtx3090.prefill_sequence_ffn_num_warps == 8
     assert rtx3090.prefill_global_fp16_accum_model_shapes == (
+        (1024, 24, 1, 512),
+        (1024, 24, 1, 2048),
+        (1024, 24, 8, 128),
         (1024, 24, 8, 512),
+        (2048, 24, 1, 128),
+        (2048, 24, 1, 512),
+        (2048, 24, 1, 2048),
         (2048, 24, 8, 128),
         (2048, 24, 8, 512),
+        (2560, 32, 1, 128),
         (2560, 32, 1, 512),
+        (2560, 32, 8, 128),
         (2560, 32, 8, 512),
         (4096, 32, 1, 128),
         (4096, 32, 1, 512),
         (4096, 32, 8, 128),
         (4096, 32, 8, 512),
     )
+    assert (1024, 24, 1, 128) not in rtx3090.prefill_global_fp16_accum_model_shapes
     assert not rtx3090.fused_prefill_state_scan
 
     a6000 = policy_for_profile(classify_gpu("NVIDIA RTX A6000", (8, 6)))
