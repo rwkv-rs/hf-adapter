@@ -573,6 +573,56 @@ def test_global_fp16_accum_is_exact_shape_dtype_and_device_scoped(monkeypatch) -
     )
 
 
+def test_block_fp16_accum_is_exact_shape_dtype_and_head_scoped(monkeypatch) -> None:
+    from rwkv7_hf import native_jit
+
+    monkeypatch.setattr(native_jit.torch.cuda, "device_count", lambda: 1)
+    monkeypatch.setattr(
+        native_jit.torch.backends.cuda,
+        "matmul",
+        types.SimpleNamespace(allow_fp16_accumulation=False),
+    )
+    monkeypatch.setattr(
+        native_jit,
+        "_kernel_policy",
+        lambda: types.SimpleNamespace(
+            prefill_block_fp16_accum_model_shapes=((1024, 24, 8, 512),),
+        ),
+    )
+    monkeypatch.delenv("RWKV7_NATIVE_PREFILL_BLOCK_FP16_ACCUM", raising=False)
+    monkeypatch.delenv(
+        "RWKV7_NATIVE_PREFILL_BLOCK_FP16_ACCUM_MODEL_SHAPES",
+        raising=False,
+    )
+
+    assert native_jit._native_prefill_block_fp16_accum_enabled(
+        8, 512, 1024, 24, torch.float16
+    )
+    assert not native_jit._native_prefill_block_fp16_accum_enabled(
+        1, 512, 1024, 24, torch.float16
+    )
+    assert not native_jit._native_prefill_block_fp16_accum_enabled(
+        8, 512, 1024, 24, torch.bfloat16
+    )
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_BLOCK_FP16_ACCUM", "0")
+    assert not native_jit._native_prefill_block_fp16_accum_enabled(
+        8, 512, 1024, 24, torch.float16
+    )
+
+    monkeypatch.setenv("RWKV7_NATIVE_PREFILL_BLOCK_FP16_ACCUM", "1")
+    monkeypatch.setenv(
+        "RWKV7_NATIVE_PREFILL_BLOCK_FP16_ACCUM_MODEL_SHAPES",
+        "2048x24x8x512",
+    )
+    assert native_jit._native_prefill_block_fp16_accum_enabled(
+        8, 512, 2048, 24, torch.float16
+    )
+    monkeypatch.setattr(native_jit.torch.cuda, "device_count", lambda: 2)
+    assert not native_jit._native_prefill_block_fp16_accum_enabled(
+        8, 512, 2048, 24, torch.float16
+    )
+
+
 def test_global_fp16_accum_disables_sequence_ffn_only_for_selected_fp16_shape(
     monkeypatch,
 ) -> None:

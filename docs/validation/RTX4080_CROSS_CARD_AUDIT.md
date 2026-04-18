@@ -43,10 +43,11 @@ stack.
 The machine-readable dataclass diff now has the following result:
 
 - **RTX 4080:** retains its exact shape allowlists, graph cache size 4,
-  self-chunk tile 32, row-4 scan selections, and disabled regressing Ada linear
+  self-chunk tile 32, measured row-4/row-8 scan selections, and disabled regressing Ada linear
   and sparse-FFN routes. PyTorch native FP16 accumulation is promoted only for
-  the 15 exact shapes with prefill/decode greedy parity and cosine above
-  `0.9999`; three boundary shapes retain FP32 accumulation. A later exact-shape
+  15 exact full-Prefill shapes with prefill/decode greedy parity and cosine above
+  `0.9999`; three former boundary shapes use block-only FP16 accumulation with
+  the final norm/head kept on FP32 accumulation and pass the same gates. A later exact-shape
   addition selects Triton FP16 recurrent state only for hidden 4096, 32 layers
   and B8; the paired 7.2B evidence is in
   `bench/4080_7p2b_fp16_state_20260809/`.
