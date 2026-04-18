@@ -10,6 +10,7 @@ CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 WARMUP="${WARMUP:-2}"
 RUNS="${RUNS:-5}"
 SOURCE_COMMIT="${SOURCE_COMMIT:-}"
+BENCHMARK_MATRIX="${BENCHMARK_MATRIX:-qwen35_3090_g1i_pd_20260812}"
 
 required=(
   RWKV_04_MODEL RWKV_15_MODEL RWKV_29_MODEL RWKV_72_MODEL
@@ -106,7 +107,7 @@ run_matrix() {
   "${python_bin}" bench/bench_cross_model_speed_resident.py \
     --model "${model}" --model-kind "${kind}" --model-role "${role}" \
     --model-pair "${pair}" --model-size-label "${size}" \
-    --benchmark-matrix qwen35_3090_g1i_pd_20260812 \
+    --benchmark-matrix "${BENCHMARK_MATRIX}" \
     --dtype fp16 --quantization none --device cuda \
     --batch-sizes 1 8 --prompt-tokens 128 512 2048 \
     --decode-tokens 128 --prefill-chunk-size 512 \
@@ -171,11 +172,13 @@ run_correctness() {
 
 # Every direct or chunk-carried shape that opts into global FP16 GEMM
 # accumulation gets prompt-logit, cache-handoff, and greedy-token coverage.
-run_correctness "${RWKV_04_MODEL}" 8 512
-run_correctness "${RWKV_04_MODEL}" 8 2048 512
+run_correctness "${RWKV_04_MODEL}" 1 "512 2048"
+run_correctness "${RWKV_04_MODEL}" 8 "128 512"
+run_correctness "${RWKV_04_MODEL}" "1 8" 2048 512
+run_correctness "${RWKV_15_MODEL}" 1 "128 512 2048"
 run_correctness "${RWKV_15_MODEL}" 8 "128 512"
-run_correctness "${RWKV_15_MODEL}" 8 2048 512
-run_correctness "${RWKV_29_MODEL}" "1 8" 512
+run_correctness "${RWKV_15_MODEL}" "1 8" 2048 512
+run_correctness "${RWKV_29_MODEL}" "1 8" "128 512"
 run_correctness "${RWKV_29_MODEL}" "1 8" 2048 512
 run_correctness "${RWKV_72_MODEL}" "1 8" "128 512"
 run_correctness "${RWKV_72_MODEL}" "1 8" 2048 512
@@ -188,7 +191,7 @@ from pathlib import Path
 
 source, target = map(Path, sys.argv[1:])
 rows = [json.loads(line) for line in source.read_text(encoding="utf-8").splitlines()]
-assert len(rows) == 15, f"expected 15 correctness rows, got {len(rows)}"
+assert len(rows) == 25, f"expected 25 correctness rows, got {len(rows)}"
 assert all(row.get("status") == "pass" for row in rows), "correctness failure"
 summary = {
     "status": "pass",

@@ -177,6 +177,7 @@ def test_3090_adjusted_prefill_runner_contract() -> None:
     assert "RWKV_PYTHON_BIN" in text
     assert "QWEN_PYTHON_BIN" in text
     assert "SOURCE_COMMIT" in text
+    assert "BENCHMARK_MATRIX" in text
     assert 'expected = ("2.7.1+cu126", "12.6", "3.3.1", "5.12.1", "1.14.0")' in text
     assert '"2.6.0+cu124", "12.4", "3.2.0", "5.12.1", "0.5.1", "0.49.2"' in text
     assert "--batch-sizes 1 8 --prompt-tokens 128 512 2048" in text
@@ -186,7 +187,7 @@ def test_3090_adjusted_prefill_runner_contract() -> None:
     assert "--min-prefill-active-parameter-throughput-ratio 1.0" in text
     assert "--fail-on-gate" in text
     assert "bench/bench_native_prefill_accum_correctness.py" in text
-    assert 'assert len(rows) == 15' in text
+    assert 'assert len(rows) == 25' in text
     assert 'row.get("status") == "pass"' in text
 
 
