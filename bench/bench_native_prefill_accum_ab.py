@@ -20,20 +20,36 @@ import time
 from pathlib import Path
 from typing import Any
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+# Direct ``python bench/<script>.py`` execution puts ``bench/`` ahead of the
+# repository root.  That can resolve ``bench`` to ``bench/bench.py`` instead
+# of the package, even when PYTHONPATH already contains the root.  Reinsert the
+# root at position zero so the benchmark is reproducible from its documented
+# CLI entrypoint as well as through pytest/module imports.
+try:
+    sys.path.remove(str(REPO_ROOT))
+except ValueError:
+    pass
+sys.path.insert(0, str(REPO_ROOT))
+
 import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from bench.bench_native_prefill_scan import (
-    DTYPES,
-    build_ids,
-    infer_model_size_label,
-    prepare_model_dir,
-)
+try:
+    from bench.bench_native_prefill_scan import (
+        DTYPES,
+        build_ids,
+        infer_model_size_label,
+        prepare_model_dir,
+    )
+except ModuleNotFoundError:  # Direct ``python bench/...`` execution.
+    from bench_native_prefill_scan import (
+        DTYPES,
+        build_ids,
+        infer_model_size_label,
+        prepare_model_dir,
+    )
 
 
 MODES = ("off", "global", "block")

@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+import subprocess
+import sys
+
 import pytest
 
 from bench.bench_native_prefill_accum_ab import (
@@ -49,3 +54,24 @@ def test_model_shape_spec_is_deterministic() -> None:
         "1024x24x1x128 1024x24x1x512 "
         "1024x24x8x128 1024x24x8x512"
     )
+
+
+def test_direct_script_entrypoint_resolves_bench_package() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(repo_root)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "bench" / "bench_native_prefill_accum_ab.py"),
+            "--help",
+        ],
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "Paired same-process A/B" in completed.stdout
