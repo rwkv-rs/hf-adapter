@@ -12,6 +12,7 @@ Generated inventory of benchmark scripts and evidence directories. Keep this fil
 | V100 32GB / RTX 4080 | [`4080_v100_decode_tuning_20260808/`](4080_v100_decode_tuning_20260808/README.md) | Fail-closed exact-B8 decode tuning passes paired speed, policy and greedy gates on both products |
 | V100 32GB | [`v100_exact_card_20260811/`](v100_exact_card_20260811/README.md) | Exact 0.4B/1.5B B8 FP16 state passes both A/B orders, saves allocated VRAM, and preserves greedy traces |
 | RTX 3090 | [`3090_g1h_7p2_bsz8_20260714/`](3090_g1h_7p2_bsz8_20260714/README.md) | Latest g1h 7.2B/9B bsz8 dense, active-work, W8/W4 speed and memory gates pass 18/18 |
+| RTX 3090 | [`3090_g1i_qwen35_maxperf_20260812/`](3090_g1i_qwen35_maxperf_20260812/README.md) | Max-performance g1d/g1i 0.4B-7.2B B1/B8 strict parameter-adjusted prefill passes 24/24; correctness passes 25/25 |
 | RTX 3090 | [`3090_self_fused_20260713/`](3090_self_fused_20260713/README.md) | 7.2B/9B prompt-2048 batch-1/2 self-fused dense gates pass |
 | RTX 4090 | [`4090_g1h_7p2_bsz8_20260715/`](4090_g1h_7p2_bsz8_20260715/README.md) | Latest g1h 7.2B/9B bsz8 dense, active-work, W8/W4 speed and quant-local memory gates pass 18/18 |
 | RTX 4090 | [`4090_small_bsz8_20260715/`](4090_small_bsz8_20260715/README.md) | 0.4B/0.8B, 1.5B/2B and 2.9B/4B bsz8 dense, active-work, W8/W4 speed and physical-memory gates pass 54/54 |
@@ -54,6 +55,8 @@ two-pair conservative gate. Conclusions and reproduction commands are in
 | --- | --- | --- | --- |
 | amd_gfx1100_native_20260727 | AMD gfx1100/ROCm 7.2.1 fully native HF compatibility and baseline | 1 | 13 |
 | 3090_g1h_7p2_bsz8_20260714 | RTX 3090 latest-g1h 7.2B vs Qwen3.5-9B bsz8 acceptance | 5 | 5 |
+| 3090_g1i_qwen35_maxperf_20260812 | RTX 3090 exact-shape max-performance B1/B8 Qwen3.5 matrix, correctness and promotion probes | 10 | 0 |
+| 3090_g1i_qwen35_prefill_pd_20260812 | RTX 3090 latest-checkpoint B1/B8 strict parameter-adjusted prefill and FP16-accumulation correctness | 2 | 0 |
 | 3090_self_fused_20260713 | RTX 3090 self-fused RWKV-7 7.2B long-prefill close | 2 | 0 |
 | 4090_g1h_7p2_bsz8_20260715 | RTX 4090 latest-g1h 7.2B vs Qwen3.5-9B bsz8 acceptance | 6 | 7 |
 | 4090_small_bsz8_20260715 | RTX 4090 0.4B/1.5B/2.9B vs Qwen3.5 bsz8 acceptance | 5 | 1 |

@@ -13,13 +13,13 @@ def read(relative: str) -> str:
 
 def main() -> int:
     canonical_dates = {
-        "HF_STATUS.md": "2026-08-11",
-        "HF_TODO.md": "2026-08-11",
-        "BENCHMARK.md": "2026-08-11",
-        "docs/ACCEPTANCE.md": "2026-08-11",
-        "docs/HARDWARE_MATRIX.md": "2026-08-11",
-        "docs/PROJECT_SUMMARY.md": "2026-08-11",
-        "docs/RESULTS_INDEX.md": "2026-08-11",
+        "HF_STATUS.md": "2026-08-12",
+        "HF_TODO.md": "2026-08-12",
+        "BENCHMARK.md": "2026-08-12",
+        "docs/ACCEPTANCE.md": "2026-08-12",
+        "docs/HARDWARE_MATRIX.md": "2026-08-12",
+        "docs/PROJECT_SUMMARY.md": "2026-08-12",
+        "docs/RESULTS_INDEX.md": "2026-08-12",
     }
     for relative, expected_date in canonical_dates.items():
         text = read(relative)
@@ -86,6 +86,8 @@ def main() -> int:
         "4080_7p2b_fp16_state_20260809",
         "5070_max_perf_20260811",
         "v100_exact_card_20260811",
+        "3090_g1i_qwen35_prefill_pd_20260812",
+        "3090_g1i_qwen35_maxperf_20260812",
     ):
         assert artifact in bench_index, f"current promoted artifact missing: {artifact}"
 

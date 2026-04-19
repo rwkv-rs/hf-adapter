@@ -58,6 +58,25 @@ def test_decode_ownership_moves_without_token_loop_wrappers() -> None:
         assert getattr(native_jit, name) is getattr(native_jit_decode, name)
 
 
+def test_standard_fused_recurrent_output_uses_supported_launch_arguments() -> None:
+    tree = ast.parse(
+        (ROOT / "rwkv7_hf" / "native_jit_decode.py").read_text(encoding="utf-8")
+    )
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "fused_recurrent_output_prepare"
+    ]
+
+    assert calls
+    assert all(
+        "num_warps" not in {keyword.arg for keyword in call.keywords}
+        for call in calls
+    )
+
+
 def test_dense_jit_decode_or_eager_fallback_matches_eager_for_b1_and_b2(monkeypatch) -> None:
     model = _tiny_model()
     ids = torch.tensor([[1, 2, 3], [4, 5, 6]])

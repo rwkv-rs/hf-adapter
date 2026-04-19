@@ -108,6 +108,14 @@ Current exact-card dispatch additions:
   `(hidden=2048, layers=24, batch=8)`. Other batches, model shapes, and Volta
   product names remain on FP32 state. Prefill tile and decode warp probes from
   2026-08-11 did not clear the promotion gate and must remain unchanged.
+- NVIDIA GeForce RTX 3090 (`sm_86`): the 2026-08-12 max-performance
+  dense-FP16 B1/B8 P128/P512/P2048 matrix may use only the exact scan tiles
+  and scoped full-prefill FP16 GEMM-accumulation shapes allowlisted in
+  `kernel_policy.py`. The strict parameter-adjusted prefill gate passes 24/24
+  against full-FLA/Triton-conv Qwen3.5 at minimum/median
+  `1.227477x/1.467758x`, and all 25 prompt/cache-handoff correctness rows must
+  remain green. Other Ampere products, model shapes, batches, and token blocks
+  must not inherit these routes.
 - NVIDIA GeForce RTX 5070 Laptop GPU (`sm_120`): the 2026-08-11 policy may use
   exact 0.4B/1.5B prefill graph+scan, raw recurrent, shape-gated norm/mix, and
   B8 FP16-state routes recorded in

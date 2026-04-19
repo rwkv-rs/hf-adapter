@@ -5,7 +5,7 @@ HF deliverables and dated experiments belong in `HF_STATUS.md`,
 `BENCHMARK.md`, or the immutable evidence directories under `bench/`.
 Native vLLM/SGLang scheduler work remains outside this repository.
 
-Last updated: **2026-08-11**. The released baseline was audited against `main` commit
+Last updated: **2026-08-12**. The released baseline was audited against `main` commit
 `045bac1b769240facd290e1ac8232e8b1ca39778` and the published `v0.6.0`
 release.
 

@@ -3,7 +3,7 @@
 Canonical current hardware status for the HF adapter. Detailed experiment logs
 remain in `bench/` and platform-specific documents.
 
-Last updated: **2026-08-11**. The released baseline was audited at `main`
+Last updated: **2026-08-12**. The released baseline was audited at `main`
 `045bac1b769240facd290e1ac8232e8b1ca39778`.
 
 The `v0.6.0` HF release is complete for the declared support policy and the
@@ -24,7 +24,7 @@ reopening the released adapter milestone.
 | Platform | Status | Models / scope | Strongest current evidence | Open work |
 |---|---|---|---|---|
 | Tesla V100 32GB, sm70 | **Production-close** | dense/Qwen lanes; packed-MM4 cached decode for 1.5B/2.9B/7.2B; exact-B8 WAVG; exact 0.4B/1.5B B8 FP16 state; larger inference/training smoke | Albatross P1 and MM4 gates remain; FP16 state passes both A/B orders at `1.0216x-1.0288x`, saves `16.875-58.125 MiB`, and matches `4,096/4,096` greedy tokens per model; other batches and Volta cards remain FP32 | Larger-model FP16-state rows, P2/P3, full-memory prefill and broader optimized-Qwen shapes |
-| RTX 3090 24GB, sm86 | **Production-close for measured bsz8 lanes** | g1h 7.2B vs Qwen3.5-9B plus 1.5B/2B and 2.9B/4B pairs | Latest 7.2B dense/W8/W4 matrix passes 18/18; dense decode active-work, Qwen FLA, quant speed and physical-memory gates pass | bsz1/2/4 latest-g1h matrix, task-quality evaluation, multi-GPU |
+| RTX 3090 24GB, sm86 | **Production-close for latest-checkpoint B1/B8 prefill and retained quant lanes** | g1d/g1i 0.4B/1.5B/2.9B/7.2B vs Qwen3.5 0.8B/2B/4B/9B; earlier B8 W8/W4 | Strict per-cell parameter-adjusted prefill passes 24/24 at minimum/median `1.227477x/1.467758x`; 24/24 full-FLA references and 25/25 prompt/cache-handoff correctness rows pass | B2/B4 latest checkpoints, task-quality evaluation, multi-GPU and broader Ampere portability |
 | RTX 4090 24GB, sm89 | **Production-close for measured bsz8 lanes** | RWKV 0.4B/1.5B/2.9B/7.2B vs Qwen3.5 0.8B/2B/4B/9B, dense/W8/W4 | Small-model matrix passes 54/54 and 7.2B passes 18/18; dense prefill/decode, active-work, full Qwen FLA, quant speed and quant-local memory gates pass | bsz1/2/4 latest matrix, task quality, full-memory W4, other Ada cards |
 | RTX 4080 16GB, sm89 | **Production-close for measured Native HF B1/B8 and capacity lanes** | Native HF 0.4B/1.5B/2.9B vs full-FLA Qwen3.5 0.8B/2B/4B; optimized 7.2B/B8 decode; 13.3B capacity | parameter-adjusted Prefill and Decode each pass 36/36 cells, minima `1.068520x/1.140700x`; output-head quant complete-cell minima `1.003101x/1.015996x`; 7.2B/B8 FP16-state decode is median `344.39 tok/s`, `1.0301x` FP32 state, `-123.88 MiB`, and greedy `12288/12288`; 13.3B MM8/MM4 fit | 7.2B same-card Qwen/Albatross close, task quality, long-run/distributed training and full-model quant speed |
 | RTX 5090, sm120 | **Production-close for measured Qwen/W4/train_temp/Native lanes** | Existing Qwen/W4/MATH lanes; Native B16/T512 training; Native fp16-state 7.2B decode and 2.9B/13.3B prefill | Full-FLA Qwen 8/8; BN/TN W4 B1/B8; exact-step plus real-MiniPile 3-seed/5,000-step/resume training; Native decode `1.0010x/1.0104x` and prefill 12/12 at `1.0029x–1.5690x` versus pinned same-precision v3a | Broader models/cards/quality, cross-harness memory parity and distributed train_temp |
@@ -52,6 +52,7 @@ reopening the released adapter milestone.
 - V100 / RTX 4080 exact-B8 decode tuning: [`../bench/4080_v100_decode_tuning_20260808/README.md`](../bench/4080_v100_decode_tuning_20260808/README.md)
 - V100 exact 0.4B/1.5B B8 FP16 state: [`../bench/v100_exact_card_20260811/README.md`](../bench/v100_exact_card_20260811/README.md)
 - RTX 3090 g1h 7.2B: [`../bench/3090_g1h_7p2_bsz8_20260714/README.md`](../bench/3090_g1h_7p2_bsz8_20260714/README.md)
+- RTX 3090 max-performance parameter-adjusted prefill: [`../bench/3090_g1i_qwen35_maxperf_20260812/README.md`](../bench/3090_g1i_qwen35_maxperf_20260812/README.md)
 - RTX 4090 g1h 7.2B: [`../bench/4090_g1h_7p2_bsz8_20260715/README.md`](../bench/4090_g1h_7p2_bsz8_20260715/README.md)
 - RTX 4090 small models: [`../bench/4090_small_bsz8_20260715/README.md`](../bench/4090_small_bsz8_20260715/README.md)
 - RTX 4080 Native HF, full-FLA Qwen and capacity ladder: [`../bench/4080_full_model_ladder_20260719/README.md`](../bench/4080_full_model_ladder_20260719/README.md)
