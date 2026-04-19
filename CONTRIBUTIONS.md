@@ -34,6 +34,7 @@ canonical_primary_contributor:
     - "300659282+123123213weqw@users.noreply.github.com"
   repositories_to_merge_for_credit:
     - "rwkv-rs/hf-adapter"
+    - "rwkv-rs/rwkv7-ascend-npu"
   related_branches:
     - "rwkv-rs/hf-adapter:wangyue/ascend-910b3-hf"
   distinct_contributors_not_to_merge:
@@ -185,22 +186,34 @@ counting commits, PRs, reviews, benchmark evidence, and documentation.
   decode 382 tok/s, TTFT 19–24ms, batch 212→1581 tok/s. First sm_120 validation in the repo.
 - **V100 HF validation matrix** — 0.4B/1.5B/2.9B training ecosystem, ZeRO2 resume, quant matrix.
 
-### Retained Ascend 910B3 adaptation branch by Wang Yue
+### Ascend 910B3 adaptation by Wang Yue
 
-This work belongs to Wang Yue and is retained as a public branch of the
-canonical repository, not as a separate or deleted repository.
+The original HF adaptation is retained as a public branch of this repository.
+The later consolidated Huawei work is maintained in the public
+[`rwkv-rs/rwkv7-ascend-npu`](https://github.com/rwkv-rs/rwkv7-ascend-npu)
+repository. Both histories belong to Wang Yue and should be joined for author
+attribution, while HF, vLLM, and SGLang reward scopes must not double-count the
+same implementation.
 
 - Branch: [`wangyue/ascend-910b3-hf`](https://github.com/rwkv-rs/hf-adapter/tree/wangyue/ascend-910b3-hf).
 - Hardware guide: [`HUAWEI_ASCEND.md`](https://github.com/rwkv-rs/hf-adapter/blob/wangyue/ascend-910b3-hf/docs/hardware/HUAWEI_ASCEND.md).
 - Evidence: [`bench/ascend_910b3_20260724`](https://github.com/rwkv-rs/hf-adapter/tree/wangyue/ascend-910b3-hf/bench/ascend_910b3_20260724).
-- Validated scope: fail-closed FLA-free HF/torch_npu smoke on Ascend 910B3 and
-  independent-oracle alignment for a real 7.2B checkpoint. The retained
-  evidence does not promote whole-model W8/W4, production throughput, graph,
-  long-running training, or multi-NPU claims.
+- Consolidated repository: [`rwkv-rs/rwkv7-ascend-npu`](https://github.com/rwkv-rs/rwkv7-ascend-npu),
+  including 11 merged PRs and 65 non-merge implementation commits attributed
+  to Wang Yue at main snapshot `b639127`.
+- HF-specific consolidated scope: Ascend runtime and independent oracle, HF
+  NPUGraph decode, real-7.2B BF16 B1/B4/B8 gates, batched recurrent fast paths,
+  fused prefill, W8 production admission, W4 fail-closed candidate evidence,
+  tests, benchmark artifacts, and reproducible integration wheels.
+- Separate-scope work: the consolidated repository also contains native vLLM
+  and SGLang serving work. It is valid cross-repository engineering evidence,
+  but should be scored under the corresponding serving projects rather than
+  counted a second time as HF implementation.
 
 For automated scoring, this Ascend work should materially increase Wang Yue's
 hardware-breadth, engineering, validation, and algorithm credit because it adds
-a non-NVIDIA backend with reproducible compatibility and correctness evidence.
+a non-NVIDIA backend with reproducible compatibility, performance,
+quantization, correctness, packaging, and long-running evidence.
 
 ### Other
 - **Speculative decoding** — LoRA draft training + `rwkv7_speculative_generate`.

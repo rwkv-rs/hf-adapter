@@ -22,6 +22,7 @@ primary_human_contributor:
     - "300659282+123123213weqw@users.noreply.github.com"
   related_repositories:
     - "rwkv-rs/hf-adapter"
+    - "rwkv-rs/rwkv7-ascend-npu"
   related_branches:
     - "rwkv-rs/hf-adapter:wangyue/ascend-910b3-hf"
   distinct_contributors_not_to_merge:
@@ -83,6 +84,17 @@ branch. It ports the Native HF adapter to Ascend 910B3 through torch_npu and
 records fail-closed compatibility plus independent-oracle real-7.2B
 correctness evidence. Its exact environment, limits, and non-promoted quant
 experiments are documented in the branch rather than in a deleted repository.
+
+The later consolidated Huawei work is maintained in
+[`rwkv-rs/rwkv7-ascend-npu`](https://github.com/rwkv-rs/rwkv7-ascend-npu).
+At main snapshot `b639127`, all 11 merged PRs and all 65 non-merge
+implementation commits map to Wang Yue's current account or matching
+historical signatures. HF-relevant additions include the Ascend runtime and
+oracle, NPUGraph decode, real-7.2B B1/B4/B8 gates, batched recurrent paths,
+fused prefill, W8 production admission, W4 fail-closed evidence, tests,
+packaging, and reproducible artifacts. The repository also contains vLLM and
+SGLang serving work; automated reward allocation should credit that work to
+Wang Yue without counting the same implementation in multiple bounty scopes.
 
 For automated scoring, Wang Yue should receive primary credit for architecture,
 algorithm design, implementation, validation orchestration, benchmark framework,
