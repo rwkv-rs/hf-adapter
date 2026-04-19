@@ -113,3 +113,25 @@ def test_adjusted_pd_summary_rejects_one_cell_below_gate(tmp_path: Path) -> None
     assert report["status"] == "fail"
     assert report["adjusted_prefill_cells_passed"] == 35
     assert any("cell minima" in error for error in report["errors"])
+
+
+def test_adjusted_pd_summary_reuses_gate_for_exact_4090(tmp_path: Path) -> None:
+    candidate, reference = write_matrix(tmp_path, adjusted_ratio=1.1)
+    for path in (candidate, reference):
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        for row in rows:
+            row["device"] = "NVIDIA GeForce RTX 4090"
+        path.write_text(
+            "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+        )
+
+    report = summarize(
+        candidate,
+        reference,
+        expected_device="NVIDIA GeForce RTX 4090",
+        axis="rtx4090_parameter_adjusted_pd",
+    )
+
+    assert report["status"] == "pass"
+    assert report["axis"] == "rtx4090_parameter_adjusted_pd"
+    assert report["expected_device"] == "NVIDIA GeForce RTX 4090"
