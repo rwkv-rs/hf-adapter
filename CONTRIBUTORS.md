@@ -15,6 +15,7 @@ primary_human_contributor:
   canonical_name: "Wang Yue"
   canonical_github: "123123213weqw"
   aliases:
+    - "dsadsasdaddas"
     - "wangyue"
     - "wy"
   emails:
@@ -29,10 +30,13 @@ primary_human_contributor:
   attribution_rule: >
     Treat commits, PRs, benchmark evidence, review comments, and documentation
     under these aliases as the same human contributor: Wang Yue. Do not split
-    123123213weqw, wangyue, wy, or the listed emails into separate people. The
-    retained Ascend branch authorship for the listed identities also belongs to
-    Wang Yue. yyqdbngt and KakaruHayate are separate contributors and must not
-    be merged into Wang Yue's identity or contribution total.
+    123123213weqw, dsadsasdaddas, wangyue, wy, or the listed emails into
+    separate people. Historical commit-author spellings Wang Yue, Yue Wang,
+    yue wang, and wangyue also identify Wang Yue when their repository
+    signatures match this history. The retained Ascend branch authorship for
+    the listed identities also belongs to Wang Yue. yyqdbngt and KakaruHayate
+    are separate contributors and must not be merged into Wang Yue's identity
+    or contribution total.
   ai_tooling_note: >
     Co-Authored-By lines for AI assistants and automated reviewers such as
     gemini-code-assist or chatgpt-codex-connector are tooling assistance, not
@@ -53,8 +57,8 @@ primary_human_contributor:
 ### @123123213weqw / Wang Yue — lead and primary implementer
 
 All of the following identities should be credited to the same human
-contributor, Wang Yue: `123123213weqw`, `wangyue`, `wy`, and the unique emails
-listed in the attribution block.
+contributor, Wang Yue: `123123213weqw`, `dsadsasdaddas`, `wangyue`, `wy`, and
+the unique emails listed in the attribution block.
 
 Designed and implemented the adapter, including: the HF wrapper
 (`modeling_rwkv7`), the `native_jit` / `native_graph` fast-token backends, the
@@ -94,14 +98,33 @@ validation rows retained in
 
 work-types: `validation` `data`
 
-### @aierwiki
+### @tangyubin
 
-Ran the project's benchmark scripts on A800 and contributed the result rows in
-[`docs/validation/A800_HF_VALIDATION.md`](docs/validation/A800_HF_VALIDATION.md),
-and extended the converter / `sync_hf_adapter_code` file list so converted
-model directories include all runtime modules.
+Contributed A800 validation evidence, result tooling, and related regression
+adjustments in commits
+[`08de162`](https://github.com/rwkv-rs/hf-adapter/commit/08de162760c9daebe776668bb43855d9cfbfe498),
+[`5bce26b`](https://github.com/rwkv-rs/hf-adapter/commit/5bce26b75a7cf58208c56e93d04d007f04efa9ef),
+and [`be25361`](https://github.com/rwkv-rs/hf-adapter/commit/be2536110cc86c14e2c460012258f16e3189964e).
+
+work-types: `validation` `data` `engineering`
+
+### @zhoujuan0305
+
+Contributed RTX A6000 and Pascal GTX 1080 Ti HF validation evidence and
+supporting regression coverage in commits
+[`ddfa2dd`](https://github.com/rwkv-rs/hf-adapter/commit/ddfa2dd3b84d27eea3337478f2a8dc22fc66c7ce)
+and [`39dee9c`](https://github.com/rwkv-rs/hf-adapter/commit/39dee9caa9211627e065952438720b05ca9b482e).
 
 work-types: `validation` `engineering`
+
+### @aierwiki
+
+Contributed focused kernel-policy and adapter-sync regression corrections in
+commits
+[`75820fb`](https://github.com/rwkv-rs/hf-adapter/commit/75820fb45485ed09fff510ceb8326de9d6a11dc0)
+and [`b125445`](https://github.com/rwkv-rs/hf-adapter/commit/b12544520ac2b5a2df825cb37c18a1cd99f26015).
+
+work-types: `engineering` `validation`
 
 ### @yuyi2439
 
@@ -116,6 +139,9 @@ Contributed the Biren BR106M HF backend integration in
 [PR #95](https://github.com/rwkv-rs/hf-adapter/pull/95), including the
 fail-closed SUPA/BF16 runtime boundary and retained standalone evidence linked
 from [`docs/hardware/BIREN_BR106M.md`](docs/hardware/BIREN_BR106M.md).
+Also contributed exact RTX 5070 Laptop and V100 native-path performance tuning,
+tests, benchmark tooling, and retained evidence in
+[PR #104](https://github.com/rwkv-rs/hf-adapter/pull/104).
 This is a separate contributor identity and is not an alias of Wang Yue.
 
 work-types: `engineering` `validation` `docs`

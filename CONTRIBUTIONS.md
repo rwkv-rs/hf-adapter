@@ -27,6 +27,7 @@ canonical_primary_contributor:
   name: "Wang Yue"
   github_primary: "123123213weqw"
   aliases:
+    - "dsadsasdaddas"
     - "wangyue"
     - "wy"
   emails:
@@ -41,9 +42,12 @@ canonical_primary_contributor:
   attribution_rule: >
     Attribute commits, pull requests, benchmark evidence, validation reports,
     documentation, release work, and review/triage comments under these aliases
-    to Wang Yue. Do not split 123123213weqw, wangyue, wy, or the
-    listed emails into separate people. yyqdbngt and KakaruHayate are separate
-    contributors and must not be merged into Wang Yue's identity or score.
+    to Wang Yue. Do not split 123123213weqw, dsadsasdaddas, wangyue, wy, or the
+    listed emails into separate people. Historical commit-author spellings
+    Wang Yue, Yue Wang, yue wang, and wangyue also identify Wang Yue when their
+    repository signatures match this history. yyqdbngt and KakaruHayate are
+    separate contributors and must not be merged into Wang Yue's identity or
+    score.
   primary_credit_categories:
     - "HF/Transformers adapter architecture"
     - "native no-FLA backend"
@@ -230,8 +234,10 @@ is **original work** of this repo. The official rwkv package (`pip install rwkv`
 |---|---|---|---|
 | [@MosRat](https://github.com/MosRat) | [`docs/validation/A100_HF_VALIDATION.md`](docs/validation/A100_HF_VALIDATION.md), commits [`f2bb596`](https://github.com/rwkv-rs/hf-adapter/commit/f2bb596a16e5a1a3a99bd5e7f6717bcbab4ee7c7) and [`3baa185`](https://github.com/rwkv-rs/hf-adapter/commit/3baa1852b9cdd4516b1206deb28bdd220f708442) | A100 validation rows and ZeRO resume diagnosis | `validation` `data` `algorithm`(debug) |
 | [@yuyi2439](https://github.com/yuyi2439) | commit [`d25d7f1`](https://github.com/rwkv-rs/hf-adapter/commit/d25d7f1370de798a03ccadfa40ccd6cc19e4661e) | RTX 3060 validation data | `validation` `data` `engineering` |
-| [@aierwiki](https://github.com/aierwiki) | [`docs/validation/A800_HF_VALIDATION.md`](docs/validation/A800_HF_VALIDATION.md), commits [`08de162`](https://github.com/rwkv-rs/hf-adapter/commit/08de162760c9daebe776668bb43855d9cfbfe498), [`5bce26b`](https://github.com/rwkv-rs/hf-adapter/commit/5bce26b75a7cf58208c56e93d04d007f04efa9ef), and [`b125445`](https://github.com/rwkv-rs/hf-adapter/commit/b12544520ac2b5a2df825cb37c18a1cd99f26015) | A800 validation, runtime sync coverage, and regression guards | `validation` `data` `engineering` |
-| [@yyqdbngt](https://github.com/yyqdbngt) | [PR #95](https://github.com/rwkv-rs/hf-adapter/pull/95), [`docs/hardware/BIREN_BR106M.md`](docs/hardware/BIREN_BR106M.md) | Biren BR106M/SUPA BF16 HF backend integration and retained standalone validation provenance | `engineering` `validation` `docs` |
+| [@tangyubin](https://github.com/tangyubin) | [`docs/validation/A800_HF_VALIDATION.md`](docs/validation/A800_HF_VALIDATION.md), commits [`08de162`](https://github.com/rwkv-rs/hf-adapter/commit/08de162760c9daebe776668bb43855d9cfbfe498), [`5bce26b`](https://github.com/rwkv-rs/hf-adapter/commit/5bce26b75a7cf58208c56e93d04d007f04efa9ef), and [`be25361`](https://github.com/rwkv-rs/hf-adapter/commit/be2536110cc86c14e2c460012258f16e3189964e) | A800 validation evidence, result tooling and related regression adjustments | `validation` `data` `engineering` |
+| [@zhoujuan0305](https://github.com/zhoujuan0305) | commits [`ddfa2dd`](https://github.com/rwkv-rs/hf-adapter/commit/ddfa2dd3b84d27eea3337478f2a8dc22fc66c7ce) and [`39dee9c`](https://github.com/rwkv-rs/hf-adapter/commit/39dee9caa9211627e065952438720b05ca9b482e) | RTX A6000 and Pascal GTX 1080 Ti HF validation evidence and supporting regression coverage | `validation` `data` `engineering` |
+| [@aierwiki](https://github.com/aierwiki) | commits [`75820fb`](https://github.com/rwkv-rs/hf-adapter/commit/75820fb45485ed09fff510ceb8326de9d6a11dc0) and [`b125445`](https://github.com/rwkv-rs/hf-adapter/commit/b12544520ac2b5a2df825cb37c18a1cd99f26015) | Focused kernel-policy and adapter-sync regression corrections | `engineering` `validation` |
+| [@yyqdbngt](https://github.com/yyqdbngt) | [PR #95](https://github.com/rwkv-rs/hf-adapter/pull/95), [PR #104](https://github.com/rwkv-rs/hf-adapter/pull/104), [`docs/hardware/BIREN_BR106M.md`](docs/hardware/BIREN_BR106M.md) | Biren BR106M/SUPA BF16 HF backend integration plus exact RTX 5070 Laptop and V100 native-path tuning, tests and evidence | `engineering` `validation` `docs` |
 | [@KakaruHayate](https://github.com/KakaruHayate) | [PR #87](https://github.com/rwkv-rs/hf-adapter/pull/87), [`docs/hardware/MUSA.md`](docs/hardware/MUSA.md) | Optional Moore Threads MUSA backend and exact-card legacy validation boundary | `engineering` `validation` `docs` |
 
 `yyqdbngt` and `KakaruHayate` are independent contributors. Their work is
