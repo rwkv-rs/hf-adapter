@@ -4,10 +4,13 @@
 
 The default axis changes only ``RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA`` between
 captures. ``--axis ada_wagv_bmm`` instead holds that grouped route on and
-changes only the exact RTX 4080 B8 tensor-core BMM switch. Sparse FFN and the
-Ada exact-row linear probe stay disabled, while output/recurrent-output, raw
-recurrent, and decode norm/mix routes remain enabled. It records correctness,
-cache telemetry, latency, throughput, and peak memory.
+changes only the B8 tensor-core BMM switch. The
+``ada_wagv_bmm_from_default`` axis compares the ungrouped fallback directly
+with grouped BMM; use it when a card's current policy does not already enable
+grouped W/A/G/V at B8. Sparse FFN and the Ada exact-row linear probe stay
+disabled, while output/recurrent-output, raw recurrent, and decode norm/mix
+routes remain enabled. It records correctness, cache telemetry, latency,
+throughput, and peak memory.
 """
 from __future__ import annotations
 
@@ -128,13 +131,27 @@ def prefill(model, ids: torch.Tensor):
     return token, out.past_key_values
 
 
+def wagv_mode_flags(axis: str, enabled: bool) -> tuple[bool, bool]:
+    """Return grouped-WAGV and BMM flags for one A/B capture.
+
+    ``ada_wagv_bmm`` isolates the BMM implementation behind an already-on
+    grouped route. ``ada_wagv_bmm_from_default`` is the production-policy
+    comparison for cards whose B8 fallback is still ungrouped.
+    """
+
+    if axis == "ada_wagv_bmm":
+        return True, bool(enabled)
+    if axis == "ada_wagv_bmm_from_default":
+        return bool(enabled), bool(enabled)
+    if axis == "ada_wagv_lora":
+        return bool(enabled), False
+    raise ValueError(f"unsupported WAGV benchmark axis: {axis!r}")
+
+
 def run_mode(model, token: torch.Tensor, base_state, args: argparse.Namespace, *, enabled: bool) -> dict[str, Any]:
-    if args.axis == "ada_wagv_bmm":
-        os.environ["RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA"] = "1"
-        os.environ["RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM"] = "1" if enabled else "0"
-    else:
-        os.environ["RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA"] = "1" if enabled else "0"
-        os.environ["RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM"] = "0"
+    grouped, bmm = wagv_mode_flags(args.axis, enabled)
+    os.environ["RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA"] = "1" if grouped else "0"
+    os.environ["RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM"] = "1" if bmm else "0"
     os.environ["RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN"] = "0"
     os.environ["RWKV7_NATIVE_GRAPH_ADA_LINEAR"] = "0"
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX"] = "1"
@@ -207,7 +224,7 @@ def main() -> int:
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument(
         "--axis",
-        choices=("ada_wagv_lora", "ada_wagv_bmm"),
+        choices=("ada_wagv_lora", "ada_wagv_bmm", "ada_wagv_bmm_from_default"),
         default="ada_wagv_lora",
     )
     ap.add_argument("--prompt-tokens", type=int, default=64)
