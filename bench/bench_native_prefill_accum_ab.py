@@ -32,9 +32,9 @@ except ValueError:
     pass
 sys.path.insert(0, str(REPO_ROOT))
 
-import torch
-import torch.nn.functional as F
-from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch  # noqa: E402
+import torch.nn.functional as F  # noqa: E402
+from transformers import AutoModelForCausalLM, AutoTokenizer  # noqa: E402
 
 try:
     from bench.bench_native_prefill_scan import (
