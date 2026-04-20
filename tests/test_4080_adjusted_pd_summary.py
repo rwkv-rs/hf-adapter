@@ -121,6 +121,10 @@ def test_adjusted_pd_summary_reuses_gate_for_exact_4090(tmp_path: Path) -> None:
         rows = [json.loads(line) for line in path.read_text().splitlines()]
         for row in rows:
             row["device"] = "NVIDIA GeForce RTX 4090"
+            if row.get("model_role") == "reference":
+                row["effective_backend"] = (
+                    "qwen_fla_gated_delta_rule_fla_triton_conv"
+                )
         path.write_text(
             "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
         )
@@ -130,8 +134,14 @@ def test_adjusted_pd_summary_reuses_gate_for_exact_4090(tmp_path: Path) -> None:
         reference,
         expected_device="NVIDIA GeForce RTX 4090",
         axis="rtx4090_parameter_adjusted_pd",
+        expected_qwen_backends=(
+            "qwen_fla_gated_delta_rule_fla_triton_conv",
+        ),
     )
 
     assert report["status"] == "pass"
     assert report["axis"] == "rtx4090_parameter_adjusted_pd"
     assert report["expected_device"] == "NVIDIA GeForce RTX 4090"
+    assert report["expected_qwen_backends"] == [
+        "qwen_fla_gated_delta_rule_fla_triton_conv"
+    ]

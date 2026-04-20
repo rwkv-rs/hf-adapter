@@ -131,7 +131,13 @@ more specific claim.
   high-water reference. Separately, all published 0.4B/1.5B/2.9B/7.2B pairs
   pass the batch-8 dense/W8/W4 Qwen3.5 contract: `54/54` small-model cells and
   `18/18` 7.2B cells, with full-FLA, dense decode active-work, quant speed and
-  quant-local physical-memory gates.
+  quant-local physical-memory gates. A 2026-08-12 exact-card transfer of the
+  recent RTX 4080 work adds block-scoped FP16 accumulation for latest
+  0.4B/1.5B/2.9B B1/B8 P128/P512/P2048 Prefill and grouped W/A/V BMM for
+  those checkpoints at B8. The paired gates pass `108/108` accumulation rows,
+  `18/18` default-policy oracle rows, and `9/9` BMM rows; median BMM gains are
+  `1.2002x/1.1426x/1.1259x`. Evidence:
+  [`../bench/4090_4080_routes_20260812/README.md`](../bench/4090_4080_routes_20260812/README.md).
 - **RTX 5090:** the full-FLA Qwen3.5 matrix passes 8/8 B1/B8 batch-pairs,
   144/144 cells and 32/32 correctness reports from 0.4B/0.8B through 7.2B/9B;
   raw prefill/decode minima are `1.0226x/2.8130x`; RWKV-7 7.2B versus

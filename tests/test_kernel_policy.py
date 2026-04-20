@@ -420,7 +420,14 @@ def test_policy_defaults_are_conservative() -> None:
     assert ada.ada_linear_rows == "1 2 4"
     assert ada.ada_wagv_lora
     assert ada.ada_wagv_lora_max_rows == 4
-    assert not ada.ada_wagv_bmm
+    assert ada.ada_wagv_bmm
+    assert ada.prefill_global_fp16_accum_model_shapes == ()
+    assert ada.prefill_block_fp16_accum_model_shapes == tuple(
+        (hidden, layers, batch, tokens)
+        for hidden, layers in ((1024, 24), (2048, 24), (2560, 32))
+        for batch in (1, 8)
+        for tokens in (128, 512, 2048)
+    )
     assert ada.ada_sparse_ffn
     assert ada.ada_sparse_ffn_max_rows == 2
     assert ada.ada_sparse_ffn_inplace
@@ -545,6 +552,7 @@ def test_policy_defaults_are_conservative() -> None:
         assert not adjacent_ada.fast_prefill
         assert not adjacent_ada.prefill_graph
         assert adjacent_ada.prefill_global_fp16_accum_model_shapes == ()
+        assert adjacent_ada.prefill_block_fp16_accum_model_shapes == ()
         assert not adjacent_ada.fused_prefill_self_chunk
         assert adjacent_ada.prefill_self_chunk_size == 16
         assert adjacent_ada.prefill_scan_model_shapes == ()

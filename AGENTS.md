@@ -116,6 +116,16 @@ Current exact-card dispatch additions:
   `1.227477x/1.467758x`, and all 25 prompt/cache-handoff correctness rows must
   remain green. Other Ampere products, model shapes, batches, and token blocks
   must not inherit these routes.
+- NVIDIA GeForce RTX 4090 (`sm_89`): the 2026-08-12 RTX-4080-route transfer
+  may use block-scoped FP16 GEMM accumulation only for exact latest-checkpoint
+  0.4B/1.5B/2.9B B1/B8 P128/P512/P2048 shapes.  The final norm and vocabulary
+  head retain FP32 accumulation.  B8 grouped tensor-core W/A/V BMM is enabled
+  only by its existing hidden-size/rank gate for 1024/2048/2560-wide models;
+  the generic grouped fallback remains rows<=4 so 7.2B/hidden=4096 is not
+  implicitly promoted.  The paired screen passes 108/108 accumulation rows
+  and 9/9 BMM rows in `bench/4090_4080_routes_20260812/`.  Other batches,
+  model shapes, RTX 4090 variants, and adjacent Ada cards must not inherit
+  these routes without exact-card evidence.
 - NVIDIA GeForce RTX 5070 Laptop GPU (`sm_120`): the 2026-08-11 policy may use
   exact 0.4B/1.5B prefill graph+scan, raw recurrent, shape-gated norm/mix, and
   B8 FP16-state routes recorded in

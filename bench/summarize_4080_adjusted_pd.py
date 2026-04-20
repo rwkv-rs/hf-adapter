@@ -54,6 +54,7 @@ def summarize(
     gate: float = 1.0,
     expected_device: str = EXPECTED_DEVICE,
     axis: str = "rtx4080_parameter_adjusted_pd",
+    expected_qwen_backends: tuple[str, ...] = ("qwen_fla_gated_delta_rule",),
 ) -> dict[str, Any]:
     candidates = load_jsonl(candidate_path)
     references = load_jsonl(reference_path)
@@ -129,9 +130,11 @@ def summarize(
                     errors.append(
                         f"{pair} B{batch_size} {key}: Qwen full-FLA path is unverified"
                     )
-                if r.get("effective_backend") != "qwen_fla_gated_delta_rule":
+                if r.get("effective_backend") not in expected_qwen_backends:
                     errors.append(
-                        f"{pair} B{batch_size} {key}: Qwen effective backend drifted"
+                        f"{pair} B{batch_size} {key}: Qwen effective backend "
+                        f"{r.get('effective_backend')!r} not in "
+                        f"{expected_qwen_backends!r}"
                     )
                 ratio = float(c["active_parameter_count"]) / float(
                     r["active_parameter_count"]
@@ -230,6 +233,7 @@ def summarize(
     return {
         "axis": axis,
         "expected_device": expected_device,
+        "expected_qwen_backends": list(expected_qwen_backends),
         "status": "pass" if not errors else "fail",
         "gate": "every adjusted Prefill cell > 1.0 and every adjusted Decode cell > 1.0",
         "formula": "raw_speed_ratio * candidate_active_parameters / reference_active_parameters",
@@ -271,6 +275,12 @@ def main() -> int:
     parser.add_argument("--gate", type=float, default=1.0)
     parser.add_argument("--expected-device", default=EXPECTED_DEVICE)
     parser.add_argument("--axis", default="rtx4080_parameter_adjusted_pd")
+    parser.add_argument(
+        "--expected-qwen-backend",
+        action="append",
+        dest="expected_qwen_backends",
+        help="approved verified Qwen backend; repeat to allow more than one",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--markdown-output", type=Path)
     args = parser.parse_args()
@@ -280,6 +290,9 @@ def main() -> int:
         gate=args.gate,
         expected_device=args.expected_device,
         axis=args.axis,
+        expected_qwen_backends=tuple(args.expected_qwen_backends)
+        if args.expected_qwen_backends
+        else ("qwen_fla_gated_delta_rule",),
     )
     text = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:

@@ -36,6 +36,7 @@ BENCH_RUNNERS = [
     "bench/run_3090_qwen35_pair.sh",
     "bench/run_3090_adjusted_prefill_pd.sh",
     "bench/run_4080_qwen35_pair_acceptance.sh",
+    "bench/run_4090_adjusted_pd.sh",
     "bench/run_t4_hf_validation.sh",
 ]
 
@@ -75,6 +76,20 @@ def test_shell_syntax_and_executable_bits() -> None:
         assert path.stat().st_mode & stat.S_IXUSR, f"{rel} should be executable"
         proc = run_bash(f"bash -n {rel}")
         assert_ok(proc)
+
+
+def test_4090_adjusted_pd_runner_is_exact_card_and_full_fla() -> None:
+    text = (ROOT / "bench/run_4090_adjusted_pd.sh").read_text(encoding="utf-8")
+    assert 'check_exact_gpu.py" --model 4090' in text
+    assert "qwen35_4090_adjusted_pd" in text
+    assert 'version("fla-core")' in text
+    assert 'version("einops")' in text
+    assert "--batch-sizes \"${batch_args[@]}\" --prompt-tokens 128 512 2048" in text
+    assert "--decode-tokens 128 512" in text
+    assert "--qwen-backend fla --qwen-conv-backend fla_triton" in text
+    assert "--require-qwen-fast-path" in text
+    assert '--expected-device "NVIDIA GeForce RTX 4090"' in text
+    assert "qwen_fla_gated_delta_rule_fla_triton_conv" in text
 
 
 def test_a6000_validation_runner_contract() -> None:

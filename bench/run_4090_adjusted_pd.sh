@@ -51,8 +51,11 @@ import torch, transformers, triton
 actual = (
     str(torch.__version__), str(torch.version.cuda), str(triton.__version__),
     str(transformers.__version__), version("flash-linear-attention"),
+    version("fla-core"), version("einops"),
 )
-expected = ("2.6.0+cu124", "12.4", "3.2.0", "5.12.1", "0.5.1")
+expected = (
+    "2.6.0+cu124", "12.4", "3.2.0", "5.12.1", "0.5.1", "0.5.1", "0.8.2"
+)
 assert actual == expected, f"Qwen runtime {actual} != validated {expected}"
 PY
 
@@ -115,4 +118,5 @@ cat "${OUT_DIR}"/reference/*.jsonl > "${OUT_DIR}/qwen_reference.jsonl"
   "${OUT_DIR}/candidate.jsonl" "${OUT_DIR}/qwen_reference.jsonl" \
   --expected-device "NVIDIA GeForce RTX 4090" \
   --axis rtx4090_parameter_adjusted_pd \
+  --expected-qwen-backend qwen_fla_gated_delta_rule_fla_triton_conv \
   --output "${OUT_DIR}/summary.json" --markdown-output "${OUT_DIR}/summary.md"
