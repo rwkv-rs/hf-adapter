@@ -6,12 +6,12 @@
 
 ## 先看结论
 
-> 当前正式的 NVIDIA dense FP16 optimized-Qwen 同卡对照共有 **29 个
+> 当前正式的 NVIDIA dense FP16 optimized-Qwen 同卡对照共有 **32 个
 > GPU/模型/Batch 组合**，另列 **3 个 Apple M5 target-only W4 组合**。
 > 表内每一行的 RWKV-7 原始 Prefill 和原始 Decode 中位值均高于 Qwen3.5。
-> 原始 Prefill/Decode 可达 **5.41x / 19.79x**；扣除较小参数量带来的天然速度
-> 优势后，参数规模校正 Prefill/Decode 可达 **4.39x / 11.85x**。更直观的
-> Prefill + Decode 端到端结果中，NVIDIA **116/116 个实测格**和 **29/29 个
+> 原始 Prefill/Decode 可达 **7.90x / 20.51x**；扣除较小参数量带来的天然速度
+> 优势后，参数规模校正 Prefill/Decode 可达 **4.73x / 12.29x**。更直观的
+> Prefill + Decode 端到端结果中，NVIDIA **134/134 个实测格**和 **32/32 个
 > 组合中位值**在原始及参数规模校正后都超过 Qwen3.5；Apple M5 的 **3/3 个
 > 组合**在校正后也全部超过。
 
@@ -22,6 +22,10 @@
 P128/P512/P2048 共 24 格的参数规模校正 Prefill 均达到 `>=1.00x`，Qwen
 参考全部使用 fail-closed full-FLA 路径，最低/中位提升至
 `1.227477x/1.467758x`。**
+
+**RTX 4090 最新 0.4B/1.5B/2.9B 矩阵也已逐格完成：参数规模校正
+Prefill 36/36、Decode 36/36 均超过 `1.00x`，全矩阵最小值为
+`1.108265x / 4.158943x`。**
 
 - `1.02x` 表示 RWKV 吞吐是 Qwen 的 1.02 倍，即约快 2%。
 - Prefill 是处理输入提示词；Decode 是逐 token 生成，后者更接近日常聊天的
@@ -51,8 +55,8 @@ P128/P512/P2048 共 24 格的参数规模校正 Prefill 均达到 `>=1.00x`，Qw
   Prefill 用时 + RWKV Decode 用时）；**参数规模校正端到端速度比** = 原始
   端到端速度比 × RWKV/Qwen 活跃参数比。本页端到端用时指正式计时的推理阶段，
   不包含模型加载。
-- 例如 RTX 4090 的 0.4B/0.8B B8：原始 Prefill `1.75x`，参数比
-  `0.599112`，校正后为 `1.75 × 0.599112 ≈ 1.05x`。
+- 例如最新 RTX 4090 的 0.4B/0.8B B8：原始 Prefill 中位值 `2.22x`，
+  参数比 `0.599112`，校正后约为 `1.33x`。
 
 ## NVIDIA：全部正式同卡模型参数与速度
 
@@ -63,6 +67,9 @@ Prefill/Decode 中位值；`E2E 原始 / 校正`是逐格合并 Prefill 与 Deco
 
 RTX 4080 现已通过更严格的逐格门槛：**参数校正 Prefill 36/36、Decode
 36/36 全部超过**，全矩阵最小值为 `1.068520x / 1.140700x`。
+
+RTX 4090 的最新严格门槛同样通过：**参数校正 Prefill 36/36、Decode
+36/36 全部超过**，最小值为 `1.108265x / 4.158943x`。
 
 | GPU | 模型对 | Batch | 范围 | RWKV 活跃参数 | Qwen 活跃参数 | 参数比 | 原始 P / D | 参数规模校正 P / D | E2E 原始 / 校正 | 证据 |
 |---|---|---:|---|---:|---:|---:|---:|---:|---:|---|
@@ -82,9 +89,12 @@ RTX 4080 现已通过更严格的逐格门槛：**参数校正 Prefill 36/36、D
 | RTX 4080 | 1.5B / 2B | B8 | 6格，全过 | 1.527405B | 1.881825B | `0.811661` | **1.76x / 1.77x** | **1.43x / 1.44x** | **1.77x / 1.44x** | [4080 全部 P/D](../bench/4080_adjusted_pd_20260811/README.md) |
 | RTX 4080 | 2.9B / 4B | B1 | 6格，全过 | 2.947735B | 4.205751B | `0.700882` | **1.75x / 1.63x** | **1.22x / 1.15x** | **1.63x / 1.15x** | [4080 全部 P/D](../bench/4080_adjusted_pd_20260811/README.md) |
 | RTX 4080 | 2.9B / 4B | B8 | 6格，全过 | 2.947735B | 4.205751B | `0.700882` | **1.99x / 1.75x** | **1.40x / 1.23x** | **1.77x / 1.24x** | [4080 全部 P/D](../bench/4080_adjusted_pd_20260811/README.md) |
-| RTX 4090 | 0.4B / 0.8B | B8 | 6格 | 0.450768B | 0.752393B | `0.599112` | **1.75x / 12.15x** | **1.05x / 7.28x** | **11.46x / 6.86x** | [4090 small](../bench/4090_small_bsz8_20260715/README.md) |
-| RTX 4090 | 1.5B / 2B | B8 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.11x / 5.66x** | **0.90x / 4.59x** | **5.30x / 4.30x** | [4090 small](../bench/4090_small_bsz8_20260715/README.md) |
-| RTX 4090 | 2.9B / 4B | B8 | 6格 | 2.947735B | 4.205751B | `0.700882` | **1.42x / 4.24x** | **1.00x / 2.97x** | **3.99x / 2.80x** | [4090 small](../bench/4090_small_bsz8_20260715/README.md) |
+| RTX 4090 | 0.4B / 0.8B | B1 | 6格，全过 | 0.450768B | 0.752393B | `0.599112` | **7.90x / 20.51x** | **4.73x / 12.29x** | **20.24x / 12.12x** | [4090 最新 P/D](../bench/4090_adjusted_pd_20260812/README.md) |
+| RTX 4090 | 0.4B / 0.8B | B8 | 6格，全过 | 0.450768B | 0.752393B | `0.599112` | **2.22x / 17.85x** | **1.33x / 10.69x** | **16.89x / 10.12x** | [4090 最新 P/D](../bench/4090_adjusted_pd_20260812/README.md) |
+| RTX 4090 | 1.5B / 2B | B1 | 6格，全过 | 1.527405B | 1.881825B | `0.811661` | **4.12x / 8.68x** | **3.34x / 7.05x** | **8.61x / 6.99x** | [4090 最新 P/D](../bench/4090_adjusted_pd_20260812/README.md) |
+| RTX 4090 | 1.5B / 2B | B8 | 6格，全过 | 1.527405B | 1.881825B | `0.811661` | **1.54x / 7.84x** | **1.25x / 6.36x** | **7.41x / 6.02x** | [4090 最新 P/D](../bench/4090_adjusted_pd_20260812/README.md) |
+| RTX 4090 | 2.9B / 4B | B1 | 6格，全过 | 2.947735B | 4.205751B | `0.700882` | **3.64x / 6.63x** | **2.55x / 4.64x** | **6.58x / 4.62x** | [4090 最新 P/D](../bench/4090_adjusted_pd_20260812/README.md) |
+| RTX 4090 | 2.9B / 4B | B8 | 6格，全过 | 2.947735B | 4.205751B | `0.700882` | **1.90x / 5.96x** | **1.33x / 4.18x** | **5.66x / 3.97x** | [4090 最新 P/D](../bench/4090_adjusted_pd_20260812/README.md) |
 | RTX 4090 | 7.2B / 9B | B8 | 6格 | 7.199142B | 8.953803B | `0.804032` | **1.12x / 2.22x** | **0.90x / 1.79x** | **2.11x / 1.69x** | [4090 7.2B](../bench/4090_g1h_7p2_bsz8_20260715/README.md) |
 | RTX 5070 Laptop | 1.5B / 2B | B8 | 6格 | 1.527405B | 1.881825B | `0.811661` | **1.33x / 2.62x** | **1.08x / 2.13x** | **2.48x / 2.02x** | [5070](../bench/5070_qwen35_full_fla_bsz8_20260714/README.md) |
 | RTX 5090 | 0.4B / 0.8B | B1 | 3格 | 0.450768B | 0.752393B | `0.599112` | **3.86x / 19.79x** | **2.31x / 11.85x** | **18.63x / 11.16x** | [5090 最新](../bench/5090_g1i_qwen35_prefill_pd_sota_20260811/README.md) |
@@ -119,6 +129,22 @@ FLA、Triton causal convolution、实时 fused bindings 和 full-fused contract�
 完全一致。提升策略只适用于实测 RTX 3090 的模型、Batch 和 token-block
 形状。完整数据见
 [不可变证据](../bench/3090_g1i_qwen35_maxperf_20260812/README.md)。
+
+### RTX 4090 最新检查点严格门槛
+
+最新 RTX 4090 证据使用 RWKV-7 g1d 0.4B 和 g1i 1.5B/2.9B，对照官方
+Qwen3.5 0.8B/2B/4B，覆盖 B1/B8、P128/P512/P2048 和 D128/D512。
+全部 `36/36` 个 Qwen 参考格都验证 FLA chunk Gated DeltaNet、
+fused-recurrent Decode、fused gated normalization 和仓库内 Triton
+causal-convolution 内核。
+
+两项严格门槛均逐格通过：参数校正 Prefill 为 `36/36`，全局最低/中位
+`1.108265x/2.306890x`；参数校正 Decode 为 `36/36`，全局最低/中位
+`4.158943x/6.693394x`。原先未通过的 1.5B/B1/P2048 两格现采用
+RTX 4090 精确限定的 tile-16 self-chunk + stacked-R/K/V 路线，相对本地
+control 达到 `1.2539x`；正反序 A/B 的 Prompt/Decode cosine 均
+`>=0.9999`，greedy token 和缓存交接全部一致。完整数据见
+[不可变证据](../bench/4090_adjusted_pd_20260812/README.md)。
 
 ### RTX 5090 最新检查点严格门槛
 
@@ -303,6 +329,7 @@ Qwen 行显示 full-FLA 优化路径；结果按中位值和两位小数进行�
 | V100 | [V100 证据中的命令](../bench/v100_active_b1b8_20260715/README.md#reproduce) | 1.5B/2B，B1/B8 |
 | RTX 3090 最新检查点 | [`bench/run_3090_adjusted_prefill_pd.sh`](../bench/run_3090_adjusted_prefill_pd.sh) | 四个模型对、B1/B8、P128/512/2048、D128；逐格校正 Prefill 门槛与 25 格正确性门禁 |
 | RTX 4080 | [`bench/run_4080_adjusted_pd.sh`](../bench/run_4080_adjusted_pd.sh) | 一次运行 3 个模型对、B1/B8 全部 36 格，并强制每格参数校正 P/D 均 `>1.00x` |
+| RTX 4090 最新检查点 | [`bench/run_4090_adjusted_pd.sh`](../bench/run_4090_adjusted_pd.sh) | 三个模型对、B1/B8、P128/512/2048、D128/512；强制全部 36 格参数校正 P/D 均 `>1.00x` |
 | RTX 5070 Laptop | [`bench/run_5070_qwen35_full_fla_bsz8.ps1`](../bench/run_5070_qwen35_full_fla_bsz8.ps1) | Windows PowerShell；通过 `-RwkvModel`、`-QwenModel`、`-OutDir` 传路径 |
 | RTX 5090 | [`bench/run_5090_qwen35_full_matrix.sh`](../bench/run_5090_qwen35_full_matrix.sh) | 四个模型对、B1/B8 的完整矩阵 |
 | RTX 5090 最新检查点 | [严格门槛证据中的命令](../bench/5090_g1i_qwen35_prefill_pd_sota_20260811/README.md#reproduce-the-gate) | 四个模型对、B1/B8、P128/512/2048、D128 |
