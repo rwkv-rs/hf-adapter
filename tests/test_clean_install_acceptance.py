@@ -15,7 +15,7 @@ def test_parse_clean_install_counts():
     output = """
 No broken requirements found.
 RWKV7_CLEAN_ENVIRONMENT={"machine":"arm64","modules":{"mlx":true,"triton":false},"cuda_available":false,"mps_available":true}
-installed rwkv7-hf-adapter=0.5.0 from /tmp/venv/site-packages/rwkv7_hf/__init__.py
+installed rwkv7-hf=0.7.0 from /tmp/venv/site-packages/rwkv7_hf/__init__.py
 193 tests collected in 1.23s
 186 passed, 6 skipped in 9.87s
 SKIPPED Apple executable profile on Darwin arm64

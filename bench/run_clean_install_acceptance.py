@@ -89,7 +89,7 @@ def evidence_row(
 ) -> dict[str, Any]:
     counts = parse_test_counts(output)
     clean_environment = parse_clean_environment(output)
-    import_pass = "installed rwkv7-hf-adapter=" in output and "clean-install import leaked" not in output
+    import_pass = "installed rwkv7-hf=" in output and "clean-install import leaked" not in output
     pip_check_pass = "No broken requirements found." in output
     collection_pass = bool(counts["collected"] and counts["errors"] == 0)
     status = (
