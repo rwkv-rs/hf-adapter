@@ -547,6 +547,8 @@ def test_policy_defaults_are_conservative() -> None:
         "NVIDIA GeForce RTX 4080 Laptop GPU",
         "NVIDIA GeForce RTX 4080 SUPER",
         "NVIDIA GeForce RTX 40900",
+        "NVIDIA GeForce RTX 4090 Ti",
+        "NVIDIA GeForce RTX 4090 D",
     ):
         adjacent_ada = policy_for_profile(classify_gpu(name, (8, 9)))
         assert not adjacent_ada.fast_prefill
