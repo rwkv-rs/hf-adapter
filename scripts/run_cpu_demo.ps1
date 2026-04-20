@@ -26,7 +26,7 @@ try {
         & $PythonExe -m pip install torch --index-url https://download.pytorch.org/whl/cpu
         if ($LASTEXITCODE -ne 0) { throw "Failed to install CPU PyTorch" }
         & $PythonExe -m pip install -e .
-        if ($LASTEXITCODE -ne 0) { throw "Failed to install rwkv7-hf-adapter" }
+        if ($LASTEXITCODE -ne 0) { throw "Failed to install rwkv7-hf" }
     }
 
     & $PythonExe -c "import torch, transformers, rwkv7_hf"

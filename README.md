@@ -17,6 +17,14 @@ resolver result inside those major-version bounds.
 
 ## Five-minute quick start
 
+Install the published package from PyPI:
+
+```bash
+python -m pip install -U rwkv7-hf
+```
+
+Or install the current source tree for development:
+
 ```bash
 git clone https://github.com/rwkv-rs/hf-adapter.git
 cd hf-adapter
@@ -111,9 +119,10 @@ public compatibility contract.
 
 ## Current status
 
-The published **RWKV-7 HF adapter `v0.6.0` deliverable is complete** for its
-declared, evidence-backed scope. New cards, shapes, quality suites, and serving
-engines extend the matrix without reopening the released milestone.
+The published **RWKV-7 HF `v0.7.0` release is complete** for its declared,
+evidence-backed scope. It retains the accepted v0.6 adapter milestone and adds
+the integrated Ascend, Biren, MetaX and MUSA boundaries plus the latest
+exact-card NVIDIA performance routes.
 
 Production readiness is scoped to exact models, cards, dtypes, batches, and
 shapes. Promoted evidence currently includes V100, T4, RTX 3090/4080/4090/5090,
@@ -129,10 +138,11 @@ quality, and distributed-training breadth are separate expansion projects. HF la
 PP and the TP/PP porting contracts are complete for this repository; native
 serving-engine executors remain separate projects.
 
-Current main additionally includes exact-card B8 decode tuning for V100 and
-RTX 4080, grouped RTX 4080 W/A/V projections for 0.4B/1.5B/2.9B, and an RTX
-4080 7.2B/B8 FP16-state route. These are promoted, evidence-backed expansions,
-not unfinished release items.
+The release additionally includes exact-card B8 decode tuning for V100 and
+RTX 4080, grouped RTX 4080 W/A/V projections, the complete adjusted RTX 4080
+and RTX 4090 Prefill/Decode matrices, and the latest RTX 3090/5090 Prefill
+routes. These are promoted, evidence-backed profiles rather than universal
+claims for unmeasured products or shapes.
 
 Representative promoted evidence:
 
@@ -155,7 +165,7 @@ For exact numbers and caveats use [`BENCHMARK.md`](BENCHMARK.md), not this
 landing page.
 
 Completion is reported by **named scope**, not as a single repository-wide
-percentage. `v0.6.0` is complete; exact hardware and benchmark claims remain
+percentage. `v0.7.0` is complete; exact hardware and benchmark claims remain
 limited to their promoted profiles.
 
 Canonical project state:

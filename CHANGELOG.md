@@ -6,6 +6,16 @@ model, dtype, batch and sequence shape named by their linked artifact.
 
 ## Unreleased
 
+## [v0.7.0](https://github.com/rwkv-rs/hf-adapter/releases/tag/v0.7.0) - 2026-08-12
+
+### Distribution
+
+- Published the first PyPI distribution as `rwkv7-hf`; the Python import
+  remains `rwkv7_hf` and the supported runtime range remains Python 3.10-3.12,
+  Transformers `>=5.12.1,<6`, PEFT `>=0.19.1,<1`, and TRL `>=1.7,<2`.
+- Added a GitHub Trusted Publishing release workflow with isolated build,
+  metadata validation, artifact transfer, and OIDC-based PyPI upload.
+
 ### Hardware backends
 
 - Integrated the optional Moore Threads MUSA backend with an exact-card legacy
@@ -33,7 +43,6 @@ model, dtype, batch and sequence shape named by their linked artifact.
 - Added exact Tesla V100 0.4B/1.5B B8 FP16 recurrent state. Opposite-order
   paired processes measure `1.0216x-1.0288x`, save
   `16.875-58.125 MiB`, and retain exact recorded greedy traces.
-
 - Added exact-card RTX 4080 and V100 B8 decode tuning in
   [PR #100](https://github.com/rwkv-rs/hf-adapter/pull/100). The V100 WAVG
   launch improves paired 0.4B/1.5B/2.9B B8 decode by
@@ -46,6 +55,16 @@ model, dtype, batch and sequence shape named by their linked artifact.
   [PR #102](https://github.com/rwkv-rs/hf-adapter/pull/102). It records
   `344.39 tok/s`, `1.0301x` the FP32-state route, `-123.88 MiB` median peak
   allocation and greedy `12,288/12,288`.
+- Closed the RTX 4080 latest-checkpoint dense-FP16 matrix: all `36/36`
+  parameter-adjusted Prefill and `36/36` Decode cells exceed Qwen3.5, with
+  global minima `1.068520x/1.140700x`.
+- Added exact RTX 4090 block-scoped FP16 accumulation, grouped W/A/V BMM and
+  1.5B/B1/P2048 self-chunk routing. The final full-FLA/Triton-conv Qwen3.5
+  comparison passes all `36/36` adjusted Prefill and `36/36` Decode cells at
+  minima `1.108265x/4.158943x`.
+- Promoted the latest RTX 5090 exact-card Prefill routes and strict Qwen3.5
+  matrix: all `24/24` parameter-adjusted Prefill cells pass, with graph/eager
+  continuation correctness and conservative 7.2B memory routing retained.
 
 ### Maintenance and documentation
 
