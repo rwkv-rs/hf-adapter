@@ -20,6 +20,37 @@ import time
 from pathlib import Path
 from typing import Any
 
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument(
+        "--dtype", choices=("fp16", "bf16", "fp32"), default="fp16"
+    )
+    parser.add_argument("--batch-sizes", type=int, nargs="+", default=[1, 8])
+    parser.add_argument(
+        "--prompt-tokens", type=int, nargs="+", default=[128, 512, 2048]
+    )
+    parser.add_argument(
+        "--orders", choices=("forward", "reverse", "both"), default="both"
+    )
+    parser.add_argument("--warmup", type=int, default=10)
+    parser.add_argument("--steps", type=int, default=30)
+    parser.add_argument("--min-cosine", type=float, default=0.9999)
+    parser.add_argument("--code-source", choices=("model", "repo"), default="repo")
+    parser.add_argument("--results", default="")
+    return parser
+
+
+# ``--help`` should not pay the Torch/Transformers import cost. This also keeps
+# the documented direct-script entrypoint responsive on cold Windows hosts.
+if __name__ == "__main__" and any(
+    arg in {"-h", "--help"} for arg in sys.argv[1:]
+):
+    build_parser().parse_args()
+
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 # Direct ``python bench/<script>.py`` execution puts ``bench/`` ahead of the
 # repository root.  That can resolve ``bench`` to ``bench/bench.py`` instead
@@ -207,19 +238,7 @@ def append_row(path: str, row: dict[str, Any]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", required=True)
-    parser.add_argument("--device", default="cuda")
-    parser.add_argument("--dtype", choices=DTYPES, default="fp16")
-    parser.add_argument("--batch-sizes", type=int, nargs="+", default=[1, 8])
-    parser.add_argument("--prompt-tokens", type=int, nargs="+", default=[128, 512, 2048])
-    parser.add_argument("--orders", choices=("forward", "reverse", "both"), default="both")
-    parser.add_argument("--warmup", type=int, default=10)
-    parser.add_argument("--steps", type=int, default=30)
-    parser.add_argument("--min-cosine", type=float, default=0.9999)
-    parser.add_argument("--code-source", choices=("model", "repo"), default="repo")
-    parser.add_argument("--results", default="")
-    args = parser.parse_args()
+    args = build_parser().parse_args()
 
     effective_path, temporary_dir = prepare_model_dir(
         args.model,

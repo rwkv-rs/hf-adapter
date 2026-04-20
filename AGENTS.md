@@ -123,7 +123,12 @@ Current exact-card dispatch additions:
   only by its existing hidden-size/rank gate for 1024/2048/2560-wide models;
   the generic grouped fallback remains rows<=4 so 7.2B/hidden=4096 is not
   implicitly promoted.  The paired screen passes 108/108 accumulation rows
-  and 9/9 BMM rows in `bench/4090_4080_routes_20260812/`.  Other batches,
+  and 9/9 BMM rows in `bench/4090_4080_routes_20260812/`. Exact
+  1.5B/B1/P2048 may additionally use self-chunk tile 16 plus stacked R/K/V;
+  three interleaved process runs measure `1.2539x` median versus the prior
+  route, the forward/reverse Prompt/cache-handoff gate passes, and the final
+  full-FLA/Triton-conv Qwen3.5 matrix passes all 36/36 adjusted Prefill plus
+  36/36 adjusted Decode cells in `bench/4090_adjusted_pd_20260812/`. Other batches,
   model shapes, RTX 4090 variants, and adjacent Ada cards must not inherit
   these routes without exact-card evidence.
 - NVIDIA GeForce RTX 5070 Laptop GPU (`sm_120`): the 2026-08-11 policy may use

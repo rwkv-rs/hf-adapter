@@ -408,9 +408,12 @@ def test_policy_defaults_are_conservative() -> None:
     assert ada.prefill_scan_block_m_model_shapes == ((2048, 8, 512, 32),)
     assert ada.prefill_graph
     assert ada.fused_prefill_scan
-    assert not ada.fused_prefill_self_chunk
+    assert ada.fused_prefill_self_chunk
     assert ada.prefill_self_chunk_size == 16
-    assert ada.prefill_self_chunk_model_shapes == ()
+    assert ada.prefill_self_chunk_model_shapes_only
+    assert ada.prefill_self_chunk_model_shapes == ((2048, 24, 1, 2048),)
+    assert ada.prefill_self_chunk_shape_sizes == ((1, 2048, 16),)
+    assert ada.prefill_self_chunk_h_tile_shapes == ((1, 2048, 16, 16),)
     assert ada.fused_prefill_state_prep
     assert ada.fused_prefill_output
     assert ada.fused_prefill_shift_mix
@@ -421,6 +424,10 @@ def test_policy_defaults_are_conservative() -> None:
     assert ada.ada_wagv_lora
     assert ada.ada_wagv_lora_max_rows == 4
     assert ada.ada_wagv_bmm
+    assert ada.fused_prefill_stacked_rkv
+    assert ada.prefill_stacked_rkv_min_rows == 1
+    assert ada.prefill_stacked_rkv_max_rows == 1
+    assert ada.prefill_stacked_rkv_model_shapes == ((2048, 24, 1, 2048),)
     assert ada.prefill_global_fp16_accum_model_shapes == ()
     assert ada.prefill_block_fp16_accum_model_shapes == tuple(
         (hidden, layers, batch, tokens)

@@ -115,6 +115,14 @@ rows. B8 grouped W/A/V BMM passes nine independent rows at
 are recorded in
 [`../../bench/4090_4080_routes_20260812/README.md`](../../bench/4090_4080_routes_20260812/README.md).
 
+The subsequent strict Qwen3.5 matrix found one remaining 4090 red shape at
+1.5B/B1/P2048. A three-process exact-card sweep re-tested, rather than copied,
+the 4080 self-chunk route: tile16 plus stacked R/K/V wins at `1.2539x` the
+4090 control and passes forward/reverse Prompt and cache-handoff correctness.
+Only `(hidden=2048,layers=24,B1,P2048)` is promoted. The corrected matrix
+passes all 36 adjusted Prefill and 36 adjusted Decode cells; evidence is in
+[`../../bench/4090_adjusted_pd_20260812/README.md`](../../bench/4090_adjusted_pd_20260812/README.md).
+
 ## Reproduction
 
 ```bash

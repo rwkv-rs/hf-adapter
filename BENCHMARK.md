@@ -38,6 +38,7 @@ Status vocabulary:
 | RTX 4090 | g1h 7.2B vs Qwen3.5-9B, bsz8, dense/W8/W4 | finite logits, fail-closed Qwen FLA routes, BNB8/MM4 same-quant probes; task quality is separate | dense prefill/decode min `1.0240x/2.2101x`; decode active work min `1.7770x`; W8/W4 total-latency and quant-local memory gates pass | **PASS 18/18** |
 | RTX 4090 | 0.4B/0.8B, 1.5B/2B and 2.9B/4B, bsz8, dense/W8/W4 | finite logits, fail-closed native/full-FLA/route contracts; quality is a separate axis | dense prefill min `1.3704x/1.0420x/1.3051x`, decode min `12.1018x/5.6368x/4.2144x`; W8/W4 total latency and physical-memory gates pass | **PASS 54/54** |
 | RTX 4090 | Latest 0.4B/1.5B/2.9B, B1/B8 Prefill plus B8 decode | exact-card 4080-route transfer, forward/reverse A/B, independent recurrent oracle, greedy/cache handoff | block-scoped FP16 accumulation `1.0057x-1.3007x`; grouped W/A/V BMM `1.1259x-1.2002x` | **PASS 108/108 + 18/18 + 9/9** |
+| RTX 4090 | Latest 0.4B/1.5B/2.9B versus full-FLA/Triton-conv Qwen3.5, B1/B8, dense FP16 | 36/36 verified Qwen references; exact 1.5B/B1/P2048 self-chunk Prompt/cache-handoff A/B passes | parameter-adjusted Prefill/Decode minima `1.108265x/4.158943x`; selected tile16+stack route `1.2539x` control | **PASS 36/36 + 36/36** |
 | RTX 4090 | Historical 0.4B dense and W8/W4 speed lanes | 32-step greedy and cache handoff pass | decode `1.007x–1.418x` matching Albatross; bsz4 prefill `1.007x` current-session / `0.916x` historical high-water | **PASS measured lanes** |
 | RTX 4080 | Native HF 0.4B/1.5B/2.9B vs full-FLA Qwen3.5 0.8B/2B/4B, B1/B8; 7.2B/13.3B capacity | fail-closed optimized-Qwen contracts; paired quant cosine/greedy gates; exact-card capacity probes | 6/6 pair matrices pass; dense prefill/decode minima `1.0123x/1.4353x`; A8W8/W4 complete-cell minima `1.0031x/1.0160x`; 13.3B MM8/MM4 fit | **PASS measured lanes** |
 | RTX 4080 | Exact B8 FP16 grouped W/A/V tensor-core projection, 0.4B/1.5B/2.9B | three independent loads per model; first-step logits exact; greedy `4,608/4,608` | median decode gains `1.1267x/1.0942x/1.0809x`; process peak-memory deltas `+2.39%/+1.90%/+1.55%` | **PASS exact B8 lane** |
@@ -550,6 +551,17 @@ grouped W/A/V BMM passes nine independent rows with median gains
 telemetry. These allowlists do not widen to other batches, hidden=4096, RTX
 4090 variants, or adjacent Ada products. Evidence:
 [`bench/4090_4080_routes_20260812/README.md`](bench/4090_4080_routes_20260812/README.md).
+
+The strict follow-up compares latest RWKV-7 0.4B/1.5B/2.9B with official
+Qwen3.5 0.8B/2B/4B across B1/B8, prompt128/512/2048 and decode128/512. All 36
+Qwen rows verify FLA chunk Prefill, fused-recurrent Decode, fused gated norm,
+and repository Triton causal convolution. The first run exposed only the
+1.5B/B1/P2048 adjusted-Prefill pair below one. Re-measuring the RTX 4080
+self-chunk idea on the exact 4090 selected tile16 plus stacked R/K/V at
+`1.2539x` its control; forward/reverse Prompt and cache-handoff cosine remain
+`>=0.9999940` with greedy equality. The corrected matrix passes every adjusted
+Prefill and Decode cell, with global minima `1.108265x/4.158943x`. Evidence:
+[`bench/4090_adjusted_pd_20260812/README.md`](bench/4090_adjusted_pd_20260812/README.md).
 
 The latest g1h 7.2B checkpoint is measured against official Qwen3.5-9B at
 bsz8, prompt 128/512/2048, decode 128/512, shared prefill chunk 512, and
