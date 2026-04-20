@@ -104,6 +104,25 @@ fresh physical RTX 4090 and RTX 5090 benchmark is still required before claiming
 post-audit throughput parity; historical throughput is not relabeled as a new
 run.
 
+## 2026-08-12 RTX 4090 follow-up
+
+The required physical RTX 4090 transfer has now been performed for two 4080
+routes, without generalizing them by `sm_89` family. Latest
+0.4B/1.5B/2.9B B1/B8 P128/P512/P2048 block-scoped FP16 accumulation passes
+108/108 paired screening rows and 18/18 default-policy direct-native oracle
+rows. B8 grouped W/A/V BMM passes nine independent rows at
+`1.1259x-1.2002x`. Exact-card evidence and the remaining unpromoted boundaries
+are recorded in
+[`../../bench/4090_4080_routes_20260812/README.md`](../../bench/4090_4080_routes_20260812/README.md).
+
+The subsequent strict Qwen3.5 matrix found one remaining 4090 red shape at
+1.5B/B1/P2048. A three-process exact-card sweep re-tested, rather than copied,
+the 4080 self-chunk route: tile16 plus stacked R/K/V wins at `1.2539x` the
+4090 control and passes forward/reverse Prompt and cache-handoff correctness.
+Only `(hidden=2048,layers=24,B1,P2048)` is promoted. The corrected matrix
+passes all 36 adjusted Prefill and 36 adjusted Decode cells; evidence is in
+[`../../bench/4090_adjusted_pd_20260812/README.md`](../../bench/4090_adjusted_pd_20260812/README.md).
+
 ## Reproduction
 
 ```bash

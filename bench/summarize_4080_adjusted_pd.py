@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Gate every RTX 4080 parameter-adjusted Prefill/Decode matrix cell."""
+"""Gate every exact-Ada-card parameter-adjusted Prefill/Decode matrix cell.
+
+The filename is retained for compatibility with the original RTX 4080
+acceptance bundle.  ``--expected-device`` and ``--axis`` let later exact-card
+validations reuse the identical accounting and fail-closed coverage gates.
+"""
 from __future__ import annotations
 
 import argparse
@@ -47,6 +52,9 @@ def summarize(
     reference_path: Path,
     *,
     gate: float = 1.0,
+    expected_device: str = EXPECTED_DEVICE,
+    axis: str = "rtx4080_parameter_adjusted_pd",
+    expected_qwen_backends: tuple[str, ...] = ("qwen_fla_gated_delta_rule",),
 ) -> dict[str, Any]:
     candidates = load_jsonl(candidate_path)
     references = load_jsonl(reference_path)
@@ -109,8 +117,11 @@ def summarize(
                 c = cand[key]
                 r = ref[key]
                 for label, row in (("candidate", c), ("reference", r)):
-                    if row.get("device") != EXPECTED_DEVICE:
-                        errors.append(f"{pair} B{batch_size} {key}: {label} is not RTX 4080")
+                    if row.get("device") != expected_device:
+                        errors.append(
+                            f"{pair} B{batch_size} {key}: {label} device "
+                            f"{row.get('device')!r} != {expected_device!r}"
+                        )
                     if row.get("dtype") != "fp16" or row.get("status") != "pass":
                         errors.append(f"{pair} B{batch_size} {key}: {label} failed FP16 contract")
                     if row.get("logits_finite") is not True:
@@ -119,9 +130,11 @@ def summarize(
                     errors.append(
                         f"{pair} B{batch_size} {key}: Qwen full-FLA path is unverified"
                     )
-                if r.get("effective_backend") != "qwen_fla_gated_delta_rule":
+                if r.get("effective_backend") not in expected_qwen_backends:
                     errors.append(
-                        f"{pair} B{batch_size} {key}: Qwen effective backend drifted"
+                        f"{pair} B{batch_size} {key}: Qwen effective backend "
+                        f"{r.get('effective_backend')!r} not in "
+                        f"{expected_qwen_backends!r}"
                     )
                 ratio = float(c["active_parameter_count"]) / float(
                     r["active_parameter_count"]
@@ -218,7 +231,9 @@ def summarize(
         int(group["adjusted_decode_cells_passed"]) for group in groups
     )
     return {
-        "axis": "rtx4080_parameter_adjusted_pd",
+        "axis": axis,
+        "expected_device": expected_device,
+        "expected_qwen_backends": list(expected_qwen_backends),
         "status": "pass" if not errors else "fail",
         "gate": "every adjusted Prefill cell > 1.0 and every adjusted Decode cell > 1.0",
         "formula": "raw_speed_ratio * candidate_active_parameters / reference_active_parameters",
@@ -232,7 +247,7 @@ def summarize(
 
 def markdown(report: dict[str, Any]) -> str:
     lines = [
-        "# RTX 4080 parameter-adjusted Prefill/Decode",
+        f"# {report['expected_device']} parameter-adjusted Prefill/Decode",
         "",
         f"Status: **{report['status']}**",
         "",
@@ -258,10 +273,27 @@ def main() -> int:
     parser.add_argument("candidate", type=Path)
     parser.add_argument("reference", type=Path)
     parser.add_argument("--gate", type=float, default=1.0)
+    parser.add_argument("--expected-device", default=EXPECTED_DEVICE)
+    parser.add_argument("--axis", default="rtx4080_parameter_adjusted_pd")
+    parser.add_argument(
+        "--expected-qwen-backend",
+        action="append",
+        dest="expected_qwen_backends",
+        help="approved verified Qwen backend; repeat to allow more than one",
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--markdown-output", type=Path)
     args = parser.parse_args()
-    report = summarize(args.candidate, args.reference, gate=args.gate)
+    report = summarize(
+        args.candidate,
+        args.reference,
+        gate=args.gate,
+        expected_device=args.expected_device,
+        axis=args.axis,
+        expected_qwen_backends=tuple(args.expected_qwen_backends)
+        if args.expected_qwen_backends
+        else ("qwen_fla_gated_delta_rule",),
+    )
     text = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:
         args.output.write_text(text, encoding="utf-8")

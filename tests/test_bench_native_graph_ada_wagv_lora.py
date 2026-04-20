@@ -4,7 +4,13 @@ import sys
 import types
 from types import SimpleNamespace
 
-from bench.bench_native_graph_ada_wagv_lora import model_metadata, wagv_extension_status
+import pytest
+
+from bench.bench_native_graph_ada_wagv_lora import (
+    model_metadata,
+    wagv_extension_status,
+    wagv_mode_flags,
+)
 
 
 def test_model_metadata_identifies_checkpoint_shape() -> None:
@@ -42,3 +48,23 @@ def test_extension_status_reports_build_and_error(monkeypatch) -> None:
         "wagv_extension_available": True,
         "wagv_extension_error": None,
     }
+
+
+@pytest.mark.parametrize(
+    ("axis", "enabled", "expected"),
+    [
+        ("ada_wagv_lora", False, (False, False)),
+        ("ada_wagv_lora", True, (True, False)),
+        ("ada_wagv_bmm", False, (True, False)),
+        ("ada_wagv_bmm", True, (True, True)),
+        ("ada_wagv_bmm_from_default", False, (False, False)),
+        ("ada_wagv_bmm_from_default", True, (True, True)),
+    ],
+)
+def test_wagv_mode_flags(axis: str, enabled: bool, expected: tuple[bool, bool]) -> None:
+    assert wagv_mode_flags(axis, enabled) == expected
+
+
+def test_wagv_mode_flags_rejects_unknown_axis() -> None:
+    with pytest.raises(ValueError, match="unsupported WAGV benchmark axis"):
+        wagv_mode_flags("unknown", True)
