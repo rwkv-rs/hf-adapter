@@ -32,6 +32,99 @@ except Exception:  # pragma: no cover
     torch = None  # type: ignore[assignment]
     F = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - exercised on CUDA/Triton hosts
+    import triton
+    import triton.language as tl
+except Exception:  # pragma: no cover
+    triton = None  # type: ignore[assignment]
+    tl = None  # type: ignore[assignment]
+
+
+_HAS_TRITON = triton is not None and tl is not None
+
+
+if _HAS_TRITON:
+
+    @triton.jit
+    def _sm120_wagv_bmm_down_epilogue_kernel(
+        w_hidden_ptr,
+        g_hidden_ptr,
+        numel,
+        BLOCK: tl.constexpr,
+    ):
+        offsets = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+        mask = offsets < numel
+        w_hidden = tl.load(w_hidden_ptr + offsets, mask=mask, other=0.0).to(
+            tl.float32
+        )
+        g_hidden = tl.load(g_hidden_ptr + offsets, mask=mask, other=0.0).to(
+            tl.float32
+        )
+        # Match the existing fused-LoRA tanh formulation. Stores provide the
+        # FP16 barrier consumed by the second tensor-core BMM.
+        w_activated = (2.0 * tl.sigmoid(2.0 * w_hidden) - 1.0).to(tl.float16)
+        g_activated = tl.sigmoid(g_hidden).to(tl.float16)
+        tl.store(w_hidden_ptr + offsets, w_activated, mask=mask)
+        tl.store(g_hidden_ptr + offsets, g_activated, mask=mask)
+
+    @triton.jit
+    def _sm120_wagv_bmm_up_epilogue_kernel(
+        w_ptr,
+        a_ptr,
+        v_gate_ptr,
+        w_bias_ptr,
+        a_bias_ptr,
+        v_bias_ptr,
+        v_ptr,
+        v_first_ptr,
+        numel,
+        hidden: tl.constexpr,
+        COMPUTE_V: tl.constexpr,
+        BLOCK: tl.constexpr,
+    ):
+        offsets = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+        mask = offsets < numel
+        bias_offsets = offsets % hidden
+        w_raw = tl.load(w_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+        a_raw = tl.load(a_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+        w_bias = tl.load(
+            w_bias_ptr + bias_offsets, mask=mask, other=0.0
+        ).to(tl.float32)
+        a_bias = tl.load(
+            a_bias_ptr + bias_offsets, mask=mask, other=0.0
+        ).to(tl.float32)
+        # The pure rank-out BMM materializes FP16. Match eager's bias result
+        # before feeding it to the following sigmoid.
+        w_out = (w_raw + w_bias).to(tl.float16)
+        a_biased = (a_raw + a_bias).to(tl.float16).to(tl.float32)
+        a_gate = tl.sigmoid(a_biased).to(tl.float16)
+        tl.store(w_ptr + offsets, w_out, mask=mask)
+        tl.store(a_ptr + offsets, a_gate, mask=mask)
+
+        if COMPUTE_V:
+            gate_raw = tl.load(
+                v_gate_ptr + offsets, mask=mask, other=0.0
+            ).to(tl.float32)
+            current = tl.load(v_ptr + offsets, mask=mask, other=0.0).to(
+                tl.float32
+            )
+            first = tl.load(v_first_ptr + offsets, mask=mask, other=0.0).to(
+                tl.float32
+            )
+            v_bias = tl.load(
+                v_bias_ptr + bias_offsets, mask=mask, other=0.0
+            ).to(tl.float32)
+            # Preserve the eager FP16 expression's materialization points:
+            # sigmoid, subtraction, multiplication, then addition each round
+            # through FP16 before the next operation.
+            gate_biased = (gate_raw + v_bias).to(tl.float16).to(tl.float32)
+            gate = tl.sigmoid(gate_biased).to(tl.float16).to(tl.float32)
+            delta = (first - current).to(tl.float16).to(tl.float32)
+            scaled = (delta * gate).to(tl.float16).to(tl.float32)
+            mixed = (current + scaled).to(tl.float16)
+            # The V-group BMM output is private, so reuse it for the final V.
+            tl.store(v_gate_ptr + offsets, mixed, mask=mask)
+
 
 _CPP_SOURCE = r"""
 #include <torch/extension.h>
@@ -531,6 +624,19 @@ def ada_wagv_lora_available(device: Any = None, *, build: bool = False) -> bool:
     return _load_extension(device) is not None if build else True
 
 
+def ada_wagv_bmm_available(device: Any = None) -> bool:
+    """Return whether the measured grouped-BMM formulation may be selected.
+
+    Unlike :func:`ada_wagv_lora_available`, this route uses ordinary PyTorch
+    ``bmm``/``baddbmm`` operators and does not require the custom extension to
+    build.  Keep the capability allowlist explicit so an environment request
+    cannot be reported as selected while the implementation silently falls
+    back on an unsupported device.
+    """
+
+    return _small_row_capability(device) in {(8, 9), (12, 0)}
+
+
 def ada_wagv_lora_build_error(device: Any = None) -> str | None:
     capability = _small_row_capability(device)
     return _EXTENSION_ERRORS.get(capability) if capability is not None else _EXTENSION_ERROR
@@ -547,6 +653,110 @@ def ada_wagv_bmm_should_use(rows: int, hidden: int, max_rank: int) -> bool:
         int(rows) == 8
         and int(hidden) in (1024, 2048, 2560)
         and 1 <= int(max_rank) <= 512
+    )
+
+
+def sm120_wagv_bmm_g_available(device: Any = None) -> bool:
+    """Whether the exact-card all-W/A/G/V padded BMM probe may run.
+
+    The route is one indivisible experiment: both padded BMMs and both Triton
+    pointwise epilogues must be available.  Returning false when Triton is
+    absent prevents dispatch telemetry from claiming a partial implementation.
+    """
+
+    return bool(_HAS_TRITON and _small_row_capability(device) == (12, 0))
+
+
+def sm120_wagv_bmm_g_should_use(rows: int, hidden: int, max_rank: int) -> bool:
+    """Exact SM120 shapes covered by the positive all-group microprobe."""
+
+    return bool(
+        int(rows) == 8
+        and int(hidden) in {1024, 2048}
+        and 1 <= int(max_rank) <= 512
+    )
+
+
+def _sm120_wagv_bmm_down_epilogue(w_hidden: Any, g_hidden: Any) -> None:
+    """Apply W tanh and G sigmoid in one exact-SM120 Triton launch."""
+
+    if not _HAS_TRITON:
+        raise RuntimeError("SM120 W/A/G/V BMM requires Triton epilogues")
+    if (
+        torch is None
+        or not w_hidden.is_cuda
+        or w_hidden.dtype != torch.float16
+        or g_hidden.dtype != w_hidden.dtype
+        or tuple(g_hidden.shape) != tuple(w_hidden.shape)
+        or not w_hidden.is_contiguous()
+        or not g_hidden.is_contiguous()
+    ):
+        raise RuntimeError("SM120 W/A/G/V down epilogue contract was not satisfied")
+    numel = int(w_hidden.numel())
+    block = 256
+    _sm120_wagv_bmm_down_epilogue_kernel[(triton.cdiv(numel, block),)](
+        w_hidden,
+        g_hidden,
+        numel,
+        BLOCK=block,
+        num_warps=4,
+    )
+
+
+def _sm120_wagv_bmm_up_epilogue(
+    w: Any,
+    a: Any,
+    v_gate: Any,
+    w_bias: Any,
+    a_bias: Any,
+    v_bias: Any,
+    v: Any,
+    v_first: Any,
+    *,
+    compute_v: bool,
+) -> None:
+    """Apply A/V gates and FP16-barrier V interpolation in one launch."""
+
+    if not _HAS_TRITON:
+        raise RuntimeError("SM120 W/A/G/V BMM requires Triton epilogues")
+    values = (
+        (w, a, w_bias, a_bias)
+        if not compute_v
+        else (w, a, v_gate, w_bias, a_bias, v_bias, v, v_first)
+    )
+    if (
+        torch is None
+        or not a.is_cuda
+        or a.dtype != torch.float16
+        or any(
+            item.dtype != a.dtype or not item.is_contiguous() for item in values
+        )
+        or tuple(w.shape) != tuple(a.shape)
+        or (compute_v and tuple(v_gate.shape) != tuple(a.shape))
+        or any(int(item.numel()) != int(a.shape[-1]) for item in (w_bias, a_bias, v_bias))
+        or (compute_v and (tuple(v.shape) != tuple(a.shape) or tuple(v_first.shape) != tuple(a.shape)))
+    ):
+        raise RuntimeError("SM120 W/A/G/V up epilogue contract was not satisfied")
+    numel = int(a.numel())
+    block = 256
+    # The non-V specialization erases every access to the dummy pointers.
+    safe_v_gate = v_gate if compute_v else a
+    safe_v = v if compute_v else a
+    safe_v_first = v_first if compute_v else a
+    _sm120_wagv_bmm_up_epilogue_kernel[(triton.cdiv(numel, block),)](
+        w,
+        a,
+        safe_v_gate,
+        w_bias,
+        a_bias,
+        v_bias,
+        safe_v,
+        safe_v_first,
+        numel,
+        hidden=int(a.shape[-1]),
+        COMPUTE_V=bool(compute_v),
+        BLOCK=block,
+        num_warps=4,
     )
 
 
@@ -577,6 +787,9 @@ def _ada_wagv_bmm_pack(
     v0: Any,
     *,
     include_v: bool = True,
+    include_g: bool = False,
+    g1: Any | None = None,
+    g2: Any | None = None,
 ) -> tuple[Any, Any, Any]:
     """Pad W/A[/V] ranks once for two grouped tensor-core BMMs.
 
@@ -585,18 +798,43 @@ def _ada_wagv_bmm_pack(
     weight update. It is not part of the state dict or converted checkpoint.
     """
 
-    down_weights = (w1, a1, v1) if include_v else (w1, a1)
-    up_weights = (w2, a2, v2) if include_v else (w2, a2)
-    biases = (w0, a0, v0) if include_v else (w0, a0)
-    weights = (*down_weights, *up_weights, *biases)
+    if include_g:
+        if g1 is None or g2 is None:
+            raise ValueError("include_g requires G rank-in and rank-out weights")
+        # The all-six norm/mix backing store is R/K/V/W/A/G.  Starting at V
+        # gives a zero-copy V/W/A/G BMM view while preserving R/K/V's view.
+        if include_v:
+            down_weights = (v1, w1, a1, g1)
+            up_weights = (v2, w2, a2, g2)
+            bias_sources = (v0, w0, a0)
+        else:
+            down_weights = (w1, a1, g1)
+            up_weights = (w2, a2, g2)
+            bias_sources = (w0, a0)
+    else:
+        down_weights = (w1, a1, v1) if include_v else (w1, a1)
+        up_weights = (w2, a2, v2) if include_v else (w2, a2)
+        bias_sources = (w0, a0, v0) if include_v else (w0, a0)
+    weights = (*down_weights, *up_weights, *bias_sources)
     identity = tuple(_tensor_pack_identity(value) for value in weights)
     cache_name = (
-        "_rwkv7_ada_wagv_bmm_pack" if include_v else "_rwkv7_ada_wa_bmm_pack"
+        "_rwkv7_sm120_wagv_bmm_g_pack"
+        if include_g and include_v
+        else "_rwkv7_sm120_wag_bmm_g_pack"
+        if include_g
+        else "_rwkv7_ada_wagv_bmm_pack"
+        if include_v
+        else "_rwkv7_ada_wa_bmm_pack"
     )
     cached = getattr(w1, cache_name, None)
     if isinstance(cached, tuple) and len(cached) == 4 and cached[0] == identity:
         return cached[1], cached[2], cached[3]
 
+    if include_g:
+        zero_bias = torch.zeros_like(w0)
+        biases = (*bias_sources, zero_bias)
+    else:
+        biases = bias_sources
     hidden = int(w1.shape[1])
     ranks = tuple(int(value.shape[0]) for value in down_weights)
     max_rank = max(ranks)
@@ -663,6 +901,43 @@ def _stack_wav_inputs(
     return torch.stack((xw, xa, xv) if include_v else (xw, xa))
 
 
+def _stack_sm120_wagv_inputs(
+    xw: Any,
+    xa: Any,
+    xg: Any,
+    xv: Any,
+    *,
+    include_v: bool,
+) -> Any:
+    """Reuse the R/K/V/W/A/G norm-mix backing store without a cat/copy."""
+
+    rows, hidden = int(xw.shape[0]), int(xw.shape[1])
+    row_values = rows * hidden
+    first = xv if include_v else xw
+    expected = (xv, xw, xa, xg) if include_v else (xw, xa, xg)
+    try:
+        storage = first.untyped_storage()
+        shared = all(
+            value.untyped_storage().data_ptr() == storage.data_ptr()
+            and value.is_contiguous()
+            and int(value.storage_offset())
+            == int(first.storage_offset()) + index * row_values
+            for index, value in enumerate(expected)
+        )
+    except Exception:
+        shared = False
+    if shared:
+        return first.as_strided(
+            (len(expected), rows, hidden),
+            (row_values, hidden, 1),
+            storage_offset=int(first.storage_offset()),
+        )
+    # This allocation is correct but intentionally observable in the profiler.
+    # The selected native_graph route requests the fused norm/mix layout, so a
+    # production capture should always take the shared branch.
+    return torch.stack(expected)
+
+
 def ada_wagv_bmm(
     xw: Any,
     xa: Any,
@@ -685,14 +960,17 @@ def ada_wagv_bmm(
     sigmoid_a: bool = False,
     compute_v: bool = True,
     force_fallback: bool = False,
+    require_bmm: bool = False,
+    include_g: bool = False,
+    require_zero_copy: bool = False,
 ) -> tuple[Any, Any, Any, Any]:
-    """Grouped B8 W/A/V LoRA using two padded tensor-core BMMs.
+    """Grouped B8 W/A/V or opt-in W/A/G/V using two padded BMMs.
 
-    W/A/V have nearby ranks in released RWKV-7 checkpoints, so they share a
-    compact padded pack. The larger G projection stays on its original GEMMs;
-    this preserves most of the speedup without padding every group to G's
-    maximum rank. Dense full-rank weights remain untouched, and unsupported
-    shapes preserve the existing no-copy implementation.
+    W/A/V have nearby ranks in released checkpoints, so the portable route
+    shares a compact padded pack and leaves larger G on its original GEMMs.
+    ``include_g`` is the exact-SM120 B8 experiment whose 1024/2048 shapes were
+    positive in a raw-graph microprobe; it pads G too and requires the combined
+    R/K/V/W/A/G norm-mix backing store when ``require_zero_copy`` is true.
     """
 
     if torch is None or F is None:
@@ -723,8 +1001,16 @@ def ada_wagv_bmm(
         not force_fallback
         and not torch.is_grad_enabled()
         and ada_wagv_bmm_should_use(rows, hidden, max_rank)
+        and (
+            not include_g
+            or (
+                sigmoid_a
+                and sm120_wagv_bmm_g_should_use(rows, hidden, max_rank)
+                and sm120_wagv_bmm_g_available(xw.device)
+            )
+        )
         and xw.dtype == torch.float16
-        and _small_row_capability(xw.device) == (8, 9)
+        and ada_wagv_bmm_available(xw.device)
         and all(
             item.is_cuda and item.dtype == xw.dtype and item.is_contiguous()
             for item in values
@@ -741,6 +1027,11 @@ def ada_wagv_bmm(
         and all(int(item.numel()) == hidden for item in (w0, a0, v0))
     )
     if not valid:
+        if require_bmm:
+            raise RuntimeError(
+                "ada_wagv_bmm was selected for native_graph but its exact "
+                "device/dtype/layout contract was not satisfied"
+            )
         return ada_wagv_lora(
             xw,
             xa,
@@ -775,25 +1066,73 @@ def ada_wagv_bmm(
         a0,
         v0,
         include_v=compute_v,
+        include_g=include_g,
+        g1=g1,
+        g2=g2,
     )
-    mixed = _stack_wav_inputs(xw, xa, xv, include_v=compute_v)
+    if include_g:
+        mixed = _stack_sm120_wagv_inputs(
+            xw, xa, xg, xv, include_v=compute_v
+        )
+        if require_zero_copy:
+            first = xv if compute_v else xw
+            if mixed.untyped_storage().data_ptr() != first.untyped_storage().data_ptr():
+                raise RuntimeError(
+                    "SM120 W/A/G/V BMM was selected but norm/mix did not "
+                    "provide its required zero-copy R/K/V/W/A/G layout"
+                )
+    else:
+        mixed = _stack_wav_inputs(xw, xa, xv, include_v=compute_v)
     hidden_states = torch.bmm(mixed, down.transpose(1, 2))
-    # The grouped BMM result is private to this route. Apply W's activation in
-    # place so A/V do not need a second stacked copy before the rank-out BMM.
-    hidden_states[0].tanh_()
-    outputs = torch.baddbmm(bias, hidden_states, up_transposed)
-    if sigmoid_a:
-        outputs[1].sigmoid_()
-    a = outputs[1]
-    g_hidden = F.linear(xg, g1)
-    g_hidden.sigmoid_()
-    g = F.linear(g_hidden, g2)
+    if include_g:
+        w_index = 1 if compute_v else 0
+        a_index = 2 if compute_v else 1
+        g_index = 3 if compute_v else 2
+        v_index = 0 if compute_v else None
+        _sm120_wagv_bmm_down_epilogue(
+            hidden_states[w_index], hidden_states[g_index]
+        )
+    else:
+        w_index, a_index, g_index = 0, 1, None
+        v_index = 2 if compute_v else None
+        # The grouped BMM result is private to this route. Apply W's activation
+        # in place so A/V do not need a second stacked copy before rank-out.
+        hidden_states[w_index].tanh_()
+    if include_g:
+        # Bias is fused into the single pointwise up epilogue. Keeping
+        # baddbmm here costs a measurable per-layer launch/copy on SM120.
+        outputs = torch.bmm(hidden_states, up_transposed)
+        _sm120_wagv_bmm_up_epilogue(
+            outputs[w_index],
+            outputs[a_index],
+            outputs[v_index] if compute_v else outputs[a_index],
+            w0,
+            a0,
+            v0,
+            v,
+            v_first,
+            compute_v=compute_v,
+        )
+    else:
+        outputs = torch.baddbmm(bias, hidden_states, up_transposed)
+        if sigmoid_a:
+            outputs[a_index].sigmoid_()
+    a = outputs[a_index]
+    if include_g:
+        g = outputs[g_index]
+    else:
+        g_hidden = F.linear(xg, g1)
+        g_hidden.sigmoid_()
+        g = F.linear(g_hidden, g2)
     if compute_v:
-        outputs[2].sigmoid_()
-        v_out = v + (v_first - v) * outputs[2]
+        if include_g:
+            v_out = outputs[v_index]
+        else:
+            outputs[v_index].sigmoid_()
+            v_out = v + (v_first - v) * outputs[v_index]
     else:
         v_out = v
-    return outputs[0], a, g, v_out
+    return outputs[w_index], a, g, v_out
 
 
 def _ada_wagv_lora_extension_should_use(rows: int, hidden: int, max_rank: int) -> bool:
@@ -840,6 +1179,7 @@ def ada_wagv_lora(
     sigmoid_a: bool = False,
     compute_v: bool = True,
     force_fallback: bool = False,
+    require_extension: bool = False,
 ) -> tuple[Any, Any, Any, Any]:
     """Return grouped W/A/G/V outputs for layer>0 decode.
 
@@ -872,6 +1212,13 @@ def ada_wagv_lora(
         and _is_small_row_cuda_device(xw2.device)
     )
     extension = _load_extension(xw2.device) if valid else None
+    if require_extension and extension is None:
+        detail = ada_wagv_lora_build_error(xw2.device)
+        raise RuntimeError(
+            "Ada W/A/G/V extension was required for native_graph decode, "
+            "but its exact device/dtype/layout/build contract was not satisfied; "
+            f"fallback is forbidden; build_error={detail!r}"
+        )
     if extension is None:
         if compute_v:
             outputs = _fallback(
@@ -988,7 +1335,10 @@ def ada_wag_lora(
 __all__ = [
     "ada_wag_lora",
     "ada_wagv_bmm",
+    "ada_wagv_bmm_available",
     "ada_wagv_bmm_should_use",
+    "sm120_wagv_bmm_g_available",
+    "sm120_wagv_bmm_g_should_use",
     "ada_wagv_lora",
     "ada_wagv_lora_available",
     "ada_wagv_lora_build_error",

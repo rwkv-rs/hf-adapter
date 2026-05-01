@@ -524,6 +524,9 @@ class _NativeRuntimeMixin:
                 value = int(runner_stats.get(name, 0))
                 row[name] = value
                 totals[name] += value
+            for name, value in runner_stats.items():
+                if name not in totals:
+                    row[name] = value
             rows.append(row)
         copy_calls = totals["copy_from_cache_calls"]
         bind_calls = totals["bind_cache_calls"]

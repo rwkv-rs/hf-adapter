@@ -174,6 +174,7 @@ def fused_attn_norm_mix6_decode(
     num_warps: int = 4,
     stack_rkv: bool = False,
     stack_wav: bool = False,
+    stack_rkv_wagv: bool = False,
     force_fallback: bool = False,
 ) -> tuple[Any, Any, Any, Any, Any, Any]:
     """Layer-normalize ``x``, update ``previous``, and emit six time mixes."""
@@ -203,7 +204,22 @@ def fused_attn_norm_mix6_decode(
         h = F.layer_norm(x2, (hidden,), params[0], params[1], float(eps))
         delta = prev2 - h
         outputs = tuple(h + delta * mix for mix in params[2:])
-        if stack_rkv:
+        if stack_rkv_wagv:
+            # R/K/V/W/A/G makes both consumers zero-copy: RKV starts at slot
+            # zero and the exact-SM120 all-group BMM reads V/W/A/G at slot two.
+            stacked_all = torch.stack(
+                (outputs[0], outputs[2], outputs[3], outputs[1], outputs[4], outputs[5]),
+                dim=0,
+            )
+            outputs = (
+                stacked_all[0],
+                stacked_all[3],
+                stacked_all[1],
+                stacked_all[2],
+                stacked_all[4],
+                stacked_all[5],
+            )
+        elif stack_rkv:
             stacked_rkv = torch.stack((outputs[0], outputs[2], outputs[3]), dim=0)
             outputs = (stacked_rkv[0], outputs[1], stacked_rkv[1], stacked_rkv[2], outputs[4], outputs[5])
         elif stack_wav:
@@ -227,7 +243,19 @@ def fused_attn_norm_mix6_decode(
     x_c = x2.contiguous()
     if x_c.data_ptr() == prev2.data_ptr():
         raise ValueError("x and previous must not alias")
-    if stack_rkv:
+    if stack_rkv_wagv:
+        stacked_all = torch.empty(
+            (6, *tuple(x_c.shape)), device=x_c.device, dtype=x_c.dtype
+        )
+        outputs = (
+            stacked_all[0],
+            stacked_all[3],
+            stacked_all[1],
+            stacked_all[2],
+            stacked_all[4],
+            stacked_all[5],
+        )
+    elif stack_rkv:
         stacked_rkv = torch.empty((3, *tuple(x_c.shape)), device=x_c.device, dtype=x_c.dtype)
         outputs = (
             stacked_rkv[0],

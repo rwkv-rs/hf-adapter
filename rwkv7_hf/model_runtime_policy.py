@@ -117,6 +117,28 @@ def native_model_backend_requested(
 ) -> str:
     raw = os.environ.get("RWKV7_NATIVE_MODEL_BACKEND")
     if raw is None:
+        # ``RWKV7_FAST_TOKEN_BACKEND`` is the public switch used by the
+        # production HF wrapper and by the cross-model benchmark protocol.
+        # Honor its native-compatible values in the FLA-free model too so a
+        # requested ``native_jit`` fair line cannot silently become an
+        # ``auto`` / CUDA-graph run after repo-code model dispatch.
+        legacy = os.environ.get("RWKV7_FAST_TOKEN_BACKEND")
+        if legacy is not None:
+            normalized_legacy = legacy.strip().lower()
+            if normalized_legacy in {
+                "",
+                "auto",
+                "eager",
+                "torch",
+                "native",
+                "native_jit",
+                "jit",
+                "native_graph",
+                "cuda_graph",
+                "graph",
+            }:
+                raw = legacy
+    if raw is None:
         return "auto" if jit_enabled_fn() else "eager"
     backend = raw.strip().lower()
     aliases = {

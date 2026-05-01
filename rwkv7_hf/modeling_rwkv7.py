@@ -129,6 +129,8 @@ try:
     from .native_jit import _native_graph_linear_dispatch
     from .native_jit import prefill as _native_jit_prefill
     from .native_jit import prewarm_ada_sparse_ffn as _native_graph_prewarm_sparse_ffn
+    from .native_jit import prewarm_sm120_compiled_ffn as _native_graph_prewarm_sm120_compiled_ffn
+    from .native_jit import sm120_compiled_ffn_preparation_stats as _native_graph_sm120_compiled_ffn_preparation_stats
 except Exception:  # pragma: no cover - optional remote-code fast path
     try:
         from native_jit import block_step as _native_jit_block_step
@@ -140,6 +142,8 @@ except Exception:  # pragma: no cover - optional remote-code fast path
         from native_jit import _native_graph_linear_dispatch
         from native_jit import prefill as _native_jit_prefill
         from native_jit import prewarm_ada_sparse_ffn as _native_graph_prewarm_sparse_ffn
+        from native_jit import prewarm_sm120_compiled_ffn as _native_graph_prewarm_sm120_compiled_ffn
+        from native_jit import sm120_compiled_ffn_preparation_stats as _native_graph_sm120_compiled_ffn_preparation_stats
     except Exception:
         _native_jit_block_step = None
         _native_jit_block_step_batched = None
@@ -150,6 +154,8 @@ except Exception:  # pragma: no cover - optional remote-code fast path
         _native_graph_linear_dispatch = None
         _native_jit_prefill = None
         _native_graph_prewarm_sparse_ffn = None
+        _native_graph_prewarm_sm120_compiled_ffn = None
+        _native_graph_sm120_compiled_ffn_preparation_stats = None
 
 # HF dynamic-module discovery copies files referenced by direct relative
 # imports in this top-level remote-code file.  The native backend reaches
@@ -169,6 +175,7 @@ if False:  # pragma: no cover
     from .sm70_linear import sm70_linear as _rwkv7_sm70_linear_dependency_sentinel
     from .sm70_quant import w4_linear as _rwkv7_sm70_quant_dependency_sentinel
     from .sm70_wagv import sm70_wagv_lora as _rwkv7_sm70_wagv_dependency_sentinel
+    from .sm120_compiled_ffn import sm120_compiled_ffn as _rwkv7_sm120_compiled_ffn_dependency_sentinel
     from .fused_lora import fused_wag_lora as _rwkv7_fused_lora_dependency_sentinel
     from .fused_output import fused_attn_output_prepare as _rwkv7_fused_output_dependency_sentinel
     from .fused_prefill import fused_prefill_state_prep as _rwkv7_fused_prefill_dependency_sentinel
@@ -754,6 +761,20 @@ def _native_graph_ada_wagv_bmm_requested() -> bool:
     )
 
 
+def _native_graph_sm120_wagv_bmm_g_requested() -> bool:
+    """Explicit-only SM120 all-W/A/G/V BMM+epilogue experiment."""
+
+    return env_flag("RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G", False)
+
+
+def _native_graph_sm120_compiled_ffn_requested() -> bool:
+    policy = _rwkv7_kernel_policy()
+    return env_flag(
+        "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN",
+        bool(getattr(policy, "sm120_compiled_ffn", False)),
+    )
+
+
 def _native_graph_ada_sparse_ffn_requested() -> bool:
     policy = _rwkv7_kernel_policy()
     return env_flag(
@@ -1042,6 +1063,14 @@ class _RWKV7NativeGraphTokenRunner:
         self.copy_from_cache_fast_skips = 0
         self.bind_cache_calls = 0
         self.bind_cache_fast_skips = 0
+        self.ada_wagv_bmm_requested = bool(_native_graph_ada_wagv_bmm_requested())
+        self.sm120_wagv_bmm_g_requested = bool(
+            _native_graph_sm120_wagv_bmm_g_requested()
+        )
+        self.sm120_compiled_ffn_requested = bool(
+            _native_graph_sm120_compiled_ffn_requested()
+        )
+        self.sm120_compiled_ffn_preparation = None
         self.graph = None
         self._capture()
 
@@ -1057,6 +1086,11 @@ class _RWKV7NativeGraphTokenRunner:
             self.logits.copy_(_native_graph_head_linear(self.head_module, out).reshape(-1))
 
     def _capture(self) -> None:
+        if self.sm120_wagv_bmm_g_requested or self.sm120_compiled_ffn_requested:
+            raise RuntimeError(
+                "explicit SM120 Decode routes require the exact batched route; "
+                "single-token fallback is forbidden"
+            )
         warm = torch.cuda.Stream(device=self.device)
         warm.wait_stream(torch.cuda.current_stream(self.device))
         with torch.cuda.stream(warm):
@@ -1139,12 +1173,41 @@ class _RWKV7NativeGraphTokenRunner:
         self._bound_cache_ref = weakref.ref(past_key_values)
         past_key_values._bind_native_graph_runner(self)
 
-    def copy_stats(self) -> dict[str, int]:
+    def copy_stats(self) -> dict[str, object]:
+        preparation_stats = (
+            _native_graph_sm120_compiled_ffn_preparation_stats(
+                getattr(self, "sm120_compiled_ffn_preparation", None)
+            )
+            if _native_graph_sm120_compiled_ffn_preparation_stats is not None
+            else {}
+        )
         return {
             "copy_from_cache_calls": int(self.copy_from_cache_calls),
             "copy_from_cache_fast_skips": int(self.copy_from_cache_fast_skips),
             "bind_cache_calls": int(self.bind_cache_calls),
             "bind_cache_fast_skips": int(self.bind_cache_fast_skips),
+            "ada_wagv_bmm_requested": bool(self.ada_wagv_bmm_requested),
+            "ada_wagv_bmm_selected": False,
+            "ada_wagv_bmm_effective": False,
+            "ada_wagv_bmm_selected_layers": [],
+            "ada_wagv_bmm_effective_layers": [],
+            "ada_wagv_bmm_effective_layer_count": 0,
+            "ada_wagv_bmm_full_model_effective": False,
+            "sm120_wagv_bmm_g_requested": bool(self.sm120_wagv_bmm_g_requested),
+            "sm120_wagv_bmm_g_selected": False,
+            "sm120_wagv_bmm_g_effective": False,
+            "sm120_wagv_bmm_g_selected_layers": [],
+            "sm120_wagv_bmm_g_effective_layers": [],
+            "sm120_wagv_bmm_g_effective_layer_count": 0,
+            "sm120_wagv_bmm_g_full_model_effective": False,
+            "sm120_compiled_ffn_requested": bool(self.sm120_compiled_ffn_requested),
+            "sm120_compiled_ffn_selected": False,
+            "sm120_compiled_ffn_effective": False,
+            "sm120_compiled_ffn_selected_layers": [],
+            "sm120_compiled_ffn_effective_layers": [],
+            "sm120_compiled_ffn_effective_layer_count": 0,
+            "sm120_compiled_ffn_full_model_effective": False,
+            **preparation_stats,
         }
 
     def reorder_batch_inplace(self, indices: torch.LongTensor) -> bool:
@@ -1199,8 +1262,57 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         self.copy_from_cache_fast_skips = 0
         self.bind_cache_calls = 0
         self.bind_cache_fast_skips = 0
+        self._decode_route_layers: dict[str, set[int]] = {
+            "ada_wagv_bmm_selected": set(),
+            "ada_wagv_bmm_effective": set(),
+            "sm120_wagv_bmm_g_selected": set(),
+            "sm120_wagv_bmm_g_effective": set(),
+            "sm120_compiled_ffn_selected": set(),
+            "sm120_compiled_ffn_effective": set(),
+        }
+        self.ada_wagv_bmm_requested = bool(_native_graph_ada_wagv_bmm_requested())
+        self.sm120_wagv_bmm_g_requested = bool(
+            _native_graph_sm120_wagv_bmm_g_requested()
+        )
+        self.sm120_compiled_ffn_requested = bool(
+            _native_graph_sm120_compiled_ffn_requested()
+        )
+        self.sm120_compiled_ffn_preparation = None
         self.graph = None
         self._capture()
+
+    def _record_decode_route(self, name: str, layer_index: int) -> None:
+        layers = self._decode_route_layers.get(name)
+        if layers is not None:
+            layers.add(int(layer_index))
+
+    def _require_requested_sm120_routes(self) -> None:
+        """Reject any explicitly requested SM120 route before graph capture."""
+
+        expected = set(range(len(self.packs)))
+        for requested, route, flag in (
+            (
+                self.sm120_wagv_bmm_g_requested,
+                "sm120_wagv_bmm_g",
+                "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G",
+            ),
+            (
+                self.sm120_compiled_ffn_requested,
+                "sm120_compiled_ffn",
+                "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN",
+            ),
+        ):
+            if not requested:
+                continue
+            selected = self._decode_route_layers[f"{route}_selected"]
+            effective = self._decode_route_layers[f"{route}_effective"]
+            if selected != expected or effective != expected:
+                raise RuntimeError(
+                    f"{flag}=1 was requested, but the route was not selected "
+                    "and effective for every layer; "
+                    f"expected={sorted(expected)}, selected={sorted(selected)}, "
+                    f"effective={sorted(effective)}; fallback is forbidden"
+                )
 
     def _one_step(self) -> None:
         x = F.embedding(self.tok_id, self.emb).reshape(self.batch_size, self.hidden)
@@ -1208,6 +1320,7 @@ class _RWKV7NativeGraphBatchedTokenRunner:
             x = _native_graph_block_ip_batched(
                 x, self.state[li], self.xpa[li], self.xpf[li], self.v_first, p,
                 self.sparse_ffn_out[li],
+                route_observer=self._record_decode_route,
             )
         out = F.layer_norm(x, [self.hidden], self.norm_w, self.norm_b, 1e-5)
         if not _native_graph_head_linear_into(self.head_module, out, self.logits):
@@ -1221,6 +1334,7 @@ class _RWKV7NativeGraphBatchedTokenRunner:
                 for _ in range(3):
                     self._one_step()
         torch.cuda.current_stream(self.device).wait_stream(warm)
+        self._require_requested_sm120_routes()
         self.graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(self.graph):
             self._one_step()
@@ -1294,12 +1408,71 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         self._bound_cache_ref = weakref.ref(past_key_values)
         past_key_values._bind_native_graph_runner(self)
 
-    def copy_stats(self) -> dict[str, int]:
+    def copy_stats(self) -> dict[str, object]:
+        selected_layers = sorted(self._decode_route_layers["ada_wagv_bmm_selected"])
+        effective_layers = sorted(self._decode_route_layers["ada_wagv_bmm_effective"])
+        expected_layers = list(range(len(self.packs)))
+        full_model_effective = bool(
+            self.ada_wagv_bmm_requested
+            and selected_layers == expected_layers
+            and effective_layers == expected_layers
+        )
+        sm120_selected_layers = sorted(
+            self._decode_route_layers.get("sm120_wagv_bmm_g_selected", set())
+        )
+        sm120_effective_layers = sorted(
+            self._decode_route_layers.get("sm120_wagv_bmm_g_effective", set())
+        )
+        sm120_full_model_effective = bool(
+            self.sm120_wagv_bmm_g_requested
+            and sm120_selected_layers == expected_layers
+            and sm120_effective_layers == expected_layers
+        )
+        compiled_selected_layers = sorted(
+            self._decode_route_layers.get("sm120_compiled_ffn_selected", set())
+        )
+        compiled_effective_layers = sorted(
+            self._decode_route_layers.get("sm120_compiled_ffn_effective", set())
+        )
+        compiled_full_model_effective = bool(
+            self.sm120_compiled_ffn_requested
+            and compiled_selected_layers == expected_layers
+            and compiled_effective_layers == expected_layers
+        )
+        preparation_stats = (
+            _native_graph_sm120_compiled_ffn_preparation_stats(
+                getattr(self, "sm120_compiled_ffn_preparation", None)
+            )
+            if _native_graph_sm120_compiled_ffn_preparation_stats is not None
+            else {}
+        )
         return {
             "copy_from_cache_calls": int(self.copy_from_cache_calls),
             "copy_from_cache_fast_skips": int(self.copy_from_cache_fast_skips),
             "bind_cache_calls": int(self.bind_cache_calls),
             "bind_cache_fast_skips": int(self.bind_cache_fast_skips),
+            "ada_wagv_bmm_requested": bool(self.ada_wagv_bmm_requested),
+            "ada_wagv_bmm_selected": bool(selected_layers),
+            "ada_wagv_bmm_effective": bool(effective_layers),
+            "ada_wagv_bmm_selected_layers": selected_layers,
+            "ada_wagv_bmm_effective_layers": effective_layers,
+            "ada_wagv_bmm_effective_layer_count": len(effective_layers),
+            "ada_wagv_bmm_full_model_effective": full_model_effective,
+            "sm120_wagv_bmm_g_requested": bool(self.sm120_wagv_bmm_g_requested),
+            "sm120_wagv_bmm_g_selected": bool(sm120_selected_layers),
+            "sm120_wagv_bmm_g_effective": bool(sm120_effective_layers),
+            "sm120_wagv_bmm_g_selected_layers": sm120_selected_layers,
+            "sm120_wagv_bmm_g_effective_layers": sm120_effective_layers,
+            "sm120_wagv_bmm_g_effective_layer_count": len(sm120_effective_layers),
+            "sm120_wagv_bmm_g_full_model_effective": (sm120_full_model_effective),
+            "sm120_compiled_ffn_requested": bool(self.sm120_compiled_ffn_requested),
+            "sm120_compiled_ffn_selected": bool(compiled_selected_layers),
+            "sm120_compiled_ffn_effective": bool(compiled_effective_layers),
+            "sm120_compiled_ffn_selected_layers": compiled_selected_layers,
+            "sm120_compiled_ffn_effective_layers": compiled_effective_layers,
+            "sm120_compiled_ffn_effective_layer_count": len(compiled_effective_layers),
+            "sm120_compiled_ffn_full_model_effective": (compiled_full_model_effective),
+            **preparation_stats,
         }
 
     def reorder_batch_inplace(self, indices: torch.LongTensor) -> bool:
@@ -2129,6 +2302,9 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                 value = int(stats.get(name, 0))
                 row[name] = value
                 totals[name] += value
+            for name, value in stats.items():
+                if name not in totals:
+                    row[name] = value
             rows.append(row)
 
         copy_calls = int(totals["copy_from_cache_calls"])
@@ -2561,6 +2737,8 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_ada_linear_signature(),
             _native_graph_ada_wagv_lora_requested(),
             _native_graph_ada_wagv_bmm_requested(),
+            _native_graph_sm120_wagv_bmm_g_requested(),
+            _native_graph_sm120_compiled_ffn_requested(),
             _native_graph_ada_sparse_ffn_requested(),
             _native_graph_ada_sparse_ffn_signature(),
             _native_graph_rkv_policy(),
@@ -2594,12 +2772,23 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         while len(cache) >= cache_limit:
             cache.popitem(last=False)
             stats["evictions"] = int(stats.get("evictions", 0)) + 1
+        sm120_compiled_ffn_preparation = None
+        if _native_graph_sm120_compiled_ffn_requested():
+            if _native_graph_prewarm_sm120_compiled_ffn is None:
+                raise RuntimeError(
+                    "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN=1 was requested, "
+                    "but prewarm is unavailable; fallback is forbidden"
+                )
+            sm120_compiled_ffn_preparation = _native_graph_prewarm_sm120_compiled_ffn(
+                packs, int(batch_size)
+            )
         if _native_graph_ada_sparse_ffn_requested() and _native_graph_prewarm_sparse_ffn is not None:
             _native_graph_prewarm_sparse_ffn(packs, int(batch_size))
         if int(batch_size) == 1:
             runner = _RWKV7NativeGraphTokenRunner(self, packs)
         else:
             runner = _RWKV7NativeGraphBatchedTokenRunner(self, packs, int(batch_size))
+        runner.sm120_compiled_ffn_preparation = sm120_compiled_ffn_preparation
         cache[key] = runner
         cache.move_to_end(key)
         return runner

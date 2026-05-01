@@ -22,7 +22,7 @@ Generated inventory of benchmark scripts and evidence directories. Keep this fil
 | RTX 4080 | [`4080_7p2b_fp16_state_20260809/`](4080_7p2b_fp16_state_20260809/README.md) | 7.2B/B8 FP16-state decode reaches `344.39 tok/s`, `1.0301x` FP32-state, `-123.88 MiB`, and greedy `12,288/12,288` |
 | RTX 5070 Laptop | [`5070_max_perf_20260811/`](5070_max_perf_20260811/README.md) | Exact 0.4B/1.5B Native prefill/decode schedules pass correctness and paired speed gates; negative candidates remain disabled |
 | RTX 5090 | [`5090_blackwell_production_close_20260712/`](5090_blackwell_production_close_20260712/README.md) | Quant pressure, 13.3B conversion and full MATH500 pass |
-| RTX 5090 | [`5090_g1h_qwen35_b1_b8_20260715/`](5090_g1h_qwen35_b1_b8_20260715/README.md) | Current-main 0.4B/0.8B through 7.2B/9B B1/B8 matrix passes 8/8 batch-pairs and 144/144 full-FLA cells |
+| RTX 5090 | [`5090_g1h_qwen35_b1_b8_20260715/`](5090_g1h_qwen35_b1_b8_20260715/README.md) | Historical under the superseding protocol; the original 0.4B/0.8B through 7.2B/9B B1/B8 matrix passes 8/8 batch-pairs and 144/144 full-FLA cells |
 | RTX 5090 | [`5090_g1h_13p3_20260715/`](5090_g1h_13p3_20260715/README.md) | Latest official g1h 13.3B load/generate plus B8 paired-fp16 MM8/MM4 speed-policy gate pass |
 | RTX 5090 | [`5090_bntn_all_models_20260716/`](5090_bntn_all_models_20260716/README.md) | g1h 1.5B/2.9B/7.2B/13.3B B1/B8 BN/TN Tensor Core W4 passes all-phase speed, `0.5298x–0.6250x` footprint and correctness gates |
 | RTX 5090 | [`5090_train_temp_alignment_20260717/`](5090_train_temp_alignment_20260717/README.md) | Official vs opt-in HF train_temp BF16 12x768 backward/step exact; 3-seed x 1,000-step cohort passes |
@@ -33,6 +33,19 @@ Generated inventory of benchmark scripts and evidence directories. Keep this fil
 
 Canonical cross-platform summary: [`../BENCHMARK.md`](../BENCHMARK.md) and
 [`../docs/HARDWARE_MATRIX.md`](../docs/HARDWARE_MATRIX.md).
+
+## Promoted paired comparison artifacts
+
+| Platform | Artifact | Current conclusion |
+|---|---|---|
+| RTX 4080 | [`4080_qwen35_paired_pd_v1_20260814/`](4080_qwen35_paired_pd_v1_20260814/README.md) | Same-runtime raw and parameter-adjusted Prefill/Decode pass all 36 cells; adjusted minima `1.051333x/1.022115x`; 6/6 512-token native-graph/FLA probes pass. Speed only, not quality/E2E |
+| RTX 5090 | [`5090_qwen35_paired_decode_v1_20260813/`](5090_qwen35_paired_decode_v1_20260813/README.md) | Frozen-reference parameter-adjusted Decode passes 48/48 at minimum `1.029966x`; raw Decode 48/48 is supporting telemetry. Decode-only, not quality/Prefill/E2E |
+
+## Promoted reference-only artifacts
+
+| Platform | Artifact | Current conclusion |
+|---|---|---|
+| RTX 5090 | [`5090_qwen35_best_optimized_hf_v1_20260813/`](5090_qwen35_best_optimized_hf_v1_20260813/README.md) | Qwen3.5 0.8B/2B/4B/9B official-operator reference passes 48/48 with fixed per-model optimized Graph Decode; source remains reference-only and paired Decode is reported separately |
 
 ## Promoted exact-card validation artifacts
 
@@ -53,6 +66,7 @@ two-pair conservative gate. Conclusions and reproduction commands are in
 
 | Directory | Title / purpose | JSONL | Logs |
 | --- | --- | --- | --- |
+| 4080_qwen35_paired_pd_v1_20260814 | RTX 4080 same-runtime strict paired Prefill/Decode 36/36, routes and 6/6 FLA correctness | 24 | 16 |
 | amd_gfx1100_native_20260727 | AMD gfx1100/ROCm 7.2.1 fully native HF compatibility and baseline | 1 | 13 |
 | 3090_g1h_7p2_bsz8_20260714 | RTX 3090 latest-g1h 7.2B vs Qwen3.5-9B bsz8 acceptance | 5 | 5 |
 | 3090_g1i_qwen35_maxperf_20260812 | RTX 3090 exact-shape max-performance B1/B8 Qwen3.5 matrix, correctness and promotion probes | 10 | 0 |
@@ -70,6 +84,8 @@ two-pair conservative gate. Conclusions and reproduction commands are in
 | 5070_native_memory_loading_20260716 | RTX 5070 Laptop CPU-first native MM8/MM4 memory-loading smoke | 1 | 0 |
 | 5090_g1h_13p3_20260715 | RTX 5090 latest official g1h 13.3B conversion, smoke, and speed-policy acceptance | 2 | 0 |
 | 5090_g1h_qwen35_b1_b8_20260715 | RTX 5090 complete B1/B8 RWKV-7 vs full-FLA Qwen3.5 acceptance | 107 | 0 |
+| 5090_qwen35_best_optimized_hf_v1_20260813 | RTX 5090 Qwen3.5 0.8B/2B/4B/9B best-optimized official-operator reference-only matrix | 6 | 12 |
+| 5090_qwen35_paired_decode_v1_20260813 | RTX 5090 frozen-Qwen versus RWKV strict parameter-adjusted Decode 48/48, route A/B and 8/8 FLA correctness | 30 | 22 |
 | 5090_blackwell_hf_matrix_20260704 | RTX 5090 Blackwell HF validation matrix (2026-07-04) | 2 | 12 |
 | 5090_blackwell_native_prefill_smoke_20260704 | RTX 5090 Blackwell native-prefill validation (2026-07-04) | 2 | 3 |
 | 5090_blackwell_native_quant_20260704 | RTX 5090 native quant benchmark (2026-07-04) | 1 | 2 |

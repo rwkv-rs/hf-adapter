@@ -103,6 +103,11 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
 
 
 def _native_graph_sparse_ffn_low_memory_pack_enabled() -> bool:
+    # The SM120 compiled dense FFN was measured with standard contiguous
+    # down-weights. Relayout is irreversible for the live module, so suppress
+    # it before graph-pack extraction whenever the explicit route is requested.
+    if env_flag("RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN", False):
+        return False
     policy = _kernel_policy()
     return env_flag(
         "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_LOW_MEMORY_PACK",
@@ -485,28 +490,55 @@ try:  # pragma: no cover - optional sm_89/sm_120 grouped W/A/G/V LoRA
     from .ada_lora import (
         ada_wag_lora,
         ada_wagv_bmm,
+        ada_wagv_bmm_available,
         ada_wagv_bmm_should_use,
         ada_wagv_lora,
         ada_wagv_lora_available,
         ada_wagv_lora_should_use,
+        sm120_wagv_bmm_g_available,
+        sm120_wagv_bmm_g_should_use,
     )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
         from ada_lora import (
             ada_wag_lora,
             ada_wagv_bmm,
+            ada_wagv_bmm_available,
             ada_wagv_bmm_should_use,
             ada_wagv_lora,
             ada_wagv_lora_available,
             ada_wagv_lora_should_use,
+            sm120_wagv_bmm_g_available,
+            sm120_wagv_bmm_g_should_use,
         )
     except Exception:
         ada_wag_lora = None  # type: ignore[assignment]
         ada_wagv_bmm = None  # type: ignore[assignment]
+        ada_wagv_bmm_available = None  # type: ignore[assignment]
         ada_wagv_bmm_should_use = None  # type: ignore[assignment]
         ada_wagv_lora = None  # type: ignore[assignment]
         ada_wagv_lora_available = None  # type: ignore[assignment]
         ada_wagv_lora_should_use = None  # type: ignore[assignment]
+        sm120_wagv_bmm_g_available = None  # type: ignore[assignment]
+        sm120_wagv_bmm_g_should_use = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional SM120 torch.compile dense FFN
+    from .sm120_compiled_ffn import (
+        prepare_sm120_compiled_ffn,
+        sm120_compiled_ffn,
+        sm120_compiled_ffn_preparation_stats,
+    )
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from sm120_compiled_ffn import (
+            prepare_sm120_compiled_ffn,
+            sm120_compiled_ffn,
+            sm120_compiled_ffn_preparation_stats,
+        )
+    except Exception:
+        prepare_sm120_compiled_ffn = None  # type: ignore[assignment]
+        sm120_compiled_ffn = None  # type: ignore[assignment]
+        sm120_compiled_ffn_preparation_stats = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional exact-shape FP16 recurrent state
     from .native_wkv_fp16 import (
@@ -641,13 +673,18 @@ _native_graph_ada_sparse_ffn_enabled = _native_jit_graph_dispatch_impl._native_g
 _native_graph_ada_linear_enabled = _native_jit_graph_dispatch_impl._native_graph_ada_linear_enabled
 _native_graph_ada_linear_should_route = _native_jit_graph_dispatch_impl._native_graph_ada_linear_should_route
 _native_graph_ada_wagv_lora_enabled = _native_jit_graph_dispatch_impl._native_graph_ada_wagv_lora_enabled
+_native_graph_ada_wagv_bmm_requested = _native_jit_graph_dispatch_impl._native_graph_ada_wagv_bmm_requested
 _native_graph_ada_wagv_bmm_enabled = _native_jit_graph_dispatch_impl._native_graph_ada_wagv_bmm_enabled
+_native_graph_sm120_wagv_bmm_g_requested = _native_jit_graph_dispatch_impl._native_graph_sm120_wagv_bmm_g_requested
+_native_graph_sm120_wagv_bmm_g_enabled = _native_jit_graph_dispatch_impl._native_graph_sm120_wagv_bmm_g_enabled
+_native_graph_sm120_compiled_ffn_requested = _native_jit_graph_dispatch_impl._native_graph_sm120_compiled_ffn_requested
 _native_graph_ada_wag_lora_enabled = _native_jit_graph_dispatch_impl._native_graph_ada_wag_lora_enabled
 _native_graph_linear_dispatch = _native_jit_graph_dispatch_impl._native_graph_linear_dispatch
 _native_graph_ffn_up_relu2_dispatch = _native_jit_graph_dispatch_impl._native_graph_ffn_up_relu2_dispatch
 _native_graph_ffn_down_add_dispatch = _native_jit_graph_dispatch_impl._native_graph_ffn_down_add_dispatch
 _native_graph_ffn_dispatch = _native_jit_graph_dispatch_impl._native_graph_ffn_dispatch
 prewarm_ada_sparse_ffn = _native_jit_graph_dispatch_impl.prewarm_ada_sparse_ffn
+prewarm_sm120_compiled_ffn = _native_jit_graph_dispatch_impl.prewarm_sm120_compiled_ffn
 _native_graph_rkv_policy = _native_jit_graph_dispatch_impl._native_graph_rkv_policy
 _native_graph_int_env = _native_jit_graph_dispatch_impl._native_graph_int_env
 _native_graph_vkwr_rkv_dispatch = _native_jit_graph_dispatch_impl._native_graph_vkwr_rkv_dispatch

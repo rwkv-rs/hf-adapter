@@ -133,6 +133,65 @@ def effective_fused_recurrent_raw(model, batch_size: int) -> bool:
     )
 
 
+def native_graph_wagv_bmm_route(model, batch_size: int) -> dict[str, Any]:
+    """Report requested, selected, and captured B8 BMM state separately."""
+
+    requested = effective_flag(
+        model,
+        "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM",
+        "ada_wagv_bmm",
+        False,
+    )
+    route = {
+        "native_graph_ada_wagv_bmm": None,
+        "native_graph_ada_wagv_bmm_requested": requested,
+        "native_graph_ada_wagv_bmm_selected": None,
+        "native_graph_ada_wagv_bmm_effective": None,
+        "native_graph_ada_wagv_bmm_effective_layer_count": 0,
+        "native_graph_ada_wagv_bmm_full_model_effective": None,
+    }
+    getter = getattr(model, "rwkv7_native_graph_runner_copy_stats", None)
+    if not callable(getter):
+        return route
+    try:
+        runners = getter().get("runners", [])
+    except Exception:
+        return route
+    match = next(
+        (
+            row
+            for row in reversed(runners)
+            if int(row.get("batch_size", -1)) == int(batch_size)
+        ),
+        None,
+    )
+    if not isinstance(match, dict):
+        return route
+    route.update(
+        {
+            "native_graph_ada_wagv_bmm": bool(
+                match.get("ada_wagv_bmm_effective", False)
+            ),
+            "native_graph_ada_wagv_bmm_requested": bool(
+                match.get("ada_wagv_bmm_requested", requested)
+            ),
+            "native_graph_ada_wagv_bmm_selected": bool(
+                match.get("ada_wagv_bmm_selected", False)
+            ),
+            "native_graph_ada_wagv_bmm_effective": bool(
+                match.get("ada_wagv_bmm_effective", False)
+            ),
+            "native_graph_ada_wagv_bmm_effective_layer_count": int(
+                match.get("ada_wagv_bmm_effective_layer_count", 0)
+            ),
+            "native_graph_ada_wagv_bmm_full_model_effective": bool(
+                match.get("ada_wagv_bmm_full_model_effective", False)
+            ),
+        }
+    )
+    return route
+
+
 def infer_model_size_label(hf_dir: str, explicit: str = "") -> str | None:
     if explicit:
         return explicit.lower()
@@ -491,6 +550,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
         fast_route["musa_attn_shift_mix_calls_delta"] = int(
             fast_route.get("musa_attn_shift_mix_calls", 0)
         ) - int(forward_route.get("musa_attn_shift_mix_calls", 0))
+        bmm_route = native_graph_wagv_bmm_route(model, bsz)
         rows.append({**rows[0],
             "decode_api": fast_name,
             "fast_token_backend": requested_backend,
@@ -507,7 +567,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
             "native_graph_sm70_linear": effective_flag(model, "RWKV7_NATIVE_GRAPH_SM70_LINEAR", "sm70_linear", False),
             "native_graph_ada_linear": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_LINEAR", "ada_linear", False),
             "native_graph_ada_wagv_lora": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA", "ada_wagv_lora", False),
-            "native_graph_ada_wagv_bmm": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM", "ada_wagv_bmm", False),
+            **bmm_route,
             "native_graph_ada_sparse_ffn": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN", "ada_sparse_ffn", False),
             "native_graph_ada_sparse_ffn_max_rows": int(os.environ.get(
                 "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_MAX_ROWS",

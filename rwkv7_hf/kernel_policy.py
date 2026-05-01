@@ -327,6 +327,9 @@ class KernelPolicy:
     ada_wagv_lora: bool = False
     ada_wagv_lora_max_rows: int = 4
     ada_wagv_bmm: bool = False
+    # Exact SM120/B8/H1024+H2048 torch.compile dense FFN. This remains
+    # explicit-only until full-model horizon and paired-matrix evidence lands.
+    sm120_compiled_ffn: bool = False
     ada_wag_lora: bool = False
     ada_sparse_ffn: bool = False
     ada_sparse_ffn_max_rows: int = 19
@@ -1297,7 +1300,12 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
         rtx4090_block_fp16_accum_shapes = (
             tuple(
                 (hidden, layers, batch, tokens)
-                for hidden, layers in ((1024, 24), (2048, 24), (2560, 32))
+                for hidden, layers in (
+                    (1024, 24),
+                    (2048, 24),
+                    (2560, 32),
+                    (4096, 32),
+                )
                 for batch in (1, 8)
                 for tokens in (128, 512, 2048)
             )
@@ -1387,7 +1395,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             prefill_graph_model_shapes=rtx4080_prefill_shapes,
             prefill_global_fp16_accum_model_shapes=rtx4080_global_fp16_accum_shapes,
             # The RTX 4090 same-process forward/reverse A/B selected the
-            # block-only boundary on all measured 0.4B/1.5B/2.9B B1/B8
+            # block-only boundary on all measured 0.4B/1.5B/2.9B/7.2B B1/B8
             # P128/P512/P2048 shapes.  It retains FP32 accumulation for the
             # final norm and vocabulary head while recovering essentially the
             # same Tensor Core gain as process-global FP16 accumulation.
@@ -1451,7 +1459,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
                 "parity-approved prefill shapes use scoped full-GEMM FP16 accumulation; "
                 "7.2B/B8 decode uses exact-shape Triton FP16 state, while the regressing Ada linear route stays disabled"
                 if is_4080
-                else "RTX 40/Ada: exact-4090 rows promote fixed-shape prefill graph plus raw recurrent decode, 8-warp norm/mix, rows=1/2/4 exact linear, exact 1.5B/B1/P2048 self-chunk plus stacked-copy-free R/K/V, graph-safe one/two-row sparse FFN, threshold-zero BnB W8 native prefill/decode, bsz8 grouped tensor-core W/A/V projection and MM4 output-head dispatch, plus block-scoped FP16 accumulation on measured 0.4B/1.5B/2.9B B1/B8 prompt shapes; other Ada cards retain the compatible fallback until measured"
+                else "RTX 40/Ada: exact-4090 rows promote fixed-shape prefill graph plus raw recurrent decode, 8-warp norm/mix, rows=1/2/4 exact linear, exact 1.5B/B1/P2048 self-chunk plus stacked-copy-free R/K/V, graph-safe one/two-row sparse FFN, threshold-zero BnB W8 native prefill/decode, bsz8 grouped tensor-core W/A/V projection and MM4 output-head dispatch, plus block-scoped FP16 accumulation on measured 0.4B/1.5B/2.9B/7.2B B1/B8 prompt shapes; other Ada cards retain the compatible fallback until measured"
             ),
         )
     if family == "hopper":
@@ -1694,6 +1702,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             ada_linear_rows="1" if is_5090 else "2 4",
             ada_linear_roles="hidden,ffn_up,ffn_down" if is_5090 else "auto",
             ada_wagv_lora=is_5090,
+            sm120_compiled_ffn=False,
             ada_wag_lora=is_5090,
             ada_sparse_ffn=is_5090,
             ada_sparse_ffn_max_rows=19,

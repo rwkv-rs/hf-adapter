@@ -1,0 +1,2 @@
+name, uuid, pci.bus_id, compute_cap, driver_version, memory.total [MiB], power.limit [W], clocks.current.sm [MHz], clocks.max.sm [MHz], clocks.current.memory [MHz], clocks.max.memory [MHz]
+NVIDIA GeForce RTX 5090, GPU-5f6fec2b-7f06-48f2-8f1f-8a843e3ff05b, 00000000:29:00.0, 12.0, 595.58.03, 32607 MiB, 575.00 W, 2917 MHz, 3090 MHz, 14001 MHz, 14001 MHz

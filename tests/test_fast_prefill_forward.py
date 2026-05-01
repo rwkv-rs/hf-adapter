@@ -133,7 +133,7 @@ def main() -> int:
             chunked = None
             chunked_match = True
             chunked_decode_match = True
-            if args.prefill_graph and 0 < args.chunk_size < int(ids.shape[1]):
+            if 0 < args.chunk_size < int(ids.shape[1]):
                 chunked = model.rwkv7_prefill_chunks(ids, chunk_size=args.chunk_size, logits_to_keep=1, return_dict=True)
                 chunked_logits = chunked.logits[:, -1].float()
                 chunked_match = bool(

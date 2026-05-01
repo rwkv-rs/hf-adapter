@@ -7,11 +7,14 @@ captures. ``--axis ada_wagv_bmm`` instead holds that grouped route on and
 changes only the B8 tensor-core BMM switch. The
 ``ada_wagv_bmm_from_default`` axis compares the ungrouped fallback directly
 with grouped BMM; use it when a card's current policy does not already enable
-grouped W/A/G/V at B8. Sparse FFN and the Ada exact-row linear probe stay
-disabled, while output/recurrent-output, raw recurrent, and decode norm/mix
-routes remain enabled. It records correctness, cache telemetry, latency,
-throughput, and peak memory.
+grouped W/A/G/V at B8. ``sm120_wagv_bmm_g`` holds the proven B8 BMM baseline
+on and toggles the exact-SM120 padded W/A/G/V + fused-epilogue + six-slot
+norm/mix route. Sparse FFN and the Ada exact-row linear probe stay disabled,
+while output/recurrent-output, raw recurrent, and decode norm/mix routes remain
+enabled. It records correctness, cache telemetry, latency, throughput, and
+peak memory.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -79,6 +82,118 @@ def wagv_extension_status(model: Any, device: str) -> dict[str, Any]:
     }
 
 
+def wagv_bmm_route_status(
+    model: Any,
+    batch_size: int,
+    *,
+    route_prefix: str = "ada_wagv_bmm",
+) -> dict[str, Any]:
+    """Read the grouped-BMM route actually captured by one graph runner."""
+
+    empty = {
+        "requested": None,
+        "selected": None,
+        "effective": None,
+        "selected_layers": [],
+        "effective_layers": [],
+        "effective_layer_count": 0,
+        "full_model_effective": None,
+    }
+    getter = getattr(model, "rwkv7_native_graph_runner_copy_stats", None)
+    if not callable(getter):
+        return empty
+    try:
+        runners = getter().get("runners", [])
+    except Exception:
+        return empty
+    match = next(
+        (
+            row
+            for row in reversed(runners)
+            if int(row.get("batch_size", -1)) == int(batch_size)
+        ),
+        None,
+    )
+    if not isinstance(match, dict):
+        return empty
+    return {
+        "requested": match.get(f"{route_prefix}_requested"),
+        "selected": match.get(f"{route_prefix}_selected"),
+        "effective": match.get(f"{route_prefix}_effective"),
+        "selected_layers": list(match.get(f"{route_prefix}_selected_layers", [])),
+        "effective_layers": list(match.get(f"{route_prefix}_effective_layers", [])),
+        "effective_layer_count": int(
+            match.get(f"{route_prefix}_effective_layer_count", 0)
+        ),
+        "full_model_effective": match.get(f"{route_prefix}_full_model_effective"),
+    }
+
+
+def wagv_bmm_route_pass(
+    status: dict[str, Any],
+    *,
+    requested: bool,
+    num_layers: int,
+) -> bool:
+    """Fail closed when a requested BMM capture silently selected a fallback."""
+
+    if status.get("requested") is not bool(requested):
+        return False
+    if not requested:
+        return not bool(status.get("selected")) and not bool(status.get("effective"))
+    expected_layers = list(range(int(num_layers)))
+    return bool(
+        status.get("selected")
+        and status.get("effective")
+        and status.get("full_model_effective")
+        and status.get("selected_layers") == expected_layers
+        and status.get("effective_layers") == expected_layers
+        and int(status.get("effective_layer_count", 0)) == int(num_layers)
+    )
+
+
+def greedy_match_summary(
+    reference: list[int], candidate: list[int]
+) -> tuple[bool, int, int]:
+    """Return fail-closed greedy alignment with an unambiguous boolean result."""
+
+    reference_total = len(reference)
+    match_count = sum(
+        int(left == right) for left, right in zip(reference, candidate, strict=False)
+    )
+    all_match = bool(
+        reference_total > 0
+        and len(candidate) == reference_total
+        and match_count == reference_total
+    )
+    return all_match, match_count, reference_total
+
+
+def logits_pair_metrics(
+    reference: torch.Tensor, candidate: torch.Tensor, *, batch_size: int
+) -> dict[str, Any]:
+    """Return finite, cosine, and max-error evidence without JSON NaN/Inf."""
+
+    finite = bool(
+        tuple(reference.shape) == tuple(candidate.shape)
+        and torch.isfinite(reference).all().item()
+        and torch.isfinite(candidate).all().item()
+    )
+    if not finite:
+        return {"finite": False, "min_cosine": None, "max_abs_diff": None}
+    reference_f = reference.float().reshape(int(batch_size), -1)
+    candidate_f = candidate.float().reshape(int(batch_size), -1)
+    return {
+        "finite": True,
+        "min_cosine": float(
+            torch.nn.functional.cosine_similarity(reference_f, candidate_f, dim=-1)
+            .min()
+            .cpu()
+        ),
+        "max_abs_diff": float((reference_f - candidate_f).abs().max().cpu()),
+    }
+
+
 def set_attn_mode(model, attn_mode: str) -> None:
     model.config.attn_mode = attn_mode
     for layer in getattr(model.model, "layers", []):
@@ -120,7 +235,9 @@ def load_model(args: argparse.Namespace, dtype: torch.dtype):
 
 
 def encode(tok, prompt_tokens: int, batch_size: int, device: str) -> torch.Tensor:
-    ids = tok(SEED, return_tensors="pt", add_special_tokens=False).input_ids[:, :prompt_tokens]
+    ids = tok(SEED, return_tensors="pt", add_special_tokens=False).input_ids[
+        :, :prompt_tokens
+    ]
     ids = ids.repeat(batch_size, 1)
     return ids.to(device) if device.startswith("cuda") else ids
 
@@ -131,8 +248,8 @@ def prefill(model, ids: torch.Tensor):
     return token, out.past_key_values
 
 
-def wagv_mode_flags(axis: str, enabled: bool) -> tuple[bool, bool]:
-    """Return grouped-WAGV and BMM flags for one A/B capture.
+def wagv_mode_flags(axis: str, enabled: bool) -> tuple[bool, bool, bool]:
+    """Return grouped-WAGV, BMM, and exact-SM120 flags for one capture.
 
     ``ada_wagv_bmm`` isolates the BMM implementation behind an already-on
     grouped route. ``ada_wagv_bmm_from_default`` is the production-policy
@@ -140,20 +257,28 @@ def wagv_mode_flags(axis: str, enabled: bool) -> tuple[bool, bool]:
     """
 
     if axis == "ada_wagv_bmm":
-        return True, bool(enabled)
+        return True, bool(enabled), False
     if axis == "ada_wagv_bmm_from_default":
-        return bool(enabled), bool(enabled)
+        return bool(enabled), bool(enabled), False
     if axis == "ada_wagv_lora":
-        return bool(enabled), False
+        return bool(enabled), False, False
+    if axis == "sm120_wagv_bmm_g":
+        return True, True, bool(enabled)
     raise ValueError(f"unsupported WAGV benchmark axis: {axis!r}")
 
 
-def run_mode(model, token: torch.Tensor, base_state, args: argparse.Namespace, *, enabled: bool) -> dict[str, Any]:
-    grouped, bmm = wagv_mode_flags(args.axis, enabled)
+def run_mode(
+    model, token: torch.Tensor, base_state, args: argparse.Namespace, *, enabled: bool
+) -> dict[str, Any]:
+    grouped, bmm, sm120_g = wagv_mode_flags(args.axis, enabled)
     os.environ["RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA"] = "1" if grouped else "0"
     os.environ["RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM"] = "1" if bmm else "0"
+    os.environ["RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G"] = "1" if sm120_g else "0"
+    os.environ["RWKV7_NATIVE_GRAPH_RKV_POLICY"] = args.rkv_policy
     os.environ["RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN"] = "0"
     os.environ["RWKV7_NATIVE_GRAPH_ADA_LINEAR"] = "0"
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_PROJECTION"] = "0"
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA"] = "0"
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX"] = "1"
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS"] = str(args.num_warps)
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW"] = "1"
@@ -169,16 +294,22 @@ def run_mode(model, token: torch.Tensor, base_state, args: argparse.Namespace, *
         torch.cuda.reset_peak_memory_stats()
     with torch.inference_mode():
         first = model.rwkv7_forward_token(tok, past_key_values=state)
-        effective_backend = getattr(model, "rwkv7_last_fast_token_backend", lambda: None)()
+        effective_backend = getattr(
+            model, "rwkv7_last_fast_token_backend", lambda: None
+        )()
         # Correctness is collected outside the timed region so device-to-host
         # token copies do not hide a small fused-kernel delta.
         state = base_state.clone()
         tok = token.clone()
         greedy_tokens: list[int] = []
+        last_logits = None
         for _ in range(args.correctness_steps):
             out = model.rwkv7_forward_token(tok, past_key_values=state)
+            last_logits = out.logits.detach().clone()
             tok = out.logits[:, -1:].argmax(dim=-1)
             greedy_tokens.extend(int(v) for v in tok.detach().cpu().reshape(-1))
+        if last_logits is None:
+            raise RuntimeError("correctness_steps must be at least one")
         state = base_state.clone()
         tok = token.clone()
         for _ in range(args.warmup):
@@ -195,14 +326,29 @@ def run_mode(model, token: torch.Tensor, base_state, args: argparse.Namespace, *
                 tok = token
         cuda_sync(args.device)
     ms_per_step = (time.perf_counter() - t0) * 1000.0 / float(args.steps)
-    stats = model.rwkv7_native_graph_cache_stats() if hasattr(model, "rwkv7_native_graph_cache_stats") else {}
+    stats = (
+        model.rwkv7_native_graph_cache_stats()
+        if hasattr(model, "rwkv7_native_graph_cache_stats")
+        else {}
+    )
+    bmm_route = wagv_bmm_route_status(model, args.batch_size)
+    sm120_g_route = wagv_bmm_route_status(
+        model, args.batch_size, route_prefix="sm120_wagv_bmm_g"
+    )
     return {
         "effective_backend": effective_backend,
         "first_logits": first.logits.detach().clone(),
+        "last_logits": last_logits,
         "ms_per_step": ms_per_step,
-        "tokps_total": 1000.0 * int(token.numel()) / ms_per_step if ms_per_step > 0 else None,
+        "tokps_total": 1000.0 * int(token.numel()) / ms_per_step
+        if ms_per_step > 0
+        else None,
         "greedy_tokens": greedy_tokens,
         "cache_stats": stats,
+        "bmm_requested_by_mode": bmm,
+        "bmm_route": bmm_route,
+        "sm120_g_requested_by_mode": sm120_g,
+        "sm120_g_route": sm120_g_route,
         "peak_vram_mb": peak_mb(args.device),
     }
 
@@ -218,13 +364,20 @@ def main() -> int:
         default="model",
         help="load checkpoint-bundled remote code or the current repository implementation",
     )
-    ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
+    ap.add_argument(
+        "--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"]
+    )
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument(
         "--axis",
-        choices=("ada_wagv_lora", "ada_wagv_bmm", "ada_wagv_bmm_from_default"),
+        choices=(
+            "ada_wagv_lora",
+            "ada_wagv_bmm",
+            "ada_wagv_bmm_from_default",
+            "sm120_wagv_bmm_g",
+        ),
         default="ada_wagv_lora",
     )
     ap.add_argument("--prompt-tokens", type=int, default=64)
@@ -233,9 +386,18 @@ def main() -> int:
     ap.add_argument("--correctness-steps", type=int, default=32)
     ap.add_argument("--fixed-token", action="store_true")
     ap.add_argument("--num-warps", type=int, choices=[1, 2, 4, 8], default=4)
+    ap.add_argument(
+        "--rkv-policy",
+        choices=("manual", "vkwr_auto"),
+        default="vkwr_auto",
+        help="hold the R/K/V projection route explicit across both captures",
+    )
     ap.add_argument("--native-graph-cache-size", type=int, default=8)
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     args = ap.parse_args()
+
+    if args.correctness_steps < 1:
+        ap.error("--correctness-steps must be at least 1")
 
     dtype = DTYPES[args.dtype]
     if args.device.startswith("cuda"):
@@ -251,19 +413,49 @@ def main() -> int:
         baseline = run_mode(model, token, base_state, args, enabled=False)
         fused = run_mode(model, token, base_state, args, enabled=True)
 
-    max_abs = float((baseline["first_logits"].float() - fused["first_logits"].float()).abs().max().cpu())
-    cosine = float(
-        torch.nn.functional.cosine_similarity(
-            baseline["first_logits"].float().reshape(args.batch_size, -1),
-            fused["first_logits"].float().reshape(args.batch_size, -1),
-            dim=-1,
-        ).min().cpu()
+    first_metrics = logits_pair_metrics(
+        baseline["first_logits"], fused["first_logits"], batch_size=args.batch_size
     )
-    greedy_total = min(len(baseline["greedy_tokens"]), len(fused["greedy_tokens"]))
-    greedy_match = sum(
-        int(a == b) for a, b in zip(baseline["greedy_tokens"], fused["greedy_tokens"], strict=False)
+    last_metrics = logits_pair_metrics(
+        baseline["last_logits"], fused["last_logits"], batch_size=args.batch_size
     )
-    correctness_pass = bool(greedy_match == greedy_total and cosine >= 0.999)
+    greedy_match, greedy_match_count, greedy_total = greedy_match_summary(
+        baseline["greedy_tokens"], fused["greedy_tokens"]
+    )
+    num_layers = int(getattr(model.config, "num_hidden_layers", 0))
+    baseline_bmm_route_pass = wagv_bmm_route_pass(
+        baseline["bmm_route"],
+        requested=bool(baseline["bmm_requested_by_mode"]),
+        num_layers=num_layers,
+    )
+    fused_bmm_route_pass = wagv_bmm_route_pass(
+        fused["bmm_route"],
+        requested=bool(fused["bmm_requested_by_mode"]),
+        num_layers=num_layers,
+    )
+    baseline_sm120_route_pass = wagv_bmm_route_pass(
+        baseline["sm120_g_route"],
+        requested=bool(baseline["sm120_g_requested_by_mode"]),
+        num_layers=num_layers,
+    )
+    fused_sm120_route_pass = wagv_bmm_route_pass(
+        fused["sm120_g_route"],
+        requested=bool(fused["sm120_g_requested_by_mode"]),
+        num_layers=num_layers,
+    )
+    correctness_pass = bool(
+        greedy_match
+        and first_metrics["finite"]
+        and last_metrics["finite"]
+        and first_metrics["min_cosine"] is not None
+        and first_metrics["min_cosine"] >= 0.9999
+        and last_metrics["min_cosine"] is not None
+        and last_metrics["min_cosine"] >= 0.9999
+        and baseline_bmm_route_pass
+        and fused_bmm_route_pass
+        and baseline_sm120_route_pass
+        and fused_sm120_route_pass
+    )
     row = {
         "axis": f"native_graph_{args.axis}",
         "backend": "hf_adapter",
@@ -281,17 +473,51 @@ def main() -> int:
         "correctness_steps": args.correctness_steps,
         "fixed_token": args.fixed_token,
         "num_warps": args.num_warps,
+        "rkv_policy": args.rkv_policy,
         **extension_status,
         "baseline_effective_backend": baseline["effective_backend"],
         "fused_effective_backend": fused["effective_backend"],
+        "baseline_ada_wagv_bmm_requested": baseline["bmm_route"]["requested"],
+        "baseline_ada_wagv_bmm_selected": baseline["bmm_route"]["selected"],
+        "baseline_ada_wagv_bmm_effective": baseline["bmm_route"]["effective"],
+        "baseline_ada_wagv_bmm_effective_layers": baseline["bmm_route"][
+            "effective_layers"
+        ],
+        "baseline_ada_wagv_bmm_route_pass": baseline_bmm_route_pass,
+        "fused_ada_wagv_bmm_requested": fused["bmm_route"]["requested"],
+        "fused_ada_wagv_bmm_selected": fused["bmm_route"]["selected"],
+        "fused_ada_wagv_bmm_effective": fused["bmm_route"]["effective"],
+        "fused_ada_wagv_bmm_effective_layers": fused["bmm_route"]["effective_layers"],
+        "fused_ada_wagv_bmm_route_pass": fused_bmm_route_pass,
+        "baseline_sm120_wagv_bmm_g_requested": baseline["sm120_g_route"]["requested"],
+        "baseline_sm120_wagv_bmm_g_selected": baseline["sm120_g_route"]["selected"],
+        "baseline_sm120_wagv_bmm_g_effective": baseline["sm120_g_route"]["effective"],
+        "baseline_sm120_wagv_bmm_g_effective_layers": baseline["sm120_g_route"][
+            "effective_layers"
+        ],
+        "baseline_sm120_wagv_bmm_g_route_pass": baseline_sm120_route_pass,
+        "fused_sm120_wagv_bmm_g_requested": fused["sm120_g_route"]["requested"],
+        "fused_sm120_wagv_bmm_g_selected": fused["sm120_g_route"]["selected"],
+        "fused_sm120_wagv_bmm_g_effective": fused["sm120_g_route"]["effective"],
+        "fused_sm120_wagv_bmm_g_effective_layers": fused["sm120_g_route"][
+            "effective_layers"
+        ],
+        "fused_sm120_wagv_bmm_g_route_pass": fused_sm120_route_pass,
         "baseline_ms_per_step": round(float(baseline["ms_per_step"]), 4),
         "fused_ms_per_step": round(float(fused["ms_per_step"]), 4),
-        "speedup": round(float(baseline["ms_per_step"]) / float(fused["ms_per_step"]), 4),
+        "speedup": round(
+            float(baseline["ms_per_step"]) / float(fused["ms_per_step"]), 4
+        ),
         "baseline_tokps_total": round(float(baseline["tokps_total"]), 1),
         "fused_tokps_total": round(float(fused["tokps_total"]), 1),
-        "max_abs_diff_first_step": round(max_abs, 6),
-        "min_cosine_first_step": cosine,
+        "logits_finite_first_step": first_metrics["finite"],
+        "max_abs_diff_first_step": first_metrics["max_abs_diff"],
+        "min_cosine_first_step": first_metrics["min_cosine"],
+        "logits_finite_last_step": last_metrics["finite"],
+        "max_abs_diff_last_step": last_metrics["max_abs_diff"],
+        "min_cosine_last_step": last_metrics["min_cosine"],
         "greedy_match": greedy_match,
+        "greedy_match_count": greedy_match_count,
         "greedy_total": greedy_total,
         "correctness_pass": correctness_pass,
         "baseline_cache_stats": baseline["cache_stats"],
@@ -299,8 +525,11 @@ def main() -> int:
         "baseline_peak_vram_mb": baseline["peak_vram_mb"],
         "fused_peak_vram_mb": fused["peak_vram_mb"],
         "vram_delta_mb": (
-            None if baseline["peak_vram_mb"] is None or fused["peak_vram_mb"] is None
-            else round(float(fused["peak_vram_mb"]) - float(baseline["peak_vram_mb"]), 1)
+            None
+            if baseline["peak_vram_mb"] is None or fused["peak_vram_mb"] is None
+            else round(
+                float(fused["peak_vram_mb"]) - float(baseline["peak_vram_mb"]), 1
+            )
         ),
     }
     print(json.dumps(row, indent=2, ensure_ascii=False), flush=True)

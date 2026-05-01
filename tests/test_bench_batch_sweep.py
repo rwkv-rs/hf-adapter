@@ -10,6 +10,7 @@ from bench.bench_batch_sweep import (
     load_tokenizer,
     native_prefill_route,
     native_graph_state_route,
+    native_graph_wagv_bmm_route,
     timed,
 )
 
@@ -108,6 +109,37 @@ def test_native_graph_state_route_reports_bound_runner() -> None:
         "native_graph_native_fp16_recurrent": False,
     }
     assert native_graph_state_route(object()) == {}
+
+
+def test_native_graph_wagv_bmm_route_uses_runner_effective_state(monkeypatch) -> None:
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM", "1")
+
+    class Model:
+        config = type("Config", (), {"hidden_size": 1024})()
+
+        @staticmethod
+        def rwkv7_native_graph_runner_copy_stats():
+            return {
+                "runners": [
+                    {
+                        "batch_size": 8,
+                        "ada_wagv_bmm_requested": True,
+                        "ada_wagv_bmm_selected": True,
+                        "ada_wagv_bmm_effective": True,
+                        "ada_wagv_bmm_effective_layer_count": 24,
+                        "ada_wagv_bmm_full_model_effective": True,
+                    }
+                ]
+            }
+
+    assert native_graph_wagv_bmm_route(Model(), 8) == {
+        "native_graph_ada_wagv_bmm": True,
+        "native_graph_ada_wagv_bmm_requested": True,
+        "native_graph_ada_wagv_bmm_selected": True,
+        "native_graph_ada_wagv_bmm_effective": True,
+        "native_graph_ada_wagv_bmm_effective_layer_count": 24,
+        "native_graph_ada_wagv_bmm_full_model_effective": True,
+    }
 
 
 def test_last_fast_prefill_backend_prefers_public_native_api() -> None:

@@ -10,13 +10,18 @@ PARAMS = {
     "rwkv-0.4b__qwen3.5-0.8b": (450_767_872, 752_393_024),
     "rwkv-1.5b__qwen3.5-2b": (1_527_404_544, 1_881_825_088),
     "rwkv-2.9b__qwen3.5-4b": (2_947_735_040, 4_205_751_296),
+    "rwkv-7.2b__qwen3.5-9b": (7_199_141_888, 8_953_803_264),
 }
 
 
-def write_matrix(root: Path, adjusted_ratio: float = 1.1) -> tuple[Path, Path]:
+def write_matrix(
+    root: Path,
+    adjusted_ratio: float = 1.1,
+    pairs: tuple[str, ...] = PAIRS,
+) -> tuple[Path, Path]:
     candidates = []
     references = []
-    for pair in PAIRS:
+    for pair in pairs:
         candidate_params, reference_params = PARAMS[pair]
         raw_ratio = adjusted_ratio * reference_params / candidate_params
         for batch in (1, 8):
@@ -144,4 +149,34 @@ def test_adjusted_pd_summary_reuses_gate_for_exact_4090(tmp_path: Path) -> None:
     assert report["expected_device"] == "NVIDIA GeForce RTX 4090"
     assert report["expected_qwen_backends"] == [
         "qwen_fla_gated_delta_rule_fla_triton_conv"
+    ]
+
+
+def test_adjusted_pd_summary_supports_explicit_four_pair_matrix(
+    tmp_path: Path,
+) -> None:
+    pairs = (*PAIRS, "rwkv-7.2b__qwen3.5-9b")
+    candidate, reference = write_matrix(tmp_path, adjusted_ratio=1.1, pairs=pairs)
+
+    report = summarize(candidate, reference, expected_pairs=pairs)
+
+    assert report["status"] == "pass"
+    assert report["cells_total"] == 48
+    assert len(report["groups"]) == 8
+    assert report["adjusted_prefill_cells_passed"] == 48
+    assert report["adjusted_decode_cells_passed"] == 48
+
+
+def test_adjusted_pd_summary_sorts_model_size_then_batch(tmp_path: Path) -> None:
+    pairs = tuple(reversed((*PAIRS, "rwkv-7.2b__qwen3.5-9b")))
+    candidate, reference = write_matrix(tmp_path, adjusted_ratio=1.1, pairs=pairs)
+
+    report = summarize(candidate, reference, expected_pairs=pairs)
+
+    assert [
+        (row["model_pair"], row["batch_size"]) for row in report["groups"]
+    ] == [
+        (pair, batch)
+        for pair in (*PAIRS, "rwkv-7.2b__qwen3.5-9b")
+        for batch in (1, 8)
     ]

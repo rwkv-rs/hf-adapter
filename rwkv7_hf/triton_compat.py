@@ -167,6 +167,8 @@ def maybe_disable_incompatible_torch_compile(attrs_descriptor_shim: bool) -> boo
         return False
     if os.environ.get("RWKV7_TORCH_COMPILE", "").strip().lower() in true_values:
         return False
+    if os.environ.get("RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN", "").strip().lower() in true_values:
+        return False
     try:
         import torch
         import triton
@@ -214,7 +216,10 @@ def maybe_disable_blackwell_torch_compile() -> bool:
     for already-imported torch processes, which is common in HF scripts.
     """
 
-    if os.environ.get("RWKV7_BLACKWELL_TORCH_COMPILE", "").strip().lower() in {"1", "true", "yes", "on"}:
+    true_values = {"1", "true", "yes", "on"}
+    if os.environ.get("RWKV7_BLACKWELL_TORCH_COMPILE", "").strip().lower() in true_values:
+        return False
+    if os.environ.get("RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN", "").strip().lower() in true_values:
         return False
     try:
         import torch

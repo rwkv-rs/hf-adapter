@@ -17,12 +17,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from bench.bench_cross_model_speed import (  # noqa: E402
+    _logits_trace_metrics,
+    QwenCudaGraphParityError,
+    QwenStaticCacheRawCudaGraphDecode,
     build_exact_prompt,
     effective_quantization_metadata,
     enforce_qwen_backend,
     failure_row,
     forward_prefill,
     last_rwkv_prefill_backend,
+    load_model,
     model_metadata,
     model_parameter_metadata,
     prepare_rwkv_model_dir,
@@ -30,6 +34,7 @@ from bench.bench_cross_model_speed import (  # noqa: E402
     qwen_effective_backend,
     qwen_fla_operator_contract,
     validate_loaded_model,
+    validate_qwen_result_contract,
     validate_args,
 )
 from bench.qwen35_fla_triton_conv import (  # noqa: E402
@@ -37,7 +42,13 @@ from bench.qwen35_fla_triton_conv import (  # noqa: E402
     qwen35_fla_triton_causal_conv1d,
     qwen35_fla_triton_causal_conv1d_update,
 )
-from bench.bench_cross_model_speed_resident import cell_args, resolve_sweep_cells, resolve_sweep_shapes
+from bench.bench_cross_model_speed_resident import (
+    cell_args,
+    resolve_probe_cell,
+    resolve_sweep_cells,
+    resolve_sweep_shapes,
+    selected_probe_output,
+)
 from bench.compare_qwen35_speed_matrix import quantization_family
 from bench.compare_qwen35_backend_probe import compare as compare_backend_probe  # noqa: E402
 from bench.compare_rwkv_prefill_probe import compare as compare_rwkv_prefill_probe  # noqa: E402
@@ -55,6 +66,85 @@ from bench.run_qwen35_speed_matrix import (  # noqa: E402
 
 def write_rows(path: Path, rows: list[dict]) -> None:
     path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+
+def test_logits_trace_metrics_rejects_non_finite_later_step() -> None:
+    left = [torch.tensor([[1.0, 2.0]]), torch.tensor([[float("nan"), 3.0]])]
+    right = [torch.tensor([[1.0, 2.0]]), torch.tensor([[4.0, 3.0]])]
+
+    metrics = _logits_trace_metrics(left, right)
+
+    assert metrics["finite"] is False
+    assert metrics["min_cosine"] is None
+    assert metrics["max_abs_diff"] is None
+    assert metrics["worst_index"] == 1
+    assert metrics["greedy_match"] is False
+
+
+def test_parity_failure_row_preserves_structured_diagnostics() -> None:
+    parity = {
+        "qwen_graph_parity_verified": False,
+        "qwen_graph_logits_trace_finite": False,
+        "qwen_graph_logits_min_cosine": None,
+        "qwen_graph_logits_max_abs_diff": None,
+        "qwen_graph_logits_worst_index": 7,
+    }
+    result = failure_row(worker_args(), QwenCudaGraphParityError(parity))
+
+    assert result["status"] == "fail"
+    assert result["qwen_graph_logits_trace_finite"] is False
+    assert result["qwen_graph_logits_worst_index"] == 7
+    assert "Infinity" not in json.dumps(result, allow_nan=False)
+
+
+def test_raw_cudagraph_constructor_failure_cleans_partial_resources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    created: dict[str, object] = {}
+
+    class PartialGraph:
+        def reset(self) -> None:
+            events.append("reset")
+
+    def fail_during_initialize(self) -> None:
+        created["runner"] = self
+        self.cache = object()
+        self.static_token = object()
+        self.capture_stream = object()
+        self.graph = PartialGraph()
+        self.static_logits = object()
+        raise RuntimeError("capture failed")
+
+    def fail_sync(_device: str) -> None:
+        events.append("sync")
+        raise RuntimeError("sync failed")
+
+    monkeypatch.setattr(
+        QwenStaticCacheRawCudaGraphDecode,
+        "_initialize",
+        fail_during_initialize,
+    )
+    monkeypatch.setattr("bench.bench_cross_model_speed.cuda_sync", fail_sync)
+
+    with pytest.raises(RuntimeError, match="capture failed"):
+        QwenStaticCacheRawCudaGraphDecode(
+            SimpleNamespace(device="cuda"),
+            object(),
+            object(),
+        )
+
+    runner = created["runner"]
+    assert events == ["sync", "reset"]
+    assert runner._cleanup_complete is True
+    assert runner.cache is None
+    assert runner.static_token is None
+    assert runner.capture_stream is None
+    assert runner.graph is None
+    assert runner.static_logits is None
+
+    runner.cleanup()
+    assert events == ["sync", "reset"]
 
 
 def test_resident_exact_cells_avoid_cartesian_reruns() -> None:
@@ -76,6 +166,158 @@ def test_resident_exact_cells_reject_shapes_mix() -> None:
         assert "mutually exclusive" in str(exc)
     else:  # pragma: no cover - assertion guard
         raise AssertionError("expected --cells/--shapes conflict")
+
+
+def test_resident_probe_cell_selects_one_exact_sweep_cell() -> None:
+    args = Namespace(
+        probe_cell="8x2048x512",
+        probe_output="probe.pt",
+    )
+    cells = [(8, 128, 128), (8, 2048, 512)]
+
+    probe_cell = resolve_probe_cell(args, cells)
+
+    assert probe_cell == (8, 2048, 512)
+    assert selected_probe_output(args, cells[0], probe_cell) == ""
+    assert selected_probe_output(args, cells[1], probe_cell) == "probe.pt"
+
+
+@pytest.mark.parametrize(
+    ("probe_cell", "probe_output", "message"),
+    [
+        ("8x2048x512", "", "requires --probe-output"),
+        ("8x2048", "probe.pt", "three positive dimensions"),
+        ("8x2048x0", "probe.pt", "three positive dimensions"),
+        ("1x2048x512", "probe.pt", "not present"),
+    ],
+)
+def test_resident_probe_cell_rejects_invalid_contract(
+    probe_cell: str,
+    probe_output: str,
+    message: str,
+) -> None:
+    args = Namespace(probe_cell=probe_cell, probe_output=probe_output)
+
+    with pytest.raises(ValueError, match=message):
+        resolve_probe_cell(args, [(8, 2048, 512)])
+
+
+def test_wrapper_repo_loader_bypasses_converted_auto_map(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from rwkv7_hf.configuration_rwkv7 import RWKV7Config
+    from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
+
+    canonical_model = tmp_path / "converted-native-model"
+    canonical_model.mkdir()
+    config = SimpleNamespace(attn_mode="chunk")
+    loaded = SimpleNamespace(
+        config=config,
+        model=SimpleNamespace(layers=[]),
+        eval=lambda: loaded,
+    )
+    calls: dict[str, object] = {}
+
+    def fake_config_from_pretrained(_cls, path: str):
+        calls["config_path"] = path
+        return config
+
+    def fake_model_from_pretrained(_cls, path: str, **kwargs):
+        calls["model_path"] = path
+        calls["kwargs"] = kwargs
+        calls["native_model_during_load"] = os.environ.get("RWKV7_NATIVE_MODEL")
+        return loaded
+
+    monkeypatch.setattr(
+        RWKV7Config,
+        "from_pretrained",
+        classmethod(fake_config_from_pretrained),
+    )
+    monkeypatch.setattr(
+        RWKV7ForCausalLM,
+        "from_pretrained",
+        classmethod(fake_model_from_pretrained),
+    )
+    args = worker_args(
+        model=str(canonical_model),
+        rwkv_implementation="wrapper_repo",
+        rwkv_attn_mode="fused_recurrent",
+        quantization="none",
+    )
+    monkeypatch.setenv("RWKV7_NATIVE_MODEL", "1")
+
+    model = load_model(args, torch.float16, model_path="ignored-auto-map-overlay")
+
+    expected = str(canonical_model.resolve())
+    assert model is loaded
+    assert calls["config_path"] == expected
+    assert calls["model_path"] == expected
+    kwargs = calls["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert kwargs["config"] is config
+    assert "trust_remote_code" not in kwargs
+    assert calls["native_model_during_load"] == "0"
+    assert os.environ["RWKV7_NATIVE_MODEL"] == "1"
+    assert model._rwkv7_benchmark_implementation_effective == "wrapper_repo"
+    assert model.config.attn_mode == "fused_recurrent"
+
+
+def test_wrapper_repo_loader_accepts_native_converted_weight_layout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
+    from rwkv7_hf.native_model import NativeRWKV7Config, NativeRWKV7ForCausalLM
+
+    config = NativeRWKV7Config(
+        vocab_size=32,
+        hidden_size=64,
+        attention_hidden_size=64,
+        num_heads=1,
+        head_dim=64,
+        num_hidden_layers=2,
+        intermediate_size=128,
+        decay_low_rank_dim=4,
+        a_low_rank_dim=4,
+        gate_low_rank_dim=4,
+        v_low_rank_dim=4,
+        fuse_norm=False,
+    )
+    source = NativeRWKV7ForCausalLM(config).eval()
+    source.save_pretrained(tmp_path, safe_serialization=True)
+    monkeypatch.setenv("RWKV7_NATIVE_MODEL", "0")
+    args = worker_args(
+        model=str(tmp_path),
+        rwkv_implementation="wrapper_repo",
+        rwkv_attn_mode="fused_recurrent",
+        quantization="none",
+    )
+
+    loaded = load_model(args, torch.float32, model_path="ignored-auto-map-overlay")
+
+    assert type(loaded) is RWKV7ForCausalLM
+    assert loaded._rwkv7_benchmark_implementation_effective == "wrapper_repo"
+    assert loaded.state_dict().keys() == source.state_dict().keys()
+    assert torch.equal(loaded.lm_head.weight, source.lm_head.weight)
+
+
+def test_wrapper_repo_loader_is_restricted_to_rwkv_repo_code() -> None:
+    validate_args(worker_args(rwkv_implementation="wrapper_repo"))
+    with pytest.raises(ValueError, match="requires --model-kind rwkv"):
+        validate_args(
+            worker_args(
+                model_kind="qwen35",
+                rwkv_implementation="wrapper_repo",
+            )
+        )
+    with pytest.raises(ValueError, match="requires --model-kind rwkv"):
+        validate_args(
+            worker_args(
+                rwkv_code_source="model",
+                rwkv_implementation="wrapper_repo",
+            )
+        )
 
 
 def test_effective_bnb_metadata_reports_loaded_policy(monkeypatch) -> None:
@@ -275,8 +517,12 @@ def row(
         "prefill_effective_backend": "native_prefill" if candidate else "module_call",
         "effective_backend": "native_graph" if candidate else "fla+causal_conv1d",
         "qwen_fast_path_verified": None if candidate else True,
-        "model_footprint_mb": footprint if footprint is not None else (100.0 if candidate else 120.0),
-        "peak_vram_mb": footprint if footprint is not None else (100.0 if candidate else 120.0),
+        "model_footprint_mb": footprint
+        if footprint is not None
+        else (100.0 if candidate else 120.0),
+        "peak_vram_mb": footprint
+        if footprint is not None
+        else (100.0 if candidate else 120.0),
     }
     if role == "reference":
         result.update(
@@ -292,11 +538,18 @@ def row(
             }
         )
     else:
-        result.update({"qwen_backend_requested": qwen_backend, "effective_backend": "native_graph"})
+        result.update(
+            {
+                "qwen_backend_requested": qwen_backend,
+                "effective_backend": "native_graph",
+            }
+        )
     return result
 
 
-def run_compare(tmp: Path, rows: list[dict], *extra: str) -> subprocess.CompletedProcess[str]:
+def run_compare(
+    tmp: Path, rows: list[dict], *extra: str
+) -> subprocess.CompletedProcess[str]:
     results = tmp / "results.jsonl"
     write_rows(results, rows)
     return subprocess.run(
@@ -332,6 +585,8 @@ def test_resident_worker_direct_entrypoint_imports_sibling_worker() -> None:
     assert "Single-load RWKV/Qwen speed sweep" in proc.stdout
     assert "--shapes" in proc.stdout
     assert "--probe-output" in proc.stdout
+    assert "--probe-cell" in proc.stdout
+    assert "--rwkv-implementation" in proc.stdout
     assert "{auto,fla,torch}" in proc.stdout
 
 
@@ -364,6 +619,7 @@ def test_resident_worker_forwards_probe_defaults_to_shared_worker() -> None:
     forwarded = cell_args(args, 8, 128, 128)
     assert forwarded.probe_output == ""
     assert forwarded.probe_tokens == 8
+    assert forwarded.rwkv_implementation == "auto"
     assert forwarded.qwen_conv_backend == "fla_triton"
     validate_args(forwarded)
 
@@ -397,11 +653,326 @@ def test_comparator_passes_complete_matrix(tmp_path: Path) -> None:
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
-    assert summary["coverage"] == {"expected_cells": 2, "joined_cells": 2, "complete": True}
+    assert summary["coverage"] == {
+        "expected_cells": 2,
+        "joined_cells": 2,
+        "complete": True,
+    }
     assert summary["speed"]["min_prefill_speedup"] == 1.05
     assert summary["speed"]["min_decode_speedup"] == 1.1
     assert summary["gates"]["overall_pass"] is True
     assert "Overall: PASS" in (tmp_path / "summary.md").read_text(encoding="utf-8")
+
+
+def test_comparator_rejects_duplicate_role_cell_without_overwrite(
+    tmp_path: Path,
+) -> None:
+    first_candidate = row("candidate", prompt=128, prefill=120.0, decode=220.0)
+    duplicate_candidate = row("candidate", prompt=128, prefill=999.0, decode=999.0)
+    reference = row("reference", prompt=128, prefill=100.0, decode=200.0)
+
+    proc = run_compare(
+        tmp_path,
+        [first_candidate, duplicate_candidate, reference],
+        "--expected-cells",
+        "1",
+        "--fail-on-gate",
+    )
+
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["coverage"]["complete"] is False
+    assert summary["gates"]["duplicate_free_pass"] is False
+    assert summary["gates"]["overall_pass"] is False
+    assert summary["duplicates"] == [
+        {
+            "role": "candidate",
+            "model_pair": "rwkv-1.5b__qwen3.5-2b",
+            "prompt_tokens": 128,
+            "decode_tokens": 128,
+            "batch_size": 1,
+            "dtype": "fp16",
+            "quantization": "none",
+            "first_lineno": 1,
+            "duplicate_lineno": 2,
+        }
+    ]
+    assert summary["cells"][0]["candidate_decode_tokps_total"] == 220.0
+
+
+@pytest.mark.parametrize(
+    "route",
+    ["static_cache_inductor_cudagraph", "static_cache_raw_cudagraph"],
+)
+def test_comparator_gates_and_reports_exact_reference_decode_routes(
+    tmp_path: Path, route: str
+) -> None:
+    reference = row("reference", prompt=128, prefill=100.0, decode=200.0)
+    reference.update(
+        {
+            "model_size_label": "2b",
+            "qwen_decode_optimization_effective": route,
+            "step_backend": f"qwen_{route}",
+            "cache_type": "StaticCache",
+            "qwen_axis_composition": "independent_best_prefill_and_decode",
+        }
+    )
+
+    proc = run_compare(
+        tmp_path,
+        [row("candidate", prompt=128, prefill=120.0, decode=220.0), reference],
+        "--expected-cells",
+        "1",
+        "--required-reference-decode-route",
+        route,
+        "--fail-on-gate",
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["reference_decode_route"] == {
+        "required": route,
+        "matching_cells": 1,
+        "total_cells": 1,
+        "complete": True,
+    }
+    assert summary["routes_by_model"] == {"2b": [route]}
+    cell = summary["cells"][0]
+    assert cell["reference_decode_route"] == route
+    assert cell["reference_step_backend"] == f"qwen_{route}"
+    assert cell["reference_cache_type"] == "StaticCache"
+    assert cell["reference_axis_composition"] == "independent_best_prefill_and_decode"
+    assert cell["reference_decode_route_pass"] is True
+
+    family_dir = tmp_path / "family"
+    family_dir.mkdir()
+    family_proc = run_compare(
+        family_dir,
+        [row("candidate", prompt=128, prefill=120.0, decode=220.0), reference],
+        "--expected-cells",
+        "1",
+        "--required-reference-decode-route",
+        "static_cache_cudagraph",
+        "--fail-on-gate",
+    )
+    assert family_proc.returncode == 0, family_proc.stdout + family_proc.stderr
+
+
+def test_comparator_static_cache_cudagraph_family_is_fail_closed(
+    tmp_path: Path,
+) -> None:
+    reference = row("reference", prompt=128, prefill=100.0, decode=200.0)
+    reference["qwen_decode_optimization_effective"] = "module_call_dynamic"
+
+    proc = run_compare(
+        tmp_path,
+        [row("candidate", prompt=128, prefill=120.0, decode=220.0), reference],
+        "--expected-cells",
+        "1",
+        "--required-reference-decode-route",
+        "static_cache_cudagraph",
+        "--fail-on-gate",
+    )
+
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["reference_decode_route"]["matching_cells"] == 0
+    assert summary["gates"]["reference_decode_route_pass"] is False
+    assert summary["red_cells"][0]["reference_decode_route_pass"] is False
+
+
+def test_comparator_rejects_mixed_legacy_and_qwen_only_protocols(
+    tmp_path: Path,
+) -> None:
+    candidate = row("candidate", prompt=128, prefill=120.0, decode=220.0)
+    candidate["benchmark_matrix"] = "hf_fast_path_v1"
+    reference = row("reference", prompt=128, prefill=100.0, decode=200.0)
+    reference.update(
+        {
+            "benchmark_matrix": "qwen35_best_optimized_hf_v1",
+            "optimization_lane": "qwen_best_optimized_hf",
+            "qwen_decode_optimization_effective": ("static_cache_inductor_cudagraph"),
+        }
+    )
+
+    proc = run_compare(
+        tmp_path,
+        [candidate, reference],
+        "--expected-cells",
+        "1",
+        "--fail-on-gate",
+    )
+
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["protocol"]["matrices_by_role"] == {
+        "candidate": ["hf_fast_path_v1"],
+        "reference": ["qwen35_best_optimized_hf_v1"],
+    }
+    assert summary["gates"]["matrix_consistency_pass"] is False
+    assert summary["gates"]["protocol_pass"] is False
+    assert summary["gates"]["overall_pass"] is False
+
+
+def test_comparator_qwen_only_matrix_rejects_candidate_rows(tmp_path: Path) -> None:
+    rows = [
+        row("candidate", prompt=128, prefill=120.0, decode=220.0),
+        row("reference", prompt=128, prefill=100.0, decode=200.0),
+    ]
+    for item in rows:
+        item["benchmark_matrix"] = "qwen35_best_optimized_hf_v1"
+        item["optimization_lane"] = "qwen_best_optimized_hf"
+        for field, value in {
+            "torch_version": "2.8",
+            "torch_cuda_version": "12.8",
+            "triton_version": "3.4",
+            "transformers_version": "5.12",
+            "fla_version": "0.5",
+            "causal_conv1d_version": "1.6",
+        }.items():
+            item[field] = value
+    rows[1]["qwen_decode_optimization_effective"] = "static_cache_raw_cudagraph"
+
+    proc = run_compare(
+        tmp_path,
+        rows,
+        "--expected-cells",
+        "1",
+        "--fail-on-gate",
+    )
+
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["protocol"]["qwen_only_candidate_pass"] is False
+    assert summary["gates"]["qwen_only_candidate_pass"] is False
+    assert summary["unified_main_table_eligible"] is False
+
+
+def test_comparator_locks_runtime_but_allows_distinct_repository_commits(
+    tmp_path: Path,
+) -> None:
+    rows = [
+        row("candidate", prompt=128, prefill=120.0, decode=220.0),
+        row("reference", prompt=128, prefill=100.0, decode=200.0),
+    ]
+    runtime = {
+        "torch_version": "2.8",
+        "torch_cuda_version": "12.8",
+        "triton_version": "3.4",
+        "transformers_version": "5.12",
+        "fla_version": "0.5",
+        "causal_conv1d_version": "1.6",
+    }
+    for item in rows:
+        item.update({"benchmark_matrix": "hf_fast_path_v1", **runtime})
+    rows[0]["benchmark_repository_commit"] = "candidate-commit"
+    rows[1]["benchmark_repository_commit"] = "reference-commit"
+
+    proc = run_compare(
+        tmp_path,
+        rows,
+        "--expected-cells",
+        "1",
+        "--fail-on-gate",
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["protocol"]["runtime_signature_count"] == 1
+    assert summary["protocol"]["runtime_consistency_pass"] is True
+    assert summary["protocol"]["repository_commits_by_role"] == {
+        "candidate": ["candidate-commit"],
+        "reference": ["reference-commit"],
+    }
+
+
+def test_comparator_rejects_mixed_reference_routes_per_model(tmp_path: Path) -> None:
+    references = [
+        row("reference", prompt=128, prefill=100.0, decode=200.0),
+        row("reference", prompt=512, prefill=200.0, decode=300.0),
+    ]
+    references[0]["qwen_decode_optimization_effective"] = (
+        "static_cache_inductor_cudagraph"
+    )
+    references[1]["qwen_decode_optimization_effective"] = "static_cache_raw_cudagraph"
+    candidates = [
+        row("candidate", prompt=128, prefill=120.0, decode=220.0),
+        row("candidate", prompt=512, prefill=220.0, decode=330.0),
+    ]
+
+    proc = run_compare(
+        tmp_path,
+        [*candidates, *references],
+        "--expected-cells",
+        "2",
+        "--fail-on-gate",
+    )
+
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["routes_by_model"] == {
+        "rwkv-1.5b__qwen3.5-2b": [
+            "static_cache_inductor_cudagraph",
+            "static_cache_raw_cudagraph",
+        ]
+    }
+    assert summary["route_consistency"]["unique_route_per_model_pass"] is False
+    assert summary["gates"]["route_consistency_pass"] is False
+    assert summary["gates"]["overall_pass"] is False
+
+
+def test_comparator_sorts_cells_by_model_gpu_batch_prompt_decode(
+    tmp_path: Path,
+) -> None:
+    specs = [
+        ("rwkv-7.2b__qwen3.5-9b", "9b", "GPU-A", 1, 128, 512),
+        ("rwkv-0.4b__qwen3.5-0.8b", "0.8b", "GPU-Z", 8, 512, 128),
+        ("rwkv-2.9b__qwen3.5-4b", "4b", "GPU-A", 1, 128, 128),
+        ("rwkv-0.4b__qwen3.5-0.8b", "0.8b", "GPU-A", 1, 2048, 512),
+    ]
+    rows = []
+    for pair, size, device, batch, prompt, decode in reversed(specs):
+        for role, prefill, decode_rate in (
+            ("candidate", 120.0, 220.0),
+            ("reference", 100.0, 200.0),
+        ):
+            item = row(role, prompt=prompt, prefill=prefill, decode=decode_rate)
+            item.update(
+                {
+                    "model_pair": pair,
+                    "model_size_label": size,
+                    "device": device,
+                    "batch_size": batch,
+                    "decode_tokens": decode,
+                }
+            )
+            rows.append(item)
+
+    proc = run_compare(
+        tmp_path,
+        rows,
+        "--expected-cells",
+        "4",
+        "--fail-on-gate",
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert [
+        (
+            cell["model_size_label"],
+            cell["device"],
+            cell["batch_size"],
+            cell["prompt_tokens"],
+            cell["decode_tokens"],
+        )
+        for cell in summary["cells"]
+    ] == [
+        ("0.8b", "GPU-A", 1, 2048, 512),
+        ("0.8b", "GPU-Z", 8, 512, 128),
+        ("4b", "GPU-A", 1, 128, 128),
+        ("9b", "GPU-A", 1, 128, 512),
+    ]
 
 
 def test_comparator_strict_backend_and_quant_memory_gates(tmp_path: Path) -> None:
@@ -515,7 +1086,9 @@ def test_comparator_fails_mismatched_prefill_chunking(tmp_path: Path) -> None:
 
 
 def test_comparator_fails_quant_vs_dense_chunk_mismatch(tmp_path: Path) -> None:
-    dense_candidate = row("candidate", prompt=128, prefill=120.0, decode=220.0, footprint=200.0)
+    dense_candidate = row(
+        "candidate", prompt=128, prefill=120.0, decode=220.0, footprint=200.0
+    )
     dense_reference = row("reference", prompt=128, prefill=100.0, decode=200.0)
     quant_candidate = row(
         "candidate",
@@ -679,10 +1252,18 @@ def test_red_candidate_rerunner_builds_append_only_command(tmp_path: Path) -> No
     assert "--model /models/rwkv" in proc.stdout
 
 
-def test_red_candidate_rerunner_resolves_normalized_quant_family(tmp_path: Path) -> None:
+def test_red_candidate_rerunner_resolves_normalized_quant_family(
+    tmp_path: Path,
+) -> None:
     results = tmp_path / "results.jsonl"
     candidate = {
-        **row("candidate", prompt=128, prefill=90.0, decode=220.0, quantization="torchao_w8"),
+        **row(
+            "candidate",
+            prompt=128,
+            prefill=90.0,
+            decode=220.0,
+            quantization="torchao_w8",
+        ),
         "model_id_or_path": "/models/rwkv",
         "model_size_label": "1.5b",
         "qwen_backend_requested": "auto",
@@ -739,9 +1320,15 @@ def test_comparator_can_gate_memory_per_cell(tmp_path: Path) -> None:
     assert summary["red_cells"][0]["memory_pass"] is False
 
 
-def test_comparator_requires_full_fla_conv_and_active_parameter_work(tmp_path: Path) -> None:
-    candidate = row("candidate", prompt=128, prefill=130.0, decode=130.0, footprint=90.0)
-    reference = row("reference", prompt=128, prefill=100.0, decode=100.0, footprint=100.0)
+def test_comparator_requires_full_fla_conv_and_active_parameter_work(
+    tmp_path: Path,
+) -> None:
+    candidate = row(
+        "candidate", prompt=128, prefill=130.0, decode=130.0, footprint=90.0
+    )
+    reference = row(
+        "reference", prompt=128, prefill=100.0, decode=100.0, footprint=100.0
+    )
     candidate.update(
         {
             "runtime_working_set_mb": 20.0,
@@ -801,7 +1388,9 @@ def test_comparator_requires_full_fla_conv_and_active_parameter_work(tmp_path: P
     assert summary["active_parameter_work"]["min_decode_throughput_ratio"] == 1.04
 
 
-def test_comparator_active_parameter_work_does_not_reward_smaller_model(tmp_path: Path) -> None:
+def test_comparator_active_parameter_work_does_not_reward_smaller_model(
+    tmp_path: Path,
+) -> None:
     candidate = row("candidate", prompt=128, prefill=120.0, decode=120.0)
     reference = row("reference", prompt=128, prefill=100.0, decode=100.0)
     candidate.update(
@@ -835,7 +1424,9 @@ def test_comparator_active_parameter_work_does_not_reward_smaller_model(tmp_path
     assert summary["gates"]["active_parameter_pass"] is False
 
 
-def test_comparator_can_gate_active_parameter_work_on_decode_only(tmp_path: Path) -> None:
+def test_comparator_can_gate_active_parameter_work_on_decode_only(
+    tmp_path: Path,
+) -> None:
     candidate = row("candidate", prompt=128, prefill=120.0, decode=130.0)
     reference = row("reference", prompt=128, prefill=100.0, decode=100.0)
     candidate.update(
@@ -873,7 +1464,9 @@ def test_comparator_can_gate_active_parameter_work_on_decode_only(tmp_path: Path
     assert summary["gates"]["active_parameter_work_pass"] is True
 
 
-def test_comparator_active_parameter_efficiency_normalizes_smaller_model(tmp_path: Path) -> None:
+def test_comparator_active_parameter_efficiency_normalizes_smaller_model(
+    tmp_path: Path,
+) -> None:
     candidate = row("candidate", prompt=128, prefill=120.0, decode=120.0)
     reference = row("reference", prompt=128, prefill=100.0, decode=100.0)
     candidate.update({"active_parameter_count": 80})
@@ -896,17 +1489,60 @@ def test_comparator_active_parameter_efficiency_normalizes_smaller_model(tmp_pat
     assert summary["gates"]["active_parameter_efficiency_pass"] is True
 
 
+def _clone_probe_payload(payload: dict[str, object]) -> dict[str, object]:
+    return {
+        key: value.clone() if isinstance(value, torch.Tensor) else value
+        for key, value in payload.items()
+    }
+
+
 def test_rwkv_prefill_probe_requires_greedy_and_logits_alignment() -> None:
     reference = {
         "input_ids": torch.tensor([[1, 2]]),
         "greedy_tokens": torch.tensor([3, 4]),
         "prompt_logits": torch.tensor([[1.0, 2.0]]),
         "final_logits": torch.tensor([[2.0, 3.0]]),
+        "decode_logits_finite_by_batch": torch.tensor([True]),
+        "decode_logits_all_finite": True,
     }
-    native = {key: value.clone() for key, value in reference.items()}
+    native = _clone_probe_payload(reference)
     assert compare_rwkv_prefill_probe(reference, native, 0.9999)["status"] == "pass"
     native["greedy_tokens"][1] = 5
     assert compare_rwkv_prefill_probe(reference, native, 0.9999)["status"] == "fail"
+
+
+def test_rwkv_prefill_probe_uses_minimum_batch_row_and_finite_logits() -> None:
+    reference = {
+        "input_ids": torch.tensor([[1], [2]]),
+        "greedy_tokens": torch.tensor([[3, 4], [5, 6]]),
+        "prompt_logits": torch.tensor([[1.0, 0.0], [0.0, 100_000.0]]),
+        "final_logits": torch.tensor([[1.0, 0.0], [0.0, 100_000.0]]),
+        "decode_logits_finite_by_batch": torch.tensor([True, True]),
+        "decode_logits_all_finite": True,
+    }
+    native = _clone_probe_payload(reference)
+    native["prompt_logits"][0] = torch.tensor([0.0, 1.0])
+    result = compare_rwkv_prefill_probe(reference, native, 0.9999)
+    assert result["status"] == "fail"
+    assert result["prompt_logits_shape_match"] is True
+    assert result["prompt_logits_finite"] is True
+    assert result["prompt_logits_cosine"] == 0.0
+
+    native = _clone_probe_payload(reference)
+    native["final_logits"][1, 0] = float("nan")
+    result = compare_rwkv_prefill_probe(reference, native, 0.9999)
+    assert result["status"] == "fail"
+    assert result["final_logits_finite"] is False
+    assert result["final_logits_cosine"] is None
+
+    native = _clone_probe_payload(reference)
+    native["decode_logits_finite_by_batch"][1] = False
+    native["decode_logits_all_finite"] = False
+    result = compare_rwkv_prefill_probe(reference, native, 0.9999)
+    assert result["status"] == "fail"
+    assert result["decode_finite_shape_match"] is True
+    assert result["reference_decode_logits_all_finite"] is True
+    assert result["native_decode_logits_all_finite"] is False
 
 
 def test_comparator_rejects_torch_qwen_reference(tmp_path: Path) -> None:
@@ -961,7 +1597,9 @@ def fake_operator(origin: str):
 def fake_qwen_model(*, accelerated: bool, fused_conv: bool = True):
     if accelerated:
         prefill = fake_operator("fla.ops.gated_delta_rule.chunk.chunk_gated_delta_rule")
-        decode = fake_operator("fla.ops.gated_delta_rule.fused_recurrent.fused_recurrent_gated_delta_rule")
+        decode = fake_operator(
+            "fla.ops.gated_delta_rule.fused_recurrent.fused_recurrent_gated_delta_rule"
+        )
         conv = (
             fake_operator("causal_conv1d.causal_conv1d_interface.causal_conv1d_fn")
             if fused_conv
@@ -970,15 +1608,23 @@ def fake_qwen_model(*, accelerated: bool, fused_conv: bool = True):
         conv_update = (
             fake_operator("causal_conv1d.causal_conv1d_interface.causal_conv1d_update")
             if fused_conv
-            else fake_operator("transformers.models.qwen3_5.modeling_qwen3_5.torch_causal_conv1d_update")
+            else fake_operator(
+                "transformers.models.qwen3_5.modeling_qwen3_5.torch_causal_conv1d_update"
+            )
         )
         norm_type = type("FusedRMSNormGated", (), {})
         norm_type.__module__ = "fla.modules"
     else:
-        prefill = fake_operator("transformers.models.qwen3_5.modeling_qwen3_5.torch_chunk_gated_delta_rule")
-        decode = fake_operator("transformers.models.qwen3_5.modeling_qwen3_5.torch_recurrent_gated_delta_rule")
+        prefill = fake_operator(
+            "transformers.models.qwen3_5.modeling_qwen3_5.torch_chunk_gated_delta_rule"
+        )
+        decode = fake_operator(
+            "transformers.models.qwen3_5.modeling_qwen3_5.torch_recurrent_gated_delta_rule"
+        )
         conv = None
-        conv_update = fake_operator("transformers.models.qwen3_5.modeling_qwen3_5.torch_causal_conv1d_update")
+        conv_update = fake_operator(
+            "transformers.models.qwen3_5.modeling_qwen3_5.torch_causal_conv1d_update"
+        )
         norm_type = type("Qwen3_5RMSNormGated", (), {})
         norm_type.__module__ = "transformers.models.qwen3_5.modeling_qwen3_5"
     layer = SimpleNamespace(
@@ -988,7 +1634,9 @@ def fake_qwen_model(*, accelerated: bool, fused_conv: bool = True):
         causal_conv1d_update=conv_update,
         norm=norm_type(),
     )
-    return SimpleNamespace(named_modules=lambda: [("model.layers.0.linear_attn", layer)])
+    return SimpleNamespace(
+        named_modules=lambda: [("model.layers.0.linear_attn", layer)]
+    )
 
 
 def test_qwen_fla_operator_contract_checks_bound_operators() -> None:
@@ -1004,7 +1652,12 @@ def test_qwen_fla_operator_contract_checks_bound_operators() -> None:
     assert contract["qwen_fla_core_contract_pass"] is True
     assert contract["qwen_causal_conv1d_contract_pass"] is True
     assert contract["qwen_full_fused_contract_pass"] is True
-    assert enforce_qwen_backend(model, worker_args(model_kind="qwen35", qwen_backend="fla")) == contract
+    assert (
+        enforce_qwen_backend(
+            model, worker_args(model_kind="qwen35", qwen_backend="fla")
+        )
+        == contract
+    )
 
     windows_model = fake_qwen_model(accelerated=True, fused_conv=False)
     windows_contract = qwen_fla_operator_contract(windows_model)
@@ -1012,28 +1665,248 @@ def test_qwen_fla_operator_contract_checks_bound_operators() -> None:
     assert windows_contract["qwen_fla_core_contract_pass"] is True
     assert windows_contract["qwen_causal_conv1d_contract_pass"] is False
     assert windows_contract["qwen_full_fused_contract_pass"] is False
-    assert enforce_qwen_backend(
-        windows_model, worker_args(model_kind="qwen35", qwen_backend="fla")
-    ) == windows_contract
+    assert (
+        enforce_qwen_backend(
+            windows_model, worker_args(model_kind="qwen35", qwen_backend="fla")
+        )
+        == windows_contract
+    )
 
     fallback = fake_qwen_model(accelerated=False)
     fallback_contract = qwen_fla_operator_contract(fallback)
     assert fallback_contract["qwen_operator_contract_pass"] is False
     try:
-        enforce_qwen_backend(fallback, worker_args(model_kind="qwen35", qwen_backend="fla"))
+        enforce_qwen_backend(
+            fallback, worker_args(model_kind="qwen35", qwen_backend="fla")
+        )
     except RuntimeError as exc:
         assert "FLA backend was required" in str(exc)
         assert "chunk_gated_delta_rule" in str(exc)
     else:
-        raise AssertionError("required Qwen FLA backend must reject bound torch fallback operators")
+        raise AssertionError(
+            "required Qwen FLA backend must reject bound torch fallback operators"
+        )
 
     partial_layer = fake_qwen_model(accelerated=True).named_modules()[0][1]
     del partial_layer.recurrent_gated_delta_rule
-    partial = SimpleNamespace(named_modules=lambda: [("model.layers.0.linear_attn", partial_layer)])
+    partial = SimpleNamespace(
+        named_modules=lambda: [("model.layers.0.linear_attn", partial_layer)]
+    )
     partial_contract = qwen_fla_operator_contract(partial)
     assert partial_contract["qwen_linear_attention_layers"] == 1
     assert partial_contract["qwen_fla_decode_layers"] == 0
     assert partial_contract["qwen_operator_contract_pass"] is False
+
+
+def test_explicit_qwen_conv_backend_rejects_a_different_live_binding() -> None:
+    model = fake_qwen_model(accelerated=True)
+    official_args = worker_args(
+        model_kind="qwen35",
+        qwen_backend="fla",
+        qwen_conv_backend="causal_conv1d",
+        require_qwen_fast_path=False,
+    )
+    contract = enforce_qwen_backend(model, official_args)
+    assert contract["qwen_conv_backend_effective"] == "causal_conv1d"
+
+    layer = model.named_modules()[0][1]
+    layer.causal_conv1d_fn = fake_operator(
+        "bench.qwen35_fla_triton_conv.causal_conv1d_fn"
+    )
+    layer.causal_conv1d_update = fake_operator(
+        "bench.qwen35_fla_triton_conv.causal_conv1d_update"
+    )
+    with pytest.raises(RuntimeError, match="causal-conv backend mismatch"):
+        enforce_qwen_backend(model, official_args)
+
+
+def test_official_qwen_fast_path_requires_the_import_environment(monkeypatch) -> None:
+    model = fake_qwen_model(accelerated=True)
+    args = worker_args(
+        model_kind="qwen35",
+        qwen_backend="fla",
+        qwen_conv_backend="causal_conv1d",
+        require_qwen_fast_path=True,
+    )
+    monkeypatch.setitem(
+        enforce_qwen_backend.__globals__,
+        "qwen_official_fast_path_environment",
+        lambda: {
+            "qwen_fast_path_available": True,
+            "qwen_fla_importable": True,
+            "qwen_causal_conv1d_importable": False,
+            "qwen_force_torch_disabled": True,
+        },
+    )
+    with pytest.raises(RuntimeError, match="qwen_causal_conv1d_importable"):
+        enforce_qwen_backend(model, args)
+
+
+def test_official_qwen_result_row_enforces_all_six_acceptance_fields() -> None:
+    args = worker_args(
+        model_kind="qwen35",
+        qwen_conv_backend="causal_conv1d",
+        require_qwen_fast_path=True,
+    )
+    passing = {
+        "status": "pass",
+        "qwen_fast_path_available": True,
+        "qwen_fast_path_verified": True,
+        "qwen_full_fused_contract_pass": True,
+        "qwen_causal_conv1d_importable": True,
+        "qwen_conv_backend_effective": "causal_conv1d",
+        "qwen_force_torch": False,
+    }
+    validate_qwen_result_contract(args, passing)
+
+    invalid = {**passing, "qwen_conv_backend_effective": "fla_triton"}
+    with pytest.raises(RuntimeError, match="qwen_conv_backend_effective='fla_triton'"):
+        validate_qwen_result_contract(args, invalid)
+
+
+def graph_worker_args(**updates) -> Namespace:
+    values = {
+        "model_kind": "qwen35",
+        "model_role": "reference",
+        "device": "cuda",
+        "dtype": "fp16",
+        "quantization": "none",
+        "qwen_backend": "fla",
+        "qwen_conv_backend": "causal_conv1d",
+        "require_qwen_fast_path": True,
+        "qwen_decode_optimization": "static_cache_inductor_cudagraph",
+        "qwen_graph_probe_tokens": 16,
+        "qwen_compile_mode": "max-autotune",
+        "optimization_lane": "qwen_best_optimized_hf",
+        "batch_size": 1,
+        "prompt_tokens": 128,
+        "decode_tokens": 128,
+        "prefill_chunk_size": 512,
+        "warmup": 3,
+        "runs": 7,
+        "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+        "probe_output": "",
+        "probe_tokens": 8,
+    }
+    values.update(updates)
+    return Namespace(**values)
+
+
+def test_qwen_inductor_cudagraph_lane_is_strict_and_fail_closed() -> None:
+    validate_args(graph_worker_args())
+    validate_args(graph_worker_args(qwen_compile_mode="reduce-overhead"))
+    with pytest.raises(ValueError, match="--qwen-compile-mode"):
+        validate_args(graph_worker_args(qwen_compile_mode="invalid"))
+    with pytest.raises(ValueError, match="strict Qwen reference lane"):
+        validate_args(graph_worker_args(optimization_lane=""))
+    with pytest.raises(ValueError, match="strict Qwen reference lane"):
+        validate_args(graph_worker_args(qwen_conv_backend="fla_triton"))
+
+    passing = {
+        "status": "pass",
+        "optimization_lane": "qwen_best_optimized_hf",
+        "qwen_fast_path_available": True,
+        "qwen_fast_path_verified": True,
+        "qwen_full_fused_contract_pass": True,
+        "qwen_causal_conv1d_importable": True,
+        "qwen_conv_backend_effective": "causal_conv1d",
+        "qwen_force_torch": False,
+        "qwen_decode_optimization_effective": "static_cache_inductor_cudagraph",
+        "qwen_cuda_graph_requested": True,
+        "qwen_cuda_graph_effective": True,
+        "qwen_decode_cuda_graph_verified": True,
+        "qwen_graph_parity_verified": True,
+        "qwen_graph_prefill_next_token_match": True,
+        "qwen_graph_greedy_match": True,
+        "qwen_same_cache_greedy_match": True,
+        "qwen_static_cache_eager_greedy_match": True,
+        "qwen_graph_logits_trace_finite": True,
+        "qwen_dynamic_static_logits_finite": True,
+        "qwen_static_compiled_logits_finite": True,
+        "qwen_same_cache_logits_finite": True,
+        "qwen_cache_pointer_stable": True,
+        "qwen_graph_break_count": 0,
+        "qwen_cudagraph_skip_count": 0,
+        "qwen_compile_backend_effective": "inductor",
+        "qwen_compile_mode_effective": "max-autotune",
+        "qwen_graph_scope": "single_token_hf_qwen_forward",
+        "qwen_cuda_graph_launch_count": 1,
+        "qwen_graph_logits_min_cosine": 0.99999,
+        "qwen_dynamic_static_logits_min_cosine": 0.99999,
+        "qwen_static_compiled_logits_min_cosine": 0.99999,
+        "qwen_same_cache_logits_min_cosine": 0.99999,
+        "step_backend": "qwen_static_cache_inductor_cudagraph",
+        "prefill_backend_effective": "module_call_dynamic_cache",
+        "prefill_cache_type": "DynamicCache",
+        "cache_type": "StaticCache",
+    }
+    args = graph_worker_args()
+    validate_qwen_result_contract(args, passing)
+    raw_args = graph_worker_args(qwen_decode_optimization="static_cache_raw_cudagraph")
+    validate_args(raw_args)
+    raw_passing = {
+        **passing,
+        "qwen_decode_optimization_effective": "static_cache_raw_cudagraph",
+        "step_backend": "qwen_static_cache_raw_cudagraph",
+        "qwen_graph_scope": "single_token_hf_qwen_forward_argmax_token_copy",
+        "qwen_graph_break_count": None,
+        "qwen_cudagraph_skip_count": None,
+        "qwen_cudagraph_recorded_non_static_inputs": None,
+        "qwen_compile_backend_effective": None,
+        "qwen_compile_mode_effective": None,
+        "qwen_compile_fullgraph_effective": None,
+        "qwen_compile_dynamic_effective": None,
+    }
+    validate_qwen_result_contract(raw_args, raw_passing)
+    validate_qwen_result_contract(args, {**passing, "qwen_cuda_graph_launch_count": 2})
+    with pytest.raises(RuntimeError, match="expected exactly 1"):
+        validate_qwen_result_contract(
+            raw_args, {**raw_passing, "qwen_cuda_graph_launch_count": 2}
+        )
+    with pytest.raises(RuntimeError, match="qwen_compile_backend_effective"):
+        validate_qwen_result_contract(
+            raw_args, {**raw_passing, "qwen_compile_backend_effective": "inductor"}
+        )
+    reduce_args = graph_worker_args(qwen_compile_mode="reduce-overhead")
+    validate_qwen_result_contract(
+        reduce_args,
+        {**passing, "qwen_compile_mode_effective": "reduce-overhead"},
+    )
+    for field in (
+        "qwen_graph_logits_trace_finite",
+        "qwen_dynamic_static_logits_finite",
+        "qwen_same_cache_logits_finite",
+    ):
+        for invalid in (False, 1, None):
+            with pytest.raises(RuntimeError, match=field):
+                validate_qwen_result_contract(args, {**passing, field: invalid})
+    with pytest.raises(RuntimeError, match="qwen_decode_cuda_graph_verified=False"):
+        validate_qwen_result_contract(
+            args, {**passing, "qwen_decode_cuda_graph_verified": False}
+        )
+    validate_qwen_result_contract(
+        args, {**passing, "qwen_graph_logits_min_cosine": 0.99}
+    )
+    validate_qwen_result_contract(
+        args, {**passing, "qwen_dynamic_static_logits_min_cosine": 0.99}
+    )
+    for field in (
+        "qwen_graph_logits_min_cosine",
+        "qwen_dynamic_static_logits_min_cosine",
+        "qwen_same_cache_logits_min_cosine",
+    ):
+        for invalid in (True, float("nan"), float("inf")):
+            with pytest.raises(RuntimeError, match=field):
+                validate_qwen_result_contract(args, {**passing, field: invalid})
+    with pytest.raises(RuntimeError, match="qwen_same_cache_logits_min_cosine"):
+        validate_qwen_result_contract(
+            args, {**passing, "qwen_same_cache_logits_min_cosine": 0.9998}
+        )
+    with pytest.raises(RuntimeError, match="qwen_same_cache_logits_min_cosine"):
+        validate_qwen_result_contract(
+            args,
+            {**passing, "qwen_same_cache_logits_min_cosine": float("nan")},
+        )
 
 
 class FakeTokenizer:
@@ -1069,7 +1942,9 @@ def worker_args(**updates) -> Namespace:
 def test_worker_helpers_build_exact_shape_and_metadata() -> None:
     args = worker_args()
     validate_args(args)
-    ids = build_exact_prompt(FakeTokenizer(), args.prompt_tokens, args.batch_size, "cpu")
+    ids = build_exact_prompt(
+        FakeTokenizer(), args.prompt_tokens, args.batch_size, "cpu"
+    )
     assert ids.tolist() == [[5, 6, 7, 5, 6, 7, 5, 6]] * 2
 
     config = SimpleNamespace(
@@ -1082,7 +1957,12 @@ def test_worker_helpers_build_exact_shape_and_metadata() -> None:
     assert metadata["model_name"] == "rwkv7-g1g-1.5b-hf"
     assert metadata["model_type"] == "rwkv7"
     assert metadata["hidden_size"] == 2048
-    assert last_rwkv_prefill_backend(SimpleNamespace(_rwkv7_last_fast_prefill_backend="native_prefill")) == "native_prefill"
+    assert (
+        last_rwkv_prefill_backend(
+            SimpleNamespace(_rwkv7_last_fast_prefill_backend="native_prefill")
+        )
+        == "native_prefill"
+    )
 
 
 def test_worker_chunked_prefill_carries_hf_cache() -> None:
@@ -1112,6 +1992,30 @@ def test_worker_chunked_prefill_carries_hf_cache() -> None:
     assert forward_prefill(rwkv_args, FakeRWKV(), ids) == ((1, 8), 4, 1)
 
 
+def test_worker_chunked_prefill_preserves_supplied_static_cache_identity() -> None:
+    persistent_cache = object()
+    seen: list[object] = []
+
+    class FakeQwen:
+        def __call__(self, ids, *, past_key_values=None, **_kwargs):
+            seen.append(past_key_values)
+            return SimpleNamespace(
+                logits=torch.zeros((ids.shape[0], 1, 4)),
+                past_key_values=past_key_values,
+            )
+
+    args = worker_args(model_kind="qwen35", prefill_chunk_size=3)
+    ids = torch.arange(8).reshape(1, 8)
+    out = forward_prefill(
+        args,
+        FakeQwen(),
+        ids,
+        past_key_values=persistent_cache,
+    )
+    assert seen == [persistent_cache, persistent_cache, persistent_cache]
+    assert out.past_key_values is persistent_cache
+
+
 def test_worker_helpers_validate_and_emit_failure() -> None:
     args = worker_args(prompt_tokens=0)
     try:
@@ -1134,7 +2038,9 @@ def test_worker_helpers_validate_and_emit_failure() -> None:
     except ValueError as exc:
         assert "RWKV candidate backend" in str(exc)
     else:
-        raise AssertionError("Qwen reference must not be mislabeled as TorchAO-quantized")
+        raise AssertionError(
+            "Qwen reference must not be mislabeled as TorchAO-quantized"
+        )
 
     qwen_native = worker_args(model_kind="qwen35", quantization="a8w8")
     try:
@@ -1142,7 +2048,9 @@ def test_worker_helpers_validate_and_emit_failure() -> None:
     except ValueError as exc:
         assert "RWKV candidate backend" in str(exc)
     else:
-        raise AssertionError("Qwen reference must not be mislabeled as native-quantized")
+        raise AssertionError(
+            "Qwen reference must not be mislabeled as native-quantized"
+        )
 
     qwen_hybrid = worker_args(model_kind="qwen35", quantization="bnb8_a8w8_head")
     try:
@@ -1150,7 +2058,9 @@ def test_worker_helpers_validate_and_emit_failure() -> None:
     except ValueError as exc:
         assert "RWKV candidate backend" in str(exc)
     else:
-        raise AssertionError("Qwen reference must not be mislabeled as hybrid-quantized")
+        raise AssertionError(
+            "Qwen reference must not be mislabeled as hybrid-quantized"
+        )
 
 
 def _fake_operator(module_name: str):
@@ -1170,8 +2080,12 @@ class FakeQwenModel:
             "recurrent_gated_delta_rule": "fla.ops.gated_delta_rule.fused_recurrent",
         }
         if not fast:
-            origin["chunk_gated_delta_rule"] = "transformers.models.qwen3_5.modeling_qwen3_5"
-        self.layer = SimpleNamespace(**{name: _fake_operator(module) for name, module in origin.items()})
+            origin["chunk_gated_delta_rule"] = (
+                "transformers.models.qwen3_5.modeling_qwen3_5"
+            )
+        self.layer = SimpleNamespace(
+            **{name: _fake_operator(module) for name, module in origin.items()}
+        )
 
     def modules(self):
         return [self, self.layer]
@@ -1267,7 +2181,10 @@ def test_qwen_fla_triton_binding_satisfies_live_full_fused_contract() -> None:
         require_qwen_fast_path=True,
     )
     validate_loaded_model(args, model)
-    assert qwen_effective_backend(args, contract) == "qwen_fla_gated_delta_rule_fla_triton_conv"
+    assert (
+        qwen_effective_backend(args, contract)
+        == "qwen_fla_gated_delta_rule_fla_triton_conv"
+    )
 
 
 def test_model_parameter_metadata_counts_logical_and_active_work() -> None:
@@ -1275,7 +2192,9 @@ def test_model_parameter_metadata_counts_logical_and_active_work() -> None:
         def __init__(self, numel: int, logical_shape=None) -> None:
             self._numel = numel
             self.quant_state = (
-                SimpleNamespace(shape=logical_shape) if logical_shape is not None else None
+                SimpleNamespace(shape=logical_shape)
+                if logical_shape is not None
+                else None
             )
 
         def numel(self) -> int:
@@ -1396,7 +2315,9 @@ def test_orchestrator_failure_row_does_not_depend_on_main_scope(tmp_path: Path) 
         dtype="fp16",
         quantization="bnb8",
     )
-    proc = subprocess.CompletedProcess(["python", "worker.py"], 7, stdout="", stderr="boom")
+    proc = subprocess.CompletedProcess(
+        ["python", "worker.py"], 7, stdout="", stderr="boom"
+    )
     append_orchestrator_failure(
         result_path,
         spec,
@@ -1412,7 +2333,9 @@ def test_orchestrator_failure_row_does_not_depend_on_main_scope(tmp_path: Path) 
 
 def test_orchestrator_forces_production_rwkv_wrapper() -> None:
     args = Namespace(rwkv_fast_token_backend="native_graph")
-    env = build_run_environment(args, {"RWKV7_NATIVE_MODEL": "1", "PYTHONPATH": "/existing"})
+    env = build_run_environment(
+        args, {"RWKV7_NATIVE_MODEL": "1", "PYTHONPATH": "/existing"}
+    )
     assert env["RWKV7_NATIVE_MODEL"] == "0"
     assert env["RWKV7_FAST_TOKEN_BACKEND"] == "native_graph"
     assert env["PYTHONPATH"].endswith(f"{os.pathsep}/existing")
@@ -1447,7 +2370,7 @@ def test_4090_acceptance_entrypoint_is_exact_card_and_chunk_safe() -> None:
     assert 'QWEN_CONV_BACKEND="${QWEN_CONV_BACKEND:-auto}"' in script
     assert 'REQUIRE_QWEN_FULL_FUSED="${REQUIRE_QWEN_FULL_FUSED:-0}"' in script
     assert '--qwen-conv-backend "${QWEN_CONV_BACKEND}"' in script
-    assert 'common_compare+=(--require-qwen-full-fused)' in script
+    assert "common_compare+=(--require-qwen-full-fused)" in script
     assert 'if [[ "${RUN_NATIVE_MM8:-0}" == "1" ]]' in script
     assert "native_speed_mm8" in script
     assert "--require-qwen-fast-path" in script
@@ -1459,7 +2382,10 @@ def test_4090_acceptance_entrypoint_is_exact_card_and_chunk_safe() -> None:
     assert "RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH=1" in script
     assert "RWKV7_NATIVE_PREFILL_SELF_CHUNK_MIN_TOKENS=128" in script
     assert "--allow-quant-total-not-slower-than-dense" in script
-    assert 'printf \'%s\\n\' "${pipeline_rc}" > "${OUT_DIR}/pipeline_exit_code.txt"' in script
+    assert (
+        'printf \'%s\\n\' "${pipeline_rc}" > "${OUT_DIR}/pipeline_exit_code.txt"'
+        in script
+    )
 
 
 def test_4080_acceptance_entrypoint_is_full_prompt_and_fail_closed() -> None:
@@ -1471,34 +2397,42 @@ def test_4080_acceptance_entrypoint_is_full_prompt_and_fail_closed() -> None:
     assert '"torch": "2.6.0+cu124"' in script
     assert '"triton": "3.2.0"' in script
     assert '"torchao": "0.16.0"' in script
-    assert "use the generic benchmark entrypoints for an unvalidated runtime experiment" in script
+    assert (
+        "use the generic benchmark entrypoints for an unvalidated runtime experiment"
+        in script
+    )
     assert "REQUIRE_VALIDATED_RUNTIME" not in script
-    assert '--benchmark-matrix qwen35_4080_hf_final' in script
-    assert 'rwkv-0.4b__qwen3.5-0.8b)' in script
-    assert 'rwkv-1.5b__qwen3.5-2b)' in script
-    assert 'rwkv-2.9b__qwen3.5-4b)' in script
+    assert "--benchmark-matrix qwen35_4080_hf_final" in script
+    assert "rwkv-0.4b__qwen3.5-0.8b)" in script
+    assert "rwkv-1.5b__qwen3.5-2b)" in script
+    assert "rwkv-2.9b__qwen3.5-4b)" in script
     assert 'BATCH_SIZE="${BATCH_SIZE:-8}"' in script
     assert '--batch-sizes "${BATCH_SIZE}" --prompt-tokens 128 512 2048' in script
-    assert '--decode-tokens 128 512 --prefill-chunk-size "${PREFILL_CHUNK_SIZE}"' in script
+    assert (
+        '--decode-tokens 128 512 --prefill-chunk-size "${PREFILL_CHUNK_SIZE}"' in script
+    )
     assert 'if [[ "${BATCH_SIZE}" == "1" ]]' in script
     assert 'DENSE_DECODE_GATE="${DENSE_DECODE_GATE:-1.00}"' in script
     assert 'default_active_work_gate="1.75"' in script
     assert '--min-active-work-decode "${ACTIVE_WORK_DECODE_GATE}"' in script
     assert '--model-pair "${PAIR_LABEL}"' in script
     assert '--batch-size "${BATCH_SIZE}"' in script
-    assert '--qwen-backend fla' in script
-    assert '--require-qwen-fast-path' in script
-    assert '--paired-baseline' in script
-    assert 'for quant in a8w8 torchao_w4' in script
-    assert 'for quant in bnb8 bnb4' in script
-    assert 'summarize_4080_qwen35_acceptance.py' in script
-    assert 'printf \'%s\\n\' "${pipeline_rc}" > "${OUT_DIR}/pipeline_exit_code.txt"' in script
+    assert "--qwen-backend fla" in script
+    assert "--require-qwen-fast-path" in script
+    assert "--paired-baseline" in script
+    assert "for quant in a8w8 torchao_w4" in script
+    assert "for quant in bnb8 bnb4" in script
+    assert "summarize_4080_qwen35_acceptance.py" in script
+    assert (
+        'printf \'%s\\n\' "${pipeline_rc}" > "${OUT_DIR}/pipeline_exit_code.txt"'
+        in script
+    )
 
 
 def test_4080_torchao_version_does_not_leak_into_global_optional_dependency() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'torchao = ["torchao; platform_system == \'Linux\'"]' in pyproject
-    assert 'torchao>=' not in pyproject
+    assert "torchao = [\"torchao; platform_system == 'Linux'\"]" in pyproject
+    assert "torchao>=" not in pyproject
     assert 'quant = ["bitsandbytes"]' in pyproject
     assert "triton>=" not in pyproject
 
@@ -1532,7 +2466,9 @@ def test_5090_correctness_entrypoint_checks_full_fla_and_native_prefill() -> Non
     assert 'bench/check_exact_gpu.py"' in script
     assert 'CORRECTNESS_PROMPT_TOKENS="${CORRECTNESS_PROMPT_TOKENS:-512}"' in script
     assert 'CORRECTNESS_BATCH_SIZE="${CORRECTNESS_BATCH_SIZE:-8}"' in script
-    assert 'QWEN_CORRECTNESS_PROMPT_TOKENS="${QWEN_CORRECTNESS_PROMPT_TOKENS:-}"' in script
+    assert (
+        'QWEN_CORRECTNESS_PROMPT_TOKENS="${QWEN_CORRECTNESS_PROMPT_TOKENS:-}"' in script
+    )
     assert '[[ "${qwen_size}" == "9b" ]]' in script
     assert "QWEN_CORRECTNESS_PROMPT_TOKENS=512" in script
     assert '--prompt-tokens "${QWEN_CORRECTNESS_PROMPT_TOKENS}"' in script
@@ -1545,7 +2481,7 @@ def test_5090_correctness_entrypoint_checks_full_fla_and_native_prefill() -> Non
     assert "--min-cosine 0.9999" in script
     assert "RWKV7_NATIVE_PREFILL_FUSED_SCAN=1" in script
     assert "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1" in script
-    assert '[[ ${failures} -eq 0 ]]' in script
+    assert "[[ ${failures} -eq 0 ]]" in script
 
 
 def test_5090_full_matrix_entrypoint_runs_all_exact_pairs() -> None:
@@ -1562,13 +2498,19 @@ def test_5090_full_matrix_entrypoint_runs_all_exact_pairs() -> None:
     assert "run_5090_qwen35_correctness.sh" in script
     assert "run_5090_qwen35_pair_acceptance.sh" in script
     assert 'ACCEPTANCE_BATCH_SIZES="${ACCEPTANCE_BATCH_SIZES:-1 8}"' in script
-    assert 'for batch_size in ${ACCEPTANCE_BATCH_SIZES}' in script
+    assert "for batch_size in ${ACCEPTANCE_BATCH_SIZES}" in script
     assert 'out_dir="${OUT_ROOT}/b${batch_size}/${out_name}"' in script
     assert 'CORRECTNESS_BATCH_SIZE="${batch_size}"' in script
     assert 'BATCH_SIZES="${batch_size}"' in script
     assert "summarize_5090_qwen35_acceptance.py" in script
-    assert 'printf \'%s\\n\' "${summary_rc}" > "${OUT_ROOT}/summary-exit-code.txt"' in script
-    assert 'printf \'%s\\n\' "${pipeline_rc}" > "${OUT_ROOT}/pipeline-exit-code.txt"' in script
+    assert (
+        'printf \'%s\\n\' "${summary_rc}" > "${OUT_ROOT}/summary-exit-code.txt"'
+        in script
+    )
+    assert (
+        'printf \'%s\\n\' "${pipeline_rc}" > "${OUT_ROOT}/pipeline-exit-code.txt"'
+        in script
+    )
 
 
 def test_5090_g1h_13b_entrypoint_is_fail_closed() -> None:
@@ -1583,7 +2525,10 @@ def test_5090_g1h_13b_entrypoint_is_fail_closed() -> None:
     assert "--paired-baseline --fail-fast" in script
     assert "--gate --expected-rows 3 --min-speed-ratio 0.98" in script
     assert "smoke_rc" in script and "quant_rc" in script and "gate_rc" in script
-    assert 'printf \'%s\\n\' "${pipeline_rc}" > "${OUT_DIR}/pipeline-exit-code.txt"' in script
+    assert (
+        'printf \'%s\\n\' "${pipeline_rc}" > "${OUT_DIR}/pipeline-exit-code.txt"'
+        in script
+    )
 
 
 def test_hardware_entrypoints_are_fail_closed() -> None:
@@ -1594,7 +2539,9 @@ def test_hardware_entrypoints_are_fail_closed() -> None:
         assert "--min-decode-speedup 1.05" in script
         assert "--fail-on-gate" in script
 
-    pair_script = (ROOT / "bench" / "run_3090_qwen35_pair.sh").read_text(encoding="utf-8")
+    pair_script = (ROOT / "bench" / "run_3090_qwen35_pair.sh").read_text(
+        encoding="utf-8"
+    )
     assert "--expected-cells 72" in pair_script
     assert "--min-prefill-speedup 1.05" in pair_script
     assert "--min-decode-speedup 1.05" in pair_script
@@ -1632,8 +2579,13 @@ def test_orchestrator_isolates_qwen_import_backend() -> None:
     )
     qwen_spec = next(spec for spec in specs if spec.model_kind == "qwen35")
     base = {"RWKV7_QWEN35_FORCE_TORCH": "1"}
-    assert "RWKV7_QWEN35_FORCE_TORCH" not in build_worker_environment(base, qwen_spec, "fla")
-    assert build_worker_environment({}, qwen_spec, "torch")["RWKV7_QWEN35_FORCE_TORCH"] == "1"
+    assert "RWKV7_QWEN35_FORCE_TORCH" not in build_worker_environment(
+        base, qwen_spec, "fla"
+    )
+    assert (
+        build_worker_environment({}, qwen_spec, "torch")["RWKV7_QWEN35_FORCE_TORCH"]
+        == "1"
+    )
     rwkv_bnb8 = next(spec for spec in specs if spec.model_kind == "rwkv")
     rwkv_bnb8 = type(rwkv_bnb8)(**{**rwkv_bnb8.__dict__, "quantization": "bnb8"})
     env = build_worker_environment({}, rwkv_bnb8, "fla", "decode_rk")
@@ -1642,7 +2594,10 @@ def test_orchestrator_isolates_qwen_import_backend() -> None:
 
 def test_5070_qwen_fla_evidence_is_complete() -> None:
     evidence = ROOT / "bench" / "5070_qwen35_fla_matrix_20260713"
-    rows = [json.loads(line) for line in (evidence / "results.jsonl").read_text().splitlines()]
+    rows = [
+        json.loads(line)
+        for line in (evidence / "results.jsonl").read_text().splitlines()
+    ]
     assert len(rows) == 144
     assert all(row["status"] == "pass" for row in rows)
 
@@ -1662,12 +2617,16 @@ def test_5070_qwen_fla_evidence_is_complete() -> None:
     assert summary["memory"]["model_footprint_not_larger_cells"] == 72
     assert summary["memory"]["peak_vram_not_larger_cells"] == 72
 
-    probe = json.loads((evidence / "fla-vs-torch-probe.json").read_text(encoding="utf-8-sig"))
+    probe = json.loads(
+        (evidence / "fla-vs-torch-probe.json").read_text(encoding="utf-8-sig")
+    )
     assert probe["status"] == "pass"
     assert probe["greedy_tokens_match"] is True
     assert min(probe["prompt_logits_cosine"], probe["final_logits_cosine"]) >= 0.999
 
-    exit_codes = json.loads((evidence / "exit-codes.json").read_text(encoding="utf-8-sig"))
+    exit_codes = json.loads(
+        (evidence / "exit-codes.json").read_text(encoding="utf-8-sig")
+    )
     assert exit_codes
     assert all(code == 0 for code in exit_codes.values())
 

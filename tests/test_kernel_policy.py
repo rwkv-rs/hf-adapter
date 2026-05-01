@@ -431,7 +431,12 @@ def test_policy_defaults_are_conservative() -> None:
     assert ada.prefill_global_fp16_accum_model_shapes == ()
     assert ada.prefill_block_fp16_accum_model_shapes == tuple(
         (hidden, layers, batch, tokens)
-        for hidden, layers in ((1024, 24), (2048, 24), (2560, 32))
+        for hidden, layers in (
+            (1024, 24),
+            (2048, 24),
+            (2560, 32),
+            (4096, 32),
+        )
         for batch in (1, 8)
         for tokens in (128, 512, 2048)
     )
@@ -731,6 +736,8 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.ada_linear_roles == "hidden,ffn_up,ffn_down"
     assert blackwell.ada_wagv_lora
     assert blackwell.ada_wag_lora
+    assert not blackwell.ada_wagv_bmm
+    assert not blackwell.sm120_compiled_ffn
     assert blackwell.ada_sparse_ffn
     assert blackwell.ada_sparse_ffn_low_memory_pack
     assert blackwell.ada_sparse_ffn_share_pack

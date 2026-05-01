@@ -1,5 +1,6 @@
 # coding=utf-8
 """FLA-free CUDA graph runtime for native RWKV-7 token decode."""
+
 from __future__ import annotations
 
 import os
@@ -11,6 +12,12 @@ import torch.nn.functional as F
 
 from .kernel_policy import current_kernel_policy, env_flag
 
+try:
+    from .ada_lora import ada_wagv_lora_available, ada_wagv_lora_build_error
+except Exception:  # pragma: no cover - optional CUDA extension
+    ada_wagv_lora_available = None
+    ada_wagv_lora_build_error = None
+
 if TYPE_CHECKING:
     from .native_model import NativeRWKV7Cache, NativeRWKV7ForCausalLM
 
@@ -18,14 +25,26 @@ try:
     from .native_jit import (
         _block_ip,
         _block_ip_batched,
+        _native_graph_ada_wagv_bmm_requested,
+        _native_graph_rkv_policy,
+        _native_graph_sm120_compiled_ffn_requested,
+        _native_graph_sm120_wagv_bmm_g_requested,
         _native_graph_linear_dispatch,
         prewarm_ada_sparse_ffn,
+        prewarm_sm120_compiled_ffn,
+        sm120_compiled_ffn_preparation_stats,
     )
 except Exception:  # pragma: no cover - optional CUDA/Triton acceleration
     _block_ip = None
     _block_ip_batched = None
+    _native_graph_ada_wagv_bmm_requested = None
+    _native_graph_rkv_policy = None
+    _native_graph_sm120_compiled_ffn_requested = None
+    _native_graph_sm120_wagv_bmm_g_requested = None
     _native_graph_linear_dispatch = None
     prewarm_ada_sparse_ffn = None
+    prewarm_sm120_compiled_ffn = None
+    sm120_compiled_ffn_preparation_stats = None
 
 try:
     from .native_wkv_fp16 import (
@@ -36,10 +55,15 @@ except Exception:  # pragma: no cover - optional CUDA extension
     native_fp16_recurrent_available = None
     native_fp16_recurrent_build_error = None
 
+
 def native_graph_available() -> bool:
     """Return whether this process can capture the native decode graph."""
 
-    return bool(torch.cuda.is_available() and _block_ip is not None and _block_ip_batched is not None)
+    return bool(
+        torch.cuda.is_available()
+        and _block_ip is not None
+        and _block_ip_batched is not None
+    )
 
 
 def native_graph_cache_size() -> int:
@@ -111,8 +135,7 @@ def native_graph_state_dtype(
     if raw in {"fp16", "float16", "half"}:
         return torch.float16 if model_dtype == torch.float16 else torch.float32
     raise ValueError(
-        "RWKV7_NATIVE_GRAPH_STATE_DTYPE must be fp32 or fp16; "
-        f"got {raw!r}"
+        f"RWKV7_NATIVE_GRAPH_STATE_DTYPE must be fp32 or fp16; got {raw!r}"
     )
 
 
@@ -140,7 +163,13 @@ def native_graph_runtime_signature() -> tuple[tuple[str, str], ...]:
         "RWKV7_FUSED_",
         "RWKV7_NATIVE_MM",
     )
-    return tuple(sorted((key, value) for key, value in os.environ.items() if key.startswith(prefixes)))
+    return tuple(
+        sorted(
+            (key, value)
+            for key, value in os.environ.items()
+            if key.startswith(prefixes)
+        )
+    )
 
 
 def _same_tensor_view(left: torch.Tensor, right: torch.Tensor) -> bool:
@@ -177,7 +206,9 @@ class NativeGraphRunner:
 
     def __init__(self, owner: "NativeRWKV7ForCausalLM", packs, batch_size: int) -> None:
         if not native_graph_available():
-            raise RuntimeError("native_graph requires CUDA and rwkv7_hf.native_jit graph blocks")
+            raise RuntimeError(
+                "native_graph requires CUDA and rwkv7_hf.native_jit graph blocks"
+            )
         self.owner_ref = weakref.ref(owner)
         self.packs = list(packs)
         self.batch_size = int(batch_size)
@@ -188,6 +219,36 @@ class NativeGraphRunner:
         if self.device.type != "cuda":
             raise RuntimeError("native_graph requires model weights on CUDA")
         self.dtype = base.embeddings.weight.dtype
+        self.ada_wagv_lora_extension_required = env_flag(
+            "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA_REQUIRE_EXTENSION", False
+        )
+        self.ada_wagv_lora_extension_available = False
+        self.rkv_policy = (
+            str(_native_graph_rkv_policy())
+            if _native_graph_rkv_policy is not None
+            else "unavailable"
+        )
+        if self.ada_wagv_lora_extension_required:
+            if self.batch_size != 1:
+                raise RuntimeError(
+                    "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA_REQUIRE_EXTENSION=1 "
+                    "is restricted to the exact B1 route"
+                )
+            available = bool(
+                ada_wagv_lora_available is not None
+                and ada_wagv_lora_available(self.device, build=True)
+            )
+            if not available:
+                detail = (
+                    ada_wagv_lora_build_error(self.device)
+                    if ada_wagv_lora_build_error is not None
+                    else "extension module unavailable"
+                )
+                raise RuntimeError(
+                    "Ada W/A/G/V extension was required before native CUDA "
+                    f"graph capture, but it could not be built; fallback is forbidden: {detail}"
+                )
+            self.ada_wagv_lora_extension_available = True
         self.hidden = int(owner.config.hidden_size)
         self.attention_hidden = int(
             getattr(owner.config, "attention_hidden_size", packs[0][1] * packs[0][2])
@@ -246,7 +307,9 @@ class NativeGraphRunner:
                 self.embeddings.dtype,
                 tuple(self.embeddings.shape),
             )
-            cached = getattr(owner, "_rwkv7_native_graph_precomputed_embedding_ln0", None)
+            cached = getattr(
+                owner, "_rwkv7_native_graph_precomputed_embedding_ln0", None
+            )
             if not isinstance(cached, tuple) or len(cached) != 2 or cached[0] != key:
                 normalized = F.layer_norm(
                     self.embeddings,
@@ -278,10 +341,21 @@ class NativeGraphRunner:
                 if self.fp16_recurrent
                 else None
             )
-            self.xpa = [torch.zeros(self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
-            self.xpf = [torch.zeros(self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
-            self.sparse_ffn_out = [torch.empty(self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
-            self.v_first = torch.zeros(self.attention_hidden, device=self.device, dtype=self.dtype)
+            self.xpa = [
+                torch.zeros(self.hidden, device=self.device, dtype=self.dtype)
+                for _ in packs
+            ]
+            self.xpf = [
+                torch.zeros(self.hidden, device=self.device, dtype=self.dtype)
+                for _ in packs
+            ]
+            self.sparse_ffn_out = [
+                torch.empty(self.hidden, device=self.device, dtype=self.dtype)
+                for _ in packs
+            ]
+            self.v_first = torch.zeros(
+                self.attention_hidden, device=self.device, dtype=self.dtype
+            )
         else:
             self.state = [
                 torch.zeros(
@@ -300,13 +374,22 @@ class NativeGraphRunner:
                 else None
             )
             self.xpa = [
-                torch.zeros(self.batch_size, self.hidden, device=self.device, dtype=self.dtype) for _ in packs
+                torch.zeros(
+                    self.batch_size, self.hidden, device=self.device, dtype=self.dtype
+                )
+                for _ in packs
             ]
             self.xpf = [
-                torch.zeros(self.batch_size, self.hidden, device=self.device, dtype=self.dtype) for _ in packs
+                torch.zeros(
+                    self.batch_size, self.hidden, device=self.device, dtype=self.dtype
+                )
+                for _ in packs
             ]
             self.sparse_ffn_out = [
-                torch.empty(self.batch_size, self.hidden, device=self.device, dtype=self.dtype) for _ in packs
+                torch.empty(
+                    self.batch_size, self.hidden, device=self.device, dtype=self.dtype
+                )
+                for _ in packs
             ]
             self.v_first = torch.zeros(
                 self.batch_size,
@@ -314,19 +397,77 @@ class NativeGraphRunner:
                 device=self.device,
                 dtype=self.dtype,
             )
-        self.token_ids = torch.zeros(self.batch_size, dtype=torch.long, device=self.device)
+        self.token_ids = torch.zeros(
+            self.batch_size, dtype=torch.long, device=self.device
+        )
         self.head = owner.lm_head
         self.norm_weight = base.norm.weight
         self.norm_bias = base.norm.bias
         vocab_size = int(getattr(self.head, "out_features", self.embeddings.shape[0]))
-        self.logits = torch.empty(self.batch_size, vocab_size, device=self.device, dtype=self.dtype)
+        self.logits = torch.empty(
+            self.batch_size, vocab_size, device=self.device, dtype=self.dtype
+        )
         self.graph: torch.cuda.CUDAGraph | None = None
         self._bound_cache_ref: weakref.ReferenceType | None = None
         self.copy_from_cache_calls = 0
         self.copy_from_cache_fast_skips = 0
         self.bind_cache_calls = 0
         self.bind_cache_fast_skips = 0
+        self._decode_route_layers: dict[str, set[int]] = {
+            "ada_wagv_bmm_selected": set(),
+            "ada_wagv_bmm_effective": set(),
+            "sm120_wagv_bmm_g_selected": set(),
+            "sm120_wagv_bmm_g_effective": set(),
+            "sm120_compiled_ffn_selected": set(),
+            "sm120_compiled_ffn_effective": set(),
+        }
+        self.ada_wagv_bmm_requested = bool(
+            _native_graph_ada_wagv_bmm_requested is not None
+            and _native_graph_ada_wagv_bmm_requested()
+        )
+        self.sm120_wagv_bmm_g_requested = bool(
+            _native_graph_sm120_wagv_bmm_g_requested is not None
+            and _native_graph_sm120_wagv_bmm_g_requested()
+        )
+        self.sm120_compiled_ffn_requested = bool(
+            _native_graph_sm120_compiled_ffn_requested is not None
+            and _native_graph_sm120_compiled_ffn_requested()
+        )
+        self.sm120_compiled_ffn_preparation = None
         self._capture()
+
+    def _record_decode_route(self, name: str, layer_index: int) -> None:
+        layers = self._decode_route_layers.get(name)
+        if layers is not None:
+            layers.add(int(layer_index))
+
+    def _require_requested_sm120_routes(self) -> None:
+        """Reject any explicitly requested SM120 route before graph capture."""
+
+        expected = set(range(self.num_layers))
+        for requested, route, flag in (
+            (
+                self.sm120_wagv_bmm_g_requested,
+                "sm120_wagv_bmm_g",
+                "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G",
+            ),
+            (
+                self.sm120_compiled_ffn_requested,
+                "sm120_compiled_ffn",
+                "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN",
+            ),
+        ):
+            if not requested:
+                continue
+            selected = self._decode_route_layers[f"{route}_selected"]
+            effective = self._decode_route_layers[f"{route}_effective"]
+            if selected != expected or effective != expected:
+                raise RuntimeError(
+                    f"{flag}=1 was requested, but the route was not selected "
+                    "and effective for every layer; "
+                    f"expected={sorted(expected)}, selected={sorted(selected)}, "
+                    f"effective={sorted(effective)}; fallback is forbidden"
+                )
 
     def _one_step(self) -> None:
         if self.single:
@@ -343,11 +484,15 @@ class NativeGraphRunner:
                     self.elapsed,
                     layer_index + 1 == self.num_layers,
                 )
-            hidden = F.layer_norm(hidden, [self.hidden], self.norm_weight, self.norm_bias, 1e-5)
+            hidden = F.layer_norm(
+                hidden, [self.hidden], self.norm_weight, self.norm_bias, 1e-5
+            )
             _head_linear_into(self.head, hidden, self.logits.reshape(-1))
             return
 
-        hidden = F.embedding(self.token_ids, self.embeddings).reshape(self.batch_size, self.hidden)
+        hidden = F.embedding(self.token_ids, self.embeddings).reshape(
+            self.batch_size, self.hidden
+        )
         for layer_index, pack in enumerate(self.packs):
             hidden = _block_ip_batched(
                 hidden,
@@ -359,11 +504,23 @@ class NativeGraphRunner:
                 self.sparse_ffn_out[layer_index],
                 self.elapsed,
                 layer_index + 1 == self.num_layers,
+                self._record_decode_route,
             )
-        hidden = F.layer_norm(hidden, [self.hidden], self.norm_weight, self.norm_bias, 1e-5)
+        hidden = F.layer_norm(
+            hidden, [self.hidden], self.norm_weight, self.norm_bias, 1e-5
+        )
         _head_linear_into(self.head, hidden, self.logits)
 
     def _capture(self) -> None:
+        if self.sm120_compiled_ffn_requested:
+            if prewarm_sm120_compiled_ffn is None:
+                raise RuntimeError(
+                    "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN=1 was requested, "
+                    "but prewarm is unavailable; fallback is forbidden"
+                )
+            self.sm120_compiled_ffn_preparation = prewarm_sm120_compiled_ffn(
+                self.packs, self.batch_size
+            )
         if prewarm_ada_sparse_ffn is not None:
             prewarm_ada_sparse_ffn(self.packs, self.batch_size)
         warmup_stream = torch.cuda.Stream(device=self.device)
@@ -372,6 +529,7 @@ class NativeGraphRunner:
             for _ in range(3):
                 self._one_step()
         torch.cuda.current_stream(self.device).wait_stream(warmup_stream)
+        self._require_requested_sm120_routes()
         self.graph = torch.cuda.CUDAGraph()
         with torch.cuda.graph(self.graph):
             self._one_step()
@@ -379,11 +537,17 @@ class NativeGraphRunner:
     def _native_view(self, value: torch.Tensor) -> torch.Tensor:
         return value.unsqueeze(0) if self.single else value
 
-    def _copy_cache_tensor(self, target: torch.Tensor, source: torch.Tensor | None) -> None:
+    def _copy_cache_tensor(
+        self, target: torch.Tensor, source: torch.Tensor | None
+    ) -> None:
         if source is None:
             target.zero_()
             return
-        if self.single and source.dim() == target.dim() + 1 and int(source.shape[0]) == 1:
+        if (
+            self.single
+            and source.dim() == target.dim() + 1
+            and int(source.shape[0]) == 1
+        ):
             source = source.squeeze(0)
         if _same_tensor_view(target, source):
             return
@@ -392,7 +556,9 @@ class NativeGraphRunner:
             target.copy_(converted.contiguous())
 
     def _detach_bound_cache_if_different(self, cache: "NativeRWKV7Cache") -> None:
-        previous = self._bound_cache_ref() if self._bound_cache_ref is not None else None
+        previous = (
+            self._bound_cache_ref() if self._bound_cache_ref is not None else None
+        )
         if previous is None or previous is cache:
             return
         if previous._native_graph_bound_to(self):
@@ -449,9 +615,15 @@ class NativeGraphRunner:
             return True
         index = indices.to(device=self.device, dtype=torch.long)
         for layer_index in range(self.num_layers):
-            self.state[layer_index].copy_(self.state[layer_index].index_select(0, index).contiguous())
-            self.xpa[layer_index].copy_(self.xpa[layer_index].index_select(0, index).contiguous())
-            self.xpf[layer_index].copy_(self.xpf[layer_index].index_select(0, index).contiguous())
+            self.state[layer_index].copy_(
+                self.state[layer_index].index_select(0, index).contiguous()
+            )
+            self.xpa[layer_index].copy_(
+                self.xpa[layer_index].index_select(0, index).contiguous()
+            )
+            self.xpf[layer_index].copy_(
+                self.xpf[layer_index].index_select(0, index).contiguous()
+            )
         if self.elapsed is not None:
             self.elapsed.copy_(self.elapsed.index_select(0, index).contiguous())
         self.v_first.copy_(self.v_first.index_select(0, index).contiguous())
@@ -477,12 +649,89 @@ class NativeGraphRunner:
         logits = self.logits.view(self.batch_size, 1, -1)
         return logits.clone() if copy_logits else logits
 
-    def copy_stats(self) -> dict[str, int]:
+    def copy_stats(self) -> dict[str, object]:
+        selected_layers = sorted(self._decode_route_layers["ada_wagv_bmm_selected"])
+        effective_layers = sorted(self._decode_route_layers["ada_wagv_bmm_effective"])
+        expected_layers = list(range(self.num_layers))
+        full_model_effective = bool(
+            self.ada_wagv_bmm_requested
+            and selected_layers == expected_layers
+            and effective_layers == expected_layers
+        )
+        sm120_selected_layers = sorted(
+            self._decode_route_layers.get("sm120_wagv_bmm_g_selected", set())
+        )
+        sm120_effective_layers = sorted(
+            self._decode_route_layers.get("sm120_wagv_bmm_g_effective", set())
+        )
+        sm120_requested = bool(getattr(self, "sm120_wagv_bmm_g_requested", False))
+        sm120_full_model_effective = bool(
+            sm120_requested
+            and sm120_selected_layers == expected_layers
+            and sm120_effective_layers == expected_layers
+        )
+        compiled_selected_layers = sorted(
+            self._decode_route_layers.get("sm120_compiled_ffn_selected", set())
+        )
+        compiled_effective_layers = sorted(
+            self._decode_route_layers.get("sm120_compiled_ffn_effective", set())
+        )
+        compiled_requested = bool(getattr(self, "sm120_compiled_ffn_requested", False))
+        compiled_full_model_effective = bool(
+            compiled_requested
+            and compiled_selected_layers == expected_layers
+            and compiled_effective_layers == expected_layers
+        )
+        preparation_stats = (
+            sm120_compiled_ffn_preparation_stats(
+                getattr(self, "sm120_compiled_ffn_preparation", None)
+            )
+            if sm120_compiled_ffn_preparation_stats is not None
+            else {}
+        )
+        extension_required = bool(
+            getattr(self, "ada_wagv_lora_extension_required", False)
+        )
+        extension_available = bool(
+            getattr(self, "ada_wagv_lora_extension_available", False)
+        )
+        extension_layers = list(range(self.num_layers)) if extension_required else []
+        extension_effective = bool(extension_required and extension_available)
         return {
             "copy_from_cache_calls": int(self.copy_from_cache_calls),
             "copy_from_cache_fast_skips": int(self.copy_from_cache_fast_skips),
             "bind_cache_calls": int(self.bind_cache_calls),
             "bind_cache_fast_skips": int(self.bind_cache_fast_skips),
+            "ada_wagv_lora_extension_requested": extension_required,
+            "ada_wagv_lora_extension_selected": extension_effective,
+            "ada_wagv_lora_extension_effective": extension_effective,
+            "ada_wagv_lora_extension_selected_layers": extension_layers,
+            "ada_wagv_lora_extension_effective_layers": extension_layers,
+            "ada_wagv_lora_extension_effective_layer_count": len(extension_layers),
+            "ada_wagv_lora_extension_full_model_effective": extension_effective,
+            "rkv_policy": str(getattr(self, "rkv_policy", "unavailable")),
+            "ada_wagv_bmm_requested": bool(self.ada_wagv_bmm_requested),
+            "ada_wagv_bmm_selected": bool(selected_layers),
+            "ada_wagv_bmm_effective": bool(effective_layers),
+            "ada_wagv_bmm_selected_layers": selected_layers,
+            "ada_wagv_bmm_effective_layers": effective_layers,
+            "ada_wagv_bmm_effective_layer_count": len(effective_layers),
+            "ada_wagv_bmm_full_model_effective": full_model_effective,
+            "sm120_wagv_bmm_g_requested": sm120_requested,
+            "sm120_wagv_bmm_g_selected": bool(sm120_selected_layers),
+            "sm120_wagv_bmm_g_effective": bool(sm120_effective_layers),
+            "sm120_wagv_bmm_g_selected_layers": sm120_selected_layers,
+            "sm120_wagv_bmm_g_effective_layers": sm120_effective_layers,
+            "sm120_wagv_bmm_g_effective_layer_count": len(sm120_effective_layers),
+            "sm120_wagv_bmm_g_full_model_effective": (sm120_full_model_effective),
+            "sm120_compiled_ffn_requested": compiled_requested,
+            "sm120_compiled_ffn_selected": bool(compiled_selected_layers),
+            "sm120_compiled_ffn_effective": bool(compiled_effective_layers),
+            "sm120_compiled_ffn_selected_layers": compiled_selected_layers,
+            "sm120_compiled_ffn_effective_layers": compiled_effective_layers,
+            "sm120_compiled_ffn_effective_layer_count": len(compiled_effective_layers),
+            "sm120_compiled_ffn_full_model_effective": (compiled_full_model_effective),
+            **preparation_stats,
         }
 
 

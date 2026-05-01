@@ -139,6 +139,7 @@ if False:  # pragma: no cover
     from .sm70_linear import sm70_linear as _native_sm70_linear_dependency_sentinel
     from .sm70_quant import w4_linear as _native_sm70_quant_dependency_sentinel
     from .sm70_wagv import sm70_wagv_lora as _native_sm70_wagv_dependency_sentinel
+    from .sm120_compiled_ffn import sm120_compiled_ffn as _native_sm120_compiled_ffn_dependency_sentinel
 
 _FALSE_VALUES = _RUNTIME_FALSE_VALUES
 

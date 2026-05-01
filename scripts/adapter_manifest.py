@@ -106,6 +106,7 @@ ADAPTER_FILES = [
     "sm70_linear.py",
     "sm70_quant.py",
     "sm70_wagv.py",
+    "sm120_compiled_ffn.py",
     "triton_compat.py",
     "tokenization_rwkv7.py",
 ]

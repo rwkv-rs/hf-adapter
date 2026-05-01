@@ -64,6 +64,22 @@ def test_fallback_matches_reference() -> None:
     assert wav[4].storage_offset() - wav[1].storage_offset() == batch * hidden
     assert wav[3].storage_offset() - wav[1].storage_offset() == 2 * batch * hidden
 
+    all_state = previous.clone()
+    all_groups = fused_attn_norm_mix6_decode(
+        x, all_state, weight, bias, *mixes,
+        stack_rkv_wagv=True, force_fallback=True,
+    )
+    for actual, reference in zip(all_groups, expected):
+        assert torch.equal(actual, reference)
+    # Public order is R/W/K/V/A/G; backing order is R/K/V/W/A/G so RKV and
+    # V/W/A/G are both consecutive views without duplicating V.
+    base = all_groups[0]
+    row_values = batch * hidden
+    logical_slots = (0, 3, 1, 2, 4, 5)
+    for actual, slot in zip(all_groups, logical_slots):
+        assert actual.untyped_storage().data_ptr() == base.untyped_storage().data_ptr()
+        assert actual.storage_offset() - base.storage_offset() == slot * row_values
+
     attn_out = torch.randn_like(x)
     ffn_previous = torch.randn_like(x)
     ffn_mix = torch.randn(hidden)
@@ -121,6 +137,17 @@ def test_cuda_matches_fallback() -> None:
                 wav[1].untyped_storage().data_ptr()
                 == wav[3].untyped_storage().data_ptr()
             )
+
+            all_state = previous.clone()
+            all_groups = fused_attn_norm_mix6_decode(
+                x, all_state, weight, bias, *mixes, stack_rkv_wagv=True
+            )
+            torch.cuda.synchronize()
+            for got, ref in zip(all_groups, reference):
+                assert torch.allclose(got.float(), ref.float(), atol=2e-2, rtol=3e-3)
+            base = all_groups[0]
+            for got in all_groups:
+                assert got.untyped_storage().data_ptr() == base.untyped_storage().data_ptr()
 
         attn_out = torch.randn_like(x)
         ffn_previous = torch.randn_like(x)

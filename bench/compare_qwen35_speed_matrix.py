@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,28 @@ CELL_FIELDS = (
     "batch_size",
     "dtype",
     "quantization",
+)
+
+QWEN_STATIC_CACHE_CUDAGRAPH_ROUTES = {
+    "static_cache_inductor_cudagraph",
+    "static_cache_raw_cudagraph",
+}
+REFERENCE_DECODE_ROUTE_CHOICES = (
+    "any",
+    "static_cache_cudagraph",
+    *sorted(QWEN_STATIC_CACHE_CUDAGRAPH_ROUTES),
+)
+QWEN_ONLY_OPTIMIZED_MATRIX = "qwen35_best_optimized_hf_v1"
+QWEN_ONLY_OPTIMIZED_LANE = "qwen_best_optimized_hf"
+UNIFIED_MATRIX = "hf_fast_path_v1"
+FORMAL_MATRICES = {QWEN_ONLY_OPTIMIZED_MATRIX, UNIFIED_MATRIX}
+RUNTIME_FIELDS = (
+    "torch_version",
+    "torch_cuda_version",
+    "triton_version",
+    "transformers_version",
+    "fla_version",
+    "causal_conv1d_version",
 )
 
 
@@ -63,6 +86,12 @@ def key_dict(key: tuple[Any, ...]) -> dict[str, Any]:
     return dict(zip(CELL_FIELDS, key))
 
 
+def model_size_sort_key(value: Any) -> tuple[float, str]:
+    label = str(value or "").strip().lower()
+    match = re.search(r"(\d+(?:\.\d+)?)\s*b", label)
+    return (float(match.group(1)) if match else float("inf"), label)
+
+
 def ratio(candidate: Any, reference: Any) -> float | None:
     if candidate is None or reference in (None, 0):
         return None
@@ -107,6 +136,47 @@ def reference_backend_matches(row: dict[str, Any], required: str) -> bool:
     )
 
 
+def reference_decode_route_matches(row: dict[str, Any], required: str) -> bool:
+    if required == "any":
+        return True
+    route = row.get("qwen_decode_optimization_effective")
+    if required == "static_cache_cudagraph":
+        return route in QWEN_STATIC_CACHE_CUDAGRAPH_ROUTES
+    return route == required
+
+
+def reference_routes_by_model(
+    rows: list[dict[str, Any]],
+) -> dict[str, list[str]]:
+    routes: dict[str, set[str]] = {}
+    for row in rows:
+        if str(row.get("model_role") or "") != "reference":
+            continue
+        model = str(
+            row.get("model_size_label")
+            or row.get("model_pair")
+            or row.get("model_name")
+            or "<unknown>"
+        )
+        route = row.get("qwen_decode_optimization_effective")
+        routes.setdefault(model, set()).add(
+            str(route) if route is not None else "<missing>"
+        )
+    return {
+        model: sorted(routes[model])
+        for model in sorted(routes, key=model_size_sort_key)
+    }
+
+
+def row_model_label(row: dict[str, Any]) -> str:
+    return str(
+        row.get("model_size_label")
+        or row.get("model_pair")
+        or row.get("model_name")
+        or "<unknown>"
+    )
+
+
 def compare(
     rows: list[dict[str, Any]],
     *,
@@ -123,6 +193,7 @@ def compare(
     require_quant_not_slower_than_dense: bool = False,
     allow_quant_total_not_slower_than_dense: bool = False,
     required_reference_backend: str = "any",
+    required_reference_decode_route: str = "any",
     require_memory_not_larger: bool = False,
     min_active_parameter_throughput_ratio: float | None = None,
     min_prefill_active_parameter_throughput_ratio: float | None = None,
@@ -139,17 +210,139 @@ def compare(
         if min_decode_active_parameter_throughput_ratio is not None
         else min_active_parameter_throughput_ratio
     )
+    role_rows = {
+        role: [row for row in rows if str(row.get("model_role") or "") == role]
+        for role in ("candidate", "reference")
+    }
+    matrices_by_role = {
+        role: sorted({str(row.get("benchmark_matrix") or "<missing>") for row in values})
+        for role, values in role_rows.items()
+    }
+    all_matrices = sorted(
+        {matrix for matrices in matrices_by_role.values() for matrix in matrices}
+    )
+    matrix_consistency_pass = bool(all_matrices) and all(
+        len(matrices) <= 1 for matrices in matrices_by_role.values()
+    )
+    if role_rows["candidate"] and role_rows["reference"]:
+        matrix_consistency_pass = bool(
+            matrix_consistency_pass
+            and matrices_by_role["candidate"] == matrices_by_role["reference"]
+        )
+    qwen_only_matrix_present = QWEN_ONLY_OPTIMIZED_MATRIX in all_matrices
+    qwen_only_candidate_pass = not (
+        qwen_only_matrix_present and role_rows["candidate"]
+    )
+    qwen_only_lane_pass = all(
+        row.get("optimization_lane") == QWEN_ONLY_OPTIMIZED_LANE
+        for row in role_rows["reference"]
+        if row.get("benchmark_matrix") == QWEN_ONLY_OPTIMIZED_MATRIX
+    )
+    runtime_gate_required = bool(set(all_matrices) & FORMAL_MATRICES)
+    runtime_rows = role_rows["candidate"] + role_rows["reference"]
+    runtime_fields_complete = all(
+        all(row.get(field) not in (None, "") for field in RUNTIME_FIELDS)
+        for row in runtime_rows
+    )
+    runtime_signatures = {
+        tuple(row.get(field) for field in RUNTIME_FIELDS) for row in runtime_rows
+    }
+    runtime_consistency_pass = bool(
+        not runtime_gate_required
+        or (runtime_fields_complete and len(runtime_signatures) == 1)
+    )
+    repository_commits_by_role = {
+        role: sorted(
+            {
+                str(row.get("benchmark_repository_commit"))
+                for row in values
+                if row.get("benchmark_repository_commit") not in (None, "")
+            }
+        )
+        for role, values in role_rows.items()
+    }
+    protocol_pass = bool(
+        matrix_consistency_pass
+        and qwen_only_candidate_pass
+        and qwen_only_lane_pass
+        and runtime_consistency_pass
+    )
     indexed: dict[str, dict[tuple[Any, ...], dict[str, Any]]] = {"candidate": {}, "reference": {}}
+    duplicates: list[dict[str, Any]] = []
     for row in rows:
         role = str(row.get("model_role") or "")
         if role in indexed:
-            indexed[role][cell_key(row)] = row
+            key = cell_key(row)
+            if key in indexed[role]:
+                first = indexed[role][key]
+                duplicates.append(
+                    {
+                        "role": role,
+                        **key_dict(key),
+                        "first_lineno": first.get("_lineno"),
+                        "duplicate_lineno": row.get("_lineno"),
+                    }
+                )
+                continue
+            indexed[role][key] = row
 
     candidate_keys = set(indexed["candidate"])
     reference_keys = set(indexed["reference"])
-    joined_keys = sorted(candidate_keys & reference_keys, key=lambda key: tuple(str(x) for x in key))
+
+    def comparison_sort_key(key: tuple[Any, ...]) -> tuple[Any, ...]:
+        reference = indexed["reference"].get(key, {})
+        fields = key_dict(key)
+        return (
+            *model_size_sort_key(reference.get("model_size_label") or fields["model_pair"]),
+            str(reference.get("device") or ""),
+            int(fields["batch_size"] or 0),
+            int(fields["prompt_tokens"] or 0),
+            int(fields["decode_tokens"] or 0),
+            str(fields["quantization"] or ""),
+            str(fields["model_pair"] or ""),
+        )
+
+    joined_keys = sorted(candidate_keys & reference_keys, key=comparison_sort_key)
     missing_candidate = sorted(reference_keys - candidate_keys, key=lambda key: tuple(str(x) for x in key))
     missing_reference = sorted(candidate_keys - reference_keys, key=lambda key: tuple(str(x) for x in key))
+
+    reference_route_sets: dict[str, set[str]] = {}
+    reference_cells_by_model: dict[str, int] = {}
+    for row in role_rows["reference"]:
+        model = row_model_label(row)
+        route = row.get("qwen_decode_optimization_effective")
+        reference_route_sets.setdefault(model, set()).add(
+            str(route) if route is not None else "<missing>"
+        )
+        reference_cells_by_model[model] = reference_cells_by_model.get(model, 0) + 1
+    unique_reference_routes_pass = bool(reference_route_sets) and all(
+        len(routes) == 1 for routes in reference_route_sets.values()
+    )
+    optimized_routes_pass = all(
+        row.get("qwen_decode_optimization_effective")
+        in QWEN_STATIC_CACHE_CUDAGRAPH_ROUTES
+        for row in role_rows["reference"]
+        if row.get("benchmark_matrix") == QWEN_ONLY_OPTIMIZED_MATRIX
+    )
+    complete_optimized_reference_required = bool(
+        qwen_only_matrix_present and expected_cells == 48
+    )
+    expected_optimized_models = {"0.8b", "2b", "4b", "9b"}
+    optimized_reference_shape_pass = bool(
+        not complete_optimized_reference_required
+        or (
+            set(reference_cells_by_model) == expected_optimized_models
+            and all(
+                reference_cells_by_model.get(model) == 12
+                for model in expected_optimized_models
+            )
+        )
+    )
+    route_consistency_pass = bool(
+        unique_reference_routes_pass
+        and optimized_routes_pass
+        and optimized_reference_shape_pass
+    )
 
     cells: list[dict[str, Any]] = []
     red_cells: list[dict[str, Any]] = []
@@ -172,12 +365,17 @@ def compare(
     active_parameter_efficiency_failures = 0
     active_parameter_failures = 0
     backend_matches = 0
+    decode_route_matches = 0
     for key in joined_keys:
         candidate = indexed["candidate"][key]
         reference = indexed["reference"][key]
         both_pass = candidate.get("status") == "pass" and reference.get("status") == "pass"
         reference_backend_pass = reference_backend_matches(reference, required_reference_backend)
         backend_matches += int(reference_backend_pass)
+        reference_decode_route_pass = reference_decode_route_matches(
+            reference, required_reference_decode_route
+        )
+        decode_route_matches += int(reference_decode_route_pass)
         prefill_speedup = ratio(candidate.get("prefill_tokps_total"), reference.get("prefill_tokps_total"))
         decode_speedup = ratio(candidate.get("decode_tokps_total"), reference.get("decode_tokps_total"))
         footprint_ratio = ratio(candidate.get("model_footprint_mb"), reference.get("model_footprint_mb"))
@@ -422,6 +620,7 @@ def compare(
         passed = bool(
             both_pass
             and reference_backend_pass
+            and reference_decode_route_pass
             and prefill_speedup is not None
             and decode_speedup is not None
             and prefill_speedup >= prefill_gate
@@ -435,11 +634,20 @@ def compare(
         )
         cell = {
             **key_dict(key),
+            "model_size_label": reference.get("model_size_label"),
+            "device": reference.get("device"),
             "candidate_status": candidate.get("status"),
             "reference_status": reference.get("status"),
             "reference_backend_requested": reference.get("qwen_backend_requested"),
             "reference_effective_backend": reference.get("effective_backend"),
             "reference_backend_pass": reference_backend_pass,
+            "reference_decode_route": reference.get(
+                "qwen_decode_optimization_effective"
+            ),
+            "reference_decode_route_pass": reference_decode_route_pass,
+            "reference_step_backend": reference.get("step_backend"),
+            "reference_cache_type": reference.get("cache_type"),
+            "reference_axis_composition": reference.get("qwen_axis_composition"),
             "candidate_prefill_tokps_total": candidate.get("prefill_tokps_total"),
             "reference_prefill_tokps_total": reference.get("prefill_tokps_total"),
             "prefill_speedup": prefill_speedup,
@@ -495,7 +703,10 @@ def compare(
 
     expected = expected_cells if expected_cells > 0 else len(candidate_keys | reference_keys)
     coverage_complete = bool(
-        len(joined_keys) == expected and not missing_candidate and not missing_reference
+        len(joined_keys) == expected
+        and not missing_candidate
+        and not missing_reference
+        and not duplicates
     )
     ratios_pass = not red_cells and bool(cells)
     speed_by_quantization = {}
@@ -542,10 +753,34 @@ def compare(
             ),
         }
     reference_backend_complete = bool(cells) and backend_matches == len(cells)
+    reference_decode_route_complete = bool(cells) and decode_route_matches == len(cells)
     cells_pass = not red_cells and bool(cells)
-    overall_pass = coverage_complete and reference_backend_complete and cells_pass
+    overall_pass = (
+        coverage_complete
+        and protocol_pass
+        and route_consistency_pass
+        and reference_backend_complete
+        and reference_decode_route_complete
+        and cells_pass
+    )
     return {
         "axis": "qwen35_cross_model_speed_comparison",
+        "protocol": {
+            "matrices": all_matrices,
+            "matrices_by_role": matrices_by_role,
+            "matrix_consistency_pass": matrix_consistency_pass,
+            "qwen_only_matrix": QWEN_ONLY_OPTIMIZED_MATRIX,
+            "qwen_only_matrix_present": qwen_only_matrix_present,
+            "qwen_only_candidate_pass": qwen_only_candidate_pass,
+            "qwen_only_lane_pass": qwen_only_lane_pass,
+            "runtime_gate_required": runtime_gate_required,
+            "runtime_fields": list(RUNTIME_FIELDS),
+            "runtime_fields_complete": runtime_fields_complete,
+            "runtime_signature_count": len(runtime_signatures),
+            "runtime_consistency_pass": runtime_consistency_pass,
+            "repository_commits_by_role": repository_commits_by_role,
+            "complete": protocol_pass,
+        },
         "coverage": {
             "expected_cells": expected,
             "joined_cells": len(joined_keys),
@@ -564,6 +799,7 @@ def compare(
             "require_quant_not_slower_than_dense": require_quant_not_slower_than_dense,
             "allow_quant_total_not_slower_than_dense": allow_quant_total_not_slower_than_dense,
             "required_reference_backend": required_reference_backend,
+            "required_reference_decode_route": required_reference_decode_route,
             "require_memory_not_larger": require_memory_not_larger,
             "min_active_parameter_throughput_ratio": min_active_parameter_throughput_ratio,
             "min_prefill_active_parameter_throughput_ratio": prefill_active_work_gate,
@@ -576,6 +812,33 @@ def compare(
             "total_cells": len(cells),
             "complete": reference_backend_complete,
         },
+        "reference_decode_route": {
+            "required": required_reference_decode_route,
+            "matching_cells": decode_route_matches,
+            "total_cells": len(cells),
+            "complete": reference_decode_route_complete,
+        },
+        "routes_by_model": reference_routes_by_model(rows),
+        "route_consistency": {
+            "routes_by_model": reference_routes_by_model(rows),
+            "reference_cells_by_model": {
+                model: reference_cells_by_model[model]
+                for model in sorted(reference_cells_by_model, key=model_size_sort_key)
+            },
+            "unique_route_per_model_pass": unique_reference_routes_pass,
+            "optimized_routes_pass": optimized_routes_pass,
+            "complete_optimized_reference_required": (
+                complete_optimized_reference_required
+            ),
+            "optimized_reference_cells_per_model": (
+                12 if complete_optimized_reference_required else None
+            ),
+            "optimized_reference_shape_pass": optimized_reference_shape_pass,
+            "complete": route_consistency_pass,
+        },
+        "unified_main_table_eligible": bool(
+            overall_pass and not qwen_only_matrix_present
+        ),
         "speed": {
             "min_prefill_speedup": min(prefill_ratios) if prefill_ratios else None,
             "median_prefill_speedup": median_or_none(prefill_ratios),
@@ -661,16 +924,24 @@ def compare(
             "candidate": [key_dict(key) for key in missing_candidate],
             "reference": [key_dict(key) for key in missing_reference],
         },
+        "duplicates": duplicates,
         "red_cells": red_cells,
         "cells": cells,
         "gates": {
             "coverage_pass": coverage_complete,
+            "duplicate_free_pass": not duplicates,
+            "protocol_pass": protocol_pass,
+            "matrix_consistency_pass": matrix_consistency_pass,
+            "runtime_consistency_pass": runtime_consistency_pass,
+            "qwen_only_candidate_pass": qwen_only_candidate_pass,
+            "route_consistency_pass": route_consistency_pass,
             "speed_pass": ratios_pass,
             "backend_pass": backend_failures == 0,
             "quant_memory_pass": memory_failures == 0,
             "prefill_mode_pass": prefill_mode_failures == 0,
             "quant_dense_speed_pass": quant_dense_speed_failures == 0,
             "reference_backend_pass": reference_backend_complete,
+            "reference_decode_route_pass": reference_decode_route_complete,
             "memory_pass": all(cell["memory_pass"] for cell in cells) and bool(cells),
             "active_parameter_work_pass": active_parameter_work_failures == 0 and bool(cells),
             "active_parameter_efficiency_pass": (
@@ -693,6 +964,7 @@ def fmt(value: Any, digits: int = 3) -> str:
 def render_markdown(summary: dict[str, Any]) -> str:
     coverage = summary["coverage"]
     backend = summary["reference_backend"]
+    decode_route = summary["reference_decode_route"]
     speed = summary["speed"]
     memory = summary["memory"]
     active = summary["active_parameter_work"]
@@ -714,6 +986,9 @@ def render_markdown(summary: dict[str, Any]) -> str:
         "",
         f"Required Qwen backend: `{backend['required']}`; verified: "
         f"`{backend['matching_cells']}/{backend['total_cells']}` cells.",
+        "",
+        f"Required Qwen decode route: `{decode_route['required']}`; verified: "
+        f"`{decode_route['matching_cells']}/{decode_route['total_cells']}` cells.",
         "",
         f"Required Qwen full fusion: `{str(full_fused_required).lower()}`; verified: "
         f"`{full_fused_cells}/{backend['total_cells']}` cells.",
@@ -859,6 +1134,11 @@ def main() -> int:
     ap.add_argument("--require-quant-not-slower-than-dense", action="store_true")
     ap.add_argument("--allow-quant-total-not-slower-than-dense", action="store_true")
     ap.add_argument("--required-reference-backend", choices=["fla", "torch", "any"], default="fla")
+    ap.add_argument(
+        "--required-reference-decode-route",
+        choices=REFERENCE_DECODE_ROUTE_CHOICES,
+        default="any",
+    )
     ap.add_argument("--require-memory-not-larger", action="store_true")
     ap.add_argument("--min-active-parameter-throughput-ratio", type=float, default=None)
     ap.add_argument("--min-prefill-active-parameter-throughput-ratio", type=float, default=None)
@@ -884,6 +1164,7 @@ def main() -> int:
         require_quant_not_slower_than_dense=args.require_quant_not_slower_than_dense,
         allow_quant_total_not_slower_than_dense=args.allow_quant_total_not_slower_than_dense,
         required_reference_backend=args.required_reference_backend,
+        required_reference_decode_route=args.required_reference_decode_route,
         require_memory_not_larger=args.require_memory_not_larger,
         min_active_parameter_throughput_ratio=args.min_active_parameter_throughput_ratio,
         min_prefill_active_parameter_throughput_ratio=(

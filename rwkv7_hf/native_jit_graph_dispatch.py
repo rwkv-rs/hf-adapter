@@ -14,7 +14,7 @@ import torch
 import torch.nn.functional as F
 
 
-_OWNED_NAMES = {'_native_graph_fused_recurrent_raw_enabled', '_native_graph_fused_recurrent_raw_num_warps', '_native_graph_linear_dispatch', '_native_graph_fused_output_project_block_m', '_native_graph_ada_sparse_ffn_enabled', '_native_graph_ada_linear_should_route', '_native_graph_fused_wavg_lora_blocks', '_native_graph_blackwell_norm_mix_enabled', '_native_graph_rkv_project', '_native_graph_ada_wagv_bmm_enabled', '_native_graph_ada_wagv_lora_enabled', '_native_graph_fused_recurrent_output_enabled', '_native_graph_fp16_recurrent_enabled', '_native_graph_fused_wag_lora_blocks', '_native_graph_vkwr_rkv_dispatch', '_native_graph_ffn_dispatch', '_native_graph_fused_projection_enabled', '_native_graph_ada_wag_lora_enabled', '_native_graph_int_env', '_native_graph_fused_output_project_enabled', '_native_graph_ffn_down_add_dispatch', 'prewarm_ada_sparse_ffn', '_native_graph_fused_wavg_lora_enabled', '_native_graph_ffn_up_relu2_dispatch', '_native_graph_sm70_linear_enabled', '_native_graph_fused_wavg_lora_num_warps', '_native_graph_fused_output_enabled', '_native_graph_fused_norm_mix_num_warps', '_native_graph_fused_norm_mix_enabled', '_native_graph_fused_wag_lora_enabled', '_native_graph_rkv_policy', '_native_graph_ada_linear_enabled', '_native_graph_sm70_wagv_lora_enabled'} | {"bind_runtime", "_facade_value"}
+_OWNED_NAMES = {'_native_graph_fused_recurrent_raw_enabled', '_native_graph_fused_recurrent_raw_num_warps', '_native_graph_linear_dispatch', '_native_graph_fused_output_project_block_m', '_native_graph_ada_sparse_ffn_enabled', '_native_graph_ada_linear_should_route', '_native_graph_fused_wavg_lora_blocks', '_native_graph_blackwell_norm_mix_enabled', '_native_graph_rkv_project', '_native_graph_ada_wagv_bmm_requested', '_native_graph_ada_wagv_bmm_enabled', '_native_graph_sm120_wagv_bmm_g_requested', '_native_graph_sm120_wagv_bmm_g_enabled', '_native_graph_sm120_compiled_ffn_requested', '_native_graph_ada_wagv_lora_enabled', '_native_graph_fused_recurrent_output_enabled', '_native_graph_fp16_recurrent_enabled', '_native_graph_fused_wag_lora_blocks', '_native_graph_vkwr_rkv_dispatch', '_native_graph_ffn_dispatch', '_native_graph_fused_projection_enabled', '_native_graph_ada_wag_lora_enabled', '_native_graph_int_env', '_native_graph_fused_output_project_enabled', '_native_graph_ffn_down_add_dispatch', 'prewarm_ada_sparse_ffn', 'prewarm_sm120_compiled_ffn', '_native_graph_fused_wavg_lora_enabled', '_native_graph_ffn_up_relu2_dispatch', '_native_graph_sm70_linear_enabled', '_native_graph_fused_wavg_lora_num_warps', '_native_graph_fused_output_enabled', '_native_graph_fused_norm_mix_num_warps', '_native_graph_fused_norm_mix_enabled', '_native_graph_fused_wag_lora_enabled', '_native_graph_rkv_policy', '_native_graph_ada_linear_enabled', '_native_graph_sm70_wagv_lora_enabled'} | {"bind_runtime", "_facade_value"}
 
 
 def bind_runtime(runtime: dict[str, object]) -> None:
@@ -356,12 +356,8 @@ def _native_graph_ada_wagv_lora_enabled(rows: int, hidden_size: int, max_rank: i
     )
 
 
-def _native_graph_ada_wagv_bmm_enabled(
-    rows: int,
-    hidden_size: int,
-    max_rank: int,
-) -> bool:
-    """Whether the exact sm89 B8 tensor-core LoRA route is enabled."""
+def _native_graph_ada_wagv_bmm_requested() -> bool:
+    """Return the raw environment-or-policy request for grouped B8 BMM."""
 
     policy = _kernel_policy()
     return bool(
@@ -369,10 +365,70 @@ def _native_graph_ada_wagv_bmm_enabled(
             "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM",
             bool(getattr(policy, "ada_wagv_bmm", False)),
         )
+    )
+
+
+def _native_graph_ada_wagv_bmm_enabled(
+    rows: int,
+    hidden_size: int,
+    max_rank: int,
+    device=None,
+) -> bool:
+    """Whether the device-aware sm89/sm120 B8 BMM route is selected."""
+
+    return bool(
+        _native_graph_ada_wagv_bmm_requested()
         and ada_wagv_bmm is not None
+        and ada_wagv_bmm_available is not None
+        and ada_wagv_bmm_available(device)
         and ada_wagv_bmm_should_use is not None
         and ada_wagv_bmm_should_use(int(rows), int(hidden_size), int(max_rank))
     )
+
+
+def _native_graph_sm120_wagv_bmm_g_requested() -> bool:
+    """Return the explicit request for the SM120 all-W/A/G/V route.
+
+    This experiment deliberately has no kernel-policy default. Exact-card
+    evidence must promote it separately after full-horizon validation.
+    """
+
+    return bool(env_flag("RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G", False))
+
+
+def _native_graph_sm120_wagv_bmm_g_enabled(
+    rows: int,
+    hidden_size: int,
+    max_rank: int,
+    device=None,
+) -> bool:
+    """Select the complete SM120 padded-BMM plus fused-epilogue route."""
+
+    return bool(
+        _native_graph_sm120_wagv_bmm_g_requested()
+        and _native_graph_ada_wagv_bmm_enabled(
+            rows, hidden_size, max_rank, device
+        )
+        and sm120_wagv_bmm_g_available is not None
+        and sm120_wagv_bmm_g_available(device)
+        and sm120_wagv_bmm_g_should_use is not None
+        and sm120_wagv_bmm_g_should_use(
+            int(rows), int(hidden_size), int(max_rank)
+        )
+    )
+
+
+def _native_graph_sm120_compiled_ffn_requested() -> bool:
+    """Return the explicit-or-policy request for the compiled dense FFN."""
+
+    policy = _kernel_policy()
+    return bool(
+        env_flag(
+            "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN",
+            bool(getattr(policy, "sm120_compiled_ffn", False)),
+        )
+    )
+
 
 def _native_graph_ada_wag_lora_enabled() -> bool:
     """Whether the exact-card W/A/G-only low-rank route may be captured."""
@@ -483,11 +539,34 @@ def _native_graph_ffn_dispatch(
     residual: torch.Tensor,
     *,
     sparse_out: torch.Tensor | None = None,
+    route_observer=None,
+    layer_index: int | None = None,
 ) -> torch.Tensor:
     """Route the complete FFN boundary so sparse kernels can avoid ReLU² IO."""
 
     rows = 1 if x.dim() == 1 else int(x.shape[0])
     outputs, inputs = _graph_linear_shape(down_weight)
+    if _native_graph_sm120_compiled_ffn_requested():
+        if layer_index is None:
+            raise RuntimeError(
+                "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN=1 requires a layer-indexed "
+                "native-graph runner; eager fallback is forbidden"
+            )
+        if (
+            not _graph_linear_is_dense(up_weight)
+            or not _graph_linear_is_dense(down_weight)
+            or sm120_compiled_ffn is None
+        ):
+            raise RuntimeError(
+                "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN=1 requires the compiled "
+                "dense FFN implementation and dense weights; fallback is forbidden"
+            )
+        if route_observer is not None:
+            route_observer("sm120_compiled_ffn_selected", int(layer_index))
+        result = sm120_compiled_ffn(x, up_weight, down_weight, residual)
+        if route_observer is not None:
+            route_observer("sm120_compiled_ffn_effective", int(layer_index))
+        return result
     if (
         _graph_linear_is_dense(up_weight)
         and _graph_linear_is_dense(down_weight)
@@ -528,6 +607,8 @@ def prewarm_ada_sparse_ffn(packs, rows: int = 1) -> int:
     shape a stable read-only operand before its independent graph is captured.
     """
 
+    if _native_graph_sm120_compiled_ffn_requested():
+        return 0
     max_rows = env_int(
         "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_MAX_ROWS",
         int(getattr(_kernel_policy(), "ada_sparse_ffn_max_rows", 19)),
@@ -572,6 +653,19 @@ def prewarm_ada_sparse_ffn(packs, rows: int = 1) -> int:
             ada_sparse_ffn_prepare_deterministic_scratch(down_weight, int(rows))
         packed += 1
     return packed
+
+
+def prewarm_sm120_compiled_ffn(packs, rows: int = 1):
+    """Prepare every layer before raw graph capture, with no fallback."""
+
+    if not _native_graph_sm120_compiled_ffn_requested():
+        return None
+    if prepare_sm120_compiled_ffn is None:
+        raise RuntimeError(
+            "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN=1 was requested, but the "
+            "compiled FFN module is unavailable; fallback is forbidden"
+        )
+    return prepare_sm120_compiled_ffn(packs, int(rows))
 
 def _native_graph_rkv_policy() -> str:
     """Return the optional VKWR-inspired R/K/V projection dispatch policy.
@@ -761,3 +855,11 @@ def _native_graph_fused_wavg_lora_num_warps(rows: int = 1) -> int:
     return value
 
 __all__ = ['_native_graph_fused_recurrent_output_enabled', '_native_graph_fused_recurrent_raw_enabled', '_native_graph_fused_recurrent_raw_num_warps', '_native_graph_fp16_recurrent_enabled', '_native_graph_fused_output_enabled', '_native_graph_fused_output_project_enabled', '_native_graph_fused_output_project_block_m', '_native_graph_fused_projection_enabled', '_native_graph_fused_wag_lora_enabled', '_native_graph_sm70_wagv_lora_enabled', '_native_graph_fused_wavg_lora_enabled', '_native_graph_fused_norm_mix_enabled', '_native_graph_fused_norm_mix_num_warps', '_native_graph_blackwell_norm_mix_enabled', '_native_graph_sm70_linear_enabled', '_native_graph_ada_sparse_ffn_enabled', '_native_graph_ada_linear_enabled', '_native_graph_ada_linear_should_route', '_native_graph_ada_wagv_lora_enabled', '_native_graph_ada_wag_lora_enabled', '_native_graph_linear_dispatch', '_native_graph_ffn_up_relu2_dispatch', '_native_graph_ffn_down_add_dispatch', '_native_graph_ffn_dispatch', 'prewarm_ada_sparse_ffn', '_native_graph_rkv_policy', '_native_graph_int_env', '_native_graph_vkwr_rkv_dispatch', '_native_graph_rkv_project', '_native_graph_fused_wag_lora_blocks', '_native_graph_fused_wavg_lora_blocks', '_native_graph_fused_wavg_lora_num_warps']
+__all__.extend([
+    "_native_graph_ada_wagv_bmm_requested",
+    "_native_graph_ada_wagv_bmm_enabled",
+    "_native_graph_sm120_wagv_bmm_g_requested",
+    "_native_graph_sm120_wagv_bmm_g_enabled",
+    "_native_graph_sm120_compiled_ffn_requested",
+    "prewarm_sm120_compiled_ffn",
+])

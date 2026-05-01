@@ -11,6 +11,7 @@ from bench.bench_native_prefill_accum_ab import (
     mode_flags,
     model_shape_spec,
     route_effective_matches,
+    shape_tokens_for_prefill,
     sweep_orders,
 )
 
@@ -56,6 +57,12 @@ def test_model_shape_spec_is_deterministic() -> None:
     )
 
 
+def test_chunk_size_is_added_to_exact_shape_allowlist() -> None:
+    assert shape_tokens_for_prefill([2048], 512) == [2048, 512]
+    assert shape_tokens_for_prefill([128, 512, 2048], 512) == [128, 512, 2048]
+    assert shape_tokens_for_prefill([2048], 0) == [2048]
+
+
 def test_direct_script_entrypoint_resolves_bench_package() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     env = os.environ.copy()
@@ -75,3 +82,5 @@ def test_direct_script_entrypoint_resolves_bench_package() -> None:
     )
     assert completed.returncode == 0, completed.stderr
     assert "Paired same-process A/B" in completed.stdout
+    assert "--no-prefill-graph" in completed.stdout
+    assert "--prefill-chunk-size" in completed.stdout

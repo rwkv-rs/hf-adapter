@@ -37,6 +37,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--steps", type=int, default=30)
+    parser.add_argument(
+        "--prefill-graph",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable Prefill CUDA Graph capture; use --no-prefill-graph for memory-bound shapes.",
+    )
+    parser.add_argument(
+        "--prefill-chunk-size",
+        type=int,
+        default=0,
+        help="Use rwkv7_prefill_chunks when this is between zero and the prompt length.",
+    )
     parser.add_argument("--min-cosine", type=float, default=0.9999)
     parser.add_argument("--code-source", choices=("model", "repo"), default="repo")
     parser.add_argument("--results", default="")
@@ -128,6 +140,21 @@ def model_shape_spec(
     )
 
 
+def shape_tokens_for_prefill(
+    prompt_tokens: list[int],
+    prefill_chunk_size: int,
+) -> list[int]:
+    tokens = list(dict.fromkeys(int(token) for token in prompt_tokens))
+    chunk_size = int(prefill_chunk_size)
+    if (
+        chunk_size > 0
+        and chunk_size not in tokens
+        and any(chunk_size < token for token in tokens)
+    ):
+        tokens.append(chunk_size)
+    return tokens
+
+
 def _cosine_min(left: torch.Tensor, right: torch.Tensor) -> float:
     return float(F.cosine_similarity(left.float(), right.float(), dim=-1).min())
 
@@ -141,17 +168,33 @@ def _cuda_sync(device: str) -> None:
         torch.cuda.synchronize()
 
 
-def _timed_call(model, ids: torch.Tensor, device: str) -> tuple[Any, float]:
+def _prefill_call(model, ids: torch.Tensor, prefill_chunk_size: int):
+    if 0 < int(prefill_chunk_size) < int(ids.shape[1]):
+        return model.rwkv7_prefill_chunks(
+            ids,
+            chunk_size=int(prefill_chunk_size),
+            logits_to_keep=1,
+            return_dict=True,
+        )
+    return model.rwkv7_prefill_native(ids, logits_to_keep=1, return_dict=True)
+
+
+def _timed_call(
+    model,
+    ids: torch.Tensor,
+    device: str,
+    prefill_chunk_size: int,
+) -> tuple[Any, float]:
     if device.startswith("cuda"):
         begin = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
         begin.record()
-        output = model.rwkv7_prefill_native(ids, logits_to_keep=1, return_dict=True)
+        output = _prefill_call(model, ids, prefill_chunk_size)
         end.record()
         end.synchronize()
         return output, float(begin.elapsed_time(end))
     started = time.perf_counter()
-    output = model.rwkv7_prefill_native(ids, logits_to_keep=1, return_dict=True)
+    output = _prefill_call(model, ids, prefill_chunk_size)
     return output, (time.perf_counter() - started) * 1000.0
 
 
@@ -163,6 +206,7 @@ def _capture_mode(
     device: str,
     warmup: int,
     steps: int,
+    prefill_chunk_size: int,
 ) -> dict[str, Any]:
     global_flag, block_flag = mode_flags(mode)
     previous = {
@@ -181,12 +225,17 @@ def _capture_mode(
             torch.cuda.reset_peak_memory_stats()
         with torch.inference_mode():
             for _ in range(warmup):
-                model.rwkv7_prefill_native(ids, logits_to_keep=1, return_dict=True)
+                _prefill_call(model, ids, prefill_chunk_size)
             _cuda_sync(device)
             times: list[float] = []
             output = None
             for _ in range(steps):
-                output, elapsed = _timed_call(model, ids, device)
+                output, elapsed = _timed_call(
+                    model,
+                    ids,
+                    device,
+                    prefill_chunk_size,
+                )
                 times.append(elapsed)
             assert output is not None
             prompt_logits = output.logits[:, -1].detach().float().cpu().clone()
@@ -258,10 +307,15 @@ def main() -> int:
             hidden_size,
             num_layers,
             args.batch_sizes,
-            args.prompt_tokens,
+            shape_tokens_for_prefill(
+                args.prompt_tokens,
+                args.prefill_chunk_size,
+            ),
         )
         os.environ["RWKV7_FAST_PREFILL"] = "1"
-        os.environ["RWKV7_NATIVE_PREFILL_GRAPH"] = "1"
+        os.environ["RWKV7_NATIVE_PREFILL_GRAPH"] = (
+            "1" if args.prefill_graph else "0"
+        )
         os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "native_graph"
         os.environ["RWKV7_NATIVE_PREFILL_GLOBAL_FP16_ACCUM_MODEL_SHAPES"] = shapes
         os.environ["RWKV7_NATIVE_PREFILL_BLOCK_FP16_ACCUM_MODEL_SHAPES"] = shapes
@@ -279,6 +333,7 @@ def main() -> int:
                             device=args.device,
                             warmup=args.warmup,
                             steps=args.steps,
+                            prefill_chunk_size=args.prefill_chunk_size,
                         )
                         for mode in order
                     }
@@ -339,6 +394,8 @@ def main() -> int:
                             "num_hidden_layers": num_layers,
                             "batch_size": batch_size,
                             "prompt_tokens": prompt_tokens,
+                            "prefill_graph": args.prefill_graph,
+                            "prefill_chunk_size": args.prefill_chunk_size,
                             "order_index": order_index,
                             "order": list(order),
                             "mode": mode,

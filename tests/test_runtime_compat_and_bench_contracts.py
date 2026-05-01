@@ -119,3 +119,14 @@ def test_blackwell_compile_workaround_does_not_patch_ada_in_same_process(monkeyp
     monkeypatch.delenv("TORCH_COMPILE_DISABLE", raising=False)
     assert triton_compat.maybe_disable_blackwell_torch_compile() is False
     assert fake_torch.compile is original_compile
+
+
+def test_sm120_compiled_ffn_opt_in_preserves_torch_compile(monkeypatch) -> None:
+    original_compile = object()
+    fake_torch = types.SimpleNamespace(compile=original_compile)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN", "1")
+    monkeypatch.delenv("TORCH_COMPILE_DISABLE", raising=False)
+    assert triton_compat.maybe_disable_blackwell_torch_compile() is False
+    assert fake_torch.compile is original_compile
+    assert "TORCH_COMPILE_DISABLE" not in __import__("os").environ

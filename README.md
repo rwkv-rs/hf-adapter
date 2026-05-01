@@ -145,6 +145,7 @@ routes. These are promoted, evidence-backed profiles rather than universal
 claims for unmeasured products or shapes.
 
 Representative promoted evidence:
+> **Qwen3.5 comparator reset (2026-08-12):** historical rows below are excluded from the new main table; new RTX 3090/4090/5090 rows require one locked runtime, official FLA plus Dao-AILab `causal_conv1d`, and the RWKV `native_jit` no-CUDA-Graph fair lane. See the [unified protocol](docs/QWEN35_SPEED_COMPARISON.md).
 
 | Scope | Evidence |
 |---|---|

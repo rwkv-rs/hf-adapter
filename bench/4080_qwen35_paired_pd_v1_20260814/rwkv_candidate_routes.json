@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "protocol": "qwen35_paired_pd_v1",
+  "benchmark_repository_commit": "398277d94e1d1dc441af97dea0578b87fa072f74",
+  "repository_clean_pre_and_post": true,
+  "candidate_rows": 36,
+  "candidate_result": {
+    "path": "/home/wzu/wangyue/benchmarks/4080-qwen35-strict-v2-formal-398277d/rwkv_candidate.jsonl",
+    "sha256": "4c4359a6cd379d01bf009e503d9f67a5ffb141bb2c4e2c962be0a9029b2edb5a"
+  },
+  "candidate_sha256_sidecar": {
+    "path": "/home/wzu/wangyue/benchmarks/4080-qwen35-strict-v2-formal-398277d/rwkv_candidate.sha256",
+    "sha256": "7ebbc8801e997d4f07ef6f6e27dfe9c928c2670f16b3a63db69181aaa4d4a292"
+  },
+  "model_hash_contract": {
+    "algorithm": "sha256",
+    "scope": "every recursive regular file",
+    "before": {
+      "path": "/home/wzu/wangyue/benchmarks/4080-qwen35-strict-v2-formal-398277d/model_hashes.sha256",
+      "sha256": "464c946e5c2841825809a1fdebc725dbd1f14ffd1767c409a062cbec12d16add"
+    },
+    "after": {
+      "path": "/home/wzu/wangyue/benchmarks/4080-qwen35-strict-v2-formal-398277d/model_hashes.after.sha256",
+      "sha256": "464c946e5c2841825809a1fdebc725dbd1f14ffd1767c409a062cbec12d16add"
+    },
+    "byte_identical": true
+  },
+  "native_graph_fla_correctness_manifest": {
+    "path": "/home/wzu/wangyue/benchmarks/4080-qwen35-strict-v2-formal-398277d/rwkv_native_graph_fla_correctness.json",
+    "sha256": "f1eb7bc2cd635fbab07b4b11ec826766984c8e4c596450d71e7b989a47f3c098"
+  },
+  "runtime_lock": {
+    "path": "/home/wzu/wangyue/benchmarks/4080-qwen35-strict-v2-formal-398277d/runtime-lock.json",
+    "sha256": "1761daf346b5e2c60847e82df6a739cd74739d1a452e9a622b1dc7210c213882"
+  },
+  "pip_freeze": {
+    "path": "/home/wzu/wangyue/benchmarks/4080-qwen35-strict-v2-formal-398277d/pip-freeze.txt",
+    "sha256": "ea548d0bbb07d409979ec5c608f6107e5e6e0cec5287884160ac3c69abcd2740"
+  },
+  "system_identity": {
+    "path": "/home/wzu/wangyue/benchmarks/4080-qwen35-strict-v2-formal-398277d/system.csv",
+    "sha256": "702e0b5990cef6bd9f433ac08179496c866df4d9c707f9865ae5f7fc939c5ba7"
+  },
+  "forced_environment": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
+    "PYTHONPATH": "/home/wzu/wangyue/worktrees/rwkv7-hf-4080-strict-v2-398277d",
+    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    "TORCH_CUDA_ARCH_LIST": "8.9",
+    "CPATH": "/home/wzu/anaconda3/lib/python3.12/site-packages/nvidia/cu13/include",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "TOKENIZERS_PARALLELISM": "false",
+    "RWKV7_FAST_TOKEN_BACKEND": "native_graph",
+    "RWKV7_NATIVE_MODEL_BACKEND": "native_graph",
+    "RWKV7_NATIVE_PREFILL_GRAPH": "unset_exact_card_policy",
+    "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA_REQUIRE_EXTENSION": "1_for_B1_0_for_B8",
+    "RWKV7_NATIVE_GRAPH_RKV_POLICY": "vkwr_auto_except_2p9_B8_manual",
+    "RWKV7_NATIVE_GRAPH_ADA_WAGV_BMM": "1",
+    "RWKV7_NATIVE_GRAPH_SM120_WAGV_BMM_G": "0",
+    "RWKV7_NATIVE_GRAPH_SM120_COMPILED_FFN": "0",
+    "CACHE_ROOT": "/home/wzu/.cache/rwkv-qwen35-4080-strict-v2/formal-398277d/rwkv"
+  },
+  "lanes": [
+    {
+      "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+      "batch_size": 1,
+      "artifact": {
+        "path": "/home/wzu/wangyue/benchmarks/4080-qwen35-strict-v2-formal-398277d/rwkv_0p4_b1.jsonl",
+        "sha256": "116ac3d6411e96bd4c016fed479568fdd2bc74a8b083113db0a394c13bf2de2e"
+      },
+      "rows": 6,
+      "probe_cell": [
+        1,
+        2048,
+        512
+      ],
+      "ada_wagv_lora_require_extension": true,
+      "rkv_policy": "vkwr_auto"
+    },
+    {
+      "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+      "batch_size": 8,
+      "artifact": {
+        "path": "/home/wzu/wangyue/benchmarks/4080-qwen35-strict-v2-formal-398277d/rwkv_0p4_b8.jsonl",
+        "sha256": "7c2baecc5c1ebf6942dc899f75ba603913bdcdd51122b1f8d5c6296762a5d97e"
+      },
+      "rows": 6,
+      "probe_cell": [
+        8,
+        2048,
+        512
+      ],
+      "ada_wagv_lora_require_extension": false,
+      "rkv_policy": "vkwr_auto"
+    },
+    {
+      "model_pair": "rwkv-1.5b__qwen3.5-2b",
+      "batch_size": 1,
+      "artifact": {
+        "path": "/home/wzu/wangyue/benchmarks/4080-qwen35-strict-v2-formal-398277d/rwkv_1p5_b1.jsonl",
+        "sha256": "e65bfd3814b2d67c8453d1cef8dd106ac48a6755f899e345a3c13d1704852766"
+      },
+      "rows": 6,
+      "probe_cell": [
+        1,
+        2048,
+        512
+      ],
+      "ada_wagv_lora_require_extension": true,
+      "rkv_policy": "vkwr_auto"
+    },
+    {
+      "model_pair": "rwkv-1.5b__qwen3.5-2b",
+      "batch_size": 8,
+      "artifact": {
+        "path": "/home/wzu/wangyue/benchmarks/4080-qwen35-strict-v2-formal-398277d/rwkv_1p5_b8.jsonl",
+        "sha256": "fb27bdcb989883d0bf506136b1dd3203e965ba542390ad1b1d43d7f9c55a68bf"
+      },
+      "rows": 6,
+      "probe_cell": [
+        8,
+        2048,
+        512
+      ],
+      "ada_wagv_lora_require_extension": false,
+      "rkv_policy": "vkwr_auto"
+    },
+    {
+      "model_pair": "rwkv-2.9b__qwen3.5-4b",
+      "batch_size": 1,
+      "artifact": {
+        "path": "/home/wzu/wangyue/benchmarks/4080-qwen35-strict-v2-formal-398277d/rwkv_2p9_b1.jsonl",
+        "sha256": "74091bf7f8e9f85910583049d4d6dcacd4ecbe3b168eb8835804f7982ce14daf"
+      },
+      "rows": 6,
+      "probe_cell": [
+        1,
+        2048,
+        512
+      ],
+      "ada_wagv_lora_require_extension": true,
+      "rkv_policy": "vkwr_auto"
+    },
+    {
+      "model_pair": "rwkv-2.9b__qwen3.5-4b",
+      "batch_size": 8,
+      "artifact": {
+        "path": "/home/wzu/wangyue/benchmarks/4080-qwen35-strict-v2-formal-398277d/rwkv_2p9_b8.jsonl",
+        "sha256": "17891d49e406cf5f474b769f80f148b7157864d719c7891d89b321d441b4ddb0"
+      },
+      "rows": 6,
+      "probe_cell": [
+        8,
+        2048,
+        512
+      ],
+      "ada_wagv_lora_require_extension": false,
+      "rkv_policy": "manual"
+    }
+  ]
+}
