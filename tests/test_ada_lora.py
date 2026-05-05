@@ -56,7 +56,7 @@ def test_bmm_device_policy_is_exact_capability_gated(
     [
         ((12, 0), True, True),
         ((12, 0), False, False),
-        ((8, 9), True, False),
+        ((8, 9), True, True),
         ((12, 1), True, False),
     ],
 )
@@ -457,11 +457,11 @@ def test_sm120_b8_bmm_g_zero_copy_cuda_matches_fallback(
     compute_v: bool,
 ) -> None:
     if not torch.cuda.is_available():
-        pytest.skip("CUDA is required for the exact-SM120 W/A/G/V route")
-    if torch.cuda.get_device_capability() != (12, 0):
-        pytest.skip("exact sm_120 GPU is required for the W/A/G/V route")
+        pytest.skip("CUDA is required for the exact-SM89/SM120 W/A/G/V route")
+    if torch.cuda.get_device_capability() not in {(8, 9), (12, 0)}:
+        pytest.skip("exact sm_89 or sm_120 GPU is required for the W/A/G/V route")
     if not sm120_wagv_bmm_g_available("cuda"):
-        pytest.skip("exact-SM120 W/A/G/V Triton epilogues are unavailable")
+        pytest.skip("exact-SM89/SM120 W/A/G/V Triton epilogues are unavailable")
 
     rows, hidden = 8, 1024
     ranks = (64, 64, 128, 32)

@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "protocol": "rwkv_native_graph_fla_correctness_4090_v2",
+  "benchmark_repository_commit": "9b2bde5060c92d39acbb6ef58706dfd7c8a84264",
+  "model_hashes_sha256": "02a949a90f30d165c648336c39bea487083c2b28ecabf0b4744d8b719848e09c",
+  "entries": [
+    {
+      "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "decode_tokens": 512,
+      "probe_tokens": 512,
+      "fla_probe": {
+        "path": "decode_correctness_0p4_b1_fla_eager_smoke.pt",
+        "sha256": "f2ecd17cdee8480bd924b4b96f1b4c1f8f239cfbd10a7be8a95ab2e6596a67ec"
+      },
+      "native_probe": {
+        "path": "decode_correctness_0p4_b1_native.pt",
+        "sha256": "461b1da45d83901017a1a13462a2d0696cf5b18267b07d01ee5952275cd2d4e7"
+      },
+      "comparison": {
+        "path": "decode_correctness_0p4_b1_compare_final.json",
+        "sha256": "eef3fd252700b892f44449cd19212694b16e5da34ea915c0ef15f801ad838a19"
+      },
+      "status": "pass"
+    },
+    {
+      "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+      "batch_size": 8,
+      "prompt_tokens": 2048,
+      "decode_tokens": 512,
+      "probe_tokens": 512,
+      "fla_probe": {
+        "path": "decode_correctness_0p4_b8_fla_eager.pt",
+        "sha256": "90632eaec9064ab8b7983c751f54725b92037f0b389a3e4c1e560b6e3b88fd00"
+      },
+      "native_probe": {
+        "path": "decode_correctness_0p4_b8_native.pt",
+        "sha256": "c127992e3a2203235bb6464866bf01cdf1c362607a57b99f67c81584ef0e78ec"
+      },
+      "comparison": {
+        "path": "decode_correctness_0p4_b8_compare_final.json",
+        "sha256": "69dfbb177fc93b4775db6479a47b4cf2df8e453f8b7bffb68662796a088996ae"
+      },
+      "status": "pass"
+    },
+    {
+      "model_pair": "rwkv-1.5b__qwen3.5-2b",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "decode_tokens": 512,
+      "probe_tokens": 512,
+      "fla_probe": {
+        "path": "decode_correctness_1p5_b1_fla_eager.pt",
+        "sha256": "f4dee5af5bc94e8f0d9b8fe94a749d0aff69de273c315a360a3fbccb1cfaaab9"
+      },
+      "native_probe": {
+        "path": "decode_correctness_1p5_b1_native.pt",
+        "sha256": "31060db0a9862b452efcfc888a57a7a719db910c7a222cee9d868ed9b57cb455"
+      },
+      "comparison": {
+        "path": "decode_correctness_1p5_b1_compare_final.json",
+        "sha256": "911935483db81f268b9a39e2c8d2d248eddddfe307df7f32d1e4b7fda091dae3"
+      },
+      "status": "pass"
+    },
+    {
+      "model_pair": "rwkv-1.5b__qwen3.5-2b",
+      "batch_size": 8,
+      "prompt_tokens": 2048,
+      "decode_tokens": 512,
+      "probe_tokens": 512,
+      "fla_probe": {
+        "path": "decode_correctness_1p5_b8_fla_eager.pt",
+        "sha256": "4fe65e27013df9824e8f1fe03814bc1e9237fb9e73b628d04a63a77345649e71"
+      },
+      "native_probe": {
+        "path": "decode_correctness_1p5_b8_native.pt",
+        "sha256": "ae83fa52d71171ea0f56bcf6e4b80d62cbcd35b5706b0187e21176356f485d25"
+      },
+      "comparison": {
+        "path": "decode_correctness_1p5_b8_compare_final.json",
+        "sha256": "26574d6451cbfd2264513de5dbe6266ad839ca1e5c07605a5f6e11fa9b2a7f76"
+      },
+      "status": "pass"
+    },
+    {
+      "model_pair": "rwkv-2.9b__qwen3.5-4b",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "decode_tokens": 512,
+      "probe_tokens": 512,
+      "fla_probe": {
+        "path": "decode_correctness_2p9_b1_fla_eager.pt",
+        "sha256": "78c872e2d0218d99d8321483e0d8cbe844043d4bb22ba001891cd979376bba1b"
+      },
+      "native_probe": {
+        "path": "decode_correctness_2p9_b1_native.pt",
+        "sha256": "aa96a48cf03e405708de67defc60e01da1b5efd2f4d958eebf876ed30d32cffa"
+      },
+      "comparison": {
+        "path": "decode_correctness_2p9_b1_compare_final.json",
+        "sha256": "a7c2da0bf34f5e85b9efbf8054c73fef7a1eccf2702f1d27e758a68ad777d90e"
+      },
+      "status": "pass"
+    },
+    {
+      "model_pair": "rwkv-2.9b__qwen3.5-4b",
+      "batch_size": 8,
+      "prompt_tokens": 2048,
+      "decode_tokens": 512,
+      "probe_tokens": 512,
+      "fla_probe": {
+        "path": "decode_correctness_2p9_b8_fla_eager.pt",
+        "sha256": "654f4ec19cb6fa3e7f4904bec27611fc096cb95bcf7329b35c2f959e6723d65b"
+      },
+      "native_probe": {
+        "path": "decode_correctness_2p9_b8_native.pt",
+        "sha256": "bab1106883aa197c2451429af055d2a0e145cf4f0d212f8649a7fb99c4202b92"
+      },
+      "comparison": {
+        "path": "decode_correctness_2p9_b8_compare_final.json",
+        "sha256": "54ebce7eff30ff34eff14b00890c24fd3df27c4068dacbc89bcfa6aac02f749a"
+      },
+      "status": "pass"
+    },
+    {
+      "model_pair": "rwkv-7.2b__qwen3.5-9b",
+      "batch_size": 1,
+      "prompt_tokens": 2048,
+      "decode_tokens": 512,
+      "probe_tokens": 512,
+      "fla_probe": {
+        "path": "decode_correctness_7p2_b1_fla_eager.pt",
+        "sha256": "f57af2740b2ad82b17762f01cb7448b93b0a7ecc4a700142f912c70bd5502fc4"
+      },
+      "native_probe": {
+        "path": "decode_correctness_7p2_b1_native.pt",
+        "sha256": "ab3de15d014f1a1404382bb35d78380984c78e632c7b80c07e28297df15801f4"
+      },
+      "comparison": {
+        "path": "decode_correctness_7p2_b1_compare_final.json",
+        "sha256": "573ad8c1ecceb04273bd513387fbebddb375a2e9991cb6b1e9c8033142cdee67"
+      },
+      "status": "pass"
+    },
+    {
+      "model_pair": "rwkv-7.2b__qwen3.5-9b",
+      "batch_size": 8,
+      "prompt_tokens": 2048,
+      "decode_tokens": 512,
+      "probe_tokens": 512,
+      "fla_probe": {
+        "path": "decode_correctness_7p2_b8_fla_eager.pt",
+        "sha256": "a807b1ab6b2cc187731e41d4f43529e59136597e1463b6c9a8585926bfc068df"
+      },
+      "native_probe": {
+        "path": "decode_correctness_7p2_b8_native.pt",
+        "sha256": "a4d194963199cecf3d88591fedee66c923fd06613fb39d64f44748168285cada"
+      },
+      "comparison": {
+        "path": "decode_correctness_7p2_b8_compare_final.json",
+        "sha256": "4d39ea591e0f4c0ecb19b43da7c7cafe5de43a0f35a3c96122da8670084af111"
+      },
+      "status": "pass"
+    }
+  ]
+}

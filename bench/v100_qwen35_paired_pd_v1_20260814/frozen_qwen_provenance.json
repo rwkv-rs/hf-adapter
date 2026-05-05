@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "source_directory": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-47ee410",
+  "expected_reference_sha256": "00b81eb0f80d8204069fc69acc5b802d3192b52386055262776e0c9e9ddab5bd",
+  "artifacts": [
+    {
+      "path": "qwen_0p8.jsonl",
+      "sha256": "4e57a63ba533d5971bd10c02662062ce234b16a7e11d44c08e019404fb9163a3"
+    },
+    {
+      "path": "qwen_0p8_model_hashes.sha256",
+      "sha256": "a3d42902797a78745b9686fb59f82f8b6d6758133c7ca6c6f68e67a5eaf68c8e"
+    },
+    {
+      "path": "qwen_0p8_model_hashes.after.sha256",
+      "sha256": "a3d42902797a78745b9686fb59f82f8b6d6758133c7ca6c6f68e67a5eaf68c8e"
+    },
+    {
+      "path": "qwen_0p8_route.json",
+      "sha256": "8ef3caed295168d3cf24e0534c490bca628144b3a2540f155a1c0811dc7b7434"
+    },
+    {
+      "path": "qwen_2b.jsonl",
+      "sha256": "e174b3be9e9070d643c0b2ccb80a40e0ba6ef85da229872dde8f858a519c4505"
+    },
+    {
+      "path": "qwen_2b_model_hashes.sha256",
+      "sha256": "fb086c569cdf1eaa04219b7773271badeeee67bb10b1f7e98130e56889de9d2c"
+    },
+    {
+      "path": "qwen_2b_model_hashes.after.sha256",
+      "sha256": "fb086c569cdf1eaa04219b7773271badeeee67bb10b1f7e98130e56889de9d2c"
+    },
+    {
+      "path": "qwen_2b_route.json",
+      "sha256": "8dcd927d834473800a2c371c803806633eaac5953eaaaa93e35473b5cc0a8939"
+    },
+    {
+      "path": "qwen_4b.jsonl",
+      "sha256": "99b5a06c1082c5107f71837a0e54e2c29aa9baeeafbd54eb839b1a17519603cc"
+    },
+    {
+      "path": "qwen_4b_model_hashes.sha256",
+      "sha256": "5f942a83150b2748ceb099d538dbddbaba1c955f89001f978f5f7dd724622297"
+    },
+    {
+      "path": "qwen_4b_model_hashes.after.sha256",
+      "sha256": "5f942a83150b2748ceb099d538dbddbaba1c955f89001f978f5f7dd724622297"
+    },
+    {
+      "path": "qwen_4b_route.json",
+      "sha256": "b1eb21004096cba0cd1e5d80882819acd033473cfbd0292a8c069a638777c479"
+    },
+    {
+      "path": "qwen_9b.jsonl",
+      "sha256": "19bea4d6de02e39ec5515b51b6e4c5a623909db4d6b567e58721484d71dc12fe"
+    },
+    {
+      "path": "qwen_9b_model_hashes.sha256",
+      "sha256": "6c4538aacc56e6ca8d355ffcec3ca1e8f945e05ebf98435f794ef539a6e24501"
+    },
+    {
+      "path": "qwen_9b_model_hashes.after.sha256",
+      "sha256": "6c4538aacc56e6ca8d355ffcec3ca1e8f945e05ebf98435f794ef539a6e24501"
+    },
+    {
+      "path": "qwen_9b_route.json",
+      "sha256": "b5cf16c89fe22706581e216a6c5d056f114619db493276dd70b2434664324676"
+    }
+  ]
+}

@@ -5,9 +5,10 @@ The CUDA kernels are derived from Albatross faster3a (Apache-2.0).  This
 self-contained lazy extension keeps HF checkpoints in their native layout and
 fuses four low-rank projections without duplicate persistent weights.
 """
+
 from __future__ import annotations
-import os, threading
-from typing import Any
+
+import threading
 
 try:
     from .extension_build import cuda_extension_build_environment
@@ -585,6 +586,7 @@ def sm70_wagv_lora(
     v_first,
     *,
     force_fallback=False,
+    require_extension=False,
 ):
     scalar = xw.dim() == 1
     xs = [q.reshape(1, -1) if scalar else q for q in (xw, xa, xg, xv)]
@@ -601,6 +603,14 @@ def sm70_wagv_lora(
         )
     )
     ext = _load_extension() if valid else None
+    if require_extension and ext is None:
+        detail = _EXTENSION_ERROR or (
+            "the inputs do not satisfy the exact SM70 FP16 inference contract"
+        )
+        raise RuntimeError(
+            "the SM70 W/A/G/V extension was required, but it was not available; "
+            f"fallback is forbidden: {detail}"
+        )
     if ext is None:
         ww = F.linear(torch.tanh(F.linear(xs[0], w1)), w2, w0)
         aa = F.linear(F.linear(xs[1], a1), a2, a0)

@@ -88,7 +88,9 @@ def main() -> int:
         "v100_exact_card_20260811",
         "3090_g1i_qwen35_prefill_pd_20260812",
         "3090_g1i_qwen35_maxperf_20260812",
+        "4090_qwen35_paired_pd_v2_20260815",
         "4080_qwen35_paired_pd_v1_20260814",
+        "v100_qwen35_paired_pd_v1_20260814",
         "5090_qwen35_best_optimized_hf_v1_20260813",
         "5090_qwen35_paired_decode_v1_20260813",
     ):

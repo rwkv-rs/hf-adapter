@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn.functional as F
+import pytest
 
 from rwkv7_hf.sm70_wagv import sm70_orig_linear, sm70_orig_rkv, sm70_wagv_lora
 
@@ -58,3 +59,21 @@ def test_orig_linear_fallback_for_unsupported_shape() -> None:
     )
     for actual, reference in zip(got, refs):
         assert torch.equal(actual, reference)
+
+
+def test_required_extension_rejects_fallback() -> None:
+    values = [torch.randn(1, 32) for _ in range(4)]
+    rank_in = [torch.randn(8, 32) for _ in range(4)]
+    rank_out = [torch.randn(32, 8) for _ in range(4)]
+    biases = [torch.randn(32) for _ in range(3)]
+    with pytest.raises(RuntimeError, match="fallback is forbidden"):
+        sm70_wagv_lora(
+            *values,
+            *rank_in,
+            *rank_out,
+            *biases,
+            torch.randn(1, 32),
+            torch.randn(1, 32),
+            force_fallback=True,
+            require_extension=True,
+        )

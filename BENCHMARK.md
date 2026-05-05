@@ -38,12 +38,14 @@ Status vocabulary:
 
 ## Unified Qwen comparator status
 
-RTX 4090 completed the superseding `hf_fast_path_v1` shape matrix on
-2026-08-12. The promoted artifact has 48/48 official FLA + Dao-AILab
-causal-conv1d Qwen rows and 48/48 exact-card best-optimized RWKV rows. All 96
-rows share one locked runtime signature; the fail-closed validator reports no
-errors or fallback. Qwen is the strong official HF fast-operator baseline;
-RWKV is intentionally run at its best verified HF state, including CUDA Graph.
+RTX 4090 completed the superseding `qwen35_4090_paired_pd_v2` matrix on
+2026-08-15. It joins a SHA-locked 48-row Qwen reference, selected from the
+fastest correctness-passing StaticCache Graph route per model, to 48 fresh
+exact-card RWKV rows in the same locked runtime. Raw and parameter-adjusted
+Prefill and Decode all pass 48/48; eight 512-token FLA/native correctness
+comparisons also pass. Qwen and RWKV use different clean repository commits
+and were captured sequentially, so this is a frozen-reference paired result,
+not an interleaved A/B or continuous-E2E measurement.
 
 RTX 5090 first completed a 48/48 Qwen-only best-optimized HF reference on
 2026-08-13, then separately captured 48/48 RWKV rows with the same six-package
@@ -62,24 +64,33 @@ Graph; Qwen 4B uses the strongest capacity-safe official DynamicCache
 module-call route. Raw and parameter-adjusted Prefill and Decode all pass
 36/36 without weakening the reference.
 
+Tesla V100 completed the corresponding four-pair matrix on 2026-08-14. It
+joins 48 fresh RWKV rows to a SHA-locked 48-row Qwen reference captured on the
+same physical server and identical six-package runtime. Raw and
+parameter-adjusted Prefill and Decode all pass 48/48. Eight independent
+FLA-versus-native 512-token checks and one additional 7.2B/B8 graph closure
+also pass; this remains a speed result, not a quality or continuous-E2E claim.
+
 | GPU | Protocol | Rows | Adjusted Prefill > Qwen | Raw Decode > Qwen | Adjusted Decode > Qwen | Result |
 |---|---|---:|---:|---:|---:|---|
-| RTX 4090 | `hf_fast_path_v1` + `best_optimized_hf` | 96/96 | 48/48 | 48/48 | 48/48 | **PASS** |
+| RTX 4090 | `qwen35_4090_paired_pd_v2` + frozen optimized Qwen reference | 48 Qwen + 48 RWKV; 48 joined | 48/48 | 48/48 | 48/48 | **PASS — STRICT P+D** |
 | RTX 3090 | `hf_fast_path_v1` | pending | — | — | — | **PENDING** |
 | RTX 4080 | `qwen35_paired_pd_v1` | 36 Qwen + 36 RWKV; 36 joined | 36/36 | 36/36 | 36/36 | **PASS — STRICT P+D** |
+| Tesla V100 | `qwen35_v100_paired_pd_v1` + frozen Qwen reference | 48 Qwen + 48 RWKV; 48 joined | 48/48 | 48/48 | 48/48 | **PASS — STRICT P+D** |
 | RTX 5090 | `qwen35_paired_decode_v1` + frozen Qwen reference | 48 Qwen + 48 RWKV; 48 joined | not gated | 48/48 telemetry | 48/48 | **PASS — ADJUSTED DECODE ONLY** |
 
-Across the promoted 4090 matrix, raw Prefill minimum/median is
-`1.361373x/2.315043x` and parameter-adjusted Prefill is
-`1.060506x/1.549011x`. Raw Decode minimum/median is
-`2.275368x/5.871032x` and parameter-adjusted Decode is
-`1.829468x/4.468521x`. Every matched Prefill and Decode cell clears Qwen.
-Corrected Qwen Decode medians for 0.8B/2B/4B/9B are respectively
-`35.512/35.115/25.443/25.499 tok/s` at B1 and
-`268.928/268.261/195.923/197.472 tok/s` at B8. Evidence:
-[`bench/4090_hf_best_optimized_v1_20260812/`](bench/4090_hf_best_optimized_v1_20260812/README.md).
-The earlier [`native_jit` no-Graph artifact](bench/4090_hf_fast_path_v1_20260812/README.md)
-is retained as a diagnostic lane, not the max-performance headline.
+Across the superseding RTX 4090 paired table, raw Prefill
+minimum/median/maximum is `1.415206x/2.449410x/12.686421x`, and
+parameter-adjusted Prefill is `1.148668x/1.695334x/7.600590x`. Raw Decode is
+`1.276285x/1.770640x/3.116990x`; parameter-adjusted Decode is
+`1.026173x/1.323737x/1.867427x`. Every unrounded ratio is strictly above
+`1.0x`. The narrowest cell is 7.2B/9B B8/P128/D128: RWKV reaches `448.713`
+Decode tok/s against Qwen's `351.578`, leaving a `+2.6173%` adjusted margin.
+All eight 512-step FLA/native comparisons preserve greedy tokens and finite
+logits; global prompt/final cosine is at least `0.999992967`. Evidence:
+[`bench/4090_qwen35_paired_pd_v2_20260815/`](bench/4090_qwen35_paired_pd_v2_20260815/README.md).
+The 2026-08-12 artifacts remain historical diagnostics against an older,
+weaker Qwen reference.
 
 Across the RTX 5090 paired Decode subtable, parameter-adjusted Decode has
 minimum/median/maximum `1.029966x/1.409279x/2.063849x`; all 48 unrounded values
@@ -106,6 +117,18 @@ minima `0.999990582/0.999993861`. Evidence:
 [`bench/4080_qwen35_paired_pd_v1_20260814/`](bench/4080_qwen35_paired_pd_v1_20260814/README.md).
 This is an inference-speed result, not a model-quality or continuous-E2E claim.
 
+Across the Tesla V100 paired P+D table, raw Prefill minimum/median/maximum is
+`2.249335x/4.744253x/13.714267x`, and raw Decode is
+`1.393444x/2.398393x/4.662333x`. Parameter-adjusted Prefill is
+`1.808536x/3.217214x/8.216385x`; parameter-adjusted Decode is
+`1.120373x/1.617469x/2.793261x`. All four gates pass all 48 cells. The weakest
+adjusted Decode cell is 7.2B/9B B8/P128/D128: RWKV reaches `266.506 tok/s`
+against Qwen's `191.257 tok/s`. Eight FLA/native checks plus the targeted
+7.2B/B8 closure preserve all 512 greedy tokens and finite logits. Evidence:
+[`bench/v100_qwen35_paired_pd_v1_20260814/`](bench/v100_qwen35_paired_pd_v1_20260814/README.md).
+The Qwen and RWKV commits differ, and the axes are independently measured; the
+claim is matched-shape inference throughput, not quality or continuous E2E.
+
 ## Production-close and historical overview
 
 Rows involving Qwen3.5 in this table are **HISTORICAL** under the superseding
@@ -114,6 +137,7 @@ contract above, even where the final column preserves their original PASS label.
 | Platform | Scope | Correctness / quality | Performance | Result |
 |---|---|---|---|---|
 | V100 32GB | dense/Qwen lanes plus 1.5B/2.9B/7.2B packed-MM4, exact-B8 WAVG, and exact 0.4B/1.5B B8 FP16 state | greedy/cache gates; MM4 complete-sequence and repeat hashes pass 21/21 decode-profile cells plus 4/4 1.5B group256 all-phase cells; FP16-state A/B matches `4,096/4,096` greedy tokens per model across two process orders | Albatross P1; full-FLA Qwen gates; MM4 decode minima `1.0255x/1.0111x/1.0810x`; B8 FP16 state adds `1.0216x-1.0288x` and saves `16.875-58.125 MiB` | **PASS measured lanes** |
+| V100 32GB | Strict 0.4B/0.8B through 7.2B/9B paired P+D, B1/B8, dense FP16 | 48/48 candidate and reference rows; 8/8 FLA/native 512-token checks plus 7.2B/B8 graph closure pass | raw Prefill/Decode minima `2.249335x/1.393444x`; adjusted minima `1.808536x/1.120373x` | **PASS 48/48 + 48/48** |
 | Tesla T4 15GB | 0.1B–2.9B HF/cache/fused-prefill/native-graph, exact-T4 W8/W4, training integration | functional/cache/fused rows pass; quant greedy 52/52; official alignment 0.1B/0.4B/1.5B passes | head-speed W8/W4 decode `>=1.0207x` fp16; dense decode `0.4888x–0.8649x` and B1/T512 prefill `0.5385x–0.7671x` Albatross; full-model quant prefill remains slower | **VALIDATED / performance partial** |
 | RTX 3090 | RWKV-7 7.2B vs Qwen3.5-9B, prompt2048, bsz1/2 | finite logits, greedy equality and cosine `>=0.999995`; Qwen fast bindings verified | self-fused dense prefill `1.0519x–1.0846x`; decode `1.9258x–2.1441x` | **PASS measured cells** |
 | RTX 3090 | g1h 7.2B vs Qwen3.5-9B, bsz8, dense/W8/W4 | finite logits, fail-closed Qwen FLA and route contracts; quality is a separate axis | dense prefill/decode min `1.0589x/1.7884x`; decode active work min `1.4379x`; W8/W4 total latency and memory gates pass | **PASS 18/18** |
@@ -248,6 +272,23 @@ Evidence:
 [`bench/5090_native_official_fp16_production_20260718/`](bench/5090_native_official_fp16_production_20260718/README.md).
 
 ## V100 production-close
+
+### V100 strict paired Prefill/Decode v1
+
+The 2026-08-14 strict matrix covers RWKV-7 0.4B/1.5B/2.9B/7.2B versus
+Qwen3.5 0.8B/2B/4B/9B at B1/B8, P128/512/2048 and D128/512. All 48 fresh
+RWKV rows use Native Graph. Qwen is an immutable, same-server and same-runtime
+48-row reference with official FLA operators and StaticCache raw CUDA Graph
+Decode; Qwen9 locks math-only SDPA.
+
+All four unrounded per-cell gates pass 48/48. Raw Prefill/Decode minima are
+`2.249335x/1.393444x`; parameter-adjusted minima are
+`1.808536x/1.120373x`. The weakest adjusted Decode cell is 7.2B/9B
+B8/P128/D128. Eight FLA/native 512-token oracles and one targeted 7.2B/B8
+native-eager/native-graph closure pass greedy, finite-logits, and cosine
+`>=0.9999` gates. This is matched-shape engine throughput, not model quality or
+continuous E2E. Evidence:
+[`bench/v100_qwen35_paired_pd_v1_20260814/`](bench/v100_qwen35_paired_pd_v1_20260814/README.md).
 
 Canonical matrix: 0.1B/0.4B/1.5B × bsz1/2/4/8.
 

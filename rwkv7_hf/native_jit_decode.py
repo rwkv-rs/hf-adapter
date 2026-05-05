@@ -31,6 +31,17 @@ def _ada_wagv_lora_extension_required() -> bool:
     )
 
 
+def _sm70_wagv_lora_extension_required() -> bool:
+    return (
+        os.environ.get(
+            "RWKV7_NATIVE_GRAPH_SM70_WAGV_LORA_REQUIRE_EXTENSION", "0"
+        )
+        .strip()
+        .lower()
+        in _TRUE_VALUES
+    )
+
+
 def bind_runtime(runtime: dict[str, object]) -> None:
     for name in _RUNTIME_NAMES:
         if name in runtime and name not in _OWNED_NAMES:
@@ -105,6 +116,7 @@ def _block_ip(
     sparse_ffn_out=None,
     fp16_elapsed=None,
     fp16_advance_elapsed=False,
+    route_observer=None,
 ):
     """In-place (eager) block step for CUDA-graph capture: state/xpa/xpf/v_first
     are fixed buffers updated in place. Same math as block_step."""
@@ -234,11 +246,16 @@ def _block_ip(
         a = torch.sigmoid(a)
     elif equal_width and i > 0 and lora_dense and _native_graph_sm70_wagv_lora_enabled(1, D):
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, D)
+        if route_observer is not None:
+            route_observer("sm70_wagv_lora_selected", int(i))
         w, a, g, v = sm70_wagv_lora(
             xw.view(1, D), xa.view(1, D), xg.view(1, D), xv.view(1, D),
             w1, a1, g1, v1, w2, a2, g2, v2, w0, a0, v0,
             v.view(1, A), v_first.view(1, A),
+            require_extension=_sm70_wagv_lora_extension_required(),
         )
+        if route_observer is not None:
+            route_observer("sm70_wagv_lora_effective", int(i))
         w = w.view(A); a = torch.sigmoid(a.view(A)); g = g.view(A); v = v.view(A)
         v_mixed = True
     elif lora_dense and _native_graph_fused_wavg_lora_enabled(1, D):
@@ -249,6 +266,8 @@ def _block_ip(
             g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
         else:
             block_m, block_r, block_k = _native_graph_fused_wavg_lora_blocks(1)
+            if route_observer is not None:
+                route_observer("fused_wavg_lora_selected", int(i))
             w, a, g, v_gate = fused_wavg_lora(
                 xw.view(1, D),
                 xa.view(1, D),
@@ -271,6 +290,8 @@ def _block_ip(
                 block_k=block_k,
                 num_warps=_native_graph_fused_wavg_lora_num_warps(1),
             )
+            if route_observer is not None:
+                route_observer("fused_wavg_lora_effective", int(i))
             w = w.view(A)
             a = a.view(A)
             g = g.view(A)
@@ -657,9 +678,14 @@ def _block_ip_batched(
         a = torch.sigmoid(a)
     elif equal_width and i > 0 and lora_dense and _native_graph_sm70_wagv_lora_enabled(B, D):
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, D)
+        if route_observer is not None:
+            route_observer("sm70_wagv_lora_selected", int(i))
         w, a, g, v = sm70_wagv_lora(
             xw, xa, xg, xv, w1, a1, g1, v1, w2, a2, g2, v2, w0, a0, v0, v, v_first,
+            require_extension=_sm70_wagv_lora_extension_required(),
         )
+        if route_observer is not None:
+            route_observer("sm70_wagv_lora_effective", int(i))
         a = torch.sigmoid(a)
         v_mixed = True
     elif lora_dense and _native_graph_fused_wavg_lora_enabled(B, D):
@@ -670,6 +696,8 @@ def _block_ip_batched(
             g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
         else:
             block_m, block_r, block_k = _native_graph_fused_wavg_lora_blocks(B)
+            if route_observer is not None:
+                route_observer("fused_wavg_lora_selected", int(i))
             w, a, g, v_gate = fused_wavg_lora(
                 xw,
                 xa,
@@ -692,6 +720,8 @@ def _block_ip_batched(
                 block_k=block_k,
                 num_warps=_native_graph_fused_wavg_lora_num_warps(B),
             )
+            if route_observer is not None:
+                route_observer("fused_wavg_lora_effective", int(i))
         a = torch.sigmoid(a)
     elif lora_dense and _native_graph_fused_wag_lora_enabled():
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, D)

@@ -133,6 +133,11 @@ def validate_args(args: argparse.Namespace) -> None:
         )
     if args.qwen_backend not in {"auto", "fla", "torch"}:
         raise ValueError("--qwen-backend must be auto, fla, or torch")
+    qwen_sdpa_policy = str(getattr(args, "qwen_sdpa_policy", "auto"))
+    if qwen_sdpa_policy not in {"auto", "math_only"}:
+        raise ValueError("--qwen-sdpa-policy must be auto or math_only")
+    if args.model_kind != "qwen35" and qwen_sdpa_policy != "auto":
+        raise ValueError("--qwen-sdpa-policy is only valid for Qwen3.5")
     qwen_conv_backend = str(getattr(args, "qwen_conv_backend", "auto"))
     if qwen_conv_backend not in {"auto", "causal_conv1d", "fla_triton"}:
         raise ValueError(
@@ -160,6 +165,12 @@ def validate_args(args: argparse.Namespace) -> None:
                 raise ValueError(
                     "--qwen-compile-mode must be reduce-overhead or max-autotune"
                 )
+        qwen_graph_conv_contract = (
+            "fla_triton"
+            if str(getattr(args, "benchmark_matrix", ""))
+            == "qwen35_v100_best_optimized_hf_v1"
+            else "causal_conv1d"
+        )
         graph_requirements = {
             "model_kind": (args.model_kind, "qwen35"),
             "model_role": (args.model_role, "reference"),
@@ -167,7 +178,7 @@ def validate_args(args: argparse.Namespace) -> None:
             "dtype": (args.dtype, "fp16"),
             "quantization": (args.quantization, "none"),
             "qwen_backend": (args.qwen_backend, "fla"),
-            "qwen_conv_backend": (qwen_conv_backend, "causal_conv1d"),
+            "qwen_conv_backend": (qwen_conv_backend, qwen_graph_conv_contract),
             "require_qwen_fast_path": (
                 bool(getattr(args, "require_qwen_fast_path", False)),
                 True,
@@ -261,6 +272,11 @@ def base_row(args: argparse.Namespace) -> dict[str, Any]:
         "quantization": args.quantization,
         "qwen_backend_requested": args.qwen_backend,
         "qwen_conv_backend_requested": getattr(args, "qwen_conv_backend", "auto"),
+        "qwen_sdpa_policy_requested": (
+            str(getattr(args, "qwen_sdpa_policy", "auto"))
+            if args.model_kind == "qwen35"
+            else None
+        ),
         "qwen_fast_path_required": bool(getattr(args, "require_qwen_fast_path", False)),
         "qwen_decode_optimization_requested": str(
             getattr(args, "qwen_decode_optimization", "module_call_dynamic")
@@ -312,6 +328,42 @@ def cuda_sync(device: str) -> None:
 
 def cuda_device_index(device: str) -> int:
     return int(device.split(":", 1)[1]) if ":" in device else 0
+
+
+def configure_qwen_sdpa_policy(args: argparse.Namespace) -> None:
+    """Apply and verify the explicit Qwen SDPA backend policy."""
+
+    if args.model_kind != "qwen35":
+        return
+    policy = str(getattr(args, "qwen_sdpa_policy", "auto"))
+    enabled = policy == "auto"
+    setters = (
+        ("enable_flash_sdp", enabled),
+        ("enable_mem_efficient_sdp", enabled),
+        ("enable_math_sdp", True),
+        ("enable_cudnn_sdp", enabled),
+    )
+    for name, value in setters:
+        setter = getattr(torch.backends.cuda, name, None)
+        if callable(setter):
+            setter(value)
+
+    expected = {
+        "flash_sdp_enabled": enabled,
+        "mem_efficient_sdp_enabled": enabled,
+        "math_sdp_enabled": True,
+        "cudnn_sdp_enabled": enabled,
+    }
+    mismatches: list[str] = []
+    for name, value in expected.items():
+        getter = getattr(torch.backends.cuda, name, None)
+        if callable(getter) and bool(getter()) is not value:
+            mismatches.append(f"{name}={bool(getter())!r}, expected {value!r}")
+    if mismatches:
+        raise RuntimeError(
+            f"Qwen SDPA policy {policy!r} was not applied: " + "; ".join(mismatches)
+        )
+    setattr(args, "_qwen_sdpa_policy_effective", policy)
 
 
 def device_map_for(device: str):
@@ -2000,6 +2052,37 @@ def environment_metadata(args: argparse.Namespace, model=None) -> dict[str, Any]
         "qwen_force_torch": QWEN_FORCE_TORCH,
         "qwen_fast_path_available": qwen_environment.get("qwen_fast_path_available"),
         "qwen_fla_expected_device_route": qwen_device_route,
+        "qwen_sdpa_policy_effective": (
+            str(getattr(args, "_qwen_sdpa_policy_effective", "auto"))
+            if args.model_kind == "qwen35"
+            else None
+        ),
+        "qwen_sdp_flash_enabled": (
+            bool(torch.backends.cuda.flash_sdp_enabled())
+            if args.model_kind == "qwen35"
+            and callable(getattr(torch.backends.cuda, "flash_sdp_enabled", None))
+            else None
+        ),
+        "qwen_sdp_mem_efficient_enabled": (
+            bool(torch.backends.cuda.mem_efficient_sdp_enabled())
+            if args.model_kind == "qwen35"
+            and callable(
+                getattr(torch.backends.cuda, "mem_efficient_sdp_enabled", None)
+            )
+            else None
+        ),
+        "qwen_sdp_math_enabled": (
+            bool(torch.backends.cuda.math_sdp_enabled())
+            if args.model_kind == "qwen35"
+            and callable(getattr(torch.backends.cuda, "math_sdp_enabled", None))
+            else None
+        ),
+        "qwen_sdp_cudnn_enabled": (
+            bool(torch.backends.cuda.cudnn_sdp_enabled())
+            if args.model_kind == "qwen35"
+            and callable(getattr(torch.backends.cuda, "cudnn_sdp_enabled", None))
+            else None
+        ),
         "rwkv_fast_token_backend_requested": os.environ.get("RWKV7_FAST_TOKEN_BACKEND"),
         "rwkv_native_model_backend_requested": os.environ.get(
             "RWKV7_NATIVE_MODEL_BACKEND"
@@ -2462,6 +2545,24 @@ _RWKV_NATIVE_GRAPH_DECODE_ROUTE_FIELDS = (
     "ada_wagv_lora_extension_effective_layer_count",
     "ada_wagv_lora_extension_full_model_effective",
     "rkv_policy",
+    "fused_norm_mix_num_warps",
+    "state_dtype",
+    "triton_fp16_state",
+    "fp16_recurrent",
+    "sm70_wagv_lora_selected",
+    "sm70_wagv_lora_effective",
+    "sm70_wagv_lora_selected_layers",
+    "sm70_wagv_lora_effective_layers",
+    "sm70_wagv_lora_effective_layer_count",
+    "sm70_wagv_lora_full_eligible_layers_effective",
+    "sm70_wagv_lora_extension_required",
+    "sm70_wagv_lora_extension_available",
+    "fused_wavg_lora_selected",
+    "fused_wavg_lora_effective",
+    "fused_wavg_lora_selected_layers",
+    "fused_wavg_lora_effective_layers",
+    "fused_wavg_lora_effective_layer_count",
+    "fused_wavg_lora_full_eligible_layers_effective",
     "ada_wagv_bmm_requested",
     "ada_wagv_bmm_selected",
     "ada_wagv_bmm_effective",
@@ -2818,6 +2919,7 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     temporary = None
     model = None
     try:
+        configure_qwen_sdpa_policy(args)
         if args.model_kind == "rwkv":
             effective_model_path, temporary = prepare_rwkv_model_dir(
                 args.model, args.rwkv_code_source
@@ -2928,6 +3030,15 @@ def parse_args() -> argparse.Namespace:
         choices=["auto", "causal_conv1d", "fla_triton"],
         default="auto",
         help="Select the Qwen causal-conv implementation independently of the FLA core",
+    )
+    ap.add_argument(
+        "--qwen-sdpa-policy",
+        choices=["auto", "math_only"],
+        default="auto",
+        help=(
+            "Explicit full-attention SDPA backend policy. math_only disables "
+            "flash, memory-efficient, and cuDNN SDPA before model loading."
+        ),
     )
     ap.add_argument("--require-qwen-fast-path", action="store_true")
     ap.add_argument(

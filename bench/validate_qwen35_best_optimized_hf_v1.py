@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Validate a complete card-local Qwen3.5 best-optimized HF reference matrix."""
+
 from __future__ import annotations
 
 import argparse
@@ -32,9 +33,7 @@ RUNTIME_FIELDS = (
     "fla_version",
     "causal_conv1d_version",
 )
-QWEN_CONTRACT = (
-    "official_fla_causal_conv1d_static_cache_cudagraph_same_cache_v2"
-)
+QWEN_CONTRACT = "official_fla_causal_conv1d_static_cache_cudagraph_same_cache_v2"
 QWEN_COMPILE_MODES = {"reduce-overhead", "max-autotune"}
 QWEN_GRAPH_ROUTES = {
     "static_cache_inductor_cudagraph",
@@ -46,7 +45,9 @@ QWEN_DYNAMIC_ROUTE = "module_call_dynamic"
 def read_rows(paths: Iterable[Path]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for path in paths:
-        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), 1
+        ):
             if not line.strip():
                 continue
             row = json.loads(line)
@@ -64,8 +65,7 @@ def _require(row: dict[str, Any], field: str, expected: Any, errors: list[str]) 
     )
     if not matches:
         errors.append(
-            f"{row.get('_source', '<row>')}: {field}={actual!r}, "
-            f"expected {expected!r}"
+            f"{row.get('_source', '<row>')}: {field}={actual!r}, expected {expected!r}"
         )
 
 
@@ -77,9 +77,7 @@ def _require_positive(row: dict[str, Any], field: str, errors: list[str]) -> Non
         or not math.isfinite(value)
         or value <= 0
     ):
-        errors.append(
-            f"{row.get('_source', '<row>')}: {field}={value!r}, expected > 0"
-        )
+        errors.append(f"{row.get('_source', '<row>')}: {field}={value!r}, expected > 0")
 
 
 def _is_finite_real_number(value: Any) -> bool:
@@ -113,13 +111,18 @@ def _validate_samples(
         )
         return
     recorded = row.get(median_field)
-    if not isinstance(recorded, (int, float)) or abs(statistics.median(samples) - recorded) > 1e-6:
+    if (
+        not isinstance(recorded, (int, float))
+        or abs(statistics.median(samples) - recorded) > 1e-6
+    ):
         errors.append(
             f"{row.get('_source', '<row>')}: {median_field} does not match raw-sample median"
         )
     raw_median_field = f"{median_field}_raw"
     raw_recorded = row.get(raw_median_field)
-    if not isinstance(raw_recorded, (int, float)) or raw_recorded != statistics.median(samples):
+    if not isinstance(raw_recorded, (int, float)) or raw_recorded != statistics.median(
+        samples
+    ):
         errors.append(
             f"{row.get('_source', '<row>')}: {raw_median_field} does not exactly match "
             "the raw-sample median"
@@ -132,11 +135,17 @@ def _validate_row(
     errors: list[str],
     *,
     expected_route: str | None = None,
+    expected_matrix: str = MATRIX,
+    expected_lane: str = LANE,
+    expected_conv_backend: str = "causal_conv1d",
+    expected_causal_conv1d_importable: bool = True,
+    expected_fast_path_available: bool = True,
+    nullable_runtime_fields: frozenset[str] = frozenset(),
 ) -> None:
     for field, expected in (
         ("axis", "qwen35_cross_model_speed"),
-        ("benchmark_matrix", MATRIX),
-        ("optimization_lane", LANE),
+        ("benchmark_matrix", expected_matrix),
+        ("optimization_lane", expected_lane),
         ("model_role", "reference"),
         ("model_kind", "qwen35"),
         ("dtype", "fp16"),
@@ -150,13 +159,13 @@ def _validate_row(
         ("resident_sweep", True),
         ("status", "pass"),
         ("qwen_backend_requested", "fla"),
-        ("qwen_conv_backend_requested", "causal_conv1d"),
+        ("qwen_conv_backend_requested", expected_conv_backend),
         ("qwen_fast_path_required", True),
-        ("qwen_fast_path_available", True),
+        ("qwen_fast_path_available", expected_fast_path_available),
         ("qwen_fast_path_verified", True),
         ("qwen_full_fused_contract_pass", True),
-        ("qwen_causal_conv1d_importable", True),
-        ("qwen_conv_backend_effective", "causal_conv1d"),
+        ("qwen_causal_conv1d_importable", expected_causal_conv1d_importable),
+        ("qwen_conv_backend_effective", expected_conv_backend),
         ("qwen_force_torch", False),
         ("logits_finite", True),
     ):
@@ -335,10 +344,7 @@ def _validate_row(
                     f"{minimum_cosine!r}, expected finite cross-cache telemetry"
                 )
         same_cache_cosine = row.get("qwen_same_cache_logits_min_cosine")
-        if (
-            not _is_finite_real_number(same_cache_cosine)
-            or same_cache_cosine < 0.9999
-        ):
+        if not _is_finite_real_number(same_cache_cosine) or same_cache_cosine < 0.9999:
             errors.append(
                 f"{row.get('_source', '<row>')}: qwen_same_cache_logits_min_cosine="
                 f"{same_cache_cosine!r}, expected >=0.9999"
@@ -357,14 +363,21 @@ def _validate_row(
     _validate_samples(row, "prefill_sec_samples", "prefill_sec_median", errors)
     _validate_samples(row, "decode_sec_samples", "decode_sec_median", errors)
     for field in RUNTIME_FIELDS:
-        if not row.get(field):
-            errors.append(
-                f"{row.get('_source', '<row>')}: {field} must be non-empty"
-            )
-    expected_prefill = batch * prompt / float(row.get("prefill_sec_median_raw", math.nan))
+        value = row.get(field)
+        if field in nullable_runtime_fields and value is None:
+            continue
+        if type(value) is not str or not value.strip():
+            errors.append(f"{row.get('_source', '<row>')}: {field} must be non-empty")
+    expected_prefill = (
+        batch * prompt / float(row.get("prefill_sec_median_raw", math.nan))
+    )
     expected_decode = batch * decode / float(row.get("decode_sec_median_raw", math.nan))
     for field, actual, expected in (
-        ("prefill_tokps_total_raw", row.get("prefill_tokps_total_raw"), expected_prefill),
+        (
+            "prefill_tokps_total_raw",
+            row.get("prefill_tokps_total_raw"),
+            expected_prefill,
+        ),
         ("decode_tokps_total_raw", row.get("decode_tokps_total_raw"), expected_decode),
     ):
         if (
@@ -384,6 +397,13 @@ def validate_matrix(
     expected_device: str = "",
     expected_pairs: Iterable[str] | None = None,
     expected_routes_by_pair: dict[str, str] | None = None,
+    expected_matrix: str = MATRIX,
+    expected_lane: str = LANE,
+    expected_conv_backend: str = "causal_conv1d",
+    expected_causal_conv1d_importable: bool = True,
+    expected_fast_path_available: bool = True,
+    nullable_runtime_fields: Iterable[str] = (),
+    qwen_contract: str = QWEN_CONTRACT,
 ) -> dict[str, Any]:
     errors: list[str] = []
     selected_pairs = (
@@ -415,6 +435,12 @@ def validate_matrix(
             expected_device,
             errors,
             expected_route=expected_route,
+            expected_matrix=expected_matrix,
+            expected_lane=expected_lane,
+            expected_conv_backend=expected_conv_backend,
+            expected_causal_conv1d_importable=expected_causal_conv1d_importable,
+            expected_fast_path_available=expected_fast_path_available,
+            nullable_runtime_fields=frozenset(nullable_runtime_fields),
         )
     repository_commits = sorted(
         {
@@ -497,8 +523,8 @@ def validate_matrix(
     devices = sorted({str(row.get("device")) for row in rows})
     return {
         "schema_version": 2,
-        "benchmark_matrix": MATRIX,
-        "optimization_lane": LANE,
+        "benchmark_matrix": expected_matrix,
+        "optimization_lane": expected_lane,
         "status": "pass" if not errors else "fail",
         "reference_rows": len(rows),
         "expected_rows": expected_rows,
@@ -509,7 +535,7 @@ def validate_matrix(
         "benchmark_repository_commits": repository_commits,
         "compile_modes_by_model": compile_modes_by_model,
         "decode_routes_by_model": decode_routes_by_model,
-        "qwen_contract": QWEN_CONTRACT,
+        "qwen_contract": qwen_contract,
         "reference_lane_eligible": not errors,
         "unified_main_table_eligible": False,
         "unified_main_table_reason": (

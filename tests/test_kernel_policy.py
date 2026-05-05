@@ -338,6 +338,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert v100.native_graph_triton_fp16_state_model_shapes == (
         (1024, 24, 8),
         (2048, 24, 8),
+        (4096, 32, 8),
     )
     assert v100.fused_wavg_lora
     assert v100.wavg_lora_bsz1_max_hidden == 4096

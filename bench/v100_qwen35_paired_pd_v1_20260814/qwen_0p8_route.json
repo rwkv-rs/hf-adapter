@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "protocol": "qwen35_v100_best_optimized_hf_v1",
+  "benchmark_repository_commit": "47ee4104b07e35e85a0a54df2aaa8b4e87db1dc8",
+  "repository_clean_pre_and_post": true,
+  "model_pair": "rwkv-0.4b__qwen3.5-0.8b",
+  "model_size_label": "0.8b",
+  "model_path": "/home/data/wangyue/models/qwen/Qwen3.5-0.8B",
+  "result": {
+    "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-47ee410/qwen_0p8.jsonl",
+    "sha256": "4e57a63ba533d5971bd10c02662062ce234b16a7e11d44c08e019404fb9163a3"
+  },
+  "model_hash_contract": {
+    "algorithm": "sha256",
+    "scope": "every recursive regular file",
+    "before": {
+      "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-47ee410/qwen_0p8_model_hashes.sha256",
+      "sha256": "a3d42902797a78745b9686fb59f82f8b6d6758133c7ca6c6f68e67a5eaf68c8e"
+    },
+    "after": {
+      "path": "/home/data/wangyue/artifacts/benchmarks/v100-qwen35-paired-pd-v1-20260814-47ee410/qwen_0p8_model_hashes.after.sha256",
+      "sha256": "a3d42902797a78745b9686fb59f82f8b6d6758133c7ca6c6f68e67a5eaf68c8e"
+    },
+    "byte_identical": true
+  },
+  "decode_route": "static_cache_raw_cudagraph",
+  "sdpa_policy": "auto",
+  "compile_mode": null,
+  "forced_environment": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "CUDA_DEVICE_ORDER": "PCI_BUS_ID",
+    "PYTHONPATH": "/home/data/wangyue/projects/worktrees/rwkv7-hf-v100-strict-v1-47ee410:/home/data/wangyue/dependencies/python/v100-qwen35-strict-v1-triton34:/home/data/wangyue/dependencies/python/v100-qwen35-strict-v1-e818337",
+    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    "TORCH_CUDA_ARCH_LIST": "7.0",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "TOKENIZERS_PARALLELISM": "false",
+    "CACHE_ROOT": "/home/data/wangyue/dependencies/cache/v100-qwen35-paired-pd-v1-47ee410/qwen_0p8"
+  }
+}

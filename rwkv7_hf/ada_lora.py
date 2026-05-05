@@ -657,18 +657,20 @@ def ada_wagv_bmm_should_use(rows: int, hidden: int, max_rank: int) -> bool:
 
 
 def sm120_wagv_bmm_g_available(device: Any = None) -> bool:
-    """Whether the exact-card all-W/A/G/V padded BMM probe may run.
+    """Whether the measured Ada/Blackwell all-W/A/G/V BMM probe may run.
 
     The route is one indivisible experiment: both padded BMMs and both Triton
     pointwise epilogues must be available.  Returning false when Triton is
     absent prevents dispatch telemetry from claiming a partial implementation.
     """
 
-    return bool(_HAS_TRITON and _small_row_capability(device) == (12, 0))
+    return bool(
+        _HAS_TRITON and _small_row_capability(device) in {(8, 9), (12, 0)}
+    )
 
 
 def sm120_wagv_bmm_g_should_use(rows: int, hidden: int, max_rank: int) -> bool:
-    """Exact SM120 shapes covered by the positive all-group microprobe."""
+    """Exact SM89/SM120 shapes admitted to the all-group microprobe."""
 
     return bool(
         int(rows) == 8
@@ -678,10 +680,10 @@ def sm120_wagv_bmm_g_should_use(rows: int, hidden: int, max_rank: int) -> bool:
 
 
 def _sm120_wagv_bmm_down_epilogue(w_hidden: Any, g_hidden: Any) -> None:
-    """Apply W tanh and G sigmoid in one exact-SM120 Triton launch."""
+    """Apply W tanh and G sigmoid in one exact-SM89/SM120 Triton launch."""
 
     if not _HAS_TRITON:
-        raise RuntimeError("SM120 W/A/G/V BMM requires Triton epilogues")
+        raise RuntimeError("SM89/SM120 W/A/G/V BMM requires Triton epilogues")
     if (
         torch is None
         or not w_hidden.is_cuda
@@ -691,7 +693,9 @@ def _sm120_wagv_bmm_down_epilogue(w_hidden: Any, g_hidden: Any) -> None:
         or not w_hidden.is_contiguous()
         or not g_hidden.is_contiguous()
     ):
-        raise RuntimeError("SM120 W/A/G/V down epilogue contract was not satisfied")
+        raise RuntimeError(
+            "SM89/SM120 W/A/G/V down epilogue contract was not satisfied"
+        )
     numel = int(w_hidden.numel())
     block = 256
     _sm120_wagv_bmm_down_epilogue_kernel[(triton.cdiv(numel, block),)](
@@ -718,7 +722,7 @@ def _sm120_wagv_bmm_up_epilogue(
     """Apply A/V gates and FP16-barrier V interpolation in one launch."""
 
     if not _HAS_TRITON:
-        raise RuntimeError("SM120 W/A/G/V BMM requires Triton epilogues")
+        raise RuntimeError("SM89/SM120 W/A/G/V BMM requires Triton epilogues")
     values = (
         (w, a, w_bias, a_bias)
         if not compute_v
@@ -736,7 +740,9 @@ def _sm120_wagv_bmm_up_epilogue(
         or any(int(item.numel()) != int(a.shape[-1]) for item in (w_bias, a_bias, v_bias))
         or (compute_v and (tuple(v.shape) != tuple(a.shape) or tuple(v_first.shape) != tuple(a.shape)))
     ):
-        raise RuntimeError("SM120 W/A/G/V up epilogue contract was not satisfied")
+        raise RuntimeError(
+            "SM89/SM120 W/A/G/V up epilogue contract was not satisfied"
+        )
     numel = int(a.numel())
     block = 256
     # The non-V specialization erases every access to the dummy pointers.
@@ -968,9 +974,10 @@ def ada_wagv_bmm(
 
     W/A/V have nearby ranks in released checkpoints, so the portable route
     shares a compact padded pack and leaves larger G on its original GEMMs.
-    ``include_g`` is the exact-SM120 B8 experiment whose 1024/2048 shapes were
-    positive in a raw-graph microprobe; it pads G too and requires the combined
-    R/K/V/W/A/G norm-mix backing store when ``require_zero_copy`` is true.
+    ``include_g`` is the exact-SM89/SM120 B8 experiment whose 1024/2048 shapes
+    were positive in a raw-graph microprobe; it pads G too and requires the
+    combined R/K/V/W/A/G norm-mix backing store when ``require_zero_copy`` is
+    true.
     """
 
     if torch is None or F is None:
@@ -1078,7 +1085,7 @@ def ada_wagv_bmm(
             first = xv if compute_v else xw
             if mixed.untyped_storage().data_ptr() != first.untyped_storage().data_ptr():
                 raise RuntimeError(
-                    "SM120 W/A/G/V BMM was selected but norm/mix did not "
+                    "SM89/SM120 W/A/G/V BMM was selected but norm/mix did not "
                     "provide its required zero-copy R/K/V/W/A/G layout"
                 )
     else:
@@ -1100,7 +1107,7 @@ def ada_wagv_bmm(
         hidden_states[w_index].tanh_()
     if include_g:
         # Bias is fused into the single pointwise up epilogue. Keeping
-        # baddbmm here costs a measurable per-layer launch/copy on SM120.
+        # baddbmm here costs a measurable per-layer launch/copy on SM89/SM120.
         outputs = torch.bmm(hidden_states, up_transposed)
         _sm120_wagv_bmm_up_epilogue(
             outputs[w_index],
