@@ -1,5 +1,5 @@
 # coding=utf-8
-"""Strict opt-in compiled dense FFN route for SM89/SM120 native-graph decode.
+"""Strict opt-in compiled dense FFN route for SM86/SM89/SM120 native-graph decode.
 
 The runtime boundary is the exact RWKV dense FFN expression used by the
 native CUDA-graph token loop::
@@ -122,7 +122,7 @@ def sm120_compiled_ffn_contract(
         and int(hidden_size) in SUPPORTED_HIDDEN
         and int(num_layers) == EXPECTED_LAYERS
         and str(dtype_name).lower() in {"torch.float16", "float16", "fp16"}
-        and tuple(int(value) for value in capability) in {(8, 9), (12, 0)}
+        and tuple(int(value) for value in capability) in {(8, 6), (8, 9), (12, 0)}
     )
 
 
@@ -350,7 +350,7 @@ def prepare_sm120_compiled_ffn(
         capability=capability,
     ):
         raise RuntimeError(
-            f"{ENV_NAME}=1 supports only SM89/SM120, FP16, B8, 24 layers, and hidden "
+            f"{ENV_NAME}=1 supports only SM86/SM89/SM120, FP16, B8, 24 layers, and hidden "
             f"{SUPPORTED_HIDDEN}; got capability={capability}, dtype={dtype}, "
             f"batch={batch_size}, layers={len(packs)}, hidden={hidden_size}"
         )
@@ -485,7 +485,7 @@ def sm120_compiled_ffn(
         rows != EXPECTED_BATCH
         or hidden_size not in SUPPORTED_HIDDEN
         or x.dtype != torch.float16
-        or capability not in {(8, 9), (12, 0)}
+        or capability not in {(8, 6), (8, 9), (12, 0)}
     ):
         raise RuntimeError(
             f"{ENV_NAME}=1 reached an unsupported decode input: "

@@ -74,12 +74,23 @@ def row(pair: str, batch: int, prompt: int, decode: int) -> dict:
         "qwen_cache_pointer_stable": True,
         "qwen_cache_tensor_pointer_count": 54,
         "qwen_graph_parity_verified": True,
+        "qwen_cross_cache_full_greedy_policy_requested": "strict",
+        "qwen_cross_cache_full_greedy_policy_effective": "strict",
+        "qwen_cross_cache_full_greedy_required": True,
         "qwen_graph_prefill_next_token_match": True,
         "qwen_axis_composition": "independent_best_prefill_and_decode",
         "qwen_graph_greedy_match": True,
         "qwen_same_cache_greedy_match": True,
+        "qwen_dynamic_static_full_greedy_mismatch_count": 0,
+        "qwen_dynamic_static_full_greedy_first_mismatch_index": None,
+        "qwen_dynamic_candidate_full_greedy_mismatch_count": 0,
+        "qwen_dynamic_candidate_full_greedy_first_mismatch_index": None,
+        "qwen_same_cache_full_greedy_mismatch_count": 0,
+        "qwen_same_cache_full_greedy_first_mismatch_index": None,
         "qwen_static_cache_eager_greedy_match": True,
         "qwen_graph_logits_greedy_match": True,
+        "qwen_dynamic_static_logits_greedy_match": True,
+        "qwen_same_cache_logits_greedy_match": True,
         "qwen_graph_logits_trace_finite": True,
         "qwen_dynamic_static_logits_finite": True,
         "qwen_same_cache_logits_finite": True,
@@ -208,9 +219,7 @@ def test_models_may_choose_one_consistent_graph_route_each() -> None:
             use_raw_graph(item)
     summary = validate_matrix(rows, expected_device="NVIDIA GeForce RTX 5090")
     assert summary["status"] == "pass"
-    assert summary["decode_routes_by_model"]["4b"] == [
-        "static_cache_raw_cudagraph"
-    ]
+    assert summary["decode_routes_by_model"]["4b"] == ["static_cache_raw_cudagraph"]
     assert summary["compile_modes_by_model"]["4b"] is None
 
     use_raw_graph(rows[0])
@@ -228,7 +237,47 @@ def test_cross_cache_cosine_is_informational_but_same_cache_is_strict() -> None:
     rows[0]["qwen_same_cache_logits_min_cosine"] = 0.9998
     summary = validate_matrix(rows)
     assert summary["status"] == "fail"
-    assert any("qwen_same_cache_logits_min_cosine" in error for error in summary["errors"])
+    assert any(
+        "qwen_same_cache_logits_min_cosine" in error for error in summary["errors"]
+    )
+
+
+def test_cross_cache_full_greedy_can_be_explicitly_informational() -> None:
+    rows = complete_rows()
+    for item in rows:
+        item["qwen_cross_cache_full_greedy_policy_requested"] = "informational"
+        item["qwen_cross_cache_full_greedy_policy_effective"] = "informational"
+        item["qwen_cross_cache_full_greedy_required"] = False
+    target = rows[0]
+    target["qwen_graph_greedy_match"] = False
+    target["qwen_static_cache_eager_greedy_match"] = False
+    target["qwen_dynamic_static_full_greedy_mismatch_count"] = 1
+    target["qwen_dynamic_static_full_greedy_first_mismatch_index"] = 100
+    target["qwen_dynamic_candidate_full_greedy_mismatch_count"] = 1
+    target["qwen_dynamic_candidate_full_greedy_first_mismatch_index"] = 100
+    summary = validate_matrix(
+        rows, expected_cross_cache_full_greedy_policy="informational"
+    )
+    assert summary["status"] == "pass"
+    assert summary["cross_cache_full_greedy_policy"] == "informational"
+
+    assert validate_matrix(rows)["status"] == "fail"
+
+
+def test_same_cache_full_greedy_never_becomes_informational() -> None:
+    rows = complete_rows()
+    for item in rows:
+        item["qwen_cross_cache_full_greedy_policy_requested"] = "informational"
+        item["qwen_cross_cache_full_greedy_policy_effective"] = "informational"
+        item["qwen_cross_cache_full_greedy_required"] = False
+    rows[0]["qwen_same_cache_greedy_match"] = False
+    rows[0]["qwen_same_cache_full_greedy_mismatch_count"] = 1
+    rows[0]["qwen_same_cache_full_greedy_first_mismatch_index"] = 7
+    summary = validate_matrix(
+        rows, expected_cross_cache_full_greedy_policy="informational"
+    )
+    assert summary["status"] == "fail"
+    assert any("qwen_same_cache_greedy_match" in error for error in summary["errors"])
 
 
 @pytest.mark.parametrize(
@@ -304,7 +353,9 @@ def test_graph_fallback_or_missing_cell_fails() -> None:
     rows[0]["qwen_decode_cuda_graph_verified"] = False
     summary = validate_matrix(rows[:-1])
     assert summary["status"] == "fail"
-    assert any("qwen_decode_cuda_graph_verified=False" in error for error in summary["errors"])
+    assert any(
+        "qwen_decode_cuda_graph_verified=False" in error for error in summary["errors"]
+    )
     assert any("missing cells" in error for error in summary["errors"])
 
 
@@ -358,7 +409,10 @@ def test_summary_sort_and_display_rounding_do_not_change_raw_values() -> None:
     assert display_rate(100.0) == "100"
     assert summary["correctness_contract"]["same_cache"]["cosine_threshold"] == 0.9999
     assert summary["correctness_contract"]["cross_cache"]["cosine_threshold"] is None
-    assert summary["correctness_contract"]["cross_cache"]["cosine_interpretation"] == "informational_only"
+    assert (
+        summary["correctness_contract"]["cross_cache"]["cosine_interpretation"]
+        == "informational_only"
+    )
     assert summary["reference_lane_eligible"] is True
     assert summary["unified_main_table_eligible"] is False
     assert summary["axis_composition"] == "independent_best_prefill_and_decode"

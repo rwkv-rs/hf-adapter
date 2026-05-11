@@ -1,0 +1,29 @@
+{
+  "schema_version": 2,
+  "protocol": "qwen35_3090_reference_contract_v2",
+  "device": "NVIDIA GeForce RTX 3090",
+  "gpu_arch": "sm_86",
+  "compute_cap": "8.6",
+  "driver_version": "550.142",
+  "memory_total_mib": 24576,
+  "runtime": {
+    "python": "3.10.12",
+    "torch": "2.7.1+cu126",
+    "torch_cuda": "12.6",
+    "triton": "3.3.1",
+    "transformers": "5.12.1",
+    "fla": "0.5.1",
+    "causal_conv1d": "1.6.2.post1"
+  },
+  "torch_cuda_arch_list": "8.6",
+  "cross_cache_full_greedy_policy": "informational",
+  "reference_sha256": "cb5d86e7a4a8cabad1f7dd86c0187dbf514b92cfafccdb0699026dc9e9696c81",
+  "routes_by_pair": {
+    "rwkv-0.4b__qwen3.5-0.8b": "static_cache_inductor_cudagraph",
+    "rwkv-1.5b__qwen3.5-2b": "static_cache_inductor_cudagraph",
+    "rwkv-2.9b__qwen3.5-4b": "static_cache_raw_cudagraph",
+    "rwkv-7.2b__qwen3.5-9b": "static_cache_raw_cudagraph"
+  },
+  "benchmark_repository_commit": "8f98046dc274d24441d6b3b8eb1578496fee6b2d",
+  "reference_path": "qwen_reference.jsonl"
+}

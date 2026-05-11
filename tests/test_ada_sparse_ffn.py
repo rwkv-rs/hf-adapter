@@ -24,7 +24,7 @@ from rwkv7_hf.ada_sparse_ffn import (
 )
 
 
-@pytest.mark.parametrize("capability", [(7, 0), (8, 9), (12, 0)])
+@pytest.mark.parametrize("capability", [(7, 0), (8, 6), (8, 9), (12, 0)])
 def test_cuda_extension_capability_gate_includes_measured_cards(monkeypatch, capability) -> None:
     class FakeCuda:
         @staticmethod
@@ -118,6 +118,14 @@ def test_scalar_fallback_preserves_shape() -> None:
     residual = torch.randn(256)
     actual = ada_sparse_ffn_down_add(preact, weight, residual, force_fallback=True)
     assert actual.shape == residual.shape
+
+
+def test_ada_linear_required_extension_is_fail_closed(monkeypatch) -> None:
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_ADA_LINEAR_REQUIRE_EXTENSION", "1")
+    x = torch.randn(1, 1024)
+    weight = torch.randn(1024, 1024)
+    with pytest.raises(RuntimeError, match="fallback is forbidden"):
+        ada_linear(x, weight)
 
 
 def test_fallback_out_buffer_is_reused() -> None:

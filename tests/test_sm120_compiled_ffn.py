@@ -47,7 +47,14 @@ def _patch_raw_cuda_capture(monkeypatch, events: list[str]) -> None:
     )
 
 
-def test_contract_is_exact_sm89_sm120_fp16_b8_24_layers() -> None:
+def test_contract_is_exact_sm86_sm89_sm120_fp16_b8_24_layers() -> None:
+    assert compiled_ffn.sm120_compiled_ffn_contract(
+        batch_size=8,
+        hidden_size=1024,
+        num_layers=24,
+        dtype_name="torch.float16",
+        capability=(8, 6),
+    )
     assert compiled_ffn.sm120_compiled_ffn_contract(
         batch_size=8,
         hidden_size=1024,
@@ -67,7 +74,7 @@ def test_contract_is_exact_sm89_sm120_fp16_b8_24_layers() -> None:
         {"hidden_size": 4096},
         {"num_layers": 23},
         {"dtype_name": "torch.bfloat16"},
-        {"capability": (8, 6)},
+        {"capability": (8, 0)},
     ):
         values = {
             "batch_size": 8,
@@ -84,7 +91,7 @@ def test_prepare_rejects_cpu_without_attempting_compile() -> None:
     up = torch.empty(4096, 1024, dtype=torch.float16)
     down = torch.empty(1024, 4096, dtype=torch.float16)
     packs = [(index, up, down, None) for index in range(24)]
-    with pytest.raises(RuntimeError, match="supports only SM89/SM120"):
+    with pytest.raises(RuntimeError, match="supports only SM86/SM89/SM120"):
         compiled_ffn.prepare_sm120_compiled_ffn(packs, 8)
 
 

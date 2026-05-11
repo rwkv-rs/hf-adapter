@@ -80,6 +80,16 @@ def _require_positive(row: dict[str, Any], field: str, errors: list[str]) -> Non
         errors.append(f"{row.get('_source', '<row>')}: {field}={value!r}, expected > 0")
 
 
+def _require_int(
+    row: dict[str, Any], field: str, expected: int, errors: list[str]
+) -> None:
+    value = row.get(field)
+    if type(value) is not int or value != expected:
+        errors.append(
+            f"{row.get('_source', '<row>')}: {field}={value!r}, expected integer {expected}"
+        )
+
+
 def _is_finite_real_number(value: Any) -> bool:
     """Return true only for finite int/float telemetry, never bool sentinels."""
 
@@ -88,6 +98,35 @@ def _is_finite_real_number(value: Any) -> bool:
         and isinstance(value, (int, float))
         and math.isfinite(value)
     )
+
+
+def _validate_mismatch_telemetry(
+    row: dict[str, Any], prefix: str, errors: list[str]
+) -> None:
+    count_field = f"{prefix}_mismatch_count"
+    index_field = f"{prefix}_first_mismatch_index"
+    count = row.get(count_field)
+    index = row.get(index_field)
+    if type(count) is not int or count < 0:
+        errors.append(
+            f"{row.get('_source', '<row>')}: {count_field} must be a non-negative int"
+        )
+        return
+    if count == 0:
+        if index is not None:
+            errors.append(
+                f"{row.get('_source', '<row>')}: {index_field} must be null when count is zero"
+            )
+        return
+    probe_tokens = row.get("qwen_graph_probe_tokens")
+    if (
+        type(index) is not int
+        or type(probe_tokens) is not int
+        or not 0 <= index <= probe_tokens
+    ):
+        errors.append(
+            f"{row.get('_source', '<row>')}: {index_field}={index!r} is outside the token trace"
+        )
 
 
 def _validate_samples(
@@ -141,6 +180,7 @@ def _validate_row(
     expected_causal_conv1d_importable: bool = True,
     expected_fast_path_available: bool = True,
     nullable_runtime_fields: frozenset[str] = frozenset(),
+    expected_cross_cache_full_greedy_policy: str = "strict",
 ) -> None:
     for field, expected in (
         ("axis", "qwen35_cross_model_speed"),
@@ -191,6 +231,9 @@ def _validate_row(
             f"{requested_route!r} != {effective_route!r}"
         )
     if effective_route in QWEN_GRAPH_ROUTES:
+        cross_cache_full_greedy_required = (
+            expected_cross_cache_full_greedy_policy == "strict"
+        )
         for field, expected in (
             ("prefill_backend_effective", "module_call_dynamic_cache"),
             ("prefill_cache_type", "DynamicCache"),
@@ -200,18 +243,66 @@ def _validate_row(
             ("qwen_decode_cuda_graph_verified", True),
             ("qwen_cache_pointer_stable", True),
             ("qwen_graph_parity_verified", True),
+            (
+                "qwen_cross_cache_full_greedy_policy_requested",
+                expected_cross_cache_full_greedy_policy,
+            ),
+            (
+                "qwen_cross_cache_full_greedy_policy_effective",
+                expected_cross_cache_full_greedy_policy,
+            ),
+            (
+                "qwen_cross_cache_full_greedy_required",
+                cross_cache_full_greedy_required,
+            ),
             ("qwen_graph_prefill_next_token_match", True),
             ("qwen_axis_composition", "independent_best_prefill_and_decode"),
-            ("qwen_graph_greedy_match", True),
             ("qwen_same_cache_greedy_match", True),
-            ("qwen_static_cache_eager_greedy_match", True),
             ("qwen_graph_logits_greedy_match", True),
+            ("qwen_dynamic_static_logits_greedy_match", True),
+            ("qwen_same_cache_logits_greedy_match", True),
             ("qwen_graph_logits_trace_finite", True),
             ("qwen_dynamic_static_logits_finite", True),
             ("qwen_same_cache_logits_finite", True),
             ("qwen_static_compiled_logits_finite", True),
         ):
             _require(row, field, expected, errors)
+        _require_int(row, "qwen_same_cache_full_greedy_mismatch_count", 0, errors)
+        if cross_cache_full_greedy_required:
+            for field, expected in (
+                ("qwen_graph_greedy_match", True),
+                ("qwen_static_cache_eager_greedy_match", True),
+            ):
+                _require(row, field, expected, errors)
+            for field in (
+                "qwen_dynamic_static_full_greedy_mismatch_count",
+                "qwen_dynamic_candidate_full_greedy_mismatch_count",
+            ):
+                _require_int(row, field, 0, errors)
+        else:
+            for field in (
+                "qwen_graph_greedy_match",
+                "qwen_static_cache_eager_greedy_match",
+            ):
+                if type(row.get(field)) is not bool:
+                    errors.append(
+                        f"{row.get('_source', '<row>')}: {field} must be bool telemetry"
+                    )
+            for field in (
+                "qwen_dynamic_static_full_greedy_mismatch_count",
+                "qwen_dynamic_candidate_full_greedy_mismatch_count",
+            ):
+                value = row.get(field)
+                if type(value) is not int or value < 0:
+                    errors.append(
+                        f"{row.get('_source', '<row>')}: {field} must be a non-negative int"
+                    )
+        for prefix in (
+            "qwen_dynamic_static_full_greedy",
+            "qwen_dynamic_candidate_full_greedy",
+            "qwen_same_cache_full_greedy",
+        ):
+            _validate_mismatch_telemetry(row, prefix, errors)
         _require(row, "step_backend", f"qwen_{effective_route}", errors)
     if effective_route == "static_cache_inductor_cudagraph":
         _require(row, "qwen_compile_backend_effective", "inductor", errors)
@@ -288,11 +379,21 @@ def _validate_row(
             "qwen_cache_pointer_stable",
             "qwen_cache_tensor_pointer_count",
             "qwen_graph_parity_verified",
+            "qwen_cross_cache_full_greedy_policy_effective",
+            "qwen_cross_cache_full_greedy_required",
             "qwen_graph_prefill_next_token_match",
             "qwen_graph_greedy_match",
             "qwen_same_cache_greedy_match",
+            "qwen_dynamic_static_full_greedy_mismatch_count",
+            "qwen_dynamic_static_full_greedy_first_mismatch_index",
+            "qwen_dynamic_candidate_full_greedy_mismatch_count",
+            "qwen_dynamic_candidate_full_greedy_first_mismatch_index",
+            "qwen_same_cache_full_greedy_mismatch_count",
+            "qwen_same_cache_full_greedy_first_mismatch_index",
             "qwen_static_cache_eager_greedy_match",
             "qwen_graph_logits_greedy_match",
+            "qwen_dynamic_static_logits_greedy_match",
+            "qwen_same_cache_logits_greedy_match",
             "qwen_graph_logits_trace_finite",
             "qwen_dynamic_static_logits_finite",
             "qwen_same_cache_logits_finite",
@@ -404,6 +505,7 @@ def validate_matrix(
     expected_fast_path_available: bool = True,
     nullable_runtime_fields: Iterable[str] = (),
     qwen_contract: str = QWEN_CONTRACT,
+    expected_cross_cache_full_greedy_policy: str = "strict",
 ) -> dict[str, Any]:
     errors: list[str] = []
     selected_pairs = (
@@ -416,6 +518,10 @@ def validate_matrix(
         errors.append(f"unknown expected model pairs: {unknown_pairs}")
     if len(set(selected_pairs)) != len(selected_pairs):
         errors.append("expected model pairs contain duplicates")
+    if expected_cross_cache_full_greedy_policy not in {"strict", "informational"}:
+        errors.append(
+            "expected_cross_cache_full_greedy_policy must be strict or informational"
+        )
     expected_rows = len(selected_pairs) * len(EXPECTED_SHAPES)
     if len(rows) != expected_rows:
         errors.append(f"reference row count={len(rows)}, expected {expected_rows}")
@@ -441,6 +547,7 @@ def validate_matrix(
             expected_causal_conv1d_importable=expected_causal_conv1d_importable,
             expected_fast_path_available=expected_fast_path_available,
             nullable_runtime_fields=frozenset(nullable_runtime_fields),
+            expected_cross_cache_full_greedy_policy=expected_cross_cache_full_greedy_policy,
         )
     repository_commits = sorted(
         {
@@ -536,6 +643,7 @@ def validate_matrix(
         "compile_modes_by_model": compile_modes_by_model,
         "decode_routes_by_model": decode_routes_by_model,
         "qwen_contract": qwen_contract,
+        "cross_cache_full_greedy_policy": expected_cross_cache_full_greedy_policy,
         "reference_lane_eligible": not errors,
         "unified_main_table_eligible": False,
         "unified_main_table_reason": (
@@ -554,6 +662,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reference-results", type=Path, nargs="+", required=True)
     parser.add_argument("--expected-device", default="")
+    parser.add_argument(
+        "--cross-cache-full-greedy-policy",
+        choices=["strict", "informational"],
+        default="strict",
+    )
+    parser.add_argument("--qwen-contract", default=QWEN_CONTRACT)
     parser.add_argument(
         "--expected-model-pair",
         action="append",
@@ -576,6 +690,8 @@ def main() -> int:
         rows,
         expected_device=args.expected_device,
         expected_pairs=args.expected_model_pairs,
+        expected_cross_cache_full_greedy_policy=args.cross_cache_full_greedy_policy,
+        qwen_contract=args.qwen_contract,
     )
     args.summary.parent.mkdir(parents=True, exist_ok=True)
     args.summary.write_text(

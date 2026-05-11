@@ -1,0 +1,2 @@
+name, uuid, pci.bus_id, compute_cap, driver_version, memory.total [MiB]
+NVIDIA GeForce RTX 3090, GPU-a03a5827-113e-ef8e-d740-2950add87c31, 00000000:07:00.0, 8.6, 550.142, 24576 MiB
