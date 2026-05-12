@@ -1,5 +1,7 @@
 # 最新 Qwen3.5 对齐：全卡 Prefill / Decode tok/s
 
+[English version](QWEN35_LATEST_P_D_TOKPS_EN.md)
+
 更新日期：**2026-08-16**。
 
 排序：模型尺寸 → 显卡 → B1/B8。`P / D` 为六个测试单元的 Prefill / Decode
