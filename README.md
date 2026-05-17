@@ -58,7 +58,7 @@ User guides:
 - [AI-assisted setup and troubleshooting](docs/AI_ASSISTED_SETUP.md)
 - [Advanced training, speculative decoding, and multi-GPU](docs/ADVANCED_USAGE.md)
 - [Apple MPS, MLX, and CoreML](docs/APPLE_USAGE.md)
-- [Latest RWKV-7 vs Qwen3.5 Prefill/Decode table](docs/QWEN35_LATEST_P_D_TOKPS_EN.md) ([Chinese](docs/QWEN35_LATEST_P_D_TOKPS.md))
+- RWKV-7 vs Qwen3.5: [latest Prefill/Decode table](docs/QWEN35_LATEST_P_D_TOKPS_EN.md) and [standalone GPU reproduction tutorial](docs/QWEN35_SPEED_REPRODUCTION.md) ([中文](docs/QWEN35_SPEED_REPRODUCTION_ZH.md))
 - [Huawei Ascend NPU / torch-npu](docs/hardware/HUAWEI_ASCEND.md)
 - [Biren BR106M / BIRENSUPA](docs/hardware/BIREN_BR106M.md)
 - [MetaX C500 / MXMACA](docs/hardware/METAX_C500.md)
