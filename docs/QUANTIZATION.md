@@ -149,36 +149,6 @@ use backticks for line continuation.
 Exact RTX 5070 Laptop 0.4B smoke evidence is in
 [`../bench/5070_native_memory_loading_20260716/README.md`](../bench/5070_native_memory_loading_20260716/README.md).
 
-## RTX 4080 output-head speed and full-model memory lanes
-
-The exact RTX 4080 matrix covers official 0.4B/1.5B/2.9B checkpoints at B1/B8,
-prompt 128/512/2048 and decode 128/512. Full-model BNB8/BNB4 are memory routes:
-all 72 rows execute with finite logits and reduce footprint to
-`0.573136x-0.665038x` and `0.359704x-0.497558x` dense. No full-model speed claim
-is attached to them.
-
-The paired speed routes replace one output-head module and measure fp16 and
-quantized execution in the same process:
-
-| Route | Prefill min | Decode min | `prefill + decode` min | Footprint | Min cosine | Greedy |
-|---|---:|---:|---:|---:|---:|---:|
-| A8W8 head | telemetry | `>=1.0045x` | `>=1.003101x` | `0.9258x-0.9716x` | `>=0.999931` | 36/36 |
-| TorchAO-W4 head | telemetry | `>=1.0246x` | `>=1.015996x` | `0.8907x-0.9612x` | `>=0.999475` | 36/36 |
-
-As on the promoted RTX 3090/4090 lanes, the quant speed contract requires both
-cached decode and complete-cell `prefill + decode` latency to be no slower than
-fp16. Phase prefill is retained as telemetry and is not independently described
-as faster. Direct 8-row A8W8 GEMV and group64 W4 probes were slower than the
-selected routes and remain unpromoted.
-
-The 7.2B full-memory MM8/MM4 B1 rows reduce footprint to `0.5346x/0.3015x`
-and preserve the measured fp16 greedy sequence, but are slower than fp16.
-The 13.3B CPU-first MM8/MM4 routes fit in 16GB and execute deterministically;
-because the fp16 model does not fit, they are capacity routes without an fp16
-speed or logits-parity claim.
-
-Evidence: [`../bench/4080_full_model_ladder_20260719/README.md`](../bench/4080_full_model_ladder_20260719/README.md).
-
 ## RTX 4090 g1h 7.2B promoted result
 
 The bsz8 matrix covers prompt 128/512/2048 and decode 128/512. Route
@@ -219,22 +189,18 @@ Evidence: [`../bench/4090_small_bsz8_20260715/README.md`](../bench/4090_small_bs
 
 ## RTX 5090 promoted result
 
-The 36-row pressure artifact covers 1.5B/2.9B/7.2B × fp16/MM8/MM4 × prompt
-128/2048 × decode 128/512 × bsz8.
+The current exact-card line covers g1h 1.5B/2.9B/7.2B/13.3B at B1/B8,
+prompt128/decode128. It uses BF16 activations and symmetric group-128 Marlin
+W4 FFN weights, with a dense or TorchAO-W4 output head selected per model.
 
-- All 24 quant rows reduce footprint and preserve the fp16 greedy next token.
-- Every 2.9B/7.2B W8/W4 row is within 1% of paired fp16 decode speed.
-- The combined matrix passes a conservative 2% equivalence gate.
-- One 1.5B W8 row is `0.9841x`; universal strict no-slower is not claimed.
-- The earlier g1g 13.3B speed-policy boundaries are W8 `0.9912x` and W4
-  `0.9889x`.
-- The latest g1h 13.3B B8 prompt128/decode128 rerun measures MM8 `1.0013x`
-  and MM4 `0.9845x` paired-fp16 decode, with footprint `0.9899x/0.9848x`,
-  cosine above `0.99985`, and matching next tokens. Each row replaces only
-  `lm_head`; neither generation is a full-memory quantization claim.
+- All eight promoted rows are faster in both Prefill and Decode than their
+  paired BF16 baselines.
+- Footprint is `0.5298x-0.6250x` BF16.
+- Prompt/final cosine and same-next-token gates pass for every selected row.
+- Exact model profiles replace 46, 64, 64, or 120 FFN modules; the smallest
+  0.4B full-FFN candidate remains rejected.
 
-Evidence: [`../bench/5090_blackwell_production_close_20260712/README.md`](../bench/5090_blackwell_production_close_20260712/README.md)
-and [`../bench/5090_g1h_13p3_20260715/README.md`](../bench/5090_g1h_13p3_20260715/README.md).
+Evidence: [`../bench/5090_bntn_all_models_20260716/README.md`](../bench/5090_bntn_all_models_20260716/README.md).
 
 ## Acceptance gate
 
@@ -250,15 +216,18 @@ A promoted quant row must provide:
 Example:
 
 ```bash
-python bench/summarize_blackwell_quant_matrix.py \
-  bench/5090_blackwell_production_close_20260712/quant_gap_close.jsonl \
-  --gate --expected-rows 36 --min-speed-ratio 0.98
+python bench/bench_native_quant_e2e_decode.py \
+  --hf-dir /path/to/rwkv7-g1h-2.9b-hf --model-size-label 2.9b \
+  --dtype bf16 --device cuda --attn-mode fused_recurrent \
+  --fast-cache true --fast-token-backend native_graph \
+  --single-quantization torchao_w4 --min-params 1 --policy speed \
+  --batch-size 8 --prompt-tokens 128 --decode-tokens 128 \
+  --warmup 1 --timing-repeats 5 --paired-baseline \
+  --results /tmp/rtx5090-w4.jsonl
 ```
 
 ## Main open item
 
-The RTX 5090 7.2B FFN-heavy W4 lane now provides a large payload reduction and
-all-phase speed win. The remaining project-wide problem is extending that
-result to the still-dense square projections, W8, old cards, Hopper, AMD and
-the rest of the declared common-card matrix without regressing any measured
-fallback.
+The remaining project-wide problem is extending the exact-card W4 result to
+more projections, W8, older cards, Hopper, AMD, and unmeasured shapes without
+regressing any accepted fallback.

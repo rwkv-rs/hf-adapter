@@ -138,7 +138,7 @@ the existing quant path. The experiment therefore rejects this scalar design
 as a universal kernel even though it validates BN/TN as separate tuning axes.
 
 Full evidence:
-[`../../bench/5090_bn_tn_20260716/`](../../bench/5090_bn_tn_20260716/README.md).
+[`../../bench/5090_bntn_all_models_20260716/`](../../bench/5090_bntn_all_models_20260716/README.md).
 
 ## V100 packed-W4 result (2026-07-16)
 

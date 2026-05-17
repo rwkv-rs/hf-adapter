@@ -8,6 +8,8 @@ import sys
 from unittest.mock import patch
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -418,6 +420,8 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
 
 
 def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("requires a POSIX shell")
     out = tmp_path / "acceptance.jsonl"
     env = os.environ.copy()
     env.update(
@@ -455,6 +459,8 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
         cwd=ROOT,
         env=env,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
     )

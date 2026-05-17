@@ -1,2 +1,0 @@
-name, compute_cap, driver_version, memory.total [MiB], power.limit [W], clocks.current.sm [MHz], clocks.max.sm [MHz]
-NVIDIA GeForce RTX 4090, 8.9, 550.142, 24564 MiB, 450.00 W, 210 MHz, 3105 MHz

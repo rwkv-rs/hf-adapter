@@ -1,2 +1,0 @@
-{"axis": "native_bnb_quant_smoke", "backend": "hf_native_model", "quantization": "8bit", "status": "pass", "dtype": "fp16", "device": "NVIDIA GeForce RTX 4080", "load_s": 1.046, "forward_decode_generate_s": 0.739, "logits_shape": [1, 15, 65536], "decode_backend": "eager", "next_token": 4171, "generated_tail": [4171, 1184, 4600, 332], "module_counts": {"linear_dense": 191, "linear_8bit": 144, "linear_4bit": 0}, "model_footprint_mb": 571.8, "peak_vram_mb": 614.4}
-NATIVE BNB QUANT PASS

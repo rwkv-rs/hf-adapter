@@ -81,7 +81,7 @@ and should be included in a current assessment:
 
 | Merged work | Engineering contribution | Reproducible evidence |
 |---|---|---|
-| [PR #100](https://github.com/rwkv-rs/hf-adapter/pull/100) | Fail-closed RTX 4080 grouped B8 decode and exact-V100 B8 WAVG launch policy; benchmark harness gained current-repository loading and paired launch comparison | [`bench/4080_v100_decode_tuning_20260808/`](bench/4080_v100_decode_tuning_20260808/README.md) |
+| [PR #100](https://github.com/rwkv-rs/hf-adapter/pull/100) | Fail-closed RTX 4080 grouped B8 decode and exact-V100 B8 WAVG launch policy; benchmark harness gained current-repository loading and paired launch comparison | [`bench/4080_b8_projection_bmm_20260809/`](bench/4080_b8_projection_bmm_20260809/README.md) |
 | [PR #101](https://github.com/rwkv-rs/hf-adapter/pull/101) | Exact RTX 4080/B8 tensor-core grouping of W/A/V projections, compact padded-weight cache and zero-copy fused norm/mix input | [`bench/4080_b8_projection_bmm_20260809/`](bench/4080_b8_projection_bmm_20260809/README.md) |
 | [PR #102](https://github.com/rwkv-rs/hf-adapter/pull/102) | Exact RTX 4080/7.2B/B8 FP16 recurrent-state route, fused raw Triton recurrent/output reuse, telemetry and fallback isolation | [`bench/4080_7p2b_fp16_state_20260809/`](bench/4080_7p2b_fp16_state_20260809/README.md) |
 

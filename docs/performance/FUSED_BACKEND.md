@@ -422,23 +422,12 @@ serving speed.
    - Blackwell/5070-specific evidence lives in `BLACKWELL_50SERIES.md`; 5070
      uses the same software stack but `sm_120`-specific kernel behavior must not
      be projected onto Ada without the 4090 gate.
-   - The promoted RTX 5070 Laptop / 1.5B RWKV vs official Qwen3.5 2B artifact is
-     `bench/5070_qwen35_full_fla_bsz8_20260714/`. Its 36 passing raw rows form
-     18/18 strict bsz8 cells across fp16/BNB8/BNB4, prompt 128/512/2048, and
-     decode 128/512. Minimum prefill/decode speedups are
-     `1.082707x`/`1.795119x`; footprint and peak VRAM are no larger in 18/18,
-     and tok/s per active-B is at least `1.333940x`/`2.211641x`.
-   - Blackwell fused prefill auto-selects scan `block_m=8/16/32/64` for bsz
-     1/2/4/8+ and 1/1/1/4 warps. Fp16 can use the full native prefill graph;
-     external BNB8 uses the native prefill bridge without graph capture. BNB4
-     external-quant prefill graph and one-token decode graph are validated as
-     opt-in bsz8 paths; BNB8 uses the explicit `decode_rk` hybrid policy. These
-     routes are exact-card and default-off.
-   - Qwen's gated-delta core, fused norm, and FLA Triton causal convolution are
-     accelerated in all 18 promoted reference rows. Report the effective
-     backend as `qwen_fla_gated_delta_rule_fla_triton_conv` and fail closed if
-     any performance row retains the Transformers Torch convolution fallback.
-     The older 72-cell FLA-core-only artifact remains historical coverage.
+   - The current RTX 5070 Laptop artifact is Native-only and exact-card scoped:
+     0.4B/1.5B B1/B2/B4/B8 Prefill/Decode routes, fused norm/mix, raw recurrent
+     preparation, and B8 FP16 recurrent state pass their correctness and speed
+     gates in `bench/5070_max_perf_20260811/`.
+   - Superseded RWKV FLA performance matrices are not retained. FLA remains a
+     compatibility/reference backend and correctness oracle.
 20. Native fused prefill scan and bsz=1 bottleneck breakdown.
    - `bench/bench_native_prefill_scan.py` now records model-size-labeled
      end-to-end native prefill rows, and the analyzer compares
@@ -574,55 +563,21 @@ serving speed.
      (`0.3052ms`) plus state-prep/FFN/norm-shift work, so the next optimization
    should be a repeated per-layer fusion pattern that benefits all 24 layers,
    not a layer-specific special case.
-21. V100/sm70 split-row state-scan policy promotion.
-   - `rwkv7_hf.fused_recurrent_update` now has a split-row fused
-     state-prep + recurrent-scan kernel. It keeps token recurrence local while
-     tiling the 64 state rows, avoiding the full-head kernel's sm70 register
-     pressure.
-   - Volta defaults are batch-routed: scan tile 16 for bsz 1/2 and 32 for
-     bsz >=4; fused state-prep + state-scan is limited to bsz 1, while larger
-     batches use split scan plus separate fused state-prep. Fused prefill output
-     prep stays enabled. Explicit `RWKV7_*` environment overrides still win.
-   - On V100-32GB, 0.1B fp16 prompt512 reaches median
-     `32058.9/56598.4/94135.9/122043.7` tok/s at bsz 1/2/4/8, or
-     `0.8153x/0.7929x/0.8632x/0.7958x` the same-card Albatross rows. This is
-     `1.162x`-`1.234x` faster than the old full-head fused state-scan route.
-   - Matching-checkpoint 0.4B ratios are `0.8904x/0.8793x/0.8433x/0.7871x`;
-     1.5B ratios are `0.8651x/0.8829x/0.8494x/0.8141x`. Independent token-loop
-     alignment and ordinary HF `generate()` pass at bsz 1/4 for all three
-     models. Raw evidence is in
-     [`bench/v100_sm70_prefill_policy_20260710/README.md`](../../bench/v100_sm70_prefill_policy_20260710/README.md).
-   - This promotes V100 prefill from the old P0-level row to P1 across the
-     matrix and P2 on most measured rows. It does not close universal
-     Albatross parity, cross-card prefill policy, or W8/W4 speed.
-22. V100/sm70 deep decode fusion and raw recurrent preparation.
-   - `rwkv7_hf.fused_decode_norm_mix` folds attention layer norm plus six
-     time-mixes into one Triton kernel and folds attention residual add, FFN
-     layer norm, FFN mix, and cache update into a second kernel.
-   - `rwkv7_hf.sm70_linear` supplies an exact-sm70 lazy CUDA extension for
-     grouped R/K/V projection, FFN up + `relu²`, FFN down + residual, and
-     shape-routed decode GEMV. It uses the original projection weights rather
-     than a persistent stacked duplicate. Unsupported devices and build
-     failures fall back to the existing PyTorch/cuBLAS path.
-   - `fused_recurrent_output_prepare_raw()` extends the recurrent-output
-     Triton kernel to consume raw W/K directly. It computes W decay, adjusted
-     K, normalized KK, state update/readout, group norm, recurrent correction,
-     and gate multiply in one launch. On Volta this is enabled by
-     `RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW=1`; set the flag to `0` to capture
-     the previous split-preparation graph. The setting is part of the graph
-     cache key.
-   - End-to-end raw-preparation A/B is greedy-exact for 32 steps at 0.4B and
-     1.5B bsz=2 and improves decode by `1.3560x` and `1.1478x`, respectively.
-     The final public HF API reaches `637.9/1114.0/1852.8/3531.7` tok/s for
-     0.1B, `331.5/573.4/970.6/1855.7` for 0.4B, and
-     `162.0/261.1/459.1/874.0` for 1.5B at bsz=1/2/4/8.
-   - Full raw rows, Albatross references, VRAM, ratios, and excluded-contention
-     notes are retained in
-     [`bench/v100_sm70_decode_gap_20260710/README.md`](../../bench/v100_sm70_decode_gap_20260710/README.md).
-   - The sm70 extension compiles lazily on first capture. Production launchers
-     should call `rwkv7_warmup_fast_token()` for expected batch sizes before
-     accepting traffic. The compile latency is cold-start setup and is not
-     included in steady-state throughput.
+21. V100/sm70 production route.
+   - Exact-sm70 Native Prefill/Decode uses batch-shaped graph and fused kernels;
+     explicit `RWKV7_*` overrides still win over policy defaults.
+   - The retained production-close matrix covers 0.1B/0.4B/1.5B B1/B2/B4/B8.
+     Dense Decode is `0.908x-1.248x` and prompt512 Prefill is
+     `0.930x-1.047x` the recorded same-host Albatross reference.
+   - W8/W4 Decode passes 24/24 no-slower rows, quantized payload is
+     `0.803x-0.956x` FP16, and all quant rows preserve the next token. Evidence:
+     [`bench/v100_production_close_20260711/README.md`](../../bench/v100_production_close_20260711/README.md).
+22. V100 packed-W4 Prefill route.
+   - Exact-sm70 W4 Prefill dequantizes eligible packed weights to temporary
+     FP16 and uses cuBLAS while cached Decode keeps the packed kernels.
+   - The 1.5B head-only speed profile passes B1/B2/B4/B8 all-phase gates;
+     full-memory W4 remains a capacity route. Evidence:
+     [`bench/v100_sm70_prefill_dequant_20260723/README.md`](../../bench/v100_sm70_prefill_dequant_20260723/README.md).
 
 ### V100 packed-MM4 BN/TN and groupwise decode lane
 

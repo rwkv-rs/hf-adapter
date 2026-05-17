@@ -157,7 +157,7 @@ print({"backend": backend, "loss": float(loss), "finite_grad_tensors": grad_coun
 
 官方 shell 形状的 Native B16 证据、完整真实数据三 seed 图、5,000-step 官方对比图、
 2,500+2,500 恢复哈希和稳态显存采样见
-[`5090_native_train_temp_real_minipile_20260718`](../bench/5090_native_train_temp_real_minipile_20260718/README.md)。
+[`5090_native_train_temp_b16_20260718`](../bench/5090_native_train_temp_b16_20260718/README.md)。
 
 ### 官方 shell 运行方式
 
@@ -215,7 +215,7 @@ wrapper 追加 `--max_steps 1`，没有修改脚本内容。官方一轮报告
 B16/BF16/T512、ZeRO-2、loss `11.20`；等价 Native runner 报告 loss
 `11.249235`、`399/399` 有限 ZeRO 梯度、模型 hash 变化和 4,355.95 MiB 峰值。
 脚本哈希、数据哈希、原始日志和结果见
-[`5090_native_hf_gradio_train_temp_20260718`](../bench/5090_native_hf_gradio_train_temp_20260718/README.md)。
+[`5090_native_train_temp_real_minipile_20260718`](../bench/5090_native_train_temp_real_minipile_20260718/README.md)。
 
 ### Native 断点恢复
 

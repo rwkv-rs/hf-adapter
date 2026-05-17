@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import html
+import json
 import re
 from pathlib import Path
 from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
+CURRENT_ARTIFACTS = ROOT / "bench" / "CURRENT_ARTIFACTS.json"
 LINK_RE = re.compile(
     r'!?\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+"[^"]*")?\s*\)'
 )
@@ -14,11 +16,24 @@ HEADING_RE = re.compile(r"^ {0,3}#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
 FENCE_OPEN_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 
 
+def frozen_artifact_roots() -> set[Path]:
+    manifest = json.loads(CURRENT_ARTIFACTS.read_text(encoding="utf-8"))
+    return {
+        (ROOT / "bench" / artifact["path"]).resolve()
+        for artifact in manifest["artifacts"]
+    }
+
+
 def iter_markdown_files() -> list[Path]:
+    frozen_roots = frozen_artifact_roots()
     return sorted(
         p
         for p in ROOT.rglob("*.md")
         if ".git" not in p.parts and not any(part.startswith(".") and part != "." for part in p.parts)
+        and not any(
+            p.resolve().is_relative_to(root) and p.name != "README.md"
+            for root in frozen_roots
+        )
     )
 
 

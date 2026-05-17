@@ -58,7 +58,7 @@ User guides:
 - [AI-assisted setup and troubleshooting](docs/AI_ASSISTED_SETUP.md)
 - [Advanced training, speculative decoding, and multi-GPU](docs/ADVANCED_USAGE.md)
 - [Apple MPS, MLX, and CoreML](docs/APPLE_USAGE.md)
-- [RWKV-7 vs Qwen3.5 full parameter/speed comparison and live GPU reproduction](docs/QWEN35_SPEED_COMPARISON.md) ([中文](docs/QWEN35_SPEED_COMPARISON_ZH.md))
+- [Latest RWKV-7 vs Qwen3.5 Prefill/Decode table](docs/QWEN35_LATEST_P_D_TOKPS_EN.md) ([Chinese](docs/QWEN35_LATEST_P_D_TOKPS.md))
 - [Huawei Ascend NPU / torch-npu](docs/hardware/HUAWEI_ASCEND.md)
 - [Biren BR106M / BIRENSUPA](docs/hardware/BIREN_BR106M.md)
 - [MetaX C500 / MXMACA](docs/hardware/METAX_C500.md)
@@ -145,18 +145,18 @@ routes. These are promoted, evidence-backed profiles rather than universal
 claims for unmeasured products or shapes.
 
 Representative promoted evidence:
-> **Qwen3.5 comparator reset (2026-08-12):** historical rows below are excluded from the new main table; new RTX 3090/4090/5090 rows require one locked runtime, official FLA plus Dao-AILab `causal_conv1d`, and the RWKV `native_jit` no-CUDA-Graph fair lane. See the [unified protocol](docs/QWEN35_SPEED_COMPARISON.md).
+> **Current Qwen3.5 comparison:** use the retained paired matrices in the [latest P/D table](docs/QWEN35_LATEST_P_D_TOKPS_EN.md). RWKV uses Native for performance; FLA remains a compatibility/reference oracle.
 
 | Scope | Evidence |
 |---|---|
 | RTX 5090 Native vs official/Albatross | [`bench/5090_native_official_fp16_production_20260718/`](bench/5090_native_official_fp16_production_20260718/README.md) |
-| RTX 5090 Qwen3.5 comparison | [`bench/5090_g1h_qwen35_b1_b8_20260715/`](bench/5090_g1h_qwen35_b1_b8_20260715/README.md) |
-| RTX 5090 latest-checkpoint Qwen3.5 prefill PD | [`bench/5090_g1i_qwen35_prefill_pd_sota_20260811/`](bench/5090_g1i_qwen35_prefill_pd_sota_20260811/README.md) |
+| RTX 5090 Qwen3.5 comparison | [`bench/5090_qwen35_paired_decode_v1_20260813/`](bench/5090_qwen35_paired_decode_v1_20260813/README.md) |
+| RTX 5090 frozen Qwen3.5 reference | [`bench/5090_qwen35_best_optimized_hf_v1_20260813/`](bench/5090_qwen35_best_optimized_hf_v1_20260813/README.md) |
 | RTX 5090 Tensor Core W4 | [`bench/5090_bntn_all_models_20260716/`](bench/5090_bntn_all_models_20260716/README.md) |
 | RTX 5090 train_temp alignment | [`bench/5090_native_train_temp_real_minipile_20260718/`](bench/5090_native_train_temp_real_minipile_20260718/README.md) |
-| V100 B1/B8 active-parameter comparison | [`bench/v100_active_b1b8_20260715/`](bench/v100_active_b1b8_20260715/README.md) |
+| V100 B1/B8 active-parameter comparison | [`bench/v100_qwen35_paired_pd_v1_20260814/`](bench/v100_qwen35_paired_pd_v1_20260814/README.md) |
 | V100 production close | [`bench/v100_production_close_20260711/`](bench/v100_production_close_20260711/README.md) |
-| V100 / RTX 4080 B8 decode tuning | [`bench/4080_v100_decode_tuning_20260808/`](bench/4080_v100_decode_tuning_20260808/README.md) |
+| RTX 4080 B8 decode tuning | [`bench/4080_b8_projection_bmm_20260809/`](bench/4080_b8_projection_bmm_20260809/README.md) |
 | RTX 4080 B8 grouped projections | [`bench/4080_b8_projection_bmm_20260809/`](bench/4080_b8_projection_bmm_20260809/README.md) |
 | RTX 4080 7.2B/B8 FP16 state | [`bench/4080_7p2b_fp16_state_20260809/`](bench/4080_7p2b_fp16_state_20260809/README.md) |
 | RTX 4090 B8 matrices | [`bench/4090_small_bsz8_20260715/`](bench/4090_small_bsz8_20260715/README.md) |
@@ -286,7 +286,7 @@ for the specialized Apple evidence command catalog.
 - [`docs/BACKENDS.md`](docs/BACKENDS.md) — backend and hardware isolation
 - [`docs/reference/HF_CRITERIA.md`](docs/reference/HF_CRITERIA.md) — HF criteria
 - [`docs/integrations/README.md`](docs/integrations/README.md) — serving-engine contracts
-- [`docs/archive/`](docs/archive/) — superseded plans and milestone history
+- [`bench/CURRENT_ARTIFACTS.json`](bench/CURRENT_ARTIFACTS.json) - retained benchmark evidence
 
 ## Attribution and license
 

@@ -109,31 +109,6 @@ rounding is report-only: values at or above 100 use zero decimals and lower
 values use one decimal. Machine-readable tok/s and all seven timing samples are
 retained in [`summary.json`](summary.json) and the source JSONL files.
 
-## Historical Decode context
-
-The closest older RTX 5090 evidence is the 2026-08-11 D128 matrix in
-[`../5090_g1i_qwen35_prefill_pd_sota_20260811/`](../5090_g1i_qwen35_prefill_pd_sota_20260811/README.md).
-For a shape-aligned view, the table below compares the median of P128/P512/P2048
-at D128 on the same GPU and model size.
-
-| Qwen3.5 | Batch | Historical module-call tok/s | This artifact tok/s | Historical ratio |
-|---|---:|---:|---:|---:|
-| 0.8B | B1 | 56.7 | 584.4 | 10.31x |
-| 0.8B | B8 | 429.4 | 3,371.2 | 7.85x |
-| 2B | B1 | 56.7 | 334.0 | 5.89x |
-| 2B | B8 | 434.0 | 2,113.5 | 4.87x |
-| 4B | B1 | 41.3 | 122.5 | 2.96x |
-| 4B | B8 | 317.4 | 751.2 | 2.37x |
-| 9B | B1 | 41.7 | 80.1 | 1.92x |
-| 9B | B8 | 318.6 | 528.8 | 1.66x |
-
-These ratios are historical context, not a controlled same-runtime A/B. The
-older rows used per-token `module_call` with `DynamicCache`, a repository
-`fla_triton` convolution route, PyTorch 2.11, and 2/5 warmup/runs. This artifact
-uses official `causal_conv1d`, PyTorch 2.8, 3/7 warmup/runs, and the selected
-StaticCache Graph routes. The table therefore demonstrates the practical
-baseline change but does not isolate a pure Graph or kernel speedup.
-
 ## Complete raw matrix
 
 [`summary.md`](summary.md) contains the sorted 48-cell table in model, GPU,

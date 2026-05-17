@@ -1,387 +1,0 @@
-{
-  "torch": "2.9.1+rocm7.2.1.gitff65f5bc",
-  "hip": "7.2.53211-e1a6bc5663",
-  "device": "AMD Radeon Graphics",
-  "vram_gib": 47.98,
-  "profile_family": "amd_hip",
-  "architecture": "gfx1100",
-  "fused_recurrent_output": true,
-  "fused_recurrent_raw": true,
-  "fused_output": true,
-  "fused_norm_mix": true,
-  "norm_mix_num_warps": 4,
-  "fused_prefill_scan": false,
-  "mm8_dot_launch": {
-    "min_rows": 2,
-    "block_b": 16,
-    "block_m": 256,
-    "block_n": 16,
-    "warps": 8
-  },
-  "mm4_dot_launch": {
-    "min_rows": 2,
-    "block_b": 16,
-    "block_pairs": 64,
-    "block_n": 32,
-    "warps": 2
-  }
-}
-+ python scripts/sync_hf_adapter_code.py /workspace/models/rwkv7-g1d-0.4b-hf
-{"model_dir": "/workspace/models/rwkv7-g1d-0.4b-hf", "copied": ["/workspace/models/rwkv7-g1d-0.4b-hf/ada_lora.py", "/workspace/models/rwkv7-g1d-0.4b-hf/ada_sparse_ffn.py", "/workspace/models/rwkv7-g1d-0.4b-hf/blackwell_norm_mix.py", "/workspace/models/rwkv7-g1d-0.4b-hf/dplr_prefill.py", "/workspace/models/rwkv7-g1d-0.4b-hf/dplr_prefill_triton.py", "/workspace/models/rwkv7-g1d-0.4b-hf/extension_build.py", "/workspace/models/rwkv7-g1d-0.4b-hf/fused_attention_projection.py", "/workspace/models/rwkv7-g1d-0.4b-hf/fused_ffn.py", "/workspace/models/rwkv7-g1d-0.4b-hf/fused_lora.py", "/workspace/models/rwkv7-g1d-0.4b-hf/fused_decode_norm_mix.py", "/workspace/models/rwkv7-g1d-0.4b-hf/fused_norm_mix.py", "/workspace/models/rwkv7-g1d-0.4b-hf/fused_output.py", "/workspace/models/rwkv7-g1d-0.4b-hf/fused_prefill.py", "/workspace/models/rwkv7-g1d-0.4b-hf/fused_projection.py", "/workspace/models/rwkv7-g1d-0.4b-hf/fused_recurrent_update.py", "/workspace/models/rwkv7-g1d-0.4b-hf/fused_elementwise.py", "/workspace/models/rwkv7-g1d-0.4b-hf/fused_time_mix.py", "/workspace/models/rwkv7-g1d-0.4b-hf/kernel_policy.py", "/workspace/models/rwkv7-g1d-0.4b-hf/mlx_bridge.py", "/workspace/models/rwkv7-g1d-0.4b-hf/mlx_cache.py", "/workspace/models/rwkv7-g1d-0.4b-hf/mlx_dplr_prefill.py", "/workspace/models/rwkv7-g1d-0.4b-hf/mlx_model.py", "/workspace/models/rwkv7-g1d-0.4b-hf/mlx_mix.py", "/workspace/models/rwkv7-g1d-0.4b-hf/mlx_norm.py", "/workspace/models/rwkv7-g1d-0.4b-hf/mlx_policy.py", "/workspace/models/rwkv7-g1d-0.4b-hf/mlx_quant.py", "/workspace/models/rwkv7-g1d-0.4b-hf/mlx_scan.py", "/workspace/models/rwkv7-g1d-0.4b-hf/mlx_scheduler.py", "/workspace/models/rwkv7-g1d-0.4b-hf/mlx_session.py", "/workspace/models/rwkv7-g1d-0.4b-hf/mlx_state.py", "/workspace/models/rwkv7-g1d-0.4b-hf/mlx_wkv.py", "/workspace/models/rwkv7-g1d-0.4b-hf/model_backbone.py", "/workspace/models/rwkv7-g1d-0.4b-hf/model_cache.py", "/workspace/models/rwkv7-g1d-0.4b-hf/model_config.py", "/workspace/models/rwkv7-g1d-0.4b-hf/model_fast_api.py", "/workspace/models/rwkv7-g1d-0.4b-hf/model_generation.py", "/workspace/models/rwkv7-g1d-0.4b-hf/model_layers.py", "/workspace/models/rwkv7-g1d-0.4b-hf/model_prefill_graph.py", "/workspace/models/rwkv7-g1d-0.4b-hf/model_quantization.py", "/workspace/models/rwkv7-g1d-0.4b-hf/model_runtime_policy.py", "/workspace/models/rwkv7-g1d-0.4b-hf/model_runtime.py", "/workspace/models/rwkv7-g1d-0.4b-hf/model_speculative.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_jit.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_jit_bnb8.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_jit_dense_step.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_jit_decode.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_jit_graph_dispatch.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_jit_linear.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_jit_packing.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_jit_prefill.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_jit_prefill_policy.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_jit_prefill_runtime_policy.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_jit_recurrent.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_graph_runtime.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_model.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_quant.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_quant_a8w8.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_quant_bnb8.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_quant_mm4.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_quant_mm8.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_quant_bn_tn.py", "/workspace/models/rwkv7-g1d-0.4b-hf/marlin_autotune.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_quant_marlin.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_quant_marlin_sources.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_quant_torchao.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_quant_policy.py", "/workspace/models/rwkv7-g1d-0.4b-hf/native_wkv_fp16.py", "/workspace/models/rwkv7-g1d-0.4b-hf/remote_code/__init__.py", "/workspace/models/rwkv7-g1d-0.4b-hf/self_chunk_A_fwd.py", "/workspace/models/rwkv7-g1d-0.4b-hf/self_chunk_cumsum.py", "/workspace/models/rwkv7-g1d-0.4b-hf/self_chunk_h_fwd.py", "/workspace/models/rwkv7-g1d-0.4b-hf/self_chunk_o_fwd.py", "/workspace/models/rwkv7-g1d-0.4b-hf/self_chunk_rwkv7.py", "/workspace/models/rwkv7-g1d-0.4b-hf/self_chunk_utils.py", "/workspace/models/rwkv7-g1d-0.4b-hf/self_chunk_wy_fwd.py", "/workspace/models/rwkv7-g1d-0.4b-hf/sm70_linear.py", "/workspace/models/rwkv7-g1d-0.4b-hf/sm70_quant.py", "/workspace/models/rwkv7-g1d-0.4b-hf/sm70_wagv.py", "/workspace/models/rwkv7-g1d-0.4b-hf/triton_compat.py", "/workspace/models/rwkv7-g1d-0.4b-hf/tokenization_rwkv7.py"], "removed": [], "dry_run": false}
-+ python - /workspace/models/rwkv7-g1d-0.4b-hf
-{
-  "architectures": [
-    "NativeRWKV7ForCausalLM"
-  ],
-  "model_type": "rwkv7_native",
-  "auto_model": "native_model.NativeRWKV7ForCausalLM"
-}
-+ python -m py_compile rwkv7_hf/kernel_policy.py rwkv7_hf/model_config.py rwkv7_hf/model_cache.py rwkv7_hf/model_generation.py rwkv7_hf/model_fast_api.py rwkv7_hf/model_layers.py rwkv7_hf/model_backbone.py rwkv7_hf/model_prefill_graph.py rwkv7_hf/model_quantization.py rwkv7_hf/model_runtime_policy.py rwkv7_hf/model_runtime.py rwkv7_hf/model_speculative.py rwkv7_hf/native_jit.py rwkv7_hf/native_jit_bnb8.py rwkv7_hf/native_jit_dense_step.py rwkv7_hf/native_jit_decode.py rwkv7_hf/native_jit_graph_dispatch.py rwkv7_hf/native_jit_linear.py rwkv7_hf/native_jit_packing.py rwkv7_hf/native_jit_prefill.py rwkv7_hf/native_jit_prefill_policy.py rwkv7_hf/native_jit_prefill_runtime_policy.py rwkv7_hf/native_jit_recurrent.py rwkv7_hf/native_model.py bench/bench_batch_sweep.py bench/bench_chunked_prefill.py bench/bench_native_graph_policy_ab.py
-+ python tests/test_kernel_policy.py
-PASS
-+ python -m pytest -q tests/test_native_quant_mm8_policy.py tests/test_native_quant_mm4_policy.py
-...                                                                      [100%]
-3 passed in 3.45s
-+ python -m pytest -q tests/test_native_model_module_split.py
-...                                                                      [100%]
-3 passed in 3.33s
-+ python tests/test_native_fla_free_import.py --model /workspace/models/rwkv7-g1d-0.4b-hf
-Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 15932.46it/s]
-NATIVE FLA-FREE IMPORT PASS
-+ python tests/smoke_hf_generate.py --model /workspace/models/rwkv7-g1d-0.4b-hf --device cuda --max-new-tokens 8
-[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
-Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  33%|███▎      | 262/795 [00:00<00:00, 2561.87it/s]Loading weights:  65%|██████▌   | 519/795 [00:00<00:00, 2555.38it/s]Loading weights:  97%|█████████▋| 775/795 [00:00<00:00, 2504.82it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 2508.87it/s]
-logits_shape (1, 8, 65536)
-top5 [36786, 3880, 308, 28980, 20039]
-forward_sec 1.2885
-generate_fast_token_backend native_graph
-generated_ids_shape (1, 16)
-decoded_BEGIN
-User: Hello!
-
-Assistant: Hello! How can I assist you today
-decoded_END
-+ python tests/test_hf_api_contract.py --model /workspace/models/rwkv7-g1d-0.4b-hf --device cuda --dtype fp16 --beam-new-tokens 2
-[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
-Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  33%|███▎      | 260/795 [00:00<00:00, 2551.24it/s]Loading weights:  65%|██████▍   | 516/795 [00:00<00:00, 2452.66it/s]Loading weights:  96%|█████████▌| 762/795 [00:00<00:00, 2436.53it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 2452.15it/s]
-generate_fast_token_backend native_graph
-beam_ids [36274, 47]
-PASS
-+ python tests/test_peft_lora.py --model /workspace/models/rwkv7-g1d-0.4b-hf --device cuda --attn-mode fused_recurrent
-[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
-Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  14%|█▍        | 113/795 [00:00<00:00, 1120.43it/s]Loading weights:  45%|████▌     | 360/795 [00:00<00:00, 1855.54it/s]Loading weights:  76%|███████▌  | 605/795 [00:00<00:00, 2110.13it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 2063.25it/s]
-trainable 1769472 total 452537344 pct 0.391
-loss 2.3399295806884766
-nonzero_grad_count 144
-nonzero_grad base_model.model.model.layers.0.attn.r_proj.lora_B.default.weight 0.6487976312637329
-nonzero_grad base_model.model.model.layers.0.attn.k_proj.lora_B.default.weight 0.5438004732131958
-nonzero_grad base_model.model.model.layers.0.attn.v_proj.lora_B.default.weight 5.990245819091797
-nonzero_grad base_model.model.model.layers.0.attn.o_proj.lora_B.default.weight 5.8666205406188965
-nonzero_grad base_model.model.model.layers.0.ffn.key.lora_B.default.weight 5.216097354888916
-+ python tests/test_dynamic_batch_cache.py --model /workspace/models/rwkv7-g1d-0.4b-hf --device cuda --dtype fp16 --batch-size 3 --prompt-tokens 32 --decode-steps 2 --modes forward
-[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
-Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  14%|█▍        | 113/795 [00:00<00:00, 1118.77it/s]Loading weights:  45%|████▌     | 358/795 [00:00<00:00, 1886.11it/s]Loading weights:  74%|███████▍  | 589/795 [00:00<00:00, 2053.79it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 2057.02it/s]
-ids_shape=(3, 32) modes=['forward']
-forward prefill batch-vs-individual max_abs_diff=0.0625
-forward heterogeneous decode step=1 max_abs_diff=0.0625
-forward heterogeneous decode step=2 max_abs_diff=0.0625
-forward reordered decode max_abs_diff=0.03125
-forward inplace-reordered decode max_abs_diff=0.0625
-forward compacted decode max_abs_diff=0.0625
-forward PASS cache_type=NativeRWKV7Cache perm=[1, 0, 2]
-PASS
-+ python tests/test_chunked_prefill.py --model /workspace/models/rwkv7-g1d-0.4b-hf --device cuda --dtype fp16 --batch-size 2 --chunk-sizes 1 4 8 --max-diff 0.2
-[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
-Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  33%|███▎      | 260/795 [00:00<00:00, 2430.22it/s]Loading weights:  64%|██████▎   | 506/795 [00:00<00:00, 2446.64it/s]Loading weights:  95%|█████████▍| 754/795 [00:00<00:00, 2434.70it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 2433.29it/s]
-chunked_prefill chunk_size 1 max_abs_diff 0.046875 decode_max_abs_diff 0.0625 seq_full 161 seq_chunked 161
-chunked_prefill chunk_size 4 max_abs_diff 0.0625 decode_max_abs_diff 0.0625 seq_full 161 seq_chunked 161
-chunked_prefill chunk_size 8 max_abs_diff 0.0625 decode_max_abs_diff 0.0625 seq_full 161 seq_chunked 161
-PASS
-+ python tests/test_native_trainer_smoke.py --model /workspace/models/rwkv7-g1d-0.4b-hf --dtype bf16 --max-steps 6 --batch-size 2 --length 16
-Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  66%|██████▌   | 525/795 [00:00<00:00, 5234.98it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 5761.96it/s]
-  0%|          | 0/6 [00:00<?, ?it/s] 17%|█▋        | 1/6 [00:02<00:11,  2.31s/it]                                              17%|█▋        | 1/6 [00:02<00:11,  2.31s/it] 33%|███▎      | 2/6 [00:03<00:06,  1.66s/it]                                              33%|███▎      | 2/6 [00:03<00:06,  1.66s/it] 50%|█████     | 3/6 [00:04<00:04,  1.45s/it]                                              50%|█████     | 3/6 [00:04<00:04,  1.45s/it] 67%|██████▋   | 4/6 [00:05<00:02,  1.34s/it]                                              67%|██████▋   | 4/6 [00:05<00:02,  1.34s/it] 83%|████████▎ | 5/6 [00:07<00:01,  1.29s/it]                                              83%|████████▎ | 5/6 [00:07<00:01,  1.29s/it]100%|██████████| 6/6 [00:08<00:00,  1.28s/it]                                             100%|██████████| 6/6 [00:08<00:00,  1.28s/it]                                             100%|██████████| 6/6 [00:08<00:00,  1.28s/it]100%|██████████| 6/6 [00:08<00:00,  1.39s/it]
-{'loss': '3.027', 'grad_norm': '14', 'learning_rate': '0.001', 'epoch': '0.04167'}
-{'loss': '2.051', 'grad_norm': '11.1', 'learning_rate': '0.0008333', 'epoch': '0.08333'}
-{'loss': '1.724', 'grad_norm': '17', 'learning_rate': '0.0006667', 'epoch': '0.125'}
-{'loss': '0.7272', 'grad_norm': '4.465', 'learning_rate': '0.0005', 'epoch': '0.1667'}
-{'loss': '1.209', 'grad_norm': '7.641', 'learning_rate': '0.0003333', 'epoch': '0.2083'}
-{'loss': '0.9417', 'grad_norm': '6.911', 'learning_rate': '0.0001667', 'epoch': '0.25'}
-{'train_runtime': '8.341', 'train_samples_per_second': '1.439', 'train_steps_per_second': '0.719', 'train_loss': '1.613', 'epoch': '0.25'}
-[native-trainer] loss history: [3.0271, 2.0506, 1.7241, 0.7272, 1.2094, 0.9417]
-[native-trainer] trainable params updated: 144/144
-NATIVE TRAINER PASS
-+ python bench/bench_batch_sweep.py --hf-dir /workspace/models/rwkv7-g1d-0.4b-hf --dtype fp16 --device cuda --fast-cache true --fast-decode-api false --fast-token-backend auto --batch-sizes 1 2 4 8 --prompt-tokens 128 --decode-tokens 32 --warmup 1 --runs 2 --results /workspace/amd_rebase_final_validation_0p4b/results.jsonl
-[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
-Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  15%|█▍        | 117/795 [00:00<00:00, 1165.60it/s]Loading weights:  45%|████▌     | 360/795 [00:00<00:00, 1903.96it/s]Loading weights:  74%|███████▍  | 592/795 [00:00<00:00, 2088.21it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 2080.94it/s]
-
-===== batch_size=1 =====
-{
-  "axis": "batch_sweep",
-  "backend": "hf_adapter",
-  "decode_api": "forward",
-  "dtype": "fp16",
-  "device": "AMD Radeon Graphics",
-  "model_name": "rwkv7-g1d-0.4b-hf",
-  "model_size_label": "0.4b",
-  "hf_model_dir": "/workspace/models/rwkv7-g1d-0.4b-hf",
-  "hidden_size": 1024,
-  "intermediate_size": 4096,
-  "num_hidden_layers": 24,
-  "head_dim": 64,
-  "num_heads": 16,
-  "attn_mode": "fused_recurrent",
-  "fuse_norm": false,
-  "fast_cache": true,
-  "cache_type": "NativeRWKV7Cache",
-  "batch_size": 1,
-  "prompt_tokens": 128,
-  "decode_tokens": 32,
-  "prefill_tokps_total": 262.5,
-  "prefill_tokps_per_seq": 262.5,
-  "prefill_ms": 487.54,
-  "decode_tokps_total": 141.1,
-  "decode_tokps_per_seq": 141.1,
-  "decode_ms_per_step": 7.09,
-  "peak_vram_mb": 1045.3
-}
-
-===== batch_size=2 =====
-{
-  "axis": "batch_sweep",
-  "backend": "hf_adapter",
-  "decode_api": "forward",
-  "dtype": "fp16",
-  "device": "AMD Radeon Graphics",
-  "model_name": "rwkv7-g1d-0.4b-hf",
-  "model_size_label": "0.4b",
-  "hf_model_dir": "/workspace/models/rwkv7-g1d-0.4b-hf",
-  "hidden_size": 1024,
-  "intermediate_size": 4096,
-  "num_hidden_layers": 24,
-  "head_dim": 64,
-  "num_heads": 16,
-  "attn_mode": "fused_recurrent",
-  "fuse_norm": false,
-  "fast_cache": true,
-  "cache_type": "NativeRWKV7Cache",
-  "batch_size": 2,
-  "prompt_tokens": 128,
-  "decode_tokens": 32,
-  "prefill_tokps_total": 471.4,
-  "prefill_tokps_per_seq": 235.7,
-  "prefill_ms": 543.02,
-  "decode_tokps_total": 282.6,
-  "decode_tokps_per_seq": 141.3,
-  "decode_ms_per_step": 7.08,
-  "peak_vram_mb": 1095.7
-}
-
-===== batch_size=4 =====
-{
-  "axis": "batch_sweep",
-  "backend": "hf_adapter",
-  "decode_api": "forward",
-  "dtype": "fp16",
-  "device": "AMD Radeon Graphics",
-  "model_name": "rwkv7-g1d-0.4b-hf",
-  "model_size_label": "0.4b",
-  "hf_model_dir": "/workspace/models/rwkv7-g1d-0.4b-hf",
-  "hidden_size": 1024,
-  "intermediate_size": 4096,
-  "num_hidden_layers": 24,
-  "head_dim": 64,
-  "num_heads": 16,
-  "attn_mode": "fused_recurrent",
-  "fuse_norm": false,
-  "fast_cache": true,
-  "cache_type": "NativeRWKV7Cache",
-  "batch_size": 4,
-  "prompt_tokens": 128,
-  "decode_tokens": 32,
-  "prefill_tokps_total": 936.1,
-  "prefill_tokps_per_seq": 234.0,
-  "prefill_ms": 546.93,
-  "decode_tokps_total": 538.8,
-  "decode_tokps_per_seq": 134.7,
-  "decode_ms_per_step": 7.42,
-  "peak_vram_mb": 1168.2
-}
-
-===== batch_size=8 =====
-{
-  "axis": "batch_sweep",
-  "backend": "hf_adapter",
-  "decode_api": "forward",
-  "dtype": "fp16",
-  "device": "AMD Radeon Graphics",
-  "model_name": "rwkv7-g1d-0.4b-hf",
-  "model_size_label": "0.4b",
-  "hf_model_dir": "/workspace/models/rwkv7-g1d-0.4b-hf",
-  "hidden_size": 1024,
-  "intermediate_size": 4096,
-  "num_hidden_layers": 24,
-  "head_dim": 64,
-  "num_heads": 16,
-  "attn_mode": "fused_recurrent",
-  "fuse_norm": false,
-  "fast_cache": true,
-  "cache_type": "NativeRWKV7Cache",
-  "batch_size": 8,
-  "prompt_tokens": 128,
-  "decode_tokens": 32,
-  "prefill_tokps_total": 1861.9,
-  "prefill_tokps_per_seq": 232.7,
-  "prefill_ms": 549.97,
-  "decode_tokps_total": 1062.9,
-  "decode_tokps_per_seq": 132.9,
-  "decode_ms_per_step": 7.53,
-  "peak_vram_mb": 1310.9
-}
-
-appended 4 rows -> /workspace/amd_rebase_final_validation_0p4b/results.jsonl
-+ python bench/bench_chunked_prefill.py --hf-dir /workspace/models/rwkv7-g1d-0.4b-hf --dtype fp16 --device cuda --batch-size 1 --prompt-tokens 256 --chunk-sizes 32 64 128 --warmup 0 --runs 1 --max-diff 0.2 --results /workspace/amd_rebase_final_validation_0p4b/results.jsonl
-[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
-Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  15%|█▍        | 117/795 [00:00<00:00, 1164.06it/s]Loading weights:  45%|████▌     | 361/795 [00:00<00:00, 1893.96it/s]Loading weights:  77%|███████▋  | 611/795 [00:00<00:00, 2163.93it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 2102.21it/s]
-{"axis": "chunked_prefill", "backend": "hf_adapter", "model_name": "rwkv7-g1d-0.4b-hf", "model_size_label": "0.4b", "hf_model_dir": "/workspace/models/rwkv7-g1d-0.4b-hf", "hidden_size": 1024, "intermediate_size": 4096, "num_hidden_layers": 24, "head_dim": 64, "num_heads": 16, "prefill_mode": "full", "dtype": "fp16", "device": "AMD Radeon Graphics", "attn_mode": "fused_recurrent", "fuse_norm": false, "batch_size": 1, "prompt_tokens": 256, "total_tokens": 256, "prefill_ms": 1655.01, "prefill_tokps_total": 154.7, "peak_vram_mb": 1015.0, "seq_length": 256}
-{"axis": "chunked_prefill", "backend": "hf_adapter", "model_name": "rwkv7-g1d-0.4b-hf", "model_size_label": "0.4b", "hf_model_dir": "/workspace/models/rwkv7-g1d-0.4b-hf", "hidden_size": 1024, "intermediate_size": 4096, "num_hidden_layers": 24, "head_dim": 64, "num_heads": 16, "prefill_mode": "chunked", "dtype": "fp16", "device": "AMD Radeon Graphics", "attn_mode": "fused_recurrent", "fuse_norm": false, "batch_size": 1, "prompt_tokens": 256, "total_tokens": 256, "chunk_size": 32, "prefill_ms": 1127.02, "prefill_tokps_total": 227.1, "speed_ratio_vs_full": 1.4685, "peak_vram_mb": 1059.2, "peak_vram_ratio_vs_full": 1.0435, "max_abs_diff": 0.0625, "min_cosine": 1.00000012, "greedy_match": true, "decode_max_abs_diff": 0.0625, "decode_min_cosine": 1.00000012, "decode_greedy_match": true, "seq_length_match": true, "seq_length": 256}
-{"axis": "chunked_prefill", "backend": "hf_adapter", "model_name": "rwkv7-g1d-0.4b-hf", "model_size_label": "0.4b", "hf_model_dir": "/workspace/models/rwkv7-g1d-0.4b-hf", "hidden_size": 1024, "intermediate_size": 4096, "num_hidden_layers": 24, "head_dim": 64, "num_heads": 16, "prefill_mode": "chunked", "dtype": "fp16", "device": "AMD Radeon Graphics", "attn_mode": "fused_recurrent", "fuse_norm": false, "batch_size": 1, "prompt_tokens": 256, "total_tokens": 256, "chunk_size": 64, "prefill_ms": 1012.69, "prefill_tokps_total": 252.8, "speed_ratio_vs_full": 1.6343, "peak_vram_mb": 1073.1, "peak_vram_ratio_vs_full": 1.0572, "max_abs_diff": 0.0625, "min_cosine": 1.00000012, "greedy_match": true, "decode_max_abs_diff": 0.0625, "decode_min_cosine": 1.00000012, "decode_greedy_match": true, "seq_length_match": true, "seq_length": 256}
-{"axis": "chunked_prefill", "backend": "hf_adapter", "model_name": "rwkv7-g1d-0.4b-hf", "model_size_label": "0.4b", "hf_model_dir": "/workspace/models/rwkv7-g1d-0.4b-hf", "hidden_size": 1024, "intermediate_size": 4096, "num_hidden_layers": 24, "head_dim": 64, "num_heads": 16, "prefill_mode": "chunked", "dtype": "fp16", "device": "AMD Radeon Graphics", "attn_mode": "fused_recurrent", "fuse_norm": false, "batch_size": 1, "prompt_tokens": 256, "total_tokens": 256, "chunk_size": 128, "prefill_ms": 963.56, "prefill_tokps_total": 265.7, "speed_ratio_vs_full": 1.7176, "peak_vram_mb": 1089.4, "peak_vram_ratio_vs_full": 1.0733, "max_abs_diff": 0.0625, "min_cosine": 1.00000012, "greedy_match": true, "decode_max_abs_diff": 0.0625, "decode_min_cosine": 0.99999994, "decode_greedy_match": true, "seq_length_match": true, "seq_length": 256}
-+ python bench/bench_native_graph_policy_ab.py --hf-dir /workspace/models/rwkv7-g1d-0.4b-hf --dtype fp16 --device cuda --batch-size 1 --prompt-tokens 128 --correctness-steps 32 --warmup 8 --steps 128 --min-speedup 1.0 --require-accelerated-policy --results /workspace/amd_rebase_final_validation_0p4b/decode_policy_ab.jsonl
-[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
-Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  15%|█▍        | 117/795 [00:00<00:00, 1163.67it/s]Loading weights:  45%|████▌     | 361/795 [00:00<00:00, 1888.95it/s]Loading weights:  77%|███████▋  | 611/795 [00:00<00:00, 2161.98it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 2098.13it/s]
-{
-  "axis": "native_graph_policy_ab",
-  "backend": "hf_adapter",
-  "status": "pass",
-  "dtype": "fp16",
-  "device": "AMD Radeon Graphics",
-  "gpu_family": "amd_hip",
-  "gpu_architecture": "gfx1100",
-  "model_name": "rwkv7-g1d-0.4b-hf",
-  "hf_model_dir": "/workspace/models/rwkv7-g1d-0.4b-hf",
-  "hidden_size": 1024,
-  "num_hidden_layers": 24,
-  "batch_size": 1,
-  "prompt_tokens": 128,
-  "correctness_steps": 32,
-  "timing_steps": 128,
-  "fixed_token": false,
-  "selected_policy": {
-    "fused_recurrent_output": true,
-    "fused_recurrent_raw": true,
-    "fused_output": true,
-    "fused_norm_mix": true
-  },
-  "norm_mix_num_warps": 4,
-  "baseline_effective_backend": "native_graph",
-  "candidate_effective_backend": "native_graph",
-  "baseline_ms_per_step": 12.3346,
-  "candidate_ms_per_step": 7.061,
-  "baseline_tokps_total": 81.1,
-  "candidate_tokps_total": 141.6,
-  "speedup": 1.7469,
-  "min_speedup": 1.0,
-  "max_abs_diff_first_step": 0.03125,
-  "min_cosine_first_step": 1.0000001192092896,
-  "greedy_match": 32,
-  "greedy_total": 32,
-  "correctness_pass": true,
-  "speed_pass": true,
-  "backend_pass": true,
-  "baseline_cache_stats": {
-    "requests": 169,
-    "hits": 168,
-    "misses": 1,
-    "evictions": 0,
-    "size": 1,
-    "limit": 8,
-    "batch_sizes": [
-      1
-    ],
-    "hit_rate": 0.9940828402366864
-  },
-  "candidate_cache_stats": {
-    "requests": 169,
-    "hits": 168,
-    "misses": 1,
-    "evictions": 0,
-    "size": 1,
-    "limit": 8,
-    "batch_sizes": [
-      1
-    ],
-    "hit_rate": 0.9940828402366864
-  },
-  "peak_vram_mb": 1106.9
-}
-+ python bench/bench_native_graph_policy_ab.py --hf-dir /workspace/models/rwkv7-g1d-0.4b-hf --dtype fp16 --device cuda --batch-size 8 --prompt-tokens 128 --correctness-steps 32 --warmup 8 --steps 128 --min-speedup 1.0 --require-accelerated-policy --results /workspace/amd_rebase_final_validation_0p4b/decode_policy_ab.jsonl
-[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
-Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  15%|█▍        | 116/795 [00:00<00:00, 1159.82it/s]Loading weights:  45%|████▌     | 360/795 [00:00<00:00, 1877.29it/s]Loading weights:  77%|███████▋  | 612/795 [00:00<00:00, 2156.78it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 2093.82it/s]
-{
-  "axis": "native_graph_policy_ab",
-  "backend": "hf_adapter",
-  "status": "pass",
-  "dtype": "fp16",
-  "device": "AMD Radeon Graphics",
-  "gpu_family": "amd_hip",
-  "gpu_architecture": "gfx1100",
-  "model_name": "rwkv7-g1d-0.4b-hf",
-  "hf_model_dir": "/workspace/models/rwkv7-g1d-0.4b-hf",
-  "hidden_size": 1024,
-  "num_hidden_layers": 24,
-  "batch_size": 8,
-  "prompt_tokens": 128,
-  "correctness_steps": 32,
-  "timing_steps": 128,
-  "fixed_token": false,
-  "selected_policy": {
-    "fused_recurrent_output": true,
-    "fused_recurrent_raw": true,
-    "fused_output": true,
-    "fused_norm_mix": true
-  },
-  "norm_mix_num_warps": 4,
-  "baseline_effective_backend": "native_graph",
-  "candidate_effective_backend": "native_graph",
-  "baseline_ms_per_step": 13.0344,
-  "candidate_ms_per_step": 7.456,
-  "baseline_tokps_total": 613.8,
-  "candidate_tokps_total": 1073.0,
-  "speedup": 1.7482,
-  "min_speedup": 1.0,
-  "max_abs_diff_first_step": 0.03125,
-  "min_cosine_first_step": 1.0,
-  "greedy_match": 256,
-  "greedy_total": 256,
-  "correctness_pass": true,
-  "speed_pass": true,
-  "backend_pass": true,
-  "baseline_cache_stats": {
-    "requests": 169,
-    "hits": 168,
-    "misses": 1,
-    "evictions": 0,
-    "size": 1,
-    "limit": 8,
-    "batch_sizes": [
-      8
-    ],
-    "hit_rate": 0.9940828402366864
-  },
-  "candidate_cache_stats": {
-    "requests": 169,
-    "hits": 168,
-    "misses": 1,
-    "evictions": 0,
-    "size": 1,
-    "limit": 8,
-    "batch_sizes": [
-      8
-    ],
-    "hit_rate": 0.9940828402366864
-  },
-  "peak_vram_mb": 1313.1
-}
-AMD ROCm HF VALIDATION PASS
-wrote /workspace/amd_rebase_final_validation_0p4b
-wrote /workspace/amd_rebase_final_validation_0p4b/results.jsonl

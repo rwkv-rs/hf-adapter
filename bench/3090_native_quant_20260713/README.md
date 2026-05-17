@@ -81,5 +81,5 @@ PYTHON_BIN=/path/to/python \
 `DENSE_PREFILL_GATE` and `DENSE_DECODE_GATE` can override the pair-specific
 dense gates for an exploratory run; the legacy `DENSE_SPEEDUP_GATE` aliases
 the decode override. Quantized Qwen checkpoints are not loaded by this
-command. The completed 1.5B/2B and 2.9B/4B bsz8 evidence is in
-[`../3090_small_bsz8_20260714/README.md`](../3090_small_bsz8_20260714/README.md).
+command. Superseded cross-model B8 evidence is not part of the retained
+artifact set.

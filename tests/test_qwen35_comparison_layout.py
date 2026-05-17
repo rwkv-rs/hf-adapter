@@ -29,21 +29,6 @@ PAIR_LABELS = {
 }
 
 
-def comparison_rows(path: Path) -> list[list[str]]:
-    lines = path.read_text(encoding="utf-8").splitlines()
-    header = next(
-        index
-        for index, line in enumerate(lines)
-        if line.startswith("| GPU |") and "RWKV P / D tok/s" in line
-    )
-    rows: list[list[str]] = []
-    for line in lines[header + 2 :]:
-        if not line.startswith("|"):
-            break
-        rows.append([cell.strip() for cell in line.strip().strip("|").split("|")])
-    return rows
-
-
 def assert_throughput_format(cell: str) -> None:
     values = cell.replace("**", "").split("/")
     assert len(values) == 2
@@ -54,17 +39,6 @@ def assert_throughput_format(cell: str) -> None:
             assert "." not in rendered, rendered
         else:
             assert re.fullmatch(r"\d{1,2}\.\d", rendered), rendered
-
-
-def assert_document_throughput_format(text: str) -> None:
-    values = re.findall(r"([0-9][0-9,]*(?:\.[0-9]+)?)\s*tok/s", text)
-    pair_values = [
-        value
-        for pair in re.findall(r"\*\*([0-9,.]+) / ([0-9,.]+)\*\*", text)
-        for value in pair
-    ]
-    for value in (*values, *pair_values):
-        assert_throughput_format(f"{value} / {value}")
 
 
 def latest_tokps_rows(path: Path) -> list[list[str]]:
@@ -245,126 +219,3 @@ def test_latest_tokps_doc_matches_promoted_artifact_medians() -> None:
         for row in document_rows
     }
     assert actual == expected
-
-
-def test_cross_card_table_is_model_gpu_batch_sorted_and_formatted() -> None:
-    for relative in (
-        "docs/QWEN35_SPEED_COMPARISON.md",
-        "docs/QWEN35_SPEED_COMPARISON_ZH.md",
-    ):
-        rows = comparison_rows(ROOT / relative)
-        assert_document_throughput_format((ROOT / relative).read_text(encoding="utf-8"))
-        keys = [
-            (MODEL_ORDER[row[1]], GPU_ORDER[row[0]], int(row[2].removeprefix("B")))
-            for row in rows
-        ]
-        assert keys == sorted(keys), relative
-        for row in rows:
-            assert_throughput_format(row[6])
-            assert_throughput_format(row[7])
-
-
-def test_4090_artifact_table_is_model_batch_sorted_and_formatted() -> None:
-    path = ROOT / "bench/4090_hf_best_optimized_v1_20260812/README.md"
-    text = path.read_text(encoding="utf-8")
-    lines = text.splitlines()
-    header = lines.index(
-        "| RWKV / Qwen | Batch | RWKV Prefill / Decode | Qwen Prefill / Decode | Raw Prefill / Decode | Adjusted Prefill / Decode | Adjusted minima P / D |"
-    )
-    rows = [
-        [cell.strip() for cell in line.strip().strip("|").split("|")]
-        for line in lines[header + 2 : header + 10]
-    ]
-    keys = [(MODEL_ORDER[row[0]], int(row[1].removeprefix("B"))) for row in rows]
-    assert keys == sorted(keys)
-    for row in rows:
-        assert_throughput_format(row[2])
-        assert_throughput_format(row[3])
-
-    for artifact in ("candidate.jsonl", "qwen_reference.jsonl", "main_table.jsonl"):
-        assert f"]({artifact})" in text
-    assert "`prefill_tokps_total`" in text
-    assert "`decode_tokps_total`" in text
-
-
-def test_comparison_docs_link_full_precision_4090_pd_evidence() -> None:
-    artifact_root = "../bench/4090_qwen35_paired_pd_v2_20260815/"
-    for relative in (
-        "docs/QWEN35_SPEED_COMPARISON.md",
-        "docs/QWEN35_SPEED_COMPARISON_ZH.md",
-    ):
-        text = (ROOT / relative).read_text(encoding="utf-8")
-        for artifact in (
-            "rwkv_candidate.jsonl",
-            "qwen_reference.jsonl",
-            "paired_pd_table.jsonl",
-            "paired_validation.json",
-        ):
-            assert f"]({artifact_root}{artifact})" in text
-        assert "1.148668x/1.695334x/7.600590x" in text
-        assert "1.026173x/1.323737x/1.867427x" in text
-        assert "0.999992967" in text
-
-
-def test_comparison_docs_link_full_precision_3090_pd_evidence() -> None:
-    artifact_root = "../bench/3090_qwen35_paired_pd_v2_20260816/"
-    for relative in (
-        "docs/QWEN35_SPEED_COMPARISON.md",
-        "docs/QWEN35_SPEED_COMPARISON_ZH.md",
-    ):
-        text = (ROOT / relative).read_text(encoding="utf-8")
-        for artifact in (
-            "rwkv_candidate.jsonl",
-            "qwen_reference.jsonl",
-            "paired_pd_table.jsonl",
-            "validation.json",
-        ):
-            assert f"]({artifact_root}{artifact})" in text
-        assert "1.208324x/1.535161x/5.049362x" in text
-        assert "1.017763x/1.207730x/1.853893x" in text
-        assert "0.999987364" in text
-
-
-def test_comparison_docs_scope_5090_paired_decode_claim() -> None:
-    artifact_root = "../bench/5090_qwen35_paired_decode_v1_20260813/"
-    for relative in (
-        "docs/QWEN35_SPEED_COMPARISON.md",
-        "docs/QWEN35_SPEED_COMPARISON_ZH.md",
-    ):
-        text = (ROOT / relative).read_text(encoding="utf-8")
-        assert f"]({artifact_root}README.md)" in text
-        assert f"]({artifact_root}rwkv_candidate.jsonl)" in text
-        assert f"]({artifact_root}paired_decode_table.jsonl)" in text
-        assert f"]({artifact_root}paired_validation.json)" in text
-        assert "1.029966x/1.409279x/2.063849x" in text
-        assert "continuous_e2e_eligible=false" in text
-
-
-def test_comparison_docs_scope_4080_paired_pd_claim() -> None:
-    artifact_root = "../bench/4080_qwen35_paired_pd_v1_20260814/"
-    for relative in (
-        "docs/QWEN35_SPEED_COMPARISON.md",
-        "docs/QWEN35_SPEED_COMPARISON_ZH.md",
-    ):
-        text = (ROOT / relative).read_text(encoding="utf-8")
-        assert f"]({artifact_root}README.md)" in text
-        assert f"]({artifact_root}paired_pd_table.jsonl)" in text
-        assert f"]({artifact_root}paired_validation.json)" in text
-        assert "1.051333x/1.313931x/2.891099x" in text
-        assert "1.022115x/1.190224x/1.836279x" in text
-        assert "36/36" in text
-
-
-def test_comparison_docs_scope_v100_paired_pd_claim() -> None:
-    artifact_root = "../bench/v100_qwen35_paired_pd_v1_20260814/"
-    for relative in (
-        "docs/QWEN35_SPEED_COMPARISON.md",
-        "docs/QWEN35_SPEED_COMPARISON_ZH.md",
-    ):
-        text = (ROOT / relative).read_text(encoding="utf-8")
-        assert f"]({artifact_root}README.md)" in text
-        assert f"]({artifact_root}paired_pd_table.jsonl)" in text
-        assert f"]({artifact_root}paired_validation.json)" in text
-        assert "1.808536x/3.217214x/8.216385x" in text
-        assert "1.120373x/1.617469x/2.793261x" in text
-        assert "48/48" in text

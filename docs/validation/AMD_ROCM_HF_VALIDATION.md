@@ -108,9 +108,9 @@ warmup, its ratio is correctness/cold-start telemetry rather than a promoted
 speed comparison.
 
 Raw logs, JSONL and checksums:
-[`bench/amd_gfx1100_native_20260727/`](../../bench/amd_gfx1100_native_20260727/README.md).
+[`bench/amd_gfx1100_full_close_20260730/`](../../bench/amd_gfx1100_full_close_20260730/README.md).
 The fused-decode promotion evidence is in
-[`bench/amd_gfx1100_fused_decode_20260728/`](../../bench/amd_gfx1100_fused_decode_20260728/README.md).
+[`bench/amd_gfx1100_full_close_20260730/`](../../bench/amd_gfx1100_full_close_20260730/README.md).
 
 ## Exact-gfx1100 output-head W8/W4 decode
 
@@ -133,7 +133,7 @@ FFN sweep are in
 [`bench/amd_gfx1100_quant_20260728/`](../../bench/amd_gfx1100_quant_20260728/README.md).
 The complete post-rebase native-HF replay, 40-cell matrix, large-checkpoint
 conversion provenance and checksums are in
-[`bench/amd_gfx1100_rebase_validation_20260728/`](../../bench/amd_gfx1100_rebase_validation_20260728/README.md).
+[`bench/amd_gfx1100_full_close_20260730/`](../../bench/amd_gfx1100_full_close_20260730/README.md).
 
 ## Reproduce
 

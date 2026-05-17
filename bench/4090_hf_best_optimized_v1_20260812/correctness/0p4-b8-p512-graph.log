@@ -1,4 +1,0 @@
-[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
-Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  35%|███▌      | 280/795 [00:00<00:00, 2781.36it/s]Loading weights:  70%|███████   | 559/795 [00:00<00:00, 2756.40it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 2871.67it/s]
-[transformers] The attention mask is not set and cannot be inferred from input because pad token is same as eos token. As a consequence, you may observe unexpected behavior. Please pass your input's `attention_mask` to obtain reliable results.
-FAST PREFILL FORWARD PASS reference=hf fused_scan=True prefill_graph=True max_abs=0.000000 min_cos=1.00000000 greedy=True decode_max_abs=0.000000 decode_greedy=True chunked_greedy=True chunked_decode=True generate_match=True seen=512

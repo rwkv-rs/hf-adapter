@@ -88,9 +88,9 @@ The comparator can also be run directly:
 
 ```bash
 python bench/compare_math500_summaries.py \
-  --hf-summary bench/math500_hf_seed43_bsz128_defer_text_full_compare_4090_20260704/hf_seed43_bsz128_defer_text_summary.json \
-  --albatross-summary bench/math500_hf_seed43_bsz128_defer_text_full_compare_4090_20260704/albatross_summary.json \
-  --albatross-log bench/math500_hf_seed43_bsz128_defer_text_full_compare_4090_20260704/albatross_run.log \
+  --hf-summary bench/math500_final_acceptance_5090_1p5b_20260705/hf_seed43_bsz128_defer_text_summary.json \
+  --albatross-summary bench/math500_final_acceptance_5090_1p5b_20260705/albatross_summary.json \
+  --albatross-log bench/math500_final_acceptance_5090_1p5b_20260705/albatross_run.log \
   --require-compatible-shape \
   --min-pass-at-rollout 0.370 \
   --min-summary-speed-ratio 2.0 \
@@ -182,11 +182,11 @@ samples, this is the current anti-cheat / high-signal logits-alignment metric.
 
 Passing committed artifact:
 
-- `bench/math500_hf_seed43_bsz128_defer_text_full_compare_4090_20260704/README.md`
-- `bench/math500_hf_seed43_bsz128_defer_text_full_compare_4090_20260704/comparison.json`
-- `bench/math500_hf_seed43_bsz128_defer_text_full_compare_4090_20260704/comparison.txt`
-- `bench/math500_hf_seed43_bsz128_defer_text_full_compare_4090_20260704/hf_seed43_bsz128_defer_text_summary.json`
-- `bench/math500_hf_seed43_bsz128_defer_text_full_compare_4090_20260704/albatross_summary.json`
+- `bench/math500_final_acceptance_5090_1p5b_20260705/README.md`
+- `bench/math500_final_acceptance_5090_1p5b_20260705/comparison.json`
+- `bench/math500_final_acceptance_5090_1p5b_20260705/comparison.txt`
+- `bench/math500_final_acceptance_5090_1p5b_20260705/hf_seed43_bsz128_defer_text_summary.json`
+- `bench/math500_final_acceptance_5090_1p5b_20260705/albatross_summary.json`
 
 Current result:
 

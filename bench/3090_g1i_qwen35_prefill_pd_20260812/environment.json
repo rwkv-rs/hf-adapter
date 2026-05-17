@@ -1,8 +1,0 @@
-{
-  "os": "Ubuntu 22.04.5 LTS",
-  "kernel": "5.15.0-128-generic",
-  "architecture": "x86_64",
-  "rwkv_python": "3.10.12",
-  "qwen_python": "3.10.12",
-  "cuda_visible_devices": "0"
-}

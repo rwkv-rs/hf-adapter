@@ -1,101 +1,55 @@
-# Bench workspace
+# Benchmark workspace
 
-This directory stores benchmark entrypoints, raw evidence, and comparison artifacts for RWKV-7 HF/Transformers, native fused paths, quantization, and Apple/Qwen3.5 work.
+`bench/` contains current benchmark entry points and the exact evidence bundles
+that support promoted repository claims. The retained evidence boundary is
+machine-readable in [`CURRENT_ARTIFACTS.json`](CURRENT_ARTIFACTS.json) and
+rendered for humans in [`INDEX.md`](INDEX.md).
 
-The goal is to keep benchmark evidence reproducible without making the repository root impossible to read. New benchmark work should add a timestamped evidence directory with a short `README.md`, keep raw `.jsonl` rows, and link promoted conclusions from `BENCHMARK.md` or the relevant docs page.
+Superseded tuning snapshots and RWKV FLA performance matrices are not retained.
+FLA remains available as a compatibility/reference backend and as a correctness
+oracle for current Native comparisons.
 
+## Current workflow
 
-## Relationship with the main docs
+1. Select an existing generic runner or add a reusable entry point.
+2. Write results to a new `<line>_<hardware>_<yyyymmdd>/` directory.
+3. Include a README, exact environment/model identity, commands, raw rows,
+   correctness results, and the final validator output.
+4. Promote the new bundle by replacing the older bundle for that line in
+   [`CURRENT_ARTIFACTS.json`](CURRENT_ARTIFACTS.json).
+5. Update [`INDEX.md`](INDEX.md), [`../BENCHMARK.md`](../BENCHMARK.md), and only
+   the platform documents whose accepted state changed.
 
-Benchmark evidence should be read together with the rest of the documentation:
+Evidence bundles are immutable after promotion. Fix explanatory prose only
+when necessary; never rewrite raw measurements in place.
 
-| Need | Doc |
-|---|---|
-| Full documentation map | [`../docs/README.md`](../docs/README.md) |
-| Current numeric summary | [`../BENCHMARK.md`](../BENCHMARK.md) |
-| HF status / gaps | [`../HF_STATUS.md`](../HF_STATUS.md), [`../HF_TODO.md`](../HF_TODO.md) |
-| Acceptance status / low-level criteria | [`../docs/ACCEPTANCE.md`](../docs/ACCEPTANCE.md), [`../docs/reference/HF_CRITERIA.md`](../docs/reference/HF_CRITERIA.md) |
-| Hardware / quant / training summaries | [`../docs/HARDWARE_MATRIX.md`](../docs/HARDWARE_MATRIX.md), [`../docs/QUANTIZATION.md`](../docs/QUANTIZATION.md), [`../docs/TRAINING.md`](../docs/TRAINING.md) |
-| RTX 5090 production BN/TN W4 | [`5090_bn_tn_tensorcore_20260716/`](5090_bn_tn_tensorcore_20260716/README.md), [`../docs/performance/BN_TN_TUNING.md`](../docs/performance/BN_TN_TUNING.md) |
-| Fused performance route | [`../docs/performance/FUSED_BACKEND.md`](../docs/performance/FUSED_BACKEND.md), [`../docs/native_fused_roadmap.md`](../docs/native_fused_roadmap.md) |
-| Apple / Qwen3.5 lane | [`../docs/hardware/APPLE_PRODUCTION_CLOSE.md`](../docs/hardware/APPLE_PRODUCTION_CLOSE.md), [`../docs/hardware/APPLE_SILICON.md`](../docs/hardware/APPLE_SILICON.md) |
-| MATH500 quality lane | [`../docs/validation/math500_acceptance.md`](../docs/validation/math500_acceptance.md), [`../docs/validation/math500_accuracy_parity.md`](../docs/validation/math500_accuracy_parity.md) |
+## Main entry points
 
-`bench/INDEX.md` is an inventory. `BENCHMARK.md` is the promoted numeric summary. Platform docs explain why a row matters and what remains blocked.
-
-## Directory contract
-
-```text
-bench/
-  bench_*.py                         # single-purpose benchmark entrypoints
-  run_*.py / run_*.sh                 # hardware or acceptance orchestrators
-  compare_*.py / analyze_*.py         # post-processing and comparison tools
-  profile_*.py                        # local profiler probes
-  results*.jsonl                      # legacy aggregate result streams
-  <lane>_<hardware>_<date>/           # immutable evidence bundle
-    README.md                         # what was run, command/env, conclusion
-    results*.jsonl                    # machine-readable rows
-    *.log / *.txt / *.json / *.md     # raw logs and summaries
-```
-
-Evidence directories should be treated as append-only records. If a result is superseded, create a new dated directory instead of editing old rows, except for fixing broken links or adding explanatory README text.
-
-## Naming convention
-
-Use lower-case, underscore-separated names:
-
-```text
-<topic>_<hardware>_<yyyymmdd>/
-<topic>_<model_or_baseline>_<prompt>_<decode>_<variant>.jsonl
-```
-
-Examples:
-
-- `apple_scan_prefill_auto_m5_20260708/`
-- `results_rwkv15_512_64_fast_gn.jsonl`
-- `5090_blackwell_quant_policy_20260705/`
-
-## Required README fields for new evidence
-
-Each promoted evidence directory should state:
-
-1. hardware / software environment;
-2. model paths or model IDs;
-3. command lines or orchestrator env vars;
-4. key metrics: prefill tok/s, decode tok/s, TTFT/TPOT, peak memory, correctness status;
-5. decision: default-on, opt-in, negative evidence, or informational only.
-
-## Current benchmark lanes
-
-| Lane | Purpose | Main files/directories |
-|---|---|---|
-| Apple MLX/CoreML | Qwen3.5 comparison, MLX scan prefill, CoreML state contract, mobile-oriented memory/speed | `apple_*`, `bench/run_qwen35_apple_baseline.py`, `bench/compare_qwen35_apple_baseline.py`, `bench/audit_qwen35_apple_goal.py` |
-| Native fused CUDA | Albatross gap, fused recurrent/output/projection experiments | `bench/bench_native_*`, `bench/bench_fused_*`, `albatross_*`, `5090_*` |
-| Quantization | bitsandbytes W8/W4, native mm8/mm4, and exact-card Marlin BN/TN policies | `bench/bench_quantization.py`, `bench/bench_native_quant_*`, `bench/bench_marlin_*`, `5090_blackwell_quant_*`, `5090_bn_tn_tensorcore_20260716/` |
-| HF acceptance | generate/API/Trainer/PEFT/TRL/DeepSpeed and hardware smoke | `scripts/run_hf_acceptance.sh`, `scripts/run_hardware_smoke.sh`, `bench/run_*_hf_validation.sh` |
-| MATH500 / quality | quality and sampling variance against Albatross/HF paths | `math500_*`, `bench/eval_math500_hf.py`, `bench/run_math500_final_acceptance.py` |
+- General Native performance: `bench_batch_sweep.py`,
+  `bench_native_prefill_scan.py`, `bench_native_graph_overhead.py`.
+- Cross-model matrices: `bench_cross_model_speed.py`,
+  `bench_cross_model_speed_resident.py`.
+- Quantization: `bench_native_quant_e2e_decode.py`,
+  `bench_native_mm_quant_decode.py`, `bench_sm70_w4_bn_tn.py`.
+- Training and quality: `bench_train_temp_alignment.py`,
+  `run_math500_final_acceptance.py`.
+- Current hardware-specific runners and validators are listed in
+  [`INDEX.md`](INDEX.md).
 
 ## Promotion rules
 
-- **Default-on optimization**: correctness parity, at least two real-model rows, no material memory regression, and clear positive speed on the target lane.
-- **Opt-in optimization**: correctness parity but mixed or hardware-specific speed.
-- **Negative evidence**: keep it if it prevents repeating work; README should say why it stays default-off.
-- **Comparison evidence**: keep combined raw rows and generated comparison rows together in the same directory.
+- Record exact hardware, runtime, model hash, dtype, batch, prompt, decode,
+  route, samples, correctness, and peak memory.
+- Use fail-closed validators and unrounded values for pass/fail decisions.
+- Default-on optimizations require correctness plus non-negative end-to-end
+  value across the declared scope.
+- Keep negative evidence only when it is part of the current artifact and
+  prevents a known regression; do not accumulate historical probe directories.
 
-## Quick validation before committing benchmark changes
+## Local checks
 
 ```bash
-PYTHONPATH=. python tests/test_markdown_links.py
-python -m json.tool < some_result.json >/dev/null  # for JSON files
-python - <<'PY'
-import json, pathlib
-for p in pathlib.Path('bench').rglob('*.jsonl'):
-    for i, line in enumerate(p.read_text(errors='ignore').splitlines(), 1):
-        if line.strip():
-            json.loads(line)
-print('JSONL OK')
-PY
+python -m pytest -q tests/test_current_benchmark_artifacts.py
+python tests/test_markdown_links.py
 git diff --check
 ```
-
-See `bench/INDEX.md` for the current generated inventory.

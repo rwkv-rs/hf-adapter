@@ -23,7 +23,7 @@ and confirmed ANE placement remain the next Apple performance layer.
 ## Qwen3.5 Apple/mobile comparison lane
 
 The Apple performance target is now tracked against public Qwen3.5 MLX/mobile
-baselines in [QWEN35_APPLE_BASELINE.md](QWEN35_APPLE_BASELINE.md).  That file
+baselines in [APPLE_PRODUCTION_CLOSE.md](APPLE_PRODUCTION_CLOSE.md). That file
 defines the same-prompt JSONL schema, Ollama/Qwen3.5 runner, RWKV MLX runner,
 initial 0.8B/2B/4B/9B comparison matrix, `scripts/run_qwen35_apple_acceptance.sh` one-command evidence wrapper, `scripts/export_rwkv7_coreml.py`
 CoreML export manifest/prototype, and the follow-up CoreML/ANE runtime lane.
