@@ -1,5 +1,7 @@
 """Public package surface for the canonical native RWKV-7 HF adapter."""
 
+from .kernel_package import inspect_kernel_package, kernel_runtime_report
+
 try:
     from .native_model import (
         NativeRWKV7Cache,
@@ -173,6 +175,8 @@ __all__ = [
     "NativeRWKV7ForCausalLM",
     "NativeRWKV7Model",
     "NativeRWKV7Cache",
+    "inspect_kernel_package",
+    "kernel_runtime_report",
     "BirenDTypeError",
     "BirenRuntimeInfo",
     "BirenRuntimePolicy",

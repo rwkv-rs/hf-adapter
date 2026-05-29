@@ -14,6 +14,7 @@ The CUDA implementation is derived from Albatross' Apache-2.0
 layouts directly, adds no packed copy, is inference-only, and falls back to
 ordinary PyTorch for every unsupported device, dtype, shape, or build failure.
 """
+
 from __future__ import annotations
 
 import os
@@ -24,6 +25,31 @@ try:
     from .extension_build import cuda_extension_build_environment
 except ImportError:  # pragma: no cover - direct remote-file execution
     from extension_build import cuda_extension_build_environment
+
+try:
+    from .kernel_package import (
+        jit_extensions_allowed,
+        load_prebuilt_extension,
+        record_jit_extension,
+    )
+except ImportError:  # pragma: no cover - direct remote-file execution
+    try:
+        from kernel_package import (
+            jit_extensions_allowed,
+            load_prebuilt_extension,
+            record_jit_extension,
+        )
+    except ImportError:  # pragma: no cover - old converted-model closure
+
+        def jit_extensions_allowed():
+            return True
+
+        def load_prebuilt_extension(*_args, **_kwargs):
+            return None
+
+        def record_jit_extension(*_args, **_kwargs):
+            return None
+
 
 try:  # pragma: no cover - optional in lightweight environments
     import torch
@@ -54,12 +80,8 @@ if _HAS_TRITON:
     ):
         offsets = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
         mask = offsets < numel
-        w_hidden = tl.load(w_hidden_ptr + offsets, mask=mask, other=0.0).to(
-            tl.float32
-        )
-        g_hidden = tl.load(g_hidden_ptr + offsets, mask=mask, other=0.0).to(
-            tl.float32
-        )
+        w_hidden = tl.load(w_hidden_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+        g_hidden = tl.load(g_hidden_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
         # Match the existing fused-LoRA tanh formulation. Stores provide the
         # FP16 barrier consumed by the second tensor-core BMM.
         w_activated = (2.0 * tl.sigmoid(2.0 * w_hidden) - 1.0).to(tl.float16)
@@ -87,12 +109,8 @@ if _HAS_TRITON:
         bias_offsets = offsets % hidden
         w_raw = tl.load(w_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
         a_raw = tl.load(a_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
-        w_bias = tl.load(
-            w_bias_ptr + bias_offsets, mask=mask, other=0.0
-        ).to(tl.float32)
-        a_bias = tl.load(
-            a_bias_ptr + bias_offsets, mask=mask, other=0.0
-        ).to(tl.float32)
+        w_bias = tl.load(w_bias_ptr + bias_offsets, mask=mask, other=0.0).to(tl.float32)
+        a_bias = tl.load(a_bias_ptr + bias_offsets, mask=mask, other=0.0).to(tl.float32)
         # The pure rank-out BMM materializes FP16. Match eager's bias result
         # before feeding it to the following sigmoid.
         w_out = (w_raw + w_bias).to(tl.float16)
@@ -102,18 +120,14 @@ if _HAS_TRITON:
         tl.store(a_ptr + offsets, a_gate, mask=mask)
 
         if COMPUTE_V:
-            gate_raw = tl.load(
-                v_gate_ptr + offsets, mask=mask, other=0.0
-            ).to(tl.float32)
-            current = tl.load(v_ptr + offsets, mask=mask, other=0.0).to(
+            gate_raw = tl.load(v_gate_ptr + offsets, mask=mask, other=0.0).to(
                 tl.float32
             )
-            first = tl.load(v_first_ptr + offsets, mask=mask, other=0.0).to(
+            current = tl.load(v_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+            first = tl.load(v_first_ptr + offsets, mask=mask, other=0.0).to(tl.float32)
+            v_bias = tl.load(v_bias_ptr + bias_offsets, mask=mask, other=0.0).to(
                 tl.float32
             )
-            v_bias = tl.load(
-                v_bias_ptr + bias_offsets, mask=mask, other=0.0
-            ).to(tl.float32)
             # Preserve the eager FP16 expression's materialization points:
             # sigmoid, subtraction, multiplication, then addition each round
             # through FP16 before the next operation.
@@ -565,7 +579,11 @@ def _small_row_capability(device: Any = None) -> tuple[int, int] | None:
         resolved = torch.device("cuda" if device is None else device)
         if resolved.type != "cuda":
             return None
-        index = torch.cuda.current_device() if resolved.index is None else int(resolved.index)
+        index = (
+            torch.cuda.current_device()
+            if resolved.index is None
+            else int(resolved.index)
+        )
         return tuple(int(v) for v in torch.cuda.get_device_capability(index))
     except Exception:
         return None
@@ -585,6 +603,15 @@ def _load_extension(device: Any = None) -> Any | None:
             return _EXTENSIONS[capability]
         if capability in _EXTENSION_ERRORS:
             return None
+        extension = load_prebuilt_extension(
+            "ada_lora", torch_module=torch, device=device
+        )
+        if extension is not None:
+            _EXTENSION = extension
+            _EXTENSIONS[capability] = extension
+            return extension
+        if not jit_extensions_allowed():
+            return None
         try:
             with cuda_extension_build_environment(
                 arch_list=f"{capability[0]}.{capability[1]}"
@@ -592,9 +619,7 @@ def _load_extension(device: Any = None) -> Any | None:
                 from torch.utils.cpp_extension import load_inline
 
                 extra_ldflags = (
-                    [f"-Wl,-rpath,{runtime_lib}"]
-                    if runtime_lib is not None
-                    else []
+                    [f"-Wl,-rpath,{runtime_lib}"] if runtime_lib is not None else []
                 )
                 extension = load_inline(
                     name=f"rwkv7_ada_lora_v8_sm{capability[0]}{capability[1]}",
@@ -602,7 +627,11 @@ def _load_extension(device: Any = None) -> Any | None:
                     cuda_sources=_CUDA_SOURCE,
                     functions=None,
                     extra_cflags=["-O3"],
-                    extra_cuda_cflags=["-O3", "--use_fast_math", "--extra-device-vectorization"],
+                    extra_cuda_cflags=[
+                        "-O3",
+                        "--use_fast_math",
+                        "--extra-device-vectorization",
+                    ],
                     extra_ldflags=extra_ldflags,
                     with_cuda=True,
                     verbose=os.environ.get("RWKV7_ADA_LORA_BUILD_VERBOSE", "0").lower()
@@ -610,10 +639,12 @@ def _load_extension(device: Any = None) -> Any | None:
                 )
             _EXTENSION = extension
             _EXTENSIONS[capability] = extension
+            record_jit_extension("ada_lora", selected=True)
         except Exception as exc:  # pragma: no cover - host toolchain dependent
             message = f"{type(exc).__name__}: {exc}"
             _EXTENSION_ERROR = message
             _EXTENSION_ERRORS[capability] = message
+            record_jit_extension("ada_lora", selected=False, error=message)
             return None
     return _EXTENSIONS.get(capability)
 
@@ -641,11 +672,20 @@ def ada_wagv_bmm_available(device: Any = None) -> bool:
 
 def ada_wagv_lora_build_error(device: Any = None) -> str | None:
     capability = _small_row_capability(device)
-    return _EXTENSION_ERRORS.get(capability) if capability is not None else _EXTENSION_ERROR
+    return (
+        _EXTENSION_ERRORS.get(capability)
+        if capability is not None
+        else _EXTENSION_ERROR
+    )
 
 
 def ada_wagv_lora_should_use(rows: int, hidden: int, max_rank: int) -> bool:
-    return 1 <= int(rows) <= 8 and int(hidden) >= 1024 and int(hidden) % 4 == 0 and 1 <= int(max_rank) <= 512
+    return (
+        1 <= int(rows) <= 8
+        and int(hidden) >= 1024
+        and int(hidden) % 4 == 0
+        and 1 <= int(max_rank) <= 512
+    )
 
 
 def ada_wagv_bmm_should_use(rows: int, hidden: int, max_rank: int) -> bool:
@@ -675,9 +715,7 @@ def sm120_wagv_bmm_g_should_use(rows: int, hidden: int, max_rank: int) -> bool:
     """Exact SM86/SM89/SM120 shapes admitted to the all-group microprobe."""
 
     return bool(
-        int(rows) == 8
-        and int(hidden) in {1024, 2048}
-        and 1 <= int(max_rank) <= 512
+        int(rows) == 8 and int(hidden) in {1024, 2048} and 1 <= int(max_rank) <= 512
     )
 
 
@@ -734,17 +772,21 @@ def _sm120_wagv_bmm_up_epilogue(
         torch is None
         or not a.is_cuda
         or a.dtype != torch.float16
-        or any(
-            item.dtype != a.dtype or not item.is_contiguous() for item in values
-        )
+        or any(item.dtype != a.dtype or not item.is_contiguous() for item in values)
         or tuple(w.shape) != tuple(a.shape)
         or (compute_v and tuple(v_gate.shape) != tuple(a.shape))
-        or any(int(item.numel()) != int(a.shape[-1]) for item in (w_bias, a_bias, v_bias))
-        or (compute_v and (tuple(v.shape) != tuple(a.shape) or tuple(v_first.shape) != tuple(a.shape)))
-    ):
-        raise RuntimeError(
-            "SM89/SM120 W/A/G/V up epilogue contract was not satisfied"
+        or any(
+            int(item.numel()) != int(a.shape[-1]) for item in (w_bias, a_bias, v_bias)
         )
+        or (
+            compute_v
+            and (
+                tuple(v.shape) != tuple(a.shape)
+                or tuple(v_first.shape) != tuple(a.shape)
+            )
+        )
+    ):
+        raise RuntimeError("SM89/SM120 W/A/G/V up epilogue contract was not satisfied")
     numel = int(a.numel())
     block = 256
     # The non-V specialization erases every access to the dummy pointers.
@@ -882,8 +924,7 @@ def _stack_wav_inputs(
         shared_storage = xa.untyped_storage().data_ptr() == storage.data_ptr()
         if include_v:
             shared_storage = bool(
-                shared_storage
-                and xv.untyped_storage().data_ptr() == storage.data_ptr()
+                shared_storage and xv.untyped_storage().data_ptr() == storage.data_ptr()
             )
     except Exception:
         shared_storage = False
@@ -1025,8 +1066,7 @@ def ada_wagv_bmm(
             for item in values
         )
         and all(
-            tuple(item.shape) == (rows, hidden)
-            for item in (xw, xa, xg, xv, v, v_first)
+            tuple(item.shape) == (rows, hidden) for item in (xw, xa, xg, xv, v, v_first)
         )
         and all(int(item.shape[1]) == hidden for item in (w1, a1, g1, v1))
         and tuple(w2.shape) == (hidden, int(w1.shape[0]))
@@ -1080,9 +1120,7 @@ def ada_wagv_bmm(
         g2=g2,
     )
     if include_g:
-        mixed = _stack_sm120_wagv_inputs(
-            xw, xa, xg, xv, include_v=compute_v
-        )
+        mixed = _stack_sm120_wagv_inputs(xw, xa, xg, xv, include_v=compute_v)
         if require_zero_copy:
             first = xv if compute_v else xw
             if mixed.untyped_storage().data_ptr() != first.untyped_storage().data_ptr():
@@ -1098,9 +1136,7 @@ def ada_wagv_bmm(
         a_index = 2 if compute_v else 1
         g_index = 3 if compute_v else 2
         v_index = 0 if compute_v else None
-        _sm120_wagv_bmm_down_epilogue(
-            hidden_states[w_index], hidden_states[g_index]
-        )
+        _sm120_wagv_bmm_down_epilogue(hidden_states[w_index], hidden_states[g_index])
     else:
         w_index, a_index, g_index = 0, 1, None
         v_index = 2 if compute_v else None
@@ -1153,12 +1189,15 @@ def _ada_wagv_lora_extension_should_use(rows: int, hidden: int, max_rank: int) -
     range instead of being widened implicitly with the graph policy.
     """
 
-    return 1 <= int(rows) <= 4 and int(hidden) >= 1024 and int(hidden) % 4 == 0 and 1 <= int(max_rank) <= 512
+    return (
+        1 <= int(rows) <= 4
+        and int(hidden) >= 1024
+        and int(hidden) % 4 == 0
+        and 1 <= int(max_rank) <= 512
+    )
 
 
-def _fallback(
-    xw, xa, xg, xv, w1, a1, g1, v1, w2, a2, g2, v2, w0, a0, v0, v, v_first
-):
+def _fallback(xw, xa, xg, xv, w1, a1, g1, v1, w2, a2, g2, v2, w0, a0, v0, v, v_first):
     w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
     a = F.linear(F.linear(xa, a1), a2, a0)
     g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
@@ -1210,7 +1249,10 @@ def ada_wagv_lora(
         and not torch.is_grad_enabled()
         and _ada_wagv_lora_extension_should_use(rows, hidden, max_rank)
         and xw2.dtype in {torch.float16, torch.bfloat16}
-        and all(item.is_cuda and item.dtype == xw2.dtype and item.is_contiguous() for item in all_tensors)
+        and all(
+            item.is_cuda and item.dtype == xw2.dtype and item.is_contiguous()
+            for item in all_tensors
+        )
         and all(tuple(item.shape) == (rows, hidden) for item in flat)
         and all(int(item.shape[1]) == hidden for item in (w1, a1, g1, v1))
         and tuple(w2.shape) == (hidden, int(w1.shape[0]))
@@ -1231,8 +1273,23 @@ def ada_wagv_lora(
     if extension is None:
         if compute_v:
             outputs = _fallback(
-                xw2, xa2, xg2, xv2, w1, a1, g1, v1, w2, a2, g2, v2,
-                w0, a0, v0, v_current, v_first2,
+                xw2,
+                xa2,
+                xg2,
+                xv2,
+                w1,
+                a1,
+                g1,
+                v1,
+                w2,
+                a2,
+                g2,
+                v2,
+                w0,
+                a0,
+                v0,
+                v_current,
+                v_first2,
             )
         else:
             outputs = (
@@ -1248,8 +1305,19 @@ def ada_wagv_lora(
             xw2, xa2, xg2, xv2, w1, a1, g1, v1, bool(compute_v)
         )
         outputs = extension.rank_out(
-            *hidden_states, w2, a2, g2, v2, w0, a0, v0, v_current, v_first2,
-            bool(sigmoid_a), bool(compute_v), True,
+            *hidden_states,
+            w2,
+            a2,
+            g2,
+            v2,
+            w0,
+            a0,
+            v0,
+            v_current,
+            v_first2,
+            bool(sigmoid_a),
+            bool(compute_v),
+            True,
         )
     if scalar:
         return tuple(item.reshape(hidden) for item in outputs)  # type: ignore[return-value]
@@ -1282,9 +1350,7 @@ def ada_wag_lora(
     if torch is None or F is None:
         raise RuntimeError("ada_wag_lora requires torch")
     scalar = xw.dim() == 1
-    xw2, xa2, xg2 = (
-        item.reshape(1, -1) if scalar else item for item in (xw, xa, xg)
-    )
+    xw2, xa2, xg2 = (item.reshape(1, -1) if scalar else item for item in (xw, xa, xg))
     rows, hidden = int(xw2.shape[0]), int(xw2.shape[1])
     max_rank = max(int(item.shape[0]) for item in (w1, a1, g1))
     tensors = [xw2, xa2, xg2, w1, a1, g1, w2, a2, g2, w0, a0]
@@ -1315,9 +1381,7 @@ def ada_wag_lora(
             F.linear(torch.sigmoid(F.linear(xg2, g1)), g2),
         )
     else:
-        hidden_states = extension.rank_in(
-            xw2, xa2, xg2, xg2, w1, a1, g1, g1, False
-        )
+        hidden_states = extension.rank_in(xw2, xa2, xg2, xg2, w1, a1, g1, g1, False)
         w, a, g, _unused_v = extension.rank_out(
             *hidden_states,
             w2,

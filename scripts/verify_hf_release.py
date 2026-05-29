@@ -21,7 +21,8 @@ from typing import Any, Callable, TypeVar
 
 DEFAULT_MODEL = "wangyue114514/rwkv7-g1d-0.1b-hf"
 DEFAULT_REVISION = "v0.7.0"
-DEFAULT_RUNTIME = "0.7.0"
+DEFAULT_RUNTIME = "0.8.0"
+DEFAULT_MANIFEST_RUNTIME = "0.7.0"
 T = TypeVar("T")
 
 
@@ -37,6 +38,11 @@ def parse_args() -> argparse.Namespace:
         "--expected-runtime-version",
         default=DEFAULT_RUNTIME,
         help="Required installed rwkv7-hf version",
+    )
+    parser.add_argument(
+        "--expected-manifest-runtime-version",
+        default=DEFAULT_MANIFEST_RUNTIME,
+        help="Publishing runtime recorded by the immutable conversion manifest",
     )
     parser.add_argument(
         "--metadata-only",
@@ -170,7 +176,8 @@ def main() -> int:
     )
     manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
     require(
-        manifest["runtime"]["version"] == runtime_version, "manifest runtime mismatch"
+        manifest["runtime"]["version"] == args.expected_manifest_runtime_version,
+        "manifest publishing runtime mismatch",
     )
     remote_weights = verify_remote_weights(info, manifest)
 

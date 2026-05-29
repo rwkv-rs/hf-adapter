@@ -27,7 +27,7 @@ Normal users no longer need to convert a `.pth` checkpoint first. Install the
 release and load the 0.1B public model directly:
 
 ```bash
-python -m pip install "rwkv7-hf==0.7.0"
+python -m pip install "rwkv7-hf==0.8.0"
 ```
 
 ```python
@@ -119,6 +119,20 @@ Fix the first `FAIL` and rerun the command. Continue only after it prints
 `RESULT: READY`. The second command records the visible accelerator, build
 toolchain, and kernel-policy candidates; see the
 [kernel doctor guide](KERNEL_DOCTOR.md).
+
+On a supported Linux NVIDIA environment, the optional compiler-free binary
+path can then be installed and verified with:
+
+```bash
+rwkv7-hf-kernels status
+rwkv7-hf-kernels install
+rwkv7-hf-doctor
+rwkv7-hf-smoke --device cuda
+```
+
+See [prebuilt CUDA kernel wheels](KERNEL_WHEELS.md) for the exact runtime matrix
+and fallback behavior. If there is no exact wheel, do not force a nearby one;
+the base adapter remains functional.
 
 ## 2. Get and convert a model
 

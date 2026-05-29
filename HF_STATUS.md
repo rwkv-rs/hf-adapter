@@ -1,12 +1,12 @@
 # RWKV-7 Hugging Face adapter status
 
-Last audited: **2026-08-19**.
+Last audited: **2026-08-20**.
 
 ## Release status
 
 | Scope | Status |
 |---|---|
-| HF v0.7 adapter deliverable | **COMPLETE** |
+| HF v0.8 adapter deliverable | **COMPLETE** |
 | Native inference route | **CURRENT PERFORMANCE BACKEND** |
 | FLA wrapper/reference | **COMPATIBILITY AND ORACLE ONLY** |
 | Recurrent cache and serving helpers | **PASS** |
@@ -14,6 +14,7 @@ Last audited: **2026-08-19**.
 | Dense HF inference PP/TP boundary | **PASS for declared scope** |
 | Native W8/W4 | **PASS for recorded exact-card lines** |
 | Public FP16 model family (0.1B through 13.3B) | **PUBLISHED AND VERIFIED** |
+| Prebuilt CUDA kernels | **VERIFIED: CPython 3.11 / CUDA 12.4 / Torch 2.5 SM70 and Torch 2.6 SM89** |
 
 Completion is reported by named scope; there is no official repository-wide
 completion percentage.
@@ -22,10 +23,17 @@ completion percentage.
 
 The six ready-to-load model repositories are grouped in the
 [`RWKV7-G1 Transformers` Collection](https://huggingface.co/collections/wangyue114514/rwkv7-g1-transformers-6a85b04191034d4c2d1896f1).
-They use `rwkv7-hf==0.7.0`, FP16 Safetensors, pinned source revisions, and
-repository-local conversion manifests. The complete matrix, memory guidance,
-direct loading example, and public verification command are maintained in
+They were published with `rwkv7-hf==0.7.0` manifests and remain compatible
+with the current `rwkv7-hf==0.8.0` runtime. They use FP16 Safetensors, pinned
+source revisions, and repository-local conversion manifests. The complete
+matrix, memory guidance, direct loading example, and public verification command are maintained in
 [`docs/PUBLISHED_MODELS.md`](docs/PUBLISHED_MODELS.md).
+
+Linux NVIDIA users can avoid first-run compilation on the two published exact
+lanes by installing the matching `rwkv7-kernels` wheel with
+`rwkv7-hf-kernels install`. Compatibility is checked before any binary module
+is imported; unsupported environments retain the existing JIT and portable
+fallbacks. See [`docs/KERNEL_WHEELS.md`](docs/KERNEL_WHEELS.md).
 
 ## Current performance evidence
 

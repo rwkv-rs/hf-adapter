@@ -30,7 +30,7 @@
 普通用户现在不需要先转换 `.pth`。安装正式版并直接加载公开的 0.1B 模型：
 
 ```bash
-python -m pip install "rwkv7-hf==0.7.0"
+python -m pip install "rwkv7-hf==0.8.0"
 ```
 
 ```python
@@ -113,6 +113,18 @@ python -m rwkv7_hf.doctor
 两个检查命令都必须显示 `RESULT: READY`。第二条会显示当前加速设备、编译工具链和
 候选算子策略，详细解释见[算子检查指南](KERNEL_DOCTOR_ZH.md)。如果出现 `FAIL`，
 先修复第一项再继续。
+
+如果当前 Linux NVIDIA 环境存在精确匹配的预编译算子，可继续执行：
+
+```bash
+rwkv7-hf-kernels status
+rwkv7-hf-kernels install
+rwkv7-hf-doctor
+rwkv7-hf-smoke --device cuda
+```
+
+精确环境矩阵和回退顺序见[预编译 CUDA 算子 wheel](KERNEL_WHEELS_ZH.md)。没有
+匹配项时不要强装相近 wheel；基础 adapter 仍可正常使用。
 
 只有 Linux + NVIDIA 用户需要安装原生 CUDA 优化依赖：
 

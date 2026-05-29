@@ -1,0 +1,150 @@
+name: kernel-wheels
+
+# Binary wheels are tied to Python, PyTorch, CUDA, the libstdc++ ABI, and the
+# exact GPU architecture. They are therefore built and executed on labelled
+# hardware-lab runners, never guessed on a generic hosted runner.
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Commit or tag to build
+        required: true
+        default: main
+        type: string
+      release_tag:
+        description: Existing GitHub release tag used for public asset URLs
+        required: false
+        default: ""
+        type: string
+      publish:
+        description: Upload verified wheels and index to release_tag
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: cu124-torch25-sm70
+            runner: rwkv7-sm70-builder
+            arch: "7.0"
+            tests: >-
+              tests/test_sm70_linear.py tests/test_sm70_wagv.py
+              tests/test_sm70_quant.py tests/test_ada_sparse_ffn.py
+              tests/test_native_wkv_fp16.py
+          - lane: cu124-torch26-sm89
+            runner: rwkv7-sm89-builder
+            arch: "8.9"
+            tests: >-
+              tests/test_ada_lora.py tests/test_ada_sparse_ffn.py
+              tests/test_native_wkv_fp16.py
+    runs-on: [self-hosted, linux, x64, "${{ matrix.runner }}"]
+    timeout-minutes: 90
+    name: ${{ matrix.lane }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+
+      - name: Validate runner toolchain
+        run: |
+          : "${RWKV7_KERNEL_PYTHON:?runner must export RWKV7_KERNEL_PYTHON}"
+          test -x "${RWKV7_KERNEL_PYTHON}"
+          test -n "${CUDA_HOME:-}"
+          test -x "${CUDA_HOME}/bin/nvcc"
+          "${RWKV7_KERNEL_PYTHON}" - <<'PY'
+          import torch
+          assert torch.version.cuda
+          assert torch.cuda.is_available()
+          print(torch.__version__, torch.version.cuda, torch.cuda.get_device_name())
+          PY
+
+      - name: Build exact-runtime wheel
+        env:
+          RWKV7_KERNEL_ARCH_LIST: ${{ matrix.arch }}
+          OUT_DIR: ${{ runner.temp }}/kernel-dist
+          MAX_JOBS: "4"
+        run: |
+          export PATH="$(dirname "${RWKV7_KERNEL_PYTHON}"):${CUDA_HOME}/bin:${PATH}"
+          export PYTHON_BIN="${RWKV7_KERNEL_PYTHON}"
+          export RWKV7_KERNEL_SOURCE_COMMIT="$(git rev-parse HEAD)"
+          bash scripts/build_kernel_wheel.sh
+
+      - name: Install without compiler fallback and execute kernels
+        env:
+          RWKV7_KERNELS_MODE: prebuilt
+        run: |
+          target="${RUNNER_TEMP}/kernel-acceptance"
+          adapter_dist="${RUNNER_TEMP}/adapter-dist"
+          mkdir -p "${target}" "${adapter_dist}"
+          "${RWKV7_KERNEL_PYTHON}" -m pip wheel \
+            --no-deps --no-build-isolation --wheel-dir "${adapter_dist}" .
+          "${RWKV7_KERNEL_PYTHON}" -m pip install --no-deps --target "${target}" \
+            "${adapter_dist}"/*.whl "${RUNNER_TEMP}/kernel-dist"/*.whl
+          cd "${RUNNER_TEMP}"
+          PYTHONPATH="${target}" "${RWKV7_KERNEL_PYTHON}" -m rwkv7_hf.doctor \
+            --device cuda:0 --json --output "${RUNNER_TEMP}/doctor-${{ matrix.lane }}.json"
+          test_args=()
+          for test_path in ${{ matrix.tests }}; do
+            test_args+=("${GITHUB_WORKSPACE}/${test_path}")
+          done
+          cd "${RUNNER_TEMP}"
+          PYTHONPATH="${target}" "${RWKV7_KERNEL_PYTHON}" -m pytest -q "${test_args[@]}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernel-wheel-${{ matrix.lane }}
+          path: |
+            ${{ runner.temp }}/kernel-dist/*.whl
+            ${{ runner.temp }}/doctor-${{ matrix.lane }}.json
+          if-no-files-found: error
+          retention-days: 14
+
+  assemble-index:
+    needs: build-and-validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kernel-wheel-*
+          path: kernel-assets
+          merge-multiple: true
+
+      - name: Generate public hash index
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          tag="${RELEASE_TAG:-unpublished}"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}"
+          python scripts/build_kernel_index.py kernel-assets/*.whl \
+            --base-url "${base}" \
+            --release-tag "${tag}" \
+            --output kernel-assets/rwkv7-kernel-index-v1.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rwkv7-kernel-release-assets
+          path: kernel-assets/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload verified release assets
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          test -n "${RELEASE_TAG}"
+          gh release upload "${RELEASE_TAG}" \
+            kernel-assets/*.whl kernel-assets/rwkv7-kernel-index-v1.json \
+            --clobber

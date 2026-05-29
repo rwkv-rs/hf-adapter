@@ -5,6 +5,7 @@ from __future__ import annotations
 import torch
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
+from .kernel_package import kernel_runtime_report
 from .model_cache import NativeRWKV7Cache, _cache_seen
 
 
@@ -35,6 +36,24 @@ class _NativeFastAPIMixin:
     def rwkv7_native_model_last_prefill_backend(self) -> str | None:
         """Return the backend used by the previous native-model prefill call."""
         return getattr(self, "_rwkv7_native_model_last_prefill_backend", None)
+
+    def rwkv7_runtime_report(self) -> dict:
+        """Report the effective model routes and native-kernel package state."""
+
+        try:
+            device = next(self.parameters()).device
+            rendered_device = str(device)
+        except (AttributeError, StopIteration):
+            device = None
+            rendered_device = None
+        return {
+            "schema_version": 1,
+            "device": rendered_device,
+            "requested_model_backend": _native_model_backend_requested(),
+            "last_prefill_backend": self.rwkv7_native_model_last_prefill_backend(),
+            "last_decode_backend": self.rwkv7_native_model_last_decode_backend(),
+            "kernels": kernel_runtime_report(torch_module=torch, device=device),
+        }
 
     @torch.inference_mode()
     def rwkv7_prefill_native(

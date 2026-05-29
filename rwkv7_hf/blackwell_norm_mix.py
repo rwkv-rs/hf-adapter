@@ -7,6 +7,7 @@ alignment harness at commit ``cc57df475465c6cacd42ecd4f2f05a588ee5473b``.
 Only the FFN residual-add, layer-normalization, mix, and shift-state boundary is
 included here; dense projections and recurrence remain repository-native.
 """
+
 from __future__ import annotations
 
 import os
@@ -17,6 +18,31 @@ try:
     from .extension_build import cuda_extension_build_environment
 except ImportError:  # pragma: no cover - direct remote-file execution
     from extension_build import cuda_extension_build_environment
+
+try:
+    from .kernel_package import (
+        jit_extensions_allowed,
+        load_prebuilt_extension,
+        record_jit_extension,
+    )
+except ImportError:  # pragma: no cover - direct remote-file execution
+    try:
+        from kernel_package import (
+            jit_extensions_allowed,
+            load_prebuilt_extension,
+            record_jit_extension,
+        )
+    except ImportError:  # pragma: no cover - old converted-model closure
+
+        def jit_extensions_allowed():
+            return True
+
+        def load_prebuilt_extension(*_args, **_kwargs):
+            return None
+
+        def record_jit_extension(*_args, **_kwargs):
+            return None
+
 
 try:  # pragma: no cover - optional in lightweight environments
     import torch
@@ -208,6 +234,13 @@ def _load_extension() -> Any | None:
             return _EXTENSION
         if _EXTENSION_ERROR is not None:
             return None
+        _EXTENSION = load_prebuilt_extension(
+            "blackwell_norm_mix", torch_module=torch, device="cuda"
+        )
+        if _EXTENSION is not None:
+            return _EXTENSION
+        if not jit_extensions_allowed():
+            return None
         try:
             capability = torch.cuda.get_device_capability()
             with cuda_extension_build_environment(
@@ -223,11 +256,17 @@ def _load_extension() -> Any | None:
                     extra_cflags=["-O3"],
                     extra_cuda_cflags=["-O3", "--extra-device-vectorization"],
                     with_cuda=True,
-                    verbose=os.environ.get("RWKV7_BLACKWELL_NORM_MIX_BUILD_VERBOSE", "0").lower()
+                    verbose=os.environ.get(
+                        "RWKV7_BLACKWELL_NORM_MIX_BUILD_VERBOSE", "0"
+                    ).lower()
                     in {"1", "true", "yes", "on"},
                 )
+            record_jit_extension("blackwell_norm_mix", selected=True)
         except Exception as exc:  # pragma: no cover - host toolchain dependent
             _EXTENSION_ERROR = f"{type(exc).__name__}: {exc}"
+            record_jit_extension(
+                "blackwell_norm_mix", selected=False, error=_EXTENSION_ERROR
+            )
             return None
     return _EXTENSION
 
@@ -253,9 +292,13 @@ def blackwell_ffn_add_norm_mix(
     eps: float = 1.0e-5,
 ) -> tuple[Any, Any]:
     if not blackwell_norm_mix_should_use(residual, attention, previous):
-        raise ValueError("SM120 norm/mix received an unsupported device, dtype, or shape")
+        raise ValueError(
+            "SM120 norm/mix received an unsupported device, dtype, or shape"
+        )
     tensors = (residual, attention, previous, weight, bias, mix)
-    if not all(item.is_contiguous() and item.dtype == torch.float16 for item in tensors):
+    if not all(
+        item.is_contiguous() and item.dtype == torch.float16 for item in tensors
+    ):
         raise ValueError("SM120 norm/mix requires contiguous CUDA fp16 tensors")
     extension = _load_extension()
     if extension is None:

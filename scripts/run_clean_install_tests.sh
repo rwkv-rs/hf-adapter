@@ -215,8 +215,13 @@ if [[ "$PROFILE" == smoke ]]; then
     tests/test_acceptance_scripts.py \
     tests/test_apple_silicon_packaging.py \
     tests/test_backend_boundaries.py \
+    tests/test_doctor.py \
+    tests/test_kernel_package.py \
+    tests/test_kernels_cli.py \
     tests/test_kernel_policy.py \
+    tests/test_kernel_wheel_tooling.py \
     tests/test_native_model_module_split.py \
+    tests/test_smoke_cli.py \
     tests/test_tokenizer_fast_trie.py
 
   # Preserve the historical executable-script PR coverage. Several of these

@@ -16,6 +16,7 @@ implementation unless a benchmark explicitly requires the extension. Value
 weights are transposed once and cached; callers can prewarm the cache before
 CUDA graph capture with :func:`ada_sparse_ffn_pack_weight`.
 """
+
 from __future__ import annotations
 
 import os
@@ -26,6 +27,32 @@ try:
     from .extension_build import cuda_extension_build_environment
 except ImportError:  # pragma: no cover - direct remote-file execution
     from extension_build import cuda_extension_build_environment
+
+try:
+    from .kernel_package import (
+        jit_extensions_allowed,
+        load_prebuilt_extension,
+        record_jit_extension,
+    )
+except ImportError:  # pragma: no cover - direct remote-file execution
+    try:
+        from kernel_package import (
+            jit_extensions_allowed,
+            load_prebuilt_extension,
+            record_jit_extension,
+        )
+    except ImportError:  # pragma: no cover - old converted-model closure
+
+        def jit_extensions_allowed():
+            return True
+
+        def load_prebuilt_extension(*_args, **_kwargs):
+            return None
+
+        def record_jit_extension(*_args, **_kwargs):
+            return None
+
+
 import weakref
 
 try:  # pragma: no cover - optional in lightweight environments
@@ -1220,7 +1247,9 @@ _EXTENSION_LOCK = threading.Lock()
 _PACK_LOCK = threading.Lock()
 _PACKED_WEIGHTS: dict[tuple[Any, ...], tuple[weakref.ReferenceType[Any], Any]] = {}
 _FP32_SCRATCH: dict[tuple[Any, ...], tuple[weakref.ReferenceType[Any], Any]] = {}
-_DETERMINISTIC_SCRATCH: dict[tuple[Any, ...], tuple[weakref.ReferenceType[Any], Any]] = {}
+_DETERMINISTIC_SCRATCH: dict[
+    tuple[Any, ...], tuple[weakref.ReferenceType[Any], Any]
+] = {}
 
 _SUPPORTED_SPARSE_FFN_CAPABILITIES = {(7, 0), (8, 6), (8, 9), (12, 0)}
 
@@ -1236,7 +1265,11 @@ def _sparse_ffn_capability(device: Any = None) -> tuple[int, int] | None:
         resolved = torch.device("cuda" if device is None else device)
         if resolved.type != "cuda":
             return None
-        index = torch.cuda.current_device() if resolved.index is None else int(resolved.index)
+        index = (
+            torch.cuda.current_device()
+            if resolved.index is None
+            else int(resolved.index)
+        )
         return tuple(int(v) for v in torch.cuda.get_device_capability(index))
     except Exception:
         return None
@@ -1249,7 +1282,11 @@ def _is_blackwell_device(device: Any = None) -> bool:
         resolved = torch.device("cuda" if device is None else device)
         if resolved.type != "cuda":
             return False
-        index = torch.cuda.current_device() if resolved.index is None else int(resolved.index)
+        index = (
+            torch.cuda.current_device()
+            if resolved.index is None
+            else int(resolved.index)
+        )
         return tuple(int(v) for v in torch.cuda.get_device_capability(index)) == (12, 0)
     except Exception:
         return False
@@ -1259,21 +1296,16 @@ def blackwell_cmix_should_use(rows: int, outputs: int, inputs: int) -> bool:
     """Return whether the opt-in SM120 row-one CMIX kernel supports a shape."""
 
     return (
-        int(rows) == 1
-        and int(inputs) == 4 * int(outputs)
-        and int(outputs) % 256 == 0
+        int(rows) == 1 and int(inputs) == 4 * int(outputs) and int(outputs) % 256 == 0
     )
 
 
 def _blackwell_cmix_enabled(device: Any = None) -> bool:
-    return (
-        _policy_flag(
-            "RWKV7_NATIVE_GRAPH_BLACKWELL_CMIX",
-            "blackwell_cmix",
-            device,
-        )
-        and _is_blackwell_device(device)
-    )
+    return _policy_flag(
+        "RWKV7_NATIVE_GRAPH_BLACKWELL_CMIX",
+        "blackwell_cmix",
+        device,
+    ) and _is_blackwell_device(device)
 
 
 def _load_extension(device: Any = None) -> Any | None:
@@ -1290,6 +1322,15 @@ def _load_extension(device: Any = None) -> Any | None:
             return _EXTENSIONS[capability]
         if capability in _EXTENSION_ERRORS:
             return None
+        extension = load_prebuilt_extension(
+            "ada_sparse_ffn", torch_module=torch, device=device
+        )
+        if extension is not None:
+            _EXTENSION = extension
+            _EXTENSIONS[capability] = extension
+            return extension
+        if not jit_extensions_allowed():
+            return None
         try:
             with cuda_extension_build_environment(
                 arch_list=f"{capability[0]}.{capability[1]}"
@@ -1297,9 +1338,7 @@ def _load_extension(device: Any = None) -> Any | None:
                 from torch.utils.cpp_extension import load_inline
 
                 extra_ldflags = (
-                    [f"-Wl,-rpath,{runtime_lib}"]
-                    if runtime_lib is not None
-                    else []
+                    [f"-Wl,-rpath,{runtime_lib}"] if runtime_lib is not None else []
                 )
                 extension = load_inline(
                     name=f"rwkv7_sparse_ffn_v20_sm{capability[0]}{capability[1]}",
@@ -1307,18 +1346,26 @@ def _load_extension(device: Any = None) -> Any | None:
                     cuda_sources=_CUDA_SOURCE,
                     functions=None,
                     extra_cflags=["-O3"],
-                    extra_cuda_cflags=["-O3", "--use_fast_math", "--extra-device-vectorization"],
+                    extra_cuda_cflags=[
+                        "-O3",
+                        "--use_fast_math",
+                        "--extra-device-vectorization",
+                    ],
                     extra_ldflags=extra_ldflags,
                     with_cuda=True,
-                    verbose=os.environ.get("RWKV7_ADA_SPARSE_FFN_BUILD_VERBOSE", "0").lower()
+                    verbose=os.environ.get(
+                        "RWKV7_ADA_SPARSE_FFN_BUILD_VERBOSE", "0"
+                    ).lower()
                     in {"1", "true", "yes", "on"},
                 )
             _EXTENSION = extension
             _EXTENSIONS[capability] = extension
+            record_jit_extension("ada_sparse_ffn", selected=True)
         except Exception as exc:  # pragma: no cover - depends on host toolchain
             message = f"{type(exc).__name__}: {exc}"
             _EXTENSION_ERROR = message
             _EXTENSION_ERRORS[capability] = message
+            record_jit_extension("ada_sparse_ffn", selected=False, error=message)
             return None
     return _EXTENSIONS.get(capability)
 
@@ -1354,7 +1401,9 @@ def ada_ffn_up_should_use(rows: int, outputs: int, inputs: int) -> bool:
 def ada_linear_should_use(rows: int, outputs: int, inputs: int) -> bool:
     rows, outputs, inputs = int(rows), int(outputs), int(inputs)
     common = outputs > 0 and outputs % 2 == 0 and inputs >= 1024 and inputs % 4 == 0
-    return common and (1 <= rows <= 2 or (rows == 4 and outputs in {inputs, 4 * inputs}))
+    return common and (
+        1 <= rows <= 2 or (rows == 4 and outputs in {inputs, 4 * inputs})
+    )
 
 
 def ada_sparse_ffn_available(device: Any = None, *, build: bool = False) -> bool:
@@ -1365,7 +1414,11 @@ def ada_sparse_ffn_available(device: Any = None, *, build: bool = False) -> bool
 
 def ada_sparse_ffn_build_error(device: Any = None) -> str | None:
     capability = _sparse_ffn_capability(device)
-    return _EXTENSION_ERRORS.get(capability) if capability is not None else _EXTENSION_ERROR
+    return (
+        _EXTENSION_ERRORS.get(capability)
+        if capability is not None
+        else _EXTENSION_ERROR
+    )
 
 
 def _weight_cache_key(weight: Any, cache_tag: Any = None) -> tuple[Any, ...]:
@@ -1409,7 +1462,11 @@ def ada_sparse_ffn_pack_weight(weight: Any, *, cache_tag: Any = None) -> Any:
         cached = _PACKED_WEIGHTS.get(key)
         if cached is not None and cached[0]() is weight:
             return cached[1]
-        if torch is not None and weight.is_cuda and torch.cuda.is_current_stream_capturing():
+        if (
+            torch is not None
+            and weight.is_cuda
+            and torch.cuda.is_current_stream_capturing()
+        ):
             raise RuntimeError(
                 "sparse FFN weights must be packed before CUDA graph capture; "
                 "call prewarm_ada_sparse_ffn first"
@@ -1434,7 +1491,11 @@ def ada_sparse_ffn_prepare_fp32_scratch(weight: Any, rows: int) -> Any:
         cached = _FP32_SCRATCH.get(key)
         if cached is not None and cached[0]() is weight:
             return cached[1]
-        if torch is not None and weight.is_cuda and torch.cuda.is_current_stream_capturing():
+        if (
+            torch is not None
+            and weight.is_cuda
+            and torch.cuda.is_current_stream_capturing()
+        ):
             raise RuntimeError(
                 "sparse FFN FP32 scratch must be allocated before CUDA graph capture; "
                 "call prewarm_ada_sparse_ffn first"
@@ -1461,7 +1522,11 @@ def ada_sparse_ffn_prepare_deterministic_scratch(weight: Any, rows: int) -> Any:
         cached = _DETERMINISTIC_SCRATCH.get(key)
         if cached is not None and cached[0]() is weight:
             return cached[1]
-        if torch is not None and weight.is_cuda and torch.cuda.is_current_stream_capturing():
+        if (
+            torch is not None
+            and weight.is_cuda
+            and torch.cuda.is_current_stream_capturing()
+        ):
             raise RuntimeError(
                 "sparse FFN deterministic scratch must be allocated before CUDA graph capture; "
                 "call prewarm_ada_sparse_ffn first"
@@ -1538,8 +1603,10 @@ def ada_sparse_ffn_down_add(
         and blackwell_cmix_should_use(rows, outputs, inputs)
     )
     if blackwell_cmix:
-        out2 = torch.empty_like(residual2) if out is None else (
-            out.reshape(1, -1) if scalar else out
+        out2 = (
+            torch.empty_like(residual2)
+            if out is None
+            else (out.reshape(1, -1) if scalar else out)
         )
         if tuple(out2.shape) != tuple(residual2.shape):
             raise ValueError(
@@ -1567,7 +1634,9 @@ def ada_sparse_ffn_down_add(
         )
     )
     if deterministic_splits not in {0, 4}:
-        raise ValueError("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_DETERMINISTIC_SPLITS must be 0 or 4")
+        raise ValueError(
+            "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_DETERMINISTIC_SPLITS must be 0 or 4"
+        )
     deterministic = bool(
         deterministic_splits == 4
         and ada_sparse_ffn_deterministic4_should_use(rows, outputs, inputs)
@@ -1580,17 +1649,13 @@ def ada_sparse_ffn_down_add(
     )
     if out is None:
         if fp32_accum:
-            output = extension.sparse_down_add_fp32(
-                preact2, packed, residual2, scratch
-            )
+            output = extension.sparse_down_add_fp32(preact2, packed, residual2, scratch)
         elif deterministic:
             output = extension.sparse_down_add_deterministic4(
                 preact2, packed, residual2, deterministic_scratch
             )
         elif official_boundary:
-            output = extension.sparse_down_add_official(
-                preact2, packed, residual2
-            )
+            output = extension.sparse_down_add_official(preact2, packed, residual2)
         else:
             output = extension.sparse_down_add(preact2, packed, residual2)
     else:
@@ -1612,9 +1677,7 @@ def ada_sparse_ffn_down_add(
                 preact2, packed, residual2, out2
             )
         else:
-            output = extension.sparse_down_add_out(
-                preact2, packed, residual2, out2
-            )
+            output = extension.sparse_down_add_out(preact2, packed, residual2, out2)
     return output.reshape(outputs) if scalar else output
 
 

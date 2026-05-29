@@ -1,6 +1,6 @@
 # RWKV-7 HF follow-up work
 
-Last audited: **2026-08-17**.
+Last audited: **2026-08-20**.
 
 ## Scope and current boundary
 
@@ -16,6 +16,9 @@ projects, not release blockers.
 - Build native fused full-model W8/W4 paths that beat FP16 end to end, rather
   than relying on memory-only quantization claims.
 - Expand AMD and non-NVIDIA exact-card performance evidence.
+- Expand prebuilt kernel-wheel coverage beyond the initial CPython 3.11,
+  CUDA 12.4, Torch 2.5/SM70 and Torch 2.6/SM89 lanes when matching exact-card
+  builders are available.
 - Add broader multi-GPU and long-context stress testing where hardware is
   available.
 

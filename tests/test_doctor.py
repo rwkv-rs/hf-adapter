@@ -71,6 +71,9 @@ def test_collect_diagnostics_cpu_is_ready_without_gpu_warning() -> None:
     assert not any(
         "exact validated hardware" in warning for warning in report["warnings"]
     )
+    assert not any(
+        "Prebuilt kernel package" in warning for warning in report["warnings"]
+    )
     assert doctor.render_text(report).endswith("RESULT: READY")
 
 
@@ -112,6 +115,53 @@ def test_incompatible_torch_cuda_binary_is_not_ready() -> None:
     assert report["devices"][0]["torch_binary_compatible"] is False
     assert any("matching PyTorch build" in warning for warning in report["warnings"])
     assert doctor.render_text(report).endswith("RESULT: FAIL")
+
+
+def test_ready_prebuilt_package_removes_local_compiler_warning(monkeypatch) -> None:
+    torch = _FakeTorch(
+        _FakeCuda(
+            available=True,
+            devices=[("NVIDIA GeForce RTX 4090", (8, 9), 24 * 1024**3)],
+            arch_list=["sm_89"],
+        )
+    )
+    monkeypatch.setattr(
+        doctor,
+        "inspect_kernel_package",
+        lambda **_: {
+            "status": "ready",
+            "mode": "auto",
+            "manifest": {
+                "distribution": "rwkv7-kernels",
+                "version": "0.8.0+cu124.torch26.sm89",
+            },
+            "recommended_distribution": "rwkv7-kernels",
+            "recommended_build": "cu124-torch26-sm89",
+            "reasons": [],
+        },
+    )
+    monkeypatch.setattr(
+        doctor,
+        "_toolchain_report",
+        lambda _torch: {
+            "cuda_runtime": "12.4",
+            "hip_runtime": None,
+            "cuda_home": None,
+            "nvcc": None,
+            "ninja": None,
+            "cuda_extension_build_ready": False,
+            "triton": {"available": True, "version": "3.2"},
+            "torch_cuda_arch_list": ["sm_89"],
+            "packaged_sources": {},
+            "cache_directories": {},
+        },
+    )
+
+    report = doctor.collect_diagnostics(torch_module=torch)
+
+    assert report["status"] == "ready"
+    assert not any("NVCC and Ninja" in warning for warning in report["warnings"])
+    assert any("do not require a local NVCC" in note for note in report["notes"])
 
 
 def test_json_cli_writes_the_same_report(monkeypatch, tmp_path, capsys) -> None:

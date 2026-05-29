@@ -20,10 +20,11 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Sequence
 
+from .kernel_package import KERNEL_MODE_ENV, inspect_kernel_package
 from .kernel_policy import current_adaptation_rule, current_kernel_policy
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 PREFILL_FEATURES = (
     "fast_prefill",
     "fused_prefill_scan",
@@ -234,10 +235,15 @@ def collect_diagnostics(
 
     mps = getattr(getattr(torch_module, "backends", None), "mps", None)
     cuda = getattr(torch_module, "cuda", None)
+    policy_devices = _visible_policy_devices(torch_module, device)
+    kernel_packages = [
+        inspect_kernel_package(torch_module=torch_module, device=item)
+        for item in policy_devices
+    ]
     report = {
         "schema_version": SCHEMA_VERSION,
         "status": "ready",
-        "scope": "environment_and_policy_only",
+        "scope": "environment_policy_and_prebuilt_kernel_package",
         "python": {
             "version": platform.python_version(),
             "implementation": platform.python_implementation(),
@@ -264,26 +270,50 @@ def collect_diagnostics(
             ),
         },
         "toolchain": _toolchain_report(torch_module),
-        "devices": [
-            _policy_report(torch_module, item)
-            for item in _visible_policy_devices(torch_module, device)
-        ],
+        "devices": [_policy_report(torch_module, item) for item in policy_devices],
+        "kernel_packages": kernel_packages,
         "notes": [
             "Policy defaults are hardware-level candidates; the actual runtime route also depends on model shape, dtype, batch size, sequence length, optional packages, and environment overrides.",
-            "This command never compiles kernels or loads model weights.",
+            "Kernel package checks validate metadata only; this command never imports a binary extension, compiles kernels, or loads model weights.",
         ],
     }
 
     warnings: list[str] = []
+    prebuilt_ready = any(item["status"] == "ready" for item in kernel_packages)
     if report["accelerators"]["cuda_available"]:
         if not report["toolchain"]["triton"]["available"]:
             warnings.append(
                 "CUDA is available but Triton is not importable; Triton routes will fall back."
             )
-        if not report["toolchain"]["cuda_extension_build_ready"]:
+        if not report["toolchain"]["cuda_extension_build_ready"] and not prebuilt_ready:
             warnings.append(
                 "A complete local CUDA extension toolchain was not detected; routes that require NVCC and Ninja cannot build, while Torch and Triton routes may still work."
             )
+        elif not report["toolchain"]["cuda_extension_build_ready"]:
+            report["notes"].append(
+                "A compatible prebuilt kernel package is ready, so its included routes do not require a local NVCC/Ninja toolchain."
+            )
+    for kernel_report in kernel_packages:
+        kernel_status = kernel_report["status"]
+        recommendation = kernel_report.get("recommended_distribution")
+        if kernel_status == "ready":
+            continue
+        if kernel_status in {"missing", "incompatible", "invalid", "import_error"} and (
+            recommendation or kernel_report["mode"] == "prebuilt"
+        ):
+            detail = "; ".join(kernel_report.get("reasons", []))
+            build = kernel_report.get("recommended_build")
+            if recommendation and build:
+                suffix = f" Recommended package/build: {recommendation} ({build})."
+            elif recommendation:
+                suffix = f" Recommended package: {recommendation}."
+            else:
+                suffix = ""
+            warnings.append(
+                f"Prebuilt kernel package is {kernel_status}: {detail}.{suffix}"
+            )
+            if kernel_report["mode"] == "prebuilt":
+                report["status"] = "not_ready"
     for item in report["devices"]:
         profile = item["profile"]
         if item["torch_binary_compatible"] is False:
@@ -318,6 +348,7 @@ def render_text(report: dict[str, Any]) -> str:
     packages = report["packages"]
     accelerators = report["accelerators"]
     toolchain = report["toolchain"]
+    kernel_packages = report["kernel_packages"]
     lines = [
         "RWKV-7 Hugging Face runtime doctor",
         f"Status: {report['status'].upper()}",
@@ -335,6 +366,19 @@ def render_text(report: dict[str, Any]) -> str:
         f"nvcc={toolchain['nvcc'] or 'unavailable'} "
         f"ninja={toolchain['ninja'] or 'unavailable'}",
     ]
+    for index, kernel_report in enumerate(kernel_packages):
+        manifest = kernel_report.get("manifest") or {}
+        package_name = manifest.get("distribution") or "not-installed"
+        package_version = manifest.get("version") or "n/a"
+        recommendation = kernel_report.get("recommended_distribution") or "n/a"
+        build = kernel_report.get("recommended_build") or "n/a"
+        lines.append(
+            f"Kernel package {index}: status={kernel_report['status']} "
+            f"mode={kernel_report['mode']} package={package_name} "
+            f"version={package_version} recommended={recommendation} build={build}"
+        )
+        for reason in kernel_report.get("reasons", []):
+            lines.append(f"  Kernel package note: {reason}")
     for index, item in enumerate(report["devices"]):
         profile = item["profile"]
         policy = item["policy_defaults"]
@@ -374,7 +418,10 @@ def render_text(report: dict[str, Any]) -> str:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Inspect the RWKV-7 runtime, accelerator, and kernel policy."
+        description=(
+            "Inspect the RWKV-7 runtime, accelerator, kernel policy, and "
+            f"optional prebuilt package ({KERNEL_MODE_ENV})."
+        )
     )
     parser.add_argument(
         "--device",

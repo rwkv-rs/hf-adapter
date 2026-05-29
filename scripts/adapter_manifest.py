@@ -6,6 +6,7 @@ Keep this module dependency-free: converter and sync tools import it before
 optional ML/Apple dependencies are available. Runtime import closure is checked
 by ``tests/test_sync_hf_adapter_code.py``.
 """
+
 from __future__ import annotations
 
 import shutil
@@ -37,6 +38,7 @@ ADAPTER_FILES = [
     "fused_recurrent_update.py",
     "fused_elementwise.py",
     "fused_time_mix.py",
+    "kernel_package.py",
     "kernel_policy.py",
     "mlx_bridge.py",
     "mlx_cache.py",
