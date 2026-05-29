@@ -112,10 +112,13 @@ Verify the base environment before downloading a model:
 
 ```bash
 python examples/check_environment.py
+python -m rwkv7_hf.doctor
 ```
 
 Fix the first `FAIL` and rerun the command. Continue only after it prints
-`RESULT: READY`.
+`RESULT: READY`. The second command records the visible accelerator, build
+toolchain, and kernel-policy candidates; see the
+[kernel doctor guide](KERNEL_DOCTOR.md).
 
 ## 2. Get and convert a model
 

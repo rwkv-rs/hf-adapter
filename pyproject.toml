@@ -27,6 +27,9 @@ dependencies = [
   "safetensors",
 ]
 
+[project.scripts]
+rwkv7-hf-doctor = "rwkv7_hf.doctor:cli"
+
 [project.optional-dependencies]
 cuda = ["ninja; platform_system == 'Linux'"]
 # torch_npu wheels are CANN-, architecture-, and Python-specific.  Install the
