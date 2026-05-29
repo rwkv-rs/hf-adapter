@@ -6,6 +6,8 @@ model, dtype, batch and sequence shape named by their linked artifact.
 
 ## Unreleased
 
+## [v0.7.1](https://github.com/rwkv-rs/hf-adapter/releases/tag/v0.7.1) - 2026-08-19
+
 ### Runtime diagnostics
 
 - Added `python -m rwkv7_hf.doctor` and the `rwkv7-hf-doctor` console command
