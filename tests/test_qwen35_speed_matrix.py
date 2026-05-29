@@ -281,6 +281,7 @@ def test_wrapper_repo_loader_accepts_native_converted_weight_layout(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    pytest.importorskip("fla.models.rwkv7.modeling_rwkv7")
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
     from rwkv7_hf.native_model import NativeRWKV7Config, NativeRWKV7ForCausalLM
 
