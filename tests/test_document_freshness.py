@@ -24,12 +24,17 @@ def main() -> int:
         "docs/PROJECT_SUMMARY.md",
         "docs/RESULTS_INDEX.md",
     )
-    for relative in current_docs:
-        assert "2026-08-17" in read(relative), relative
+    expected_audit_dates = {relative: "2026-08-17" for relative in current_docs}
+    for relative in ("HF_STATUS.md", "docs/RESULTS_INDEX.md"):
+        expected_audit_dates[relative] = "2026-08-19"
+    for relative, expected_date in expected_audit_dates.items():
+        assert expected_date in read(relative), relative
 
     for path in sorted((ROOT / "docs/plans").glob("*.md")):
         text = path.read_text(encoding="utf-8").lower()
-        assert "historical" in text, f"plan lacks lifecycle banner: {path.relative_to(ROOT)}"
+        assert "historical" in text, (
+            f"plan lacks lifecycle banner: {path.relative_to(ROOT)}"
+        )
 
     status = read("HF_STATUS.md")
     assert "HF v0.7 adapter deliverable | **COMPLETE**" in status
@@ -55,10 +60,10 @@ def main() -> int:
 
     readme = read("README.md")
     assert "Completion is reported by **named scope**" in readme
-    assert "python -m pip install -U rwkv7-hf" in readme
+    assert 'python -m pip install "rwkv7-hf==0.7.0"' in readme
 
     readme_zh = read("README_ZH.md")
-    assert "python -m pip install -U rwkv7-hf" in readme_zh
+    assert 'python -m pip install "rwkv7-hf==0.7.0"' in readme_zh
 
     print("DOCUMENT FRESHNESS PASS")
     return 0

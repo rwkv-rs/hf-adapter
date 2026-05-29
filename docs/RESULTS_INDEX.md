@@ -1,6 +1,6 @@
 # Current results and evidence
 
-Last updated: **2026-08-17**.
+Last updated: **2026-08-19**.
 
 This is the compact reviewer index. The latest cross-card throughput table is
 [`QWEN35_LATEST_P_D_TOKPS.md`](QWEN35_LATEST_P_D_TOKPS.md); exact raw evidence
@@ -36,6 +36,17 @@ The RTX 5090 Qwen-only frozen source is
 
 The full path list and line identifiers are in
 [`../bench/CURRENT_ARTIFACTS.json`](../bench/CURRENT_ARTIFACTS.json).
+
+## Public Hugging Face distribution
+
+The public `rwkv7-hf==0.7.0` release has six tagged model repositories from
+0.1B through 13.3B. The retained acceptance bundle records a clean PyPI install
+and full 0.1B load/forward/generation gate, plus the six-model metadata and LFS
+integrity matrix:
+[`hf_public_release_20260819`](../bench/hf_public_release_20260819/README.md).
+
+Model links, storage layouts, and copyable verification commands are listed in
+[`PUBLISHED_MODELS.md`](PUBLISHED_MODELS.md).
 
 ## Compatibility and training
 

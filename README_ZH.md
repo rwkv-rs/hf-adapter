@@ -32,8 +32,32 @@ Python、PyTorch、Transformers 和可用设备。
 直接从 PyPI 安装正式版：
 
 ```bash
-python -m pip install -U rwkv7-hf
+python -m pip install "rwkv7-hf==0.7.0"
 ```
+
+然后直接加载公开 Collection 里的最小模型，不需要先下载 `.pth` 或执行转换：
+
+```python
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model_id = "wangyue114514/rwkv7-g1d-0.1b-hf"
+tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+model = AutoModelForCausalLM.from_pretrained(
+    model_id, trust_remote_code=True, dtype="auto"
+).eval()
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model = model.to(device)
+inputs = tokenizer("User: 你好！ Assistant:", return_tensors="pt")
+inputs = {name: value.to(device) for name, value in inputs.items()}
+with torch.inference_mode():
+    output = model.generate(**inputs, max_new_tokens=16)
+print(tokenizer.decode(output[0], skip_special_tokens=True))
+```
+
+六个尺寸、权重大小、内存建议、模型链接和一键验收命令见
+[已发布模型矩阵](docs/PUBLISHED_MODELS_ZH.md)，总入口是
+[`RWKV7-G1 Transformers` Collection](https://huggingface.co/collections/wangyue114514/rwkv7-g1-transformers-6a85b04191034d4c2d1896f1)。
 
 需要开发当前源码时再克隆仓库：
 
@@ -103,8 +127,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run_cpu_demo.ps1 -
 
 ## 准备模型
 
-如果你已经有转换好的 Hugging Face 模型目录，可以直接进入下一节。模型目录至少应
-包含 `config.json`、tokenizer 文件和 `.safetensors` 或 `.bin` 权重。
+普通用户优先直接使用[已发布模型矩阵](docs/PUBLISHED_MODELS_ZH.md)，不需要自行转换。
+只有需要复现转换过程或处理新 checkpoint 时才继续本节。如果你已经有转换好的
+Hugging Face 模型目录，可以直接进入下一节。模型目录至少应包含 `config.json`、
+tokenizer 文件和 `.safetensors` 或 `.bin` 权重。
 
 如果你只有官方 `.pth` 权重，请按照
 [下载与转换逐步教程](docs/USER_GUIDE_ZH.md#2-下载并转换模型)操作。该教程包含：

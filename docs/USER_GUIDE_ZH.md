@@ -25,6 +25,35 @@
 文件存在不等于模型能运行。遇到错误时只处理屏幕上的第一个 `FAIL` 或
 第一段 traceback，然后重新执行同一条命令。
 
+## 公开模型最快路径
+
+普通用户现在不需要先转换 `.pth`。安装正式版并直接加载公开的 0.1B 模型：
+
+```bash
+python -m pip install "rwkv7-hf==0.7.0"
+```
+
+```python
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+model_id = "wangyue114514/rwkv7-g1d-0.1b-hf"
+tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+model = AutoModelForCausalLM.from_pretrained(
+    model_id, trust_remote_code=True, dtype="auto"
+).eval()
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model = model.to(device)
+inputs = tokenizer("User: 你好！ Assistant:", return_tensors="pt")
+inputs = {name: value.to(device) for name, value in inputs.items()}
+with torch.inference_mode():
+    output = model.generate(**inputs, max_new_tokens=16)
+print(tokenizer.decode(output[0], skip_special_tokens=True))
+```
+
+其它尺寸见[已发布模型矩阵](PUBLISHED_MODELS_ZH.md)。后面的转换流程继续保留，供
+新 checkpoint、定制模型或转换复现使用。
+
 ## 新手选择规则
 
 - 第一次只用 **0.4B**。不要用 7.2B 或 13.3B 验证环境。

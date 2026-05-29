@@ -1,0 +1,133 @@
+{
+  "status": "passed",
+  "date": "2026-08-19",
+  "revision": "v0.7.0",
+  "models": [
+    {
+      "status": "passed",
+      "mode": "metadata-only",
+      "model_id": "wangyue114514/rwkv7-g1d-0.1b-hf",
+      "revision": "v0.7.0",
+      "resolved_commit": "a5d124a4697978f4461d84d849b0aae5937da522",
+      "python": "3.11.15",
+      "torch": "2.12.1",
+      "transformers": "5.12.1",
+      "rwkv7_hf": "0.7.0",
+      "config_class": "rwkv7_hf.native_model.NativeRWKV7Config",
+      "tokenizer_class": "rwkv7_hf.tokenization_rwkv7.RWKV7Tokenizer",
+      "vocabulary_size": 65538,
+      "parameter_count_manifest": 191034624,
+      "remote_weights": {
+        "layout": "single",
+        "files": 1,
+        "size_bytes": 382110672
+      },
+      "elapsed_seconds": 38.588
+    },
+    {
+      "status": "passed",
+      "mode": "metadata-only",
+      "model_id": "wangyue114514/rwkv7-g1d-0.4b-hf",
+      "revision": "v0.7.0",
+      "resolved_commit": "c34d1dbdedf6a9ad6c655dcebbba16d57486377e",
+      "python": "3.11.15",
+      "torch": "2.12.1",
+      "transformers": "5.12.1",
+      "rwkv7_hf": "0.7.0",
+      "config_class": "rwkv7_hf.native_model.NativeRWKV7Config",
+      "tokenizer_class": "rwkv7_hf.tokenization_rwkv7.RWKV7Tokenizer",
+      "vocabulary_size": 65538,
+      "parameter_count_manifest": 450767872,
+      "remote_weights": {
+        "layout": "single",
+        "files": 1,
+        "size_bytes": 901619536
+      },
+      "elapsed_seconds": 43.834
+    },
+    {
+      "status": "passed",
+      "mode": "metadata-only",
+      "model_id": "wangyue114514/rwkv7-g1g-1.5b-hf",
+      "revision": "v0.7.0",
+      "resolved_commit": "1434914a9032fedc6d2fc0d56cbdf95f86c6b865",
+      "python": "3.11.15",
+      "torch": "2.12.1",
+      "transformers": "5.12.1",
+      "rwkv7_hf": "0.7.0",
+      "config_class": "rwkv7_hf.native_model.NativeRWKV7Config",
+      "tokenizer_class": "rwkv7_hf.tokenization_rwkv7.RWKV7Tokenizer",
+      "vocabulary_size": 65538,
+      "parameter_count_manifest": 1527404544,
+      "remote_weights": {
+        "layout": "sharded",
+        "files": 6,
+        "size_bytes": 3054892712
+      },
+      "elapsed_seconds": 52.167
+    },
+    {
+      "status": "passed",
+      "mode": "metadata-only",
+      "model_id": "wangyue114514/rwkv7-g1g-2.9b-hf",
+      "revision": "v0.7.0",
+      "resolved_commit": "efe63e9b96dd5f48189b883789155ddcc84ce1fe",
+      "python": "3.11.15",
+      "torch": "2.12.1",
+      "transformers": "5.12.1",
+      "rwkv7_hf": "0.7.0",
+      "config_class": "rwkv7_hf.native_model.NativeRWKV7Config",
+      "tokenizer_class": "rwkv7_hf.tokenization_rwkv7.RWKV7Tokenizer",
+      "vocabulary_size": 65538,
+      "parameter_count_manifest": 2947735040,
+      "remote_weights": {
+        "layout": "sharded",
+        "files": 13,
+        "size_bytes": 5895582248
+      },
+      "elapsed_seconds": 80.201
+    },
+    {
+      "status": "passed",
+      "mode": "metadata-only",
+      "model_id": "wangyue114514/rwkv7-g1g-7.2b-hf",
+      "revision": "v0.7.0",
+      "resolved_commit": "7bcfcbbe74819887d577a87b01cbc38d26233460",
+      "python": "3.11.15",
+      "torch": "2.12.1",
+      "transformers": "5.12.1",
+      "rwkv7_hf": "0.7.0",
+      "config_class": "rwkv7_hf.native_model.NativeRWKV7Config",
+      "tokenizer_class": "rwkv7_hf.tokenization_rwkv7.RWKV7Tokenizer",
+      "vocabulary_size": 65538,
+      "parameter_count_manifest": 7199141888,
+      "remote_weights": {
+        "layout": "sharded",
+        "files": 4,
+        "size_bytes": 14398397464
+      },
+      "elapsed_seconds": 41.049
+    },
+    {
+      "status": "passed",
+      "mode": "metadata-only",
+      "model_id": "wangyue114514/rwkv7-g1g-13.3b-hf",
+      "revision": "v0.7.0",
+      "resolved_commit": "e5ebec336b0ed76018e20d54299cca8d648c1fb0",
+      "python": "3.11.15",
+      "torch": "2.12.1",
+      "transformers": "5.12.1",
+      "rwkv7_hf": "0.7.0",
+      "config_class": "rwkv7_hf.native_model.NativeRWKV7Config",
+      "tokenizer_class": "rwkv7_hf.tokenization_rwkv7.RWKV7Tokenizer",
+      "vocabulary_size": 65538,
+      "parameter_count_manifest": 13269245952,
+      "remote_weights": {
+        "layout": "sharded",
+        "files": 7,
+        "size_bytes": 26538708640
+      },
+      "elapsed_seconds": 36.579
+    }
+  ]
+}

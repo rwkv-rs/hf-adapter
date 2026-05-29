@@ -24,6 +24,7 @@
     {"id": "amd-gfx1100-quant", "platform": "AMD gfx1100", "line": "quantization", "path": "amd_gfx1100_quant_20260728"},
     {"id": "apple-m5-b1", "platform": "Apple M5", "line": "paired_b1", "path": "apple_bsz1_active_m5_20260715"},
     {"id": "apple-m5-b8", "platform": "Apple M5", "line": "paired_b8", "path": "apple_bsz8_active_m5_20260714"},
+    {"id": "hf-public-release", "platform": "Public Hugging Face Hub", "line": "distribution_acceptance", "path": "hf_public_release_20260819"},
     {"id": "math500-final", "platform": "RTX 5090", "line": "quality_evaluation", "path": "math500_final_acceptance_5090_1p5b_20260705"},
     {"id": "musa-s70-kernel", "platform": "Moore Threads S70", "line": "kernel_tuning", "path": "musa_s70_shift_mix_20260728"},
     {"id": "musa-s70-validation", "platform": "Moore Threads S70", "line": "compatibility", "path": "musa_s70_validation_20260728"},

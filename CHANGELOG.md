@@ -6,6 +6,16 @@ model, dtype, batch and sequence shape named by their linked artifact.
 
 ## Unreleased
 
+### Distribution and published models
+
+- Published the complete RWKV7-G1 FP16 Transformers family (0.1B, 0.4B,
+  1.5B, 2.9B, 7.2B, and 13.3B) as independently loadable Hugging Face model
+  repositories using the pinned `rwkv7-hf==0.7.0` thin runtime.
+- Added the public `RWKV7-G1 Transformers` Hugging Face Collection, model and
+  memory matrix, direct Hub quick start, and a one-command release verifier.
+- Standardized the 7.2B and 13.3B repositories on bounded Safetensors shards
+  and retained source/output SHA256 provenance in each conversion manifest.
+
 ## [v0.7.0](https://github.com/rwkv-rs/hf-adapter/releases/tag/v0.7.0) - 2026-08-12
 
 ### Distribution
