@@ -496,34 +496,37 @@ Use an isolated environment. On Apple Silicon the base package should install
 without FLA:
 
 ```bash
-cd /path/to/rwkv7-hf-adapter
 python3 -m venv .venv-apple-torch
 source .venv-apple-torch/bin/activate
 python -m pip install -U pip setuptools wheel
-python -m pip install -e .
+python -m pip install "rwkv7-hf==0.8.0"
 python -m pip install accelerate
+rwkv7-hf-doctor --device mps
+rwkv7-hf-smoke --model wangyue114514/rwkv7-g1d-0.1b-hf \
+  --revision v0.7.0 --device mps --output rwkv7-smoke.json
 ```
 
-For MLX bridge/export validation on Apple Silicon, install the optional MLX
-extra:
+For ordinary MLX dependencies, install the published extra:
 
 ```bash
+python -m pip install "rwkv7-hf[mlx]==0.8.0"
+```
+
+The remaining commands in this document invoke repository scripts and retained
+benchmark wrappers. Clone the repository and use editable extras only for that
+development/validation workflow:
+
+```bash
+git clone https://github.com/rwkv-rs/hf-adapter.git
+cd hf-adapter
 python -m pip install -e '.[mlx]'
 ```
 
-If `pip install -e .` is not desired, the lightweight fallback is:
+FLA is a reference-only dependency rather than an Apple runtime requirement.
+CUDA development extras below apply to a separate Linux NVIDIA environment:
 
 ```bash
-python -m pip install torch torchvision torchaudio transformers safetensors accelerate
-export PYTHONPATH=/path/to/rwkv7-hf-adapter:${PYTHONPATH:-}
-```
-
-CUDA users who want the optimized default backend should install the optional
-extra instead:
-
-```bash
-python -m pip install -e '.[fla]'
-# or, for CUDA/Triton development helpers:
+python -m pip install -e '.[fla-reference]'
 python -m pip install -e '.[cuda]'
 ```
 

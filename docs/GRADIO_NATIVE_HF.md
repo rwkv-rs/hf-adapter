@@ -6,13 +6,15 @@
 
 ## 1. 前置条件和支持环境
 
-- Linux、NVIDIA CUDA GPU，以及已经转换完成的 RWKV-7 HF 模型目录；
-- 本仓库已使用 `python -m pip install -e ".[cuda]"` 安装；
+- Linux、NVIDIA CUDA GPU，以及公开模型快照或自行转换的 RWKV-7 HF 模型目录；
+- 因为本流程需要仓库内的 Space 补丁，本仓库应使用
+  `python -m pip install -e ".[cuda]"` 安装；这不是普通用户的默认安装方式；
 - Git、约 2 GB 环境空间，以及模型本身需要的显存和磁盘；
 - 当前精确证据是 RTX 5090、FP16、官方 g1h 7.2B、Space commit `cc57df4`。
 
-首次接入请用 0.4B/1.5B 模型确认页面，不要直接以大模型排查环境。模型转换见
-[`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md)。
+首次接入请用公开 0.1B/0.4B 确认页面，不要直接以大模型排查环境。普通用户模型见
+[`PUBLISHED_MODELS_ZH.md`](PUBLISHED_MODELS_ZH.md)；只有新 checkpoint 才使用
+[`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md#2-可选下载并转换模型) 的转换流程。
 
 ## 2. 最小安全模型和输入
 
@@ -32,6 +34,13 @@ export MODEL=/absolute/path/to/rwkv7-g1d-0.4b-hf
 export SPACE=/absolute/path/to/RWKV-Gradio-3-native-hf
 ```
 
+没有本地模型时可以直接下载公开成品目录，不需要 `.pth` 或转换：
+
+```bash
+hf download wangyue114514/rwkv7-g1d-0.1b-hf \
+  --revision v0.7.0 --local-dir "$MODEL"
+```
+
 `MODEL` 必须包含 `config.json`、tokenizer 文件和完整权重，不能填单个 `.pth`。
 补丁会把这个目录同时交给原 Space 的启动逻辑，因此 Native 模式不需要再下载或提供
 官方 `.pth`。
@@ -48,6 +57,9 @@ cp "$ADAPTER/examples/gradio/native_hf_v3a_compat.py" "$SPACE/"
 
 python -m pip install -e "$ADAPTER[cuda]"
 python -m pip install -r "$SPACE/requirements.txt"
+rwkv7-hf-doctor
+rwkv7-hf-kernels recommend
+# 只有精确匹配时才运行 rwkv7-hf-kernels install
 
 cd "$SPACE"
 APP3_BACKEND=native_hf \

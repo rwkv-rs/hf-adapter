@@ -11,7 +11,21 @@ Apple 用户可以选择三层路线：
 
 ## 1. 使用 MPS 做标准 HF 生成
 
+普通用户直接安装发布包并验收公开 0.1B：
+
 ```bash
+python -m pip install "rwkv7-hf==0.8.0"
+rwkv7-hf-doctor --device mps
+rwkv7-hf-smoke --model wangyue114514/rwkv7-g1d-0.1b-hf \
+  --revision v0.7.0 --device mps --output rwkv7-smoke.json
+```
+
+MPS 不安装 CUDA kernel wheel。需要运行仓库的转换、训练或 MLX 脚本时再 clone
+源码并切换为 editable 安装：
+
+```bash
+git clone https://github.com/rwkv-rs/hf-adapter.git
+cd hf-adapter
 python -m pip install -e .
 python examples/check_environment.py --model MODEL
 python examples/generate.py --model MODEL --prompt "Hello" \
@@ -25,7 +39,7 @@ python examples/generate.py --model MODEL --prompt "Hello" \
 同一路线支持 PEFT、Trainer、SFT、DPO、GRPO 兼容 smoke：
 
 ```bash
-python -m pip install -e ".[train]"
+python -m pip install -e ".[train]"  # 已 clone 源码的仓库验收环境
 python tests/test_hf_training_smoke.py --model MODEL \
   --device mps --train-dtype fp32 --max-steps 1 --backend both
 python tests/test_hf_rl_training_smoke.py --model MODEL \

@@ -13,13 +13,15 @@ exact runtime lane.
 Install the adapter and inspect the current environment:
 
 ```bash
-python -m pip install -U rwkv7-hf
+python -m pip install "rwkv7-hf==0.8.0"
 rwkv7-hf-kernels status
+rwkv7-hf-kernels recommend
 rwkv7-hf-doctor
 ```
 
-On a supported Linux NVIDIA lane, install the hash-pinned wheel selected from
-the public release index:
+The base PyPI installation intentionally does not install a GPU wheel. On a
+supported Linux NVIDIA lane, `recommend` lists one exact build; then install
+the hash-pinned wheel selected from the public release index:
 
 ```bash
 rwkv7-hf-kernels install
@@ -38,6 +40,11 @@ The installer matches all of these fields before invoking pip:
 It installs by an HTTPS asset URL with a `sha256` fragment. It never chooses a
 "nearby" wheel. If there is no exact match, the adapter remains usable through
 the existing JIT, Triton, or PyTorch fallback.
+
+No model setting is required after installation. The default
+`RWKV7_KERNELS_MODE=auto` revalidates the installed manifest in each new
+process and automatically chooses compatible prebuilt extensions before JIT
+or portable fallbacks. A stale or incompatible package is never imported.
 
 ## Initial verified binary matrix
 

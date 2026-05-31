@@ -319,6 +319,22 @@ Common docs to update:
 - `README.md` — if contributor-facing entry points or quickstart commands change.
 - `docs/performance/FUSED_BACKEND.md` — if you change fused/native performance routes.
 
+Keep installation audiences separate:
+
+- ordinary users start with the pinned PyPI release, public 0.1B model,
+  `rwkv7-hf-doctor`, and `rwkv7-hf-smoke`;
+- `pip install -e .` appears only in clearly labeled source-development,
+  conversion, repository-test, or benchmark workflows;
+- the six live Hugging Face model cards and their three thin entrypoint error
+  messages must recommend the same current PyPI release as `README.md`;
+- immutable conversion manifests, release tags, changelog entries, and retained
+  benchmark evidence keep the runtime version that actually produced them.
+
+When the public package version changes, update the English and Chinese README,
+user guides, published-model pages, kernel pages, AI setup route, Collection
+description, and live model cards together. Run `tests/test_document_freshness.py`
+and `tests/test_markdown_links.py` before publishing.
+
 ## Pull request checklist
 
 Before opening a PR:

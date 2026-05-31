@@ -17,10 +17,14 @@ stability.
 
 ## Common preflight
 
-Use a converted 0.1B or 0.4B model first. Activate the repository virtual
-environment and check the installation:
+Use a public or locally converted 0.1B/0.4B model first. These commands invoke
+repository tests, so clone the source tree and activate its virtual environment
+before checking the installation:
 
 ```bash
+git clone https://github.com/rwkv-rs/hf-adapter.git
+cd hf-adapter
+python -m pip install -e .
 python examples/check_environment.py --model /path/to/model-hf
 python -c "import torch; print(torch.__version__, torch.cuda.device_count(), [torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())])"
 ```
@@ -31,6 +35,9 @@ them:
 ```bash
 python -m pip install -e ".[train]"
 ```
+
+For an application that does not run repository tests, install the published
+extra instead with `python -m pip install "rwkv7-hf[train]==0.8.0"`.
 
 ## 1. Speculative decoding
 

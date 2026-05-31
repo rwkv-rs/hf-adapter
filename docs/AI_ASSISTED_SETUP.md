@@ -9,11 +9,12 @@
 
 ## 使用前的安全规则
 
-- 把已经 clone 的 `hf-adapter` 仓库作为 AI 工作区。
+- `first-run` 只需要普通工作目录和独立 `.venv`；转换、仓库测试、benchmark 等
+  开发任务才把已经 clone 的 `hf-adapter` 作为工作区。
 - 不要在提示词里提供密码、Hugging Face 私有 token、SSH key 或云平台密钥。
 - 公开的 BlinkDL 模型和词表不需要 token。
 - AI 必须在下载、安装系统软件、删除文件或使用多张 GPU 前请求确认。
-- 第一次安装固定使用 0.4B；不要用 7.2B/13.3B 验证环境。
+- 第一次安装固定使用公开 0.1B；不要下载 `.pth`，也不要用 7.2B/13.3B 验证环境。
 - AI 只能报告真实命令输出。文件存在、脚本已启动或“理论上可用”都不是通过。
 
 ## 任务路由
@@ -23,7 +24,9 @@
 
 | 任务 ID | 用户目标 | 只读这份教程 | AI 必须观察的通过证据 |
 |---|---|---|---|
-| `first-run` | 安装、下载 0.4B、转换并生成 | [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) | `RESULT: READY`、`[PASS] Model directory`、生成退出 0 且有新文本 |
+| `first-run` | 从 PyPI 安装并运行公开 0.1B | [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) | Doctor `RESULT: READY`、smoke `RESULT: PASS`、版本为 0.8.0 且生成 token |
+| `prebuilt-kernels` | 自动识别并安装精确预编译算子 | [`KERNEL_WHEELS_ZH.md`](KERNEL_WHEELS_ZH.md) | recommendation 唯一匹配、安装哈希通过、Doctor package `ready`、真实 smoke 记录 `prebuilt` |
+| `convert-source` | 下载官方 `.pth`、转换定制 HF 目录并生成 | [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) | `RESULT: READY`、`[PASS] Model directory`、转换 manifest 成功、生成退出 0 且有新文本 |
 | `windows-cpu` | Windows/CPU 无下载 tiny 推理、训练和保存重载 | [`WINDOWS_CPU.md`](WINDOWS_CPU.md) | 退出码 0、四个 `CPU ... PASS`、loss 下降、梯度/参数变化非零、重载 logits 差为 0 |
 | `inference` | 转换、HF API、保存重载、离线/native | [`INFERENCE_WORKFLOWS.md`](INFERENCE_WORKFLOWS.md) | 所选章节的退出码 0、`PASS` 或有限 loss/logits |
 | `gradio-native-hf` | 在官方 RWKV-Gradio-3 网页运行 Native HF | [`GRADIO_NATIVE_HF.md`](GRADIO_NATIVE_HF.md) | 固定 HTML5 任务生成完整页面，实际渲染和按钮交互通过，并保存渲染前后截图 |
@@ -60,15 +63,17 @@ RESULT_DIR: <需要保存证据时填写仓库内目录，否则填 NONE>
 1. 先输出当前仓库路径、git 状态、操作系统、shell、Python、可用磁盘、
    PyTorch、加速器数量/名称和可用显存。所有值来自命令，不允许猜。
 2. 检查 TASK_ID、MODEL、DEVICE、DTYPE 是否与真实机器匹配。MODEL=AUTO 且
-   TASK_ID=first-run 时，使用公开 0.4B；其他任务找不到模型时停止并报告。
+   TASK_ID=first-run 时，使用 `wangyue114514/rwkv7-g1d-0.1b-hf`；其他任务
+   找不到模型时停止并报告。
 3. 给出本次只执行的教程章节、最终命令、预计下载空间和风险。模型下载、系统级
    安装、删除/覆盖文件、多 GPU 运行前必须等我确认。
-4. 使用仓库内 .venv，不全局安装包，不删除现有文件，不覆盖无关改动。
+4. 使用任务工作目录内的 `.venv`，不全局安装包，不删除现有文件，不覆盖无关改动。
 5. 一次只运行一个 TASK_ID 和其中一个编号章节。不要顺便跑 benchmark、训练、
    量化或内核调优。
 6. 遇到第一个非零退出码立即停止。解释第一处真实错误，只修复这一处，然后重新
    运行失败命令。不得用“应该可以”代替重跑。
-7. trust_remote_code=True 只用于我确认可信的本地转换模型目录。
+7. `trust_remote_code=True` 只用于用户确认可信的本地转换目录或本项目公开的
+   `wangyue114514/rwkv7-g1*-hf` 模型仓库。
 8. 按教程的精确 PASS 门槛验收。smoke 只能称为兼容 smoke；不得扩写成质量、
    收敛、生产稳定性、Tensor Parallel 或速度结论。
 9. 量化任务必须分开报告功能、质量、内存和配对端到端速度。缺少哪类证据就明确
@@ -91,27 +96,29 @@ AI 必须按顺序完成，不允许跳过失败状态：
 
 ## 首次安装的固定下载规则
 
-`TASK_ID=first-run` 时，AI 必须使用
-`BlinkDL/rwkv7-g1/rwkv7-g1d-0.4b-20260210-ctx8192.pth`，下载前报告目标为
-`models/source/`，并等待确认。安装顺序固定为：
+`TASK_ID=first-run` 时不允许先走源码转换。安装顺序固定为：
 
-1. 创建 `.venv` 并安装基础包；
-2. `python examples/check_environment.py` 得到 `RESULT: READY`；
-3. 下载官方 0.4B 权重和官方词表；
-4. 按 [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) 转换；
-5. 带 `--model` 再检查，得到 `[PASS] Model directory`；
-6. 用 `examples/generate.py` 生成 8 token。
-
-固定生成命令为：
+1. 创建 `.venv` 并安装 `rwkv7-hf==0.8.0`；
+2. `rwkv7-hf-doctor` 得到 `RESULT: READY`；
+3. 运行 `rwkv7-hf-kernels status` 和 `recommend`，但不在无精确匹配时强装 wheel；
+4. 下载公开 `wangyue114514/rwkv7-g1d-0.1b-hf@v0.7.0` 前报告预计空间并等待确认；
+5. 使用下面的固定命令完成 Prefill、Decode、有限 logits、生成和路线报告。
 
 ```bash
-python examples/generate.py --model models/rwkv7-g1d-0.4b-hf \
-  --prompt "User: Say hello in one sentence. Assistant:" --max-new-tokens 8
+rwkv7-hf-smoke \
+  --model wangyue114514/rwkv7-g1d-0.1b-hf \
+  --revision v0.7.0 \
+  --device auto \
+  --output rwkv7-smoke.json
 ```
 
-Linux NVIDIA 可以在首次 native 通过后安装 `.[cuda]` 启用原生融合 kernel。
-普通 RWKV 任务不得因为 FLA 未安装而失败；`.[fla-reference]` 只用于明确的参考
-benchmark。
+只有用户选择 `convert-source` 时，才按 [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md)
+下载官方 0.4B `.pth`、词表并运行转换器。Linux NVIDIA 预编译算子属于独立的
+`prebuilt-kernels` 任务；普通任务不得因为没有 FLA 或没有精确 wheel 而失败。
+`convert-source` 的仓库验收仍需运行
+`python examples/check_environment.py --model /path/to/model-hf` 和
+`python examples/generate.py --model /path/to/model-hf ...`，分别观察模型目录
+`PASS` 与真实新增文本；它们不是普通 `first-run` 的前置步骤。
 
 ## 统一汇报格式
 

@@ -6,6 +6,16 @@ model, dtype, batch and sequence shape named by their linked artifact.
 
 ## Unreleased
 
+### Documentation
+
+- Unified ordinary-user entrypoints around the published `rwkv7-hf==0.8.0`
+  package, public 0.1B model, doctor, exact-kernel recommendation, and
+  one-command smoke report. Source checkout and `.pth` conversion are now
+  explicitly separated as developer/publisher workflows.
+- Synchronized the six Hugging Face model cards and thin-entrypoint install
+  hints with the current runtime while preserving their immutable v0.7.0
+  conversion manifests and release tags.
+
 ## [v0.8.0](https://github.com/rwkv-rs/hf-adapter/releases/tag/v0.8.0) - 2026-08-20
 
 ### Prebuilt CUDA kernel distribution

@@ -8,137 +8,114 @@ Chinese version: [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md)
 
 ## Choose a path
 
-- Follow this page step by step for a manual setup.
-- Give [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) to a terminal-capable AI
-  assistant if you want it to perform and verify the setup.
-- After the first generation, use
-  [`COMPLETE_ADAPTER_GUIDE.md`](COMPLETE_ADAPTER_GUIDE.md) to find the tutorial
-  and PASS gate for every other implemented adaptation.
-- If you already have a converted HF model directory, skip to
-  [Run generation](#3-run-generation).
+- **Normal first run:** complete [Install](#1-install), then run the public-model
+  smoke. No repository clone or checkpoint conversion is required.
+- **Python integration:** after the smoke passes, continue to
+  [Use the Transformers API](#4-use-the-transformers-api).
+- **New/custom checkpoint:** use the optional
+  [conversion workflow](#2-optional-get-and-convert-a-model).
+- **AI-assisted setup:** give [`AI_ASSISTED_SETUP.md`](AI_ASSISTED_SETUP.md) to
+  a terminal-capable assistant.
+- **Advanced task:** after the first generation, choose a bounded workflow from
+  [`COMPLETE_ADAPTER_GUIDE.md`](COMPLETE_ADAPTER_GUIDE.md).
 
-Setup is complete only when the environment doctor reports `RESULT: READY`,
-the model-directory check passes, and `examples/generate.py` exits with code 0
-and prints newly generated text.
+For a normal installation, setup is complete only when:
 
-## Published-model fast path
+1. `rwkv7-hf-doctor` prints `RESULT: READY`;
+2. `rwkv7-hf-smoke` prints `RESULT: PASS` and writes a valid report; and
+3. the report says `rwkv7_hf: 0.8.0` and contains generated tokens.
 
-Normal users no longer need to convert a `.pth` checkpoint first. Install the
-release and load the 0.1B public model directly:
-
-```bash
-python -m pip install "rwkv7-hf==0.8.0"
-```
-
-```python
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-model_id = "wangyue114514/rwkv7-g1d-0.1b-hf"
-tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-model = AutoModelForCausalLM.from_pretrained(
-    model_id, trust_remote_code=True, dtype="auto"
-).eval()
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model = model.to(device)
-inputs = tokenizer("User: Hello! Assistant:", return_tensors="pt")
-inputs = {name: value.to(device) for name, value in inputs.items()}
-with torch.inference_mode():
-    output = model.generate(**inputs, max_new_tokens=16)
-print(tokenizer.decode(output[0], skip_special_tokens=True))
-```
-
-Use the [published model matrix](PUBLISHED_MODELS.md) to select another size.
-The conversion path below remains available for new or custom checkpoints.
+Conversion and repository-development workflows have additional model-directory
+and test gates described in their own sections. A downloaded file or a command
+that merely started is not a pass.
 
 ## What you need
 
 - Python 3.10 or newer.
-- A published RWKV-7 Hugging Face model ID, a converted local model directory,
-  or an official `.pth` checkpoint that you can convert.
-- Enough RAM or VRAM for the selected model. A dense fp16 checkpoint uses
-  roughly 2 bytes per parameter before runtime buffers: approximately 0.8 GB
-  for 0.4B, 3 GB for 1.5B, 5.8 GB for 2.9B, 14.4 GB for 7.2B, and 26.6 GB for
-  13.3B. Leave additional memory for activations, cache, and temporary buffers.
-
-Start with 0.1B or 0.4B to verify the installation.
+- A published RWKV-7 Hugging Face model ID for normal use. Start with
+  `wangyue114514/rwkv7-g1d-0.1b-hf`.
+- Enough RAM or VRAM for the selected model. See the
+  [published model matrix](PUBLISHED_MODELS.md); leave headroom beyond the
+  stored fp16 weight size for runtime buffers.
+- A repository checkout only if you are converting a new checkpoint, modifying
+  code, running repository tests, or reproducing a benchmark.
 
 ## 1. Install
 
-Clone the repository and create a virtual environment:
+Create and activate an isolated environment:
 
 ```bash
-git clone https://github.com/rwkv-rs/hf-adapter.git
-cd hf-adapter
 python -m venv .venv
-```
-
-Activate it on Linux or macOS:
-
-```bash
-source .venv/bin/activate
-```
-
-Activate it in Windows PowerShell:
-
-```powershell
-.venv\Scripts\Activate.ps1
-```
-
-Install one of these profiles:
-
-```bash
-# Portable base install: CPU, MPS, or CUDA through the native backend.
+source .venv/bin/activate                 # Windows: .venv\Scripts\Activate.ps1
 python -m pip install -U pip
-python -m pip install -e .
-
-# Native CUDA kernels, normally on Linux NVIDIA.
-python -m pip install -e ".[cuda]"
-
-# Optional training or quantization dependencies.
-python -m pip install -e ".[train]"
-python -m pip install -e ".[quant]"
-
-# Apple Silicon MLX tools.
-python -m pip install -e ".[mlx]"
+python -m pip install "rwkv7-hf==0.8.0"
 ```
 
-Install a PyTorch build appropriate for your hardware before these commands if
-the default PyPI build does not provide the CUDA or platform support you need.
-The ordinary RWKV runtime does not require `flash-linear-attention`. Install
-`.[fla-reference]` only to reproduce a dedicated reference benchmark.
+Install a PyTorch build appropriate for your hardware first when the default
+PyPI resolver does not provide the CUDA or vendor runtime you need. Ordinary
+RWKV inference does not require Flash Linear Attention.
 
-Verify the base environment before downloading a model:
-
-```bash
-python examples/check_environment.py
-python -m rwkv7_hf.doctor
-```
-
-Fix the first `FAIL` and rerun the command. Continue only after it prints
-`RESULT: READY`. The second command records the visible accelerator, build
-toolchain, and kernel-policy candidates; see the
-[kernel doctor guide](KERNEL_DOCTOR.md).
-
-On a supported Linux NVIDIA environment, the optional compiler-free binary
-path can then be installed and verified with:
+Inspect the installed runtime without downloading model weights:
 
 ```bash
+rwkv7-hf-doctor
 rwkv7-hf-kernels status
+rwkv7-hf-kernels recommend
+```
+
+`rwkv7-hf-doctor` must finish with `RESULT: READY`. On Linux NVIDIA, run the
+next command only when the recommendation reports one exact compatible wheel:
+
+```bash
 rwkv7-hf-kernels install
 rwkv7-hf-doctor
-rwkv7-hf-smoke --device cuda
 ```
 
-See [prebuilt CUDA kernel wheels](KERNEL_WHEELS.md) for the exact runtime matrix
-and fallback behavior. If there is no exact wheel, do not force a nearby one;
-the base adapter remains functional.
+The installer matches the Python ABI, platform, PyTorch series and C++ ABI,
+CUDA runtime, GPU compute capability, and adapter series. It never installs a
+nearby build. Installing `rwkv7-hf` itself does not silently install a GPU
+binary. At runtime the default `auto` policy selects a compatible prebuilt
+extension, then JIT where allowed, then the existing correct portable fallback.
+See [prebuilt CUDA kernel wheels](KERNEL_WHEELS.md).
 
-## 2. Get and convert a model
+Now run the public 0.1B acceptance command:
+
+```bash
+rwkv7-hf-smoke \
+  --model wangyue114514/rwkv7-g1d-0.1b-hf \
+  --revision v0.7.0 \
+  --device auto \
+  --output rwkv7-smoke.json
+```
+
+The first run downloads the public model. `RESULT: PASS` means loading, prefill,
+greedy decode, finite logits, and runtime reporting all completed. Smoke timing
+is installation telemetry, not a general performance claim.
+
+Install optional published extras only when a later workflow needs them:
+
+```bash
+python -m pip install "rwkv7-hf[cuda]==0.8.0"    # Linux NVIDIA JIT helper
+python -m pip install "rwkv7-hf[train]==0.8.0"   # PEFT/TRL/DeepSpeed
+python -m pip install "rwkv7-hf[quant]==0.8.0"   # bitsandbytes
+python -m pip install "rwkv7-hf[mlx]==0.8.0"     # Apple Silicon MLX
+```
+
+## 2. Optional: get and convert a model
 
 If you already have a converted model directory containing `config.json`,
 tokenizer files, remote-code Python files, and safetensors weights, skip to
 [Run generation](#3-run-generation).
+
+The converter and repository checks are development tools rather than PyPI
+console commands. Clone the source tree and install it in editable mode before
+continuing:
+
+```bash
+git clone https://github.com/rwkv-rs/hf-adapter.git
+cd hf-adapter
+python -m pip install -e .
+```
 
 Official RWKV-7 checkpoints are published in
 [`BlinkDL/rwkv7-g1`](https://huggingface.co/BlinkDL/rwkv7-g1). The example
@@ -262,7 +239,7 @@ device:
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-model_path = "models/rwkv7-g1d-0.4b-hf"
+model_path = "wangyue114514/rwkv7-g1d-0.1b-hf"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 dtype = torch.float16 if device.type == "cuda" else torch.float32
 
@@ -292,9 +269,10 @@ new_tokens = output[0, inputs["input_ids"].shape[1]:]
 print(tokenizer.decode(new_tokens, skip_special_tokens=True))
 ```
 
-`trust_remote_code=True` is required because converted directories include the
-RWKV-7 adapter classes. Only enable it for a model directory or Hub repository
-you trust.
+`trust_remote_code=True` is required because the published thin repositories
+and converted directories contain small adapter entrypoints; the maintained
+implementation comes from the installed `rwkv7-hf`. Only enable it for a model
+directory or Hub repository you trust.
 
 ### Public argument and config names
 
@@ -324,17 +302,21 @@ keys, and kernel-local RWKV notation are intentionally unchanged.
 
 ## 5. Verify the installation
 
-Check the example and focused tests without loading a large checkpoint:
+For an ordinary PyPI installation, the complete gate is:
+
+```bash
+rwkv7-hf-doctor
+rwkv7-hf-smoke --model wangyue114514/rwkv7-g1d-0.1b-hf \
+  --revision v0.7.0 --device auto --output rwkv7-smoke.json
+```
+
+Inside a cloned source tree, additionally check repository examples and the
+focused quick-start tests:
 
 ```bash
 python examples/generate.py --help
-python examples/check_environment.py
+python examples/check_environment.py --model /path/to/model-hf
 python -m pytest tests/test_user_quickstart.py -q
-```
-
-After conversion, run a real generation smoke:
-
-```bash
 python examples/generate.py \
   --model /path/to/model-hf \
   --prompt "User: Hello! Assistant:" \
@@ -354,8 +336,9 @@ for this public-model setup.
 
 ### `No module named 'fla'`
 
-Use `--backend native`, or install the CUDA profile on a supported NVIDIA
-environment with `python -m pip install -e ".[cuda]"`.
+Normal inference does not require FLA. Confirm that `rwkv7-hf==0.8.0` is
+installed and use the canonical native model. Install `fla-reference` only for
+an explicitly named comparison benchmark.
 
 ### CUDA is unavailable
 
@@ -372,7 +355,9 @@ reduce model footprint, but speed and support are card-dependent; read
 ### The first run is slow
 
 CUDA/Triton kernels and graph paths may compile or warm up on first use.
-Measure steady-state performance after the first generation.
+Run `rwkv7-hf-kernels recommend`; an exact prebuilt wheel avoids local JIT for
+the extensions it contains. Measure steady-state performance only after the
+first generation.
 
 ### Output quality is not chat-like
 

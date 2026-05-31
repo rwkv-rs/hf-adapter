@@ -41,11 +41,14 @@ source /usr/local/Ascend/cann-8.5.0/set_env.sh
 python3.11 -m venv .venv
 . .venv/bin/activate
 # Install the exact Huawei torch + torch_npu wheel pair here.
-python -m pip install -e '.[ascend]'
+python -m pip install "rwkv7-hf[ascend]==0.8.0"
 python -c 'from rwkv7_hf import ascend_available; print(ascend_available())'
 ```
 
-The last command must print `True`.
+The last command must print `True`. The empty `ascend` extra is a stable adapter
+entrypoint; it intentionally does not guess or install a CANN-specific vendor
+wheel. Use `pip install -e '.[ascend]'` only after cloning the repository for
+source development or validation scripts.
 
 ## Standard Transformers usage
 

@@ -26,16 +26,43 @@ FP16-state 路径。这些均已有配对性能、正确性和回退边界证据
 
 ## 五分钟开始
 
-新用户建议先使用 0.1B 或 0.4B 模型。下面的命令会创建独立环境、安装仓库并检查
-Python、PyTorch、Transformers 和可用设备。
-
-直接从 PyPI 安装正式版：
+普通用户**不需要克隆仓库、不需要下载 `.pth`，也不需要运行转换脚本**。先创建
+独立环境并安装 PyPI 正式版：
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate                 # Windows：.venv\Scripts\Activate.ps1
+python -m pip install -U pip
 python -m pip install "rwkv7-hf==0.8.0"
+rwkv7-hf-doctor
 ```
 
-然后直接加载公开 Collection 里的最小模型，不需要先下载 `.pth` 或执行转换：
+用一条命令下载并验收最小公开模型：
+
+```bash
+rwkv7-hf-smoke \
+  --model wangyue114514/rwkv7-g1d-0.1b-hf \
+  --revision v0.7.0 \
+  --device auto \
+  --output rwkv7-smoke.json
+```
+
+最后出现 `RESULT: PASS` 才算首次安装完成。Linux NVIDIA 用户可以检查当前
+Python、PyTorch、CUDA ABI 和 GPU 架构是否有完全匹配的预编译算子：
+
+```bash
+rwkv7-hf-kernels status
+rwkv7-hf-kernels recommend
+# 只有上一步列出完全匹配的 wheel 时才执行：
+rwkv7-hf-kernels install
+rwkv7-hf-doctor
+```
+
+基础 `pip install` 不会猜测或静默安装 GPU 二进制。可选 wheel 安装完成后，运行时
+会自动依次选择“兼容预编译算子 → 允许时按需 JIT → Triton/tensor/PyTorch
+正确回退”。没有匹配 wheel 的机器仍可使用可移植路径。
+
+标准 Transformers API：
 
 ```python
 import torch
@@ -59,7 +86,7 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 [已发布模型矩阵](docs/PUBLISHED_MODELS_ZH.md)，总入口是
 [`RWKV7-G1 Transformers` Collection](https://huggingface.co/collections/wangyue114514/rwkv7-g1-transformers-6a85b04191034d4c2d1896f1)。
 
-需要开发当前源码时再克隆仓库：
+只有转换新 checkpoint、修改代码、运行仓库测试或复现 benchmark 时才克隆源码：
 
 ### Linux / macOS
 
@@ -91,6 +118,15 @@ Linux NVIDIA 用户可以安装包含 CUDA 优化依赖的版本：
 python -m pip install -e ".[cuda]"
 ```
 
+如果不修改源码，等价的 PyPI 可选依赖写法是：
+
+```bash
+python -m pip install "rwkv7-hf[cuda]==0.8.0"
+python -m pip install "rwkv7-hf[train]==0.8.0"
+python -m pip install "rwkv7-hf[quant]==0.8.0"
+python -m pip install "rwkv7-hf[mlx]==0.8.0"
+```
+
 华为昇腾用户需先安装与当前 CANN 精确匹配的 PyTorch/torch-npu wheel，再安装
 适配器入口：
 
@@ -109,6 +145,9 @@ python -m pip install -e ".[biren]"
 ```bash
 python -m pip install -e ".[metax]"
 ```
+
+上面三个硬件 extra 只提供稳定 adapter 入口，不会安装厂商专用 PyTorch wheel。
+必须先按对应硬件文档安装精确匹配的厂商运行时。普通用户不要一次安装全部 extra。
 
 看到下面的输出说明基础环境已经可用：
 
@@ -133,7 +172,7 @@ Hugging Face 模型目录，可以直接进入下一节。模型目录至少应�
 tokenizer 文件和 `.safetensors` 或 `.bin` 权重。
 
 如果你只有官方 `.pth` 权重，请按照
-[下载与转换逐步教程](docs/USER_GUIDE_ZH.md#2-下载并转换模型)操作。该教程包含：
+[下载与转换逐步教程](docs/USER_GUIDE_ZH.md#2-可选下载并转换模型)操作。该教程包含：
 
 - Hugging Face 官方模型下载位置截图；
 - GitHub tokenizer 下载位置截图；
@@ -265,7 +304,9 @@ kernel 内部变量名保持不变。完整规则见
 
 | 你要完成的任务 | 从这里开始 |
 |---|---|
-| 零基础安装、下载、转换与生成 | [中文逐步指南](docs/USER_GUIDE_ZH.md) |
+| 零基础 PyPI 安装、自动检查和公开模型生成 | [中文逐步指南](docs/USER_GUIDE_ZH.md) |
+| 新 checkpoint 下载与转换 | [可选转换流程](docs/USER_GUIDE_ZH.md#2-可选下载并转换模型) |
+| 自动识别并安装精确 CUDA 算子 | [预编译算子 wheel](docs/KERNEL_WHEELS_ZH.md) |
 | 全部功能导航 | [全功能使用指南](docs/COMPLETE_ADAPTER_GUIDE.md) |
 | Windows/CPU 无模型下载推理与微型训练 | [Windows 与 CPU 教程](docs/WINDOWS_CPU.md) |
 | 批量转换、HF API、缓存和分块 prefill | [推理工作流](docs/INFERENCE_WORKFLOWS.md) |
@@ -349,7 +390,7 @@ python examples/check_environment.py --model /path/to/rwkv7-model-hf
 
 ### 旧模型提示缺少 FLA
 
-普通用户不需要安装 FLA。运行
+普通用户和公开成品模型不需要安装 FLA。只有旧的本地转换目录需要先 clone 源码，再运行
 `python scripts/sync_hf_adapter_code.py /path/to/rwkv7-model-hf` 更新旧模型目录，
 再按 [中文逐步指南](docs/USER_GUIDE_ZH.md)使用原生后端。
 

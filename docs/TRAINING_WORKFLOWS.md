@@ -13,13 +13,18 @@ Native/no-FLA 全参数 CUDA 训练时，使用 `scripts/train_native.py`。官�
 
 前置条件：
 
+普通 Python 项目可以直接安装 `rwkv7-hf[train]==0.8.0`。本页命令调用仓库内
+测试和训练脚本，所以验收环境需要 clone 源码并使用 editable 安装：
+
 ```bash
+git clone https://github.com/rwkv-rs/hf-adapter.git
+cd hf-adapter
 python -m pip install -e ".[train]"
 python examples/check_environment.py --model MODEL
 ```
 
-第一次使用 0.1B 或 0.4B，把 `MODEL` 替换为已转换模型目录。训练时关闭循环
-缓存（`use_cache=False`）。
+第一次使用 0.1B 或 0.4B；`MODEL` 可以是公开模型 ID，也可以是可信的本地转换
+目录。训练时关闭循环缓存（`use_cache=False`）。
 
 ## 1. 证明 PEFT LoRA 梯度
 

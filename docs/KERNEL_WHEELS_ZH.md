@@ -11,12 +11,14 @@
 先安装运行库并检查环境：
 
 ```bash
-python -m pip install -U rwkv7-hf
+python -m pip install "rwkv7-hf==0.8.0"
 rwkv7-hf-kernels status
+rwkv7-hf-kernels recommend
 rwkv7-hf-doctor
 ```
 
-如果当前 Linux NVIDIA 环境存在经过验证的精确 wheel，一条命令安装：
+基础 PyPI 安装有意不自动安装 GPU wheel。如果当前 Linux NVIDIA 环境存在经过
+验证的精确 wheel，`recommend` 会列出唯一构建，再用一条命令安装：
 
 ```bash
 rwkv7-hf-kernels install
@@ -34,6 +36,10 @@ rwkv7-hf-doctor
 
 安装地址带有索引中记录的 SHA256。任何一项不完全相符都不会安装“相近版本”。
 没有匹配 wheel 时，原有 JIT、Triton 或 PyTorch 正确回退仍然可用。
+
+安装后不需要给模型设置算子。默认 `RWKV7_KERNELS_MODE=auto` 会在每个新进程重新
+验证 manifest，并自动优先选择兼容预编译扩展，再进入 JIT 或可移植回退；过期或
+不兼容的包不会被导入。
 
 ## 首批已验证矩阵
 

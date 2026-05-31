@@ -16,38 +16,31 @@ resolver result inside those major-version bounds.
 
 ## Five-minute quick start
 
-Install the published package from PyPI:
+Normal users do **not** need to clone this repository or convert a `.pth`:
 
 ```bash
-python -m pip install "rwkv7-hf==0.8.0"
-```
-
-Load `wangyue114514/rwkv7-g1d-0.1b-hf` first. The copy-paste example, six-size
-matrix, memory guidance, and verification gate are in [published models](docs/PUBLISHED_MODELS.md) and the [`RWKV7-G1 Transformers` collection](https://huggingface.co/collections/wangyue114514/rwkv7-g1-transformers-6a85b04191034d4c2d1896f1).
-
-Or install the current source tree for development:
-
-```bash
-git clone https://github.com/rwkv-rs/hf-adapter.git
-cd hf-adapter
 python -m venv .venv
 source .venv/bin/activate                 # Windows: .venv\Scripts\Activate.ps1
 python -m pip install -U pip
-python -m pip install -e .                # portable native backend
-# Linux NVIDIA optimized path: python -m pip install -e ".[cuda]"
-python examples/check_environment.py
+python -m pip install "rwkv7-hf==0.8.0"
+rwkv7-hf-doctor
+rwkv7-hf-smoke --model wangyue114514/rwkv7-g1d-0.1b-hf \
+  --revision v0.7.0 --device auto --output rwkv7-smoke.json
 ```
 
-Run a converted RWKV-7 model directory:
+The smoke must end with `RESULT: PASS`. Linux NVIDIA users can optionally run:
 
 ```bash
-python examples/generate.py \
-  --model /path/to/rwkv7-model-hf \
-  --prompt "User: Hello! Assistant:" \
-  --max-new-tokens 64
+rwkv7-hf-kernels status
+rwkv7-hf-kernels recommend
+rwkv7-hf-kernels install  # only when one exact compatible wheel is listed
 ```
 
-User guides:
+The base package never guesses a GPU binary. After optional installation, `auto` selects a compatible prebuilt extension, then JIT where allowed, then a
+portable fallback. See [published models](docs/PUBLISHED_MODELS.md), the
+[full user guide](docs/USER_GUIDE.md), and [kernel wheels](docs/KERNEL_WHEELS.md).
+Clone the repository only for conversion, development, repository tests, or
+benchmark reproduction.
 
 - [Published models and direct Hub loading](docs/PUBLISHED_MODELS.md)
 - [English step-by-step guide](docs/USER_GUIDE.md)
@@ -179,6 +172,13 @@ Canonical project state:
 - [Raw benchmark inventory](bench/INDEX.md)
 
 ## Installation profiles
+
+Normal-use PyPI profiles (`cuda`, `train`, `quant`, `torchao`, `mlx`, and
+vendor entrypoint extras) are listed in the [user guide](docs/USER_GUIDE.md).
+Vendor extras never guess or install hardware-specific PyTorch wheels.
+
+Editable profiles below are for a source checkout, not the ordinary model
+installation path:
 
 ```bash
 python -m pip install -e .                    # core native HF path

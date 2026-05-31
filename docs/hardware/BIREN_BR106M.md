@@ -38,13 +38,14 @@ Use the vendor container or source its environment before Python starts:
 
 ```bash
 source /usr/local/birensupa/sdk/latest/scripts/brsw_set_env.sh
-python -m pip install -e '.[biren]'
+python -m pip install "rwkv7-hf[biren]==0.8.0"
 python -c 'from rwkv7_hf import biren_available; print(biren_available())'
 ```
 
 The last command must print `True`. The BIRENSUPA and `torch_br` wheels are
 vendor/runtime-specific and are intentionally not declared as universal PyPI
-dependencies.
+dependencies. Use `pip install -e '.[biren]'` only inside a cloned source tree
+for repository tests or conversion.
 
 `enable_biren()` checks the exact product and validated software row. An
 unknown stack fails closed. `RWKV7_ALLOW_UNVALIDATED_BIREN=1` permits an
@@ -53,6 +54,12 @@ explicitly reported experimental run but does not promote that stack.
 ## Convert a checkpoint
 
 BR106M checkpoints should be converted to BF16 without fused normalization:
+
+```bash
+git clone https://github.com/rwkv-rs/hf-adapter.git
+cd hf-adapter
+python -m pip install -e '.[biren]'
+```
 
 ```bash
 python scripts/convert_rwkv7_to_hf.py \
