@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 # coding=utf-8
-"""Sync latest RWKV-7 HF adapter remote-code files into converted model dirs.
+"""Install a bundled RWKV-7 runtime snapshot into converted model directories.
 
-Converted checkpoints carry ``native_model.py``, tokenizer code, and native
-helper modules so standard
+This legacy/offline helper copies ``native_model.py``, tokenizer code, and
+native helper modules so standard
 ``AutoModelForCausalLM.from_pretrained(..., trust_remote_code=True)`` can load
-them without installing this repository.  As the adapter evolves, older
-converted dirs need those small Python files refreshed without rewriting large
-``model.safetensors`` weights.  This helper performs that code-only sync and
-refreshes the Auto* metadata in ``config.json``.
+them without installing ``rwkv7-hf``. It intentionally converts the default
+thin layout into the optional ``bundled`` layout without rewriting large
+``model.safetensors`` weights.
 """
 from __future__ import annotations
 
@@ -57,6 +56,8 @@ def sync_one(model_dir: Path, *, dry_run: bool = False) -> dict:
     cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
     cfg["architectures"] = ["NativeRWKV7ForCausalLM"]
     cfg["model_type"] = "rwkv7_native"
+    cfg["rwkv7_hf_adapter_layout"] = "bundled"
+    cfg.pop("rwkv7_hf_runtime_version", None)
     cfg["auto_map"] = {
         "AutoConfig": "native_model.NativeRWKV7Config",
         "AutoModel": "native_model.NativeRWKV7Model",

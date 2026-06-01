@@ -72,8 +72,11 @@ def main() -> int:
         assert a["attn_mode"] == "fused_recurrent"
         assert a["fuse_norm"] is False
         assert a["low_memory"] is True
+        assert a["adapter_layout"] == "thin"
+        assert a["runtime_package_version"] is None
         assert "--no-fuse-norm" in a["command"]
         assert "--low-memory" in a["command"]
+        assert a["command"][a["command"].index("--adapter-layout") + 1] == "thin"
 
         proc = subprocess.run(
             [

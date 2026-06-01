@@ -172,6 +172,7 @@ python scripts\convert_rwkv7_to_hf.py `
   --vocab-file models\source\rwkv_vocab_v20230424.txt `
   --precision fp16 `
   --attn-mode fused_recurrent `
+  --adapter-layout thin `
   --no-fuse-norm
 ```
 
@@ -206,8 +207,13 @@ python scripts/convert_rwkv7_to_hf.py \
   --vocab-file models/source/rwkv_vocab_v20230424.txt \
   --precision fp16 \
   --attn-mode fused_recurrent \
+  --adapter-layout thin \
   --no-fuse-norm
 ```
+
+`thin` 是默认布局，与六个公开 Hub 模型一致：输出目录只放三个很小的 remote-code
+入口，实际实现来自已安装的 `rwkv7-hf`。只有离线或归档目录必须自带完整运行时代码
+快照时才使用 `--adapter-layout bundled`；两种布局的模型权重完全相同。
 
 下载中断时重新执行同一条 `hf download`，不要创建第二个文件名。浏览器下载如果
 出现 `.crdownload`、`.part` 或大小持续变化，说明还没完成；不要提前转换。转换

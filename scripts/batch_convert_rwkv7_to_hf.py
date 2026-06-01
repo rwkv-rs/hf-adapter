@@ -62,7 +62,11 @@ def convert_command(args: argparse.Namespace, input_path: Path, output_path: Pat
         args.attn_mode,
         "--max-shard-size",
         args.max_shard_size,
+        "--adapter-layout",
+        args.adapter_layout,
     ]
+    if args.runtime_package_version:
+        cmd += ["--runtime-package-version", args.runtime_package_version]
     cmd.append("--fuse-norm" if args.fuse_norm else "--no-fuse-norm")
     if args.low_memory:
         cmd.append("--low-memory")
@@ -81,6 +85,8 @@ def entry_base(args: argparse.Namespace, input_path: Path, output_path: Path) ->
         "attn_mode": args.attn_mode,
         "fuse_norm": bool(args.fuse_norm),
         "low_memory": bool(args.low_memory),
+        "adapter_layout": args.adapter_layout,
+        "runtime_package_version": args.runtime_package_version,
     }
 
 
@@ -144,6 +150,17 @@ def main() -> int:
     ap.add_argument("--vocab-file", type=Path, default=None)
     ap.add_argument("--precision", default="fp16", choices=["fp16", "float16", "bf16", "bfloat16", "fp32", "float32"])
     ap.add_argument("--attn-mode", choices=["chunk", "fused_recurrent"], default="chunk")
+    ap.add_argument(
+        "--adapter-layout",
+        choices=["thin", "bundled"],
+        default="thin",
+        help="Use package-backed thin entrypoints (default) or bundle a runtime snapshot",
+    )
+    ap.add_argument(
+        "--runtime-package-version",
+        default=None,
+        help="Optional rwkv7-hf version embedded in thin entrypoint install hints",
+    )
     norm_group = ap.add_mutually_exclusive_group()
     norm_group.add_argument("--fuse-norm", dest="fuse_norm", action="store_true")
     norm_group.add_argument("--no-fuse-norm", dest="fuse_norm", action="store_false")

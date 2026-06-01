@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # coding=utf-8
-"""Single source of truth for files shipped with converted HF checkpoints.
+"""Single source of truth for the optional bundled HF adapter layout.
 
 Keep this module dependency-free: converter and sync tools import it before
 optional ML/Apple dependencies are available. Runtime import closure is checked

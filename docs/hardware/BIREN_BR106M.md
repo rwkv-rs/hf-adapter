@@ -63,9 +63,9 @@ python -m pip install -e '.[biren]'
 
 ```bash
 python scripts/convert_rwkv7_to_hf.py \
-  --checkpoint /path/to/rwkv7-model.pth \
+  --input /path/to/rwkv7-model.pth \
   --output /path/to/rwkv7-model-hf \
-  --precision bf16 --no-fuse-norm
+  --precision bf16 --adapter-layout thin --no-fuse-norm
 ```
 
 Large checkpoints can use the converter's low-memory mode. The converter now

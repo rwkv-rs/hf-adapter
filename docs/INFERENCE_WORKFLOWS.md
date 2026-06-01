@@ -30,6 +30,7 @@ python scripts/batch_convert_rwkv7_to_hf.py \
   --output-root /path/to/hf-models \
   --vocab-file /path/to/rwkv_vocab_v20230424.txt \
   --precision fp16 --attn-mode fused_recurrent --no-fuse-norm \
+  --adapter-layout thin \
   --max-shard-size 5GB --low-memory --dry-run
 ```
 
@@ -40,8 +41,12 @@ python scripts/batch_convert_rwkv7_to_hf.py \
 单个模型仍使用第一次运行教程中的 `convert_rwkv7_to_hf.py`。`--low-memory`
 只降低转换过程的主机内存，不会降低加载模型所需的 RAM/VRAM。
 
-转换目录中包含适配器 remote code 的快照。仓库更新后，可以先预览，再只刷新
-Python 代码，不重写大权重：
+默认 `--adapter-layout thin` 只生成三个由 `rwkv7-hf` 包支持的入口，与公开 Hub
+模型一致。只有离线或归档目录必须自带完整运行时代码快照时，才改用
+`--adapter-layout bundled`。两种布局不会改变转换后的权重。
+
+下面的同步工具仅用于旧目录或明确选择的 `bundled` 目录。它会把 thin 目录改为
+完整代码快照；普通 thin 目录升级 `rwkv7-hf` 包即可，不要运行同步工具：
 
 ```bash
 python scripts/sync_hf_adapter_code.py MODEL --dry-run
