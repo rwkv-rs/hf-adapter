@@ -21,9 +21,9 @@ Chinese version: [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md)
 
 For a normal installation, setup is complete only when:
 
-1. `rwkv7-hf-doctor` prints `RESULT: READY`;
-2. `rwkv7-hf-smoke` prints `RESULT: PASS` and writes a valid report; and
-3. the report says `rwkv7_hf: 0.8.0` and contains generated tokens.
+1. `rwkv7-hf doctor` prints `RESULT: READY`;
+2. `rwkv7-hf smoke` prints `RESULT: PASS` and writes a valid report; and
+3. the report says `rwkv7_hf: 0.8.1` and contains generated tokens.
 
 Conversion and repository-development workflows have additional model-directory
 and test gates described in their own sections. A downloaded file or a command
@@ -37,8 +37,9 @@ that merely started is not a pass.
 - Enough RAM or VRAM for the selected model. See the
   [published model matrix](PUBLISHED_MODELS.md); leave headroom beyond the
   stored fp16 weight size for runtime buffers.
-- A repository checkout only if you are converting a new checkpoint, modifying
-  code, running repository tests, or reproducing a benchmark.
+- A repository checkout only if you are modifying code, running repository
+  tests, using batch-only scripts, or reproducing a benchmark. Single-model
+  conversion is included in the wheel.
 
 ## 1. Install
 
@@ -48,7 +49,7 @@ Create and activate an isolated environment:
 python -m venv .venv
 source .venv/bin/activate                 # Windows: .venv\Scripts\Activate.ps1
 python -m pip install -U pip
-python -m pip install "rwkv7-hf==0.8.0"
+python -m pip install "rwkv7-hf==0.8.1"
 ```
 
 Install a PyTorch build appropriate for your hardware first when the default
@@ -58,17 +59,17 @@ RWKV inference does not require Flash Linear Attention.
 Inspect the installed runtime without downloading model weights:
 
 ```bash
-rwkv7-hf-doctor
-rwkv7-hf-kernels status
-rwkv7-hf-kernels recommend
+rwkv7-hf doctor
+rwkv7-hf kernels status
+rwkv7-hf kernels recommend
 ```
 
-`rwkv7-hf-doctor` must finish with `RESULT: READY`. On Linux NVIDIA, run the
+`rwkv7-hf doctor` must finish with `RESULT: READY`. On Linux NVIDIA, run the
 next command only when the recommendation reports one exact compatible wheel:
 
 ```bash
-rwkv7-hf-kernels install
-rwkv7-hf-doctor
+rwkv7-hf kernels install
+rwkv7-hf doctor
 ```
 
 The installer matches the Python ABI, platform, PyTorch series and C++ ABI,
@@ -81,7 +82,7 @@ See [prebuilt CUDA kernel wheels](KERNEL_WHEELS.md).
 Now run the public 0.1B acceptance command:
 
 ```bash
-rwkv7-hf-smoke \
+rwkv7-hf smoke \
   --model wangyue114514/rwkv7-g1d-0.1b-hf \
   --revision v0.7.0 \
   --device auto \
@@ -95,10 +96,10 @@ is installation telemetry, not a general performance claim.
 Install optional published extras only when a later workflow needs them:
 
 ```bash
-python -m pip install "rwkv7-hf[cuda]==0.8.0"    # Linux NVIDIA JIT helper
-python -m pip install "rwkv7-hf[train]==0.8.0"   # PEFT/TRL/DeepSpeed
-python -m pip install "rwkv7-hf[quant]==0.8.0"   # bitsandbytes
-python -m pip install "rwkv7-hf[mlx]==0.8.0"     # Apple Silicon MLX
+python -m pip install "rwkv7-hf[cuda]==0.8.1"    # Linux NVIDIA JIT helper
+python -m pip install "rwkv7-hf[train]==0.8.1"   # PEFT/TRL/DeepSpeed
+python -m pip install "rwkv7-hf[quant]==0.8.1"   # bitsandbytes
+python -m pip install "rwkv7-hf[mlx]==0.8.1"     # Apple Silicon MLX
 ```
 
 ## 2. Optional: get and convert a model
@@ -107,14 +108,11 @@ If you already have a converted model directory containing `config.json`,
 tokenizer files, remote-code Python files, and safetensors weights, skip to
 [Run generation](#3-run-generation).
 
-The converter and repository checks are development tools rather than PyPI
-console commands. Clone the source tree and install it in editable mode before
-continuing:
+The single-checkpoint converter is included in `rwkv7-hf==0.8.1` and works
+from any directory. A Git clone is not required:
 
 ```bash
-git clone https://github.com/rwkv-rs/hf-adapter.git
-cd hf-adapter
-python -m pip install -e .
+rwkv7-hf convert --help
 ```
 
 Official RWKV-7 checkpoints are published in
@@ -155,7 +153,7 @@ as a PowerShell alias.
 Convert the checkpoint:
 
 ```bash
-python scripts/convert_rwkv7_to_hf.py \
+rwkv7-hf convert \
   --input models/source/rwkv7-g1d-0.4b-20260210-ctx8192.pth \
   --output models/rwkv7-g1d-0.4b-hf \
   --vocab-file models/source/rwkv_vocab_v20230424.txt \
@@ -175,7 +173,7 @@ For 7.2B and 13.3B checkpoints, reduce conversion RAM and bound output shard
 size:
 
 ```bash
-python scripts/convert_rwkv7_to_hf.py \
+rwkv7-hf convert \
   --input /path/to/model.pth \
   --output /path/to/model-hf \
   --vocab-file /path/to/rwkv_vocab_v20230424.txt \
@@ -192,22 +190,25 @@ python scripts/convert_rwkv7_to_hf.py \
 Validate the converted directory before generation:
 
 ```bash
-python examples/check_environment.py --model models/rwkv7-g1d-0.4b-hf
+rwkv7-hf doctor
+rwkv7-hf smoke --model models/rwkv7-g1d-0.4b-hf --device auto
 ```
 
-The result must include `[PASS] Model directory` and `RESULT: READY`.
+The commands must include `RESULT: READY` and `RESULT: PASS` respectively.
 
 ## 3. Run generation
 
-The included example automatically selects CUDA, MPS, or CPU and always loads
+The installed smoke command automatically selects CUDA, MPS, or CPU and loads
 the canonical native backend:
 
 ```bash
-python examples/generate.py \
-  --model models/rwkv7-g1d-0.4b-hf \
-  --prompt "User: Write a short greeting. Assistant:" \
-  --max-new-tokens 8
+rwkv7-hf smoke --model models/rwkv7-g1d-0.4b-hf --device auto
 ```
+
+Use the standard Transformers Python API in the next section when you need a
+custom prompt, sampling, or application integration. The commands below use
+`examples/generate.py`, which is available only in a source checkout and is an
+optional developer convenience:
 
 Useful explicit configurations:
 
@@ -313,8 +314,8 @@ keys, and kernel-local RWKV notation are intentionally unchanged.
 For an ordinary PyPI installation, the complete gate is:
 
 ```bash
-rwkv7-hf-doctor
-rwkv7-hf-smoke --model wangyue114514/rwkv7-g1d-0.1b-hf \
+rwkv7-hf doctor
+rwkv7-hf smoke --model wangyue114514/rwkv7-g1d-0.1b-hf \
   --revision v0.7.0 --device auto --output rwkv7-smoke.json
 ```
 
@@ -344,7 +345,7 @@ for this public-model setup.
 
 ### `No module named 'fla'`
 
-Normal inference does not require FLA. Confirm that `rwkv7-hf==0.8.0` is
+Normal inference does not require FLA. Confirm that `rwkv7-hf==0.8.1` is
 installed and use the canonical native model. Install `fla-reference` only for
 an explicitly named comparison benchmark.
 
@@ -363,7 +364,7 @@ reduce model footprint, but speed and support are card-dependent; read
 ### The first run is slow
 
 CUDA/Triton kernels and graph paths may compile or warm up on first use.
-Run `rwkv7-hf-kernels recommend`; an exact prebuilt wheel avoids local JIT for
+Run `rwkv7-hf kernels recommend`; an exact prebuilt wheel avoids local JIT for
 the extensions it contains. Measure steady-state performance only after the
 first generation.
 

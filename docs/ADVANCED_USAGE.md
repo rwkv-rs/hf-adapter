@@ -37,7 +37,7 @@ python -m pip install -e ".[train]"
 ```
 
 For an application that does not run repository tests, install the published
-extra instead with `python -m pip install "rwkv7-hf[train]==0.8.0"`.
+extra instead with `python -m pip install "rwkv7-hf[train]==0.8.1"`.
 
 ## 1. Speculative decoding
 

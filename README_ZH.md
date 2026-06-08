@@ -8,7 +8,7 @@ W8/W4 量化、投机解码和多卡运行，并按设备选择原生或融合�
 
 ## 项目状态
 
-已发布的 **RWKV-7 HF `v0.8.0` 正式版交付范围已经完成**。它保留 v0.6
+已发布的 **RWKV-7 HF `v0.8.1` 正式版交付范围已经完成**。它保留 v0.6
 适配器里程碑的转换、Transformers 标准接口、PEFT/TRL、状态缓存、
 Native/no-FLA、W8/W4、PP/TP 和 ZeRO，并加入 Ascend、Biren、MetaX、MUSA
 边界以及最新的 NVIDIA 精确显卡性能路线。
@@ -33,14 +33,14 @@ FP16-state 路径。这些均已有配对性能、正确性和回退边界证据
 python -m venv .venv
 source .venv/bin/activate                 # Windows：.venv\Scripts\Activate.ps1
 python -m pip install -U pip
-python -m pip install "rwkv7-hf==0.8.0"
-rwkv7-hf-doctor
+python -m pip install "rwkv7-hf==0.8.1"
+rwkv7-hf doctor
 ```
 
 用一条命令下载并验收最小公开模型：
 
 ```bash
-rwkv7-hf-smoke \
+rwkv7-hf smoke \
   --model wangyue114514/rwkv7-g1d-0.1b-hf \
   --revision v0.7.0 \
   --device auto \
@@ -51,11 +51,11 @@ rwkv7-hf-smoke \
 Python、PyTorch、CUDA ABI 和 GPU 架构是否有完全匹配的预编译算子：
 
 ```bash
-rwkv7-hf-kernels status
-rwkv7-hf-kernels recommend
+rwkv7-hf kernels status
+rwkv7-hf kernels recommend
 # 只有上一步列出完全匹配的 wheel 时才执行：
-rwkv7-hf-kernels install
-rwkv7-hf-doctor
+rwkv7-hf kernels install
+rwkv7-hf doctor
 ```
 
 基础 `pip install` 不会猜测或静默安装 GPU 二进制。可选 wheel 安装完成后，运行时
@@ -85,8 +85,11 @@ print(tokenizer.decode(output[0], skip_special_tokens=True))
 六个尺寸、权重大小、内存建议、模型链接和一键验收命令见
 [已发布模型矩阵](docs/PUBLISHED_MODELS_ZH.md)，总入口是
 [`RWKV7-G1 Transformers` Collection](https://huggingface.co/collections/wangyue114514/rwkv7-g1-transformers-6a85b04191034d4c2d1896f1)。
+统一命令行的完整参数见 [CLI 参考](docs/CLI.md)。旧的
+`rwkv7-hf-doctor`、`rwkv7-hf-kernels`、`rwkv7-hf-smoke` 命令继续兼容。
 
-只有转换新 checkpoint、修改代码、运行仓库测试或复现 benchmark 时才克隆源码：
+单 checkpoint 转换已经包含在 PyPI wheel 中，可直接使用 `rwkv7-hf convert`，
+不需要克隆源码。只有修改代码、运行仓库测试、批量工具或复现 benchmark 时才克隆：
 
 ### Linux / macOS
 
@@ -121,10 +124,10 @@ python -m pip install -e ".[cuda]"
 如果不修改源码，等价的 PyPI 可选依赖写法是：
 
 ```bash
-python -m pip install "rwkv7-hf[cuda]==0.8.0"
-python -m pip install "rwkv7-hf[train]==0.8.0"
-python -m pip install "rwkv7-hf[quant]==0.8.0"
-python -m pip install "rwkv7-hf[mlx]==0.8.0"
+python -m pip install "rwkv7-hf[cuda]==0.8.1"
+python -m pip install "rwkv7-hf[train]==0.8.1"
+python -m pip install "rwkv7-hf[quant]==0.8.1"
+python -m pip install "rwkv7-hf[mlx]==0.8.1"
 ```
 
 华为昇腾用户需先安装与当前 CANN 精确匹配的 PyTorch/torch-npu wheel，再安装
@@ -180,33 +183,28 @@ tokenizer 文件和 `.safetensors` 或 `.bin` 权重。
 - 大模型低内存转换和断点恢复方法；
 - 模型目录的明确 `PASS` 标准。
 
-也可以先让环境检查脚本验证模型目录：
+直接用已安装的 CLI 验证模型目录：
 
 ```bash
-python examples/check_environment.py --model /path/to/rwkv7-model-hf
+rwkv7-hf doctor
+rwkv7-hf smoke --model /path/to/rwkv7-model-hf --device auto
 ```
 
 通过时会看到：
 
 ```text
-MODEL DIRECTORY: PASS
 RESULT: READY
+RESULT: PASS
 ```
 
 ## 运行第一次生成
 
 ```bash
-python examples/generate.py \
-  --model /path/to/rwkv7-model-hf \
-  --prompt "User: 你好！请用一句话介绍 RWKV。 Assistant:" \
-  --max-new-tokens 64
+rwkv7-hf smoke --model /path/to/rwkv7-model-hf --device auto
 ```
 
-Windows PowerShell 可以使用反引号换行，也可以写成一行：
-
-```powershell
-python examples/generate.py --model D:\models\rwkv7-model-hf --prompt "User: 你好！ Assistant:" --max-new-tokens 64
-```
+需要自定义提示词或采样参数时，直接使用下方标准 Transformers Python API。
+源码仓库中的 `examples/generate.py` 是额外的开发者示例，不属于 PyPI wheel。
 
 完成标志：命令退出码为 `0`，输出中显示所用 `device` 和 `dtype`，并在输入提示词后
 生成新文本。示例会自动选择 CUDA、MPS 或 CPU，并始终使用仓库原生后端。

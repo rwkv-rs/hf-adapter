@@ -6,9 +6,22 @@ model, dtype, batch and sequence shape named by their linked artifact.
 
 ## Unreleased
 
+## [v0.8.1](https://github.com/rwkv-rs/hf-adapter/releases/tag/v0.8.1) - 2026-08-21
+
+### Unified command-line interface
+
+- Added `rwkv7-hf` with `convert`, `doctor`, `kernels`, and `smoke`
+  subcommands while retaining every `rwkv7-hf-*` compatibility command.
+- Shipped the official-checkpoint converter in the PyPI wheel as both
+  `rwkv7-hf convert` and `rwkv7-hf-convert`; conversion no longer requires a
+  Git clone or a source-checkout working directory.
+- Kept `scripts/convert_rwkv7_to_hf.py` as a backward-compatible wrapper and
+  made thin and bundled conversion resolve their resources from an installed
+  package.
+
 ### Documentation
 
-- Unified ordinary-user entrypoints around the published `rwkv7-hf==0.8.0`
+- Unified ordinary-user entrypoints around the published `rwkv7-hf==0.8.1`
   package, public 0.1B model, doctor, exact-kernel recommendation, and
   one-command smoke report. Source checkout and `.pth` conversion are now
   explicitly separated as developer/publisher workflows.

@@ -3,7 +3,7 @@ provenance:
   canonical_repository: https://github.com/rwkv-rs/hf-adapter
   primary_maintainer: Wang Yue
   github_identity: 123123213weqw
-  reference_implementation: scripts/convert_rwkv7_to_hf.py
+  reference_implementation: rwkv7_hf/converter.py
   metadata: ../reference/provenance.yaml
   license: MIT
 -->
@@ -27,7 +27,8 @@ remote-code files (for Transformers use)
 A serving engine needs `config.json`, safetensors, and tokenizer assets. It
 does not need to execute remote model code if it implements this specification.
 
-The conversion source is `scripts/convert_rwkv7_to_hf.py`.
+The canonical installed conversion source is `rwkv7_hf/converter.py`.
+`scripts/convert_rwkv7_to_hf.py` is a backward-compatible wrapper.
 
 ## Required configuration
 

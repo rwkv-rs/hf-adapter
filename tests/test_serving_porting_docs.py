@@ -76,6 +76,7 @@ def test_serving_contract_reference_sources_exist() -> None:
         "rwkv7_hf/native_quant_a8w8.py",
         "rwkv7_hf/native_quant_marlin.py",
         "rwkv7_hf/sm70_quant.py",
+        "rwkv7_hf/converter.py",
         "scripts/convert_rwkv7_to_hf.py",
     ):
         assert (ROOT / relative).is_file(), relative

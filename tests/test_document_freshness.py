@@ -61,10 +61,10 @@ def main() -> int:
 
     readme = read("README.md")
     assert "Completion is reported by **named scope**" in readme
-    assert 'python -m pip install "rwkv7-hf==0.8.0"' in readme
+    assert 'python -m pip install "rwkv7-hf==0.8.1"' in readme
 
     readme_zh = read("README_ZH.md")
-    assert 'python -m pip install "rwkv7-hf==0.8.0"' in readme_zh
+    assert 'python -m pip install "rwkv7-hf==0.8.1"' in readme_zh
 
     ordinary_user_docs = (
         "README.md",
@@ -76,9 +76,9 @@ def main() -> int:
     )
     for relative in ordinary_user_docs:
         text = read(relative)
-        assert 'rwkv7-hf==0.8.0' in text, relative
-        assert "rwkv7-hf-doctor" in text, relative
-        assert "rwkv7-hf-smoke" in text, relative
+        assert 'rwkv7-hf==0.8.1' in text, relative
+        assert "rwkv7-hf doctor" in text, relative
+        assert "rwkv7-hf smoke" in text, relative
         assert "wangyue114514/rwkv7-g1d-0.1b-hf" in text, relative
 
     for relative in (
@@ -90,8 +90,8 @@ def main() -> int:
         "docs/KERNEL_WHEELS_ZH.md",
     ):
         text = read(relative)
-        assert "rwkv7-hf-kernels recommend" in text, relative
-        assert "rwkv7-hf-kernels install" in text, relative
+        assert "rwkv7-hf kernels recommend" in text, relative
+        assert "rwkv7-hf kernels install" in text, relative
 
     english_first_run = read("docs/USER_GUIDE.md").split(
         "## 2. Optional: get and convert a model", 1
@@ -104,7 +104,7 @@ def main() -> int:
 
     ai_setup = read("docs/AI_ASSISTED_SETUP.md")
     assert "从 PyPI 安装并运行公开 0.1B" in ai_setup
-    assert "rwkv7-hf-smoke" in ai_setup
+    assert "rwkv7-hf smoke" in ai_setup
     assert "TASK_ID=first-run" in ai_setup
 
     print("DOCUMENT FRESHNESS PASS")

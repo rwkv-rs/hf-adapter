@@ -24,7 +24,7 @@
 
 | 任务 ID | 用户目标 | 只读这份教程 | AI 必须观察的通过证据 |
 |---|---|---|---|
-| `first-run` | 从 PyPI 安装并运行公开 0.1B | [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) | Doctor `RESULT: READY`、smoke `RESULT: PASS`、版本为 0.8.0 且生成 token |
+| `first-run` | 从 PyPI 安装并运行公开 0.1B | [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) | Doctor `RESULT: READY`、smoke `RESULT: PASS`、版本为 0.8.1 且生成 token |
 | `prebuilt-kernels` | 自动识别并安装精确预编译算子 | [`KERNEL_WHEELS_ZH.md`](KERNEL_WHEELS_ZH.md) | recommendation 唯一匹配、安装哈希通过、Doctor package `ready`、真实 smoke 记录 `prebuilt` |
 | `convert-source` | 下载官方 `.pth`、转换定制 HF 目录并生成 | [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) | `RESULT: READY`、`[PASS] Model directory`、转换 manifest 成功、生成退出 0 且有新文本 |
 | `windows-cpu` | Windows/CPU 无下载 tiny 推理、训练和保存重载 | [`WINDOWS_CPU.md`](WINDOWS_CPU.md) | 退出码 0、四个 `CPU ... PASS`、loss 下降、梯度/参数变化非零、重载 logits 差为 0 |
@@ -98,14 +98,14 @@ AI 必须按顺序完成，不允许跳过失败状态：
 
 `TASK_ID=first-run` 时不允许先走源码转换。安装顺序固定为：
 
-1. 创建 `.venv` 并安装 `rwkv7-hf==0.8.0`；
-2. `rwkv7-hf-doctor` 得到 `RESULT: READY`；
-3. 运行 `rwkv7-hf-kernels status` 和 `recommend`，但不在无精确匹配时强装 wheel；
+1. 创建 `.venv` 并安装 `rwkv7-hf==0.8.1`；
+2. `rwkv7-hf doctor` 得到 `RESULT: READY`；
+3. 运行 `rwkv7-hf kernels status` 和 `recommend`，但不在无精确匹配时强装 wheel；
 4. 下载公开 `wangyue114514/rwkv7-g1d-0.1b-hf@v0.7.0` 前报告预计空间并等待确认；
 5. 使用下面的固定命令完成 Prefill、Decode、有限 logits、生成和路线报告。
 
 ```bash
-rwkv7-hf-smoke \
+rwkv7-hf smoke \
   --model wangyue114514/rwkv7-g1d-0.1b-hf \
   --revision v0.7.0 \
   --device auto \

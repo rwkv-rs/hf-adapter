@@ -91,7 +91,7 @@ export QWEN_MODEL=/models/Qwen3.5-2B
 Convert the official RWKV `.pth` checkpoint with the official vocabulary:
 
 ```bash
-python scripts/convert_rwkv7_to_hf.py \
+rwkv7-hf convert \
   --input /models/rwkv7-g1i-1.5b.pth \
   --output /models/rwkv7-g1i-1.5b-hf \
   --vocab-file /models/rwkv_vocab_v20230424.txt \

@@ -10,7 +10,7 @@ loss 和 mask、模型保存迁移、循环状态复用、动态批处理以及�
 前置条件：先完成 [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md)，并把下文的 `MODEL`
 替换成已经通过目录检查的 HF 模型路径。
 
-普通公开模型生成直接使用 PyPI 的 `rwkv7-hf-smoke` 或标准 Transformers API，
+普通公开模型生成直接使用 PyPI 的 `rwkv7-hf smoke` 或标准 Transformers API，
 不需要本页。由于这里会调用 `scripts/`、`examples/` 和 `tests/`，继续前必须 clone
 源码并使用 editable 安装：
 
@@ -38,7 +38,7 @@ python scripts/batch_convert_rwkv7_to_hf.py \
 退出码必须为 0，每个请求项都应是 `converted` 或有意的 `skipped`，不能出现
 `failed`。`--force` 会覆盖已有输出，只能在明确需要时使用。
 
-单个模型仍使用第一次运行教程中的 `convert_rwkv7_to_hf.py`。`--low-memory`
+单个模型使用第一次运行教程中的 `rwkv7-hf convert`。`--low-memory`
 只降低转换过程的主机内存，不会降低加载模型所需的 RAM/VRAM。
 
 默认 `--adapter-layout thin` 只生成三个由 `rwkv7-hf` 包支持的入口，与公开 Hub

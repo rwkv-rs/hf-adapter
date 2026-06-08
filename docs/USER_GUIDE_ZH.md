@@ -20,9 +20,9 @@
 
 普通用户只有下面三项都满足才算安装完成：
 
-1. `rwkv7-hf-doctor` 显示 `RESULT: READY`；
-2. `rwkv7-hf-smoke` 显示 `RESULT: PASS` 并写出合法 JSON；
-3. 报告中的 `rwkv7_hf` 为 `0.8.0`，且确实生成了新 token。
+1. `rwkv7-hf doctor` 显示 `RESULT: READY`；
+2. `rwkv7-hf smoke` 显示 `RESULT: PASS` 并写出合法 JSON；
+3. 报告中的 `rwkv7_hf` 为 `0.8.1`，且确实生成了新 token。
 
 自行转换与源码开发还有模型目录、转换 manifest 和仓库测试门槛。文件存在、命令已
 启动或“理论上可用”都不算通过。
@@ -45,7 +45,7 @@ python --version
 python -m venv .venv
 source .venv/bin/activate                 # Windows：.venv\Scripts\Activate.ps1
 python -m pip install -U pip
-python -m pip install "rwkv7-hf==0.8.0"
+python -m pip install "rwkv7-hf==0.8.1"
 ```
 
 Windows PowerShell 如果禁止激活脚本，只对当前窗口临时放行：
@@ -58,17 +58,17 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 不下载模型，先检查安装和自动路由候选：
 
 ```bash
-rwkv7-hf-doctor
-rwkv7-hf-kernels status
-rwkv7-hf-kernels recommend
+rwkv7-hf doctor
+rwkv7-hf kernels status
+rwkv7-hf kernels recommend
 ```
 
 Doctor 必须显示 `RESULT: READY`。Linux NVIDIA 只有在推荐命令列出一个完全匹配
 wheel 时才继续：
 
 ```bash
-rwkv7-hf-kernels install
-rwkv7-hf-doctor
+rwkv7-hf kernels install
+rwkv7-hf doctor
 ```
 
 安装器会同时检查 Python ABI、系统与机器架构、PyTorch 主次版本和 C++ ABI、
@@ -85,7 +85,7 @@ CUDA runtime、GPU compute capability 以及 adapter 版本。`pip install rwkv7
 现在运行公开 0.1B 一键验收：
 
 ```bash
-rwkv7-hf-smoke \
+rwkv7-hf smoke \
   --model wangyue114514/rwkv7-g1d-0.1b-hf \
   --revision v0.7.0 \
   --device auto \
@@ -98,20 +98,19 @@ logits 和实际运行路线报告全部完成；其中时间只用于安装 smo
 后续任务需要时再安装对应 PyPI extra，不要一次全部安装：
 
 ```bash
-python -m pip install "rwkv7-hf[cuda]==0.8.0"    # Linux NVIDIA JIT 工具
-python -m pip install "rwkv7-hf[train]==0.8.0"   # PEFT/TRL/DeepSpeed
-python -m pip install "rwkv7-hf[quant]==0.8.0"   # bitsandbytes
-python -m pip install "rwkv7-hf[mlx]==0.8.0"     # Apple Silicon MLX
+python -m pip install "rwkv7-hf[cuda]==0.8.1"    # Linux NVIDIA JIT 工具
+python -m pip install "rwkv7-hf[train]==0.8.1"   # PEFT/TRL/DeepSpeed
+python -m pip install "rwkv7-hf[quant]==0.8.1"   # bitsandbytes
+python -m pip install "rwkv7-hf[mlx]==0.8.1"     # Apple Silicon MLX
 ```
 
 ## 2. 可选：下载并转换模型
 
-转换脚本和仓库检查脚本不是 PyPI 控制台命令。先克隆源码并切换为 editable 安装：
+单 checkpoint 转换器已经包含在 `rwkv7-hf==0.8.1`，可从任意目录运行，不需要
+克隆源码：
 
 ```bash
-git clone https://github.com/rwkv-rs/hf-adapter.git
-cd hf-adapter
-python -m pip install -e .
+rwkv7-hf convert --help
 ```
 
 官方权重位于
@@ -166,7 +165,7 @@ Get-Item models\source\rwkv7-g1d-0.4b-20260210-ctx8192.pth, models\source\rwkv_v
 转换模型：
 
 ```powershell
-python scripts\convert_rwkv7_to_hf.py `
+rwkv7-hf convert `
   --input models\source\rwkv7-g1d-0.4b-20260210-ctx8192.pth `
   --output models\rwkv7-g1d-0.4b-hf `
   --vocab-file models\source\rwkv_vocab_v20230424.txt `
@@ -201,7 +200,7 @@ ls -lh \
 转换模型：
 
 ```bash
-python scripts/convert_rwkv7_to_hf.py \
+rwkv7-hf convert \
   --input models/source/rwkv7-g1d-0.4b-20260210-ctx8192.pth \
   --output models/rwkv7-g1d-0.4b-hf \
   --vocab-file models/source/rwkv_vocab_v20230424.txt \
@@ -225,10 +224,11 @@ python scripts/convert_rwkv7_to_hf.py \
 Windows、Linux 和 macOS 都执行：
 
 ```bash
-python examples/check_environment.py --model models/rwkv7-g1d-0.4b-hf
+rwkv7-hf doctor
+rwkv7-hf smoke --model models/rwkv7-g1d-0.4b-hf --device auto
 ```
 
-必须同时看到 `RESULT: READY` 和 `[PASS] Model directory`，否则不要继续。
+两条命令必须分别看到 `RESULT: READY` 和 `RESULT: PASS`，否则不要继续。
 转换目录至少应包含 `config.json`、`tokenizer_config.json`、
 `rwkv_vocab_v20230424.txt` 和一个或多个 `.safetensors` 权重文件。
 
@@ -242,25 +242,15 @@ python examples/check_environment.py --model models/rwkv7-g1d-0.4b-hf
 
 ## 4. 生成第一段文本
 
-默认会自动选择 CUDA、MPS 或 CPU，并始终加载 native 后端：
-
-Windows PowerShell：
-
-```powershell
-python examples\generate.py --model models\rwkv7-g1d-0.4b-hf --prompt "User: 你好，请用一句话介绍自己。 Assistant:" --max-new-tokens 8
-```
-
-Linux 或 macOS：
+已安装的 smoke 命令会自动选择 CUDA、MPS 或 CPU，并加载 native 后端：
 
 ```bash
-python examples/generate.py \
-  --model models/rwkv7-g1d-0.4b-hf \
-  --prompt "User: 你好，请用一句话介绍自己。 Assistant:" \
-  --max-new-tokens 8
+rwkv7-hf smoke --model models/rwkv7-g1d-0.4b-hf --device auto
 ```
 
-终端先显示加载的设备、精度和后端，然后打印模型生成的新文本。只要命令退出码为
-0 且有新文本，首次安装就完成了。内容质量取决于 checkpoint，本步骤只验证运行链路。
+看到 `RESULT: PASS` 才表示加载、Prefill 和 Decode 链路通过。需要自定义提示词、
+采样或集成应用时，使用下一节标准 Transformers Python API。下面的
+`examples/generate.py` 仅存在于源码仓库，是可选的开发者示例：
 
 常用配置：
 
@@ -362,19 +352,19 @@ assert config.num_heads == config.num_attention_heads
 
 - **旧的本地转换目录提示缺少 `fla`**：在源码仓库中运行
   `python scripts/sync_hf_adapter_code.py /path/to/model-hf` 更新 Auto metadata，
-  再使用 native；公开成品模型和普通 0.8.0 推理不需要 FLA。
+  再使用 native；公开成品模型和普通 0.8.1 推理不需要 FLA。
 - **CUDA 不可用**：运行
   `python -c "import torch; print(torch.cuda.is_available())"` 检查 PyTorch。
 - **显存不足**：先换小模型。量化可以省显存，但不同显卡的速度和支持情况
   不同，请阅读 [`QUANTIZATION.md`](QUANTIZATION.md)。
-- **第一次运行很慢**：运行 `rwkv7-hf-kernels recommend`；精确预编译 wheel 可
+- **第一次运行很慢**：运行 `rwkv7-hf kernels recommend`；精确预编译 wheel 可
   避免其中已包含扩展的本地 JIT。CUDA/Triton 和图路线仍可能需要首次预热。
 - **输出不像聊天模型**：适配器不会改变模型训练性质。基础模型并不会因为接入 HF
   自动变成指令模型，请选择合适的 checkpoint 和提示格式。
 - **Windows CUDA 安装困难**：先使用基础安装和 native 后端；优化后端主要在
   Linux 上验证，也可以考虑 WSL2。
 - **不知道把错误发给别人时该发什么**：普通安装运行
-  `rwkv7-hf-doctor --json --output rwkv7-doctor.json`；源码转换再运行
+  `rwkv7-hf doctor --json --output rwkv7-doctor.json`；源码转换再运行
   `python examples/check_environment.py`。提供失败命令和第一段完整 traceback，
   不要发送密码、token 或 SSH 私钥。
 

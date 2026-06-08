@@ -3,6 +3,7 @@
 ## Start here
 
 - [Ordinary-user PyPI and public-model guide](USER_GUIDE.md) / [中文](USER_GUIDE_ZH.md)
+- [Unified CLI reference](CLI.md)
 - [Published RWKV7-G1 models](PUBLISHED_MODELS.md) / [中文](PUBLISHED_MODELS_ZH.md)
 - [Runtime and kernel-policy doctor](KERNEL_DOCTOR.md) / [中文](KERNEL_DOCTOR_ZH.md)
 - [Prebuilt CUDA kernel wheels](KERNEL_WHEELS.md) / [中文](KERNEL_WHEELS_ZH.md)

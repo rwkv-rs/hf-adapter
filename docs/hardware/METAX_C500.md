@@ -48,7 +48,7 @@ dependencies.
 export MACA_PATH=/opt/maca
 export CUCC_PATH=/opt/maca/tools/cu-bridge
 export CUDA_PATH=/opt/maca/tools/cu-bridge
-python -m pip install "rwkv7-hf[metax]==0.8.0"
+python -m pip install "rwkv7-hf[metax]==0.8.1"
 python -c 'from rwkv7_hf import metax_available; print(metax_available())'
 ```
 

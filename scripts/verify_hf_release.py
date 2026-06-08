@@ -21,7 +21,7 @@ from typing import Any, Callable, TypeVar
 
 DEFAULT_MODEL = "wangyue114514/rwkv7-g1d-0.1b-hf"
 DEFAULT_REVISION = "v0.7.0"
-DEFAULT_RUNTIME = "0.8.0"
+DEFAULT_RUNTIME = "0.8.1"
 DEFAULT_MANIFEST_RUNTIME = "0.7.0"
 T = TypeVar("T")
 

@@ -34,7 +34,7 @@ paged KV blocks.
 | Token-step mathematics | `rwkv7_hf/native.py` | Correctness oracle |
 | Batched state initialization | `rwkv7_hf/native.py::_init_state_batched` | State-pool shape/dtype contract |
 | HF cache behavior | `rwkv7_hf/native_model.py::NativeRWKV7Cache` | Semantic reference, not production allocator |
-| Official checkpoint conversion | `scripts/convert_rwkv7_to_hf.py` | Loader name/transpose rules |
+| Official checkpoint conversion | `rwkv7_hf/converter.py` | Loader name/transpose rules |
 | Native W8/W4 formats | `rwkv7_hf/native_quant.py`, `rwkv7_hf/native_quant_mm8.py`, `rwkv7_hf/native_quant_mm4.py`, `rwkv7_hf/native_quant_a8w8.py`, `rwkv7_hf/native_quant_marlin.py` | Quant method and packed-weight loaders |
 | Volta/Turing W8/W4 | `rwkv7_hf/sm70_quant.py` | Optional SM7x kernels |
 | Marlin BF16/W4 | `rwkv7_hf/native_quant_marlin.py` | Optional Ada/Blackwell kernel backend |

@@ -131,7 +131,7 @@ def test_real_width_split_checkpoint_conversion_and_hf_reload() -> None:
         assert not (output / "native_model.py").exists()
         converted_config = AutoConfig.from_pretrained(output, trust_remote_code=True)
         assert converted_config.rwkv7_hf_adapter_layout == "thin"
-        assert converted_config.rwkv7_hf_runtime_version == "0.8.0"
+        assert converted_config.rwkv7_hf_runtime_version == "0.8.1"
 
         auto_config = converted_config
         assert auto_config.hidden_size == 8
@@ -157,7 +157,7 @@ def test_real_width_split_checkpoint_conversion_and_hf_reload() -> None:
             reloaded_dir, trust_remote_code=True
         )
         assert reloaded_config.rwkv7_hf_adapter_layout == "thin"
-        assert reloaded_config.rwkv7_hf_runtime_version == "0.8.0"
+        assert reloaded_config.rwkv7_hf_runtime_version == "0.8.1"
         reloaded = AutoModelForCausalLM.from_pretrained(reloaded_dir, trust_remote_code=True).eval()
         reloaded_tokenizer = AutoTokenizer.from_pretrained(
             reloaded_dir, trust_remote_code=True

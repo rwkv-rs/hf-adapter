@@ -8,7 +8,7 @@
 
 | 用户目标 | 教程 | 完成标志 | 使用建议 |
 |---|---|---|---|
-| PyPI 安装、自动设备/算子检查、公开模型首次生成 | [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) | Doctor `RESULT: READY`、smoke `RESULT: PASS`、版本 0.8.0、生成 token | 普通用户固定从公开 0.1B 开始，不需要 clone、`.pth` 或转换 |
+| PyPI 安装、自动设备/算子检查、公开模型首次生成 | [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md) | Doctor `RESULT: READY`、smoke `RESULT: PASS`、版本 0.8.1、生成 token | 普通用户固定从公开 0.1B 开始，不需要 clone、`.pth` 或转换 |
 | 新 checkpoint 下载、转换和本地目录验证 | [`USER_GUIDE_ZH.md`](USER_GUIDE_ZH.md#2-可选下载并转换模型) | 转换 manifest、模型目录 `PASS`、输出新文本 | 只用于新/定制权重或转换复现；先 clone 源码 |
 | 精确预编译 CUDA 算子自动识别与安装 | [`KERNEL_WHEELS_ZH.md`](KERNEL_WHEELS_ZH.md) | recommendation 唯一匹配、Doctor package `ready`、真实 smoke 记录 `prebuilt` | 没有精确 wheel 时保持默认 JIT/可移植回退，禁止强装相近构建 |
 | Windows/CPU 无下载推理、微型训练和保存重载 | [`WINDOWS_CPU.md`](WINDOWS_CPU.md) | 四个 `CPU ... PASS` 标记；loss 下降、梯度/参数变化非零、重载 logits 差为 0 | 随机两层 tiny 模型用于接口演示；真实自然语言生成从公开 0.1B 开始 |
@@ -29,7 +29,7 @@
 
 ## 如何选择合适路线
 
-1. **先完成首次生成。** 使用公开 0.1B 和 `rwkv7-hf-smoke` 确认安装、Tokenizer、
+1. **先完成首次生成。** 使用公开 0.1B 和 `rwkv7-hf smoke` 确认安装、Tokenizer、
    Prefill、Decode 与生成都通过，再换成目标模型；普通用户不先转换 `.pth`。
 2. **按任务选择多卡方案。** 推理时从 `device_map` 开始；Trainer/TRL 训练时从
    DeepSpeed ZeRO-2 或 ZeRO-3 开始。

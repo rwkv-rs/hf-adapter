@@ -30,7 +30,7 @@ python -m pip install -e ".[train]"
 ```
 
 普通应用不运行仓库测试时，直接安装发布 extra：
-`python -m pip install "rwkv7-hf[train]==0.8.0"`。
+`python -m pip install "rwkv7-hf[train]==0.8.1"`。
 
 ## 1. 投机解码
 

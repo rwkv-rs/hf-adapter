@@ -212,6 +212,7 @@ fi
 if [[ "$PROFILE" == smoke ]]; then
   "$PY" -m pytest -q -ra \
     tests/test_clean_install_packaging.py \
+    tests/test_cli.py \
     tests/test_acceptance_scripts.py \
     tests/test_apple_silicon_packaging.py \
     tests/test_backend_boundaries.py \
@@ -220,6 +221,7 @@ if [[ "$PROFILE" == smoke ]]; then
     tests/test_kernels_cli.py \
     tests/test_kernel_policy.py \
     tests/test_kernel_wheel_tooling.py \
+    tests/test_release_metadata.py \
     tests/test_native_model_module_split.py \
     tests/test_smoke_cli.py \
     tests/test_tokenizer_fast_trie.py

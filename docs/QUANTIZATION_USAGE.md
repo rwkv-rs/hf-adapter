@@ -14,7 +14,7 @@ English version: [`QUANTIZATION_USAGE.md`](QUANTIZATION_USAGE.md)
 普通应用只需要安装发布 extra：
 
 ```bash
-python -m pip install "rwkv7-hf[quant]==0.8.0"
+python -m pip install "rwkv7-hf[quant]==0.8.1"
 ```
 
 下面的配对验收命令调用仓库测试文件，因此需要 clone 源码，并有意使用 editable
