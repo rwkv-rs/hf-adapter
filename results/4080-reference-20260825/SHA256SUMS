@@ -1,3 +1,12 @@
-8aa0fb580a0c5d442b28f63b9b08c2c60a81821f7c60e79307c11a1a3a2693e0  /home/wzu/codex-run/rwkv7-reference-convert-4080/model/model.safetensors
-ebbcc329fd332479b5f9730543d2c0d5b7412ae93688733536c209072d4eae11  /home/wzu/codex-run/rwkv7-reference-convert-4080/model/config.json
-b136713e905cd7b51ecda6390ba94bad550b3154e2a2f96d64b52d3b79d4f30b  /home/wzu/codex-run/rwkv7-reference-convert-4080/model/modeling_rwkv7.py
+7da6172d9265d6e05ca380b10be334d31d6f22849418061ebef5af5ae11808bc  ./README.md
+bd26ea6887fdbb3a51f2ef0b44b78dae43a7e19d43ff6608bcbd50393fb8eaec  ./bf16/clean-vs-fla-model-bf16.json
+ab80427291b6709e4868d9eb0fdbf31e665f6523d7a8096fc8cc0cb28d764dc7  ./bf16/clean-vs-fla-model-bf16.jsonl
+a93d7835a6f0bed78e0bd1f041d0167b4b96f8a20143697fbf8fc729c73952c9  ./bf16/clean-vs-fla-model-bf16.md
+d5355163ba36a8a7c48e4156014a7de3634544d00cb057b86004fe57cf75ac04  ./clean-vs-fla-model-fp16.json
+da125dc8d3b4ac09198bceb7cafbfaa3b64f0f245020f14b7aa535d0a4f1fcee  ./clean-vs-fla-model-fp16.jsonl
+8f9fe910091656894b14e86885745f7c1f8f4c1f7b924a885c2e1138ee53f232  ./clean-vs-fla-model-fp16.md
+2e6e52da84c88db6bc4441b49619b36669c9fd92a4240323476e1cd5fdf10270  ./converted-model-SHA256SUMS
+07325cc524df0fecfd5eb68e591acfad3fd1ef651e4581967f6afea0efcb517a  ./fp32/clean-vs-fla-model-fp32.json
+caa30fbeffea5860f7bce635615784a0a57de00137b2ad00e914f8e1d12631cc  ./fp32/clean-vs-fla-model-fp32.jsonl
+9847b2662df70be0c7a90881c2a9cae260c57ba2f174535b37f2a6e8214d778b  ./fp32/clean-vs-fla-model-fp32.md
+f6fb2a29d57d2bb6ca67230a8cf82348f3a51f0e3282b37c49c8235544a76695  ./package-free-smoke.json
