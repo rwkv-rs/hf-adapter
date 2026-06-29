@@ -1,0 +1,134 @@
+from __future__ import annotations
+
+import torch
+import pytest
+
+from rwkv7_hf.cache_rwkv7 import RWKV7Cache
+from rwkv7_hf.modeling_rwkv7 import (
+    RWKV7Block,
+    RWKV7ChannelMix,
+    RWKV7ForCausalLM,
+    RWKV7Model,
+    RWKV7TimeMix,
+)
+
+
+def test_public_structure_and_forward(tiny_config):
+    model = RWKV7ForCausalLM(tiny_config).eval()
+    assert isinstance(model.model, RWKV7Model)
+    assert isinstance(model.model.layers[0], RWKV7Block)
+    assert isinstance(model.model.layers[0].attn, RWKV7TimeMix)
+    assert isinstance(model.model.layers[0].ffn, RWKV7ChannelMix)
+
+    ids = torch.tensor([[1, 2, 3], [4, 5, 6]])
+    with torch.inference_mode():
+        output = model(
+            input_ids=ids,
+            use_cache=True,
+            output_hidden_states=True,
+        )
+    assert output.logits.shape == (2, 3, tiny_config.vocab_size)
+    assert isinstance(output.past_key_values, RWKV7Cache)
+    assert output.past_key_values.get_seq_length() == 3
+    assert len(output.hidden_states) == tiny_config.num_hidden_layers + 1
+    for state in output.past_key_values.recurrent_state:
+        assert state.shape == (2, 2, 8, 8)
+
+
+def test_default_config_has_generation_token_ids():
+    from rwkv7_hf.configuration_rwkv7 import RWKV7Config
+
+    config = RWKV7Config(
+        vocab_size=64,
+        hidden_size=32,
+        attention_hidden_size=32,
+        intermediate_size=64,
+        num_hidden_layers=2,
+        num_heads=1,
+        head_dim=32,
+        value_dim=[32, 32],
+    )
+    assert config.pad_token_id == 0
+    assert config.eos_token_id == 0
+    assert config.bos_token_id == 1
+    RWKV7ForCausalLM(config)
+
+
+def test_cache_decode_matches_full_forward(tiny_config):
+    torch.manual_seed(7)
+    model = RWKV7ForCausalLM(tiny_config).eval()
+    ids = torch.randint(1, tiny_config.vocab_size, (2, 7))
+    with torch.inference_mode():
+        full = model(input_ids=ids, use_cache=False).logits
+        cache = None
+        pieces = []
+        for token_idx in range(ids.shape[1]):
+            output = model(
+                input_ids=ids[:, token_idx : token_idx + 1],
+                past_key_values=cache,
+                use_cache=True,
+            )
+            cache = output.past_key_values
+            pieces.append(output.logits)
+    cached = torch.cat(pieces, dim=1)
+    torch.testing.assert_close(cached, full, rtol=1e-5, atol=1e-6)
+    assert cache.get_seq_length() == ids.shape[1]
+
+
+def test_left_and_right_padding_do_not_update_state(tiny_config):
+    model = RWKV7ForCausalLM(tiny_config).eval()
+    core = torch.tensor([[11, 12, 13]])
+    with torch.inference_mode():
+        plain = model(input_ids=core, use_cache=True)
+        left = model(
+            input_ids=torch.tensor([[0, 0, 11, 12, 13]]),
+            attention_mask=torch.tensor([[0, 0, 1, 1, 1]]),
+            use_cache=True,
+        )
+        right = model(
+            input_ids=torch.tensor([[11, 12, 13, 0, 0]]),
+            attention_mask=torch.tensor([[1, 1, 1, 0, 0]]),
+            use_cache=True,
+        )
+    torch.testing.assert_close(left.logits[:, 2:], plain.logits)
+    torch.testing.assert_close(right.logits[:, :3], plain.logits)
+    for expected, left_state, right_state in zip(
+        plain.past_key_values.recurrent_state,
+        left.past_key_values.recurrent_state,
+        right.past_key_values.recurrent_state,
+    ):
+        torch.testing.assert_close(left_state, expected)
+        torch.testing.assert_close(right_state, expected)
+
+
+def test_loss_gradient_inputs_embeds_and_unsupported_attentions(tiny_config):
+    torch.manual_seed(11)
+    model = RWKV7ForCausalLM(tiny_config).train()
+    ids = torch.tensor([[1, 2, 3, 4], [5, 6, 7, 0]])
+    labels = ids.clone()
+    labels[1, -1] = -100
+    output = model(input_ids=ids, labels=labels, use_cache=True)
+    assert output.past_key_values is None
+    assert torch.isfinite(output.loss)
+    output.loss.backward()
+    gradient = model.model.layers[0].attn.r_proj.weight.grad
+    assert gradient is not None and torch.isfinite(gradient).all()
+    assert float(gradient.abs().sum()) > 0
+
+    model.eval()
+    embeds = model.get_input_embeddings()(ids)
+    with torch.inference_mode():
+        from_ids = model(input_ids=ids, use_cache=False).logits
+        from_embeds = model(inputs_embeds=embeds, use_cache=False).logits
+    torch.testing.assert_close(from_ids, from_embeds)
+    with pytest.raises(NotImplementedError):
+        model(input_ids=ids, output_attentions=True)
+
+
+def test_gradient_checkpointing_disables_cache(tiny_config):
+    model = RWKV7ForCausalLM(tiny_config).train()
+    model.gradient_checkpointing_enable()
+    ids = torch.tensor([[1, 2, 3, 4]])
+    output = model(input_ids=ids, labels=ids, use_cache=True)
+    assert output.past_key_values is None
+    output.loss.backward()

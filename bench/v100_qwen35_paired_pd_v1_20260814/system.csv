@@ -1,3 +1,0 @@
-name, uuid, pci.bus_id, compute_cap, driver_version, memory.total [MiB], power.limit [W], clocks.current.sm [MHz], clocks.max.sm [MHz], clocks.current.memory [MHz], clocks.max.memory [MHz]
-Tesla V100-PCIE-32GB, GPU-18fbf081-3c6d-d65b-11b8-288a4ce1ab28, 00000000:1A:00.0, 7.0, 580.173.02, 32768 MiB, 250.00 W, 135 MHz, 1380 MHz, 877 MHz, 877 MHz
-Tesla V100-PCIE-32GB, GPU-f65db2e8-87bb-c88d-363f-23c79f793548, 00000000:3D:00.0, 7.0, 580.173.02, 32768 MiB, 250.00 W, 135 MHz, 1380 MHz, 877 MHz, 877 MHz

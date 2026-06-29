@@ -1,8 +1,5 @@
 name: cpu-smoke
 
-# Cheap required PR gate. It creates a brand-new venv, installs the wheel and
-# [test] extra, proves all tests collect, and runs the fast CPU/offline subset.
-
 on:
   push:
     branches: [main]
@@ -12,19 +9,16 @@ permissions:
   contents: read
 
 jobs:
-  clean-install-smoke:
+  reference-model:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    env:
-      RWKV7_CPU_ONLY: "1"
-      PYTHON_BIN: python
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-
-      - name: Clean install, collection, and fast smoke
-        run: scripts/run_clean_install_tests.sh smoke
+      - run: python -m pip install -e ".[test]"
+      - run: python -m pytest -q
+      - run: rwkv7-hf --version
+      - run: rwkv7-hf convert --help

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rwkv7-hf"
-version = "0.8.1"
-description = "Native Hugging Face adapter and converter for official RWKV-7 checkpoints."
+version = "0.9.0"
+description = "Readable pure-PyTorch Hugging Face reference model and converter for RWKV-7."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -23,7 +23,7 @@ classifiers = [
 ]
 dependencies = [
   "torch",
-  "transformers>=5.12.1,<6",
+  "transformers>=4.48,<6",
   "safetensors",
   "packaging",
 ]
@@ -31,35 +31,17 @@ dependencies = [
 [project.scripts]
 rwkv7-hf = "rwkv7_hf.cli:cli"
 rwkv7-hf-convert = "rwkv7_hf.converter:cli"
-rwkv7-hf-doctor = "rwkv7_hf.doctor:cli"
-rwkv7-hf-kernels = "rwkv7_hf.kernels_cli:cli"
 rwkv7-hf-smoke = "rwkv7_hf.smoke:cli"
 
 [project.optional-dependencies]
-cuda = ["ninja; platform_system == 'Linux'"]
-# torch_npu wheels are CANN-, architecture-, and Python-specific.  Install the
-# matching Huawei wheel first; this empty extra provides a stable adapter lane.
-ascend = []
-# torch_br wheels are distributed with a matched BIRENSUPA runtime image.
-biren = []
-# MetaX PyTorch/MXMACA wheels are distributed with the vendor runtime image.
-metax = []
 fla = ["flash-linear-attention"]
 fla-reference = ["flash-linear-attention"]
 test = [
   "pytest>=8.0",
   "numpy",
   "tomli>=2.0; python_version < '3.11'",
-  "peft>=0.19.1,<1",
-  "accelerate",
-  "datasets",
-  "trl>=1.7,<2",
-  "mlx; platform_system == 'Darwin' and platform_machine == 'arm64'",
 ]
-train = ["peft>=0.19.1,<1", "accelerate", "datasets", "trl>=1.7,<2", "deepspeed"]
-quant = ["bitsandbytes"]
-torchao = ["torchao; platform_system == 'Linux'"]
-mlx = ["mlx; platform_system == 'Darwin' and platform_machine == 'arm64'"]
+train = ["peft>=0.19.1,<1", "accelerate", "datasets", "trl==1.10.0"]
 
 [project.urls]
 Homepage = "https://github.com/rwkv-rs/hf-adapter"
@@ -71,22 +53,14 @@ Issues = "https://github.com/rwkv-rs/hf-adapter/issues"
 include = ["rwkv7_hf*"]
 
 [tool.setuptools.package-data]
-rwkv7_hf = ["csrc/marlin/*", "csrc/marlin/core/*", "csrc/musa/*", "csrc/train_temp/*"]
+rwkv7_hf = ["chat_template.jinja"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers"
 testpaths = ["tests"]
 markers = [
-  "cpu: safe in the CPU/offline collection lane; hardware-gated items may skip",
-  "cuda: covers a CUDA runtime, kernel, graph, or CUDA-specific integration",
-  "sm70: covers the Volta/V100 sm_70 policy or exact-card evidence contract",
-  "ada: covers Ada/RTX 40 policy or exact-card evidence contracts",
-  "blackwell: covers Blackwell/RTX 50 policy or exact-card evidence contracts",
-  "apple: covers Apple MPS, MLX, Metal, CoreML, or Apple evidence contracts",
-  "musa: covers Moore Threads MUSA runtime, kernel, or evidence contracts",
-  "ascend: covers Huawei Ascend NPU runtime, graph, quantization, or evidence contracts",
-  "biren: covers Biren BR106M/BIRENSUPA runtime, policy, or evidence contracts",
-  "metax: covers MetaX C500/MXMACA runtime, policy, or evidence contracts",
+  "cpu: runs without an accelerator",
+  "cuda: requires a CUDA device",
   "slow: integration/evidence test unsuitable for the fast pull-request subset",
   "model_required: requires an external converted checkpoint or model fixture",
 ]

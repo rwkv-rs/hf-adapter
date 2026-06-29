@@ -1,5 +1,5 @@
 # coding=utf-8
-"""Download, load, generate, and report the effective RWKV-7 runtime route."""
+"""Download an RWKV-7 HF model and verify prefill plus cached decode."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from typing import Any, Sequence
 
 
 DEFAULT_MODEL = "wangyue114514/rwkv7-g1d-0.1b-hf"
-DEFAULT_REVISION = "v0.7.0"
+DEFAULT_REVISION = "main"
 
 
 def _choose_device(torch_module: Any, requested: str) -> Any:
@@ -152,11 +152,6 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
         decode_seconds = time.perf_counter() - decode_started
 
     generated_ids = torch.cat(generated, dim=1)
-    runtime_report = (
-        model.rwkv7_runtime_report()
-        if hasattr(model, "rwkv7_runtime_report")
-        else {"available": False}
-    )
     peak_memory = (
         int(torch.cuda.max_memory_allocated(device)) if device.type == "cuda" else None
     )
@@ -188,14 +183,12 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
             ),
         },
         "peak_memory_bytes": peak_memory,
-        "runtime": runtime_report,
+        "cache_type": type(cache).__name__,
     }
 
 
 def render_text(report: dict[str, Any]) -> str:
     timing = report["timing"]
-    runtime = report["runtime"]
-    kernels = runtime.get("kernels", {}).get("package", {})
     return "\n".join(
         [
             "RWKV-7 Hugging Face public-model smoke",
@@ -203,8 +196,7 @@ def render_text(report: dict[str, Any]) -> str:
             f"Device: {report['device']} dtype={report['dtype']}",
             f"Prefill: {timing['prefill_tokens_per_second']} tok/s",
             f"Decode: {timing['decode_tokens_per_second']} tok/s",
-            f"Backend: prefill={runtime.get('last_prefill_backend')} decode={runtime.get('last_decode_backend')}",
-            f"Kernel package: {kernels.get('status', 'unknown')}",
+            f"Cache: {report['cache_type']}",
             f"Generated: {report['generated_text']!r}",
             "RESULT: PASS",
         ]

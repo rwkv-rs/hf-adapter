@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 # coding=utf-8
-"""Installed-package manifest for the optional bundled HF adapter layout.
+"""Dependency-free, traversal-safe file helpers used by the converter.
 
-Keep this module dependency-free: converter and sync tools import it before
-optional ML/Apple dependencies are available. Runtime import closure is checked
-by ``tests/test_sync_hf_adapter_code.py``. The source-tooling copy in
-``scripts/adapter_manifest.py`` is kept synchronized by tests.
+``OBSOLETE_08_ADAPTER_FILES`` is only a removal list. It lets an in-place
+conversion clean files emitted by the 0.8 performance-oriented layout; none of
+those modules is copied, imported, or shipped by the 0.9 reference model.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import Iterable
 
 
-ADAPTER_FILES = [
+OBSOLETE_08_ADAPTER_FILES = [
     "ada_lora.py",
     "ada_sparse_ffn.py",
     "ascend_graph_runtime.py",
@@ -114,9 +113,8 @@ ADAPTER_FILES = [
     "tokenization_rwkv7.py",
 ]
 
-# These files were shipped by the historical FLA-backed remote-code adapter.
-# Native checkpoints remove them so stale files cannot suggest or restore the
-# retired default route after an in-place code sync.
+# These files were shipped by the historical remote-code adapter. They remain
+# explicit so either current layout can safely replace them in place.
 LEGACY_REMOTE_CODE_FILES = [
     "configuration_rwkv7.py",
     "modeling_rwkv7.py",
@@ -161,12 +159,25 @@ def validate_manifest_paths(names: Iterable[str]) -> tuple[PurePosixPath, ...]:
     return paths
 
 
-def _contained_path(root: Path, relative: PurePosixPath) -> Path:
+def _contained_path(
+    root: Path,
+    relative: PurePosixPath,
+    *,
+    allow_leaf_symlink: bool = False,
+) -> Path:
     """Resolve a manifest path while refusing symlink/path traversal escapes."""
 
     root = root.resolve()
     candidate = root.joinpath(*relative.parts)
-    resolved = candidate.resolve(strict=False)
+    # A leaf symlink inside a Hugging Face cache snapshot may point to the
+    # shared blobs directory. Removing that leaf is safe and must not be
+    # confused with following it for a write. Parent-directory symlinks remain
+    # forbidden.
+    resolved = (
+        candidate.parent.resolve(strict=False) / candidate.name
+        if allow_leaf_symlink
+        else candidate.resolve(strict=False)
+    )
     try:
         resolved.relative_to(root)
     except ValueError as exc:
@@ -211,7 +222,9 @@ def remove_manifest_files(
     destination_root = Path(destination_root)
     removed: list[Path] = []
     for relative in validate_manifest_paths(names):
-        destination = _contained_path(destination_root, relative)
+        destination = _contained_path(
+            destination_root, relative, allow_leaf_symlink=True
+        )
         if destination.exists() or destination.is_symlink():
             if destination.is_dir() and not destination.is_symlink():
                 raise IsADirectoryError(
@@ -224,7 +237,7 @@ def remove_manifest_files(
 
 
 __all__ = [
-    "ADAPTER_FILES",
+    "OBSOLETE_08_ADAPTER_FILES",
     "LEGACY_REMOTE_CODE_FILES",
     "copy_manifest_files",
     "normalize_manifest_path",

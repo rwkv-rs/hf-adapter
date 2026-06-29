@@ -1,5 +1,5 @@
 # coding=utf-8
-"""Unified command-line interface for the RWKV-7 Hugging Face runtime."""
+"""Small command-line interface for conversion and HF smoke testing."""
 
 from __future__ import annotations
 
@@ -15,14 +15,6 @@ COMMANDS = {
     "convert": (
         "rwkv7_hf.converter",
         "convert an official RWKV-7 .pth checkpoint to Hugging Face format",
-    ),
-    "doctor": (
-        "rwkv7_hf.doctor",
-        "inspect the runtime, accelerator, and selected kernel policy",
-    ),
-    "kernels": (
-        "rwkv7_hf.kernels_cli",
-        "inspect, recommend, list, or install an exact kernel wheel",
     ),
     "smoke": (
         "rwkv7_hf.smoke",
@@ -55,7 +47,7 @@ def render_help() -> str:
     )
     return (
         "usage: rwkv7-hf <command> [options]\n\n"
-        "RWKV-7 Hugging Face runtime and checkpoint tools.\n\n"
+        "RWKV-7 Hugging Face reference-model tools.\n\n"
         f"commands:\n{commands}\n\n"
         "options:\n"
         "  -h, --help     show this help message\n"

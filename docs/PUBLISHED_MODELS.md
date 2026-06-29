@@ -1,117 +1,14 @@
-# Published RWKV7-G1 Hugging Face Models
+# Published model repositories
 
-Chinese version: [`PUBLISHED_MODELS_ZH.md`](PUBLISHED_MODELS_ZH.md)
+| Model | Parameters | Repository |
+|---|---:|---|
+| G1d 0.1B | 191M | [wangyue114514/rwkv7-g1d-0.1b-hf](https://huggingface.co/wangyue114514/rwkv7-g1d-0.1b-hf) |
+| G1d 0.4B | 451M | [wangyue114514/rwkv7-g1d-0.4b-hf](https://huggingface.co/wangyue114514/rwkv7-g1d-0.4b-hf) |
+| G1g 1.5B | 1.53B | [wangyue114514/rwkv7-g1g-1.5b-hf](https://huggingface.co/wangyue114514/rwkv7-g1g-1.5b-hf) |
+| G1g 2.9B | 2.95B | [wangyue114514/rwkv7-g1g-2.9b-hf](https://huggingface.co/wangyue114514/rwkv7-g1g-2.9b-hf) |
+| G1g 7.2B | 7.20B | [wangyue114514/rwkv7-g1g-7.2b-hf](https://huggingface.co/wangyue114514/rwkv7-g1g-7.2b-hf) |
+| G1g 13.3B | 13.27B | [wangyue114514/rwkv7-g1g-13.3b-hf](https://huggingface.co/wangyue114514/rwkv7-g1g-13.3b-hf) |
 
-The ready-to-load FP16 family is grouped in the
-[`RWKV7-G1 Transformers` collection](https://huggingface.co/collections/wangyue114514/rwkv7-g1-transformers-6a85b04191034d4c2d1896f1).
-Each model is an independent Transformers repository. Its immutable `v0.7.0`
-manifest records the publishing runtime; the repositories are compatible with
-the current `rwkv7-hf==0.8.1` runtime.
-
-## Model matrix
-
-| Model | Parameters | FP16 weight files | Weight bytes | Conservative available-memory starting point |
-|---|---:|---:|---:|---:|
-| [`rwkv7-g1d-0.1b-hf`](https://huggingface.co/wangyue114514/rwkv7-g1d-0.1b-hf) | 191,034,624 | 1 | 0.38 GB | 1 GB |
-| [`rwkv7-g1d-0.4b-hf`](https://huggingface.co/wangyue114514/rwkv7-g1d-0.4b-hf) | 450,767,872 | 1 | 0.90 GB | 2 GB |
-| [`rwkv7-g1g-1.5b-hf`](https://huggingface.co/wangyue114514/rwkv7-g1g-1.5b-hf) | 1,527,404,544 | 6 | 3.05 GB | 6 GB |
-| [`rwkv7-g1g-2.9b-hf`](https://huggingface.co/wangyue114514/rwkv7-g1g-2.9b-hf) | 2,947,735,040 | 13 | 5.90 GB | 10 GB |
-| [`rwkv7-g1g-7.2b-hf`](https://huggingface.co/wangyue114514/rwkv7-g1g-7.2b-hf) | 7,199,141,888 | 4 | 14.40 GB | 20 GB |
-| [`rwkv7-g1g-13.3b-hf`](https://huggingface.co/wangyue114514/rwkv7-g1g-13.3b-hf) | 13,269,245,952 | 7 | 26.54 GB | 32 GB |
-
-The memory column is a first-load guideline, not a universal peak-VRAM claim.
-Backend, dtype, batch size, prompt length, training, quantization, and device
-placement can all change the actual requirement. Start with 0.1B when checking
-a new environment.
-
-## Install and load directly
-
-```bash
-python -m pip install "rwkv7-hf==0.8.1"
-rwkv7-hf doctor
-```
-
-Normal users do not need this repository or the original `.pth` files. On
-Linux NVIDIA, inspect the exact runtime before installing an optional prebuilt
-binary:
-
-```bash
-rwkv7-hf kernels status
-rwkv7-hf kernels recommend
-# Run only when one exact compatible wheel is listed:
-rwkv7-hf kernels install
-rwkv7-hf doctor
-```
-
-The base package never guesses a GPU wheel. Once an exact wheel is present,
-runtime selection is automatic; otherwise the JIT/portable fallbacks remain
-available.
-
-```python
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
-
-model_id = "wangyue114514/rwkv7-g1d-0.1b-hf"
-tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-model = AutoModelForCausalLM.from_pretrained(
-    model_id,
-    trust_remote_code=True,
-    dtype="auto",
-).eval()
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-model = model.to(device)
-inputs = tokenizer("User: Hello! Assistant:", return_tensors="pt")
-inputs = {name: value.to(device) for name, value in inputs.items()}
-with torch.inference_mode():
-    output = model.generate(**inputs, max_new_tokens=16)
-print(tokenizer.decode(output[0], skip_special_tokens=True))
-```
-
-For a first-run acceptance report without writing Python:
-
-```bash
-rwkv7-hf smoke \
-  --model wangyue114514/rwkv7-g1d-0.1b-hf \
-  --revision v0.7.0 \
-  --device auto \
-  --output rwkv7-smoke.json
-```
-
-The command must end with `RESULT: PASS`. Its timings are installation
-telemetry rather than a general benchmark claim.
-
-The model repositories contain weights, config, tokenizer assets, and three
-small remote-code entrypoints. The maintained implementation and optimized
-operators come from the compatible PyPI package instead of being copied into
-every model repository.
-
-## One-command release verification
-
-From a checkout of this repository:
-
-```bash
-python scripts/verify_hf_release.py \
-  --model wangyue114514/rwkv7-g1d-0.1b-hf
-```
-
-Success ends with `RESULT: PASS`. The command verifies the Hub revision,
-conversion manifest, remote LFS sizes and SHA256 values, config, tokenizer,
-loading keys, parameter count, finite logits, and a real generation.
-
-For large repositories, verify metadata without downloading the weights:
-
-```bash
-python scripts/verify_hf_release.py \
-  --model wangyue114514/rwkv7-g1g-13.3b-hf \
-  --metadata-only
-```
-
-## Published models versus source checkpoints
-
-[`BlinkDL/rwkv7-g1`](https://huggingface.co/BlinkDL/rwkv7-g1) remains the
-authoritative multi-checkpoint archive. The repositories above are the
-productized Transformers form: one independently loadable model per repository,
-grouped by a Hub Collection. Every repository includes a
-`conversion_manifest.json` that records the source revision, source and output
-hashes, parameter count, runtime version, and validation result.
+Each size is an independent HF repository. Release `v0.9.0` updates
+reference code and configuration in place; old tags and weights stay immutable.
+Safetensors are not uploaded again when SHA256 is unchanged.

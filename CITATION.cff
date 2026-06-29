@@ -1,8 +1,7 @@
 cff-version: 1.2.0
 message: >-
-  If you use the RWKV-7 Transformers adapter, recurrent-state ABI,
-  quantization integration, or serving-engine porting specifications,
-  please cite this software.
+  If you use the readable RWKV-7 Transformers reference implementation,
+  converter, or reproducibility tooling, please cite this software.
 title: RWKV-7 Hugging Face Adapter
 type: software
 authors:
@@ -12,12 +11,11 @@ authors:
 repository-code: https://github.com/rwkv-rs/hf-adapter
 url: https://github.com/rwkv-rs/hf-adapter
 license: MIT
-version: 0.8.1
-date-released: 2026-08-21
+version: 0.9.0
+date-released: 2026-08-25
 keywords:
   - RWKV-7
   - Transformers
   - recurrent state
-  - quantization
-  - vLLM
-  - SGLang
+  - reference implementation
+  - reproducibility

@@ -152,14 +152,14 @@ def main() -> int:
     ap.add_argument("--attn-mode", choices=["chunk", "fused_recurrent"], default="chunk")
     ap.add_argument(
         "--adapter-layout",
-        choices=["thin", "bundled"],
-        default="thin",
-        help="Use package-backed thin entrypoints (default) or bundle a runtime snapshot",
+        choices=["reference", "thin"],
+        default="reference",
+        help="Write the self-contained reference implementation (default) or the legacy package-backed thin entrypoints",
     )
     ap.add_argument(
         "--runtime-package-version",
         default=None,
-        help="Optional rwkv7-hf version embedded in thin entrypoint install hints",
+        help="Optional rwkv7-hf version embedded in legacy thin-entrypoint install hints",
     )
     norm_group = ap.add_mutually_exclusive_group()
     norm_group.add_argument("--fuse-norm", dest="fuse_norm", action="store_true")

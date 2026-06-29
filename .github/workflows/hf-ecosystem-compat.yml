@@ -1,11 +1,6 @@
 name: hf-ecosystem-compat
 
-# Supported-range gate: exact evidence-backed minimums plus the newest resolver
-# result inside the declared Transformers/PEFT/TRL major-version bounds.
-
 on:
-  push:
-    branches: [main]
   pull_request:
   schedule:
     - cron: "41 4 * * 2"
@@ -15,32 +10,34 @@ permissions:
   contents: read
 
 jobs:
-  compatibility:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+  transformers:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - lane: minimum
-            python: "3.10"
-            constraints: configs/ci/hf-minimum.txt
-          - lane: current
-            python: "3.12"
-            constraints: ""
-    name: ${{ matrix.lane }} / py${{ matrix.python }}
-    env:
-      PYTHON_BIN: python
-      RWKV7_CPU_ONLY: "1"
-      RWKV7_HF_COMPAT_LANE: ${{ matrix.lane }}
-      RWKV7_CONSTRAINTS_FILE: ${{ matrix.constraints }}
+          - python: "3.10"
+            transformers: "transformers==4.48.3"
+          - python: "3.12"
+            transformers: "transformers<6"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
           cache: pip
+      - run: python -m pip install -e ".[test]" "${{ matrix.transformers }}"
+      - run: python -m pytest -q
 
-      - name: Clean install and HF ecosystem compatibility gate
-        run: scripts/run_clean_install_tests.sh compat
+  training-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e ".[test,train]"
+      - run: python -m pytest -q tests/test_training_ecosystem.py
