@@ -28,6 +28,12 @@ separate release gate.
 V100 runs FP32 and FP16. RTX 4080 runs FP32, FP16 and BF16. Every output bundle
 records command, code SHA, FLA revision, model file hashes, environment and GPU.
 
+The first provenance-complete RTX 4080 FP16 run is archived at
+[`results/4080-reference-20260825`](../results/4080-reference-20260825/README.md).
+It is deliberately marked failed: B=4/T=1 measured 0.15625 and B=4/T=128
+measured 0.28125 against the fixed 0.15 max-absolute-logit limit. Do not treat
+that bundle as a passing release result or loosen the gate to accommodate it.
+
 ## lm_eval
 
 Install the fixed harness:

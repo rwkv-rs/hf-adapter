@@ -1,0 +1,3 @@
+8aa0fb580a0c5d442b28f63b9b08c2c60a81821f7c60e79307c11a1a3a2693e0  /home/wzu/codex-run/rwkv7-reference-convert-4080/model/model.safetensors
+ebbcc329fd332479b5f9730543d2c0d5b7412ae93688733536c209072d4eae11  /home/wzu/codex-run/rwkv7-reference-convert-4080/model/config.json
+b136713e905cd7b51ecda6390ba94bad550b3154e2a2f96d64b52d3b79d4f30b  /home/wzu/codex-run/rwkv7-reference-convert-4080/model/modeling_rwkv7.py

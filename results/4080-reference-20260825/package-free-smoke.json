@@ -1,0 +1,34 @@
+{
+  "config": "RWKV7Config",
+  "model_type": "rwkv7",
+  "model": "RWKV7ForCausalLM",
+  "cache": "RWKV7Cache",
+  "shape": [
+    1,
+    4,
+    65536
+  ],
+  "generated": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "chat": "User: Hello\nAssistant:",
+  "files": [
+    "cache_rwkv7.py",
+    "chat_template.jinja",
+    "config.json",
+    "configuration_rwkv7.py",
+    "generation_config.json",
+    "model.safetensors",
+    "modeling_rwkv7.py",
+    "ops_rwkv7.py",
+    "rwkv_vocab_v20230424.txt",
+    "special_tokens_map.json",
+    "tokenization_rwkv7.py",
+    "tokenizer_config.json"
+  ]
+}
