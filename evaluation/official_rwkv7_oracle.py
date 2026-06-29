@@ -144,6 +144,17 @@ class OfficialRWKV7:
         for name, value in loaded.items():
             target_dtype = torch.float32 if name.endswith("att.w0") else dtype
             self.weights[name] = value.squeeze().to(device=device, dtype=target_dtype)
+        # Official low-rank matrices are stored as [in, rank] / [rank, out],
+        # while nn.Linear stores their transposes.  The equations are identical,
+        # but CUDA may select a different reduced-precision GEMM from the memory
+        # layout alone.  Materialize the exact HF views so this is a semantic
+        # checkpoint oracle rather than a comparison of two BLAS layout choices.
+        # Native-layout numbers remain a non-blocking diagnostic in the vendored
+        # official demo and the separate FLA benchmark.
+        self.low_rank_linear: dict[str, torch.Tensor] = {}
+        for name, value in self.weights.items():
+            if name.endswith(("att.w1", "att.w2", "att.a1", "att.a2", "att.v1", "att.v2", "att.g1", "att.g2")):
+                self.low_rank_linear[name] = value.transpose(-1, -2).contiguous()
         del loaded
         gc.collect()
 
@@ -178,6 +189,18 @@ class OfficialRWKV7:
 
     def _linear(self, value: torch.Tensor, name: str) -> torch.Tensor:
         return F.linear(value, self.weights[name])
+
+    def _low_rank(
+        self,
+        value: torch.Tensor,
+        first: str,
+        second: str,
+        activation=None,
+    ) -> torch.Tensor:
+        value = F.linear(value, self.low_rank_linear[first])
+        if activation is not None:
+            value = activation(value)
+        return F.linear(value, self.low_rank_linear[second])
 
     @torch.inference_mode()
     def step(
@@ -227,14 +250,18 @@ class OfficialRWKV7:
             xg = attention_input + delta * self.weights[att + "x_g"]
 
             receptance = self._linear(xr, att + "receptance.weight")
-            raw_decay = torch.tanh(xw @ self.weights[att + "w1"]) @ self.weights[att + "w2"]
+            raw_decay = self._low_rank(
+                xw, att + "w1", att + "w2", torch.tanh
+            )
             key = self._linear(xk, att + "key.weight")
             value = self._linear(xv, att + "value.weight")
             in_context = torch.sigmoid(
                 self.weights[att + "a0"]
-                + (xa @ self.weights[att + "a1"]) @ self.weights[att + "a2"]
+                + self._low_rank(xa, att + "a1", att + "a2")
             )
-            gate = torch.sigmoid(xg @ self.weights[att + "g1"]) @ self.weights[att + "g2"]
+            gate = self._low_rank(
+                xg, att + "g1", att + "g2", torch.sigmoid
+            )
 
             normalized_key = key * self.weights[att + "k_k"]
             normalized_key = F.normalize(
@@ -250,7 +277,7 @@ class OfficialRWKV7:
             else:
                 value_mix = torch.sigmoid(
                     self.weights[att + "v0"]
-                    + (xv @ self.weights[att + "v1"]) @ self.weights[att + "v2"]
+                    + self._low_rank(xv, att + "v1", att + "v2")
                 )
                 value = value + (v_first - value) * value_mix
 
