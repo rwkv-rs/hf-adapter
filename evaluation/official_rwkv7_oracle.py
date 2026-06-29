@@ -214,9 +214,12 @@ class OfficialRWKV7:
         batch_size = int(tokens.shape[0])
         if active is None:
             active = torch.ones(batch_size, device=self.device, dtype=torch.bool)
-        active_hidden = active.view(batch_size, 1)
+        # Keep the singleton time dimension used by the HF model.  CUDA GEMM
+        # kernels can round FP16/BF16 differently for [B,D] and [B,1,D] even
+        # though they describe the same token batch.
+        active_hidden = active.view(batch_size, 1, 1)
         active_state = active.view(batch_size, 1, 1, 1)
-        x = self.embedding[tokens]
+        x = self.embedding[tokens].unsqueeze(1)
         # The NumPy oracle applies ln0 per token. The RNN demo folds the same
         # operation into the embedding table at load time.
         x = F.layer_norm(
@@ -241,7 +244,9 @@ class OfficialRWKV7:
                 self.weights[block + "ln1.bias"],
                 1e-5,
             )
-            delta = state.attention_shift[layer_idx] - attention_input
+            delta = (
+                state.attention_shift[layer_idx].unsqueeze(1) - attention_input
+            )
             xr = attention_input + delta * self.weights[att + "x_r"]
             xw = attention_input + delta * self.weights[att + "x_w"]
             xk = attention_input + delta * self.weights[att + "x_k"]
@@ -308,12 +313,12 @@ class OfficialRWKV7:
                 weight=self.weights[att + "ln_x.weight"],
                 bias=self.weights[att + "ln_x.bias"],
                 eps=self.head_dim * 1e-5,
-            )
+            ).unsqueeze(1)
             direct = (
                 (r * k * self.weights[att + "r_k"].view(1, self.num_heads, self.head_dim))
                 .sum(dim=-1, keepdim=True)
                 * v
-            ).view(batch_size, self.hidden_size)
+            ).view(batch_size, 1, self.hidden_size)
             attention_output = self._linear(
                 (recurrent_output + direct) * gate,
                 att + "output.weight",
@@ -322,7 +327,9 @@ class OfficialRWKV7:
                 active_hidden, attention_output, torch.zeros_like(attention_output)
             )
             state.attention_shift[layer_idx] = torch.where(
-                active_hidden, attention_input, state.attention_shift[layer_idx]
+                active.view(batch_size, 1),
+                attention_input[:, 0],
+                state.attention_shift[layer_idx],
             )
             state.recurrent_vk[layer_idx] = torch.where(
                 active_state, candidate, previous
@@ -336,7 +343,7 @@ class OfficialRWKV7:
                 self.weights[block + "ln2.bias"],
                 1e-5,
             )
-            ffn_delta = state.ffn_shift[layer_idx] - ffn_input
+            ffn_delta = state.ffn_shift[layer_idx].unsqueeze(1) - ffn_input
             ffn_key = self._linear(
                 ffn_input + ffn_delta * self.weights[ffn + "x_k"],
                 ffn + "key.weight",
@@ -348,11 +355,13 @@ class OfficialRWKV7:
                 active_hidden, ffn_output, torch.zeros_like(ffn_output)
             )
             state.ffn_shift[layer_idx] = torch.where(
-                active_hidden, ffn_input, state.ffn_shift[layer_idx]
+                active.view(batch_size, 1),
+                ffn_input[:, 0],
+                state.ffn_shift[layer_idx],
             )
             x = torch.where(active_hidden, x + ffn_output, torch.zeros_like(x))
             if collect_blocks:
-                blocks.append(x.detach().cpu())
+                blocks.append(x[:, 0].detach().cpu())
 
         final_hidden = F.layer_norm(
             x,
@@ -366,7 +375,7 @@ class OfficialRWKV7:
         )
         logits = self._linear(final_hidden, "head.weight")
         logits = torch.where(active_hidden, logits, torch.zeros_like(logits))
-        return logits, state, blocks, final_hidden.detach().cpu()
+        return logits[:, 0], state, blocks, final_hidden[:, 0].detach().cpu()
 
     @torch.inference_mode()
     def forward(
