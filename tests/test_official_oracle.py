@@ -117,9 +117,11 @@ def test_official_equations_match_tiny_hf_model(tmp_path):
         input_ids, collect_blocks=True
     )
     output = model(input_ids, use_cache=True, output_hidden_states=True)
-    assert tensor_metrics(official_logits, output.logits)["max_abs"] == 0
-    assert tensor_metrics(blocks[0], output.hidden_states[1])["max_abs"] == 0
-    assert tensor_metrics(final_hidden, output.hidden_states[-1])["max_abs"] == 0
+    # Batched and token-wise BLAS calls can differ by one FP32 rounding unit;
+    # the synthetic fixture must still agree far inside the release tolerance.
+    assert tensor_metrics(official_logits, output.logits)["max_abs"] < 1e-7
+    assert tensor_metrics(blocks[0], output.hidden_states[1])["max_abs"] < 1e-7
+    assert tensor_metrics(final_hidden, output.hidden_states[-1])["max_abs"] < 1e-7
     for layer_idx in range(config.num_hidden_layers):
         row = tensor_metrics(
             official_state.recurrent_vk[layer_idx].transpose(-1, -2),
