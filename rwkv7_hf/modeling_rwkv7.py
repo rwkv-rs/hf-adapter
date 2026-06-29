@@ -8,6 +8,7 @@ is rwkv7_recurrent in ops_rwkv7.py.
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import torch
@@ -26,8 +27,8 @@ from .configuration_rwkv7 import RWKV7Config
 from .ops_rwkv7 import rwkv7_recurrent
 
 
-# Official RWKV-7 uses this rounded constant in the published one-token path.
-RWKV7_DECAY_BASE = 0.606531
+# Mathematically equivalent form used by the official NumPy reference.
+RWKV7_DECAY_BASE = math.exp(-0.5)
 
 
 def _layer_norm(hidden_size: int, eps: float, bias: bool) -> nn.LayerNorm:
@@ -225,7 +226,16 @@ class RWKV7TimeMix(nn.Module):
         xg = hidden_states + delta * self.x_g
 
         receptance = self.r_proj(xr)
-        raw_decay = self.w_lora.project(xw, torch.tanh)
+        # ``w0`` is evaluated in FP32 by the official implementation.  Keep
+        # the low-rank update in the model dtype, then add the stored bias only
+        # after promoting both terms.  This is especially important when a
+        # FP16 checkpoint is executed as BF16.
+        decay_rank = torch.tanh(self.w_lora.lora[0](xw))
+        raw_decay = F.linear(
+            decay_rank,
+            self.w_lora.lora[2].weight,
+            bias=None,
+        )
         key = self.k_proj(xk)
         value = self.v_proj(xv)
         in_context_learning = torch.sigmoid(self.a_lora.project(xa))
@@ -238,10 +248,10 @@ class RWKV7TimeMix(nn.Module):
                 sequence_length,
                 self.num_heads,
                 self.head_dim,
-            ).float(),
+            ),
             p=2,
             dim=-1,
-        ).to(dtype=key.dtype).view(
+        ).view(
             batch_size, sequence_length, self.attention_hidden_size
         )
         key = key * (
@@ -258,8 +268,12 @@ class RWKV7TimeMix(nn.Module):
             value_mix = torch.sigmoid(self.v_lora.project(xv))
             value = value + (v_first - value) * value_mix
 
+        decay_bias = self.w_lora.lora[2].bias
+        if decay_bias is None:  # pragma: no cover - checkpoint contract guard
+            raise RuntimeError("RWKV7 decay projection requires the w0 bias")
         decay = torch.exp(
-            -RWKV7_DECAY_BASE * torch.sigmoid(raw_decay.float())
+            -RWKV7_DECAY_BASE
+            * torch.sigmoid(raw_decay.float() + decay_bias.float())
         )
 
         shape = (
@@ -409,6 +423,10 @@ class RWKV7PreTrainedModel(PreTrainedModel):
     _skip_keys_device_placement = ["past_key_values"]
     _supports_cache_class = True
     _tied_weights_keys = {}
+    # Official RWKV-7 promotes w0 for both FP16 and BF16 execution.  This also
+    # tells ``from_pretrained(dtype=...)`` not to downcast the parameter after
+    # the self-contained model has been instantiated.
+    _keep_in_fp32_modules_strict = ["w_lora.lora.2.bias"]
 
     @classmethod
     def _supports_default_dynamic_cache(cls) -> bool:

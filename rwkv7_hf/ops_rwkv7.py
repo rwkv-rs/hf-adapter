@@ -60,15 +60,20 @@ def rwkv7_recurrent(
         )
 
     state = initial_state
-    state_dtype = state.dtype
     outputs: list[torch.Tensor] = []
     for token_idx in range(time):
-        r_t = receptance[:, token_idx].to(dtype=state_dtype)
-        w_t = decay[:, token_idx].to(dtype=state_dtype)
-        k_t = key[:, token_idx].to(dtype=state_dtype)
-        v_t = value[:, token_idx].to(dtype=state_dtype)
-        a_t = a[:, token_idx].to(dtype=state_dtype)
-        b_t = b[:, token_idx].to(dtype=state_dtype)
+        # Match the official reference's mixed-precision contract exactly:
+        # projections and their outer products stay in the model dtype, while
+        # the accumulated recurrent state and decay are FP32.  Casting every
+        # operand to the state dtype here looks numerically attractive, but it
+        # is a different model in FP16/BF16 and makes a converted checkpoint
+        # diverge from the official token-wise implementation.
+        r_t = receptance[:, token_idx]
+        w_t = decay[:, token_idx].to(dtype=state.dtype)
+        k_t = key[:, token_idx]
+        v_t = value[:, token_idx]
+        a_t = a[:, token_idx]
+        b_t = b[:, token_idx]
 
         # The public/cache layout is [K,V]. Evaluate the equation in the
         # official [V,K] presentation, then transpose the result back. Keeping
@@ -79,11 +84,13 @@ def rwkv7_recurrent(
         vk = v_t.unsqueeze(-1) @ k_t.unsqueeze(-2)
         candidate_vk = (
             state_vk * w_t.unsqueeze(-2)
-            + state_vk @ ab
-            + vk
+            + state_vk @ ab.to(dtype=state.dtype)
+            + vk.to(dtype=state.dtype)
         )
         candidate = candidate_vk.transpose(-1, -2)
-        output = (candidate_vk @ r_t.unsqueeze(-1)).squeeze(-1)
+        output = (
+            candidate_vk.to(dtype=r_t.dtype) @ r_t.unsqueeze(-1)
+        ).squeeze(-1)
 
         if attention_mask is not None:
             active = attention_mask[:, token_idx]
