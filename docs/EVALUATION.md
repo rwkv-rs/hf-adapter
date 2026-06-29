@@ -13,6 +13,14 @@ paths and independent state containers. A mismatch is localized at projection,
 decay, normalized key, WKV output/state, normalization, block output, and final
 logits before changing model mathematics.
 
+For FP32 logits the harness follows the official NumPy verification metric,
+`max(abs(reference-candidate)) / std(reference) <= 1e-4`; recurrent and shift
+states use `rtol=1e-4, atol=1e-5`. Low-precision tensors must be finite with
+cosine at least 0.9999, FP16 logits additionally use max-absolute error 0.15,
+and 64-token greedy output must match exactly. Per-layer traces are diagnostic
+and identify where accumulation begins; they are not an additional gate once
+the official final outputs, state, loss, padding, and greedy checks pass.
+
 ## Optional FLA backend diagnostic
 
 FLA is an optimized training/inference backend reference, not the correctness
