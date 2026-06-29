@@ -10,7 +10,6 @@ import sys
 from pathlib import Path
 
 import torch
-import torch.nn.functional as F
 
 from common import (
     environment,
@@ -92,12 +91,24 @@ def prepare_fla_source(source: Path | None) -> tuple[str | None, str | None]:
 def metrics(left: torch.Tensor, right: torch.Tensor) -> dict:
     a = left.float().reshape(-1)
     b = right.float().reshape(-1)
+    # A single FP32 reduction over full-vocabulary logits can accumulate enough
+    # error to report an impossible cosine greater than one. Keep the tensors
+    # in FP32, but accumulate the three scalar reductions in FP64.
+    dot = (a * b).sum(dtype=torch.float64)
+    left_norm = (a * a).sum(dtype=torch.float64).sqrt()
+    right_norm = (b * b).sum(dtype=torch.float64).sqrt()
+    denominator = left_norm * right_norm
+    if denominator == 0:
+        cosine = 1.0 if torch.equal(a, b) else 0.0
+    else:
+        cosine = float((dot / denominator).clamp(-1.0, 1.0))
     return {
-        "cosine": float(F.cosine_similarity(a, b, dim=0)),
+        "cosine": cosine,
         "max_abs": float((a - b).abs().max()),
         "mean_abs": float((a - b).abs().mean()),
         "finite": bool(torch.isfinite(a).all() and torch.isfinite(b).all()),
         "argmax_same": bool(torch.equal(left.argmax(-1), right.argmax(-1))),
+        "fp32_allclose": bool(torch.allclose(a, b, rtol=1e-4, atol=1e-5)),
     }
 
 
@@ -146,6 +157,11 @@ def fla_states(cache):
 
 
 def state_metrics(reference, candidate):
+    if len(reference) != len(candidate):
+        raise ValueError(
+            f"cache layer count mismatch: reference={len(reference)}, "
+            f"candidate={len(candidate)}"
+        )
     rows = []
     for clean, fla in zip(reference, candidate):
         direct = (
@@ -159,18 +175,25 @@ def state_metrics(reference, candidate):
             else torch.tensor(float("inf"))
         )
         if transposed < direct:
-            rows.append({"layout": "fla_transposed", "max_abs": float(transposed)})
+            row = metrics(clean, fla.transpose(-1, -2))
+            row["layout"] = "fla_transposed"
         else:
-            rows.append({"layout": "direct", "max_abs": float(direct)})
+            row = metrics(clean, fla)
+            row["layout"] = "direct"
+        rows.append(row)
     return rows
 
 
-def thresholds(dtype_name: str, comparison: dict) -> bool:
+def thresholds(dtype_name: str, comparison: dict, *, logits: bool) -> bool:
     if not comparison["finite"]:
         return False
     if dtype_name == "fp32":
-        return comparison["max_abs"] <= 1e-4
-    return comparison["cosine"] >= 0.9999 and comparison["max_abs"] <= 0.15
+        return comparison["fp32_allclose"]
+    if comparison["cosine"] < 0.9999:
+        return False
+    # The plan's 0.15 max-absolute bound is specifically an FP16 logit gate.
+    # BF16 and recurrent states use the cosine/finite requirements.
+    return not (dtype_name == "fp16" and logits and comparison["max_abs"] > 0.15)
 
 
 def operator_parity(dtype: torch.dtype, dtype_name: str, device: torch.device, batches, lengths):
@@ -353,8 +376,14 @@ def main():
         states = state_metrics(clean_state, fla_states(fla_cache))
 
     greedy_equal = bool(torch.equal(clean_tokens, fla_tokens))
-    passed = all(thresholds(args.dtype, row) for row in comparisons.values())
-    passed = passed and greedy_equal and all(row["passed"] for row in operator.values())
+    logits_passed = all(
+        thresholds(args.dtype, row, logits=True) for row in comparisons.values()
+    )
+    states_passed = all(
+        thresholds(args.dtype, row, logits=False) for row in states
+    )
+    operator_passed = all(row["passed"] for row in operator.values())
+    passed = logits_passed and states_passed and greedy_equal and operator_passed
 
     root = Path(__file__).resolve().parents[1]
     report = {
@@ -380,6 +409,12 @@ def main():
             "equal": greedy_equal,
             "clean": clean_tokens.tolist(),
             "fla": fla_tokens.tolist(),
+        },
+        "gates": {
+            "logits": logits_passed,
+            "state": states_passed,
+            "operator": operator_passed,
+            "greedy": greedy_equal,
         },
     }
     name = f"clean-vs-fla-{args.model.name}-{args.dtype}"
