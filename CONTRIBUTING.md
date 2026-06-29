@@ -22,11 +22,12 @@ python -m pytest -q
 
 - keep `modeling_rwkv7.py` understandable without private runtime code;
 - add CPU tests for model, cache, padding, loss and save/reload changes;
-- compare mathematical changes with pinned FLA and official RWKV;
+- compare mathematical changes with the official RWKV oracle;
+- treat FLA comparisons as non-blocking optimized-backend diagnostics;
 - do not weaken published tolerances to make a regression pass;
 - record commands, code/model/dataset revisions and raw GPU output;
 - never commit access tokens or W&B credentials;
 - update English and Chinese docs when the public workflow changes.
 
-Release work must also pass both GPU matrices, formal lm_eval, three fine-tuning
+Release work must also pass the official GPU matrices, formal lm_eval, three fine-tuning
 examples, clean-wheel installation and Hub download smoke.

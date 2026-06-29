@@ -6,10 +6,10 @@ from pathlib import Path
 import torch
 
 
-EVALUATION = Path(__file__).resolve().parents[1] / "evaluation"
-sys.path.insert(0, str(EVALUATION))
+FLA_BENCHMARK = Path(__file__).resolve().parents[1] / "benchmarks" / "fla"
+sys.path.insert(0, str(FLA_BENCHMARK))
 
-from compare_fla import metrics, state_metrics, thresholds  # noqa: E402
+from compare import metrics, state_metrics, thresholds  # noqa: E402
 
 
 def test_low_precision_thresholds_match_release_contract():

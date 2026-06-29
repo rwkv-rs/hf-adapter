@@ -104,11 +104,14 @@ def write_bundle(output_dir: Path, name: str, report: dict) -> tuple[Path, Path]
         f"- dtype: {report.get('dtype')}",
         f"- device: {report.get('environment', {}).get('gpu')}",
         f"- code: {report.get('code_sha')}",
-        f"- FLA: {report.get('fla_commit')}",
+    ]
+    if report.get("fla_commit") is not None:
+        lines.append(f"- FLA: {report.get('fla_commit')}")
+    lines.extend([
         "",
         "| case | cosine | max abs | mean abs | argmax |",
         "|---|---:|---:|---:|---|",
-    ]
+    ])
     for case, row in report.get("comparisons", {}).items():
         lines.append(
             f"| {case} | {row['cosine']:.8f} | {row['max_abs']:.8f} | "

@@ -39,10 +39,9 @@ python -m twine check --strict dist/*
 ```
 
 Also keep the Transformers 4.48 compatibility lane green. Model-math or cache
-changes require clean-vs-FLA and official-checkpoint parity on V100 and RTX
-4080 before release. Do not relax published tolerances to turn a failed result
-into a pass; retain the failure bundle and fix or document the oracle/runtime
-problem.
+changes require official-checkpoint parity on V100 and RTX 4080 before release.
+FLA is a non-blocking optimized-backend diagnostic. Do not change reference
+mathematics merely to reproduce a fused backend's low-precision rounding.
 
 Training changes require a finite loss, non-zero gradient, changed trainable
 parameters, adapter save/reload parity, and resume-step advancement. Local

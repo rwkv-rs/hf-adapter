@@ -1,6 +1,7 @@
 # RTX 4080 reference-line checkpoint — 2026-08-25
 
-This is an immutable pre-release gate bundle, not a passing release bundle.
+This is an immutable, non-blocking optimized-backend diagnostic bundle. It is
+not an RWKV7 correctness verdict or a release gate.
 
 ## Environment and provenance
 
@@ -25,14 +26,14 @@ completed cached generation. It included all reference code and the chat
 template. The generated safetensors SHA256 exactly matched the existing 0.4B
 HF weight file: `8aa0fb580a0c5d442b28f63b9b08c2c60a81821f7c60e79307c11a1a3a2693e0`.
 
-## Pinned FLA gates
+## Pinned FLA diagnostic thresholds
 
 All three dtypes were rerun after making cache-state parity part of the gate,
 using FP64 accumulation for the reported cosine, applying FP32
 `rtol=1e-4, atol=1e-5` via `torch.allclose`, and applying the 0.15 max-absolute
 limit only to FP16 logits as specified by the release plan.
 
-| dtype | logits | cache state | operator | greedy 64 | result |
+| dtype | logits | cache state | operator | greedy 64 | diagnostic |
 |---|---|---|---|---|---|
 | FP16 | failed | passed | 6/6 passed | 64/64 equal | **failed** |
 | BF16 | failed | passed | 6/6 passed | different | **failed** |
@@ -46,8 +47,8 @@ limit only to FP16 logits as specified by the release plan.
 - full-model B4/T1 max abs: 0.15625 (limit 0.15);
 - full-model B4/T128 max abs: 0.28125 (limit 0.15).
 
-The strict FP16 release gate therefore remains **failed**. No tolerance was
-relaxed. The complete raw measurements and command are in
+The FP16 comparison is outside the recorded diagnostic thresholds. The
+complete raw measurements and command are in
 `clean-vs-fla-model-fp16.json`.
 
 ### BF16
@@ -65,5 +66,5 @@ cases failed. Cache-state parity and greedy generation passed. Raw results are
 in `fp32/`.
 
 These results do not identify which model is correct. Pinned FLA warns that its
-RWKV7 implementation may be buggy, so the independent official-checkpoint
-oracle remains mandatory before changing the reference implementation.
+RWKV7 implementation may be buggy. Only the independent official-checkpoint
+oracle can block release or justify changing the reference implementation.

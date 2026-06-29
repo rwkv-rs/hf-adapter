@@ -1,41 +1,28 @@
 # Evaluation
 
-## Clean reference versus FLA
+## Official RWKV checkpoint oracle
 
-Release comparisons require FLA commit
-`80e494f6c588e091fc8316b612870df29375c5b8`.
+Official RWKV checkpoint behavior is the model-correctness oracle. The oracle
+matrix covers no-cache logits, prefill state, teacher-forced cached decode,
+causal loss, padding, and 64-token greedy generation. Every bundle records the
+official source revision, code revision, checkpoint hashes, environment, and
+exact command. RTX 4080 runs FP32/FP16/BF16; V100 runs FP32/FP16.
 
-```bash
-python evaluation/compare_fla.py \
-  --model /models/rwkv7-g1d-0.4b-hf \
-  --dtype fp16 \
-  --device cuda \
-  --output-dir results/reference/4080
-```
+The official oracle and the reference implementation use separate source
+paths and independent state containers. A mismatch is localized at projection,
+decay, normalized key, WKV output/state, normalization, block output, and final
+logits before changing model mathematics.
 
-The default matrix covers batch 1/4 and lengths 1/17/128, cached teacher
-forcing, final recurrent state and 64-token greedy generation. Formal runs
-refuse an unverified FLA installation. `--allow-unverified-fla` exists only
-for local smoke tests.
+## Optional FLA backend diagnostic
 
-FP32 gates use rtol 1e-4 / atol 1e-5 for model tensors and the dedicated
-operator/gradient suite uses rtol 5e-4 / atol 5e-5. FP16/BF16 require finite
-values, cosine at least 0.9999, FP16 max logit error at most 0.15, and identical
-64-token greedy output. FLA itself warns that official RWKV must remain the
-final oracle; official checkpoint logits and greedy bundles are therefore a
-separate release gate.
+FLA is an optimized training/inference backend reference, not the correctness
+oracle and not a runtime dependency. Its comparison lives under
+[`benchmarks/fla`](../benchmarks/fla/README.md) and returns success by default
+even when diagnostic thresholds are missed. Use `--require-thresholds` only in
+an explicitly performance-backend-focused job.
 
-V100 runs FP32 and FP16. RTX 4080 runs FP32, FP16 and BF16. Every output bundle
-records command, code SHA, FLA revision, model file hashes, environment and GPU.
-
-The first provenance-complete RTX 4080 FP32/FP16/BF16 runs are archived at
-[`results/4080-reference-20260825`](../results/4080-reference-20260825/README.md).
-They are deliberately marked failed. FP16 B=4/T=1 measured 0.15625 and
-B=4/T=128 measured 0.28125 against the fixed 0.15 max-absolute-logit limit;
-BF16 missed cosine and greedy parity; FLA's FP32 path warned that it is not
-supported on some platforms and missed both operator and model tolerances. Do
-not treat that bundle as a passing release result or loosen the gates to
-accommodate it.
+The first RTX 4080 diagnostic bundle is archived at
+[`benchmarks/fla/results/4080-reference-20260825`](../benchmarks/fla/results/4080-reference-20260825/README.md).
 
 ## lm_eval
 

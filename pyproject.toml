@@ -34,8 +34,6 @@ rwkv7-hf-convert = "rwkv7_hf.converter:cli"
 rwkv7-hf-smoke = "rwkv7_hf.smoke:cli"
 
 [project.optional-dependencies]
-fla = ["flash-linear-attention"]
-fla-reference = ["flash-linear-attention"]
 test = [
   "pytest>=8.0",
   "numpy",

@@ -8,7 +8,7 @@
 - Made the self-contained `reference` conversion layout the default.
 - Added standard cache, padding, generation, loss, gradient-checkpointing and
   package-free AutoModel tests.
-- Added pinned FLA comparison, formal lm_eval matrix tooling, and direct LoRA
+- Added non-blocking FLA backend diagnostics, formal lm_eval matrix tooling, and direct LoRA
   SFT/DPO/GRPO examples with local reproducibility artifacts.
 - Preserved `NativeRWKV7*` names as compatibility aliases.
 - Moved CUDA/JIT/graph/quantization/hardware-specialized work to

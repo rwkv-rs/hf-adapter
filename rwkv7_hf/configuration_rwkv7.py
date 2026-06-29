@@ -8,7 +8,7 @@ from transformers import PretrainedConfig
 class RWKV7Config(PretrainedConfig):
     """Describe an RWKV-7 checkpoint without selecting a hardware backend.
 
-    The names intentionally match the official checkpoint and FLA RWKV-7
+    The names intentionally match the official RWKV-7 checkpoint
     configuration where practical. Performance policy is not part of the model
     contract: this configuration always selects the reference PyTorch model.
     """

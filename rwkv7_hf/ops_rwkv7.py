@@ -73,7 +73,7 @@ def rwkv7_recurrent(
         # The public/cache layout is [K,V]. Evaluate the equation in the
         # official [V,K] presentation, then transpose the result back. Keeping
         # this multiplication order is important for numerical parity with the
-        # official RWKV implementation and FLA over long recurrent sequences.
+        # official RWKV implementation over long recurrent sequences.
         state_vk = state.transpose(-1, -2)
         ab = a_t.unsqueeze(-1) @ b_t.unsqueeze(-2)
         vk = v_t.unsqueeze(-1) @ k_t.unsqueeze(-2)

@@ -16,12 +16,13 @@ includes:
   directories;
 - Transformers cache, padding, loss, generation, save/reload, Trainer, PEFT,
   and TRL compatibility tests;
-- pinned clean-vs-FLA evaluation, the formal `lm_eval` matrix, and direct
+- non-blocking optimized-backend diagnostics, the formal `lm_eval` matrix, and direct
   LoRA SFT/DPO/GRPO reproducibility examples;
 - release documentation and six-model Hub publication tooling.
 
 The executable evidence for these claims is in [`tests/`](tests/),
-[`evaluation/`](evaluation/), and [`examples/finetune/`](examples/finetune/).
+[`evaluation/`](evaluation/), [`benchmarks/`](benchmarks/), and
+[`examples/finetune/`](examples/finetune/).
 Release readiness is tracked in [`HF_STATUS.md`](HF_STATUS.md).
 
 ## Preserved performance history

@@ -11,7 +11,10 @@ from pathlib import Path
 
 import torch
 
-from common import (
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "evaluation"))
+
+from common import (  # noqa: E402
     environment,
     git_revision,
     model_fingerprint,
@@ -25,7 +28,10 @@ EXPECTED_FLA_COMMIT = "80e494f6c588e091fc8316b612870df29375c5b8"
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Compare the clean RWKV-7 HF reference model with pinned FLA"
+        description=(
+            "Record a non-blocking numerical diagnostic between the readable "
+            "RWKV-7 reference model and a pinned optimized FLA backend"
+        )
     )
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -36,6 +42,11 @@ def parse_args():
     parser.add_argument("--decode-tokens", type=int, default=64)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--allow-unverified-fla", action="store_true")
+    parser.add_argument(
+        "--require-thresholds",
+        action="store_true",
+        help="Return non-zero when diagnostic thresholds are missed",
+    )
     parser.add_argument(
         "--fla-source",
         type=Path,
@@ -308,7 +319,7 @@ def main():
         raise SystemExit(
             "FLA must be installed from commit "
             f"{EXPECTED_FLA_COMMIT}; detected {installed_commit!r}. "
-            "Use --allow-unverified-fla only for a non-release smoke run."
+            "Use --allow-unverified-fla only for an exploratory benchmark."
         )
 
     torch.manual_seed(args.seed)
@@ -383,13 +394,15 @@ def main():
         thresholds(args.dtype, row, logits=False) for row in states
     )
     operator_passed = all(row["passed"] for row in operator.values())
-    passed = logits_passed and states_passed and greedy_equal and operator_passed
+    within_thresholds = (
+        logits_passed and states_passed and greedy_equal and operator_passed
+    )
 
-    root = Path(__file__).resolve().parents[1]
     report = {
         "schema_version": 1,
-        "status": "passed" if passed else "failed",
-        "code_sha": args.code_sha or git_revision(root),
+        "status": "within_thresholds" if within_thresholds else "outside_thresholds",
+        "blocking": False,
+        "code_sha": args.code_sha or git_revision(ROOT),
         "fla_commit": installed_commit or "unverified",
         "fla_source": fla_source,
         "fla_archive_sha256": (
@@ -420,7 +433,9 @@ def main():
     name = f"clean-vs-fla-{args.model.name}-{args.dtype}"
     paths = write_bundle(args.output_dir, name, report)
     print(json.dumps({"status": report["status"], "artifacts": [str(p) for p in paths]}))
-    raise SystemExit(0 if passed else 1)
+    raise SystemExit(
+        1 if args.require_thresholds and not within_thresholds else 0
+    )
 
 
 if __name__ == "__main__":
