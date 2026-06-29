@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata
 import json
 import platform
 import subprocess
@@ -51,6 +52,24 @@ def environment() -> dict:
     import torch
     import transformers
 
+    def package(name: str):
+        try:
+            return importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            return None
+
+    try:
+        driver = subprocess.check_output(
+            [
+                "nvidia-smi",
+                "--query-gpu=driver_version",
+                "--format=csv,noheader",
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).splitlines()[0]
+    except Exception:
+        driver = None
     return {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "command": sys.argv,
@@ -58,7 +77,10 @@ def environment() -> dict:
         "platform": platform.platform(),
         "torch": torch.__version__,
         "transformers": transformers.__version__,
+        "flash_linear_attention": package("flash-linear-attention"),
+        "triton": package("triton"),
         "cuda": torch.version.cuda,
+        "driver": driver,
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
     }
 

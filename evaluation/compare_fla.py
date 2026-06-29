@@ -12,7 +12,13 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
-from common import environment, git_revision, model_fingerprint, write_bundle
+from common import (
+    environment,
+    git_revision,
+    model_fingerprint,
+    sha256_file,
+    write_bundle,
+)
 
 
 EXPECTED_FLA_COMMIT = "80e494f6c588e091fc8316b612870df29375c5b8"
@@ -35,6 +41,15 @@ def parse_args():
         "--fla-source",
         type=Path,
         help="Pinned FLA source checkout/archive directory to prepend to sys.path",
+    )
+    parser.add_argument(
+        "--fla-archive",
+        type=Path,
+        help="Optional downloaded commit archive whose SHA256 is recorded",
+    )
+    parser.add_argument(
+        "--code-sha",
+        help="Source commit for rsync deployments that intentionally omit .git",
     )
     return parser.parse_args()
 
@@ -345,9 +360,14 @@ def main():
     report = {
         "schema_version": 1,
         "status": "passed" if passed else "failed",
-        "code_sha": git_revision(root),
+        "code_sha": args.code_sha or git_revision(root),
         "fla_commit": installed_commit or "unverified",
         "fla_source": fla_source,
+        "fla_archive_sha256": (
+            sha256_file(args.fla_archive.expanduser().resolve())
+            if args.fla_archive is not None
+            else None
+        ),
         "required_fla_commit": EXPECTED_FLA_COMMIT,
         "model": model_fingerprint(args.model),
         "dtype": args.dtype,
