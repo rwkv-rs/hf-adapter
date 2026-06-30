@@ -48,7 +48,7 @@
 
 - correctness：`fuse_norm=false` 下 top5/argmax/cosine/greedy64 均通过，fp16 max_abs 约 0.072。
 - memory：HF 406.4 MB vs official 406.2 MB，0.1B serving path 已基本持平。
-- speed：`fuse_norm=false` + `RWKV7StateCache` 下真实 remote-code HF decode 约 41.2 tok/s，official 约 92.5 tok/s；decode 仍是主优化点。
+- speed：`fuse_norm=false` + `RWKV7StateCache` 下标准 remote-code HF decode 约 41.2 tok/s；`rwkv7_forward_token` V100 bsz=1 约 58.0 tok/s，bsz=1/2/4/8 batch sweep per-seq 约 55 tok/s，dynamic batch 从 205.2 提升到 345.7 total tok/s；official 约 90 tok/s，decode 仍是主优化点。
 - profiler：`fuse_norm=true` 的 FLA `LayerNormFunction` CPU 开销很大，native norm 把 norm CPU total 从约 54.8ms/6tok 降到约 6.6ms/6tok。
 - breakdown：argmax 开销约等于 0，`chunk` 和 `fused_recurrent` 单 token decode 基本一样，剩余瓶颈在 HF/FLA model+state/cache+小 kernel launch 路径。
 
@@ -68,7 +68,7 @@
    - 继续 profile 单 token decode
    - `RWKV7StateCache` 已减少 generic CacheLayer 开销
    - 已新增 `rwkv7_forward_token` batched one-token fast decode entrypoint，并保留 `rwkv7_forward_one` bsz=1 兼容入口
-   - 已新增 batch cache/sweep、dynamic-batch reorder/drop harness、decode microbench 和 gap analyzer；服务器恢复后运行 `./bench/run_v100_fast_decode_validation.sh` 补正式 V100 fast-decode、bsz sweep、dynamic batch、micro timing benchmark，并用 `bench/analyze_results.py` 生成下一轮优化焦点
+   - 已新增 batch cache/sweep、dynamic-batch reorder/drop harness、decode microbench 和 gap analyzer；V100 bundle 已跑通，下一轮重点是把 fast-token path 从约 0.64x official 继续推近 0.9x，主要减少 tiny kernel launch / Python dispatch
 
 ## 阶段 3：Transformers 原生 PR 方向
 

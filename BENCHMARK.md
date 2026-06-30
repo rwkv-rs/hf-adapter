@@ -118,6 +118,7 @@ Result on Tesla V100:
 | HF adapter, `fuse_norm=true` | 11852.0 | 31.5 | 31.70 | 406.4 MB |
 | HF adapter, `fuse_norm=false` | 14247.7 | 41.3 | 24.24 | 406.4 MB |
 | HF adapter, `fuse_norm=false`, `RWKV7StateCache` | 13801.4 | 41.2 | 24.28 | 406.4 MB |
+| HF adapter, `rwkv7_forward_token` | 13954.7 | 58.0 | 17.25 | 406.4 MB |
 | official `rwkv` | 225.0 | 92.5 | 10.81 | 406.2 MB |
 
 Interpretation:
@@ -126,7 +127,9 @@ Interpretation:
 - HF prefill is much faster than the official pure-torch reference path measured here.
 - Disabling FLA fused norm for inference improved HF decode from `31.5` to about `41` tok/s (`+31%`).
 - The lightweight `RWKV7StateCache` preserves exact logits/cache behavior and keeps the real remote-code `AutoModelForCausalLM` path at the same ~41 tok/s level while avoiding FLA CacheLayer bookkeeping.
-- **Decode is still not met**: optimized HF decode is about `0.45x` official `rwkv` on this V100 run.
+- **Decode is still not met**, but the fast token API improves the serving path:
+  standard optimized HF decode is about `0.45x` official, while
+  `rwkv7_forward_token` reaches about `0.64x` official on this V100 run.
 
 ### Decode breakdown
 
@@ -157,6 +160,7 @@ Result on Tesla V100:
 | HF `chunk`, `fuse_norm=false`, `RWKV7StateCache` | 13510.3 | 36.7 | 37.4 | 0.51 ms/tok | 439.7 MB |
 | HF `fused_recurrent`, `fuse_norm=false` | 17192.8 | 38.3 | 38.2 | ≈0 ms/tok | 440.2 MB |
 | HF `fused_recurrent`, `fuse_norm=false`, `RWKV7StateCache` | 17198.9 | 38.4 | 38.5 | 0.09 ms/tok | 440.2 MB |
+| HF `fused_recurrent`, `rwkv7_forward_token` | 16571.8 | 52.9 | 53.0 | ≈0 ms/tok | 440.2 MB |
 | official `rwkv` | 222.1 | 91.5 | n/a | n/a | 470.0 MB |
 
 Interpretation:
@@ -164,8 +168,9 @@ Interpretation:
 - Greedy argmax/sampling overhead is negligible.
 - `chunk` vs `fused_recurrent` does not materially change single-token decode.
 - `fuse_norm=false` removes the expensive FLA `LayerNormFunction` path and improves decode, but does not remove the main gap.
-- The remaining decode gap is inside the HF/FLA model + recurrent cache + per-token
-  layer path, not in Python sampling.
+- The fast token API reduces standard HF one-token decode from about `26 ms/token`
+  to about `19 ms/token`, but the remaining gap is still inside the HF/FLA model
+  + recurrent cache + per-token layer path, not in Python sampling.
 
 
 ### Decode profiler findings
@@ -222,7 +227,14 @@ python bench/bench_batch_sweep.py \
   --results bench/results.jsonl
 ```
 
-V100 numbers are still pending because the development server was unreachable during the local update. Once it is reachable, `run_v100_fast_decode_validation.sh` will append `axis=batch_sweep` rows to `bench/results.jsonl`.
+Latest V100 batch sweep:
+
+| Batch | Forward total tok/s | Fast-token total tok/s | Fast-token per-seq tok/s |
+|---:|---:|---:|---:|
+| 1 | 40.0 | 56.4 | 56.4 |
+| 2 | 79.1 | 111.3 | 55.7 |
+| 4 | 156.6 | 221.0 | 55.3 |
+| 8 | 312.9 | 441.3 | 55.2 |
 
 ## Dynamic-batch coverage
 
@@ -260,6 +272,13 @@ python bench/bench_dynamic_batch.py \
 This is not a full scheduler, but it gives a reproducible `axis=dynamic_batch`
 signal for the cache operations needed by dynamic batching.
 
+Latest V100 dynamic-batch simulation:
+
+| Decode API | Initial -> final batch | Reorders | Drops | Total tok/s | ms/token |
+|---|---:|---:|---:|---:|---:|
+| `forward` | 8 -> 4 | 32 | 4 | 205.2 | 4.8734 |
+| `rwkv7_forward_token` | 8 -> 4 | 32 | 4 | 345.7 | 2.8930 |
+
 ## Decode microbench coverage
 
 `bench_decode_micro.py` appends `axis=decode_micro` rows with stable per-component timings:
@@ -279,6 +298,15 @@ python bench/bench_decode_micro.py \
 
 The row records standard HF fixed/greedy one-token decode, optional fast token API fixed/greedy decode, and isolated `lm_head`, `norm+lm_head`, `argmax`, embedding, and empty-loop costs. This gives an easier regression signal than profiler tables while keeping the profiler for operator-level investigation.
 
+Latest V100 microbench:
+
+| Component | ms/token | tok/s |
+|---|---:|---:|
+| HF `forward` fixed-token | 24.9691 | 40.0 |
+| `rwkv7_forward_token` fixed-token | 17.5097 | 57.1 |
+| `lm_head` only | 0.1639 | 6103.0 |
+| argmax only | 0.0266 | 37525.1 |
+
 ## Benchmark gap report
 
 `bench/analyze_results.py` turns accumulated JSONL rows into a target/gap report:
@@ -296,12 +324,13 @@ microbench rows, and a short next-focus list. Current committed V100 rows show:
 
 | Metric | Current | Target | Status |
 |---|---:|---:|---|
-| speed_mem decode ratio | ~0.45x official | >=0.90x | GAP |
-| decode_breakdown ratio | ~0.42x official | >=0.90x | GAP |
+| speed_mem fast-token decode ratio | ~0.64x official | >=0.90x | GAP |
+| decode_breakdown fast-token ratio | ~0.57x official | >=0.90x | GAP |
 | speed_mem memory ratio | ~1.00x official | <=1.10x | PASS |
 
-Formal fast-token, batch-sweep, dynamic-batch, and decode-micro rows remain
-pending until the server is reachable again and the validation bundle is rerun.
+The current next-focus list is: continue reducing tiny kernels/dispatch in the
+fast token path. The profiler still shows thousands of launches over a small
+active decode window.
 
 ## Current optimization target
 
@@ -329,8 +358,8 @@ The next optimization work should focus on **HF recurrent decode**:
   and save/reload roundtrip.
 - Memory for the serving-style HF path is now at parity with official on V100.
 - First decode optimizations landed: `fuse_norm=false` plus the exact-match `RWKV7StateCache` keep the real remote-code HF path at ~41 tok/s vs official ~92 tok/s on V100.
-- Batch correctness and sweep harnesses are in place; formal V100 batch-sweep numbers are pending the next reachable server run.
-- Dynamic-batch cache reorder/drop correctness and benchmark harnesses are in place; formal V100 rows are pending the next reachable server run.
-- Decode microbench harness is in place; formal V100 per-component rows are pending the next reachable server run.
+- Batch correctness and sweep harnesses are in place; V100 bsz=1/2/4/8 fast-token decode runs at about `55 tok/s` per sequence.
+- Dynamic-batch cache reorder/drop correctness and benchmark harnesses are in place; V100 dynamic simulation improves from `205.2` to `345.7` total tok/s with `rwkv7_forward_token`.
+- Decode microbench harness is in place; V100 shows `rwkv7_forward_token` at `17.5 ms/token` vs HF `forward` at `25.0 ms/token`, while `lm_head` and argmax are tiny.
 - Benchmark gap analysis is in place and currently identifies decode throughput as the active optimization gap.
-- The active blocker remains decode throughput: optimized HF is still only ~0.45x official on V100.
+- The active blocker remains decode throughput: fast-token HF is now ~0.64x official on V100, still below the 0.90x target.
