@@ -47,6 +47,8 @@ def check_present(report: dict[str, Any], failures: list[str]) -> None:
         fail(failures, "missing batch_sweep rows")
     if not report.get("dynamic_batch"):
         fail(failures, "missing dynamic_batch rows")
+    if not report.get("chunked_prefill"):
+        fail(failures, "missing chunked_prefill rows")
     if not report.get("decode_micro"):
         fail(failures, "missing decode_micro row")
     if not report.get("decode_components"):
@@ -99,6 +101,21 @@ def check_common(report: dict[str, Any], failures: list[str], args: argparse.Nam
         fast_tokps = float(dyn_fast.get("decode_tokps_total") or 0)
         if fwd_tokps <= 0 or fast_tokps / fwd_tokps < args.min_dynamic_fast_speedup:
             fail(failures, f"dynamic fast speedup below floor: {fast_tokps}/{fwd_tokps} < {args.min_dynamic_fast_speedup}x")
+
+    chunked = report.get("chunked_prefill") or []
+    chunked_full = [row for row in chunked if row.get("prefill_mode") == "full"]
+    chunked_parts = [row for row in chunked if row.get("prefill_mode") == "chunked"]
+    if not chunked_full:
+        fail(failures, "missing chunked_prefill full row")
+    if not chunked_parts:
+        fail(failures, "missing chunked_prefill chunked rows")
+    for row in chunked_parts:
+        if row.get("seq_length_match") is not True:
+            fail(failures, f"chunked prefill seq length mismatch: {row}")
+        for key in ("max_abs_diff", "decode_max_abs_diff"):
+            val = row.get(key)
+            if val is None or float(val) > args.max_chunked_prefill_diff:
+                fail(failures, f"chunked prefill {key} above floor: {val} > {args.max_chunked_prefill_diff}")
 
     micro = report.get("decode_micro") or {}
     fast_fixed = (micro.get("fast_decode_fixed") or {}).get("tokps")
@@ -188,6 +205,7 @@ def main() -> int:
     ap.add_argument("--required-batch-sizes", nargs="+", type=int, default=[1, 2, 4, 8])
     ap.add_argument("--min-batch-fast-speedup", type=float, default=1.25)
     ap.add_argument("--min-dynamic-fast-speedup", type=float, default=1.5)
+    ap.add_argument("--max-chunked-prefill-diff", type=float, default=0.2)
     ap.add_argument("--min-micro-fast-tokps", type=float, default=50.0)
     ap.add_argument("--min-micro-fast-speedup", type=float, default=1.25)
     ap.add_argument("--expected-top-component", default="attn_linears_lora")
