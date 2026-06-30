@@ -185,6 +185,17 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         focus.append(f"fast token API {fast_decode_ratio:.2f}x official; continue reducing tiny kernels/dispatch")
     if not batch_latest:
         focus.append("batch_sweep rows pending")
+    else:
+        native_fallback_batches = [
+            r.get("batch_size")
+            for r in batch_latest
+            if r.get("decode_api") == "rwkv7_forward_token"
+            and r.get("fast_token_backend") == "native_jit"
+            and r.get("fast_token_backend_effective") != "native_jit"
+        ]
+        if native_fallback_batches:
+            sizes = "/".join(str(b) for b in native_fallback_batches)
+            focus.append(f"native_jit fast-token backend is bsz=1 only; bsz={sizes} still falls back to FLA")
     if not dynamic_latest:
         focus.append("dynamic_batch rows pending")
     if micro is None:
@@ -216,7 +227,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             "memory_ratio_le": target_memory_ratio,
         },
         "speed_mem": {
-            "hf": compact(speed_hf, ["_lineno", "device", "attn_mode", "fuse_norm", "fast_cache", "hf_decode_api", "fast_token_layout", "prefill_tokps", "decode_tokps", "decode_ms_per_tok", "peak_vram_mb"]),
+            "hf": compact(speed_hf, ["_lineno", "device", "attn_mode", "fuse_norm", "fast_cache", "hf_decode_api", "fast_token_layout", "fast_token_backend", "prefill_tokps", "decode_tokps", "decode_ms_per_tok", "peak_vram_mb"]),
             "official": compact(speed_official, ["_lineno", "device", "attn_mode", "prefill_tokps", "decode_tokps", "decode_ms_per_tok", "peak_vram_mb"]),
             "prefill_ratio": round(speed_prefill_ratio, 4) if speed_prefill_ratio is not None else None,
             "decode_ratio": round(speed_decode_ratio, 4) if speed_decode_ratio is not None else None,
@@ -232,7 +243,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             "decode_status": verdict_ge(breakdown_decode_ratio, target_decode_ratio),
         },
         "fast_decode": {
-            "best_row": compact(best_fast, ["_lineno", "axis", "hf_decode_api", "fast_decode_api_name", "fast_token_layout", "attn_mode", "decode_tokps", "decode_fast_api_greedy_tokps", "decode_fast_api_fixed_tokps", "peak_vram_mb"]),
+            "best_row": compact(best_fast, ["_lineno", "axis", "hf_decode_api", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "attn_mode", "decode_tokps", "decode_fast_api_greedy_tokps", "decode_fast_api_fixed_tokps", "peak_vram_mb"]),
             "decode_tokps": round(best_fast_tokps, 4) if best_fast_tokps is not None else None,
             "decode_ratio": round(fast_decode_ratio, 4) if fast_decode_ratio is not None else None,
             "decode_status": verdict_ge(fast_decode_ratio, target_decode_ratio),
@@ -241,9 +252,9 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             "latest": compact(latest_precision, ["_lineno", "axis", "dtype", "top5_match", "argmax_match", "cosine", "max_abs_diff", "mean_abs_diff", "greedy_window"]),
             "greedy_ratio": round(greedy_ratio, 4) if greedy_ratio is not None else None,
         },
-        "batch_sweep": [compact(r, ["_lineno", "batch_size", "decode_api", "decode_tokps_total", "decode_tokps_per_seq", "decode_ms_per_step", "peak_vram_mb"]) for r in batch_latest],
+        "batch_sweep": [compact(r, ["_lineno", "batch_size", "decode_api", "fast_token_backend", "fast_token_backend_effective", "decode_tokps_total", "decode_tokps_per_seq", "decode_ms_per_step", "peak_vram_mb"]) for r in batch_latest],
         "dynamic_batch": [compact(r, ["_lineno", "decode_api", "initial_batch_size", "final_batch_size", "total_decode_tokens", "reorder_count", "drop_count", "decode_tokps_total", "decode_ms_per_token", "peak_vram_mb"]) for r in dynamic_latest],
-        "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "hf_forward_fixed", "hf_forward_greedy", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
+        "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "hf_forward_fixed", "hf_forward_greedy", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
         "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
         "projection_lora": compact(projection_lora, ["_lineno", "batch_size", "hidden_size", "layers", "avg_timings_ms", "avg_current_linears_lora_sum_ms", "avg_candidate_linears_lora_sum_ms", "avg_candidate_speedup", "peak_vram_mb"]),
         "native_decode": {

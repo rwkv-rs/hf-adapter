@@ -59,6 +59,8 @@ def timed(fn, device: str, runs: int) -> float:
 def load_model(args, dtype):
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
+    if args.fast_token_backend != "auto":
+        os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_dir,
         trust_remote_code=True,
@@ -137,6 +139,8 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
         fast_name = "rwkv7_forward_one" if fast_fn is not None else None
 
     if args.fast_decode_api != "false" and fast_fn is not None:
+        requested_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "fla")
+        effective_backend = "native_jit" if requested_backend == "native_jit" and bsz == 1 else "fla"
         with torch.inference_mode():
             out = model(ids[:, :8], use_cache=True, logits_to_keep=args.hf_logits_to_keep)
             state = out.past_key_values
@@ -155,6 +159,8 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
             fast_dt = time.time() - t0
         rows.append({**rows[0],
             "decode_api": fast_name,
+            "fast_token_backend": requested_backend,
+            "fast_token_backend_effective": effective_backend,
             "decode_tokps_total": round((bsz * args.decode_tokens) / fast_dt, 1),
             "decode_tokps_per_seq": round(args.decode_tokens / fast_dt, 1),
             "decode_ms_per_step": round(1000 * fast_dt / args.decode_tokens, 2),
@@ -175,6 +181,8 @@ def main() -> int:
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--fast-decode-api", choices=["auto", "true", "false"], default="auto")
+    ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit"], default="auto",
+                    help="Fast-token backend; native_jit applies to bsz=1 and falls back to FLA for batched requests")
     ap.add_argument("--batch-sizes", nargs="+", type=int, default=[1, 2, 4, 8])
     ap.add_argument("--prompt-tokens", type=int, default=512)
     ap.add_argument("--decode-tokens", type=int, default=128)
