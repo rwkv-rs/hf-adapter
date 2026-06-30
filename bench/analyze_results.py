@@ -282,15 +282,16 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         if slow:
             focus.append("generic bnb quantized decode is slower than fp16: " + ", ".join(slow))
     larger_by_label = {str(r.get("model_size_label", "")).lower(): r for r in larger_latest}
-    if "0.4b" not in larger_by_label:
-        focus.append("0.4B+ converted-model load/generate smoke row pending")
-    else:
-        row = larger_by_label["0.4b"]
+    for required_label, display_label in (("0.4b", "0.4B"), ("1.5b", "1.5B")):
+        if required_label not in larger_by_label:
+            focus.append(f"{display_label} converted-model load/generate smoke row pending")
+            continue
+        row = larger_by_label[required_label]
         if row.get("status") != "pass":
-            focus.append(f"0.4B+ larger-model smoke did not pass: {row.get('status')}")
+            focus.append(f"{display_label} larger-model smoke did not pass: {row.get('status')}")
         else:
             focus.append(
-                "0.4B converted HF model loads and generates on "
+                f"{display_label} converted HF model loads and generates on "
                 f"{row.get('device')} with hidden={row.get('hidden_size')}, layers={row.get('num_hidden_layers')}"
             )
     if best_native is None:
