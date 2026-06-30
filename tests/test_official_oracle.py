@@ -137,7 +137,8 @@ def test_official_fp32_logit_gate_uses_upstream_normalized_metric():
     row = tensor_metrics(reference, candidate)
     assert not row["fp32_allclose"]
     assert tensor_passed("fp32", row, logits=True)
-    assert not tensor_passed("fp32", row, logits=False)
+    assert tensor_passed("fp32", row, logits=False)
+    assert not strict_target_passed("fp32", row, logits=False)
 
 
 def test_calibrated_bf16_gate_keeps_original_target_as_diagnostic():

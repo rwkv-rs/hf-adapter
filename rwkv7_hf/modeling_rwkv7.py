@@ -122,6 +122,7 @@ class RWKV7LowRank(nn.Module):
         output_size: int,
         *,
         bias: bool,
+        fp32_bias: bool = False,
     ):
         super().__init__()
         self.lora = nn.Sequential(
@@ -129,6 +130,14 @@ class RWKV7LowRank(nn.Module):
             nn.Identity(),
             nn.Linear(rank, output_size, bias=bias),
         )
+        if bias and fp32_bias:
+            # Official RWKV-7 evaluates w0 in FP32 even when all checkpoint
+            # tensors are stored as FP16.  Constructing this parameter
+            # explicitly avoids relying on newer Transformers-only dtype-plan
+            # hooks and therefore remains compatible with Transformers 4.56.
+            self.lora[2].bias = nn.Parameter(
+                torch.zeros(output_size, dtype=torch.float32)
+            )
 
     def project(self, value: torch.Tensor, activation=None) -> torch.Tensor:
         value = self.lora[0](value)
@@ -177,6 +186,7 @@ class RWKV7TimeMix(nn.Module):
             config.decay_low_rank_dim,
             self.attention_hidden_size,
             bias=True,
+            fp32_bias=True,
         )
         self.a_lora = RWKV7LowRank(
             self.hidden_size,
