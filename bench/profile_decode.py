@@ -102,13 +102,22 @@ def profile_hf(args, dtype) -> dict[str, Any]:
             attn.mode = args.attn_mode
     ids = _encode(tok, args.prompt_tokens, args.device)
     fixed = ids[:, -1:]
+    use_fast_decode = args.hf_decode_api == "rwkv7_forward_one"
+    if use_fast_decode and not hasattr(model, "rwkv7_forward_one"):
+        raise ValueError("Loaded model does not expose rwkv7_forward_one")
+
+    def decode_step(token, state):
+        if use_fast_decode:
+            return model.rwkv7_forward_one(token, past_key_values=state)
+        return model(token, past_key_values=state, use_cache=True, logits_to_keep=1)
+
     with torch.inference_mode():
         out = model(ids[:, :8], use_cache=True, logits_to_keep=1)
         state = out.past_key_values
         nxt = out.logits[:, -1:].argmax(dim=-1)
         for _ in range(args.prewarm):
             token = fixed if args.fixed_token else nxt
-            out = model(token, past_key_values=state, use_cache=True, logits_to_keep=1)
+            out = decode_step(token, state)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
     _sync(args.device)
@@ -129,7 +138,7 @@ def profile_hf(args, dtype) -> dict[str, Any]:
         with torch.inference_mode():
             for _ in range(steps):
                 token = fixed if args.fixed_token else nxt
-                out = model(token, past_key_values=state, use_cache=True, logits_to_keep=1)
+                out = decode_step(token, state)
                 state = out.past_key_values
                 nxt = out.logits[:, -1:].argmax(dim=-1)
                 prof.step()
@@ -144,6 +153,7 @@ def profile_hf(args, dtype) -> dict[str, Any]:
         "fuse_norm": getattr(model.config, "fuse_norm", None),
         "fast_cache": os.environ.get("RWKV7_FAST_CACHE", "1") not in {"0", "false", "False", "no", "off"},
         "cache_type": type(state).__name__ if state is not None else None,
+        "hf_decode_api": args.hf_decode_api,
         "fixed_token": args.fixed_token,
         "wait": args.wait,
         "warmup": args.warmup,
@@ -219,6 +229,8 @@ def main() -> int:
                     help="Override config.fuse_norm for HF load; false is faster on V100 in current tests")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto",
                     help="HF only: use the lightweight RWKV7StateCache hot path (default via model env is enabled)")
+    ap.add_argument("--hf-decode-api", choices=["forward", "rwkv7_forward_one"], default="forward",
+                    help="HF decode implementation to profile; rwkv7_forward_one is bsz=1 inference-only fast path")
     ap.add_argument("--prompt-tokens", type=int, default=128)
     ap.add_argument("--prewarm", type=int, default=8)
     ap.add_argument("--wait", type=int, default=2)
