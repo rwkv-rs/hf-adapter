@@ -190,31 +190,48 @@ def task_provenance(unit_dir: Path, task: str) -> dict:
     config = payload.get("configs", {}).get(task, {})
     samples = payload.get("samples", {}).get(task, [])
     sample_files = sorted(unit_dir.rglob(f"samples_{task}_*.jsonl"))
+    sample_digest = hashlib.sha256()
+    sample_count = 0
+
+    def add_sample(sample: dict) -> None:
+        nonlocal sample_count
+        hashes = {
+            key: sample[key]
+            for key in ("doc_hash", "prompt_hash", "target_hash")
+            if key in sample
+        }
+        sample_digest.update(
+            json.dumps(hashes, sort_keys=True, ensure_ascii=False).encode()
+        )
+        sample_digest.update(b"\n")
+        sample_count += 1
+
     if sample_files:
-        samples = [
-            json.loads(line)
-            for line in sample_files[-1].read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        with sample_files[-1].open(encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    add_sample(json.loads(line))
+    else:
+        for sample in samples:
+            add_sample(sample)
+    sample_hash_fingerprint = sample_digest.hexdigest()
     provenance = {
         "result_json": str(result_path),
         "samples_jsonl": str(sample_files[-1]) if sample_files else None,
         "task_config": config,
         "dataset_revision": config.get("dataset_kwargs", {}).get("revision"),
-        "sample_hashes": [
-            {
-                key: sample[key]
-                for key in ("doc_hash", "prompt_hash", "target_hash")
-                if key in sample
-            }
-            for sample in samples
-        ],
+        "sample_count": sample_count,
+        "sample_hash_fingerprint": sample_hash_fingerprint,
     }
     # lm_eval's task config plus its document hashes are the stable dataset-input
     # fingerprint.  Hash them explicitly instead of depending on a private
     # datasets cache fingerprint that can vary across Arrow versions.
     canonical = json.dumps(
-        {"task_config": config, "sample_hashes": provenance["sample_hashes"]},
+        {
+            "task_config": config,
+            "sample_count": sample_count,
+            "sample_hash_fingerprint": sample_hash_fingerprint,
+        },
         sort_keys=True,
         ensure_ascii=False,
         default=str,
