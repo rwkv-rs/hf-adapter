@@ -82,6 +82,8 @@ def validate_run(path: Path, name: str, expected_step: int) -> dict:
         "dataset_revision": expected_revision,
         "target_modules": EXPECTED_TARGETS,
     }
+    if name == "grpo":
+        expected_config["max_completion_length"] = 64
     mismatches = {
         key: {"expected": value, "actual": config.get(key)}
         for key, value in expected_config.items()
@@ -97,6 +99,8 @@ def validate_run(path: Path, name: str, expected_step: int) -> dict:
         failures.append("missing model/weight provenance")
     if not all(fingerprints.get(split, {}).get("selected") for split in ("train", "eval")):
         failures.append("missing deterministic dataset fingerprints")
+    if name == "grpo" and not any(float(row.get("reward_std", 0.0)) > 0.0 for row in metrics):
+        failures.append("GRPO never observed nonzero within-group reward variance")
     return {
         "path": str(path),
         "global_step": checks.get("global_step"),
