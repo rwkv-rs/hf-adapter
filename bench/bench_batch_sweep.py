@@ -59,8 +59,7 @@ def timed(fn, device: str, runs: int) -> float:
 def load_model(args, dtype):
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
-    if args.fast_token_backend != "auto":
-        os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
+    os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_dir,
         trust_remote_code=True,
@@ -74,6 +73,13 @@ def load_model(args, dtype):
             raise ValueError(f"Loaded model config has fuse_norm={actual}; use a converted model dir with fuse_norm={desired}")
     set_attn_mode(model, args.attn_mode)
     return model
+
+
+def last_fast_token_backend(model):
+    getter = getattr(model, "rwkv7_last_fast_token_backend", None)
+    if callable(getter):
+        return getter()
+    return getattr(model, "_rwkv7_last_fast_token_backend", None)
 
 
 def encode(tok, prompt_tokens: int, bsz: int, device: str) -> torch.Tensor:
@@ -139,13 +145,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
         fast_name = "rwkv7_forward_one" if fast_fn is not None else None
 
     if args.fast_decode_api != "false" and fast_fn is not None:
-        requested_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "fla")
-        if requested_backend == "native_graph":
-            effective_backend = "native_graph"
-        elif requested_backend == "native_jit":
-            effective_backend = "native_jit"
-        else:
-            effective_backend = "fla"
+        requested_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "auto")
         with torch.inference_mode():
             out = model(ids[:, :8], use_cache=True, logits_to_keep=args.hf_logits_to_keep)
             state = out.past_key_values
@@ -165,7 +165,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
         rows.append({**rows[0],
             "decode_api": fast_name,
             "fast_token_backend": requested_backend,
-            "fast_token_backend_effective": effective_backend,
+            "fast_token_backend_effective": last_fast_token_backend(model) or requested_backend,
             "decode_tokps_total": round((bsz * args.decode_tokens) / fast_dt, 1),
             "decode_tokps_per_seq": round(args.decode_tokens / fast_dt, 1),
             "decode_ms_per_step": round(1000 * fast_dt / args.decode_tokens, 2),

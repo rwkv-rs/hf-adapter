@@ -61,8 +61,7 @@ def set_attn_mode(model, attn_mode: str) -> None:
 def load_model(args, dtype):
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
-    if args.fast_token_backend != "auto":
-        os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
+    os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_dir,
         trust_remote_code=True,
@@ -76,6 +75,13 @@ def load_model(args, dtype):
             raise ValueError(f"Loaded model config has fuse_norm={actual}; use a converted model dir with fuse_norm={desired}")
     set_attn_mode(model, args.attn_mode)
     return model
+
+
+def last_fast_token_backend(model):
+    getter = getattr(model, "rwkv7_last_fast_token_backend", None)
+    if callable(getter):
+        return getter()
+    return getattr(model, "_rwkv7_last_fast_token_backend", None)
 
 
 def encode_prompts(tok, batch_size: int, prompt_tokens: int, device: str) -> torch.Tensor:
@@ -129,7 +135,8 @@ def run_loop(args, model, ids: torch.Tensor, decode_api: str) -> dict[str, Any]:
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
 
-    if decode_api == "rwkv7_forward_token" and os.environ.get("RWKV7_FAST_TOKEN_BACKEND") in {"native_jit", "native_graph"}:
+    requested_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "auto")
+    if decode_api == "rwkv7_forward_token" and requested_backend in {"auto", "native_jit", "native_graph"}:
         # Shape changes are expected in dynamic batching. TorchScript specializes
         # the native block-step for new batch sizes, so compile the active sizes
         # outside the timed region to measure steady-state serving throughput.
@@ -205,7 +212,8 @@ def run_loop(args, model, ids: torch.Tensor, decode_api: str) -> dict[str, Any]:
         "peak_vram_mb": peak_mb(args.device),
     }
     if decode_api == "rwkv7_forward_token":
-        row["fast_token_backend"] = os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "fla")
+        row["fast_token_backend"] = requested_backend
+        row["fast_token_backend_effective"] = last_fast_token_backend(model) or requested_backend
     return row
 
 

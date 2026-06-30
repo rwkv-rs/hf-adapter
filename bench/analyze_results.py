@@ -94,6 +94,10 @@ def compact(row: dict[str, Any] | None, keys: list[str]) -> dict[str, Any] | Non
     return {k: row[k] for k in keys if k in row}
 
 
+def fast_token_backend_effective(row: dict[str, Any]) -> str | None:
+    return row.get("fast_token_backend_effective") or row.get("fast_token_backend")
+
+
 def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, Any]:
     rows = filt(rows, device=args.device, dtype=args.dtype)
     target_decode_ratio = args.target_decode_ratio
@@ -108,7 +112,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         rows,
         lambda r: r.get("axis") == "speed_mem"
         and r.get("backend") == "hf_adapter"
-        and r.get("fast_token_backend") != "native_graph",
+        and fast_token_backend_effective(r) != "native_graph",
     ) or latest(rows, lambda r: r.get("axis") == "speed_mem" and r.get("backend") == "hf_adapter")
     speed_official = latest(rows, lambda r: r.get("axis") == "speed_mem" and r.get("backend") == "official_rwkv")
     speed_decode_ratio = ratio(num(speed_hf, "decode_tokps"), num(speed_official, "decode_tokps"))
@@ -159,8 +163,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             int(r.get("batch_size"))
             for r in batch_latest
             if r.get("decode_api") == "rwkv7_forward_token"
-            and r.get("fast_token_backend") == "native_graph"
-            and r.get("fast_token_backend_effective") == "native_graph"
+            and fast_token_backend_effective(r) == "native_graph"
             and r.get("batch_size") is not None
         }
     )
@@ -171,7 +174,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     )
     native_graph_dynamic = any(
         r.get("decode_api") == "rwkv7_forward_token"
-        and r.get("fast_token_backend") == "native_graph"
+        and fast_token_backend_effective(r) == "native_graph"
         for r in dynamic_latest
     )
     chunked_rows = [r for r in rows if r.get("axis") == "chunked_prefill" and r.get("backend") == "hf_adapter"]
@@ -278,7 +281,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             "memory_ratio_le": target_memory_ratio,
         },
         "speed_mem": {
-            "hf": compact(speed_hf, ["_lineno", "device", "attn_mode", "fuse_norm", "fast_cache", "hf_decode_api", "fast_token_layout", "fast_token_backend", "prefill_tokps", "decode_tokps", "decode_ms_per_tok", "peak_vram_mb"]),
+            "hf": compact(speed_hf, ["_lineno", "device", "attn_mode", "fuse_norm", "fast_cache", "hf_decode_api", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "prefill_tokps", "decode_tokps", "decode_ms_per_tok", "peak_vram_mb"]),
             "official": compact(speed_official, ["_lineno", "device", "attn_mode", "prefill_tokps", "decode_tokps", "decode_ms_per_tok", "peak_vram_mb"]),
             "prefill_ratio": round(speed_prefill_ratio, 4) if speed_prefill_ratio is not None else None,
             "decode_ratio": round(speed_decode_ratio, 4) if speed_decode_ratio is not None else None,
@@ -294,7 +297,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             "decode_status": verdict_ge(breakdown_decode_ratio, target_decode_ratio),
         },
         "fast_decode": {
-            "best_row": compact(best_fast, ["_lineno", "axis", "hf_decode_api", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "attn_mode", "decode_tokps", "decode_fast_api_greedy_tokps", "decode_fast_api_fixed_tokps", "peak_vram_mb"]),
+            "best_row": compact(best_fast, ["_lineno", "axis", "hf_decode_api", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "attn_mode", "decode_tokps", "decode_fast_api_greedy_tokps", "decode_fast_api_fixed_tokps", "peak_vram_mb"]),
             "decode_tokps": round(best_fast_tokps, 4) if best_fast_tokps is not None else None,
             "decode_ratio": round(fast_decode_ratio, 4) if fast_decode_ratio is not None else None,
             "decode_status": verdict_ge(fast_decode_ratio, target_decode_ratio),
@@ -304,9 +307,9 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             "greedy_ratio": round(greedy_ratio, 4) if greedy_ratio is not None else None,
         },
         "batch_sweep": [compact(r, ["_lineno", "batch_size", "decode_api", "fast_token_backend", "fast_token_backend_effective", "decode_tokps_total", "decode_tokps_per_seq", "decode_ms_per_step", "peak_vram_mb"]) for r in batch_latest],
-        "dynamic_batch": [compact(r, ["_lineno", "decode_api", "fast_token_backend", "initial_batch_size", "final_batch_size", "final_cache_batch_size", "cache_select_api", "total_decode_tokens", "reorder_count", "drop_count", "decode_tokps_total", "decode_ms_per_token", "peak_vram_mb"]) for r in dynamic_latest],
+        "dynamic_batch": [compact(r, ["_lineno", "decode_api", "fast_token_backend", "fast_token_backend_effective", "initial_batch_size", "final_batch_size", "final_cache_batch_size", "cache_select_api", "total_decode_tokens", "reorder_count", "drop_count", "decode_tokps_total", "decode_ms_per_token", "peak_vram_mb"]) for r in dynamic_latest],
         "chunked_prefill": [compact(r, ["_lineno", "prefill_mode", "batch_size", "prompt_tokens", "chunk_size", "prefill_tokps_total", "speed_ratio_vs_full", "peak_vram_mb", "peak_vram_ratio_vs_full", "max_abs_diff", "decode_max_abs_diff", "seq_length_match"]) for r in chunked_latest],
-        "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "hf_forward_fixed", "hf_forward_greedy", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
+        "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "hf_forward_fixed", "hf_forward_greedy", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
         "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
         "projection_lora": compact(projection_lora, ["_lineno", "batch_size", "hidden_size", "layers", "avg_timings_ms", "avg_current_linears_lora_sum_ms", "avg_candidate_linears_lora_sum_ms", "avg_candidate_speedup", "peak_vram_mb"]),
         "quantization": [compact(r, ["_lineno", "quantization", "status", "prefill_tokps", "decode_tokps", "decode_ms_per_tok", "model_footprint_mb", "peak_vram_mb", "error"]) for r in quant_latest],

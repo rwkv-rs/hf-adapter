@@ -45,13 +45,23 @@ def set_attn_mode(model, attn_mode: str) -> None:
             attn.mode = attn_mode
 
 
+def configure_fast_token_env(args) -> None:
+    if args.fast_token_layout != "auto":
+        os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = args.fast_token_layout
+    os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
+
+
+def last_fast_token_backend(model):
+    getter = getattr(model, "rwkv7_last_fast_token_backend", None)
+    if callable(getter):
+        return getter()
+    return getattr(model, "_rwkv7_last_fast_token_backend", None)
+
+
 def bench_hf(args, dt):
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
-    if args.fast_token_layout != "auto":
-        os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = args.fast_token_layout
-    if args.fast_token_backend != "auto":
-        os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
+    configure_fast_token_env(args)
     tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_dir, trust_remote_code=True, torch_dtype=dt,
@@ -118,7 +128,8 @@ def bench_hf(args, dt):
     res["hf_decode_api"] = args.hf_decode_api
     if use_fast_decode:
         res["fast_token_layout"] = os.environ.get("RWKV7_FAST_TOKEN_LAYOUT", "3d")
-        res["fast_token_backend"] = os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "fla")
+        res["fast_token_backend"] = os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "auto")
+        res["fast_token_backend_effective"] = last_fast_token_backend(model) or res["fast_token_backend"]
     return res
 
 
