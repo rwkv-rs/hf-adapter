@@ -159,7 +159,7 @@ def resolve_model(source: str, revision: str | None) -> dict:
 
 
 def environment() -> dict:
-    return {
+    result = {
         "python": sys.version,
         "platform": platform.platform(),
         "packages": {
@@ -175,6 +175,27 @@ def environment() -> dict:
             )
         },
     }
+    try:
+        import torch
+
+        result["torch_runtime"] = {
+            "version": torch.__version__,
+            "cuda": torch.version.cuda,
+            "cudnn": torch.backends.cudnn.version(),
+            "cuda_available": torch.cuda.is_available(),
+            "devices": [
+                {
+                    "index": index,
+                    "name": torch.cuda.get_device_name(index),
+                    "capability": list(torch.cuda.get_device_capability(index)),
+                    "total_memory": torch.cuda.get_device_properties(index).total_memory,
+                }
+                for index in range(torch.cuda.device_count())
+            ],
+        }
+    except Exception as error:
+        result["torch_runtime_error"] = f"{type(error).__name__}: {error}"
+    return result
 
 
 def read_manifest(path: Path) -> dict[str, dict]:
