@@ -26,17 +26,20 @@ try:
     from .native_jit import block_step_batched as _native_jit_block_step_batched
     from .native_jit import extract as _native_jit_extract
     from .native_jit import _block_ip as _native_graph_block_ip
+    from .native_jit import _block_ip_batched as _native_graph_block_ip_batched
 except Exception:  # pragma: no cover - optional remote-code fast path
     try:
         from native_jit import block_step as _native_jit_block_step
         from native_jit import block_step_batched as _native_jit_block_step_batched
         from native_jit import extract as _native_jit_extract
         from native_jit import _block_ip as _native_graph_block_ip
+        from native_jit import _block_ip_batched as _native_graph_block_ip_batched
     except Exception:
         _native_jit_block_step = None
         _native_jit_block_step_batched = None
         _native_jit_extract = None
         _native_graph_block_ip = None
+        _native_graph_block_ip_batched = None
 
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
@@ -189,6 +192,96 @@ class _RWKV7NativeGraphTokenRunner:
         self.graph.replay()
         self.bind_cache(past_key_values)
         return self.logits.view(1, 1, -1)
+
+
+class _RWKV7NativeGraphBatchedTokenRunner:
+    """CUDA-graph replay helper for fixed-batch native fast-token decode."""
+
+    def __init__(self, owner: "RWKV7ForCausalLM", packs, batch_size: int) -> None:
+        if _native_graph_block_ip_batched is None:
+            raise RuntimeError("native_graph batched fast-token backend is unavailable; copy native_jit.py into the model repo")
+        if not torch.cuda.is_available():
+            raise RuntimeError("native_graph fast-token backend requires CUDA")
+        base = owner.model
+        self.packs = packs
+        self.batch_size = int(batch_size)
+        self.device = base.embeddings.weight.device
+        if self.device.type != "cuda":
+            raise RuntimeError("native_graph fast-token backend requires CUDA model weights")
+        self.dtype = base.embeddings.weight.dtype
+        self.hidden = int(packs[0][1] * packs[0][2])
+        self.state = [
+            torch.zeros(self.batch_size, int(p[1]), int(p[2]), int(p[2]), device=self.device, dtype=torch.float32)
+            for p in packs
+        ]
+        self.xpa = [torch.zeros(self.batch_size, self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
+        self.xpf = [torch.zeros(self.batch_size, self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
+        self.v_first = torch.zeros(self.batch_size, self.hidden, device=self.device, dtype=self.dtype)
+        self.tok_id = torch.zeros(self.batch_size, dtype=torch.long, device=self.device)
+        self.logits = torch.zeros(self.batch_size, base.embeddings.weight.shape[0], device=self.device, dtype=self.dtype)
+        self.emb = base.embeddings.weight
+        self.head = owner.lm_head.weight
+        self.head_bias = owner.lm_head.bias
+        self.norm_w = base.norm.weight
+        self.norm_b = base.norm.bias
+        self.graph = None
+        self._capture()
+
+    def _one_step(self) -> None:
+        x = F.embedding(self.tok_id, self.emb).reshape(self.batch_size, self.hidden)
+        for li, p in enumerate(self.packs):
+            x = _native_graph_block_ip_batched(x, self.state[li], self.xpa[li], self.xpf[li], self.v_first, p)
+        out = F.layer_norm(x, [self.hidden], self.norm_w, self.norm_b, 1e-5)
+        self.logits.copy_(F.linear(out, self.head, self.head_bias))
+
+    def _capture(self) -> None:
+        warm = torch.cuda.Stream(device=self.device)
+        warm.wait_stream(torch.cuda.current_stream(self.device))
+        with torch.cuda.stream(warm):
+            with torch.no_grad():
+                for _ in range(3):
+                    self._one_step()
+        torch.cuda.current_stream(self.device).wait_stream(warm)
+        self.graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self.graph):
+            self._one_step()
+
+    @staticmethod
+    def _copy_cache_tensor(dst: torch.Tensor, value: torch.Tensor | None, *, transpose_last: bool = False) -> None:
+        if value is None:
+            dst.zero_()
+            return
+        src = value
+        if transpose_last:
+            src = src.transpose(-1, -2)
+        dst.copy_(src.to(device=dst.device, dtype=dst.dtype).contiguous())
+
+    def copy_from_cache(self, past_key_values: "RWKV7StateCache") -> None:
+        for li, p in enumerate(self.packs):
+            layer_idx = int(p[0])
+            state = past_key_values._ensure_layer(layer_idx)
+            self._copy_cache_tensor(self.state[li], state.get("recurrent_state"), transpose_last=True)
+            self._copy_cache_tensor(self.xpa[li], state.get("conv_state"))
+            self._copy_cache_tensor(self.xpf[li], state.get("ffn_state"))
+
+    def bind_cache(self, past_key_values: "RWKV7StateCache") -> None:
+        for li, p in enumerate(self.packs):
+            layer_idx = int(p[0])
+            state = past_key_values._ensure_layer(layer_idx)
+            # FLA cache layout is transposed relative to the native matmul layout.
+            state["recurrent_state"] = self.state[li].transpose(-1, -2)
+            state["conv_state"] = self.xpa[li]
+            state["ffn_state"] = self.xpf[li]
+            state["attn_state"] = None
+
+    def replay(self, token: torch.LongTensor, past_key_values: "RWKV7StateCache") -> torch.Tensor:
+        if int(token.numel()) != self.batch_size:
+            raise ValueError(f"native_graph runner batch mismatch: got {int(token.numel())}, expected {self.batch_size}")
+        self.copy_from_cache(past_key_values)
+        self.tok_id.copy_(token.reshape(self.batch_size))
+        self.graph.replay()
+        self.bind_cache(past_key_values)
+        return self.logits.view(self.batch_size, 1, -1)
 
 
 class RWKV7StateCache(_FLACache):
@@ -430,7 +523,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             past_key_values = RWKV7StateCache.from_legacy_cache(past_key_values)
 
         backend = _fast_token_backend()
-        if backend == "native_graph" and token.numel() == 1:
+        if backend == "native_graph":
             return self._rwkv7_forward_token_native_graph(token, past_key_values, return_dict)
         if backend in {"native_jit", "native_graph"}:
             return self._rwkv7_forward_token_native_jit(token, past_key_values, return_dict)
@@ -479,12 +572,15 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return packs
         return cache[1]
 
-    def _rwkv7_native_graph_runner(self, packs):
+    def _rwkv7_native_graph_runner(self, packs, batch_size: int):
         weight = self.model.embeddings.weight
-        key = (weight.device.type, weight.device.index, weight.dtype, len(packs), int(packs[0][1]), int(packs[0][2]))
+        key = (weight.device.type, weight.device.index, weight.dtype, len(packs), int(packs[0][1]), int(packs[0][2]), int(batch_size))
         cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
         if cache is None or cache[0] != key:
-            runner = _RWKV7NativeGraphTokenRunner(self, packs)
+            if int(batch_size) == 1:
+                runner = _RWKV7NativeGraphTokenRunner(self, packs)
+            else:
+                runner = _RWKV7NativeGraphBatchedTokenRunner(self, packs, int(batch_size))
             self._rwkv7_native_graph_runner_cache = (key, runner)
             return runner
         return cache[1]
@@ -594,15 +690,14 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         past_key_values: RWKV7StateCache,
         return_dict: bool | None = True,
     ):
-        """CUDA-graph replay backend for bsz=1 recurrent decode.
+        """CUDA-graph replay backend for fixed-batch recurrent decode.
 
         This is an opt-in serving fast path via
-        `RWKV7_FAST_TOKEN_BACKEND=native_graph`. Batched requests fall back to
-        the native-JIT backend, while this bsz=1 path captures the fixed
-        single-token layer graph once and replays it for subsequent tokens.
+        `RWKV7_FAST_TOKEN_BACKEND=native_graph`. A separate graph is captured
+        for each batch size seen by this model instance.
         """
         packs = self._rwkv7_native_jit_packs()
-        runner = self._rwkv7_native_graph_runner(packs)
+        runner = self._rwkv7_native_graph_runner(packs, int(token.numel()))
         logits = runner.replay(token, past_key_values)
         past_key_values._seen_tokens += 1
         if not return_dict:
