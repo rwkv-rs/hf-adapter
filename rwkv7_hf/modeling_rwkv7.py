@@ -57,14 +57,18 @@ def _fast_token_layout() -> str:
     return "2d" if layout in {"2d", "flat"} else "3d"
 
 
-def _fast_token_backend() -> str:
-    """Select the fast-token implementation backend."""
-    backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "auto").strip().lower()
+def _normalize_fast_token_backend(backend: str | None) -> str:
+    backend = (backend or "auto").strip().lower()
     if backend in {"", "auto", "best"}:
         return "auto"
     if backend in {"native_graph", "cuda_graph", "graph"}:
         return "native_graph"
     return "native_jit" if backend in {"native", "native_jit", "jit"} else "fla"
+
+
+def _fast_token_backend() -> str:
+    """Select the fast-token implementation backend."""
+    return _normalize_fast_token_backend(os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "auto"))
 
 
 def _fast_forward_enabled() -> bool:
@@ -634,6 +638,61 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     def rwkv7_last_fast_token_backend(self) -> str | None:
         """Return the effective backend used by the previous fast-token call."""
         return getattr(self, "_rwkv7_last_fast_token_backend", None)
+
+    def rwkv7_native_graph_cache_batch_sizes(self) -> list[int]:
+        """Return active batch sizes currently retained in the graph-runner LRU."""
+        cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
+        if isinstance(cache, tuple) and len(cache) == 2:
+            key = cache[0]
+            return [int(key[-1])] if isinstance(key, tuple) and key else []
+        if isinstance(cache, OrderedDict):
+            return sorted({int(key[-1]) for key in cache.keys() if isinstance(key, tuple) and key})
+        return []
+
+    def rwkv7_warmup_fast_token(
+        self,
+        batch_sizes: int | list[int] | tuple[int, ...] = (1,),
+        backend: str | None = None,
+    ) -> dict[int, str]:
+        """Pre-initialize fast-token native resources for serving.
+
+        For the native-graph backend this captures and caches graph runners for
+        each requested active batch size, removing the first-request graph
+        capture from the serving hot path. For native-JIT it extracts/caches the
+        packed weights. `backend=None` follows `RWKV7_FAST_TOKEN_BACKEND`, while
+        `backend="auto"` uses the same graph -> JIT -> FLA resolution as
+        `rwkv7_forward_token`.
+        """
+        if isinstance(batch_sizes, int):
+            sizes = [int(batch_sizes)]
+        else:
+            sizes = [int(v) for v in batch_sizes]
+        if not sizes:
+            raise ValueError("rwkv7_warmup_fast_token requires at least one batch size")
+
+        requested = _normalize_fast_token_backend(backend) if backend is not None else _fast_token_backend()
+        warmed: dict[int, str] = {}
+        for batch_size in sizes:
+            if batch_size <= 0:
+                raise ValueError("rwkv7_warmup_fast_token batch sizes must be positive")
+            chosen = self._rwkv7_resolve_fast_token_backend(batch_size) if requested == "auto" else requested
+            if chosen == "native_graph":
+                if not self._rwkv7_can_use_native_backend("native_graph", batch_size):
+                    if requested != "auto":
+                        raise RuntimeError(f"native_graph fast-token backend is unavailable for batch_size={batch_size}")
+                    chosen = "native_jit" if self._rwkv7_can_use_native_backend("native_jit", batch_size) else "fla"
+                else:
+                    packs = self._rwkv7_native_jit_packs()
+                    self._rwkv7_native_graph_runner(packs, batch_size)
+            if chosen == "native_jit":
+                if not self._rwkv7_can_use_native_backend("native_jit", batch_size):
+                    if requested != "auto":
+                        raise RuntimeError(f"native_jit fast-token backend is unavailable for batch_size={batch_size}")
+                    chosen = "fla"
+                else:
+                    self._rwkv7_native_jit_packs()
+            warmed[batch_size] = chosen
+        return warmed
 
     def _rwkv7_uses_external_quantization(self) -> bool:
         """Detect generic HF/bitsandbytes quantization wrappers.

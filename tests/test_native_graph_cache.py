@@ -195,14 +195,31 @@ def main() -> int:
         owner._rwkv7_resolve_fast_token_backend = types.MethodType(
             modeling.RWKV7ForCausalLM._rwkv7_resolve_fast_token_backend, owner
         )
+        owner._rwkv7_native_graph_runner = types.MethodType(
+            modeling.RWKV7ForCausalLM._rwkv7_native_graph_runner, owner
+        )
+        owner.rwkv7_warmup_fast_token = types.MethodType(modeling.RWKV7ForCausalLM.rwkv7_warmup_fast_token, owner)
+        owner.rwkv7_native_graph_cache_batch_sizes = types.MethodType(
+            modeling.RWKV7ForCausalLM.rwkv7_native_graph_cache_batch_sizes, owner
+        )
         os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "auto"
         assert modeling._fast_token_backend() == "auto"
         assert owner._rwkv7_resolve_fast_token_backend(1) == "native_graph"
         assert owner._rwkv7_resolve_fast_token_backend(4) == "native_graph"
         assert owner._rwkv7_can_use_native_backend("native_graph", 4) is True
+        warmed = owner.rwkv7_warmup_fast_token([1, 4], backend="auto")
+        assert warmed == {1: "native_graph", 4: "native_graph"}, warmed
+        assert owner.rwkv7_native_graph_cache_batch_sizes() == [1, 4]
+        try:
+            owner.rwkv7_warmup_fast_token(0)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("batch_size=0 warmup should fail")
 
         modeling._native_graph_block_ip_batched = None
         assert owner._rwkv7_resolve_fast_token_backend(4) == "native_jit"
+        assert owner.rwkv7_warmup_fast_token([4], backend="auto") == {4: "native_jit"}
 
         owner.is_loaded_in_4bit = True
         assert owner._rwkv7_resolve_fast_token_backend(1) == "fla"
