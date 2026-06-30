@@ -5,7 +5,7 @@
 # Optional env vars:
 #   HF_DIR, PTH, DTYPE, DEVICE, PROMPT_TOKENS, DECODE_TOKENS, MICRO_STEPS,
 #   FORWARD_FAST_STEPS, GENERATE_BATCH_SIZE, GENERATE_NEW_TOKENS, WARMUP_BATCH_SIZES,
-#   NATIVE_GRAPH_CACHE_SIZE, NATIVE_GRAPH_OVERHEAD_STEPS, COMPONENT_STEPS, NATIVE_DECODE_TOKENS, RESULTS, LOG_DIR
+#   NATIVE_GRAPH_CACHE_SIZE, NATIVE_GRAPH_OVERHEAD_BATCH_SIZES, NATIVE_GRAPH_OVERHEAD_STEPS, COMPONENT_STEPS, NATIVE_DECODE_TOKENS, RESULTS, LOG_DIR
 set -euo pipefail
 
 export RWKV_V7_ON="${RWKV_V7_ON:-1}"
@@ -23,6 +23,7 @@ GENERATE_BATCH_SIZE="${GENERATE_BATCH_SIZE:-2}"
 GENERATE_NEW_TOKENS="${GENERATE_NEW_TOKENS:-16}"
 WARMUP_BATCH_SIZES="${WARMUP_BATCH_SIZES:-1 2 4 8}"
 NATIVE_GRAPH_CACHE_SIZE="${NATIVE_GRAPH_CACHE_SIZE:-8}"
+NATIVE_GRAPH_OVERHEAD_BATCH_SIZES="${NATIVE_GRAPH_OVERHEAD_BATCH_SIZES:-1 2 4 8}"
 NATIVE_GRAPH_OVERHEAD_STEPS="${NATIVE_GRAPH_OVERHEAD_STEPS:-32}"
 COMPONENT_STEPS="${COMPONENT_STEPS:-32}"
 NATIVE_DECODE_TOKENS="${NATIVE_DECODE_TOKENS:-64}"
@@ -44,7 +45,7 @@ run() {
   echo "date=$(date -Is)"
   echo "hf_dir=${HF_DIR}"
   echo "pth=${PTH}"
-  echo "dtype=${DTYPE} device=${DEVICE} prompt_tokens=${PROMPT_TOKENS} decode_tokens=${DECODE_TOKENS} micro_steps=${MICRO_STEPS} forward_fast_steps=${FORWARD_FAST_STEPS} generate_batch_size=${GENERATE_BATCH_SIZE} generate_new_tokens=${GENERATE_NEW_TOKENS} warmup_batch_sizes=${WARMUP_BATCH_SIZES} native_graph_cache_size=${NATIVE_GRAPH_CACHE_SIZE} native_graph_overhead_steps=${NATIVE_GRAPH_OVERHEAD_STEPS} component_steps=${COMPONENT_STEPS}"
+  echo "dtype=${DTYPE} device=${DEVICE} prompt_tokens=${PROMPT_TOKENS} decode_tokens=${DECODE_TOKENS} micro_steps=${MICRO_STEPS} forward_fast_steps=${FORWARD_FAST_STEPS} generate_batch_size=${GENERATE_BATCH_SIZE} generate_new_tokens=${GENERATE_NEW_TOKENS} warmup_batch_sizes=${WARMUP_BATCH_SIZES} native_graph_cache_size=${NATIVE_GRAPH_CACHE_SIZE} native_graph_overhead_batch_sizes=${NATIVE_GRAPH_OVERHEAD_BATCH_SIZES} native_graph_overhead_steps=${NATIVE_GRAPH_OVERHEAD_STEPS} component_steps=${COMPONENT_STEPS}"
   echo "results=${RESULTS} profile_out=${PROFILE_OUT}"
 
   run python tests/test_fast_decode_api.py \
@@ -347,7 +348,7 @@ run() {
     --attn-mode fused_recurrent \
     --fuse-norm false \
     --fast-cache true \
-    --batch-size 1 \
+    --batch-sizes ${NATIVE_GRAPH_OVERHEAD_BATCH_SIZES} \
     --prompt-tokens 64 \
     --warmup 4 \
     --steps "${NATIVE_GRAPH_OVERHEAD_STEPS}" \

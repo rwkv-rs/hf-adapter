@@ -186,7 +186,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     forward_fast_path = latest(rows, lambda r: r.get("axis") == "forward_fast_path" and r.get("backend") == "hf_adapter")
     generate_fast_path = latest(rows, lambda r: r.get("axis") == "generate_fast_path" and r.get("backend") == "hf_adapter")
     fast_token_warmup = latest(rows, lambda r: r.get("axis") == "fast_token_warmup" and r.get("backend") == "hf_adapter")
-    native_graph_overhead = latest(rows, lambda r: r.get("axis") == "native_graph_replay_overhead" and r.get("backend") == "hf_adapter")
+    native_graph_overhead = latest_by_key(
+        [r for r in rows if r.get("axis") == "native_graph_replay_overhead" and r.get("backend") == "hf_adapter"],
+        lambda r: r.get("batch_size"),
+    )
     components = latest(rows, lambda r: r.get("axis") == "decode_components" and r.get("backend") == "hf_adapter")
     projection_lora = latest(rows, lambda r: r.get("axis") == "projection_lora" and r.get("backend") == "hf_adapter")
     quant_rows = [r for r in rows if r.get("axis") == "quantization" and r.get("backend") == "hf_adapter"]
@@ -237,12 +240,15 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         focus.append("decode_micro rows pending")
     if fast_token_warmup is None:
         focus.append("fast_token_warmup rows pending")
-    if native_graph_overhead is None:
+    if not native_graph_overhead:
         focus.append("native_graph_replay_overhead rows pending")
-    elif native_graph_overhead.get("copy_share_of_manual_wall") is not None:
-        copy_share = float(native_graph_overhead["copy_share_of_manual_wall"])
-        if copy_share > 0.15:
-            focus.append(f"native_graph cache-copy overhead is {copy_share:.2%}; inspect runner cache binding")
+    else:
+        max_copy_share = max(
+            (float(r["copy_share_of_manual_wall"]) for r in native_graph_overhead if r.get("copy_share_of_manual_wall") is not None),
+            default=None,
+        )
+        if max_copy_share is not None and max_copy_share > 0.15:
+            focus.append(f"native_graph cache-copy overhead max is {max_copy_share:.2%}; inspect runner cache binding")
     if components is None:
         focus.append("decode_components rows pending")
     elif components.get("top_components"):
@@ -325,7 +331,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "forward_fast_path": compact(forward_fast_path, ["_lineno", "fast_token_backend", "fast_token_layout", "reference_forward", "hf_forward_fast", "direct_fast_token", "hf_forward_fast_backend", "direct_fast_token_backend", "max_abs_diff_auto_vs_reference", "max_abs_diff_direct_vs_reference", "peak_vram_mb"]),
         "generate_fast_path": compact(generate_fast_path, ["_lineno", "fast_token_backend", "fast_token_backend_effective", "batch_size", "reference_generate", "hf_generate_fast", "speedup_vs_reference", "generated_equal", "generated_tokens_matched", "generated_tokens_total", "prompt_tokens", "max_new_tokens", "peak_vram_mb"]),
         "fast_token_warmup": compact(fast_token_warmup, ["_lineno", "fast_token_backend", "batch_sizes", "effective_backend_by_batch", "native_graph_cache_batch_sizes", "native_graph_cache_size_limit", "cleared_before", "warmup_s", "peak_vram_mb"]),
-        "native_graph_replay_overhead": compact(native_graph_overhead, ["_lineno", "fast_token_backend", "fast_token_backend_effective", "batch_size", "prompt_tokens", "steps", "fixed_token", "max_abs_diff_runner_vs_api", "copy_from_cache_ms", "token_copy_ms", "graph_replay_ms", "bind_cache_ms", "argmax_ms", "manual_wall_ms_per_token", "api_ms_per_token", "manual_decode_tokps_total", "api_decode_tokps_total", "copy_share_of_manual_wall", "peak_vram_mb"]),
+        "native_graph_replay_overhead": [
+            compact(r, ["_lineno", "fast_token_backend", "fast_token_backend_effective", "batch_size", "prompt_tokens", "steps", "fixed_token", "max_abs_diff_runner_vs_api", "copy_from_cache_ms", "token_copy_ms", "graph_replay_ms", "bind_cache_ms", "argmax_ms", "manual_wall_ms_per_token", "api_ms_per_token", "manual_decode_tokps_total", "api_decode_tokps_total", "copy_share_of_manual_wall", "peak_vram_mb"])
+            for r in native_graph_overhead
+        ],
         "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
         "projection_lora": compact(projection_lora, ["_lineno", "batch_size", "hidden_size", "layers", "avg_timings_ms", "avg_current_linears_lora_sum_ms", "avg_candidate_linears_lora_sum_ms", "avg_candidate_speedup", "peak_vram_mb"]),
         "quantization": [compact(r, ["_lineno", "quantization", "status", "prefill_tokps", "decode_tokps", "decode_ms_per_tok", "model_footprint_mb", "peak_vram_mb", "error"]) for r in quant_latest],
@@ -381,7 +390,11 @@ def print_text(report: dict[str, Any]) -> None:
     print("\n## fast_token_warmup")
     print(json.dumps(report["fast_token_warmup"], ensure_ascii=False) if report["fast_token_warmup"] else "PENDING")
     print("\n## native_graph_replay_overhead")
-    print(json.dumps(report["native_graph_replay_overhead"], ensure_ascii=False) if report["native_graph_replay_overhead"] else "PENDING")
+    if report["native_graph_replay_overhead"]:
+        for row in report["native_graph_replay_overhead"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
     print("\n## decode_components")
     print(json.dumps(report["decode_components"], ensure_ascii=False) if report["decode_components"] else "PENDING")
     print("\n## projection_lora")
