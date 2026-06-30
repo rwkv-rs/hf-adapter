@@ -101,30 +101,10 @@ def encode(tok, prompt_tokens: int, batch_size: int, device: str) -> torch.Tenso
     return ids.to(device) if device.startswith("cuda") else ids
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--hf-dir", required=True)
-    ap.add_argument("--dtype", default="fp16", choices=sorted(DTYPES))
-    ap.add_argument("--device", default="cuda")
-    ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
-    ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
-    ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto")
-    ap.add_argument("--batch-size", type=int, default=1)
-    ap.add_argument("--prompt-tokens", type=int, default=64)
-    ap.add_argument("--warmup", type=int, default=4)
-    ap.add_argument("--steps", type=int, default=32)
-    ap.add_argument("--fixed-token", action="store_true")
-    ap.add_argument("--native-graph-cache-size", type=int, default=8)
-    ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
-    args = ap.parse_args()
-
-    dtype = DTYPES[args.dtype]
+def run_one(args: argparse.Namespace, tok, model, batch_size: int) -> dict[str, Any]:
     if args.device.startswith("cuda"):
-        torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
-    tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
-    model = load_model(args, dtype)
-    ids = encode(tok, args.prompt_tokens, args.batch_size, args.device)
+    ids = encode(tok, args.prompt_tokens, batch_size, args.device)
     fixed = ids[:, -1:]
 
     with torch.inference_mode():
@@ -151,7 +131,7 @@ def main() -> int:
             runner.replay(token_parts.reshape(-1), state_parts)
             out_api = model.rwkv7_forward_token(token_api, past_key_values=state_api)
             if not args.fixed_token:
-                token_parts = runner.logits.view(args.batch_size, 1, -1).argmax(dim=-1)
+                token_parts = runner.logits.view(batch_size, 1, -1).argmax(dim=-1)
                 token_api = out_api.logits[:, -1:].argmax(dim=-1)
 
         copy_ms = token_ms = replay_ms = bind_ms = argmax_ms = 0.0
@@ -160,17 +140,17 @@ def main() -> int:
             def step_parts() -> None:
                 nonlocal copy_ms, token_ms, replay_ms, bind_ms, argmax_ms, token_parts
                 copy_ms += event_time_ms(lambda: runner.copy_from_cache(state_parts), args.device)
-                token_ms += event_time_ms(lambda: runner.tok_id.copy_(token_parts.reshape(args.batch_size)), args.device)
+                token_ms += event_time_ms(lambda: runner.tok_id.copy_(token_parts.reshape(batch_size)), args.device)
                 replay_ms += event_time_ms(lambda: runner.graph.replay(), args.device)
                 t_bind0 = time.perf_counter()
                 runner.bind_cache(state_parts)
                 bind_ms += (time.perf_counter() - t_bind0) * 1000.0
                 if not args.fixed_token:
                     argmax_ms += event_time_ms(
-                        lambda: runner.logits.view(args.batch_size, 1, -1).argmax(dim=-1),
+                        lambda: runner.logits.view(batch_size, 1, -1).argmax(dim=-1),
                         args.device,
                     )
-                    token_parts = runner.logits.view(args.batch_size, 1, -1).argmax(dim=-1)
+                    token_parts = runner.logits.view(batch_size, 1, -1).argmax(dim=-1)
 
             wall_ms += wall_time_ms(step_parts, args.device)
 
@@ -187,7 +167,7 @@ def main() -> int:
     denom = float(args.steps)
     wall_ms_per_token = wall_ms / denom
     api_ms_per_token = api_wall_ms / denom
-    row = {
+    return {
         "axis": "native_graph_replay_overhead",
         "backend": "hf_adapter",
         "dtype": args.dtype,
@@ -197,7 +177,7 @@ def main() -> int:
         "fast_cache": os.environ.get("RWKV7_FAST_CACHE", "1") not in _FALSE_VALUES,
         "fast_token_backend": "native_graph",
         "fast_token_backend_effective": effective_backend,
-        "batch_size": args.batch_size,
+        "batch_size": batch_size,
         "prompt_tokens": int(ids.shape[1]),
         "steps": args.steps,
         "fixed_token": args.fixed_token,
@@ -209,18 +189,48 @@ def main() -> int:
         "argmax_ms": round(argmax_ms / denom, 4),
         "manual_wall_ms_per_token": round(wall_ms_per_token, 4),
         "api_ms_per_token": round(api_ms_per_token, 4),
-        "manual_decode_tokps_total": round(1000.0 * args.batch_size / wall_ms_per_token, 1) if wall_ms_per_token > 0 else None,
-        "api_decode_tokps_total": round(1000.0 * args.batch_size / api_ms_per_token, 1) if api_ms_per_token > 0 else None,
+        "manual_decode_tokps_total": round(1000.0 * batch_size / wall_ms_per_token, 1) if wall_ms_per_token > 0 else None,
+        "api_decode_tokps_total": round(1000.0 * batch_size / api_ms_per_token, 1) if api_ms_per_token > 0 else None,
         "copy_share_of_manual_wall": round((copy_ms / denom) / wall_ms_per_token, 4) if wall_ms_per_token > 0 else None,
         "peak_vram_mb": peak_mb(args.device),
     }
-    print(json.dumps(row, indent=2, ensure_ascii=False), flush=True)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--hf-dir", required=True)
+    ap.add_argument("--dtype", default="fp16", choices=sorted(DTYPES))
+    ap.add_argument("--device", default="cuda")
+    ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
+    ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
+    ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto")
+    ap.add_argument("--batch-size", type=int, default=1)
+    ap.add_argument("--batch-sizes", nargs="+", type=int, default=None)
+    ap.add_argument("--prompt-tokens", type=int, default=64)
+    ap.add_argument("--warmup", type=int, default=4)
+    ap.add_argument("--steps", type=int, default=32)
+    ap.add_argument("--fixed-token", action="store_true")
+    ap.add_argument("--native-graph-cache-size", type=int, default=8)
+    ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
+    args = ap.parse_args()
+
+    dtype = DTYPES[args.dtype]
+    if args.device.startswith("cuda"):
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+    tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
+    model = load_model(args, dtype)
+    batch_sizes = args.batch_sizes if args.batch_sizes is not None else [args.batch_size]
+    rows = [run_one(args, tok, model, int(batch_size)) for batch_size in batch_sizes]
+    for row in rows:
+        print(json.dumps(row, indent=2, ensure_ascii=False), flush=True)
     if args.results:
         out = Path(args.results)
         out.parent.mkdir(parents=True, exist_ok=True)
         with out.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-        print(f"\nappended 1 row -> {out}", flush=True)
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        print(f"\nappended {len(rows)} rows -> {out}", flush=True)
     return 0
 
 

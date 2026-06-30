@@ -433,17 +433,19 @@ python bench/bench_native_graph_overhead.py \
   --attn-mode fused_recurrent \
   --fuse-norm false \
   --fast-cache true \
-  --batch-size 1 \
+  --batch-sizes 1 2 4 8 \
   --prompt-tokens 64 \
   --steps 32 \
   --fixed-token \
   --results bench/results.jsonl
 ```
 
-Latest V100 row: public API `255.1 tok/s`, runner-vs-API max diff `0.0`,
-graph replay `3.9296ms`, cache copy `0.2272ms`, cache bind `0.0809ms`, and
-cache-copy share `0.0517`. `check_results.py` gates the row with a minimum API
-throughput, runner/API equality tolerance, and maximum cache-copy share.
+Latest V100 rows for bsz=1/2/4/8: public API `254.9` / `449.8` / `858.5` /
+`1546.9` aggregate tok/s, runner-vs-API max diff `0.0` for all rows, graph
+replay `3.9375` / `4.4620` / `4.6760` / `5.1876ms`, and cache-copy share
+`0.0703` / `0.0376` / `0.0361` / `0.0329`. `check_results.py` gates every
+required batch size with a minimum API throughput, runner/API equality
+tolerance, and maximum cache-copy share.
 
 ## Decode component benchmark
 
@@ -588,7 +590,7 @@ committed V100 rows show:
 | decode_breakdown fast-token ratio | ~0.57x official | >=0.90x | GAP |
 | native_graph prototype decode ratio | ~2.76x official | >=0.90x | PASS prototype |
 | native_graph warmup bsz=1/2/4/8 | cache contains 1/2/4/8 in 1.389s | preflight complete | PASS |
-| native_graph replay overhead | API `255.1 tok/s`, copy share `0.052` | >=150 tok/s, <=0.15 copy share | PASS |
+| native_graph replay overhead bsz=1/2/4/8 | API `254.9` / `449.8` / `858.5` / `1546.9` tok/s, max copy share `0.070` | >=150 tok/s, <=0.15 copy share | PASS |
 | speed_mem memory ratio | ~1.00x official | <=1.10x | PASS |
 | 8-bit / 4-bit footprint ratio | 0.76x / 0.65x fp16 | lower is better | PASS smoke |
 | 8-bit / 4-bit decode ratio | 0.24x / 0.67x fp16 | >=1.00x | GAP |
@@ -598,9 +600,9 @@ toward larger models and solve the generic bnb quantized decode speed gap. The
 bsz=1 HF fast-token target is exceeded by `native_graph`; bsz=2/4/8 native-graph
 serving now reaches `434.3` / `852.6` / `1539.1` aggregate tok/s, and
 preflight warmup confirms graph runners are captured for bsz=1/2/4/8 before the
-first serving request. The native-graph overhead row confirms the public API is
-still `255.1 tok/s` while cache-copy overhead stays at about `5.2%` of measured
-manual replay wall time.
+first serving request. The native-graph overhead rows confirm the public API
+scales to `1546.9` aggregate tok/s at bsz=8 while cache-copy overhead stays
+below `7.1%` of measured manual replay wall time for all required batch sizes.
 
 ## Benchmark regression and target gates
 
