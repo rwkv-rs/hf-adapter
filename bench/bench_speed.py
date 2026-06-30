@@ -24,7 +24,7 @@ from pathlib import Path
 
 os.environ.setdefault("RWKV_V7_ON", "1")
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
 SEED = "The quick brown fox jumps over the lazy dog. " * 200
@@ -37,8 +37,11 @@ def encode(tok, n):
 
 def bench_hf(args, dt):
     tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
+    cfg = AutoConfig.from_pretrained(args.hf_dir, trust_remote_code=True)
+    if args.fuse_norm != "auto":
+        cfg.fuse_norm = args.fuse_norm == "true"
     model = AutoModelForCausalLM.from_pretrained(
-        args.hf_dir, trust_remote_code=True, torch_dtype=dt,
+        args.hf_dir, trust_remote_code=True, config=cfg, torch_dtype=dt,
         device_map=args.device).eval()
     ids = encode(tok, args.prompt_tokens).to(args.device)
     L = ids.shape[1]
@@ -80,6 +83,7 @@ def bench_hf(args, dt):
                getattr(model.config, "attn_mode", "?"))
     res["hf_logits_to_keep"] = args.hf_logits_to_keep
     res["hf_prefill_use_cache"] = True
+    res["fuse_norm"] = getattr(model.config, "fuse_norm", None)
     return res
 
 
@@ -145,6 +149,8 @@ def main() -> int:
     ap.add_argument("--runs", type=int, default=5)
     ap.add_argument("--hf-logits-to-keep", type=int, default=1,
                     help="HF prefill/decode logits_to_keep; 1 matches serving needs and reduces memory")
+    ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto",
+                    help="Override config.fuse_norm for HF load; false is faster on V100 in current tests")
     args = ap.parse_args()
     dt = DTYPES[args.dtype]
     out = Path(__file__).parent / "results.jsonl"

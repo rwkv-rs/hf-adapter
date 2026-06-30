@@ -22,7 +22,7 @@ from typing import Any
 os.environ.setdefault("RWKV_V7_ON", "1")
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 PROMPTS = [
     "The quick brown fox jumps over the lazy dog.",
@@ -97,6 +97,7 @@ def main() -> int:
     ap.add_argument("--max-abs-target", type=float, default=None)
     ap.add_argument("--top5-target", type=float, default=None)
     ap.add_argument("--cosine-target", type=float, default=0.9999)
+    ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto", help="Override config.fuse_norm for HF load")
     ap.add_argument("--results", default=None, help="Optional JSONL path to append summary")
     args = ap.parse_args()
 
@@ -105,9 +106,13 @@ def main() -> int:
     top5_target = DEFAULT_TOP5[args.dtype] if args.top5_target is None else args.top5_target
 
     tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
+    cfg = AutoConfig.from_pretrained(args.hf_dir, trust_remote_code=True)
+    if args.fuse_norm != "auto":
+        cfg.fuse_norm = args.fuse_norm == "true"
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_dir,
         trust_remote_code=True,
+        config=cfg,
         torch_dtype=dtype,
         device_map=args.device if args.device.startswith("cuda") else None,
     ).eval()
@@ -143,6 +148,7 @@ def main() -> int:
         "pth": args.pth,
         "dtype": args.dtype,
         "official_strategy": args.official_strategy,
+        "fuse_norm": getattr(model.config, "fuse_norm", None),
         "n_prompts": len(rows),
         "top5_match": sum(float(r["top5_match"]) for r in rows) / len(rows),
         "argmax_match": sum(int(r["argmax_match"]) for r in rows) / len(rows),
