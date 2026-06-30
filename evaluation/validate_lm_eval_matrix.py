@@ -35,17 +35,22 @@ def numeric_metrics(result: dict, task: str) -> dict[str, float]:
 
 def main():
     args = parse_args()
-    rows = [
-        json.loads(line)
-        for line in (args.result_dir / "manifest.jsonl").read_text().splitlines()
-        if line.strip()
-    ]
+    latest = {}
+    for line in (args.result_dir / "manifest.jsonl").read_text().splitlines():
+        if line.strip():
+            row = json.loads(line)
+            latest[row["unit"]] = row
+    rows = list(latest.values())
     if len(rows) != 48:
-        raise SystemExit(f"expected 48 units, found {len(rows)}")
+        raise SystemExit(f"expected 48 unique units, found {len(rows)}")
     if any(row["exit_code"] != 0 for row in rows):
         raise SystemExit("at least one lm_eval unit failed")
     if any(not row.get("formal") for row in rows):
         raise SystemExit("formal validation refuses results produced with --limit")
+    if any(not row.get("code_sha") for row in rows):
+        raise SystemExit("every unit must record its source code SHA")
+    if any(not row.get("task_provenance", {}).get("dataset_fingerprint") for row in rows):
+        raise SystemExit("every unit must record task configuration and dataset fingerprint")
 
     indexed = {}
     for row in rows:
