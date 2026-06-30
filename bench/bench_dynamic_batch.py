@@ -61,6 +61,8 @@ def set_attn_mode(model, attn_mode: str) -> None:
 def load_model(args, dtype):
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
+    if args.fast_token_backend != "auto":
+        os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_dir,
         trust_remote_code=True,
@@ -125,6 +127,25 @@ def run_loop(args, model, ids: torch.Tensor, decode_api: str) -> dict[str, Any]:
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
 
+    if decode_api == "rwkv7_forward_token" and os.environ.get("RWKV7_FAST_TOKEN_BACKEND") == "native_jit":
+        # Shape changes are expected in dynamic batching. TorchScript specializes
+        # the native block-step for new batch sizes, so compile the active sizes
+        # outside the timed region to measure steady-state serving throughput.
+        with torch.inference_mode():
+            for active in range(int(ids.shape[0]), args.min_batch_size - 1, -1):
+                warm_ids = ids[:active]
+                out = model(warm_ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
+                warm_state = out.past_key_values
+                warm_token = out.logits[:, -1:].argmax(dim=-1)
+                for _ in range(2):
+                    out = step_decode(model, decode_api, warm_token, warm_state, args.hf_logits_to_keep)
+                    warm_state = out.past_key_values
+                    warm_token = out.logits[:, -1:].argmax(dim=-1)
+        cuda_sync(args.device)
+        if args.device.startswith("cuda"):
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
+
     with torch.inference_mode():
         out = model(ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
         state = out.past_key_values
@@ -154,7 +175,7 @@ def run_loop(args, model, ids: torch.Tensor, decode_api: str) -> dict[str, Any]:
         cuda_sync(args.device)
         dt = time.time() - t0
 
-    return {
+    row = {
         "axis": "dynamic_batch",
         "backend": "hf_adapter",
         "decode_api": decode_api,
@@ -179,6 +200,9 @@ def run_loop(args, model, ids: torch.Tensor, decode_api: str) -> dict[str, Any]:
         "decode_ms_per_token": round(1000 * dt / max(total_tokens, 1), 4),
         "peak_vram_mb": peak_mb(args.device),
     }
+    if decode_api == "rwkv7_forward_token":
+        row["fast_token_backend"] = os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "fla")
+    return row
 
 
 def main() -> int:
@@ -189,6 +213,7 @@ def main() -> int:
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto")
+    ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit"], default="auto")
     ap.add_argument("--decode-apis", nargs="+", default=["forward", "rwkv7_forward_token"], choices=["forward", "rwkv7_forward_token"])
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--min-batch-size", type=int, default=2)

@@ -48,16 +48,13 @@ def latest(rows: Iterable[dict[str, Any]], pred) -> dict[str, Any] | None:
     return matches[-1] if matches else None
 
 
-def best_latest_by_key(rows: Iterable[dict[str, Any]], key_fn, score_fn) -> list[dict[str, Any]]:
+def latest_by_key(rows: Iterable[dict[str, Any]], key_fn) -> list[dict[str, Any]]:
     groups: dict[Any, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         groups[key_fn(row)].append(row)
     out = []
     for key, vals in groups.items():
-        vals = [v for v in vals if score_fn(v) is not None]
-        if not vals:
-            continue
-        out.append(max(vals, key=lambda v: (float(score_fn(v)), int(v.get("_lineno", 0)))))
+        out.append(max(vals, key=lambda v: int(v.get("_lineno", 0))))
     return sorted(out, key=lambda r: str(key_fn(r)))
 
 
@@ -144,16 +141,14 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         greedy_ratio = float(greedy.get("matched", 0)) / float(greedy["requested"])
 
     batch_rows = [r for r in rows if r.get("axis") == "batch_sweep" and r.get("backend") == "hf_adapter"]
-    batch_latest = best_latest_by_key(
+    batch_latest = latest_by_key(
         batch_rows,
         lambda r: (r.get("batch_size"), r.get("decode_api")),
-        lambda r: r.get("decode_tokps_total"),
     )
     dynamic_rows = [r for r in rows if r.get("axis") == "dynamic_batch" and r.get("backend") == "hf_adapter"]
-    dynamic_latest = best_latest_by_key(
+    dynamic_latest = latest_by_key(
         dynamic_rows,
         lambda r: r.get("decode_api"),
-        lambda r: r.get("decode_tokps_total"),
     )
     micro = latest(rows, lambda r: r.get("axis") == "decode_micro" and r.get("backend") == "hf_adapter")
     components = latest(rows, lambda r: r.get("axis") == "decode_components" and r.get("backend") == "hf_adapter")
@@ -253,7 +248,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             "greedy_ratio": round(greedy_ratio, 4) if greedy_ratio is not None else None,
         },
         "batch_sweep": [compact(r, ["_lineno", "batch_size", "decode_api", "fast_token_backend", "fast_token_backend_effective", "decode_tokps_total", "decode_tokps_per_seq", "decode_ms_per_step", "peak_vram_mb"]) for r in batch_latest],
-        "dynamic_batch": [compact(r, ["_lineno", "decode_api", "initial_batch_size", "final_batch_size", "total_decode_tokens", "reorder_count", "drop_count", "decode_tokps_total", "decode_ms_per_token", "peak_vram_mb"]) for r in dynamic_latest],
+        "dynamic_batch": [compact(r, ["_lineno", "decode_api", "fast_token_backend", "initial_batch_size", "final_batch_size", "total_decode_tokens", "reorder_count", "drop_count", "decode_tokps_total", "decode_ms_per_token", "peak_vram_mb"]) for r in dynamic_latest],
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "hf_forward_fixed", "hf_forward_greedy", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
         "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
         "projection_lora": compact(projection_lora, ["_lineno", "batch_size", "hidden_size", "layers", "avg_timings_ms", "avg_current_linears_lora_sum_ms", "avg_candidate_linears_lora_sum_ms", "avg_candidate_speedup", "peak_vram_mb"]),
