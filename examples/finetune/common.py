@@ -93,6 +93,47 @@ def package_version(name: str) -> str | None:
         return None
 
 
+def model_provenance(model: str, requested_revision: str) -> dict:
+    path = Path(model).expanduser()
+    if path.exists():
+        files = sorted(
+            candidate
+            for candidate in path.rglob("*")
+            if candidate.is_file()
+            and (
+                candidate.name in {"config.json", "tokenizer_config.json"}
+                or candidate.suffix in {".py", ".safetensors"}
+                or candidate.name.endswith(".safetensors.index.json")
+            )
+        )
+        hashes = {str(candidate.relative_to(path)): sha256(candidate) for candidate in files}
+        aggregate = hashlib.sha256()
+        for name, digest in hashes.items():
+            aggregate.update(f"{name}\0{digest}\n".encode())
+        return {
+            "kind": "local",
+            "path": str(path.resolve()),
+            "requested_revision": requested_revision,
+            "resolved_revision": aggregate.hexdigest(),
+            "files": hashes,
+        }
+    result = {
+        "kind": "hub",
+        "repo_id": model,
+        "requested_revision": requested_revision,
+        "resolved_revision": None,
+    }
+    try:
+        from huggingface_hub import HfApi
+
+        result["resolved_revision"] = HfApi().model_info(
+            model, revision=requested_revision
+        ).sha
+    except Exception as error:
+        result["resolution_error"] = f"{type(error).__name__}: {error}"
+    return result
+
+
 def prepare_run(args, dataset_name: str, dataset_revision: str) -> Path:
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -104,7 +145,9 @@ def prepare_run(args, dataset_name: str, dataset_revision: str) -> Path:
             "dataset_revision": dataset_revision,
             "target_modules": TARGET_MODULES,
             "command": sys.argv,
-            "source_revision": revision(Path(__file__).resolve().parents[2]),
+            "source_revision": args.code_sha
+            or revision(Path(__file__).resolve().parents[2])
+            or "unknown",
         }
     )
     (output / "resolved_config.json").write_text(
@@ -123,6 +166,15 @@ def prepare_run(args, dataset_name: str, dataset_revision: str) -> Path:
     }
     (output / "environment.json").write_text(
         json.dumps(environment, indent=2) + "\n"
+    )
+    (output / "model_provenance.json").write_text(
+        json.dumps(
+            model_provenance(args.model, args.model_revision),
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
     )
     return output
 
@@ -374,6 +426,11 @@ def common_arguments(parser):
         "--model", default="wangyue114514/rwkv7-g1d-0.1b-hf"
     )
     parser.add_argument("--model-revision", default="v0.9.0")
+    parser.add_argument(
+        "--code-sha",
+        default=None,
+        help="Source revision for rsync deployments without a .git directory",
+    )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-length", type=int, default=512)
