@@ -80,6 +80,7 @@
    - 继续补更完整 Transformers 原生 test suite
 4. 训练路径：
    - 已跑通 PEFT LoRA backward、HF Trainer 1-step、TRL `SFTTrainer` 1-step
+   - 已新增 TRL `DPOTrainer` / `GRPOTrainer` LoRA 1-step smoke 脚本，并补 `configs/deepspeed/zero2.json` / `zero3.json` 作为 HF Trainer ZeRO-2/3 预设
    - 继续扩大到真实 SFT 小数据、多 batch、gradient accumulation
    - 当前 smoke 明确 `TORCHDYNAMO_DISABLE=1`，并关闭 `use_l2warp` 避免 Trainer loss 原地缩放与 L2Wrap backward 冲突
 5. 性能路径：
