@@ -108,6 +108,36 @@ def _move_first_dim(value: Any, indices: torch.LongTensor) -> Any:
     return value
 
 
+def _clone_cache_value(value: Any) -> Any:
+    """Clone nested cache containers without assuming a fixed FLA layout."""
+    if isinstance(value, torch.Tensor):
+        return value.clone()
+    if isinstance(value, tuple):
+        return tuple(_clone_cache_value(v) for v in value)
+    if isinstance(value, list):
+        return [_clone_cache_value(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _clone_cache_value(v) for k, v in value.items()}
+    return value
+
+
+def _first_tensor_batch_size(value: Any) -> int | None:
+    """Return the leading dimension of the first tensor in a nested cache."""
+    if isinstance(value, torch.Tensor):
+        return int(value.shape[0]) if value.dim() > 0 else None
+    if isinstance(value, dict):
+        for item in value.values():
+            found = _first_tensor_batch_size(item)
+            if found is not None:
+                return found
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            found = _first_tensor_batch_size(item)
+            if found is not None:
+                return found
+    return None
+
+
 class _RWKV7NativeGraphTokenRunner:
     """CUDA-graph replay helper for bsz=1 native fast-token decode.
 
@@ -424,9 +454,30 @@ class RWKV7StateCache(_FLACache):
     def to_legacy_cache(self) -> tuple[dict[str, Any], ...]:
         return tuple(self.states)
 
+    def clone(self) -> "RWKV7StateCache":
+        out = type(self)(seen_tokens=self._seen_tokens)
+        out.states = [_clone_cache_value(state) for state in self.states]
+        return out
+
+    def get_batch_size(self) -> int | None:
+        return _first_tensor_batch_size(self.states)
+
+    def select_batch(self, indices: torch.LongTensor, *, inplace: bool = True) -> "RWKV7StateCache":
+        """Select/reorder active batch rows for dynamic serving.
+
+        `indices` may reorder rows, drop completed rows, or both. The method is
+        intentionally cache-only: sequence length is preserved because all
+        active requests are assumed to have advanced together.
+        """
+        target = self if inplace else self.clone()
+        target.states = [_move_first_dim(state, indices) for state in target.states]
+        return target
+
+    def batch_select(self, indices: torch.LongTensor, *, inplace: bool = True) -> "RWKV7StateCache":
+        return self.select_batch(indices, inplace=inplace)
+
     def reorder_cache(self, beam_idx: torch.LongTensor):
-        self.states = [_move_first_dim(state, beam_idx) for state in self.states]
-        return self
+        return self.select_batch(beam_idx, inplace=True)
 
     @classmethod
     def from_legacy_cache(

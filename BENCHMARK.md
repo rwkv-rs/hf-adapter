@@ -129,6 +129,9 @@ Interpretation:
 - HF prefill is much faster than the official pure-torch reference path measured here.
 - Disabling FLA fused norm for inference improved HF decode from `31.5` to about `41` tok/s (`+31%`).
 - The lightweight `RWKV7StateCache` preserves exact logits/cache behavior and keeps the real remote-code `AutoModelForCausalLM` path at the same ~41 tok/s level while avoiding FLA CacheLayer bookkeeping.
+- `RWKV7StateCache.select_batch` / `batch_select` now gives serving stacks a
+  direct dynamic-batch compact/drop API; `reorder_cache` remains as the HF beam
+  compatibility hook.
 - **bsz=1 decode target is met** with the opt-in `native_jit` fast-token backend:
   standard optimized HF decode is about `0.45x` official, FLA fast-token reaches
   about `0.64x` official, and `RWKV7_FAST_TOKEN_BACKEND=native_jit` reaches
@@ -566,13 +569,13 @@ The next optimization work should focus on **HF recurrent decode**:
 - HF native-graph fast-token is now integrated for fixed bsz=1/2/4/8; V100
   speed_mem reaches `255.5 tok/s`, batch sweep reaches `253.9` / `434.3` /
   `852.6` / `1539.1` aggregate tok/s, and dynamic reorder/drop reaches
-  `524.7` total tok/s while using the normal HF prefill/cache handoff. The graph
-  runner cache is now an LRU over active batch sizes instead of a single most
-  recent runner, so dynamic serving does not recapture when a retained size
-  reappears.
+  `1209.3` total tok/s through the explicit cache select API while using the
+  normal HF prefill/cache handoff. The graph runner cache is now an LRU over
+  active batch sizes instead of a single most recent runner, so dynamic serving
+  does not recapture when a retained size reappears.
 - Dynamic-batch cache reorder/drop correctness and benchmark harnesses are in
-  place; V100 dynamic simulation reaches `417.9` total tok/s with native-JIT
-  `rwkv7_forward_token`.
+  place; V100 tests now cover non-inplace reorder plus compact/drop through
+  `select_batch` / `batch_select`.
 - Chunked prefill helper, correctness test, benchmark, analyzer section, and
   regression gate are in place. V100 bsz=2 prompt=512 chunked prefill matches
   full prefill/decode within fp16 tolerance; chunk sizes 64/128/256 reduce peak
@@ -626,9 +629,12 @@ Latest V100 `bench_batch_sweep.py --fast-token-backend native_graph` rows:
 | 8 | 317.7 | 1539.1 | 192.4 | 5.20 |
 
 Dynamic-batch reorder/drop with `RWKV7_FAST_TOKEN_BACKEND=native_graph` now
-reaches `524.7` total tok/s for `832` decoded tokens with active batch dropping
-from 8 to 4, compared with the latest forward row at `209.3` total tok/s and
-the previous native-JIT fast-token row at `417.9` total tok/s.
+reaches `1209.3` total tok/s for `832` decoded tokens with active batch dropping
+from 8 to 4, compared with the latest forward row at `211.7` total tok/s and
+the previous native-graph row at `524.7` total tok/s. Both latest rows report
+`cache_select_api=true` and `final_cache_batch_size=4`, so the result is using
+the production-facing cache compact/select path rather than only the beam
+reorder hook.
 
 ### Chunked prefill results
 

@@ -106,16 +106,18 @@ def maybe_reorder_or_drop(state, token: torch.Tensor, step_idx: int, args) -> tu
     do_drop = args.drop_every > 0 and step_idx % args.drop_every == 0 and active > args.min_batch_size
     if not do_reorder and not do_drop:
         return state, token, 0, 0
-    if not hasattr(state, "reorder_cache"):
-        raise ValueError(f"Cache type {type(state).__name__} does not expose reorder_cache")
-
     perm = list(range(active))
     if do_reorder:
         perm = [active - 1, *range(active - 1)]
     if do_drop:
         perm = perm[: active - 1]
     perm_t = torch.tensor(perm, dtype=torch.long, device=token.device)
-    state.reorder_cache(perm_t.detach().cpu())
+    if hasattr(state, "select_batch"):
+        state = state.select_batch(perm_t, inplace=True)
+    elif hasattr(state, "reorder_cache"):
+        state.reorder_cache(perm_t.detach().cpu())
+    else:
+        raise ValueError(f"Cache type {type(state).__name__} does not expose select_batch/reorder_cache")
     token = token.index_select(0, perm_t)
     return state, token, int(do_reorder), int(do_drop)
 
@@ -185,6 +187,8 @@ def run_loop(args, model, ids: torch.Tensor, decode_api: str) -> dict[str, Any]:
         "fuse_norm": getattr(model.config, "fuse_norm", None),
         "fast_cache": os.environ.get("RWKV7_FAST_CACHE", "1") not in _FALSE_VALUES,
         "cache_type": type(state).__name__ if state is not None else None,
+        "cache_select_api": bool(hasattr(state, "select_batch")) if state is not None else False,
+        "final_cache_batch_size": state.get_batch_size() if hasattr(state, "get_batch_size") else None,
         "prompt_tokens": int(ids.shape[1]),
         "initial_batch_size": int(ids.shape[0]),
         "final_batch_size": int(token.shape[0]),
