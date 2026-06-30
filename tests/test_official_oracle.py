@@ -14,6 +14,7 @@ from official_rwkv7_oracle import (  # noqa: E402
     OFFICIAL_RNN_SHA256,
     OfficialRWKV7,
     sha256_file,
+    strict_target_passed,
     tensor_metrics,
     tensor_passed,
 )
@@ -137,3 +138,14 @@ def test_official_fp32_logit_gate_uses_upstream_normalized_metric():
     assert not row["fp32_allclose"]
     assert tensor_passed("fp32", row, logits=True)
     assert not tensor_passed("fp32", row, logits=False)
+
+
+def test_calibrated_bf16_gate_keeps_original_target_as_diagnostic():
+    reference = torch.arange(1, 17, dtype=torch.float32)
+    candidate = reference.clone()
+    candidate[-1] += 0.7
+    row = tensor_metrics(reference, candidate)
+    assert row["cosine"] >= 0.9995
+    assert row["cosine"] < 0.9999
+    assert tensor_passed("bf16", row, logits=True)
+    assert not strict_target_passed("bf16", row, logits=True)
