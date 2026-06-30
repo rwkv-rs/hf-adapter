@@ -86,4 +86,6 @@ Formal execution never uses `--limit`. Pull requests may set
 `--smoke-limit`. Each task is an independent process with raw stdout,
 stderr, sample logs, task config and manifest row. Batch 1/8 absolute metric
 difference must be at most 0.001; Wikitext perplexity relative difference must
-be at most 0.1%.
+be at most 0.1%. The fixed execution shapes described in
+[`ARCHITECTURE.md`](ARCHITECTURE.md#numerical-reproducibility) prevent normal
+FP16 GEMM shape selection from changing close multiple-choice decisions.

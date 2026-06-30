@@ -30,6 +30,79 @@ from .ops_rwkv7 import rwkv7_recurrent
 # Mathematically equivalent form used by the official NumPy reference.
 RWKV7_DECAY_BASE = math.exp(-0.5)
 
+# A fixed row shape makes the readable reference implementation numerically
+# reproducible when an evaluation framework regroups the same examples into a
+# different batch size.  CUDA GEMM implementations are allowed to select a
+# different accumulation strategy for [B*T, C] matrices of different heights;
+# in FP16 that can flip close multiple-choice scores. Tiling batch and time so
+# every projection has 128 rows keeps the GEMM shape constant while preserving
+# the exact model equation and autograd graph. This is a reference
+# execution rule, not hardware dispatch: there are no device checks, tuning
+# tables, environment variables, or alternate kernels here.
+RWKV7_REFERENCE_LINEAR_ROWS = 128
+
+
+def _linear_reference(
+    value: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Apply a linear map with a batch- and length-invariant row shape.
+
+    Model projections are three-dimensional [batch, time, channels]. Batch and
+    time are tiled together so every GEMM has exactly 128 rows; padding rows
+    are discarded immediately and therefore cannot affect model state.
+    Two-dimensional inputs retain ordinary ``F.linear`` semantics for small
+    utility callers outside the model path.
+    """
+
+    if value.ndim != 3:
+        return F.linear(value, weight, bias)
+
+    batch_size, sequence_length, input_size = value.shape
+    batch_groups: list[torch.Tensor] = []
+    for batch_start in range(0, batch_size, RWKV7_REFERENCE_LINEAR_ROWS):
+        group = value[
+            batch_start : batch_start + RWKV7_REFERENCE_LINEAR_ROWS
+        ]
+        valid_batch = int(group.shape[0])
+        padded_batch = 1 << (valid_batch - 1).bit_length()
+        tokens_per_block = RWKV7_REFERENCE_LINEAR_ROWS // padded_batch
+
+        sequence_blocks: list[torch.Tensor] = []
+        for token_start in range(0, sequence_length, tokens_per_block):
+            block = group[:, token_start : token_start + tokens_per_block]
+            valid_tokens = int(block.shape[1])
+            if valid_batch < padded_batch or valid_tokens < tokens_per_block:
+                block = F.pad(
+                    block,
+                    (
+                        0,
+                        0,
+                        0,
+                        tokens_per_block - valid_tokens,
+                        0,
+                        padded_batch - valid_batch,
+                    ),
+                )
+            # Every projection below is exactly [128, input] @ [input, output],
+            # regardless of how callers batch or pad the examples.
+            projected = F.linear(
+                block.contiguous().view(RWKV7_REFERENCE_LINEAR_ROWS, input_size),
+                weight,
+                bias,
+            ).view(padded_batch, tokens_per_block, -1)
+            sequence_blocks.append(projected[:valid_batch, :valid_tokens])
+        batch_groups.append(torch.cat(sequence_blocks, dim=1))
+    return torch.cat(batch_groups, dim=0)
+
+
+class RWKV7Linear(nn.Linear):
+    """Checkpoint-compatible linear layer using the reference row contract."""
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        return _linear_reference(value, self.weight, self.bias)
+
 
 def _layer_norm(hidden_size: int, eps: float, bias: bool) -> nn.LayerNorm:
     try:
@@ -126,9 +199,9 @@ class RWKV7LowRank(nn.Module):
     ):
         super().__init__()
         self.lora = nn.Sequential(
-            nn.Linear(input_size, rank, bias=False),
+            RWKV7Linear(input_size, rank, bias=False),
             nn.Identity(),
-            nn.Linear(rank, output_size, bias=bias),
+            RWKV7Linear(rank, output_size, bias=bias),
         )
         if bias and fp32_bias:
             # Official RWKV-7 evaluates w0 in FP32 even when all checkpoint
@@ -168,16 +241,16 @@ class RWKV7TimeMix(nn.Module):
         self.k_a = nn.Parameter(torch.zeros(self.attention_hidden_size))
         self.r_k = nn.Parameter(torch.zeros(self.num_heads, self.head_dim))
 
-        self.r_proj = nn.Linear(
+        self.r_proj = RWKV7Linear(
             self.hidden_size, self.attention_hidden_size, bias=False
         )
-        self.k_proj = nn.Linear(
+        self.k_proj = RWKV7Linear(
             self.hidden_size, self.attention_hidden_size, bias=False
         )
-        self.v_proj = nn.Linear(
+        self.v_proj = RWKV7Linear(
             self.hidden_size, self.attention_hidden_size, bias=False
         )
-        self.o_proj = nn.Linear(
+        self.o_proj = RWKV7Linear(
             self.attention_hidden_size, self.hidden_size, bias=False
         )
 
@@ -241,7 +314,7 @@ class RWKV7TimeMix(nn.Module):
         # after promoting both terms.  This is especially important when a
         # FP16 checkpoint is executed as BF16.
         decay_rank = torch.tanh(self.w_lora.lora[0](xw))
-        raw_decay = F.linear(
+        raw_decay = _linear_reference(
             decay_rank,
             self.w_lora.lora[2].weight,
             bias=None,
@@ -334,10 +407,10 @@ class RWKV7ChannelMix(nn.Module):
     def __init__(self, config: RWKV7Config):
         super().__init__()
         self.x_k = nn.Parameter(torch.zeros(config.hidden_size))
-        self.key = nn.Linear(
+        self.key = RWKV7Linear(
             config.hidden_size, config.intermediate_size, bias=False
         )
-        self.value = nn.Linear(
+        self.value = RWKV7Linear(
             config.intermediate_size, config.hidden_size, bias=False
         )
 
@@ -754,7 +827,9 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
     def __init__(self, config: RWKV7Config):
         super().__init__(config)
         self.model = RWKV7Model(config)
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.lm_head = RWKV7Linear(
+            config.hidden_size, config.vocab_size, bias=False
+        )
         self.post_init()
 
     def get_input_embeddings(self):

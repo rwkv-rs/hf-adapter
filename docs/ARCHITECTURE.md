@@ -26,6 +26,17 @@ The cache implements sequence length, reorder, select, repeat, reset, detach and
 device/dtype conversion without graph runners, counters, hardware policy or
 layout routing.
 
+## Numerical reproducibility
+
+The model still uses ordinary `torch.nn.functional.linear` and PyTorch matrix
+multiplication. To make FP16 scores independent of how an evaluation or
+training framework regroups the same examples, `modeling_rwkv7.py` tiles batch
+and time into a fixed 128-row linear shape and `ops_rwkv7.py` evaluates the
+recurrence independently per sample. Linear padding rows are discarded. This
+changes neither the RWKV equations nor checkpoint keys and has no
+device-specific route, environment variable, compiled extension, or custom
+kernel.
+
 ## HF contract
 
 `RWKV7ForCausalLM.forward` accepts `input_ids`, `inputs_embeds`,

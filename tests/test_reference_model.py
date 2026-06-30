@@ -75,6 +75,35 @@ def test_cache_decode_matches_full_forward(tiny_config):
     assert cache.get_seq_length() == ids.shape[1]
 
 
+def test_fp16_prefix_is_invariant_to_batch_regrouping(tiny_config):
+    """Evaluation batching must not change an existing sequence's scores."""
+
+    torch.manual_seed(19)
+    model = RWKV7ForCausalLM(tiny_config)
+    # The tiny constructor deliberately leaves checkpoint-specific mixing
+    # vectors at zero; populate every tensor as a converted checkpoint would.
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.normal_(mean=0.0, std=0.02)
+    model = model.half().eval()
+    sample = torch.tensor([[7, 11, 13, 17, 19]])
+    regrouped = torch.randint(1, tiny_config.vocab_size, (8, 11))
+    regrouped[5, : sample.shape[1]] = sample[0]
+    # lm_eval right-pads requests internally and does not currently forward an
+    # attention mask through HFLM._model_call. Later positions are irrelevant
+    # to the causal prefix, but their presence changes the outer GEMM shape in
+    # an ordinary batched implementation.
+    regrouped[5, sample.shape[1] :] = 0
+
+    with torch.inference_mode():
+        isolated = model(input_ids=sample, use_cache=False).logits
+        batched = model(input_ids=regrouped, use_cache=False).logits
+
+    torch.testing.assert_close(
+        batched[5, : sample.shape[1]], isolated[0], rtol=0, atol=0
+    )
+
+
 def test_left_and_right_padding_do_not_update_state(tiny_config):
     model = RWKV7ForCausalLM(tiny_config).eval()
     core = torch.tensor([[11, 12, 13]])
