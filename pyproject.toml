@@ -45,6 +45,7 @@ train = [
   "accelerate",
   "datasets>=4.7,<6",
   "trl==0.20.0",
+  "wandb>=0.18,<1",
 ]
 
 [project.urls]
