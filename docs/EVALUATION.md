@@ -66,6 +66,22 @@ python evaluation/validate_lm_eval_matrix.py \
   --result-dir results/lm_eval/v0.9.0
 ```
 
+On a two-GPU V100 host, the checked-in launcher partitions the eight tasks,
+runs both shards concurrently, merges them, and invokes the same validator:
+
+```bash
+MODEL_ROOT=/models/rwkv7-reference \
+OUTPUT_DIR="$PWD/results/lm_eval/v0.9.0" \
+PYTHON="$VIRTUAL_ENV/bin/python" \
+CODE_SHA="$(git rev-parse HEAD)" \
+bash evaluation/run_lm_eval_v100_parallel.sh
+```
+
+`MODEL_ROOT` must contain `rwkv7_01b_hf`, `rwkv7_04b_hf`, and
+`rwkv7_15b_hf` directories or symlinks. The merged release bundle is written
+to `$OUTPUT_DIR/merged`; shard logs and manifests remain beside it for audit
+and resumable reruns.
+
 Formal execution never uses `--limit`. Pull requests may set
 `--smoke-limit`. Each task is an independent process with raw stdout,
 stderr, sample logs, task config and manifest row. Batch 1/8 absolute metric
