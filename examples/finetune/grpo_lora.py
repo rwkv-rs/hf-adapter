@@ -120,6 +120,10 @@ def main():
         per_device_train_batch_size=2,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         num_generations=2,
+        # GRPO's sampled rollout is inference, so use the canonical recurrent
+        # cache there.  The model config remains use_cache=False for the
+        # gradient-checkpointed policy-loss forward/backward below.
+        generation_kwargs={"use_cache": True},
         gradient_checkpointing=True,
         save_steps=25,
         logging_steps=1,
