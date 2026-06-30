@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 os.environ.setdefault("RWKV_V7_ON", "1")
@@ -35,49 +36,116 @@ def encode(tok, n):
     return ids[:, :n]
 
 
+def set_attn_mode(model, attn_mode: str) -> None:
+    if attn_mode == "auto":
+        return
+    model.config.attn_mode = attn_mode
+    for layer in getattr(model.model, "layers", []):
+        attn = getattr(layer, "attn", None)
+        if hasattr(attn, "mode"):
+            attn.mode = attn_mode
+
+
+def configure_fast_token_env(args) -> None:
+    if args.fast_token_layout != "auto":
+        os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = args.fast_token_layout
+    os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
+
+
+def last_fast_token_backend(model):
+    getter = getattr(model, "rwkv7_last_fast_token_backend", None)
+    if callable(getter):
+        return getter()
+    return getattr(model, "_rwkv7_last_fast_token_backend", None)
+
+
+@contextmanager
+def reference_forward_env():
+    old = os.environ.get("RWKV7_FAST_FORWARD")
+    os.environ["RWKV7_FAST_FORWARD"] = "0"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("RWKV7_FAST_FORWARD", None)
+        else:
+            os.environ["RWKV7_FAST_FORWARD"] = old
+
+
 def bench_hf(args, dt):
+    if args.fast_cache != "auto":
+        os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
+    configure_fast_token_env(args)
     tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_dir, trust_remote_code=True, torch_dtype=dt,
         device_map=args.device).eval()
+    set_attn_mode(model, args.attn_mode)
+    if args.fuse_norm != "auto":
+        desired = args.fuse_norm == "true"
+        actual = bool(getattr(model.config, "fuse_norm", False))
+        if actual != desired:
+            raise ValueError(f"Loaded model config has fuse_norm={actual}; use a converted model dir with fuse_norm={desired}")
     ids = encode(tok, args.prompt_tokens).to(args.device)
     L = ids.shape[1]
 
     torch.cuda.reset_peak_memory_stats()
     # prefill
-    with torch.no_grad():
+    with torch.inference_mode():
         for _ in range(args.warmup):
-            _ = model(ids, use_cache=False)
+            _ = model(ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
     torch.cuda.synchronize()
     t0 = time.time()
-    with torch.no_grad():
+    with torch.inference_mode():
         for _ in range(args.runs):
-            _ = model(ids, use_cache=False)
+            _ = model(ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
     torch.cuda.synchronize()
     prefill_tokps = L / ((time.time() - t0) / args.runs)
 
     # decode via direct state threading
-    with torch.no_grad():
-        out = model(ids[:, :8], use_cache=True)
+    use_fast_decode = args.hf_decode_api in {"rwkv7_forward_one", "rwkv7_forward_token"}
+    if use_fast_decode and not hasattr(model, args.hf_decode_api):
+        raise ValueError(f"Loaded model does not expose {args.hf_decode_api}")
+    fast_decode_fn = getattr(model, args.hf_decode_api) if use_fast_decode else None
+
+    def decode_step(token, state):
+        if use_fast_decode:
+            return fast_decode_fn(token, past_key_values=state)
+        with reference_forward_env():
+            return model(token, past_key_values=state, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
+
+    with torch.inference_mode():
+        out = model(ids[:, :8], use_cache=True, logits_to_keep=args.hf_logits_to_keep)
         state = out.past_key_values
         nxt = out.logits[:, -1:].argmax(dim=-1)
         for _ in range(args.warmup):
-            out = model(nxt, past_key_values=state, use_cache=True)
+            out = decode_step(nxt, state)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
     torch.cuda.synchronize()
     t0 = time.time()
-    with torch.no_grad():
+    with torch.inference_mode():
         for _ in range(args.decode_tokens):
-            out = model(nxt, past_key_values=state, use_cache=True)
+            out = decode_step(nxt, state)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
     torch.cuda.synchronize()
     dt_decode = time.time() - t0
-    return _res("hf_adapter", args, model, L, prefill_tokps,
-                args.decode_tokens / dt_decode,
-                torch.cuda.max_memory_allocated() / 1024 / 1024,
-                getattr(model.config, "attn_mode", "?"))
+    res = _res("hf_adapter", args, model, L, prefill_tokps,
+               args.decode_tokens / dt_decode,
+               torch.cuda.max_memory_allocated() / 1024 / 1024,
+               getattr(model.config, "attn_mode", "?"))
+    res["hf_logits_to_keep"] = args.hf_logits_to_keep
+    res["hf_prefill_use_cache"] = True
+    res["fuse_norm"] = getattr(model.config, "fuse_norm", None)
+    res["fast_cache"] = os.environ.get("RWKV7_FAST_CACHE", "1") not in {"0", "false", "False", "no", "off"}
+    res["cache_type"] = type(state).__name__ if state is not None else None
+    res["hf_decode_api"] = args.hf_decode_api
+    if use_fast_decode:
+        res["fast_token_layout"] = os.environ.get("RWKV7_FAST_TOKEN_LAYOUT", "3d")
+        res["fast_token_backend"] = os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "auto")
+        res["fast_token_backend_effective"] = last_fast_token_backend(model) or res["fast_token_backend"]
+    return res
 
 
 def bench_official(args, dt):
@@ -140,9 +208,25 @@ def main() -> int:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--warmup", type=int, default=3)
     ap.add_argument("--runs", type=int, default=5)
+    ap.add_argument("--hf-logits-to-keep", type=int, default=1,
+                    help="HF prefill/decode logits_to_keep; 1 matches serving needs and reduces memory")
+    ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto",
+                    help="Override config.fuse_norm for HF load; false is faster on V100 in current tests")
+    ap.add_argument("--attn-mode", choices=["auto", "chunk", "fused_recurrent"], default="auto",
+                    help="HF attention mode override; fused_recurrent avoids V100 Triton chunk compile instability")
+    ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto",
+                    help="HF only: use the lightweight RWKV7StateCache hot path (default via model env is enabled)")
+    ap.add_argument("--hf-decode-api", choices=["forward", "rwkv7_forward_one", "rwkv7_forward_token"], default="forward",
+                    help="HF decode loop implementation; rwkv7_forward_token is the batched inference-only fast path")
+    ap.add_argument("--fast-token-layout", choices=["auto", "3d", "2d"], default="auto",
+                    help="HF fast-token layout; 3d is the validated baseline, 2d is an experimental A/B path")
+    ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="auto",
+                    help="HF fast-token backend; native_graph captures a CUDA graph per fixed batch size")
+    ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"),
+                    help="JSONL output path; set empty string to disable appending")
     args = ap.parse_args()
     dt = DTYPES[args.dtype]
-    out = Path(__file__).parent / "results.jsonl"
+    out = Path(args.results) if args.results else None
     results = []
     if args.backend in ("hf", "both"):
         print(f"\n===== backend: hf_adapter ({args.dtype}) =====", flush=True)
@@ -153,10 +237,12 @@ def main() -> int:
         else:
             print(f"\n===== backend: official_rwkv ({args.dtype}) =====", flush=True)
             r = bench_official(args, dt); results.append(r); print(json.dumps(r, indent=2), flush=True)
-    with out.open("a", encoding="utf-8") as f:
-        for r in results:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    print(f"\nappended {len(results)} rows -> {out}", flush=True)
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("a", encoding="utf-8") as f:
+            for r in results:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        print(f"\nappended {len(results)} rows -> {out}", flush=True)
     return 0
 
 

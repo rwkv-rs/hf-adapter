@@ -172,4 +172,3 @@ if __name__ == "__main__":
         torch.cuda.synchronize()
         dt = time.time() - t0
     print(f"[decode] eager native: {N / dt:.1f} tok/s  ({1000 * dt / N:.2f} ms/tok)")
-
