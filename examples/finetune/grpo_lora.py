@@ -83,7 +83,15 @@ def format_reward(completions, **kwargs):
 def main():
     parser = argparse.ArgumentParser(description="RWKV-7 LoRA GRPO example")
     common_arguments(parser)
+    parser.add_argument(
+        "--max-completion-length",
+        type=int,
+        default=64,
+        help="Maximum sampled answer length within --max-length",
+    )
     args = parser.parse_args()
+    if not 0 < args.max_completion_length < args.max_length:
+        parser.error("--max-completion-length must be between 1 and --max-length - 1")
     output = prepare_run(args, DATASET, REVISION)
     train = load_dataset(DATASET, "main", revision=REVISION, split="train")
     evaluation = load_dataset(DATASET, "main", revision=REVISION, split="test")
@@ -95,7 +103,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(
         args.model, revision=args.model_revision, trust_remote_code=True
     )
-    max_prompt_length = args.max_length // 2
+    max_prompt_length = args.max_length - args.max_completion_length
 
     def truncate_prompt(example):
         content = example["prompt"][0]["content"]
@@ -115,7 +123,7 @@ def main():
     config = GRPOConfig(
         output_dir=str(output),
         seed=args.seed,
-        max_completion_length=args.max_length // 2,
+        max_completion_length=args.max_completion_length,
         max_steps=args.max_steps,
         per_device_train_batch_size=2,
         gradient_accumulation_steps=args.gradient_accumulation_steps,

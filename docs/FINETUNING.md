@@ -10,6 +10,10 @@ unfused PyTorch recurrence remains bounded; use
 The canonical environment uses `transformers==4.56.2` and `trl==0.20.0`
 (`pip install -e '.[train]'`). This combination retains V100 support with the
 validated PyTorch 2.5 CUDA build.
+Training from scratch works with PyTorch 2.5, while restoring a Trainer
+checkpoint that contains optimizer state requires PyTorch 2.6 or newer under
+this Transformers version. The requirement comes from Transformers' secure
+`torch.load` gate; the canonical resume check uses PyTorch 2.6.0+cu124.
 
 ## SFT
 
@@ -37,6 +41,8 @@ Dataset: [openai/gsm8k](https://huggingface.co/datasets/openai/gsm8k),
 revision `740312add88f781978c0658806c59bc2815b9866`. The script includes
 answer extraction, an exact correctness reward, and a small format/diversity
 reward so a cold-start 0.1B model does not receive zero advantage forever.
+The 512-token context reserves 64 tokens for each sampled completion by
+default; change this explicitly with `--max-completion-length`.
 
 ```bash
 python examples/finetune/grpo_lora.py \
