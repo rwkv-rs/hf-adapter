@@ -9,7 +9,7 @@ Release gates:
 - [x] package-free save/load and reference conversion layout
 - [x] tiny cache, padding, generation, loss and gradient tests
 - [x] non-blocking RTX 4080 FLA backend diagnostics archived
-- [ ] official checkpoint oracle matrix
+- [x] official checkpoint oracle matrix (V100 6/6; RTX 4080 9/9)
 - [ ] formal 48-unit lm_eval run
 - [ ] canonical SFT, DPO and GRPO runs
 - [x] clean wheel build, metadata check, isolated install and CLI/model smoke
