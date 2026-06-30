@@ -282,7 +282,12 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         if slow:
             focus.append("generic bnb quantized decode is slower than fp16: " + ", ".join(slow))
     larger_by_label = {str(r.get("model_size_label", "")).lower(): r for r in larger_latest}
-    for required_label, display_label in (("0.4b", "0.4B"), ("1.5b", "1.5B"), ("2.9b", "2.9B")):
+    for required_label, display_label in (
+        ("0.4b", "0.4B"),
+        ("1.5b", "1.5B"),
+        ("2.9b", "2.9B"),
+        ("7.2b", "7.2B"),
+    ):
         if required_label not in larger_by_label:
             focus.append(f"{display_label} converted-model load/generate smoke row pending")
             continue

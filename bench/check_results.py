@@ -340,7 +340,7 @@ def main() -> int:
     ap.add_argument("--max-native-graph-copy-share", type=float, default=0.15)
     ap.add_argument("--expected-top-component", default="attn_linears_lora")
     ap.add_argument("--expect-naive-candidate-slower", action="store_true", default=True)
-    ap.add_argument("--required-larger-models", nargs="+", default=["0.4b", "1.5b", "2.9b"])
+    ap.add_argument("--required-larger-models", nargs="+", default=["0.4b", "1.5b", "2.9b", "7.2b"])
     ap.add_argument("--min-larger-model-new-tokens", type=int, default=2)
     ap.add_argument("--min-larger-model-hidden-size", type=int, default=1024)
     ap.add_argument("--min-larger-model-layers", type=int, default=24)
