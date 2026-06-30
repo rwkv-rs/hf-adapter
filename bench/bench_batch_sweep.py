@@ -140,7 +140,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
 
     if args.fast_decode_api != "false" and fast_fn is not None:
         requested_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "fla")
-        effective_backend = "native_jit" if requested_backend == "native_jit" and bsz == 1 else "fla"
+        effective_backend = "native_jit" if requested_backend == "native_jit" else "fla"
         with torch.inference_mode():
             out = model(ids[:, :8], use_cache=True, logits_to_keep=args.hf_logits_to_keep)
             state = out.past_key_values

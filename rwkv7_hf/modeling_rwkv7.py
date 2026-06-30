@@ -23,13 +23,16 @@ except ImportError:  # pragma: no cover - direct remote-file execution fallback
 
 try:
     from .native_jit import block_step as _native_jit_block_step
+    from .native_jit import block_step_batched as _native_jit_block_step_batched
     from .native_jit import extract as _native_jit_extract
 except Exception:  # pragma: no cover - optional remote-code fast path
     try:
         from native_jit import block_step as _native_jit_block_step
+        from native_jit import block_step_batched as _native_jit_block_step_batched
         from native_jit import extract as _native_jit_extract
     except Exception:
         _native_jit_block_step = None
+        _native_jit_block_step_batched = None
         _native_jit_extract = None
 
 
@@ -298,7 +301,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         if not isinstance(past_key_values, RWKV7StateCache):
             past_key_values = RWKV7StateCache.from_legacy_cache(past_key_values)
 
-        if _fast_token_backend() == "native_jit" and token.numel() == 1:
+        if _fast_token_backend() == "native_jit":
             return self._rwkv7_forward_token_native_jit(token, past_key_values, return_dict)
 
         if _fast_token_layout() == "2d":
@@ -334,7 +337,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         return CausalLMOutputWithPast(logits=logits, past_key_values=past_key_values)
 
     def _rwkv7_native_jit_packs(self):
-        if _native_jit_block_step is None or _native_jit_extract is None:
+        if _native_jit_block_step is None or _native_jit_block_step_batched is None or _native_jit_extract is None:
             raise RuntimeError("native_jit fast-token backend is unavailable; copy native_jit.py into the model repo")
         cache = getattr(self, "_rwkv7_native_jit_pack_cache", None)
         weight = self.model.embeddings.weight
@@ -368,63 +371,78 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         past_key_values: RWKV7StateCache,
         return_dict: bool | None = True,
     ):
-        """TorchScript block-step fast path for bsz=1 recurrent decode.
+        """TorchScript block-step fast path for recurrent decode.
 
         This bridges the standard HF/RWKV7StateCache prefill state into the
         native JIT layout, executes one token, then writes the updated state back
         to the same cache object. It is opt-in via
-        `RWKV7_FAST_TOKEN_BACKEND=native_jit`; batched requests keep using the
-        existing FLA fast-token path.
+        `RWKV7_FAST_TOKEN_BACKEND=native_jit`.
         """
         packs = self._rwkv7_native_jit_packs()
         base = self.model
         dtype = base.embeddings.weight.dtype
         device = token.device
         hidden = int(packs[0][1] * packs[0][2])
-        x = F.embedding(token.reshape(1, 1), base.embeddings.weight).reshape(hidden)
-        v_first = torch.zeros(hidden, device=device, dtype=dtype)
+        batch_size = int(token.numel())
+        x = F.embedding(token.reshape(batch_size), base.embeddings.weight).reshape(batch_size, hidden)
+        v_first = torch.zeros(batch_size, hidden, device=device, dtype=dtype)
 
         for p in packs:
             layer_idx, num_heads, head_dim = int(p[0]), int(p[1]), int(p[2])
             state = past_key_values._ensure_layer(layer_idx)
             recurrent_state = self._native_state_tensor(
                 state.get("recurrent_state"),
-                (num_heads, head_dim, head_dim),
+                (batch_size, num_heads, head_dim, head_dim),
                 device=device,
                 dtype=torch.float32,
                 transpose_last=True,
             )
             xpa = self._native_state_tensor(
                 state.get("conv_state"),
-                (hidden,),
+                (batch_size, hidden),
                 device=device,
                 dtype=dtype,
             )
             xpf = self._native_state_tensor(
                 state.get("ffn_state"),
-                (hidden,),
+                (batch_size, hidden),
                 device=device,
                 dtype=dtype,
             )
-            x, xpa, xpf, v_first, recurrent_state = _native_jit_block_step(
-                x,
-                xpa,
-                xpf,
-                v_first,
-                recurrent_state,
-                *p,
-            )
+            if batch_size == 1:
+                x1, xpa1, xpf1, vf1, rs1 = _native_jit_block_step(
+                    x.reshape(hidden),
+                    xpa.reshape(hidden),
+                    xpf.reshape(hidden),
+                    v_first.reshape(hidden),
+                    recurrent_state.reshape(num_heads, head_dim, head_dim),
+                    *p,
+                )
+                x = x1.reshape(1, hidden)
+                xpa = xpa1.reshape(1, hidden)
+                xpf = xpf1.reshape(1, hidden)
+                v_first = vf1.reshape(1, hidden)
+                recurrent_state = rs1.reshape(1, num_heads, head_dim, head_dim)
+            else:
+                x, xpa, xpf, v_first, recurrent_state = _native_jit_block_step_batched(
+                    x,
+                    xpa,
+                    xpf,
+                    v_first,
+                    recurrent_state,
+                    *p,
+                )
             # FLA's cache stores the recurrent matrix transposed relative to
             # the official/native matmul layout. Keep the public cache in FLA
             # layout so callers can still fall back to the normal HF path.
-            state["recurrent_state"] = recurrent_state.transpose(-1, -2).unsqueeze(0).contiguous()
-            state["conv_state"] = xpa.unsqueeze(0)
-            state["ffn_state"] = xpf.unsqueeze(0)
+            state["recurrent_state"] = recurrent_state.transpose(-1, -2).contiguous()
+            state["conv_state"] = xpa.contiguous()
+            state["ffn_state"] = xpf.contiguous()
             state["attn_state"] = None
 
         past_key_values._seen_tokens += 1
         hidden_states = F.layer_norm(x, [hidden], base.norm.weight, base.norm.bias, 1e-5)
-        logits = F.linear(hidden_states, self.lm_head.weight, self.lm_head.bias).view(1, 1, -1)
+        logits = F.linear(hidden_states, self.lm_head.weight, self.lm_head.bias).view(batch_size, 1, -1)
         if not return_dict:
             return logits, past_key_values
         return CausalLMOutputWithPast(logits=logits, past_key_values=past_key_values)
