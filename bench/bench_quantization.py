@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+# coding=utf-8
+"""Benchmark HF adapter inference under fp16 / bitsandbytes 8bit / 4bit loads."""
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import os
+import time
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
+
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
+SEED = (
+    "RWKV is a recurrent language model with transformer-like parallel training. "
+    "This prompt is repeated to create a stable quantization benchmark. "
+    * 80
+)
+
+
+def device_map_for(device: str):
+    if not device.startswith("cuda"):
+        return None
+    if ":" in device:
+        return {"": int(device.split(":", 1)[1])}
+    return {"": 0}
+
+
+def cuda_sync(device: str) -> None:
+    if device.startswith("cuda") and torch.cuda.is_available():
+        torch.cuda.synchronize()
+
+
+def peak_mb(device: str) -> float | None:
+    if not device.startswith("cuda") or not torch.cuda.is_available():
+        return None
+    return round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
+
+
+def encode(tok, n: int) -> torch.LongTensor:
+    ids = tok(SEED, return_tensors="pt", add_special_tokens=False).input_ids
+    return ids[:, :n]
+
+
+def set_attn_mode(model, attn_mode: str) -> None:
+    model.config.attn_mode = attn_mode
+    for layer in getattr(model.model, "layers", []):
+        attn = getattr(layer, "attn", None)
+        if hasattr(attn, "mode"):
+            attn.mode = attn_mode
+
+
+@contextmanager
+def reference_forward_env():
+    old = os.environ.get("RWKV7_FAST_FORWARD")
+    os.environ["RWKV7_FAST_FORWARD"] = "0"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("RWKV7_FAST_FORWARD", None)
+        else:
+            os.environ["RWKV7_FAST_FORWARD"] = old
+
+
+def load_model(args: argparse.Namespace, quantization: str, dtype: torch.dtype):
+    kwargs: dict[str, Any] = {
+        "trust_remote_code": True,
+        "torch_dtype": dtype,
+        "device_map": device_map_for(args.device) if args.device.startswith("cuda") else None,
+    }
+    if quantization != "none":
+        if importlib.util.find_spec("bitsandbytes") is None:
+            raise RuntimeError("bitsandbytes missing")
+        from transformers import BitsAndBytesConfig
+
+        if quantization == "8bit":
+            kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+        elif quantization == "4bit":
+            kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type=args.bnb_4bit_quant_type,
+                bnb_4bit_compute_dtype=dtype,
+                bnb_4bit_use_double_quant=args.bnb_4bit_use_double_quant,
+            )
+        else:  # pragma: no cover - argparse choices
+            raise ValueError(quantization)
+    model = AutoModelForCausalLM.from_pretrained(args.hf_dir, **kwargs).eval()
+    set_attn_mode(model, args.attn_mode)
+    return model
+
+
+def bench_one(args: argparse.Namespace, tok, quantization: str, dtype: torch.dtype) -> dict[str, Any]:
+    if args.device.startswith("cuda") and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+    try:
+        t0 = time.time()
+        model = load_model(args, quantization, dtype)
+        cuda_sync(args.device)
+        load_s = time.time() - t0
+    except Exception as exc:
+        if args.optional:
+            return {
+                "axis": "quantization",
+                "backend": "hf_adapter",
+                "quantization": quantization,
+                "dtype": args.dtype,
+                "device": torch.cuda.get_device_name(0) if args.device.startswith("cuda") and torch.cuda.is_available() else args.device,
+                "status": "skip",
+                "error": repr(exc),
+            }
+        raise
+
+    input_device = next(model.parameters()).device
+    ids = encode(tok, args.prompt_tokens).to(input_device)
+    prompt_tokens = int(ids.shape[1])
+
+    with torch.inference_mode():
+        for _ in range(args.warmup):
+            _ = model(ids, use_cache=True, logits_to_keep=1)
+    cuda_sync(args.device)
+    t0 = time.time()
+    with torch.inference_mode():
+        for _ in range(args.runs):
+            out = model(ids, use_cache=True, logits_to_keep=1)
+    cuda_sync(args.device)
+    prefill_tokps = prompt_tokens / ((time.time() - t0) / args.runs)
+    logits = out.logits.detach().float()
+    if not logits.isfinite().all():
+        raise RuntimeError(f"{quantization} produced non-finite logits")
+
+    with torch.inference_mode():
+        state = out.past_key_values
+        nxt = out.logits[:, -1:].argmax(dim=-1)
+        for _ in range(args.warmup):
+            with reference_forward_env():
+                out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
+            state = out.past_key_values
+            nxt = out.logits[:, -1:].argmax(dim=-1)
+    cuda_sync(args.device)
+    t0 = time.time()
+    with torch.inference_mode():
+        for _ in range(args.decode_tokens):
+            with reference_forward_env():
+                out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
+            state = out.past_key_values
+            nxt = out.logits[:, -1:].argmax(dim=-1)
+    cuda_sync(args.device)
+    decode_s = time.time() - t0
+    footprint_mb = None
+    if hasattr(model, "get_memory_footprint"):
+        footprint_mb = round(float(model.get_memory_footprint()) / 1024 / 1024, 1)
+    return {
+        "axis": "quantization",
+        "backend": "hf_adapter",
+        "quantization": quantization,
+        "dtype": args.dtype,
+        "device": torch.cuda.get_device_name(0) if args.device.startswith("cuda") and torch.cuda.is_available() else args.device,
+        "attn_mode": getattr(model.config, "attn_mode", "?"),
+        "prompt_tokens": prompt_tokens,
+        "decode_tokens": args.decode_tokens,
+        "prefill_tokps": round(prefill_tokps, 1),
+        "decode_tokps": round(args.decode_tokens / decode_s, 1),
+        "decode_ms_per_tok": round(1000 * decode_s / args.decode_tokens, 2),
+        "model_footprint_mb": footprint_mb,
+        "peak_vram_mb": peak_mb(args.device),
+        "load_s": round(load_s, 3),
+        "status": "pass",
+    }
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--hf-dir", required=True)
+    ap.add_argument("--dtype", default="fp16", choices=list(DTYPES))
+    ap.add_argument("--device", default="cuda")
+    ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
+    ap.add_argument("--quantizations", nargs="+", choices=["none", "8bit", "4bit"], default=["none", "8bit", "4bit"])
+    ap.add_argument("--prompt-tokens", type=int, default=256)
+    ap.add_argument("--decode-tokens", type=int, default=32)
+    ap.add_argument("--warmup", type=int, default=1)
+    ap.add_argument("--runs", type=int, default=2)
+    ap.add_argument("--optional", action="store_true", help="Append skip rows instead of failing when a quant backend is unavailable")
+    ap.add_argument("--bnb-4bit-quant-type", choices=["fp4", "nf4"], default="nf4")
+    ap.add_argument("--bnb-4bit-use-double-quant", action="store_true")
+    ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
+    args = ap.parse_args()
+    dtype = DTYPES[args.dtype]
+    tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
+
+    rows = []
+    for quantization in args.quantizations:
+        print(f"\n===== quantization: {quantization} =====", flush=True)
+        row = bench_one(args, tok, quantization, dtype)
+        rows.append(row)
+        print(json.dumps(row, indent=2, ensure_ascii=False), flush=True)
+
+    if args.results:
+        out = Path(args.results)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("a", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        print(f"\nappended {len(rows)} rows -> {out}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
