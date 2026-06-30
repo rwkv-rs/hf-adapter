@@ -158,6 +158,21 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     micro = latest(rows, lambda r: r.get("axis") == "decode_micro" and r.get("backend") == "hf_adapter")
     components = latest(rows, lambda r: r.get("axis") == "decode_components" and r.get("backend") == "hf_adapter")
     projection_lora = latest(rows, lambda r: r.get("axis") == "projection_lora" and r.get("backend") == "hf_adapter")
+    native_rows = [r for r in rows if r.get("axis") == "native_decode" and r.get("backend") == "hf_native_jit"]
+    best_native = max(
+        native_rows,
+        key=lambda r: (float(r.get("native_graph_tokps") or r.get("native_jit_tokps") or 0), int(r.get("_lineno", 0))),
+        default=None,
+    )
+    native_best_tokps = None
+    native_best_path = None
+    if best_native:
+        native_best_tokps = num(best_native, "native_graph_tokps")
+        native_best_path = "native_graph"
+        if native_best_tokps is None:
+            native_best_tokps = num(best_native, "native_jit_tokps")
+            native_best_path = "native_jit"
+    native_decode_ratio = ratio(native_best_tokps, num(speed_official, "decode_tokps") or num(breakdown_official, "decode_tokps"))
 
     focus = []
     if speed_decode_ratio is not None and speed_decode_ratio < target_decode_ratio:
@@ -186,6 +201,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         speedup = projection_lora.get("avg_candidate_speedup")
         if speedup is not None and float(speedup) < 1.0:
             focus.append(f"naive PyTorch projection/LoRA bmm candidate is slower ({float(speedup):.2f}x); custom fusion needed")
+    if best_native is None:
+        focus.append("native JIT/CUDA-graph decode rows pending")
+    elif native_decode_ratio is not None and native_decode_ratio >= target_decode_ratio:
+        focus.append(f"{native_best_path} reaches {native_decode_ratio:.2f}x official; validate integration with HF fast-token/dynamic batching")
     if not focus:
         focus.append("targets met for available rows; rerun larger models/new GPUs")
 
@@ -227,6 +246,13 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "hf_forward_fixed", "hf_forward_greedy", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
         "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
         "projection_lora": compact(projection_lora, ["_lineno", "batch_size", "hidden_size", "layers", "avg_timings_ms", "avg_current_linears_lora_sum_ms", "avg_candidate_linears_lora_sum_ms", "avg_candidate_speedup", "peak_vram_mb"]),
+        "native_decode": {
+            "best_row": compact(best_native, ["_lineno", "device", "prompt_tokens", "decode_tokens", "hidden_size", "num_heads", "head_dim", "native_jit_tokps", "native_jit_ms_per_tok", "native_graph_tokps", "native_graph_ms_per_tok", "graph_vs_jit_tokens_matched", "graph_vs_jit_tokens_total", "logit_cosine", "logit_max_abs_diff", "peak_vram_mb"]),
+            "best_path": native_best_path,
+            "decode_tokps": round(native_best_tokps, 4) if native_best_tokps is not None else None,
+            "decode_ratio": round(native_decode_ratio, 4) if native_decode_ratio is not None else None,
+            "decode_status": verdict_ge(native_decode_ratio, target_decode_ratio),
+        },
         "next_focus": focus,
     }
 
@@ -263,6 +289,8 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["decode_components"], ensure_ascii=False) if report["decode_components"] else "PENDING")
     print("\n## projection_lora")
     print(json.dumps(report["projection_lora"], ensure_ascii=False) if report["projection_lora"] else "PENDING")
+    print("\n## native_decode")
+    print(json.dumps(report["native_decode"], ensure_ascii=False))
     print("\n## next_focus")
     for item in report["next_focus"]:
         print(f"- {item}")
