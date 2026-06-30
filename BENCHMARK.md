@@ -641,6 +641,27 @@ than fp16 on this RWKV-7/FLA V100 path. This means production quantized serving
 still needs a custom faster path or fused quantized projections before it can
 meet the original "not slower than fp16" target.
 
+## HF speculative decoding smoke
+
+`rwkv7_speculative_generate()` is the initial HF-only speculative decoding
+helper. It keeps the target and draft as ordinary HF models, proposes greedy
+draft spans, verifies them with block target forwards, and reports acceptance
+telemetry:
+
+```bash
+python tests/test_speculative_decode.py \
+  --model /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --max-new-tokens 8 \
+  --draft-tokens 4
+```
+
+The default smoke uses the same model as target and draft, so every proposed
+token should be accepted and the sequence must match greedy `generate()`.
+Passing `--draft-model /path/to/smaller-hf-rwkv` exercises the same API with a
+real draft model.
+
 ## Benchmark gap report
 
 `bench/analyze_results.py` turns accumulated JSONL rows into a target/gap report:
