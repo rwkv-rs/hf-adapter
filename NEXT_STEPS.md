@@ -65,6 +65,8 @@
    - 已把 converter 的 head_dim/value_dim/rank dims 改成权重 shape 推断，并用 `tests/test_convert_config.py` 覆盖非 64 head_dim、value_dim 列表和错误 shape。
    - 下一步需要拿真实 0.4B+ `.pth` 跑转换、load、alignment 和 speed smoke。
 2. 增加批量转换脚本和 SHA256 manifest。
+   - 已新增 `scripts/batch_convert_rwkv7_to_hf.py`，支持 `--input-dir` / `--inputs`、dry-run、跳过已存在输出、追加 manifest，并记录 size / sha256 / 转换选项 / command / status。
+   - 已新增 `tests/test_batch_convert_manifest.py` 覆盖 dry-run manifest、append manifest、missing input error。
 3. 补 HF behavior：
    - 已补 `resize_token_embeddings` 固定词表保护
    - 已新增 `tests/test_hf_api_contract.py` 覆盖 `prepare_inputs_for_generation`、beam cache reorder、`gradient_checkpointing_enable`

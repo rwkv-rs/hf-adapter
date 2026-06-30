@@ -21,6 +21,7 @@ rwkv7_hf/
   tokenization_rwkv7.py
 scripts/
   convert_rwkv7_to_hf.py
+  batch_convert_rwkv7_to_hf.py
 tests/
   smoke_hf_generate.py
   test_official_alignment.py
@@ -60,6 +61,27 @@ python scripts/convert_rwkv7_to_hf.py \
   --precision fp16 \
   --attn-mode chunk \
   --no-fuse-norm
+```
+
+For multiple downloaded checkpoints, use the batch wrapper. It writes a
+reproducible manifest with source path, output path, size, SHA256, conversion
+options, status, and the exact command for each model:
+
+```bash
+python scripts/batch_convert_rwkv7_to_hf.py \
+  --input-dir /path/to/rwkv7-pth-files \
+  --output-root /path/to/hf-models \
+  --vocab-file /path/to/rwkv_vocab_v20230424.txt \
+  --precision fp16 \
+  --attn-mode fused_recurrent \
+  --no-fuse-norm \
+  --manifest /path/to/hf-models/manifest.json
+
+# Enumerate and hash without loading torch/FLA or writing model directories.
+python scripts/batch_convert_rwkv7_to_hf.py \
+  --input-dir /path/to/rwkv7-pth-files \
+  --output-root /path/to/hf-models \
+  --dry-run
 ```
 
 ## Inference smoke test
@@ -397,6 +419,9 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   dimensions, and low-rank dimensions from checkpoint tensor shapes instead of
   hard-coding the 0.1B layout; offline tests cover non-64 head dims and shape
   validation errors.
+- Batch conversion wrapper writes a SHA256 manifest and supports dry-run
+  enumeration for downloaded 0.4B+ checkpoints before launching heavyweight
+  conversions.
 - HF API contract smoke covers fixed-vocab `resize_token_embeddings` handling,
   `prepare_inputs_for_generation`, beam cache reorder, and
   `gradient_checkpointing_enable`.
