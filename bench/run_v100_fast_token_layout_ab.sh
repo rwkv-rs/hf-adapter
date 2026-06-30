@@ -10,12 +10,14 @@ PROMPT_TOKENS=${PROMPT_TOKENS:-512}
 DECODE_TOKENS=${DECODE_TOKENS:-128}
 MICRO_PROMPT_TOKENS=${MICRO_PROMPT_TOKENS:-128}
 MICRO_STEPS=${MICRO_STEPS:-128}
+LAYOUTS=${LAYOUTS:-"3d 2d"}
+SPEED_BACKEND=${SPEED_BACKEND:-both}
 
 export PYTHONNOUSERSITE=${PYTHONNOUSERSITE:-1}
 export RWKV_V7_ON=${RWKV_V7_ON:-1}
 export RWKV7_FAST_CACHE=${RWKV7_FAST_CACHE:-1}
 
-for layout in 3d 2d; do
+for layout in ${LAYOUTS}; do
   echo "===== fast-token layout: ${layout} correctness ====="
   RWKV7_FAST_TOKEN_LAYOUT=${layout} \
   python tests/test_fast_decode_api.py \
@@ -33,7 +35,7 @@ for layout in 3d 2d; do
   python bench/bench_speed.py \
     --hf-dir "${HF_DIR}" \
     --pth "${PTH}" \
-    --backend both \
+    --backend "${SPEED_BACKEND}" \
     --dtype "${DTYPE}" \
     --prompt-tokens "${PROMPT_TOKENS}" \
     --decode-tokens "${DECODE_TOKENS}" \
