@@ -387,10 +387,11 @@ fast-token speed, and within fp16 diff tolerance.
 `bench_generate_fast_path.py` emits `axis=generate_fast_path` for the top-level
 HF API. It compares greedy `model.generate(..., use_cache=True)` with
 `RWKV7_FAST_FORWARD=0` and `1`; `check_results.py` requires identical generated
-tokens, a valid effective backend, and at least `2.0x` end-to-end new-token
-throughput improvement. The recorded V100 prompt=8/new=16 row is `37.8 tok/s`
-for reference generate vs `162.2 tok/s` with fast-forward (`4.29x`), with
-`generated_equal=true` and effective backend `native_graph`.
+tokens, bsz>=2 coverage, a valid effective backend, and at least `2.0x`
+end-to-end new-token throughput improvement. The recorded V100 prompt=8/new=16 bsz=2 row is `75.3 tok/s`
+aggregate for reference generate vs `303.5 tok/s` aggregate with fast-forward
+(`4.03x`), with `generated_equal=true`, `32/32` generated tokens matched,
+and effective backend `native_graph`.
 
 ## Decode component benchmark
 

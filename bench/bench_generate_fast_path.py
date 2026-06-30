@@ -137,6 +137,7 @@ def main() -> int:
     ap.add_argument("--fast-token-layout", choices=["auto", "3d", "2d"], default="auto")
     ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="auto")
     ap.add_argument("--prompt", default="User: Hello!\n\nAssistant:")
+    ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--max-new-tokens", type=int, default=16)
     ap.add_argument("--warmup-new-tokens", type=int, default=2)
     ap.add_argument("--warmup", type=int, default=1)
@@ -150,7 +151,10 @@ def main() -> int:
         torch.cuda.reset_peak_memory_stats()
     tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
     model = load_model(args, dtype)
-    enc = tok(args.prompt, return_tensors="pt")
+    if args.batch_size < 1:
+        raise ValueError("--batch-size must be positive")
+    prompt_input = args.prompt if args.batch_size == 1 else [args.prompt for _ in range(args.batch_size)]
+    enc = tok(prompt_input, return_tensors="pt", add_special_tokens=False)
     if args.device.startswith("cuda"):
         enc = {k: v.cuda() for k, v in enc.items()}
     batch = int(enc["input_ids"].shape[0])
@@ -180,6 +184,7 @@ def main() -> int:
         "fast_token_layout": os.environ.get("RWKV7_FAST_TOKEN_LAYOUT", "3d"),
         "fast_token_backend": os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "auto"),
         "fast_token_backend_effective": fast_backend,
+        "batch_size": batch,
         "prompt_tokens": prompt_tokens,
         "max_new_tokens": args.max_new_tokens,
         "runs": args.runs,
