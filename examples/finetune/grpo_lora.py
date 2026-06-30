@@ -71,7 +71,15 @@ def format_reward(completions, **kwargs):
             completion = completion[-1]["content"]
         text = str(completion).strip()
         words = set(text.split())
-        score = min(len(words), 20) / 200.0
+        # Do not saturate the lexical term at the short completion length: a
+        # saturated reward gives every sampled answer the same value and GRPO
+        # then has zero within-group advantage.  These small dense terms favor
+        # varied reasoning, numeric work, and mathematical structure while the
+        # exact-answer reward remains dominant.
+        score = min(len(words), 100) / 1000.0
+        score += min(len(set(text)), 100) / 10000.0
+        score += min(sum(character.isdigit() for character in text), 20) / 1000.0
+        score += min(sum(character in "+-*/=" for character in text), 20) / 2000.0
         if "####" in text:
             score += 0.1
         if final_answer(text):
