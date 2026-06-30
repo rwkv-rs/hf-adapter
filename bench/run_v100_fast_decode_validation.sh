@@ -42,6 +42,7 @@ run() {
     --dtype "${DTYPE}" \
     --device "${DEVICE}" \
     --fuse-norm false \
+    --batch-sizes 1 2 4 \
     --decode-steps 32 \
     --max-diff 0.2
 
@@ -67,7 +68,7 @@ run() {
     --hf-logits-to-keep 1 \
     --fuse-norm false \
     --fast-cache true \
-    --hf-decode-api rwkv7_forward_one \
+    --hf-decode-api rwkv7_forward_token \
     --results "${RESULTS}"
 
   run python bench/bench_batch_sweep.py \
@@ -122,7 +123,7 @@ run() {
     --fuse-norm false \
     --fast-cache true \
     --fixed-token \
-    --hf-decode-api rwkv7_forward_one \
+    --hf-decode-api rwkv7_forward_token \
     --out "${PROFILE_OUT}"
 
   run python bench/summarize_results.py \
