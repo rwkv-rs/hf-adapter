@@ -59,6 +59,17 @@ run() {
     --decode-steps 16 \
     --max-diff 0.2
 
+  run python tests/test_fast_decode_api.py \
+    --model "${HF_DIR}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --fuse-norm false \
+    --batch-sizes 1 \
+    --fast-token-layouts 3d \
+    --fast-token-backends native_graph \
+    --decode-steps 16 \
+    --max-diff 0.2
+
   run python tests/test_batch_cache.py \
     --model "${HF_DIR}" \
     --dtype "${DTYPE}" \
@@ -106,6 +117,7 @@ run() {
     --warmup 2 \
     --runs 3 \
     --hf-logits-to-keep 1 \
+    --attn-mode fused_recurrent \
     --fuse-norm false \
     --fast-cache true \
     --hf-decode-api rwkv7_forward_token \
@@ -122,10 +134,29 @@ run() {
     --warmup 2 \
     --runs 3 \
     --hf-logits-to-keep 1 \
+    --attn-mode fused_recurrent \
     --fuse-norm false \
     --fast-cache true \
     --hf-decode-api rwkv7_forward_token \
     --fast-token-backend native_jit \
+    --results "${RESULTS}"
+
+  run python bench/bench_speed.py \
+    --hf-dir "${HF_DIR}" \
+    --pth "${PTH}" \
+    --backend hf \
+    --dtype "${DTYPE}" \
+    --prompt-tokens "${PROMPT_TOKENS}" \
+    --decode-tokens "${DECODE_TOKENS}" \
+    --device "${DEVICE}" \
+    --warmup 3 \
+    --runs 3 \
+    --hf-logits-to-keep 1 \
+    --attn-mode fused_recurrent \
+    --fuse-norm false \
+    --fast-cache true \
+    --hf-decode-api rwkv7_forward_token \
+    --fast-token-backend native_graph \
     --results "${RESULTS}"
 
   run python bench/bench_batch_sweep.py \

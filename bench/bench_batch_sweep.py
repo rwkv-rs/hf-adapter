@@ -140,7 +140,12 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
 
     if args.fast_decode_api != "false" and fast_fn is not None:
         requested_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "fla")
-        effective_backend = "native_jit" if requested_backend == "native_jit" else "fla"
+        if requested_backend == "native_graph":
+            effective_backend = "native_graph" if bsz == 1 else "native_jit"
+        elif requested_backend == "native_jit":
+            effective_backend = "native_jit"
+        else:
+            effective_backend = "fla"
         with torch.inference_mode():
             out = model(ids[:, :8], use_cache=True, logits_to_keep=args.hf_logits_to_keep)
             state = out.past_key_values
@@ -181,8 +186,8 @@ def main() -> int:
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--fast-decode-api", choices=["auto", "true", "false"], default="auto")
-    ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit"], default="auto",
-                    help="Fast-token backend; native_jit applies to bsz=1 and falls back to FLA for batched requests")
+    ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="auto",
+                    help="Fast-token backend; native_graph applies to bsz=1 and falls back to native_jit for batched requests")
     ap.add_argument("--batch-sizes", nargs="+", type=int, default=[1, 2, 4, 8])
     ap.add_argument("--prompt-tokens", type=int, default=512)
     ap.add_argument("--decode-tokens", type=int, default=128)
