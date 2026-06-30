@@ -40,6 +40,8 @@ def bench_hf(args, dt):
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
     if args.fast_token_layout != "auto":
         os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = args.fast_token_layout
+    if args.fast_token_backend != "auto":
+        os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
     tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_dir, trust_remote_code=True, torch_dtype=dt,
@@ -105,6 +107,7 @@ def bench_hf(args, dt):
     res["hf_decode_api"] = args.hf_decode_api
     if use_fast_decode:
         res["fast_token_layout"] = os.environ.get("RWKV7_FAST_TOKEN_LAYOUT", "3d")
+        res["fast_token_backend"] = os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "fla")
     return res
 
 
@@ -178,6 +181,8 @@ def main() -> int:
                     help="HF decode loop implementation; rwkv7_forward_token is the batched inference-only fast path")
     ap.add_argument("--fast-token-layout", choices=["auto", "3d", "2d"], default="auto",
                     help="HF fast-token layout; 3d is the validated baseline, 2d is an experimental A/B path")
+    ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit"], default="auto",
+                    help="HF fast-token backend; native_jit is bsz=1 only and falls back to FLA for batched requests")
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"),
                     help="JSONL output path; set empty string to disable appending")
     args = ap.parse_args()
