@@ -171,9 +171,11 @@ def main() -> int:
                     help="HF only: use the lightweight RWKV7StateCache hot path (default via model env is enabled)")
     ap.add_argument("--hf-decode-api", choices=["forward", "rwkv7_forward_one"], default="forward",
                     help="HF decode loop implementation; rwkv7_forward_one is bsz=1 inference-only fast path")
+    ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"),
+                    help="JSONL output path; set empty string to disable appending")
     args = ap.parse_args()
     dt = DTYPES[args.dtype]
-    out = Path(__file__).parent / "results.jsonl"
+    out = Path(args.results) if args.results else None
     results = []
     if args.backend in ("hf", "both"):
         print(f"\n===== backend: hf_adapter ({args.dtype}) =====", flush=True)
@@ -184,10 +186,12 @@ def main() -> int:
         else:
             print(f"\n===== backend: official_rwkv ({args.dtype}) =====", flush=True)
             r = bench_official(args, dt); results.append(r); print(json.dumps(r, indent=2), flush=True)
-    with out.open("a", encoding="utf-8") as f:
-        for r in results:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    print(f"\nappended {len(results)} rows -> {out}", flush=True)
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("a", encoding="utf-8") as f:
+            for r in results:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        print(f"\nappended {len(results)} rows -> {out}", flush=True)
     return 0
 
 
