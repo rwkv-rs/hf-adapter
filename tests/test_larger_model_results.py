@@ -29,6 +29,7 @@ def row(label: str, hidden_size: int, lineno: int) -> dict:
         "value_dim_unique": [hidden_size],
         "generated_tokens": 2,
         "top5": [1, 2, 3, 4, 5],
+        "fast_token_backend_effective": "native_graph",
     }
 
 
@@ -40,11 +41,12 @@ def main() -> int:
         target_decode_ratio=0.9,
         target_memory_ratio=1.1,
     )
-    report = analyze([row("0.4b", 1024, 1), row("1.5b", 2048, 2)], args)
+    report = analyze([row("0.4b", 1024, 1), row("1.5b", 2048, 2), row("2.9b", 2560, 3)], args)
     labels = {r["model_size_label"] for r in report["larger_model_smoke"]}
-    assert labels == {"0.4b", "1.5b"}
+    assert labels == {"0.4b", "1.5b", "2.9b"}
     assert any("0.4B converted HF model loads" in item for item in report["next_focus"])
     assert any("1.5B converted HF model loads" in item for item in report["next_focus"])
+    assert any("2.9B converted HF model loads" in item for item in report["next_focus"])
     print("PASS")
     return 0
 
