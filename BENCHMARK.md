@@ -224,7 +224,7 @@ When the V100 server is reachable, run the committed bundle from the repository 
 ```
 
 It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_token`,
-`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `bench_fast_token_warmup.py`, `bench_native_graph_overhead.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `bench_larger_model_smoke.py` when the 0.4B paths exist, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
+`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `bench_fast_token_warmup.py`, `bench_native_graph_overhead.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `bench_larger_model_smoke.py` when the 0.4B/1.5B paths exist, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
 then writes logs under `bench/logs/`. The bundle now also validates the
 `native_jit` backend plus fixed-batch and dynamic `native_graph` fast-token
 backends, and appends native HF speed rows before running the target gate. Use
@@ -519,8 +519,8 @@ deeper rewrite that reduces launches without adding stack/bmm overhead.
 
 ## Larger converted-model smoke
 
-`bench_larger_model_smoke.py` proves the shape-inferred converter on a real
-checkpoint beyond the 0.1B development model. It loads the generated HF
+`bench_larger_model_smoke.py` proves the shape-inferred converter on real
+checkpoints beyond the 0.1B development model. It loads each generated HF
 directory with AutoConfig/AutoTokenizer/AutoModelForCausalLM, runs cached
 forward, runs greedy generation, records config dimensions, checkpoint
 provenance, backend selection, and memory.
@@ -536,17 +536,31 @@ python bench/bench_larger_model_smoke.py \
   --fast-token-backend auto \
   --max-new-tokens 4 \
   --results bench/results.jsonl
+
+python bench/bench_larger_model_smoke.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1g-1.5b-hf \
+  --model-size-label 1.5b \
+  --checkpoint-path /home/data/wangyue/models/rwkv7/rwkv7-g1g-1.5b-20260526-ctx8192.pth \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --fast-token-backend auto \
+  --max-new-tokens 2 \
+  --results bench/results.jsonl
 ```
 
-Latest V100 0.4B row:
+Latest V100 larger-model rows:
 
 | Model | hidden | layers | head_dim | value_dim | generated | backend | load s | generate s | footprint | peak VRAM |
 |---|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|
 | rwkv7-g1d-0.4b-hf | 1024 | 24 | 64 | 1024 | 4 | native_graph | 15.095 | 0.6751 | 859.8 MB | 1124.5 MB |
+| rwkv7-g1g-1.5b-hf | 2048 | 24 | 64 | 2048 | 2 | native_graph | 27.991 | 0.6307 | 2913.3 MB | 3178.6 MB |
 
-Checkpoint provenance is recorded in the row: SHA256
+Checkpoint provenance is recorded in the rows: 0.4B SHA256
 `947cb9b8013224e06b112b72204256bec65096cc935a7767ce63d8e3ddef83bb`, size
-`901776749` bytes. The regression gate now requires this 0.4B smoke row so the
+`901776749` bytes; 1.5B SHA256
+`441f70b096ad62442b5c33128bfe717c5d8529915c45a9709d4482016e8a0482`, size
+`3055444605` bytes. The regression gate now requires both smoke rows so the
 converter cannot silently regress to 0.1B-only shape assumptions.
 
 ## Quantized inference coverage
@@ -628,9 +642,10 @@ V100 rows show:
 | 8-bit / 4-bit footprint ratio | 0.76x / 0.65x fp16 | lower is better | PASS smoke |
 | 8-bit / 4-bit decode ratio | 0.24x / 0.67x fp16 | >=1.00x | GAP |
 | 0.4B converted-model smoke | hidden=1024, layers=24, generated=4, backend=native_graph | load + generate | PASS |
+| 1.5B converted-model smoke | hidden=2048, layers=24, generated=2, backend=native_graph | load + generate | PASS |
 
-The current next-focus list is: extend the larger-model smoke from 0.4B to
-additional published sizes/newer GPUs and solve the generic bnb quantized decode
+The current next-focus list is: extend the larger-model smoke from 0.4B/1.5B to
+2.9B+ published sizes/newer GPUs and solve the generic bnb quantized decode
 speed gap. The bsz=1 HF fast-token target is exceeded by `native_graph`;
 bsz=2/4/8 native-graph serving now reaches `434.3` / `852.6` / `1539.1`
 aggregate tok/s, and preflight warmup confirms graph runners are captured for
@@ -662,8 +677,8 @@ Current committed V100 rows pass both the regression gate and the target gate.
 The gate now uses the native-JIT HF fast-token speed row (`92.1 tok/s` vs
 official `92.1 tok/s`) for the low-memory 0.1B bsz=1 target, while the
 `fast_decode` section reports the optional native-graph row at `255.5 tok/s`.
-It also requires a passing 0.4B `larger_model_smoke` row with checkpoint SHA256
-and generated-token evidence.
+It also requires passing 0.4B and 1.5B `larger_model_smoke` rows with checkpoint
+SHA256 and generated-token evidence.
 
 ## Current optimization target
 
@@ -746,7 +761,8 @@ The next optimization work should focus on **HF recurrent decode**:
   larger-model/newer-GPU and quantized serving validation: bsz=1 native-graph HF
   is at `255.5 tok/s` vs official `92.1`, bsz=2/4/8 native-graph reaches
   `434.3`, `852.6`, `1539.1` aggregate tok/s in the latest sweep, and the real
-  0.4B converted HF directory now passes load/forward/generate smoke on V100.
+  0.4B plus 1.5B converted HF directories now pass load/forward/generate smoke
+  on V100.
 
 ### Batched native-JIT fast-token results
 
