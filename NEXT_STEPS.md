@@ -40,6 +40,7 @@
 - `bench/bench_decode_micro.py`：稳定记录 HF forward decode、fast token API、`lm_head`、argmax、embedding、empty loop 等 micro timing。
 - `bench/bench_decode_components.py`：细分 fast-token layer path 的 projection/recurrent/norm/FFN/top layer 耗时，用于决定下一步 fusion 目标。
 - `bench/bench_projection_lora.py`：专项测 attention projection/LoRA 子模块和简单 PyTorch bmm 候选，确认下一步需要 custom fusion 而不是简单拼 bmm。
+- `bench/bench_native_decode.py`：正式记录 `rwkv7_hf.native_jit` 的 native JIT / CUDA graph decode 结果，用作下一轮 fast-token integration 的性能上限参考。
 - `bench/analyze_results.py`：从 `bench/results.jsonl` 输出 target/gap report，直接列出 decode/memory ratio、缺失 benchmark axis 和下一步优化焦点。
 - `bench/check_results.py`：把 JSONL 结果变成可执行 gate；默认 regression gate 当前通过，`--target` gate 在 decode 达到 0.9x official 前预期失败。
 - `bench/bench_speed.py` 已改成 serving-style prefill：`use_cache=True + logits_to_keep=1`，并可用 `--hf-decode-api rwkv7_forward_token` 测快 decode API。
@@ -52,6 +53,7 @@
 - correctness：`fuse_norm=false` 下 top5/argmax/cosine/greedy64 均通过，fp16 max_abs 约 0.072。
 - memory：HF 406.4 MB vs official 406.2 MB，0.1B serving path 已基本持平。
 - speed：`fuse_norm=false` + `RWKV7StateCache` 下标准 remote-code HF decode 约 41.2 tok/s；`rwkv7_forward_token` V100 bsz=1 约 59.2 tok/s，bsz=1/2/4/8 batch sweep per-seq 约 55 tok/s，dynamic batch 从 205.2 提升到 345.7 total tok/s；official 约 92.1 tok/s，decode 仍是主优化点。component bench 显示 `attn_linears_lora` 最大，约 9.87ms/token。
+- native decode prototype：`rwkv7_hf.native_jit` 在 V100 0.1B 上已验证，logit cosine≈1.00000024、graph-vs-JIT greedy 16/16 一致；native JIT 约 103.5 tok/s，native CUDA graph 约 254.3 tok/s（2.76x official）。这证明 launch/dispatch 合并能过目标，但当前还是 single-batch fixed-shape greedy prototype，尚未并入 HF serving/dynamic batching 路径。
 - profiler：`fuse_norm=true` 的 FLA `LayerNormFunction` CPU 开销很大，native norm 把 norm CPU total 从约 54.8ms/6tok 降到约 6.6ms/6tok。
 - breakdown：argmax 开销约等于 0，`chunk` 和 `fused_recurrent` 单 token decode 基本一样，剩余瓶颈在 HF/FLA model+state/cache+小 kernel launch 路径。
 
@@ -72,6 +74,7 @@
    - `RWKV7StateCache` 已减少 generic CacheLayer 开销
    - 已新增 `rwkv7_forward_token` batched one-token fast decode entrypoint，并保留 `rwkv7_forward_one` bsz=1 兼容入口
    - 已新增 batch cache/sweep、dynamic-batch reorder/drop harness、decode microbench、decode component bench、projection/LoRA bench、gap analyzer 和 result gate；V100 bundle 已跑通，下一轮重点是把 fast-token path 从约 0.64x official 继续推近 0.9x，优先做 custom attention projection + LoRA fusion（简单 PyTorch bmm 候选整体更慢），然后继续减少 tiny kernel launch / Python dispatch
+   - 新增 native JIT / CUDA graph prototype benchmark；下一步把 block-step packing / graph-capture 思路移植到 `rwkv7_forward_token` 或 serving fast path，同时保持 batch state cache 和 dynamic reorder/drop 语义
 
 ## 阶段 3：Transformers 原生 PR 方向
 
