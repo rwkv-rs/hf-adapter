@@ -201,7 +201,19 @@ python bench/profile_decode.py \
   --attn-mode chunk \
   --fuse-norm false \
   --fixed-token \
-  --fast-cache true
+  --fast-cache true \
+  --hf-decode-api forward
+
+# Profile the bsz=1 fast decode API instead:
+python bench/profile_decode.py \
+  --backend hf \
+  --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --fixed-token \
+  --fast-cache true \
+  --hf-decode-api rwkv7_forward_one
 ```
 
 ## Current validation
