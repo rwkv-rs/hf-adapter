@@ -1040,6 +1040,198 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return out.logits, out.past_key_values
         return out
 
+    @torch.no_grad()
+    def rwkv7_speculative_generate(
+        self,
+        input_ids: torch.LongTensor,
+        draft_model: torch.nn.Module,
+        max_new_tokens: int = 32,
+        draft_tokens: int = 4,
+        eos_token_id: int | list[int] | tuple[int, ...] | None = None,
+        return_stats: bool = False,
+        logits_to_keep: int = 1,
+        **forward_kwargs,
+    ):
+        """Greedy HF-compatible speculative decoding for RWKV draft models.
+
+        This is an initial inference-only helper for the HF track: a smaller
+        RWKV/HF model proposes up to `draft_tokens` tokens, while this target
+        model verifies them with the normal cached HF `forward()` path. The
+        helper intentionally stays model-API based instead of depending on a
+        serving runtime, so it works with remote-code HF models and can later be
+        wired into faster native-token backends.
+
+        Scope: batch size 1 and greedy decoding. If a draft token mismatches the
+        target greedy token, the target token is emitted and the draft cache is
+        rebuilt from the accepted prefix.
+        """
+        if self.training:
+            raise RuntimeError("rwkv7_speculative_generate is inference-only; call model.eval() first")
+        if draft_model is None:
+            raise ValueError("rwkv7_speculative_generate requires a draft_model")
+        if getattr(draft_model, "training", False):
+            raise RuntimeError("draft_model must be in eval mode for speculative decoding")
+        if input_ids.dim() != 2 or int(input_ids.shape[0]) != 1:
+            raise ValueError("rwkv7_speculative_generate currently supports input_ids shaped [1, seq]")
+        if int(input_ids.shape[1]) <= 0:
+            raise ValueError("rwkv7_speculative_generate requires at least one prompt token")
+        max_new_tokens = int(max_new_tokens)
+        draft_tokens = int(draft_tokens)
+        if max_new_tokens < 0:
+            raise ValueError("max_new_tokens must be non-negative")
+        if draft_tokens <= 0:
+            raise ValueError("draft_tokens must be positive")
+        if max_new_tokens == 0:
+            stats = {
+                "generated_tokens": 0,
+                "proposed_tokens": 0,
+                "accepted_tokens": 0,
+                "corrected_tokens": 0,
+                "resyncs": 0,
+                "target_forward_calls": 0,
+                "draft_forward_calls": 0,
+                "acceptance_rate": None,
+            }
+            return {"sequences": input_ids, "stats": stats} if return_stats else input_ids
+
+        eos_ids = {int(eos_token_id)} if isinstance(eos_token_id, int) else (
+            {int(v) for v in eos_token_id} if eos_token_id is not None else set()
+        )
+        prefill_kwargs = dict(forward_kwargs)
+        step_kwargs = {
+            k: v for k, v in forward_kwargs.items()
+            if k not in {"attention_mask", "position_ids", "cache_position", "past_key_values", "use_cache", "return_dict", "logits_to_keep"}
+        }
+
+        stats = {
+            "generated_tokens": 0,
+            "proposed_tokens": 0,
+            "accepted_tokens": 0,
+            "corrected_tokens": 0,
+            "resyncs": 0,
+            "target_forward_calls": 0,
+            "draft_forward_calls": 0,
+            "acceptance_rate": None,
+        }
+
+        def _forward(model, tokens, past=None, *, prefill: bool = False, keep: int | None = None):
+            kwargs = dict(prefill_kwargs if prefill else step_kwargs)
+            kwargs.pop("past_key_values", None)
+            kwargs.pop("use_cache", None)
+            kwargs.pop("return_dict", None)
+            kwargs.pop("logits_to_keep", None)
+            return model(
+                tokens,
+                past_key_values=past,
+                use_cache=True,
+                return_dict=True,
+                logits_to_keep=logits_to_keep if keep is None else keep,
+                **kwargs,
+            )
+
+        def _argmax_token(logits: torch.Tensor) -> torch.LongTensor:
+            return torch.argmax(logits[:, -1, :], dim=-1).to(device=input_ids.device)
+
+        def _append_token(sequence: torch.LongTensor, token: torch.LongTensor) -> torch.LongTensor:
+            return torch.cat([sequence, token.reshape(1, 1).to(sequence.device)], dim=1)
+
+        def _append_tokens(sequence: torch.LongTensor, tokens: list[torch.LongTensor]) -> torch.LongTensor:
+            if not tokens:
+                return sequence
+            return torch.cat([sequence] + [tok.reshape(1, 1).to(sequence.device) for tok in tokens], dim=1)
+
+        def _is_eos(token: torch.LongTensor) -> bool:
+            return bool(eos_ids and int(token.reshape(-1)[0].detach().cpu()) in eos_ids)
+
+        def _clone_past(past):
+            if hasattr(past, "clone"):
+                return past.clone()
+            return RWKV7StateCache.from_legacy_cache(past).clone()
+
+        generated = input_ids
+        target_out = _forward(self, generated, prefill=True)
+        stats["target_forward_calls"] += 1
+        target_past = target_out.past_key_values
+        target_next = _argmax_token(target_out.logits)
+
+        draft_out = _forward(draft_model, generated, prefill=True)
+        stats["draft_forward_calls"] += 1
+        draft_past = draft_out.past_key_values
+        draft_next = _argmax_token(draft_out.logits)
+
+        while stats["generated_tokens"] < max_new_tokens:
+            proposals: list[torch.LongTensor] = []
+            for _ in range(min(draft_tokens, max_new_tokens - stats["generated_tokens"])):
+                proposal = draft_next.reshape(1).to(input_ids.device)
+                proposals.append(proposal)
+                stats["proposed_tokens"] += 1
+                draft_out = _forward(draft_model, proposal.reshape(1, 1), past=draft_past)
+                stats["draft_forward_calls"] += 1
+                draft_past = draft_out.past_key_values
+                draft_next = _argmax_token(draft_out.logits)
+
+            if not proposals:
+                break
+
+            proposal_ids = torch.cat([p.reshape(1, 1).to(input_ids.device) for p in proposals], dim=1)
+            verify_out = _forward(self, proposal_ids, past=_clone_past(target_past), keep=len(proposals))
+            stats["target_forward_calls"] += 1
+            verify_logits = verify_out.logits
+            target_predictions = [target_next.reshape(1)]
+            for pos in range(max(0, len(proposals) - 1)):
+                target_predictions.append(torch.argmax(verify_logits[:, pos, :], dim=-1).to(device=input_ids.device))
+
+            accepted_prefix: list[torch.LongTensor] = []
+            mismatch = False
+            stop_after_append = False
+            for idx, proposal in enumerate(proposals):
+                expected = target_predictions[idx].reshape(1)
+                if int(proposal.reshape(-1)[0]) == int(expected.reshape(-1)[0]):
+                    accepted_prefix.append(proposal)
+                    stats["accepted_tokens"] += 1
+                    stats["generated_tokens"] += 1
+                    if _is_eos(proposal) or stats["generated_tokens"] >= max_new_tokens:
+                        stop_after_append = True
+                        break
+                    continue
+
+                generated = _append_tokens(generated, accepted_prefix)
+                correction = expected
+                generated = _append_token(generated, correction)
+                stats["corrected_tokens"] += 1
+                stats["generated_tokens"] += 1
+                mismatch = True
+                if not _is_eos(correction) and stats["generated_tokens"] < max_new_tokens:
+                    target_out = _forward(self, generated, prefill=True)
+                    stats["target_forward_calls"] += 1
+                    target_past = target_out.past_key_values
+                    target_next = _argmax_token(target_out.logits)
+                    draft_out = _forward(draft_model, generated, prefill=True)
+                    stats["draft_forward_calls"] += 1
+                    draft_past = draft_out.past_key_values
+                    draft_next = _argmax_token(draft_out.logits)
+                    stats["resyncs"] += 1
+                stop_after_append = True
+                break
+
+            if not mismatch:
+                generated = _append_tokens(generated, accepted_prefix)
+                if len(accepted_prefix) == len(proposals):
+                    target_past = verify_out.past_key_values
+                    target_next = _argmax_token(verify_logits)
+                elif not stop_after_append:
+                    target_out = _forward(self, generated, prefill=True)
+                    stats["target_forward_calls"] += 1
+                    target_past = target_out.past_key_values
+                    target_next = _argmax_token(target_out.logits)
+
+            if _is_eos(generated[:, -1]) or stats["generated_tokens"] >= max_new_tokens:
+                break
+
+        if stats["proposed_tokens"]:
+            stats["acceptance_rate"] = float(stats["accepted_tokens"]) / float(stats["proposed_tokens"])
+        return {"sequences": generated, "stats": stats} if return_stats else generated
+
     @staticmethod
     def _native_state_tensor(
         value: torch.Tensor | None,
