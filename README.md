@@ -22,8 +22,14 @@ scripts/
   convert_rwkv7_to_hf.py
 tests/
   smoke_hf_generate.py
+  test_official_alignment.py
+  test_reload_roundtrip.py
   test_peft_lora.py
+bench/
+  bench_speed.py
+  bench_decode_breakdown.py
 NEXT_STEPS.md
+BENCHMARK.md
 ```
 
 ## Convert an official checkpoint
@@ -82,19 +88,67 @@ python tests/test_peft_lora.py \
   --attn-mode fused_recurrent
 ```
 
+
+## Correctness and benchmark tests
+
+Official alignment including greedy 64-token equality:
+
+```bash
+python tests/test_official_alignment.py \
+  --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
+  --pth /path/to/rwkv7-g1d-0.1b-20260129-ctx8192.pth \
+  --dtype fp16 \
+  --device cuda \
+  --official-strategy 'cpu fp32' \
+  --greedy-window 64
+```
+
+Save/reload roundtrip:
+
+```bash
+python tests/test_reload_roundtrip.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --device cuda \
+  --dtype fp16
+```
+
+Serving-style speed/memory benchmark:
+
+```bash
+python bench/bench_speed.py \
+  --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
+  --pth /path/to/rwkv7-g1d-0.1b-20260129-ctx8192.pth \
+  --backend both \
+  --dtype fp16 \
+  --hf-logits-to-keep 1
+```
+
+Decode bottleneck breakdown:
+
+```bash
+python bench/bench_decode_breakdown.py \
+  --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
+  --pth /path/to/rwkv7-g1d-0.1b-20260129-ctx8192.pth \
+  --dtype fp16 \
+  --attn-modes chunk fused_recurrent
+```
+
 ## Current validation
 
 For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 
 - HF `generate()` works.
 - PEFT LoRA forward/loss/backward works.
-- Official `rwkv` logits comparison on a smoke prompt:
+- Save/reload roundtrip works with exact logit equality.
+- Official `rwkv` alignment includes prompt logits and 64-token greedy equality.
+- Official `rwkv` logits comparison on smoke prompts:
   - top-5 token IDs match
-  - cosine similarity ≈ `0.999996`
-  - fp16 max absolute difference ≈ `0.047`
+  - cosine similarity ≈ `0.999998` on V100 fp16
+  - fp16 max absolute difference ≈ `0.101` on V100; fp32 reference ≈ `0.030`
 
 ## Known limitations
 
 - This is a wrapper-based first stage, not yet a native upstream Transformers implementation.
 - The backend currently requires FLA.
-- V100 `chunk` prefill/backward kernel behavior needs further optimization and compatibility work.
+- V100 serving-style memory is now near parity with official for 0.1B when using `logits_to_keep=1`.
+- V100 HF decode remains the primary performance gap: about 31 tok/s vs official about 93 tok/s for 0.1B fp16.
