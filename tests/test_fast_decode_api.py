@@ -3,12 +3,26 @@ from __future__ import annotations
 
 import argparse
 import os
+from contextlib import contextmanager
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
+
+
+@contextmanager
+def fast_forward_env(enabled: bool):
+    old = os.environ.get("RWKV7_FAST_FORWARD")
+    os.environ["RWKV7_FAST_FORWARD"] = "1" if enabled else "0"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("RWKV7_FAST_FORWARD", None)
+        else:
+            os.environ["RWKV7_FAST_FORWARD"] = old
 
 
 def set_attn_mode(model, attn_mode: str) -> None:
@@ -32,7 +46,8 @@ def run_decode_case(model, input_ids: torch.Tensor, decode_steps: int, max_diff_
         forward_state = forward_out.past_key_values
         fast_state = fast_out.past_key_values
         for _ in range(decode_steps):
-            forward_out = model(next_forward, past_key_values=forward_state, use_cache=True, logits_to_keep=1)
+            with fast_forward_env(False):
+                forward_out = model(next_forward, past_key_values=forward_state, use_cache=True, logits_to_keep=1)
             fast_out = fast_fn(next_fast, past_key_values=fast_state)
             forward_state = forward_out.past_key_values
             fast_state = fast_out.past_key_values
@@ -43,8 +58,9 @@ def run_decode_case(model, input_ids: torch.Tensor, decode_steps: int, max_diff_
             greedy_equal += int(torch.equal(next_forward, next_fast))
         # The optimized cache must remain compatible with the standard HF
         # recurrent forward path so serving code can fall back after a fast step.
-        forward_out = model(next_forward, past_key_values=forward_state, use_cache=True, logits_to_keep=1)
-        fallback_out = model(next_fast, past_key_values=fast_state, use_cache=True, logits_to_keep=1)
+        with fast_forward_env(False):
+            forward_out = model(next_forward, past_key_values=forward_state, use_cache=True, logits_to_keep=1)
+            fallback_out = model(next_fast, past_key_values=fast_state, use_cache=True, logits_to_keep=1)
         forward_state = forward_out.past_key_values
         fast_state = fallback_out.past_key_values
         fallback_diff = float((forward_out.logits.float() - fallback_out.logits.float()).abs().max().detach().cpu())
@@ -58,6 +74,24 @@ def run_decode_case(model, input_ids: torch.Tensor, decode_steps: int, max_diff_
     assert max_diff <= max_diff_limit, (label, max_diff)
     assert greedy_equal == decode_steps, label
     assert forward_state.get_seq_length() == fast_state.get_seq_length(), label
+
+
+def run_forward_fast_path_case(model, input_ids: torch.Tensor, max_diff_limit: float, label: str) -> None:
+    prefill_ids = input_ids[:, :-1]
+    token = input_ids[:, -1:]
+    with torch.inference_mode():
+        ref_prefill = model(prefill_ids, use_cache=True, logits_to_keep=1)
+        fast_prefill = model(prefill_ids, use_cache=True, logits_to_keep=1)
+        with fast_forward_env(False):
+            ref = model(token, past_key_values=ref_prefill.past_key_values, use_cache=True, logits_to_keep=1)
+        with fast_forward_env(True):
+            fast = model(token, past_key_values=fast_prefill.past_key_values, use_cache=True, logits_to_keep=1)
+    diff = float((ref.logits.float() - fast.logits.float()).abs().max().detach().cpu())
+    effective = last_fast_token_backend(model)
+    print(f"{label} forward_fast_path_max_abs_diff", diff)
+    print(f"{label} forward_fast_path_effective_backend", effective)
+    assert diff <= max_diff_limit, (label, diff)
+    assert effective in {"native_graph", "native_jit", "fla"}, effective
 
 
 def graph_cache_limit() -> int:
@@ -172,6 +206,12 @@ def main() -> int:
                     assert effective == backend, (backend, effective)
                 else:
                     assert effective in {"native_graph", "native_jit", "fla"}, effective
+                run_forward_fast_path_case(
+                    model,
+                    input_ids,
+                    args.max_diff,
+                    label=f"hf_forward backend={backend} layout={layout} bsz=1",
+                )
                 if backend == "native_graph" or effective == "native_graph":
                     check_native_graph_cache(model, args.batch_sizes)
     finally:

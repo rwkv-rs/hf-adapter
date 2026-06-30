@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +85,19 @@ def last_fast_token_backend(model):
     return getattr(model, "_rwkv7_last_fast_token_backend", None)
 
 
+@contextmanager
+def reference_forward_env():
+    old = os.environ.get("RWKV7_FAST_FORWARD")
+    os.environ["RWKV7_FAST_FORWARD"] = "0"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("RWKV7_FAST_FORWARD", None)
+        else:
+            os.environ["RWKV7_FAST_FORWARD"] = old
+
+
 def encode_prompts(tok, batch_size: int, prompt_tokens: int, device: str) -> torch.Tensor:
     rows = []
     for i in range(batch_size):
@@ -98,7 +112,8 @@ def encode_prompts(tok, batch_size: int, prompt_tokens: int, device: str) -> tor
 
 def step_decode(model, decode_api: str, token: torch.Tensor, state: Any, logits_to_keep: int):
     if decode_api == "forward":
-        return model(token, past_key_values=state, use_cache=True, logits_to_keep=logits_to_keep)
+        with reference_forward_env():
+            return model(token, past_key_values=state, use_cache=True, logits_to_keep=logits_to_keep)
     if decode_api == "rwkv7_forward_token":
         return model.rwkv7_forward_token(token, past_key_values=state)
     raise ValueError(decode_api)

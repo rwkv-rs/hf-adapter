@@ -172,6 +172,7 @@ def main() -> int:
             os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = old_limit
 
     old_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND")
+    old_fast_forward = os.environ.get("RWKV7_FAST_FORWARD")
     old_jit_block_step = modeling._native_jit_block_step
     old_jit_block_step_batched = modeling._native_jit_block_step_batched
     old_jit_extract = modeling._native_jit_extract
@@ -218,6 +219,10 @@ def main() -> int:
         assert modeling._fast_token_backend() == "native_jit"
         os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "unknown"
         assert modeling._fast_token_backend() == "fla"
+        os.environ["RWKV7_FAST_FORWARD"] = "0"
+        assert modeling._fast_forward_enabled() is False
+        os.environ["RWKV7_FAST_FORWARD"] = "1"
+        assert modeling._fast_forward_enabled() is True
     finally:
         modeling._native_jit_block_step = old_jit_block_step
         modeling._native_jit_block_step_batched = old_jit_block_step_batched
@@ -228,6 +233,10 @@ def main() -> int:
             os.environ.pop("RWKV7_FAST_TOKEN_BACKEND", None)
         else:
             os.environ["RWKV7_FAST_TOKEN_BACKEND"] = old_backend
+        if old_fast_forward is None:
+            os.environ.pop("RWKV7_FAST_FORWARD", None)
+        else:
+            os.environ["RWKV7_FAST_FORWARD"] = old_fast_forward
 
     print("PASS")
     return 0
