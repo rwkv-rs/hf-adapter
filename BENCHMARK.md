@@ -665,6 +665,32 @@ token should be accepted and the sequence must match greedy `generate()`.
 Passing `--draft-model /path/to/smaller-hf-rwkv` exercises the same API with a
 real draft model.
 
+## HF RL / ZeRO training smoke
+
+`tests/test_hf_rl_training_smoke.py` covers one-step LoRA preference/RL training
+through common TRL trainers:
+
+```bash
+python tests/test_hf_rl_training_smoke.py \
+  --model /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --device cuda \
+  --backend dpo
+
+python tests/test_hf_rl_training_smoke.py \
+  --model /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --device cuda \
+  --backend grpo \
+  --grpo-max-completion-length 2
+```
+
+`configs/deepspeed/zero2.json` and `configs/deepspeed/zero3.json` are
+HF Trainer-compatible ZeRO presets with auto micro-batch, gradient accumulation,
+fp16/bf16, and bucket sizing. Validate them with:
+
+```bash
+python tests/test_deepspeed_configs.py
+```
+
 ## Benchmark gap report
 
 `bench/analyze_results.py` turns accumulated JSONL rows into a target/gap report:
