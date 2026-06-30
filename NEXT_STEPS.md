@@ -8,6 +8,7 @@
 - RWKV trie slow tokenizer：`AutoTokenizer`
 - `generate(use_cache=True)` 跑通
 - PEFT LoRA forward/loss/backward 跑通
+- HF Trainer / TRL SFTTrainer 1-step LoRA smoke 跑通
 - 官方 `rwkv` pip logits 对齐：top5 一致，fp16 cosine≈0.999996
 
 模型目录：
@@ -28,16 +29,19 @@
 
 - `tests/test_official_alignment.py`：官方 `rwkv` vs HF logits + greedy 64 token 对齐。
 - `tests/test_reload_roundtrip.py`：`save_pretrained` / reload roundtrip。
+- `tests/test_fast_cache.py`：轻量 `RWKV7StateCache` 与 FLA 默认 cache 的 prefill/decode 等价测试。
+- `tests/test_hf_training_smoke.py`：HF Trainer / TRL SFTTrainer 1-step LoRA smoke。
 - `bench/bench_decode_breakdown.py`：decode 瓶颈拆分。
 - `bench/bench_speed.py` 已改成 serving-style prefill：`use_cache=True + logits_to_keep=1`。
 - `bench/profile_decode.py`：单 token decode profiler。
 - `scripts/convert_rwkv7_to_hf.py` 新增 `--no-fuse-norm`，作为当前 V100 推理推荐配置。
+- remote config 改为唯一 `rwkv7_hf_adapter` model_type，避免 Transformers 环境中已注册的 FLA `rwkv7` 本地类绕过本仓库 wrapper。
 
 当前 V100 结论：
 
 - correctness：`fuse_norm=false` 下 top5/argmax/cosine/greedy64 均通过，fp16 max_abs 约 0.072。
 - memory：HF 406.4 MB vs official 406.2 MB，0.1B serving path 已基本持平。
-- speed：`fuse_norm=false` 把 HF decode 从约 31.5 tok/s 提到 41.3 tok/s，official 约 92.8 tok/s；decode 仍是主优化点。
+- speed：`fuse_norm=false` + `RWKV7StateCache` 下真实 remote-code HF decode 约 41.2 tok/s，official 约 92.5 tok/s；decode 仍是主优化点。
 - profiler：`fuse_norm=true` 的 FLA `LayerNormFunction` CPU 开销很大，native norm 把 norm CPU total 从约 54.8ms/6tok 降到约 6.6ms/6tok。
 - breakdown：argmax 开销约等于 0，`chunk` 和 `fused_recurrent` 单 token decode 基本一样，剩余瓶颈在 HF/FLA model+state/cache+小 kernel launch 路径。
 
@@ -50,12 +54,12 @@
    - `gradient_checkpointing_enable`
    - `prepare_inputs_for_generation`/cache shape 文档化
 4. 训练路径：
-   - PEFT LoRA SFT 小数据跑通
-   - TRL `SFTTrainer` smoke
-   - 明确 `TORCHDYNAMO_DISABLE=1` 或修 FLA backward compile 问题
+   - 已跑通 PEFT LoRA backward、HF Trainer 1-step、TRL `SFTTrainer` 1-step
+   - 继续扩大到真实 SFT 小数据、多 batch、gradient accumulation
+   - 当前 smoke 明确 `TORCHDYNAMO_DISABLE=1`，并关闭 `use_l2warp` 避免 Trainer loss 原地缩放与 L2Wrap backward 冲突
 5. 性能路径：
    - 继续 profile 单 token decode
-   - 减少 `CausalLMOutputWithPast` / dynamic `Cache` / per-layer update / tiny kernel launch 开销
+   - `RWKV7StateCache` 已减少 generic CacheLayer 开销；下一步继续减少 `CausalLMOutputWithPast` / per-layer update / tiny kernel launch 开销
    - 做专用 fast decode entrypoint
 
 ## 阶段 3：Transformers 原生 PR 方向

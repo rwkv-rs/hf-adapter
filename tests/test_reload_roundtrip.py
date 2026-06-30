@@ -7,7 +7,7 @@ import argparse
 import tempfile
 
 import torch
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
 def main() -> int:
@@ -21,16 +21,17 @@ def main() -> int:
     dtype = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[args.dtype]
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-    cfg = AutoConfig.from_pretrained(args.model, trust_remote_code=True)
-    if args.fuse_norm != "auto":
-        cfg.fuse_norm = args.fuse_norm == "true"
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
         trust_remote_code=True,
-        config=cfg,
         torch_dtype=dtype,
         device_map=args.device if args.device.startswith("cuda") else None,
     ).eval()
+    if args.fuse_norm != "auto":
+        desired = args.fuse_norm == "true"
+        actual = bool(getattr(model.config, "fuse_norm", False))
+        if actual != desired:
+            raise ValueError(f"Loaded model config has fuse_norm={actual}; use a converted model dir with fuse_norm={desired}")
     enc = tok("User: Hello!\n\nAssistant:", return_tensors="pt")
     if args.device.startswith("cuda"):
         enc = {k: v.cuda() for k, v in enc.items()}

@@ -116,6 +116,7 @@ def patch_hf_metadata(output: Path) -> None:
     cfg_path = output / "config.json"
     cfg = json.loads(cfg_path.read_text())
     cfg["architectures"] = ["RWKV7ForCausalLM"]
+    cfg["model_type"] = "rwkv7_hf_adapter"
     cfg["auto_map"] = {
         "AutoConfig": "configuration_rwkv7.RWKV7Config",
         "AutoModel": "modeling_rwkv7.RWKV7Model",

@@ -19,7 +19,7 @@ os.environ.setdefault("RWKV_V7_ON", "1")
 
 import torch
 from torch.profiler import ProfilerActivity, profile, schedule
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
 SEED = "The quick brown fox jumps over the lazy dog. " * 64
@@ -81,18 +81,25 @@ def _encode(tok, n: int, device: str) -> torch.Tensor:
 
 
 def profile_hf(args, dtype) -> dict[str, Any]:
+    if args.fast_cache != "auto":
+        os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
     tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
-    cfg = AutoConfig.from_pretrained(args.hf_dir, trust_remote_code=True)
-    cfg.attn_mode = args.attn_mode
-    if args.fuse_norm != "auto":
-        cfg.fuse_norm = args.fuse_norm == "true"
     model = AutoModelForCausalLM.from_pretrained(
         args.hf_dir,
         trust_remote_code=True,
-        config=cfg,
         torch_dtype=dtype,
         device_map=args.device if args.device.startswith("cuda") else None,
     ).eval()
+    if args.fuse_norm != "auto":
+        desired = args.fuse_norm == "true"
+        actual = bool(getattr(model.config, "fuse_norm", False))
+        if actual != desired:
+            raise ValueError(f"Loaded model config has fuse_norm={actual}; use a converted model dir with fuse_norm={desired}")
+    model.config.attn_mode = args.attn_mode
+    for layer in getattr(model.model, "layers", []):
+        attn = getattr(layer, "attn", None)
+        if hasattr(attn, "mode"):
+            attn.mode = args.attn_mode
     ids = _encode(tok, args.prompt_tokens, args.device)
     fixed = ids[:, -1:]
     with torch.inference_mode():
@@ -135,6 +142,8 @@ def profile_hf(args, dtype) -> dict[str, Any]:
         "device": _device_name(args.device),
         "attn_mode": args.attn_mode,
         "fuse_norm": getattr(model.config, "fuse_norm", None),
+        "fast_cache": os.environ.get("RWKV7_FAST_CACHE", "1") not in {"0", "false", "False", "no", "off"},
+        "cache_type": type(state).__name__ if state is not None else None,
         "fixed_token": args.fixed_token,
         "wait": args.wait,
         "warmup": args.warmup,
@@ -208,6 +217,8 @@ def main() -> int:
     ap.add_argument("--attn-mode", default="chunk", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto",
                     help="Override config.fuse_norm for HF load; false is faster on V100 in current tests")
+    ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto",
+                    help="HF only: use the lightweight RWKV7StateCache hot path (default via model env is enabled)")
     ap.add_argument("--prompt-tokens", type=int, default=128)
     ap.add_argument("--prewarm", type=int, default=8)
     ap.add_argument("--wait", type=int, default=2)
