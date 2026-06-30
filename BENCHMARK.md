@@ -415,6 +415,56 @@ LoRA bmm is slower and can introduce larger fp16 numerical differences. The
 next real optimization should be a custom fused projection/LoRA path or a
 deeper rewrite that reduces launches without adding stack/bmm overhead.
 
+## Quantized inference coverage
+
+`tests/test_quantized_inference.py` checks that the adapter loads and generates
+through standard HF `BitsAndBytesConfig` paths:
+
+```bash
+python tests/test_quantized_inference.py \
+  --model /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --quantization 8bit
+
+python tests/test_quantized_inference.py \
+  --model /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --quantization 4bit
+```
+
+`bench/bench_quantization.py` records comparable fp16 / 8-bit / 4-bit rows:
+
+```bash
+python bench/bench_quantization.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --quantizations none 8bit 4bit \
+  --prompt-tokens 128 \
+  --decode-tokens 8 \
+  --warmup 1 \
+  --runs 1 \
+  --results bench/results.jsonl
+```
+
+Latest short V100 rows:
+
+| Quantization | Model footprint | Peak VRAM | Prefill tok/s | Decode tok/s | Status |
+|---|---:|---:|---:|---:|---|
+| none/fp16 | 364.4 MB | 632.4 MB | 4456.1 | 40.4 | PASS |
+| 8-bit bnb | 278.4 MB | 296.3 MB | 938.0 | 9.5 | PASS smoke, speed gap |
+| 4-bit bnb | 235.3 MB | 258.3 MB | 2395.2 | 27.1 | PASS smoke, speed gap |
+
+The memory direction is correct, but generic bitsandbytes kernels are slower
+than fp16 on this RWKV-7/FLA V100 path. This means production quantized serving
+still needs a custom faster path or fused quantized projections before it can
+meet the original "not slower than fp16" target.
+
 ## Benchmark gap report
 
 `bench/analyze_results.py` turns accumulated JSONL rows into a target/gap report:
@@ -428,7 +478,8 @@ python bench/analyze_results.py \
 
 It reports HF-vs-official prefill/decode/memory ratios, best decode-breakdown
 rows, fast-token API status, latest correctness row, batch/dynamic rows, decode
-microbench rows, and a short next-focus list. Current committed V100 rows show:
+microbench rows, quantization rows, and a short next-focus list. Current
+committed V100 rows show:
 
 | Metric | Current | Target | Status |
 |---|---:|---:|---|
@@ -436,6 +487,8 @@ microbench rows, and a short next-focus list. Current committed V100 rows show:
 | decode_breakdown fast-token ratio | ~0.57x official | >=0.90x | GAP |
 | native_graph prototype decode ratio | ~2.76x official | >=0.90x | PASS prototype |
 | speed_mem memory ratio | ~1.00x official | <=1.10x | PASS |
+| 8-bit / 4-bit footprint ratio | 0.76x / 0.65x fp16 | lower is better | PASS smoke |
+| 8-bit / 4-bit decode ratio | 0.24x / 0.67x fp16 | >=1.00x | GAP |
 
 The current next-focus list is: continue from native-JIT batched decode toward
 CUDA-graph/reduced-launch serving. The bsz=1 HF fast-token target is met, bsz=2/4
@@ -508,6 +561,9 @@ The next optimization work should focus on **HF recurrent decode**:
   largest remaining fast-token component at about `9.87 ms/token`.
 - Projection/LoRA harness is in place; V100 shows naive PyTorch bmm grouping is
   slower overall, so custom fusion is needed.
+- Quantization smoke and benchmark harnesses are in place; V100 bnb 8-bit/4-bit
+  loads pass and reduce model footprint, but current generic bnb decode is
+  slower than fp16.
 - Benchmark gap analysis is in place and currently identifies decode throughput
   as the active optimization gap.
 - Benchmark check gate is in place: current regression gate passes, target gate

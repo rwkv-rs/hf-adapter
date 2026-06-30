@@ -78,6 +78,23 @@ run() {
     --decode-steps 4 \
     --max-diff 0.2
 
+  run python tests/test_hf_api_contract.py \
+    --model "${HF_DIR}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --fuse-norm false \
+    --attn-mode fused_recurrent \
+    --beam-new-tokens 2
+
+  run python tests/test_quantized_inference.py \
+    --model "${HF_DIR}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --attn-mode fused_recurrent \
+    --quantization 8bit \
+    --max-new-tokens 2 \
+    --optional
+
   run python bench/bench_speed.py \
     --hf-dir "${HF_DIR}" \
     --pth "${PTH}" \
@@ -143,6 +160,19 @@ run() {
     --warmup 8 \
     --reorder-every 4 \
     --drop-every 32 \
+    --results "${RESULTS}"
+
+  run python bench/bench_quantization.py \
+    --hf-dir "${HF_DIR}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --attn-mode fused_recurrent \
+    --quantizations none 8bit 4bit \
+    --prompt-tokens 256 \
+    --decode-tokens 32 \
+    --warmup 1 \
+    --runs 2 \
+    --optional \
     --results "${RESULTS}"
 
   run python bench/bench_decode_breakdown.py \

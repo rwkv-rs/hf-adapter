@@ -122,6 +122,30 @@ def check_common(report: dict[str, Any], failures: list[str], args: argparse.Nam
     elif args.expect_naive_candidate_slower and float(candidate_speedup) >= 1.0:
         fail(failures, f"naive candidate unexpectedly faster/equal: {candidate_speedup}")
 
+    if args.require_quantization:
+        quant_rows = report.get("quantization") or []
+        by_mode = {row.get("quantization"): row for row in quant_rows}
+        base = by_mode.get("none")
+        for mode in ("8bit", "4bit"):
+            row = by_mode.get(mode)
+            if not row:
+                fail(failures, f"missing quantization row: {mode}")
+                continue
+            if row.get("status") != "pass":
+                fail(failures, f"quantization {mode} did not pass: {row.get('status')} {row.get('error')}")
+                continue
+            if base and base.get("status") == "pass":
+                base_mem = base.get("model_footprint_mb") or base.get("peak_vram_mb")
+                q_mem = row.get("model_footprint_mb") or row.get("peak_vram_mb")
+                if base_mem and q_mem:
+                    max_ratio = args.max_8bit_memory_ratio if mode == "8bit" else args.max_4bit_memory_ratio
+                    if float(q_mem) / float(base_mem) > max_ratio:
+                        fail(failures, f"{mode} memory ratio too high: {q_mem}/{base_mem} > {max_ratio}")
+                base_decode = base.get("decode_tokps")
+                q_decode = row.get("decode_tokps")
+                if base_decode and q_decode and float(q_decode) / float(base_decode) < args.min_quant_decode_ratio:
+                    fail(failures, f"{mode} decode ratio below floor: {q_decode}/{base_decode} < {args.min_quant_decode_ratio}")
+
 
 def check_regression(report: dict[str, Any], failures: list[str], args: argparse.Namespace) -> None:
     speed = report.get("speed_mem") or {}
@@ -168,6 +192,11 @@ def main() -> int:
     ap.add_argument("--min-micro-fast-speedup", type=float, default=1.25)
     ap.add_argument("--expected-top-component", default="attn_linears_lora")
     ap.add_argument("--expect-naive-candidate-slower", action="store_true", default=True)
+    ap.add_argument("--require-quantization", action="store_true",
+                    help="Require passing 8bit/4bit quantization benchmark rows")
+    ap.add_argument("--min-quant-decode-ratio", type=float, default=1.0)
+    ap.add_argument("--max-8bit-memory-ratio", type=float, default=0.85)
+    ap.add_argument("--max-4bit-memory-ratio", type=float, default=0.65)
     args = ap.parse_args()
 
     report = run_analyzer(args)
