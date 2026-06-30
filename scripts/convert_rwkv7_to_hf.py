@@ -32,29 +32,104 @@ DTYPES = {
 }
 
 
+def tensor_shape(weights: Dict[str, torch.Tensor], name: str) -> tuple[int, ...]:
+    """Return a plain int shape with a useful error for missing checkpoint keys."""
+    if name not in weights:
+        raise KeyError(f"Missing required RWKV-7 weight: {name}")
+    return tuple(int(v) for v in weights[name].shape)
+
+
+def infer_num_layers(weights: Dict[str, torch.Tensor]) -> int:
+    """Infer and validate contiguous RWKV block indices from checkpoint keys."""
+    layers = sorted(
+        int(m.group(1))
+        for name in weights
+        if (m := re.match(r"blocks\.(\d+)\.ffn\.key\.weight$", name))
+    )
+    if not layers:
+        raise KeyError("No blocks.*.ffn.key.weight tensors found in checkpoint")
+    expected = list(range(layers[-1] + 1))
+    if layers != expected:
+        raise ValueError(f"RWKV block indices must be contiguous from 0: got {layers[:20]} ...")
+    return len(layers)
+
+
+def infer_head_dim(weights: Dict[str, torch.Tensor], hidden_size: int) -> int:
+    """Infer attention head dimension instead of hard-coding 64 for every model."""
+    rk_shape = tensor_shape(weights, "blocks.0.att.r_k")
+    if len(rk_shape) >= 2:
+        num_heads, head_dim = int(rk_shape[-2]), int(rk_shape[-1])
+        if num_heads * head_dim != hidden_size:
+            raise ValueError(
+                "blocks.0.att.r_k shape does not match hidden size: "
+                f"{rk_shape} -> {num_heads}*{head_dim} != {hidden_size}"
+            )
+        return head_dim
+    if hidden_size % 64 != 0:
+        raise ValueError(f"Cannot infer head_dim from r_k={rk_shape}; hidden_size={hidden_size} is not divisible by 64")
+    return 64
+
+
+def infer_value_dim(weights: Dict[str, torch.Tensor], num_layers: int, hidden_size: int, num_heads: int) -> list[int]:
+    """Infer per-layer value dimensions from official value projection weights."""
+    dims: list[int] = []
+    for layer_idx in range(num_layers):
+        value_shape = tensor_shape(weights, f"blocks.{layer_idx}.att.value.weight")
+        value_dim = int(value_shape[0])
+        if value_dim % num_heads != 0:
+            raise ValueError(
+                f"blocks.{layer_idx}.att.value.weight output dim {value_dim} is not divisible by num_heads={num_heads}"
+            )
+        dims.append(value_dim)
+    if any(v <= 0 for v in dims):
+        raise ValueError(f"Invalid value_dim list: {dims}")
+    if dims[0] != hidden_size:
+        raise ValueError(f"Layer-0 value_dim should equal hidden_size for RWKV-7: {dims[0]} != {hidden_size}")
+    return dims
+
+
+def validate_layer_shapes(weights: Dict[str, torch.Tensor], num_layers: int, hidden_size: int, head_dim: int) -> None:
+    """Catch size/shape mismatches before constructing the HF model."""
+    num_heads = hidden_size // head_dim
+    for layer_idx in range(num_layers):
+        ffn_key = tensor_shape(weights, f"blocks.{layer_idx}.ffn.key.weight")
+        if len(ffn_key) != 2 or int(ffn_key[1]) != hidden_size:
+            raise ValueError(f"blocks.{layer_idx}.ffn.key.weight has inconsistent shape {ffn_key}")
+        rk_shape = tensor_shape(weights, f"blocks.{layer_idx}.att.r_k")
+        if tuple(rk_shape[-2:]) != (num_heads, head_dim):
+            raise ValueError(
+                f"blocks.{layer_idx}.att.r_k has inconsistent shape {rk_shape}; "
+                f"expected trailing {(num_heads, head_dim)}"
+            )
+
+
 def infer_config(weights: Dict[str, torch.Tensor], dtype_name: str, attn_mode: str, fuse_norm: bool) -> RWKV7Config:
-    hidden_size = weights["blocks.0.ffn.key.weight"].shape[1]
-    intermediate_size = weights["blocks.0.ffn.key.weight"].shape[0]
-    num_layers = 0
-    while f"blocks.{num_layers}.ffn.key.weight" in weights:
-        num_layers += 1
+    hidden_size = tensor_shape(weights, "blocks.0.ffn.key.weight")[1]
+    intermediate_size = tensor_shape(weights, "blocks.0.ffn.key.weight")[0]
+    num_layers = infer_num_layers(weights)
+    head_dim = infer_head_dim(weights, hidden_size)
+    if hidden_size % head_dim != 0:
+        raise ValueError(f"hidden_size={hidden_size} must be divisible by head_dim={head_dim}")
+    num_heads = hidden_size // head_dim
+    value_dim = infer_value_dim(weights, num_layers, hidden_size, num_heads)
+    validate_layer_shapes(weights, num_layers, hidden_size, head_dim)
     try:
-        v_low_rank_dim = weights["blocks.1.att.v1"].shape[1]
+        v_low_rank_dim = tensor_shape(weights, "blocks.1.att.v1")[1]
     except KeyError:
         v_low_rank_dim = 32
     cfg = RWKV7Config(
         attn_mode=attn_mode,
-        vocab_size=weights["emb.weight"].shape[0],
+        vocab_size=tensor_shape(weights, "emb.weight")[0],
         hidden_size=hidden_size,
         hidden_ratio=intermediate_size / hidden_size,
         intermediate_size=intermediate_size,
         num_hidden_layers=num_layers,
-        value_dim=[hidden_size] * num_layers,
-        decay_low_rank_dim=weights["blocks.0.att.w1"].shape[1],
-        gate_low_rank_dim=weights["blocks.0.att.g1"].shape[1],
-        a_low_rank_dim=weights["blocks.0.att.a1"].shape[1],
+        value_dim=value_dim,
+        decay_low_rank_dim=tensor_shape(weights, "blocks.0.att.w1")[1],
+        gate_low_rank_dim=tensor_shape(weights, "blocks.0.att.g1")[1],
+        a_low_rank_dim=tensor_shape(weights, "blocks.0.att.a1")[1],
         v_low_rank_dim=v_low_rank_dim,
-        head_dim=64,
+        head_dim=head_dim,
         # 0 is unused by the official trie vocab; use it as a HF generation sentinel/pad id.
         pad_token_id=0,
         eos_token_id=0,

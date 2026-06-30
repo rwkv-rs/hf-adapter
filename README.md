@@ -393,6 +393,10 @@ python bench/profile_decode.py \
 For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 
 - HF `generate()` works.
+- Converter infers layer count, hidden size, head dimension, per-layer value
+  dimensions, and low-rank dimensions from checkpoint tensor shapes instead of
+  hard-coding the 0.1B layout; offline tests cover non-64 head dims and shape
+  validation errors.
 - HF API contract smoke covers fixed-vocab `resize_token_embeddings` handling,
   `prepare_inputs_for_generation`, beam cache reorder, and
   `gradient_checkpointing_enable`.
