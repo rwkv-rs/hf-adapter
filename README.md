@@ -41,6 +41,7 @@ bench/
   bench_dynamic_batch.py
   bench_chunked_prefill.py
   bench_decode_micro.py
+  bench_forward_fast_path.py
   bench_decode_components.py
   bench_projection_lora.py
   compare_fast_token_layouts.py
@@ -339,6 +340,18 @@ python bench/bench_decode_micro.py \
   --fast-decode-api auto
 ```
 
+Production-facing HF forward fast-path benchmark:
+
+```bash
+python bench/bench_forward_fast_path.py \
+  --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --fast-cache true \
+  --fast-token-backend auto
+```
+
 Native JIT / CUDA graph decode prototype benchmark:
 
 ```bash
@@ -456,6 +469,10 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - Decode microbench coverage records stable timing for reference HF recurrent
   forward, ordinary HF forward with fast-forward enabled, the direct fast token
   API, `lm_head`, argmax, embedding, and empty-loop overhead.
+- `bench_forward_fast_path.py` records the production-facing ordinary HF
+  cached `forward()` path against both `RWKV7_FAST_FORWARD=0` reference forward
+  and direct `rwkv7_forward_token`, and `check_results.py` gates correctness,
+  speedup, and direct-fast parity.
 - Decode component benchmark coverage times the fast-token layer path by projection, recurrent, norm/output, FFN, and layer totals.
 - Projection/LoRA benchmark coverage times the largest component and compares simple PyTorch bmm fusion candidates.
 - Benchmark analysis coverage reports speed/memory ratios and next optimization focus from `bench/results.jsonl`.
