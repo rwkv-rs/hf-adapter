@@ -195,7 +195,7 @@ def main() -> int:
     ap.add_argument("--fast-token-layout", choices=["auto", "3d", "2d"], default="auto",
                     help="HF fast-token layout; 3d is the validated baseline, 2d is an experimental A/B path")
     ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="auto",
-                    help="HF fast-token backend; native_graph uses CUDA graph for bsz=1 and falls back to native_jit for batched requests")
+                    help="HF fast-token backend; native_graph captures a CUDA graph per fixed batch size")
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"),
                     help="JSONL output path; set empty string to disable appending")
     args = ap.parse_args()
