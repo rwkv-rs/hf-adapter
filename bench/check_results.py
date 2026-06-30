@@ -255,6 +255,8 @@ def check_common(report: dict[str, Any], failures: list[str], args: argparse.Nam
             fail(failures, f"larger_model_smoke {label} missing checkpoint size provenance")
         if not row.get("top5") or len(row.get("top5") or []) != 5:
             fail(failures, f"larger_model_smoke {label} missing top5 logits summary")
+        if row.get("fast_token_backend_effective") not in {"native_graph", "native_jit", "fla"}:
+            fail(failures, f"larger_model_smoke {label} missing effective fast-token backend: {row.get('fast_token_backend_effective')}")
 
     if args.require_quantization:
         quant_rows = report.get("quantization") or []
@@ -338,8 +340,8 @@ def main() -> int:
     ap.add_argument("--max-native-graph-copy-share", type=float, default=0.15)
     ap.add_argument("--expected-top-component", default="attn_linears_lora")
     ap.add_argument("--expect-naive-candidate-slower", action="store_true", default=True)
-    ap.add_argument("--required-larger-models", nargs="+", default=["0.4b", "1.5b"])
-    ap.add_argument("--min-larger-model-new-tokens", type=int, default=1)
+    ap.add_argument("--required-larger-models", nargs="+", default=["0.4b", "1.5b", "2.9b"])
+    ap.add_argument("--min-larger-model-new-tokens", type=int, default=2)
     ap.add_argument("--min-larger-model-hidden-size", type=int, default=1024)
     ap.add_argument("--min-larger-model-layers", type=int, default=24)
     ap.add_argument("--require-quantization", action="store_true",
