@@ -9,9 +9,12 @@ import os
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from fla.models.rwkv7.modeling_rwkv7 import RWKV7Model as _RWKV7Model
 from fla.models.rwkv7.modeling_rwkv7 import RWKV7ForCausalLM as _RWKV7ForCausalLM
 from fla.models.utils import Cache as _FLACache
+from fla.ops.rwkv7.fused_recurrent import fused_mul_recurrent_rwkv7
+from transformers.modeling_outputs import CausalLMOutputWithPast
 
 try:
     from .configuration_rwkv7 import RWKV7Config
@@ -58,6 +61,14 @@ class RWKV7StateCache(_FLACache):
         # that are unnecessary for RWKV recurrent decode and add CPU overhead.
         self.states: list[dict[str, Any]] = []
         self._seen_tokens = int(seen_tokens)
+
+    def _ensure_layer(self, layer_idx: int) -> dict[str, Any]:
+        empty = {"recurrent_state": None, "attn_state": None, "conv_state": None, "ffn_state": None}
+        while len(self.states) <= layer_idx:
+            self.states.append(dict(empty))
+        if self.states[layer_idx] is None:
+            self.states[layer_idx] = dict(empty)
+        return self.states[layer_idx]
 
     def __getitem__(self, layer_idx: int) -> dict[str, Any]:
         if layer_idx < len(self.states):
@@ -188,11 +199,129 @@ class RWKV7Model(_RWKV7Model):
     config_class = RWKV7Config
 
 
-
 class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     config_class = RWKV7Config
     # Transformers >=5 expects dict-like _tied_weights_keys in save_pretrained.
     _tied_weights_keys = {}
+
+    @torch.no_grad()
+    def rwkv7_forward_one(
+        self,
+        input_ids: torch.LongTensor,
+        past_key_values: RWKV7StateCache | _FLACache | tuple | list | None = None,
+        return_dict: bool | None = True,
+    ):
+        """Inference-only bsz=1 one-token decode path.
+
+        This keeps the standard HF `forward` path untouched for `generate`, PEFT,
+        Trainer, and TRL. Serving stacks can call this method after a normal HF
+        prefill to avoid the generic 3D module/cache path for recurrent decode.
+        It uses the same FLA fused recurrent kernel and the same state layout as
+        `RWKV7StateCache`, but performs token shift, FFN shift, and gate output
+        correction directly on `[1, 1, hidden]` tensors.
+        """
+        if self.training:
+            raise RuntimeError("rwkv7_forward_one is inference-only; call model.eval() first")
+        token = input_ids.reshape(-1)
+        if token.numel() != 1:
+            raise ValueError("rwkv7_forward_one only supports exactly one token with batch size 1")
+        if not isinstance(past_key_values, RWKV7StateCache):
+            past_key_values = RWKV7StateCache.from_legacy_cache(past_key_values)
+
+        x = self.model.embeddings(token.view(1, 1))
+        v_first = None
+        for layer_idx, layer in enumerate(self.model.layers):
+            state = past_key_values._ensure_layer(layer_idx)
+            residual = layer.pre_norm(x) if hasattr(layer, "pre_norm") else x
+            attn_input = layer.attn_norm(residual)
+            attn_out, recurrent_state, conv_state, v_first = self._rwkv7_attn_one(
+                layer.attn,
+                attn_input,
+                state,
+                v_first,
+            )
+            hidden_states = residual + attn_out
+            residual = hidden_states
+            ffn_input = layer.ffn_norm(hidden_states)
+            ffn_out, ffn_state = self._rwkv7_ffn_one(layer.ffn, ffn_input, state)
+            x = residual + ffn_out
+            state["recurrent_state"] = recurrent_state
+            state["conv_state"] = conv_state
+            state["ffn_state"] = ffn_state
+            state["attn_state"] = None
+
+        past_key_values._seen_tokens += 1
+        hidden_states = self.model.norm(x)
+        logits = self.lm_head(hidden_states)
+        if not return_dict:
+            return logits, past_key_values
+        return CausalLMOutputWithPast(logits=logits, past_key_values=past_key_values)
+
+    def _rwkv7_attn_one(self, attn, hidden_states: torch.Tensor, state: dict[str, Any], v_first: torch.Tensor | None):
+        batch_size, seq_len, hidden_size = hidden_states.shape
+        if batch_size != 1 or seq_len != 1:
+            raise ValueError("_rwkv7_attn_one expects [1, 1, hidden] input")
+        num_heads, head_dim = attn.num_heads, attn.head_dim
+        conv_cache = state.get("conv_state")
+        if conv_cache is None:
+            prev = torch.zeros_like(hidden_states)
+        else:
+            prev = conv_cache.unsqueeze(1) if conv_cache.dim() == 2 else conv_cache
+        delta = prev - hidden_states
+        xr = torch.addcmul(hidden_states, delta, attn.x_r)
+        xw = torch.addcmul(hidden_states, delta, attn.x_w)
+        xk = torch.addcmul(hidden_states, delta, attn.x_k)
+        xv = torch.addcmul(hidden_states, delta, attn.x_v)
+        xa = torch.addcmul(hidden_states, delta, attn.x_a)
+        xg = torch.addcmul(hidden_states, delta, attn.x_g)
+
+        r = attn.r_proj(xr)
+        w = -0.6065306597126334 * attn.w_lora(xw).sigmoid()
+        k = attn.k_proj(xk)
+        v = attn.v_proj(xv)
+        if attn.layer_idx == 0:
+            v_first = v
+        else:
+            v = torch.lerp(v, v_first, attn.v_lora(xv).sigmoid())
+        a = attn.a_lora(xa).sigmoid()
+        g = attn.g_lora(xg)
+
+        kk = F.normalize(
+            (k * attn.k_k).view(batch_size, seq_len, num_heads, head_dim),
+            dim=-1,
+            p=2.0,
+        )
+        k = k.addcmul(k * (a - 1), attn.k_a)
+        r, w, k, a = (t.view(batch_size, seq_len, num_heads, head_dim) for t in (r, w, k, a))
+        v = v.view(batch_size, seq_len, num_heads, attn.head_v_dim)
+
+        o, recurrent_state = fused_mul_recurrent_rwkv7(
+            r=r,
+            w=w,
+            k=k,
+            v=v,
+            kk=kk,
+            a=a,
+            scale=1.0,
+            initial_state=state.get("recurrent_state"),
+            output_final_state=True,
+        )
+        o = attn.g_norm(o.reshape(batch_size * seq_len, attn.value_dim)).view(batch_size, seq_len, attn.value_dim)
+        correction = ((r * k * attn.r_k.view(1, 1, num_heads, head_dim)).sum(-1, keepdim=True) * v).reshape(o.shape)
+        o = attn.o_proj((o + correction) * g)
+        return o, recurrent_state, hidden_states[:, -1], v_first
+
+    @staticmethod
+    def _rwkv7_ffn_one(ffn, hidden_states: torch.Tensor, state: dict[str, Any]):
+        ffn_cache = state.get("ffn_state")
+        if ffn_cache is None:
+            prev = torch.zeros_like(hidden_states)
+        else:
+            prev = ffn_cache.unsqueeze(1) if ffn_cache.dim() == 2 else ffn_cache
+        delta = prev - hidden_states
+        k = torch.addcmul(hidden_states, delta, ffn.x_k.view(1, 1, -1))
+        out = ffn.value(torch.relu(ffn.key(k)) ** 2)
+        return out, hidden_states[:, -1]
 
     def forward(self, *args, **kwargs):
         use_cache = kwargs.get("use_cache")

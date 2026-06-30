@@ -64,19 +64,28 @@ def bench_hf(args, dt):
     prefill_tokps = L / ((time.time() - t0) / args.runs)
 
     # decode via direct state threading
+    use_fast_decode = args.hf_decode_api == "rwkv7_forward_one"
+    if use_fast_decode and not hasattr(model, "rwkv7_forward_one"):
+        raise ValueError("Loaded model does not expose rwkv7_forward_one")
+
+    def decode_step(token, state):
+        if use_fast_decode:
+            return model.rwkv7_forward_one(token, past_key_values=state)
+        return model(token, past_key_values=state, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
+
     with torch.inference_mode():
         out = model(ids[:, :8], use_cache=True, logits_to_keep=args.hf_logits_to_keep)
         state = out.past_key_values
         nxt = out.logits[:, -1:].argmax(dim=-1)
         for _ in range(args.warmup):
-            out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
+            out = decode_step(nxt, state)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
     torch.cuda.synchronize()
     t0 = time.time()
     with torch.inference_mode():
         for _ in range(args.decode_tokens):
-            out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
+            out = decode_step(nxt, state)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
     torch.cuda.synchronize()
@@ -90,6 +99,7 @@ def bench_hf(args, dt):
     res["fuse_norm"] = getattr(model.config, "fuse_norm", None)
     res["fast_cache"] = os.environ.get("RWKV7_FAST_CACHE", "1") not in {"0", "false", "False", "no", "off"}
     res["cache_type"] = type(state).__name__ if state is not None else None
+    res["hf_decode_api"] = args.hf_decode_api
     return res
 
 
@@ -159,6 +169,8 @@ def main() -> int:
                     help="Override config.fuse_norm for HF load; false is faster on V100 in current tests")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto",
                     help="HF only: use the lightweight RWKV7StateCache hot path (default via model env is enabled)")
+    ap.add_argument("--hf-decode-api", choices=["forward", "rwkv7_forward_one"], default="forward",
+                    help="HF decode loop implementation; rwkv7_forward_one is bsz=1 inference-only fast path")
     args = ap.parse_args()
     dt = DTYPES[args.dtype]
     out = Path(__file__).parent / "results.jsonl"
