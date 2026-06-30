@@ -4,6 +4,9 @@ The three examples are direct TRL programs rather than a private training
 framework. They all use the 0.1B model, seed 42, sequence length 512, LoRA
 r=8 / alpha=16 / dropout=0.05 and target
 `r_proj,k_proj,v_proj,o_proj,key,value`.
+The canonical reference run uses gradient accumulation 1 so the deliberately
+unfused PyTorch recurrence remains bounded; use
+`--gradient-accumulation-steps` to increase the effective batch.
 The canonical environment uses `transformers==4.56.2` and `trl==0.20.0`
 (`pip install -e '.[train]'`). This combination retains V100 support with the
 validated PyTorch 2.5 CUDA build.
