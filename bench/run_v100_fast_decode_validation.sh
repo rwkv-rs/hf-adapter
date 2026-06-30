@@ -53,7 +53,7 @@ run() {
     --dtype "${DTYPE}" \
     --device "${DEVICE}" \
     --fuse-norm false \
-    --batch-sizes 1 \
+    --batch-sizes 1 2 4 \
     --fast-token-layouts 3d \
     --fast-token-backends native_jit \
     --decode-steps 16 \
@@ -134,6 +134,7 @@ run() {
     --attn-mode fused_recurrent \
     --fuse-norm false \
     --fast-cache true \
+    --fast-token-backend native_jit \
     --decode-apis forward rwkv7_forward_token \
     --batch-size 8 \
     --min-batch-size 2 \
