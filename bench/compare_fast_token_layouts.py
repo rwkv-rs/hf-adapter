@@ -139,6 +139,10 @@ def main() -> int:
     ap.add_argument("--dtype", default="fp16")
     ap.add_argument("--baseline-layout", default="3d")
     ap.add_argument("--candidate-layout", default="2d")
+    ap.add_argument("--min-speedup", type=float, default=1.0,
+                    help="Minimum candidate/baseline ratio required when --require-candidate is set")
+    ap.add_argument("--require-candidate", action="store_true",
+                    help="Exit non-zero unless candidate rows exist and meet --min-speedup on all available ratios")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
@@ -170,20 +174,41 @@ def main() -> int:
         },
     }
 
+    speed_ratio = report["speed_mem"]["candidate_vs_baseline_decode_tokps"]
+    micro_ratio = report["decode_micro"]["candidate_vs_baseline_fast_fixed_tokps"]
+    ratios = [r for r in (speed_ratio, micro_ratio) if r is not None]
+    has_candidate = cand_speed is not None or cand_micro is not None
+    failures = []
+    if args.require_candidate and not has_candidate:
+        failures.append("candidate layout rows missing")
+    if args.require_candidate and not ratios:
+        failures.append("candidate/baseline ratios unavailable")
+    if args.require_candidate:
+        for name, value in (("speed_mem.decode_tokps", speed_ratio), ("decode_micro.fast_fixed_tokps", micro_ratio)):
+            if value is not None and value < args.min_speedup:
+                failures.append(f"{name} ratio {value:.4f} < {args.min_speedup:.4f}")
+
+    report["required"] = {
+        "enabled": bool(args.require_candidate),
+        "min_speedup": args.min_speedup,
+        "ok": not failures,
+        "failures": failures,
+    }
+
     if args.json:
         print(json.dumps(report, indent=2, ensure_ascii=False))
     else:
         print("# RWKV-7 fast-token layout comparison")
         print(json.dumps(report, ensure_ascii=False))
-        speed_ratio = report["speed_mem"]["candidate_vs_baseline_decode_tokps"]
-        micro_ratio = report["decode_micro"]["candidate_vs_baseline_fast_fixed_tokps"]
-        if speed_ratio is None and micro_ratio is None:
+        if not ratios:
             print("PENDING: need both baseline and candidate layout rows")
-        elif (speed_ratio is not None and speed_ratio < 1.0) or (micro_ratio is not None and micro_ratio < 1.0):
-            print("CANDIDATE: not faster on available rows")
+        elif any(r < args.min_speedup for r in ratios):
+            print("CANDIDATE: below required speedup on available rows")
         else:
-            print("CANDIDATE: faster on available rows")
-    return 0
+            print("CANDIDATE: meets required speedup on available rows")
+        if failures:
+            print("FAIL: " + "; ".join(failures))
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
