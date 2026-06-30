@@ -199,6 +199,33 @@ It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward
 `test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
 then writes logs under `bench/logs/`. Use `python bench/summarize_results.py --device V100 --last 12` for a compact view of the latest JSONL rows.
 
+## Fast-token layout A/B harness
+
+The validated fast-token path remains the default `3d` layout.  For candidate
+one-token hot-path changes, the repository also includes an opt-in layout switch
+and a V100 A/B bundle:
+
+```bash
+# Default baseline behavior.
+RWKV7_FAST_TOKEN_LAYOUT=3d python bench/bench_speed.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --pth /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-20260129-ctx8192.pth \
+  --backend both \
+  --dtype fp16 \
+  --hf-decode-api rwkv7_forward_token \
+  --fast-token-layout 3d
+
+# Run 3d vs experimental 2d correctness + speed + microbench rows.
+./bench/run_v100_fast_token_layout_ab.sh
+python bench/compare_fast_token_layouts.py --results bench/results.jsonl --device V100 --dtype fp16
+```
+
+Rows without `fast_token_layout` are treated as `3d` by
+`bench/compare_fast_token_layouts.py`, so older V100 results remain the baseline
+until new A/B rows are appended. Candidate rows are not accepted as an
+optimization until `tests/test_fast_decode_api.py --fast-token-layouts 2d` passes
+and the layout comparison shows a real speedup on V100.
+
 ## Batch-size coverage
 
 The serving path now has a dedicated repeated-prompt batch smoke test:
