@@ -230,6 +230,21 @@ python bench/bench_speed.py \
   --hf-decode-api rwkv7_forward_token
 ```
 
+Opt-in native-JIT backend for the bsz=1 HF fast-token path:
+
+```bash
+python bench/bench_speed.py \
+  --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
+  --pth /path/to/rwkv7-g1d-0.1b-20260129-ctx8192.pth \
+  --backend both \
+  --dtype fp16 \
+  --hf-logits-to-keep 1 \
+  --fuse-norm false \
+  --fast-cache true \
+  --hf-decode-api rwkv7_forward_token \
+  --fast-token-backend native_jit
+```
+
 Batch-size sweep for serving-style prefill and recurrent decode:
 
 ```bash
@@ -377,8 +392,8 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - Decode component benchmark coverage times the fast-token layer path by projection, recurrent, norm/output, FFN, and layer totals.
 - Projection/LoRA benchmark coverage times the largest component and compares simple PyTorch bmm fusion candidates.
 - Benchmark analysis coverage reports speed/memory ratios and next optimization focus from `bench/results.jsonl`.
-- Benchmark check coverage provides a passing regression gate and a failing final-target gate until decode reaches >=0.9x official.
-- Latest V100 fast-token results: bsz=1 decode `59.2 tok/s` vs official `92.1 tok/s`; batch sweep fast-token per-seq decode is about `55 tok/s` for bsz=1/2/4/8; dynamic-batch simulation improves from `205.2` to `345.7` total tok/s; component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`; naive PyTorch bmm projection/LoRA candidates are not enough, so the next implementation needs custom fusion/reduced launch count.
+- Benchmark check coverage provides passing regression and target gates for the current bsz=1 native-JIT HF fast-token row.
+- Latest V100 fast-token results: FLA bsz=1 decode `59.2 tok/s` vs official `92.1 tok/s`; opt-in native-JIT bsz=1 decode reaches `92.1 tok/s` vs official `92.1 tok/s`; batch sweep with native-JIT enabled uses native-JIT for bsz=1 (`91.9 tok/s`) and falls back to FLA for bsz=2/4/8 (`117.7` / `233.3` / `465.5` aggregate tok/s). Dynamic-batch simulation improves from `205.2` to `345.7` total tok/s; component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`; naive PyTorch bmm projection/LoRA candidates are not enough, so the next implementation needs custom fusion/reduced launch count.
 - Native JIT / CUDA graph prototype: V100 fp16 native logits match HF logits (`cosine≈1.00000024`, max_abs `0.03125`), graph-vs-JIT greedy decode is `16/16` identical, native JIT reaches `103.52 tok/s`, and native CUDA graph reaches `254.33 tok/s` (`2.76x` the current official 0.1B V100 baseline). This is a single-batch fixed-shape prototype, so the next task is integrating the same block-step packing / launch reduction into the HF fast-token serving path.
 - Save/reload roundtrip works with exact logit equality.
 - Official `rwkv` alignment includes prompt logits and 64-token greedy equality.
@@ -393,5 +408,5 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - The backend currently requires FLA.
 - The remote config uses a unique `rwkv7_hf_adapter` model type so `AutoModelForCausalLM` reliably loads this adapter instead of a locally registered FLA `rwkv7` class.
 - V100 serving-style memory is now near parity with official for 0.1B when using `logits_to_keep=1`.
-- V100 native-norm + fast-cache HF decode is about 41 tok/s; `rwkv7_forward_token` improves this to about 59 tok/s, but official is still about 92 tok/s for 0.1B fp16.
-- The native CUDA graph prototype exceeds the 0.1B V100 decode target, but it is not yet a full HF `forward` / dynamic-batching path.
+- V100 native-norm + fast-cache HF decode is about 41 tok/s; FLA `rwkv7_forward_token` improves this to about 59 tok/s; opt-in native-JIT `rwkv7_forward_token` reaches official parity for bsz=1.
+- The native-JIT / CUDA graph work is not yet a full batched dynamic-serving path: bsz>1 currently falls back to the FLA fast-token backend.
