@@ -165,6 +165,8 @@ def check_common(report: dict[str, Any], failures: list[str], args: argparse.Nam
     if generate_fast.get("generated_tokens_matched") is not None and generate_fast.get("generated_tokens_total") is not None:
         if int(generate_fast["generated_tokens_matched"]) != int(generate_fast["generated_tokens_total"]):
             fail(failures, f"generate token match mismatch: {generate_fast}")
+    if generate_fast.get("batch_size") is None or int(generate_fast.get("batch_size") or 0) < args.min_generate_batch_size:
+        fail(failures, f"generate fast-path batch size below floor: {generate_fast.get('batch_size')} < {args.min_generate_batch_size}")
     if generate_fast.get("fast_token_backend_effective") not in {"native_graph", "native_jit", "fla"}:
         fail(failures, f"unexpected generate fast backend: {generate_fast.get('fast_token_backend_effective')}")
 
@@ -255,6 +257,7 @@ def main() -> int:
     ap.add_argument("--min-forward-fast-vs-direct-ratio", type=float, default=0.9)
     ap.add_argument("--max-forward-fast-diff", type=float, default=0.2)
     ap.add_argument("--min-generate-fast-speedup", type=float, default=2.0)
+    ap.add_argument("--min-generate-batch-size", type=int, default=2)
     ap.add_argument("--expected-top-component", default="attn_linears_lora")
     ap.add_argument("--expect-naive-candidate-slower", action="store_true", default=True)
     ap.add_argument("--require-quantization", action="store_true",

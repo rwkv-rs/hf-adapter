@@ -363,6 +363,7 @@ python bench/bench_generate_fast_path.py \
   --fuse-norm false \
   --fast-cache true \
   --fast-token-backend auto \
+  --batch-size 2 \
   --max-new-tokens 16
 ```
 
@@ -489,10 +490,11 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   speedup, and direct-fast parity.
 - `bench_generate_fast_path.py` records the production-facing
   `model.generate(..., use_cache=True)` path with `RWKV7_FAST_FORWARD=0/1`,
-  gates greedy token equality, backend selection, and end-to-end generation
-  speedup. V100 prompt=8/new=16 runs show reference generate at `37.8 tok/s`
-  and fast-forward generate at `162.2 tok/s` (`4.29x`) with all generated
-  tokens identical and effective backend `native_graph`.
+  gates greedy token equality, backend selection, bsz>=2 coverage, and
+  end-to-end generation speedup. V100 prompt=8/new=16 bsz=2 runs show
+  reference generate at `75.3 tok/s` aggregate and fast-forward generate at
+  `303.5 tok/s` aggregate (`4.03x`) with all `32/32` generated tokens
+  identical and effective backend `native_graph`.
 - Decode component benchmark coverage times the fast-token layer path by projection, recurrent, norm/output, FFN, and layer totals.
 - Projection/LoRA benchmark coverage times the largest component and compares simple PyTorch bmm fusion candidates.
 - Benchmark analysis coverage reports speed/memory ratios and next optimization focus from `bench/results.jsonl`.
