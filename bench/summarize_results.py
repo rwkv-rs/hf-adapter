@@ -52,7 +52,7 @@ def compact(row: dict[str, Any]) -> dict[str, Any]:
         "_lineno", "axis", "backend", "device", "dtype", "attn_mode",
         "fuse_norm", "fast_cache", "cache_type", "hf_decode_api", "fast_decode_api",
         "fast_decode_api_name", "fast_decode_api_requested", "fast_decode_api_available",
-        "decode_api", "batch_size", "prompt_tokens", "decode_tokens", "decode_steps",
+        "fast_token_layout", "decode_api", "batch_size", "prompt_tokens", "decode_tokens", "decode_steps",
         "steps", "hf_forward_fixed", "hf_forward_greedy",
         "fast_decode_fixed", "fast_decode_greedy",
         "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers",

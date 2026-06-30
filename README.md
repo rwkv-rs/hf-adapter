@@ -31,6 +31,7 @@ tests/
   test_dynamic_batch_cache.py
   test_peft_lora.py
   test_hf_training_smoke.py
+  test_result_tools.py
 bench/
   bench_speed.py
   bench_decode_breakdown.py
@@ -39,6 +40,7 @@ bench/
   bench_decode_micro.py
   bench_decode_components.py
   bench_projection_lora.py
+  compare_fast_token_layouts.py
   analyze_results.py
   check_results.py
   profile_decode.py
@@ -202,6 +204,14 @@ Full V100 fast-decode validation bundle:
 ```bash
 ./bench/run_v100_fast_decode_validation.sh
 python bench/summarize_results.py --device V100 --last 12
+```
+
+
+Fast-token layout A/B benchmark, for opt-in 2D hot-path experiments after the baseline is stable:
+
+```bash
+./bench/run_v100_fast_token_layout_ab.sh
+python bench/compare_fast_token_layouts.py --results bench/results.jsonl --device V100 --dtype fp16
 ```
 
 Serving-style speed/memory benchmark using the one-token fast decode API:

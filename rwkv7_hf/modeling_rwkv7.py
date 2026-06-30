@@ -30,6 +30,12 @@ def _fast_cache_enabled() -> bool:
     return os.environ.get("RWKV7_FAST_CACHE", "1") not in _FALSE_VALUES
 
 
+def _fast_token_layout() -> str:
+    """Select the experimental fast-token tensor layout for A/B benchmarks."""
+    layout = os.environ.get("RWKV7_FAST_TOKEN_LAYOUT", "3d").strip().lower()
+    return "2d" if layout in {"2d", "flat"} else "3d"
+
+
 def _linear_direct(module, x: torch.Tensor) -> torch.Tensor:
     """Call a Linear module through F.linear to skip small-module dispatch."""
     return F.linear(x, module.weight, module.bias)
@@ -266,6 +272,9 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         if not isinstance(past_key_values, RWKV7StateCache):
             past_key_values = RWKV7StateCache.from_legacy_cache(past_key_values)
 
+        if _fast_token_layout() == "2d":
+            return self._rwkv7_forward_token_2d(token, past_key_values, return_dict)
+
         x = self.model.embeddings(token.view(-1, 1))
         v_first = None
         for layer_idx, layer in enumerate(self.model.layers):
@@ -291,6 +300,42 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         past_key_values._seen_tokens += 1
         hidden_states = self.model.norm(x)
         logits = _linear_direct(self.lm_head, hidden_states)
+        if not return_dict:
+            return logits, past_key_values
+        return CausalLMOutputWithPast(logits=logits, past_key_values=past_key_values)
+
+    def _rwkv7_forward_token_2d(
+        self,
+        token: torch.LongTensor,
+        past_key_values: RWKV7StateCache,
+        return_dict: bool | None = True,
+    ):
+        """Experimental 2D fast-token path used by layout A/B benchmarks."""
+        x = self.model.embeddings(token)
+        v_first = None
+        for layer_idx, layer in enumerate(self.model.layers):
+            state = past_key_values._ensure_layer(layer_idx)
+            residual = layer.pre_norm(x) if hasattr(layer, "pre_norm") else x
+            attn_input = layer.attn_norm(residual)
+            attn_out, recurrent_state, conv_state, v_first = self._rwkv7_attn_one_2d(
+                layer.attn,
+                attn_input,
+                state,
+                v_first,
+            )
+            hidden_states = residual + attn_out
+            residual = hidden_states
+            ffn_input = layer.ffn_norm(hidden_states)
+            ffn_out, ffn_state = self._rwkv7_ffn_one_2d(layer.ffn, ffn_input, state)
+            x = residual + ffn_out
+            state["recurrent_state"] = recurrent_state
+            state["conv_state"] = conv_state
+            state["ffn_state"] = ffn_state
+            state["attn_state"] = None
+
+        past_key_values._seen_tokens += 1
+        hidden_states = self.model.norm(x)
+        logits = _linear_direct(self.lm_head, hidden_states).unsqueeze(1)
         if not return_dict:
             return logits, past_key_values
         return CausalLMOutputWithPast(logits=logits, past_key_values=past_key_values)
@@ -349,6 +394,60 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         o = _linear_direct(attn.o_proj, (o + correction) * g)
         return o, recurrent_state, hidden_states[:, -1], v_first
 
+    def _rwkv7_attn_one_2d(self, attn, hidden_states: torch.Tensor, state: dict[str, Any], v_first: torch.Tensor | None):
+        batch_size, hidden_size = hidden_states.shape
+        num_heads, head_dim = attn.num_heads, attn.head_dim
+        conv_cache = state.get("conv_state")
+        if conv_cache is None:
+            prev = torch.zeros_like(hidden_states)
+        else:
+            prev = conv_cache[:, -1] if conv_cache.dim() == 3 else conv_cache
+        delta = prev - hidden_states
+        xr = torch.addcmul(hidden_states, delta, attn.x_r)
+        xw = torch.addcmul(hidden_states, delta, attn.x_w)
+        xk = torch.addcmul(hidden_states, delta, attn.x_k)
+        xv = torch.addcmul(hidden_states, delta, attn.x_v)
+        xa = torch.addcmul(hidden_states, delta, attn.x_a)
+        xg = torch.addcmul(hidden_states, delta, attn.x_g)
+
+        r = _linear_direct(attn.r_proj, xr)
+        w = -0.6065306597126334 * _lora_direct(attn.w_lora, xw).sigmoid()
+        k = _linear_direct(attn.k_proj, xk)
+        v = _linear_direct(attn.v_proj, xv)
+        if attn.layer_idx == 0:
+            v_first = v
+        else:
+            v = torch.lerp(v, v_first, _lora_direct(attn.v_lora, xv).sigmoid())
+        a = _lora_direct(attn.a_lora, xa).sigmoid()
+        g = _lora_direct(attn.g_lora, xg)
+
+        kk = F.normalize(
+            (k * attn.k_k).view(batch_size, num_heads, head_dim),
+            dim=-1,
+            p=2.0,
+        )
+        k = k.addcmul(k * (a - 1), attn.k_a)
+        r, w, k, a = (t.view(batch_size, 1, num_heads, head_dim) for t in (r, w, k, a))
+        v = v.view(batch_size, 1, num_heads, attn.head_v_dim)
+
+        o, recurrent_state = fused_mul_recurrent_rwkv7(
+            r=r,
+            w=w,
+            k=k,
+            v=v,
+            kk=kk.unsqueeze(1),
+            a=a,
+            scale=1.0,
+            initial_state=state.get("recurrent_state"),
+            output_final_state=True,
+        )
+        o = attn.g_norm(o.reshape(batch_size, attn.value_dim))
+        correction = ((r * k * attn.r_k.view(1, 1, num_heads, head_dim)).sum(-1, keepdim=True) * v).reshape(
+            batch_size, attn.value_dim
+        )
+        o = _linear_direct(attn.o_proj, (o + correction) * g)
+        return o, recurrent_state, hidden_states, v_first
+
     @staticmethod
     def _rwkv7_ffn_one(ffn, hidden_states: torch.Tensor, state: dict[str, Any]):
         ffn_cache = state.get("ffn_state")
@@ -360,6 +459,18 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         k = torch.addcmul(hidden_states, delta, ffn.x_k.view(1, 1, -1))
         out = _linear_direct(ffn.value, torch.relu(_linear_direct(ffn.key, k)) ** 2)
         return out, hidden_states[:, -1]
+
+    @staticmethod
+    def _rwkv7_ffn_one_2d(ffn, hidden_states: torch.Tensor, state: dict[str, Any]):
+        ffn_cache = state.get("ffn_state")
+        if ffn_cache is None:
+            prev = torch.zeros_like(hidden_states)
+        else:
+            prev = ffn_cache[:, -1] if ffn_cache.dim() == 3 else ffn_cache
+        delta = prev - hidden_states
+        k = torch.addcmul(hidden_states, delta, ffn.x_k.view(1, -1))
+        out = _linear_direct(ffn.value, torch.relu(_linear_direct(ffn.key, k)) ** 2)
+        return out, hidden_states
 
     def forward(self, *args, **kwargs):
         use_cache = kwargs.get("use_cache")

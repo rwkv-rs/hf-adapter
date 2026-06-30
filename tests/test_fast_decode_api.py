@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -61,6 +62,8 @@ def main() -> int:
     ap.add_argument("--decode-steps", type=int, default=32)
     ap.add_argument("--max-diff", type=float, default=0.15)
     ap.add_argument("--batch-sizes", nargs="+", type=int, default=[1, 2, 4])
+    ap.add_argument("--fast-token-layouts", nargs="+", default=["3d"], choices=["3d", "2d"],
+                    help="Fast-token tensor layouts to validate; 3d is the current production baseline")
     args = ap.parse_args()
 
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
@@ -83,24 +86,33 @@ def main() -> int:
     input_ids = enc.input_ids.to(args.device) if args.device.startswith("cuda") else enc.input_ids
     assert input_ids.shape[1] >= 2, "Prompt must tokenize to at least two tokens"
 
-    for bsz in args.batch_sizes:
-        ids = input_ids.repeat(bsz, 1)
-        run_decode_case(
-            model,
-            ids,
-            args.decode_steps,
-            args.max_diff,
-            model.rwkv7_forward_token,
-            label=f"rwkv7_forward_token bsz={bsz}",
-        )
-    run_decode_case(
-        model,
-        input_ids,
-        args.decode_steps,
-        args.max_diff,
-        model.rwkv7_forward_one,
-        label="rwkv7_forward_one bsz=1",
-    )
+    old_layout = os.environ.get("RWKV7_FAST_TOKEN_LAYOUT")
+    try:
+        for layout in args.fast_token_layouts:
+            os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = layout
+            for bsz in args.batch_sizes:
+                ids = input_ids.repeat(bsz, 1)
+                run_decode_case(
+                    model,
+                    ids,
+                    args.decode_steps,
+                    args.max_diff,
+                    model.rwkv7_forward_token,
+                    label=f"rwkv7_forward_token layout={layout} bsz={bsz}",
+                )
+            run_decode_case(
+                model,
+                input_ids,
+                args.decode_steps,
+                args.max_diff,
+                model.rwkv7_forward_one,
+                label=f"rwkv7_forward_one layout={layout} bsz=1",
+            )
+    finally:
+        if old_layout is None:
+            os.environ.pop("RWKV7_FAST_TOKEN_LAYOUT", None)
+        else:
+            os.environ["RWKV7_FAST_TOKEN_LAYOUT"] = old_layout
     print("PASS")
     return 0
 
