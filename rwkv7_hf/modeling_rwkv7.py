@@ -225,10 +225,36 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         token = input_ids.reshape(-1)
         if token.numel() != 1:
             raise ValueError("rwkv7_forward_one only supports exactly one token with batch size 1")
+        return self.rwkv7_forward_token(input_ids, past_key_values=past_key_values, return_dict=return_dict)
+
+    @torch.no_grad()
+    def rwkv7_forward_token(
+        self,
+        input_ids: torch.LongTensor,
+        past_key_values: RWKV7StateCache | _FLACache | tuple | list | None = None,
+        return_dict: bool | None = True,
+    ):
+        """Inference-only one-token decode path for any batch size.
+
+        `input_ids` may be shaped `[batch]` or `[batch, 1]`. This is the batched
+        version of `rwkv7_forward_one`: it keeps the standard HF `forward` path
+        unchanged, but lets serving benchmarks bypass generic sequence/cache
+        handling for one-token recurrent decode after a normal HF prefill.
+        """
+        if self.training:
+            raise RuntimeError("rwkv7_forward_token is inference-only; call model.eval() first")
+        if input_ids.dim() == 1:
+            token = input_ids
+        elif input_ids.dim() == 2 and input_ids.shape[1] == 1:
+            token = input_ids[:, 0]
+        else:
+            raise ValueError("rwkv7_forward_token expects input_ids shaped [batch] or [batch, 1]")
+        if token.numel() == 0:
+            raise ValueError("rwkv7_forward_token requires a non-empty batch")
         if not isinstance(past_key_values, RWKV7StateCache):
             past_key_values = RWKV7StateCache.from_legacy_cache(past_key_values)
 
-        x = self.model.embeddings(token.view(1, 1))
+        x = self.model.embeddings(token.view(-1, 1))
         v_first = None
         for layer_idx, layer in enumerate(self.model.layers):
             state = past_key_values._ensure_layer(layer_idx)
@@ -259,8 +285,8 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
 
     def _rwkv7_attn_one(self, attn, hidden_states: torch.Tensor, state: dict[str, Any], v_first: torch.Tensor | None):
         batch_size, seq_len, hidden_size = hidden_states.shape
-        if batch_size != 1 or seq_len != 1:
-            raise ValueError("_rwkv7_attn_one expects [1, 1, hidden] input")
+        if seq_len != 1:
+            raise ValueError("_rwkv7_attn_one expects [batch, 1, hidden] input")
         num_heads, head_dim = attn.num_heads, attn.head_dim
         conv_cache = state.get("conv_state")
         if conv_cache is None:

@@ -119,14 +119,15 @@ python tests/test_fast_cache.py \
   --fuse-norm false
 ```
 
-Inference-only bsz=1 fast decode API equivalence test:
+Inference-only fast decode API equivalence test:
 
 ```bash
 python tests/test_fast_decode_api.py \
   --model /path/to/rwkv7-g1d-0.1b-hf \
   --dtype fp16 \
   --device cuda \
-  --fuse-norm false
+  --fuse-norm false \
+  --batch-sizes 1 2 4
 ```
 
 Batched recurrent cache smoke test:
@@ -186,7 +187,7 @@ Full V100 fast-decode validation bundle:
 python bench/summarize_results.py --device V100 --last 12
 ```
 
-Serving-style speed/memory benchmark using the bsz=1 fast decode API:
+Serving-style speed/memory benchmark using the one-token fast decode API:
 
 ```bash
 python bench/bench_speed.py \
@@ -197,7 +198,7 @@ python bench/bench_speed.py \
   --hf-logits-to-keep 1 \
   --fuse-norm false \
   --fast-cache true \
-  --hf-decode-api rwkv7_forward_one
+  --hf-decode-api rwkv7_forward_token
 ```
 
 Batch-size sweep for serving-style prefill and recurrent decode:
@@ -251,7 +252,7 @@ python bench/profile_decode.py \
   --fast-cache true \
   --hf-decode-api forward
 
-# Profile the bsz=1 fast decode API instead:
+# Profile the fast one-token decode API instead:
 python bench/profile_decode.py \
   --backend hf \
   --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
@@ -260,7 +261,7 @@ python bench/profile_decode.py \
   --fuse-norm false \
   --fixed-token \
   --fast-cache true \
-  --hf-decode-api rwkv7_forward_one
+  --hf-decode-api rwkv7_forward_token
 ```
 
 ## Current validation
@@ -271,9 +272,9 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - PEFT LoRA forward/loss/backward works.
 - HF Trainer and TRL SFTTrainer one-step LoRA smoke runs work.
 - Fast recurrent cache matches the default FLA cache exactly on prefill and recurrent decode.
-- Inference-only `rwkv7_forward_one` bsz=1 API is available for serving benchmark experiments without changing HF `forward`/`generate`.
-- Batched recurrent cache smoke coverage exists for repeated prompts across bsz=1/2/4; benchmark sweep records total/per-sequence throughput for bsz=1/2/4/8.
-- Decode microbench coverage records stable timing for HF recurrent forward, `rwkv7_forward_one`, `lm_head`, argmax, embedding, and empty-loop overhead.
+- Inference-only `rwkv7_forward_token` API supports one-token decode for batched serving experiments without changing HF `forward`/`generate`; `rwkv7_forward_one` remains as the bsz=1 compatibility entrypoint.
+- Batched recurrent cache smoke coverage exists for repeated prompts across bsz=1/2/4; benchmark sweep records total/per-sequence throughput for bsz=1/2/4/8 and includes the fast token API when available.
+- Decode microbench coverage records stable timing for HF recurrent forward, the fast token API, `lm_head`, argmax, embedding, and empty-loop overhead.
 - Save/reload roundtrip works with exact logit equality.
 - Official `rwkv` alignment includes prompt logits and 64-token greedy equality.
 - Official `rwkv` logits comparison on smoke prompts:

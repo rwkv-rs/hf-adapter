@@ -64,13 +64,14 @@ def bench_hf(args, dt):
     prefill_tokps = L / ((time.time() - t0) / args.runs)
 
     # decode via direct state threading
-    use_fast_decode = args.hf_decode_api == "rwkv7_forward_one"
-    if use_fast_decode and not hasattr(model, "rwkv7_forward_one"):
-        raise ValueError("Loaded model does not expose rwkv7_forward_one")
+    use_fast_decode = args.hf_decode_api in {"rwkv7_forward_one", "rwkv7_forward_token"}
+    if use_fast_decode and not hasattr(model, args.hf_decode_api):
+        raise ValueError(f"Loaded model does not expose {args.hf_decode_api}")
+    fast_decode_fn = getattr(model, args.hf_decode_api) if use_fast_decode else None
 
     def decode_step(token, state):
         if use_fast_decode:
-            return model.rwkv7_forward_one(token, past_key_values=state)
+            return fast_decode_fn(token, past_key_values=state)
         return model(token, past_key_values=state, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
 
     with torch.inference_mode():
@@ -169,8 +170,8 @@ def main() -> int:
                     help="Override config.fuse_norm for HF load; false is faster on V100 in current tests")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto",
                     help="HF only: use the lightweight RWKV7StateCache hot path (default via model env is enabled)")
-    ap.add_argument("--hf-decode-api", choices=["forward", "rwkv7_forward_one"], default="forward",
-                    help="HF decode loop implementation; rwkv7_forward_one is bsz=1 inference-only fast path")
+    ap.add_argument("--hf-decode-api", choices=["forward", "rwkv7_forward_one", "rwkv7_forward_token"], default="forward",
+                    help="HF decode loop implementation; rwkv7_forward_token is the batched inference-only fast path")
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"),
                     help="JSONL output path; set empty string to disable appending")
     args = ap.parse_args()

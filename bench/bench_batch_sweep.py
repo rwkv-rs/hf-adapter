@@ -3,9 +3,8 @@
 """Batch-size sweep benchmark for the RWKV-7 HF adapter.
 
 Measures serving-style prefill and recurrent decode for multiple batch sizes.
-The fast bsz=1 `rwkv7_forward_one` API is included only for `bsz == 1`; batched
-serving continues to use the standard HF recurrent `forward` path until a
-batched fast path is implemented.
+The batched `rwkv7_forward_token` API is included when available; older adapter
+builds fall back to the bsz=1 `rwkv7_forward_one` API.
 """
 from __future__ import annotations
 
@@ -131,33 +130,39 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
         "peak_vram_mb": peak_mb(args.device),
     }]
 
-    if bsz == 1 and args.fast_decode_api != "false" and hasattr(model, "rwkv7_forward_one"):
+    fast_fn = getattr(model, "rwkv7_forward_token", None)
+    fast_name = "rwkv7_forward_token" if fast_fn is not None else None
+    if fast_fn is None and bsz == 1:
+        fast_fn = getattr(model, "rwkv7_forward_one", None)
+        fast_name = "rwkv7_forward_one" if fast_fn is not None else None
+
+    if args.fast_decode_api != "false" and fast_fn is not None:
         with torch.inference_mode():
             out = model(ids[:, :8], use_cache=True, logits_to_keep=args.hf_logits_to_keep)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
             for _ in range(args.warmup):
-                out = model.rwkv7_forward_one(nxt, past_key_values=state)
+                out = fast_fn(nxt, past_key_values=state)
                 state = out.past_key_values
                 nxt = out.logits[:, -1:].argmax(dim=-1)
             cuda_sync(args.device)
             t0 = time.time()
             for _ in range(args.decode_tokens):
-                out = model.rwkv7_forward_one(nxt, past_key_values=state)
+                out = fast_fn(nxt, past_key_values=state)
                 state = out.past_key_values
                 nxt = out.logits[:, -1:].argmax(dim=-1)
             cuda_sync(args.device)
             fast_dt = time.time() - t0
         rows.append({**rows[0],
-            "decode_api": "rwkv7_forward_one",
-            "decode_tokps_total": round(args.decode_tokens / fast_dt, 1),
+            "decode_api": fast_name,
+            "decode_tokps_total": round((bsz * args.decode_tokens) / fast_dt, 1),
             "decode_tokps_per_seq": round(args.decode_tokens / fast_dt, 1),
             "decode_ms_per_step": round(1000 * fast_dt / args.decode_tokens, 2),
             "cache_type": type(state).__name__ if state is not None else None,
             "peak_vram_mb": peak_mb(args.device),
         })
-    elif args.fast_decode_api == "true" and bsz == 1:
-        raise ValueError("Loaded model does not expose rwkv7_forward_one")
+    elif args.fast_decode_api == "true":
+        raise ValueError("Loaded model does not expose a fast one-token decode API for this batch size")
     return rows
 
 

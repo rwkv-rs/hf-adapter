@@ -190,8 +190,8 @@ When the V100 server is reachable, run the committed bundle from the repository 
 ./bench/run_v100_fast_decode_validation.sh
 ```
 
-It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_one`,
-`test_batch_cache.py`, `bench_batch_sweep.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, and `profile_decode.py --hf-decode-api rwkv7_forward_one`,
+It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_token`,
+`test_batch_cache.py`, `bench_batch_sweep.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, and `profile_decode.py --hf-decode-api rwkv7_forward_token`,
 then writes logs under `bench/logs/`. Use `python bench/summarize_results.py --device V100 --last 12` for a compact view of the latest JSONL rows.
 
 ## Batch-size coverage
@@ -241,7 +241,7 @@ python bench/bench_decode_micro.py \
   --results bench/results.jsonl
 ```
 
-The row records standard HF fixed/greedy one-token decode, optional `rwkv7_forward_one` fixed/greedy decode, and isolated `lm_head`, `norm+lm_head`, `argmax`, embedding, and empty-loop costs. This gives an easier regression signal than profiler tables while keeping the profiler for operator-level investigation.
+The row records standard HF fixed/greedy one-token decode, optional fast token API fixed/greedy decode, and isolated `lm_head`, `norm+lm_head`, `argmax`, embedding, and empty-loop costs. This gives an easier regression signal than profiler tables while keeping the profiler for operator-level investigation.
 
 ## Current optimization target
 
@@ -253,9 +253,9 @@ The next optimization work should focus on **HF recurrent decode**:
 2. Inspect FLA `Cache.update`, per-layer state gather/update, token shift, group norm,
    and output projection overhead in the single-token path.
 3. Profile one-token decode with `torch.profiler` / Nsight and compare against official
-   `rwkv` package layer-by-layer. `profile_decode.py --hf-decode-api rwkv7_forward_one` profiles the new bsz=1 API directly.
-4. Benchmark the new bsz=1 `rwkv7_forward_one` API with `bench_speed.py --hf-decode-api rwkv7_forward_one` and `bench_decode_breakdown.py --fast-decode-api true`; if the V100 result is stable, use it as the serving-stack fast path while keeping HF `forward`/`generate` compatibility unchanged.
-5. Use `bench_batch_sweep.py` to keep bsz=1/2/4/8 regressions visible while developing a future batched fast decode path.
+   `rwkv` package layer-by-layer. `profile_decode.py --hf-decode-api rwkv7_forward_token` profiles the fast token API directly.
+4. Benchmark the new batched `rwkv7_forward_token` API with `bench_speed.py --hf-decode-api rwkv7_forward_token`, `bench_batch_sweep.py --fast-decode-api true`, and `bench_decode_breakdown.py --fast-decode-api true`; if the V100 result is stable, use it as the serving-stack fast path while keeping HF `forward`/`generate` compatibility unchanged.
+5. Use `bench_batch_sweep.py` to keep bsz=1/2/4/8 regressions visible while optimizing the batched fast decode path.
 6. Use `bench_decode_micro.py` to separate recurrent model cost from `lm_head`, argmax, and Python loop overhead before changing the decode implementation.
 7. Keep `logits_to_keep=1` as the default serving benchmark path because it already
    fixes the earlier excess-memory measurement.

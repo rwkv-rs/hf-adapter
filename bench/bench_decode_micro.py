@@ -8,7 +8,7 @@ isolated operations so decode regressions can be attributed before deeper kernel
 work:
 
 - standard HF recurrent `forward`, fixed-token and greedy-token loops
-- optional bsz=1 `rwkv7_forward_one`, fixed-token and greedy-token loops
+- optional fast one-token API, fixed-token and greedy-token loops
 - embedding, final norm + lm_head, lm_head only, argmax only, and empty-loop cost
 """
 from __future__ import annotations
@@ -130,15 +130,21 @@ def bench_decode_paths(args, model, ids: torch.Tensor) -> dict[str, Any]:
         "hf_forward_greedy": metric(hf_greedy_dt, args.steps),
     }
 
-    has_fast = hasattr(model, "rwkv7_forward_one")
+    fast_fn = getattr(model, "rwkv7_forward_token", None)
+    fast_name = "rwkv7_forward_token" if fast_fn is not None else None
+    if fast_fn is None:
+        fast_fn = getattr(model, "rwkv7_forward_one", None)
+        fast_name = "rwkv7_forward_one" if fast_fn is not None else None
+    row["fast_decode_api_name"] = fast_name
+    has_fast = fast_fn is not None
     if args.fast_decode_api == "true" and not has_fast:
-        raise ValueError("Loaded model does not expose rwkv7_forward_one")
+        raise ValueError("Loaded model does not expose a fast one-token decode API")
     if args.fast_decode_api != "false" and has_fast:
         state, _ = seed_state()
 
         def fast_fixed_step():
             nonlocal state
-            out = model.rwkv7_forward_one(fixed, past_key_values=state)
+            out = fast_fn(fixed, past_key_values=state)
             state = out.past_key_values
 
         fast_fixed_dt = timed(fast_fixed_step, args.device, args.warmup, args.steps)
@@ -147,16 +153,16 @@ def bench_decode_paths(args, model, ids: torch.Tensor) -> dict[str, Any]:
 
         def fast_greedy_step():
             nonlocal state, nxt
-            out = model.rwkv7_forward_one(nxt, past_key_values=state)
+            out = fast_fn(nxt, past_key_values=state)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
 
         fast_greedy_dt = timed(fast_greedy_step, args.device, args.warmup, args.steps)
-        row["rwkv7_forward_one_fixed"] = metric(fast_fixed_dt, args.steps)
-        row["rwkv7_forward_one_greedy"] = metric(fast_greedy_dt, args.steps)
+        row["fast_decode_fixed"] = metric(fast_fixed_dt, args.steps)
+        row["fast_decode_greedy"] = metric(fast_greedy_dt, args.steps)
     else:
-        row["rwkv7_forward_one_fixed"] = None
-        row["rwkv7_forward_one_greedy"] = None
+        row["fast_decode_fixed"] = None
+        row["fast_decode_greedy"] = None
     return row
 
 
@@ -229,7 +235,7 @@ def main() -> int:
         "fuse_norm": getattr(model.config, "fuse_norm", None),
         "fast_cache": os.environ.get("RWKV7_FAST_CACHE", "1") not in _FALSE_VALUES,
         "fast_decode_api_requested": args.fast_decode_api,
-        "fast_decode_api_available": hasattr(model, "rwkv7_forward_one"),
+        "fast_decode_api_available": hasattr(model, "rwkv7_forward_token") or hasattr(model, "rwkv7_forward_one"),
         "prompt_tokens": int(ids.shape[1]),
         "steps": args.steps,
     }
