@@ -153,6 +153,8 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     micro = latest(rows, lambda r: r.get("axis") == "decode_micro" and r.get("backend") == "hf_adapter")
     components = latest(rows, lambda r: r.get("axis") == "decode_components" and r.get("backend") == "hf_adapter")
     projection_lora = latest(rows, lambda r: r.get("axis") == "projection_lora" and r.get("backend") == "hf_adapter")
+    quant_rows = [r for r in rows if r.get("axis") == "quantization" and r.get("backend") == "hf_adapter"]
+    quant_latest = latest_by_key(quant_rows, lambda r: r.get("quantization"))
     native_rows = [r for r in rows if r.get("axis") == "native_decode" and r.get("backend") == "hf_native_jit"]
     best_native = max(
         native_rows,
@@ -207,6 +209,21 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         speedup = projection_lora.get("avg_candidate_speedup")
         if speedup is not None and float(speedup) < 1.0:
             focus.append(f"naive PyTorch projection/LoRA bmm candidate is slower ({float(speedup):.2f}x); custom fusion needed")
+    quant_pass_modes = {r.get("quantization") for r in quant_latest if r.get("status") == "pass"}
+    if quant_rows and not {"8bit", "4bit"}.issubset(quant_pass_modes):
+        missing = sorted({"8bit", "4bit"} - quant_pass_modes)
+        focus.append(f"quantization validation incomplete: missing passing {missing}")
+    quant_by_mode = {r.get("quantization"): r for r in quant_latest if r.get("status") == "pass"}
+    quant_base_decode = num(quant_by_mode.get("none"), "decode_tokps")
+    if quant_base_decode:
+        slow = []
+        for mode in ("8bit", "4bit"):
+            q_decode = num(quant_by_mode.get(mode), "decode_tokps")
+            q_ratio = ratio(q_decode, quant_base_decode)
+            if q_ratio is not None and q_ratio < 1.0:
+                slow.append(f"{mode} {q_ratio:.2f}x")
+        if slow:
+            focus.append("generic bnb quantized decode is slower than fp16: " + ", ".join(slow))
     if best_native is None:
         focus.append("native JIT/CUDA-graph decode rows pending")
     elif native_decode_ratio is not None and native_decode_ratio >= target_decode_ratio:
@@ -252,6 +269,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "hf_forward_fixed", "hf_forward_greedy", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
         "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
         "projection_lora": compact(projection_lora, ["_lineno", "batch_size", "hidden_size", "layers", "avg_timings_ms", "avg_current_linears_lora_sum_ms", "avg_candidate_linears_lora_sum_ms", "avg_candidate_speedup", "peak_vram_mb"]),
+        "quantization": [compact(r, ["_lineno", "quantization", "status", "prefill_tokps", "decode_tokps", "decode_ms_per_tok", "model_footprint_mb", "peak_vram_mb", "error"]) for r in quant_latest],
         "native_decode": {
             "best_row": compact(best_native, ["_lineno", "device", "prompt_tokens", "decode_tokens", "hidden_size", "num_heads", "head_dim", "native_jit_tokps", "native_jit_ms_per_tok", "native_graph_tokps", "native_graph_ms_per_tok", "graph_vs_jit_tokens_matched", "graph_vs_jit_tokens_total", "logit_cosine", "logit_max_abs_diff", "peak_vram_mb"]),
             "best_path": native_best_path,
@@ -295,6 +313,12 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["decode_components"], ensure_ascii=False) if report["decode_components"] else "PENDING")
     print("\n## projection_lora")
     print(json.dumps(report["projection_lora"], ensure_ascii=False) if report["projection_lora"] else "PENDING")
+    print("\n## quantization")
+    if report["quantization"]:
+        for row in report["quantization"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
     print("\n## native_decode")
     print(json.dumps(report["native_decode"], ensure_ascii=False))
     print("\n## next_focus")
