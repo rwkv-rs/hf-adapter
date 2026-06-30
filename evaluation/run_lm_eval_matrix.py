@@ -102,15 +102,10 @@ def main():
                         args.device,
                         "--show_config",
                         "--log_samples",
+                        "--trust_remote_code",
                         "--output_path",
                         str(unit_dir),
-                        "--random_seed",
-                        str(args.seed),
-                        "--numpy_random_seed",
-                        str(args.seed),
-                        "--torch_random_seed",
-                        str(args.seed),
-                        "--fewshot_random_seed",
+                        "--seed",
                         str(args.seed),
                     ]
                     if args.smoke_limit is not None:

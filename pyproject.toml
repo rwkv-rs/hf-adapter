@@ -39,7 +39,13 @@ test = [
   "numpy",
   "tomli>=2.0; python_version < '3.11'",
 ]
-train = ["peft>=0.19.1,<1", "accelerate", "datasets", "trl==1.10.0"]
+train = [
+  "transformers>=4.56.2,<6",
+  "peft>=0.19.1,<1",
+  "accelerate",
+  "datasets>=4.7,<6",
+  "trl==0.20.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/rwkv-rs/hf-adapter"

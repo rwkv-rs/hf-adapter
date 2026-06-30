@@ -226,6 +226,10 @@ def validate_adapter_reload(
 
     device = next(trained_model.parameters()).device
     sample = torch.tensor([[1, 2, 3]], device=device)
+    # Gradient checkpointing is a training-only execution mode.  Disable it on
+    # both sides so adapter serialization is compared under the same canonical
+    # inference configuration.
+    trained_model.gradient_checkpointing_disable()
     trained_model.eval()
     with torch.inference_mode():
         expected = trained_model(input_ids=sample, use_cache=False).logits.float().cpu()
@@ -233,12 +237,79 @@ def validate_adapter_reload(
         model_id, revision=model_revision, trust_remote_code=True
     ).to(device)
     reloaded = PeftModel.from_pretrained(base, adapter_dir).eval()
+    reloaded.gradient_checkpointing_disable()
+    reloaded.config.use_cache = trained_model.config.use_cache
+    reloaded.config.bos_token_id = trained_model.config.bos_token_id
     with torch.inference_mode():
         actual = reloaded(input_ids=sample, use_cache=False).logits.float().cpu()
+        expected_repeat = trained_model(
+            input_ids=sample, use_cache=False
+        ).logits.float().cpu()
+        actual_repeat = reloaded(
+            input_ids=sample, use_cache=False
+        ).logits.float().cpu()
     max_abs = float((expected - actual).abs().max())
+    expected_parameters = dict(trained_model.named_parameters())
+    parameter_differences = []
+    for name, parameter in reloaded.named_parameters():
+        reference = expected_parameters.get(name)
+        if reference is None:
+            parameter_differences.append({"name": name, "missing": True})
+            continue
+        difference = float(
+            (reference.detach().float().cpu() - parameter.detach().float().cpu())
+            .abs()
+            .max()
+        )
+        if difference:
+            parameter_differences.append(
+                {"name": name, "max_abs": difference}
+            )
+    expected_buffers = dict(trained_model.named_buffers())
+    buffer_differences = []
+    for name, buffer in reloaded.named_buffers():
+        reference = expected_buffers.get(name)
+        if reference is None or not torch.equal(
+            reference.detach().cpu(), buffer.detach().cpu()
+        ):
+            buffer_differences.append(name)
+
+    def adapter_runtime(value):
+        for module in value.modules():
+            if hasattr(module, "lora_A") and hasattr(module, "scaling"):
+                return {
+                    "active_adapters": list(getattr(module, "active_adapters", [])),
+                    "disable_adapters": bool(getattr(module, "disable_adapters", False)),
+                    "merged": bool(getattr(module, "merged", False)),
+                    "scaling": dict(getattr(module, "scaling", {})),
+                }
+        return {}
     result = {
         "max_abs": max_abs,
         "close": bool(torch.allclose(expected, actual, rtol=1e-5, atol=1e-5)),
+        "trained_dtype": str(next(trained_model.parameters()).dtype),
+        "reloaded_dtype": str(next(reloaded.parameters()).dtype),
+        "parameter_differences": parameter_differences[:50],
+        "buffer_differences": buffer_differences[:50],
+        "trained_adapter_runtime": adapter_runtime(trained_model),
+        "reloaded_adapter_runtime": adapter_runtime(reloaded),
+        "trained_repeat_max_abs": float((expected - expected_repeat).abs().max()),
+        "reloaded_repeat_max_abs": float((actual - actual_repeat).abs().max()),
+        "trained_gradient_checkpointing": bool(
+            getattr(trained_model.base_model.model.model, "gradient_checkpointing", False)
+        ),
+        "reloaded_gradient_checkpointing": bool(
+            getattr(reloaded.base_model.model.model, "gradient_checkpointing", False)
+        ),
+        "config_differences": {
+            key: [trained_model.config.to_dict().get(key), reloaded.config.to_dict().get(key)]
+            for key in sorted(
+                trained_model.config.to_dict().keys()
+                | reloaded.config.to_dict().keys()
+            )
+            if trained_model.config.to_dict().get(key)
+            != reloaded.config.to_dict().get(key)
+        },
     }
     (output / "adapter_reload.json").write_text(
         json.dumps(result, indent=2) + "\n"

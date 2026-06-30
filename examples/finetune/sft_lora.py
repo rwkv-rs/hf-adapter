@@ -41,10 +41,12 @@ def main():
     args = parser.parse_args()
     output = prepare_run(args, DATASET, REVISION)
 
-    train = load_dataset(DATASET, revision=REVISION, split="train_sft").map(render)
-    evaluation = load_dataset(DATASET, revision=REVISION, split="test_sft").map(render)
+    train = load_dataset(DATASET, revision=REVISION, split="train_sft")
+    evaluation = load_dataset(DATASET, revision=REVISION, split="test_sft")
     train = deterministic_subset(train, args.train_samples, args.seed, output, "train")
     evaluation = deterministic_subset(evaluation, args.eval_samples, args.seed, output, "eval")
+    train = train.map(render, remove_columns=train.column_names)
+    evaluation = evaluation.map(render, remove_columns=evaluation.column_names)
 
     tokenizer = AutoTokenizer.from_pretrained(
         args.model, revision=args.model_revision, trust_remote_code=True
@@ -81,15 +83,18 @@ def main():
     )
     before = snapshot_trainable(trainer.model)
     result = trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
+    trained_model = trainer.accelerator.unwrap_model(
+        trainer.model, keep_fp32_wrapper=False
+    )
     adapter_dir = output / "adapter-final"
-    trainer.save_model(adapter_dir)
+    trained_model.save_pretrained(adapter_dir)
     trainer.save_metrics("train", result.metrics)
     trainer.save_metrics("eval", trainer.evaluate())
     callback.write_status(trainer.state.global_step)
     validate_resume(args.resume_from_checkpoint, trainer.state.global_step, output)
-    validate_parameter_change(trainer.model, before, output)
+    validate_parameter_change(trained_model, before, output)
     validate_adapter_reload(
-        trainer.model,
+        trained_model,
         model_id=args.model,
         model_revision=args.model_revision,
         adapter_dir=adapter_dir,

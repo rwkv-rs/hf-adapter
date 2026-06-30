@@ -4,7 +4,9 @@ The three examples are direct TRL programs rather than a private training
 framework. They all use the 0.1B model, seed 42, sequence length 512, LoRA
 r=8 / alpha=16 / dropout=0.05 and target
 `r_proj,k_proj,v_proj,o_proj,key,value`.
-The canonical environment uses `trl==1.10.0` (`pip install -e '.[train]'`).
+The canonical environment uses `transformers==4.56.2` and `trl==0.20.0`
+(`pip install -e '.[train]'`). This combination retains V100 support with the
+validated PyTorch 2.5 CUDA build.
 
 ## SFT
 
@@ -30,7 +32,8 @@ python examples/finetune/dpo_lora.py \
 
 Dataset: [openai/gsm8k](https://huggingface.co/datasets/openai/gsm8k),
 revision `740312add88f781978c0658806c59bc2815b9866`. The script includes
-answer extraction and a correctness reward.
+answer extraction, an exact correctness reward, and a small format/diversity
+reward so a cold-start 0.1B model does not receive zero advantage forever.
 
 ```bash
 python examples/finetune/grpo_lora.py \

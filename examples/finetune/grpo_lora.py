@@ -55,15 +55,42 @@ def correctness_reward(completions, answer, **kwargs):
     return rewards
 
 
+def format_reward(completions, **kwargs):
+    """Small dense reward that makes the cold-start example trainable.
+
+    Exact GSM8K correctness remains the primary reward.  A randomly initialized
+    or very small base model can otherwise receive an all-zero group forever,
+    so this auxiliary term rewards non-empty, lexically varied reasoning and
+    the requested numeric answer format.
+    """
+
+    del kwargs
+    rewards = []
+    for completion in completions:
+        if isinstance(completion, list):
+            completion = completion[-1]["content"]
+        text = str(completion).strip()
+        words = set(text.split())
+        score = min(len(words), 20) / 200.0
+        if "####" in text:
+            score += 0.1
+        if final_answer(text):
+            score += 0.1
+        rewards.append(score)
+    return rewards
+
+
 def main():
     parser = argparse.ArgumentParser(description="RWKV-7 LoRA GRPO example")
     common_arguments(parser)
     args = parser.parse_args()
     output = prepare_run(args, DATASET, REVISION)
-    train = load_dataset(DATASET, "main", revision=REVISION, split="train").map(render)
-    evaluation = load_dataset(DATASET, "main", revision=REVISION, split="test").map(render)
+    train = load_dataset(DATASET, "main", revision=REVISION, split="train")
+    evaluation = load_dataset(DATASET, "main", revision=REVISION, split="test")
     train = deterministic_subset(train, args.train_samples, args.seed, output, "train")
     evaluation = deterministic_subset(evaluation, args.eval_samples, args.seed, output, "eval")
+    train = train.map(render, remove_columns=train.column_names)
+    evaluation = evaluation.map(render, remove_columns=evaluation.column_names)
 
     tokenizer = AutoTokenizer.from_pretrained(
         args.model, revision=args.model_revision, trust_remote_code=True
@@ -100,7 +127,7 @@ def main():
     )
     trainer = GRPOTrainer(
         model=model,
-        reward_funcs=[correctness_reward],
+        reward_funcs=[correctness_reward, format_reward],
         args=config,
         train_dataset=train,
         eval_dataset=evaluation,
@@ -110,15 +137,18 @@ def main():
     )
     before = snapshot_trainable(trainer.model)
     result = trainer.train(resume_from_checkpoint=args.resume_from_checkpoint)
+    trained_model = trainer.accelerator.unwrap_model(
+        trainer.model, keep_fp32_wrapper=False
+    )
     adapter_dir = output / "adapter-final"
-    trainer.save_model(adapter_dir)
+    trained_model.save_pretrained(adapter_dir)
     trainer.save_metrics("train", result.metrics)
     trainer.save_metrics("eval", trainer.evaluate())
     callback.write_status(trainer.state.global_step)
     validate_resume(args.resume_from_checkpoint, trainer.state.global_step, output)
-    validate_parameter_change(trainer.model, before, output)
+    validate_parameter_change(trained_model, before, output)
     validate_adapter_reload(
-        trainer.model,
+        trained_model,
         model_id=args.model,
         model_revision=args.model_revision,
         adapter_dir=adapter_dir,

@@ -423,11 +423,6 @@ class RWKV7PreTrainedModel(PreTrainedModel):
     _skip_keys_device_placement = ["past_key_values"]
     _supports_cache_class = True
     _tied_weights_keys = {}
-    # Official RWKV-7 promotes w0 for both FP16 and BF16 execution.  This also
-    # tells ``from_pretrained(dtype=...)`` not to downcast the parameter after
-    # the self-contained model has been instantiated.
-    _keep_in_fp32_modules_strict = ["w_lora.lora.2.bias"]
-
     @classmethod
     def _supports_default_dynamic_cache(cls) -> bool:
         # RWKV recurrent state is not a Transformer key/value cache.
