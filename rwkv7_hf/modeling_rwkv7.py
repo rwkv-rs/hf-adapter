@@ -48,6 +48,15 @@ def _lora_direct(module, x: torch.Tensor) -> torch.Tensor:
     return F.linear(h, module.lora[2].weight, module.lora[2].bias)
 
 
+def _squeeze_token_dim(x: torch.Tensor) -> torch.Tensor:
+    """Return `[batch, hidden]` for single-token `[batch, 1, hidden]` tensors."""
+    if x.dim() == 3:
+        if x.shape[1] != 1:
+            raise ValueError("fast-token 2d layout only supports a single sequence position")
+        return x[:, 0]
+    return x
+
+
 def _move_first_dim(value: Any, indices: torch.LongTensor) -> Any:
     """Reorder nested tensor state along batch dimension for HF beam helpers."""
     if isinstance(value, torch.Tensor):
@@ -311,12 +320,12 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         return_dict: bool | None = True,
     ):
         """Experimental 2D fast-token path used by layout A/B benchmarks."""
-        x = self.model.embeddings(token)
+        x = _squeeze_token_dim(self.model.embeddings(token))
         v_first = None
         for layer_idx, layer in enumerate(self.model.layers):
             state = past_key_values._ensure_layer(layer_idx)
-            residual = layer.pre_norm(x) if hasattr(layer, "pre_norm") else x
-            attn_input = layer.attn_norm(residual)
+            residual = _squeeze_token_dim(layer.pre_norm(x)) if hasattr(layer, "pre_norm") else x
+            attn_input = _squeeze_token_dim(layer.attn_norm(residual))
             attn_out, recurrent_state, conv_state, v_first = self._rwkv7_attn_one_2d(
                 layer.attn,
                 attn_input,
@@ -325,7 +334,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             )
             hidden_states = residual + attn_out
             residual = hidden_states
-            ffn_input = layer.ffn_norm(hidden_states)
+            ffn_input = _squeeze_token_dim(layer.ffn_norm(hidden_states))
             ffn_out, ffn_state = self._rwkv7_ffn_one_2d(layer.ffn, ffn_input, state)
             x = residual + ffn_out
             state["recurrent_state"] = recurrent_state
@@ -334,7 +343,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             state["attn_state"] = None
 
         past_key_values._seen_tokens += 1
-        hidden_states = self.model.norm(x)
+        hidden_states = _squeeze_token_dim(self.model.norm(x))
         logits = _linear_direct(self.lm_head, hidden_states).unsqueeze(1)
         if not return_dict:
             return logits, past_key_values
@@ -403,12 +412,12 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         else:
             prev = conv_cache[:, -1] if conv_cache.dim() == 3 else conv_cache
         delta = prev - hidden_states
-        xr = torch.addcmul(hidden_states, delta, attn.x_r)
-        xw = torch.addcmul(hidden_states, delta, attn.x_w)
-        xk = torch.addcmul(hidden_states, delta, attn.x_k)
-        xv = torch.addcmul(hidden_states, delta, attn.x_v)
-        xa = torch.addcmul(hidden_states, delta, attn.x_a)
-        xg = torch.addcmul(hidden_states, delta, attn.x_g)
+        xr = torch.addcmul(hidden_states, delta, attn.x_r.view(1, -1))
+        xw = torch.addcmul(hidden_states, delta, attn.x_w.view(1, -1))
+        xk = torch.addcmul(hidden_states, delta, attn.x_k.view(1, -1))
+        xv = torch.addcmul(hidden_states, delta, attn.x_v.view(1, -1))
+        xa = torch.addcmul(hidden_states, delta, attn.x_a.view(1, -1))
+        xg = torch.addcmul(hidden_states, delta, attn.x_g.view(1, -1))
 
         r = _linear_direct(attn.r_proj, xr)
         w = -0.6065306597126334 * _lora_direct(attn.w_lora, xw).sigmoid()
@@ -422,11 +431,11 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         g = _lora_direct(attn.g_lora, xg)
 
         kk = F.normalize(
-            (k * attn.k_k).view(batch_size, num_heads, head_dim),
+            (k * attn.k_k.view(1, -1)).view(batch_size, num_heads, head_dim),
             dim=-1,
             p=2.0,
         )
-        k = k.addcmul(k * (a - 1), attn.k_a)
+        k = k.addcmul(k * (a - 1), attn.k_a.view(1, -1))
         r, w, k, a = (t.view(batch_size, 1, num_heads, head_dim) for t in (r, w, k, a))
         v = v.view(batch_size, 1, num_heads, attn.head_v_dim)
 
