@@ -62,6 +62,22 @@ def assert_close_logits(label: str, got: torch.Tensor, expected: torch.Tensor, m
     assert torch.equal(got_next, expected_next), label
 
 
+def first_tensor(value):
+    if isinstance(value, torch.Tensor):
+        return value
+    if isinstance(value, dict):
+        for item in value.values():
+            found = first_tensor(item)
+            if found is not None:
+                return found
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            found = first_tensor(item)
+            if found is not None:
+                return found
+    return None
+
+
 def run_case(model, ids: torch.Tensor, mode: str, decode_steps: int, max_diff_limit: float) -> None:
     assert ids.ndim == 2 and ids.shape[0] >= 2 and ids.shape[1] >= 2
     if mode == "forward":
@@ -81,6 +97,8 @@ def run_case(model, ids: torch.Tensor, mode: str, decode_steps: int, max_diff_li
         assert hasattr(batched_state, "reorder_cache"), type(batched_state).__name__
         assert hasattr(batched_state, "select_batch"), type(batched_state).__name__
         assert hasattr(batched_state, "clone"), type(batched_state).__name__
+        assert hasattr(batched_state, "detach"), type(batched_state).__name__
+        assert hasattr(batched_state, "to"), type(batched_state).__name__
         assert batched_state.get_batch_size() == ids.shape[0], batched_state.get_batch_size()
 
         indiv_states = []
@@ -138,7 +156,17 @@ def run_case(model, ids: torch.Tensor, mode: str, decode_steps: int, max_diff_li
             compact_state = batched.past_key_values.batch_select(keep_rows, inplace=False)
             compact_next = batched.logits[:, -1:].argmax(dim=-1).index_select(0, keep_rows)
             assert compact_state.get_batch_size() == len(keep_sources)
-            compact = step_fn(compact_next, compact_state)
+            detached = compact_state.detach(inplace=False)
+            assert detached is not compact_state
+            assert first_tensor(detached.states).requires_grad is False
+            if ids.device.type == "cuda":
+                offloaded = detached.to("cpu", inplace=False)
+                assert first_tensor(offloaded.states).device.type == "cpu"
+                restored = offloaded.to(ids.device, inplace=False)
+                assert first_tensor(restored.states).device.type == "cuda"
+            else:
+                restored = detached.to(ids.device, inplace=False)
+            compact = step_fn(compact_next, restored)
             compact_expected = []
             for src in keep_sources:
                 out = step_fn(indiv_next[src], indiv_states[src])
