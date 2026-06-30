@@ -9,6 +9,7 @@ dist/
 .ruff_cache/
 .coverage
 htmlcov/
+.release/
 
 # Virtualenvs
 .venv/
