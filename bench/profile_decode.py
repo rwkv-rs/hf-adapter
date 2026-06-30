@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +81,19 @@ def _encode(tok, n: int, device: str) -> torch.Tensor:
     return ids.to(device) if device.startswith("cuda") else ids
 
 
+@contextmanager
+def reference_forward_env():
+    old = os.environ.get("RWKV7_FAST_FORWARD")
+    os.environ["RWKV7_FAST_FORWARD"] = "0"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("RWKV7_FAST_FORWARD", None)
+        else:
+            os.environ["RWKV7_FAST_FORWARD"] = old
+
+
 def profile_hf(args, dtype) -> dict[str, Any]:
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
@@ -110,7 +124,8 @@ def profile_hf(args, dtype) -> dict[str, Any]:
     def decode_step(token, state):
         if use_fast_decode:
             return fast_decode_fn(token, past_key_values=state)
-        return model(token, past_key_values=state, use_cache=True, logits_to_keep=1)
+        with reference_forward_env():
+            return model(token, past_key_values=state, use_cache=True, logits_to_keep=1)
 
     with torch.inference_mode():
         out = model(ids[:, :8], use_cache=True, logits_to_keep=1)

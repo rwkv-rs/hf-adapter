@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from contextlib import contextmanager
 
 os.environ.setdefault("RWKV_V7_ON", "1")
 
@@ -18,6 +19,19 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
+
+
+@contextmanager
+def reference_forward_env():
+    old = os.environ.get("RWKV7_FAST_FORWARD")
+    os.environ["RWKV7_FAST_FORWARD"] = "0"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("RWKV7_FAST_FORWARD", None)
+        else:
+            os.environ["RWKV7_FAST_FORWARD"] = old
 
 
 def set_attn_mode(model, attn_mode: str) -> None:
@@ -74,7 +88,8 @@ def main() -> int:
             nxt = out.logits[:, -1:].argmax(dim=-1)
             assert torch.equal(nxt, nxt[:1].repeat(bsz, 1))
             for step in range(args.decode_steps):
-                out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
+                with reference_forward_env():
+                    out = model(nxt, past_key_values=state, use_cache=True, logits_to_keep=1)
                 state = out.past_key_values
                 logits = out.logits.float()
                 row_diff = float((logits - logits[:1]).abs().max().detach().cpu())
