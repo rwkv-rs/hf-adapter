@@ -51,7 +51,7 @@
 
 - correctness：`fuse_norm=false` 下 top5/argmax/cosine/greedy64 均通过，fp16 max_abs 约 0.072。
 - memory：HF 406.4 MB vs official 406.2 MB，0.1B serving path 已基本持平。
-- speed：`fuse_norm=false` + `RWKV7StateCache` 下标准 remote-code HF decode 约 41.2 tok/s；`rwkv7_forward_token` V100 bsz=1 约 58.0 tok/s，bsz=1/2/4/8 batch sweep per-seq 约 55 tok/s，dynamic batch 从 205.2 提升到 345.7 total tok/s；official 约 90 tok/s，decode 仍是主优化点。component bench 显示 `attn_linears_lora` 最大，约 9.87ms/token。
+- speed：`fuse_norm=false` + `RWKV7StateCache` 下标准 remote-code HF decode 约 41.2 tok/s；`rwkv7_forward_token` V100 bsz=1 约 59.2 tok/s，bsz=1/2/4/8 batch sweep per-seq 约 55 tok/s，dynamic batch 从 205.2 提升到 345.7 total tok/s；official 约 92.1 tok/s，decode 仍是主优化点。component bench 显示 `attn_linears_lora` 最大，约 9.87ms/token。
 - profiler：`fuse_norm=true` 的 FLA `LayerNormFunction` CPU 开销很大，native norm 把 norm CPU total 从约 54.8ms/6tok 降到约 6.6ms/6tok。
 - breakdown：argmax 开销约等于 0，`chunk` 和 `fused_recurrent` 单 token decode 基本一样，剩余瓶颈在 HF/FLA model+state/cache+小 kernel launch 路径。
 

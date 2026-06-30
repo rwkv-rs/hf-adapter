@@ -354,7 +354,7 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - Projection/LoRA benchmark coverage times the largest component and compares simple PyTorch bmm fusion candidates.
 - Benchmark analysis coverage reports speed/memory ratios and next optimization focus from `bench/results.jsonl`.
 - Benchmark check coverage provides a passing regression gate and a failing final-target gate until decode reaches >=0.9x official.
-- Latest V100 fast-token results: bsz=1 decode `58.0 tok/s` vs official `90.0 tok/s`; batch sweep fast-token per-seq decode is about `55 tok/s` for bsz=1/2/4/8; dynamic-batch simulation improves from `205.2` to `345.7` total tok/s; component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`; naive PyTorch bmm projection/LoRA candidates are not enough, so the next implementation needs custom fusion/reduced launch count.
+- Latest V100 fast-token results: bsz=1 decode `59.2 tok/s` vs official `92.1 tok/s`; batch sweep fast-token per-seq decode is about `55 tok/s` for bsz=1/2/4/8; dynamic-batch simulation improves from `205.2` to `345.7` total tok/s; component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`; naive PyTorch bmm projection/LoRA candidates are not enough, so the next implementation needs custom fusion/reduced launch count.
 - Save/reload roundtrip works with exact logit equality.
 - Official `rwkv` alignment includes prompt logits and 64-token greedy equality.
 - Official `rwkv` logits comparison on smoke prompts:
@@ -368,4 +368,4 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - The backend currently requires FLA.
 - The remote config uses a unique `rwkv7_hf_adapter` model type so `AutoModelForCausalLM` reliably loads this adapter instead of a locally registered FLA `rwkv7` class.
 - V100 serving-style memory is now near parity with official for 0.1B when using `logits_to_keep=1`.
-- V100 native-norm + fast-cache HF decode is about 41 tok/s; `rwkv7_forward_token` improves this to about 58 tok/s, but official is still about 90 tok/s for 0.1B fp16.
+- V100 native-norm + fast-cache HF decode is about 41 tok/s; `rwkv7_forward_token` improves this to about 59 tok/s, but official is still about 92 tok/s for 0.1B fp16.
