@@ -127,7 +127,7 @@ def run_loop(args, model, ids: torch.Tensor, decode_api: str) -> dict[str, Any]:
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
 
-    if decode_api == "rwkv7_forward_token" and os.environ.get("RWKV7_FAST_TOKEN_BACKEND") == "native_jit":
+    if decode_api == "rwkv7_forward_token" and os.environ.get("RWKV7_FAST_TOKEN_BACKEND") in {"native_jit", "native_graph"}:
         # Shape changes are expected in dynamic batching. TorchScript specializes
         # the native block-step for new batch sizes, so compile the active sizes
         # outside the timed region to measure steady-state serving throughput.
@@ -213,7 +213,7 @@ def main() -> int:
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="auto")
-    ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit"], default="auto")
+    ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="auto")
     ap.add_argument("--decode-apis", nargs="+", default=["forward", "rwkv7_forward_token"], choices=["forward", "rwkv7_forward_token"])
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--min-batch-size", type=int, default=2)
