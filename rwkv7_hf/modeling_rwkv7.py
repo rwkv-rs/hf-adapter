@@ -59,10 +59,18 @@ def _fast_token_layout() -> str:
 
 def _fast_token_backend() -> str:
     """Select the fast-token implementation backend."""
-    backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "fla").strip().lower()
+    backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "auto").strip().lower()
+    if backend in {"", "auto", "best"}:
+        return "auto"
     if backend in {"native_graph", "cuda_graph", "graph"}:
         return "native_graph"
     return "native_jit" if backend in {"native", "native_jit", "jit"} else "fla"
+
+
+def _cuda_available() -> bool:
+    cuda = getattr(torch, "cuda", None)
+    is_available = getattr(cuda, "is_available", None)
+    return bool(callable(is_available) and is_available())
 
 
 def _native_graph_cache_size() -> int:
@@ -618,6 +626,64 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             raise ValueError("rwkv7_forward_one only supports exactly one token with batch size 1")
         return self.rwkv7_forward_token(input_ids, past_key_values=past_key_values, return_dict=return_dict)
 
+    def rwkv7_last_fast_token_backend(self) -> str | None:
+        """Return the effective backend used by the previous fast-token call."""
+        return getattr(self, "_rwkv7_last_fast_token_backend", None)
+
+    def _rwkv7_uses_external_quantization(self) -> bool:
+        """Detect generic HF/bitsandbytes quantization wrappers.
+
+        The native fast-token paths expect dense floating-point projection
+        weights extracted from the FLA modules. Generic 8-bit/4-bit wrappers are
+        still supported through the normal FLA fast-token path until a dedicated
+        quantized native path exists.
+        """
+        if bool(getattr(self, "is_loaded_in_8bit", False)) or bool(getattr(self, "is_loaded_in_4bit", False)):
+            return True
+        if getattr(self, "hf_quantizer", None) is not None:
+            return True
+        config = getattr(self, "config", None)
+        return getattr(config, "quantization_config", None) is not None
+
+    def _rwkv7_can_use_native_backend(self, backend: str, batch_size: int) -> bool:
+        if self._rwkv7_uses_external_quantization():
+            return False
+        if backend == "native_jit":
+            if _native_jit_block_step is None or _native_jit_extract is None:
+                return False
+            if int(batch_size) != 1 and _native_jit_block_step_batched is None:
+                return False
+            try:
+                self._rwkv7_native_jit_packs()
+            except Exception:
+                return False
+            return True
+        if backend == "native_graph":
+            if int(batch_size) == 1:
+                if _native_graph_block_ip is None:
+                    return False
+            elif _native_graph_block_ip_batched is None:
+                return False
+            weight = self.model.embeddings.weight
+            if not _cuda_available() or getattr(weight.device, "type", None) != "cuda":
+                return False
+            try:
+                self._rwkv7_native_jit_packs()
+            except Exception:
+                return False
+            return True
+        return backend == "fla"
+
+    def _rwkv7_resolve_fast_token_backend(self, batch_size: int) -> str:
+        requested = _fast_token_backend()
+        if requested != "auto":
+            return requested
+        if self._rwkv7_can_use_native_backend("native_graph", batch_size):
+            return "native_graph"
+        if self._rwkv7_can_use_native_backend("native_jit", batch_size):
+            return "native_jit"
+        return "fla"
+
     @torch.no_grad()
     def rwkv7_forward_token(
         self,
@@ -630,7 +696,9 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         `input_ids` may be shaped `[batch]` or `[batch, 1]`. This is the batched
         version of `rwkv7_forward_one`: it keeps the standard HF `forward` path
         unchanged, but lets serving benchmarks bypass generic sequence/cache
-        handling for one-token recurrent decode after a normal HF prefill.
+        handling for one-token recurrent decode after a normal HF prefill. The
+        default `RWKV7_FAST_TOKEN_BACKEND=auto` resolves to native graph replay,
+        native JIT, or the FLA tensor path depending on runtime availability.
         """
         if self.training:
             raise RuntimeError("rwkv7_forward_token is inference-only; call model.eval() first")
@@ -645,10 +713,18 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         if not isinstance(past_key_values, RWKV7StateCache):
             past_key_values = RWKV7StateCache.from_legacy_cache(past_key_values)
 
-        backend = _fast_token_backend()
+        requested_backend = _fast_token_backend()
+        backend = self._rwkv7_resolve_fast_token_backend(int(token.numel()))
+        self._rwkv7_last_fast_token_backend = backend
         if backend == "native_graph":
-            return self._rwkv7_forward_token_native_graph(token, past_key_values, return_dict)
-        if backend in {"native_jit", "native_graph"}:
+            try:
+                return self._rwkv7_forward_token_native_graph(token, past_key_values, return_dict)
+            except Exception:
+                if requested_backend != "auto":
+                    raise
+                backend = "native_jit" if self._rwkv7_can_use_native_backend("native_jit", int(token.numel())) else "fla"
+                self._rwkv7_last_fast_token_backend = backend
+        if backend == "native_jit":
             return self._rwkv7_forward_token_native_jit(token, past_key_values, return_dict)
 
         if _fast_token_layout() == "2d":
