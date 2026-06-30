@@ -431,8 +431,9 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - HF Trainer and TRL SFTTrainer one-step LoRA smoke runs work.
 - Fast recurrent cache matches the default FLA cache exactly on prefill and recurrent decode.
 - `RWKV7StateCache` exposes serving-friendly `select_batch` / `batch_select`,
-  `clone`, and `get_batch_size` helpers so dynamic batching can reorder or drop
-  active rows without relying on beam-search-only cache hooks.
+  `clone`, `detach`, `to`, and `get_batch_size` helpers so dynamic batching can
+  reorder/drop active rows and temporarily CPU-offload inactive states without
+  relying on beam-search-only cache hooks.
 - `rwkv7_prefill_chunks` provides an inference-only chunked prefill helper that
   preserves HF `forward` as the source of truth while carrying
   `RWKV7StateCache` across prompt chunks.
