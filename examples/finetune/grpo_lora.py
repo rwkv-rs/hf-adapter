@@ -118,7 +118,7 @@ def main():
         max_completion_length=args.max_length // 2,
         max_steps=args.max_steps,
         per_device_train_batch_size=2,
-        gradient_accumulation_steps=4,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
         num_generations=2,
         gradient_checkpointing=True,
         save_steps=25,

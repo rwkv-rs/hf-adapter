@@ -437,6 +437,12 @@ def common_arguments(parser):
     parser.add_argument("--train-samples", type=int, default=1024)
     parser.add_argument("--eval-samples", type=int, default=128)
     parser.add_argument("--max-steps", type=int, default=100)
+    parser.add_argument(
+        "--gradient-accumulation-steps",
+        type=int,
+        default=1,
+        help="Keep the readable reference examples bounded; increase for a larger effective batch",
+    )
     parser.add_argument("--resume-from-checkpoint", default=None)
     parser.add_argument(
         "--report-to", choices=("none", "wandb"), default="none"
