@@ -34,6 +34,7 @@ bench/
   bench_speed.py
   bench_decode_breakdown.py
   bench_batch_sweep.py
+  bench_decode_micro.py
   profile_decode.py
 NEXT_STEPS.md
 BENCHMARK.md
@@ -225,6 +226,18 @@ python bench/bench_decode_breakdown.py \
   --fast-decode-api auto
 ```
 
+Decode microbench for stable per-component timings:
+
+```bash
+python bench/bench_decode_micro.py \
+  --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --fast-cache true \
+  --fast-decode-api auto
+```
+
 Profiler for one-token decode hotspots:
 
 ```bash
@@ -260,6 +273,7 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - Fast recurrent cache matches the default FLA cache exactly on prefill and recurrent decode.
 - Inference-only `rwkv7_forward_one` bsz=1 API is available for serving benchmark experiments without changing HF `forward`/`generate`.
 - Batched recurrent cache smoke coverage exists for repeated prompts across bsz=1/2/4; benchmark sweep records total/per-sequence throughput for bsz=1/2/4/8.
+- Decode microbench coverage records stable timing for HF recurrent forward, `rwkv7_forward_one`, `lm_head`, argmax, embedding, and empty-loop overhead.
 - Save/reload roundtrip works with exact logit equality.
 - Official `rwkv` alignment includes prompt logits and 64-token greedy equality.
 - Official `rwkv` logits comparison on smoke prompts:

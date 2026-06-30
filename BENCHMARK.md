@@ -191,7 +191,7 @@ When the V100 server is reachable, run the committed bundle from the repository 
 ```
 
 It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_one`,
-`test_batch_cache.py`, `bench_batch_sweep.py`, `bench_decode_breakdown.py --fast-decode-api true`, and `profile_decode.py --hf-decode-api rwkv7_forward_one`,
+`test_batch_cache.py`, `bench_batch_sweep.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, and `profile_decode.py --hf-decode-api rwkv7_forward_one`,
 then writes logs under `bench/logs/`. Use `python bench/summarize_results.py --device V100 --last 12` for a compact view of the latest JSONL rows.
 
 ## Batch-size coverage
@@ -224,6 +224,25 @@ python bench/bench_batch_sweep.py \
 
 V100 numbers are still pending because the development server was unreachable during the local update. Once it is reachable, `run_v100_fast_decode_validation.sh` will append `axis=batch_sweep` rows to `bench/results.jsonl`.
 
+## Decode microbench coverage
+
+`bench_decode_micro.py` appends `axis=decode_micro` rows with stable per-component timings:
+
+```bash
+python bench/bench_decode_micro.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --fast-cache true \
+  --fast-decode-api auto \
+  --steps 128 \
+  --results bench/results.jsonl
+```
+
+The row records standard HF fixed/greedy one-token decode, optional `rwkv7_forward_one` fixed/greedy decode, and isolated `lm_head`, `norm+lm_head`, `argmax`, embedding, and empty-loop costs. This gives an easier regression signal than profiler tables while keeping the profiler for operator-level investigation.
+
 ## Current optimization target
 
 The next optimization work should focus on **HF recurrent decode**:
@@ -237,9 +256,10 @@ The next optimization work should focus on **HF recurrent decode**:
    `rwkv` package layer-by-layer. `profile_decode.py --hf-decode-api rwkv7_forward_one` profiles the new bsz=1 API directly.
 4. Benchmark the new bsz=1 `rwkv7_forward_one` API with `bench_speed.py --hf-decode-api rwkv7_forward_one` and `bench_decode_breakdown.py --fast-decode-api true`; if the V100 result is stable, use it as the serving-stack fast path while keeping HF `forward`/`generate` compatibility unchanged.
 5. Use `bench_batch_sweep.py` to keep bsz=1/2/4/8 regressions visible while developing a future batched fast decode path.
-6. Keep `logits_to_keep=1` as the default serving benchmark path because it already
+6. Use `bench_decode_micro.py` to separate recurrent model cost from `lm_head`, argmax, and Python loop overhead before changing the decode implementation.
+7. Keep `logits_to_keep=1` as the default serving benchmark path because it already
    fixes the earlier excess-memory measurement.
-7. After V100 decode approaches official `rwkv`, rerun on newer GPUs and larger models.
+8. After V100 decode approaches official `rwkv`, rerun on newer GPUs and larger models.
 
 ## Loop state
 
@@ -248,4 +268,5 @@ The next optimization work should focus on **HF recurrent decode**:
 - Memory for the serving-style HF path is now at parity with official on V100.
 - First decode optimizations landed: `fuse_norm=false` plus the exact-match `RWKV7StateCache` keep the real remote-code HF path at ~41 tok/s vs official ~92 tok/s on V100.
 - Batch correctness and sweep harnesses are in place; formal V100 batch-sweep numbers are pending the next reachable server run.
+- Decode microbench harness is in place; formal V100 per-component rows are pending the next reachable server run.
 - The active blocker remains decode throughput: optimized HF is still only ~0.45x official on V100.
