@@ -50,6 +50,7 @@ python tests/test_official_alignment.py \
   --device cuda \
   --official-strategy 'cpu fp32' \
   --greedy-window 64 \
+  --fuse-norm false \
   --results bench/results.jsonl
 ```
 
@@ -60,11 +61,13 @@ Result on Tesla V100:
 | top5_match | 1.0000 | PASS |
 | argmax_match | 1.0000 | PASS |
 | cosine | 0.9999977 | PASS |
-| max_abs_diff | 0.1008 | dtype noise; acceptable for fp16 smoke |
+| max_abs_diff | 0.0718 | PASS for fp16 smoke; fp32 reference remains ≈0.030 |
 | greedy window | 64 / 64 tokens | PASS |
 
 Earlier fp32 reference on the 5070 Laptop produced `max_abs_diff≈0.030`, proving
 that the adapter math and weight mapping are correct when dtype noise is removed.
+The V100 optimized path uses `fuse_norm=false`; it preserves top-k/greedy behavior
+and improves fp16 max-abs error versus the FLA fused-norm path.
 
 ### Save/reload roundtrip
 
@@ -102,21 +105,24 @@ python bench/bench_speed.py \
   --device cuda \
   --warmup 2 \
   --runs 3 \
-  --hf-logits-to-keep 1
+  --hf-logits-to-keep 1 \
+  --fuse-norm false
 ```
 
 Result on Tesla V100:
 
 | Backend | Prefill tok/s | Decode tok/s | Decode ms/tok | Peak VRAM |
 |---|---:|---:|---:|---:|
-| HF adapter | 11852.0 | 31.5 | 31.70 | 406.4 MB |
-| official `rwkv` | 228.0 | 92.6 | 10.80 | 406.2 MB |
+| HF adapter, `fuse_norm=true` | 11852.0 | 31.5 | 31.70 | 406.4 MB |
+| HF adapter, `fuse_norm=false` | 14247.7 | 41.3 | 24.24 | 406.4 MB |
+| official `rwkv` | 228.4 | 92.8 | 10.77 | 406.2 MB |
 
 Interpretation:
 
 - **Memory target is met** for the 0.1B V100 serving-style path: HF is roughly equal to official.
 - HF prefill is much faster than the official pure-torch reference path measured here.
-- **Decode is not met**: HF decode is only about `0.34x` official `rwkv` on this V100 run.
+- Disabling FLA fused norm for inference improved HF decode from `31.5` to `41.3` tok/s (`+31%`).
+- **Decode is still not met**: optimized HF decode is about `0.45x` official `rwkv` on this V100 run.
 
 ### Decode breakdown
 
@@ -133,6 +139,7 @@ python bench/bench_decode_breakdown.py \
   --warmup 2 \
   --runs 3 \
   --attn-modes chunk fused_recurrent \
+  --fuse-norm false \
   --results bench/results.jsonl
 ```
 
@@ -140,16 +147,33 @@ Result on Tesla V100:
 
 | Path | Prefill tok/s | Greedy decode tok/s | Fixed-token decode tok/s | Sampling overhead | Peak VRAM |
 |---|---:|---:|---:|---:|---:|
-| HF `chunk` | 11536.2 | 30.4 | 30.4 | 0.05 ms/tok | 439.7 MB |
-| HF `fused_recurrent` | 14259.9 | 30.3 | 30.4 | 0.08 ms/tok | 440.2 MB |
-| official `rwkv` | 224.5 | 95.1 | n/a | n/a | 470.0 MB |
+| HF `chunk`, `fuse_norm=true` | 11536.2 | 30.4 | 30.4 | 0.05 ms/tok | 439.7 MB |
+| HF `chunk`, `fuse_norm=false` | 13343.7 | 38.2 | 38.0 | ≈0 ms/tok | 439.7 MB |
+| HF `fused_recurrent`, `fuse_norm=false` | 17192.8 | 38.3 | 38.2 | ≈0 ms/tok | 440.2 MB |
+| official `rwkv` | 222.0 | 92.2 | n/a | n/a | 470.0 MB |
 
 Interpretation:
 
 - Greedy argmax/sampling overhead is negligible.
 - `chunk` vs `fused_recurrent` does not materially change single-token decode.
+- `fuse_norm=false` removes the expensive FLA `LayerNormFunction` path and improves decode, but does not remove the main gap.
 - The remaining decode gap is inside the HF/FLA model + recurrent cache + per-token
   layer path, not in Python sampling.
+
+
+### Decode profiler findings
+
+Profiler commands were added via `bench/profile_decode.py`. On V100 fixed-token
+decode, the original HF path spent most wall time in CPU dispatch/custom-function
+overhead, not GPU math. The most important finding was:
+
+- `fuse_norm=true`: FLA `LayerNormFunction` showed about `54.8 ms` CPU total over 6 active decode tokens.
+- `fuse_norm=false`: native `aten::native_layer_norm` path reduced norm overhead to about `6.6 ms` CPU total over 6 active decode tokens.
+- Result: high-level HF decode improved from `31.5` tok/s to `41.3` tok/s on V100.
+
+The profile still shows thousands of tiny kernel launches per handful of decode
+tokens, so the next optimization has to reduce/fuse the one-token layer path
+rather than tune sampling.
 
 ## Current optimization target
 
@@ -170,4 +194,5 @@ The next optimization work should focus on **HF recurrent decode**:
 - Correctness tests are now strong enough for 0.1B smoke: prompt logits, greedy 64,
   and save/reload roundtrip.
 - Memory for the serving-style HF path is now at parity with official on V100.
-- The active blocker is decode throughput: HF ~31 tok/s vs official ~93-95 tok/s on V100.
+- First decode optimization landed: `fuse_norm=false` gives HF ~41 tok/s vs official ~92-93 tok/s on V100.
+- The active blocker remains decode throughput: optimized HF is still only ~0.45x official on V100.

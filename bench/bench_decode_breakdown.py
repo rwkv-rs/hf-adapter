@@ -57,15 +57,17 @@ def timed(fn, device: str, runs: int = 1) -> float:
     return (time.time() - t0) / runs
 
 
-def load_hf(hf_dir: str, dtype, device: str, attn_mode: str):
-    cfg = AutoConfig.from_pretrained(hf_dir, trust_remote_code=True)
+def load_hf(args, dtype, attn_mode: str):
+    cfg = AutoConfig.from_pretrained(args.hf_dir, trust_remote_code=True)
     cfg.attn_mode = attn_mode
+    if args.fuse_norm != "auto":
+        cfg.fuse_norm = args.fuse_norm == "true"
     model = AutoModelForCausalLM.from_pretrained(
-        hf_dir,
+        args.hf_dir,
         trust_remote_code=True,
         config=cfg,
         torch_dtype=dtype,
-        device_map=device if device.startswith("cuda") else None,
+        device_map=args.device if args.device.startswith("cuda") else None,
     ).eval()
     return model
 
@@ -74,7 +76,7 @@ def bench_hf_variant(args, tok, dtype, attn_mode: str) -> dict[str, Any]:
     if args.device.startswith("cuda"):
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
-    model = load_hf(args.hf_dir, dtype, args.device, attn_mode)
+    model = load_hf(args, dtype, attn_mode)
     ids = encode(tok, args.prompt_tokens, args.device)
     fixed = ids[:, -1:]
 
@@ -124,6 +126,7 @@ def bench_hf_variant(args, tok, dtype, attn_mode: str) -> dict[str, Any]:
         "dtype": args.dtype,
         "device": torch.cuda.get_device_name(0) if args.device.startswith("cuda") else args.device,
         "attn_mode": attn_mode,
+        "fuse_norm": getattr(model.config, "fuse_norm", None),
         "prompt_tokens": int(ids.shape[1]),
         "decode_tokens": args.decode_tokens,
         "prefill_keep1_tokps": round(int(ids.shape[1]) / dt_prefill_keep1, 1),
@@ -201,6 +204,8 @@ def main() -> int:
     ap.add_argument("--warmup", type=int, default=2)
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--attn-modes", nargs="+", default=["chunk", "fused_recurrent"], choices=["chunk", "fused_recurrent"])
+    ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto",
+                    help="Override config.fuse_norm for HF load; false is faster on V100 in current tests")
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     args = ap.parse_args()
 
