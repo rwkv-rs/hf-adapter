@@ -100,7 +100,16 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     target_prefill_ratio = args.target_prefill_ratio
     target_memory_ratio = args.target_memory_ratio
 
-    speed_hf = latest(rows, lambda r: r.get("axis") == "speed_mem" and r.get("backend") == "hf_adapter")
+    # Keep the formal speed/memory target anchored to the low-memory serving
+    # row. `native_graph` is reported through fast_decode as an optional
+    # reduced-launch speed path because its captured buffers intentionally trade
+    # extra VRAM for lower latency.
+    speed_hf = latest(
+        rows,
+        lambda r: r.get("axis") == "speed_mem"
+        and r.get("backend") == "hf_adapter"
+        and r.get("fast_token_backend") != "native_graph",
+    ) or latest(rows, lambda r: r.get("axis") == "speed_mem" and r.get("backend") == "hf_adapter")
     speed_official = latest(rows, lambda r: r.get("axis") == "speed_mem" and r.get("backend") == "official_rwkv")
     speed_decode_ratio = ratio(num(speed_hf, "decode_tokps"), num(speed_official, "decode_tokps"))
     speed_prefill_ratio = ratio(num(speed_hf, "prefill_tokps"), num(speed_official, "prefill_tokps"))
@@ -192,7 +201,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         ]
         if native_fallback_batches:
             sizes = "/".join(str(b) for b in native_fallback_batches)
-            focus.append(f"native_jit fast-token backend is bsz=1 only; bsz={sizes} still falls back to FLA")
+            focus.append(f"native_jit fast-token backend did not activate for bsz={sizes}; check backend fallback")
     if not dynamic_latest:
         focus.append("dynamic_batch rows pending")
     if micro is None:
