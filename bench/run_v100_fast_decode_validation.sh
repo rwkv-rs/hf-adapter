@@ -3,7 +3,7 @@
 #
 # Expected environment: activated Python env with torch/transformers/fla/rwkv.
 # Optional env vars:
-#   HF_DIR, PTH, DTYPE, DEVICE, PROMPT_TOKENS, DECODE_TOKENS, MICRO_STEPS, COMPONENT_STEPS, RESULTS, LOG_DIR
+#   HF_DIR, PTH, DTYPE, DEVICE, PROMPT_TOKENS, DECODE_TOKENS, MICRO_STEPS, COMPONENT_STEPS, NATIVE_DECODE_TOKENS, RESULTS, LOG_DIR
 set -euo pipefail
 
 export RWKV_V7_ON="${RWKV_V7_ON:-1}"
@@ -17,6 +17,7 @@ PROMPT_TOKENS="${PROMPT_TOKENS:-512}"
 DECODE_TOKENS="${DECODE_TOKENS:-128}"
 MICRO_STEPS="${MICRO_STEPS:-128}"
 COMPONENT_STEPS="${COMPONENT_STEPS:-32}"
+NATIVE_DECODE_TOKENS="${NATIVE_DECODE_TOKENS:-64}"
 RESULTS="${RESULTS:-bench/results.jsonl}"
 LOG_DIR="${LOG_DIR:-bench/logs}"
 
@@ -140,6 +141,15 @@ run() {
     --prompt-tokens 128 \
     --warmup 8 \
     --steps "${MICRO_STEPS}" \
+    --results "${RESULTS}"
+
+  run python bench/bench_native_decode.py \
+    --hf-dir "${HF_DIR}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --prompt-tokens 32 \
+    --decode-tokens "${NATIVE_DECODE_TOKENS}" \
+    --greedy-check-tokens 16 \
     --results "${RESULTS}"
 
   run python bench/bench_decode_components.py \

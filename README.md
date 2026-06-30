@@ -282,6 +282,18 @@ python bench/bench_decode_micro.py \
   --fast-decode-api auto
 ```
 
+Native JIT / CUDA graph decode prototype benchmark:
+
+```bash
+python bench/bench_native_decode.py \
+  --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --prompt-tokens 32 \
+  --decode-tokens 64 \
+  --greedy-check-tokens 16
+```
+
 Fast-token component timing benchmark:
 
 ```bash
@@ -367,6 +379,7 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - Benchmark analysis coverage reports speed/memory ratios and next optimization focus from `bench/results.jsonl`.
 - Benchmark check coverage provides a passing regression gate and a failing final-target gate until decode reaches >=0.9x official.
 - Latest V100 fast-token results: bsz=1 decode `59.2 tok/s` vs official `92.1 tok/s`; batch sweep fast-token per-seq decode is about `55 tok/s` for bsz=1/2/4/8; dynamic-batch simulation improves from `205.2` to `345.7` total tok/s; component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`; naive PyTorch bmm projection/LoRA candidates are not enough, so the next implementation needs custom fusion/reduced launch count.
+- Native JIT / CUDA graph prototype: V100 fp16 native logits match HF logits (`cosine≈1.00000024`, max_abs `0.03125`), graph-vs-JIT greedy decode is `16/16` identical, native JIT reaches `103.52 tok/s`, and native CUDA graph reaches `254.33 tok/s` (`2.76x` the current official 0.1B V100 baseline). This is a single-batch fixed-shape prototype, so the next task is integrating the same block-step packing / launch reduction into the HF fast-token serving path.
 - Save/reload roundtrip works with exact logit equality.
 - Official `rwkv` alignment includes prompt logits and 64-token greedy equality.
 - Official `rwkv` logits comparison on smoke prompts:
@@ -381,3 +394,4 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - The remote config uses a unique `rwkv7_hf_adapter` model type so `AutoModelForCausalLM` reliably loads this adapter instead of a locally registered FLA `rwkv7` class.
 - V100 serving-style memory is now near parity with official for 0.1B when using `logits_to_keep=1`.
 - V100 native-norm + fast-cache HF decode is about 41 tok/s; `rwkv7_forward_token` improves this to about 59 tok/s, but official is still about 92 tok/s for 0.1B fp16.
+- The native CUDA graph prototype exceeds the 0.1B V100 decode target, but it is not yet a full HF `forward` / dynamic-batching path.
