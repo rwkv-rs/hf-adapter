@@ -26,6 +26,7 @@ tests/
   test_official_alignment.py
   test_reload_roundtrip.py
   test_fast_cache.py
+  test_fast_decode_api.py
   test_peft_lora.py
   test_hf_training_smoke.py
 bench/
@@ -115,6 +116,16 @@ python tests/test_fast_cache.py \
   --fuse-norm false
 ```
 
+Inference-only bsz=1 fast decode API equivalence test:
+
+```bash
+python tests/test_fast_decode_api.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --fuse-norm false
+```
+
 
 ## Correctness and benchmark tests
 
@@ -153,6 +164,20 @@ python bench/bench_speed.py \
   --fast-cache true
 ```
 
+Serving-style speed/memory benchmark using the bsz=1 fast decode API:
+
+```bash
+python bench/bench_speed.py \
+  --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
+  --pth /path/to/rwkv7-g1d-0.1b-20260129-ctx8192.pth \
+  --backend both \
+  --dtype fp16 \
+  --hf-logits-to-keep 1 \
+  --fuse-norm false \
+  --fast-cache true \
+  --hf-decode-api rwkv7_forward_one
+```
+
 Decode bottleneck breakdown:
 
 ```bash
@@ -162,7 +187,8 @@ python bench/bench_decode_breakdown.py \
   --dtype fp16 \
   --attn-modes chunk fused_recurrent \
   --fuse-norm false \
-  --fast-cache true
+  --fast-cache true \
+  --fast-decode-api auto
 ```
 
 Profiler for one-token decode hotspots:
@@ -186,6 +212,7 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - PEFT LoRA forward/loss/backward works.
 - HF Trainer and TRL SFTTrainer one-step LoRA smoke runs work.
 - Fast recurrent cache matches the default FLA cache exactly on prefill and recurrent decode.
+- Inference-only `rwkv7_forward_one` bsz=1 API is available for serving benchmark experiments without changing HF `forward`/`generate`.
 - Save/reload roundtrip works with exact logit equality.
 - Official `rwkv` alignment includes prompt logits and 64-token greedy equality.
 - Official `rwkv` logits comparison on smoke prompts:
