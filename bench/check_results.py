@@ -53,6 +53,8 @@ def check_present(report: dict[str, Any], failures: list[str]) -> None:
         fail(failures, "missing decode_micro row")
     if not report.get("forward_fast_path"):
         fail(failures, "missing forward_fast_path row")
+    if not report.get("generate_fast_path"):
+        fail(failures, "missing generate_fast_path row")
     if not report.get("decode_components"):
         fail(failures, "missing decode_components row")
     if not report.get("projection_lora"):
@@ -151,6 +153,21 @@ def check_common(report: dict[str, Any], failures: list[str], args: argparse.Nam
         if val is None or float(val) > args.max_forward_fast_diff:
             fail(failures, f"forward_fast_path {key} above floor: {val} > {args.max_forward_fast_diff}")
 
+    generate_fast = report.get("generate_fast_path") or {}
+    gen_ref_tokps = (generate_fast.get("reference_generate") or {}).get("tokps")
+    gen_fast_tokps = (generate_fast.get("hf_generate_fast") or {}).get("tokps")
+    if gen_ref_tokps is None or gen_fast_tokps is None:
+        fail(failures, f"generate_fast_path missing reference/fast tokps: {generate_fast}")
+    elif float(gen_ref_tokps) <= 0 or float(gen_fast_tokps) / float(gen_ref_tokps) < args.min_generate_fast_speedup:
+        fail(failures, f"generate fast speedup below floor: {gen_fast_tokps}/{gen_ref_tokps} < {args.min_generate_fast_speedup}x")
+    if generate_fast.get("generated_equal") is not True:
+        fail(failures, f"generate fast path did not preserve greedy output: {generate_fast}")
+    if generate_fast.get("generated_tokens_matched") is not None and generate_fast.get("generated_tokens_total") is not None:
+        if int(generate_fast["generated_tokens_matched"]) != int(generate_fast["generated_tokens_total"]):
+            fail(failures, f"generate token match mismatch: {generate_fast}")
+    if generate_fast.get("fast_token_backend_effective") not in {"native_graph", "native_jit", "fla"}:
+        fail(failures, f"unexpected generate fast backend: {generate_fast.get('fast_token_backend_effective')}")
+
     components = report.get("decode_components") or {}
     top_components = components.get("top_components") or []
     if not top_components:
@@ -237,6 +254,7 @@ def main() -> int:
     ap.add_argument("--min-forward-fast-speedup", type=float, default=3.0)
     ap.add_argument("--min-forward-fast-vs-direct-ratio", type=float, default=0.9)
     ap.add_argument("--max-forward-fast-diff", type=float, default=0.2)
+    ap.add_argument("--min-generate-fast-speedup", type=float, default=2.0)
     ap.add_argument("--expected-top-component", default="attn_linears_lora")
     ap.add_argument("--expect-naive-candidate-slower", action="store_true", default=True)
     ap.add_argument("--require-quantization", action="store_true",

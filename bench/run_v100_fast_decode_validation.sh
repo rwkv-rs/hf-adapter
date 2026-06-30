@@ -4,7 +4,7 @@
 # Expected environment: activated Python env with torch/transformers/fla/rwkv.
 # Optional env vars:
 #   HF_DIR, PTH, DTYPE, DEVICE, PROMPT_TOKENS, DECODE_TOKENS, MICRO_STEPS,
-#   FORWARD_FAST_STEPS, COMPONENT_STEPS, NATIVE_DECODE_TOKENS, RESULTS, LOG_DIR
+#   FORWARD_FAST_STEPS, GENERATE_NEW_TOKENS, COMPONENT_STEPS, NATIVE_DECODE_TOKENS, RESULTS, LOG_DIR
 set -euo pipefail
 
 export RWKV_V7_ON="${RWKV_V7_ON:-1}"
@@ -18,6 +18,7 @@ PROMPT_TOKENS="${PROMPT_TOKENS:-512}"
 DECODE_TOKENS="${DECODE_TOKENS:-128}"
 MICRO_STEPS="${MICRO_STEPS:-128}"
 FORWARD_FAST_STEPS="${FORWARD_FAST_STEPS:-32}"
+GENERATE_NEW_TOKENS="${GENERATE_NEW_TOKENS:-16}"
 COMPONENT_STEPS="${COMPONENT_STEPS:-32}"
 NATIVE_DECODE_TOKENS="${NATIVE_DECODE_TOKENS:-64}"
 RESULTS="${RESULTS:-bench/results.jsonl}"
@@ -38,7 +39,7 @@ run() {
   echo "date=$(date -Is)"
   echo "hf_dir=${HF_DIR}"
   echo "pth=${PTH}"
-  echo "dtype=${DTYPE} device=${DEVICE} prompt_tokens=${PROMPT_TOKENS} decode_tokens=${DECODE_TOKENS} micro_steps=${MICRO_STEPS} forward_fast_steps=${FORWARD_FAST_STEPS} component_steps=${COMPONENT_STEPS}"
+  echo "dtype=${DTYPE} device=${DEVICE} prompt_tokens=${PROMPT_TOKENS} decode_tokens=${DECODE_TOKENS} micro_steps=${MICRO_STEPS} forward_fast_steps=${FORWARD_FAST_STEPS} generate_new_tokens=${GENERATE_NEW_TOKENS} component_steps=${COMPONENT_STEPS}"
   echo "results=${RESULTS} profile_out=${PROFILE_OUT}"
 
   run python tests/test_fast_decode_api.py \
@@ -305,6 +306,20 @@ run() {
     --prompt-tokens 64 \
     --warmup 2 \
     --steps "${FORWARD_FAST_STEPS}" \
+    --results "${RESULTS}"
+
+  run python bench/bench_generate_fast_path.py \
+    --hf-dir "${HF_DIR}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --attn-mode fused_recurrent \
+    --fuse-norm false \
+    --fast-cache true \
+    --fast-token-backend auto \
+    --max-new-tokens "${GENERATE_NEW_TOKENS}" \
+    --warmup-new-tokens 2 \
+    --warmup 1 \
+    --runs 2 \
     --results "${RESULTS}"
 
   run python bench/bench_native_decode.py \
