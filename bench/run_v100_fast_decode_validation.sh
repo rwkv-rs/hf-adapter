@@ -5,7 +5,9 @@
 # Optional env vars:
 #   HF_DIR, PTH, DTYPE, DEVICE, PROMPT_TOKENS, DECODE_TOKENS, MICRO_STEPS,
 #   FORWARD_FAST_STEPS, GENERATE_BATCH_SIZE, GENERATE_NEW_TOKENS, WARMUP_BATCH_SIZES,
-#   NATIVE_GRAPH_CACHE_SIZE, NATIVE_GRAPH_OVERHEAD_BATCH_SIZES, NATIVE_GRAPH_OVERHEAD_STEPS, COMPONENT_STEPS, NATIVE_DECODE_TOKENS, RESULTS, LOG_DIR
+#   NATIVE_GRAPH_CACHE_SIZE, NATIVE_GRAPH_OVERHEAD_BATCH_SIZES, NATIVE_GRAPH_OVERHEAD_STEPS,
+#   COMPONENT_STEPS, NATIVE_DECODE_TOKENS, RUN_LARGER_MODEL_SMOKE, LARGER_HF_DIR,
+#   LARGER_PTH, LARGER_MODEL_SIZE_LABEL, LARGER_MAX_NEW_TOKENS, RESULTS, LOG_DIR
 set -euo pipefail
 
 export RWKV_V7_ON="${RWKV_V7_ON:-1}"
@@ -27,6 +29,11 @@ NATIVE_GRAPH_OVERHEAD_BATCH_SIZES="${NATIVE_GRAPH_OVERHEAD_BATCH_SIZES:-1 2 4 8}
 NATIVE_GRAPH_OVERHEAD_STEPS="${NATIVE_GRAPH_OVERHEAD_STEPS:-32}"
 COMPONENT_STEPS="${COMPONENT_STEPS:-32}"
 NATIVE_DECODE_TOKENS="${NATIVE_DECODE_TOKENS:-64}"
+RUN_LARGER_MODEL_SMOKE="${RUN_LARGER_MODEL_SMOKE:-auto}"
+LARGER_HF_DIR="${LARGER_HF_DIR:-/home/data/wangyue/models/rwkv7/rwkv7-g1d-0.4b-hf}"
+LARGER_PTH="${LARGER_PTH:-/home/data/wangyue/models/rwkv7/rwkv7-g1d-0.4b-20260210-ctx8192.pth}"
+LARGER_MODEL_SIZE_LABEL="${LARGER_MODEL_SIZE_LABEL:-0.4b}"
+LARGER_MAX_NEW_TOKENS="${LARGER_MAX_NEW_TOKENS:-4}"
 RESULTS="${RESULTS:-bench/results.jsonl}"
 LOG_DIR="${LOG_DIR:-bench/logs}"
 
@@ -46,6 +53,7 @@ run() {
   echo "hf_dir=${HF_DIR}"
   echo "pth=${PTH}"
   echo "dtype=${DTYPE} device=${DEVICE} prompt_tokens=${PROMPT_TOKENS} decode_tokens=${DECODE_TOKENS} micro_steps=${MICRO_STEPS} forward_fast_steps=${FORWARD_FAST_STEPS} generate_batch_size=${GENERATE_BATCH_SIZE} generate_new_tokens=${GENERATE_NEW_TOKENS} warmup_batch_sizes=${WARMUP_BATCH_SIZES} native_graph_cache_size=${NATIVE_GRAPH_CACHE_SIZE} native_graph_overhead_batch_sizes=${NATIVE_GRAPH_OVERHEAD_BATCH_SIZES} native_graph_overhead_steps=${NATIVE_GRAPH_OVERHEAD_STEPS} component_steps=${COMPONENT_STEPS}"
+  echo "larger_smoke=${RUN_LARGER_MODEL_SMOKE} larger_hf_dir=${LARGER_HF_DIR} larger_pth=${LARGER_PTH} larger_model_size_label=${LARGER_MODEL_SIZE_LABEL} larger_max_new_tokens=${LARGER_MAX_NEW_TOKENS}"
   echo "results=${RESULTS} profile_out=${PROFILE_OUT}"
 
   run python tests/test_fast_decode_api.py \
@@ -391,6 +399,21 @@ run() {
     --warmup 16 \
     --steps 256 \
     --results "${RESULTS}"
+
+  if [[ "${RUN_LARGER_MODEL_SMOKE}" == "1" || "${RUN_LARGER_MODEL_SMOKE}" == "true" || ( "${RUN_LARGER_MODEL_SMOKE}" == "auto" && -d "${LARGER_HF_DIR}" && -f "${LARGER_PTH}" ) ]]; then
+    run python bench/bench_larger_model_smoke.py \
+      --hf-dir "${LARGER_HF_DIR}" \
+      --model-size-label "${LARGER_MODEL_SIZE_LABEL}" \
+      --checkpoint-path "${LARGER_PTH}" \
+      --dtype "${DTYPE}" \
+      --device "${DEVICE}" \
+      --attn-mode fused_recurrent \
+      --fast-token-backend auto \
+      --max-new-tokens "${LARGER_MAX_NEW_TOKENS}" \
+      --results "${RESULTS}"
+  else
+    echo "SKIP larger-model smoke: RUN_LARGER_MODEL_SMOKE=${RUN_LARGER_MODEL_SMOKE} LARGER_HF_DIR=${LARGER_HF_DIR} LARGER_PTH=${LARGER_PTH}"
+  fi
 
   run python bench/profile_decode.py \
     --backend hf \

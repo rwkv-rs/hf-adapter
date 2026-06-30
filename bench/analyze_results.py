@@ -194,6 +194,11 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     projection_lora = latest(rows, lambda r: r.get("axis") == "projection_lora" and r.get("backend") == "hf_adapter")
     quant_rows = [r for r in rows if r.get("axis") == "quantization" and r.get("backend") == "hf_adapter"]
     quant_latest = latest_by_key(quant_rows, lambda r: r.get("quantization"))
+    larger_rows = [r for r in rows if r.get("axis") == "larger_model_smoke" and r.get("backend") == "hf_adapter"]
+    larger_latest = latest_by_key(
+        larger_rows,
+        lambda r: r.get("model_size_label") or r.get("model_name"),
+    )
     native_rows = [r for r in rows if r.get("axis") == "native_decode" and r.get("backend") == "hf_native_jit"]
     best_native = max(
         native_rows,
@@ -276,6 +281,18 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 slow.append(f"{mode} {q_ratio:.2f}x")
         if slow:
             focus.append("generic bnb quantized decode is slower than fp16: " + ", ".join(slow))
+    larger_by_label = {str(r.get("model_size_label", "")).lower(): r for r in larger_latest}
+    if "0.4b" not in larger_by_label:
+        focus.append("0.4B+ converted-model load/generate smoke row pending")
+    else:
+        row = larger_by_label["0.4b"]
+        if row.get("status") != "pass":
+            focus.append(f"0.4B+ larger-model smoke did not pass: {row.get('status')}")
+        else:
+            focus.append(
+                "0.4B converted HF model loads and generates on "
+                f"{row.get('device')} with hidden={row.get('hidden_size')}, layers={row.get('num_hidden_layers')}"
+            )
     if best_native is None:
         focus.append("native JIT/CUDA-graph decode rows pending")
     elif native_decode_ratio is not None and native_decode_ratio >= target_decode_ratio:
@@ -337,6 +354,45 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         ],
         "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
         "projection_lora": compact(projection_lora, ["_lineno", "batch_size", "hidden_size", "layers", "avg_timings_ms", "avg_current_linears_lora_sum_ms", "avg_candidate_linears_lora_sum_ms", "avg_candidate_speedup", "peak_vram_mb"]),
+        "larger_model_smoke": [
+            compact(
+                r,
+                [
+                    "_lineno",
+                    "status",
+                    "model_size_label",
+                    "model_name",
+                    "checkpoint_sha256",
+                    "checkpoint_size_bytes",
+                    "vocab_size",
+                    "hidden_size",
+                    "intermediate_size",
+                    "num_hidden_layers",
+                    "head_dim",
+                    "num_heads",
+                    "value_dim_first",
+                    "value_dim_last",
+                    "value_dim_unique",
+                    "attn_mode",
+                    "fuse_norm",
+                    "fast_token_backend",
+                    "fast_token_backend_effective",
+                    "prompt_tokens",
+                    "max_new_tokens",
+                    "generated_tokens",
+                    "top5",
+                    "generated_tail",
+                    "load_s",
+                    "forward_s",
+                    "generate_s",
+                    "generate_tokps",
+                    "model_footprint_mb",
+                    "peak_vram_mb",
+                    "device",
+                ],
+            )
+            for r in larger_latest
+        ],
         "quantization": [compact(r, ["_lineno", "quantization", "status", "prefill_tokps", "decode_tokps", "decode_ms_per_tok", "model_footprint_mb", "peak_vram_mb", "error"]) for r in quant_latest],
         "native_decode": {
             "best_row": compact(best_native, ["_lineno", "device", "prompt_tokens", "decode_tokens", "hidden_size", "num_heads", "head_dim", "native_jit_tokps", "native_jit_ms_per_tok", "native_graph_tokps", "native_graph_ms_per_tok", "graph_vs_jit_tokens_matched", "graph_vs_jit_tokens_total", "logit_cosine", "logit_max_abs_diff", "peak_vram_mb"]),
@@ -399,6 +455,12 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["decode_components"], ensure_ascii=False) if report["decode_components"] else "PENDING")
     print("\n## projection_lora")
     print(json.dumps(report["projection_lora"], ensure_ascii=False) if report["projection_lora"] else "PENDING")
+    print("\n## larger_model_smoke")
+    if report["larger_model_smoke"]:
+        for row in report["larger_model_smoke"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
     print("\n## quantization")
     if report["quantization"]:
         for row in report["quantization"]:
