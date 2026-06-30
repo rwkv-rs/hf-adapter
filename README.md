@@ -28,12 +28,14 @@ tests/
   test_fast_cache.py
   test_fast_decode_api.py
   test_batch_cache.py
+  test_dynamic_batch_cache.py
   test_peft_lora.py
   test_hf_training_smoke.py
 bench/
   bench_speed.py
   bench_decode_breakdown.py
   bench_batch_sweep.py
+  bench_dynamic_batch.py
   bench_decode_micro.py
   profile_decode.py
 NEXT_STEPS.md
@@ -141,6 +143,17 @@ python tests/test_batch_cache.py \
   --batch-sizes 1 2 4
 ```
 
+Dynamic-batch cache reorder smoke test:
+
+```bash
+python tests/test_dynamic_batch_cache.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --fuse-norm false \
+  --batch-size 3
+```
+
 
 ## Correctness and benchmark tests
 
@@ -214,6 +227,20 @@ python bench/bench_batch_sweep.py \
   --batch-sizes 1 2 4 8
 ```
 
+Dynamic-batch decode benchmark with cache reorder/drop simulation:
+
+```bash
+python bench/bench_dynamic_batch.py \
+  --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --fast-cache true \
+  --decode-apis forward rwkv7_forward_token \
+  --batch-size 8 \
+  --min-batch-size 2
+```
+
 Decode bottleneck breakdown:
 
 ```bash
@@ -274,6 +301,7 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - Fast recurrent cache matches the default FLA cache exactly on prefill and recurrent decode.
 - Inference-only `rwkv7_forward_token` API supports one-token decode for batched serving experiments without changing HF `forward`/`generate`; `rwkv7_forward_one` remains as the bsz=1 compatibility entrypoint.
 - Batched recurrent cache smoke coverage exists for repeated prompts across bsz=1/2/4; benchmark sweep records total/per-sequence throughput for bsz=1/2/4/8 and includes the fast token API when available.
+- Dynamic-batch cache reorder coverage exists for heterogeneous prompts; benchmark simulation records reorder/drop counts and total decoded tokens/s.
 - Decode microbench coverage records stable timing for HF recurrent forward, the fast token API, `lm_head`, argmax, embedding, and empty-loop overhead.
 - Save/reload roundtrip works with exact logit equality.
 - Official `rwkv` alignment includes prompt logits and 64-token greedy equality.

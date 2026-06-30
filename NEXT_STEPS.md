@@ -32,9 +32,11 @@
 - `tests/test_fast_cache.py`：轻量 `RWKV7StateCache` 与 FLA 默认 cache 的 prefill/decode 等价测试。
 - `tests/test_fast_decode_api.py`：`rwkv7_forward_token` batched one-token decode API 和 `rwkv7_forward_one` bsz=1 兼容入口与 HF recurrent forward 的等价测试。
 - `tests/test_batch_cache.py`：bsz=1/2/4 repeated prompt cache/layout smoke，覆盖批量 recurrent state。
+- `tests/test_dynamic_batch_cache.py`：heterogeneous prompts + cache reorder 后继续 decode，对比逐条 independent states，覆盖 dynamic batching state reorder/drop 风险。
 - `tests/test_hf_training_smoke.py`：HF Trainer / TRL SFTTrainer 1-step LoRA smoke。
 - `bench/bench_decode_breakdown.py`：decode 瓶颈拆分。
 - `bench/bench_batch_sweep.py`：bsz=1/2/4/8 serving-style prefill/decode sweep，记录 total/per-seq throughput。
+- `bench/bench_dynamic_batch.py`：模拟 active batch reorder/drop，记录 dynamic batching 相关 total decoded tok/s。
 - `bench/bench_decode_micro.py`：稳定记录 HF forward decode、fast token API、`lm_head`、argmax、embedding、empty loop 等 micro timing。
 - `bench/bench_speed.py` 已改成 serving-style prefill：`use_cache=True + logits_to_keep=1`，并可用 `--hf-decode-api rwkv7_forward_token` 测快 decode API。
 - `bench/profile_decode.py`：单 token decode profiler。
@@ -65,7 +67,7 @@
    - 继续 profile 单 token decode
    - `RWKV7StateCache` 已减少 generic CacheLayer 开销
    - 已新增 `rwkv7_forward_token` batched one-token fast decode entrypoint，并保留 `rwkv7_forward_one` bsz=1 兼容入口
-   - 已新增 batch cache/sweep harness 和 decode microbench；服务器恢复后运行 `./bench/run_v100_fast_decode_validation.sh` 补正式 V100 fast-decode、bsz sweep、micro timing benchmark，并继续减少 tiny kernel launch
+   - 已新增 batch cache/sweep、dynamic-batch reorder/drop harness 和 decode microbench；服务器恢复后运行 `./bench/run_v100_fast_decode_validation.sh` 补正式 V100 fast-decode、bsz sweep、dynamic batch、micro timing benchmark，并继续减少 tiny kernel launch
 
 ## 阶段 3：Transformers 原生 PR 方向
 
