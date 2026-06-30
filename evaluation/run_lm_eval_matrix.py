@@ -48,6 +48,21 @@ def parse_args():
     parser.add_argument("--max-length", type=int, default=2048)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
+        "--task",
+        action="append",
+        choices=TASKS,
+        default=[],
+        help="Run only this task; repeat to create a parallelizable shard",
+    )
+    parser.add_argument(
+        "--batch-size",
+        action="append",
+        type=int,
+        choices=(1, 8),
+        default=[],
+        help="Run only this batch size; repeat to create a parallelizable shard",
+    )
+    parser.add_argument(
         "--code-sha",
         default=None,
         help="Source revision for rsync deployments without a .git directory",
@@ -247,6 +262,8 @@ def main():
         raise SystemExit(f"lm_eval=={EXPECTED_LM_EVAL} is required, found {version}")
 
     specs = [parse_model(value) for value in (args.model or DEFAULT_MODELS)]
+    tasks = tuple(args.task or TASKS)
+    batch_sizes = tuple(args.batch_size or (1, 8))
     args.output_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = args.output_dir / "manifest.jsonl"
     latest = read_manifest(manifest_path)
@@ -264,8 +281,8 @@ def main():
 
     with manifest_path.open("a", encoding="utf-8") as manifest:
         for label, source, revision in specs:
-            for batch_size in (1, 8):
-                for task in TASKS:
+            for batch_size in batch_sizes:
+                for task in tasks:
                     unit = f"{label}-b{batch_size}-{task}"
                     unit_dir = args.output_dir / unit
                     unit_dir.mkdir(parents=True, exist_ok=True)
@@ -352,12 +369,12 @@ def main():
                     latest[unit] = row
                     print(f"{unit}: {'PASS' if result.returncode == 0 else 'FAIL'}")
 
-    expected = len(specs) * 2 * len(TASKS)
+    expected = len(specs) * len(batch_sizes) * len(tasks)
     expected_units = {
         f"{label}-b{batch_size}-{task}"
         for label, _, _ in specs
-        for batch_size in (1, 8)
-        for task in TASKS
+        for batch_size in batch_sizes
+        for task in tasks
     }
     failures = sum(
         1 for unit in expected_units if latest.get(unit, {}).get("exit_code") != 0
