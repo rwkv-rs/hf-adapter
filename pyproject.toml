@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["peft", "accelerate", "datasets", "trl"]
+train = ["peft", "accelerate", "datasets", "trl", "deepspeed"]
 quant = ["bitsandbytes", "triton>=3.3.0; platform_system == 'Linux'"]
 
 [tool.setuptools.packages.find]
