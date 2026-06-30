@@ -118,8 +118,8 @@ Result on Tesla V100:
 | HF adapter, `fuse_norm=true` | 11852.0 | 31.5 | 31.70 | 406.4 MB |
 | HF adapter, `fuse_norm=false` | 14247.7 | 41.3 | 24.24 | 406.4 MB |
 | HF adapter, `fuse_norm=false`, `RWKV7StateCache` | 13801.4 | 41.2 | 24.28 | 406.4 MB |
-| HF adapter, `rwkv7_forward_token` | 13954.7 | 58.0 | 17.25 | 406.4 MB |
-| official `rwkv` | 225.0 | 92.5 | 10.81 | 406.2 MB |
+| HF adapter, `rwkv7_forward_token` | 14055.1 | 59.2 | 16.89 | 406.4 MB |
+| official `rwkv` | 225.6 | 92.1 | 10.86 | 406.2 MB |
 
 Interpretation:
 
@@ -302,10 +302,10 @@ Latest V100 microbench:
 
 | Component | ms/token | tok/s |
 |---|---:|---:|
-| HF `forward` fixed-token | 24.9691 | 40.0 |
-| `rwkv7_forward_token` fixed-token | 17.5097 | 57.1 |
-| `lm_head` only | 0.1639 | 6103.0 |
-| argmax only | 0.0266 | 37525.1 |
+| HF `forward` fixed-token | 24.5294 | 40.8 |
+| `rwkv7_forward_token` fixed-token | 16.7989 | 59.5 |
+| `lm_head` only | 0.1351 | 7402.3 |
+| argmax only | 0.0234 | 42819.5 |
 
 ## Decode component benchmark
 
@@ -422,7 +422,7 @@ python bench/check_results.py \
 ```
 
 Current committed V100 rows pass the regression gate and fail the target gate
-only on decode ratio: `0.6444 < 0.9`. This makes future optimization iterations
+only on decode ratio: `0.6428 < 0.9`. This makes future optimization iterations
 easy to judge without re-reading every JSONL row.
 
 ## Current optimization target
@@ -456,9 +456,9 @@ The next optimization work should focus on **HF recurrent decode**:
 - First decode optimizations landed: `fuse_norm=false` plus the exact-match `RWKV7StateCache` keep the real remote-code HF path at ~41 tok/s vs official ~92 tok/s on V100.
 - Batch correctness and sweep harnesses are in place; V100 bsz=1/2/4/8 fast-token decode runs at about `55 tok/s` per sequence.
 - Dynamic-batch cache reorder/drop correctness and benchmark harnesses are in place; V100 dynamic simulation improves from `205.2` to `345.7` total tok/s with `rwkv7_forward_token`.
-- Decode microbench harness is in place; V100 shows `rwkv7_forward_token` at `17.5 ms/token` vs HF `forward` at `25.0 ms/token`, while `lm_head` and argmax are tiny.
+- Decode microbench harness is in place; V100 shows `rwkv7_forward_token` at `16.8 ms/token` vs HF `forward` at `24.5 ms/token`, while `lm_head` and argmax are tiny.
 - Decode component harness is in place; V100 shows `attn_linears_lora` is the largest remaining fast-token component at about `9.87 ms/token`.
 - Projection/LoRA harness is in place; V100 shows naive PyTorch bmm grouping is slower overall, so custom fusion is needed.
 - Benchmark gap analysis is in place and currently identifies decode throughput as the active optimization gap.
-- Benchmark check gate is in place: current regression gate passes, target gate fails only because decode is still `0.6444x` official.
+- Benchmark check gate is in place: current regression gate passes, target gate fails only because decode is still `0.6428x` official.
 - The active blocker remains decode throughput: fast-token HF is now ~0.64x official on V100, still below the 0.90x target.
