@@ -44,6 +44,15 @@ run() {
     --decode-steps 32 \
     --max-diff 0.2
 
+  run python tests/test_batch_cache.py \
+    --model "${HF_DIR}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --fuse-norm false \
+    --batch-sizes 1 2 4 \
+    --prompt-tokens 64 \
+    --decode-steps 8
+
   run python bench/bench_speed.py \
     --hf-dir "${HF_DIR}" \
     --pth "${PTH}" \
@@ -58,6 +67,21 @@ run() {
     --fuse-norm false \
     --fast-cache true \
     --hf-decode-api rwkv7_forward_one \
+    --results "${RESULTS}"
+
+  run python bench/bench_batch_sweep.py \
+    --hf-dir "${HF_DIR}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --attn-mode fused_recurrent \
+    --fuse-norm false \
+    --fast-cache true \
+    --fast-decode-api auto \
+    --batch-sizes 1 2 4 8 \
+    --prompt-tokens "${PROMPT_TOKENS}" \
+    --decode-tokens "${DECODE_TOKENS}" \
+    --warmup 2 \
+    --runs 3 \
     --results "${RESULTS}"
 
   run python bench/bench_decode_breakdown.py \
