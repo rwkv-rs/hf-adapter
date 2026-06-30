@@ -1,0 +1,37 @@
+{
+  "model": "/home/data/wangyue/models/rwkv7/reference-v090-6795a75/rwkv7_01b_hf",
+  "model_revision": "local-d2f8de6",
+  "code_sha": "bf7919f62fba1688e0beb4d4f745637fe9907aea",
+  "output_dir": "/home/data/wangyue/results/rwkv7-reference-v090/finetune-canonical-v0.9.0/grpo",
+  "seed": 42,
+  "max_length": 512,
+  "train_samples": 1024,
+  "eval_samples": 128,
+  "max_steps": 100,
+  "gradient_accumulation_steps": 1,
+  "resume_from_checkpoint": null,
+  "report_to": "none",
+  "max_completion_length": 64,
+  "dataset_name": "openai/gsm8k",
+  "dataset_revision": "740312add88f781978c0658806c59bc2815b9866",
+  "target_modules": [
+    "r_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "key",
+    "value"
+  ],
+  "command": [
+    "/home/data/wangyue/repos/codex-build/hf-adapter-reference-v090/examples/finetune/grpo_lora.py",
+    "--model",
+    "/home/data/wangyue/models/rwkv7/reference-v090-6795a75/rwkv7_01b_hf",
+    "--model-revision",
+    "local-d2f8de6",
+    "--output-dir",
+    "/home/data/wangyue/results/rwkv7-reference-v090/finetune-canonical-v0.9.0/grpo",
+    "--code-sha",
+    "bf7919f62fba1688e0beb4d4f745637fe9907aea"
+  ],
+  "source_revision": "bf7919f62fba1688e0beb4d4f745637fe9907aea"
+}

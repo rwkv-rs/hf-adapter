@@ -11,7 +11,7 @@ Release gates:
 - [x] non-blocking RTX 4080 FLA backend diagnostics archived
 - [x] official checkpoint oracle matrix (V100 6/6; RTX 4080 9/9)
 - [ ] formal 48-unit lm_eval run
-- [ ] canonical SFT, DPO and GRPO runs
+- [x] canonical SFT, DPO and GRPO runs, exact resume, and W&B offline smoke
 - [x] clean wheel build, metadata check, isolated install and CLI/model smoke
 - [ ] six model repositories updated and tagged v0.9.0
 - [ ] PyPI 0.9.0 published

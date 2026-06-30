@@ -1,0 +1,5 @@
+{
+  "finite_loss": true,
+  "nonzero_gradient": true,
+  "global_step": 101
+}

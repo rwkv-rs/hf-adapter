@@ -1,0 +1,5 @@
+{
+  "returncode": 0,
+  "stdout": "/home/data/wangyue/results/rwkv7-reference-v090/finetune-canonical-v0.9.0/sft-wandb-offline/stdout.log",
+  "stderr": "/home/data/wangyue/results/rwkv7-reference-v090/finetune-canonical-v0.9.0/sft-wandb-offline/stderr.log"
+}

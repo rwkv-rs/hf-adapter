@@ -1,0 +1,20 @@
+Map:   0%|          | 0/8 [00:00<?, ? examples/s]Map: 100%|██████████| 8/8 [00:00<00:00, 1468.40 examples/s]
+Adding EOS to train dataset:   0%|          | 0/8 [00:00<?, ? examples/s]Adding EOS to train dataset: 100%|██████████| 8/8 [00:00<00:00, 2397.60 examples/s]
+Parameter 'fn_kwargs'={'processing_class': RWKV7Tokenizer(name_or_path='/home/data/wangyue/models/rwkv7/reference-v090-6795a75/rwkv7_01b_hf', vocab_size=65536, model_max_length=1000000000000000019884624838656, is_fast=False, padding_side='right', truncation_side='right', special_tokens={'eos_token': '<|endoftext|>', 'pad_token': '<|padding|>'}, clean_up_tokenization_spaces=False, added_tokens_decoder={
+	65536: AddedToken("<|endoftext|>", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+	65537: AddedToken("<|padding|>", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+}
+), 'dataset_text_field': 'text', 'assistant_only_loss': False} of the transform datasets.arrow_dataset.Dataset._map_single couldn't be hashed properly, a random hash was used instead. Make sure your transforms and parameters are serializable with pickle or dill for the dataset fingerprinting and caching to work. If you reuse this transform, the caching mechanism will consider it to be different from the previous calls and recompute everything. This warning is only shown once. Subsequent hashing failures won't be shown.
+Tokenizing train dataset:   0%|          | 0/8 [00:00<?, ? examples/s]Tokenizing train dataset: 100%|██████████| 8/8 [00:00<00:00, 171.36 examples/s]
+Truncating train dataset:   0%|          | 0/8 [00:00<?, ? examples/s]Truncating train dataset: 100%|██████████| 8/8 [00:00<00:00, 2770.80 examples/s]
+Tokenizing eval dataset:   0%|          | 0/2 [00:00<?, ? examples/s]Tokenizing eval dataset: 100%|██████████| 2/2 [00:00<00:00, 140.65 examples/s]
+Truncating eval dataset:   0%|          | 0/2 [00:00<?, ? examples/s]Truncating eval dataset: 100%|██████████| 2/2 [00:00<00:00, 791.23 examples/s]
+The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None}.
+wandb: Tracking run with wandb version 0.28.2
+wandb: W&B syncing is set to `offline` in this directory. Run `wandb online` or set WANDB_MODE=online to enable cloud syncing.
+wandb: Run data is saved locally in /home/data/wangyue/repos/codex-build/hf-adapter-reference-v090/wandb/offline-run-20260826_012002-wy328yot
+wandb: View this run in the terminal with `wandb leet`
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:01<00:00,  1.48s/it]                                             100%|██████████| 1/1 [00:01<00:00,  1.48s/it]wandb: WARNING URL not available in offline run
+                                             100%|██████████| 1/1 [00:01<00:00,  1.48s/it]100%|██████████| 1/1 [00:01<00:00,  1.59s/it]
+  0%|          | 0/2 [00:00<?, ?it/s]100%|██████████| 2/2 [00:00<00:00, 12.81it/s]100%|██████████| 2/2 [00:00<00:00, 12.69it/s]
+wandb: WARNING URL not available in offline run

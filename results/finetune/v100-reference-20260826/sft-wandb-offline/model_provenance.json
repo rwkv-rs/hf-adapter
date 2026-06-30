@@ -1,0 +1,16 @@
+{
+  "kind": "local",
+  "path": "/home/data/wangyue/models/rwkv7/reference-v090-6795a75/rwkv7-0.1b-hf",
+  "requested_revision": "local-d2f8de6",
+  "resolved_revision": "daa456194cf14b6eab36c0c39cc867f86c99060cc7bcfe3e03e2eb17c6501648",
+  "files": {
+    "cache_rwkv7.py": "8d2cc30f05d04eca4521026b1cb4683001c6f3e625a39e30451c74df092ba99b",
+    "config.json": "a62082ea59f4ed55eb5a7939a56ede61436489409d5675a3a4ac8cd14e179e5c",
+    "configuration_rwkv7.py": "6b1b07047312e1fb9f63e501e9f5939f3d7e1d9ebf9b9ff526e1ac651a169726",
+    "model.safetensors": "12d208adf2880927615656c2dc3f6fb6a3ea3120a9ed9fdfeeea55c841723d79",
+    "modeling_rwkv7.py": "668afabb77a58600549ea7a135c13195033fdcf14e827dc8d8bea764d9981edd",
+    "ops_rwkv7.py": "c255710be2bbd4c252fca0013dbd47478b183cc70cdd26b7cc425b7807de257e",
+    "tokenization_rwkv7.py": "b08da37df93e51806ad78985834286050da465251e9d3e04598e4a69d05280dd",
+    "tokenizer_config.json": "0a8bbc94fb5f6644b21e2653aea79407245a9a4b24d25c5f6a84698f5d9c5f27"
+  }
+}

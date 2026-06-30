@@ -1,0 +1,3 @@
+=== dpo gpu=1 2026-08-26T00:41:39+08:00 ===
+{"returncode": 0, "stdout": "/home/data/wangyue/results/rwkv7-reference-v090/finetune-canonical-v0.9.0/dpo/stdout.log", "stderr": "/home/data/wangyue/results/rwkv7-reference-v090/finetune-canonical-v0.9.0/dpo/stderr.log"}
+dpo rc=0 2026-08-26T01:14:58+08:00

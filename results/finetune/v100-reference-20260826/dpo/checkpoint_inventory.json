@@ -1,0 +1,202 @@
+[
+  {
+    "path": "adapter-final/adapter_config.json",
+    "bytes": 1120,
+    "sha256": "0d5d95a72c3ccfa15f657619d9201b1f20520d11e1f6c1b6bb611f92b6727e3f"
+  },
+  {
+    "path": "adapter-final/adapter_model.safetensors",
+    "bytes": 5326296,
+    "sha256": "389e5df4e29650d5726f9c3afaff643655b19552781f47bcd8e65ca570387f5d"
+  },
+  {
+    "path": "adapter_reload.json",
+    "bytes": 713,
+    "sha256": "9d7dea956fb39ab6721acbf026714c23c1a27b387406f01a48cf6ed4e71da557"
+  },
+  {
+    "path": "all_results.json",
+    "bytes": 716,
+    "sha256": "012c49bd9bfa25051fc461c2a649c2a3280a5be3ecdac5d2707890aa9d53dca8"
+  },
+  {
+    "path": "changed_parameters.json",
+    "bytes": 10107,
+    "sha256": "96ab466585d8815a214c2607d261d62f7f81fa4e3acaf9a908084713f1a51df9"
+  },
+  {
+    "path": "checkpoint-100/adapter_config.json",
+    "bytes": 1120,
+    "sha256": "0d5d95a72c3ccfa15f657619d9201b1f20520d11e1f6c1b6bb611f92b6727e3f"
+  },
+  {
+    "path": "checkpoint-100/adapter_model.safetensors",
+    "bytes": 5326296,
+    "sha256": "389e5df4e29650d5726f9c3afaff643655b19552781f47bcd8e65ca570387f5d"
+  },
+  {
+    "path": "checkpoint-100/added_tokens.json",
+    "bytes": 53,
+    "sha256": "a4cf0c7318dfa8fbe6b1c40297b62d6071b0785c29e712e8919264a37614c256"
+  },
+  {
+    "path": "checkpoint-100/special_tokens_map.json",
+    "bytes": 65,
+    "sha256": "b77491e270c6fcc5b2ecf22370f7318a6a18d3cabea09ba7bab92e9bf12656c2"
+  },
+  {
+    "path": "checkpoint-100/tokenizer_config.json",
+    "bytes": 764,
+    "sha256": "a311871e0abc74ddbff430419c8a01e7ce14cb8b2fa9ad1f45fe2c5e1a478615"
+  },
+  {
+    "path": "checkpoint-100/trainer_state.json",
+    "bytes": 50846,
+    "sha256": "1e532255ab49584c8201f25e4b4291e2bdb8ad6fb671210372f8c1888c3d8810"
+  },
+  {
+    "path": "checkpoint-25/adapter_config.json",
+    "bytes": 1120,
+    "sha256": "0d5d95a72c3ccfa15f657619d9201b1f20520d11e1f6c1b6bb611f92b6727e3f"
+  },
+  {
+    "path": "checkpoint-25/adapter_model.safetensors",
+    "bytes": 5326296,
+    "sha256": "ddfa28eb87d13e3c852a8b87fcdfbd472dba7587b198a86d42c4ac4d6377b2f8"
+  },
+  {
+    "path": "checkpoint-25/added_tokens.json",
+    "bytes": 53,
+    "sha256": "a4cf0c7318dfa8fbe6b1c40297b62d6071b0785c29e712e8919264a37614c256"
+  },
+  {
+    "path": "checkpoint-25/special_tokens_map.json",
+    "bytes": 65,
+    "sha256": "b77491e270c6fcc5b2ecf22370f7318a6a18d3cabea09ba7bab92e9bf12656c2"
+  },
+  {
+    "path": "checkpoint-25/tokenizer_config.json",
+    "bytes": 764,
+    "sha256": "a311871e0abc74ddbff430419c8a01e7ce14cb8b2fa9ad1f45fe2c5e1a478615"
+  },
+  {
+    "path": "checkpoint-25/trainer_state.json",
+    "bytes": 13298,
+    "sha256": "69a21558a5459bb730585b1503937ecc0c73113ae2785e55b9efb843fe571726"
+  },
+  {
+    "path": "checkpoint-50/adapter_config.json",
+    "bytes": 1120,
+    "sha256": "0d5d95a72c3ccfa15f657619d9201b1f20520d11e1f6c1b6bb611f92b6727e3f"
+  },
+  {
+    "path": "checkpoint-50/adapter_model.safetensors",
+    "bytes": 5326296,
+    "sha256": "81ac01dcfdb0db3d78cdff58b428bb1740ac4d63658693fc9315ad8d6c17c803"
+  },
+  {
+    "path": "checkpoint-50/added_tokens.json",
+    "bytes": 53,
+    "sha256": "a4cf0c7318dfa8fbe6b1c40297b62d6071b0785c29e712e8919264a37614c256"
+  },
+  {
+    "path": "checkpoint-50/special_tokens_map.json",
+    "bytes": 65,
+    "sha256": "b77491e270c6fcc5b2ecf22370f7318a6a18d3cabea09ba7bab92e9bf12656c2"
+  },
+  {
+    "path": "checkpoint-50/tokenizer_config.json",
+    "bytes": 764,
+    "sha256": "a311871e0abc74ddbff430419c8a01e7ce14cb8b2fa9ad1f45fe2c5e1a478615"
+  },
+  {
+    "path": "checkpoint-50/trainer_state.json",
+    "bytes": 25780,
+    "sha256": "78a96bbb5389f32cf39ef70213dc9e23a5f9f3f3b37032053db9d36b9ad9c193"
+  },
+  {
+    "path": "checkpoint-75/adapter_config.json",
+    "bytes": 1120,
+    "sha256": "0d5d95a72c3ccfa15f657619d9201b1f20520d11e1f6c1b6bb611f92b6727e3f"
+  },
+  {
+    "path": "checkpoint-75/adapter_model.safetensors",
+    "bytes": 5326296,
+    "sha256": "ee6bd30d69053bd00a13ef2a25fcfbd5fa3edbf938bfb743c0deabab90eb027e"
+  },
+  {
+    "path": "checkpoint-75/added_tokens.json",
+    "bytes": 53,
+    "sha256": "a4cf0c7318dfa8fbe6b1c40297b62d6071b0785c29e712e8919264a37614c256"
+  },
+  {
+    "path": "checkpoint-75/special_tokens_map.json",
+    "bytes": 65,
+    "sha256": "b77491e270c6fcc5b2ecf22370f7318a6a18d3cabea09ba7bab92e9bf12656c2"
+  },
+  {
+    "path": "checkpoint-75/tokenizer_config.json",
+    "bytes": 764,
+    "sha256": "a311871e0abc74ddbff430419c8a01e7ce14cb8b2fa9ad1f45fe2c5e1a478615"
+  },
+  {
+    "path": "checkpoint-75/trainer_state.json",
+    "bytes": 38360,
+    "sha256": "ea1b294fbdf931d1bdc1119b83a915b8d342d2e24b8bd35b3462af672cfa3edb"
+  },
+  {
+    "path": "dataset_fingerprints.json",
+    "bytes": 176,
+    "sha256": "e297f450ae24ffde55d28c592ce553ca80c5052346afc048e2bf902ccd57e48f"
+  },
+  {
+    "path": "environment.json",
+    "bytes": 244,
+    "sha256": "9743a60af1888265d57d4cecef41447ebe939b49eb01412b7080c5e1665165e4"
+  },
+  {
+    "path": "eval_indices.json",
+    "bytes": 701,
+    "sha256": "89d472a7118633d7c48c6f817008e4bf794cf8195e5c150f94e4d7587a319d19"
+  },
+  {
+    "path": "eval_results.json",
+    "bytes": 549,
+    "sha256": "bd9c80c28878d23e07b77e4460cd1a935854193cb3321ae2356fc71c22b6c85a"
+  },
+  {
+    "path": "model_provenance.json",
+    "bytes": 996,
+    "sha256": "eb9083046f5425732eba5915346f22bdb28cc1719c759fb85a60a82a51362494"
+  },
+  {
+    "path": "resolved_config.json",
+    "bytes": 1194,
+    "sha256": "ed3dda00f18ca92cffc9b0b2a4f519865863194d6cff7dd42a870054affe6351"
+  },
+  {
+    "path": "resume_check.json",
+    "bytes": 101,
+    "sha256": "102ffc409219f0b5bd1fc27933963707c2d9b67aa28802b7bb8f694d8c5c60ff"
+  },
+  {
+    "path": "train_indices.json",
+    "bytes": 6976,
+    "sha256": "d984d87a72eed3a57b5fe6c72534d12c0005045f1241a5fc3e01e8820c050f0a"
+  },
+  {
+    "path": "train_results.json",
+    "bytes": 194,
+    "sha256": "bd0b1382bf02b7ff30df6442b8d2acd7cb097b83a2f2543bb3f2a2bf27196e4d"
+  },
+  {
+    "path": "training_checks.json",
+    "bytes": 76,
+    "sha256": "ca8b84a0119a8c2ad2a23ee9d29b6efbb121278482ae69b00b53fb950c9abe36"
+  },
+  {
+    "path": "wandb.json",
+    "bytes": 52,
+    "sha256": "4fe5fdb1eab5ce5a27058aade9845190827eb786522ce77de5d4561171e08ae9"
+  }
+]

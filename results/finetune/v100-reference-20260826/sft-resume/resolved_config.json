@@ -1,0 +1,40 @@
+{
+  "model": "/home/data/wangyue/models/rwkv7/reference-v090-6795a75/rwkv7_01b_hf",
+  "model_revision": "local-d2f8de6",
+  "code_sha": "ebdbb1d9451ac8568838b75d6a9e3d7f68e5b35f",
+  "output_dir": "/home/data/wangyue/results/rwkv7-reference-v090/finetune-canonical-v0.9.0/sft-resume",
+  "seed": 42,
+  "max_length": 512,
+  "train_samples": 1024,
+  "eval_samples": 128,
+  "max_steps": 101,
+  "gradient_accumulation_steps": 1,
+  "resume_from_checkpoint": "/home/data/wangyue/results/rwkv7-reference-v090/finetune-canonical-v0.9.0/sft/checkpoint-100",
+  "report_to": "none",
+  "dataset_name": "HuggingFaceH4/ultrachat_200k",
+  "dataset_revision": "8049631c405ae6576f93f445c6b8166f76f5505a",
+  "target_modules": [
+    "r_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "key",
+    "value"
+  ],
+  "command": [
+    "/home/data/wangyue/repos/codex-build/hf-adapter-reference-v090/examples/finetune/sft_lora.py",
+    "--model",
+    "/home/data/wangyue/models/rwkv7/reference-v090-6795a75/rwkv7_01b_hf",
+    "--model-revision",
+    "local-d2f8de6",
+    "--output-dir",
+    "/home/data/wangyue/results/rwkv7-reference-v090/finetune-canonical-v0.9.0/sft-resume",
+    "--code-sha",
+    "ebdbb1d9451ac8568838b75d6a9e3d7f68e5b35f",
+    "--max-steps",
+    "101",
+    "--resume-from-checkpoint",
+    "/home/data/wangyue/results/rwkv7-reference-v090/finetune-canonical-v0.9.0/sft/checkpoint-100"
+  ],
+  "source_revision": "ebdbb1d9451ac8568838b75d6a9e3d7f68e5b35f"
+}

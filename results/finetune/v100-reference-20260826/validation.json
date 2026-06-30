@@ -1,0 +1,50 @@
+{
+  "status": "passed",
+  "runs": {
+    "sft": {
+      "path": "/home/data/wangyue/results/rwkv7-reference-v090/finetune-canonical-v0.9.0/sft",
+      "global_step": 100,
+      "metrics": 102,
+      "changed_parameters": 144,
+      "inventory_files": 40,
+      "adapter_reload_max_abs": 0.0,
+      "status": "passed",
+      "failures": []
+    },
+    "dpo": {
+      "path": "/home/data/wangyue/results/rwkv7-reference-v090/finetune-canonical-v0.9.0/dpo",
+      "global_step": 100,
+      "metrics": 102,
+      "changed_parameters": 144,
+      "inventory_files": 40,
+      "adapter_reload_max_abs": 0.0,
+      "status": "passed",
+      "failures": []
+    },
+    "grpo": {
+      "path": "/home/data/wangyue/results/rwkv7-reference-v090/finetune-canonical-v0.9.0/grpo",
+      "global_step": 100,
+      "metrics": 102,
+      "changed_parameters": 144,
+      "inventory_files": 40,
+      "adapter_reload_max_abs": 0.0,
+      "status": "passed",
+      "failures": []
+    }
+  },
+  "ancillary": {
+    "resume": {
+      "passed": true,
+      "requested": "/home/data/wangyue/results/rwkv7-reference-v090/finetune-canonical-v0.9.0/sft/checkpoint-100",
+      "prior_global_step": 100,
+      "final_global_step": 101,
+      "advanced": true
+    },
+    "wandb_offline": {
+      "passed": true,
+      "enabled": true,
+      "id": "wy328yot",
+      "url": null
+    }
+  }
+}

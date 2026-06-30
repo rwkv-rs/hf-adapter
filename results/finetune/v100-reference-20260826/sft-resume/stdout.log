@@ -1,0 +1,2 @@
+{'loss': 1.586, 'grad_norm': 3.2526509761810303, 'learning_rate': 0.0, 'num_tokens': 512.0, 'mean_token_accuracy': 0.6810176372528076, 'epoch': 0.1}
+{'train_runtime': 14.922, 'train_samples_per_second': 6.769, 'train_steps_per_second': 6.769, 'train_loss': 0.015703171786695422, 'epoch': 0.1}

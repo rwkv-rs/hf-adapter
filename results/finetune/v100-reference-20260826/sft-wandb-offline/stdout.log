@@ -1,0 +1,7 @@
+⚙️  Running in WANDB offline mode
+{'loss': 2.9526, 'grad_norm': 20.1796875, 'learning_rate': 2e-05, 'num_tokens': 32.0, 'mean_token_accuracy': 0.3870967626571655, 'epoch': 0.12}
+{'train_runtime': 2.1512, 'train_samples_per_second': 0.465, 'train_steps_per_second': 0.465, 'train_loss': 2.9525575637817383, 'epoch': 0.12}
+[1;34mwandb[0m: 
+[1;34mwandb[0m: You can sync this run to the cloud by running:
+[1;34mwandb[0m: [1mwandb sync /home/data/wangyue/repos/codex-build/hf-adapter-reference-v090/wandb/offline-run-20260826_012002-wy328yot[0m
+[1;34mwandb[0m: Find logs at: [1;35m../../../data/wangyue/repos/codex-build/hf-adapter-reference-v090/wandb/offline-run-20260826_012002-wy328yot/logs[0m

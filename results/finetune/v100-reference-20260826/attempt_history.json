@@ -1,0 +1,17 @@
+[
+  {
+    "attempt": "grpo-uncached-256",
+    "status": "interrupted",
+    "reason": "TRL disabled model cache for training and inherited it for the rollout; replaced with inference-only generation_kwargs.use_cache=true"
+  },
+  {
+    "attempt": "sft-resume-torch-2.5.1",
+    "status": "blocked-by-runtime-safety-gate",
+    "reason": "Transformers 4.56.2 requires PyTorch >=2.6 to restore torch.load optimizer state; rerun passed with PyTorch 2.6.0+cu124"
+  },
+  {
+    "attempt": "grpo-saturated-format-reward",
+    "status": "interrupted",
+    "reason": "both generations saturated the lexical reward and had zero advantage; final nonsaturating structured reward produced nonzero reward_std and gradients"
+  }
+]
