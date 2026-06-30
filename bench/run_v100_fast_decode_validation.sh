@@ -164,6 +164,11 @@ run() {
     --require-fast-decode \
     --last 8
 
+  run python bench/analyze_results.py \
+    --results "${RESULTS}" \
+    --device V100 \
+    --dtype "${DTYPE}"
+
   echo
   echo "DONE log=${LOG} profile=${PROFILE_OUT}"
 } 2>&1 | tee "${LOG}"
