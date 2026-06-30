@@ -63,6 +63,8 @@ def check_present(report: dict[str, Any], failures: list[str]) -> None:
         fail(failures, "missing decode_components row")
     if not report.get("projection_lora"):
         fail(failures, "missing projection_lora row")
+    if not report.get("larger_model_smoke"):
+        fail(failures, "missing larger_model_smoke row")
 
 
 def index_by(rows: list[dict[str, Any]], key: str) -> dict[Any, dict[str, Any]]:
@@ -228,6 +230,32 @@ def check_common(report: dict[str, Any], failures: list[str], args: argparse.Nam
     elif args.expect_naive_candidate_slower and float(candidate_speedup) >= 1.0:
         fail(failures, f"naive candidate unexpectedly faster/equal: {candidate_speedup}")
 
+    larger_rows = report.get("larger_model_smoke") or []
+    larger_by_label = {str(row.get("model_size_label", "")).lower(): row for row in larger_rows}
+    for label in args.required_larger_models:
+        row = larger_by_label.get(label.lower())
+        if not row:
+            fail(failures, f"missing larger_model_smoke row for {label}")
+            continue
+        if row.get("status") != "pass":
+            fail(failures, f"larger_model_smoke {label} did not pass: {row.get('status')}")
+        for key in ("vocab_size", "hidden_size", "intermediate_size", "num_hidden_layers", "head_dim", "num_heads"):
+            if row.get(key) is None or int(row.get(key) or 0) <= 0:
+                fail(failures, f"larger_model_smoke {label} has invalid {key}: {row.get(key)}")
+        if int(row.get("hidden_size") or 0) < args.min_larger_model_hidden_size:
+            fail(failures, f"larger_model_smoke {label} hidden_size below floor: {row.get('hidden_size')} < {args.min_larger_model_hidden_size}")
+        if int(row.get("num_hidden_layers") or 0) < args.min_larger_model_layers:
+            fail(failures, f"larger_model_smoke {label} layers below floor: {row.get('num_hidden_layers')} < {args.min_larger_model_layers}")
+        if int(row.get("generated_tokens") or 0) < args.min_larger_model_new_tokens:
+            fail(failures, f"larger_model_smoke {label} generated too few tokens: {row.get('generated_tokens')} < {args.min_larger_model_new_tokens}")
+        sha = row.get("checkpoint_sha256")
+        if not isinstance(sha, str) or len(sha) != 64:
+            fail(failures, f"larger_model_smoke {label} missing checkpoint sha256 provenance")
+        if row.get("checkpoint_size_bytes") is None or int(row.get("checkpoint_size_bytes") or 0) <= 0:
+            fail(failures, f"larger_model_smoke {label} missing checkpoint size provenance")
+        if not row.get("top5") or len(row.get("top5") or []) != 5:
+            fail(failures, f"larger_model_smoke {label} missing top5 logits summary")
+
     if args.require_quantization:
         quant_rows = report.get("quantization") or []
         by_mode = {row.get("quantization"): row for row in quant_rows}
@@ -310,6 +338,10 @@ def main() -> int:
     ap.add_argument("--max-native-graph-copy-share", type=float, default=0.15)
     ap.add_argument("--expected-top-component", default="attn_linears_lora")
     ap.add_argument("--expect-naive-candidate-slower", action="store_true", default=True)
+    ap.add_argument("--required-larger-models", nargs="+", default=["0.4b"])
+    ap.add_argument("--min-larger-model-new-tokens", type=int, default=1)
+    ap.add_argument("--min-larger-model-hidden-size", type=int, default=1024)
+    ap.add_argument("--min-larger-model-layers", type=int, default=24)
     ap.add_argument("--require-quantization", action="store_true",
                     help="Require passing 8bit/4bit quantization benchmark rows")
     ap.add_argument("--min-quant-decode-ratio", type=float, default=1.0)
