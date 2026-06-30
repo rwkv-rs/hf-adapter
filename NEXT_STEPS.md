@@ -38,6 +38,7 @@
 - `bench/bench_batch_sweep.py`：bsz=1/2/4/8 serving-style prefill/decode sweep，记录 total/per-seq throughput。
 - `bench/bench_dynamic_batch.py`：模拟 active batch reorder/drop，记录 dynamic batching 相关 total decoded tok/s。
 - `bench/bench_decode_micro.py`：稳定记录 HF forward decode、fast token API、`lm_head`、argmax、embedding、empty loop 等 micro timing。
+- `bench/bench_decode_components.py`：细分 fast-token layer path 的 projection/recurrent/norm/FFN/top layer 耗时，用于决定下一步 fusion 目标。
 - `bench/analyze_results.py`：从 `bench/results.jsonl` 输出 target/gap report，直接列出 decode/memory ratio、缺失 benchmark axis 和下一步优化焦点。
 - `bench/bench_speed.py` 已改成 serving-style prefill：`use_cache=True + logits_to_keep=1`，并可用 `--hf-decode-api rwkv7_forward_token` 测快 decode API。
 - `bench/profile_decode.py`：单 token decode profiler。
@@ -48,7 +49,7 @@
 
 - correctness：`fuse_norm=false` 下 top5/argmax/cosine/greedy64 均通过，fp16 max_abs 约 0.072。
 - memory：HF 406.4 MB vs official 406.2 MB，0.1B serving path 已基本持平。
-- speed：`fuse_norm=false` + `RWKV7StateCache` 下标准 remote-code HF decode 约 41.2 tok/s；`rwkv7_forward_token` V100 bsz=1 约 58.0 tok/s，bsz=1/2/4/8 batch sweep per-seq 约 55 tok/s，dynamic batch 从 205.2 提升到 345.7 total tok/s；official 约 90 tok/s，decode 仍是主优化点。
+- speed：`fuse_norm=false` + `RWKV7StateCache` 下标准 remote-code HF decode 约 41.2 tok/s；`rwkv7_forward_token` V100 bsz=1 约 58.0 tok/s，bsz=1/2/4/8 batch sweep per-seq 约 55 tok/s，dynamic batch 从 205.2 提升到 345.7 total tok/s；official 约 90 tok/s，decode 仍是主优化点。component bench 显示 `attn_linears_lora` 最大，约 9.87ms/token。
 - profiler：`fuse_norm=true` 的 FLA `LayerNormFunction` CPU 开销很大，native norm 把 norm CPU total 从约 54.8ms/6tok 降到约 6.6ms/6tok。
 - breakdown：argmax 开销约等于 0，`chunk` 和 `fused_recurrent` 单 token decode 基本一样，剩余瓶颈在 HF/FLA model+state/cache+小 kernel launch 路径。
 
@@ -68,7 +69,7 @@
    - 继续 profile 单 token decode
    - `RWKV7StateCache` 已减少 generic CacheLayer 开销
    - 已新增 `rwkv7_forward_token` batched one-token fast decode entrypoint，并保留 `rwkv7_forward_one` bsz=1 兼容入口
-   - 已新增 batch cache/sweep、dynamic-batch reorder/drop harness、decode microbench 和 gap analyzer；V100 bundle 已跑通，下一轮重点是把 fast-token path 从约 0.64x official 继续推近 0.9x，主要减少 tiny kernel launch / Python dispatch
+   - 已新增 batch cache/sweep、dynamic-batch reorder/drop harness、decode microbench、decode component bench 和 gap analyzer；V100 bundle 已跑通，下一轮重点是把 fast-token path 从约 0.64x official 继续推近 0.9x，优先融合/减少 attention projection + LoRA 小矩阵调用，然后继续减少 tiny kernel launch / Python dispatch
 
 ## 阶段 3：Transformers 原生 PR 方向
 
