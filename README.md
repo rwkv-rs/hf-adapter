@@ -38,6 +38,7 @@ bench/
   bench_dynamic_batch.py
   bench_decode_micro.py
   bench_decode_components.py
+  bench_projection_lora.py
   analyze_results.py
   profile_decode.py
 NEXT_STEPS.md
@@ -280,6 +281,18 @@ python bench/bench_decode_components.py \
   --fixed-token
 ```
 
+Attention projection/LoRA microbenchmark:
+
+```bash
+python bench/bench_projection_lora.py \
+  --hf-dir /path/to/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --fast-cache true \
+  --layers 0 1 11
+```
+
 Benchmark gap report against current targets:
 
 ```bash
@@ -327,8 +340,9 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - Dynamic-batch cache reorder coverage exists for heterogeneous prompts; benchmark simulation records reorder/drop counts and total decoded tokens/s.
 - Decode microbench coverage records stable timing for HF recurrent forward, the fast token API, `lm_head`, argmax, embedding, and empty-loop overhead.
 - Decode component benchmark coverage times the fast-token layer path by projection, recurrent, norm/output, FFN, and layer totals.
+- Projection/LoRA benchmark coverage times the largest component and compares simple PyTorch bmm fusion candidates.
 - Benchmark analysis coverage reports speed/memory ratios and next optimization focus from `bench/results.jsonl`.
-- Latest V100 fast-token results: bsz=1 decode `58.0 tok/s` vs official `90.0 tok/s`; batch sweep fast-token per-seq decode is about `55 tok/s` for bsz=1/2/4/8; dynamic-batch simulation improves from `205.2` to `345.7` total tok/s; component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`.
+- Latest V100 fast-token results: bsz=1 decode `58.0 tok/s` vs official `90.0 tok/s`; batch sweep fast-token per-seq decode is about `55 tok/s` for bsz=1/2/4/8; dynamic-batch simulation improves from `205.2` to `345.7` total tok/s; component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`; naive PyTorch bmm projection/LoRA candidates are not enough, so the next implementation needs custom fusion/reduced launch count.
 - Save/reload roundtrip works with exact logit equality.
 - Official `rwkv` alignment includes prompt logits and 64-token greedy equality.
 - Official `rwkv` logits comparison on smoke prompts:
