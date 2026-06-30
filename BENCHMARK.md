@@ -132,6 +132,9 @@ Interpretation:
 - `RWKV7StateCache.select_batch` / `batch_select` now gives serving stacks a
   direct dynamic-batch compact/drop API; `reorder_cache` remains as the HF beam
   compatibility hook.
+- `RWKV7StateCache.detach()` and `to(device, dtype=None)` cover serving state
+  offload/restore. V100 dynamic cache tests now compact active rows, detach the
+  cache, move it to CPU, restore it to CUDA, and verify the next logits.
 - **bsz=1 decode target is met** with the opt-in `native_jit` fast-token backend:
   standard optimized HF decode is about `0.45x` official, FLA fast-token reaches
   about `0.64x` official, and `RWKV7_FAST_TOKEN_BACKEND=native_jit` reaches
@@ -575,7 +578,8 @@ The next optimization work should focus on **HF recurrent decode**:
   does not recapture when a retained size reappears.
 - Dynamic-batch cache reorder/drop correctness and benchmark harnesses are in
   place; V100 tests now cover non-inplace reorder plus compact/drop through
-  `select_batch` / `batch_select`.
+  `select_batch` / `batch_select`, plus detach and CPU offload/restore before
+  continuing decode.
 - Chunked prefill helper, correctness test, benchmark, analyzer section, and
   regression gate are in place. V100 bsz=2 prompt=512 chunked prefill matches
   full prefill/decode within fp16 tolerance; chunk sizes 64/128/256 reduce peak
