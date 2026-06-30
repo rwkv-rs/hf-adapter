@@ -55,6 +55,9 @@ def test_peft_lora_and_trl_sft_one_step(tmp_path, tiny_config):
     )
     args = trl.SFTConfig(
         output_dir=str(tmp_path),
+        use_cpu=True,
+        bf16=False,
+        fp16=False,
         max_steps=1,
         per_device_train_batch_size=2,
         report_to="none",
