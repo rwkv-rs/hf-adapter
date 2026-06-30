@@ -41,6 +41,7 @@
 - `bench/bench_dynamic_batch.py`：模拟 active batch reorder/drop，记录 dynamic batching 相关 total decoded tok/s。
 - `bench/bench_chunked_prefill.py`：记录 full vs chunked prefill 的 logits/cache correctness、throughput 和 peak VRAM tradeoff。
 - `bench/bench_decode_micro.py`：稳定记录 HF forward decode、fast token API、`lm_head`、argmax、embedding、empty loop 等 micro timing。
+- `bench/bench_forward_fast_path.py`：正式记录普通 HF cached one-token `forward()` 在 `RWKV7_FAST_FORWARD=1` 下的 production-facing 性能，并和 reference forward / direct fast-token 做速度与正确性 gate。
 - `bench/bench_decode_components.py`：细分 fast-token layer path 的 projection/recurrent/norm/FFN/top layer 耗时，用于决定下一步 fusion 目标。
 - `bench/bench_projection_lora.py`：专项测 attention projection/LoRA 子模块和简单 PyTorch bmm 候选，确认下一步需要 custom fusion 而不是简单拼 bmm。
 - `bench/bench_native_decode.py`：正式记录 `rwkv7_hf.native_jit` 的 native JIT / CUDA graph decode 结果，用作下一轮 fast-token integration 的性能上限参考。

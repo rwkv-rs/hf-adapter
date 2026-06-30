@@ -224,7 +224,7 @@ When the V100 server is reachable, run the committed bundle from the repository 
 ```
 
 It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_token`,
-`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
+`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
 then writes logs under `bench/logs/`. The bundle now also validates the
 `native_jit` backend plus fixed-batch and dynamic `native_graph` fast-token
 backends, and appends native HF speed rows before running the target gate. Use
@@ -376,6 +376,13 @@ Latest V100 microbench:
 | Direct `rwkv7_forward_token` fixed-token (auto->native_graph) | 3.9494 | 253.2 |
 | `lm_head` only | 0.1388 | 7205.2 |
 | argmax only | 0.0249 | 40233.1 |
+
+`bench_forward_fast_path.py` emits a smaller `axis=forward_fast_path` gate row
+for the production-facing path. It compares `RWKV7_FAST_FORWARD=0` reference HF
+forward, ordinary HF forward with fast-forward enabled, and direct
+`rwkv7_forward_token`; `check_results.py` requires the ordinary HF fast path to
+be at least `3.0x` faster than reference forward, at least `0.9x` of direct
+fast-token speed, and within fp16 diff tolerance.
 
 ## Decode component benchmark
 
