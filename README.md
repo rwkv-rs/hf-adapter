@@ -44,6 +44,7 @@ bench/
   bench_forward_fast_path.py
   bench_generate_fast_path.py
   bench_fast_token_warmup.py
+  bench_native_graph_overhead.py
   bench_decode_components.py
   bench_projection_lora.py
   compare_fast_token_layouts.py
@@ -502,6 +503,9 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   `bench_fast_token_warmup.py` records `axis=fast_token_warmup`; the default gate
   requires bsz=1/2/4/8 to resolve to `native_graph` and be present in the graph
   cache.
+- Native-graph replay overhead coverage records runner-vs-public-API equality,
+  cache-copy/token-copy/graph-replay/cache-bind timing, and public API tok/s, so
+  wrapper overhead around the captured graph is gated separately from model math.
 - Decode component benchmark coverage times the fast-token layer path by projection, recurrent, norm/output, FFN, and layer totals.
 - Projection/LoRA benchmark coverage times the largest component and compares simple PyTorch bmm fusion candidates.
 - Benchmark analysis coverage reports speed/memory ratios and next optimization focus from `bench/results.jsonl`.
@@ -518,7 +522,7 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   records reference HF forward at about `40 tok/s`, ordinary HF forward with
   fast-forward at about `251 tok/s`, and direct `rwkv7_forward_token` at about
   `252 tok/s`, all resolving to `native_graph`.
-- Latest V100 fast-token results: FLA bsz=1 decode `59.2 tok/s` vs official `92.1 tok/s`; native-JIT bsz=1 decode reaches `92.1 tok/s` vs official `92.1 tok/s`; HF `native_graph` bsz=1 reaches `255.5 tok/s` in speed_mem. Batched native-graph reaches `253.9` / `434.3` / `852.6` / `1539.1` aggregate tok/s for bsz=1/2/4/8, and warmup pre-captures those graph runners in `1.389s` with cache sizes `[1,2,4,8]`. Dynamic-batch simulation with native-graph reorder/drop through `select_batch` reaches `1209.3` total tok/s. Chunked prefill bsz=2 prompt=512 preserves logits/cache within fp16 tolerance and reduces peak VRAM to about `0.60x` / `0.62x` / `0.63x` of full prefill for chunk sizes 64/128/256, trading throughput to `0.13x` / `0.25x` / `0.50x`. Component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`; naive PyTorch bmm projection/LoRA candidates are not enough, so the next implementation needs custom fusion/reduced launch count.
+- Latest V100 fast-token results: FLA bsz=1 decode `59.2 tok/s` vs official `92.1 tok/s`; native-JIT bsz=1 decode reaches `92.1 tok/s` vs official `92.1 tok/s`; HF `native_graph` bsz=1 reaches `255.5 tok/s` in speed_mem. Batched native-graph reaches `253.9` / `434.3` / `852.6` / `1539.1` aggregate tok/s for bsz=1/2/4/8, and warmup pre-captures those graph runners in `1.389s` with cache sizes `[1,2,4,8]`. Native-graph replay overhead row shows public API `255.1 tok/s`, runner/API diff `0.0`, graph replay `3.93ms`, and cache-copy share `0.052` after skipping graph-buffer self-copy. Dynamic-batch simulation with native-graph reorder/drop through `select_batch` reaches `1209.3` total tok/s. Chunked prefill bsz=2 prompt=512 preserves logits/cache within fp16 tolerance and reduces peak VRAM to about `0.60x` / `0.62x` / `0.63x` of full prefill for chunk sizes 64/128/256, trading throughput to `0.13x` / `0.25x` / `0.50x`. Component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`; naive PyTorch bmm projection/LoRA candidates are not enough, so the next implementation needs custom fusion/reduced launch count.
 - Bitsandbytes quantization smoke now loads and generates for both 8-bit and
   4-bit on V100. Short benchmark rows show model footprint dropping from
   `364.4 MB` fp16 to `278.4 MB` 8-bit and `235.3 MB` 4-bit; current generic bnb

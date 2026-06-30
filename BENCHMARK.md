@@ -224,7 +224,7 @@ When the V100 server is reachable, run the committed bundle from the repository 
 ```
 
 It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_token`,
-`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `bench_fast_token_warmup.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
+`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `bench_fast_token_warmup.py`, `bench_native_graph_overhead.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
 then writes logs under `bench/logs/`. The bundle now also validates the
 `native_jit` backend plus fixed-batch and dynamic `native_graph` fast-token
 backends, and appends native HF speed rows before running the target gate. Use
@@ -420,6 +420,31 @@ python bench/bench_fast_token_warmup.py \
 `native_graph`, fit inside the configured graph cache, and are visible through
 the cache-size inspection API before production traffic starts.
 
+The native-graph runner now skips cache copies when the cache is already bound
+to the graph runner's own buffers, which is the steady state for continuous
+decode. `bench_native_graph_overhead.py` emits
+`axis=native_graph_replay_overhead` to keep that wrapper overhead visible:
+
+```bash
+python bench/bench_native_graph_overhead.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --fast-cache true \
+  --batch-size 1 \
+  --prompt-tokens 64 \
+  --steps 32 \
+  --fixed-token \
+  --results bench/results.jsonl
+```
+
+Latest V100 row: public API `255.1 tok/s`, runner-vs-API max diff `0.0`,
+graph replay `3.9296ms`, cache copy `0.2272ms`, cache bind `0.0809ms`, and
+cache-copy share `0.0517`. `check_results.py` gates the row with a minimum API
+throughput, runner/API equality tolerance, and maximum cache-copy share.
+
 ## Decode component benchmark
 
 `bench_decode_components.py` instruments the fast-token path itself:
@@ -553,7 +578,7 @@ python bench/analyze_results.py \
 
 It reports HF-vs-official prefill/decode/memory ratios, best decode-breakdown
 rows, fast-token API status, latest correctness row, batch/dynamic rows, decode
-microbench rows, fast-token warmup rows, quantization rows, and a short next-focus list. Current
+microbench rows, fast-token warmup and native-graph overhead rows, quantization rows, and a short next-focus list. Current
 committed V100 rows show:
 
 | Metric | Current | Target | Status |
@@ -563,6 +588,7 @@ committed V100 rows show:
 | decode_breakdown fast-token ratio | ~0.57x official | >=0.90x | GAP |
 | native_graph prototype decode ratio | ~2.76x official | >=0.90x | PASS prototype |
 | native_graph warmup bsz=1/2/4/8 | cache contains 1/2/4/8 in 1.389s | preflight complete | PASS |
+| native_graph replay overhead | API `255.1 tok/s`, copy share `0.052` | >=150 tok/s, <=0.15 copy share | PASS |
 | speed_mem memory ratio | ~1.00x official | <=1.10x | PASS |
 | 8-bit / 4-bit footprint ratio | 0.76x / 0.65x fp16 | lower is better | PASS smoke |
 | 8-bit / 4-bit decode ratio | 0.24x / 0.67x fp16 | >=1.00x | GAP |
@@ -572,7 +598,9 @@ toward larger models and solve the generic bnb quantized decode speed gap. The
 bsz=1 HF fast-token target is exceeded by `native_graph`; bsz=2/4/8 native-graph
 serving now reaches `434.3` / `852.6` / `1539.1` aggregate tok/s, and
 preflight warmup confirms graph runners are captured for bsz=1/2/4/8 before the
-first serving request.
+first serving request. The native-graph overhead row confirms the public API is
+still `255.1 tok/s` while cache-copy overhead stays at about `5.2%` of measured
+manual replay wall time.
 
 ## Benchmark regression and target gates
 
@@ -621,9 +649,11 @@ The next optimization work should focus on **HF recurrent decode**:
 13. Use `rwkv7_warmup_fast_token()` and `bench_fast_token_warmup.py` to remove
    first-request native-graph capture from serving latency before measuring
    production traffic.
-14. Keep `logits_to_keep=1` as the default serving benchmark path because it already
+14. Use `bench_native_graph_overhead.py` to keep cache-copy/bind overhead around
+   the captured graph below the gate while optimizing dynamic serving paths.
+15. Keep `logits_to_keep=1` as the default serving benchmark path because it already
    fixes the earlier excess-memory measurement.
-15. After V100 decode approaches official `rwkv`, rerun on newer GPUs and larger models.
+16. After V100 decode approaches official `rwkv`, rerun on newer GPUs and larger models.
 
 ## Loop state
 
