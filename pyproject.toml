@@ -1,0 +1,20 @@
+[project]
+name = "rwkv7-hf-adapter"
+version = "0.1.0"
+description = "First-stage Hugging Face adapter and converter for official RWKV-7 checkpoints."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "dsadsasdaddas", email = "wangyue20060908@gmail.com" }]
+dependencies = [
+  "torch",
+  "transformers",
+  "safetensors",
+  "flash-linear-attention",
+]
+
+[project.optional-dependencies]
+test = ["peft"]
+
+[tool.setuptools.packages.find]
+include = ["rwkv7_hf*"]
