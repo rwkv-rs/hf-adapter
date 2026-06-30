@@ -131,7 +131,8 @@ Interpretation:
 - The lightweight `RWKV7StateCache` preserves exact logits/cache behavior and keeps the real remote-code `AutoModelForCausalLM` path at the same ~41 tok/s level while avoiding FLA CacheLayer bookkeeping.
 - `RWKV7StateCache.select_batch` / `batch_select` now gives serving stacks a
   direct dynamic-batch compact/drop API; `reorder_cache` remains as the HF beam
-  compatibility hook.
+  compatibility hook. `RWKV7StateCache.rwkv7_cache_metrics()` exposes
+  update/select/reorder/offload counters and current cache shape telemetry.
 - `RWKV7StateCache.detach()` and `to(device, dtype=None)` cover serving state
   offload/restore. V100 dynamic cache tests now compact active rows, detach the
   cache, move it to CPU, restore it to CUDA, and verify the next logits.
@@ -398,7 +399,9 @@ fast-token resources. With `backend="auto"` it follows the same native-graph ->
 native-JIT -> FLA resolution as `rwkv7_forward_token`; with
 `backend="native_graph"` it raises if graph replay is unavailable. The paired
 `rwkv7_native_graph_cache_batch_sizes()` API reports which active batch sizes
-are currently retained in the per-model graph-runner LRU.
+are currently retained in the per-model graph-runner LRU, and
+`rwkv7_native_graph_cache_stats()` reports requests/hits/misses/evictions plus
+hit rate for cache-reuse dashboards.
 
 `bench_fast_token_warmup.py` emits `axis=fast_token_warmup`:
 
