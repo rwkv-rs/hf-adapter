@@ -64,7 +64,7 @@ run() {
     --dtype "${DTYPE}" \
     --device "${DEVICE}" \
     --fuse-norm false \
-    --batch-sizes 1 \
+    --batch-sizes 1 2 4 \
     --fast-token-layouts 3d \
     --fast-token-backends native_graph \
     --decode-steps 16 \
@@ -175,6 +175,22 @@ run() {
     --runs 3 \
     --results "${RESULTS}"
 
+  run python bench/bench_batch_sweep.py \
+    --hf-dir "${HF_DIR}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --attn-mode fused_recurrent \
+    --fuse-norm false \
+    --fast-cache true \
+    --fast-decode-api auto \
+    --fast-token-backend native_graph \
+    --batch-sizes 1 2 4 8 \
+    --prompt-tokens "${PROMPT_TOKENS}" \
+    --decode-tokens "${DECODE_TOKENS}" \
+    --warmup 3 \
+    --runs 3 \
+    --results "${RESULTS}"
+
   run python bench/bench_dynamic_batch.py \
     --hf-dir "${HF_DIR}" \
     --dtype "${DTYPE}" \
@@ -183,6 +199,24 @@ run() {
     --fuse-norm false \
     --fast-cache true \
     --fast-token-backend native_jit \
+    --decode-apis forward rwkv7_forward_token \
+    --batch-size 8 \
+    --min-batch-size 2 \
+    --prompt-tokens 256 \
+    --decode-steps "${DECODE_TOKENS}" \
+    --warmup 8 \
+    --reorder-every 4 \
+    --drop-every 32 \
+    --results "${RESULTS}"
+
+  run python bench/bench_dynamic_batch.py \
+    --hf-dir "${HF_DIR}" \
+    --dtype "${DTYPE}" \
+    --device "${DEVICE}" \
+    --attn-mode fused_recurrent \
+    --fuse-norm false \
+    --fast-cache true \
+    --fast-token-backend native_graph \
     --decode-apis forward rwkv7_forward_token \
     --batch-size 8 \
     --min-batch-size 2 \

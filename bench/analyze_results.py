@@ -154,10 +154,25 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         batch_rows,
         lambda r: (r.get("batch_size"), r.get("decode_api")),
     )
+    native_graph_batch_sizes = sorted(
+        {
+            int(r.get("batch_size"))
+            for r in batch_latest
+            if r.get("decode_api") == "rwkv7_forward_token"
+            and r.get("fast_token_backend") == "native_graph"
+            and r.get("fast_token_backend_effective") == "native_graph"
+            and r.get("batch_size") is not None
+        }
+    )
     dynamic_rows = [r for r in rows if r.get("axis") == "dynamic_batch" and r.get("backend") == "hf_adapter"]
     dynamic_latest = latest_by_key(
         dynamic_rows,
         lambda r: r.get("decode_api"),
+    )
+    native_graph_dynamic = any(
+        r.get("decode_api") == "rwkv7_forward_token"
+        and r.get("fast_token_backend") == "native_graph"
+        for r in dynamic_latest
     )
     micro = latest(rows, lambda r: r.get("axis") == "decode_micro" and r.get("backend") == "hf_adapter")
     components = latest(rows, lambda r: r.get("axis") == "decode_components" and r.get("backend") == "hf_adapter")
@@ -236,7 +251,15 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     if best_native is None:
         focus.append("native JIT/CUDA-graph decode rows pending")
     elif native_decode_ratio is not None and native_decode_ratio >= target_decode_ratio:
-        focus.append(f"{native_best_path} reaches {native_decode_ratio:.2f}x official; validate integration with HF fast-token/dynamic batching")
+        if native_graph_batch_sizes and native_graph_dynamic:
+            sizes = "/".join(str(v) for v in native_graph_batch_sizes)
+            focus.append(
+                f"{native_best_path} reaches {native_decode_ratio:.2f}x official; HF native_graph integrated for bsz={sizes} plus dynamic active batches"
+            )
+        else:
+            focus.append(
+                f"{native_best_path} reaches {native_decode_ratio:.2f}x official; validate integration with HF fast-token/dynamic batching"
+            )
     if not focus:
         focus.append("targets met for available rows; rerun larger models/new GPUs")
 
