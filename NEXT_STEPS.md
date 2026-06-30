@@ -6,6 +6,7 @@
 - HF `config.json` + `generation_config.json`
 - remote-code wrapper：`AutoConfig` / `AutoModelForCausalLM`
 - RWKV trie slow tokenizer：`AutoTokenizer`
+- 转换脚本已从权重 shape 推断 layer count / hidden size / head_dim / value_dim / rank dims，并新增离线 shape 测试，避免后续 0.4B+ 尺寸继续沿用 0.1B hardcode。
 - `generate(use_cache=True)` 跑通
 - PEFT LoRA forward/loss/backward 跑通
 - HF Trainer / TRL SFTTrainer 1-step LoRA smoke 跑通
@@ -61,6 +62,8 @@
 下一步继续补：
 
 1. 支持全部已发布尺寸的配置推断和转换：0.4B / 1.5B / 2.9B / 7.2B / 13.3B。
+   - 已把 converter 的 head_dim/value_dim/rank dims 改成权重 shape 推断，并用 `tests/test_convert_config.py` 覆盖非 64 head_dim、value_dim 列表和错误 shape。
+   - 下一步需要拿真实 0.4B+ `.pth` 跑转换、load、alignment 和 speed smoke。
 2. 增加批量转换脚本和 SHA256 manifest。
 3. 补 HF behavior：
    - 已补 `resize_token_embeddings` 固定词表保护
