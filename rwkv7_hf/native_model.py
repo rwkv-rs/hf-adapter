@@ -322,6 +322,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
+        attention_mask=None,
         past_key_values=None,
         use_cache: bool | None = None,
         return_dict: bool | None = True,
