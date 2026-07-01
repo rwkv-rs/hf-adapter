@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "model": "/home/wzu/codex-run/rwkv7-wheel-final-smoke/model",
+  "revision": "main",
+  "device": "cuda",
+  "dtype": "torch.float16",
+  "versions": {
+    "python": "3.12.2",
+    "torch": "2.11.0+cu130",
+    "transformers": "5.8.0",
+    "rwkv7_hf": "0.9.0"
+  },
+  "prompt_tokens": 6,
+  "generated_tokens": 2,
+  "generated_token_ids": [
+    308,
+    459
+  ],
+  "generated_text": " I'm",
+  "timing": {
+    "load_seconds": 0.735702,
+    "prefill_seconds": 0.248599,
+    "prefill_tokens_per_second": 24.135,
+    "decode_steps": 1,
+    "decode_seconds": 0.011699,
+    "decode_tokens_per_second": 85.474
+  },
+  "peak_memory_bytes": 420133376,
+  "cache_type": "RWKV7Cache"
+}
