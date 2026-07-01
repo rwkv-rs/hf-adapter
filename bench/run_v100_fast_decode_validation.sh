@@ -10,7 +10,7 @@
 #   FUSED_ATTN_OUTPUT_STEPS, FUSED_ATTN_OUTPUT_INPUT_SCALE, FUSED_FFN_STEPS, FUSED_SHIFT_MIX_STEPS,
 #   FUSED_RECURRENT_STEPS, FUSED_RECURRENT_OUTPUT_STEPS,
 #   NATIVE_GRAPH_FUSED_RECURRENT_STEPS, NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT_STEPS,
-#   NATIVE_GRAPH_FUSED_OUTPUT_STEPS, NATIVE_GRAPH_FUSED_WAVG_LORA_STEPS, NATIVE_GRAPH_FUSED_OUTPUT_BATCH_SIZES,
+#   NATIVE_GRAPH_FUSED_OUTPUT_STEPS, NATIVE_GRAPH_FUSED_WAVG_LORA_STEPS, NATIVE_GRAPH_VKWR_RKV_POLICY_STEPS, NATIVE_GRAPH_FUSED_OUTPUT_BATCH_SIZES,
 #   NATIVE_QUANT_GEMV_STEPS, NATIVE_QUANT_W4_GEMV_STEPS,
 #   NATIVE_QUANT_RKV_STEPS, NATIVE_QUANT_W4_RKV_STEPS,
 #   NATIVE_DECODE_TOKENS, RUN_LARGER_MODEL_SMOKE, LARGER_HF_DIR,
@@ -61,6 +61,7 @@ NATIVE_GRAPH_FUSED_RECURRENT_STEPS="${NATIVE_GRAPH_FUSED_RECURRENT_STEPS:-32}"
 NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT_STEPS="${NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT_STEPS:-32}"
 NATIVE_GRAPH_FUSED_OUTPUT_STEPS="${NATIVE_GRAPH_FUSED_OUTPUT_STEPS:-32}"
 NATIVE_GRAPH_FUSED_WAVG_LORA_STEPS="${NATIVE_GRAPH_FUSED_WAVG_LORA_STEPS:-32}"
+NATIVE_GRAPH_VKWR_RKV_POLICY_STEPS="${NATIVE_GRAPH_VKWR_RKV_POLICY_STEPS:-32}"
 NATIVE_GRAPH_FUSED_OUTPUT_BATCH_SIZES="${NATIVE_GRAPH_FUSED_OUTPUT_BATCH_SIZES:-1 2 4 8}"
 NATIVE_QUANT_GEMV_STEPS="${NATIVE_QUANT_GEMV_STEPS:-128}"
 NATIVE_QUANT_W4_GEMV_STEPS="${NATIVE_QUANT_W4_GEMV_STEPS:-128}"
@@ -166,7 +167,7 @@ run_larger_smoke() {
   echo "date=$(date -Is)"
   echo "hf_dir=${HF_DIR}"
   echo "pth=${PTH}"
-  echo "dtype=${DTYPE} device=${DEVICE} prompt_tokens=${PROMPT_TOKENS} decode_tokens=${DECODE_TOKENS} micro_steps=${MICRO_STEPS} forward_fast_steps=${FORWARD_FAST_STEPS} generate_batch_size=${GENERATE_BATCH_SIZE} generate_new_tokens=${GENERATE_NEW_TOKENS} warmup_batch_sizes=${WARMUP_BATCH_SIZES} native_graph_cache_size=${NATIVE_GRAPH_CACHE_SIZE} native_graph_overhead_batch_sizes=${NATIVE_GRAPH_OVERHEAD_BATCH_SIZES} native_graph_overhead_steps=${NATIVE_GRAPH_OVERHEAD_STEPS} component_steps=${COMPONENT_STEPS} fused_projection_steps=${FUSED_PROJECTION_STEPS} fused_wa_lora_steps=${FUSED_WA_LORA_STEPS} fused_wag_lora_steps=${FUSED_WAG_LORA_STEPS} fused_wavg_lora_steps=${FUSED_WAVG_LORA_STEPS} fused_rkv_wag_projection_steps=${FUSED_RKV_WAG_PROJECTION_STEPS} fused_attn_output_steps=${FUSED_ATTN_OUTPUT_STEPS} fused_attn_output_input_scale=${FUSED_ATTN_OUTPUT_INPUT_SCALE} fused_ffn_steps=${FUSED_FFN_STEPS} fused_shift_mix_steps=${FUSED_SHIFT_MIX_STEPS} fused_recurrent_steps=${FUSED_RECURRENT_STEPS} fused_recurrent_output_steps=${FUSED_RECURRENT_OUTPUT_STEPS} native_graph_fused_recurrent_steps=${NATIVE_GRAPH_FUSED_RECURRENT_STEPS} native_graph_fused_recurrent_output_steps=${NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT_STEPS} native_graph_fused_output_steps=${NATIVE_GRAPH_FUSED_OUTPUT_STEPS} native_graph_fused_wavg_lora_steps=${NATIVE_GRAPH_FUSED_WAVG_LORA_STEPS} native_graph_fused_output_batch_sizes=${NATIVE_GRAPH_FUSED_OUTPUT_BATCH_SIZES} native_quant_gemv_steps=${NATIVE_QUANT_GEMV_STEPS} native_quant_w4_gemv_steps=${NATIVE_QUANT_W4_GEMV_STEPS} native_quant_rkv_steps=${NATIVE_QUANT_RKV_STEPS} native_quant_w4_rkv_steps=${NATIVE_QUANT_W4_RKV_STEPS}"
+  echo "dtype=${DTYPE} device=${DEVICE} prompt_tokens=${PROMPT_TOKENS} decode_tokens=${DECODE_TOKENS} micro_steps=${MICRO_STEPS} forward_fast_steps=${FORWARD_FAST_STEPS} generate_batch_size=${GENERATE_BATCH_SIZE} generate_new_tokens=${GENERATE_NEW_TOKENS} warmup_batch_sizes=${WARMUP_BATCH_SIZES} native_graph_cache_size=${NATIVE_GRAPH_CACHE_SIZE} native_graph_overhead_batch_sizes=${NATIVE_GRAPH_OVERHEAD_BATCH_SIZES} native_graph_overhead_steps=${NATIVE_GRAPH_OVERHEAD_STEPS} component_steps=${COMPONENT_STEPS} fused_projection_steps=${FUSED_PROJECTION_STEPS} fused_wa_lora_steps=${FUSED_WA_LORA_STEPS} fused_wag_lora_steps=${FUSED_WAG_LORA_STEPS} fused_wavg_lora_steps=${FUSED_WAVG_LORA_STEPS} fused_rkv_wag_projection_steps=${FUSED_RKV_WAG_PROJECTION_STEPS} fused_attn_output_steps=${FUSED_ATTN_OUTPUT_STEPS} fused_attn_output_input_scale=${FUSED_ATTN_OUTPUT_INPUT_SCALE} fused_ffn_steps=${FUSED_FFN_STEPS} fused_shift_mix_steps=${FUSED_SHIFT_MIX_STEPS} fused_recurrent_steps=${FUSED_RECURRENT_STEPS} fused_recurrent_output_steps=${FUSED_RECURRENT_OUTPUT_STEPS} native_graph_fused_recurrent_steps=${NATIVE_GRAPH_FUSED_RECURRENT_STEPS} native_graph_fused_recurrent_output_steps=${NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT_STEPS} native_graph_fused_output_steps=${NATIVE_GRAPH_FUSED_OUTPUT_STEPS} native_graph_fused_wavg_lora_steps=${NATIVE_GRAPH_FUSED_WAVG_LORA_STEPS} native_graph_vkwr_rkv_policy_steps=${NATIVE_GRAPH_VKWR_RKV_POLICY_STEPS} native_graph_fused_output_batch_sizes=${NATIVE_GRAPH_FUSED_OUTPUT_BATCH_SIZES} native_quant_gemv_steps=${NATIVE_QUANT_GEMV_STEPS} native_quant_w4_gemv_steps=${NATIVE_QUANT_W4_GEMV_STEPS} native_quant_rkv_steps=${NATIVE_QUANT_RKV_STEPS} native_quant_w4_rkv_steps=${NATIVE_QUANT_W4_RKV_STEPS}"
   echo "larger_smoke=${RUN_LARGER_MODEL_SMOKE} larger_hf_dir=${LARGER_HF_DIR} larger_pth=${LARGER_PTH} larger_model_size_label=${LARGER_MODEL_SIZE_LABEL} larger_max_new_tokens=${LARGER_MAX_NEW_TOKENS} larger_fast_token_backend=${LARGER_FAST_TOKEN_BACKEND}"
   echo "larger_15_smoke=${RUN_15B_MODEL_SMOKE} larger_15_hf_dir=${LARGER_15_HF_DIR} larger_15_pth=${LARGER_15_PTH} larger_15_max_new_tokens=${LARGER_15_MAX_NEW_TOKENS} larger_15_fast_token_backend=${LARGER_15_FAST_TOKEN_BACKEND}"
   echo "larger_29_smoke=${RUN_29B_MODEL_SMOKE} larger_29_hf_dir=${LARGER_29_HF_DIR} larger_29_pth=${LARGER_29_PTH} larger_29_max_new_tokens=${LARGER_29_MAX_NEW_TOKENS} larger_29_fast_token_backend=${LARGER_29_FAST_TOKEN_BACKEND}"
@@ -726,6 +727,22 @@ run_larger_smoke() {
       --prompt-tokens 64 \
       --warmup 4 \
       --steps "${NATIVE_GRAPH_FUSED_WAVG_LORA_STEPS}" \
+      --fixed-token \
+      --results "${RESULTS}"
+  done
+
+  for rkv_policy_bsz in ${NATIVE_GRAPH_FUSED_OUTPUT_BATCH_SIZES}; do
+    run python bench/bench_native_graph_vkwr_rkv_policy.py \
+      --hf-dir "${HF_DIR}" \
+      --dtype "${DTYPE}" \
+      --device "${DEVICE}" \
+      --attn-mode fused_recurrent \
+      --fuse-norm false \
+      --fast-cache true \
+      --batch-size "${rkv_policy_bsz}" \
+      --prompt-tokens 64 \
+      --warmup 4 \
+      --steps "${NATIVE_GRAPH_VKWR_RKV_POLICY_STEPS}" \
       --fixed-token \
       --results "${RESULTS}"
   done
