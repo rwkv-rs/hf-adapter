@@ -22,7 +22,7 @@
 - **fp16 decode**：V100 0.1B native_graph fast-token 已达到约 `255 tok/s` 量级，超过已测 RWKV-LM fused bsz=1 decode 基线约 `2.6x`。
 - **HF forward/generate 快路径**：`RWKV7_FAST_FORWARD=1` 默认把 eval/no-grad cached one-token `forward()` / `generate()` 路由到 fast-token backend。
 - **state cache**：已有 `RWKV7StateCache`、dynamic batch select/reorder/drop/compact、chunked prefill、offload/restore、cache metrics、native-graph runner LRU / hit-rate telemetry。
-- **训练兼容**：PEFT LoRA、HF Trainer、TRL SFT、TRL DPO、TRL GRPO smoke 已有脚本覆盖。
+- **训练兼容**：PEFT LoRA、HF Trainer、TRL SFT、TRL DPO、TRL GRPO smoke 已有脚本覆盖；Trainer/TRL smoke 现支持 batch size / gradient accumulation 参数，并校验 LoRA/trainable 参数确实更新；V100 fp32 smoke 已覆盖 Trainer/SFT batch=2 grad_accum=2 以及 DPO/GRPO batch=2。
 - **多卡方向**：2 x V100 手动 `device_map` PP generate smoke 已通过；ZeRO-2/3 配置有结构测试。
 - **大模型**：0.4B / 1.5B / 2.9B / 7.2B / 13.3B 已完成 HF 转换和 V100 load/forward/generate smoke rows。
 - **投机解码**：0.1B draft -> 0.4B target V100 smoke 已保持 target greedy 一致，并用 cached-prefix resync 达到短样例约 `2.1x` target-greedy speedup。
