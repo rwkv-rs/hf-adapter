@@ -163,6 +163,18 @@ def check_common(report: dict[str, Any], failures: list[str], args: argparse.Nam
         if val is None or float(val) > args.max_forward_fast_diff:
             fail(failures, f"forward_fast_path {key} above floor: {val} > {args.max_forward_fast_diff}")
 
+    training_rows = report.get("training_smoke") or []
+    for row in training_rows:
+        if row.get("status") != "pass":
+            fail(failures, f"training smoke row did not pass: {row}")
+        delta = row.get("max_trainable_delta")
+        if delta is None or float(delta) <= 0.0:
+            fail(failures, f"training smoke row did not update trainable params: {row}")
+        if row.get("batch_size") is not None and int(row.get("batch_size") or 0) < 1:
+            fail(failures, f"training smoke invalid batch size: {row}")
+        if row.get("gradient_accumulation_steps") is not None and int(row.get("gradient_accumulation_steps") or 0) < 1:
+            fail(failures, f"training smoke invalid gradient accumulation: {row}")
+
     generate_fast = report.get("generate_fast_path") or {}
     gen_ref_tokps = (generate_fast.get("reference_generate") or {}).get("tokps")
     gen_fast_tokps = (generate_fast.get("hf_generate_fast") or {}).get("tokps")
