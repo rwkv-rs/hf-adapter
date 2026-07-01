@@ -98,7 +98,16 @@ serving speed.
      first V100 row proves roughly half fp16 weight footprint and good cosine,
      but it is still slower than fp16 cuBLAS, so the W8 path remains telemetry
      until the kernel is optimized.
-8. Native W4 pack plus fused int4 dequant-GEMV.
+8. Native W4 pack plus fused int4 dequant-GEMV prototype.
+   - `rwkv7_hf.native_quant.quantize_int4_rowwise()` packs dense weights as
+     two signed 4-bit values per byte plus row-wise fp32 scales.
+   - `rwkv7_hf.native_quant.int4_rowwise_gemv()` provides an optional Triton
+     fused nibble-unpack/dequant-GEMV prototype with torch fallback.
+   - `bench/bench_native_quant_w4_gemv.py` records
+     `native_quant_w4_gemv_proto`. The first V100 row proves roughly quarter
+     fp16 sampled weight footprint, but the prototype is still slower than
+     fp16 cuBLAS and needs a better packed reduction / deeper projection fusion
+     before it can replace bnb or fp16.
 9. V100 + 5070/newer-GPU benchmark matrix.
 
 ## Backend dispatch requirement
