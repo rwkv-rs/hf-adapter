@@ -67,6 +67,8 @@ def check_present(report: dict[str, Any], failures: list[str]) -> None:
         fail(failures, "missing larger_model_smoke row")
     if not report.get("device_map_smoke"):
         fail(failures, "missing device_map_smoke row")
+    if not report.get("speculative_decode"):
+        fail(failures, "missing speculative_decode row")
 
 
 def index_by(rows: list[dict[str, Any]], key: str) -> dict[Any, dict[str, Any]]:
@@ -283,6 +285,27 @@ def check_common(report: dict[str, Any], failures: list[str], args: argparse.Nam
         if device_map.get("last_fast_token_backend") is not None:
             fail(failures, f"device_map_smoke should skip single-device fast-token backend, got {device_map.get('last_fast_token_backend')}")
 
+    speculative = report.get("speculative_decode") or {}
+    if speculative.get("status") != "pass":
+        fail(failures, f"speculative_decode did not pass: {speculative.get('status')}")
+    elif args.require_speculative_decode:
+        if speculative.get("same_model") is True:
+            fail(failures, "speculative_decode must use a real draft model, not target==draft")
+        if speculative.get("generated_equal") is not True:
+            fail(failures, "speculative_decode did not match target greedy output")
+        if int(speculative.get("generated_tokens") or 0) < args.min_speculative_new_tokens:
+            fail(failures, f"speculative_decode generated too few tokens: {speculative.get('generated_tokens')} < {args.min_speculative_new_tokens}")
+        proposed = speculative.get("stats_proposed_tokens")
+        generated = speculative.get("stats_generated_tokens")
+        if proposed is None or generated is None or int(proposed) < int(generated):
+            fail(failures, f"speculative_decode proposed/generated invalid: {proposed}/{generated}")
+        acceptance = speculative.get("stats_acceptance_rate")
+        if acceptance is None or float(acceptance) < args.min_speculative_acceptance_rate:
+            fail(failures, f"speculative_decode acceptance below floor: {acceptance} < {args.min_speculative_acceptance_rate}")
+        target_calls = speculative.get("stats_target_forward_calls")
+        if target_calls is None or int(target_calls) <= 0:
+            fail(failures, f"speculative_decode target_forward_calls invalid: {target_calls}")
+
     if args.require_quantization:
         quant_rows = report.get("quantization") or []
         by_mode = {row.get("quantization"): row for row in quant_rows}
@@ -379,6 +402,10 @@ def main() -> int:
                     help="Require passing HF multi-GPU device_map generate smoke rows")
     ap.add_argument("--min-device-map-cuda-devices", type=int, default=2)
     ap.add_argument("--min-device-map-new-tokens", type=int, default=2)
+    ap.add_argument("--require-speculative-decode", action="store_true", default=True,
+                    help="Require passing real-draft speculative decode benchmark rows")
+    ap.add_argument("--min-speculative-new-tokens", type=int, default=4)
+    ap.add_argument("--min-speculative-acceptance-rate", type=float, default=0.0)
     ap.add_argument("--require-quantization", action="store_true",
                     help="Require passing 8bit/4bit quantization benchmark rows")
     ap.add_argument("--min-quant-decode-ratio", type=float, default=1.0)

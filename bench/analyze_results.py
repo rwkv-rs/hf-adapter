@@ -195,6 +195,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     quant_rows = [r for r in rows if r.get("axis") == "quantization" and r.get("backend") == "hf_adapter"]
     quant_latest = latest_by_key(quant_rows, lambda r: r.get("quantization"))
     device_map_smoke = latest(rows, lambda r: r.get("axis") == "device_map_smoke" and r.get("backend") == "hf_adapter")
+    speculative_decode = latest(rows, lambda r: r.get("axis") == "speculative_decode" and r.get("backend") == "hf_adapter" and r.get("status") != "skip")
     larger_rows = [r for r in rows if r.get("axis") == "larger_model_smoke" and r.get("backend") == "hf_adapter"]
     larger_latest = latest_by_key(
         larger_rows,
@@ -291,6 +292,16 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         )
     else:
         focus.append(f"HF device_map generate smoke did not pass: {device_map_smoke.get('status')}")
+
+    if speculative_decode is None:
+        focus.append("real-draft speculative decode benchmark row pending")
+    elif speculative_decode.get("status") == "pass":
+        focus.append(
+            "speculative decode matches target greedy with "
+            f"draft={speculative_decode.get('draft_model_name')} acceptance={speculative_decode.get('stats_acceptance_rate')}"
+        )
+    else:
+        focus.append(f"speculative decode benchmark did not pass: {speculative_decode.get('status')}")
 
     larger_by_label = {str(r.get("model_size_label", "")).lower(): r for r in larger_latest}
     for required_label, display_label in (
@@ -412,6 +423,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             for r in larger_latest
         ],
         "device_map_smoke": compact(device_map_smoke, ["_lineno", "status", "dtype", "device", "device_count", "device_map_kind", "split_layer", "num_hidden_layers", "hf_device_map_devices", "multi_cuda_device_map", "fast_forward_env", "last_fast_token_backend", "prompt_tokens", "max_new_tokens", "generated_tokens", "generated_tail", "reference_tail", "generated_equal_reference", "logits_shape", "logits_device", "logits_finite", "load_s", "generate_s", "generate_tokps", "peak_vram_mb_by_device"]),
+        "speculative_decode": compact(speculative_decode, ["_lineno", "status", "dtype", "device", "target_model_name", "draft_model_name", "same_model", "prompt_tokens", "max_new_tokens", "draft_tokens", "generated_tokens", "generated_equal", "target_tail", "speculative_tail", "target_generate_s", "speculative_s", "target_generate_tokps", "speculative_tokps", "speedup_vs_target_generate", "stats_generated_tokens", "stats_proposed_tokens", "stats_accepted_tokens", "stats_corrected_tokens", "stats_resyncs", "stats_target_forward_calls", "stats_draft_forward_calls", "stats_acceptance_rate", "peak_vram_mb"]),
         "quantization": [
             compact(
                 r,
@@ -505,6 +517,8 @@ def print_text(report: dict[str, Any]) -> None:
         print("PENDING")
     print("\n## device_map_smoke")
     print(json.dumps(report["device_map_smoke"], ensure_ascii=False) if report["device_map_smoke"] else "PENDING")
+    print("\n## speculative_decode")
+    print(json.dumps(report["speculative_decode"], ensure_ascii=False) if report["speculative_decode"] else "PENDING")
     print("\n## quantization")
     if report["quantization"]:
         for row in report["quantization"]:
