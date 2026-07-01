@@ -8,8 +8,96 @@ Run: python -m rwkv7_hf.native_jit <hf_dir>
 """
 from __future__ import annotations
 
+import os
+
 import torch
 import torch.nn.functional as F
+
+try:  # pragma: no cover - optional Triton fast path on CUDA hosts
+    from .fused_recurrent_update import fused_recurrent_update, fused_recurrent_update_available
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from fused_recurrent_update import fused_recurrent_update, fused_recurrent_update_available
+    except Exception:
+        fused_recurrent_update = None  # type: ignore[assignment]
+        fused_recurrent_update_available = None  # type: ignore[assignment]
+
+
+_FALSE_VALUES = {"0", "false", "False", "no", "off"}
+
+
+def _native_graph_fused_recurrent_enabled() -> bool:
+    """Runtime switch for the experimental native-graph recurrent Triton path."""
+
+    if os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT", "0") in _FALSE_VALUES:
+        return False
+    if fused_recurrent_update is None or fused_recurrent_update_available is None:
+        return False
+    try:
+        return bool(fused_recurrent_update_available())
+    except Exception:
+        return False
+
+
+def _recurrent_update_unbatched(
+    r: torch.Tensor,
+    w: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    kk: torch.Tensor,
+    a: torch.Tensor,
+    state: torch.Tensor,
+    H: int,
+    N: int,
+):
+    if _native_graph_fused_recurrent_enabled():
+        out, new_state = fused_recurrent_update(
+            r.view(1, H, N),
+            w.view(1, H, N),
+            k.view(1, H, N),
+            v.view(1, H, N),
+            kk.view(1, H, N),
+            a.view(1, H, N),
+            state.view(1, H, N, N),
+            block_n=N,
+        )
+        return out.reshape(H * N), new_state.reshape(H, N, N)
+    vk = v.view(H, N, 1) @ k.view(H, 1, N)
+    ab = (-kk).view(H, N, 1) @ (kk * a).view(H, 1, N)
+    new_state = state * w.view(H, 1, N) + state @ ab.float() + vk.float()
+    out = new_state.to(r.dtype) @ r.view(H, N, 1)
+    return out.view(H * N), new_state
+
+
+def _recurrent_update_batched(
+    r: torch.Tensor,
+    w: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    kk: torch.Tensor,
+    a: torch.Tensor,
+    state: torch.Tensor,
+    B: int,
+    H: int,
+    N: int,
+):
+    if _native_graph_fused_recurrent_enabled():
+        out, new_state = fused_recurrent_update(
+            r.view(B, H, N),
+            w.view(B, H, N),
+            k.view(B, H, N),
+            v.view(B, H, N),
+            kk.view(B, H, N),
+            a.view(B, H, N),
+            state,
+            block_n=N,
+        )
+        return out.reshape(B, H * N), new_state
+    vk = v.view(B, H, N, 1) @ k.view(B, H, 1, N)
+    ab = (-kk).view(B, H, N, 1) @ (kk * a).view(B, H, 1, N)
+    new_state = state * w.view(B, H, 1, N) + state @ ab.float() + vk.float()
+    out = new_state.to(r.dtype) @ r.view(B, H, N, 1)
+    return out.view(B, H * N), new_state
 
 
 @torch.jit.script
@@ -278,11 +366,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
     else:
         v = v + (v_first - v) * torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
     w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
-    vk = v.view(H, N, 1) @ k.view(H, 1, N)
-    ab = (-kk).view(H, N, 1) @ (kk * a).view(H, 1, N)
-    new_state = state * w.view(H, 1, N) + state @ ab.float() + vk.float()
-    out = new_state.to(h.dtype) @ r.view(H, N, 1)
-    out = out.view(H * N)
+    out, new_state = _recurrent_update_unbatched(r, w, k, v, kk, a, state, H, N)
     out = F.group_norm(out.view(1, H * N), H, gn_w, gn_b, eps).view(H * N)
     sk = (r.view(H, N) * k.view(H, N) * r_k).sum(dim=-1, keepdim=True)
     out = out + (sk * v.view(H, N)).view(H * N)
@@ -333,11 +417,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
     else:
         v = v + (v_first - v) * torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
     w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
-    vk = v.view(B, H, N, 1) @ k.view(B, H, 1, N)
-    ab = (-kk).view(B, H, N, 1) @ (kk * a).view(B, H, 1, N)
-    new_state = state * w.view(B, H, 1, N) + state @ ab.float() + vk.float()
-    out = new_state.to(h.dtype) @ r.view(B, H, N, 1)
-    out = out.view(B, H * N)
+    out, new_state = _recurrent_update_batched(r, w, k, v, kk, a, state, B, H, N)
     out = F.group_norm(out, H, gn_w, gn_b, eps).view(B, H * N)
     sk = (r.view(B, H, N) * k.view(B, H, N) * r_k).sum(dim=-1, keepdim=True)
     out = out + (sk * v.view(B, H, N)).view(B, H * N)
