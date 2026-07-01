@@ -126,15 +126,19 @@ serving speed.
      correctness-clean but end-to-end neutral, so the flag remains opt-in while
      deeper projection/LoRA fusion is developed.
 12. Native-graph integration for the fused output-prep fp16 path.
-   - `RWKV7_NATIVE_GRAPH_FUSED_OUTPUT=1` makes native-graph capture use the
-     fused attention output-prep kernel. The graph-runner cache key includes
-     both recurrent and output fusion flags plus the active batch size.
+   - Native-graph capture now uses the fused attention output-prep kernel by
+     default. `RWKV7_NATIVE_GRAPH_FUSED_OUTPUT=0` disables it for A/B or
+     fallback testing. The graph-runner cache key includes both recurrent and
+     output fusion flags plus the active batch size.
    - `bench/bench_native_graph_fused_output.py` records
      `native_graph_fused_output` A/B rows. The first V100 integration row is
      correctness-clean and moves full token replay latency by about 1.10x. The
      V100 bsz=1/2/4/8 matrix is also correctness-clean with minimum speedup
-     above 1.03x, so it remains opt-in while device matrix and combined fusion
-     are validated.
+     above 1.03x, and an idle-V100 greedy batch sweep shows about 1.08-1.10x
+     `rwkv7_forward_token` throughput over `RWKV7_NATIVE_GRAPH_FUSED_OUTPUT=0`,
+     so output fusion is now the native-graph default. The env flag remains as
+     a fallback/A-B switch while the 5070/newer device matrix and combined
+     fusion are validated.
 13. Native W8 pack plus fused int8 dequant-GEMV prototype.
    - `rwkv7_hf.native_quant.quantize_int8_rowwise()` packs dense weights as
      signed int8 plus row-wise fp32 scales.
