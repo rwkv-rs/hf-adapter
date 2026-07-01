@@ -50,10 +50,14 @@ Near-term completion, without waiting for extra GPUs:
 4. Current: keep code/tests/docs green locally without CUDA, then merge only
    changes that preserve existing HF training, cache, quantization, benchmark,
    and telemetry behavior.
-5. Next when GPUs return: expand V100 evidence for large-model smoke,
+5. Current no-GPU task: finish executable DeepSpeed ZeRO-2/ZeRO-3 HF Trainer
+   smoke harness, analyzer/report ingestion, docs, and local tests. Real pass
+   rows can wait for live GPU/DeepSpeed access, but the repository should be
+   ready to run them with one command.
+6. Next when GPUs return: expand V100 evidence for large-model smoke,
    speed/precision sweeps, chunked prefill, dynamic batching, state-cache reuse,
    speculative decoding, and ZeRO-2/ZeRO-3 multi-GPU smoke.
-6. Later validation: run the prepared benchmark matrix on H100/4090/5090/A100.
+7. Later validation: run the prepared benchmark matrix on H100/4090/5090/A100.
    These newer cards are validation targets, not blockers for current progress.
 
 Current no-GPU work mode:

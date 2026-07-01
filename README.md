@@ -175,6 +175,21 @@ DeepSpeed ZeRO preset validation:
 python tests/test_deepspeed_configs.py
 ```
 
+Executable HF Trainer + PEFT LoRA ZeRO-2/ZeRO-3 smoke, when a DeepSpeed/CUDA
+environment is available:
+
+```bash
+export TORCHDYNAMO_DISABLE=1
+export PYTHONPATH=/path/to/flash-linear-attention:$PYTHONPATH
+
+python tests/test_deepspeed_training_smoke.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --zero-stage both \
+  --train-dtype fp32 \
+  --attn-mode fused_recurrent \
+  --results bench/results.jsonl
+```
+
 HF multi-GPU `device_map` generate smoke, for the pipeline-parallel direction:
 
 ```bash
