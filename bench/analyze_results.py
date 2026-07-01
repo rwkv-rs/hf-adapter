@@ -98,6 +98,30 @@ def fast_token_backend_effective(row: dict[str, Any]) -> str | None:
     return row.get("fast_token_backend_effective") or row.get("fast_token_backend")
 
 
+def model_label(row: dict[str, Any]) -> str:
+    label = row.get("model_size_label")
+    if label:
+        return str(label).lower()
+    name = str(row.get("model_name") or row.get("hf_model_dir") or "")
+    lowered = name.lower()
+    for candidate in ("0.1b", "0.4b", "1.5b", "2.9b", "7.2b", "13.3b"):
+        if candidate in lowered:
+            return candidate
+    return "unknown"
+
+
+def is_canonical_quant_model(row: dict[str, Any]) -> bool:
+    """Keep the main quantization gate anchored to the 0.1B baseline.
+
+    Larger-model quant rows are reported separately via quantization_model_sweep
+    so adding a 0.4B/1.5B sweep cannot accidentally overwrite the existing
+    canonical W8/W4 memory gate.
+    """
+
+    label = model_label(row)
+    return label in {"unknown", "0.1b"}
+
+
 def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, Any]:
     raw_rows = list(rows)
     rows = filt(rows, device=args.device, dtype=args.dtype)
@@ -194,15 +218,22 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     components = latest(rows, lambda r: r.get("axis") == "decode_components" and r.get("backend") == "hf_adapter")
     projection_lora = latest(rows, lambda r: r.get("axis") == "projection_lora" and r.get("backend") == "hf_adapter")
     quant_rows_all = [r for r in rows if r.get("axis") == "quantization" and r.get("backend") == "hf_adapter"]
+    quant_rows_canonical = [r for r in quant_rows_all if is_canonical_quant_model(r)]
+    if not quant_rows_canonical:
+        quant_rows_canonical = quant_rows_all
     # Keep the target gate anchored to the canonical memory-first quantization
     # policy. Hybrid policies such as decode_hot are useful optimization probes,
     # but they trade some W4 footprint for speed and should not overwrite the
     # memory-target rows just because they were measured later.
-    quant_rows = [r for r in quant_rows_all if r.get("quant_skip_policy") in (None, "", "memory", "small_lora", "minimal")]
+    quant_rows = [r for r in quant_rows_canonical if r.get("quant_skip_policy") in (None, "", "memory", "small_lora", "minimal")]
     quant_latest = latest_by_key(quant_rows, lambda r: r.get("quantization"))
     quant_variant_latest = latest_by_key(
-        quant_rows_all,
+        quant_rows_canonical,
         lambda r: (r.get("quantization"), r.get("quant_skip_policy") or "memory"),
+    )
+    quant_model_latest = latest_by_key(
+        quant_rows_all,
+        lambda r: (model_label(r), r.get("quantization"), r.get("quant_skip_policy") or "memory"),
     )
     quant_variant_pass = [r for r in quant_variant_latest if r.get("status") == "pass"]
     quant_base_for_variants = max(
@@ -517,6 +548,14 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 f"policy={best_speed.get('quant_skip_policy') or 'memory'} "
                 f"decode={q_ratio:.2f}x fp16 footprint={footprint_ratio if footprint_ratio is not None else 'n/a'}x"
             )
+    quant_model_pass = defaultdict(set)
+    for row in quant_model_latest:
+        if row.get("status") == "pass":
+            quant_model_pass[model_label(row)].add(row.get("quantization"))
+    for label in sorted(k for k in quant_model_pass if k not in {"unknown", "0.1b"}):
+        modes = sorted(str(v) for v in quant_model_pass[label] if v)
+        if modes:
+            focus.append(f"{label} quantization sweep rows pass for {','.join(modes)}")
     if device_map_smoke is None:
         focus.append("HF device_map multi-GPU generate smoke row pending")
     elif device_map_smoke.get("status") == "pass":
@@ -730,6 +769,8 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 r,
                 [
                     "_lineno",
+                    "model_size_label",
+                    "model_name",
                     "quantization",
                     "status",
                     "prefill_tokps",
@@ -758,6 +799,8 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 r,
                 [
                     "_lineno",
+                    "model_size_label",
+                    "model_name",
                     "quantization",
                     "status",
                     "quant_skip_policy",
@@ -770,6 +813,37 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 ],
             )
             for r in quant_variant_latest
+        ],
+        "quantization_model_sweep": [
+            compact(
+                r,
+                [
+                    "_lineno",
+                    "model_size_label",
+                    "model_name",
+                    "status",
+                    "quantization",
+                    "quant_skip_policy",
+                    "prompt_tokens",
+                    "decode_tokens",
+                    "prefill_tokps",
+                    "decode_mode",
+                    "selected_decode_path",
+                    "decode_tokps",
+                    "reference_decode_tokps",
+                    "fast_decode_tokps",
+                    "fast_forward_backend",
+                    "fast_forward_same_next_token",
+                    "model_footprint_mb",
+                    "peak_vram_mb",
+                    "hidden_size",
+                    "num_hidden_layers",
+                    "head_dim",
+                    "num_heads",
+                    "error",
+                ],
+            )
+            for r in quant_model_latest
         ],
         "quantization_best_variants": quant_best_variants,
         "native_decode": {
@@ -880,6 +954,12 @@ def print_text(report: dict[str, Any]) -> None:
     print("\n## quantization_best_variants")
     if report.get("quantization_best_variants"):
         for row in report["quantization_best_variants"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+    print("\n## quantization_model_sweep")
+    if report.get("quantization_model_sweep"):
+        for row in report["quantization_model_sweep"]:
             print(json.dumps(row, ensure_ascii=False))
     else:
         print("PENDING")
