@@ -117,7 +117,7 @@ def _native_graph_fused_recurrent_requested() -> bool:
 def _native_graph_fused_recurrent_output_requested() -> bool:
     """Whether native-graph runners should capture recurrent+output-prep fusion."""
 
-    return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", "0") not in _FALSE_VALUES
+    return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", "1") not in _FALSE_VALUES
 
 
 def _native_graph_fused_output_requested() -> bool:
