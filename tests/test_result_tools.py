@@ -532,6 +532,65 @@ def assert_fused_wa_lora_proto_is_reported(tmpdir: Path) -> None:
     assert any("fused W/A LoRA prototype backend=triton_fused_wa_lora is slower" in item for item in report["next_focus"])
 
 
+def assert_fused_wag_lora_proto_is_reported(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "fused_wag_lora_proto",
+            "backend": "hf_adapter",
+            "prototype_backend": "triton_fused_wag_lora",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 1,
+            "hidden_size": 768,
+            "ranks": [{"w": 64, "a": 64, "g": 128}],
+            "layers": [0],
+            "block_m": 64,
+            "block_r": 64,
+            "block_k": 64,
+            "steps": 128,
+            "avg_current_ms": 0.221,
+            "avg_prototype_ms": 0.214,
+            "avg_speedup": 1.033,
+            "max_abs_diff": 0.015625,
+            "min_cosine": 0.9999998,
+            "layer_rows": [
+                {
+                    "layer_idx": 0,
+                    "ranks": {"w": 64, "a": 64, "g": 128},
+                    "current_ms": 0.221,
+                    "prototype_ms": 0.214,
+                    "speedup": 1.033,
+                },
+            ],
+        }
+    ]
+    path = tmpdir / "fused_wag_lora_proto.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    assert report["fused_wag_lora_proto"]["prototype_backend"] == "triton_fused_wag_lora"
+    assert report["fused_wag_lora_proto"]["avg_speedup"] == 1.033
+    assert any("fused W/A/G LoRA prototype backend=triton_fused_wag_lora speedup=1.03x" in item for item in report["next_focus"])
+
+
 def assert_fused_shift_mix_proto_is_reported(tmpdir: Path) -> None:
     rows = [
         {
@@ -1242,6 +1301,7 @@ def main() -> int:
         assert_projection_kernel_plan_is_reported(tmpdir)
         assert_fused_projection_proto_is_reported(tmpdir)
         assert_fused_wa_lora_proto_is_reported(tmpdir)
+        assert_fused_wag_lora_proto_is_reported(tmpdir)
         assert_fused_shift_mix_proto_is_reported(tmpdir)
         assert_fused_recurrent_proto_is_reported(tmpdir)
         assert_native_graph_fused_recurrent_is_reported(tmpdir)
