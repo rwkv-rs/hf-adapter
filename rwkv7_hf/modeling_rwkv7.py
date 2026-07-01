@@ -380,6 +380,8 @@ class _RWKV7NativeGraphTokenRunner:
         self._bound_cache_ref: weakref.ReferenceType[RWKV7StateCache] | None = None
         self.copy_from_cache_calls = 0
         self.copy_from_cache_fast_skips = 0
+        self.bind_cache_calls = 0
+        self.bind_cache_fast_skips = 0
         self.graph = None
         self._capture()
 
@@ -458,6 +460,10 @@ class _RWKV7NativeGraphTokenRunner:
         self._bound_cache_ref = None
 
     def bind_cache(self, past_key_values: "RWKV7StateCache") -> None:
+        self.bind_cache_calls += 1
+        if past_key_values._native_graph_bound_to(self):
+            self.bind_cache_fast_skips += 1
+            return
         for li, p in enumerate(self.packs):
             layer_idx = int(p[0])
             state = past_key_values._ensure_layer(layer_idx)
@@ -473,6 +479,8 @@ class _RWKV7NativeGraphTokenRunner:
         return {
             "copy_from_cache_calls": int(self.copy_from_cache_calls),
             "copy_from_cache_fast_skips": int(self.copy_from_cache_fast_skips),
+            "bind_cache_calls": int(self.bind_cache_calls),
+            "bind_cache_fast_skips": int(self.bind_cache_fast_skips),
         }
 
     def replay(self, token: torch.LongTensor, past_key_values: "RWKV7StateCache") -> torch.Tensor:
@@ -516,6 +524,8 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         self._bound_cache_ref: weakref.ReferenceType[RWKV7StateCache] | None = None
         self.copy_from_cache_calls = 0
         self.copy_from_cache_fast_skips = 0
+        self.bind_cache_calls = 0
+        self.bind_cache_fast_skips = 0
         self.graph = None
         self._capture()
 
@@ -592,6 +602,10 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         self._bound_cache_ref = None
 
     def bind_cache(self, past_key_values: "RWKV7StateCache") -> None:
+        self.bind_cache_calls += 1
+        if past_key_values._native_graph_bound_to(self):
+            self.bind_cache_fast_skips += 1
+            return
         for li, p in enumerate(self.packs):
             layer_idx = int(p[0])
             state = past_key_values._ensure_layer(layer_idx)
@@ -607,6 +621,8 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         return {
             "copy_from_cache_calls": int(self.copy_from_cache_calls),
             "copy_from_cache_fast_skips": int(self.copy_from_cache_fast_skips),
+            "bind_cache_calls": int(self.bind_cache_calls),
+            "bind_cache_fast_skips": int(self.bind_cache_fast_skips),
         }
 
     def replay(self, token: torch.LongTensor, past_key_values: "RWKV7StateCache") -> torch.Tensor:
