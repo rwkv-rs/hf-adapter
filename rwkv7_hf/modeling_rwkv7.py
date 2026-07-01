@@ -793,6 +793,38 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             warmed[batch_size] = chosen
         return warmed
 
+    def _rwkv7_has_multi_cuda_device_map(self) -> bool:
+        """Return True when Accelerate placed model blocks on multiple CUDA devices.
+
+        The native/FLA fast-token helpers directly walk submodules and cache
+        tensors, so they assume one active CUDA device. Standard HF forward
+        with Accelerate hooks can still move tensors between a split device_map;
+        in that case the top-level forward/generate path should skip the
+        fast-forward shortcut and use the normal HF implementation.
+        """
+        devices: set[tuple[str, int | None]] = set()
+        device_map = getattr(self, "hf_device_map", None)
+        if isinstance(device_map, dict) and device_map:
+            for value in device_map.values():
+                if isinstance(value, int):
+                    devices.add(("cuda", int(value)))
+                    continue
+                dev = torch.device(value) if isinstance(value, str) and value not in {"disk"} else None
+                if dev is not None and dev.type == "cuda":
+                    devices.add(("cuda", dev.index))
+            if len(devices) > 1:
+                return True
+
+        parameters = getattr(self, "parameters", None)
+        if not callable(parameters):
+            return False
+        param_devices = {
+            (p.device.type, p.device.index)
+            for p in parameters()
+            if getattr(p, "device", None) is not None and p.device.type == "cuda"
+        }
+        return len(param_devices) > 1
+
     def _rwkv7_uses_external_quantization(self) -> bool:
         """Detect generic HF/bitsandbytes quantization wrappers.
 
@@ -809,6 +841,8 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         return getattr(config, "quantization_config", None) is not None
 
     def _rwkv7_can_use_native_backend(self, backend: str, batch_size: int) -> bool:
+        if self._rwkv7_has_multi_cuda_device_map():
+            return False
         if self._rwkv7_uses_external_quantization():
             return False
         if backend == "native_jit":
@@ -1531,6 +1565,8 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         if not effective_use_cache or not _fast_forward_enabled():
             return None
         if self.training or torch.is_grad_enabled():
+            return None
+        if self._rwkv7_has_multi_cuda_device_map():
             return None
         if self._rwkv7_uses_external_quantization() and not _fast_forward_quant_enabled():
             return None

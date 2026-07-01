@@ -228,7 +228,7 @@ When the V100 server is reachable, run the committed bundle from the repository 
 ```
 
 It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_token`,
-`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `bench_fast_token_warmup.py`, `bench_native_graph_overhead.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `bench_larger_model_smoke.py` when the 0.4B/1.5B/2.9B/7.2B/13.3B paths exist, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
+`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `tests/test_device_map_generate.py` when at least two CUDA devices are visible, `bench_fast_token_warmup.py`, `bench_native_graph_overhead.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `bench_larger_model_smoke.py` when the 0.4B/1.5B/2.9B/7.2B/13.3B paths exist, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
 then writes logs under `bench/logs/`. The bundle now also validates the
 `native_jit` backend plus fixed-batch and dynamic `native_graph` fast-token
 backends, and appends native HF speed rows before running the target gate. Use
@@ -738,6 +738,7 @@ V100 rows show:
 | native_graph prototype decode ratio | ~2.76x official | >=0.90x | PASS prototype |
 | native_graph warmup bsz=1/2/4/8 | cache contains 1/2/4/8 in 1.389s | preflight complete | PASS |
 | native_graph replay overhead bsz=1/2/4/8 | API `255.1` / `449.8` / `857.2` / `1548.1` tok/s, max copy share `0.052`, hit rate `0.9737` | >=150 tok/s, <=0.15 copy share, >=0.80 hit rate | PASS |
+| HF device_map generate smoke | 2 x V100, split layer 6, greedy tail matches single-device, fast backend skipped | >=2 CUDA devices, finite logits, greedy equality | PASS |
 | speed_mem memory ratio | ~1.00x official | <=1.10x | PASS |
 | 8-bit / 4-bit footprint ratio | 0.76x / 0.65x fp16 | lower is better | PASS smoke |
 | 8-bit / 4-bit decode ratio | 0.24x / 0.67x fp16 | >=1.00x | GAP |
@@ -754,7 +755,11 @@ aggregate tok/s, and preflight warmup confirms graph runners are captured for
 bsz=1/2/4/8 before the first serving request. The native-graph overhead rows
 confirm the public API scales to `1548.1` aggregate tok/s at bsz=8 while
 cache-copy overhead stays below `5.3%` of measured manual replay wall time and
-graph-runner cache hit rate stays at `0.9737` for all required batch sizes.
+graph-runner cache hit rate stays at `0.9737` for all required batch sizes. The
+HF `device_map` row validates the multi-GPU pipeline-parallel direction on
+2 x V100 by splitting the 0.1B model at layer 6; normal cached `generate()`
+keeps finite logits, bypasses the single-device fast-token backend, and matches
+the single-device greedy tail.
 
 ## Benchmark regression and target gates
 
