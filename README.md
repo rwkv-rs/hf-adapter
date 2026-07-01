@@ -9,6 +9,7 @@ This repository converts RWKV-7 weights to a Hugging Face-style directory and pr
 - `model.generate(..., use_cache=True)`
 - PEFT LoRA smoke tests
 - HF Trainer, TRL SFTTrainer, DPOTrainer, and GRPOTrainer one-step smoke tests
+- HF `device_map` multi-GPU generate smoke for the pipeline-parallel direction
 
 The current backend uses the FLA (`flash-linear-attention`) RWKV-7 implementation. The next milestone is a native Transformers implementation without the FLA runtime dependency.
 
@@ -33,6 +34,7 @@ tests/
   test_dynamic_batch_cache.py
   test_peft_lora.py
   test_hf_training_smoke.py
+  test_device_map_generate.py
   test_result_tools.py
 bench/
   bench_speed.py
@@ -167,6 +169,17 @@ DeepSpeed ZeRO preset validation:
 
 ```bash
 python tests/test_deepspeed_configs.py
+```
+
+HF multi-GPU `device_map` generate smoke, for the pipeline-parallel direction:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 python tests/test_device_map_generate.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --attn-mode fused_recurrent \
+  --max-new-tokens 4 \
+  --compare-single-device
 ```
 
 Fast recurrent cache equivalence test:
@@ -613,11 +626,17 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   recurrent forward baseline. A short V100 microbench with prompt=64/steps=8
   records reference HF forward at about `40 tok/s`, ordinary HF forward with
   fast-forward at about `251 tok/s`, and direct `rwkv7_forward_token` at about
-  `252 tok/s`, all resolving to `native_graph`.
+  `252 tok/s`, all resolving to `native_graph`. For HF `device_map` placements
+  that span multiple CUDA devices, the adapter skips this single-device
+  fast-token shortcut so Accelerate's normal hooks can move tensors across the
+  split.
   Quantized loads use the same fast-forward hook by default through the FLA
   fallback; set `RWKV7_FAST_FORWARD_QUANT=0` to force the slower reference
   path for debugging.
 - Latest V100 fast-token results: FLA bsz=1 decode `59.2 tok/s` vs official `92.1 tok/s`; native-JIT bsz=1 decode reaches `92.1 tok/s` vs official `92.1 tok/s`; HF `native_graph` bsz=1 reaches `255.5 tok/s` in speed_mem. Batched native-graph reaches `253.9` / `434.3` / `852.6` / `1539.1` aggregate tok/s for bsz=1/2/4/8, and warmup pre-captures those graph runners in `1.389s` with cache sizes `[1,2,4,8]`. Native-graph replay overhead rows for bsz=1/2/4/8 show public API `255.1` / `449.8` / `857.2` / `1548.1` aggregate tok/s, runner/API diff `0.0`, cache-copy share `0.052` / `0.032` / `0.030` / `0.028`, and graph-runner cache hit rate `0.9737` after skipping graph-buffer self-copy. Dynamic-batch simulation with native-graph reorder/drop through `select_batch` reaches `1209.3` total tok/s. The converted 0.4B, 1.5B, 2.9B, 7.2B, and 13.3B HF directories load and generate on V100: 0.4B has hidden=1024/layers=24, checkpoint SHA256 `947cb9b8013224e06b112b72204256bec65096cc935a7767ce63d8e3ddef83bb`, peak VRAM `1124.5 MB`; 1.5B has hidden=2048/layers=24, checkpoint SHA256 `441f70b096ad62442b5c33128bfe717c5d8529915c45a9709d4482016e8a0482`, peak VRAM `3178.6 MB`; 2.9B has hidden=2560/layers=32, checkpoint SHA256 `3d118ed77fe94e63e6fc0a6afd5a4fac49fe70da4e3d9d91b628951bb55dd798`, peak VRAM `5888.0 MB`; 7.2B has hidden=4096/layers=32, checkpoint SHA256 `425fc9bda2d12d4ce3b6bfe5c3b3f355be8b14d85960cf40fcca58a19d632630`, peak VRAM `13997.8 MB`; 13.3B has hidden=4096/layers=61, checkpoint SHA256 `0aa686d3ca4bb486e83e3071f4798a210f960e1fc1f5042e6cb418cc463814d6`, peak VRAM `25575.6 MB`, and uses `native_jit` for the V100 smoke because native-graph capture can reserve too much extra memory on 32GB cards. Chunked prefill bsz=2 prompt=512 preserves logits/cache within fp16 tolerance and reduces peak VRAM to about `0.60x` / `0.62x` / `0.63x` of full prefill for chunk sizes 64/128/256, trading throughput to `0.13x` / `0.25x` / `0.50x`. Component timing identifies `attn_linears_lora` as the largest group at about `9.87 ms/token`; naive PyTorch bmm projection/LoRA candidates are not enough, so the next implementation needs custom fusion/reduced launch count.
+- HF `device_map` smoke on 2 x V100 manually splits 12 layers at layer 6,
+  keeps `RWKV7_FAST_FORWARD=1`, skips the single-device fast-token backend,
+  and matches the single-device greedy tail `[36786, 34, 308, 459]`.
 - Bitsandbytes quantization smoke now loads and generates for both 8-bit and
   4-bit on V100, and cached decode can use the HF fast-forward hook through
   the FLA fallback. Short benchmark rows show model footprint dropping from
