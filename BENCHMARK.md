@@ -147,6 +147,9 @@ Interpretation:
   per-model LRU controlled by `RWKV7_NATIVE_GRAPH_CACHE_SIZE`; serving code can
   call `rwkv7_clear_native_graph_cache()` to release retained graph buffers. The
   formal memory target remains anchored to the lower-memory native-JIT row.
+  Native-graph replay overhead rows also record cache requests, hits, misses,
+  evictions, retained batch sizes, and hit rate so serving cache reuse is a
+  gated metric rather than an undocumented implementation detail.
 - `RWKV7_FAST_TOKEN_BACKEND=auto` now resolves the effective fast-token backend
   at runtime as `native_graph` -> `native_jit` -> FLA, gated by CUDA/model
   placement, available native helpers, active batch size, and dense
@@ -734,7 +737,7 @@ V100 rows show:
 | decode_breakdown fast-token ratio | ~0.57x official | >=0.90x | GAP |
 | native_graph prototype decode ratio | ~2.76x official | >=0.90x | PASS prototype |
 | native_graph warmup bsz=1/2/4/8 | cache contains 1/2/4/8 in 1.389s | preflight complete | PASS |
-| native_graph replay overhead bsz=1/2/4/8 | API `254.9` / `449.8` / `858.5` / `1546.9` tok/s, max copy share `0.070` | >=150 tok/s, <=0.15 copy share | PASS |
+| native_graph replay overhead bsz=1/2/4/8 | API `255.1` / `449.8` / `857.2` / `1548.1` tok/s, max copy share `0.052`, hit rate `0.9737` | >=150 tok/s, <=0.15 copy share, >=0.80 hit rate | PASS |
 | speed_mem memory ratio | ~1.00x official | <=1.10x | PASS |
 | 8-bit / 4-bit footprint ratio | 0.76x / 0.65x fp16 | lower is better | PASS smoke |
 | 8-bit / 4-bit decode ratio | 0.24x / 0.67x fp16 | >=1.00x | GAP |
@@ -749,9 +752,9 @@ validate newer GPUs, and solve the generic bnb quantized decode speed gap. The b
 bsz=2/4/8 native-graph serving now reaches `434.3` / `852.6` / `1539.1`
 aggregate tok/s, and preflight warmup confirms graph runners are captured for
 bsz=1/2/4/8 before the first serving request. The native-graph overhead rows
-confirm the public API scales to `1546.9` aggregate tok/s at bsz=8 while
-cache-copy overhead stays below `7.1%` of measured manual replay wall time for
-all required batch sizes.
+confirm the public API scales to `1548.1` aggregate tok/s at bsz=8 while
+cache-copy overhead stays below `5.3%` of measured manual replay wall time and
+graph-runner cache hit rate stays at `0.9737` for all required batch sizes.
 
 ## Benchmark regression and target gates
 
