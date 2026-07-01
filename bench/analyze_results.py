@@ -204,6 +204,68 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         quant_rows_all,
         lambda r: (r.get("quantization"), r.get("quant_skip_policy") or "memory"),
     )
+    quant_variant_pass = [r for r in quant_variant_latest if r.get("status") == "pass"]
+    quant_base_for_variants = max(
+        [r for r in quant_variant_pass if r.get("quantization") == "none"],
+        key=lambda r: (float(r.get("decode_tokps") or 0.0), int(r.get("_lineno", 0))),
+        default=None,
+    )
+    quant_base_decode_for_variants = num(quant_base_for_variants, "decode_tokps")
+    quant_base_footprint_for_variants = num(quant_base_for_variants, "model_footprint_mb")
+    quant_base_peak_for_variants = num(quant_base_for_variants, "peak_vram_mb")
+    quant_best_variants = []
+    for mode in ("8bit", "4bit"):
+        candidates = [r for r in quant_variant_pass if r.get("quantization") == mode]
+        if not candidates:
+            continue
+        best_speed = max(
+            candidates,
+            key=lambda r: (float(r.get("decode_tokps") or 0.0), -float(r.get("model_footprint_mb") or 1e30), int(r.get("_lineno", 0))),
+        )
+        best_memory = min(
+            candidates,
+            key=lambda r: (float(r.get("model_footprint_mb") or 1e30), -float(r.get("decode_tokps") or 0.0), -int(r.get("_lineno", 0))),
+        )
+        best_decode = num(best_speed, "decode_tokps")
+        best_footprint = num(best_speed, "model_footprint_mb")
+        best_peak = num(best_speed, "peak_vram_mb")
+        quant_best_variants.append(
+            {
+                "quantization": mode,
+                "best_speed": compact(
+                    best_speed,
+                    [
+                        "_lineno",
+                        "quant_skip_policy",
+                        "decode_tokps",
+                        "reference_decode_tokps",
+                        "fast_decode_tokps",
+                        "fast_forward_backend",
+                        "model_footprint_mb",
+                        "peak_vram_mb",
+                    ],
+                ),
+                "best_memory": compact(
+                    best_memory,
+                    [
+                        "_lineno",
+                        "quant_skip_policy",
+                        "decode_tokps",
+                        "model_footprint_mb",
+                        "peak_vram_mb",
+                    ],
+                ),
+                "decode_ratio_vs_fp16": round(ratio(best_decode, quant_base_decode_for_variants), 4)
+                if quant_base_decode_for_variants
+                else None,
+                "footprint_ratio_vs_fp16": round(ratio(best_footprint, quant_base_footprint_for_variants), 4)
+                if quant_base_footprint_for_variants
+                else None,
+                "peak_vram_ratio_vs_fp16": round(ratio(best_peak, quant_base_peak_for_variants), 4)
+                if quant_base_peak_for_variants
+                else None,
+            }
+        )
     device_map_smoke = latest(rows, lambda r: r.get("axis") == "device_map_smoke" and r.get("backend") == "hf_adapter")
     speculative_decode = latest(rows, lambda r: r.get("axis") == "speculative_decode" and r.get("backend") == "hf_adapter" and r.get("status") != "skip")
     larger_rows = [r for r in rows if r.get("axis") == "larger_model_smoke" and r.get("backend") == "hf_adapter"]
@@ -437,6 +499,16 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 slow.append(f"{mode} {q_ratio:.2f}x")
         if slow:
             focus.append("generic bnb quantized decode is slower than fp16: " + ", ".join(slow))
+    for row in quant_best_variants:
+        best_speed = row.get("best_speed") or {}
+        q_ratio = row.get("decode_ratio_vs_fp16")
+        footprint_ratio = row.get("footprint_ratio_vs_fp16")
+        if q_ratio is not None:
+            focus.append(
+                f"best {row['quantization']} quant variant "
+                f"policy={best_speed.get('quant_skip_policy') or 'memory'} "
+                f"decode={q_ratio:.2f}x fp16 footprint={footprint_ratio if footprint_ratio is not None else 'n/a'}x"
+            )
     if device_map_smoke is None:
         focus.append("HF device_map multi-GPU generate smoke row pending")
     elif device_map_smoke.get("status") == "pass":
@@ -678,6 +750,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             )
             for r in quant_variant_latest
         ],
+        "quantization_best_variants": quant_best_variants,
         "native_decode": {
             "best_row": compact(best_native, ["_lineno", "device", "prompt_tokens", "decode_tokens", "hidden_size", "num_heads", "head_dim", "native_jit_tokps", "native_jit_ms_per_tok", "native_graph_tokps", "native_graph_ms_per_tok", "graph_vs_jit_tokens_matched", "graph_vs_jit_tokens_total", "logit_cosine", "logit_max_abs_diff", "peak_vram_mb"]),
             "best_path": native_best_path,
@@ -778,6 +851,12 @@ def print_text(report: dict[str, Any]) -> None:
     print("\n## quantization")
     if report["quantization"]:
         for row in report["quantization"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+    print("\n## quantization_best_variants")
+    if report.get("quantization_best_variants"):
+        for row in report["quantization_best_variants"]:
             print(json.dumps(row, ensure_ascii=False))
     else:
         print("PENDING")
