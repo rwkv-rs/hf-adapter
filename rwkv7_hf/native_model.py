@@ -33,6 +33,75 @@ except Exception:  # pragma: no cover - optional native acceleration
     _native_jit_extract = None
     _native_jit_step_batched = None
 
+try:  # pragma: no cover - optional Cache base for HF GenerationMixin/Trainer compat
+    from fla.models.utils import Cache as _FLACache
+except Exception:  # pragma: no cover
+    try:
+        from transformers.cache_utils import Cache as _FLACache
+    except Exception:
+        class _FLACache:  # minimal fallback so native_model imports without fla or transformers
+            pass
+
+
+class NativeRWKV7Cache(_FLACache):
+    """HF Cache-contract wrapper for ``NativeRWKV7ForCausalLM`` recurrent state.
+
+    Native decode threads ``(state, xpa, xpf, v_first)`` as its recurrent
+    cache (state=list per layer, xpa/xpf=list per layer, v_first is cross-layer).
+    That raw tuple does not satisfy the HF ``Cache`` contract that
+    ``GenerationMixin``/``Trainer`` want (``get_seq_length`` etc.). This wrapper
+    stores the tuple but subclasses the FLA/HF ``Cache`` base so it is accepted,
+    and stays **iterable** so existing tuple-unpacking in ``forward`` and
+    ``_reorder_cache`` keeps working unchanged.
+    """
+
+    is_compileable = True
+
+    def __init__(self, state=None, xpa=None, xpf=None, v_first=None, seen_tokens: int = 0):
+        # Skip _FLACache.__init__: it allocates CacheLayer wrappers that RWKV
+        # recurrent decode does not need (mirrors RWKV7StateCache).
+        self._state = state
+        self._xpa = xpa
+        self._xpf = xpf
+        self._v_first = v_first
+        self._seen_tokens = int(seen_tokens)
+
+    def __iter__(self):
+        yield self._state
+        yield self._xpa
+        yield self._xpf
+        yield self._v_first
+
+    def __len__(self) -> int:
+        return 4
+
+    def get_seq_length(self, layer_idx: int | None = 0, cache_position=None) -> int:
+        return self._seen_tokens
+
+    def to_legacy_cache(self):
+        return tuple(self)
+
+    @classmethod
+    def from_legacy_cache(cls, legacy, seen_tokens: int = 0):
+        if legacy is None:
+            return cls(seen_tokens=seen_tokens)
+        if isinstance(legacy, NativeRWKV7Cache):
+            return legacy
+        state, xpa, xpf, v_first = legacy
+        return cls(state, xpa, xpf, v_first, seen_tokens=seen_tokens)
+
+
+def _cache_seen(past_key_values) -> int:
+    """Best-effort seen-token count from a native cache (wrapper or raw tuple)."""
+    if past_key_values is None:
+        return 0
+    if hasattr(past_key_values, "get_seq_length"):
+        try:
+            return int(past_key_values.get_seq_length())
+        except Exception:
+            return 0
+    return 0
+
 
 def _native_model_jit_enabled() -> bool:
     return os.environ.get("RWKV7_NATIVE_MODEL_JIT", "1") not in _FALSE_VALUES
@@ -172,8 +241,24 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         """Return the backend used by the previous native-model decode call."""
         return getattr(self, "_rwkv7_native_model_last_decode_backend", None)
 
+    def _native_model_quantized(self) -> bool:
+        """True if attention projections were replaced by bitsandbytes.
+
+        The JIT decode path extracts raw ``.weight`` tensors into packs, which
+        cannot represent bnb-quantized params (Linear4/8bit). When quantized,
+        decode must use the eager per-token path whose module calls invoke the
+        bnb linears. Detected by class name to avoid importing bitsandbytes.
+        """
+        try:
+            proj = self.model.layers[0].attn.r_proj
+            return type(proj).__name__ in {"Linear4bit", "Linear8bit", "Linear8bitLt"}
+        except Exception:
+            return False
+
     def _native_jit_packs(self):
         if not _native_model_jit_enabled() or _native_jit_extract is None or _native_jit_step_batched is None:
+            return None
+        if self._native_model_quantized():
             return None
         weight = self.model.embeddings.weight
         key = (weight.device.type, weight.device.index, weight.dtype)
@@ -249,6 +334,11 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             raise ValueError("Experimental NativeRWKV7ForCausalLM expects input_ids shaped [batch, seq]")
         if int(input_ids.shape[0]) <= 0 or int(input_ids.shape[1]) <= 0:
             raise ValueError("NativeRWKV7ForCausalLM requires a non-empty batch and sequence")
+        if return_dict is None:
+            # HF/PEFT/TRL forward `return_dict=None`; treat as the True default
+            # (without this, `if not return_dict:` sent None down the tuple path
+            # and DPOTrainer's `outputs.logits` failed with AttributeError).
+            return_dict = True
         base = self.model
         device, dtype = input_ids.device, base.embeddings.weight.dtype
         if labels is not None:
@@ -282,12 +372,18 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             state, xpa, xpf, v_first = _init_state_batched(self, input_ids.shape[0], device, dtype)
             toks = input_ids
             use_jit = False
+            seen = int(toks.shape[1])
+            collect_all = True  # full forward -> all-token logits [B, seq, vocab] (HF CausalLM semantics; DPO/eval need per-token logprobs)
         else:
             state, xpa, xpf, v_first = past_key_values
             toks = input_ids[:, -1:]
             use_jit = True
-        logits, state, xpa, xpf, v_first = self._run(toks, state, xpa, xpf, v_first, use_jit=use_jit)
-        new_cache = (state, xpa, xpf, v_first) if use_cache else None
+            seen = _cache_seen(past_key_values) + int(toks.shape[1])
+            collect_all = False  # decode -> last-token logits only (fast path)
+        logits, state, xpa, xpf, v_first = self._run(
+            toks, state, xpa, xpf, v_first, use_jit=use_jit, collect_all=collect_all
+        )
+        new_cache = NativeRWKV7Cache(state, xpa, xpf, v_first, seen_tokens=seen) if use_cache else None
         if not return_dict:
             return (logits, new_cache) if use_cache else (logits,)
         return CausalLMOutputWithPast(logits=logits, past_key_values=new_cache)
@@ -299,11 +395,13 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             return None
         state, xpa, xpf, v_first = past_key_values
         index = beam_idx.to(v_first.device)
-        return (
+        seen = _cache_seen(past_key_values)
+        return NativeRWKV7Cache(
             [s.index_select(0, index.to(s.device)) for s in state],
             [x.index_select(0, index.to(x.device)) for x in xpa],
             [x.index_select(0, index.to(x.device)) for x in xpf],
             v_first.index_select(0, index),
+            seen_tokens=seen,
         )
 
     def prepare_inputs_for_generation(self, input_ids, past_key_values=None, **kwargs):
