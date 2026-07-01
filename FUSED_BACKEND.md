@@ -61,6 +61,12 @@ serving speed.
    - `bench/analyze_results.py` surfaces the first fused fp16 target in
      `projection_lora` and `next_focus`.
 3. Fused fp16 projection prototype.
+   - `rwkv7_hf.fused_projection.fused_rkv_projection()` provides an optional
+     Triton single-launch R/K/V GEMV prototype with torch fallback.
+   - `bench/bench_fused_projection.py` records correctness and speed telemetry
+     as `fused_projection_proto`. The first V100 prototype is correct but still
+     slower than three cuBLAS-backed linears, so it is not integrated into the
+     HF fast path yet.
 4. Native-graph integration for the fused projection path.
 5. Fused recurrent state update.
 6. Native W8 pack plus fused int8 dequant-GEMV.

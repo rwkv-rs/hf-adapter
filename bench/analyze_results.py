@@ -217,6 +217,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     )
     components = latest(rows, lambda r: r.get("axis") == "decode_components" and r.get("backend") == "hf_adapter")
     projection_lora = latest(rows, lambda r: r.get("axis") == "projection_lora" and r.get("backend") == "hf_adapter")
+    fused_projection_proto = latest(rows, lambda r: r.get("axis") == "fused_projection_proto" and r.get("backend") == "hf_adapter")
     quant_rows_all = [r for r in rows if r.get("axis") == "quantization" and r.get("backend") == "hf_adapter"]
     quant_rows_canonical = [r for r in quant_rows_all if is_canonical_quant_model(r)]
     if not quant_rows_canonical:
@@ -561,6 +562,21 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 )
         else:
             focus.append("projection_lora row lacks matrix-level fused kernel plan; rerun bench_projection_lora")
+    if fused_projection_proto is None:
+        focus.append("fused_projection_proto row pending")
+    else:
+        proto_speedup = fused_projection_proto.get("avg_speedup")
+        backend = fused_projection_proto.get("prototype_backend")
+        if proto_speedup is not None and float(proto_speedup) < 1.0:
+            focus.append(
+                f"fused R/K/V projection prototype backend={backend} is slower "
+                f"({float(proto_speedup):.2f}x); optimize kernel before HF integration"
+            )
+        elif proto_speedup is not None:
+            focus.append(
+                f"fused R/K/V projection prototype backend={backend} speedup={float(proto_speedup):.2f}x; "
+                "validate end-to-end fast-token integration"
+            )
     if albatross_decode_min is None:
         focus.append("fused backend target tracking needs Albatross decode ratios")
     elif albatross_decode_min < 0.55:
@@ -792,6 +808,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         ],
         "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
         "projection_lora": compact(projection_lora, ["_lineno", "batch_size", "hidden_size", "layers", "avg_timings_ms", "avg_current_linears_lora_sum_ms", "avg_candidate_linears_lora_sum_ms", "avg_candidate_speedup", "sample_matrix_profile_summary", "fused_kernel_plan", "peak_vram_mb"]),
+        "fused_projection_proto": compact(fused_projection_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "larger_model_smoke": [
             compact(
                 r,
@@ -1056,6 +1073,8 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["decode_components"], ensure_ascii=False) if report["decode_components"] else "PENDING")
     print("\n## projection_lora")
     print(json.dumps(report["projection_lora"], ensure_ascii=False) if report["projection_lora"] else "PENDING")
+    print("\n## fused_projection_proto")
+    print(json.dumps(report["fused_projection_proto"], ensure_ascii=False) if report["fused_projection_proto"] else "PENDING")
     print("\n## larger_model_smoke")
     if report["larger_model_smoke"]:
         for row in report["larger_model_smoke"]:
