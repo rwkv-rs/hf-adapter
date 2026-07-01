@@ -849,6 +849,66 @@ output fusion enabled, the same sweep reached:
 | 4 | 934.2 | 4.28 | 1.0953x |
 | 8 | 1673.1 | 4.78 | 1.0848x |
 
+## Fused output-prep + `o_proj` prototype
+
+The next attention-output probe folds the final dense `o_proj` into the Triton
+output-prep kernel. It is not enabled by default because the full native-graph
+integration is slower than the current fused-prep+cuBLAS default, but it is a
+useful occupancy/deeper-fusion target.
+
+Isolated kernel sweep:
+
+```bash
+python bench/bench_fused_attn_output_project.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --batch-size 1 \
+  --layers 0 1 11 \
+  --block-m 8 16 32 64 \
+  --results bench/results.jsonl
+```
+
+Latest isolated V100 row: `triton_attn_output_prepare_o_proj` averages
+`0.14649ms`, which is `1.5965x` faster than the old output path and `1.2931x`
+faster than fused output-prep plus cuBLAS `o_proj`. Correctness remains aligned
+(`max_abs_diff=0.001953125`, `min_cosine=0.99999976`).
+
+Native-graph A/B:
+
+```bash
+python bench/bench_native_graph_fused_output_project.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --fast-cache true \
+  --batch-size 1 \
+  --prompt-tokens 64 \
+  --fixed-token \
+  --block-m 16 \
+  --results bench/results.jsonl
+```
+
+Set `RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT=1` to opt into this path manually;
+`RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT_BLOCK_M` selects the row tile and is
+included in the native-graph runner cache key. The V100 bsz=1/2/4/8 matrix is
+greedy-exact but slower than the default output-fused graph:
+
+| bsz | baseline ms/step | fused project ms/step | speedup | greedy |
+|---:|---:|---:|---:|---:|
+| 1 | 3.9019 | 4.0968 | 0.9524x | 32/32 |
+| 2 | 4.4253 | 4.5679 | 0.9688x | 64/64 |
+| 4 | 4.6334 | 4.8186 | 0.9616x | 128/128 |
+| 8 | 5.0789 | 5.2805 | 0.9618x | 256/256 |
+
+Conclusion: the isolated one-launch project kernel is promising, but the
+captured full-token graph does not yet preserve the win. Keep it opt-in and use
+the telemetry to guide a better `o_proj` fusion instead of making it default.
+
 ## Native W8 dequant-GEMV prototype
 
 `rwkv7_hf/native_quant.py` contains the first RWKV-native W8 serving prototype:

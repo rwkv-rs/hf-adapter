@@ -23,13 +23,25 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_recurrent_update_available = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
-    from .fused_output import fused_attn_output_prepare, fused_attn_output_prepare_available
+    from .fused_output import (
+        fused_attn_output_prepare,
+        fused_attn_output_prepare_available,
+        fused_attn_output_project,
+        fused_attn_output_project_available,
+    )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
-        from fused_output import fused_attn_output_prepare, fused_attn_output_prepare_available
+        from fused_output import (
+            fused_attn_output_prepare,
+            fused_attn_output_prepare_available,
+            fused_attn_output_project,
+            fused_attn_output_project_available,
+        )
     except Exception:
         fused_attn_output_prepare = None  # type: ignore[assignment]
         fused_attn_output_prepare_available = None  # type: ignore[assignment]
+        fused_attn_output_project = None  # type: ignore[assignment]
+        fused_attn_output_project_available = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
     from .fused_attention_projection import fused_rkv_wag_projection, fused_rkv_wag_projection_available
@@ -68,6 +80,33 @@ def _native_graph_fused_output_enabled() -> bool:
         return bool(fused_attn_output_prepare_available())
     except Exception:
         return False
+
+
+def _native_graph_fused_output_project_enabled() -> bool:
+    """Runtime switch for fused output-prep plus ``o_proj`` in native_graph."""
+
+    if os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT", "0") in _FALSE_VALUES:
+        return False
+    if fused_attn_output_project is None or fused_attn_output_project_available is None:
+        return False
+    try:
+        return bool(fused_attn_output_project_available())
+    except Exception:
+        return False
+
+
+def _native_graph_fused_output_project_block_m() -> int:
+    """Output-projection row tile used by the prototype fused output-project kernel."""
+
+    raw = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT_BLOCK_M", "16").strip()
+    try:
+        block_m = int(raw)
+    except ValueError:
+        block_m = 16
+    # Keep the grid bounded and power-of-two-ish for Triton specialization reuse.
+    if block_m <= 0:
+        return 16
+    return min(block_m, 128)
 
 
 def _native_graph_fused_projection_enabled() -> bool:
@@ -439,7 +478,25 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         v = v + (v_first - v) * torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
     w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
     out, new_state = _recurrent_update_unbatched(r, w, k, v, kk, a, state, H, N)
-    if _native_graph_fused_output_enabled():
+    if _native_graph_fused_output_project_enabled():
+        out = fused_attn_output_project(
+            out.view(1, H * N),
+            r.view(1, H, N),
+            k.view(1, H, N),
+            v.view(1, H, N),
+            g.view(1, H * N),
+            r_k,
+            gn_w,
+            gn_b,
+            Ow,
+            None,
+            num_heads=H,
+            head_dim=N,
+            head_v_dim=N,
+            eps=eps,
+            block_m=_native_graph_fused_output_project_block_m(),
+        ).view(H * N)
+    elif _native_graph_fused_output_enabled():
         out = fused_attn_output_prepare(
             out.view(1, H * N),
             r.view(1, H, N),
@@ -454,11 +511,12 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
             head_v_dim=N,
             eps=eps,
         ).view(H * N)
+        out = F.linear(out, Ow)
     else:
         out = F.group_norm(out.view(1, H * N), H, gn_w, gn_b, eps).view(H * N)
         sk = (r.view(H, N) * k.view(H, N) * r_k).sum(dim=-1, keepdim=True)
         out = (out + (sk * v.view(H, N)).view(H * N)) * g
-    out = F.linear(out, Ow)
+        out = F.linear(out, Ow)
     xpa.copy_(h)
     state.copy_(new_state)
     x = residual + out
@@ -529,7 +587,25 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         v = v + (v_first - v) * torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
     w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
     out, new_state = _recurrent_update_batched(r, w, k, v, kk, a, state, B, H, N)
-    if _native_graph_fused_output_enabled():
+    if _native_graph_fused_output_project_enabled():
+        out = fused_attn_output_project(
+            out,
+            r.view(B, H, N),
+            k.view(B, H, N),
+            v.view(B, H, N),
+            g,
+            r_k,
+            gn_w,
+            gn_b,
+            Ow,
+            None,
+            num_heads=H,
+            head_dim=N,
+            head_v_dim=N,
+            eps=eps,
+            block_m=_native_graph_fused_output_project_block_m(),
+        )
+    elif _native_graph_fused_output_enabled():
         out = fused_attn_output_prepare(
             out,
             r.view(B, H, N),
@@ -544,11 +620,12 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
             head_v_dim=N,
             eps=eps,
         )
+        out = F.linear(out, Ow)
     else:
         out = F.group_norm(out, H, gn_w, gn_b, eps).view(B, H * N)
         sk = (r.view(B, H, N) * k.view(B, H, N) * r_k).sum(dim=-1, keepdim=True)
         out = (out + (sk * v.view(B, H, N)).view(B, H * N)) * g
-    out = F.linear(out, Ow)
+        out = F.linear(out, Ow)
     xpa.copy_(h)
     state.copy_(new_state)
     x = residual + out

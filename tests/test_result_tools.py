@@ -715,6 +715,71 @@ def assert_fused_attn_output_proto_is_reported(tmpdir: Path) -> None:
     assert any("fused attention output prototype backend=triton_attn_output_prepare_plus_cublas_o speedup=1.23x" in item for item in report["next_focus"])
 
 
+def assert_fused_attn_output_project_proto_is_reported(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "fused_attn_output_project_proto",
+            "backend": "hf_adapter",
+            "prototype_backend": "triton_attn_output_prepare_o_proj",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 1,
+            "hidden_size": 768,
+            "layers": [0],
+            "block_m_values": [8, 16, 32],
+            "input_scale": 0.3,
+            "steps": 256,
+            "avg_current_ms": 0.23388,
+            "avg_prep_cublas_ms": 0.18943,
+            "avg_prep_cublas_speedup": 1.2347,
+            "best_fused_project": {
+                "block_m": 16,
+                "avg_fused_project_ms": 0.14649,
+                "speedup_vs_current": 1.5965,
+                "speedup_vs_prep_cublas": 1.2931,
+            },
+            "max_abs_diff": 0.001953125,
+            "min_cosine": 0.99999976,
+            "layer_rows": [
+                {
+                    "layer_idx": 0,
+                    "num_heads": 12,
+                    "head_dim": 64,
+                    "head_v_dim": 64,
+                    "current_ms": 0.23469,
+                    "prep_cublas_ms": 0.1908,
+                    "best_fused_project": {"block_m": 16, "fused_project_ms": 0.14685},
+                },
+            ],
+        }
+    ]
+    path = tmpdir / "fused_attn_output_project_proto.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    assert report["fused_attn_output_project_proto"]["best_fused_project"]["speedup_vs_prep_cublas"] == 1.2931
+    assert report["fused_attn_output_project_proto"]["best_fused_project"]["block_m"] == 16
+    assert any("fused output+o_proj prototype backend=triton_attn_output_prepare_o_proj block_m=16 beats prep+cuBLAS by 1.29x" in item for item in report["next_focus"])
+
+
 def assert_fused_ffn_proto_is_reported(tmpdir: Path) -> None:
     rows = [
         {
@@ -1015,6 +1080,97 @@ def assert_native_graph_fused_output_is_reported(tmpdir: Path) -> None:
     assert [row["batch_size"] for row in report["native_graph_fused_output_sweep"]] == [1, 2]
     assert any("native_graph fused output integration passes greedy 64/64" in item for item in report["next_focus"])
     assert any("native_graph fused output batch matrix covers bsz=[1, 2]" in item for item in report["next_focus"])
+
+
+def assert_native_graph_fused_output_project_is_reported(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "native_graph_fused_output_project",
+            "backend": "hf_adapter",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 1,
+            "prompt_tokens": 64,
+            "steps": 32,
+            "fixed_token": True,
+            "fused_recurrent_enabled": False,
+            "fused_output_enabled": True,
+            "fused_projection_enabled": False,
+            "output_project_block_m": 16,
+            "baseline_effective_backend": "native_graph",
+            "fused_effective_backend": "native_graph",
+            "baseline_fused_output_project": False,
+            "fused_output_project": True,
+            "baseline_ms_per_step": 4.0205,
+            "fused_ms_per_step": 3.8125,
+            "speedup": 1.0546,
+            "baseline_tokps_total": 248.7,
+            "fused_tokps_total": 262.3,
+            "max_abs_diff_first_step": 0.03125,
+            "min_cosine_first_step": 1.0,
+            "greedy_match": 32,
+            "greedy_total": 32,
+            "baseline_cache_stats": {"batch_sizes": [1], "hit_rate": 0.97},
+            "fused_cache_stats": {"batch_sizes": [1], "hit_rate": 0.97},
+        },
+        {
+            "axis": "native_graph_fused_output_project",
+            "backend": "hf_adapter",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 2,
+            "prompt_tokens": 64,
+            "steps": 32,
+            "fixed_token": True,
+            "fused_recurrent_enabled": False,
+            "fused_output_enabled": True,
+            "fused_projection_enabled": False,
+            "output_project_block_m": 16,
+            "baseline_effective_backend": "native_graph",
+            "fused_effective_backend": "native_graph",
+            "baseline_fused_output_project": False,
+            "fused_output_project": True,
+            "baseline_ms_per_step": 7.9802,
+            "fused_ms_per_step": 7.7123,
+            "speedup": 1.0347,
+            "baseline_tokps_total": 250.6,
+            "fused_tokps_total": 259.3,
+            "max_abs_diff_first_step": 0.03125,
+            "min_cosine_first_step": 1.0,
+            "greedy_match": 64,
+            "greedy_total": 64,
+            "baseline_cache_stats": {"batch_sizes": [2], "hit_rate": 0.97},
+            "fused_cache_stats": {"batch_sizes": [2], "hit_rate": 0.97},
+        },
+    ]
+    path = tmpdir / "native_graph_fused_output_project.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    assert report["native_graph_fused_output_project"]["speedup"] == 1.0347
+    assert report["native_graph_fused_output_project"]["output_project_block_m"] == 16
+    assert [row["batch_size"] for row in report["native_graph_fused_output_project_sweep"]] == [1, 2]
+    assert any("native_graph fused output+o_proj integration block_m=16 passes greedy 64/64" in item for item in report["next_focus"])
+    assert any("native_graph fused output+o_proj batch matrix covers bsz=[1, 2]" in item for item in report["next_focus"])
 
 
 def assert_native_graph_fused_projection_is_reported(tmpdir: Path) -> None:
@@ -1727,11 +1883,13 @@ def main() -> int:
         assert_fused_wag_lora_proto_is_reported(tmpdir)
         assert_fused_rkv_wag_projection_proto_is_reported(tmpdir)
         assert_fused_attn_output_proto_is_reported(tmpdir)
+        assert_fused_attn_output_project_proto_is_reported(tmpdir)
         assert_fused_ffn_proto_is_reported(tmpdir)
         assert_fused_shift_mix_proto_is_reported(tmpdir)
         assert_fused_recurrent_proto_is_reported(tmpdir)
         assert_native_graph_fused_recurrent_is_reported(tmpdir)
         assert_native_graph_fused_output_is_reported(tmpdir)
+        assert_native_graph_fused_output_project_is_reported(tmpdir)
         assert_native_graph_fused_projection_is_reported(tmpdir)
         assert_native_quant_gemv_proto_is_reported(tmpdir)
         assert_native_quant_w4_gemv_proto_is_reported(tmpdir)

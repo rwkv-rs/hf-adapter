@@ -139,6 +139,25 @@ serving speed.
      so output fusion is now the native-graph default. The env flag remains as
      a fallback/A-B switch while the 5070/newer device matrix and combined
      fusion are validated.
+12a. Opt-in native-graph probe for fused output-prep plus `o_proj`.
+   - `rwkv7_hf.fused_output.fused_attn_output_project()` folds group norm,
+     recurrent correction, gate, and the final `o_proj` into one Triton launch.
+     It is guarded by `RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT=1`; the default
+     path still uses fused output-prep plus cuBLAS `o_proj`.
+   - `RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT_BLOCK_M` controls the output-row
+     tile and is part of the graph-runner cache key together with the project
+     flag, so captures for different tiles cannot be reused accidentally.
+   - `bench/bench_fused_attn_output_project.py` records isolated
+     `fused_attn_output_project_proto` rows. V100 bsz=1 shows `1.5965x` over
+     the old output path and `1.2931x` over fused-prep+cuBLAS with
+     `max_abs_diff=0.001953125`.
+   - `bench/bench_native_graph_fused_output_project.py` records full
+     `native_graph_fused_output_project` A/B rows. The first V100 bsz=1/2/4/8
+     matrix is greedy-exact, but end-to-end speed is only `0.95x`-`0.97x` of
+     the default output-fused graph. This proves the one-launch project kernel
+     is useful telemetry but not defaultable yet; next work should profile why
+     graph capture loses the isolated win and only fold `o_proj` after a better
+     occupancy/deeper-fusion kernel exists.
 13. Native-graph integration guard for the fused R/K/V + W/A/G projection path.
    - `RWKV7_NATIVE_GRAPH_FUSED_PROJECTION=1` makes native-graph capture use the
      two-kernel `fused_rkv_wag_projection()` prototype. The graph-runner cache

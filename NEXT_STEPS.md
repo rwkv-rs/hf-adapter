@@ -68,6 +68,21 @@
 - profiler：`fuse_norm=true` 的 FLA `LayerNormFunction` CPU 开销很大，native norm 把 norm CPU total 从约 54.8ms/6tok 降到约 6.6ms/6tok。
 - breakdown：argmax 开销约等于 0，`chunk` 和 `fused_recurrent` 单 token decode 基本一样，剩余瓶颈在 HF/FLA model+state/cache+小 kernel launch 路径。
 
+最新 fused output+`o_proj` 更新：
+
+- `bench_fused_attn_output_project.py` 新增 attention output-prep + `o_proj`
+  单 Triton kernel telemetry。V100 isolated row 达到 `1.5965x` 当前 output
+  path、`1.2931x` fused-prep+cuBLAS，correctness 为
+  `max_abs_diff=0.001953125`、`min_cosine=0.99999976`。
+- `RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT=1` 已作为 opt-in 接入
+  native_graph，`RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT_BLOCK_M` 进入 graph
+  runner cache key；`bench_native_graph_fused_output_project.py` 的 V100
+  bsz=1/2/4/8 矩阵 greedy 全一致，但 end-to-end 只有
+  `0.9524x/0.9688x/0.9616x/0.9618x` 默认 output-fused graph，所以不能默认。
+  结论：isolated 子 kernel 有信号，native_graph 捕获后收益丢失；下一步
+  profile occupancy / memory load，并把 `o_proj` fusion 放到更深的
+  projection-output fusion 里，而不是单独默认替换 cuBLAS。
+
 下一步继续补：
 
 1. 支持全部已发布尺寸的配置推断和转换：0.4B / 1.5B / 2.9B / 7.2B / 13.3B。
