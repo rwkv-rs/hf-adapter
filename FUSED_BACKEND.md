@@ -180,7 +180,14 @@ serving speed.
    - `bench/bench_native_quant_w4_rkv.py` records `native_quant_w4_rkv_proto`.
      The first V100 row improves over three separate W4 dequant-GEMVs, but is
      still below fp16 cuBLAS, so W4 also needs deeper group fusion.
-18. V100 + 5070/newer-GPU benchmark matrix.
+18. Single-load native W8/W4 R/K/V block sweep.
+   - `bench/bench_native_quant_rkv_sweep.py` sweeps block sizes after one model
+     load with one shared fp16 baseline, avoiding per-config cuBLAS drift.
+   - The V100 sweep confirms best W8 (`block_m=64, block_k=128`) is still only
+     `0.7873x` fp16 and best W4 (`block_m=8, block_k=64`) is `0.7675x` fp16.
+     The quant path therefore needs tensor-core-aware packing or deeper fusion,
+     not just block-size tuning.
+19. V100 + 5070/newer-GPU benchmark matrix.
 
 ## Backend dispatch requirement
 
