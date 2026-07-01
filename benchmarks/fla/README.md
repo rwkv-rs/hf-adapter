@@ -16,3 +16,8 @@ python benchmarks/fla/compare.py \
 Missing the recorded numerical thresholds is written to the bundle but returns
 zero because this comparison is not a release gate. Add `--require-thresholds`
 only when developing an FLA-compatible optimized backend.
+
+The reproducible speed harness is `speed.py`. The first pinned RTX 4080
+throughput bundle is archived under `results/4080-speed-20260826/`; it reports
+operator, prefill and cached-decode latency without CUDA graphs or
+`torch.compile`.
