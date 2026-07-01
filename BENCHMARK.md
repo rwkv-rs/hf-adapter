@@ -510,18 +510,24 @@ Latest V100 projection/LoRA timing for sampled layers:
 
 | Item | ms/layer |
 |---|---:|
-| R/K/V current separate projections | 0.0911 |
-| R/K/V PyTorch bmm candidate | 0.0833 |
-| W/A LoRA current | 0.1449 |
-| W/A LoRA PyTorch bmm candidate | 0.2684 |
-| Avg current linears+LoRA sum | 0.3571 |
-| Avg PyTorch candidate sum | 0.4712 |
+| R/K/V current separate projections | 0.0896 |
+| R/K/V PyTorch bmm candidate | 0.0836 |
+| W/A LoRA current | 0.1424 |
+| W/A LoRA PyTorch bmm candidate | 0.2658 |
+| Avg current linears+LoRA sum | 0.3502 |
+| Avg PyTorch candidate sum | 0.4679 |
 
-Interpretation: simple PyTorch bmm grouping is not enough (`0.76x` of current
+Interpretation: simple PyTorch bmm grouping is not enough (`0.75x` of current
 overall for this group). R/K/V batched matmul is only a small win, while W/A
 LoRA bmm is slower and can introduce larger fp16 numerical differences. The
 next real optimization should be a custom fused projection/LoRA path or a
 deeper rewrite that reduces launches without adding stack/bmm overhead.
+
+Newer rows also emit `sample_matrix_profile`, `sample_matrix_profile_summary`,
+and `fused_kernel_plan`. These fields turn the profiler into the first concrete
+step of `FUSED_BACKEND.md`: they record matrix shapes, per-token FLOPs,
+fp16/int8/int4 weight sizes, timed members, the first fp16 fusion target, and
+the native-quant candidates that should later replace generic bnb kernels.
 
 ## Larger converted-model smoke
 

@@ -46,7 +46,7 @@
 - `bench/bench_fast_token_warmup.py`：正式记录 `rwkv7_warmup_fast_token()` serving preflight，gate bsz=1/2/4/8 的 native-graph capture 是否提前完成，并通过 `rwkv7_native_graph_cache_batch_sizes()` 验证 graph runner LRU。
 - `bench/bench_native_graph_overhead.py`：正式记录 native-graph replay 周边的 cache copy / token copy / graph replay / cache bind 耗时，并 gate public API tok/s、runner/API diff 和 cache-copy 占比。
 - `bench/bench_decode_components.py`：细分 fast-token layer path 的 projection/recurrent/norm/FFN/top layer 耗时，用于决定下一步 fusion 目标。
-- `bench/bench_projection_lora.py`：专项测 attention projection/LoRA 子模块和简单 PyTorch bmm 候选，确认下一步需要 custom fusion 而不是简单拼 bmm。
+- `bench/bench_projection_lora.py`：专项测 attention projection/LoRA 子模块和简单 PyTorch bmm 候选，确认下一步需要 custom fusion 而不是简单拼 bmm；新增 matrix-level profile / summary / fused_kernel_plan，记录矩阵 shape、FLOPs、fp16/int8/int4 权重体积、第一 fp16 fusion target 和后续 native quant 候选。
 - `bench/bench_native_decode.py`：正式记录 `rwkv7_hf.native_jit` 的 native JIT / CUDA graph decode 结果，用作下一轮 fast-token integration 的性能上限参考。
 - `bench/analyze_results.py`：从 `bench/results.jsonl` 输出 target/gap report，直接列出 decode/memory ratio、缺失 benchmark axis 和下一步优化焦点。
 - `bench/check_results.py`：把 JSONL 结果变成可执行 gate；默认 regression gate 当前通过，`--target` gate 在 decode 达到 0.9x official 前预期失败。

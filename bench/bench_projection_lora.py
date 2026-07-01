@@ -156,6 +156,175 @@ def maxdiff_tuple(a, b) -> float:
     return max(diffs) if diffs else 0.0
 
 
+def _mb(num_bytes: float) -> float:
+    return round(float(num_bytes) / 1024.0 / 1024.0, 5)
+
+
+def linear_matrix_profile(
+    name: str,
+    module,
+    batch_size: int,
+    *,
+    input_source: str,
+    fused_group: str,
+    timing_ms: float | None = None,
+    quant_candidate: bool = True,
+) -> dict[str, Any]:
+    weight = module.weight
+    out_features, in_features = int(weight.shape[0]), int(weight.shape[1])
+    bias = getattr(module, "bias", None)
+    params = int(weight.numel()) + (int(bias.numel()) if bias is not None else 0)
+    weight_params = int(weight.numel())
+    flops = int(2 * int(batch_size) * in_features * out_features)
+    return {
+        "name": name,
+        "input_source": input_source,
+        "fused_group": fused_group,
+        "shape": [out_features, in_features],
+        "has_bias": bias is not None,
+        "params": params,
+        "weight_params": weight_params,
+        "flops_per_token": flops,
+        "fp16_weight_mb": _mb(weight_params * 2),
+        "int8_weight_mb": _mb(weight_params),
+        "int4_weight_mb": _mb(weight_params / 2.0),
+        "timing_ms": round(float(timing_ms), 5) if timing_ms is not None else None,
+        "quant_candidate": bool(quant_candidate),
+    }
+
+
+def lora_matrix_profile(
+    name: str,
+    module,
+    batch_size: int,
+    *,
+    input_source: str,
+    fused_group: str,
+    timing_ms: float | None = None,
+) -> list[dict[str, Any]]:
+    down = module.lora[0]
+    up = module.lora[2]
+    activation_name = type(module.lora[1]).__name__
+    rows = [
+        linear_matrix_profile(
+            f"{name}.down",
+            down,
+            batch_size,
+            input_source=input_source,
+            fused_group=fused_group,
+            timing_ms=None,
+            quant_candidate=False,
+        ),
+        linear_matrix_profile(
+            f"{name}.up",
+            up,
+            batch_size,
+            input_source=f"{name}.activation",
+            fused_group=fused_group,
+            timing_ms=None,
+            quant_candidate=False,
+        ),
+    ]
+    for row in rows:
+        row["lora_module"] = name
+        row["lora_activation"] = activation_name
+        row["lora_timing_group_ms"] = round(float(timing_ms), 5) if timing_ms is not None else None
+    return rows
+
+
+def matrix_profile_summary(matrix_profile: list[dict[str, Any]]) -> dict[str, Any]:
+    by_group: dict[str, dict[str, Any]] = {}
+    for row in matrix_profile:
+        group = str(row["fused_group"])
+        agg = by_group.setdefault(
+            group,
+            {
+                "matrix_count": 0,
+                "params": 0,
+                "flops_per_token": 0,
+                "fp16_weight_mb": 0.0,
+                "int8_weight_mb": 0.0,
+                "int4_weight_mb": 0.0,
+                "timed_members": [],
+            },
+        )
+        agg["matrix_count"] += 1
+        agg["params"] += int(row.get("params") or 0)
+        agg["flops_per_token"] += int(row.get("flops_per_token") or 0)
+        agg["fp16_weight_mb"] += float(row.get("fp16_weight_mb") or 0.0)
+        agg["int8_weight_mb"] += float(row.get("int8_weight_mb") or 0.0)
+        agg["int4_weight_mb"] += float(row.get("int4_weight_mb") or 0.0)
+        if row.get("timing_ms") is not None:
+            agg["timed_members"].append([row["name"], row["timing_ms"]])
+        elif row.get("lora_timing_group_ms") is not None and not any(
+            member[0] == row.get("lora_module") for member in agg["timed_members"]
+        ):
+            agg["timed_members"].append([row["lora_module"], row["lora_timing_group_ms"]])
+    for agg in by_group.values():
+        for key in ("fp16_weight_mb", "int8_weight_mb", "int4_weight_mb"):
+            agg[key] = round(float(agg[key]), 5)
+    return by_group
+
+
+def build_fused_kernel_plan(
+    timings: dict[str, float],
+    matrix_profile: list[dict[str, Any]],
+    *,
+    current_sum_ms: float,
+    candidate_sum_ms: float,
+) -> dict[str, Any]:
+    has_v_lora = any(row.get("lora_module") == "v_lora" for row in matrix_profile)
+    first_target_members = ["r_proj", "k_proj", "v_proj", "w_lora", "a_lora", "g_lora"]
+    if has_v_lora:
+        first_target_members.insert(5, "v_lora")
+    rkv_current = float(timings.get("rkv_current") or 0.0)
+    rkv_candidate = float(timings.get("rkv_bmm_candidate") or 0.0)
+    wa_current = float(timings.get("wa_lora_current") or 0.0)
+    wa_candidate = float(timings.get("wa_lora_bmm_candidate") or 0.0)
+    return {
+        "first_fused_fp16_target": {
+            "group": "attn_time_mix_linears_lora",
+            "members": first_target_members,
+            "current_ms": round(float(current_sum_ms), 5),
+            "naive_candidate_ms": round(float(candidate_sum_ms), 5),
+            "naive_candidate_speedup": round(float(current_sum_ms) / float(candidate_sum_ms), 4) if candidate_sum_ms else None,
+            "reason": "largest decode_components bucket; PyTorch bmm candidate is only a measurement scaffold, not the final kernel",
+            "required_output_tensors": ["r", "w", "k", "v", "a", "g"],
+        },
+        "fused_groups": [
+            {
+                "name": "attn_rkv_dense",
+                "members": ["r_proj", "k_proj", "v_proj"],
+                "current_ms": round(rkv_current, 5),
+                "naive_candidate_ms": round(rkv_candidate, 5),
+                "naive_candidate_speedup": round(rkv_current / rkv_candidate, 4) if rkv_candidate else None,
+                "target": "single fp16 fused GEMV/GEMM producing r,k,v without intermediate stack materialization",
+            },
+            {
+                "name": "attn_wa_lora",
+                "members": ["w_lora", "a_lora"],
+                "current_ms": round(wa_current, 5),
+                "naive_candidate_ms": round(wa_candidate, 5),
+                "naive_candidate_speedup": round(wa_current / wa_candidate, 4) if wa_candidate else None,
+                "target": "fuse two same-rank LoRA down/activation/up chains",
+            },
+        ],
+        "native_quant_candidates": [
+            {
+                "name": "ffn_key_value",
+                "status": "planned_not_measured_by_projection_lora",
+                "reason": "largest memory-saving W8/W4 candidate; requires fused dequant-GEMV before bnb can be replaced",
+            },
+            {
+                "name": "attn_dense_rkv_o",
+                "status": "fp16_first_quant_later",
+                "reason": "decode-hot path; current decode_hot policy keeps it dense because generic bnb kernels are slow on V100",
+            },
+        ],
+        "matrix_profile_summary": matrix_profile_summary(matrix_profile),
+    }
+
+
 def bench_layer(attn, xs, args) -> dict[str, Any]:
     row: dict[str, Any] = {}
     funcs: dict[str, Callable[[], Any]] = {
@@ -198,6 +367,27 @@ def bench_layer(attn, xs, args) -> dict[str, Any]:
         timings["rkv_bmm_candidate"] + timings["wa_lora_bmm_candidate"] + timings.get("v_lora", 0.0) + timings["g_lora"],
         5,
     )
+    matrix_profile = [
+        linear_matrix_profile("r_proj", attn.r_proj, args.batch_size, input_source="xr", fused_group="attn_rkv_dense", timing_ms=timings["r_proj"]),
+        linear_matrix_profile("k_proj", attn.k_proj, args.batch_size, input_source="xk", fused_group="attn_rkv_dense", timing_ms=timings["k_proj"]),
+        linear_matrix_profile("v_proj", attn.v_proj, args.batch_size, input_source="xv", fused_group="attn_rkv_dense", timing_ms=timings["v_proj"]),
+        linear_matrix_profile("o_proj", attn.o_proj, args.batch_size, input_source="attn_out_gated", fused_group="attn_output_dense", quant_candidate=True),
+        *lora_matrix_profile("w_lora", attn.w_lora, args.batch_size, input_source="xw", fused_group="attn_wa_lora", timing_ms=timings["w_lora"]),
+        *lora_matrix_profile("a_lora", attn.a_lora, args.batch_size, input_source="xa", fused_group="attn_wa_lora", timing_ms=timings["a_lora"]),
+        *lora_matrix_profile("g_lora", attn.g_lora, args.batch_size, input_source="xg", fused_group="attn_g_lora", timing_ms=timings["g_lora"]),
+    ]
+    if getattr(attn, "v_lora", None) is not None:
+        matrix_profile.extend(
+            lora_matrix_profile("v_lora", attn.v_lora, args.batch_size, input_source="xv", fused_group="attn_v_lora", timing_ms=timings["v_lora"])
+        )
+    row["matrix_profile"] = matrix_profile
+    row["matrix_profile_summary"] = matrix_profile_summary(matrix_profile)
+    row["fused_kernel_plan"] = build_fused_kernel_plan(
+        timings,
+        matrix_profile,
+        current_sum_ms=row["current_linears_lora_sum_ms"],
+        candidate_sum_ms=row["candidate_linears_lora_sum_ms"],
+    )
     return row
 
 
@@ -239,6 +429,15 @@ def main() -> int:
     avg_timings = {k: avg(k) for k in sorted(layer_rows[0]["timings_ms"].keys())}
     current_sum = round(sum(row["current_linears_lora_sum_ms"] for row in layer_rows) / len(layer_rows), 5)
     candidate_sum = round(sum(row["candidate_linears_lora_sum_ms"] for row in layer_rows) / len(layer_rows), 5)
+    sample_matrix_profile = layer_rows[0]["matrix_profile"]
+    fused_kernel_plan = build_fused_kernel_plan(
+        avg_timings,
+        sample_matrix_profile,
+        current_sum_ms=current_sum,
+        candidate_sum_ms=candidate_sum,
+    )
+    fused_kernel_plan["sample_layer_idx"] = layer_rows[0]["layer_idx"]
+    fused_kernel_plan["sampled_layers"] = args.layers
     row = {
         "axis": "projection_lora",
         "backend": "hf_adapter",
@@ -255,6 +454,9 @@ def main() -> int:
         "avg_current_linears_lora_sum_ms": current_sum,
         "avg_candidate_linears_lora_sum_ms": candidate_sum,
         "avg_candidate_speedup": round(current_sum / candidate_sum, 4) if candidate_sum else None,
+        "sample_matrix_profile": sample_matrix_profile,
+        "sample_matrix_profile_summary": matrix_profile_summary(sample_matrix_profile),
+        "fused_kernel_plan": fused_kernel_plan,
         "layer_rows": layer_rows,
         "peak_vram_mb": peak_mb(args.device),
     }
