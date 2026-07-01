@@ -313,6 +313,11 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         if r.get("axis") == "training_smoke" and r.get("backend") == "hf_adapter"
     ]
     training_latest = latest_by_key(training_rows, lambda r: r.get("trainer_backend"))
+    deepspeed_rows = [
+        r for r in filt(raw_rows, device=args.device, dtype=None)
+        if r.get("axis") == "deepspeed_training_smoke" and r.get("backend") == "hf_adapter"
+    ]
+    deepspeed_latest = latest_by_key(deepspeed_rows, lambda r: r.get("zero_stage"))
     albatross_rows = [
         r for r in rows
         if r.get("axis") == "albatross_speed" and r.get("backend") == "albatross"
@@ -489,6 +494,24 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     for row in training_latest:
         if row.get("status") == "pass" and float(row.get("max_trainable_delta") or 0.0) <= 0.0:
             focus.append(f"training smoke did not update trainable params: {row.get('trainer_backend')}")
+    deepspeed_by_stage = {int(r.get("zero_stage")): r for r in deepspeed_latest if r.get("zero_stage") is not None}
+    missing_zero = sorted({2, 3} - set(deepspeed_by_stage))
+    if missing_zero:
+        focus.append(f"DeepSpeed ZeRO smoke telemetry incomplete: missing stages {missing_zero}")
+    else:
+        passed_zero = [stage for stage, row in sorted(deepspeed_by_stage.items()) if row.get("status") == "pass"]
+        skipped_zero = [stage for stage, row in sorted(deepspeed_by_stage.items()) if row.get("status") == "skip"]
+        if passed_zero:
+            focus.append(f"DeepSpeed ZeRO smoke passes for stages {passed_zero}")
+        if skipped_zero:
+            reasons = {
+                stage: deepspeed_by_stage[stage].get("reason")
+                for stage in skipped_zero
+            }
+            focus.append(f"DeepSpeed ZeRO smoke skipped for stages {skipped_zero}: {reasons}")
+        for stage, row in sorted(deepspeed_by_stage.items()):
+            if row.get("status") == "pass" and float(row.get("max_trainable_delta") or 0.0) <= 0.0:
+                focus.append(f"DeepSpeed ZeRO-{stage} smoke did not update trainable params")
 
     if not albatross_latest:
         focus.append("Albatross A/B rows pending")
@@ -736,6 +759,33 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             )
             for r in training_latest
         ],
+        "deepspeed_training_smoke": [
+            compact(
+                r,
+                [
+                    "_lineno",
+                    "trainer_backend",
+                    "zero_stage",
+                    "status",
+                    "reason",
+                    "train_dtype",
+                    "device",
+                    "cuda_device_count",
+                    "attn_mode",
+                    "batch_size",
+                    "gradient_accumulation_steps",
+                    "effective_batch_size",
+                    "max_steps",
+                    "deepspeed_config",
+                    "train_loss",
+                    "train_runtime_s",
+                    "train_samples_per_second",
+                    "train_steps_per_second",
+                    "max_trainable_delta",
+                ],
+            )
+            for r in deepspeed_latest
+        ],
         "albatross_speed": [
             compact(
                 r,
@@ -922,6 +972,12 @@ def print_text(report: dict[str, Any]) -> None:
     print("\n## training_smoke")
     if report.get("training_smoke"):
         for row in report["training_smoke"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+    print("\n## deepspeed_training_smoke")
+    if report.get("deepspeed_training_smoke"):
+        for row in report["deepspeed_training_smoke"]:
             print(json.dumps(row, ensure_ascii=False))
     else:
         print("PENDING")

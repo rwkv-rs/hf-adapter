@@ -390,6 +390,59 @@ def assert_native_model_smoke_is_reported(tmpdir: Path) -> None:
     assert any("experimental native_model smoke passes" in item for item in report["next_focus"])
 
 
+def assert_deepspeed_smoke_survives_inference_dtype_filter(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "deepspeed_training_smoke",
+            "backend": "hf_adapter",
+            "trainer_backend": f"trainer_zero{stage}",
+            "zero_stage": stage,
+            "status": "pass",
+            "dtype": "fp32",
+            "train_dtype": "fp32",
+            "device": "Tesla V100-PCIE-32GB",
+            "cuda_device_count": 2,
+            "attn_mode": "fused_recurrent",
+            "batch_size": 1,
+            "gradient_accumulation_steps": 1,
+            "effective_batch_size": 1,
+            "max_steps": 1,
+            "deepspeed_config": f"configs/deepspeed/zero{stage}.json",
+            "train_loss": 1.0,
+            "train_runtime_s": 1.0,
+            "train_samples_per_second": 1.0,
+            "train_steps_per_second": 1.0,
+            "max_trainable_delta": 1e-4,
+        }
+        for stage in (2, 3)
+    ]
+    path = tmpdir / "deepspeed_results.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    stages = {int(row["zero_stage"]) for row in report["deepspeed_training_smoke"]}
+    assert stages == {2, 3}
+    assert all(row["status"] == "pass" for row in report["deepspeed_training_smoke"])
+    assert any("DeepSpeed ZeRO smoke passes for stages [2, 3]" in item for item in report["next_focus"])
+
+
 def main() -> int:
     rows = [
         {
@@ -479,6 +532,7 @@ def main() -> int:
         assert_quantization_best_variants_are_reported(tmpdir)
         assert_quantization_model_sweep_does_not_override_canonical(tmpdir)
         assert_native_model_smoke_is_reported(tmpdir)
+        assert_deepspeed_smoke_survives_inference_dtype_filter(tmpdir)
     args = argparse.Namespace(device="V100", dtype="fp16")
     speeds = latest_by_layout(fast_speed_rows(loaded, args))
     micros = latest_by_layout(fast_micro_rows(loaded, args))
