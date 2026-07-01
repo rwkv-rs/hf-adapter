@@ -41,19 +41,36 @@ The current delivery strategy is:
 
 Near-term completion, without waiting for extra GPUs:
 
-1. Merge and preserve V100 training telemetry for HF Trainer, TRL SFT, TRL DPO,
-   and TRL GRPO.
-2. Add Albatross A/B benchmark ingestion on the same checkpoint, V100, dtype,
-   batch size, prompt length, decode length, and cache policy.
-3. Continue W8/W4 work beyond generic bitsandbytes toward fused/native fast
-   paths, while reporting current memory wins and speed gaps honestly.
-4. Expand V100 evidence for large-model smoke, speed/precision sweeps,
-   chunked prefill, dynamic batching, state-cache reuse, and speculative
-   decoding.
-5. Keep ZeRO-2/ZeRO-3 and multi-GPU HF smoke runnable on the available 2 x V100
-   server where feasible.
-6. Prepare benchmark commands so H100/4090/5090/A100 can be run later as a
-   validation matrix, not as a blocker for current progress.
+1. Done: preserve V100 training telemetry for HF Trainer, TRL SFT, TRL DPO,
+   and TRL GRPO in the benchmark/report pipeline.
+2. Done: add Albatross A/B benchmark ingestion on the same checkpoint, V100,
+   dtype, batch size, prompt length, decode length, and cache policy.
+3. Current: finish W8/W4 reporting and gates so the repository clearly records
+   both the memory-target bnb rows and the fastest passing hybrid variants.
+4. Current: keep code/tests/docs green locally without CUDA, then merge only
+   changes that preserve existing HF training, cache, quantization, benchmark,
+   and telemetry behavior.
+5. Next when GPUs return: expand V100 evidence for large-model smoke,
+   speed/precision sweeps, chunked prefill, dynamic batching, state-cache reuse,
+   speculative decoding, and ZeRO-2/ZeRO-3 multi-GPU smoke.
+6. Later validation: run the prepared benchmark matrix on H100/4090/5090/A100.
+   These newer cards are validation targets, not blockers for current progress.
+
+Current no-GPU work mode:
+
+- Finish everything that does not require live CUDA access first: HF API
+  compatibility code, analyzers, benchmark ingestion, result gates, docs, unit
+  tests, and PR hygiene.
+- Treat existing V100 evidence as the active baseline until GPUs return. Do not
+  block merges on new H100/4090/5090/A100 numbers.
+- Keep GPU-only work as explicit follow-up rows in `BENCHMARK.md` /
+  `NEXT_STEPS.md`: fresh speed sweeps, large-model runs, fused W8/W4 kernels,
+  ZeRO-2/3 multi-GPU validation, and cross-card validation.
+- The immediate finish line for this repository is a clean HF adapter that can
+  be reviewed, installed, tested, and benchmarked reproducibly; vLLM/SGLang and
+  DFlash stay outside the current merge gate.
+- Do not start vLLM/SGLang work in this repository while the HF adapter still
+  has open local tasks. First finish the HF adapter evidence, gates, and docs.
 
 ## Target Acceptance Criteria
 
@@ -163,6 +180,17 @@ Completed first-stage HF wrapper adaptation:
   - max absolute difference around `0.047`
 
 Current implementation uses FLA (`flash-linear-attention`) as backend. This is a first-stage wrapper, not yet the final native Transformers implementation.
+
+Recent completed evidence:
+
+- V100 training telemetry is recorded for HF Trainer, TRL SFT, TRL DPO, and TRL
+  GRPO-style smoke paths.
+- Albatross A/B ingestion exists and analyzer output reports HF-vs-Albatross
+  prefill/decode ratios.
+- W8/W4 quantization rows record both canonical memory-target bnb behavior and
+  `decode_hot` hybrid variants. The hybrid variants improve decode over generic
+  bnb on V100 while remaining below fp16/native-graph speed, so fused/native
+  quantized projection kernels remain the main quantization performance gap.
 
 ## Important Paths
 
