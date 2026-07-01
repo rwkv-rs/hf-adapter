@@ -335,8 +335,21 @@ def check_common(report: dict[str, Any], failures: list[str], args: argparse.Nam
                 continue
             if row.get("fast_forward_same_next_token") is False:
                 fail(failures, f"quantization {mode} fast-forward changed greedy next token")
-            if row.get("fast_decode_speedup") is not None and float(row["fast_decode_speedup"]) < 1.0:
-                fail(failures, f"quantization {mode} fast-forward speedup below 1.0: {row.get('fast_decode_speedup')}")
+            if (
+                row.get("selected_decode_path") == "fast_forward"
+                and row.get("fast_decode_speedup") is not None
+                and float(row["fast_decode_speedup"]) < 1.0
+            ):
+                fail(failures, f"quantization {mode} selected fast-forward despite speedup below 1.0: {row.get('fast_decode_speedup')}")
+            module_counts = row.get("module_counts") or {}
+            quantized_lora = int(module_counts.get("quantized_lora_rank_linear") or 0)
+            dense_lora = int(module_counts.get("dense_lora_rank_linear") or 0)
+            if quantized_lora != 0 or dense_lora <= 0:
+                fail(
+                    failures,
+                    f"quantization {mode} did not keep small LoRA rank linears dense: "
+                    f"dense={dense_lora} quantized={quantized_lora}",
+                )
             if base and base.get("status") == "pass":
                 base_mem = base.get("model_footprint_mb") or base.get("peak_vram_mb")
                 q_mem = row.get("model_footprint_mb") or row.get("peak_vram_mb")
