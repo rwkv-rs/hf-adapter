@@ -1,6 +1,9 @@
 # RWKV-7 HF Adapter
 
 First-stage Hugging Face adapter for official RWKV-7 `.pth` checkpoints.
+Current scope is HF adapter delivery only: Transformers loading/generation,
+PEFT/TRL/Trainer compatibility, HF state-cache serving primitives, quantized
+inference, and HF-compatible speculative decoding.
 
 This repository converts RWKV-7 weights to a Hugging Face-style directory and provides remote-code wrappers so the result can be loaded with:
 
@@ -49,6 +52,7 @@ bench/
   bench_native_graph_overhead.py
   bench_decode_components.py
   bench_projection_lora.py
+  bench_speculative_decode.py
   compare_fast_token_layouts.py
   analyze_results.py
   check_results.py
@@ -579,7 +583,9 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - Initial HF-compatible `rwkv7_speculative_generate()` supports greedy bsz=1
   speculative decoding with a RWKV/HF draft model. It verifies draft spans with
   block HF forwards, reports accepted/proposed/corrected tokens and acceptance
-  rate, and falls back to cache resync on mismatch.
+  rate, and falls back to cache resync on mismatch. `bench_speculative_decode.py`
+  now records a real 0.1B draft -> 0.4B target V100 row and gates target-greedy
+  equality plus acceptance telemetry.
 - Batched recurrent cache smoke coverage exists for repeated prompts across bsz=1/2/4; benchmark sweep records total/per-sequence throughput for bsz=1/2/4/8 and includes the fast token API when available.
 - Dynamic-batch cache reorder coverage exists for heterogeneous prompts; benchmark simulation records reorder/drop counts and total decoded tokens/s.
 - Chunked prefill coverage compares full vs chunked logits/cache and records
@@ -637,6 +643,10 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - HF `device_map` smoke on 2 x V100 manually splits 12 layers at layer 6,
   keeps `RWKV7_FAST_FORWARD=1`, skips the single-device fast-token backend,
   and matches the single-device greedy tail `[36786, 34, 308, 459]`.
+- HF speculative decode benchmark on V100 uses a real 0.1B draft against the
+  0.4B target, matches target greedy for 8/8 new tokens, accepts 7/9 proposals
+  (`0.778` acceptance), and records target/draft forward call counts for the
+  next draft-selection/speedup pass.
 - Bitsandbytes quantization smoke now loads and generates for both 8-bit and
   4-bit on V100, and cached decode can use the HF fast-forward hook through
   the FLA fallback. Short benchmark rows show model footprint dropping from
