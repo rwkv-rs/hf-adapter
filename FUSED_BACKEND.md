@@ -292,6 +292,19 @@ serving speed.
      `0.7873x` fp16 and best W4 (`block_m=8, block_k=64`) is `0.7675x` fp16.
      The quant path therefore needs tensor-core-aware packing or deeper fusion,
      not just block-size tuning.
+   - The W4 Triton kernels now iterate over packed int4 bytes and consume both
+     nibbles per load instead of loading the same packed byte once per logical
+     input feature. For W4 rows the benchmark reports `block_k_unit` as
+     `packed_int4_bytes`; W8 keeps `block_k_unit=input_features`.
+   - RTX 4090 / Ada 0.4B fp16 sweep evidence is now recorded for the same R/K/V
+     group. Best W8 reaches `0.7125x` fp16 (`0.05051ms` fused vs `0.03599ms`
+     fp16, footprint ratio `0.502`) and best W4 reaches `0.6958x` fp16
+     (`0.05157ms` fused vs `0.03588ms` fp16, footprint ratio `0.252`). Both
+     fused quant paths are roughly `1.88x`-`1.92x` faster than three separate
+     quant GEMVs, but still below fp16 cuBLAS, so 4090 quant remains a memory
+     win rather than a decode-speed win until the next design uses tensor-core
+     friendly activation quantization or fuses quant projection with more of the
+     native_graph token path.
 19. V100 + Ada/Blackwell benchmark matrix.
    - `bench/run_v100_fast_decode_validation.sh` remains the broad V100
      regression gate.
@@ -300,6 +313,10 @@ serving speed.
      fused recurrent+output A/B matrix, and a small set of negative opt-in
      probes so future changes do not accidentally default a microbench-only
      fusion.
+   - `bench/run_4090_quant_validation.sh` is the Ada/4090 native-quant gate. It
+     runs the single-load W8/W4 R/K/V sweep with `TORCH_CUDA_ARCH_LIST=8.9` and
+     emits an analyzer report so quant work is tracked separately from generic
+     bitsandbytes compatibility.
    - Blackwell/5070-specific evidence lives in `BLACKWELL_50SERIES.md`; 5070
      uses the same software stack but `sm_120`-specific kernel behavior must not
      be projected onto Ada without the 4090 gate.
