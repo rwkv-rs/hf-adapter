@@ -45,22 +45,27 @@ Near-term completion, without waiting for extra GPUs:
    and TRL GRPO in the benchmark/report pipeline.
 2. Done: add Albatross A/B benchmark ingestion on the same checkpoint, V100,
    dtype, batch size, prompt length, decode length, and cache policy.
-3. Current: finish W8/W4 reporting and gates so the repository clearly records
+3. Done: harden the experimental native/no-FLA HF path with smoke tests for
+   Trainer, TRL SFT, TRL DPO, TRL GRPO, PEFT adapter save/load/merge, Trainer
+   checkpoint resume, and bnb W8/W4 functional quantized inference. These are
+   compatibility gates only; they do not close the Albatross or quantized-speed
+   gaps.
+4. Current: finish W8/W4 reporting and gates so the repository clearly records
    both the memory-target bnb rows and the fastest passing hybrid variants.
-4. Current: keep code/tests/docs green locally without CUDA, then merge only
+5. Current: keep code/tests/docs green locally without CUDA, then merge only
    changes that preserve existing HF training, cache, quantization, benchmark,
    and telemetry behavior.
-5. Current no-GPU task: finish executable DeepSpeed ZeRO-2/ZeRO-3 HF Trainer
+6. Current no-GPU task: finish executable DeepSpeed ZeRO-2/ZeRO-3 HF Trainer
    smoke harness, analyzer/report ingestion, docs, and local tests. Real pass
    rows can wait for live GPU/DeepSpeed access, but the repository should be
    ready to run them with one command.
-6. Current performance phase: follow `FUSED_BACKEND.md` for the native fused
+7. Current performance phase: follow `FUSED_BACKEND.md` for the native fused
    fp16 -> native W8/W4 backend. The analyzer must track Albatross ratio
    ladders and quantized speed/footprint gates under `fused_backend_targets`.
-7. Next when GPUs return: expand V100 evidence for large-model smoke,
+8. Next when GPUs return: expand V100 evidence for large-model smoke,
    speed/precision sweeps, chunked prefill, dynamic batching, state-cache reuse,
    speculative decoding, and ZeRO-2/ZeRO-3 multi-GPU smoke.
-8. Later validation: run the prepared benchmark matrix on H100/4090/5090/A100.
+9. Later validation: run the prepared benchmark matrix on H100/4090/5090/A100.
    These newer cards are validation targets, not blockers for current progress.
 
 Current no-GPU work mode:
@@ -186,12 +191,19 @@ Completed first-stage HF wrapper adaptation:
   - fp16 cosine similarity around `0.999996`
   - max absolute difference around `0.047`
 
-Current implementation uses FLA (`flash-linear-attention`) as backend. This is a first-stage wrapper, not yet the final native Transformers implementation.
+The default production-facing wrapper uses FLA (`flash-linear-attention`) as
+backend. The opt-in `RWKV7_NATIVE_MODEL=1` path loads the experimental
+pure-PyTorch `NativeRWKV7ForCausalLM` backend for FLA-free compatibility work;
+it is not yet the final performance backend.
 
 Recent completed evidence:
 
 - V100 training telemetry is recorded for HF Trainer, TRL SFT, TRL DPO, and TRL
   GRPO-style smoke paths.
+- The experimental native/no-FLA backend has explicit HF ecosystem smokes for
+  HF Trainer, TRL SFT, TRL DPO, TRL GRPO, PEFT adapter save/load/merge,
+  Trainer checkpoint resume, and bnb W8/W4 functional inference. These prove
+  compatibility and regression coverage, not Albatross-level speed.
 - Albatross A/B ingestion exists and analyzer output reports HF-vs-Albatross
   prefill/decode ratios.
 - W8/W4 quantization rows record both canonical memory-target bnb behavior and
