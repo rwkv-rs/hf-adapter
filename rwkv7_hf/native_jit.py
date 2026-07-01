@@ -22,6 +22,15 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_recurrent_update = None  # type: ignore[assignment]
         fused_recurrent_update_available = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - optional Triton fast path on CUDA hosts
+    from .fused_output import fused_attn_output_prepare, fused_attn_output_prepare_available
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from fused_output import fused_attn_output_prepare, fused_attn_output_prepare_available
+    except Exception:
+        fused_attn_output_prepare = None  # type: ignore[assignment]
+        fused_attn_output_prepare_available = None  # type: ignore[assignment]
+
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
 
@@ -35,6 +44,19 @@ def _native_graph_fused_recurrent_enabled() -> bool:
         return False
     try:
         return bool(fused_recurrent_update_available())
+    except Exception:
+        return False
+
+
+def _native_graph_fused_output_enabled() -> bool:
+    """Runtime switch for the experimental native-graph output-prep Triton path."""
+
+    if os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT", "0") in _FALSE_VALUES:
+        return False
+    if fused_attn_output_prepare is None or fused_attn_output_prepare_available is None:
+        return False
+    try:
+        return bool(fused_attn_output_prepare_available())
     except Exception:
         return False
 
@@ -367,10 +389,26 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         v = v + (v_first - v) * torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
     w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
     out, new_state = _recurrent_update_unbatched(r, w, k, v, kk, a, state, H, N)
-    out = F.group_norm(out.view(1, H * N), H, gn_w, gn_b, eps).view(H * N)
-    sk = (r.view(H, N) * k.view(H, N) * r_k).sum(dim=-1, keepdim=True)
-    out = out + (sk * v.view(H, N)).view(H * N)
-    out = F.linear(out * g, Ow)
+    if _native_graph_fused_output_enabled():
+        out = fused_attn_output_prepare(
+            out.view(1, H * N),
+            r.view(1, H, N),
+            k.view(1, H, N),
+            v.view(1, H, N),
+            g.view(1, H * N),
+            r_k,
+            gn_w,
+            gn_b,
+            num_heads=H,
+            head_dim=N,
+            head_v_dim=N,
+            eps=eps,
+        ).view(H * N)
+    else:
+        out = F.group_norm(out.view(1, H * N), H, gn_w, gn_b, eps).view(H * N)
+        sk = (r.view(H, N) * k.view(H, N) * r_k).sum(dim=-1, keepdim=True)
+        out = (out + (sk * v.view(H, N)).view(H * N)) * g
+    out = F.linear(out, Ow)
     xpa.copy_(h)
     state.copy_(new_state)
     x = residual + out
@@ -418,10 +456,26 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         v = v + (v_first - v) * torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
     w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
     out, new_state = _recurrent_update_batched(r, w, k, v, kk, a, state, B, H, N)
-    out = F.group_norm(out, H, gn_w, gn_b, eps).view(B, H * N)
-    sk = (r.view(B, H, N) * k.view(B, H, N) * r_k).sum(dim=-1, keepdim=True)
-    out = out + (sk * v.view(B, H, N)).view(B, H * N)
-    out = F.linear(out * g, Ow)
+    if _native_graph_fused_output_enabled():
+        out = fused_attn_output_prepare(
+            out,
+            r.view(B, H, N),
+            k.view(B, H, N),
+            v.view(B, H, N),
+            g,
+            r_k,
+            gn_w,
+            gn_b,
+            num_heads=H,
+            head_dim=N,
+            head_v_dim=N,
+            eps=eps,
+        )
+    else:
+        out = F.group_norm(out, H, gn_w, gn_b, eps).view(B, H * N)
+        sk = (r.view(B, H, N) * k.view(B, H, N) * r_k).sum(dim=-1, keepdim=True)
+        out = (out + (sk * v.view(B, H, N)).view(B, H * N)) * g
+    out = F.linear(out, Ow)
     xpa.copy_(h)
     state.copy_(new_state)
     x = residual + out

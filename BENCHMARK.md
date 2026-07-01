@@ -228,7 +228,7 @@ When the V100 server is reachable, run the committed bundle from the repository 
 ```
 
 It runs `test_fast_decode_api.py`, `bench_speed.py --hf-decode-api rwkv7_forward_token`,
-`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `tests/test_device_map_generate.py` when at least two CUDA devices are visible, `bench_fast_token_warmup.py`, `bench_native_graph_overhead.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `bench_fused_projection.py`, `bench_fused_wa_lora.py`, `bench_fused_wag_lora.py`, `bench_fused_rkv_wag_projection.py`, `bench_fused_attn_output.py`, `bench_fused_ffn.py`, `bench_fused_shift_mix.py`, `bench_fused_recurrent.py`, `bench_native_graph_fused_recurrent.py`, `bench_native_quant_gemv.py`, `bench_native_quant_w4_gemv.py`, `bench_native_quant_rkv.py`, `bench_native_quant_w4_rkv.py`, `bench_larger_model_smoke.py` when the 0.4B/1.5B/2.9B/7.2B/13.3B paths exist, `bench_speculative_decode.py` when the target/draft HF dirs exist, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
+`test_batch_cache.py`, `test_dynamic_batch_cache.py`, `bench_batch_sweep.py`, `bench_dynamic_batch.py`, `bench_decode_breakdown.py --fast-decode-api true`, `bench_decode_micro.py`, `bench_forward_fast_path.py`, `bench_generate_fast_path.py`, `tests/test_device_map_generate.py` when at least two CUDA devices are visible, `bench_fast_token_warmup.py`, `bench_native_graph_overhead.py`, `bench_decode_components.py`, `bench_projection_lora.py`, `bench_fused_projection.py`, `bench_fused_wa_lora.py`, `bench_fused_wag_lora.py`, `bench_fused_rkv_wag_projection.py`, `bench_fused_attn_output.py`, `bench_fused_ffn.py`, `bench_fused_shift_mix.py`, `bench_fused_recurrent.py`, `bench_native_graph_fused_recurrent.py`, `bench_native_graph_fused_output.py`, `bench_native_quant_gemv.py`, `bench_native_quant_w4_gemv.py`, `bench_native_quant_rkv.py`, `bench_native_quant_w4_rkv.py`, `bench_larger_model_smoke.py` when the 0.4B/1.5B/2.9B/7.2B/13.3B paths exist, `bench_speculative_decode.py` when the target/draft HF dirs exist, `profile_decode.py --hf-decode-api rwkv7_forward_token`, `bench/analyze_results.py`, and `bench/check_results.py`,
 then writes logs under `bench/logs/`. The bundle now also validates the
 `native_jit` backend plus fixed-batch and dynamic `native_graph` fast-token
 backends, and appends native HF speed rows before running the target gate. Use
@@ -776,6 +776,34 @@ tokens match `32/32`. End-to-end graph replay is currently neutral
 (`1.0033x`, `4.2878ms` fused vs `4.3018ms` baseline), so this remains opt-in;
 the isolated recurrent kernel is fast, but the captured full-token graph still
 needs deeper fusion around the larger projection/LoRA bottleneck.
+
+## Native-graph fused output integration
+
+Set `RWKV7_NATIVE_GRAPH_FUSED_OUTPUT=1` to capture native-graph decode with the
+attention output-prep Triton prototype. The graph-runner cache key includes both
+`RWKV7_NATIVE_GRAPH_FUSED_RECURRENT` and `RWKV7_NATIVE_GRAPH_FUSED_OUTPUT`, while
+keeping the active batch size visible in cache telemetry.
+
+```bash
+python bench/bench_native_graph_fused_output.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --batch-size 1 \
+  --prompt-tokens 64 \
+  --fixed-token \
+  --results bench/results.jsonl
+```
+
+Latest V100 integration row: first-step logits remain aligned
+(`max_abs_diff_first_step=0.0625`, `min_cosine_first_step=1.0000001`) and greedy
+tokens match `32/32`. End-to-end native-graph replay improves to `1.0997x`
+(`4.0205ms` fused vs `4.4214ms` baseline, `248.7` vs `226.2` tok/s). This makes
+fused output prep the first opt-in Triton kernel to move full native-graph token
+latency on V100; next validation should cover bsz>1, 5070/newer GPUs, and
+combining with recurrent/projection/LoRA fusion.
 
 ## Native W8 dequant-GEMV prototype
 
