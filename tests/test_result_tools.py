@@ -530,6 +530,64 @@ def assert_fused_shift_mix_proto_is_reported(tmpdir: Path) -> None:
     assert any("fused attention shift-mix prototype backend=triton_attn_shift_mix is slower" in item for item in report["next_focus"])
 
 
+def assert_fused_recurrent_proto_is_reported(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "fused_recurrent_proto",
+            "backend": "hf_adapter",
+            "prototype_backend": "triton_rank1_recurrent",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 1,
+            "hidden_size": 768,
+            "layers": [0],
+            "block_n": 64,
+            "steps": 256,
+            "avg_current_ms": 0.22,
+            "avg_prototype_ms": 0.08,
+            "avg_speedup": 2.75,
+            "out_max_abs_diff": 0.0234375,
+            "state_max_abs_diff": 0.0039,
+            "out_min_cosine": 0.9999997,
+            "layer_rows": [
+                {
+                    "layer_idx": 0,
+                    "num_heads": 12,
+                    "head_dim": 64,
+                    "current_ms": 0.22,
+                    "prototype_ms": 0.08,
+                    "speedup": 2.75,
+                },
+            ],
+        }
+    ]
+    path = tmpdir / "fused_recurrent_proto.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    assert report["fused_recurrent_proto"]["prototype_backend"] == "triton_rank1_recurrent"
+    assert report["fused_recurrent_proto"]["avg_speedup"] == 2.75
+    assert any("fused recurrent prototype backend=triton_rank1_recurrent speedup=2.75x" in item for item in report["next_focus"])
+
+
 def assert_quantization_model_sweep_does_not_override_canonical(tmpdir: Path) -> None:
     rows = [
         {
@@ -821,6 +879,7 @@ def main() -> int:
         assert_projection_kernel_plan_is_reported(tmpdir)
         assert_fused_projection_proto_is_reported(tmpdir)
         assert_fused_shift_mix_proto_is_reported(tmpdir)
+        assert_fused_recurrent_proto_is_reported(tmpdir)
         assert_quantization_model_sweep_does_not_override_canonical(tmpdir)
         assert_native_model_smoke_is_reported(tmpdir)
         assert_deepspeed_smoke_survives_inference_dtype_filter(tmpdir)
