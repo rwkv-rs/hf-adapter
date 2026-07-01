@@ -51,7 +51,7 @@ def _native_graph_fused_recurrent_enabled() -> bool:
 def _native_graph_fused_output_enabled() -> bool:
     """Runtime switch for the experimental native-graph output-prep Triton path."""
 
-    if os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT", "0") in _FALSE_VALUES:
+    if os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT", "1") in _FALSE_VALUES:
         return False
     if fused_attn_output_prepare is None or fused_attn_output_prepare_available is None:
         return False
