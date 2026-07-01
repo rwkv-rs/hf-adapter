@@ -548,6 +548,19 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         speedup = projection_lora.get("avg_candidate_speedup")
         if speedup is not None and float(speedup) < 1.0:
             focus.append(f"naive PyTorch projection/LoRA bmm candidate is slower ({float(speedup):.2f}x); custom fusion needed")
+        fused_plan = projection_lora.get("fused_kernel_plan")
+        if isinstance(fused_plan, dict):
+            first_target = fused_plan.get("first_fused_fp16_target") or {}
+            group = first_target.get("group")
+            current_ms = first_target.get("current_ms")
+            members = first_target.get("members") or []
+            if group:
+                focus.append(
+                    f"fused projection first target: {group} current={current_ms} ms "
+                    f"members={','.join(str(m) for m in members)}"
+                )
+        else:
+            focus.append("projection_lora row lacks matrix-level fused kernel plan; rerun bench_projection_lora")
     if albatross_decode_min is None:
         focus.append("fused backend target tracking needs Albatross decode ratios")
     elif albatross_decode_min < 0.55:
@@ -778,7 +791,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             for r in native_graph_overhead
         ],
         "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
-        "projection_lora": compact(projection_lora, ["_lineno", "batch_size", "hidden_size", "layers", "avg_timings_ms", "avg_current_linears_lora_sum_ms", "avg_candidate_linears_lora_sum_ms", "avg_candidate_speedup", "peak_vram_mb"]),
+        "projection_lora": compact(projection_lora, ["_lineno", "batch_size", "hidden_size", "layers", "avg_timings_ms", "avg_current_linears_lora_sum_ms", "avg_candidate_linears_lora_sum_ms", "avg_candidate_speedup", "sample_matrix_profile_summary", "fused_kernel_plan", "peak_vram_mb"]),
         "larger_model_smoke": [
             compact(
                 r,
