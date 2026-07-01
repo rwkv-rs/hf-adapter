@@ -2371,6 +2371,72 @@ def assert_deepspeed_smoke_survives_inference_dtype_filter(tmpdir: Path) -> None
     assert any("DeepSpeed ZeRO smoke passes for stages [2, 3]" in item for item in report["next_focus"])
 
 
+def assert_dynamic_batch_native_graph_telemetry_is_reported(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "dynamic_batch",
+            "backend": "hf_adapter",
+            "decode_api": "rwkv7_forward_token",
+            "dtype": "fp16",
+            "device": "NVIDIA GeForce RTX 4090",
+            "fast_token_backend": "native_graph",
+            "fast_token_backend_effective": "native_graph",
+            "initial_batch_size": 8,
+            "final_batch_size": 4,
+            "final_cache_batch_size": 4,
+            "cache_select_api": True,
+            "total_decode_tokens": 832,
+            "reorder_count": 32,
+            "drop_count": 4,
+            "decode_tokps_total": 1634.6,
+            "decode_ms_per_token": 0.6118,
+            "cache_select_batch_calls": 32,
+            "cache_native_graph_bound_selects": 28,
+            "cache_seen_tokens": 256,
+            "native_graph_cache_requests": 128,
+            "native_graph_cache_hits": 128,
+            "native_graph_cache_misses": 0,
+            "native_graph_cache_hit_rate": 1.0,
+            "native_graph_cache_batch_sizes": [2, 3, 4, 5, 6, 7, 8],
+            "native_graph_copy_from_cache_calls": 128,
+            "native_graph_copy_from_cache_fast_skips": 96,
+            "native_graph_copy_from_cache_fast_skip_rate": 0.75,
+            "native_graph_bind_cache_calls": 128,
+            "native_graph_bind_cache_fast_skips": 96,
+            "native_graph_bind_cache_fast_skip_rate": 0.75,
+        }
+    ]
+    path = tmpdir / "dynamic_batch_telemetry.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "4090",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    dynamic = report["dynamic_batch"]
+    assert len(dynamic) == 1, dynamic
+    row = dynamic[0]
+    assert row["native_graph_cache_hit_rate"] == 1.0, row
+    assert row["native_graph_cache_batch_sizes"] == [2, 3, 4, 5, 6, 7, 8], row
+    assert row["cache_native_graph_bound_selects"] == 28, row
+    assert row["native_graph_copy_from_cache_fast_skip_rate"] == 0.75, row
+    assert row["native_graph_bind_cache_fast_skip_rate"] == 0.75, row
+
+
 def main() -> int:
     rows = [
         {
@@ -2488,6 +2554,7 @@ def main() -> int:
         assert_quantization_model_sweep_does_not_override_canonical(tmpdir)
         assert_native_model_smoke_is_reported(tmpdir)
         assert_deepspeed_smoke_survives_inference_dtype_filter(tmpdir)
+        assert_dynamic_batch_native_graph_telemetry_is_reported(tmpdir)
     args = argparse.Namespace(device="V100", dtype="fp16")
     speeds = latest_by_layout(fast_speed_rows(loaded, args))
     micros = latest_by_layout(fast_micro_rows(loaded, args))
