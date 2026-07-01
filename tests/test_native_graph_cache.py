@@ -112,6 +112,27 @@ def main() -> int:
     assert metrics["new_layers"] == 2, metrics
     assert metrics["layers"] == 2, metrics
     assert metrics["seen_tokens"] == 1, metrics
+    binding_cache = modeling.RWKV7StateCache()
+    binding_cache.update(recurrent_state="r0", layer_idx=0)
+    runner_marker = object()
+    binding_cache._bind_native_graph_runner(runner_marker)
+    assert binding_cache._native_graph_bound_to(runner_marker)
+    assert not binding_cache.clone()._native_graph_bound_to(runner_marker)
+    binding_cache.update(recurrent_state="r1", layer_idx=0)
+    assert not binding_cache._native_graph_bound_to(runner_marker)
+    binding_cache._bind_native_graph_runner(runner_marker)
+    binding_cache.detach(inplace=True)
+    assert not binding_cache._native_graph_bound_to(runner_marker)
+    binding_cache._bind_native_graph_runner(runner_marker)
+    binding_cache.to(inplace=True)
+    assert not binding_cache._native_graph_bound_to(runner_marker)
+    binding_cache._bind_native_graph_runner(runner_marker)
+    binding_cache.select_batch(object(), inplace=True)
+    assert not binding_cache._native_graph_bound_to(runner_marker)
+    binding_cache._bind_native_graph_runner(runner_marker)
+    binding_cache.reset()
+    assert not binding_cache._native_graph_bound_to(runner_marker)
+
     cloned = state_cache.clone()
     assert cloned.rwkv7_cache_metrics()["clones"] == 1
     cloned.detach(inplace=True)
