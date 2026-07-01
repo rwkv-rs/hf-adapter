@@ -802,8 +802,21 @@ Latest V100 integration row: first-step logits remain aligned
 tokens match `32/32`. End-to-end native-graph replay improves to `1.0997x`
 (`4.0205ms` fused vs `4.4214ms` baseline, `248.7` vs `226.2` tok/s). This makes
 fused output prep the first opt-in Triton kernel to move full native-graph token
-latency on V100; next validation should cover bsz>1, 5070/newer GPUs, and
-combining with recurrent/projection/LoRA fusion.
+latency on V100.
+
+The V100 fixed-token batch matrix now covers the same active batch sizes used by
+the native-graph serving cache:
+
+| bsz | baseline ms/step | fused ms/step | speedup | greedy |
+|---:|---:|---:|---:|---:|
+| 1 | 4.4214 | 4.0205 | 1.0997x | 32/32 |
+| 2 | 12.1951 | 9.2125 | 1.3238x | 64/64 |
+| 4 | 12.6281 | 12.2061 | 1.0346x | 128/128 |
+| 8 | 12.9932 | 12.4389 | 1.0446x | 256/256 |
+
+The minimum V100 speedup across bsz=1/2/4/8 is therefore `1.0346x`; next
+validation should cover 5070/newer GPUs and combining this with
+recurrent/projection/LoRA fusion.
 
 ## Native W8 dequant-GEMV prototype
 
