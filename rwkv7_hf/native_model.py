@@ -131,6 +131,12 @@ class NativeRWKV7Model(PreTrainedModel):
         self.layers = nn.ModuleList([NativeRWKV7Layer(config, i) for i in range(config.num_hidden_layers)])
         self.norm = nn.LayerNorm(config.hidden_size)
 
+    def get_input_embeddings(self):
+        return self.embeddings
+
+    def set_input_embeddings(self, value):
+        self.embeddings = value
+
 
 class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     """Experimental batched native PyTorch CausalLM for converted RWKV-7 weights."""
@@ -150,6 +156,18 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         self.model = NativeRWKV7Model(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
+    def get_input_embeddings(self):
+        return self.model.get_input_embeddings()
+
+    def set_input_embeddings(self, value):
+        self.model.set_input_embeddings(value)
+
+    def get_output_embeddings(self):
+        return self.lm_head
+
+    def set_output_embeddings(self, new_embeddings):
+        self.lm_head = new_embeddings
+
     def rwkv7_native_model_last_decode_backend(self) -> str | None:
         """Return the backend used by the previous native-model decode call."""
         return getattr(self, "_rwkv7_native_model_last_decode_backend", None)
@@ -167,13 +185,28 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             return packs
         return cache[1]
 
-    def _run(self, token_ids: torch.Tensor, state, xpa, xpf, v_first, *, use_jit: bool = False):
+    def _run(
+        self,
+        token_ids: torch.Tensor,
+        state,
+        xpa,
+        xpf,
+        v_first,
+        *,
+        use_jit: bool = False,
+        collect_all: bool = False,
+    ):
         """Sequentially advance over token ids shaped ``[batch, seq]``.
 
         The experimental native model is still correctness-first and sequential
         over time, but the per-token math is vectorized over batch rows. This
         keeps the native/upstream fallback path aligned with wrapper bsz tests
         without claiming it replaces the optimized wrapper backend.
+
+        When ``collect_all`` is enabled, returns per-token logits shaped
+        ``[batch, seq, vocab]``. This keeps the FLA-free native path compatible
+        with standard CausalLM training losses without changing the optimized
+        decode path, which only materializes the final token logits.
         """
         if token_ids.dim() != 2:
             raise ValueError("NativeRWKV7ForCausalLM._run expects token ids shaped [batch, seq]")
@@ -181,18 +214,24 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         x = None
         packs = self._native_jit_packs() if use_jit else None
         backend = "native_jit" if packs is not None else "eager"
+        all_logits = [] if collect_all else None
         for t in range(token_ids.shape[1]):
             x = F.embedding(token_ids[:, t], base.embeddings.weight)
             if packs is not None:
                 x, state, xpa, xpf, v_first = _native_jit_step_batched(self, x, state, xpa, xpf, v_first, packs)
             else:
                 x, state, xpa, xpf, v_first = _step_token_batched(self, x, state, xpa, xpf, v_first)
+            if all_logits is not None:
+                all_logits.append(F.linear(base.norm(x), self.lm_head.weight))
         if x is None:
             raise ValueError("NativeRWKV7ForCausalLM requires at least one token")
         if use_jit:
             self._rwkv7_native_model_last_decode_backend = backend
-        x = base.norm(x)
-        logits = F.linear(x, self.lm_head.weight).view(token_ids.shape[0], 1, -1)
+        if all_logits is not None:
+            logits = torch.stack(all_logits, dim=1)
+        else:
+            x = base.norm(x)
+            logits = F.linear(x, self.lm_head.weight).view(token_ids.shape[0], 1, -1)
         return logits, state, xpa, xpf, v_first
 
     def forward(
@@ -201,6 +240,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         past_key_values=None,
         use_cache: bool | None = None,
         return_dict: bool | None = True,
+        labels: torch.LongTensor | None = None,
         **kwargs,
     ):
         if input_ids is None:
@@ -209,9 +249,35 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             raise ValueError("Experimental NativeRWKV7ForCausalLM expects input_ids shaped [batch, seq]")
         if int(input_ids.shape[0]) <= 0 or int(input_ids.shape[1]) <= 0:
             raise ValueError("NativeRWKV7ForCausalLM requires a non-empty batch and sequence")
-        use_cache = bool(self.config.use_cache if use_cache is None else use_cache)
         base = self.model
         device, dtype = input_ids.device, base.embeddings.weight.dtype
+        if labels is not None:
+            if labels.shape != input_ids.shape:
+                raise ValueError("NativeRWKV7ForCausalLM labels must have the same shape as input_ids")
+            if past_key_values is not None:
+                raise ValueError("NativeRWKV7ForCausalLM does not support labels with past_key_values")
+            state, xpa, xpf, v_first = _init_state_batched(self, input_ids.shape[0], device, dtype)
+            logits, state, xpa, xpf, v_first = self._run(
+                input_ids,
+                state,
+                xpa,
+                xpf,
+                v_first,
+                use_jit=False,
+                collect_all=True,
+            )
+            shift_logits = logits[:, :-1, :].contiguous()
+            shift_labels = labels[:, 1:].contiguous()
+            loss = F.cross_entropy(
+                shift_logits.view(-1, shift_logits.shape[-1]).float(),
+                shift_labels.view(-1),
+                ignore_index=-100,
+            )
+            if not return_dict:
+                return (loss, logits)
+            return CausalLMOutputWithPast(loss=loss, logits=logits)
+
+        use_cache = bool(self.config.use_cache if use_cache is None else use_cache)
         if past_key_values is None:
             state, xpa, xpf, v_first = _init_state_batched(self, input_ids.shape[0], device, dtype)
             toks = input_ids
