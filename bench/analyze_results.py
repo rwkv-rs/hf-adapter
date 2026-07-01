@@ -399,7 +399,30 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             )
             for r in larger_latest
         ],
-        "quantization": [compact(r, ["_lineno", "quantization", "status", "prefill_tokps", "decode_tokps", "decode_ms_per_tok", "model_footprint_mb", "peak_vram_mb", "error"]) for r in quant_latest],
+        "quantization": [
+            compact(
+                r,
+                [
+                    "_lineno",
+                    "quantization",
+                    "status",
+                    "prefill_tokps",
+                    "decode_mode",
+                    "decode_tokps",
+                    "reference_decode_tokps",
+                    "fast_decode_tokps",
+                    "fast_decode_speedup",
+                    "fast_forward_backend",
+                    "fast_forward_max_abs_diff",
+                    "fast_forward_same_next_token",
+                    "decode_ms_per_tok",
+                    "model_footprint_mb",
+                    "peak_vram_mb",
+                    "error",
+                ],
+            )
+            for r in quant_latest
+        ],
         "native_decode": {
             "best_row": compact(best_native, ["_lineno", "device", "prompt_tokens", "decode_tokens", "hidden_size", "num_heads", "head_dim", "native_jit_tokps", "native_jit_ms_per_tok", "native_graph_tokps", "native_graph_ms_per_tok", "graph_vs_jit_tokens_matched", "graph_vs_jit_tokens_total", "logit_cosine", "logit_max_abs_diff", "peak_vram_mb"]),
             "best_path": native_best_path,

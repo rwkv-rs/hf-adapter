@@ -615,7 +615,9 @@ python tests/test_quantized_inference.py \
   --quantization 4bit
 ```
 
-`bench/bench_quantization.py` records comparable fp16 / 8-bit / 4-bit rows:
+`bench/bench_quantization.py` records comparable fp16 / 8-bit / 4-bit rows and
+can compare the slower cached-HF reference decode against the HF fast-forward
+path:
 
 ```bash
 python bench/bench_quantization.py \
@@ -633,16 +635,19 @@ python bench/bench_quantization.py \
 
 Latest short V100 rows:
 
-| Quantization | Model footprint | Peak VRAM | Prefill tok/s | Decode tok/s | Status |
-|---|---:|---:|---:|---:|---|
-| none/fp16 | 364.4 MB | 632.4 MB | 4456.1 | 40.4 | PASS |
-| 8-bit bnb | 278.4 MB | 296.3 MB | 938.0 | 9.5 | PASS smoke, speed gap |
-| 4-bit bnb | 235.3 MB | 258.3 MB | 2395.2 | 27.1 | PASS smoke, speed gap |
+| Quantization | Model footprint | Peak VRAM | Prefill tok/s | Reference decode tok/s | Fast-forward decode tok/s | Status |
+|---|---:|---:|---:|---:|---:|---|
+| none/fp16 | 364.4 MB | 633.7 MB | 3844.0 | 33.9 | 251.1 | PASS |
+| 8-bit bnb | 278.4 MB | 316.5 MB | 796.0 | 7.9 | 8.4 | PASS smoke, speed gap |
+| 4-bit bnb | 235.3 MB | 279.1 MB | 2100.9 | 22.5 | 27.1 | PASS smoke, speed gap |
 
-The memory direction is correct, but generic bitsandbytes kernels are slower
-than fp16 on this RWKV-7/FLA V100 path. This means production quantized serving
-still needs a custom faster path or fused quantized projections before it can
-meet the original "not slower than fp16" target.
+The memory direction is correct and generic bitsandbytes cached decode now uses
+the HF fast-forward fallback by default (`RWKV7_FAST_FORWARD_QUANT=1`), improving
+8-bit by about `1.06x` and 4-bit by about `1.20x` on the short V100 run while
+preserving the greedy next token. It is still slower than fp16 native-graph
+decode, so production quantized serving still needs a custom fused/native
+quantized projection path before it can meet the original "not slower than
+fp16" target.
 
 ## HF speculative decoding smoke
 

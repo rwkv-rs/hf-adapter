@@ -3,10 +3,10 @@
 """Quantized inference smoke test for RWKV-7 HF loading.
 
 The adapter should remain loadable through standard HF quantization configs.
-This script intentionally exercises the normal HF `forward`/`generate` path
-rather than the native-JIT fast-token helper, because bitsandbytes replaces
-Linear modules with quantized modules whose packed weights are not compatible
-with the native weight extractor.
+This script exercises normal HF `forward`/`generate` plus the quantized
+fast-forward fallback. Bitsandbytes replaces Linear modules with quantized
+modules whose packed weights are not compatible with the native weight
+extractor, so quantized decode should resolve to the FLA fast-token backend.
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import importlib.util
 import json
 import os
 import time
+from contextlib import contextmanager
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -29,6 +30,32 @@ def peak_mb(device: str) -> float | None:
     if not device.startswith("cuda") or not torch.cuda.is_available():
         return None
     return round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
+
+
+@contextmanager
+def fast_forward_env(enabled: bool):
+    old = os.environ.get("RWKV7_FAST_FORWARD")
+    os.environ["RWKV7_FAST_FORWARD"] = "1" if enabled else "0"
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("RWKV7_FAST_FORWARD", None)
+        else:
+            os.environ["RWKV7_FAST_FORWARD"] = old
+
+
+def clone_cache(past_key_values):
+    if hasattr(past_key_values, "clone"):
+        return past_key_values.clone()
+    return past_key_values
+
+
+def last_fast_token_backend(model):
+    getter = getattr(model, "rwkv7_last_fast_token_backend", None)
+    if callable(getter):
+        return getter()
+    return getattr(model, "_rwkv7_last_fast_token_backend", None)
 
 
 def device_map_for(device: str):
@@ -89,6 +116,8 @@ def main() -> int:
     ap.add_argument("--optional", action="store_true", help="Return success when the quantization backend is not installed/supported")
     ap.add_argument("--bnb-4bit-quant-type", choices=["fp4", "nf4"], default="nf4")
     ap.add_argument("--bnb-4bit-use-double-quant", action="store_true")
+    ap.add_argument("--skip-fast-forward-check", action="store_true")
+    ap.add_argument("--fast-forward-max-diff", type=float, default=1.0)
     args = ap.parse_args()
     dtype = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}[args.dtype]
 
@@ -121,6 +150,29 @@ def main() -> int:
         forward_s = time.time() - t0
         logits = out.logits.detach().float()
         assert logits.isfinite().all(), "non-finite logits from quantized forward"
+        fast_forward = None
+        if not args.skip_fast_forward_check:
+            token = out.logits[:, -1:].argmax(dim=-1)
+            ref_state = clone_cache(out.past_key_values)
+            fast_state = clone_cache(out.past_key_values)
+            with fast_forward_env(False):
+                ref = model(token, past_key_values=ref_state, use_cache=True, logits_to_keep=1)
+            with fast_forward_env(True):
+                fast = model(token, past_key_values=fast_state, use_cache=True, logits_to_keep=1)
+            cuda_sync(args.device)
+            diff = float((ref.logits.float() - fast.logits.float()).abs().max().detach().cpu())
+            fast_logits = fast.logits.detach().float()
+            assert fast_logits.isfinite().all(), "non-finite logits from quantized fast-forward"
+            assert diff <= args.fast_forward_max_diff, diff
+            assert torch.equal(
+                ref.logits[:, -1].argmax(dim=-1),
+                fast.logits[:, -1].argmax(dim=-1),
+            ), "fast-forward changed greedy next token"
+            fast_forward = {
+                "max_abs_diff_vs_reference": round(diff, 6),
+                "backend": last_fast_token_backend(model),
+                "next_token": int(fast.logits[:, -1].argmax(dim=-1)[0].detach().cpu().item()),
+            }
         generated = model.generate(**enc, max_new_tokens=args.max_new_tokens, do_sample=False, use_cache=True)
         cuda_sync(args.device)
     new_tokens = generated[0, -args.max_new_tokens :].detach().cpu().tolist() if args.max_new_tokens > 0 else []
@@ -142,6 +194,7 @@ def main() -> int:
         "generated_tail": new_tokens,
         "model_footprint_mb": footprint_mb,
         "peak_vram_mb": peak_mb(args.device),
+        "fast_forward": fast_forward,
         "status": "pass",
     }
     print(json.dumps(row, ensure_ascii=False))
