@@ -82,6 +82,22 @@ bash evaluation/run_lm_eval_v100_parallel.sh
 to `$OUTPUT_DIR/merged`; shard logs and manifests remain beside it for audit
 and resumable reruns.
 
+For the full eager reference run, independent units can occupy otherwise idle
+V100 capacity without changing any lm_eval command or batch size:
+
+```bash
+python evaluation/run_lm_eval_v100_pool.py \
+  --model-root /models/rwkv7-reference \
+  --output-dir results/lm_eval/v0.9.0 \
+  --python "$VIRTUAL_ENV/bin/python" \
+  --code-sha "$(git rev-parse HEAD)"
+```
+
+The pool runs all 24 batch-one units first with six processes per V100, then
+the higher-memory batch-eight units with two per V100. Every unit retains its
+own raw command, logs, manifest and result directory before the normal merge
+and validation scripts run.
+
 Formal execution never uses `--limit`. Pull requests may set
 `--smoke-limit`. Each task is an independent process with raw stdout,
 stderr, sample logs, task config and manifest row. Batch 1/8 absolute metric
