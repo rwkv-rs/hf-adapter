@@ -218,6 +218,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     components = latest(rows, lambda r: r.get("axis") == "decode_components" and r.get("backend") == "hf_adapter")
     projection_lora = latest(rows, lambda r: r.get("axis") == "projection_lora" and r.get("backend") == "hf_adapter")
     fused_projection_proto = latest(rows, lambda r: r.get("axis") == "fused_projection_proto" and r.get("backend") == "hf_adapter")
+    fused_shift_mix_proto = latest(rows, lambda r: r.get("axis") == "fused_shift_mix_proto" and r.get("backend") == "hf_adapter")
     quant_rows_all = [r for r in rows if r.get("axis") == "quantization" and r.get("backend") == "hf_adapter"]
     quant_rows_canonical = [r for r in quant_rows_all if is_canonical_quant_model(r)]
     if not quant_rows_canonical:
@@ -469,7 +470,8 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "next_kernel_steps": [
             "profile projection/LoRA at matrix granularity",
             "prototype fused fp16 projection path",
-            "fuse recurrent state update",
+            "prototype fused attention shift-mix path",
+            "replace standalone small kernels with deeper shift-mix + projection/LoRA + recurrent fusion",
             "add native W8/W4 pack plus fused dequant-GEMV",
         ],
     }
@@ -576,6 +578,21 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             focus.append(
                 f"fused R/K/V projection prototype backend={backend} speedup={float(proto_speedup):.2f}x; "
                 "validate end-to-end fast-token integration"
+            )
+    if fused_shift_mix_proto is None:
+        focus.append("fused_shift_mix_proto row pending")
+    else:
+        shift_speedup = fused_shift_mix_proto.get("avg_speedup")
+        backend = fused_shift_mix_proto.get("prototype_backend")
+        if shift_speedup is not None and float(shift_speedup) < 1.0:
+            focus.append(
+                f"fused attention shift-mix prototype backend={backend} is slower "
+                f"({float(shift_speedup):.2f}x); keep it as telemetry and fuse deeper with projection/state update"
+            )
+        elif shift_speedup is not None:
+            focus.append(
+                f"fused attention shift-mix prototype backend={backend} speedup={float(shift_speedup):.2f}x; "
+                "validate native_graph integration"
             )
     if albatross_decode_min is None:
         focus.append("fused backend target tracking needs Albatross decode ratios")
@@ -809,6 +826,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "decode_components": compact(components, ["_lineno", "decode_api", "batch_size", "wall_ms_per_token", "decode_tokps_wall", "top_components", "top_layers", "peak_vram_mb"]),
         "projection_lora": compact(projection_lora, ["_lineno", "batch_size", "hidden_size", "layers", "avg_timings_ms", "avg_current_linears_lora_sum_ms", "avg_candidate_linears_lora_sum_ms", "avg_candidate_speedup", "sample_matrix_profile_summary", "fused_kernel_plan", "peak_vram_mb"]),
         "fused_projection_proto": compact(fused_projection_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
+        "fused_shift_mix_proto": compact(fused_shift_mix_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "input_rank", "hidden_size", "layers", "block_size", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "larger_model_smoke": [
             compact(
                 r,
@@ -1075,6 +1093,8 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["projection_lora"], ensure_ascii=False) if report["projection_lora"] else "PENDING")
     print("\n## fused_projection_proto")
     print(json.dumps(report["fused_projection_proto"], ensure_ascii=False) if report["fused_projection_proto"] else "PENDING")
+    print("\n## fused_shift_mix_proto")
+    print(json.dumps(report["fused_shift_mix_proto"], ensure_ascii=False) if report["fused_shift_mix_proto"] else "PENDING")
     print("\n## larger_model_smoke")
     if report["larger_model_smoke"]:
         for row in report["larger_model_smoke"]:
