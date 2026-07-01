@@ -6,7 +6,7 @@ set -euo pipefail
 # multiple-choice tasks together so both V100s finish at roughly the same time.
 REPO_ROOT="${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 PYTHON="${PYTHON:-python}"
-MODEL_ROOT="${MODEL_ROOT:?set MODEL_ROOT to the directory containing rwkv7_{01b,04b,15b}_hf}"
+MODEL_ROOT="${MODEL_ROOT:?set MODEL_ROOT to the directory containing the three converted model folders}"
 OUTPUT_DIR="${OUTPUT_DIR:?set OUTPUT_DIR for the formal result bundle}"
 CODE_SHA="${CODE_SHA:-$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || printf unknown)}"
 GPU_A="${GPU_A:-0}"
