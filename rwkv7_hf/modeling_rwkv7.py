@@ -76,6 +76,11 @@ def _fast_forward_enabled() -> bool:
     return os.environ.get("RWKV7_FAST_FORWARD", "1") not in _FALSE_VALUES
 
 
+def _fast_forward_quant_enabled() -> bool:
+    """Allow quantized HF modules to use the FLA fast-token fallback."""
+    return os.environ.get("RWKV7_FAST_FORWARD_QUANT", "1") not in _FALSE_VALUES
+
+
 def _cuda_available() -> bool:
     cuda = getattr(torch, "cuda", None)
     is_available = getattr(cuda, "is_available", None)
@@ -97,14 +102,16 @@ def _native_graph_stats_template() -> dict[str, int]:
 
 def _linear_direct(module, x: torch.Tensor) -> torch.Tensor:
     """Call a Linear module through F.linear to skip small-module dispatch."""
+    if type(module) is not torch.nn.Linear:
+        return module(x)
     return F.linear(x, module.weight, module.bias)
 
 
 def _lora_direct(module, x: torch.Tensor) -> torch.Tensor:
     """Fast-path FLA LoRA forward used only by inference decode helpers."""
-    h = F.linear(x, module.lora[0].weight, module.lora[0].bias)
+    h = _linear_direct(module.lora[0], x)
     h = module.lora[1](h)
-    return F.linear(h, module.lora[2].weight, module.lora[2].bias)
+    return _linear_direct(module.lora[2], h)
 
 
 def _squeeze_token_dim(x: torch.Tensor) -> torch.Tensor:
@@ -1525,7 +1532,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return None
         if self.training or torch.is_grad_enabled():
             return None
-        if self._rwkv7_uses_external_quantization():
+        if self._rwkv7_uses_external_quantization() and not _fast_forward_quant_enabled():
             return None
         if kwargs.get("past_key_values") is None:
             return None
