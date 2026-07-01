@@ -89,7 +89,15 @@ serving speed.
      `native_graph_fused_recurrent` A/B rows. The first V100 integration row is
      correctness-clean but end-to-end neutral, so the flag remains opt-in while
      deeper projection/LoRA fusion is developed.
-7. Native W8 pack plus fused int8 dequant-GEMV.
+7. Native W8 pack plus fused int8 dequant-GEMV prototype.
+   - `rwkv7_hf.native_quant.quantize_int8_rowwise()` packs dense weights as
+     signed int8 plus row-wise fp32 scales.
+   - `rwkv7_hf.native_quant.int8_rowwise_gemv()` provides an optional Triton
+     fused dequant-GEMV prototype with torch fallback.
+   - `bench/bench_native_quant_gemv.py` records `native_quant_gemv_proto`. The
+     first V100 row proves roughly half fp16 weight footprint and good cosine,
+     but it is still slower than fp16 cuBLAS, so the W8 path remains telemetry
+     until the kernel is optimized.
 8. Native W4 pack plus fused int4 dequant-GEMV.
 9. V100 + 5070/newer-GPU benchmark matrix.
 
