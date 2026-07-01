@@ -110,6 +110,11 @@
 - 下一步不要回到 wrapper 层堆优化；继续沿
   `native_graph -> fused recurrent+output -> fused projection/LoRA -> fused quant`
   追 bsz=2/P1 min ratio，然后把同一条深融合路线迁移到 W8/W4。
+- 在 recurrent+output 默认路径上复测现有 projection / W/A/G LoRA opt-in：
+  `RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA=1` 为默认路径的 `0.94x-0.99x`，
+  `RWKV7_NATIVE_GRAPH_FUSED_PROJECTION=1` 为 `0.84x-0.91x`，都不能作为
+  P1 路线。analyzer 已把 Albatross gate 固定到默认 native_graph rows，
+  后续实验 flag 不会因为追加到 `bench/results.jsonl` 而污染正式目标。
 
 下一步继续补：
 

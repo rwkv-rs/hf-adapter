@@ -431,6 +431,80 @@ def assert_albatross_prefill_ignores_short_prompt_probe(tmpdir: Path) -> None:
     assert report["fused_backend_targets"]["albatross_prefill"]["current_ratio_min"] == 0.7
 
 
+def assert_albatross_decode_uses_default_native_graph_batch_rows(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "batch_sweep",
+            "backend": "hf_adapter",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 2,
+            "decode_api": "rwkv7_forward_token",
+            "fast_token_backend_effective": "native_graph",
+            "native_graph_fused_recurrent_output": True,
+            "native_graph_fused_output": True,
+            "native_graph_fused_wag_lora": False,
+            "native_graph_fused_projection": False,
+            "decode_tokps_total": 600.0,
+            "prompt_tokens": 64,
+        },
+        {
+            "axis": "albatross_speed",
+            "backend": "albatross",
+            "engine": "faster3a",
+            "engine_config": "wkv=fp32io16",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "model_size_label": "0.1b",
+            "batch_size": 2,
+            "tokens_per_sequence": 1,
+            "tokps_p50": 1000.0,
+        },
+        {
+            "axis": "batch_sweep",
+            "backend": "hf_adapter",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 2,
+            "decode_api": "rwkv7_forward_token",
+            "fast_token_backend_effective": "native_graph",
+            "native_graph_fused_recurrent_output": True,
+            "native_graph_fused_output": True,
+            "native_graph_fused_wag_lora": True,
+            "native_graph_fused_projection": False,
+            "decode_tokps_total": 450.0,
+            "prompt_tokens": 64,
+        },
+    ]
+    path = tmpdir / "albatross_default_batch_gate.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    assert report["fused_backend_targets"]["albatross_decode"]["current_ratio_min"] == 0.6
+    assert report["albatross_decode_comparison"][0]["hf_tokps_total"] == 600.0
+    assert report["batch_sweep_default_native_graph"][0]["decode_tokps_total"] == 600.0
+    assert report["batch_sweep_experimental_native_graph"][0]["decode_tokps_total"] == 450.0
+    assert any("experimental native_graph flags" in item and "min_ratio=0.75x" in item for item in report["next_focus"])
+
+
 def assert_projection_kernel_plan_is_reported(tmpdir: Path) -> None:
     rows = [
         {
@@ -2212,6 +2286,7 @@ def main() -> int:
         assert_quantization_best_variants_are_reported(tmpdir)
         assert_fused_backend_targets_are_reported(tmpdir)
         assert_albatross_prefill_ignores_short_prompt_probe(tmpdir)
+        assert_albatross_decode_uses_default_native_graph_batch_rows(tmpdir)
         assert_projection_kernel_plan_is_reported(tmpdir)
         assert_fused_projection_proto_is_reported(tmpdir)
         assert_fused_wa_lora_proto_is_reported(tmpdir)

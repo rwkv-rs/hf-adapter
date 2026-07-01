@@ -910,6 +910,13 @@ That raises the current Albatross decode comparison to min `0.4352x`, max
 `0.6474x`: bsz=8 is now above the P1 decode line, but the overall P1 gate is
 still GAP because the minimum batch ratio is below `0.55x`.
 
+Additional flag sweeps under the recurrent+output default show that the current
+projection-side opt-ins are not the next P1 route: `RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA=1`
+with `block_m=16, block_r=64, block_k=64` reaches only `0.94x`-`0.99x` of
+default, and `RWKV7_NATIVE_GRAPH_FUSED_PROJECTION=1` reaches only `0.84x`-`0.91x`.
+Analyzer Albatross gates now use the default native-graph batch rows even if
+later experimental flag rows are appended.
+
 ## Fused output-prep + `o_proj` prototype
 
 The next attention-output probe folds the final dense `o_proj` into the Triton
