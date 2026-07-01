@@ -187,12 +187,15 @@ def main() -> int:
             fast_state = clone_cache(out.past_key_values)
             with fast_forward_env(False):
                 ref = model(token, past_key_values=ref_state, use_cache=True, logits_to_keep=1)
+                flat = model(token.reshape(-1), past_key_values=clone_cache(out.past_key_values), use_cache=True, logits_to_keep=1)
             with fast_forward_env(True):
                 fast = model(token, past_key_values=fast_state, use_cache=True, logits_to_keep=1)
             cuda_sync(args.device)
             diff = float((ref.logits.float() - fast.logits.float()).abs().max().detach().cpu())
             fast_logits = fast.logits.detach().float()
             assert fast_logits.isfinite().all(), "non-finite logits from quantized fast-forward"
+            assert flat.logits.isfinite().all(), "non-finite logits from 1-D input_ids fallback"
+            assert tuple(flat.logits.shape[:2]) == tuple(ref.logits.shape[:2]), (flat.logits.shape, ref.logits.shape)
             assert diff <= args.fast_forward_max_diff, diff
             assert torch.equal(
                 ref.logits[:, -1].argmax(dim=-1),
