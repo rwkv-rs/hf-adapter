@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import tempfile
+from pathlib import Path
 from typing import Any
 
 # FLA backward can hit Dynamo/Triton issues on the V100 test box.
@@ -20,6 +22,25 @@ PROMPTS = [
     "User: Say hello.\n\nAssistant:",
     "User: Count to two.\n\nAssistant:",
 ]
+
+
+def device_name(device: str) -> str:
+    return torch.cuda.get_device_name(0) if device.startswith("cuda") and torch.cuda.is_available() else device
+
+
+def metric(metrics: dict[str, Any], key: str) -> float | None:
+    value = metrics.get(key)
+    return float(value) if value is not None else None
+
+
+def append_rows(path: str, rows: list[dict[str, Any]]) -> None:
+    if not path:
+        return
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("a", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def trainable_snapshot(model) -> dict[str, torch.Tensor]:
@@ -80,7 +101,7 @@ def lora_config() -> LoraConfig:
     )
 
 
-def run_dpo(args: argparse.Namespace) -> float:
+def run_dpo(args: argparse.Namespace) -> dict[str, Any]:
     ensure_trl_fsdp_compat()
     from trl import DPOConfig, DPOTrainer
 
@@ -124,8 +145,30 @@ def run_dpo(args: argparse.Namespace) -> float:
     assert math.isfinite(loss), result.training_loss
     delta = max_trainable_delta(before, trainer.model)
     assert delta > 0.0, "DPO LoRA/trainable parameters did not update"
+    metrics = dict(getattr(result, "metrics", {}) or {})
+    row = {
+        "axis": "training_smoke",
+        "backend": "hf_adapter",
+        "trainer_backend": "trl_dpo",
+        "status": "pass",
+        "dtype": args.train_dtype,
+        "train_dtype": args.train_dtype,
+        "device": device_name(args.device),
+        "attn_mode": args.attn_mode,
+        "batch_size": args.batch_size,
+        "gradient_accumulation_steps": args.gradient_accumulation_steps,
+        "effective_batch_size": args.batch_size * args.gradient_accumulation_steps,
+        "max_steps": args.max_steps,
+        "dataset_repeats": args.dataset_repeats,
+        "max_length": args.max_length,
+        "train_loss": loss,
+        "train_runtime_s": metric(metrics, "train_runtime"),
+        "train_samples_per_second": metric(metrics, "train_samples_per_second"),
+        "train_steps_per_second": metric(metrics, "train_steps_per_second"),
+        "max_trainable_delta": delta,
+    }
     print("trl_dpo_train_loss", loss, "max_trainable_delta", delta)
-    return loss
+    return row
 
 
 def reward_func(prompts: list[Any], completions: list[Any], **_: Any) -> list[float]:
@@ -134,7 +177,7 @@ def reward_func(prompts: list[Any], completions: list[Any], **_: Any) -> list[fl
     return [float(i % 2) for i, _ in enumerate(completions)]
 
 
-def run_grpo(args: argparse.Namespace) -> float:
+def run_grpo(args: argparse.Namespace) -> dict[str, Any]:
     ensure_trl_fsdp_compat()
     from trl import GRPOConfig, GRPOTrainer
 
@@ -175,8 +218,30 @@ def run_grpo(args: argparse.Namespace) -> float:
     assert math.isfinite(loss), result.training_loss
     delta = max_trainable_delta(before, trainer.model)
     assert delta > 0.0, "GRPO LoRA/trainable parameters did not update"
+    metrics = dict(getattr(result, "metrics", {}) or {})
+    row = {
+        "axis": "training_smoke",
+        "backend": "hf_adapter",
+        "trainer_backend": "trl_grpo",
+        "status": "pass",
+        "dtype": args.train_dtype,
+        "train_dtype": args.train_dtype,
+        "device": device_name(args.device),
+        "attn_mode": args.attn_mode,
+        "batch_size": max(2, args.batch_size),
+        "gradient_accumulation_steps": args.gradient_accumulation_steps,
+        "effective_batch_size": max(2, args.batch_size) * args.gradient_accumulation_steps,
+        "max_steps": args.max_steps,
+        "dataset_repeats": args.dataset_repeats,
+        "max_completion_length": args.grpo_max_completion_length,
+        "train_loss": loss,
+        "train_runtime_s": metric(metrics, "train_runtime"),
+        "train_samples_per_second": metric(metrics, "train_samples_per_second"),
+        "train_steps_per_second": metric(metrics, "train_steps_per_second"),
+        "max_trainable_delta": delta,
+    }
     print("trl_grpo_train_loss", loss, "max_trainable_delta", delta)
-    return loss
+    return row
 
 
 def main() -> int:
@@ -192,11 +257,16 @@ def main() -> int:
     ap.add_argument("--gradient-accumulation-steps", type=int, default=1)
     ap.add_argument("--dataset-repeats", type=int, default=4)
     ap.add_argument("--backend", choices=["dpo", "grpo", "both"], default="both")
+    ap.add_argument("--results", default="")
     args = ap.parse_args()
+    rows = []
     if args.backend in {"dpo", "both"}:
-        run_dpo(args)
+        rows.append(run_dpo(args))
     if args.backend in {"grpo", "both"}:
-        run_grpo(args)
+        rows.append(run_grpo(args))
+    append_rows(args.results, rows)
+    for row in rows:
+        print(json.dumps(row, ensure_ascii=False))
     print("PASS")
     return 0
 
