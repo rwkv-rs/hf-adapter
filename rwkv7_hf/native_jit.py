@@ -52,6 +52,15 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_rkv_wag_projection = None  # type: ignore[assignment]
         fused_rkv_wag_projection_available = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - optional Triton fast path on CUDA hosts
+    from .fused_lora import fused_wag_lora, fused_wag_lora_available
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from fused_lora import fused_wag_lora, fused_wag_lora_available
+    except Exception:
+        fused_wag_lora = None  # type: ignore[assignment]
+        fused_wag_lora_available = None  # type: ignore[assignment]
+
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
 
@@ -120,6 +129,37 @@ def _native_graph_fused_projection_enabled() -> bool:
         return bool(fused_rkv_wag_projection_available())
     except Exception:
         return False
+
+
+def _native_graph_fused_wag_lora_enabled() -> bool:
+    """Runtime switch for the native-graph W/A/G LoRA-only fusion probe."""
+
+    if os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA", "0") in _FALSE_VALUES:
+        return False
+    if fused_wag_lora is None or fused_wag_lora_available is None:
+        return False
+    try:
+        return bool(fused_wag_lora_available())
+    except Exception:
+        return False
+
+
+def _native_graph_fused_wag_lora_blocks() -> tuple[int, int, int]:
+    """Return ``(block_m, block_r, block_k)`` for the W/A/G LoRA probe."""
+
+    vals = []
+    for name, default, upper in (
+        ("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_M", 64, 128),
+        ("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_R", 64, 128),
+        ("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_K", 64, 256),
+    ):
+        raw = os.environ.get(name, str(default)).strip()
+        try:
+            val = int(raw)
+        except ValueError:
+            val = default
+        vals.append(min(max(1, val), upper))
+    return vals[0], vals[1], vals[2]
 
 
 def _recurrent_update_unbatched(
@@ -463,6 +503,31 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         w = w.view(H * N)
         a = torch.sigmoid(a.view(H * N))
         g = g.view(H * N)
+    elif _native_graph_fused_wag_lora_enabled():
+        r = F.linear(xr, Rw)
+        k = F.linear(xk, Kw)
+        v = F.linear(xv, Vw)
+        block_m, block_r, block_k = _native_graph_fused_wag_lora_blocks()
+        w, a, g = fused_wag_lora(
+            xw.view(1, H * N),
+            xa.view(1, H * N),
+            xg.view(1, H * N),
+            w1,
+            a1,
+            g1,
+            w2,
+            a2,
+            g2,
+            w0,
+            a0,
+            None,
+            block_m=block_m,
+            block_r=block_r,
+            block_k=block_k,
+        )
+        w = w.view(H * N)
+        a = torch.sigmoid(a.view(H * N))
+        g = g.view(H * N)
     else:
         r = F.linear(xr, Rw)
         w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
@@ -570,6 +635,29 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
             w0,
             a0,
             None,
+        )
+        a = torch.sigmoid(a)
+    elif _native_graph_fused_wag_lora_enabled():
+        r = F.linear(xr, Rw)
+        k = F.linear(xk, Kw)
+        v = F.linear(xv, Vw)
+        block_m, block_r, block_k = _native_graph_fused_wag_lora_blocks()
+        w, a, g = fused_wag_lora(
+            xw,
+            xa,
+            xg,
+            w1,
+            a1,
+            g1,
+            w2,
+            a2,
+            g2,
+            w0,
+            a0,
+            None,
+            block_m=block_m,
+            block_r=block_r,
+            block_k=block_k,
         )
         a = torch.sigmoid(a)
     else:
