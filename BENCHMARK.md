@@ -690,6 +690,51 @@ evidence. The analyzer now also reports `quantization_best_variants`, selecting
 the fastest passing policy per W8/W4 mode and comparing its decode and footprint
 ratios against fp16.
 
+### 0.4B V100 quantization sweep
+
+Before refreshing older converted model dirs, run the code-only sync helper so
+their remote-code wrappers include the latest quantization skip-policy support:
+
+```bash
+python scripts/sync_hf_adapter_code.py \
+  /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.4b-hf
+```
+
+Then benchmark the 0.4B model:
+
+```bash
+python bench/bench_quantization.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.4b-hf \
+  --model-size-label 0.4b \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --quantizations none 8bit 4bit \
+  --quant-skip-policy memory \
+  --prompt-tokens 128 \
+  --decode-tokens 8 \
+  --decode-mode compare \
+  --warmup 1 \
+  --runs 1 \
+  --results bench/results.jsonl
+```
+
+Latest V100 0.4B rows:
+
+| Quantization | Policy | Model footprint | Peak VRAM | Prefill tok/s | Selected decode tok/s | Fast backend | Status |
+|---|---|---:|---:|---:|---:|---|---|
+| none/fp16 | memory | 859.8 MB | 1136.7 MB | 2117.8 | 107.0 | native_graph | PASS |
+| 8-bit bnb | memory | 571.8 MB | 629.5 MB | 817.6 | 8.4 | FLA | PASS, speed gap |
+| 4-bit bnb | memory | 427.8 MB | 502.6 MB | 1517.3 | 16.3 | FLA | PASS, speed gap |
+| 8-bit bnb | `decode_hot` | 667.8 MB | 945.3 MB | 1362.4 | 13.7 | FLA | faster hybrid, speed gap |
+| 4-bit bnb | `decode_hot` | 571.8 MB | 624.3 MB | 1882.3 | 19.6 | FLA | faster hybrid, speed gap |
+
+`analyze_results.py` keeps the canonical quantization gate anchored to the 0.1B
+baseline, and reports larger-model rows separately under
+`quantization_model_sweep`. The 0.4B rows confirm memory decreases
+substantially, but V100 decode speed is still far below fp16 native-graph; the
+next quantization task remains a fused/native W8/W4 serving path.
+
 ## HF speculative decoding smoke
 
 `rwkv7_speculative_generate()` is the initial HF-only speculative decoding
