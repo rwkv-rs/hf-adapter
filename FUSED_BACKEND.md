@@ -114,7 +114,13 @@ serving speed.
    - `bench/bench_native_quant_rkv.py` records `native_quant_rkv_proto`. The
      first V100 row improves over three separate W8 dequant-GEMVs, but is still
      below fp16 cuBLAS, so the next quant step is deeper projection/LoRA fusion.
-10. V100 + 5070/newer-GPU benchmark matrix.
+10. Native W4 fused R/K/V quant projection prototype.
+   - `rwkv7_hf.native_quant.int4_fused_rkv_gemv()` computes R/K/V from packed
+     row-wise W4 weights in one Triton launch.
+   - `bench/bench_native_quant_w4_rkv.py` records `native_quant_w4_rkv_proto`.
+     The first V100 row improves over three separate W4 dequant-GEMVs, but is
+     still below fp16 cuBLAS, so W4 also needs deeper group fusion.
+11. V100 + 5070/newer-GPU benchmark matrix.
 
 ## Backend dispatch requirement
 
