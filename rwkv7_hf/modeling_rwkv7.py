@@ -155,6 +155,12 @@ def _native_graph_fused_wag_lora_requested() -> bool:
     return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA", "0") not in _FALSE_VALUES
 
 
+def _native_graph_fused_wavg_lora_requested() -> bool:
+    """Whether native-graph runners should capture the W/A/G/V-gate LoRA probe."""
+
+    return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA", "0") not in _FALSE_VALUES
+
+
 def _native_graph_fused_wag_lora_blocks() -> tuple[int, int, int]:
     vals = []
     for name, default, upper in (
@@ -163,6 +169,22 @@ def _native_graph_fused_wag_lora_blocks() -> tuple[int, int, int]:
         ("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_K", 64, 256),
     ):
         raw = os.environ.get(name, str(default)).strip()
+        try:
+            val = int(raw)
+        except ValueError:
+            val = default
+        vals.append(min(max(1, val), upper))
+    return vals[0], vals[1], vals[2]
+
+
+def _native_graph_fused_wavg_lora_blocks() -> tuple[int, int, int]:
+    vals = []
+    for name, fallback, default, upper in (
+        ("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_M", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_M", 64, 128),
+        ("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_R", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_R", 64, 128),
+        ("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_K", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_K", 64, 256),
+    ):
+        raw = os.environ.get(name, os.environ.get(fallback, str(default))).strip()
         try:
             val = int(raw)
         except ValueError:
@@ -1158,6 +1180,8 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_fused_projection_requested(),
             _native_graph_fused_wag_lora_requested(),
             _native_graph_fused_wag_lora_blocks(),
+            _native_graph_fused_wavg_lora_requested(),
+            _native_graph_fused_wavg_lora_blocks(),
             int(batch_size),
         )
         cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
