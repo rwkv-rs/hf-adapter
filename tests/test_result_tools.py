@@ -588,6 +588,56 @@ def assert_fused_recurrent_proto_is_reported(tmpdir: Path) -> None:
     assert any("fused recurrent prototype backend=triton_rank1_recurrent speedup=2.75x" in item for item in report["next_focus"])
 
 
+def assert_native_graph_fused_recurrent_is_reported(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "native_graph_fused_recurrent",
+            "backend": "hf_adapter",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 1,
+            "prompt_tokens": 64,
+            "steps": 32,
+            "fixed_token": True,
+            "baseline_effective_backend": "native_graph",
+            "fused_effective_backend": "native_graph",
+            "baseline_ms_per_step": 4.3,
+            "fused_ms_per_step": 4.1,
+            "speedup": 1.05,
+            "baseline_tokps_total": 232.0,
+            "fused_tokps_total": 244.0,
+            "max_abs_diff_first_step": 0.0,
+            "min_cosine_first_step": 1.0,
+            "greedy_match": 32,
+            "greedy_total": 32,
+        }
+    ]
+    path = tmpdir / "native_graph_fused_recurrent.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    assert report["native_graph_fused_recurrent"]["speedup"] == 1.05
+    assert any("native_graph fused recurrent integration passes greedy 32/32" in item for item in report["next_focus"])
+
+
 def assert_quantization_model_sweep_does_not_override_canonical(tmpdir: Path) -> None:
     rows = [
         {
@@ -880,6 +930,7 @@ def main() -> int:
         assert_fused_projection_proto_is_reported(tmpdir)
         assert_fused_shift_mix_proto_is_reported(tmpdir)
         assert_fused_recurrent_proto_is_reported(tmpdir)
+        assert_native_graph_fused_recurrent_is_reported(tmpdir)
         assert_quantization_model_sweep_does_not_override_canonical(tmpdir)
         assert_native_model_smoke_is_reported(tmpdir)
         assert_deepspeed_smoke_survives_inference_dtype_filter(tmpdir)
