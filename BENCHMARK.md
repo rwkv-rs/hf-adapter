@@ -849,6 +849,66 @@ output fusion enabled, the same sweep reached:
 | 4 | 934.2 | 4.28 | 1.0953x |
 | 8 | 1673.1 | 4.78 | 1.0848x |
 
+## Fused recurrent + output-prep native-graph probe
+
+The next profitable fp16 step is deeper than standalone recurrent or standalone
+output-prep fusion. `fused_recurrent_output_prepare()` combines recurrent state
+update/readout, group norm, recurrent correction, and gate multiply into one
+Triton kernel while keeping the final `o_proj` on cuBLAS. Enable the integrated
+path with `RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT=1`.
+
+Isolated kernel benchmark:
+
+```bash
+python bench/bench_fused_recurrent_output.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --batch-size 1 \
+  --layers 0 1 11 \
+  --results bench/results.jsonl
+```
+
+Latest V100 isolated row: `triton_recurrent_output_prepare` averages
+`0.10580ms`, beating split fused recurrent/output kernels by `1.7956x` and the
+torch current path by `4.1916x`. Correctness is aligned with
+`split_out_max_abs_diff=0.00390625`, `split_state_max_abs_diff=1.19e-7`, and
+`split_out_min_cosine=0.99999994`.
+
+Native-graph A/B:
+
+```bash
+python bench/bench_native_graph_fused_recurrent_output.py \
+  --hf-dir /home/data/wangyue/models/rwkv7/rwkv7-g1d-0.1b-hf \
+  --dtype fp16 \
+  --device cuda \
+  --attn-mode fused_recurrent \
+  --fuse-norm false \
+  --fast-cache true \
+  --batch-size 1 \
+  --prompt-tokens 64 \
+  --fixed-token \
+  --results bench/results.jsonl
+```
+
+V100 bsz=1/2/4/8 native-graph matrix:
+
+| bsz | baseline ms/step | fused ms/step | speedup | baseline tok/s | fused tok/s | greedy |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 3.9255 | 3.2364 | 1.2129x | 254.7 | 309.0 | 32/32 |
+| 2 | 4.4472 | 3.7672 | 1.1805x | 449.7 | 530.9 | 64/64 |
+| 4 | 4.5937 | 3.6998 | 1.2416x | 870.8 | 1081.1 | 128/128 |
+| 8 | 5.1479 | 4.1170 | 1.2504x | 1554.0 | 1943.2 | 256/256 |
+
+A normal `bench_batch_sweep.py` run with
+`RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT=1` and default fused output enabled
+reaches `343.6`/`590.1`/`1179.5`/`2130.6` aggregate tok/s for bsz=1/2/4/8.
+That raises the current Albatross decode comparison to min `0.4357x`, max
+`0.6455x`: bsz=8 is now above the P1 decode line, but the overall P1 gate is
+still GAP because the minimum batch ratio is below `0.55x`.
+
 ## Fused output-prep + `o_proj` prototype
 
 The next attention-output probe folds the final dense `o_proj` into the Triton
