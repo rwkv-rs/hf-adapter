@@ -16,7 +16,7 @@
 #   LARGER_72_MAX_NEW_TOKENS, LARGER_72_FAST_TOKEN_BACKEND,
 #   RUN_133B_MODEL_SMOKE, LARGER_133_HF_DIR, LARGER_133_PTH,
 #   LARGER_133_MAX_NEW_TOKENS, LARGER_133_FAST_TOKEN_BACKEND,
-#   RESULTS, LOG_DIR
+#   RUN_DEVICE_MAP_SMOKE, DEVICE_MAP_MAX_NEW_TOKENS, RESULTS, LOG_DIR
 set -euo pipefail
 
 export RWKV_V7_ON="${RWKV_V7_ON:-1}"
@@ -66,6 +66,8 @@ LARGER_133_MAX_NEW_TOKENS="${LARGER_133_MAX_NEW_TOKENS:-2}"
 # 13.3B fits V100 fp16 smoke with native_jit; native_graph capture may reserve
 # too much extra memory on 32GB cards, so keep the default conservative.
 LARGER_133_FAST_TOKEN_BACKEND="${LARGER_133_FAST_TOKEN_BACKEND:-native_jit}"
+RUN_DEVICE_MAP_SMOKE="${RUN_DEVICE_MAP_SMOKE:-auto}"
+DEVICE_MAP_MAX_NEW_TOKENS="${DEVICE_MAP_MAX_NEW_TOKENS:-4}"
 RESULTS="${RESULTS:-bench/results.jsonl}"
 LOG_DIR="${LOG_DIR:-bench/logs}"
 
@@ -85,6 +87,19 @@ should_run_larger_smoke() {
   local hf_dir="$2"
   local pth="$3"
   [[ "${mode}" == "1" || "${mode}" == "true" || ( "${mode}" == "auto" && -d "${hf_dir}" && -f "${pth}" ) ]]
+}
+
+has_two_cuda_devices() {
+  python - <<'PYCHECK'
+import torch
+raise SystemExit(0 if torch.cuda.is_available() and torch.cuda.device_count() >= 2 else 1)
+PYCHECK
+}
+
+should_run_device_map_smoke() {
+  local mode="$1"
+  [[ "${mode}" == "1" || "${mode}" == "true" ]] && return 0
+  [[ "${mode}" == "auto" ]] && has_two_cuda_devices
 }
 
 run_larger_smoke() {
@@ -115,6 +130,7 @@ run_larger_smoke() {
   echo "larger_29_smoke=${RUN_29B_MODEL_SMOKE} larger_29_hf_dir=${LARGER_29_HF_DIR} larger_29_pth=${LARGER_29_PTH} larger_29_max_new_tokens=${LARGER_29_MAX_NEW_TOKENS} larger_29_fast_token_backend=${LARGER_29_FAST_TOKEN_BACKEND}"
   echo "larger_72_smoke=${RUN_72B_MODEL_SMOKE} larger_72_hf_dir=${LARGER_72_HF_DIR} larger_72_pth=${LARGER_72_PTH} larger_72_max_new_tokens=${LARGER_72_MAX_NEW_TOKENS} larger_72_fast_token_backend=${LARGER_72_FAST_TOKEN_BACKEND}"
   echo "larger_133_smoke=${RUN_133B_MODEL_SMOKE} larger_133_hf_dir=${LARGER_133_HF_DIR} larger_133_pth=${LARGER_133_PTH} larger_133_max_new_tokens=${LARGER_133_MAX_NEW_TOKENS} larger_133_fast_token_backend=${LARGER_133_FAST_TOKEN_BACKEND}"
+  echo "device_map_smoke=${RUN_DEVICE_MAP_SMOKE} device_map_max_new_tokens=${DEVICE_MAP_MAX_NEW_TOKENS}"
   echo "results=${RESULTS} profile_out=${PROFILE_OUT}"
 
   run python tests/test_fast_decode_api.py \
@@ -397,6 +413,18 @@ run_larger_smoke() {
     --warmup 1 \
     --runs 2 \
     --results "${RESULTS}"
+
+  if should_run_device_map_smoke "${RUN_DEVICE_MAP_SMOKE}"; then
+    run python tests/test_device_map_generate.py \
+      --model "${HF_DIR}" \
+      --dtype "${DTYPE}" \
+      --attn-mode fused_recurrent \
+      --max-new-tokens "${DEVICE_MAP_MAX_NEW_TOKENS}" \
+      --compare-single-device \
+      --results "${RESULTS}"
+  else
+    echo "SKIP device_map smoke: RUN_DEVICE_MAP_SMOKE=${RUN_DEVICE_MAP_SMOKE} requires >=2 CUDA devices"
+  fi
 
   run python bench/bench_fast_token_warmup.py \
     --hf-dir "${HF_DIR}" \
