@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # coding=utf-8
-"""A/B benchmark for native_graph with fused recurrent+output-prep enabled.
+"""A/B benchmark for native_graph with fused W/A/G/V-gate LoRA enabled.
 
-`bench_fused_recurrent_output.py` proves the isolated recurrent-update plus
-output-prep prototype can beat the split recurrent/output kernels. This script
-checks whether `RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT=1` preserves
-logits/greedy behavior and improves end-to-end native_graph decode on top of
-the current output-prep default.
+`bench_fused_wavg_lora.py` shows isolated W/A/G/V-gate grouping is profitable
+on V100. This script checks the production-facing question: after capture
+inside the HF native_graph fast-token backend, does enabling
+`RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA=1` preserve logits/greedy behavior and move
+end-to-end decode latency on top of the current recurrent-output default?
 """
 from __future__ import annotations
 
@@ -87,13 +87,16 @@ def prefill(model, ids: torch.Tensor):
 
 
 def run_mode(model, token: torch.Tensor, base_state, args: argparse.Namespace, *, enabled: bool) -> dict[str, Any]:
-    os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT"] = "0"
-    os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT"] = "1" if enabled else "0"
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT"] = "1" if args.fused_recurrent else "0"
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT"] = "1" if args.fused_recurrent_output else "0"
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT"] = "1" if args.fused_output else "0"
-    os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT"] = "0"
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT"] = "1" if args.fused_output_project else "0"
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_PROJECTION"] = "0"
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA"] = "0"
-    os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA"] = "0"
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_M"] = str(args.block_m)
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_R"] = str(args.block_r)
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_K"] = str(args.block_k)
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA"] = "1" if enabled else "0"
     model.rwkv7_clear_native_graph_cache()
     if hasattr(model, "rwkv7_reset_native_graph_cache_stats"):
         model.rwkv7_reset_native_graph_cache_stats()
@@ -147,7 +150,13 @@ def main() -> int:
     ap.add_argument("--steps", type=int, default=32)
     ap.add_argument("--fixed-token", action="store_true")
     ap.add_argument("--native-graph-cache-size", type=int, default=8)
-    ap.add_argument("--fused-output", action=argparse.BooleanOptionalAction, default=True, help="Keep default fused output prep enabled in baseline mode; recurrent-output mode overrides it with combined recurrent+output-prep fusion.")
+    ap.add_argument("--fused-recurrent-output", action=argparse.BooleanOptionalAction, default=True, help="Keep default fused recurrent+output prep enabled in both A/B modes.")
+    ap.add_argument("--fused-output", action=argparse.BooleanOptionalAction, default=True, help="Keep default fused output prep enabled in both A/B modes when recurrent-output is disabled.")
+    ap.add_argument("--fused-output-project", action="store_true", help="Keep RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT=1 in both A/B modes for combined probes.")
+    ap.add_argument("--fused-recurrent", action="store_true", help="Keep RWKV7_NATIVE_GRAPH_FUSED_RECURRENT=1 in both A/B modes to test combined recurrent/WAVG-LoRA integration.")
+    ap.add_argument("--block-m", type=int, default=64, help="Fused W/A/G/V-gate LoRA output tile.")
+    ap.add_argument("--block-r", type=int, default=64, help="Fused W/A/G/V-gate LoRA rank tile.")
+    ap.add_argument("--block-k", type=int, default=64, help="Fused W/A/G/V-gate LoRA hidden tile.")
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     args = ap.parse_args()
 
@@ -160,13 +169,16 @@ def main() -> int:
     ids = encode(tok, args.prompt_tokens, args.batch_size, args.device)
     with torch.inference_mode():
         # Use the normal path for prefill, then A/B only the captured decode graph.
-        os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT"] = "0"
-        os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT"] = "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT"] = "1" if args.fused_recurrent else "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT"] = "1" if args.fused_recurrent_output else "0"
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT"] = "1" if args.fused_output else "0"
-        os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT"] = "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT"] = "1" if args.fused_output_project else "0"
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_PROJECTION"] = "0"
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA"] = "0"
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA"] = "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_M"] = str(args.block_m)
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_R"] = str(args.block_r)
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_K"] = str(args.block_k)
         token, base_state = prefill(model, ids)
         baseline = run_mode(model, token, base_state, args, enabled=False)
         fused = run_mode(model, token, base_state, args, enabled=True)
@@ -180,7 +192,7 @@ def main() -> int:
     greedy_total = min(len(baseline["greedy_tokens"]), len(fused["greedy_tokens"]))
     greedy_match = sum(int(a == b) for a, b in zip(baseline["greedy_tokens"], fused["greedy_tokens"], strict=False))
     row = {
-        "axis": "native_graph_fused_recurrent_output",
+        "axis": "native_graph_fused_wavg_lora",
         "backend": "hf_adapter",
         "status": "pass",
         "dtype": args.dtype,
@@ -192,11 +204,17 @@ def main() -> int:
         "prompt_tokens": int(ids.shape[1]),
         "steps": args.steps,
         "fixed_token": args.fixed_token,
+        "fused_recurrent_enabled": bool(args.fused_recurrent),
+        "fused_recurrent_output_enabled": bool(args.fused_recurrent_output),
         "fused_output_enabled": bool(args.fused_output),
+        "fused_output_project_enabled": bool(args.fused_output_project),
+        "block_m": int(args.block_m),
+        "block_r": int(args.block_r),
+        "block_k": int(args.block_k),
         "baseline_effective_backend": baseline["effective_backend"],
         "fused_effective_backend": fused["effective_backend"],
-        "baseline_fused_recurrent_output": False,
-        "fused_recurrent_output": True,
+        "baseline_fused_wavg_lora": False,
+        "fused_wavg_lora": True,
         "baseline_ms_per_step": round(float(baseline["ms_per_step"]), 4),
         "fused_ms_per_step": round(float(fused["ms_per_step"]), 4),
         "speedup": round(float(baseline["ms_per_step"]) / float(fused["ms_per_step"]), 4) if fused["ms_per_step"] else None,
