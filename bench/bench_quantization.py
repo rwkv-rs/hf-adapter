@@ -118,6 +118,46 @@ def load_model(args: argparse.Namespace, quantization: str, dtype: torch.dtype):
     return model
 
 
+def quant_module_counts(model) -> dict[str, Any]:
+    counts = {
+        "linear_dense": 0,
+        "linear_8bit": 0,
+        "linear_4bit": 0,
+        "dense_lora_rank_linear": 0,
+        "quantized_lora_rank_linear": 0,
+    }
+    dense_lora_names: list[str] = []
+    quantized_lora_names: list[str] = []
+    for name, module in model.named_modules():
+        cls_name = type(module).__name__
+        is_lora_rank_linear = "_lora.lora.0" in name or "_lora.lora.2" in name
+        if type(module) is torch.nn.Linear:
+            counts["linear_dense"] += 1
+            if is_lora_rank_linear:
+                counts["dense_lora_rank_linear"] += 1
+                dense_lora_names.append(name)
+        elif "Linear8bit" in cls_name:
+            counts["linear_8bit"] += 1
+            if is_lora_rank_linear:
+                counts["quantized_lora_rank_linear"] += 1
+                quantized_lora_names.append(name)
+        elif "Linear4bit" in cls_name:
+            counts["linear_4bit"] += 1
+            if is_lora_rank_linear:
+                counts["quantized_lora_rank_linear"] += 1
+                quantized_lora_names.append(name)
+    counts["dense_lora_rank_linear_sample"] = dense_lora_names[:6]
+    counts["quantized_lora_rank_linear_sample"] = quantized_lora_names[:6]
+    return counts
+
+
+def quant_skip_modules(model) -> list[str]:
+    qconfig = getattr(getattr(model, "config", None), "quantization_config", None)
+    if qconfig is None and getattr(model, "hf_quantizer", None) is not None:
+        qconfig = getattr(model.hf_quantizer, "quantization_config", None)
+    return list(getattr(qconfig, "llm_int8_skip_modules", None) or [])
+
+
 def bench_one(args: argparse.Namespace, tok, quantization: str, dtype: torch.dtype) -> dict[str, Any]:
     if args.device.startswith("cuda") and torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -199,11 +239,21 @@ def bench_one(args: argparse.Namespace, tok, quantization: str, dtype: torch.dty
         ref_decode_s, _, ref_backend = decode_timed(False)
     if args.decode_mode in {"fast", "compare"}:
         fast_decode_s, _, fast_backend = decode_timed(True)
-    primary_decode_s = fast_decode_s if fast_decode_s is not None else ref_decode_s
+    if ref_decode_s is not None and fast_decode_s is not None:
+        if fast_decode_s <= ref_decode_s:
+            primary_decode_s = fast_decode_s
+            selected_decode_path = "fast_forward"
+        else:
+            primary_decode_s = ref_decode_s
+            selected_decode_path = "reference"
+    else:
+        primary_decode_s = fast_decode_s if fast_decode_s is not None else ref_decode_s
+        selected_decode_path = "fast_forward" if fast_decode_s is not None else "reference"
     assert primary_decode_s is not None
     footprint_mb = None
     if hasattr(model, "get_memory_footprint"):
         footprint_mb = round(float(model.get_memory_footprint()) / 1024 / 1024, 1)
+    module_counts = quant_module_counts(model)
     reference_decode_tokps = round(args.decode_tokens / ref_decode_s, 1) if ref_decode_s is not None else None
     fast_decode_tokps = round(args.decode_tokens / fast_decode_s, 1) if fast_decode_s is not None else None
     speedup = (
@@ -222,6 +272,7 @@ def bench_one(args: argparse.Namespace, tok, quantization: str, dtype: torch.dty
         "decode_tokens": args.decode_tokens,
         "prefill_tokps": round(prefill_tokps, 1),
         "decode_mode": args.decode_mode,
+        "selected_decode_path": selected_decode_path,
         "decode_tokps": round(args.decode_tokens / primary_decode_s, 1),
         "decode_ms_per_tok": round(1000 * primary_decode_s / args.decode_tokens, 2),
         "reference_decode_tokps": reference_decode_tokps,
@@ -231,6 +282,8 @@ def bench_one(args: argparse.Namespace, tok, quantization: str, dtype: torch.dty
         "reference_forward_backend": ref_backend,
         "fast_forward_max_abs_diff": round(fast_diff, 6),
         "fast_forward_same_next_token": fast_same_token,
+        "quant_skip_modules": quant_skip_modules(model),
+        "module_counts": module_counts,
         "model_footprint_mb": footprint_mb,
         "peak_vram_mb": peak_mb(args.device),
         "load_s": round(load_s, 3),
