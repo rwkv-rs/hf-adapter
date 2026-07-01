@@ -11,7 +11,9 @@ greedy output.
 from __future__ import annotations
 
 import argparse
+import json
 import types
+from pathlib import Path
 
 import torch
 import torch.nn.functional as F
@@ -37,6 +39,15 @@ def build_batch_ids(tok, batch_size: int, prompt_tokens: int, device: str) -> to
     return torch.stack(rows, dim=0).to(device)
 
 
+def append_row(path: str, row: dict) -> None:
+    if not path:
+        return
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
@@ -44,6 +55,7 @@ def main() -> int:
     ap.add_argument("--batch-size", type=int, default=3)
     ap.add_argument("--batch-prompt-tokens", type=int, default=16)
     ap.add_argument("--expect-jit-decode", action="store_true")
+    ap.add_argument("--results", default="")
     args = ap.parse_args()
     d = args.model
     tok = AutoTokenizer.from_pretrained(d, trust_remote_code=True)
@@ -144,6 +156,38 @@ def main() -> int:
         and (not args.expect_jit_decode or native_decode_backend == "native_jit")
         and match == len(nt)
         and cache_ok
+    )
+    append_row(
+        args.results,
+        {
+            "axis": "native_model_smoke",
+            "backend": "hf_native_model",
+            "status": "pass" if ok else "fail",
+            "dtype": "fp32",
+            "device": torch.cuda.get_device_name(0),
+            "model_name": Path(args.model).name,
+            "hf_model_dir": args.model,
+            "prompt_count": len(PROMPTS),
+            "forward_min_cos": round(float(worst_cos), 8),
+            "forward_max_abs": round(float(worst_abs), 8),
+            "forward_argmax_match": argmax_ok,
+            "forward_argmax_total": len(PROMPTS),
+            "batch_size": args.batch_size,
+            "batch_prompt_tokens": args.batch_prompt_tokens,
+            "batch_forward_min_cos": round(float(batch_min_cos), 8),
+            "batch_forward_max_abs": round(float(batch_max_abs), 8),
+            "batch_forward_argmax_match": batch_argmax_ok,
+            "batch_forward_argmax_total": args.batch_size,
+            "batch_decode_max_abs": round(float(batch_decode_max_abs), 8),
+            "batch_decode_argmax_match": batch_decode_argmax_ok,
+            "batch_decode_argmax_total": args.batch_size,
+            "batch_cache_shape_ok": bool(batch_cache_shape_ok),
+            "native_decode_backend": native_decode_backend,
+            "generate_tokens": len(nt),
+            "generate_token_match": match,
+            "generate_token_total": len(nt),
+            "incremental_cache": bool(cache_ok),
+        },
     )
     print("NATIVE MODEL PASS" if ok else "NATIVE MODEL FAIL")
     return 0 if ok else 1

@@ -371,6 +371,14 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             )
 
     native_rows = [r for r in rows if r.get("axis") == "native_decode" and r.get("backend") == "hf_native_jit"]
+    # The experimental FLA-free native_model correctness smoke normally runs
+    # fp32, while the serving report is commonly filtered with --dtype fp16.
+    # Keep it visible like training telemetry, but still honor the device
+    # filter so reports remain hardware-specific.
+    native_model_smoke = latest(
+        filt(raw_rows, device=args.device, dtype=None),
+        lambda r: r.get("axis") == "native_model_smoke" and r.get("backend") == "hf_native_model",
+    )
     best_native = max(
         native_rows,
         key=lambda r: (float(r.get("native_graph_tokps") or r.get("native_jit_tokps") or 0), int(r.get("_lineno", 0))),
@@ -551,6 +559,18 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 f"{display_label} converted HF model loads and generates on "
                 f"{row.get('device')} with hidden={row.get('hidden_size')}, layers={row.get('num_hidden_layers')}"
             )
+    if native_model_smoke is None:
+        focus.append("experimental native_model smoke telemetry pending")
+    elif native_model_smoke.get("status") == "pass":
+        focus.append(
+            "experimental native_model smoke passes with "
+            f"forward_cos={native_model_smoke.get('forward_min_cos')} "
+            f"generate={native_model_smoke.get('generate_token_match')}/{native_model_smoke.get('generate_token_total')} "
+            f"cache={native_model_smoke.get('incremental_cache')} "
+            f"backend={native_model_smoke.get('native_decode_backend')}"
+        )
+    else:
+        focus.append(f"experimental native_model smoke did not pass: {native_model_smoke.get('status')}")
     if best_native is None:
         focus.append("native JIT/CUDA-graph decode rows pending")
     elif native_decode_ratio is not None and native_decode_ratio >= target_decode_ratio:
@@ -653,6 +673,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         ],
         "device_map_smoke": compact(device_map_smoke, ["_lineno", "status", "dtype", "device", "device_count", "device_map_kind", "split_layer", "num_hidden_layers", "hf_device_map_devices", "multi_cuda_device_map", "fast_forward_env", "last_fast_token_backend", "prompt_tokens", "max_new_tokens", "generated_tokens", "generated_tail", "reference_tail", "generated_equal_reference", "logits_shape", "logits_device", "logits_finite", "load_s", "generate_s", "generate_tokps", "peak_vram_mb_by_device"]),
         "speculative_decode": compact(speculative_decode, ["_lineno", "status", "dtype", "device", "target_model_name", "draft_model_name", "same_model", "prompt_tokens", "max_new_tokens", "draft_tokens", "generated_tokens", "generated_equal", "target_tail", "speculative_tail", "target_generate_s", "speculative_s", "target_generate_tokps", "speculative_tokps", "speedup_vs_target_generate", "stats_generated_tokens", "stats_proposed_tokens", "stats_accepted_tokens", "stats_corrected_tokens", "stats_resyncs", "stats_resync_tokens", "stats_full_resync_tokens", "stats_resync_saved_tokens", "stats_target_forward_calls", "stats_draft_forward_calls", "stats_acceptance_rate", "peak_vram_mb"]),
+        "native_model_smoke": compact(native_model_smoke, ["_lineno", "status", "dtype", "device", "model_name", "prompt_count", "forward_min_cos", "forward_max_abs", "forward_argmax_match", "forward_argmax_total", "batch_size", "batch_prompt_tokens", "batch_forward_min_cos", "batch_forward_max_abs", "batch_forward_argmax_match", "batch_forward_argmax_total", "batch_decode_max_abs", "batch_decode_argmax_match", "batch_decode_argmax_total", "batch_cache_shape_ok", "native_decode_backend", "generate_tokens", "generate_token_match", "generate_token_total", "incremental_cache"]),
         "training_smoke": [
             compact(
                 r,
@@ -822,6 +843,8 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["device_map_smoke"], ensure_ascii=False) if report["device_map_smoke"] else "PENDING")
     print("\n## speculative_decode")
     print(json.dumps(report["speculative_decode"], ensure_ascii=False) if report["speculative_decode"] else "PENDING")
+    print("\n## native_model_smoke")
+    print(json.dumps(report["native_model_smoke"], ensure_ascii=False) if report["native_model_smoke"] else "PENDING")
     print("\n## training_smoke")
     if report.get("training_smoke"):
         for row in report["training_smoke"]:
