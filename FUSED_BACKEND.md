@@ -131,8 +131,10 @@ serving speed.
      both recurrent and output fusion flags plus the active batch size.
    - `bench/bench_native_graph_fused_output.py` records
      `native_graph_fused_output` A/B rows. The first V100 integration row is
-     correctness-clean and moves full token replay latency by about 1.10x, so it
-     remains opt-in while bsz/device matrix and combined fusion are validated.
+     correctness-clean and moves full token replay latency by about 1.10x. The
+     V100 bsz=1/2/4/8 matrix is also correctness-clean with minimum speedup
+     above 1.03x, so it remains opt-in while device matrix and combined fusion
+     are validated.
 13. Native W8 pack plus fused int8 dequant-GEMV prototype.
    - `rwkv7_hf.native_quant.quantize_int8_rowwise()` packs dense weights as
      signed int8 plus row-wise fp32 scales.
