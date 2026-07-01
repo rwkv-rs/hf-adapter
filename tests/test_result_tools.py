@@ -650,6 +650,71 @@ def assert_fused_rkv_wag_projection_proto_is_reported(tmpdir: Path) -> None:
     assert any("fused R/K/V + W/A/G projection prototype backend=triton_rkv_wag_down_plus_wag_up speedup=1.01x" in item for item in report["next_focus"])
 
 
+def assert_fused_attn_output_proto_is_reported(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "fused_attn_output_proto",
+            "backend": "hf_adapter",
+            "prototype_backend": "triton_attn_output_prepare_plus_cublas_o",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 1,
+            "hidden_size": 768,
+            "head_dims": [64],
+            "head_v_dims": [64],
+            "layers": [0],
+            "input_scale": 0.3,
+            "steps": 512,
+            "avg_current_ms": 0.234,
+            "avg_prototype_ms": 0.191,
+            "avg_speedup": 1.225,
+            "max_abs_diff": 0.00390625,
+            "output_max_abs_diff": 0.0009765625,
+            "prep_max_abs_diff": 0.00390625,
+            "min_cosine": 0.9999997,
+            "output_min_cosine": 0.9999997,
+            "prep_min_cosine": 0.9999998,
+            "layer_rows": [
+                {
+                    "layer_idx": 0,
+                    "num_heads": 12,
+                    "head_dim": 64,
+                    "head_v_dim": 64,
+                    "current_ms": 0.234,
+                    "prototype_ms": 0.191,
+                    "speedup": 1.225,
+                },
+            ],
+        }
+    ]
+    path = tmpdir / "fused_attn_output_proto.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    assert report["fused_attn_output_proto"]["prototype_backend"] == "triton_attn_output_prepare_plus_cublas_o"
+    assert report["fused_attn_output_proto"]["avg_speedup"] == 1.225
+    assert report["fused_attn_output_proto"]["output_max_abs_diff"] == 0.0009765625
+    assert any("fused attention output prototype backend=triton_attn_output_prepare_plus_cublas_o speedup=1.23x" in item for item in report["next_focus"])
+
+
 def assert_fused_ffn_proto_is_reported(tmpdir: Path) -> None:
     rows = [
         {
@@ -1420,6 +1485,7 @@ def main() -> int:
         assert_fused_wa_lora_proto_is_reported(tmpdir)
         assert_fused_wag_lora_proto_is_reported(tmpdir)
         assert_fused_rkv_wag_projection_proto_is_reported(tmpdir)
+        assert_fused_attn_output_proto_is_reported(tmpdir)
         assert_fused_ffn_proto_is_reported(tmpdir)
         assert_fused_shift_mix_proto_is_reported(tmpdir)
         assert_fused_recurrent_proto_is_reported(tmpdir)
