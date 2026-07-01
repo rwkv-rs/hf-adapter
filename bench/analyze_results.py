@@ -287,6 +287,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         ("1.5b", "1.5B"),
         ("2.9b", "2.9B"),
         ("7.2b", "7.2B"),
+        ("13.3b", "13.3B"),
     ):
         if required_label not in larger_by_label:
             focus.append(f"{display_label} converted-model load/generate smoke row pending")
