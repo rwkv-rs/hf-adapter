@@ -231,6 +231,9 @@ def main() -> int:
         modeling._native_graph_block_ip_batched = object()
 
         owner._rwkv7_native_jit_packs = types.MethodType(modeling.RWKV7ForCausalLM._rwkv7_native_jit_packs, owner)
+        owner._rwkv7_has_multi_cuda_device_map = types.MethodType(
+            modeling.RWKV7ForCausalLM._rwkv7_has_multi_cuda_device_map, owner
+        )
         owner._rwkv7_uses_external_quantization = types.MethodType(
             modeling.RWKV7ForCausalLM._rwkv7_uses_external_quantization, owner
         )
@@ -269,6 +272,12 @@ def main() -> int:
         owner.is_loaded_in_4bit = True
         assert owner._rwkv7_resolve_fast_token_backend(1) == "fla"
         owner.is_loaded_in_4bit = False
+
+        owner.hf_device_map = {"model.embeddings": 0, "model.layers.0": 1}
+        assert owner._rwkv7_has_multi_cuda_device_map() is True
+        assert owner._rwkv7_resolve_fast_token_backend(1) == "fla"
+        owner.hf_device_map = {"": 0}
+        assert owner._rwkv7_has_multi_cuda_device_map() is False
 
         modeling._native_jit_extract = lambda owner: (_ for _ in ()).throw(RuntimeError("extract failed"))
         modeling._native_graph_block_ip = None
