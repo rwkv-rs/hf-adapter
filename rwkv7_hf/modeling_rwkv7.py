@@ -108,6 +108,12 @@ def _native_graph_cache_size() -> int:
         return 8
 
 
+def _native_graph_fused_recurrent_requested() -> bool:
+    """Whether native-graph runners should capture the experimental recurrent kernel."""
+
+    return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT", "0") not in _FALSE_VALUES
+
+
 def _native_graph_stats_template() -> dict[str, int]:
     return {"requests": 0, "hits": 0, "misses": 0, "evictions": 0}
 
@@ -1080,7 +1086,16 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
 
     def _rwkv7_native_graph_runner(self, packs, batch_size: int):
         weight = self.model.embeddings.weight
-        key = (weight.device.type, weight.device.index, weight.dtype, len(packs), int(packs[0][1]), int(packs[0][2]), int(batch_size))
+        key = (
+            weight.device.type,
+            weight.device.index,
+            weight.dtype,
+            len(packs),
+            int(packs[0][1]),
+            int(packs[0][2]),
+            int(batch_size),
+            _native_graph_fused_recurrent_requested(),
+        )
         cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
         if isinstance(cache, tuple) and len(cache) == 2:
             cache = OrderedDict([cache])
