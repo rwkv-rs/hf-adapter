@@ -1456,7 +1456,18 @@ python tests/test_deepspeed_training_smoke.py \
 
 On machines without DeepSpeed or live GPUs, use `--optional --results
 /tmp/rwkv7_zero_optional.jsonl` to record explicit skip rows while keeping local
-analyzer/report tests green. Real pass rows remain a GPU follow-up item.
+analyzer/report tests green.
+
+Latest V100 validation: the server environment exposes torch CUDA through the
+pip/conda CUDA runtime without a system CUDA toolkit, so the harness defaults
+`DS_IGNORE_CUDA_DETECTION=1` for ZeRO-only smoke runs and seeds a one-process
+`RANK/WORLD_SIZE/LOCAL_RANK` environment when no launcher is present. Full
+2-process validation was also run with `torchrun --standalone --nproc_per_node=2`
+on `CUDA_VISIBLE_DEVICES=0,1`. The committed rank-0 rows pass on 2 x Tesla V100
+fp32, `max_steps=1`, `batch_size=1`, `max_length=16`: ZeRO-2 reports finite
+loss `4.857278823852539` and `max_trainable_delta=9.999999747378752e-05`;
+ZeRO-3 reports the same finite loss and trainable delta after gathering full
+ZeRO-3 parameter shards for the update check.
 
 ## Benchmark gap report
 
