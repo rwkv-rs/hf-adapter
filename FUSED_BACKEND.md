@@ -81,7 +81,14 @@ serving speed.
    - `bench/bench_fused_recurrent.py` records `fused_recurrent_proto`. The
      first V100 row is profitable, so the next implementation step is
      correctness-gated native-graph integration.
-6. Native-graph integration for the profitable recurrent fused fp16 path.
+6. Native-graph integration for the recurrent fused fp16 path.
+   - `RWKV7_NATIVE_GRAPH_FUSED_RECURRENT=1` makes native-graph capture use the
+     recurrent prototype. The graph-runner cache key includes this flag so
+     default and experimental captures cannot be reused accidentally.
+   - `bench/bench_native_graph_fused_recurrent.py` records
+     `native_graph_fused_recurrent` A/B rows. The first V100 integration row is
+     correctness-clean but end-to-end neutral, so the flag remains opt-in while
+     deeper projection/LoRA fusion is developed.
 7. Native W8 pack plus fused int8 dequant-GEMV.
 8. Native W4 pack plus fused int4 dequant-GEMV.
 9. V100 + 5070/newer-GPU benchmark matrix.
