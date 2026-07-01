@@ -657,6 +657,8 @@ Latest short V100 rows:
 | none/fp16 | 364.4 MB | 636.2 MB | 8370.4 | 41.0 | 217.2 | PASS |
 | 8-bit bnb + dense LoRA rank | 283.4 MB | 321.6 MB | 3226.6 | 15.9 | 16.3 | PASS smoke, speed gap |
 | 4-bit bnb + dense LoRA rank | 242.9 MB | 286.4 MB | 6075.9 | 32.6 | 32.1 | PASS smoke, speed gap |
+| 8-bit bnb `decode_hot` | 310.4 MB | 582.4 MB | 5406.3 | 25.6 | 27.0 | faster hybrid, speed gap |
+| 4-bit bnb `decode_hot` | 283.4 MB | 310.0 MB | 7527.1 | 37.5 | 39.1 | faster hybrid, speed gap |
 
 The adapter appends `lm_head` and `.*_lora\.lora\.[02]` to HF/bnb
 `llm_int8_skip_modules` so tiny RWKV LoRA rank projections are not replaced
@@ -675,16 +677,18 @@ speed-memory policies:
 - `memory` (default): keep only `lm_head` and tiny LoRA rank projections dense;
   this is the canonical memory-target row used by result gates.
 - `decode_hot`: additionally keep attention `r_proj/k_proj/v_proj/o_proj`
-  dense while FFN key/value remain quantized. V100 4-bit smoke improved cached
-  decode from about `32 tok/s` to about `37 tok/s` with footprint about
-  `283 MB`, so it is useful as a hybrid speed probe but still far below fp16
-  native-graph.
+  dense while FFN key/value remain quantized. Latest V100 rows improve selected
+  decode to `27.0 tok/s` for 8-bit and `39.1 tok/s` for 4-bit while keeping
+  footprint below fp16 (`310.4 MB` / `283.4 MB`). It is useful as a hybrid speed
+  probe but still far below fp16 native-graph.
 - `dense`: keep attention and FFN projections dense; diagnostic upper bound,
   effectively fp16 footprint.
 
 Analyzer/check gates keep canonical quantization status anchored to `memory`
 policy rows so hybrid probes do not accidentally overwrite W4 memory-target
-evidence.
+evidence. The analyzer now also reports `quantization_best_variants`, selecting
+the fastest passing policy per W8/W4 mode and comparing its decode and footprint
+ratios against fp16.
 
 ## HF speculative decoding smoke
 
