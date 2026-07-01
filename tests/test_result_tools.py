@@ -8,6 +8,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from bench.bench_albatross import parse_result_lines
 from bench.compare_fast_token_layouts import fast_micro_rows, fast_speed_rows, latest_by_layout, load_rows, nested_num, num, ratio
 
 
@@ -84,6 +85,82 @@ def assert_training_smoke_survives_inference_dtype_filter(tmpdir: Path) -> None:
         for item in report["next_focus"]
     )
     assert not any("training smoke telemetry incomplete" in item for item in report["next_focus"])
+
+
+def assert_albatross_rows_are_parsed_and_compared(tmpdir: Path) -> None:
+    sample = "\n".join(
+        [
+            "warmup complete",
+            "RESULT B=1 T=1 iters=10 p10_ms=7.0000 p50_ms=8.0000 p90_ms=9.0000 tok_s_p50=125.00",
+            "RESULT B=2 T=1 iters=10 p10_ms=8.0000 p50_ms=10.0000 p90_ms=12.0000 tok_s_p50=200.00",
+        ]
+    )
+    albatross_rows = parse_result_lines(
+        sample,
+        engine="faster4_cpp",
+        dtype="fp16",
+        device="Tesla V100-PCIE-32GB",
+        model_path="/models/rwkv7-g1d-0.1b.pth",
+        model_size_label="0.1B",
+        checkpoint_sha256="abc123",
+    )
+    assert len(albatross_rows) == 2
+    assert albatross_rows[0]["axis"] == "albatross_speed"
+    assert albatross_rows[0]["batch_size"] == 1
+    assert albatross_rows[0]["tokens_per_sequence"] == 1
+    assert albatross_rows[0]["tokps_p50"] == 125.0
+
+    hf_rows = [
+        {
+            "axis": "batch_sweep",
+            "backend": "hf_adapter",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 1,
+            "decode_api": "rwkv7_forward_token",
+            "fast_token_backend_effective": "native_graph",
+            "decode_tokps_total": 250.0,
+            "prompt_tokens": 512,
+            "prefill_tokps_total": 12000.0,
+        },
+        {
+            "axis": "batch_sweep",
+            "backend": "hf_adapter",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 2,
+            "decode_api": "rwkv7_forward_token",
+            "fast_token_backend_effective": "native_graph",
+            "decode_tokps_total": 400.0,
+            "prompt_tokens": 512,
+            "prefill_tokps_total": 24000.0,
+        },
+    ]
+    path = tmpdir / "albatross_results.jsonl"
+    write_jsonl(path, hf_rows + albatross_rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    comparisons = report["albatross_decode_comparison"]
+    assert [row["batch_size"] for row in comparisons] == [1, 2]
+    assert [row["hf_vs_albatross_ratio"] for row in comparisons] == [2.0, 2.0]
+    assert any("Albatross A/B decode comparison present" in item for item in report["next_focus"])
 
 
 def main() -> int:
@@ -171,6 +248,7 @@ def main() -> int:
         assert failed.returncode != 0
         assert "candidate layout rows missing" in failed.stdout
         assert_training_smoke_survives_inference_dtype_filter(tmpdir)
+        assert_albatross_rows_are_parsed_and_compared(tmpdir)
     args = argparse.Namespace(device="V100", dtype="fp16")
     speeds = latest_by_layout(fast_speed_rows(loaded, args))
     micros = latest_by_layout(fast_micro_rows(loaded, args))
