@@ -583,9 +583,9 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 - Initial HF-compatible `rwkv7_speculative_generate()` supports greedy bsz=1
   speculative decoding with a RWKV/HF draft model. It verifies draft spans with
   block HF forwards, reports accepted/proposed/corrected tokens and acceptance
-  rate, and falls back to cache resync on mismatch. `bench_speculative_decode.py`
-  now records a real 0.1B draft -> 0.4B target V100 row and gates target-greedy
-  equality plus acceptance telemetry.
+  rate, and resyncs mismatches from the cached prefix instead of replaying the
+  full prompt. `bench_speculative_decode.py` now records a real 0.1B draft ->
+  0.4B target V100 row and gates target-greedy equality plus resync telemetry.
 - Batched recurrent cache smoke coverage exists for repeated prompts across bsz=1/2/4; benchmark sweep records total/per-sequence throughput for bsz=1/2/4/8 and includes the fast token API when available.
 - Dynamic-batch cache reorder coverage exists for heterogeneous prompts; benchmark simulation records reorder/drop counts and total decoded tokens/s.
 - Chunked prefill coverage compares full vs chunked logits/cache and records
@@ -645,8 +645,9 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   and matches the single-device greedy tail `[36786, 34, 308, 459]`.
 - HF speculative decode benchmark on V100 uses a real 0.1B draft against the
   0.4B target, matches target greedy for 8/8 new tokens, accepts 7/9 proposals
-  (`0.778` acceptance), and records target/draft forward call counts for the
-  next draft-selection/speedup pass.
+  (`0.778` acceptance), replays only 3 resync tokens instead of 11 full-prefix
+  tokens after the mismatch, and reaches `2.11x` speedup over target greedy in
+  this short correctness benchmark.
 - Bitsandbytes quantization smoke now loads and generates for both 8-bit and
   4-bit on V100, and cached decode can use the HF fast-forward hook through
   the FLA fallback. Short benchmark rows show model footprint dropping from
