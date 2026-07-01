@@ -242,6 +242,15 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     native_quant_w4_gemv_proto = latest(rows, lambda r: r.get("axis") == "native_quant_w4_gemv_proto" and r.get("backend") == "hf_adapter")
     native_quant_rkv_proto = latest(rows, lambda r: r.get("axis") == "native_quant_rkv_proto" and r.get("backend") == "hf_adapter")
     native_quant_w4_rkv_proto = latest(rows, lambda r: r.get("axis") == "native_quant_w4_rkv_proto" and r.get("backend") == "hf_adapter")
+    native_quant_rkv_sweep = latest_by_key(
+        [
+            r
+            for r in rows
+            if r.get("axis") == "native_quant_rkv_sweep"
+            and r.get("backend") == "hf_adapter"
+        ],
+        lambda r: r.get("quantization"),
+    )
     quant_rows_all = [r for r in rows if r.get("axis") == "quantization" and r.get("backend") == "hf_adapter"]
     quant_rows_canonical = [r for r in quant_rows_all if is_canonical_quant_model(r)]
     if not quant_rows_canonical:
@@ -848,6 +857,25 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 f"native int4 fused R/K/V quant projection is {float(fused_vs_separate):.2f}x "
                 "of separate W4 GEMVs; optimize before integrating"
             )
+    if native_quant_rkv_sweep:
+        for row in native_quant_rkv_sweep:
+            best = row.get("best_by_latency") or row.get("best_by_speedup_vs_fp16") or {}
+            quant_label = "W8" if str(row.get("quantization", "")).startswith("int8") else "W4"
+            speed = best.get("fused_speedup_vs_fp16")
+            sep_speed = best.get("fused_speedup_vs_separate")
+            bm = best.get("block_m")
+            bk = best.get("block_k")
+            fused_ms = best.get("avg_fused_quant_ms")
+            if speed is not None and float(speed) >= 1.0:
+                focus.append(
+                    f"native {quant_label} R/K/V sweep best block_m={bm} block_k={bk} reaches "
+                    f"{float(speed):.2f}x fp16 ({fused_ms} ms), separate={sep_speed}x; validate model-level path"
+                )
+            elif speed is not None:
+                focus.append(
+                    f"native {quant_label} R/K/V sweep best block_m={bm} block_k={bk} is "
+                    f"{float(speed):.2f}x fp16 ({fused_ms} ms), separate={sep_speed}x; kernel still below fp16"
+                )
     if albatross_decode_min is None:
         focus.append("fused backend target tracking needs Albatross decode ratios")
     elif albatross_decode_min < 0.55:
@@ -1098,6 +1126,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "native_quant_w4_gemv_proto": compact(native_quant_w4_gemv_proto, ["_lineno", "prototype_backend", "status", "quantization", "dtype", "device", "batch_size", "layers", "modules", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "mean_abs_diff_max", "min_cosine", "sample_fp16_weight_mb", "sample_int4_weight_mb", "sample_footprint_ratio", "layer_rows", "peak_vram_mb"]),
         "native_quant_rkv_proto": compact(native_quant_rkv_proto, ["_lineno", "prototype_backend", "status", "quantization", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m", "block_k", "steps", "avg_fp16_current_ms", "avg_separate_int8_ms", "avg_fused_int8_ms", "fused_speedup_vs_fp16", "fused_speedup_vs_separate_int8", "separate_speedup_vs_fp16", "max_abs_diff_fp16_vs_fused", "max_abs_diff_separate_vs_fused", "min_cosine_fp16_vs_fused", "min_cosine_separate_vs_fused", "sample_fp16_weight_mb", "sample_int8_weight_mb", "sample_footprint_ratio", "layer_rows", "peak_vram_mb"]),
         "native_quant_w4_rkv_proto": compact(native_quant_w4_rkv_proto, ["_lineno", "prototype_backend", "status", "quantization", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m", "block_k", "steps", "avg_fp16_current_ms", "avg_separate_int4_ms", "avg_fused_int4_ms", "fused_speedup_vs_fp16", "fused_speedup_vs_separate_int4", "separate_speedup_vs_fp16", "max_abs_diff_fp16_vs_fused", "max_abs_diff_separate_vs_fused", "min_cosine_fp16_vs_fused", "min_cosine_separate_vs_fused", "sample_fp16_weight_mb", "sample_int4_weight_mb", "sample_footprint_ratio", "layer_rows", "peak_vram_mb"]),
+        "native_quant_rkv_sweep": [
+            compact(r, ["_lineno", "prototype_backend", "status", "quantization", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m_values", "block_k_values", "warmup", "steps", "avg_fp16_baseline_ms", "best_by_speedup_vs_fp16", "best_by_latency", "sample_fp16_weight_mb", "sample_quant_weight_mb", "sample_footprint_ratio", "peak_vram_mb"])
+            for r in native_quant_rkv_sweep
+        ],
         "larger_model_smoke": [
             compact(
                 r,
@@ -1398,6 +1430,12 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["native_quant_rkv_proto"], ensure_ascii=False) if report["native_quant_rkv_proto"] else "PENDING")
     print("\n## native_quant_w4_rkv_proto")
     print(json.dumps(report["native_quant_w4_rkv_proto"], ensure_ascii=False) if report["native_quant_w4_rkv_proto"] else "PENDING")
+    print("\n## native_quant_rkv_sweep")
+    if report["native_quant_rkv_sweep"]:
+        for row in report["native_quant_rkv_sweep"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
     print("\n## larger_model_smoke")
     if report["larger_model_smoke"]:
         for row in report["larger_model_smoke"]:
