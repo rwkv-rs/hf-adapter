@@ -406,6 +406,73 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 }
             )
 
+    albatross_decode_ratios = [
+        float(row["hf_vs_albatross_ratio"])
+        for row in albatross_decode_comparison
+        if row.get("hf_vs_albatross_ratio") is not None
+    ]
+    albatross_prefill_ratios = [
+        float(row["hf_vs_albatross_ratio"])
+        for row in albatross_prefill_comparison
+        if row.get("hf_vs_albatross_ratio") is not None
+    ]
+    albatross_decode_min = min(albatross_decode_ratios) if albatross_decode_ratios else None
+    albatross_decode_max = max(albatross_decode_ratios) if albatross_decode_ratios else None
+    albatross_prefill_min = min(albatross_prefill_ratios) if albatross_prefill_ratios else None
+    albatross_prefill_max = max(albatross_prefill_ratios) if albatross_prefill_ratios else None
+    quant_target_by_mode = {
+        "8bit": {"decode_ratio_ge": 1.0, "footprint_ratio_le": 0.75},
+        "4bit": {"decode_ratio_ge": 1.0, "footprint_ratio_le": 0.55},
+    }
+    fused_quant_targets = []
+    for row in quant_best_variants:
+        mode = row.get("quantization")
+        targets = quant_target_by_mode.get(str(mode), {"decode_ratio_ge": 1.0, "footprint_ratio_le": None})
+        decode_ratio = row.get("decode_ratio_vs_fp16")
+        footprint_ratio = row.get("footprint_ratio_vs_fp16")
+        footprint_target = targets.get("footprint_ratio_le")
+        fused_quant_targets.append(
+            {
+                "quantization": mode,
+                "best_speed_policy": (row.get("best_speed") or {}).get("quant_skip_policy") or "memory",
+                "decode_ratio_vs_fp16": decode_ratio,
+                "decode_target_ge": targets["decode_ratio_ge"],
+                "decode_status": verdict_ge(decode_ratio, targets["decode_ratio_ge"]),
+                "footprint_ratio_vs_fp16": footprint_ratio,
+                "footprint_target_le": footprint_target,
+                "footprint_status": verdict_le(footprint_ratio, footprint_target) if footprint_target is not None else "PENDING",
+            }
+        )
+    fused_backend_targets = {
+        "phase": "rwkv7_hf_fused_backend",
+        "purpose": "Track the new native fused fp16 -> native W8/W4 backend against Albatross and fp16 speed targets.",
+        "albatross_decode": {
+            "current_ratio_min": round(albatross_decode_min, 4) if albatross_decode_min is not None else None,
+            "current_ratio_max": round(albatross_decode_max, 4) if albatross_decode_max is not None else None,
+            "p1_ratio_ge": 0.55,
+            "p1_status": verdict_ge(albatross_decode_min, 0.55),
+            "p2_ratio_ge": 0.75,
+            "p2_status": verdict_ge(albatross_decode_min, 0.75),
+            "p3_ratio_ge": 0.90,
+            "p3_status": verdict_ge(albatross_decode_min, 0.90),
+        },
+        "albatross_prefill": {
+            "current_ratio_min": round(albatross_prefill_min, 4) if albatross_prefill_min is not None else None,
+            "current_ratio_max": round(albatross_prefill_max, 4) if albatross_prefill_max is not None else None,
+            "p1_ratio_ge": 0.60,
+            "p1_status": verdict_ge(albatross_prefill_min, 0.60),
+            "p2_ratio_ge": 0.80,
+            "p2_status": verdict_ge(albatross_prefill_min, 0.80),
+        },
+        "quantization": fused_quant_targets,
+        "next_kernel_steps": [
+            "profile projection/LoRA at matrix granularity",
+            "prototype fused fp16 projection path",
+            "fuse recurrent state update",
+            "add native W8/W4 pack plus fused dequant-GEMV",
+        ],
+    }
+
     native_rows = [r for r in rows if r.get("axis") == "native_decode" and r.get("backend") == "hf_native_jit"]
     # The experimental FLA-free native_model correctness smoke normally runs
     # fp32, while the serving report is commonly filtered with --dtype fp16.
@@ -481,6 +548,18 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         speedup = projection_lora.get("avg_candidate_speedup")
         if speedup is not None and float(speedup) < 1.0:
             focus.append(f"naive PyTorch projection/LoRA bmm candidate is slower ({float(speedup):.2f}x); custom fusion needed")
+    if albatross_decode_min is None:
+        focus.append("fused backend target tracking needs Albatross decode ratios")
+    elif albatross_decode_min < 0.55:
+        focus.append(
+            f"fused backend P1 pending: decode min {albatross_decode_min:.2f}x Albatross; "
+            "start fused fp16 projection/recurrent kernels"
+        )
+    if albatross_prefill_min is not None and albatross_prefill_min < 0.60:
+        focus.append(
+            f"fused backend prefill P1 pending: prefill min {albatross_prefill_min:.2f}x Albatross; "
+            "plan scan/chunk fused prefill path"
+        )
     training_by_backend = {r.get("trainer_backend"): r for r in training_latest if r.get("status") == "pass"}
     missing_training = sorted({"trainer", "trl_sft", "trl_dpo", "trl_grpo"} - set(training_by_backend))
     if missing_training:
@@ -570,6 +649,12 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 f"best {row['quantization']} quant variant "
                 f"policy={best_speed.get('quant_skip_policy') or 'memory'} "
                 f"decode={q_ratio:.2f}x fp16 footprint={footprint_ratio if footprint_ratio is not None else 'n/a'}x"
+            )
+    for row in fused_quant_targets:
+        if row.get("decode_status") == "GAP":
+            focus.append(
+                f"native fused {row['quantization']} pending: best decode "
+                f"{row.get('decode_ratio_vs_fp16')}x fp16; replace generic bnb with packed dequant-GEMV"
             )
     quant_model_pass = defaultdict(set)
     for row in quant_model_latest:
@@ -814,6 +899,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         ],
         "albatross_decode_comparison": albatross_decode_comparison,
         "albatross_prefill_comparison": albatross_prefill_comparison,
+        "fused_backend_targets": fused_backend_targets,
         "quantization": [
             compact(
                 r,
@@ -1000,6 +1086,8 @@ def print_text(report: dict[str, Any]) -> None:
             print(json.dumps(row, ensure_ascii=False))
     else:
         print("PENDING")
+    print("\n## fused_backend_targets")
+    print(json.dumps(report.get("fused_backend_targets"), ensure_ascii=False))
 
     print("\n## quantization")
     if report["quantization"]:
