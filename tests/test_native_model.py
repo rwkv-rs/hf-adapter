@@ -43,6 +43,7 @@ def main() -> int:
     ap.add_argument("--gen-tokens", type=int, default=16)
     ap.add_argument("--batch-size", type=int, default=3)
     ap.add_argument("--batch-prompt-tokens", type=int, default=16)
+    ap.add_argument("--expect-jit-decode", action="store_true")
     args = ap.parse_args()
     d = args.model
     tok = AutoTokenizer.from_pretrained(d, trust_remote_code=True)
@@ -80,6 +81,11 @@ def main() -> int:
         bn_next = nat(batch_next, past_key_values=bn.past_key_values, use_cache=True)
     batch_decode_max_abs = float((bf_next.logits[:, -1].float().cpu() - bn_next.logits[:, -1].float().cpu()).abs().max().item())
     batch_decode_argmax_ok = int((bf_next.logits[:, -1].argmax(dim=-1).cpu() == bn_next.logits[:, -1].argmax(dim=-1).cpu()).sum().item())
+    native_decode_backend = (
+        nat.rwkv7_native_model_last_decode_backend()
+        if hasattr(nat, "rwkv7_native_model_last_decode_backend")
+        else None
+    )
     state0, xpa0, xpf0, vfirst = bn_next.past_key_values
     batch_cache_shape_ok = (
         len(state0) == nat.config.num_hidden_layers
@@ -94,7 +100,8 @@ def main() -> int:
     )
     print(
         f"[batch-cache] decode_max_abs={batch_decode_max_abs:.6f} "
-        f"argmax {batch_decode_argmax_ok}/{args.batch_size} cache_shape={batch_cache_shape_ok}"
+        f"argmax {batch_decode_argmax_ok}/{args.batch_size} cache_shape={batch_cache_shape_ok} "
+        f"backend={native_decode_backend}"
     )
 
     # greedy generate token-identical
@@ -134,6 +141,7 @@ def main() -> int:
         and batch_argmax_ok == args.batch_size
         and batch_decode_argmax_ok == args.batch_size
         and batch_cache_shape_ok
+        and (not args.expect_jit_decode or native_decode_backend == "native_jit")
         and match == len(nt)
         and cache_ok
     )
