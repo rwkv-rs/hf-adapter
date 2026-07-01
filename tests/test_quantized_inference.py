@@ -104,11 +104,16 @@ def quant_skip_modules(model) -> list[str]:
     return list(getattr(qconfig, "llm_int8_skip_modules", None) or [])
 
 
+def quant_skip_policy(model) -> str:
+    return str(getattr(model, "_rwkv7_bnb_skip_policy", None) or getattr(getattr(model, "config", None), "rwkv7_bnb_skip_policy", "memory"))
+
+
 def load_model(args, dtype):
     kwargs = {
         "trust_remote_code": True,
         "torch_dtype": dtype,
         "device_map": device_map_for(args.device) if args.device.startswith("cuda") else None,
+        "rwkv7_bnb_skip_policy": args.quant_skip_policy,
     }
     if args.quantization != "none":
         if importlib.util.find_spec("bitsandbytes") is None:
@@ -146,6 +151,7 @@ def main() -> int:
     ap.add_argument("--optional", action="store_true", help="Return success when the quantization backend is not installed/supported")
     ap.add_argument("--bnb-4bit-quant-type", choices=["fp4", "nf4"], default="nf4")
     ap.add_argument("--bnb-4bit-use-double-quant", action="store_true")
+    ap.add_argument("--quant-skip-policy", choices=["memory", "decode_hot", "dense"], default=os.environ.get("RWKV7_BNB_SKIP_POLICY", "memory"))
     ap.add_argument("--skip-fast-forward-check", action="store_true")
     ap.add_argument("--fast-forward-max-diff", type=float, default=1.25)
     args = ap.parse_args()
@@ -216,6 +222,8 @@ def main() -> int:
     if args.quantization != "none":
         assert module_counts["dense_lora_rank_linear"] > 0, module_counts
         assert module_counts["quantized_lora_rank_linear"] == 0, module_counts
+        if args.quant_skip_policy == "decode_hot":
+            assert module_counts["linear_4bit"] < 72 or module_counts["linear_8bit"] < 72, module_counts
     row = {
         "axis": "quantized_inference",
         "backend": "hf_adapter",
@@ -231,6 +239,7 @@ def main() -> int:
         "generated_tail": new_tokens,
         "model_footprint_mb": footprint_mb,
         "peak_vram_mb": peak_mb(args.device),
+        "quant_skip_policy": quant_skip_policy(model),
         "quant_skip_modules": quant_skip_modules(model),
         "module_counts": module_counts,
         "fast_forward": fast_forward,
