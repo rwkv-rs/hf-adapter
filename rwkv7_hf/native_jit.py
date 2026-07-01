@@ -14,11 +14,23 @@ import torch
 import torch.nn.functional as F
 
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
-    from .fused_recurrent_update import fused_recurrent_update, fused_recurrent_update_available
+    from .fused_recurrent_update import (
+        fused_recurrent_output_prepare,
+        fused_recurrent_output_prepare_available,
+        fused_recurrent_update,
+        fused_recurrent_update_available,
+    )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
-        from fused_recurrent_update import fused_recurrent_update, fused_recurrent_update_available
+        from fused_recurrent_update import (
+            fused_recurrent_output_prepare,
+            fused_recurrent_output_prepare_available,
+            fused_recurrent_update,
+            fused_recurrent_update_available,
+        )
     except Exception:
+        fused_recurrent_output_prepare = None  # type: ignore[assignment]
+        fused_recurrent_output_prepare_available = None  # type: ignore[assignment]
         fused_recurrent_update = None  # type: ignore[assignment]
         fused_recurrent_update_available = None  # type: ignore[assignment]
 
@@ -74,6 +86,19 @@ def _native_graph_fused_recurrent_enabled() -> bool:
         return False
     try:
         return bool(fused_recurrent_update_available())
+    except Exception:
+        return False
+
+
+def _native_graph_fused_recurrent_output_enabled() -> bool:
+    """Runtime switch for fused recurrent update plus output-prep."""
+
+    if os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", "0") in _FALSE_VALUES:
+        return False
+    if fused_recurrent_output_prepare is None or fused_recurrent_output_prepare_available is None:
+        return False
+    try:
+        return bool(fused_recurrent_output_prepare_available())
     except Exception:
         return False
 
@@ -542,8 +567,29 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
     else:
         v = v + (v_first - v) * torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
     w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
-    out, new_state = _recurrent_update_unbatched(r, w, k, v, kk, a, state, H, N)
-    if _native_graph_fused_output_project_enabled():
+    if _native_graph_fused_recurrent_output_enabled():
+        out, new_state = fused_recurrent_output_prepare(
+            r.view(1, H, N),
+            w.view(1, H, N),
+            k.view(1, H, N),
+            v.view(1, H, N),
+            kk.view(1, H, N),
+            a.view(1, H, N),
+            state.view(1, H, N, N),
+            g.view(1, H, N),
+            r_k,
+            gn_w,
+            gn_b,
+            eps=eps,
+            block_n=N,
+        )
+        out = out.view(H * N)
+        new_state = new_state.view(H, N, N)
+    else:
+        out, new_state = _recurrent_update_unbatched(r, w, k, v, kk, a, state, H, N)
+    if _native_graph_fused_recurrent_output_enabled():
+        out = F.linear(out, Ow)
+    elif _native_graph_fused_output_project_enabled():
         out = fused_attn_output_project(
             out.view(1, H * N),
             r.view(1, H, N),
@@ -674,8 +720,28 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
     else:
         v = v + (v_first - v) * torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
     w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
-    out, new_state = _recurrent_update_batched(r, w, k, v, kk, a, state, B, H, N)
-    if _native_graph_fused_output_project_enabled():
+    if _native_graph_fused_recurrent_output_enabled():
+        out, new_state = fused_recurrent_output_prepare(
+            r.view(B, H, N),
+            w.view(B, H, N),
+            k.view(B, H, N),
+            v.view(B, H, N),
+            kk.view(B, H, N),
+            a.view(B, H, N),
+            state,
+            g.view(B, H, N),
+            r_k,
+            gn_w,
+            gn_b,
+            eps=eps,
+            block_n=N,
+        )
+        out = out.reshape(B, H * N)
+    else:
+        out, new_state = _recurrent_update_batched(r, w, k, v, kk, a, state, B, H, N)
+    if _native_graph_fused_recurrent_output_enabled():
+        out = F.linear(out, Ow)
+    elif _native_graph_fused_output_project_enabled():
         out = fused_attn_output_project(
             out,
             r.view(B, H, N),
