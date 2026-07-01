@@ -26,10 +26,23 @@ PROMPTS = [
 ]
 
 
+def build_batch_ids(tok, batch_size: int, prompt_tokens: int, device: str) -> torch.LongTensor:
+    rows = []
+    for i in range(batch_size):
+        text = (PROMPTS[i % len(PROMPTS)] + " ") * 32
+        ids = tok(text, return_tensors="pt", add_special_tokens=False).input_ids[0]
+        if ids.numel() < prompt_tokens:
+            raise ValueError(f"prompt {i} only produced {ids.numel()} tokens; need {prompt_tokens}")
+        rows.append(ids[:prompt_tokens])
+    return torch.stack(rows, dim=0).to(device)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
     ap.add_argument("--gen-tokens", type=int, default=16)
+    ap.add_argument("--batch-size", type=int, default=3)
+    ap.add_argument("--batch-prompt-tokens", type=int, default=16)
     args = ap.parse_args()
     d = args.model
     tok = AutoTokenizer.from_pretrained(d, trust_remote_code=True)
@@ -50,6 +63,39 @@ def main() -> int:
         argmax_ok += int(lf.argmax() == ln.argmax())
     print(f"[forward] min_cos={worst_cos:.6f} max_abs={worst_abs:.6f} "
           f"argmax {argmax_ok}/{len(PROMPTS)}")
+
+    batch_ids = build_batch_ids(tok, args.batch_size, args.batch_prompt_tokens, "cuda")
+    with torch.no_grad():
+        bf = fla(batch_ids, use_cache=True, logits_to_keep=1)
+        bn = nat(batch_ids, use_cache=True)
+    bf_logits = bf.logits[:, -1].float().cpu()
+    bn_logits = bn.logits[:, -1].float().cpu()
+    batch_cos_vals = F.cosine_similarity(bf_logits, bn_logits, dim=-1)
+    batch_min_cos = float(batch_cos_vals.min().item())
+    batch_max_abs = float((bf_logits - bn_logits).abs().max().item())
+    batch_argmax_ok = int((bf_logits.argmax(dim=-1) == bn_logits.argmax(dim=-1)).sum().item())
+    batch_next = bf.logits[:, -1:].argmax(dim=-1)
+    with torch.no_grad():
+        bf_next = fla(batch_next, past_key_values=bf.past_key_values, use_cache=True, logits_to_keep=1)
+        bn_next = nat(batch_next, past_key_values=bn.past_key_values, use_cache=True)
+    batch_decode_max_abs = float((bf_next.logits[:, -1].float().cpu() - bn_next.logits[:, -1].float().cpu()).abs().max().item())
+    batch_decode_argmax_ok = int((bf_next.logits[:, -1].argmax(dim=-1).cpu() == bn_next.logits[:, -1].argmax(dim=-1).cpu()).sum().item())
+    state0, xpa0, xpf0, vfirst = bn_next.past_key_values
+    batch_cache_shape_ok = (
+        len(state0) == nat.config.num_hidden_layers
+        and state0[0].shape[0] == args.batch_size
+        and xpa0[0].shape[0] == args.batch_size
+        and xpf0[0].shape[0] == args.batch_size
+        and vfirst.shape[0] == args.batch_size
+    )
+    print(
+        f"[batch-forward] bsz={args.batch_size} min_cos={batch_min_cos:.6f} "
+        f"max_abs={batch_max_abs:.6f} argmax {batch_argmax_ok}/{args.batch_size}"
+    )
+    print(
+        f"[batch-cache] decode_max_abs={batch_decode_max_abs:.6f} "
+        f"argmax {batch_decode_argmax_ok}/{args.batch_size} cache_shape={batch_cache_shape_ok}"
+    )
 
     # greedy generate token-identical
     ids = tok(PROMPTS[2], return_tensors="pt", add_special_tokens=False).input_ids.to("cuda")
@@ -81,7 +127,16 @@ def main() -> int:
     )
     print(f"[generate-cache] incremental_cache={cache_ok} calls={calls}")
 
-    ok = worst_cos >= 0.999 and argmax_ok == len(PROMPTS) and match == len(nt) and cache_ok
+    ok = (
+        worst_cos >= 0.999
+        and argmax_ok == len(PROMPTS)
+        and batch_min_cos >= 0.999
+        and batch_argmax_ok == args.batch_size
+        and batch_decode_argmax_ok == args.batch_size
+        and batch_cache_shape_ok
+        and match == len(nt)
+        and cache_ok
+    )
     print("NATIVE MODEL PASS" if ok else "NATIVE MODEL FAIL")
     return 0 if ok else 1
 
