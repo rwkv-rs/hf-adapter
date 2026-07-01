@@ -243,6 +243,95 @@ def assert_quantization_best_variants_are_reported(tmpdir: Path) -> None:
     assert any("best 4bit quant variant policy=decode_hot" in item for item in report["next_focus"])
 
 
+def assert_quantization_model_sweep_does_not_override_canonical(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "quantization",
+            "backend": "hf_adapter",
+            "model_size_label": "0.1b",
+            "model_name": "rwkv7-g1d-0.1b-hf",
+            "quantization": "none",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "decode_tokps": 200.0,
+            "model_footprint_mb": 400.0,
+            "peak_vram_mb": 600.0,
+        },
+        {
+            "axis": "quantization",
+            "backend": "hf_adapter",
+            "model_size_label": "0.1b",
+            "model_name": "rwkv7-g1d-0.1b-hf",
+            "quantization": "4bit",
+            "quant_skip_policy": "memory",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "decode_tokps": 40.0,
+            "model_footprint_mb": 240.0,
+            "peak_vram_mb": 300.0,
+        },
+        {
+            "axis": "quantization",
+            "backend": "hf_adapter",
+            "model_size_label": "0.4b",
+            "model_name": "rwkv7-g1d-0.4b-hf",
+            "quantization": "none",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "decode_tokps": 100.0,
+            "model_footprint_mb": 900.0,
+            "peak_vram_mb": 1100.0,
+        },
+        {
+            "axis": "quantization",
+            "backend": "hf_adapter",
+            "model_size_label": "0.4b",
+            "model_name": "rwkv7-g1d-0.4b-hf",
+            "quantization": "4bit",
+            "quant_skip_policy": "memory",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "decode_tokps": 25.0,
+            "model_footprint_mb": 500.0,
+            "peak_vram_mb": 700.0,
+        },
+    ]
+    path = tmpdir / "quant_model_sweep.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    canonical = {row["quantization"]: row for row in report["quantization"]}
+    assert canonical["none"]["model_name"] == "rwkv7-g1d-0.1b-hf"
+    assert canonical["4bit"]["model_name"] == "rwkv7-g1d-0.1b-hf"
+    sweep = {
+        (row.get("model_size_label"), row.get("quantization")): row
+        for row in report["quantization_model_sweep"]
+    }
+    assert sweep[("0.4b", "4bit")]["model_name"] == "rwkv7-g1d-0.4b-hf"
+    assert any("0.4b quantization sweep rows pass" in item for item in report["next_focus"])
+
+
 def assert_native_model_smoke_is_reported(tmpdir: Path) -> None:
     rows = [
         {
@@ -388,6 +477,7 @@ def main() -> int:
         assert_training_smoke_survives_inference_dtype_filter(tmpdir)
         assert_albatross_rows_are_parsed_and_compared(tmpdir)
         assert_quantization_best_variants_are_reported(tmpdir)
+        assert_quantization_model_sweep_does_not_override_canonical(tmpdir)
         assert_native_model_smoke_is_reported(tmpdir)
     args = argparse.Namespace(device="V100", dtype="fp16")
     speeds = latest_by_layout(fast_speed_rows(loaded, args))

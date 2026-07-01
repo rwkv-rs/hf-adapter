@@ -12,6 +12,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -26,6 +27,29 @@ SEED = (
     "This prompt is repeated to create a stable quantization benchmark. "
     * 80
 )
+
+
+def infer_model_size_label(hf_dir: str, explicit: str = "") -> str | None:
+    if explicit:
+        return explicit.lower()
+    name = Path(hf_dir).name.lower()
+    match = re.search(r"(\d+(?:\.\d+)?b)", name)
+    return match.group(1) if match else None
+
+
+def model_metadata(args: argparse.Namespace, model) -> dict[str, Any]:
+    cfg = getattr(model, "config", None)
+    return {
+        "model_name": Path(args.hf_dir).name,
+        "model_size_label": infer_model_size_label(args.hf_dir, args.model_size_label),
+        "hf_model_dir": args.hf_dir,
+        "vocab_size": getattr(cfg, "vocab_size", None),
+        "hidden_size": getattr(cfg, "hidden_size", None),
+        "intermediate_size": getattr(cfg, "intermediate_size", None),
+        "num_hidden_layers": getattr(cfg, "num_hidden_layers", None),
+        "head_dim": getattr(cfg, "head_dim", None),
+        "num_heads": getattr(cfg, "num_heads", None),
+    }
 
 
 def device_map_for(device: str):
@@ -96,9 +120,9 @@ def load_model(args: argparse.Namespace, quantization: str, dtype: torch.dtype):
         "trust_remote_code": True,
         "torch_dtype": dtype,
         "device_map": device_map_for(args.device) if args.device.startswith("cuda") else None,
-        "rwkv7_bnb_skip_policy": args.quant_skip_policy,
     }
     if quantization != "none":
+        kwargs["rwkv7_bnb_skip_policy"] = args.quant_skip_policy
         if importlib.util.find_spec("bitsandbytes") is None:
             raise RuntimeError("bitsandbytes missing")
         from transformers import BitsAndBytesConfig
@@ -180,6 +204,9 @@ def bench_one(args: argparse.Namespace, tok, quantization: str, dtype: torch.dty
                 "quantization": quantization,
                 "dtype": args.dtype,
                 "device": torch.cuda.get_device_name(0) if args.device.startswith("cuda") and torch.cuda.is_available() else args.device,
+                "model_name": Path(args.hf_dir).name,
+                "model_size_label": infer_model_size_label(args.hf_dir, args.model_size_label),
+                "hf_model_dir": args.hf_dir,
                 "status": "skip",
                 "error": repr(exc),
             }
@@ -272,6 +299,7 @@ def bench_one(args: argparse.Namespace, tok, quantization: str, dtype: torch.dty
         "quantization": quantization,
         "dtype": args.dtype,
         "device": torch.cuda.get_device_name(0) if args.device.startswith("cuda") and torch.cuda.is_available() else args.device,
+        **model_metadata(args, model),
         "attn_mode": getattr(model.config, "attn_mode", "?"),
         "prompt_tokens": prompt_tokens,
         "decode_tokens": args.decode_tokens,
@@ -300,6 +328,7 @@ def bench_one(args: argparse.Namespace, tok, quantization: str, dtype: torch.dty
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hf-dir", required=True)
+    ap.add_argument("--model-size-label", default="", help="Optional size label such as 0.1b or 0.4b; inferred from --hf-dir when omitted")
     ap.add_argument("--dtype", default="fp16", choices=list(DTYPES))
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
