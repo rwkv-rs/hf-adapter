@@ -219,6 +219,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     projection_lora = latest(rows, lambda r: r.get("axis") == "projection_lora" and r.get("backend") == "hf_adapter")
     fused_projection_proto = latest(rows, lambda r: r.get("axis") == "fused_projection_proto" and r.get("backend") == "hf_adapter")
     fused_shift_mix_proto = latest(rows, lambda r: r.get("axis") == "fused_shift_mix_proto" and r.get("backend") == "hf_adapter")
+    fused_recurrent_proto = latest(rows, lambda r: r.get("axis") == "fused_recurrent_proto" and r.get("backend") == "hf_adapter")
     quant_rows_all = [r for r in rows if r.get("axis") == "quantization" and r.get("backend") == "hf_adapter"]
     quant_rows_canonical = [r for r in quant_rows_all if is_canonical_quant_model(r)]
     if not quant_rows_canonical:
@@ -471,7 +472,8 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             "profile projection/LoRA at matrix granularity",
             "prototype fused fp16 projection path",
             "prototype fused attention shift-mix path",
-            "replace standalone small kernels with deeper shift-mix + projection/LoRA + recurrent fusion",
+            "prototype fused recurrent rank-1 state update",
+            "integrate profitable recurrent fusion into native_graph and then fuse deeper with projection/LoRA",
             "add native W8/W4 pack plus fused dequant-GEMV",
         ],
     }
@@ -593,6 +595,22 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             focus.append(
                 f"fused attention shift-mix prototype backend={backend} speedup={float(shift_speedup):.2f}x; "
                 "validate native_graph integration"
+            )
+    if fused_recurrent_proto is None:
+        focus.append("fused_recurrent_proto row pending")
+    else:
+        rec_speedup = fused_recurrent_proto.get("avg_speedup")
+        backend = fused_recurrent_proto.get("prototype_backend")
+        out_diff = fused_recurrent_proto.get("out_max_abs_diff")
+        if rec_speedup is not None and float(rec_speedup) >= 1.0:
+            focus.append(
+                f"fused recurrent prototype backend={backend} speedup={float(rec_speedup):.2f}x "
+                f"out_max_abs_diff={out_diff}; validate end-to-end native_graph integration"
+            )
+        elif rec_speedup is not None:
+            focus.append(
+                f"fused recurrent prototype backend={backend} is slower "
+                f"({float(rec_speedup):.2f}x); keep optimizing before integration"
             )
     if albatross_decode_min is None:
         focus.append("fused backend target tracking needs Albatross decode ratios")
@@ -827,6 +845,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "projection_lora": compact(projection_lora, ["_lineno", "batch_size", "hidden_size", "layers", "avg_timings_ms", "avg_current_linears_lora_sum_ms", "avg_candidate_linears_lora_sum_ms", "avg_candidate_speedup", "sample_matrix_profile_summary", "fused_kernel_plan", "peak_vram_mb"]),
         "fused_projection_proto": compact(fused_projection_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_shift_mix_proto": compact(fused_shift_mix_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "input_rank", "hidden_size", "layers", "block_size", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
+        "fused_recurrent_proto": compact(fused_recurrent_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_n", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "out_max_abs_diff", "state_max_abs_diff", "out_min_cosine", "layer_rows", "peak_vram_mb"]),
         "larger_model_smoke": [
             compact(
                 r,
@@ -1095,6 +1114,8 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["fused_projection_proto"], ensure_ascii=False) if report["fused_projection_proto"] else "PENDING")
     print("\n## fused_shift_mix_proto")
     print(json.dumps(report["fused_shift_mix_proto"], ensure_ascii=False) if report["fused_shift_mix_proto"] else "PENDING")
+    print("\n## fused_recurrent_proto")
+    print(json.dumps(report["fused_recurrent_proto"], ensure_ascii=False) if report["fused_recurrent_proto"] else "PENDING")
     print("\n## larger_model_smoke")
     if report["larger_model_smoke"]:
         for row in report["larger_model_smoke"]:
