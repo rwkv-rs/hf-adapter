@@ -12,11 +12,40 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
-from fla.models.rwkv7.modeling_rwkv7 import RWKV7Model as _RWKV7Model
-from fla.models.rwkv7.modeling_rwkv7 import RWKV7ForCausalLM as _RWKV7ForCausalLM
-from fla.models.utils import Cache as _FLACache
-from fla.ops.rwkv7.fused_recurrent import fused_mul_recurrent_rwkv7
 from transformers.modeling_outputs import CausalLMOutputWithPast
+
+_FLA_IMPORT_ERROR: Exception | None = None
+
+try:
+    from fla.models.rwkv7.modeling_rwkv7 import RWKV7Model as _RWKV7Model
+    from fla.models.rwkv7.modeling_rwkv7 import RWKV7ForCausalLM as _RWKV7ForCausalLM
+    from fla.models.utils import Cache as _FLACache
+    from fla.ops.rwkv7.fused_recurrent import fused_mul_recurrent_rwkv7
+except Exception as exc:  # pragma: no cover - exercised by fla-free native backend tests
+    _FLA_IMPORT_ERROR = exc
+    from transformers.cache_utils import Cache as _FLACache
+    from transformers.modeling_utils import PreTrainedModel
+
+    class _MissingFLABase(PreTrainedModel):
+        """Fallback base that keeps remote-code import alive without FLA."""
+
+        def __init__(self, *args, **kwargs):
+            raise ImportError(
+                "flash-linear-attention (`fla`) is required for the optimized "
+                "RWKV7ForCausalLM wrapper. Set RWKV7_NATIVE_MODEL=1 to load the "
+                "fla-free NativeRWKV7ForCausalLM backend instead."
+            ) from _FLA_IMPORT_ERROR
+
+    class _RWKV7Model(_MissingFLABase):
+        pass
+
+    class _RWKV7ForCausalLM(_MissingFLABase):
+        pass
+
+    def fused_mul_recurrent_rwkv7(*args, **kwargs):
+        raise ImportError(
+            "flash-linear-attention (`fla`) is required for fused RWKV-7 recurrent ops."
+        ) from _FLA_IMPORT_ERROR
 
 try:
     from .configuration_rwkv7 import RWKV7Config
@@ -837,6 +866,17 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        if os.environ.get("RWKV7_NATIVE_MODEL", "0") not in _FALSE_VALUES:
+            # Opt-in fla-free backend: load NativeRWKV7ForCausalLM instead of
+            # the FLA wrapper. Same checkpoint, same HF from_pretrained/generate
+            # API; bypasses the fla runtime dependency and the FLA backward
+            # kernels that fail on some GPUs (e.g. Blackwell sm_120 shared-mem).
+            from .native_model import NativeRWKV7ForCausalLM
+
+            kwargs.pop("rwkv7_bnb_skip_policy", None)
+            return NativeRWKV7ForCausalLM.from_pretrained(
+                pretrained_model_name_or_path, *model_args, **kwargs
+            )
         rwkv7_bnb_skip_policy = _bnb_skip_policy(kwargs.pop("rwkv7_bnb_skip_policy", None))
         quantization_config = kwargs.get("quantization_config")
         if quantization_config is None and (kwargs.get("load_in_8bit") or kwargs.get("load_in_4bit")):
