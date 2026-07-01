@@ -72,6 +72,140 @@ def ffn_step(layer, x: torch.Tensor, x_prev: torch.Tensor):
     return F.linear(k, layer.value.weight), x
 
 
+def attn_step_batched(layer, layer_id: int, x: torch.Tensor, x_prev: torch.Tensor,
+                      v_first: torch.Tensor, state: torch.Tensor):
+    """Batched RWKV_x070_TMix_one.
+
+    x/x_prev/v_first: [B, hidden], state: [B, H, N, N].  This is a
+    correctness-first pure PyTorch path for the experimental native model; it
+    intentionally mirrors :func:`attn_step` and avoids FLA-specific runtime
+    dependencies.
+    """
+    B = int(x.shape[0])
+    H, N = layer.num_heads, layer.head_dim
+    hidden = H * N
+    xx = x_prev - x
+    xr = x + xx * layer.x_r.reshape(1, hidden)
+    xw = x + xx * layer.x_w.reshape(1, hidden)
+    xk = x + xx * layer.x_k.reshape(1, hidden)
+    xv = x + xx * layer.x_v.reshape(1, hidden)
+    xa = x + xx * layer.x_a.reshape(1, hidden)
+    xg = x + xx * layer.x_g.reshape(1, hidden)
+
+    r = F.linear(xr, layer.r_proj.weight)
+    w = F.linear(torch.tanh(F.linear(xw, layer.w_lora.lora[0].weight)),
+                 layer.w_lora.lora[2].weight, layer.w_lora.lora[2].bias)
+    k = F.linear(xk, layer.k_proj.weight)
+    v = F.linear(xv, layer.v_proj.weight)
+    a = torch.sigmoid(layer.a_lora.lora[2].bias +
+                      F.linear(F.linear(xa, layer.a_lora.lora[0].weight),
+                               layer.a_lora.lora[2].weight))
+    g = F.linear(torch.sigmoid(F.linear(xg, layer.g_lora.lora[0].weight)),
+                 layer.g_lora.lora[2].weight)
+
+    kk = F.normalize((k * layer.k_k.reshape(1, hidden)).view(B, H, N), dim=-1, p=2).view(B, hidden)
+    k = k * (1 + (a - 1) * layer.k_a.reshape(1, hidden))
+    if layer_id == 0:
+        v_first = v
+    else:
+        v = v + (v_first - v) * torch.sigmoid(
+            layer.v_lora.lora[2].bias +
+            F.linear(F.linear(xv, layer.v_lora.lora[0].weight),
+                     layer.v_lora.lora[2].weight))
+    w = torch.exp(-EXP_HALF * torch.sigmoid(w.float()))
+
+    vk = v.view(B, H, N, 1) @ k.view(B, H, 1, N)
+    ab = (-kk).view(B, H, N, 1) @ (kk * a).view(B, H, 1, N)
+    state = state * w.view(B, H, 1, N) + state @ ab.float() + vk.float()
+    out = state.to(x.dtype) @ r.view(B, H, N, 1)
+    out = out.view(B, hidden)
+    out = F.group_norm(out, num_groups=H,
+                       weight=layer.g_norm.weight, bias=layer.g_norm.bias,
+                       eps=N * 1e-5)
+    sk = (r.view(B, H, N) * k.view(B, H, N) * layer.r_k.reshape(1, H, N)).sum(dim=-1, keepdim=True)
+    out = out + (sk * v.view(B, H, N)).view(B, hidden)
+    out = F.linear(out * g, layer.o_proj.weight)
+    return out, x, state, v_first
+
+
+def ffn_step_batched(layer, x: torch.Tensor, x_prev: torch.Tensor):
+    """Batched RWKV_x070_CMix_one. Returns (out, x_new_prev)."""
+    xx = x_prev - x
+    k = x + xx * layer.x_k.reshape(1, -1)
+    k = torch.relu(F.linear(k, layer.key.weight)) ** 2
+    return F.linear(k, layer.value.weight), x
+
+
+def _init_state_batched(model, batch_size: int, device, dtype):
+    base = model.model
+    n = len(base.layers)
+    H = base.layers[0].attn.num_heads
+    N = base.layers[0].attn.head_dim
+    hid = base.layers[0].attn.hidden_size
+    B = int(batch_size)
+    state = [torch.zeros(B, H, N, N, device=device, dtype=torch.float32) for _ in range(n)]
+    xpa = [torch.zeros(B, hid, device=device, dtype=dtype) for _ in range(n)]
+    xpf = [torch.zeros(B, hid, device=device, dtype=dtype) for _ in range(n)]
+    v_first = torch.zeros(B, hid, device=device, dtype=dtype)
+    return state, xpa, xpf, v_first
+
+
+def _step_token_batched(model, x, state, xpa, xpf, v_first):
+    for i, layer in enumerate(model.model.layers):
+        attn = layer.attn
+        residual = layer.pre_norm(x) if hasattr(layer, "pre_norm") else x
+        h = layer.attn_norm(residual)
+        a, xpa[i], state[i], v_first = attn_step_batched(attn, i, h, xpa[i], v_first, state[i])
+        x = residual + a
+        residual = x
+        h2 = layer.ffn_norm(x)
+        f, xpf[i] = ffn_step_batched(layer.ffn, h2, xpf[i])
+        x = residual + f
+    return x, state, xpa, xpf, v_first
+
+
+def native_forward_batched(model, input_ids: torch.Tensor):
+    """Sequential pure-PyTorch native forward for input_ids shaped [B, T]."""
+    if input_ids.dim() != 2:
+        raise ValueError("native_forward_batched expects input_ids shaped [batch, seq]")
+    base = model.model
+    state, xpa, xpf, v_first = _init_state_batched(model, input_ids.shape[0], input_ids.device, base.embeddings.weight.dtype)
+    x = None
+    for t in range(input_ids.shape[1]):
+        x = F.embedding(input_ids[:, t], base.embeddings.weight)
+        x, state, xpa, xpf, v_first = _step_token_batched(model, x, state, xpa, xpf, v_first)
+    if x is None:
+        raise ValueError("native_forward_batched requires at least one token")
+    x = base.norm(x)
+    return F.linear(x, model.lm_head.weight)
+
+
+def native_prefill_batched(model, input_ids):
+    """Batched prefill returning (logits, state, xpa, xpf, v_first)."""
+    if input_ids.dim() != 2:
+        raise ValueError("native_prefill_batched expects input_ids shaped [batch, seq]")
+    base = model.model
+    state, xpa, xpf, v_first = _init_state_batched(model, input_ids.shape[0], input_ids.device, base.embeddings.weight.dtype)
+    x = None
+    for t in range(input_ids.shape[1]):
+        x = F.embedding(input_ids[:, t], base.embeddings.weight)
+        x, state, xpa, xpf, v_first = _step_token_batched(model, x, state, xpa, xpf, v_first)
+    if x is None:
+        raise ValueError("native_prefill_batched requires at least one token")
+    x = base.norm(x)
+    return F.linear(x, model.lm_head.weight), state, xpa, xpf, v_first
+
+
+def native_decode_step_batched(model, token_ids, state, xpa, xpf, v_first):
+    """One batched incremental decode step. token_ids: [B] or [B, 1]."""
+    base = model.model
+    token_ids = token_ids.reshape(-1)
+    x = F.embedding(token_ids, base.embeddings.weight)
+    x, state, xpa, xpf, v_first = _step_token_batched(model, x, state, xpa, xpf, v_first)
+    x = base.norm(x)
+    return F.linear(x, model.lm_head.weight), state, xpa, xpf, v_first
+
+
 def _init_state(model, device, dtype):
     base = model.model
     n = len(base.layers)
