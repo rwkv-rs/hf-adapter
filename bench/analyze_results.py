@@ -280,6 +280,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     fused_projection_proto = latest(rows, lambda r: r.get("axis") == "fused_projection_proto" and r.get("backend") == "hf_adapter")
     fused_wa_lora_proto = latest(rows, lambda r: r.get("axis") == "fused_wa_lora_proto" and r.get("backend") == "hf_adapter")
     fused_wag_lora_proto = latest(rows, lambda r: r.get("axis") == "fused_wag_lora_proto" and r.get("backend") == "hf_adapter")
+    fused_wavg_lora_proto = latest(rows, lambda r: r.get("axis") == "fused_wavg_lora_proto" and r.get("backend") == "hf_adapter")
     fused_rkv_wag_projection_proto = latest(rows, lambda r: r.get("axis") == "fused_rkv_wag_projection_proto" and r.get("backend") == "hf_adapter")
     fused_attn_output_proto = latest(rows, lambda r: r.get("axis") == "fused_attn_output_proto" and r.get("backend") == "hf_adapter")
     fused_attn_output_project_proto = latest(rows, lambda r: r.get("axis") == "fused_attn_output_project_proto" and r.get("backend") == "hf_adapter")
@@ -763,6 +764,21 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             focus.append(
                 f"fused W/A/G LoRA prototype backend={backend} speedup={float(wag_speedup):.2f}x; "
                 "next combine with R/K/V projection path"
+            )
+    if fused_wavg_lora_proto is None:
+        focus.append("fused_wavg_lora_proto row pending")
+    else:
+        wavg_speedup = fused_wavg_lora_proto.get("avg_speedup")
+        backend = fused_wavg_lora_proto.get("prototype_backend")
+        if wavg_speedup is not None and float(wavg_speedup) < 1.0:
+            focus.append(
+                f"fused W/A/G/V-gate LoRA prototype backend={backend} is slower "
+                f"({float(wavg_speedup):.2f}x); V-gate grouping alone is not enough, fuse with R/K/V or skip native_graph integration"
+            )
+        elif wavg_speedup is not None:
+            focus.append(
+                f"fused W/A/G/V-gate LoRA prototype backend={backend} speedup={float(wavg_speedup):.2f}x; "
+                "compare against W/A/G-only and then test native_graph integration"
             )
     if fused_rkv_wag_projection_proto is None:
         focus.append("fused_rkv_wag_projection_proto row pending")
@@ -1387,6 +1403,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "fused_projection_proto": compact(fused_projection_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_wa_lora_proto": compact(fused_wa_lora_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_wag_lora_proto": compact(fused_wag_lora_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
+        "fused_wavg_lora_proto": compact(fused_wavg_lora_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_rkv_wag_projection_proto": compact(fused_rkv_wag_projection_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_attn_output_proto": compact(fused_attn_output_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "head_dims", "head_v_dims", "layers", "input_scale", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "output_max_abs_diff", "prep_max_abs_diff", "min_cosine", "output_min_cosine", "prep_min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_attn_output_project_proto": compact(fused_attn_output_project_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m_values", "input_scale", "steps", "avg_current_ms", "avg_prep_cublas_ms", "avg_prep_cublas_speedup", "best_fused_project", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
@@ -1706,6 +1723,8 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["fused_wa_lora_proto"], ensure_ascii=False) if report["fused_wa_lora_proto"] else "PENDING")
     print("\n## fused_wag_lora_proto")
     print(json.dumps(report["fused_wag_lora_proto"], ensure_ascii=False) if report["fused_wag_lora_proto"] else "PENDING")
+    print("\n## fused_wavg_lora_proto")
+    print(json.dumps(report["fused_wavg_lora_proto"], ensure_ascii=False) if report["fused_wavg_lora_proto"] else "PENDING")
     print("\n## fused_rkv_wag_projection_proto")
     print(json.dumps(report["fused_rkv_wag_projection_proto"], ensure_ascii=False) if report["fused_rkv_wag_projection_proto"] else "PENDING")
     print("\n## fused_attn_output_proto")
