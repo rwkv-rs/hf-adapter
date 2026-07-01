@@ -96,13 +96,14 @@
   group norm、recurrent correction、gate multiply 合到一个 Triton kernel，
   `o_proj` 继续走 cuBLAS。V100 isolated row 为 `0.10580ms`，相对 split
   fused recurrent/output 为 `1.7956x`，相对 torch current 为 `4.1916x`。
-- `RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT=1` 已接入 native_graph cache key
-  和 A/B benchmark。V100 bsz=1/2/4/8 greedy 全一致，端到端 decode speedup
+- `RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT=1` 已升级为 native_graph 默认值，
+  并接入 cache key 和 A/B benchmark；设成 `0` 可回退。V100 bsz=1/2/4/8
+  greedy 全一致，端到端 decode speedup
   为 `1.2129x/1.1805x/1.2416x/1.2504x`。
 - 开启该 flag 后 `bench_batch_sweep.py` 达到
-  `343.6/590.1/1179.5/2130.6` aggregate tok/s，Albatross decode ratio 提升到
-  min `0.4357x`、max `0.6455x`。这说明路线正确，但 P1 仍是 GAP：bsz=8
-  过线，bsz=2 仍卡在 `0.4357x`，prefill 仍为 `0.3148x`。
+  `332.2/589.5/1177.9/2136.7` aggregate tok/s，Albatross decode ratio 提升到
+  min `0.4352x`、max `0.6474x`。这说明路线正确，但 P1 仍是 GAP：bsz=8
+  过线，bsz=2 仍卡在 `0.4352x`，prefill 仍为 `0.3148x`。
 - analyzer 现在会报告 `fused_recurrent_output_proto`、
   `native_graph_fused_recurrent_output` 和对应 sweep，并且忽略 prompt<512
   的短 prefill probe，避免短 prompt decode sweep 污染 Albatross prefill gate。

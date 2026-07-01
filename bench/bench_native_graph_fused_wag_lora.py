@@ -88,6 +88,7 @@ def prefill(model, ids: torch.Tensor):
 
 def run_mode(model, token: torch.Tensor, base_state, args: argparse.Namespace, *, enabled: bool) -> dict[str, Any]:
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT"] = "1" if args.fused_recurrent else "0"
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT"] = "0"
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT"] = "1" if args.fused_output else "0"
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT"] = "1" if args.fused_output_project else "0"
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_PROJECTION"] = "0"
@@ -167,6 +168,7 @@ def main() -> int:
     with torch.inference_mode():
         # Use the normal path for prefill, then A/B only the captured decode graph.
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT"] = "1" if args.fused_recurrent else "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT"] = "0"
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT"] = "1" if args.fused_output else "0"
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT"] = "1" if args.fused_output_project else "0"
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_PROJECTION"] = "0"

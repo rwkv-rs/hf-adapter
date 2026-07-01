@@ -854,8 +854,9 @@ output fusion enabled, the same sweep reached:
 The next profitable fp16 step is deeper than standalone recurrent or standalone
 output-prep fusion. `fused_recurrent_output_prepare()` combines recurrent state
 update/readout, group norm, recurrent correction, and gate multiply into one
-Triton kernel while keeping the final `o_proj` on cuBLAS. Enable the integrated
-path with `RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT=1`.
+Triton kernel while keeping the final `o_proj` on cuBLAS. This is now the
+native-graph default; set `RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT=0` to
+disable it for A/B or fallback testing.
 
 Isolated kernel benchmark:
 
@@ -902,11 +903,11 @@ V100 bsz=1/2/4/8 native-graph matrix:
 | 4 | 4.5937 | 3.6998 | 1.2416x | 870.8 | 1081.1 | 128/128 |
 | 8 | 5.1479 | 4.1170 | 1.2504x | 1554.0 | 1943.2 | 256/256 |
 
-A normal `bench_batch_sweep.py` run with
-`RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT=1` and default fused output enabled
-reaches `343.6`/`590.1`/`1179.5`/`2130.6` aggregate tok/s for bsz=1/2/4/8.
-That raises the current Albatross decode comparison to min `0.4357x`, max
-`0.6455x`: bsz=8 is now above the P1 decode line, but the overall P1 gate is
+A normal `bench_batch_sweep.py` run with the new default
+`RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT=1` plus default fused output enabled
+reaches `332.2`/`589.5`/`1177.9`/`2136.7` aggregate tok/s for bsz=1/2/4/8.
+That raises the current Albatross decode comparison to min `0.4352x`, max
+`0.6474x`: bsz=8 is now above the P1 decode line, but the overall P1 gate is
 still GAP because the minimum batch ratio is below `0.55x`.
 
 ## Fused output-prep + `o_proj` prototype

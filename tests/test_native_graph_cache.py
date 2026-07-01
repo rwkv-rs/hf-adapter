@@ -164,8 +164,16 @@ def main() -> int:
     owner = Owner()
     packs = [(0, 12, 64)]
     old_limit = os.environ.get("RWKV7_NATIVE_GRAPH_CACHE_SIZE")
+    old_recurrent_output = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT")
     os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = "2"
     try:
+        os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", None)
+        assert modeling._native_graph_fused_recurrent_output_requested() is True
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT"] = "0"
+        assert modeling._native_graph_fused_recurrent_output_requested() is False
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT"] = "1"
+        assert modeling._native_graph_fused_recurrent_output_requested() is True
+
         get_runner = modeling.RWKV7ForCausalLM._rwkv7_native_graph_runner
         clear_cache = modeling.RWKV7ForCausalLM.rwkv7_clear_native_graph_cache
         owner.rwkv7_native_graph_cache_batch_sizes = types.MethodType(
@@ -215,6 +223,10 @@ def main() -> int:
             os.environ.pop("RWKV7_NATIVE_GRAPH_CACHE_SIZE", None)
         else:
             os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = old_limit
+        if old_recurrent_output is None:
+            os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", None)
+        else:
+            os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT"] = old_recurrent_output
 
     old_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND")
     old_fast_forward = os.environ.get("RWKV7_FAST_FORWARD")

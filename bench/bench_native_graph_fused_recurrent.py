@@ -88,6 +88,7 @@ def prefill(model, ids: torch.Tensor):
 
 def run_mode(model, token: torch.Tensor, base_state, args: argparse.Namespace, *, enabled: bool) -> dict[str, Any]:
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT"] = "1" if enabled else "0"
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT"] = "0"
     # Keep this benchmark isolated to recurrent fusion even though fused output
     # prep is now the native_graph default.
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT"] = "0"
@@ -157,6 +158,7 @@ def main() -> int:
     with torch.inference_mode():
         # Use the normal path for prefill, then A/B only the captured decode graph.
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT"] = "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT"] = "0"
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_OUTPUT"] = "0"
         token, base_state = prefill(model, ids)
         baseline = run_mode(model, token, base_state, args, enabled=False)
