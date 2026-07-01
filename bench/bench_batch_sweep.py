@@ -183,6 +183,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
             "fast_token_backend": requested_backend,
             "fast_token_backend_effective": last_fast_token_backend(model) or requested_backend,
             "native_graph_fused_output": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT", "1") not in {"0", "false", "False", "no", "off"},
+            "native_graph_fused_projection": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_PROJECTION", "0") not in {"0", "false", "False", "no", "off"},
             "decode_tokps_total": round((bsz * args.decode_tokens) / fast_dt, 1),
             "decode_tokps_per_seq": round(args.decode_tokens / fast_dt, 1),
             "decode_ms_per_step": round(1000 * fast_dt / args.decode_tokens, 2),
