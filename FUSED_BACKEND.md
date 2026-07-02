@@ -320,6 +320,22 @@ serving speed.
    - Blackwell/5070-specific evidence lives in `BLACKWELL_50SERIES.md`; 5070
      uses the same software stack but `sm_120`-specific kernel behavior must not
      be projected onto Ada without the 4090 gate.
+20. Native fused prefill scan and bsz=1 bottleneck breakdown.
+   - `bench/bench_native_prefill_scan.py` now records model-size-labeled
+     end-to-end native prefill rows, and the analyzer compares
+     `native_prefill_tokps_total` against Albatross for exact model-size cases
+     instead of falling back to older chunked-prefill rows.
+   - RTX 4090 / Ada 0.4B fp16 prompt=512 with
+     `RWKV7_NATIVE_PREFILL_FUSED_SCAN=1` reaches `22025.2` tok/s at bsz=1 and
+     `76787.8` tok/s at bsz=4. That is `0.3668x` and `0.6519x` of Albatross:
+     bsz=4 clears prefill P1, while bsz=1 remains the prefill blocker.
+   - `bench/bench_native_prefill_breakdown.py` records the next optimization
+     target. On the same 4090 0.4B prompt=512 rows, bsz=1 time is dominated by
+     `recurrent_scan` (`9.3071ms`, share `0.3509`) and
+     `attn_lora_state_prep` (`8.9671ms`, share `0.3381`). bsz=4 is still led by
+     `recurrent_scan` (`10.5853ms`, share `0.3593`), followed by FFN
+     (`7.3115ms`, share `0.2482`). This means the next bsz=1 prefill work
+     should tune the fused scan and LoRA/state-prep path, not cache.
 
 ## Backend dispatch requirement
 
