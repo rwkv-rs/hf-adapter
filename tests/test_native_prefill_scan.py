@@ -186,12 +186,54 @@ def test_prefill_opt_in_lora_state_prep_fallback_matches_token_loop() -> None:
     assert xpf[1].shape == (1, 8)
 
 
+def test_prefill_opt_in_fused_state_scan_fallback_matches_token_loop() -> None:
+    native_jit, model, packs = _build_fake_model_and_packs()
+    ids = torch.tensor([[1, 5, 4, 2]], dtype=torch.long)
+    old_env = {
+        key: os.environ.get(key)
+        for key in (
+            "RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN",
+            "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT",
+            "RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT",
+        )
+    }
+    old_state_scan_avail = native_jit.fused_recurrent_scan_state_prep_available
+    old_output_avail = native_jit.fused_attn_output_prepare_available
+    try:
+        os.environ["RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN"] = "1"
+        os.environ["RWKV7_NATIVE_PREFILL_FUSED_OUTPUT"] = "1"
+        # The state-scan path intentionally stays separate from the older
+        # scan+output fusion probe, which consumes already-prepared W/K/V/KK.
+        os.environ.pop("RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT", None)
+        native_jit.fused_recurrent_scan_state_prep_available = lambda: True
+        native_jit.fused_attn_output_prepare_available = lambda: True
+        with torch.no_grad():
+            ref = native_jit.forward(model, ids, packs).float().view(1, -1)
+            logits, state, xpa, xpf = native_jit.prefill(model, ids, packs, logits_to_keep=1)
+    finally:
+        native_jit.fused_recurrent_scan_state_prep_available = old_state_scan_avail
+        native_jit.fused_attn_output_prepare_available = old_output_avail
+        for key, value in old_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    got = logits[:, -1, :].float()
+    assert got.shape == ref.shape
+    assert torch.allclose(got, ref, atol=2e-5, rtol=2e-5), (got - ref).abs().max()
+    assert len(state) == len(packs)
+    assert state[1].shape == (1, 2, 4, 4)
+    assert xpa[1].shape == (1, 8)
+    assert xpf[1].shape == (1, 8)
+
+
 def main() -> int:
     if torch is None:
         print("SKIP native prefill scan test: torch unavailable")
         return 0
     test_prefill_matches_token_loop()
     test_prefill_opt_in_lora_state_prep_fallback_matches_token_loop()
+    test_prefill_opt_in_fused_state_scan_fallback_matches_token_loop()
     print("PASS")
     return 0
 
