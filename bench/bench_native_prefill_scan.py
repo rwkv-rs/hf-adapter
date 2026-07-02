@@ -222,6 +222,8 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_fused_scan_output_effective": nj._native_prefill_fused_scan_output_enabled(),
         "prefill_fused_state_scan_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_state_scan_output_effective": getattr(nj, "_native_prefill_fused_state_scan_output_enabled", lambda: False)(),
+        "prefill_fused_state_scan_correction_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_CORRECTION", "0").lower() not in {"0", "false", "no", "off"},
+        "prefill_fused_state_scan_correction_effective": getattr(nj, "_native_prefill_fused_state_scan_correction_enabled", lambda: False)(),
         "prefill_fused_clampw_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_CLAMPW_SCAN", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_clampw_scan_effective": nj._native_prefill_fused_clampw_scan_enabled(),
         "prefill_dplr_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_DPLR_SCAN", "0").lower() not in {"0", "false", "no", "off"},

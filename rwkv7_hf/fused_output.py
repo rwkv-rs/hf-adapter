@@ -82,6 +82,39 @@ if _HAS_TRITON:
         tl.store(out_ptr + base_v + offs_v, prepared, mask=mask_v)
 
     @triton.jit
+    def _attn_output_prepare_from_correction_kernel(
+        recurrent_ptr,
+        correction_ptr,
+        g_ptr,
+        gn_weight_ptr,
+        gn_bias_ptr,
+        out_ptr,
+        num_heads: tl.constexpr,
+        head_v_dim: tl.constexpr,
+        value_dim: tl.constexpr,
+        eps: tl.constexpr,
+        BLOCK_V: tl.constexpr,
+    ):
+        batch_id = tl.program_id(0)
+        head_id = tl.program_id(1)
+        offs_v = tl.arange(0, BLOCK_V)
+        mask_v = offs_v < head_v_dim
+        base_v = batch_id * value_dim + head_id * head_v_dim
+
+        rec = tl.load(recurrent_ptr + base_v + offs_v, mask=mask_v, other=0.0).to(tl.float32)
+        mean = tl.sum(rec, axis=0) / head_v_dim
+        centered = tl.where(mask_v, rec - mean, 0.0)
+        var = tl.sum(centered * centered, axis=0) / head_v_dim
+        normed = centered * tl.rsqrt(var + eps)
+
+        corr = tl.load(correction_ptr + base_v + offs_v, mask=mask_v, other=0.0).to(tl.float32)
+        gate = tl.load(g_ptr + base_v + offs_v, mask=mask_v, other=0.0).to(tl.float32)
+        weight = tl.load(gn_weight_ptr + head_id * head_v_dim + offs_v, mask=mask_v, other=1.0).to(tl.float32)
+        bias = tl.load(gn_bias_ptr + head_id * head_v_dim + offs_v, mask=mask_v, other=0.0).to(tl.float32)
+        prepared = (normed * weight + bias + corr) * gate
+        tl.store(out_ptr + base_v + offs_v, prepared, mask=mask_v)
+
+    @triton.jit
     def _attn_output_project_kernel(
         recurrent_ptr,
         r_ptr,
@@ -148,6 +181,12 @@ if _HAS_TRITON:
 
 def fused_attn_output_prepare_available() -> bool:
     """Return whether the optional fused output-prepare kernel can run."""
+
+    return bool(_HAS_TRITON and torch is not None)
+
+
+def fused_attn_output_prepare_from_correction_available() -> bool:
+    """Return whether fused output-prep can consume precomputed correction."""
 
     return bool(_HAS_TRITON and torch is not None)
 
@@ -266,6 +305,77 @@ def fused_attn_output_prepare(
             value_dim=value_dim,
             eps=float(eps),
             BLOCK_N=block_n,
+            BLOCK_V=block_v,
+            num_warps=1,
+        )
+    if had_seq:
+        return out.unsqueeze(1)
+    return out
+
+
+def fused_attn_output_prepare_from_correction(
+    recurrent_out: Any,
+    correction: Any,
+    g: Any,
+    group_norm_weight: Any,
+    group_norm_bias: Any,
+    *,
+    num_heads: int,
+    head_v_dim: int,
+    eps: float,
+    force_fallback: bool = False,
+):
+    """Prepare attention output using a correction tensor emitted by scan.
+
+    ``correction`` must already contain the RWKV correction term
+    ``sum(r * k * r_k) * v``.  This lets upstream fused scans avoid writing the
+    full adjusted K/V tensors when output prep only needs their product.
+    """
+
+    if torch is None or F is None:
+        raise RuntimeError("fused_attn_output_prepare_from_correction requires torch")
+    value_dim = int(num_heads) * int(head_v_dim)
+    rec2, had_seq = _flatten_2d(recurrent_out, value_dim, name="recurrent_out")
+    corr2, corr_had_seq = _flatten_2d(correction, value_dim, name="correction")
+    g2, g_had_seq = _flatten_2d(g, value_dim, name="g")
+    if corr_had_seq != had_seq or g_had_seq != had_seq:
+        raise ValueError("recurrent_out, correction, and g must use the same flattened/sequence layout")
+    if tuple(corr2.shape) != tuple(rec2.shape) or tuple(g2.shape) != tuple(rec2.shape):
+        raise ValueError("recurrent_out, correction, and g must have identical shape")
+    if group_norm_weight.dim() != 1 or int(group_norm_weight.shape[0]) != value_dim:
+        raise ValueError(f"group_norm_weight must be [{value_dim}], got {tuple(group_norm_weight.shape)}")
+    if group_norm_bias.dim() != 1 or int(group_norm_bias.shape[0]) != value_dim:
+        raise ValueError(f"group_norm_bias must be [{value_dim}], got {tuple(group_norm_bias.shape)}")
+
+    tensors = [rec2, corr2, g2, group_norm_weight, group_norm_bias]
+    use_triton = (
+        not force_fallback
+        and fused_attn_output_prepare_from_correction_available()
+        and all(t.is_cuda for t in tensors)
+        and rec2.dtype in (torch.float16, torch.bfloat16, torch.float32)
+        and all(t.dtype == rec2.dtype for t in tensors)
+        and int(head_v_dim) <= 128
+    )
+    if not use_triton:
+        normed = F.group_norm(rec2, num_groups=int(num_heads), weight=group_norm_weight, bias=group_norm_bias, eps=float(eps))
+        out = (normed + corr2) * g2
+    else:
+        rec_c, corr_c, g_c = [t.contiguous() for t in (rec2, corr2, g2)]
+        w_c = group_norm_weight.contiguous()
+        b_c = group_norm_bias.contiguous()
+        out = torch.empty_like(rec2)
+        block_v = triton.next_power_of_2(int(head_v_dim))
+        _attn_output_prepare_from_correction_kernel[(int(rec2.shape[0]), int(num_heads))](
+            rec_c,
+            corr_c,
+            g_c,
+            w_c,
+            b_c,
+            out,
+            num_heads=int(num_heads),
+            head_v_dim=int(head_v_dim),
+            value_dim=value_dim,
+            eps=float(eps),
             BLOCK_V=block_v,
             num_warps=1,
         )

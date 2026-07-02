@@ -166,11 +166,35 @@ Branch: `wangyue/native-prefill-060-albatross`
   - conclusion: expose the knob for future card/shape tuning, but keep the
     default at `3` on 4090 because confirmation did not support promoting
     stage `2`.
+- [x] Try reduced K/V writeback via scan-emitted correction:
+  - added opt-in `RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_CORRECTION=1`.
+  - implementation:
+    - `fused_recurrent_scan_state_prep_correction(...)` computes the RWKV
+      correction `sum(r * k_adj * r_k) * v_adj` inside the full-head
+      state-prep scan and returns `(recurrent, final_state, correction)` rather
+      than full adjusted K/V tensors.
+    - `fused_attn_output_prepare_from_correction(...)` consumes that correction
+      with fused per-head group norm and G gate.
+    - default HF/native paths stay unchanged unless the env flag is set.
+  - validation result file:
+    `bench/results_4090_prefill060_state_scan_correction_confirm_20260702_152407.jsonl`
+  - remote row source:
+    `/tmp/native_4090_state_scan_correction_confirm_20260702_152407.jsonl`
+  - confirmation rows, both pass greedy/cache smoke:
+    - no-KV correction path: `26,164.0 tok/s`, `19.5689 ms`,
+      about `0.5017x` Albatross, peak `990.2 MiB`
+    - current baseline full-head state-scan + fused output:
+      `27,051.0 tok/s`, `18.9272 ms`, about `0.5187x` Albatross,
+      peak `989.2 MiB`
+  - conclusion: correctness is good and the memory-writeback hypothesis is now
+    represented by an opt-in experiment, but it is slower on 4090 because the
+    correction reduction increases pressure in the already-dominant scan
+    kernel. Keep it disabled by default and do not promote it.
 - [ ] Next corrected-harness experiment:
   - target `fused_recurrent_scan_state_prep` internal cost directly beyond
-    shallow scheduling knobs; next candidates are reduced K/V writeback traffic
-    or a deeper pre-scan projection/LoRA boundary that does not add a
-    standalone launch.
+    shallow scheduling knobs; reduced K/V writeback is tested and negative, so
+    the next candidate is a deeper pre-scan projection/LoRA boundary that does
+    not add a standalone launch.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `26,745.8 tok/s` (`~0.5129x`), still about `17.0%` short of the stretch.
