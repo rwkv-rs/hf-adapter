@@ -14,8 +14,9 @@ for shared helper code or documentation.
 1. Read [`HF_STATUS.md`](HF_STATUS.md) to understand what is already done.
 2. Read [`HF_TODO.md`](HF_TODO.md) to pick a current task.
 3. For performance or hardware work, read [`BENCHMARK.md`](BENCHMARK.md).
-4. For kernel/performance experiments, also read [`FUSED_BACKEND.md`](FUSED_BACKEND.md).
-5. Pick an issue, comment that you are working on it, then open a focused PR.
+4. For the current V100 training/quant/ZeRO evidence, read [`docs/validation/V100_HF_VALIDATION.md`](docs/validation/V100_HF_VALIDATION.md).
+5. For kernel/performance experiments, also read [`docs/performance/FUSED_BACKEND.md`](docs/performance/FUSED_BACKEND.md).
+6. Pick an issue, comment that you are working on it, then open a focused PR.
 
 ## Current issue map
 
@@ -93,7 +94,16 @@ If dependencies are missing, mention the skip reason in the PR body.
 
 ## Minimal GPU card validation
 
-For a card-adaptation issue, start with:
+For a card-adaptation issue, prefer the one-click wrapper first:
+
+```bash
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DEVICE=cuda DTYPE=fp16 \
+RESULTS=bench/results.jsonl \
+bash scripts/run_hardware_smoke.sh
+```
+
+If the wrapper fails or you need to bisect, run the underlying commands:
 
 ```bash
 python tests/smoke_hf_generate.py \
@@ -157,7 +167,16 @@ python tests/test_hf_rl_training_smoke.py \
   --results bench/results.jsonl
 ```
 
-For multi-GPU cards/nodes, add ZeRO smoke:
+For multi-GPU cards/nodes, add ZeRO smoke through the wrapper:
+
+```bash
+NPROC_PER_NODE=2 ZERO_STAGE=both \
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+RESULTS=bench/results.jsonl \
+bash scripts/run_zero_training_smoke.sh
+```
+
+Equivalent raw command for debugging:
 
 ```bash
 torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py \
@@ -230,7 +249,7 @@ Common docs to update:
 - `HF_TODO.md` — if a TODO is completed, split, or reprioritized.
 - `BENCHMARK.md` — if you add benchmark or hardware rows.
 - `README.md` — if contributor-facing entry points or quickstart commands change.
-- `FUSED_BACKEND.md` — if you change fused/native performance routes.
+- `docs/performance/FUSED_BACKEND.md` — if you change fused/native performance routes.
 
 ## Pull request checklist
 
