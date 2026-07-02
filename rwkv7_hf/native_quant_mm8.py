@@ -145,7 +145,7 @@ if _HAS_TRITON:
             x = tl.load(x_ptr + n, mask=mask_n, other=0.0).to(tl.float32)        # [BLOCK_N]
             ry_n = tl.load(ry_ptr + n, mask=mask_n, other=0.0).to(tl.float32)    # [BLOCK_N]
             my_n = tl.load(my_ptr + n, mask=mask_n, other=0.0).to(tl.float32)    # [BLOCK_N]
-            w_addr = n[:, None] * M + offs_m[None, :]
+            w_addr = n.to(tl.int64)[:, None] * M + offs_m.to(tl.int64)[None, :]
             w_mask = mask_n[:, None] & mask_m[None, :]
             w = tl.load(w_ptr + w_addr, mask=w_mask, other=0.0).to(tl.float32)   # [BLOCK_N, BLOCK_M]
             deq = (w + 0.5) * ry_n[:, None] * rx_m[None, :] + my_n[:, None] + mx_m[None, :]
@@ -153,8 +153,20 @@ if _HAS_TRITON:
         tl.store(y_ptr + offs_m, acc, mask=mask_m)
 
 
-def mm8_gemv_available() -> bool:
-    return bool(_HAS_TRITON and torch is not None)
+def mm8_gemv_available(device=None) -> bool:
+    """Return whether the fused Triton GEMV path can run on ``device``.
+
+    Importing Triton is not enough: CPU-only CI or CUDA-hidden processes can
+    import Triton but still have no active CUDA driver, which would fail at
+    launch time. Keep the fused path CUDA-only and let callers fall back to the
+    reference dequant+matmul path elsewhere.
+    """
+    if not (_HAS_TRITON and torch is not None and torch.cuda.is_available()):
+        return False
+    if device is None:
+        return True
+    dev = torch.device(device)
+    return dev.type == "cuda"
 
 
 def _as_1d(t):
@@ -163,8 +175,8 @@ def _as_1d(t):
 
 def mm8_gemv_triton(x, w_u8, mx, rx, my, ry, *, block_m=64, block_n=64):
     """Fused int8 dequant GEMV: ``x: [N]`` -> ``[M]`` (single vector, decode path)."""
-    if not mm8_gemv_available():
-        raise RuntimeError("mm8_gemv_triton requires triton + torch")
+    if not (x.is_cuda and mm8_gemv_available(x.device)):
+        raise RuntimeError("mm8_gemv_triton requires triton + torch + CUDA input")
     n, m = w_u8.shape
     y = torch.empty(m, device=x.device, dtype=x.dtype)
     grid = (triton.cdiv(m, block_m),)
@@ -175,11 +187,23 @@ def mm8_gemv_triton(x, w_u8, mx, rx, my, ry, *, block_m=64, block_n=64):
     return y
 
 
-def mm8_matmul_triton(x, w_u8, mx, rx, my, ry):
-    """Fused int8 dequant matmul. ``x: [N]`` -> ``[M]`` or ``[B, N]`` -> ``[B, M]``."""
+def mm8_matmul_triton(x, w_u8, mx, rx, my, ry, *, max_gemv_rows: int = 4):
+    """Fused int8 dequant matmul with safe fallbacks.
+
+    ``x: [N]`` uses the fused GEMV decode path.  Small ``[B, N]`` decode
+    batches can loop GEMV rows, but prefill / large-batch inputs must not launch
+    hundreds of sequential GEMV kernels; those fall back to the reference path
+    that materializes once and uses a single PyTorch GEMM.
+    """
+    if not (x.is_cuda and mm8_gemv_available(x.device)):
+        return mm8_matmul(x, w_u8, mx, rx, my, ry)
     if x.dim() == 1:
         return mm8_gemv_triton(x, w_u8, mx, rx, my, ry)
-    # Batched: loop rows through the GEMV kernel (correct, small-B decode).
+    if x.dim() != 2:
+        return mm8_matmul(x, w_u8, mx, rx, my, ry)
+    if int(x.shape[0]) > int(max_gemv_rows):
+        return mm8_matmul(x, w_u8, mx, rx, my, ry)
+    # Small batched decode: loop rows through the GEMV kernel.
     outs = [mm8_gemv_triton(x[i], w_u8, mx, rx, my, ry) for i in range(x.shape[0])]
     return torch.stack(outs, dim=0)
 
@@ -210,7 +234,7 @@ if _HAS_TRITON:
         x = tl.load(x_ptr + offs_n, mask=mask_n, other=0.0).to(tl.float32)
         ry_n = tl.load(ry_ptr + offs_n, mask=mask_n, other=0.0).to(tl.float32)
         my_n = tl.load(my_ptr + offs_n, mask=mask_n, other=0.0).to(tl.float32)
-        w_addr = offs_n[:, None] * M + offs_m[None, :]
+        w_addr = offs_n.to(tl.int64)[:, None] * M + offs_m.to(tl.int64)[None, :]
         w = tl.load(w_ptr + w_addr, mask=mask_n[:, None] & mask_m[None, :], other=0).to(tl.float32)
         deq = (w + 0.5) * ry_n[:, None] * rx_m[None, :] + my_n[:, None] + mx_m[None, :]
         acc = tl.sum(x[:, None] * deq, axis=0)  # [BLOCK_M]
@@ -219,8 +243,8 @@ if _HAS_TRITON:
 
 def mm8_gemv_triton_sk(x, w_u8, mx, rx, my, ry, *, block_m=64, block_n=128):
     """Split-K fused int8 dequant GEMV (more parallelism than :func:`mm8_gemv_triton`)."""
-    if not mm8_gemv_available():
-        raise RuntimeError("mm8_gemv_triton_sk requires triton + torch")
+    if not (x.is_cuda and mm8_gemv_available(x.device)):
+        raise RuntimeError("mm8_gemv_triton_sk requires triton + torch + CUDA input")
     n, m = w_u8.shape
     y = torch.zeros(m, device=x.device, dtype=torch.float32)
     grid = (triton.cdiv(m, block_m), triton.cdiv(n, block_n))
@@ -256,12 +280,12 @@ class MM8Linear(torch.nn.Module):
             self.register_buffer("bias", linear.bias.data.clone())
         else:
             self.bias = None
-        self.fused = bool(fused and mm8_gemv_available())
+        self.fused = bool(fused)
 
     def forward(self, x):
         leading = x.shape[:-1]
         x2 = x.reshape(-1, self.in_features)
-        if self.fused:
+        if self.fused and x2.is_cuda and mm8_gemv_available(x2.device):
             y = mm8_matmul_triton(x2, self.w_u8, self.mx, self.rx, self.my, self.ry)
         else:
             y = mm8_matmul(x2, self.w_u8, self.mx, self.rx, self.my, self.ry)
@@ -274,13 +298,14 @@ class MM8Linear(torch.nn.Module):
         return f"in={self.in_features}, out={self.out_features}, mm8(fused={self.fused})"
 
 
-def quantize_model_mm8(model, *, min_params: int = 8_000_000) -> int:
+def quantize_model_mm8(model, *, min_params: int = 8_000_000, fused: bool = True) -> int:
     """Swap eligible ``nn.Linear`` modules for :class:`MM8Linear` (size-gated).
 
     Only linears with ``weight.numel() >= min_params`` are quantized. Default
     ``8M`` is the launch->memory-bound crossover, so on small models only the
     head is swapped; on 7B+ (hidden >= 4096) the per-layer projections qualify
-    too. Returns the number of modules replaced.
+    too. Set ``fused=False`` to force the portable reference path. Returns the
+    number of modules replaced.
     """
     if torch is None:
         raise RuntimeError("quantize_model_mm8 requires torch")
@@ -291,7 +316,7 @@ def quantize_model_mm8(model, *, min_params: int = 8_000_000) -> int:
     for full_name in targets:
         parent_name, _, attr = full_name.rpartition(".")
         parent = model.get_submodule(parent_name) if parent_name else model
-        setattr(parent, attr, MM8Linear(getattr(parent, attr)))
+        setattr(parent, attr, MM8Linear(getattr(parent, attr), fused=fused))
     return len(targets)
 
 
