@@ -70,6 +70,9 @@ __all__ = [
     "dplr_compact_wy_chunk_summary_triton_available",
     "dplr_compact_wy_summary_to_dense",
     "dplr_compact_wy_apply_summaries_torch",
+    "dplr_compact_wy_prefix_combine_torch",
+    "dplr_compact_wy_prefix_combine_triton",
+    "dplr_compact_wy_prefix_combine_triton_available",
     "dplr_dense_prefix_combine_torch",
     "dplr_dense_prefix_combine_triton",
     "dplr_dense_chunk_apply_torch",
@@ -229,6 +232,89 @@ if _HAS_TRITON:
         tl.store(trans_right_ptr + factor_base, trans_right, mask=factor_mask)
         tl.store(add_left_ptr + factor_base, add_left, mask=factor_mask)
         tl.store(add_right_ptr + factor_base, add_right, mask=factor_mask)
+
+    @triton.jit
+    def _compact_wy_prefix_combine_kernel(
+        state_ptr,
+        diag_ptr,
+        trans_left_ptr,
+        trans_right_ptr,
+        add_left_ptr,
+        add_right_ptr,
+        start_state_ptr,
+        final_state_ptr,
+        H: tl.constexpr,
+        N: tl.constexpr,
+        CHUNKS: tl.constexpr,
+        R: tl.constexpr,
+        ROW_BLOCKS: tl.constexpr,
+        BLOCK_M: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        BLOCK_R: tl.constexpr,
+    ):
+        """Compute chunk start states directly from compact WY factors."""
+
+        pid = tl.program_id(0)
+        row_block = pid % ROW_BLOCKS
+        bh_id = pid // ROW_BLOCKS
+        head_id = bh_id % H
+        batch_id = bh_id // H
+
+        offs_i = row_block * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_j = tl.arange(0, BLOCK_N)
+        offs_r = tl.arange(0, BLOCK_R)
+        mask_i = offs_i < N
+        mask_j = offs_j < N
+        mask_r = offs_r < R
+        row_mask = mask_i[:, None] & mask_j[None, :]
+
+        state_base = (batch_id * H + head_id) * N * N
+        cur = tl.load(
+            state_ptr + state_base + offs_i[:, None] * N + offs_j[None, :],
+            mask=row_mask,
+            other=0.0,
+        ).to(tl.float32)
+
+        chunk = 0
+        while chunk < CHUNKS:
+            summary_base = ((batch_id * CHUNKS + chunk) * H + head_id) * N
+            factor_base = summary_base * R
+
+            start_base = ((batch_id * CHUNKS + chunk) * H + head_id) * N * N
+            tl.store(start_state_ptr + start_base + offs_i[:, None] * N + offs_j[None, :], cur, mask=row_mask)
+
+            diag = tl.load(diag_ptr + summary_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            factor_mask = mask_j[:, None] & mask_r[None, :]
+            trans_left = tl.load(
+                trans_left_ptr + factor_base + offs_j[:, None] * R + offs_r[None, :],
+                mask=factor_mask,
+                other=0.0,
+            ).to(tl.float32)
+            trans_right = tl.load(
+                trans_right_ptr + factor_base + offs_j[:, None] * R + offs_r[None, :],
+                mask=factor_mask,
+                other=0.0,
+            ).to(tl.float32)
+            add_left = tl.load(
+                add_left_ptr + factor_base + offs_i[:, None] * R + offs_r[None, :],
+                mask=mask_i[:, None] & mask_r[None, :],
+                other=0.0,
+            ).to(tl.float32)
+            add_right = tl.load(
+                add_right_ptr + factor_base + offs_j[:, None] * R + offs_r[None, :],
+                mask=factor_mask,
+                other=0.0,
+            ).to(tl.float32)
+
+            trans_coeff = tl.dot(cur, trans_left, input_precision="ieee")
+            next_cur = cur * diag[None, :]
+            next_cur += tl.dot(trans_coeff, tl.trans(trans_right), input_precision="ieee")
+            next_cur += tl.dot(add_left, tl.trans(add_right), input_precision="ieee")
+
+            cur = next_cur
+            chunk += 1
+
+        tl.store(final_state_ptr + state_base + offs_i[:, None] * N + offs_j[None, :], cur, mask=row_mask)
 
     @triton.jit
     def _dense_prefix_combine_kernel(
@@ -392,6 +478,12 @@ def dplr_dense_chunk_summary_triton_available() -> bool:
 
 def dplr_compact_wy_chunk_summary_triton_available() -> bool:
     """Return whether the compact WY summary Triton probe can run."""
+
+    return bool(_HAS_TRITON and torch is not None)
+
+
+def dplr_compact_wy_prefix_combine_triton_available() -> bool:
+    """Return whether the compact WY prefix-combine Triton probe can run."""
 
     return bool(_HAS_TRITON and torch is not None)
 
@@ -803,6 +895,169 @@ def dplr_compact_wy_apply_summaries_torch(state: Any, summary: dict[str, Any]):
         )
         cur = cur + _compact_outer_to_dense(add_left[:, chunk].float(), add_right[:, chunk].float())
     return cur
+
+
+def dplr_compact_wy_prefix_combine_torch(state: Any, summary: dict[str, Any]):
+    """Reference chunk-prefix combine directly over compact WY factors.
+
+    Returns `(start_states, final_state)` where `start_states[:, c]` is the
+    native VxK state before chunk `c`.  Unlike the dense prefix-combine oracle,
+    this never stores dense transition/additive summaries; it applies
+    `diag + U V^T` and `X Y^T` factors directly to the dense recurrent state.
+    """
+
+    if torch is None:
+        raise RuntimeError("dplr_compact_wy_prefix_combine_torch requires torch")
+    if state.dim() != 4:
+        raise ValueError("state must be [B,H,N,N]")
+    diag = summary["transition_diag"]
+    trans_left = summary["transition_left"]
+    trans_right = summary["transition_right"]
+    add_left = summary["additive_left"]
+    add_right = summary["additive_right"]
+    B, H, N, N2 = (int(vv) for vv in state.shape)
+    if N != N2:
+        raise ValueError("state must be square in the last two dimensions")
+    if diag.dim() != 4:
+        raise ValueError("transition_diag must be [B,chunks,H,N]")
+    if tuple(trans_left.shape) != tuple(trans_right.shape):
+        raise ValueError("transition_left and transition_right shapes must match")
+    if tuple(add_left.shape) != tuple(add_right.shape):
+        raise ValueError("additive_left and additive_right shapes must match")
+    if trans_left.dim() != 5 or add_left.dim() != 5:
+        raise ValueError("compact factors must be [B,chunks,H,N,R]")
+    chunks = int(diag.shape[1])
+    if (
+        int(diag.shape[0]) != B
+        or int(diag.shape[2]) != H
+        or int(diag.shape[3]) != N
+        or int(trans_left.shape[0]) != B
+        or int(trans_left.shape[1]) != chunks
+        or int(trans_left.shape[2]) != H
+        or int(trans_left.shape[3]) != N
+        or int(add_left.shape[0]) != B
+        or int(add_left.shape[1]) != chunks
+        or int(add_left.shape[2]) != H
+        or int(add_left.shape[3]) != N
+    ):
+        raise ValueError("compact summary shapes must match state")
+
+    cur = state.float()
+    starts = []
+    for chunk in range(chunks):
+        starts.append(cur)
+        cur = _compact_apply_transition_to_state(
+            cur,
+            diag[:, chunk],
+            trans_left[:, chunk],
+            trans_right[:, chunk],
+        )
+        cur = cur + _compact_outer_to_dense(add_left[:, chunk].float(), add_right[:, chunk].float())
+    return torch.stack(starts, dim=1), cur
+
+
+def dplr_compact_wy_prefix_combine_triton(
+    state: Any,
+    summary: dict[str, Any],
+    *,
+    block_m: int | None = None,
+    block_n: int | None = None,
+    force_fallback: bool = False,
+):
+    """Triton chunk-prefix combine directly over compact WY factors."""
+
+    if torch is None:
+        raise RuntimeError("dplr_compact_wy_prefix_combine_triton requires torch")
+    if state.dim() != 4:
+        raise ValueError("state must be [B,H,N,N]")
+    diag = summary["transition_diag"]
+    trans_left = summary["transition_left"]
+    trans_right = summary["transition_right"]
+    add_left = summary["additive_left"]
+    add_right = summary["additive_right"]
+    B, H, N, N2 = (int(vv) for vv in state.shape)
+    if N != N2:
+        raise ValueError("state must be square in the last two dimensions")
+    if diag.dim() != 4 or trans_left.dim() != 5 or trans_right.dim() != 5 or add_left.dim() != 5 or add_right.dim() != 5:
+        raise ValueError("compact summary must be [B,chunks,H,N] plus [B,chunks,H,N,R] factors")
+    chunks = int(diag.shape[1])
+    R = int(trans_left.shape[-1])
+    if R <= 0:
+        raise ValueError("compact factor rank must be positive")
+    if tuple(trans_left.shape) != tuple(trans_right.shape):
+        raise ValueError("transition_left and transition_right shapes must match")
+    if tuple(add_left.shape) != tuple(add_right.shape):
+        raise ValueError("additive_left and additive_right shapes must match")
+    if (
+        int(diag.shape[0]) != B
+        or int(diag.shape[2]) != H
+        or int(diag.shape[3]) != N
+        or int(trans_left.shape[0]) != B
+        or int(trans_left.shape[1]) != chunks
+        or int(trans_left.shape[2]) != H
+        or int(trans_left.shape[3]) != N
+        or int(add_left.shape[0]) != B
+        or int(add_left.shape[1]) != chunks
+        or int(add_left.shape[2]) != H
+        or int(add_left.shape[3]) != N
+    ):
+        raise ValueError("compact summary shapes must match state")
+    if block_m is None:
+        block_m = _env_int("RWKV7_DPLR_TRITON_COMPACT_PREFIX_BLOCK_M", 8)
+    if block_n is None:
+        block_n = N
+    block_m = int(block_m)
+    block_n = int(block_n)
+    if block_m <= 0:
+        raise ValueError("block_m must be positive")
+    if block_n < N:
+        raise ValueError(f"block_n must be >= head_dim={N}; got {block_n}")
+
+    target_supported = 16 <= N <= 64 and 16 <= R <= 64 and block_n <= 64
+    use_triton = (
+        not force_fallback
+        and target_supported
+        and dplr_compact_wy_prefix_combine_triton_available()
+        and state.is_cuda
+        and diag.is_cuda
+        and trans_left.is_cuda
+        and trans_right.is_cuda
+        and add_left.is_cuda
+        and add_right.is_cuda
+        and state.dtype == torch.float32
+    )
+    if not use_triton:
+        return dplr_compact_wy_prefix_combine_torch(state, summary)
+
+    state_c = state.contiguous()
+    diag_c = diag.contiguous()
+    trans_left_c = trans_left.contiguous()
+    trans_right_c = trans_right.contiguous()
+    add_left_c = add_left.contiguous()
+    add_right_c = add_right.contiguous()
+    start_states = torch.empty((B, chunks, H, N, N), device=state.device, dtype=torch.float32)
+    final_state = torch.empty_like(state_c)
+    row_blocks = triton.cdiv(N, block_m)
+    _compact_wy_prefix_combine_kernel[(B * H * row_blocks,)](
+        state_c,
+        diag_c,
+        trans_left_c,
+        trans_right_c,
+        add_left_c,
+        add_right_c,
+        start_states,
+        final_state,
+        H,
+        N,
+        chunks,
+        R,
+        ROW_BLOCKS=int(row_blocks),
+        BLOCK_M=block_m,
+        BLOCK_N=block_n,
+        BLOCK_R=R,
+        num_warps=4 if block_m < N else 8,
+    )
+    return start_states, final_state
 
 
 def dplr_dense_chunk_summary_triton(
