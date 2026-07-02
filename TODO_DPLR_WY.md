@@ -71,6 +71,23 @@ is either checked off or replaced with a more precise kernel task.
 
 ## Next concrete kernel TODO from the 4090 sweep
 
+- [x] Run current 4090 adaptation validation pass before more kernel work.
+  - Unit/correctness on RTX 4090 passed:
+    - `python -m py_compile ...`
+    - `python tests/test_native_prefill_scan.py`
+    - `python tests/test_dplr_prefill_scan.py`
+    - `python tests/test_dplr_prefill_triton.py`
+  - DPLR synthetic validation:
+    `/tmp/verify_4090_dplr_20260702_111046.jsonl`
+    - `triton_wy`: pass, `0.226 ms`, `2.265M tok/s`
+    - `triton_dense3`: pass, `0.27073 ms`, `1.891M tok/s`
+    - `triton_wy_compact`: pass, `0.24142 ms`, `2.121M tok/s`
+  - HF repo-code validation:
+    `/tmp/verify_4090_native_prefill_20260702_111055.jsonl`
+    - fused-scan best config: pass, `22,116.7 tok/s`, `0.4241x`
+    - cache-view experiment: pass but slower, `22,081.8 tok/s`, not kept
+    - DPLR compact HF smoke: pass, `17,663.3 tok/s`, `0.3387x`
+  - Conclusion: 4090 correctness is stable; no new row reaches `0.45x`.
 - [ ] Close the remaining `0.45x` Albatross gap on 4090 / 0.4B / prompt512 /
   bsz1:
   - current confirmed best: `22,292.0 tok/s` (`0.4275x`)
