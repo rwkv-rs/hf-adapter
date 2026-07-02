@@ -81,6 +81,14 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_recurrent_update = None  # type: ignore[assignment]
         fused_recurrent_update_available = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - optional pure-torch DPLR/chunked prefill prototype
+    from .dplr_prefill import dplr_chunk_scan
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from dplr_prefill import dplr_chunk_scan
+    except Exception:
+        dplr_chunk_scan = None  # type: ignore[assignment]
+
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
     from .fused_output import (
         fused_attn_output_prepare,
@@ -203,6 +211,20 @@ def _native_prefill_fused_scan_enabled() -> bool:
         return bool(fused_recurrent_scan_available())
     except Exception:
         return False
+
+
+def _native_prefill_dplr_scan_enabled() -> bool:
+    """Runtime switch for the correctness-first DPLR/chunked prefill scan."""
+
+    if not env_flag("RWKV7_NATIVE_PREFILL_DPLR_SCAN", False):
+        return False
+    return dplr_chunk_scan is not None
+
+
+def _native_prefill_dplr_chunk_size() -> int:
+    """Chunk length for the pure-torch DPLR/chunked prefill reference path."""
+
+    return env_int("RWKV7_NATIVE_PREFILL_DPLR_CHUNK_SIZE", 64, lower=1, upper=4096)
 
 
 def _native_prefill_fused_clampw_scan_enabled() -> bool:
@@ -824,6 +846,19 @@ def _native_prefill_scan(
             block_n=N,
             block_m=scan_block_m,
             num_warps=_native_prefill_scan_num_warps(N, scan_block_m),
+        )
+        return out.reshape(B, T, H * N), new_state
+
+    if _native_prefill_dplr_scan_enabled() and T > 1:
+        out, new_state = dplr_chunk_scan(
+            r.view(B, T, H, N),
+            w.view(B, T, H, N),
+            k.view(B, T, H, N),
+            v.view(B, T, H, N),
+            kk.view(B, T, H, N),
+            a.view(B, T, H, N),
+            state,
+            chunk_size=_native_prefill_dplr_chunk_size(),
         )
         return out.reshape(B, T, H * N), new_state
 

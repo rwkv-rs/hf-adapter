@@ -411,6 +411,18 @@ serving speed.
      `3.2887ms -> 2.8226ms`, but scan grows `7.4649ms -> 7.7147ms`; keep
      clampw scan opt-in telemetry-only and do not promote unless a future
      larger fused scan/state-prep kernel wins end-to-end.
+   - `rwkv7_hf.dplr_prefill.dplr_chunk_scan()` is now the correctness oracle
+     for the DPLR/chunked-prefill line. It accepts `[B,T,H,N]` or flat
+     `[B,T,H*N]` tensors plus native `[B,H,N,N]` state and exposes the future
+     chunk boundary, but V1 intentionally scans sequentially inside each chunk.
+     The opt-in native prefill path
+     `RWKV7_NATIVE_PREFILL_DPLR_SCAN=1` /
+     `RWKV7_NATIVE_PREFILL_DPLR_CHUNK_SIZE=64` is correctness/cache clean on
+     RTX 4090 / 0.4B / fp16 / prompt=128 (`greedy_match=true`,
+     `decode_after_prefill_greedy_match=true`), but it remains token-loop
+     speed (`~220 tok/s`) because no affine/WY chunk summary or parallel chunk
+     apply kernel exists yet. Treat this as the test harness for the next
+     algorithmic DPLR implementation, not a performance path.
    - Prefill W/A/G/V-gate LoRA grouping is also wired as an opt-in adaptive
      probe (`RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA=1`,
      `RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_MAX_M`, default `1024` rows). The
@@ -458,6 +470,12 @@ serving speed.
      row. Keep this opt-in telemetry-only; shallow shift-mix is not the
      missing P1 fix unless folded into a larger norm/shift/projection/state
      kernel.
+   - `rwkv7_hf.fused_norm_mix.fused_attn_norm_shift_mix()` is available as a
+     pure-torch correctness oracle for the larger attention pre-norm /
+     attention-norm / shift / mix6 boundary. It is deliberately not wired into
+     `native_jit` and makes no speed claim; use it to test a future fused
+     `tmix_mix6` kernel that includes the layernorm boundary instead of the
+     already-negative shallow shift-mix-only probe.
    - `RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT=1` tests a larger full-head
      kernel that fuses the recurrent scan with group-norm, recurrent
      correction, and gate multiply before the final cuBLAS `o_proj`. It is
