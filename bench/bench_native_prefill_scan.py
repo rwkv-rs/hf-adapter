@@ -251,6 +251,9 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_dplr_compact_block_n": os.environ.get("RWKV7_DPLR_TRITON_COMPACT_BLOCK_N"),
         "prefill_dplr_compact_block_r": os.environ.get("RWKV7_DPLR_TRITON_COMPACT_BLOCK_R"),
         "prefill_dplr_compact_prefix_block_m": os.environ.get("RWKV7_DPLR_TRITON_COMPACT_PREFIX_BLOCK_M"),
+        "prefill_dplr_compact_start_state_dtype": os.environ.get(
+            "RWKV7_DPLR_TRITON_COMPACT_START_STATE_DTYPE", "fp32"
+        ),
         "prefill_dplr_compact_output_only": os.environ.get("RWKV7_DPLR_TRITON_COMPACT_OUTPUT_ONLY", "0").lower()
         not in {"0", "false", "no", "off"},
         "prefill_fused_shift_mix_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX", "0").lower() not in {"0", "false", "no", "off"},

@@ -678,7 +678,7 @@ Branch: `wangyue/native-prefill-060-albatross`
         HF path (`~5.9%` faster than same-run compact baseline and `~42 MiB`
         less peak VRAM), but still far below the main fused recurrent scan
         line and far below the `0.60x` Albatross stretch. Keep it opt-in.
-- [ ] Next compact-WY task:
+- [x] Next compact-WY task:
   - The output-only apply experiment shows chunk-end writeback is worth
     removing in HF, but stage timings now make `compact_chunk_summary` +
     `compact_prefix_combine` the larger remaining compact path. The next
@@ -686,6 +686,49 @@ Branch: `wangyue/native-prefill-060-albatross`
     materialization/readback or fuse compact prefix metadata more deeply with
     apply/output, while preserving chunk-level parallelism. Do not switch back
     to wrapper-only optimization.
+  - Done: added opt-in compact fp16 start-state materialization:
+    `RWKV7_DPLR_TRITON_COMPACT_START_STATE_DTYPE=fp16`.
+    - implementation:
+      - `dplr_compact_wy_prefix_combine_triton(..., start_dtype=...)` can now
+        store dense chunk `start_states` as fp32/fp16/bf16; default remains
+        fp32;
+      - `dplr_dense_chunk_apply_triton(...)` and the output-only apply helper
+        now read fp16 starts back into fp32 inside the Triton kernel when the
+        recurrent vectors are fp16;
+      - benchmark/HF telemetry records the compact start-state dtype.
+    - result files:
+      - synthetic:
+        `bench/results_4090_prefill060_dplr_compact_fp16_starts_20260703_034500.jsonl`
+      - HF corrected smoke:
+        `bench/results_4090_prefill060_native_dplr_compact_fp16_starts_20260703_034500.jsonl`
+    - 4090 synthetic, `B=1,T=512,H=16,N=64,chunk=64,fp16`,
+      output-only compact with fp16 starts:
+      - pass, `out_min_cosine=0.99999988`;
+      - `start_states_max_abs_diff=0.00012207`;
+      - peak benchmark VRAM drops from the previous compact probe's
+        `60.7 MiB` to `53.4 MiB`;
+      - prefix time regresses from `0.05637 ms` to `0.05947 ms`;
+      - output-only apply regresses from `0.05330 ms` to `0.05474 ms`;
+      - full output-only compact is essentially flat/slightly worse:
+        `0.22847 ms` versus prior `0.22985 ms` stage-probe row and prior
+        `0.23091 ms` normal algorithm row, within noise.
+    - 4090 HF corrected smoke, 0.4B / prompt512 / bsz1:
+      - output-only fp32 starts: pass, `17,978.2 tok/s`, `28.4789 ms`,
+        peak `996.2 MiB`;
+      - output-only fp16 starts: pass, `17,549.1 tok/s`, `29.1754 ms`,
+        peak `995.2 MiB`, max diff `0.125`;
+      - conclusion: fp16 start states are correctness-safe and slightly reduce
+        memory, but they do not speed the compact path on 4090 and should stay
+        opt-in / not promoted.
+- [ ] Next compact-WY task:
+  - Do not spend another iteration on lossy `start_states` storage. The next
+    useful compact experiment should reduce or bypass dense start-state traffic
+    without adding lossy conversion, e.g. a compact-prefix/apply fusion that
+    computes each chunk's start state inside the apply boundary from compact
+    factors, or a lower-traffic prefix representation that still preserves
+    chunk-level parallelism. Keep output-only apply as the best compact HF
+    flag so far, but do not default-enable it until a same-run synthetic/HF
+    confirmation beats the current fused recurrent scan line.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `27,051.0 tok/s` (`~0.5187x`), still about `15.7%` relative uplift short of

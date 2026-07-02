@@ -131,6 +131,25 @@ def test_dense_chunk_summary_torch_final_state_matches_recurrent_scan() -> None:
     assert torch.allclose(compact3_state_only, ref_state, atol=2e-6, rtol=2e-6), (
         compact3_state_only - ref_state
     ).abs().max()
+    compact3_out_fp16_starts, compact3_state_fp16_starts = dplr_compact_wy_three_stage_triton(
+        r,
+        w,
+        k,
+        v,
+        kk,
+        a,
+        state,
+        chunk_size=4,
+        output_only=True,
+        start_dtype=torch.float16,
+        force_fallback=True,
+    )
+    assert torch.allclose(compact3_out_fp16_starts, ref_out, atol=5e-3, rtol=5e-3), (
+        compact3_out_fp16_starts - ref_out
+    ).abs().max()
+    assert torch.allclose(compact3_state_fp16_starts, ref_state, atol=2e-6, rtol=2e-6), (
+        compact3_state_fp16_starts - ref_state
+    ).abs().max()
 
 
 def test_dense_chunk_summary_triton_matches_torch_cuda() -> None:
@@ -252,6 +271,15 @@ def test_dense_chunk_summary_triton_matches_torch_cuda() -> None:
     ).abs().max()
     assert torch.allclose(compact3_state_only, ref_state, atol=2e-6, rtol=2e-6), (
         compact3_state_only - ref_state
+    ).abs().max()
+    compact3_out_fp16_starts, compact3_state_fp16_starts = dplr_compact_wy_three_stage_triton(
+        r, w, k, v, kk, a, state, chunk_size=4, output_only=True, start_dtype=torch.float16
+    )
+    assert torch.allclose(compact3_out_fp16_starts, ref_out, atol=5e-3, rtol=5e-3), (
+        compact3_out_fp16_starts - ref_out
+    ).abs().max()
+    assert torch.allclose(compact3_state_fp16_starts, ref_state, atol=2e-6, rtol=2e-6), (
+        compact3_state_fp16_starts - ref_state
     ).abs().max()
 
 

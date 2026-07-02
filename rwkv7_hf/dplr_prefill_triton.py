@@ -571,6 +571,37 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return str(raw).strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _resolve_compact_start_state_dtype(start_dtype: Any | None = None):
+    """Resolve the opt-in compact prefix start-state storage dtype.
+
+    The default remains fp32.  ``fp16``/``bf16`` are experimental knobs for the
+    compact-WY path only; they reduce dense ``start_states`` materialization
+    traffic before the apply/output stage reads the states back into fp32.
+    """
+
+    if torch is None:
+        raise RuntimeError("compact start-state dtype resolution requires torch")
+    if start_dtype is not None:
+        raw = start_dtype if isinstance(start_dtype, str) else None
+        if raw is None:
+            return start_dtype
+    else:
+        raw = os.environ.get("RWKV7_DPLR_TRITON_COMPACT_START_STATE_DTYPE")
+    if raw is None or str(raw).strip() == "":
+        return torch.float32
+    normalized = str(raw).strip().lower().replace("-", "_")
+    if normalized in {"fp32", "float32", "f32"}:
+        return torch.float32
+    if normalized in {"fp16", "float16", "half", "f16"}:
+        return torch.float16
+    if normalized in {"bf16", "bfloat16"}:
+        return torch.bfloat16
+    raise ValueError(
+        "RWKV7_DPLR_TRITON_COMPACT_START_STATE_DTYPE must be one of "
+        "fp32, fp16, or bf16"
+    )
+
+
 def _as_bthn(x: Any, H: int, N: int, *, name: str):
     if torch is None:
         raise RuntimeError("dplr_chunk_scan_triton requires torch")
@@ -970,7 +1001,12 @@ def dplr_compact_wy_apply_summaries_torch(state: Any, summary: dict[str, Any]):
     return cur
 
 
-def dplr_compact_wy_prefix_combine_torch(state: Any, summary: dict[str, Any]):
+def dplr_compact_wy_prefix_combine_torch(
+    state: Any,
+    summary: dict[str, Any],
+    *,
+    start_dtype: Any | None = None,
+):
     """Reference chunk-prefix combine directly over compact WY factors.
 
     Returns `(start_states, final_state)` where `start_states[:, c]` is the
@@ -1015,10 +1051,11 @@ def dplr_compact_wy_prefix_combine_torch(state: Any, summary: dict[str, Any]):
     ):
         raise ValueError("compact summary shapes must match state")
 
+    start_dtype = _resolve_compact_start_state_dtype(start_dtype)
     cur = state.float()
     starts = []
     for chunk in range(chunks):
-        starts.append(cur)
+        starts.append(cur.to(dtype=start_dtype))
         cur = _compact_apply_transition_to_state(
             cur,
             diag[:, chunk],
@@ -1035,6 +1072,7 @@ def dplr_compact_wy_prefix_combine_triton(
     *,
     block_m: int | None = None,
     block_n: int | None = None,
+    start_dtype: Any | None = None,
     force_fallback: bool = False,
 ):
     """Triton chunk-prefix combine directly over compact WY factors."""
@@ -1085,6 +1123,7 @@ def dplr_compact_wy_prefix_combine_triton(
         raise ValueError("block_m must be positive")
     if block_n < N:
         raise ValueError(f"block_n must be >= head_dim={N}; got {block_n}")
+    start_dtype = _resolve_compact_start_state_dtype(start_dtype)
 
     target_supported = 16 <= N <= 64 and 16 <= R <= 64 and block_n <= 64
     use_triton = (
@@ -1100,7 +1139,7 @@ def dplr_compact_wy_prefix_combine_triton(
         and state.dtype == torch.float32
     )
     if not use_triton:
-        return dplr_compact_wy_prefix_combine_torch(state, summary)
+        return dplr_compact_wy_prefix_combine_torch(state, summary, start_dtype=start_dtype)
 
     state_c = state.contiguous()
     diag_c = diag.contiguous()
@@ -1108,7 +1147,7 @@ def dplr_compact_wy_prefix_combine_triton(
     trans_right_c = trans_right.contiguous()
     add_left_c = add_left.contiguous()
     add_right_c = add_right.contiguous()
-    start_states = torch.empty((B, chunks, H, N, N), device=state.device, dtype=torch.float32)
+    start_states = torch.empty((B, chunks, H, N, N), device=state.device, dtype=start_dtype)
     final_state = torch.empty_like(state_c)
     row_blocks = triton.cdiv(N, block_m)
     _compact_wy_prefix_combine_kernel[(B * H * row_blocks,)](
@@ -1426,7 +1465,7 @@ def dplr_dense_chunk_apply_triton(
         and kk_kernel.is_cuda
         and a_kernel.is_cuda
         and start_states.is_cuda
-        and start_states.dtype == torch.float32
+        and start_states.dtype in (torch.float32, r4.dtype)
         and r4.dtype in (torch.float16, torch.bfloat16, torch.float32)
         and w4.dtype in (r4.dtype, torch.float32)
     )
@@ -1533,7 +1572,7 @@ def dplr_dense_chunk_apply_output_triton(
         and kk_kernel.is_cuda
         and a_kernel.is_cuda
         and start_states.is_cuda
-        and start_states.dtype == torch.float32
+        and start_states.dtype in (torch.float32, r4.dtype)
         and r4.dtype in (torch.float16, torch.bfloat16, torch.float32)
         and w4.dtype in (r4.dtype, torch.float32)
     )
@@ -1644,6 +1683,7 @@ def dplr_compact_wy_three_stage_triton(
     *,
     chunk_size: int = 64,
     output_only: bool | None = None,
+    start_dtype: Any | None = None,
     force_fallback: bool = False,
 ):
     """Compact-WY three-stage DPLR scaffold.
@@ -1682,6 +1722,7 @@ def dplr_compact_wy_three_stage_triton(
     start_states, prefix_final = dplr_compact_wy_prefix_combine_triton(
         state,
         summary,
+        start_dtype=start_dtype,
         force_fallback=force_fallback,
     )
     if output_only is None:
