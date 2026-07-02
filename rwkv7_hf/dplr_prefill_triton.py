@@ -32,6 +32,13 @@ try:  # pragma: no cover - optional on lightweight hosts
 except Exception:  # pragma: no cover
     torch = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - exercised on CUDA/Triton hosts
+    import triton
+    import triton.language as tl
+except Exception:  # pragma: no cover
+    triton = None  # type: ignore[assignment]
+    tl = None  # type: ignore[assignment]
+
 try:  # pragma: no cover - CUDA/Triton hosts only
     from .fused_recurrent_update import (
         fused_recurrent_scan,
@@ -54,7 +61,83 @@ except Exception:  # pragma: no cover - direct script fallback
 __all__ = [
     "dplr_chunk_scan_triton",
     "dplr_chunk_scan_triton_available",
+    "dplr_dense_chunk_summary_triton",
+    "dplr_dense_chunk_summary_triton_available",
+    "dplr_dense_chunk_summary_torch",
 ]
+
+
+_HAS_TRITON = triton is not None and tl is not None
+
+
+if _HAS_TRITON:
+
+    @triton.jit
+    def _dense_chunk_summary_kernel(
+        w_ptr,
+        k_ptr,
+        v_ptr,
+        kk_ptr,
+        a_ptr,
+        transition_ptr,
+        additive_ptr,
+        T: tl.constexpr,
+        H: tl.constexpr,
+        N: tl.constexpr,
+        CHUNKS: tl.constexpr,
+        C: tl.constexpr,
+        ROW_BLOCKS: tl.constexpr,
+        BLOCK_M: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+    ):
+        """Build dense chunk affine summaries using the DPLR rank-1 update.
+
+        For one `(batch, chunk, head, row_block)` this computes row blocks of
+        `P` and `Q` satisfying `S_end = S_start @ P + Q` for the chunk.  The
+        kernel is intentionally dense-summary scaffolding for the three-stage
+        WY backend: it pins down the chunk-summary boundary while the next
+        iteration swaps dense `P/Q` for compact WY factors.
+        """
+
+        pid = tl.program_id(0)
+        row_block = pid % ROW_BLOCKS
+        tmp = pid // ROW_BLOCKS
+        head_id = tmp % H
+        chunk_id = (tmp // H) % CHUNKS
+        batch_id = tmp // (H * CHUNKS)
+
+        offs_i = row_block * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_j = tl.arange(0, BLOCK_N)
+        mask_i = offs_i < N
+        mask_j = offs_j < N
+
+        # Row block of identity transition and zero additive term.
+        transition = tl.where(offs_i[:, None] == offs_j[None, :], 1.0, 0.0).to(tl.float32)
+        additive = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+
+        i = 0
+        while i < C:
+            t = chunk_id * C + i
+            vec_base = ((batch_id * T + t) * H + head_id) * N
+            w = tl.load(w_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            key = tl.load(k_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            kk = tl.load(kk_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            a = tl.load(a_ptr + vec_base + offs_j, mask=mask_j, other=0.0).to(tl.float32)
+            v_rows = tl.load(v_ptr + vec_base + offs_i, mask=mask_i, other=0.0).to(tl.float32)
+
+            # A_i = diag(w_i) + p_i q_i^T, p_i=-kk_i, q_i=kk_i*a_i.
+            p = -kk
+            q = kk * a
+            transition_dot_p = tl.sum(transition * p[None, :], axis=1)
+            additive_dot_p = tl.sum(additive * p[None, :], axis=1)
+            transition = transition * w[None, :] + transition_dot_p[:, None] * q[None, :]
+            additive = additive * w[None, :] + additive_dot_p[:, None] * q[None, :] + v_rows[:, None] * key[None, :]
+            i += 1
+
+        summary_base = (((batch_id * CHUNKS + chunk_id) * H + head_id) * N + offs_i[:, None]) * N + offs_j[None, :]
+        mask = mask_i[:, None] & mask_j[None, :]
+        tl.store(transition_ptr + summary_base, transition, mask=mask)
+        tl.store(additive_ptr + summary_base, additive, mask=mask)
 
 
 def dplr_chunk_scan_triton_available() -> bool:
@@ -66,6 +149,12 @@ def dplr_chunk_scan_triton_available() -> bool:
         and fused_recurrent_scan_available is not None
         and fused_recurrent_scan_available()
     )
+
+
+def dplr_dense_chunk_summary_triton_available() -> bool:
+    """Return whether the dense chunk-summary Triton probe can run."""
+
+    return bool(_HAS_TRITON and torch is not None)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -100,6 +189,15 @@ def _as_bthn(x: Any, H: int, N: int, *, name: str):
     raise ValueError(f"{name} must be shaped [batch,tokens,{H},{N}] or [batch,tokens,{H * N}]")
 
 
+def _check_same_bthn(name: str, x: Any, *, shape: tuple[int, int, int, int], device: Any) -> None:
+    if tuple(int(v) for v in x.shape) != shape:
+        raise ValueError(f"{name} shape must match w; got {tuple(x.shape)}, expected {shape}")
+    if x.device != device:
+        raise ValueError(f"{name} must be on the same device as w")
+    if not x.is_floating_point():
+        raise TypeError(f"{name} must be a floating point tensor")
+
+
 def _validate_chunk_size(chunk_size: int) -> int:
     try:
         value = int(chunk_size)
@@ -124,6 +222,155 @@ def _fallback_scan(r4: Any, w4: Any, k4: Any, v4: Any, kk4: Any, a4: Any, state:
         state,
     )
     return out, final_state
+
+
+def dplr_dense_chunk_summary_torch(w: Any, k: Any, v: Any, kk: Any, a: Any, *, chunk_size: int = 64):
+    """Reference dense affine chunk summaries.
+
+    Returns `transition` and `additive` shaped `[B, chunks, H, N, N]` where each
+    chunk satisfies `S_end = S_start @ transition + additive`.  This is a
+    correctness oracle for the compiled summary kernel and a bridge toward the
+    future compact WY summary.
+    """
+
+    if torch is None:
+        raise RuntimeError("dplr_dense_chunk_summary_torch requires torch")
+    chunk_size_i = _validate_chunk_size(chunk_size)
+    if not hasattr(w, "dim"):
+        raise TypeError("w must be a torch.Tensor")
+    if w.dim() != 4:
+        raise ValueError("summary inputs must be shaped [batch,tokens,heads,head_dim]")
+    B, T, H, N = (int(vv) for vv in w.shape)
+    if T % chunk_size_i != 0:
+        raise ValueError(f"T={T} must be divisible by chunk_size={chunk_size_i} for the summary prototype")
+    shape = (B, T, H, N)
+    for name, x in (("k", k), ("v", v), ("kk", kk), ("a", a)):
+        _check_same_bthn(name, x, shape=shape, device=w.device)
+
+    chunks = T // chunk_size_i
+    transition_rows = []
+    additive_rows = []
+    eye = torch.eye(N, device=w.device, dtype=torch.float32).view(1, 1, N, N).expand(B, H, N, N)
+    for chunk in range(chunks):
+        trans = eye.clone()
+        add = torch.zeros((B, H, N, N), device=w.device, dtype=torch.float32)
+        start = chunk * chunk_size_i
+        for local_i in range(chunk_size_i):
+            t = start + local_i
+            w_i = w[:, t].float()
+            k_i = k[:, t].float()
+            v_i = v[:, t].float()
+            kk_i = kk[:, t].float()
+            a_i = a[:, t].float()
+            p_i = -kk_i
+            q_i = kk_i * a_i
+            trans_dot_p = torch.sum(trans * p_i.unsqueeze(-2), dim=-1)
+            add_dot_p = torch.sum(add * p_i.unsqueeze(-2), dim=-1)
+            trans = trans * w_i.unsqueeze(-2) + trans_dot_p.unsqueeze(-1) * q_i.unsqueeze(-2)
+            add = add * w_i.unsqueeze(-2) + add_dot_p.unsqueeze(-1) * q_i.unsqueeze(-2)
+            add = add + v_i.unsqueeze(-1) * k_i.unsqueeze(-2)
+        transition_rows.append(trans)
+        additive_rows.append(add)
+    return {
+        "algorithm": "torch_dense_dplr_summary",
+        "chunk_size": chunk_size_i,
+        "transition": torch.stack(transition_rows, dim=1),
+        "additive": torch.stack(additive_rows, dim=1),
+    }
+
+
+def dplr_dense_chunk_summary_triton(
+    w: Any,
+    k: Any,
+    v: Any,
+    kk: Any,
+    a: Any,
+    *,
+    chunk_size: int = 64,
+    block_m: int | None = None,
+    block_n: int | None = None,
+    force_fallback: bool = False,
+):
+    """Build dense DPLR chunk summaries with a Triton row-block kernel.
+
+    This is the first explicit chunk-summary kernel boundary for the future
+    three-stage WY backend.  It intentionally returns dense `P/Q` summaries as
+    a correctness scaffold; production WY work should replace those dense
+    tensors with compact factors and then add prefix-combine and chunk-apply
+    kernels.
+    """
+
+    if torch is None:
+        raise RuntimeError("dplr_dense_chunk_summary_triton requires torch")
+    chunk_size_i = _validate_chunk_size(chunk_size)
+    if not hasattr(w, "dim"):
+        raise TypeError("w must be a torch.Tensor")
+    if w.dim() != 4:
+        raise ValueError("summary inputs must be shaped [batch,tokens,heads,head_dim]")
+    B, T, H, N = (int(vv) for vv in w.shape)
+    if T % chunk_size_i != 0:
+        raise ValueError(f"T={T} must be divisible by chunk_size={chunk_size_i} for the summary prototype")
+    shape = (B, T, H, N)
+    for name, x in (("k", k), ("v", v), ("kk", kk), ("a", a)):
+        _check_same_bthn(name, x, shape=shape, device=w.device)
+    if not w.is_floating_point():
+        raise TypeError("w must be a floating point tensor")
+    if block_m is None:
+        block_m = _env_int("RWKV7_DPLR_TRITON_SUMMARY_BLOCK_M", 8)
+    if block_n is None:
+        block_n = N
+    block_m = int(block_m)
+    block_n = int(block_n)
+    if block_m <= 0:
+        raise ValueError("block_m must be positive")
+    if block_n < N:
+        raise ValueError(f"block_n must be >= head_dim={N}; got {block_n}")
+
+    use_triton = (
+        not force_fallback
+        and dplr_dense_chunk_summary_triton_available()
+        and w.is_cuda
+        and k.is_cuda
+        and v.is_cuda
+        and kk.is_cuda
+        and a.is_cuda
+    )
+    if not use_triton:
+        return dplr_dense_chunk_summary_torch(w, k, v, kk, a, chunk_size=chunk_size_i)
+
+    chunks = T // chunk_size_i
+    w_c = w.contiguous()
+    k_c = k.contiguous()
+    v_c = v.contiguous()
+    kk_c = kk.contiguous()
+    a_c = a.contiguous()
+    transition = torch.empty((B, chunks, H, N, N), device=w.device, dtype=torch.float32)
+    additive = torch.empty_like(transition)
+    row_blocks = triton.cdiv(N, block_m)
+    _dense_chunk_summary_kernel[(B * chunks * H * row_blocks,)](
+        w_c,
+        k_c,
+        v_c,
+        kk_c,
+        a_c,
+        transition,
+        additive,
+        T,
+        H,
+        N,
+        chunks,
+        chunk_size_i,
+        ROW_BLOCKS=int(row_blocks),
+        BLOCK_M=block_m,
+        BLOCK_N=block_n,
+        num_warps=4 if block_m < N else 8,
+    )
+    return {
+        "algorithm": "triton_dense_dplr_summary",
+        "chunk_size": chunk_size_i,
+        "transition": transition,
+        "additive": additive,
+    }
 
 
 def dplr_chunk_scan_triton(
