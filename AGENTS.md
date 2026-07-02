@@ -310,6 +310,11 @@ Run this checklist for every new GPU before marking it as supported:
     addcmul, and the full-prefill row only gives a tiny bsz=4 bump while bsz=1
     stays below the best state-prep-only row. Do not default it outside a
     larger fused norm/shift/projection/state-prep design.
+  - Latest fine prefill breakdown splits dense R/K/V projection separately:
+    bsz=1 prompt512 has scan `7.6627ms`, LoRA sum `6.2419ms`, norm/shift/mix
+    `3.8281ms`, state-prep `3.1581ms`, and dense R/K/V sum `2.2056ms`. The
+    next Ada prefill experiment should fuse across these buckets rather than
+    optimizing cache or a single shallow pointwise kernel.
   - Prefill output-prep fusion (`RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1`) is
     correctness-clean but not defaultable on the current 4090 prompt512 rows:
     it reduces the isolated output-prep bucket yet end-to-end bsz=1/4 stays
