@@ -43,7 +43,7 @@ __all__ = ["dplr_chunk_scan", "lowrank_chunk_summary"]
 
 
 _ALGORITHM_ENV = "RWKV7_DPLR_PREFILL_ALGORITHM"
-_SUPPORTED_ALGORITHMS = ("sequential", "affine", "lowrank", "wy", "triton_wy", "cuda_wy")
+_SUPPORTED_ALGORITHMS = ("sequential", "affine", "lowrank", "wy", "triton_wy", "cuda_wy", "triton_dense3")
 
 
 def _require_torch():
@@ -95,7 +95,10 @@ def _resolve_algorithm(algorithm: Any) -> str:
     if algorithm is None:
         algorithm = os.environ.get(_ALGORITHM_ENV, "sequential")
     if not isinstance(algorithm, str):
-        raise TypeError("algorithm must be 'sequential', 'affine', 'lowrank', 'wy', 'triton_wy', 'cuda_wy', or None")
+        raise TypeError(
+            "algorithm must be 'sequential', 'affine', 'lowrank', 'wy', "
+            "'triton_wy', 'cuda_wy', 'triton_dense3', or None"
+        )
     normalized = algorithm.strip().lower()
     if normalized not in _SUPPORTED_ALGORITHMS:
         supported = "', '".join(_SUPPORTED_ALGORITHMS)
@@ -528,8 +531,10 @@ def dplr_chunk_scan(
         explicitly composes per-token ``A_t``/``B_t`` transforms.  ``"lowrank"``
         and ``"wy"`` enable the experimental diagonal-plus-low-rank chunk
         summary path from ``lowrank_chunk_summary``. ``"triton_wy"`` and
-        ``"cuda_wy"`` dispatch to the opt-in compiled prototype in
-        ``dplr_prefill_triton``.  ``None`` (the default) reads
+        ``"cuda_wy"`` dispatch to the opt-in fused recurrent compiled prototype
+        in ``dplr_prefill_triton``.  ``"triton_dense3"`` dispatches to the
+        explicit dense three-stage Triton scaffold (summary -> prefix ->
+        chunk-apply) for synthetic benchmarking. ``None`` (the default) reads
         ``RWKV7_DPLR_PREFILL_ALGORITHM`` and falls back to ``"sequential"``
         when the environment variable is unset.
 
@@ -578,6 +583,26 @@ def dplr_chunk_scan(
 
     out_dtype = r4.dtype
     state_dtype = state.dtype
+
+    if algorithm_i == "triton_dense3":
+        try:
+            from .dplr_prefill_triton import dplr_dense_three_stage_triton
+        except Exception:  # pragma: no cover - direct remote-file execution fallback
+            try:
+                from dplr_prefill_triton import dplr_dense_three_stage_triton  # type: ignore[no-redef]
+            except Exception as exc:
+                raise RuntimeError("triton_dense3 requested but dplr_prefill_triton is unavailable") from exc
+        return dplr_dense_three_stage_triton(
+            r,
+            w,
+            k,
+            v,
+            kk,
+            a,
+            state,
+            chunk_size=chunk_size_i,
+            force_fallback=force_fallback,
+        )
 
     if algorithm_i in {"triton_wy", "cuda_wy"}:
         try:
