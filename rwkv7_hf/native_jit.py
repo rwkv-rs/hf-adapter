@@ -46,6 +46,8 @@ try:  # pragma: no cover - optional Triton fast path on CUDA hosts
     from .fused_recurrent_update import (
         fused_recurrent_output_prepare,
         fused_recurrent_output_prepare_available,
+        fused_recurrent_scan,
+        fused_recurrent_scan_available,
         fused_recurrent_update,
         fused_recurrent_update_available,
     )
@@ -54,12 +56,16 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         from fused_recurrent_update import (
             fused_recurrent_output_prepare,
             fused_recurrent_output_prepare_available,
+            fused_recurrent_scan,
+            fused_recurrent_scan_available,
             fused_recurrent_update,
             fused_recurrent_update_available,
         )
     except Exception:
         fused_recurrent_output_prepare = None  # type: ignore[assignment]
         fused_recurrent_output_prepare_available = None  # type: ignore[assignment]
+        fused_recurrent_scan = None  # type: ignore[assignment]
+        fused_recurrent_scan_available = None  # type: ignore[assignment]
         fused_recurrent_update = None  # type: ignore[assignment]
         fused_recurrent_update_available = None  # type: ignore[assignment]
 
@@ -127,6 +133,20 @@ def _native_graph_fused_recurrent_enabled() -> bool:
         return False
     try:
         return bool(fused_recurrent_update_available())
+    except Exception:
+        return False
+
+
+def _native_prefill_fused_scan_enabled() -> bool:
+    """Runtime switch for the experimental native prefill recurrent scan."""
+
+    policy = _kernel_policy()
+    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_SCAN", bool(getattr(policy, "fused_prefill_scan", False))):
+        return False
+    if fused_recurrent_scan is None or fused_recurrent_scan_available is None:
+        return False
+    try:
+        return bool(fused_recurrent_scan_available())
     except Exception:
         return False
 
@@ -498,6 +518,17 @@ def _init(model, device, dtype):
     return state, xpa, xpf, v_first
 
 
+def _init_batched_from_packs(packs, batch_size: int, device, dtype):
+    n = len(packs)
+    H = int(packs[0][1])
+    N = int(packs[0][2])
+    hid = H * N
+    state = [torch.zeros(batch_size, H, N, N, device=device, dtype=torch.float32) for _ in range(n)]
+    xpa = [torch.zeros(batch_size, hid, device=device, dtype=dtype) for _ in range(n)]
+    xpf = [torch.zeros(batch_size, hid, device=device, dtype=dtype) for _ in range(n)]
+    return state, xpa, xpf
+
+
 def step(model, x, state, xpa, xpf, v_first, packs):
     for p in packs:
         x, xpa[p[0]], xpf[p[0]], v_first, state[p[0]] = block_step(x, xpa[p[0]], xpf[p[0]], v_first, state[p[0]], *p)
@@ -517,6 +548,157 @@ def step_batched(model, x, state, xpa, xpf, v_first, packs):
             x, xpa[p[0]], xpf[p[0]], v_first, state[p[0]], *p
         )
     return x, state, xpa, xpf, v_first
+
+
+def _native_prefill_scan(
+    r: torch.Tensor,
+    w: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    kk: torch.Tensor,
+    a: torch.Tensor,
+    state: torch.Tensor,
+    B: int,
+    T: int,
+    H: int,
+    N: int,
+):
+    """Run the recurrent prefill scan, using Triton only when explicitly enabled."""
+
+    if _native_prefill_fused_scan_enabled():
+        out, new_state = fused_recurrent_scan(
+            r.view(B, T, H, N),
+            w.view(B, T, H, N),
+            k.view(B, T, H, N),
+            v.view(B, T, H, N),
+            kk.view(B, T, H, N),
+            a.view(B, T, H, N),
+            state,
+            block_n=N,
+        )
+        return out.reshape(B, T, H * N), new_state
+
+    cur_state = state
+    outs = []
+    for t in range(T):
+        out, cur_state = _recurrent_update_batched(
+            r[:, t],
+            w[:, t],
+            k[:, t],
+            v[:, t],
+            kk[:, t],
+            a[:, t],
+            cur_state,
+            B,
+            H,
+            N,
+        )
+        outs.append(out)
+    return torch.stack(outs, dim=1), cur_state
+
+
+def prefill(
+    model,
+    ids,
+    packs,
+    *,
+    state=None,
+    xpa=None,
+    xpf=None,
+    logits_to_keep: int | None = 1,
+):
+    """Layer-wise native RWKV-7 prefill over a full prompt.
+
+    This is the first production-facing bridge for the fused recurrent scan
+    prototype: it computes every layer over `[batch, tokens]` using vectorized
+    projections and an optional fused recurrent scan instead of repeatedly
+    calling the one-token decode path.  Returned state uses the native layout
+    `[B,H,N,N]`; callers that expose HF/FLA cache state should transpose the
+    final two dimensions, matching the native-graph decode runner.
+    """
+
+    base = model.model
+    if ids.dim() == 1:
+        ids = ids.unsqueeze(0)
+    if ids.dim() != 2:
+        raise ValueError("native_jit.prefill expects ids shaped [batch, tokens]")
+    B = int(ids.shape[0])
+    T = int(ids.shape[1])
+    if T <= 0:
+        raise ValueError("native_jit.prefill requires at least one token")
+    H = int(packs[0][1])
+    N = int(packs[0][2])
+    hidden = H * N
+    dtype = base.embeddings.weight.dtype
+    if state is None or xpa is None or xpf is None:
+        state, xpa, xpf = _init_batched_from_packs(packs, B, ids.device, dtype)
+    else:
+        state = [s.to(device=ids.device, dtype=torch.float32).contiguous() for s in state]
+        xpa = [s.to(device=ids.device, dtype=dtype).contiguous() for s in xpa]
+        xpf = [s.to(device=ids.device, dtype=dtype).contiguous() for s in xpf]
+
+    x = F.embedding(ids, base.embeddings.weight).reshape(B, T, hidden)
+    v_first_seq = torch.zeros(B, T, hidden, device=ids.device, dtype=dtype)
+
+    for p in packs:
+        (i, H, N, eps, has_pre,
+         pre_w, pre_b, an_w, an_b, fn_w, fn_b,
+         x_r, x_w, x_k, x_v, x_a, x_g, k_k, k_a, r_k,
+         Rw, Kw, Vw, Ow, w1, w2, w0, a1, a2, a0, v1, v2, v0, g1, g2,
+         gn_w, gn_b, fx_k, fK, fV) = p
+        layer_idx = int(i)
+        H = int(H)
+        N = int(N)
+        hidden = H * N
+
+        residual = F.layer_norm(x, [hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
+        h = F.layer_norm(residual, [hidden], an_w, an_b, 1e-5)
+        prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h[:, :-1, :]], dim=1)
+        xx = prev_h - h
+        xr = h + xx * x_r.view(1, 1, hidden)
+        xw = h + xx * x_w.view(1, 1, hidden)
+        xk = h + xx * x_k.view(1, 1, hidden)
+        xv = h + xx * x_v.view(1, 1, hidden)
+        xa = h + xx * x_a.view(1, 1, hidden)
+        xg = h + xx * x_g.view(1, 1, hidden)
+
+        r = F.linear(xr, Rw)
+        w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
+        k = F.linear(xk, Kw)
+        v = F.linear(xv, Vw)
+        a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
+        g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
+        kk = F.normalize((k * k_k.view(1, 1, hidden)).view(B, T, H, N), dim=-1, p=2.0).view(B, T, hidden)
+        k = k * (1 + (a - 1) * k_a.view(1, 1, hidden))
+        if layer_idx == 0:
+            v_first_seq = v
+        else:
+            v_gate = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
+            v = v + (v_first_seq - v) * v_gate
+        w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
+
+        out, new_state = _native_prefill_scan(r, w, k, v, kk, a, state[layer_idx], B, T, H, N)
+        out = F.group_norm(out.reshape(B * T, hidden), H, gn_w, gn_b, eps).view(B, T, hidden)
+        sk = (r.view(B, T, H, N) * k.view(B, T, H, N) * r_k.view(1, 1, H, N)).sum(dim=-1, keepdim=True)
+        out = (out + (sk * v.view(B, T, H, N)).view(B, T, hidden)) * g
+        out = F.linear(out, Ow)
+        x = residual + out
+        xpa[layer_idx] = h[:, -1, :].contiguous()
+        state[layer_idx] = new_state.contiguous()
+
+        residual = x
+        h2 = F.layer_norm(x, [hidden], fn_w, fn_b, 1e-5)
+        prev_h2 = torch.cat([xpf[layer_idx].view(B, 1, hidden), h2[:, :-1, :]], dim=1)
+        fxx = prev_h2 - h2
+        fk = h2 + fxx * fx_k.view(1, 1, hidden)
+        fk = torch.relu(F.linear(fk, fK)) ** 2
+        x = residual + F.linear(fk, fV)
+        xpf[layer_idx] = h2[:, -1, :].contiguous()
+
+    x = F.layer_norm(x, [hidden], base.norm.weight, base.norm.bias, 1e-5)
+    keep = T if logits_to_keep is None or int(logits_to_keep) <= 0 else min(int(logits_to_keep), T)
+    logits = F.linear(x[:, -keep:, :], model.lm_head.weight, model.lm_head.bias)
+    return logits, state, xpa, xpf
 
 
 def forward(model, ids, packs):
