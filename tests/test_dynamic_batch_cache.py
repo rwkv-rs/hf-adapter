@@ -165,6 +165,49 @@ def run_case(model, ids: torch.Tensor, mode: str, decode_steps: int, max_diff_li
         assert_close_logits(f"{mode} reordered decode", batched.logits, expected, max_diff_limit)
         assert batched.past_key_values.get_seq_length() == ids.shape[1] + decode_steps + 1
 
+        inplace_perm_list = list(reversed(range(ids.shape[0])))
+        inplace_perm = torch.tensor(inplace_perm_list, dtype=torch.long, device=ids.device)
+        inplace_sources = [perm_list[i] for i in inplace_perm_list]
+        inplace_state = batched.past_key_values
+        metrics_before = (
+            inplace_state.rwkv7_cache_metrics().get("native_graph_bound_selects")
+            if hasattr(inplace_state, "rwkv7_cache_metrics")
+            else None
+        )
+        selected_state = inplace_state.select_batch(inplace_perm, inplace=True)
+        assert selected_state is inplace_state
+        metrics_after = (
+            inplace_state.rwkv7_cache_metrics().get("native_graph_bound_selects")
+            if hasattr(inplace_state, "rwkv7_cache_metrics")
+            else None
+        )
+        if mode == "fast_token" and metrics_before is not None and metrics_after is not None:
+            effective_backend = (
+                model.rwkv7_last_fast_token_backend()
+                if hasattr(model, "rwkv7_last_fast_token_backend")
+                else None
+            )
+            if effective_backend == "native_graph":
+                assert metrics_after == metrics_before + 1
+            else:
+                assert metrics_after >= metrics_before
+        batched_next = batched.logits[:, -1:].argmax(dim=-1).index_select(0, inplace_perm)
+        batched = step_fn(batched_next, selected_state)
+        inplace_expected = []
+        for src in inplace_sources:
+            out = step_fn(indiv_next[src], indiv_states[src])
+            indiv_states[src] = out.past_key_values
+            indiv_next[src] = out.logits[:, -1:].argmax(dim=-1)
+            inplace_expected.append(out.logits)
+        assert_close_logits(
+            f"{mode} inplace-reordered decode",
+            batched.logits,
+            torch.cat(inplace_expected, dim=0),
+            max_diff_limit,
+        )
+        assert batched.past_key_values.get_seq_length() == ids.shape[1] + decode_steps + 2
+        perm_list = inplace_sources
+
         if ids.shape[0] > 2:
             keep_rows = torch.arange(ids.shape[0] - 1, dtype=torch.long, device=ids.device)
             keep_sources = perm_list[: ids.shape[0] - 1]
@@ -194,7 +237,7 @@ def run_case(model, ids: torch.Tensor, mode: str, decode_steps: int, max_diff_li
                 torch.cat(compact_expected, dim=0),
                 max_diff_limit,
             )
-            assert compact.past_key_values.get_seq_length() == ids.shape[1] + decode_steps + 2
+            assert compact.past_key_values.get_seq_length() == ids.shape[1] + decode_steps + 3
         print(f"{mode} PASS cache_type={type(batched.past_key_values).__name__} perm={perm_list}")
 
 

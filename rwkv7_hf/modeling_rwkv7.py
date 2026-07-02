@@ -53,11 +53,41 @@ except ImportError:  # pragma: no cover - direct remote-file execution fallback
     from configuration_rwkv7 import RWKV7Config
 
 try:
+    from .kernel_policy import current_kernel_policy, env_blocks, env_flag, env_int
+except ImportError:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from kernel_policy import current_kernel_policy, env_blocks, env_flag, env_int
+    except Exception:  # pragma: no cover - older converted model dirs
+        current_kernel_policy = None  # type: ignore[assignment]
+
+        def env_flag(name: str, default: bool) -> bool:
+            raw = os.environ.get(name)
+            if raw is None:
+                return bool(default)
+            return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+        def env_int(name: str, default: int, *, lower: int = 1, upper: int | None = None) -> int:
+            try:
+                value = int(os.environ.get(name, str(default)).strip())
+            except Exception:
+                value = default
+            value = max(lower, value)
+            return min(value, upper) if upper is not None else value
+
+        def env_blocks(names: tuple[str, str, str], defaults: tuple[int, int, int], uppers: tuple[int, int, int]) -> tuple[int, int, int]:
+            return (
+                env_int(names[0], defaults[0], lower=1, upper=uppers[0]),
+                env_int(names[1], defaults[1], lower=1, upper=uppers[1]),
+                env_int(names[2], defaults[2], lower=1, upper=uppers[2]),
+            )
+
+try:
     from .native_jit import block_step as _native_jit_block_step
     from .native_jit import block_step_batched as _native_jit_block_step_batched
     from .native_jit import extract as _native_jit_extract
     from .native_jit import _block_ip as _native_graph_block_ip
     from .native_jit import _block_ip_batched as _native_graph_block_ip_batched
+    from .native_jit import prefill as _native_jit_prefill
 except Exception:  # pragma: no cover - optional remote-code fast path
     try:
         from native_jit import block_step as _native_jit_block_step
@@ -65,20 +95,33 @@ except Exception:  # pragma: no cover - optional remote-code fast path
         from native_jit import extract as _native_jit_extract
         from native_jit import _block_ip as _native_graph_block_ip
         from native_jit import _block_ip_batched as _native_graph_block_ip_batched
+        from native_jit import prefill as _native_jit_prefill
     except Exception:
         _native_jit_block_step = None
         _native_jit_block_step_batched = None
         _native_jit_extract = None
         _native_graph_block_ip = None
         _native_graph_block_ip_batched = None
+        _native_jit_prefill = None
 
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
 
 
+def _rwkv7_kernel_policy():
+    if current_kernel_policy is None:
+        return None
+    try:
+        return current_kernel_policy(torch_module=torch)
+    except Exception:
+        return None
+
+
 def _fast_cache_enabled() -> bool:
     """Runtime switch used by benchmarks to compare cache implementations."""
-    return os.environ.get("RWKV7_FAST_CACHE", "1") not in _FALSE_VALUES
+    policy = _rwkv7_kernel_policy()
+    default = bool(getattr(policy, "fast_cache", True))
+    return env_flag("RWKV7_FAST_CACHE", default)
 
 
 def _fast_token_layout() -> str:
@@ -111,8 +154,20 @@ def _fast_forward_quant_enabled() -> bool:
     return os.environ.get("RWKV7_FAST_FORWARD_QUANT", "1") not in _FALSE_VALUES
 
 
+def _fast_prefill_enabled() -> bool:
+    """Allow normal HF forward/generate to use the native prefill path."""
+
+    return env_flag("RWKV7_FAST_PREFILL", False)
+
+
 def _bnb_skip_policy(policy: str | None = None) -> str:
-    policy = (policy or os.environ.get("RWKV7_BNB_SKIP_POLICY", "memory")).strip().lower()
+    if policy is None:
+        env_policy = os.environ.get("RWKV7_BNB_SKIP_POLICY")
+        if env_policy is None:
+            kernel_policy = _rwkv7_kernel_policy()
+            env_policy = str(getattr(kernel_policy, "bnb_skip_policy", "memory"))
+        policy = env_policy
+    policy = str(policy).strip().lower()
     if policy in {"", "default", "small_lora", "memory", "minimal"}:
         return "memory"
     if policy in {"decode", "decode_hot", "hot", "hybrid"}:
@@ -140,54 +195,63 @@ def _native_graph_cache_size() -> int:
 def _native_graph_fused_recurrent_requested() -> bool:
     """Whether native-graph runners should capture the experimental recurrent kernel."""
 
-    return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT", "0") not in _FALSE_VALUES
+    policy = _rwkv7_kernel_policy()
+    default = bool(getattr(policy, "fused_recurrent", False))
+    return env_flag("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT", default)
 
 
 def _native_graph_fused_recurrent_output_requested() -> bool:
     """Whether native-graph runners should capture recurrent+output-prep fusion."""
 
-    return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", "1") not in _FALSE_VALUES
+    policy = _rwkv7_kernel_policy()
+    default = bool(getattr(policy, "fused_recurrent_output", True))
+    return env_flag("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", default)
 
 
 def _native_graph_fused_output_requested() -> bool:
     """Whether native-graph runners should capture the experimental output-prep kernel."""
 
-    return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT", "1") not in _FALSE_VALUES
+    policy = _rwkv7_kernel_policy()
+    default = bool(getattr(policy, "fused_output", True))
+    return env_flag("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT", default)
 
 
 def _native_graph_fused_output_project_requested() -> bool:
     """Whether native-graph runners should capture fused output-prep plus ``o_proj``."""
 
-    return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT", "0") not in _FALSE_VALUES
+    policy = _rwkv7_kernel_policy()
+    default = bool(getattr(policy, "fused_output_project", False))
+    return env_flag("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT", default)
 
 
 def _native_graph_fused_output_project_block_m() -> int:
-    raw = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT_BLOCK_M", "16").strip()
-    try:
-        block_m = int(raw)
-    except ValueError:
-        block_m = 16
-    if block_m <= 0:
-        return 16
-    return min(block_m, 128)
+    policy = _rwkv7_kernel_policy()
+    default = int(getattr(policy, "output_project_block_m", 16))
+    return env_int("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT_BLOCK_M", default, lower=1, upper=128)
 
 
 def _native_graph_fused_projection_requested() -> bool:
     """Whether native-graph runners should capture the experimental projection kernel."""
 
-    return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_PROJECTION", "0") not in _FALSE_VALUES
+    policy = _rwkv7_kernel_policy()
+    default = bool(getattr(policy, "fused_projection", False))
+    return env_flag("RWKV7_NATIVE_GRAPH_FUSED_PROJECTION", default)
 
 
 def _native_graph_fused_wag_lora_requested() -> bool:
     """Whether native-graph runners should capture the W/A/G LoRA fusion probe."""
 
-    return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA", "0") not in _FALSE_VALUES
+    policy = _rwkv7_kernel_policy()
+    default = bool(getattr(policy, "fused_wag_lora", False))
+    return env_flag("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA", default)
 
 
 def _native_graph_fused_wavg_lora_requested() -> bool:
     """Whether native-graph runners should capture the W/A/G/V-gate LoRA probe."""
 
-    return os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA", "0") not in _FALSE_VALUES
+    policy = _rwkv7_kernel_policy()
+    default = bool(getattr(policy, "fused_wavg_lora", False))
+    return env_flag("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA", default)
 
 
 def _native_graph_rkv_policy() -> str:
@@ -224,34 +288,33 @@ def _native_graph_vkwr_rkv_thresholds() -> tuple[int, int]:
 
 
 def _native_graph_fused_wag_lora_blocks() -> tuple[int, int, int]:
-    vals = []
-    for name, default, upper in (
-        ("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_M", 64, 128),
-        ("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_R", 64, 128),
-        ("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_K", 64, 256),
-    ):
-        raw = os.environ.get(name, str(default)).strip()
-        try:
-            val = int(raw)
-        except ValueError:
-            val = default
-        vals.append(min(max(1, val), upper))
-    return vals[0], vals[1], vals[2]
+    policy = _rwkv7_kernel_policy()
+    defaults = tuple(getattr(policy, "wag_lora_blocks", (64, 64, 64)))
+    return env_blocks(
+        ("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_M", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_R", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_K"),
+        defaults,  # type: ignore[arg-type]
+        (128, 128, 256),
+    )
 
 
 def _native_graph_fused_wavg_lora_blocks() -> tuple[int, int, int]:
+    policy = _rwkv7_kernel_policy()
+    defaults = tuple(getattr(policy, "wavg_lora_blocks", (64, 64, 64)))
     vals = []
     for name, fallback, default, upper in (
-        ("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_M", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_M", 64, 128),
-        ("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_R", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_R", 64, 128),
-        ("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_K", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_K", 64, 256),
+        ("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_M", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_M", defaults[0], 128),
+        ("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_R", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_R", defaults[1], 128),
+        ("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_K", "RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA_BLOCK_K", defaults[2], 256),
     ):
-        raw = os.environ.get(name, os.environ.get(fallback, str(default))).strip()
-        try:
-            val = int(raw)
-        except ValueError:
-            val = default
-        vals.append(min(max(1, val), upper))
+        raw = os.environ.get(name, os.environ.get(fallback))
+        if raw is None:
+            vals.append(env_int(name, int(default), lower=1, upper=upper))
+        else:
+            try:
+                val = int(str(raw).strip())
+            except ValueError:
+                val = int(default)
+            vals.append(min(max(1, val), upper))
     return vals[0], vals[1], vals[2]
 
 
@@ -411,6 +474,10 @@ class _RWKV7NativeGraphTokenRunner:
         self.norm_w = base.norm.weight
         self.norm_b = base.norm.bias
         self._bound_cache_ref: weakref.ReferenceType[RWKV7StateCache] | None = None
+        self.copy_from_cache_calls = 0
+        self.copy_from_cache_fast_skips = 0
+        self.bind_cache_calls = 0
+        self.bind_cache_fast_skips = 0
         self.graph = None
         self._capture()
 
@@ -451,6 +518,10 @@ class _RWKV7NativeGraphTokenRunner:
         dst.copy_(src.contiguous())
 
     def copy_from_cache(self, past_key_values: "RWKV7StateCache") -> None:
+        self.copy_from_cache_calls += 1
+        if past_key_values._native_graph_bound_to(self):
+            self.copy_from_cache_fast_skips += 1
+            return
         self._detach_bound_cache_if_different(past_key_values)
         for li, p in enumerate(self.packs):
             layer_idx = int(p[0])
@@ -480,9 +551,15 @@ class _RWKV7NativeGraphTokenRunner:
                 state["conv_state"] = state["conv_state"].clone()
             if isinstance(state.get("ffn_state"), torch.Tensor) and _same_tensor_view(state["ffn_state"], ffn_view):
                 state["ffn_state"] = state["ffn_state"].clone()
+        if hasattr(previous, "_invalidate_native_graph_binding"):
+            previous._invalidate_native_graph_binding()
         self._bound_cache_ref = None
 
     def bind_cache(self, past_key_values: "RWKV7StateCache") -> None:
+        self.bind_cache_calls += 1
+        if past_key_values._native_graph_bound_to(self):
+            self.bind_cache_fast_skips += 1
+            return
         for li, p in enumerate(self.packs):
             layer_idx = int(p[0])
             state = past_key_values._ensure_layer(layer_idx)
@@ -492,6 +569,20 @@ class _RWKV7NativeGraphTokenRunner:
             state["ffn_state"] = self.xpf[li].unsqueeze(0)
             state["attn_state"] = None
         self._bound_cache_ref = weakref.ref(past_key_values)
+        past_key_values._bind_native_graph_runner(self)
+
+    def copy_stats(self) -> dict[str, int]:
+        return {
+            "copy_from_cache_calls": int(self.copy_from_cache_calls),
+            "copy_from_cache_fast_skips": int(self.copy_from_cache_fast_skips),
+            "bind_cache_calls": int(self.bind_cache_calls),
+            "bind_cache_fast_skips": int(self.bind_cache_fast_skips),
+        }
+
+    def reorder_batch_inplace(self, indices: torch.LongTensor) -> bool:
+        if int(indices.numel()) != 1:
+            return False
+        return True
 
     def replay(self, token: torch.LongTensor, past_key_values: "RWKV7StateCache") -> torch.Tensor:
         self.copy_from_cache(past_key_values)
@@ -532,6 +623,10 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         self.norm_w = base.norm.weight
         self.norm_b = base.norm.bias
         self._bound_cache_ref: weakref.ReferenceType[RWKV7StateCache] | None = None
+        self.copy_from_cache_calls = 0
+        self.copy_from_cache_fast_skips = 0
+        self.bind_cache_calls = 0
+        self.bind_cache_fast_skips = 0
         self.graph = None
         self._capture()
 
@@ -570,6 +665,10 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         dst.copy_(src.contiguous())
 
     def copy_from_cache(self, past_key_values: "RWKV7StateCache") -> None:
+        self.copy_from_cache_calls += 1
+        if past_key_values._native_graph_bound_to(self):
+            self.copy_from_cache_fast_skips += 1
+            return
         self._detach_bound_cache_if_different(past_key_values)
         for li, p in enumerate(self.packs):
             layer_idx = int(p[0])
@@ -599,9 +698,15 @@ class _RWKV7NativeGraphBatchedTokenRunner:
                 state["conv_state"] = state["conv_state"].clone()
             if isinstance(state.get("ffn_state"), torch.Tensor) and _same_tensor_view(state["ffn_state"], ffn_view):
                 state["ffn_state"] = state["ffn_state"].clone()
+        if hasattr(previous, "_invalidate_native_graph_binding"):
+            previous._invalidate_native_graph_binding()
         self._bound_cache_ref = None
 
     def bind_cache(self, past_key_values: "RWKV7StateCache") -> None:
+        self.bind_cache_calls += 1
+        if past_key_values._native_graph_bound_to(self):
+            self.bind_cache_fast_skips += 1
+            return
         for li, p in enumerate(self.packs):
             layer_idx = int(p[0])
             state = past_key_values._ensure_layer(layer_idx)
@@ -611,6 +716,28 @@ class _RWKV7NativeGraphBatchedTokenRunner:
             state["ffn_state"] = self.xpf[li]
             state["attn_state"] = None
         self._bound_cache_ref = weakref.ref(past_key_values)
+        past_key_values._bind_native_graph_runner(self)
+
+    def copy_stats(self) -> dict[str, int]:
+        return {
+            "copy_from_cache_calls": int(self.copy_from_cache_calls),
+            "copy_from_cache_fast_skips": int(self.copy_from_cache_fast_skips),
+            "bind_cache_calls": int(self.bind_cache_calls),
+            "bind_cache_fast_skips": int(self.bind_cache_fast_skips),
+        }
+
+    def reorder_batch_inplace(self, indices: torch.LongTensor) -> bool:
+        """Reorder captured state buffers without breaking cache binding."""
+
+        if int(indices.numel()) != self.batch_size:
+            return False
+        idx = indices.to(device=self.device, dtype=torch.long)
+        for li in range(len(self.packs)):
+            self.state[li].copy_(self.state[li].index_select(0, idx).contiguous())
+            self.xpa[li].copy_(self.xpa[li].index_select(0, idx).contiguous())
+            self.xpf[li].copy_(self.xpf[li].index_select(0, idx).contiguous())
+        self.v_first.copy_(self.v_first.index_select(0, idx).contiguous())
+        return True
 
     def replay(self, token: torch.LongTensor, past_key_values: "RWKV7StateCache") -> torch.Tensor:
         if int(token.numel()) != self.batch_size:
@@ -647,10 +774,46 @@ class RWKV7StateCache(_FLACache):
             "detaches": 0,
             "device_moves": 0,
             "select_batch_calls": 0,
+            "native_graph_bound_selects": 0,
             "batch_select_calls": 0,
             "reorder_calls": 0,
             "resets": 0,
         }
+        self._rwkv7_cache_version = 0
+        self._rwkv7_native_graph_bound_runner_id: int | None = None
+        self._rwkv7_native_graph_bound_version: int | None = None
+        self._rwkv7_native_graph_bound_runner_ref: weakref.ReferenceType | None = None
+
+    def _invalidate_native_graph_binding(self) -> None:
+        """Mark native-graph runner bindings stale after cache mutations."""
+
+        self._rwkv7_cache_version += 1
+        self._rwkv7_native_graph_bound_runner_id = None
+        self._rwkv7_native_graph_bound_version = None
+        self._rwkv7_native_graph_bound_runner_ref = None
+
+    def _bind_native_graph_runner(self, runner: object) -> None:
+        self._rwkv7_native_graph_bound_runner_id = id(runner)
+        self._rwkv7_native_graph_bound_version = int(self._rwkv7_cache_version)
+        try:
+            self._rwkv7_native_graph_bound_runner_ref = weakref.ref(runner)
+        except TypeError:
+            self._rwkv7_native_graph_bound_runner_ref = None
+
+    def _native_graph_bound_to(self, runner: object) -> bool:
+        return (
+            self._rwkv7_native_graph_bound_runner_id == id(runner)
+            and self._rwkv7_native_graph_bound_version == int(self._rwkv7_cache_version)
+        )
+
+    def _native_graph_bound_runner(self) -> object | None:
+        if self._rwkv7_native_graph_bound_version != int(self._rwkv7_cache_version):
+            return None
+        ref = self._rwkv7_native_graph_bound_runner_ref
+        runner = ref() if ref is not None else None
+        if runner is not None and self._rwkv7_native_graph_bound_runner_id == id(runner):
+            return runner
+        return None
 
     def _ensure_layer(self, layer_idx: int) -> dict[str, Any]:
         empty = {"recurrent_state": None, "attn_state": None, "conv_state": None, "ffn_state": None}
@@ -681,6 +844,7 @@ class RWKV7StateCache(_FLACache):
         offset: int | None = 1,
         cache_kwargs: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        self._invalidate_native_graph_binding()
         if cache_kwargs is None:
             cache_kwargs = {}
         offset = 1 if offset is None else int(offset)
@@ -760,6 +924,7 @@ class RWKV7StateCache(_FLACache):
         return int(self.get_seq_length(layer_idx)) + query_len, 0
 
     def reset(self) -> None:
+        self._invalidate_native_graph_binding()
         self.states.clear()
         self._seen_tokens = 0
         self._rwkv7_cache_metrics["resets"] += 1
@@ -772,11 +937,13 @@ class RWKV7StateCache(_FLACache):
         out.states = [_clone_cache_value(state) for state in self.states]
         out._rwkv7_cache_metrics = dict(self._rwkv7_cache_metrics)
         out._rwkv7_cache_metrics["clones"] += 1
+        out._rwkv7_cache_version = int(self._rwkv7_cache_version)
         return out
 
     def detach(self, *, inplace: bool = True) -> "RWKV7StateCache":
         """Detach cache tensors from autograd graphs for inference serving."""
         target = self if inplace else self.clone()
+        target._invalidate_native_graph_binding()
         target.states = [_detach_cache_value(state) for state in target.states]
         target._rwkv7_cache_metrics["detaches"] += 1
         return target
@@ -797,6 +964,7 @@ class RWKV7StateCache(_FLACache):
         keep their dtype; floating tensors are cast only when `dtype` is set.
         """
         target = self if inplace else self.clone()
+        target._invalidate_native_graph_binding()
         target.states = [
             _to_cache_value(state, device=device, dtype=dtype, non_blocking=non_blocking, copy=copy)
             for state in target.states
@@ -815,6 +983,19 @@ class RWKV7StateCache(_FLACache):
         active requests are assumed to have advanced together.
         """
         target = self if inplace else self.clone()
+        runner = target._native_graph_bound_runner() if inplace else None
+        if runner is not None and hasattr(runner, "reorder_batch_inplace"):
+            try:
+                same_size = target.get_batch_size() == int(indices.numel())
+            except Exception:
+                same_size = False
+            if same_size and runner.reorder_batch_inplace(indices):
+                target._rwkv7_cache_metrics["select_batch_calls"] += 1
+                target._rwkv7_cache_metrics["native_graph_bound_selects"] = (
+                    int(target._rwkv7_cache_metrics.get("native_graph_bound_selects", 0)) + 1
+                )
+                return target
+        target._invalidate_native_graph_binding()
         target.states = [_move_first_dim(state, indices) for state in target.states]
         target._rwkv7_cache_metrics["select_batch_calls"] += 1
         return target
@@ -1018,6 +1199,10 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         """Return the effective backend used by the previous fast-token call."""
         return getattr(self, "_rwkv7_last_fast_token_backend", None)
 
+    def rwkv7_last_fast_prefill_backend(self) -> str | None:
+        """Return the effective backend used by the previous fast-prefill call."""
+        return getattr(self, "_rwkv7_last_fast_prefill_backend", None)
+
     def rwkv7_native_graph_cache_batch_sizes(self) -> list[int]:
         """Return active batch sizes currently retained in the graph-runner LRU."""
         cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
@@ -1042,6 +1227,53 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             }
         )
         return stats
+
+    def rwkv7_native_graph_runner_copy_stats(self) -> dict[str, Any]:
+        """Return aggregate native-graph runner cache-copy/binding counters.
+
+        The LRU-level counters above answer whether a captured runner was
+        reused for the active batch size.  These runner-level counters answer
+        the more serving-specific question: once the runner is reused, did the
+        RWKV7StateCache stay bound to the captured buffers or did dynamic
+        batching/reorder force a state copy back into the graph inputs?
+        """
+
+        cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
+        runners: list[tuple[Any, Any]] = []
+        if isinstance(cache, tuple) and len(cache) == 2:
+            runners = [cache]
+        elif isinstance(cache, OrderedDict):
+            runners = list(cache.items())
+
+        totals = {
+            "copy_from_cache_calls": 0,
+            "copy_from_cache_fast_skips": 0,
+            "bind_cache_calls": 0,
+            "bind_cache_fast_skips": 0,
+        }
+        rows: list[dict[str, Any]] = []
+        for key, runner in runners:
+            stats = runner.copy_stats() if hasattr(runner, "copy_stats") else {}
+            batch_size = int(key[-1]) if isinstance(key, tuple) and key else getattr(runner, "batch_size", None)
+            row = {"batch_size": int(batch_size) if batch_size is not None else None}
+            for name in totals:
+                value = int(stats.get(name, 0))
+                row[name] = value
+                totals[name] += value
+            rows.append(row)
+
+        copy_calls = int(totals["copy_from_cache_calls"])
+        bind_calls = int(totals["bind_cache_calls"])
+        totals["copy_from_cache_fast_skip_rate"] = (
+            float(totals["copy_from_cache_fast_skips"]) / float(copy_calls) if copy_calls else None
+        )
+        totals["bind_cache_fast_skip_rate"] = (
+            float(totals["bind_cache_fast_skips"]) / float(bind_calls) if bind_calls else None
+        )
+        return {
+            "totals": totals,
+            "runners": sorted(rows, key=lambda row: (-1 if row["batch_size"] is None else int(row["batch_size"]))),
+        }
 
     def rwkv7_reset_native_graph_cache_stats(self) -> dict[str, Any]:
         """Reset and return native-graph cache reuse counters."""
@@ -1075,6 +1307,8 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             if batch_size <= 0:
                 raise ValueError("rwkv7_warmup_fast_token batch sizes must be positive")
             chosen = self._rwkv7_resolve_fast_token_backend(batch_size) if requested == "auto" else requested
+            if chosen in {"native_graph", "native_jit"} and self._rwkv7_uses_external_quantization():
+                chosen = "fla"
             if chosen == "native_graph":
                 if not self._rwkv7_can_use_native_backend("native_graph", batch_size):
                     if requested != "auto":
@@ -1174,6 +1408,14 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     def _rwkv7_resolve_fast_token_backend(self, batch_size: int) -> str:
         requested = _fast_token_backend()
         if requested != "auto":
+            if self._rwkv7_uses_external_quantization() and requested in {"native_graph", "native_jit"}:
+                # Bitsandbytes/HF quantization wraps Linear weights in packed
+                # int8/int4 modules. The native paths extract and replay dense
+                # floating-point projection weights, so a global serving env
+                # such as RWKV7_FAST_TOKEN_BACKEND=native_graph must not make
+                # quantized generate crash. Keep quantized fast-forward on the
+                # FLA tensor path until a real native quant kernel exists.
+                return "fla"
             return requested
         if self._rwkv7_can_use_native_backend("native_graph", batch_size):
             return "native_graph"
@@ -1344,6 +1586,125 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return 1
         self._rwkv7_native_graph_runner_cache = OrderedDict()
         return 0
+
+    def _rwkv7_native_prefill_initial_state(
+        self,
+        past_key_values: RWKV7StateCache,
+        packs,
+        batch_size: int,
+    ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
+        weight = self.model.embeddings.weight
+        device = weight.device
+        dtype = weight.dtype
+        state_native: list[torch.Tensor] = []
+        xpa: list[torch.Tensor] = []
+        xpf: list[torch.Tensor] = []
+        for p in packs:
+            layer_idx = int(p[0])
+            H = int(p[1])
+            N = int(p[2])
+            hidden = H * N
+            layer_state = past_key_values._ensure_layer(layer_idx)
+
+            recurrent = layer_state.get("recurrent_state")
+            if isinstance(recurrent, torch.Tensor):
+                if recurrent.dim() == 3:
+                    recurrent = recurrent.unsqueeze(0)
+                recurrent = recurrent.to(device=device, dtype=torch.float32).transpose(-1, -2).contiguous()
+                if int(recurrent.shape[0]) != int(batch_size):
+                    raise ValueError(f"native prefill recurrent_state batch mismatch on layer {layer_idx}: {tuple(recurrent.shape)}")
+            else:
+                recurrent = torch.zeros(batch_size, H, N, N, device=device, dtype=torch.float32)
+            state_native.append(recurrent)
+
+            conv = layer_state.get("conv_state")
+            if isinstance(conv, torch.Tensor):
+                if conv.dim() == 1:
+                    conv = conv.unsqueeze(0)
+                conv = conv.to(device=device, dtype=dtype).contiguous()
+                if int(conv.shape[0]) != int(batch_size):
+                    raise ValueError(f"native prefill conv_state batch mismatch on layer {layer_idx}: {tuple(conv.shape)}")
+            else:
+                conv = torch.zeros(batch_size, hidden, device=device, dtype=dtype)
+            xpa.append(conv.reshape(batch_size, hidden))
+
+            ffn = layer_state.get("ffn_state")
+            if isinstance(ffn, torch.Tensor):
+                if ffn.dim() == 1:
+                    ffn = ffn.unsqueeze(0)
+                ffn = ffn.to(device=device, dtype=dtype).contiguous()
+                if int(ffn.shape[0]) != int(batch_size):
+                    raise ValueError(f"native prefill ffn_state batch mismatch on layer {layer_idx}: {tuple(ffn.shape)}")
+            else:
+                ffn = torch.zeros(batch_size, hidden, device=device, dtype=dtype)
+            xpf.append(ffn.reshape(batch_size, hidden))
+        return state_native, xpa, xpf
+
+    @torch.no_grad()
+    def rwkv7_prefill_native(
+        self,
+        input_ids: torch.LongTensor,
+        past_key_values: RWKV7StateCache | _FLACache | tuple | list | None = None,
+        logits_to_keep: int = 1,
+        return_dict: bool | None = True,
+    ):
+        """Inference-only native prefill path with optional fused recurrent scan.
+
+        This is the serving bridge for the native fused prefill work: it runs
+        prompt prefill layer-wise through `native_jit.prefill`, writes the final
+        recurrent/shift state back into `RWKV7StateCache`, and leaves the cache
+        layout compatible with the existing native-graph one-token decode path.
+        Set `RWKV7_NATIVE_PREFILL_FUSED_SCAN=1` to force the Triton scan
+        prototype; otherwise the method uses the same math with the safe torch
+        recurrent loop.
+        """
+
+        if self.training:
+            raise RuntimeError("rwkv7_prefill_native is inference-only; call model.eval() first")
+        if _native_jit_prefill is None:
+            raise RuntimeError("native prefill backend is unavailable; copy native_jit.py into the model repo")
+        self._rwkv7_last_fast_prefill_backend = "native_prefill"
+        if input_ids.dim() == 1:
+            input_ids = input_ids.unsqueeze(0)
+        if input_ids.dim() != 2:
+            raise ValueError("rwkv7_prefill_native expects input_ids shaped [batch, seq]")
+        if int(input_ids.shape[1]) <= 0:
+            raise ValueError("rwkv7_prefill_native requires at least one token")
+        batch_size = int(input_ids.shape[0])
+        if self._rwkv7_uses_external_quantization():
+            raise RuntimeError("native prefill currently requires dense floating-point weights")
+        packs = self._rwkv7_native_jit_packs()
+        source_seen = None
+        if past_key_values is not None and hasattr(past_key_values, "get_seq_length"):
+            try:
+                source_seen = int(past_key_values.get_seq_length())
+            except Exception:
+                source_seen = None
+        past = RWKV7StateCache.from_legacy_cache(past_key_values)
+        initial_seen = source_seen if source_seen is not None else (int(past.get_seq_length()) if hasattr(past, "get_seq_length") else 0)
+        state_native, xpa, xpf = self._rwkv7_native_prefill_initial_state(past, packs, batch_size)
+        logits, state_native, xpa, xpf = _native_jit_prefill(
+            self,
+            input_ids.to(self.model.embeddings.weight.device),
+            packs,
+            state=state_native,
+            xpa=xpa,
+            xpf=xpf,
+            logits_to_keep=logits_to_keep,
+        )
+
+        past._invalidate_native_graph_binding()
+        for li, p in enumerate(packs):
+            layer_idx = int(p[0])
+            layer_state = past._ensure_layer(layer_idx)
+            layer_state["recurrent_state"] = state_native[li].transpose(-1, -2).contiguous()
+            layer_state["conv_state"] = xpa[li].contiguous()
+            layer_state["ffn_state"] = xpf[li].contiguous()
+            layer_state["attn_state"] = None
+        past._seen_tokens = initial_seen + int(input_ids.shape[1])
+        if not return_dict:
+            return logits, past
+        return CausalLMOutputWithPast(logits=logits, past_key_values=past)
 
     @torch.no_grad()
     def rwkv7_prefill_chunks(
@@ -1931,6 +2292,53 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return input_ids
         return None
 
+    def _rwkv7_forward_prefill_candidate(self, args: tuple[Any, ...], kwargs: dict[str, Any], effective_use_cache: bool):
+        if not effective_use_cache or not _fast_prefill_enabled():
+            return None
+        if self.training or torch.is_grad_enabled():
+            return None
+        if _native_jit_prefill is None:
+            return None
+        if self._rwkv7_has_multi_cuda_device_map() or self._rwkv7_uses_external_quantization():
+            return None
+        if kwargs.get("inputs_embeds") is not None or kwargs.get("labels") is not None:
+            return None
+        if kwargs.get("output_attentions") is True or kwargs.get("output_hidden_states") is True:
+            return None
+        input_ids = kwargs.get("input_ids")
+        if input_ids is None and args:
+            input_ids = args[0]
+        if not isinstance(input_ids, torch.Tensor):
+            return None
+        if input_ids.dim() == 1:
+            input_ids = input_ids.unsqueeze(0)
+        if input_ids.dim() != 2 or int(input_ids.shape[0]) <= 0 or int(input_ids.shape[1]) <= 1:
+            return None
+
+        attention_mask = kwargs.get("attention_mask")
+        if attention_mask is not None:
+            if not isinstance(attention_mask, torch.Tensor) or tuple(attention_mask.shape[:2]) != tuple(input_ids.shape[:2]):
+                return None
+            try:
+                if not bool(torch.all(attention_mask != 0).detach().cpu().item()):
+                    return None
+            except Exception:
+                return None
+
+        past_key_values = kwargs.get("past_key_values")
+        if past_key_values is None:
+            return input_ids
+        try:
+            if hasattr(past_key_values, "get_seq_length") and int(past_key_values.get_seq_length()) == 0:
+                return input_ids
+            if isinstance(past_key_values, RWKV7StateCache) and len(past_key_values) == 0:
+                return input_ids
+            if isinstance(past_key_values, (tuple, list)) and len(past_key_values) == 0:
+                return input_ids
+        except Exception:
+            return None
+        return None
+
     def forward(self, *args, **kwargs):
         # Normalize `[batch]` single-token input into `[batch, 1]` before the
         # generic FLA path. The native fast-token shortcut accepts either shape,
@@ -1947,6 +2355,17 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             past_key_values = kwargs.get("past_key_values")
             if not isinstance(past_key_values, RWKV7StateCache):
                 kwargs["past_key_values"] = RWKV7StateCache.from_legacy_cache(past_key_values)
+        prefill_input_ids = self._rwkv7_forward_prefill_candidate(args, kwargs, effective_use_cache)
+        if prefill_input_ids is not None:
+            return_dict = kwargs.get("return_dict")
+            if return_dict is None:
+                return_dict = getattr(self.config, "use_return_dict", True)
+            return self.rwkv7_prefill_native(
+                prefill_input_ids,
+                past_key_values=kwargs.get("past_key_values"),
+                logits_to_keep=kwargs.get("logits_to_keep", 1),
+                return_dict=return_dict,
+            )
         fast_input_ids = self._rwkv7_forward_fast_candidate(args, kwargs, effective_use_cache)
         if fast_input_ids is not None:
             return_dict = kwargs.get("return_dict")
