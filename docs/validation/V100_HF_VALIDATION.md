@@ -21,6 +21,7 @@ Notes:
 - 2.9B FLA-backed SFT on a V100 hit the current FLA/Triton path limits (`fp32` autotune OOM; `fp16` produced finite loss but no LoRA update). The native/no-FLA SFT/DPO/GRPO path passed and is the correct HF compatibility route for this size on V100.
 - 7.2B native Trainer resume in fp16 hit V100 32GB memory limits. Manual PEFT LoRA training still works, and quantized inference works.
 - DeepSpeed ZeRO3 base training smoke passes, but ZeRO3 checkpoint-resume still needs a dedicated fix for DeepSpeed parameter-partition re-entry around fresh model construction. ZeRO2 resume is now validated through 2.9B.
+- 13.3B is inference-only on a single V100-32GB: official alignment + decode speed are validated (see [13.3B inference validation](#133b-inference-validation)). Full training needs >32GB / multi-card / offload.
 
 ## New V100 passes from this run
 
@@ -61,6 +62,34 @@ The resume harness saves a full DeepSpeed checkpoint, then removes RNG state fil
 | 7.2B | 7380.0 MB / 7649.6 MB | 4204.4 MB / 4737.7 MB | pass/pass |
 
 All quantized rows exercised HF `quantization_config`, native model load, forward, decode with cache, and `generate(max_new_tokens=2)` on V100.
+
+### 13.3B inference validation
+
+`rwkv7-g1g-13.3b-hf` (hidden=4096, 61 layers, head_dim=64, vocab=65536, `use_l2warp=true`) is inference-validated on a single Tesla V100-PCIE-32GB in fp16. Training is out of scope on one 32GB card — weights alone are ~25.6GB fp16.
+
+Run against a clean checkout at `7cb1049` (#51); the server could not reach GitHub for the latest `main` during the run, and converted-weight correctness is independent of adapter commit. Env: `torch 2.5.1+cu124`, `fla 0.5.2`, `attn_mode=fused_recurrent`, `fuse_norm=false`.
+
+Official alignment — `tests/test_official_alignment.py`, HF fp16 on GPU vs official `rwkv` `cpu fp32`:
+
+| metric | result | target |
+|---|---|---|
+| cosine (5-prompt mean) | 0.9999976 | >=0.99 |
+| top5_match | 1.0 | >=0.9 |
+| argmax_match | 1.0 | — |
+| max_abs_diff (worst prompt) | 0.0813 | <=0.15 |
+| greedy window | 16/16 matched, 0 mismatch | 16 |
+
+`use_l2warp=true` is baked into the converted weights by the converter (the adapter has no runtime l2warp code); HF output still matches the official model bit-for-bit (cos~1.0), confirming the conversion is correct.
+
+Decode speed — `bench/bench_speed.py`, prompt=128, decode=64, fp16, single V100-32GB, `rwkv7_forward_token` + fast cache:
+
+| fast-token backend | prefill tok/s | decode tok/s | decode ms/tok | peak VRAM |
+|---|---:|---:|---:|---:|
+| fla (fused_recurrent) | 893 | 11.6 | ~86 | — |
+| native_jit | 907 | 18.4 | ~54 | — |
+| native_graph | 893 | 17.1 | 58.4 | 25594 MB |
+
+`native_jit` is the best 13.3B decode backend (1.58x over fla). `native_graph` fits the 32GB card (25.6GB peak) but is slightly slower than `native_jit` at this scale: 13.3B decode is memory-bound (~54 ms/tok reading ~27GB of weights), so the graph launch-overhead win that dominates small launch-bound models inverts here under graph-replay overhead. This is why the larger-model smoke defaults 13.3B to `native_jit`.
 
 ## Harness changes made for V100-scale validation
 

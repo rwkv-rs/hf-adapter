@@ -1328,6 +1328,18 @@ Checkpoint provenance is recorded in the rows: 0.4B SHA256
 `26540868485` bytes. The regression gate now requires all five smoke rows so
 the converter cannot silently regress to 0.1B-only shape assumptions.
 
+### 13.3B official alignment + decode speed
+
+Beyond the 2-token smoke above, 13.3B is official-alignment and decode-speed
+validated on a single V100-32GB (full detail in
+[`docs/validation/V100_HF_VALIDATION.md#133b-inference-validation`](docs/validation/V100_HF_VALIDATION.md#133b-inference-validation)).
+HF fp16 vs official `rwkv` `cpu fp32`: cosine `0.9999976`, top5 `1.0`,
+argmax `1.0`, max_abs `0.0813`, greedy `16/16` matched. Decode (prompt=128,
+decode=64, fp16): fla `11.6`, `native_jit` `18.4` (1.58x fla), `native_graph`
+`17.1` tok/s at `25594 MB` peak. `native_jit` is the recommended 13.3B backend;
+`native_graph` fits 32GB but is slower than `native_jit` because 13.3B decode is
+memory-bound and graph-replay overhead inverts the usual small-model graph win.
+
 ## Quantized inference coverage
 
 `tests/test_quantized_inference.py` checks that the adapter loads and generates
@@ -1593,8 +1605,10 @@ V100 rows show:
 | 7.2B converted-model smoke | hidden=4096, layers=32, generated=2, backend=native_graph | load + generate | PASS |
 | 13.3B converted-model smoke | hidden=4096, layers=61, generated=2, backend=native_jit | load + generate | PASS |
 
-The current next-focus list is: run 13.3B official-alignment/speed sweeps,
-validate newer GPUs, and solve the generic bnb quantized decode speed gap. The bsz=1 HF fast-token target is exceeded by `native_graph`;
+The current next-focus list is: 13.3B official-alignment/speed sweeps are now
+done (cos~1.0, `native_jit` 18.4 tok/s on V100; see
+[13.3B official alignment + decode speed](#133b-official-alignment--decode-speed));
+remaining: validate newer GPUs, and solve the generic bnb quantized decode speed gap. The bsz=1 HF fast-token target is exceeded by `native_graph`;
 bsz=2/4/8 native-graph serving now reaches `434.3` / `852.6` / `1539.1`
 aggregate tok/s, and preflight warmup confirms graph runners are captured for
 bsz=1/2/4/8 before the first serving request. The native-graph overhead rows
