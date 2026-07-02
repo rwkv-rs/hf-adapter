@@ -303,6 +303,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             bool(r.get("fused_scan_requested")),
             r.get("scan_block_m"),
             r.get("scan_num_warps"),
+            r.get("scan_num_stages"),
             bool(r.get("fine_attention_breakdown")),
             bool(r.get("layer_breakdown")),
             bool(r.get("prefill_fused_scan_output_effective")),
@@ -327,6 +328,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             bool(r.get("fused_scan_requested")),
             r.get("scan_block_m"),
             r.get("scan_num_warps"),
+            r.get("scan_num_stages"),
             bool(r.get("fine_attention_breakdown")),
             bool(r.get("prefill_fused_scan_output_effective")),
             bool(r.get("prefill_fused_clampw_scan_effective")),
@@ -1197,6 +1199,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     bool(r.get("fused_scan_requested")),
                     r.get("scan_block_m"),
                     r.get("scan_num_warps"),
+                    r.get("scan_num_stages"),
                     bool(r.get("prefill_fused_scan_output_effective")),
                     bool(r.get("prefill_fused_clampw_scan_effective")),
                     bool(r.get("prefill_fused_shift_mix_effective")),
@@ -1250,6 +1253,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     and r.get("prompt_tokens") == row.get("prompt_tokens")
                     and r.get("scan_block_m") == row.get("scan_block_m")
                     and r.get("scan_num_warps") == row.get("scan_num_warps")
+                    and r.get("scan_num_stages") == row.get("scan_num_stages")
                     and bool(r.get("prefill_fused_state_prep_effective")) == bool(row.get("prefill_fused_state_prep_effective"))
                     and bool(r.get("prefill_fused_shift_mix_effective")) == bool(row.get("prefill_fused_shift_mix_effective"))
                     and bool(r.get("prefill_fused_output_effective")) == bool(row.get("prefill_fused_output_effective"))
@@ -1292,6 +1296,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     if r.get("batch_size") == row.get("batch_size")
                     and r.get("prompt_tokens") == row.get("prompt_tokens")
                     and r.get("scan_block_m") == row.get("scan_block_m")
+                    and r.get("scan_num_stages") == row.get("scan_num_stages")
                     and bool(r.get("prefill_fused_state_prep_effective")) == bool(row.get("prefill_fused_state_prep_effective"))
                     and bool(r.get("prefill_fused_clampw_scan_effective")) == bool(row.get("prefill_fused_clampw_scan_effective"))
                     and not bool(r.get("prefill_fused_scan_output_effective"))
@@ -1318,6 +1323,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     and r.get("prompt_tokens") == row.get("prompt_tokens")
                     and r.get("scan_block_m") == row.get("scan_block_m")
                     and r.get("scan_num_warps") == row.get("scan_num_warps")
+                    and r.get("scan_num_stages") == row.get("scan_num_stages")
                     and bool(r.get("prefill_fused_scan_output_effective")) == bool(row.get("prefill_fused_scan_output_effective"))
                     and bool(r.get("prefill_fused_clampw_scan_effective")) == bool(row.get("prefill_fused_clampw_scan_effective"))
                     and bool(r.get("prefill_fused_state_prep_effective")) == bool(row.get("prefill_fused_state_prep_effective"))
@@ -1353,7 +1359,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     candidates = [r for r in warp_rows if (r.get("batch_size"), r.get("prompt_tokens")) == key]
                     best = max(candidates, key=lambda r: float(r.get("native_prefill_tokps_total") or 0.0))
                     best_warp_by_case.append(
-                        f"bsz={key[0]} tok={key[1]} warps={best.get('scan_num_warps')} tokps={best.get('native_prefill_tokps_total')}"
+                        f"bsz={key[0]} tok={key[1]} warps={best.get('scan_num_warps')} stages={best.get('scan_num_stages')} tokps={best.get('native_prefill_tokps_total')}"
                     )
                 focus.append(
                     "native prefill scan num_warps sweep present; best explicit rows "
@@ -2130,11 +2136,11 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         ],
         "chunked_prefill": [compact(r, ["_lineno", "prefill_mode", "batch_size", "prompt_tokens", "chunk_size", "prefill_tokps_total", "speed_ratio_vs_full", "peak_vram_mb", "peak_vram_ratio_vs_full", "max_abs_diff", "decode_max_abs_diff", "seq_length_match"]) for r in chunked_latest],
         "native_prefill_scan": [
-            compact(r, ["_lineno", "status", "dtype", "device", "code_source", "native_jit_module", "effective_model_path", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "scan_num_warps", "prefill_fused_scan_output_requested", "prefill_fused_scan_output_effective", "prefill_fused_clampw_scan_requested", "prefill_fused_clampw_scan_effective", "prefill_dplr_scan_requested", "prefill_dplr_scan_effective", "prefill_dplr_chunk_size", "prefill_fused_shift_mix_requested", "prefill_fused_shift_mix_effective", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_state_scan_requested", "prefill_fused_state_scan_effective", "prefill_fused_output_requested", "prefill_fused_output_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "fast_token_backend_after_native_prefill", "hf_prefill_ms", "native_prefill_ms", "native_vs_hf_speedup", "hf_prefill_tokps_total", "native_prefill_tokps_total", "max_abs_diff", "min_cosine", "greedy_match", "decode_after_prefill_max_abs_diff", "decode_after_prefill_greedy_match", "peak_vram_mb"])
+            compact(r, ["_lineno", "status", "dtype", "device", "code_source", "native_jit_module", "effective_model_path", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "scan_num_warps", "scan_num_stages", "prefill_fused_scan_output_requested", "prefill_fused_scan_output_effective", "prefill_fused_clampw_scan_requested", "prefill_fused_clampw_scan_effective", "prefill_dplr_scan_requested", "prefill_dplr_scan_effective", "prefill_dplr_chunk_size", "prefill_fused_shift_mix_requested", "prefill_fused_shift_mix_effective", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_state_scan_requested", "prefill_fused_state_scan_effective", "prefill_fused_output_requested", "prefill_fused_output_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "fast_token_backend_after_native_prefill", "hf_prefill_ms", "native_prefill_ms", "native_vs_hf_speedup", "hf_prefill_tokps_total", "native_prefill_tokps_total", "max_abs_diff", "min_cosine", "greedy_match", "decode_after_prefill_max_abs_diff", "decode_after_prefill_greedy_match", "peak_vram_mb"])
             for r in native_prefill_scan
         ],
         "native_prefill_breakdown": [
-            compact(r, ["_lineno", "status", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "scan_num_warps", "fine_attention_breakdown", "layer_breakdown", "prefill_fused_scan_output_requested", "prefill_fused_scan_output_effective", "prefill_fused_clampw_scan_requested", "prefill_fused_clampw_scan_effective", "prefill_dplr_scan_requested", "prefill_dplr_scan_effective", "prefill_dplr_chunk_size", "prefill_fused_shift_mix_requested", "prefill_fused_shift_mix_effective", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_state_scan_requested", "prefill_fused_state_scan_effective", "prefill_fused_output_requested", "prefill_fused_output_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "profiled_total_gpu_ms", "component_sum_ms", "profiled_tokps_total", "component_ms", "component_share", "top_components", "layer_total_ms", "top_layers_by_total", "layer_top_components", "max_abs_diff_vs_native_prefill", "greedy_match_vs_native_prefill", "peak_vram_mb"])
+            compact(r, ["_lineno", "status", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "scan_num_warps", "scan_num_stages", "fine_attention_breakdown", "layer_breakdown", "prefill_fused_scan_output_requested", "prefill_fused_scan_output_effective", "prefill_fused_clampw_scan_requested", "prefill_fused_clampw_scan_effective", "prefill_dplr_scan_requested", "prefill_dplr_scan_effective", "prefill_dplr_chunk_size", "prefill_fused_shift_mix_requested", "prefill_fused_shift_mix_effective", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_state_scan_requested", "prefill_fused_state_scan_effective", "prefill_fused_output_requested", "prefill_fused_output_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "profiled_total_gpu_ms", "component_sum_ms", "profiled_tokps_total", "component_ms", "component_share", "top_components", "layer_total_ms", "top_layers_by_total", "layer_top_components", "max_abs_diff_vs_native_prefill", "greedy_match_vs_native_prefill", "peak_vram_mb"])
             for r in native_prefill_breakdown
         ],
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "hf_forward_fixed", "hf_forward_greedy", "hf_forward_auto_fixed", "hf_forward_auto_greedy", "hf_forward_auto_backend", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),

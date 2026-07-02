@@ -1420,6 +1420,7 @@ def fused_recurrent_scan_state_prep(
     block_n: int = 64,
     block_m: int | None = None,
     num_warps: int = 8,
+    num_stages: int = 3,
     force_fallback: bool = False,
 ):
     """Fuse native-prefill state prep with the recurrent scan.
@@ -1450,6 +1451,9 @@ def fused_recurrent_scan_state_prep(
         raise ValueError(f"block_m must be in [1, head_dim={N}]; got {block_m}")
     if int(num_warps) not in {1, 2, 4, 8}:
         raise ValueError(f"num_warps must be one of 1, 2, 4, or 8; got {num_warps}")
+    num_stages = int(num_stages)
+    if num_stages < 1 or num_stages > 8:
+        raise ValueError(f"num_stages must be in [1, 8]; got {num_stages}")
     r4, flat = _as_bthn(r, H, N, name="r")
     w4, _ = _as_bthn(w_raw, H, N, name="w_raw")
     k4, _ = _as_bthn(k_raw, H, N, name="k_raw")
@@ -1540,6 +1544,7 @@ def fused_recurrent_scan_state_prep(
             BLOCK_M=int(block_m),
             BLOCK_N=int(block_n),
             num_warps=int(num_warps),
+            num_stages=num_stages,
         )
     else:
         _recurrent_scan_state_prep_kernel[(B * H,)](
@@ -1563,6 +1568,7 @@ def fused_recurrent_scan_state_prep(
             HAS_V_GATE=bool(has_v_gate),
             BLOCK_N=int(block_n),
             num_warps=int(num_warps),
+            num_stages=num_stages,
         )
     if flat:
         return out.reshape(B, T, H * N), final_state, k_out.reshape(B, T, H * N), v_out.reshape(B, T, H * N)

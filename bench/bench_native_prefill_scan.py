@@ -140,6 +140,19 @@ def scan_num_warps(model, block_m: int | None) -> int | None:
         return None
 
 
+def scan_num_stages(model) -> int | None:
+    raw = os.environ.get("RWKV7_NATIVE_PREFILL_SCAN_NUM_STAGES")
+    if raw is not None:
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+    try:
+        return model_native_jit_module(model)._native_prefill_scan_num_stages()
+    except Exception:
+        return None
+
+
 def cosine_min(a: torch.Tensor, b: torch.Tensor) -> float:
     return float(F.cosine_similarity(a.float(), b.float(), dim=-1).min().detach().cpu())
 
@@ -204,6 +217,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "fused_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN", "0") not in {"0", "false", "False", "no", "off"},
         "scan_block_m": scan_m,
         "scan_num_warps": scan_num_warps(model, scan_m),
+        "scan_num_stages": scan_num_stages(model),
         "prefill_fused_scan_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_scan_output_effective": nj._native_prefill_fused_scan_output_enabled(),
         "prefill_fused_state_scan_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},

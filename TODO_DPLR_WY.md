@@ -141,14 +141,39 @@ Branch: `wangyue/native-prefill-060-albatross`
     current full-head `fused_recurrent_scan_state_prep` remains the only viable
     4090 route and is still the dominant cost; older/shallow fusion routes are
     worse and should stay disabled.
+- [x] Wire and test `fused_recurrent_scan_state_prep` `num_stages` scheduling:
+  - added `RWKV7_NATIVE_PREFILL_SCAN_NUM_STAGES` plumbing through native
+    prefill, profiler telemetry, analyzer keys, and
+    `fused_recurrent_scan_state_prep(...)`.
+  - sweep result file:
+    `bench/results_4090_prefill060_state_scan_num_stages_20260702_205036.jsonl`
+  - confirmation result file:
+    `bench/results_4090_prefill060_state_scan_num_stages_confirm_20260702_205315.jsonl`
+  - remote row sources:
+    - `/tmp/native_4090_060_state_scan_num_stages_20260702_205036.jsonl`
+    - `/tmp/native_4090_060_state_scan_num_stages_confirm_20260702_205315.jsonl`
+  - sweep rows:
+    - `num_stages=2`: pass, `26,399.4 tok/s`, `19.3943 ms`, about `0.5062x`
+    - `num_stages=5`: pass, `26,310.0 tok/s`, about `0.5045x`
+    - `num_stages=4`: pass, `25,953.4 tok/s`, about `0.4977x`
+    - `num_stages=6`: pass, `25,704.0 tok/s`, about `0.4929x`
+    - `num_stages=3`: pass, `25,443.6 tok/s`, about `0.4879x`
+    - `num_stages=1`: pass, `24,887.6 tok/s`, about `0.4772x`
+  - confirmation rows:
+    - `num_stages=3` (current default): pass, `26,745.8 tok/s`,
+      `19.1432 ms`, about `0.5129x`
+    - `num_stages=2`: pass, `25,988.3 tok/s`, `19.7011 ms`, about `0.4984x`
+  - conclusion: expose the knob for future card/shape tuning, but keep the
+    default at `3` on 4090 because confirmation did not support promoting
+    stage `2`.
 - [ ] Next corrected-harness experiment:
-  - target `fused_recurrent_scan_state_prep` internal cost directly; plausible
-    next micro-variants are scan kernel `num_stages`/scheduling, reduced KV
-    writeback traffic, or moving more projection/LoRA prep into a single
-    pre-scan boundary without adding a standalone launch.
+  - target `fused_recurrent_scan_state_prep` internal cost directly beyond
+    shallow scheduling knobs; next candidates are reduced K/V writeback traffic
+    or a deeper pre-scan projection/LoRA boundary that does not add a
+    standalone launch.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
-  `26,395.7 tok/s` (`~0.5062x`), still about `18.5%` short of the stretch.
+  `26,745.8 tok/s` (`~0.5129x`), still about `17.0%` short of the stretch.
 
 ## Temporary TODO: next 4090 push
 

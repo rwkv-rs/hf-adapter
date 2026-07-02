@@ -285,6 +285,12 @@ def _native_prefill_scan_num_warps(head_dim: int, block_m: int | None = None) ->
     return value
 
 
+def _native_prefill_scan_num_stages() -> int:
+    """Triton pipeline stage count for optional native prefill scan kernels."""
+
+    return env_int("RWKV7_NATIVE_PREFILL_SCAN_NUM_STAGES", 3, lower=1, upper=8)
+
+
 def _native_prefill_fused_shift_mix_enabled() -> bool:
     """Runtime switch for prefill attention shift-mix fusion telemetry."""
 
@@ -1224,6 +1230,7 @@ def prefill(
         elif use_fused_state_scan:
             state_scan_block_m = _native_prefill_scan_block_m(N)
             state_scan_num_warps = _native_prefill_scan_num_warps(N, state_scan_block_m)
+            state_scan_num_stages = _native_prefill_scan_num_stages()
             if layer_idx == 0:
                 out, new_state, k, v = fused_recurrent_scan_state_prep(
                     r.view(B, T, H, N),
@@ -1237,6 +1244,7 @@ def prefill(
                     block_n=N,
                     block_m=state_scan_block_m,
                     num_warps=state_scan_num_warps,
+                    num_stages=state_scan_num_stages,
                 )
                 v_first_seq = v.reshape(B, T, hidden)
             else:
@@ -1254,6 +1262,7 @@ def prefill(
                     block_n=N,
                     block_m=state_scan_block_m,
                     num_warps=state_scan_num_warps,
+                    num_stages=state_scan_num_stages,
                 )
             out = out.reshape(B, T, hidden)
             k = k.reshape(B, T, hidden)
