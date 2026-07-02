@@ -48,6 +48,8 @@ try:  # pragma: no cover - optional Triton fast path on CUDA hosts
         fused_recurrent_output_prepare_available,
         fused_recurrent_scan,
         fused_recurrent_scan_available,
+        fused_recurrent_scan_clampw,
+        fused_recurrent_scan_clampw_available,
         fused_recurrent_scan_output_prepare,
         fused_recurrent_scan_output_prepare_available,
         fused_recurrent_update,
@@ -60,6 +62,8 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
             fused_recurrent_output_prepare_available,
             fused_recurrent_scan,
             fused_recurrent_scan_available,
+            fused_recurrent_scan_clampw,
+            fused_recurrent_scan_clampw_available,
             fused_recurrent_scan_output_prepare,
             fused_recurrent_scan_output_prepare_available,
             fused_recurrent_update,
@@ -70,6 +74,8 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_recurrent_output_prepare_available = None  # type: ignore[assignment]
         fused_recurrent_scan = None  # type: ignore[assignment]
         fused_recurrent_scan_available = None  # type: ignore[assignment]
+        fused_recurrent_scan_clampw = None  # type: ignore[assignment]
+        fused_recurrent_scan_clampw_available = None  # type: ignore[assignment]
         fused_recurrent_scan_output_prepare = None  # type: ignore[assignment]
         fused_recurrent_scan_output_prepare_available = None  # type: ignore[assignment]
         fused_recurrent_update = None  # type: ignore[assignment]
@@ -129,11 +135,23 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_wavg_lora_available = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
-    from .fused_prefill import fused_prefill_state_prep, fused_prefill_state_prep_available
+    from .fused_prefill import (
+        fused_prefill_kv_kk_prep,
+        fused_prefill_kv_kk_prep_available,
+        fused_prefill_state_prep,
+        fused_prefill_state_prep_available,
+    )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
-        from fused_prefill import fused_prefill_state_prep, fused_prefill_state_prep_available
+        from fused_prefill import (
+            fused_prefill_kv_kk_prep,
+            fused_prefill_kv_kk_prep_available,
+            fused_prefill_state_prep,
+            fused_prefill_state_prep_available,
+        )
     except Exception:
+        fused_prefill_kv_kk_prep = None  # type: ignore[assignment]
+        fused_prefill_kv_kk_prep_available = None  # type: ignore[assignment]
         fused_prefill_state_prep = None  # type: ignore[assignment]
         fused_prefill_state_prep_available = None  # type: ignore[assignment]
 
@@ -183,6 +201,21 @@ def _native_prefill_fused_scan_enabled() -> bool:
         return False
     try:
         return bool(fused_recurrent_scan_available())
+    except Exception:
+        return False
+
+
+def _native_prefill_fused_clampw_scan_enabled() -> bool:
+    """Runtime switch for raw-W clampw native prefill recurrent scan."""
+
+    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_CLAMPW_SCAN", False):
+        return False
+    if not _native_prefill_fused_scan_enabled():
+        return False
+    if fused_recurrent_scan_clampw is None or fused_recurrent_scan_clampw_available is None:
+        return False
+    try:
+        return bool(fused_recurrent_scan_clampw_available())
     except Exception:
         return False
 
@@ -754,8 +787,29 @@ def _native_prefill_scan(
     T: int,
     H: int,
     N: int,
+    *,
+    w_is_raw: bool = False,
 ):
     """Run the recurrent prefill scan, using Triton only when explicitly enabled."""
+
+    if w_is_raw and _native_prefill_fused_clampw_scan_enabled():
+        scan_block_m = _native_prefill_scan_block_m(N)
+        out, new_state = fused_recurrent_scan_clampw(
+            r.view(B, T, H, N),
+            w.view(B, T, H, N),
+            k.view(B, T, H, N),
+            v.view(B, T, H, N),
+            kk.view(B, T, H, N),
+            a.view(B, T, H, N),
+            state,
+            block_n=N,
+            block_m=scan_block_m,
+            num_warps=_native_prefill_scan_num_warps(N, scan_block_m),
+        )
+        return out.reshape(B, T, H * N), new_state
+
+    if w_is_raw:
+        w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
 
     if _native_prefill_fused_scan_enabled():
         scan_block_m = _native_prefill_scan_block_m(N)
@@ -898,8 +952,36 @@ def prefill(
             g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
             if layer_idx != 0:
                 v_gate = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
+        use_fused_scan_output = _native_prefill_fused_scan_output_enabled()
+        use_clampw_scan = _native_prefill_fused_clampw_scan_enabled() and not use_fused_scan_output
+        if use_clampw_scan and _native_prefill_fused_state_prep_enabled() and fused_prefill_kv_kk_prep is None:
+            use_clampw_scan = False
         if _native_prefill_fused_state_prep_enabled():
-            if layer_idx == 0:
+            if use_clampw_scan:
+                if layer_idx == 0:
+                    k, v, kk = fused_prefill_kv_kk_prep(
+                        k,
+                        v,
+                        a,
+                        k_k,
+                        k_a,
+                        num_heads=H,
+                        head_dim=N,
+                    )
+                    v_first_seq = v
+                else:
+                    k, v, kk = fused_prefill_kv_kk_prep(
+                        k,
+                        v,
+                        a,
+                        k_k,
+                        k_a,
+                        v_first=v_first_seq,
+                        v_gate=v_gate,
+                        num_heads=H,
+                        head_dim=N,
+                    )
+            elif layer_idx == 0:
                 w, k, v, kk = fused_prefill_state_prep(
                     w,
                     k,
@@ -933,9 +1015,9 @@ def prefill(
                 v_first_seq = v
             else:
                 v = v + (v_first_seq - v) * v_gate
-            w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
+            if not use_clampw_scan:
+                w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
 
-        use_fused_scan_output = _native_prefill_fused_scan_output_enabled()
         if use_fused_scan_output:
             out, new_state = fused_recurrent_scan_output_prepare(
                 r.view(B, T, H, N),
@@ -954,7 +1036,7 @@ def prefill(
             )
             out = out.reshape(B, T, hidden)
         else:
-            out, new_state = _native_prefill_scan(r, w, k, v, kk, a, state[layer_idx], B, T, H, N)
+            out, new_state = _native_prefill_scan(r, w, k, v, kk, a, state[layer_idx], B, T, H, N, w_is_raw=use_clampw_scan)
         if use_fused_scan_output:
             pass
         elif _native_prefill_fused_output_enabled():
