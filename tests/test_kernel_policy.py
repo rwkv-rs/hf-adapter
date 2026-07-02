@@ -3,7 +3,14 @@ from __future__ import annotations
 
 import os
 
-from rwkv7_hf.kernel_policy import classify_gpu, env_flag, env_int, policy_for_profile
+from rwkv7_hf.kernel_policy import (
+    ADAPTATION_RULES,
+    adaptation_rule_for_profile,
+    classify_gpu,
+    env_flag,
+    env_int,
+    policy_for_profile,
+)
 
 
 def test_gpu_family_classification() -> None:
@@ -42,6 +49,32 @@ def test_policy_defaults_are_conservative() -> None:
     assert not blackwell.fused_projection
 
 
+def test_every_policy_family_has_an_adaptation_rule() -> None:
+    cases = [
+        classify_gpu(None, None),
+        classify_gpu("old cuda", (5, 2)),
+        classify_gpu("Tesla P100", (6, 0)),
+        classify_gpu("Tesla V100-PCIE-32GB", (7, 0)),
+        classify_gpu("NVIDIA T4", (7, 5)),
+        classify_gpu("NVIDIA A100-SXM4-80GB", (8, 0)),
+        classify_gpu("NVIDIA GeForce RTX 4090", (8, 9)),
+        classify_gpu("NVIDIA H100 SXM", (9, 0)),
+        classify_gpu("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0)),
+        classify_gpu("AMD Instinct MI300X", None, is_hip=True),
+    ]
+    for profile in cases:
+        rule = adaptation_rule_for_profile(profile)
+        assert rule.family == profile.family, (profile, rule)
+        assert rule.required_functional
+        assert rule.required_benchmarks
+        assert rule.promotion_rule
+
+    # The registry is intentionally broader than the live test cases because it
+    # also documents unvalidated fallback families.
+    for family in ("unknown_cuda", "legacy_cuda", "pascal", "volta", "ada", "blackwell", "amd_hip"):
+        assert family in ADAPTATION_RULES
+
+
 def test_env_helpers_override_defaults() -> None:
     old = os.environ.get("RWKV7_TEST_FLAG")
     old_int = os.environ.get("RWKV7_TEST_INT")
@@ -74,6 +107,7 @@ def test_env_helpers_override_defaults() -> None:
 def main() -> int:
     test_gpu_family_classification()
     test_policy_defaults_are_conservative()
+    test_every_policy_family_has_an_adaptation_rule()
     test_env_helpers_override_defaults()
     print("PASS")
     return 0
