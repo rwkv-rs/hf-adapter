@@ -375,10 +375,32 @@ def profiled_native_prefill(
         else:
             w, k, v, a, g, kk, v_first_seq = profiler.measure("attn_lora_state_prep", lora_and_state_prep)
 
-        out, new_state = profiler.measure(
-            "recurrent_scan",
-            lambda: native_jit._native_prefill_scan(r, w, k, v, kk, a, state[layer_idx], B, T, H, N),
-        )
+        use_fused_scan_output = native_jit._native_prefill_fused_scan_output_enabled()
+        if use_fused_scan_output:
+            out, new_state = profiler.measure(
+                "recurrent_scan_output_prep_fused",
+                lambda: native_jit.fused_recurrent_scan_output_prepare(
+                    r.view(B, T, H, N),
+                    w.view(B, T, H, N),
+                    k.view(B, T, H, N),
+                    v.view(B, T, H, N),
+                    kk.view(B, T, H, N),
+                    a.view(B, T, H, N),
+                    state[layer_idx],
+                    g.view(B, T, H, N),
+                    r_k,
+                    gn_w,
+                    gn_b,
+                    eps=eps,
+                    block_n=N,
+                ),
+            )
+            out = out.reshape(B, T, hidden)
+        else:
+            out, new_state = profiler.measure(
+                "recurrent_scan",
+                lambda: native_jit._native_prefill_scan(r, w, k, v, kk, a, state[layer_idx], B, T, H, N),
+            )
 
         def output_prep_project():
             if native_jit._native_prefill_fused_output_enabled():
@@ -432,7 +454,10 @@ def profiled_native_prefill(
             projected = profiler.measure("attn_output_o_proj", lambda: F.linear(prepared, Ow))
             return residual + projected
 
-        if fine_attention_breakdown:
+        if use_fused_scan_output:
+            projected = profiler.measure("attn_output_o_proj", lambda: F.linear(out, Ow))
+            x = residual + projected
+        elif fine_attention_breakdown:
             x = fine_output_prep_project()
         else:
             x = profiler.measure("attn_output_project", output_prep_project)
@@ -520,6 +545,8 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "scan_block_m": scan_m,
         "scan_num_warps": scan_num_warps(model, scan_m),
         "fine_attention_breakdown": bool(args.fine_attn),
+        "prefill_fused_scan_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
+        "prefill_fused_scan_output_effective": native_jit._native_prefill_fused_scan_output_enabled(),
         "prefill_fused_shift_mix_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_shift_mix_effective": native_jit._native_prefill_fused_shift_mix_enabled(),
         "prefill_fused_state_prep_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", "0").lower() not in {"0", "false", "no", "off"},
