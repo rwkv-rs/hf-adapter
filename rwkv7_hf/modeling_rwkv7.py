@@ -87,6 +87,7 @@ try:
     from .native_jit import extract as _native_jit_extract
     from .native_jit import _block_ip as _native_graph_block_ip
     from .native_jit import _block_ip_batched as _native_graph_block_ip_batched
+    from .native_jit import prefill as _native_jit_prefill
 except Exception:  # pragma: no cover - optional remote-code fast path
     try:
         from native_jit import block_step as _native_jit_block_step
@@ -94,12 +95,14 @@ except Exception:  # pragma: no cover - optional remote-code fast path
         from native_jit import extract as _native_jit_extract
         from native_jit import _block_ip as _native_graph_block_ip
         from native_jit import _block_ip_batched as _native_graph_block_ip_batched
+        from native_jit import prefill as _native_jit_prefill
     except Exception:
         _native_jit_block_step = None
         _native_jit_block_step_batched = None
         _native_jit_extract = None
         _native_graph_block_ip = None
         _native_graph_block_ip_batched = None
+        _native_jit_prefill = None
 
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
@@ -1490,6 +1493,124 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return 1
         self._rwkv7_native_graph_runner_cache = OrderedDict()
         return 0
+
+    def _rwkv7_native_prefill_initial_state(
+        self,
+        past_key_values: RWKV7StateCache,
+        packs,
+        batch_size: int,
+    ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
+        weight = self.model.embeddings.weight
+        device = weight.device
+        dtype = weight.dtype
+        state_native: list[torch.Tensor] = []
+        xpa: list[torch.Tensor] = []
+        xpf: list[torch.Tensor] = []
+        for p in packs:
+            layer_idx = int(p[0])
+            H = int(p[1])
+            N = int(p[2])
+            hidden = H * N
+            layer_state = past_key_values._ensure_layer(layer_idx)
+
+            recurrent = layer_state.get("recurrent_state")
+            if isinstance(recurrent, torch.Tensor):
+                if recurrent.dim() == 3:
+                    recurrent = recurrent.unsqueeze(0)
+                recurrent = recurrent.to(device=device, dtype=torch.float32).transpose(-1, -2).contiguous()
+                if int(recurrent.shape[0]) != int(batch_size):
+                    raise ValueError(f"native prefill recurrent_state batch mismatch on layer {layer_idx}: {tuple(recurrent.shape)}")
+            else:
+                recurrent = torch.zeros(batch_size, H, N, N, device=device, dtype=torch.float32)
+            state_native.append(recurrent)
+
+            conv = layer_state.get("conv_state")
+            if isinstance(conv, torch.Tensor):
+                if conv.dim() == 1:
+                    conv = conv.unsqueeze(0)
+                conv = conv.to(device=device, dtype=dtype).contiguous()
+                if int(conv.shape[0]) != int(batch_size):
+                    raise ValueError(f"native prefill conv_state batch mismatch on layer {layer_idx}: {tuple(conv.shape)}")
+            else:
+                conv = torch.zeros(batch_size, hidden, device=device, dtype=dtype)
+            xpa.append(conv.reshape(batch_size, hidden))
+
+            ffn = layer_state.get("ffn_state")
+            if isinstance(ffn, torch.Tensor):
+                if ffn.dim() == 1:
+                    ffn = ffn.unsqueeze(0)
+                ffn = ffn.to(device=device, dtype=dtype).contiguous()
+                if int(ffn.shape[0]) != int(batch_size):
+                    raise ValueError(f"native prefill ffn_state batch mismatch on layer {layer_idx}: {tuple(ffn.shape)}")
+            else:
+                ffn = torch.zeros(batch_size, hidden, device=device, dtype=dtype)
+            xpf.append(ffn.reshape(batch_size, hidden))
+        return state_native, xpa, xpf
+
+    @torch.no_grad()
+    def rwkv7_prefill_native(
+        self,
+        input_ids: torch.LongTensor,
+        past_key_values: RWKV7StateCache | _FLACache | tuple | list | None = None,
+        logits_to_keep: int = 1,
+        return_dict: bool | None = True,
+    ):
+        """Inference-only native prefill path with optional fused recurrent scan.
+
+        This is the serving bridge for the native fused prefill work: it runs
+        prompt prefill layer-wise through `native_jit.prefill`, writes the final
+        recurrent/shift state back into `RWKV7StateCache`, and leaves the cache
+        layout compatible with the existing native-graph one-token decode path.
+        Set `RWKV7_NATIVE_PREFILL_FUSED_SCAN=1` to force the Triton scan
+        prototype; otherwise the method uses the same math with the safe torch
+        recurrent loop.
+        """
+
+        if self.training:
+            raise RuntimeError("rwkv7_prefill_native is inference-only; call model.eval() first")
+        if _native_jit_prefill is None:
+            raise RuntimeError("native prefill backend is unavailable; copy native_jit.py into the model repo")
+        if input_ids.dim() == 1:
+            input_ids = input_ids.unsqueeze(0)
+        if input_ids.dim() != 2:
+            raise ValueError("rwkv7_prefill_native expects input_ids shaped [batch, seq]")
+        if int(input_ids.shape[1]) <= 0:
+            raise ValueError("rwkv7_prefill_native requires at least one token")
+        batch_size = int(input_ids.shape[0])
+        if self._rwkv7_uses_external_quantization():
+            raise RuntimeError("native prefill currently requires dense floating-point weights")
+        packs = self._rwkv7_native_jit_packs()
+        source_seen = None
+        if past_key_values is not None and hasattr(past_key_values, "get_seq_length"):
+            try:
+                source_seen = int(past_key_values.get_seq_length())
+            except Exception:
+                source_seen = None
+        past = RWKV7StateCache.from_legacy_cache(past_key_values)
+        initial_seen = source_seen if source_seen is not None else (int(past.get_seq_length()) if hasattr(past, "get_seq_length") else 0)
+        state_native, xpa, xpf = self._rwkv7_native_prefill_initial_state(past, packs, batch_size)
+        logits, state_native, xpa, xpf = _native_jit_prefill(
+            self,
+            input_ids.to(self.model.embeddings.weight.device),
+            packs,
+            state=state_native,
+            xpa=xpa,
+            xpf=xpf,
+            logits_to_keep=logits_to_keep,
+        )
+
+        past._invalidate_native_graph_binding()
+        for li, p in enumerate(packs):
+            layer_idx = int(p[0])
+            layer_state = past._ensure_layer(layer_idx)
+            layer_state["recurrent_state"] = state_native[li].transpose(-1, -2).contiguous()
+            layer_state["conv_state"] = xpa[li].contiguous()
+            layer_state["ffn_state"] = xpf[li].contiguous()
+            layer_state["attn_state"] = None
+        past._seen_tokens = initial_seen + int(input_ids.shape[1])
+        if not return_dict:
+            return logits, past
+        return CausalLMOutputWithPast(logits=logits, past_key_values=past)
 
     @torch.no_grad()
     def rwkv7_prefill_chunks(
