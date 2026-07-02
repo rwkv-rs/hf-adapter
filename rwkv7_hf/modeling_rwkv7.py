@@ -154,6 +154,12 @@ def _fast_forward_quant_enabled() -> bool:
     return os.environ.get("RWKV7_FAST_FORWARD_QUANT", "1") not in _FALSE_VALUES
 
 
+def _fast_prefill_enabled() -> bool:
+    """Allow normal HF forward/generate to use the native prefill path."""
+
+    return env_flag("RWKV7_FAST_PREFILL", False)
+
+
 def _bnb_skip_policy(policy: str | None = None) -> str:
     if policy is None:
         env_policy = os.environ.get("RWKV7_BNB_SKIP_POLICY")
@@ -1128,6 +1134,10 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         """Return the effective backend used by the previous fast-token call."""
         return getattr(self, "_rwkv7_last_fast_token_backend", None)
 
+    def rwkv7_last_fast_prefill_backend(self) -> str | None:
+        """Return the effective backend used by the previous fast-prefill call."""
+        return getattr(self, "_rwkv7_last_fast_prefill_backend", None)
+
     def rwkv7_native_graph_cache_batch_sizes(self) -> list[int]:
         """Return active batch sizes currently retained in the graph-runner LRU."""
         cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
@@ -1570,6 +1580,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             raise RuntimeError("rwkv7_prefill_native is inference-only; call model.eval() first")
         if _native_jit_prefill is None:
             raise RuntimeError("native prefill backend is unavailable; copy native_jit.py into the model repo")
+        self._rwkv7_last_fast_prefill_backend = "native_prefill"
         if input_ids.dim() == 1:
             input_ids = input_ids.unsqueeze(0)
         if input_ids.dim() != 2:
@@ -2198,6 +2209,53 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return input_ids
         return None
 
+    def _rwkv7_forward_prefill_candidate(self, args: tuple[Any, ...], kwargs: dict[str, Any], effective_use_cache: bool):
+        if not effective_use_cache or not _fast_prefill_enabled():
+            return None
+        if self.training or torch.is_grad_enabled():
+            return None
+        if _native_jit_prefill is None:
+            return None
+        if self._rwkv7_has_multi_cuda_device_map() or self._rwkv7_uses_external_quantization():
+            return None
+        if kwargs.get("inputs_embeds") is not None or kwargs.get("labels") is not None:
+            return None
+        if kwargs.get("output_attentions") is True or kwargs.get("output_hidden_states") is True:
+            return None
+        input_ids = kwargs.get("input_ids")
+        if input_ids is None and args:
+            input_ids = args[0]
+        if not isinstance(input_ids, torch.Tensor):
+            return None
+        if input_ids.dim() == 1:
+            input_ids = input_ids.unsqueeze(0)
+        if input_ids.dim() != 2 or int(input_ids.shape[0]) <= 0 or int(input_ids.shape[1]) <= 1:
+            return None
+
+        attention_mask = kwargs.get("attention_mask")
+        if attention_mask is not None:
+            if not isinstance(attention_mask, torch.Tensor) or tuple(attention_mask.shape[:2]) != tuple(input_ids.shape[:2]):
+                return None
+            try:
+                if not bool(torch.all(attention_mask != 0).detach().cpu().item()):
+                    return None
+            except Exception:
+                return None
+
+        past_key_values = kwargs.get("past_key_values")
+        if past_key_values is None:
+            return input_ids
+        try:
+            if hasattr(past_key_values, "get_seq_length") and int(past_key_values.get_seq_length()) == 0:
+                return input_ids
+            if isinstance(past_key_values, RWKV7StateCache) and len(past_key_values) == 0:
+                return input_ids
+            if isinstance(past_key_values, (tuple, list)) and len(past_key_values) == 0:
+                return input_ids
+        except Exception:
+            return None
+        return None
+
     def forward(self, *args, **kwargs):
         # Normalize `[batch]` single-token input into `[batch, 1]` before the
         # generic FLA path. The native fast-token shortcut accepts either shape,
@@ -2214,6 +2272,17 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             past_key_values = kwargs.get("past_key_values")
             if not isinstance(past_key_values, RWKV7StateCache):
                 kwargs["past_key_values"] = RWKV7StateCache.from_legacy_cache(past_key_values)
+        prefill_input_ids = self._rwkv7_forward_prefill_candidate(args, kwargs, effective_use_cache)
+        if prefill_input_ids is not None:
+            return_dict = kwargs.get("return_dict")
+            if return_dict is None:
+                return_dict = getattr(self.config, "use_return_dict", True)
+            return self.rwkv7_prefill_native(
+                prefill_input_ids,
+                past_key_values=kwargs.get("past_key_values"),
+                logits_to_keep=kwargs.get("logits_to_keep", 1),
+                return_dict=return_dict,
+            )
         fast_input_ids = self._rwkv7_forward_fast_candidate(args, kwargs, effective_use_cache)
         if fast_input_ids is not None:
             return_dict = kwargs.get("return_dict")
