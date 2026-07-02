@@ -305,6 +305,11 @@ Run this checklist for every new GPU before marking it as supported:
     `1` warp at bsz=4), but full prefill rows do not beat the best
     state-prep-only row, so do not promote a warp count without exact-card
     end-to-end wins across the claimed bsz set.
+  - `RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX=1` supports prefill-shaped tensors
+    but remains telemetry-only. 4090 isolated shift-mix is slower than torch
+    addcmul, and the full-prefill row only gives a tiny bsz=4 bump while bsz=1
+    stays below the best state-prep-only row. Do not default it outside a
+    larger fused norm/shift/projection/state-prep design.
   - Prefill output-prep fusion (`RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1`) is
     correctness-clean but not defaultable on the current 4090 prompt512 rows:
     it reduces the isolated output-prep bucket yet end-to-end bsz=1/4 stays
