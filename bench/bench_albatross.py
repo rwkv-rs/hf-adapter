@@ -7,8 +7,11 @@ helper keeps the comparison reproducible by turning its standard
 
 ``RESULT B=... T=... iters=... p10_ms=... p50_ms=... p90_ms=... tok_s_p50=...``
 
-lines into the repository's ``bench/results.jsonl`` schema.  It can either run a
-local Albatross checkout or parse a saved log with ``--parse-log``.
+lines into the repository's ``bench/results.jsonl`` schema.  Newer faster4 C++
+builds print compact ``bench B1T1 wkv=... ms=... tok_s=...`` rows; those are
+ingested as the same schema with the single latency copied to p10/p50/p90.  It
+can either run a local Albatross checkout or parse a saved log with
+``--parse-log``.
 """
 from __future__ import annotations
 
@@ -24,13 +27,22 @@ from typing import Any, Iterable
 
 
 DEFAULT_CASES = "1x1,1x2,1x4,1x8,1x16,1x32,1x64,1x128,1x256,2x1,4x1,8x1,16x1,32x1,2x2,4x4,8x8,16x16"
+FLOAT_RE = r"[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?\d+)?"
 RESULT_RE = re.compile(
     r"RESULT\s+B=(?P<batch_size>\d+)\s+T=(?P<tokens_per_sequence>\d+)\s+"
     r"iters=(?P<iters>\d+)\s+"
-    r"p10_ms=(?P<latency_p10_ms>[0-9.]+)\s+"
-    r"p50_ms=(?P<latency_p50_ms>[0-9.]+)\s+"
-    r"p90_ms=(?P<latency_p90_ms>[0-9.]+)\s+"
-    r"tok_s_p50=(?P<tokps_p50>[0-9.]+)"
+    rf"p10_ms=(?P<latency_p10_ms>{FLOAT_RE})\s+"
+    rf"p50_ms=(?P<latency_p50_ms>{FLOAT_RE})\s+"
+    rf"p90_ms=(?P<latency_p90_ms>{FLOAT_RE})\s+"
+    rf"tok_s_p50=(?P<tokps_p50>{FLOAT_RE})"
+)
+FASTER4_BENCH_RE = re.compile(
+    rf"bench\s+B(?P<batch_size>\d+)T(?P<tokens_per_sequence>\d+)\s+"
+    rf"wkv=(?P<wkv>\S+)\s+"
+    rf"ms=(?P<latency_p50_ms>{FLOAT_RE})\s+"
+    rf"tok_s=(?P<tokps_p50>{FLOAT_RE})"
+    rf"(?:\s+gpu_mib=(?P<gpu_mib>{FLOAT_RE}))?"
+    rf"(?:\s+cpu_emb_mib=(?P<cpu_emb_mib>{FLOAT_RE}))?"
 )
 
 
@@ -67,16 +79,23 @@ def parse_result_lines(
     engine_config: str | None = None,
     peak_vram_mb: float | None = None,
     command: list[str] | None = None,
+    fallback_iters: int | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for line in text.splitlines():
         match = RESULT_RE.search(line)
+        row_format = "result"
+        if not match:
+            match = FASTER4_BENCH_RE.search(line)
+            row_format = "faster4_bench"
         if not match:
             continue
         data = match.groupdict()
         batch_size = int(data["batch_size"])
         tokens_per_sequence = int(data["tokens_per_sequence"])
         latency_p50_ms = float(data["latency_p50_ms"])
+        latency_p10_ms = float(data.get("latency_p10_ms") or latency_p50_ms)
+        latency_p90_ms = float(data.get("latency_p90_ms") or latency_p50_ms)
         tokps_p50 = float(data["tokps_p50"])
         row: dict[str, Any] = {
             "axis": "albatross_speed",
@@ -91,14 +110,18 @@ def parse_result_lines(
             "batch_size": batch_size,
             "tokens_per_sequence": tokens_per_sequence,
             "tokens_total": batch_size * tokens_per_sequence,
-            "iters": int(data["iters"]),
-            "latency_p10_ms": float(data["latency_p10_ms"]),
+            "iters": int(data["iters"]) if data.get("iters") is not None else fallback_iters,
+            "latency_p10_ms": latency_p10_ms,
             "latency_p50_ms": latency_p50_ms,
-            "latency_p90_ms": float(data["latency_p90_ms"]),
+            "latency_p90_ms": latency_p90_ms,
             "tokps_p50": tokps_p50,
             "ms_per_token_p50": round(1000.0 / tokps_p50, 6) if tokps_p50 > 0 else None,
             "peak_vram_mb": peak_vram_mb,
             "command": command,
+            "albatross_log_format": row_format,
+            "wkv": data.get("wkv"),
+            "albatross_gpu_mib": float(data["gpu_mib"]) if data.get("gpu_mib") is not None else None,
+            "albatross_cpu_emb_mib": float(data["cpu_emb_mib"]) if data.get("cpu_emb_mib") is not None else None,
             "status": "pass",
         }
         # Keep rows compact when optional fields are unknown.
@@ -204,6 +227,7 @@ def main() -> int:
         engine_config=args.engine_config,
         peak_vram_mb=args.peak_vram_mb,
         command=command,
+        fallback_iters=args.iters,
     )
     if not rows:
         raise SystemExit("no Albatross RESULT rows found")
