@@ -384,16 +384,14 @@ def _flatten(x: Any, hidden: int | None = None, *, name: str):
     if torch is None:
         raise RuntimeError("fused_rkv_wag_projection requires torch")
     if x.dim() == 3:
-        if int(x.shape[1]) != 1:
-            raise ValueError(f"{name} must be [batch, 1, hidden] or [batch, hidden], got {tuple(x.shape)}")
         if hidden is not None and int(x.shape[2]) != hidden:
             raise ValueError(f"{name} hidden mismatch: got {int(x.shape[2])}, expected {hidden}")
-        return x.reshape(int(x.shape[0]), int(x.shape[2])), True
+        return x.reshape(int(x.shape[0]) * int(x.shape[1]), int(x.shape[2])), tuple(x.shape)
     if x.dim() == 2:
         if hidden is not None and int(x.shape[1]) != hidden:
             raise ValueError(f"{name} hidden mismatch: got {int(x.shape[1])}, expected {hidden}")
-        return x, False
-    raise ValueError(f"{name} must be [batch, 1, hidden] or [batch, hidden]")
+        return x, None
+    raise ValueError(f"{name} must be [batch, tokens, hidden] or [batch, hidden]")
 
 
 def _validate_square_weight(w: Any, hidden: int, *, name: str) -> None:
@@ -439,19 +437,19 @@ def fused_rkv_wag_projection(
 ):
     """Compute R/K/V dense projections plus W/A/G LoRA outputs.
 
-    Outputs are returned as ``(r, k, v, w, a, g)`` and preserve the input rank
-    (`[batch, hidden]` or `[batch, 1, hidden]`).  W/A/G outputs are raw LoRA
+    Outputs are returned as ``(r, k, v, w, a, g)`` and preserve the input shape
+    (`[batch, hidden]` or `[batch, tokens, hidden]`).  W/A/G outputs are raw LoRA
     module outputs; callers still apply RWKV's outer sigmoid/scaling.
     """
 
     if torch is None or F is None:
         raise RuntimeError("fused_rkv_wag_projection requires torch")
-    xr2, had_seq = _flatten(xr, name="xr")
+    xr2, restore_shape = _flatten(xr, name="xr")
     hidden = int(xr2.shape[1])
     inputs = [xr2]
     for name, value in (("xk", xk), ("xv", xv), ("xw", xw), ("xa", xa), ("xg", xg)):
-        flat, seq = _flatten(value, hidden, name=name)
-        if seq != had_seq or tuple(flat.shape) != tuple(xr2.shape):
+        flat, shape = _flatten(value, hidden, name=name)
+        if shape != restore_shape or tuple(flat.shape) != tuple(xr2.shape):
             raise ValueError("all projection inputs must have identical flattened shape/layout")
         inputs.append(flat)
     xk2, xv2, xw2, xa2, xg2 = inputs[1:]
@@ -575,8 +573,8 @@ def fused_rkv_wag_projection(
             BLOCK_R=int(block_r),
             num_warps=4,
         )
-    if had_seq:
-        return tuple(t.unsqueeze(1) for t in (r, k, v, w, a, g))
+    if restore_shape is not None:
+        return tuple(t.reshape(restore_shape) for t in (r, k, v, w, a, g))
     return r, k, v, w, a, g
 
 
@@ -613,18 +611,18 @@ def fused_rkv_wavg_projection(
     This is the deeper decode-fusion variant of :func:`fused_rkv_wag_projection`.
     It also groups the per-layer V-gate LoRA used after layer 0, removing one
     more small down/up GEMV pair from the native_graph decode path.  The
-    returned tuple is ``(r, k, v, w, a, g, v_gate)`` with the same rank as the
+    returned tuple is ``(r, k, v, w, a, g, v_gate)`` with the same shape as the
     inputs.
     """
 
     if torch is None or F is None:
         raise RuntimeError("fused_rkv_wavg_projection requires torch")
-    xr2, had_seq = _flatten(xr, name="xr")
+    xr2, restore_shape = _flatten(xr, name="xr")
     hidden = int(xr2.shape[1])
     inputs = [xr2]
     for name, value in (("xk", xk), ("xv", xv), ("xw", xw), ("xa", xa), ("xg", xg)):
-        flat, seq = _flatten(value, hidden, name=name)
-        if seq != had_seq or tuple(flat.shape) != tuple(xr2.shape):
+        flat, shape = _flatten(value, hidden, name=name)
+        if shape != restore_shape or tuple(flat.shape) != tuple(xr2.shape):
             raise ValueError("all projection inputs must have identical flattened shape/layout")
         inputs.append(flat)
     xk2, xv2, xw2, xa2, xg2 = inputs[1:]
@@ -766,6 +764,6 @@ def fused_rkv_wavg_projection(
             BLOCK_R=int(block_r),
             num_warps=4,
         )
-    if had_seq:
-        return tuple(t.unsqueeze(1) for t in (r, k, v, w, a, g, v_gate))
+    if restore_shape is not None:
+        return tuple(t.reshape(restore_shape) for t in (r, k, v, w, a, g, v_gate))
     return r, k, v, w, a, g, v_gate

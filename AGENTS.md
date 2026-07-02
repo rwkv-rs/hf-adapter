@@ -324,9 +324,12 @@ Run this checklist for every new GPU before marking it as supported:
     microbench but regresses end-to-end bsz=1 prefill (`21773.4` tok/s) and is
     disabled for larger flattened rows by default
     (`RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_MAX_M=1024`).
-  - Deeper R/K/V + W/A/G/V-gate projection fusion is opt-in: current 4090 rows
-    show greedy correctness, bsz=4 speedup, and bsz=1 regression, so default
-    promotion is blocked by the min-batch gate.
+  - Deeper R/K/V + W/A/G/V-gate projection fusion is opt-in: current 4090
+    decode rows show greedy correctness, bsz=4 speedup, and bsz=1 regression,
+    so default promotion is blocked by the min-batch gate. Prefill-shaped
+    R/K/V+W/A/G rows are worse (`0.6823x` at bsz=1/T512 and `0.1471x` at
+    bsz=4/T512), so do not wire the current two-launch projection prototype
+    into prefill.
 - Required validation: common functional checklist, bsz=1/2/4/8 decode matrix,
   prefill scan A/B if fast prefill is claimed, quant end-to-end rows, and
   Albatross-ratio reporting.
