@@ -35,7 +35,7 @@ else:  # pragma: no cover - exercised by benchmark/test hosts with torch
 
 
 DTYPE_CHOICES = ("bf16", "fp16", "fp32")
-ALGORITHMS = ("sequential", "affine", "wy", "lowrank", "triton_wy", "cuda_wy")
+ALGORITHMS = ("sequential", "affine", "wy", "lowrank", "triton_wy", "cuda_wy", "triton_dense3")
 WY_ALGORITHM_ALIASES = ("wy", "lowrank")
 TRITON_WY_ALIASES = ("triton_wy", "cuda_wy")
 
@@ -96,6 +96,8 @@ def _algorithm_family(name: str | None) -> str | None:
         return "lowrank_wy"
     if normalized in TRITON_WY_ALIASES:
         return "triton_wy"
+    if normalized == "triton_dense3":
+        return "triton_dense3"
     return "unknown"
 
 
@@ -578,8 +580,11 @@ def main() -> int:
     triton_summary_available = bool(
         dplr_dense_chunk_summary_triton_available is not None and dplr_dense_chunk_summary_triton_available()
     )
+    triton_dense3_available = triton_summary_available
     triton_wy_block_m = int(os.environ.get("RWKV7_DPLR_TRITON_BLOCK_M", "8"))
     triton_summary_block_m = int(os.environ.get("RWKV7_DPLR_TRITON_SUMMARY_BLOCK_M", "8"))
+    triton_prefix_block_m = int(os.environ.get("RWKV7_DPLR_TRITON_PREFIX_BLOCK_M", "8"))
+    triton_apply_block_m = int(os.environ.get("RWKV7_DPLR_TRITON_APPLY_BLOCK_M", "8"))
     rows = 0
 
     if dev.type == "cuda":
@@ -770,6 +775,10 @@ def main() -> int:
                                 "status": plan.status,
                                 "triton_wy_available": triton_wy_available,
                                 "triton_wy_block_m": triton_wy_block_m if (row.get("algorithm_family") == "triton_wy") else None,
+                                "triton_dense3_available": triton_dense3_available,
+                                "triton_summary_block_m": triton_summary_block_m if (row.get("algorithm_family") == "triton_dense3") else None,
+                                "triton_prefix_block_m": triton_prefix_block_m if (row.get("algorithm_family") == "triton_dense3") else None,
+                                "triton_apply_block_m": triton_apply_block_m if (row.get("algorithm_family") == "triton_dense3") else None,
                                 "peak_vram_mb": _peak_mb(args.device),
                             }
                         )
@@ -789,6 +798,10 @@ def main() -> int:
                                 "skip_reason": exc.reason,
                                 "triton_wy_available": triton_wy_available,
                                 "triton_wy_block_m": triton_wy_block_m if row.get("algorithm_family") == "triton_wy" else None,
+                                "triton_dense3_available": triton_dense3_available,
+                                "triton_summary_block_m": triton_summary_block_m if row.get("algorithm_family") == "triton_dense3" else None,
+                                "triton_prefix_block_m": triton_prefix_block_m if row.get("algorithm_family") == "triton_dense3" else None,
+                                "triton_apply_block_m": triton_apply_block_m if row.get("algorithm_family") == "triton_dense3" else None,
                                 "ms": None,
                                 "tokps": None,
                                 "out_max_abs_diff": None,
@@ -804,6 +817,10 @@ def main() -> int:
                                 "error": str(exc),
                                 "triton_wy_available": triton_wy_available,
                                 "triton_wy_block_m": triton_wy_block_m if row.get("algorithm_family") == "triton_wy" else None,
+                                "triton_dense3_available": triton_dense3_available,
+                                "triton_summary_block_m": triton_summary_block_m if row.get("algorithm_family") == "triton_dense3" else None,
+                                "triton_prefix_block_m": triton_prefix_block_m if row.get("algorithm_family") == "triton_dense3" else None,
+                                "triton_apply_block_m": triton_apply_block_m if row.get("algorithm_family") == "triton_dense3" else None,
                                 "ms": None,
                                 "tokps": None,
                                 "out_max_abs_diff": None,
