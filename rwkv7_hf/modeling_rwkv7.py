@@ -254,6 +254,39 @@ def _native_graph_fused_wavg_lora_requested() -> bool:
     return env_flag("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA", default)
 
 
+def _native_graph_rkv_policy() -> str:
+    """Cache-key visible policy for VKWR-inspired stacked R/K/V projection."""
+
+    raw = os.environ.get("RWKV7_NATIVE_GRAPH_RKV_POLICY", "manual").strip().lower()
+    if raw in {"", "manual", "explicit", "env"}:
+        return "manual"
+    if raw in {"0", "false", "no", "off", "disabled"}:
+        return "off"
+    if raw in {"vkwr", "vkwr_auto", "auto", "stacked", "bmm"}:
+        return "vkwr_auto"
+    return "manual"
+
+
+def _native_graph_vkwr_rkv_thresholds() -> tuple[int, int]:
+    """Return ``(min_hidden, max_rows)`` used by the opt-in RKV policy."""
+
+    vals = []
+    for name, default, lower, upper in (
+        ("RWKV7_NATIVE_GRAPH_RKV_MIN_HIDDEN", 1, 1, None),
+        ("RWKV7_NATIVE_GRAPH_RKV_MAX_ROWS", 64, 4, 4096),
+    ):
+        raw = os.environ.get(name, str(default)).strip()
+        try:
+            val = int(raw)
+        except ValueError:
+            val = default
+        val = max(lower, val)
+        if upper is not None:
+            val = min(upper, val)
+        vals.append(val)
+    return vals[0], vals[1]
+
+
 def _native_graph_fused_wag_lora_blocks() -> tuple[int, int, int]:
     policy = _rwkv7_kernel_policy()
     defaults = tuple(getattr(policy, "wag_lora_blocks", (64, 64, 64)))
@@ -1040,10 +1073,36 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         "dense": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)", r".*ffn\.(key|value)"],
     }
 
+    @staticmethod
+    def _rwkv7_bnb_concrete_skip_modules(policy: str, config: Any | None = None) -> list[str]:
+        num_layers = int(getattr(config, "num_hidden_layers", 0) or 0)
+        if num_layers <= 0:
+            return []
+        skips: list[str] = []
+        for layer_idx in range(num_layers):
+            for lora_name in ("w_lora", "a_lora", "g_lora", "v_lora"):
+                for linear_idx in (0, 2):
+                    skips.append(f"model.layers.{layer_idx}.attn.{lora_name}.lora.{linear_idx}")
+            if policy in {"decode_hot", "dense"}:
+                for proj_name in ("r_proj", "k_proj", "v_proj", "o_proj"):
+                    skips.append(f"model.layers.{layer_idx}.attn.{proj_name}")
+            if policy == "dense":
+                for ffn_name in ("key", "value"):
+                    skips.append(f"model.layers.{layer_idx}.ffn.{ffn_name}")
+        return skips
+
     @classmethod
-    def rwkv7_bnb_skip_modules(cls, policy: str | None = None) -> list[str]:
+    def rwkv7_bnb_skip_modules(cls, policy: str | None = None, config: Any | None = None) -> list[str]:
         policy = _bnb_skip_policy(policy)
-        return list(dict.fromkeys([*cls._rwkv7_bnb_skip_modules, *cls._rwkv7_bnb_policy_extra_skips[policy]]))
+        return list(
+            dict.fromkeys(
+                [
+                    *cls._rwkv7_bnb_skip_modules,
+                    *cls._rwkv7_bnb_policy_extra_skips[policy],
+                    *cls._rwkv7_bnb_concrete_skip_modules(policy, config),
+                ]
+            )
+        )
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
@@ -1070,8 +1129,14 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             quantization_config = BitsAndBytesConfig(**bnb_kwargs)
             kwargs["quantization_config"] = quantization_config
         if quantization_config is not None and hasattr(quantization_config, "llm_int8_skip_modules"):
+            config_for_skip = kwargs.get("config")
+            if config_for_skip is None:
+                try:
+                    config_for_skip = cls.config_class.from_pretrained(pretrained_model_name_or_path)
+                except Exception:
+                    config_for_skip = None
             existing = list(getattr(quantization_config, "llm_int8_skip_modules", None) or [])
-            merged = list(dict.fromkeys([*existing, *cls.rwkv7_bnb_skip_modules(rwkv7_bnb_skip_policy)]))
+            merged = list(dict.fromkeys([*existing, *cls.rwkv7_bnb_skip_modules(rwkv7_bnb_skip_policy, config_for_skip)]))
             quantization_config.llm_int8_skip_modules = merged
         model = super().from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
         if quantization_config is not None:
@@ -1438,7 +1503,13 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             raise RuntimeError("native_jit fast-token backend is unavailable; copy native_jit.py into the model repo")
         cache = getattr(self, "_rwkv7_native_jit_pack_cache", None)
         weight = self.model.embeddings.weight
-        key = (weight.device.type, weight.device.index, weight.dtype)
+        key = (
+            weight.device.type,
+            weight.device.index,
+            weight.dtype,
+            _native_graph_rkv_policy(),
+            _native_graph_vkwr_rkv_thresholds(),
+        )
         if cache is None or cache[0] != key:
             packs, _, _, _ = _native_jit_extract(self)
             self._rwkv7_native_jit_pack_cache = (key, packs)
@@ -1464,6 +1535,8 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_fused_wag_lora_blocks(),
             _native_graph_fused_wavg_lora_requested(),
             _native_graph_fused_wavg_lora_blocks(),
+            _native_graph_rkv_policy(),
+            _native_graph_vkwr_rkv_thresholds(),
             int(batch_size),
         )
         cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)

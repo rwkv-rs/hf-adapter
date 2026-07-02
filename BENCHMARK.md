@@ -7,9 +7,11 @@ and Albatross-style paths in correctness, speed, and memory.
 ## Hardware currently measured
 
 - Development server: **Tesla V100-PCIE-32GB**, CUDA fp16.
+- A100 validation server: **NVIDIA A100-PCIE-40GB**, fp16/bf16.
 - Local dev box baseline from earlier PR: **NVIDIA RTX 5070 Laptop GPU**, fp16/bf16/fp32.
 - Ada validation server: **NVIDIA GeForce RTX 4090 24GB (sm_89)**, CUDA 12.8.
 - Baseline model: **rwkv7-g1d-0.1b-20260129-ctx8192**.
+- A100 large-model validation: **0.4B / 1.5B / 2.9B / 7.2B**.
 
 ## Current RTX 4090 / Ada status
 
@@ -66,9 +68,155 @@ default HF path is unchanged.
 |---|---:|
 | peak VRAM | HF <= 1.1 x official comparable path |
 
+## Current A100 / Ampere status
+
+The initial issue #68 A100 0.1B baseline was run on 2026-07-02 on `gpu03`
+and merged in #82.
+
+Environment:
+
+- GPU: 8 x NVIDIA A100-PCIE-40GB; inference used 1 GPU, ZeRO used 2 GPUs.
+- Driver / CUDA: NVIDIA driver `570.133.20`, `nvidia-smi` CUDA `12.8`.
+- Runtime: Python `3.12.8`, PyTorch `2.8.0+cu126` (`torch.version.cuda=12.6`), Transformers `4.57.1`, PEFT `0.19.1`, TRL `1.7.0`, DeepSpeed `0.19.2`, bitsandbytes `0.49.2`, FLA `0.5.1`.
+- Model: converted HF `rwkv7-g1d-0.1b-20260129-ctx8192`, `fused_recurrent`, `fuse_norm=false`, `RWKV7StateCache`, `RWKV7_FAST_TOKEN_BACKEND=auto`.
+- Note: the first FLA backward pass compiled slowly on the 4.18 kernel; later steps reused the compiled path.
+
+Representative commands:
+
+```bash
+DTYPE=fp16 DEVICE=cuda FUSE_NORM=false FAST_CACHE=true FAST_TOKEN_BACKEND=auto \
+  BATCH_SIZES="1 2 4 8 16 32" PROMPT_TOKENS=512 DECODE_TOKENS=128 WARMUP=2 RUNS=3 \
+  bash scripts/run_hardware_smoke.sh "$MODEL"
+
+DTYPE=bf16 DEVICE=cuda RUN_QUANT=0 FUSE_NORM=false FAST_CACHE=true FAST_TOKEN_BACKEND=auto \
+  BATCH_SIZES="1 2 4 8 16 32" PROMPT_TOKENS=512 DECODE_TOKENS=128 WARMUP=2 RUNS=3 \
+  bash scripts/run_hardware_smoke.sh "$MODEL"
+
+TRAIN_DTYPE=bf16 DEVICE=cuda MAX_LENGTH=32 MAX_STEPS=1 DATASET_REPEATS=2 \
+  RUN_PEFT=0 RUN_TRAINER=1 RUN_RL=1 RL_BACKEND=both \
+  bash scripts/run_hf_training_matrix.sh "$MODEL"
+
+CUDA_VISIBLE_DEVICES=0,1 TRAIN_DTYPE=bf16 NPROC_PER_NODE=2 ZERO_STAGE=both \
+  MAX_LENGTH=32 MAX_STEPS=1 DATASET_REPEATS=2 \
+  bash scripts/run_zero_training_smoke.sh "$MODEL"
+```
+
+Smoke status:
+
+| Check | Result |
+|---|---|
+| `smoke_hf_generate` | PASS; `generate_fast_token_backend native_graph` |
+| `test_hf_api_contract --dtype bf16` | PASS |
+| `test_quantized_inference` 8-bit / 4-bit | PASS on fp16; footprint `283.4 MB` / `242.9 MB`, peak `310.6 MB` / `273.3 MB` |
+| `test_peft_lora` | PASS; `663552` trainable parameters, finite loss, `72` non-zero LoRA gradients |
+
+Single-model speed rows in `bench/results.jsonl`:
+
+| Dtype | Prefill tok/s | Forward decode tok/s | Decode ms/tok | Peak VRAM |
+|---|---:|---:|---:|---:|
+| fp16 | 19538.7 | 52.9 | 18.90 | 660.3 MB |
+| bf16 | 19562.5 | 59.5 | 16.82 | 631.1 MB |
+
+A100 serving-style batch sweep, `rwkv7_forward_token`, `fast_token_backend_effective=native_graph`:
+
+| Batch | fp16 decode tok/s | bf16 decode tok/s | bf16 prefill tok/s | Peak VRAM |
+|---:|---:|---:|---:|---:|
+| 1 | 368.5 | 372.8 | 13914.3 | 727.1 MB |
+| 2 | 618.7 | 691.6 | 28281.7 | 1114.0 MB |
+| 4 | 1282.3 | 1333.8 | 54674.3 | 1819.8 MB |
+| 8 | 2591.1 | 2500.8 | 103898.8 | 3263.0 MB |
+| 16 | 5694.9 | 4974.8 | 121949.7 | 6112.5 MB |
+| 32 | 10376.9 | 9966.4 | 124579.8 | 11818.9 MB |
+
+Training and RL rows:
+
+| Backend | Dtype | Status | Loss | Runtime | Trainable delta |
+|---|---|---|---:|---:|---:|
+| HF Trainer | bf16 | PASS | 1.7299 | 311.6833 s | `1.0e-4` |
+| TRL SFT | bf16 | PASS | 1.6520 | 0.2667 s | `1.0e-4` |
+| TRL DPO | bf16 | PASS | 0.6931 | 1.5805 s | `1.0e-4` |
+| TRL GRPO | bf16 | PASS | 0.0000 | 43.2822 s | `1.0e-4` |
+
+DeepSpeed ZeRO rows, 2 x A100, `world_size=2`:
+
+| ZeRO stage | Dtype | Status | Loss | Rank-0 runtime | Rank-0 trainable delta |
+|---:|---|---|---:|---:|---:|
+| 2 | bf16 | PASS | 4.8672 | 66.3160 s | `1.001e-4` |
+| 3 | bf16 | PASS | 4.8672 | 0.7241 s | `1.0e-4` |
+
+### A100 extended large-model validation
+
+The follow-up issue #68 A100 40GB pass added 0.4B / 1.5B / 2.9B / 7.2B
+evidence for smoke generation, fp16/bf16 batch sweeps, quantized speed/memory,
+single-GPU Trainer/SFT/DPO, HF Trainer checkpoint resume, 2 x A100 ZeRO-2/3
+base smoke, and 2 x A100 ZeRO-2 checkpoint resume. Detailed environment,
+commands, model hashes, and tables are recorded in
+[`docs/validation/A100_HF_VALIDATION.md`](docs/validation/A100_HF_VALIDATION.md).
+
+Large-model smoke rows:
+
+| Model | Layers | Hidden | Footprint | Peak VRAM | Status |
+|---|---:|---:|---:|---:|---|
+| 0.4B | 24 | 1024 | 859.8 MB | 1124.5 MB | PASS |
+| 1.5B | 24 | 2048 | 2913.3 MB | 3178.6 MB | PASS |
+| 2.9B | 32 | 2560 | 5622.4 MB | 5888.0 MB | PASS |
+| 7.2B | 32 | 4096 | 13731.3 MB | 13997.8 MB | PASS |
+
+A100 fast-token batch sweep, `rwkv7_forward_token`, `native_graph`,
+`prompt_tokens=128`, `decode_tokens=16`:
+
+| Model | Dtype | Batches | Batch-1 decode tok/s | Max-batch decode tok/s | Max-batch peak VRAM |
+|---|---|---|---:|---:|---:|
+| 0.4B | fp16 | 1,2,4,8 | 147.0 | 1539.8 | 2867.4 MB |
+| 0.4B | bf16 | 1,2,4,8 | 146.5 | 1530.8 | 2867.4 MB |
+| 1.5B | fp16 | 1,2,4 | 164.5 | 578.2 | 4904.1 MB |
+| 1.5B | bf16 | 1,2,4 | 164.9 | 552.6 | 4904.1 MB |
+| 2.9B | fp16 | 1,2 | 101.8 | 189.1 | 7261.5 MB |
+| 2.9B | bf16 | 1,2 | 78.5 | 166.2 | 7261.5 MB |
+| 7.2B | fp16 | 1,2 | 59.2 | 117.2 | 16336.1 MB |
+| 7.2B | bf16 | 1,2 | 58.5 | 117.1 | 16336.1 MB |
+
+Quantized A100 memory and interim decode telemetry:
+
+| Model | fp16 footprint / decode | 8bit footprint / decode (interim) | 4bit footprint / decode (interim) |
+|---|---:|---:|---:|
+| 0.4B | 859.8 MB / 144.8 tok/s | 571.8 MB / 12.3 tok/s | 427.8 MB / 25.3 tok/s |
+| 1.5B | 2913.3 MB / 119.5 tok/s | 1761.3 MB / 11.5 tok/s | 1185.3 MB / 25.0 tok/s |
+| 2.9B | 5622.4 MB / 73.5 tok/s | 3222.4 MB / 8.9 tok/s | 2022.4 MB / 19.2 tok/s |
+| 7.2B | 13731.3 MB / 61.4 tok/s | 7587.3 MB / 7.0 tok/s | 4515.3 MB / 15.3 tok/s |
+
+All W8/W4 rows reduce memory. Their decode-speed fields are marked
+`quant_speed_status=interim` in `bench/results.jsonl` because the native-fused
+packed-quant / tensor-core-aware kernel work is expected to replace these
+generic bitsandbytes speed numbers; they are still slower than
+fp16/native-graph and therefore remain part of the fused/native quantization
+performance gap.
+
+Training and resume coverage:
+
+| Model | Single-GPU Trainer/SFT/DPO | HF checkpoint resume | ZeRO-2 base | ZeRO-2 resume | ZeRO-3 base |
+|---|---|---|---|---|---|
+| 0.4B | PASS | PASS | PASS | PASS | PASS |
+| 1.5B | PASS | PASS | PASS | PASS | PASS |
+| 2.9B | PASS | PASS | PASS | PASS | PASS |
+| 7.2B | PASS | PASS | PASS | PASS | PASS |
+
+The A100 40GB validation block brings `bench/results.jsonl` to 134 A100 rows:
+68 batch-sweep rows, 20 DeepSpeed base rows, 16 single-GPU training rows, 12
+quantization rows including 8 W8/W4 rows with interim speed status, 8
+DeepSpeed resume rows, 4 large-model smoke rows, 4 HF checkpoint-resume rows,
+and the 2 legacy 0.1B speed rows from #82. A100 80GB was not available in the
+current cluster. ZeRO3 checkpoint resume still requires a follow-up
+DeepSpeed/PyTorch dtype-mismatch fix.
+
 ## Current V100 status
 
-Latest V100 runs are appended in `bench/results.jsonl`.
+Latest V100 runs are appended in `bench/results.jsonl`. The HF training /
+quant / ZeRO matrix from 2026-07-02 is summarized in
+[`docs/validation/V100_HF_VALIDATION.md`](docs/validation/V100_HF_VALIDATION.md): 0.4B/1.5B pass the
+Trainer/SFT/DPO/GRPO/PEFT/ZeRO/quant smoke matrix, 2.9B passes the
+native TRL/PEFT/ZeRO2-resume/ZeRO3-base/quant matrix, and 7.2B passes
+PEFT plus 8/4-bit quantized inference within V100 memory limits.
 
 ### Correctness / precision
 
@@ -557,7 +705,7 @@ deeper rewrite that reduces launches without adding stack/bmm overhead.
 
 Newer rows also emit `sample_matrix_profile`, `sample_matrix_profile_summary`,
 and `fused_kernel_plan`. These fields turn the profiler into the first concrete
-step of `FUSED_BACKEND.md`: they record matrix shapes, per-token FLOPs,
+step of `docs/performance/FUSED_BACKEND.md`: they record matrix shapes, per-token FLOPs,
 fp16/int8/int4 weight sizes, timed members, the first fp16 fusion target, and
 the native-quant candidates that should later replace generic bnb kernels.
 
@@ -1276,6 +1424,18 @@ Checkpoint provenance is recorded in the rows: 0.4B SHA256
 `26540868485` bytes. The regression gate now requires all five smoke rows so
 the converter cannot silently regress to 0.1B-only shape assumptions.
 
+### 13.3B official alignment + decode speed
+
+Beyond the 2-token smoke above, 13.3B is official-alignment and decode-speed
+validated on a single V100-32GB (full detail in
+[`docs/validation/V100_HF_VALIDATION.md#133b-inference-validation`](docs/validation/V100_HF_VALIDATION.md#133b-inference-validation)).
+HF fp16 vs official `rwkv` `cpu fp32`: cosine `0.9999976`, top5 `1.0`,
+argmax `1.0`, max_abs `0.0813`, greedy `16/16` matched. Decode (prompt=128,
+decode=64, fp16): fla `11.6`, `native_jit` `18.4` (1.58x fla), `native_graph`
+`17.1` tok/s at `25594 MB` peak. `native_jit` is the recommended 13.3B backend;
+`native_graph` fits 32GB but is slower than `native_jit` because 13.3B decode is
+memory-bound and graph-replay overhead inverts the usual small-model graph win.
+
 ## Quantized inference coverage
 
 `tests/test_quantized_inference.py` checks that the adapter loads and generates
@@ -1488,7 +1648,18 @@ python tests/test_deepspeed_training_smoke.py \
 
 On machines without DeepSpeed or live GPUs, use `--optional --results
 /tmp/rwkv7_zero_optional.jsonl` to record explicit skip rows while keeping local
-analyzer/report tests green. Real pass rows remain a GPU follow-up item.
+analyzer/report tests green.
+
+Latest V100 validation: the server environment exposes torch CUDA through the
+pip/conda CUDA runtime without a system CUDA toolkit, so the harness defaults
+`DS_IGNORE_CUDA_DETECTION=1` for ZeRO-only smoke runs and seeds a one-process
+`RANK/WORLD_SIZE/LOCAL_RANK` environment when no launcher is present. Full
+2-process validation was also run with `torchrun --standalone --nproc_per_node=2`
+on `CUDA_VISIBLE_DEVICES=0,1`. The committed rank-0 rows pass on 2 x Tesla V100
+fp32, `max_steps=1`, `batch_size=1`, `max_length=16`: ZeRO-2 reports finite
+loss `4.857278823852539` and `max_trainable_delta=9.999999747378752e-05`;
+ZeRO-3 reports the same finite loss and trainable delta after gathering full
+ZeRO-3 parameter shards for the update check.
 
 ## Benchmark gap report
 
@@ -1522,7 +1693,7 @@ V100 rows show:
 | 8-bit / 4-bit decode ratio | 0.24x / 0.67x fp16 | >=1.00x | GAP |
 | Albatross V100 decode ratio | HF native-graph `0.32x`-`0.47x` Albatross faster3a for bsz=1/2/4/8 | approach Albatross | GAP |
 | Albatross V100 prefill ratio | HF `0.32x` Albatross faster3a for B=1,T=512 | approach Albatross | GAP |
-| Fused backend P1 decode ladder | analyzer target min ratio `>=0.55x` Albatross | `FUSED_BACKEND.md` P1 | GAP |
+| Fused backend P1 decode ladder | analyzer target min ratio `>=0.55x` Albatross | `docs/performance/FUSED_BACKEND.md` P1 | GAP |
 | Fused backend quant ladder | W8/W4 decode `>=1.0x` fp16 reference with W8 footprint `<=0.75x`, W4 footprint `<=0.55x` | native W8/W4 fused path | GAP |
 | 0.4B converted-model smoke | hidden=1024, layers=24, generated=4, backend=native_graph | load + generate | PASS |
 | 1.5B converted-model smoke | hidden=2048, layers=24, generated=2, backend=native_graph | load + generate | PASS |
@@ -1530,8 +1701,10 @@ V100 rows show:
 | 7.2B converted-model smoke | hidden=4096, layers=32, generated=2, backend=native_graph | load + generate | PASS |
 | 13.3B converted-model smoke | hidden=4096, layers=61, generated=2, backend=native_jit | load + generate | PASS |
 
-The current next-focus list is: run 13.3B official-alignment/speed sweeps,
-validate newer GPUs, and solve the generic bnb quantized decode speed gap. The bsz=1 HF fast-token target is exceeded by `native_graph`;
+The current next-focus list is: 13.3B official-alignment/speed sweeps are now
+done (cos~1.0, `native_jit` 18.4 tok/s on V100; see
+[13.3B official alignment + decode speed](#133b-official-alignment--decode-speed));
+remaining: validate newer GPUs, and solve the generic bnb quantized decode speed gap. The bsz=1 HF fast-token target is exceeded by `native_graph`;
 bsz=2/4/8 native-graph serving now reaches `434.3` / `852.6` / `1539.1`
 aggregate tok/s, and preflight warmup confirms graph runners are captured for
 bsz=1/2/4/8 before the first serving request. The native-graph overhead rows
@@ -1747,6 +1920,36 @@ Correctness claims from the latest `main` branch:
 - forward logits vs FLA: cosine 1.000000, max_abs approximately 0 at fp32.
 - CUDA-graph greedy decode: 40/40 tokens identical to the JIT path.
 - end-to-end vs `model.generate()` greedy: 32/32 generated tokens identical.
+
+### Production TTFT/TPOT + batch generate (RTX 5070 Laptop, sm_120, 0.1B fp16)
+
+`bench/bench_ttft_tpot.py`, native_graph fast-token backend, `RWKV7_FAST_FORWARD=1`,
+`attn_mode=fused_recurrent`, `fuse_norm=false`.
+
+TTFT (time-to-first-token, bsz=1, p50):
+
+| input len | TTFT p50 | TTFT p99 | prefill tok/s |
+|---|---:|---:|---:|
+| 32 | 19.1 ms | 20.4 ms | 1,676 |
+| 128 | 23.6 ms | 24.1 ms | 5,430 |
+| 512 | 24.0 ms | 26.9 ms | 21,318 |
+
+TPOT (per-output-token, bsz=1, decode 32): p50 **3.77 ms** (decode 265 tok/s),
+p99 4.34 ms -- tight tail.
+
+Batch-generate throughput (32 new tokens, prompt 128):
+
+| batch | total tok/s | peak VRAM |
+|---|---:|---:|
+| 1 | 212 | 413 MB |
+| 4 | 784 | 562 MB |
+| 8 | 1,581 | 590 MB |
+
+The 265 tok/s single-stream TPOT number is the realistic `model.generate()`
+figure via the standard HF path; the ~395 tok/s in the table above is a
+tighter isolated native-graph bench. The real serving lever on Blackwell is
+**batch scaling** (bsz 1 -> 8 gives ~7.5x aggregate throughput, since RWKV
+has no KV cache), not single-stream speedup.
 
 Usage:
 
