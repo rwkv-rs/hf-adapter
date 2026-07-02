@@ -13,6 +13,158 @@ The active reward target is the HF/Transformers track: make RWKV-7 usable from
 standard HF APIs with near-production correctness, performance, memory behavior,
 training compatibility, quantized inference, and reproducible benchmarks.
 
+## Current Agent Contract: Native Fused HF Backend
+
+This is the active contract for the next workers on this branch. Treat
+`FUSED_BACKEND.md` and `docs/native_fused_roadmap.md` as the performance
+roadmap.
+
+- Scope is **HF adapter only**. Do not implement or gate native vLLM/SGLang
+  integrations in this repository.
+- Keep HF compatibility as the invariant: `AutoModelForCausalLM`, `generate`,
+  PEFT, Trainer, TRL, `RWKV7StateCache`, dynamic batching, chunked prefill,
+  save/load, and quantized loading must keep working.
+- Move the speed core to native fused backends: fused fp16 first, then fused
+  quant. The wrapper is the compatibility shell, not the place for the next
+  performance breakthrough.
+- Use official math alignment from `rwkv_v7_numpy.py` and
+  `run_rwkv7_qwen35.py`; preserve exact RWKV-7 recurrence, clamp, state, and
+  output semantics before optimizing layout.
+- Follow train_temp-style fused boundaries: `tmix_mix6`, `kk_pre/state_prep`,
+  `lnx_rkvres_xg`, `cmix`, and `clampw`.
+- Use Albatross-style GPU-specific layout/autotune. Exact-card rows decide
+  defaults; V100, 4090, A100/H100, and Blackwell must not blindly share tile
+  choices.
+- Treat DPLR/chunked prefill as the bsz=1 prompt-prefill breakthrough line.
+  Do not spend the next phase on wrapper/cache micro-optimizations.
+- Forbidden directions: wrapper micro-optimization as the main plan, native
+  vLLM/SGLang work, defaulting the full-head scan+output fused prefill path,
+  and quantized-speed claims before a native fused quant kernel beats fp16
+  end-to-end.
+- Required next validation loop: RTX 4090 fp16, bsz=1/4, prompt512 prefill,
+  decode, correctness, peak memory/VRAM, and `bench/analyze_results.py`
+  reporting.
+
+## Current Branch Goal: DPLR/WY Compiled Prefill Prototype
+
+Active branch work is now the opt-in DPLR/WY compiled prefill backend, not
+wrapper micro-optimization. Keep the default HF behavior unchanged unless a
+benchmark explicitly opts in.
+
+Goal:
+
+- Move `dplr_chunk_scan(algorithm="wy"/"lowrank")` from pure torch
+  correctness prototype toward a real Triton/CUDA performance prototype.
+- Maintain native VxK state layout `[B,H,N,N]`, fp16/bf16/fp32 token inputs,
+  and fp32 state accumulation.
+- Synthetic first: support the critical target
+  `B=1,H=16,N=64,T=512,chunk_size=64,fp16` on RTX 4090.
+- Correctness gates: match `torch_recurrent_scan`; for fp16 target require
+  `out_min_cosine >= 0.9999` and keep greedy/cache smoke passing when routed
+  through HF repo-code loading.
+
+Current implementation state:
+
+- `rwkv7_hf/dplr_prefill_triton.py` exposes:
+  - `dplr_chunk_scan_triton(...)` / `dplr_chunk_scan_triton_available()`
+  - dense chunk summary: `dplr_dense_chunk_summary_*`
+  - dense prefix combine: `dplr_dense_prefix_combine_*`
+  - dense chunk apply/output: `dplr_dense_chunk_apply_*`
+  - dense three-stage scaffold: `dplr_dense_three_stage_triton(...)`
+- `algorithm="triton_wy"` is the P0 compiled bridge using the existing fused
+  recurrent scan. It is fast and correctness-passing, but it is not yet compact
+  WY.
+- `algorithm="triton_dense3"` is the explicit dense three-stage scaffold
+  (summary -> prefix -> apply/output). It proves the mathematical kernel
+  boundaries, but it materializes dense `[N,N]` summaries and is expected to be
+  slower than the P0 fused scan until replaced with compact WY factors.
+
+Latest RTX 4090 target evidence:
+
+- Synthetic `B=1,T=512,H=16,N=64,chunk=64,fp16`:
+  - `sequential`: pass, about `55.63 ms`, `9.2k tok/s`
+  - `triton_wy`: pass, about `0.233 ms`, `2.20M tok/s`,
+    `out_min_cosine ~= 0.9999999`
+  - `triton_dense3`: pass; latest stage-probe full row is about
+    `0.264-0.269 ms`, `~1.9M tok/s`, `out_min_cosine = 1.0`
+  - dense stage split from `--stage-probe`: summary `~0.144 ms`, prefix
+    `~0.092 ms`, apply/output `~0.065 ms`, summary shape
+    `[1,8,16,64,64]`. Dense summary/prefix `[N,N]` traffic is the first
+    compact-WY target.
+- HF repo-code smoke on 4090 / 0.4B / prompt512 / bsz1:
+  - Sweep path: `/tmp/native_4090_todo_sweep_20260702_103919.jsonl`.
+  - Albatross reference for this shape remains `52,148.52 tok/s`; `0.45x`
+    is `23,467 tok/s`.
+  - DPLR repo-code rows: `triton_wy` pass at `20,421.7 tok/s` (`0.3916x`),
+    `triton_dense3` pass at `18,546.0 tok/s` (`0.3556x`),
+    `triton_wy_compact` pass at `17,970.5 tok/s` (`0.3446x`).
+  - Fastest short sweep row was the fused recurrent scan path, not DPLR:
+    `RWKV7_NATIVE_PREFILL_FUSED_SCAN=1`,
+    `RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M=8`,
+    `RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS=1`,
+    `RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP=1`; pass at `22,777.0 tok/s`
+    (`0.4368x`) and `991.2 MiB`.
+  - Confirmation for that older split setting:
+    `/tmp/native_4090_todo_confirm_20260702_104202.jsonl`, pass at
+    `22,292.0 tok/s` (`0.4275x`), below the `0.45x` target.
+  - Breakdown path: `/tmp/native_4090_todo_breakdown_20260702_104126.jsonl`.
+    Top components for the best fused-scan setting are recurrent scan
+    `7.4571 ms` / `26.34%`, FFN `4.0836 ms` / `14.42%`,
+    attention norm+shift-mix `3.8040 ms` / `13.44%`, and fused state prep
+    `3.2982 ms` / `11.65%`.
+  - New opt-in fused state-prep + recurrent scan row:
+    `RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN=1` and
+    `RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1` with path
+    `/tmp/native_4090_fused_state_scan_confirm_20260702_111924.jsonl` passes
+    greedy/cache smoke at `25,663.2 tok/s`, `19.9507 ms`, `0.4921x`
+    Albatross, and `989.2 MiB` peak VRAM. This closes the 0.45x checkpoint but
+    remains below the `0.60x` stretch target (`31,289 tok/s`).
+  - DPLR compact retest after the launch-count reduction is still slower:
+    `/tmp/native_4090_dplr_compact_retest_20260702_111924.jsonl`,
+    `16,863.4 tok/s`, `30.3616 ms`, `0.3234x` Albatross, greedy/cache smoke
+    passing. Keep DPLR compact as high-upside work, but its next useful step is
+    DPLR-specific apply/output fusion rather than wrapper-level changes.
+  - Prefill fused-output-project is now an opt-in experiment
+    (`RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_PROJECT=1`) for evidence only. The
+    first 4090 row `/tmp/native_4090_output_project_20260702_104430.jsonl`
+    passed correctness but was slower (`18,228.8 tok/s`), so it must remain
+    disabled by default.
+
+Remaining before this goal is complete:
+
+- Compact WY torch reference, dense reconstruction oracle, and first Triton
+  compact summary kernel now exist via
+  `dplr_compact_wy_chunk_summary_torch`,
+  `dplr_compact_wy_chunk_summary_triton`,
+  `dplr_compact_wy_summary_to_dense`, and
+  `dplr_compact_wy_apply_summaries_torch`. The first Triton compact kernel is
+  target-constrained to `N<=64, chunk_size<=64`; 4090 target factor diff is
+  `<=5.96e-08`, final state diff is `~1.13e-04`, and summary time is
+  `~0.155 ms`. Compact prefix combine now exists via
+  `dplr_compact_wy_prefix_combine_torch` and
+  `dplr_compact_wy_prefix_combine_triton`; 4090 target prefix time is
+  `~0.067 ms` with starts diff vs dense `~5.96e-08`. The next required
+  step is reusing current chunk apply/output to make a compact three-stage
+  route. That route now exists as `dplr_compact_wy_three_stage_triton`; 4090
+  target correctness passes (`out_min_cosine=1.0`, state diff
+  `~1.26e-04` in the benchmark row). It is exposed as
+  `RWKV7_DPLR_PREFILL_ALGORITHM=triton_wy_compact`; latest 4090 synthetic
+  target benchmark is `~0.241 ms`, `~2.12M tok/s`, close to P0 `triton_wy`
+  (`~0.228 ms`). HF repo-code smoke 0.4B/prompt512/bsz1 passes greedy/cache
+  at `~17.5k tok/s`.
+- Replace dense `[N,N]` transition/additive runtime summaries with compact
+  WY/low-rank factors to reduce memory traffic and close the Albatross gap.
+- Make the explicit three-stage path at least competitive with the P0 fused
+  recurrent scan; current dense3 is correctness-first and slower than P0.
+- The 4090 native prefill benchmark has moved 0.4B prompt512 bsz1 past the
+  `>=0.45x` checkpoint with the opt-in fused state-scan row (`0.4921x`). The
+  remaining stretch is `>=0.60x`; current gap is about `5,626 tok/s`. The next
+  concrete kernel task is deeper fusion beyond state-prep+scan, especially
+  output-prep/application fusion and DPLR-specific apply/output fusion;
+  wrapper-only work is not the performance route.
+- Do not call the DPLR/WY goal finished until compact WY or an equivalent
+  compiled path is verified end-to-end against the original acceptance target.
+
 ## Active Goal: Finish the Current HF Adapter First
 
 Current priority: finish the RWKV-7 Hugging Face / Transformers adapter with
@@ -27,9 +179,12 @@ The current delivery strategy is:
   `AutoModelForCausalLM`, `generate`, PEFT, Trainer, TRL, state cache,
   dynamic batching, chunked prefill, quantization, speculative decoding, and
   benchmark gates.
-- Keep optimizing wrapper performance through `RWKV7StateCache`,
-  `native_jit`, `native_graph`, cache reuse, reduced launch count, and future
-  fused/native quantized kernels.
+- Stop treating wrapper micro-optimization as the performance plan. The
+  wrapper may be changed for HF compatibility, correctness, telemetry, and
+  dispatch, but new speed wins should come from native fused fp16 kernels and
+  later fused native W8/W4 kernels. `native_jit`, `native_graph`, cache reuse,
+  and reduced launch count are fallback/baseline layers, not the next
+  breakthrough by themselves.
 - Keep `native_model` explicitly experimental. It is the long-term base for
   removing the mandatory FLA runtime, upstream Transformers work, AMD/CPU
   fallback, and future kernels. It must not be described as replacing the
@@ -162,6 +317,237 @@ Required goals:
   available.
 - AMD GPU support remains a compatibility target for the HF path, preferably via
   pure PyTorch/reference paths first and optional kernels later.
+
+### GPU-Specific Kernel Policy Registry
+
+This is a **live per-GPU adaptation contract**, not a historical notes section.
+Every time this project touches a new card, add or update the card/family rule
+here and the machine-readable rule in `rwkv7_hf/kernel_policy.py`. Do not leave
+new hardware as an implicit "works on my GPU" case.
+
+For every card that is developed, rented, borrowed, or used for validation,
+record the following before claiming support:
+
+1. Exact identity: GPU name, SM/ROCm target, driver, CUDA/ROCm, PyTorch, Triton,
+   model checkpoint, dtype, and batch/prompt/decode matrix.
+2. Runtime policy: `rwkv7_hf/kernel_policy.py` classification plus default-on
+   and default-off kernels for that card/family.
+3. AGENTS contract: this section must say which kernels are allowed by default,
+   which are opt-in only, and which benchmark rows are mandatory.
+4. Evidence rows: append `bench/results.jsonl` rows for functional smoke,
+   decode, prefill, cache, and quant axes that are being claimed.
+5. Analyzer support: update `bench/analyze_results.py` / summaries whenever a
+   new axis, gate, or card-local metric is added.
+
+Environment variables always override the policy. The policy is only the safe
+default selected when the user does not set explicit flags. Policy coverage and
+validation are separate: a family can have a conservative routing rule before it
+has production evidence, but it is not a validated production target until the
+required exact-card rows exist in `bench/results.jsonl`.
+
+Current exact-card evidence status:
+
+- V100 (`sm_70`): active regression baseline; preserve training/PEFT/TRL/cache
+  and decode greedy-match rows before changing defaults.
+- RTX 4090 (`sm_89`): active Ada consumer validation card; native fused prefill
+  scan plus state-prep fusion is promising under explicit A/B flags, while
+  WAVG/projection fusion is still opt-in because shallow LoRA grouping regresses
+  end-to-end even when isolated rows improve. Full-head scan+output-prep fusion
+  is also negative telemetry on Ada because it gives up the split-row scan tile
+  that currently keeps prefill occupancy acceptable. Per-layer bsz=1 breakdown
+  shows the prefill gap is broad across layers, so pursue reusable per-layer
+  fusion patterns rather than layer-specific patches.
+- RTX 5070 Laptop / 50-series (`sm_120` observed): touched Blackwell path; native
+  no-FLA compatibility is important because some FLA training kernels can be
+  architecture-limited; fusion wins must be re-proven end-to-end on each 50-card.
+- Pascal/Turing/Ampere/Hopper/AMD: registry rules exist, but support remains TODO
+  until exact-card rows are added.
+
+#### Per-GPU adaptation checklist
+
+Run this checklist for every new GPU before marking it as supported:
+
+- Functional: import/from_pretrained, `generate(use_cache=True)`,
+  `rwkv7_forward_token`, batch cache, dynamic batch select/reorder/drop,
+  chunked prefill, save/reload, and greedy-match decode.
+- Decode performance: `bench_batch_sweep.py` for `bsz=1/2/4/8`,
+  `bench_native_graph_overhead.py`, native_graph cache hit/miss telemetry, and
+  per-step tok/s/latency.
+- Prefill performance: `bench_native_prefill_scan.py` when fast prefill is
+  claimed; compare HF/FLA prefill against native prefill and record cache handoff
+  correctness.
+- Fused kernels: fused recurrent-output and fused output integration smokes;
+  projection/LoRA/layout sweeps before any projection default; full native_graph
+  end-to-end rows before promotion.
+- Quantization: W8/W4 footprint, speed, greedy/quality rows. Microbench wins are
+  never enough for a speed claim; require end-to-end decode evidence.
+- Training, if claimed: HF Trainer, PEFT LoRA, TRL SFT/DPO/GRPO, checkpoint
+  resume, and ZeRO-2/ZeRO-3 smoke on the relevant card or multi-GPU setup.
+- Promotion rule: do not enable a fused/quant kernel by default unless exact-card
+  rows show correctness plus non-negative end-to-end value across the claimed
+  batch sizes. If bsz=1 regresses, keep the kernel opt-in even if bsz=4/8 wins.
+
+#### Pascal / GTX 10 / P100 (`sm_60`/`sm_61`)
+
+- Policy family: `pascal`.
+- Default stance: compatibility-first; Pascal lacks the newer tensor-core path.
+- Default-on: `fast_cache` only.
+- Default-off: fused recurrent/output/projection/LoRA/prefill-scan kernels.
+- Required validation: common functional checklist plus at least one full
+  native_graph decode smoke on the exact card.
+- Quant rule: memory-only until a card-local W8/W4 row beats fp16 end-to-end.
+- Promotion rule: never inherit V100/4090/5070 fused defaults without Pascal rows.
+
+#### Volta / V100 (`sm_70`)
+
+- Policy family: `volta`.
+- Role: current regression baseline and conservative production-smoke target.
+- Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
+- Default-off: `fused_recurrent`, `fused_prefill_scan`, `fused_output_project`,
+  `fused_projection`, `fused_wag_lora`, `fused_wavg_lora`.
+- Required validation: functional checklist plus HF Trainer, PEFT LoRA, TRL
+  SFT/DPO/GRPO, checkpoint resume, decode greedy-match, cache telemetry, and
+  Albatross A/B rows when available.
+- Quant rule: W8/W4 memory rows are valid; speed is unsolved until native/fused
+  quant beats fp16 end-to-end on V100.
+- Promotion rule: any default change must preserve V100 training and decode rows.
+
+#### Turing / RTX 20 / T4 (`sm_75`)
+
+- Policy family: `turing`.
+- Default stance: Volta-safe output fusions can be attempted, but performance is
+  not claimed without Turing rows.
+- Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
+- Default-off: prefill-scan, output-project, projection, WAG/WAVG LoRA fusions.
+- Required validation: common functional checklist, bsz sweep, native_graph
+  overhead, quant footprint/speed, and cache hit-rate rows.
+- Promotion rule: projection/LoRA fusions stay opt-in until exact-card
+  native_graph end-to-end speedup is measured.
+
+#### Ampere / A100 / RTX 30 (`sm_80`/`sm_86`)
+
+- Policy family: `ampere`.
+- Default stance: stable output/recurrent-output fusions may be enabled; larger
+  batch, training, and quant behavior must be tuned per exact card.
+- Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
+- Default-off: prefill-scan by default, output-project, projection, WAG/WAVG LoRA
+  fusions.
+- Required validation: common functional checklist, larger-batch prefill, state
+  cache reuse/hit-rate rows, W8/W4 rows, and ZeRO-2/ZeRO-3 smoke when training is
+  claimed.
+- Promotion rule: do not assume V100/4090 block sizes; run Ampere block/layout
+  sweeps before changing defaults.
+
+#### Ada / RTX 40 / 4090 (`sm_89`)
+
+- Policy family: `ada`.
+- Role: high-end consumer validation target.
+- Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
+- Default-off: `fused_output_project`, projection/LoRA fusions, and prefill-scan
+  as a default.
+- 4090 adaptation rule:
+  - cuBLAS/torch remains the baseline for shallow R/K/V projection; split-K/layout
+    prototype rows were slower and must stay telemetry-only.
+  - Native fused prefill scan can be used under explicit A/B flags
+    (`RWKV7_FAST_PREFILL=1` + `RWKV7_NATIVE_PREFILL_FUSED_SCAN=1`) after
+    cache-handoff correctness rows, but it is not a blanket default until the
+    broader batch/model matrix passes.
+  - Native prefill state-prep fusion
+    (`RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP=1`) is a small positive Ada probe:
+    4090 / 0.4B / fp16 / prompt512 moves bsz=1 from `21857.3` to `22358.5`
+    tok/s and bsz=4 stays neutral (`81144.8` tok/s). Keep it explicit until
+    the larger model/card matrix passes. For this exact Ada shape,
+    `RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M=8` is the best recorded scan tile; `4`,
+    `16`, and `32` were slower end-to-end.
+  - Native fused state-prep + recurrent scan
+    (`RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN=1`) is the current best Ada bsz=1
+    prefill row when paired with `RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1`: 4090 /
+    0.4B / fp16 / prompt512 confirms at `25,663.2 tok/s` (`0.4921x`
+    Albatross) with greedy/cache smoke passing. It is opt-in only: before
+    defaulting, validate bsz=1/2/4/8, larger checkpoints, memory, and other
+    card families; do not reuse the Ada full-head `N=64` kernel as a generic
+    V100/A100/H100/Blackwell default.
+  - `RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS` is a telemetry override only. The
+    4090 scan microbench shows batch-dependent winners (`8` warps at bsz=1,
+    `1` warp at bsz=4), but full prefill rows do not beat the best
+    state-prep-only row, so do not promote a warp count without exact-card
+    end-to-end wins across the claimed bsz set.
+  - `RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX=1` supports prefill-shaped tensors
+    but remains telemetry-only. 4090 isolated shift-mix is slower than torch
+    addcmul, and the full-prefill row only gives a tiny bsz=4 bump while bsz=1
+    stays below the best state-prep-only row. Do not default it outside a
+    larger fused norm/shift/projection/state-prep design.
+  - Latest fine prefill breakdown splits dense R/K/V projection separately:
+    bsz=1 prompt512 has scan `7.6627ms`, LoRA sum `6.2419ms`, norm/shift/mix
+    `3.8281ms`, state-prep `3.1581ms`, and dense R/K/V sum `2.2056ms`. The
+    next Ada prefill experiment should fuse across these buckets rather than
+    optimizing cache or a single shallow pointwise kernel.
+  - Prefill output-prep fusion (`RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1`) is
+    correctness-clean but not defaultable on the current 4090 prompt512 rows:
+    it reduces the isolated output-prep bucket yet end-to-end bsz=1/4 stays
+    below the state-prep-only path.
+  - Prefill WAVG LoRA grouping must stay telemetry-only:
+    `RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA=1` improves isolated `B*T=512`
+    microbench but regresses end-to-end bsz=1 prefill (`21773.4` tok/s) and is
+    disabled for larger flattened rows by default
+    (`RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_MAX_M=1024`).
+  - Deeper R/K/V + W/A/G/V-gate projection fusion is opt-in: current 4090
+    decode rows show greedy correctness, bsz=4 speedup, and bsz=1 regression,
+    so default promotion is blocked by the min-batch gate. Prefill-shaped
+    R/K/V+W/A/G rows are worse (`0.6823x` at bsz=1/T512 and `0.1471x` at
+    bsz=4/T512), so do not wire the current two-launch projection prototype
+    into prefill.
+- Required validation: common functional checklist, bsz=1/2/4/8 decode matrix,
+  prefill scan A/B if fast prefill is claimed, quant end-to-end rows, and
+  Albatross-ratio reporting.
+- Promotion rule: the minimum speedup across claimed bsz values must be >= 1.0x
+  with greedy match before enabling a new fusion by default.
+
+#### Hopper / H100 (`sm_90`)
+
+- Policy family: `hopper`.
+- Default stance: expected fast server path, but H100 is not tuned until H100 rows
+  exist.
+- Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
+- Default-off: prefill-scan by default, output-project, projection, WAG/WAVG LoRA
+  fusions.
+- Required validation: common functional checklist, larger model rows, large
+  batch/chunked prefill, W8/W4/FP8-like precision and speed rows, PP/TP serving
+  smoke if claimed, and ZeRO-2/ZeRO-3 smoke if training is claimed.
+- Promotion rule: do not reuse 4090 or Blackwell block sizes without H100 sweeps.
+
+#### Blackwell / RTX 50 / 5070-5090 (`sm_100+`, observed `sm_120`)
+
+- Policy family: `blackwell`.
+- Role: next consumer-generation compatibility target.
+- Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
+- Default-off: `fused_output_project`, projection/LoRA fusions, and prefill-scan
+  as a default.
+- 50-series adaptation rule:
+  - Always include native/no-FLA smokes because FLA kernels may fail or regress on
+    new architectures even when inference forward works.
+  - Keep projection/LoRA/quant fusions opt-in until exact 50-card end-to-end rows
+    prove both correctness and speed. Isolated kernel wins do not promote.
+  - Quantization must include footprint, long/short decode speed, and greedy or
+    quality rows. Treat bnb as a compatibility/memory baseline, not a fast path.
+- Mandatory before claiming support: import/generate, fast decode, dynamic batch,
+  chunked prefill, bnb W8/W4 functional inference, native_model no-FLA fallback,
+  and exact-card fused-kernel A/B rows.
+- Promotion rule: promote only kernels with exact-card greedy match and min bsz
+  speedup >= 1.0x; otherwise leave them opt-in/telemetry.
+
+#### AMD / ROCm / HIP
+
+- Policy family: `amd_hip`.
+- Default stance: compatibility-first; CUDA/Triton-only kernels are off.
+- Default-on: `fast_cache` only.
+- Default-off: CUDA native_graph fused kernels and CUDA-only quant speed paths.
+- Required path: pure PyTorch/native_model or ROCm-supported fallback first, then
+  HIP-specific kernels only after evidence.
+- Required validation: ROCm import/generate, pure PyTorch/native_model
+  forward/backward, cache smokes, and HIP-specific speed rows before parity
+  claims.
+- Quant rule: no AMD quant performance claim until HIP-specific W8/W4 rows exist.
 
 ### Quantized Inference
 
@@ -315,8 +701,12 @@ python /home/data/wangyue/projects/rwkv7-hf-adapter/tests/test_peft_lora.py \
 2. Keep official RWKV vs HF logits/generation alignment tests green.
 3. Keep `save_pretrained` / reload roundtrip tests green.
 4. Expand PEFT / Trainer / TRL SFT/DPO/GRPO smoke tests into multi-batch and gradient-accumulation checks.
-5. Continue HF decode-performance work: native graph/JIT, dynamic-batch cache, chunked prefill, and cache telemetry.
-6. Finish HF quantized W8/W4 inference so memory drops and speed is competitive with W16.
+5. Move HF performance work into the native fused backend: train_temp-style
+   fp16 kernel boundaries, GPU-specific layout/autotune, and DPLR/chunked
+   prefill for bsz=1 prompt-prefill. Keep wrapper/cache work to compatibility
+   and telemetry fixes.
+6. Finish HF quantized W8/W4 inference as memory-compatible first, and claim
+   quant speed only after native fused quant kernels beat W16/fp16 end-to-end.
 7. Validate on more GPUs and larger batch sizes.
 8. Start native Transformers implementation under `src/transformers/models/rwkv7/` style layout.
 9. Remove mandatory FLA dependency from the final HF implementation.

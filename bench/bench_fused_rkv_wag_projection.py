@@ -59,9 +59,9 @@ def load_model(args, dtype):
     return model
 
 
-def make_inputs(hidden_size: int, batch_size: int, device: str, dtype: torch.dtype) -> dict[str, torch.Tensor]:
+def make_inputs(hidden_size: int, batch_size: int, sequence_length: int, device: str, dtype: torch.dtype) -> dict[str, torch.Tensor]:
     gen_device = device if device.startswith("cuda") else "cpu"
-    base = torch.randn(batch_size, 1, hidden_size, device=gen_device, dtype=dtype)
+    base = torch.randn(batch_size, sequence_length, hidden_size, device=gen_device, dtype=dtype)
     prev = torch.randn_like(base)
     delta = prev - base
     return {
@@ -149,6 +149,7 @@ def main() -> int:
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--batch-size", type=int, default=1)
+    ap.add_argument("--sequence-length", type=int, default=1, help="Use prompt length for prefill-shaped rows; default keeps decode-shaped [B,1,H]")
     ap.add_argument("--layers", nargs="+", type=int, default=[0, 1, 11])
     ap.add_argument("--block-m", type=int, default=64)
     ap.add_argument("--block-r", type=int, default=64)
@@ -164,7 +165,7 @@ def main() -> int:
         torch.cuda.reset_peak_memory_stats()
     model = load_model(args, dtype)
     hidden_size = int(model.config.hidden_size)
-    xs = make_inputs(hidden_size, args.batch_size, args.device, dtype)
+    xs = make_inputs(hidden_size, args.batch_size, args.sequence_length, args.device, dtype)
 
     layer_rows = []
     ranks = []
@@ -205,6 +206,8 @@ def main() -> int:
         "attn_mode": args.attn_mode,
         "fuse_norm": getattr(model.config, "fuse_norm", None),
         "batch_size": args.batch_size,
+        "sequence_length": args.sequence_length,
+        "tokens_total": args.batch_size * args.sequence_length,
         "hidden_size": hidden_size,
         "ranks": ranks,
         "layers": args.layers,

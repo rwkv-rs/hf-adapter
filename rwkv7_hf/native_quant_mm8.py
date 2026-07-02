@@ -318,5 +318,3 @@ def quantize_model_mm8(model, *, min_params: int = 8_000_000, fused: bool = True
         parent = model.get_submodule(parent_name) if parent_name else model
         setattr(parent, attr, MM8Linear(getattr(parent, attr), fused=fused))
     return len(targets)
-
-

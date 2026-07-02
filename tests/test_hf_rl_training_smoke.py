@@ -97,6 +97,16 @@ def max_trainable_delta(before: dict[str, torch.Tensor], model) -> float:
     return max_delta
 
 
+def keep_trainable_params_fp32(model) -> None:
+    """Keep LoRA adapters in fp32 for deterministic one-step smoke updates."""
+
+    for param in model.parameters():
+        if param.requires_grad:
+            param.data = param.data.float()
+            if param.grad is not None:
+                param.grad.data = param.grad.data.float()
+
+
 def ensure_trl_fsdp_compat() -> None:
     """Patch older torch builds for newer TRL imports when needed."""
     try:
@@ -160,8 +170,11 @@ def run_dpo(args: argparse.Namespace) -> dict[str, Any]:
             logging_steps=1,
             save_strategy="no",
             report_to=[],
-            fp16=use_fp16(args.device, args.train_dtype),
-            bf16=use_bf16(args.device, args.train_dtype),
+            # The model itself is loaded in --train-dtype. Keep Trainer mixed
+            # precision off so the one-step LoRA update check is not skipped by
+            # AMP loss scaling on tiny smoke batches.
+            fp16=False,
+            bf16=False,
             gradient_checkpointing=False,
             optim="adamw_torch",
             remove_unused_columns=False,
@@ -174,6 +187,7 @@ def run_dpo(args: argparse.Namespace) -> dict[str, Any]:
             processing_class=tokenizer,
             peft_config=lora_config(),
         )
+        keep_trainable_params_fp32(trainer.model)
         before = trainable_snapshot(trainer.model)
         assert before, "expected LoRA/trainable parameters"
         result = trainer.train()
@@ -231,8 +245,8 @@ def run_grpo(args: argparse.Namespace) -> dict[str, Any]:
             logging_steps=1,
             save_strategy="no",
             report_to=[],
-            fp16=use_fp16(args.device, args.train_dtype),
-            bf16=use_bf16(args.device, args.train_dtype),
+            fp16=False,
+            bf16=False,
             gradient_checkpointing=False,
             optim="adamw_torch",
             remove_unused_columns=False,
@@ -248,6 +262,7 @@ def run_grpo(args: argparse.Namespace) -> dict[str, Any]:
             processing_class=tokenizer,
             peft_config=lora_config(),
         )
+        keep_trainable_params_fp32(trainer.model)
         before = trainable_snapshot(trainer.model)
         assert before, "expected LoRA/trainable parameters"
         result = trainer.train()
