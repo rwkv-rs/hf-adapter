@@ -66,6 +66,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--target-model", required=True, help="Target HF model directory")
     ap.add_argument("--draft-model", required=True, help="Draft HF model directory")
+    ap.add_argument(
+        "--draft-tag",
+        default="off-the-shelf",
+        choices=["off-the-shelf", "trained"],
+        help="draft source: 'off-the-shelf' (default) or 'trained' (LoRA-aligned via scripts/train_spec_draft.py)",
+    )
     ap.add_argument("--dtype", choices=sorted(DTYPES), default="fp16")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--attn-mode", choices=["chunk", "fused_recurrent"], default="fused_recurrent")
@@ -84,6 +90,7 @@ def main() -> int:
             "backend": "hf_adapter",
             "status": "skip",
             "reason": "missing target or draft HF directory",
+            "draft": args.draft_tag,
             "target_hf_dir": args.target_model,
             "draft_hf_dir": args.draft_model,
         }
@@ -145,6 +152,7 @@ def main() -> int:
         "backend": "hf_adapter",
         "status": status,
         "dtype": args.dtype,
+        "draft": args.draft_tag,
         "device": device_name(args.device),
         "target_model_name": target_path.name,
         "draft_model_name": draft_path.name,
