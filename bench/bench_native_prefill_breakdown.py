@@ -24,6 +24,7 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from bench_native_prefill_scan import prepare_model_dir
 from rwkv7_hf import native_jit
 
 
@@ -656,10 +657,13 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
     row = {
         "axis": "native_prefill_breakdown",
         "backend": "hf_adapter",
+        "bench_case": os.environ.get("RWKV7_BENCH_CASE"),
         "status": "pass" if greedy_match else "fail",
         "dtype": args.dtype,
         "device": torch.cuda.get_device_name(0) if args.device.startswith("cuda") else args.device,
         "model_path": args.model,
+        "effective_model_path": getattr(args, "effective_model_path", args.model),
+        "code_source": getattr(args, "code_source", "model"),
         "model_size_label": infer_model_size_label(args.model),
         "batch_size": batch_size,
         "prompt_tokens": prompt_tokens,
@@ -678,6 +682,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
             and not native_jit._native_prefill_fused_scan_enabled()
             and not native_jit._native_prefill_fused_scan_output_enabled()
         ),
+        "prefill_dplr_algorithm": os.environ.get("RWKV7_DPLR_PREFILL_ALGORITHM"),
         "prefill_dplr_chunk_size": native_jit._native_prefill_dplr_chunk_size(),
         "prefill_fused_shift_mix_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_shift_mix_effective": native_jit._native_prefill_fused_shift_mix_enabled(),
@@ -729,6 +734,7 @@ def main() -> int:
     ap.add_argument("--batch-sizes", default="1,4")
     ap.add_argument("--prompt-tokens", default="512")
     ap.add_argument("--fused-scan", choices=["auto", "true", "false"], default="auto")
+    ap.add_argument("--code-source", choices=["model", "repo"], default="model", help="load trust_remote_code from checkpoint files or overlay current repo rwkv7_hf/*.py")
     ap.add_argument("--fine-attn", action="store_true", help="split attn_lora_state_prep into LoRA/state-prep subcomponents")
     ap.add_argument("--layer-breakdown", action="store_true", help="also record per-layer component timings for bsz=1 bottleneck attribution")
     ap.add_argument("--warmup", type=int, default=1)
@@ -739,18 +745,24 @@ def main() -> int:
     if args.fused_scan != "auto":
         os.environ["RWKV7_NATIVE_PREFILL_FUSED_SCAN"] = "1" if args.fused_scan == "true" else "0"
 
-    tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model,
-        trust_remote_code=True,
-        torch_dtype=DTYPES[args.dtype],
-        device_map=args.device if args.device.startswith("cuda") else None,
-    ).eval()
-    for bsz in parse_ints(args.batch_sizes):
-        for prompt_tokens in parse_ints(args.prompt_tokens):
-            row = run_case(args, tok, model, bsz, prompt_tokens)
-            print(json.dumps(row, ensure_ascii=False))
-            append_row(args.results, row)
+    effective_model_path, tmp_model_dir = prepare_model_dir(args.model, code_source=args.code_source)
+    args.effective_model_path = effective_model_path
+    try:
+        tok = AutoTokenizer.from_pretrained(effective_model_path, trust_remote_code=True)
+        model = AutoModelForCausalLM.from_pretrained(
+            effective_model_path,
+            trust_remote_code=True,
+            torch_dtype=DTYPES[args.dtype],
+            device_map=args.device if args.device.startswith("cuda") else None,
+        ).eval()
+        for bsz in parse_ints(args.batch_sizes):
+            for prompt_tokens in parse_ints(args.prompt_tokens):
+                row = run_case(args, tok, model, bsz, prompt_tokens)
+                print(json.dumps(row, ensure_ascii=False))
+                append_row(args.results, row)
+    finally:
+        if tmp_model_dir is not None:
+            tmp_model_dir.cleanup()
     return 0
 
 
