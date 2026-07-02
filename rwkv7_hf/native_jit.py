@@ -321,6 +321,12 @@ def _native_prefill_scan_algebraic_output_enabled() -> bool:
     return env_flag("RWKV7_NATIVE_PREFILL_SCAN_ALGEBRAIC_OUTPUT", False)
 
 
+def _native_prefill_scan_nomask64_enabled() -> bool:
+    """Use the specialized unmasked full-head scan for head_dim=64."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_SCAN_NOMASK64", False)
+
+
 def _native_prefill_fused_shift_mix_enabled() -> bool:
     """Runtime switch for prefill attention shift-mix fusion telemetry."""
 
@@ -1529,6 +1535,7 @@ def prefill(
             state_scan_num_warps = _native_prefill_scan_num_warps(N, state_scan_block_m)
             state_scan_num_stages = _native_prefill_scan_num_stages()
             state_scan_algebraic_output = _native_prefill_scan_algebraic_output_enabled()
+            state_scan_nomask64 = _native_prefill_scan_nomask64_enabled()
             if layer_idx == 0:
                 out, new_state, k, v = fused_recurrent_scan_state_prep(
                     r.view(B, T, H, N),
@@ -1544,6 +1551,7 @@ def prefill(
                     num_warps=state_scan_num_warps,
                     num_stages=state_scan_num_stages,
                     algebraic_output=state_scan_algebraic_output,
+                    nomask64=state_scan_nomask64,
                 )
                 v_first_seq = v.reshape(B, T, hidden)
             else:
@@ -1563,6 +1571,7 @@ def prefill(
                     num_warps=state_scan_num_warps,
                     num_stages=state_scan_num_stages,
                     algebraic_output=state_scan_algebraic_output,
+                    nomask64=state_scan_nomask64,
                 )
             out = out.reshape(B, T, hidden)
             k = k.reshape(B, T, hidden)

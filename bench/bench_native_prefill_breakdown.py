@@ -85,6 +85,10 @@ def scan_algebraic_output() -> bool:
     return getattr(native_jit, "_native_prefill_scan_algebraic_output_enabled", lambda: False)()
 
 
+def scan_nomask64() -> bool:
+    return getattr(native_jit, "_native_prefill_scan_nomask64_enabled", lambda: False)()
+
+
 def median(vals: list[float]) -> float:
     vals = sorted(vals)
     return vals[len(vals) // 2]
@@ -552,6 +556,7 @@ def profiled_native_prefill(
             state_scan_num_warps = native_jit._native_prefill_scan_num_warps(N, state_scan_block_m)
             state_scan_num_stages = native_jit._native_prefill_scan_num_stages()
             state_scan_algebraic_output = native_jit._native_prefill_scan_algebraic_output_enabled()
+            state_scan_nomask64 = native_jit._native_prefill_scan_nomask64_enabled()
 
             def state_scan():
                 if layer_idx == 0:
@@ -569,6 +574,7 @@ def profiled_native_prefill(
                         num_warps=state_scan_num_warps,
                         num_stages=state_scan_num_stages,
                         algebraic_output=state_scan_algebraic_output,
+                        nomask64=state_scan_nomask64,
                     )
                 return native_jit.fused_recurrent_scan_state_prep(
                     r.view(B, T, H, N),
@@ -586,6 +592,7 @@ def profiled_native_prefill(
                     num_warps=state_scan_num_warps,
                     num_stages=state_scan_num_stages,
                     algebraic_output=state_scan_algebraic_output,
+                    nomask64=state_scan_nomask64,
                 )
 
             out, new_state, k, v = profiler.measure("recurrent_scan_state_prep_fused", state_scan)
@@ -881,6 +888,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "scan_num_warps": scan_num_warps(model, scan_m),
         "scan_num_stages": scan_num_stages(),
         "scan_algebraic_output": scan_algebraic_output(),
+        "scan_nomask64": scan_nomask64(),
         "fine_attention_breakdown": bool(args.fine_attn),
         "prefill_fused_scan_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_scan_output_effective": native_jit._native_prefill_fused_scan_output_enabled(),

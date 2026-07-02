@@ -276,6 +276,31 @@ Branch: `wangyue/native-prefill-060-albatross`
     slower on 4090. Keep it disabled by default; the remaining gap is inside
     the state update/readout math and likely needs a dedicated CUDA/persistent
     scan/layout rewrite rather than more output-boundary movement.
+- [x] Try head-dim-64 no-mask specialization inside the full-head scan:
+  - added opt-in `RWKV7_NATIVE_PREFILL_SCAN_NOMASK64=1`.
+  - implementation:
+    - `fused_recurrent_scan_state_prep(...)` can dispatch to a specialized
+      full-head Triton kernel for `N=64, block_n=64` that removes all
+      per-vector masks and masked load/store paths from the dominant scan loop.
+    - benchmark/profiler/analyzer telemetry now records `scan_nomask64`.
+    - default HF/native behavior stays unchanged unless the env flag is set.
+  - validation result files:
+    - `bench/results_4090_prefill060_state_scan_nomask64_smoke_20260703_000958.jsonl`
+    - `bench/results_4090_prefill060_state_scan_nomask64_confirm_20260703_001039.jsonl`
+  - remote row sources:
+    - `/tmp/native_4090_state_scan_nomask64_smoke_20260703_000958.jsonl`
+    - `/tmp/native_4090_state_scan_nomask64_confirm_20260703_001039.jsonl`
+  - confirmation rows, both pass greedy/cache smoke:
+    - current baseline full-head state-scan + fused output:
+      `26,291.0 tok/s`, `19.4743 ms`, about `0.5042x` Albatross.
+    - no-mask N64 scan: `25,764.3 tok/s`, `19.8725 ms`, about `0.4941x`
+      Albatross, max diff `0.0625`.
+  - conclusion: removing generic mask overhead is correctness-safe but slower
+    on 4090; Triton likely already optimizes much of the `N=64` masking or the
+    specialized variant changes scheduling/register allocation unfavorably.
+    Keep it disabled by default. This further narrows the remaining path to a
+    real state-layout/CUDA-persistent rewrite instead of another small Triton
+    full-head specialization.
 - [ ] Next corrected-harness experiment:
   - remaining credible path is no longer wrapper/projection fusion. Target the
     internal full-head `fused_recurrent_scan_state_prep` kernel itself, likely

@@ -219,6 +219,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "scan_num_warps": scan_num_warps(model, scan_m),
         "scan_num_stages": scan_num_stages(model),
         "scan_algebraic_output": getattr(nj, "_native_prefill_scan_algebraic_output_enabled", lambda: False)(),
+        "scan_nomask64": getattr(nj, "_native_prefill_scan_nomask64_enabled", lambda: False)(),
         "prefill_fused_scan_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_scan_output_effective": nj._native_prefill_fused_scan_output_enabled(),
         "prefill_fused_state_scan_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
