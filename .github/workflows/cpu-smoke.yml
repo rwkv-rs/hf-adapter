@@ -1,0 +1,37 @@
+name: cpu-smoke
+
+# No-CUDA / CPU-fallback guard for the HF adapter. Runs the fla-free import
+# smoke, the offline convert/manifest tests, and the native (fla-free) CausalLM
+# training-unit smoke on a GPU-less runner. Protects the path that upstream /
+# AMD / CPU-only contributors and CI rely on. Mirrors what
+# `CUDA_VISIBLE_DEVICES="" python tests/test_native_*.py` checks locally.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  cpu-no-cuda:
+    runs-on: ubuntu-latest
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install CPU-only torch
+        run: pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Install adapter and runtime deps (fla / transformers / safetensors)
+        run: pip install -e .
+      - name: No-CUDA smoke tests
+        run: |
+          python tests/test_native_fla_free_import.py
+          python tests/test_convert_config.py
+          python tests/test_batch_convert_manifest.py
+          python tests/test_native_model_training_unit.py
