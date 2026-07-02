@@ -351,13 +351,61 @@ def profiled_native_prefill(
         )
 
         def output_prep_project():
-            out_local = F.group_norm(out.reshape(B * T, hidden), H, gn_w, gn_b, eps).view(B, T, hidden)
-            sk = (r.view(B, T, H, N) * k.view(B, T, H, N) * r_k.view(1, 1, H, N)).sum(dim=-1, keepdim=True)
-            out_local = (out_local + (sk * v.view(B, T, H, N)).view(B, T, hidden)) * g
+            if native_jit._native_prefill_fused_output_enabled():
+                out_local = native_jit.fused_attn_output_prepare(
+                    out.reshape(B * T, hidden),
+                    r.reshape(B * T, H, N),
+                    k.reshape(B * T, H, N),
+                    v.reshape(B * T, H, N),
+                    g.reshape(B * T, hidden),
+                    r_k,
+                    gn_w,
+                    gn_b,
+                    num_heads=H,
+                    head_dim=N,
+                    head_v_dim=N,
+                    eps=eps,
+                ).view(B, T, hidden)
+            else:
+                out_local = F.group_norm(out.reshape(B * T, hidden), H, gn_w, gn_b, eps).view(B, T, hidden)
+                sk = (r.view(B, T, H, N) * k.view(B, T, H, N) * r_k.view(1, 1, H, N)).sum(dim=-1, keepdim=True)
+                out_local = (out_local + (sk * v.view(B, T, H, N)).view(B, T, hidden)) * g
             out_local = F.linear(out_local, Ow)
             return residual + out_local
 
-        x = profiler.measure("attn_output_project", output_prep_project)
+        def fine_output_prep_project():
+            if native_jit._native_prefill_fused_output_enabled():
+                prepared = profiler.measure(
+                    "attn_output_prep_fused",
+                    lambda: native_jit.fused_attn_output_prepare(
+                        out.reshape(B * T, hidden),
+                        r.reshape(B * T, H, N),
+                        k.reshape(B * T, H, N),
+                        v.reshape(B * T, H, N),
+                        g.reshape(B * T, hidden),
+                        r_k,
+                        gn_w,
+                        gn_b,
+                        num_heads=H,
+                        head_dim=N,
+                        head_v_dim=N,
+                        eps=eps,
+                    ).view(B, T, hidden),
+                )
+            else:
+                def output_prep():
+                    out_local = F.group_norm(out.reshape(B * T, hidden), H, gn_w, gn_b, eps).view(B, T, hidden)
+                    sk = (r.view(B, T, H, N) * k.view(B, T, H, N) * r_k.view(1, 1, H, N)).sum(dim=-1, keepdim=True)
+                    return (out_local + (sk * v.view(B, T, H, N)).view(B, T, hidden)) * g
+
+                prepared = profiler.measure("attn_output_prep", output_prep)
+            projected = profiler.measure("attn_output_o_proj", lambda: F.linear(prepared, Ow))
+            return residual + projected
+
+        if fine_attention_breakdown:
+            x = fine_output_prep_project()
+        else:
+            x = profiler.measure("attn_output_project", output_prep_project)
         xpa[layer_idx] = h[:, -1, :].contiguous()
         state[layer_idx] = new_state.contiguous()
 
@@ -442,6 +490,8 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "fine_attention_breakdown": bool(args.fine_attn),
         "prefill_fused_state_prep_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_state_prep_effective": native_jit._native_prefill_fused_state_prep_enabled(),
+        "prefill_fused_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
+        "prefill_fused_output_effective": native_jit._native_prefill_fused_output_enabled(),
         "prefill_fused_wavg_lora_requested": native_jit._native_prefill_fused_wavg_lora_requested(),
         "prefill_fused_wavg_lora_effective": native_jit._native_prefill_fused_wavg_lora_enabled(batch_size * prompt_tokens),
         "prefill_fused_wavg_lora_max_m": native_jit._native_prefill_fused_wavg_lora_max_m(),

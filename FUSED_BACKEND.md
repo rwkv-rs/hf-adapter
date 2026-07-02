@@ -376,6 +376,13 @@ serving speed.
      both bsz=1 and bsz=4. Next prefill work should therefore be a deeper
      cross-bucket fusion (scan + norm/shift/state prep and/or projection), not
      cache work and not shallow WAVG LoRA alone.
+   - Native prefill can also reuse the decode output-prep kernel under
+     `RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1`. The 4090 / 0.4B / fp16 /
+     prompt=512 A/B is correctness-clean, and fine breakdown shows output prep
+     itself shrinking to `0.1855ms` (bsz=1), but end-to-end prefill regresses
+     versus the state-prep-only row (`21691.5` vs `22358.5` tok/s at bsz=1;
+     `80948.1` vs `81144.8` tok/s at bsz=4). Keep this path opt-in telemetry;
+     it is too small a bucket to offset extra overhead without deeper fusion.
 
 ## Backend dispatch requirement
 
