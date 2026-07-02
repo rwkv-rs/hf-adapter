@@ -557,9 +557,78 @@ PYTHONPATH=. python bench/bench_dplr_prefill_scan.py \
   --warmup 1 --steps 2 \
   --results bench/results.jsonl
 
-PYTHONPATH=. python bench/analyze_results.py --results bench/results.jsonl
+PYTHONPATH=. python bench/analyze_results.py --results bench/results.jsonl --dtype fp32
 ```
 
 Do not run the dense affine prototype at `H=16,N=64,T=512` except deliberately
 as a stress test; it materializes dense chunk transforms and is expected to be
 slower than the sequential reference until the WY/low-rank chunk composer lands.
+
+### WY/lowrank prototype validation commands
+
+`bench/bench_dplr_prefill_scan.py` accepts `--algorithms sequential affine wy
+lowrank` and records both `requested_algorithm` and `effective_algorithm`.
+If the checked-out `dplr_chunk_scan()` does not yet support `wy` or `lowrank`,
+the row is emitted as `status="skip_unsupported_algorithm"`; if one alias is
+implemented and the other is requested, the benchmark may use the implemented
+alias and record `status="fallback_algorithm_alias"`.
+
+Start with small correctness-focused matrices, where the dense affine scaffold
+is still safe enough to compare against sequential and the future WY/lowrank
+path:
+
+```bash
+PYTHONPATH=. python bench/bench_dplr_prefill_scan.py \
+  --device cuda --dtype fp32 \
+  --batch-sizes 1 --tokens 32 64 \
+  --heads 2 --head-dim 8 --chunk-sizes 8 16 \
+  --algorithms sequential affine wy lowrank \
+  --warmup 1 --steps 2 \
+  --results bench/results.jsonl
+
+PYTHONPATH=. python bench/analyze_results.py --results bench/results.jsonl --dtype fp32
+```
+
+Then measure the target prefill-shaped case without dense affine.  For
+`H=16,N=64` do **not** include `affine`; it materializes dense O(N^3) chunk
+transforms and is not the intended large-matrix path.
+
+```bash
+PYTHONPATH=. python bench/bench_dplr_prefill_scan.py \
+  --device cuda --dtype fp16 \
+  --batch-sizes 1 --tokens 512 \
+  --heads 16 --head-dim 64 --chunk-sizes 64 128 \
+  --algorithms sequential wy \
+  --warmup 3 --steps 10 \
+  --results bench/results.jsonl
+
+PYTHONPATH=. python bench/analyze_results.py --results bench/results.jsonl
+```
+
+If the implementation exposes the low-rank path as `lowrank` rather than `wy`,
+replace the second command with `--algorithms sequential lowrank`, or list both
+aliases and let unsupported rows skip explicitly in JSONL.
+
+4090 validation for the current pure-torch WY/lowrank prototype:
+
+- `tests/test_dplr_prefill_scan.py`: PASS.
+- Synthetic fp32 `B=1,T=32/64,H=2,N=8,chunk=8/16`: `wy`/`lowrank`
+  rows PASS with output/state max diff `<=2.3e-8` vs `torch_recurrent_scan`.
+  The implementation is correctness-only in torch: `wy`/`lowrank` run at
+  roughly `2.5k`-`2.6k tok/s`, slower than sequential (`~8.4k`-`8.5k tok/s`).
+- Synthetic fp16 `B=1,T=128,H=4,N=16,chunk=16/32`: `wy`/`lowrank`
+  rows PASS with output max diff `1.22e-4`, state max diff `6.65e-5`, and
+  min cosine `0.99999988`.  They run at roughly `2.8k tok/s`, slower than
+  sequential (`~9.3k tok/s`).
+- HF native prefill smoke on 0.4B / prompt32 with
+  `RWKV7_NATIVE_PREFILL_DPLR_SCAN=1` and
+  `RWKV7_DPLR_PREFILL_ALGORITHM=wy`: `status=pass`, `greedy_match=true`,
+  `decode_after_prefill_greedy_match=true`, but only `~188 tok/s`.  This
+  confirms cache/generate correctness and also confirms that Python WY is not a
+  performance path.
+
+Next step: stop micro-optimizing the pure torch loops and move the same
+contract into compiled kernels: (1) chunk summary for diagonal-plus-low-rank
+metadata, (2) chunk-level prefix combine, (3) chunk apply/output.  Keep
+`algorithm_family="lowrank_wy"` and `is_dense_affine=false` in JSON so we can
+tell the real WY path apart from dense affine and sequential fallbacks.

@@ -18,6 +18,15 @@ materializes the per-token affine transitions and composes chunk prefix/suffix
 transforms in torch.  That affine path is intentionally O(T*N^3): it is a
 correctness prototype and the marked replacement point for a future WY/Triton
 implementation.
+
+The newer experimental ``algorithm="lowrank"`` / ``algorithm="wy"`` path keeps
+chunk affine products as
+
+    A_{0:i} = diag(d_i) + U_i V_i^T
+
+and keeps the additive chunk term as ``X_i Y_i^T``.  It is still a pure torch
+correctness prototype, but it avoids explicitly constructing each dense
+``A_t`` and avoids dense ``N x N`` by ``N x N`` transition products.
 """
 from __future__ import annotations
 
@@ -30,11 +39,11 @@ except Exception:  # pragma: no cover
     torch = None  # type: ignore[assignment]
 
 
-__all__ = ["dplr_chunk_scan"]
+__all__ = ["dplr_chunk_scan", "lowrank_chunk_summary"]
 
 
 _ALGORITHM_ENV = "RWKV7_DPLR_PREFILL_ALGORITHM"
-_SUPPORTED_ALGORITHMS = ("sequential", "affine")
+_SUPPORTED_ALGORITHMS = ("sequential", "affine", "lowrank", "wy")
 
 
 def _require_torch():
@@ -86,7 +95,7 @@ def _resolve_algorithm(algorithm: Any) -> str:
     if algorithm is None:
         algorithm = os.environ.get(_ALGORITHM_ENV, "sequential")
     if not isinstance(algorithm, str):
-        raise TypeError("algorithm must be 'sequential', 'affine', or None")
+        raise TypeError("algorithm must be 'sequential', 'affine', 'lowrank', 'wy', or None")
     normalized = algorithm.strip().lower()
     if normalized not in _SUPPORTED_ALGORITHMS:
         supported = "', '".join(_SUPPORTED_ALGORITHMS)
@@ -136,6 +145,158 @@ def _dplr_affine_transition(w_t: Any, k_t: Any, v_t: Any, kk_t: Any, a_t: Any):
     affine_a = diag_w + rank1
     affine_b = v_t.view(B, H, N, 1) @ k_t.view(B, H, 1, N)
     return affine_a, affine_b
+
+
+def _factor_dot(factors: Any, vec: Any):
+    """Return ``factors^T vec`` for factors shaped ``[B,H,N,R]``."""
+
+    if int(factors.shape[-1]) == 0:
+        return vec.new_zeros((*vec.shape[:-1], 0))
+    return torch.einsum("bhnr,bhn->bhr", factors, vec)
+
+
+def _factor_weighted_sum(factors: Any, weights: Any):
+    """Return ``factors weights`` for factors shaped ``[B,H,N,R]``."""
+
+    if int(factors.shape[-1]) == 0:
+        return factors.new_zeros(factors.shape[:-1])
+    return torch.einsum("bhnr,bhr->bhn", factors, weights)
+
+
+def _append_factor_column(factors: Any, col: Any):
+    return torch.cat((factors, col.unsqueeze(-1)), dim=-1)
+
+
+def _lowrank_apply_transition_to_vector(diag: Any, left: Any, right: Any, vec: Any):
+    """Apply ``diag(diag) + left right^T`` to ``vec`` without forming it."""
+
+    out = diag * vec
+    if int(left.shape[-1]) != 0:
+        out = out + _factor_weighted_sum(left, _factor_dot(right, vec))
+    return out
+
+
+def _lowrank_apply_outer_to_vector(left: Any, right: Any, vec: Any):
+    """Apply ``left right^T`` to ``vec`` without forming the dense matrix."""
+
+    return _factor_weighted_sum(left, _factor_dot(right, vec))
+
+
+def _lowrank_apply_transition_to_state(state: Any, diag: Any, left: Any, right: Any):
+    """Apply ``state @ (diag(diag) + left right^T)`` without dense N^3 work."""
+
+    out = state * diag.unsqueeze(-2)
+    if int(left.shape[-1]) != 0:
+        out = out + (state @ left) @ right.transpose(-1, -2)
+    return out
+
+
+def _lowrank_outer_to_dense(left: Any, right: Any):
+    if int(left.shape[-1]) == 0:
+        return left.new_zeros((*left.shape[:-1], int(left.shape[-2])))
+    return left @ right.transpose(-1, -2)
+
+
+def _check_chunk_tensor_compat(name: str, x: Any, *, shape: Any, device: Any) -> None:
+    if tuple(x.shape) != tuple(shape):
+        raise ValueError(f"{name} chunk shape must match w; got {tuple(x.shape)}")
+    if x.device != device:
+        raise ValueError(f"{name} chunk must be on the same device as w")
+    if not x.is_floating_point():
+        raise TypeError(f"{name} chunk must be a floating point tensor")
+
+
+def lowrank_chunk_summary(w: Any, k: Any, v: Any, kk: Any, a: Any, *, include_prefix: bool = True):
+    """Return diagonal-plus-low-rank metadata for one BTHN chunk.
+
+    Inputs must be normalized chunk tensors shaped ``[B, L, H, N]``.  For token
+    ``i`` in the chunk define
+
+    ``A_i = diag(w_i) + p_i q_i^T``, with ``p_i = -kk_i`` and
+    ``q_i = kk_i * a_i``, and ``B_i = v_i k_i^T``.
+
+    The returned summary stores the full chunk transition and additive term as
+
+    ``A_0 ... A_{L-1} = diag(d) + U V^T``
+    ``sum_j B_j A_{j+1} ... A_{L-1} = X Y^T``
+
+    plus optional inclusive prefix summaries.  The update rules never build a
+    dense ``A_i`` and never multiply two dense ``N x N`` transition matrices;
+    rank grows by one per token, so the pure torch prototype uses O(L^2*N)
+    metadata work plus O(L*N^2) state application at chunk boundaries.
+    """
+
+    _require_torch()
+    if not hasattr(w, "dim"):
+        raise TypeError("w chunk must be a torch.Tensor")
+    if w.dim() != 4:
+        raise ValueError("chunk tensors must be shaped [batch, chunk_tokens, heads, head_dim]")
+    if not w.is_floating_point():
+        raise TypeError("w chunk must be a floating point tensor")
+
+    B, L, H, N = (int(vv) for vv in w.shape)
+    shape = tuple(w.shape)
+    device = w.device
+    for name, x in (("k", k), ("v", v), ("kk", kk), ("a", a)):
+        if not hasattr(x, "dim"):
+            raise TypeError(f"{name} chunk must be a torch.Tensor")
+        _check_chunk_tensor_compat(name, x, shape=shape, device=device)
+
+    diag = w.new_ones((B, H, N))
+    trans_left = w.new_empty((B, H, N, 0))
+    trans_right = w.new_empty((B, H, N, 0))
+    add_left = w.new_empty((B, H, N, 0))
+    add_right = w.new_empty((B, H, N, 0))
+    prefixes = []
+
+    for i in range(L):
+        w_i = w[:, i]
+        key_i = k[:, i]
+        val_i = v[:, i]
+        p_i = -kk[:, i]
+        q_i = kk[:, i] * a[:, i]
+
+        # If P = diag(d) + U V^T is the previous transition product, then
+        # P (diag(w_i) + p_i q_i^T) =
+        #   diag(d*w_i) + U (diag(w_i)V)^T + (P p_i) q_i^T.
+        new_left_col = diag * p_i + _factor_weighted_sum(trans_left, _factor_dot(trans_right, p_i))
+        trans_right = trans_right * w_i.unsqueeze(-1)
+        diag = diag * w_i
+        trans_left = _append_factor_column(trans_left, new_left_col)
+        trans_right = _append_factor_column(trans_right, q_i)
+
+        # If Q = X Y^T is the previous additive term, then
+        # Q (diag(w_i) + p_i q_i^T) =
+        #   X (diag(w_i)Y + q_i(Y^T p_i)^T)^T.
+        if int(add_right.shape[-1]) != 0:
+            add_coeff = _factor_dot(add_right, p_i)
+            add_right = add_right * w_i.unsqueeze(-1) + q_i.unsqueeze(-1) * add_coeff.unsqueeze(-2)
+        add_left = _append_factor_column(add_left, val_i)
+        add_right = _append_factor_column(add_right, key_i)
+
+        if include_prefix:
+            prefixes.append(
+                {
+                    "length": i + 1,
+                    "transition_diag": diag,
+                    "transition_left": trans_left,
+                    "transition_right": trans_right,
+                    "additive_left": add_left,
+                    "additive_right": add_right,
+                }
+            )
+
+    return {
+        "algorithm": "lowrank-wy",
+        "length": L,
+        "rank": int(trans_left.shape[-1]),
+        "transition_diag": diag,
+        "transition_left": trans_left,
+        "transition_right": trans_right,
+        "additive_left": add_left,
+        "additive_right": add_right,
+        "prefix": tuple(prefixes),
+    }
 
 
 def _identity_affine(B: int, H: int, N: int, *, device: Any, dtype: Any):
@@ -268,6 +429,67 @@ def _dplr_chunk_scan_affine(r32: Any, w32: Any, k32: Any, v32: Any, kk32: Any, a
     return outs, cur_state
 
 
+def _dplr_chunk_scan_lowrank(r32: Any, w32: Any, k32: Any, v32: Any, kk32: Any, a32: Any, state32: Any, chunk_size: int):
+    """Experimental diagonal-plus-low-rank/WY chunk prototype.
+
+    For a chunk start state ``S`` and inclusive prefix metadata
+    ``P_i = diag(d_i) + U_i V_i^T`` and ``Q_i = X_i Y_i^T``, token outputs are
+
+        ``out_i = S @ (P_i r_i) + Q_i @ r_i``.
+
+    The chunk-end state is
+
+        ``S_end = S @ diag(d) + (S @ U) V^T + X Y^T``.
+
+    This is still a correctness prototype (rank grows with chunk length), but
+    unlike the dense affine path it never constructs per-token dense
+    ``A_i`` matrices and never composes dense ``N x N`` transitions.
+    """
+
+    B, T, H, N = (int(r32.shape[0]), int(r32.shape[1]), int(r32.shape[2]), int(r32.shape[3]))
+    cur_state = state32
+    outs = []
+
+    for start in range(0, T, chunk_size):
+        end = min(start + chunk_size, T)
+        chunk_start_state = cur_state
+        summary = lowrank_chunk_summary(
+            w32[:, start:end],
+            k32[:, start:end],
+            v32[:, start:end],
+            kk32[:, start:end],
+            a32[:, start:end],
+            include_prefix=True,
+        )
+
+        for local_i, t in enumerate(range(start, end)):
+            prefix = summary["prefix"][local_i]
+            r_t = r32[:, t]
+            pr_t = _lowrank_apply_transition_to_vector(
+                prefix["transition_diag"],
+                prefix["transition_left"],
+                prefix["transition_right"],
+                r_t,
+            )
+            out_t = chunk_start_state @ pr_t.view(B, H, N, 1)
+            out_t = out_t.view(B, H, N) + _lowrank_apply_outer_to_vector(
+                prefix["additive_left"],
+                prefix["additive_right"],
+                r_t,
+            )
+            outs.append(out_t)
+
+        cur_state = _lowrank_apply_transition_to_state(
+            chunk_start_state,
+            summary["transition_diag"],
+            summary["transition_left"],
+            summary["transition_right"],
+        )
+        cur_state = cur_state + _lowrank_outer_to_dense(summary["additive_left"], summary["additive_right"])
+
+    return outs, cur_state
+
+
 def dplr_chunk_scan(
     r: Any,
     w: Any,
@@ -303,8 +525,10 @@ def dplr_chunk_scan(
     algorithm:
         ``"sequential"`` preserves the original chunked reference behavior.
         ``"affine"`` enables an experimental dense affine chunk prototype that
-        explicitly composes per-token ``A_t``/``B_t`` transforms.  ``None``
-        (the default) reads ``RWKV7_DPLR_PREFILL_ALGORITHM`` and falls back to
+        explicitly composes per-token ``A_t``/``B_t`` transforms.  ``"lowrank"``
+        and ``"wy"`` enable the experimental diagonal-plus-low-rank chunk
+        summary path from ``lowrank_chunk_summary``.  ``None`` (the default)
+        reads ``RWKV7_DPLR_PREFILL_ALGORITHM`` and falls back to
         ``"sequential"`` when the environment variable is unset.
 
     Returns
@@ -365,8 +589,13 @@ def dplr_chunk_scan(
 
     if algorithm_i == "sequential":
         outs, cur_state = _dplr_chunk_scan_sequential(r32, w32, k32, v32, kk32, a32, cur_state, chunk_size_i)
-    else:
+    elif algorithm_i == "affine":
         outs, cur_state = _dplr_chunk_scan_affine(r32, w32, k32, v32, kk32, a32, cur_state, chunk_size_i)
+    else:
+        # ``wy`` is an alias for the same diagonal-plus-low-rank product
+        # metadata used by ``lowrank``.  It is a true low-rank prototype, not a
+        # fallback to the dense affine implementation.
+        outs, cur_state = _dplr_chunk_scan_lowrank(r32, w32, k32, v32, kk32, a32, cur_state, chunk_size_i)
 
     stacked = torch.stack(outs, dim=1).to(dtype=out_dtype)
     if flat:
