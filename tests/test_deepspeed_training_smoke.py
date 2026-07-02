@@ -35,6 +35,8 @@ PROMPTS = [
     "User: Count to three.\n\nAssistant: one two three.",
 ]
 
+TRAIN_DTYPES = {"fp32": "float32", "fp16": "float16", "bf16": "bfloat16"}
+
 
 def optional_torch() -> Any | None:
     if importlib.util.find_spec("torch") is None:
@@ -124,6 +126,18 @@ def append_rows(path: str, rows: list[dict[str, Any]]) -> None:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def train_torch_dtype(torch: Any, train_dtype: str) -> Any:
+    return getattr(torch, TRAIN_DTYPES[train_dtype])
+
+
+def use_fp16(torch: Any, train_dtype: str) -> bool:
+    return torch.cuda.is_available() and train_dtype == "fp16"
+
+
+def use_bf16(torch: Any, train_dtype: str) -> bool:
+    return torch.cuda.is_available() and train_dtype == "bf16"
+
+
 def materialize_trainable_param(param) -> Any | None:
     """Return a full CPU fp32 copy, including DeepSpeed ZeRO-3 shards."""
     try:
@@ -173,7 +187,7 @@ def load_lora_model(model_path: str, attn_mode: str, train_dtype: str):
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         trust_remote_code=True,
-        torch_dtype=torch.float16 if train_dtype == "fp16" else torch.float32,
+        torch_dtype=train_torch_dtype(torch, train_dtype),
     )
     model.config.use_cache = False
     model.config.fuse_cross_entropy = False
@@ -263,8 +277,8 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
             save_strategy="no",
             report_to=[],
             remove_unused_columns=False,
-            fp16=torch.cuda.is_available() and args.train_dtype == "fp16",
-            bf16=False,
+            fp16=use_fp16(torch, args.train_dtype),
+            bf16=use_bf16(torch, args.train_dtype),
             dataloader_num_workers=0,
             gradient_checkpointing=False,
             deepspeed=str(config_path),
@@ -318,7 +332,7 @@ def main() -> int:
     ap.add_argument("--zero-stage", choices=["2", "3", "both"], default="both")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--max-length", type=int, default=64)
-    ap.add_argument("--train-dtype", choices=["fp32", "fp16"], default="fp32")
+    ap.add_argument("--train-dtype", choices=["fp32", "fp16", "bf16"], default="fp32")
     ap.add_argument("--max-steps", type=int, default=1)
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--gradient-accumulation-steps", type=int, default=1)
