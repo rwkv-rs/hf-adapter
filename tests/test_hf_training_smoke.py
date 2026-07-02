@@ -25,6 +25,8 @@ PROMPTS = [
     "User: Count to three.\n\nAssistant: one two three.",
 ]
 
+TRAIN_DTYPES = {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}
+
 
 class TokenDataset(Dataset):
     def __init__(self, tokenizer, max_length: int, repeats: int = 1):
@@ -65,6 +67,18 @@ def metric(metrics: dict[str, Any], key: str) -> float | None:
     return float(value) if value is not None else None
 
 
+def train_torch_dtype(train_dtype: str) -> torch.dtype:
+    return TRAIN_DTYPES[train_dtype]
+
+
+def use_fp16(device: str, train_dtype: str) -> bool:
+    return device.startswith("cuda") and train_dtype == "fp16"
+
+
+def use_bf16(device: str, train_dtype: str) -> bool:
+    return device.startswith("cuda") and train_dtype == "bf16"
+
+
 def append_rows(path: str, rows: list[dict[str, Any]]) -> None:
     if not path:
         return
@@ -97,7 +111,7 @@ def load_lora_model(model_path: str, device: str, attn_mode: str, train_dtype: s
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         trust_remote_code=True,
-        torch_dtype=torch.float16 if train_dtype == "fp16" else torch.float32,
+        torch_dtype=train_torch_dtype(train_dtype),
         device_map=device if device.startswith("cuda") else None,
     )
     model.config.use_cache = False
@@ -136,8 +150,8 @@ def run_trainer(args) -> dict[str, Any]:
             save_strategy="no",
             report_to=[],
             remove_unused_columns=False,
-            fp16=args.device.startswith("cuda") and args.train_dtype == "fp16",
-            bf16=False,
+            fp16=use_fp16(args.device, args.train_dtype),
+            bf16=use_bf16(args.device, args.train_dtype),
             dataloader_num_workers=0,
             gradient_checkpointing=False,
             optim="adamw_torch",
@@ -201,8 +215,8 @@ def run_trl(args) -> dict[str, Any]:
             logging_steps=1,
             save_strategy="no",
             report_to=[],
-            fp16=args.device.startswith("cuda") and args.train_dtype == "fp16",
-            bf16=False,
+            fp16=use_fp16(args.device, args.train_dtype),
+            bf16=use_bf16(args.device, args.train_dtype),
             gradient_checkpointing=False,
             max_length=args.max_length,
             dataset_text_field="text",
@@ -245,7 +259,7 @@ def main() -> int:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--max-length", type=int, default=64)
-    ap.add_argument("--train-dtype", choices=["fp32", "fp16"], default="fp32")
+    ap.add_argument("--train-dtype", choices=["fp32", "fp16", "bf16"], default="fp32")
     ap.add_argument("--max-steps", type=int, default=1)
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--gradient-accumulation-steps", type=int, default=1)

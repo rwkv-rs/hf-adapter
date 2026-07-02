@@ -44,7 +44,11 @@ if [[ "${OPTIONAL_DEEPSPEED}" == "1" ]]; then
 fi
 
 if [[ -n "${NPROC_PER_NODE}" && "${NPROC_PER_NODE}" != "1" ]]; then
-  torchrun_cmd=(torchrun --standalone --nproc_per_node="${NPROC_PER_NODE}" "${script_args[@]}")
+  if command -v torchrun >/dev/null 2>&1; then
+    torchrun_cmd=(torchrun --standalone --nproc_per_node="${NPROC_PER_NODE}" "${script_args[@]}")
+  else
+    torchrun_cmd=("${PYTHON_BIN}" -m torch.distributed.run --standalone --nproc_per_node="${NPROC_PER_NODE}" "${script_args[@]}")
+  fi
   rwkv7_run "${torchrun_cmd[@]}"
 else
   rwkv7_run "${PYTHON_BIN}" "${script_args[@]}"
