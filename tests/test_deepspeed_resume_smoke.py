@@ -231,7 +231,7 @@ def main() -> int:
     ap.add_argument("--zero-stage", choices=["2", "3", "both"], default="both")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--max-length", type=int, default=16)
-    ap.add_argument("--train-dtype", choices=["fp32", "fp16", "bf16"], default="fp32")
+    ap.add_argument("--train-dtype", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--first-steps", type=int, default=1)
     ap.add_argument("--resume-steps", type=int, default=2)
     ap.add_argument("--batch-size", type=int, default=1)
@@ -239,6 +239,9 @@ def main() -> int:
     ap.add_argument("--dataset-repeats", type=int, default=4)
     ap.add_argument("--results", default="")
     args = ap.parse_args()
+    if args.train_dtype is None:
+        args.train_dtype = "bf16" if args.device.startswith("cuda") else "fp32"
+    
     if args.resume_steps <= args.first_steps:
         raise ValueError("resume-steps must exceed first-steps")
     stages = [2, 3] if args.zero_stage == "both" else [int(args.zero_stage)]
