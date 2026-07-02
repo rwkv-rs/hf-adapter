@@ -652,6 +652,7 @@ def fused_recurrent_scan(
     *,
     block_n: int = 64,
     block_m: int | None = None,
+    num_warps: int | None = None,
     force_fallback: bool = False,
 ):
     """Compute a multi-token RWKV-7 recurrent scan with an optional Triton kernel.
@@ -677,6 +678,11 @@ def fused_recurrent_scan(
     block_m = int(block_m)
     if block_m <= 0:
         raise ValueError(f"block_m must be positive; got {block_m}")
+    if num_warps is None:
+        num_warps = 4 if block_m < N else 8
+    num_warps = int(num_warps)
+    if num_warps not in {1, 2, 4, 8}:
+        raise ValueError(f"num_warps must be one of 1, 2, 4, or 8; got {num_warps}")
     r4, flat = _as_bthn(r, H, N, name="r")
     w4, _ = _as_bthn(w, H, N, name="w")
     k4, _ = _as_bthn(k, H, N, name="k")
@@ -732,7 +738,7 @@ def fused_recurrent_scan(
             ROW_BLOCKS=int(row_blocks),
             BLOCK_M=int(block_m),
             BLOCK_N=int(block_n),
-            num_warps=4,
+            num_warps=int(num_warps),
         )
     else:
         _recurrent_scan_kernel[(B * H,)](
@@ -749,7 +755,7 @@ def fused_recurrent_scan(
             H,
             N,
             BLOCK_N=int(block_n),
-            num_warps=8,
+            num_warps=int(num_warps),
         )
     if flat:
         return out.reshape(B, T, H * N), final_state

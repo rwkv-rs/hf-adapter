@@ -300,6 +300,11 @@ Run this checklist for every new GPU before marking it as supported:
     the larger model/card matrix passes. For this exact Ada shape,
     `RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M=8` is the best recorded scan tile; `4`,
     `16`, and `32` were slower end-to-end.
+  - `RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS` is a telemetry override only. The
+    4090 scan microbench shows batch-dependent winners (`8` warps at bsz=1,
+    `1` warp at bsz=4), but full prefill rows do not beat the best
+    state-prep-only row, so do not promote a warp count without exact-card
+    end-to-end wins across the claimed bsz set.
   - Prefill output-prep fusion (`RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1`) is
     correctness-clean but not defaultable on the current 4090 prompt512 rows:
     it reduces the isolated output-prep bucket yet end-to-end bsz=1/4 stays
