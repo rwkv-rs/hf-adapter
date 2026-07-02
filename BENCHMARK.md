@@ -7,6 +7,7 @@ and Albatross-style paths in correctness, speed, and memory.
 ## Hardware currently measured
 
 - Development server: **Tesla V100-PCIE-32GB**, CUDA fp16.
+- A100 validation server: **NVIDIA A100-PCIE-40GB**, fp16/bf16.
 - Local dev box baseline from earlier PR: **NVIDIA RTX 5070 Laptop GPU**, fp16/bf16/fp32.
 - Baseline model: **rwkv7-g1d-0.1b-20260129-ctx8192**.
 
@@ -33,6 +34,84 @@ and Albatross-style paths in correctness, speed, and memory.
 | Metric | Target |
 |---|---:|
 | peak VRAM | HF <= 1.1 x official comparable path |
+
+## Current A100 / Ampere status
+
+Issue #68 A100 validation was run on 2026-07-02 on `gpu03`.
+
+Environment:
+
+- GPU: 8 x NVIDIA A100-PCIE-40GB; inference used 1 GPU, ZeRO used 2 GPUs.
+- Driver / CUDA: NVIDIA driver `570.133.20`, `nvidia-smi` CUDA `12.8`.
+- Runtime: Python `3.12.8`, PyTorch `2.8.0+cu126` (`torch.version.cuda=12.6`), Transformers `4.57.1`, PEFT `0.19.1`, TRL `1.7.0`, DeepSpeed `0.19.2`, bitsandbytes `0.49.2`, FLA `0.5.1`.
+- Model: converted HF `rwkv7-g1d-0.1b-20260129-ctx8192`, `fused_recurrent`, `fuse_norm=false`, `RWKV7StateCache`, `RWKV7_FAST_TOKEN_BACKEND=auto`.
+- Note: the first FLA backward pass compiled slowly on the 4.18 kernel; later steps reused the compiled path.
+
+Representative commands:
+
+```bash
+DTYPE=fp16 DEVICE=cuda FUSE_NORM=false FAST_CACHE=true FAST_TOKEN_BACKEND=auto \
+  BATCH_SIZES="1 2 4 8 16 32" PROMPT_TOKENS=512 DECODE_TOKENS=128 WARMUP=2 RUNS=3 \
+  bash scripts/run_hardware_smoke.sh "$MODEL"
+
+DTYPE=bf16 DEVICE=cuda RUN_QUANT=0 FUSE_NORM=false FAST_CACHE=true FAST_TOKEN_BACKEND=auto \
+  BATCH_SIZES="1 2 4 8 16 32" PROMPT_TOKENS=512 DECODE_TOKENS=128 WARMUP=2 RUNS=3 \
+  bash scripts/run_hardware_smoke.sh "$MODEL"
+
+TRAIN_DTYPE=bf16 DEVICE=cuda MAX_LENGTH=32 MAX_STEPS=1 DATASET_REPEATS=2 \
+  RUN_PEFT=0 RUN_TRAINER=1 RUN_RL=1 RL_BACKEND=both \
+  bash scripts/run_hf_training_matrix.sh "$MODEL"
+
+CUDA_VISIBLE_DEVICES=0,1 TRAIN_DTYPE=bf16 NPROC_PER_NODE=2 ZERO_STAGE=both \
+  MAX_LENGTH=32 MAX_STEPS=1 DATASET_REPEATS=2 \
+  bash scripts/run_zero_training_smoke.sh "$MODEL"
+```
+
+Smoke status:
+
+| Check | Result |
+|---|---|
+| `smoke_hf_generate` | PASS; `generate_fast_token_backend native_graph` |
+| `test_hf_api_contract --dtype bf16` | PASS |
+| `test_quantized_inference` 8-bit / 4-bit | PASS on fp16; footprint `283.4 MB` / `242.9 MB`, peak `310.6 MB` / `273.3 MB` |
+| `test_peft_lora` | PASS; `663552` trainable parameters, finite loss, `72` non-zero LoRA gradients |
+
+Single-model speed rows in `bench/results.jsonl`:
+
+| Dtype | Prefill tok/s | Forward decode tok/s | Decode ms/tok | Peak VRAM |
+|---|---:|---:|---:|---:|
+| fp16 | 19538.7 | 52.9 | 18.90 | 660.3 MB |
+| bf16 | 19562.5 | 59.5 | 16.82 | 631.1 MB |
+
+A100 serving-style batch sweep, `rwkv7_forward_token`, `fast_token_backend_effective=native_graph`:
+
+| Batch | fp16 decode tok/s | bf16 decode tok/s | bf16 prefill tok/s | Peak VRAM |
+|---:|---:|---:|---:|---:|
+| 1 | 368.5 | 372.8 | 13914.3 | 727.1 MB |
+| 2 | 618.7 | 691.6 | 28281.7 | 1114.0 MB |
+| 4 | 1282.3 | 1333.8 | 54674.3 | 1819.8 MB |
+| 8 | 2591.1 | 2500.8 | 103898.8 | 3263.0 MB |
+| 16 | 5694.9 | 4974.8 | 121949.7 | 6112.5 MB |
+| 32 | 10376.9 | 9966.4 | 124579.8 | 11818.9 MB |
+
+Training and RL rows:
+
+| Backend | Dtype | Status | Loss | Runtime | Trainable delta |
+|---|---|---|---:|---:|---:|
+| HF Trainer | bf16 | PASS | 1.7299 | 311.6833 s | `1.0e-4` |
+| TRL SFT | bf16 | PASS | 1.6520 | 0.2667 s | `1.0e-4` |
+| TRL DPO | bf16 | PASS | 0.6931 | 1.5805 s | `1.0e-4` |
+| TRL GRPO | bf16 | PASS | 0.0000 | 43.2822 s | `1.0e-4` |
+
+DeepSpeed ZeRO rows, 2 x A100, `world_size=2`:
+
+| ZeRO stage | Dtype | Status | Loss | Rank-0 runtime | Rank-0 trainable delta |
+|---:|---|---|---:|---:|---:|
+| 2 | bf16 | PASS | 4.8672 | 66.3160 s | `1.001e-4` |
+| 3 | bf16 | PASS | 4.8672 | 0.7241 s | `1.0e-4` |
+
+The A100 rows occupy the latest A100 block in `bench/results.jsonl`: speed and
+batch rows, bf16 Trainer/TRL rows, and rank-local ZeRO-2/3 rows.
 
 ## Current V100 status
 
