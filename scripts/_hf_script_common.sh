@@ -11,7 +11,15 @@ export PYTHONNOUSERSITE="${PYTHONNOUSERSITE:-1}"
 export RWKV_V7_ON="${RWKV_V7_ON:-1}"
 export TORCHDYNAMO_DISABLE="${TORCHDYNAMO_DISABLE:-1}"
 export DS_IGNORE_CUDA_DETECTION="${DS_IGNORE_CUDA_DETECTION:-1}"
-export PYTHONPATH="${RWKV7_REPO_ROOT}:${PYTHONPATH:-}"
+# Windows (MSYS / Git-Bash / Cygwin) Python uses ';' as the PYTHONPATH
+# separator, not ':'. With ':' the entries get misparsed (the ':' in drive
+# paths like D:/...) and `from bench.xxx` / `import rwkv7_hf` fail with
+# ModuleNotFoundError -- which broke run_hf_acceptance.sh on RTX 5070/Windows.
+if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* || -n "${MSYSTEM:-}" ]]; then
+    export PYTHONPATH="${RWKV7_REPO_ROOT};${PYTHONPATH:-}"
+else
+    export PYTHONPATH="${RWKV7_REPO_ROOT}:${PYTHONPATH:-}"
+fi
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
 RESULTS="${RESULTS:-bench/results.jsonl}"
