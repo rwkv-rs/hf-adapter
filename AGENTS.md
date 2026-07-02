@@ -92,10 +92,31 @@ Latest RTX 4090 target evidence:
     `[1,8,16,64,64]`. Dense summary/prefix `[N,N]` traffic is the first
     compact-WY target.
 - HF repo-code smoke on 4090 / 0.4B / prompt512 / bsz1:
-  - `RWKV7_DPLR_PREFILL_ALGORITHM=triton_wy`: pass, greedy/cache smoke pass,
-    about `20.4k tok/s` in the latest one-step smoke.
-  - `RWKV7_DPLR_PREFILL_ALGORITHM=triton_dense3`: pass, greedy/cache smoke
-    pass, about `18.0k tok/s` in the latest one-step smoke.
+  - Sweep path: `/tmp/native_4090_todo_sweep_20260702_103919.jsonl`.
+  - Albatross reference for this shape remains `52,148.52 tok/s`; `0.45x`
+    is `23,467 tok/s`.
+  - DPLR repo-code rows: `triton_wy` pass at `20,421.7 tok/s` (`0.3916x`),
+    `triton_dense3` pass at `18,546.0 tok/s` (`0.3556x`),
+    `triton_wy_compact` pass at `17,970.5 tok/s` (`0.3446x`).
+  - Fastest short sweep row was the fused recurrent scan path, not DPLR:
+    `RWKV7_NATIVE_PREFILL_FUSED_SCAN=1`,
+    `RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M=8`,
+    `RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS=1`,
+    `RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP=1`; pass at `22,777.0 tok/s`
+    (`0.4368x`) and `991.2 MiB`.
+  - Confirmation for that setting:
+    `/tmp/native_4090_todo_confirm_20260702_104202.jsonl`, pass at
+    `22,292.0 tok/s` (`0.4275x`). It is still below the `0.45x` target.
+  - Breakdown path: `/tmp/native_4090_todo_breakdown_20260702_104126.jsonl`.
+    Top components for the best fused-scan setting are recurrent scan
+    `7.4571 ms` / `26.34%`, FFN `4.0836 ms` / `14.42%`,
+    attention norm+shift-mix `3.8040 ms` / `13.44%`, and fused state prep
+    `3.2982 ms` / `11.65%`.
+  - Prefill fused-output-project is now an opt-in experiment
+    (`RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_PROJECT=1`) for evidence only. The
+    first 4090 row `/tmp/native_4090_output_project_20260702_104430.jsonl`
+    passed correctness but was slower (`18,228.8 tok/s`), so it must remain
+    disabled by default.
 
 Remaining before this goal is complete:
 
@@ -124,7 +145,9 @@ Remaining before this goal is complete:
 - Make the explicit three-stage path at least competitive with the P0 fused
   recurrent scan; current dense3 is correctness-first and slower than P0.
 - Use the 4090 native prefill benchmark to move 0.4B prompt512 bsz1 from the
-  current roughly `0.36x` Albatross band toward `>=0.45x`, then `>=0.60x`.
+  confirmed `0.4275x`/short-sweep `0.4368x` Albatross band to `>=0.45x`, then
+  `>=0.60x`. The next concrete kernel task is recurrent-scan/state-prep
+  launch-count reduction; wrapper-only work is not the performance route.
 - Do not call the DPLR/WY goal finished until compact WY or an equivalent
   compiled path is verified end-to-end against the original acceptance target.
 
