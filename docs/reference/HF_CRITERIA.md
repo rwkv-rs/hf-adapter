@@ -42,5 +42,5 @@
 1. 从 `bench/analyze_results.py --json` 和 `bench/check_results.py` 找当前未达门禁。
 2. 优先处理“有测试覆盖 + 能推动最终目标”的缺口：量化 fast decode、TTFT/TPOT、训练吞吐、13.3B speed/precision、更多 GPU。
 3. 每次只合入一个清晰优化点：补测试、实现、跑本地静态检查、跑 V100 相关 smoke/bench。
-4. 更新 `bench/results.jsonl`、`BENCHMARK.md` / `NEXT_STEPS.md` / 本文件中的状态，保证数字可复现。
+4. 更新 `bench/results.jsonl`、`../../BENCHMARK.md` / `../archive/NEXT_STEPS.md` / 本文件中的状态，保证数字可复现。
 5. PR 标题和正文只描述技术变更，不加入无关标记。

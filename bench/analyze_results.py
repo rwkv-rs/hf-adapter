@@ -428,6 +428,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     native_graph_fused_output_project = latest(rows, lambda r: r.get("axis") == "native_graph_fused_output_project" and r.get("backend") == "hf_adapter")
     native_graph_fused_wag_lora = latest(rows, lambda r: r.get("axis") == "native_graph_fused_wag_lora" and r.get("backend") == "hf_adapter")
     native_graph_fused_wavg_lora = latest(rows, lambda r: r.get("axis") == "native_graph_fused_wavg_lora" and r.get("backend") == "hf_adapter")
+    native_graph_vkwr_rkv_policy = latest(rows, lambda r: r.get("axis") == "native_graph_vkwr_rkv_policy" and r.get("backend") == "hf_adapter")
     native_graph_fused_projection = latest(rows, lambda r: r.get("axis") == "native_graph_fused_projection" and r.get("backend") == "hf_adapter")
     native_graph_fused_output_sweep = latest_by_key(
         [
@@ -562,6 +563,8 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                         "reference_decode_tokps",
                         "fast_decode_tokps",
                         "fast_forward_backend",
+                        "quant_speed_status",
+                        "quant_speed_note",
                         "model_footprint_mb",
                         "peak_vram_mb",
                     ],
@@ -574,6 +577,8 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                         "decode_tokps",
                         "model_footprint_mb",
                         "peak_vram_mb",
+                        "quant_speed_status",
+                        "quant_speed_note",
                     ],
                 ),
                 "decode_ratio_vs_fp16": round(ratio(best_decode, quant_base_decode_for_variants), 4)
@@ -602,12 +607,28 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         r for r in filt(raw_rows, device=args.device, dtype=None)
         if r.get("axis") == "training_smoke" and r.get("backend") == "hf_adapter"
     ]
-    training_latest = latest_by_key(training_rows, lambda r: r.get("trainer_backend"))
+    training_latest = latest_by_key(training_rows, lambda r: (model_label(r), r.get("trainer_backend")))
+    checkpoint_resume_rows = [
+        r for r in filt(raw_rows, device=args.device, dtype=None)
+        if r.get("axis") == "checkpoint_resume_smoke" and r.get("backend") == "hf_adapter"
+    ]
+    checkpoint_resume_latest = latest_by_key(
+        checkpoint_resume_rows,
+        lambda r: (model_label(r), r.get("trainer_backend")),
+    )
     deepspeed_rows = [
         r for r in filt(raw_rows, device=args.device, dtype=None)
         if r.get("axis") == "deepspeed_training_smoke" and r.get("backend") == "hf_adapter"
     ]
-    deepspeed_latest = latest_by_key(deepspeed_rows, lambda r: r.get("zero_stage"))
+    deepspeed_latest = latest_by_key(deepspeed_rows, lambda r: (model_label(r), r.get("zero_stage")))
+    deepspeed_resume_rows = [
+        r for r in filt(raw_rows, device=args.device, dtype=None)
+        if r.get("axis") == "deepspeed_resume_smoke" and r.get("backend") == "hf_adapter"
+    ]
+    deepspeed_resume_latest = latest_by_key(
+        deepspeed_resume_rows,
+        lambda r: (model_label(r), r.get("zero_stage")),
+    )
     albatross_rows = [
         r for r in rows
         if r.get("axis") == "albatross_speed" and r.get("backend") == "albatross"
@@ -790,6 +811,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 "footprint_ratio_vs_fp16": footprint_ratio,
                 "footprint_target_le": footprint_target,
                 "footprint_status": verdict_le(footprint_ratio, footprint_target) if footprint_target is not None else "PENDING",
+                "speed_status": (row.get("best_speed") or {}).get("quant_speed_status") or "measured",
             }
         )
     fused_backend_targets = {
@@ -1622,6 +1644,32 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     f"native_graph fused W/A/G/V-gate LoRA batch matrix covers bsz={sweep_batches} "
                     f"with greedy exact but min_speedup={min_speed:.2f}x; keep opt-in, not defaultable"
                 )
+    if native_graph_vkwr_rkv_policy is None:
+        focus.append("VKWR-style stacked R/K/V projection policy row pending")
+    else:
+        rkv_speedup = native_graph_vkwr_rkv_policy.get("speedup")
+        greedy_match = native_graph_vkwr_rkv_policy.get("greedy_match")
+        greedy_total = native_graph_vkwr_rkv_policy.get("greedy_total")
+        hidden_size = native_graph_vkwr_rkv_policy.get("hidden_size")
+        active = native_graph_vkwr_rkv_policy.get("policy_active_by_rule")
+        if rkv_speedup is not None and float(rkv_speedup) >= 1.02:
+            focus.append(
+                f"VKWR-style stacked R/K/V projection hidden={hidden_size} active={active} "
+                f"passes greedy {greedy_match}/{greedy_total} with speedup={float(rkv_speedup):.2f}x; "
+                "sweep bsz/model sizes before integration"
+            )
+        elif rkv_speedup is not None and float(rkv_speedup) >= 0.99:
+            focus.append(
+                f"VKWR-style stacked R/K/V projection hidden={hidden_size} active={active} "
+                f"passes greedy {greedy_match}/{greedy_total} but is neutral at speedup={float(rkv_speedup):.2f}x; "
+                "Python/Torch stacked bmm is not enough"
+            )
+        elif rkv_speedup is not None:
+            focus.append(
+                f"VKWR-style stacked R/K/V projection hidden={hidden_size} active={active} "
+                f"passes greedy {greedy_match}/{greedy_total} but speedup={float(rkv_speedup):.2f}x; "
+                "keep opt-in and prefer lower-level CUDA if slower"
+            )
     if native_graph_fused_projection is None:
         focus.append("native_graph fused projection integration row pending")
     else:
@@ -1760,37 +1808,96 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             f"fused backend prefill P1 pending: prefill min {albatross_prefill_min:.2f}x Albatross; "
             "plan scan/chunk fused prefill path"
         )
-    training_by_backend = {r.get("trainer_backend"): r for r in training_latest if r.get("status") == "pass"}
-    missing_training = sorted({"trainer", "trl_sft", "trl_dpo", "trl_grpo"} - set(training_by_backend))
-    if missing_training:
+    required_training_backends = {"trainer", "trl_sft", "trl_dpo", "trl_grpo"}
+    training_pass = [r for r in training_latest if r.get("status") == "pass"]
+    training_by_model: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in training_latest:
+        training_by_model[model_label(row)].append(row)
+    if not training_by_model:
+        missing_training = sorted(required_training_backends)
         focus.append(f"training smoke telemetry incomplete: missing {missing_training}")
     else:
-        min_delta = min(float(r.get("max_trainable_delta") or 0.0) for r in training_by_backend.values())
+        incomplete_training = False
+        for label, model_rows in sorted(training_by_model.items()):
+            passed_backends = {
+                row.get("trainer_backend")
+                for row in model_rows
+                if row.get("status") == "pass"
+            }
+            missing_training = sorted(required_training_backends - passed_backends)
+            if missing_training:
+                incomplete_training = True
+                focus.append(f"training smoke telemetry incomplete for {label}: missing {missing_training}")
+        if not incomplete_training:
+            min_delta = min(float(r.get("max_trainable_delta") or 0.0) for r in training_pass)
+            focus.append(
+                "HF training telemetry passes for Trainer/SFT/DPO/GRPO "
+                f"with min trainable delta {min_delta:.3g}"
+            )
+    if training_pass and not any(item.startswith("HF training telemetry passes") for item in focus):
+        min_delta = min(float(r.get("max_trainable_delta") or 0.0) for r in training_pass)
         focus.append(
-            "HF training telemetry passes for Trainer/SFT/DPO/GRPO "
+            "HF training telemetry has passing rows "
             f"with min trainable delta {min_delta:.3g}"
         )
     for row in training_latest:
         if row.get("status") == "pass" and float(row.get("max_trainable_delta") or 0.0) <= 0.0:
-            focus.append(f"training smoke did not update trainable params: {row.get('trainer_backend')}")
-    deepspeed_by_stage = {int(r.get("zero_stage")): r for r in deepspeed_latest if r.get("zero_stage") is not None}
-    missing_zero = sorted({2, 3} - set(deepspeed_by_stage))
-    if missing_zero:
+            focus.append(f"training smoke did not update trainable params: {model_label(row)} {row.get('trainer_backend')}")
+    required_zero_stages = {2, 3}
+    deepspeed_by_model: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in deepspeed_latest:
+        deepspeed_by_model[model_label(row)].append(row)
+    if not deepspeed_by_model:
+        missing_zero = sorted(required_zero_stages)
         focus.append(f"DeepSpeed ZeRO smoke telemetry incomplete: missing stages {missing_zero}")
     else:
-        passed_zero = [stage for stage, row in sorted(deepspeed_by_stage.items()) if row.get("status") == "pass"]
-        skipped_zero = [stage for stage, row in sorted(deepspeed_by_stage.items()) if row.get("status") == "skip"]
-        if passed_zero:
-            focus.append(f"DeepSpeed ZeRO smoke passes for stages {passed_zero}")
-        if skipped_zero:
-            reasons = {
-                stage: deepspeed_by_stage[stage].get("reason")
-                for stage in skipped_zero
+        for label, model_rows in sorted(deepspeed_by_model.items()):
+            deepspeed_stages = {
+                int(row.get("zero_stage"))
+                for row in model_rows
+                if row.get("zero_stage") is not None
             }
-            focus.append(f"DeepSpeed ZeRO smoke skipped for stages {skipped_zero}: {reasons}")
-        for stage, row in sorted(deepspeed_by_stage.items()):
-            if row.get("status") == "pass" and float(row.get("max_trainable_delta") or 0.0) <= 0.0:
-                focus.append(f"DeepSpeed ZeRO-{stage} smoke did not update trainable params")
+            missing_zero = sorted(required_zero_stages - deepspeed_stages)
+            if missing_zero:
+                focus.append(f"DeepSpeed ZeRO smoke telemetry incomplete for {label}: missing stages {missing_zero}")
+            passed_zero = sorted({
+                int(row.get("zero_stage"))
+                for row in model_rows
+                if row.get("status") == "pass" and row.get("zero_stage") is not None
+            })
+            skipped_zero = sorted({
+                int(row.get("zero_stage"))
+                for row in model_rows
+                if row.get("status") == "skip" and row.get("zero_stage") is not None
+            })
+            if passed_zero:
+                focus.append(f"DeepSpeed ZeRO smoke passes for stages {passed_zero} for {label}")
+            if skipped_zero:
+                reasons = {
+                    stage: sorted({
+                        str(row.get("reason"))
+                        for row in model_rows
+                        if row.get("zero_stage") == stage and row.get("status") == "skip"
+                    })
+                    for stage in skipped_zero
+                }
+                focus.append(f"DeepSpeed ZeRO smoke skipped for stages {skipped_zero} for {label}: {reasons}")
+        for row in deepspeed_latest:
+            stage = row.get("zero_stage")
+            if stage is not None and row.get("status") == "pass" and float(row.get("max_trainable_delta") or 0.0) <= 0.0:
+                focus.append(f"DeepSpeed ZeRO-{stage} smoke did not update trainable params for {model_label(row)}")
+    if deepspeed_resume_latest:
+        passed_resume = sorted({
+            int(row.get("zero_stage"))
+            for row in deepspeed_resume_latest
+            if row.get("status") == "pass" and row.get("zero_stage") is not None
+        })
+        if passed_resume:
+            focus.append(f"DeepSpeed ZeRO resume passes for stages {passed_resume}")
+        for row in deepspeed_resume_latest:
+            stage = row.get("zero_stage")
+            if stage is not None and row.get("status") == "pass" and float(row.get("resume_max_trainable_delta") or 0.0) <= 0.0:
+                focus.append(f"DeepSpeed ZeRO-{stage} resume did not update trainable params for {model_label(row)}")
 
     if not albatross_latest:
         focus.append("Albatross A/B rows pending")
@@ -1831,6 +1938,16 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         focus.append(f"quantization validation incomplete: missing passing {missing}")
     quant_by_mode = {r.get("quantization"): r for r in quant_latest if r.get("status") == "pass"}
     quant_base_decode = num(quant_by_mode.get("none"), "decode_tokps")
+    interim_quant_speed_modes = sorted({
+        str(row.get("quantization"))
+        for row in quant_variant_latest
+        if row.get("status") == "pass" and row.get("quant_speed_status") == "interim"
+    })
+    if interim_quant_speed_modes:
+        focus.append(
+            "quantized speed rows marked interim pending native-fused kernel update: "
+            + ",".join(interim_quant_speed_modes)
+        )
     if quant_base_decode:
         slow = []
         for mode in ("8bit", "4bit"):
@@ -2071,6 +2188,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "native_graph_fused_output_project": compact(native_graph_fused_output_project, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "fused_output_enabled", "fused_projection_enabled", "output_project_block_m", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_output_project", "fused_output_project", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
         "native_graph_fused_wag_lora": compact(native_graph_fused_wag_lora, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "fused_output_enabled", "fused_output_project_enabled", "block_m", "block_r", "block_k", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_wag_lora", "fused_wag_lora", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
         "native_graph_fused_wavg_lora": compact(native_graph_fused_wavg_lora, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "fused_recurrent_output_enabled", "fused_output_enabled", "fused_output_project_enabled", "block_m", "block_r", "block_k", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_wavg_lora", "fused_wavg_lora", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
+        "native_graph_vkwr_rkv_policy": compact(native_graph_vkwr_rkv_policy, ["_lineno", "status", "dtype", "device", "batch_size", "hidden_size", "prompt_tokens", "steps", "fixed_token", "policy_min_hidden", "policy_max_rows", "policy_active_by_rule", "fused_recurrent_enabled", "fused_recurrent_output_enabled", "fused_output_enabled", "fused_output_project_enabled", "baseline_policy", "candidate_policy", "baseline_effective_backend", "candidate_effective_backend", "baseline_ms_per_step", "candidate_ms_per_step", "speedup", "baseline_tokps_total", "candidate_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "candidate_cache_stats", "peak_vram_mb"]),
         "native_graph_fused_projection": compact(native_graph_fused_projection, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "projection_variant", "fused_recurrent_enabled", "fused_output_enabled", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_projection", "fused_projection", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
         "native_graph_fused_output_sweep": [
             compact(r, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_recurrent_enabled", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"])
@@ -2153,6 +2271,9 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     "_lineno",
                     "trainer_backend",
                     "status",
+                    "model_size_label",
+                    "model_name",
+                    "hf_model_dir",
                     "train_dtype",
                     "device",
                     "attn_mode",
@@ -2169,6 +2290,35 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             )
             for r in training_latest
         ],
+        "checkpoint_resume_smoke": [
+            compact(
+                r,
+                [
+                    "_lineno",
+                    "trainer_backend",
+                    "status",
+                    "model_size_label",
+                    "model_name",
+                    "hf_model_dir",
+                    "train_dtype",
+                    "device",
+                    "attn_mode",
+                    "batch_size",
+                    "gradient_accumulation_steps",
+                    "effective_batch_size",
+                    "first_steps",
+                    "resume_steps",
+                    "global_step",
+                    "checkpoint",
+                    "first_loss",
+                    "resume_loss",
+                    "train_runtime_s",
+                    "first_max_trainable_delta",
+                    "resume_max_trainable_delta",
+                ],
+            )
+            for r in checkpoint_resume_latest
+        ],
         "deepspeed_training_smoke": [
             compact(
                 r,
@@ -2178,6 +2328,9 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     "zero_stage",
                     "status",
                     "reason",
+                    "model_size_label",
+                    "model_name",
+                    "hf_model_dir",
                     "train_dtype",
                     "device",
                     "cuda_device_count",
@@ -2195,6 +2348,41 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 ],
             )
             for r in deepspeed_latest
+        ],
+        "deepspeed_resume_smoke": [
+            compact(
+                r,
+                [
+                    "_lineno",
+                    "trainer_backend",
+                    "zero_stage",
+                    "status",
+                    "reason",
+                    "model_size_label",
+                    "model_name",
+                    "hf_model_dir",
+                    "train_dtype",
+                    "device",
+                    "cuda_device_count",
+                    "distributed_world_size",
+                    "local_rank",
+                    "attn_mode",
+                    "batch_size",
+                    "gradient_accumulation_steps",
+                    "effective_batch_size",
+                    "first_steps",
+                    "resume_steps",
+                    "global_step",
+                    "checkpoint",
+                    "deepspeed_config",
+                    "first_loss",
+                    "resume_loss",
+                    "train_runtime_s",
+                    "first_max_trainable_delta",
+                    "resume_max_trainable_delta",
+                ],
+            )
+            for r in deepspeed_resume_latest
         ],
         "albatross_speed": [
             compact(
@@ -2244,6 +2432,8 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     "fast_forward_backend",
                     "fast_forward_max_abs_diff",
                     "fast_forward_same_next_token",
+                    "quant_speed_status",
+                    "quant_speed_note",
                     "quant_skip_policy",
                     "quant_skip_modules",
                     "module_counts",
@@ -2268,6 +2458,8 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     "decode_tokps",
                     "reference_decode_tokps",
                     "fast_decode_tokps",
+                    "quant_speed_status",
+                    "quant_speed_note",
                     "model_footprint_mb",
                     "peak_vram_mb",
                     "module_counts",
@@ -2295,6 +2487,8 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     "fast_decode_tokps",
                     "fast_forward_backend",
                     "fast_forward_same_next_token",
+                    "quant_speed_status",
+                    "quant_speed_note",
                     "model_footprint_mb",
                     "peak_vram_mb",
                     "hidden_size",
@@ -2454,6 +2648,8 @@ def print_text(report: dict[str, Any]) -> None:
     print(json.dumps(report["native_graph_fused_wag_lora"], ensure_ascii=False) if report["native_graph_fused_wag_lora"] else "PENDING")
     print("\n## native_graph_fused_wavg_lora")
     print(json.dumps(report["native_graph_fused_wavg_lora"], ensure_ascii=False) if report["native_graph_fused_wavg_lora"] else "PENDING")
+    print("\n## native_graph_vkwr_rkv_policy")
+    print(json.dumps(report["native_graph_vkwr_rkv_policy"], ensure_ascii=False) if report["native_graph_vkwr_rkv_policy"] else "PENDING")
     print("\n## native_graph_fused_projection")
     print(json.dumps(report["native_graph_fused_projection"], ensure_ascii=False) if report["native_graph_fused_projection"] else "PENDING")
     print("\n## native_graph_fused_projection_sweep")
@@ -2524,9 +2720,21 @@ def print_text(report: dict[str, Any]) -> None:
             print(json.dumps(row, ensure_ascii=False))
     else:
         print("PENDING")
+    print("\n## checkpoint_resume_smoke")
+    if report.get("checkpoint_resume_smoke"):
+        for row in report["checkpoint_resume_smoke"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
     print("\n## deepspeed_training_smoke")
     if report.get("deepspeed_training_smoke"):
         for row in report["deepspeed_training_smoke"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+    print("\n## deepspeed_resume_smoke")
+    if report.get("deepspeed_resume_smoke"):
+        for row in report["deepspeed_resume_smoke"]:
             print(json.dumps(row, ensure_ascii=False))
     else:
         print("PENDING")

@@ -14,6 +14,7 @@ finite loss is reported, and LoRA parameters update.
 from __future__ import annotations
 
 import argparse
+import gc
 import math
 import tempfile
 from pathlib import Path
@@ -152,8 +153,18 @@ def main() -> int:
             data_collator=collator,
         )
         first_result = trainer.train()
+        first_loss = float(first_result.training_loss)
         first_delta = max_delta(before_first, model)
         ckpt = latest_checkpoint(out_dir)
+
+        # Large fp32 checkpoints (2.9B on a 32GB V100) cannot keep the
+        # pre-resume model and the freshly reloaded model resident at the same
+        # time. Release the first Trainer/model before validating resume.
+        del trainer, model, before_first, first_result
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
 
         resumed_model = load_lora_native(args.model, dtype, args.device)
         before_resume = trainable_snapshot(resumed_model)
@@ -167,7 +178,6 @@ def main() -> int:
         resume_delta = max_delta(before_resume, resumed_model)
         global_step = int(resumed_trainer.state.global_step)
 
-    first_loss = float(first_result.training_loss)
     resume_loss = float(resume_result.training_loss)
     ok = (
         math.isfinite(first_loss)

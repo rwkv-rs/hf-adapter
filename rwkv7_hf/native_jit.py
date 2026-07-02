@@ -535,6 +535,96 @@ def _native_graph_fused_wavg_lora_enabled() -> bool:
         return False
 
 
+def _native_graph_rkv_policy() -> str:
+    """Return the optional VKWR-inspired R/K/V projection dispatch policy.
+
+    VKWR stacks the receptance/key/value matrices and uses a grouped batched
+    projection for selected small-row decode cases.  Keep the HF adapter's
+    historical three-``F.linear`` path by default and enable the stacked path
+    only through ``RWKV7_NATIVE_GRAPH_RKV_POLICY=vkwr_auto`` while collecting
+    telemetry.
+    """
+
+    raw = os.environ.get("RWKV7_NATIVE_GRAPH_RKV_POLICY", "manual").strip().lower()
+    if raw in {"", "manual", "explicit", "env"}:
+        return "manual"
+    if raw in {"0", "false", "no", "off", "disabled"}:
+        return "off"
+    if raw in {"vkwr", "vkwr_auto", "auto", "stacked", "bmm"}:
+        return "vkwr_auto"
+    return "manual"
+
+
+def _native_graph_int_env(name: str, default: int, *, lo: int = 1, hi: int | None = None) -> int:
+    raw = os.environ.get(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = default
+    value = max(lo, value)
+    if hi is not None:
+        value = min(hi, value)
+    return value
+
+
+def _native_graph_vkwr_rkv_dispatch(rows: int, hidden_size: int) -> bool:
+    """VKWR-style row gate for stacked R/K/V native-graph decode.
+
+    VKWR's automatic RKV path is used for one-row decode and medium tiny-row
+    batches (roughly 4..64 rows), but not for rows 2/3.  Mirroring that rule
+    avoids forcing a grouped path into shapes where three cuBLAS calls can be
+    competitive or faster.
+    """
+
+    if _native_graph_rkv_policy() != "vkwr_auto":
+        return False
+    if rows <= 0 or hidden_size <= 0:
+        return False
+    min_hidden = _native_graph_int_env("RWKV7_NATIVE_GRAPH_RKV_MIN_HIDDEN", 1, lo=1)
+    max_rows = _native_graph_int_env("RWKV7_NATIVE_GRAPH_RKV_MAX_ROWS", 64, lo=4, hi=4096)
+    if hidden_size < min_hidden:
+        return False
+    return rows == 1 or (4 <= rows <= max_rows)
+
+
+def _native_graph_rkv_project(
+    xr: torch.Tensor,
+    xk: torch.Tensor,
+    xv: torch.Tensor,
+    Rw: torch.Tensor,
+    Kw: torch.Tensor,
+    Vw: torch.Tensor,
+    RKVw: torch.Tensor,
+    rows: int,
+    hidden_size: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Project R/K/V with either separate linears or VKWR-style stacked bmm."""
+
+    if not _native_graph_vkwr_rkv_dispatch(int(rows), int(hidden_size)) or RKVw.numel() == 0:
+        return F.linear(xr, Rw), F.linear(xk, Kw), F.linear(xv, Vw)
+    if xr.dim() == 1:
+        flat = torch.stack(
+            (
+                xr.reshape(1, hidden_size),
+                xk.reshape(1, hidden_size),
+                xv.reshape(1, hidden_size),
+            ),
+            dim=0,
+        )
+        rkv = torch.bmm(flat, RKVw)
+        return rkv[0, 0], rkv[1, 0], rkv[2, 0]
+    flat = torch.stack(
+        (
+            xr.reshape(rows, hidden_size),
+            xk.reshape(rows, hidden_size),
+            xv.reshape(rows, hidden_size),
+        ),
+        dim=0,
+    )
+    rkv = torch.bmm(flat, RKVw)
+    return rkv[0], rkv[1], rkv[2]
+
+
 def _native_graph_fused_wag_lora_blocks() -> tuple[int, int, int]:
     """Return ``(block_m, block_r, block_k)`` for the W/A/G LoRA probe."""
 
@@ -647,7 +737,8 @@ def block_step(x: torch.Tensor, xpa: torch.Tensor, xpf: torch.Tensor,
                v1: torch.Tensor, v2: torch.Tensor, v0: torch.Tensor,
                g1: torch.Tensor, g2: torch.Tensor,
                gn_w: torch.Tensor, gn_b: torch.Tensor,
-               fx_k: torch.Tensor, fK: torch.Tensor, fV: torch.Tensor):
+               fx_k: torch.Tensor, fK: torch.Tensor, fV: torch.Tensor,
+               RKVw: torch.Tensor):
     # --- block wiring (fuse_norm=False) ---
     if has_pre == 1:
         residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5)
@@ -711,7 +802,8 @@ def block_step_batched(x: torch.Tensor, xpa: torch.Tensor, xpf: torch.Tensor,
                        v1: torch.Tensor, v2: torch.Tensor, v0: torch.Tensor,
                        g1: torch.Tensor, g2: torch.Tensor,
                        gn_w: torch.Tensor, gn_b: torch.Tensor,
-                       fx_k: torch.Tensor, fK: torch.Tensor, fV: torch.Tensor):
+                       fx_k: torch.Tensor, fK: torch.Tensor, fV: torch.Tensor,
+                       RKVw: torch.Tensor):
     # Batched variant of block_step. Shapes:
     # x/xpa/xpf/v_first:[B,H*N], state:[B,H,N,N].
     B = x.shape[0]
@@ -766,6 +858,7 @@ def extract(model):
     eps = float(N * 1e-5)
     packs = []
     hidden = int(layers[0].attn.hidden_size)
+    stack_rkv = _native_graph_rkv_policy() == "vkwr_auto"
     for i, layer in enumerate(layers):
         a = layer.attn
         ref = a.w_lora.lora[0].weight
@@ -793,6 +886,9 @@ def extract(model):
             a.g_lora.lora[0].weight, a.g_lora.lora[2].weight,
             a.g_norm.weight, a.g_norm.bias,
             layer.ffn.x_k, layer.ffn.key.weight, layer.ffn.value.weight,
+            torch.stack((a.r_proj.weight.t(), a.k_proj.weight.t(), a.v_proj.weight.t())).contiguous()
+            if stack_rkv
+            else ref.new_empty((0,)),
         ))
     return packs, H, N, eps
 
@@ -1260,7 +1356,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
      pre_w, pre_b, an_w, an_b, fn_w, fn_b,
      x_r, x_w, x_k, x_v, x_a, x_g, k_k, k_a, r_k,
      Rw, Kw, Vw, Ow, w1, w2, w0, a1, a2, a0, v1, v2, v0, g1, g2,
-     gn_w, gn_b, fx_k, fK, fV) = p
+     gn_w, gn_b, fx_k, fK, fV, RKVw) = p
     residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5) if has_pre else x
     h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
     xx = xpa - h
@@ -1299,9 +1395,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         g = g.view(H * N)
         v_gate = torch.sigmoid(v_gate.view(H * N))
     elif _native_graph_fused_wavg_lora_enabled():
-        r = F.linear(xr, Rw)
-        k = F.linear(xk, Kw)
-        v = F.linear(xv, Vw)
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
         if i == 0:
             w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
             a = a0 + F.linear(F.linear(xa, a1), a2)
@@ -1335,9 +1429,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
             v_gate = v_gate.view(H * N)
         a = torch.sigmoid(a)
     elif _native_graph_fused_wag_lora_enabled():
-        r = F.linear(xr, Rw)
-        k = F.linear(xk, Kw)
-        v = F.linear(xv, Vw)
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
         block_m, block_r, block_k = _native_graph_fused_wag_lora_blocks()
         w, a, g = fused_wag_lora(
             xw.view(1, H * N),
@@ -1360,10 +1452,8 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         a = torch.sigmoid(a.view(H * N))
         g = g.view(H * N)
     else:
-        r = F.linear(xr, Rw)
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
         w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
-        k = F.linear(xk, Kw)
-        v = F.linear(xv, Vw)
         a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
         g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
     kk = F.normalize((k * k_k).view(H, N), dim=-1, p=2.0).view(H * N)
@@ -1462,7 +1552,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
      pre_w, pre_b, an_w, an_b, fn_w, fn_b,
      x_r, x_w, x_k, x_v, x_a, x_g, k_k, k_a, r_k,
      Rw, Kw, Vw, Ow, w1, w2, w0, a1, a2, a0, v1, v2, v0, g1, g2,
-     gn_w, gn_b, fx_k, fK, fV) = p
+     gn_w, gn_b, fx_k, fK, fV, RKVw) = p
     B = x.shape[0]
     residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5) if has_pre else x
     h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
@@ -1497,9 +1587,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         a = torch.sigmoid(a)
         v_gate = torch.sigmoid(v_gate)
     elif _native_graph_fused_wavg_lora_enabled():
-        r = F.linear(xr, Rw)
-        k = F.linear(xk, Kw)
-        v = F.linear(xv, Vw)
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
         if i == 0:
             w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
             a = a0 + F.linear(F.linear(xa, a1), a2)
@@ -1529,9 +1617,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
             )
         a = torch.sigmoid(a)
     elif _native_graph_fused_wag_lora_enabled():
-        r = F.linear(xr, Rw)
-        k = F.linear(xk, Kw)
-        v = F.linear(xv, Vw)
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
         block_m, block_r, block_k = _native_graph_fused_wag_lora_blocks()
         w, a, g = fused_wag_lora(
             xw,
@@ -1552,10 +1638,8 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         )
         a = torch.sigmoid(a)
     else:
-        r = F.linear(xr, Rw)
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
         w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
-        k = F.linear(xk, Kw)
-        v = F.linear(xv, Vw)
         a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
         g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
     kk = F.normalize((k * k_k).view(B, H, N), dim=-1, p=2.0).view(B, H * N)
