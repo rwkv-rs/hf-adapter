@@ -174,6 +174,7 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
         "dtype": args.train_dtype,
         "train_dtype": args.train_dtype,
         "device": ds.device_name(),
+        **ds.model_metadata(args, resumed_model),
         "cuda_device_count": ds.cuda_device_count(),
         "distributed_world_size": int(os.environ.get("WORLD_SIZE", "1")),
         "local_rank": int(os.environ.get("LOCAL_RANK", "0")),
@@ -212,6 +213,7 @@ def append_rows(path: str, rows: list[dict[str, Any]]) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
+    ap.add_argument("--model-size-label", default="", help="Optional size label such as 0.4b; inferred from --model when omitted")
     ap.add_argument("--config-dir", default="configs/deepspeed")
     ap.add_argument("--zero-stage", choices=["2", "3", "both"], default="both")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])

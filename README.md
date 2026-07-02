@@ -17,6 +17,7 @@ Contributor status and roadmap docs:
 - [`HF_TODO.md`](HF_TODO.md): prioritized HF-only TODO list for contributors, including large-model training, ZeRO resume, one-click acceptance scripts, card validation, and productionization tasks.
 - [`docs/reference/HF_CRITERIA.md`](docs/reference/HF_CRITERIA.md): high-level HF acceptance criteria and optimization rules.
 - [`BENCHMARK.md`](BENCHMARK.md): numeric evidence and benchmark contract.
+- [`docs/validation/A100_HF_VALIDATION.md`](docs/validation/A100_HF_VALIDATION.md): latest A100 40GB HF training/quant/ZeRO validation matrix.
 - [`docs/validation/V100_HF_VALIDATION.md`](docs/validation/V100_HF_VALIDATION.md): latest V100 HF training/quant/ZeRO validation matrix.
 - [`docs/README.md`](docs/README.md): map of specialized, hardware, validation, and archived docs.
 
