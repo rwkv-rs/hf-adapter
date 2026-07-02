@@ -136,6 +136,19 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
         release_cuda(torch)
         maybe_barrier(torch)
 
+        # The first Trainer set transformers' global is_deepspeed_zero3_enabled()
+        # flag; deleting the Trainer does NOT reset it. Left set, the next
+        # from_pretrained builds the resume model under DeepSpeed's partitioned
+        # init, which breaks FLA's _initialize_weights (it indexes
+        # param.shape[1], out of range on a partitioned 1-D shard -> IndexError,
+        # the ZeRO3-resume failure). Reset it so the resume model builds at full
+        # shape; the new Trainer re-enables ZeRO3 via deepspeed.initialize.
+        try:
+            from transformers.integrations import unset_hf_deepspeed_config
+            unset_hf_deepspeed_config()
+        except Exception:
+            pass
+
         resumed_model = ds.load_lora_model(args.model, args.attn_mode, args.train_dtype)
         before_resume = ds.trainable_snapshot(resumed_model)
         resumed_trainer = Trainer(
@@ -218,7 +231,7 @@ def main() -> int:
     ap.add_argument("--zero-stage", choices=["2", "3", "both"], default="both")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--max-length", type=int, default=16)
-    ap.add_argument("--train-dtype", choices=["fp32", "fp16", "bf16"], default="fp32")
+    ap.add_argument("--train-dtype", choices=["fp32", "fp16", "bf16"])
     ap.add_argument("--first-steps", type=int, default=1)
     ap.add_argument("--resume-steps", type=int, default=2)
     ap.add_argument("--batch-size", type=int, default=1)
@@ -226,6 +239,9 @@ def main() -> int:
     ap.add_argument("--dataset-repeats", type=int, default=4)
     ap.add_argument("--results", default="")
     args = ap.parse_args()
+    if args.train_dtype is None:
+        args.train_dtype = "bf16" if args.device.startswith("cuda") else "fp32"
+    
     if args.resume_steps <= args.first_steps:
         raise ValueError("resume-steps must exceed first-steps")
     stages = [2, 3] if args.zero_stage == "both" else [int(args.zero_stage)]
