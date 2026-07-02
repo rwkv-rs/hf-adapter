@@ -382,7 +382,9 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             r.get("T", r.get("tokens")),
             r.get("H", r.get("heads")),
             r.get("N", r.get("head_dim")),
-            r.get("algorithm"),
+            r.get("requested_algorithm", r.get("algorithm")),
+            r.get("effective_algorithm"),
+            r.get("algorithm_family"),
             r.get("chunk_size"),
             r.get("dtype"),
             r.get("device"),
@@ -2019,7 +2021,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             for r in fused_recurrent_scan_proto
         ],
         "dplr_prefill_scan_proto": [
-            compact(r, ["_lineno", "status", "dtype", "device", "algorithm", "effective_algorithm", "chunk_size", "B", "T", "H", "N", "warmup", "steps", "ms", "tokps", "out_max_abs_diff", "state_max_abs_diff", "out_min_cosine", "peak_vram_mb"])
+            compact(r, ["_lineno", "status", "dtype", "device", "algorithm", "requested_algorithm", "effective_algorithm", "algorithm_family", "is_dense_affine", "detected_algorithms", "chunk_size", "B", "T", "H", "N", "warmup", "steps", "ms", "tokps", "out_max_abs_diff", "state_max_abs_diff", "out_min_cosine", "fallback_reason", "skip_reason", "error", "peak_vram_mb"])
             for r in dplr_prefill_scan_proto
         ],
         "fused_recurrent_output_proto": compact(fused_recurrent_output_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "attn_mode", "fuse_norm", "batch_size", "hidden_size", "layers", "block_n", "input_scale", "steps", "avg_current_ms", "avg_split_fused_ms", "avg_fused_ms", "avg_speedup_vs_current", "avg_speedup_vs_split", "out_max_abs_diff", "state_max_abs_diff", "split_out_max_abs_diff", "split_state_max_abs_diff", "out_min_cosine", "split_out_min_cosine", "layer_rows", "peak_vram_mb"]),
@@ -2381,7 +2383,11 @@ def print_text(report: dict[str, Any]) -> None:
     print("\n## fused_recurrent_scan_proto")
     print(json.dumps(report["fused_recurrent_scan_proto"], ensure_ascii=False) if report["fused_recurrent_scan_proto"] else "PENDING")
     print("\n## dplr_prefill_scan_proto")
-    print(json.dumps(report["dplr_prefill_scan_proto"], ensure_ascii=False) if report["dplr_prefill_scan_proto"] else "PENDING")
+    if report["dplr_prefill_scan_proto"]:
+        for row in report["dplr_prefill_scan_proto"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
     print("\n## fused_recurrent_output_proto")
     print(json.dumps(report["fused_recurrent_output_proto"], ensure_ascii=False) if report["fused_recurrent_output_proto"] else "PENDING")
     print("\n## native_graph_fused_recurrent")

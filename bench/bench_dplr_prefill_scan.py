@@ -10,6 +10,7 @@ can validate the chunked API surface independently of the HF prefill path.
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import inspect
 import json
 import sys
@@ -33,7 +34,33 @@ else:  # pragma: no cover - exercised by benchmark/test hosts with torch
 
 
 DTYPE_CHOICES = ("bf16", "fp16", "fp32")
-ALGORITHMS = ("sequential", "affine")
+ALGORITHMS = ("sequential", "affine", "wy", "lowrank")
+WY_ALGORITHM_ALIASES = ("wy", "lowrank")
+
+
+@dataclass(frozen=True)
+class AlgorithmPlan:
+    requested_algorithm: str
+    effective_algorithm: str | None
+    status: str
+    call_algorithm: str | None
+    reason: str | None = None
+
+
+class UnsupportedAlgorithmError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        requested_algorithm: str,
+        status: str = "skip_unsupported_algorithm",
+        reason: str,
+        effective_algorithm: str | None = None,
+    ) -> None:
+        super().__init__(reason)
+        self.requested_algorithm = requested_algorithm
+        self.effective_algorithm = effective_algorithm
+        self.status = status
+        self.reason = reason
 
 
 def _torch_unavailable_message() -> str:
@@ -47,6 +74,107 @@ def _require_positive(values: list[int], *, name: str) -> None:
     bad = [v for v in values if int(v) <= 0]
     if bad:
         raise SystemExit(f"{name} must contain positive integers; got {bad}")
+
+
+def _normalize_algorithm_name(name: Any) -> str:
+    return str(name).strip().lower().replace("-", "_")
+
+
+def _algorithm_family(name: str | None) -> str | None:
+    if name is None:
+        return None
+    normalized = _normalize_algorithm_name(name)
+    if normalized in {"torch_recurrent_scan", "torch_reference", "reference"}:
+        return "torch_reference"
+    if normalized in {"sequential", "sequential_fallback"}:
+        return "sequential"
+    if normalized == "affine":
+        return "dense_affine"
+    if normalized in WY_ALGORITHM_ALIASES:
+        return "lowrank_wy"
+    return "unknown"
+
+
+def _is_dense_affine_algorithm(name: str | None) -> bool:
+    return _algorithm_family(name) == "dense_affine"
+
+
+def _normalize_supported_algorithms(raw: Any) -> tuple[str, ...] | None:
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        values = raw.keys()
+    elif isinstance(raw, str):
+        values = raw.replace(",", " ").replace("/", " ").split()
+    else:
+        try:
+            values = list(raw)
+        except TypeError:
+            values = [raw]
+
+    found = {_normalize_algorithm_name(v) for v in values}
+    return tuple(algorithm for algorithm in ALGORITHMS if algorithm in found)
+
+
+def _detect_supported_algorithms(fn: Callable[..., Any], supports_algorithm: bool | None) -> tuple[str, ...] | None:
+    if supports_algorithm is False:
+        return ("sequential",)
+
+    owners: list[Any] = [fn]
+    module = inspect.getmodule(fn)
+    if module is not None:
+        owners.append(module)
+    globals_dict = getattr(fn, "__globals__", None)
+    if isinstance(globals_dict, dict):
+        owners.append(globals_dict)
+
+    for owner in owners:
+        for attr in ("SUPPORTED_ALGORITHMS", "_SUPPORTED_ALGORITHMS", "DPLR_SUPPORTED_ALGORITHMS", "ALGORITHMS"):
+            if isinstance(owner, dict):
+                raw = owner.get(attr)
+            else:
+                raw = getattr(owner, attr, None)
+            detected = _normalize_supported_algorithms(raw)
+            if detected:
+                return detected
+    return None
+
+
+def _unexpected_keyword_error(exc: TypeError, keyword: str) -> bool:
+    text = str(exc).lower()
+    return keyword.lower() in text and ("unexpected keyword" in text or "unexpected" in text)
+
+
+def _looks_like_unsupported_algorithm(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    return "algorithm" in text and any(
+        marker in text
+        for marker in (
+            "must be one of",
+            "unsupported",
+            "unknown",
+            "not implemented",
+            "invalid",
+            "got",
+        )
+    )
+
+
+def _annotate_algorithm_row(
+    row: dict[str, Any],
+    *,
+    requested_algorithm: str,
+    effective_algorithm: str | None,
+    detected_algorithms: tuple[str, ...] | None,
+) -> None:
+    requested = _normalize_algorithm_name(requested_algorithm)
+    effective = _normalize_algorithm_name(effective_algorithm) if effective_algorithm is not None else None
+    row["algorithm"] = requested
+    row["requested_algorithm"] = requested
+    row["effective_algorithm"] = effective
+    row["algorithm_family"] = _algorithm_family(effective or requested)
+    row["is_dense_affine"] = _is_dense_affine_algorithm(effective or requested)
+    row["detected_algorithms"] = list(detected_algorithms) if detected_algorithms is not None else None
 
 
 def _dtype_from_name(name: str):
@@ -190,43 +318,134 @@ class DplrInvoker:
         self.fn = fn
         self.supports_algorithm = _supports_keyword(fn, "algorithm")
         self.supports_force_fallback = _supports_keyword(fn, "force_fallback")
+        self.supported_algorithms = _detect_supported_algorithms(fn, self.supports_algorithm)
 
-    def __call__(self, xs: dict[str, Any], *, chunk_size: int, algorithm: str) -> tuple[tuple[Any, Any], str, str]:
+    def _plans_for_no_algorithm_keyword(self, requested_algorithm: str) -> list[AlgorithmPlan]:
+        if requested_algorithm == "sequential":
+            return [
+                AlgorithmPlan(
+                    requested_algorithm=requested_algorithm,
+                    effective_algorithm="sequential",
+                    status="pass",
+                    call_algorithm=None,
+                )
+            ]
+        if requested_algorithm == "affine":
+            return [
+                AlgorithmPlan(
+                    requested_algorithm=requested_algorithm,
+                    effective_algorithm="sequential_fallback",
+                    status="fallback_no_algorithm_arg",
+                    call_algorithm=None,
+                    reason="dplr_chunk_scan has no algorithm= parameter; using sequential fallback",
+                )
+            ]
+        return []
+
+    def plans_for(self, algorithm: str) -> list[AlgorithmPlan]:
+        requested_algorithm = _normalize_algorithm_name(algorithm)
+
+        if self.supports_algorithm is False:
+            return self._plans_for_no_algorithm_keyword(requested_algorithm)
+
+        if self.supported_algorithms is not None:
+            if requested_algorithm in self.supported_algorithms:
+                return [
+                    AlgorithmPlan(
+                        requested_algorithm=requested_algorithm,
+                        effective_algorithm=requested_algorithm,
+                        status="pass",
+                        call_algorithm=requested_algorithm,
+                    )
+                ]
+            if requested_algorithm in WY_ALGORITHM_ALIASES:
+                for alias in WY_ALGORITHM_ALIASES:
+                    if alias != requested_algorithm and alias in self.supported_algorithms:
+                        return [
+                            AlgorithmPlan(
+                                requested_algorithm=requested_algorithm,
+                                effective_algorithm=alias,
+                                status="fallback_algorithm_alias",
+                                call_algorithm=alias,
+                                reason=f"{requested_algorithm!r} not detected; using {alias!r} WY/lowrank alias",
+                            )
+                        ]
+            return []
+
+        plans = [
+            AlgorithmPlan(
+                requested_algorithm=requested_algorithm,
+                effective_algorithm=requested_algorithm,
+                status="pass",
+                call_algorithm=requested_algorithm,
+            )
+        ]
+        if requested_algorithm in WY_ALGORITHM_ALIASES:
+            for alias in WY_ALGORITHM_ALIASES:
+                if alias != requested_algorithm:
+                    plans.append(
+                        AlgorithmPlan(
+                            requested_algorithm=requested_algorithm,
+                            effective_algorithm=alias,
+                            status="fallback_algorithm_alias",
+                            call_algorithm=alias,
+                            reason=f"trying {alias!r} as a WY/lowrank alias",
+                        )
+                    )
+        return plans
+
+    def call_plan(self, xs: dict[str, Any], *, chunk_size: int, plan: AlgorithmPlan) -> tuple[Any, Any]:
         kwargs: dict[str, Any] = {"chunk_size": int(chunk_size)}
-        status = "pass"
-        effective_algorithm = algorithm
+        if plan.call_algorithm is not None:
+            kwargs["algorithm"] = plan.call_algorithm
+        elif self.supports_force_fallback is True and plan.status == "fallback_no_algorithm_arg":
+            kwargs["force_fallback"] = True
+        return self.fn(xs["r"], xs["w"], xs["k"], xs["v"], xs["kk"], xs["a"], xs["state"], **kwargs)
 
-        if self.supports_algorithm is True:
-            kwargs["algorithm"] = algorithm
-        elif self.supports_algorithm is False:
-            # The current prototype has no algorithm= parameter and is explicitly
-            # sequential inside chunks.  Keep affine rows runnable, but mark them
-            # as fallback so server JSONL cannot be mistaken for a real affine
-            # implementation result.
-            if self.supports_force_fallback is True:
-                kwargs["force_fallback"] = True
-            if algorithm == "affine":
-                status = "fallback_no_algorithm_arg"
-                effective_algorithm = "sequential_fallback"
-        else:
-            # Signature introspection failed; optimistically try the future API.
-            kwargs["algorithm"] = algorithm
+    def __call__(self, xs: dict[str, Any], *, chunk_size: int, algorithm: str) -> tuple[tuple[Any, Any], AlgorithmPlan]:
+        requested_algorithm = _normalize_algorithm_name(algorithm)
+        plans = self.plans_for(requested_algorithm)
+        if not plans:
+            detected = list(self.supported_algorithms) if self.supported_algorithms is not None else None
+            raise UnsupportedAlgorithmError(
+                requested_algorithm=requested_algorithm,
+                reason=f"dplr_chunk_scan does not advertise support for {requested_algorithm!r}; detected_algorithms={detected}",
+            )
 
-        try:
-            out = self.fn(xs["r"], xs["w"], xs["k"], xs["v"], xs["kk"], xs["a"], xs["state"], **kwargs)
-            return out, status, effective_algorithm
-        except TypeError as exc:
-            if self.supports_algorithm is None and "algorithm" in kwargs:
-                # Last-resort compatibility fallback for callables where inspect
-                # cannot see the signature.
-                kwargs.pop("algorithm", None)
-                if self.supports_force_fallback is True:
-                    kwargs["force_fallback"] = True
-                out = self.fn(xs["r"], xs["w"], xs["k"], xs["v"], xs["kk"], xs["a"], xs["state"], **kwargs)
-                fallback_status = "fallback_no_algorithm_arg" if algorithm == "affine" else "pass"
-                fallback_effective = "sequential_fallback" if algorithm == "affine" else "sequential"
-                return out, fallback_status, fallback_effective
-            raise exc
+        unsupported_errors: list[str] = []
+        for plan in plans:
+            try:
+                return self.call_plan(xs, chunk_size=chunk_size, plan=plan), plan
+            except TypeError as exc:
+                if self.supports_algorithm is None and plan.call_algorithm is not None and _unexpected_keyword_error(exc, "algorithm"):
+                    # Last-resort compatibility fallback for callables where
+                    # inspect cannot see the signature.  Only sequential and
+                    # historical affine rows can safely fall back to the
+                    # no-algorithm API; WY/lowrank should skip instead.
+                    self.supports_algorithm = False
+                    self.supported_algorithms = ("sequential",)
+                    fallback_plans = self._plans_for_no_algorithm_keyword(requested_algorithm)
+                    if fallback_plans:
+                        fallback_plan = fallback_plans[0]
+                        return self.call_plan(xs, chunk_size=chunk_size, plan=fallback_plan), fallback_plan
+                    raise UnsupportedAlgorithmError(
+                        requested_algorithm=requested_algorithm,
+                        reason="dplr_chunk_scan does not accept algorithm= and no safe fallback exists for WY/lowrank",
+                    ) from exc
+                if _looks_like_unsupported_algorithm(exc):
+                    unsupported_errors.append(str(exc))
+                    continue
+                raise
+            except (ValueError, NotImplementedError) as exc:
+                if _looks_like_unsupported_algorithm(exc):
+                    unsupported_errors.append(str(exc))
+                    continue
+                raise
+
+        raise UnsupportedAlgorithmError(
+            requested_algorithm=requested_algorithm,
+            reason="; ".join(unsupported_errors) or f"dplr_chunk_scan rejected {requested_algorithm!r}",
+        )
 
 
 def base_row(args: argparse.Namespace, *, B: int, T: int, H: int, N: int) -> dict[str, Any]:
@@ -324,10 +543,14 @@ def main() -> int:
                     steps=args.steps,
                 )
                 row = base_row(args, B=int(B), T=int(T), H=H, N=N)
+                _annotate_algorithm_row(
+                    row,
+                    requested_algorithm="torch_recurrent_scan",
+                    effective_algorithm="torch_recurrent_scan",
+                    detected_algorithms=dplr_call.supported_algorithms,
+                )
                 row.update(
                     {
-                        "algorithm": "torch_recurrent_scan",
-                        "effective_algorithm": "torch_recurrent_scan",
                         "chunk_size": None,
                         "status": "pass",
                         "out_max_abs_diff": 0.0,
@@ -341,10 +564,14 @@ def main() -> int:
                 rows += 1
             except Exception as exc:
                 row = base_row(args, B=int(B), T=int(T), H=H, N=N)
+                _annotate_algorithm_row(
+                    row,
+                    requested_algorithm="torch_recurrent_scan",
+                    effective_algorithm="torch_recurrent_scan",
+                    detected_algorithms=dplr_call.supported_algorithms,
+                )
                 row.update(
                     {
-                        "algorithm": "torch_recurrent_scan",
-                        "effective_algorithm": "torch_recurrent_scan",
                         "chunk_size": None,
                         "status": f"error:{type(exc).__name__}",
                         "error": str(exc),
@@ -362,25 +589,62 @@ def main() -> int:
 
             for chunk_size in args.chunk_sizes:
                 for algorithm in args.algorithms:
+                    requested_algorithm = _normalize_algorithm_name(algorithm)
                     row = base_row(args, B=int(B), T=int(T), H=H, N=N)
-                    row.update({"algorithm": algorithm, "chunk_size": int(chunk_size)})
+                    _annotate_algorithm_row(
+                        row,
+                        requested_algorithm=requested_algorithm,
+                        effective_algorithm=None,
+                        detected_algorithms=dplr_call.supported_algorithms,
+                    )
+                    row.update({"chunk_size": int(chunk_size)})
                     try:
                         with torch.inference_mode():
-                            got, status, effective_algorithm = dplr_call(xs, chunk_size=int(chunk_size), algorithm=algorithm)
-                        ms = timed(lambda: dplr_call(xs, chunk_size=int(chunk_size), algorithm=algorithm)[0], device=args.device, warmup=args.warmup, steps=args.steps)
+                            got, plan = dplr_call(xs, chunk_size=int(chunk_size), algorithm=requested_algorithm)
+                        ms = timed(
+                            lambda: dplr_call.call_plan(xs, chunk_size=int(chunk_size), plan=plan),
+                            device=args.device,
+                            warmup=args.warmup,
+                            steps=args.steps,
+                        )
                         row.update(pair_diff(got, ref))
+                        _annotate_algorithm_row(
+                            row,
+                            requested_algorithm=plan.requested_algorithm,
+                            effective_algorithm=plan.effective_algorithm,
+                            detected_algorithms=dplr_call.supported_algorithms,
+                        )
                         row.update(
                             {
-                                "effective_algorithm": effective_algorithm,
-                                "status": status,
+                                "status": plan.status,
                                 "peak_vram_mb": _peak_mb(args.device),
                             }
                         )
+                        if plan.reason is not None:
+                            row["fallback_reason"] = plan.reason
                         finish_timing_row(row, B=int(B), T=int(T), ms=ms)
+                    except UnsupportedAlgorithmError as exc:
+                        _annotate_algorithm_row(
+                            row,
+                            requested_algorithm=exc.requested_algorithm,
+                            effective_algorithm=exc.effective_algorithm,
+                            detected_algorithms=dplr_call.supported_algorithms,
+                        )
+                        row.update(
+                            {
+                                "status": exc.status,
+                                "skip_reason": exc.reason,
+                                "ms": None,
+                                "tokps": None,
+                                "out_max_abs_diff": None,
+                                "state_max_abs_diff": None,
+                                "out_min_cosine": None,
+                                "peak_vram_mb": _peak_mb(args.device),
+                            }
+                        )
                     except Exception as exc:
                         row.update(
                             {
-                                "effective_algorithm": None,
                                 "status": f"error:{type(exc).__name__}",
                                 "error": str(exc),
                                 "ms": None,
