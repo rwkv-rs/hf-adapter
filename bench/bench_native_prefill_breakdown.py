@@ -116,7 +116,14 @@ class EventProfiler:
         return dict(self.timings)
 
 
-def profiled_native_prefill(model, ids: torch.Tensor, packs, *, logits_to_keep: int = 1):
+def profiled_native_prefill(
+    model,
+    ids: torch.Tensor,
+    packs,
+    *,
+    logits_to_keep: int = 1,
+    fine_attention_breakdown: bool = False,
+):
     """Mirror ``native_jit.prefill`` while recording component timings."""
 
     base = model.model
@@ -243,7 +250,100 @@ def profiled_native_prefill(model, ids: torch.Tensor, packs, *, logits_to_keep: 
                 w_local = torch.exp(-0.606531 * torch.sigmoid(w_local.float()))
             return w_local, k_local, v_local, a_local, g_local, kk_local, v_first_local
 
-        w, k, v, a, g, kk, v_first_seq = profiler.measure("attn_lora_state_prep", lora_and_state_prep)
+        def fine_lora_and_state_prep():
+            v_gate_local = None
+            if layer_idx > 0 and native_jit._native_prefill_fused_wavg_lora_enabled(B * T):
+                block_m, block_r, block_k = native_jit._native_prefill_fused_wavg_lora_blocks()
+
+                def fused_wavg():
+                    w_out, a_out, g_out, v_gate_out = native_jit.fused_wavg_lora(
+                        xw.reshape(B * T, hidden),
+                        xa.reshape(B * T, hidden),
+                        xg.reshape(B * T, hidden),
+                        xv.reshape(B * T, hidden),
+                        w1,
+                        a1,
+                        g1,
+                        v1,
+                        w2,
+                        a2,
+                        g2,
+                        v2,
+                        w0,
+                        a0,
+                        None,
+                        v0,
+                        block_m=block_m,
+                        block_r=block_r,
+                        block_k=block_k,
+                    )
+                    return (
+                        w_out.view(B, T, hidden),
+                        torch.sigmoid(a_out.view(B, T, hidden)),
+                        g_out.view(B, T, hidden),
+                        v_gate_out.view(B, T, hidden),
+                    )
+
+                w_local, a_local, g_local, v_gate_local = profiler.measure("attn_lora_wavg_fused", fused_wavg)
+            else:
+                w_local = profiler.measure("attn_lora_w", lambda: F.linear(torch.tanh(F.linear(xw, w1)), w2, w0))
+                a_local = profiler.measure("attn_lora_a", lambda: torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2)))
+                g_local = profiler.measure("attn_lora_g", lambda: F.linear(torch.sigmoid(F.linear(xg, g1)), g2))
+                if layer_idx != 0:
+                    v_gate_local = profiler.measure("attn_lora_v_gate", lambda: torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2)))
+
+            if native_jit._native_prefill_fused_state_prep_enabled():
+                if layer_idx == 0:
+                    w_local, k_local, v_local, kk_local = profiler.measure(
+                        "attn_state_prep_fused",
+                        lambda: native_jit.fused_prefill_state_prep(
+                            w_local,
+                            k,
+                            v,
+                            a_local,
+                            k_k,
+                            k_a,
+                            num_heads=H,
+                            head_dim=N,
+                        ),
+                    )
+                    v_first_local = v_local
+                else:
+                    w_local, k_local, v_local, kk_local = profiler.measure(
+                        "attn_state_prep_fused",
+                        lambda: native_jit.fused_prefill_state_prep(
+                            w_local,
+                            k,
+                            v,
+                            a_local,
+                            k_k,
+                            k_a,
+                            v_first=v_first_seq,
+                            v_gate=v_gate_local,
+                            num_heads=H,
+                            head_dim=N,
+                        ),
+                    )
+                    v_first_local = v_first_seq
+            else:
+                kk_local = profiler.measure(
+                    "attn_kk_norm",
+                    lambda: F.normalize((k * k_k.view(1, 1, hidden)).view(B, T, H, N), dim=-1, p=2.0).view(B, T, hidden),
+                )
+                k_local = profiler.measure("attn_k_adjust", lambda: k * (1 + (a_local - 1) * k_a.view(1, 1, hidden)))
+                if layer_idx == 0:
+                    v_first_local = v
+                    v_local = v
+                else:
+                    v_first_local = v_first_seq
+                    v_local = profiler.measure("attn_v_interp", lambda: v + (v_first_seq - v) * v_gate_local)
+                w_local = profiler.measure("attn_w_decay", lambda: torch.exp(-0.606531 * torch.sigmoid(w_local.float())))
+            return w_local, k_local, v_local, a_local, g_local, kk_local, v_first_local
+
+        if fine_attention_breakdown:
+            w, k, v, a, g, kk, v_first_seq = fine_lora_and_state_prep()
+        else:
+            w, k, v, a, g, kk, v_first_seq = profiler.measure("attn_lora_state_prep", lora_and_state_prep)
 
         out, new_state = profiler.measure(
             "recurrent_scan",
@@ -292,7 +392,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
 
     with torch.inference_mode():
         ref = model.rwkv7_prefill_native(ids, logits_to_keep=1, return_dict=True)
-        prof_logits, *_ = profiled_native_prefill(model, ids, packs, logits_to_keep=1)
+        prof_logits, *_ = profiled_native_prefill(model, ids, packs, logits_to_keep=1, fine_attention_breakdown=args.fine_attn)
         ref_logits = ref.logits[:, -1, :].detach()
         prof_logits_last = prof_logits[:, -1, :].detach()
         max_abs = float((ref_logits.float() - prof_logits_last.float()).abs().max().detach().cpu())
@@ -300,12 +400,12 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
 
     for _ in range(args.warmup):
         with torch.inference_mode():
-            profiled_native_prefill(model, ids, packs, logits_to_keep=1)
+            profiled_native_prefill(model, ids, packs, logits_to_keep=1, fine_attention_breakdown=args.fine_attn)
 
     timing_runs: list[dict[str, float]] = []
     with torch.inference_mode():
         for _ in range(args.steps):
-            _, _, _, _, timings = profiled_native_prefill(model, ids, packs, logits_to_keep=1)
+            _, _, _, _, timings = profiled_native_prefill(model, ids, packs, logits_to_keep=1, fine_attention_breakdown=args.fine_attn)
             timing_runs.append(timings)
 
     keys = sorted({k for row in timing_runs for k in row})
@@ -339,6 +439,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "tokens_total": batch_size * prompt_tokens,
         "fused_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN", "0").lower() not in {"0", "false", "no", "off"},
         "scan_block_m": scan_block_m(model),
+        "fine_attention_breakdown": bool(args.fine_attn),
         "prefill_fused_state_prep_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_state_prep_effective": native_jit._native_prefill_fused_state_prep_enabled(),
         "prefill_fused_wavg_lora_requested": native_jit._native_prefill_fused_wavg_lora_requested(),
@@ -373,6 +474,7 @@ def main() -> int:
     ap.add_argument("--batch-sizes", default="1,4")
     ap.add_argument("--prompt-tokens", default="512")
     ap.add_argument("--fused-scan", choices=["auto", "true", "false"], default="auto")
+    ap.add_argument("--fine-attn", action="store_true", help="split attn_lora_state_prep into LoRA/state-prep subcomponents")
     ap.add_argument("--warmup", type=int, default=1)
     ap.add_argument("--steps", type=int, default=3)
     ap.add_argument("--results", default="")

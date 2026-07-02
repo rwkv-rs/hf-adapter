@@ -300,6 +300,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             r.get("prompt_tokens"),
             bool(r.get("fused_scan_requested")),
             r.get("scan_block_m"),
+            bool(r.get("fine_attention_breakdown")),
             bool(r.get("prefill_fused_state_prep_effective")),
             bool(r.get("prefill_fused_wavg_lora_effective")),
             r.get("prefill_fused_wavg_lora_max_m"),
@@ -1125,6 +1126,20 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 f"prompt={chosen.get('prompt_tokens')}: {top_name} {top_ms}ms share={top_share}; "
                 "optimize this before touching cache"
             )
+            fine_rows = [r for r in native_prefill_breakdown if r.get("fine_attention_breakdown")]
+            if fine_rows:
+                fine_bsz1 = [r for r in fine_rows if int(r.get("batch_size") or 0) == 1]
+                fine = max(fine_bsz1 or fine_rows, key=lambda r: int(r.get("_lineno", 0)))
+                cm = fine.get("component_ms") or {}
+                lora_sum = sum(float(cm.get(k) or 0.0) for k in ("attn_lora_w", "attn_lora_a", "attn_lora_g", "attn_lora_v_gate", "attn_lora_wavg_fused"))
+                scan_ms = cm.get("recurrent_scan")
+                state_ms = cm.get("attn_state_prep_fused", cm.get("attn_lora_state_prep"))
+                norm_ms = cm.get("attn_norm_shift_mix")
+                focus.append(
+                    f"fine prefill breakdown bsz={fine.get('batch_size')} prompt={fine.get('prompt_tokens')}: "
+                    f"scan={scan_ms}ms state_prep={state_ms}ms lora_sum={round(lora_sum, 4)}ms "
+                    f"norm_shift_mix={norm_ms}ms; next fusion should target scan plus norm/shift/state prep, not cache"
+                )
         else:
             focus.append("native_prefill_breakdown rows present but top_components missing")
     fast_prefill_ttft = [
@@ -1749,7 +1764,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             for r in native_prefill_scan
         ],
         "native_prefill_breakdown": [
-            compact(r, ["_lineno", "status", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "profiled_total_gpu_ms", "component_sum_ms", "profiled_tokps_total", "component_ms", "component_share", "top_components", "max_abs_diff_vs_native_prefill", "greedy_match_vs_native_prefill", "peak_vram_mb"])
+            compact(r, ["_lineno", "status", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "fine_attention_breakdown", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "profiled_total_gpu_ms", "component_sum_ms", "profiled_tokps_total", "component_ms", "component_share", "top_components", "max_abs_diff_vs_native_prefill", "greedy_match_vs_native_prefill", "peak_vram_mb"])
             for r in native_prefill_breakdown
         ],
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "hf_forward_fixed", "hf_forward_greedy", "hf_forward_auto_fixed", "hf_forward_auto_greedy", "hf_forward_auto_backend", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
