@@ -1732,6 +1732,36 @@ Correctness claims from the latest `main` branch:
 - CUDA-graph greedy decode: 40/40 tokens identical to the JIT path.
 - end-to-end vs `model.generate()` greedy: 32/32 generated tokens identical.
 
+### Production TTFT/TPOT + batch generate (RTX 5070 Laptop, sm_120, 0.1B fp16)
+
+`bench/bench_ttft_tpot.py`, native_graph fast-token backend, `RWKV7_FAST_FORWARD=1`,
+`attn_mode=fused_recurrent`, `fuse_norm=false`.
+
+TTFT (time-to-first-token, bsz=1, p50):
+
+| input len | TTFT p50 | TTFT p99 | prefill tok/s |
+|---|---:|---:|---:|
+| 32 | 19.1 ms | 20.4 ms | 1,676 |
+| 128 | 23.6 ms | 24.1 ms | 5,430 |
+| 512 | 24.0 ms | 26.9 ms | 21,318 |
+
+TPOT (per-output-token, bsz=1, decode 32): p50 **3.77 ms** (decode 265 tok/s),
+p99 4.34 ms -- tight tail.
+
+Batch-generate throughput (32 new tokens, prompt 128):
+
+| batch | total tok/s | peak VRAM |
+|---|---:|---:|
+| 1 | 212 | 413 MB |
+| 4 | 784 | 562 MB |
+| 8 | 1,581 | 590 MB |
+
+The 265 tok/s single-stream TPOT number is the realistic `model.generate()`
+figure via the standard HF path; the ~395 tok/s in the table above is a
+tighter isolated native-graph bench. The real serving lever on Blackwell is
+**batch scaling** (bsz 1 -> 8 gives ~7.5x aggregate throughput, since RWKV
+has no KV cache), not single-stream speedup.
+
 Usage:
 
 ```python
