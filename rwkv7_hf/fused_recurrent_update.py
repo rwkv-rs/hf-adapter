@@ -206,6 +206,79 @@ if _HAS_TRITON:
         )
 
     @triton.jit
+    def _recurrent_scan_state_prep_kernel(
+        r_ptr,
+        w_raw_ptr,
+        k_raw_ptr,
+        v_raw_ptr,
+        a_ptr,
+        state_ptr,
+        k_k_ptr,
+        k_a_ptr,
+        v_first_ptr,
+        v_gate_ptr,
+        out_ptr,
+        final_state_ptr,
+        k_out_ptr,
+        v_out_ptr,
+        T,
+        H: tl.constexpr,
+        N: tl.constexpr,
+        HAS_V_GATE: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+    ):
+        bh_id = tl.program_id(0)
+        head_id = bh_id % H
+        batch_id = bh_id // H
+
+        offs = tl.arange(0, BLOCK_N)
+        mask = offs < N
+        state_base = (batch_id * H + head_id) * N * N
+        param_base = head_id * N
+        st = tl.load(
+            state_ptr + state_base + offs[:, None] * N + offs[None, :],
+            mask=mask[:, None] & mask[None, :],
+            other=0.0,
+        ).to(tl.float32)
+        kk_scale = tl.load(k_k_ptr + param_base + offs, mask=mask, other=0.0).to(tl.float32)
+        ka_scale = tl.load(k_a_ptr + param_base + offs, mask=mask, other=0.0).to(tl.float32)
+
+        t = 0
+        while t < T:
+            vec_base = ((batch_id * T + t) * H + head_id) * N
+            r = tl.load(r_ptr + vec_base + offs, mask=mask, other=0.0).to(tl.float32)
+            w_raw = tl.load(w_raw_ptr + vec_base + offs, mask=mask, other=0.0).to(tl.float32)
+            k_raw = tl.load(k_raw_ptr + vec_base + offs, mask=mask, other=0.0).to(tl.float32)
+            v_raw = tl.load(v_raw_ptr + vec_base + offs, mask=mask, other=0.0).to(tl.float32)
+            a_val = tl.load(a_ptr + vec_base + offs, mask=mask, other=0.0).to(tl.float32)
+
+            kk_raw = k_raw * kk_scale
+            norm2 = tl.sum(tl.where(mask, kk_raw * kk_raw, 0.0), axis=0)
+            kk = kk_raw * tl.rsqrt(tl.maximum(norm2, 1.0e-20))
+            k_adj = k_raw * (1.0 + (a_val - 1.0) * ka_scale)
+            v_adj = v_raw
+            if HAS_V_GATE:
+                vf = tl.load(v_first_ptr + vec_base + offs, mask=mask, other=0.0).to(tl.float32)
+                vg = tl.load(v_gate_ptr + vec_base + offs, mask=mask, other=0.0).to(tl.float32)
+                v_adj = v_raw + (vf - v_raw) * vg
+            w = tl.exp(-0.606531 * tl.sigmoid(w_raw))
+
+            state_dot_kk = tl.sum(st * kk[None, :], axis=1)
+            st = st * w[None, :] + v_adj[:, None] * k_adj[None, :] - state_dot_kk[:, None] * kk[None, :] * a_val[None, :]
+
+            recurrent = tl.sum(st * r[None, :], axis=1)
+            tl.store(out_ptr + vec_base + offs, recurrent, mask=mask)
+            tl.store(k_out_ptr + vec_base + offs, k_adj, mask=mask)
+            tl.store(v_out_ptr + vec_base + offs, v_adj, mask=mask)
+            t += 1
+
+        tl.store(
+            final_state_ptr + state_base + offs[:, None] * N + offs[None, :],
+            st,
+            mask=mask[:, None] & mask[None, :],
+        )
+
+    @triton.jit
     def _recurrent_scan_rows_kernel(
         r_ptr,
         w_ptr,
@@ -470,6 +543,12 @@ def fused_recurrent_scan_available() -> bool:
 
 def fused_recurrent_scan_clampw_available() -> bool:
     """Return whether the raw-W clampw recurrent scan prototype can run."""
+
+    return bool(_HAS_TRITON and torch is not None)
+
+
+def fused_recurrent_scan_state_prep_available() -> bool:
+    """Return whether fused state-prep plus recurrent scan can run."""
 
     return bool(_HAS_TRITON and torch is not None)
 
@@ -1151,6 +1230,134 @@ def fused_recurrent_scan_clampw(
     if flat:
         return out.reshape(B, T, H * N), final_state
     return out, final_state
+
+
+def fused_recurrent_scan_state_prep(
+    r: Any,
+    w_raw: Any,
+    k_raw: Any,
+    v_raw: Any,
+    a: Any,
+    state: Any,
+    k_k: Any,
+    k_a: Any,
+    *,
+    v_first: Any | None = None,
+    v_gate: Any | None = None,
+    block_n: int = 64,
+    force_fallback: bool = False,
+):
+    """Fuse native-prefill state prep with the recurrent scan.
+
+    This opt-in bsz=1 prompt-prefill prototype consumes raw W/K/V and already
+    sigmoid'd A/V-gate tensors, computes W decay, adjusted K, interpolated V,
+    and normalized KK inside the scan, and returns ``(out, final_state, k, v)``
+    so the existing attention output-prep code can keep using adjusted K/V.
+
+    The Triton path is intentionally full-head only: it avoids duplicating the
+    per-head KK normalization across row blocks and targets the 4090
+    ``N=64`` validation shape first.
+    """
+
+    if torch is None or F is None:
+        raise RuntimeError("fused_recurrent_scan_state_prep requires torch")
+    if state.dim() != 4:
+        raise ValueError("state must be shaped [batch, heads, head_dim, head_dim]")
+    B, H, N, N2 = (int(vv) for vv in state.shape)
+    if N != N2:
+        raise ValueError("state must be square in the last two dimensions")
+    if int(block_n) < N:
+        raise ValueError(f"block_n must be >= head_dim={N}; got {block_n}")
+    r4, flat = _as_bthn(r, H, N, name="r")
+    w4, _ = _as_bthn(w_raw, H, N, name="w_raw")
+    k4, _ = _as_bthn(k_raw, H, N, name="k_raw")
+    v4, _ = _as_bthn(v_raw, H, N, name="v_raw")
+    a4, _ = _as_bthn(a, H, N, name="a")
+    if int(r4.shape[0]) != B:
+        raise ValueError("r/w/k/v/a batch size must match state")
+    hidden = H * N
+    if int(k_k.numel()) != hidden or int(k_a.numel()) != hidden:
+        raise ValueError(f"k_k and k_a must have {hidden} elements")
+    has_v_gate = v_first is not None and v_gate is not None
+    if has_v_gate:
+        vf4, _ = _as_bthn(v_first, H, N, name="v_first")
+        vg4, _ = _as_bthn(v_gate, H, N, name="v_gate")
+    else:
+        vf4 = v4
+        vg4 = v4
+
+    use_triton = (
+        not force_fallback
+        and fused_recurrent_scan_state_prep_available()
+        and r4.is_cuda
+        and w4.is_cuda
+        and k4.is_cuda
+        and v4.is_cuda
+        and a4.is_cuda
+        and state.is_cuda
+        and k_k.is_cuda
+        and k_a.is_cuda
+        and (not has_v_gate or (vf4.is_cuda and vg4.is_cuda))
+        and state.dtype == torch.float32
+        and r4.dtype in (torch.float16, torch.bfloat16, torch.float32)
+        and all(t.dtype == r4.dtype for t in (w4, k4, v4, a4))
+        and k_k.dtype == r4.dtype
+        and k_a.dtype == r4.dtype
+        and (not has_v_gate or (vf4.dtype == r4.dtype and vg4.dtype == r4.dtype))
+    )
+    if not use_triton:
+        kk = F.normalize((k4.reshape(B, int(k4.shape[1]), hidden) * k_k.reshape(1, 1, hidden)).view(B, int(k4.shape[1]), H, N), dim=-1, p=2.0)
+        k_adj = (k4.reshape(B, int(k4.shape[1]), hidden) * (1 + (a4.reshape(B, int(a4.shape[1]), hidden) - 1) * k_a.reshape(1, 1, hidden))).view_as(k4)
+        if has_v_gate:
+            v_adj = v4 + (vf4 - v4) * vg4
+        else:
+            v_adj = v4
+        w_decay = torch.exp(-0.606531 * torch.sigmoid(w4.float()))
+        out, final_state = torch_recurrent_scan(r4.reshape(B, int(r4.shape[1]), H * N) if flat else r4, w_decay, k_adj, v_adj, kk, a4, state)
+        if flat:
+            return out, final_state, k_adj.reshape(B, int(k4.shape[1]), H * N), v_adj.reshape(B, int(v4.shape[1]), H * N)
+        return out, final_state, k_adj, v_adj
+
+    T = int(r4.shape[1])
+    r_c = r4.contiguous()
+    w_c = w4.contiguous()
+    k_c = k4.contiguous()
+    v_c = v4.contiguous()
+    a_c = a4.contiguous()
+    state_c = state.contiguous()
+    kk_c = k_k.reshape(hidden).contiguous()
+    ka_c = k_a.reshape(hidden).contiguous()
+    vf_c = vf4.contiguous()
+    vg_c = vg4.contiguous()
+    out = torch.empty((B, T, H, N), device=r4.device, dtype=r4.dtype)
+    final_state = torch.empty_like(state_c)
+    k_out = torch.empty_like(k_c)
+    v_out = torch.empty_like(v_c)
+    _recurrent_scan_state_prep_kernel[(B * H,)](
+        r_c,
+        w_c,
+        k_c,
+        v_c,
+        a_c,
+        state_c,
+        kk_c,
+        ka_c,
+        vf_c,
+        vg_c,
+        out,
+        final_state,
+        k_out,
+        v_out,
+        T,
+        H,
+        N,
+        HAS_V_GATE=bool(has_v_gate),
+        BLOCK_N=int(block_n),
+        num_warps=8,
+    )
+    if flat:
+        return out.reshape(B, T, H * N), final_state, k_out.reshape(B, T, H * N), v_out.reshape(B, T, H * N)
+    return out, final_state, k_out, v_out
 
 
 def fused_recurrent_scan_output_prepare(

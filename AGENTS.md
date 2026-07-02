@@ -104,14 +104,26 @@ Latest RTX 4090 target evidence:
     `RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS=1`,
     `RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP=1`; pass at `22,777.0 tok/s`
     (`0.4368x`) and `991.2 MiB`.
-  - Confirmation for that setting:
+  - Confirmation for that older split setting:
     `/tmp/native_4090_todo_confirm_20260702_104202.jsonl`, pass at
-    `22,292.0 tok/s` (`0.4275x`). It is still below the `0.45x` target.
+    `22,292.0 tok/s` (`0.4275x`), below the `0.45x` target.
   - Breakdown path: `/tmp/native_4090_todo_breakdown_20260702_104126.jsonl`.
     Top components for the best fused-scan setting are recurrent scan
     `7.4571 ms` / `26.34%`, FFN `4.0836 ms` / `14.42%`,
     attention norm+shift-mix `3.8040 ms` / `13.44%`, and fused state prep
     `3.2982 ms` / `11.65%`.
+  - New opt-in fused state-prep + recurrent scan row:
+    `RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN=1` and
+    `RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1` with path
+    `/tmp/native_4090_fused_state_scan_confirm_20260702_111924.jsonl` passes
+    greedy/cache smoke at `25,663.2 tok/s`, `19.9507 ms`, `0.4921x`
+    Albatross, and `989.2 MiB` peak VRAM. This closes the 0.45x checkpoint but
+    remains below the `0.60x` stretch target (`31,289 tok/s`).
+  - DPLR compact retest after the launch-count reduction is still slower:
+    `/tmp/native_4090_dplr_compact_retest_20260702_111924.jsonl`,
+    `16,863.4 tok/s`, `30.3616 ms`, `0.3234x` Albatross, greedy/cache smoke
+    passing. Keep DPLR compact as high-upside work, but its next useful step is
+    DPLR-specific apply/output fusion rather than wrapper-level changes.
   - Prefill fused-output-project is now an opt-in experiment
     (`RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_PROJECT=1`) for evidence only. The
     first 4090 row `/tmp/native_4090_output_project_20260702_104430.jsonl`
@@ -144,10 +156,12 @@ Remaining before this goal is complete:
   WY/low-rank factors to reduce memory traffic and close the Albatross gap.
 - Make the explicit three-stage path at least competitive with the P0 fused
   recurrent scan; current dense3 is correctness-first and slower than P0.
-- Use the 4090 native prefill benchmark to move 0.4B prompt512 bsz1 from the
-  confirmed `0.4275x`/short-sweep `0.4368x` Albatross band to `>=0.45x`, then
-  `>=0.60x`. The next concrete kernel task is recurrent-scan/state-prep
-  launch-count reduction; wrapper-only work is not the performance route.
+- The 4090 native prefill benchmark has moved 0.4B prompt512 bsz1 past the
+  `>=0.45x` checkpoint with the opt-in fused state-scan row (`0.4921x`). The
+  remaining stretch is `>=0.60x`; current gap is about `5,626 tok/s`. The next
+  concrete kernel task is deeper fusion beyond state-prep+scan, especially
+  output-prep/application fusion and DPLR-specific apply/output fusion;
+  wrapper-only work is not the performance route.
 - Do not call the DPLR/WY goal finished until compact WY or an equivalent
   compiled path is verified end-to-end against the original acceptance target.
 
@@ -445,6 +459,14 @@ Run this checklist for every new GPU before marking it as supported:
     the larger model/card matrix passes. For this exact Ada shape,
     `RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M=8` is the best recorded scan tile; `4`,
     `16`, and `32` were slower end-to-end.
+  - Native fused state-prep + recurrent scan
+    (`RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN=1`) is the current best Ada bsz=1
+    prefill row when paired with `RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1`: 4090 /
+    0.4B / fp16 / prompt512 confirms at `25,663.2 tok/s` (`0.4921x`
+    Albatross) with greedy/cache smoke passing. It is opt-in only: before
+    defaulting, validate bsz=1/2/4/8, larger checkpoints, memory, and other
+    card families; do not reuse the Ada full-head `N=64` kernel as a generic
+    V100/A100/H100/Blackwell default.
   - `RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS` is a telemetry override only. The
     4090 scan microbench shows batch-dependent winners (`8` warps at bsz=1,
     `1` warp at bsz=4), but full prefill rows do not beat the best
