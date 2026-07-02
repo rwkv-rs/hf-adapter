@@ -13,6 +13,8 @@ import argparse
 import json
 import os
 import re
+import shutil
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -28,6 +30,57 @@ from rwkv7_hf import native_jit
 
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
 SEED = "The quick brown fox jumps over the lazy dog. " * 256
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_CODE_DIR = REPO_ROOT / "rwkv7_hf"
+
+
+def prepare_model_dir(model_path: str, *, code_source: str) -> tuple[str, tempfile.TemporaryDirectory[str] | None]:
+    """Return a model directory, optionally overlaying repo remote-code files.
+
+    Local HF checkpoints usually carry their own ``modeling_rwkv7.py`` and
+    ``native_jit.py`` next to the weights.  That is correct for release
+    validation, but it hides in-repo experiments such as ``dplr_prefill.py`` and
+    ``dplr_prefill_triton.py`` from ``trust_remote_code=True``.  ``code_source=
+    repo`` creates a temporary checkpoint directory that symlinks the original
+    non-code files and copies the current repo's ``rwkv7_hf/*.py`` files to the
+    checkpoint root, so the benchmark measures the current worktree code.
+    """
+
+    if code_source == "model":
+        return model_path, None
+    if code_source != "repo":
+        raise ValueError(f"code_source must be 'model' or 'repo', got {code_source!r}")
+
+    src = Path(model_path).resolve()
+    if not src.is_dir():
+        raise ValueError(f"--model must be a local directory for --code-source repo; got {model_path!r}")
+    if not REPO_CODE_DIR.is_dir():
+        raise ValueError(f"repo code directory not found: {REPO_CODE_DIR}")
+
+    tmp = tempfile.TemporaryDirectory(prefix="rwkv7_repo_code_model_")
+    dst = Path(tmp.name)
+    for item in src.iterdir():
+        if item.name == "__pycache__" or item.suffix == ".py":
+            continue
+        target = dst / item.name
+        if item.is_dir():
+            target.symlink_to(item, target_is_directory=True)
+        else:
+            target.symlink_to(item)
+    for py_file in REPO_CODE_DIR.glob("*.py"):
+        shutil.copy2(py_file, dst / py_file.name)
+    return str(dst), tmp
+
+
+def model_native_jit_module(model) -> Any:
+    """Return the native_jit module actually used by the loaded HF model."""
+
+    method = getattr(model, "rwkv7_prefill_native", None)
+    fn = getattr(method, "__func__", method)
+    globals_dict = getattr(fn, "__globals__", {})
+    return globals_dict.get("native_jit", native_jit)
 
 
 def cuda_sync(device: str) -> None:
@@ -82,7 +135,7 @@ def scan_num_warps(model, block_m: int | None) -> int | None:
             return None
     try:
         head_dim = int(model._rwkv7_native_jit_packs()[0][2])
-        return native_jit._native_prefill_scan_num_warps(head_dim, block_m)
+        return model_native_jit_module(model)._native_prefill_scan_num_warps(head_dim, block_m)
     except Exception:
         return None
 
@@ -92,6 +145,7 @@ def cosine_min(a: torch.Tensor, b: torch.Tensor) -> float:
 
 
 def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_tokens: int) -> dict[str, Any]:
+    nj = model_native_jit_module(model)
     ids = build_ids(tok, batch_size, prompt_tokens, args.device)
     if args.device.startswith("cuda"):
         torch.cuda.reset_peak_memory_stats()
@@ -139,6 +193,9 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "dtype": args.dtype,
         "device": torch.cuda.get_device_name(0) if args.device.startswith("cuda") else args.device,
         "model_path": args.model,
+        "effective_model_path": getattr(args, "effective_model_path", args.model),
+        "code_source": args.code_source,
+        "native_jit_module": getattr(nj, "__name__", str(nj)),
         "model_size_label": infer_model_size_label(args.model),
         "batch_size": batch_size,
         "prompt_tokens": prompt_tokens,
@@ -147,26 +204,26 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "scan_block_m": scan_m,
         "scan_num_warps": scan_num_warps(model, scan_m),
         "prefill_fused_scan_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
-        "prefill_fused_scan_output_effective": native_jit._native_prefill_fused_scan_output_enabled(),
+        "prefill_fused_scan_output_effective": nj._native_prefill_fused_scan_output_enabled(),
         "prefill_fused_clampw_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_CLAMPW_SCAN", "0").lower() not in {"0", "false", "no", "off"},
-        "prefill_fused_clampw_scan_effective": native_jit._native_prefill_fused_clampw_scan_enabled(),
+        "prefill_fused_clampw_scan_effective": nj._native_prefill_fused_clampw_scan_enabled(),
         "prefill_dplr_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_DPLR_SCAN", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_dplr_scan_effective": (
-            native_jit._native_prefill_dplr_scan_enabled()
-            and not native_jit._native_prefill_fused_scan_enabled()
-            and not native_jit._native_prefill_fused_scan_output_enabled()
+            getattr(nj, "_native_prefill_dplr_scan_enabled", lambda: False)()
+            and not nj._native_prefill_fused_scan_enabled()
+            and not nj._native_prefill_fused_scan_output_enabled()
         ),
-        "prefill_dplr_chunk_size": native_jit._native_prefill_dplr_chunk_size(),
+        "prefill_dplr_chunk_size": getattr(nj, "_native_prefill_dplr_chunk_size", lambda: None)(),
         "prefill_fused_shift_mix_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX", "0").lower() not in {"0", "false", "no", "off"},
-        "prefill_fused_shift_mix_effective": native_jit._native_prefill_fused_shift_mix_enabled(),
+        "prefill_fused_shift_mix_effective": nj._native_prefill_fused_shift_mix_enabled(),
         "prefill_fused_state_prep_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", "0").lower() not in {"0", "false", "no", "off"},
-        "prefill_fused_state_prep_effective": native_jit._native_prefill_fused_state_prep_enabled(),
-        "prefill_state_prep_w_dtype": native_jit._native_prefill_state_prep_w_dtype(),
+        "prefill_fused_state_prep_effective": nj._native_prefill_fused_state_prep_enabled(),
+        "prefill_state_prep_w_dtype": nj._native_prefill_state_prep_w_dtype(),
         "prefill_fused_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
-        "prefill_fused_output_effective": native_jit._native_prefill_fused_output_enabled(),
-        "prefill_fused_wavg_lora_requested": native_jit._native_prefill_fused_wavg_lora_requested(),
-        "prefill_fused_wavg_lora_effective": native_jit._native_prefill_fused_wavg_lora_enabled(batch_size * prompt_tokens),
-        "prefill_fused_wavg_lora_max_m": native_jit._native_prefill_fused_wavg_lora_max_m(),
+        "prefill_fused_output_effective": nj._native_prefill_fused_output_enabled(),
+        "prefill_fused_wavg_lora_requested": nj._native_prefill_fused_wavg_lora_requested(),
+        "prefill_fused_wavg_lora_effective": nj._native_prefill_fused_wavg_lora_enabled(batch_size * prompt_tokens),
+        "prefill_fused_wavg_lora_max_m": nj._native_prefill_fused_wavg_lora_max_m(),
         "fast_token_backend_after_native_prefill": decode_backend,
         "hf_prefill_ms": round(ref_ms, 4),
         "native_prefill_ms": round(native_ms, 4),
@@ -203,6 +260,7 @@ def main() -> int:
     ap.add_argument("--batch-sizes", default="1,4")
     ap.add_argument("--prompt-tokens", default="128")
     ap.add_argument("--fused-scan", choices=["auto", "true", "false"], default="auto")
+    ap.add_argument("--code-source", choices=["model", "repo"], default="model", help="load trust_remote_code from checkpoint files or overlay current repo rwkv7_hf/*.py")
     ap.add_argument("--warmup", type=int, default=2)
     ap.add_argument("--steps", type=int, default=5)
     ap.add_argument("--results", default="")
@@ -211,18 +269,24 @@ def main() -> int:
     if args.fused_scan != "auto":
         os.environ["RWKV7_NATIVE_PREFILL_FUSED_SCAN"] = "1" if args.fused_scan == "true" else "0"
 
-    tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model,
-        trust_remote_code=True,
-        torch_dtype=DTYPES[args.dtype],
-        device_map=args.device if args.device.startswith("cuda") else None,
-    ).eval()
-    for bsz in parse_ints(args.batch_sizes):
-        for prompt_tokens in parse_ints(args.prompt_tokens):
-            row = run_case(args, tok, model, bsz, prompt_tokens)
-            print(json.dumps(row, ensure_ascii=False))
-            append_row(args.results, row)
+    effective_model_path, tmp_model_dir = prepare_model_dir(args.model, code_source=args.code_source)
+    args.effective_model_path = effective_model_path
+    try:
+        tok = AutoTokenizer.from_pretrained(effective_model_path, trust_remote_code=True)
+        model = AutoModelForCausalLM.from_pretrained(
+            effective_model_path,
+            trust_remote_code=True,
+            torch_dtype=DTYPES[args.dtype],
+            device_map=args.device if args.device.startswith("cuda") else None,
+        ).eval()
+        for bsz in parse_ints(args.batch_sizes):
+            for prompt_tokens in parse_ints(args.prompt_tokens):
+                row = run_case(args, tok, model, bsz, prompt_tokens)
+                print(json.dumps(row, ensure_ascii=False))
+                append_row(args.results, row)
+    finally:
+        if tmp_model_dir is not None:
+            tmp_model_dir.cleanup()
     return 0
 
 
