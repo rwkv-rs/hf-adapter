@@ -1,5 +1,26 @@
 # RWKV-7 HF 适配下一步
 
+
+## 当前大 TODO：FLA 保底 + native fused/DPLR 性能路线
+
+这两条必须同时保留，不能混成“继续优化 FLA”：
+
+1. **FLA / PyTorch 保底线**
+   - FLA 只作为 HF 兼容、训练、量化、fallback 和 correctness reference。
+   - 默认/不支持 native 的场景必须能安全回退，尤其 PEFT、Trainer、TRL、bitsandbytes 4bit/8bit、CPU/AMD/旧卡路径。
+   - 不再把 FLA wrapper 微优化当作 Albatross gap 的主性能路线。
+
+2. **native fused + DPLR/WY 性能线**
+   - 短期主线：native fused fp16，当前 4090 opt-in `RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN=1` + `RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1` 已把 0.4B/prompt512/bsz1 推到 `25,663.2 tok/s`（`0.4921x` Albatross）；下一步冲 `>=0.60x`。
+   - 数学上限线：DPLR/WY chunk prefill，继续做 compact WY apply/output fusion、避免 dense `[N,N]` 和 adjusted K/V 大量 materialize，把 output-prep 合进 chunk apply，最后迁移到 fused W8/W4。
+   - 任何默认启用都必须有 exact-card / exact-bsz / exact-model 证据；4090、V100、A100/H100、Blackwell 不共享默认 tile。
+
+3. **外部可借鉴但不是完整替代的方案**
+   - Albatross/faster3a：最强性能验收线和 CUDA kernel/layout 参考。
+   - FLA `chunk_rwkv7` / `chunk_dplr_delta_rule`：训练和 chunk-DPLR 参考，但不是我们要继续堆的 HF wrapper 主线。
+   - vLLM 关闭 PR #41060/#46269：可借鉴 recurrent state ownership、scheduler/cache 语义、TP/PP/sharding、custom CUDA op build，但目前不是可直接依赖的 merged 解。
+   - wind_rwkv / VKWR / rwkv.cpp：分别可借鉴 H100/MI300X kernel benchmark、continuous batching server、INT4/INT8 quant format。
+
 ## 已完成：阶段 1 / wrapper 可用版
 
 - 官方 `.pth` -> HF `model.safetensors`
