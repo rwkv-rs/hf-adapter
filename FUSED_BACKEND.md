@@ -680,3 +680,40 @@ For HF end-to-end validation, ensure the model directory loaded by
 `dplr_prefill.py`, and `dplr_prefill_triton.py`; otherwise the benchmark row may
 only reflect the checkpoint-local remote code rather than this repository's
 new backend.
+
+`bench/bench_native_prefill_scan.py --code-source repo` creates a temporary
+checkpoint directory that symlinks the model weights/tokenizer files and copies
+the current repo's `rwkv7_hf/*.py` files into the HF remote-code root.  Rows now
+record `code_source`, `effective_model_path`, and `native_jit_module` so DPLR
+experiments can distinguish checkpoint-local code from the current worktree.
+
+4090 HF smoke using current repo code:
+
+```bash
+env RWKV7_NATIVE_PREFILL_DPLR_SCAN=1 \
+    RWKV7_NATIVE_PREFILL_DPLR_CHUNK_SIZE=64 \
+    RWKV7_DPLR_PREFILL_ALGORITHM=triton_wy \
+    RWKV7_DPLR_TRITON_BLOCK_M=8 \
+    RWKV7_DPLR_TRITON_STRICT=1 \
+    RWKV7_NATIVE_PREFILL_FUSED_SCAN=0 \
+    RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT=0 \
+    RWKV7_NATIVE_PREFILL_FUSED_CLAMPW_SCAN=0 \
+    RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP=1 \
+    PYTHONPATH=. \
+    python bench/bench_native_prefill_scan.py \
+      --model /workspace/models/rwkv7/rwkv7-g1d-0.4b-hf \
+      --code-source repo \
+      --device cuda --dtype fp16 \
+      --batch-sizes 1 --prompt-tokens 512 \
+      --fused-scan false \
+      --warmup 2 --steps 5 \
+      --results bench/results.jsonl
+```
+
+Result: `status=pass`, `prefill_dplr_scan_effective=true`,
+`greedy_match=true`, `decode_after_prefill_greedy_match=true`, and
+`native_prefill_tokps_total=21567.9` on 4090 / 0.4B / prompt512.  This proves
+the repo-code HF native path can dispatch through
+`RWKV7_DPLR_PREFILL_ALGORITHM=triton_wy`.  It is roughly the existing fused-scan
+performance envelope because P0 delegates to `fused_recurrent_scan`; exceeding
+the current mainline still requires the real three-stage WY kernels.
