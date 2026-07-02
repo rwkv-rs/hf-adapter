@@ -717,3 +717,51 @@ the repo-code HF native path can dispatch through
 `RWKV7_DPLR_PREFILL_ALGORITHM=triton_wy`.  It is roughly the existing fused-scan
 performance envelope because P0 delegates to `fused_recurrent_scan`; exceeding
 the current mainline still requires the real three-stage WY kernels.
+
+### Triton chunk-summary kernel boundary
+
+The first explicit chunk-summary kernel boundary now exists in
+`dplr_prefill_triton.py`:
+
+- `dplr_dense_chunk_summary_torch(...)`
+- `dplr_dense_chunk_summary_triton(...)`
+- `dplr_dense_chunk_summary_triton_available()`
+
+This is not the final compact WY summary yet: it returns dense chunk affine
+summaries `transition/additive` shaped `[B, chunks, H, N, N]` for
+`S_end = S_start @ transition + additive`.  It is still useful because it pins
+down stage 1 of the target backend and gives a correctness oracle for the next
+two stages:
+
+1. chunk summary kernel — **present as dense DPLR summary**
+2. chunk-level prefix combine — next
+3. chunk apply/output — next
+
+Run the summary probe with:
+
+```bash
+PYTHONPATH=. python bench/bench_dplr_prefill_scan.py \
+  --device cuda --dtype fp16 \
+  --batch-sizes 1 --tokens 512 \
+  --heads 16 --head-dim 64 --chunk-sizes 64 \
+  --algorithms triton_wy \
+  --summary-probe \
+  --warmup 1 --steps 3 \
+  --results bench/results.jsonl
+```
+
+4090 target-shape result for the dense summary probe:
+
+- `axis="dplr_chunk_summary_proto"`
+- `status=pass`
+- `summary_shape=[1,8,16,64,64]`
+- `transition_max_abs_diff=4.97e-14`
+- `additive_max_abs_diff=5.96e-8`
+- `state_max_abs_diff=1.26e-4`
+- `ms=0.31705`, `tokps=1.61M`
+
+Next implementation step: use those per-chunk summaries to compute chunk start
+states, then add a chunk-apply kernel that emits recurrent outputs from each
+chunk start state.  After that is correct, replace dense `transition/additive`
+with compact WY factors to reduce memory and make the design closer to the
+Albatross/DPLR line.
