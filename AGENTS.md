@@ -163,6 +163,137 @@ Required goals:
 - AMD GPU support remains a compatibility target for the HF path, preferably via
   pure PyTorch/reference paths first and optional kernels later.
 
+### GPU-Specific Kernel Policy Registry
+
+Every GPU/card family that is touched by this project must have an explicit
+adapter profile. Do not leave new hardware as an implicit "works on my GPU"
+case. When adding or validating a card, update all of:
+
+1. `rwkv7_hf/kernel_policy.py` with the runtime family classification and
+   default kernel policy.
+2. This `AGENTS.md` section with the per-card adaptation rules.
+3. `bench/results.jsonl` with at least smoke rows for the relevant benchmark
+   axes.
+4. `bench/analyze_results.py` / summaries when a new axis or gate is added.
+
+Environment variables always override the policy. The policy is only the
+safe default selected when the user does not set explicit flags.
+
+Policy coverage and validation are separate. A family may have a conservative
+profile so the code can route safely, but it is not a validated production
+target until the required card-local rows are present in `bench/results.jsonl`.
+Current validated/touched rows exist for V100, RTX 4090, and RTX 5070 Laptop;
+Pascal/Turing/Ampere/Hopper/AMD entries are policy rules and TODO validation
+targets until matching hardware is benchmarked.
+
+#### Global rules for all cards
+
+- Never enable a fused kernel by default on a card unless there is a
+  per-card benchmark row showing correctness and non-negative end-to-end value.
+- A shallow micro-kernel win is not enough for default enablement. Prefer
+  end-to-end `native_graph` rows with greedy match and tok/s speedup.
+- If a custom kernel is slower than cuBLAS/torch on a card, keep it as
+  telemetry only and record that it must not be integrated by default.
+- Preserve fallback order: `native_graph` / `native_jit` / FLA or pure torch
+  fallback, depending on availability and compatibility.
+- For every new GPU, run at minimum:
+  - `bench_batch_sweep.py` for `bsz=1/2/4/8`;
+  - `bench_native_graph_overhead.py`;
+  - fused output/recurrent-output integration smokes;
+  - projection/LoRA/layout sweep before enabling projection kernels;
+  - W8/W4 footprint + speed rows if quantization is claimed.
+
+#### Pascal / GTX 10 / P100 (`sm_60`/`sm_61`)
+
+- Policy family: `pascal`.
+- Default stance: compatibility-first.
+- Default fused Triton/native-graph sub-kernels: off, except manually forced
+  smokes.
+- Required validation before any default enablement: import, generate,
+  `rwkv7_forward_token`, batch cache, dynamic batch, and at least one full
+  native-graph decode smoke on the exact card.
+- Quantization rule: memory-only until a card-local W8/W4 speed row beats fp16.
+
+#### Volta / V100 (`sm_70`)
+
+- Policy family: `volta`.
+- Role: current regression baseline and conservative production-smoke target.
+- Defaults:
+  - `native_graph` backend remains preferred through `auto`.
+  - `fused_recurrent_output`: on by default.
+  - `fused_output`: on by default.
+  - `fused_recurrent`: off by default unless explicitly A/B tested.
+  - `fused_output_project`: off by default.
+  - `fused_projection`, `fused_wag_lora`, `fused_wavg_lora`: off by default.
+- Quantization rule: W8/W4 memory rows are valid, but speed is not considered
+  solved until fused/native quant beats fp16 on this card.
+- Any change to default V100 policy must preserve HF Trainer/TRL/PEFT smoke
+  coverage plus decode greedy-match rows.
+
+#### Turing / RTX 20 / T4 (`sm_75`)
+
+- Policy family: `turing`.
+- Default stance: follow Volta-safe output fusions, but require card-local
+  decode and quant rows before claiming performance.
+- Projection/LoRA fusions stay opt-in until `native_graph` end-to-end speedup
+  is measured on the card.
+
+#### Ampere / A100 / RTX 30 (`sm_80`/`sm_86`)
+
+- Policy family: `ampere`.
+- Default stance: stable output and recurrent-output fusions may be enabled;
+  projection/LoRA and quant kernels require card-local sweeps.
+- A100 validation must include larger batch, chunked prefill, and ZeRO smoke
+  rows when training support is claimed.
+
+#### Ada / RTX 40 / 4090 (`sm_89`)
+
+- Policy family: `ada`.
+- Role: current high-end consumer validation target.
+- Defaults:
+  - `native_graph` backend preferred through `auto`.
+  - `fused_recurrent_output`: on by default.
+  - `fused_output`: on by default.
+  - shallow R/K/V split-K/layout kernels: off; 4090 rows showed they are slower
+    than cuBLAS.
+  - projection/LoRA fusions: off unless a deeper fused path proves end-to-end
+    speedup.
+- Prefill rule: native recurrent scan may be benchmarked, but it is not the
+  default full prefill path until projection/output integration is wired and
+  end-to-end prefill rows improve.
+
+#### Hopper / H100 (`sm_90`)
+
+- Policy family: `hopper`.
+- Default stance: output/recurrent-output fusions may be enabled, but H100 is
+  not considered tuned until it has its own projection, prefill, W8/W4, and
+  larger-batch rows.
+- Do not assume 4090 block sizes are optimal on H100; add sweep rows before
+  changing `block_m`/`block_k` defaults.
+
+#### Blackwell / RTX 50 / 5070-5090 (`sm_100+`, observed 50-series paths)
+
+- Policy family: `blackwell`.
+- Role: next consumer-generation compatibility target.
+- Default stance: prefer native/no-FLA compatibility smokes when FLA kernels
+  fail or show architecture-specific issues.
+- Defaults:
+  - `native_graph` remains the intended fast decode route when CUDA graph
+    capture succeeds.
+  - stable output/recurrent-output fusions may be on.
+  - projection/LoRA/quant fused kernels stay off until 50-series rows prove
+    correctness and speed.
+- Mandatory before claiming support: import/generate, fast decode, dynamic
+  batch, chunked prefill, bnb W8/W4 functional inference, and native/no-FLA
+  fallback smoke on the exact card.
+
+#### AMD / ROCm / HIP
+
+- Policy family: `amd_hip`.
+- Default stance: compatibility-first; Triton/CUDA-only kernels are off.
+- Required path: pure PyTorch/native_model or ROCm-supported fallback first.
+- Do not claim AMD performance parity until HIP-specific benchmark rows exist.
+
 ### Quantized Inference
 
 Required goals:
