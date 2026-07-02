@@ -2021,7 +2021,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             for r in fused_recurrent_scan_proto
         ],
         "dplr_prefill_scan_proto": [
-            compact(r, ["_lineno", "status", "dtype", "device", "algorithm", "requested_algorithm", "effective_algorithm", "algorithm_family", "is_dense_affine", "detected_algorithms", "chunk_size", "B", "T", "H", "N", "warmup", "steps", "ms", "tokps", "out_max_abs_diff", "state_max_abs_diff", "out_min_cosine", "fallback_reason", "skip_reason", "error", "peak_vram_mb"])
+            compact(r, ["_lineno", "status", "dtype", "device", "algorithm", "requested_algorithm", "effective_algorithm", "algorithm_family", "is_dense_affine", "detected_algorithms", "chunk_size", "triton_wy_available", "triton_wy_block_m", "B", "T", "H", "N", "warmup", "steps", "ms", "tokps", "out_max_abs_diff", "state_max_abs_diff", "out_min_cosine", "fallback_reason", "skip_reason", "error", "peak_vram_mb"])
             for r in dplr_prefill_scan_proto
         ],
         "fused_recurrent_output_proto": compact(fused_recurrent_output_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "attn_mode", "fuse_norm", "batch_size", "hidden_size", "layers", "block_n", "input_scale", "steps", "avg_current_ms", "avg_split_fused_ms", "avg_fused_ms", "avg_speedup_vs_current", "avg_speedup_vs_split", "out_max_abs_diff", "state_max_abs_diff", "split_out_max_abs_diff", "split_state_max_abs_diff", "out_min_cosine", "split_out_min_cosine", "layer_rows", "peak_vram_mb"]),

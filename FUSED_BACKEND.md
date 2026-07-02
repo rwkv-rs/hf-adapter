@@ -632,3 +632,51 @@ contract into compiled kernels: (1) chunk summary for diagonal-plus-low-rank
 metadata, (2) chunk-level prefix combine, (3) chunk apply/output.  Keep
 `algorithm_family="lowrank_wy"` and `is_dense_affine=false` in JSON so we can
 tell the real WY path apart from dense affine and sequential fallbacks.
+
+### Triton DPLR/WY P0 compiled prototype
+
+`rwkv7_hf/dplr_prefill_triton.py` adds the first opt-in compiled backend hook:
+
+- `dplr_chunk_scan_triton(...)`
+- `dplr_chunk_scan_triton_available()`
+
+The synthetic benchmark can request it with `--algorithms triton_wy` (or the
+alias `cuda_wy`).  JSON rows use `algorithm_family="triton_wy"` plus
+`triton_wy_available` and `triton_wy_block_m`.
+
+Important limitation: this P0 is a compiled DPLR scan bridge, not the final
+three-stage WY factor implementation.  It currently delegates the recurrence to
+the existing Triton `fused_recurrent_scan` kernel while preserving the future
+`dplr_chunk_scan(..., chunk_size=...)` API.  It proves the synthetic opt-in
+compiled path and benchmark plumbing; the next kernel step is still explicit
+chunk summary + prefix combine + chunk apply.
+
+4090 validation for the P0 compiled backend:
+
+- `tests/test_dplr_prefill_scan.py`: PASS.
+- Synthetic fp32 `B=1,T=32,H=2,N=8,chunk=8`: `triton_wy` PASS with
+  output/state max diff `1.49e-8`, about `0.116ms` / `276k tok/s`.
+- Target synthetic fp16 `B=1,T=512,H=16,N=64,chunk=64`: `triton_wy` PASS with
+  output max diff `4.88e-4`, state max diff `1.26e-4`, min cosine
+  `0.99999988`; `0.234ms` / `2.19M tok/s` versus pure torch sequential
+  `64.63ms` / `7.9k tok/s`.
+
+Target-shape command:
+
+```bash
+PYTHONPATH=. python bench/bench_dplr_prefill_scan.py \
+  --device cuda --dtype fp16 \
+  --batch-sizes 1 --tokens 512 \
+  --heads 16 --head-dim 64 --chunk-sizes 64 \
+  --algorithms sequential triton_wy \
+  --warmup 1 --steps 3 \
+  --results bench/results.jsonl
+
+PYTHONPATH=. python bench/analyze_results.py --results bench/results.jsonl
+```
+
+For HF end-to-end validation, ensure the model directory loaded by
+`trust_remote_code=True` contains the same updated `native_jit.py`,
+`dplr_prefill.py`, and `dplr_prefill_triton.py`; otherwise the benchmark row may
+only reflect the checkpoint-local remote code rather than this repository's
+new backend.
