@@ -405,6 +405,20 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             r.get("device"),
         ),
     )
+    dplr_dense3_stage_proto = latest_by_key(
+        [r for r in rows if r.get("axis") == "dplr_dense3_stage_proto" and r.get("backend") == "hf_adapter"],
+        lambda r: (
+            r.get("B", r.get("batch_size")),
+            r.get("T", r.get("tokens")),
+            r.get("H", r.get("heads")),
+            r.get("N", r.get("head_dim")),
+            r.get("algorithm"),
+            r.get("stage"),
+            r.get("chunk_size"),
+            r.get("dtype"),
+            r.get("device"),
+        ),
+    )
     fused_recurrent_output_proto = latest(rows, lambda r: r.get("axis") == "fused_recurrent_output_proto" and r.get("backend") == "hf_adapter")
     native_graph_fused_recurrent = latest(rows, lambda r: r.get("axis") == "native_graph_fused_recurrent" and r.get("backend") == "hf_adapter")
     native_graph_fused_recurrent_output = latest(rows, lambda r: r.get("axis") == "native_graph_fused_recurrent_output" and r.get("backend") == "hf_adapter")
@@ -2043,6 +2057,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             compact(r, ["_lineno", "status", "dtype", "device", "algorithm", "algorithm_family", "chunk_size", "triton_summary_available", "triton_summary_block_m", "B", "T", "H", "N", "warmup", "steps", "summary_shape", "ms", "tokps", "transition_max_abs_diff", "additive_max_abs_diff", "state_max_abs_diff", "skip_reason", "error", "peak_vram_mb"])
             for r in dplr_chunk_summary_proto
         ],
+        "dplr_dense3_stage_proto": [
+            compact(r, ["_lineno", "status", "dtype", "device", "algorithm", "algorithm_family", "stage", "chunk_size", "triton_summary_available", "triton_summary_block_m", "triton_prefix_block_m", "triton_apply_block_m", "B", "T", "H", "N", "warmup", "steps", "summary_shape", "start_states_shape", "chunk_end_shape", "ms", "tokps", "transition_max_abs_diff", "additive_max_abs_diff", "start_states_max_abs_diff", "prefix_vs_torch_summary_state_max_abs_diff", "chunk_end_max_abs_diff", "out_max_abs_diff", "state_max_abs_diff", "out_min_cosine", "skip_reason", "error", "peak_vram_mb"])
+            for r in dplr_dense3_stage_proto
+        ],
         "fused_recurrent_output_proto": compact(fused_recurrent_output_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "attn_mode", "fuse_norm", "batch_size", "hidden_size", "layers", "block_n", "input_scale", "steps", "avg_current_ms", "avg_split_fused_ms", "avg_fused_ms", "avg_speedup_vs_current", "avg_speedup_vs_split", "out_max_abs_diff", "state_max_abs_diff", "split_out_max_abs_diff", "split_state_max_abs_diff", "out_min_cosine", "split_out_min_cosine", "layer_rows", "peak_vram_mb"]),
         "native_graph_fused_recurrent": compact(native_graph_fused_recurrent, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "steps", "fixed_token", "baseline_effective_backend", "fused_effective_backend", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "peak_vram_mb"]),
         "native_graph_fused_recurrent_output": compact(native_graph_fused_recurrent_output, ["_lineno", "status", "dtype", "device", "attn_mode", "fuse_norm", "fast_cache", "batch_size", "prompt_tokens", "steps", "fixed_token", "fused_output_enabled", "baseline_effective_backend", "fused_effective_backend", "baseline_fused_recurrent_output", "fused_recurrent_output", "baseline_ms_per_step", "fused_ms_per_step", "speedup", "baseline_tokps_total", "fused_tokps_total", "max_abs_diff_first_step", "min_cosine_first_step", "greedy_match", "greedy_total", "baseline_cache_stats", "fused_cache_stats", "peak_vram_mb"]),
@@ -2410,6 +2428,12 @@ def print_text(report: dict[str, Any]) -> None:
     print("\n## dplr_chunk_summary_proto")
     if report["dplr_chunk_summary_proto"]:
         for row in report["dplr_chunk_summary_proto"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+    print("\n## dplr_dense3_stage_proto")
+    if report["dplr_dense3_stage_proto"]:
+        for row in report["dplr_dense3_stage_proto"]:
             print(json.dumps(row, ensure_ascii=False))
     else:
         print("PENDING")
