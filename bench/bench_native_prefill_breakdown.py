@@ -576,6 +576,9 @@ def profiled_native_prefill(
             cuda_state_scan_rows_per_block = (
                 native_jit._native_prefill_cuda_state_scan_rows_per_block() if use_cuda_state_scan else 1
             )
+            cuda_state_scan_schedule = (
+                native_jit._native_prefill_cuda_state_scan_schedule() if use_cuda_state_scan else "default"
+            )
 
             def state_scan():
                 if use_cuda_state_scan and layer_idx == 0:
@@ -592,6 +595,7 @@ def profiled_native_prefill(
                         precompute_vector=cuda_state_scan_precompute,
                         precompute_mode=cuda_state_scan_precompute_mode,
                         rows_per_block=cuda_state_scan_rows_per_block,
+                        schedule=cuda_state_scan_schedule,
                     )
                 if use_cuda_state_scan:
                     return native_jit.cuda_state_scan_prep(
@@ -609,6 +613,7 @@ def profiled_native_prefill(
                         precompute_vector=cuda_state_scan_precompute,
                         precompute_mode=cuda_state_scan_precompute_mode,
                         rows_per_block=cuda_state_scan_rows_per_block,
+                        schedule=cuda_state_scan_schedule,
                     )
                 if layer_idx == 0:
                     return native_jit.fused_recurrent_scan_state_prep(
@@ -947,6 +952,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_cuda_state_scan_precompute": getattr(native_jit, "_native_prefill_cuda_state_scan_precompute_enabled", lambda: False)(),
         "prefill_cuda_state_scan_precompute_mode": getattr(native_jit, "_native_prefill_cuda_state_scan_precompute_mode", lambda: "none")(),
         "prefill_cuda_state_scan_rows_per_block": getattr(native_jit, "_native_prefill_cuda_state_scan_rows_per_block", lambda: 1)(),
+        "prefill_cuda_state_scan_schedule": getattr(native_jit, "_native_prefill_cuda_state_scan_schedule", lambda: "default")(),
         "fine_attention_breakdown": bool(args.fine_attn),
         "prefill_fused_scan_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_scan_output_effective": native_jit._native_prefill_fused_scan_output_enabled(),

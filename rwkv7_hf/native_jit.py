@@ -416,6 +416,18 @@ def _native_prefill_cuda_state_scan_rows_per_block() -> int:
     return value
 
 
+def _native_prefill_cuda_state_scan_schedule() -> str:
+    """CUDA row-block schedule variant for the experimental N=64 scan."""
+
+    value = os.environ.get("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE", "default")
+    schedule = str(value).strip().lower().replace("-", "_")
+    if schedule in {"", "0", "default", "normal", "rowblock", "none"}:
+        return "default"
+    if schedule in {"1", "warp", "warp_specialized", "warp_specialised", "producer_worker", "producer"}:
+        return "warp_specialized"
+    raise ValueError("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE must be default or warp_specialized")
+
+
 def _native_prefill_fused_shift_mix_enabled() -> bool:
     """Runtime switch for prefill attention shift-mix fusion telemetry."""
 
@@ -1641,6 +1653,7 @@ def prefill(
             cuda_state_scan_rows_per_block = (
                 _native_prefill_cuda_state_scan_rows_per_block() if use_cuda_state_scan else 1
             )
+            cuda_state_scan_schedule = _native_prefill_cuda_state_scan_schedule() if use_cuda_state_scan else "default"
             if use_cuda_state_scan and layer_idx == 0:
                 out, new_state, k, v = cuda_state_scan_prep(
                     r.view(B, T, H, N),
@@ -1655,6 +1668,7 @@ def prefill(
                     precompute_vector=cuda_state_scan_precompute,
                     precompute_mode=cuda_state_scan_precompute_mode,
                     rows_per_block=cuda_state_scan_rows_per_block,
+                    schedule=cuda_state_scan_schedule,
                 )
                 v_first_seq = v.reshape(B, T, hidden)
             elif use_cuda_state_scan:
@@ -1673,6 +1687,7 @@ def prefill(
                     precompute_vector=cuda_state_scan_precompute,
                     precompute_mode=cuda_state_scan_precompute_mode,
                     rows_per_block=cuda_state_scan_rows_per_block,
+                    schedule=cuda_state_scan_schedule,
                 )
             elif layer_idx == 0:
                 out, new_state, k, v = fused_recurrent_scan_state_prep(

@@ -545,17 +545,61 @@ Branch: `wangyue/native-prefill-060-albatross`
     it opt-in. A useful persistent schedule probably needs finer-grained
     producer/consumer overlap or warp-specialized vector prep, not simply more
     rows per CTA.
+- [x] Try warp-specialized producer/worker CUDA row-block schedule:
+  - added `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE=warp_specialized`,
+    valid only for the opt-in CUDA state-scan row-block path
+    (`RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN=1`,
+    `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_LANES=64`,
+    no vector precompute).
+  - implementation:
+    - new `rwkv7_state_scan_prep_n64_rowblock_warp_specialized_kernel`
+      uses one producer warp to compute R/W/K/A/normalized-KK for the current
+      token and one worker warp per row to keep row state in registers.
+    - each worker lane owns two state columns (`N=64`), reducing the per-row
+      worker width from two warps to one warp while sharing vector prep within
+      a CTA.
+    - telemetry now records `prefill_cuda_state_scan_schedule`.
+  - validation result files:
+    - `bench/results_4090_prefill060_cuda_state_scan_warpspec_smoke_20260703_022500.jsonl`
+    - `bench/results_4090_prefill060_cuda_state_scan_warpspec_confirm_20260703_023000.jsonl`
+  - remote row sources:
+    - `/tmp/native_4090_cuda_state_scan_warpspec_smoke_20260703_022500.jsonl`
+    - `/tmp/native_4090_cuda_state_scan_warpspec_confirm_20260703_023000.jsonl`
+  - rows all pass greedy/cache smoke. The small CUDA oracle matches the
+    default row-block path with max diffs `[0.0, 9.54e-07, 0.0, 0.0]` for
+    `(out, state, K, V)` across `rpb=1/2/4/8`.
+  - smoke rows:
+    - Triton baseline: `25,459.3 tok/s`.
+    - default CUDA row-block `rpb=1`: `26,066.8 tok/s`.
+    - warp-specialized `rpb=1`: `26,435.5 tok/s`.
+    - warp-specialized `rpb=2`: `25,573.3 tok/s`.
+    - warp-specialized `rpb=4`: `25,202.8 tok/s`.
+    - warp-specialized `rpb=8`: `26,328.8 tok/s`.
+  - confirmation rows:
+    - Triton baseline: `25,491.9 tok/s`.
+    - default CUDA row-block `rpb=1`: `26,280.6 tok/s`.
+    - warp-specialized `rpb=1`: `25,560.6 tok/s`.
+  - conclusion: the producer/worker layout is correctness-safe and gave a
+    smoke win, but confirmation did not beat the simpler two-warp row-block
+    path. Keep it opt-in and do not promote it. The likely issue is that the
+    one-warp worker loses enough per-row parallelism / ILP to offset saved
+    vector prep, and the intra-CTA schedule still cannot overlap producer and
+    worker phases across tokens.
 - [ ] Next corrected-harness experiment:
   - CUDA rowgroup, row-block, full precompute, reduced-temp precompute, and
-    CTA-local cooperative rows-per-block testing narrowed the remaining
-    credible path: the row-register layout is viable, but naive sharing either
-    adds global temp traffic or lowers parallelism too much. The next concrete
-    CUDA task should try warp-specialized/persistent scheduling: e.g. one or
-    two producer warps compute vector prep and normalized KK while row-worker
-    warps process independent rows, ideally with overlap and without reducing
-    row-level parallelism as aggressively as `rows_per_block>1`. Do not promote
-    wrapper/projection fusion or the current rowgroup, row-block,
-    full-precompute, reduced-temp, or CTA-local cooperative scaffolds.
+    CTA-local cooperative rows-per-block plus warp-specialized producer/worker
+    testing narrowed the remaining credible CUDA path: the row-register layout
+    is viable, but every naive sharing attempt either adds global temp traffic,
+    lowers row parallelism, or serializes producer/worker phases. The next
+    concrete task should quantify the remaining row-block cost directly before
+    another large rewrite: add a narrow micro/profiler path that times the
+    row-block kernel variants outside the full HF layer and isolates vector
+    prep, state-dot, update, and recurrent-output costs. Use that evidence to
+    choose between (a) a true persistent/inter-CTA design if the duplicated
+    vector prep dominates, or (b) returning to Triton/DPLR apply-output fusion
+    if row math dominates. Do not promote wrapper/projection fusion or the
+    current rowgroup, row-block, full-precompute, reduced-temp,
+    CTA-local cooperative, or warp-specialized scaffolds.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `27,051.0 tok/s` (`~0.5187x`), still about `15.7%` relative uplift short of
