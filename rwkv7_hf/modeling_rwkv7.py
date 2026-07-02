@@ -962,6 +962,15 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             setattr(model, "_rwkv7_bnb_skip_policy", rwkv7_bnb_skip_policy)
             if getattr(model, "config", None) is not None:
                 setattr(model.config, "rwkv7_bnb_skip_policy", rwkv7_bnb_skip_policy)
+        if quantization_config is None and bool(getattr(model.config, "use_native_mm8", False)):
+            # Persisted native int8 (mm8): re-quantize eligible linears from the
+            # fp16 weights. Deterministic, so it round-trips the saved state.
+            from .native_quant_mm8 import quantize_model_mm8
+
+            quantize_model_mm8(
+                model,
+                min_params=int(getattr(model.config, "native_mm8_min_params", 8_000_000)),
+            )
         return model
 
     def resize_token_embeddings(self, new_num_tokens: int | None = None, *args, **kwargs):
