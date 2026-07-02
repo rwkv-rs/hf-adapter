@@ -295,11 +295,28 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     )
     native_prefill_scan = latest_by_key(
         [r for r in rows if r.get("axis") == "native_prefill_scan" and r.get("backend") == "hf_adapter"],
-        lambda r: (r.get("batch_size"), r.get("prompt_tokens"), bool(r.get("fused_scan_requested")), r.get("scan_block_m")),
+        lambda r: (
+            r.get("batch_size"),
+            r.get("prompt_tokens"),
+            bool(r.get("fused_scan_requested")),
+            r.get("scan_block_m"),
+            bool(r.get("prefill_fused_state_prep_effective")),
+            bool(r.get("prefill_fused_wavg_lora_effective")),
+            r.get("prefill_fused_wavg_lora_max_m"),
+        ),
     )
     native_prefill_breakdown = latest_by_key(
         [r for r in rows if r.get("axis") == "native_prefill_breakdown" and r.get("backend") == "hf_adapter"],
-        lambda r: (model_size_label(r), r.get("batch_size"), r.get("prompt_tokens"), bool(r.get("fused_scan_requested")), r.get("scan_block_m")),
+        lambda r: (
+            model_size_label(r),
+            r.get("batch_size"),
+            r.get("prompt_tokens"),
+            bool(r.get("fused_scan_requested")),
+            r.get("scan_block_m"),
+            bool(r.get("prefill_fused_state_prep_effective")),
+            bool(r.get("prefill_fused_wavg_lora_effective")),
+            r.get("prefill_fused_wavg_lora_max_m"),
+        ),
     )
     micro = latest(rows, lambda r: r.get("axis") == "decode_micro" and r.get("backend") == "hf_adapter")
     forward_fast_path = latest(rows, lambda r: r.get("axis") == "forward_fast_path" and r.get("backend") == "hf_adapter")
@@ -654,6 +671,9 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     "hf_model_size_label": hf.get("_model_size_label_for_compare"),
                     "hf_prefill_metric": hf.get("_prefill_metric"),
                     "hf_fused_scan_requested": hf.get("fused_scan_requested"),
+                    "hf_scan_block_m": hf.get("scan_block_m"),
+                    "hf_prefill_fused_state_prep_effective": hf.get("prefill_fused_state_prep_effective"),
+                    "hf_prefill_fused_wavg_lora_effective": hf.get("prefill_fused_wavg_lora_effective"),
                     "hf_tokps_total": round(hf_tokps, 4),
                     "albatross_engine": alb.get("engine"),
                     "albatross_engine_config": alb.get("engine_config"),
@@ -1068,7 +1088,18 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             if r.get("native_vs_hf_speedup") is not None
         ]
         cases = sorted(
-            {(r.get("batch_size"), r.get("prompt_tokens"), bool(r.get("fused_scan_requested")), r.get("scan_block_m")) for r in native_prefill_scan},
+            {
+                (
+                    r.get("batch_size"),
+                    r.get("prompt_tokens"),
+                    bool(r.get("fused_scan_requested")),
+                    r.get("scan_block_m"),
+                    bool(r.get("prefill_fused_state_prep_effective")),
+                    bool(r.get("prefill_fused_wavg_lora_effective")),
+                    r.get("prefill_fused_wavg_lora_max_m"),
+                )
+                for r in native_prefill_scan
+            },
             key=str,
         )
         if speedups:
@@ -1714,11 +1745,11 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         ],
         "chunked_prefill": [compact(r, ["_lineno", "prefill_mode", "batch_size", "prompt_tokens", "chunk_size", "prefill_tokps_total", "speed_ratio_vs_full", "peak_vram_mb", "peak_vram_ratio_vs_full", "max_abs_diff", "decode_max_abs_diff", "seq_length_match"]) for r in chunked_latest],
         "native_prefill_scan": [
-            compact(r, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "fast_token_backend_after_native_prefill", "hf_prefill_ms", "native_prefill_ms", "native_vs_hf_speedup", "hf_prefill_tokps_total", "native_prefill_tokps_total", "max_abs_diff", "min_cosine", "greedy_match", "decode_after_prefill_max_abs_diff", "decode_after_prefill_greedy_match", "peak_vram_mb"])
+            compact(r, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "fast_token_backend_after_native_prefill", "hf_prefill_ms", "native_prefill_ms", "native_vs_hf_speedup", "hf_prefill_tokps_total", "native_prefill_tokps_total", "max_abs_diff", "min_cosine", "greedy_match", "decode_after_prefill_max_abs_diff", "decode_after_prefill_greedy_match", "peak_vram_mb"])
             for r in native_prefill_scan
         ],
         "native_prefill_breakdown": [
-            compact(r, ["_lineno", "status", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "profiled_total_gpu_ms", "component_sum_ms", "profiled_tokps_total", "component_ms", "component_share", "top_components", "max_abs_diff_vs_native_prefill", "greedy_match_vs_native_prefill", "peak_vram_mb"])
+            compact(r, ["_lineno", "status", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "profiled_total_gpu_ms", "component_sum_ms", "profiled_tokps_total", "component_ms", "component_share", "top_components", "max_abs_diff_vs_native_prefill", "greedy_match_vs_native_prefill", "peak_vram_mb"])
             for r in native_prefill_breakdown
         ],
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "hf_forward_fixed", "hf_forward_greedy", "hf_forward_auto_fixed", "hf_forward_auto_greedy", "hf_forward_auto_backend", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
