@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -50,6 +51,11 @@ def build_ids(tok, batch_size: int, prompt_tokens: int, device: str) -> torch.Te
 def median(vals: list[float]) -> float:
     vals = sorted(vals)
     return vals[len(vals) // 2]
+
+
+def infer_model_size_label(model_path: str) -> str | None:
+    match = re.search(r"(\d+(?:\.\d+)?)\s*b", str(model_path).lower())
+    return f"{match.group(1)}b" if match else None
 
 
 def cosine_min(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -103,6 +109,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "dtype": args.dtype,
         "device": torch.cuda.get_device_name(0) if args.device.startswith("cuda") else args.device,
         "model_path": args.model,
+        "model_size_label": infer_model_size_label(args.model),
         "batch_size": batch_size,
         "prompt_tokens": prompt_tokens,
         "tokens_total": batch_size * prompt_tokens,
