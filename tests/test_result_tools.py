@@ -450,6 +450,101 @@ def assert_albatross_prefill_ignores_short_prompt_probe(tmpdir: Path) -> None:
     assert report["fused_backend_targets"]["albatross_prefill"]["current_ratio_min"] == 0.7
 
 
+def assert_albatross_prefill_uses_fastest_native_prefill_scan(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "chunked_prefill",
+            "backend": "hf_adapter",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "batch_size": 1,
+            "prompt_tokens": 512,
+            "prefill_tokps_total": 700.0,
+        },
+        {
+            "axis": "native_prefill_scan",
+            "backend": "hf_adapter",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "model_path": "/models/rwkv7-g1d-0.1b-hf",
+            "batch_size": 1,
+            "prompt_tokens": 512,
+            "fused_scan_requested": True,
+            "hf_prefill_tokps_total": 800.0,
+            "native_prefill_tokps_total": 2000.0,
+        },
+        {
+            "axis": "native_prefill_scan",
+            "backend": "hf_adapter",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "model_path": "/models/rwkv7-g1d-0.4b-hf",
+            "batch_size": 1,
+            "prompt_tokens": 512,
+            "fused_scan_requested": False,
+            "hf_prefill_tokps_total": 800.0,
+            "native_prefill_tokps_total": 200.0,
+        },
+        {
+            "axis": "native_prefill_scan",
+            "backend": "hf_adapter",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "model_path": "/models/rwkv7-g1d-0.4b-hf",
+            "batch_size": 1,
+            "prompt_tokens": 512,
+            "fused_scan_requested": True,
+            "hf_prefill_tokps_total": 800.0,
+            "native_prefill_tokps_total": 900.0,
+        },
+        {
+            "axis": "albatross_speed",
+            "backend": "albatross",
+            "engine": "faster3a",
+            "engine_config": "wkv=fp32io16",
+            "status": "pass",
+            "dtype": "fp16",
+            "device": "Tesla V100-PCIE-32GB",
+            "model_size_label": "0.4b",
+            "batch_size": 1,
+            "tokens_per_sequence": 512,
+            "tokps_p50": 1000.0,
+        },
+    ]
+    path = tmpdir / "albatross_native_prefill.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    comparison = report["albatross_prefill_comparison"][0]
+    assert comparison["hf_axis"] == "native_prefill_scan"
+    assert comparison["model_size_label"] == "0.4b"
+    assert comparison["hf_model_size_label"] == "0.4b"
+    assert comparison["hf_prefill_metric"] == "native_prefill_tokps_total"
+    assert comparison["hf_fused_scan_requested"] is True
+    assert comparison["hf_tokps_total"] == 900.0
+    assert report["fused_backend_targets"]["albatross_prefill"]["current_ratio_min"] == 0.9
+
+
 def assert_albatross_decode_uses_default_native_graph_batch_rows(tmpdir: Path) -> None:
     rows = [
         {
@@ -2549,6 +2644,7 @@ def main() -> int:
         assert_quantization_best_variants_are_reported(tmpdir)
         assert_fused_backend_targets_are_reported(tmpdir)
         assert_albatross_prefill_ignores_short_prompt_probe(tmpdir)
+        assert_albatross_prefill_uses_fastest_native_prefill_scan(tmpdir)
         assert_albatross_decode_uses_default_native_graph_batch_rows(tmpdir)
         assert_projection_kernel_plan_is_reported(tmpdir)
         assert_fused_projection_proto_is_reported(tmpdir)

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
@@ -74,6 +75,29 @@ def ratio(a: float | None, b: float | None) -> float | None:
     if a is None or b in (None, 0):
         return None
     return a / b
+
+
+def model_size_label(row: dict[str, Any] | None) -> str | None:
+    """Best-effort normalized model size label such as ``0.4b``.
+
+    Benchmark rows grew this field over time.  Older HF rows often only contain
+    a checkpoint path (`rwkv7-g1d-0.4b-hf`), while Albatross rows usually record
+    ``model_size_label`` directly.  Use this for apples-to-apples comparisons
+    when possible, and fall back to unlabeled rows only when no exact-size row
+    exists.
+    """
+
+    if not row:
+        return None
+    for key in ("model_size_label", "model_label", "model_path", "model"):
+        raw = row.get(key)
+        if raw is None:
+            continue
+        text = str(raw).lower()
+        match = re.search(r"(\d+(?:\.\d+)?)\s*b", text)
+        if match:
+            return f"{match.group(1)}b"
+    return None
 
 
 def verdict_ge(value: float | None, target: float) -> str:
@@ -534,22 +558,58 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             continue
         hf_decode_by_bsz_default[int(row["batch_size"])] = row
 
-    hf_prefill_by_case: dict[tuple[int, int], dict[str, Any]] = {}
+    hf_prefill_by_case: dict[tuple[int, int, str | None], dict[str, Any]] = {}
+
+    def hf_prefill_tokps(row: dict[str, Any] | None) -> tuple[float | None, str | None]:
+        """Return the HF-adapter prefill throughput metric used for A/B.
+
+        Different benchmark axes record different prefill paths.  For the
+        native fused scan axis the useful adapter number is the native prefill
+        throughput, not the FLA/HF reference throughput measured beside it.
+        """
+
+        if row is None:
+            return None, None
+        if row.get("axis") == "native_prefill_scan":
+            val = num(row, "native_prefill_tokps_total")
+            if val is not None:
+                return val, "native_prefill_tokps_total"
+            val = num(row, "hf_prefill_tokps_total")
+            if val is not None:
+                return val, "hf_prefill_tokps_total"
+        val = num(row, "prefill_tokps_total")
+        if val is not None:
+            return val, "prefill_tokps_total"
+        val = num(row, "prefill_tokps")
+        if val is not None:
+            return val, "prefill_tokps"
+        return None, None
+
     for row in rows:
         if row.get("backend") != "hf_adapter":
             continue
-        tokps = row.get("prefill_tokps_total")
         prompt_tokens = row.get("prompt_tokens")
         batch_size = row.get("batch_size")
+        tokps, metric = hf_prefill_tokps(row)
+        label = model_size_label(row)
         if tokps is not None and prompt_tokens is not None and batch_size is not None:
-            key = (int(batch_size), int(prompt_tokens))
-        elif row.get("axis") == "speed_mem" and row.get("prefill_tokps") is not None and prompt_tokens is not None:
-            tokps = row.get("prefill_tokps")
-            key = (1, int(prompt_tokens))
+            key = (int(batch_size), int(prompt_tokens), label)
+        elif row.get("axis") == "speed_mem" and tokps is not None and prompt_tokens is not None:
+            key = (1, int(prompt_tokens), label)
         else:
             continue
         old = hf_prefill_by_case.get(key)
-        if old is None or int(row.get("_lineno", 0)) >= int(old.get("_lineno", 0)):
+        old_tokps, _ = hf_prefill_tokps(old)
+        if (
+            old is None
+            or old_tokps is None
+            or float(tokps) > float(old_tokps)
+            or (float(tokps) == float(old_tokps) and int(row.get("_lineno", 0)) >= int(old.get("_lineno", 0)))
+        ):
+            row = dict(row)
+            row["_prefill_metric"] = metric
+            row["_prefill_tokps_for_compare"] = tokps
+            row["_model_size_label_for_compare"] = label
             hf_prefill_by_case[key] = row
 
     albatross_decode_comparison = []
@@ -575,16 +635,21 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             continue
         if tokens < 512:
             continue
-        hf = hf_prefill_by_case.get((bsz, tokens))
-        hf_tokps = num(hf, "prefill_tokps_total") if hf is not None else None
-        if hf_tokps is None and hf is not None:
-            hf_tokps = num(hf, "prefill_tokps")
+        alb_label = model_size_label(alb)
+        hf = hf_prefill_by_case.get((bsz, tokens, alb_label)) if alb_label is not None else None
+        if hf is None:
+            hf = hf_prefill_by_case.get((bsz, tokens, None))
+        hf_tokps = num(hf, "_prefill_tokps_for_compare") if hf is not None else None
         if hf is not None and hf_tokps is not None:
             albatross_prefill_comparison.append(
                 {
                     "batch_size": bsz,
                     "tokens_per_sequence": tokens,
+                    "model_size_label": alb_label,
                     "hf_axis": hf.get("axis"),
+                    "hf_model_size_label": hf.get("_model_size_label_for_compare"),
+                    "hf_prefill_metric": hf.get("_prefill_metric"),
+                    "hf_fused_scan_requested": hf.get("fused_scan_requested"),
                     "hf_tokps_total": round(hf_tokps, 4),
                     "albatross_engine": alb.get("engine"),
                     "albatross_engine_config": alb.get("engine_config"),
