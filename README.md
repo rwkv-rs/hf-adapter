@@ -10,6 +10,14 @@ keep the HF wrapper as the public compatibility layer, then add native fused
 fp16 and native W8/W4 backends behind `rwkv7_forward_token()` and `generate()`
 to close the Albatross and quantized-decode speed gaps.
 
+Contributor status and roadmap docs:
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md): how to pick an issue, run card validation, report environment/results, and prepare focused PRs.
+- [`HF_STATUS.md`](HF_STATUS.md): what is already done, current evidence, hardware/card adaptation status, and production-readiness gaps.
+- [`HF_TODO.md`](HF_TODO.md): prioritized HF-only TODO list for contributors, including large-model training, ZeRO resume, one-click acceptance scripts, card validation, and productionization tasks.
+- [`HF_CRITERIA.md`](HF_CRITERIA.md): high-level HF acceptance criteria and optimization rules.
+- [`BENCHMARK.md`](BENCHMARK.md): numeric evidence and benchmark contract.
+
 This repository converts RWKV-7 weights to a Hugging Face-style directory and provides remote-code wrappers so the result can be loaded with:
 
 - `AutoTokenizer.from_pretrained(..., trust_remote_code=True)`
@@ -82,6 +90,10 @@ bench/
   analyze_results.py
   check_results.py
   profile_decode.py
+CONTRIBUTING.md
+HF_STATUS.md
+HF_TODO.md
+HF_CRITERIA.md
 NEXT_STEPS.md
 BENCHMARK.md
 ```
