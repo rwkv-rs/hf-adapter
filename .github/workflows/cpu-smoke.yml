@@ -1,10 +1,9 @@
 name: cpu-smoke
 
-# No-CUDA / CPU-fallback guard for the HF adapter. Runs the fla-free import
-# smoke, the offline convert/manifest tests, and the native (fla-free) CausalLM
-# training-unit smoke on a GPU-less runner. Protects the path that upstream /
-# AMD / CPU-only contributors and CI rely on. Mirrors what
-# `CUDA_VISIBLE_DEVICES="" python tests/test_native_*.py` checks locally.
+# No-CUDA / CPU-fallback guard for the HF adapter. This is the cheap PR gate:
+# it does not prove GPU performance, but it blocks broken imports, stale HF API
+# assumptions, converter/config regressions, shell syntax errors, and result
+# analyzer regressions before they reach V100/A100/4090 validation.
 
 on:
   push:
@@ -19,19 +18,43 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CUDA_VISIBLE_DEVICES: ""
+      PYTHONNOUSERSITE: "1"
+      PYTHONPATH: "."
+      TORCHDYNAMO_DISABLE: "1"
+      DS_IGNORE_CUDA_DETECTION: "1"
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
+
       - name: Install CPU-only torch
-        run: pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
-      - name: Install adapter and runtime deps (fla / transformers / safetensors)
-        run: pip install -e .
-      - name: No-CUDA smoke tests
+        run: python -m pip install --upgrade torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install adapter and runtime deps
+        run: python -m pip install -e .
+
+      - name: Static syntax gates
         run: |
-          python tests/test_native_fla_free_import.py
+          set -euo pipefail
+          python -m py_compile $(git ls-files '*.py')
+          find scripts -maxdepth 1 -name '*.sh' -print0 | xargs -0 -r bash -n
+
+      - name: Offline config / converter / docs-tool tests
+        run: |
+          set -euo pipefail
           python tests/test_convert_config.py
           python tests/test_batch_convert_manifest.py
+          python tests/test_deepspeed_configs.py
+          python tests/test_sync_hf_adapter_code.py
+          python tests/test_larger_model_results.py
+          python tests/test_result_tools.py
+
+      - name: No-CUDA native / quant policy smoke tests
+        run: |
+          set -euo pipefail
+          python tests/test_native_fla_free_import.py
           python tests/test_native_model_training_unit.py
+          python tests/test_bnb_skip_policy.py
