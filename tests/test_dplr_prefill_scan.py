@@ -128,17 +128,18 @@ def test_dplr_chunk_scan_lowrank_fp32_matches_torch_recurrent_scan() -> None:
                 )
 
 
-def test_dplr_chunk_scan_triton_dense3_fallback_matches_reference() -> None:
+def test_dplr_chunk_scan_triton_stage_fallbacks_match_reference() -> None:
     if _skip_if_no_torch():
         return
-    for flat in (False, True):
-        _assert_matches_reference(
-            flat=flat,
-            chunk_size=7,
-            algorithm="triton_dense3",
-            force_fallback=True,
-            dtype=torch.float32,
-        )
+    for algorithm in ("triton_dense3", "triton_wy_compact"):
+        for flat in (False, True):
+            _assert_matches_reference(
+                flat=flat,
+                chunk_size=7,
+                algorithm=algorithm,
+                force_fallback=True,
+                dtype=torch.float32,
+            )
 
 
 def test_dplr_chunk_scan_env_algorithm_lowrank_matches_reference() -> None:
@@ -181,7 +182,7 @@ def main() -> int:
     test_dplr_chunk_scan_flat_matches_torch_recurrent_scan()
     test_dplr_chunk_scan_force_fallback_matches_reference()
     test_dplr_chunk_scan_lowrank_fp32_matches_torch_recurrent_scan()
-    test_dplr_chunk_scan_triton_dense3_fallback_matches_reference()
+    test_dplr_chunk_scan_triton_stage_fallbacks_match_reference()
     test_dplr_chunk_scan_env_algorithm_lowrank_matches_reference()
     test_lowrank_chunk_summary_metadata_shapes()
     print("PASS")
