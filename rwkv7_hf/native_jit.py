@@ -91,13 +91,25 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_attn_output_project_available = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
-    from .fused_attention_projection import fused_rkv_wag_projection, fused_rkv_wag_projection_available
+    from .fused_attention_projection import (
+        fused_rkv_wag_projection,
+        fused_rkv_wag_projection_available,
+        fused_rkv_wavg_projection,
+        fused_rkv_wavg_projection_available,
+    )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
-        from fused_attention_projection import fused_rkv_wag_projection, fused_rkv_wag_projection_available
+        from fused_attention_projection import (
+            fused_rkv_wag_projection,
+            fused_rkv_wag_projection_available,
+            fused_rkv_wavg_projection,
+            fused_rkv_wavg_projection_available,
+        )
     except Exception:
         fused_rkv_wag_projection = None  # type: ignore[assignment]
         fused_rkv_wag_projection_available = None  # type: ignore[assignment]
+        fused_rkv_wavg_projection = None  # type: ignore[assignment]
+        fused_rkv_wavg_projection_available = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
     from .fused_lora import fused_wag_lora, fused_wag_lora_available, fused_wavg_lora, fused_wavg_lora_available
@@ -207,10 +219,10 @@ def _native_graph_fused_projection_enabled() -> bool:
     policy = _kernel_policy()
     if not env_flag("RWKV7_NATIVE_GRAPH_FUSED_PROJECTION", bool(getattr(policy, "fused_projection", False))):
         return False
-    if fused_rkv_wag_projection is None or fused_rkv_wag_projection_available is None:
+    if fused_rkv_wavg_projection is None or fused_rkv_wavg_projection_available is None:
         return False
     try:
-        return bool(fused_rkv_wag_projection_available())
+        return bool(fused_rkv_wavg_projection_available())
     except Exception:
         return False
 
@@ -479,8 +491,8 @@ def extract(model):
         ref = a.w_lora.lora[0].weight
         vl = getattr(a, "v_lora", None)
         v1 = vl.lora[0].weight if vl is not None else torch.zeros(1, ref.shape[1], device=ref.device, dtype=ref.dtype)
-        v2 = vl.lora[2].weight if vl is not None else torch.zeros(ref.shape[0], 1, device=ref.device, dtype=ref.dtype)
-        v0 = vl.lora[2].bias if vl is not None else torch.zeros(ref.shape[0], device=ref.device, dtype=ref.dtype)
+        v2 = vl.lora[2].weight if vl is not None else torch.zeros(hidden, 1, device=ref.device, dtype=ref.dtype)
+        v0 = vl.lora[2].bias if vl is not None else torch.zeros(hidden, device=ref.device, dtype=ref.dtype)
         if hasattr(layer, "pre_norm"):
             pre_w, pre_b, has_pre = layer.pre_norm.weight, layer.pre_norm.bias, 1
         else:
@@ -756,7 +768,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
     xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
     v_gate = None
     if _native_graph_fused_projection_enabled():
-        r, k, v, w, a, g = fused_rkv_wag_projection(
+        r, k, v, w, a, g, v_gate = fused_rkv_wavg_projection(
             xr.view(1, H * N),
             xk.view(1, H * N),
             xv.view(1, H * N),
@@ -769,12 +781,15 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
             w1,
             a1,
             g1,
+            v1,
             w2,
             a2,
             g2,
+            v2,
             w0,
             a0,
             None,
+            v0,
         )
         r = r.view(H * N)
         k = k.view(H * N)
@@ -782,6 +797,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         w = w.view(H * N)
         a = torch.sigmoid(a.view(H * N))
         g = g.view(H * N)
+        v_gate = torch.sigmoid(v_gate.view(H * N))
     elif _native_graph_fused_wavg_lora_enabled():
         r = F.linear(xr, Rw)
         k = F.linear(xk, Kw)
@@ -955,7 +971,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
     xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
     v_gate = None
     if _native_graph_fused_projection_enabled():
-        r, k, v, w, a, g = fused_rkv_wag_projection(
+        r, k, v, w, a, g, v_gate = fused_rkv_wavg_projection(
             xr,
             xk,
             xv,
@@ -968,14 +984,18 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
             w1,
             a1,
             g1,
+            v1,
             w2,
             a2,
             g2,
+            v2,
             w0,
             a0,
             None,
+            v0,
         )
         a = torch.sigmoid(a)
+        v_gate = torch.sigmoid(v_gate)
     elif _native_graph_fused_wavg_lora_enabled():
         r = F.linear(xr, Rw)
         k = F.linear(xk, Kw)
