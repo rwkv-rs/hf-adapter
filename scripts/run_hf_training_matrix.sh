@@ -27,8 +27,11 @@ DATASET_REPEATS="${DATASET_REPEATS:-4}"
 RUN_PEFT="${RUN_PEFT:-1}"
 RUN_TRAINER="${RUN_TRAINER:-1}"
 RUN_RL="${RUN_RL:-1}"
+RUN_RESUME="${RUN_RESUME:-0}"
 RL_BACKEND="${RL_BACKEND:-both}"
 RUN_DEEPSPEED="${RUN_DEEPSPEED:-0}"
+RESUME_FIRST_STEPS="${RESUME_FIRST_STEPS:-1}"
+RESUME_STEPS="${RESUME_STEPS:-2}"
 
 rwkv7_prepare_results
 rwkv7_print_env
@@ -72,6 +75,21 @@ for model in "${MODELS[@]}"; do
       --dataset-repeats "${DATASET_REPEATS}" \
       --max-length "${MAX_LENGTH}" \
       --backend "${RL_BACKEND}" \
+      --results "${RESULTS}"
+  fi
+
+  if [[ "${RUN_RESUME}" == "1" ]]; then
+    rwkv7_run "${PYTHON_BIN}" tests/test_hf_trainer_resume_smoke.py \
+      --model "${model}" \
+      --device "${DEVICE}" \
+      --attn-mode "${ATTN_MODE}" \
+      --train-dtype "${TRAIN_DTYPE}" \
+      --first-steps "${RESUME_FIRST_STEPS}" \
+      --resume-steps "${RESUME_STEPS}" \
+      --batch-size "${BATCH_SIZE}" \
+      --gradient-accumulation-steps "${GRADIENT_ACCUMULATION_STEPS}" \
+      --dataset-repeats "${DATASET_REPEATS}" \
+      --max-length "${MAX_LENGTH}" \
       --results "${RESULTS}"
   fi
 

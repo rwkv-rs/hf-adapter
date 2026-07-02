@@ -6,6 +6,7 @@ import importlib.util
 import json
 import math
 import os
+import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +37,27 @@ PROMPTS = [
 ]
 
 TRAIN_DTYPES = {"fp32": "float32", "fp16": "float16", "bf16": "bfloat16"}
+
+
+def infer_model_size_label(model_path: str, explicit: str = "") -> str | None:
+    if explicit:
+        return explicit.lower()
+    match = re.search(r"(\d+(?:\.\d+)?b)", Path(model_path).name.lower())
+    return match.group(1) if match else None
+
+
+def model_metadata(args: argparse.Namespace, model: Any | None = None) -> dict[str, Any]:
+    cfg = getattr(model, "config", None)
+    return {
+        "model_name": Path(args.model).name,
+        "model_size_label": infer_model_size_label(args.model, getattr(args, "model_size_label", "")),
+        "hf_model_dir": args.model,
+        "hidden_size": getattr(cfg, "hidden_size", None),
+        "intermediate_size": getattr(cfg, "intermediate_size", None),
+        "num_hidden_layers": getattr(cfg, "num_hidden_layers", None),
+        "head_dim": getattr(cfg, "head_dim", None),
+        "num_heads": getattr(cfg, "num_heads", None),
+    }
 
 
 def optional_torch() -> Any | None:
@@ -234,6 +256,7 @@ def skip_row(args: argparse.Namespace, stage: int, reason: str) -> dict[str, Any
         "dtype": args.train_dtype,
         "train_dtype": args.train_dtype,
         "device": device_name(),
+        **model_metadata(args),
         "cuda_device_count": cuda_device_count(),
         "distributed_world_size": int(os.environ.get("WORLD_SIZE", "1")),
         "local_rank": int(os.environ.get("LOCAL_RANK", "0")),
@@ -306,6 +329,7 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
         "dtype": args.train_dtype,
         "train_dtype": args.train_dtype,
         "device": device_name(),
+        **model_metadata(args, model),
         "cuda_device_count": cuda_device_count(),
         "distributed_world_size": int(os.environ.get("WORLD_SIZE", "1")),
         "local_rank": int(os.environ.get("LOCAL_RANK", "0")),
@@ -328,6 +352,7 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
+    ap.add_argument("--model-size-label", default="", help="Optional size label such as 0.4b; inferred from --model when omitted")
     ap.add_argument("--config-dir", default="configs/deepspeed")
     ap.add_argument("--zero-stage", choices=["2", "3", "both"], default="both")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
