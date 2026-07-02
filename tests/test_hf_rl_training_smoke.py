@@ -5,6 +5,7 @@ import argparse
 import json
 import math
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,29 @@ PROMPTS = [
     "User: Count to two.\n\nAssistant:",
 ]
 
+TRAIN_DTYPES = {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}
+
+
+def infer_model_size_label(model_path: str, explicit: str = "") -> str | None:
+    if explicit:
+        return explicit.lower()
+    match = re.search(r"(\d+(?:\.\d+)?b)", Path(model_path).name.lower())
+    return match.group(1) if match else None
+
+
+def model_metadata(args: argparse.Namespace, model) -> dict[str, Any]:
+    cfg = getattr(model, "config", None)
+    return {
+        "model_name": Path(args.model).name,
+        "model_size_label": infer_model_size_label(args.model, args.model_size_label),
+        "hf_model_dir": args.model,
+        "hidden_size": getattr(cfg, "hidden_size", None),
+        "intermediate_size": getattr(cfg, "intermediate_size", None),
+        "num_hidden_layers": getattr(cfg, "num_hidden_layers", None),
+        "head_dim": getattr(cfg, "head_dim", None),
+        "num_heads": getattr(cfg, "num_heads", None),
+    }
+
 
 def device_name(device: str) -> str:
     return torch.cuda.get_device_name(0) if device.startswith("cuda") and torch.cuda.is_available() else device
@@ -31,6 +55,18 @@ def device_name(device: str) -> str:
 def metric(metrics: dict[str, Any], key: str) -> float | None:
     value = metrics.get(key)
     return float(value) if value is not None else None
+
+
+def train_torch_dtype(train_dtype: str) -> torch.dtype:
+    return TRAIN_DTYPES[train_dtype]
+
+
+def use_fp16(device: str, train_dtype: str) -> bool:
+    return device.startswith("cuda") and train_dtype == "fp16"
+
+
+def use_bf16(device: str, train_dtype: str) -> bool:
+    return device.startswith("cuda") and train_dtype == "bf16"
 
 
 def append_rows(path: str, rows: list[dict[str, Any]]) -> None:
@@ -61,6 +97,16 @@ def max_trainable_delta(before: dict[str, torch.Tensor], model) -> float:
     return max_delta
 
 
+def keep_trainable_params_fp32(model) -> None:
+    """Keep LoRA adapters in fp32 for deterministic one-step smoke updates."""
+
+    for param in model.parameters():
+        if param.requires_grad:
+            param.data = param.data.float()
+            if param.grad is not None:
+                param.grad.data = param.grad.data.float()
+
+
 def ensure_trl_fsdp_compat() -> None:
     """Patch older torch builds for newer TRL imports when needed."""
     try:
@@ -71,24 +117,6 @@ def ensure_trl_fsdp_compat() -> None:
         class FSDPModule:  # pragma: no cover - import shim only
             pass
         fsdp.FSDPModule = FSDPModule
-
-
-def train_torch_dtype(train_dtype: str) -> torch.dtype:
-    if train_dtype == "fp16":
-        return torch.float16
-    if train_dtype == "bf16":
-        return torch.bfloat16
-    return torch.float32
-
-
-def keep_trainable_params_fp32(model) -> None:
-    """Keep LoRA adapters in fp32 for deterministic one-step smoke updates."""
-
-    for param in model.parameters():
-        if param.requires_grad:
-            param.data = param.data.float()
-            if param.grad is not None:
-                param.grad.data = param.grad.data.float()
 
 
 def load_base_model(model_path: str, device: str, attn_mode: str, train_dtype: str):
@@ -176,6 +204,7 @@ def run_dpo(args: argparse.Namespace) -> dict[str, Any]:
         "dtype": args.train_dtype,
         "train_dtype": args.train_dtype,
         "device": device_name(args.device),
+        **model_metadata(args, trainer.model),
         "attn_mode": args.attn_mode,
         "batch_size": args.batch_size,
         "gradient_accumulation_steps": args.gradient_accumulation_steps,
@@ -250,6 +279,7 @@ def run_grpo(args: argparse.Namespace) -> dict[str, Any]:
         "dtype": args.train_dtype,
         "train_dtype": args.train_dtype,
         "device": device_name(args.device),
+        **model_metadata(args, trainer.model),
         "attn_mode": args.attn_mode,
         "batch_size": max(2, args.batch_size),
         "gradient_accumulation_steps": args.gradient_accumulation_steps,
@@ -270,6 +300,7 @@ def run_grpo(args: argparse.Namespace) -> dict[str, Any]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
+    ap.add_argument("--model-size-label", default="", help="Optional size label such as 0.4b; inferred from --model when omitted")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--max-length", type=int, default=64)

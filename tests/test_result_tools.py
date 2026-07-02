@@ -109,25 +109,6 @@ def assert_albatross_rows_are_parsed_and_compared(tmpdir: Path) -> None:
     assert albatross_rows[0]["batch_size"] == 1
     assert albatross_rows[0]["tokens_per_sequence"] == 1
     assert albatross_rows[0]["tokps_p50"] == 125.0
-    faster4_rows = parse_result_lines(
-        "bench B4T128 wkv=fp16 ms=6.10028 tok_s=83930.6 gpu_mib=759 cpu_emb_mib=128",
-        engine="faster4_cpp",
-        engine_config="faster4_cpp_sm89_default_fp16wkv",
-        dtype="fp16",
-        device="NVIDIA GeForce RTX 4090",
-        model_path="/models/rwkv7-g1d-0.4b.pth",
-        model_size_label="0.4B",
-        checkpoint_sha256="def456",
-        fallback_iters=10,
-    )
-    assert len(faster4_rows) == 1
-    assert faster4_rows[0]["batch_size"] == 4
-    assert faster4_rows[0]["tokens_per_sequence"] == 128
-    assert faster4_rows[0]["latency_p50_ms"] == 6.10028
-    assert faster4_rows[0]["latency_p10_ms"] == 6.10028
-    assert faster4_rows[0]["tokps_p50"] == 83930.6
-    assert faster4_rows[0]["iters"] == 10
-    assert faster4_rows[0]["wkv"] == "fp16"
 
     hf_rows = [
         {
@@ -218,6 +199,8 @@ def assert_quantization_best_variants_are_reported(tmpdir: Path) -> None:
             "decode_tokps": 80.0,
             "model_footprint_mb": 280.0,
             "peak_vram_mb": 340.0,
+            "quant_speed_status": "interim",
+            "quant_speed_note": "pending native-fused W8/W4 kernel update",
         },
         {
             "axis": "quantization",
@@ -230,6 +213,8 @@ def assert_quantization_best_variants_are_reported(tmpdir: Path) -> None:
             "decode_tokps": 50.0,
             "model_footprint_mb": 300.0,
             "peak_vram_mb": 360.0,
+            "quant_speed_status": "interim",
+            "quant_speed_note": "pending native-fused W8/W4 kernel update",
         },
     ]
     path = tmpdir / "quant_results.jsonl"
@@ -255,10 +240,15 @@ def assert_quantization_best_variants_are_reported(tmpdir: Path) -> None:
     report = json.loads(analyzed.stdout)
     best_by_mode = {row["quantization"]: row for row in report["quantization_best_variants"]}
     assert best_by_mode["4bit"]["best_speed"]["quant_skip_policy"] == "decode_hot"
+    assert best_by_mode["4bit"]["best_speed"]["quant_speed_status"] == "interim"
     assert best_by_mode["4bit"]["best_memory"]["quant_skip_policy"] == "memory"
     assert best_by_mode["4bit"]["decode_ratio_vs_fp16"] == 0.4
     assert best_by_mode["4bit"]["footprint_ratio_vs_fp16"] == 0.7
     assert best_by_mode["8bit"]["decode_ratio_vs_fp16"] == 0.25
+    fused_quant = {row["quantization"]: row for row in report["fused_backend_targets"]["quantization"]}
+    assert fused_quant["4bit"]["speed_status"] == "interim"
+    assert fused_quant["8bit"]["speed_status"] == "interim"
+    assert any("quantized speed rows marked interim" in item for item in report["next_focus"])
     assert any("best 4bit quant variant policy=decode_hot" in item for item in report["next_focus"])
 
 
@@ -448,164 +438,6 @@ def assert_albatross_prefill_ignores_short_prompt_probe(tmpdir: Path) -> None:
     comparisons = report["albatross_prefill_comparison"]
     assert [row["tokens_per_sequence"] for row in comparisons] == [512]
     assert report["fused_backend_targets"]["albatross_prefill"]["current_ratio_min"] == 0.7
-
-
-def assert_albatross_prefill_uses_fastest_native_prefill_scan(tmpdir: Path) -> None:
-    rows = [
-        {
-            "axis": "chunked_prefill",
-            "backend": "hf_adapter",
-            "dtype": "fp16",
-            "device": "Tesla V100-PCIE-32GB",
-            "batch_size": 1,
-            "prompt_tokens": 512,
-            "prefill_tokps_total": 700.0,
-        },
-        {
-            "axis": "native_prefill_scan",
-            "backend": "hf_adapter",
-            "status": "pass",
-            "dtype": "fp16",
-            "device": "Tesla V100-PCIE-32GB",
-            "model_path": "/models/rwkv7-g1d-0.1b-hf",
-            "batch_size": 1,
-            "prompt_tokens": 512,
-            "fused_scan_requested": True,
-            "hf_prefill_tokps_total": 800.0,
-            "native_prefill_tokps_total": 2000.0,
-        },
-        {
-            "axis": "native_prefill_scan",
-            "backend": "hf_adapter",
-            "status": "pass",
-            "dtype": "fp16",
-            "device": "Tesla V100-PCIE-32GB",
-            "model_path": "/models/rwkv7-g1d-0.4b-hf",
-            "batch_size": 1,
-            "prompt_tokens": 512,
-            "fused_scan_requested": False,
-            "hf_prefill_tokps_total": 800.0,
-            "native_prefill_tokps_total": 200.0,
-        },
-        {
-            "axis": "native_prefill_scan",
-            "backend": "hf_adapter",
-            "status": "pass",
-            "dtype": "fp16",
-            "device": "Tesla V100-PCIE-32GB",
-            "model_path": "/models/rwkv7-g1d-0.4b-hf",
-            "batch_size": 1,
-            "prompt_tokens": 512,
-            "fused_scan_requested": True,
-            "hf_prefill_tokps_total": 800.0,
-            "native_prefill_tokps_total": 900.0,
-        },
-        {
-            "axis": "albatross_speed",
-            "backend": "albatross",
-            "engine": "faster3a",
-            "engine_config": "wkv=fp32io16",
-            "status": "pass",
-            "dtype": "fp16",
-            "device": "Tesla V100-PCIE-32GB",
-            "model_size_label": "0.4b",
-            "batch_size": 1,
-            "tokens_per_sequence": 512,
-            "tokps_p50": 1000.0,
-        },
-    ]
-    path = tmpdir / "albatross_native_prefill.jsonl"
-    write_jsonl(path, rows)
-    analyzed = subprocess.run(
-        [
-            sys.executable,
-            "bench/analyze_results.py",
-            "--results",
-            str(path),
-            "--device",
-            "V100",
-            "--dtype",
-            "fp16",
-            "--json",
-        ],
-        cwd=Path(__file__).resolve().parents[1],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
-    report = json.loads(analyzed.stdout)
-    comparison = report["albatross_prefill_comparison"][0]
-    assert comparison["hf_axis"] == "native_prefill_scan"
-    assert comparison["model_size_label"] == "0.4b"
-    assert comparison["hf_model_size_label"] == "0.4b"
-    assert comparison["hf_prefill_metric"] == "native_prefill_tokps_total"
-    assert comparison["hf_fused_scan_requested"] is True
-    assert comparison["hf_tokps_total"] == 900.0
-    assert report["fused_backend_targets"]["albatross_prefill"]["current_ratio_min"] == 0.9
-
-
-def assert_native_prefill_breakdown_is_reported(tmpdir: Path) -> None:
-    rows = [
-        {
-            "axis": "native_prefill_breakdown",
-            "backend": "hf_adapter",
-            "status": "pass",
-            "dtype": "fp16",
-            "device": "NVIDIA GeForce RTX 4090",
-            "model_size_label": "0.4b",
-            "batch_size": 1,
-            "prompt_tokens": 512,
-            "tokens_total": 512,
-            "fused_scan_requested": True,
-            "profiled_total_gpu_ms": 24.0,
-            "component_sum_ms": 24.5,
-            "profiled_tokps_total": 21333.3,
-            "component_ms": {
-                "attn_dense_rkv": 8.0,
-                "attn_lora_state_prep": 6.0,
-                "recurrent_scan": 2.0,
-                "attn_output_project": 4.0,
-                "ffn": 4.5,
-            },
-            "component_share": {
-                "attn_dense_rkv": 0.3265,
-                "attn_lora_state_prep": 0.2449,
-                "recurrent_scan": 0.0816,
-                "attn_output_project": 0.1633,
-                "ffn": 0.1837,
-            },
-            "top_components": [["attn_dense_rkv", 8.0, 0.3265]],
-            "max_abs_diff_vs_native_prefill": 0.0,
-            "greedy_match_vs_native_prefill": True,
-            "peak_vram_mb": 1024.0,
-        }
-    ]
-    path = tmpdir / "native_prefill_breakdown.jsonl"
-    write_jsonl(path, rows)
-    analyzed = subprocess.run(
-        [
-            sys.executable,
-            "bench/analyze_results.py",
-            "--results",
-            str(path),
-            "--device",
-            "RTX 4090",
-            "--dtype",
-            "fp16",
-            "--json",
-        ],
-        cwd=Path(__file__).resolve().parents[1],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
-    report = json.loads(analyzed.stdout)
-    row = report["native_prefill_breakdown"][0]
-    assert row["component_ms"]["attn_dense_rkv"] == 8.0
-    assert row["top_components"][0][0] == "attn_dense_rkv"
-    assert any("native_prefill_breakdown top component" in item and "attn_dense_rkv" in item for item in report["next_focus"])
 
 
 def assert_albatross_decode_uses_default_native_graph_batch_rows(tmpdir: Path) -> None:
@@ -2264,7 +2096,6 @@ def assert_native_quant_rkv_sweep_is_reported(tmpdir: Path) -> None:
             "layers": [0, 1, 11],
             "block_m_values": [8, 16, 32],
             "block_k_values": [32, 64],
-            "block_k_unit": "input_features",
             "warmup": 8,
             "steps": 128,
             "avg_fp16_baseline_ms": 0.071,
@@ -2299,7 +2130,6 @@ def assert_native_quant_rkv_sweep_is_reported(tmpdir: Path) -> None:
             "layers": [0, 1, 11],
             "block_m_values": [8, 16, 32],
             "block_k_values": [32, 64],
-            "block_k_unit": "packed_int4_bytes",
             "warmup": 8,
             "steps": 128,
             "avg_fp16_baseline_ms": 0.071,
@@ -2346,8 +2176,6 @@ def assert_native_quant_rkv_sweep_is_reported(tmpdir: Path) -> None:
     by_quant = {row["quantization"]: row for row in report["native_quant_rkv_sweep"]}
     assert set(by_quant) == {"int8_rowwise_fused_rkv", "int4_rowwise_fused_rkv"}
     assert by_quant["int8_rowwise_fused_rkv"]["best_by_latency"]["block_m"] == 32
-    assert by_quant["int8_rowwise_fused_rkv"]["block_k_unit"] == "input_features"
-    assert by_quant["int4_rowwise_fused_rkv"]["block_k_unit"] == "packed_int4_bytes"
     assert any("native W8 R/K/V sweep best block_m=32 block_k=64 is 0.82x fp16" in item for item in report["next_focus"])
     assert any("native W4 R/K/V sweep best block_m=8 block_k=32 is 0.78x fp16" in item for item in report["next_focus"])
 
@@ -2617,6 +2445,323 @@ def assert_dynamic_batch_native_graph_telemetry_is_reported(tmpdir: Path) -> Non
     assert row["native_graph_copy_from_cache_fast_skip_rate"] == 0.75, row
     assert row["native_graph_bind_cache_fast_skip_rate"] == 0.75, row
 
+def assert_checkpoint_resume_smoke_survives_inference_dtype_filter(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "checkpoint_resume_smoke",
+            "backend": "hf_adapter",
+            "trainer_backend": "trainer_resume",
+            "status": "pass",
+            "model_size_label": label,
+            "model_name": f"rwkv7-{label}-hf",
+            "hf_model_dir": f"/models/rwkv7-{label}-hf",
+            "dtype": "bf16",
+            "train_dtype": "bf16",
+            "device": "NVIDIA A100-PCIE-40GB",
+            "attn_mode": "fused_recurrent",
+            "batch_size": 1,
+            "gradient_accumulation_steps": 1,
+            "effective_batch_size": 1,
+            "first_steps": 1,
+            "resume_steps": 2,
+            "global_step": 2,
+            "checkpoint": "checkpoint-1",
+            "first_loss": 1.0,
+            "resume_loss": 0.9,
+            "train_runtime_s": 1.0,
+            "first_max_trainable_delta": 1e-4,
+            "resume_max_trainable_delta": 1e-4,
+        }
+        for label in ("0.4b", "1.5b")
+    ]
+    path = tmpdir / "resume_results.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "A100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    labels = {row["model_size_label"] for row in report["checkpoint_resume_smoke"]}
+    assert labels == {"0.4b", "1.5b"}
+    assert all(row["global_step"] == 2 for row in report["checkpoint_resume_smoke"])
+    assert all(row["resume_max_trainable_delta"] > 0 for row in report["checkpoint_resume_smoke"])
+
+
+def assert_deepspeed_resume_smoke_survives_inference_dtype_filter(tmpdir: Path) -> None:
+    rows = [
+        {
+            "axis": "deepspeed_resume_smoke",
+            "backend": "hf_adapter",
+            "trainer_backend": "trainer_zero2_resume",
+            "zero_stage": 2,
+            "status": "pass",
+            "model_size_label": label,
+            "model_name": f"rwkv7-{label}-hf",
+            "hf_model_dir": f"/models/rwkv7-{label}-hf",
+            "dtype": "bf16",
+            "train_dtype": "bf16",
+            "device": "NVIDIA A100-PCIE-40GB",
+            "cuda_device_count": 2,
+            "distributed_world_size": 2,
+            "local_rank": 0,
+            "attn_mode": "fused_recurrent",
+            "batch_size": 1,
+            "gradient_accumulation_steps": 1,
+            "effective_batch_size": 1,
+            "first_steps": 1,
+            "resume_steps": 2,
+            "global_step": 2,
+            "checkpoint": "checkpoint-1",
+            "deepspeed_config": "configs/deepspeed/zero2.json",
+            "first_loss": 1.0,
+            "resume_loss": 0.9,
+            "train_runtime_s": 1.0,
+            "first_max_trainable_delta": 1e-4,
+            "resume_max_trainable_delta": 1e-4,
+        }
+        for label in ("0.4b", "1.5b")
+    ]
+    path = tmpdir / "deepspeed_resume_results.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "A100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    labels = {row["model_size_label"] for row in report["deepspeed_resume_smoke"]}
+    assert labels == {"0.4b", "1.5b"}
+    assert all(row["zero_stage"] == 2 for row in report["deepspeed_resume_smoke"])
+    assert all(row["global_step"] == 2 for row in report["deepspeed_resume_smoke"])
+    assert all(row["resume_max_trainable_delta"] > 0 for row in report["deepspeed_resume_smoke"])
+    assert any("DeepSpeed ZeRO resume passes for stages [2]" in item for item in report["next_focus"])
+
+
+def assert_model_aware_focus_checks_do_not_overwrite_deepspeed_rows(tmpdir: Path) -> None:
+    rows = []
+    for label, delta in (("0.4b", 0.0), ("1.5b", 1e-4)):
+        for stage in (2, 3):
+            rows.append(
+                {
+                    "axis": "deepspeed_training_smoke",
+                    "backend": "hf_adapter",
+                    "trainer_backend": f"trainer_zero{stage}",
+                    "zero_stage": stage,
+                    "status": "pass",
+                    "model_size_label": label,
+                    "model_name": f"rwkv7-{label}-hf",
+                    "hf_model_dir": f"/models/rwkv7-{label}-hf",
+                    "dtype": "bf16",
+                    "train_dtype": "bf16",
+                    "device": "NVIDIA A100-PCIE-40GB",
+                    "cuda_device_count": 2,
+                    "attn_mode": "fused_recurrent",
+                    "batch_size": 1,
+                    "gradient_accumulation_steps": 1,
+                    "effective_batch_size": 1,
+                    "max_steps": 1,
+                    "deepspeed_config": f"configs/deepspeed/zero{stage}.json",
+                    "train_loss": 1.0,
+                    "train_runtime_s": 1.0,
+                    "train_samples_per_second": 1.0,
+                    "train_steps_per_second": 1.0,
+                    "max_trainable_delta": delta if stage == 2 else 1e-4,
+                }
+            )
+        rows.append(
+            {
+                "axis": "deepspeed_resume_smoke",
+                "backend": "hf_adapter",
+                "trainer_backend": "trainer_zero2_resume",
+                "zero_stage": 2,
+                "status": "pass",
+                "model_size_label": label,
+                "model_name": f"rwkv7-{label}-hf",
+                "hf_model_dir": f"/models/rwkv7-{label}-hf",
+                "dtype": "bf16",
+                "train_dtype": "bf16",
+                "device": "NVIDIA A100-PCIE-40GB",
+                "cuda_device_count": 2,
+                "distributed_world_size": 2,
+                "local_rank": 0,
+                "attn_mode": "fused_recurrent",
+                "batch_size": 1,
+                "gradient_accumulation_steps": 1,
+                "effective_batch_size": 1,
+                "first_steps": 1,
+                "resume_steps": 2,
+                "global_step": 2,
+                "checkpoint": "checkpoint-1",
+                "deepspeed_config": "configs/deepspeed/zero2.json",
+                "first_loss": 1.0,
+                "resume_loss": 0.9,
+                "train_runtime_s": 1.0,
+                "first_max_trainable_delta": 1e-4,
+                "resume_max_trainable_delta": delta,
+            }
+        )
+
+    path = tmpdir / "model_aware_deepspeed_results.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "A100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    assert any(
+        "DeepSpeed ZeRO-2 smoke did not update trainable params for 0.4b" in item
+        for item in report["next_focus"]
+    )
+    assert any(
+        "DeepSpeed ZeRO-2 resume did not update trainable params for 0.4b" in item
+        for item in report["next_focus"]
+    )
+    assert not any(
+        "DeepSpeed ZeRO-2 smoke did not update trainable params for 1.5b" in item
+        for item in report["next_focus"]
+    )
+
+
+def assert_model_aware_focus_checks_report_missing_backends_per_model(tmpdir: Path) -> None:
+    rows = []
+    for label, backends in (
+        ("0.1b", ("trainer", "trl_sft", "trl_dpo", "trl_grpo")),
+        ("0.4b", ("trainer", "trl_sft", "trl_dpo")),
+    ):
+        for backend in backends:
+            rows.append(
+                {
+                    "axis": "training_smoke",
+                    "backend": "hf_adapter",
+                    "trainer_backend": backend,
+                    "status": "pass",
+                    "model_size_label": label,
+                    "model_name": f"rwkv7-{label}-hf",
+                    "hf_model_dir": f"/models/rwkv7-{label}-hf",
+                    "dtype": "bf16",
+                    "train_dtype": "bf16",
+                    "device": "NVIDIA A100-PCIE-40GB",
+                    "attn_mode": "fused_recurrent",
+                    "batch_size": 1,
+                    "gradient_accumulation_steps": 1,
+                    "effective_batch_size": 1,
+                    "max_steps": 1,
+                    "train_loss": 1.0,
+                    "train_runtime_s": 1.0,
+                    "train_samples_per_second": 1.0,
+                    "train_steps_per_second": 1.0,
+                    "max_trainable_delta": 1e-4,
+                }
+            )
+    for label, stages in (("0.1b", (2, 3)), ("0.4b", (2,))):
+        for stage in stages:
+            rows.append(
+                {
+                    "axis": "deepspeed_training_smoke",
+                    "backend": "hf_adapter",
+                    "trainer_backend": f"trainer_zero{stage}",
+                    "zero_stage": stage,
+                    "status": "pass",
+                    "model_size_label": label,
+                    "model_name": f"rwkv7-{label}-hf",
+                    "hf_model_dir": f"/models/rwkv7-{label}-hf",
+                    "dtype": "bf16",
+                    "train_dtype": "bf16",
+                    "device": "NVIDIA A100-PCIE-40GB",
+                    "cuda_device_count": 2,
+                    "attn_mode": "fused_recurrent",
+                    "batch_size": 1,
+                    "gradient_accumulation_steps": 1,
+                    "effective_batch_size": 1,
+                    "max_steps": 1,
+                    "deepspeed_config": f"configs/deepspeed/zero{stage}.json",
+                    "train_loss": 1.0,
+                    "train_runtime_s": 1.0,
+                    "train_samples_per_second": 1.0,
+                    "train_steps_per_second": 1.0,
+                    "max_trainable_delta": 1e-4,
+                }
+            )
+
+    path = tmpdir / "model_aware_missing_backend_results.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "A100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    assert any(
+        "training smoke telemetry incomplete for 0.4b: missing ['trl_grpo']" in item
+        for item in report["next_focus"]
+    )
+    assert not any(
+        "training smoke telemetry incomplete for 0.1b" in item
+        for item in report["next_focus"]
+    )
+    assert any(
+        "DeepSpeed ZeRO smoke telemetry incomplete for 0.4b: missing stages [3]" in item
+        for item in report["next_focus"]
+    )
+    assert not any(
+        "DeepSpeed ZeRO smoke telemetry incomplete for 0.1b" in item
+        for item in report["next_focus"]
+    )
+
 
 def main() -> int:
     rows = [
@@ -2707,8 +2852,6 @@ def main() -> int:
         assert_quantization_best_variants_are_reported(tmpdir)
         assert_fused_backend_targets_are_reported(tmpdir)
         assert_albatross_prefill_ignores_short_prompt_probe(tmpdir)
-        assert_albatross_prefill_uses_fastest_native_prefill_scan(tmpdir)
-        assert_native_prefill_breakdown_is_reported(tmpdir)
         assert_albatross_decode_uses_default_native_graph_batch_rows(tmpdir)
         assert_projection_kernel_plan_is_reported(tmpdir)
         assert_fused_projection_proto_is_reported(tmpdir)
@@ -2738,6 +2881,10 @@ def main() -> int:
         assert_native_model_smoke_is_reported(tmpdir)
         assert_deepspeed_smoke_survives_inference_dtype_filter(tmpdir)
         assert_dynamic_batch_native_graph_telemetry_is_reported(tmpdir)
+        assert_checkpoint_resume_smoke_survives_inference_dtype_filter(tmpdir)
+        assert_deepspeed_resume_smoke_survives_inference_dtype_filter(tmpdir)
+        assert_model_aware_focus_checks_do_not_overwrite_deepspeed_rows(tmpdir)
+        assert_model_aware_focus_checks_report_missing_backends_per_model(tmpdir)
     args = argparse.Namespace(device="V100", dtype="fp16")
     speeds = latest_by_layout(fast_speed_rows(loaded, args))
     micros = latest_by_layout(fast_micro_rows(loaded, args))

@@ -5,10 +5,21 @@ Current scope is HF adapter delivery only: Transformers loading/generation,
 PEFT/TRL/Trainer compatibility, HF state-cache serving primitives, quantized
 inference, and HF-compatible speculative decoding.
 
-The current performance phase is tracked in [`FUSED_BACKEND.md`](FUSED_BACKEND.md):
+The current performance phase is tracked in [`docs/performance/FUSED_BACKEND.md`](docs/performance/FUSED_BACKEND.md):
 keep the HF wrapper as the public compatibility layer, then add native fused
 fp16 and native W8/W4 backends behind `rwkv7_forward_token()` and `generate()`
 to close the Albatross and quantized-decode speed gaps.
+
+Contributor status and roadmap docs:
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md): how to pick an issue, run card validation, report environment/results, and prepare focused PRs.
+- [`HF_STATUS.md`](HF_STATUS.md): what is already done, current evidence, hardware/card adaptation status, and production-readiness gaps.
+- [`HF_TODO.md`](HF_TODO.md): prioritized HF-only TODO list for contributors, including large-model training, ZeRO resume, one-click acceptance scripts, card validation, and productionization tasks.
+- [`docs/reference/HF_CRITERIA.md`](docs/reference/HF_CRITERIA.md): high-level HF acceptance criteria and optimization rules.
+- [`BENCHMARK.md`](BENCHMARK.md): numeric evidence and benchmark contract.
+- [`docs/validation/A100_HF_VALIDATION.md`](docs/validation/A100_HF_VALIDATION.md): latest A100 40GB HF training/quant/ZeRO validation matrix.
+- [`docs/validation/V100_HF_VALIDATION.md`](docs/validation/V100_HF_VALIDATION.md): latest V100 HF training/quant/ZeRO validation matrix.
+- [`docs/README.md`](docs/README.md): map of specialized, hardware, validation, and archived docs.
 
 This repository converts RWKV-7 weights to a Hugging Face-style directory and provides remote-code wrappers so the result can be loaded with:
 
@@ -37,6 +48,10 @@ rwkv7_hf/
 scripts/
   convert_rwkv7_to_hf.py
   batch_convert_rwkv7_to_hf.py
+  run_hf_acceptance.sh
+  run_hf_training_matrix.sh
+  run_zero_training_smoke.sh
+  run_hardware_smoke.sh
 tests/
   smoke_hf_generate.py
   test_official_alignment.py
@@ -56,6 +71,8 @@ tests/
   test_native_grpo_smoke.py
   test_native_peft_save_load_merge.py
   test_native_trainer_resume_smoke.py
+  test_deepspeed_training_smoke.py
+  test_deepspeed_resume_smoke.py
   test_native_bnb_quant_smoke.py
   test_device_map_generate.py
   test_quantized_inference.py
@@ -78,8 +95,17 @@ bench/
   analyze_results.py
   check_results.py
   profile_decode.py
-NEXT_STEPS.md
+CONTRIBUTING.md
+HF_STATUS.md
+HF_TODO.md
 BENCHMARK.md
+docs/
+  README.md
+  reference/HF_CRITERIA.md
+  performance/FUSED_BACKEND.md
+  validation/V100_HF_VALIDATION.md
+  hardware/BLACKWELL_50SERIES.md
+  archive/NEXT_STEPS.md
 ```
 
 ## Convert an official checkpoint
@@ -124,6 +150,42 @@ export PYTHONPATH=/path/to/flash-linear-attention:$PYTHONPATH
 
 python tests/smoke_hf_generate.py \
   --model /path/to/rwkv7-g1d-0.1b-hf
+```
+
+## One-click validation scripts
+
+For a short HF acceptance pass on one converted model:
+
+```bash
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+RESULTS=bench/results.jsonl \
+bash scripts/run_hf_acceptance.sh
+```
+
+For card-adaptation issues, run the hardware smoke wrapper. It records short
+speed and batch rows and skips static tests by default:
+
+```bash
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DEVICE=cuda DTYPE=fp16 \
+bash scripts/run_hardware_smoke.sh
+```
+
+For PEFT/Trainer/TRL training smoke over one or more model sizes:
+
+```bash
+MODELS="/path/to/rwkv7-g1d-0.4b-hf /path/to/rwkv7-g1g-1.5b-hf" \
+RESULTS=bench/results.jsonl \
+bash scripts/run_hf_training_matrix.sh
+```
+
+For DeepSpeed ZeRO-2/ZeRO-3 smoke on a multi-GPU node:
+
+```bash
+NPROC_PER_NODE=2 ZERO_STAGE=both \
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+RESULTS=bench/results.jsonl \
+bash scripts/run_zero_training_smoke.sh
 ```
 
 Minimal usage:
@@ -252,6 +314,18 @@ export PYTHONPATH=/path/to/flash-linear-attention:$PYTHONPATH
 python tests/test_deepspeed_training_smoke.py \
   --model /path/to/rwkv7-g1d-0.1b-hf \
   --zero-stage both \
+  --train-dtype fp32 \
+  --attn-mode fused_recurrent \
+  --results bench/results.jsonl
+```
+
+DeepSpeed ZeRO checkpoint-resume smoke is tracked separately. ZeRO2 resume is
+validated through 2.9B on 2 x V100; ZeRO3 resume remains a follow-up gap:
+
+```bash
+python tests/test_deepspeed_resume_smoke.py \
+  --model /path/to/rwkv7-g1d-0.1b-hf \
+  --zero-stage 2 \
   --train-dtype fp32 \
   --attn-mode fused_recurrent \
   --results bench/results.jsonl

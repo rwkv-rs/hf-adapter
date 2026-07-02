@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -23,6 +24,27 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
 SEED = "The quick brown fox jumps over the lazy dog. " * 256
+
+
+def infer_model_size_label(hf_dir: str, explicit: str = "") -> str | None:
+    if explicit:
+        return explicit.lower()
+    match = re.search(r"(\d+(?:\.\d+)?b)", Path(hf_dir).name.lower())
+    return match.group(1) if match else None
+
+
+def model_metadata(args, model) -> dict[str, Any]:
+    cfg = getattr(model, "config", None)
+    return {
+        "model_name": Path(args.hf_dir).name,
+        "model_size_label": infer_model_size_label(args.hf_dir, args.model_size_label),
+        "hf_model_dir": args.hf_dir,
+        "hidden_size": getattr(cfg, "hidden_size", None),
+        "intermediate_size": getattr(cfg, "intermediate_size", None),
+        "num_hidden_layers": getattr(cfg, "num_hidden_layers", None),
+        "head_dim": getattr(cfg, "head_dim", None),
+        "num_heads": getattr(cfg, "num_heads", None),
+    }
 
 
 def cuda_sync(device: str) -> None:
@@ -138,6 +160,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
         "decode_api": "forward",
         "dtype": args.dtype,
         "device": device_name(args.device),
+        **model_metadata(args, model),
         "attn_mode": args.attn_mode,
         "fuse_norm": getattr(model.config, "fuse_norm", None),
         "fast_cache": os.environ.get("RWKV7_FAST_CACHE", "1") not in {"0", "false", "False", "no", "off"},
@@ -203,6 +226,7 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hf-dir", required=True)
+    ap.add_argument("--model-size-label", default="", help="Optional size label such as 0.4b; inferred from --hf-dir when omitted")
     ap.add_argument("--dtype", default="fp16", choices=sorted(DTYPES))
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])

@@ -18,6 +18,7 @@ Gate: adapter reload and merged model both reproduce the trained adapter logits.
 from __future__ import annotations
 
 import argparse
+import gc
 import math
 import tempfile
 
@@ -60,6 +61,15 @@ def lora_config() -> LoraConfig:
         bias="none",
         target_modules=["r_proj", "k_proj", "v_proj", "o_proj", "key", "value"],
     )
+
+
+def release_cuda(*objs) -> None:
+    for obj in objs:
+        del obj
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
 
 
 def logits_for(model, tokenizer, text: str) -> torch.Tensor:
@@ -121,6 +131,12 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="native_peft_adapter_") as adapter_dir:
         model.save_pretrained(adapter_dir)
+
+        # Keep only one full base model resident at a time. This lets the same
+        # save/load/merge contract run on 32GB V100s for 2.9B+ checkpoints.
+        del model, base
+        release_cuda()
+
         fresh = load_native(args.model, dtype, args.device)
         reloaded = PeftModel.from_pretrained(fresh, adapter_dir)
         reload_logits = logits_for(reloaded, tok, "User: Hello.\n\nAssistant:")
@@ -129,6 +145,9 @@ def main() -> int:
         merged = reloaded.merge_and_unload()
         merge_logits = logits_for(merged, tok, "User: Hello.\n\nAssistant:")
         merge_diff = float((ref_logits - merge_logits).abs().max().item())
+
+        del fresh, reloaded, merged
+        release_cuda()
 
         # Exercise GenerationMixin after reload before declaring the adapter usable.
         reloaded_for_generate = PeftModel.from_pretrained(

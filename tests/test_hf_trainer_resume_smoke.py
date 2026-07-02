@@ -2,18 +2,29 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
+import math
 import os
 import re
+import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# FLA backward can hit Dynamo/Triton issues on the V100 test box.
 os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
 
-import math
+# This smoke only resumes checkpoints it creates in a temporary directory.
+# Disable the recent Transformers torch.load guard for older torch runtimes.
+try:
+    import transformers.trainer as _hf_trainer
+    import transformers.utils.import_utils as _hf_import_utils
+
+    _hf_import_utils.check_torch_load_is_safe = lambda: None
+    _hf_trainer.check_torch_load_is_safe = lambda: None
+except Exception:
+    pass
 
 import torch
 from peft import LoraConfig, get_peft_model
@@ -25,7 +36,6 @@ PROMPTS = [
     "User: Say hello.\n\nAssistant: Hello!",
     "User: Count to three.\n\nAssistant: one two three.",
 ]
-
 TRAIN_DTYPES = {"fp32": torch.float32, "fp16": torch.float16, "bf16": torch.bfloat16}
 
 
@@ -36,7 +46,7 @@ def infer_model_size_label(model_path: str, explicit: str = "") -> str | None:
     return match.group(1) if match else None
 
 
-def model_metadata(args, model) -> dict[str, Any]:
+def model_metadata(args: argparse.Namespace, model) -> dict[str, Any]:
     cfg = getattr(model, "config", None)
     return {
         "model_name": Path(args.model).name,
@@ -84,11 +94,6 @@ def device_name(device: str) -> str:
     return torch.cuda.get_device_name(0) if device.startswith("cuda") and torch.cuda.is_available() else device
 
 
-def metric(metrics: dict[str, Any], key: str) -> float | None:
-    value = metrics.get(key)
-    return float(value) if value is not None else None
-
-
 def train_torch_dtype(train_dtype: str) -> torch.dtype:
     return TRAIN_DTYPES[train_dtype]
 
@@ -129,22 +134,6 @@ def max_trainable_delta(before: dict[str, torch.Tensor], model) -> float:
     return max_delta
 
 
-def keep_trainable_params_fp32(model) -> None:
-    """Keep LoRA adapters in fp32 so a one-step smoke observes a real update.
-
-    The base model is still loaded in ``--train-dtype``.  Trainer AMP/GradScaler
-    can legitimately skip a tiny fp16 one-step update when RWKV kernels emit a
-    non-finite global grad norm; for this compatibility smoke we care that the
-    HF/PEFT training stack runs and trainable LoRA weights move.
-    """
-
-    for param in model.parameters():
-        if param.requires_grad:
-            param.data = param.data.float()
-            if param.grad is not None:
-                param.grad.data = param.grad.data.float()
-
-
 def load_lora_model(model_path: str, device: str, attn_mode: str, train_dtype: str):
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
@@ -167,134 +156,125 @@ def load_lora_model(model_path: str, device: str, attn_mode: str, train_dtype: s
         lora_dropout=0.0,
         target_modules=["r_proj", "k_proj", "v_proj", "o_proj", "key", "value"],
     )
-    model = get_peft_model(model, lora_cfg)
-    keep_trainable_params_fp32(model)
-    return model
+    return get_peft_model(model, lora_cfg)
 
 
-def run_trainer(args) -> dict[str, Any]:
+def latest_checkpoint(out_dir: str) -> str:
+    ckpts = sorted(Path(out_dir).glob("checkpoint-*"), key=lambda p: int(p.name.rsplit("-", 1)[1]))
+    if not ckpts:
+        raise RuntimeError(f"no checkpoints in {out_dir}")
+    return str(ckpts[-1])
+
+
+def release_cuda() -> None:
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+
+
+def make_args(args: argparse.Namespace, out_dir: str, max_steps: int) -> TrainingArguments:
+    return TrainingArguments(
+        output_dir=out_dir,
+        max_steps=max_steps,
+        per_device_train_batch_size=args.batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        learning_rate=1e-4,
+        logging_steps=1,
+        save_strategy="steps",
+        save_steps=1,
+        save_total_limit=3,
+        report_to=[],
+        remove_unused_columns=False,
+        fp16=use_fp16(args.device, args.train_dtype),
+        bf16=use_bf16(args.device, args.train_dtype),
+        dataloader_num_workers=0,
+        gradient_checkpointing=False,
+        optim="adamw_torch",
+    )
+
+
+def run_resume(args: argparse.Namespace) -> dict[str, Any]:
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-    model = load_lora_model(args.model, args.device, args.attn_mode, args.train_dtype)
     dataset = TokenDataset(tok, args.max_length, repeats=args.dataset_repeats)
     collator = CausalCollator(tok)
-    before = trainable_snapshot(model)
-    assert before, "expected LoRA/trainable parameters"
-    with tempfile.TemporaryDirectory(prefix="rwkv7_trainer_smoke_") as out_dir:
-        train_args = TrainingArguments(
-            output_dir=out_dir,
-            max_steps=args.max_steps,
-            per_device_train_batch_size=args.batch_size,
-            gradient_accumulation_steps=args.gradient_accumulation_steps,
-            learning_rate=1e-4,
-            logging_steps=1,
-            save_strategy="no",
-            report_to=[],
-            remove_unused_columns=False,
-            # The model itself is loaded in --train-dtype. Keep Trainer mixed
-            # precision off so GradScaler cannot turn the one-step smoke into a
-            # no-op before the trainable-delta assertion.
-            fp16=False,
-            bf16=False,
-            dataloader_num_workers=0,
-            gradient_checkpointing=False,
-            optim="adamw_torch",
-        )
+
+    out_dir = tempfile.mkdtemp(prefix="rwkv7_hf_trainer_resume_")
+    try:
+        model = load_lora_model(args.model, args.device, args.attn_mode, args.train_dtype)
+        before_first = trainable_snapshot(model)
         trainer = Trainer(
             model=model,
-            args=train_args,
+            args=make_args(args, out_dir, args.first_steps),
             train_dataset=dataset,
             data_collator=collator,
             processing_class=tok,
         )
-        result = trainer.train()
-    assert math.isfinite(float(result.training_loss)), result.training_loss
-    delta = max_trainable_delta(before, model)
-    assert delta > 0.0, "LoRA/trainable parameters did not update"
-    metrics = dict(getattr(result, "metrics", {}) or {})
-    row = {
-        "axis": "training_smoke",
-        "backend": "hf_adapter",
-        "trainer_backend": "trainer",
-        "status": "pass",
-        "dtype": args.train_dtype,
-        "train_dtype": args.train_dtype,
-        "device": device_name(args.device),
-        **model_metadata(args, model),
-        "attn_mode": args.attn_mode,
-        "batch_size": args.batch_size,
-        "gradient_accumulation_steps": args.gradient_accumulation_steps,
-        "effective_batch_size": args.batch_size * args.gradient_accumulation_steps,
-        "max_steps": args.max_steps,
-        "dataset_repeats": args.dataset_repeats,
-        "max_length": args.max_length,
-        "train_loss": float(result.training_loss),
-        "train_runtime_s": metric(metrics, "train_runtime"),
-        "train_samples_per_second": metric(metrics, "train_samples_per_second"),
-        "train_steps_per_second": metric(metrics, "train_steps_per_second"),
-        "max_trainable_delta": delta,
-    }
-    print("trainer_train_loss", result.training_loss, "max_trainable_delta", delta)
-    return row
+        first_result = trainer.train()
+        first_loss = float(first_result.training_loss)
+        first_delta = max_trainable_delta(before_first, model)
+        first_step = int(trainer.state.global_step)
+        ckpt = latest_checkpoint(out_dir)
+        checkpoint_name = Path(ckpt).name
+        for rng_file in Path(ckpt).glob("rng_state*.pth"):
+            rng_file.unlink(missing_ok=True)
 
+        del trainer, model, before_first, first_result
+        release_cuda()
 
-def run_trl(args) -> dict[str, Any]:
-    try:
-        from datasets import Dataset as HFDataset
-        from trl import SFTConfig, SFTTrainer
-    except Exception as exc:  # pragma: no cover - optional dependency path
-        raise RuntimeError("TRL SFT smoke requires `datasets` and `trl`") from exc
-
-    tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-    model = load_lora_model(args.model, args.device, args.attn_mode, args.train_dtype)
-    dataset = HFDataset.from_dict({"text": PROMPTS * max(1, int(args.dataset_repeats))})
-    before = trainable_snapshot(model)
-    assert before, "expected LoRA/trainable parameters"
-    with tempfile.TemporaryDirectory(prefix="rwkv7_trl_sft_smoke_") as out_dir:
-        sft_args = SFTConfig(
-            output_dir=out_dir,
-            max_steps=args.max_steps,
-            per_device_train_batch_size=args.batch_size,
-            gradient_accumulation_steps=args.gradient_accumulation_steps,
-            learning_rate=1e-4,
-            logging_steps=1,
-            save_strategy="no",
-            report_to=[],
-            fp16=False,
-            bf16=False,
-            gradient_checkpointing=False,
-            max_length=args.max_length,
-            dataset_text_field="text",
-            packing=False,
+        resumed_model = load_lora_model(args.model, args.device, args.attn_mode, args.train_dtype)
+        before_resume = trainable_snapshot(resumed_model)
+        resumed_trainer = Trainer(
+            model=resumed_model,
+            args=make_args(args, out_dir, args.resume_steps),
+            train_dataset=dataset,
+            data_collator=collator,
+            processing_class=tok,
         )
-        trainer = SFTTrainer(model=model, args=sft_args, train_dataset=dataset, processing_class=tok)
-        result = trainer.train()
-    assert math.isfinite(float(result.training_loss)), result.training_loss
-    delta = max_trainable_delta(before, model)
-    assert delta > 0.0, "LoRA/trainable parameters did not update"
-    metrics = dict(getattr(result, "metrics", {}) or {})
+        resume_result = resumed_trainer.train(resume_from_checkpoint=ckpt)
+        resume_loss = float(resume_result.training_loss)
+        resume_delta = max_trainable_delta(before_resume, resumed_model)
+        global_step = int(resumed_trainer.state.global_step)
+        metrics = dict(getattr(resume_result, "metrics", {}) or {})
+        metadata_model = resumed_model
+    finally:
+        shutil.rmtree(out_dir, ignore_errors=True)
+
+    ok = (
+        math.isfinite(first_loss)
+        and math.isfinite(resume_loss)
+        and first_delta > 0.0
+        and resume_delta > 0.0
+        and first_step == args.first_steps
+        and global_step == args.resume_steps
+    )
     row = {
-        "axis": "training_smoke",
+        "axis": "checkpoint_resume_smoke",
         "backend": "hf_adapter",
-        "trainer_backend": "trl_sft",
-        "status": "pass",
+        "trainer_backend": "trainer_resume",
+        "status": "pass" if ok else "fail",
         "dtype": args.train_dtype,
         "train_dtype": args.train_dtype,
         "device": device_name(args.device),
-        **model_metadata(args, model),
+        **model_metadata(args, metadata_model),
         "attn_mode": args.attn_mode,
         "batch_size": args.batch_size,
         "gradient_accumulation_steps": args.gradient_accumulation_steps,
         "effective_batch_size": args.batch_size * args.gradient_accumulation_steps,
-        "max_steps": args.max_steps,
+        "first_steps": args.first_steps,
+        "resume_steps": args.resume_steps,
         "dataset_repeats": args.dataset_repeats,
         "max_length": args.max_length,
-        "train_loss": float(result.training_loss),
-        "train_runtime_s": metric(metrics, "train_runtime"),
-        "train_samples_per_second": metric(metrics, "train_samples_per_second"),
-        "train_steps_per_second": metric(metrics, "train_steps_per_second"),
-        "max_trainable_delta": delta,
+        "checkpoint": checkpoint_name,
+        "first_loss": first_loss,
+        "resume_loss": resume_loss,
+        "train_runtime_s": float(metrics["train_runtime"]) if "train_runtime" in metrics else None,
+        "first_max_trainable_delta": first_delta,
+        "resume_max_trainable_delta": resume_delta,
+        "global_step": global_step,
     }
-    print("trl_sft_train_loss", result.training_loss, "max_trainable_delta", delta)
+    if not ok:
+        raise AssertionError(row)
     return row
 
 
@@ -304,24 +284,21 @@ def main() -> int:
     ap.add_argument("--model-size-label", default="", help="Optional size label such as 0.4b; inferred from --model when omitted")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
-    ap.add_argument("--max-length", type=int, default=64)
+    ap.add_argument("--max-length", type=int, default=32)
     ap.add_argument("--train-dtype", choices=["fp32", "fp16", "bf16"], default="fp32")
-    ap.add_argument("--max-steps", type=int, default=1)
+    ap.add_argument("--first-steps", type=int, default=1)
+    ap.add_argument("--resume-steps", type=int, default=2)
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--gradient-accumulation-steps", type=int, default=1)
     ap.add_argument("--dataset-repeats", type=int, default=4)
-    ap.add_argument("--backend", choices=["trainer", "trl", "both"], default="both")
     ap.add_argument("--results", default="")
     args = ap.parse_args()
-    rows = []
-    if args.backend in {"trainer", "both"}:
-        rows.append(run_trainer(args))
-    if args.backend in {"trl", "both"}:
-        rows.append(run_trl(args))
-    append_rows(args.results, rows)
-    for row in rows:
-        print(json.dumps(row, ensure_ascii=False))
-    print("PASS")
+    if args.resume_steps <= args.first_steps:
+        raise ValueError("resume-steps must exceed first-steps")
+    row = run_resume(args)
+    append_rows(args.results, [row])
+    print(json.dumps(row, ensure_ascii=False))
+    print("HF TRAINER RESUME PASS")
     return 0
 
 
