@@ -1,8 +1,8 @@
 # coding=utf-8
-"""Optional fused time-mix prototypes for RWKV-7 decode.
+"""Optional fused time-mix prototypes for RWKV-7 decode and prefill.
 
-The HF/native_graph fast-token path currently materializes six time-mixed
-attention inputs with separate pointwise torch ops::
+The HF/native_graph fast-token and native-prefill paths currently materialize
+six time-mixed attention inputs with separate pointwise torch ops::
 
     xr = x + (prev - x) * x_r
     xw = x + (prev - x) * x_w
@@ -93,12 +93,10 @@ def _flatten_hidden_input(x: Any, *, name: str):
     if torch is None:
         raise RuntimeError("fused_attn_shift_mix requires torch")
     if x.dim() == 3:
-        if int(x.shape[1]) != 1:
-            raise ValueError(f"{name} must be shaped [batch, 1, hidden] or [batch, hidden]")
-        return x.reshape(int(x.shape[0]), int(x.shape[2])), True
+        return x.reshape(int(x.shape[0]) * int(x.shape[1]), int(x.shape[2])), tuple(x.shape)
     if x.dim() == 2:
-        return x, False
-    raise ValueError(f"{name} must be shaped [batch, 1, hidden] or [batch, hidden]")
+        return x, None
+    raise ValueError(f"{name} must be shaped [batch, tokens, hidden] or [batch, hidden]")
 
 
 def _flatten_mix(mix: Any, hidden: int, *, name: str):
@@ -136,16 +134,16 @@ def fused_attn_shift_mix(
 ):
     """Compute all six RWKV-7 attention time-mix inputs in one optional launch.
 
-    Inputs may be shaped ``[batch, hidden]`` or ``[batch, 1, hidden]``. Mix
+    Inputs may be shaped ``[batch, hidden]`` or ``[batch, tokens, hidden]``. Mix
     vectors may use any shape with ``hidden`` elements, matching FLA weights such
-    as ``[1, 1, hidden]``. Returned tensors preserve the input rank.
+    as ``[1, 1, hidden]``. Returned tensors preserve the input rank/shape.
     """
 
     if torch is None:
         raise RuntimeError("fused_attn_shift_mix requires torch")
-    x2, had_seq = _flatten_hidden_input(x, name="x")
-    prev2, _ = _flatten_hidden_input(prev, name="prev")
-    if tuple(x2.shape) != tuple(prev2.shape):
+    x2, restore_shape = _flatten_hidden_input(x, name="x")
+    prev2, prev_shape = _flatten_hidden_input(prev, name="prev")
+    if tuple(x2.shape) != tuple(prev2.shape) or restore_shape != prev_shape:
         raise ValueError("x and prev must have identical flattened shapes")
     batch, hidden = int(x2.shape[0]), int(x2.shape[1])
     mixes = tuple(
@@ -189,6 +187,6 @@ def fused_attn_shift_mix(
             BLOCK_SIZE=int(block_size),
             num_warps=4,
         )
-    if had_seq:
-        return tuple(out.unsqueeze(1) for out in outs)
+    if restore_shape is not None:
+        return tuple(out.reshape(restore_shape) for out in outs)
     return outs

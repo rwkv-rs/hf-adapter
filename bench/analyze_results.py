@@ -302,6 +302,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             r.get("scan_block_m"),
             r.get("scan_num_warps"),
             bool(r.get("fine_attention_breakdown")),
+            bool(r.get("prefill_fused_shift_mix_effective")),
             bool(r.get("prefill_fused_state_prep_effective")),
             bool(r.get("prefill_fused_output_effective")),
             bool(r.get("prefill_fused_wavg_lora_effective")),
@@ -318,6 +319,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             r.get("scan_block_m"),
             r.get("scan_num_warps"),
             bool(r.get("fine_attention_breakdown")),
+            bool(r.get("prefill_fused_shift_mix_effective")),
             bool(r.get("prefill_fused_state_prep_effective")),
             bool(r.get("prefill_fused_output_effective")),
             bool(r.get("prefill_fused_wavg_lora_effective")),
@@ -679,6 +681,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     "hf_fused_scan_requested": hf.get("fused_scan_requested"),
                     "hf_scan_block_m": hf.get("scan_block_m"),
                     "hf_scan_num_warps": hf.get("scan_num_warps"),
+                    "hf_prefill_fused_shift_mix_effective": hf.get("prefill_fused_shift_mix_effective"),
                     "hf_prefill_fused_state_prep_effective": hf.get("prefill_fused_state_prep_effective"),
                     "hf_prefill_fused_output_effective": hf.get("prefill_fused_output_effective"),
                     "hf_prefill_fused_wavg_lora_effective": hf.get("prefill_fused_wavg_lora_effective"),
@@ -1026,7 +1029,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         elif shift_speedup is not None:
             focus.append(
                 f"fused attention shift-mix prototype backend={backend} speedup={float(shift_speedup):.2f}x; "
-                "validate native_graph integration"
+                + ("validate native prefill opt-in" if fused_shift_mix_proto.get("input_rank") == 3 else "validate native_graph integration")
             )
     if fused_recurrent_proto is None:
         focus.append("fused_recurrent_proto row pending")
@@ -1104,6 +1107,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     bool(r.get("fused_scan_requested")),
                     r.get("scan_block_m"),
                     r.get("scan_num_warps"),
+                    bool(r.get("prefill_fused_shift_mix_effective")),
                     bool(r.get("prefill_fused_state_prep_effective")),
                     bool(r.get("prefill_fused_output_effective")),
                     bool(r.get("prefill_fused_wavg_lora_effective")),
@@ -1142,12 +1146,38 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     f"native prefill fused output-prep opt-in A/B ratio min={min(output_ratios):.3f}x "
                     f"max={max(output_ratios):.3f}x; keep telemetry-only unless full prefill improves"
                 )
+            shift_rows = [r for r in native_prefill_scan if r.get("prefill_fused_shift_mix_effective")]
+            shift_ratios: list[float] = []
+            for row in shift_rows:
+                base_candidates = [
+                    r
+                    for r in native_prefill_scan
+                    if r.get("batch_size") == row.get("batch_size")
+                    and r.get("prompt_tokens") == row.get("prompt_tokens")
+                    and r.get("scan_block_m") == row.get("scan_block_m")
+                    and r.get("scan_num_warps") == row.get("scan_num_warps")
+                    and bool(r.get("prefill_fused_state_prep_effective")) == bool(row.get("prefill_fused_state_prep_effective"))
+                    and bool(r.get("prefill_fused_output_effective")) == bool(row.get("prefill_fused_output_effective"))
+                    and bool(r.get("prefill_fused_wavg_lora_effective")) == bool(row.get("prefill_fused_wavg_lora_effective"))
+                    and not bool(r.get("prefill_fused_shift_mix_effective"))
+                ]
+                base = max(base_candidates, key=lambda r: float(r.get("native_prefill_tokps_total") or 0.0), default=None)
+                row_tokps = num(row, "native_prefill_tokps_total")
+                base_tokps = num(base, "native_prefill_tokps_total")
+                if row_tokps is not None and base_tokps:
+                    shift_ratios.append(float(row_tokps) / float(base_tokps))
+            if shift_ratios:
+                focus.append(
+                    f"native prefill fused shift-mix opt-in A/B ratio min={min(shift_ratios):.3f}x "
+                    f"max={max(shift_ratios):.3f}x; promote only if full prefill wins across target bsz"
+                )
             warp_rows = [
                 r
                 for r in native_prefill_scan
                 if r.get("scan_num_warps") is not None
                 and r.get("native_prefill_tokps_total") is not None
                 and bool(r.get("prefill_fused_state_prep_effective"))
+                and not bool(r.get("prefill_fused_shift_mix_effective"))
                 and not bool(r.get("prefill_fused_output_effective"))
                 and not bool(r.get("prefill_fused_wavg_lora_effective"))
             ]
@@ -1815,11 +1845,11 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         ],
         "chunked_prefill": [compact(r, ["_lineno", "prefill_mode", "batch_size", "prompt_tokens", "chunk_size", "prefill_tokps_total", "speed_ratio_vs_full", "peak_vram_mb", "peak_vram_ratio_vs_full", "max_abs_diff", "decode_max_abs_diff", "seq_length_match"]) for r in chunked_latest],
         "native_prefill_scan": [
-            compact(r, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "scan_num_warps", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_output_requested", "prefill_fused_output_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "fast_token_backend_after_native_prefill", "hf_prefill_ms", "native_prefill_ms", "native_vs_hf_speedup", "hf_prefill_tokps_total", "native_prefill_tokps_total", "max_abs_diff", "min_cosine", "greedy_match", "decode_after_prefill_max_abs_diff", "decode_after_prefill_greedy_match", "peak_vram_mb"])
+            compact(r, ["_lineno", "status", "dtype", "device", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "scan_num_warps", "prefill_fused_shift_mix_requested", "prefill_fused_shift_mix_effective", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_output_requested", "prefill_fused_output_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "fast_token_backend_after_native_prefill", "hf_prefill_ms", "native_prefill_ms", "native_vs_hf_speedup", "hf_prefill_tokps_total", "native_prefill_tokps_total", "max_abs_diff", "min_cosine", "greedy_match", "decode_after_prefill_max_abs_diff", "decode_after_prefill_greedy_match", "peak_vram_mb"])
             for r in native_prefill_scan
         ],
         "native_prefill_breakdown": [
-            compact(r, ["_lineno", "status", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "scan_num_warps", "fine_attention_breakdown", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_output_requested", "prefill_fused_output_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "profiled_total_gpu_ms", "component_sum_ms", "profiled_tokps_total", "component_ms", "component_share", "top_components", "max_abs_diff_vs_native_prefill", "greedy_match_vs_native_prefill", "peak_vram_mb"])
+            compact(r, ["_lineno", "status", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "tokens_total", "fused_scan_requested", "scan_block_m", "scan_num_warps", "fine_attention_breakdown", "prefill_fused_shift_mix_requested", "prefill_fused_shift_mix_effective", "prefill_fused_state_prep_requested", "prefill_fused_state_prep_effective", "prefill_fused_output_requested", "prefill_fused_output_effective", "prefill_fused_wavg_lora_requested", "prefill_fused_wavg_lora_effective", "prefill_fused_wavg_lora_max_m", "profiled_total_gpu_ms", "component_sum_ms", "profiled_tokps_total", "component_ms", "component_share", "top_components", "max_abs_diff_vs_native_prefill", "greedy_match_vs_native_prefill", "peak_vram_mb"])
             for r in native_prefill_breakdown
         ],
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "hf_forward_fixed", "hf_forward_greedy", "hf_forward_auto_fixed", "hf_forward_auto_greedy", "hf_forward_auto_backend", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
@@ -1848,7 +1878,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "fused_attn_output_proto": compact(fused_attn_output_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "head_dims", "head_v_dims", "layers", "input_scale", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "output_max_abs_diff", "prep_max_abs_diff", "min_cosine", "output_min_cosine", "prep_min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_attn_output_project_proto": compact(fused_attn_output_project_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m_values", "input_scale", "steps", "avg_current_ms", "avg_prep_cublas_ms", "avg_prep_cublas_speedup", "best_fused_project", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_ffn_proto": compact(fused_ffn_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "intermediate_sizes", "layers", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
-        "fused_shift_mix_proto": compact(fused_shift_mix_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "input_rank", "hidden_size", "layers", "block_size", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
+        "fused_shift_mix_proto": compact(fused_shift_mix_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "sequence_length", "tokens_total", "input_rank", "hidden_size", "layers", "block_size", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_recurrent_proto": compact(fused_recurrent_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_n", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "out_max_abs_diff", "state_max_abs_diff", "out_min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_recurrent_scan_proto": [
             compact(r, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "tokens", "heads", "head_dim", "block_n", "block_m", "num_warps", "chunk_size", "steps", "native_scan_ms", "native_scan_tokps_total", "fla_chunk_ms", "fla_chunk_tokps_total", "native_vs_fla_speedup", "native_vs_torch_speedup", "native_vs_torch_out_max_abs_diff", "native_vs_torch_state_max_abs_diff", "native_vs_torch_out_min_cosine", "native_vs_fla_out_min_cosine", "peak_vram_mb"])

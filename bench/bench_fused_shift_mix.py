@@ -66,12 +66,13 @@ def load_model(args, dtype):
     return model
 
 
-def make_inputs(hidden_size: int, batch_size: int, device: str, dtype: torch.dtype, rank: int) -> tuple[torch.Tensor, torch.Tensor]:
+def make_inputs(hidden_size: int, batch_size: int, sequence_length: int, device: str, dtype: torch.dtype, rank: int) -> tuple[torch.Tensor, torch.Tensor]:
     gen_device = device if device.startswith("cuda") else "cpu"
-    x = torch.randn(batch_size, hidden_size, device=gen_device, dtype=dtype)
-    prev = torch.randn_like(x)
     if rank == 3:
-        return x.unsqueeze(1), prev.unsqueeze(1)
+        x = torch.randn(batch_size, sequence_length, hidden_size, device=gen_device, dtype=dtype)
+    else:
+        x = torch.randn(batch_size, hidden_size, device=gen_device, dtype=dtype)
+    prev = torch.randn_like(x)
     return x, prev
 
 
@@ -79,12 +80,12 @@ def current_shift_mix(attn, x: torch.Tensor, prev: torch.Tensor):
     delta = prev - x
     if x.dim() == 3:
         return (
-            torch.addcmul(x, delta, attn.x_r),
-            torch.addcmul(x, delta, attn.x_w),
-            torch.addcmul(x, delta, attn.x_k),
-            torch.addcmul(x, delta, attn.x_v),
-            torch.addcmul(x, delta, attn.x_a),
-            torch.addcmul(x, delta, attn.x_g),
+            torch.addcmul(x, delta, attn.x_r.view(1, 1, -1)),
+            torch.addcmul(x, delta, attn.x_w.view(1, 1, -1)),
+            torch.addcmul(x, delta, attn.x_k.view(1, 1, -1)),
+            torch.addcmul(x, delta, attn.x_v.view(1, 1, -1)),
+            torch.addcmul(x, delta, attn.x_a.view(1, 1, -1)),
+            torch.addcmul(x, delta, attn.x_g.view(1, 1, -1)),
         )
     return (
         torch.addcmul(x, delta, attn.x_r.view(1, -1)),
@@ -147,6 +148,7 @@ def main() -> int:
     ap.add_argument("--attn-mode", default="fused_recurrent", choices=["chunk", "fused_recurrent"])
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--batch-size", type=int, default=1)
+    ap.add_argument("--sequence-length", type=int, default=1, help="Only used with --input-rank 3; use prompt length for prefill-shaped rows")
     ap.add_argument("--input-rank", type=int, choices=[2, 3], default=2)
     ap.add_argument("--layers", nargs="+", type=int, default=[0, 1, 11])
     ap.add_argument("--block-size", type=int, default=256)
@@ -161,7 +163,7 @@ def main() -> int:
         torch.cuda.reset_peak_memory_stats()
     model = load_model(args, dtype)
     hidden_size = int(model.config.hidden_size)
-    x, prev = make_inputs(hidden_size, args.batch_size, args.device, dtype, args.input_rank)
+    x, prev = make_inputs(hidden_size, args.batch_size, args.sequence_length, args.device, dtype, args.input_rank)
 
     layer_rows = []
     for layer_idx in args.layers:
@@ -194,6 +196,8 @@ def main() -> int:
         "attn_mode": args.attn_mode,
         "fuse_norm": getattr(model.config, "fuse_norm", None),
         "batch_size": args.batch_size,
+        "sequence_length": args.sequence_length if args.input_rank == 3 else None,
+        "tokens_total": args.batch_size * (args.sequence_length if args.input_rank == 3 else 1),
         "input_rank": args.input_rank,
         "hidden_size": hidden_size,
         "layers": args.layers,
