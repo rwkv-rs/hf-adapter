@@ -221,10 +221,12 @@ def profiled_native_prefill(
 
         use_fused_scan_output = native_jit._native_prefill_fused_scan_output_enabled()
         use_clampw_scan = native_jit._native_prefill_fused_clampw_scan_enabled() and not use_fused_scan_output
+        use_fused_state_scan = native_jit._native_prefill_fused_state_scan_enabled() and not use_fused_scan_output
         use_dplr_scan = (
             native_jit._native_prefill_dplr_scan_enabled()
             and not native_jit._native_prefill_fused_scan_enabled()
             and not use_fused_scan_output
+            and not use_fused_state_scan
         )
         if use_clampw_scan and native_jit._native_prefill_fused_state_prep_enabled() and native_jit.fused_prefill_kv_kk_prep is None:
             use_clampw_scan = False
@@ -264,7 +266,12 @@ def profiled_native_prefill(
                 g_local = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
                 if layer_idx != 0:
                     v_gate_local = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
-            if native_jit._native_prefill_fused_state_prep_enabled():
+            if use_fused_state_scan:
+                k_local = k
+                v_local = v
+                kk_local = None
+                v_first_local = v if layer_idx == 0 else v_first_seq
+            elif native_jit._native_prefill_fused_state_prep_enabled():
                 if use_clampw_scan:
                     if layer_idx == 0:
                         k_local, v_local, kk_local = native_jit.fused_prefill_kv_kk_prep(
@@ -374,7 +381,12 @@ def profiled_native_prefill(
                 if layer_idx != 0:
                     v_gate_local = profiler.measure("attn_lora_v_gate", lambda: torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2)))
 
-            if native_jit._native_prefill_fused_state_prep_enabled():
+            if use_fused_state_scan:
+                k_local = k
+                v_local = v
+                kk_local = None
+                v_first_local = v if layer_idx == 0 else v_first_seq
+            elif native_jit._native_prefill_fused_state_prep_enabled():
                 if use_clampw_scan:
                     if layer_idx == 0:
                         k_local, v_local, kk_local = profiler.measure(
@@ -462,7 +474,41 @@ def profiled_native_prefill(
         else:
             w, k, v, a, g, kk, v_first_seq = profiler.measure("attn_lora_state_prep", lora_and_state_prep)
 
-        if use_fused_scan_output:
+        if use_fused_state_scan:
+            def state_scan():
+                if layer_idx == 0:
+                    return native_jit.fused_recurrent_scan_state_prep(
+                        r.view(B, T, H, N),
+                        w.view(B, T, H, N),
+                        k.view(B, T, H, N),
+                        v.view(B, T, H, N),
+                        a.view(B, T, H, N),
+                        state[layer_idx],
+                        k_k,
+                        k_a,
+                        block_n=N,
+                    )
+                return native_jit.fused_recurrent_scan_state_prep(
+                    r.view(B, T, H, N),
+                    w.view(B, T, H, N),
+                    k.view(B, T, H, N),
+                    v.view(B, T, H, N),
+                    a.view(B, T, H, N),
+                    state[layer_idx],
+                    k_k,
+                    k_a,
+                    v_first=v_first_seq.view(B, T, H, N),
+                    v_gate=v_gate.view(B, T, H, N),
+                    block_n=N,
+                )
+
+            out, new_state, k, v = profiler.measure("recurrent_scan_state_prep_fused", state_scan)
+            out = out.reshape(B, T, hidden)
+            k = k.reshape(B, T, hidden)
+            v = v.reshape(B, T, hidden)
+            if layer_idx == 0:
+                v_first_seq = v
+        elif use_fused_scan_output:
             out, new_state = profiler.measure(
                 "recurrent_scan_output_prep_fused",
                 lambda: native_jit.fused_recurrent_scan_output_prepare(
@@ -688,6 +734,8 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_fused_shift_mix_effective": native_jit._native_prefill_fused_shift_mix_enabled(),
         "prefill_fused_state_prep_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_state_prep_effective": native_jit._native_prefill_fused_state_prep_enabled(),
+        "prefill_fused_state_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN", "0").lower() not in {"0", "false", "no", "off"},
+        "prefill_fused_state_scan_effective": native_jit._native_prefill_fused_state_scan_enabled(),
         "prefill_state_prep_w_dtype": native_jit._native_prefill_state_prep_w_dtype(),
         "prefill_fused_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_output_effective": native_jit._native_prefill_fused_output_enabled(),
