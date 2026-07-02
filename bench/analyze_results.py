@@ -955,16 +955,24 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
     if fused_rkv_wag_projection_proto is None:
         focus.append("fused_rkv_wag_projection_proto row pending")
     else:
+        combo_rows = [r for r in rows if r.get("axis") == "fused_rkv_wag_projection_proto" and r.get("backend") == "hf_adapter"]
+        combo_speedups = [float(r["avg_speedup"]) for r in combo_rows if r.get("avg_speedup") is not None]
+        combo_cases = sorted(
+            {(r.get("batch_size"), r.get("sequence_length"), r.get("tokens_total"), r.get("block_m"), r.get("block_r"), r.get("block_k")) for r in combo_rows},
+            key=str,
+        )
         combo_speedup = fused_rkv_wag_projection_proto.get("avg_speedup")
         backend = fused_rkv_wag_projection_proto.get("prototype_backend")
-        if combo_speedup is not None and float(combo_speedup) < 1.0:
+        if combo_speedups and min(combo_speedups) < 1.0:
             focus.append(
                 f"fused R/K/V + W/A/G projection prototype backend={backend} is slower "
-                f"({float(combo_speedup):.2f}x); optimize two-launch combined projection before HF integration"
+                f"for cases={combo_cases}; speedup min={min(combo_speedups):.2f}x max={max(combo_speedups):.2f}x; "
+                "optimize larger norm/shift/projection fusion before HF integration"
             )
         elif combo_speedup is not None:
             focus.append(
-                f"fused R/K/V + W/A/G projection prototype backend={backend} speedup={float(combo_speedup):.2f}x; "
+                f"fused R/K/V + W/A/G projection prototype backend={backend} "
+                f"speedup={float(combo_speedup):.2f}x tokens_total={fused_rkv_wag_projection_proto.get('tokens_total')}; "
                 "next target full attention fusion/integration"
             )
     if fused_attn_output_proto is None:
@@ -1878,7 +1886,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "fused_wa_lora_proto": compact(fused_wa_lora_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_wag_lora_proto": compact(fused_wag_lora_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_wavg_lora_proto": compact(fused_wavg_lora_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
-        "fused_rkv_wag_projection_proto": compact(fused_rkv_wag_projection_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
+        "fused_rkv_wag_projection_proto": compact(fused_rkv_wag_projection_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "sequence_length", "tokens_total", "hidden_size", "ranks", "layers", "block_m", "block_r", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_attn_output_proto": compact(fused_attn_output_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "head_dims", "head_v_dims", "layers", "input_scale", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "output_max_abs_diff", "prep_max_abs_diff", "min_cosine", "output_min_cosine", "prep_min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_attn_output_project_proto": compact(fused_attn_output_project_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m_values", "input_scale", "steps", "avg_current_ms", "avg_prep_cublas_ms", "avg_prep_cublas_speedup", "best_fused_project", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
         "fused_ffn_proto": compact(fused_ffn_proto, ["_lineno", "prototype_backend", "status", "dtype", "device", "batch_size", "hidden_size", "intermediate_sizes", "layers", "block_m", "block_k", "steps", "avg_current_ms", "avg_prototype_ms", "avg_speedup", "max_abs_diff", "min_cosine", "layer_rows", "peak_vram_mb"]),
