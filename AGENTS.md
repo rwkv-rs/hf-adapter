@@ -165,140 +165,187 @@ Required goals:
 
 ### GPU-Specific Kernel Policy Registry
 
-Every GPU/card family that is touched by this project must have an explicit
-adapter profile. Do not leave new hardware as an implicit "works on my GPU"
-case. When adding or validating a card, update all of:
+This is a **live per-GPU adaptation contract**, not a historical notes section.
+Every time this project touches a new card, add or update the card/family rule
+here and the machine-readable rule in `rwkv7_hf/kernel_policy.py`. Do not leave
+new hardware as an implicit "works on my GPU" case.
 
-1. `rwkv7_hf/kernel_policy.py` with the runtime family classification and
-   default kernel policy.
-2. This `AGENTS.md` section with the per-card adaptation rules.
-3. `bench/results.jsonl` with at least smoke rows for the relevant benchmark
-   axes.
-4. `bench/analyze_results.py` / summaries when a new axis or gate is added.
+For every card that is developed, rented, borrowed, or used for validation,
+record the following before claiming support:
 
-Environment variables always override the policy. The policy is only the
-safe default selected when the user does not set explicit flags.
+1. Exact identity: GPU name, SM/ROCm target, driver, CUDA/ROCm, PyTorch, Triton,
+   model checkpoint, dtype, and batch/prompt/decode matrix.
+2. Runtime policy: `rwkv7_hf/kernel_policy.py` classification plus default-on
+   and default-off kernels for that card/family.
+3. AGENTS contract: this section must say which kernels are allowed by default,
+   which are opt-in only, and which benchmark rows are mandatory.
+4. Evidence rows: append `bench/results.jsonl` rows for functional smoke,
+   decode, prefill, cache, and quant axes that are being claimed.
+5. Analyzer support: update `bench/analyze_results.py` / summaries whenever a
+   new axis, gate, or card-local metric is added.
 
-Policy coverage and validation are separate. A family may have a conservative
-profile so the code can route safely, but it is not a validated production
-target until the required card-local rows are present in `bench/results.jsonl`.
-Current validated/touched rows exist for V100, RTX 4090, and RTX 5070 Laptop;
-Pascal/Turing/Ampere/Hopper/AMD entries are policy rules and TODO validation
-targets until matching hardware is benchmarked.
+Environment variables always override the policy. The policy is only the safe
+default selected when the user does not set explicit flags. Policy coverage and
+validation are separate: a family can have a conservative routing rule before it
+has production evidence, but it is not a validated production target until the
+required exact-card rows exist in `bench/results.jsonl`.
 
-#### Global rules for all cards
+Current exact-card evidence status:
 
-- Never enable a fused kernel by default on a card unless there is a
-  per-card benchmark row showing correctness and non-negative end-to-end value.
-- A shallow micro-kernel win is not enough for default enablement. Prefer
-  end-to-end `native_graph` rows with greedy match and tok/s speedup.
-- If a custom kernel is slower than cuBLAS/torch on a card, keep it as
-  telemetry only and record that it must not be integrated by default.
-- Preserve fallback order: `native_graph` / `native_jit` / FLA or pure torch
-  fallback, depending on availability and compatibility.
-- For every new GPU, run at minimum:
-  - `bench_batch_sweep.py` for `bsz=1/2/4/8`;
-  - `bench_native_graph_overhead.py`;
-  - `bench_native_prefill_scan.py` for the native layer-wise prefill/cache
-    handoff path when prefill performance is being claimed;
-  - fused output/recurrent-output integration smokes;
-  - projection/LoRA/layout sweep before enabling projection kernels;
-  - W8/W4 footprint + speed rows if quantization is claimed.
+- V100 (`sm_70`): active regression baseline; preserve training/PEFT/TRL/cache
+  and decode greedy-match rows before changing defaults.
+- RTX 4090 (`sm_89`): active Ada consumer validation card; native fused prefill
+  scan is promising under explicit A/B flags, while deeper projection fusion is
+  still opt-in because bsz=1 regresses even when bsz=4 improves.
+- RTX 5070 Laptop / 50-series (`sm_120` observed): touched Blackwell path; native
+  no-FLA compatibility is important because some FLA training kernels can be
+  architecture-limited; fusion wins must be re-proven end-to-end on each 50-card.
+- Pascal/Turing/Ampere/Hopper/AMD: registry rules exist, but support remains TODO
+  until exact-card rows are added.
+
+#### Per-GPU adaptation checklist
+
+Run this checklist for every new GPU before marking it as supported:
+
+- Functional: import/from_pretrained, `generate(use_cache=True)`,
+  `rwkv7_forward_token`, batch cache, dynamic batch select/reorder/drop,
+  chunked prefill, save/reload, and greedy-match decode.
+- Decode performance: `bench_batch_sweep.py` for `bsz=1/2/4/8`,
+  `bench_native_graph_overhead.py`, native_graph cache hit/miss telemetry, and
+  per-step tok/s/latency.
+- Prefill performance: `bench_native_prefill_scan.py` when fast prefill is
+  claimed; compare HF/FLA prefill against native prefill and record cache handoff
+  correctness.
+- Fused kernels: fused recurrent-output and fused output integration smokes;
+  projection/LoRA/layout sweeps before any projection default; full native_graph
+  end-to-end rows before promotion.
+- Quantization: W8/W4 footprint, speed, greedy/quality rows. Microbench wins are
+  never enough for a speed claim; require end-to-end decode evidence.
+- Training, if claimed: HF Trainer, PEFT LoRA, TRL SFT/DPO/GRPO, checkpoint
+  resume, and ZeRO-2/ZeRO-3 smoke on the relevant card or multi-GPU setup.
+- Promotion rule: do not enable a fused/quant kernel by default unless exact-card
+  rows show correctness plus non-negative end-to-end value across the claimed
+  batch sizes. If bsz=1 regresses, keep the kernel opt-in even if bsz=4/8 wins.
 
 #### Pascal / GTX 10 / P100 (`sm_60`/`sm_61`)
 
 - Policy family: `pascal`.
-- Default stance: compatibility-first.
-- Default fused Triton/native-graph sub-kernels: off, except manually forced
-  smokes.
-- Required validation before any default enablement: import, generate,
-  `rwkv7_forward_token`, batch cache, dynamic batch, and at least one full
-  native-graph decode smoke on the exact card.
-- Quantization rule: memory-only until a card-local W8/W4 speed row beats fp16.
+- Default stance: compatibility-first; Pascal lacks the newer tensor-core path.
+- Default-on: `fast_cache` only.
+- Default-off: fused recurrent/output/projection/LoRA/prefill-scan kernels.
+- Required validation: common functional checklist plus at least one full
+  native_graph decode smoke on the exact card.
+- Quant rule: memory-only until a card-local W8/W4 row beats fp16 end-to-end.
+- Promotion rule: never inherit V100/4090/5070 fused defaults without Pascal rows.
 
 #### Volta / V100 (`sm_70`)
 
 - Policy family: `volta`.
 - Role: current regression baseline and conservative production-smoke target.
-- Defaults:
-  - `native_graph` backend remains preferred through `auto`.
-  - `fused_recurrent_output`: on by default.
-  - `fused_output`: on by default.
-  - `fused_recurrent`: off by default unless explicitly A/B tested.
-  - `fused_prefill_scan`: off by default; enable only in
-    `bench_native_prefill_scan.py` A/B rows until full prefill beats HF/FLA.
-  - `fused_output_project`: off by default.
-  - `fused_projection`, `fused_wag_lora`, `fused_wavg_lora`: off by default.
-- Quantization rule: W8/W4 memory rows are valid, but speed is not considered
-  solved until fused/native quant beats fp16 on this card.
-- Any change to default V100 policy must preserve HF Trainer/TRL/PEFT smoke
-  coverage plus decode greedy-match rows.
+- Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
+- Default-off: `fused_recurrent`, `fused_prefill_scan`, `fused_output_project`,
+  `fused_projection`, `fused_wag_lora`, `fused_wavg_lora`.
+- Required validation: functional checklist plus HF Trainer, PEFT LoRA, TRL
+  SFT/DPO/GRPO, checkpoint resume, decode greedy-match, cache telemetry, and
+  Albatross A/B rows when available.
+- Quant rule: W8/W4 memory rows are valid; speed is unsolved until native/fused
+  quant beats fp16 end-to-end on V100.
+- Promotion rule: any default change must preserve V100 training and decode rows.
 
 #### Turing / RTX 20 / T4 (`sm_75`)
 
 - Policy family: `turing`.
-- Default stance: follow Volta-safe output fusions, but require card-local
-  decode and quant rows before claiming performance.
-- Projection/LoRA fusions stay opt-in until `native_graph` end-to-end speedup
-  is measured on the card.
+- Default stance: Volta-safe output fusions can be attempted, but performance is
+  not claimed without Turing rows.
+- Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
+- Default-off: prefill-scan, output-project, projection, WAG/WAVG LoRA fusions.
+- Required validation: common functional checklist, bsz sweep, native_graph
+  overhead, quant footprint/speed, and cache hit-rate rows.
+- Promotion rule: projection/LoRA fusions stay opt-in until exact-card
+  native_graph end-to-end speedup is measured.
 
 #### Ampere / A100 / RTX 30 (`sm_80`/`sm_86`)
 
 - Policy family: `ampere`.
-- Default stance: stable output and recurrent-output fusions may be enabled;
-  projection/LoRA and quant kernels require card-local sweeps.
-- A100 validation must include larger batch, chunked prefill, and ZeRO smoke
-  rows when training support is claimed.
+- Default stance: stable output/recurrent-output fusions may be enabled; larger
+  batch, training, and quant behavior must be tuned per exact card.
+- Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
+- Default-off: prefill-scan by default, output-project, projection, WAG/WAVG LoRA
+  fusions.
+- Required validation: common functional checklist, larger-batch prefill, state
+  cache reuse/hit-rate rows, W8/W4 rows, and ZeRO-2/ZeRO-3 smoke when training is
+  claimed.
+- Promotion rule: do not assume V100/4090 block sizes; run Ampere block/layout
+  sweeps before changing defaults.
 
 #### Ada / RTX 40 / 4090 (`sm_89`)
 
 - Policy family: `ada`.
-- Role: current high-end consumer validation target.
-- Defaults:
-  - `native_graph` backend preferred through `auto`.
-  - `fused_recurrent_output`: on by default.
-  - `fused_output`: on by default.
-  - shallow R/K/V split-K/layout kernels: off; 4090 rows showed they are slower
-    than cuBLAS.
-  - projection/LoRA fusions: off unless a deeper fused path proves end-to-end
-    speedup.
-- Prefill rule: native recurrent scan may be benchmarked, but it is not the
-  default full prefill path until projection/output integration is wired and
-  `native_prefill_scan` end-to-end rows improve. Use `RWKV7_FAST_PREFILL=1`
-  plus `RWKV7_NATIVE_PREFILL_FUSED_SCAN=1` only as explicit A/B flags until the
-  broader card/model matrix is validated.
+- Role: high-end consumer validation target.
+- Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
+- Default-off: `fused_output_project`, projection/LoRA fusions, and prefill-scan
+  as a default.
+- 4090 adaptation rule:
+  - cuBLAS/torch remains the baseline for shallow R/K/V projection; split-K/layout
+    prototype rows were slower and must stay telemetry-only.
+  - Native fused prefill scan can be used under explicit A/B flags
+    (`RWKV7_FAST_PREFILL=1` + `RWKV7_NATIVE_PREFILL_FUSED_SCAN=1`) after
+    cache-handoff correctness rows, but it is not a blanket default until the
+    broader batch/model matrix passes.
+  - Deeper R/K/V + W/A/G/V-gate projection fusion is opt-in: current 4090 rows
+    show greedy correctness, bsz=4 speedup, and bsz=1 regression, so default
+    promotion is blocked by the min-batch gate.
+- Required validation: common functional checklist, bsz=1/2/4/8 decode matrix,
+  prefill scan A/B if fast prefill is claimed, quant end-to-end rows, and
+  Albatross-ratio reporting.
+- Promotion rule: the minimum speedup across claimed bsz values must be >= 1.0x
+  with greedy match before enabling a new fusion by default.
 
 #### Hopper / H100 (`sm_90`)
 
 - Policy family: `hopper`.
-- Default stance: output/recurrent-output fusions may be enabled, but H100 is
-  not considered tuned until it has its own projection, prefill, W8/W4, and
-  larger-batch rows.
-- Do not assume 4090 block sizes are optimal on H100; add sweep rows before
-  changing `block_m`/`block_k` defaults.
+- Default stance: expected fast server path, but H100 is not tuned until H100 rows
+  exist.
+- Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
+- Default-off: prefill-scan by default, output-project, projection, WAG/WAVG LoRA
+  fusions.
+- Required validation: common functional checklist, larger model rows, large
+  batch/chunked prefill, W8/W4/FP8-like precision and speed rows, PP/TP serving
+  smoke if claimed, and ZeRO-2/ZeRO-3 smoke if training is claimed.
+- Promotion rule: do not reuse 4090 or Blackwell block sizes without H100 sweeps.
 
-#### Blackwell / RTX 50 / 5070-5090 (`sm_100+`, observed 50-series paths)
+#### Blackwell / RTX 50 / 5070-5090 (`sm_100+`, observed `sm_120`)
 
 - Policy family: `blackwell`.
 - Role: next consumer-generation compatibility target.
-- Default stance: prefer native/no-FLA compatibility smokes when FLA kernels
-  fail or show architecture-specific issues.
-- Defaults:
-  - `native_graph` remains the intended fast decode route when CUDA graph
-    capture succeeds.
-  - stable output/recurrent-output fusions may be on.
-  - projection/LoRA/quant fused kernels stay off until 50-series rows prove
-    correctness and speed.
-- Mandatory before claiming support: import/generate, fast decode, dynamic
-  batch, chunked prefill, bnb W8/W4 functional inference, and native/no-FLA
-  fallback smoke on the exact card.
+- Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
+- Default-off: `fused_output_project`, projection/LoRA fusions, and prefill-scan
+  as a default.
+- 50-series adaptation rule:
+  - Always include native/no-FLA smokes because FLA kernels may fail or regress on
+    new architectures even when inference forward works.
+  - Keep projection/LoRA/quant fusions opt-in until exact 50-card end-to-end rows
+    prove both correctness and speed. Isolated kernel wins do not promote.
+  - Quantization must include footprint, long/short decode speed, and greedy or
+    quality rows. Treat bnb as a compatibility/memory baseline, not a fast path.
+- Mandatory before claiming support: import/generate, fast decode, dynamic batch,
+  chunked prefill, bnb W8/W4 functional inference, native_model no-FLA fallback,
+  and exact-card fused-kernel A/B rows.
+- Promotion rule: promote only kernels with exact-card greedy match and min bsz
+  speedup >= 1.0x; otherwise leave them opt-in/telemetry.
 
 #### AMD / ROCm / HIP
 
 - Policy family: `amd_hip`.
-- Default stance: compatibility-first; Triton/CUDA-only kernels are off.
-- Required path: pure PyTorch/native_model or ROCm-supported fallback first.
-- Do not claim AMD performance parity until HIP-specific benchmark rows exist.
+- Default stance: compatibility-first; CUDA/Triton-only kernels are off.
+- Default-on: `fast_cache` only.
+- Default-off: CUDA native_graph fused kernels and CUDA-only quant speed paths.
+- Required path: pure PyTorch/native_model or ROCm-supported fallback first, then
+  HIP-specific kernels only after evidence.
+- Required validation: ROCm import/generate, pure PyTorch/native_model
+  forward/backward, cache smokes, and HIP-specific speed rows before parity
+  claims.
+- Quant rule: no AMD quant performance claim until HIP-specific W8/W4 rows exist.
 
 ### Quantized Inference
 
