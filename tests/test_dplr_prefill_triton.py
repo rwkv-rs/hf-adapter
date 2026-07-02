@@ -119,6 +119,10 @@ def test_dense_chunk_summary_triton_matches_torch_cuda() -> None:
         dplr_dense_chunk_summary_torch,
         dplr_dense_chunk_summary_triton,
         dplr_dense_chunk_summary_triton_available,
+        dplr_compact_wy_apply_summaries_torch,
+        dplr_compact_wy_chunk_summary_torch,
+        dplr_compact_wy_chunk_summary_triton,
+        dplr_compact_wy_summary_to_dense,
         dplr_dense_prefix_combine_torch,
         dplr_dense_prefix_combine_triton,
         dplr_dense_three_stage_triton,
@@ -142,6 +146,23 @@ def test_dense_chunk_summary_triton_matches_torch_cuda() -> None:
     assert torch.allclose(got["additive"], ref["additive"], atol=2e-6, rtol=2e-6), (
         got["additive"] - ref["additive"]
     ).abs().max()
+
+    compact_ref = dplr_compact_wy_chunk_summary_torch(w, k, v, kk, a, chunk_size=4)
+    compact_got = dplr_compact_wy_chunk_summary_triton(w, k, v, kk, a, chunk_size=4, block_n=4, block_r=4)
+    for key in ("transition_diag", "transition_left", "transition_right", "additive_left", "additive_right"):
+        assert torch.allclose(compact_got[key], compact_ref[key], atol=2e-6, rtol=2e-6), (
+            key,
+            (compact_got[key] - compact_ref[key]).abs().max(),
+        )
+    compact_dense = dplr_compact_wy_summary_to_dense(compact_got)
+    assert torch.allclose(compact_dense["transition"], ref["transition"], atol=2e-6, rtol=2e-6), (
+        compact_dense["transition"] - ref["transition"]
+    ).abs().max()
+    assert torch.allclose(compact_dense["additive"], ref["additive"], atol=2e-6, rtol=2e-6), (
+        compact_dense["additive"] - ref["additive"]
+    ).abs().max()
+    compact_state = dplr_compact_wy_apply_summaries_torch(state, compact_got)
+    assert torch.allclose(compact_state, ref_state, atol=2e-6, rtol=2e-6), (compact_state - ref_state).abs().max()
 
     starts_ref, prefix_final_ref = dplr_dense_prefix_combine_torch(state, ref["transition"], ref["additive"])
     starts_got, prefix_final_got = dplr_dense_prefix_combine_triton(

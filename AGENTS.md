@@ -99,11 +99,15 @@ Latest RTX 4090 target evidence:
 
 Remaining before this goal is complete:
 
-- Compact WY torch reference and dense reconstruction oracle now exist via
+- Compact WY torch reference, dense reconstruction oracle, and first Triton
+  compact summary kernel now exist via
   `dplr_compact_wy_chunk_summary_torch`,
+  `dplr_compact_wy_chunk_summary_triton`,
   `dplr_compact_wy_summary_to_dense`, and
-  `dplr_compact_wy_apply_summaries_torch`. The next required step is a
-  Triton compact summary kernel for the 4090 target shape.
+  `dplr_compact_wy_apply_summaries_torch`. The first Triton compact kernel is
+  target-constrained to `N<=64, chunk_size<=64`; 4090 target factor diff is
+  `<=5.96e-08`, final state diff is `~1.13e-04`, and summary time is
+  `~0.155 ms`. The next required step is compact prefix combine.
 - Replace dense `[N,N]` transition/additive runtime summaries with compact
   WY/low-rank factors to reduce memory traffic and close the Albatross gap.
 - Make the explicit three-stage path at least competitive with the P0 fused
