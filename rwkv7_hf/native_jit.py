@@ -383,6 +383,12 @@ def _native_prefill_cuda_state_scan_lanes_per_row() -> int:
     return value
 
 
+def _native_prefill_cuda_state_scan_precompute_enabled() -> bool:
+    """Use two-stage vector precompute before the CUDA row-block scan."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_PRECOMPUTE", False)
+
+
 def _native_prefill_fused_shift_mix_enabled() -> bool:
     """Runtime switch for prefill attention shift-mix fusion telemetry."""
 
@@ -1599,6 +1605,9 @@ def prefill(
                 and x.dtype == torch.float16
             )
             cuda_state_scan_lanes = _native_prefill_cuda_state_scan_lanes_per_row() if use_cuda_state_scan else 1
+            cuda_state_scan_precompute = (
+                _native_prefill_cuda_state_scan_precompute_enabled() if use_cuda_state_scan else False
+            )
             if use_cuda_state_scan and layer_idx == 0:
                 out, new_state, k, v = cuda_state_scan_prep(
                     r.view(B, T, H, N),
@@ -1610,6 +1619,7 @@ def prefill(
                     k_k,
                     k_a,
                     lanes_per_row=cuda_state_scan_lanes,
+                    precompute_vector=cuda_state_scan_precompute,
                 )
                 v_first_seq = v.reshape(B, T, hidden)
             elif use_cuda_state_scan:
@@ -1625,6 +1635,7 @@ def prefill(
                     v_first=v_first_seq.view(B, T, H, N),
                     v_gate=v_gate.view(B, T, H, N),
                     lanes_per_row=cuda_state_scan_lanes,
+                    precompute_vector=cuda_state_scan_precompute,
                 )
             elif layer_idx == 0:
                 out, new_state, k, v = fused_recurrent_scan_state_prep(

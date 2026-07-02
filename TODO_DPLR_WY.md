@@ -436,16 +436,53 @@ Branch: `wangyue/native-prefill-060-albatross`
     duplicated vector prep / K normalization across the 64 row blocks, e.g.
     split into a head-level vector-precompute stage plus register-row apply, or
     move to a cooperative persistent head-level schedule.
+- [x] Try two-stage CUDA vector precompute plus row-block register-state apply:
+  - added opt-in `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_PRECOMPUTE=1`, valid
+    only with `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN=1` and
+    `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_LANES=64`.
+  - implementation:
+    - new `rwkv7_state_scan_prep_n64_vector_precompute_kernel` runs once per
+      `(batch, token, head)` and computes W decay, normalized KK, adjusted K,
+      and adjusted V once instead of recomputing them in each of the 64
+      row-blocks.
+    - new `rwkv7_state_scan_prep_n64_rowblock_precomputed_kernel` keeps the
+      row state in registers and consumes the precomputed vectors. K/V returned
+      to the rest of the HF path stay fp16, while the row-block update consumes
+      fp32 temp vectors for correctness parity with the non-precompute
+      row-block path.
+    - benchmark/profiler/analyzer telemetry now records
+      `prefill_cuda_state_scan_precompute`.
+  - validation result files:
+    - `bench/results_4090_prefill060_cuda_state_scan_precompute_smoke_20260703_011900.jsonl`
+    - `bench/results_4090_prefill060_cuda_state_scan_precompute_confirm_20260703_012150.jsonl`
+  - remote row sources:
+    - `/tmp/native_4090_cuda_state_scan_precompute_smoke_20260703_011900.jsonl`
+    - `/tmp/native_4090_cuda_state_scan_precompute_confirm_20260703_012150.jsonl`
+  - rows all pass greedy/cache smoke:
+    - smoke baseline Triton: `24,017.2 tok/s`.
+    - smoke row-block no-precompute: `27,122.9 tok/s`.
+    - smoke two-stage precompute: `26,194.8 tok/s`, peak `994.2 MiB`.
+    - confirm baseline Triton: `24,720.9 tok/s`.
+    - confirm row-block no-precompute: `26,251.0 tok/s`.
+    - confirm two-stage precompute: `26,395.6 tok/s`, peak `994.2 MiB`,
+      max diff `0.09375`.
+  - conclusion: removing duplicated vector prep/K normalization is correctness
+    safe and gives a small confirm win over the same-run row-block CUDA path,
+    but the extra precompute kernel and four fp32 temp vectors keep it below
+    the historical best confirmed branch row (`27,051.0 tok/s`) and below the
+    `0.60x` Albatross stretch. Keep it opt-in. The useful signal is that vector
+    prep duplication is real, but it needs a lower-traffic/persistent schedule
+    rather than a naive temp-tensor precompute stage.
 - [ ] Next corrected-harness experiment:
-  - CUDA rowgroup and row-block testing narrowed the remaining credible path:
-    target a persistent or layout-rewritten state scan that reduces per-token
-    synchronization/shared-memory traffic without recomputing W/K/V/A prep and
-    K normalization 64 times. The most concrete next experiment is a two-stage
-    CUDA path: head-level vector precompute once per `(B,H,T)` plus
-    register-row apply/output, or a cooperative persistent head-level schedule
-    that shares vector prep while keeping row state in registers. Do not
-    promote wrapper/projection fusion or the current rowgroup/row-block CUDA
-    scaffolds.
+  - CUDA rowgroup, row-block, and two-stage precompute testing narrowed the
+    remaining credible path: keep the register-row state layout, but avoid the
+    naive precompute path's extra global temp traffic. The next concrete CUDA
+    task should try either (a) a cooperative persistent head-level schedule
+    where one block/cluster shares vector prep while row state stays in
+    registers, or (b) a reduced-temp row-block path that precomputes only the
+    expensive normalized KK / W decay and keeps K/V in the existing fp16 output
+    tensors. Do not promote wrapper/projection fusion or the current rowgroup,
+    row-block, or naive precompute scaffolds.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `27,051.0 tok/s` (`~0.5187x`), still about `15.7%` relative uplift short of
