@@ -33,7 +33,8 @@ std::vector<torch::Tensor> rwkv7_state_scan_prep_forward_cuda(
     torch::Tensor v_gate,
     bool has_v_gate,
     int lanes_per_row,
-    int precompute_mode);
+    int precompute_mode,
+    int rows_per_block);
 
 std::vector<torch::Tensor> state_scan_prep_forward(
     torch::Tensor r,
@@ -48,9 +49,10 @@ std::vector<torch::Tensor> state_scan_prep_forward(
     torch::Tensor v_gate,
     bool has_v_gate,
     int lanes_per_row,
-    int precompute_mode) {
+    int precompute_mode,
+    int rows_per_block) {
   return rwkv7_state_scan_prep_forward_cuda(
-      r, w_raw, k_raw, v_raw, a, state, k_k, k_a, v_first, v_gate, has_v_gate, lanes_per_row, precompute_mode);
+      r, w_raw, k_raw, v_raw, a, state, k_k, k_a, v_first, v_gate, has_v_gate, lanes_per_row, precompute_mode, rows_per_block);
 }
 """
 
@@ -433,6 +435,132 @@ __global__ void rwkv7_state_scan_prep_n64_rowblock_kernel(
   final_state[state_base + row * N + col] = st;
 }
 
+template <int ROWS_PER_BLOCK>
+__device__ __forceinline__ float rwkv7_row_reduce_sum_64(float value, float* scratch, int row_lane, int col) {
+  const unsigned mask = 0xffffffffu;
+  const int lane = col & 31;
+  const int local_warp = col >> 5;
+  #pragma unroll
+  for (int offset = 16; offset > 0; offset >>= 1) {
+    value += __shfl_down_sync(mask, value, offset);
+  }
+  if (lane == 0) {
+    scratch[row_lane * 2 + local_warp] = value;
+  }
+  __syncthreads();
+  value = (local_warp == 0 && lane < 2) ? scratch[row_lane * 2 + lane] : 0.0f;
+  if (local_warp == 0) {
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1) {
+      value += __shfl_down_sync(mask, value, offset);
+    }
+  }
+  if (local_warp == 0 && lane == 0) {
+    scratch[row_lane * 2] = value;
+  }
+  __syncthreads();
+  return scratch[row_lane * 2];
+}
+
+template <typename scalar_t, int ROWS_PER_BLOCK>
+__global__ void rwkv7_state_scan_prep_n64_rowblock_coop_kernel(
+    const scalar_t* __restrict__ r,
+    const scalar_t* __restrict__ w_raw,
+    const scalar_t* __restrict__ k_raw,
+    const scalar_t* __restrict__ v_raw,
+    const scalar_t* __restrict__ a,
+    const float* __restrict__ state,
+    const scalar_t* __restrict__ k_k,
+    const scalar_t* __restrict__ k_a,
+    const scalar_t* __restrict__ v_first,
+    const scalar_t* __restrict__ v_gate,
+    scalar_t* __restrict__ out,
+    float* __restrict__ final_state,
+    scalar_t* __restrict__ k_out,
+    scalar_t* __restrict__ v_out,
+    int B,
+    int T,
+    int H,
+    bool has_v_gate) {
+  constexpr int N = 64;
+  constexpr int ROW_BLOCKS = N / ROWS_PER_BLOCK;
+  const int block = blockIdx.x;
+  const int row_block = block % ROW_BLOCKS;
+  const int bh = block / ROW_BLOCKS;
+  const int head = bh % H;
+  const int batch = bh / H;
+  const int row_lane = threadIdx.x >> 6;
+  const int col = threadIdx.x & 63;
+  const int row = row_block * ROWS_PER_BLOCK + row_lane;
+
+  __shared__ float r_s[N];
+  __shared__ float w_s[N];
+  __shared__ float k_s[N];
+  __shared__ float a_s[N];
+  __shared__ float kk_s[N];
+  __shared__ float v_row_s[ROWS_PER_BLOCK];
+  __shared__ float reduce_s[ROWS_PER_BLOCK * 2];
+
+  const int state_base = (batch * H + head) * N * N;
+  const int param_base = head * N;
+  float st = state[state_base + row * N + col];
+
+  for (int t = 0; t < T; ++t) {
+    const int vec_base = ((batch * T + t) * H + head) * N;
+    float rv = 0.0f;
+    float wr = 0.0f;
+    float kr = 0.0f;
+    float av = 0.0f;
+    float kk_raw = 0.0f;
+    if (row_lane == 0) {
+      rv = static_cast<float>(r[vec_base + col]);
+      wr = static_cast<float>(w_raw[vec_base + col]);
+      kr = static_cast<float>(k_raw[vec_base + col]);
+      av = static_cast<float>(a[vec_base + col]);
+      kk_raw = kr * static_cast<float>(k_k[param_base + col]);
+    }
+
+    const float norm2 = rwkv7_row_reduce_sum_64<ROWS_PER_BLOCK>(
+        row_lane == 0 ? kk_raw * kk_raw : 0.0f, reduce_s, row_lane, col);
+    const float norm_inv = rsqrtf(fmaxf(norm2, 1.0e-20f));
+
+    if (row_lane == 0) {
+      const float kv = kr * (1.0f + (av - 1.0f) * static_cast<float>(k_a[param_base + col]));
+      r_s[col] = rv;
+      w_s[col] = __expf(-0.606531f / (1.0f + __expf(-wr)));
+      k_s[col] = kv;
+      a_s[col] = av;
+      kk_s[col] = kk_raw * norm_inv;
+      k_out[vec_base + col] = static_cast<scalar_t>(kv);
+      if (col < ROWS_PER_BLOCK) {
+        const int v_row = row_block * ROWS_PER_BLOCK + col;
+        const float vr = static_cast<float>(v_raw[vec_base + v_row]);
+        float vv = vr;
+        if (has_v_gate) {
+          const float vf = static_cast<float>(v_first[vec_base + v_row]);
+          const float vg = static_cast<float>(v_gate[vec_base + v_row]);
+          vv = vr + (vf - vr) * vg;
+        }
+        v_row_s[col] = vv;
+        v_out[vec_base + v_row] = static_cast<scalar_t>(vv);
+      }
+    }
+    __syncthreads();
+
+    const float state_dot_kk = rwkv7_row_reduce_sum_64<ROWS_PER_BLOCK>(
+        st * kk_s[col], reduce_s, row_lane, col);
+    const float new_st = st * w_s[col] + v_row_s[row_lane] * k_s[col] - state_dot_kk * kk_s[col] * a_s[col];
+    st = new_st;
+    const float recurrent = rwkv7_row_reduce_sum_64<ROWS_PER_BLOCK>(
+        new_st * r_s[col], reduce_s, row_lane, col);
+    if (col == 0) {
+      out[vec_base + row] = static_cast<scalar_t>(recurrent);
+    }
+  }
+
+  final_state[state_base + row * N + col] = st;
+}
+
 template <typename scalar_t>
 __global__ void rwkv7_state_scan_prep_n64_vector_precompute_kernel(
     const scalar_t* __restrict__ w_raw,
@@ -648,7 +776,8 @@ std::vector<torch::Tensor> rwkv7_state_scan_prep_forward_cuda(
     torch::Tensor v_gate,
     bool has_v_gate,
     int lanes_per_row,
-    int precompute_mode) {
+    int precompute_mode,
+    int rows_per_block) {
   CHECK_INPUT(r);
   CHECK_INPUT(w_raw);
   CHECK_INPUT(k_raw);
@@ -683,6 +812,10 @@ std::vector<torch::Tensor> rwkv7_state_scan_prep_forward_cuda(
               "CUDA vector precompute mode must be 0 (none), 1 (full), or 2 (wk)");
   TORCH_CHECK(precompute_mode == 0 || lanes_per_row == 64,
               "CUDA vector precompute prototypes currently require lanes_per_row=64");
+  TORCH_CHECK(rows_per_block == 1 || rows_per_block == 2 || rows_per_block == 4 || rows_per_block == 8,
+              "CUDA row-block cooperative rows_per_block must be one of 1, 2, 4, or 8");
+  TORCH_CHECK(rows_per_block == 1 || (lanes_per_row == 64 && precompute_mode == 0),
+              "CUDA rows_per_block>1 currently requires lanes_per_row=64 and precompute_mode=none");
 
   auto out = torch::empty_like(r);
   auto final_state = torch::empty_like(state);
@@ -761,6 +894,63 @@ std::vector<torch::Tensor> rwkv7_state_scan_prep_forward_cuda(
         out.data_ptr<at::Half>(),
         final_state.data_ptr<float>(),
         B, T, H);
+  } else if (lanes_per_row == 64 && rows_per_block == 8) {
+    const dim3 row_grid(B * H * 8);
+    const dim3 block(64 * 8);
+    rwkv7_state_scan_prep_n64_rowblock_coop_kernel<at::Half, 8><<<row_grid, block, 0, stream>>>(
+        r.data_ptr<at::Half>(),
+        w_raw.data_ptr<at::Half>(),
+        k_raw.data_ptr<at::Half>(),
+        v_raw.data_ptr<at::Half>(),
+        a.data_ptr<at::Half>(),
+        state.data_ptr<float>(),
+        k_k.data_ptr<at::Half>(),
+        k_a.data_ptr<at::Half>(),
+        has_v_gate ? v_first.data_ptr<at::Half>() : v_raw.data_ptr<at::Half>(),
+        has_v_gate ? v_gate.data_ptr<at::Half>() : v_raw.data_ptr<at::Half>(),
+        out.data_ptr<at::Half>(),
+        final_state.data_ptr<float>(),
+        k_out.data_ptr<at::Half>(),
+        v_out.data_ptr<at::Half>(),
+        B, T, H, has_v_gate);
+  } else if (lanes_per_row == 64 && rows_per_block == 4) {
+    const dim3 row_grid(B * H * 16);
+    const dim3 block(64 * 4);
+    rwkv7_state_scan_prep_n64_rowblock_coop_kernel<at::Half, 4><<<row_grid, block, 0, stream>>>(
+        r.data_ptr<at::Half>(),
+        w_raw.data_ptr<at::Half>(),
+        k_raw.data_ptr<at::Half>(),
+        v_raw.data_ptr<at::Half>(),
+        a.data_ptr<at::Half>(),
+        state.data_ptr<float>(),
+        k_k.data_ptr<at::Half>(),
+        k_a.data_ptr<at::Half>(),
+        has_v_gate ? v_first.data_ptr<at::Half>() : v_raw.data_ptr<at::Half>(),
+        has_v_gate ? v_gate.data_ptr<at::Half>() : v_raw.data_ptr<at::Half>(),
+        out.data_ptr<at::Half>(),
+        final_state.data_ptr<float>(),
+        k_out.data_ptr<at::Half>(),
+        v_out.data_ptr<at::Half>(),
+        B, T, H, has_v_gate);
+  } else if (lanes_per_row == 64 && rows_per_block == 2) {
+    const dim3 row_grid(B * H * 32);
+    const dim3 block(64 * 2);
+    rwkv7_state_scan_prep_n64_rowblock_coop_kernel<at::Half, 2><<<row_grid, block, 0, stream>>>(
+        r.data_ptr<at::Half>(),
+        w_raw.data_ptr<at::Half>(),
+        k_raw.data_ptr<at::Half>(),
+        v_raw.data_ptr<at::Half>(),
+        a.data_ptr<at::Half>(),
+        state.data_ptr<float>(),
+        k_k.data_ptr<at::Half>(),
+        k_a.data_ptr<at::Half>(),
+        has_v_gate ? v_first.data_ptr<at::Half>() : v_raw.data_ptr<at::Half>(),
+        has_v_gate ? v_gate.data_ptr<at::Half>() : v_raw.data_ptr<at::Half>(),
+        out.data_ptr<at::Half>(),
+        final_state.data_ptr<float>(),
+        k_out.data_ptr<at::Half>(),
+        v_out.data_ptr<at::Half>(),
+        B, T, H, has_v_gate);
   } else if (lanes_per_row == 64) {
     const dim3 row_grid(B * H * 64);
     const dim3 block(64);
@@ -884,7 +1074,7 @@ def _load_extension():
     from torch.utils.cpp_extension import load_inline
 
     return load_inline(
-        name="rwkv7_cuda_state_scan_v8",
+        name="rwkv7_cuda_state_scan_v9",
         cpp_sources=_CPP_SRC,
         cuda_sources=_CUDA_SRC,
         functions=["state_scan_prep_forward"],
@@ -913,6 +1103,7 @@ def cuda_state_scan_prep(
     lanes_per_row: int | None = None,
     precompute_vector: bool | None = None,
     precompute_mode: str | None = None,
+    rows_per_block: int | None = None,
 ):
     """Run the experimental CUDA N=64 state-prep scan.
 
@@ -978,6 +1169,17 @@ def cuda_state_scan_prep(
     precompute_mode_id = 0 if mode_name == "none" else (1 if mode_name == "full" else 2)
     if precompute_mode_id and int(lanes_per_row) != 64:
         raise ValueError("cuda_state_scan_prep precompute_vector currently requires lanes_per_row=64")
+    if rows_per_block is None:
+        import os
+
+        try:
+            rows_per_block = int(os.environ.get("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_ROWS_PER_BLOCK", "1"))
+        except ValueError:
+            rows_per_block = 1
+    if int(rows_per_block) not in {1, 2, 4, 8}:
+        raise ValueError("cuda_state_scan_prep rows_per_block must be one of 1, 2, 4, or 8")
+    if int(rows_per_block) != 1 and (int(lanes_per_row) != 64 or precompute_mode_id != 0):
+        raise ValueError("cuda_state_scan_prep rows_per_block>1 requires lanes_per_row=64 and precompute_mode=none")
     ext = _load_extension()
     out, final_state, k_out, v_out = ext.state_scan_prep_forward(
         r.contiguous(),
@@ -993,5 +1195,6 @@ def cuda_state_scan_prep(
         bool(has_v_gate),
         int(lanes_per_row),
         int(precompute_mode_id),
+        int(rows_per_block),
     )
     return out, final_state, k_out, v_out

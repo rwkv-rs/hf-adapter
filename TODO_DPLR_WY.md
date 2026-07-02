@@ -510,15 +510,52 @@ Branch: `wangyue/native-prefill-060-albatross`
     by materializing fewer temp tensors; the next useful step is not another
     global-memory precompute variant, but a cooperative/persistent schedule
     that shares vector prep without writing it to global memory.
+- [x] Try cooperative rows-per-block CUDA row-block schedule:
+  - added `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_ROWS_PER_BLOCK` with supported
+    values `1`, `2`, `4`, and `8`. Values above `1` are valid only for the
+    `lanes=64`, no-precompute row-block path.
+  - implementation:
+    - new `rwkv7_state_scan_prep_n64_rowblock_coop_kernel` handles multiple
+      state rows per CUDA block. The block computes R/W/K/A/normalized-KK once
+      into shared memory, then multiple row workers consume those shared
+      vectors while keeping each row's state element in a register.
+    - this tests the next TODO's idea of sharing vector prep without writing
+      global temp tensors. It is still a CTA-local prototype, not a real
+      persistent/cluster schedule.
+    - telemetry now records `prefill_cuda_state_scan_rows_per_block`.
+  - validation result files:
+    - `bench/results_4090_prefill060_cuda_state_scan_coop_rows_smoke_20260703_020000.jsonl`
+    - `bench/results_4090_prefill060_cuda_state_scan_coop_rows_confirm_20260703_020500.jsonl`
+  - remote row sources:
+    - `/tmp/native_4090_cuda_state_scan_coop_rows_smoke_20260703_020000.jsonl`
+    - `/tmp/native_4090_cuda_state_scan_coop_rows_confirm_20260703_020500.jsonl`
+  - rows all pass greedy/cache smoke and the small CUDA oracle matches
+    row-block `rows_per_block=1` exactly for outputs, state, K, and V:
+    - smoke baseline Triton: `24,877.6 tok/s`.
+    - smoke row-block `rpb=1`: `25,958.9 tok/s`.
+    - smoke cooperative `rpb=2`: `25,641.6 tok/s`.
+    - smoke cooperative `rpb=4`: `25,532.0 tok/s`.
+    - smoke cooperative `rpb=8`: `24,935.9 tok/s`.
+    - confirm baseline Triton: `25,470.3 tok/s`.
+    - confirm row-block `rpb=1`: `26,596.1 tok/s`.
+    - confirm cooperative `rpb=2`: `25,685.1 tok/s`.
+  - conclusion: CTA-local sharing is correctness-safe but slower than one
+    row per block. The loss likely comes from lower parallelism / occupancy and
+    heavier per-block synchronization overwhelming the saved vector prep. Keep
+    it opt-in. A useful persistent schedule probably needs finer-grained
+    producer/consumer overlap or warp-specialized vector prep, not simply more
+    rows per CTA.
 - [ ] Next corrected-harness experiment:
-  - CUDA rowgroup, row-block, full precompute, and reduced-temp precompute
-    testing narrowed the remaining credible path: keep the register-row state
-    layout, but share vector prep without writing another set of global temp
-    tensors. The next concrete CUDA task should be a cooperative/persistent
-    head-level schedule where one block/cluster computes W/K/V/A/KK prep once
-    and row workers consume it from shared/register exchange while row state
-    stays in registers. Do not promote wrapper/projection fusion or the current
-    rowgroup, row-block, full-precompute, or reduced-temp scaffolds.
+  - CUDA rowgroup, row-block, full precompute, reduced-temp precompute, and
+    CTA-local cooperative rows-per-block testing narrowed the remaining
+    credible path: the row-register layout is viable, but naive sharing either
+    adds global temp traffic or lowers parallelism too much. The next concrete
+    CUDA task should try warp-specialized/persistent scheduling: e.g. one or
+    two producer warps compute vector prep and normalized KK while row-worker
+    warps process independent rows, ideally with overlap and without reducing
+    row-level parallelism as aggressively as `rows_per_block>1`. Do not promote
+    wrapper/projection fusion or the current rowgroup, row-block,
+    full-precompute, reduced-temp, or CTA-local cooperative scaffolds.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `27,051.0 tok/s` (`~0.5187x`), still about `15.7%` relative uplift short of

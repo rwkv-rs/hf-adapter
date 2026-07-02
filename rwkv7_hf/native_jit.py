@@ -407,6 +407,15 @@ def _native_prefill_cuda_state_scan_precompute_mode() -> str:
     )
 
 
+def _native_prefill_cuda_state_scan_rows_per_block() -> int:
+    """Rows handled by one CUDA row-block in the cooperative N=64 scan."""
+
+    value = env_int("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_ROWS_PER_BLOCK", 1, lower=1, upper=8)
+    if value not in {1, 2, 4, 8}:
+        raise ValueError("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_ROWS_PER_BLOCK must be one of 1, 2, 4, or 8")
+    return value
+
+
 def _native_prefill_fused_shift_mix_enabled() -> bool:
     """Runtime switch for prefill attention shift-mix fusion telemetry."""
 
@@ -1629,6 +1638,9 @@ def prefill(
             cuda_state_scan_precompute_mode = (
                 _native_prefill_cuda_state_scan_precompute_mode() if use_cuda_state_scan else "none"
             )
+            cuda_state_scan_rows_per_block = (
+                _native_prefill_cuda_state_scan_rows_per_block() if use_cuda_state_scan else 1
+            )
             if use_cuda_state_scan and layer_idx == 0:
                 out, new_state, k, v = cuda_state_scan_prep(
                     r.view(B, T, H, N),
@@ -1642,6 +1654,7 @@ def prefill(
                     lanes_per_row=cuda_state_scan_lanes,
                     precompute_vector=cuda_state_scan_precompute,
                     precompute_mode=cuda_state_scan_precompute_mode,
+                    rows_per_block=cuda_state_scan_rows_per_block,
                 )
                 v_first_seq = v.reshape(B, T, hidden)
             elif use_cuda_state_scan:
@@ -1659,6 +1672,7 @@ def prefill(
                     lanes_per_row=cuda_state_scan_lanes,
                     precompute_vector=cuda_state_scan_precompute,
                     precompute_mode=cuda_state_scan_precompute_mode,
+                    rows_per_block=cuda_state_scan_rows_per_block,
                 )
             elif layer_idx == 0:
                 out, new_state, k, v = fused_recurrent_scan_state_prep(
