@@ -1,8 +1,8 @@
 # A100 HF validation matrix
 
-Validation date: 2026-07-02  
-Base commit: `c09227a` (`docs: record 13.3B V100 official alignment + decode speed (#83)`)  
-Server: `8 x NVIDIA A100-PCIE-40GB` on `gpu03`; validation used 1 GPU for inference and single-card training, 2 GPUs for DeepSpeed.  
+Validation date: 2026-07-02
+Base commit: `c09227a` (`docs: record 13.3B V100 official alignment + decode speed (#83)`)
+Server: `8 x NVIDIA A100-PCIE-40GB` on `gpu03`; validation used 1 GPU for inference and single-card training, 2 GPUs for DeepSpeed.
 Runtime: Python `3.12.8`, PyTorch `2.8.0+cu126`, Transformers `4.57.1`, PEFT `0.19.1`, TRL `1.7.0`, DeepSpeed `0.19.2`, bitsandbytes `0.49.2`, FLA `0.5.1`.
 
 This file records the A100 40GB extension for issue #68 after the initial 0.1B A100 baseline was merged in #82. It covers the larger 0.4B, 1.5B, 2.9B, and 7.2B checkpoints. Cross-card comparison with V100 / 4090 / H100 is intentionally out of scope for this validation pass.

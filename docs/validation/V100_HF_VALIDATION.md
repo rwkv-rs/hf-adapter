@@ -1,8 +1,8 @@
 # V100 HF validation matrix
 
-Validation date: 2026-07-02  
-Base commit: `4528756` (`tests: record DeepSpeed ZeRO smoke passes (#64)`)  
-Server: `2 x Tesla V100-PCIE-32GB`  
+Validation date: 2026-07-02
+Base commit: `4528756` (`tests: record DeepSpeed ZeRO smoke passes (#64)`)
+Server: `2 x Tesla V100-PCIE-32GB`
 Main runtime: `torch 2.5.1+cu124`, `deepspeed 0.19.2`, `fused_recurrent` unless noted.
 
 This file records the additional V100 validation pass for the HF-only RWKV-7 adapter work.  The goal was to close the remaining HF ecosystem evidence gap with the hardware currently available.
