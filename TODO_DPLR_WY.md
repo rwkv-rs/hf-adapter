@@ -1,6 +1,58 @@
 # Temporary TODO: DPLR/WY Compiled Prefill
 
-This is a short-lived working TODO for the current `wangyue/native-fused-fp16-kernel` branch. Keep the default HF path unchanged unless a benchmark explicitly opts in.
+This is a short-lived working TODO for the current native-prefill performance branches. Keep the default HF path unchanged unless a benchmark explicitly opts in.
+
+## Temporary TODO: 0.60x Albatross experiment branch
+
+Branch: `wangyue/native-prefill-060-albatross`
+
+- [x] Start from merged `origin/main` after PR #90.
+- [x] Fix the first experiment blocker:
+  - `extract()` now appends the optional `RKVw` pack item used by the
+    VKWR/RKV policy path; native prefill and its profiler were still unpacking
+    the old 40-field pack.
+  - Updated `rwkv7_hf/native_jit.py` and
+    `bench/bench_native_prefill_breakdown.py` to accept both 40-field legacy
+    packs and 41-field current packs.
+- [x] Re-run 4090 fused-state-scan fine/layer breakdown after PR #90:
+  - result file: `bench/results_4090_prefill060_experiments_20260702_120602.jsonl`
+  - remote row source: `/tmp/native_4090_060_breakdown_20260702_120418.jsonl`
+  - pass, greedy match vs native prefill, max diff `0.0`
+  - top components in profiled row:
+    - `recurrent_scan_state_prep_fused`: `13.3723 ms`, `52.69%`
+    - `ffn`: `2.2262 ms`, `8.77%`
+    - LoRA path sum (`w/a/v_gate/g`): about `6.1581 ms`
+    - `attn_norm_shift_mix`: `1.2186 ms`, `4.8%`
+  - profiling row is slower than the end-to-end benchmark because it measures
+    per-component CUDA events; use it for attribution, not headline tok/s.
+- [x] Run prior-art direction experiments instead of guessing:
+  - baseline fused state-scan + fused output:
+    - `/tmp/native_4090_060_wavg_ab_20260702_120500.jsonl` baseline:
+      `26,197.2 tok/s`, `19.5441 ms`, about `0.5024x` Albatross
+    - `/tmp/native_4090_060_shiftmix_ab_20260702_120602.jsonl` baseline:
+      `26,487.4 tok/s`, `19.3300 ms`, about `0.5079x` Albatross
+  - fused WAVG-LoRA prefill experiment:
+    - pass/correct, but slower: `25,552.3 tok/s`, `20.0374 ms`,
+      about `0.4900x` Albatross
+    - conclusion: do not promote the current WAVG-LoRA prefill kernel; it
+      reduces launch count but loses enough inside the Triton kernel to be a
+      net negative at 4090 / 0.4B / prompt512 / bsz1.
+  - fused shift-mix prefill experiment:
+    - pass/correct, but slower: `25,784.5 tok/s`, `19.8569 ms`,
+      about `0.4944x` Albatross
+    - conclusion: do not promote the current standalone shift-mix kernel;
+      Albatross-style norm+mix is still a good boundary, but it must be fused
+      deeper with norm/projection instead of adding a standalone launch.
+- [ ] Next experiment should target the real dominant path:
+  - first choice: optimize/specialize `fused_recurrent_scan_state_prep` itself
+    for 4090/Ada 0.4B `H=16,N=64,T=512`, because it is now over half of the
+    profiled component time;
+  - second choice: one larger fused attention-prep kernel that combines
+    norm/shift-mix + dense R/K/V + W/A/G/V LoRA + state-scan boundary, rather
+    than enabling standalone fused WAVG-LoRA or standalone fused shift-mix.
+- [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
+  4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
+  `26,487.4 tok/s` (`~0.5079x`), still about `18.1%` short of the stretch.
 
 ## Temporary TODO: next 4090 push
 

@@ -893,6 +893,22 @@ def extract(model):
     return packs, H, N, eps
 
 
+def _ensure_rkv_pack(p):
+    """Accept legacy 40-field packs and current packs with optional RKVw.
+
+    The native-graph VKWR/RKV policy appended ``RKVw`` to layer packs.  Some
+    synthetic tests and older remote-code checkpoints still build the previous
+    40-field pack shape.  Keep those callers working by appending an empty
+    tensor with the same device/dtype as the dense projection weights.
+    """
+
+    if len(p) == 41:
+        return p
+    if len(p) == 40:
+        return (*p, p[20].new_empty((0,)))
+    raise ValueError(f"unexpected native_jit layer pack length {len(p)}")
+
+
 def _init(model, device, dtype):
     layers = model.model.layers
     n = len(layers)
@@ -919,6 +935,7 @@ def _init_batched_from_packs(packs, batch_size: int, device, dtype):
 
 def step(model, x, state, xpa, xpf, v_first, packs):
     for p in packs:
+        p = _ensure_rkv_pack(p)
         x, xpa[p[0]], xpf[p[0]], v_first, state[p[0]] = block_step(x, xpa[p[0]], xpf[p[0]], v_first, state[p[0]], *p)
     return x, state, xpa, xpf, v_first
 
@@ -932,6 +949,7 @@ def step_batched(model, x, state, xpa, xpf, v_first, packs):
     the same reduced-dispatch H2 decode idea without importing the wrapper.
     """
     for p in packs:
+        p = _ensure_rkv_pack(p)
         x, xpa[p[0]], xpf[p[0]], v_first, state[p[0]] = block_step_batched(
             x, xpa[p[0]], xpf[p[0]], v_first, state[p[0]], *p
         )
@@ -1066,11 +1084,12 @@ def prefill(
     v_first_seq = torch.zeros(B, T, hidden, device=ids.device, dtype=dtype)
 
     for p in packs:
+        p = _ensure_rkv_pack(p)
         (i, H, N, eps, has_pre,
          pre_w, pre_b, an_w, an_b, fn_w, fn_b,
          x_r, x_w, x_k, x_v, x_a, x_g, k_k, k_a, r_k,
          Rw, Kw, Vw, Ow, w1, w2, w0, a1, a2, a0, v1, v2, v0, g1, g2,
-         gn_w, gn_b, fx_k, fK, fV) = p
+         gn_w, gn_b, fx_k, fK, fV, RKVw) = p
         layer_idx = int(i)
         H = int(H)
         N = int(N)

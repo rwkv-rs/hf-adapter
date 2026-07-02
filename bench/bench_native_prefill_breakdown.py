@@ -169,11 +169,12 @@ def profiled_native_prefill(
     v_first_seq = torch.zeros(B, T, hidden0, device=ids.device, dtype=dtype)
 
     for p in packs:
+        p = native_jit._ensure_rkv_pack(p)
         (i, H, N, eps, has_pre,
          pre_w, pre_b, an_w, an_b, fn_w, fn_b,
          x_r, x_w, x_k, x_v, x_a, x_g, k_k, k_a, r_k,
          Rw, Kw, Vw, Ow, w1, w2, w0, a1, a2, a0, v1, v2, v0, g1, g2,
-         gn_w, gn_b, fx_k, fK, fV) = p
+         gn_w, gn_b, fx_k, fK, fV, RKVw) = p
         layer_idx = int(i)
         profiler.current_layer = layer_idx
         H = int(H)
@@ -337,7 +338,7 @@ def profiled_native_prefill(
                     v_local = v + (v_first_seq - v) * v_gate_local
                 if not use_clampw_scan:
                     w_local = torch.exp(-0.606531 * torch.sigmoid(w_local.float()))
-            return w_local, k_local, v_local, a_local, g_local, kk_local, v_first_local
+            return w_local, k_local, v_local, a_local, g_local, kk_local, v_first_local, v_gate_local
 
         def fine_lora_and_state_prep():
             v_gate_local = None
@@ -467,12 +468,12 @@ def profiled_native_prefill(
                     v_local = profiler.measure("attn_v_interp", lambda: v + (v_first_seq - v) * v_gate_local)
                 if not use_clampw_scan:
                     w_local = profiler.measure("attn_w_decay", lambda: torch.exp(-0.606531 * torch.sigmoid(w_local.float())))
-            return w_local, k_local, v_local, a_local, g_local, kk_local, v_first_local
+            return w_local, k_local, v_local, a_local, g_local, kk_local, v_first_local, v_gate_local
 
         if fine_attention_breakdown:
-            w, k, v, a, g, kk, v_first_seq = fine_lora_and_state_prep()
+            w, k, v, a, g, kk, v_first_seq, v_gate = fine_lora_and_state_prep()
         else:
-            w, k, v, a, g, kk, v_first_seq = profiler.measure("attn_lora_state_prep", lora_and_state_prep)
+            w, k, v, a, g, kk, v_first_seq, v_gate = profiler.measure("attn_lora_state_prep", lora_and_state_prep)
 
         if use_fused_state_scan:
             def state_scan():
