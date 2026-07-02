@@ -131,6 +131,15 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_prefill_state_prep = None  # type: ignore[assignment]
         fused_prefill_state_prep_available = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - optional Triton fast path on CUDA hosts
+    from .fused_time_mix import fused_attn_shift_mix, fused_attn_shift_mix_available
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from fused_time_mix import fused_attn_shift_mix, fused_attn_shift_mix_available
+    except Exception:
+        fused_attn_shift_mix = None  # type: ignore[assignment]
+        fused_attn_shift_mix_available = None  # type: ignore[assignment]
+
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
 
@@ -188,6 +197,19 @@ def _native_prefill_scan_num_warps(head_dim: int, block_m: int | None = None) ->
     if value not in {1, 2, 4, 8}:
         raise ValueError(f"RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS must be one of 1, 2, 4, or 8; got {value}")
     return value
+
+
+def _native_prefill_fused_shift_mix_enabled() -> bool:
+    """Runtime switch for prefill attention shift-mix fusion telemetry."""
+
+    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX", False):
+        return False
+    if fused_attn_shift_mix is None or fused_attn_shift_mix_available is None:
+        return False
+    try:
+        return bool(fused_attn_shift_mix_available())
+    except Exception:
+        return False
 
 
 def _native_prefill_fused_state_prep_enabled() -> bool:
@@ -780,13 +802,16 @@ def prefill(
         residual = F.layer_norm(x, [hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
         h = F.layer_norm(residual, [hidden], an_w, an_b, 1e-5)
         prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h[:, :-1, :]], dim=1)
-        xx = prev_h - h
-        xr = h + xx * x_r.view(1, 1, hidden)
-        xw = h + xx * x_w.view(1, 1, hidden)
-        xk = h + xx * x_k.view(1, 1, hidden)
-        xv = h + xx * x_v.view(1, 1, hidden)
-        xa = h + xx * x_a.view(1, 1, hidden)
-        xg = h + xx * x_g.view(1, 1, hidden)
+        if _native_prefill_fused_shift_mix_enabled():
+            xr, xw, xk, xv, xa, xg = fused_attn_shift_mix(h, prev_h, x_r, x_w, x_k, x_v, x_a, x_g)
+        else:
+            xx = prev_h - h
+            xr = h + xx * x_r.view(1, 1, hidden)
+            xw = h + xx * x_w.view(1, 1, hidden)
+            xk = h + xx * x_k.view(1, 1, hidden)
+            xv = h + xx * x_v.view(1, 1, hidden)
+            xa = h + xx * x_a.view(1, 1, hidden)
+            xg = h + xx * x_g.view(1, 1, hidden)
 
         r = F.linear(xr, Rw)
         k = F.linear(xk, Kw)

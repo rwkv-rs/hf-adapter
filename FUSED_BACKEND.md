@@ -397,6 +397,17 @@ serving speed.
      state-prep-only `22358.5` tok/s row). Keep the default heuristic
      unchanged and treat this as a per-card telemetry override, not a promoted
      Ada default.
+   - `RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX=1` reuses the Triton attention
+     shift-mix kernel for full `[B,T,H]` prefill tensors. It is
+     correctness-clean, but the standalone prefill-shaped shift-mix microbench
+     is slower than torch addcmul on 4090 (`0.6876x` at bsz=1/T=512 and
+     `0.6940x` at bsz=4/T=512). End-to-end with state-prep and
+     `SCAN_BLOCK_M=8`, `SCAN_NUM_WARPS=4` gives `21965.9` tok/s at bsz=1
+     and `81303.7` tok/s at bsz=4: a small win over the explicit warps=4
+     rows, but bsz=1 is still below the best state-prep-only `22358.5` tok/s
+     row. Keep this opt-in telemetry-only; shallow shift-mix is not the
+     missing P1 fix unless folded into a larger norm/shift/projection/state
+     kernel.
 
 ## Backend dispatch requirement
 
