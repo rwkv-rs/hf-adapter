@@ -13,6 +13,7 @@ import argparse
 from dataclasses import dataclass
 import inspect
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -34,8 +35,9 @@ else:  # pragma: no cover - exercised by benchmark/test hosts with torch
 
 
 DTYPE_CHOICES = ("bf16", "fp16", "fp32")
-ALGORITHMS = ("sequential", "affine", "wy", "lowrank")
+ALGORITHMS = ("sequential", "affine", "wy", "lowrank", "triton_wy", "cuda_wy")
 WY_ALGORITHM_ALIASES = ("wy", "lowrank")
+TRITON_WY_ALIASES = ("triton_wy", "cuda_wy")
 
 
 @dataclass(frozen=True)
@@ -92,6 +94,8 @@ def _algorithm_family(name: str | None) -> str | None:
         return "dense_affine"
     if normalized in WY_ALGORITHM_ALIASES:
         return "lowrank_wy"
+    if normalized in TRITON_WY_ALIASES:
+        return "triton_wy"
     return "unknown"
 
 
@@ -370,6 +374,18 @@ class DplrInvoker:
                                 reason=f"{requested_algorithm!r} not detected; using {alias!r} WY/lowrank alias",
                             )
                         ]
+            if requested_algorithm in TRITON_WY_ALIASES:
+                for alias in TRITON_WY_ALIASES:
+                    if alias != requested_algorithm and alias in self.supported_algorithms:
+                        return [
+                            AlgorithmPlan(
+                                requested_algorithm=requested_algorithm,
+                                effective_algorithm=alias,
+                                status="fallback_algorithm_alias",
+                                call_algorithm=alias,
+                                reason=f"{requested_algorithm!r} not detected; using {alias!r} compiled DPLR/WY alias",
+                            )
+                        ]
             return []
 
         plans = [
@@ -390,6 +406,18 @@ class DplrInvoker:
                             status="fallback_algorithm_alias",
                             call_algorithm=alias,
                             reason=f"trying {alias!r} as a WY/lowrank alias",
+                        )
+                    )
+        if requested_algorithm in TRITON_WY_ALIASES:
+            for alias in TRITON_WY_ALIASES:
+                if alias != requested_algorithm:
+                    plans.append(
+                        AlgorithmPlan(
+                            requested_algorithm=requested_algorithm,
+                            effective_algorithm=alias,
+                            status="fallback_algorithm_alias",
+                            call_algorithm=alias,
+                            reason=f"trying {alias!r} as a compiled DPLR/WY alias",
                         )
                     )
         return plans
@@ -518,9 +546,17 @@ def main() -> int:
     except Exception as exc:
         print(f"failed to import DPLR benchmark dependencies: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
+    try:
+        from rwkv7_hf.dplr_prefill_triton import dplr_chunk_scan_triton_available
+    except Exception:
+        dplr_chunk_scan_triton_available = None  # type: ignore[assignment]
 
     dtype = _dtype_from_name(args.dtype)
     dplr_call = DplrInvoker(dplr_chunk_scan)
+    triton_wy_available = bool(
+        dplr_chunk_scan_triton_available is not None and dplr_chunk_scan_triton_available()
+    )
+    triton_wy_block_m = int(os.environ.get("RWKV7_DPLR_TRITON_BLOCK_M", "8"))
     rows = 0
 
     if dev.type == "cuda":
@@ -617,6 +653,8 @@ def main() -> int:
                         row.update(
                             {
                                 "status": plan.status,
+                                "triton_wy_available": triton_wy_available,
+                                "triton_wy_block_m": triton_wy_block_m if (row.get("algorithm_family") == "triton_wy") else None,
                                 "peak_vram_mb": _peak_mb(args.device),
                             }
                         )
@@ -634,6 +672,8 @@ def main() -> int:
                             {
                                 "status": exc.status,
                                 "skip_reason": exc.reason,
+                                "triton_wy_available": triton_wy_available,
+                                "triton_wy_block_m": triton_wy_block_m if row.get("algorithm_family") == "triton_wy" else None,
                                 "ms": None,
                                 "tokps": None,
                                 "out_max_abs_diff": None,
@@ -647,6 +687,8 @@ def main() -> int:
                             {
                                 "status": f"error:{type(exc).__name__}",
                                 "error": str(exc),
+                                "triton_wy_available": triton_wy_available,
+                                "triton_wy_block_m": triton_wy_block_m if row.get("algorithm_family") == "triton_wy" else None,
                                 "ms": None,
                                 "tokps": None,
                                 "out_max_abs_diff": None,

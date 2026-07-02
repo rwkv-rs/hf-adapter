@@ -43,7 +43,7 @@ __all__ = ["dplr_chunk_scan", "lowrank_chunk_summary"]
 
 
 _ALGORITHM_ENV = "RWKV7_DPLR_PREFILL_ALGORITHM"
-_SUPPORTED_ALGORITHMS = ("sequential", "affine", "lowrank", "wy")
+_SUPPORTED_ALGORITHMS = ("sequential", "affine", "lowrank", "wy", "triton_wy", "cuda_wy")
 
 
 def _require_torch():
@@ -95,7 +95,7 @@ def _resolve_algorithm(algorithm: Any) -> str:
     if algorithm is None:
         algorithm = os.environ.get(_ALGORITHM_ENV, "sequential")
     if not isinstance(algorithm, str):
-        raise TypeError("algorithm must be 'sequential', 'affine', 'lowrank', 'wy', or None")
+        raise TypeError("algorithm must be 'sequential', 'affine', 'lowrank', 'wy', 'triton_wy', 'cuda_wy', or None")
     normalized = algorithm.strip().lower()
     if normalized not in _SUPPORTED_ALGORITHMS:
         supported = "', '".join(_SUPPORTED_ALGORITHMS)
@@ -527,9 +527,11 @@ def dplr_chunk_scan(
         ``"affine"`` enables an experimental dense affine chunk prototype that
         explicitly composes per-token ``A_t``/``B_t`` transforms.  ``"lowrank"``
         and ``"wy"`` enable the experimental diagonal-plus-low-rank chunk
-        summary path from ``lowrank_chunk_summary``.  ``None`` (the default)
-        reads ``RWKV7_DPLR_PREFILL_ALGORITHM`` and falls back to
-        ``"sequential"`` when the environment variable is unset.
+        summary path from ``lowrank_chunk_summary``. ``"triton_wy"`` and
+        ``"cuda_wy"`` dispatch to the opt-in compiled prototype in
+        ``dplr_prefill_triton``.  ``None`` (the default) reads
+        ``RWKV7_DPLR_PREFILL_ALGORITHM`` and falls back to ``"sequential"``
+        when the environment variable is unset.
 
     Returns
     -------
@@ -576,6 +578,26 @@ def dplr_chunk_scan(
 
     out_dtype = r4.dtype
     state_dtype = state.dtype
+
+    if algorithm_i in {"triton_wy", "cuda_wy"}:
+        try:
+            from .dplr_prefill_triton import dplr_chunk_scan_triton
+        except Exception:  # pragma: no cover - direct remote-file execution fallback
+            try:
+                from dplr_prefill_triton import dplr_chunk_scan_triton  # type: ignore[no-redef]
+            except Exception as exc:
+                raise RuntimeError("triton_wy requested but dplr_prefill_triton is unavailable") from exc
+        return dplr_chunk_scan_triton(
+            r,
+            w,
+            k,
+            v,
+            kk,
+            a,
+            state,
+            chunk_size=chunk_size_i,
+            force_fallback=force_fallback,
+        )
 
     # Correctness/stability policy for the reference prototype: fp16/bf16 (and
     # fp32) scan in fp32, then cast public outputs back.  This mirrors the

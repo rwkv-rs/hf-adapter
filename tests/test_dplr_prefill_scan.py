@@ -18,7 +18,7 @@ if "pytest" in sys.modules:  # pragma: no cover - pytest collection metadata
 
 
 CHUNK_SIZES = (1, 2, 3, 8)
-ALGORITHMS = ("sequential", "affine", "lowrank", "wy")
+ALGORITHMS = ("sequential", "affine", "lowrank", "wy", "triton_wy")
 
 
 def _skip_if_no_torch() -> bool:
