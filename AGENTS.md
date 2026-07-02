@@ -112,7 +112,10 @@ Remaining before this goal is complete:
   `dplr_compact_wy_prefix_combine_triton`; 4090 target prefix time is
   `~0.067 ms` with starts diff vs dense `~5.96e-08`. The next required
   step is reusing current chunk apply/output to make a compact three-stage
-  route.
+  route. That route now exists as `dplr_compact_wy_three_stage_triton`; 4090
+  target correctness passes (`out_min_cosine~=0.9999999`, state diff
+  `~1.13e-04`), but current full compact time is `~0.501 ms`, so it is not
+  yet a performance win over dense3/P0.
 - Replace dense `[N,N]` transition/additive runtime summaries with compact
   WY/low-rank factors to reduce memory traffic and close the Albatross gap.
 - Make the explicit three-stage path at least competitive with the P0 fused

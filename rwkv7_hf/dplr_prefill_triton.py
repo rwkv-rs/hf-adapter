@@ -78,6 +78,7 @@ __all__ = [
     "dplr_dense_chunk_apply_torch",
     "dplr_dense_chunk_apply_triton",
     "dplr_dense_three_stage_triton",
+    "dplr_compact_wy_three_stage_triton",
 ]
 
 
@@ -1442,6 +1443,72 @@ def dplr_dense_three_stage_triton(
     # Prefer the chunk-apply final state because it follows the same token path
     # as the emitted recurrent outputs; prefix_final is kept as a consistency
     # check by callers/tests.
+    _ = prefix_final
+    return out, final_from_apply
+
+
+def dplr_compact_wy_three_stage_triton(
+    r: Any,
+    w: Any,
+    k: Any,
+    v: Any,
+    kk: Any,
+    a: Any,
+    state: Any,
+    *,
+    chunk_size: int = 64,
+    force_fallback: bool = False,
+):
+    """Compact-WY three-stage DPLR scaffold.
+
+    Stages:
+
+    1. compact WY chunk summary factors,
+    2. compact factor prefix-combine to dense chunk start states,
+    3. the existing chunk apply/output kernel.
+
+    This is the first end-to-end compact-factor route.  It still reuses the
+    current dense-state apply stage, so the next iteration can focus on making
+    the apply/output stage factor-aware or otherwise fusing stage boundaries.
+    """
+
+    if torch is None:
+        raise RuntimeError("dplr_compact_wy_three_stage_triton requires torch")
+    if state.dim() != 4:
+        raise ValueError("state must be [B,H,N,N]")
+    B, H, N, _ = (int(vv) for vv in state.shape)
+    r4, flat = _as_bthn(r, H, N, name="r")
+    w4, _ = _as_bthn(w, H, N, name="w")
+    k4, _ = _as_bthn(k, H, N, name="k")
+    v4, _ = _as_bthn(v, H, N, name="v")
+    kk4, _ = _as_bthn(kk, H, N, name="kk")
+    a4, _ = _as_bthn(a, H, N, name="a")
+    summary = dplr_compact_wy_chunk_summary_triton(
+        w4,
+        k4,
+        v4,
+        kk4,
+        a4,
+        chunk_size=chunk_size,
+        force_fallback=force_fallback,
+    )
+    start_states, prefix_final = dplr_compact_wy_prefix_combine_triton(
+        state,
+        summary,
+        force_fallback=force_fallback,
+    )
+    out, chunk_ends = dplr_dense_chunk_apply_triton(
+        r4.reshape(B, int(r4.shape[1]), H * N) if flat else r4,
+        w4,
+        k4,
+        v4,
+        kk4,
+        a4,
+        start_states,
+        chunk_size=chunk_size,
+        force_fallback=force_fallback,
+    )
+    final_from_apply = chunk_ends[:, -1].to(dtype=state.dtype)
     _ = prefix_final
     return out, final_from_apply
 
