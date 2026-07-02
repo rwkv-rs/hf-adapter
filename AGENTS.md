@@ -99,8 +99,13 @@ Latest RTX 4090 target evidence:
 
 Remaining before this goal is complete:
 
-- Replace dense `[N,N]` transition/additive summaries with compact WY/low-rank
-  factors to reduce memory traffic and close the Albatross gap.
+- Compact WY torch reference and dense reconstruction oracle now exist via
+  `dplr_compact_wy_chunk_summary_torch`,
+  `dplr_compact_wy_summary_to_dense`, and
+  `dplr_compact_wy_apply_summaries_torch`. The next required step is a
+  Triton compact summary kernel for the 4090 target shape.
+- Replace dense `[N,N]` transition/additive runtime summaries with compact
+  WY/low-rank factors to reduce memory traffic and close the Albatross gap.
 - Make the explicit three-stage path at least competitive with the P0 fused
   recurrent scan; current dense3 is correctness-first and slower than P0.
 - Use the 4090 native prefill benchmark to move 0.4B prompt512 bsz1 from the

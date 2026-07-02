@@ -30,10 +30,11 @@ This is a short-lived working TODO for the current `wangyue/native-fused-fp16-ke
 
 ## P1 compact WY path
 
-- [ ] Add torch reference for compact chunk summary factors instead of dense `[N,N]` summaries.
-  - [ ] transition diag / low-rank factors
-  - [ ] additive low-rank factors
-  - [ ] final-state reconstruction oracle for correctness
+- [x] Add torch reference for compact chunk summary factors instead of dense `[N,N]` summaries.
+  - [x] transition diag / low-rank factors
+  - [x] additive low-rank factors
+  - [x] final-state reconstruction oracle for correctness
+  - Done: `dplr_compact_wy_chunk_summary_torch`, `dplr_compact_wy_summary_to_dense`, and `dplr_compact_wy_apply_summaries_torch` added. 4090 target oracle: transition diff `~4.6e-14`, additive diff `~5.96e-08`, final state diff `~1.13e-04`.
 - [ ] Add Triton compact summary kernel for the target shape first.
 - [ ] Add compact prefix combine using factors instead of materialized transition/additive matrices.
 - [ ] Reuse current chunk apply/output kernel initially, then fuse/optimize only after correctness is stable.
