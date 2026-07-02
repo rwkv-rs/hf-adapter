@@ -57,6 +57,9 @@ def test_dense_chunk_summary_torch_final_state_matches_recurrent_scan() -> None:
     if _skip_if_no_torch():
         return
     from rwkv7_hf.dplr_prefill_triton import (
+        dplr_compact_wy_apply_summaries_torch,
+        dplr_compact_wy_chunk_summary_torch,
+        dplr_compact_wy_summary_to_dense,
         dplr_dense_chunk_apply_torch,
         dplr_dense_chunk_summary_torch,
         dplr_dense_prefix_combine_torch,
@@ -69,6 +72,22 @@ def test_dense_chunk_summary_torch_final_state_matches_recurrent_scan() -> None:
     ref_out, ref_state = torch_recurrent_scan(r, w, k, v, kk, a, state)
     got_state = _apply_dense_summaries(state, summary)
     assert torch.allclose(got_state, ref_state, atol=2e-6, rtol=2e-6), (got_state - ref_state).abs().max()
+
+    compact = dplr_compact_wy_chunk_summary_torch(w, k, v, kk, a, chunk_size=4)
+    dense_from_compact = dplr_compact_wy_summary_to_dense(compact)
+    assert compact["transition_diag"].shape == (1, 2, 2, 4)
+    assert compact["transition_left"].shape == (1, 2, 2, 4, 4)
+    assert compact["transition_right"].shape == (1, 2, 2, 4, 4)
+    assert compact["additive_left"].shape == (1, 2, 2, 4, 4)
+    assert compact["additive_right"].shape == (1, 2, 2, 4, 4)
+    assert torch.allclose(dense_from_compact["transition"], summary["transition"], atol=2e-6, rtol=2e-6), (
+        dense_from_compact["transition"] - summary["transition"]
+    ).abs().max()
+    assert torch.allclose(dense_from_compact["additive"], summary["additive"], atol=2e-6, rtol=2e-6), (
+        dense_from_compact["additive"] - summary["additive"]
+    ).abs().max()
+    compact_state = dplr_compact_wy_apply_summaries_torch(state, compact)
+    assert torch.allclose(compact_state, ref_state, atol=2e-6, rtol=2e-6), (compact_state - ref_state).abs().max()
 
     start_states, prefix_final = dplr_dense_prefix_combine_torch(state, summary["transition"], summary["additive"])
     assert torch.allclose(start_states[:, 0], state.float(), atol=0, rtol=0)
