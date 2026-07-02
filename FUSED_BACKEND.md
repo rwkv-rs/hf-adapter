@@ -387,6 +387,16 @@ serving speed.
      versus the state-prep-only row (`21691.5` vs `22358.5` tok/s at bsz=1;
      `80948.1` vs `81144.8` tok/s at bsz=4). Keep this path opt-in telemetry;
      it is too small a bucket to offset extra overhead without deeper fusion.
+   - `RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS` is now recorded for both the
+     recurrent-scan microbench and full native-prefill rows. On RTX 4090 /
+     0.4B / fp16 / prompt=512 with `SCAN_BLOCK_M=8`, isolated scan likes
+     different warp counts by batch (`num_warps=8` is fastest at bsz=1,
+     `0.15578ms`; `num_warps=1` is fastest at bsz=4, `0.19655ms`), while
+     full prefill does not repeat the microbench win (`22018.8` tok/s at
+     bsz=1 with warps=1, `21733.0` with warps=8, both below the existing
+     state-prep-only `22358.5` tok/s row). Keep the default heuristic
+     unchanged and treat this as a per-card telemetry override, not a promoted
+     Ada default.
 
 ## Backend dispatch requirement
 
