@@ -336,6 +336,16 @@ serving speed.
      `recurrent_scan` (`10.5853ms`, share `0.3593`), followed by FFN
      (`7.3115ms`, share `0.2482`). This means the next bsz=1 prefill work
      should tune the fused scan and LoRA/state-prep path, not cache.
+   - The recurrent scan kernel now has an opt-in split-row tile
+     (`block_m` / `RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M`) so N=64 heads no longer
+     require a single Triton program to keep the full 64x64 state tile live.
+     On RTX 4090 isolated scan, `block_m=8` improves T=512 latency from
+     `0.32535ms` to `0.19627ms` at bsz=1 and from `0.32617ms` to `0.21120ms`
+     at bsz=4, with torch-reference cosine still `1.0` on T=128 checks. In the
+     full prefill path this raises the best recorded bsz=4 throughput to
+     `81047.4` tok/s (`0.6881x` Albatross), but bsz=1 remains stuck around
+     `0.3668x`; next work must reduce LoRA/state-prep and other full-layer
+     overhead rather than assuming scan-only tuning is sufficient.
 
 ## Backend dispatch requirement
 
