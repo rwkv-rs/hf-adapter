@@ -191,6 +191,24 @@ def _native_prefill_fused_state_prep_enabled() -> bool:
         return False
 
 
+def _native_prefill_fused_output_enabled() -> bool:
+    """Runtime switch for native prefill output-prep fusion.
+
+    This reuses the profitable decode fused-output-prep kernel, but keeps the
+    prefill path explicit until end-to-end prompt rows prove it helps each
+    card/model shape.
+    """
+
+    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT", False):
+        return False
+    if fused_attn_output_prepare is None or fused_attn_output_prepare_available is None:
+        return False
+    try:
+        return bool(fused_attn_output_prepare_available())
+    except Exception:
+        return False
+
+
 def _native_prefill_fused_wavg_lora_requested() -> bool:
     """Return whether the prefill W/A/G/V-gate LoRA fusion probe is requested."""
 
@@ -830,9 +848,25 @@ def prefill(
             w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
 
         out, new_state = _native_prefill_scan(r, w, k, v, kk, a, state[layer_idx], B, T, H, N)
-        out = F.group_norm(out.reshape(B * T, hidden), H, gn_w, gn_b, eps).view(B, T, hidden)
-        sk = (r.view(B, T, H, N) * k.view(B, T, H, N) * r_k.view(1, 1, H, N)).sum(dim=-1, keepdim=True)
-        out = (out + (sk * v.view(B, T, H, N)).view(B, T, hidden)) * g
+        if _native_prefill_fused_output_enabled():
+            out = fused_attn_output_prepare(
+                out.reshape(B * T, hidden),
+                r.reshape(B * T, H, N),
+                k.reshape(B * T, H, N),
+                v.reshape(B * T, H, N),
+                g.reshape(B * T, hidden),
+                r_k,
+                gn_w,
+                gn_b,
+                num_heads=H,
+                head_dim=N,
+                head_v_dim=N,
+                eps=eps,
+            ).view(B, T, hidden)
+        else:
+            out = F.group_norm(out.reshape(B * T, hidden), H, gn_w, gn_b, eps).view(B, T, hidden)
+            sk = (r.view(B, T, H, N) * k.view(B, T, H, N) * r_k.view(1, 1, H, N)).sum(dim=-1, keepdim=True)
+            out = (out + (sk * v.view(B, T, H, N)).view(B, T, hidden)) * g
         out = F.linear(out, Ow)
         x = residual + out
         xpa[layer_idx] = h[:, -1, :].contiguous()
