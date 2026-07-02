@@ -119,7 +119,7 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 | 优先级 | 卡族 | 目标 |
 |---|---|---|
 | P0 | V100 1×/2× | 保持基线绿灯;ZeRO2 resume 和 0.4B/1.5B/2.9B 矩阵已补,继续补 ZeRO3 resume。 |
-| P0 | A100 | 补 Ampere 生产吞吐、bf16、量化、ZeRO 行。 |
+| P0 | A100 | 0.1B 基础验证已补:fp16/bf16 吞吐、8/4-bit 量化、bf16 Trainer/TRL、2×A100 ZeRO-2/3;继续补更大模型、长 step 与吞吐矩阵。 |
 | P0 | RTX 4090 | **进行中** —— 补常见消费级 Ada 证据。 |
 | P1 | H100 | 补 Hopper 高端吞吐与 bf16 / 量化行。 |
 | P1 | RTX 5090 / 50 系 | 补 Blackwell 消费级验证与回归行。 |
