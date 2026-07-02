@@ -199,7 +199,9 @@ Current exact-card evidence status:
   WAVG/projection fusion is still opt-in because shallow LoRA grouping regresses
   end-to-end even when isolated rows improve. Full-head scan+output-prep fusion
   is also negative telemetry on Ada because it gives up the split-row scan tile
-  that currently keeps prefill occupancy acceptable.
+  that currently keeps prefill occupancy acceptable. Per-layer bsz=1 breakdown
+  shows the prefill gap is broad across layers, so pursue reusable per-layer
+  fusion patterns rather than layer-specific patches.
 - RTX 5070 Laptop / 50-series (`sm_120` observed): touched Blackwell path; native
   no-FLA compatibility is important because some FLA training kernels can be
   architecture-limited; fusion wins must be re-proven end-to-end on each 50-card.
