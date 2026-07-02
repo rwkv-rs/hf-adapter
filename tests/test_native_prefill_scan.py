@@ -10,6 +10,7 @@ stable on normal CI.
 """
 from __future__ import annotations
 
+import os
 import types
 
 try:
@@ -141,11 +142,51 @@ def test_prefill_matches_token_loop() -> None:
     assert xpf[0].shape == (1, 8)
 
 
+def test_prefill_opt_in_lora_state_prep_fallback_matches_token_loop() -> None:
+    native_jit, model, packs = _build_fake_model_and_packs()
+    ids = torch.tensor([[1, 5, 4, 2]], dtype=torch.long)
+    old_env = {
+        key: os.environ.get(key)
+        for key in (
+            "RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP",
+            "RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA",
+            "RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_MAX_M",
+        )
+    }
+    old_state_avail = native_jit.fused_prefill_state_prep_available
+    old_wavg_avail = native_jit.fused_wavg_lora_available
+    try:
+        os.environ["RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP"] = "1"
+        os.environ["RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA"] = "1"
+        os.environ["RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_MAX_M"] = "999"
+        native_jit.fused_prefill_state_prep_available = lambda: True
+        native_jit.fused_wavg_lora_available = lambda: True
+        with torch.no_grad():
+            ref = native_jit.forward(model, ids, packs).float().view(1, -1)
+            logits, state, xpa, xpf = native_jit.prefill(model, ids, packs, logits_to_keep=1)
+    finally:
+        native_jit.fused_prefill_state_prep_available = old_state_avail
+        native_jit.fused_wavg_lora_available = old_wavg_avail
+        for key, value in old_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    got = logits[:, -1, :].float()
+    assert got.shape == ref.shape
+    assert torch.allclose(got, ref, atol=2e-5, rtol=2e-5), (got - ref).abs().max()
+    assert len(state) == len(packs)
+    assert state[1].shape == (1, 2, 4, 4)
+    assert xpa[1].shape == (1, 8)
+    assert xpf[1].shape == (1, 8)
+
+
 def main() -> int:
     if torch is None:
         print("SKIP native prefill scan test: torch unavailable")
         return 0
     test_prefill_matches_token_loop()
+    test_prefill_opt_in_lora_state_prep_fallback_matches_token_loop()
     print("PASS")
     return 0
 

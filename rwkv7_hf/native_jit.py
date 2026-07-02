@@ -122,6 +122,15 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_wavg_lora = None  # type: ignore[assignment]
         fused_wavg_lora_available = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - optional Triton fast path on CUDA hosts
+    from .fused_prefill import fused_prefill_state_prep, fused_prefill_state_prep_available
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from fused_prefill import fused_prefill_state_prep, fused_prefill_state_prep_available
+    except Exception:
+        fused_prefill_state_prep = None  # type: ignore[assignment]
+        fused_prefill_state_prep_available = None  # type: ignore[assignment]
+
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
 
@@ -167,6 +176,72 @@ def _native_prefill_scan_block_m(head_dim: int) -> int:
     """Row tile for the optional split-row recurrent scan kernel."""
 
     return env_int("RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M", int(head_dim), lower=1, upper=int(head_dim))
+
+
+def _native_prefill_fused_state_prep_enabled() -> bool:
+    """Runtime switch for the native prefill state-prep fusion probe."""
+
+    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", False):
+        return False
+    if fused_prefill_state_prep is None or fused_prefill_state_prep_available is None:
+        return False
+    try:
+        return bool(fused_prefill_state_prep_available())
+    except Exception:
+        return False
+
+
+def _native_prefill_fused_wavg_lora_requested() -> bool:
+    """Return whether the prefill W/A/G/V-gate LoRA fusion probe is requested."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA", False)
+
+
+def _native_prefill_fused_wavg_lora_max_m() -> int:
+    """Maximum flattened rows for prefill WAVG LoRA before falling back.
+
+    The first RTX 4090 probe is profitable for `B*T=512` but slower for
+    `B*T=2048`, so the opt-in path defaults to the small-prefill shape until an
+    exact-card sweep proves a larger tile.
+    """
+
+    return env_int("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_MAX_M", 1024, lower=1, upper=1 << 30)
+
+
+def _native_prefill_fused_wavg_lora_enabled(total_rows: int) -> bool:
+    """Runtime switch for the native prefill W/A/G/V-gate LoRA fusion probe."""
+
+    if not _native_prefill_fused_wavg_lora_requested():
+        return False
+    if int(total_rows) > _native_prefill_fused_wavg_lora_max_m():
+        return False
+    if fused_wavg_lora is None or fused_wavg_lora_available is None:
+        return False
+    try:
+        return bool(fused_wavg_lora_available())
+    except Exception:
+        return False
+
+
+def _native_prefill_fused_wavg_lora_blocks() -> tuple[int, int, int]:
+    """Return ``(block_m, block_r, block_k)`` for prefill WAVG LoRA."""
+
+    vals = []
+    for name, fallback, default, upper in (
+        ("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_M", "RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_M", 64, 128),
+        ("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_R", "RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_R", 64, 128),
+        ("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_K", "RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_K", 64, 256),
+    ):
+        raw = os.environ.get(name, os.environ.get(fallback))
+        if raw is None:
+            vals.append(env_int(name, int(default), lower=1, upper=upper))
+        else:
+            try:
+                val = int(str(raw).strip())
+            except ValueError:
+                val = int(default)
+            vals.append(min(max(1, val), upper))
+    return vals[0], vals[1], vals[2]
 
 
 def _native_graph_fused_recurrent_output_enabled() -> bool:
@@ -682,19 +757,77 @@ def prefill(
         xg = h + xx * x_g.view(1, 1, hidden)
 
         r = F.linear(xr, Rw)
-        w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
         k = F.linear(xk, Kw)
         v = F.linear(xv, Vw)
-        a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
-        g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
-        kk = F.normalize((k * k_k.view(1, 1, hidden)).view(B, T, H, N), dim=-1, p=2.0).view(B, T, hidden)
-        k = k * (1 + (a - 1) * k_a.view(1, 1, hidden))
-        if layer_idx == 0:
-            v_first_seq = v
+        v_gate = None
+        use_prefill_wavg_lora = layer_idx > 0 and _native_prefill_fused_wavg_lora_enabled(B * T)
+        if use_prefill_wavg_lora:
+            block_m, block_r, block_k = _native_prefill_fused_wavg_lora_blocks()
+            w, a, g, v_gate = fused_wavg_lora(
+                xw.reshape(B * T, hidden),
+                xa.reshape(B * T, hidden),
+                xg.reshape(B * T, hidden),
+                xv.reshape(B * T, hidden),
+                w1,
+                a1,
+                g1,
+                v1,
+                w2,
+                a2,
+                g2,
+                v2,
+                w0,
+                a0,
+                None,
+                v0,
+                block_m=block_m,
+                block_r=block_r,
+                block_k=block_k,
+            )
+            w = w.view(B, T, hidden)
+            a = torch.sigmoid(a.view(B, T, hidden))
+            g = g.view(B, T, hidden)
+            v_gate = v_gate.view(B, T, hidden)
         else:
-            v_gate = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
-            v = v + (v_first_seq - v) * v_gate
-        w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
+            w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
+            a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
+            g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
+            if layer_idx != 0:
+                v_gate = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
+        if _native_prefill_fused_state_prep_enabled():
+            if layer_idx == 0:
+                w, k, v, kk = fused_prefill_state_prep(
+                    w,
+                    k,
+                    v,
+                    a,
+                    k_k,
+                    k_a,
+                    num_heads=H,
+                    head_dim=N,
+                )
+                v_first_seq = v
+            else:
+                w, k, v, kk = fused_prefill_state_prep(
+                    w,
+                    k,
+                    v,
+                    a,
+                    k_k,
+                    k_a,
+                    v_first=v_first_seq,
+                    v_gate=v_gate,
+                    num_heads=H,
+                    head_dim=N,
+                )
+        else:
+            kk = F.normalize((k * k_k.view(1, 1, hidden)).view(B, T, H, N), dim=-1, p=2.0).view(B, T, hidden)
+            k = k * (1 + (a - 1) * k_a.view(1, 1, hidden))
+            if layer_idx == 0:
+                v_first_seq = v
+            else:
+                v = v + (v_first_seq - v) * v_gate
+            w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
 
         out, new_state = _native_prefill_scan(r, w, k, v, kk, a, state[layer_idx], B, T, H, N)
         out = F.group_norm(out.reshape(B * T, hidden), H, gn_w, gn_b, eps).view(B, T, hidden)

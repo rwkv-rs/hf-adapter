@@ -195,8 +195,9 @@ Current exact-card evidence status:
 - V100 (`sm_70`): active regression baseline; preserve training/PEFT/TRL/cache
   and decode greedy-match rows before changing defaults.
 - RTX 4090 (`sm_89`): active Ada consumer validation card; native fused prefill
-  scan is promising under explicit A/B flags, while deeper projection fusion is
-  still opt-in because bsz=1 regresses even when bsz=4 improves.
+  scan plus state-prep fusion is promising under explicit A/B flags, while
+  WAVG/projection fusion is still opt-in because shallow LoRA grouping regresses
+  end-to-end even when isolated rows improve.
 - RTX 5070 Laptop / 50-series (`sm_120` observed): touched Blackwell path; native
   no-FLA compatibility is important because some FLA training kernels can be
   architecture-limited; fusion wins must be re-proven end-to-end on each 50-card.
@@ -292,6 +293,16 @@ Run this checklist for every new GPU before marking it as supported:
     (`RWKV7_FAST_PREFILL=1` + `RWKV7_NATIVE_PREFILL_FUSED_SCAN=1`) after
     cache-handoff correctness rows, but it is not a blanket default until the
     broader batch/model matrix passes.
+  - Native prefill state-prep fusion
+    (`RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP=1`) is a small positive Ada probe:
+    4090 / 0.4B / fp16 / prompt512 moves bsz=1 from `21857.3` to `22358.5`
+    tok/s and bsz=4 stays neutral (`81144.8` tok/s). Keep it explicit until
+    the larger model/card matrix passes.
+  - Prefill WAVG LoRA grouping must stay telemetry-only:
+    `RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA=1` improves isolated `B*T=512`
+    microbench but regresses end-to-end bsz=1 prefill (`21773.4` tok/s) and is
+    disabled for larger flattened rows by default
+    (`RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_MAX_M=1024`).
   - Deeper R/K/V + W/A/G/V-gate projection fusion is opt-in: current 4090 rows
     show greedy correctness, bsz=4 speedup, and bsz=1 regression, so default
     promotion is blocked by the min-batch gate.
