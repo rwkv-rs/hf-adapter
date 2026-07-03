@@ -2,6 +2,30 @@
 
 This is a short-lived working TODO for the current `wangyue/native-fused-fp16-kernel` branch. Keep the default HF path unchanged unless a benchmark explicitly opts in.
 
+## Temporary TODO: G1 MATH500 speed gate after seed43 accuracy pass
+
+- [x] Preserve the full seed43 accuracy evidence:
+  - `bench/math500_hf_seed43_full_compare_4090_20260704/`
+  - HF seed43 `pass@64=0.372` vs Albatross `0.370`
+  - current blocker: same run speed is only `1.608x` summary token/s and
+    `1.686x` decode token/s vs Albatross, below the `>=2x` gate.
+- [x] Add an opt-in deferred verifier path so CPU `math_verify` does not stall
+  the dynamic GPU decode/refill loop.
+  - Implementation: `bench/eval_math500_hf.py --defer-verification`
+  - Default behavior stays unchanged.
+  - Optional speed denominator: `--summary-speed-timing generation`.
+- [x] Validate deferred verification on a 4090 dynamic smoke.
+  - Artifact: `bench/math500_defer_verification_smoke_4090_20260704/`
+  - Completion mismatches: `0`
+  - Correctness mismatches: `0`
+  - Small smoke token/s improved from `358.850` inline to `411.810`
+    generation-timed deferred.
+- [ ] Finish the full seed43 avg@64 deferred-verification run and compare it
+  with the committed Albatross reference.
+  - Remote output: `/tmp/math500_hf_dynamic_full_avg64_seed43_defer_20260704`
+  - Remote log: `/tmp/math500_hf_dynamic_full_avg64_seed43_defer_20260704.log`
+  - Acceptance target: keep `pass@64 >= 0.370` and restore `>=2x` speed.
+
 ## Temporary TODO: next 4090 push
 
 Use this as the current scratch checklist until the Albatross-ratio item below
