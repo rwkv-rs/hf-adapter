@@ -106,10 +106,20 @@ Branch: `wangyue/native-prefill-060-albatross`
     generated tokens `612.2159`, `decoded_token_events=19,615,994`,
     `decode_sec=2128.4963`, `elapsed_sec=2141.1968`,
     `token_per_sec=9161.2290`, `sample_per_sec=14.9449`, and prefill cache
-    build time `12.1229s`.  This is the first full HF dynamic avg@64
-    acceptance artifact; the remaining rigorous comparison is to run the same
-    full MATH500 avg@64 through Albatross and compare accuracy/speed under the
-    same prompt/sampling/stop policy.
+    build time `12.1229s`.
+  - Full 500-task MATH500 avg@64 Albatross reference completed on the same
+    4090 with matching rollout/sampling/stop policy:
+    `bench/math500_albatross_full_avg64_20260703/summary.json` and
+    `bench/math500_albatross_full_avg64_20260703/run.log`.  Result:
+    `4670/32000` correct generations, `rollout_accuracy=0.1459375`,
+    `pass_at_rollout_accuracy=0.37`, `truncated_rate=0.21575`, mean generated
+    tokens `612.84375`, `decode_s=4945.952` for `19,636,096` decoded tokens,
+    `elapsed_sec=5030.2108`, `token_per_sec=3903.6328`, and
+    `sample_per_sec=6.3616`.  Direct comparison: HF dynamic is about
+    `2.347x` faster by summary token/s (`9161.2290 / 3903.6328`) and about
+    `2.320x` faster by steady decode token/s (`19615994/2128.4963` vs
+    `19636096/4945.952`), while Albatross accuracy is higher by `249/32000`
+    generations and `+0.012` absolute pass@64 (`0.37` vs `0.358`).
 
 - [x] Start from merged `origin/main` after PR #90.
 - [x] Fix the first experiment blocker:
