@@ -467,10 +467,10 @@ class _RWKV7NativeGraphTokenRunner:
         self.xpf = [torch.zeros(self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
         self.v_first = torch.zeros(self.hidden, device=self.device, dtype=self.dtype)
         self.tok_id = torch.zeros(1, dtype=torch.long, device=self.device)
-        self.logits = torch.zeros(base.embeddings.weight.shape[0], device=self.device, dtype=self.dtype)
         self.emb = base.embeddings.weight
-        self.head = owner.lm_head.weight
-        self.head_bias = owner.lm_head.bias
+        self.head_module = owner.lm_head
+        self.vocab_size = int(getattr(self.head_module, "out_features", base.embeddings.weight.shape[0]))
+        self.logits = torch.zeros(self.vocab_size, device=self.device, dtype=self.dtype)
         self.norm_w = base.norm.weight
         self.norm_b = base.norm.bias
         self._bound_cache_ref: weakref.ReferenceType[RWKV7StateCache] | None = None
@@ -486,7 +486,7 @@ class _RWKV7NativeGraphTokenRunner:
         for li, p in enumerate(self.packs):
             x = _native_graph_block_ip(x, self.state[li], self.xpa[li], self.xpf[li], self.v_first, p)
         out = F.layer_norm(x, [self.hidden], self.norm_w, self.norm_b, 1e-5)
-        self.logits.copy_(F.linear(out, self.head, self.head_bias).reshape(-1))
+        self.logits.copy_(_linear_direct(self.head_module, out).reshape(-1))
 
     def _capture(self) -> None:
         warm = torch.cuda.Stream(device=self.device)
@@ -616,10 +616,10 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         self.xpf = [torch.zeros(self.batch_size, self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
         self.v_first = torch.zeros(self.batch_size, self.hidden, device=self.device, dtype=self.dtype)
         self.tok_id = torch.zeros(self.batch_size, dtype=torch.long, device=self.device)
-        self.logits = torch.zeros(self.batch_size, base.embeddings.weight.shape[0], device=self.device, dtype=self.dtype)
         self.emb = base.embeddings.weight
-        self.head = owner.lm_head.weight
-        self.head_bias = owner.lm_head.bias
+        self.head_module = owner.lm_head
+        self.vocab_size = int(getattr(self.head_module, "out_features", base.embeddings.weight.shape[0]))
+        self.logits = torch.zeros(self.batch_size, self.vocab_size, device=self.device, dtype=self.dtype)
         self.norm_w = base.norm.weight
         self.norm_b = base.norm.bias
         self._bound_cache_ref: weakref.ReferenceType[RWKV7StateCache] | None = None
@@ -635,7 +635,7 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         for li, p in enumerate(self.packs):
             x = _native_graph_block_ip_batched(x, self.state[li], self.xpa[li], self.xpf[li], self.v_first, p)
         out = F.layer_norm(x, [self.hidden], self.norm_w, self.norm_b, 1e-5)
-        self.logits.copy_(F.linear(out, self.head, self.head_bias))
+        self.logits.copy_(_linear_direct(self.head_module, out).reshape(self.batch_size, self.vocab_size))
 
     def _capture(self) -> None:
         warm = torch.cuda.Stream(device=self.device)
@@ -2081,7 +2081,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
 
         past_key_values._seen_tokens += 1
         hidden_states = F.layer_norm(x, [hidden], base.norm.weight, base.norm.bias, 1e-5)
-        logits = F.linear(hidden_states, self.lm_head.weight, self.lm_head.bias).view(batch_size, 1, -1)
+        logits = _linear_direct(self.lm_head, hidden_states).view(batch_size, 1, -1)
         if not return_dict:
             return logits, past_key_values
         return CausalLMOutputWithPast(logits=logits, past_key_values=past_key_values)
