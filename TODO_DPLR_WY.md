@@ -1118,7 +1118,7 @@ Branch: `wangyue/native-prefill-060-albatross`
       route in this sequence that repeatedly beats its same-run baseline, but
       it still does not beat the strict historical best row `27,051.0 tok/s`
       and remains below the `0.60x` target.  Keep it opt-in for now.
-- [ ] Next main fused-fp16 task:
+- [x] Next main fused-fp16 task:
   - Use the positive sk-scale route as the new bounded branch, but do not
     promote it yet.  Next experiment should profile or micro-split the sk path
     to locate the remaining overhead: added `sk` reduction inside scan, raw-V
@@ -1126,6 +1126,52 @@ Branch: `wangyue/native-prefill-060-albatross`
     output prep.  Promotion gate remains same-run 4090 / 0.4B / prompt512 /
     bsz1 correctness plus movement beyond the strict `27,051.0 tok/s` row and
     toward `>=31,289 tok/s`.
+  - Done: added and ran a synthetic state-scan/output micro-split benchmark.
+    - implementation:
+      - new benchmark `bench/bench_state_scan_output_micro.py` times scan-only,
+        output-only, and scan+output route pairs for full K/V-writeback,
+        no-K/V raw recompute, sk-scale raw-V, and full-correction variants;
+      - analyzer now preserves `state_scan_output_micro` rows and adds their
+        component/delta summary to `next_focus`.
+    - result file:
+      - `bench/results_state_scan_output_micro_4090_20260703_011009.jsonl`
+        from remote `/tmp/state_scan_output_micro_4090_20260703_011009.jsonl`.
+    - 4090 synthetic `B=1,T=512,H=16,N=64,fp16`, `num_warps=8`,
+      `num_stages=3`, all correctness checks pass within fp16 tolerance
+      (`out/state` diffs `0.0`; output-prep diffs up to `0.125`):
+      - scan-only:
+        - full K/V-writeback: `0.515968 ms`;
+        - no-K/V: `0.455680 ms`;
+        - sk-scale: `0.502784 ms`;
+        - full correction-vector: `0.574464 ms`;
+      - output-only:
+        - full K/V output prep: `0.080896 ms`;
+        - raw-K/V recompute output prep: `0.099328 ms`;
+        - sk-scale raw-V output prep: `0.081856 ms`;
+        - correction-vector output prep: `0.067680 ms`;
+      - route totals:
+        - full K/V baseline route: `0.521216 ms`;
+        - no-K/V raw route: `0.462848 ms`;
+        - sk-scale route: `0.509952 ms`;
+        - correction-vector route: `0.580608 ms`.
+    - conclusion: the sk-scale route's remaining overhead is primarily inside
+      the scan kernel, not output prep.  `scan_sk - scan_nokv` is about
+      `0.047104 ms`, while `output_sk_raw_v` is only `0.000960 ms` slower
+      than full K/V output prep.  Writing a full correction vector is clearly
+      negative.  The next bounded experiment should reduce or move the sk
+      reduction cost, or revisit the no-K/V raw route with a full-HF profiler
+      because synthetic route timing favors it even though the earlier HF raw
+      route was only parity/slower.
+- [ ] Next main fused-fp16 task:
+  - Do not promote sk-scale yet.  Use the micro-split evidence to target the
+    scan-side `sk` reduction overhead directly.  Candidate bounded directions:
+    - add a scan phase/probe or kernel variant that computes `sk` with lower
+      register/reduction pressure, then re-test the sk-scale HF route; or
+    - run a corrected HF breakdown for sk-scale and no-K/V raw routes to
+      resolve why synthetic `route_nokv_raw` is much faster while prior HF raw
+      was not.
+  - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
+    confirmed row beyond the strict `27,051.0 tok/s` before default promotion.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `27,051.0 tok/s` (`~0.5187x`), still about `15.7%` relative uplift short of
