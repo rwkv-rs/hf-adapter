@@ -1228,6 +1228,19 @@ def _native_graph_rkv_project(
 
     if not _native_graph_vkwr_rkv_dispatch(int(rows), int(hidden_size)) or RKVw.numel() == 0:
         return F.linear(xr, Rw), F.linear(xk, Kw), F.linear(xv, Vw)
+    return _stacked_rkv_bmm_project(xr, xk, xv, RKVw, rows, hidden_size)
+
+
+def _stacked_rkv_bmm_project(
+    xr: torch.Tensor,
+    xk: torch.Tensor,
+    xv: torch.Tensor,
+    RKVw: torch.Tensor,
+    rows: int,
+    hidden_size: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Project R/K/V with a packed ``[3, hidden, hidden]`` batched matmul."""
+
     if xr.dim() == 1:
         flat = torch.stack(
             (
@@ -1249,6 +1262,30 @@ def _native_graph_rkv_project(
     )
     rkv = torch.bmm(flat, RKVw)
     return rkv[0], rkv[1], rkv[2]
+
+
+def _native_prefill_rkv_bmm_requested() -> bool:
+    """Return whether native prefill should try packed R/K/V bmm projection."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_RKV_BMM", False)
+
+
+def _native_prefill_rkv_bmm_max_rows() -> int:
+    """Maximum flattened prefill rows for the packed R/K/V bmm probe."""
+
+    return env_int("RWKV7_NATIVE_PREFILL_RKV_BMM_MAX_ROWS", 4096, lower=1, upper=65536)
+
+
+def _native_prefill_rkv_bmm_enabled(rows: int, hidden_size: int, RKVw: torch.Tensor) -> bool:
+    """Runtime gate for the prefill packed R/K/V projection probe."""
+
+    if not _native_prefill_rkv_bmm_requested():
+        return False
+    if int(rows) <= 0 or int(hidden_size) <= 0:
+        return False
+    if int(rows) > _native_prefill_rkv_bmm_max_rows():
+        return False
+    return bool(RKVw.numel() > 0)
 
 
 def _native_graph_fused_wag_lora_blocks() -> tuple[int, int, int]:
@@ -1484,7 +1521,7 @@ def extract(model):
     eps = float(N * 1e-5)
     packs = []
     hidden = int(layers[0].attn.hidden_size)
-    stack_rkv = _native_graph_rkv_policy() == "vkwr_auto"
+    stack_rkv = _native_graph_rkv_policy() == "vkwr_auto" or _native_prefill_rkv_bmm_requested()
     for i, layer in enumerate(layers):
         a = layer.attn
         ref = a.w_lora.lora[0].weight
@@ -1862,9 +1899,22 @@ def prefill(
                 a = torch.sigmoid(a)
                 v_gate = torch.sigmoid(v_gate)
         else:
-            r = F.linear(xr, Rw)
-            k = F.linear(xk, Kw)
-            v = F.linear(xv, Vw)
+            if _native_prefill_rkv_bmm_enabled(B * T, hidden, RKVw):
+                r2, k2, v2 = _stacked_rkv_bmm_project(
+                    xr.reshape(B * T, hidden),
+                    xk.reshape(B * T, hidden),
+                    xv.reshape(B * T, hidden),
+                    RKVw,
+                    B * T,
+                    hidden,
+                )
+                r = r2.view(B, T, hidden)
+                k = k2.view(B, T, hidden)
+                v = v2.view(B, T, hidden)
+            else:
+                r = F.linear(xr, Rw)
+                k = F.linear(xk, Kw)
+                v = F.linear(xv, Vw)
         use_prefill_wavg_lora = (
             not shift_wavg_lora_done
             and not use_prefill_projection

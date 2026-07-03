@@ -1801,6 +1801,30 @@ Branch: `wangyue/native-prefill-060-albatross`
     cost; the next useful experiment needs a wider attention/shift-WAVG
     boundary or a genuinely persistent state-scan design, not another
     one-kernel activation tweak.
+- [x] Try packed R/K/V bmm as a larger attention projection boundary:
+  - Motivation: the repo already carries VKWR-inspired packed `RKVw` weights
+    for native-graph decode, while prefill still uses three separate
+    `F.linear(xr/xk/xv)` calls.  This experiment exposes
+    `RWKV7_NATIVE_PREFILL_RKV_BMM=1`, makes `extract()` pack `RKVw` when that
+    prefill flag is requested, and routes prefill R/K/V through one packed
+    `torch.bmm` group without touching the default path.
+  - Result file:
+    `bench/results_native_4090_prefill_rkv_bmm_20260703_150000.jsonl`
+    from remote `/tmp/native_4090_prefill_rkv_bmm_20260703_150000.jsonl`.
+  - 4090 / 0.4B / prompt512 / bsz1, CUDA warp-specialized state-scan +
+    shift-WAVG `bm128/br64/bk64`, rows all pass greedy/cache/decode smoke:
+    - baseline: `27,964.9 tok/s`, `18.3087 ms`, peak `988.2 MiB`;
+    - packed prefill RKV-bmm: effective, `27,204.3 tok/s`, `18.8206 ms`,
+      peak `1134.2 MiB`;
+    - packed prefill RKV-bmm + FFN norm-shift: effective,
+      `27,072.1 tok/s`, `18.9125 ms`, peak `1111.0 MiB`.
+  - Conclusion: packed RKV-bmm is correctness-safe but negative for this
+    prefill shape.  It increases peak memory by carrying packed RKV weights and
+    loses to the three cuBLAS linear calls, so keep it opt-in/telemetry only.
+    This rules out the simple "borrow VKWR packed RKV" projection boundary for
+    the 4090 bsz1/prompt512 path; the next attention-side attempt must reduce
+    shift-WAVG intermediate traffic or fuse with the state-scan/output
+    consumer, not just repackage the dense R/K/V matmuls.
 - [ ] Next persistent/two-level state-scan experiment:
   - Move the next bounded experiment to the larger remaining boundary exposed
     by breakdown: `attn_shift_wavg_lora_fused` (`~5.1 ms`) and/or the FFN

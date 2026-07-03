@@ -202,6 +202,17 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
     scan_m = scan_block_m(model)
     shift_wavg_blocks = getattr(nj, "_native_prefill_fused_shift_wavg_lora_blocks", lambda: (None, None, None))()
     shift_wavg_warps = getattr(nj, "_native_prefill_fused_shift_wavg_lora_warps", lambda: (None, None))()
+    try:
+        rkv_pack = nj._ensure_rkv_pack(model._rwkv7_native_jit_packs()[0])
+        rkv_hidden = int(rkv_pack[1]) * int(rkv_pack[2])
+        rkv_weight = rkv_pack[-1]
+        prefill_rkv_bmm_effective = getattr(nj, "_native_prefill_rkv_bmm_enabled", lambda *_args: False)(
+            batch_size * prompt_tokens,
+            rkv_hidden,
+            rkv_weight,
+        )
+    except Exception:
+        prefill_rkv_bmm_effective = False
     return {
         "axis": "native_prefill_scan",
         "backend": "hf_adapter",
@@ -225,6 +236,9 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "scan_nomask64": getattr(nj, "_native_prefill_scan_nomask64_enabled", lambda: False)(),
         "scan_precompute_w": getattr(nj, "_native_prefill_scan_precompute_w_enabled", lambda: False)(),
         "scan_precompute_w_dtype": getattr(nj, "_native_prefill_scan_precompute_w_dtype", lambda: "fp32")(),
+        "prefill_rkv_bmm_requested": getattr(nj, "_native_prefill_rkv_bmm_requested", lambda: False)(),
+        "prefill_rkv_bmm_effective": bool(prefill_rkv_bmm_effective),
+        "prefill_rkv_bmm_max_rows": getattr(nj, "_native_prefill_rkv_bmm_max_rows", lambda: None)(),
         "prefill_cuda_state_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_cuda_state_scan_effective": getattr(nj, "_native_prefill_cuda_state_scan_enabled", lambda: False)(),
         "prefill_cuda_state_scan_sk_requested": os.environ.get("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SK", "0").lower() not in {"0", "false", "no", "off"},
