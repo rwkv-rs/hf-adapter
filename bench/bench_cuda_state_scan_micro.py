@@ -208,8 +208,10 @@ def main() -> int:
 
     for schedule, rpb in [
         ("default", 1),
+        ("default", 16),
         ("warp_specialized", 1),
         ("warp_specialized", 8),
+        ("warp_specialized", 16),
         ("warp2", 1),
         ("warp2", 2),
         ("warp2", 4),
@@ -265,7 +267,7 @@ def main() -> int:
         }
         print(json.dumps(row, ensure_ascii=False))
         append_row(args.results, row)
-    for rpb in [1, 2, 4, 8]:
+    for rpb in [1, 2, 4, 8, 16]:
         ms = median_ms(
             lambda rpb=rpb: call_full_sk(tensors, rows_per_block=rpb),
             warmup=args.warmup,

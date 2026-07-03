@@ -1482,12 +1482,31 @@ Branch: `wangyue/native-prefill-060-albatross`
     the best cached form, but the extra launch / temp traffic still loses e2e
     to warp-specialized in the current HF prefill route. Keep `wk_half` as an
     opt-in probe only.
+- [x] Try wider single-launch vector-prep sharing inside CUDA state-scan:
+  - Added `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_ROWS_PER_BLOCK=16` for the
+    single-launch row-block CUDA paths.  The warp-specialized rpb16 path uses
+    one producer warp for 16 row-worker warps, so it reuses one vector-prep /
+    norm result across more rows without adding the cached-prep extra launch.
+  - Micro result on 4090 / synthetic `B=1,T=512,H=16,N=64`:
+    - warp-specialized rpb1: `0.447488 ms`;
+    - warp-specialized rpb8: `0.458752 ms`;
+    - new warp-specialized rpb16: `0.519168 ms`;
+    - default/coop rpb16: `0.826368 ms`;
+    - SK rpb16: `0.570368 ms`.
+  - E2E confirm with current shift-WAVG route on 4090 / 0.4B / prompt512 / bsz1:
+    - same-run rpb1: `28,349.5 tok/s`, `18.0603 ms`, max diff `0.0625`;
+    - rpb8: `28,312.8 tok/s`, `18.0837 ms`, max diff `0.0625`;
+    - rpb16: `26,303.0 tok/s`, `19.4655 ms`, max diff `0.0625`.
+  - Conclusion: sharing vector prep across 16 rows in one launch over-reduces
+    row parallelism / occupancy.  rpb8 is near rpb1, but neither beats the
+    previous strict best `28,780.6 tok/s`. Keep rpb16 as an opt-in probe only;
+    do not promote.
 - [ ] Next state-scan structural experiment:
-  - Stop treating split cached-prep as a promotion path until it can remove an
-    extra launch.  Next attack the same duplicated prep/norm cost inside a
-    single CUDA launch: try a persistent/vector-prep sharing schedule that keeps
-    row parallelism but reuses one producer result across more rows, or fuses the
-    cached-prep and row scan into one cooperative kernel.
+  - Stop widening rows-per-block.  The next state-scan attempt should preserve
+    rpb1/rpb8-level row parallelism while removing duplicated producer work by a
+    different structure: e.g. persistent two-level scheduling, head-level vector
+    prep shared through cooperative groups, or moving the remaining gain target
+    to scan+output/FFN fusion if state-scan single-kernel variants keep losing.
   - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond `28,780.6 tok/s`, moving toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for

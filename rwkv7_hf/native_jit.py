@@ -482,9 +482,9 @@ def _native_prefill_cuda_state_scan_precompute_mode() -> str:
 def _native_prefill_cuda_state_scan_rows_per_block() -> int:
     """Rows handled by one CUDA row-block in the cooperative N=64 scan."""
 
-    value = env_int("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_ROWS_PER_BLOCK", 1, lower=1, upper=8)
-    if value not in {1, 2, 4, 8}:
-        raise ValueError("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_ROWS_PER_BLOCK must be one of 1, 2, 4, or 8")
+    value = env_int("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_ROWS_PER_BLOCK", 1, lower=1, upper=16)
+    if value not in {1, 2, 4, 8, 16}:
+        raise ValueError("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_ROWS_PER_BLOCK must be one of 1, 2, 4, 8, or 16")
     return value
 
 
