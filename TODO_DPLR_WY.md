@@ -1162,7 +1162,7 @@ Branch: `wangyue/native-prefill-060-albatross`
       reduction cost, or revisit the no-K/V raw route with a full-HF profiler
       because synthetic route timing favors it even though the earlier HF raw
       route was only parity/slower.
-- [ ] Next main fused-fp16 task:
+- [x] Next main fused-fp16 task:
   - Do not promote sk-scale yet.  Use the micro-split evidence to target the
     scan-side `sk` reduction overhead directly.  Candidate bounded directions:
     - add a scan phase/probe or kernel variant that computes `sk` with lower
@@ -1172,6 +1172,71 @@ Branch: `wangyue/native-prefill-060-albatross`
       was not.
   - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond the strict `27,051.0 tok/s` before default promotion.
+  - Done: added corrected HF profiler support for the sk-scale route, ran the
+    raw/sk corrected breakdown, and tried the narrow sk no-mask plus
+    sk+WAVG-LoRA combination experiments.
+    - implementation:
+      - `bench/bench_native_prefill_breakdown.py` now routes
+        `RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_SK_OUTPUT=1` through
+        `fused_recurrent_scan_state_prep_sk(...)` and
+        `fused_attn_output_prepare_from_sk_raw_v(...)`, with profiler
+        components `recurrent_scan_state_prep_sk_fused` and
+        `attn_output_prep_sk_raw_v_fused`;
+      - added an opt-in N=64 no-mask sk kernel under the existing
+        `RWKV7_NATIVE_PREFILL_SCAN_NOMASK64=1` knob for the sk-scale route;
+      - default HF/native behavior remains unchanged unless the benchmark env
+        enables these experimental flags.
+    - corrected HF breakdown result file:
+      `bench/results_native_4090_sk_raw_breakdown_20260703_011513.jsonl`
+      from remote `/tmp/native_4090_sk_raw_breakdown_20260703_011513.jsonl`.
+    - 4090 breakdown rows, all pass with `max_abs_diff_vs_native_prefill=0.0`:
+      - baseline full K/V scan+output: profiled total `29.4134 ms`,
+        `17,407.0 tok/s`; scan component
+        `recurrent_scan_state_prep_fused=13.2268 ms`, output prep
+        `0.1875 ms`;
+      - raw no-K/V output route: profiled total `29.5475 ms`,
+        `17,328.0 tok/s`; scan component
+        `recurrent_scan_state_prep_nokv_fused=11.9508 ms`, output prep
+        `0.1906 ms`;
+      - sk-scale route: profiled total `28.7642 ms`, `17,799.9 tok/s`;
+        scan component `recurrent_scan_state_prep_sk_fused=13.3087 ms`,
+        output prep `0.1874 ms`.
+    - end-to-end sk/no-mask result file:
+      `bench/results_native_4090_sk_nomask64_sweep_20260703_012451.jsonl`
+      from remote `/tmp/native_4090_sk_nomask64_sweep_20260703_012451.jsonl`.
+      Rows all pass greedy/cache/decode smoke:
+      - baseline: `25,309.6 tok/s`, `20.2295 ms`;
+      - raw no-K/V output: `24,574.1 tok/s`, `20.8349 ms`;
+      - sk-scale: `25,812.9 tok/s`, `19.8350 ms`;
+      - sk-scale + no-mask N64: `25,314.8 tok/s`, `20.2253 ms`.
+    - combination result file:
+      `bench/results_native_4090_sk_wavg_combo_20260703_012714.jsonl`
+      from remote `/tmp/native_4090_sk_wavg_combo_20260703_012714.jsonl`.
+      Rows pass greedy/cache/decode smoke:
+      - tuned WAVG-LoRA only: `25,457.9 tok/s`, `20.1117 ms`;
+      - sk-scale + tuned WAVG-LoRA: `26,375.2 tok/s`, `19.4122 ms`.
+    - conclusion:
+      - corrected HF profiling confirms the raw no-K/V scan kernel is faster
+        inside the scan (`~1.276 ms` lower than full K/V), but that saving
+        still does not transfer to e2e because the downstream raw route loses
+        it back and is slower in confirmed prefill rows;
+      - sk-scale remains the best no-K/V-derived route and combines cleanly
+        with tuned WAVG-LoRA, but the best new combined row still stays below
+        the historical strict `27,051.0 tok/s` and far below the
+        `31,289 tok/s` 0.60x target;
+      - the sk no-mask N64 variant is negative on 4090, so do not promote it.
+- [ ] Next main fused-fp16 task:
+  - Stop repeating shallow raw/sk/no-mask/WAVG combinations unless a new
+    component-level reason appears.  The next bounded experiment must attack a
+    larger remaining cost boundary:
+    - either a real fused layer-prep boundary that reduces the aggregate
+      norm/shift + LoRA/projection launch/memory cost without replacing
+      cuBLAS dense matmuls with slower Triton matmul; or
+    - a deeper CUDA/persistent state-scan schedule that shares vector prep
+      without global temp tensors and still preserves row-level parallelism.
+  - Promotion gate remains unchanged: same-run 4090 / 0.4B / prompt512 / bsz1
+    correctness plus a confirmed row beyond `27,051.0 tok/s`, moving toward
+    `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `27,051.0 tok/s` (`~0.5187x`), still about `15.7%` relative uplift short of

@@ -737,6 +737,79 @@ if _HAS_TRITON:
         )
 
     @triton.jit
+    def _recurrent_scan_state_prep_sk_nomask64_kernel(
+        r_ptr,
+        w_raw_ptr,
+        k_raw_ptr,
+        v_raw_ptr,
+        a_ptr,
+        state_ptr,
+        k_k_ptr,
+        k_a_ptr,
+        r_k_ptr,
+        v_first_ptr,
+        v_gate_ptr,
+        out_ptr,
+        final_state_ptr,
+        sk_ptr,
+        T,
+        H: tl.constexpr,
+        N: tl.constexpr,
+        HAS_V_GATE: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+    ):
+        """N=64 specialization for the sk-scale no-K/V state-scan path.
+
+        This is intentionally separate from the generic sk kernel so the
+        experiment can remove mask predicates from the extra ``sk`` reduction
+        without changing the default route.  It is only dispatched for
+        ``N == BLOCK_N == 64``.
+        """
+
+        bh_id = tl.program_id(0)
+        head_id = bh_id % H
+        batch_id = bh_id // H
+
+        offs = tl.arange(0, BLOCK_N)
+        state_base = (batch_id * H + head_id) * N * N
+        param_base = head_id * N
+        st = tl.load(state_ptr + state_base + offs[:, None] * N + offs[None, :]).to(tl.float32)
+        kk_scale = tl.load(k_k_ptr + param_base + offs).to(tl.float32)
+        ka_scale = tl.load(k_a_ptr + param_base + offs).to(tl.float32)
+        rk = tl.load(r_k_ptr + param_base + offs).to(tl.float32)
+
+        t = 0
+        while t < T:
+            vec_base = ((batch_id * T + t) * H + head_id) * N
+            r = tl.load(r_ptr + vec_base + offs).to(tl.float32)
+            w_raw = tl.load(w_raw_ptr + vec_base + offs).to(tl.float32)
+            k_raw = tl.load(k_raw_ptr + vec_base + offs).to(tl.float32)
+            v_raw = tl.load(v_raw_ptr + vec_base + offs).to(tl.float32)
+            a_val = tl.load(a_ptr + vec_base + offs).to(tl.float32)
+
+            kk_raw = k_raw * kk_scale
+            norm2 = tl.sum(kk_raw * kk_raw, axis=0)
+            kk = kk_raw * tl.rsqrt(tl.maximum(norm2, 1.0e-20))
+            k_adj = k_raw * (1.0 + (a_val - 1.0) * ka_scale)
+            v_adj = v_raw
+            if HAS_V_GATE:
+                vf = tl.load(v_first_ptr + vec_base + offs).to(tl.float32)
+                vg = tl.load(v_gate_ptr + vec_base + offs).to(tl.float32)
+                v_adj = v_raw + (vf - v_raw) * vg
+            w = tl.exp(-0.606531 * tl.sigmoid(w_raw))
+
+            state_dot_kk = tl.sum(st * kk[None, :], axis=1)
+            st = st * w[None, :] + v_adj[:, None] * k_adj[None, :] - state_dot_kk[:, None] * kk[None, :] * a_val[None, :]
+
+            recurrent = tl.sum(st * r[None, :], axis=1)
+            corr_scale = tl.sum(r * k_adj * rk, axis=0)
+            tl.store(out_ptr + vec_base + offs, recurrent)
+            tl.store(sk_ptr + (batch_id * T + t) * H + head_id, corr_scale)
+            t += 1
+
+        tl.store(final_state_ptr + state_base + offs[:, None] * N + offs[None, :], st)
+
+    @triton.jit
     def _recurrent_scan_state_prep_rows_kernel(
         r_ptr,
         w_raw_ptr,
@@ -2570,6 +2643,7 @@ def fused_recurrent_scan_state_prep_sk(
     block_n: int = 64,
     num_warps: int = 8,
     num_stages: int = 3,
+    nomask64: bool = False,
     force_fallback: bool = False,
 ):
     """Fuse state prep and scan while emitting per-head correction scale.
@@ -2660,29 +2734,54 @@ def fused_recurrent_scan_state_prep_sk(
     out = torch.empty((B, T, H, N), device=r4.device, dtype=r4.dtype)
     final_state = torch.empty_like(state_c)
     sk = torch.empty((B, T, H), device=r4.device, dtype=r4.dtype)
-    _recurrent_scan_state_prep_sk_kernel[(B * H,)](
-        r_c,
-        w_c,
-        k_c,
-        v_c,
-        a_c,
-        state_c,
-        kk_c,
-        ka_c,
-        rk_c,
-        vf_c,
-        vg_c,
-        out,
-        final_state,
-        sk,
-        T,
-        H,
-        N,
-        HAS_V_GATE=bool(has_v_gate),
-        BLOCK_N=int(block_n),
-        num_warps=int(num_warps),
-        num_stages=num_stages,
-    )
+    if nomask64 and N == 64 and int(block_n) == 64:
+        _recurrent_scan_state_prep_sk_nomask64_kernel[(B * H,)](
+            r_c,
+            w_c,
+            k_c,
+            v_c,
+            a_c,
+            state_c,
+            kk_c,
+            ka_c,
+            rk_c,
+            vf_c,
+            vg_c,
+            out,
+            final_state,
+            sk,
+            T,
+            H,
+            N,
+            HAS_V_GATE=bool(has_v_gate),
+            BLOCK_N=int(block_n),
+            num_warps=int(num_warps),
+            num_stages=num_stages,
+        )
+    else:
+        _recurrent_scan_state_prep_sk_kernel[(B * H,)](
+            r_c,
+            w_c,
+            k_c,
+            v_c,
+            a_c,
+            state_c,
+            kk_c,
+            ka_c,
+            rk_c,
+            vf_c,
+            vg_c,
+            out,
+            final_state,
+            sk,
+            T,
+            H,
+            N,
+            HAS_V_GATE=bool(has_v_gate),
+            BLOCK_N=int(block_n),
+            num_warps=int(num_warps),
+            num_stages=num_stages,
+        )
     if flat:
         return out.reshape(B, T, hidden), final_state, sk
     return out, final_state, sk

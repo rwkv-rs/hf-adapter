@@ -1713,6 +1713,7 @@ def prefill(
             state_scan_block_m = _native_prefill_scan_block_m(N)
             state_scan_num_warps = _native_prefill_scan_num_warps(N, state_scan_block_m)
             state_scan_num_stages = _native_prefill_scan_num_stages()
+            state_scan_nomask64 = _native_prefill_scan_nomask64_enabled()
             if layer_idx == 0:
                 out, new_state, sk_scale = fused_recurrent_scan_state_prep_sk(
                     r.view(B, T, H, N),
@@ -1727,6 +1728,7 @@ def prefill(
                     block_n=N,
                     num_warps=state_scan_num_warps,
                     num_stages=state_scan_num_stages,
+                    nomask64=state_scan_nomask64,
                 )
                 # Layer 0 adjusted V is the raw V projection.
                 v_first_seq = v
@@ -1746,6 +1748,7 @@ def prefill(
                     block_n=N,
                     num_warps=state_scan_num_warps,
                     num_stages=state_scan_num_stages,
+                    nomask64=state_scan_nomask64,
                 )
             out = out.reshape(B, T, hidden)
             sk_scale = sk_scale.reshape(B * T, H)
