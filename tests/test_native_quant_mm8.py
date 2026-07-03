@@ -36,6 +36,7 @@ def main() -> int:
     ap.add_argument("--per-layer-cos-min", type=float, default=0.999)
     ap.add_argument("--e2e-cos-min", type=float, default=0.999)
     ap.add_argument("--triton-max-abs", type=float, default=0.5)
+    ap.add_argument("--fast-token-cos-min", type=float, default=0.999)
     args = ap.parse_args()
 
     model = AutoModelForCausalLM.from_pretrained(
@@ -86,6 +87,33 @@ def main() -> int:
     e2e = F.cosine_similarity(ref.unsqueeze(0), q.unsqueeze(0)).item()
     print(f"e2e ({n} layer(s) quantized) cos = {e2e:.6f} (>= {args.e2e_cos_min})", flush=True)
     ok = ok and e2e >= args.e2e_cos_min and n >= 1
+
+    # 4. Native fast-token backends must accept quantized lm_head modules.
+    # Regression coverage for MM8/MM4Linear, which intentionally do not expose
+    # a dense `.weight` tensor. Compare native decode to the quantized FLA
+    # one-token fallback from the same empty recurrent state.
+    one = ids[:, :1]
+    old_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND")
+    try:
+        with torch.no_grad():
+            os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "fla"
+            fast_ref = model(one).logits[0, -1].float().cpu()
+            for backend in ("native_jit", "native_graph"):
+                os.environ["RWKV7_FAST_TOKEN_BACKEND"] = backend
+                fast_q = model(one).logits[0, -1].float().cpu()
+                used = getattr(model, "_rwkv7_last_fast_token_backend", None)
+                fast_cos = F.cosine_similarity(fast_ref.unsqueeze(0), fast_q.unsqueeze(0)).item()
+                print(
+                    f"fast-token {backend} used={used} cos vs quantized-fla = "
+                    f"{fast_cos:.6f} (>= {args.fast_token_cos_min})",
+                    flush=True,
+                )
+                ok = ok and used == backend and fast_cos >= args.fast_token_cos_min
+    finally:
+        if old_backend is None:
+            os.environ.pop("RWKV7_FAST_TOKEN_BACKEND", None)
+        else:
+            os.environ["RWKV7_FAST_TOKEN_BACKEND"] = old_backend
 
     if not ok:
         print("FAIL", flush=True)
