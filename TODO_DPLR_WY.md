@@ -2578,6 +2578,34 @@ Branch: `wangyue/native-prefill-060-albatross`
       The next stretch attempt still needs a larger shift-WAVG/state-scan/output
       producer-consumer boundary or a schedule that beats warp-pipelined in both
       micro and HF, not only a prev-cache indexing tweak.
+  - [x] Try native prefill tail final-norm slicing:
+    - Motivation: test a cheap tail boundary on the current HF native prefill
+      route: when `logits_to_keep` is smaller than the prompt length, normalize
+      only the retained tail tokens before `lm_head` instead of applying the
+      final layernorm to all prompt tokens.  This is independent per token, so
+      it is correctness-preserving for `logits_to_keep=1`, and stays opt-in.
+    - Implementation:
+      - added opt-in `RWKV7_NATIVE_PREFILL_TAIL_NORM_SLICE=1`;
+      - native prefill keeps the old full-sequence final norm unless the flag is
+        effective and `keep < T`;
+      - scan benchmark/analyzer telemetry records the requested/effective flag.
+    - Correctness:
+      - local and 4090 `py_compile` plus local `git diff --check` passed;
+      - HF e2e rows pass greedy/cache/decode smoke with `max_abs_diff=0.0625`
+        and cosine `1.0`.
+    - Result file:
+      `bench/results_native_4090_tail_norm_slice_20260703_124500.jsonl`
+      from remote `/tmp/native_4090_tail_norm_slice_20260703_1.jsonl`.
+    - 4090 / 0.4B / prompt512 / bsz1 HF rows, current shift-WAVG + CUDA
+      warp-specialized state-scan route:
+      - baseline: `26,086.5 tok/s`, `19.6270 ms`;
+      - tail final-norm slice: `25,678.1 tok/s`, `19.9392 ms`;
+      - repeat baseline: `26,476.3 tok/s`, `19.3381 ms`.
+    - Conclusion: the optimization is correctness-safe but slower in same-run
+      HF because the saved final-norm work is too small and the extra slice path
+      does not move the dominant attention/scan costs. Keep it opt-in only; do
+      not promote. The stretch target still needs a wider attention
+      producer-consumer boundary or a stronger persistent/two-level scan.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `28,780.6 tok/s` (`~0.5519x`), still about `2,508 tok/s` (`~8.7%`

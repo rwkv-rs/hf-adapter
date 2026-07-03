@@ -816,6 +816,12 @@ def _native_prefill_fused_output_enabled() -> bool:
         return False
 
 
+def _native_prefill_tail_norm_slice_enabled() -> bool:
+    """Only normalize the logits-to-keep tail at the end of native prefill."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_TAIL_NORM_SLICE", False)
+
+
 def _native_prefill_fused_output_project_enabled() -> bool:
     """Runtime switch for native prefill output-prep plus ``o_proj`` fusion.
 
@@ -2845,9 +2851,14 @@ def prefill(
         x = residual + F.linear(fk, fV)
         xpf[layer_idx] = h2_last.contiguous()
 
-    x = F.layer_norm(x, [hidden], base.norm.weight, base.norm.bias, 1e-5)
     keep = T if logits_to_keep is None or int(logits_to_keep) <= 0 else min(int(logits_to_keep), T)
-    logits = _lm_head(model, x[:, -keep:, :])
+    x_for_logits = x if keep == T else x[:, -keep:, :]
+    if _native_prefill_tail_norm_slice_enabled() and keep < T:
+        x_for_logits = F.layer_norm(x_for_logits, [hidden], base.norm.weight, base.norm.bias, 1e-5)
+    else:
+        x = F.layer_norm(x, [hidden], base.norm.weight, base.norm.bias, 1e-5)
+        x_for_logits = x[:, -keep:, :]
+    logits = _lm_head(model, x_for_logits)
     return logits, state, xpa, xpf
 
 

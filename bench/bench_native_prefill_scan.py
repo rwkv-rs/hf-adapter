@@ -362,6 +362,11 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_state_prep_w_dtype": nj._native_prefill_state_prep_w_dtype(),
         "prefill_fused_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_output_effective": nj._native_prefill_fused_output_enabled(),
+        "prefill_tail_norm_slice_requested": os.environ.get("RWKV7_NATIVE_PREFILL_TAIL_NORM_SLICE", "0").lower() not in {"0", "false", "no", "off"},
+        "prefill_tail_norm_slice_effective": bool(
+            getattr(nj, "_native_prefill_tail_norm_slice_enabled", lambda: False)()
+            and prompt_tokens > 1
+        ),
         "prefill_fused_output_project_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_PROJECT", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_output_project_effective": getattr(nj, "_native_prefill_fused_output_project_enabled", lambda: False)(),
         "prefill_fused_output_project_block_m": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_PROJECT_BLOCK_M"),
