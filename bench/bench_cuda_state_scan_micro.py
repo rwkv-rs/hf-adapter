@@ -26,7 +26,7 @@ from typing import Any, Callable
 
 import torch
 
-from rwkv7_hf.cuda_state_scan import cuda_state_scan_prep, cuda_state_scan_rowblock_phase
+from rwkv7_hf.cuda_state_scan import cuda_state_scan_prep, cuda_state_scan_prep_sk, cuda_state_scan_rowblock_phase
 
 
 PHASE_NAMES = {
@@ -75,6 +75,7 @@ def make_inputs(args: argparse.Namespace) -> dict[str, torch.Tensor]:
         "state": torch.randn((args.batch_size, args.heads, 64, 64), device=device, dtype=torch.float32),
         "k_k": torch.randn((args.heads, 64), device=device, dtype=torch.float16),
         "k_a": torch.randn((args.heads, 64), device=device, dtype=torch.float16),
+        "r_k": torch.randn((args.heads, 64), device=device, dtype=torch.float16),
         "v_first": torch.randn(shape, device=device, dtype=torch.float16),
         "v_gate": torch.sigmoid(torch.randn(shape, device=device, dtype=torch.float16)),
     }
@@ -109,6 +110,24 @@ def call_full(tensors: dict[str, torch.Tensor], *, rows_per_block: int = 1, sche
         v_first=tensors["v_first"],
         v_gate=tensors["v_gate"],
         lanes_per_row=64,
+        rows_per_block=rows_per_block,
+        schedule=schedule,
+    )
+
+
+def call_full_sk(tensors: dict[str, torch.Tensor], *, rows_per_block: int = 1, schedule: str = "warp_specialized"):
+    return cuda_state_scan_prep_sk(
+        tensors["r"],
+        tensors["w"],
+        tensors["k"],
+        tensors["v"],
+        tensors["a"],
+        tensors["state"],
+        tensors["k_k"],
+        tensors["k_a"],
+        tensors["r_k"],
+        v_first=tensors["v_first"],
+        v_gate=tensors["v_gate"],
         rows_per_block=rows_per_block,
         schedule=schedule,
     )
@@ -208,6 +227,32 @@ def main() -> int:
             "tokens_total": tokens_total,
             "schedule": schedule,
             "rows_per_block": rpb,
+            "cuda_ms": round(ms, 6),
+            "tokps_total": round(1000.0 * tokens_total / ms, 1) if ms > 0 else None,
+        }
+        print(json.dumps(row, ensure_ascii=False))
+        append_row(args.results, row)
+    for rpb in [1, 2, 4, 8]:
+        ms = median_ms(
+            lambda rpb=rpb: call_full_sk(tensors, rows_per_block=rpb),
+            warmup=args.warmup,
+            steps=args.steps,
+        )
+        row = {
+            "axis": "cuda_state_scan_micro",
+            "backend": "cuda_state_scan",
+            "bench_case": f"full_warp_specialized_sk_rpb{rpb}",
+            "status": "pass",
+            "device": device_name,
+            "dtype": "fp16",
+            "batch_size": args.batch_size,
+            "seq_len": args.seq_len,
+            "heads": args.heads,
+            "head_dim": 64,
+            "tokens_total": tokens_total,
+            "schedule": "warp_specialized",
+            "rows_per_block": rpb,
+            "cuda_state_scan_sk": True,
             "cuda_ms": round(ms, 6),
             "tokps_total": round(1000.0 * tokens_total / ms, 1) if ms > 0 else None,
         }

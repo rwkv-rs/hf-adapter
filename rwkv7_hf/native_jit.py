@@ -120,13 +120,25 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         dplr_chunk_scan = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional CUDA extension prototype
-    from .cuda_state_scan import cuda_state_scan_prep, cuda_state_scan_prep_available
+    from .cuda_state_scan import (
+        cuda_state_scan_prep,
+        cuda_state_scan_prep_available,
+        cuda_state_scan_prep_sk,
+        cuda_state_scan_prep_sk_available,
+    )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
-        from cuda_state_scan import cuda_state_scan_prep, cuda_state_scan_prep_available
+        from cuda_state_scan import (
+            cuda_state_scan_prep,
+            cuda_state_scan_prep_available,
+            cuda_state_scan_prep_sk,
+            cuda_state_scan_prep_sk_available,
+        )
     except Exception:
         cuda_state_scan_prep = None  # type: ignore[assignment]
         cuda_state_scan_prep_available = None  # type: ignore[assignment]
+        cuda_state_scan_prep_sk = None  # type: ignore[assignment]
+        cuda_state_scan_prep_sk_available = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
     from .fused_output import (
@@ -407,6 +419,27 @@ def _native_prefill_cuda_state_scan_enabled() -> bool:
         return False
     try:
         return bool(cuda_state_scan_prep_available())
+    except Exception:
+        return False
+
+
+def _native_prefill_cuda_state_scan_sk_enabled() -> bool:
+    """Use CUDA state-scan's SK-emitting no-K/V-writeback route."""
+
+    if not env_flag("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SK", False):
+        return False
+    if not _native_prefill_cuda_state_scan_enabled():
+        return False
+    if cuda_state_scan_prep_sk is None or cuda_state_scan_prep_sk_available is None:
+        return False
+    if fused_attn_output_prepare_from_sk_raw_v is None or fused_attn_output_prepare_from_sk_raw_v_available is None:
+        return False
+    if _native_prefill_cuda_state_scan_schedule() != "warp_specialized":
+        return False
+    if _native_prefill_cuda_state_scan_precompute_enabled():
+        return False
+    try:
+        return bool(cuda_state_scan_prep_sk_available() and fused_attn_output_prepare_from_sk_raw_v_available())
     except Exception:
         return False
 
@@ -1937,6 +1970,7 @@ def prefill(
                 and state_scan_block_m == 64
                 and x.dtype == torch.float16
             )
+            use_cuda_state_scan_sk = bool(use_cuda_state_scan and _native_prefill_cuda_state_scan_sk_enabled())
             cuda_state_scan_lanes = _native_prefill_cuda_state_scan_lanes_per_row() if use_cuda_state_scan else 1
             cuda_state_scan_precompute = (
                 _native_prefill_cuda_state_scan_precompute_enabled() if use_cuda_state_scan else False
@@ -1955,7 +1989,38 @@ def prefill(
                 w_for_state_scan = torch.sigmoid(w.float()).mul_(-0.606531).exp_()
                 if state_scan_precompute_w_dtype == "input":
                     w_for_state_scan = w_for_state_scan.to(dtype=w.dtype)
-            if use_cuda_state_scan and layer_idx == 0:
+            if use_cuda_state_scan_sk and layer_idx == 0:
+                out, new_state, sk_scale = cuda_state_scan_prep_sk(
+                    r.view(B, T, H, N),
+                    w.view(B, T, H, N),
+                    k.view(B, T, H, N),
+                    v.view(B, T, H, N),
+                    a.view(B, T, H, N),
+                    state[layer_idx],
+                    k_k,
+                    k_a,
+                    r_k,
+                    rows_per_block=cuda_state_scan_rows_per_block,
+                    schedule=cuda_state_scan_schedule,
+                )
+                v_first_seq = v.reshape(B, T, hidden)
+            elif use_cuda_state_scan_sk:
+                out, new_state, sk_scale = cuda_state_scan_prep_sk(
+                    r.view(B, T, H, N),
+                    w.view(B, T, H, N),
+                    k.view(B, T, H, N),
+                    v.view(B, T, H, N),
+                    a.view(B, T, H, N),
+                    state[layer_idx],
+                    k_k,
+                    k_a,
+                    r_k,
+                    v_first=v_first_seq.view(B, T, H, N),
+                    v_gate=v_gate.view(B, T, H, N),
+                    rows_per_block=cuda_state_scan_rows_per_block,
+                    schedule=cuda_state_scan_schedule,
+                )
+            elif use_cuda_state_scan and layer_idx == 0:
                 out, new_state, k, v = cuda_state_scan_prep(
                     r.view(B, T, H, N),
                     w.view(B, T, H, N),
@@ -2030,8 +2095,12 @@ def prefill(
                     precomputed_w=state_scan_precompute_w,
                 )
             out = out.reshape(B, T, hidden)
-            k = k.reshape(B, T, hidden)
-            v = v.reshape(B, T, hidden)
+            if use_cuda_state_scan_sk:
+                sk_scale = sk_scale.reshape(B * T, H)
+                state_scan_sk_output_done = True
+            else:
+                k = k.reshape(B, T, hidden)
+                v = v.reshape(B, T, hidden)
             state_scan_done = True
         elif _native_prefill_fused_state_prep_enabled():
             if use_clampw_scan:

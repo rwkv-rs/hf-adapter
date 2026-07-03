@@ -1439,15 +1439,34 @@ Branch: `wangyue/native-prefill-060-albatross`
   - Conclusion: down/up work is roughly balanced and simple warp retuning does
     not close the remaining Albatross gap. Keep `4/4` as the portable default
     unless a full same-run sweep proves otherwise.
-- [ ] Next main fused-fp16 performance task:
-  - Stop spending cycles on simple shift-WAVG warp tuning.  The remaining
-    `~2,508 tok/s` gap to `0.60x` should be attacked structurally:
-    - primary: reduce `recurrent_scan_state_prep_cuda` (`11.3919 ms`,
-      `47.51%`) with a deeper persistent/state-scan schedule or scan+output
-      fusion that removes more global-memory traffic;
-    - secondary: reduce shift-WAVG overhead by eliminating intermediate
-      allocations / launch overhead or fusing the down+up path if the state-scan
-      work stalls.
+- [x] Try CUDA state-scan SK/no-KV-writeback as the first structural
+  state-scan/output experiment:
+  - Added opt-in `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SK=1`, implemented a
+    CUDA warp-specialized SK-emitting state-scan path, paired it with the
+    existing `fused_attn_output_prepare_from_sk_raw_v`, and added telemetry plus
+    micro rows.  The route avoids writing full adjusted K/V from the CUDA scan
+    and emits only per-token/head `sk=sum(r*k_adj*r_k)`.
+  - Micro result on 4090 / synthetic `B=1,T=512,H=16,N=64`:
+    - existing full warp-specialized rpb1: `0.450560 ms`;
+    - SK rpb1/rpb2/rpb4/rpb8: `0.508928 / 0.497664 / 0.504832 /
+      0.510976 ms`;
+    - best SK micro is rpb2, but it is still slower than existing full K/V
+      writeback, so the extra SK reduction outweighs removed K/V writes at this
+      shape.
+  - E2E confirm with current shift-WAVG route on 4090 / 0.4B / prompt512 / bsz1:
+    - same-run baseline CUDA state-scan + shift-WAVG: `27,815.6 tok/s`,
+      `18.4069 ms`, max diff `0.0625`;
+    - best CUDA-SK rpb2: `27,354.5 tok/s`, `18.7172 ms`, max diff `0.125`;
+    - rpb4/rpb1/rpb8: `27,110.2 / 27,022.5 / 26,915.2 tok/s`.
+  - Conclusion: keep the CUDA-SK path as telemetry-only / opt-in; do not promote
+    it to the main route. It does not beat the previous strict best
+    `28,780.6 tok/s`, and it also loses to the same-run baseline.
+- [ ] Next state-scan structural experiment:
+  - The SK/no-KV route shows that simply reducing K/V writeback is not enough.
+    Next attack the duplicated per-row vector-prep/norm cost inside the CUDA
+    row-block scan: either share producer vector prep across multiple row CTAs
+    without losing row parallelism, or split vector prep into a cheaper cached
+    form only if its e2e cost beats current warp-specialized rpb1.
   - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond `28,780.6 tok/s`, moving toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
