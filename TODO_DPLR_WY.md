@@ -2185,6 +2185,19 @@ is either checked off or replaced with a more precise kernel task.
   - high-upside math: DPLR/WY compact chunk prefill, with next work on
     prefix-shared apply/output scheduling, less dense `[N,N]`
     traffic/materialization, and later fused W8/W4 kernels.
+- [x] Native MM8/MM4 lm_head bridge for fast-token decode:
+  - `native_jit` and `native_graph` no longer assume `lm_head.weight` exists;
+    they route the final projection through the module when `lm_head` is a
+    packed `MM8Linear` or `MM4Linear`.
+  - 4090 validation on `/workspace/models/rwkv7/rwkv7-g1d-0.4b-hf` using an
+    effective repo-code model passed:
+    - MM8: `1` layer quantized, e2e cosine `0.999991`, native_jit fast-token
+      cosine vs quantized-FLA `0.999993`, native_graph `0.999992`.
+    - MM4: `1` layer quantized, e2e cosine `0.998870`, native_jit fast-token
+      cosine vs quantized-FLA `0.999994`, native_graph `0.999993`.
+  - This closes the immediate native fast-token crash for size-gated
+    native-quant `lm_head`; full model-level W8/W4 speed claims still require
+    the remaining larger projection/FFN fused quant path.
 - [x] Prior-art check: search official RWKV-LM, Albatross, FLA, VKWR/rwkv.cpp,
   wind_rwkv, and vLLM/SGLang RWKV work before inventing another kernel
   boundary. Current conclusion: there are strong references, but no merged
