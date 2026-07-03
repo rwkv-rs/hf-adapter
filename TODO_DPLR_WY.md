@@ -60,10 +60,11 @@ Branch: `wangyue/native-prefill-060-albatross`
     `bench/math500_hf_accept_long_smoke_20260703/summary.json` used 2 tasks,
     rollout 4, Albatross-style max_new_tokens 1500: `0/8` correct, truncation
     `12.5%`, mean generated tokens `660.5`, `93.26 tok/s`.
-  - Full MATH500 `avg@64` on all 500 tasks is still pending.  The current HF
-    eval harness is intentionally correctness-first and bsz1; it does not yet
-    implement Albatross-like dynamic batched rollout/prefill-cache generation,
-    so it should not be used as the final speed number.
+  - Superseded by the dynamic runner below: the original bsz1 HF MATH500
+    harness remains useful as a correctness smoke, but final speed/accuracy
+    acceptance should use `bench/eval_math500_hf.py --dynamic-batching --bsz 64`
+    with rollout `64`, max_new_tokens `1500`, and the full 500-task MATH500
+    dataset.
 - [x] Implement and validate Albatross-style HF MATH500 dynamic rollout:
   - `bench/eval_math500_hf.py` now supports `--dynamic-batching --bsz N` with:
     prompt-state prefill cache, fixed-size decode slots, dynamic slot refill,
@@ -89,6 +90,12 @@ Branch: `wangyue/native-prefill-060-albatross`
     run log records `decode_s=28.614` for `88727` tokens.  Its summary
     `elapsed_sec=111.565` includes one-time CUDA extension loading/compile
     (`~72.8s`), so use the log's decode line for steady-state comparison.
+  - Added reproducibility/comparison helpers for the final acceptance path:
+    `scripts/run_math500_acceptance.sh`,
+    `bench/compare_math500_summaries.py`, and
+    `docs/validation/math500_acceptance.md`.  These are CPU/lightweight except
+    for the actual requested eval run, and let the final Albatross result be
+    compared without hand calculation.
   - Full 500-task MATH500 avg@64 HF dynamic run completed on the 4090:
     `bench/math500_hf_dynamic_full_avg64_20260703/summary.json` and
     `bench/math500_hf_dynamic_full_avg64_20260703/run.log`.  This used full
