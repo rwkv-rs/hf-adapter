@@ -1775,6 +1775,32 @@ Branch: `wangyue/native-prefill-060-albatross`
     `28,780.6 tok/s`.  Keep it opt-in; do not promote.  The remaining gap is
     no longer likely to close through W-only or pure scan synchronization
     retile.
+- [x] Try the existing larger FFN boundary combination on the current best
+  shift-WAVG/CUDA-scan route:
+  - Motivation: after small W-only/scan-retile gains stopped transferring to
+    HF e2e, test whether the already-correct FFN norm-shift and activation
+    probes stack into a larger useful FFN memory boundary.
+  - Result file:
+    `bench/results_native_4090_ffn_combo_20260703_142500.jsonl`
+    from remote `/tmp/native_4090_ffn_combo_20260703_142500.jsonl`.
+  - 4090 / 0.4B / prompt512 / bsz1, CUDA warp-specialized state-scan +
+    shift-WAVG `bm128/br64/bk64`, rows all pass greedy/cache/decode smoke:
+    - baseline: `27,582.0 tok/s`, `18.5628 ms`, peak `988.2 MiB`;
+    - FFN norm-shift only: `28,020.4 tok/s`, `18.2724 ms`, peak
+      `964.2 MiB`;
+    - FFN activation Triton block4096 only: `26,472.2 tok/s`, `19.3411 ms`,
+      peak `986.2 MiB`;
+    - FFN norm-shift + activation Triton block4096: `27,128.4 tok/s`,
+      `18.8732 ms`, peak `963.2 MiB`;
+    - FFN norm-shift + activation torch-inplace: `27,599.0 tok/s`,
+      `18.5514 ms`, peak `963.2 MiB`.
+  - Conclusion: FFN norm-shift is still memory-positive and can be a same-run
+    small win, but activation fusion destroys the gain and no FFN combination
+    beats the strict best `28,780.6 tok/s`.  This supports the current
+    hypothesis that small standalone fusion boundaries now have high marginal
+    cost; the next useful experiment needs a wider attention/shift-WAVG
+    boundary or a genuinely persistent state-scan design, not another
+    one-kernel activation tweak.
 - [ ] Next persistent/two-level state-scan experiment:
   - Move the next bounded experiment to the larger remaining boundary exposed
     by breakdown: `attn_shift_wavg_lora_fused` (`~5.1 ms`) and/or the FFN
