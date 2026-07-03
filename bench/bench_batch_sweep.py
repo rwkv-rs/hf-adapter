@@ -133,7 +133,11 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
     with torch.inference_mode():
         for _ in range(args.warmup):
             _ = model(ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
-    prefill_dt = timed(lambda: model(ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep), args.device, args.runs)
+    def prefill_once():
+        with torch.inference_mode():
+            return model(ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
+
+    prefill_dt = timed(prefill_once, args.device, args.runs)
 
     with torch.inference_mode():
         out = model(ids[:, :8], use_cache=True, logits_to_keep=args.hf_logits_to_keep)

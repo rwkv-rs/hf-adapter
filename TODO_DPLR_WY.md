@@ -20,6 +20,50 @@ Branch: `wangyue/native-prefill-060-albatross`
   - Logit alignment must use uncheatable compression ratio, including
     compression ratio vs token position.  Max-diff/cosine/greedy checks remain
     smoke tests only and are too weak for final acceptance.
+- [x] Add first acceptance-test harnesses and run the first RTX 4090 overlay
+  smoke:
+  - Added `bench/eval_math500_hf.py`, an HF-adapter MATH500 runner that emits
+    Albatross-style fields (`rollout_accuracy`, `pass_at_rollout_accuracy`,
+    `sample_per_sec`, `token_per_sec`, `generations_jsonl`, and config).
+  - Added `bench/bench_logit_compression_alignment.py`, an uncheatable
+    logits/NLL compression-ratio harness over fixed external tokens, including
+    `candidate_vs_ref_bits_ratio` and compression ratio vs token-position bins.
+  - Fixed `bench/bench_batch_sweep.py` timed prefill to run under
+    `torch.inference_mode()`; without this the HF fast-prefill guard sees
+    gradients enabled, silently falls back to the slow FLA path, and can OOM at
+    high bsz.
+  - 4090 native-prefill fastest-bsz sweep:
+    `bench/results_4090_accept_speed_bsz_20260703_193117.jsonl`.
+    Current 0.4B / prompt512 best passing row in that sweep is `bsz=16`,
+    `55,874.9 tok/s`, `146.6132 ms`, peak `1975.6 MiB`; bsz1 in the same
+    noisy run is `25,925.3 tok/s`, while the older strict bsz1 best remains
+    `28,780.6 tok/s`.
+  - High-bsz shift-WAVG MAX_M check:
+    `bench/results_4090_accept_speed_bsz_shiftwavg_maxm2_20260703.jsonl`.
+    Forcing shift-WAVG at bsz>=4 is slower; best is `50,206.9 tok/s` at
+    `bsz=32`, so keep the default MAX_M behavior for now.
+  - Serving-style batch sweep after the benchmark fix:
+    `bench/results_4090_accept_serving_batch2_20260703.jsonl`.
+    Best prefill row is `bsz=16`, `55,702.8 tok/s`; best recurrent fast-token
+    decode row is `bsz=64`, `15,043.6 tok/s`, peak `4487.0 MiB`.
+  - Compression-ratio alignment:
+    `bench/results_4090_accept_logit_compression_20260703.jsonl` over 8
+    MATH500 prompts / 561 scored target tokens.  Native-prefill candidate vs
+    reference bits ratio is `0.9999498`, argmax match rate `1.0`,
+    reference/candidate bits-per-token `1.632204/1.632123`, max abs diff
+    `0.25`; position bins are stored in the result row.
+  - HF MATH500 smoke:
+    `bench/math500_hf_accept_smoke_20260703/summary.json` used 8 tasks,
+    rollout 4, max_new_tokens 128: `0/32` correct, truncation `96.875%`,
+    `91.81 tok/s`; this validates the harness but is not an accuracy result.
+  - HF MATH500 long smoke:
+    `bench/math500_hf_accept_long_smoke_20260703/summary.json` used 2 tasks,
+    rollout 4, Albatross-style max_new_tokens 1500: `0/8` correct, truncation
+    `12.5%`, mean generated tokens `660.5`, `93.26 tok/s`.
+  - Full MATH500 `avg@64` on all 500 tasks is still pending.  The current HF
+    eval harness is intentionally correctness-first and bsz1; it does not yet
+    implement Albatross-like dynamic batched rollout/prefill-cache generation,
+    so it should not be used as the final speed number.
 
 - [x] Start from merged `origin/main` after PR #90.
 - [x] Fix the first experiment blocker:
