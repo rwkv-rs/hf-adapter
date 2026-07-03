@@ -44,6 +44,19 @@ class _TinyLM(nn.Module):
         return _Out(logits) if return_dict else logits
 
 
+
+class _DeviceMapTinyLM(_TinyLM):
+    """Tiny model that mimics HF/Accelerate device_map dispatch."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.hf_device_map = {"": "cpu"}
+        self.to_called = False
+
+    def to(self, *args, **kwargs):  # pragma: no cover - should never be called
+        self.to_called = True
+        raise AssertionError("device_map-dispatched target should not be moved with .to()")
+
 def main() -> int:
     torch.manual_seed(0)
     target = _TinyLM(vocab=16, dim=8, seed=1)
@@ -61,6 +74,13 @@ def main() -> int:
     assert target.head.weight.grad is None  # not yet frozen at module level here
 
     # 2. align_draft: LoRA on draft, target frozen, then merged.
+    try:
+        align_draft(target, target, [ids], epochs=1, target_modules=["key"], device="cpu")
+    except ValueError as exc:
+        assert "separate model instances" in str(exc)
+    else:
+        raise AssertionError("target and draft must be separate instances")
+
     draft2 = _TinyLM(vocab=16, dim=8, seed=2)  # fresh, so LoRA starts from the same init
     target_before = {n: p.detach().clone() for n, p in target.named_parameters()}
     aligned, losses = align_draft(
@@ -89,7 +109,30 @@ def main() -> int:
         out = aligned(input_ids=ids, return_dict=True).logits
     assert out.shape == (2, 8, 16) and torch.isfinite(out).all(), out.shape
 
-    # 4. Validation: alignment must RAISE draft->target token agreement.
+    # 4. device_map-dispatched target guard: align_draft must not call target.to().
+    target_dm = _DeviceMapTinyLM(vocab=16, dim=8, seed=1)
+    draft_dm = _TinyLM(vocab=16, dim=8, seed=2)
+    _, dm_losses = align_draft(
+        target_dm, draft_dm, [ids],
+        epochs=1, lr=1e-2, lora_r=4, lora_alpha=8,
+        target_modules=["key", "value"],
+        merge=True, device="cpu", seed=0,
+    )
+    assert len(dm_losses) == 1 and not target_dm.to_called
+
+    # PEFT wraps the draft before movement; device_map detection must still see
+    # the original dispatched draft nested under PeftModel/LoraModel.
+    target_plain = _TinyLM(vocab=16, dim=8, seed=1)
+    draft_dm = _DeviceMapTinyLM(vocab=16, dim=8, seed=2)
+    _, draft_dm_losses = align_draft(
+        target_plain, draft_dm, [ids],
+        epochs=1, lr=1e-2, lora_r=4, lora_alpha=8,
+        target_modules=["key", "value"],
+        merge=True, device="cpu", seed=0,
+    )
+    assert len(draft_dm_losses) == 1 and not draft_dm.to_called
+
+    # 5. Validation: alignment must RAISE draft->target token agreement.
     #    argmax agreement is the proxy for greedy-verify acceptance; the verify
     #    path (rwkv7_speculative_generate) is never touched, per the 准则.
     def _agreement(t: _TinyLM, d: torch.nn.Module, seq: torch.Tensor) -> float:
