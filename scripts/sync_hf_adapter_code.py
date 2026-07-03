@@ -20,10 +20,14 @@ from pathlib import Path
 
 ADAPTER_FILES = [
     "configuration_rwkv7.py",
+    "dplr_prefill.py",
+    "dplr_prefill_triton.py",
     "fused_attention_projection.py",
     "fused_ffn.py",
     "fused_lora.py",
+    "fused_norm_mix.py",
     "fused_output.py",
+    "fused_prefill.py",
     "fused_projection.py",
     "fused_recurrent_update.py",
     "fused_time_mix.py",
@@ -33,6 +37,8 @@ ADAPTER_FILES = [
     "native_jit.py",
     "native_model.py",
     "native_quant.py",
+    "native_quant_mm4.py",
+    "native_quant_mm8.py",
     "tokenization_rwkv7.py",
 ]
 
