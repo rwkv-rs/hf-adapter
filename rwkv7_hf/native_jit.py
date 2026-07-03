@@ -189,11 +189,27 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_rkv_wavg_projection_available = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
-    from .fused_lora import fused_wag_lora, fused_wag_lora_available, fused_wavg_lora, fused_wavg_lora_available
+    from .fused_lora import (
+        fused_shift_wavg_lora,
+        fused_shift_wavg_lora_available,
+        fused_wag_lora,
+        fused_wag_lora_available,
+        fused_wavg_lora,
+        fused_wavg_lora_available,
+    )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
-        from fused_lora import fused_wag_lora, fused_wag_lora_available, fused_wavg_lora, fused_wavg_lora_available
+        from fused_lora import (
+            fused_shift_wavg_lora,
+            fused_shift_wavg_lora_available,
+            fused_wag_lora,
+            fused_wag_lora_available,
+            fused_wavg_lora,
+            fused_wavg_lora_available,
+        )
     except Exception:
+        fused_shift_wavg_lora = None  # type: ignore[assignment]
+        fused_shift_wavg_lora_available = None  # type: ignore[assignment]
         fused_wag_lora = None  # type: ignore[assignment]
         fused_wag_lora_available = None  # type: ignore[assignment]
         fused_wavg_lora = None  # type: ignore[assignment]
@@ -735,6 +751,53 @@ def _native_prefill_fused_wavg_lora_blocks() -> tuple[int, int, int]:
         ("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_M", "RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_M", 64, 128),
         ("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_R", "RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_R", 64, 128),
         ("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_K", "RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BLOCK_K", 64, 256),
+    ):
+        raw = os.environ.get(name, os.environ.get(fallback))
+        if raw is None:
+            vals.append(env_int(name, int(default), lower=1, upper=upper))
+        else:
+            try:
+                val = int(str(raw).strip())
+            except ValueError:
+                val = int(default)
+            vals.append(min(max(1, val), upper))
+    return vals[0], vals[1], vals[2]
+
+
+def _native_prefill_fused_shift_wavg_lora_requested() -> bool:
+    """Return whether the prefill shift-mix + WAVG LoRA boundary is requested."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA", False)
+
+
+def _native_prefill_fused_shift_wavg_lora_enabled(total_rows: int) -> bool:
+    """Runtime switch for the prefill shift-mix + W/A/G/V-gate LoRA fusion."""
+
+    if not _native_prefill_fused_shift_wavg_lora_requested():
+        return False
+    if int(total_rows) > _native_prefill_fused_wavg_lora_max_m():
+        return False
+    if fused_shift_wavg_lora is None or fused_shift_wavg_lora_available is None:
+        return False
+    try:
+        return bool(fused_shift_wavg_lora_available())
+    except Exception:
+        return False
+
+
+def _native_prefill_fused_shift_wavg_lora_blocks() -> tuple[int, int, int]:
+    """Return ``(block_m, block_r, block_k)`` for shift-mix + WAVG LoRA.
+
+    The first 4090 sweep preferred a wider output tile than the older
+    standalone WAVG-LoRA path, so this route has its own defaults while still
+    accepting the older WAVG env names as fallbacks for shared sweeps.
+    """
+
+    vals = []
+    for name, fallback, default, upper in (
+        ("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_BLOCK_M", "RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_M", 128, 128),
+        ("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_BLOCK_R", "RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_R", 64, 128),
+        ("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_BLOCK_K", "RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_K", 64, 256),
     ):
         raw = os.environ.get(name, os.environ.get(fallback))
         if raw is None:
@@ -1452,6 +1515,8 @@ def prefill(
         H = int(H)
         N = int(N)
         hidden = H * N
+        use_prefill_projection = _native_prefill_fused_projection_enabled(B * T)
+        shift_wavg_lora_done = False
 
         if _native_prefill_fused_norm_mix_enabled():
             norm_mix = fused_attn_norm_shift_mix_prefill(
@@ -1474,7 +1539,48 @@ def prefill(
             residual = F.layer_norm(x, [hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
             h = F.layer_norm(residual, [hidden], an_w, an_b, 1e-5)
             prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h[:, :-1, :]], dim=1)
-            if _native_prefill_fused_shift_mix_enabled():
+            if (
+                not use_prefill_projection
+                and layer_idx > 0
+                and _native_prefill_fused_shift_wavg_lora_enabled(B * T)
+            ):
+                block_m, block_r, block_k = _native_prefill_fused_shift_wavg_lora_blocks()
+                xr2, xk2, xv2, w2_out, a2_out, g2_out, v_gate2 = fused_shift_wavg_lora(
+                    h.reshape(B * T, hidden),
+                    prev_h.reshape(B * T, hidden),
+                    x_r,
+                    x_w,
+                    x_k,
+                    x_v,
+                    x_a,
+                    x_g,
+                    w1,
+                    a1,
+                    g1,
+                    v1,
+                    w2,
+                    a2,
+                    g2,
+                    v2,
+                    w0,
+                    a0,
+                    None,
+                    v0,
+                    block_m=block_m,
+                    block_r=block_r,
+                    block_k=block_k,
+                )
+                xr = xr2.view(B, T, hidden)
+                xk = xk2.view(B, T, hidden)
+                xv = xv2.view(B, T, hidden)
+                # xw/xa/xg are intentionally not materialized by this route.
+                xw = xa = xg = None
+                w = w2_out.view(B, T, hidden)
+                a = torch.sigmoid(a2_out.view(B, T, hidden))
+                g = g2_out.view(B, T, hidden)
+                v_gate = v_gate2.view(B, T, hidden)
+                shift_wavg_lora_done = True
+            elif _native_prefill_fused_shift_mix_enabled():
                 xr, xw, xk, xv, xa, xg = fused_attn_shift_mix(h, prev_h, x_r, x_w, x_k, x_v, x_a, x_g)
             else:
                 xx = prev_h - h
@@ -1485,8 +1591,8 @@ def prefill(
                 xa = h + xx * x_a.view(1, 1, hidden)
                 xg = h + xx * x_g.view(1, 1, hidden)
 
-        v_gate = None
-        use_prefill_projection = _native_prefill_fused_projection_enabled(B * T)
+        if not shift_wavg_lora_done:
+            v_gate = None
         if use_prefill_projection:
             block_m, block_r, block_k = _native_prefill_fused_projection_blocks()
             if layer_idx == 0:
@@ -1548,7 +1654,10 @@ def prefill(
             k = F.linear(xk, Kw)
             v = F.linear(xv, Vw)
         use_prefill_wavg_lora = (
-            not use_prefill_projection and layer_idx > 0 and _native_prefill_fused_wavg_lora_enabled(B * T)
+            not shift_wavg_lora_done
+            and not use_prefill_projection
+            and layer_idx > 0
+            and _native_prefill_fused_wavg_lora_enabled(B * T)
         )
         if use_prefill_wavg_lora:
             block_m, block_r, block_k = _native_prefill_fused_wavg_lora_blocks()
@@ -1577,7 +1686,7 @@ def prefill(
             a = torch.sigmoid(a.view(B, T, hidden))
             g = g.view(B, T, hidden)
             v_gate = v_gate.view(B, T, hidden)
-        elif not use_prefill_projection:
+        elif not shift_wavg_lora_done and not use_prefill_projection:
             w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
             a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
             g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)

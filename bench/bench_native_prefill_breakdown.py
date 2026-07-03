@@ -210,6 +210,14 @@ def profiled_native_prefill(
         H = int(H)
         N = int(N)
         hidden = H * N
+        use_shift_wavg_lora = (
+            layer_idx > 0
+            and not getattr(native_jit, "_native_prefill_fused_projection_enabled", lambda _rows: False)(B * T)
+            and getattr(native_jit, "_native_prefill_fused_shift_wavg_lora_enabled", lambda _rows: False)(B * T)
+            and not getattr(native_jit, "_native_prefill_fused_norm_mix_enabled", lambda: False)()
+        )
+        shift_wavg_lora_done = False
+        shift_wavg_values = None
 
         def norm_shift_mix():
             if getattr(native_jit, "_native_prefill_fused_norm_mix_enabled", lambda: False)():
@@ -229,16 +237,19 @@ def profiled_native_prefill(
                     has_pre_norm=int(has_pre) == 1,
                 )
                 residual_local, h_local, xr_local, xw_local, xk_local, xv_local, xa_local, xg_local = out.as_tuple()
+                prev_h_local = None
             else:
                 residual_local = F.layer_norm(x, [hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
                 h_local = F.layer_norm(residual_local, [hidden], an_w, an_b, 1e-5)
-                prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h_local[:, :-1, :]], dim=1)
-                if native_jit._native_prefill_fused_shift_mix_enabled():
+                prev_h_local = torch.cat([xpa[layer_idx].view(B, 1, hidden), h_local[:, :-1, :]], dim=1)
+                if use_shift_wavg_lora:
+                    xr_local = xw_local = xk_local = xv_local = xa_local = xg_local = None
+                elif native_jit._native_prefill_fused_shift_mix_enabled():
                     xr_local, xw_local, xk_local, xv_local, xa_local, xg_local = native_jit.fused_attn_shift_mix(
-                        h_local, prev_h, x_r, x_w, x_k, x_v, x_a, x_g
+                        h_local, prev_h_local, x_r, x_w, x_k, x_v, x_a, x_g
                     )
                 else:
-                    xx = prev_h - h_local
+                    xx = prev_h_local - h_local
                     xr_local = h_local + xx * x_r.view(1, 1, hidden)
                     xw_local = h_local + xx * x_w.view(1, 1, hidden)
                     xk_local = h_local + xx * x_k.view(1, 1, hidden)
@@ -248,6 +259,7 @@ def profiled_native_prefill(
             return (
                 residual_local,
                 h_local,
+                prev_h_local,
                 xr_local,
                 xw_local,
                 xk_local,
@@ -256,7 +268,53 @@ def profiled_native_prefill(
                 xg_local,
             )
 
-        residual, h, xr, xw, xk, xv, xa, xg = profiler.measure("attn_norm_shift_mix", norm_shift_mix)
+        residual, h, prev_h, xr, xw, xk, xv, xa, xg = profiler.measure("attn_norm_shift_mix", norm_shift_mix)
+
+        if use_shift_wavg_lora:
+            block_m, block_r, block_k = native_jit._native_prefill_fused_shift_wavg_lora_blocks()
+
+            def fused_shift_wavg():
+                return native_jit.fused_shift_wavg_lora(
+                    h.reshape(B * T, hidden),
+                    prev_h.reshape(B * T, hidden),
+                    x_r,
+                    x_w,
+                    x_k,
+                    x_v,
+                    x_a,
+                    x_g,
+                    w1,
+                    a1,
+                    g1,
+                    v1,
+                    w2,
+                    a2,
+                    g2,
+                    v2,
+                    w0,
+                    a0,
+                    None,
+                    v0,
+                    block_m=block_m,
+                    block_r=block_r,
+                    block_k=block_k,
+                )
+
+            xr2, xk2, xv2, w2_out, a2_out, g2_out, v_gate2 = profiler.measure(
+                "attn_shift_wavg_lora_fused",
+                fused_shift_wavg,
+            )
+            xr = xr2.view(B, T, hidden)
+            xk = xk2.view(B, T, hidden)
+            xv = xv2.view(B, T, hidden)
+            xw = xa = xg = None
+            shift_wavg_values = (
+                w2_out.view(B, T, hidden),
+                torch.sigmoid(a2_out.view(B, T, hidden)),
+                g2_out.view(B, T, hidden),
+                v_gate2.view(B, T, hidden),
+            )
+            shift_wavg_lora_done = True
 
         if fine_attention_breakdown:
             r = profiler.measure("attn_dense_r_proj", lambda: F.linear(xr, Rw))
@@ -303,7 +361,9 @@ def profiled_native_prefill(
 
         def lora_and_state_prep():
             v_gate_local = None
-            if layer_idx > 0 and native_jit._native_prefill_fused_wavg_lora_enabled(B * T):
+            if shift_wavg_lora_done:
+                w_local, a_local, g_local, v_gate_local = shift_wavg_values
+            elif layer_idx > 0 and native_jit._native_prefill_fused_wavg_lora_enabled(B * T):
                 block_m, block_r, block_k = native_jit._native_prefill_fused_wavg_lora_blocks()
                 w_local, a_local, g_local, v_gate_local = native_jit.fused_wavg_lora(
                     xw.reshape(B * T, hidden),
@@ -411,7 +471,9 @@ def profiled_native_prefill(
 
         def fine_lora_and_state_prep():
             v_gate_local = None
-            if layer_idx > 0 and native_jit._native_prefill_fused_wavg_lora_enabled(B * T):
+            if shift_wavg_lora_done:
+                w_local, a_local, g_local, v_gate_local = shift_wavg_values
+            elif layer_idx > 0 and native_jit._native_prefill_fused_wavg_lora_enabled(B * T):
                 block_m, block_r, block_k = native_jit._native_prefill_fused_wavg_lora_blocks()
 
                 def fused_wavg():
@@ -1080,6 +1142,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
     if args.device.startswith("cuda"):
         peak = round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
     scan_m = scan_block_m(model)
+    shift_wavg_blocks = getattr(native_jit, "_native_prefill_fused_shift_wavg_lora_blocks", lambda: (None, None, None))()
     row = {
         "axis": "native_prefill_breakdown",
         "backend": "hf_adapter",
@@ -1144,6 +1207,11 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_fused_wavg_lora_requested": native_jit._native_prefill_fused_wavg_lora_requested(),
         "prefill_fused_wavg_lora_effective": native_jit._native_prefill_fused_wavg_lora_enabled(batch_size * prompt_tokens),
         "prefill_fused_wavg_lora_max_m": native_jit._native_prefill_fused_wavg_lora_max_m(),
+        "prefill_fused_shift_wavg_lora_requested": getattr(native_jit, "_native_prefill_fused_shift_wavg_lora_requested", lambda: False)(),
+        "prefill_fused_shift_wavg_lora_effective": getattr(native_jit, "_native_prefill_fused_shift_wavg_lora_enabled", lambda _rows: False)(batch_size * prompt_tokens),
+        "prefill_fused_shift_wavg_lora_block_m": shift_wavg_blocks[0],
+        "prefill_fused_shift_wavg_lora_block_r": shift_wavg_blocks[1],
+        "prefill_fused_shift_wavg_lora_block_k": shift_wavg_blocks[2],
         "prefill_fused_projection_requested": getattr(native_jit, "_native_prefill_fused_projection_requested", lambda: False)(),
         "prefill_fused_projection_effective": getattr(native_jit, "_native_prefill_fused_projection_enabled", lambda _rows: False)(batch_size * prompt_tokens),
         "prefill_fused_projection_max_m": getattr(native_jit, "_native_prefill_fused_projection_max_m", lambda: None)(),

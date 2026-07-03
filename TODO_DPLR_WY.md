@@ -1341,7 +1341,7 @@ Branch: `wangyue/native-prefill-060-albatross`
       and previous-token norm recompute erase the saved Python/PyTorch
       operations. Keep it opt-in and do not promote it; it does not beat the
       strict historical `27,051.0 tok/s` row or the `31,289 tok/s` stretch.
-- [ ] Next main fused-fp16 task:
+- [x] Next main fused-fp16 task:
   - Do not spend another iteration on standalone recompute-prev norm-mix.  The
     next bounded performance experiment should either:
     - make layer-prep larger without previous-token recompute, e.g.
@@ -1352,10 +1352,87 @@ Branch: `wangyue/native-prefill-060-albatross`
       row-level parallelism.
   - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond `27,051.0 tok/s`, moving toward `>=31,289 tok/s`.
+  - Done: added the no-prev-recompute layer-prep route
+    `RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA=1`.
+    - implementation:
+      - new `fused_shift_wavg_lora(...)` keeps the regular cached `h` and
+        `prev_h` path, materializes only `xr/xk/xv` for the large cuBLAS
+        R/K/V projections, and computes W/A/G/V-gate LoRA from on-the-fly
+        time-mixed vectors inside the fused Triton down kernel;
+      - this avoids the negative recompute-prev layernorm from the previous
+        norm-mix experiment and avoids writing/loading `xw/xa/xg`;
+      - native prefill, scan telemetry, analyzer keys, and profiler telemetry
+        now record `prefill_fused_shift_wavg_lora_*`;
+      - default HF/native behavior stays unchanged unless the env flag is set.
+    - correctness:
+      - remote CUDA oracle passed against the torch fallback for random fp16
+        tensors;
+      - all HF rows below pass greedy/cache/decode smoke with `max_abs_diff`
+        `0.0625` or better.
+    - result files:
+      - initial e2e:
+        `bench/results_native_4090_shift_wavg_layerprep_20260703_021100.jsonl`
+        from remote
+        `/tmp/native_4090_shift_wavg_layerprep_20260703_021100.jsonl`;
+      - block sweep:
+        `bench/results_native_4090_shift_wavg_blocks_20260703_021900.jsonl`
+        and
+        `bench/results_native_4090_shift_wavg_blocks2_20260703_022600.jsonl`;
+      - confirmation:
+        `bench/results_native_4090_shift_wavg_confirm_20260703_023200.jsonl`
+        from remote
+        `/tmp/native_4090_shift_wavg_confirm_20260703_023200.jsonl`;
+      - default-block smoke after making `128/64/64` the route default:
+        `bench/results_native_4090_shift_wavg_default_smoke_20260703_024600.jsonl`
+        from remote
+        `/tmp/native_4090_shift_wavg_default_smoke_20260703_024600.jsonl`;
+      - refreshed breakdown:
+        `bench/results_native_4090_shift_wavg_breakdown_20260703_023900.jsonl`
+        from remote
+        `/tmp/native_4090_shift_wavg_breakdown_20260703_023900.jsonl`.
+    - 4090 / 0.4B / prompt512 / bsz1 e2e rows:
+      - same-run baseline: `25,438.5 tok/s`, `20.1270 ms`;
+      - tuned WAVG only: `25,718.3 tok/s`, `19.9080 ms`;
+      - shift-WAVG only: `26,823.7 tok/s`, `19.0876 ms`;
+      - CUDA warp-specialized state-scan + tuned WAVG:
+        `26,092.5 tok/s`, `19.6225 ms`;
+      - CUDA warp-specialized state-scan + shift-WAVG:
+        `28,071.9 tok/s`, `18.2389 ms`.
+    - block sweep best:
+      - `block_m=128,block_r=64,block_k=64` reached `28,564.7 tok/s`,
+        `17.9242 ms`; nearby `bk128`, `br128`, and smaller/larger tiles were
+        slower. This tile is now the shift-WAVG route default, while the old
+        standalone WAVG-LoRA defaults stay unchanged.
+    - confirmation row:
+      - baseline: `25,180.6 tok/s`, `20.3331 ms`;
+      - CUDA warp-specialized + old tuned WAVG: `25,781.7 tok/s`,
+        `19.8591 ms`;
+      - CUDA warp-specialized + shift-WAVG `bm128/br64/bk64`:
+        `28,780.6 tok/s`, `17.7898 ms`, peak `988.2 MiB`, about `0.5519x`
+        Albatross and `+6.4%` over the previous strict best
+        `27,051.0 tok/s`.
+    - breakdown signal for the new best route:
+      - `recurrent_scan_state_prep_cuda`: `11.3919 ms`, `47.51%`;
+      - `attn_shift_wavg_lora_fused`: `5.4047 ms`, `22.54%`;
+      - `ffn`: `2.6432 ms`, `11.02%`;
+      - the layer-prep fusion is now the largest non-scan component, so the
+        next stretch step needs either split/tune that fused kernel or return
+        to state-scan/FFN fusion.
+- [ ] Next main fused-fp16 task:
+  - Use the positive shift-WAVG route as the current mainline candidate, but do
+    not claim Albatross parity yet.  The next bounded experiment should target
+    the remaining `~2,508 tok/s` gap to `0.60x` by either:
+    - profiling/splitting `attn_shift_wavg_lora_fused` to see whether the
+      on-the-fly time-mix down pass or the up pass dominates, then reducing
+      that cost; or
+    - attacking the still-dominant `recurrent_scan_state_prep_cuda` path with
+      a deeper persistent/state-scan schedule.
+  - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
+    confirmed row beyond `28,780.6 tok/s`, moving toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
-  `27,051.0 tok/s` (`~0.5187x`), still about `15.7%` relative uplift short of
-  the stretch.
+  `28,780.6 tok/s` (`~0.5519x`), still about `2,508 tok/s` (`~8.7%`
+  relative uplift) short of the stretch.
 
 ## Temporary TODO: next 4090 push
 
@@ -1564,9 +1641,9 @@ is either checked off or replaced with a more precise kernel task.
   - [x] 4090 / 0.4B / prompt512 / bsz1 moves toward `>=0.45x` Albatross
     - Done: fused state-scan confirmation row is `25,663.2 tok/s` (`0.4921x`).
   - [ ] stretch: `>=0.60x` Albatross
-    - Current strict confirmed row on this branch is `27,051.0 tok/s`
-      (`~0.5187x`), still below the stretch target `31,289 tok/s` by about
-      `4,238 tok/s` (`~15.7%` relative uplift).
+    - Current strict confirmed row on this branch is `28,780.6 tok/s`
+      (`~0.5519x`), still below the stretch target `31,289 tok/s` by about
+      `2,508 tok/s` (`~8.7%` relative uplift).
 
 ## Big TODO routing note
 
@@ -1575,8 +1652,9 @@ is either checked off or replaced with a more precise kernel task.
   PEFT/TRL, and generic quantized paths may still fall back to FLA/PyTorch.
 - [ ] Keep two performance tracks active:
   - short-term: native fused fp16 prefill/decode kernels, starting from the
-    confirmed fused state-scan row and pushing 4090 0.4B/prompt512/bsz1 from
-    the current strict `0.5187x` row to `>=0.60x` Albatross;
+    confirmed fused state-scan + shift-WAVG row and pushing 4090
+    0.4B/prompt512/bsz1 from the current strict `0.5519x` row to `>=0.60x`
+    Albatross;
   - high-upside math: DPLR/WY compact chunk prefill, with next work on
     prefix-shared apply/output scheduling, less dense `[N,N]`
     traffic/materialization, and later fused W8/W4 kernels.

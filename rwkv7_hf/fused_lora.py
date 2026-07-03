@@ -383,6 +383,86 @@ if _HAS_TRITON:
         tl.store(g_out_ptr + out_base, acc_g, mask=mask_m)
         tl.store(v_gate_ptr + out_base, tl.sigmoid(acc_v), mask=mask_m)
 
+    @triton.jit
+    def _shift_wavg_lora_down_kernel(
+        h_ptr,
+        prev_h_ptr,
+        xr_mix_ptr,
+        xw_mix_ptr,
+        xk_mix_ptr,
+        xv_mix_ptr,
+        xa_mix_ptr,
+        xg_mix_ptr,
+        w_down_ptr,
+        a_down_ptr,
+        g_down_ptr,
+        v_down_ptr,
+        w_mid_ptr,
+        a_mid_ptr,
+        g_mid_ptr,
+        v_mid_ptr,
+        xr_out_ptr,
+        xk_out_ptr,
+        xv_out_ptr,
+        hidden: tl.constexpr,
+        w_rank: tl.constexpr,
+        a_rank: tl.constexpr,
+        g_rank: tl.constexpr,
+        v_rank: tl.constexpr,
+        max_rank: tl.constexpr,
+        BLOCK_R: tl.constexpr,
+        BLOCK_K: tl.constexpr,
+    ):
+        batch_id = tl.program_id(0)
+        block_id = tl.program_id(1)
+        offs_r = block_id * BLOCK_R + tl.arange(0, BLOCK_R)
+        offs_k = tl.arange(0, BLOCK_K)
+        mask_w_r = offs_r < w_rank
+        mask_a_r = offs_r < a_rank
+        mask_g_r = offs_r < g_rank
+        mask_v_r = offs_r < v_rank
+
+        acc_w = tl.zeros((BLOCK_R,), tl.float32)
+        acc_a = tl.zeros((BLOCK_R,), tl.float32)
+        acc_g = tl.zeros((BLOCK_R,), tl.float32)
+        acc_v = tl.zeros((BLOCK_R,), tl.float32)
+        for start in range(0, hidden, BLOCK_K):
+            kidx = start + offs_k
+            mask_k = kidx < hidden
+            base = batch_id * hidden + kidx
+            h = tl.load(h_ptr + base, mask=mask_k, other=0.0).to(tl.float32)
+            prev_h = tl.load(prev_h_ptr + base, mask=mask_k, other=0.0).to(tl.float32)
+            delta = prev_h - h
+            xr = h + delta * tl.load(xr_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
+            xw = h + delta * tl.load(xw_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
+            xk = h + delta * tl.load(xk_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
+            xv = h + delta * tl.load(xv_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
+            xa = h + delta * tl.load(xa_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
+            xg = h + delta * tl.load(xg_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
+
+            # Only rank block 0 materializes the three cuBLAS projection inputs.
+            store_mask = mask_k & (block_id == 0)
+            tl.store(xr_out_ptr + base, xr, mask=store_mask)
+            tl.store(xk_out_ptr + base, xk, mask=store_mask)
+            tl.store(xv_out_ptr + base, xv, mask=store_mask)
+
+            offsets = offs_r[:, None] * hidden + kidx[None, :]
+            wd = tl.load(w_down_ptr + offsets, mask=mask_w_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
+            ad = tl.load(a_down_ptr + offsets, mask=mask_a_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
+            gd = tl.load(g_down_ptr + offsets, mask=mask_g_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
+            vd = tl.load(v_down_ptr + offsets, mask=mask_v_r[:, None] & mask_k[None, :], other=0.0).to(tl.float32)
+            acc_w += tl.sum(wd * xw[None, :], axis=1)
+            acc_a += tl.sum(ad * xa[None, :], axis=1)
+            acc_g += tl.sum(gd * xg[None, :], axis=1)
+            acc_v += tl.sum(vd * xv[None, :], axis=1)
+
+        w_act = 2.0 * tl.sigmoid(2.0 * acc_w) - 1.0
+        g_act = tl.sigmoid(acc_g)
+        tl.store(w_mid_ptr + batch_id * w_rank + offs_r, w_act, mask=mask_w_r)
+        tl.store(a_mid_ptr + batch_id * a_rank + offs_r, acc_a, mask=mask_a_r)
+        tl.store(g_mid_ptr + batch_id * g_rank + offs_r, g_act, mask=mask_g_r)
+        tl.store(v_mid_ptr + batch_id * v_rank + offs_r, acc_v, mask=mask_v_r)
+
 
 def fused_wa_lora_available() -> bool:
     """Return whether the optional Triton W/A LoRA prototype can run."""
@@ -530,6 +610,12 @@ def fused_wag_lora_available() -> bool:
 
 def fused_wavg_lora_available() -> bool:
     """Return whether the optional Triton W/A/G/V-gate LoRA prototype can run."""
+
+    return bool(_HAS_TRITON and torch is not None)
+
+
+def fused_shift_wavg_lora_available() -> bool:
+    """Return whether the optional shift-mix + W/A/G/V LoRA prototype can run."""
 
     return bool(_HAS_TRITON and torch is not None)
 
@@ -875,3 +961,234 @@ def fused_wavg_lora(
     if had_seq:
         return w_out.unsqueeze(1), a_out.unsqueeze(1), g_out.unsqueeze(1), v_gate.unsqueeze(1)
     return w_out, a_out, g_out, v_gate
+
+
+def fused_shift_wavg_lora(
+    h: Any,
+    prev_h: Any,
+    x_r: Any,
+    x_w: Any,
+    x_k: Any,
+    x_v: Any,
+    x_a: Any,
+    x_g: Any,
+    w_down_weight: Any,
+    a_down_weight: Any,
+    g_down_weight: Any,
+    v_down_weight: Any,
+    w_up_weight: Any,
+    a_up_weight: Any,
+    g_up_weight: Any,
+    v_up_weight: Any,
+    w_up_bias: Any | None = None,
+    a_up_bias: Any | None = None,
+    g_up_bias: Any | None = None,
+    v_up_bias: Any | None = None,
+    *,
+    block_m: int = 16,
+    block_r: int = 64,
+    block_k: int = 64,
+    force_fallback: bool = False,
+):
+    """Fuse attention time-mix materialization with W/A/G/V-gate LoRA.
+
+    This prefill-only prototype assumes the caller has already computed and
+    cached ``h`` and ``prev_h``.  It keeps the large R/K/V projections on
+    cuBLAS by materializing only ``xr``, ``xk`` and ``xv`` while computing the
+    W/A/G/V-gate LoRA bucket from on-the-fly mixed vectors.  It intentionally
+    avoids recomputing the previous token layernorm that made the standalone
+    norm+mix boundary negative.
+    """
+
+    if torch is None or F is None:
+        raise RuntimeError("fused_shift_wavg_lora requires torch")
+    h2, had_seq = _flatten_lora_input(h, name="h")
+    hidden = int(h2.shape[1])
+    prev2, prev_had_seq = _flatten_lora_input(prev_h, hidden, name="prev_h")
+    if prev_had_seq != had_seq or tuple(h2.shape) != tuple(prev2.shape):
+        raise ValueError("h and prev_h must have identical flattened shapes")
+    for name, mix in (("x_r", x_r), ("x_w", x_w), ("x_k", x_k), ("x_v", x_v), ("x_a", x_a), ("x_g", x_g)):
+        if mix.dim() != 1 or int(mix.shape[0]) != hidden:
+            raise ValueError(f"{name} must be [{hidden}], got {tuple(mix.shape)}")
+
+    w_rank = _validate_lora_weights(w_down_weight, w_up_weight, w_up_bias, hidden, name="w")
+    a_rank = _validate_lora_weights(a_down_weight, a_up_weight, a_up_bias, hidden, name="a")
+    g_rank = _validate_lora_weights(g_down_weight, g_up_weight, g_up_bias, hidden, name="g")
+    v_rank = _validate_lora_weights(v_down_weight, v_up_weight, v_up_bias, hidden, name="v")
+    max_rank = max(w_rank, a_rank, g_rank, v_rank)
+
+    use_triton = (
+        not force_fallback
+        and fused_shift_wavg_lora_available()
+        and h2.is_cuda
+        and prev2.is_cuda
+        and x_r.is_cuda
+        and x_w.is_cuda
+        and x_k.is_cuda
+        and x_v.is_cuda
+        and x_a.is_cuda
+        and x_g.is_cuda
+        and w_down_weight.is_cuda
+        and a_down_weight.is_cuda
+        and g_down_weight.is_cuda
+        and v_down_weight.is_cuda
+        and w_up_weight.is_cuda
+        and a_up_weight.is_cuda
+        and g_up_weight.is_cuda
+        and v_up_weight.is_cuda
+        and (w_up_bias is None or w_up_bias.is_cuda)
+        and (a_up_bias is None or a_up_bias.is_cuda)
+        and (g_up_bias is None or g_up_bias.is_cuda)
+        and (v_up_bias is None or v_up_bias.is_cuda)
+        and h2.dtype in (torch.float16, torch.bfloat16, torch.float32)
+        and prev2.dtype == h2.dtype
+        and x_r.dtype == h2.dtype
+        and x_w.dtype == h2.dtype
+        and x_k.dtype == h2.dtype
+        and x_v.dtype == h2.dtype
+        and x_a.dtype == h2.dtype
+        and x_g.dtype == h2.dtype
+        and w_down_weight.dtype == h2.dtype
+        and a_down_weight.dtype == h2.dtype
+        and g_down_weight.dtype == h2.dtype
+        and v_down_weight.dtype == h2.dtype
+        and w_up_weight.dtype == h2.dtype
+        and a_up_weight.dtype == h2.dtype
+        and g_up_weight.dtype == h2.dtype
+        and v_up_weight.dtype == h2.dtype
+    )
+    if not use_triton:
+        delta = prev2 - h2
+        xr = h2 + delta * x_r.view(1, hidden)
+        xw = h2 + delta * x_w.view(1, hidden)
+        xk = h2 + delta * x_k.view(1, hidden)
+        xv = h2 + delta * x_v.view(1, hidden)
+        xa = h2 + delta * x_a.view(1, hidden)
+        xg = h2 + delta * x_g.view(1, hidden)
+        w_out, a_out, g_out, v_gate = fused_wavg_lora(
+            xw,
+            xa,
+            xg,
+            xv,
+            w_down_weight,
+            a_down_weight,
+            g_down_weight,
+            v_down_weight,
+            w_up_weight,
+            a_up_weight,
+            g_up_weight,
+            v_up_weight,
+            w_up_bias,
+            a_up_bias,
+            g_up_bias,
+            v_up_bias,
+            block_m=block_m,
+            block_r=block_r,
+            block_k=block_k,
+            force_fallback=True,
+        )
+    else:
+        batch = int(h2.shape[0])
+        h_c = h2.contiguous()
+        prev_c = prev2.contiguous()
+        xr_mix_c = x_r.contiguous()
+        xw_mix_c = x_w.contiguous()
+        xk_mix_c = x_k.contiguous()
+        xv_mix_c = x_v.contiguous()
+        xa_mix_c = x_a.contiguous()
+        xg_mix_c = x_g.contiguous()
+        wd_c = w_down_weight.contiguous()
+        ad_c = a_down_weight.contiguous()
+        gd_c = g_down_weight.contiguous()
+        vd_c = v_down_weight.contiguous()
+        wu_c = w_up_weight.contiguous()
+        au_c = a_up_weight.contiguous()
+        gu_c = g_up_weight.contiguous()
+        vu_c = v_up_weight.contiguous()
+        wb_c = w_up_bias.contiguous() if w_up_bias is not None else wu_c
+        ab_c = a_up_bias.contiguous() if a_up_bias is not None else au_c
+        gb_c = g_up_bias.contiguous() if g_up_bias is not None else gu_c
+        vb_c = v_up_bias.contiguous() if v_up_bias is not None else vu_c
+        w_mid = torch.empty((batch, w_rank), device=h2.device, dtype=h2.dtype)
+        a_mid = torch.empty((batch, a_rank), device=h2.device, dtype=h2.dtype)
+        g_mid = torch.empty((batch, g_rank), device=h2.device, dtype=h2.dtype)
+        v_mid = torch.empty((batch, v_rank), device=h2.device, dtype=h2.dtype)
+        xr = torch.empty((batch, hidden), device=h2.device, dtype=h2.dtype)
+        xk = torch.empty_like(xr)
+        xv = torch.empty_like(xr)
+        w_out = torch.empty_like(xr)
+        a_out = torch.empty_like(xr)
+        g_out = torch.empty_like(xr)
+        v_gate = torch.empty_like(xr)
+        _shift_wavg_lora_down_kernel[(batch, triton.cdiv(max_rank, int(block_r)))](
+            h_c,
+            prev_c,
+            xr_mix_c,
+            xw_mix_c,
+            xk_mix_c,
+            xv_mix_c,
+            xa_mix_c,
+            xg_mix_c,
+            wd_c,
+            ad_c,
+            gd_c,
+            vd_c,
+            w_mid,
+            a_mid,
+            g_mid,
+            v_mid,
+            xr,
+            xk,
+            xv,
+            hidden,
+            w_rank,
+            a_rank,
+            g_rank,
+            v_rank,
+            max_rank,
+            BLOCK_R=int(block_r),
+            BLOCK_K=int(block_k),
+            num_warps=4,
+        )
+        _wavg_lora_up_kernel[(batch, triton.cdiv(hidden, int(block_m)))](
+            w_mid,
+            a_mid,
+            g_mid,
+            v_mid,
+            wu_c,
+            au_c,
+            gu_c,
+            vu_c,
+            wb_c,
+            ab_c,
+            gb_c,
+            vb_c,
+            w_out,
+            a_out,
+            g_out,
+            v_gate,
+            hidden,
+            w_rank,
+            a_rank,
+            g_rank,
+            v_rank,
+            max_rank,
+            HAS_W_BIAS=w_up_bias is not None,
+            HAS_A_BIAS=a_up_bias is not None,
+            HAS_G_BIAS=g_up_bias is not None,
+            HAS_V_BIAS=v_up_bias is not None,
+            BLOCK_M=int(block_m),
+            BLOCK_R=int(block_r),
+            num_warps=4,
+        )
+    if had_seq:
+        return (
+            xr.unsqueeze(1),
+            xk.unsqueeze(1),
+            xv.unsqueeze(1),
+            w_out.unsqueeze(1),
+            a_out.unsqueeze(1),
+            g_out.unsqueeze(1),
+            v_gate.unsqueeze(1),
+        )
+    return xr, xk, xv, w_out, a_out, g_out, v_gate

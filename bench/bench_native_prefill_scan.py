@@ -200,6 +200,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
     if args.device.startswith("cuda"):
         peak = round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
     scan_m = scan_block_m(model)
+    shift_wavg_blocks = getattr(nj, "_native_prefill_fused_shift_wavg_lora_blocks", lambda: (None, None, None))()
     return {
         "axis": "native_prefill_scan",
         "backend": "hf_adapter",
@@ -291,6 +292,11 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_fused_wavg_lora_block_m": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_M"),
         "prefill_fused_wavg_lora_block_r": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_R"),
         "prefill_fused_wavg_lora_block_k": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_K"),
+        "prefill_fused_shift_wavg_lora_requested": getattr(nj, "_native_prefill_fused_shift_wavg_lora_requested", lambda: False)(),
+        "prefill_fused_shift_wavg_lora_effective": getattr(nj, "_native_prefill_fused_shift_wavg_lora_enabled", lambda _rows: False)(batch_size * prompt_tokens),
+        "prefill_fused_shift_wavg_lora_block_m": shift_wavg_blocks[0],
+        "prefill_fused_shift_wavg_lora_block_r": shift_wavg_blocks[1],
+        "prefill_fused_shift_wavg_lora_block_k": shift_wavg_blocks[2],
         "prefill_fused_projection_requested": getattr(nj, "_native_prefill_fused_projection_requested", lambda: False)(),
         "prefill_fused_projection_effective": getattr(nj, "_native_prefill_fused_projection_enabled", lambda _rows: False)(batch_size * prompt_tokens),
         "prefill_fused_projection_max_m": getattr(nj, "_native_prefill_fused_projection_max_m", lambda: None)(),
