@@ -329,20 +329,23 @@ performance gap.
 
 Training and resume coverage:
 
-| Model | Single-GPU Trainer/SFT/DPO | HF checkpoint resume | ZeRO-2 base | ZeRO-2 resume | ZeRO-3 base |
-|---|---|---|---|---|---|
-| 0.4B | PASS | PASS | PASS | PASS | PASS |
-| 1.5B | PASS | PASS | PASS | PASS | PASS |
-| 2.9B | PASS | PASS | PASS | PASS | PASS |
-| 7.2B | PASS | PASS | PASS | PASS | PASS |
+| Model | Single-GPU Trainer/SFT/DPO | HF checkpoint resume | ZeRO-2 base | ZeRO-2 resume | ZeRO-3 base | ZeRO-3 resume |
+|---|---|---|---|---|---|---|
+| 0.1B | smoke | smoke | smoke | smoke | smoke | V100 2-GPU PASS |
+| 0.4B | PASS | PASS | PASS | PASS | PASS | pending scale-up |
+| 1.5B | PASS | PASS | PASS | PASS | PASS | pending scale-up |
+| 2.9B | PASS | PASS | PASS | PASS | PASS | pending scale-up |
+| 7.2B | PASS | PASS | PASS | PASS | PASS | pending scale-up |
 
 The A100 40GB validation block brings `bench/results.jsonl` to 134 A100 rows:
 68 batch-sweep rows, 20 DeepSpeed base rows, 16 single-GPU training rows, 12
 quantization rows including 8 W8/W4 rows with interim speed status, 8
 DeepSpeed resume rows, 4 large-model smoke rows, 4 HF checkpoint-resume rows,
 and the 2 legacy 0.1B speed rows from #82. A100 80GB was not available in the
-current cluster. ZeRO3 checkpoint resume still requires a follow-up
-DeepSpeed/PyTorch dtype-mismatch fix.
+current cluster. A follow-up V100 run closed the initial ZeRO3 checkpoint
+resume smoke on 0.1B native/HF (`bench/results_v100_zero3_resume_2gpu_20260703.jsonl`);
+the remaining work is scaling that same ZeRO3-resume proof to 0.4B+ and
+rechecking the A100 large-model dtype-mismatch path.
 
 ## Current V100 status
 

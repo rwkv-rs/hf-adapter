@@ -143,11 +143,16 @@ def _step_token_batched(model, x, state, xpa, xpf, v_first):
         attn = layer.attn
         residual = layer.pre_norm(x) if hasattr(layer, "pre_norm") else x
         h = layer.attn_norm(residual)
-        a, xpa[i], state[i], v_first = attn_step_batched(attn, i, h, xpa[i], v_first, state[i])
+        # Call the attention / FFN modules instead of passing them directly to
+        # the functional helpers.  DeepSpeed ZeRO-3 uses module pre-forward
+        # hooks to gather partitioned parameters; bypassing ``Module.__call__``
+        # leaves raw parameters such as ``x_r``, ``r_k``, ``g_norm.weight`` and
+        # ``ffn.x_k`` sharded during backward.
+        a, xpa[i], state[i], v_first = attn(h, xpa[i], v_first, state[i])
         x = residual + a
         residual = x
         h2 = layer.ffn_norm(x)
-        f, xpf[i] = ffn_step_batched(layer.ffn, h2, xpf[i])
+        f, xpf[i] = layer.ffn(h2, xpf[i])
         x = residual + f
     return x, state, xpa, xpf, v_first
 
