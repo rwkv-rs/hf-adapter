@@ -2662,6 +2662,52 @@ Branch: `wangyue/native-prefill-060-albatross`
       the next stretch attempt should return to a wider integrated
       shift-WAVG/state-scan/output producer-consumer kernel or a schedule that
       improves both micro and full HF.
+  - [x] Run a strongest-existing-boundary stack sweep before another kernel
+    rewrite:
+    - Motivation: the remaining unchecked gate is still `>=0.60x` Albatross,
+      and several opt-in boundaries had only been tested alone or in older
+      noisy windows.  Before writing another schedule, re-test the strongest
+      existing knobs around the strict best route:
+      shift-WAVG `bm128/br64/bk64` + CUDA warp-specialized rpb1 state scan +
+      fused output.
+    - Result files:
+      - broad sweep:
+        `bench/results_native_4090_existing_combo_sweep_20260703_150000.jsonl`
+        from remote
+        `/tmp/native_4090_existing_combo_sweep_20260703_1.jsonl`;
+      - focused prev-cache stack:
+        `bench/results_native_4090_prevcache_stack_20260703_151000.jsonl`
+        from remote `/tmp/native_4090_prevcache_stack_20260703_1.jsonl`.
+    - Broad 4090 / 0.4B / prompt512 / bsz1 rows, all pass
+      greedy/cache/decode smoke:
+      - baseline: `26,061.9 tok/s`, `19.6455 ms`;
+      - FFN norm-shift: `26,197.7 tok/s`, `19.5437 ms`;
+      - lean-down: `26,414.3 tok/s`, `19.3834 ms`;
+      - lean-down + FFN norm-shift: `26,707.2 tok/s`, `19.1708 ms`;
+      - in-place V: `26,267.5 tok/s`, `19.4918 ms`;
+      - tail norm slice: `26,653.5 tok/s`, `19.2095 ms`;
+      - prev-cache: `27,471.0 tok/s`, `18.6378 ms`;
+      - warp-pipelined rpb16: `26,304.5 tok/s`, `19.4644 ms`;
+      - warp-pipelined rpb16 + W-decay: `25,410.6 tok/s`, `20.1491 ms`;
+      - raw no-K/V output: `26,522.5 tok/s`, `19.3043 ms`;
+      - repeat baseline: `26,281.5 tok/s`, `19.4814 ms`.
+    - Focused prev-cache stack rows:
+      - prev-cache repeat: `27,221.5 tok/s`, `18.8087 ms`;
+      - prev-cache + FFN norm-shift: `26,921.2 tok/s`, `19.0185 ms`;
+      - prev-cache + lean-down: `26,833.2 tok/s`, `19.0808 ms`;
+      - prev-cache + lean-down + FFN norm-shift:
+        `26,899.0 tok/s`, `19.0342 ms`;
+      - prev-cache + tail norm slice: `26,149.0 tok/s`, `19.5801 ms`;
+      - prev-cache + in-place V: `26,937.1 tok/s`, `19.0072 ms`;
+      - prev-cache + raw no-K/V output: `26,578.8 tok/s`, `19.2635 ms`.
+    - Conclusion: the existing opt-in stack does not close the gap.  The best
+      current broad row (`prev-cache`, `27,471.0 tok/s`) and focused repeat
+      (`27,221.5 tok/s`) remain below the strict branch best
+      `28,780.6 tok/s`, and every stack with FFN norm-shift, lean-down, tail
+      norm slicing, in-place V, raw no-K/V, or warp-pipelined W-decay regresses.
+      Keep all of these opt-in only.  The next stretch attempt should not be
+      another flag-combo rerun; it needs a new integrated producer-consumer
+      boundary or a different scan schedule.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `28,780.6 tok/s` (`~0.5519x`), still about `2,508 tok/s` (`~8.7%`
