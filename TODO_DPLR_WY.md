@@ -2606,6 +2606,62 @@ Branch: `wangyue/native-prefill-060-albatross`
       does not move the dominant attention/scan costs. Keep it opt-in only; do
       not promote. The stretch target still needs a wider attention
       producer-consumer boundary or a stronger persistent/two-level scan.
+  - [x] Try in-place adjusted-V output reuse for no-precompute CUDA state scan:
+    - Motivation: after K/V in-place was limited to precompute routes because
+      raw K has cross-row CTA read hazards, test the safe half of that idea for
+      the no-precompute row-block path.  V is only consumed by the row that
+      writes adjusted V, so the CUDA scan can reuse the raw V projection tensor
+      as `v_out` while still allocating a separate adjusted-K output.
+    - Implementation:
+      - added opt-in `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_INPLACE_V=1`;
+      - extended the CUDA extension entrypoint and Python wrapper with
+        `inplace_v`;
+      - allowed it only when `write_kv=True` and `inplace_kv=False`;
+      - native prefill enables it only for CUDA no-precompute state-scan routes;
+      - scan benchmark/analyzer telemetry records
+        `prefill_cuda_state_scan_inplace_v(_effective)`;
+      - microbench now emits no-precompute in-place-V rows for
+        warp-specialized and warp-pipelined schedules.
+    - Correctness:
+      - local and 4090 `py_compile` plus local `git diff --check` passed;
+      - 4090 direct CUDA oracle passed for `warp_specialized` rpb1/rpb8 and
+        `warp_pipelined` rpb8/rpb16, both layer-0/no-gate and gated cases:
+        output/state/K/V diffs were all `0.0`, and returned `v_out` aliases the
+        supplied V scratch buffer.
+    - Result files:
+      - micro:
+        `bench/results_cuda_state_scan_inplace_v_micro_4090_20260703_140000.jsonl`
+        from remote `/tmp/cuda_state_scan_inplace_v_micro_20260703_1.jsonl`;
+      - HF:
+        `bench/results_native_4090_inplace_v_20260703_140500.jsonl`
+        from remote `/tmp/native_4090_inplace_v_20260703_1.jsonl`.
+    - 4090 synthetic `B=1,T=512,H=16,N=64,fp16` micro rows:
+      - warp-specialized rpb1: `0.459776 ms`;
+      - warp-specialized rpb1 + in-place V: `0.462848 ms`;
+      - warp-specialized rpb8: `0.472064 ms`;
+      - warp-specialized rpb8 + in-place V: `0.455680 ms`;
+      - warp-pipelined rpb8: `0.359424 ms`;
+      - warp-pipelined rpb8 + in-place V: `0.339840 ms`;
+      - warp-pipelined rpb16: `0.405504 ms`;
+      - warp-pipelined rpb16 + in-place V: `0.380928 ms`.
+    - 4090 / 0.4B / prompt512 / bsz1 HF rows, current shift-WAVG route:
+      - baseline warp-specialized rpb1:
+        `25,676.3 tok/s`, `19.9405 ms`;
+      - in-place V warp-specialized rpb1:
+        `25,724.8 tok/s`, `19.9030 ms`;
+      - warp-pipelined rpb8:
+        `26,281.0 tok/s`, `19.4817 ms`;
+      - in-place V warp-pipelined rpb8:
+        `25,337.2 tok/s`, `20.2074 ms`;
+      - repeat baseline:
+        `25,887.9 tok/s`, `19.7776 ms`.
+    - Conclusion: V output aliasing is bit-exact and saves memory traffic in
+      some CUDA micro rows, but it does not transfer into a strict HF e2e win
+      and remains below the branch best `28,780.6 tok/s`. Keep it opt-in only
+      and do not promote.  This closes another small storage-reuse boundary;
+      the next stretch attempt should return to a wider integrated
+      shift-WAVG/state-scan/output producer-consumer kernel or a schedule that
+      improves both micro and full HF.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `28,780.6 tok/s` (`~0.5519x`), still about `2,508 tok/s` (`~8.7%`
@@ -2885,6 +2941,8 @@ is either checked off or replaced with a more precise kernel task.
 
 ## Guardrails
 
+- HF Transformers adapter is the 30w scope in this repo; vLLM/SGLang work is
+  out of scope for this branch and should not consume the Albatross-gap loop.
 - Do not default-enable dense3 in the HF path.
 - Do not claim Albatross-level performance from dense3 alone.
 - Do not start vLLM/SGLang work in this repository.

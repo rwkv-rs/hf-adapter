@@ -111,13 +111,15 @@ def call_full(
     precompute_mode: str = "none",
     w_precomputed: bool = False,
     inplace_kv: bool = False,
+    inplace_v: bool = False,
     inplace_kka: bool = False,
+    v_tensor: torch.Tensor | None = None,
 ):
     return cuda_state_scan_prep(
         tensors["r"],
         tensors["w_decay"] if w_precomputed else tensors["w"],
         tensors["k"],
-        tensors["v"],
+        tensors["v"] if v_tensor is None else v_tensor,
         tensors["a"],
         tensors["state"],
         tensors["k_k"],
@@ -130,6 +132,7 @@ def call_full(
         schedule=schedule,
         w_precomputed=w_precomputed,
         inplace_kv=inplace_kv,
+        inplace_v=inplace_v,
         inplace_kka=inplace_kka,
     )
 
@@ -305,6 +308,47 @@ def main() -> int:
             "schedule": schedule,
             "rows_per_block": rpb,
             "precompute_mode": precompute_mode,
+            "cuda_ms": round(ms, 6),
+            "tokps_total": round(1000.0 * tokens_total / ms, 1) if ms > 0 else None,
+        }
+        print(json.dumps(row, ensure_ascii=False))
+        append_row(args.results, row)
+    for schedule, rpb in [
+        ("warp_specialized", 1),
+        ("warp_specialized", 8),
+        ("warp_pipelined", 8),
+        ("warp_pipelined", 16),
+    ]:
+        v_scratch = torch.empty_like(tensors["v"])
+        setup_inplace_v = lambda v_scratch=v_scratch: v_scratch.copy_(tensors["v"])
+        ms = median_ms(
+            lambda schedule=schedule, rpb=rpb, v_scratch=v_scratch: call_full(
+                tensors,
+                rows_per_block=rpb,
+                schedule=schedule,
+                inplace_v=True,
+                v_tensor=v_scratch,
+            ),
+            warmup=args.warmup,
+            steps=args.steps,
+            setup=setup_inplace_v,
+        )
+        row = {
+            "axis": "cuda_state_scan_micro",
+            "backend": "cuda_state_scan",
+            "bench_case": f"full_{schedule}_inplace_v_rpb{rpb}",
+            "status": "pass",
+            "device": device_name,
+            "dtype": "fp16",
+            "batch_size": args.batch_size,
+            "seq_len": args.seq_len,
+            "heads": args.heads,
+            "head_dim": 64,
+            "tokens_total": tokens_total,
+            "schedule": schedule,
+            "rows_per_block": rpb,
+            "precompute_mode": "none",
+            "inplace_v": True,
             "cuda_ms": round(ms, 6),
             "tokps_total": round(1000.0 * tokens_total / ms, 1) if ms > 0 else None,
         }

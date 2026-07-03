@@ -39,6 +39,7 @@ std::vector<torch::Tensor> rwkv7_state_scan_prep_forward_cuda(
     bool w_precomputed,
     bool write_kv,
     bool inplace_kv,
+    bool inplace_v,
     bool inplace_kka,
     torch::Tensor w_temp,
     torch::Tensor kk_temp);
@@ -92,11 +93,12 @@ std::vector<torch::Tensor> state_scan_prep_forward(
     bool w_precomputed,
     bool write_kv,
     bool inplace_kv,
+    bool inplace_v,
     bool inplace_kka,
     torch::Tensor w_temp,
     torch::Tensor kk_temp) {
   return rwkv7_state_scan_prep_forward_cuda(
-      r, w_raw, k_raw, v_raw, a, state, k_k, k_a, v_first, v_gate, has_v_gate, lanes_per_row, precompute_mode, rows_per_block, schedule_mode, w_precomputed, write_kv, inplace_kv, inplace_kka, w_temp, kk_temp);
+      r, w_raw, k_raw, v_raw, a, state, k_k, k_a, v_first, v_gate, has_v_gate, lanes_per_row, precompute_mode, rows_per_block, schedule_mode, w_precomputed, write_kv, inplace_kv, inplace_v, inplace_kka, w_temp, kk_temp);
 }
 
 std::vector<torch::Tensor> state_scan_prep_sk_forward(
@@ -2484,6 +2486,7 @@ std::vector<torch::Tensor> rwkv7_state_scan_prep_forward_cuda(
     bool w_precomputed,
     bool write_kv,
     bool inplace_kv,
+    bool inplace_v,
     bool inplace_kka,
     torch::Tensor w_temp,
     torch::Tensor kk_temp) {
@@ -2547,6 +2550,8 @@ std::vector<torch::Tensor> rwkv7_state_scan_prep_forward_cuda(
               "CUDA no-K/V-write probe currently requires lanes_per_row=64, precompute_mode=none, schedule=warp_specialized, and w_precomputed=false");
   TORCH_CHECK(!inplace_kv || (write_kv && precompute_mode != 0 && !w_precomputed),
               "CUDA in-place K/V output reuse currently requires write_kv=true, precompute_mode!=none, and w_precomputed=false");
+  TORCH_CHECK(!inplace_v || (write_kv && !inplace_kv),
+              "CUDA in-place V output reuse currently requires write_kv=true and inplace_kv=false");
   TORCH_CHECK(!inplace_kka || (precompute_mode == 3 && !w_precomputed),
               "CUDA in-place KKA precompute currently requires precompute_mode=wk_half and w_precomputed=false");
   if (w_temp.numel() != 0 || kk_temp.numel() != 0) {
@@ -2562,7 +2567,7 @@ std::vector<torch::Tensor> rwkv7_state_scan_prep_forward_cuda(
   auto out = torch::empty_like(r);
   auto final_state = torch::empty_like(state);
   auto k_out = write_kv ? (inplace_kv ? k_raw : torch::empty_like(k_raw)) : torch::empty({0}, k_raw.options());
-  auto v_out = write_kv ? (inplace_kv ? v_raw : torch::empty_like(v_raw)) : torch::empty({0}, v_raw.options());
+  auto v_out = write_kv ? ((inplace_kv || inplace_v) ? v_raw : torch::empty_like(v_raw)) : torch::empty({0}, v_raw.options());
   at::Half* k_out_ptr = write_kv ? k_out.data_ptr<at::Half>() : out.data_ptr<at::Half>();
   at::Half* v_out_ptr = write_kv ? v_out.data_ptr<at::Half>() : out.data_ptr<at::Half>();
 
@@ -4140,7 +4145,7 @@ def _load_extension():
     from torch.utils.cpp_extension import load_inline
 
     return load_inline(
-        name="rwkv7_cuda_state_scan_v26",
+        name="rwkv7_cuda_state_scan_v27",
         cpp_sources=_CPP_SRC,
         cuda_sources=_CUDA_SRC,
         functions=["state_scan_prep_forward", "state_scan_prep_sk_forward", "state_scan_rowblock_phase_forward"],
@@ -4178,6 +4183,7 @@ def cuda_state_scan_prep(
     w_precomputed: bool | None = None,
     write_kv: bool = True,
     inplace_kv: bool | None = None,
+    inplace_v: bool | None = None,
     inplace_kka: bool | None = None,
     w_temp: Any | None = None,
     kk_temp: Any | None = None,
@@ -4368,6 +4374,15 @@ def cuda_state_scan_prep(
             "no",
             "off",
         }
+    if inplace_v is None:
+        import os
+
+        inplace_v = os.environ.get("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_INPLACE_V", "0").lower() not in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }
     if inplace_kka is None:
         import os
 
@@ -4388,6 +4403,12 @@ def cuda_state_scan_prep(
             raise ValueError(
                 "cuda_state_scan_prep inplace_kv currently requires write_kv=True, "
                 "precompute_mode!=none, and w_precomputed=False"
+            )
+    if bool(inplace_v):
+        if not bool(write_kv) or bool(inplace_kv):
+            raise ValueError(
+                "cuda_state_scan_prep inplace_v currently requires write_kv=True "
+                "and inplace_kv=False"
             )
     if bool(inplace_kka):
         if precompute_mode_id != 3 or bool(w_precomputed):
@@ -4433,6 +4454,7 @@ def cuda_state_scan_prep(
         bool(w_precomputed),
         bool(write_kv),
         bool(inplace_kv),
+        bool(inplace_v),
         bool(inplace_kka),
         w_temp_arg,
         kk_temp_arg,
