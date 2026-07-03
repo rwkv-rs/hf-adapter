@@ -89,12 +89,20 @@ Branch: `wangyue/native-prefill-060-albatross`
     run log records `decode_s=28.614` for `88727` tokens.  Its summary
     `elapsed_sec=111.565` includes one-time CUDA extension loading/compile
     (`~72.8s`), so use the log's decode line for steady-state comparison.
-  - Full 500-task MATH500 avg@64 HF dynamic run has been started on the 4090:
-    PID `316499`, log `/tmp/math500_hf_dynamic_full_avg64_20260703.log`,
-    output `/tmp/math500_hf_dynamic_full_avg64_20260703`.  Initial progress:
-    prefill cache completed `500/500` prompts in `12.123s`; at about 1m36s it
-    was `1205/32000` samples with window throughput around `9k-10k tok/s`.
-    Final full-summary artifact is still pending.
+  - Full 500-task MATH500 avg@64 HF dynamic run completed on the 4090:
+    `bench/math500_hf_dynamic_full_avg64_20260703/summary.json` and
+    `bench/math500_hf_dynamic_full_avg64_20260703/run.log`.  This used full
+    MATH500 (`500` tasks), rollout `64`, dynamic bsz `64`, max_new_tokens
+    `1500`, native prefill, and `native_graph` fast-token decode.  Result:
+    `4421/32000` correct generations, `rollout_accuracy=0.13815625`,
+    `pass_at_rollout_accuracy=0.358`, `truncated_rate=0.21609375`, mean
+    generated tokens `612.2159`, `decoded_token_events=19,615,994`,
+    `decode_sec=2128.4963`, `elapsed_sec=2141.1968`,
+    `token_per_sec=9161.2290`, `sample_per_sec=14.9449`, and prefill cache
+    build time `12.1229s`.  This is the first full HF dynamic avg@64
+    acceptance artifact; the remaining rigorous comparison is to run the same
+    full MATH500 avg@64 through Albatross and compare accuracy/speed under the
+    same prompt/sampling/stop policy.
 
 - [x] Start from merged `origin/main` after PR #90.
 - [x] Fix the first experiment blocker:
