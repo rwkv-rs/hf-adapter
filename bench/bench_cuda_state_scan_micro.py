@@ -180,7 +180,15 @@ def main() -> int:
     print(json.dumps(summary, ensure_ascii=False))
     append_row(args.results, summary)
 
-    for schedule, rpb in [("default", 1), ("warp_specialized", 1), ("warp_specialized", 8)]:
+    for schedule, rpb in [
+        ("default", 1),
+        ("warp_specialized", 1),
+        ("warp_specialized", 8),
+        ("warp2", 1),
+        ("warp2", 2),
+        ("warp2", 4),
+        ("warp2", 8),
+    ]:
         ms = median_ms(
             lambda schedule=schedule, rpb=rpb: call_full(tensors, rows_per_block=rpb, schedule=schedule),
             warmup=args.warmup,

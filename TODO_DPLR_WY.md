@@ -1225,7 +1225,7 @@ Branch: `wangyue/native-prefill-060-albatross`
         the historical strict `27,051.0 tok/s` and far below the
         `31,289 tok/s` 0.60x target;
       - the sk no-mask N64 variant is negative on 4090, so do not promote it.
-- [ ] Next main fused-fp16 task:
+- [x] Next main fused-fp16 task:
   - Stop repeating shallow raw/sk/no-mask/WAVG combinations unless a new
     component-level reason appears.  The next bounded experiment must attack a
     larger remaining cost boundary:
@@ -1237,6 +1237,65 @@ Branch: `wangyue/native-prefill-060-albatross`
   - Promotion gate remains unchanged: same-run 4090 / 0.4B / prompt512 / bsz1
     correctness plus a confirmed row beyond `27,051.0 tok/s`, moving toward
     `>=31,289 tok/s`.
+  - Done: tried the deeper CUDA/persistent-side branch by adding a
+    two-worker-warp row-block schedule that shares vector prep across multiple
+    rows while preserving the two-warp-per-row state/recurrent reductions.
+    - implementation:
+      - added `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE=warp2` to the
+        opt-in CUDA N=64 state-scan scaffold;
+      - `warp2` uses one producer warp per CTA to compute shared R/W/K/A/KK
+        prep and two worker warps per row, with `ROWS_PER_BLOCK` variants
+        `1/2/4/8`;
+      - `bench/bench_cuda_state_scan_micro.py` now records the `warp2`
+        schedule rows; default HF/native behavior remains unchanged unless the
+        CUDA state-scan env flags are set.
+    - micro result file:
+      `bench/results_cuda_state_scan_warp2_micro_4090_20260703_013407.jsonl`
+      from remote `/tmp/cuda_state_scan_warp2_micro_4090_20260703_013407.jsonl`.
+      4090 synthetic `B=1,T=512,H=16,N=64,fp16`:
+      - default row-block `rpb=1`: `0.518592 ms`;
+      - prior warp-specialized `rpb=1`: `0.449088 ms`;
+      - prior warp-specialized `rpb=8`: `0.460800 ms`;
+      - new `warp2 rpb=1`: `0.498224 ms`;
+      - new `warp2 rpb=2`: `0.472064 ms`;
+      - new `warp2 rpb=4`: `0.480256 ms`;
+      - new `warp2 rpb=8`: `0.502784 ms`.
+    - HF confirmation result file:
+      `bench/results_native_4090_cuda_warp2_confirm_20260703_013526.jsonl`
+      from remote `/tmp/native_4090_cuda_warp2_confirm_20260703_013526.jsonl`.
+      Rows all pass greedy/cache/decode smoke:
+      - Triton baseline: `25,297.9 tok/s`, `20.2388 ms`;
+      - CUDA row-block `rpb=1`: `26,076.1 tok/s`, `19.6348 ms`;
+      - CUDA warp-specialized `rpb=1`: `26,186.4 tok/s`, `19.5522 ms`;
+      - CUDA `warp2 rpb=2`: `25,882.8 tok/s`, `19.7815 ms`.
+    - Combination result file:
+      `bench/results_native_4090_cuda_wavg_combo_20260703_013719.jsonl`
+      from remote `/tmp/native_4090_cuda_wavg_combo_20260703_013719.jsonl`.
+      Rows all pass greedy/cache/decode smoke:
+      - Triton baseline: `25,733.8 tok/s`, `19.8960 ms`;
+      - tuned WAVG-LoRA only: `25,428.5 tok/s`, `20.1349 ms`;
+      - CUDA row-block + tuned WAVG-LoRA: `25,308.0 tok/s`,
+        `20.2307 ms`;
+      - CUDA warp-specialized + tuned WAVG-LoRA: `26,404.8 tok/s`,
+        `19.3904 ms`.
+    - conclusion:
+      - `warp2` is correctness-safe and improves on the default row-block
+        micro, but it does not beat the existing one-worker-warp
+        warp-specialized CUDA schedule in micro or HF;
+      - CUDA warp-specialized + tuned WAVG-LoRA is the best same-run
+        combination in this experiment, but still below the strict historical
+        `27,051.0 tok/s` row and below the `31,289 tok/s` stretch target;
+      - keep `warp2` opt-in and do not promote it.
+- [ ] Next main fused-fp16 task:
+  - Move to the other larger-boundary option: implement or probe a real
+    layer-prep fusion that reduces norm/shift + LoRA/projection launch and
+    memory cost while preserving cuBLAS for the big dense R/K/V/O matmuls.
+    The bounded experiment should compare same-run:
+    - current full-head Triton state-scan baseline;
+    - best opt-in CUDA state-scan/WAVG combination;
+    - the new layer-prep boundary.
+  - Promotion gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
+    confirmed row beyond `27,051.0 tok/s`, moving toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `27,051.0 tok/s` (`~0.5187x`), still about `15.7%` relative uplift short of

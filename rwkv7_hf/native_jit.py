@@ -437,7 +437,18 @@ def _native_prefill_cuda_state_scan_schedule() -> str:
         return "default"
     if schedule in {"1", "warp", "warp_specialized", "warp_specialised", "producer_worker", "producer"}:
         return "warp_specialized"
-    raise ValueError("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE must be default or warp_specialized")
+    if schedule in {
+        "2",
+        "warp2",
+        "warp_2",
+        "warp_specialized2",
+        "warp_specialized_2",
+        "producer_worker2",
+        "producer_worker_wide",
+        "wide",
+    }:
+        return "warp2"
+    raise ValueError("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE must be default, warp_specialized, or warp2")
 
 
 def _native_prefill_fused_shift_mix_enabled() -> bool:
