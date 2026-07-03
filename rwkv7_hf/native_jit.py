@@ -529,7 +529,11 @@ def _native_prefill_cuda_state_scan_schedule() -> str:
         "wide",
     }:
         return "warp2"
-    raise ValueError("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE must be default, warp_specialized, or warp2")
+    if schedule in {"3", "head_reg16", "head_reg", "head", "reg16", "head_level", "headlevel"}:
+        return "head_reg16"
+    raise ValueError(
+        "RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE must be default, warp_specialized, warp2, or head_reg16"
+    )
 
 
 def _native_prefill_fused_shift_mix_enabled() -> bool:

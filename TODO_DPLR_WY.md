@@ -1614,19 +1614,52 @@ Branch: `wangyue/native-prefill-060-albatross`
     that removing only W sigmoid/exp is too small once the cost is paid in the
     shift-WAVG boundary; the remaining `0.60x` gap still needs a larger
     persistent/two-level scan schedule or a bigger fused boundary.
+- [x] Try head-level register-state CUDA schedule for two-level sharing:
+  - Motivation: test a real alternative to row-block producer duplication.
+    `head_reg16` launches one CTA per `(batch, head)`, uses 1024 threads, maps
+    16 lanes to each state row, and keeps four state columns per thread in
+    registers.  R/W/K/A/normalized-KK/adjusted-KV are computed once per
+    token/head in shared memory, then half-warp row workers perform
+    state-dot/update/recurrent output.  This directly tests whether head-level
+    vector sharing can beat duplicated row-block prep without global temp
+    tensors.
+  - Implementation:
+    - added `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE=head_reg16`;
+    - added `rwkv7_state_scan_prep_n64_head_reg16_kernel`;
+    - kept the route opt-in and left default HF/native behavior unchanged;
+    - analyzer now preserves the W-precomputed and shift-WAVG W-decay
+      telemetry fields.
+  - Correctness:
+    - 4090 synthetic oracle vs warp-specialized row-block passed with diffs
+      `[0.0004883, 1.907e-06, 0.0, 0.0]` for output/state/K/V;
+    - HF e2e row passed greedy/cache/decode smoke with `max_abs_diff=0.0625`.
+  - Result files:
+    - micro: `bench/results_cuda_state_scan_head_reg16_micro_4090_20260703.jsonl`
+      from remote `/tmp/cuda_state_scan_head_reg16_micro_4090_.jsonl`;
+    - HF e2e: `bench/results_native_4090_head_reg16_20260703.jsonl`
+      from remote `/tmp/native_4090_head_reg16_20260703.jsonl`.
+  - 4090 synthetic `B=1,T=512,H=16,N=64,fp16` micro rows:
+    - warp-specialized rpb1: `0.447488 ms`, `1,144,164.7 tok/s`;
+    - warp-specialized rpb8: `0.459776 ms`, `1,113,585.7 tok/s`;
+    - `head_reg16`: `0.688128 ms`, `744,047.6 tok/s`.
+  - 4090 / 0.4B / prompt512 / bsz1 HF rows:
+    - same-run warp-specialized + shift-WAVG baseline: `26,879.8 tok/s`,
+      `19.0478 ms`;
+    - `head_reg16` + shift-WAVG: `21,563.7 tok/s`, `23.7436 ms`;
+    - both rows peak at `988.2 MiB`.
+  - Conclusion: `head_reg16` is correctness-safe but clearly slower in both
+    micro and HF.  Full head-level sharing over-reduces CTA parallelism and
+    makes a 1024-thread CTA too heavy for this shape.  Keep the route opt-in
+    as a negative schedule probe; do not promote.
 - [ ] Next persistent/two-level state-scan experiment:
-  - Return to the main state-scan gap.  The next bounded experiment should
-    preserve rpb1/rpb8 row parallelism while sharing more than W-decay: producer
-    vector prep for R/W/K/A/normalized-KK/adjusted-KV and/or state-dot work.
-    Do not spend another turn on W-only precompute, small FFN activation, or
-    recompute-prev layernorm boundaries unless a same-run profiler shows a new
-    larger win.
-  - Candidate implementation directions:
-    - add a two-level CUDA row-block schedule where a head-level producer
-      computes per-token vectors once and row workers consume them without
-      global temp tensors; or
-    - split/retile the current shift-WAVG + CUDA scan boundary so W/A/K/V prep
-      is shared with the scan without reducing row occupancy like rpb16 did.
+  - Do not repeat head-level single-CTA sharing or W-only precompute.  The next
+    bounded experiment should keep the proven warp-specialized row-block
+    occupancy and reduce only one cost inside it.  Preferred directions:
+    - retile warp-specialized rpb1/rpb8 to reduce per-token synchronizations or
+      shared stores while keeping one-worker-warp row parallelism; or
+    - split the vector-prep producer into a lighter inline path that shares
+      normalized KK/adjusted-KV within rpb8 without using 1024-thread CTAs or
+      global temp tensors.
   - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond `28,780.6 tok/s`, moving toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
