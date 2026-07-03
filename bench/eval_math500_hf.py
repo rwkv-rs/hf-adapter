@@ -11,7 +11,9 @@ intended for acceptance testing of the HF adapter; full acceptance should use
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
+import multiprocessing as mp
 import os
 import random
 import time
@@ -40,8 +42,14 @@ class Task:
 
 
 @torch.jit.script
-def sample_logits(logits: torch.Tensor, temperature: float, top_p: float, top_k: int) -> torch.Tensor:
-    """Albatross-compatible sampler: temperature -> top-k -> top-p."""
+def sample_logits_from_uniform(
+    logits: torch.Tensor,
+    uniform01: torch.Tensor,
+    temperature: float,
+    top_p: float,
+    top_k: int,
+) -> torch.Tensor:
+    """Albatross-compatible sampler using caller-provided U[0,1)."""
 
     k = min(max(1, int(top_k)), logits.size(-1))
     if temperature <= 0.0 or top_p <= 0.0 or k == 1:
@@ -54,9 +62,54 @@ def sample_logits(logits: torch.Tensor, temperature: float, top_p: float, top_k:
         mass = cdf.gather(1, keep.view(-1, 1)).view(-1)
     else:
         mass = cdf[:, -1]
-    r = torch.rand((logits.size(0), 1), device=logits.device) * mass.view(-1, 1)
+    u = torch.clamp(uniform01.view(-1, 1).to(device=logits.device, dtype=torch.float32), 0.0, 0.9999999403953552)
+    r = u * mass.view(-1, 1)
     picked = torch.searchsorted(cdf, r).view(-1, 1)
     return ids.gather(1, picked).view(-1)
+
+
+@torch.jit.script
+def sample_logits(logits: torch.Tensor, temperature: float, top_p: float, top_k: int) -> torch.Tensor:
+    """Albatross-compatible sampler: temperature -> top-k -> top-p."""
+
+    uniform01 = torch.rand((logits.size(0), 1), device=logits.device)
+    return sample_logits_from_uniform(logits, uniform01, temperature, top_p, top_k)
+
+
+_SPLITMIX64_MASK = (1 << 64) - 1
+
+
+def _splitmix64(value: int) -> int:
+    value = (int(value) + 0x9E3779B97F4A7C15) & _SPLITMIX64_MASK
+    z = value
+    z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & _SPLITMIX64_MASK
+    z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & _SPLITMIX64_MASK
+    return (z ^ (z >> 31)) & _SPLITMIX64_MASK
+
+
+def deterministic_uniform01(seed: int, task_index: int, sample_id: int, draw_index: int, salt: int) -> float:
+    """Stable per-row RNG independent of slot/refill order."""
+
+    key = int(seed) & _SPLITMIX64_MASK
+    key ^= (int(task_index) + 0x100000001B3) * 0x9E3779B185EBCA87
+    key ^= (int(sample_id) + 0xC2B2AE3D27D4EB4F) * 0xBF58476D1CE4E5B9
+    key ^= (int(draw_index) + 0x165667B19E3779F9) * 0x94D049BB133111EB
+    key ^= (int(salt) + 0xD6E8FEB86659FD93) * 0xD2B74407B1CE6E93
+    bits = _splitmix64(key) >> 11
+    return bits * (1.0 / float(1 << 53))
+
+
+def deterministic_uniforms_for_work(
+    args: argparse.Namespace,
+    work_items: list[tuple[int, int]],
+    draw_indices: list[int],
+    device: str,
+) -> torch.Tensor:
+    vals = [
+        deterministic_uniform01(args.seed, task_idx, sample_id, draw_idx, args.rng_salt)
+        for (task_idx, sample_id), draw_idx in zip(work_items, draw_indices, strict=True)
+    ]
+    return torch.tensor(vals, dtype=torch.float32, device=device).view(-1, 1)
 
 
 def load_tasks(dataset: str, limit: int = 0) -> list[Task]:
@@ -112,6 +165,65 @@ def verify_completion(answer: str, completion: str) -> tuple[bool, str]:
         return False, f"{type(exc).__name__}: {exc}"
 
 
+def _verify_completion_worker(payload: tuple[int, str, str]) -> tuple[int, bool, str]:
+    """Process-pool friendly wrapper for deferred verification."""
+
+    row_index, answer, completion = payload
+    correct, error = verify_completion(answer, completion)
+    return row_index, correct, error
+
+
+def verify_rows_deferred(
+    rows: list[dict[str, Any]],
+    *,
+    workers: int,
+    progress_every: int,
+) -> dict[str, Any]:
+    """Verify completed generations after the GPU decode loop has finished.
+
+    The default evaluator verifies each row at slot-finish time.  That is fine
+    for correctness, but it can stall dynamic batching because expensive SymPy /
+    math_verify work runs on the main thread while GPU slots wait for refill.
+    This helper keeps the generated completions identical and moves only the
+    CPU verifier to a post-decode phase.
+    """
+
+    started = time.perf_counter()
+    if workers <= 0:
+        workers = min(4, max(1, os.cpu_count() or 1))
+    payloads = [(idx, str(row["answer"]), str(row["completion"])) for idx, row in enumerate(rows)]
+    done = 0
+
+    if workers == 1 or len(payloads) <= 1:
+        for payload in payloads:
+            idx, correct, error = _verify_completion_worker(payload)
+            rows[idx]["correct"] = correct
+            rows[idx]["verify_error"] = error
+            done += 1
+            if progress_every > 0 and done % progress_every == 0:
+                elapsed = time.perf_counter() - started
+                print(f"math500_hf verify {done}/{len(rows)} elapsed_s={elapsed:.3f}", flush=True)
+    else:
+        ctx = mp.get_context("spawn")
+        with concurrent.futures.ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+            chunksize = max(1, len(payloads) // max(1, workers * 16))
+            for idx, correct, error in pool.map(_verify_completion_worker, payloads, chunksize=chunksize):
+                rows[idx]["correct"] = correct
+                rows[idx]["verify_error"] = error
+                done += 1
+                if progress_every > 0 and done % progress_every == 0:
+                    elapsed = time.perf_counter() - started
+                    print(f"math500_hf verify {done}/{len(rows)} elapsed_s={elapsed:.3f}", flush=True)
+
+    elapsed = time.perf_counter() - started
+    print(f"math500_hf verify done rows={len(rows)} workers={workers} elapsed_s={elapsed:.3f}", flush=True)
+    return {
+        "deferred_verification": True,
+        "verify_workers": workers,
+        "verification_sec": elapsed,
+    }
+
+
 def trim_completion(text: str) -> str:
     text = text.split("\nUser:", 1)[0]
     if text.startswith(">"):
@@ -145,7 +257,10 @@ def generate_one(args: argparse.Namespace, model, tokenizer, task: Task, sample_
     elapsed = time.perf_counter() - started
     new_ids = out[0, prompt_tokens:]
     completion = trim_completion(tokenizer.decode(new_ids.detach().cpu().tolist(), skip_special_tokens=False))
-    correct, verify_error = verify_completion(task.answer, completion)
+    if args.defer_verification:
+        correct, verify_error = None, ""
+    else:
+        correct, verify_error = verify_completion(task.answer, completion)
     generated_tokens = int(new_ids.numel())
     ended_eod = bool(generated_tokens > 0 and int(new_ids[-1].detach().cpu()) == args.eos_token_id)
     ended_user_stop = "\nUser:" in tokenizer.decode(new_ids.detach().cpu().tolist(), skip_special_tokens=False)
@@ -261,6 +376,7 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
     generated: list[list[int]] = [[] for _ in range(batch_size)]
     active = [False] * batch_size
     token_counts = [0] * batch_size
+    draw_counts = [0] * batch_size
     out_texts = ["" for _ in range(batch_size)]
     out_last = [0 for _ in range(batch_size)]
     next_cpu = [0 for _ in range(batch_size)]
@@ -277,13 +393,23 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
         assert work_item is not None
         task_idx, sample_id = work_item
         token_ids = generated[row]
-        if out_last[row] < len(token_ids):
+        if args.defer_text_decode:
+            raw_completion = tokenizer.decode(token_ids, skip_special_tokens=False)
+        elif out_last[row] < len(token_ids):
             pending = tokenizer.decode(token_ids[out_last[row] :], skip_special_tokens=False)
             if "\ufffd" not in pending:
                 out_texts[row] += pending
-        completion = trim_completion(out_texts[row])
+            raw_completion = out_texts[row]
+        else:
+            raw_completion = out_texts[row]
+        completion = trim_completion(raw_completion)
         task = task_by_index[task_idx]
-        correct, verify_error = verify_completion(task.answer, completion)
+        post_user_stop = "\nUser:" in raw_completion
+        final_stop_reason = "user_stop" if stop_reason == "max_tokens" and post_user_stop else stop_reason
+        if args.defer_verification:
+            correct, verify_error = None, ""
+        else:
+            correct, verify_error = verify_completion(task.answer, completion)
         rows.append(
             {
                 "task_index": task.index,
@@ -298,10 +424,10 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
                 "generated_tokens": len(token_ids),
                 "tokens_including_eod": token_counts[row],
                 "tokens_including_stop": token_counts[row],
-                "ended_eod": stop_reason == "eod",
-                "ended_user_stop": stop_reason == "user_stop",
-                "stop_reason": stop_reason,
-                "truncated": stop_reason == "max_tokens",
+                "ended_eod": final_stop_reason == "eod",
+                "ended_user_stop": final_stop_reason == "user_stop",
+                "stop_reason": final_stop_reason,
+                "truncated": final_stop_reason == "max_tokens",
                 "completion": completion,
                 "correct": correct,
                 "verify_error": verify_error,
@@ -312,6 +438,7 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
         generated[row] = []
         active[row] = False
         token_counts[row] = 0
+        draw_counts[row] = 0
         out_texts[row] = ""
         out_last[row] = 0
         next_cpu[row] = 0
@@ -332,14 +459,29 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
             generated[row] = []
             active[row] = True
             token_counts[row] = 0
+            draw_counts[row] = 0
             out_texts[row] = ""
             out_last[row] = 0
             assigned.append(row)
             init_logits.append(logits)
         if assigned:
-            sampled = sample_logits(torch.stack(init_logits, dim=0), args.temperature, args.top_p, args.top_k)
+            init = torch.stack(init_logits, dim=0)
+            if args.rng_mode == "per_sample":
+                work_items = [slot_work[row] for row in assigned]
+                if any(item is None for item in work_items):
+                    raise RuntimeError("assigned row without work item")
+                uniforms = deterministic_uniforms_for_work(
+                    args,
+                    [item for item in work_items if item is not None],
+                    [draw_counts[row] for row in assigned],
+                    args.device,
+                )
+                sampled = sample_logits_from_uniform(init, uniforms, args.temperature, args.top_p, args.top_k)
+            else:
+                sampled = sample_logits(init, args.temperature, args.top_p, args.top_k)
             for row, token in zip(assigned, sampled.detach().cpu().tolist(), strict=False):
                 next_cpu[row] = int(token)
+                draw_counts[row] += 1
         return assigned
 
     def process_next_token(row: int) -> bool:
@@ -351,6 +493,11 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
             finish_row(row, "eod")
             return False
         generated[row].append(token)
+        if args.defer_text_decode:
+            if token_counts[row] >= args.max_new_tokens:
+                finish_row(row, "max_tokens")
+                return False
+            return True
         pending = tokenizer.decode(generated[row][out_last[row] :], skip_special_tokens=False)
         if "\ufffd" not in pending:
             out_texts[row] += pending
@@ -394,9 +541,29 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
                 out = model(token_tensor, past_key_values=batch_cache, use_cache=True, logits_to_keep=1, return_dict=True)
         batch_cache = out.past_key_values
         logits = out.logits[:, -1, :]
-        sampled = sample_logits(logits, args.temperature, args.top_p, args.top_k).detach().cpu().tolist()
-        for row in forward_rows:
-            next_cpu[row] = int(sampled[row])
+        if args.rng_mode == "global":
+            sampled = sample_logits(logits, args.temperature, args.top_p, args.top_k).detach().cpu().tolist()
+            for row in forward_rows:
+                next_cpu[row] = int(sampled[row])
+                draw_counts[row] += 1
+        else:
+            row_logits = logits[torch.tensor(forward_rows, dtype=torch.long, device=logits.device)]
+            if args.rng_mode == "per_sample":
+                work_items = [slot_work[row] for row in forward_rows]
+                if any(item is None for item in work_items):
+                    raise RuntimeError("forward row without work item")
+                uniforms = deterministic_uniforms_for_work(
+                    args,
+                    [item for item in work_items if item is not None],
+                    [draw_counts[row] for row in forward_rows],
+                    args.device,
+                )
+                row_sampled = sample_logits_from_uniform(row_logits, uniforms, args.temperature, args.top_p, args.top_k)
+            else:
+                row_sampled = sample_logits(row_logits, args.temperature, args.top_p, args.top_k)
+            for row, token in zip(forward_rows, row_sampled.detach().cpu().tolist(), strict=True):
+                next_cpu[row] = int(token)
+                draw_counts[row] += 1
         forward_steps += 1
         if args.progress_every > 0 and forward_steps % args.progress_every == 0:
             now = time.perf_counter()
@@ -419,11 +586,15 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
     stats = {
         "prefill_sec": prefill_sec,
         "decode_sec": decode_sec,
+        "generation_elapsed_sec": prefill_sec + decode_sec,
         "decoded_token_events": decoded_token_events,
         "forward_steps": forward_steps,
         "dynamic_bsz": batch_size,
         "fast_token_backend_effective": getattr(model, "rwkv7_last_fast_token_backend", lambda: None)(),
         "cache_metrics": batch_cache.rwkv7_cache_metrics() if hasattr(batch_cache, "rwkv7_cache_metrics") else None,
+        "rng_mode": args.rng_mode,
+        "rng_salt": args.rng_salt,
+        "defer_text_decode": args.defer_text_decode,
     }
     print(
         f"math500_hf dynamic done B={batch_size} rows={len(rows)} decode_s={decode_sec:.3f} "
@@ -448,6 +619,14 @@ def summarize(
     pass_tasks = sum(1 for task_rows in by_task.values() if any(row["correct"] for row in task_rows))
     elapsed = time.perf_counter() - started
     tokens = sum(int(row.get("tokens_including_stop", row["generated_tokens"])) for row in rows)
+    generation_elapsed = None
+    if extra_stats:
+        value = extra_stats.get("generation_elapsed_sec")
+        if value is not None:
+            generation_elapsed = float(value)
+    if generation_elapsed is None:
+        generation_elapsed = elapsed
+    speed_elapsed = generation_elapsed if args.summary_speed_timing == "generation" else elapsed
     summary = {
         "axis": "math500_hf_adapter",
         "backend": "hf_adapter",
@@ -467,8 +646,15 @@ def summarize(
         "mean_generated_tokens": sum(int(row["generated_tokens"]) for row in rows) / max(total, 1),
         "mean_tokens_including_stop": tokens / max(total, 1),
         "elapsed_sec": elapsed,
-        "sample_per_sec": total / max(elapsed, 1e-9),
-        "token_per_sec": tokens / max(elapsed, 1e-9),
+        "speed_timing": args.summary_speed_timing,
+        "speed_elapsed_sec": speed_elapsed,
+        "sample_per_sec": total / max(speed_elapsed, 1e-9),
+        "token_per_sec": tokens / max(speed_elapsed, 1e-9),
+        "wall_sample_per_sec": total / max(elapsed, 1e-9),
+        "wall_token_per_sec": tokens / max(elapsed, 1e-9),
+        "generation_elapsed_sec": generation_elapsed,
+        "generation_sample_per_sec": total / max(generation_elapsed, 1e-9),
+        "generation_token_per_sec": tokens / max(generation_elapsed, 1e-9),
         "generations_jsonl": str(out_dir / "generations.jsonl"),
         "config": {
             "hf_dir": args.hf_dir,
@@ -489,6 +675,12 @@ def summarize(
             "add_bos": args.add_bos,
             "prefill_backend": args.prefill_backend,
             "decode_backend": args.decode_backend,
+            "rng_mode": args.rng_mode,
+            "rng_salt": args.rng_salt,
+            "defer_verification": args.defer_verification,
+            "verify_workers": args.verify_workers,
+            "summary_speed_timing": args.summary_speed_timing,
+            "defer_text_decode": args.defer_text_decode,
         },
     }
     if extra_stats:
@@ -521,6 +713,47 @@ def main() -> int:
     ap.add_argument("--bos-token-id", type=int, default=0)
     ap.add_argument("--prefill-backend", choices=("native", "forward"), default="native")
     ap.add_argument("--decode-backend", choices=("fast_token", "forward"), default="fast_token")
+    ap.add_argument(
+        "--rng-mode",
+        choices=("global", "active_global", "per_sample"),
+        default="global",
+        help=(
+            "Dynamic-batching sampler RNG mode. global matches Albatross and samples the full batch; "
+            "active_global samples only active forward rows; per_sample uses deterministic per task/sample/token draws."
+        ),
+    )
+    ap.add_argument("--rng-salt", type=int, default=0, help="Extra salt for --rng-mode=per_sample deterministic draws")
+    ap.add_argument(
+        "--defer-verification",
+        action="store_true",
+        help=(
+            "Do not run math_verify inside the generation/refill loop. Generated rows are verified after decode, "
+            "which keeps GPU throughput measurement from being stalled by CPU verifier work."
+        ),
+    )
+    ap.add_argument(
+        "--verify-workers",
+        type=int,
+        default=4,
+        help="Number of deferred verifier worker processes. Use 1 for sequential; only used with --defer-verification.",
+    )
+    ap.add_argument(
+        "--summary-speed-timing",
+        choices=("wall", "generation"),
+        default="wall",
+        help=(
+            "Timing denominator for sample_per_sec/token_per_sec. wall preserves the original end-to-end schema; "
+            "generation uses prefill+decode time and is intended for GPU speed acceptance when verification is deferred."
+        ),
+    )
+    ap.add_argument(
+        "--defer-text-decode",
+        action="store_true",
+        help=(
+            "Dynamic batching only: collect token ids and decode once when a row finishes instead of calling "
+            "tokenizer.decode after every generated token. Default early user-stop behavior remains unchanged."
+        ),
+    )
     args = ap.parse_args()
 
     random.seed(args.seed)
@@ -557,6 +790,16 @@ def main() -> int:
                         f"tokens={tokens} tps={tokens / max(elapsed, 1e-9):.1f}",
                         flush=True,
                     )
+
+    generation_done = time.perf_counter()
+    if extra_stats is None:
+        extra_stats = {}
+    extra_stats.setdefault("generation_elapsed_sec", generation_done - started)
+    extra_stats.setdefault("deferred_verification", False)
+    if args.defer_verification:
+        extra_stats.update(
+            verify_rows_deferred(rows, workers=args.verify_workers, progress_every=args.progress_every)
+        )
 
     rows.sort(key=lambda x: (x["task_index"], x["sample_id"]))
     with (out_dir / "generations.jsonl").open("w", encoding="utf-8") as f:

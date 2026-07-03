@@ -1,0 +1,188 @@
+{
+  "inputs": {
+    "hf_generations": "/tmp/math500_hf_dynamic_full_avg64_20260703/generations.jsonl",
+    "albatross_generations": "/tmp/albatross_math500_full_avg64_20260703/generations.jsonl"
+  },
+  "shape": {
+    "common_tasks": 500,
+    "missing_in_hf": [],
+    "missing_in_albatross": []
+  },
+  "observed": {
+    "hf": {
+      "tasks": 500,
+      "rows": 32000,
+      "rollout_sizes": {
+        "64": 500
+      },
+      "correct_generations": 4421,
+      "rollout_accuracy": 0.13815625,
+      "pass_tasks": 179,
+      "pass_at_rollout": 0.358
+    },
+    "albatross": {
+      "tasks": 500,
+      "rows": 32000,
+      "rollout_sizes": {
+        "64": 500
+      },
+      "correct_generations": 4670,
+      "rollout_accuracy": 0.1459375,
+      "pass_tasks": 185,
+      "pass_at_rollout": 0.37
+    },
+    "delta_hf_minus_albatross": {
+      "correct_generations": -249,
+      "rollout_accuracy": -0.0077812499999999896,
+      "pass_tasks": -6,
+      "pass_at_rollout": -0.01200000000000001
+    }
+  },
+  "prefix_curves": {
+    "hf": [
+      {
+        "k": 1,
+        "pass_tasks": 72,
+        "pass_at_k": 0.144,
+        "correct_generations": 72,
+        "rollout_accuracy": 0.144
+      },
+      {
+        "k": 2,
+        "pass_tasks": 95,
+        "pass_at_k": 0.19,
+        "correct_generations": 145,
+        "rollout_accuracy": 0.145
+      },
+      {
+        "k": 4,
+        "pass_tasks": 109,
+        "pass_at_k": 0.218,
+        "correct_generations": 283,
+        "rollout_accuracy": 0.1415
+      },
+      {
+        "k": 8,
+        "pass_tasks": 123,
+        "pass_at_k": 0.246,
+        "correct_generations": 558,
+        "rollout_accuracy": 0.1395
+      },
+      {
+        "k": 16,
+        "pass_tasks": 137,
+        "pass_at_k": 0.274,
+        "correct_generations": 1121,
+        "rollout_accuracy": 0.140125
+      },
+      {
+        "k": 32,
+        "pass_tasks": 158,
+        "pass_at_k": 0.316,
+        "correct_generations": 2228,
+        "rollout_accuracy": 0.13925
+      },
+      {
+        "k": 64,
+        "pass_tasks": 179,
+        "pass_at_k": 0.358,
+        "correct_generations": 4421,
+        "rollout_accuracy": 0.13815625
+      }
+    ],
+    "albatross": [
+      {
+        "k": 1,
+        "pass_tasks": 71,
+        "pass_at_k": 0.142,
+        "correct_generations": 71,
+        "rollout_accuracy": 0.142
+      },
+      {
+        "k": 2,
+        "pass_tasks": 91,
+        "pass_at_k": 0.182,
+        "correct_generations": 148,
+        "rollout_accuracy": 0.148
+      },
+      {
+        "k": 4,
+        "pass_tasks": 107,
+        "pass_at_k": 0.214,
+        "correct_generations": 286,
+        "rollout_accuracy": 0.143
+      },
+      {
+        "k": 8,
+        "pass_tasks": 124,
+        "pass_at_k": 0.248,
+        "correct_generations": 575,
+        "rollout_accuracy": 0.14375
+      },
+      {
+        "k": 16,
+        "pass_tasks": 149,
+        "pass_at_k": 0.298,
+        "correct_generations": 1192,
+        "rollout_accuracy": 0.149
+      },
+      {
+        "k": 32,
+        "pass_tasks": 167,
+        "pass_at_k": 0.334,
+        "correct_generations": 2363,
+        "rollout_accuracy": 0.1476875
+      },
+      {
+        "k": 64,
+        "pass_tasks": 185,
+        "pass_at_k": 0.37,
+        "correct_generations": 4670,
+        "rollout_accuracy": 0.1459375
+      }
+    ]
+  },
+  "bootstrap": {
+    "method": "empirical per-task Binomial(n, observed_correct_rate) repeated-rollout bootstrap",
+    "samples": 20000,
+    "seed": 7,
+    "expected_pass_tasks": {
+      "hf": 167.29173030524512,
+      "albatross": 174.01402804034748,
+      "hf_minus_albatross": -6.722297735102359
+    },
+    "observed_pass_tasks": {
+      "hf": 179,
+      "albatross": 185,
+      "hf_minus_albatross": -6
+    },
+    "draw_quantiles": {
+      "hf_pass_tasks": {
+        "p025": 162.0,
+        "p050": 163.0,
+        "p500": 167.0,
+        "p950": 172.0,
+        "p975": 173.0
+      },
+      "albatross_pass_tasks": {
+        "p025": 168.0,
+        "p050": 169.0,
+        "p500": 174.0,
+        "p950": 178.0,
+        "p975": 179.0
+      },
+      "delta_hf_minus_albatross": {
+        "p025": -14.0,
+        "p050": -13.0,
+        "p500": -7.0,
+        "p950": 0.0,
+        "p975": 1.0
+      }
+    },
+    "probabilities": {
+      "delta_ge_0": 0.05455,
+      "delta_le_observed": 0.62595,
+      "abs_delta_ge_observed_abs": 0.6271
+    }
+  }
+}
