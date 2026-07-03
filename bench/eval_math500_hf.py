@@ -40,8 +40,14 @@ class Task:
 
 
 @torch.jit.script
-def sample_logits(logits: torch.Tensor, temperature: float, top_p: float, top_k: int) -> torch.Tensor:
-    """Albatross-compatible sampler: temperature -> top-k -> top-p."""
+def sample_logits_from_uniform(
+    logits: torch.Tensor,
+    uniform01: torch.Tensor,
+    temperature: float,
+    top_p: float,
+    top_k: int,
+) -> torch.Tensor:
+    """Albatross-compatible sampler using caller-provided U[0,1)."""
 
     k = min(max(1, int(top_k)), logits.size(-1))
     if temperature <= 0.0 or top_p <= 0.0 or k == 1:
@@ -54,9 +60,54 @@ def sample_logits(logits: torch.Tensor, temperature: float, top_p: float, top_k:
         mass = cdf.gather(1, keep.view(-1, 1)).view(-1)
     else:
         mass = cdf[:, -1]
-    r = torch.rand((logits.size(0), 1), device=logits.device) * mass.view(-1, 1)
+    u = torch.clamp(uniform01.view(-1, 1).to(device=logits.device, dtype=torch.float32), 0.0, 0.9999999403953552)
+    r = u * mass.view(-1, 1)
     picked = torch.searchsorted(cdf, r).view(-1, 1)
     return ids.gather(1, picked).view(-1)
+
+
+@torch.jit.script
+def sample_logits(logits: torch.Tensor, temperature: float, top_p: float, top_k: int) -> torch.Tensor:
+    """Albatross-compatible sampler: temperature -> top-k -> top-p."""
+
+    uniform01 = torch.rand((logits.size(0), 1), device=logits.device)
+    return sample_logits_from_uniform(logits, uniform01, temperature, top_p, top_k)
+
+
+_SPLITMIX64_MASK = (1 << 64) - 1
+
+
+def _splitmix64(value: int) -> int:
+    value = (int(value) + 0x9E3779B97F4A7C15) & _SPLITMIX64_MASK
+    z = value
+    z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & _SPLITMIX64_MASK
+    z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & _SPLITMIX64_MASK
+    return (z ^ (z >> 31)) & _SPLITMIX64_MASK
+
+
+def deterministic_uniform01(seed: int, task_index: int, sample_id: int, draw_index: int, salt: int) -> float:
+    """Stable per-row RNG independent of slot/refill order."""
+
+    key = int(seed) & _SPLITMIX64_MASK
+    key ^= (int(task_index) + 0x100000001B3) * 0x9E3779B185EBCA87
+    key ^= (int(sample_id) + 0xC2B2AE3D27D4EB4F) * 0xBF58476D1CE4E5B9
+    key ^= (int(draw_index) + 0x165667B19E3779F9) * 0x94D049BB133111EB
+    key ^= (int(salt) + 0xD6E8FEB86659FD93) * 0xD2B74407B1CE6E93
+    bits = _splitmix64(key) >> 11
+    return bits * (1.0 / float(1 << 53))
+
+
+def deterministic_uniforms_for_work(
+    args: argparse.Namespace,
+    work_items: list[tuple[int, int]],
+    draw_indices: list[int],
+    device: str,
+) -> torch.Tensor:
+    vals = [
+        deterministic_uniform01(args.seed, task_idx, sample_id, draw_idx, args.rng_salt)
+        for (task_idx, sample_id), draw_idx in zip(work_items, draw_indices, strict=True)
+    ]
+    return torch.tensor(vals, dtype=torch.float32, device=device).view(-1, 1)
 
 
 def load_tasks(dataset: str, limit: int = 0) -> list[Task]:
@@ -261,6 +312,7 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
     generated: list[list[int]] = [[] for _ in range(batch_size)]
     active = [False] * batch_size
     token_counts = [0] * batch_size
+    draw_counts = [0] * batch_size
     out_texts = ["" for _ in range(batch_size)]
     out_last = [0 for _ in range(batch_size)]
     next_cpu = [0 for _ in range(batch_size)]
@@ -312,6 +364,7 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
         generated[row] = []
         active[row] = False
         token_counts[row] = 0
+        draw_counts[row] = 0
         out_texts[row] = ""
         out_last[row] = 0
         next_cpu[row] = 0
@@ -332,14 +385,29 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
             generated[row] = []
             active[row] = True
             token_counts[row] = 0
+            draw_counts[row] = 0
             out_texts[row] = ""
             out_last[row] = 0
             assigned.append(row)
             init_logits.append(logits)
         if assigned:
-            sampled = sample_logits(torch.stack(init_logits, dim=0), args.temperature, args.top_p, args.top_k)
+            init = torch.stack(init_logits, dim=0)
+            if args.rng_mode == "per_sample":
+                work_items = [slot_work[row] for row in assigned]
+                if any(item is None for item in work_items):
+                    raise RuntimeError("assigned row without work item")
+                uniforms = deterministic_uniforms_for_work(
+                    args,
+                    [item for item in work_items if item is not None],
+                    [draw_counts[row] for row in assigned],
+                    args.device,
+                )
+                sampled = sample_logits_from_uniform(init, uniforms, args.temperature, args.top_p, args.top_k)
+            else:
+                sampled = sample_logits(init, args.temperature, args.top_p, args.top_k)
             for row, token in zip(assigned, sampled.detach().cpu().tolist(), strict=False):
                 next_cpu[row] = int(token)
+                draw_counts[row] += 1
         return assigned
 
     def process_next_token(row: int) -> bool:
@@ -394,9 +462,29 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
                 out = model(token_tensor, past_key_values=batch_cache, use_cache=True, logits_to_keep=1, return_dict=True)
         batch_cache = out.past_key_values
         logits = out.logits[:, -1, :]
-        sampled = sample_logits(logits, args.temperature, args.top_p, args.top_k).detach().cpu().tolist()
-        for row in forward_rows:
-            next_cpu[row] = int(sampled[row])
+        if args.rng_mode == "global":
+            sampled = sample_logits(logits, args.temperature, args.top_p, args.top_k).detach().cpu().tolist()
+            for row in forward_rows:
+                next_cpu[row] = int(sampled[row])
+                draw_counts[row] += 1
+        else:
+            row_logits = logits[torch.tensor(forward_rows, dtype=torch.long, device=logits.device)]
+            if args.rng_mode == "per_sample":
+                work_items = [slot_work[row] for row in forward_rows]
+                if any(item is None for item in work_items):
+                    raise RuntimeError("forward row without work item")
+                uniforms = deterministic_uniforms_for_work(
+                    args,
+                    [item for item in work_items if item is not None],
+                    [draw_counts[row] for row in forward_rows],
+                    args.device,
+                )
+                row_sampled = sample_logits_from_uniform(row_logits, uniforms, args.temperature, args.top_p, args.top_k)
+            else:
+                row_sampled = sample_logits(row_logits, args.temperature, args.top_p, args.top_k)
+            for row, token in zip(forward_rows, row_sampled.detach().cpu().tolist(), strict=True):
+                next_cpu[row] = int(token)
+                draw_counts[row] += 1
         forward_steps += 1
         if args.progress_every > 0 and forward_steps % args.progress_every == 0:
             now = time.perf_counter()
@@ -424,6 +512,8 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
         "dynamic_bsz": batch_size,
         "fast_token_backend_effective": getattr(model, "rwkv7_last_fast_token_backend", lambda: None)(),
         "cache_metrics": batch_cache.rwkv7_cache_metrics() if hasattr(batch_cache, "rwkv7_cache_metrics") else None,
+        "rng_mode": args.rng_mode,
+        "rng_salt": args.rng_salt,
     }
     print(
         f"math500_hf dynamic done B={batch_size} rows={len(rows)} decode_s={decode_sec:.3f} "
@@ -489,6 +579,8 @@ def summarize(
             "add_bos": args.add_bos,
             "prefill_backend": args.prefill_backend,
             "decode_backend": args.decode_backend,
+            "rng_mode": args.rng_mode,
+            "rng_salt": args.rng_salt,
         },
     }
     if extra_stats:
@@ -521,6 +613,16 @@ def main() -> int:
     ap.add_argument("--bos-token-id", type=int, default=0)
     ap.add_argument("--prefill-backend", choices=("native", "forward"), default="native")
     ap.add_argument("--decode-backend", choices=("fast_token", "forward"), default="fast_token")
+    ap.add_argument(
+        "--rng-mode",
+        choices=("global", "active_global", "per_sample"),
+        default="global",
+        help=(
+            "Dynamic-batching sampler RNG mode. global matches Albatross and samples the full batch; "
+            "active_global samples only active forward rows; per_sample uses deterministic per task/sample/token draws."
+        ),
+    )
+    ap.add_argument("--rng-salt", type=int, default=0, help="Extra salt for --rng-mode=per_sample deterministic draws")
     args = ap.parse_args()
 
     random.seed(args.seed)

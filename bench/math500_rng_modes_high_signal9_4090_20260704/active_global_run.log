@@ -1,0 +1,25 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+/workspace/venvs/rwkv7/lib/python3.12/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  42%|████▏     | 333/795 [00:00<00:00, 3328.81it/s]Loading weights:  84%|████████▍ | 666/795 [00:00<00:00, 3137.18it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 3204.68it/s]
+math500_hf prefill_cache done prompts=9 elapsed_s=2.409
+math500_hf dynamic step=200 active=64/64 done=64/576 pending=448 tokens=12864 tps=4728.0 window_tps=4728.0
+math500_hf dynamic step=400 active=64/64 done=64/576 pending=448 tokens=25664 tps=5818.8 window_tps=7575.2
+math500_hf dynamic step=600 active=64/64 done=128/576 pending=384 tokens=38528 tps=5997.8 window_tps=6390.0
+math500_hf dynamic step=800 active=64/64 done=128/576 pending=384 tokens=51328 tps=6323.5 window_tps=7558.9
+math500_hf dynamic step=1000 active=64/64 done=192/576 pending=320 tokens=64192 tps=6355.7 window_tps=6487.5
+math500_hf dynamic step=1200 active=64/64 done=298/576 pending=214 tokens=77098 tps=6342.4 window_tps=6277.1
+math500_hf dynamic step=1400 active=64/64 done=320/576 pending=192 tokens=89920 tps=6426.6 window_tps=6983.9
+math500_hf dynamic step=1600 active=64/64 done=320/576 pending=192 tokens=102720 tps=6523.4 window_tps=7295.9
+math500_hf dynamic step=1800 active=64/64 done=320/576 pending=192 tokens=115520 tps=6618.7 window_tps=7497.5
+math500_hf dynamic step=2000 active=64/64 done=320/576 pending=192 tokens=128320 tps=6697.3 window_tps=7501.6
+math500_hf dynamic step=2200 active=64/64 done=320/576 pending=192 tokens=141120 tps=6762.4 window_tps=7492.0
+math500_hf dynamic step=2400 active=64/64 done=320/576 pending=192 tokens=153920 tps=6816.8 window_tps=7480.4
+math500_hf dynamic step=2600 active=64/64 done=320/576 pending=192 tokens=166720 tps=6861.5 window_tps=7448.1
+math500_hf dynamic step=2800 active=64/64 done=384/576 pending=128 tokens=179584 tps=6826.9 window_tps=6408.7
+math500_hf dynamic step=3000 active=64/64 done=389/576 pending=123 tokens=192389 tps=6839.2 window_tps=7016.9
+math500_hf dynamic step=3200 active=64/64 done=453/576 pending=59 tokens=205253 tps=6804.1 window_tps=6318.1
+math500_hf dynamic step=3400 active=64/64 done=509/576 pending=3 tokens=218109 tps=6818.3 window_tps=7053.7
+math500_hf dynamic step=3600 active=41/64 done=535/576 pending=0 tokens=229112 tps=6801.6 window_tps=6486.5
+math500_hf dynamic done B=64 rows=576 decode_s=35.041 tokens=231854
+MATH500_HF_ADAPTER_RESULT {"axis": "math500_hf_adapter", "backend": "hf_adapter", "status": "pass", "model": "/tmp/rwkv7_repo_code_model_dynmath_full_avg64", "dataset": "/tmp/MATH500_high_signal_9_20260703.jsonl", "num_tasks": 9, "rollout": 64, "total_generations": 576, "correct_generations": 297, "rollout_accuracy": 0.515625, "pass_at_rollout_accuracy": 0.8888888888888888, "ended_eod": 512, "ended_user_stop": 0, "truncated": 64, "truncated_rate": 0.1111111111111111, "mean_generated_tokens": 401.6354166666667, "mean_tokens_including_stop": 402.52430555555554, "elapsed_sec": 37.46298112720251, "sample_per_sec": 15.375177913477808, "token_per_sec": 6188.88281241577, "generations_jsonl": "/tmp/math500_hf_rng_active_global_high_signal9_20260704/generations.jsonl", "config": {"hf_dir": "/tmp/rwkv7_repo_code_model_dynmath_full_avg64", "dataset": "/tmp/MATH500_high_signal_9_20260703.jsonl", "rollout": 64, "limit": 0, "max_new_tokens": 1500, "ctx_limit": 8192, "temperature": 1.0, "top_p": 0.28, "top_k": 32, "prompt_style": "fake_think", "dtype": "fp16", "device": "cuda", "seed": 42, "dynamic_batching": true, "bsz": 64, "add_bos": true, "prefill_backend": "native", "decode_backend": "fast_token", "rng_mode": "active_global", "rng_salt": 0}, "prefill_sec": 2.4089136943221092, "decode_sec": 35.041472643613815, "decoded_token_events": 231854, "forward_steps": 3769, "dynamic_bsz": 64, "fast_token_backend_effective": "native_graph", "cache_metrics": {"updates": 0, "new_layers": 0, "clones": 0, "detaches": 0, "device_moves": 0, "select_batch_calls": 0, "native_graph_bound_selects": 0, "batch_select_calls": 0, "reorder_calls": 0, "resets": 0, "layers": 24, "seen_tokens": 3769, "batch_size": 64}, "rng_mode": "active_global", "rng_salt": 0}
