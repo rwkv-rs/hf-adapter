@@ -303,11 +303,12 @@ if _HAS_TRITON:
         N: tl.constexpr,
         HAS_V_GATE: tl.constexpr,
         PHASE: tl.constexpr,
+        WRITE_KV: tl.constexpr,
         BLOCK_N: tl.constexpr,
     ):
         """Cumulative phase probe for the full-head state-prep scan.
 
-        PHASE 0: vector prep + K normalization + K/V writeback.
+        PHASE 0: vector prep + K normalization + optional K/V writeback.
         PHASE 1: phase 0 + state-dot-KK reduction.
         PHASE 2: phase 1 + state update and final-state writeback.
         PHASE 3: phase 2 + recurrent readout; matches the normal full-head
@@ -350,8 +351,9 @@ if _HAS_TRITON:
                 v_adj = v_raw + (vf - v_raw) * vg
             w = tl.exp(-0.606531 * tl.sigmoid(w_raw))
 
-            tl.store(k_out_ptr + vec_base + offs, k_adj, mask=mask)
-            tl.store(v_out_ptr + vec_base + offs, v_adj, mask=mask)
+            if WRITE_KV:
+                tl.store(k_out_ptr + vec_base + offs, k_adj, mask=mask)
+                tl.store(v_out_ptr + vec_base + offs, v_adj, mask=mask)
 
             if PHASE == 0:
                 # Keep all prep values live with a lightweight vector store.
@@ -2046,6 +2048,7 @@ def fused_recurrent_scan_state_prep_phase_probe(
     v_first: Any | None = None,
     v_gate: Any | None = None,
     phase: int = 3,
+    write_kv: bool = True,
     block_n: int = 64,
     num_warps: int = 8,
     num_stages: int = 3,
@@ -2054,8 +2057,11 @@ def fused_recurrent_scan_state_prep_phase_probe(
 
     This is a synthetic profiler helper, not an HF runtime path.  ``phase=3``
     matches the normal full-head :func:`fused_recurrent_scan_state_prep`
-    behavior for the same inputs, while earlier phases keep progressively less
-    work in the loop to estimate dominant costs.
+    behavior for the same inputs when ``write_kv=True``, while earlier phases
+    keep progressively less work in the loop to estimate dominant costs.
+    ``write_kv=False`` is a timing probe that isolates adjusted K/V global
+    writeback cost; returned K/V tensors are meaningful only when writing is
+    enabled.
     """
 
     if torch is None:
@@ -2150,6 +2156,7 @@ def fused_recurrent_scan_state_prep_phase_probe(
         N,
         HAS_V_GATE=bool(has_v_gate),
         PHASE=phase,
+        WRITE_KV=bool(write_kv),
         BLOCK_N=int(block_n),
         num_warps=int(num_warps),
         num_stages=num_stages,

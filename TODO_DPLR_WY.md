@@ -1021,7 +1021,7 @@ Branch: `wangyue/native-prefill-060-albatross`
       phase without global temp tensors, or revisit the CUDA row-register
       path with a persistent/cooperative schedule that shares those vectors
       while retaining enough parallelism.
-- [ ] Next main fused-fp16 task:
+- [x] Next main fused-fp16 task:
   - Use the new full-head phase evidence rather than another W-only or shallow
     LoRA boundary.  The next bounded experiment should target the dominant
     `prep_norm_kv_w` + state-dot region directly.  Candidate directions:
@@ -1030,9 +1030,48 @@ Branch: `wangyue/native-prefill-060-albatross`
     - a CUDA row-register/persistent schedule that shares R/W/K/A/KK/V prep
       once per token/head without materializing fp32 temp tensors or losing the
       row-block parallelism that made the previous CUDA row-block near parity.
-  - Same-run gate remains: compare against fused recurrent scan + fused output
-    baseline on 4090 / 0.4B / prompt512 / bsz1, preserve greedy/cache/decode
-    smoke, and only promote if it moves toward `>=31,289 tok/s`.
+  - Done: extended the full-head Triton phase probe to isolate adjusted K/V
+    global writeback cost.
+    - implementation:
+      - `fused_recurrent_scan_state_prep_phase_probe(..., write_kv=False)`
+        disables adjusted K/V stores while keeping the same prep/update/output
+        math live;
+      - `bench/bench_fused_state_scan_micro.py --include-no-kv-write` records
+        both normal and no-K/V-write phase rows plus a delta summary;
+      - analyzer now preserves `write_kv` micro rows and reports the no-K/V
+        delta in `next_focus`; default HF/native behavior is unchanged.
+    - result file:
+      - `bench/results_triton_state_scan_micro_nokv_4090_20260703_004626.jsonl`
+        from remote
+        `/tmp/triton_state_scan_micro_nokv_4090_20260703_004626.jsonl`.
+    - 4090 synthetic full-head scan micro, `B=1,T=512,H=16,N=64,fp16`,
+      `num_warps=8,num_stages=3`:
+      - normal write-K/V summary: phase 3 `0.548864 ms`, normal full helper
+        `0.514048 ms`, phase 3 exact vs helper for outputs/state/K/V;
+      - no-K/V-write summary: phase 3 `0.460800 ms`;
+      - total adjusted K/V writeback estimate: `0.088064 ms`, about
+        `16.0%` of the normal phase-3 probe;
+      - phase-0 prep/K-normalization/KV/W delta: `0.068736 ms`
+        (`0.349184 ms` with K/V stores vs `0.280448 ms` without).
+    - conclusion: adjusted K/V writeback is a real cost inside the synthetic
+      full-head scan, but the prior full HF no-K/V/raw-output recompute path
+      was only parity/slower because it paid the savings back in downstream
+      recompute/output prep.  The next main experiment should not repeat raw
+      recompute; it should either consume the local adjusted K/V in a fused
+      correction/output boundary, or move to a CUDA/persistent row-register
+      schedule that shares vector prep and keeps enough row parallelism.
+- [ ] Next main fused-fp16 task:
+  - Convert the no-K/V-write signal into an end-to-end candidate instead of
+    stopping at the micro result.  The bounded route should avoid the already
+    negative raw-output recompute path.  Preferred next experiment:
+    - fused no-K/V state-scan plus correction/output-prep boundary that keeps
+      adjusted K/V local for the RWKV correction, or an equivalent CUDA
+      persistent row-register schedule that shares per-token vectors without
+      global temp tensors;
+    - compare against same-run fused recurrent scan + fused output baseline on
+      4090 / 0.4B / prompt512 / bsz1;
+    - preserve greedy/cache/decode smoke and only promote if it moves toward
+      `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `27,051.0 tok/s` (`~0.5187x`), still about `15.7%` relative uplift short of

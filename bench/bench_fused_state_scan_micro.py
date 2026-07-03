@@ -15,7 +15,9 @@ cumulative phase kernels on target-shaped random tensors:
 Rows are direction evidence for the next state-layout/readout rewrite.  The
 phase deltas are approximate because each phase is a separately compiled
 profiling kernel, but they are more actionable than only seeing the full HF
-component as one opaque block.
+component as one opaque block.  ``--include-no-kv-write`` also runs the same
+cumulative phases with adjusted K/V global stores disabled, isolating how much
+of the dominant prep phase is pure writeback traffic.
 """
 from __future__ import annotations
 
@@ -89,7 +91,7 @@ def make_inputs(args: argparse.Namespace) -> dict[str, torch.Tensor]:
     }
 
 
-def call_phase(tensors: dict[str, torch.Tensor], args: argparse.Namespace, phase: int):
+def call_phase(tensors: dict[str, torch.Tensor], args: argparse.Namespace, phase: int, *, write_kv: bool = True):
     return fused_recurrent_scan_state_prep_phase_probe(
         tensors["r"],
         tensors["w"],
@@ -102,6 +104,7 @@ def call_phase(tensors: dict[str, torch.Tensor], args: argparse.Namespace, phase
         v_first=tensors["v_first"],
         v_gate=tensors["v_gate"],
         phase=phase,
+        write_kv=write_kv,
         block_n=args.head_dim,
         num_warps=args.num_warps,
         num_stages=args.num_stages,
@@ -141,6 +144,11 @@ def main() -> int:
     ap.add_argument("--head-dim", type=int, default=64)
     ap.add_argument("--num-warps", type=int, default=8)
     ap.add_argument("--num-stages", type=int, default=3)
+    ap.add_argument(
+        "--include-no-kv-write",
+        action="store_true",
+        help="Also time phase kernels with adjusted K/V global writeback disabled.",
+    )
     ap.add_argument("--warmup", type=int, default=5)
     ap.add_argument("--steps", type=int, default=20)
     ap.add_argument("--seed", type=int, default=1234)
@@ -158,7 +166,7 @@ def main() -> int:
 
     with torch.inference_mode():
         full_ref = call_full(tensors, args)
-        phase3 = call_phase(tensors, args, 3)
+        phase3 = call_phase(tensors, args, 3, write_kv=True)
     correctness = {
         "phase3_out_max_abs_diff": round(max_abs(phase3[0], full_ref[0]), 8),
         "phase3_state_max_abs_diff": round(max_abs(phase3[1], full_ref[1]), 8),
@@ -167,19 +175,54 @@ def main() -> int:
     }
     status = "pass" if max(correctness.values()) <= 0.0 else "fail"
 
-    phase_ms: dict[int, float] = {}
-    for phase in range(4):
-        ms = median_ms(
-            lambda phase=phase: call_phase(tensors, args, phase),
-            warmup=args.warmup,
-            steps=args.steps,
-        )
-        phase_ms[phase] = ms
-        row = {
+    full_ms = median_ms(lambda: call_full(tensors, args), warmup=args.warmup, steps=args.steps)
+    summary_by_write_mode: dict[bool, dict[str, Any]] = {}
+    for write_kv in ([True, False] if args.include_no_kv_write else [True]):
+        phase_ms: dict[int, float] = {}
+        suffix = "" if write_kv else "_no_kv_write"
+        for phase in range(4):
+            ms = median_ms(
+                lambda phase=phase, write_kv=write_kv: call_phase(tensors, args, phase, write_kv=write_kv),
+                warmup=args.warmup,
+                steps=args.steps,
+            )
+            phase_ms[phase] = ms
+            row = {
+                "axis": "triton_state_scan_micro",
+                "backend": "fused_recurrent_update",
+                "bench_case": f"fullhead_phase_{phase}_{PHASE_NAMES[phase]}{suffix}",
+                "status": status if (phase == 3 and write_kv) else "pass",
+                "device": device_name,
+                "dtype": args.dtype,
+                "batch_size": args.batch_size,
+                "seq_len": args.seq_len,
+                "heads": args.heads,
+                "head_dim": args.head_dim,
+                "tokens_total": tokens_total,
+                "num_warps": args.num_warps,
+                "num_stages": args.num_stages,
+                "write_kv": write_kv,
+                "phase": phase,
+                "phase_name": PHASE_NAMES[phase],
+                "triton_ms": round(ms, 6),
+                "tokps_total": round(1000.0 * tokens_total / ms, 1) if ms > 0 else None,
+                **(correctness if (phase == 3 and write_kv) else {}),
+            }
+            print(json.dumps(row, ensure_ascii=False))
+            append_row(args.results, row)
+
+        component_estimates = {
+            "prep_norm_kv_w_ms": phase_ms[0],
+            "state_dot_delta_ms": phase_ms[1] - phase_ms[0],
+            "state_update_delta_ms": phase_ms[2] - phase_ms[1],
+            "recurrent_output_delta_ms": phase_ms[3] - phase_ms[2],
+            "phase3_vs_full_delta_ms": phase_ms[3] - full_ms,
+        }
+        summary = {
             "axis": "triton_state_scan_micro",
             "backend": "fused_recurrent_update",
-            "bench_case": f"fullhead_phase_{phase}_{PHASE_NAMES[phase]}",
-            "status": status if phase == 3 else "pass",
+            "bench_case": f"fullhead_phase_delta_summary{suffix}",
+            "status": status if write_kv else "pass",
             "device": device_name,
             "dtype": args.dtype,
             "batch_size": args.batch_size,
@@ -189,45 +232,50 @@ def main() -> int:
             "tokens_total": tokens_total,
             "num_warps": args.num_warps,
             "num_stages": args.num_stages,
-            "phase": phase,
-            "phase_name": PHASE_NAMES[phase],
-            "triton_ms": round(ms, 6),
-            "tokps_total": round(1000.0 * tokens_total / ms, 1) if ms > 0 else None,
-            **(correctness if phase == 3 else {}),
+            "write_kv": write_kv,
+            "triton_ms": round(phase_ms[3], 6),
+            "full_fused_ms": round(full_ms, 6),
+            "tokps_total": round(1000.0 * tokens_total / phase_ms[3], 1) if phase_ms[3] > 0 else None,
+            "component_ms_estimate": {k: round(v, 6) for k, v in component_estimates.items()},
+            **(correctness if write_kv else {}),
         }
-        print(json.dumps(row, ensure_ascii=False))
-        append_row(args.results, row)
+        summary_by_write_mode[write_kv] = summary
+        print(json.dumps(summary, ensure_ascii=False))
+        append_row(args.results, summary)
 
-    full_ms = median_ms(lambda: call_full(tensors, args), warmup=args.warmup, steps=args.steps)
-    component_estimates = {
-        "prep_norm_kv_w_ms": phase_ms[0],
-        "state_dot_delta_ms": phase_ms[1] - phase_ms[0],
-        "state_update_delta_ms": phase_ms[2] - phase_ms[1],
-        "recurrent_output_delta_ms": phase_ms[3] - phase_ms[2],
-        "phase3_vs_full_delta_ms": phase_ms[3] - full_ms,
-    }
-    summary = {
-        "axis": "triton_state_scan_micro",
-        "backend": "fused_recurrent_update",
-        "bench_case": "fullhead_phase_delta_summary",
-        "status": status,
-        "device": device_name,
-        "dtype": args.dtype,
-        "batch_size": args.batch_size,
-        "seq_len": args.seq_len,
-        "heads": args.heads,
-        "head_dim": args.head_dim,
-        "tokens_total": tokens_total,
-        "num_warps": args.num_warps,
-        "num_stages": args.num_stages,
-        "triton_ms": round(phase_ms[3], 6),
-        "full_fused_ms": round(full_ms, 6),
-        "tokps_total": round(1000.0 * tokens_total / phase_ms[3], 1) if phase_ms[3] > 0 else None,
-        "component_ms_estimate": {k: round(v, 6) for k, v in component_estimates.items()},
-        **correctness,
-    }
-    print(json.dumps(summary, ensure_ascii=False))
-    append_row(args.results, summary)
+    if args.include_no_kv_write and True in summary_by_write_mode and False in summary_by_write_mode:
+        with_kv = summary_by_write_mode[True]
+        no_kv = summary_by_write_mode[False]
+        kv_write_delta = float(with_kv["triton_ms"]) - float(no_kv["triton_ms"])
+        phase0_kv_write_delta = (
+            float((with_kv.get("component_ms_estimate") or {}).get("prep_norm_kv_w_ms", 0.0))
+            - float((no_kv.get("component_ms_estimate") or {}).get("prep_norm_kv_w_ms", 0.0))
+        )
+        comparison = {
+            "axis": "triton_state_scan_micro",
+            "backend": "fused_recurrent_update",
+            "bench_case": "fullhead_no_kv_write_delta_summary",
+            "status": "pass",
+            "device": device_name,
+            "dtype": args.dtype,
+            "batch_size": args.batch_size,
+            "seq_len": args.seq_len,
+            "heads": args.heads,
+            "head_dim": args.head_dim,
+            "tokens_total": tokens_total,
+            "num_warps": args.num_warps,
+            "num_stages": args.num_stages,
+            "write_kv": None,
+            "with_kv_triton_ms": with_kv["triton_ms"],
+            "no_kv_triton_ms": no_kv["triton_ms"],
+            "kv_write_delta_ms": round(kv_write_delta, 6),
+            "phase0_kv_write_delta_ms": round(phase0_kv_write_delta, 6),
+            "kv_write_delta_ratio": round(kv_write_delta / float(with_kv["triton_ms"]), 6)
+            if float(with_kv["triton_ms"]) > 0
+            else None,
+        }
+        print(json.dumps(comparison, ensure_ascii=False))
+        append_row(args.results, comparison)
     return 0
 
 

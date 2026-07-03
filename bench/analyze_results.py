@@ -383,6 +383,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             r.get("head_dim"),
             r.get("num_warps"),
             r.get("num_stages"),
+            r.get("write_kv"),
             r.get("phase"),
         ),
     )
@@ -1540,18 +1541,6 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     f"full_phase={cuda_micro_summary.get('cuda_ms')}ms "
                     f"components={components}; use as direction signal, not HF promotion proof"
                 )
-            triton_micro_summary = next(
-                (r for r in triton_state_scan_micro if r.get("bench_case") == "fullhead_phase_delta_summary"),
-                None,
-            )
-            if triton_micro_summary:
-                components = triton_micro_summary.get("component_ms_estimate") or {}
-                focus.append(
-                    "Triton full-head state-scan micro row present: "
-                    f"phase3={triton_micro_summary.get('triton_ms')}ms "
-                    f"full={triton_micro_summary.get('full_fused_ms')}ms "
-                    f"components={components}; use as the next state-layout/readout direction signal"
-                )
             warp_rows = [
                 r
                 for r in native_prefill_scan
@@ -1582,6 +1571,30 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                 )
         else:
             focus.append(f"native_prefill_scan end-to-end rows present for cases={cases}; add timing fields")
+    triton_micro_summary = next(
+        (r for r in triton_state_scan_micro if r.get("bench_case") == "fullhead_phase_delta_summary"),
+        None,
+    )
+    if triton_micro_summary:
+        components = triton_micro_summary.get("component_ms_estimate") or {}
+        focus.append(
+            "Triton full-head state-scan micro row present: "
+            f"phase3={triton_micro_summary.get('triton_ms')}ms "
+            f"full={triton_micro_summary.get('full_fused_ms')}ms "
+            f"components={components}; use as the next state-layout/readout direction signal"
+        )
+    triton_no_kv_summary = next(
+        (r for r in triton_state_scan_micro if r.get("bench_case") == "fullhead_no_kv_write_delta_summary"),
+        None,
+    )
+    if triton_no_kv_summary:
+        focus.append(
+            "Triton full-head no-K/V-write micro row present: "
+            f"delta={triton_no_kv_summary.get('kv_write_delta_ms')}ms "
+            f"ratio={triton_no_kv_summary.get('kv_write_delta_ratio')}; "
+            "use to decide whether removing adjusted K/V writeback is worth a full HF-path rewrite"
+        )
+
     if not native_prefill_breakdown:
         focus.append("native_prefill_breakdown rows pending for bsz=1 prefill bottleneck attribution")
     else:
@@ -2362,7 +2375,7 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             for r in cuda_state_scan_micro
         ],
         "triton_state_scan_micro": [
-            compact(r, ["_lineno", "status", "device", "dtype", "batch_size", "seq_len", "heads", "head_dim", "tokens_total", "bench_case", "phase", "phase_name", "num_warps", "num_stages", "triton_ms", "full_fused_ms", "tokps_total", "component_ms_estimate", "phase3_out_max_abs_diff", "phase3_state_max_abs_diff", "phase3_k_max_abs_diff", "phase3_v_max_abs_diff"])
+            compact(r, ["_lineno", "status", "device", "dtype", "batch_size", "seq_len", "heads", "head_dim", "tokens_total", "bench_case", "phase", "phase_name", "num_warps", "num_stages", "write_kv", "triton_ms", "full_fused_ms", "with_kv_triton_ms", "no_kv_triton_ms", "kv_write_delta_ms", "phase0_kv_write_delta_ms", "kv_write_delta_ratio", "tokps_total", "component_ms_estimate", "phase3_out_max_abs_diff", "phase3_state_max_abs_diff", "phase3_k_max_abs_diff", "phase3_v_max_abs_diff"])
             for r in triton_state_scan_micro
         ],
         "decode_micro": compact(micro, ["_lineno", "fast_decode_api_name", "fast_token_layout", "fast_token_backend", "fast_token_backend_effective", "hf_forward_fixed", "hf_forward_greedy", "hf_forward_auto_fixed", "hf_forward_auto_greedy", "hf_forward_auto_backend", "fast_decode_fixed", "fast_decode_greedy", "norm_lm_head", "lm_head", "argmax", "empty_loop", "peak_vram_mb"]),
