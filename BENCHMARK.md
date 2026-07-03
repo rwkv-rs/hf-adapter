@@ -10,8 +10,143 @@ and Albatross-style paths in correctness, speed, and memory.
 - A100 validation server: **NVIDIA A100-PCIE-40GB**, fp16/bf16.
 - Local dev box baseline from earlier PR: **NVIDIA RTX 5070 Laptop GPU**, fp16/bf16/fp32.
 - Ada validation server: **NVIDIA GeForce RTX 4090 24GB (sm_89)**, CUDA 12.8.
+- Pascal validation box: **4 x NVIDIA GeForce GTX 1080 Ti (sm_61)**, fp16/quant smoke on one GPU.
 - Baseline model: **rwkv7-g1d-0.1b-20260129-ctx8192**.
 - A100 large-model validation: **0.4B / 1.5B / 2.9B / 7.2B**.
+
+## Current GTX 1080 Ti / Pascal Status
+
+Pascal validation was run on 2026-07-03 on one GTX 1080 Ti (`CUDA_VISIBLE_DEVICES=0`)
+using the converted 0.1B HF model at `/tmp/rwkv7-g1d-0.1b-hf-pascal.current`.
+The source checkpoint was
+`/data/zhiyuanzhou/rwkv7-g1d-0.1b-20260129-ctx8192.pth`. An optional 0.4B
+fp16 speed row was also run from
+`/data/zhiyuanzhou/rwkv7-g1d-0.4b-20260210-ctx8192.pth`.
+
+Environment:
+
+- GPU: 4 x NVIDIA GeForce GTX 1080 Ti; validation used 1 GPU, `sm_61`.
+- Driver / CUDA: NVIDIA driver `550.127.05`, `nvidia-smi` CUDA `12.4`.
+- Runtime: Python `3.10.12`, PyTorch `2.7.1+cu118` (`torch.version.cuda=11.8`), Transformers `5.12.1`, bitsandbytes `0.49.2`, FLA `0.5.1`.
+- Model: 0.1B, `hidden_size=768`, `num_hidden_layers=12`, `num_heads=12`, `head_dim=64`, dtype `fp16`; optional 0.4B fp16 speed row, `hidden_size=1024`, `num_hidden_layers=24`, `num_heads=16`, `head_dim=64`.
+- Policy: Pascal defaults to compatibility-first native/no-FLA loading. The unpatched default FLA wrapper failed on this card because Triton emitted PTX using `.evict_last`, which requires `sm_70+`. The current default route selects `NativeRWKV7ForCausalLM` for Pascal unless `RWKV7_NATIVE_MODEL` explicitly overrides it.
+
+Command:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 PYTHONNOUSERSITE=0 \
+  PYTHON_BIN=/tmp/rwkv7-pascal-venv/bin/python \
+  MODEL=/tmp/rwkv7-g1d-0.1b-hf-pascal.current DEVICE=cuda DTYPE=fp16 \
+  bash scripts/run_hardware_smoke.sh
+```
+
+Additional benchmark commands:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. PYTHONNOUSERSITE=0 \
+  /tmp/rwkv7-pascal-venv/bin/python bench/bench_quantization.py \
+  --hf-dir /tmp/rwkv7-g1d-0.1b-hf-pascal.current \
+  --model-size-label 0.1b \
+  --dtype fp16 --device cuda --attn-mode fused_recurrent \
+  --quantizations none 8bit 4bit \
+  --prompt-tokens 128 --decode-tokens 16 \
+  --warmup 1 --runs 1 --decode-mode compare \
+  --results bench/results.jsonl
+
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. PYTHONNOUSERSITE=0 \
+  /tmp/rwkv7-pascal-venv/bin/python bench/bench_native_mm_quant_decode.py \
+  --hf-dir /tmp/rwkv7-g1d-0.1b-hf-pascal.current \
+  --model-size-label 0.1b \
+  --dtype fp16 --device cuda \
+  --quantizations mm8 mm4 \
+  --min-params 8000000 \
+  --prompt-tokens 128 --decode-tokens 16 \
+  --warmup 1 --runs 1 --optional \
+  --results bench/results.jsonl
+
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. PYTHONNOUSERSITE=0 \
+  /tmp/rwkv7-pascal-venv/bin/python bench/bench_batch_sweep.py \
+  --hf-dir /tmp/rwkv7-g1d-0.1b-hf-pascal.current \
+  --model-size-label 0.1b \
+  --dtype fp16 --device cuda --attn-mode fused_recurrent \
+  --fuse-norm auto --fast-cache auto --fast-token-backend auto \
+  --batch-sizes 4 \
+  --prompt-tokens 128 --decode-tokens 16 \
+  --warmup 1 --runs 1 \
+  --results bench/results.jsonl
+
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. PYTHONNOUSERSITE=0 \
+  /tmp/rwkv7-pascal-venv/bin/python scripts/convert_rwkv7_to_hf.py \
+  --input /data/zhiyuanzhou/rwkv7-g1d-0.4b-20260210-ctx8192.pth \
+  --output /tmp/rwkv7-g1d-0.4b-hf-pascal.current \
+  --vocab-file /tmp/rwkv_vocab_v20230424.txt \
+  --precision fp16 --attn-mode chunk --no-fuse-norm
+
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. PYTHONNOUSERSITE=0 \
+  /tmp/rwkv7-pascal-venv/bin/python bench/bench_speed.py \
+  --hf-dir /tmp/rwkv7-g1d-0.4b-hf-pascal.current \
+  --model-size-label 0.4b \
+  --backend hf --dtype fp16 --device cuda \
+  --prompt-tokens 128 --decode-tokens 16 \
+  --warmup 1 --runs 1 \
+  --attn-mode fused_recurrent --fuse-norm auto \
+  --fast-cache auto --fast-token-backend auto \
+  --results bench/results.jsonl
+```
+
+Smoke status:
+
+| Check | Result |
+|---|---|
+| `smoke_hf_generate` | PASS; logits shape `(1, 8, 65536)`, generated `User: Hello!\n\nAssistant: Hello! I'm` |
+| `test_hf_api_contract --dtype fp16` | PASS |
+| `test_quantized_inference` 8-bit / 4-bit | PASS; footprint `283.4 MB` / `242.9 MB`, peak `314.1 MB` / `278.3 MB` |
+| `bench_quantization.py --quantizations none 8bit 4bit` | PASS; appended W8/W4 decode speed + footprint rows to `bench/results.jsonl` |
+| `bench_native_mm_quant_decode.py --quantizations mm8 mm4` | PASS; native mm8/mm4 each replace 1 module (`lm_head`) and append decode speed + footprint rows |
+| `bench_speed.py` | PASS; 0.1B fp16 and optional 0.4B fp16 rows appended to `bench/results.jsonl` |
+| `bench_batch_sweep.py --batch-sizes 1 2 4` | PASS; appended to `bench/results.jsonl` |
+| Training | Not run for this Pascal smoke |
+| Turing | Still TODO |
+
+Single-model speed rows in `bench/results.jsonl`, `prompt_tokens=128`,
+`decode_tokens=16`, `fast_cache=true`, `cache_type=NativeRWKV7Cache`:
+
+| Model | Dtype | Prefill tok/s | Forward decode tok/s | Decode ms/tok | Peak VRAM |
+|---|---|---:|---:|---:|---:|
+| 0.1B | fp16 | 46.4 | 95.2 | 10.50 | 406.8 MB |
+| 0.4B | fp16 | 23.3 | 48.8 | 20.48 | 906.0 MB |
+
+Quantization speed rows from `bench_quantization.py`, 0.1B, `prompt_tokens=128`,
+`decode_tokens=16`, `decode_mode=compare`, `quant_skip_policy=memory`:
+
+| Load | Decode tok/s | Model footprint | Peak VRAM | Notes |
+|---|---:|---:|---:|---|
+| fp16 / none | 70.4 | 364.4 MB | 478.8 MB | Same-script baseline |
+| W8 / bitsandbytes | 12.7 | 283.4 MB | 399.1 MB | `0.18x` same-script fp16; `0.13x` 0.1B `bench_speed.py` fp16 |
+| W4 / bitsandbytes | 27.2 | 242.9 MB | 362.9 MB | `0.39x` same-script fp16; `0.29x` 0.1B `bench_speed.py` fp16 |
+
+Repository-native mm quantization rows from `bench_native_mm_quant_decode.py`,
+0.1B, `prompt_tokens=128`, `decode_tokens=16`, `min_params=8_000_000`:
+
+| Load | Replaced modules | Decode tok/s | Model footprint | Peak VRAM | Notes |
+|---|---:|---:|---:|---:|---|
+| native mm8 | 1 (`lm_head`) | 88.2 | 316.6 MB | 1036.9 MB | `0.93x` 0.1B `bench_speed.py` fp16; model path uses the naive mm8 GEMV, while the split-K mm8 microbench hits a Pascal PTX `.acq_rel` / `sm_70+` requirement |
+| native mm4 | 1 (`lm_head`) | 89.3 | 292.6 MB | 1045.5 MB | `0.94x` 0.1B `bench_speed.py` fp16 |
+
+Batch sweep rows:
+
+| Batch | Prefill tok/s total | Prefill tok/s per seq | Decode tok/s total | Decode tok/s per seq | Peak VRAM |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 29.9 | 29.9 | 93.1 | 93.1 | 1245.2 MB |
+| 2 | 52.1 | 26.0 | 169.0 | 84.5 | 2108.0 MB |
+| 4 | 99.6 | 24.9 | 351.2 | 87.8 | 3834.2 MB |
+
+Pascal bnb quantization remains a memory/compatibility fallback. GTX 1080 Ti has
+no newer tensor-core path, and the current W8/W4 bnb rows are slower than fp16.
+The repository-native mm8/mm4 path is usable for this 0.1B shape and preserves
+near-fp16 decode while reducing model footprint, but only `lm_head` crosses the
+default `8_000_000` parameter gate. Broader quant promotion still needs
+card-local rows on larger shapes where more projections are actually quantized.
 
 ## Current RTX 4090 / Ada status
 

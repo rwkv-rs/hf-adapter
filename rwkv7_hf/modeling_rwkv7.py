@@ -117,6 +117,18 @@ def _rwkv7_kernel_policy():
         return None
 
 
+def _native_model_backend_requested() -> bool:
+    raw = os.environ.get("RWKV7_NATIVE_MODEL")
+    if raw is not None:
+        return raw not in _FALSE_VALUES
+    policy = _rwkv7_kernel_policy()
+    profile = getattr(policy, "profile", None)
+    family = getattr(profile, "family", None)
+    # FLA/Triton RWKV-7 kernels can emit sm_70+ PTX features on Pascal. Route
+    # old CUDA cards to the pure PyTorch backend unless the user overrides it.
+    return family in {"pascal", "legacy_cuda"}
+
+
 def _fast_cache_enabled() -> bool:
     """Runtime switch used by benchmarks to compare cache implementations."""
     policy = _rwkv7_kernel_policy()
@@ -1105,18 +1117,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         )
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
-        if os.environ.get("RWKV7_NATIVE_MODEL", "0") not in _FALSE_VALUES:
-            # Opt-in fla-free backend: load NativeRWKV7ForCausalLM instead of
-            # the FLA wrapper. Same checkpoint, same HF from_pretrained/generate
-            # API; bypasses the fla runtime dependency and the FLA backward
-            # kernels that fail on some GPUs (e.g. Blackwell sm_120 shared-mem).
-            from .native_model import NativeRWKV7ForCausalLM
-
-            kwargs.pop("rwkv7_bnb_skip_policy", None)
-            return NativeRWKV7ForCausalLM.from_pretrained(
-                pretrained_model_name_or_path, *model_args, **kwargs
-            )
+    def _rwkv7_prepare_bnb_kwargs(cls, pretrained_model_name_or_path, kwargs: dict[str, Any]):
         rwkv7_bnb_skip_policy = _bnb_skip_policy(kwargs.pop("rwkv7_bnb_skip_policy", None))
         quantization_config = kwargs.get("quantization_config")
         if quantization_config is None and (kwargs.get("load_in_8bit") or kwargs.get("load_in_4bit")):
@@ -1138,6 +1139,28 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             existing = list(getattr(quantization_config, "llm_int8_skip_modules", None) or [])
             merged = list(dict.fromkeys([*existing, *cls.rwkv7_bnb_skip_modules(rwkv7_bnb_skip_policy, config_for_skip)]))
             quantization_config.llm_int8_skip_modules = merged
+        return rwkv7_bnb_skip_policy, quantization_config
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        rwkv7_bnb_skip_policy, quantization_config = cls._rwkv7_prepare_bnb_kwargs(
+            pretrained_model_name_or_path,
+            kwargs,
+        )
+        if _native_model_backend_requested():
+            # FLA-free backend: explicit opt-in via RWKV7_NATIVE_MODEL, or a
+            # conservative policy fallback for CUDA generations whose FLA/Triton
+            # kernels are known to be unavailable. Same checkpoint and HF API.
+            from .native_model import NativeRWKV7ForCausalLM
+
+            model = NativeRWKV7ForCausalLM.from_pretrained(
+                pretrained_model_name_or_path, *model_args, **kwargs
+            )
+            if quantization_config is not None:
+                setattr(model, "_rwkv7_bnb_skip_policy", rwkv7_bnb_skip_policy)
+                if getattr(model, "config", None) is not None:
+                    setattr(model.config, "rwkv7_bnb_skip_policy", rwkv7_bnb_skip_policy)
+            return model
         model = super().from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
         if quantization_config is not None:
             setattr(model, "_rwkv7_bnb_skip_policy", rwkv7_bnb_skip_policy)
