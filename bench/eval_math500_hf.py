@@ -393,12 +393,19 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
         assert work_item is not None
         task_idx, sample_id = work_item
         token_ids = generated[row]
-        if out_last[row] < len(token_ids):
+        if args.defer_text_decode:
+            raw_completion = tokenizer.decode(token_ids, skip_special_tokens=False)
+        elif out_last[row] < len(token_ids):
             pending = tokenizer.decode(token_ids[out_last[row] :], skip_special_tokens=False)
             if "\ufffd" not in pending:
                 out_texts[row] += pending
-        completion = trim_completion(out_texts[row])
+            raw_completion = out_texts[row]
+        else:
+            raw_completion = out_texts[row]
+        completion = trim_completion(raw_completion)
         task = task_by_index[task_idx]
+        post_user_stop = "\nUser:" in raw_completion
+        final_stop_reason = "user_stop" if stop_reason == "max_tokens" and post_user_stop else stop_reason
         if args.defer_verification:
             correct, verify_error = None, ""
         else:
@@ -417,10 +424,10 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
                 "generated_tokens": len(token_ids),
                 "tokens_including_eod": token_counts[row],
                 "tokens_including_stop": token_counts[row],
-                "ended_eod": stop_reason == "eod",
-                "ended_user_stop": stop_reason == "user_stop",
-                "stop_reason": stop_reason,
-                "truncated": stop_reason == "max_tokens",
+                "ended_eod": final_stop_reason == "eod",
+                "ended_user_stop": final_stop_reason == "user_stop",
+                "stop_reason": final_stop_reason,
+                "truncated": final_stop_reason == "max_tokens",
                 "completion": completion,
                 "correct": correct,
                 "verify_error": verify_error,
@@ -486,6 +493,11 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
             finish_row(row, "eod")
             return False
         generated[row].append(token)
+        if args.defer_text_decode:
+            if token_counts[row] >= args.max_new_tokens:
+                finish_row(row, "max_tokens")
+                return False
+            return True
         pending = tokenizer.decode(generated[row][out_last[row] :], skip_special_tokens=False)
         if "\ufffd" not in pending:
             out_texts[row] += pending
@@ -582,6 +594,7 @@ def run_dynamic_batched(args: argparse.Namespace, model, tokenizer, tasks: list[
         "cache_metrics": batch_cache.rwkv7_cache_metrics() if hasattr(batch_cache, "rwkv7_cache_metrics") else None,
         "rng_mode": args.rng_mode,
         "rng_salt": args.rng_salt,
+        "defer_text_decode": args.defer_text_decode,
     }
     print(
         f"math500_hf dynamic done B={batch_size} rows={len(rows)} decode_s={decode_sec:.3f} "
@@ -667,6 +680,7 @@ def summarize(
             "defer_verification": args.defer_verification,
             "verify_workers": args.verify_workers,
             "summary_speed_timing": args.summary_speed_timing,
+            "defer_text_decode": args.defer_text_decode,
         },
     }
     if extra_stats:
@@ -730,6 +744,14 @@ def main() -> int:
         help=(
             "Timing denominator for sample_per_sec/token_per_sec. wall preserves the original end-to-end schema; "
             "generation uses prefill+decode time and is intended for GPU speed acceptance when verification is deferred."
+        ),
+    )
+    ap.add_argument(
+        "--defer-text-decode",
+        action="store_true",
+        help=(
+            "Dynamic batching only: collect token ids and decode once when a row finishes instead of calling "
+            "tokenizer.decode after every generated token. Default early user-stop behavior remains unchanged."
         ),
     )
     args = ap.parse_args()
