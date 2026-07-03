@@ -2019,6 +2019,39 @@ Branch: `wangyue/native-prefill-060-albatross`
   - Conclusion: the schedule is correctness-safe but negative.  Serializing two
     rows inside each worker warp loses more than reducing CTA worker warps, so
     this row-pair middle point should stay telemetry-only and not be promoted.
+- [x] Try allowed warp-pipelined + shift-WAVG tile/FFN combo sweep:
+  - Motivation: consume a larger adjacent boundary with the proven
+    `warp_pipelined` CUDA state-scan while avoiding the now-negative row-pair,
+    head-level, raw no-K/V, SK, G-mid, W-decay, FFN two-pass, and lean routes.
+  - Result file:
+    `bench/results_native_4090_warppipe_allowed_combo_20260703_070650.jsonl`
+    from remote
+    `/tmp/native_4090_warppipe_allowed_combo_20260703_070650.jsonl`.
+  - 4090 / 0.4B / prompt512 / bsz1 rows all pass greedy/cache/decode smoke:
+    - same-run warp-specialized rpb1 baseline: `26,943.3 tok/s`,
+      `19.0028 ms`;
+    - warp-specialized rpb1 + FFN norm-shift recompute:
+      `27,418.8 tok/s`, `18.6733 ms`, peak `964.2 MiB`;
+    - warp-pipelined rpb8 baseline: `27,418.6 tok/s`, `18.6734 ms`;
+    - warp-pipelined rpb8 + FFN norm-shift recompute:
+      `26,690.7 tok/s`, `19.1827 ms`, peak `964.2 MiB`;
+    - warp-pipelined rpb16 baseline: `27,068.6 tok/s`, `18.9149 ms`;
+    - warp-pipelined rpb8 with shift-WAVG `(block_m,block_r,block_k)`:
+      `(64,64,64)` -> `26,966.3 tok/s`,
+      `(128,128,64)` -> `27,441.9 tok/s`,
+      `(128,64,128)` -> best sweep row `27,583.2 tok/s`,
+      `(128,64,256)` -> `26,963.2 tok/s`,
+      `(128,128,128)` -> `26,903.1 tok/s`,
+      `(64,64,128)` -> `26,917.2 tok/s`;
+    - warp-specialized rpb1 with shift-WAVG `block_k=128`:
+      `27,310.7 tok/s`;
+    - warp-pipelined rpb1 with shift-WAVG `block_k=128`:
+      `27,039.0 tok/s`.
+  - Conclusion: the best allowed-combo row is
+    `pipe_rpb8_bk128` at `27,583.2 tok/s` (`18.5620 ms`), which is
+    correctness-safe but still below the strict branch best `28,780.6 tok/s`.
+    Keep `warp_pipelined` and FFN norm-shift as opt-in tuning branches for
+    card/shape variance, but do not promote them on the current 4090 target.
 - [ ] Next persistent/two-level state-scan experiment:
   - Continue from the state-scan/shift-WAVG boundary, but avoid the now-negative
     row-pair, head-level, raw no-K/V, SK, G-mid, W-decay, FFN two-pass, and
