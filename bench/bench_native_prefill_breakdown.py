@@ -1090,13 +1090,17 @@ def profiled_native_prefill(
 
         def ffn_block():
             residual_local = x
-            h2 = F.layer_norm(x, [hidden], fn_w, fn_b, 1e-5)
-            prev_h2 = torch.cat([xpf[layer_idx].view(B, 1, hidden), h2[:, :-1, :]], dim=1)
-            fxx = prev_h2 - h2
-            fk = h2 + fxx * fx_k.view(1, 1, hidden)
+            apply_norm_shift = getattr(native_jit, "_native_prefill_apply_ffn_norm_shift", None)
+            if apply_norm_shift is None:
+                h2 = F.layer_norm(x, [hidden], fn_w, fn_b, 1e-5)
+                prev_h2 = torch.cat([xpf[layer_idx].view(B, 1, hidden), h2[:, :-1, :]], dim=1)
+                fk = h2 + (prev_h2 - h2) * fx_k.view(1, 1, hidden)
+                h2_last = h2[:, -1, :].contiguous()
+            else:
+                fk, h2_last = apply_norm_shift(x, xpf[layer_idx], fx_k, fn_w, fn_b, hidden)
             fk = F.linear(fk, fK)
             fk = getattr(native_jit, "_native_prefill_apply_ffn_activation", lambda _fk: torch.relu(_fk) ** 2)(fk)
-            return residual_local + F.linear(fk, fV), h2[:, -1, :].contiguous()
+            return residual_local + F.linear(fk, fV), h2_last.contiguous()
 
         x, xpf_last = profiler.measure("ffn", ffn_block)
         xpf[layer_idx] = xpf_last
@@ -1272,6 +1276,9 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_ffn_fused_act_effective": getattr(native_jit, "_native_prefill_ffn_fused_act_enabled", lambda: False)(),
         "prefill_ffn_fused_act_mode": getattr(native_jit, "_native_prefill_ffn_fused_act_mode", lambda: "triton")(),
         "prefill_ffn_fused_act_block_size": getattr(native_jit, "_native_prefill_ffn_fused_act_block_size", lambda: None)(),
+        "prefill_ffn_fused_norm_shift_requested": getattr(native_jit, "_native_prefill_ffn_fused_norm_shift_requested", lambda: False)(),
+        "prefill_ffn_fused_norm_shift_effective": getattr(native_jit, "_native_prefill_ffn_fused_norm_shift_enabled", lambda: False)(),
+        "prefill_ffn_fused_norm_shift_block_h": getattr(native_jit, "_native_prefill_ffn_fused_norm_shift_block_h", lambda: None)(),
         "prefill_fused_projection_requested": getattr(native_jit, "_native_prefill_fused_projection_requested", lambda: False)(),
         "prefill_fused_projection_effective": getattr(native_jit, "_native_prefill_fused_projection_enabled", lambda _rows: False)(batch_size * prompt_tokens),
         "prefill_fused_projection_max_m": getattr(native_jit, "_native_prefill_fused_projection_max_m", lambda: None)(),

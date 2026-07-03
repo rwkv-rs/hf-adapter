@@ -31,6 +31,48 @@ _HAS_TRITON = triton is not None and tl is not None
 if _HAS_TRITON:
 
     @triton.jit
+    def _ffn_norm_shift_prefill_kernel(
+        x_ptr,
+        cached_prev_h_ptr,
+        norm_weight_ptr,
+        norm_bias_ptr,
+        mix_ptr,
+        fk_ptr,
+        h_last_ptr,
+        tokens: tl.constexpr,
+        hidden: tl.constexpr,
+        eps: tl.constexpr,
+        BLOCK_H: tl.constexpr,
+    ):
+        row = tl.program_id(0)
+        batch = row // tokens
+        token = row - batch * tokens
+        offs = tl.arange(0, BLOCK_H)
+        mask = offs < hidden
+        base = row * hidden + offs
+
+        x = tl.load(x_ptr + base, mask=mask, other=0.0).to(tl.float32)
+        mean = tl.sum(tl.where(mask, x, 0.0), axis=0) / hidden
+        centered = tl.where(mask, x - mean, 0.0)
+        var = tl.sum(centered * centered, axis=0) / hidden
+        weight = tl.load(norm_weight_ptr + offs, mask=mask, other=1.0).to(tl.float32)
+        bias = tl.load(norm_bias_ptr + offs, mask=mask, other=0.0).to(tl.float32)
+        h = centered * tl.rsqrt(var + eps) * weight + bias
+
+        prev_base = ((batch * tokens + token - 1) * hidden + offs)
+        prev_x = tl.load(x_ptr + prev_base, mask=mask & (token > 0), other=0.0).to(tl.float32)
+        prev_mean = tl.sum(tl.where(mask, prev_x, 0.0), axis=0) / hidden
+        prev_centered = tl.where(mask, prev_x - prev_mean, 0.0)
+        prev_var = tl.sum(prev_centered * prev_centered, axis=0) / hidden
+        prev_calc = prev_centered * tl.rsqrt(prev_var + eps) * weight + bias
+        cached_prev = tl.load(cached_prev_h_ptr + batch * hidden + offs, mask=mask, other=0.0).to(tl.float32)
+        prev_h = tl.where(token > 0, prev_calc, cached_prev)
+
+        mix = tl.load(mix_ptr + offs, mask=mask, other=0.0).to(tl.float32)
+        tl.store(fk_ptr + base, h + (prev_h - h) * mix, mask=mask)
+        tl.store(h_last_ptr + batch * hidden + offs, h, mask=mask & (token == (tokens - 1)))
+
+    @triton.jit
     def _ffn_key_relu_kernel(
         x_ptr,
         prev_ptr,
@@ -110,6 +152,12 @@ def fused_relu_square_available() -> bool:
     return bool(_HAS_TRITON and torch is not None)
 
 
+def fused_ffn_norm_shift_prefill_available() -> bool:
+    """Return whether the optional prefill FFN norm+shift kernel can run."""
+
+    return bool(_HAS_TRITON and torch is not None and F is not None)
+
+
 def fused_relu_square_inplace(x: Any, *, block_size: int = 1024, force_fallback: bool = False):
     """Apply ``relu(x) ** 2`` in-place.
 
@@ -139,6 +187,96 @@ def fused_relu_square_inplace(x: Any, *, block_size: int = 1024, force_fallback:
     x.relu_()
     x.mul_(x)
     return x
+
+
+def fused_ffn_norm_shift_prefill(
+    hidden_states: Any,
+    cached_prev_h: Any,
+    mix_x: Any,
+    norm_weight: Any,
+    norm_bias: Any,
+    *,
+    eps: float = 1e-5,
+    block_h: int | None = None,
+    force_fallback: bool = False,
+):
+    """Compute prefill FFN layer norm plus previous-token shift/mix.
+
+    This is the larger FFN boundary used by native prefill before the FFN key
+    GEMM:
+
+    ``h = layer_norm(x)``
+    ``prev = cat([cached_prev_h, h[:, :-1]])``
+    ``fk = h + (prev - h) * mix_x``
+
+    The Triton path avoids materializing the full ``prev`` tensor and stores
+    only ``fk`` plus the final ``h`` cache.  To keep programs independent it
+    recomputes the previous token's layer norm for ``token > 0``.  Therefore it
+    is kept opt-in until exact-card benchmarks show that saved memory/launches
+    offset the extra norm work.
+    """
+
+    if torch is None or F is None:
+        raise RuntimeError("fused_ffn_norm_shift_prefill requires torch")
+    if hidden_states.dim() != 3:
+        raise ValueError(f"hidden_states must be [batch, tokens, hidden], got {tuple(hidden_states.shape)}")
+    batch, tokens, hidden = (int(v) for v in hidden_states.shape)
+    if cached_prev_h.dim() != 2 or int(cached_prev_h.shape[0]) != batch or int(cached_prev_h.shape[1]) != hidden:
+        raise ValueError(f"cached_prev_h must be [{batch}, {hidden}], got {tuple(cached_prev_h.shape)}")
+    mix = mix_x.reshape(-1)
+    if int(mix.shape[0]) != hidden:
+        raise ValueError(f"mix_x must contain {hidden} elements, got {tuple(mix_x.shape)}")
+    norm_w = norm_weight.reshape(-1)
+    norm_b = norm_bias.reshape(-1)
+    if int(norm_w.shape[0]) != hidden or int(norm_b.shape[0]) != hidden:
+        raise ValueError("norm_weight and norm_bias must match hidden size")
+
+    use_triton = (
+        not force_fallback
+        and fused_ffn_norm_shift_prefill_available()
+        and hidden_states.is_cuda
+        and cached_prev_h.is_cuda
+        and mix.is_cuda
+        and norm_w.is_cuda
+        and norm_b.is_cuda
+        and hidden_states.dtype in (torch.float16, torch.bfloat16, torch.float32)
+        and cached_prev_h.dtype == hidden_states.dtype
+        and mix.dtype == hidden_states.dtype
+        and norm_w.dtype == hidden_states.dtype
+        and norm_b.dtype == hidden_states.dtype
+        and hidden <= 4096
+    )
+    if not use_triton:
+        h = F.layer_norm(hidden_states, (hidden,), norm_w, norm_b, float(eps))
+        prev_h = torch.cat([cached_prev_h.view(batch, 1, hidden), h[:, :-1, :]], dim=1)
+        fk = torch.addcmul(h, prev_h - h, mix.view(1, 1, hidden))
+        return fk, h[:, -1, :].contiguous()
+
+    x_c = hidden_states.contiguous()
+    cached_c = cached_prev_h.contiguous()
+    mix_c = mix.contiguous()
+    norm_w_c = norm_w.contiguous()
+    norm_b_c = norm_b.contiguous()
+    fk = torch.empty_like(x_c)
+    h_last = torch.empty((batch, hidden), device=x_c.device, dtype=x_c.dtype)
+    block = int(block_h) if block_h is not None else int(triton.next_power_of_2(hidden))
+    if block < hidden:
+        block = int(triton.next_power_of_2(hidden))
+    _ffn_norm_shift_prefill_kernel[(batch * tokens,)](
+        x_c,
+        cached_c,
+        norm_w_c,
+        norm_b_c,
+        mix_c,
+        fk,
+        h_last,
+        tokens,
+        hidden,
+        float(eps),
+        BLOCK_H=block,
+        num_warps=8 if block >= 1024 else 4,
+    )
+    return fk, h_last
 
 
 def _flatten(x: Any, hidden: int | None = None, *, name: str):

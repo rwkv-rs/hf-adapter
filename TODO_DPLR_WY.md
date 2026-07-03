@@ -1528,11 +1528,45 @@ Branch: `wangyue/native-prefill-060-albatross`
     negative end-to-end.  Do not promote it.  The remaining FFN opportunity, if
     any, must be a larger boundary than standalone activation; otherwise return
     to persistent/two-level state-scan scheduling.
-- [ ] Next larger-boundary experiment:
-  - Do not spend another turn on standalone `relu^2` FFN activation.  Next try
-    either a larger FFN boundary that saves real memory/launch work without
-    replacing cuBLAS GEMMs, or a persistent/two-level state-scan schedule that
-    preserves rpb1/rpb8 row parallelism while sharing producer vector prep.
+- [x] Try a larger FFN norm+shift boundary without replacing cuBLAS GEMMs:
+  - Added opt-in `RWKV7_NATIVE_PREFILL_FFN_FUSED_NORM_SHIFT=1` for the prefill
+    FFN key-input boundary.  It fuses FFN layernorm, previous-token alignment,
+    and `fx_k` shift/mix into one Triton kernel, returns the shifted key input
+    plus the final FFN cache, and keeps both large FFN GEMMs on cuBLAS.
+  - Correctness:
+    - 4090 synthetic oracle passed for fp16/bf16/fp32.  Max diffs:
+      fp16 `0.015625`, bf16 `0.125`, fp32 `2.86e-06`;
+    - all HF rows below pass greedy/cache/decode smoke, with max diff
+      `0.0625` for `block_h=1024` and `0.125` for `block_h=2048`.
+  - Result files:
+    - `bench/results_native_4090_ffn_norm_shift_20260703_113515.jsonl` from
+      remote `/tmp/native_4090_ffn_norm_shift_20260703_113515.jsonl`;
+    - `bench/results_native_4090_ffn_norm_shift_confirm_20260703_113639.jsonl`
+      from remote `/tmp/native_4090_ffn_norm_shift_confirm_20260703_113639.jsonl`.
+  - 4090 / 0.4B / prompt512 / bsz1, current CUDA state-scan + shift-WAVG route:
+    - sweep same-run baseline: `27,643.3 tok/s`, `18.5217 ms`, peak
+      `988.2 MiB`;
+    - FFN norm+shift `block_h=1024`: `27,676.5 tok/s`, `18.4995 ms`, peak
+      `964.2 MiB`;
+    - FFN norm+shift `block_h=2048`: `27,127.6 tok/s`, `18.8738 ms`, peak
+      `964.2 MiB`;
+    - confirm baseline #1: `27,247.0 tok/s`, `18.7911 ms`, peak
+      `988.2 MiB`;
+    - confirm `block_h=1024`: `27,708.6 tok/s`, `18.4781 ms`, peak
+      `964.2 MiB`;
+    - confirm baseline #2: `26,749.1 tok/s`, `19.1409 ms`, peak
+      `988.2 MiB`.
+  - Conclusion: `block_h=1024` is correctness-safe, consistently lowers peak
+    memory by about `24 MiB`, and can beat same-run baselines modestly.  It
+    still does not beat the strict historical best `28,780.6 tok/s`, so keep it
+    opt-in for now rather than default-promoting.  The next performance push
+    should return to the larger remaining state-scan schedule gap.
+- [ ] Next persistent/two-level state-scan experiment:
+  - Return to the main state-scan gap.  Try a persistent/two-level schedule or
+    another structure that preserves rpb1/rpb8 row parallelism while sharing
+    producer vector prep; do not spend another turn on small FFN activation or
+    recompute-prev layernorm boundaries unless a same-run profile identifies a
+    larger FFN win.
   - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond `28,780.6 tok/s`, moving toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for

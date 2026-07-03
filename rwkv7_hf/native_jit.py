@@ -267,11 +267,23 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_attn_norm_shift_mix_prefill_available = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
-    from .fused_ffn import fused_relu_square_available, fused_relu_square_inplace
+    from .fused_ffn import (
+        fused_ffn_norm_shift_prefill,
+        fused_ffn_norm_shift_prefill_available,
+        fused_relu_square_available,
+        fused_relu_square_inplace,
+    )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
-        from fused_ffn import fused_relu_square_available, fused_relu_square_inplace
+        from fused_ffn import (
+            fused_ffn_norm_shift_prefill,
+            fused_ffn_norm_shift_prefill_available,
+            fused_relu_square_available,
+            fused_relu_square_inplace,
+        )
     except Exception:
+        fused_ffn_norm_shift_prefill = None  # type: ignore[assignment]
+        fused_ffn_norm_shift_prefill_available = None  # type: ignore[assignment]
         fused_relu_square_available = None  # type: ignore[assignment]
         fused_relu_square_inplace = None  # type: ignore[assignment]
 
@@ -925,6 +937,50 @@ def _native_prefill_apply_ffn_activation(fk):
             return fk
         return fused_relu_square_inplace(fk, block_size=_native_prefill_ffn_fused_act_block_size())
     return torch.relu(fk) ** 2
+
+
+def _native_prefill_ffn_fused_norm_shift_requested() -> bool:
+    """Return whether prefill FFN norm+shift fusion is requested."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_FFN_FUSED_NORM_SHIFT", False)
+
+
+def _native_prefill_ffn_fused_norm_shift_enabled() -> bool:
+    """Runtime switch for prefill FFN layernorm plus time-shift fusion."""
+
+    if not _native_prefill_ffn_fused_norm_shift_requested():
+        return False
+    if fused_ffn_norm_shift_prefill is None or fused_ffn_norm_shift_prefill_available is None:
+        return False
+    try:
+        return bool(fused_ffn_norm_shift_prefill_available())
+    except Exception:
+        return False
+
+
+def _native_prefill_ffn_fused_norm_shift_block_h() -> int:
+    """Hidden tile for the prefill FFN norm+shift fusion probe."""
+
+    return env_int("RWKV7_NATIVE_PREFILL_FFN_FUSED_NORM_SHIFT_BLOCK_H", 1024, lower=128, upper=8192)
+
+
+def _native_prefill_apply_ffn_norm_shift(x, cached_prev_h, fx_k, fn_w, fn_b, hidden: int):
+    """Return ``(fk, h_last)`` for the prefill FFN key input boundary."""
+
+    if _native_prefill_ffn_fused_norm_shift_enabled():
+        return fused_ffn_norm_shift_prefill(
+            x,
+            cached_prev_h.view(int(x.shape[0]), hidden),
+            fx_k,
+            fn_w,
+            fn_b,
+            eps=1e-5,
+            block_h=_native_prefill_ffn_fused_norm_shift_block_h(),
+        )
+    h2 = F.layer_norm(x, [hidden], fn_w, fn_b, 1e-5)
+    prev_h2 = torch.cat([cached_prev_h.view(int(x.shape[0]), 1, hidden), h2[:, :-1, :]], dim=1)
+    fxx = prev_h2 - h2
+    return h2 + fxx * fx_k.view(1, 1, hidden), h2[:, -1, :].contiguous()
 
 
 def _native_prefill_fused_projection_requested() -> bool:
@@ -2383,14 +2439,11 @@ def prefill(
         state[layer_idx] = new_state.contiguous()
 
         residual = x
-        h2 = F.layer_norm(x, [hidden], fn_w, fn_b, 1e-5)
-        prev_h2 = torch.cat([xpf[layer_idx].view(B, 1, hidden), h2[:, :-1, :]], dim=1)
-        fxx = prev_h2 - h2
-        fk = h2 + fxx * fx_k.view(1, 1, hidden)
+        fk, h2_last = _native_prefill_apply_ffn_norm_shift(x, xpf[layer_idx], fx_k, fn_w, fn_b, hidden)
         fk = F.linear(fk, fK)
         fk = _native_prefill_apply_ffn_activation(fk)
         x = residual + F.linear(fk, fV)
-        xpf[layer_idx] = h2[:, -1, :].contiguous()
+        xpf[layer_idx] = h2_last.contiguous()
 
     x = F.layer_norm(x, [hidden], base.norm.weight, base.norm.bias, 1e-5)
     keep = T if logits_to_keep is None or int(logits_to_keep) <= 0 else min(int(logits_to_keep), T)
