@@ -37,7 +37,9 @@ std::vector<torch::Tensor> rwkv7_state_scan_prep_forward_cuda(
     int rows_per_block,
     int schedule_mode,
     bool w_precomputed,
-    bool write_kv);
+    bool write_kv,
+    torch::Tensor w_temp,
+    torch::Tensor kk_temp);
 
 std::vector<torch::Tensor> rwkv7_state_scan_prep_sk_forward_cuda(
     torch::Tensor r,
@@ -86,9 +88,11 @@ std::vector<torch::Tensor> state_scan_prep_forward(
     int rows_per_block,
     int schedule_mode,
     bool w_precomputed,
-    bool write_kv) {
+    bool write_kv,
+    torch::Tensor w_temp,
+    torch::Tensor kk_temp) {
   return rwkv7_state_scan_prep_forward_cuda(
-      r, w_raw, k_raw, v_raw, a, state, k_k, k_a, v_first, v_gate, has_v_gate, lanes_per_row, precompute_mode, rows_per_block, schedule_mode, w_precomputed, write_kv);
+      r, w_raw, k_raw, v_raw, a, state, k_k, k_a, v_first, v_gate, has_v_gate, lanes_per_row, precompute_mode, rows_per_block, schedule_mode, w_precomputed, write_kv, w_temp, kk_temp);
 }
 
 std::vector<torch::Tensor> state_scan_prep_sk_forward(
@@ -1959,7 +1963,9 @@ std::vector<torch::Tensor> rwkv7_state_scan_prep_forward_cuda(
     int rows_per_block,
     int schedule_mode,
     bool w_precomputed,
-    bool write_kv) {
+    bool write_kv,
+    torch::Tensor w_temp,
+    torch::Tensor kk_temp) {
   CHECK_INPUT(r);
   CHECK_INPUT(w_raw);
   CHECK_INPUT(k_raw);
@@ -2014,6 +2020,15 @@ std::vector<torch::Tensor> rwkv7_state_scan_prep_forward_cuda(
               "CUDA w_precomputed currently requires lanes_per_row=64, precompute_mode=none, and schedule=warp_specialized or warp_pipelined");
   TORCH_CHECK(write_kv || (lanes_per_row == 64 && precompute_mode == 0 && schedule_mode == 1 && !w_precomputed),
               "CUDA no-K/V-write probe currently requires lanes_per_row=64, precompute_mode=none, schedule=warp_specialized, and w_precomputed=false");
+  if (w_temp.numel() != 0 || kk_temp.numel() != 0) {
+    CHECK_INPUT(w_temp);
+    CHECK_INPUT(kk_temp);
+    TORCH_CHECK(precompute_mode == 3, "CUDA precompute temp reuse currently supports only wk_half mode");
+    TORCH_CHECK(w_temp.sizes() == w_raw.sizes() && kk_temp.sizes() == k_raw.sizes(),
+                "CUDA precompute temp shapes must match w/k inputs");
+    TORCH_CHECK(w_temp.scalar_type() == torch::kFloat16 && kk_temp.scalar_type() == torch::kFloat16,
+                "CUDA wk_half precompute temps must be fp16");
+  }
 
   auto out = torch::empty_like(r);
   auto final_state = torch::empty_like(state);
@@ -2095,8 +2110,8 @@ std::vector<torch::Tensor> rwkv7_state_scan_prep_forward_cuda(
         final_state.data_ptr<float>(),
         B, T, H);
   } else if (precompute_mode == 3) {
-    auto w_prep = torch::empty_like(w_raw);
-    auto kk_prep = torch::empty_like(k_raw);
+    auto w_prep = w_temp.numel() != 0 ? w_temp : torch::empty_like(w_raw);
+    auto kk_prep = kk_temp.numel() != 0 ? kk_temp : torch::empty_like(k_raw);
     const dim3 pre_grid(B * T * H);
     const dim3 pre_block(64);
     rwkv7_state_scan_prep_n64_vector_precompute_wk_half_kernel<at::Half><<<pre_grid, pre_block, 0, stream>>>(
@@ -3321,7 +3336,7 @@ def _load_extension():
     from torch.utils.cpp_extension import load_inline
 
     return load_inline(
-        name="rwkv7_cuda_state_scan_v20",
+        name="rwkv7_cuda_state_scan_v21",
         cpp_sources=_CPP_SRC,
         cuda_sources=_CUDA_SRC,
         functions=["state_scan_prep_forward", "state_scan_prep_sk_forward", "state_scan_rowblock_phase_forward"],
@@ -3358,6 +3373,8 @@ def cuda_state_scan_prep(
     schedule: str | None = None,
     w_precomputed: bool | None = None,
     write_kv: bool = True,
+    w_temp: Any | None = None,
+    kk_temp: Any | None = None,
 ):
     """Run the experimental CUDA N=64 state-prep scan.
 
@@ -3516,6 +3533,24 @@ def cuda_state_scan_prep(
                 "cuda_state_scan_prep write_kv=False currently requires lanes_per_row=64, "
                 "precompute_mode=none, schedule=warp_specialized, and w_precomputed=False"
             )
+    if (w_temp is None) != (kk_temp is None):
+        raise ValueError("cuda_state_scan_prep precompute temp reuse requires both w_temp and kk_temp")
+    if w_temp is None:
+        w_temp_arg = w_raw.new_empty((0,))
+        kk_temp_arg = k_raw.new_empty((0,))
+    else:
+        w_temp_arg = w_temp
+        kk_temp_arg = kk_temp
+        if precompute_mode_id != 3:
+            raise ValueError("cuda_state_scan_prep precompute temp reuse currently requires precompute_mode=wk_half")
+        if tuple(w_temp_arg.shape) != tuple(w_raw.shape) or tuple(kk_temp_arg.shape) != tuple(k_raw.shape):
+            raise ValueError("cuda_state_scan_prep precompute temp shapes must match w/k inputs")
+        if w_temp_arg.dtype is not torch.float16 or kk_temp_arg.dtype is not torch.float16:
+            raise ValueError("cuda_state_scan_prep precompute temps must be fp16")
+        if w_temp_arg.device != w_raw.device or kk_temp_arg.device != k_raw.device:
+            raise ValueError("cuda_state_scan_prep precompute temps must be on the same devices as w/k")
+        if not w_temp_arg.is_contiguous() or not kk_temp_arg.is_contiguous():
+            raise ValueError("cuda_state_scan_prep precompute temps must be contiguous")
     ext = _load_extension()
     out, final_state, k_out, v_out = ext.state_scan_prep_forward(
         r.contiguous(),
@@ -3535,6 +3570,8 @@ def cuda_state_scan_prep(
         int(schedule_id),
         bool(w_precomputed),
         bool(write_kv),
+        w_temp_arg,
+        kk_temp_arg,
     )
     return out, final_state, k_out, v_out
 

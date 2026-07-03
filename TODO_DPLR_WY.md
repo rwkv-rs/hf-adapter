@@ -2160,6 +2160,41 @@ Branch: `wangyue/native-prefill-060-albatross`
     parallelism without per-worker row serialization.
   - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond `28,780.6 tok/s`, moving toward `>=31,289 tok/s`.
+  - [x] Try reusable precompute-temp buffers for CUDA `wk_half` vector
+    precompute:
+    - Motivation: the previous `precomputed_warp` micro result was strong, but
+      full HF lost to the extra temp allocation/global-temp boundary.  This
+      probe keeps the same math and schedule while reusing one preallocated
+      fp16 `W` temp and one fp16 normalized-`KK` temp across layers.
+    - Implementation:
+      - added opt-in
+        `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_REUSE_PRECOMPUTE=1`;
+      - extended the CUDA extension entrypoint with optional `w_temp` /
+        `kk_temp` tensors, validated only for `precompute_mode=wk_half`;
+      - native prefill now preallocates and passes those buffers only when
+        CUDA state-scan + `wk_half` precompute are requested;
+      - benchmark rows now expose
+        `prefill_cuda_state_scan_reuse_precompute(_effective)`.
+    - Correctness/compile:
+      - local `py_compile` and `git diff --check` passed;
+      - 4090 direct CUDA wrapper check passed with no-temp vs temp-reuse diffs
+        `[0.0, 0.0, 0.0, 0.0]`.
+    - Result file:
+      `bench/results_native_4090_precompute_reuse_20260703_083814.jsonl`
+      from remote `/tmp/native_4090_precompute_reuse_20260703_083814.jsonl`.
+    - 4090 / 0.4B / prompt512 / bsz1 HF rows, all pass greedy/cache smoke:
+      - warp-specialized baseline: `26,633.1 tok/s`, `19.2242 ms`;
+      - default `wk_half` no reuse: `26,038.8 tok/s`, `19.6629 ms`;
+      - default `wk_half` reuse: `27,407.1 tok/s`, `18.6813 ms`;
+      - precomputed-warp rpb8 no reuse: `26,606.7 tok/s`, `19.2433 ms`;
+      - precomputed-warp rpb8 reuse: `26,737.2 tok/s`, `19.1493 ms`;
+      - precomputed-warp rpb16 reuse: `26,639.4 tok/s`, `19.2197 ms`.
+    - Conclusion: temp reuse fixes part of the allocation overhead and is a
+      correctness-safe opt-in knob, but it still does not beat the strict
+      branch best `28,780.6 tok/s`.  Keep it disabled by default.  The next
+      Albatross-gap attempt still needs the precomputed vectors produced by a
+      larger adjacent shift-WAVG/state-prep boundary or a different persistent
+      schedule, not merely reused standalone precompute storage.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `28,780.6 tok/s` (`~0.5519x`), still about `2,508 tok/s` (`~8.7%`

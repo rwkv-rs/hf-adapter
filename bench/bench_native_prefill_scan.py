@@ -219,6 +219,9 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
     cuda_state_scan_lanes = getattr(nj, "_native_prefill_cuda_state_scan_lanes_per_row", lambda: 1)()
     cuda_state_scan_precompute = getattr(nj, "_native_prefill_cuda_state_scan_precompute_enabled", lambda: False)()
     cuda_state_scan_precompute_mode = getattr(nj, "_native_prefill_cuda_state_scan_precompute_mode", lambda: "none")()
+    cuda_state_scan_reuse_precompute = getattr(
+        nj, "_native_prefill_cuda_state_scan_reuse_precompute_enabled", lambda: False
+    )()
     cuda_state_scan_rows_per_block = getattr(nj, "_native_prefill_cuda_state_scan_rows_per_block", lambda: 1)()
     cuda_state_scan_schedule = getattr(nj, "_native_prefill_cuda_state_scan_schedule", lambda: "default")()
     cuda_state_scan_w_precomputed = getattr(
@@ -272,6 +275,13 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_cuda_state_scan_lanes": cuda_state_scan_lanes,
         "prefill_cuda_state_scan_precompute": cuda_state_scan_precompute,
         "prefill_cuda_state_scan_precompute_mode": cuda_state_scan_precompute_mode,
+        "prefill_cuda_state_scan_reuse_precompute": cuda_state_scan_reuse_precompute,
+        "prefill_cuda_state_scan_reuse_precompute_effective": bool(
+            cuda_state_scan_effective
+            and cuda_state_scan_reuse_precompute
+            and cuda_state_scan_precompute
+            and cuda_state_scan_precompute_mode == "wk_half"
+        ),
         "prefill_cuda_state_scan_rows_per_block": cuda_state_scan_rows_per_block,
         "prefill_cuda_state_scan_schedule": cuda_state_scan_schedule,
         "prefill_cuda_state_scan_w_precomputed": cuda_state_scan_w_precomputed,

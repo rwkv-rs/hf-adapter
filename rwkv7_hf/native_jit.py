@@ -517,6 +517,12 @@ def _native_prefill_cuda_state_scan_precompute_mode() -> str:
     )
 
 
+def _native_prefill_cuda_state_scan_reuse_precompute_enabled() -> bool:
+    """Reuse preallocated fp16 W/KK temp buffers for CUDA wk_half precompute."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_REUSE_PRECOMPUTE", False)
+
+
 def _native_prefill_cuda_state_scan_rows_per_block() -> int:
     """Rows handled by one CUDA row-block in the cooperative N=64 scan."""
 
@@ -1833,6 +1839,8 @@ def prefill(
 
     x = F.embedding(ids, base.embeddings.weight).reshape(B, T, hidden)
     v_first_seq = torch.zeros(B, T, hidden, device=ids.device, dtype=dtype)
+    cuda_state_scan_w_temp = None
+    cuda_state_scan_kk_temp = None
 
     for p in packs:
         p = _ensure_rkv_pack(p)
@@ -2364,6 +2372,28 @@ def prefill(
             )
             cuda_state_scan_schedule = _native_prefill_cuda_state_scan_schedule() if use_cuda_state_scan else "default"
             state_scan_w_precomputed = bool(shift_wavg_lora_w_decay_done)
+            cuda_state_scan_reuse_precompute = bool(
+                use_cuda_state_scan
+                and _native_prefill_cuda_state_scan_reuse_precompute_enabled()
+                and cuda_state_scan_precompute
+                and cuda_state_scan_precompute_mode == "wk_half"
+                and not state_scan_w_precomputed
+            )
+            if cuda_state_scan_reuse_precompute:
+                temp_shape = (B, T, H, N)
+                if (
+                    cuda_state_scan_w_temp is None
+                    or tuple(cuda_state_scan_w_temp.shape) != temp_shape
+                    or cuda_state_scan_w_temp.device != ids.device
+                    or cuda_state_scan_w_temp.dtype != dtype
+                ):
+                    cuda_state_scan_w_temp = torch.empty(temp_shape, device=ids.device, dtype=dtype)
+                    cuda_state_scan_kk_temp = torch.empty(temp_shape, device=ids.device, dtype=dtype)
+                cuda_state_scan_w_temp_arg = cuda_state_scan_w_temp
+                cuda_state_scan_kk_temp_arg = cuda_state_scan_kk_temp
+            else:
+                cuda_state_scan_w_temp_arg = None
+                cuda_state_scan_kk_temp_arg = None
             state_scan_precompute_w = state_scan_w_precomputed or (
                 _native_prefill_scan_precompute_w_enabled() and not use_cuda_state_scan
             )
@@ -2420,6 +2450,8 @@ def prefill(
                     rows_per_block=cuda_state_scan_rows_per_block,
                     schedule=cuda_state_scan_schedule,
                     w_precomputed=state_scan_w_precomputed,
+                    w_temp=cuda_state_scan_w_temp_arg,
+                    kk_temp=cuda_state_scan_kk_temp_arg,
                 )
                 v_first_seq = v.reshape(B, T, hidden)
             elif use_cuda_state_scan:
@@ -2440,6 +2472,8 @@ def prefill(
                     rows_per_block=cuda_state_scan_rows_per_block,
                     schedule=cuda_state_scan_schedule,
                     w_precomputed=state_scan_w_precomputed,
+                    w_temp=cuda_state_scan_w_temp_arg,
+                    kk_temp=cuda_state_scan_kk_temp_arg,
                 )
             elif layer_idx == 0:
                 out, new_state, k, v = fused_recurrent_scan_state_prep(

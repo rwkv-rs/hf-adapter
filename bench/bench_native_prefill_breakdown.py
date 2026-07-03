@@ -197,6 +197,8 @@ def profiled_native_prefill(
     profiler.start_total()
     x = profiler.measure("embedding", lambda: F.embedding(ids, base.embeddings.weight).reshape(B, T, hidden0))
     v_first_seq = torch.zeros(B, T, hidden0, device=ids.device, dtype=dtype)
+    cuda_state_scan_w_temp = None
+    cuda_state_scan_kk_temp = None
 
     for p in packs:
         p = native_jit._ensure_rkv_pack(p)
@@ -791,6 +793,27 @@ def profiled_native_prefill(
             cuda_state_scan_schedule = (
                 native_jit._native_prefill_cuda_state_scan_schedule() if use_cuda_state_scan else "default"
             )
+            cuda_state_scan_reuse_precompute = bool(
+                use_cuda_state_scan
+                and getattr(native_jit, "_native_prefill_cuda_state_scan_reuse_precompute_enabled", lambda: False)()
+                and cuda_state_scan_precompute
+                and cuda_state_scan_precompute_mode == "wk_half"
+            )
+            if cuda_state_scan_reuse_precompute:
+                temp_shape = (B, T, H, N)
+                if (
+                    cuda_state_scan_w_temp is None
+                    or tuple(cuda_state_scan_w_temp.shape) != temp_shape
+                    or cuda_state_scan_w_temp.device != ids.device
+                    or cuda_state_scan_w_temp.dtype != dtype
+                ):
+                    cuda_state_scan_w_temp = torch.empty(temp_shape, device=ids.device, dtype=dtype)
+                    cuda_state_scan_kk_temp = torch.empty(temp_shape, device=ids.device, dtype=dtype)
+                cuda_state_scan_w_temp_arg = cuda_state_scan_w_temp
+                cuda_state_scan_kk_temp_arg = cuda_state_scan_kk_temp
+            else:
+                cuda_state_scan_w_temp_arg = None
+                cuda_state_scan_kk_temp_arg = None
             state_scan_precompute_w = (
                 getattr(native_jit, "_native_prefill_scan_precompute_w_enabled", lambda: False)()
                 and not use_cuda_state_scan
@@ -854,6 +877,8 @@ def profiled_native_prefill(
                         precompute_mode=cuda_state_scan_precompute_mode,
                         rows_per_block=cuda_state_scan_rows_per_block,
                         schedule=cuda_state_scan_schedule,
+                        w_temp=cuda_state_scan_w_temp_arg,
+                        kk_temp=cuda_state_scan_kk_temp_arg,
                     )
                 if use_cuda_state_scan:
                     return native_jit.cuda_state_scan_prep(
@@ -872,6 +897,8 @@ def profiled_native_prefill(
                         precompute_mode=cuda_state_scan_precompute_mode,
                         rows_per_block=cuda_state_scan_rows_per_block,
                         schedule=cuda_state_scan_schedule,
+                        w_temp=cuda_state_scan_w_temp_arg,
+                        kk_temp=cuda_state_scan_kk_temp_arg,
                     )
                 if layer_idx == 0:
                     return native_jit.fused_recurrent_scan_state_prep(
@@ -1283,6 +1310,9 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
     cuda_state_scan_precompute_mode = getattr(
         native_jit, "_native_prefill_cuda_state_scan_precompute_mode", lambda: "none"
     )()
+    cuda_state_scan_reuse_precompute = getattr(
+        native_jit, "_native_prefill_cuda_state_scan_reuse_precompute_enabled", lambda: False
+    )()
     cuda_state_scan_rows_per_block = getattr(
         native_jit, "_native_prefill_cuda_state_scan_rows_per_block", lambda: 1
     )()
@@ -1339,6 +1369,13 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_cuda_state_scan_lanes": cuda_state_scan_lanes,
         "prefill_cuda_state_scan_precompute": cuda_state_scan_precompute,
         "prefill_cuda_state_scan_precompute_mode": cuda_state_scan_precompute_mode,
+        "prefill_cuda_state_scan_reuse_precompute": cuda_state_scan_reuse_precompute,
+        "prefill_cuda_state_scan_reuse_precompute_effective": bool(
+            cuda_state_scan_effective
+            and cuda_state_scan_reuse_precompute
+            and cuda_state_scan_precompute
+            and cuda_state_scan_precompute_mode == "wk_half"
+        ),
         "prefill_cuda_state_scan_rows_per_block": cuda_state_scan_rows_per_block,
         "prefill_cuda_state_scan_schedule": cuda_state_scan_schedule,
         "prefill_cuda_state_scan_w_precomputed": cuda_state_scan_w_precomputed,
