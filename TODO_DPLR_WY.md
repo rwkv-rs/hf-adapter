@@ -6,6 +6,21 @@ This is a short-lived working TODO for the current native-prefill performance br
 
 Branch: `wangyue/native-prefill-060-albatross`
 
+- [x] Add the speed+accuracy acceptance overlay from Albatross MATH500 eval:
+  - Reference:
+    `https://github.com/BlinkDL/Albatross/blob/main/faster3a_2605/eval_math500.py`.
+  - Speed is not only bsz1 prefill tok/s.  The benchmark target must find the
+    fastest GPU setting by sweeping bsz / batch policy and report the best
+    passing throughput.
+  - Accuracy must include MATH500 `avg@64` / rollout-style math verification,
+    not only greedy/cache smoke.
+  - Different RWKV checkpoints can have different FFN `relu^2` sparsity
+    patterns; any sparse-FFN or relusq-related shortcut must be checked per
+    model for both speed and accuracy.
+  - Logit alignment must use uncheatable compression ratio, including
+    compression ratio vs token position.  Max-diff/cosine/greedy checks remain
+    smoke tests only and are too weak for final acceptance.
+
 - [x] Start from merged `origin/main` after PR #90.
 - [x] Fix the first experiment blocker:
   - `extract()` now appends the optional `RKVw` pack item used by the

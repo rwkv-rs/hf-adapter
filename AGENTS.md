@@ -45,6 +45,25 @@ roadmap.
   decode, correctness, peak memory/VRAM, and `bench/analyze_results.py`
   reporting.
 
+## Speed + Accuracy Acceptance Overlay
+
+Do not optimize against speed-only or shallow logit-diff checks. The current
+acceptance target must include the Albatross-style combined speed/accuracy
+loop:
+
+- Reference script: `BlinkDL/Albatross/faster3a_2605/eval_math500.py`.
+- Speed target: find the fastest GPU throughput by sweeping batch size / bsz
+  and report the best passing setting, not only bsz=1 prompt-prefill tok/s.
+- Accuracy target: report MATH500 `avg@64` / rollout-style pass metric using
+  the same math-verification style as the reference script.
+- Model-specific caution: different RWKV checkpoints have different FFN
+  `relu^2` sparsity patterns, so sparse FFN shortcuts must be evaluated per
+  model for both speed and accuracy.
+- Logit alignment target: use uncheatable compression ratio as the primary
+  logit-alignment signal, including compression ratio vs token position. Simple
+  max-diff/cosine/greedy checks are smoke tests only and are not enough for
+  acceptance.
+
 ## Current Branch Goal: DPLR/WY Compiled Prefill Prototype
 
 Active branch work is now the opt-in DPLR/WY compiled prefill backend, not
