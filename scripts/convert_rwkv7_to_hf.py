@@ -183,10 +183,14 @@ def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
     root = Path(__file__).resolve().parents[1]
     for name in [
         "configuration_rwkv7.py",
+        "dplr_prefill.py",
+        "dplr_prefill_triton.py",
         "fused_attention_projection.py",
         "fused_ffn.py",
         "fused_lora.py",
+        "fused_norm_mix.py",
         "fused_output.py",
+        "fused_prefill.py",
         "fused_projection.py",
         "fused_recurrent_update.py",
         "fused_time_mix.py",
@@ -196,6 +200,8 @@ def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
         "native_jit.py",
         "native_model.py",
         "native_quant.py",
+        "native_quant_mm4.py",
+        "native_quant_mm8.py",
         "tokenization_rwkv7.py",
     ]:
         shutil.copyfile(root / "rwkv7_hf" / name, output / name)
