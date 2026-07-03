@@ -2292,6 +2292,33 @@ Branch: `wangyue/native-prefill-060-albatross`
       should return to a wider shift-WAVG/state-scan/output boundary or a
       different persistent/two-level schedule, not more tiny vector-precompute
       products.
+  - [x] Re-test in-place K/V precompute under a normal 4090 HF timing window:
+    - Motivation: the earlier HF smoke for in-place K/V ran while the host was
+      in an anomalously slow launch-overhead state (`~15.7k tok/s` baseline),
+      so the micro win needed a clean e2e rerun before any promotion decision.
+    - Result file:
+      `bench/results_native_4090_inplace_kv_clean_20260703_092500.jsonl`
+      from remote `/tmp/native_4090_inplace_kv_clean_20260703_092500.jsonl`.
+    - 4090 / 0.4B / prompt512 / bsz1, current shift-WAVG route, all rows pass
+      greedy/cache/decode smoke:
+      - baseline warp-specialized: `26,486.1 tok/s`, `19.3309 ms`, peak
+        `988.2 MiB`;
+      - `wk_half` + temp reuse, no in-place: `26,360.6 tok/s`,
+        `19.4229 ms`, peak `990.2 MiB`;
+      - `wk_half` + temp reuse + in-place K/V: `26,336.8 tok/s`,
+        `19.4405 ms`, peak `990.2 MiB`;
+      - precomputed-warp rpb8 + temp reuse + in-place K/V:
+        `26,020.8 tok/s`, `19.6766 ms`;
+      - precomputed-warp rpb16 + temp reuse + in-place K/V:
+        `26,392.8 tok/s`, `19.3992 ms`;
+      - repeat baseline: `26,135.3 tok/s`, `19.5904 ms`.
+    - Conclusion: the clean rerun confirms the CUDA micro win does not transfer
+      into HF e2e for this shape.  The best precompute/in-place row stays in
+      the same noisy band as baseline and below the strict branch best
+      `28,780.6 tok/s`.  Keep in-place K/V disabled by default.  Stop spending
+      iterations on standalone vector-precompute storage/reuse; the next
+      Albatross-gap experiment should be a wider producer/consumer boundary or
+      a genuinely different two-level/persistent schedule.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `28,780.6 tok/s` (`~0.5519x`), still about `2,508 tok/s` (`~8.7%`
