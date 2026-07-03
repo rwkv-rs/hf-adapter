@@ -1980,12 +1980,52 @@ Branch: `wangyue/native-prefill-060-albatross`
     memory win, but the extra launch and full `h` write/read lose more than the
     saved recompute.  Keep it opt-in only; do not promote.  This closes the
     cheap FFN-memory branch for the current shape.
+- [x] Try CUDA warp-pair two-row worker schedule:
+  - Motivation: test a middle point between row-block duplication and heavy
+    head-level sharing.  The `warp_pair` schedule shares one producer/vector
+    prep across an even row block, but each worker warp carries two state rows
+    in registers.  This preserves more row-block CTAs than `head_reg16` while
+    reducing worker-warps/CTA versus `warp_specialized rpb8/rpb16`.
+  - Implementation:
+    - added `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE=warp_pair`;
+    - added `rwkv7_state_scan_prep_n64_rowblock_warp_pair_kernel`;
+    - supported rpb `2/4/8/16`, kept it opt-in, and left default HF/native
+      behavior unchanged;
+    - `bench_cuda_state_scan_micro.py` now includes warp-pair rows.
+  - Correctness:
+    - 4090 synthetic oracle vs warp-specialized rpb1 passed exactly for rpb
+      `2/4/8/16` (`out/state/K/V` diffs all `0.0`) on a short compile check;
+    - all HF rows below pass greedy/cache/decode smoke.
+  - Result files:
+    - micro:
+      `bench/results_cuda_state_scan_warppair_micro_20260703_065936.jsonl`
+      from remote `/tmp/cuda_state_scan_warppair_micro_20260703_065936.jsonl`;
+    - HF e2e:
+      `bench/results_native_4090_warppair_20260703_070015.jsonl` from remote
+      `/tmp/native_4090_warppair_20260703_070015.jsonl`.
+  - 4090 synthetic `B=1,T=512,H=16,N=64,fp16` micro rows:
+    - warp-specialized rpb1: `0.448512 ms`, `1,141,552.5 tok/s`;
+    - warp-pair rpb2: `0.512000 ms`, `1,000,000.0 tok/s`;
+    - warp-pair rpb4: `0.518144 ms`, `988,142.3 tok/s`;
+    - warp-pair rpb8: `0.523264 ms`, `978,473.6 tok/s`;
+    - warp-pair rpb16: `0.529408 ms`, `967,118.0 tok/s`;
+    - same-run warp-pipelined rpb8 remains much faster at `0.326656 ms`.
+  - 4090 / 0.4B / prompt512 / bsz1 HF rows:
+    - same-run warp-specialized rpb1 + shift-WAVG baseline:
+      `27,273.8 tok/s`, `18.7726 ms`, peak `988.2 MiB`;
+    - warp-pair rpb2: `26,294.5 tok/s`, `19.4717 ms`;
+    - warp-pair rpb4: `26,624.5 tok/s`, `19.2304 ms`;
+    - warp-pair rpb8: `26,162.7 tok/s`, `19.5699 ms`.
+  - Conclusion: the schedule is correctness-safe but negative.  Serializing two
+    rows inside each worker warp loses more than reducing CTA worker warps, so
+    this row-pair middle point should stay telemetry-only and not be promoted.
 - [ ] Next persistent/two-level state-scan experiment:
-  - Return to the state-scan side now that the cheap FFN-memory branch lost.
-    The next candidate should be a stronger CUDA/persistent two-level schedule
-    that shares per-token vectors while preserving enough row parallelism, or a
-    larger state-scan/output consumer that avoids the already-negative raw
-    no-K/V, SK, G-mid, W-decay, and lean per-rank routes.
+  - Continue from the state-scan/shift-WAVG boundary, but avoid the now-negative
+    row-pair, head-level, raw no-K/V, SK, G-mid, W-decay, FFN two-pass, and
+    lean per-rank routes.  The next candidate should either consume a larger
+    adjacent boundary with the proven warp-pipelined scan, or implement a
+    genuinely different persistent/two-level schedule that preserves row
+    parallelism without per-worker row serialization.
   - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond `28,780.6 tok/s`, moving toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
