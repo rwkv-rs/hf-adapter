@@ -2319,6 +2319,84 @@ Branch: `wangyue/native-prefill-060-albatross`
       iterations on standalone vector-precompute storage/reuse; the next
       Albatross-gap experiment should be a wider producer/consumer boundary or
       a genuinely different two-level/persistent schedule.
+  - [x] Re-test the existing fused output-project boundary on the current
+    CUDA-scan + shift-WAVG route:
+    - Motivation: after standalone vector-precompute variants stopped
+      transferring to HF e2e, try a wider attention output consumer boundary
+      that fuses output-prep and `Ow` projection instead of only changing the
+      scan-side vector producer.
+    - Result file:
+      `bench/results_native_4090_output_project_current_20260703_094500.jsonl`
+      from remote `/tmp/native_4090_output_project_current_20260703_094500.jsonl`.
+    - 4090 / 0.4B / prompt512 / bsz1, current shift-WAVG route, all rows pass
+      greedy/cache/decode smoke:
+      - baseline warp-specialized: `25,970.7 tok/s`, `19.7145 ms`;
+      - output-project `block_m=32`: `19,336.3 tok/s`, `26.4787 ms`;
+      - output-project `block_m=64`: `23,180.9 tok/s`, `22.0872 ms`;
+      - output-project `block_m=128`: `23,670.3 tok/s`, `21.6305 ms`;
+      - warp-pipelined rpb16: `26,015.0 tok/s`, `19.6809 ms`;
+      - warp-pipelined rpb16 + output-project `block_m=128`:
+        `24,917.5 tok/s`, `20.5478 ms`;
+      - repeat baseline: `26,341.6 tok/s`, `19.4369 ms`.
+    - Conclusion: the current output-project kernel is still negative even on
+      the current CUDA/shift-WAVG route, because it recomputes output prep per
+      output tile and loses to cuBLAS `Ow`. Keep it disabled and do not spend
+      another iteration on this existing output-project design.
+  - [x] Try warp-pipelined half-shared CUDA state-scan:
+    - Motivation: test a persistent/two-level schedule variant that preserves
+      row parallelism but reduces shared-memory traffic/footprint by storing
+      the warp-pipelined per-token vectors (`r/w/k/a/kk/v_row`) as fp16 in
+      shared memory while keeping row state and reductions in fp32.
+    - Implementation:
+      - added opt-in schedule
+        `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE=warp_pipelined_half`;
+      - added
+        `rwkv7_state_scan_prep_n64_rowblock_warp_pipelined_half_shared_kernel`;
+      - supported rpb `1/2/4/8/16`; default HF/native behavior is unchanged;
+      - microbench now records the half-shared rpb rows.
+    - Correctness:
+      - 4090 direct oracle against normal warp-pipelined rpb8 passed with
+        output/state/K/V diffs `[0.03125, 0.0036721, 0.0, 0.0]`;
+      - all HF rows below pass greedy/cache/decode smoke.  Some rows have
+        expected fp16-shared drift up to `max_abs_diff=0.15625` while cosine
+        remains `1.0`.
+    - Result files:
+      - micro:
+        `bench/results_cuda_state_scan_warppipe_half_micro_4090_20260703_100000.jsonl`
+        from remote
+        `/tmp/cuda_state_scan_warppipe_half_micro_4090_20260703_100000.jsonl`;
+      - HF sweep:
+        `bench/results_native_4090_warppipe_half_20260703_100500.jsonl`
+        from remote `/tmp/native_4090_warppipe_half_20260703_100500.jsonl`;
+      - combo sweep:
+        `bench/results_native_4090_warppipe_half_combo_20260703_101500.jsonl`
+        from remote `/tmp/native_4090_warppipe_half_combo_20260703_101500.jsonl`.
+    - 4090 synthetic `B=1,T=512,H=16,N=64,fp16` micro rows:
+      - warp-specialized rpb1: `0.458256 ms`;
+      - normal warp-pipelined rpb1/rpb8/rpb16:
+        `0.397216 / 0.358992 / 0.404480 ms`;
+      - half-shared warp-pipelined rpb1/rpb8/rpb16:
+        `0.388544 / 0.362512 / 0.405984 ms`.
+    - 4090 HF rows, current shift-WAVG route:
+      - same-run baseline: `26,128.4 tok/s`, `19.5955 ms`;
+      - normal warppipe rpb1/rpb8:
+        `25,461.4 / 24,669.5 tok/s`;
+      - half-shared rpb1/rpb8:
+        `26,616.5 / 26,583.9 tok/s`;
+      - repeat baseline: `26,338.1 tok/s`.
+    - Combo sweep:
+      - baseline: `26,144.6 tok/s`, `19.5834 ms`, peak `988.2 MiB`;
+      - baseline + FFN norm-shift: `26,432.0 tok/s`, peak `964.2 MiB`;
+      - half rpb1 + FFN norm-shift: `26,018.5 tok/s`;
+      - half rpb8 + FFN norm-shift: `26,317.9 tok/s`;
+      - half rpb1/rpb8 with shift-WAVG `block_k=128`:
+        `26,305.7 / 26,218.3 tok/s`;
+      - half rpb8 + `block_k=128` + FFN norm-shift:
+        `25,812.6 tok/s`.
+    - Conclusion: half-shared is correctness-safe and can beat the noisy
+      same-run normal warppipe rows, but it does not beat the strict branch
+      best `28,780.6 tok/s` and does not stack with FFN norm-shift or
+      `block_k=128`. Keep it opt-in only; no default promotion.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `28,780.6 tok/s` (`~0.5519x`), still about `2,508 tok/s` (`~8.7%`

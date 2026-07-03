@@ -568,6 +568,16 @@ def _native_prefill_cuda_state_scan_schedule() -> str:
         return "head_reg16"
     if schedule in {"4", "warp_pipelined", "warp_pipe", "pipelined", "pipeline", "pipe"}:
         return "warp_pipelined"
+    if schedule in {
+        "7",
+        "warp_pipelined_half",
+        "warp_pipe_half",
+        "pipelined_half",
+        "pipeline_half",
+        "pipe_half",
+        "half_shared",
+    }:
+        return "warp_pipelined_half"
     if schedule in {"5", "warp_pair", "warppair", "pair", "paired", "row_pair", "rowpair"}:
         return "warp_pair"
     if schedule in {
@@ -581,7 +591,7 @@ def _native_prefill_cuda_state_scan_schedule() -> str:
     }:
         return "precomputed_warp"
     raise ValueError(
-        "RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE must be default, warp_specialized, warp2, head_reg16, warp_pipelined, warp_pair, or precomputed_warp"
+        "RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE must be default, warp_specialized, warp2, head_reg16, warp_pipelined, warp_pair, precomputed_warp, or warp_pipelined_half"
     )
 
 
