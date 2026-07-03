@@ -2249,6 +2249,49 @@ Branch: `wangyue/native-prefill-060-albatross`
       disabled by default; next work should either re-test this under a clean
       e2e timing window or fuse more of the adjacent shift-WAVG/state-prep
       producer boundary so the micro win survives full HF.
+  - [x] Try in-place `normalized_kk * a` (KKA) precompute for CUDA `wk_half`
+    routes:
+    - Motivation: after in-place K/V made the vector-precompute component
+      faster, test one more adjacent-state-prep boundary by overwriting the
+      dead prefill `a` tensor with `normalized_kk * a`, so row workers can
+      consume the recurrent-update product directly instead of multiplying
+      `kk * a` in every row update.
+    - Implementation:
+      - added opt-in `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_INPLACE_KKA=1`;
+      - extended the CUDA extension entrypoint and Python wrapper with an
+        `inplace_kka` flag;
+      - only allows KKA in-place when `precompute_mode=wk_half` and
+        `w_precomputed=false`, because the vector precompute kernel must own
+        the safe producer point for the overwritten `a` buffer;
+      - default HF/native behavior is unchanged; benchmark/profiler rows expose
+        `prefill_cuda_state_scan_inplace_kka(_effective)`.
+    - Correctness:
+      - local `py_compile` and `git diff --check` passed;
+      - 4090 direct CUDA wrapper check passed for default `wk_half` and
+        `precomputed_warp rpb8`: no-KKA vs in-place-KKA diffs were
+        `[0.015625, 0.00040245, 0.0, 0.0]` for output/state/K/V.  This is
+        correctness-close but not bit-exact because KKA is stored in fp16
+        before row update.
+    - Result file:
+      `bench/results_cuda_state_scan_inplace_kka_micro_4090_20260703_091158.jsonl`
+      from remote `/tmp/cuda_state_scan_inplace_kka_micro_20260703_091158.jsonl`.
+    - 4090 synthetic `B=1,T=512,H=16,N=64,fp16` micro rows:
+      - default `wk_half`: `0.322560 ms`;
+      - default `wk_half` + in-place K/V: `0.324608 ms`;
+      - default `wk_half` + in-place K/V + in-place KKA: `0.330288 ms`;
+      - precomputed-warp rpb8: `0.200704 ms`;
+      - precomputed-warp rpb8 + in-place K/V: `0.202752 ms`;
+      - precomputed-warp rpb8 + in-place K/V + in-place KKA: `0.202752 ms`;
+      - precomputed-warp rpb16: `0.224768 ms`;
+      - precomputed-warp rpb16 + in-place K/V: `0.226304 ms`;
+      - precomputed-warp rpb16 + in-place K/V + in-place KKA: `0.225280 ms`.
+    - Conclusion: KKA in-place is correctness-close but not a performance win;
+      it slows the default `wk_half` route and is flat/noise for
+      precomputed-warp.  Skip HF promotion rerun because the micro gate already
+      failed.  Keep this as opt-in/telemetry only; the next Albatross-gap work
+      should return to a wider shift-WAVG/state-scan/output boundary or a
+      different persistent/two-level schedule, not more tiny vector-precompute
+      products.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `28,780.6 tok/s` (`~0.5519x`), still about `2,508 tok/s` (`~8.7%`

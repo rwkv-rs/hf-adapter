@@ -225,6 +225,9 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
     cuda_state_scan_inplace_kv = getattr(
         nj, "_native_prefill_cuda_state_scan_inplace_kv_enabled", lambda: False
     )()
+    cuda_state_scan_inplace_kka = getattr(
+        nj, "_native_prefill_cuda_state_scan_inplace_kka_enabled", lambda: False
+    )()
     cuda_state_scan_rows_per_block = getattr(nj, "_native_prefill_cuda_state_scan_rows_per_block", lambda: 1)()
     cuda_state_scan_schedule = getattr(nj, "_native_prefill_cuda_state_scan_schedule", lambda: "default")()
     cuda_state_scan_w_precomputed = getattr(
@@ -290,6 +293,14 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
             cuda_state_scan_effective
             and cuda_state_scan_inplace_kv
             and cuda_state_scan_precompute
+            and not cuda_state_scan_w_precomputed
+        ),
+        "prefill_cuda_state_scan_inplace_kka": cuda_state_scan_inplace_kka,
+        "prefill_cuda_state_scan_inplace_kka_effective": bool(
+            cuda_state_scan_effective
+            and cuda_state_scan_inplace_kka
+            and cuda_state_scan_precompute
+            and cuda_state_scan_precompute_mode == "wk_half"
             and not cuda_state_scan_w_precomputed
         ),
         "prefill_cuda_state_scan_rows_per_block": cuda_state_scan_rows_per_block,

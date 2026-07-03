@@ -111,6 +111,7 @@ def call_full(
     precompute_mode: str = "none",
     w_precomputed: bool = False,
     inplace_kv: bool = False,
+    inplace_kka: bool = False,
 ):
     return cuda_state_scan_prep(
         tensors["r"],
@@ -129,6 +130,7 @@ def call_full(
         schedule=schedule,
         w_precomputed=w_precomputed,
         inplace_kv=inplace_kv,
+        inplace_kka=inplace_kka,
     )
 
 
@@ -136,16 +138,18 @@ def call_full_inplace_scratch(
     tensors: dict[str, torch.Tensor],
     k_scratch: torch.Tensor,
     v_scratch: torch.Tensor,
+    a_scratch: torch.Tensor,
     *,
     rows_per_block: int,
     schedule: str,
+    inplace_kka: bool = False,
 ):
     return cuda_state_scan_prep(
         tensors["r"],
         tensors["w"],
         k_scratch,
         v_scratch,
-        tensors["a"],
+        a_scratch,
         tensors["state"],
         tensors["k_k"],
         tensors["k_a"],
@@ -156,6 +160,7 @@ def call_full_inplace_scratch(
         rows_per_block=rows_per_block,
         schedule=schedule,
         inplace_kv=True,
+        inplace_kka=inplace_kka,
     )
 
 
@@ -326,15 +331,18 @@ def main() -> int:
     for schedule, rpb in [("default", 1), ("precomputed_warp", 8), ("precomputed_warp", 16)]:
         k_scratch = torch.empty_like(tensors["k"])
         v_scratch = torch.empty_like(tensors["v"])
-        setup_inplace = lambda k_scratch=k_scratch, v_scratch=v_scratch: (
+        a_scratch = torch.empty_like(tensors["a"])
+        setup_inplace = lambda k_scratch=k_scratch, v_scratch=v_scratch, a_scratch=a_scratch: (
             k_scratch.copy_(tensors["k"]),
             v_scratch.copy_(tensors["v"]),
+            a_scratch.copy_(tensors["a"]),
         )
         ms = median_ms(
-            lambda schedule=schedule, rpb=rpb, k_scratch=k_scratch, v_scratch=v_scratch: call_full_inplace_scratch(
+            lambda schedule=schedule, rpb=rpb, k_scratch=k_scratch, v_scratch=v_scratch, a_scratch=a_scratch: call_full_inplace_scratch(
                 tensors,
                 k_scratch,
                 v_scratch,
+                a_scratch,
                 rows_per_block=rpb,
                 schedule=schedule,
             ),
@@ -358,6 +366,51 @@ def main() -> int:
             "rows_per_block": rpb,
             "precompute_mode": "wk_half",
             "inplace_kv": True,
+            "cuda_ms": round(ms, 6),
+            "tokps_total": round(1000.0 * tokens_total / ms, 1) if ms > 0 else None,
+        }
+        print(json.dumps(row, ensure_ascii=False))
+        append_row(args.results, row)
+    for schedule, rpb in [("default", 1), ("precomputed_warp", 8), ("precomputed_warp", 16)]:
+        k_scratch = torch.empty_like(tensors["k"])
+        v_scratch = torch.empty_like(tensors["v"])
+        a_scratch = torch.empty_like(tensors["a"])
+        setup_inplace = lambda k_scratch=k_scratch, v_scratch=v_scratch, a_scratch=a_scratch: (
+            k_scratch.copy_(tensors["k"]),
+            v_scratch.copy_(tensors["v"]),
+            a_scratch.copy_(tensors["a"]),
+        )
+        ms = median_ms(
+            lambda schedule=schedule, rpb=rpb, k_scratch=k_scratch, v_scratch=v_scratch, a_scratch=a_scratch: call_full_inplace_scratch(
+                tensors,
+                k_scratch,
+                v_scratch,
+                a_scratch,
+                rows_per_block=rpb,
+                schedule=schedule,
+                inplace_kka=True,
+            ),
+            warmup=args.warmup,
+            steps=args.steps,
+            setup=setup_inplace,
+        )
+        row = {
+            "axis": "cuda_state_scan_micro",
+            "backend": "cuda_state_scan",
+            "bench_case": f"full_{schedule}_wkhalf_inplace_kv_kka_rpb{rpb}",
+            "status": "pass",
+            "device": device_name,
+            "dtype": "fp16",
+            "batch_size": args.batch_size,
+            "seq_len": args.seq_len,
+            "heads": args.heads,
+            "head_dim": 64,
+            "tokens_total": tokens_total,
+            "schedule": schedule,
+            "rows_per_block": rpb,
+            "precompute_mode": "wk_half",
+            "inplace_kv": True,
+            "inplace_kka": True,
             "cuda_ms": round(ms, 6),
             "tokps_total": round(1000.0 * tokens_total / ms, 1) if ms > 0 else None,
         }

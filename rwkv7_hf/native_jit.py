@@ -529,6 +529,12 @@ def _native_prefill_cuda_state_scan_inplace_kv_enabled() -> bool:
     return env_flag("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_INPLACE_KV", False)
 
 
+def _native_prefill_cuda_state_scan_inplace_kka_enabled() -> bool:
+    """Overwrite prefill A with normalized-KK*A for CUDA wk_half precompute."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_INPLACE_KKA", False)
+
+
 def _native_prefill_cuda_state_scan_rows_per_block() -> int:
     """Rows handled by one CUDA row-block in the cooperative N=64 scan."""
 
@@ -2384,6 +2390,13 @@ def prefill(
                 and cuda_state_scan_precompute
                 and not state_scan_w_precomputed
             )
+            cuda_state_scan_inplace_kka = bool(
+                use_cuda_state_scan
+                and _native_prefill_cuda_state_scan_inplace_kka_enabled()
+                and cuda_state_scan_precompute
+                and cuda_state_scan_precompute_mode == "wk_half"
+                and not state_scan_w_precomputed
+            )
             cuda_state_scan_reuse_precompute = bool(
                 use_cuda_state_scan
                 and _native_prefill_cuda_state_scan_reuse_precompute_enabled()
@@ -2463,6 +2476,7 @@ def prefill(
                     schedule=cuda_state_scan_schedule,
                     w_precomputed=state_scan_w_precomputed,
                     inplace_kv=cuda_state_scan_inplace_kv,
+                    inplace_kka=cuda_state_scan_inplace_kka,
                     w_temp=cuda_state_scan_w_temp_arg,
                     kk_temp=cuda_state_scan_kk_temp_arg,
                 )
@@ -2486,6 +2500,7 @@ def prefill(
                     schedule=cuda_state_scan_schedule,
                     w_precomputed=state_scan_w_precomputed,
                     inplace_kv=cuda_state_scan_inplace_kv,
+                    inplace_kka=cuda_state_scan_inplace_kka,
                     w_temp=cuda_state_scan_w_temp_arg,
                     kk_temp=cuda_state_scan_kk_temp_arg,
                 )
