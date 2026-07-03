@@ -90,6 +90,7 @@ def main() -> int:
     ap.add_argument("--lean-down", action="store_true")
     ap.add_argument("--lean-up", action="store_true")
     ap.add_argument("--output-g-mid", action="store_true")
+    ap.add_argument("--output-a-sigmoid", action="store_true")
     ap.add_argument("--warmup", type=int, default=5)
     ap.add_argument("--steps", type=int, default=15)
     ap.add_argument("--results", default="")
@@ -244,6 +245,7 @@ def main() -> int:
                 HAS_G_BIAS=False,
                 HAS_V_BIAS=True,
                 OUTPUT_W_DECAY=False,
+                OUTPUT_A_SIGMOID=bool(args.output_a_sigmoid),
                 LEAN_UP=bool(args.lean_up),
                 SKIP_G_OUT=bool(args.output_g_mid),
                 BLOCK_M=int(args.block_m),
@@ -281,6 +283,7 @@ def main() -> int:
                 lean_down=bool(args.lean_down),
                 lean_up=bool(args.lean_up),
                 output_g_mid=bool(args.output_g_mid),
+                output_a_sigmoid=bool(args.output_a_sigmoid),
             )
 
         # Correctness against torch fallback and explicit phase composition.
@@ -309,6 +312,7 @@ def main() -> int:
             block_m=int(args.block_m),
             block_r=int(args.block_r),
             block_k=int(args.block_k),
+            output_a_sigmoid=bool(args.output_a_sigmoid),
             force_fallback=True,
         )
         if args.output_g_mid:
@@ -362,6 +366,7 @@ def main() -> int:
             "lean_down": bool(args.lean_down),
             "lean_up": bool(args.lean_up),
             "output_g_mid": bool(args.output_g_mid),
+            "output_a_sigmoid": bool(args.output_a_sigmoid),
             "max_abs_diff_vs_fallback": round(max_diff, 6),
             "phase_max_abs_diff_vs_full": round(phase_diff, 6),
         }

@@ -330,6 +330,7 @@ if _HAS_TRITON:
         HAS_G_BIAS: tl.constexpr,
         HAS_V_BIAS: tl.constexpr,
         OUTPUT_W_DECAY: tl.constexpr,
+        OUTPUT_A_SIGMOID: tl.constexpr,
         LEAN_UP: tl.constexpr,
         SKIP_G_OUT: tl.constexpr,
         BLOCK_M: tl.constexpr,
@@ -387,6 +388,8 @@ if _HAS_TRITON:
         out_base = batch_id * hidden + offs_m
         if OUTPUT_W_DECAY:
             acc_w = tl.exp(-0.606531 * tl.sigmoid(acc_w))
+        if OUTPUT_A_SIGMOID:
+            acc_a = tl.sigmoid(acc_a)
         tl.store(w_out_ptr + out_base, acc_w, mask=mask_m)
         tl.store(a_out_ptr + out_base, acc_a, mask=mask_m)
         if not SKIP_G_OUT:
@@ -979,6 +982,7 @@ def fused_wavg_lora(
             HAS_G_BIAS=g_up_bias is not None,
             HAS_V_BIAS=v_up_bias is not None,
             OUTPUT_W_DECAY=False,
+            OUTPUT_A_SIGMOID=False,
             LEAN_UP=False,
             SKIP_G_OUT=False,
             BLOCK_M=int(block_m),
@@ -1018,6 +1022,7 @@ def fused_shift_wavg_lora(
     down_num_warps: int = 4,
     up_num_warps: int = 4,
     output_w_decay: bool = False,
+    output_a_sigmoid: bool = False,
     lean_down: bool = False,
     lean_up: bool = False,
     output_g_mid: bool = False,
@@ -1122,6 +1127,8 @@ def fused_shift_wavg_lora(
         )
         if output_w_decay:
             w_out = torch.exp(-0.606531 * torch.sigmoid(w_out.float())).to(dtype=w_out.dtype)
+        if output_a_sigmoid:
+            a_out = torch.sigmoid(a_out)
         if output_g_mid:
             g_out = torch.sigmoid(F.linear(xg, g_down_weight)).to(dtype=h2.dtype)
     else:
@@ -1216,6 +1223,7 @@ def fused_shift_wavg_lora(
             HAS_G_BIAS=g_up_bias is not None,
             HAS_V_BIAS=v_up_bias is not None,
             OUTPUT_W_DECAY=bool(output_w_decay),
+            OUTPUT_A_SIGMOID=bool(output_a_sigmoid),
             LEAN_UP=bool(lean_up),
             SKIP_G_OUT=bool(output_g_mid),
             BLOCK_M=int(block_m),

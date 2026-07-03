@@ -998,6 +998,20 @@ def _native_prefill_fused_shift_wavg_lora_w_decay_enabled(total_rows: int) -> bo
     return _native_prefill_cuda_state_scan_schedule() in {"warp_specialized", "warp_pipelined"}
 
 
+def _native_prefill_fused_shift_wavg_lora_a_sigmoid_requested() -> bool:
+    """Return whether shift-WAVG should emit post-sigmoid A directly."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_A_SIGMOID", False)
+
+
+def _native_prefill_fused_shift_wavg_lora_a_sigmoid_enabled(total_rows: int) -> bool:
+    """Runtime switch for moving A sigmoid into the shift-WAVG LoRA kernel."""
+
+    if not _native_prefill_fused_shift_wavg_lora_a_sigmoid_requested():
+        return False
+    return _native_prefill_fused_shift_wavg_lora_enabled(total_rows)
+
+
 def _native_prefill_ffn_fused_act_requested() -> bool:
     """Return whether the prefill FFN relu-square fusion probe is requested."""
 
@@ -1912,6 +1926,7 @@ def prefill(
                 block_m, block_r, block_k = _native_prefill_fused_shift_wavg_lora_blocks()
                 down_warps, up_warps = _native_prefill_fused_shift_wavg_lora_warps()
                 output_w_decay = _native_prefill_fused_shift_wavg_lora_w_decay_enabled(B * T)
+                output_a_sigmoid = _native_prefill_fused_shift_wavg_lora_a_sigmoid_enabled(B * T)
                 lean_down = _native_prefill_fused_shift_wavg_lora_lean_down_requested()
                 lean_up = _native_prefill_fused_shift_wavg_lora_lean_up_requested()
                 output_g_mid = (
@@ -1951,6 +1966,7 @@ def prefill(
                     down_num_warps=down_warps,
                     up_num_warps=up_warps,
                     output_w_decay=output_w_decay,
+                    output_a_sigmoid=output_a_sigmoid,
                     lean_down=lean_down,
                     lean_up=lean_up,
                     output_g_mid=output_g_mid,
@@ -1961,7 +1977,7 @@ def prefill(
                 # xw/xa/xg are intentionally not materialized by this route.
                 xw = xa = xg = None
                 w = w2_out.view(B, T, hidden)
-                a = torch.sigmoid(a2_out.view(B, T, hidden))
+                a = a2_out.view(B, T, hidden) if output_a_sigmoid else torch.sigmoid(a2_out.view(B, T, hidden))
                 if output_g_mid:
                     g = None
                     g_mid_for_output = g2_out.reshape(B * T, int(g1.shape[0]))

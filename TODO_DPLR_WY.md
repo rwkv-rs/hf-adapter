@@ -2437,6 +2437,48 @@ Branch: `wangyue/native-prefill-060-albatross`
       slower than row-block/warppipe schedules and loses badly in HF e2e. Keep
       it opt-in only. Head-level one-CTA-per-head sharing remains a negative
       direction for this 4090 shape.
+  - [x] Try moving A sigmoid into the shift-WAVG LoRA producer boundary:
+    - Motivation: after scan-side persistent/head-level variants stayed below
+      the strict best, test a small adjacent producer/consumer boundary that
+      removes the separate PyTorch `sigmoid(A)` tensor op before state scan.
+      This stays on the current shift-WAVG + CUDA row-block path and leaves the
+      default HF path unchanged.
+    - Implementation:
+      - added opt-in
+        `RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_A_SIGMOID=1`;
+      - `_wavg_lora_up_kernel` can now emit post-sigmoid `A` directly;
+      - native prefill consumes `a2_out` directly only when the flag is
+        effective, otherwise it keeps the old `torch.sigmoid(a2_out)` path;
+      - scan and breakdown benchmark telemetry now records
+        `prefill_fused_shift_wavg_lora_a_sigmoid_(requested|effective)`.
+    - Correctness:
+      - local and 4090 `py_compile` plus local `git diff --check` passed;
+      - 4090 shift-WAVG micro row passed with
+        `max_abs_diff_vs_fallback=0.031738` and
+        `phase_max_abs_diff_vs_full=0.0`;
+      - HF e2e row passed greedy/cache/decode smoke with `max_abs_diff=0.125`
+        and cosine `1.0`.
+    - Result files:
+      - micro:
+        `bench/results_shift_wavg_asigmoid_micro_4090_20260703_120000.jsonl`
+        from remote `/tmp/shift_wavg_asigmoid_micro_20260703_1.jsonl`;
+      - HF:
+        `bench/results_native_4090_shift_wavg_asigmoid_20260703_120500.jsonl`
+        from remote `/tmp/native_4090_shift_wavg_asigmoid_20260703_1.jsonl`.
+    - 4090 micro rows, layer 1 / rows 512 / fp16:
+      - baseline raw-A full helper: `0.202592 ms`;
+      - A-sigmoid full helper: `0.207872 ms`.
+    - 4090 / 0.4B / prompt512 / bsz1 HF rows:
+      - baseline shift-WAVG + CUDA warp-specialized:
+        `26,280.8 tok/s`, `19.4819 ms`;
+      - A-sigmoid shift-WAVG:
+        `25,970.2 tok/s`, `19.7149 ms`.
+    - Conclusion: correctness is acceptable, but fusing this sigmoid into the
+      Triton up-kernel is a small performance loss in both micro and HF e2e.
+      Keep the flag opt-in only and do not promote it. The next useful stretch
+      attempt still needs a wider shift-WAVG/state-scan/output boundary or a
+      genuinely different persistent/two-level schedule, not another single
+      activation move.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `28,780.6 tok/s` (`~0.5519x`), still about `2,508 tok/s` (`~8.7%`

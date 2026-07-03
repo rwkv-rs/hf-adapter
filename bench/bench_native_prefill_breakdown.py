@@ -275,6 +275,7 @@ def profiled_native_prefill(
         if use_shift_wavg_lora:
             block_m, block_r, block_k = native_jit._native_prefill_fused_shift_wavg_lora_blocks()
             down_warps, up_warps = native_jit._native_prefill_fused_shift_wavg_lora_warps()
+            output_a_sigmoid = native_jit._native_prefill_fused_shift_wavg_lora_a_sigmoid_enabled(B * T)
 
             def fused_shift_wavg():
                 return native_jit.fused_shift_wavg_lora(
@@ -303,6 +304,7 @@ def profiled_native_prefill(
                     block_k=block_k,
                     down_num_warps=down_warps,
                     up_num_warps=up_warps,
+                    output_a_sigmoid=output_a_sigmoid,
                 )
 
             xr2, xk2, xv2, w2_out, a2_out, g2_out, v_gate2 = profiler.measure(
@@ -315,7 +317,7 @@ def profiled_native_prefill(
             xw = xa = xg = None
             shift_wavg_values = (
                 w2_out.view(B, T, hidden),
-                torch.sigmoid(a2_out.view(B, T, hidden)),
+                a2_out.view(B, T, hidden) if output_a_sigmoid else torch.sigmoid(a2_out.view(B, T, hidden)),
                 g2_out.view(B, T, hidden),
                 v_gate2.view(B, T, hidden),
             )
@@ -1467,6 +1469,8 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_fused_shift_wavg_lora_g_mid_output_effective": getattr(native_jit, "_native_prefill_fused_shift_wavg_lora_g_mid_output_enabled", lambda: False)(),
         "prefill_fused_shift_wavg_lora_w_decay_requested": getattr(native_jit, "_native_prefill_fused_shift_wavg_lora_w_decay_requested", lambda: False)(),
         "prefill_fused_shift_wavg_lora_w_decay_effective": getattr(native_jit, "_native_prefill_fused_shift_wavg_lora_w_decay_enabled", lambda _rows: False)(batch_size * prompt_tokens),
+        "prefill_fused_shift_wavg_lora_a_sigmoid_requested": getattr(native_jit, "_native_prefill_fused_shift_wavg_lora_a_sigmoid_requested", lambda: False)(),
+        "prefill_fused_shift_wavg_lora_a_sigmoid_effective": getattr(native_jit, "_native_prefill_fused_shift_wavg_lora_a_sigmoid_enabled", lambda _rows: False)(batch_size * prompt_tokens),
         "prefill_ffn_fused_act_requested": getattr(native_jit, "_native_prefill_ffn_fused_act_requested", lambda: False)(),
         "prefill_ffn_fused_act_effective": getattr(native_jit, "_native_prefill_ffn_fused_act_enabled", lambda: False)(),
         "prefill_ffn_fused_act_mode": getattr(native_jit, "_native_prefill_ffn_fused_act_mode", lambda: "triton")(),
