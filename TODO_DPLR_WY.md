@@ -1858,12 +1858,61 @@ Branch: `wangyue/native-prefill-060-albatross`
     another shallow shift-WAVG traffic tweak; the next useful attention-side
     route must remove or consume larger intermediates across the state-scan /
     output boundary rather than only pruning per-rank mix loads.
+- [x] Try a lean shift-WAVG up-kernel rank retile:
+  - Motivation: after the down-kernel traffic pruning failed to move HF e2e,
+    test the symmetric up-projection side.  For the 0.4B shape with
+    `block_r=64`, rank block 1 is G-only (`w/a/v` ranks are already
+    exhausted), so this opt-in route skips the W/A/V mid and up-weight loads
+    plus reductions for those exhausted rank ranges.
+  - Implementation:
+    - added `LEAN_UP` to `_wavg_lora_up_kernel`;
+    - exposed `RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_LEAN_UP=1`;
+    - benchmark telemetry now records
+      `prefill_fused_shift_wavg_lora_lean_up`;
+    - default HF/native behavior is unchanged.
+  - Result files:
+    - micro:
+      `bench/results_shift_wavg_lean_up_micro_4090_20260703_170000.jsonl`
+      from remote `/tmp/shift_wavg_lean_up_micro_4090_20260703_170000.jsonl`;
+    - rank32 micro:
+      `bench/results_shift_wavg_rank32_micro_4090_20260703_171500.jsonl`
+      from remote `/tmp/shift_wavg_rank32_micro_4090_20260703_171500.jsonl`;
+    - HF e2e:
+      `bench/results_native_4090_shift_wavg_lean_up_20260703_170000.jsonl`
+      from remote `/tmp/native_4090_shift_wavg_lean_up_20260703_170000.jsonl`.
+  - 4090 shift-WAVG micro, layer 1, rows512, hidden1024:
+    - baseline `bm128/br64/bk64`: full `0.19968 ms`, down `0.086016 ms`,
+      up `0.090112 ms`;
+    - lean-up: full `0.198656 ms`, up `0.089088 ms`;
+    - lean-down+lean-up: full `0.196608 ms`, up `0.088064 ms`;
+    - correctness passes with max diff `0.0625`.
+  - 4090 rank-retile micro:
+    - `block_r=32` baseline: full `0.221184 ms`, down `0.106496 ms`,
+      up `0.091136 ms`;
+    - `block_r=32` + lean-up: full `0.2048 ms`, up `0.072704 ms`;
+    - conclusion: lean-up helps small-rank up projection, but `block_r=32`
+      increases down-kernel work enough to lose versus the current
+      `block_r=64` route.
+  - 4090 / 0.4B / prompt512 / bsz1 HF rows, all pass greedy/cache/decode:
+    - same-run baseline: `26,928.3 tok/s`, `19.0135 ms`, peak `988.2 MiB`;
+    - lean-up: `27,725.4 tok/s`, `18.4668 ms`, peak `988.2 MiB`;
+    - lean-down+lean-up: `27,698.8 tok/s`, `18.4846 ms`, peak `988.2 MiB`;
+    - lean-up + FFN norm-shift: `26,523.4 tok/s`, peak `964.2 MiB`;
+    - lean-down+lean-up + FFN norm-shift: `27,285.1 tok/s`, peak
+      `964.2 MiB`.
+  - Conclusion: lean-up is correctness-safe and can beat the same-run
+    baseline, but it does not exceed the strict best `28,780.6 tok/s`, and the
+    rank32 retile loses overall.  Keep lean-up opt-in only.  This exhausts the
+    shallow rank-traffic retile line; the next step needs a wider
+    shift-WAVG/state-scan/output consumer boundary or a persistent/two-level
+    scan design that changes more than per-rank pruning.
 - [ ] Next persistent/two-level state-scan experiment:
   - Move the next bounded experiment to the larger remaining boundary exposed
     by breakdown: `attn_shift_wavg_lora_fused` (`~5.1 ms`) and/or the FFN
-    memory boundary.  Preferred next step is a targeted shift-WAVG micro/e2e
-    retile that changes actual memory traffic or matmul tiling, not only W
-    decay, while comparing against the current best CUDA scan route.
+    memory boundary.  Do not spend another iteration on lean per-rank pruning.
+    The next candidate should remove or consume a large tensor boundary
+    between shift-WAVG outputs and state-scan/output, or implement a stronger
+    persistent/two-level scan schedule.
   - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond `28,780.6 tok/s`, moving toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for

@@ -330,6 +330,7 @@ if _HAS_TRITON:
         HAS_G_BIAS: tl.constexpr,
         HAS_V_BIAS: tl.constexpr,
         OUTPUT_W_DECAY: tl.constexpr,
+        LEAN_UP: tl.constexpr,
         BLOCK_M: tl.constexpr,
         BLOCK_R: tl.constexpr,
     ):
@@ -345,26 +346,30 @@ if _HAS_TRITON:
         acc_v = tl.zeros((BLOCK_M,), tl.float32)
         for start in range(0, max_rank, BLOCK_R):
             ridx = start + offs_r
-            mask_w_r = ridx < w_rank
-            mask_a_r = ridx < a_rank
-            mask_g_r = ridx < g_rank
-            mask_v_r = ridx < v_rank
-            wm = tl.load(w_mid_ptr + batch_id * w_rank + ridx, mask=mask_w_r, other=0.0).to(tl.float32)
-            am = tl.load(a_mid_ptr + batch_id * a_rank + ridx, mask=mask_a_r, other=0.0).to(tl.float32)
-            gm = tl.load(g_mid_ptr + batch_id * g_rank + ridx, mask=mask_g_r, other=0.0).to(tl.float32)
-            vm = tl.load(v_mid_ptr + batch_id * v_rank + ridx, mask=mask_v_r, other=0.0).to(tl.float32)
-            w_offsets = offs_m[:, None] * w_rank + ridx[None, :]
-            a_offsets = offs_m[:, None] * a_rank + ridx[None, :]
-            g_offsets = offs_m[:, None] * g_rank + ridx[None, :]
-            v_offsets = offs_m[:, None] * v_rank + ridx[None, :]
-            wu = tl.load(w_up_ptr + w_offsets, mask=mask_m[:, None] & mask_w_r[None, :], other=0.0).to(tl.float32)
-            au = tl.load(a_up_ptr + a_offsets, mask=mask_m[:, None] & mask_a_r[None, :], other=0.0).to(tl.float32)
-            gu = tl.load(g_up_ptr + g_offsets, mask=mask_m[:, None] & mask_g_r[None, :], other=0.0).to(tl.float32)
-            vu = tl.load(v_up_ptr + v_offsets, mask=mask_m[:, None] & mask_v_r[None, :], other=0.0).to(tl.float32)
-            acc_w += tl.sum(wu * wm[None, :], axis=1)
-            acc_a += tl.sum(au * am[None, :], axis=1)
-            acc_g += tl.sum(gu * gm[None, :], axis=1)
-            acc_v += tl.sum(vu * vm[None, :], axis=1)
+            if (not LEAN_UP) or start < w_rank:
+                mask_w_r = ridx < w_rank
+                wm = tl.load(w_mid_ptr + batch_id * w_rank + ridx, mask=mask_w_r, other=0.0).to(tl.float32)
+                w_offsets = offs_m[:, None] * w_rank + ridx[None, :]
+                wu = tl.load(w_up_ptr + w_offsets, mask=mask_m[:, None] & mask_w_r[None, :], other=0.0).to(tl.float32)
+                acc_w += tl.sum(wu * wm[None, :], axis=1)
+            if (not LEAN_UP) or start < a_rank:
+                mask_a_r = ridx < a_rank
+                am = tl.load(a_mid_ptr + batch_id * a_rank + ridx, mask=mask_a_r, other=0.0).to(tl.float32)
+                a_offsets = offs_m[:, None] * a_rank + ridx[None, :]
+                au = tl.load(a_up_ptr + a_offsets, mask=mask_m[:, None] & mask_a_r[None, :], other=0.0).to(tl.float32)
+                acc_a += tl.sum(au * am[None, :], axis=1)
+            if (not LEAN_UP) or start < g_rank:
+                mask_g_r = ridx < g_rank
+                gm = tl.load(g_mid_ptr + batch_id * g_rank + ridx, mask=mask_g_r, other=0.0).to(tl.float32)
+                g_offsets = offs_m[:, None] * g_rank + ridx[None, :]
+                gu = tl.load(g_up_ptr + g_offsets, mask=mask_m[:, None] & mask_g_r[None, :], other=0.0).to(tl.float32)
+                acc_g += tl.sum(gu * gm[None, :], axis=1)
+            if (not LEAN_UP) or start < v_rank:
+                mask_v_r = ridx < v_rank
+                vm = tl.load(v_mid_ptr + batch_id * v_rank + ridx, mask=mask_v_r, other=0.0).to(tl.float32)
+                v_offsets = offs_m[:, None] * v_rank + ridx[None, :]
+                vu = tl.load(v_up_ptr + v_offsets, mask=mask_m[:, None] & mask_v_r[None, :], other=0.0).to(tl.float32)
+                acc_v += tl.sum(vu * vm[None, :], axis=1)
 
         if HAS_W_BIAS:
             wb = tl.load(w_bias_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
@@ -972,6 +977,7 @@ def fused_wavg_lora(
             HAS_G_BIAS=g_up_bias is not None,
             HAS_V_BIAS=v_up_bias is not None,
             OUTPUT_W_DECAY=False,
+            LEAN_UP=False,
             BLOCK_M=int(block_m),
             BLOCK_R=int(block_r),
             num_warps=4,
@@ -1010,6 +1016,7 @@ def fused_shift_wavg_lora(
     up_num_warps: int = 4,
     output_w_decay: bool = False,
     lean_down: bool = False,
+    lean_up: bool = False,
     force_fallback: bool = False,
 ):
     """Fuse attention time-mix materialization with W/A/G/V-gate LoRA.
@@ -1203,6 +1210,7 @@ def fused_shift_wavg_lora(
             HAS_G_BIAS=g_up_bias is not None,
             HAS_V_BIAS=v_up_bias is not None,
             OUTPUT_W_DECAY=bool(output_w_decay),
+            LEAN_UP=bool(lean_up),
             BLOCK_M=int(block_m),
             BLOCK_R=int(block_r),
             num_warps=int(up_num_warps),

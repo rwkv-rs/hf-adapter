@@ -88,6 +88,7 @@ def main() -> int:
     ap.add_argument("--down-warps", type=int, default=4)
     ap.add_argument("--up-warps", type=int, default=4)
     ap.add_argument("--lean-down", action="store_true")
+    ap.add_argument("--lean-up", action="store_true")
     ap.add_argument("--warmup", type=int, default=5)
     ap.add_argument("--steps", type=int, default=15)
     ap.add_argument("--results", default="")
@@ -242,6 +243,7 @@ def main() -> int:
                 HAS_G_BIAS=False,
                 HAS_V_BIAS=True,
                 OUTPUT_W_DECAY=False,
+                LEAN_UP=bool(args.lean_up),
                 BLOCK_M=int(args.block_m),
                 BLOCK_R=int(args.block_r),
                 num_warps=int(args.up_warps),
@@ -275,6 +277,7 @@ def main() -> int:
                 down_num_warps=int(args.down_warps),
                 up_num_warps=int(args.up_warps),
                 lean_down=bool(args.lean_down),
+                lean_up=bool(args.lean_up),
             )
 
         # Correctness against torch fallback and explicit phase composition.
@@ -344,6 +347,7 @@ def main() -> int:
             "down_warps": int(args.down_warps),
             "up_warps": int(args.up_warps),
             "lean_down": bool(args.lean_down),
+            "lean_up": bool(args.lean_up),
             "max_abs_diff_vs_fallback": round(max_diff, 6),
             "phase_max_abs_diff_vs_full": round(phase_diff, 6),
         }
