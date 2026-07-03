@@ -223,11 +223,17 @@ src/transformers/models/rwkv7/
 
 ### 14. HF 兼容 speculative decoding
 
-- 更多 draft / target 尺寸组合;
-- 更长 prompt 与更大 batch;
-- acceptance-rate telemetry;
-- 对 target greedy 的正确性校验;
-- 文档:speculative decoding 何时有益 / 有害。
+现状:`rwkv7_speculative_generate`(`modeling_rwkv7.py`)已实现 batch=1、greedy、block verify + 不匹配时从接受前缀重建 draft cache;`tests/test_speculative_decode.py` 校验 same-model draft `acceptance=1.0` 且与 `generate()` 逐 token 一致,`--draft-model` 可换小 draft(0.1B→0.4B,acceptance ~0.78)。verify 当前仅 greedy(`do_sample=False`)。
+
+> **准则(守红线)**:训练化的 draft **复用现有 verify,不改它**;增强只通过「加载不同的 draft checkpoint」(即现有 `--draft-model` / `draft_model=` 开关)生效。默认行为、函数签名、verify 路径不变 —— 现有 0.1B→0.4B 路径/测试/benchmark 行永远是安全回退点,训练过的 draft 随时能关掉且零损失。
+
+需补:
+
+- **draft 训练化(提 acceptance)**:`scripts/` 下加**独立**训练脚本,用小 RWKV 对 target logits 做 **LoRA 对齐**(推荐,保通用泛化)或从 target cache 蒸馏;recipe 参考 DeepSeek DeepSpec/SpecForge 的 draft 训练 + acceptance 评估([github.com/deepseek-ai/DeepSpec](https://github.com/deepseek-ai/DeepSpec))。脚本不进核心 forward 路径,不引入硬依赖。注:DSpark/DFlash/Eagle3 的 draft 架构是 transformer-KV,**不能直接用于 RWKV recurrent state**,draft 必须是小 RWKV。
+- 训练后的 draft 经现有 `--draft-model` 加载;结果按 `draft=trained` vs `draft=off-the-shelf` 写入 `bench/results.jsonl`,不覆盖旧行。
+- 更多 draft / target 尺寸组合、更长 prompt 与更大 batch。
+- **verify 采样正确性(单独子任务,慎动 verify)**:若加采样,须按 speculative-sampling 公式做 acceptance correction,并**先补分布正确性测试再改 verify** —— 这是唯一会触碰 verify 的工作,单独立项。
+- 对 target greedy 的正确性校验;文档:speculative decoding 何时有益 / 有害。
 
 ## 贡献者 PR checklist
 
