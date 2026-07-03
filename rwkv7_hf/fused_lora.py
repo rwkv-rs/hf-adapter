@@ -988,6 +988,8 @@ def fused_shift_wavg_lora(
     block_m: int = 16,
     block_r: int = 64,
     block_k: int = 64,
+    down_num_warps: int = 4,
+    up_num_warps: int = 4,
     force_fallback: bool = False,
 ):
     """Fuse attention time-mix materialization with W/A/G/V-gate LoRA.
@@ -1148,7 +1150,7 @@ def fused_shift_wavg_lora(
             max_rank,
             BLOCK_R=int(block_r),
             BLOCK_K=int(block_k),
-            num_warps=4,
+            num_warps=int(down_num_warps),
         )
         _wavg_lora_up_kernel[(batch, triton.cdiv(hidden, int(block_m)))](
             w_mid,
@@ -1179,7 +1181,7 @@ def fused_shift_wavg_lora(
             HAS_V_BIAS=v_up_bias is not None,
             BLOCK_M=int(block_m),
             BLOCK_R=int(block_r),
-            num_warps=4,
+            num_warps=int(up_num_warps),
         )
     if had_seq:
         return (

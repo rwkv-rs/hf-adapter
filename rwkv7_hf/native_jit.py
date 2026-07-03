@@ -811,6 +811,14 @@ def _native_prefill_fused_shift_wavg_lora_blocks() -> tuple[int, int, int]:
     return vals[0], vals[1], vals[2]
 
 
+def _native_prefill_fused_shift_wavg_lora_warps() -> tuple[int, int]:
+    """Return ``(down_num_warps, up_num_warps)`` for shift-WAVG LoRA."""
+
+    down = env_int("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_DOWN_WARPS", 4, lower=1, upper=8)
+    up = env_int("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_UP_WARPS", 4, lower=1, upper=8)
+    return down, up
+
+
 def _native_prefill_fused_projection_requested() -> bool:
     """Return whether the prefill R/K/V + LoRA projection fusion probe is requested."""
 
@@ -1545,6 +1553,7 @@ def prefill(
                 and _native_prefill_fused_shift_wavg_lora_enabled(B * T)
             ):
                 block_m, block_r, block_k = _native_prefill_fused_shift_wavg_lora_blocks()
+                down_warps, up_warps = _native_prefill_fused_shift_wavg_lora_warps()
                 xr2, xk2, xv2, w2_out, a2_out, g2_out, v_gate2 = fused_shift_wavg_lora(
                     h.reshape(B * T, hidden),
                     prev_h.reshape(B * T, hidden),
@@ -1569,6 +1578,8 @@ def prefill(
                     block_m=block_m,
                     block_r=block_r,
                     block_k=block_k,
+                    down_num_warps=down_warps,
+                    up_num_warps=up_warps,
                 )
                 xr = xr2.view(B, T, hidden)
                 xk = xk2.view(B, T, hidden)

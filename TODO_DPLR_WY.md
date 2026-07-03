@@ -1418,15 +1418,36 @@ Branch: `wangyue/native-prefill-060-albatross`
       - the layer-prep fusion is now the largest non-scan component, so the
         next stretch step needs either split/tune that fused kernel or return
         to state-scan/FFN fusion.
-- [ ] Next main fused-fp16 task:
-  - Use the positive shift-WAVG route as the current mainline candidate, but do
-    not claim Albatross parity yet.  The next bounded experiment should target
-    the remaining `~2,508 tok/s` gap to `0.60x` by either:
-    - profiling/splitting `attn_shift_wavg_lora_fused` to see whether the
-      on-the-fly time-mix down pass or the up pass dominates, then reducing
-      that cost; or
-    - attacking the still-dominant `recurrent_scan_state_prep_cuda` path with
-      a deeper persistent/state-scan schedule.
+- [x] Split/profile the current shift-WAVG layer-prep route before spending
+  more time on blind tuning:
+  - Added `bench/bench_shift_wavg_lora_micro.py` and exposed
+    `RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_DOWN_WARPS` /
+    `RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_UP_WARPS` so this fused
+    LoRA/time-mix section can be measured and tuned separately.
+  - Micro split on 4090 / layer1 / `T=512,H=1024` / `bm128/br64/bk64`:
+    - default `down_warps=4,up_warps=4`: full `0.196608 ms`, down
+      `0.083968 ms`, up `0.088064 ms`, `max_abs_diff_vs_fallback=0.0625`;
+    - sweep best also stayed at `4/4` (`0.196608 ms`); larger warp counts hurt
+      the micro-kernel, especially `down_warps=8`.
+  - E2E warp sweep on 4090 / 0.4B / prompt512 / bsz1 / CUDA state-scan +
+    shift-WAVG showed no new strict best:
+    - `dw8/uw4`: `28,195.8 tok/s`, `18.1587 ms`;
+    - `dw4/uw4`: `28,059.5 tok/s`, `18.2469 ms`;
+    - `dw4/uw2`: `27,961.9 tok/s`, `18.3106 ms`;
+    - `dw2/uw4`: `27,920.8 tok/s`, `18.3376 ms`;
+    - `dw4/uw8`: `27,795.8 tok/s`, `18.4200 ms`.
+  - Conclusion: down/up work is roughly balanced and simple warp retuning does
+    not close the remaining Albatross gap. Keep `4/4` as the portable default
+    unless a full same-run sweep proves otherwise.
+- [ ] Next main fused-fp16 performance task:
+  - Stop spending cycles on simple shift-WAVG warp tuning.  The remaining
+    `~2,508 tok/s` gap to `0.60x` should be attacked structurally:
+    - primary: reduce `recurrent_scan_state_prep_cuda` (`11.3919 ms`,
+      `47.51%`) with a deeper persistent/state-scan schedule or scan+output
+      fusion that removes more global-memory traffic;
+    - secondary: reduce shift-WAVG overhead by eliminating intermediate
+      allocations / launch overhead or fusing the down+up path if the state-scan
+      work stalls.
   - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond `28,780.6 tok/s`, moving toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
