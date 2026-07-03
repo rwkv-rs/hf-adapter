@@ -2397,6 +2397,46 @@ Branch: `wangyue/native-prefill-060-albatross`
       same-run normal warppipe rows, but it does not beat the strict branch
       best `28,780.6 tok/s` and does not stack with FFN norm-shift or
       `block_k=128`. Keep it opt-in only; no default promotion.
+  - [x] Try a lighter head-level register-state CUDA schedule (`head_reg8`):
+    - Motivation: the first one-CTA-per-head schedule (`head_reg16`) shared
+      vector prep once per token/head but used a very heavy 1024-thread CTA.
+      This probe keeps the same head-level/persistent idea but halves the CTA
+      to 512 threads: each row has 8 lanes and each lane carries 8 state
+      columns in registers.  It also parallelizes the KK norm reduction rather
+      than using the older head_reg16 serial thread-0 norm loop.
+    - Implementation:
+      - added opt-in schedule
+        `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE=head_reg8`;
+      - added `rwkv7_state_scan_prep_n64_head_reg8_kernel`;
+      - added quarter-warp row reductions and microbench coverage;
+      - default HF/native behavior is unchanged.
+    - Correctness:
+      - 4090 direct oracle vs warp-specialized row-block passed with output /
+        state / K / V diffs `[0.00024414, 4.77e-07, 0.0, 0.0]`;
+      - HF rows below pass greedy/cache/decode smoke.
+    - Result files:
+      - micro:
+        `bench/results_cuda_state_scan_head_reg8_micro_4090_20260703_103000.jsonl`
+        from remote
+        `/tmp/cuda_state_scan_head_reg8_micro_4090_20260703_103000.jsonl`;
+      - HF:
+        `bench/results_native_4090_head_reg8_20260703_103500.jsonl`
+        from remote `/tmp/native_4090_head_reg8_20260703_103500.jsonl`.
+    - 4090 synthetic `B=1,T=512,H=16,N=64,fp16` micro rows:
+      - warp-specialized rpb1: `0.458704 ms`;
+      - head_reg16: `0.655360 ms`;
+      - new head_reg8: `0.642048 ms`;
+      - warp-pipelined rpb8: `0.337920 ms`;
+      - warp-pipelined half rpb1: `0.365568 ms`.
+    - 4090 / 0.4B / prompt512 / bsz1 HF rows:
+      - baseline warp-specialized: `25,883.4 tok/s`, `19.7810 ms`;
+      - head_reg8: `21,783.2 tok/s`, `23.5044 ms`;
+      - head_reg16: `22,856.0 tok/s`, `22.4011 ms`.
+    - Conclusion: reducing head-level CTA size and parallelizing the norm made
+      micro only slightly better than head_reg16, but the route is still far
+      slower than row-block/warppipe schedules and loses badly in HF e2e. Keep
+      it opt-in only. Head-level one-CTA-per-head sharing remains a negative
+      direction for this 4090 shape.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `28,780.6 tok/s` (`~0.5519x`), still about `2,508 tok/s` (`~8.7%`

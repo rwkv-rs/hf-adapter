@@ -263,6 +263,7 @@ def main() -> int:
         ("warp_pair", 8),
         ("warp_pair", 16),
         ("head_reg16", 1),
+        ("head_reg8", 1),
         ("warp_pipelined", 1),
         ("warp_pipelined", 8),
         ("warp_pipelined", 16),
