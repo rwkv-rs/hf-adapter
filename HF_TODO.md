@@ -134,7 +134,7 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 | P0 | RTX 4090 | **进行中** —— 补常见消费级 Ada 证据。 |
 | P1 | H100 | 补 Hopper 高端吞吐与 bf16 / 量化行。 |
 | P1 | RTX 5090 / 50 系 | 补 Blackwell 消费级验证与回归行。 |
-| P1 | Pascal / Turing | 验证 fallback 行为与老卡约束。 |
+| P1 | Pascal / Turing | Pascal GTX 1080 Ti 0.1B fp16 smoke/bnb W8-W4 + native mm8-mm4 quant speed/bsz1-4 + 0.4B fp16 bench 已补;Turing 仍待验证 fallback、量化与老卡约束。 |
 | P2 | AMD ROCm | 先做 native / 无 FLA 兼容并记录缺口。 |
 | P2 | CPU | 保持 tiny native / 无 FLA import 与 API 测试可用。 |
 
