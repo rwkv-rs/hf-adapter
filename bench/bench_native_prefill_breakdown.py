@@ -799,6 +799,11 @@ def profiled_native_prefill(
                 and cuda_state_scan_precompute
                 and cuda_state_scan_precompute_mode == "wk_half"
             )
+            cuda_state_scan_inplace_kv = bool(
+                use_cuda_state_scan
+                and getattr(native_jit, "_native_prefill_cuda_state_scan_inplace_kv_enabled", lambda: False)()
+                and cuda_state_scan_precompute
+            )
             if cuda_state_scan_reuse_precompute:
                 temp_shape = (B, T, H, N)
                 if (
@@ -877,6 +882,7 @@ def profiled_native_prefill(
                         precompute_mode=cuda_state_scan_precompute_mode,
                         rows_per_block=cuda_state_scan_rows_per_block,
                         schedule=cuda_state_scan_schedule,
+                        inplace_kv=cuda_state_scan_inplace_kv,
                         w_temp=cuda_state_scan_w_temp_arg,
                         kk_temp=cuda_state_scan_kk_temp_arg,
                     )
@@ -897,6 +903,7 @@ def profiled_native_prefill(
                         precompute_mode=cuda_state_scan_precompute_mode,
                         rows_per_block=cuda_state_scan_rows_per_block,
                         schedule=cuda_state_scan_schedule,
+                        inplace_kv=cuda_state_scan_inplace_kv,
                         w_temp=cuda_state_scan_w_temp_arg,
                         kk_temp=cuda_state_scan_kk_temp_arg,
                     )
@@ -1313,6 +1320,9 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
     cuda_state_scan_reuse_precompute = getattr(
         native_jit, "_native_prefill_cuda_state_scan_reuse_precompute_enabled", lambda: False
     )()
+    cuda_state_scan_inplace_kv = getattr(
+        native_jit, "_native_prefill_cuda_state_scan_inplace_kv_enabled", lambda: False
+    )()
     cuda_state_scan_rows_per_block = getattr(
         native_jit, "_native_prefill_cuda_state_scan_rows_per_block", lambda: 1
     )()
@@ -1375,6 +1385,13 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
             and cuda_state_scan_reuse_precompute
             and cuda_state_scan_precompute
             and cuda_state_scan_precompute_mode == "wk_half"
+        ),
+        "prefill_cuda_state_scan_inplace_kv": cuda_state_scan_inplace_kv,
+        "prefill_cuda_state_scan_inplace_kv_effective": bool(
+            cuda_state_scan_effective
+            and cuda_state_scan_inplace_kv
+            and cuda_state_scan_precompute
+            and not cuda_state_scan_w_precomputed
         ),
         "prefill_cuda_state_scan_rows_per_block": cuda_state_scan_rows_per_block,
         "prefill_cuda_state_scan_schedule": cuda_state_scan_schedule,

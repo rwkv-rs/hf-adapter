@@ -523,6 +523,12 @@ def _native_prefill_cuda_state_scan_reuse_precompute_enabled() -> bool:
     return env_flag("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_REUSE_PRECOMPUTE", False)
 
 
+def _native_prefill_cuda_state_scan_inplace_kv_enabled() -> bool:
+    """Reuse raw K/V projection tensors as CUDA precompute K/V outputs."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_INPLACE_KV", False)
+
+
 def _native_prefill_cuda_state_scan_rows_per_block() -> int:
     """Rows handled by one CUDA row-block in the cooperative N=64 scan."""
 
@@ -2372,6 +2378,12 @@ def prefill(
             )
             cuda_state_scan_schedule = _native_prefill_cuda_state_scan_schedule() if use_cuda_state_scan else "default"
             state_scan_w_precomputed = bool(shift_wavg_lora_w_decay_done)
+            cuda_state_scan_inplace_kv = bool(
+                use_cuda_state_scan
+                and _native_prefill_cuda_state_scan_inplace_kv_enabled()
+                and cuda_state_scan_precompute
+                and not state_scan_w_precomputed
+            )
             cuda_state_scan_reuse_precompute = bool(
                 use_cuda_state_scan
                 and _native_prefill_cuda_state_scan_reuse_precompute_enabled()
@@ -2450,6 +2462,7 @@ def prefill(
                     rows_per_block=cuda_state_scan_rows_per_block,
                     schedule=cuda_state_scan_schedule,
                     w_precomputed=state_scan_w_precomputed,
+                    inplace_kv=cuda_state_scan_inplace_kv,
                     w_temp=cuda_state_scan_w_temp_arg,
                     kk_temp=cuda_state_scan_kk_temp_arg,
                 )
@@ -2472,6 +2485,7 @@ def prefill(
                     rows_per_block=cuda_state_scan_rows_per_block,
                     schedule=cuda_state_scan_schedule,
                     w_precomputed=state_scan_w_precomputed,
+                    inplace_kv=cuda_state_scan_inplace_kv,
                     w_temp=cuda_state_scan_w_temp_arg,
                     kk_temp=cuda_state_scan_kk_temp_arg,
                 )

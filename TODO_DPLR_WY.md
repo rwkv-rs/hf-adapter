@@ -2195,6 +2195,60 @@ Branch: `wangyue/native-prefill-060-albatross`
       Albatross-gap attempt still needs the precomputed vectors produced by a
       larger adjacent shift-WAVG/state-prep boundary or a different persistent
       schedule, not merely reused standalone precompute storage.
+  - [x] Try in-place adjusted K/V output reuse for CUDA precompute routes:
+    - Motivation: after temp-buffer reuse, the standalone CUDA vector-precompute
+      boundary still allocates and writes separate adjusted K/V outputs even
+      though the raw dense-projection K/V tensors are dead after state prep.
+      This tests a narrower "consume the adjacent projection/state-prep
+      boundary" idea by letting the precompute kernel overwrite those raw K/V
+      tensors and return them as adjusted K/V.
+    - Implementation:
+      - added opt-in `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_INPLACE_KV=1`;
+      - extended the CUDA extension entrypoint with an `inplace_kv` flag;
+      - only allows in-place K/V when `write_kv=True` and
+        `precompute_mode!=none`, avoiding the unsafe row-block no-precompute
+        race where one row CTA could overwrite raw K before another row CTA
+        has read it;
+      - native prefill passes the flag only for CUDA precompute routes, and
+        benchmark/profiler rows expose
+        `prefill_cuda_state_scan_inplace_kv(_effective)`;
+      - microbench now emits `wk_half + inplace_kv` rows for default and
+        precomputed-warp schedules.
+    - Correctness:
+      - local `py_compile` and `git diff --check` passed;
+      - 4090 direct CUDA wrapper check passed for default `wk_half` and
+        `precomputed_warp rpb8`: no-inplace vs inplace diffs were
+        `[0.0, 0.0, 0.0, 0.0]`, and returned K/V tensors alias the input K/V
+        buffers.
+    - Result files:
+      - micro:
+        `bench/results_cuda_state_scan_inplace_kv_micro_4090_20260703_085839.jsonl`
+        from remote
+        `/tmp/cuda_state_scan_inplace_kv_micro_20260703_085839.jsonl`;
+      - HF smoke:
+        `bench/results_native_4090_inplace_kv_20260703_085921.jsonl`
+        from remote `/tmp/native_4090_inplace_kv_hf_20260703_085921.jsonl`.
+    - 4090 synthetic `B=1,T=512,H=16,N=64,fp16` micro rows:
+      - default `wk_half` no in-place: `0.360960 ms`;
+      - default `wk_half` in-place K/V: `0.329216 ms`
+        (`~8.8%` faster in the CUDA component);
+      - precomputed-warp rpb8 no in-place: `0.230400 ms`;
+      - precomputed-warp rpb8 in-place K/V: `0.207360 ms`
+        (`~10.0%` faster in the CUDA component);
+      - precomputed-warp rpb16 no in-place: `0.256512 ms`;
+      - precomputed-warp rpb16 in-place K/V: `0.230400 ms`.
+    - HF e2e smoke rows all passed greedy/cache/decode, but the worker was in
+      an anomalously slow launch-overhead state during this run: same-run
+      warp-specialized baseline was only `15,711.0 tok/s` versus the usual
+      `26k-28k` band.  Within that noisy run, default `wk_half` + temp reuse +
+      in-place K/V reached `19,541.7 tok/s`, while precomputed-warp rpb8 +
+      temp reuse + in-place K/V was `15,131.5 tok/s`.
+    - Conclusion: in-place K/V is a real micro win and a correctness-safe
+      opt-in for precompute routes, but the HF confirmation needs a normal
+      low-noise 4090 rerun before it can be considered for promotion.  Keep it
+      disabled by default; next work should either re-test this under a clean
+      e2e timing window or fuse more of the adjacent shift-WAVG/state-prep
+      producer boundary so the micro win survives full HF.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `28,780.6 tok/s` (`~0.5519x`), still about `2,508 tok/s` (`~8.7%`

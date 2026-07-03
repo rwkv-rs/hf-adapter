@@ -46,12 +46,16 @@ def append_row(path: str, row: dict[str, Any]) -> None:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def median_ms(fn: Callable[[], Any], *, warmup: int, steps: int) -> float:
+def median_ms(fn: Callable[[], Any], *, warmup: int, steps: int, setup: Callable[[], Any] | None = None) -> float:
     for _ in range(warmup):
+        if setup is not None:
+            setup()
         fn()
     torch.cuda.synchronize()
     times: list[float] = []
     for _ in range(steps):
+        if setup is not None:
+            setup()
         start = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
         start.record()
@@ -106,6 +110,7 @@ def call_full(
     schedule: str = "default",
     precompute_mode: str = "none",
     w_precomputed: bool = False,
+    inplace_kv: bool = False,
 ):
     return cuda_state_scan_prep(
         tensors["r"],
@@ -123,6 +128,34 @@ def call_full(
         rows_per_block=rows_per_block,
         schedule=schedule,
         w_precomputed=w_precomputed,
+        inplace_kv=inplace_kv,
+    )
+
+
+def call_full_inplace_scratch(
+    tensors: dict[str, torch.Tensor],
+    k_scratch: torch.Tensor,
+    v_scratch: torch.Tensor,
+    *,
+    rows_per_block: int,
+    schedule: str,
+):
+    return cuda_state_scan_prep(
+        tensors["r"],
+        tensors["w"],
+        k_scratch,
+        v_scratch,
+        tensors["a"],
+        tensors["state"],
+        tensors["k_k"],
+        tensors["k_a"],
+        v_first=tensors["v_first"],
+        v_gate=tensors["v_gate"],
+        lanes_per_row=64,
+        precompute_mode="wk_half",
+        rows_per_block=rows_per_block,
+        schedule=schedule,
+        inplace_kv=True,
     )
 
 
@@ -285,6 +318,46 @@ def main() -> int:
             "schedule": "default",
             "rows_per_block": 1,
             "precompute_mode": mode,
+            "cuda_ms": round(ms, 6),
+            "tokps_total": round(1000.0 * tokens_total / ms, 1) if ms > 0 else None,
+        }
+        print(json.dumps(row, ensure_ascii=False))
+        append_row(args.results, row)
+    for schedule, rpb in [("default", 1), ("precomputed_warp", 8), ("precomputed_warp", 16)]:
+        k_scratch = torch.empty_like(tensors["k"])
+        v_scratch = torch.empty_like(tensors["v"])
+        setup_inplace = lambda k_scratch=k_scratch, v_scratch=v_scratch: (
+            k_scratch.copy_(tensors["k"]),
+            v_scratch.copy_(tensors["v"]),
+        )
+        ms = median_ms(
+            lambda schedule=schedule, rpb=rpb, k_scratch=k_scratch, v_scratch=v_scratch: call_full_inplace_scratch(
+                tensors,
+                k_scratch,
+                v_scratch,
+                rows_per_block=rpb,
+                schedule=schedule,
+            ),
+            warmup=args.warmup,
+            steps=args.steps,
+            setup=setup_inplace,
+        )
+        row = {
+            "axis": "cuda_state_scan_micro",
+            "backend": "cuda_state_scan",
+            "bench_case": f"full_{schedule}_wkhalf_inplace_kv_rpb{rpb}",
+            "status": "pass",
+            "device": device_name,
+            "dtype": "fp16",
+            "batch_size": args.batch_size,
+            "seq_len": args.seq_len,
+            "heads": args.heads,
+            "head_dim": 64,
+            "tokens_total": tokens_total,
+            "schedule": schedule,
+            "rows_per_block": rpb,
+            "precompute_mode": "wk_half",
+            "inplace_kv": True,
             "cuda_ms": round(ms, 6),
             "tokps_total": round(1000.0 * tokens_total / ms, 1) if ms > 0 else None,
         }
