@@ -57,8 +57,11 @@ Current acceptance baseline from `bench/math500_acceptance_4090_20260703`:
    `8/9` vs `8/9`, while correct generations are `315/576` HF vs `325/576` Albatross.  The
    full-run net gap `-249/32000` shrinks to `-10/576`, supporting the logits-parity conclusion
    that sampling/RNG/refill history is more likely than a large model-math mismatch.
-4. Run Albatross `v4` / `linear_orig_layout_launch` tuning checks and update the reference table.
-5. Only after the above, run full MATH500 avg@64 again.
+4. Run Albatross `v4` / `linear_orig_layout_launch` tuning checks and update the reference table. **Partial done:**
+   `bench/albatross_v3a_v4_4090_tune_20260703/` shows v4 is faster than v3a on this RTX 4090
+   smoke (`B1T512` is `58,933.8` tok/s vs `48,311.5`, `1.220x`).  The remaining reference-tuning
+   task is an Albatross-side micro sweep of `linear_orig_layout_launch` choices per `(GPU, C, rows, group)`.
+5. Only after sampler/refill and reference-tuning checks, run full MATH500 avg@64 again.
 
 ## Working hypothesis
 
@@ -127,6 +130,23 @@ Subset task IDs: `73,160,116,67,277,374,383,319,72`.
 | Summary token/s | `6241.051` | `3187.349` | `1.958x` |
 
 Interpretation: when the high-signal tasks are rerun from a fresh RNG stream, the pass@64 gap disappears on this subset.  The remaining correct-generation delta is small relative to the full-run gap.  Combined with logits parity, this points to sampler RNG / dynamic refill order / seed sensitivity as the next investigation target.
+
+
+## Albatross v3a/v4 reference smoke on RTX 4090
+
+Artifact: `bench/albatross_v3a_v4_4090_tune_20260703/`.
+
+| Case | v3a tok/s | v4 tok/s | v4/v3a |
+|---|---:|---:|---:|
+| `B1T1` | `837.53` | `855.73` | `1.022x` |
+| `B1T512` | `48311.51` | `58933.80` | `1.220x` |
+| `B64T1` | `25130.68` | `25183.30` | `1.002x` |
+| `B4T128` | `81847.50` | `89226.80` | `1.090x` |
+| `B8T64` | `94940.28` | `96756.70` | `1.019x` |
+
+Interpretation: v4 is a higher speed ceiling than the committed v3a reference on this RTX 4090 smoke, especially for prompt-prefill.  The committed PR #104 full MATH500 v3a run remains the accuracy reference until v4 has a full avg@64 runner/result.  For final speed claims, report both the committed full-eval v3a reference and the fastest tuned per-GPU Albatross reference.
+
+`linear_orig_layout_launch` status: checked but not fully tuned.  v4 hard-codes launch choices by `rows`, `K`, and group.  For 0.4B `C=1024`, `B1T512` uses `rows=512` in the body and `head_rows=1`; the next Albatross-reference task is a micro sweep over the cublasLt algorithm/workspace and exact-row kernel choices per `(GPU, C, rows, group)`.
 
 ## Albatross reference tuning notes
 

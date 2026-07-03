@@ -1,0 +1,33 @@
+gpu_mem before_model_forward_load free=23699MiB used=394MiB total=24092MiB
+load_model global done gpu_mib=129 cpu_emb_mib=128
+load_model layer=0 done layers=1 tensors=41 t_copies=6 gpu_mib=155
+load_model layer=1 done layers=2 tensors=82 t_copies=14 gpu_mib=181
+load_model layer=2 done layers=3 tensors=123 t_copies=22 gpu_mib=207
+load_model layer=3 done layers=4 tensors=164 t_copies=30 gpu_mib=233
+load_model layer=4 done layers=5 tensors=205 t_copies=38 gpu_mib=260
+load_model layer=5 done layers=6 tensors=246 t_copies=46 gpu_mib=286
+load_model layer=6 done layers=7 tensors=287 t_copies=54 gpu_mib=312
+load_model layer=7 done layers=8 tensors=328 t_copies=62 gpu_mib=339
+load_model layer=8 done layers=9 tensors=369 t_copies=70 gpu_mib=365
+load_model layer=9 done layers=10 tensors=410 t_copies=78 gpu_mib=391
+load_model layer=10 done layers=11 tensors=451 t_copies=86 gpu_mib=417
+load_model layer=11 done layers=12 tensors=492 t_copies=94 gpu_mib=444
+load_model layer=12 done layers=13 tensors=533 t_copies=102 gpu_mib=470
+load_model layer=13 done layers=14 tensors=574 t_copies=110 gpu_mib=496
+load_model layer=14 done layers=15 tensors=615 t_copies=118 gpu_mib=523
+load_model layer=15 done layers=16 tensors=656 t_copies=126 gpu_mib=549
+load_model layer=16 done layers=17 tensors=697 t_copies=134 gpu_mib=575
+load_model layer=17 done layers=18 tensors=738 t_copies=142 gpu_mib=601
+load_model layer=18 done layers=19 tensors=779 t_copies=150 gpu_mib=628
+load_model layer=19 done layers=20 tensors=820 t_copies=158 gpu_mib=654
+load_model layer=20 done layers=21 tensors=861 t_copies=166 gpu_mib=680
+load_model layer=21 done layers=22 tensors=902 t_copies=174 gpu_mib=707
+load_model layer=22 done layers=23 tensors=943 t_copies=182 gpu_mib=733
+load_model layer=23 done layers=24 tensors=984 t_copies=190 gpu_mib=759
+load_model emb+ln0 done cpu_emb_mib=128 entries=67108864
+gpu_mem after_model_forward_load free=22939MiB used=1154MiB total=24092MiB
+bench B1T1 wkv=fp16 ms=1.16859 tok_s=855.733 gpu_mib=759 cpu_emb_mib=128
+bench B1T512 wkv=fp16 ms=8.68772 tok_s=58933.8 gpu_mib=759 cpu_emb_mib=128
+bench B64T1 wkv=fp16 ms=2.54136 tok_s=25183.3 gpu_mib=759 cpu_emb_mib=128
+bench B4T128 wkv=fp16 ms=5.73819 tok_s=89226.8 gpu_mib=759 cpu_emb_mib=128
+bench B8T64 wkv=fp16 ms=5.29162 tok_s=96756.7 gpu_mib=759 cpu_emb_mib=128
