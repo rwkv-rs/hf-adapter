@@ -1947,13 +1947,45 @@ Branch: `wangyue/native-prefill-060-albatross`
     route; the next attempt needs either a more integrated state-scan/output
     consumer or a persistent/two-level scan schedule, not moving one LoRA up
     projection into an output-prep tile.
+- [x] Try the larger FFN norm+shift two-pass memory boundary:
+  - Motivation: the previous recompute-style FFN norm+shift probe lowered peak
+    memory but did not beat the strict best.  This bounded follow-up keeps both
+    FFN GEMMs on cuBLAS and tests whether avoiding previous-token layernorm
+    recomputation plus PyTorch `cat`/pointwise temporaries is enough to make the
+    FFN memory boundary profitable.
+  - Implementation:
+    - added `RWKV7_NATIVE_PREFILL_FFN_FUSED_NORM_SHIFT_MODE=two_pass`;
+    - `fused_ffn_norm_shift_prefill(..., mode="two_pass")` first writes the
+      normalized `h` sequence with a Triton layernorm kernel, then builds `fk`
+      from adjacent normalized rows in a second Triton shift/mix kernel;
+    - benchmark telemetry now records
+      `prefill_ffn_fused_norm_shift_mode`; default HF/native behavior and the
+      existing recompute mode remain unchanged.
+  - Correctness:
+    - 4090 synthetic fp16 oracle vs PyTorch fallback passed for both modes:
+      `fk_diff=0.0078125`, `h_last_diff=0.0`, cosine `1.0`;
+    - all HF rows below pass greedy/cache/decode smoke.
+  - Result file:
+    `bench/results_native_4090_ffn_twopass_20260703_064419.jsonl` from remote
+    `/tmp/native_4090_ffn_twopass_20260703_064419.jsonl`.
+  - 4090 / 0.4B / prompt512 / bsz1, current CUDA state-scan + shift-WAVG route:
+    - same-run baseline: `26,833.2 tok/s`, `19.0809 ms`, peak `988.2 MiB`;
+    - recompute norm+shift `block_h=1024`: `26,431.7 tok/s`, `19.3707 ms`,
+      peak `964.2 MiB`;
+    - two-pass `block_h=1024`: `26,020.7 tok/s`, `19.6767 ms`, peak
+      `964.2 MiB`;
+    - two-pass `block_h=2048`: `26,269.8 tok/s`, `19.4901 ms`, peak
+      `964.2 MiB`.
+  - Conclusion: the two-pass FFN boundary is correctness-safe and preserves the
+    memory win, but the extra launch and full `h` write/read lose more than the
+    saved recompute.  Keep it opt-in only; do not promote.  This closes the
+    cheap FFN-memory branch for the current shape.
 - [ ] Next persistent/two-level state-scan experiment:
-  - Move the next bounded experiment to the larger remaining boundary exposed
-    by breakdown: `attn_shift_wavg_lora_fused` (`~5.1 ms`) and/or the FFN
-    memory boundary.  Do not spend another iteration on lean per-rank pruning.
-    Also do not repeat the simple G-mid output-prep route.  The next candidate
-    should remove or consume a larger boundary across shift-WAVG/state-scan/
-    output, or implement a stronger persistent/two-level scan schedule.
+  - Return to the state-scan side now that the cheap FFN-memory branch lost.
+    The next candidate should be a stronger CUDA/persistent two-level schedule
+    that shares per-token vectors while preserving enough row parallelism, or a
+    larger state-scan/output consumer that avoids the already-negative raw
+    no-K/V, SK, G-mid, W-decay, and lean per-rank routes.
   - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond `28,780.6 tok/s`, moving toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for

@@ -73,6 +73,61 @@ if _HAS_TRITON:
         tl.store(h_last_ptr + batch * hidden + offs, h, mask=mask & (token == (tokens - 1)))
 
     @triton.jit
+    def _ffn_layernorm_prefill_kernel(
+        x_ptr,
+        norm_weight_ptr,
+        norm_bias_ptr,
+        h_ptr,
+        h_last_ptr,
+        tokens: tl.constexpr,
+        hidden: tl.constexpr,
+        eps: tl.constexpr,
+        BLOCK_H: tl.constexpr,
+    ):
+        row = tl.program_id(0)
+        batch = row // tokens
+        token = row - batch * tokens
+        offs = tl.arange(0, BLOCK_H)
+        mask = offs < hidden
+        base = row * hidden + offs
+
+        x = tl.load(x_ptr + base, mask=mask, other=0.0).to(tl.float32)
+        mean = tl.sum(tl.where(mask, x, 0.0), axis=0) / hidden
+        centered = tl.where(mask, x - mean, 0.0)
+        var = tl.sum(centered * centered, axis=0) / hidden
+        weight = tl.load(norm_weight_ptr + offs, mask=mask, other=1.0).to(tl.float32)
+        bias = tl.load(norm_bias_ptr + offs, mask=mask, other=0.0).to(tl.float32)
+        h = centered * tl.rsqrt(var + eps) * weight + bias
+
+        tl.store(h_ptr + base, h, mask=mask)
+        tl.store(h_last_ptr + batch * hidden + offs, h, mask=mask & (token == (tokens - 1)))
+
+    @triton.jit
+    def _ffn_shift_from_norm_prefill_kernel(
+        h_ptr,
+        cached_prev_h_ptr,
+        mix_ptr,
+        fk_ptr,
+        tokens: tl.constexpr,
+        hidden: tl.constexpr,
+        BLOCK_H: tl.constexpr,
+    ):
+        row = tl.program_id(0)
+        batch = row // tokens
+        token = row - batch * tokens
+        offs = tl.arange(0, BLOCK_H)
+        mask = offs < hidden
+        base = row * hidden + offs
+
+        h = tl.load(h_ptr + base, mask=mask, other=0.0).to(tl.float32)
+        prev_base = ((batch * tokens + token - 1) * hidden + offs)
+        prev_h = tl.load(h_ptr + prev_base, mask=mask & (token > 0), other=0.0).to(tl.float32)
+        cached_prev = tl.load(cached_prev_h_ptr + batch * hidden + offs, mask=mask, other=0.0).to(tl.float32)
+        prev_h = tl.where(token > 0, prev_h, cached_prev)
+        mix = tl.load(mix_ptr + offs, mask=mask, other=0.0).to(tl.float32)
+        tl.store(fk_ptr + base, h + (prev_h - h) * mix, mask=mask)
+
+    @triton.jit
     def _ffn_key_relu_kernel(
         x_ptr,
         prev_ptr,
@@ -198,6 +253,7 @@ def fused_ffn_norm_shift_prefill(
     *,
     eps: float = 1e-5,
     block_h: int | None = None,
+    mode: str = "recompute",
     force_fallback: bool = False,
 ):
     """Compute prefill FFN layer norm plus previous-token shift/mix.
@@ -209,11 +265,16 @@ def fused_ffn_norm_shift_prefill(
     ``prev = cat([cached_prev_h, h[:, :-1]])``
     ``fk = h + (prev - h) * mix_x``
 
-    The Triton path avoids materializing the full ``prev`` tensor and stores
-    only ``fk`` plus the final ``h`` cache.  To keep programs independent it
-    recomputes the previous token's layer norm for ``token > 0``.  Therefore it
-    is kept opt-in until exact-card benchmarks show that saved memory/launches
-    offset the extra norm work.
+    The default Triton path avoids materializing the full ``prev`` tensor and
+    stores only ``fk`` plus the final ``h`` cache.  To keep programs independent
+    it recomputes the previous token's layer norm for ``token > 0``.
+
+    ``mode="two_pass"`` is a bounded FFN-memory-boundary probe: first write
+    the normalized ``h`` sequence once, then build ``fk`` from adjacent rows in
+    a second Triton pass.  It avoids the recompute work and the PyTorch
+    ``cat``/pointwise temporaries while preserving the cuBLAS FFN GEMMs.
+    Therefore both Triton modes stay opt-in until exact-card benchmark rows
+    prove they are profitable.
     """
 
     if torch is None or F is None:
@@ -246,6 +307,13 @@ def fused_ffn_norm_shift_prefill(
         and norm_b.dtype == hidden_states.dtype
         and hidden <= 4096
     )
+    mode_name = str(mode).strip().lower().replace("-", "_")
+    if mode_name in {"", "0", "default", "recompute", "recompute_prev", "single", "single_pass"}:
+        mode_name = "recompute"
+    elif mode_name in {"1", "two", "two_pass", "twopass", "materialize_h", "norm_then_shift"}:
+        mode_name = "two_pass"
+    else:
+        raise ValueError("fused_ffn_norm_shift_prefill mode must be 'recompute' or 'two_pass'")
     if not use_triton:
         h = F.layer_norm(hidden_states, (hidden,), norm_w, norm_b, float(eps))
         prev_h = torch.cat([cached_prev_h.view(batch, 1, hidden), h[:, :-1, :]], dim=1)
@@ -262,6 +330,32 @@ def fused_ffn_norm_shift_prefill(
     block = int(block_h) if block_h is not None else int(triton.next_power_of_2(hidden))
     if block < hidden:
         block = int(triton.next_power_of_2(hidden))
+    warps = 8 if block >= 1024 else 4
+    if mode_name == "two_pass":
+        h_full = torch.empty_like(x_c)
+        _ffn_layernorm_prefill_kernel[(batch * tokens,)](
+            x_c,
+            norm_w_c,
+            norm_b_c,
+            h_full,
+            h_last,
+            tokens,
+            hidden,
+            float(eps),
+            BLOCK_H=block,
+            num_warps=warps,
+        )
+        _ffn_shift_from_norm_prefill_kernel[(batch * tokens,)](
+            h_full,
+            cached_c,
+            mix_c,
+            fk,
+            tokens,
+            hidden,
+            BLOCK_H=block,
+            num_warps=warps,
+        )
+        return fk, h_last
     _ffn_norm_shift_prefill_kernel[(batch * tokens,)](
         x_c,
         cached_c,
@@ -274,7 +368,7 @@ def fused_ffn_norm_shift_prefill(
         hidden,
         float(eps),
         BLOCK_H=block,
-        num_warps=8 if block >= 1024 else 4,
+        num_warps=warps,
     )
     return fk, h_last
 

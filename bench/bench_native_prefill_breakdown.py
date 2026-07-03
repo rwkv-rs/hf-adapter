@@ -1401,6 +1401,7 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_ffn_fused_norm_shift_requested": getattr(native_jit, "_native_prefill_ffn_fused_norm_shift_requested", lambda: False)(),
         "prefill_ffn_fused_norm_shift_effective": getattr(native_jit, "_native_prefill_ffn_fused_norm_shift_enabled", lambda: False)(),
         "prefill_ffn_fused_norm_shift_block_h": getattr(native_jit, "_native_prefill_ffn_fused_norm_shift_block_h", lambda: None)(),
+        "prefill_ffn_fused_norm_shift_mode": getattr(native_jit, "_native_prefill_ffn_fused_norm_shift_mode", lambda: "recompute")(),
         "prefill_fused_projection_requested": getattr(native_jit, "_native_prefill_fused_projection_requested", lambda: False)(),
         "prefill_fused_projection_effective": getattr(native_jit, "_native_prefill_fused_projection_enabled", lambda _rows: False)(batch_size * prompt_tokens),
         "prefill_fused_projection_max_m": getattr(native_jit, "_native_prefill_fused_projection_max_m", lambda: None)(),

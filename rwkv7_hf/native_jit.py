@@ -1045,6 +1045,33 @@ def _native_prefill_ffn_fused_norm_shift_block_h() -> int:
     return env_int("RWKV7_NATIVE_PREFILL_FFN_FUSED_NORM_SHIFT_BLOCK_H", 1024, lower=128, upper=8192)
 
 
+def _native_prefill_ffn_fused_norm_shift_mode() -> str:
+    """Implementation mode for the prefill FFN norm+shift boundary."""
+
+    raw = os.environ.get("RWKV7_NATIVE_PREFILL_FFN_FUSED_NORM_SHIFT_MODE", "recompute").strip().lower().replace("-", "_")
+    aliases = {
+        "": "recompute",
+        "0": "recompute",
+        "default": "recompute",
+        "recompute": "recompute",
+        "recompute_prev": "recompute",
+        "single": "recompute",
+        "single_pass": "recompute",
+        "1": "two_pass",
+        "two": "two_pass",
+        "two_pass": "two_pass",
+        "twopass": "two_pass",
+        "materialize_h": "two_pass",
+        "norm_then_shift": "two_pass",
+    }
+    if raw not in aliases:
+        raise ValueError(
+            "RWKV7_NATIVE_PREFILL_FFN_FUSED_NORM_SHIFT_MODE must be "
+            f"'recompute' or 'two_pass'; got {raw!r}"
+        )
+    return aliases[raw]
+
+
 def _native_prefill_apply_ffn_norm_shift(x, cached_prev_h, fx_k, fn_w, fn_b, hidden: int):
     """Return ``(fk, h_last)`` for the prefill FFN key input boundary."""
 
@@ -1057,6 +1084,7 @@ def _native_prefill_apply_ffn_norm_shift(x, cached_prev_h, fx_k, fn_w, fn_b, hid
             fn_b,
             eps=1e-5,
             block_h=_native_prefill_ffn_fused_norm_shift_block_h(),
+            mode=_native_prefill_ffn_fused_norm_shift_mode(),
         )
     h2 = F.layer_norm(x, [hidden], fn_w, fn_b, 1e-5)
     prev_h2 = torch.cat([cached_prev_h.view(int(x.shape[0]), 1, hidden), h2[:, :-1, :]], dim=1)
