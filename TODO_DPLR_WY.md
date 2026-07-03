@@ -1906,13 +1906,54 @@ Branch: `wangyue/native-prefill-060-albatross`
     shallow rank-traffic retile line; the next step needs a wider
     shift-WAVG/state-scan/output consumer boundary or a persistent/two-level
     scan design that changes more than per-rank pruning.
+- [x] Try a G-mid output-prep consumer boundary:
+  - Motivation: move beyond per-rank pruning by removing a full hidden-size
+    tensor boundary.  The shift-WAVG route normally writes `g_out`
+    `[B*T,hidden]`, then output-prep reads it as the attention gate.  This
+    opt-in experiment skips G up-projection materialization in shift-WAVG,
+    keeps only `g_mid` `[B*T,g_rank]`, and computes the G gate inside
+    output-prep.
+  - Implementation:
+    - added `SKIP_G_OUT` to `_wavg_lora_up_kernel` and
+      `fused_shift_wavg_lora(..., output_g_mid=True)`;
+    - added `fused_attn_output_prepare_from_g_mid(...)`;
+    - exposed
+      `RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_G_MID_OUTPUT=1`;
+    - benchmark/analyzer telemetry now records the requested/effective flag;
+    - default HF/native behavior is unchanged.
+  - Result files:
+    - micro:
+      `bench/results_shift_wavg_gmid_micro_4090_20260703_183000.jsonl`
+      from remote `/tmp/shift_wavg_gmid_micro_4090_20260703_183000.jsonl`;
+    - HF e2e:
+      `bench/results_native_4090_shift_wavg_gmid_20260703_183000.jsonl`
+      from remote `/tmp/native_4090_shift_wavg_gmid_20260703_183000.jsonl`.
+  - 4090 shift-WAVG micro, layer 1, rows512, hidden1024:
+    - baseline: full `0.200704 ms`, down `0.084992 ms`, up
+      `0.092160 ms`;
+    - output-G-mid: full `0.185344 ms`, up `0.077824 ms`;
+    - output-G-mid + lean-up: full `0.171008 ms`, up `0.063488 ms`;
+    - correctness passes with max diff `0.0625`.
+  - 4090 / 0.4B / prompt512 / bsz1 HF rows, all pass greedy/cache/decode:
+    - same-run baseline: `26,808.8 tok/s`, `19.0982 ms`, peak `988.2 MiB`;
+    - G-mid output-prep: `26,032.7 tok/s`, `19.6675 ms`, peak `987.3 MiB`;
+    - G-mid + lean-up: `26,627.1 tok/s`, `19.2285 ms`, peak `987.3 MiB`;
+    - G-mid + FFN norm-shift: `26,600.4 tok/s`, `19.2478 ms`, peak
+      `963.3 MiB`.
+  - Conclusion: the boundary is correctness-safe and does remove work from
+    the shift-WAVG micro-kernel, but output-prep recomputing the G projection
+    is slower end-to-end than reading the materialized gate.  Keep it opt-in
+    only.  This rules out the simple "consume G mid in output" tensor-boundary
+    route; the next attempt needs either a more integrated state-scan/output
+    consumer or a persistent/two-level scan schedule, not moving one LoRA up
+    projection into an output-prep tile.
 - [ ] Next persistent/two-level state-scan experiment:
   - Move the next bounded experiment to the larger remaining boundary exposed
     by breakdown: `attn_shift_wavg_lora_fused` (`~5.1 ms`) and/or the FFN
     memory boundary.  Do not spend another iteration on lean per-rank pruning.
-    The next candidate should remove or consume a large tensor boundary
-    between shift-WAVG outputs and state-scan/output, or implement a stronger
-    persistent/two-level scan schedule.
+    Also do not repeat the simple G-mid output-prep route.  The next candidate
+    should remove or consume a larger boundary across shift-WAVG/state-scan/
+    output, or implement a stronger persistent/two-level scan schedule.
   - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond `28,780.6 tok/s`, moving toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for

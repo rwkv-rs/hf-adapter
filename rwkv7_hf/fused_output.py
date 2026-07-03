@@ -216,6 +216,69 @@ if _HAS_TRITON:
         tl.store(out_ptr + base_v + offs_v, prepared, mask=mask_v)
 
     @triton.jit
+    def _attn_output_prepare_from_g_mid_kernel(
+        recurrent_ptr,
+        r_ptr,
+        k_ptr,
+        v_ptr,
+        g_mid_ptr,
+        g_up_ptr,
+        g_bias_ptr,
+        rk_ptr,
+        gn_weight_ptr,
+        gn_bias_ptr,
+        out_ptr,
+        num_heads: tl.constexpr,
+        head_dim: tl.constexpr,
+        head_v_dim: tl.constexpr,
+        value_dim: tl.constexpr,
+        g_rank: tl.constexpr,
+        has_g_bias: tl.constexpr,
+        eps: tl.constexpr,
+        BLOCK_N: tl.constexpr,
+        BLOCK_V: tl.constexpr,
+        BLOCK_R: tl.constexpr,
+    ):
+        batch_id = tl.program_id(0)
+        head_id = tl.program_id(1)
+        offs_n = tl.arange(0, BLOCK_N)
+        offs_v = tl.arange(0, BLOCK_V)
+        offs_r = tl.arange(0, BLOCK_R)
+        mask_n = offs_n < head_dim
+        mask_v = offs_v < head_v_dim
+        base_v = batch_id * value_dim + head_id * head_v_dim
+        base_n = batch_id * num_heads * head_dim + head_id * head_dim
+
+        rec = tl.load(recurrent_ptr + base_v + offs_v, mask=mask_v, other=0.0).to(tl.float32)
+        mean = tl.sum(rec, axis=0) / head_v_dim
+        centered = tl.where(mask_v, rec - mean, 0.0)
+        var = tl.sum(centered * centered, axis=0) / head_v_dim
+        normed = centered * tl.rsqrt(var + eps)
+
+        rr = tl.load(r_ptr + base_n + offs_n, mask=mask_n, other=0.0).to(tl.float32)
+        kk = tl.load(k_ptr + base_n + offs_n, mask=mask_n, other=0.0).to(tl.float32)
+        rk = tl.load(rk_ptr + head_id * head_dim + offs_n, mask=mask_n, other=0.0).to(tl.float32)
+        corr_scale = tl.sum(rr * kk * rk, axis=0)
+        vv = tl.load(v_ptr + base_v + offs_v, mask=mask_v, other=0.0).to(tl.float32)
+
+        gate = tl.zeros((BLOCK_V,), tl.float32)
+        for start in range(0, g_rank, BLOCK_R):
+            ridx = start + offs_r
+            mask_r = ridx < g_rank
+            gm = tl.load(g_mid_ptr + batch_id * g_rank + ridx, mask=mask_r, other=0.0).to(tl.float32)
+            g_offsets = (head_id * head_v_dim + offs_v)[:, None] * g_rank + ridx[None, :]
+            gu = tl.load(g_up_ptr + g_offsets, mask=mask_v[:, None] & mask_r[None, :], other=0.0).to(tl.float32)
+            gate += tl.sum(gu * gm[None, :], axis=1)
+        if has_g_bias:
+            gb = tl.load(g_bias_ptr + head_id * head_v_dim + offs_v, mask=mask_v, other=0.0).to(tl.float32)
+            gate += gb
+
+        weight = tl.load(gn_weight_ptr + head_id * head_v_dim + offs_v, mask=mask_v, other=1.0).to(tl.float32)
+        bias = tl.load(gn_bias_ptr + head_id * head_v_dim + offs_v, mask=mask_v, other=0.0).to(tl.float32)
+        prepared = (normed * weight + bias + corr_scale * vv) * gate
+        tl.store(out_ptr + base_v + offs_v, prepared, mask=mask_v)
+
+    @triton.jit
     def _attn_output_project_kernel(
         recurrent_ptr,
         r_ptr,
@@ -300,6 +363,12 @@ def fused_attn_output_prepare_from_sk_raw_v_available() -> bool:
 
 def fused_attn_output_prepare_raw_kv_available() -> bool:
     """Return whether fused output-prep can recompute correction from raw K/V."""
+
+    return bool(_HAS_TRITON and torch is not None)
+
+
+def fused_attn_output_prepare_from_g_mid_available() -> bool:
+    """Return whether fused output-prep can consume G LoRA mid activations."""
 
     return bool(_HAS_TRITON and torch is not None)
 
@@ -420,6 +489,122 @@ def fused_attn_output_prepare(
             BLOCK_N=block_n,
             BLOCK_V=block_v,
             num_warps=1,
+        )
+    if had_seq:
+        return out.unsqueeze(1)
+    return out
+
+
+def fused_attn_output_prepare_from_g_mid(
+    recurrent_out: Any,
+    r: Any,
+    k: Any,
+    v: Any,
+    g_mid: Any,
+    g_up_weight: Any,
+    g_up_bias: Any | None,
+    r_k: Any,
+    group_norm_weight: Any,
+    group_norm_bias: Any,
+    *,
+    num_heads: int,
+    head_dim: int,
+    head_v_dim: int,
+    eps: float,
+    block_r: int = 64,
+    force_fallback: bool = False,
+):
+    """Prepare attention output while computing the G gate from LoRA mid values.
+
+    This opt-in prefill experiment removes the large materialized ``g`` tensor
+    between the shift-WAVG LoRA up kernel and output-prep.  It keeps ``g_mid``
+    (`[batch, g_rank]`) and computes ``g_mid @ g_up_weight.T`` inside the
+    output-prep tile before applying the gate.
+    """
+
+    if torch is None or F is None:
+        raise RuntimeError("fused_attn_output_prepare_from_g_mid requires torch")
+    value_dim = int(num_heads) * int(head_v_dim)
+    rec2, had_seq = _flatten_2d(recurrent_out, value_dim, name="recurrent_out")
+    if g_mid.dim() == 3:
+        if int(g_mid.shape[1]) != 1:
+            raise ValueError(f"g_mid must be [batch, 1, rank] or [batch, rank], got {tuple(g_mid.shape)}")
+        g_mid2 = g_mid.reshape(int(g_mid.shape[0]), int(g_mid.shape[2]))
+    elif g_mid.dim() == 2:
+        g_mid2 = g_mid
+    else:
+        raise ValueError(f"g_mid must be [batch, 1, rank] or [batch, rank], got {tuple(g_mid.shape)}")
+    r3 = _flatten_head(r, int(num_heads), int(head_dim), name="r")
+    k3 = _flatten_head(k, int(num_heads), int(head_dim), name="k")
+    v3 = _flatten_head(v, int(num_heads), int(head_v_dim), name="v")
+    batch = int(rec2.shape[0])
+    if int(g_mid2.shape[0]) != batch or int(r3.shape[0]) != batch or int(k3.shape[0]) != batch or int(v3.shape[0]) != batch:
+        raise ValueError("g_mid/r/k/v batch size must match recurrent_out")
+    if g_up_weight.dim() != 2 or int(g_up_weight.shape[0]) != value_dim:
+        raise ValueError(f"g_up_weight must be [{value_dim}, rank], got {tuple(g_up_weight.shape)}")
+    g_rank = int(g_up_weight.shape[1])
+    if int(g_mid2.shape[1]) != g_rank:
+        raise ValueError(f"g_mid rank mismatch: got {int(g_mid2.shape[1])}, expected {g_rank}")
+    if g_up_bias is not None and (g_up_bias.dim() != 1 or int(g_up_bias.shape[0]) != value_dim):
+        raise ValueError(f"g_up_bias must be [{value_dim}], got {tuple(g_up_bias.shape)}")
+    if r_k.dim() != 2 or int(r_k.shape[0]) != int(num_heads) or int(r_k.shape[1]) != int(head_dim):
+        raise ValueError(f"r_k must be [{num_heads}, {head_dim}], got {tuple(r_k.shape)}")
+    if group_norm_weight.dim() != 1 or int(group_norm_weight.shape[0]) != value_dim:
+        raise ValueError(f"group_norm_weight must be [{value_dim}], got {tuple(group_norm_weight.shape)}")
+    if group_norm_bias.dim() != 1 or int(group_norm_bias.shape[0]) != value_dim:
+        raise ValueError(f"group_norm_bias must be [{value_dim}], got {tuple(group_norm_bias.shape)}")
+
+    tensors = [rec2, r3, k3, v3, g_mid2, g_up_weight, r_k, group_norm_weight, group_norm_bias]
+    if g_up_bias is not None:
+        tensors.append(g_up_bias)
+    use_triton = (
+        not force_fallback
+        and fused_attn_output_prepare_from_g_mid_available()
+        and all(t.is_cuda for t in tensors)
+        and rec2.dtype in (torch.float16, torch.bfloat16, torch.float32)
+        and all(t.dtype == rec2.dtype for t in tensors)
+        and int(head_dim) <= 128
+        and int(head_v_dim) <= 128
+        and int(g_rank) <= 256
+    )
+    if not use_triton:
+        gate = F.linear(g_mid2, g_up_weight, g_up_bias)
+        normed = F.group_norm(rec2, num_groups=int(num_heads), weight=group_norm_weight, bias=group_norm_bias, eps=float(eps))
+        correction = ((r3 * k3 * r_k.view(1, int(num_heads), int(head_dim))).sum(-1, keepdim=True) * v3).reshape(batch, value_dim)
+        out = (normed + correction) * gate
+    else:
+        rec_c, r_c, k_c, v_c, gm_c, gu_c = [t.contiguous() for t in (rec2, r3, k3, v3, g_mid2, g_up_weight)]
+        gb_c = g_up_bias.contiguous() if g_up_bias is not None else gu_c
+        rk_c = r_k.contiguous()
+        w_c = group_norm_weight.contiguous()
+        b_c = group_norm_bias.contiguous()
+        out = torch.empty_like(rec2)
+        block_n = triton.next_power_of_2(int(head_dim))
+        block_v = triton.next_power_of_2(int(head_v_dim))
+        block_r_pow2 = triton.next_power_of_2(int(block_r))
+        _attn_output_prepare_from_g_mid_kernel[(batch, int(num_heads))](
+            rec_c,
+            r_c,
+            k_c,
+            v_c,
+            gm_c,
+            gu_c,
+            gb_c,
+            rk_c,
+            w_c,
+            b_c,
+            out,
+            num_heads=int(num_heads),
+            head_dim=int(head_dim),
+            head_v_dim=int(head_v_dim),
+            value_dim=value_dim,
+            g_rank=int(g_rank),
+            has_g_bias=g_up_bias is not None,
+            eps=float(eps),
+            BLOCK_N=block_n,
+            BLOCK_V=block_v,
+            BLOCK_R=block_r_pow2,
+            num_warps=4 if int(block_r_pow2) >= 128 else 2,
         )
     if had_seq:
         return out.unsqueeze(1)

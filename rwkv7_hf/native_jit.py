@@ -146,6 +146,8 @@ try:  # pragma: no cover - optional Triton fast path on CUDA hosts
         fused_attn_output_prepare_available,
         fused_attn_output_prepare_from_correction,
         fused_attn_output_prepare_from_correction_available,
+        fused_attn_output_prepare_from_g_mid,
+        fused_attn_output_prepare_from_g_mid_available,
         fused_attn_output_prepare_from_sk_raw_v,
         fused_attn_output_prepare_from_sk_raw_v_available,
         fused_attn_output_prepare_raw_kv,
@@ -160,6 +162,8 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
             fused_attn_output_prepare_available,
             fused_attn_output_prepare_from_correction,
             fused_attn_output_prepare_from_correction_available,
+            fused_attn_output_prepare_from_g_mid,
+            fused_attn_output_prepare_from_g_mid_available,
             fused_attn_output_prepare_from_sk_raw_v,
             fused_attn_output_prepare_from_sk_raw_v_available,
             fused_attn_output_prepare_raw_kv,
@@ -172,6 +176,8 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_attn_output_prepare_available = None  # type: ignore[assignment]
         fused_attn_output_prepare_from_correction = None  # type: ignore[assignment]
         fused_attn_output_prepare_from_correction_available = None  # type: ignore[assignment]
+        fused_attn_output_prepare_from_g_mid = None  # type: ignore[assignment]
+        fused_attn_output_prepare_from_g_mid_available = None  # type: ignore[assignment]
         fused_attn_output_prepare_from_sk_raw_v = None  # type: ignore[assignment]
         fused_attn_output_prepare_from_sk_raw_v_available = None  # type: ignore[assignment]
         fused_attn_output_prepare_raw_kv = None  # type: ignore[assignment]
@@ -891,6 +897,25 @@ def _native_prefill_fused_shift_wavg_lora_lean_up_requested() -> bool:
     """Return whether shift-WAVG should use the lean up-kernel rank-retile probe."""
 
     return env_flag("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_LEAN_UP", False)
+
+
+def _native_prefill_fused_shift_wavg_lora_g_mid_output_requested() -> bool:
+    """Return whether output-prep should consume G LoRA mid activations."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_G_MID_OUTPUT", False)
+
+
+def _native_prefill_fused_shift_wavg_lora_g_mid_output_enabled() -> bool:
+    """Runtime switch for the shift-WAVG G-mid/output-prep boundary probe."""
+
+    if not _native_prefill_fused_shift_wavg_lora_g_mid_output_requested():
+        return False
+    if fused_attn_output_prepare_from_g_mid is None or fused_attn_output_prepare_from_g_mid_available is None:
+        return False
+    try:
+        return bool(fused_attn_output_prepare_from_g_mid_available())
+    except Exception:
+        return False
 
 
 def _native_prefill_fused_shift_wavg_lora_w_decay_requested() -> bool:
@@ -1772,6 +1797,8 @@ def prefill(
         use_prefill_projection = _native_prefill_fused_projection_enabled(B * T)
         shift_wavg_lora_done = False
         shift_wavg_lora_w_decay_done = False
+        shift_wavg_lora_g_mid_done = False
+        g_mid_for_output = None
 
         if _native_prefill_fused_norm_mix_enabled():
             norm_mix = fused_attn_norm_shift_mix_prefill(
@@ -1804,6 +1831,16 @@ def prefill(
                 output_w_decay = _native_prefill_fused_shift_wavg_lora_w_decay_enabled(B * T)
                 lean_down = _native_prefill_fused_shift_wavg_lora_lean_down_requested()
                 lean_up = _native_prefill_fused_shift_wavg_lora_lean_up_requested()
+                output_g_mid = (
+                    _native_prefill_fused_shift_wavg_lora_g_mid_output_enabled()
+                    and _native_prefill_fused_output_enabled()
+                    and not _native_prefill_fused_scan_output_enabled()
+                    and not _native_prefill_fused_state_scan_output_enabled()
+                    and not _native_prefill_fused_state_scan_correction_enabled()
+                    and not _native_prefill_fused_state_scan_raw_output_enabled()
+                    and not _native_prefill_fused_state_scan_sk_output_enabled()
+                    and not _native_prefill_fused_output_project_enabled()
+                )
                 xr2, xk2, xv2, w2_out, a2_out, g2_out, v_gate2 = fused_shift_wavg_lora(
                     h.reshape(B * T, hidden),
                     prev_h.reshape(B * T, hidden),
@@ -1833,6 +1870,7 @@ def prefill(
                     output_w_decay=output_w_decay,
                     lean_down=lean_down,
                     lean_up=lean_up,
+                    output_g_mid=output_g_mid,
                 )
                 xr = xr2.view(B, T, hidden)
                 xk = xk2.view(B, T, hidden)
@@ -1841,7 +1879,12 @@ def prefill(
                 xw = xa = xg = None
                 w = w2_out.view(B, T, hidden)
                 a = torch.sigmoid(a2_out.view(B, T, hidden))
-                g = g2_out.view(B, T, hidden)
+                if output_g_mid:
+                    g = None
+                    g_mid_for_output = g2_out.reshape(B * T, int(g1.shape[0]))
+                    shift_wavg_lora_g_mid_done = True
+                else:
+                    g = g2_out.view(B, T, hidden)
                 v_gate = v_gate2.view(B, T, hidden)
                 shift_wavg_lora_done = True
                 shift_wavg_lora_w_decay_done = bool(output_w_decay)
@@ -2521,6 +2564,23 @@ def prefill(
                 block_m=_native_prefill_fused_output_project_block_m(),
             ).view(B, T, hidden)
             out_projected = True
+        elif shift_wavg_lora_g_mid_done and _native_prefill_fused_output_enabled():
+            out = fused_attn_output_prepare_from_g_mid(
+                out.reshape(B * T, hidden),
+                r.reshape(B * T, H, N),
+                k.reshape(B * T, H, N),
+                v.reshape(B * T, H, N),
+                g_mid_for_output,
+                g2,
+                None,
+                r_k,
+                gn_w,
+                gn_b,
+                num_heads=H,
+                head_dim=N,
+                head_v_dim=N,
+                eps=eps,
+            ).view(B, T, hidden)
         elif _native_prefill_fused_output_enabled():
             out = fused_attn_output_prepare(
                 out.reshape(B * T, hidden),

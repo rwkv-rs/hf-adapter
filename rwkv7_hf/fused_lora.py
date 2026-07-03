@@ -331,6 +331,7 @@ if _HAS_TRITON:
         HAS_V_BIAS: tl.constexpr,
         OUTPUT_W_DECAY: tl.constexpr,
         LEAN_UP: tl.constexpr,
+        SKIP_G_OUT: tl.constexpr,
         BLOCK_M: tl.constexpr,
         BLOCK_R: tl.constexpr,
     ):
@@ -358,7 +359,7 @@ if _HAS_TRITON:
                 a_offsets = offs_m[:, None] * a_rank + ridx[None, :]
                 au = tl.load(a_up_ptr + a_offsets, mask=mask_m[:, None] & mask_a_r[None, :], other=0.0).to(tl.float32)
                 acc_a += tl.sum(au * am[None, :], axis=1)
-            if (not LEAN_UP) or start < g_rank:
+            if (not SKIP_G_OUT) and ((not LEAN_UP) or start < g_rank):
                 mask_g_r = ridx < g_rank
                 gm = tl.load(g_mid_ptr + batch_id * g_rank + ridx, mask=mask_g_r, other=0.0).to(tl.float32)
                 g_offsets = offs_m[:, None] * g_rank + ridx[None, :]
@@ -377,7 +378,7 @@ if _HAS_TRITON:
         if HAS_A_BIAS:
             ab = tl.load(a_bias_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
             acc_a += ab
-        if HAS_G_BIAS:
+        if HAS_G_BIAS and not SKIP_G_OUT:
             gb = tl.load(g_bias_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
             acc_g += gb
         if HAS_V_BIAS:
@@ -388,7 +389,8 @@ if _HAS_TRITON:
             acc_w = tl.exp(-0.606531 * tl.sigmoid(acc_w))
         tl.store(w_out_ptr + out_base, acc_w, mask=mask_m)
         tl.store(a_out_ptr + out_base, acc_a, mask=mask_m)
-        tl.store(g_out_ptr + out_base, acc_g, mask=mask_m)
+        if not SKIP_G_OUT:
+            tl.store(g_out_ptr + out_base, acc_g, mask=mask_m)
         tl.store(v_gate_ptr + out_base, tl.sigmoid(acc_v), mask=mask_m)
 
     @triton.jit
@@ -978,6 +980,7 @@ def fused_wavg_lora(
             HAS_V_BIAS=v_up_bias is not None,
             OUTPUT_W_DECAY=False,
             LEAN_UP=False,
+            SKIP_G_OUT=False,
             BLOCK_M=int(block_m),
             BLOCK_R=int(block_r),
             num_warps=4,
@@ -1017,6 +1020,7 @@ def fused_shift_wavg_lora(
     output_w_decay: bool = False,
     lean_down: bool = False,
     lean_up: bool = False,
+    output_g_mid: bool = False,
     force_fallback: bool = False,
 ):
     """Fuse attention time-mix materialization with W/A/G/V-gate LoRA.
@@ -1118,6 +1122,8 @@ def fused_shift_wavg_lora(
         )
         if output_w_decay:
             w_out = torch.exp(-0.606531 * torch.sigmoid(w_out.float())).to(dtype=w_out.dtype)
+        if output_g_mid:
+            g_out = torch.sigmoid(F.linear(xg, g_down_weight)).to(dtype=h2.dtype)
     else:
         batch = int(h2.shape[0])
         h_c = h2.contiguous()
@@ -1149,7 +1155,7 @@ def fused_shift_wavg_lora(
         xv = torch.empty_like(xr)
         w_out = torch.empty_like(xr)
         a_out = torch.empty_like(xr)
-        g_out = torch.empty_like(xr)
+        g_out = torch.empty_like(xr) if not output_g_mid else xr
         v_gate = torch.empty_like(xr)
         _shift_wavg_lora_down_kernel[(batch, triton.cdiv(max_rank, int(block_r)))](
             h_c,
@@ -1211,10 +1217,13 @@ def fused_shift_wavg_lora(
             HAS_V_BIAS=v_up_bias is not None,
             OUTPUT_W_DECAY=bool(output_w_decay),
             LEAN_UP=bool(lean_up),
+            SKIP_G_OUT=bool(output_g_mid),
             BLOCK_M=int(block_m),
             BLOCK_R=int(block_r),
             num_warps=int(up_num_warps),
         )
+        if output_g_mid:
+            g_out = g_mid
     if had_seq:
         return (
             xr.unsqueeze(1),

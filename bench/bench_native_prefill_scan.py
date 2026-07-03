@@ -319,6 +319,8 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_fused_shift_wavg_lora_up_warps": shift_wavg_warps[1],
         "prefill_fused_shift_wavg_lora_lean_down": getattr(nj, "_native_prefill_fused_shift_wavg_lora_lean_down_requested", lambda: False)(),
         "prefill_fused_shift_wavg_lora_lean_up": getattr(nj, "_native_prefill_fused_shift_wavg_lora_lean_up_requested", lambda: False)(),
+        "prefill_fused_shift_wavg_lora_g_mid_output_requested": getattr(nj, "_native_prefill_fused_shift_wavg_lora_g_mid_output_requested", lambda: False)(),
+        "prefill_fused_shift_wavg_lora_g_mid_output_effective": getattr(nj, "_native_prefill_fused_shift_wavg_lora_g_mid_output_enabled", lambda: False)(),
         "prefill_fused_shift_wavg_lora_w_decay_requested": getattr(nj, "_native_prefill_fused_shift_wavg_lora_w_decay_requested", lambda: False)(),
         "prefill_fused_shift_wavg_lora_w_decay_effective": getattr(nj, "_native_prefill_fused_shift_wavg_lora_w_decay_enabled", lambda _rows: False)(batch_size * prompt_tokens),
         "prefill_ffn_fused_act_requested": getattr(nj, "_native_prefill_ffn_fused_act_requested", lambda: False)(),

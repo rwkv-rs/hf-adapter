@@ -89,6 +89,7 @@ def main() -> int:
     ap.add_argument("--up-warps", type=int, default=4)
     ap.add_argument("--lean-down", action="store_true")
     ap.add_argument("--lean-up", action="store_true")
+    ap.add_argument("--output-g-mid", action="store_true")
     ap.add_argument("--warmup", type=int, default=5)
     ap.add_argument("--steps", type=int, default=15)
     ap.add_argument("--results", default="")
@@ -244,6 +245,7 @@ def main() -> int:
                 HAS_V_BIAS=True,
                 OUTPUT_W_DECAY=False,
                 LEAN_UP=bool(args.lean_up),
+                SKIP_G_OUT=bool(args.output_g_mid),
                 BLOCK_M=int(args.block_m),
                 BLOCK_R=int(args.block_r),
                 num_warps=int(args.up_warps),
@@ -278,6 +280,7 @@ def main() -> int:
                 up_num_warps=int(args.up_warps),
                 lean_down=bool(args.lean_down),
                 lean_up=bool(args.lean_up),
+                output_g_mid=bool(args.output_g_mid),
             )
 
         # Correctness against torch fallback and explicit phase composition.
@@ -308,11 +311,21 @@ def main() -> int:
             block_k=int(args.block_k),
             force_fallback=True,
         )
-        max_diff = max(float((a.float() - b.float()).abs().max().detach().cpu()) for a, b in zip(full, ref))
+        if args.output_g_mid:
+            delta = prev_h - h
+            xg_ref = h + delta * x_g.view(1, hidden)
+            g_mid_ref = torch.sigmoid(torch.nn.functional.linear(xg_ref, g1)).to(dtype=h.dtype)
+            max_diff = max(
+                [float((full[idx].float() - ref[idx].float()).abs().max().detach().cpu()) for idx in (0, 1, 2, 3, 4, 6)]
+                + [float((full[5].float() - g_mid_ref.float()).abs().max().detach().cpu())]
+            )
+        else:
+            max_diff = max(float((a.float() - b.float()).abs().max().detach().cpu()) for a, b in zip(full, ref))
         phase_tensors = alloc_phase_tensors()
         run_down(phase_tensors)
         run_up(phase_tensors)
-        phase_out = (phase_tensors[4], phase_tensors[5], phase_tensors[6], phase_tensors[7], phase_tensors[8], phase_tensors[9], phase_tensors[10])
+        phase_g = phase_tensors[2] if args.output_g_mid else phase_tensors[9]
+        phase_out = (phase_tensors[4], phase_tensors[5], phase_tensors[6], phase_tensors[7], phase_tensors[8], phase_g, phase_tensors[10])
         phase_diff = max(float((a.float() - b.float()).abs().max().detach().cpu()) for a, b in zip(phase_out, full))
         status = "pass" if max_diff <= 0.125 and phase_diff == 0.0 else "fail"
 
@@ -348,6 +361,7 @@ def main() -> int:
             "up_warps": int(args.up_warps),
             "lean_down": bool(args.lean_down),
             "lean_up": bool(args.lean_up),
+            "output_g_mid": bool(args.output_g_mid),
             "max_abs_diff_vs_fallback": round(max_diff, 6),
             "phase_max_abs_diff_vs_full": round(phase_diff, 6),
         }
