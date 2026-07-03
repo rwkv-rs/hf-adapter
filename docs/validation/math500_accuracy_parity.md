@@ -57,10 +57,12 @@ Current acceptance baseline from `bench/math500_acceptance_4090_20260703`:
    `8/9` vs `8/9`, while correct generations are `315/576` HF vs `325/576` Albatross.  The
    full-run net gap `-249/32000` shrinks to `-10/576`, supporting the logits-parity conclusion
    that sampling/RNG/refill history is more likely than a large model-math mismatch.
-4. Run Albatross `v4` / `linear_orig_layout_launch` tuning checks and update the reference table. **Partial done:**
+4. Run Albatross `v4` / `linear_orig_layout_launch` tuning checks and update the reference table. **Done for current 4090 evidence:**
    `bench/albatross_v3a_v4_4090_tune_20260703/` shows v4 is faster than v3a on this RTX 4090
-   smoke (`B1T512` is `58,933.8` tok/s vs `48,311.5`, `1.220x`).  The remaining reference-tuning
-   task is an Albatross-side micro sweep of `linear_orig_layout_launch` choices per `(GPU, C, rows, group)`.
+   smoke (`B1T512` is `58,933.8` tok/s vs `48,311.5`, `1.220x`).
+   `bench/albatross_linear_orig_layout_tune_4090_20260704/` records a per-bucket micro sweep.
+   `bench/albatross_v4_linear_policy_patch_4090_20260704/` shows the direct policy patch made full
+   model-forward slower, so the current v4 smoke remains the tuned reference for now.
 5. Add a sampler/refill stochasticity report before changing model math. **Done:**
    `bench/math500_sampling_variance_4090_20260703/` shows the prefix curve starts near parity (`pass@1` HF
    `0.144` vs Albatross `0.142`) and the empirical repeated-rollout bootstrap delta interval includes zero
@@ -218,7 +220,30 @@ Artifact: `bench/albatross_v3a_v4_4090_tune_20260703/`.
 
 Interpretation: v4 is a higher speed ceiling than the committed v3a reference on this RTX 4090 smoke, especially for prompt-prefill.  The committed PR #104 full MATH500 v3a run remains the accuracy reference until v4 has a full avg@64 runner/result.  For final speed claims, report both the committed full-eval v3a reference and the fastest tuned per-GPU Albatross reference.
 
-`linear_orig_layout_launch` status: checked but not fully tuned.  v4 hard-codes launch choices by `rows`, `K`, and group.  For 0.4B `C=1024`, `B1T512` uses `rows=512` in the body and `head_rows=1`; the next Albatross-reference task is a micro sweep over the cublasLt algorithm/workspace and exact-row kernel choices per `(GPU, C, rows, group)`.
+`linear_orig_layout_launch` status: v4 hard-codes launch choices by `rows`, `K`, and group.  For 0.4B `C=1024`, `B1T512` uses `rows=512` in the body and `head_rows=1`.  A 4090 micro sweep and a follow-up patched-binary smoke are recorded below; the patch did not improve full model-forward, so the current best validated v4 full-model smoke remains the tuned reference for now.
+
+
+## Albatross `linear_orig_layout_launch` per-GPU tuning
+
+Artifacts:
+
+- `bench/albatross_linear_orig_layout_tune_4090_20260704/`
+- `bench/albatross_v4_linear_policy_patch_4090_20260704/`
+
+Microbench result on RTX 4090 / sm_89 / 0.4B (`C=1024`, `F=4096`, `V=65536`):
+
+| Case | current v4 policy | current p50 ms | isolated best | best p50 ms | current/best |
+|---|---|---:|---|---:|---:|
+| `att_c2c_b1t1` | `exact_t128_o2_u1` | `0.020560` | `rows_r1_o4` | `0.020448` | `1.005x` |
+| `att_c2c_b64t1` | `lt_ws32_a6` | `0.053696` | `cfg_t32_r3_o4` | `0.025088` | `2.140x` |
+| `att_c2c_b1t512` | `lt_ws32_a1` | `0.052224` | `orig` | `0.025632` | `2.037x` |
+| `ffn_key_b1t1` | `exact_t128_o2_u1` | `0.020480` | `rows_r3_o2` | `0.020400` | `1.004x` |
+| `ffn_key_b64t1` | `lt_ws0_a0` | `0.048128` | `orig` | `0.026624` | `1.808x` |
+| `ffn_key_b1t512` | `lt_ws128_a3` | `0.075776` | `orig` | `0.041984` | `1.805x` |
+| `head_b1` | `exact_t128_o2_u1` | `0.148480` | `exact_t128_o2_u0` | `0.148480` | `1.000x` |
+| `head_b64` | `orig` | `0.167968` | `orig` | `0.167968` | `1.000x` |
+
+Follow-up patch smoke: applying the obvious isolated winners to a temporary v4 binary **did not** improve model-forward.  `B1T512` moved from `59091.90` tok/s baseline to `55594.50` tok/s patched (`0.941x`), and `B64T1` moved from `25194.50` to `24366.50` (`0.967x`).  Therefore the isolated microbench winners are useful per-GPU tuning evidence but not a safe full-model tuned reference replacement.  For current G1 comparisons, keep the best validated full-model Albatross v4 smoke as the tuned speed reference and leave deeper v4 policy search as future Albatross-side work.
 
 ## Albatross reference tuning notes
 
