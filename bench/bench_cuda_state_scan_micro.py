@@ -301,6 +301,32 @@ def main() -> int:
         }
         print(json.dumps(row, ensure_ascii=False))
         append_row(args.results, row)
+    for rpb in [8, 16]:
+        ms = median_ms(
+            lambda rpb=rpb: call_full(tensors, rows_per_block=rpb, schedule="warp_pipelined", w_precomputed=True),
+            warmup=args.warmup,
+            steps=args.steps,
+        )
+        row = {
+            "axis": "cuda_state_scan_micro",
+            "backend": "cuda_state_scan",
+            "bench_case": f"full_warp_pipelined_wpre_rpb{rpb}",
+            "status": "pass",
+            "device": device_name,
+            "dtype": "fp16",
+            "batch_size": args.batch_size,
+            "seq_len": args.seq_len,
+            "heads": args.heads,
+            "head_dim": 64,
+            "tokens_total": tokens_total,
+            "schedule": "warp_pipelined",
+            "rows_per_block": rpb,
+            "w_precomputed": True,
+            "cuda_ms": round(ms, 6),
+            "tokps_total": round(1000.0 * tokens_total / ms, 1) if ms > 0 else None,
+        }
+        print(json.dumps(row, ensure_ascii=False))
+        append_row(args.results, row)
     for rpb in [1, 2, 4, 8, 16]:
         ms = median_ms(
             lambda rpb=rpb: call_full_sk(tensors, rows_per_block=rpb),

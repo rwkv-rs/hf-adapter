@@ -1704,14 +1704,83 @@ Branch: `wangyue/native-prefill-060-albatross`
     warppipe enabled to see whether the scan component improves but total time
     is hidden by launch/model overhead, or whether the micro win is lost inside
     the real layer mix.
+- [x] Run corrected HF breakdown for the warp-pipelined route:
+  - Compared baseline warp-specialized rpb1, warp-pipelined rpb16, and
+    warp-pipelined rpb16 + FFN norm-shift on the current shift-WAVG route.
+  - Result file:
+    `bench/results_native_4090_warppipe_breakdown_20260703_124500.jsonl`
+    from remote `/tmp/native_4090_warppipe_breakdown_20260703_124500.jsonl`.
+  - 4090 / 0.4B / prompt512 / bsz1 profiled rows, all pass against native
+    prefill with max diff `0.0`:
+    - baseline warp-specialized + shift-WAVG:
+      profiled total `25.7310 ms`, `19,898.2 tok/s`, component sum
+      `22.4311 ms`, peak `1005.2 MiB`;
+    - warp-pipelined rpb16 + shift-WAVG:
+      profiled total `26.0547 ms`, `19,651.0 tok/s`, component sum
+      `22.1882 ms`, peak `1005.2 MiB`;
+    - warp-pipelined rpb16 + shift-WAVG + FFN norm-shift:
+      profiled total `25.0931 ms`, `20,404.0 tok/s`, component sum
+      `21.3850 ms`, peak `957.3 MiB`.
+  - Component signal:
+    - `recurrent_scan_state_prep_cuda` drops from `11.2925 ms` baseline to
+      `10.2545 ms` with warppipe rpb16 and `10.1245 ms` with warppipe+FFN
+      norm-shift (`~1.04-1.17 ms` scan-side win);
+    - FFN norm-shift lowers `ffn` from `2.2250 ms` to `1.9957 ms` and peak
+      VRAM by about `48 MiB`;
+    - the largest remaining non-scan component is still
+      `attn_shift_wavg_lora_fused` at about `5.08-5.20 ms`.
+  - Conclusion: the warppipe scan improvement is real in component profiling,
+    but it is not enough to beat the strict best `28,780.6 tok/s` in e2e.  The
+    next bounded experiment should target the adjacent shift-WAVG/state-scan
+    boundary or a larger FFN memory boundary rather than another pure scan-only
+    micro retile.
+- [x] Extend shift-WAVG W-decay into the warp-pipelined scan boundary:
+  - Implementation:
+    - `rwkv7_state_scan_prep_n64_rowblock_warp_pipelined_kernel` now accepts
+      precomputed W-decay through the existing `w_precomputed` CUDA extension
+      path;
+    - `RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_W_DECAY=1` is now allowed
+      for both `warp_specialized` and `warp_pipelined`;
+    - benchmark telemetry records the effective `prefill_cuda_state_scan_w_precomputed`
+      path; default HF/native behavior remains unchanged.
+  - Correctness:
+    - 4090 synthetic oracle vs raw-W warp-pipelined passed for rpb
+      `1/2/4/8/16`, with output diff `0.0625`, state diff `0.00560`, and
+      adjusted K/V diffs `0.0`;
+    - all HF rows below pass greedy/cache/decode smoke.
+  - Result files:
+    - micro:
+      `bench/results_cuda_state_scan_warppipe_wpre_micro_4090_20260703_130000.jsonl`
+      from remote
+      `/tmp/cuda_state_scan_warppipe_wpre_micro_4090_20260703_130000.jsonl`;
+    - HF sweep:
+      `bench/results_native_4090_warppipe_wpre_20260703_131500.jsonl`
+      from remote `/tmp/native_4090_warppipe_wpre_20260703_131500.jsonl`.
+  - 4090 synthetic `B=1,T=512,H=16,N=64,fp16` micro rows:
+    - warp-pipelined rpb8: `0.347136 ms`, `1,474,926.3 tok/s`;
+    - warp-pipelined W-precomputed rpb8: `0.333824 ms`,
+      `1,533,742.3 tok/s`;
+    - warp-pipelined rpb16: `0.393216 ms`, `1,302,083.3 tok/s`;
+    - warp-pipelined W-precomputed rpb16: `0.379904 ms`,
+      `1,347,708.9 tok/s`.
+  - 4090 / 0.4B / prompt512 / bsz1 HF rows:
+    - warppipe rpb8 + shift-WAVG: `27,035.2 tok/s`, `18.9383 ms`;
+    - warppipe W-precomputed rpb8 + shift-WAVG: `27,258.7 tok/s`,
+      `18.7830 ms`;
+    - warppipe rpb16 + shift-WAVG: `27,745.7 tok/s`, `18.4533 ms`;
+    - warppipe W-precomputed rpb16 + shift-WAVG: `27,166.4 tok/s`,
+      `18.8468 ms`.
+  - Conclusion: W-precompute remains a micro win even with warppipe, but it does
+    not transfer into a strict HF improvement and remains below the best
+    `28,780.6 tok/s`.  Keep it opt-in; do not promote.  The remaining gap is
+    no longer likely to close through W-only or pure scan synchronization
+    retile.
 - [ ] Next persistent/two-level state-scan experiment:
-  - Run a corrected HF breakdown comparing baseline warp-specialized rpb1,
-    warp-pipelined rpb16, and warp-pipelined rpb16 + FFN norm-shift on the
-    current shift-WAVG route.  If `recurrent_scan_state_prep_cuda` drops in the
-    component profile but e2e remains flat, route the next experiment to the
-    adjacent shift-WAVG/state-scan boundary or FFN memory boundary; if the scan
-    component does not drop, inspect the pipelined kernel occupancy/register
-    pressure and retile only the producer/shared-buffer path.
+  - Move the next bounded experiment to the larger remaining boundary exposed
+    by breakdown: `attn_shift_wavg_lora_fused` (`~5.1 ms`) and/or the FFN
+    memory boundary.  Preferred next step is a targeted shift-WAVG micro/e2e
+    retile that changes actual memory traffic or matmul tiling, not only W
+    decay, while comparing against the current best CUDA scan route.
   - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond `28,780.6 tok/s`, moving toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for

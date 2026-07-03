@@ -901,11 +901,11 @@ def _native_prefill_fused_shift_wavg_lora_w_decay_enabled(total_rows: int) -> bo
         return False
     if not (_native_prefill_fused_state_scan_enabled() and _native_prefill_cuda_state_scan_enabled()):
         return False
-    if _native_prefill_cuda_state_scan_lanes() != 64:
+    if _native_prefill_cuda_state_scan_lanes_per_row() != 64:
         return False
     if _native_prefill_cuda_state_scan_precompute_mode() != "none":
         return False
-    return _native_prefill_cuda_state_scan_schedule() == "warp_specialized"
+    return _native_prefill_cuda_state_scan_schedule() in {"warp_specialized", "warp_pipelined"}
 
 
 def _native_prefill_ffn_fused_act_requested() -> bool:
