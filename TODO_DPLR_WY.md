@@ -1286,7 +1286,7 @@ Branch: `wangyue/native-prefill-060-albatross`
         combination in this experiment, but still below the strict historical
         `27,051.0 tok/s` row and below the `31,289 tok/s` stretch target;
       - keep `warp2` opt-in and do not promote it.
-- [ ] Next main fused-fp16 task:
+- [x] Next main fused-fp16 task:
   - Move to the other larger-boundary option: implement or probe a real
     layer-prep fusion that reduces norm/shift + LoRA/projection launch and
     memory cost while preserving cuBLAS for the big dense R/K/V/O matmuls.
@@ -1295,6 +1295,62 @@ Branch: `wangyue/native-prefill-060-albatross`
     - best opt-in CUDA state-scan/WAVG combination;
     - the new layer-prep boundary.
   - Promotion gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
+    confirmed row beyond `27,051.0 tok/s`, moving toward `>=31,289 tok/s`.
+  - Done: added an opt-in prefill attention norm+shift/time-mix boundary:
+    `RWKV7_NATIVE_PREFILL_FUSED_NORM_MIX=1`.
+    - implementation:
+      - new Triton helper `fused_attn_norm_shift_mix_prefill(...)` computes
+        optional pre-attention layernorm, attention layernorm, previous-token
+        `h`, and the six RWKV time-mix tensors in one kernel;
+      - native prefill and the profiler route through it only when the env
+        flag is enabled;
+      - telemetry/analyzer now record
+        `prefill_fused_norm_mix_requested/effective`;
+      - dense R/K/V/O matmuls remain cuBLAS-backed; default HF/native behavior
+        is unchanged.
+    - correctness:
+      - 4090 random CUDA oracle passed for both `has_pre_norm=False` and
+        `has_pre_norm=True` with max diffs within fp16 tolerance;
+      - all HF rows below pass greedy/cache/decode smoke.
+    - result files:
+      - e2e:
+        `bench/results_native_4090_norm_mix_layerprep_20260703_014616.jsonl`
+        from remote
+        `/tmp/native_4090_norm_mix_layerprep_20260703_014616.jsonl`;
+      - fine-attention breakdown:
+        `bench/results_native_4090_norm_mix_breakdown_20260703_014616.jsonl`
+        from remote
+        `/tmp/native_4090_norm_mix_breakdown_20260703_014616.jsonl`.
+    - 4090 / 0.4B / prompt512 / bsz1 e2e rows:
+      - current Triton baseline: pass, `24,821.1 tok/s`, `20.6276 ms`,
+        peak `989.2 MiB`;
+      - best CUDA state-scan + tuned WAVG comparison:
+        pass, `26,256.9 tok/s`, `19.4997 ms`;
+      - fused norm-mix only: pass, `24,311.1 tok/s`, `21.0603 ms`;
+      - fused norm-mix + WAVG: pass, `25,719.4 tok/s`, `19.9072 ms`;
+      - fused norm-mix + CUDA warp-specialized state-scan + WAVG:
+        pass, `25,552.1 tok/s`, `20.0375 ms`.
+    - breakdown signal:
+      - `attn_norm_shift_mix` drops from `1.2575 ms` to `0.6043 ms`;
+      - profiled total is roughly flat/slightly better
+        (`29.6110 ms` -> `29.5373 ms`), but the e2e benchmark is slower and
+        the combined rows do not beat the same-run CUDA/WAVG comparison.
+    - conclusion: the standalone recompute-prev norm+mix boundary is
+      correctness-safe and reduces the targeted profiled component, but it
+      does not improve end-to-end 4090 throughput.  The extra launch/traffic
+      and previous-token norm recompute erase the saved Python/PyTorch
+      operations. Keep it opt-in and do not promote it; it does not beat the
+      strict historical `27,051.0 tok/s` row or the `31,289 tok/s` stretch.
+- [ ] Next main fused-fp16 task:
+  - Do not spend another iteration on standalone recompute-prev norm-mix.  The
+    next bounded performance experiment should either:
+    - make layer-prep larger without previous-token recompute, e.g.
+      compute/cache `h` once then fuse time-mix with the surrounding LoRA
+      inputs while keeping big dense projections on cuBLAS; or
+    - return to a deeper CUDA/persistent state-scan schedule that shares
+      per-token vectors without global temp tensors and without losing
+      row-level parallelism.
+  - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond `27,051.0 tok/s`, moving toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is

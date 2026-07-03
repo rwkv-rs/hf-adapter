@@ -273,6 +273,8 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         ),
         "prefill_fused_shift_mix_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_shift_mix_effective": nj._native_prefill_fused_shift_mix_enabled(),
+        "prefill_fused_norm_mix_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_NORM_MIX", "0").lower() not in {"0", "false", "no", "off"},
+        "prefill_fused_norm_mix_effective": getattr(nj, "_native_prefill_fused_norm_mix_enabled", lambda: False)(),
         "prefill_fused_state_prep_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_state_prep_effective": nj._native_prefill_fused_state_prep_enabled(),
         "prefill_fused_state_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN", "0").lower() not in {"0", "false", "no", "off"},

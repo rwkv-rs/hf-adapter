@@ -212,21 +212,39 @@ def profiled_native_prefill(
         hidden = H * N
 
         def norm_shift_mix():
-            residual_local = F.layer_norm(x, [hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
-            h_local = F.layer_norm(residual_local, [hidden], an_w, an_b, 1e-5)
-            prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h_local[:, :-1, :]], dim=1)
-            if native_jit._native_prefill_fused_shift_mix_enabled():
-                xr_local, xw_local, xk_local, xv_local, xa_local, xg_local = native_jit.fused_attn_shift_mix(
-                    h_local, prev_h, x_r, x_w, x_k, x_v, x_a, x_g
+            if getattr(native_jit, "_native_prefill_fused_norm_mix_enabled", lambda: False)():
+                out = native_jit.fused_attn_norm_shift_mix_prefill(
+                    x,
+                    xpa[layer_idx].view(B, hidden),
+                    x_r,
+                    x_w,
+                    x_k,
+                    x_v,
+                    x_a,
+                    x_g,
+                    pre_norm_weight=pre_w,
+                    pre_norm_bias=pre_b,
+                    norm_weight=an_w,
+                    norm_bias=an_b,
+                    has_pre_norm=int(has_pre) == 1,
                 )
+                residual_local, h_local, xr_local, xw_local, xk_local, xv_local, xa_local, xg_local = out.as_tuple()
             else:
-                xx = prev_h - h_local
-                xr_local = h_local + xx * x_r.view(1, 1, hidden)
-                xw_local = h_local + xx * x_w.view(1, 1, hidden)
-                xk_local = h_local + xx * x_k.view(1, 1, hidden)
-                xv_local = h_local + xx * x_v.view(1, 1, hidden)
-                xa_local = h_local + xx * x_a.view(1, 1, hidden)
-                xg_local = h_local + xx * x_g.view(1, 1, hidden)
+                residual_local = F.layer_norm(x, [hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
+                h_local = F.layer_norm(residual_local, [hidden], an_w, an_b, 1e-5)
+                prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h_local[:, :-1, :]], dim=1)
+                if native_jit._native_prefill_fused_shift_mix_enabled():
+                    xr_local, xw_local, xk_local, xv_local, xa_local, xg_local = native_jit.fused_attn_shift_mix(
+                        h_local, prev_h, x_r, x_w, x_k, x_v, x_a, x_g
+                    )
+                else:
+                    xx = prev_h - h_local
+                    xr_local = h_local + xx * x_r.view(1, 1, hidden)
+                    xw_local = h_local + xx * x_w.view(1, 1, hidden)
+                    xk_local = h_local + xx * x_k.view(1, 1, hidden)
+                    xv_local = h_local + xx * x_v.view(1, 1, hidden)
+                    xa_local = h_local + xx * x_a.view(1, 1, hidden)
+                    xg_local = h_local + xx * x_g.view(1, 1, hidden)
             return (
                 residual_local,
                 h_local,
@@ -1114,6 +1132,8 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_dplr_chunk_size": native_jit._native_prefill_dplr_chunk_size(),
         "prefill_fused_shift_mix_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_shift_mix_effective": native_jit._native_prefill_fused_shift_mix_enabled(),
+        "prefill_fused_norm_mix_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_NORM_MIX", "0").lower() not in {"0", "false", "no", "off"},
+        "prefill_fused_norm_mix_effective": getattr(native_jit, "_native_prefill_fused_norm_mix_enabled", lambda: False)(),
         "prefill_fused_state_prep_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_state_prep_effective": native_jit._native_prefill_fused_state_prep_enabled(),
         "prefill_fused_state_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN", "0").lower() not in {"0", "false", "no", "off"},
