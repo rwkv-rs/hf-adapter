@@ -84,11 +84,61 @@ if _HAS_TRITON:
             acc += tl.sum(w * h[None, :], axis=1)
         tl.store(out_ptr + batch_id * hidden + offs_m, acc, mask=mask_m)
 
+    @triton.jit
+    def _relu_square_inplace_kernel(
+        x_ptr,
+        total: tl.constexpr,
+        BLOCK: tl.constexpr,
+    ):
+        pid = tl.program_id(0)
+        offs = pid * BLOCK + tl.arange(0, BLOCK)
+        mask = offs < total
+        x = tl.load(x_ptr + offs, mask=mask, other=0.0).to(tl.float32)
+        y = tl.maximum(x, 0.0)
+        tl.store(x_ptr + offs, y * y, mask=mask)
+
 
 def fused_ffn_available() -> bool:
     """Return whether the optional Triton FFN prototype can run."""
 
     return bool(_HAS_TRITON and torch is not None)
+
+
+def fused_relu_square_available() -> bool:
+    """Return whether the single-kernel FFN activation helper can run."""
+
+    return bool(_HAS_TRITON and torch is not None)
+
+
+def fused_relu_square_inplace(x: Any, *, block_size: int = 1024, force_fallback: bool = False):
+    """Apply ``relu(x) ** 2`` in-place.
+
+    This is a prefill FFN micro-boundary: keep the two large FFN GEMMs on
+    cuBLAS, but replace the default PyTorch ``relu`` plus square elementwise
+    pair with one Triton pass over the intermediate activation.  The helper is
+    intentionally in-place and opt-in from ``native_jit`` so the default HF path
+    stays unchanged until end-to-end rows prove it is profitable.
+    """
+
+    if torch is None:
+        raise RuntimeError("fused_relu_square_inplace requires torch")
+    if not force_fallback and fused_relu_square_available() and getattr(x, "is_cuda", False):
+        x_c = x.contiguous()
+        total = int(x_c.numel())
+        if total > 0:
+            block = int(block_size)
+            if block <= 0:
+                block = 1024
+            _relu_square_inplace_kernel[(triton.cdiv(total, block),)](
+                x_c,
+                total,
+                BLOCK=block,
+                num_warps=4,
+            )
+        return x_c.reshape_as(x)
+    x.relu_()
+    x.mul_(x)
+    return x
 
 
 def _flatten(x: Any, hidden: int | None = None, *, name: str):

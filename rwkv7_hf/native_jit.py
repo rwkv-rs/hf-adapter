@@ -266,6 +266,15 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_attn_norm_shift_mix_prefill = None  # type: ignore[assignment]
         fused_attn_norm_shift_mix_prefill_available = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - optional Triton fast path on CUDA hosts
+    from .fused_ffn import fused_relu_square_available, fused_relu_square_inplace
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from fused_ffn import fused_relu_square_available, fused_relu_square_inplace
+    except Exception:
+        fused_relu_square_available = None  # type: ignore[assignment]
+        fused_relu_square_inplace = None  # type: ignore[assignment]
+
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
 
@@ -852,6 +861,70 @@ def _native_prefill_fused_shift_wavg_lora_warps() -> tuple[int, int]:
     down = env_int("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_DOWN_WARPS", 4, lower=1, upper=8)
     up = env_int("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_UP_WARPS", 4, lower=1, upper=8)
     return down, up
+
+
+def _native_prefill_ffn_fused_act_requested() -> bool:
+    """Return whether the prefill FFN relu-square fusion probe is requested."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_FFN_FUSED_ACT", False)
+
+
+def _native_prefill_ffn_fused_act_enabled() -> bool:
+    """Runtime switch for opt-in ``relu(x)^2`` variants in prefill FFN.
+
+    This deliberately does not replace the two cuBLAS FFN GEMMs; it only fuses
+    or lowers the activation boundary between them.  Keep it opt-in until
+    exact-card benchmark rows prove it beats the default PyTorch expression.
+    """
+
+    if not _native_prefill_ffn_fused_act_requested():
+        return False
+    if _native_prefill_ffn_fused_act_mode() == "torch_inplace":
+        return True
+    if fused_relu_square_inplace is None or fused_relu_square_available is None:
+        return False
+    try:
+        return bool(fused_relu_square_available())
+    except Exception:
+        return False
+
+
+def _native_prefill_ffn_fused_act_mode() -> str:
+    """Activation implementation for the prefill FFN probe."""
+
+    raw = os.environ.get("RWKV7_NATIVE_PREFILL_FFN_FUSED_ACT_MODE", "triton").strip().lower()
+    aliases = {
+        "triton": "triton",
+        "triton_inplace": "triton",
+        "single_kernel": "triton",
+        "torch": "torch_inplace",
+        "torch_inplace": "torch_inplace",
+        "inplace": "torch_inplace",
+    }
+    if raw not in aliases:
+        raise ValueError(
+            "RWKV7_NATIVE_PREFILL_FFN_FUSED_ACT_MODE must be 'triton' or "
+            f"'torch_inplace' (aliases: torch/inplace); got {raw!r}"
+        )
+    return aliases[raw]
+
+
+def _native_prefill_ffn_fused_act_block_size() -> int:
+    """Element tile for the prefill FFN activation fusion probe."""
+
+    return env_int("RWKV7_NATIVE_PREFILL_FFN_FUSED_ACT_BLOCK_SIZE", 1024, lower=128, upper=8192)
+
+
+def _native_prefill_apply_ffn_activation(fk):
+    """Apply the opt-in or default prefill FFN activation to ``fk``."""
+
+    if _native_prefill_ffn_fused_act_enabled():
+        if _native_prefill_ffn_fused_act_mode() == "torch_inplace":
+            fk.relu_()
+            fk.mul_(fk)
+            return fk
+        return fused_relu_square_inplace(fk, block_size=_native_prefill_ffn_fused_act_block_size())
+    return torch.relu(fk) ** 2
 
 
 def _native_prefill_fused_projection_requested() -> bool:
@@ -2314,7 +2387,8 @@ def prefill(
         prev_h2 = torch.cat([xpf[layer_idx].view(B, 1, hidden), h2[:, :-1, :]], dim=1)
         fxx = prev_h2 - h2
         fk = h2 + fxx * fx_k.view(1, 1, hidden)
-        fk = torch.relu(F.linear(fk, fK)) ** 2
+        fk = F.linear(fk, fK)
+        fk = _native_prefill_apply_ffn_activation(fk)
         x = residual + F.linear(fk, fV)
         xpf[layer_idx] = h2[:, -1, :].contiguous()
 

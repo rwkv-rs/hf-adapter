@@ -1501,12 +1501,38 @@ Branch: `wangyue/native-prefill-060-albatross`
     row parallelism / occupancy.  rpb8 is near rpb1, but neither beats the
     previous strict best `28,780.6 tok/s`. Keep rpb16 as an opt-in probe only;
     do not promote.
-- [ ] Next state-scan structural experiment:
-  - Stop widening rows-per-block.  The next state-scan attempt should preserve
-    rpb1/rpb8-level row parallelism while removing duplicated producer work by a
-    different structure: e.g. persistent two-level scheduling, head-level vector
-    prep shared through cooperative groups, or moving the remaining gain target
-    to scan+output/FFN fusion if state-scan single-kernel variants keep losing.
+- [x] Try a bounded FFN activation boundary after state-scan sharing variants lost:
+  - Added opt-in `RWKV7_NATIVE_PREFILL_FFN_FUSED_ACT=1` for the prefill FFN
+    middle activation, keeping both large FFN GEMMs on cuBLAS.  Modes:
+    - `RWKV7_NATIVE_PREFILL_FFN_FUSED_ACT_MODE=triton`: one Triton kernel for
+      in-place `relu(x)^2`;
+    - `RWKV7_NATIVE_PREFILL_FFN_FUSED_ACT_MODE=torch_inplace`: PyTorch in-place
+      relu plus square, avoiding extra allocation but not reducing launches.
+  - Correctness:
+    - 4090 fp16/bf16/fp32 activation oracle passed with max diff `0.0`;
+    - all HF rows below pass greedy/cache/decode smoke with max diff `0.0625`.
+  - Result files:
+    - `bench/results_native_4090_ffn_fused_act_20260703_112242.jsonl` from
+      remote `/tmp/native_4090_ffn_fused_act_20260703_112242.jsonl`;
+    - `bench/results_native_4090_ffn_act_torch_inplace_20260703_112706.jsonl`
+      from remote `/tmp/native_4090_ffn_act_torch_inplace_20260703_112706.jsonl`.
+  - 4090 / 0.4B / prompt512 / bsz1, current CUDA state-scan + shift-WAVG route:
+    - same-run baseline: `27,794.6 tok/s`, `18.4208 ms`;
+    - Triton activation block512: `26,331.2 tok/s`, `19.4446 ms`;
+    - Triton activation block1024: `26,657.4 tok/s`, `19.2067 ms`;
+    - Triton activation block2048: `25,905.3 tok/s`, `19.7643 ms`;
+    - Triton activation block4096: `26,990.0 tok/s`, `18.9700 ms`;
+    - second same-run baseline: `28,232.2 tok/s`, `18.1353 ms`;
+    - PyTorch in-place activation: `27,115.8 tok/s`, `18.8820 ms`.
+  - Conclusion: this small FFN activation boundary is correctness-safe but
+    negative end-to-end.  Do not promote it.  The remaining FFN opportunity, if
+    any, must be a larger boundary than standalone activation; otherwise return
+    to persistent/two-level state-scan scheduling.
+- [ ] Next larger-boundary experiment:
+  - Do not spend another turn on standalone `relu^2` FFN activation.  Next try
+    either a larger FFN boundary that saves real memory/launch work without
+    replacing cuBLAS GEMMs, or a persistent/two-level state-scan schedule that
+    preserves rpb1/rpb8 row parallelism while sharing producer vector prep.
   - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond `28,780.6 tok/s`, moving toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for

@@ -1094,7 +1094,8 @@ def profiled_native_prefill(
             prev_h2 = torch.cat([xpf[layer_idx].view(B, 1, hidden), h2[:, :-1, :]], dim=1)
             fxx = prev_h2 - h2
             fk = h2 + fxx * fx_k.view(1, 1, hidden)
-            fk = torch.relu(F.linear(fk, fK)) ** 2
+            fk = F.linear(fk, fK)
+            fk = getattr(native_jit, "_native_prefill_apply_ffn_activation", lambda _fk: torch.relu(_fk) ** 2)(fk)
             return residual_local + F.linear(fk, fV), h2[:, -1, :].contiguous()
 
         x, xpf_last = profiler.measure("ffn", ffn_block)
@@ -1267,6 +1268,10 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_fused_shift_wavg_lora_block_k": shift_wavg_blocks[2],
         "prefill_fused_shift_wavg_lora_down_warps": shift_wavg_warps[0],
         "prefill_fused_shift_wavg_lora_up_warps": shift_wavg_warps[1],
+        "prefill_ffn_fused_act_requested": getattr(native_jit, "_native_prefill_ffn_fused_act_requested", lambda: False)(),
+        "prefill_ffn_fused_act_effective": getattr(native_jit, "_native_prefill_ffn_fused_act_enabled", lambda: False)(),
+        "prefill_ffn_fused_act_mode": getattr(native_jit, "_native_prefill_ffn_fused_act_mode", lambda: "triton")(),
+        "prefill_ffn_fused_act_block_size": getattr(native_jit, "_native_prefill_ffn_fused_act_block_size", lambda: None)(),
         "prefill_fused_projection_requested": getattr(native_jit, "_native_prefill_fused_projection_requested", lambda: False)(),
         "prefill_fused_projection_effective": getattr(native_jit, "_native_prefill_fused_projection_enabled", lambda _rows: False)(batch_size * prompt_tokens),
         "prefill_fused_projection_max_m": getattr(native_jit, "_native_prefill_fused_projection_max_m", lambda: None)(),
