@@ -369,6 +369,12 @@ def _task_table(rows: list[dict[str, Any]], *, advantage_key: str) -> list[str]:
         problem = str(row.get("problem", "")).replace("\n", " ")
         if len(problem) > 100:
             problem = problem[:97] + "..."
+        # Problem snippets can contain LaTeX display delimiters followed
+        # immediately by multiple-choice labels, e.g. ``\\[...\\](A)``.  The
+        # repository markdown-link checker intentionally uses a simple regex and
+        # otherwise sees this as a local link to ``A``.  Add a display-safe
+        # separator and escape table pipes without changing the underlying JSON.
+        problem = problem.replace("](", "] (").replace("|", "\\|")
         lines.append(
             f"| {row['task_index']} | {row[advantage_key]} | {row['hf_correct']} | {row['albatross_correct']} | {problem} |"
         )
