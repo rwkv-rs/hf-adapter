@@ -2164,40 +2164,93 @@ def prefill(
             state_scan_block_m = _native_prefill_scan_block_m(N)
             state_scan_num_warps = _native_prefill_scan_num_warps(N, state_scan_block_m)
             state_scan_num_stages = _native_prefill_scan_num_stages()
+            use_cuda_state_scan_raw = (
+                _native_prefill_cuda_state_scan_enabled()
+                and N == 64
+                and state_scan_block_m == 64
+                and x.dtype == torch.float16
+                and _native_prefill_cuda_state_scan_lanes_per_row() == 64
+                and not _native_prefill_cuda_state_scan_precompute_enabled()
+                and _native_prefill_cuda_state_scan_schedule() == "warp_specialized"
+                and not shift_wavg_lora_w_decay_done
+            )
+            cuda_state_scan_rows_per_block = (
+                _native_prefill_cuda_state_scan_rows_per_block() if use_cuda_state_scan_raw else 1
+            )
             if layer_idx == 0:
-                out, new_state = fused_recurrent_scan_state_prep_nokv(
-                    r.view(B, T, H, N),
-                    w.view(B, T, H, N),
-                    k.view(B, T, H, N),
-                    v.view(B, T, H, N),
-                    a.view(B, T, H, N),
-                    state[layer_idx],
-                    k_k,
-                    k_a,
-                    block_n=N,
-                    block_m=state_scan_block_m,
-                    num_warps=state_scan_num_warps,
-                    num_stages=state_scan_num_stages,
-                )
+                if use_cuda_state_scan_raw:
+                    out, new_state, _k_unused, _v_unused = cuda_state_scan_prep(
+                        r.view(B, T, H, N),
+                        w.view(B, T, H, N),
+                        k.view(B, T, H, N),
+                        v.view(B, T, H, N),
+                        a.view(B, T, H, N),
+                        state[layer_idx],
+                        k_k,
+                        k_a,
+                        lanes_per_row=64,
+                        precompute_vector=False,
+                        precompute_mode="none",
+                        rows_per_block=cuda_state_scan_rows_per_block,
+                        schedule="warp_specialized",
+                        write_kv=False,
+                    )
+                    _ = (_k_unused, _v_unused)
+                else:
+                    out, new_state = fused_recurrent_scan_state_prep_nokv(
+                        r.view(B, T, H, N),
+                        w.view(B, T, H, N),
+                        k.view(B, T, H, N),
+                        v.view(B, T, H, N),
+                        a.view(B, T, H, N),
+                        state[layer_idx],
+                        k_k,
+                        k_a,
+                        block_n=N,
+                        block_m=state_scan_block_m,
+                        num_warps=state_scan_num_warps,
+                        num_stages=state_scan_num_stages,
+                    )
                 # Raw V is also the adjusted V for layer 0.
                 v_first_seq = v
             else:
-                out, new_state = fused_recurrent_scan_state_prep_nokv(
-                    r.view(B, T, H, N),
-                    w.view(B, T, H, N),
-                    k.view(B, T, H, N),
-                    v.view(B, T, H, N),
-                    a.view(B, T, H, N),
-                    state[layer_idx],
-                    k_k,
-                    k_a,
-                    v_first=v_first_seq.view(B, T, H, N),
-                    v_gate=v_gate.view(B, T, H, N),
-                    block_n=N,
-                    block_m=state_scan_block_m,
-                    num_warps=state_scan_num_warps,
-                    num_stages=state_scan_num_stages,
-                )
+                if use_cuda_state_scan_raw:
+                    out, new_state, _k_unused, _v_unused = cuda_state_scan_prep(
+                        r.view(B, T, H, N),
+                        w.view(B, T, H, N),
+                        k.view(B, T, H, N),
+                        v.view(B, T, H, N),
+                        a.view(B, T, H, N),
+                        state[layer_idx],
+                        k_k,
+                        k_a,
+                        v_first=v_first_seq.view(B, T, H, N),
+                        v_gate=v_gate.view(B, T, H, N),
+                        lanes_per_row=64,
+                        precompute_vector=False,
+                        precompute_mode="none",
+                        rows_per_block=cuda_state_scan_rows_per_block,
+                        schedule="warp_specialized",
+                        write_kv=False,
+                    )
+                    _ = (_k_unused, _v_unused)
+                else:
+                    out, new_state = fused_recurrent_scan_state_prep_nokv(
+                        r.view(B, T, H, N),
+                        w.view(B, T, H, N),
+                        k.view(B, T, H, N),
+                        v.view(B, T, H, N),
+                        a.view(B, T, H, N),
+                        state[layer_idx],
+                        k_k,
+                        k_a,
+                        v_first=v_first_seq.view(B, T, H, N),
+                        v_gate=v_gate.view(B, T, H, N),
+                        block_n=N,
+                        block_m=state_scan_block_m,
+                        num_warps=state_scan_num_warps,
+                        num_stages=state_scan_num_stages,
+                    )
             out = out.reshape(B, T, hidden)
             state_scan_done = True
             state_scan_raw_output_done = True

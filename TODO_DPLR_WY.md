@@ -2185,6 +2185,32 @@ is either checked off or replaced with a more precise kernel task.
   - high-upside math: DPLR/WY compact chunk prefill, with next work on
     prefix-shared apply/output scheduling, less dense `[N,N]`
     traffic/materialization, and later fused W8/W4 kernels.
+- [x] Validate the new raw-output CUDA state-scan no-K/V-write probe on 4090:
+  pair `RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_RAW_OUTPUT=1` with
+  `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN=1`,
+  `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_LANES=64`,
+  `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE=warp_specialized`, and
+  `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_PRECOMPUTE=0`. The benchmark rows now
+  expose `prefill_cuda_state_scan_raw_nokv_effective` and
+  `prefill_cuda_state_scan_write_kv`; keep the probe only if it beats the
+  current strict 4090 best `28,780.6 tok/s` and moves toward P1
+  `31,289 tok/s`.
+  - Result file: `bench/results_native_4090_raw_nokv_cuda_20260703_062833.jsonl`
+    from remote `/tmp/native_4090_raw_nokv_cuda_20260703_062833.jsonl`.
+  - Same-run baseline shift-WAVG + CUDA warp-specialized state scan:
+    `26,741.0 tok/s`, `19.1466 ms`, pass.
+  - Raw-output CUDA no-K/V-write rows all passed correctness/cache smoke:
+    - `rows_per_block=1`: `27,359.6 tok/s`, `18.7137 ms`;
+    - `rows_per_block=2`: `27,342.9 tok/s`, `18.7252 ms`;
+    - `rows_per_block=4`: `18,755.3 tok/s`, `27.2989 ms`;
+    - `rows_per_block=8`: `26,346.1 tok/s`, `19.4336 ms`;
+    - `rows_per_block=16`: `26,548.1 tok/s`, `19.2857 ms`.
+  - Conclusion: the CUDA no-K/V raw-output path is correctness-safe and can
+    beat the same-run baseline in a noisy run, but it does not exceed the
+    strict branch best `28,780.6 tok/s`; keep it opt-in and do not promote.
+    This reinforces the next mainline direction: a larger integrated
+    shift-WAVG/state-scan/output consumer or a stronger persistent/two-level
+    scan schedule, not another raw-output recompute boundary.
 - [x] Native MM8/MM4 lm_head bridge for fast-token decode:
   - `native_jit` and `native_graph` no longer assume `lm_head.weight` exists;
     they route the final projection through the module when `lm_head` is a
