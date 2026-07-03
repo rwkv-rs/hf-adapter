@@ -283,6 +283,48 @@ next full-run path for the speed gate.  A full seed43 avg@64 run was launched on
 - Log: `/tmp/math500_hf_dynamic_full_avg64_seed43_defer_20260704.log`
 - Command script: `/tmp/run_math500_hf_dynamic_full_avg64_seed43_defer_20260704.sh`
 
+## Deferred text-decode and batch-size speed path
+
+Artifacts:
+
+- `bench/math500_defer_text_decode_smoke_4090_20260704/`
+- `bench/math500_bsz_sweep_defer_text_4090_20260704/`
+
+The first deferred-verification full run was still trending below the `>=2x` speed gate, with early decode progress
+around `7317` token/s.  The next opt-in CPU-overhead reduction is `--defer-text-decode`, which collects token ids and
+decodes once per completed row instead of calling `tokenizer.decode(...)` after every generated token.  Default early
+user-stop behavior remains unchanged unless this benchmark flag is enabled.
+
+Smoke result on `--limit 4 --rollout 4 --bsz 4 --max-new-tokens 256`:
+
+| Metric | Deferred verification | Deferred verification + deferred text decode |
+|---|---:|---:|
+| Rows | `16` | `16` |
+| Correct generations | `3` | `3` |
+| Pass@rollout | `0.25` | `0.25` |
+| Completion mismatches | `0` | `0` |
+| Correctness mismatches | `0` | `0` |
+| Stop mismatches | `0` | `0` |
+| Decode seconds | `6.970` | `6.845` |
+| Generation token/s | `405.818` | `410.009` |
+
+Short bsz sweep with `--limit 4 --rollout 64 --max-new-tokens 256` and
+`--defer-verification --summary-speed-timing generation --defer-text-decode`:
+
+| bsz | Generation token/s | Decode sec | Decoded tokens |
+|---:|---:|---:|---:|
+| `32` | `3459.559` | `14.737` | `56517` |
+| `64` | `5391.690` | `9.130` | `57799` |
+| `96` | `6099.680` | `7.895` | `57966` |
+| `128` | `7131.751` | `6.514` | `57535` |
+| `192` | `6302.463` | `7.481` | `57133` |
+
+The best short-run row is `bsz=128`, so the next full seed43 avg@64 speed-gate run was launched with:
+
+- Output: `/tmp/math500_hf_dynamic_full_avg64_seed43_bsz128_defer_text_20260704`
+- Log: `/tmp/math500_hf_dynamic_full_avg64_seed43_bsz128_defer_text_20260704.log`
+- Command script: `/tmp/run_math500_hf_dynamic_full_avg64_seed43_bsz128_defer_text_20260704.sh`
+
 ## Albatross v3a/v4 reference smoke on RTX 4090
 
 Artifact: `bench/albatross_v3a_v4_4090_tune_20260703/`.

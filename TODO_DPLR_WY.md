@@ -20,10 +20,20 @@ This is a short-lived working TODO for the current `wangyue/native-fused-fp16-ke
   - Correctness mismatches: `0`
   - Small smoke token/s improved from `358.850` inline to `411.810`
     generation-timed deferred.
-- [ ] Finish the full seed43 avg@64 deferred-verification run and compare it
-  with the committed Albatross reference.
-  - Remote output: `/tmp/math500_hf_dynamic_full_avg64_seed43_defer_20260704`
-  - Remote log: `/tmp/math500_hf_dynamic_full_avg64_seed43_defer_20260704.log`
+- [x] Add and validate opt-in deferred text decode.
+  - Implementation: `bench/eval_math500_hf.py --defer-text-decode`
+  - Artifact: `bench/math500_defer_text_decode_smoke_4090_20260704/`
+  - Completion / correctness / stop mismatches: `0`
+  - This removes per-token `tokenizer.decode(...)` from the dynamic
+    decode/refill loop while keeping the default path unchanged.
+- [x] Run a short dynamic-batch sweep before the full speed-gate run.
+  - Artifact: `bench/math500_bsz_sweep_defer_text_4090_20260704/`
+  - Shape: `--limit 4 --rollout 64 --max-new-tokens 256`
+  - Best short-run row: `bsz=128`, `7131.751` generation token/s.
+- [ ] Finish the full seed43 avg@64 deferred-verification + deferred-text
+  decode run and compare it with the committed Albatross reference.
+  - Remote output: `/tmp/math500_hf_dynamic_full_avg64_seed43_bsz128_defer_text_20260704`
+  - Remote log: `/tmp/math500_hf_dynamic_full_avg64_seed43_bsz128_defer_text_20260704.log`
   - Acceptance target: keep `pass@64 >= 0.370` and restore `>=2x` speed.
 
 ## Temporary TODO: next 4090 push
