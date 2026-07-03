@@ -64,6 +64,37 @@ Branch: `wangyue/native-prefill-060-albatross`
     eval harness is intentionally correctness-first and bsz1; it does not yet
     implement Albatross-like dynamic batched rollout/prefill-cache generation,
     so it should not be used as the final speed number.
+- [x] Implement and validate Albatross-style HF MATH500 dynamic rollout:
+  - `bench/eval_math500_hf.py` now supports `--dynamic-batching --bsz N` with:
+    prompt-state prefill cache, fixed-size decode slots, dynamic slot refill,
+    Albatross-compatible `temperature -> top_k -> top_p` sampler, optional
+    `--add-bos`, native prefill, and `rwkv7_forward_token` fast-token decode.
+  - 4090 dynamic smoke:
+    `bench/math500_hf_dynamic_accept_smoke_20260703/summary.json`, 2 tasks,
+    rollout 4, bsz 4, max_new_tokens 128: pass, `1024` decoded token events,
+    `decode_sec=1.7144`, overall `396.13 tok/s` including prefill/verify.
+  - 4090 dynamic long smoke:
+    `bench/math500_hf_dynamic_accept_long_20260703/summary.json`, 2 tasks,
+    rollout 4, bsz 4, max_new_tokens 1500: `2/8` correct,
+    `pass_at_rollout_accuracy=0.5`, `truncated_rate=0.0`, `4572` decoded
+    token events, `decode_sec=8.1083`, overall `509.66 tok/s`.
+  - 4090 dynamic avg@64 smoke:
+    `bench/math500_hf_dynamic_accept_rollout64_smoke_20260703/summary.json`,
+    2 tasks, rollout 64, bsz 64, max_new_tokens 1500: `5/128` correct,
+    `pass_at_rollout_accuracy=0.5`, `truncated_rate=0.25`, `89309` decoded
+    token events, `decode_sec=20.3724`, overall `4201.63 tok/s`.
+  - Same 2-task / rollout64 / bsz64 reference through Albatross:
+    `bench/math500_albatross_rollout64_head2_20260703/summary.json`.
+    It produced the same `5/128` correct and `pass_at_rollout_accuracy=0.5`;
+    run log records `decode_s=28.614` for `88727` tokens.  Its summary
+    `elapsed_sec=111.565` includes one-time CUDA extension loading/compile
+    (`~72.8s`), so use the log's decode line for steady-state comparison.
+  - Full 500-task MATH500 avg@64 HF dynamic run has been started on the 4090:
+    PID `316499`, log `/tmp/math500_hf_dynamic_full_avg64_20260703.log`,
+    output `/tmp/math500_hf_dynamic_full_avg64_20260703`.  Initial progress:
+    prefill cache completed `500/500` prompts in `12.123s`; at about 1m36s it
+    was `1205/32000` samples with window throughput around `9k-10k tok/s`.
+    Final full-summary artifact is still pending.
 
 - [x] Start from merged `origin/main` after PR #90.
 - [x] Fix the first experiment blocker:

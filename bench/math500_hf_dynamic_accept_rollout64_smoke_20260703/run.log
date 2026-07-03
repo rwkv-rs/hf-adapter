@@ -1,0 +1,24 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+/workspace/venvs/rwkv7/lib/python3.12/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  49%|████▉     | 392/795 [00:00<00:00, 3916.70it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 4165.54it/s]
+math500_hf prefill_cache done prompts=2 elapsed_s=0.878
+math500_hf dynamic step=128 active=64/64 done=0/128 pending=64 tokens=8192 tps=7361.0 window_tps=7361.0
+math500_hf dynamic step=256 active=64/64 done=51/128 pending=13 tokens=16435 tps=6268.8 window_tps=5463.2
+math500_hf dynamic step=384 active=64/64 done=61/128 pending=3 tokens=24637 tps=6200.4 window_tps=6067.9
+math500_hf dynamic step=512 active=64/64 done=63/128 pending=1 tokens=32831 tps=6899.8 window_tps=10441.0
+math500_hf dynamic step=640 active=64/64 done=63/128 pending=1 tokens=41023 tps=7431.0 window_tps=10746.3
+math500_hf dynamic step=768 active=64/64 done=64/128 pending=0 tokens=49216 tps=7312.8 window_tps=6773.2
+math500_hf dynamic step=896 active=56/64 done=72/128 pending=0 tokens=56949 tps=6269.8 window_tps=3286.6
+math500_hf dynamic step=1024 active=48/64 done=80/128 pending=0 tokens=63532 tps=6010.1 window_tps=4424.9
+math500_hf dynamic step=1152 active=42/64 done=86/128 pending=0 tokens=69221 tps=5811.7 window_tps=4246.4
+math500_hf dynamic step=1280 active=38/64 done=90/128 pending=0 tokens=74331 tps=5693.5 window_tps=4463.0
+math500_hf dynamic step=1408 active=35/64 done=93/128 pending=0 tokens=79025 tps=5589.3 window_tps=4333.5
+math500_hf dynamic step=1536 active=32/64 done=96/128 pending=0 tokens=83384 tps=5263.5 window_tps=2559.2
+math500_hf dynamic step=1664 active=31/64 done=97/128 pending=0 tokens=87365 tps=5195.7 window_tps=4091.7
+math500_hf dynamic step=1792 active=3/64 done=125/128 pending=0 tokens=88733 tps=4954.5 window_tps=1249.9
+math500_hf dynamic step=1920 active=1/64 done=127/128 pending=0 tokens=88974 tps=4739.5 window_tps=279.1
+math500_hf dynamic step=2048 active=1/64 done=127/128 pending=0 tokens=89102 tps=4597.9 window_tps=211.3
+math500_hf dynamic step=2176 active=1/64 done=127/128 pending=0 tokens=89230 tps=4465.0 window_tps=211.3
+math500_hf dynamic done B=64 rows=128 decode_s=20.372 tokens=89309
+MATH500_HF_ADAPTER_RESULT {"axis": "math500_hf_adapter", "backend": "hf_adapter", "status": "pass", "model": "/tmp/rwkv7_repo_code_model_dynmath64_ofwZrF", "dataset": "/workspace/projects/Albatross/faster3a_2605/dataset/MATH500.jsonl", "num_tasks": 2, "rollout": 64, "total_generations": 128, "correct_generations": 5, "rollout_accuracy": 0.0390625, "pass_at_rollout_accuracy": 0.5, "ended_eod": 96, "ended_user_stop": 0, "truncated": 32, "truncated_rate": 0.25, "mean_generated_tokens": 696.9765625, "mean_tokens_including_stop": 697.7265625, "elapsed_sec": 21.255819723010063, "sample_per_sec": 6.021880203539559, "token_per_sec": 4201.625774202456, "generations_jsonl": "/tmp/math500_hf_dynamic_accept_rollout64_smoke/generations.jsonl", "config": {"hf_dir": "/tmp/rwkv7_repo_code_model_dynmath64_ofwZrF", "dataset": "/workspace/projects/Albatross/faster3a_2605/dataset/MATH500.jsonl", "rollout": 64, "limit": 2, "max_new_tokens": 1500, "ctx_limit": 8192, "temperature": 1.0, "top_p": 0.28, "top_k": 32, "prompt_style": "fake_think", "dtype": "fp16", "device": "cuda", "seed": 42, "dynamic_batching": true, "bsz": 64, "add_bos": true, "prefill_backend": "native", "decode_backend": "fast_token"}, "prefill_sec": 0.8777289837598801, "decode_sec": 20.37241432070732, "decoded_token_events": 89309, "forward_steps": 2254, "dynamic_bsz": 64, "fast_token_backend_effective": "native_graph", "cache_metrics": {"updates": 0, "new_layers": 0, "clones": 0, "detaches": 0, "device_moves": 0, "select_batch_calls": 0, "native_graph_bound_selects": 0, "batch_select_calls": 0, "reorder_calls": 0, "resets": 0, "layers": 24, "seen_tokens": 2254, "batch_size": 64}}
