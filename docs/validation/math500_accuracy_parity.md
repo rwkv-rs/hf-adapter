@@ -32,6 +32,18 @@ From the full-run diff, prioritize small rollout64 subsets before another full 5
 - Albatross advantage: `73`, `160`, `116`, `67`, `277`.
 - HF advantage: `374`, `383`, `319`, `72`.
 
+## Albatross reference tuning notes
+
+Do not treat the current Albatross `v3a` reference as the only possible speed ceiling:
+
+- Some Albatross `v4` configurations may be faster than `v3a` on the same model / MATH500 shape.
+- `linear_orig_layout_launch` is GPU-sensitive and should be tuned per GPU instead of hard-coded globally.
+- The benchmark harness should therefore record the exact Albatross backend/config used for the reference (`v3a` vs `v4`, layout launch policy, GPU name/SM, CUDA/Torch versions).
+- For acceptance comparisons, keep two numbers when available:
+  1. **fixed-current reference**: the committed `v3a` run used by PR #104;
+  2. **best-tuned reference**: the fastest valid Albatross config for that GPU after `linear_orig_layout_launch` tuning.
+- A HF speed win should eventually be claimed against the **best-tuned per-GPU Albatross reference**, not only against the first `v3a` baseline.
+
 ## Acceptance gate
 
 A parity fix should satisfy:
