@@ -2052,6 +2052,32 @@ Branch: `wangyue/native-prefill-060-albatross`
     correctness-safe but still below the strict branch best `28,780.6 tok/s`.
     Keep `warp_pipelined` and FFN norm-shift as opt-in tuning branches for
     card/shape variance, but do not promote them on the current 4090 target.
+- [x] Try producer-side `kk*a` premultiply inside CUDA state-scan:
+  - Motivation: test whether moving the recurrent update product
+    `normalized_kk * a` from each row worker into the producer warp helps
+    row-block schedules with more than one state row per CTA.  This preserves
+    row parallelism and does not change any Python/wrapper boundary.
+  - Result file:
+    `bench/results_cuda_state_scan_kka_micro_20260703_071850.jsonl` from remote
+    `/tmp/cuda_state_scan_kka_micro_20260703_071850.jsonl`.
+  - Implementation was tested as a temporary source patch only and then
+    reverted because the micro signal was negative/too small to justify
+    carrying another opt-in schedule.
+  - 4090 synthetic `B=1,T=512,H=16,N=64,fp16` rows, all correctness-close vs
+    default row-block (`out diff 0.03125`, state diff `1.9e-06`, K/V diff
+    `0.0`):
+    - premul warp-specialized rpb1: `0.456704 ms`, slower than the prior
+      non-premul rpb1 `~0.4485 ms`;
+    - premul warp-specialized rpb8: `0.456640 ms`, only a noise-level change
+      versus prior `~0.4608 ms`;
+    - premul warp-specialized rpb16: `0.508832 ms`, still slow;
+    - premul warp-pipelined rpb8: `0.355328 ms`, slower than prior
+      `~0.3472 ms`;
+    - premul warp-pipelined rpb16: `0.391168 ms`, not competitive.
+  - Conclusion: shifting one multiply from row workers to the producer warp is
+    not enough and slightly hurts the strongest warppipe path.  Do not add the
+    schedule.  The next attempt still needs a wider state-scan/shift-WAVG
+    boundary or a genuinely two-level/persistent scan design.
 - [ ] Next persistent/two-level state-scan experiment:
   - Continue from the state-scan/shift-WAVG boundary, but avoid the now-negative
     row-pair, head-level, raw no-K/V, SK, G-mid, W-decay, FFN two-pass, and
