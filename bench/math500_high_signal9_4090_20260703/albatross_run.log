@@ -1,0 +1,24 @@
+master tasks=9 rollout=64 total_generations=576
+master launching workers on GPUs=['0']
+worker=0/1 tasks=9 work_items=576 bsz=64 cuda_visible=0
+[rwkv7_fast_v3a] loading CUDA extensions v3a_ops + fast_ops + wkv=fp32io16
+[rwkv7_fast_v3a] CUDA extensions loaded in 0.088s
+[rwkv7_fast_v3a] loading weights from /workspace/models/rwkv7/raw/rwkv7-g1d-0.4b-20260210-ctx8192.pth
+[rwkv7_fast_v3a] weights mmap loaded in 0.054s tensors=798
+[rwkv7_fast_v3a] detected model C=1024 H=16 N=64 V=65536
+[rwkv7_fast_v3a] cmix no-fc path: rows<=19 row20_t<=5
+[rwkv7_fast_v3a] moving and preprocessing weights to CUDA emb=cpu
+[rwkv7_fast_v3a] model ready in 0.629s L=24 C=1024 H=16 N=64 V=65536
+[rwkv7_fast_v3a] gpu_mem used=1.21GiB allocated=0.75GiB reserved=0.77GiB total=23.53GiB
+worker=0 prefill_cache done prompts=9 elapsed_s=0.297
+worker=0 dynamic step=512 active=64/64 done=64/576 pending=448 tokens=32832 tps=3978.0 window_tps=3978.0
+worker=0 dynamic step=1024 active=64/64 done=200/576 pending=312 tokens=65736 tps=3880.2 window_tps=3787.4
+worker=0 dynamic step=1536 active=64/64 done=320/576 pending=192 tokens=98624 tps=3877.7 window_tps=3872.6
+worker=0 dynamic step=2048 active=64/64 done=320/576 pending=192 tokens=131392 tps=3808.0 window_tps=3612.5
+worker=0 dynamic step=2560 active=64/64 done=320/576 pending=192 tokens=164160 tps=3762.0 window_tps=3588.1
+worker=0 dynamic step=3072 active=64/64 done=419/576 pending=93 tokens=197027 tps=3717.5 window_tps=3510.3
+worker=0 dynamic step=3584 active=32/64 done=544/576 pending=0 tokens=228042 tps=3676.9 window_tps=3438.5
+worker=0 dynamic done B=64 rows=576 decode_s=65.173 tokens=230078
+worker=0 finished elapsed_s=65.180
+master verifying rows=576 workers=4
+MATH500_RWKV_V3A_RESULT {"num_tasks": 9, "rollout": 64, "total_generations": 576, "correct_generations": 325, "rollout_accuracy": 0.5642361111111112, "pass_at_rollout_accuracy": 0.8888888888888888, "ended_eod": 512, "ended_eod_rate": 0.8888888888888888, "ended_user_stop": 0, "ended_user_stop_rate": 0.0, "truncated": 64, "truncated_rate": 0.1111111111111111, "mean_generated_tokens": 398.5520833333333, "mean_tokens_including_eod": 399.44097222222223, "mean_tokens_including_stop": 399.44097222222223, "elapsed_sec": 72.18476410210133, "sample_per_sec": 7.979523202226997, "token_per_sec": 3187.348505767332, "generations_jsonl": "/tmp/math500_albatross_high_signal9_20260703/generations.jsonl", "config": {"model": "/workspace/models/rwkv7/raw/rwkv7-g1d-0.4b-20260210-ctx8192.pth", "albatross_dir": "/workspace/projects/Albatross/faster3a_2605", "dataset": "/tmp/MATH500_high_signal_9_20260703.jsonl", "rollout": 64, "bsz": 64, "max_new_tokens": 1500, "temperature": 1.0, "top_p": 0.28, "top_k": 32, "sampler_order": "temperature -> top_k -> top_p", "penalty": "off", "prompt_style": "fake_think", "wkv": "fp32io16", "emb": "cpu", "batched_rkv": "off", "cmix_sparse": "no-fc", "lowrank_weight": "both", "orig_linear_groups": "att_c2c,ffn_key,head", "torch_extensions_dir": "", "verify_workers": 4, "seed": 42, "gpus": "0"}}
