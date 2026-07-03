@@ -1022,6 +1022,20 @@ def _native_prefill_fused_shift_wavg_lora_a_sigmoid_enabled(total_rows: int) -> 
     return _native_prefill_fused_shift_wavg_lora_enabled(total_rows)
 
 
+def _native_prefill_fused_shift_wavg_lora_prev_cache_requested() -> bool:
+    """Return whether shift-WAVG should consume the attention prev cache directly."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_PREV_CACHE", False)
+
+
+def _native_prefill_fused_shift_wavg_lora_prev_cache_enabled(total_rows: int) -> bool:
+    """Runtime switch for avoiding the materialized prefill ``prev_h`` tensor."""
+
+    if not _native_prefill_fused_shift_wavg_lora_prev_cache_requested():
+        return False
+    return _native_prefill_fused_shift_wavg_lora_enabled(total_rows)
+
+
 def _native_prefill_ffn_fused_act_requested() -> bool:
     """Return whether the prefill FFN relu-square fusion probe is requested."""
 
@@ -1927,7 +1941,14 @@ def prefill(
         else:
             residual = F.layer_norm(x, [hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
             h = F.layer_norm(residual, [hidden], an_w, an_b, 1e-5)
-            prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h[:, :-1, :]], dim=1)
+            shift_wavg_prev_cache = (
+                not use_prefill_projection
+                and layer_idx > 0
+                and _native_prefill_fused_shift_wavg_lora_prev_cache_enabled(B * T)
+            )
+            prev_h = None
+            if not shift_wavg_prev_cache:
+                prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h[:, :-1, :]], dim=1)
             if (
                 not use_prefill_projection
                 and layer_idx > 0
@@ -1951,7 +1972,7 @@ def prefill(
                 )
                 xr2, xk2, xv2, w2_out, a2_out, g2_out, v_gate2 = fused_shift_wavg_lora(
                     h.reshape(B * T, hidden),
-                    prev_h.reshape(B * T, hidden),
+                    None if shift_wavg_prev_cache else prev_h.reshape(B * T, hidden),
                     x_r,
                     x_w,
                     x_k,
@@ -1980,6 +2001,8 @@ def prefill(
                     lean_down=lean_down,
                     lean_up=lean_up,
                     output_g_mid=output_g_mid,
+                    prev_cache=xpa[layer_idx].view(B, hidden) if shift_wavg_prev_cache else None,
+                    seq_len=T if shift_wavg_prev_cache else None,
                 )
                 xr = xr2.view(B, T, hidden)
                 xk = xk2.view(B, T, hidden)
@@ -1998,8 +2021,12 @@ def prefill(
                 shift_wavg_lora_done = True
                 shift_wavg_lora_w_decay_done = bool(output_w_decay)
             elif _native_prefill_fused_shift_mix_enabled():
+                if prev_h is None:
+                    prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h[:, :-1, :]], dim=1)
                 xr, xw, xk, xv, xa, xg = fused_attn_shift_mix(h, prev_h, x_r, x_w, x_k, x_v, x_a, x_g)
             else:
+                if prev_h is None:
+                    prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h[:, :-1, :]], dim=1)
                 xx = prev_h - h
                 xr = h + xx * x_r.view(1, 1, hidden)
                 xw = h + xx * x_w.view(1, 1, hidden)

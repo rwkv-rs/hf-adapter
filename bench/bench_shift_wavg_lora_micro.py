@@ -91,6 +91,8 @@ def main() -> int:
     ap.add_argument("--lean-up", action="store_true")
     ap.add_argument("--output-g-mid", action="store_true")
     ap.add_argument("--output-a-sigmoid", action="store_true")
+    ap.add_argument("--prev-cache", action="store_true", help="Read prev_h inside the down kernel from h/xpa instead of a materialized prev_h tensor")
+    ap.add_argument("--seq-len", type=int, default=0, help="Sequence length for --prev-cache; default is --rows")
     ap.add_argument("--warmup", type=int, default=5)
     ap.add_argument("--steps", type=int, default=15)
     ap.add_argument("--results", default="")
@@ -160,6 +162,19 @@ def main() -> int:
         device = torch.device(args.device)
         h = torch.randn(rows, hidden, device=device, dtype=dtype)
         prev_h = torch.randn(rows, hidden, device=device, dtype=dtype)
+        seq_len = int(args.seq_len) if int(args.seq_len) > 0 else rows
+        prev_cache = torch.empty((0, hidden), device=device, dtype=dtype)
+        if args.prev_cache:
+            if rows % seq_len != 0:
+                raise ValueError("--rows must be divisible by --seq-len for --prev-cache")
+            batch_for_cache = rows // seq_len
+            prev_cache = torch.randn(batch_for_cache, hidden, device=device, dtype=dtype)
+            h_seq = h.view(batch_for_cache, seq_len, hidden)
+            prev_seq = torch.empty_like(h_seq)
+            prev_seq[:, 0, :] = prev_cache
+            if seq_len > 1:
+                prev_seq[:, 1:, :] = h_seq[:, :-1, :]
+            prev_h = prev_seq.reshape(rows, hidden)
 
         w_rank = int(w1.shape[0])
         a_rank = int(a1.shape[0])
@@ -186,6 +201,7 @@ def main() -> int:
             _shift_wavg_lora_down_kernel[(rows, triton.cdiv(max_rank, int(args.block_r)))](
                 h,
                 prev_h,
+                prev_cache if args.prev_cache else h,
                 x_r,
                 x_w,
                 x_k,
@@ -204,6 +220,7 @@ def main() -> int:
                 xk,
                 xv,
                 hidden,
+                int(seq_len) if args.prev_cache else 1,
                 w_rank,
                 a_rank,
                 g_rank,
@@ -212,6 +229,7 @@ def main() -> int:
                 BLOCK_R=int(args.block_r),
                 BLOCK_K=int(args.block_k),
                 LEAN_DOWN=bool(args.lean_down),
+                USE_PREV_CACHE=bool(args.prev_cache),
                 num_warps=int(args.down_warps),
             )
 
@@ -256,7 +274,7 @@ def main() -> int:
         def run_full():
             return fused_shift_wavg_lora(
                 h,
-                prev_h,
+                None if args.prev_cache else prev_h,
                 x_r,
                 x_w,
                 x_k,
@@ -284,6 +302,8 @@ def main() -> int:
                 lean_up=bool(args.lean_up),
                 output_g_mid=bool(args.output_g_mid),
                 output_a_sigmoid=bool(args.output_a_sigmoid),
+                prev_cache=prev_cache if args.prev_cache else None,
+                seq_len=int(seq_len) if args.prev_cache else None,
             )
 
         # Correctness against torch fallback and explicit phase composition.
@@ -367,6 +387,8 @@ def main() -> int:
             "lean_up": bool(args.lean_up),
             "output_g_mid": bool(args.output_g_mid),
             "output_a_sigmoid": bool(args.output_a_sigmoid),
+            "prev_cache": bool(args.prev_cache),
+            "seq_len": int(seq_len) if args.prev_cache else None,
             "max_abs_diff_vs_fallback": round(max_diff, 6),
             "phase_max_abs_diff_vs_full": round(phase_diff, 6),
         }

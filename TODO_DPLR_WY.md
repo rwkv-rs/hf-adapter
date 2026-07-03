@@ -2531,6 +2531,53 @@ Branch: `wangyue/native-prefill-060-albatross`
       attempt should move to a wider shift-WAVG/state-scan/output producer-
       consumer boundary or a new schedule that beats warp-pipelined, not a
       smaller row-pair variant.
+  - [x] Try shift-WAVG prev-cache producer boundary:
+    - Motivation: remove the materialized `prev_h = cat(xpa, h[:-1])` tensor
+      from the current shift-WAVG layer-prep route.  The new opt-in path lets
+      the shift-WAVG down kernel read token `t-1` directly from the normalized
+      `h` sequence and read token `0` from the attention cache `xpa`, so this
+      tests a wider adjacent producer boundary without changing the default HF
+      path.
+    - Implementation:
+      - added opt-in
+        `RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_PREV_CACHE=1`;
+      - extended `fused_shift_wavg_lora(...)` with `prev_cache` / `seq_len`
+        mode;
+      - `_shift_wavg_lora_down_kernel` now supports `USE_PREV_CACHE` and
+        computes `prev_h` from `(h, xpa)` internally;
+      - native prefill avoids constructing `prev_h` only when the shift-WAVG
+        route and the new flag are both effective;
+      - scan benchmark/analyzer telemetry records the requested/effective flag.
+    - Correctness:
+      - local and 4090 `py_compile` plus local `git diff --check` passed;
+      - shift-WAVG micro correctness passed with `max_abs_diff_vs_fallback=0.0625`
+        and phase diff `0.0`;
+      - HF e2e rows pass greedy/cache/decode smoke with `max_abs_diff=0.0625`
+        and cosine `1.0`.
+    - Result files:
+      - micro:
+        `bench/results_shift_wavg_prevcache_micro_4090_20260703_123000.jsonl`
+        from remote `/tmp/shift_wavg_prevcache_micro_20260703_1.jsonl`;
+      - HF:
+        `bench/results_native_4090_shift_wavg_prevcache_20260703_123500.jsonl`
+        from remote `/tmp/native_4090_shift_wavg_prevcache_20260703_1.jsonl`.
+    - 4090 shift-WAVG micro, layer 1 / rows512 / fp16:
+      - materialized-prev baseline: full `0.203776 ms`, down `0.090112 ms`,
+        up `0.092160 ms`;
+      - prev-cache mode: full `0.216064 ms`, down `0.104448 ms`,
+        up `0.091136 ms`.
+    - 4090 / 0.4B / prompt512 / bsz1 HF rows, current shift-WAVG + CUDA
+      warp-specialized state-scan route:
+      - baseline: `24,622.2 tok/s`, `20.7942 ms`;
+      - prev-cache: `26,430.2 tok/s`, `19.3718 ms`;
+      - repeat baseline: `24,917.2 tok/s`, `20.5481 ms`.
+    - Conclusion: the opt-in path is correctness-safe and avoids the Python
+      `prev_h` materialization boundary, but the down-kernel itself is slower
+      and the HF run was in a low-throughput/noisy window.  It does not beat
+      the strict branch best `28,780.6 tok/s`, so keep it disabled by default.
+      The next stretch attempt still needs a larger shift-WAVG/state-scan/output
+      producer-consumer boundary or a schedule that beats warp-pipelined in both
+      micro and HF, not only a prev-cache indexing tweak.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `28,780.6 tok/s` (`~0.5519x`), still about `2,508 tok/s` (`~8.7%`

@@ -400,6 +400,7 @@ if _HAS_TRITON:
     def _shift_wavg_lora_down_kernel(
         h_ptr,
         prev_h_ptr,
+        prev_cache_ptr,
         xr_mix_ptr,
         xw_mix_ptr,
         xk_mix_ptr,
@@ -418,6 +419,7 @@ if _HAS_TRITON:
         xk_out_ptr,
         xv_out_ptr,
         hidden: tl.constexpr,
+        seq_len: tl.constexpr,
         w_rank: tl.constexpr,
         a_rank: tl.constexpr,
         g_rank: tl.constexpr,
@@ -426,6 +428,7 @@ if _HAS_TRITON:
         BLOCK_R: tl.constexpr,
         BLOCK_K: tl.constexpr,
         LEAN_DOWN: tl.constexpr,
+        USE_PREV_CACHE: tl.constexpr,
     ):
         batch_id = tl.program_id(0)
         block_id = tl.program_id(1)
@@ -445,7 +448,22 @@ if _HAS_TRITON:
             mask_k = kidx < hidden
             base = batch_id * hidden + kidx
             h = tl.load(h_ptr + base, mask=mask_k, other=0.0).to(tl.float32)
-            prev_h = tl.load(prev_h_ptr + base, mask=mask_k, other=0.0).to(tl.float32)
+            if USE_PREV_CACHE:
+                token_id = batch_id % seq_len
+                seq_batch = batch_id // seq_len
+                prev_cache_val = tl.load(
+                    prev_cache_ptr + seq_batch * hidden + kidx,
+                    mask=mask_k & (token_id == 0),
+                    other=0.0,
+                ).to(tl.float32)
+                prev_seq_val = tl.load(
+                    h_ptr + (batch_id - 1) * hidden + kidx,
+                    mask=mask_k & (token_id != 0),
+                    other=0.0,
+                ).to(tl.float32)
+                prev_h = prev_cache_val + prev_seq_val
+            else:
+                prev_h = tl.load(prev_h_ptr + base, mask=mask_k, other=0.0).to(tl.float32)
             delta = prev_h - h
             if LEAN_DOWN:
                 needs_proj = block_id == 0
@@ -996,7 +1014,7 @@ def fused_wavg_lora(
 
 def fused_shift_wavg_lora(
     h: Any,
-    prev_h: Any,
+    prev_h: Any | None,
     x_r: Any,
     x_w: Any,
     x_k: Any,
@@ -1026,6 +1044,8 @@ def fused_shift_wavg_lora(
     lean_down: bool = False,
     lean_up: bool = False,
     output_g_mid: bool = False,
+    prev_cache: Any | None = None,
+    seq_len: int | None = None,
     force_fallback: bool = False,
 ):
     """Fuse attention time-mix materialization with W/A/G/V-gate LoRA.
@@ -1042,9 +1062,34 @@ def fused_shift_wavg_lora(
         raise RuntimeError("fused_shift_wavg_lora requires torch")
     h2, had_seq = _flatten_lora_input(h, name="h")
     hidden = int(h2.shape[1])
-    prev2, prev_had_seq = _flatten_lora_input(prev_h, hidden, name="prev_h")
-    if prev_had_seq != had_seq or tuple(h2.shape) != tuple(prev2.shape):
-        raise ValueError("h and prev_h must have identical flattened shapes")
+    use_prev_cache = prev_h is None
+    if use_prev_cache:
+        if prev_cache is None:
+            raise ValueError("prev_cache is required when prev_h is None")
+        if prev_cache.dim() != 2 or int(prev_cache.shape[1]) != hidden:
+            raise ValueError(f"prev_cache must be [batch, {hidden}], got {tuple(prev_cache.shape)}")
+        if seq_len is None:
+            if h.dim() == 3:
+                seq_len = int(h.shape[1])
+            else:
+                raise ValueError("seq_len is required when h is flattened and prev_h is None")
+        seq_len = int(seq_len)
+        if seq_len <= 0:
+            raise ValueError("seq_len must be positive")
+        if int(h2.shape[0]) % seq_len != 0:
+            raise ValueError("flattened h rows must be divisible by seq_len")
+        batch_from_rows = int(h2.shape[0]) // seq_len
+        if int(prev_cache.shape[0]) != batch_from_rows:
+            raise ValueError(
+                f"prev_cache batch mismatch: got {int(prev_cache.shape[0])}, expected {batch_from_rows}"
+            )
+        prev2 = None
+        prev_had_seq = had_seq
+    else:
+        prev2, prev_had_seq = _flatten_lora_input(prev_h, hidden, name="prev_h")
+        if prev_had_seq != had_seq or tuple(h2.shape) != tuple(prev2.shape):
+            raise ValueError("h and prev_h must have identical flattened shapes")
+        seq_len = 0
     for name, mix in (("x_r", x_r), ("x_w", x_w), ("x_k", x_k), ("x_v", x_v), ("x_a", x_a), ("x_g", x_g)):
         if mix.dim() != 1 or int(mix.shape[0]) != hidden:
             raise ValueError(f"{name} must be [{hidden}], got {tuple(mix.shape)}")
@@ -1059,7 +1104,7 @@ def fused_shift_wavg_lora(
         not force_fallback
         and fused_shift_wavg_lora_available()
         and h2.is_cuda
-        and prev2.is_cuda
+        and ((prev2 is not None and prev2.is_cuda) or (prev_cache is not None and prev_cache.is_cuda))
         and x_r.is_cuda
         and x_w.is_cuda
         and x_k.is_cuda
@@ -1079,7 +1124,7 @@ def fused_shift_wavg_lora(
         and (g_up_bias is None or g_up_bias.is_cuda)
         and (v_up_bias is None or v_up_bias.is_cuda)
         and h2.dtype in (torch.float16, torch.bfloat16, torch.float32)
-        and prev2.dtype == h2.dtype
+        and ((prev2 is not None and prev2.dtype == h2.dtype) or (prev_cache is not None and prev_cache.dtype == h2.dtype))
         and x_r.dtype == h2.dtype
         and x_w.dtype == h2.dtype
         and x_k.dtype == h2.dtype
@@ -1096,6 +1141,14 @@ def fused_shift_wavg_lora(
         and v_up_weight.dtype == h2.dtype
     )
     if not use_triton:
+        if use_prev_cache:
+            batch = int(h2.shape[0]) // int(seq_len)
+            h_seq = h2.reshape(batch, int(seq_len), hidden)
+            prev_seq = torch.empty_like(h_seq)
+            prev_seq[:, 0, :] = prev_cache.to(device=h2.device, dtype=h2.dtype)
+            if int(seq_len) > 1:
+                prev_seq[:, 1:, :] = h_seq[:, :-1, :]
+            prev2 = prev_seq.reshape_as(h2)
         delta = prev2 - h2
         xr = h2 + delta * x_r.view(1, hidden)
         xw = h2 + delta * x_w.view(1, hidden)
@@ -1134,7 +1187,8 @@ def fused_shift_wavg_lora(
     else:
         batch = int(h2.shape[0])
         h_c = h2.contiguous()
-        prev_c = prev2.contiguous()
+        prev_c = prev2.contiguous() if prev2 is not None else h_c
+        prev_cache_c = prev_cache.contiguous() if use_prev_cache else h_c
         xr_mix_c = x_r.contiguous()
         xw_mix_c = x_w.contiguous()
         xk_mix_c = x_k.contiguous()
@@ -1167,6 +1221,7 @@ def fused_shift_wavg_lora(
         _shift_wavg_lora_down_kernel[(batch, triton.cdiv(max_rank, int(block_r)))](
             h_c,
             prev_c,
+            prev_cache_c,
             xr_mix_c,
             xw_mix_c,
             xk_mix_c,
@@ -1185,6 +1240,7 @@ def fused_shift_wavg_lora(
             xk,
             xv,
             hidden,
+            int(seq_len) if use_prev_cache else 1,
             w_rank,
             a_rank,
             g_rank,
@@ -1193,6 +1249,7 @@ def fused_shift_wavg_lora(
             BLOCK_R=int(block_r),
             BLOCK_K=int(block_k),
             LEAN_DOWN=bool(lean_down),
+            USE_PREV_CACHE=bool(use_prev_cache),
             num_warps=int(down_num_warps),
         )
         _wavg_lora_up_kernel[(batch, triton.cdiv(hidden, int(block_m)))](
