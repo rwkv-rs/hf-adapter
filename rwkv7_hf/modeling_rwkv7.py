@@ -104,6 +104,21 @@ except Exception:  # pragma: no cover - optional remote-code fast path
         _native_graph_block_ip_batched = None
         _native_jit_prefill = None
 
+# HF dynamic-module discovery copies files referenced by direct relative
+# imports in this top-level remote-code file.  The native backend reaches
+# ``native.py`` through ``native_model.py``; keep an explicit non-executed edge
+# here so fresh caches contain the whole native dependency set.
+if False:  # pragma: no cover
+    from .dplr_prefill import dplr_chunk_scan as _rwkv7_dplr_dependency_sentinel
+    from .dplr_prefill_triton import dplr_chunk_scan_triton as _rwkv7_dplr_triton_dependency_sentinel
+    from .fused_attention_projection import fused_rkv_wag_projection as _rwkv7_fused_attn_projection_dependency_sentinel
+    from .fused_lora import fused_wag_lora as _rwkv7_fused_lora_dependency_sentinel
+    from .fused_output import fused_attn_output_prepare as _rwkv7_fused_output_dependency_sentinel
+    from .fused_prefill import fused_prefill_state_prep as _rwkv7_fused_prefill_dependency_sentinel
+    from .fused_recurrent_update import fused_recurrent_update as _rwkv7_fused_recurrent_dependency_sentinel
+    from .fused_time_mix import fused_attn_shift_mix as _rwkv7_fused_time_mix_dependency_sentinel
+    from .native import _init_state_batched as _rwkv7_native_dependency_sentinel
+
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
 
