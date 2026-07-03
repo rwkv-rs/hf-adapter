@@ -81,6 +81,44 @@ class NativeRWKV7Cache(_FLACache):
     def to_legacy_cache(self):
         return tuple(self)
 
+    def clone(self) -> "NativeRWKV7Cache":
+        def clone_list(values):
+            if values is None:
+                return None
+            return [v.clone() for v in values]
+
+        return type(self)(
+            clone_list(self._state),
+            clone_list(self._xpa),
+            clone_list(self._xpf),
+            self._v_first.clone() if self._v_first is not None else None,
+            seen_tokens=self._seen_tokens,
+        )
+
+    def select_batch(self, indices: torch.LongTensor, *, inplace: bool = True) -> "NativeRWKV7Cache":
+        target = self if inplace else type(self)(
+            self._state,
+            self._xpa,
+            self._xpf,
+            self._v_first,
+            seen_tokens=self._seen_tokens,
+        )
+
+        def select_list(values):
+            if values is None:
+                return None
+            return [v.index_select(0, indices.to(v.device)) for v in values]
+
+        target._state = select_list(target._state)
+        target._xpa = select_list(target._xpa)
+        target._xpf = select_list(target._xpf)
+        if target._v_first is not None:
+            target._v_first = target._v_first.index_select(0, indices.to(target._v_first.device))
+        return target
+
+    def reorder_cache(self, beam_idx: torch.LongTensor):
+        return self.select_batch(beam_idx, inplace=True)
+
     @classmethod
     def from_legacy_cache(cls, legacy, seen_tokens: int = 0):
         if legacy is None:
@@ -213,6 +251,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     config_class = NativeRWKV7Config
     base_model_prefix = "model"
     _no_split_modules = ["NativeRWKV7Layer"]
+    supports_gradient_checkpointing = True
     # Transformers >=5 expects dict-like _tied_weights_keys; RWKV-7 ties nothing.
     _tied_weights_keys = {}
 
@@ -224,6 +263,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         super().__init__(config)
         self.model = NativeRWKV7Model(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.gradient_checkpointing = False
 
     def get_input_embeddings(self):
         return self.model.get_input_embeddings()
@@ -236,6 +276,16 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
 
     def set_output_embeddings(self, new_embeddings):
         self.lm_head = new_embeddings
+
+    def resize_token_embeddings(self, new_num_tokens: int | None = None, *args, **kwargs):
+        """RWKV checkpoints use the fixed official trie vocabulary."""
+
+        if new_num_tokens is None or int(new_num_tokens) == int(self.config.vocab_size):
+            return self.get_input_embeddings()
+        raise NotImplementedError(
+            "RWKV-7 uses the fixed official trie vocabulary; changing vocab size "
+            "with resize_token_embeddings is not supported by this adapter."
+        )
 
     def rwkv7_native_model_last_decode_backend(self) -> str | None:
         """Return the backend used by the previous native-model decode call."""
@@ -307,7 +357,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             else:
                 x, state, xpa, xpf, v_first = _step_token_batched(self, x, state, xpa, xpf, v_first)
             if all_logits is not None:
-                all_logits.append(F.linear(base.norm(x), self.lm_head.weight))
+                all_logits.append(self.lm_head(base.norm(x)))
         if x is None:
             raise ValueError("NativeRWKV7ForCausalLM requires at least one token")
         if use_jit:
@@ -316,7 +366,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
             logits = torch.stack(all_logits, dim=1)
         else:
             x = base.norm(x)
-            logits = F.linear(x, self.lm_head.weight).view(token_ids.shape[0], 1, -1)
+            logits = self.lm_head(x).view(token_ids.shape[0], 1, -1)
         return logits, state, xpa, xpf, v_first
 
     def forward(
@@ -331,6 +381,8 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
     ):
         if input_ids is None:
             raise ValueError("NativeRWKV7ForCausalLM currently requires input_ids")
+        if input_ids.dim() == 1:
+            input_ids = input_ids.view(1, -1)
         if input_ids.dim() != 2:
             raise ValueError("Experimental NativeRWKV7ForCausalLM expects input_ids shaped [batch, seq]")
         if int(input_ids.shape[0]) <= 0 or int(input_ids.shape[1]) <= 0:
@@ -394,6 +446,8 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         """Minimal beam/select helper for experimental batched native caches."""
         if past_key_values is None:
             return None
+        if hasattr(past_key_values, "reorder_cache"):
+            return past_key_values.reorder_cache(beam_idx)
         state, xpa, xpf, v_first = past_key_values
         index = beam_idx.to(v_first.device)
         seen = _cache_seen(past_key_values)
