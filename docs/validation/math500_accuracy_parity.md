@@ -52,7 +52,11 @@ Current acceptance baseline from `bench/math500_acceptance_4090_20260703`:
    teacher-forced dynamic-path argmax match rate is `1.0`; cosine is effectively `~1.0`.  This shifts the
    likely root cause away from model math/prefill/state update and toward sampler RNG / dynamic refill order /
    stochastic variance under near-parity logits.
-3. Run targeted rollout64 subsets on the high-signal tasks listed below.
+3. Run targeted rollout64 subsets on the high-signal tasks listed below. **Done:**
+   `bench/math500_high_signal9_4090_20260703/`.  On the fresh 9-task subset, pass@64 ties at
+   `8/9` vs `8/9`, while correct generations are `315/576` HF vs `325/576` Albatross.  The
+   full-run net gap `-249/32000` shrinks to `-10/576`, supporting the logits-parity conclusion
+   that sampling/RNG/refill history is more likely than a large model-math mismatch.
 4. Run Albatross `v4` / `linear_orig_layout_launch` tuning checks and update the reference table.
 5. Only after the above, run full MATH500 avg@64 again.
 
@@ -108,6 +112,21 @@ From the full-run diff, prioritize small rollout64 subsets before another full 5
 
 - Albatross advantage: `73`, `160`, `116`, `67`, `277`.
 - HF advantage: `374`, `383`, `319`, `72`.
+
+## Targeted high-signal subset rerun
+
+Artifact: `bench/math500_high_signal9_4090_20260703/`.
+
+Subset task IDs: `73,160,116,67,277,374,383,319,72`.
+
+| Metric | HF adapter dynamic | Albatross | Delta / ratio |
+|---|---:|---:|---:|
+| Correct generations | `315/576` | `325/576` | `-10` |
+| Rollout accuracy | `0.54687500` | `0.56423611` | `-0.01736111` |
+| Pass@64 | `0.888889` | `0.888889` | `0` |
+| Summary token/s | `6241.051` | `3187.349` | `1.958x` |
+
+Interpretation: when the high-signal tasks are rerun from a fresh RNG stream, the pass@64 gap disappears on this subset.  The remaining correct-generation delta is small relative to the full-run gap.  Combined with logits parity, this points to sampler RNG / dynamic refill order / seed sensitivity as the next investigation target.
 
 ## Albatross reference tuning notes
 
