@@ -3,6 +3,15 @@
 This project uses the BlinkDL/Albatross MATH500 evaluation shape as the current
 speed+accuracy acceptance overlay for the RWKV-7 HF adapter:
 
+> **Final evaluation standard.** This benchmark is intentionally defined from the
+> requester's / bounty-owner's stated acceptance command: use the
+> BlinkDL/Albatross `faster3a_2605/eval_math500.py` MATH500 avg@64 workflow,
+> find the fastest GPU speed through the best batch policy, and compare both
+> speed and MATH500 avg@64 accuracy under the same sampling/prompt/stop policy.
+> In this branch, the artifacts below are therefore the current final
+> acceptance benchmark, not just a smoke test.
+
+
 - dataset: full MATH500 (`500` tasks)
 - rollout: `64`
 - max new tokens: `1500`
@@ -50,27 +59,32 @@ The comparator reports:
 - steady decode token/s ratio from the Albatross `dynamic done ... decode_s=...`
   log line when available
 
-## Current 4090 HF full artifact
+## Current 4090 full benchmark artifacts
 
-Committed artifact:
+Committed source artifacts:
 
-- `bench/math500_hf_dynamic_full_avg64_20260703/summary.json`
-- `bench/math500_hf_dynamic_full_avg64_20260703/run.log`
+- HF adapter dynamic: `bench/math500_hf_dynamic_full_avg64_20260703/summary.json`
+  and `bench/math500_hf_dynamic_full_avg64_20260703/run.log`
+- Albatross reference: `bench/math500_albatross_full_avg64_20260703/summary.json`
+  and `bench/math500_albatross_full_avg64_20260703/run.log`
+- Acceptance comparison: `bench/math500_acceptance_4090_20260703/README.md`,
+  `comparison.json`, and `comparison.txt`
 
-Result:
+Current result:
 
-- `500` tasks, rollout `64`, total generations `32000`
-- correct generations: `4421/32000`
-- rollout accuracy: `0.13815625`
-- pass@64: `0.358`
-- truncated rate: `0.21609375`
-- mean generated tokens: `612.2159`
-- decoded token events: `19,615,994`
-- decode time: `2128.4963s`
-- elapsed time: `2141.1968s`
-- token throughput: `9161.229 tok/s`
-- sample throughput: `14.9449 sample/s`
+| Metric | HF adapter dynamic | Albatross | Delta / ratio |
+|---|---:|---:|---:|
+| Correct generations | `4421/32000` | `4670/32000` | `-249` |
+| Rollout accuracy | `0.13815625` | `0.1459375` | `-0.00778125` |
+| Pass@64 | `0.358` | `0.37` | `-0.012` |
+| Summary token/s | `9161.229` | `3903.633` | `2.347x` |
+| Steady decode token/s | `9215.893` | `3970.135` | `2.321x` |
+| Sample/s | `14.9449` | `6.3616` | `2.349x` |
 
-A full Albatross run under the same shape is required before making a final
-"exceeds Albatross" claim. A 2-task smoke comparison already matched accuracy
-and showed the HF dynamic path ahead on steady decode speed.
+Acceptance interpretation:
+
+- Service-style dynamic MATH500 speed: **ahead of Albatross** by about `2.3x`.
+- MATH500 avg@64 accuracy: **not fully matched yet**; HF adapter trails by
+  `1.2` absolute pass@64 points and `249/32000` correct generations.
+- The next target is accuracy parity first (`pass@64 >= 0.37` under this exact
+  benchmark), while preserving `>= 2x` Albatross dynamic throughput.

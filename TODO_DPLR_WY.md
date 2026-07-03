@@ -95,7 +95,10 @@ Branch: `wangyue/native-prefill-060-albatross`
     `bench/compare_math500_summaries.py`, and
     `docs/validation/math500_acceptance.md`.  These are CPU/lightweight except
     for the actual requested eval run, and let the final Albatross result be
-    compared without hand calculation.
+    compared without hand calculation.  This benchmark is marked as the current
+    final evaluation standard because it follows the requester/bounty-owner
+    command: Albatross MATH500 avg@64, fastest practical GPU batch policy, and
+    same-policy speed+accuracy comparison.
   - Full 500-task MATH500 avg@64 HF dynamic run completed on the 4090:
     `bench/math500_hf_dynamic_full_avg64_20260703/summary.json` and
     `bench/math500_hf_dynamic_full_avg64_20260703/run.log`.  This used full
@@ -119,7 +122,11 @@ Branch: `wangyue/native-prefill-060-albatross`
     `2.347x` faster by summary token/s (`9161.2290 / 3903.6328`) and about
     `2.320x` faster by steady decode token/s (`19615994/2128.4963` vs
     `19636096/4945.952`), while Albatross accuracy is higher by `249/32000`
-    generations and `+0.012` absolute pass@64 (`0.37` vs `0.358`).
+    generations and `+0.012` absolute pass@64 (`0.37` vs `0.358`).  The formal
+    comparison artifact is now stored at
+    `bench/math500_acceptance_4090_20260703/{README.md,comparison.json,comparison.txt}`.
+    Next benchmark gate: close the `-0.012` pass@64 gap while keeping the HF
+    dynamic route above `2x` Albatross throughput.
 
 - [x] Start from merged `origin/main` after PR #90.
 - [x] Fix the first experiment blocker:
