@@ -1561,12 +1561,72 @@ Branch: `wangyue/native-prefill-060-albatross`
     still does not beat the strict historical best `28,780.6 tok/s`, so keep it
     opt-in for now rather than default-promoting.  The next performance push
     should return to the larger remaining state-scan schedule gap.
+- [x] Try shift-WAVG-emitted W-decay for the CUDA state-scan boundary:
+  - Motivation: the previous CUDA micro rows showed vector prep / K-normalization
+    as the biggest single scan-side cost, and the current best route already
+    runs `fused_shift_wavg_lora(...)` before the CUDA scan.  This experiment
+    moves `exp(-0.606531 * sigmoid(w_raw))` into the shift-WAVG LoRA up kernel
+    and lets the warp-specialized CUDA scan consume precomputed W decay in the
+    same single-launch row-block schedule.
+  - Implementation:
+    - `fused_shift_wavg_lora(..., output_w_decay=True)` can now emit W-decay
+      instead of raw W while preserving the default raw-W behavior;
+    - `cuda_state_scan_prep(..., w_precomputed=True)` dispatches the narrow
+      fp16 / `head_dim=64` / `lanes=64` / `warp_specialized` path with W
+      already in decay form;
+    - native prefill wires this only when
+      `RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_W_DECAY=1` and the CUDA
+      warp-specialized scan route is active; default HF/native behavior remains
+      unchanged.
+  - Correctness:
+    - 4090 synthetic CUDA oracle passed; baseline raw-W scan vs precomputed-W
+      scan diffs were output `0.0625`, state `0.0031514`, adjusted K `0.0`,
+      adjusted V `0.0`;
+    - all HF rows below pass greedy/cache/decode smoke.
+  - Result files:
+    - micro:
+      `bench/results_cuda_state_scan_wpre_micro_4090_20260703_034911.jsonl`
+      from remote
+      `/tmp/cuda_state_scan_wpre_micro_4090_20260703_034911.jsonl`;
+    - HF e2e:
+      `bench/results_native_4090_shift_wdecay_20260703_034945.jsonl`
+      from remote `/tmp/native_4090_shift_wdecay_20260703_034945.jsonl`.
+  - 4090 synthetic `B=1,T=512,H=16,N=64,fp16` micro rows:
+    - full warp-specialized rpb1: `0.447488 ms`, `1,144,164.7 tok/s`;
+    - W-precomputed warp-specialized rpb1: `0.446464 ms`,
+      `1,146,789.0 tok/s`;
+    - full warp-specialized rpb8: `0.458752 ms`, `1,116,071.4 tok/s`;
+    - W-precomputed warp-specialized rpb8: `0.456704 ms`,
+      `1,121,076.3 tok/s`.
+  - 4090 / 0.4B / prompt512 / bsz1 HF rows:
+    - same-run baseline: `26,857.2 tok/s`, `19.0638 ms`, peak
+      `988.2 MiB`;
+    - shift-WAVG W-decay rpb1: `26,329.2 tok/s`, `19.4461 ms`, peak
+      `988.2 MiB`;
+    - shift-WAVG W-decay rpb8: `26,858.8 tok/s`, `19.0627 ms`, peak
+      `988.2 MiB`;
+    - shift-WAVG W-decay + FFN norm-shift: `27,147.5 tok/s`,
+      `18.8599 ms`, peak `964.2 MiB`.
+  - Conclusion: precomputing W-decay inside shift-WAVG is correctness-safe and
+    gives a tiny scan-kernel micro win (`~0.2-0.4%`), but it does not transfer
+    into a meaningful HF e2e gain and remains below the strict best
+    `28,780.6 tok/s`.  Keep it opt-in; do not promote.  The useful signal is
+    that removing only W sigmoid/exp is too small once the cost is paid in the
+    shift-WAVG boundary; the remaining `0.60x` gap still needs a larger
+    persistent/two-level scan schedule or a bigger fused boundary.
 - [ ] Next persistent/two-level state-scan experiment:
-  - Return to the main state-scan gap.  Try a persistent/two-level schedule or
-    another structure that preserves rpb1/rpb8 row parallelism while sharing
-    producer vector prep; do not spend another turn on small FFN activation or
-    recompute-prev layernorm boundaries unless a same-run profile identifies a
-    larger FFN win.
+  - Return to the main state-scan gap.  The next bounded experiment should
+    preserve rpb1/rpb8 row parallelism while sharing more than W-decay: producer
+    vector prep for R/W/K/A/normalized-KK/adjusted-KV and/or state-dot work.
+    Do not spend another turn on W-only precompute, small FFN activation, or
+    recompute-prev layernorm boundaries unless a same-run profiler shows a new
+    larger win.
+  - Candidate implementation directions:
+    - add a two-level CUDA row-block schedule where a head-level producer
+      computes per-token vectors once and row workers consume them without
+      global temp tensors; or
+    - split/retile the current shift-WAVG + CUDA scan boundary so W/A/K/V prep
+      is shared with the scan without reducing row occupancy like rpb16 did.
   - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond `28,780.6 tok/s`, moving toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for

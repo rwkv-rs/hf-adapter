@@ -875,6 +875,33 @@ def _native_prefill_fused_shift_wavg_lora_warps() -> tuple[int, int]:
     return down, up
 
 
+def _native_prefill_fused_shift_wavg_lora_w_decay_requested() -> bool:
+    """Return whether shift-WAVG should emit W decay instead of raw W."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_W_DECAY", False)
+
+
+def _native_prefill_fused_shift_wavg_lora_w_decay_enabled(total_rows: int) -> bool:
+    """Runtime switch for moving W decay into the shift-WAVG LoRA kernel.
+
+    This is only safe when the downstream state-scan is told that W is already
+    decayed.  Native prefill therefore enables it only on the CUDA
+    warp-specialized state-scan route that accepts precomputed W decay.
+    """
+
+    if not _native_prefill_fused_shift_wavg_lora_w_decay_requested():
+        return False
+    if not _native_prefill_fused_shift_wavg_lora_enabled(total_rows):
+        return False
+    if not (_native_prefill_fused_state_scan_enabled() and _native_prefill_cuda_state_scan_enabled()):
+        return False
+    if _native_prefill_cuda_state_scan_lanes() != 64:
+        return False
+    if _native_prefill_cuda_state_scan_precompute_mode() != "none":
+        return False
+    return _native_prefill_cuda_state_scan_schedule() == "warp_specialized"
+
+
 def _native_prefill_ffn_fused_act_requested() -> bool:
     """Return whether the prefill FFN relu-square fusion probe is requested."""
 
@@ -1689,6 +1716,7 @@ def prefill(
         hidden = H * N
         use_prefill_projection = _native_prefill_fused_projection_enabled(B * T)
         shift_wavg_lora_done = False
+        shift_wavg_lora_w_decay_done = False
 
         if _native_prefill_fused_norm_mix_enabled():
             norm_mix = fused_attn_norm_shift_mix_prefill(
@@ -1718,6 +1746,7 @@ def prefill(
             ):
                 block_m, block_r, block_k = _native_prefill_fused_shift_wavg_lora_blocks()
                 down_warps, up_warps = _native_prefill_fused_shift_wavg_lora_warps()
+                output_w_decay = _native_prefill_fused_shift_wavg_lora_w_decay_enabled(B * T)
                 xr2, xk2, xv2, w2_out, a2_out, g2_out, v_gate2 = fused_shift_wavg_lora(
                     h.reshape(B * T, hidden),
                     prev_h.reshape(B * T, hidden),
@@ -1744,6 +1773,7 @@ def prefill(
                     block_k=block_k,
                     down_num_warps=down_warps,
                     up_num_warps=up_warps,
+                    output_w_decay=output_w_decay,
                 )
                 xr = xr2.view(B, T, hidden)
                 xk = xk2.view(B, T, hidden)
@@ -1755,6 +1785,7 @@ def prefill(
                 g = g2_out.view(B, T, hidden)
                 v_gate = v_gate2.view(B, T, hidden)
                 shift_wavg_lora_done = True
+                shift_wavg_lora_w_decay_done = bool(output_w_decay)
             elif _native_prefill_fused_shift_mix_enabled():
                 xr, xw, xk, xv, xa, xg = fused_attn_shift_mix(h, prev_h, x_r, x_w, x_k, x_v, x_a, x_g)
             else:
@@ -2113,10 +2144,13 @@ def prefill(
                 _native_prefill_cuda_state_scan_rows_per_block() if use_cuda_state_scan else 1
             )
             cuda_state_scan_schedule = _native_prefill_cuda_state_scan_schedule() if use_cuda_state_scan else "default"
-            state_scan_precompute_w = _native_prefill_scan_precompute_w_enabled() and not use_cuda_state_scan
+            state_scan_w_precomputed = bool(shift_wavg_lora_w_decay_done)
+            state_scan_precompute_w = state_scan_w_precomputed or (
+                _native_prefill_scan_precompute_w_enabled() and not use_cuda_state_scan
+            )
             state_scan_precompute_w_dtype = _native_prefill_scan_precompute_w_dtype()
             w_for_state_scan = w
-            if state_scan_precompute_w:
+            if state_scan_precompute_w and not state_scan_w_precomputed:
                 w_for_state_scan = torch.sigmoid(w.float()).mul_(-0.606531).exp_()
                 if state_scan_precompute_w_dtype == "input":
                     w_for_state_scan = w_for_state_scan.to(dtype=w.dtype)
@@ -2166,6 +2200,7 @@ def prefill(
                     precompute_mode=cuda_state_scan_precompute_mode,
                     rows_per_block=cuda_state_scan_rows_per_block,
                     schedule=cuda_state_scan_schedule,
+                    w_precomputed=state_scan_w_precomputed,
                 )
                 v_first_seq = v.reshape(B, T, hidden)
             elif use_cuda_state_scan:
@@ -2185,6 +2220,7 @@ def prefill(
                     precompute_mode=cuda_state_scan_precompute_mode,
                     rows_per_block=cuda_state_scan_rows_per_block,
                     schedule=cuda_state_scan_schedule,
+                    w_precomputed=state_scan_w_precomputed,
                 )
             elif layer_idx == 0:
                 out, new_state, k, v = fused_recurrent_scan_state_prep(

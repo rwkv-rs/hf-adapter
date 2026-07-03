@@ -329,6 +329,7 @@ if _HAS_TRITON:
         HAS_A_BIAS: tl.constexpr,
         HAS_G_BIAS: tl.constexpr,
         HAS_V_BIAS: tl.constexpr,
+        OUTPUT_W_DECAY: tl.constexpr,
         BLOCK_M: tl.constexpr,
         BLOCK_R: tl.constexpr,
     ):
@@ -378,6 +379,8 @@ if _HAS_TRITON:
             vb = tl.load(v_bias_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
             acc_v += vb
         out_base = batch_id * hidden + offs_m
+        if OUTPUT_W_DECAY:
+            acc_w = tl.exp(-0.606531 * tl.sigmoid(acc_w))
         tl.store(w_out_ptr + out_base, acc_w, mask=mask_m)
         tl.store(a_out_ptr + out_base, acc_a, mask=mask_m)
         tl.store(g_out_ptr + out_base, acc_g, mask=mask_m)
@@ -954,6 +957,7 @@ def fused_wavg_lora(
             HAS_A_BIAS=a_up_bias is not None,
             HAS_G_BIAS=g_up_bias is not None,
             HAS_V_BIAS=v_up_bias is not None,
+            OUTPUT_W_DECAY=False,
             BLOCK_M=int(block_m),
             BLOCK_R=int(block_r),
             num_warps=4,
@@ -990,6 +994,7 @@ def fused_shift_wavg_lora(
     block_k: int = 64,
     down_num_warps: int = 4,
     up_num_warps: int = 4,
+    output_w_decay: bool = False,
     force_fallback: bool = False,
 ):
     """Fuse attention time-mix materialization with W/A/G/V-gate LoRA.
@@ -1089,6 +1094,8 @@ def fused_shift_wavg_lora(
             block_k=block_k,
             force_fallback=True,
         )
+        if output_w_decay:
+            w_out = torch.exp(-0.606531 * torch.sigmoid(w_out.float())).to(dtype=w_out.dtype)
     else:
         batch = int(h2.shape[0])
         h_c = h2.contiguous()
@@ -1179,6 +1186,7 @@ def fused_shift_wavg_lora(
             HAS_A_BIAS=a_up_bias is not None,
             HAS_G_BIAS=g_up_bias is not None,
             HAS_V_BIAS=v_up_bias is not None,
+            OUTPUT_W_DECAY=bool(output_w_decay),
             BLOCK_M=int(block_m),
             BLOCK_R=int(block_r),
             num_warps=int(up_num_warps),

@@ -66,9 +66,11 @@ def make_inputs(args: argparse.Namespace) -> dict[str, torch.Tensor]:
     torch.manual_seed(args.seed)
     device = torch.device(args.device)
     shape = (args.batch_size, args.seq_len, args.heads, 64)
+    w = torch.randn(shape, device=device, dtype=torch.float16)
     return {
         "r": torch.randn(shape, device=device, dtype=torch.float16),
-        "w": torch.randn(shape, device=device, dtype=torch.float16),
+        "w": w,
+        "w_decay": torch.exp(-0.606531 * torch.sigmoid(w.float())).to(torch.float16),
         "k": torch.randn(shape, device=device, dtype=torch.float16),
         "v": torch.randn(shape, device=device, dtype=torch.float16),
         "a": torch.randn(shape, device=device, dtype=torch.float16),
@@ -103,10 +105,11 @@ def call_full(
     rows_per_block: int = 1,
     schedule: str = "default",
     precompute_mode: str = "none",
+    w_precomputed: bool = False,
 ):
     return cuda_state_scan_prep(
         tensors["r"],
-        tensors["w"],
+        tensors["w_decay"] if w_precomputed else tensors["w"],
         tensors["k"],
         tensors["v"],
         tensors["a"],
@@ -119,6 +122,7 @@ def call_full(
         precompute_mode=precompute_mode,
         rows_per_block=rows_per_block,
         schedule=schedule,
+        w_precomputed=w_precomputed,
     )
 
 
@@ -262,6 +266,32 @@ def main() -> int:
             "schedule": "default",
             "rows_per_block": 1,
             "precompute_mode": mode,
+            "cuda_ms": round(ms, 6),
+            "tokps_total": round(1000.0 * tokens_total / ms, 1) if ms > 0 else None,
+        }
+        print(json.dumps(row, ensure_ascii=False))
+        append_row(args.results, row)
+    for rpb in [1, 8]:
+        ms = median_ms(
+            lambda rpb=rpb: call_full(tensors, rows_per_block=rpb, schedule="warp_specialized", w_precomputed=True),
+            warmup=args.warmup,
+            steps=args.steps,
+        )
+        row = {
+            "axis": "cuda_state_scan_micro",
+            "backend": "cuda_state_scan",
+            "bench_case": f"full_warp_specialized_wpre_rpb{rpb}",
+            "status": "pass",
+            "device": device_name,
+            "dtype": "fp16",
+            "batch_size": args.batch_size,
+            "seq_len": args.seq_len,
+            "heads": args.heads,
+            "head_dim": 64,
+            "tokens_total": tokens_total,
+            "schedule": "warp_specialized",
+            "rows_per_block": rpb,
+            "w_precomputed": True,
             "cuda_ms": round(ms, 6),
             "tokps_total": round(1000.0 * tokens_total / ms, 1) if ms > 0 else None,
         }
