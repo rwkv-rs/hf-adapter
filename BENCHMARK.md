@@ -2167,6 +2167,14 @@ Result on Tesla V100-PCIE-32GB:
 | native JIT block step | 103.52 | 9.6596 | 1.12x official V100 baseline |
 | native CUDA graph | 254.33 | 3.9319 | 2.76x official V100 baseline |
 
+Multi-size native-graph decode on V100-32GB (fp16, `rwkv7_forward_token`, prompt 512 / decode 128):
+
+| Model | Decode tok/s | ms/token | Prefill tok/s | Peak VRAM |
+|---|---:|---:|---:|---:|
+| 0.1B | 254.33 | 3.93 | — | ~640 MB |
+| 2.9B | 57.8 | 17.3 | 6238.8 | 5937 MB |
+| 7.2B | 32.1 | 31.12 | 3452.4 | 14076 MB |
+
 Correctness checks in the same row:
 
 - native logits vs HF logits: cosine `1.00000024`, max_abs `0.03125`, argmax match.
