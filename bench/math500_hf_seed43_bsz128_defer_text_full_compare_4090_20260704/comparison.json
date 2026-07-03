@@ -1,0 +1,58 @@
+{
+  "compatible_shape": {
+    "num_tasks_match": true,
+    "rollout_match": true,
+    "total_generations_match": true,
+    "hf_num_tasks": 500,
+    "albatross_num_tasks": 500,
+    "hf_rollout": 64,
+    "albatross_rollout": 64,
+    "hf_total_generations": 32000,
+    "albatross_total_generations": 32000
+  },
+  "accuracy": {
+    "hf_correct_generations": 4489.0,
+    "albatross_correct_generations": 4670.0,
+    "correct_delta": -181.0,
+    "hf_rollout_accuracy": 0.14028125,
+    "albatross_rollout_accuracy": 0.1459375,
+    "rollout_accuracy_delta": -0.0056562500000000016,
+    "hf_pass_at_rollout_accuracy": 0.38,
+    "albatross_pass_at_rollout_accuracy": 0.37,
+    "pass_at_rollout_delta": 0.010000000000000009
+  },
+  "speed": {
+    "hf": {
+      "token_per_sec_summary": 10426.943203905144,
+      "sample_per_sec_summary": 16.89382838172778,
+      "elapsed_sec": 1964.5202456265688,
+      "speed_elapsed_sec": 1894.1828505024314,
+      "wall_token_per_sec": 10053.618456704027,
+      "generation_token_per_sec": 10426.943203905144,
+      "decode_sec": 1704.3688936308026,
+      "decoded_token_events": 19750537.0,
+      "steady_token_per_sec": 11588.182038411649
+    },
+    "albatross": {
+      "token_per_sec_summary": 3903.63284569979,
+      "sample_per_sec_summary": 6.361562454287924,
+      "elapsed_sec": 5030.210774466395,
+      "speed_elapsed_sec": 0.0,
+      "wall_token_per_sec": 0.0,
+      "generation_token_per_sec": 0.0,
+      "decode_sec": 4945.952,
+      "decoded_token_events": 19636096.0,
+      "steady_token_per_sec": 3970.1347687967855
+    },
+    "hf_speed_timing": "generation",
+    "albatross_speed_timing": "wall",
+    "summary_token_per_sec_ratio_hf_over_albatross": 2.671087065831865,
+    "steady_decode_token_per_sec_ratio_hf_over_albatross": 2.918838455935751,
+    "sample_per_sec_ratio_hf_over_albatross": 2.6556099233672894
+  },
+  "albatross_log_decode": {
+    "decode_sec_from_log": 4945.952,
+    "decoded_token_events_from_log": 19636096.0,
+    "steady_token_per_sec_from_log": 3970.1347687967855
+  }
+}

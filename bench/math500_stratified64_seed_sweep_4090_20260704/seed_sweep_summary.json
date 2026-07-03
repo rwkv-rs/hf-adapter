@@ -1,0 +1,74 @@
+{
+  "subset": {
+    "selected_tasks": 64,
+    "rollout": 64,
+    "total_generations_per_run": 4096,
+    "buckets": {
+      "albatross_only_pass": 16,
+      "both_pass_albatross_adv": 16,
+      "both_pass_hf_adv": 16,
+      "hf_only_pass": 16
+    },
+    "full_run_reference_on_selected_tasks": {
+      "hf_correct_generations": 893,
+      "albatross_correct_generations": 1062,
+      "hf_minus_albatross_correct": -169,
+      "hf_pass_tasks": 48,
+      "albatross_pass_tasks": 48,
+      "hf_minus_albatross_pass_tasks": 0,
+      "hf_pass_at_rollout": 0.75,
+      "albatross_pass_at_rollout": 0.75
+    }
+  },
+  "completed_seeds": [
+    42,
+    43
+  ],
+  "hf_seed_rows": [
+    {
+      "seed": 42,
+      "correct_generations": 938,
+      "rollout_accuracy": 0.22900390625,
+      "pass_tasks": 46,
+      "pass_at_rollout_accuracy": 0.71875,
+      "token_per_sec": 5926.5110630884765,
+      "sample_per_sec": 8.81436781235116,
+      "decoded_token_events": 2754025,
+      "summary_json": "/tmp/math500_stratified64_seed_sweep_4090_20260704/hf_seed_42/summary.json"
+    },
+    {
+      "seed": 43,
+      "correct_generations": 981,
+      "rollout_accuracy": 0.239501953125,
+      "pass_tasks": 46,
+      "pass_at_rollout_accuracy": 0.71875,
+      "token_per_sec": 5812.7828190508535,
+      "sample_per_sec": 8.768835035784555,
+      "decoded_token_events": 2715202,
+      "summary_json": "/tmp/math500_stratified64_seed_sweep_4090_20260704/hf_seed_43/summary.json"
+    }
+  ],
+  "best_hf_seed_by_pass_then_correct": {
+    "seed": 43,
+    "correct_generations": 981,
+    "rollout_accuracy": 0.239501953125,
+    "pass_tasks": 46,
+    "pass_at_rollout_accuracy": 0.71875,
+    "token_per_sec": 5812.7828190508535,
+    "sample_per_sec": 8.768835035784555,
+    "decoded_token_events": 2715202,
+    "summary_json": "/tmp/math500_stratified64_seed_sweep_4090_20260704/hf_seed_43/summary.json"
+  },
+  "reference": {
+    "hf_full_run_selected_tasks": {
+      "correct_generations": 893,
+      "pass_tasks": 48,
+      "pass_at_rollout_accuracy": 0.75
+    },
+    "albatross_full_run_selected_tasks": {
+      "correct_generations": 1062,
+      "pass_tasks": 48,
+      "pass_at_rollout_accuracy": 0.75
+    }
+  }
+}

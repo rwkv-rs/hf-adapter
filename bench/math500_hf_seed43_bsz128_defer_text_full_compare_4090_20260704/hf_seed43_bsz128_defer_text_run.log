@@ -1,0 +1,51 @@
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+/workspace/venvs/rwkv7/lib/python3.12/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+Loading weights:   0%|          | 0/795 [00:00<?, ?it/s]Loading weights:  40%|████      | 321/795 [00:00<00:00, 3207.07it/s]Loading weights:  82%|████████▏ | 655/795 [00:00<00:00, 3284.60it/s]Loading weights: 100%|██████████| 795/795 [00:00<00:00, 3232.62it/s]
+math500_hf prefill_cache done prompts=500 elapsed_s=189.814
+math500_hf dynamic step=5000 active=128/128 done=1224/32000 pending=30648 tokens=641224 tps=11454.5 window_tps=11454.5
+math500_hf dynamic step=10000 active=128/128 done=2525/32000 pending=29347 tokens=1282525 tps=11547.1 window_tps=11641.1
+math500_hf dynamic step=15000 active=128/128 done=3838/32000 pending=28034 tokens=1923838 tps=11226.2 window_tps=10635.1
+math500_hf dynamic step=20000 active=128/128 done=4889/32000 pending=26983 tokens=2564889 tps=11032.3 window_tps=10488.5
+math500_hf dynamic step=25000 active=128/128 done=6019/32000 pending=25853 tokens=3206019 tps=11140.9 window_tps=11597.6
+math500_hf dynamic step=30000 active=128/128 done=6802/32000 pending=25070 tokens=3846802 tps=11254.7 window_tps=11861.1
+math500_hf dynamic step=35000 active=128/128 done=7627/32000 pending=24245 tokens=4487627 tps=11332.1 window_tps=11820.2
+math500_hf dynamic step=40000 active=128/128 done=8661/32000 pending=23211 tokens=5128661 tps=11391.9 window_tps=11828.5
+math500_hf dynamic step=45000 active=128/128 done=9554/32000 pending=22318 tokens=5769554 tps=11440.9 window_tps=11849.0
+math500_hf dynamic step=50000 active=128/128 done=10416/32000 pending=21456 tokens=6410416 tps=11480.5 window_tps=11849.8
+math500_hf dynamic step=55000 active=128/128 done=11522/32000 pending=20350 tokens=7051522 tps=11507.1 window_tps=11779.8
+math500_hf dynamic step=60000 active=128/128 done=12463/32000 pending=19409 tokens=7692463 tps=11507.0 window_tps=11505.6
+math500_hf dynamic step=65000 active=128/128 done=13408/32000 pending=18464 tokens=8333408 tps=11487.6 window_tps=11260.5
+math500_hf dynamic step=70000 active=128/128 done=14195/32000 pending=17677 tokens=8974195 tps=11513.7 window_tps=11864.4
+math500_hf dynamic step=75000 active=128/128 done=15150/32000 pending=16722 tokens=9615150 tps=11531.2 window_tps=11782.0
+math500_hf dynamic step=80000 active=128/128 done=16287/32000 pending=15585 tokens=10256287 tps=11543.5 window_tps=11731.5
+math500_hf dynamic step=85000 active=128/128 done=17749/32000 pending=14123 tokens=10897749 tps=11548.4 window_tps=11626.9
+math500_hf dynamic step=90000 active=128/128 done=18601/32000 pending=13271 tokens=11538601 tps=11561.0 window_tps=11780.0
+math500_hf dynamic step=95000 active=128/128 done=19486/32000 pending=12386 tokens=12179486 tps=11572.5 window_tps=11782.8
+math500_hf dynamic step=100000 active=128/128 done=20772/32000 pending=11100 tokens=12820772 tps=11578.9 window_tps=11702.3
+math500_hf dynamic step=105000 active=128/128 done=21637/32000 pending=10235 tokens=13461637 tps=11587.7 window_tps=11766.7
+math500_hf dynamic step=110000 active=128/128 done=22616/32000 pending=9256 tokens=14102616 tps=11595.9 window_tps=11769.6
+math500_hf dynamic step=115000 active=128/128 done=23691/32000 pending=8181 tokens=14743691 tps=11602.2 window_tps=11742.4
+math500_hf dynamic step=120000 active=128/128 done=24425/32000 pending=7447 tokens=15384425 tps=11611.8 window_tps=11837.1
+math500_hf dynamic step=125000 active=128/128 done=25886/32000 pending=5986 tokens=16025886 tps=11613.8 window_tps=11661.7
+math500_hf dynamic step=130000 active=128/128 done=26879/32000 pending=4993 tokens=16666879 tps=11620.2 window_tps=11784.4
+math500_hf dynamic step=135000 active=128/128 done=27931/32000 pending=3941 tokens=17307931 tps=11624.7 window_tps=11742.9
+math500_hf dynamic step=140000 active=128/128 done=29084/32000 pending=2788 tokens=17949084 tps=11629.2 window_tps=11750.4
+math500_hf dynamic step=145000 active=128/128 done=30313/32000 pending=1559 tokens=18590313 tps=11624.8 window_tps=11504.5
+math500_hf dynamic step=150000 active=128/128 done=31260/32000 pending=612 tokens=19231260 tps=11629.5 window_tps=11765.6
+math500_hf dynamic done B=128 rows=32000 decode_s=1704.369 tokens=19750537
+Timeout during comparison
+Timeout during comparison
+Timeout during comparison
+Timeout during comparison
+math500_hf verify 5000/32000 elapsed_s=47.798
+math500_hf verify 10000/32000 elapsed_s=47.803
+math500_hf verify 15000/32000 elapsed_s=47.807
+math500_hf verify 20000/32000 elapsed_s=47.809
+math500_hf verify 25000/32000 elapsed_s=49.830
+Timeout during comparison
+Timeout during comparison
+Timeout during comparison
+math500_hf verify 30000/32000 elapsed_s=68.646
+math500_hf verify done rows=32000 workers=4 elapsed_s=69.695
+MATH500_HF_ADAPTER_RESULT {"axis": "math500_hf_adapter", "backend": "hf_adapter", "status": "pass", "model": "/tmp/rwkv7_repo_code_model_dynmath_full_avg64", "dataset": "/workspace/projects/Albatross/faster3a_2605/dataset/MATH500.jsonl", "num_tasks": 500, "rollout": 64, "total_generations": 32000, "correct_generations": 4489, "rollout_accuracy": 0.14028125, "pass_at_rollout_accuracy": 0.38, "ended_eod": 25075, "ended_user_stop": 0, "truncated": 6925, "truncated_rate": 0.21640625, "mean_generated_tokens": 616.4206875, "mean_tokens_including_stop": 617.20428125, "elapsed_sec": 1964.5202456265688, "speed_timing": "generation", "speed_elapsed_sec": 1894.1828505024314, "sample_per_sec": 16.89382838172778, "token_per_sec": 10426.943203905144, "wall_sample_per_sec": 16.2889642248476, "wall_token_per_sec": 10053.618456704027, "generation_elapsed_sec": 1894.1828505024314, "generation_sample_per_sec": 16.89382838172778, "generation_token_per_sec": 10426.943203905144, "generations_jsonl": "/tmp/math500_hf_dynamic_full_avg64_seed43_bsz128_defer_text_20260704/generations.jsonl", "config": {"hf_dir": "/tmp/rwkv7_repo_code_model_dynmath_full_avg64", "dataset": "/workspace/projects/Albatross/faster3a_2605/dataset/MATH500.jsonl", "rollout": 64, "limit": 0, "max_new_tokens": 1500, "ctx_limit": 8192, "temperature": 1.0, "top_p": 0.28, "top_k": 32, "prompt_style": "fake_think", "dtype": "fp16", "device": "cuda", "seed": 43, "dynamic_batching": true, "bsz": 128, "add_bos": true, "prefill_backend": "native", "decode_backend": "fast_token", "rng_mode": "global", "rng_salt": 0, "defer_verification": true, "verify_workers": 4, "summary_speed_timing": "generation", "defer_text_decode": true}, "prefill_sec": 189.81395687162876, "decode_sec": 1704.3688936308026, "decoded_token_events": 19750537, "forward_steps": 154830, "dynamic_bsz": 128, "fast_token_backend_effective": "native_graph", "cache_metrics": {"updates": 0, "new_layers": 0, "clones": 0, "detaches": 0, "device_moves": 0, "select_batch_calls": 0, "native_graph_bound_selects": 0, "batch_select_calls": 0, "reorder_calls": 0, "resets": 0, "layers": 24, "seen_tokens": 154830, "batch_size": 128}, "rng_mode": "global", "rng_salt": 0, "defer_text_decode": true, "deferred_verification": true, "verify_workers": 4, "verification_sec": 69.69546078145504}

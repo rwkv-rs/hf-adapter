@@ -1,0 +1,50 @@
+{
+  "compatible_shape": {
+    "num_tasks_match": true,
+    "rollout_match": true,
+    "total_generations_match": true,
+    "hf_num_tasks": 500,
+    "albatross_num_tasks": 500,
+    "hf_rollout": 64,
+    "albatross_rollout": 64,
+    "hf_total_generations": 32000,
+    "albatross_total_generations": 32000
+  },
+  "accuracy": {
+    "hf_correct_generations": 4600.0,
+    "albatross_correct_generations": 4670.0,
+    "correct_delta": -70.0,
+    "hf_rollout_accuracy": 0.14375,
+    "albatross_rollout_accuracy": 0.1459375,
+    "rollout_accuracy_delta": -0.002187500000000009,
+    "hf_pass_at_rollout_accuracy": 0.372,
+    "albatross_pass_at_rollout_accuracy": 0.37,
+    "pass_at_rollout_delta": 0.0020000000000000018
+  },
+  "speed": {
+    "hf": {
+      "token_per_sec_summary": 6275.76967010325,
+      "sample_per_sec_summary": 10.21495517178064,
+      "elapsed_sec": 3132.661814160645,
+      "decode_sec": 2937.25285294652,
+      "decoded_token_events": 19659864.0,
+      "steady_token_per_sec": 6693.282800041579
+    },
+    "albatross": {
+      "token_per_sec_summary": 3903.63284569979,
+      "sample_per_sec_summary": 6.361562454287924,
+      "elapsed_sec": 5030.210774466395,
+      "decode_sec": 4945.952,
+      "decoded_token_events": 19636096.0,
+      "steady_token_per_sec": 3970.1347687967855
+    },
+    "summary_token_per_sec_ratio_hf_over_albatross": 1.6076741635721676,
+    "steady_decode_token_per_sec_ratio_hf_over_albatross": 1.6859082096273745,
+    "sample_per_sec_ratio_hf_over_albatross": 1.6057305489306937
+  },
+  "albatross_log_decode": {
+    "decode_sec_from_log": 4945.952,
+    "decoded_token_events_from_log": 19636096.0,
+    "steady_token_per_sec_from_log": 3970.1347687967855
+  }
+}

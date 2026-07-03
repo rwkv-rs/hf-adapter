@@ -1,0 +1,2 @@
+CMake Error: The current CMakeCache.txt directory /tmp/faster4_2605_cpp_linear_tuned_4090_20260704/bin/CMakeCache.txt is different than the directory /workspace/projects/Albatross/faster4_2605_cpp/bin where CMakeCache.txt was created. This may result in binaries being created in the wrong place. If you are not sure, reedit the CMakeCache.txt
+[100%] Built target rwkv7_fast_v4
