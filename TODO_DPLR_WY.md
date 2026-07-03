@@ -1651,15 +1651,67 @@ Branch: `wangyue/native-prefill-060-albatross`
     micro and HF.  Full head-level sharing over-reduces CTA parallelism and
     makes a 1024-thread CTA too heavy for this shape.  Keep the route opt-in
     as a negative schedule probe; do not promote.
+- [x] Try double-buffered warp-pipelined CUDA row-block schedule:
+  - Motivation: keep the proven warp-specialized row-block occupancy while
+    reducing per-token synchronization.  The new `warp_pipelined` schedule
+    double-buffers shared R/W/K/A/normalized-KK/V-row vectors: producer warp
+    prefetches token `t+1` while row-worker warps consume token `t`, reducing
+    the row-block inner loop from two `__syncthreads()` per token to one after
+    the initial preload.
+  - Implementation:
+    - added `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE=warp_pipelined`;
+    - added `rwkv7_state_scan_prep_n64_rowblock_warp_pipelined_kernel`;
+    - supported rpb `1/2/4/8/16`;
+    - kept the route opt-in and left default HF/native behavior unchanged.
+  - Correctness:
+    - 4090 synthetic oracle vs warp-specialized rpb1 passed exactly for
+      rpb `1/2/4/8/16`, with output/state/K/V diffs all `0.0`;
+    - all HF rows below pass greedy/cache/decode smoke with `max_abs_diff=0.0625`.
+  - Result files:
+    - micro:
+      `bench/results_cuda_state_scan_warppipe_micro_4090_20260703_121500.jsonl`
+      from remote
+      `/tmp/cuda_state_scan_warppipe_micro_4090_20260703_121500.jsonl`;
+    - HF sweep:
+      `bench/results_native_4090_warppipe_sweep_20260703_122000.jsonl`
+      from remote `/tmp/native_4090_warppipe_sweep_20260703_122000.jsonl`;
+    - HF confirm:
+      `bench/results_native_4090_warppipe_confirm_20260703_123000.jsonl`
+      from remote `/tmp/native_4090_warppipe_confirm_20260703_123000.jsonl`.
+  - 4090 synthetic `B=1,T=512,H=16,N=64,fp16` micro rows:
+    - warp-specialized rpb1: `0.448512 ms`, `1,141,552.5 tok/s`;
+    - warp-specialized rpb8: `0.460800 ms`, `1,111,111.1 tok/s`;
+    - warp-pipelined rpb1: `0.379904 ms`, `1,347,708.9 tok/s`;
+    - warp-pipelined rpb8: `0.347200 ms`, `1,474,654.4 tok/s`;
+    - warp-pipelined rpb16: `0.369664 ms`, `1,385,041.5 tok/s`.
+  - 4090 / 0.4B / prompt512 / bsz1 HF sweep rows:
+    - same-run warp-specialized rpb1 + shift-WAVG baseline:
+      `27,223.1 tok/s`, `18.8076 ms`;
+    - warp-pipelined rpb1: `26,920.9 tok/s`, `19.0187 ms`;
+    - warp-pipelined rpb8: `27,079.5 tok/s`, `18.9073 ms`;
+    - warp-pipelined rpb16: `27,739.6 tok/s`, `18.4574 ms`.
+  - 4090 HF confirmation rows:
+    - baseline #1: `27,591.2 tok/s`, `18.5566 ms`;
+    - warp-pipelined rpb16: `27,033.4 tok/s`, `18.9395 ms`;
+    - warp-pipelined rpb16 + FFN norm-shift: `27,705.4 tok/s`,
+      `18.4802 ms`, peak `964.2 MiB`;
+    - baseline #2: `27,634.9 tok/s`, `18.5273 ms`.
+  - Conclusion: the double-buffered schedule is the strongest CUDA micro win so
+    far and proves sync reduction is real inside the isolated scan kernel, but
+    the HF confirmation does not beat the strict best `28,780.6 tok/s` and only
+    shows same-run parity/slight wins when combined with FFN norm-shift.  Keep
+    it opt-in; do not promote.  The next step should profile the HF path with
+    warppipe enabled to see whether the scan component improves but total time
+    is hidden by launch/model overhead, or whether the micro win is lost inside
+    the real layer mix.
 - [ ] Next persistent/two-level state-scan experiment:
-  - Do not repeat head-level single-CTA sharing or W-only precompute.  The next
-    bounded experiment should keep the proven warp-specialized row-block
-    occupancy and reduce only one cost inside it.  Preferred directions:
-    - retile warp-specialized rpb1/rpb8 to reduce per-token synchronizations or
-      shared stores while keeping one-worker-warp row parallelism; or
-    - split the vector-prep producer into a lighter inline path that shares
-      normalized KK/adjusted-KV within rpb8 without using 1024-thread CTAs or
-      global temp tensors.
+  - Run a corrected HF breakdown comparing baseline warp-specialized rpb1,
+    warp-pipelined rpb16, and warp-pipelined rpb16 + FFN norm-shift on the
+    current shift-WAVG route.  If `recurrent_scan_state_prep_cuda` drops in the
+    component profile but e2e remains flat, route the next experiment to the
+    adjacent shift-WAVG/state-scan boundary or FFN memory boundary; if the scan
+    component does not drop, inspect the pipelined kernel occupancy/register
+    pressure and retile only the producer/shared-buffer path.
   - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond `28,780.6 tok/s`, moving toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for

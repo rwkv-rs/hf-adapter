@@ -531,8 +531,10 @@ def _native_prefill_cuda_state_scan_schedule() -> str:
         return "warp2"
     if schedule in {"3", "head_reg16", "head_reg", "head", "reg16", "head_level", "headlevel"}:
         return "head_reg16"
+    if schedule in {"4", "warp_pipelined", "warp_pipe", "pipelined", "pipeline", "pipe"}:
+        return "warp_pipelined"
     raise ValueError(
-        "RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE must be default, warp_specialized, warp2, or head_reg16"
+        "RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE must be default, warp_specialized, warp2, head_reg16, or warp_pipelined"
     )
 
 

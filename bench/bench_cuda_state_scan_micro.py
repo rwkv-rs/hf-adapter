@@ -221,6 +221,9 @@ def main() -> int:
         ("warp2", 4),
         ("warp2", 8),
         ("head_reg16", 1),
+        ("warp_pipelined", 1),
+        ("warp_pipelined", 8),
+        ("warp_pipelined", 16),
     ]:
         ms = median_ms(
             lambda schedule=schedule, rpb=rpb: call_full(tensors, rows_per_block=rpb, schedule=schedule),
