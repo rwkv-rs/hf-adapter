@@ -2479,6 +2479,58 @@ Branch: `wangyue/native-prefill-060-albatross`
       attempt still needs a wider shift-WAVG/state-scan/output boundary or a
       genuinely different persistent/two-level schedule, not another single
       activation move.
+  - [x] Try half-warp paired CUDA row-block schedule (`halfwarp_pair`):
+    - Motivation: test a genuinely different persistent/two-level schedule that
+      preserves row parallelism without serializing two rows in one full worker
+      warp.  The new worker warp is split into two independent half-warps: lanes
+      `0..15` process one state row and lanes `16..31` process the next row,
+      with each half-warp lane owning four state columns.
+    - Implementation:
+      - added opt-in schedule
+        `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE=halfwarp_pair`;
+      - added
+        `rwkv7_state_scan_prep_n64_rowblock_halfwarp_pair_kernel`;
+      - supported row blocks `2/4/8/16` and rejected `rows_per_block=1` for
+        this schedule;
+      - kept the producer warp shared-vector path and changed only the row
+        worker schedule;
+      - benchmark micro coverage now records half-warp-pair rows.
+    - Correctness:
+      - local `py_compile` and `git diff --check` passed;
+      - 4090 direct oracle vs `warp_specialized rpb2` passed for rpb
+        `2/4/8/16` with output/state/K/V diffs
+        `[0.0009766, 1.9e-06, 0.0, 0.0]`;
+      - all HF rows below pass greedy/cache/decode smoke.
+    - Result files:
+      - micro:
+        `bench/results_cuda_state_scan_halfwarp_pair_micro_4090_20260703_121500.jsonl`
+        from remote
+        `/tmp/cuda_state_scan_halfwarp_pair_micro_20260703_1.jsonl`;
+      - HF:
+        `bench/results_native_4090_halfwarp_pair_20260703_122000.jsonl`
+        from remote `/tmp/native_4090_halfwarp_pair_20260703_1.jsonl`.
+    - 4090 synthetic `B=1,T=512,H=16,N=64,fp16` micro rows:
+      - warp-specialized rpb1/rpb8/rpb16:
+        `0.457728 / 0.470016 / 0.528384 ms`;
+      - full-warp-pair rpb2/rpb4/rpb8/rpb16:
+        `0.521248 / 0.527360 / 0.533408 / 0.575488 ms`;
+      - half-warp-pair rpb2/rpb4/rpb8/rpb16:
+        `0.427904 / 0.432128 / 0.437248 / 0.470016 ms`;
+      - warp-pipelined rpb1/rpb8/rpb16 remains faster at
+        `0.388096 / 0.357376 / 0.403328 ms`.
+    - 4090 / 0.4B / prompt512 / bsz1 HF rows, current shift-WAVG route:
+      - baseline warp-specialized: `26,017.6 tok/s`, `19.6790 ms`;
+      - half-warp-pair rpb2: `26,517.9 tok/s`, `19.3077 ms`;
+      - half-warp-pair rpb4: `26,005.3 tok/s`, `19.6883 ms`;
+      - half-warp-pair rpb8: `26,344.9 tok/s`, `19.4345 ms`;
+      - repeat baseline: `26,562.6 tok/s`, `19.2753 ms`.
+    - Conclusion: half-warp pairing improves the older full-warp-pair and
+      warp-specialized micro schedules, but it still trails the stronger
+      warp-pipelined micro rows and does not beat the strict branch best
+      `28,780.6 tok/s` in HF e2e. Keep it opt-in only; the next stretch
+      attempt should move to a wider shift-WAVG/state-scan/output producer-
+      consumer boundary or a new schedule that beats warp-pipelined, not a
+      smaller row-pair variant.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `28,780.6 tok/s` (`~0.5519x`), still about `2,508 tok/s` (`~8.7%`
