@@ -1825,6 +1825,39 @@ Branch: `wangyue/native-prefill-060-albatross`
     the 4090 bsz1/prompt512 path; the next attention-side attempt must reduce
     shift-WAVG intermediate traffic or fuse with the state-scan/output
     consumer, not just repackage the dense R/K/V matmuls.
+- [x] Try a lean shift-WAVG down-kernel traffic retile:
+  - Motivation: the current shift-WAVG down kernel launches one program per
+    rank block.  For the 0.4B layer shape (`w/a=64`, `g=128`, `v=32`,
+    `block_r=64`) the second rank block only needs `g` work, but the original
+    kernel still loaded all six mix vectors and formed all mixed tensors.
+    This experiment adds opt-in
+    `RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_LEAN_DOWN=1` so non-needed
+    rank blocks mask off unused mix-vector loads while preserving the default
+    path.
+  - Result files:
+    - micro:
+      `bench/results_shift_wavg_lean_micro_4090_20260703_153000.jsonl`
+      from remote `/tmp/shift_wavg_lean_micro_4090_20260703_153000.jsonl`;
+    - HF e2e:
+      `bench/results_native_4090_shift_wavg_lean_20260703_153000.jsonl`
+      from remote `/tmp/native_4090_shift_wavg_lean_20260703_153000.jsonl`.
+  - 4090 shift-WAVG micro, layer 1, rows512, hidden1024:
+    - baseline down/full: `0.083968 ms` / `0.196608 ms`;
+    - lean-down down/full: `0.082944 ms` / `0.196608 ms`;
+    - correctness passes with max diff `0.0625`.
+  - 4090 / 0.4B / prompt512 / bsz1 HF rows, all pass greedy/cache/decode:
+    - baseline CUDA warp-specialized state-scan + shift-WAVG:
+      `27,971.7 tok/s`, `18.3042 ms`, peak `988.2 MiB`;
+    - lean-down only: `27,398.5 tok/s`, `18.6872 ms`, peak `988.2 MiB`;
+    - lean-down + FFN norm-shift: `28,364.2 tok/s`, `18.0509 ms`, peak
+      `964.2 MiB`.
+  - Conclusion: masking unused mix-vector loads gives only a tiny down-phase
+    micro win and does not improve the full shift-WAVG micro or HF e2e.  The
+    FFN norm-shift combination is again memory-positive but still below the
+    strict best `28,780.6 tok/s`.  Keep lean-down opt-in only.  This rules out
+    another shallow shift-WAVG traffic tweak; the next useful attention-side
+    route must remove or consume larger intermediates across the state-scan /
+    output boundary rather than only pruning per-rank mix loads.
 - [ ] Next persistent/two-level state-scan experiment:
   - Move the next bounded experiment to the larger remaining boundary exposed
     by breakdown: `attn_shift_wavg_lora_fused` (`~5.1 ms`) and/or the FFN

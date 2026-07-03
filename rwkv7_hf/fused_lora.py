@@ -415,6 +415,7 @@ if _HAS_TRITON:
         max_rank: tl.constexpr,
         BLOCK_R: tl.constexpr,
         BLOCK_K: tl.constexpr,
+        LEAN_DOWN: tl.constexpr,
     ):
         batch_id = tl.program_id(0)
         block_id = tl.program_id(1)
@@ -436,12 +437,25 @@ if _HAS_TRITON:
             h = tl.load(h_ptr + base, mask=mask_k, other=0.0).to(tl.float32)
             prev_h = tl.load(prev_h_ptr + base, mask=mask_k, other=0.0).to(tl.float32)
             delta = prev_h - h
-            xr = h + delta * tl.load(xr_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
-            xw = h + delta * tl.load(xw_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
-            xk = h + delta * tl.load(xk_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
-            xv = h + delta * tl.load(xv_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
-            xa = h + delta * tl.load(xa_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
-            xg = h + delta * tl.load(xg_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
+            if LEAN_DOWN:
+                needs_proj = block_id == 0
+                needs_w = (block_id * BLOCK_R) < w_rank
+                needs_a = (block_id * BLOCK_R) < a_rank
+                needs_g = (block_id * BLOCK_R) < g_rank
+                needs_v = (block_id * BLOCK_R) < v_rank
+                xr = h + delta * tl.load(xr_mix_ptr + kidx, mask=mask_k & needs_proj, other=0.0).to(tl.float32)
+                xw = h + delta * tl.load(xw_mix_ptr + kidx, mask=mask_k & needs_w, other=0.0).to(tl.float32)
+                xk = h + delta * tl.load(xk_mix_ptr + kidx, mask=mask_k & needs_proj, other=0.0).to(tl.float32)
+                xv = h + delta * tl.load(xv_mix_ptr + kidx, mask=mask_k & (needs_proj | needs_v), other=0.0).to(tl.float32)
+                xa = h + delta * tl.load(xa_mix_ptr + kidx, mask=mask_k & needs_a, other=0.0).to(tl.float32)
+                xg = h + delta * tl.load(xg_mix_ptr + kidx, mask=mask_k & needs_g, other=0.0).to(tl.float32)
+            else:
+                xr = h + delta * tl.load(xr_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                xw = h + delta * tl.load(xw_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                xk = h + delta * tl.load(xk_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                xv = h + delta * tl.load(xv_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                xa = h + delta * tl.load(xa_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
+                xg = h + delta * tl.load(xg_mix_ptr + kidx, mask=mask_k, other=0.0).to(tl.float32)
 
             # Only rank block 0 materializes the three cuBLAS projection inputs.
             store_mask = mask_k & (block_id == 0)
@@ -995,6 +1009,7 @@ def fused_shift_wavg_lora(
     down_num_warps: int = 4,
     up_num_warps: int = 4,
     output_w_decay: bool = False,
+    lean_down: bool = False,
     force_fallback: bool = False,
 ):
     """Fuse attention time-mix materialization with W/A/G/V-gate LoRA.
@@ -1157,6 +1172,7 @@ def fused_shift_wavg_lora(
             max_rank,
             BLOCK_R=int(block_r),
             BLOCK_K=int(block_k),
+            LEAN_DOWN=bool(lean_down),
             num_warps=int(down_num_warps),
         )
         _wavg_lora_up_kernel[(batch, triton.cdiv(hidden, int(block_m)))](

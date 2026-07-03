@@ -881,6 +881,12 @@ def _native_prefill_fused_shift_wavg_lora_warps() -> tuple[int, int]:
     return down, up
 
 
+def _native_prefill_fused_shift_wavg_lora_lean_down_requested() -> bool:
+    """Return whether shift-WAVG should use the lean down-kernel traffic probe."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_LEAN_DOWN", False)
+
+
 def _native_prefill_fused_shift_wavg_lora_w_decay_requested() -> bool:
     """Return whether shift-WAVG should emit W decay instead of raw W."""
 
@@ -1790,6 +1796,7 @@ def prefill(
                 block_m, block_r, block_k = _native_prefill_fused_shift_wavg_lora_blocks()
                 down_warps, up_warps = _native_prefill_fused_shift_wavg_lora_warps()
                 output_w_decay = _native_prefill_fused_shift_wavg_lora_w_decay_enabled(B * T)
+                lean_down = _native_prefill_fused_shift_wavg_lora_lean_down_requested()
                 xr2, xk2, xv2, w2_out, a2_out, g2_out, v_gate2 = fused_shift_wavg_lora(
                     h.reshape(B * T, hidden),
                     prev_h.reshape(B * T, hidden),
@@ -1817,6 +1824,7 @@ def prefill(
                     down_num_warps=down_warps,
                     up_num_warps=up_warps,
                     output_w_decay=output_w_decay,
+                    lean_down=lean_down,
                 )
                 xr = xr2.view(B, T, hidden)
                 xk = xk2.view(B, T, hidden)
