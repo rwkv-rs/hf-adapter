@@ -97,7 +97,13 @@ def call_phase(tensors: dict[str, torch.Tensor], phase: int):
     )
 
 
-def call_full(tensors: dict[str, torch.Tensor], *, rows_per_block: int = 1, schedule: str = "default"):
+def call_full(
+    tensors: dict[str, torch.Tensor],
+    *,
+    rows_per_block: int = 1,
+    schedule: str = "default",
+    precompute_mode: str = "none",
+):
     return cuda_state_scan_prep(
         tensors["r"],
         tensors["w"],
@@ -110,6 +116,7 @@ def call_full(tensors: dict[str, torch.Tensor], *, rows_per_block: int = 1, sche
         v_first=tensors["v_first"],
         v_gate=tensors["v_gate"],
         lanes_per_row=64,
+        precompute_mode=precompute_mode,
         rows_per_block=rows_per_block,
         schedule=schedule,
     )
@@ -227,6 +234,32 @@ def main() -> int:
             "tokens_total": tokens_total,
             "schedule": schedule,
             "rows_per_block": rpb,
+            "cuda_ms": round(ms, 6),
+            "tokps_total": round(1000.0 * tokens_total / ms, 1) if ms > 0 else None,
+        }
+        print(json.dumps(row, ensure_ascii=False))
+        append_row(args.results, row)
+    for mode in ["full", "wk", "wk_half"]:
+        ms = median_ms(
+            lambda mode=mode: call_full(tensors, rows_per_block=1, schedule="default", precompute_mode=mode),
+            warmup=args.warmup,
+            steps=args.steps,
+        )
+        row = {
+            "axis": "cuda_state_scan_micro",
+            "backend": "cuda_state_scan",
+            "bench_case": f"full_precompute_{mode}_rpb1",
+            "status": "pass",
+            "device": device_name,
+            "dtype": "fp16",
+            "batch_size": args.batch_size,
+            "seq_len": args.seq_len,
+            "heads": args.heads,
+            "head_dim": 64,
+            "tokens_total": tokens_total,
+            "schedule": "default",
+            "rows_per_block": 1,
+            "precompute_mode": mode,
             "cuda_ms": round(ms, 6),
             "tokps_total": round(1000.0 * tokens_total / ms, 1) if ms > 0 else None,
         }

@@ -1461,12 +1461,33 @@ Branch: `wangyue/native-prefill-060-albatross`
   - Conclusion: keep the CUDA-SK path as telemetry-only / opt-in; do not promote
     it to the main route. It does not beat the previous strict best
     `28,780.6 tok/s`, and it also loses to the same-run baseline.
+- [x] Try cheaper cached vector-prep for the CUDA row-block scan:
+  - Added opt-in `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_PRECOMPUTE_MODE=wk_half`
+    to precompute only W-decay and normalized KK into fp16 temporaries, while
+    reusing the existing fp16 adjusted K/V outputs.  This tests the
+    split-vector-prep branch with less temporary bandwidth than the old fp32
+    `full` / `wk` precompute modes.
+  - Micro result on 4090 / synthetic `B=1,T=512,H=16,N=64`:
+    - current warp-specialized rpb1: `0.449536 ms`;
+    - precompute `full`: `0.334848 ms`;
+    - precompute `wk`: `0.330752 ms`;
+    - new precompute `wk_half`: `0.326656 ms` (best micro).
+  - E2E confirm with current shift-WAVG route on 4090 / 0.4B / prompt512 / bsz1:
+    - same-run baseline warp-specialized CUDA state-scan + shift-WAVG:
+      `28,288.0 tok/s`, `18.0995 ms`, max diff `0.0625`;
+    - `wk_half`: `27,814.5 tok/s`, `18.4077 ms`, max diff `0.125`;
+    - `full`: `27,743.6 tok/s`, `18.4547 ms`, max diff `0.125`;
+    - `wk`: `26,758.2 tok/s`, `19.1343 ms`, max diff `0.0625`.
+  - Conclusion: cached vector-prep is a real micro-kernel win, and `wk_half` is
+    the best cached form, but the extra launch / temp traffic still loses e2e
+    to warp-specialized in the current HF prefill route. Keep `wk_half` as an
+    opt-in probe only.
 - [ ] Next state-scan structural experiment:
-  - The SK/no-KV route shows that simply reducing K/V writeback is not enough.
-    Next attack the duplicated per-row vector-prep/norm cost inside the CUDA
-    row-block scan: either share producer vector prep across multiple row CTAs
-    without losing row parallelism, or split vector prep into a cheaper cached
-    form only if its e2e cost beats current warp-specialized rpb1.
+  - Stop treating split cached-prep as a promotion path until it can remove an
+    extra launch.  Next attack the same duplicated prep/norm cost inside a
+    single CUDA launch: try a persistent/vector-prep sharing schedule that keeps
+    row parallelism but reuses one producer result across more rows, or fuses the
+    cached-prep and row scan into one cooperative kernel.
   - Same-run gate remains 4090 / 0.4B / prompt512 / bsz1 correctness plus a
     confirmed row beyond `28,780.6 tok/s`, moving toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for

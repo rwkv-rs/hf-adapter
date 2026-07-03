@@ -470,10 +470,12 @@ def _native_prefill_cuda_state_scan_precompute_mode() -> str:
         return "full"
     if mode in {"2", "wk", "wkk", "w_kk", "reduced", "reduced_temp", "wk_fp16kv", "fp16kv"}:
         return "wk"
+    if mode in {"3", "wk_half", "wk16", "half", "fp16", "fp16_temp", "half_temp"}:
+        return "wk_half"
     if mode in {"0", "false", "no", "off", "none"}:
         return "none"
     raise ValueError(
-        "RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_PRECOMPUTE_MODE must be one of full, wk/reduced_temp, or none"
+        "RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_PRECOMPUTE_MODE must be one of full, wk/reduced_temp, wk_half/fp16_temp, or none"
     )
 
 
