@@ -46,7 +46,12 @@ Current acceptance baseline from `bench/math500_acceptance_4090_20260703`:
    `bench/analyze_math500_gap.py` and `bench/math500_gap_4090_20260703/{README.md,gap_report.json}`.
    Result: prompt token counts match on all `32000` rows and verifier errors are empty on both sides, but completions differ on
    `26265/32000` rows, so the next probe should compare logits/state parity rather than prompt or verifier plumbing.
-2. Add a logits-parity probe for selected tasks and fixed token continuations.
+2. Add a logits-parity probe for selected tasks and fixed token continuations. **Done:**
+   `bench/compare_albatross_logits.py` and `bench/math500_logits_parity_4090_20260703/{README.md,logits_parity_report.json}`.
+   Result on high-signal tasks: prompt and continuation token IDs match; prefill argmax matches on all tasks;
+   teacher-forced dynamic-path argmax match rate is `1.0`; cosine is effectively `~1.0`.  This shifts the
+   likely root cause away from model math/prefill/state update and toward sampler RNG / dynamic refill order /
+   stochastic variance under near-parity logits.
 3. Run targeted rollout64 subsets on the high-signal tasks listed below.
 4. Run Albatross `v4` / `linear_orig_layout_launch` tuning checks and update the reference table.
 5. Only after the above, run full MATH500 avg@64 again.
@@ -75,6 +80,27 @@ Key findings from the full HF/Albatross generation diff:
 - HF-only pass tasks: `17`; Albatross-only pass tasks: `23`; net pass@64 gap `-6` tasks.
 
 Conclusion: continue with logits/state parity probes.
+
+## First logits parity report
+
+Artifact: `bench/math500_logits_parity_4090_20260703/README.md` and `logits_parity_report.json`.
+
+Probe setup:
+
+- Tasks: `73,160,116,67,277,374,383,319,72`.
+- Continuation source: Albatross full-run `generations.jsonl`, `sample_id=0`.
+- Teacher-forced steps: first `64` continuation tokens.
+- Implementations: HF adapter vs Albatross `rwkv7_fast_v3a` / `fp32io16`.
+
+Key findings:
+
+- Prompt ID mismatches: `0`; continuation ID mismatches: `0`.
+- Prefill forward vs Albatross: argmax match rate `1.0`, cosine mean `0.99999977`, mean abs diff `0.02456`, max abs diff `0.15625`.
+- Prefill native vs Albatross: argmax match rate `1.0`, cosine mean `0.99999974`, mean abs diff `0.02310`, max abs diff `0.21875`.
+- Teacher-forced all-logits: argmax match rate mean `0.99826`, cosine mean `0.99999998`.
+- Teacher-forced dynamic path: argmax match rate mean `1.0`, cosine mean `0.99999997`, max abs max `0.4375`.
+
+Conclusion: the high-signal gap is not explained by a large prefill/decode logits or state-update mismatch.  Next work should focus on sampler RNG, dynamic refill ordering, seed sensitivity, and targeted rollout subset reproducibility before changing model math.
 
 ## Initial high-signal tasks
 
