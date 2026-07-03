@@ -1,0 +1,75 @@
+{
+  "patch": "att_c2c K=1024 rows512->orig rows64->cfg_t32_r3_o4; ffn_key K=1024 rows512/64->orig",
+  "cases": {
+    "B1T1": {
+      "baseline": {
+        "ms": 1.16736,
+        "tok_s": 856.634,
+        "wkv": "fp16"
+      },
+      "tuned": {
+        "ms": 1.20054,
+        "tok_s": 832.96,
+        "wkv": "fp16"
+      },
+      "tuned_over_baseline_tok_s": 0.9723639267178282,
+      "baseline_over_tuned_ms": 0.9723624369033935
+    },
+    "B1T512": {
+      "baseline": {
+        "ms": 8.66447,
+        "tok_s": 59091.9,
+        "wkv": "fp16"
+      },
+      "tuned": {
+        "ms": 9.20955,
+        "tok_s": 55594.5,
+        "wkv": "fp16"
+      },
+      "tuned_over_baseline_tok_s": 0.940814223269179,
+      "baseline_over_tuned_ms": 0.9408136119571531
+    },
+    "B64T1": {
+      "baseline": {
+        "ms": 2.54024,
+        "tok_s": 25194.5,
+        "wkv": "fp16"
+      },
+      "tuned": {
+        "ms": 2.62656,
+        "tok_s": 24366.5,
+        "wkv": "fp16"
+      },
+      "tuned_over_baseline_tok_s": 0.9671356843755582,
+      "baseline_over_tuned_ms": 0.9671357212475633
+    },
+    "B4T128": {
+      "baseline": {
+        "ms": 5.72856,
+        "tok_s": 89376.7,
+        "wkv": "fp16"
+      },
+      "tuned": {
+        "ms": 5.82349,
+        "tok_s": 87919.8,
+        "wkv": "fp16"
+      },
+      "tuned_over_baseline_tok_s": 0.9836993310337034,
+      "baseline_over_tuned_ms": 0.9836987785674913
+    },
+    "B8T64": {
+      "baseline": {
+        "ms": 5.28998,
+        "tok_s": 96786.7,
+        "wkv": "fp16"
+      },
+      "tuned": {
+        "ms": 5.28947,
+        "tok_s": 96796.1,
+        "wkv": "fp16"
+      },
+      "tuned_over_baseline_tok_s": 1.000097120782091,
+      "baseline_over_tuned_ms": 1.0000964179776046
+    }
+  }
+}
