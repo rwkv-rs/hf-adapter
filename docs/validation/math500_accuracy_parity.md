@@ -78,15 +78,26 @@ Current acceptance baseline from `bench/math500_acceptance_4090_20260703`:
    HF seeds `42` and `43` both reach `46/64`; seed `43` improves correct generations (`981/4096` vs
    `938/4096`) but does not close selected-task pass parity.
 8. Only after a targeted variant beats the default or the reference tuning is complete, run full MATH500 avg@64 again.
+9. Run the full MATH500 avg@64 rerun with the strongest observed default/global seed. **Done for seed `43`:**
+   `bench/math500_hf_seed43_full_compare_4090_20260704/` records the full HF dynamic rerun and comparison
+   against the committed Albatross full reference.  HF seed43 reaches `0.372` pass@64 vs Albatross `0.370`,
+   so the primary accuracy gate is passed.  It is still `-70/32000` correct generations and the same run reports
+   only `1.608x` summary token/s (`1.686x` decode token/s) vs Albatross, so G1 remains open on the speed gate.
 
 ## Working hypothesis
 
-The speed path is already strong.  The next work should focus on numerical / sampling parity:
+The early evidence showed the committed PR #104 speed path was strong, so the first G1 phase focused on
+numerical / sampling parity:
 
 1. Compare HF vs Albatross prefill logits for identical prompts.
 2. Compare teacher-forced decode logits over fixed tokens.
 3. Compare native prefill + fast-token vs forward prefill + forward decode.
 4. Isolate whether the gap comes from native prefill, recurrent state update, logits dtype/cast, sampler RNG/refill order, or verifier/stop handling.
+
+After the full seed43 rerun, the current working hypothesis is updated: the accuracy primary gate is met, while the
+remaining acceptance blocker is preserving the previously observed `>=2x` speed ratio in the same full benchmark.
+Do not change model math for accuracy unless a later full run regresses below `0.370`; focus next on speed accounting
+and benchmark/runtime overhead around verification and dynamic generation.
 
 ## First gap report
 
@@ -206,6 +217,38 @@ Fresh HF default/global RNG reruns on the subset:
 
 Interpretation: seed sensitivity is real at the correct-generation level, but the two completed fresh seeds did not beat or match the selected-task Albatross pass count.  This argues against changing the final seed/path just to chase subset variance.  Completion still requires the full MATH500 avg@64 gate or a stronger targeted fix.
 
+## Full MATH500 seed43 rerun
+
+Artifact: `bench/math500_hf_seed43_full_compare_4090_20260704/`.
+
+This is the first full HF dynamic avg@64 rerun on this branch that clears the primary pass@64 gate against the
+committed Albatross reference.
+
+| Metric | HF seed43 dynamic | Albatross full reference | Delta / ratio |
+|---|---:|---:|---:|
+| Correct generations | `4600/32000` | `4670/32000` | `-70` |
+| Rollout accuracy | `0.14375000` | `0.14593750` | `-0.00218750` |
+| Pass@64 | `0.372000` | `0.370000` | `+0.002000` |
+| Summary token/s | `6275.770` | `3903.633` | `1.608x` |
+| Decode token/s | `6693.283` | `3970.135` | `1.686x` |
+
+Gap-analysis highlights from the full generations diff:
+
+- Rows compared: `32000/32000`.
+- Prompt-token diff rate: `0.000000`.
+- Completion diff rows: `26475`.
+- Correctness disagreement rows: `2318`.
+- HF-only correct generations: `1124`.
+- Albatross-only correct generations: `1194`.
+- HF-only pass tasks: `15`.
+- Albatross-only pass tasks: `14`.
+
+Status: the accuracy primary gate is now passed (`0.372 >= 0.370`), but this does **not** close G1 because the
+same run does not preserve the `>=2x` throughput gate.  The earlier PR #104 full HF run reached `9161.229` token/s
+(`~2.347x` vs Albatross), while the seed43 rerun reports `6275.770` token/s.  The next speed-focused acceptance task
+is to restore fair generation-speed accounting, likely by deferring expensive verification out of the decode loop or
+by rerunning the previous fast benchmark path with the accepted seed/settings.
+
 ## Albatross v3a/v4 reference smoke on RTX 4090
 
 Artifact: `bench/albatross_v3a_v4_4090_tune_20260703/`.
@@ -261,5 +304,6 @@ Do not treat the current Albatross `v3a` reference as the only possible speed ce
 
 A parity fix should satisfy:
 
-- `pass@64 >= 0.370` on the full MATH500 benchmark, or statistically clear evidence on targeted subsets before full rerun.
-- HF dynamic throughput remains `>= 2x` Albatross on the same 4090 acceptance benchmark.
+- `pass@64 >= 0.370` on the full MATH500 benchmark. **Current seed43 evidence passes:** `0.372`.
+- HF dynamic throughput remains `>= 2x` Albatross on the same 4090 acceptance benchmark. **Current seed43 evidence
+  does not pass:** `1.608x` summary token/s and `1.686x` decode token/s.
