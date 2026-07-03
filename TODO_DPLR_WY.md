@@ -1060,7 +1060,7 @@ Branch: `wangyue/native-prefill-060-albatross`
       recompute; it should either consume the local adjusted K/V in a fused
       correction/output boundary, or move to a CUDA/persistent row-register
       schedule that shares vector prep and keeps enough row parallelism.
-- [ ] Next main fused-fp16 task:
+- [x] Next main fused-fp16 task:
   - Convert the no-K/V-write signal into an end-to-end candidate instead of
     stopping at the micro result.  The bounded route should avoid the already
     negative raw-output recompute path.  Preferred next experiment:
@@ -1072,6 +1072,60 @@ Branch: `wangyue/native-prefill-060-albatross`
       4090 / 0.4B / prompt512 / bsz1;
     - preserve greedy/cache/decode smoke and only promote if it moves toward
       `>=31,289 tok/s`.
+  - Done: added the opt-in sk-scale no-K/V end-to-end route
+    `RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_SK_OUTPUT=1`.
+    - implementation:
+      - `fused_recurrent_scan_state_prep_sk(...)` runs the full-head
+        state-prep scan without adjusted K/V writeback and emits only
+        recurrent output, final state, and per-token/head
+        `sk=sum(r * k_adj * r_k)`;
+      - `fused_attn_output_prepare_from_sk_raw_v(...)` consumes recurrent
+        output + `sk` + raw V, recomputing only V interpolation for later
+        layers instead of recomputing adjusted K or writing a full correction
+        tensor;
+      - native prefill and benchmark telemetry now record
+        `prefill_fused_state_scan_sk_output_*`; default HF/native behavior is
+        unchanged unless the env flag is set.
+    - correctness:
+      - remote synthetic oracle on 4090: state-scan recurrent output and final
+        state match the normal full K/V-writeback route exactly
+        (`out_diff=0.0`, `state_diff=0.0`), and output-prep diff is within
+        fp16 tolerance (`prep_diff=0.0625`).
+      - all HF rows below pass greedy/cache/decode smoke with
+        `max_abs_diff=0.0625`, `min_cosine=1.0`, and peak `989.2 MiB`.
+    - result files:
+      - smoke:
+        `bench/results_native_4090_state_scan_sk_output_20260703_005756.jsonl`
+        from remote `/tmp/native_4090_state_scan_sk_output_20260703_005756.jsonl`;
+      - warp/stage sweep:
+        `bench/results_native_4090_state_scan_sk_output_sweep_20260703_005904.jsonl`
+        from remote
+        `/tmp/native_4090_state_scan_sk_output_sweep_20260703_005904.jsonl`;
+      - confirmation:
+        `bench/results_native_4090_state_scan_sk_output_confirm_20260703_010145.jsonl`
+        from remote
+        `/tmp/native_4090_state_scan_sk_output_confirm_20260703_010145.jsonl`.
+    - 4090 / 0.4B / prompt512 / bsz1 rows:
+      - smoke same-run baseline: `25,019.9 tok/s`, `20.4637 ms`;
+      - smoke sk-scale route: `26,187.6 tok/s`, `19.5512 ms`;
+      - sweep baseline: `25,051.9 tok/s`;
+      - sweep best sk-scale row `num_warps=8,num_stages=3`:
+        `26,702.7 tok/s`, `19.1741 ms`;
+      - confirmation baseline: `24,757.5 tok/s`, `20.6806 ms`;
+      - confirmation sk-scale `num_warps=8,num_stages=3`:
+        `25,785.6 tok/s`, `19.8560 ms`.
+    - conclusion: the sk-scale route is the first no-K/V-derived end-to-end
+      route in this sequence that repeatedly beats its same-run baseline, but
+      it still does not beat the strict historical best row `27,051.0 tok/s`
+      and remains below the `0.60x` target.  Keep it opt-in for now.
+- [ ] Next main fused-fp16 task:
+  - Use the positive sk-scale route as the new bounded branch, but do not
+    promote it yet.  Next experiment should profile or micro-split the sk path
+    to locate the remaining overhead: added `sk` reduction inside scan, raw-V
+    interpolation in output prep, or launch/memory traffic between scan and
+    output prep.  Promotion gate remains same-run 4090 / 0.4B / prompt512 /
+    bsz1 correctness plus movement beyond the strict `27,051.0 tok/s` row and
+    toward `>=31,289 tok/s`.
 - [ ] Stretch target remains `>=0.60x` Albatross (`>=31,289 tok/s`) for
   4090 / 0.4B / prompt512 / bsz1. Best current confirmed row on this branch is
   `27,051.0 tok/s` (`~0.5187x`), still about `15.7%` relative uplift short of
