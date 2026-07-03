@@ -2078,6 +2078,79 @@ Branch: `wangyue/native-prefill-060-albatross`
     not enough and slightly hurts the strongest warppipe path.  Do not add the
     schedule.  The next attempt still needs a wider state-scan/shift-WAVG
     boundary or a genuinely two-level/persistent scan design.
+- [x] Try two-level precomputed-warp CUDA state-scan:
+  - Motivation: test a genuine two-stage schedule that preserves row
+    parallelism without serializing multiple state rows inside one worker.
+    Stage 1 precomputes W decay, normalized KK, adjusted K, and adjusted V once
+    per token/head using the existing `wk_half` vector precompute.  Stage 2 is
+    a new row-parallel warp-worker scan (`precomputed_warp`) with no producer
+    warp and no per-token `__syncthreads()`, using one worker warp per state
+    row and optional row blocks `1/2/4/8/16`.
+  - Implementation:
+    - added `RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE=precomputed_warp`;
+    - added
+      `rwkv7_state_scan_prep_n64_rowblock_precomputed_wk_half_warp_kernel`;
+    - relaxed CUDA/Python validation only for
+      `precompute_mode=wk_half + schedule=precomputed_warp`;
+    - added precomputed-warp rows to `bench/bench_cuda_state_scan_micro.py`;
+    - default HF/native behavior remains unchanged unless the env flags are
+      requested.
+  - Correctness:
+    - 4090 short synthetic compile check passed for rpb `1/2/4/8/16` vs the
+      existing `wk_half` precompute scan (`out diff 0.0009766`, state diff
+      `1.9e-06`, K/V diff `0.0`);
+    - all HF rows below pass greedy/cache/decode smoke.
+  - Result files:
+    - micro:
+      `bench/results_cuda_state_scan_precomputed_warp_micro_4090_20260703_073000.jsonl`
+      from remote
+      `/tmp/cuda_state_scan_precomputed_warp_micro_4090_20260703_073000.jsonl`;
+    - HF sweep:
+      `bench/results_native_4090_precomputed_warp_20260703_074200.jsonl`
+      from remote `/tmp/native_4090_precomputed_warp_20260703_074200.jsonl`;
+    - HF breakdown:
+      `bench/results_native_4090_precomputed_warp_breakdown_20260703_075000.jsonl`
+      from remote
+      `/tmp/native_4090_precomputed_warp_breakdown_20260703_075000.jsonl`;
+    - FFN-combo sweep:
+      `bench/results_native_4090_precomputed_warp_ffn_20260703_075500.jsonl`
+      from remote `/tmp/native_4090_precomputed_warp_ffn_20260703_075500.jsonl`.
+  - 4090 synthetic `B=1,T=512,H=16,N=64,fp16` micro rows:
+    - warp-specialized rpb1: `0.447488 ms`;
+    - warp-pipelined rpb8: `0.348128 ms`;
+    - precomputed-warp rpb1: `0.201728 ms`;
+    - precomputed-warp rpb4: `0.203776 ms`;
+    - precomputed-warp rpb8: best micro row `0.197632 ms`,
+      `2,590,673.6 tok/s`;
+    - precomputed-warp rpb16: `0.222208 ms`.
+  - 4090 / 0.4B / prompt512 / bsz1 HF sweep rows:
+    - same-run warp-specialized + shift-WAVG baseline:
+      `27,193.1 tok/s`, `18.8283 ms`;
+    - existing default `wk_half` precompute row:
+      `27,422.0 tok/s`, `18.6711 ms`;
+    - precomputed-warp rpb1: `26,586.8 tok/s`, `19.2577 ms`;
+    - precomputed-warp rpb4: `26,142.9 tok/s`, `19.5847 ms`;
+    - precomputed-warp rpb8: `26,392.8 tok/s`, `19.3992 ms`;
+    - precomputed-warp rpb16: `26,710.1 tok/s`, `19.1688 ms`.
+  - Breakdown signal:
+    - recurrent scan/state-prep component drops from `11.2995 ms` to
+      `5.5550 ms` with precomputed-warp rpb8;
+    - profiled total still gets worse (`25.3635 ms` -> `26.9793 ms`) because
+      the extra precompute/global-temp route shifts time into the rest of the
+      layer path and does not transfer into end-to-end throughput.
+  - FFN norm-shift combo rows:
+    - baseline + FFN norm-shift: `27,332.4 tok/s`, `18.7323 ms`;
+    - default `wk_half` + FFN norm-shift: `26,930.4 tok/s`;
+    - precomputed-warp rpb8 + FFN norm-shift: `26,398.7 tok/s`;
+    - precomputed-warp rpb16 + FFN norm-shift: `26,323.0 tok/s`.
+  - Conclusion: the two-level worker scan is the strongest isolated
+    state-scan micro result so far and proves the worker-only schedule itself
+    is viable, but the separate vector-precompute/global-temp boundary loses in
+    full HF.  Keep `precomputed_warp` opt-in for future wider-boundary or
+    card/shape experiments, but do not promote it on the current 4090 target.
+    To turn this signal into an Albatross-gap win, the precomputed vectors need
+    to be produced by the adjacent shift-WAVG/state-prep boundary rather than
+    by an extra standalone precompute launch.
 - [ ] Next persistent/two-level state-scan experiment:
   - Continue from the state-scan/shift-WAVG boundary, but avoid the now-negative
     row-pair, head-level, raw no-K/V, SK, G-mid, W-decay, FFN two-pass, and

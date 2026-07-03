@@ -228,9 +228,19 @@ def main() -> int:
         ("warp_pipelined", 1),
         ("warp_pipelined", 8),
         ("warp_pipelined", 16),
+        ("precomputed_warp", 1),
+        ("precomputed_warp", 4),
+        ("precomputed_warp", 8),
+        ("precomputed_warp", 16),
     ]:
+        precompute_mode = "wk_half" if schedule == "precomputed_warp" else "none"
         ms = median_ms(
-            lambda schedule=schedule, rpb=rpb: call_full(tensors, rows_per_block=rpb, schedule=schedule),
+            lambda schedule=schedule, rpb=rpb, precompute_mode=precompute_mode: call_full(
+                tensors,
+                rows_per_block=rpb,
+                schedule=schedule,
+                precompute_mode=precompute_mode,
+            ),
             warmup=args.warmup,
             steps=args.steps,
         )
@@ -248,6 +258,7 @@ def main() -> int:
             "tokens_total": tokens_total,
             "schedule": schedule,
             "rows_per_block": rpb,
+            "precompute_mode": precompute_mode,
             "cuda_ms": round(ms, 6),
             "tokps_total": round(1000.0 * tokens_total / ms, 1) if ms > 0 else None,
         }
