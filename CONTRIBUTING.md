@@ -273,6 +273,13 @@ MODEL_SIZE_LABEL=0.4b \
 DEVICE=auto DTYPE=fp32 QUANTIZATIONS=mm8,mm4 MIN_PARAMS_LIST=4000000 \
 RESULTS=bench/results_apple_silicon_quant.jsonl \
 bash scripts/run_apple_silicon_quant_smoke.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+MODEL_SIZE_LABEL=1.5b \
+DEVICE=auto DTYPE=fp32 QUANTIZATIONS=mm8,mm4 MIN_PARAMS_LIST=8000000 \
+SKIP_TINY=1 MAX_NEW_TOKENS=1 \
+RESULTS=bench/results_apple_silicon_quant.jsonl \
+bash scripts/run_apple_silicon_quant_smoke.sh
 ```
 
 Apple MLX bridge/export smoke:
