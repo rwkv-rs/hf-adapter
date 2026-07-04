@@ -56,9 +56,11 @@ Apple quant smoke for tiny and 0.1B model paths with packed-footprint telemetry,
 an optional MLX tensor bridge/export smoke, and an initial MLX recurrent
 reference backend smoke with tokenizer prompt, state-cache, dynamic-batch, and
 chunked-prefill checks through 0.1B/0.4B/1.5B short rows. `scripts/mlx_generate.py`,
-`scripts/mlx_session_smoke.py`, `rwkv7_hf.mlx_model.generate_text_from_hf`, and
-`rwkv7_hf.mlx_model.MLXGenerationSession` provide reusable tokenizer-integrated
-MLX text generation and serving-style prefill-once/session-decode entry points.
+`scripts/mlx_session_smoke.py`, `scripts/mlx_session_batch_smoke.py`,
+`rwkv7_hf.mlx_model.generate_text_from_hf`, `rwkv7_hf.mlx_model.MLXGenerationSession`,
+and `rwkv7_hf.mlx_model.MLXGenerationSessionBatch` provide reusable
+tokenizer-integrated MLX text generation plus serving-style prefill-once,
+session-decode, and interleaved multi-session entry points.
 
 ## Layout
 
@@ -75,6 +77,7 @@ scripts/
   convert_hf_to_mlx.py
   mlx_generate.py
   mlx_session_smoke.py
+  mlx_session_batch_smoke.py
   run_hf_acceptance.sh
   run_hf_training_matrix.sh
   run_zero_training_smoke.sh
@@ -90,6 +93,7 @@ scripts/
   run_apple_silicon_mlx_smoke.sh
   run_apple_silicon_mlx_model_smoke.sh
   run_apple_silicon_mlx_session_smoke.sh
+  run_apple_silicon_mlx_session_batch_smoke.sh
 tests/
   smoke_hf_generate.py
   test_official_alignment.py

@@ -24,7 +24,7 @@ from typing import Any
 import numpy as np
 
 from rwkv7_hf.mlx_bridge import mlx_available, require_mlx, torch_tensor_to_mlx
-from rwkv7_hf.mlx_model import MLXGenerationSession, MLXRWKV7Model
+from rwkv7_hf.mlx_model import MLXGenerationSession, MLXGenerationSessionBatch, MLXRWKV7Model
 
 
 def is_apple_silicon() -> bool:
@@ -223,6 +223,32 @@ def run_tiny_generation_session(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def run_tiny_generation_session_batch(args: argparse.Namespace) -> dict[str, Any]:
+    _, mlx_model, _ = tiny_torch_model_to_mlx()
+    tokenizer = TinyTokenizer()
+    prompts = ["tiny-a", "tiny-b"]
+    batch = MLXGenerationSessionBatch.from_prompts(mlx_model, tokenizer, prompts)
+    first = batch.decode_round(1)
+    second = batch.decode_round(2)
+    total_new = 3
+    for session in batch.sessions:
+        one_shot = mlx_model.generate_text(tokenizer, session.prompt, max_new_tokens=total_new)
+        assert session.generated_ids == one_shot.generated_ids
+        assert session.text == one_shot.text
+        assert int(session.state.seen_tokens) == len(session.prompt_ids) + total_new
+    return {
+        "axis": "apple_silicon_mlx_session_batch_tiny",
+        "status": "pass",
+        "session_count": batch.batch_size,
+        "rounds": [1, 2],
+        "generated_tokens": [session.generated_tokens for session in batch.sessions],
+        "seen_tokens": [int(session.state.seen_tokens) for session in batch.sessions],
+        "all_session_one_shot_token_match": True,
+        "all_session_one_shot_text_match": True,
+        "generated_previews": [session.generated_ids[:8] for session in batch.sessions],
+    }
+
+
 def run_real_model_smoke(args: argparse.Namespace) -> dict[str, Any]:
     mx = require_mlx()
     tokens, prompt_source = prompt_or_tokens(args)
@@ -415,6 +441,7 @@ def main() -> int:
         emit(args.results, run_tiny_recurrent_parity(args))
         emit(args.results, run_tiny_state_cache(args))
         emit(args.results, run_tiny_generation_session(args))
+        emit(args.results, run_tiny_generation_session_batch(args))
     if args.model:
         emit(args.results, run_real_model_smoke(args))
 
