@@ -87,6 +87,11 @@ def test_apple_smoke_script_static() -> None:
     assert mlx_session_batch_wrapper.exists()
     assert mlx_session_batch_wrapper.stat().st_mode & stat.S_IXUSR
     subprocess.run(["bash", "-n", str(mlx_session_batch_wrapper)], cwd=ROOT, check=True)
+    mlx_session_batch_text = mlx_session_batch_wrapper.read_text(encoding="utf-8")
+    assert "SESSION_COUNT" in mlx_session_batch_text
+    assert "PROMPTS_FILE" in mlx_session_batch_text
+    assert "EXTRA_PROMPTS" in mlx_session_batch_text
+    assert "PROMPT_H" in mlx_session_batch_text
     mlx_session_batch_wrapper = ROOT / "scripts/run_apple_silicon_mlx_session_batch_smoke.sh"
     assert mlx_session_batch_wrapper.exists()
     assert mlx_session_batch_wrapper.stat().st_mode & stat.S_IXUSR
