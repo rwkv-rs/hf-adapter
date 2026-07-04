@@ -51,7 +51,7 @@ load/forward/generate plus PEFT/Trainer/TRL smokes, and 0.4B HF
 fp32/fp16 load/forward/short-generate, prompt-length sweep, and PEFT/Trainer/TRL
 smokes. It also includes 1.5B rows: fp16 load/forward/short-generate, fp16
 prompt 16/64/128/256/512 sweep plus prompt512/new8, and fp32 manual plus
-Trainer/TRL PEFT LoRA 1/2/3/5-step smoke
+Trainer/TRL PEFT LoRA 1/2/3/5/10-step smoke
 with finite trainable-update checks.
 
 ## Layout
