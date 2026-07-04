@@ -30,6 +30,10 @@ def test_apple_smoke_script_static() -> None:
     assert "RWKV7_NATIVE_MODEL" in text
     assert "PYTORCH_ENABLE_MPS_FALLBACK" in text
     assert "tests/test_apple_silicon_smoke.py" in text
+    train_script = ROOT / "scripts/run_apple_silicon_training_smoke.sh"
+    assert train_script.exists()
+    assert train_script.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(train_script)], cwd=ROOT, check=True)
 
 
 def test_apple_doc_links_entry_points() -> None:
@@ -37,6 +41,10 @@ def test_apple_doc_links_entry_points() -> None:
     text = doc.read_text(encoding="utf-8")
     assert "scripts/run_apple_silicon_smoke.sh" in text
     assert "tests/test_apple_silicon_smoke.py" in text
+    train_script = ROOT / "scripts/run_apple_silicon_training_smoke.sh"
+    assert train_script.exists()
+    assert train_script.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(train_script)], cwd=ROOT, check=True)
     assert "RafaelUI" in text
     assert "RWKV7_NATIVE_MODEL=1" in text
     assert "MLX" in text

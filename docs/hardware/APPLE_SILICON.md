@@ -13,7 +13,7 @@ Metal/MLX backend later.
 | Install without CUDA/FLA | supported by packaging | Base dependencies no longer require `flash-linear-attention`; CUDA users can install `.[fla]` / `.[cuda]`. |
 | Tiny Apple smoke | pass on local M-series | `tests/test_apple_silicon_smoke.py` passes on MacBook Air / Apple M5 / 16GB / macOS 26.5 / PyTorch 2.12.1 MPS; see `bench/results_apple_silicon_m5_20260704.jsonl`. |
 | Converted-model Apple smoke | 0.1B pass on local M-series | `scripts/run_apple_silicon_smoke.sh` loads `rwkv7-g1d-0.1b-hf` through `RWKV7_NATIVE_MODEL=1` on MPS. |
-| HF API coverage | partial | Load + forward + `generate(use_cache=True)` through the native backend. PEFT/TRL training on MPS is not yet claimed. |
+| HF API coverage | partial | Load + forward + `generate(use_cache=True)` through the native backend; tiny native backward + PEFT LoRA backward on MPS pass. TRL training on MPS is not yet claimed. |
 | Quantization | not claimed | `bitsandbytes` W8/W4 is CUDA-oriented; Apple needs MLX/Metal-specific quantization work. |
 | Production speed | not claimed | PyTorch MPS is a compatibility path, not the final Apple performance backend. |
 | MLX / Metal backend | TODO | See RafaelUI references below. |
@@ -45,6 +45,7 @@ Local smoke on 2026-07-04:
 |---|---:|---|---|---|---|---|
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | tiny native RWKV-7 `generate()` | PASS (`elapsed_s=0.1121`, 2 generated tokens) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.1b-hf` load + forward + `generate()` | PASS (`elapsed_s=0.2406`, 11 prompt tokens + 2 generated tokens) |
+| MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / PEFT 0.19.1 | MPS | tiny native train + PEFT LoRA train | PASS (`loss=3.870411`, LoRA trainable params=1792) |
 
 Commands:
 
@@ -61,6 +62,9 @@ PYTHONPATH=. python tests/test_apple_silicon_smoke.py \
   --max-new-tokens 2 \
   --skip-tiny \
   --model /path/to/rwkv7-g1d-0.1b-hf
+
+REQUIRE_PEFT=1 RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+  scripts/run_apple_silicon_training_smoke.sh
 ```
 
 Recorded rows: [`../../bench/results_apple_silicon_m5_20260704.jsonl`](../../bench/results_apple_silicon_m5_20260704.jsonl).
@@ -130,6 +134,18 @@ MAX_NEW_TOKENS=2 \
 scripts/run_apple_silicon_smoke.sh
 ```
 
+Tiny native training + optional PEFT LoRA training smoke:
+
+```bash
+RESULTS=bench/results_apple_silicon_training.jsonl \
+DEVICE=auto \
+DTYPE=fp32 \
+REQUIRE_PEFT=1 \
+scripts/run_apple_silicon_training_smoke.sh
+```
+
+The underlying test is [`../../tests/test_apple_silicon_training_smoke.py`](../../tests/test_apple_silicon_training_smoke.py).
+
 If the converted model directory was produced by an older checkout, sync the
 current remote-code files first:
 
@@ -160,8 +176,8 @@ For every Apple result, include:
   Apple hardware but does not replace CUDA fused kernels.
 - `bitsandbytes` quantization is not an Apple path. Apple W8/W4 needs MLX/Metal
   packing and kernels.
-- Training on MPS is not claimed yet. Start with tiny native forward/backward,
-  then LoRA, then SFT/DPO smoke if memory allows.
+- Full Trainer/TRL training on MPS is not claimed yet. Tiny native backward and
+  tiny PEFT LoRA backward pass; next step is 0.1B LoRA/Trainer if memory allows.
 - 16GB machines should start with tiny / 0.1B only. Close browsers and IDEs
   before running converted-model smoke.
 
@@ -177,11 +193,9 @@ next backend layer:
 
 ## Next engineering steps
 
-1. Run `scripts/run_apple_silicon_smoke.sh` on a clean M-series machine with the
-   0.1B HF model and append the JSONL row.
-2. Add a tiny native MPS forward/backward test once local PyTorch MPS is
-   confirmed stable.
-3. Add a PEFT LoRA smoke with `RWKV7_NATIVE_MODEL=1` and `device=mps`.
+1. Extend tiny native MPS forward/backward and PEFT LoRA smoke to 0.1B when memory allows.
+2. Add Trainer/SFT smoke with `RWKV7_NATIVE_MODEL=1` and `device=mps`.
+3. Add 0.4B load/generate smoke on 16GB+ and larger rows on Max/Ultra machines.
 4. Prototype MLX weight conversion for RWKV-7 HF directories.
 5. Decide whether the Metal WKV-7 kernel belongs in this repo as an optional
    backend or in a sibling `rwkv7-mlx` / `rwkv7-metal` package.

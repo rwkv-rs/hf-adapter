@@ -16,6 +16,7 @@ SCRIPTS = [
     "scripts/run_zero_training_smoke.sh",
     "scripts/run_math500_acceptance.sh",
     "scripts/run_apple_silicon_smoke.sh",
+    "scripts/run_apple_silicon_training_smoke.sh",
 ]
 
 
