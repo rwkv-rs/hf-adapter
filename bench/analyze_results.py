@@ -517,6 +517,15 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         ],
         lambda r: r.get("quantization"),
     )
+    native_mm_quant_latest = latest_by_key(
+        [
+            r
+            for r in rows
+            if r.get("axis") == "native_mm_quantization"
+            and r.get("backend") == "hf_adapter"
+        ],
+        lambda r: (model_label(r), r.get("quantization")),
+    )
     quant_rows_all = [r for r in rows if r.get("axis") == "quantization" and r.get("backend") == "hf_adapter"]
     quant_rows_canonical = [r for r in quant_rows_all if is_canonical_quant_model(r)]
     if not quant_rows_canonical:
@@ -2254,6 +2263,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
             compact(r, ["_lineno", "status", "quantization", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "decode_tokens", "min_params", "replaced_modules", "module_counts", "model_footprint_mb", "footprint_ratio_vs_fp16", "decode_speed_ratio_vs_fp16", "decode_tokps_total", "decode_ms_per_step", "prompt_logits_cos_vs_fp16", "final_logits_cos_vs_fp16", "same_next_token_as_fp16", "fast_token_backend_effective", "cache_type", "peak_vram_mb"])
             for r in native_quant_e2e_decode
         ],
+        "native_mm_quantization": [
+            compact(r, ["_lineno", "status", "quantization", "dtype", "device", "model_size_label", "prompt_tokens", "decode_tokens", "prefill_tokps", "decode_tokps", "decode_ms_per_tok", "native_mm_min_params", "native_mm_replaced_modules", "module_counts", "model_footprint_mb", "peak_vram_mb", "cache_type"])
+            for r in native_mm_quant_latest
+        ],
         "larger_model_smoke": [
             compact(
                 r,
@@ -2737,6 +2750,12 @@ def print_text(report: dict[str, Any]) -> None:
     print("\n## native_quant_e2e_decode")
     if report["native_quant_e2e_decode"]:
         for row in report["native_quant_e2e_decode"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+    print("\n## native_mm_quantization")
+    if report["native_mm_quantization"]:
+        for row in report["native_mm_quantization"]:
             print(json.dumps(row, ensure_ascii=False))
     else:
         print("PENDING")

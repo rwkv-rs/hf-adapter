@@ -98,6 +98,7 @@ def main() -> int:
     ap.add_argument("--top5-target", type=float, default=None)
     ap.add_argument("--cosine-target", type=float, default=0.9999)
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto", help="Override config.fuse_norm for HF load")
+    ap.add_argument("--model-size-label", default="", help="Optional size label such as 0.1b for result rows")
     ap.add_argument("--results", default=None, help="Optional JSONL path to append summary")
     args = ap.parse_args()
 
@@ -144,10 +145,16 @@ def main() -> int:
     greedy = greedy_window(model, off, tok(PROMPTS[2], add_special_tokens=False).input_ids, args.device, args.greedy_window)
     summary = {
         "axis": "official_alignment",
+        "backend": "hf_adapter",
+        "status": "pass",
         "ts": int(time.time()),
         "hf_dir": args.hf_dir,
+        "model_name": Path(args.hf_dir).name,
+        "model_size_label": args.model_size_label.lower() or None,
+        "hf_model_dir": args.hf_dir,
         "pth": args.pth,
         "dtype": args.dtype,
+        "device": torch.cuda.get_device_name(torch.cuda.current_device()) if args.device.startswith("cuda") and torch.cuda.is_available() else args.device,
         "official_strategy": args.official_strategy,
         "fuse_norm": getattr(model.config, "fuse_norm", None),
         "n_prompts": len(rows),
