@@ -207,6 +207,16 @@ def run_tiny_generation_session_batch(args: argparse.Namespace) -> dict[str, Any
         raise AssertionError("negative token counts must be rejected")
     assert [int(session.state.seen_tokens) for session in guard_batch.sessions] == guard_seen
     assert [int(session.generated_tokens) for session in guard_batch.sessions] == guard_generated
+    try:
+        guard_batch.decode_round([1, 2], backend="batched")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("batched backend must reject heterogeneous token counts")
+    auto_outputs = guard_batch.decode_round([1, 2], backend="auto")
+    assert guard_batch.round_backends[-1] == "sequential"
+    assert [output.generated_tokens for output in auto_outputs] == [1, 2]
+
     batch = MLXGenerationSessionBatch.from_prompts(mlx_model, tokenizer, prompts)
     first = batch.decode_round(1)
     second = batch.decode_round(2)
@@ -216,11 +226,22 @@ def run_tiny_generation_session_batch(args: argparse.Namespace) -> dict[str, Any
         assert session.generated_ids == one_shot.generated_ids
         assert session.text == one_shot.text
         assert int(session.state.seen_tokens) == len(session.prompt_ids) + total_new
+    batched = MLXGenerationSessionBatch.from_prompts(mlx_model, tokenizer, prompts)
+    batched_first = batched.decode_round(1, backend="batched")
+    batched_second = batched.decode_round(2, backend="batched")
+    assert batched.round_backends == ["batched", "batched"]
+    assert [output.generated_tokens for output in batched_first] == [1, 1]
+    assert [output.generated_tokens for output in batched_second] == [2, 2]
+    for seq_session, batched_session in zip(batch.sessions, batched.sessions):
+        assert batched_session.generated_ids == seq_session.generated_ids
+        assert batched_session.text == seq_session.text
+        assert int(batched_session.state.seen_tokens) == len(batched_session.prompt_ids) + total_new
     return {
         "axis": "apple_silicon_mlx_session_batch_tiny",
         "status": "pass",
         "session_count": batch.batch_size,
         "rounds": [1, 2],
+        "batched_round_backends": batched.round_backends,
         "generated_tokens": [session.generated_tokens for session in batch.sessions],
         "seen_tokens": [int(session.state.seen_tokens) for session in batch.sessions],
         "all_session_one_shot_token_match": True,

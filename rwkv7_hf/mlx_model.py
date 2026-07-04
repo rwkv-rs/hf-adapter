@@ -336,11 +336,14 @@ class MLXGenerationSession:
 class MLXGenerationSessionBatch:
     """Small interleaved session manager for MLX serving smoke tests.
 
-    This is not a fused batched MLX kernel.  It is a production-shaped API
-    scaffold: multiple independent prompts are prefetched once, then advanced
-    round-by-round while preserving each prompt's recurrent state cache.  The
-    helper lets Apple validation exercise concurrent session bookkeeping before
-    the inner decode loop is replaced by a fused MLX/Metal backend.
+    This is not the final fused quant+WKV Metal kernel.  It is a
+    production-shaped API scaffold: multiple independent prompts are prefetched
+    once, then advanced round-by-round while preserving each prompt's recurrent
+    state cache.  The default path stays sequential for compatibility, while
+    ``backend="batched"`` / ``"auto"`` stacks equal-length decode rounds into
+    one MLX batch so Apple validation can exercise a dynamic-batching shaped
+    path before the inner decode loop is replaced by deeper fused MLX/Metal
+    kernels.
     """
 
     def __init__(self, sessions: list[MLXGenerationSession]):
@@ -357,6 +360,9 @@ class MLXGenerationSessionBatch:
         self.tokenizer = tokenizer
         self.sessions = list(sessions)
         self.round_count = 0
+        self.round_backends: list[str] = []
+        self.round_decode_s: list[float] = []
+        self.round_generated_tokens: list[int] = []
 
     @classmethod
     def from_prompts(
@@ -386,9 +392,7 @@ class MLXGenerationSessionBatch:
     def batch_size(self) -> int:
         return len(self.sessions)
 
-    def decode_round(self, tokens_per_session: int | list[int]) -> list[MLXSessionStepOutput]:
-        """Advance all sessions once and return per-session step outputs."""
-
+    def _normalize_steps(self, tokens_per_session: int | list[int]) -> list[int]:
         if isinstance(tokens_per_session, int):
             steps = [int(tokens_per_session)] * self.batch_size
         else:
@@ -397,7 +401,120 @@ class MLXGenerationSessionBatch:
                 raise ValueError(f"expected {self.batch_size} token counts, got {len(steps)}")
         if any(step < 0 for step in steps):
             raise ValueError("all token counts must be non-negative")
+        return steps
+
+    def _decode_round_sequential(self, steps: list[int]) -> list[MLXSessionStepOutput]:
+        t0 = time.perf_counter()
         outputs = [session.decode(step) for session, step in zip(self.sessions, steps)]
+        elapsed = time.perf_counter() - t0
+        self.round_decode_s.append(float(elapsed))
+        self.round_generated_tokens.append(int(sum(steps)))
+        self.round_backends.append("sequential")
+        return outputs
+
+    def _stack_state(self) -> tuple[MLXRWKV7State, list[int]]:
+        mx = _mx()
+        seen_tokens = [int(session.state.seen_tokens) for session in self.sessions]
+        stacked = MLXRWKV7State(
+            [
+                mx.concatenate([session.state.recurrent_state[layer] for session in self.sessions], axis=0)
+                for layer in range(self.model.num_hidden_layers)
+            ],
+            [
+                mx.concatenate([session.state.attn_x_prev[layer] for session in self.sessions], axis=0)
+                for layer in range(self.model.num_hidden_layers)
+            ],
+            [
+                mx.concatenate([session.state.ffn_x_prev[layer] for session in self.sessions], axis=0)
+                for layer in range(self.model.num_hidden_layers)
+            ],
+            mx.concatenate([session.state.v_first for session in self.sessions], axis=0),
+            seen_tokens=min(seen_tokens) if seen_tokens else 0,
+        )
+        mx.eval(stacked.v_first, *stacked.recurrent_state, *stacked.attn_x_prev, *stacked.ffn_x_prev)
+        return stacked, seen_tokens
+
+    def _split_state(self, state: MLXRWKV7State, seen_tokens: list[int]) -> list[MLXRWKV7State]:
+        split: list[MLXRWKV7State] = []
+        for idx, seen in enumerate(seen_tokens):
+            row = state.select_batch([idx])
+            row.seen_tokens = int(seen)
+            split.append(row)
+        return split
+
+    def _decode_round_batched(self, tokens_per_session: int) -> list[MLXSessionStepOutput]:
+        mx = _mx()
+        n = int(tokens_per_session)
+        if n <= 0:
+            return self._decode_round_sequential([n] * self.batch_size)
+
+        prior_seen = [int(session.state.seen_tokens) for session in self.sessions]
+        stacked_state, _ = self._stack_state()
+        logits = mx.concatenate([session.logits for session in self.sessions], axis=0)
+        next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
+        generated = []
+
+        t0 = time.perf_counter()
+        for _ in range(n):
+            generated.append(next_token)
+            logits, stacked_state = self.model.decode_step(next_token, stacked_state)
+            next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
+        out = mx.stack(generated, axis=1)
+        mx.eval(out, logits, stacked_state.v_first, *stacked_state.recurrent_state, *stacked_state.attn_x_prev, *stacked_state.ffn_x_prev)
+        elapsed = time.perf_counter() - t0
+
+        split_states = self._split_state(stacked_state, [seen + n for seen in prior_seen])
+        outputs: list[MLXSessionStepOutput] = []
+        for idx, session in enumerate(self.sessions):
+            row_ids = _as_list(out[idx].reshape(-1))
+            session.logits = mx.take(logits, mx.array([idx], dtype=mx.int32), axis=0)
+            session.state = split_states[idx]
+            session.generated_ids.extend(row_ids)
+            session.decode_s += elapsed
+            session.step_count += 1
+            outputs.append(
+                MLXSessionStepOutput(
+                    step_index=session.step_count,
+                    generated_ids=row_ids,
+                    text=self.tokenizer.decode(row_ids, skip_special_tokens=session.skip_special_tokens),
+                    decode_s=elapsed,
+                    total_generated_tokens=session.generated_tokens,
+                    seen_tokens=int(session.state.seen_tokens),
+                )
+            )
+        self.round_decode_s.append(float(elapsed))
+        self.round_generated_tokens.append(int(n * self.batch_size))
+        self.round_backends.append("batched")
+        return outputs
+
+    def decode_round(
+        self,
+        tokens_per_session: int | list[int],
+        *,
+        backend: str = "sequential",
+    ) -> list[MLXSessionStepOutput]:
+        """Advance all sessions once and return per-session step outputs.
+
+        ``backend="sequential"`` preserves the historical per-session loop.
+        ``backend="batched"`` requires equal positive token counts and decodes
+        all sessions as one MLX batch.  ``backend="auto"`` uses the batched path
+        when all sessions request the same positive number of tokens and falls
+        back to the sequential path for heterogeneous or zero-token rounds.
+        """
+
+        steps = self._normalize_steps(tokens_per_session)
+        selected_backend = (backend or "sequential").lower().strip()
+        if selected_backend not in {"sequential", "batched", "auto"}:
+            raise ValueError(f"unsupported MLX session backend {backend!r}; expected sequential, batched, or auto")
+
+        if selected_backend == "sequential":
+            outputs = self._decode_round_sequential(steps)
+        elif len(set(steps)) == 1 and steps[0] > 0:
+            outputs = self._decode_round_batched(steps[0])
+        elif selected_backend == "auto":
+            outputs = self._decode_round_sequential(steps)
+        else:
+            raise ValueError("backend='batched' requires equal positive token counts for every session")
         self.round_count += 1
         return outputs
 
@@ -409,9 +526,18 @@ class MLXGenerationSessionBatch:
         generated_tokens = [session.generated_tokens for session in self.sessions]
         seen_tokens = [int(session.state.seen_tokens) for session in self.sessions]
         decode_s = [round(float(session.decode_s), 6) for session in self.sessions]
+        round_decode_s = [round(float(value), 6) for value in self.round_decode_s]
         return {
             "batch_size": int(self.batch_size),
             "session_rounds": int(self.round_count),
+            "round_backends": list(self.round_backends),
+            "last_round_backend": self.round_backends[-1] if self.round_backends else None,
+            "round_decode_s": round_decode_s,
+            "round_generated_tokens": [int(value) for value in self.round_generated_tokens],
+            "round_decode_tok_s": [
+                round(float(tokens / elapsed), 6) if elapsed > 0 else None
+                for tokens, elapsed in zip(self.round_generated_tokens, self.round_decode_s)
+            ],
             "prompt_tokens": prompt_tokens,
             "generated_tokens": generated_tokens,
             "seen_tokens": seen_tokens,
