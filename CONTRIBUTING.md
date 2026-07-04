@@ -365,6 +365,12 @@ memory-heavy apps, and confirm the result has finite positive
 trainable-gradient or trainable-update totals. Treat non-finite fp16 PEFT
 gradients/updates as a failed row, not as evidence.
 
+When adding or extending Apple hardware scripts, reuse
+`tests/apple_silicon_utils.py` for common environment probes, JSONL result
+writing, model-size labels, MPS availability checks, dtype/device selection, and
+MPS memory telemetry. This keeps MPS/MLX smoke rows comparable across native
+generate, training, quantization, and MLX session harnesses.
+
 ## Reporting hardware results
 
 Every hardware/card PR should include this information in the PR body or in a
