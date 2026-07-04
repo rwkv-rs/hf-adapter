@@ -166,6 +166,13 @@ def test_apple_smoke_script_static() -> None:
     assert "RWKV7_MLX_SESSION_AUTO_W8_STABLE" in model_text
     assert "RWKV7_MLX_SESSION_STABLE_ARGMAX_TOLERANCE" in model_text
     assert "auto_metal_max_rows" in model_text
+    quant_bench_script = ROOT / "scripts/mlx_quant_projection_bench.py"
+    assert quant_bench_script.exists()
+    assert quant_bench_script.stat().st_mode & stat.S_IXUSR
+    quant_bench_text = quant_bench_script.read_text(encoding="utf-8")
+    assert "mlx_quant_projection_bench" in quant_bench_text
+    assert "speedup_vs_dense" in quant_bench_text
+    assert "max_abs_vs_quant_reference" in quant_bench_text
     assert "_uses_w8_metal_projection" in model_text
     assert "round_backend_reasons" in model_text
     mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"
@@ -198,6 +205,7 @@ def test_apple_doc_links_entry_points() -> None:
     assert "scripts/mlx_session_smoke.py" in text
     assert "scripts/mlx_session_batch_smoke.py" in text
     assert "scripts/mlx_generation_sweep.py" in text
+    assert "scripts/mlx_quant_projection_bench.py" in text
     assert "tests/test_apple_silicon_model_training_smoke.py" in text
     assert "tests/test_apple_silicon_model_sweep.py" in text
     assert "tests/test_apple_silicon_quant_smoke.py" in text

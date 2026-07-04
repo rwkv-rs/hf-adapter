@@ -1909,7 +1909,12 @@ also passes chunked/full prefill (`max_abs=0.0`): fp16 reaches `27.97` /
 prefill and decode. This strengthens the long-context memory evidence but also
 shows W4 does not yet stably beat fp16 at longer prompt/decode sizes; stable
 W8/W4 speed `>=1.0x` fp16 across sizes and modes still requires deeper fused
-kernels. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
+kernels. The isolated MLX quant projection microbench
+(`axis=mlx_quant_projection_bench`, 1.5B-sized 2048x2048 projection, rows=1/4)
+now makes the bottleneck explicit: W4/Metal reaches `0.39x` dense for rows=1
+and `1.11x` for rows=4 (auto `1.38x`), while W8/Metal reaches `0.87x` /
+`0.67x` dense and W8 auto still routes to affine because the W8 session
+exactness guard remains open. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
 repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
 `534 MB`, and the higher-concurrency 6-session repeat=3 row reaches min decode
 `34.33` / `27.14 tok/s` with peak `682` / `547 MB`. 1.5B W8/W4

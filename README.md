@@ -73,7 +73,7 @@ opt-in seams, not yet the final production long-context fused WKV/projection/
 packed-quant speed path, and W8/W4 do not yet stably beat fp16 end to end.
 `scripts/mlx_generate.py`,
 `scripts/mlx_session_smoke.py`, `scripts/mlx_session_batch_smoke.py`,
-`scripts/mlx_generation_sweep.py`, `rwkv7_hf.mlx_model.generate_text_from_hf`,
+`scripts/mlx_generation_sweep.py`, `scripts/mlx_quant_projection_bench.py`, `rwkv7_hf.mlx_model.generate_text_from_hf`,
 `rwkv7_hf.mlx_model.MLXGenerationSession`, and
 `rwkv7_hf.mlx_model.MLXGenerationSessionBatch` provide reusable
 tokenizer-integrated MLX text generation, serving-style prefill-once/session-decode,
@@ -101,7 +101,7 @@ Metal is explicitly enabled; `RWKV7_MLX_SESSION_AUTO_W8_STABLE=1` opts W8/Metal
 auto into the stable policy), plus prompt/decode
 length sweep entry points including 0.1B prompt256/decode8,
 0.4B prompt4096/decode256 plus 1.5B prompt8192/decode512 matrices, and optional `--quantization mm8/mm4`
-MLX packed-quant rows.
+MLX packed-quant rows, plus an isolated MLX quant projection microbench that records dense/affine/Metal/auto speed ratios before deeper WKV+quant fusion.
 
 ## Layout
 
@@ -122,6 +122,7 @@ scripts/
   mlx_session_smoke.py
   mlx_session_batch_smoke.py
   mlx_generation_sweep.py
+  mlx_quant_projection_bench.py
   run_hf_acceptance.sh
   run_hf_training_matrix.sh
   run_zero_training_smoke.sh
