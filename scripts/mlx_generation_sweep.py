@@ -51,6 +51,7 @@ def model_quant_runtime_telemetry(model: Any) -> dict[str, Any]:
     return {
         "quantized_linear_last_backend_counts": telemetry.get("quantized_linear_last_backend_counts"),
         "group_rkv_quant_projection": telemetry.get("group_rkv_quant_projection"),
+        "group_rkv_quant_projection_mode": telemetry.get("group_rkv_quant_projection_mode"),
         "group_rkv_quant_projection_counts": telemetry.get("group_rkv_quant_projection_counts"),
     }
 

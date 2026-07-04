@@ -583,6 +583,149 @@ def mm8_group_matmul_metal_inputs(x_group: Any, weights: Sequence[MLXMM8Weight] 
     return out.reshape(groups, *x_group.shape[1:-1], m)
 
 
+def _as_mm8_triple(weights: Sequence[MLXMM8Weight]) -> tuple[MLXMM8Weight, MLXMM8Weight, MLXMM8Weight]:
+    qs = tuple(weights)
+    if len(qs) != 3:
+        raise ValueError(f"expected exactly three MM8 weights, got {len(qs)}")
+    n, m = int(qs[0].n), int(qs[0].m)
+    if any(int(q.n) != n or int(q.m) != m for q in qs):
+        raise ValueError("all triple MM8 weights must have the same [N, M] shape")
+    return qs  # type: ignore[return-value]
+
+
+@lru_cache(maxsize=1)
+def _metal_mm8_triple_inputs_kernel():
+    mx = require_mlx()
+    if not metal_quant_available():
+        raise RuntimeError("MLX custom Metal kernels are not available in this runtime")
+
+    source = r'''
+        uint row_id = thread_position_in_grid.x;
+        uint R = uint(dims[0]);
+        uint N = uint(dims[1]);
+        uint M = uint(dims[2]);
+        uint total = 3 * R * M;
+        if (row_id >= total) {
+            return;
+        }
+
+        uint m_id = row_id % M;
+        uint tmp = row_id / M;
+        uint r_id = tmp % R;
+        uint g_id = tmp / R;
+        uint x_base = r_id * N;
+        uint q_base = m_id * N;
+
+        float acc = 0.0f;
+        if (g_id == 0) {
+            float rx_m = float(rx0[m_id]);
+            float mx_m = float(mx0[m_id]);
+            for (uint n = 0; n < N; ++n) {
+                float xv = float(x0[x_base + n]);
+                float qv = float(q0_t[q_base + n]) + 0.5f;
+                float deq = qv * float(ry0[n]) * rx_m + float(my0[n]) + mx_m;
+                acc += xv * deq;
+            }
+        } else if (g_id == 1) {
+            float rx_m = float(rx1[m_id]);
+            float mx_m = float(mx1[m_id]);
+            for (uint n = 0; n < N; ++n) {
+                float xv = float(x1[x_base + n]);
+                float qv = float(q1_t[q_base + n]) + 0.5f;
+                float deq = qv * float(ry1[n]) * rx_m + float(my1[n]) + mx_m;
+                acc += xv * deq;
+            }
+        } else {
+            float rx_m = float(rx2[m_id]);
+            float mx_m = float(mx2[m_id]);
+            for (uint n = 0; n < N; ++n) {
+                float xv = float(x2[x_base + n]);
+                float qv = float(q2_t[q_base + n]) + 0.5f;
+                float deq = qv * float(ry2[n]) * rx_m + float(my2[n]) + mx_m;
+                acc += xv * deq;
+            }
+        }
+        out[row_id] = acc;
+    '''
+    return mx.fast.metal_kernel(
+        name="rwkv7_mm8_affine_triple_inputs_matmul",
+        input_names=[
+            "x0",
+            "x1",
+            "x2",
+            "q0_t",
+            "q1_t",
+            "q2_t",
+            "mx0",
+            "rx0",
+            "my0",
+            "ry0",
+            "mx1",
+            "rx1",
+            "my1",
+            "ry1",
+            "mx2",
+            "rx2",
+            "my2",
+            "ry2",
+            "dims",
+        ],
+        output_names=["out"],
+        source=source,
+        ensure_row_contiguous=True,
+    )
+
+
+def mm8_triple_matmul_metal_inputs(x0: Any, x1: Any, x2: Any, weights: Sequence[MLXMM8Weight]) -> Any:
+    """Run one MM8 Metal launch for three distinct inputs and weights.
+
+    Unlike :func:`mm8_group_matmul_metal_inputs`, this direct triple path does
+    not stack/copy quantized weights into an additional grouped cache. It is the
+    lower-memory R/K/V projection seam used by the MLX model integration.
+    """
+
+    mx = _mx()
+    q0, q1, q2 = _as_mm8_triple(weights)
+    n, m = int(q0.n), int(q0.m)
+    if tuple(x0.shape) != tuple(x1.shape) or tuple(x0.shape) != tuple(x2.shape):
+        raise ValueError(f"triple MM8 inputs must have identical shapes, got {x0.shape}, {x1.shape}, {x2.shape}")
+    if int(x0.shape[-1]) != n:
+        raise ValueError(f"triple MM8 inputs must end with {n}; got {tuple(x0.shape)}")
+    x0_2 = x0.reshape(-1, n)
+    x1_2 = x1.reshape(-1, n)
+    x2_2 = x2.reshape(-1, n)
+    rows = int(x0_2.shape[0])
+    dims = mx.array([rows, n, m], dtype=mx.uint32)
+    out = _metal_mm8_triple_inputs_kernel()(
+        inputs=[
+            x0_2,
+            x1_2,
+            x2_2,
+            _mm8_u8_t(q0),
+            _mm8_u8_t(q1),
+            _mm8_u8_t(q2),
+            q0.mx.reshape(m),
+            q0.rx.reshape(m),
+            q0.my.reshape(n),
+            q0.ry.reshape(n),
+            q1.mx.reshape(m),
+            q1.rx.reshape(m),
+            q1.my.reshape(n),
+            q1.ry.reshape(n),
+            q2.mx.reshape(m),
+            q2.rx.reshape(m),
+            q2.my.reshape(n),
+            q2.ry.reshape(n),
+            dims,
+        ],
+        grid=(3 * rows * m, 1, 1),
+        threadgroup=(min(256, max(1, m)), 1, 1),
+        output_shapes=[(3, rows, m)],
+        output_dtypes=[x0.dtype],
+    )[0]
+    return out.reshape(3, *x0.shape[:-1], m)
+
+
 def mm8_matmul_mlx(x: Any, q: MLXMM8Weight, *, backend: str = "affine") -> Any:
     """Run ``x @ dequant(q)`` with a reference, affine, Metal, or auto MLX backend."""
 
@@ -931,6 +1074,156 @@ def mm4_group_matmul_metal_inputs(x_group: Any, weights: Sequence[MLXMM4Weight] 
         output_dtypes=[x_group.dtype],
     )[0]
     return out.reshape(groups, *x_group.shape[1:-1], m_orig)
+
+
+def _as_mm4_triple(weights: Sequence[MLXMM4Weight]) -> tuple[MLXMM4Weight, MLXMM4Weight, MLXMM4Weight]:
+    qs = tuple(weights)
+    if len(qs) != 3:
+        raise ValueError(f"expected exactly three MM4 weights, got {len(qs)}")
+    n, m_orig, m_padded = int(qs[0].n), int(qs[0].m_orig), int(qs[0].m_padded)
+    if any(int(q.n) != n or int(q.m_orig) != m_orig or int(q.m_padded) != m_padded for q in qs):
+        raise ValueError("all triple MM4 weights must have the same [N, M] shape")
+    return qs  # type: ignore[return-value]
+
+
+@lru_cache(maxsize=1)
+def _metal_mm4_triple_inputs_kernel():
+    mx = require_mlx()
+    if not metal_quant_available():
+        raise RuntimeError("MLX custom Metal kernels are not available in this runtime")
+
+    source = r'''
+        uint row_id = thread_position_in_grid.x;
+        uint R = uint(dims[0]);
+        uint N = uint(dims[1]);
+        uint M = uint(dims[2]);
+        uint total = 3 * R * M;
+        if (row_id >= total) {
+            return;
+        }
+
+        uint m_id = row_id % M;
+        uint tmp = row_id / M;
+        uint r_id = tmp % R;
+        uint g_id = tmp / R;
+        uint packed_col = m_id >> 1;
+        bool high = (m_id & 1) != 0;
+        uint x_base = r_id * N;
+        uint q_base = packed_col * N;
+
+        float acc = 0.0f;
+        if (g_id == 0) {
+            float rx_m = float(rx0[m_id]);
+            float mx_m = float(mx0[m_id]);
+            for (uint n = 0; n < N; ++n) {
+                uint byte_v = uint(p0_t[q_base + n]);
+                uint q_u4 = high ? ((byte_v >> 4) & 0x0Fu) : (byte_v & 0x0Fu);
+                float xv = float(x0[x_base + n]);
+                float qv = float(q_u4) + 0.5f;
+                float deq = qv * float(ry0[n]) * rx_m + float(my0[n]) + mx_m;
+                acc += xv * deq;
+            }
+        } else if (g_id == 1) {
+            float rx_m = float(rx1[m_id]);
+            float mx_m = float(mx1[m_id]);
+            for (uint n = 0; n < N; ++n) {
+                uint byte_v = uint(p1_t[q_base + n]);
+                uint q_u4 = high ? ((byte_v >> 4) & 0x0Fu) : (byte_v & 0x0Fu);
+                float xv = float(x1[x_base + n]);
+                float qv = float(q_u4) + 0.5f;
+                float deq = qv * float(ry1[n]) * rx_m + float(my1[n]) + mx_m;
+                acc += xv * deq;
+            }
+        } else {
+            float rx_m = float(rx2[m_id]);
+            float mx_m = float(mx2[m_id]);
+            for (uint n = 0; n < N; ++n) {
+                uint byte_v = uint(p2_t[q_base + n]);
+                uint q_u4 = high ? ((byte_v >> 4) & 0x0Fu) : (byte_v & 0x0Fu);
+                float xv = float(x2[x_base + n]);
+                float qv = float(q_u4) + 0.5f;
+                float deq = qv * float(ry2[n]) * rx_m + float(my2[n]) + mx_m;
+                acc += xv * deq;
+            }
+        }
+        out[row_id] = acc;
+    '''
+    return mx.fast.metal_kernel(
+        name="rwkv7_mm4_affine_triple_inputs_matmul",
+        input_names=[
+            "x0",
+            "x1",
+            "x2",
+            "p0_t",
+            "p1_t",
+            "p2_t",
+            "mx0",
+            "rx0",
+            "my0",
+            "ry0",
+            "mx1",
+            "rx1",
+            "my1",
+            "ry1",
+            "mx2",
+            "rx2",
+            "my2",
+            "ry2",
+            "dims",
+        ],
+        output_names=["out"],
+        source=source,
+        ensure_row_contiguous=True,
+    )
+
+
+def mm4_triple_matmul_metal_inputs(x0: Any, x1: Any, x2: Any, weights: Sequence[MLXMM4Weight]) -> Any:
+    """Run one MM4 Metal launch for three distinct inputs and weights.
+
+    This avoids the extra grouped packed-weight copies used by the generic
+    grouped path, while preserving one-launch R/K/V projection fusion.
+    """
+
+    mx = _mx()
+    q0, q1, q2 = _as_mm4_triple(weights)
+    n, m_orig = int(q0.n), int(q0.m_orig)
+    if tuple(x0.shape) != tuple(x1.shape) or tuple(x0.shape) != tuple(x2.shape):
+        raise ValueError(f"triple MM4 inputs must have identical shapes, got {x0.shape}, {x1.shape}, {x2.shape}")
+    if int(x0.shape[-1]) != n:
+        raise ValueError(f"triple MM4 inputs must end with {n}; got {tuple(x0.shape)}")
+    x0_2 = x0.reshape(-1, n)
+    x1_2 = x1.reshape(-1, n)
+    x2_2 = x2.reshape(-1, n)
+    rows = int(x0_2.shape[0])
+    dims = mx.array([rows, n, m_orig], dtype=mx.uint32)
+    out = _metal_mm4_triple_inputs_kernel()(
+        inputs=[
+            x0_2,
+            x1_2,
+            x2_2,
+            _mm4_packed_t(q0),
+            _mm4_packed_t(q1),
+            _mm4_packed_t(q2),
+            q0.mx.reshape(q0.m_padded),
+            q0.rx_s.reshape(q0.m_padded),
+            q0.my.reshape(n),
+            q0.ry_s.reshape(n),
+            q1.mx.reshape(q1.m_padded),
+            q1.rx_s.reshape(q1.m_padded),
+            q1.my.reshape(n),
+            q1.ry_s.reshape(n),
+            q2.mx.reshape(q2.m_padded),
+            q2.rx_s.reshape(q2.m_padded),
+            q2.my.reshape(n),
+            q2.ry_s.reshape(n),
+            dims,
+        ],
+        grid=(3 * rows * m_orig, 1, 1),
+        threadgroup=(min(256, max(1, m_orig)), 1, 1),
+        output_shapes=[(3, rows, m_orig)],
+        output_dtypes=[x0.dtype],
+    )[0]
+    return out.reshape(3, *x0.shape[:-1], m_orig)
 
 
 def mm4_matmul_mlx(x: Any, q: MLXMM4Weight, *, backend: str = "affine") -> Any:

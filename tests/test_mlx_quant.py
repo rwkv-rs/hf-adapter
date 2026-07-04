@@ -31,9 +31,11 @@ def test_mlx_quant_formula_if_available():
         mm4_group_matmul_metal,
         mm4_group_matmul_metal_inputs,
         mm4_matmul_mlx,
+        mm4_triple_matmul_metal_inputs,
         mm8_group_matmul_metal,
         mm8_group_matmul_metal_inputs,
         mm8_matmul_mlx,
+        mm8_triple_matmul_metal_inputs,
         pack_mlx_mm4_group,
         pack_mlx_mm8_group,
         quantize_mlx_mm4,
@@ -72,6 +74,20 @@ def test_mlx_quant_formula_if_available():
         mx.eval(y8_group_inputs, y8_group_inputs_expected)
         assert tuple(int(v) for v in y8_group_inputs.shape) == (2, 2, 7)
         assert float(mx.max(mx.abs(y8_group_inputs - y8_group_inputs_expected))) < 5e-2
+        q8_triple = q8_group + [quantize_mlx_mm8((weight * 0.25).astype(mx.float16), layout="metal")]
+        x8_triple = [
+            x,
+            (x * 0.25).astype(mx.float16),
+            (x * -0.5).astype(mx.float16),
+        ]
+        y8_triple = mm8_triple_matmul_metal_inputs(*x8_triple, q8_triple)
+        y8_triple_expected = mx.stack(
+            [mm8_matmul_mlx(xi, q, backend="metal") for xi, q in zip(x8_triple, q8_triple, strict=True)],
+            axis=0,
+        )
+        mx.eval(y8_triple, y8_triple_expected)
+        assert tuple(int(v) for v in y8_triple.shape) == (3, 2, 7)
+        assert float(mx.max(mx.abs(y8_triple - y8_triple_expected))) < 5e-2
 
     q4 = quantize_mlx_mm4(weight)
     y4_ref = mm4_matmul_mlx(x, q4, backend="reference")
@@ -101,6 +117,20 @@ def test_mlx_quant_formula_if_available():
         mx.eval(y4_group_inputs, y4_group_inputs_expected)
         assert tuple(int(v) for v in y4_group_inputs.shape) == (2, 2, 7)
         assert float(mx.max(mx.abs(y4_group_inputs - y4_group_inputs_expected))) < 5e-2
+        q4_triple = q4_group + [quantize_mlx_mm4((weight * 0.25).astype(mx.float16), layout="metal")]
+        x4_triple = [
+            x,
+            (x * 0.25).astype(mx.float16),
+            (x * -0.5).astype(mx.float16),
+        ]
+        y4_triple = mm4_triple_matmul_metal_inputs(*x4_triple, q4_triple)
+        y4_triple_expected = mx.stack(
+            [mm4_matmul_mlx(xi, q, backend="metal") for xi, q in zip(x4_triple, q4_triple, strict=True)],
+            axis=0,
+        )
+        mx.eval(y4_triple, y4_triple_expected)
+        assert tuple(int(v) for v in y4_triple.shape) == (3, 2, 7)
+        assert float(mx.max(mx.abs(y4_triple - y4_triple_expected))) < 5e-2
 
     # Linear weights are stored [out, in]; the helper quantizes weight.T.
     linear_weight = weight.T
@@ -223,8 +253,10 @@ def test_mlx_model_grouped_rkv_quant_projection_if_available():
         assert separate_telemetry["group_rkv_quant_projection"] is False
         assert separate_telemetry["group_rkv_quant_projection_counts"]["metal"] == 0
         assert grouped_telemetry["group_rkv_quant_projection"] is True
+        assert grouped_telemetry["group_rkv_quant_projection_mode"] == "direct"
         assert grouped_telemetry["group_rkv_quant_projection_counts"]["metal"] > 0
         assert grouped_telemetry["group_rkv_quant_projection_counts"]["fallback"] == 0
+        assert grouped_model._rkv_group_quant_cache == {}
 
 
 def test_mlx_model_auto_quantized_linear_hook_if_available():
