@@ -181,12 +181,12 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 
 ### 9A. Apple Silicon / MPS / MLX
 
-已完成首批 M5/16GB 证据:0.1B load/forward/generate、0.4B fp32/fp16 load/forward/短 generate、0.4B fp32/fp16 prompt 16/64/128 generation sweep、0.4B fp16 prompt 256/512 sweep、tiny native train、tiny PEFT/Trainer、0.1B 和 0.4B 真模型 PEFT LoRA backward + HF Trainer + TRL SFT/DPO/GRPO、0.4B Trainer/TRL 2-step、1.5B fp16 load/forward/短 generate + prompt16/64/128/256/512 sweep + prompt512/new8、1.5B fp32 PEFT LoRA manual backward + HF Trainer + TRL SFT/DPO/GRPO 1/2/3/5/10-step、Apple native MM8/MM4 tiny + 0.1B/0.4B/1.5B MPS min-params smoke、初始 MLX recurrent reference smoke(tiny MLX save/load/matmul、0.1B HF projection matmul、selected HF safetensor → MLX bundle、tiny MLX/Torch recurrent parity、state-cache select/chunked-prefill/session、多会话交错 session、tokenizer prompt/API、dynamic-batch state select、0.1B/0.4B/1.5B full MLX recurrent prefill/generate、scripts/mlx_generate.py 文本生成 CLI、MLXGenerationSession 分段 decode/session smoke、MLXGenerationSessionBatch 多会话交错 decode + 0.1B/0.4B/1.5B 3-session repeat pressure smoke、MLX prompt/decode sweep + repeat pressure(0.1B prompt128/256 decode4/8 repeat=2;0.4B/1.5B prompt128/256 decode4/8 repeat=1))。继续补:
+已完成首批 M5/16GB 证据:0.1B load/forward/generate、0.4B fp32/fp16 load/forward/短 generate、0.4B fp32/fp16 prompt 16/64/128 generation sweep、0.4B fp16 prompt 256/512 sweep、tiny native train、tiny PEFT/Trainer、0.1B 和 0.4B 真模型 PEFT LoRA backward + HF Trainer + TRL SFT/DPO/GRPO、0.4B Trainer/TRL 2-step、1.5B fp16 load/forward/短 generate + prompt16/64/128/256/512 sweep + prompt512/new8、1.5B fp32 PEFT LoRA manual backward + HF Trainer + TRL SFT/DPO/GRPO 1/2/3/5/10-step、Apple native MM8/MM4 tiny + 0.1B/0.4B/1.5B MPS min-params smoke、初始 MLX recurrent reference smoke(tiny MLX save/load/matmul、0.1B HF projection matmul、selected HF safetensor → MLX bundle、tiny MLX/Torch recurrent parity、state-cache select/chunked-prefill/session、多会话交错 session、tokenizer prompt/API、dynamic-batch state select、0.1B/0.4B/1.5B full MLX recurrent prefill/generate、scripts/mlx_generate.py 文本生成 CLI、MLXGenerationSession 分段 decode/session smoke、MLXGenerationSessionBatch 多会话交错 decode + 0.1B/0.4B/1.5B 3-session repeat pressure smoke + 0.4B/1.5B 4-session rounds4,4 repeat4 pressure smoke、MLX prompt/decode sweep + repeat pressure(0.1B prompt128/256 decode4/8 repeat=2;0.4B/1.5B prompt128/256 decode4/8 repeat=1;0.4B/1.5B prompt256/512 decode16/32 repeat=1))。继续补:
 
-- 扩展 0.4B Apple 到更长 decode 和 3+ step 稳定性行;
-- 把 1.5B 从 prompt512/new8 和 10-step 继续扩到更长 decode、>10-step 训练,并持续记录 memory-pressure;
+- 扩展 0.4B Apple 到 3+ step / 更长训练稳定性行;
+- 把 1.5B 从 prompt512/decode32 和 10-step 继续扩到 >10-step 训练、更长生产式 decode,并持续记录 memory-pressure;
 - 补 M-series Pro/Max/Ultra 的长上下文、显存峰值、tok/s 行;
-- 把 MLX recurrent reference/session helper 继续扩到更高并发(4+ sessions)/更长 repeat 的 memory-pressure 遥测;
+- 把 MLX recurrent reference/session helper 继续扩到更高并发(>4 sessions)/更长 repeat(>4) 的 memory-pressure 遥测;
 - 评估 RafaelUI Metal WKV7 / MLX 路线是否做 sibling backend,并把 correctness-first MLX inner loop 替换为 fused WKV/packed quant kernel;
 - Apple native MM8/MM4 功能/min-params smoke 已有;生产级 W8/W4 仍不走 bitsandbytes,需要 MLX/Metal packed quant + fused/dequant speed path。
 
