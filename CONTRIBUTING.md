@@ -246,8 +246,22 @@ python scripts/sync_hf_adapter_code.py /path/to/rwkv7-g1d-0.1b-hf
 Apple native MM8/MM4 quant smoke (bitsandbytes-free):
 
 ```bash
-# Tiny only. Add MODEL=/path/to/rwkv7-g1d-0.1b-hf for a converted-model row.
+# Tiny only.
 DEVICE=auto DTYPE=fp32 QUANTIZATIONS=mm8,mm4 \
+RESULTS=bench/results_apple_silicon_quant.jsonl \
+bash scripts/run_apple_silicon_quant_smoke.sh
+
+# Converted-model sweep. MIN_PARAMS_LIST lowers the replacement threshold so
+# contributors can prove more than lm_head-only quantization on Apple MPS.
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+MODEL_SIZE_LABEL=0.1b \
+DEVICE=auto DTYPE=fp32 QUANTIZATIONS=mm8,mm4 MIN_PARAMS_LIST=8000000,1000000,500000 \
+RESULTS=bench/results_apple_silicon_quant.jsonl \
+bash scripts/run_apple_silicon_quant_smoke.sh
+
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+MODEL_SIZE_LABEL=0.4b \
+DEVICE=auto DTYPE=fp32 QUANTIZATIONS=mm8,mm4 MIN_PARAMS_LIST=4000000 \
 RESULTS=bench/results_apple_silicon_quant.jsonl \
 bash scripts/run_apple_silicon_quant_smoke.sh
 ```
