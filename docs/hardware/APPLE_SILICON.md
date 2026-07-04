@@ -14,7 +14,7 @@ performance layer.
 | Install without CUDA/FLA | supported by packaging | Base dependencies no longer require `flash-linear-attention`; CUDA users can install `.[fla]` / `.[cuda]`. |
 | Tiny Apple smoke | pass on local M-series | `tests/test_apple_silicon_smoke.py` passes on MacBook Air / Apple M5 / 16GB / macOS 26.5 / PyTorch 2.12.1 MPS; see `bench/results_apple_silicon_m5_20260704.jsonl`. |
 | Converted-model Apple smoke | 0.1B, 0.4B, and 1.5B pass on local M-series | `scripts/run_apple_silicon_smoke.sh` loads `rwkv7-g1d-0.1b-hf`, `rwkv7-g1d-0.4b-hf`, and `rwkv7-g1g-1.5b-hf` through `RWKV7_NATIVE_MODEL=1` on MPS; 0.4B has fp32/fp16 short-generate rows and 1.5B has fp16 short-generate + prompt sweep rows. |
-| HF API coverage | partial | Load + forward + `generate(use_cache=True)` through the native backend; tiny native backward and Trainer paths pass; real 0.1B and 0.4B PEFT LoRA, HF Trainer, and TRL SFT/DPO/GRPO paths on MPS are covered. 0.4B also has fp32/fp16 generation length sweep rows and 2-step Trainer/TRL rows. 1.5B has fp16 MPS inference/sweep rows through prompt 512 / decode 8, MLX prompt512/decode32 rows, plus fp32 PEFT LoRA manual, HF Trainer, and TRL SFT/DPO/GRPO 1/2/3/5/10/12-step rows with finite trainable updates. |
+| HF API coverage | partial | Load + forward + `generate(use_cache=True)` through the native backend; tiny native backward and Trainer paths pass; real 0.1B and 0.4B PEFT LoRA, HF Trainer, and TRL SFT/DPO/GRPO paths on MPS are covered. 0.4B also has fp32/fp16 generation length sweep rows and 2-step Trainer/TRL rows. 1.5B has fp16 MPS inference/sweep rows through prompt 512 / decode 8, MLX prompt1024/decode64 rows, plus fp32 PEFT LoRA manual, HF Trainer, and TRL SFT/DPO/GRPO 1/2/3/5/10/12-step rows with finite trainable updates. |
 | Quantization | broader functional native smoke + initial MLX packed path | `bitsandbytes` W8/W4 is CUDA-oriented and is not the Apple path. Native MM8/MM4 config-driven module replacement now runs on MPS for tiny, 0.1B, 0.4B, and 1.5B smoke rows. MLX now has a packed W8/W4 affine dequant-matmul projection path (`--quantization mm8/mm4`) with 0.1B, 0.4B, and 1.5B smoke rows. Production-speed Apple quant still needs Metal fused projection/WKV kernels and speed rows beating fp16. |
 | Production speed | not claimed | PyTorch MPS is a compatibility path, not the final Apple performance backend. |
 | MLX recurrent backend / Metal backend | initial MLX recurrent + packed quant path, Metal TODO | Optional `.[mlx]` install, `rwkv7_hf.mlx_bridge`, `rwkv7_hf.mlx_model`, `rwkv7_hf.mlx_quant`, `scripts/convert_hf_to_mlx.py`, `scripts/mlx_generate.py`, `scripts/mlx_session_smoke.py`, `scripts/mlx_session_batch_smoke.py`, `scripts/mlx_generation_sweep.py`, `scripts/run_apple_silicon_mlx_smoke.sh`, `scripts/run_apple_silicon_mlx_model_smoke.sh`, `scripts/run_apple_silicon_mlx_session_smoke.sh`, `scripts/run_apple_silicon_mlx_session_batch_smoke.sh`, and `scripts/run_apple_silicon_mlx_generation_sweep.sh` now validate HF safetensor → MLX array/export, tiny torch/MLX recurrent parity, MLX state-cache select/chunked-prefill/session behavior, tokenizer-backed prompt smoke, dynamic-batch state select, reusable MLX text generate, prefill-once/session decode, interleaved multi-session decode, prompt/decode sweeps, and optional MLX packed W8/W4 projection rows. Fused Metal WKV/projection kernels are still TODO. |
@@ -62,7 +62,7 @@ Local smoke on 2026-07-04:
 | MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `rwkv7-g1d-0.4b-hf` tokenizer prompt + dynamic-batch MLX recurrent smoke | PASS (fp16 full 795 tensors, bytes=901535744, prompt=4, generated=1, prefill≈62.95 tok/s, decode≈83.74 tok/s, dynamic select max_abs=0.03125, argmax match) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `rwkv7-g1g-1.5b-hf` tokenizer prompt + dynamic-batch MLX recurrent smoke | PASS (fp16 full 795 tensors, bytes=3054809088, prompt=4, generated=1, prefill≈10.38 tok/s, decode≈29.33 tok/s, dynamic select max_abs=0.046875, argmax match) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `scripts/mlx_generate.py` reusable text-generate API | PASS (`rwkv7-g1d-0.1b-hf` 8 tokens decode≈95.29 tok/s, peak≈389MB; `rwkv7-g1d-0.4b-hf` 8 tokens decode≈53.02 tok/s, peak≈914MB; `rwkv7-g1g-1.5b-hf` 4 tokens decode≈28.97 tok/s, peak≈3080MB) |
-| MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `scripts/mlx_generation_sweep.py` prompt/decode sweep + chunked-prefill/repeat check | PASS (`rwkv7-g1d-0.1b-hf` prompt16/64 decode2/4 chunk=32 peak≈397MB, repeat pressure prompt32/decode2 x3 peak≈397MB, and longer prompt128/256 decode4/8 repeat=2 chunk=64 peak≈397MB / min prefill≈187.23 tok/s / min decode≈153.35 tok/s; `rwkv7-g1d-0.4b-hf` prompt16/64 decode2 peak≈934MB, prompt128/256 decode4/8 repeat=1 chunk=64 peak≈934MB / min prefill≈49.77 tok/s / min decode≈33.51 tok/s, and prompt256/512 decode16/32 repeat=1 chunk=128 peak≈934MB / min prefill≈54.76 tok/s / min decode≈43.90 tok/s; `rwkv7-g1g-1.5b-hf` prompt16/64 decode2 peak≈3119MB, prompt128/256 decode4/8 repeat=1 chunk=64 peak≈3119MB / min prefill≈22.00 tok/s / min decode≈18.19 tok/s, and prompt256/512 decode16/32 repeat=1 chunk=128 peak≈3119MB / min prefill≈24.05 tok/s / min decode≈22.36 tok/s; all chunked/full max_abs=0.0) |
+| MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `scripts/mlx_generation_sweep.py` prompt/decode sweep + chunked-prefill/repeat check | PASS (`rwkv7-g1d-0.1b-hf` prompt16/64 decode2/4 chunk=32 peak≈397MB, repeat pressure prompt32/decode2 x3 peak≈397MB, and longer prompt128/256 decode4/8 repeat=2 chunk=64 peak≈397MB / min prefill≈187.23 tok/s / min decode≈153.35 tok/s; `rwkv7-g1d-0.4b-hf` prompt16/64 decode2 peak≈934MB, prompt128/256 decode4/8 repeat=1 chunk=64 peak≈934MB / min prefill≈49.77 tok/s / min decode≈33.51 tok/s, prompt256/512 decode16/32 repeat=1 chunk=128 peak≈934MB / min prefill≈54.76 tok/s / min decode≈43.90 tok/s, and prompt1024/decode64 chunk=256 peak≈921MB / prefill≈55.20 tok/s / decode≈49.32 tok/s; `rwkv7-g1g-1.5b-hf` prompt16/64 decode2 peak≈3119MB, prompt128/256 decode4/8 repeat=1 chunk=64 peak≈3119MB / min prefill≈22.00 tok/s / min decode≈18.19 tok/s, prompt256/512 decode16/32 repeat=1 chunk=128 peak≈3119MB / min prefill≈24.05 tok/s / min decode≈22.36 tok/s, and prompt1024/decode64 chunk=256 peak≈3093MB / prefill≈23.60 tok/s / decode≈19.55 tok/s; all chunked/full max_abs=0.0) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `MLXGenerationSession` prefill-once + chunked decode smoke | PASS (`rwkv7-g1d-0.1b-hf` step_sizes=4,4 token/text match vs one-shot, decode≈60.43 tok/s, peak≈392MB; `rwkv7-g1d-0.4b-hf` step_sizes=4,4 match, decode≈54.13 tok/s, peak≈921MB; `rwkv7-g1g-1.5b-hf` step_sizes=2,2 match, decode≈27.50 tok/s, peak≈3093MB) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `MLXGenerationSessionBatch` interleaved multi-session decode smoke | PASS (`rwkv7-g1d-0.1b-hf` 2 sessions rounds=2,2 match peak≈394MB; 3 sessions rounds=2,2 repeat=2 match peak≈397MB / cache≈7.4MB / min decode≈94.56 tok/s; `rwkv7-g1d-0.4b-hf` 3 sessions rounds=2,2 repeat=2 match peak≈934MB / cache≈12.8MB / min decode≈40.74 tok/s, 4 sessions rounds=4,4 repeat=4 match peak≈940MB / cache≈12.8MB / min decode≈37.76 tok/s, and 6 sessions rounds=4,4 repeat=5 match peak≈953MB / cache≈12.8MB / min decode≈41.27 tok/s; `rwkv7-g1g-1.5b-hf` 3 sessions rounds=2,2 repeat=2 match peak≈3119MB / cache≈25.7MB / min decode≈23.86 tok/s, 4 sessions rounds=4,4 repeat=4 match peak≈3132MB / cache≈25.7MB / min decode≈11.64 tok/s, and 5 sessions rounds=4,4 repeat=2 match peak≈3145MB / cache≈25.7MB / min decode≈21.55 tok/s) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.4b-hf` load + forward + `generate()` | PASS (`elapsed_s=0.4699`, 11 prompt tokens + 1 generated token, MPS driver memory≈2171MiB) |
@@ -82,9 +82,9 @@ Local smoke on 2026-07-04:
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 / PEFT 0.19.1 / TRL 1.7.0 | MPS | `rwkv7-g1d-0.4b-hf` TRL SFT/DPO/GRPO + PEFT LoRA | PASS (1-step and 2-step rows; 2-step SFT `training_loss=3.140634`, DPO `training_loss=0.692913`, GRPO `training_loss=0.0`, peak driver_mem≈4980MiB) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 / PEFT 0.19.1 / TRL 1.7.0 | MPS | `rwkv7-g1g-1.5b-hf` TRL SFT/DPO/GRPO + PEFT LoRA | PASS (1/2/3/5/10/12-step rows; 12-step SFT `training_loss=1.411032`, DPO `training_loss=0.374775`, GRPO `training_loss=0.0`, peak driver_mem≈8604MiB) |
 
-Memory-pressure note after the latest 1.5B MLX prompt512/decode32 and 12-step
-Trainer/TRL runs: `vm_stat` reported free pages≈410k, inactive pages≈152k,
-speculative pages≈74k, wired pages≈183k, compressor pages≈26k. Swap counters
+Memory-pressure note after the latest 1.5B MLX prompt1024/decode64 and 12-step
+Trainer/TRL runs: `vm_stat` reported free pages≈3.6k, inactive pages≈352k,
+speculative pages≈54k, wired pages≈185k, compressor pages≈13k. Swap counters
 are cumulative macOS counters, so the table relies on per-row MPS memory for
 run-local memory evidence.
 
@@ -574,21 +574,21 @@ REPEAT=1 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 scripts/run_apple_silicon_mlx_generation_sweep.sh
 
-# Extended 0.4B / 1.5B MLX long-decode matrix: prompt512 + decode32.
+# Extended 0.4B / 1.5B MLX long-decode matrix: prompt1024 + decode64.
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 DTYPE=fp16 \
-PROMPT_LENGTHS=256,512 \
-DECODE_LENGTHS=16,32 \
-CHUNK_SIZE=128 \
+PROMPT_LENGTHS=1024 \
+DECODE_LENGTHS=64 \
+CHUNK_SIZE=256 \
 REPEAT=1 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 scripts/run_apple_silicon_mlx_generation_sweep.sh
 
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
 DTYPE=fp16 \
-PROMPT_LENGTHS=256,512 \
-DECODE_LENGTHS=16,32 \
-CHUNK_SIZE=128 \
+PROMPT_LENGTHS=1024 \
+DECODE_LENGTHS=64 \
+CHUNK_SIZE=256 \
 REPEAT=1 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 scripts/run_apple_silicon_mlx_generation_sweep.sh
@@ -670,7 +670,7 @@ python scripts/sync_hf_adapter_code.py /path/to/rwkv7-g1d-0.1b-hf
 | M-series 16GB+ | 16GB+ | tiny + 0.1B/0.4B/1.5B HF | fp16 / fp32 | MLX GPU | `scripts/run_apple_silicon_mlx_model_smoke.sh` tiny MLX/Torch recurrent parity, state-cache select, chunked prefill, tokenizer prompt, dynamic-batch state select, 0.1B/0.4B/1.5B full MLX recurrent prefill/generate, optional HF native PyTorch compare, `scripts/mlx_generate.py` reusable text generation, `scripts/run_apple_silicon_mlx_generation_sweep.sh` prompt/decode sweep plus repeat pressure with chunked-prefill checks, `scripts/run_apple_silicon_mlx_session_smoke.sh` prefill-once/session decode equality vs one-shot, and `scripts/run_apple_silicon_mlx_session_batch_smoke.sh` interleaved multi-session equality vs one-shot plus repeat-pressure summary telemetry |
 | M-series 16GB+ | 16GB+ | 0.4B HF | fp32 / fp16 | mps | load + forward + generate + prompt-length sweep through 512 tokens + PEFT LoRA/Trainer/SFT/DPO/GRPO 1-step/2-step smoke + memory note |
 | M-series 16GB+ | 16GB+ | tiny + 0.1B/0.4B/1.5B HF | fp32 native MM8/MM4 | mps | bitsandbytes-free native quant smoke + min-params sweep + packed-footprint ratio + finite forward/generate; 1.5B on 16GB is memory-tight evidence only |
-| M-series 16GB+ | 16GB+ | 1.5B HF | fp16 inference / fp32 LoRA smoke | mps | load/generate + MPS prompt sweep through 512 tokens / decode 8 + MLX prompt512/decode32 + PEFT manual + Trainer/SFT/DPO/GRPO 1/2/3/5/10/12-step + peak memory + finite trainable update |
+| M-series 16GB+ | 16GB+ | 1.5B HF | fp16 inference / fp32 LoRA smoke | mps | load/generate + MPS prompt sweep through 512 tokens / decode 8 + MLX prompt1024/decode64 + PEFT manual + Trainer/SFT/DPO/GRPO 1/2/3/5/10/12-step + peak memory + finite trainable update |
 | M-series Max / Ultra | 64GB+ | 1.5B+ HF | fp16 / bf16 | mps | production-length decode, 12+ step Trainer/TRL rows, peak memory, tok/s |
 
 For every Apple result, include:
@@ -700,7 +700,7 @@ test script.
   production-speed backend. It verifies HF safetensor loading/export, full
   recurrent prefill/decode equations, tokenizer prompt handling/API, state-cache
   select, chunked prefill, dynamic-batch row selection, prefill-once/session
-  decode equality vs one-shot, interleaved multi-session equality vs one-shot with 0.1B/0.4B/1.5B 3-session rows plus 0.4B/1.5B 4-session repeat-pressure summary rows and higher-concurrency 0.4B 6-session / 1.5B 5-session rows, prompt/decode sweeps through 512-token prompts and 32-token decode on 0.4B/1.5B plus repeat pressure rows,
+  decode equality vs one-shot, interleaved multi-session equality vs one-shot with 0.1B/0.4B/1.5B 3-session rows plus 0.4B/1.5B 4-session repeat-pressure summary rows and higher-concurrency 0.4B 6-session / 1.5B 5-session rows, prompt/decode sweeps through 1024-token prompts and 64-token decode on 0.4B/1.5B plus repeat pressure rows,
   0.1B/0.4B/1.5B MLX packed W8/W4 affine quant projection rows, and 0.1B/0.4B/1.5B short greedy decode. Fused
   WKV, Metal fused quant/dequant, still-larger production prompt/decode pressure,
   and production serving integration are still open.
@@ -708,7 +708,7 @@ test script.
   and tiny PEFT LoRA Trainer pass; 0.1B and 0.4B PEFT LoRA backward, HF Trainer,
   TRL SFT, DPO, and GRPO one-step and 2-step smoke pass on a 16GB M5. 1.5B
   fp32 PEFT LoRA manual backward, HF Trainer, and TRL SFT/DPO/GRPO 1/2/3/5/10/12-step
-  smoke now pass. Longer MLX 1.5B decode through 32 tokens now passes; longer production-style training/decode and larger Apple machines
+  smoke now pass. Longer MLX 1.5B decode through 64 tokens now passes; longer production-style training/decode and larger Apple machines
   are still open. Native MM8/MM4 functional/min-params smoke through 1.5B and
   initial MLX recurrent reference smoke plus MLX packed W8/W4 affine projection smoke are present; full MLX/Metal WKV/projection acceleration
   and production quant speed are still open.
@@ -732,11 +732,11 @@ next backend layer:
 ## Next engineering steps
 
 1. Extend 0.4B Apple rows beyond 2 training steps.
-2. Extend 1.5B beyond 12-step Trainer/TRL and prompt512/decode32 MLX sweep to
+2. Extend 1.5B beyond 12-step Trainer/TRL and prompt1024/decode64 MLX sweep to
    longer production-style training/decode and memory-pressure notes.
 3. Extend the initial MLX packed W8/W4 affine quant path beyond the current 1.5B prompt32/decode4 rows to longer prompts/decodes, repeat-pressure rows, memory-pressure notes, and real Metal fused projection/WKV speed paths.
 4. Extend the MLX recurrent reference and `MLXGenerationSession` beyond the current
-   0.1B prompt256/decode8, 0.4B/1.5B prompt512/decode32 matrices, 0.4B 6-session repeat=5, and 1.5B 5-session repeat=2 rows to longer prompt distributions,
+   0.1B prompt256/decode8, 0.4B/1.5B prompt1024/decode64 matrices, 0.4B 6-session repeat=5, and 1.5B 5-session repeat=2 rows to longer prompt distributions,
    stronger memory-pressure telemetry, and longer production-style concurrent session reuse.
 5. Replace the correctness-first MLX recurrent inner loop and affine quantized projection path with fused MLX or Metal WKV-7 + packed W8/W4 dequant kernels.
 6. Decide whether the Metal WKV-7 kernel belongs in this repo as an optional
