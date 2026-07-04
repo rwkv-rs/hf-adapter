@@ -1,13 +1,13 @@
 # coding=utf-8
-"""Runtime compatibility helpers for Blackwell/Triton remote-code loads.
+"""Runtime compatibility helpers for newer CUDA/Triton remote-code loads.
 
-Some early Blackwell images pair PyTorch 2.6-era Inductor/FLA code with newer
-Triton 3.3 wheels.  That combination removed the legacy
+Some early newer-GPU images pair PyTorch 2.6-era Inductor/FLA code with newer
+Triton 3.3 wheels. That combination removed the legacy
 ``triton.compiler.compiler.AttrsDescriptor`` import path while FLA and PyTorch
 still reference it, and the FLA ``sqrelu`` torch.compile path can fail during
-Triton code generation on sm_120.  Keep the workaround local, conservative,
-and opt-out so converted HF model directories can run on RTX 50-series nodes
-without requiring users to patch site-packages by hand.
+Triton code generation on recent architectures. Keep the workaround local,
+conservative, and opt-out so converted HF model directories can run without
+requiring users to patch site-packages by hand.
 """
 from __future__ import annotations
 
@@ -62,8 +62,8 @@ def patch_legacy_attrs_descriptor() -> bool:
             return out
 
         # Triton 3.3's AST path treats attrs as a mapping.  This is best-effort;
-        # the adapter disables the fragile Blackwell torch.compile path by
-        # default, but exposing mapping methods keeps simple imports robust.
+        # the adapter disables fragile torch.compile paths by default, but
+        # exposing mapping methods keeps simple imports robust.
         def items(self):
             return self._attr_dict().items()
 
