@@ -365,6 +365,8 @@ class MLXGenerationSessionBatch:
         *,
         skip_special_tokens: bool = False,
     ) -> "MLXGenerationSessionBatch":
+        if isinstance(prompts, str):
+            raise TypeError("prompts must be a list of strings, not a single string")
         if not prompts:
             raise ValueError("prompts must contain at least one prompt")
         sessions = [
@@ -391,6 +393,8 @@ class MLXGenerationSessionBatch:
             steps = [int(x) for x in tokens_per_session]
             if len(steps) != self.batch_size:
                 raise ValueError(f"expected {self.batch_size} token counts, got {len(steps)}")
+        if any(step < 0 for step in steps):
+            raise ValueError("all token counts must be non-negative")
         outputs = [session.decode(step) for session, step in zip(self.sessions, steps)]
         self.round_count += 1
         return outputs
