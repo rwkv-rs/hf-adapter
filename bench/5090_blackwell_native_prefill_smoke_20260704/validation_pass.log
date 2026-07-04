@@ -1,0 +1,31 @@
++ python tests/smoke_hf_generate.py --model /workspace/models/rwkv7-g1d-0.1b-hf --device cuda --max-new-tokens 4
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+/workspace/venvs/rwkv7-5090/lib/python3.12/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights: 100%|██████████| 399/399 [00:00<00:00, 4752.98it/s]
+[transformers] `use_return_dict` is deprecated! Use `return_dict` instead!
+logits_shape (1, 8, 65536)
+top5 [36786, 308, 3880, 295, 20063]
+forward_sec 13.7863
+generate_fast_token_backend native_graph
+generated_ids_shape (1, 12)
+decoded_BEGIN
+User: Hello!
+
+Assistant: Hello! I'm
+decoded_END
++ python tests/test_hf_api_contract.py --model /workspace/models/rwkv7-g1d-0.1b-hf --device cuda --dtype fp16 --beam-new-tokens 2
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+/workspace/venvs/rwkv7-5090/lib/python3.12/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights: 100%|██████████| 399/399 [00:00<00:00, 4894.53it/s]
+[transformers] `use_return_dict` is deprecated! Use `return_dict` instead!
+generate_fast_token_backend native_graph
+beam_ids [295, 35762]
+PASS
++ python tests/test_fast_prefill_forward.py --model /workspace/models/rwkv7-g1d-0.1b-hf --device cuda --prompt-tokens 32 --gen-tokens 2
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+/workspace/venvs/rwkv7-5090/lib/python3.12/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]Loading weights: 100%|██████████| 399/399 [00:00<00:00, 5003.13it/s]
+FAST PREFILL FORWARD PASS fused_scan=False max_abs=0.062500 min_cos=1.00000000 greedy=True decode_max_abs=0.062500 decode_greedy=True generate_match=True seen=32

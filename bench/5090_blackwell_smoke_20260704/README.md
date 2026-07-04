@@ -1,5 +1,8 @@
 # RTX 5090 Blackwell smoke (2026-07-04)
 
+> Superseded note (2026-07-04): the native prefill pack-unpack blocker documented here has been fixed and revalidated in [`../5090_blackwell_native_prefill_smoke_20260704`](../5090_blackwell_native_prefill_smoke_20260704/README.md). This directory is kept as the original first-smoke record.
+
+
 Purpose: confirm the HF adapter can load and run on a real Blackwell RTX 5090 (`sm_120`) node, and record the current environment caveats before doing any full MATH500 acceptance run on 50-series hardware.
 
 ## Environment
