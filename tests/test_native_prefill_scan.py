@@ -37,6 +37,9 @@ def _build_fake_model_and_packs():
     norm_w = torch.ones(hidden, dtype=torch.float32)
     norm_b = torch.zeros(hidden, dtype=torch.float32)
     head_w = _linear_weight(vocab, hidden)
+    lm_head = torch.nn.Linear(hidden, vocab, bias=False)
+    with torch.no_grad():
+        lm_head.weight.copy_(head_w)
 
     fake_layers = [
         types.SimpleNamespace(attn=types.SimpleNamespace(num_heads=H, head_dim=N, hidden_size=hidden))
@@ -49,7 +52,7 @@ def _build_fake_model_and_packs():
     )
     model = types.SimpleNamespace(
         model=base,
-        lm_head=types.SimpleNamespace(weight=head_w, bias=None),
+        lm_head=lm_head,
     )
 
     packs = []
@@ -85,6 +88,7 @@ def _build_fake_model_and_packs():
         fx_k = torch.rand(hidden, dtype=torch.float32)
         fK = _linear_weight(hidden, hidden)
         fV = _linear_weight(hidden, hidden)
+        RKVw = torch.stack((Rw.t(), Kw.t(), Vw.t())).contiguous()
         packs.append(
             (
                 i,
@@ -122,6 +126,7 @@ def _build_fake_model_and_packs():
                 fx_k,
                 fK,
                 fV,
+                RKVw,
             )
         )
     return native_jit, model, packs

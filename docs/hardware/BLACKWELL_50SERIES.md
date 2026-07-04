@@ -1,3 +1,57 @@
+### 2026-07-04 — RTX 5090(sm_120) HF full smoke matrix 对齐 50-series 支持合约
+
+5090 现在有一键矩阵 artifact: [`bench/5090_blackwell_hf_matrix_20260704`](../../bench/5090_blackwell_hf_matrix_20260704/README.md),由 [`bench/run_5090_hf_validation.sh`](../../bench/run_5090_hf_validation.sh) 生成。它覆盖 Blackwell/50-series 支持合约里当前能在 0.1B HF 模型上验证的项目。
+
+**已通过:**
+- HF `generate` smoke PASS,backend=`native_graph`。
+- HF API contract PASS,beam generate backend=`native_graph`。
+- native prefill forward PASS:`generate_match=True`,seen=32。
+- native/no-FLA `NativeRWKV7ForCausalLM` + HF Trainer + PEFT LoRA PASS:loss `9.3638 -> 0.4192`,trainable params `72/72` updated。
+- dynamic batching + native prefill + native_graph decode smoke PASS,bsz=8,512 decoded tokens。
+- W8/W4 quantized load/generate smoke PASS:W8 footprint 283.4 MB,W4 footprint 242.9 MB。
+- native mm8/mm4 benchmark PASS artifact: [`bench/5090_blackwell_native_quant_20260704`](../../bench/5090_blackwell_native_quant_20260704/README.md)。0.1B e2e decode:mm8 **0.9487× fp16** / footprint 0.8688×,mm4 **0.9903× fp16** / footprint 0.8030×;R/K/V isolated sweep:int8 0.6706×,int4 0.6613× fp16。
+- 0.1B fp16 bsz sweep:bsz1/2/4/8 native_graph decode tok/s = **945.9 / 1346.3 / 2714.4 / 5326.4**。
+- chunked prefill PASS:prompt512,batch1,chunk64/128/256,seq length match,chunk256 达 **13,681.5 tok/s** 且 peak VRAM 421.6 MB。
+- exact-card fused A/B PASS:fused output **1.0723×**,fused recurrent-output **1.1963×**,greedy `32/32`。
+- `rwkv7_hf/kernel_policy.py` 的 Blackwell rule 已记录 RTX 5090,并要求 `triton_compat` remote-code import + 5090 runner artifact 才能声明 5090。
+
+**边界:**这仍不是 5090 full MATH500 avg@64 验收;只是把 5090 的 HF adapter/训练 fallback/量化 smoke/动态 batching/chunked prefill/fused A-B/native mm8-mm4 支持矩阵对齐到 50-series 合约。完整数学验收仍需要正式 MATH500 数据和 acceptance 模型在 5090 上跑 `scripts/run_math500_acceptance.sh`。
+
+### 2026-07-04 — RTX 5090(sm_120) native-prefill/HF smoke 对齐 4090 验证矩阵
+
+5090 首轮 smoke 发现的两个 blocker 已补齐并复测,artifact: [`bench/5090_blackwell_native_prefill_smoke_20260704`](../../bench/5090_blackwell_native_prefill_smoke_20260704/README.md)。
+
+**已修:**
+- `native_jit.prefill` 现在解包当前 41-field pack(含 `RKVw`),修掉 5090 上 `ValueError: too many values to unpack (expected 40)`。
+- 新增随 remote-code 模型一起分发的 `triton_compat.py`,为早期 Torch 2.6 + Triton 3.3 + Blackwell 栈补 legacy `AttrsDescriptor` 路径,并默认给 sm_120 关闭/降级 FLA `torch.compile` sqrelu 问题。
+- convert/sync 脚本已把 `triton_compat.py` 纳入模型目录,不再需要手工 patch site-packages。
+
+**5090 实测通过:**
+- HF `generate` smoke PASS,backend=`native_graph`。
+- HF API contract PASS,beam generate backend=`native_graph`。
+- native prefill forward PASS:`generate_match=True`,seen=32。
+- dynamic batching + native prefill + native_graph decode smoke PASS,bsz=8,512 decoded tokens。
+- W8/W4 quantized load/generate smoke PASS:W8 footprint 283.4 MB,W4 footprint 242.9 MB。
+- 0.1B fp16 bsz sweep:bsz1/2/4/8 native_graph decode tok/s = **945.7 / 1345.6 / 2715.2 / 5338.2**。
+
+**仍不是的东西:**这不是 5090 的 full MATH500 avg@64 验收;只是把 5090 的 HF adapter 可运行性/原生 prefill/量化 smoke 对齐到 4090-style HF smoke 要求。完整数学验收还需要把正式 MATH500 数据和 acceptance 模型放到 5090 后跑 `scripts/run_math500_acceptance.sh`。
+
+### 2026-07-04 — RTX 5090(sm_120) HF adapter smoke:能跑,但需记录环境 workaround
+
+在真实 RTX 5090 32GB 节点补了 HF adapter 运行 smoke,结果已落到 [`bench/5090_blackwell_smoke_20260704`](../../bench/5090_blackwell_smoke_20260704/README.md)。
+
+**环境**:RTX 5090 / driver 610.43.02 / PyTorch `2.6.0a0+ecf3bae40a.nv25.01` / CUDA 12.8 / Triton 3.3.1 / FLA 0.5.1 / Transformers 5.13.0 / bnb 0.49.2。
+
+**结论**:
+- ✅ 0.1B HF adapter 可以在 5090 上 load + generate。
+- ✅ MATH-style smoke 跑通 dynamic batching + deferred verification + deferred text decode,backend 报 `native_graph`。
+- ✅ bsz=8 smoke decode 512 tokens,decode 段约 **522.6 tok/s**。
+- ⚠️ 该节点的 Torch 2.6 + Triton 3.3 + FLA 组合需要 venv 级 `triton_compat_shim` 补 legacy `triton.compiler.compiler.AttrsDescriptor`,同时保留 Triton 3.3 的 `triton.set_allocator`。
+- ⚠️ 需 `TORCH_COMPILE_DISABLE=1` 绕开 Inductor/AttrsDescriptor 代码生成不兼容。
+- ⚠️ native prefill 在这个 0.1B smoke 模型上触发 `ValueError: too many values to unpack (expected 40)`,所以 smoke 用 `--prefill-backend forward --decode-backend forward`。
+
+这不是 MATH500 avg@64 验收数,只是 50 系 Blackwell 真机可运行性证明。完整验收仍以 4090 的 MATH500 acceptance artifact 为准;若要把 5090 纳入正式支持矩阵,下一步是把 Triton/FLA 兼容层和 native prefill 问题固化。
+
 
 ### 2026-07-01 — fused kernel 在 5070 全部跑通(最新 main 16dedd6)
 最新 main 的 fused kernel prototype 在 RTX 5070(sm_120)结果:

@@ -508,6 +508,15 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         ],
         lambda r: r.get("quantization"),
     )
+    native_quant_e2e_decode = latest_by_key(
+        [
+            r
+            for r in rows
+            if r.get("axis") == "native_quant_e2e_decode"
+            and r.get("backend") == "hf_adapter"
+        ],
+        lambda r: r.get("quantization"),
+    )
     quant_rows_all = [r for r in rows if r.get("axis") == "quantization" and r.get("backend") == "hf_adapter"]
     quant_rows_canonical = [r for r in quant_rows_all if is_canonical_quant_model(r)]
     if not quant_rows_canonical:
@@ -1796,6 +1805,25 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
                     f"native {quant_label} R/K/V sweep best block_m={bm} block_k={bk} is "
                     f"{float(speed):.2f}x fp16 ({fused_ms} ms), separate={sep_speed}x; kernel still below fp16"
                 )
+    if native_quant_e2e_decode:
+        for row in native_quant_e2e_decode:
+            mode = str(row.get("quantization") or "")
+            if mode == "none":
+                continue
+            speed = row.get("decode_speed_ratio_vs_fp16")
+            footprint = row.get("footprint_ratio_vs_fp16")
+            cos = row.get("final_logits_cos_vs_fp16")
+            replaced = row.get("replaced_modules")
+            if speed is not None and float(speed) >= 1.0:
+                focus.append(
+                    f"native {mode} e2e decode reaches {float(speed):.2f}x fp16 "
+                    f"with footprint {footprint}x and final_cos={cos} ({replaced} modules); expand to larger models"
+                )
+            elif speed is not None:
+                focus.append(
+                    f"native {mode} e2e decode is {float(speed):.2f}x fp16 "
+                    f"with footprint {footprint}x and final_cos={cos}; memory win but speed still below fp16"
+                )
     if albatross_decode_min is None:
         focus.append("fused backend target tracking needs Albatross decode ratios")
     elif albatross_decode_min < 0.55:
@@ -2221,6 +2249,10 @@ def analyze(rows: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, A
         "native_quant_rkv_sweep": [
             compact(r, ["_lineno", "prototype_backend", "status", "quantization", "dtype", "device", "batch_size", "hidden_size", "layers", "block_m_values", "block_k_values", "block_k_unit", "warmup", "steps", "avg_fp16_baseline_ms", "best_by_speedup_vs_fp16", "best_by_latency", "sample_fp16_weight_mb", "sample_quant_weight_mb", "sample_footprint_ratio", "peak_vram_mb"])
             for r in native_quant_rkv_sweep
+        ],
+        "native_quant_e2e_decode": [
+            compact(r, ["_lineno", "status", "quantization", "dtype", "device", "model_size_label", "batch_size", "prompt_tokens", "decode_tokens", "min_params", "replaced_modules", "module_counts", "model_footprint_mb", "footprint_ratio_vs_fp16", "decode_speed_ratio_vs_fp16", "decode_tokps_total", "decode_ms_per_step", "prompt_logits_cos_vs_fp16", "final_logits_cos_vs_fp16", "same_next_token_as_fp16", "fast_token_backend_effective", "cache_type", "peak_vram_mb"])
+            for r in native_quant_e2e_decode
         ],
         "larger_model_smoke": [
             compact(
@@ -2699,6 +2731,12 @@ def print_text(report: dict[str, Any]) -> None:
     print("\n## native_quant_rkv_sweep")
     if report["native_quant_rkv_sweep"]:
         for row in report["native_quant_rkv_sweep"]:
+            print(json.dumps(row, ensure_ascii=False))
+    else:
+        print("PENDING")
+    print("\n## native_quant_e2e_decode")
+    if report["native_quant_e2e_decode"]:
+        for row in report["native_quant_e2e_decode"]:
             print(json.dumps(row, ensure_ascii=False))
     else:
         print("PENDING")
