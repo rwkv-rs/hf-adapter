@@ -1961,17 +1961,24 @@ the same-shape fp16 baselines (`47.97 tok/s` decode at 0.4B and `27.20 tok/s`
 at 1.5B), these direct broad-threshold rows improve memory (`~0.40x/0.60x` peak
 for 0.4B W4/W8 and `~0.35x/0.57x` for 1.5B W4/W8) but still do not close the
 stable fp16-beating speed gate. Direct grouped session pressure now covers
-0.4B 4-session rounds4,4, 0.4B 6-session rounds8,8 repeat=2, and 1.5B 5-session
-rounds4,4 for W4, plus matching direct W8 pressure rows for 0.4B 6-session
-rounds8,8 repeat=2 and 1.5B 5-session rounds4,4: all keep one-shot
-token/text/seen-token checks passing with grouped fallback `0`. The 0.4B W4
-6-session row records aggregate round min `75.31 tok/s`, peak `466.5 MB`, and
-`metal=10176`; the 1.5B W4 5-session row records aggregate round min
-`27.33 tok/s`, peak `1239.0 MB`, and `metal=3696`. The new direct W8 rows record
-0.4B 6-session aggregate round min `91.71 tok/s`, peak `651.1 MB`,
-`metal=15552`, and 1.5B 5-session aggregate round min `23.45 tok/s`, peak
-`1910.1 MB`, `metal=5136`. Longer end-to-end ratio gates are still required
-before enabling this path by default. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
+0.4B 4-session rounds4,4, 0.4B 6-session rounds8,8 repeat=2, 0.4B 8-session
+rounds8,8 repeat=2, and 1.5B 5-session rounds4,4 / rounds8,8 repeat=2 probes.
+The 0.4B rows keep one-shot token/text/seen-token checks passing with grouped
+fallback `0`: W4 6-session aggregate round min `75.31 tok/s`, peak `466.5 MB`,
+`metal=10176`; W8 6-session aggregate round min `91.71 tok/s`, peak
+`651.1 MB`, `metal=15552`; W4 8-session aggregate round min `97.85 tok/s`, peak
+`505.4 MB`, `metal=17472`; and W8 8-session aggregate round min `91.08 tok/s`,
+peak `690.0 MB`, `metal=17472`. For 1.5B, W4/W8 rounds4,4 direct rows pass
+with aggregate round mins `27.33` / `23.45 tok/s` and peaks `1239.0` /
+`1910.1 MB`. The longer 1.5B rounds8,8 repeat=2 direct path is currently safe
+under sequential scheduling (`19.49` / `18.35 tok/s` aggregate round min for
+W4/W8, peaks `1126.1` / `1797.2 MB`, grouped fallback `0`). A strict compare
+shows 1.5B W8 direct batched still matches sequential and one-shot tokens
+(`26.02` / `25.04 tok/s` aggregate round decode), but 1.5B W4 direct batched
+mismatches one-shot on two synthetic sessions (first mismatch indices `6` and
+`9`, grouped fallback `0`), so the long 1.5B W4 batched direct route remains a
+correctness gap rather than a production path. Longer end-to-end ratio gates are
+still required before enabling this path by default. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
 repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
 `534 MB`, and the higher-concurrency 6-session repeat=3 row reaches min decode
 `34.33` / `27.14 tok/s` with peak `682` / `547 MB`. 1.5B W8/W4
