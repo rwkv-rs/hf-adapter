@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import gc
 import importlib.metadata
 import json
@@ -24,6 +25,25 @@ from common import (  # noqa: E402
 
 
 EXPECTED_FLA_COMMIT = "80e494f6c588e091fc8316b612870df29375c5b8"
+
+
+def reference_backend_context():
+    """Force the clean side to PyTorch when an optional backend is installed.
+
+    The v0.9 reference package has no dispatcher, while the optional v0.10
+    package exposes ``use_rwkv7_backend``. A no-op context keeps this harness
+    shared by both lines. An inherited ``RWKV7_BACKEND=optimized`` must not
+    turn clean-vs-FLA parity into optimized-vs-FLA or break gradient cases
+    because the optional protocol is inference-only.
+    """
+
+    try:
+        from rwkv7_hf.kernel_bridge import use_rwkv7_backend
+    except ModuleNotFoundError as exc:
+        if exc.name != "rwkv7_hf.kernel_bridge":
+            raise
+        return nullcontext()
+    return use_rwkv7_backend("reference")
 
 
 def parse_args():
@@ -337,23 +357,24 @@ def main():
     from rwkv7_hf.configuration_rwkv7 import RWKV7Config
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
 
-    operator = operator_parity(dtype, args.dtype, device, batches, lengths)
+    with reference_backend_context():
+        operator = operator_parity(dtype, args.dtype, device, batches, lengths)
 
-    clean_config = RWKV7Config.from_pretrained(args.model)
-    clean = RWKV7ForCausalLM.from_pretrained(
-        args.model, config=clean_config, dtype=dtype
-    ).to(device).eval()
-    clean_logits = {}
-    with torch.inference_mode():
-        for name, ids in cases.items():
-            clean_logits[name] = clean(input_ids=ids, use_cache=False).logits.cpu()
-        cached_logits, clean_cache = cached_teacher(
-            clean, decode_prompt, decode_continuation
-        )
-        clean_full_decode = clean(input_ids=decode_ids, use_cache=False).logits.cpu()
-        clean_state = clean_states(clean_cache)
-        clean_tokens = greedy(clean, decode_ids, args.decode_tokens)
-    del clean
+        clean_config = RWKV7Config.from_pretrained(args.model)
+        clean = RWKV7ForCausalLM.from_pretrained(
+            args.model, config=clean_config, dtype=dtype
+        ).to(device).eval()
+        clean_logits = {}
+        with torch.inference_mode():
+            for name, ids in cases.items():
+                clean_logits[name] = clean(input_ids=ids, use_cache=False).logits.cpu()
+            cached_logits, clean_cache = cached_teacher(
+                clean, decode_prompt, decode_continuation
+            )
+            clean_full_decode = clean(input_ids=decode_ids, use_cache=False).logits.cpu()
+            clean_state = clean_states(clean_cache)
+            clean_tokens = greedy(clean, decode_ids, args.decode_tokens)
+        del clean
     gc.collect()
     if device.type == "cuda":
         torch.cuda.empty_cache()

@@ -9,7 +9,29 @@ import torch
 FLA_BENCHMARK = Path(__file__).resolve().parents[1] / "benchmarks" / "fla"
 sys.path.insert(0, str(FLA_BENCHMARK))
 
-from compare import metrics, state_metrics, thresholds  # noqa: E402
+from compare import (  # noqa: E402
+    metrics,
+    reference_backend_context,
+    state_metrics,
+    thresholds,
+)
+
+
+def test_reference_backend_context_is_shared_by_reference_and_optional_lines(
+    monkeypatch,
+):
+    try:
+        from rwkv7_hf.kernel_bridge import current_backend_mode
+    except ModuleNotFoundError:
+        with reference_backend_context():
+            pass
+        return
+
+    monkeypatch.setenv("RWKV7_BACKEND", "optimized")
+    assert current_backend_mode() == "optimized"
+    with reference_backend_context():
+        assert current_backend_mode() == "reference"
+    assert current_backend_mode() == "optimized"
 
 
 def test_low_precision_thresholds_match_release_contract():
