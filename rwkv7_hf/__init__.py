@@ -21,6 +21,25 @@ except Exception:  # Keep lightweight cache/unit tests importable with stubs.
     NativeRWKV7ForCausalLM = None
     NativeRWKV7Model = None
 
+try:
+    from .mlx_model import (
+        MLXGenerateOutput,
+        MLXGenerationSession,
+        MLXRWKV7Model,
+        MLXRWKV7State,
+        MLXSessionStepOutput,
+        generate_text_from_hf,
+        load_mlx_generation_session,
+    )
+except Exception:  # Keep imports working when optional MLX/torch deps are absent.
+    MLXGenerateOutput = None
+    MLXGenerationSession = None
+    MLXRWKV7Model = None
+    MLXRWKV7State = None
+    MLXSessionStepOutput = None
+    generate_text_from_hf = None
+    load_mlx_generation_session = None
+
 __all__ = [
     "RWKV7Config",
     "RWKV7ForCausalLM",
@@ -29,4 +48,11 @@ __all__ = [
     "NativeRWKV7Config",
     "NativeRWKV7ForCausalLM",
     "NativeRWKV7Model",
+    "MLXGenerateOutput",
+    "MLXGenerationSession",
+    "MLXRWKV7Model",
+    "MLXRWKV7State",
+    "MLXSessionStepOutput",
+    "generate_text_from_hf",
+    "load_mlx_generation_session",
 ]
