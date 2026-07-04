@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .mlx_bridge import load_selected_hf_tensors_as_mlx, mlx_array_nbytes, require_mlx, summarize_mlx_arrays
-from .mlx_quant import MLXQuantizedLinear
+from .mlx_quant import MLXQuantizedLinear, metal_quant_available
 from .mlx_wkv import metal_wkv_available, wkv_update
 
 
@@ -532,6 +532,7 @@ class MLXRWKV7Model:
             "wkv_backend_last": self.wkv_backend_last,
             "wkv_backend_counts": dict(self.wkv_backend_counts),
             "wkv_metal_available": metal_wkv_available(),
+            "quant_metal_available": metal_quant_available(),
             **summarize_mlx_arrays(self.arrays),
         }
         if self.quantized_linears:
