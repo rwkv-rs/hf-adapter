@@ -160,6 +160,8 @@ def test_apple_smoke_script_static() -> None:
     assert "auto_metal_max_rows" in quant_text
     assert "mm8_group_matmul_metal" in quant_text
     assert "mm4_group_matmul_metal" in quant_text
+    assert "mm8_group_matmul_metal_inputs" in quant_text
+    assert "mm4_group_matmul_metal_inputs" in quant_text
     assert "pack_mlx_mm8_group" in quant_text
     assert 'RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS", 4096' in quant_text
     assert "@lru_cache(maxsize=1)" in quant_text
@@ -168,6 +170,8 @@ def test_apple_smoke_script_static() -> None:
     assert "auto_mm8_metal_batch_exactness_guard" in model_text
     assert "RWKV7_MLX_SESSION_AUTO_W8_STABLE" in model_text
     assert "RWKV7_MLX_SESSION_STABLE_ARGMAX_TOLERANCE" in model_text
+    assert "RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION" in model_text
+    assert "group_rkv_quant_projection_counts" in model_text
     assert "auto_metal_max_rows" in model_text
     quant_bench_script = ROOT / "scripts/mlx_quant_projection_bench.py"
     assert quant_bench_script.exists()
