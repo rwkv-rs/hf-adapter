@@ -258,10 +258,8 @@ def mm8_gemv_triton_sk(x, w_u8, mx, rx, my, ry, *, block_m=64, block_n=128):
 
 # --------------------------------------------------------------------------- #
 # Model integration: an int8 (mm8) nn.Linear drop-in + size-gated replacement.
-# The speed crossover (launch-bound -> memory-bound) sits around weight.numel()
-# ~= 8-16M (hidden ~3-4K). Below it int8 loses; above it int8 wins ~1.5-1.7x.
-# So quantize_model_mm8 only swaps linears above a param threshold, leaving the
-# small per-layer projections in fp16. lm_head (huge M) always qualifies.
+# The size gate limits blast radius; exact-card rows decide whether dequant-GEMV
+# beats fp16 for a given shape.
 # --------------------------------------------------------------------------- #
 
 class MM8Linear(torch.nn.Module):
@@ -301,11 +299,10 @@ class MM8Linear(torch.nn.Module):
 def quantize_model_mm8(model, *, min_params: int = 8_000_000, fused: bool = True) -> int:
     """Swap eligible ``nn.Linear`` modules for :class:`MM8Linear` (size-gated).
 
-    Only linears with ``weight.numel() >= min_params`` are quantized. Default
-    ``8M`` is the launch->memory-bound crossover, so on small models only the
-    head is swapped; on 7B+ (hidden >= 4096) the per-layer projections qualify
-    too. Set ``fused=False`` to force the portable reference path. Returns the
-    number of modules replaced.
+    Only linears with ``weight.numel() >= min_params`` are quantized. The default
+    ``8M`` keeps small projections in fp16; benchmark the exact card before
+    treating larger replacements as a speed path. Set ``fused=False`` to force
+    the portable reference path. Returns the number of modules replaced.
     """
     if torch is None:
         raise RuntimeError("quantize_model_mm8 requires torch")
