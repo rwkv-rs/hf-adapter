@@ -13,6 +13,7 @@ DECODE_LENGTHS="${DECODE_LENGTHS:-2,4}"
 SEED_TEXT="${SEED_TEXT:-User: Apple Silicon RWKV generation sweep. Assistant: }"
 CHUNK_SIZE="${CHUNK_SIZE:-0}"
 CHUNK_TOLERANCE="${CHUNK_TOLERANCE:-0.2}"
+REPEAT="${REPEAT:-1}"
 
 rwkv7_require_model "${MODEL}"
 
@@ -29,6 +30,7 @@ args=(
   --dtype "${DTYPE}"
   --chunk-size "${CHUNK_SIZE}"
   --chunk-tolerance "${CHUNK_TOLERANCE}"
+  --repeat "${REPEAT}"
   --results "${RESULTS}"
   --require-mlx
 )
