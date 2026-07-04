@@ -1906,7 +1906,11 @@ prompt4096/decode256 gate with chunk1024 still passes chunked/full prefill
 also passes chunked/full prefill (`max_abs=0.0`): fp16 reaches `27.97` /
 `26.02 tok/s`, while W4 auto reaches `22.77` / `21.20 tok/s` with peak
 `1677 MB` (`0.54x` fp16) and `metal=811525`, or about `0.81x` fp16 for both
-prefill and decode. This strengthens the long-context memory evidence but also
+prefill and decode. A direct grouped R/K/V W4 row extends 1.5B to
+prompt8192/decode1024 with chunk2048 and `quant_min_params=4000000`: it keeps
+chunked/full prefill `max_abs=0.0`, records `21.09` / `20.48 tok/s`, peak
+`1074.6 MB`, quantized-linear `metal=2507781`, grouped `metal=417792`, and
+grouped fallback `0`. This strengthens long-decode and memory evidence but also
 shows W4 does not yet stably beat fp16 at longer prompt/decode sizes; stable
 W8/W4 speed `>=1.0x` fp16 across sizes and modes still requires deeper fused
 kernels. The isolated MLX quant projection microbench
@@ -1965,10 +1969,13 @@ that matrix while keeping chunked/full prefill `max_abs=0.0`: 0.4B with the
 broader `quant_min_params=500000` threshold records `52.05` / `45.05 tok/s`,
 peak `364.7 MB`, grouped `metal=202752`, fallback `0`; 1.5B with
 `quant_min_params=4000000` records `21.14` / `19.98 tok/s`, peak `1074.6 MB`,
-grouped `metal=202752`, fallback `0`. A 0.4B `quant_min_params=4000000` control
-row records `52.24` / `47.81 tok/s`, peak `514.9 MB`, and grouped fallback
-`202752`, confirming that the lower threshold is needed to include 0.4B R/K/V
-in the direct grouped path. Direct grouped session pressure now covers
+grouped `metal=202752`, fallback `0`. The same 1.5B direct grouped W4 route now
+also passes prompt8192/decode1024 with chunked/full prefill `max_abs=0.0`,
+`21.09` / `20.48 tok/s`, peak `1074.6 MB`, grouped `metal=417792`, fallback
+`0`, and quantized-linear `metal=2507781`. A 0.4B `quant_min_params=4000000`
+control row records `52.24` / `47.81 tok/s`, peak `514.9 MB`, and grouped
+fallback `202752`, confirming that the lower threshold is needed to include
+0.4B R/K/V in the direct grouped path. Direct grouped session pressure now covers
 0.4B 4-session rounds4,4, 0.4B 6-session rounds8,8 repeat=2, 0.4B 8-session
 rounds8,8 repeat=2, and 1.5B 5-session rounds4,4 / rounds8,8 repeat=2 probes.
 The 0.4B rows keep one-shot token/text/seen-token checks passing with grouped
