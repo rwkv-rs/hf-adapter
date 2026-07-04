@@ -55,12 +55,14 @@ prompt 16/64/128/256/512 sweep plus MPS prompt512/new8 and MLX prompt1024/decode
 Trainer/TRL PEFT LoRA 1/2/3/5/10/12-step smoke, plus native MM8/MM4
 Apple quant min-params smoke for tiny, 0.1B, 0.4B, and 1.5B model paths with
 packed-footprint telemetry, an initial MLX packed W8/W4 affine quant path
-for 0.1B/0.4B/1.5B projection smoke,
+for 0.1B/0.4B/1.5B projection smoke, the first opt-in MLX/Metal fused
+W8/W4 dequant-projection seam (`--quant-backend metal`) with short
+0.1B/0.4B/1.5B rows,
 an optional MLX tensor bridge/export smoke, an initial MLX recurrent
 reference backend smoke, and the first optional MLX/Metal WKV custom-kernel
 seam (`rwkv7_hf.mlx_wkv`, `--wkv-backend metal|auto`) with 0.1B/0.4B/1.5B
-smoke rows. The Metal path is an opt-in seam, not yet the final production
-fused WKV/projection/packed-quant speed path. `scripts/mlx_generate.py`,
+smoke rows. The Metal paths are opt-in seams, not yet the final production
+long-context fused WKV/projection/packed-quant speed path. `scripts/mlx_generate.py`,
 `scripts/mlx_session_smoke.py`, `scripts/mlx_session_batch_smoke.py`,
 `scripts/mlx_generation_sweep.py`, `rwkv7_hf.mlx_model.generate_text_from_hf`,
 `rwkv7_hf.mlx_model.MLXGenerationSession`, and
