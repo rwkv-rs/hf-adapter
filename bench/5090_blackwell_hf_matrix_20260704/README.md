@@ -23,6 +23,7 @@ This is the full one-command RTX 5090 HF smoke matrix produced by [`../run_5090_
 | Native no-FLA Trainer + PEFT LoRA | `native_trainer_smoke.log` | PASS, loss history: [9.3638, 3.9694, 1.0814, 0.5251, 0.5898, 0.4192]; trainable params `72/72` updated |
 | W8 quantized inference | `quant_8bit.log` | PASS, footprint 283.4 MB, peak VRAM 554.1 MB |
 | W4 quantized inference | `quant_4bit.log` | PASS, footprint 242.9 MB, peak VRAM 517.5 MB |
+| Native mm8/mm4 quant benchmark | [`../5090_blackwell_native_quant_20260704`](../5090_blackwell_native_quant_20260704/README.md) | PASS evidence; mm8 0.9487x fp16, mm4 0.9903x fp16 on 0.1B e2e decode |
 | Batch sweep | `results_5090.jsonl`, `batch_sweep.log` | PASS, bsz=1/2/4/8 |
 | Chunked prefill | `chunked_prefill.log`, `results_5090.jsonl` | PASS, full + chunk sizes 64/128/256 |
 | Fused output A/B | `fused_output_ab.log`, `results_5090.jsonl` | PASS, speedup 1.0723x, greedy 32/32 |
@@ -71,4 +72,4 @@ Dataset: two synthetic MATH-style rows, rollout 4, bsz 8, max_new_tokens 64. Thi
 
 ## Scope note
 
-This artifact closes the RTX 5090 HF adapter smoke/support matrix currently required for 50-series work: remote-code import, HF generate/API, native prefill, native_graph decode, dynamic batching, chunked prefill, W8/W4 functional quantized inference, native/no-FLA Trainer smoke, and exact-card fused-kernel A/B rows. It does **not** claim full MATH500 avg@64 acceptance on 5090; the current final MATH500 acceptance evidence remains the 4090 full-run artifacts until the real MATH500 dataset and acceptance model are rerun on 5090.
+This artifact closes the RTX 5090 HF adapter smoke/support matrix currently required for 50-series work: remote-code import, HF generate/API, native prefill, native_graph decode, dynamic batching, chunked prefill, W8/W4 functional quantized inference, native mm8/mm4 benchmark rows, native/no-FLA Trainer smoke, and exact-card fused-kernel A/B rows. It does **not** claim full MATH500 avg@64 acceptance on 5090; the current final MATH500 acceptance evidence remains the 4090 full-run artifacts until the real MATH500 dataset and acceptance model are rerun on 5090.
