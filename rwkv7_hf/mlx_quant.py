@@ -47,6 +47,7 @@ def _weight_dtype(weight: Any):
     return getattr(weight, "dtype", None)
 
 
+@lru_cache(maxsize=1)
 def metal_quant_available() -> bool:
     """Return whether MLX custom Metal kernels are available for quant matmul."""
 
@@ -72,10 +73,10 @@ def _env_int(name: str, default: int) -> int:
 def _select_auto_backend(bits: int, rows: int) -> str:
     """Choose a safe MLX quant projection backend for ``backend="auto"``.
 
-    The current one-output-per-thread Metal projection is fastest for recurrent
-    decode-sized batches but loses to the affine MLX decomposition at larger
-    row counts.  W4/Metal is batch-exact in the current session gates, so auto
-    uses it for small batches and falls back to affine for larger batches.
+    W4/Metal is batch-exact in the current session and long prompt/decode gates,
+    and the real generation rows favor the fused path over the affine fallback,
+    so auto uses Metal for normal prefill/decode row counts and only falls back
+    to affine above the configurable row limit.
 
     W8/Metal still has a known session-batch exactness gap.  Keep W8 auto on
     the affine path by default; developers can opt into row-1 Metal while
@@ -85,7 +86,7 @@ def _select_auto_backend(bits: int, rows: int) -> str:
     if not metal_quant_available():
         return "affine"
     if int(bits) == 4:
-        max_rows = _env_int("RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS", 16)
+        max_rows = _env_int("RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS", 4096)
     elif int(bits) == 8:
         max_rows = _env_int("RWKV7_MLX_QUANT_AUTO_W8_METAL_MAX_ROWS", 0)
     else:
@@ -177,6 +178,7 @@ class MLXQuantizedLinear:
 
     weight: MLXMM8Weight | MLXMM4Weight
     backend: str = "affine"
+    auto_metal_max_rows: int = 0
     last_backend: str | None = None
     backend_counts: dict[str, int] = field(default_factory=lambda: {"reference": 0, "affine": 0, "metal": 0})
 
@@ -203,18 +205,24 @@ class MLXQuantizedLinear:
         backend = (backend or "affine").lower().strip()
         if backend not in {"reference", "affine", "metal", "auto"}:
             raise ValueError(f"unsupported MLX quant backend {backend!r}; expected reference, affine, metal, or auto")
-        layout = "metal" if backend in {"metal", "auto"} else "standard"
+        auto_metal_max_rows = 0
+        if backend == "auto" and metal_quant_available():
+            if int(bits) == 4:
+                auto_metal_max_rows = _env_int("RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS", 4096)
+            elif int(bits) == 8:
+                auto_metal_max_rows = _env_int("RWKV7_MLX_QUANT_AUTO_W8_METAL_MAX_ROWS", 0)
+        layout = "metal" if backend == "metal" or auto_metal_max_rows > 0 else "standard"
         if bits == 8:
-            return cls(quantize_mlx_mm8(dense_weight.T, layout=layout), backend=backend)
+            return cls(quantize_mlx_mm8(dense_weight.T, layout=layout), backend=backend, auto_metal_max_rows=auto_metal_max_rows)
         if bits == 4:
-            return cls(quantize_mlx_mm4(dense_weight.T, layout=layout), backend=backend)
+            return cls(quantize_mlx_mm4(dense_weight.T, layout=layout), backend=backend, auto_metal_max_rows=auto_metal_max_rows)
         raise ValueError(f"unsupported MLX quant bits {bits}; expected 8 or 4")
 
     def _selected_backend(self, x: Any) -> str:
         backend = (self.backend or "affine").lower().strip()
         if backend == "auto":
             rows = int(x.reshape(-1, self.in_features).shape[0])
-            return _select_auto_backend(self.bits, rows)
+            return "metal" if self.auto_metal_max_rows > 0 and rows <= self.auto_metal_max_rows else "affine"
         if backend in {"reference", "affine", "metal"}:
             return backend
         raise ValueError(f"unsupported MLX quant backend {self.backend!r}; expected reference, affine, metal, or auto")
@@ -233,6 +241,7 @@ class MLXQuantizedLinear:
         return {
             "bits": self.bits,
             "backend": self.backend,
+            "auto_metal_max_rows": int(self.auto_metal_max_rows),
             "last_backend": self.last_backend,
             "backend_counts": dict(self.backend_counts),
             "in_features": self.in_features,
