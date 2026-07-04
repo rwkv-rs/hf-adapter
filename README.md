@@ -96,8 +96,12 @@ localize current W8/W4 mismatch cases with optional logit tracing (including the
 0.4B W8 near-tie: token 11 vs 261, max-abs logit delta≈0.03125, and the 1.5B
 W4 direct token-index 6/9 gap). An explicit `SESSION_BACKEND=batched_stable`
 W8 row restores strict token equality on 0.4B 6-session pressure and still
-passes the W8 stable regression; W4 direct auto now has a guarded 1.5B 5-session
-rounds8,8 repeat=2 pass row with one-shot checks, `auto_mm4_metal_batch_exactness_guard`,
+passes the W8 stable regression; W4 direct auto now has guarded 1.5B 5-session
+rounds8,8 repeat=2 and repeat=4 pass rows with one-shot checks,
+`auto_mm4_metal_batch_exactness_guard`, grouped fallback 0, and the repeat=4 row
+recording aggregate round min≈12.77 tok/s at peak≈1126MB; the matching
+broader-threshold 0.4B W4 direct grouped batched pressure row now reaches
+12 sessions, rounds8,8, repeat=3, aggregate round min≈93.92 tok/s, peak≈584MB,
 and grouped fallback 0,
 and a new conservative `--quant-backend auto` route with backend-count telemetry
 (W4 normal prefill/decode rows choose Metal, W8 defaults to affine unless W8
