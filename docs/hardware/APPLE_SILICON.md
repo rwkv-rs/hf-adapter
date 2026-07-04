@@ -17,7 +17,7 @@ performance layer.
 | HF API coverage | partial | Load + forward + `generate(use_cache=True)` through the native backend; tiny native backward and Trainer paths pass; real 0.1B and 0.4B PEFT LoRA, HF Trainer, and TRL SFT/DPO/GRPO paths on MPS are covered. 0.4B also has fp32/fp16 generation length sweep rows and 2-step Trainer/TRL rows. 1.5B has fp16 inference/sweep rows through prompt 512 / decode 8 plus fp32 PEFT LoRA manual, HF Trainer, and TRL SFT/DPO/GRPO 1/2/3/5/10-step rows with finite trainable updates. |
 | Quantization | functional native smoke | `bitsandbytes` W8/W4 is CUDA-oriented and is not the Apple path. Native MM8/MM4 config-driven module replacement now runs on MPS for tiny and 0.1B smoke rows with packed-footprint telemetry; production-speed Apple quant still needs MLX/Metal kernels. |
 | Production speed | not claimed | PyTorch MPS is a compatibility path, not the final Apple performance backend. |
-| MLX recurrent backend / Metal backend | initial MLX recurrent reference, Metal TODO | Optional `.[mlx]` install, `rwkv7_hf.mlx_bridge`, `rwkv7_hf.mlx_model`, `scripts/convert_hf_to_mlx.py`, `scripts/run_apple_silicon_mlx_smoke.sh`, and `scripts/run_apple_silicon_mlx_model_smoke.sh` now validate HF safetensor → MLX array/export, tiny torch/MLX recurrent parity, MLX state-cache select/chunked-prefill behavior, tokenizer-backed prompt smoke, dynamic-batch state select, and 0.1B/0.4B/1.5B MLX recurrent prefill/generate rows. Fused quant and Metal WKV kernels are still TODO. |
+| MLX recurrent backend / Metal backend | initial MLX recurrent reference, Metal TODO | Optional `.[mlx]` install, `rwkv7_hf.mlx_bridge`, `rwkv7_hf.mlx_model`, `scripts/convert_hf_to_mlx.py`, `scripts/mlx_generate.py`, `scripts/run_apple_silicon_mlx_smoke.sh`, and `scripts/run_apple_silicon_mlx_model_smoke.sh` now validate HF safetensor → MLX array/export, tiny torch/MLX recurrent parity, MLX state-cache select/chunked-prefill behavior, tokenizer-backed prompt smoke, dynamic-batch state select, reusable MLX text generate, and 0.1B/0.4B/1.5B MLX recurrent prefill/generate rows. Fused quant and Metal WKV kernels are still TODO. |
 
 ## Why the Apple path is native / no-FLA by default
 
@@ -58,6 +58,7 @@ Local smoke on 2026-07-04:
 | MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `rwkv7-g1d-0.1b-hf` tokenizer prompt + dynamic-batch MLX recurrent smoke | PASS (`prompt="The quick brown fox"`, fp16, prompt=4, generated=2, prefill≈132.05 tok/s, decode≈167.99 tok/s, dynamic select max_abs=0.046875, argmax match) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `rwkv7-g1d-0.4b-hf` tokenizer prompt + dynamic-batch MLX recurrent smoke | PASS (fp16 full 795 tensors, bytes=901535744, prompt=4, generated=1, prefill≈62.95 tok/s, decode≈83.74 tok/s, dynamic select max_abs=0.03125, argmax match) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `rwkv7-g1g-1.5b-hf` tokenizer prompt + dynamic-batch MLX recurrent smoke | PASS (fp16 full 795 tensors, bytes=3054809088, prompt=4, generated=1, prefill≈10.38 tok/s, decode≈29.33 tok/s, dynamic select max_abs=0.046875, argmax match) |
+| MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `scripts/mlx_generate.py` reusable text-generate API | PASS (`rwkv7-g1d-0.1b-hf` 8 tokens decode≈167.62 tok/s; `rwkv7-g1d-0.4b-hf` 8 tokens decode≈74.86 tok/s; `rwkv7-g1g-1.5b-hf` 4 tokens decode≈32.54 tok/s) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.4b-hf` load + forward + `generate()` | PASS (`elapsed_s=0.4699`, 11 prompt tokens + 1 generated token, MPS driver memory≈2171MiB) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.4b-hf` fp16 load + forward + `generate()` | PASS (`elapsed_s=1.2837`, 11 prompt tokens + 1 generated token, MPS driver memory≈1083MiB) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.4b-hf` fp32/fp16 prompt-length sweep | PASS (fp32 prompt tokens 16/64/128; fp16 prompt tokens 16/64/128/256/512; 4 generated tokens; fp16 peak driver_mem≈1219MiB, fp32 peak driver_mem≈2203MiB) |
@@ -333,6 +334,14 @@ SKIP_TINY=1 \
 RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_mlx_model_smoke.sh
 
+# Reusable tokenizer-integrated MLX text generation API / CLI.
+python scripts/mlx_generate.py \
+  /path/to/rwkv7-g1d-0.1b-hf \
+  --prompt "The quick brown fox" \
+  --max-new-tokens 8 \
+  --dtype fp16 \
+  --results bench/results_apple_silicon_m5_20260704.jsonl
+
 # Optional stronger real-checkpoint parity against HF native PyTorch on CPU.
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
 MODEL_SIZE_LABEL=0.1b \
@@ -347,7 +356,7 @@ RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_mlx_model_smoke.sh
 ```
 
-The Trainer wrapper calls `tests/test_apple_silicon_trainer_smoke.py` directly. The 0.1B/0.4B/1.5B model-training, TRL SFT, and TRL RL wrappers call `tests/test_apple_silicon_model_training_smoke.py`. The generation sweep wrapper calls `tests/test_apple_silicon_model_sweep.py`. The native quant wrapper calls `tests/test_apple_silicon_quant_smoke.py`. The MLX bridge wrapper calls `tests/test_apple_silicon_mlx_smoke.py`; the full recurrent MLX wrapper calls `tests/test_apple_silicon_mlx_model_smoke.py`; and the HF→MLX exporter is `scripts/convert_hf_to_mlx.py`.
+The Trainer wrapper calls `tests/test_apple_silicon_trainer_smoke.py` directly. The 0.1B/0.4B/1.5B model-training, TRL SFT, and TRL RL wrappers call `tests/test_apple_silicon_model_training_smoke.py`. The generation sweep wrapper calls `tests/test_apple_silicon_model_sweep.py`. The native quant wrapper calls `tests/test_apple_silicon_quant_smoke.py`. The MLX bridge wrapper calls `tests/test_apple_silicon_mlx_smoke.py`; the full recurrent MLX wrapper calls `tests/test_apple_silicon_mlx_model_smoke.py`; the reusable MLX generation CLI is `scripts/mlx_generate.py`; and the HF→MLX exporter is `scripts/convert_hf_to_mlx.py`.
 
 Recorded rows: [`../../bench/results_apple_silicon_m5_20260704.jsonl`](../../bench/results_apple_silicon_m5_20260704.jsonl).
 
@@ -463,6 +472,12 @@ SKIP_TINY=1 \
 DYNAMIC_BATCH=1 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 scripts/run_apple_silicon_mlx_model_smoke.sh
+
+python scripts/mlx_generate.py \
+  /path/to/rwkv7-g1d-0.1b-hf \
+  --prompt "The quick brown fox" \
+  --max-new-tokens 8 \
+  --dtype fp16
 ```
 
 Tiny native training + optional PEFT LoRA training smoke:
@@ -491,7 +506,7 @@ python scripts/sync_hf_adapter_code.py /path/to/rwkv7-g1d-0.1b-hf
 | M1 / M2 Air | 16GB | tiny native | fp32 | mps or cpu | `APPLE SILICON SMOKE PASS` |
 | M1 / M2 Air | 16GB | 0.1B HF | fp32 | mps | load + forward + 2-token generate + PEFT LoRA/Trainer/SFT/DPO/GRPO smoke |
 | M-series 16GB+ | 16GB+ | tiny + selected 0.1B HF tensors | fp16 | MLX GPU | `scripts/run_apple_silicon_mlx_smoke.sh` tiny save/load/matmul + HF projection matmul, and optional `scripts/convert_hf_to_mlx.py` export manifest |
-| M-series 16GB+ | 16GB+ | tiny + 0.1B/0.4B/1.5B HF | fp16 / fp32 | MLX GPU | `scripts/run_apple_silicon_mlx_model_smoke.sh` tiny MLX/Torch recurrent parity, state-cache select, chunked prefill, tokenizer prompt, dynamic-batch state select, 0.1B/0.4B/1.5B full MLX recurrent prefill/generate, optional HF native PyTorch compare |
+| M-series 16GB+ | 16GB+ | tiny + 0.1B/0.4B/1.5B HF | fp16 / fp32 | MLX GPU | `scripts/run_apple_silicon_mlx_model_smoke.sh` tiny MLX/Torch recurrent parity, state-cache select, chunked prefill, tokenizer prompt, dynamic-batch state select, 0.1B/0.4B/1.5B full MLX recurrent prefill/generate, optional HF native PyTorch compare, and `scripts/mlx_generate.py` reusable text generation |
 | M-series 16GB+ | 16GB+ | 0.4B HF | fp32 / fp16 | mps | load + forward + generate + prompt-length sweep through 512 tokens + PEFT LoRA/Trainer/SFT/DPO/GRPO 1-step/2-step smoke + memory note |
 | M-series 16GB+ | 16GB+ | tiny + 0.1B HF | fp32 native MM8/MM4 | mps | bitsandbytes-free native quant smoke + packed-footprint ratio + finite forward/generate |
 | M-series 16GB+ | 16GB+ | 1.5B HF | fp16 inference / fp32 LoRA smoke | mps | load/generate + prompt sweep through 512 tokens / decode 8 + PEFT manual + Trainer/SFT/DPO/GRPO 1/2/3/5/10-step + peak memory + finite trainable update |
@@ -514,7 +529,7 @@ For every Apple result, include:
   Apple W8/W4 still needs MLX/Metal packing and fused kernels.
 - The MLX path is now a correctness-first recurrent reference backend, not a
   production-speed backend. It verifies HF safetensor loading/export, full
-  recurrent prefill/decode equations, tokenizer prompt handling, state-cache
+  recurrent prefill/decode equations, tokenizer prompt handling/API, state-cache
   select, chunked prefill, dynamic-batch row selection, and 0.1B/0.4B/1.5B
   short greedy decode. Fused WKV, fused quant/dequant, longer prompts/decodes,
   and production serving integration are still open.
@@ -549,8 +564,8 @@ next backend layer:
    decode, >10-step Trainer/TRL, and memory-pressure notes.
 3. Extend Apple native MM8/MM4 from 0.1B lm_head smoke to larger models and more projection groups.
 4. Extend the MLX recurrent reference from short 0.1B/0.4B/1.5B prompt rows to
-   longer prompt/decode sweeps, memory-pressure telemetry, and a reusable
-   tokenizer-integrated generate API.
+   longer prompt/decode sweeps, memory-pressure telemetry, and package-level
+   serving helpers around the reusable tokenizer-integrated generate API.
 5. Replace the correctness-first MLX recurrent inner loop with a fused MLX or
    Metal WKV-7 kernel, then add packed W8/W4 dequant/fused kernels.
 6. Decide whether the Metal WKV-7 kernel belongs in this repo as an optional
