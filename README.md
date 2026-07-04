@@ -51,7 +51,7 @@ M5 / 16GB MPS lane covers tiny native generate/train, 0.1B HF
 load/forward/generate plus PEFT/Trainer/TRL smokes, and 0.4B HF
 fp32/fp16 load/forward/short-generate, prompt-length sweep, and PEFT/Trainer/TRL
 smokes. It also includes 1.5B rows: fp16 load/forward/short-generate, fp16
-prompt 16/64/128/256/512 sweep plus MPS prompt512/new8 and MLX prompt512/decode32, and fp32 manual plus
+prompt 16/64/128/256/512 sweep plus MPS prompt512/new8 and MLX prompt1024/decode64, and fp32 manual plus
 Trainer/TRL PEFT LoRA 1/2/3/5/10/12-step smoke, plus native MM8/MM4
 Apple quant min-params smoke for tiny, 0.1B, 0.4B, and 1.5B model paths with
 packed-footprint telemetry, an initial MLX packed W8/W4 affine quant path
@@ -67,7 +67,7 @@ tokenizer-integrated MLX text generation, serving-style prefill-once/session-dec
 interleaved multi-session decode with 0.1B/0.4B/1.5B 3-session telemetry,
 0.4B/1.5B 4-session repeat-pressure telemetry, and higher-concurrency
 0.4B 6-session / 1.5B 5-session rows, plus prompt/decode length sweep entry
-points including 0.1B prompt256/decode8, 0.4B/1.5B prompt512/decode32
+points including 0.1B prompt256/decode8, 0.4B/1.5B prompt1024/decode64
 matrices, and optional `--quantization mm8/mm4` MLX packed-quant rows.
 
 ## Layout
