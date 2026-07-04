@@ -181,9 +181,11 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 
 ### 9A. Apple Silicon / MPS / MLX
 
-- 运行 [`scripts/run_apple_silicon_smoke.sh`](scripts/run_apple_silicon_smoke.sh) 填 0.1B Apple JSONL 行;
-- 运行并记录 tiny native MPS forward/backward 测试;
-- 运行并记录 `RWKV7_NATIVE_MODEL=1` + PEFT LoRA MPS smoke;
+已完成首批 M5/16GB 证据:0.1B load/forward/generate、tiny native train、tiny PEFT/Trainer、0.1B 真模型 PEFT LoRA backward + HF Trainer。继续补:
+
+- 运行并记录 0.1B TRL SFT / DPO 可行性 smoke;
+- 运行并记录 0.4B Apple load/generate JSONL 行(16GB 先短上下文,必要时 fp16);
+- 补 M-series Pro/Max/Ultra 的长上下文、显存峰值、tok/s 行;
 - 评估 RafaelUI Metal WKV7 / MLX 路线是否做 sibling backend;
 - Apple W8/W4 不走 bitsandbytes,需要 MLX/Metal packed quant。
 
