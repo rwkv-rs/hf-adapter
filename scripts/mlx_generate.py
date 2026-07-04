@@ -29,6 +29,9 @@ def main() -> int:
     ap.add_argument("--max-new-tokens", type=int, default=8)
     ap.add_argument("--dtype", default="fp16", choices=["keep", "fp32", "fp16", "bf16"])
     ap.add_argument("--skip-special-tokens", action="store_true")
+    ap.add_argument("--quantization", default="none", choices=["none", "mm8", "mm4"], help="Optional MLX packed W8/W4 projection path.")
+    ap.add_argument("--quant-min-params", type=int, default=8_000_000)
+    ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference"])
     ap.add_argument("--require-mlx", action="store_true")
     ap.add_argument("--json-only", action="store_true")
     ap.add_argument("--results", default="", help="Optional JSONL file to append a generation result row.")
@@ -42,6 +45,9 @@ def main() -> int:
             "platform": platform.platform(),
             "machine": platform.machine(),
             "model": Path(args.model).name,
+            "quantization": args.quantization,
+            "quant_min_params": int(args.quant_min_params),
+            "quant_backend": args.quant_backend,
         }
         print(json.dumps(row, ensure_ascii=False))
         append_result(args.results, row)
@@ -54,12 +60,18 @@ def main() -> int:
         dtype=args.dtype,
         max_new_tokens=int(args.max_new_tokens),
         skip_special_tokens=bool(args.skip_special_tokens),
+        quantization=args.quantization,
+        quant_min_params=int(args.quant_min_params),
+        quant_backend=args.quant_backend,
     )
     row = {
         "axis": "mlx_generate",
         "status": "pass",
         "model": Path(args.model).name,
         "dtype": args.dtype,
+        "quantization": args.quantization,
+        "quant_min_params": int(args.quant_min_params),
+        "quant_backend": args.quant_backend,
         "prompt_preview": args.prompt[:80],
         "text": output.text,
         **output.telemetry(),
