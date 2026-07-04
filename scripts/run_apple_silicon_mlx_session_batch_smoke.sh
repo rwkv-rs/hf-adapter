@@ -11,7 +11,9 @@ DTYPE="${DTYPE:-fp16}"
 PROMPT_A="${PROMPT_A:-The quick brown fox}"
 PROMPT_B="${PROMPT_B:-User: Apple Silicon RWKV test. Assistant:}"
 PROMPT_C="${PROMPT_C:-}"
+PROMPT_D="${PROMPT_D:-}"
 ROUNDS="${ROUNDS:-2,2}"
+REPEAT="${REPEAT:-1}"
 
 rwkv7_require_model "${MODEL}"
 
@@ -25,12 +27,16 @@ args=(
   --prompt "${PROMPT_A}"
   --prompt "${PROMPT_B}"
   --rounds "${ROUNDS}"
+  --repeat "${REPEAT}"
   --dtype "${DTYPE}"
   --results "${RESULTS}"
   --require-mlx
 )
 if [[ -n "${PROMPT_C}" ]]; then
   args+=(--prompt "${PROMPT_C}")
+fi
+if [[ -n "${PROMPT_D}" ]]; then
+  args+=(--prompt "${PROMPT_D}")
 fi
 if [[ "${JSON_ONLY:-0}" == "1" ]]; then
   args+=(--json-only)
