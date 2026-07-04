@@ -31,8 +31,8 @@ layout routing.
 The model still uses ordinary `torch.nn.functional.linear` and PyTorch matrix
 multiplication. To make FP16 scores independent of how an evaluation or
 training framework regroups the same examples, `modeling_rwkv7.py` tiles batch
-and time into a fixed 128-row linear shape. Padding rows are discarded before
-the recurrent boundary; `ops_rwkv7.py` remains the direct batched equation.
+and time into a fixed 128-row linear shape and `ops_rwkv7.py` evaluates the
+direct recurrence independently per sample. Linear padding rows are discarded.
 This changes neither the RWKV equations nor checkpoint keys and has no
 device-specific route, environment variable, compiled extension, or custom
 kernel.
