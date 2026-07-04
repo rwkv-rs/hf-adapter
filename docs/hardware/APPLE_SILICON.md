@@ -3,8 +3,9 @@
 This document tracks the HF adapter work needed for Apple Silicon. It is a
 separate hardware-adaptation lane from the CUDA / Albatross performance route:
 CUDA fused kernels remain the production-speed target for NVIDIA cards, while
-Apple Silicon uses the FLA-free native PyTorch path today and should grow a
-Metal/MLX backend later.
+Apple Silicon uses the FLA-free native PyTorch path today plus an initial
+optional MLX tensor bridge. Full recurrent MLX/Metal kernels remain the next
+Apple performance layer.
 
 ## Current status
 
@@ -16,7 +17,7 @@ Metal/MLX backend later.
 | HF API coverage | partial | Load + forward + `generate(use_cache=True)` through the native backend; tiny native backward and Trainer paths pass; real 0.1B and 0.4B PEFT LoRA, HF Trainer, and TRL SFT/DPO/GRPO paths on MPS are covered. 0.4B also has fp32/fp16 generation length sweep rows and 2-step Trainer/TRL rows. 1.5B has fp16 inference/sweep rows through prompt 512 / decode 8 plus fp32 PEFT LoRA manual, HF Trainer, and TRL SFT/DPO/GRPO 1/2/3/5/10-step rows with finite trainable updates. |
 | Quantization | functional native smoke | `bitsandbytes` W8/W4 is CUDA-oriented and is not the Apple path. Native MM8/MM4 config-driven module replacement now runs on MPS for tiny and 0.1B smoke rows with packed-footprint telemetry; production-speed Apple quant still needs MLX/Metal kernels. |
 | Production speed | not claimed | PyTorch MPS is a compatibility path, not the final Apple performance backend. |
-| MLX / Metal backend | TODO | See RafaelUI references below. |
+| MLX bridge / Metal backend | initial MLX bridge, Metal TODO | Optional `.[mlx]` install, `rwkv7_hf.mlx_bridge`, `scripts/convert_hf_to_mlx.py`, and `scripts/run_apple_silicon_mlx_smoke.sh` now validate HF safetensor → MLX array/export and a real 0.1B projection matmul. Full RWKV recurrent forward, state cache, fused quant, and Metal WKV kernels are still TODO. |
 
 ## Why the Apple path is native / no-FLA by default
 
@@ -47,6 +48,9 @@ Local smoke on 2026-07-04:
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.1b-hf` load + forward + `generate()` | PASS (`elapsed_s=0.2406`, 11 prompt tokens + 2 generated tokens) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | tiny native MM8/MM4 quant smoke | PASS (config-driven from_pretrained; MM8 footprint ratio=0.391615, MM4 footprint ratio=0.267734; decode backend=eager) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.1b-hf` native MM8/MM4 quant smoke | PASS (lm_head replacement; MM8 footprint ratio=0.252635, MM4 footprint ratio=0.127635; 1-token generate) |
+| MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | tiny MLX tensor save/load + matmul smoke | PASS (`axis=apple_silicon_mlx_tiny`, `elapsed_s=0.032803`, output shape `[1, 24]`) |
+| MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `rwkv7-g1d-0.1b-hf` HF safetensor → MLX projection matmul | PASS (`axis=apple_silicon_mlx_projection_smoke`, tensor `model.layers.0.attn.r_proj.weight`, fp16 `[1, 768]`, selected tensor bytes=1179648) |
+| MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `rwkv7-g1d-0.1b-hf` selected HF safetensor → MLX safetensors export | PASS (`axis=mlx_hf_export`, tensor count=1, fp16 bytes=1179648, manifest `mlx_manifest.json`) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.4b-hf` load + forward + `generate()` | PASS (`elapsed_s=0.4699`, 11 prompt tokens + 1 generated token, MPS driver memory≈2171MiB) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.4b-hf` fp16 load + forward + `generate()` | PASS (`elapsed_s=1.2837`, 11 prompt tokens + 1 generated token, MPS driver memory≈1083MiB) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.4b-hf` fp32/fp16 prompt-length sweep | PASS (fp32 prompt tokens 16/64/128; fp16 prompt tokens 16/64/128/256/512; 4 generated tokens; fp16 peak driver_mem≈1219MiB, fp32 peak driver_mem≈2203MiB) |
@@ -263,9 +267,30 @@ MODEL_SIZE_LABEL=0.1b \
 DEVICE=auto DTYPE=fp32 QUANTIZATIONS=mm8,mm4 \
 RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_quant_smoke.sh
+
+# Apple MLX bridge, tiny-only.
+DTYPE=fp16 \
+RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+  scripts/run_apple_silicon_mlx_smoke.sh
+
+# Apple MLX bridge on one real 0.1B projection tensor.
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+MODEL_SIZE_LABEL=0.1b \
+DTYPE=fp16 \
+RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+  scripts/run_apple_silicon_mlx_smoke.sh
+
+# Export selected HF safetensors into an MLX-readable bundle.
+python scripts/convert_hf_to_mlx.py \
+  /path/to/rwkv7-g1d-0.1b-hf \
+  /tmp/rwkv7-g1d-0.1b-mlx \
+  --dtype fp16 \
+  --include model.layers.0.attn.r_proj.weight \
+  --copy-metadata \
+  --results bench/results_apple_silicon_m5_20260704.jsonl
 ```
 
-The Trainer wrapper calls `tests/test_apple_silicon_trainer_smoke.py` directly. The 0.1B/0.4B/1.5B model-training, TRL SFT, and TRL RL wrappers call `tests/test_apple_silicon_model_training_smoke.py`. The generation sweep wrapper calls `tests/test_apple_silicon_model_sweep.py`. The native quant wrapper calls `tests/test_apple_silicon_quant_smoke.py`.
+The Trainer wrapper calls `tests/test_apple_silicon_trainer_smoke.py` directly. The 0.1B/0.4B/1.5B model-training, TRL SFT, and TRL RL wrappers call `tests/test_apple_silicon_model_training_smoke.py`. The generation sweep wrapper calls `tests/test_apple_silicon_model_sweep.py`. The native quant wrapper calls `tests/test_apple_silicon_quant_smoke.py`. The MLX wrapper calls `tests/test_apple_silicon_mlx_smoke.py`, and the HF→MLX exporter is `scripts/convert_hf_to_mlx.py`.
 
 Recorded rows: [`../../bench/results_apple_silicon_m5_20260704.jsonl`](../../bench/results_apple_silicon_m5_20260704.jsonl).
 
@@ -281,6 +306,13 @@ source .venv-apple-torch/bin/activate
 python -m pip install -U pip setuptools wheel
 python -m pip install -e .
 python -m pip install accelerate
+```
+
+For MLX bridge/export validation on Apple Silicon, install the optional MLX
+extra:
+
+```bash
+python -m pip install -e '.[mlx]'
 ```
 
 If `pip install -e .` is not desired, the lightweight fallback is:
@@ -334,6 +366,27 @@ MAX_NEW_TOKENS=2 \
 scripts/run_apple_silicon_smoke.sh
 ```
 
+MLX bridge smoke, safe tiny row plus optional converted-model projection row:
+
+```bash
+DTYPE=fp16 \
+RESULTS=bench/results_apple_silicon_mlx.jsonl \
+scripts/run_apple_silicon_mlx_smoke.sh
+
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+MODEL_SIZE_LABEL=0.1b \
+DTYPE=fp16 \
+RESULTS=bench/results_apple_silicon_mlx.jsonl \
+scripts/run_apple_silicon_mlx_smoke.sh
+
+python scripts/convert_hf_to_mlx.py \
+  /path/to/rwkv7-g1d-0.1b-hf \
+  /tmp/rwkv7-g1d-0.1b-mlx \
+  --dtype fp16 \
+  --include model.layers.0.attn.r_proj.weight \
+  --copy-metadata
+```
+
 Tiny native training + optional PEFT LoRA training smoke:
 
 ```bash
@@ -359,6 +412,7 @@ python scripts/sync_hf_adapter_code.py /path/to/rwkv7-g1d-0.1b-hf
 |---|---:|---|---|---|---|
 | M1 / M2 Air | 16GB | tiny native | fp32 | mps or cpu | `APPLE SILICON SMOKE PASS` |
 | M1 / M2 Air | 16GB | 0.1B HF | fp32 | mps | load + forward + 2-token generate + PEFT LoRA/Trainer/SFT/DPO/GRPO smoke |
+| M-series 16GB+ | 16GB+ | tiny + selected 0.1B HF tensors | fp16 | MLX GPU | `scripts/run_apple_silicon_mlx_smoke.sh` tiny save/load/matmul + HF projection matmul, and optional `scripts/convert_hf_to_mlx.py` export manifest |
 | M-series 16GB+ | 16GB+ | 0.4B HF | fp32 / fp16 | mps | load + forward + generate + prompt-length sweep through 512 tokens + PEFT LoRA/Trainer/SFT/DPO/GRPO 1-step/2-step smoke + memory note |
 | M-series 16GB+ | 16GB+ | tiny + 0.1B HF | fp32 native MM8/MM4 | mps | bitsandbytes-free native quant smoke + packed-footprint ratio + finite forward/generate |
 | M-series 16GB+ | 16GB+ | 1.5B HF | fp16 inference / fp32 LoRA smoke | mps | load/generate + prompt sweep through 512 tokens / decode 8 + PEFT manual + Trainer/SFT/DPO/GRPO 1/2/3/5/10-step + peak memory + finite trainable update |
@@ -379,12 +433,17 @@ For every Apple result, include:
 - `bitsandbytes` quantization is not an Apple path. Native MM8/MM4 now has
   an MPS functional smoke path and packed-footprint telemetry, but production
   Apple W8/W4 still needs MLX/Metal packing and fused kernels.
+- The MLX path is currently a bridge/export and projection-matmul proof, not a
+  full RWKV recurrent inference backend. It verifies selected HF safetensors can
+  become MLX arrays/bundles; full state cache, sequence prefill/decode, and
+  WKV/quant kernels are still open.
 - Long-running full-size training on MPS is not claimed yet. Tiny native Trainer
   and tiny PEFT LoRA Trainer pass; 0.1B and 0.4B PEFT LoRA backward, HF Trainer,
   TRL SFT, DPO, and GRPO one-step and 2-step smoke pass on a 16GB M5. 1.5B
   fp32 PEFT LoRA manual backward, HF Trainer, and TRL SFT/DPO/GRPO 1/2/3/5/10-step
   smoke now pass. Longer 1.5B decode beyond 8 tokens, >10-step training, and larger Apple machines
-  are still open. Native MM8/MM4 functional smoke is present; MLX/Metal acceleration and production quant speed are still open.
+  are still open. Native MM8/MM4 functional smoke and initial MLX bridge/export
+  smoke are present; full MLX/Metal acceleration and production quant speed are still open.
 - 1.5B fp16 PEFT LoRA on the 16GB M5 produced non-finite gradient/update values
   in one local trial. The training smoke now rejects non-finite or zero
   trainable-gradient/update totals instead of recording false-positive rows.
@@ -408,6 +467,8 @@ next backend layer:
 2. Extend 1.5B beyond 10-step Trainer/TRL and prompt512/new8 sweep to longer
    decode, >10-step Trainer/TRL, and memory-pressure notes.
 3. Extend Apple native MM8/MM4 from 0.1B lm_head smoke to larger models and more projection groups.
-4. Prototype MLX weight conversion for RWKV-7 HF directories.
+4. Extend the initial MLX tensor bridge into a full recurrent forward path:
+   full-weight export, state-cache layout, chunked prefill/decode parity, and
+   MLX-native generate smoke.
 5. Decide whether the Metal WKV-7 kernel belongs in this repo as an optional
    backend or in a sibling `rwkv7-mlx` / `rwkv7-metal` package.

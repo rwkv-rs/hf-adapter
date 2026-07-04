@@ -52,7 +52,8 @@ fp32/fp16 load/forward/short-generate, prompt-length sweep, and PEFT/Trainer/TRL
 smokes. It also includes 1.5B rows: fp16 load/forward/short-generate, fp16
 prompt 16/64/128/256/512 sweep plus prompt512/new8, and fp32 manual plus
 Trainer/TRL PEFT LoRA 1/2/3/5/10-step smoke, plus native MM8/MM4
-Apple quant smoke for tiny and 0.1B model paths with packed-footprint telemetry.
+Apple quant smoke for tiny and 0.1B model paths with packed-footprint telemetry,
+and an initial optional MLX tensor bridge/export smoke.
 
 ## Layout
 
@@ -61,9 +62,11 @@ rwkv7_hf/
   configuration_rwkv7.py
   modeling_rwkv7.py
   tokenization_rwkv7.py
+  mlx_bridge.py
 scripts/
   convert_rwkv7_to_hf.py
   batch_convert_rwkv7_to_hf.py
+  convert_hf_to_mlx.py
   run_hf_acceptance.sh
   run_hf_training_matrix.sh
   run_zero_training_smoke.sh
@@ -76,6 +79,7 @@ scripts/
   run_apple_silicon_model_rl_smoke.sh
   run_apple_silicon_model_sweep.sh
   run_apple_silicon_quant_smoke.sh
+  run_apple_silicon_mlx_smoke.sh
 tests/
   smoke_hf_generate.py
   test_official_alignment.py
@@ -100,6 +104,7 @@ tests/
   test_native_bnb_quant_smoke.py
   test_device_map_generate.py
   test_quantized_inference.py
+  test_apple_silicon_mlx_smoke.py
   test_result_tools.py
 bench/
   bench_speed.py
