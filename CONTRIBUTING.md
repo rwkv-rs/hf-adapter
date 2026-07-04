@@ -16,8 +16,9 @@ for shared helper code or documentation.
 3. For performance or hardware work, read [`BENCHMARK.md`](BENCHMARK.md).
 4. For the current V100 training/quant/ZeRO evidence, read [`docs/validation/V100_HF_VALIDATION.md`](docs/validation/V100_HF_VALIDATION.md).
 5. For kernel/performance experiments, also read [`docs/performance/FUSED_BACKEND.md`](docs/performance/FUSED_BACKEND.md).
-6. For Apple Silicon work, read [`docs/hardware/APPLE_SILICON.md`](docs/hardware/APPLE_SILICON.md).
-7. Pick an issue, comment that you are working on it, then open a focused PR.
+6. For backend or hardware work, read [`docs/BACKENDS.md`](docs/BACKENDS.md).
+7. For Apple Silicon work, read [`docs/hardware/APPLE_SILICON.md`](docs/hardware/APPLE_SILICON.md).
+8. Pick an issue, comment that you are working on it, then open a focused PR.
 
 ## Current issue map
 
@@ -56,6 +57,14 @@ Examples:
 
 Avoid large PRs that mix unrelated tasks such as docs, kernels, training, and
 serving changes at the same time.
+
+## Backend boundary rule
+
+Cards are validation rows, not code branches. Keep exact card/chip names in
+docs, tests, scripts, benchmark JSONL, and `rwkv7_hf/kernel_policy.py`. Core
+model code should branch on capabilities such as backend availability,
+`device.type`, dtype support, graph-capture support, or the normalized policy
+family. See [`docs/BACKENDS.md`](docs/BACKENDS.md) for the full contract.
 
 ## Local setup
 
