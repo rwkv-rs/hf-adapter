@@ -114,9 +114,11 @@ launch for the three existing R/K/V packed weights without duplicating them into
 a grouped cache; `RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE=packed` keeps the
 older prepacked A/B path. Initial 0.4B/1.5B W4 and W8 rows show positive
 prefill/decode movement with grouped hits and zero fallbacks; the direct path
-now has W4 and W8 prompt512/decode16 plus broader-threshold
-prompt2048/decode128 rows, 0.4B 8-session grouped pressure, and 1.5B longer
-rounds8,8 session probes. Grouped fallback remains 0 in these rows; 1.5B W8
+now has W4 and W8 prompt512/decode16, broader-threshold prompt2048/decode128
+rows, new W4 prompt4096/decode256 rows for 0.4B/1.5B (chunked/full prefill
+`max_abs=0.0`, grouped fallback 0 on the broader-threshold rows), 0.4B 8-session
+grouped pressure, and 1.5B longer rounds8,8 session probes. Grouped fallback
+remains 0 in these rows; 1.5B W8
 batched matches one-shot, while 1.5B W4 batched still has a documented
 correctness gap. `SESSION_BACKEND=auto` now protects W4/Metal with
 `auto_mm4_metal_batch_exactness_guard` and uses the sequential safe path until

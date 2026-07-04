@@ -1960,7 +1960,15 @@ W8 records `20.47` / `19.78 tok/s`, peak `1745.6 MB`, `metal=101376`. Against
 the same-shape fp16 baselines (`47.97 tok/s` decode at 0.4B and `27.20 tok/s`
 at 1.5B), these direct broad-threshold rows improve memory (`~0.40x/0.60x` peak
 for 0.4B W4/W8 and `~0.35x/0.57x` for 1.5B W4/W8) but still do not close the
-stable fp16-beating speed gate. Direct grouped session pressure now covers
+stable fp16-beating speed gate. New direct W4 prompt4096/decode256 rows extend
+that matrix while keeping chunked/full prefill `max_abs=0.0`: 0.4B with the
+broader `quant_min_params=500000` threshold records `52.05` / `45.05 tok/s`,
+peak `364.7 MB`, grouped `metal=202752`, fallback `0`; 1.5B with
+`quant_min_params=4000000` records `21.14` / `19.98 tok/s`, peak `1074.6 MB`,
+grouped `metal=202752`, fallback `0`. A 0.4B `quant_min_params=4000000` control
+row records `52.24` / `47.81 tok/s`, peak `514.9 MB`, and grouped fallback
+`202752`, confirming that the lower threshold is needed to include 0.4B R/K/V
+in the direct grouped path. Direct grouped session pressure now covers
 0.4B 4-session rounds4,4, 0.4B 6-session rounds8,8 repeat=2, 0.4B 8-session
 rounds8,8 repeat=2, and 1.5B 5-session rounds4,4 / rounds8,8 repeat=2 probes.
 The 0.4B rows keep one-shot token/text/seen-token checks passing with grouped
