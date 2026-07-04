@@ -101,7 +101,7 @@ Metal is explicitly enabled; `RWKV7_MLX_SESSION_AUTO_W8_STABLE=1` opts W8/Metal
 auto into the stable policy), plus prompt/decode
 length sweep entry points including 0.1B prompt256/decode8,
 0.4B prompt4096/decode256 plus 1.5B prompt8192/decode512 matrices, and optional `--quantization mm8/mm4`
-MLX packed-quant rows, plus an isolated MLX quant projection microbench that records dense/affine/Metal/auto speed ratios before deeper WKV+quant fusion.
+MLX packed-quant rows, plus isolated and grouped MLX quant projection microbench rows that record dense/affine/Metal/auto speed ratios before deeper WKV+quant fusion.
 
 ## Layout
 
