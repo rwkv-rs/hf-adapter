@@ -365,6 +365,17 @@ REPEAT=1 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_generation_sweep.sh
 
+# Longer 1.5B matrix; close memory-heavy apps first on 16GB machines.
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+MODEL_SIZE_LABEL=1.5b \
+DTYPE=fp16 \
+PROMPT_LENGTHS=128,256 \
+DECODE_LENGTHS=4,8 \
+CHUNK_SIZE=64 \
+REPEAT=1 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
 # Serving-shaped MLX session smoke: prefill once, decode in chunks, compare with one-shot.
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
 DTYPE=fp16 \
