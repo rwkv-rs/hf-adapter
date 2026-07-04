@@ -15,6 +15,7 @@ Contributor status and roadmap docs:
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): how to pick an issue, run card validation, report environment/results, and prepare focused PRs.
 - [`HF_STATUS.md`](HF_STATUS.md): what is already done, current evidence, hardware/card adaptation status, and production-readiness gaps.
 - [`HF_TODO.md`](HF_TODO.md): prioritized HF-only TODO list for contributors, including large-model training, ZeRO resume, one-click acceptance scripts, card validation, and productionization tasks.
+- [`docs/BACKENDS.md`](docs/BACKENDS.md): backend boundaries and rules that keep card-specific validation out of core model code.
 - [`docs/reference/HF_CRITERIA.md`](docs/reference/HF_CRITERIA.md): high-level HF acceptance criteria and optimization rules.
 - [`BENCHMARK.md`](BENCHMARK.md): numeric evidence and benchmark contract.
 - [`docs/validation/A100_HF_VALIDATION.md`](docs/validation/A100_HF_VALIDATION.md): latest A100 40GB HF training/quant/ZeRO validation matrix.
