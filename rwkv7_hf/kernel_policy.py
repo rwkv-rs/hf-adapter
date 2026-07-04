@@ -230,15 +230,15 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     ),
     "blackwell": GPUAdaptationRule(
         family="blackwell",
-        cards=("RTX 5070 Laptop", "RTX 5080/5090", "RTX 50-series"),
-        status="touched; 5070 Laptop rows exist",
-        default_stance="prefer native/no-FLA fallback when FLA kernels fail on 50-series",
+        cards=("RTX 5070 Laptop", "RTX 5090", "RTX 5080/5090", "RTX 50-series"),
+        status="touched; 5070 Laptop rows and RTX 5090 HF/native-prefill/native-trainer rows exist",
+        default_stance="prefer native/no-FLA fallback when FLA kernels fail on 50-series; apply Blackwell Triton/torch.compile compatibility for early sm_120 stacks",
         default_on=("fast_cache", "fused_recurrent_output", "fused_output"),
         default_off=("fused_output_project", "projection/LoRA fusions", "fused_prefill_scan by default"),
         required_functional=COMMON_FUNCTIONAL_SMOKES
-        + ("native_model no-FLA training smoke", "bnb W8/W4 functional inference"),
+        + ("native_model no-FLA training smoke", "bnb W8/W4 functional inference", "triton_compat remote-code import"),
         required_benchmarks=COMMON_PERF_BENCHMARKS
-        + ("50-series FLA compatibility row", "native/no-FLA fallback row"),
+        + ("50-series FLA compatibility row", "native/no-FLA fallback row", "RTX 5090 HF validation runner artifact when claiming 5090"),
         quant_rule="microbench wins are insufficient; require end-to-end decode and quality rows",
         promotion_rule="promote only fusions with exact-card greedy match and min bsz speedup >= 1.0x",
     ),
@@ -395,7 +395,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_output=True,
             fused_prefill_scan=False,
             output_project_block_m=32,
-            notes="RTX 50/Blackwell: prefer native/no-FLA compatibility smokes; keep unvalidated projection/LoRA fusions off",
+            notes="RTX 50/Blackwell: use triton_compat for early sm_120 stacks, prefer native/no-FLA smokes, keep unvalidated projection/LoRA fusions off",
         )
     return KernelPolicy(profile=profile)
 

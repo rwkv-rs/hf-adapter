@@ -1,5 +1,7 @@
 # RTX 5090 Blackwell native-prefill validation (2026-07-04)
 
+> Superseded note (2026-07-04): the broader RTX 5090 matrix, including native/no-FLA Trainer smoke, now lives in [`../5090_blackwell_hf_matrix_20260704`](../5090_blackwell_hf_matrix_20260704/README.md). This directory remains the first native-prefill fix artifact.
+
 This artifact upgrades the earlier 5090 smoke from forward-prefill-only to the same HF-native route used by the 4090/Ada validation style: standard HF load/generate, HF API contract, native prefill, native-graph decode, dynamic batching, and W8/W4 quantized load smoke.
 
 ## Environment

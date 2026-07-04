@@ -21,6 +21,7 @@ def test_gpu_family_classification() -> None:
         ("NVIDIA GeForce RTX 4090", (8, 9), "ada"),
         ("NVIDIA H100 SXM", (9, 0), "hopper"),
         ("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0), "blackwell"),
+        ("NVIDIA GeForce RTX 5090", (12, 0), "blackwell"),
         ("AMD Instinct MI300X", None, "amd_hip"),
     ]
     for name, capability, family in cases:
@@ -44,10 +45,11 @@ def test_policy_defaults_are_conservative() -> None:
     assert ada.fused_recurrent_output
     assert not ada.fused_projection
 
-    blackwell = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0)))
+    blackwell = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 5090", (12, 0)))
     assert blackwell.fused_output
     assert blackwell.fused_recurrent_output
     assert not blackwell.fused_projection
+    assert "triton_compat" in blackwell.notes
 
 
 def test_every_policy_family_has_an_adaptation_rule() -> None:
@@ -62,6 +64,7 @@ def test_every_policy_family_has_an_adaptation_rule() -> None:
         classify_gpu("NVIDIA GeForce RTX 4090", (8, 9)),
         classify_gpu("NVIDIA H100 SXM", (9, 0)),
         classify_gpu("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0)),
+        classify_gpu("NVIDIA GeForce RTX 5090", (12, 0)),
         classify_gpu("AMD Instinct MI300X", None, is_hip=True),
     ]
     for profile in cases:
