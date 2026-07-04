@@ -410,7 +410,7 @@ def _native_prefill_fused_wavg_lora_requested() -> bool:
 def _native_prefill_fused_wavg_lora_max_m() -> int:
     """Maximum flattened rows for prefill WAVG LoRA before falling back.
 
-    The first RTX 4090 probe is profitable for `B*T=512` but slower for
+    Initial card-local probes were profitable for `B*T=512` but slower for
     `B*T=2048`, so the opt-in path defaults to the small-prefill shape until an
     exact-card sweep proves a larger tile.
     """
