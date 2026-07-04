@@ -19,7 +19,7 @@ This file records the A100 40GB extension for issue #68 after the initial 0.1B A
 Notes:
 
 - All training rows use PEFT LoRA trainable parameters through the HF Trainer / TRL harnesses and assert finite loss plus a non-zero trainable-parameter delta.
-- ZeRO3 base training smoke passes for all four sizes on 2 x A100 40GB. ZeRO3 checkpoint resume remains a follow-up: a direct ZeRO3 resume attempt reproduced a DeepSpeed/PyTorch dtype mismatch in `all_gather_into_tensor` during checkpoint epilogue.
+- ZeRO3 base training smoke passes for all four sizes on 2 x A100 40GB. ZeRO3 checkpoint resume remains an **A100-specific** follow-up: a direct ZeRO3 resume attempt reproduced a DeepSpeed/PyTorch dtype mismatch in `all_gather_into_tensor` during checkpoint epilogue. (0.1B native-path ZeRO3 resume passes on 2×V100 — see `docs/validation/V100_HF_VALIDATION.md`; that fix does not address this A100 dtype mismatch.)
 - A100 80GB was not available in the current cluster. This pass records A100 40GB evidence only.
 - Quantized W8/W4 rows reduce memory for all four sizes. Their decode-speed fields are marked interim pending the native-fused packed-quant / tensor-core-aware kernel work; generic bitsandbytes decode is still slower than fp16/native-graph.
 
@@ -232,6 +232,6 @@ After this validation pass, `bench/results.jsonl` contains 134 A100 rows:
 Remaining A100-specific gaps after this pass:
 
 - A100 80GB validation is not available on the current cluster.
-- ZeRO3 checkpoint resume needs a DeepSpeed/PyTorch dtype-mismatch fix.
+- ZeRO3 checkpoint resume needs a DeepSpeed/PyTorch dtype-mismatch fix (A100-specific; 0.1B native-path resume passes on 2×V100 — see `docs/validation/V100_HF_VALIDATION.md`).
 - Quantized decode needs fused/native W8/W4 kernels to meet the "not slower than fp16" target; current W8/W4 speed rows are interim.
 - Longer production training sweeps remain useful, but the requested larger-model smoke, batch sweep, quantized functional/memory evidence, interim quantized speed telemetry, HF checkpoint resume, ZeRO base, and ZeRO2 resume evidence is now present for A100 40GB.
