@@ -430,6 +430,27 @@ class MLXGenerationSessionBatch:
             return "auto_mm8_metal_batch_exactness_guard"
         return None
 
+    def _stable_argmax(self, logits, *, tolerance: float):
+        """Argmax with a deterministic low-margin tie policy for batched W8 bring-up.
+
+        MLX/Metal W8 batched logits can differ from the one-row path by a few
+        fp16 ulps.  When the top-2 margin is within ``tolerance``, choose the
+        lower token id to mirror MLX's observed exact-tie greedy behavior.
+        """
+
+        mx = _mx()
+        scores = logits[:, -1, :].astype(mx.float32)
+        greedy = mx.argmax(scores, axis=-1).astype(mx.int32)
+        tol = float(tolerance)
+        if tol <= 0:
+            return greedy
+        top2_idx = mx.argpartition(-scores, kth=2, axis=-1)[:, :2].astype(mx.int32)
+        top2_vals = mx.take_along_axis(scores, top2_idx, axis=-1)
+        margins = mx.max(top2_vals, axis=-1) - mx.min(top2_vals, axis=-1)
+        low_margin = margins <= tol
+        low_token = mx.min(top2_idx, axis=-1).astype(mx.int32)
+        return mx.where(low_margin, low_token, greedy).astype(mx.int32)
+
     def _stack_state(self) -> tuple[MLXRWKV7State, list[int]]:
         mx = _mx()
         seen_tokens = [int(session.state.seen_tokens) for session in self.sessions]
@@ -460,7 +481,7 @@ class MLXGenerationSessionBatch:
             split.append(row)
         return split
 
-    def _decode_round_batched(self, tokens_per_session: int) -> list[MLXSessionStepOutput]:
+    def _decode_round_batched(self, tokens_per_session: int, *, stable_argmax_tolerance: float = 0.0) -> list[MLXSessionStepOutput]:
         mx = _mx()
         n = int(tokens_per_session)
         if n <= 0:
@@ -469,14 +490,14 @@ class MLXGenerationSessionBatch:
         prior_seen = [int(session.state.seen_tokens) for session in self.sessions]
         stacked_state, _ = self._stack_state()
         logits = mx.concatenate([session.logits for session in self.sessions], axis=0)
-        next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
+        next_token = self._stable_argmax(logits, tolerance=stable_argmax_tolerance)
         generated = []
 
         t0 = time.perf_counter()
         for _ in range(n):
             generated.append(next_token)
             logits, stacked_state = self.model.decode_step(next_token, stacked_state)
-            next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
+            next_token = self._stable_argmax(logits, tolerance=stable_argmax_tolerance)
         out = mx.stack(generated, axis=1)
         mx.eval(out, logits, stacked_state.v_first, *stacked_state.recurrent_state, *stacked_state.attn_x_prev, *stacked_state.ffn_x_prev)
         elapsed = time.perf_counter() - t0
@@ -502,8 +523,12 @@ class MLXGenerationSessionBatch:
             )
         self.round_decode_s.append(float(elapsed))
         self.round_generated_tokens.append(int(n * self.batch_size))
-        self.round_backends.append("batched")
-        self.round_backend_reasons.append("equal_positive_round")
+        self.round_backends.append("batched_stable" if stable_argmax_tolerance > 0 else "batched")
+        self.round_backend_reasons.append(
+            f"equal_positive_round_stable_argmax_tol_{stable_argmax_tolerance:g}"
+            if stable_argmax_tolerance > 0
+            else "equal_positive_round"
+        )
         return outputs
 
     def decode_round(
@@ -516,30 +541,33 @@ class MLXGenerationSessionBatch:
 
         ``backend="sequential"`` preserves the historical per-session loop.
         ``backend="batched"`` requires equal positive token counts and decodes
-        all sessions as one MLX batch.  ``backend="auto"`` uses the batched path
-        when all sessions request the same positive number of tokens and falls
-        back to the sequential path for heterogeneous or zero-token rounds, plus
-        W8/Metal until its long batched-session exactness gap is closed.
+        all sessions as one MLX batch.  ``backend="batched_stable"`` adds a
+        low-margin stable-argmax policy for W8/Metal exactness bring-up.
+        ``backend="auto"`` uses the batched path when all sessions request the
+        same positive number of tokens and falls back to the sequential path for
+        heterogeneous or zero-token rounds, plus W8/Metal until its long
+        batched-session exactness gap is closed.
         """
 
         steps = self._normalize_steps(tokens_per_session)
         selected_backend = (backend or "sequential").lower().strip()
-        if selected_backend not in {"sequential", "batched", "auto"}:
-            raise ValueError(f"unsupported MLX session backend {backend!r}; expected sequential, batched, or auto")
+        if selected_backend not in {"sequential", "batched", "batched_stable", "auto"}:
+            raise ValueError(f"unsupported MLX session backend {backend!r}; expected sequential, batched, batched_stable, or auto")
 
         if selected_backend == "sequential":
             outputs = self._decode_round_sequential(steps, reason="requested")
         elif len(set(steps)) == 1 and steps[0] > 0 and (
-            selected_backend == "batched" or self._auto_batch_disabled_reason() is None
+            selected_backend in {"batched", "batched_stable"} or self._auto_batch_disabled_reason() is None
         ):
-            outputs = self._decode_round_batched(steps[0])
+            tol = 0.015625 if selected_backend == "batched_stable" else 0.0
+            outputs = self._decode_round_batched(steps[0], stable_argmax_tolerance=tol)
         elif selected_backend == "auto":
             reason = self._auto_batch_disabled_reason()
             if reason is None:
                 reason = "heterogeneous_or_zero_round"
             outputs = self._decode_round_sequential(steps, reason=reason)
         else:
-            raise ValueError("backend='batched' requires equal positive token counts for every session")
+            raise ValueError("backend='batched'/'batched_stable' requires equal positive token counts for every session")
         self.round_count += 1
         return outputs
 

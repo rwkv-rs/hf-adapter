@@ -137,8 +137,8 @@ def test_apple_smoke_script_static() -> None:
     mlx_session_batch_text = mlx_session_batch_script.read_text(encoding="utf-8")
     assert 'choices=["affine", "reference", "metal", "auto"]' in mlx_session_batch_text
     assert 'choices=["reference", "metal", "auto"]' in mlx_session_batch_text
-    assert 'choices=["sequential", "batched", "auto"]' in mlx_session_batch_text
-    assert 'choices=["none", "sequential", "batched", "auto"]' in mlx_session_batch_text
+    assert 'choices=["sequential", "batched", "batched_stable", "auto"]' in mlx_session_batch_text
+    assert 'choices=["none", "sequential", "batched", "batched_stable", "auto"]' in mlx_session_batch_text
     assert '"axis": "mlx_session_batch_backend_compare"' in mlx_session_batch_text
     assert '"backend_compare_status": "match" if strict_match else "mismatch"' in mlx_session_batch_text
     assert '"strict_match": bool(strict_match)' in mlx_session_batch_text
@@ -160,6 +160,8 @@ def test_apple_smoke_script_static() -> None:
     assert "auto_metal_max_rows" in quant_text
     assert 'RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS", 4096' in quant_text
     assert "@lru_cache(maxsize=1)" in quant_text
+    assert "batched_stable" in model_text
+    assert "equal_positive_round_stable_argmax_tol" in model_text
     assert "auto_mm8_metal_batch_exactness_guard" in model_text
     assert 'quant_backend in {"metal", "auto"}' in model_text
     assert "round_backend_reasons" in model_text
