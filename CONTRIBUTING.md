@@ -1034,6 +1034,21 @@ WKV_BACKEND=metal \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_generation_sweep.sh
 
+
+# Isolated MLX quant projection microbench. This does not use a full model; it
+# measures the dense fp16, reference, affine, Metal, and auto projection paths
+# for 1.5B-sized hidden projections before attempting deeper WKV+quant fusion.
+python scripts/mlx_quant_projection_bench.py \
+  --rows 1,4 \
+  --bits 4,8 \
+  --in-features 2048 \
+  --out-features 2048 \
+  --dtype fp16 \
+  --backends reference,affine,metal,auto \
+  --warmup 1 \
+  --runs 3 \
+  --results bench/results_apple_silicon_mlx_recurrent.jsonl
+
 # Higher-pressure session matrix: 4 concurrent sessions, longer rounds, repeat=4.
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 DTYPE=fp16 \
