@@ -87,18 +87,22 @@ pressure rows (0.4B W8/W4 4-session repeat=2 and 6-session repeat=3;
 session pressure rows (0.4B W4 8-session repeat=2; 1.5B W4/W8 5-session
 repeat=2), initial W4
 `SESSION_BACKEND=batched` rows (0.4B 6-session repeat=2, 1.5B 5-session
-repeat=1), and W8/Metal `SESSION_BACKEND=auto` safety rows that fall back with
-`auto_mm8_metal_batch_exactness_guard` until long batched W8 exactness is fixed,
-plus `mlx_session_batch_backend_compare` rows that prove 0.4B/1.5B W4
-sequential-vs-batched token equality and localize the current 0.4B W8 mismatch
-with optional logit tracing (the first mismatch is a near-tie: token 11 vs 261,
-max-abs logit delta≈0.03125) plus an explicit `SESSION_BACKEND=batched_stable`
-W8 row that restores strict token equality on 0.4B 6-session pressure and now
-passes 0.4B 8-session repeat=2 plus 1.5B 5-session W8/W4 rounds8,8 repeat=4 one-shot checks,
+repeat=1), and W8/W4 Metal `SESSION_BACKEND=auto` safety rows that fall back with
+`auto_mm8_metal_batch_exactness_guard` / `auto_mm4_metal_batch_exactness_guard`
+until long batched exactness is fixed,
+plus `mlx_session_batch_backend_compare` rows that prove earlier 0.4B/1.5B W4
+sequential-vs-batched token equality, prove 1.5B W8 direct batched equality, and
+localize current W8/W4 mismatch cases with optional logit tracing (including the
+0.4B W8 near-tie: token 11 vs 261, max-abs logit delta≈0.03125, and the 1.5B
+W4 direct token-index 6/9 gap). An explicit `SESSION_BACKEND=batched_stable`
+W8 row restores strict token equality on 0.4B 6-session pressure and still
+passes the W8 stable regression; W4 direct auto now has a guarded 1.5B 5-session
+rounds8,8 repeat=2 pass row with one-shot checks, `auto_mm4_metal_batch_exactness_guard`,
+and grouped fallback 0,
 and a new conservative `--quant-backend auto` route with backend-count telemetry
 (W4 normal prefill/decode rows choose Metal, W8 defaults to affine unless W8
-Metal is explicitly enabled; `RWKV7_MLX_SESSION_AUTO_W8_STABLE=1` opts W8/Metal
-auto into the stable policy), plus prompt/decode
+Metal is explicitly enabled; `RWKV7_MLX_SESSION_AUTO_W8_STABLE=1` /
+`RWKV7_MLX_SESSION_AUTO_W4_STABLE=1` opt W8/W4 Metal auto into the stable policy), plus prompt/decode
 length sweep entry points including 0.1B prompt256/decode8,
 0.4B prompt4096/decode256 plus 1.5B prompt8192/decode512 matrices, and optional `--quantization mm8/mm4`
 MLX packed-quant rows, plus isolated and grouped MLX quant projection
@@ -114,8 +118,10 @@ now has W4 and W8 prompt512/decode16 plus broader-threshold
 prompt2048/decode128 rows, 0.4B 8-session grouped pressure, and 1.5B longer
 rounds8,8 session probes. Grouped fallback remains 0 in these rows; 1.5B W8
 batched matches one-shot, while 1.5B W4 batched still has a documented
-correctness gap, so longer end-to-end speed gates are still needed before
-enabling it by default.
+correctness gap. `SESSION_BACKEND=auto` now protects W4/Metal with
+`auto_mm4_metal_batch_exactness_guard` and uses the sequential safe path until
+that batched gap is closed, so longer end-to-end speed gates are still needed
+before enabling it by default.
 
 ## Layout
 

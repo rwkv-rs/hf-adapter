@@ -29,6 +29,8 @@ SESSION_BACKEND="${SESSION_BACKEND:-sequential}"
 COMPARE_SESSION_BACKEND="${COMPARE_SESSION_BACKEND:-none}"
 TRACE_MISMATCH_LOGITS="${TRACE_MISMATCH_LOGITS:-0}"
 MISMATCH_TOPK="${MISMATCH_TOPK:-5}"
+STABLE_ARGMAX_TOLERANCE="${STABLE_ARGMAX_TOLERANCE:-}"
+STABLE_ARGMAX_MODE="${STABLE_ARGMAX_MODE:-}"
 
 rwkv7_require_model "${MODEL}"
 
@@ -111,6 +113,12 @@ if [[ "${REQUIRE_SESSION_BACKEND_MATCH:-0}" == "1" ]]; then
 fi
 if [[ "${TRACE_MISMATCH_LOGITS}" == "1" ]]; then
   args+=(--trace-mismatch-logits)
+fi
+if [[ -n "${STABLE_ARGMAX_TOLERANCE}" ]]; then
+  args+=(--stable-argmax-tolerance "${STABLE_ARGMAX_TOLERANCE}")
+fi
+if [[ -n "${STABLE_ARGMAX_MODE}" ]]; then
+  args+=(--stable-argmax-mode "${STABLE_ARGMAX_MODE}")
 fi
 
 rwkv7_print_env
