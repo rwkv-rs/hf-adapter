@@ -1945,10 +1945,16 @@ sequential and one-shot tokens, with the 6-session row reaching batched
 aggregate round mins `162.12` / `163.72 tok/s` (`metal=20378`, peak `790 MB`).
 The stable policy now has longer/repeat coverage too: 0.4B W8/Metal
 `batched_stable` 8-session rounds8,8 repeat=2 matches one-shot tokens with
-aggregate round min `184.62 tok/s` (peak `790 MB`), and 1.5B W8/Metal
-5-session rounds8,8 repeat=2 matches one-shot tokens with aggregate round min
-`53.66 tok/s` (peak `2311 MB`). A 1.5B strict sequential-vs-batched-stable
-compare for rounds8,8 also passes. The default W8/Metal auto path remains
+aggregate round min `184.62 tok/s` (peak `790 MB`). 1.5B W8/Metal 5-session
+rounds8,8 repeat=2 matches one-shot tokens with aggregate round min
+`53.66 tok/s` (peak `2311 MB`), and the stronger repeat=4 pressure row still
+matches one-shot tokens/text/seen-tokens with aggregate round min `26.11 tok/s`,
+peak `2311 MB`, and `metal=50728`. The same 1.5B W4 auto 5-session
+rounds8,8 repeat=4 pressure row also matches one-shot with aggregate round min
+`30.94 tok/s`, peak `1841 MB`, and `metal=50728`. These repeat=4 rows are
+stability evidence and also show throughput degradation under sustained local
+M5/16GB pressure. A 1.5B strict sequential-vs-batched-stable compare for
+rounds8,8 also passes. The default W8/Metal auto path remains
 guarded, but `RWKV7_MLX_SESSION_AUTO_W8_STABLE=1` now opts `SESSION_BACKEND=auto`
 into this stable policy; a 0.4B W8/Metal auto row selects `batched_stable` and
 passes with aggregate round min `90.73 tok/s` (`metal=5126`). The MLX quant
