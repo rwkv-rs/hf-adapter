@@ -54,6 +54,7 @@ jobs:
           python tests/test_larger_model_results.py
           python tests/test_result_tools.py
           python tests/test_markdown_links.py
+          python tests/test_backend_boundaries.py
           python tests/test_acceptance_scripts.py
           python tests/test_apple_silicon_packaging.py
           python tests/test_tokenizer_fast_trie.py
