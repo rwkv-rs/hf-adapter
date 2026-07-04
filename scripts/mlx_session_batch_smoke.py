@@ -64,6 +64,17 @@ def min_round_decode_tok_s(rows: list[dict[str, Any]]) -> float | None:
     return round(min(values), 6) if values else None
 
 
+def model_quant_runtime_telemetry(model: Any) -> dict[str, Any]:
+    """Return quant runtime fields that can change after each session run."""
+
+    telemetry = model.telemetry()
+    return {
+        "quantized_linear_last_backend_counts": telemetry.get("quantized_linear_last_backend_counts"),
+        "group_rkv_quant_projection": telemetry.get("group_rkv_quant_projection"),
+        "group_rkv_quant_projection_counts": telemetry.get("group_rkv_quant_projection_counts"),
+    }
+
+
 def first_mismatch(left: list[int], right: list[int]) -> int | None:
     for idx, (a, b) in enumerate(zip(left, right)):
         if int(a) != int(b):
@@ -352,7 +363,7 @@ def run_backend_compare(
         "mismatch_logit_trace": mismatch_logit_trace,
         "wkv_backend_last": model.wkv_backend_last,
         "wkv_backend_counts": dict(model.wkv_backend_counts),
-        "quantized_linear_last_backend_counts": model.telemetry().get("quantized_linear_last_backend_counts"),
+        **model_quant_runtime_telemetry(model),
         **mlx_memory_telemetry(),
     }
     if require_match and not strict_match:
@@ -457,7 +468,7 @@ def run_interleaved_batch(
         "wkv_backend_counts": dict(model.wkv_backend_counts),
         "round_telemetry": round_rows,
         "per_session": per_session,
-        "quantized_linear_last_backend_counts": model.telemetry().get("quantized_linear_last_backend_counts"),
+        **model_quant_runtime_telemetry(model),
         **batch.telemetry(),
         **mlx_memory_telemetry(),
     }
@@ -633,7 +644,7 @@ def main() -> int:
             "max_mlx_cache_memory_bytes": max(int(row.get("mlx_cache_memory_bytes", 0)) for row in rows) if rows else None,
             "min_decode_tok_s": min_decode_tok_s(rows),
             "min_round_decode_tok_s": min_round_decode_tok_s(rows),
-            "quantized_linear_last_backend_counts": model.telemetry().get("quantized_linear_last_backend_counts"),
+            **model_quant_runtime_telemetry(model),
         }
         print(json.dumps(summary, ensure_ascii=False))
         append_result(args.results, summary)

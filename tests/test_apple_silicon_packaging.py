@@ -149,9 +149,13 @@ def test_apple_smoke_script_static() -> None:
     assert "if require_match and not strict_match" in mlx_session_batch_text
     assert '"quantization": args.quantization' in mlx_session_batch_text
     mlx_generation_sweep_text = (ROOT / "scripts/mlx_generation_sweep.py").read_text(encoding="utf-8")
-    assert '"quantized_linear_last_backend_counts": model.telemetry().get("quantized_linear_last_backend_counts")' in mlx_generation_sweep_text
+    assert '"quantized_linear_last_backend_counts": telemetry.get("quantized_linear_last_backend_counts")' in mlx_generation_sweep_text
     assert '"quant_backend": args.quant_backend' in mlx_session_batch_text
-    assert '"quantized_linear_last_backend_counts": model.telemetry().get("quantized_linear_last_backend_counts")' in mlx_session_batch_text
+    assert '"quantized_linear_last_backend_counts": telemetry.get("quantized_linear_last_backend_counts")' in mlx_session_batch_text
+    assert "model_quant_runtime_telemetry" in mlx_generation_sweep_text
+    assert "group_rkv_quant_projection_counts" in mlx_generation_sweep_text
+    assert "model_quant_runtime_telemetry" in mlx_session_batch_text
+    assert "group_rkv_quant_projection_counts" in mlx_session_batch_text
     assert '"session_backend": args.session_backend' in mlx_session_batch_text
     assert '"min_round_decode_tok_s": min_round_decode_tok_s(rows)' in mlx_session_batch_text
     assert '"round_backend_reasons": sorted(' in mlx_session_batch_text
