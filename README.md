@@ -63,7 +63,7 @@ chunked-prefill checks through 0.1B/0.4B/1.5B short rows. `scripts/mlx_generate.
 `rwkv7_hf.mlx_model.MLXGenerationSession`, and
 `rwkv7_hf.mlx_model.MLXGenerationSessionBatch` provide reusable
 tokenizer-integrated MLX text generation, serving-style prefill-once/session-decode,
-interleaved multi-session decode with 0.1B/0.4B/1.5B 3-session repeat-pressure telemetry, and prompt/decode length sweep entry points including 0.1B, 0.4B, and 1.5B prompt256/decode8 matrices.
+interleaved multi-session decode with 0.1B/0.4B/1.5B 3-session telemetry plus 0.4B/1.5B 4-session repeat-pressure telemetry, and prompt/decode length sweep entry points including 0.1B prompt256/decode8 and 0.4B/1.5B prompt512/decode32 matrices.
 
 ## Layout
 
