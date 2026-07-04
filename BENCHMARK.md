@@ -1947,14 +1947,22 @@ W4 auto records `20.95` / `19.52 tok/s`, peak `1074.6 MB`, `metal=6336`, and
 below the old packed-cache grouped peaks (`415.9 MB` / `1226.8 MB`). Longer
 direct rows also pass: 0.4B W4 auto prompt512/decode16 reaches `45.83` /
 `45.17 tok/s`, peak `364.7 MB`, `metal=24960`; 1.5B W4 auto prompt512/decode16
-reaches `20.69` / `19.28 tok/s`, peak `1074.6 MB`, `metal=24960`; both keep
+reaches `20.69` / `19.28 tok/s`, peak `1074.6 MB`, `metal=24960`; 0.4B W8/Metal
+prompt512/decode16 reaches `44.50` / `41.50 tok/s`, peak `549.3 MB`,
+`metal=24960`; and 1.5B W8/Metal prompt512/decode16 reaches `19.81` /
+`19.27 tok/s`, peak `1745.6 MB`, `metal=24960`. All of these rows keep
 chunked/full prefill `max_abs=0.0`. Direct grouped session pressure now covers
 0.4B 4-session rounds4,4, 0.4B 6-session rounds8,8 repeat=2, and 1.5B 5-session
-rounds4,4: all keep one-shot token/text/seen-token checks passing with grouped
-fallback `0`. The 0.4B 6-session row records aggregate round min `75.31 tok/s`,
-peak `466.5 MB`, and `metal=10176`; the 1.5B 5-session row records aggregate
-round min `27.33 tok/s`, peak `1239.0 MB`, and `metal=3696`. Longer end-to-end
-ratio gates are still required before enabling this path by default. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
+rounds4,4 for W4, plus matching direct W8 pressure rows for 0.4B 6-session
+rounds8,8 repeat=2 and 1.5B 5-session rounds4,4: all keep one-shot
+token/text/seen-token checks passing with grouped fallback `0`. The 0.4B W4
+6-session row records aggregate round min `75.31 tok/s`, peak `466.5 MB`, and
+`metal=10176`; the 1.5B W4 5-session row records aggregate round min
+`27.33 tok/s`, peak `1239.0 MB`, and `metal=3696`. The new direct W8 rows record
+0.4B 6-session aggregate round min `91.71 tok/s`, peak `651.1 MB`,
+`metal=15552`, and 1.5B 5-session aggregate round min `23.45 tok/s`, peak
+`1910.1 MB`, `metal=5136`. Longer end-to-end ratio gates are still required
+before enabling this path by default. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
 repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
 `534 MB`, and the higher-concurrency 6-session repeat=3 row reaches min decode
 `34.33` / `27.14 tok/s` with peak `682` / `547 MB`. 1.5B W8/W4
