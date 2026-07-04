@@ -13,7 +13,7 @@ Metal/MLX backend later.
 | Install without CUDA/FLA | supported by packaging | Base dependencies no longer require `flash-linear-attention`; CUDA users can install `.[fla]` / `.[cuda]`. |
 | Tiny Apple smoke | pass on local M-series | `tests/test_apple_silicon_smoke.py` passes on MacBook Air / Apple M5 / 16GB / macOS 26.5 / PyTorch 2.12.1 MPS; see `bench/results_apple_silicon_m5_20260704.jsonl`. |
 | Converted-model Apple smoke | 0.1B, 0.4B, and 1.5B pass on local M-series | `scripts/run_apple_silicon_smoke.sh` loads `rwkv7-g1d-0.1b-hf`, `rwkv7-g1d-0.4b-hf`, and `rwkv7-g1g-1.5b-hf` through `RWKV7_NATIVE_MODEL=1` on MPS; 0.4B has fp32/fp16 short-generate rows and 1.5B has fp16 short-generate + prompt sweep rows. |
-| HF API coverage | partial | Load + forward + `generate(use_cache=True)` through the native backend; tiny native backward and Trainer paths pass; real 0.1B and 0.4B PEFT LoRA, HF Trainer, and TRL SFT/DPO/GRPO paths on MPS are covered. 0.4B also has fp32/fp16 generation length sweep rows and 2-step Trainer/TRL rows. 1.5B has fp16 inference/sweep rows through prompt 512 / decode 8 plus fp32 PEFT LoRA manual, HF Trainer, and TRL SFT/DPO/GRPO 1/2/3/5-step rows with finite trainable updates. |
+| HF API coverage | partial | Load + forward + `generate(use_cache=True)` through the native backend; tiny native backward and Trainer paths pass; real 0.1B and 0.4B PEFT LoRA, HF Trainer, and TRL SFT/DPO/GRPO paths on MPS are covered. 0.4B also has fp32/fp16 generation length sweep rows and 2-step Trainer/TRL rows. 1.5B has fp16 inference/sweep rows through prompt 512 / decode 8 plus fp32 PEFT LoRA manual, HF Trainer, and TRL SFT/DPO/GRPO 1/2/3/5/10-step rows with finite trainable updates. |
 | Quantization | not claimed | `bitsandbytes` W8/W4 is CUDA-oriented; Apple needs MLX/Metal-specific quantization work. |
 | Production speed | not claimed | PyTorch MPS is a compatibility path, not the final Apple performance backend. |
 | MLX / Metal backend | TODO | See RafaelUI references below. |
@@ -55,16 +55,16 @@ Local smoke on 2026-07-04:
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 / PEFT 0.19.1 | MPS | `rwkv7-g1d-0.1b-hf` PEFT LoRA train + HF Trainer | PASS (`loss=2.70401`, LoRA params=663552, Trainer `changed_l1=26.63627`, driver_mem≈2466MiB) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 / PEFT 0.19.1 | MPS | `rwkv7-g1d-0.4b-hf` PEFT LoRA train + HF Trainer | PASS (`loss=2.22734`, LoRA params=1769472, Trainer `changed_l1=67.165365`, driver_mem≈4651MiB) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 / PEFT 0.19.1 | MPS | `rwkv7-g1g-1.5b-hf` fp32 PEFT LoRA manual backward | PASS (`loss=1.976301`, LoRA params=3538944, `grad_l1=10386.947289`, `changed_l1=137.084609`, driver_mem≈6843MiB) |
-| MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 / PEFT 0.19.1 | MPS | `rwkv7-g1g-1.5b-hf` fp32 PEFT LoRA HF Trainer | PASS (1/2/3/5-step rows; 5-step `training_loss=2.329351`, `changed_l1=445.078561`, 0.606 steps/s, driver_mem≈6875MiB) |
+| MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 / PEFT 0.19.1 | MPS | `rwkv7-g1g-1.5b-hf` fp32 PEFT LoRA HF Trainer | PASS (1/2/3/5/10-step rows; 10-step `training_loss=1.574907`, `changed_l1=769.378162`, 0.565 steps/s, driver_mem≈6875MiB) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 / PEFT 0.19.1 / TRL 1.7.0 | MPS | `rwkv7-g1d-0.1b-hf` TRL SFTTrainer + PEFT LoRA | PASS (`training_loss=2.70401`, `changed_l1=26.620176`, 1.446 steps/s) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 / PEFT 0.19.1 / TRL 1.7.0 | MPS | `rwkv7-g1d-0.1b-hf` TRL GRPOTrainer + PEFT LoRA | PASS (`training_loss=0.0`, `changed_l1=10.454315`, 3.098 steps/s) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 / PEFT 0.19.1 / TRL 1.7.0 | MPS | `rwkv7-g1d-0.1b-hf` TRL DPOTrainer + PEFT LoRA | PASS (`training_loss=0.693147`, `changed_l1=28.315877`, 1.518 steps/s) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 / PEFT 0.19.1 / TRL 1.7.0 | MPS | `rwkv7-g1d-0.4b-hf` TRL SFT/DPO/GRPO + PEFT LoRA | PASS (1-step and 2-step rows; 2-step SFT `training_loss=3.140634`, DPO `training_loss=0.692913`, GRPO `training_loss=0.0`, peak driver_mem≈4980MiB) |
-| MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 / PEFT 0.19.1 / TRL 1.7.0 | MPS | `rwkv7-g1g-1.5b-hf` TRL SFT/DPO/GRPO + PEFT LoRA | PASS (1/2/3/5-step rows; 5-step SFT `training_loss=2.330504`, DPO `training_loss=0.574138`, GRPO `training_loss=0.0`, peak driver_mem≈8620MiB) |
+| MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 / PEFT 0.19.1 / TRL 1.7.0 | MPS | `rwkv7-g1g-1.5b-hf` TRL SFT/DPO/GRPO + PEFT LoRA | PASS (1/2/3/5/10-step rows; 10-step SFT `training_loss=1.569469`, DPO `training_loss=0.422009`, GRPO `training_loss=0.0`, peak driver_mem≈8604MiB) |
 
-Memory-pressure note after the latest 1.5B prompt512/new8 and 5-step
-Trainer/TRL runs: `vm_stat` reported free pages≈402k, inactive pages≈156k,
-speculative pages≈67k, wired pages≈195k, compressor pages≈24k. Swap counters
+Memory-pressure note after the latest 1.5B prompt512/new8 and 10-step
+Trainer/TRL runs: `vm_stat` reported free pages≈410k, inactive pages≈152k,
+speculative pages≈74k, wired pages≈183k, compressor pages≈26k. Swap counters
 are cumulative macOS counters, so the table relies on per-row MPS memory for
 run-local memory evidence.
 
@@ -346,7 +346,7 @@ python scripts/sync_hf_adapter_code.py /path/to/rwkv7-g1d-0.1b-hf
 | M1 / M2 Air | 16GB | tiny native | fp32 | mps or cpu | `APPLE SILICON SMOKE PASS` |
 | M1 / M2 Air | 16GB | 0.1B HF | fp32 | mps | load + forward + 2-token generate + PEFT LoRA/Trainer/SFT/DPO/GRPO smoke |
 | M-series 16GB+ | 16GB+ | 0.4B HF | fp32 / fp16 | mps | load + forward + generate + prompt-length sweep through 512 tokens + PEFT LoRA/Trainer/SFT/DPO/GRPO 1-step/2-step smoke + memory note |
-| M-series 16GB+ | 16GB+ | 1.5B HF | fp16 inference / fp32 LoRA smoke | mps | load/generate + prompt sweep through 512 tokens / decode 8 + PEFT manual + Trainer/SFT/DPO/GRPO 1/2/3/5-step + peak memory + finite trainable update |
+| M-series 16GB+ | 16GB+ | 1.5B HF | fp16 inference / fp32 LoRA smoke | mps | load/generate + prompt sweep through 512 tokens / decode 8 + PEFT manual + Trainer/SFT/DPO/GRPO 1/2/3/5/10-step + peak memory + finite trainable update |
 | M-series Max / Ultra | 64GB+ | 1.5B+ HF | fp16 / bf16 | mps | longer decode, 10+ step Trainer/TRL rows, peak memory, tok/s |
 
 For every Apple result, include:
@@ -366,8 +366,8 @@ For every Apple result, include:
 - Long-running full-size training on MPS is not claimed yet. Tiny native Trainer
   and tiny PEFT LoRA Trainer pass; 0.1B and 0.4B PEFT LoRA backward, HF Trainer,
   TRL SFT, DPO, and GRPO one-step and 2-step smoke pass on a 16GB M5. 1.5B
-  fp32 PEFT LoRA manual backward, HF Trainer, and TRL SFT/DPO/GRPO 1/2/3/5-step
-  smoke now pass. Longer 1.5B decode beyond 8 tokens, 10+ step training, larger Apple machines,
+  fp32 PEFT LoRA manual backward, HF Trainer, and TRL SFT/DPO/GRPO 1/2/3/5/10-step
+  smoke now pass. Longer 1.5B decode beyond 8 tokens, >10-step training, larger Apple machines,
   and MLX/Metal acceleration are still open.
 - 1.5B fp16 PEFT LoRA on the 16GB M5 produced non-finite gradient/update values
   in one local trial. The training smoke now rejects non-finite or zero
@@ -389,8 +389,8 @@ next backend layer:
 ## Next engineering steps
 
 1. Extend 0.4B Apple rows beyond 2 training steps.
-2. Extend 1.5B from 5-step Trainer/TRL and prompt512/new8 sweep to longer
-   decode, 10+ step Trainer/TRL, and memory-pressure notes.
+2. Extend 1.5B beyond 10-step Trainer/TRL and prompt512/new8 sweep to longer
+   decode, >10-step Trainer/TRL, and memory-pressure notes.
 3. Prototype MLX weight conversion for RWKV-7 HF directories.
 4. Decide whether the Metal WKV-7 kernel belongs in this repo as an optional
    backend or in a sibling `rwkv7-mlx` / `rwkv7-metal` package.
