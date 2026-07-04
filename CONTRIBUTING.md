@@ -394,6 +394,27 @@ ROUNDS=2,2 \
 REPEAT=2 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+# Repeat the same 3-session pressure row on 0.4B / 1.5B after tiny/0.1B pass.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+PROMPT_A="The quick brown fox" \
+PROMPT_B="User: Apple Silicon RWKV test. Assistant:" \
+PROMPT_C="Repeat pressure prompt for MLX sessions." \
+ROUNDS=2,2 \
+REPEAT=2 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+PROMPT_A="The quick brown fox" \
+PROMPT_B="User: Apple Silicon RWKV test. Assistant:" \
+PROMPT_C="Repeat pressure prompt for MLX sessions." \
+ROUNDS=2,2 \
+REPEAT=2 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 ```
 
 Include the `torch_mps_built` / `torch_mps_available` lines printed by the
