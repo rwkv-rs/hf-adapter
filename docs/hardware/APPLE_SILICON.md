@@ -15,7 +15,7 @@ performance layer.
 | Tiny Apple smoke | pass on local M-series | `tests/test_apple_silicon_smoke.py` passes on MacBook Air / Apple M5 / 16GB / macOS 26.5 / PyTorch 2.12.1 MPS; see `bench/results_apple_silicon_m5_20260704.jsonl`. |
 | Converted-model Apple smoke | 0.1B, 0.4B, and 1.5B pass on local M-series | `scripts/run_apple_silicon_smoke.sh` loads `rwkv7-g1d-0.1b-hf`, `rwkv7-g1d-0.4b-hf`, and `rwkv7-g1g-1.5b-hf` through `RWKV7_NATIVE_MODEL=1` on MPS; 0.4B has fp32/fp16 short-generate rows and 1.5B has fp16 short-generate + prompt sweep rows. |
 | HF API coverage | partial | Load + forward + `generate(use_cache=True)` through the native backend; tiny native backward and Trainer paths pass; real 0.1B and 0.4B PEFT LoRA, HF Trainer, and TRL SFT/DPO/GRPO paths on MPS are covered. 0.4B also has fp32/fp16 generation length sweep rows and 2-step Trainer/TRL rows. 1.5B has fp16 inference/sweep rows through prompt 512 / decode 8 plus fp32 PEFT LoRA manual, HF Trainer, and TRL SFT/DPO/GRPO 1/2/3/5/10-step rows with finite trainable updates. |
-| Quantization | functional native smoke | `bitsandbytes` W8/W4 is CUDA-oriented and is not the Apple path. Native MM8/MM4 config-driven module replacement now runs on MPS for tiny and 0.1B smoke rows with packed-footprint telemetry; production-speed Apple quant still needs MLX/Metal kernels. |
+| Quantization | broader functional native smoke | `bitsandbytes` W8/W4 is CUDA-oriented and is not the Apple path. Native MM8/MM4 config-driven module replacement now runs on MPS for tiny, 0.1B, and 0.4B smoke rows, including lower `min_params` sweeps that replace FFN/projection groups rather than only `lm_head`; production-speed Apple quant still needs MLX/Metal kernels. |
 | Production speed | not claimed | PyTorch MPS is a compatibility path, not the final Apple performance backend. |
 | MLX recurrent backend / Metal backend | initial MLX recurrent reference + session helper, Metal TODO | Optional `.[mlx]` install, `rwkv7_hf.mlx_bridge`, `rwkv7_hf.mlx_model`, `scripts/convert_hf_to_mlx.py`, `scripts/mlx_generate.py`, `scripts/mlx_session_smoke.py`, `scripts/mlx_session_batch_smoke.py`, `scripts/mlx_generation_sweep.py`, `scripts/run_apple_silicon_mlx_smoke.sh`, `scripts/run_apple_silicon_mlx_model_smoke.sh`, `scripts/run_apple_silicon_mlx_session_smoke.sh`, `scripts/run_apple_silicon_mlx_session_batch_smoke.sh`, and `scripts/run_apple_silicon_mlx_generation_sweep.sh` now validate HF safetensor → MLX array/export, tiny torch/MLX recurrent parity, MLX state-cache select/chunked-prefill/session behavior, tokenizer-backed prompt smoke, dynamic-batch state select, reusable MLX text generate, prefill-once/session decode, interleaved multi-session decode, prompt/decode length sweeps plus repeat/pressure rows with chunked-prefill checks, and 0.1B/0.4B/1.5B MLX recurrent rows. Fused quant and Metal WKV kernels are still TODO. |
 
@@ -47,7 +47,8 @@ Local smoke on 2026-07-04:
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | tiny native RWKV-7 `generate()` | PASS (`elapsed_s=0.1121`, 2 generated tokens) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.1b-hf` load + forward + `generate()` | PASS (`elapsed_s=0.2406`, 11 prompt tokens + 2 generated tokens) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | tiny native MM8/MM4 quant smoke | PASS (config-driven from_pretrained; MM8 footprint ratio=0.391615, MM4 footprint ratio=0.267734; decode backend=eager) |
-| MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.1b-hf` native MM8/MM4 quant smoke | PASS (lm_head replacement; MM8 footprint ratio=0.252635, MM4 footprint ratio=0.127635; 1-token generate) |
+| MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.1b-hf` native MM8/MM4 quant smoke | PASS (`MIN_PARAMS=8000000` lm_head replacement; `MIN_PARAMS=1000000` replaces 25 FFN/lm_head modules; `MIN_PARAMS=500000` replaces 73 attention/FFN/lm_head modules; MM8 footprint ratio≈0.253433, MM4 footprint ratio≈0.128433; 1-token generate) |
+| MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.4b-hf` native MM8/MM4 quant sweep | PASS (`MIN_PARAMS=4000000` replaces 49 FFN/lm_head modules; MM8 footprint ratio≈0.252327, MM4 footprint ratio≈0.127327; 1-token generate) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | tiny MLX tensor save/load + matmul smoke | PASS (`axis=apple_silicon_mlx_tiny`, `elapsed_s=0.032803`, output shape `[1, 24]`) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `rwkv7-g1d-0.1b-hf` HF safetensor → MLX projection matmul | PASS (`axis=apple_silicon_mlx_projection_smoke`, tensor `model.layers.0.attn.r_proj.weight`, fp16 `[1, 768]`, selected tensor bytes=1179648) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | MLX 0.31.2 | MLX GPU | `rwkv7-g1d-0.1b-hf` selected HF safetensor → MLX safetensors export | PASS (`axis=mlx_hf_export`, tensor count=1, fp16 bytes=1179648, manifest `mlx_manifest.json`) |
@@ -272,10 +273,18 @@ DEVICE=auto DTYPE=fp32 QUANTIZATIONS=mm8,mm4 \
 RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_quant_smoke.sh
 
-# Apple native MM8/MM4 quant on converted 0.1B; default MIN_PARAMS=8000000 replaces lm_head.
+# Apple native MM8/MM4 quant on converted 0.1B.
+# MIN_PARAMS_LIST sweeps from lm_head-only into broader projection groups.
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
 MODEL_SIZE_LABEL=0.1b \
-DEVICE=auto DTYPE=fp32 QUANTIZATIONS=mm8,mm4 \
+DEVICE=auto DTYPE=fp32 QUANTIZATIONS=mm8,mm4 MIN_PARAMS_LIST=8000000,1000000,500000 \
+RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+  scripts/run_apple_silicon_quant_smoke.sh
+
+# 0.4B quant sweep: MIN_PARAMS=4000000 covers FFN key/value + lm_head modules.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+MODEL_SIZE_LABEL=0.4b \
+DEVICE=auto DTYPE=fp32 QUANTIZATIONS=mm8,mm4 MIN_PARAMS_LIST=4000000 \
 RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_quant_smoke.sh
 
@@ -545,7 +554,7 @@ python scripts/sync_hf_adapter_code.py /path/to/rwkv7-g1d-0.1b-hf
 | M-series 16GB+ | 16GB+ | tiny + selected 0.1B HF tensors | fp16 | MLX GPU | `scripts/run_apple_silicon_mlx_smoke.sh` tiny save/load/matmul + HF projection matmul, and optional `scripts/convert_hf_to_mlx.py` export manifest |
 | M-series 16GB+ | 16GB+ | tiny + 0.1B/0.4B/1.5B HF | fp16 / fp32 | MLX GPU | `scripts/run_apple_silicon_mlx_model_smoke.sh` tiny MLX/Torch recurrent parity, state-cache select, chunked prefill, tokenizer prompt, dynamic-batch state select, 0.1B/0.4B/1.5B full MLX recurrent prefill/generate, optional HF native PyTorch compare, `scripts/mlx_generate.py` reusable text generation, `scripts/run_apple_silicon_mlx_generation_sweep.sh` prompt/decode sweep plus repeat pressure with chunked-prefill checks, `scripts/run_apple_silicon_mlx_session_smoke.sh` prefill-once/session decode equality vs one-shot, and `scripts/run_apple_silicon_mlx_session_batch_smoke.sh` interleaved multi-session equality vs one-shot |
 | M-series 16GB+ | 16GB+ | 0.4B HF | fp32 / fp16 | mps | load + forward + generate + prompt-length sweep through 512 tokens + PEFT LoRA/Trainer/SFT/DPO/GRPO 1-step/2-step smoke + memory note |
-| M-series 16GB+ | 16GB+ | tiny + 0.1B HF | fp32 native MM8/MM4 | mps | bitsandbytes-free native quant smoke + packed-footprint ratio + finite forward/generate |
+| M-series 16GB+ | 16GB+ | tiny + 0.1B/0.4B HF | fp32 native MM8/MM4 | mps | bitsandbytes-free native quant smoke + min-params sweep + packed-footprint ratio + finite forward/generate |
 | M-series 16GB+ | 16GB+ | 1.5B HF | fp16 inference / fp32 LoRA smoke | mps | load/generate + prompt sweep through 512 tokens / decode 8 + PEFT manual + Trainer/SFT/DPO/GRPO 1/2/3/5/10-step + peak memory + finite trainable update |
 | M-series Max / Ultra | 64GB+ | 1.5B+ HF | fp16 / bf16 | mps | longer decode, 10+ step Trainer/TRL rows, peak memory, tok/s |
 
@@ -562,8 +571,9 @@ For every Apple result, include:
 - This is not an Albatross-speed path. PyTorch MPS validates HF compatibility on
   Apple hardware but does not replace CUDA fused kernels.
 - `bitsandbytes` quantization is not an Apple path. Native MM8/MM4 now has
-  an MPS functional smoke path and packed-footprint telemetry, but production
-  Apple W8/W4 still needs MLX/Metal packing and fused kernels.
+  MPS functional smoke plus 0.1B/0.4B min-params sweeps with packed-footprint
+  telemetry, but production Apple W8/W4 still needs MLX/Metal packing and
+  fused kernels.
 - The MLX path is now a correctness-first recurrent reference backend, not a
   production-speed backend. It verifies HF safetensor loading/export, full
   recurrent prefill/decode equations, tokenizer prompt handling/API, state-cache
@@ -577,8 +587,9 @@ For every Apple result, include:
   TRL SFT, DPO, and GRPO one-step and 2-step smoke pass on a 16GB M5. 1.5B
   fp32 PEFT LoRA manual backward, HF Trainer, and TRL SFT/DPO/GRPO 1/2/3/5/10-step
   smoke now pass. Longer 1.5B decode beyond 8 tokens, >10-step training, and larger Apple machines
-  are still open. Native MM8/MM4 functional smoke and initial MLX recurrent
-  reference smoke are present; full MLX/Metal acceleration and production quant speed are still open.
+  are still open. Native MM8/MM4 functional/min-params smoke and initial MLX
+  recurrent reference smoke are present; full MLX/Metal acceleration and
+  production quant speed are still open.
 - 1.5B fp16 PEFT LoRA on the 16GB M5 produced non-finite gradient/update values
   in one local trial. The training smoke now rejects non-finite or zero
   trainable-gradient/update totals instead of recording false-positive rows.
@@ -601,7 +612,8 @@ next backend layer:
 1. Extend 0.4B Apple rows beyond 2 training steps.
 2. Extend 1.5B beyond 10-step Trainer/TRL and prompt512/new8 sweep to longer
    decode, >10-step Trainer/TRL, and memory-pressure notes.
-3. Extend Apple native MM8/MM4 from 0.1B lm_head smoke to larger models and more projection groups.
+3. Extend Apple native MM8/MM4 beyond 0.4B min-params smoke to 1.5B, longer
+   prompts/decodes, and real fused MLX/Metal W8/W4 speed paths.
 4. Extend the MLX recurrent reference and `MLXGenerationSession` beyond the current
    prompt64/decode4-or-2 sweep and prompt32/decode2 repeat row to longer prompt/decode matrices,
    memory-pressure telemetry, and longer production-style concurrent session reuse.

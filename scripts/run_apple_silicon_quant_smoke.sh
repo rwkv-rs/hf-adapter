@@ -12,6 +12,7 @@ DEVICE="${USER_DEVICE:-auto}"
 DTYPE="${DTYPE:-fp32}"
 QUANTIZATIONS="${QUANTIZATIONS:-mm8,mm4}"
 MIN_PARAMS="${MIN_PARAMS:-8000000}"
+MIN_PARAMS_LIST="${MIN_PARAMS_LIST:-}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-1}"
 MODEL_SIZE_LABEL="${MODEL_SIZE_LABEL:-}"
 if [[ -z "${PROMPT:-}" ]]; then
@@ -34,9 +35,12 @@ args=(
   --min-params "${MIN_PARAMS}"
   --max-new-tokens "${MAX_NEW_TOKENS}"
   --prompt "${PROMPT}"
-  --results "${RESULTS}"
+  --results "${RESULTS:-}"
   --require-apple
 )
+if [[ -n "${MIN_PARAMS_LIST}" ]]; then
+  args+=(--min-params-list "${MIN_PARAMS_LIST}")
+fi
 if [[ -n "${MODEL}" ]]; then
   args+=(--model "${MODEL}")
 fi
