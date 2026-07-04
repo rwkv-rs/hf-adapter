@@ -16,8 +16,9 @@ for shared helper code or documentation.
 3. For performance or hardware work, read [`BENCHMARK.md`](BENCHMARK.md).
 4. For the current V100 training/quant/ZeRO evidence, read [`docs/validation/V100_HF_VALIDATION.md`](docs/validation/V100_HF_VALIDATION.md).
 5. For kernel/performance experiments, also read [`docs/performance/FUSED_BACKEND.md`](docs/performance/FUSED_BACKEND.md).
-6. For Apple Silicon work, read [`docs/hardware/APPLE_SILICON.md`](docs/hardware/APPLE_SILICON.md).
-7. Pick an issue, comment that you are working on it, then open a focused PR.
+6. For backend or hardware work, read [`docs/BACKENDS.md`](docs/BACKENDS.md).
+7. For Apple Silicon work, read [`docs/hardware/APPLE_SILICON.md`](docs/hardware/APPLE_SILICON.md).
+8. Pick an issue, comment that you are working on it, then open a focused PR.
 
 ## Current issue map
 
@@ -56,6 +57,14 @@ Examples:
 
 Avoid large PRs that mix unrelated tasks such as docs, kernels, training, and
 serving changes at the same time.
+
+## Backend boundary rule
+
+Cards are validation rows, not code branches. Keep exact card/chip names in
+docs, tests, scripts, benchmark JSONL, and `rwkv7_hf/kernel_policy.py`. Core
+model code should branch on capabilities such as backend availability,
+`device.type`, dtype support, graph-capture support, or the normalized policy
+family. See [`docs/BACKENDS.md`](docs/BACKENDS.md) for the full contract.
 
 ## Local setup
 
@@ -318,6 +327,16 @@ python scripts/mlx_generate.py \
   --max-new-tokens 8 \
   --dtype fp16
 
+# Prompt/decode length sweep with MLX memory telemetry.
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=16,64 \
+DECODE_LENGTHS=2,4 \
+CHUNK_SIZE=32 \
+REPEAT=2 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
 # Serving-shaped MLX session smoke: prefill once, decode in chunks, compare with one-shot.
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
 DTYPE=fp16 \
@@ -325,6 +344,15 @@ PROMPT="The quick brown fox" \
 STEP_SIZES=4,4 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_smoke.sh
+
+# Interleaved multi-session smoke: prefill multiple prompts and advance them round-by-round.
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DTYPE=fp16 \
+PROMPT_A="The quick brown fox" \
+PROMPT_B="User: Apple Silicon RWKV test. Assistant:" \
+ROUNDS=2,2 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 ```
 
 Include the `torch_mps_built` / `torch_mps_available` lines printed by the
