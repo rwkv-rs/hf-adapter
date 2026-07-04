@@ -153,8 +153,10 @@ def test_apple_smoke_script_static() -> None:
     assert '"quant_backend": args.quant_backend' in mlx_session_batch_text
     assert '"quantized_linear_last_backend_counts": telemetry.get("quantized_linear_last_backend_counts")' in mlx_session_batch_text
     assert "model_quant_runtime_telemetry" in mlx_generation_sweep_text
+    assert "group_rkv_quant_projection_mode" in mlx_generation_sweep_text
     assert "group_rkv_quant_projection_counts" in mlx_generation_sweep_text
     assert "model_quant_runtime_telemetry" in mlx_session_batch_text
+    assert "group_rkv_quant_projection_mode" in mlx_session_batch_text
     assert "group_rkv_quant_projection_counts" in mlx_session_batch_text
     assert '"session_backend": args.session_backend' in mlx_session_batch_text
     assert '"min_round_decode_tok_s": min_round_decode_tok_s(rows)' in mlx_session_batch_text
@@ -166,6 +168,8 @@ def test_apple_smoke_script_static() -> None:
     assert "mm4_group_matmul_metal" in quant_text
     assert "mm8_group_matmul_metal_inputs" in quant_text
     assert "mm4_group_matmul_metal_inputs" in quant_text
+    assert "mm8_triple_matmul_metal_inputs" in quant_text
+    assert "mm4_triple_matmul_metal_inputs" in quant_text
     assert "pack_mlx_mm8_group" in quant_text
     assert 'RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS", 4096' in quant_text
     assert "@lru_cache(maxsize=1)" in quant_text
@@ -175,6 +179,8 @@ def test_apple_smoke_script_static() -> None:
     assert "RWKV7_MLX_SESSION_AUTO_W8_STABLE" in model_text
     assert "RWKV7_MLX_SESSION_STABLE_ARGMAX_TOLERANCE" in model_text
     assert "RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION" in model_text
+    assert "RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE" in model_text
+    assert "group_rkv_quant_projection_mode" in model_text
     assert "group_rkv_quant_projection_counts" in model_text
     assert "auto_metal_max_rows" in model_text
     quant_bench_script = ROOT / "scripts/mlx_quant_projection_bench.py"

@@ -105,10 +105,12 @@ MLX packed-quant rows, plus isolated and grouped MLX quant projection
 microbench rows that record dense/affine/Metal/auto speed ratios before deeper
 WKV+quant fusion. `RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION=1` enables the
 default-off model-level grouped R/K/V quant projection seam for MLX/Metal
-experiments. Initial 0.4B/1.5B W4 and W8 A/B rows show positive prefill/decode
-movement with grouped hits and zero fallbacks, but higher cached-weight memory;
-keep it disabled for baseline compatibility runs until longer end-to-end speed
-gates are closed.
+experiments. The default grouped mode is now `direct`, which uses one Metal
+launch for the three existing R/K/V packed weights without duplicating them into
+a grouped cache; `RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE=packed` keeps the
+older prepacked A/B path. Initial 0.4B/1.5B W4 and W8 rows show positive
+prefill/decode movement with grouped hits and zero fallbacks, but longer
+end-to-end speed gates are still needed before enabling it by default.
 
 ## Layout
 
