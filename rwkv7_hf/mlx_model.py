@@ -22,7 +22,14 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .mlx_bridge import load_selected_hf_tensors_as_mlx, mlx_array_nbytes, require_mlx, summarize_mlx_arrays
-from .mlx_quant import MLXQuantizedLinear, metal_quant_available
+from .mlx_quant import (
+    MLXQuantizedLinear,
+    metal_quant_available,
+    mm4_group_matmul_metal_inputs,
+    mm8_group_matmul_metal_inputs,
+    pack_mlx_mm4_group,
+    pack_mlx_mm8_group,
+)
 from .mlx_wkv import metal_wkv_available, wkv_update
 
 
@@ -662,6 +669,9 @@ class MLXRWKV7Model:
         self.quantized_linear_bytes = 0
         self.quantized_linear_bits: int | None = None
         self.quantized_linear_backend: str | None = None
+        self.group_rkv_quant_projection = _env_flag("RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION", False)
+        self.group_rkv_quant_projection_counts: dict[str, int] = {"metal": 0, "fallback": 0}
+        self._rkv_group_quant_cache: dict[tuple[int, int], Any] = {}
         self.layer_ids = _layer_indices(self.arrays)
         self.num_hidden_layers = int(self.config.get("num_hidden_layers", len(self.layer_ids)))
         self.hidden_size = int(self.config["hidden_size"])
@@ -743,6 +753,7 @@ class MLXRWKV7Model:
             qlinear = MLXQuantizedLinear.from_linear_weight(dense, bits=bits, backend=backend)
             self.quantized_linears[key] = qlinear
             self.quantized_linear_bytes += qlinear.storage_bytes
+        self._rkv_group_quant_cache.clear()
         self.quantized_linear_bits = bits if selected else None
         self.quantized_linear_backend = backend if selected else None
         return len(selected)
@@ -778,6 +789,8 @@ class MLXRWKV7Model:
                         "affine": sum(int(q.backend_counts.get("affine", 0)) for q in self.quantized_linears.values()),
                         "metal": sum(int(q.backend_counts.get("metal", 0)) for q in self.quantized_linears.values()),
                     },
+                    "group_rkv_quant_projection": bool(self.group_rkv_quant_projection),
+                    "group_rkv_quant_projection_counts": dict(self.group_rkv_quant_projection_counts),
                 }
             )
         return out
@@ -797,6 +810,65 @@ class MLXRWKV7Model:
         if bias_key is not None and bias_key in self.arrays:
             y = y + self._get(bias_key)
         return y
+
+    def _rkv_group_weight(self, layer: int, qlines: list[MLXQuantizedLinear]):
+        bits = int(qlines[0].bits)
+        cache_key = (int(layer), bits)
+        cached = self._rkv_group_quant_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        weights = [q.weight for q in qlines]
+        group = pack_mlx_mm8_group(weights) if bits == 8 else pack_mlx_mm4_group(weights)
+        self._rkv_group_quant_cache[cache_key] = group
+        return group
+
+    def _grouped_rkv_projection(self, layer: int, xr, xk, xv, prefix: str):
+        """Opt-in grouped R/K/V quant projection seam.
+
+        This path is disabled by default and only activates when all three
+        R/K/V projection weights are quantized, route to Metal, and share shape
+        and bit-width. It keeps the default correctness-first path unchanged.
+        """
+
+        if not self.group_rkv_quant_projection:
+            return None
+        keys = [
+            f"{prefix}.r_proj.weight",
+            f"{prefix}.k_proj.weight",
+            f"{prefix}.v_proj.weight",
+        ]
+        qlines = [self.quantized_linears.get(key) for key in keys]
+        if any(q is None for q in qlines):
+            self.group_rkv_quant_projection_counts["fallback"] = int(
+                self.group_rkv_quant_projection_counts.get("fallback", 0)
+            ) + 1
+            return None
+        qlines = [q for q in qlines if q is not None]
+        if len({int(q.bits) for q in qlines}) != 1:
+            self.group_rkv_quant_projection_counts["fallback"] = int(
+                self.group_rkv_quant_projection_counts.get("fallback", 0)
+            ) + 1
+            return None
+        if any(q._selected_backend(x) != "metal" for q, x in zip(qlines, (xr, xk, xv), strict=True)):
+            self.group_rkv_quant_projection_counts["fallback"] = int(
+                self.group_rkv_quant_projection_counts.get("fallback", 0)
+            ) + 1
+            return None
+        mx = _mx()
+        group = self._rkv_group_weight(layer, qlines)
+        x_group = mx.stack([xr, xk, xv], axis=0)
+        y_group = (
+            mm8_group_matmul_metal_inputs(x_group, group)
+            if int(qlines[0].bits) == 8
+            else mm4_group_matmul_metal_inputs(x_group, group)
+        )
+        for q in qlines:
+            q.last_backend = "metal"
+            q.backend_counts["metal"] = int(q.backend_counts.get("metal", 0)) + 1
+        self.group_rkv_quant_projection_counts["metal"] = int(
+            self.group_rkv_quant_projection_counts.get("metal", 0)
+        ) + 1
+        return y_group[0], y_group[1], y_group[2]
 
     def _layer_norm(self, x, prefix: str):
         mx = _mx()
@@ -854,14 +926,18 @@ class MLXRWKV7Model:
         xa = x + xx * self._get(f"{prefix}.x_a").reshape(1, hidden)
         xg = x + xx * self._get(f"{prefix}.x_g").reshape(1, hidden)
 
-        r = self._linear(xr, f"{prefix}.r_proj.weight")
+        grouped_rkv = self._grouped_rkv_projection(layer, xr, xk, xv, prefix)
+        if grouped_rkv is None:
+            r = self._linear(xr, f"{prefix}.r_proj.weight")
+            k = self._linear(xk, f"{prefix}.k_proj.weight")
+            v = self._linear(xv, f"{prefix}.v_proj.weight")
+        else:
+            r, k, v = grouped_rkv
         w = self._linear(
             mx.tanh(self._linear(xw, f"{prefix}.w_lora.lora.0.weight")),
             f"{prefix}.w_lora.lora.2.weight",
             f"{prefix}.w_lora.lora.2.bias",
         )
-        k = self._linear(xk, f"{prefix}.k_proj.weight")
-        v = self._linear(xv, f"{prefix}.v_proj.weight")
         a = mx.sigmoid(
             self._linear(
                 self._linear(xa, f"{prefix}.a_lora.lora.0.weight"),

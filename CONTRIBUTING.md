@@ -1050,6 +1050,21 @@ python scripts/mlx_quant_projection_bench.py \
   --runs 3 \
   --results bench/results_apple_silicon_mlx_recurrent.jsonl
 
+# Model-level grouped R/K/V quant seam. Keep this as an opt-in A/B row until it
+# has stable end-to-end wins over the default quant path.
+RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION=1 \
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=512 \
+DECODE_LENGTHS=16 \
+CHUNK_SIZE=256 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=auto \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
 # Higher-pressure session matrix: 4 concurrent sessions, longer rounds, repeat=4.
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 DTYPE=fp16 \
