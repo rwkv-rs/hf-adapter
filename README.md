@@ -19,6 +19,7 @@ Contributor status and roadmap docs:
 - [`BENCHMARK.md`](BENCHMARK.md): numeric evidence and benchmark contract.
 - [`docs/validation/A100_HF_VALIDATION.md`](docs/validation/A100_HF_VALIDATION.md): latest A100 40GB HF training/quant/ZeRO validation matrix.
 - [`docs/validation/V100_HF_VALIDATION.md`](docs/validation/V100_HF_VALIDATION.md): latest V100 HF training/quant/ZeRO validation matrix.
+- [`docs/hardware/APPLE_SILICON.md`](docs/hardware/APPLE_SILICON.md): Apple Silicon / MPS / MLX compatibility lane and smoke commands.
 - [`docs/README.md`](docs/README.md): map of specialized, hardware, validation, and archived docs.
 
 This repository converts RWKV-7 weights to a Hugging Face-style directory and provides remote-code wrappers so the result can be loaded with:
@@ -38,6 +39,27 @@ implementation. Set `RWKV7_NATIVE_MODEL=1` to route remote-code
 `AutoModelForCausalLM.from_pretrained(...)` into the experimental native
 PyTorch backend for FLA-free compatibility validation.
 
+`flash-linear-attention` is optional at package-install time so Apple Silicon,
+CPU, and other no-CUDA environments can install the adapter. Use
+`pip install -e '.[fla]'` or `pip install -e '.[cuda]'` when validating the
+optimized CUDA/FLA backend.
+
+Apple Silicon evidence is tracked in
+[`docs/hardware/APPLE_SILICON.md`](docs/hardware/APPLE_SILICON.md). The current
+M5 / 16GB MPS lane covers tiny native generate/train, 0.1B HF
+load/forward/generate plus PEFT/Trainer/TRL smokes, and 0.4B HF
+fp32/fp16 load/forward/short-generate, prompt-length sweep, and PEFT/Trainer/TRL
+smokes. It also includes 1.5B rows: fp16 load/forward/short-generate, fp16
+prompt 16/64/128/256/512 sweep plus prompt512/new8, and fp32 manual plus
+Trainer/TRL PEFT LoRA 1/2/3/5/10-step smoke, plus native MM8/MM4
+Apple quant smoke for tiny and 0.1B model paths with packed-footprint telemetry,
+an optional MLX tensor bridge/export smoke, and an initial MLX recurrent
+reference backend smoke with tokenizer prompt, state-cache, dynamic-batch, and
+chunked-prefill checks through 0.1B/0.4B/1.5B short rows. `scripts/mlx_generate.py`,
+`scripts/mlx_session_smoke.py`, `rwkv7_hf.mlx_model.generate_text_from_hf`, and
+`rwkv7_hf.mlx_model.MLXGenerationSession` provide reusable tokenizer-integrated
+MLX text generation and serving-style prefill-once/session-decode entry points.
+
 ## Layout
 
 ```text
@@ -45,13 +67,29 @@ rwkv7_hf/
   configuration_rwkv7.py
   modeling_rwkv7.py
   tokenization_rwkv7.py
+  mlx_bridge.py
+  mlx_model.py
 scripts/
   convert_rwkv7_to_hf.py
   batch_convert_rwkv7_to_hf.py
+  convert_hf_to_mlx.py
+  mlx_generate.py
+  mlx_session_smoke.py
   run_hf_acceptance.sh
   run_hf_training_matrix.sh
   run_zero_training_smoke.sh
   run_hardware_smoke.sh
+  run_apple_silicon_smoke.sh
+  run_apple_silicon_training_smoke.sh
+  run_apple_silicon_trainer_smoke.sh
+  run_apple_silicon_model_training_smoke.sh
+  run_apple_silicon_model_trl_sft_smoke.sh
+  run_apple_silicon_model_rl_smoke.sh
+  run_apple_silicon_model_sweep.sh
+  run_apple_silicon_quant_smoke.sh
+  run_apple_silicon_mlx_smoke.sh
+  run_apple_silicon_mlx_model_smoke.sh
+  run_apple_silicon_mlx_session_smoke.sh
 tests/
   smoke_hf_generate.py
   test_official_alignment.py
@@ -76,6 +114,8 @@ tests/
   test_native_bnb_quant_smoke.py
   test_device_map_generate.py
   test_quantized_inference.py
+  test_apple_silicon_mlx_smoke.py
+  test_apple_silicon_mlx_model_smoke.py
   test_result_tools.py
 bench/
   bench_speed.py
@@ -846,7 +886,8 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
 ## Known limitations
 
 - This is a wrapper-based first stage, not yet a native upstream Transformers implementation.
-- The backend currently requires FLA.
+- The default CUDA wrapper backend currently requires FLA; set
+  `RWKV7_NATIVE_MODEL=1` for the FLA-free native PyTorch compatibility path.
 - The remote config uses a unique `rwkv7_hf_adapter` model type so `AutoModelForCausalLM` reliably loads this adapter instead of a locally registered FLA `rwkv7` class.
 - V100 serving-style memory is now near parity with official for 0.1B when using `logits_to_keep=1`.
 - V100 native-norm + fast-cache HF decode is about 41 tok/s; FLA `rwkv7_forward_token` improves this to about 59 tok/s; native-JIT `rwkv7_forward_token` reaches official parity for bsz=1 and supports batched/dynamic serving; native-graph `rwkv7_forward_token` reaches about 255 tok/s for bsz=1 and 1539 aggregate tok/s for bsz=8 with extra captured graph buffers.

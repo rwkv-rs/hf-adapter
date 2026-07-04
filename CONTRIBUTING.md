@@ -16,7 +16,8 @@ for shared helper code or documentation.
 3. For performance or hardware work, read [`BENCHMARK.md`](BENCHMARK.md).
 4. For the current V100 training/quant/ZeRO evidence, read [`docs/validation/V100_HF_VALIDATION.md`](docs/validation/V100_HF_VALIDATION.md).
 5. For kernel/performance experiments, also read [`docs/performance/FUSED_BACKEND.md`](docs/performance/FUSED_BACKEND.md).
-6. Pick an issue, comment that you are working on it, then open a focused PR.
+6. For Apple Silicon work, read [`docs/hardware/APPLE_SILICON.md`](docs/hardware/APPLE_SILICON.md).
+7. Pick an issue, comment that you are working on it, then open a focused PR.
 
 ## Current issue map
 
@@ -32,6 +33,7 @@ with different hardware to help.
 | #70 | Pascal / Turing | Older-card fallback behavior and fp16/quant constraints. |
 | #71 | AMD / ROCm | Native/no-FLA compatibility first, ROCm gaps second. |
 | #72 | CPU fallback | No-CUDA import, tiny native forward/generate, API tests. |
+| Apple Silicon / MPS | Apple native/no-FLA load/generate first, MLX/Metal backend later. |
 | #73 | Jetson AGX Thor | aarch64/Jetson Linux unified-memory validation. |
 | #74 | DGX Spark / GB10 | Grace Blackwell unified-memory validation. |
 
@@ -189,6 +191,137 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
   --max-length 32 \
   --results bench/results.jsonl
 ```
+
+## Minimal Apple Silicon validation
+
+Apple Silicon does not use the CUDA/FLA path. Use the native backend and record
+MPS availability:
+
+```bash
+python -m pip install -e .
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DEVICE=auto DTYPE=fp32 \
+RESULTS=bench/results_apple_silicon.jsonl \
+bash scripts/run_apple_silicon_smoke.sh
+
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+MODEL_SIZE_LABEL=0.4b SKIP_TINY=1 MAX_NEW_TOKENS=1 \
+DEVICE=auto DTYPE=fp32 \
+RESULTS=bench/results_apple_silicon.jsonl \
+bash scripts/run_apple_silicon_smoke.sh
+
+REQUIRE_PEFT=1 \
+DEVICE=auto DTYPE=fp32 \
+RESULTS=bench/results_apple_silicon_training.jsonl \
+bash scripts/run_apple_silicon_training_smoke.sh
+
+REQUIRE_PEFT=1 \
+DEVICE=auto DTYPE=fp32 \
+RESULTS=bench/results_apple_silicon_trainer.jsonl \
+bash scripts/run_apple_silicon_trainer_smoke.sh
+
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DEVICE=auto DTYPE=fp32 MAX_LENGTH=8 MAX_STEPS=1 REQUIRE_PEFT=1 \
+RESULTS=bench/results_apple_silicon_model_training.jsonl \
+bash scripts/run_apple_silicon_model_training_smoke.sh
+
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DEVICE=auto DTYPE=fp32 MAX_LENGTH=8 MAX_STEPS=1 REQUIRE_PEFT=1 REQUIRE_TRL=1 \
+RESULTS=bench/results_apple_silicon_trl_sft.jsonl \
+bash scripts/run_apple_silicon_model_trl_sft_smoke.sh
+
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DEVICE=auto DTYPE=fp32 MAX_LENGTH=8 MAX_STEPS=1 REQUIRE_PEFT=1 REQUIRE_TRL=1 \
+RESULTS=bench/results_apple_silicon_rl.jsonl \
+bash scripts/run_apple_silicon_model_rl_smoke.sh
+```
+
+If the model dir has stale remote-code files, sync them first:
+
+```bash
+python scripts/sync_hf_adapter_code.py /path/to/rwkv7-g1d-0.1b-hf
+```
+
+
+Apple native MM8/MM4 quant smoke (bitsandbytes-free):
+
+```bash
+# Tiny only. Add MODEL=/path/to/rwkv7-g1d-0.1b-hf for a converted-model row.
+DEVICE=auto DTYPE=fp32 QUANTIZATIONS=mm8,mm4 \
+RESULTS=bench/results_apple_silicon_quant.jsonl \
+bash scripts/run_apple_silicon_quant_smoke.sh
+```
+
+Apple MLX bridge/export smoke:
+
+```bash
+python -m pip install -e '.[mlx]'
+
+# Tiny MLX save/load/matmul smoke. Add MODEL for a real HF projection row.
+DTYPE=fp16 \
+RESULTS=bench/results_apple_silicon_mlx.jsonl \
+bash scripts/run_apple_silicon_mlx_smoke.sh
+
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+MODEL_SIZE_LABEL=0.1b \
+DTYPE=fp16 \
+RESULTS=bench/results_apple_silicon_mlx.jsonl \
+bash scripts/run_apple_silicon_mlx_smoke.sh
+
+python scripts/convert_hf_to_mlx.py \
+  /path/to/rwkv7-g1d-0.1b-hf \
+  /tmp/rwkv7-g1d-0.1b-mlx \
+  --dtype fp16 \
+  --include model.layers.0.attn.r_proj.weight \
+  --copy-metadata
+
+# Full MLX recurrent reference smoke: tiny parity/cache only.
+DTYPE=fp16 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_model_smoke.sh
+
+# Full MLX recurrent reference smoke on converted 0.1B.
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+MODEL_SIZE_LABEL=0.1b \
+DTYPE=fp16 \
+PROMPT="The quick brown fox" \
+DYNAMIC_BATCH=1 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_model_smoke.sh
+
+# Larger MLX rows should start short on 16GB machines.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+MODEL_SIZE_LABEL=0.4b \
+DTYPE=fp16 \
+PROMPT="The quick brown fox" \
+SKIP_TINY=1 DYNAMIC_BATCH=1 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_model_smoke.sh
+
+python scripts/mlx_generate.py \
+  /path/to/rwkv7-g1d-0.1b-hf \
+  --prompt "The quick brown fox" \
+  --max-new-tokens 8 \
+  --dtype fp16
+
+# Serving-shaped MLX session smoke: prefill once, decode in chunks, compare with one-shot.
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DTYPE=fp16 \
+PROMPT="The quick brown fox" \
+STEP_SIZES=4,4 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_smoke.sh
+```
+
+Include the `torch_mps_built` / `torch_mps_available` lines printed by the
+wrapper. On 16GB machines, start with tiny / 0.1B first, then short 0.4B
+generate, `scripts/run_apple_silicon_model_sweep.sh`, and 0.4B PEFT/Trainer/TRL
+one-step smoke before longer sweeps. For 1.5B on 16GB machines, start with
+fp16 load/forward/short-generate and a prompt-length sweep through 512 tokens;
+then add prompt512/new8 or 10-step Trainer/TRL rows only after closing other
+memory-heavy apps, and confirm the result has finite positive
+trainable-gradient or trainable-update totals. Treat non-finite fp16 PEFT
+gradients/updates as a failed row, not as evidence.
 
 ## Reporting hardware results
 
