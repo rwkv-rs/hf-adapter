@@ -14,6 +14,7 @@ Metal/MLX kernel.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -30,6 +31,23 @@ EXP_HALF = 0.606531  # = exp(-0.5), RWKV-7 decay base used by the native torch p
 
 def _mx():
     return require_mlx()
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return bool(default)
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return float(default)
+    try:
+        return float(raw)
+    except ValueError:
+        return float(default)
 
 
 def _as_list(values: Iterable[int] | Any) -> list[int]:
@@ -414,19 +432,36 @@ class MLXGenerationSessionBatch:
         self.round_backend_reasons.append(str(reason))
         return outputs
 
+    def _uses_w8_metal_projection(self) -> bool:
+        bits = getattr(self.model, "quantized_linear_bits", None)
+        quant_backend = getattr(self.model, "quantized_linear_backend", None)
+        if bits != 8:
+            return False
+        if quant_backend == "metal":
+            return True
+        if quant_backend != "auto":
+            return False
+        return any(int(getattr(q, "auto_metal_max_rows", 0)) > 0 for q in self.model.quantized_linears.values())
+
+    def _auto_stable_argmax_tolerance(self) -> float:
+        if not self._uses_w8_metal_projection():
+            return 0.0
+        if not _env_flag("RWKV7_MLX_SESSION_AUTO_W8_STABLE", False):
+            return 0.0
+        return max(0.0, _env_float("RWKV7_MLX_SESSION_STABLE_ARGMAX_TOLERANCE", 0.015625))
+
     def _auto_batch_disabled_reason(self) -> str | None:
         """Return why ``backend='auto'`` should avoid batched decode.
 
         W8/Metal projection is correct for one-shot and sequential session
-        paths, but current long multi-session batched decode can diverge from
-        one-shot greedy tokens on larger real checkpoints.  Keep ``auto`` as the
-        production-safe scheduler and require explicit ``backend='batched'`` for
-        ongoing W8/Metal batch-exactness investigations.
+        paths, but long multi-session batched decode can diverge from one-shot
+        greedy tokens.  Keep automatic W8/Metal batching guarded by default.
+        W8 ``quant_backend=auto`` still batches when it resolves to the affine
+        path, and developers can opt into W8/Metal stable auto batching with
+        ``RWKV7_MLX_SESSION_AUTO_W8_STABLE=1`` after running the strict gates.
         """
 
-        bits = getattr(self.model, "quantized_linear_bits", None)
-        quant_backend = getattr(self.model, "quantized_linear_backend", None)
-        if bits == 8 and quant_backend in {"metal", "auto"}:
+        if self._uses_w8_metal_projection() and self._auto_stable_argmax_tolerance() <= 0:
             return "auto_mm8_metal_batch_exactness_guard"
         return None
 
@@ -559,7 +594,13 @@ class MLXGenerationSessionBatch:
         elif len(set(steps)) == 1 and steps[0] > 0 and (
             selected_backend in {"batched", "batched_stable"} or self._auto_batch_disabled_reason() is None
         ):
-            tol = 0.015625 if selected_backend == "batched_stable" else 0.0
+            tol = (
+                0.015625
+                if selected_backend == "batched_stable"
+                else self._auto_stable_argmax_tolerance()
+                if selected_backend == "auto"
+                else 0.0
+            )
             outputs = self._decode_round_batched(steps[0], stable_argmax_tolerance=tol)
         elif selected_backend == "auto":
             reason = self._auto_batch_disabled_reason()

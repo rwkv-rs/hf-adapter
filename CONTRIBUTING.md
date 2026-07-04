@@ -901,8 +901,24 @@ REQUIRE_SESSION_BACKEND_MATCH=1 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 
+# Optional W8/Metal auto rollout gate. Default auto remains guarded for W8/Metal;
+# this env flag makes SESSION_BACKEND=auto use the batched_stable policy.
+RWKV7_MLX_SESSION_AUTO_W8_STABLE=1 \
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=3 \
+ROUNDS=4,4 \
+REPEAT=1 \
+QUANTIZATION=mm8 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+SESSION_BACKEND=auto \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
 # Conservative quant backend auto route. W4 should report Metal calls in
-# quantized_linear_last_backend_counts; W8 should report affine calls by default.
+# quantized_linear_last_backend_counts; W8 should report affine calls by default and can now batch under SESSION_BACKEND=auto when it resolves to affine.
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 DTYPE=fp16 \
 SESSION_COUNT=3 \
@@ -928,28 +944,25 @@ QUANTIZATION=mm8 \
 QUANT_MIN_PARAMS=4000000 \
 QUANT_BACKEND=auto \
 WKV_BACKEND=metal \
-SESSION_BACKEND=sequential \
-COMPARE_SESSION_BACKEND=batched \
-COMPARE_ONLY=1 \
-REQUIRE_SESSION_BACKEND_MATCH=1 \
+SESSION_BACKEND=auto \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 
-# Extended 0.4B / 1.5B long-decode matrix: prompt1024 + decode64.
+# Extended 0.4B / 1.5B long-decode matrix: prompt4096 + decode256.
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 DTYPE=fp16 \
-PROMPT_LENGTHS=1024 \
-DECODE_LENGTHS=64 \
-CHUNK_SIZE=256 \
+PROMPT_LENGTHS=4096 \
+DECODE_LENGTHS=256 \
+CHUNK_SIZE=1024 \
 REPEAT=1 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_generation_sweep.sh
 
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
 DTYPE=fp16 \
-PROMPT_LENGTHS=1024 \
-DECODE_LENGTHS=64 \
-CHUNK_SIZE=256 \
+PROMPT_LENGTHS=4096 \
+DECODE_LENGTHS=256 \
+CHUNK_SIZE=1024 \
 REPEAT=1 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_generation_sweep.sh
@@ -1002,7 +1015,7 @@ wrapper. On 16GB machines, start with tiny / 0.1B first, then short 0.4B
 generate, `scripts/run_apple_silicon_model_sweep.sh`, and 0.4B PEFT/Trainer/TRL
 one-step smoke before longer sweeps. For 1.5B on 16GB machines, start with
 fp16 load/forward/short-generate and a prompt-length sweep through 512 tokens;
-then add prompt1024/decode64 or 12-step Trainer/TRL rows only after closing other
+then add prompt4096/decode256 or 12-step Trainer/TRL rows only after closing other
 memory-heavy apps, and confirm the result has finite positive
 trainable-gradient or trainable-update totals. Treat non-finite fp16 PEFT
 gradients/updates as a failed row, not as evidence.

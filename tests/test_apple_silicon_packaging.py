@@ -163,7 +163,10 @@ def test_apple_smoke_script_static() -> None:
     assert "batched_stable" in model_text
     assert "equal_positive_round_stable_argmax_tol" in model_text
     assert "auto_mm8_metal_batch_exactness_guard" in model_text
-    assert 'quant_backend in {"metal", "auto"}' in model_text
+    assert "RWKV7_MLX_SESSION_AUTO_W8_STABLE" in model_text
+    assert "RWKV7_MLX_SESSION_STABLE_ARGMAX_TOLERANCE" in model_text
+    assert "auto_metal_max_rows" in model_text
+    assert "_uses_w8_metal_projection" in model_text
     assert "round_backend_reasons" in model_text
     mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"
     assert mlx_session_batch_script.exists()
