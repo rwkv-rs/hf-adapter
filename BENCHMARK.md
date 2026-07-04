@@ -1901,8 +1901,15 @@ repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
 6-session repeat=2 passes with per-session min decode `19.00 tok/s`,
 aggregate round min decode `105.44 tok/s`, and peak `617 MB`; 1.5B 5-session
 repeat=1 passes with per-session min decode `6.61 tok/s`, aggregate round min
-decode `32.38 tok/s`, and peak `1841 MB`. These rows validate the batching seam
-and telemetry, not the final fp16-beating quant speed gate.
+decode `32.38 tok/s`, and peak `1841 MB`. During W8/Metal strict batched
+decode bring-up, larger 0.4B multi-round exactness diverged from one-shot greedy
+tokens, so `SESSION_BACKEND=auto` now records an
+`auto_mm8_metal_batch_exactness_guard` reason and falls back to sequential for
+W8/Metal while W4 uses the batched path. Safe W8/Metal auto rows pass for 0.4B
+6-session repeat=2 (min decode `39.80 tok/s`, peak `682 MB`) and 1.5B
+5-session repeat=1 (min decode `17.43 tok/s`, peak `2198 MB`). These rows
+validate the batching seam and safety telemetry, not the final fp16-beating
+quant speed gate.
 
 The current next-focus list is: 13.3B official-alignment/speed sweeps are now
 done (cos~1.0, `native_jit` 18.4 tok/s on V100; see

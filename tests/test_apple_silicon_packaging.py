@@ -132,6 +132,10 @@ def test_apple_smoke_script_static() -> None:
     assert '"quant_backend": args.quant_backend' in mlx_session_batch_text
     assert '"session_backend": args.session_backend' in mlx_session_batch_text
     assert '"min_round_decode_tok_s": min_round_decode_tok_s(rows)' in mlx_session_batch_text
+    assert '"round_backend_reasons": sorted(' in mlx_session_batch_text
+    model_text = (ROOT / "rwkv7_hf/mlx_model.py").read_text(encoding="utf-8")
+    assert "auto_mm8_metal_batch_exactness_guard" in model_text
+    assert "round_backend_reasons" in model_text
     mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"
     assert mlx_session_batch_script.exists()
     assert mlx_session_batch_script.stat().st_mode & stat.S_IXUSR

@@ -215,7 +215,26 @@ def run_tiny_generation_session_batch(args: argparse.Namespace) -> dict[str, Any
         raise AssertionError("batched backend must reject heterogeneous token counts")
     auto_outputs = guard_batch.decode_round([1, 2], backend="auto")
     assert guard_batch.round_backends[-1] == "sequential"
+    assert guard_batch.round_backend_reasons[-1] == "heterogeneous_or_zero_round"
     assert [output.generated_tokens for output in auto_outputs] == [1, 2]
+    auto_equal_batch = MLXGenerationSessionBatch.from_prompts(mlx_model, tokenizer, prompts)
+    auto_equal = auto_equal_batch.decode_round(1, backend="auto")
+    assert auto_equal_batch.round_backends == ["batched"]
+    assert auto_equal_batch.round_backend_reasons == ["equal_positive_round"]
+    assert [output.generated_tokens for output in auto_equal] == [1, 1]
+    old_bits = mlx_model.quantized_linear_bits
+    old_backend = mlx_model.quantized_linear_backend
+    mlx_model.quantized_linear_bits = 8
+    mlx_model.quantized_linear_backend = "metal"
+    try:
+        auto_guard_batch = MLXGenerationSessionBatch.from_prompts(mlx_model, tokenizer, prompts)
+        auto_guard = auto_guard_batch.decode_round(1, backend="auto")
+        assert auto_guard_batch.round_backends == ["sequential"]
+        assert auto_guard_batch.round_backend_reasons == ["auto_mm8_metal_batch_exactness_guard"]
+        assert [output.generated_tokens for output in auto_guard] == [1, 1]
+    finally:
+        mlx_model.quantized_linear_bits = old_bits
+        mlx_model.quantized_linear_backend = old_backend
 
     batch = MLXGenerationSessionBatch.from_prompts(mlx_model, tokenizer, prompts)
     first = batch.decode_round(1)
