@@ -479,7 +479,7 @@ def main() -> int:
     ap.add_argument(
         "--session-backend",
         default="sequential",
-        choices=["sequential", "batched", "auto"],
+        choices=["sequential", "batched", "batched_stable", "auto"],
         help=(
             "Session decode scheduler: sequential preserves historical per-session decode; "
             "batched stacks equal-size rounds into one MLX batch; auto batches equal positive rounds."
@@ -488,7 +488,7 @@ def main() -> int:
     ap.add_argument(
         "--compare-session-backend",
         default="none",
-        choices=["none", "sequential", "batched", "auto"],
+        choices=["none", "sequential", "batched", "batched_stable", "auto"],
         help="Optionally compare --session-backend against another scheduler and record strict match telemetry.",
     )
     ap.add_argument(
