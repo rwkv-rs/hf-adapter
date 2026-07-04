@@ -13,7 +13,10 @@ import argparse
 import json
 import os
 import platform
+import re
+import subprocess
 import time
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +41,56 @@ def append_result(path: str, row: dict[str, Any]) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def emit(path: str, row: dict[str, Any]) -> None:
+    print(json.dumps(row, ensure_ascii=False))
+    append_result(path, row)
+
+
+def package_version(name: str) -> str:
+    try:
+        return metadata.version(name)
+    except metadata.PackageNotFoundError:
+        return "missing"
+
+
+def darwin_sysctl(name: str) -> str:
+    try:
+        return subprocess.check_output(["sysctl", "-n", name], text=True).strip()
+    except Exception:
+        return "unknown"
+
+
+def apple_memory_gb() -> int | str:
+    raw = darwin_sysctl("hw.memsize")
+    try:
+        return round(int(raw) / 1024 / 1024 / 1024)
+    except Exception:
+        return "unknown"
+
+
+def infer_model_size_label(model_path: str, explicit: str = "") -> str:
+    if explicit:
+        return explicit.lower()
+    match = re.search(r"(\d+(?:\.\d+)?b)", Path(model_path).name.lower())
+    return match.group(1) if match else "unknown"
+
+
+def mps_memory_stats(torch: Any) -> dict[str, int]:
+    if not getattr(torch.backends, "mps", None) or not torch.backends.mps.is_available():
+        return {}
+    stats: dict[str, int] = {}
+    for key, func_name in (
+        ("mps_current_allocated_memory_bytes", "current_allocated_memory"),
+        ("mps_driver_allocated_memory_bytes", "driver_allocated_memory"),
+        ("mps_recommended_max_memory_bytes", "recommended_max_memory"),
+    ):
+        try:
+            stats[key] = int(getattr(torch.mps, func_name)())
+        except Exception:
+            pass
+    return stats
 
 
 def choose_device(torch: Any, requested: str) -> str:
@@ -124,10 +177,11 @@ def run_hf_model(torch: Any, args: argparse.Namespace, device: str, dtype: Any) 
     elapsed = time.perf_counter() - t0
     assert out.logits.shape[0] == 1
     assert gen.shape[1] >= batch["input_ids"].shape[1]
-    return {
+    row = {
         "axis": "apple_silicon_hf_model",
         "status": "pass",
-        "model": str(args.model),
+        "model": Path(args.model).name,
+        "model_size_label": infer_model_size_label(args.model, args.model_size_label),
         "device": device,
         "dtype": str(dtype).replace("torch.", ""),
         "prompt_tokens": int(batch["input_ids"].shape[1]),
@@ -135,6 +189,8 @@ def run_hf_model(torch: Any, args: argparse.Namespace, device: str, dtype: Any) 
         "elapsed_s": round(elapsed, 4),
         "backend_class": model.__class__.__name__,
     }
+    row.update(mps_memory_stats(torch))
+    return row
 
 
 def main() -> int:
@@ -145,6 +201,7 @@ def main() -> int:
     ap.add_argument("--max-new-tokens", type=int, default=2)
     ap.add_argument("--prompt", default="User: Hello from Apple Silicon.\n\nAssistant:")
     ap.add_argument("--results", default="")
+    ap.add_argument("--model-size-label", default="")
     ap.add_argument("--require-apple", action="store_true")
     ap.add_argument("--skip-tiny", action="store_true")
     args = ap.parse_args()
@@ -172,24 +229,25 @@ def main() -> int:
         "status": "info",
         "platform": platform.platform(),
         "machine": platform.machine(),
+        "chip": darwin_sysctl("machdep.cpu.brand_string"),
+        "memory_gb": apple_memory_gb(),
         "torch": getattr(torch, "__version__", "unknown"),
+        "transformers": package_version("transformers"),
         "mps_built": bool(torch.backends.mps.is_built()),
         "mps_available": bool(torch.backends.mps.is_available()),
         "device": device,
         "dtype": args.dtype,
         "native_model": os.environ.get("RWKV7_NATIVE_MODEL"),
     }
-    print(json.dumps(header, ensure_ascii=False))
-    append_result(args.results, header)
+    header.update(mps_memory_stats(torch))
+    emit(args.results, header)
 
     if not args.skip_tiny:
         row = run_tiny_native(torch, device, dtype, args.max_new_tokens)
-        print(json.dumps(row, ensure_ascii=False))
-        append_result(args.results, row)
+        emit(args.results, row)
     if args.model:
         row = run_hf_model(torch, args, device, dtype)
-        print(json.dumps(row, ensure_ascii=False))
-        append_result(args.results, row)
+        emit(args.results, row)
     print("APPLE SILICON SMOKE PASS")
     return 0
 
