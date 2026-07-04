@@ -132,6 +132,35 @@ def summarize_mlx_arrays(arrays: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def reset_mlx_peak_memory() -> None:
+    """Reset MLX peak-memory counters when the runtime exposes them."""
+
+    m = require_mlx()
+    reset = getattr(m, "reset_peak_memory", None)
+    if callable(reset):
+        reset()
+
+
+def mlx_memory_telemetry() -> dict[str, int]:
+    """Return best-effort MLX memory counters in bytes.
+
+    MLX exposes these counters on Apple hosts.  Keeping them behind a helper
+    lets scripts record memory telemetry without making non-MLX imports fail.
+    """
+
+    m = require_mlx()
+    out: dict[str, int] = {}
+    for key, attr in (
+        ("mlx_active_memory_bytes", "get_active_memory"),
+        ("mlx_peak_memory_bytes", "get_peak_memory"),
+        ("mlx_cache_memory_bytes", "get_cache_memory"),
+    ):
+        fn = getattr(m, attr, None)
+        if callable(fn):
+            out[key] = int(fn())
+    return out
+
+
 def hf_safetensor_files(model_dir: str | Path) -> list[Path]:
     root = Path(model_dir)
     files = sorted(root.glob("*.safetensors"))
