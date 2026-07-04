@@ -66,6 +66,10 @@ def run_interleaved_batch(
     repeat_index: int,
     repeat: int,
     skip_special_tokens: bool,
+    quantization: str,
+    quant_min_params: int,
+    quant_backend: str,
+    wkv_backend: str,
 ) -> tuple[dict[str, Any], list[str]]:
     reset_mlx_peak_memory()
     batch = MLXGenerationSessionBatch.from_prompts(
@@ -136,6 +140,9 @@ def run_interleaved_batch(
         "status": "pass",
         "model": model_name,
         "dtype": dtype,
+        "quantization": quantization,
+        "quant_min_params": int(quant_min_params),
+        "quant_backend": quant_backend,
         "repeat_index": int(repeat_index),
         "repeat": int(repeat),
         "rounds": rounds,
@@ -144,6 +151,9 @@ def run_interleaved_batch(
         "all_session_one_shot_token_match": bool(all_token_match),
         "all_session_one_shot_text_match": bool(all_text_match),
         "all_seen_tokens_match": bool(all_seen_match),
+        "wkv_backend": wkv_backend,
+        "wkv_backend_last": model.wkv_backend_last,
+        "wkv_backend_counts": dict(model.wkv_backend_counts),
         "round_telemetry": round_rows,
         "per_session": per_session,
         **batch.telemetry(),
@@ -162,7 +172,8 @@ def main() -> int:
     ap.add_argument("--repeat", type=int, default=1, help="Repeat the full interleaved-session workload for pressure telemetry.")
     ap.add_argument("--quantization", default="none", choices=["none", "mm8", "mm4"], help="Optional MLX packed W8/W4 projection path.")
     ap.add_argument("--quant-min-params", type=int, default=8_000_000)
-    ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference"])
+    ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference", "metal"])
+    ap.add_argument("--wkv-backend", default="reference", choices=["reference", "metal", "auto"])
     ap.add_argument("--require-mlx", action="store_true")
     ap.add_argument("--json-only", action="store_true")
     ap.add_argument("--results", default="", help="Optional JSONL file to append a generation result row.")
@@ -182,6 +193,10 @@ def main() -> int:
             "batch_size": len(prompts),
             "rounds": rounds,
             "repeat": int(repeat),
+            "quantization": args.quantization,
+            "quant_min_params": int(args.quant_min_params),
+            "quant_backend": args.quant_backend,
+            "wkv_backend": args.wkv_backend,
         }
         print(json.dumps(row, ensure_ascii=False))
         append_result(args.results, row)
@@ -196,6 +211,7 @@ def main() -> int:
         quantization=args.quantization,
         quant_min_params=int(args.quant_min_params),
         quant_backend=args.quant_backend,
+        wkv_backend=args.wkv_backend,
     )
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     model_name = Path(args.model).name
@@ -207,6 +223,7 @@ def main() -> int:
         "quantization": args.quantization,
         "quant_min_params": int(args.quant_min_params),
         "quant_backend": args.quant_backend,
+        "wkv_backend": args.wkv_backend,
         "session_count": len(prompts),
         "rounds": rounds,
         "repeat": int(repeat),
@@ -228,6 +245,10 @@ def main() -> int:
             repeat_index=repeat_index,
             repeat=repeat,
             skip_special_tokens=bool(args.skip_special_tokens),
+            quantization=args.quantization,
+            quant_min_params=int(args.quant_min_params),
+            quant_backend=args.quant_backend,
+            wkv_backend=args.wkv_backend,
         )
         rows.append(row)
         if not args.json_only:
@@ -241,6 +262,9 @@ def main() -> int:
         "status": "pass",
         "model": model_name,
         "dtype": args.dtype,
+        "quantization": args.quantization,
+        "quant_min_params": int(args.quant_min_params),
+        "quant_backend": args.quant_backend,
         "repeat": int(repeat),
         "rows": len(rows),
         "session_count": len(prompts),
@@ -249,6 +273,7 @@ def main() -> int:
         "all_session_one_shot_token_match": all(bool(row["all_session_one_shot_token_match"]) for row in rows),
         "all_session_one_shot_text_match": all(bool(row["all_session_one_shot_text_match"]) for row in rows),
         "all_seen_tokens_match": all(bool(row["all_seen_tokens_match"]) for row in rows),
+        "wkv_backend": args.wkv_backend,
         "max_prompt_tokens": max(max(int(x) for x in row.get("prompt_tokens", [0])) for row in rows) if rows else None,
         "max_generated_tokens": max(max(int(x) for x in row.get("generated_tokens", [0])) for row in rows) if rows else None,
         "max_mlx_active_memory_bytes": max(int(row.get("mlx_active_memory_bytes", 0)) for row in rows) if rows else None,

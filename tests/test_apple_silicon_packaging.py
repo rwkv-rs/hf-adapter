@@ -83,6 +83,10 @@ def test_apple_smoke_script_static() -> None:
     assert mlx_session_wrapper.exists()
     assert mlx_session_wrapper.stat().st_mode & stat.S_IXUSR
     subprocess.run(["bash", "-n", str(mlx_session_wrapper)], cwd=ROOT, check=True)
+    mlx_session_wrapper_text = mlx_session_wrapper.read_text(encoding="utf-8")
+    assert "QUANT_BACKEND" in mlx_session_wrapper_text
+    assert "WKV_BACKEND" in mlx_session_wrapper_text
+    assert "--wkv-backend" in mlx_session_wrapper_text
     mlx_session_batch_wrapper = ROOT / "scripts/run_apple_silicon_mlx_session_batch_smoke.sh"
     assert mlx_session_batch_wrapper.exists()
     assert mlx_session_batch_wrapper.stat().st_mode & stat.S_IXUSR
@@ -92,6 +96,9 @@ def test_apple_smoke_script_static() -> None:
     assert "PROMPTS_FILE" in mlx_session_batch_text
     assert "EXTRA_PROMPTS" in mlx_session_batch_text
     assert "PROMPT_H" in mlx_session_batch_text
+    assert "QUANT_BACKEND" in mlx_session_batch_text
+    assert "WKV_BACKEND" in mlx_session_batch_text
+    assert "--wkv-backend" in mlx_session_batch_text
     mlx_session_batch_wrapper = ROOT / "scripts/run_apple_silicon_mlx_session_batch_smoke.sh"
     assert mlx_session_batch_wrapper.exists()
     assert mlx_session_batch_wrapper.stat().st_mode & stat.S_IXUSR
@@ -109,9 +116,17 @@ def test_apple_smoke_script_static() -> None:
     mlx_session_script = ROOT / "scripts/mlx_session_smoke.py"
     assert mlx_session_script.exists()
     assert mlx_session_script.stat().st_mode & stat.S_IXUSR
+    mlx_session_text = mlx_session_script.read_text(encoding="utf-8")
+    assert 'choices=["affine", "reference", "metal"]' in mlx_session_text
+    assert 'choices=["reference", "metal", "auto"]' in mlx_session_text
     mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"
     assert mlx_session_batch_script.exists()
     assert mlx_session_batch_script.stat().st_mode & stat.S_IXUSR
+    mlx_session_batch_text = mlx_session_batch_script.read_text(encoding="utf-8")
+    assert 'choices=["affine", "reference", "metal"]' in mlx_session_batch_text
+    assert 'choices=["reference", "metal", "auto"]' in mlx_session_batch_text
+    assert '"quantization": args.quantization' in mlx_session_batch_text
+    assert '"quant_backend": args.quant_backend' in mlx_session_batch_text
     mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"
     assert mlx_session_batch_script.exists()
     assert mlx_session_batch_script.stat().st_mode & stat.S_IXUSR
