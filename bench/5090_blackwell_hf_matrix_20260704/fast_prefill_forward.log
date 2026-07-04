@@ -1,0 +1,1 @@
+FAST PREFILL FORWARD PASS fused_scan=False max_abs=0.062500 min_cos=1.00000000 greedy=True decode_max_abs=0.062500 decode_greedy=True generate_match=True seen=32

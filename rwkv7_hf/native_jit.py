@@ -1081,7 +1081,7 @@ def prefill(
          pre_w, pre_b, an_w, an_b, fn_w, fn_b,
          x_r, x_w, x_k, x_v, x_a, x_g, k_k, k_a, r_k,
          Rw, Kw, Vw, Ow, w1, w2, w0, a1, a2, a0, v1, v2, v0, g1, g2,
-         gn_w, gn_b, fx_k, fK, fV) = p
+         gn_w, gn_b, fx_k, fK, fV, _RKVw) = p
         layer_idx = int(i)
         H = int(H)
         N = int(N)
