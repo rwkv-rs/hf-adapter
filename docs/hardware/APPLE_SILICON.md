@@ -566,6 +566,12 @@ For every Apple result, include:
 - command line and JSONL result row;
 - Activity Monitor or `memory_pressure` notes if the run swaps heavily.
 
+Apple harness maintenance note: shared script helpers live in
+`tests/apple_silicon_utils.py`. New MPS/MLX smoke rows should use it for
+hardware probes, JSONL output, package versions, model-size labels, device/dtype
+selection, and MPS memory telemetry instead of copying helper blocks into each
+test script.
+
 ## Known limitations
 
 - This is not an Albatross-speed path. PyTorch MPS validates HF compatibility on
