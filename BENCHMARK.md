@@ -1929,7 +1929,12 @@ one-shot tokens (`all_backend_token_match=true`,
 `145.89` and `38.31 tok/s`; 1.5B W8 also matches in this matrix with
 batched aggregate round min `34.67 tok/s`; 0.4B W8 reproduces the exactness gap
 (`backend_compare_status=mismatch`, first mismatch at token index `6` for the
-short prompt). The MLX quant backend now also has a conservative
+short prompt). A new optional `--trace-mismatch-logits` row localizes that gap:
+at step 6 the sequential path has an exact tie between tokens `11` and `261`
+(logits `8.476562` / `8.476562`, `mx.argmax` selects `11`), while the batched
+Metal path shifts token `11` down to `8.46875` and selects `261`; the traced
+left/right max-abs logit delta at that step is only `0.03125`. The MLX quant
+backend now also has a conservative
 `--quant-backend auto` policy with backend-count telemetry: W4 auto selects the
 Metal fused dequant-projection path for normal row counts and the 0.4B
 3-session sequential-vs-batched gate passes with
