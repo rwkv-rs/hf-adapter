@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 from pathlib import Path
 from typing import Any
@@ -519,6 +520,21 @@ def main() -> int:
         help="When a backend comparison mismatches, replay token-by-token and record top-k logits at the first divergent step.",
     )
     ap.add_argument("--mismatch-topk", type=int, default=5, help="Top-k logits to record for --trace-mismatch-logits.")
+    ap.add_argument(
+        "--stable-argmax-tolerance",
+        type=float,
+        default=None,
+        help=(
+            "Override RWKV7_MLX_SESSION_STABLE_ARGMAX_TOLERANCE for batched_stable/auto-stable "
+            "low-margin argmax rows."
+        ),
+    )
+    ap.add_argument(
+        "--stable-argmax-mode",
+        default=None,
+        choices=["lower", "repair"],
+        help="Override RWKV7_MLX_SESSION_STABLE_ARGMAX_MODE; default preserves the historical lower-token policy.",
+    )
     ap.add_argument("--require-mlx", action="store_true")
     ap.add_argument("--json-only", action="store_true")
     ap.add_argument("--results", default="", help="Optional JSONL file to append a generation result row.")
@@ -527,6 +543,12 @@ def main() -> int:
     rounds = parse_rounds(args.rounds)
     prompts = [str(x) for x in args.prompt]
     repeat = positive_int(args.repeat, name="repeat")
+    if args.stable_argmax_tolerance is not None:
+        if float(args.stable_argmax_tolerance) < 0:
+            raise ValueError("--stable-argmax-tolerance must be non-negative")
+        os.environ["RWKV7_MLX_SESSION_STABLE_ARGMAX_TOLERANCE"] = str(float(args.stable_argmax_tolerance))
+    if args.stable_argmax_mode is not None:
+        os.environ["RWKV7_MLX_SESSION_STABLE_ARGMAX_MODE"] = str(args.stable_argmax_mode)
     if args.compare_only and args.compare_session_backend == "none":
         raise ValueError("--compare-only requires --compare-session-backend")
     if not mlx_available():
@@ -549,6 +571,8 @@ def main() -> int:
             "compare_only": bool(args.compare_only),
             "trace_mismatch_logits": bool(args.trace_mismatch_logits),
             "mismatch_topk": int(args.mismatch_topk),
+            "stable_argmax_tolerance": args.stable_argmax_tolerance,
+            "stable_argmax_mode": args.stable_argmax_mode,
         }
         print(json.dumps(row, ensure_ascii=False))
         append_result(args.results, row)
@@ -581,6 +605,8 @@ def main() -> int:
         "compare_only": bool(args.compare_only),
         "trace_mismatch_logits": bool(args.trace_mismatch_logits),
         "mismatch_topk": int(args.mismatch_topk),
+        "stable_argmax_tolerance": args.stable_argmax_tolerance,
+        "stable_argmax_mode": args.stable_argmax_mode,
         "session_count": len(prompts),
         "rounds": rounds,
         "repeat": int(repeat),
