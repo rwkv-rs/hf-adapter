@@ -22,6 +22,7 @@ from typing import Any, Iterable
 
 from .mlx_bridge import load_selected_hf_tensors_as_mlx, mlx_array_nbytes, require_mlx, summarize_mlx_arrays
 from .mlx_quant import MLXQuantizedLinear
+from .mlx_wkv import metal_wkv_available, wkv_update
 
 
 EXP_HALF = 0.606531  # = exp(-0.5), RWKV-7 decay base used by the native torch path.
@@ -426,9 +427,14 @@ class MLXGenerationSessionBatch:
 class MLXRWKV7Model:
     """Minimal MLX-native RWKV-7 recurrent model loaded from HF safetensors."""
 
-    def __init__(self, config: dict[str, Any], arrays: dict[str, Any]):
+    def __init__(self, config: dict[str, Any], arrays: dict[str, Any], *, wkv_backend: str = "reference"):
         self.config = dict(config)
         self.arrays = dict(arrays)
+        self.wkv_backend = (wkv_backend or "reference").lower().strip()
+        if self.wkv_backend not in {"reference", "metal", "auto"}:
+            raise ValueError(f"unsupported MLX WKV backend {wkv_backend!r}; expected reference, metal, or auto")
+        self.wkv_backend_last: str | None = None
+        self.wkv_backend_counts: dict[str, int] = {"reference": 0, "metal": 0}
         self.quantized_linears: dict[str, MLXQuantizedLinear] = {}
         self.quantized_dense_equivalent_bytes = 0
         self.quantized_linear_bytes = 0
@@ -459,18 +465,19 @@ class MLXRWKV7Model:
         quantization: str | None = None,
         quant_min_params: int = 8_000_000,
         quant_backend: str = "affine",
+        wkv_backend: str = "reference",
     ) -> "MLXRWKV7Model":
         root = Path(model_dir)
         config = json.loads((root / "config.json").read_text(encoding="utf-8"))
         arrays = load_selected_hf_tensors_as_mlx(root, tensor_regex=r".*", dtype=dtype)
-        model = cls(config, arrays)
+        model = cls(config, arrays, wkv_backend=wkv_backend)
         if quantization and quantization.lower() not in {"none", "off", "false", "0"}:
             model.quantize_linears(quantization, min_params=quant_min_params, backend=quant_backend)
         return model
 
     @classmethod
-    def from_arrays(cls, config: dict[str, Any], arrays: dict[str, Any]) -> "MLXRWKV7Model":
-        return cls(config, arrays)
+    def from_arrays(cls, config: dict[str, Any], arrays: dict[str, Any], *, wkv_backend: str = "reference") -> "MLXRWKV7Model":
+        return cls(config, arrays, wkv_backend=wkv_backend)
 
     def _is_quantizable_linear_weight(self, key: str, value: Any, min_params: int) -> bool:
         if not key.endswith(".weight"):
@@ -521,6 +528,10 @@ class MLXRWKV7Model:
             "num_heads": self.num_heads,
             "head_dim": self.head_dim,
             "vocab_size": self.vocab_size,
+            "wkv_backend": self.wkv_backend,
+            "wkv_backend_last": self.wkv_backend_last,
+            "wkv_backend_counts": dict(self.wkv_backend_counts),
+            "wkv_metal_available": metal_wkv_available(),
             **summarize_mlx_arrays(self.arrays),
         }
         if self.quantized_linears:
@@ -648,11 +659,19 @@ class MLXRWKV7Model:
             v = v + (v_first - v) * v_mix
         w = mx.exp(-EXP_HALF * mx.sigmoid(w.astype(mx.float32)))
 
-        vk = v.reshape(B, H, N, 1) @ k.reshape(B, H, 1, N)
-        ab = (-kk).reshape(B, H, N, 1) @ (kk * a).reshape(B, H, 1, N)
-        state = state * w.reshape(B, H, 1, N) + state @ ab.astype(mx.float32) + vk.astype(mx.float32)
-        out = state.astype(x.dtype) @ r.reshape(B, H, N, 1)
-        out = out.reshape(B, hidden)
+        out_heads, state, backend_used = wkv_update(
+            state,
+            w,
+            v,
+            k,
+            kk,
+            a,
+            r,
+            backend=self.wkv_backend,
+        )
+        self.wkv_backend_last = backend_used
+        self.wkv_backend_counts[backend_used] = int(self.wkv_backend_counts.get(backend_used, 0)) + 1
+        out = out_heads.reshape(B, hidden)
         out = self._group_norm_heads(out, layer)
         sk = (
             r.reshape(B, H, N)
@@ -817,6 +836,7 @@ def load_mlx_rwkv7_model(
     quantization: str | None = None,
     quant_min_params: int = 8_000_000,
     quant_backend: str = "affine",
+    wkv_backend: str = "reference",
 ) -> MLXRWKV7Model:
     return MLXRWKV7Model.from_hf(
         model_dir,
@@ -824,6 +844,7 @@ def load_mlx_rwkv7_model(
         quantization=quantization,
         quant_min_params=quant_min_params,
         quant_backend=quant_backend,
+        wkv_backend=wkv_backend,
     )
 
 
@@ -836,6 +857,7 @@ def load_mlx_generation_session(
     quantization: str | None = None,
     quant_min_params: int = 8_000_000,
     quant_backend: str = "affine",
+    wkv_backend: str = "reference",
 ) -> MLXGenerationSession:
     """Load a converted HF directory and prefill a tokenizer-backed MLX session."""
 
@@ -847,6 +869,7 @@ def load_mlx_generation_session(
         quantization=quantization,
         quant_min_params=quant_min_params,
         quant_backend=quant_backend,
+        wkv_backend=wkv_backend,
     )
     tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
     return MLXGenerationSession.from_prompt(
@@ -867,6 +890,7 @@ def generate_text_from_hf(
     quantization: str | None = None,
     quant_min_params: int = 8_000_000,
     quant_backend: str = "affine",
+    wkv_backend: str = "reference",
 ) -> MLXGenerateOutput:
     """Load a converted HF directory and run tokenizer-integrated MLX generate."""
 
@@ -878,6 +902,7 @@ def generate_text_from_hf(
         quantization=quantization,
         quant_min_params=quant_min_params,
         quant_backend=quant_backend,
+        wkv_backend=wkv_backend,
     )
     tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
     return model.generate_text(
