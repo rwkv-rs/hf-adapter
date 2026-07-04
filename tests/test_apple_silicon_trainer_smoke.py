@@ -40,12 +40,37 @@ def append_result(path: str, row: dict[str, Any]) -> None:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+
+def mps_backend(torch: Any) -> Any | None:
+    return getattr(getattr(torch, "backends", None), "mps", None)
+
+
+def mps_is_available(torch: Any) -> bool:
+    mps = mps_backend(torch)
+    if mps is None or not hasattr(mps, "is_available"):
+        return False
+    try:
+        return bool(mps.is_available())
+    except Exception:
+        return False
+
+
+def mps_is_built(torch: Any) -> bool:
+    mps = mps_backend(torch)
+    if mps is None or not hasattr(mps, "is_built"):
+        return False
+    try:
+        return bool(mps.is_built())
+    except Exception:
+        return False
+
+
 def choose_device(torch: Any, requested: str) -> str:
     if requested != "auto":
-        if requested == "mps" and not torch.backends.mps.is_available():
+        if requested == "mps" and not mps_is_available(torch):
             raise RuntimeError("requested --device mps but MPS is unavailable")
         return requested
-    return "mps" if torch.backends.mps.is_available() else "cpu"
+    return "mps" if mps_is_available(torch) else "cpu"
 
 
 def dtype_for(torch: Any, name: str) -> Any:
@@ -234,8 +259,8 @@ def main() -> int:
         "torch": getattr(torch, "__version__", "unknown"),
         "transformers": package_version("transformers"),
         "peft": package_version("peft"),
-        "mps_built": bool(torch.backends.mps.is_built()),
-        "mps_available": bool(torch.backends.mps.is_available()),
+        "mps_built": mps_is_built(torch),
+        "mps_available": mps_is_available(torch),
         "device": device,
         "dtype": args.dtype,
         "peft_available": importlib.util.find_spec("peft") is not None,
