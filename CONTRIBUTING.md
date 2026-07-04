@@ -242,6 +242,16 @@ If the model dir has stale remote-code files, sync them first:
 python scripts/sync_hf_adapter_code.py /path/to/rwkv7-g1d-0.1b-hf
 ```
 
+
+Apple native MM8/MM4 quant smoke (bitsandbytes-free):
+
+```bash
+# Tiny only. Add MODEL=/path/to/rwkv7-g1d-0.1b-hf for a converted-model row.
+DEVICE=auto DTYPE=fp32 QUANTIZATIONS=mm8,mm4 \
+RESULTS=bench/results_apple_silicon_quant.jsonl \
+bash scripts/run_apple_silicon_quant_smoke.sh
+```
+
 Include the `torch_mps_built` / `torch_mps_available` lines printed by the
 wrapper. On 16GB machines, start with tiny / 0.1B first, then short 0.4B
 generate, `scripts/run_apple_silicon_model_sweep.sh`, and 0.4B PEFT/Trainer/TRL

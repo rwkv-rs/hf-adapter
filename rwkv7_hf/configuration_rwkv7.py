@@ -42,12 +42,14 @@ class RWKV7HFAdapterConfig(_RWKV7Config):
     model_type = "rwkv7_hf_adapter"
 
     def __init__(self, *args, **kwargs):
-        # Native int8 (mm8) persistence: when True, from_pretrained re-quantizes
-        # eligible linears into MM8Linear after loading the fp16 weights. The
-        # int8 state is a deterministic function of the fp16 weights, so this
-        # round-trips exactly without serializing the uint8 buffers.
+        # Native W8/W4 persistence: when True, from_pretrained re-quantizes
+        # eligible linears into MM8Linear / MM4Linear after loading the fp16
+        # weights. The packed state is a deterministic function of the dense
+        # weights, so this round-trips without serializing the uint8 buffers.
         self.use_native_mm8 = kwargs.pop("use_native_mm8", False)
         self.native_mm8_min_params = kwargs.pop("native_mm8_min_params", 8_000_000)
+        self.use_native_mm4 = kwargs.pop("use_native_mm4", False)
+        self.native_mm4_min_params = kwargs.pop("native_mm4_min_params", 8_000_000)
         super().__init__(*args, **kwargs)
 
 
