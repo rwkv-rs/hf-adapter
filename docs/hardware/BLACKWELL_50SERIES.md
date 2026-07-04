@@ -9,12 +9,13 @@
 - native/no-FLA `NativeRWKV7ForCausalLM` + HF Trainer + PEFT LoRA PASS:loss `9.3638 -> 0.4192`,trainable params `72/72` updated。
 - dynamic batching + native prefill + native_graph decode smoke PASS,bsz=8,512 decoded tokens。
 - W8/W4 quantized load/generate smoke PASS:W8 footprint 283.4 MB,W4 footprint 242.9 MB。
+- native mm8/mm4 benchmark PASS artifact: [`bench/5090_blackwell_native_quant_20260704`](../../bench/5090_blackwell_native_quant_20260704/README.md)。0.1B e2e decode:mm8 **0.9487× fp16** / footprint 0.8688×,mm4 **0.9903× fp16** / footprint 0.8030×;R/K/V isolated sweep:int8 0.6706×,int4 0.6613× fp16。
 - 0.1B fp16 bsz sweep:bsz1/2/4/8 native_graph decode tok/s = **945.9 / 1346.3 / 2714.4 / 5326.4**。
 - chunked prefill PASS:prompt512,batch1,chunk64/128/256,seq length match,chunk256 达 **13,681.5 tok/s** 且 peak VRAM 421.6 MB。
 - exact-card fused A/B PASS:fused output **1.0723×**,fused recurrent-output **1.1963×**,greedy `32/32`。
 - `rwkv7_hf/kernel_policy.py` 的 Blackwell rule 已记录 RTX 5090,并要求 `triton_compat` remote-code import + 5090 runner artifact 才能声明 5090。
 
-**边界:**这仍不是 5090 full MATH500 avg@64 验收;只是把 5090 的 HF adapter/训练 fallback/量化 smoke/动态 batching/chunked prefill/fused A-B 支持矩阵对齐到 50-series 合约。完整数学验收仍需要正式 MATH500 数据和 acceptance 模型在 5090 上跑 `scripts/run_math500_acceptance.sh`。
+**边界:**这仍不是 5090 full MATH500 avg@64 验收;只是把 5090 的 HF adapter/训练 fallback/量化 smoke/动态 batching/chunked prefill/fused A-B/native mm8-mm4 支持矩阵对齐到 50-series 合约。完整数学验收仍需要正式 MATH500 数据和 acceptance 模型在 5090 上跑 `scripts/run_math500_acceptance.sh`。
 
 ### 2026-07-04 — RTX 5090(sm_120) native-prefill/HF smoke 对齐 4090 验证矩阵
 
