@@ -132,6 +132,11 @@ def trainable_grad_l1(model: Any) -> float:
     return total
 
 
+def assert_finite_positive(value: float, label: str) -> None:
+    if not math.isfinite(value) or value <= 0:
+        raise AssertionError(f"expected finite positive {label}, got {value}")
+
+
 def mps_memory(torch: Any) -> dict[str, int]:
     if not hasattr(torch, "mps"):
         return {}
@@ -295,13 +300,11 @@ def run_manual_lora(args: argparse.Namespace, torch: Any, tokenizer: Any, device
         raise AssertionError(f"non-finite manual LoRA loss {loss}")
     out.loss.backward()
     grad_l1 = trainable_grad_l1(model)
-    if grad_l1 <= 0:
-        raise AssertionError("expected non-zero LoRA gradients")
+    assert_finite_positive(grad_l1, "LoRA gradients")
     opt.step()
     opt.zero_grad(set_to_none=True)
     changed = trainable_changed_l1(before, model)
-    if changed <= 0:
-        raise AssertionError("expected LoRA parameter update")
+    assert_finite_positive(changed, "LoRA parameter update")
     elapsed = time.perf_counter() - t0
     row = {
         "axis": "apple_silicon_model_peft_lora_train",
@@ -358,8 +361,7 @@ def run_trainer_lora(args: argparse.Namespace, torch: Any, tokenizer: Any, devic
     if not math.isfinite(loss):
         raise AssertionError(f"non-finite Trainer LoRA loss {loss}")
     changed = trainable_changed_l1(before, model)
-    if changed <= 0:
-        raise AssertionError("expected Trainer LoRA parameter update")
+    assert_finite_positive(changed, "Trainer LoRA parameter update")
     metrics = dict(getattr(result, "metrics", {}) or {})
     row = {
         "axis": "apple_silicon_model_peft_lora_trainer",
@@ -428,8 +430,7 @@ def run_trl_sft_lora(args: argparse.Namespace, torch: Any, tokenizer: Any, devic
     if not math.isfinite(loss):
         raise AssertionError(f"non-finite TRL SFT LoRA loss {loss}")
     changed = trainable_changed_l1(before, trainer.model)
-    if changed <= 0:
-        raise AssertionError("expected TRL SFT LoRA parameter update")
+    assert_finite_positive(changed, "TRL SFT LoRA parameter update")
     metrics = dict(getattr(result, "metrics", {}) or {})
     row = {
         "axis": "apple_silicon_model_peft_lora_trl_sft",
@@ -500,8 +501,7 @@ def run_trl_dpo_lora(args: argparse.Namespace, torch: Any, tokenizer: Any, devic
     if not math.isfinite(loss):
         raise AssertionError(f"non-finite TRL DPO LoRA loss {loss}")
     changed = trainable_changed_l1(before, trainer.model)
-    if changed <= 0:
-        raise AssertionError("expected TRL DPO LoRA parameter update")
+    assert_finite_positive(changed, "TRL DPO LoRA parameter update")
     metrics = dict(getattr(result, "metrics", {}) or {})
     row = {
         "axis": "apple_silicon_model_peft_lora_trl_dpo",
@@ -576,8 +576,7 @@ def run_trl_grpo_lora(args: argparse.Namespace, torch: Any, tokenizer: Any, devi
     if not math.isfinite(loss):
         raise AssertionError(f"non-finite TRL GRPO LoRA loss {loss}")
     changed = trainable_changed_l1(before, trainer.model)
-    if changed <= 0:
-        raise AssertionError("expected TRL GRPO LoRA parameter update")
+    assert_finite_positive(changed, "TRL GRPO LoRA parameter update")
     metrics = dict(getattr(result, "metrics", {}) or {})
     row = {
         "axis": "apple_silicon_model_peft_lora_trl_grpo",

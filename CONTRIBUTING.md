@@ -245,7 +245,11 @@ python scripts/sync_hf_adapter_code.py /path/to/rwkv7-g1d-0.1b-hf
 Include the `torch_mps_built` / `torch_mps_available` lines printed by the
 wrapper. On 16GB machines, start with tiny / 0.1B first, then short 0.4B
 generate, `scripts/run_apple_silicon_model_sweep.sh`, and 0.4B PEFT/Trainer/TRL
-one-step smoke before longer sweeps.
+one-step smoke before longer sweeps. For 1.5B on 16GB machines, start with
+fp16 load/forward/short-generate and a tiny prompt-length sweep; only run fp32
+manual PEFT LoRA after closing other memory-heavy apps, and confirm the result
+has finite positive trainable-gradient and trainable-update totals. Treat
+non-finite fp16 PEFT gradients/updates as a failed row, not as evidence.
 
 ## Reporting hardware results
 
