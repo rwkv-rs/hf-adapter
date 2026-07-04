@@ -457,6 +457,76 @@ QUANT_BACKEND=affine \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_generation_sweep.sh
 
+# Initial MLX/Metal packed W8/W4 fused dequant-projection seam. Pair it with
+# WKV_BACKEND=metal when comparing against the current fp16 Metal WKV row.
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=32 \
+DECODE_LENGTHS=2 \
+CHUNK_SIZE=16 \
+QUANTIZATION=mm8 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=32 \
+DECODE_LENGTHS=2 \
+CHUNK_SIZE=16 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=16 \
+DECODE_LENGTHS=1 \
+QUANTIZATION=mm8 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=16 \
+DECODE_LENGTHS=1 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=16 \
+DECODE_LENGTHS=1 \
+QUANTIZATION=mm8 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=16 \
+DECODE_LENGTHS=1 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
 # Longer 1.5B matrix; close memory-heavy apps first on 16GB machines.
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
 MODEL_SIZE_LABEL=1.5b \
