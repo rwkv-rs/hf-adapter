@@ -27,51 +27,14 @@ from rwkv7_hf.mlx_bridge import mlx_available, require_mlx, torch_tensor_to_mlx
 from rwkv7_hf.mlx_model import MLXGenerationSession, MLXGenerationSessionBatch, MLXRWKV7Model
 
 
-def is_apple_silicon() -> bool:
-    return platform.system() == "Darwin" and platform.machine() == "arm64"
-
-
-def append_result(path: str, row: dict[str, Any]) -> None:
-    if not path:
-        return
-    out = Path(path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-
-def emit(path: str, row: dict[str, Any]) -> None:
-    print(json.dumps(row, ensure_ascii=False))
-    append_result(path, row)
-
-
-def package_version(name: str) -> str:
-    try:
-        return metadata.version(name)
-    except metadata.PackageNotFoundError:
-        return "missing"
-
-
-def darwin_sysctl(name: str) -> str:
-    try:
-        return subprocess.check_output(["sysctl", "-n", name], text=True).strip()
-    except Exception:
-        return "unknown"
-
-
-def apple_memory_gb() -> int | str:
-    raw = darwin_sysctl("hw.memsize")
-    try:
-        return round(int(raw) / 1024 / 1024 / 1024)
-    except Exception:
-        return "unknown"
-
-
-def infer_model_size_label(model_path: str, explicit: str = "") -> str:
-    if explicit:
-        return explicit.lower()
-    match = re.search(r"(\d+(?:\.\d+)?b)", Path(model_path).name.lower())
-    return match.group(1) if match else "unknown"
+from apple_silicon_utils import (
+    darwin_sysctl,
+    apple_memory_gb,
+    emit,
+    infer_model_size_label,
+    is_apple_silicon,
+    package_version,
+)
 
 
 def max_abs(a, b) -> float:
