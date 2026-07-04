@@ -284,7 +284,17 @@ bash scripts/run_apple_silicon_mlx_model_smoke.sh
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
 MODEL_SIZE_LABEL=0.1b \
 DTYPE=fp16 \
-TOKENS=1,2,3,4 \
+PROMPT="The quick brown fox" \
+DYNAMIC_BATCH=1 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_model_smoke.sh
+
+# Larger MLX rows should start short on 16GB machines.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+MODEL_SIZE_LABEL=0.4b \
+DTYPE=fp16 \
+PROMPT="The quick brown fox" \
+SKIP_TINY=1 DYNAMIC_BATCH=1 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_model_smoke.sh
 ```

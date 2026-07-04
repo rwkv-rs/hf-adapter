@@ -363,6 +363,27 @@ class MLXRWKV7Model:
         ids = mx.array(token_ids, dtype=mx.int32).reshape(-1, 1)
         return self.forward(ids, state=state, collect_all=False)
 
+    def decode_greedy(self, logits: Any, state: MLXRWKV7State, *, max_new_tokens: int):
+        """Continue decoding from an existing prefill ``logits`` + ``state``.
+
+        This is the serving-shaped path: callers prefill a prompt once, keep the
+        recurrent state cache, and then decode one token at a time without
+        recomputing the prompt.
+        """
+
+        mx = _mx()
+        generated = []
+        next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
+        for _ in range(int(max_new_tokens)):
+            generated.append(next_token)
+            logits, state = self.decode_step(next_token, state)
+            next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
+        if not generated:
+            return mx.zeros((int(logits.shape[0]), 0), dtype=mx.int32), state
+        out = mx.stack(generated, axis=1)
+        mx.eval(out)
+        return out, state
+
     def chunked_prefill(self, input_ids: Iterable[Iterable[int]] | Any, *, chunk_size: int):
         mx = _mx()
         ids = mx.array(input_ids, dtype=mx.int32)
@@ -379,21 +400,9 @@ class MLXRWKV7Model:
         return logits, state
 
     def generate_greedy(self, input_ids: Iterable[Iterable[int]] | Any, *, max_new_tokens: int):
-        mx = _mx()
         logits, state = self.prefill(input_ids)
-        generated = []
-        next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
-        for _ in range(int(max_new_tokens)):
-            generated.append(next_token)
-            logits, state = self.decode_step(next_token, state)
-            next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
-        if not generated:
-            return mx.zeros((int(logits.shape[0]), 0), dtype=mx.int32), state
-        out = mx.stack(generated, axis=1)
-        mx.eval(out)
-        return out, state
+        return self.decode_greedy(logits, state, max_new_tokens=max_new_tokens)
 
 
 def load_mlx_rwkv7_model(model_dir: str | Path, *, dtype: str | None = "fp16") -> MLXRWKV7Model:
     return MLXRWKV7Model.from_hf(model_dir, dtype=dtype)
-
