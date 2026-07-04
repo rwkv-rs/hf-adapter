@@ -109,8 +109,10 @@ experiments. The default grouped mode is now `direct`, which uses one Metal
 launch for the three existing R/K/V packed weights without duplicating them into
 a grouped cache; `RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE=packed` keeps the
 older prepacked A/B path. Initial 0.4B/1.5B W4 and W8 rows show positive
-prefill/decode movement with grouped hits and zero fallbacks, but longer
-end-to-end speed gates are still needed before enabling it by default.
+prefill/decode movement with grouped hits and zero fallbacks; the direct W4 path
+now has prompt512/decode16 rows plus 0.4B/1.5B grouped session-pressure rows,
+but longer end-to-end speed gates are still needed before enabling it by
+default.
 
 ## Layout
 

@@ -1944,11 +1944,17 @@ memory penalty: 0.4B W4 auto prompt128/decode8 records `43.30` / `42.54 tok/s`,
 peak `364.7 MB`, `metal=6336`, and chunked/full prefill `max_abs=0.0`; 1.5B
 W4 auto records `20.95` / `19.52 tok/s`, peak `1074.6 MB`, `metal=6336`, and
 `max_abs=0.0`. These peaks are back near the separate-path baselines and well
-below the old packed-cache grouped peaks (`415.9 MB` / `1226.8 MB`). A 0.4B W4
-direct grouped session row also passes 4-session `SESSION_BACKEND=batched`
-rounds4,4 one-shot token/text/seen-token checks with aggregate round min
-`84.50 tok/s`, peak `427.7 MB`, and `metal=2592`. Longer end-to-end ratio gates
-are still required before enabling this path by default. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
+below the old packed-cache grouped peaks (`415.9 MB` / `1226.8 MB`). Longer
+direct rows also pass: 0.4B W4 auto prompt512/decode16 reaches `45.83` /
+`45.17 tok/s`, peak `364.7 MB`, `metal=24960`; 1.5B W4 auto prompt512/decode16
+reaches `20.69` / `19.28 tok/s`, peak `1074.6 MB`, `metal=24960`; both keep
+chunked/full prefill `max_abs=0.0`. Direct grouped session pressure now covers
+0.4B 4-session rounds4,4, 0.4B 6-session rounds8,8 repeat=2, and 1.5B 5-session
+rounds4,4: all keep one-shot token/text/seen-token checks passing with grouped
+fallback `0`. The 0.4B 6-session row records aggregate round min `75.31 tok/s`,
+peak `466.5 MB`, and `metal=10176`; the 1.5B 5-session row records aggregate
+round min `27.33 tok/s`, peak `1239.0 MB`, and `metal=3696`. Longer end-to-end
+ratio gates are still required before enabling this path by default. Quant+Metal session-batch pressure rows also pass: 0.4B W8/W4 4-session
 repeat=2 reaches min decode `40.18` / `41.17 tok/s` with peak `669` /
 `534 MB`, and the higher-concurrency 6-session repeat=3 row reaches min decode
 `34.33` / `27.14 tok/s` with peak `682` / `547 MB`. 1.5B W8/W4
