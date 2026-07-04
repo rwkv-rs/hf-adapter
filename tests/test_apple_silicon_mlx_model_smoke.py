@@ -24,7 +24,7 @@ from typing import Any
 import numpy as np
 
 from rwkv7_hf.mlx_bridge import mlx_available, require_mlx, torch_tensor_to_mlx
-from rwkv7_hf.mlx_model import MLXRWKV7Model
+from rwkv7_hf.mlx_model import MLXGenerationSession, MLXRWKV7Model
 
 
 def is_apple_silicon() -> bool:
@@ -122,6 +122,17 @@ def tiny_torch_model_to_mlx() -> tuple[Any, MLXRWKV7Model, dict[str, Any]]:
     return torch_model, mlx_model, cfg.to_dict()
 
 
+class TinyTokenizer:
+    def __call__(self, prompt: str, *, add_special_tokens: bool = False):
+        class Encoded:
+            input_ids = [1, 2, 3, 4]
+
+        return Encoded()
+
+    def decode(self, ids: list[int], *, skip_special_tokens: bool = False) -> str:
+        return ",".join(str(int(x)) for x in ids)
+
+
 def run_tiny_recurrent_parity(args: argparse.Namespace) -> dict[str, Any]:
     import torch
 
@@ -184,6 +195,31 @@ def run_tiny_state_cache(args: argparse.Namespace) -> dict[str, Any]:
         "chunked_prefill_max_abs": round(chunk_diff, 8),
         "select_batch_decode_max_abs": round(select_diff, 8),
         "seen_tokens": int(chunk_state.seen_tokens),
+    }
+
+
+def run_tiny_generation_session(args: argparse.Namespace) -> dict[str, Any]:
+    _, mlx_model, _ = tiny_torch_model_to_mlx()
+    tokenizer = TinyTokenizer()
+    session = MLXGenerationSession.from_prompt(mlx_model, tokenizer, "tiny")
+    first = session.decode(2)
+    second = session.decode(2)
+    one_shot = mlx_model.generate_text(tokenizer, "tiny", max_new_tokens=4)
+    assert session.generated_ids == one_shot.generated_ids
+    assert session.text == one_shot.text
+    assert int(session.state.seen_tokens) == len(session.prompt_ids) + 4
+    assert first.generated_tokens == 2
+    assert second.generated_tokens == 2
+    return {
+        "axis": "apple_silicon_mlx_session_tiny",
+        "status": "pass",
+        "prompt_tokens": len(session.prompt_ids),
+        "generated_tokens": session.generated_tokens,
+        "step_sizes": [first.generated_tokens, second.generated_tokens],
+        "session_one_shot_token_match": True,
+        "session_one_shot_text_match": True,
+        "seen_tokens_after_generate": int(session.state.seen_tokens),
+        "generated_preview": session.generated_ids[:8],
     }
 
 
@@ -378,6 +414,7 @@ def main() -> int:
     if not args.skip_tiny:
         emit(args.results, run_tiny_recurrent_parity(args))
         emit(args.results, run_tiny_state_cache(args))
+        emit(args.results, run_tiny_generation_session(args))
     if args.model:
         emit(args.results, run_real_model_smoke(args))
 
