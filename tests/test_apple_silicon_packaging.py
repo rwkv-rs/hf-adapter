@@ -42,6 +42,10 @@ def test_apple_smoke_script_static() -> None:
     assert model_train_script.exists()
     assert model_train_script.stat().st_mode & stat.S_IXUSR
     subprocess.run(["bash", "-n", str(model_train_script)], cwd=ROOT, check=True)
+    trl_sft_script = ROOT / "scripts/run_apple_silicon_model_trl_sft_smoke.sh"
+    assert trl_sft_script.exists()
+    assert trl_sft_script.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(trl_sft_script)], cwd=ROOT, check=True)
 
 
 def test_apple_doc_links_entry_points() -> None:
@@ -52,6 +56,7 @@ def test_apple_doc_links_entry_points() -> None:
     assert "scripts/run_apple_silicon_trainer_smoke.sh" in text
     assert "tests/test_apple_silicon_trainer_smoke.py" in text
     assert "scripts/run_apple_silicon_model_training_smoke.sh" in text
+    assert "scripts/run_apple_silicon_model_trl_sft_smoke.sh" in text
     assert "tests/test_apple_silicon_model_training_smoke.py" in text
     train_script = ROOT / "scripts/run_apple_silicon_training_smoke.sh"
     assert train_script.exists()
@@ -65,6 +70,10 @@ def test_apple_doc_links_entry_points() -> None:
     assert model_train_script.exists()
     assert model_train_script.stat().st_mode & stat.S_IXUSR
     subprocess.run(["bash", "-n", str(model_train_script)], cwd=ROOT, check=True)
+    trl_sft_script = ROOT / "scripts/run_apple_silicon_model_trl_sft_smoke.sh"
+    assert trl_sft_script.exists()
+    assert trl_sft_script.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(trl_sft_script)], cwd=ROOT, check=True)
     assert "RafaelUI" in text
     assert "RWKV7_NATIVE_MODEL=1" in text
     assert "MLX" in text

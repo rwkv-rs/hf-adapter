@@ -19,6 +19,7 @@ SCRIPTS = [
     "scripts/run_apple_silicon_training_smoke.sh",
     "scripts/run_apple_silicon_trainer_smoke.sh",
     "scripts/run_apple_silicon_model_training_smoke.sh",
+    "scripts/run_apple_silicon_model_trl_sft_smoke.sh",
 ]
 
 
@@ -80,6 +81,12 @@ def test_apple_silicon_model_training_requires_model() -> None:
     assert "MODEL is required" in proc.stderr
 
 
+def test_apple_silicon_model_trl_sft_requires_model() -> None:
+    proc = run_bash("bash scripts/run_apple_silicon_model_trl_sft_smoke.sh")
+    assert proc.returncode == 2, (proc.returncode, proc.stdout, proc.stderr)
+    assert "MODEL is required" in proc.stderr
+
+
 def test_math500_acceptance_defaults_are_final_benchmark() -> None:
     text = (ROOT / "scripts/run_math500_acceptance.sh").read_text(encoding="utf-8")
     assert 'BSZ="${BSZ:-128}"' in text
@@ -114,6 +121,7 @@ def main() -> int:
     test_hardware_wrapper_requires_model()
     test_apple_silicon_smoke_requires_model()
     test_apple_silicon_model_training_requires_model()
+    test_apple_silicon_model_trl_sft_requires_model()
     test_math500_acceptance_defaults_are_final_benchmark()
     test_common_pythonpath_separator_linux()
     test_common_pythonpath_separator_windows_msys()

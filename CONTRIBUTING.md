@@ -218,6 +218,11 @@ MODEL=/path/to/rwkv7-g1d-0.1b-hf \
 DEVICE=auto DTYPE=fp32 MAX_LENGTH=8 MAX_STEPS=1 REQUIRE_PEFT=1 \
 RESULTS=bench/results_apple_silicon_model_training.jsonl \
 bash scripts/run_apple_silicon_model_training_smoke.sh
+
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+DEVICE=auto DTYPE=fp32 MAX_LENGTH=8 MAX_STEPS=1 REQUIRE_PEFT=1 REQUIRE_TRL=1 \
+RESULTS=bench/results_apple_silicon_trl_sft.jsonl \
+bash scripts/run_apple_silicon_model_trl_sft_smoke.sh
 ```
 
 If the model dir has stale remote-code files, sync them first:
