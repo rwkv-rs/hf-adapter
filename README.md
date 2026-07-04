@@ -51,28 +51,86 @@ M5 / 16GB MPS lane covers tiny native generate/train, 0.1B HF
 load/forward/generate plus PEFT/Trainer/TRL smokes, and 0.4B HF
 fp32/fp16 load/forward/short-generate, prompt-length sweep, and PEFT/Trainer/TRL
 smokes. It also includes 1.5B rows: fp16 load/forward/short-generate, fp16
-prompt 16/64/128/256/512 sweep plus MPS prompt512/new8 and MLX prompt1024/decode64, and fp32 manual plus
-Trainer/TRL PEFT LoRA 1/2/3/5/10/12-step smoke, plus native MM8/MM4
+prompt 16/64/128/256/512 sweep plus MPS prompt512/new8, MLX prompt8192/decode512 baseline rows, and a direct grouped W4 prompt8192/decode1024 row, and fp32 manual plus
+Trainer/TRL PEFT LoRA 1/2/3/5/10/12-step smoke plus 20-step HF Trainer/SFT rows, plus native MM8/MM4
 Apple quant min-params smoke for tiny, 0.1B, 0.4B, and 1.5B model paths with
 packed-footprint telemetry, an initial MLX packed W8/W4 affine quant path
 for 0.1B/0.4B/1.5B projection smoke, the first opt-in MLX/Metal fused
 W8/W4 dequant-projection seam (`--quant-backend metal`) with 0.1B short rows
-and 0.4B/1.5B prompt128/256 decode4/8 plus prompt512/1024 decode16 pressure rows,
-an optional MLX tensor bridge/export smoke, an initial MLX recurrent
-reference backend smoke, and the first optional MLX/Metal WKV custom-kernel
-seam (`rwkv7_hf.mlx_wkv`, `--wkv-backend metal|auto`) with 0.1B/0.4B/1.5B
-smoke rows. The Metal paths are opt-in seams, not yet the final production
-long-context fused WKV/projection/packed-quant speed path. `scripts/mlx_generate.py`,
+and 0.4B/1.5B prompt128/256 decode4/8 plus prompt512/1024 decode16 and
+prompt2048/decode128 pressure rows, plus same-shape fp16 Metal baselines for the
+quant ratio gates (prompt512/1024 decode16: 0.4B W8/W4 decode≈0.79x/0.81x
+fp16 with peak memory≈0.71x/0.57x; 1.5B W8/W4 decode≈0.75x/0.84x fp16 with
+peak memory≈0.70x/0.55x. prompt2048/decode128: 0.4B W8/W4 decode≈0.88x/1.04x
+fp16 with peak memory≈0.71x/0.56x; 1.5B W8/W4 decode≈0.68x/0.73x fp16 with
+peak memory≈0.70x/0.54x. The optimized W4 `--quant-backend auto` route now
+records 0.4B prefill/decode≈60.61/59.73 tok/s, decode≈1.25x fp16, and 1.5B
+prefill/decode≈27.64/20.42 tok/s, decode≈0.75x fp16; prompt4096/decode256 still shows W8/W4 below fp16 on 1.5B, the 1.5B prompt8192/decode512 W4 auto row reaches decode≈0.81x fp16 with peak≈0.54x, and the direct grouped R/K/V W4 prompt8192/decode1024 row reaches prefill/decode≈21.09/20.48 tok/s with peak≈1075MB and grouped fallback 0), an optional MLX
+tensor bridge/export smoke, an initial MLX recurrent reference backend smoke,
+and the first optional MLX/Metal WKV custom-kernel seam (`rwkv7_hf.mlx_wkv`,
+`--wkv-backend metal|auto`) with 0.1B/0.4B/1.5B smoke rows. The Metal paths are
+opt-in seams, not yet the final production long-context fused WKV/projection/
+packed-quant speed path, and W8/W4 do not yet stably beat fp16 end to end.
+`scripts/mlx_generate.py`,
 `scripts/mlx_session_smoke.py`, `scripts/mlx_session_batch_smoke.py`,
-`scripts/mlx_generation_sweep.py`, `rwkv7_hf.mlx_model.generate_text_from_hf`,
+`scripts/mlx_generation_sweep.py`, `scripts/mlx_quant_projection_bench.py`, `rwkv7_hf.mlx_model.generate_text_from_hf`,
 `rwkv7_hf.mlx_model.MLXGenerationSession`, and
 `rwkv7_hf.mlx_model.MLXGenerationSessionBatch` provide reusable
 tokenizer-integrated MLX text generation, serving-style prefill-once/session-decode,
-interleaved multi-session decode with 0.1B/0.4B/1.5B 3-session telemetry,
-0.4B/1.5B 4-session repeat-pressure telemetry, and higher-concurrency
-0.4B 6-session / 1.5B 5-session rows, plus prompt/decode length sweep entry
-points including 0.1B prompt256/decode8, 0.4B/1.5B prompt1024/decode64
-matrices, and optional `--quantization mm8/mm4` MLX packed-quant rows.
+interleaved multi-session decode with a compatibility-preserving optional
+`--session-backend batched|auto` equal-round MLX batching path,
+0.1B/0.4B/1.5B 3-session telemetry,
+0.4B/1.5B 4-session repeat-pressure telemetry, higher-concurrency
+0.4B 6-session / 1.5B 5-session rows, and initial quant+Metal session-batch
+pressure rows (0.4B W8/W4 4-session repeat=2 and 6-session repeat=3;
+1.5B W8/W4 4-session repeat=1 and 5-session repeat=2), longer rounds8,8
+session pressure rows (0.4B W4 8-session repeat=2; 1.5B W4/W8 5-session
+repeat=2), initial W4
+`SESSION_BACKEND=batched` rows (0.4B 6-session repeat=2, 1.5B 5-session
+repeat=1), and W8/W4 Metal `SESSION_BACKEND=auto` safety rows that fall back with
+`auto_mm8_metal_batch_exactness_guard` / `auto_mm4_metal_batch_exactness_guard`
+until long batched exactness is fixed,
+plus `mlx_session_batch_backend_compare` rows that prove earlier 0.4B/1.5B W4
+sequential-vs-batched token equality, prove 1.5B W8 direct batched equality, and
+localize current W8/W4 mismatch cases with optional logit tracing (including the
+0.4B W8 near-tie: token 11 vs 261, max-abs logit delta≈0.03125, and the 1.5B
+W4 direct token-index 6/9 gap). An explicit `SESSION_BACKEND=batched_stable`
+W8 row restores strict token equality on 0.4B 6-session pressure and still
+passes the W8 stable regression; W4 direct auto now has guarded 1.5B 5-session
+rounds8,8 repeat=2 and repeat=4 pass rows with one-shot checks,
+`auto_mm4_metal_batch_exactness_guard`, grouped fallback 0, and the repeat=4 row
+recording aggregate round min≈12.77 tok/s at peak≈1126MB; the matching
+broader-threshold 0.4B W4 direct grouped batched pressure row now reaches
+12 sessions, rounds8,8, repeat=3, aggregate round min≈93.92 tok/s, peak≈584MB,
+and grouped fallback 0,
+and a new conservative `--quant-backend auto` route with backend-count telemetry
+(W4 normal prefill/decode rows choose Metal, W8 defaults to affine unless W8
+Metal is explicitly enabled; `RWKV7_MLX_SESSION_AUTO_W8_STABLE=1` /
+`RWKV7_MLX_SESSION_AUTO_W4_STABLE=1` opt W8/W4 Metal auto into the stable policy), plus prompt/decode
+length sweep entry points including 0.1B prompt256/decode8,
+0.4B prompt4096/decode256 plus 1.5B prompt8192/decode512 / direct W4 decode1024 matrices, and optional `--quantization mm8/mm4`
+MLX packed-quant rows, plus isolated and grouped MLX quant projection
+microbench rows that record dense/affine/Metal/auto speed ratios before deeper
+WKV+quant fusion. `RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION=1` enables the
+default-off model-level grouped R/K/V quant projection seam for MLX/Metal
+experiments. The default grouped mode is now `direct`, which uses one Metal
+launch for the three existing R/K/V packed weights without duplicating them into
+a grouped cache; `RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE=packed` keeps the
+older prepacked A/B path. Initial 0.4B/1.5B W4 and W8 rows show positive
+prefill/decode movement with grouped hits and zero fallbacks; the direct path
+now has W4 and W8 prompt512/decode16, broader-threshold prompt2048/decode128
+rows, new W4 prompt4096/decode256 rows for 0.4B/1.5B (chunked/full prefill
+`max_abs=0.0`, grouped fallback 0 on the broader-threshold rows), 0.4B 8-session
+grouped pressure, and 1.5B longer rounds8,8 session probes. Grouped fallback
+remains 0 in these rows; 1.5B W8 batched matches one-shot, raw 1.5B W4 batched
+still has a documented correctness gap, and opt-in 1.5B W4 `batched_stable`
+with `RWKV7_MLX_SESSION_STABLE_ARGMAX_MODE=repair` now matches sequential and
+one-shot in the same 5-session rounds8,8 strict compare with structured repair
+counts `[2, 3]`, aggregate round min≈25.32 tok/s, and peak≈1434MB.
+`SESSION_BACKEND=auto` now protects W4/Metal with
+`auto_mm4_metal_batch_exactness_guard` and uses the sequential safe path until
+that batched gap is closed, so longer end-to-end speed gates are still needed
+before enabling it by default.
 
 ## Layout
 
@@ -93,6 +151,7 @@ scripts/
   mlx_session_smoke.py
   mlx_session_batch_smoke.py
   mlx_generation_sweep.py
+  mlx_quant_projection_bench.py
   run_hf_acceptance.sh
   run_hf_training_matrix.sh
   run_zero_training_smoke.sh

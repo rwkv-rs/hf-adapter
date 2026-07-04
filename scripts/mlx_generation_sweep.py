@@ -44,6 +44,18 @@ def max_abs(a: Any, b: Any) -> float:
     return float(mx.max(mx.abs(a - b)))
 
 
+def model_quant_runtime_telemetry(model: Any) -> dict[str, Any]:
+    """Return quant runtime fields that can change after each prefill/decode row."""
+
+    telemetry = model.telemetry()
+    return {
+        "quantized_linear_last_backend_counts": telemetry.get("quantized_linear_last_backend_counts"),
+        "group_rkv_quant_projection": telemetry.get("group_rkv_quant_projection"),
+        "group_rkv_quant_projection_mode": telemetry.get("group_rkv_quant_projection_mode"),
+        "group_rkv_quant_projection_counts": telemetry.get("group_rkv_quant_projection_counts"),
+    }
+
+
 def make_prompt_ids(tokenizer: Any, target_tokens: int, seed_text: str) -> list[int]:
     seed_ids = [int(x) for x in tokenizer(seed_text, add_special_tokens=False).input_ids]
     if not seed_ids:
@@ -64,7 +76,7 @@ def main() -> int:
     ap.add_argument("--repeat", type=int, default=1, help="Repeat each prompt/decode point for pressure/stability telemetry.")
     ap.add_argument("--quantization", default="none", choices=["none", "mm8", "mm4"], help="Optional MLX packed W8/W4 projection path.")
     ap.add_argument("--quant-min-params", type=int, default=8_000_000, help="Minimum dense weight params to replace when MLX quantization is enabled.")
-    ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference", "metal"], help="MLX quantized matmul backend.")
+    ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference", "metal", "auto"], help="MLX quantized matmul backend.")
     ap.add_argument("--wkv-backend", default="reference", choices=["reference", "metal", "auto"], help="MLX recurrent WKV update backend.")
     ap.add_argument("--require-mlx", action="store_true")
     ap.add_argument("--json-only", action="store_true")
@@ -191,6 +203,7 @@ def main() -> int:
                     "seen_tokens_after_generate": int(gen_state.seen_tokens),
                     "expected_seen_tokens": int(expected_seen),
                     "generated_preview": generated_ids[:16],
+                    **model_quant_runtime_telemetry(model),
                     **mlx_memory_telemetry(),
                 }
                 if chunk_diff is not None:
@@ -228,6 +241,7 @@ def main() -> int:
         "min_decode_tok_s": min(float(row["decode_tok_s"]) for row in rows if row.get("decode_tok_s") is not None)
         if rows
         else None,
+        **model_quant_runtime_telemetry(model),
     }
     print(json.dumps(summary, ensure_ascii=False))
     append_result(args.results, summary)

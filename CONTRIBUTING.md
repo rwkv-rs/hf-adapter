@@ -634,6 +634,59 @@ WKV_BACKEND=metal \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_generation_sweep.sh
 
+# Same-shape fp16 Metal baselines for W8/W4 ratio gates. Report both the
+# quant rows above and these baseline rows before claiming speed parity.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=512,1024 \
+DECODE_LENGTHS=16 \
+CHUNK_SIZE=256 \
+REPEAT=1 \
+QUANTIZATION=none \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=512,1024 \
+DECODE_LENGTHS=16 \
+CHUNK_SIZE=256 \
+REPEAT=1 \
+QUANTIZATION=none \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
+# Extended long-decode ratio gate. Run the same shape for QUANTIZATION=none,
+# mm8, and mm4 before claiming W8/W4 speed parity. For mm8/mm4 set
+# QUANT_BACKEND=metal and the model-specific QUANT_MIN_PARAMS shown below.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=2048 \
+DECODE_LENGTHS=128 \
+CHUNK_SIZE=512 \
+REPEAT=1 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=2048 \
+DECODE_LENGTHS=128 \
+CHUNK_SIZE=512 \
+REPEAT=1 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
 # Longer 1.5B matrix; close memory-heavy apps first on 16GB machines.
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
 MODEL_SIZE_LABEL=1.5b \
@@ -654,6 +707,7 @@ RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_smoke.sh
 
 # Interleaved multi-session smoke: prefill multiple prompts and advance them round-by-round.
+# SESSION_BACKEND defaults to sequential; use batched/auto to exercise equal-round MLX batching.
 MODEL=/path/to/rwkv7-g1d-0.1b-hf \
 DTYPE=fp16 \
 PROMPT_A="The quick brown fox" \
@@ -661,6 +715,7 @@ PROMPT_B="User: Apple Silicon RWKV test. Assistant:" \
 PROMPT_C="Repeat pressure prompt for MLX sessions." \
 ROUNDS=2,2 \
 REPEAT=2 \
+SESSION_BACKEND=batched \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 
@@ -685,22 +740,330 @@ REPEAT=2 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 
-# Extended 0.4B / 1.5B long-decode matrix: prompt1024 + decode64.
+# Quant+Metal interleaved session-batch pressure. Use QUANTIZATION=mm4 with
+# SESSION_BACKEND=batched for the current batch-exact path. For QUANTIZATION=mm8
+# use SESSION_BACKEND=auto; it records auto_mm8_metal_batch_exactness_guard and
+# falls back to sequential until strict W8/Metal batched decode is fixed.
+# This validates prefill-once/session state reuse while both WKV and quantized
+# projections use the opt-in Metal paths.
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 DTYPE=fp16 \
-PROMPT_LENGTHS=1024 \
-DECODE_LENGTHS=64 \
-CHUNK_SIZE=256 \
+SESSION_COUNT=4 \
+ROUNDS=4,4 \
+REPEAT=2 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+SESSION_BACKEND=batched \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=4 \
+ROUNDS=4,4 \
+REPEAT=1 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+# Higher-concurrency quant+Metal session pressure. Run both QUANTIZATION=mm8 and
+# QUANTIZATION=mm4 when collecting the full W8/W4 matrix.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=6 \
+ROUNDS=4,4 \
+REPEAT=3 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=5 \
+ROUNDS=4,4 \
+REPEAT=2 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+# Longer equal-round session pressure. Use mm4 + SESSION_BACKEND=batched for
+# exact batched W4; use mm8 + SESSION_BACKEND=auto to keep W8 on the safe
+# sequential fallback until strict W8/Metal batched exactness is fixed.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=8 \
+ROUNDS=8,8 \
+REPEAT=2 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+SESSION_BACKEND=batched \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=5 \
+ROUNDS=8,8 \
+REPEAT=2 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+SESSION_BACKEND=batched \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=5 \
+ROUNDS=8,8 \
+REPEAT=2 \
+QUANTIZATION=mm8 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+SESSION_BACKEND=auto \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+# Strict scheduler comparison: compare sequential vs batched without hiding
+# mismatches. Use REQUIRE_SESSION_BACKEND_MATCH=1 for W4 gates. For W8 gap
+# capture, omit REQUIRE_SESSION_BACKEND_MATCH so the row records the mismatch
+# instead of aborting; current 0.4B W8/Metal strict batched decode diverges at
+# token index 6 on the short prompt while SESSION_BACKEND=auto remains safe.
+# Set TRACE_MISMATCH_LOGITS=1 to append a top-k logit trace for the first
+# divergent token.
+# Use QUANT_BACKEND=auto to validate the conservative quant backend router:
+# W4 normal prefill/decode rows select Metal, while W8 defaults to affine until W8/Metal
+# batch exactness is fixed. The result rows expose
+# quantized_linear_last_backend_counts so reviewers can verify the route used.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=6 \
+ROUNDS=4,4 \
+REPEAT=1 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+SESSION_BACKEND=sequential \
+COMPARE_SESSION_BACKEND=batched \
+COMPARE_ONLY=1 \
+REQUIRE_SESSION_BACKEND_MATCH=1 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=6 \
+ROUNDS=4,4 \
+REPEAT=1 \
+QUANTIZATION=mm8 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+SESSION_BACKEND=sequential \
+COMPARE_SESSION_BACKEND=batched \
+COMPARE_ONLY=1 \
+TRACE_MISMATCH_LOGITS=1 \
+MISMATCH_TOPK=5 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+# Experimental W8/Metal low-margin stable argmax gate. This should pass strict
+# compare before considering any W8 auto batching rollout.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=6 \
+ROUNDS=4,4 \
+REPEAT=1 \
+QUANTIZATION=mm8 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+SESSION_BACKEND=sequential \
+COMPARE_SESSION_BACKEND=batched_stable \
+COMPARE_ONLY=1 \
+REQUIRE_SESSION_BACKEND_MATCH=1 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+# Optional W8/Metal auto rollout gate. Default auto remains guarded for W8/Metal;
+# this env flag makes SESSION_BACKEND=auto use the batched_stable policy.
+RWKV7_MLX_SESSION_AUTO_W8_STABLE=1 \
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=3 \
+ROUNDS=4,4 \
+REPEAT=1 \
+QUANTIZATION=mm8 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+SESSION_BACKEND=auto \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+# Sustained 1.5B quant session pressure: both W8/Metal stable and W4 auto should
+# keep one-shot equality through repeat=4, while recording min aggregate tok/s.
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=5 \
+ROUNDS=8,8 \
+REPEAT=4 \
+QUANTIZATION=mm8 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+SESSION_BACKEND=batched_stable \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=5 \
+ROUNDS=8,8 \
+REPEAT=4 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=auto \
+WKV_BACKEND=metal \
+SESSION_BACKEND=batched \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+# Conservative quant backend auto route. W4 should report Metal calls in
+# quantized_linear_last_backend_counts; W8 should report affine calls by default and can now batch under SESSION_BACKEND=auto when it resolves to affine.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=3 \
+ROUNDS=4,4 \
+REPEAT=1 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=auto \
+WKV_BACKEND=metal \
+SESSION_BACKEND=sequential \
+COMPARE_SESSION_BACKEND=batched \
+COMPARE_ONLY=1 \
+REQUIRE_SESSION_BACKEND_MATCH=1 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=3 \
+ROUNDS=4,4 \
+REPEAT=1 \
+QUANTIZATION=mm8 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=auto \
+WKV_BACKEND=metal \
+SESSION_BACKEND=auto \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+# Extended 0.4B / 1.5B long-decode matrix: prompt4096 + decode256.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=4096 \
+DECODE_LENGTHS=256 \
+CHUNK_SIZE=1024 \
 REPEAT=1 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_generation_sweep.sh
 
 MODEL=/path/to/rwkv7-g1g-1.5b-hf \
 DTYPE=fp16 \
-PROMPT_LENGTHS=1024 \
-DECODE_LENGTHS=64 \
-CHUNK_SIZE=256 \
+PROMPT_LENGTHS=4096 \
+DECODE_LENGTHS=256 \
+CHUNK_SIZE=1024 \
 REPEAT=1 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
+# 1.5B W8 same-shape ratio row for prompt4096 + decode256.
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=4096 \
+DECODE_LENGTHS=256 \
+CHUNK_SIZE=1024 \
+REPEAT=1 \
+QUANTIZATION=mm8 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=metal \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
+# Extra-long 1.5B W4 long-decode gate: prompt8192 + decode512. Run after the
+# prompt4096 rows on 16GB machines because full+chunk prefill takes minutes.
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=8192 \
+DECODE_LENGTHS=512 \
+CHUNK_SIZE=2048 \
+REPEAT=1 \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
+MODEL=/path/to/rwkv7-g1g-1.5b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=8192 \
+DECODE_LENGTHS=512 \
+CHUNK_SIZE=2048 \
+REPEAT=1 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=8000000 \
+QUANT_BACKEND=auto \
+WKV_BACKEND=metal \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_generation_sweep.sh
+
+
+# Isolated MLX quant projection microbench. This does not use a full model; it
+# measures the dense fp16, reference, affine, Metal, and auto projection paths
+# for 1.5B-sized hidden projections before attempting deeper WKV+quant fusion.
+python scripts/mlx_quant_projection_bench.py \
+  --rows 1,4 \
+  --bits 4,8 \
+  --in-features 2048 \
+  --out-features 2048 \
+  --dtype fp16 \
+  --backends reference,affine,metal,auto \
+  --groups 3 \
+  --warmup 1 \
+  --runs 3 \
+  --results bench/results_apple_silicon_mlx_recurrent.jsonl
+
+# Model-level grouped R/K/V quant seam. Keep this as an opt-in A/B row until it
+# has stable end-to-end wins over the default quant path. The default mode is
+# direct (no duplicated grouped packed-weight cache); set
+# RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE=packed only for packed-cache A/B.
+RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION=1 \
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+PROMPT_LENGTHS=512 \
+DECODE_LENGTHS=16 \
+CHUNK_SIZE=256 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=auto \
+WKV_BACKEND=metal \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_generation_sweep.sh
 
@@ -752,7 +1115,7 @@ wrapper. On 16GB machines, start with tiny / 0.1B first, then short 0.4B
 generate, `scripts/run_apple_silicon_model_sweep.sh`, and 0.4B PEFT/Trainer/TRL
 one-step smoke before longer sweeps. For 1.5B on 16GB machines, start with
 fp16 load/forward/short-generate and a prompt-length sweep through 512 tokens;
-then add prompt1024/decode64 or 12-step Trainer/TRL rows only after closing other
+then add prompt4096/decode256, prompt8192/decode512, or 12-step Trainer/TRL rows only after closing other
 memory-heavy apps, and confirm the result has finite positive
 trainable-gradient or trainable-update totals. Treat non-finite fp16 PEFT
 gradients/updates as a failed row, not as evidence.
