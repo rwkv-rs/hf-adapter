@@ -397,6 +397,7 @@ class MLXGenerationSessionBatch:
         self.round_backend_reasons: list[str] = []
         self.round_decode_s: list[float] = []
         self.round_generated_tokens: list[int] = []
+        self.round_stable_repair_counts: list[int] = []
 
     @classmethod
     def from_prompts(
@@ -445,6 +446,7 @@ class MLXGenerationSessionBatch:
         self.round_generated_tokens.append(int(sum(steps)))
         self.round_backends.append("sequential")
         self.round_backend_reasons.append(str(reason))
+        self.round_stable_repair_counts.append(0)
         return outputs
 
     def _uses_metal_quant_projection_bits(self, bits: int) -> bool:
@@ -693,6 +695,7 @@ class MLXGenerationSessionBatch:
         else:
             reason = "equal_positive_round"
         self.round_backend_reasons.append(reason)
+        self.round_stable_repair_counts.append(int(stable_repair_count))
         return outputs
 
     def decode_round(
@@ -750,11 +753,16 @@ class MLXGenerationSessionBatch:
         seen_tokens = [int(session.state.seen_tokens) for session in self.sessions]
         decode_s = [round(float(session.decode_s), 6) for session in self.sessions]
         round_decode_s = [round(float(value), 6) for value in self.round_decode_s]
+        round_stable_repair_counts = [int(value) for value in self.round_stable_repair_counts]
         return {
             "batch_size": int(self.batch_size),
             "session_rounds": int(self.round_count),
             "round_backends": list(self.round_backends),
             "round_backend_reasons": list(self.round_backend_reasons),
+            "round_stable_repair_counts": round_stable_repair_counts,
+            "last_round_stable_repair_count": (
+                round_stable_repair_counts[-1] if round_stable_repair_counts else None
+            ),
             "last_round_backend": self.round_backends[-1] if self.round_backends else None,
             "last_round_backend_reason": self.round_backend_reasons[-1] if self.round_backend_reasons else None,
             "round_decode_s": round_decode_s,

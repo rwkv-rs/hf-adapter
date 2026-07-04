@@ -122,9 +122,12 @@ now has W4 and W8 prompt512/decode16, broader-threshold prompt2048/decode128
 rows, new W4 prompt4096/decode256 rows for 0.4B/1.5B (chunked/full prefill
 `max_abs=0.0`, grouped fallback 0 on the broader-threshold rows), 0.4B 8-session
 grouped pressure, and 1.5B longer rounds8,8 session probes. Grouped fallback
-remains 0 in these rows; 1.5B W8
-batched matches one-shot, while 1.5B W4 batched still has a documented
-correctness gap. `SESSION_BACKEND=auto` now protects W4/Metal with
+remains 0 in these rows; 1.5B W8 batched matches one-shot, raw 1.5B W4 batched
+still has a documented correctness gap, and opt-in 1.5B W4 `batched_stable`
+with `RWKV7_MLX_SESSION_STABLE_ARGMAX_MODE=repair` now matches sequential and
+one-shot in the same 5-session rounds8,8 strict compare with structured repair
+counts `[2, 3]`, aggregate round min≈25.32 tok/s, and peak≈1434MB.
+`SESSION_BACKEND=auto` now protects W4/Metal with
 `auto_mm4_metal_batch_exactness_guard` and uses the sequential safe path until
 that batched gap is closed, so longer end-to-end speed gates are still needed
 before enabling it by default.
