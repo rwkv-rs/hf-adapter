@@ -67,6 +67,33 @@ def test_mlx_quant_formula_if_available():
     mx.eval(y)
     assert tuple(int(v) for v in y.shape) == (2, 7)
     assert lin.telemetry()["bits"] == 8
+    assert lin.telemetry()["backend_counts"]["affine"] == 1
+
+    lin8_auto = MLXQuantizedLinear.from_linear_weight(linear_weight, bits=8, backend="auto")
+    y8_auto = lin8_auto(x)
+    mx.eval(y8_auto)
+    assert tuple(int(v) for v in y8_auto.shape) == (2, 7)
+    assert lin8_auto.telemetry()["last_backend"] == "affine"
+
+    lin4_auto = MLXQuantizedLinear.from_linear_weight(linear_weight, bits=4, backend="auto")
+    y4_auto = lin4_auto(x)
+    mx.eval(y4_auto)
+    assert tuple(int(v) for v in y4_auto.shape) == (2, 7)
+    expected_auto_backend = "metal" if metal_quant_available() else "affine"
+    assert lin4_auto.telemetry()["last_backend"] == expected_auto_backend
+
+    old_limit = os.environ.get("RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS")
+    os.environ["RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS"] = "1"
+    try:
+        lin4_auto_limited = MLXQuantizedLinear.from_linear_weight(linear_weight, bits=4, backend="auto")
+        y4_auto_limited = lin4_auto_limited(x)
+        mx.eval(y4_auto_limited)
+        assert lin4_auto_limited.telemetry()["last_backend"] == "affine"
+    finally:
+        if old_limit is None:
+            os.environ.pop("RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS", None)
+        else:
+            os.environ["RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS"] = old_limit
 
 
 def test_mlx_model_quantized_linear_hook_if_available():
@@ -88,6 +115,7 @@ def test_mlx_model_quantized_linear_hook_if_available():
     assert telemetry["quantized_linear_count"] == replaced
     assert telemetry["quantized_linear_bits"] == 8
     assert telemetry["quantized_linear_backend"] == "affine"
+    assert telemetry["quantized_linear_last_backend_counts"] == {"reference": 0, "affine": 0, "metal": 0}
     assert telemetry["quantized_linear_bytes"] > 0
     assert telemetry["quantized_dense_equivalent_bytes"] > 0
 
@@ -95,6 +123,7 @@ def test_mlx_model_quantized_linear_hook_if_available():
     mx.eval(q_logits)
     assert tuple(int(v) for v in q_logits.shape) == tuple(int(v) for v in dense_logits.shape)
     assert int(q_state.seen_tokens) == 3
+    assert model.telemetry()["quantized_linear_last_backend_counts"]["affine"] > 0
 
 
 def test_mlx_model_metal_quantized_linear_hook_if_available():
@@ -119,9 +148,30 @@ def test_mlx_model_metal_quantized_linear_hook_if_available():
     assert int(state.seen_tokens) == 3
 
 
+def test_mlx_model_auto_quantized_linear_hook_if_available():
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    from rwkv7_hf.mlx_quant import metal_quant_available
+    from tests.test_apple_silicon_mlx_model_smoke import tiny_torch_model_to_mlx
+
+    _, model, _ = tiny_torch_model_to_mlx()
+    replaced = model.quantize_linears("mm4", min_params=1, backend="auto")
+    assert replaced > 0
+    logits, state = model.forward([[1, 2, 3]], collect_all=False)
+    mx.eval(logits)
+    telemetry = model.telemetry()
+    assert telemetry["quantized_linear_backend"] == "auto"
+    expected = "metal" if metal_quant_available() else "affine"
+    assert telemetry["quantized_linear_last_backend_counts"][expected] > 0
+    assert int(state.seen_tokens) == 3
+
+
 if __name__ == "__main__":
     test_mlx_quant_import_safe()
     test_mlx_quant_formula_if_available()
     test_mlx_model_quantized_linear_hook_if_available()
     test_mlx_model_metal_quantized_linear_hook_if_available()
+    test_mlx_model_auto_quantized_linear_hook_if_available()
     print("MLX QUANT TESTS PASS")

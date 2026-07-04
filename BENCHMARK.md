@@ -1924,8 +1924,16 @@ one-shot tokens (`all_backend_token_match=true`,
 `145.89` and `38.31 tok/s`; 1.5B W8 also matches in this matrix with
 batched aggregate round min `34.67 tok/s`; 0.4B W8 reproduces the exactness gap
 (`backend_compare_status=mismatch`, first mismatch at token index `6` for the
-short prompt). These rows validate the batching seam and safety telemetry, not
-the final fp16-beating quant speed gate.
+short prompt). The MLX quant backend now also has a conservative
+`--quant-backend auto` policy with backend-count telemetry: W4 auto selects the
+small-batch Metal fused dequant-projection path and the 0.4B 3-session
+sequential-vs-batched gate passes with `quantized_linear_last_backend_counts`
+showing `metal=4913` and batched aggregate round mins `78.68` / `69.17 tok/s`;
+W8 auto stays on the affine path by default until the W8/Metal batch-exactness
+gap is fixed, and the matching 0.4B W8 auto gate passes with `affine=4913` and
+batched aggregate round mins `44.40` / `47.04 tok/s`. These rows validate the
+batching seam, safe backend routing, and telemetry, not the final fp16-beating
+quant speed gate.
 
 The current next-focus list is: 13.3B official-alignment/speed sweeps are now
 done (cos~1.0, `native_jit` 18.4 tok/s on V100; see
