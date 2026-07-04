@@ -844,6 +844,10 @@ bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 # capture, omit REQUIRE_SESSION_BACKEND_MATCH so the row records the mismatch
 # instead of aborting; current 0.4B W8/Metal strict batched decode diverges at
 # token index 6 on the short prompt while SESSION_BACKEND=auto remains safe.
+# Use QUANT_BACKEND=auto to validate the conservative quant backend router:
+# W4 small batches select Metal, while W8 defaults to affine until W8/Metal
+# batch exactness is fixed. The result rows expose
+# quantized_linear_last_backend_counts so reviewers can verify the route used.
 MODEL=/path/to/rwkv7-g1d-0.4b-hf \
 DTYPE=fp16 \
 SESSION_COUNT=6 \
@@ -872,6 +876,40 @@ WKV_BACKEND=metal \
 SESSION_BACKEND=sequential \
 COMPARE_SESSION_BACKEND=batched \
 COMPARE_ONLY=1 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+# Conservative quant backend auto route. W4 should report Metal calls in
+# quantized_linear_last_backend_counts; W8 should report affine calls by default.
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=3 \
+ROUNDS=4,4 \
+REPEAT=1 \
+QUANTIZATION=mm4 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=auto \
+WKV_BACKEND=metal \
+SESSION_BACKEND=sequential \
+COMPARE_SESSION_BACKEND=batched \
+COMPARE_ONLY=1 \
+REQUIRE_SESSION_BACKEND_MATCH=1 \
+RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
+bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
+
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+DTYPE=fp16 \
+SESSION_COUNT=3 \
+ROUNDS=4,4 \
+REPEAT=1 \
+QUANTIZATION=mm8 \
+QUANT_MIN_PARAMS=4000000 \
+QUANT_BACKEND=auto \
+WKV_BACKEND=metal \
+SESSION_BACKEND=sequential \
+COMPARE_SESSION_BACKEND=batched \
+COMPARE_ONLY=1 \
+REQUIRE_SESSION_BACKEND_MATCH=1 \
 RESULTS=bench/results_apple_silicon_mlx_recurrent.jsonl \
 bash scripts/run_apple_silicon_mlx_session_batch_smoke.sh
 

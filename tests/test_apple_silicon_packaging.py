@@ -125,13 +125,13 @@ def test_apple_smoke_script_static() -> None:
     assert mlx_session_script.exists()
     assert mlx_session_script.stat().st_mode & stat.S_IXUSR
     mlx_session_text = mlx_session_script.read_text(encoding="utf-8")
-    assert 'choices=["affine", "reference", "metal"]' in mlx_session_text
+    assert 'choices=["affine", "reference", "metal", "auto"]' in mlx_session_text
     assert 'choices=["reference", "metal", "auto"]' in mlx_session_text
     mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"
     assert mlx_session_batch_script.exists()
     assert mlx_session_batch_script.stat().st_mode & stat.S_IXUSR
     mlx_session_batch_text = mlx_session_batch_script.read_text(encoding="utf-8")
-    assert 'choices=["affine", "reference", "metal"]' in mlx_session_batch_text
+    assert 'choices=["affine", "reference", "metal", "auto"]' in mlx_session_batch_text
     assert 'choices=["reference", "metal", "auto"]' in mlx_session_batch_text
     assert 'choices=["sequential", "batched", "auto"]' in mlx_session_batch_text
     assert 'choices=["none", "sequential", "batched", "auto"]' in mlx_session_batch_text
@@ -143,11 +143,13 @@ def test_apple_smoke_script_static() -> None:
     assert "if require_match and not strict_match" in mlx_session_batch_text
     assert '"quantization": args.quantization' in mlx_session_batch_text
     assert '"quant_backend": args.quant_backend' in mlx_session_batch_text
+    assert '"quantized_linear_last_backend_counts": model.telemetry().get("quantized_linear_last_backend_counts")' in mlx_session_batch_text
     assert '"session_backend": args.session_backend' in mlx_session_batch_text
     assert '"min_round_decode_tok_s": min_round_decode_tok_s(rows)' in mlx_session_batch_text
     assert '"round_backend_reasons": sorted(' in mlx_session_batch_text
     model_text = (ROOT / "rwkv7_hf/mlx_model.py").read_text(encoding="utf-8")
     assert "auto_mm8_metal_batch_exactness_guard" in model_text
+    assert 'quant_backend in {"metal", "auto"}' in model_text
     assert "round_backend_reasons" in model_text
     mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"
     assert mlx_session_batch_script.exists()

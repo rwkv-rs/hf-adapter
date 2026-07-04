@@ -235,6 +235,7 @@ def run_backend_compare(
         "per_session": per_session,
         "wkv_backend_last": model.wkv_backend_last,
         "wkv_backend_counts": dict(model.wkv_backend_counts),
+        "quantized_linear_last_backend_counts": model.telemetry().get("quantized_linear_last_backend_counts"),
         **mlx_memory_telemetry(),
     }
     if require_match and not strict_match:
@@ -339,6 +340,7 @@ def run_interleaved_batch(
         "wkv_backend_counts": dict(model.wkv_backend_counts),
         "round_telemetry": round_rows,
         "per_session": per_session,
+        "quantized_linear_last_backend_counts": model.telemetry().get("quantized_linear_last_backend_counts"),
         **batch.telemetry(),
         **mlx_memory_telemetry(),
     }
@@ -355,7 +357,7 @@ def main() -> int:
     ap.add_argument("--repeat", type=int, default=1, help="Repeat the full interleaved-session workload for pressure telemetry.")
     ap.add_argument("--quantization", default="none", choices=["none", "mm8", "mm4"], help="Optional MLX packed W8/W4 projection path.")
     ap.add_argument("--quant-min-params", type=int, default=8_000_000)
-    ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference", "metal"])
+    ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference", "metal", "auto"])
     ap.add_argument("--wkv-backend", default="reference", choices=["reference", "metal", "auto"])
     ap.add_argument(
         "--session-backend",
@@ -504,6 +506,7 @@ def main() -> int:
             "max_mlx_cache_memory_bytes": max(int(row.get("mlx_cache_memory_bytes", 0)) for row in rows) if rows else None,
             "min_decode_tok_s": min_decode_tok_s(rows),
             "min_round_decode_tok_s": min_round_decode_tok_s(rows),
+            "quantized_linear_last_backend_counts": model.telemetry().get("quantized_linear_last_backend_counts"),
         }
         print(json.dumps(summary, ensure_ascii=False))
         append_result(args.results, summary)
