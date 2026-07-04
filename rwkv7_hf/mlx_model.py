@@ -152,6 +152,185 @@ class MLXGenerateOutput:
         }
 
 
+@dataclass
+class MLXSessionStepOutput:
+    """One incremental decode step from an :class:`MLXGenerationSession`."""
+
+    step_index: int
+    generated_ids: list[int]
+    text: str
+    decode_s: float
+    total_generated_tokens: int
+    seen_tokens: int
+
+    @property
+    def generated_tokens(self) -> int:
+        return len(self.generated_ids)
+
+    @property
+    def decode_tok_s(self) -> float | None:
+        return self.generated_tokens / self.decode_s if self.decode_s > 0 else None
+
+    def telemetry(self) -> dict[str, Any]:
+        return {
+            "step_index": int(self.step_index),
+            "generated_tokens": int(self.generated_tokens),
+            "total_generated_tokens": int(self.total_generated_tokens),
+            "seen_tokens": int(self.seen_tokens),
+            "decode_s": round(float(self.decode_s), 6),
+            "decode_tok_s": round(float(self.decode_tok_s), 6) if self.decode_tok_s is not None else None,
+            "generated_preview": [int(x) for x in self.generated_ids[:16]],
+        }
+
+
+class MLXGenerationSession:
+    """Stateful tokenizer-backed MLX generation helper.
+
+    The plain ``generate_text`` helper is useful for one-shot demos.  Serving
+    style callers need a stricter seam: prefill a prompt once, hold the RWKV
+    recurrent state cache, then decode in multiple chunks without recomputing
+    the prompt.  This class exposes that shape for Apple/MLX smoke tests and
+    future Metal-backed serving integration.
+
+    The session is intentionally single-prompt/tokenizer-backed.  Dynamic batch
+    select/reorder remains covered at the lower ``MLXRWKV7State`` layer where
+    batched cache tensors are explicit.
+    """
+
+    def __init__(
+        self,
+        *,
+        model: "MLXRWKV7Model",
+        tokenizer: Any,
+        prompt: str,
+        prompt_ids: list[int],
+        logits: Any,
+        state: MLXRWKV7State,
+        prefill_s: float,
+        skip_special_tokens: bool = False,
+    ):
+        if state.batch_size != 1:
+            raise ValueError("MLXGenerationSession currently expects one prompt / batch row")
+        self.model = model
+        self.tokenizer = tokenizer
+        self.prompt = prompt
+        self.prompt_ids = [int(x) for x in prompt_ids]
+        self.logits = logits
+        self.state = state
+        self.prefill_s = float(prefill_s)
+        self.decode_s = 0.0
+        self.generated_ids: list[int] = []
+        self.step_count = 0
+        self.skip_special_tokens = bool(skip_special_tokens)
+
+    @classmethod
+    def from_prompt(
+        cls,
+        model: "MLXRWKV7Model",
+        tokenizer: Any,
+        prompt: str,
+        *,
+        skip_special_tokens: bool = False,
+    ) -> "MLXGenerationSession":
+        """Encode and prefill a prompt, returning a reusable decode session."""
+
+        encoded = tokenizer(prompt, add_special_tokens=False)
+        prompt_ids = [int(tok) for tok in encoded.input_ids]
+        if not prompt_ids:
+            raise ValueError("prompt produced no token ids")
+        t0 = time.perf_counter()
+        logits, state = model.prefill([prompt_ids])
+        prefill_s = time.perf_counter() - t0
+        return cls(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            prompt_ids=prompt_ids,
+            logits=logits,
+            state=state,
+            prefill_s=prefill_s,
+            skip_special_tokens=skip_special_tokens,
+        )
+
+    @property
+    def prompt_tokens(self) -> int:
+        return len(self.prompt_ids)
+
+    @property
+    def generated_tokens(self) -> int:
+        return len(self.generated_ids)
+
+    @property
+    def text(self) -> str:
+        return self.tokenizer.decode(self.generated_ids, skip_special_tokens=self.skip_special_tokens)
+
+    @property
+    def prefill_tok_s(self) -> float | None:
+        return self.prompt_tokens / self.prefill_s if self.prefill_s > 0 else None
+
+    @property
+    def decode_tok_s(self) -> float | None:
+        return self.generated_tokens / self.decode_s if self.decode_s > 0 else None
+
+    def decode(self, max_new_tokens: int) -> MLXSessionStepOutput:
+        """Decode ``max_new_tokens`` more tokens from the cached state."""
+
+        mx = _mx()
+        n = int(max_new_tokens)
+        if n < 0:
+            raise ValueError("max_new_tokens must be non-negative")
+        t0 = time.perf_counter()
+        generated = []
+        next_token = mx.argmax(self.logits[:, -1, :], axis=-1).astype(mx.int32)
+        for _ in range(n):
+            generated.append(next_token)
+            self.logits, self.state = self.model.decode_step(next_token, self.state)
+            next_token = mx.argmax(self.logits[:, -1, :], axis=-1).astype(mx.int32)
+        if generated:
+            out = mx.stack(generated, axis=1)
+            mx.eval(out, self.logits)
+            step_ids = _as_list(out.reshape(-1))
+        else:
+            mx.eval(self.logits)
+            step_ids = []
+        elapsed = time.perf_counter() - t0
+        self.generated_ids.extend(step_ids)
+        self.decode_s += elapsed
+        self.step_count += 1
+        return MLXSessionStepOutput(
+            step_index=self.step_count,
+            generated_ids=step_ids,
+            text=self.tokenizer.decode(step_ids, skip_special_tokens=self.skip_special_tokens),
+            decode_s=elapsed,
+            total_generated_tokens=self.generated_tokens,
+            seen_tokens=int(self.state.seen_tokens),
+        )
+
+    def output(self) -> MLXGenerateOutput:
+        """Return a cumulative one-shot-style generation output."""
+
+        return MLXGenerateOutput(
+            prompt=self.prompt,
+            prompt_ids=list(self.prompt_ids),
+            generated_ids=list(self.generated_ids),
+            text=self.text,
+            prefill_s=self.prefill_s,
+            decode_s=self.decode_s,
+            prompt_tokens=self.prompt_tokens,
+            generated_tokens=self.generated_tokens,
+        )
+
+    def telemetry(self) -> dict[str, Any]:
+        out = self.output().telemetry()
+        out.update(
+            {
+                "session_steps": int(self.step_count),
+                "seen_tokens": int(self.state.seen_tokens),
+            }
+        )
+        return out
+
+
 class MLXRWKV7Model:
     """Minimal MLX-native RWKV-7 recurrent model loaded from HF safetensors."""
 
@@ -452,32 +631,39 @@ class MLXRWKV7Model:
         completion) so callers can decide how to display or postprocess.
         """
 
-        encoded = tokenizer(prompt, add_special_tokens=False)
-        prompt_ids = [int(tok) for tok in encoded.input_ids]
-        if not prompt_ids:
-            raise ValueError("prompt produced no token ids")
-        t0 = time.perf_counter()
-        logits, state = self.prefill([prompt_ids])
-        prefill_s = time.perf_counter() - t0
-        t1 = time.perf_counter()
-        generated, _ = self.decode_greedy(logits, state, max_new_tokens=int(max_new_tokens))
-        decode_s = time.perf_counter() - t1
-        generated_ids = _as_list(generated.reshape(-1))
-        text = tokenizer.decode(generated_ids, skip_special_tokens=skip_special_tokens)
-        return MLXGenerateOutput(
-            prompt=prompt,
-            prompt_ids=prompt_ids,
-            generated_ids=generated_ids,
-            text=text,
-            prefill_s=prefill_s,
-            decode_s=decode_s,
-            prompt_tokens=len(prompt_ids),
-            generated_tokens=len(generated_ids),
+        session = MLXGenerationSession.from_prompt(
+            self,
+            tokenizer,
+            prompt,
+            skip_special_tokens=skip_special_tokens,
         )
+        session.decode(int(max_new_tokens))
+        return session.output()
 
 
 def load_mlx_rwkv7_model(model_dir: str | Path, *, dtype: str | None = "fp16") -> MLXRWKV7Model:
     return MLXRWKV7Model.from_hf(model_dir, dtype=dtype)
+
+
+def load_mlx_generation_session(
+    model_dir: str | Path,
+    prompt: str,
+    *,
+    dtype: str | None = "fp16",
+    skip_special_tokens: bool = False,
+) -> MLXGenerationSession:
+    """Load a converted HF directory and prefill a tokenizer-backed MLX session."""
+
+    from transformers import AutoTokenizer
+
+    model = load_mlx_rwkv7_model(model_dir, dtype=dtype)
+    tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
+    return MLXGenerationSession.from_prompt(
+        model,
+        tokenizer,
+        prompt,
+        skip_special_tokens=skip_special_tokens,
+    )
 
 
 def generate_text_from_hf(
