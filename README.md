@@ -52,7 +52,7 @@ load/forward/generate plus PEFT/Trainer/TRL smokes, and 0.4B HF
 fp32/fp16 load/forward/short-generate, prompt-length sweep, and PEFT/Trainer/TRL
 smokes. It also includes 1.5B rows: fp16 load/forward/short-generate, fp16
 prompt 16/64/128/256/512 sweep plus MPS prompt512/new8 and MLX prompt8192/decode512, and fp32 manual plus
-Trainer/TRL PEFT LoRA 1/2/3/5/10/12-step smoke, plus native MM8/MM4
+Trainer/TRL PEFT LoRA 1/2/3/5/10/12-step smoke plus 20-step HF Trainer/SFT rows, plus native MM8/MM4
 Apple quant min-params smoke for tiny, 0.1B, 0.4B, and 1.5B model paths with
 packed-footprint telemetry, an initial MLX packed W8/W4 affine quant path
 for 0.1B/0.4B/1.5B projection smoke, the first opt-in MLX/Metal fused
