@@ -3,6 +3,7 @@
 
 set -euo pipefail
 
+USER_DEVICE="${DEVICE:-}"
 USER_ATTN_MODE="${ATTN_MODE:-}"
 source "$(dirname "$0")/_hf_script_common.sh"
 
@@ -10,7 +11,7 @@ MODEL="${1:-${MODEL:-}}"
 rwkv7_require_model "${MODEL}"
 rwkv7_prepare_results
 
-DEVICE="${DEVICE:-auto}"
+DEVICE="${USER_DEVICE:-auto}"
 DTYPE="${DTYPE:-fp32}"
 ATTN_MODE="${USER_ATTN_MODE:-chunk}"
 MAX_LENGTH="${MAX_LENGTH:-8}"

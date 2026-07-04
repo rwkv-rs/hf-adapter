@@ -3,10 +3,11 @@
 
 set -euo pipefail
 
+USER_DEVICE="${DEVICE:-}"
 source "$(dirname "$0")/_hf_script_common.sh"
 rwkv7_prepare_results
 
-DEVICE="${DEVICE:-auto}"
+DEVICE="${USER_DEVICE:-auto}"
 DTYPE="${DTYPE:-fp32}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 LENGTH="${LENGTH:-8}"

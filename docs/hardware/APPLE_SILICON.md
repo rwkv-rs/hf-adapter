@@ -14,7 +14,7 @@ Metal/MLX backend later.
 | Tiny Apple smoke | pass on local M-series | `tests/test_apple_silicon_smoke.py` passes on MacBook Air / Apple M5 / 16GB / macOS 26.5 / PyTorch 2.12.1 MPS; see `bench/results_apple_silicon_m5_20260704.jsonl`. |
 | Converted-model Apple smoke | 0.1B, 0.4B, and 1.5B pass on local M-series | `scripts/run_apple_silicon_smoke.sh` loads `rwkv7-g1d-0.1b-hf`, `rwkv7-g1d-0.4b-hf`, and `rwkv7-g1g-1.5b-hf` through `RWKV7_NATIVE_MODEL=1` on MPS; 0.4B has fp32/fp16 short-generate rows and 1.5B has fp16 short-generate + prompt sweep rows. |
 | HF API coverage | partial | Load + forward + `generate(use_cache=True)` through the native backend; tiny native backward and Trainer paths pass; real 0.1B and 0.4B PEFT LoRA, HF Trainer, and TRL SFT/DPO/GRPO paths on MPS are covered. 0.4B also has fp32/fp16 generation length sweep rows and 2-step Trainer/TRL rows. 1.5B has fp16 inference/sweep rows through prompt 512 / decode 8 plus fp32 PEFT LoRA manual, HF Trainer, and TRL SFT/DPO/GRPO 1/2/3/5/10-step rows with finite trainable updates. |
-| Quantization | not claimed | `bitsandbytes` W8/W4 is CUDA-oriented; Apple needs MLX/Metal-specific quantization work. |
+| Quantization | functional native smoke | `bitsandbytes` W8/W4 is CUDA-oriented and is not the Apple path. Native MM8/MM4 config-driven module replacement now runs on MPS for tiny and 0.1B smoke rows with packed-footprint telemetry; production-speed Apple quant still needs MLX/Metal kernels. |
 | Production speed | not claimed | PyTorch MPS is a compatibility path, not the final Apple performance backend. |
 | MLX / Metal backend | TODO | See RafaelUI references below. |
 
@@ -45,6 +45,8 @@ Local smoke on 2026-07-04:
 |---|---:|---|---|---|---|---|
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | tiny native RWKV-7 `generate()` | PASS (`elapsed_s=0.1121`, 2 generated tokens) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.1b-hf` load + forward + `generate()` | PASS (`elapsed_s=0.2406`, 11 prompt tokens + 2 generated tokens) |
+| MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | tiny native MM8/MM4 quant smoke | PASS (config-driven from_pretrained; MM8 footprint ratio=0.391615, MM4 footprint ratio=0.267734; decode backend=eager) |
+| MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.1b-hf` native MM8/MM4 quant smoke | PASS (lm_head replacement; MM8 footprint ratio=0.252635, MM4 footprint ratio=0.127635; 1-token generate) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.4b-hf` load + forward + `generate()` | PASS (`elapsed_s=0.4699`, 11 prompt tokens + 1 generated token, MPS driver memory≈2171MiB) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.4b-hf` fp16 load + forward + `generate()` | PASS (`elapsed_s=1.2837`, 11 prompt tokens + 1 generated token, MPS driver memory≈1083MiB) |
 | MacBook Air / Apple M5 | 16GB | 26.5 | 2.12.1 / Transformers 5.13.0 | MPS | `rwkv7-g1d-0.4b-hf` fp32/fp16 prompt-length sweep | PASS (fp32 prompt tokens 16/64/128; fp16 prompt tokens 16/64/128/256/512; 4 generated tokens; fp16 peak driver_mem≈1219MiB, fp32 peak driver_mem≈2203MiB) |
@@ -206,8 +208,8 @@ MODEL_SIZE_LABEL=1.5b \
 DTYPE=fp32 \
 MAX_LENGTH=8 \
 BATCH_SIZE=1 \
-MAX_STEPS=5 \
-DATASET_REPEATS=6 \
+MAX_STEPS=10 \
+DATASET_REPEATS=12 \
 BACKEND=trainer \
 REQUIRE_PEFT=1 \
 RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
@@ -218,8 +220,8 @@ MODEL_SIZE_LABEL=1.5b \
 DTYPE=fp32 \
 MAX_LENGTH=8 \
 BATCH_SIZE=1 \
-MAX_STEPS=5 \
-DATASET_REPEATS=6 \
+MAX_STEPS=10 \
+DATASET_REPEATS=12 \
 BACKEND=trl_sft \
 REQUIRE_PEFT=1 REQUIRE_TRL=1 \
 RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
@@ -230,8 +232,8 @@ MODEL_SIZE_LABEL=1.5b \
 DTYPE=fp32 \
 MAX_LENGTH=8 \
 BATCH_SIZE=1 \
-MAX_STEPS=5 \
-DATASET_REPEATS=6 \
+MAX_STEPS=10 \
+DATASET_REPEATS=12 \
 BACKEND=trl_dpo \
 REQUIRE_PEFT=1 REQUIRE_TRL=1 \
 RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
@@ -242,16 +244,28 @@ MODEL_SIZE_LABEL=1.5b \
 DTYPE=fp32 \
 MAX_LENGTH=8 \
 BATCH_SIZE=1 \
-MAX_STEPS=5 \
-DATASET_REPEATS=6 \
+MAX_STEPS=10 \
+DATASET_REPEATS=12 \
 GRPO_MAX_COMPLETION_LENGTH=1 \
 BACKEND=trl_grpo \
 REQUIRE_PEFT=1 REQUIRE_TRL=1 \
 RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_model_training_smoke.sh
+
+# Apple native MM8/MM4 quant, tiny-only.
+DEVICE=auto DTYPE=fp32 QUANTIZATIONS=mm8,mm4 \
+RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+  scripts/run_apple_silicon_quant_smoke.sh
+
+# Apple native MM8/MM4 quant on converted 0.1B; default MIN_PARAMS=8000000 replaces lm_head.
+MODEL=/path/to/rwkv7-g1d-0.1b-hf \
+MODEL_SIZE_LABEL=0.1b \
+DEVICE=auto DTYPE=fp32 QUANTIZATIONS=mm8,mm4 \
+RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
+  scripts/run_apple_silicon_quant_smoke.sh
 ```
 
-The Trainer wrapper calls `tests/test_apple_silicon_trainer_smoke.py` directly. The 0.1B/0.4B/1.5B model-training, TRL SFT, and TRL RL wrappers call `tests/test_apple_silicon_model_training_smoke.py`. The generation sweep wrapper calls `tests/test_apple_silicon_model_sweep.py`.
+The Trainer wrapper calls `tests/test_apple_silicon_trainer_smoke.py` directly. The 0.1B/0.4B/1.5B model-training, TRL SFT, and TRL RL wrappers call `tests/test_apple_silicon_model_training_smoke.py`. The generation sweep wrapper calls `tests/test_apple_silicon_model_sweep.py`. The native quant wrapper calls `tests/test_apple_silicon_quant_smoke.py`.
 
 Recorded rows: [`../../bench/results_apple_silicon_m5_20260704.jsonl`](../../bench/results_apple_silicon_m5_20260704.jsonl).
 
@@ -346,6 +360,7 @@ python scripts/sync_hf_adapter_code.py /path/to/rwkv7-g1d-0.1b-hf
 | M1 / M2 Air | 16GB | tiny native | fp32 | mps or cpu | `APPLE SILICON SMOKE PASS` |
 | M1 / M2 Air | 16GB | 0.1B HF | fp32 | mps | load + forward + 2-token generate + PEFT LoRA/Trainer/SFT/DPO/GRPO smoke |
 | M-series 16GB+ | 16GB+ | 0.4B HF | fp32 / fp16 | mps | load + forward + generate + prompt-length sweep through 512 tokens + PEFT LoRA/Trainer/SFT/DPO/GRPO 1-step/2-step smoke + memory note |
+| M-series 16GB+ | 16GB+ | tiny + 0.1B HF | fp32 native MM8/MM4 | mps | bitsandbytes-free native quant smoke + packed-footprint ratio + finite forward/generate |
 | M-series 16GB+ | 16GB+ | 1.5B HF | fp16 inference / fp32 LoRA smoke | mps | load/generate + prompt sweep through 512 tokens / decode 8 + PEFT manual + Trainer/SFT/DPO/GRPO 1/2/3/5/10-step + peak memory + finite trainable update |
 | M-series Max / Ultra | 64GB+ | 1.5B+ HF | fp16 / bf16 | mps | longer decode, 10+ step Trainer/TRL rows, peak memory, tok/s |
 
@@ -361,14 +376,15 @@ For every Apple result, include:
 
 - This is not an Albatross-speed path. PyTorch MPS validates HF compatibility on
   Apple hardware but does not replace CUDA fused kernels.
-- `bitsandbytes` quantization is not an Apple path. Apple W8/W4 needs MLX/Metal
-  packing and kernels.
+- `bitsandbytes` quantization is not an Apple path. Native MM8/MM4 now has
+  an MPS functional smoke path and packed-footprint telemetry, but production
+  Apple W8/W4 still needs MLX/Metal packing and fused kernels.
 - Long-running full-size training on MPS is not claimed yet. Tiny native Trainer
   and tiny PEFT LoRA Trainer pass; 0.1B and 0.4B PEFT LoRA backward, HF Trainer,
   TRL SFT, DPO, and GRPO one-step and 2-step smoke pass on a 16GB M5. 1.5B
   fp32 PEFT LoRA manual backward, HF Trainer, and TRL SFT/DPO/GRPO 1/2/3/5/10-step
-  smoke now pass. Longer 1.5B decode beyond 8 tokens, >10-step training, larger Apple machines,
-  and MLX/Metal acceleration are still open.
+  smoke now pass. Longer 1.5B decode beyond 8 tokens, >10-step training, and larger Apple machines
+  are still open. Native MM8/MM4 functional smoke is present; MLX/Metal acceleration and production quant speed are still open.
 - 1.5B fp16 PEFT LoRA on the 16GB M5 produced non-finite gradient/update values
   in one local trial. The training smoke now rejects non-finite or zero
   trainable-gradient/update totals instead of recording false-positive rows.
@@ -391,6 +407,7 @@ next backend layer:
 1. Extend 0.4B Apple rows beyond 2 training steps.
 2. Extend 1.5B beyond 10-step Trainer/TRL and prompt512/new8 sweep to longer
    decode, >10-step Trainer/TRL, and memory-pressure notes.
-3. Prototype MLX weight conversion for RWKV-7 HF directories.
-4. Decide whether the Metal WKV-7 kernel belongs in this repo as an optional
+3. Extend Apple native MM8/MM4 from 0.1B lm_head smoke to larger models and more projection groups.
+4. Prototype MLX weight conversion for RWKV-7 HF directories.
+5. Decide whether the Metal WKV-7 kernel belongs in this repo as an optional
    backend or in a sibling `rwkv7-mlx` / `rwkv7-metal` package.
