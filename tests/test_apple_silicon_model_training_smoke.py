@@ -88,12 +88,37 @@ def infer_model_size_label(model_path: str, explicit: str = "") -> str:
     return match.group(1) if match else "unknown"
 
 
+
+def mps_backend(torch: Any) -> Any | None:
+    return getattr(getattr(torch, "backends", None), "mps", None)
+
+
+def mps_is_available(torch: Any) -> bool:
+    mps = mps_backend(torch)
+    if mps is None or not hasattr(mps, "is_available"):
+        return False
+    try:
+        return bool(mps.is_available())
+    except Exception:
+        return False
+
+
+def mps_is_built(torch: Any) -> bool:
+    mps = mps_backend(torch)
+    if mps is None or not hasattr(mps, "is_built"):
+        return False
+    try:
+        return bool(mps.is_built())
+    except Exception:
+        return False
+
+
 def choose_device(torch: Any, requested: str) -> str:
     if requested != "auto":
-        if requested == "mps" and not torch.backends.mps.is_available():
+        if requested == "mps" and not mps_is_available(torch):
             raise RuntimeError("requested --device mps but MPS is unavailable")
         return requested
-    return "mps" if torch.backends.mps.is_available() else "cpu"
+    return "mps" if mps_is_available(torch) else "cpu"
 
 
 def dtype_for(torch: Any, name: str) -> Any:
@@ -665,8 +690,8 @@ def main() -> int:
         "peft": package_version("peft"),
         "trl": package_version("trl"),
         "datasets": package_version("datasets"),
-        "mps_built": bool(torch.backends.mps.is_built()),
-        "mps_available": bool(torch.backends.mps.is_available()),
+        "mps_built": mps_is_built(torch),
+        "mps_available": mps_is_available(torch),
         "device": device,
         "dtype": args.dtype,
         "model": Path(args.model).name,
