@@ -179,6 +179,14 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 - 可选 GPU smoke benchmark workflow;
 - training / 量化 / dev docs 的 dependency extras。
 
+### 9A. Apple Silicon / MPS / MLX
+
+- 运行 [`scripts/run_apple_silicon_smoke.sh`](scripts/run_apple_silicon_smoke.sh) 填 0.1B Apple JSONL 行;
+- 补 tiny native MPS forward/backward 测试;
+- 补 `RWKV7_NATIVE_MODEL=1` + PEFT LoRA MPS smoke;
+- 评估 RafaelUI Metal WKV7 / MLX 路线是否做 sibling backend;
+- Apple W8/W4 不走 bitsandbytes,需要 MLX/Metal packed quant。
+
 ## P2:闭合性能与量化缺口
 
 > 路线与数字权威见 [`docs/performance/FUSED_BACKEND.md`](docs/performance/FUSED_BACKEND.md) 与 [`BENCHMARK.md`](BENCHMARK.md);本节只列实操动作。
