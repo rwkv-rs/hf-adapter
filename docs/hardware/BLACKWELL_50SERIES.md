@@ -1,3 +1,22 @@
+### 2026-07-04 — RTX 5090(sm_120) native-prefill/HF smoke 对齐 4090 验证矩阵
+
+5090 首轮 smoke 发现的两个 blocker 已补齐并复测,artifact: [`bench/5090_blackwell_native_prefill_smoke_20260704`](../../bench/5090_blackwell_native_prefill_smoke_20260704/README.md)。
+
+**已修:**
+- `native_jit.prefill` 现在解包当前 41-field pack(含 `RKVw`),修掉 5090 上 `ValueError: too many values to unpack (expected 40)`。
+- 新增随 remote-code 模型一起分发的 `triton_compat.py`,为早期 Torch 2.6 + Triton 3.3 + Blackwell 栈补 legacy `AttrsDescriptor` 路径,并默认给 sm_120 关闭/降级 FLA `torch.compile` sqrelu 问题。
+- convert/sync 脚本已把 `triton_compat.py` 纳入模型目录,不再需要手工 patch site-packages。
+
+**5090 实测通过:**
+- HF `generate` smoke PASS,backend=`native_graph`。
+- HF API contract PASS,beam generate backend=`native_graph`。
+- native prefill forward PASS:`generate_match=True`,seen=32。
+- dynamic batching + native prefill + native_graph decode smoke PASS,bsz=8,512 decoded tokens。
+- W8/W4 quantized load/generate smoke PASS:W8 footprint 283.4 MB,W4 footprint 242.9 MB。
+- 0.1B fp16 bsz sweep:bsz1/2/4/8 native_graph decode tok/s = **945.7 / 1345.6 / 2715.2 / 5338.2**。
+
+**仍不是的东西:**这不是 5090 的 full MATH500 avg@64 验收;只是把 5090 的 HF adapter 可运行性/原生 prefill/量化 smoke 对齐到 4090-style HF smoke 要求。完整数学验收还需要把正式 MATH500 数据和 acceptance 模型放到 5090 后跑 `scripts/run_math500_acceptance.sh`。
+
 ### 2026-07-04 — RTX 5090(sm_120) HF adapter smoke:能跑,但需记录环境 workaround
 
 在真实 RTX 5090 32GB 节点补了 HF adapter 运行 smoke,结果已落到 [`bench/5090_blackwell_smoke_20260704`](../../bench/5090_blackwell_smoke_20260704/README.md)。
