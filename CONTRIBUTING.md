@@ -204,6 +204,12 @@ DEVICE=auto DTYPE=fp32 \
 RESULTS=bench/results_apple_silicon.jsonl \
 bash scripts/run_apple_silicon_smoke.sh
 
+MODEL=/path/to/rwkv7-g1d-0.4b-hf \
+MODEL_SIZE_LABEL=0.4b SKIP_TINY=1 MAX_NEW_TOKENS=1 \
+DEVICE=auto DTYPE=fp32 \
+RESULTS=bench/results_apple_silicon.jsonl \
+bash scripts/run_apple_silicon_smoke.sh
+
 REQUIRE_PEFT=1 \
 DEVICE=auto DTYPE=fp32 \
 RESULTS=bench/results_apple_silicon_training.jsonl \
@@ -237,7 +243,8 @@ python scripts/sync_hf_adapter_code.py /path/to/rwkv7-g1d-0.1b-hf
 ```
 
 Include the `torch_mps_built` / `torch_mps_available` lines printed by the
-wrapper, and start with 0.1B on 16GB machines.
+wrapper. On 16GB machines, start with tiny / 0.1B first, then short 0.4B
+generate before longer sweeps.
 
 ## Reporting hardware results
 

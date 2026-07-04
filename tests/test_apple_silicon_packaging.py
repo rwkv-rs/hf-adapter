@@ -30,6 +30,10 @@ def test_apple_smoke_script_static() -> None:
     assert "RWKV7_NATIVE_MODEL" in text
     assert "PYTORCH_ENABLE_MPS_FALLBACK" in text
     assert "tests/test_apple_silicon_smoke.py" in text
+    assert "MODEL_SIZE_LABEL" in text
+    assert "SKIP_TINY" in text
+    assert "--model-size-label" in text
+    assert "--skip-tiny" in text
     train_script = ROOT / "scripts/run_apple_silicon_training_smoke.sh"
     assert train_script.exists()
     assert train_script.stat().st_mode & stat.S_IXUSR
@@ -85,6 +89,8 @@ def test_apple_doc_links_entry_points() -> None:
     subprocess.run(["bash", "-n", str(rl_script)], cwd=ROOT, check=True)
     assert "RafaelUI" in text
     assert "RWKV7_NATIVE_MODEL=1" in text
+    assert "rwkv7-g1d-0.4b-hf" in text
+    assert "SKIP_TINY=1" in text
     assert "MLX" in text
     assert "Metal" in text
 
