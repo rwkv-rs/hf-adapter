@@ -158,6 +158,9 @@ def test_apple_smoke_script_static() -> None:
     model_text = (ROOT / "rwkv7_hf/mlx_model.py").read_text(encoding="utf-8")
     quant_text = (ROOT / "rwkv7_hf/mlx_quant.py").read_text(encoding="utf-8")
     assert "auto_metal_max_rows" in quant_text
+    assert "mm8_group_matmul_metal" in quant_text
+    assert "mm4_group_matmul_metal" in quant_text
+    assert "pack_mlx_mm8_group" in quant_text
     assert 'RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS", 4096' in quant_text
     assert "@lru_cache(maxsize=1)" in quant_text
     assert "batched_stable" in model_text
@@ -173,6 +176,8 @@ def test_apple_smoke_script_static() -> None:
     assert "mlx_quant_projection_bench" in quant_bench_text
     assert "speedup_vs_dense" in quant_bench_text
     assert "max_abs_vs_quant_reference" in quant_bench_text
+    assert "mlx_quant_group_projection_bench" in quant_bench_text
+    assert "speedup_vs_separate_metal" in quant_bench_text
     assert "_uses_w8_metal_projection" in model_text
     assert "round_backend_reasons" in model_text
     mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"

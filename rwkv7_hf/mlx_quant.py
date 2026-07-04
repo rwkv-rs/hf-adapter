@@ -31,7 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import lru_cache
 import os
-from typing import Any
+from typing import Any, Sequence
 
 from .mlx_bridge import mlx_array_nbytes, mlx_available, require_mlx
 
@@ -145,6 +145,29 @@ class MLXMM8Weight:
 
 
 @dataclass
+class MLXMM8GroupWeight:
+    """Prepacked grouped MM8 weights for one-launch Metal projection groups."""
+
+    q_t: Any
+    mx: Any
+    rx: Any
+    my: Any
+    ry: Any
+    n: int
+    m: int
+    groups: int
+    dense_dtype: Any
+
+    @property
+    def bits(self) -> int:
+        return 8
+
+    @property
+    def storage_bytes(self) -> int:
+        return sum(mlx_array_nbytes(x) for x in (self.q_t, self.mx, self.rx, self.my, self.ry))
+
+
+@dataclass
 class MLXMM4Weight:
     """Packed int4 affine weight for ``y = x @ W``."""
 
@@ -170,6 +193,30 @@ class MLXMM4Weight:
             for x in (self.packed, self.packed_t, self.mx, self.rx_s, self.my, self.ry_s)
             if x is not None
         )
+
+
+@dataclass
+class MLXMM4GroupWeight:
+    """Prepacked grouped MM4 weights for one-launch Metal projection groups."""
+
+    packed_t: Any
+    mx: Any
+    rx_s: Any
+    my: Any
+    ry_s: Any
+    n: int
+    m_orig: int
+    m_padded: int
+    groups: int
+    dense_dtype: Any
+
+    @property
+    def bits(self) -> int:
+        return 4
+
+    @property
+    def storage_bytes(self) -> int:
+        return sum(mlx_array_nbytes(x) for x in (self.packed_t, self.mx, self.rx_s, self.my, self.ry_s))
 
 
 @dataclass
@@ -295,6 +342,31 @@ def quantize_mlx_mm8(weight: Any, *, layout: str = "standard") -> MLXMM8Weight:
     return q
 
 
+def pack_mlx_mm8_group(weights: Sequence[MLXMM8Weight]) -> MLXMM8GroupWeight:
+    """Prepack equal-shaped MM8 weights for grouped Metal projection."""
+
+    mx = _mx()
+    qs = list(weights)
+    if not qs:
+        raise ValueError("pack_mlx_mm8_group requires at least one weight")
+    n, m = int(qs[0].n), int(qs[0].m)
+    if any(int(q.n) != n or int(q.m) != m for q in qs):
+        raise ValueError("all grouped MM8 weights must have the same [N, M] shape")
+    out = MLXMM8GroupWeight(
+        q_t=mx.stack([_mm8_u8_t(q) for q in qs], axis=0),
+        mx=mx.stack([q.mx.reshape(m) for q in qs], axis=0),
+        rx=mx.stack([q.rx.reshape(m) for q in qs], axis=0),
+        my=mx.stack([q.my.reshape(n) for q in qs], axis=0),
+        ry=mx.stack([q.ry.reshape(n) for q in qs], axis=0),
+        n=n,
+        m=m,
+        groups=len(qs),
+        dense_dtype=qs[0].dense_dtype,
+    )
+    mx.eval(out.q_t, out.mx, out.rx, out.my, out.ry)
+    return out
+
+
 def dequantize_mlx_mm8(q: MLXMM8Weight, *, out_dtype: Any | None = None) -> Any:
     mx = _mx()
     dtype = out_dtype or q.dense_dtype
@@ -365,6 +437,77 @@ def mm8_matmul_metal(x: Any, q: MLXMM8Weight) -> Any:
         output_dtypes=[x.dtype],
     )[0]
     return out.reshape(*x.shape[:-1], q.m)
+
+
+@lru_cache(maxsize=1)
+def _metal_mm8_group_kernel():
+    mx = require_mlx()
+    if not metal_quant_available():
+        raise RuntimeError("MLX custom Metal kernels are not available in this runtime")
+
+    source = r'''
+        uint row_id = thread_position_in_grid.x;
+        uint R = uint(dims[0]);
+        uint N = uint(dims[1]);
+        uint M = uint(dims[2]);
+        uint G = uint(dims[3]);
+        uint total = G * R * M;
+        if (row_id >= total) {
+            return;
+        }
+
+        uint m_id = row_id % M;
+        uint tmp = row_id / M;
+        uint r_id = tmp % R;
+        uint g_id = tmp / R;
+        uint x_base = r_id * N;
+        uint q_base = (g_id * M + m_id) * N;
+        uint col_base = g_id * M + m_id;
+        uint row_base = g_id * N;
+
+        float rx_m = float(rx[col_base]);
+        float mx_m = float(mx_col[col_base]);
+        float acc = 0.0f;
+        for (uint n = 0; n < N; ++n) {
+            float xv = float(x[x_base + n]);
+            float qv = float(q_t[q_base + n]) + 0.5f;
+            float deq = qv * float(ry[row_base + n]) * rx_m + float(my[row_base + n]) + mx_m;
+            acc += xv * deq;
+        }
+        out[row_id] = acc;
+    '''
+    return mx.fast.metal_kernel(
+        name="rwkv7_mm8_affine_group_matmul",
+        input_names=["x", "q_t", "mx_col", "rx", "my", "ry", "dims"],
+        output_names=["out"],
+        source=source,
+        ensure_row_contiguous=True,
+    )
+
+
+def mm8_group_matmul_metal(x: Any, weights: Sequence[MLXMM8Weight] | MLXMM8GroupWeight) -> Any:
+    """Run grouped fused Metal MM8 projections for equal-shaped weights.
+
+    Returns ``[groups, *x.shape[:-1], out_features]``. This experimental
+    launch-fusion seam targets decode-hot groups such as R/K/V projections; it
+    does not change the default single-projection path.
+    """
+
+    mx = _mx()
+    group = weights if isinstance(weights, MLXMM8GroupWeight) else pack_mlx_mm8_group(weights)
+    n, m = int(group.n), int(group.m)
+    x2 = x.reshape(-1, n)
+    rows = int(x2.shape[0])
+    groups = int(group.groups)
+    dims = mx.array([rows, n, m, groups], dtype=mx.uint32)
+    out = _metal_mm8_group_kernel()(
+        inputs=[x2, group.q_t, group.mx, group.rx, group.my, group.ry, dims],
+        grid=(groups * rows * m, 1, 1),
+        threadgroup=(min(256, max(1, m)), 1, 1),
+        output_shapes=[(groups, rows, m)],
+        output_dtypes=[x.dtype],
+    )[0]
+    return out.reshape(groups, *x.shape[:-1], m)
 
 
 def mm8_matmul_mlx(x: Any, q: MLXMM8Weight, *, backend: str = "affine") -> Any:
@@ -444,6 +587,32 @@ def quantize_mlx_mm4(weight: Any, *, layout: str = "standard") -> MLXMM4Weight:
     )
     mx.eval(*[x for x in (q.packed, q.packed_t, q.mx, q.rx_s, q.my, q.ry_s) if x is not None])
     return q
+
+
+def pack_mlx_mm4_group(weights: Sequence[MLXMM4Weight]) -> MLXMM4GroupWeight:
+    """Prepack equal-shaped MM4 weights for grouped Metal projection."""
+
+    mx = _mx()
+    qs = list(weights)
+    if not qs:
+        raise ValueError("pack_mlx_mm4_group requires at least one weight")
+    n, m_orig, m_padded = int(qs[0].n), int(qs[0].m_orig), int(qs[0].m_padded)
+    if any(int(q.n) != n or int(q.m_orig) != m_orig or int(q.m_padded) != m_padded for q in qs):
+        raise ValueError("all grouped MM4 weights must have the same [N, M] shape")
+    out = MLXMM4GroupWeight(
+        packed_t=mx.stack([_mm4_packed_t(q) for q in qs], axis=0),
+        mx=mx.stack([q.mx.reshape(m_padded) for q in qs], axis=0),
+        rx_s=mx.stack([q.rx_s.reshape(m_padded) for q in qs], axis=0),
+        my=mx.stack([q.my.reshape(n) for q in qs], axis=0),
+        ry_s=mx.stack([q.ry_s.reshape(n) for q in qs], axis=0),
+        n=n,
+        m_orig=m_orig,
+        m_padded=m_padded,
+        groups=len(qs),
+        dense_dtype=qs[0].dense_dtype,
+    )
+    mx.eval(out.packed_t, out.mx, out.rx_s, out.my, out.ry_s)
+    return out
 
 
 def unpack_mlx_mm4(q: MLXMM4Weight, *, out_dtype: Any | None = None) -> Any:
@@ -533,6 +702,83 @@ def mm4_matmul_metal(x: Any, q: MLXMM4Weight) -> Any:
         output_dtypes=[x.dtype],
     )[0]
     return out.reshape(*x.shape[:-1], q.m_orig)
+
+
+@lru_cache(maxsize=1)
+def _metal_mm4_group_kernel():
+    mx = require_mlx()
+    if not metal_quant_available():
+        raise RuntimeError("MLX custom Metal kernels are not available in this runtime")
+
+    source = r'''
+        uint row_id = thread_position_in_grid.x;
+        uint R = uint(dims[0]);
+        uint N = uint(dims[1]);
+        uint M = uint(dims[2]);
+        uint M_PAD = uint(dims[3]);
+        uint G = uint(dims[4]);
+        uint PACKED_COLS = M_PAD >> 1;
+        uint total = G * R * M;
+        if (row_id >= total) {
+            return;
+        }
+
+        uint m_id = row_id % M;
+        uint tmp = row_id / M;
+        uint r_id = tmp % R;
+        uint g_id = tmp / R;
+        uint packed_col = m_id >> 1;
+        bool high = (m_id & 1) != 0;
+        uint x_base = r_id * N;
+        uint q_base = (g_id * PACKED_COLS + packed_col) * N;
+        uint col_base = g_id * M_PAD + m_id;
+        uint row_base = g_id * N;
+
+        float rx_m = float(rx_s[col_base]);
+        float mx_m = float(mx_col[col_base]);
+        float acc = 0.0f;
+        for (uint n = 0; n < N; ++n) {
+            uint byte_v = uint(packed_t[q_base + n]);
+            uint q_u4 = high ? ((byte_v >> 4) & 0x0Fu) : (byte_v & 0x0Fu);
+            float xv = float(x[x_base + n]);
+            float qv = float(q_u4) + 0.5f;
+            float deq = qv * float(ry_s[row_base + n]) * rx_m + float(my[row_base + n]) + mx_m;
+            acc += xv * deq;
+        }
+        out[row_id] = acc;
+    '''
+    return mx.fast.metal_kernel(
+        name="rwkv7_mm4_affine_group_matmul",
+        input_names=["x", "packed_t", "mx_col", "rx_s", "my", "ry_s", "dims"],
+        output_names=["out"],
+        source=source,
+        ensure_row_contiguous=True,
+    )
+
+
+def mm4_group_matmul_metal(x: Any, weights: Sequence[MLXMM4Weight] | MLXMM4GroupWeight) -> Any:
+    """Run grouped fused Metal MM4 projections for equal-shaped weights.
+
+    Returns ``[groups, *x.shape[:-1], out_features]``. This experimental
+    launch-fusion seam targets decode-hot groups such as R/K/V projections; it
+    does not change the default single-projection path.
+    """
+
+    mx = _mx()
+    group = weights if isinstance(weights, MLXMM4GroupWeight) else pack_mlx_mm4_group(weights)
+    n, m_orig, m_padded = int(group.n), int(group.m_orig), int(group.m_padded)
+    x2 = x.reshape(-1, n)
+    rows = int(x2.shape[0])
+    groups = int(group.groups)
+    dims = mx.array([rows, n, m_orig, m_padded, groups], dtype=mx.uint32)
+    out = _metal_mm4_group_kernel()(
+        inputs=[x2, group.packed_t, group.mx, group.rx_s, group.my, group.ry_s, dims],
+        grid=(groups * rows * m_orig, 1, 1),
+        threadgroup=(min(256, max(1, m_orig)), 1, 1),
+        output_shapes=[(groups, rows, m_orig)],
+        output_dtypes=[x.dtype],
+    )[0]
+    return out.reshape(groups, *x.shape[:-1], m_orig)
 
 
 def mm4_matmul_mlx(x: Any, q: MLXMM4Weight, *, backend: str = "affine") -> Any:
