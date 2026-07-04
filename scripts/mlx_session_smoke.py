@@ -48,7 +48,8 @@ def main() -> int:
     ap.add_argument("--skip-special-tokens", action="store_true")
     ap.add_argument("--quantization", default="none", choices=["none", "mm8", "mm4"], help="Optional MLX packed W8/W4 projection path.")
     ap.add_argument("--quant-min-params", type=int, default=8_000_000)
-    ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference"])
+    ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference", "metal"])
+    ap.add_argument("--wkv-backend", default="reference", choices=["reference", "metal", "auto"])
     ap.add_argument("--require-mlx", action="store_true")
     ap.add_argument("--json-only", action="store_true")
     ap.add_argument("--results", default="", help="Optional JSONL file to append a generation result row.")
@@ -64,6 +65,10 @@ def main() -> int:
             "machine": platform.machine(),
             "model": Path(args.model).name,
             "step_sizes": steps,
+            "quantization": args.quantization,
+            "quant_min_params": int(args.quant_min_params),
+            "quant_backend": args.quant_backend,
+            "wkv_backend": args.wkv_backend,
         }
         print(json.dumps(row, ensure_ascii=False))
         append_result(args.results, row)
@@ -78,6 +83,7 @@ def main() -> int:
         quantization=args.quantization,
         quant_min_params=int(args.quant_min_params),
         quant_backend=args.quant_backend,
+        wkv_backend=args.wkv_backend,
     )
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     session = MLXGenerationSession.from_prompt(
@@ -118,6 +124,9 @@ def main() -> int:
         "quantization": args.quantization,
         "quant_min_params": int(args.quant_min_params),
         "quant_backend": args.quant_backend,
+        "wkv_backend": args.wkv_backend,
+        "wkv_backend_last": model.wkv_backend_last,
+        "wkv_backend_counts": dict(model.wkv_backend_counts),
         "prompt_preview": args.prompt[:80],
         "step_sizes": steps,
         "session_one_shot_token_match": bool(token_match),
