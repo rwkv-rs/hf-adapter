@@ -81,7 +81,9 @@ interleaved multi-session decode with a compatibility-preserving optional
 0.4B/1.5B 4-session repeat-pressure telemetry, higher-concurrency
 0.4B 6-session / 1.5B 5-session rows, and initial quant+Metal session-batch
 pressure rows (0.4B W8/W4 4-session repeat=2 and 6-session repeat=3;
-1.5B W8/W4 4-session repeat=1 and 5-session repeat=2), initial W4
+1.5B W8/W4 4-session repeat=1 and 5-session repeat=2), longer rounds8,8
+session pressure rows (0.4B W4 8-session repeat=2; 1.5B W4/W8 5-session
+repeat=2), initial W4
 `SESSION_BACKEND=batched` rows (0.4B 6-session repeat=2, 1.5B 5-session
 repeat=1), and W8/Metal `SESSION_BACKEND=auto` safety rows that fall back with
 `auto_mm8_metal_batch_exactness_guard` until long batched W8 exactness is fixed,
