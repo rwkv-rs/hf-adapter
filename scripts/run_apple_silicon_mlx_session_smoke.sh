@@ -10,6 +10,9 @@ MODEL="${1:-${MODEL:-}}"
 DTYPE="${DTYPE:-fp16}"
 PROMPT="${PROMPT:-The quick brown fox}"
 STEP_SIZES="${STEP_SIZES:-4,4}"
+QUANTIZATION="${QUANTIZATION:-none}"
+QUANT_MIN_PARAMS="${QUANT_MIN_PARAMS:-8000000}"
+QUANT_BACKEND="${QUANT_BACKEND:-affine}"
 
 rwkv7_require_model "${MODEL}"
 
@@ -23,6 +26,9 @@ args=(
   --prompt "${PROMPT}"
   --step-sizes "${STEP_SIZES}"
   --dtype "${DTYPE}"
+  --quantization "${QUANTIZATION}"
+  --quant-min-params "${QUANT_MIN_PARAMS}"
+  --quant-backend "${QUANT_BACKEND}"
   --results "${RESULTS}"
   --require-mlx
 )

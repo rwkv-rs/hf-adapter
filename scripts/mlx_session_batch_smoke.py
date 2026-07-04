@@ -160,6 +160,9 @@ def main() -> int:
     ap.add_argument("--dtype", default="fp16", choices=["keep", "fp32", "fp16", "bf16"])
     ap.add_argument("--skip-special-tokens", action="store_true")
     ap.add_argument("--repeat", type=int, default=1, help="Repeat the full interleaved-session workload for pressure telemetry.")
+    ap.add_argument("--quantization", default="none", choices=["none", "mm8", "mm4"], help="Optional MLX packed W8/W4 projection path.")
+    ap.add_argument("--quant-min-params", type=int, default=8_000_000)
+    ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference"])
     ap.add_argument("--require-mlx", action="store_true")
     ap.add_argument("--json-only", action="store_true")
     ap.add_argument("--results", default="", help="Optional JSONL file to append a generation result row.")
@@ -187,7 +190,13 @@ def main() -> int:
     from transformers import AutoTokenizer
 
     reset_mlx_peak_memory()
-    model = load_mlx_rwkv7_model(args.model, dtype=args.dtype)
+    model = load_mlx_rwkv7_model(
+        args.model,
+        dtype=args.dtype,
+        quantization=args.quantization,
+        quant_min_params=int(args.quant_min_params),
+        quant_backend=args.quant_backend,
+    )
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     model_name = Path(args.model).name
     header = {
@@ -195,6 +204,9 @@ def main() -> int:
         "status": "info",
         "model": model_name,
         "dtype": args.dtype,
+        "quantization": args.quantization,
+        "quant_min_params": int(args.quant_min_params),
+        "quant_backend": args.quant_backend,
         "session_count": len(prompts),
         "rounds": rounds,
         "repeat": int(repeat),
