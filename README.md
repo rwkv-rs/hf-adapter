@@ -82,6 +82,8 @@ pressure rows (0.4B W8/W4 4-session repeat=2 and 6-session repeat=3;
 `SESSION_BACKEND=batched` rows (0.4B 6-session repeat=2, 1.5B 5-session
 repeat=1), and W8/Metal `SESSION_BACKEND=auto` safety rows that fall back with
 `auto_mm8_metal_batch_exactness_guard` until long batched W8 exactness is fixed,
+plus `mlx_session_batch_backend_compare` rows that prove 0.4B/1.5B W4
+sequential-vs-batched token equality and localize the current 0.4B W8 mismatch,
 plus prompt/decode
 length sweep entry points including 0.1B prompt256/decode8,
 0.4B/1.5B prompt1024/decode64 matrices, and optional `--quantization mm8/mm4`

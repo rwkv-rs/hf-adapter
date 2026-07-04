@@ -26,6 +26,7 @@ QUANT_MIN_PARAMS="${QUANT_MIN_PARAMS:-8000000}"
 QUANT_BACKEND="${QUANT_BACKEND:-affine}"
 WKV_BACKEND="${WKV_BACKEND:-reference}"
 SESSION_BACKEND="${SESSION_BACKEND:-sequential}"
+COMPARE_SESSION_BACKEND="${COMPARE_SESSION_BACKEND:-none}"
 
 rwkv7_require_model "${MODEL}"
 
@@ -86,6 +87,7 @@ args=(
   --quant-backend "${QUANT_BACKEND}"
   --wkv-backend "${WKV_BACKEND}"
   --session-backend "${SESSION_BACKEND}"
+  --compare-session-backend "${COMPARE_SESSION_BACKEND}"
   --results "${RESULTS}"
   --require-mlx
 )
@@ -97,6 +99,12 @@ if [[ "${JSON_ONLY:-0}" == "1" ]]; then
 fi
 if [[ "${SKIP_SPECIAL_TOKENS:-0}" == "1" ]]; then
   args+=(--skip-special-tokens)
+fi
+if [[ "${COMPARE_ONLY:-0}" == "1" ]]; then
+  args+=(--compare-only)
+fi
+if [[ "${REQUIRE_SESSION_BACKEND_MATCH:-0}" == "1" ]]; then
+  args+=(--require-session-backend-match)
 fi
 
 rwkv7_print_env
