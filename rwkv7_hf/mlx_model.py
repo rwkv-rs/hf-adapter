@@ -331,6 +331,97 @@ class MLXGenerationSession:
         return out
 
 
+class MLXGenerationSessionBatch:
+    """Small interleaved session manager for MLX serving smoke tests.
+
+    This is not a fused batched MLX kernel.  It is a production-shaped API
+    scaffold: multiple independent prompts are prefetched once, then advanced
+    round-by-round while preserving each prompt's recurrent state cache.  The
+    helper lets Apple validation exercise concurrent session bookkeeping before
+    the inner decode loop is replaced by a fused MLX/Metal backend.
+    """
+
+    def __init__(self, sessions: list[MLXGenerationSession]):
+        if not sessions:
+            raise ValueError("MLXGenerationSessionBatch requires at least one session")
+        model = sessions[0].model
+        tokenizer = sessions[0].tokenizer
+        for idx, session in enumerate(sessions):
+            if session.model is not model:
+                raise ValueError(f"session {idx} uses a different MLX model instance")
+            if session.tokenizer is not tokenizer:
+                raise ValueError(f"session {idx} uses a different tokenizer instance")
+        self.model = model
+        self.tokenizer = tokenizer
+        self.sessions = list(sessions)
+        self.round_count = 0
+
+    @classmethod
+    def from_prompts(
+        cls,
+        model: "MLXRWKV7Model",
+        tokenizer: Any,
+        prompts: list[str],
+        *,
+        skip_special_tokens: bool = False,
+    ) -> "MLXGenerationSessionBatch":
+        if isinstance(prompts, str):
+            raise TypeError("prompts must be a list of strings, not a single string")
+        if not prompts:
+            raise ValueError("prompts must contain at least one prompt")
+        sessions = [
+            MLXGenerationSession.from_prompt(
+                model,
+                tokenizer,
+                prompt,
+                skip_special_tokens=skip_special_tokens,
+            )
+            for prompt in prompts
+        ]
+        return cls(sessions)
+
+    @property
+    def batch_size(self) -> int:
+        return len(self.sessions)
+
+    def decode_round(self, tokens_per_session: int | list[int]) -> list[MLXSessionStepOutput]:
+        """Advance all sessions once and return per-session step outputs."""
+
+        if isinstance(tokens_per_session, int):
+            steps = [int(tokens_per_session)] * self.batch_size
+        else:
+            steps = [int(x) for x in tokens_per_session]
+            if len(steps) != self.batch_size:
+                raise ValueError(f"expected {self.batch_size} token counts, got {len(steps)}")
+        if any(step < 0 for step in steps):
+            raise ValueError("all token counts must be non-negative")
+        outputs = [session.decode(step) for session, step in zip(self.sessions, steps)]
+        self.round_count += 1
+        return outputs
+
+    def outputs(self) -> list[MLXGenerateOutput]:
+        return [session.output() for session in self.sessions]
+
+    def telemetry(self) -> dict[str, Any]:
+        prompt_tokens = [session.prompt_tokens for session in self.sessions]
+        generated_tokens = [session.generated_tokens for session in self.sessions]
+        seen_tokens = [int(session.state.seen_tokens) for session in self.sessions]
+        decode_s = [round(float(session.decode_s), 6) for session in self.sessions]
+        return {
+            "batch_size": int(self.batch_size),
+            "session_rounds": int(self.round_count),
+            "prompt_tokens": prompt_tokens,
+            "generated_tokens": generated_tokens,
+            "seen_tokens": seen_tokens,
+            "decode_s": decode_s,
+            "decode_tok_s": [
+                round(float(session.decode_tok_s), 6) if session.decode_tok_s is not None else None
+                for session in self.sessions
+            ],
+            "generated_previews": [[int(x) for x in session.generated_ids[:16]] for session in self.sessions],
+        }
+
+
 class MLXRWKV7Model:
     """Minimal MLX-native RWKV-7 recurrent model loaded from HF safetensors."""
 
