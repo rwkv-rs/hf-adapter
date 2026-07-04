@@ -6,6 +6,16 @@ import re
 
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
+
+# The canonical example deliberately uses Transformers generation, not vLLM.
+# TRL 0.20 probes any system-wide vLLM installation while importing
+# GRPOTrainer and then imports private vLLM symbols even when use_vllm=False.
+# A stale unrelated vLLM package can therefore break this example before the
+# arguments are parsed. Mark that optional integration unavailable before
+# TRL's lazy trainer import; the selected native generation path is unchanged.
+from trl import import_utils as trl_import_utils
+
+trl_import_utils._vllm_available = False
 from trl import GRPOConfig, GRPOTrainer
 
 from common import (

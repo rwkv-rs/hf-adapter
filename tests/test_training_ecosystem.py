@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import torch
 import pytest
 import transformers
@@ -21,6 +23,18 @@ tokenizers = pytest.importorskip("tokenizers")
 from transformers import PreTrainedTokenizerFast, default_data_collator
 
 from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
+
+
+def test_grpo_example_disables_unselected_vllm_before_trainer_import():
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "examples"
+        / "finetune"
+        / "grpo_lora.py"
+    ).read_text(encoding="utf-8")
+    disable = source.index("trl_import_utils._vllm_available = False")
+    trainer_import = source.index("from trl import GRPOConfig, GRPOTrainer")
+    assert disable < trainer_import
 
 
 def test_peft_lora_and_trl_sft_one_step(tmp_path, tiny_config):

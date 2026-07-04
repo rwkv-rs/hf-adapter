@@ -10,6 +10,9 @@ unfused PyTorch recurrence remains bounded; use
 The canonical environment uses `transformers==4.56.2` and `trl==0.20.0`
 (`pip install -e '.[train]'`). This combination retains V100 support with the
 validated PyTorch 2.5 CUDA build.
+GRPO selects TRL's native Transformers generation path and masks an unrelated
+system-wide vLLM installation before importing `GRPOTrainer`. This prevents an
+incompatible optional vLLM from breaking a run that does not request vLLM.
 Training from scratch works with PyTorch 2.5, while restoring a Trainer
 checkpoint that contains optimizer state requires PyTorch 2.6 or newer under
 this Transformers version. The requirement comes from Transformers' secure
