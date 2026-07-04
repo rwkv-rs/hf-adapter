@@ -156,6 +156,27 @@ def release(torch: Any, *objs: Any) -> None:
             pass
 
 
+def patch_trl_runtime(torch: Any) -> None:
+    """Keep TRL imports independent of optional DeepSpeed/FSDP quirks."""
+
+    try:
+        import accelerate.utils.other as accelerate_other
+
+        accelerate_other.is_deepspeed_available = lambda: False
+    except Exception:
+        pass
+    try:
+        import torch.distributed.fsdp as torch_fsdp
+
+        if not hasattr(torch_fsdp, "FSDPModule"):
+            class RWKV7FSDPModuleCompat(torch.nn.Module):
+                pass
+
+            torch_fsdp.FSDPModule = RWKV7FSDPModuleCompat
+    except Exception:
+        pass
+
+
 def load_lora_model(args: argparse.Namespace, torch: Any, device: str, dtype: Any):
     from peft import LoraConfig, get_peft_model
     from transformers import AutoModelForCausalLM
@@ -339,6 +360,76 @@ def run_trainer_lora(args: argparse.Namespace, torch: Any, tokenizer: Any, devic
     return row, model
 
 
+def run_trl_sft_lora(args: argparse.Namespace, torch: Any, tokenizer: Any, device: str, dtype: Any) -> tuple[dict[str, Any], Any]:
+    patch_trl_runtime(torch)
+    from datasets import Dataset as HFDataset
+    from trl import SFTConfig, SFTTrainer
+
+    model, load_s = load_lora_model(args, torch, device, dtype)
+    dataset = HFDataset.from_dict({"text": PROMPTS * max(1, int(args.dataset_repeats))})
+    with tempfile.TemporaryDirectory(prefix="apple_model_lora_sft_") as out_dir:
+        sft_args = SFTConfig(
+            output_dir=out_dir,
+            max_steps=args.max_steps,
+            per_device_train_batch_size=args.batch_size,
+            gradient_accumulation_steps=1,
+            learning_rate=args.lr,
+            logging_steps=1,
+            save_strategy="no",
+            report_to=[],
+            remove_unused_columns=True,
+            disable_tqdm=True,
+            dataloader_pin_memory=False,
+            dataloader_num_workers=0,
+            use_cpu=False,
+            fp16=False,
+            bf16=False,
+            gradient_checkpointing=False,
+            optim="adamw_torch",
+            max_length=args.max_length,
+            dataset_text_field="text",
+            packing=False,
+            # TRL 1.7 may default to chunked loss paths that patch the inner
+            # backbone. This smoke validates the standard CausalLM labels ->
+            # loss contract used by HF/PEFT scripts.
+            loss_type="nll",
+        )
+        trainer = SFTTrainer(
+            model=model,
+            args=sft_args,
+            train_dataset=dataset,
+            processing_class=tokenizer,
+        )
+        before = trainable_snapshot(trainer.model)
+        if not before:
+            raise AssertionError("expected TRL SFT LoRA/trainable parameters")
+        t0 = time.perf_counter()
+        result = trainer.train()
+        elapsed = time.perf_counter() - t0
+    loss = float(result.training_loss)
+    if not math.isfinite(loss):
+        raise AssertionError(f"non-finite TRL SFT LoRA loss {loss}")
+    changed = trainable_changed_l1(before, trainer.model)
+    if changed <= 0:
+        raise AssertionError("expected TRL SFT LoRA parameter update")
+    metrics = dict(getattr(result, "metrics", {}) or {})
+    row = {
+        "axis": "apple_silicon_model_peft_lora_trl_sft",
+        "status": "pass",
+        **base_row(args, trainer.model, device, dtype),
+        "dataset_rows": int(dataset.num_rows),
+        "training_loss": round(loss, 6),
+        "changed_l1": round(changed, 6),
+        "load_s": round(load_s, 4),
+        "elapsed_s": round(elapsed, 4),
+        "train_runtime_s": metrics.get("train_runtime"),
+        "train_samples_per_second": metrics.get("train_samples_per_second"),
+        "train_steps_per_second": metrics.get("train_steps_per_second"),
+        **mps_memory(torch),
+    }
+    return row, trainer.model
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True, help="Converted RWKV-7 HF model directory")
@@ -353,10 +444,11 @@ def main() -> int:
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--lora-r", type=int, default=4)
     ap.add_argument("--lora-alpha", type=int, default=8)
-    ap.add_argument("--backend", choices=["manual", "trainer", "both"], default="both")
+    ap.add_argument("--backend", choices=["manual", "trainer", "trl_sft", "both", "all"], default="both")
     ap.add_argument("--results", default="")
     ap.add_argument("--require-apple", action="store_true")
     ap.add_argument("--require-peft", action="store_true")
+    ap.add_argument("--require-trl", action="store_true")
     args = ap.parse_args()
 
     if not is_apple_silicon():
@@ -380,6 +472,14 @@ def main() -> int:
             raise SystemExit(3)
         return 0
 
+    needs_trl = args.backend in {"trl_sft", "all"}
+    if needs_trl and (importlib.util.find_spec("trl") is None or importlib.util.find_spec("datasets") is None):
+        row = {"axis": "apple_silicon_model_trl_sft", "status": "skip", "reason": "trl or datasets missing"}
+        emit(args.results, row)
+        if args.require_trl:
+            raise SystemExit(4)
+        return 0
+
     import torch
     from transformers import AutoTokenizer
 
@@ -395,6 +495,8 @@ def main() -> int:
         "torch": getattr(torch, "__version__", "unknown"),
         "transformers": package_version("transformers"),
         "peft": package_version("peft"),
+        "trl": package_version("trl"),
+        "datasets": package_version("datasets"),
         "mps_built": bool(torch.backends.mps.is_built()),
         "mps_available": bool(torch.backends.mps.is_available()),
         "device": device,
@@ -407,14 +509,20 @@ def main() -> int:
 
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     rows: list[dict[str, Any]] = []
-    if args.backend in {"manual", "both"}:
+    if args.backend in {"manual", "both", "all"}:
         row, model = run_manual_lora(args, torch, tokenizer, device, dtype)
         rows.append(row)
         emit(args.results, row)
         del model
         release(torch)
-    if args.backend in {"trainer", "both"}:
+    if args.backend in {"trainer", "both", "all"}:
         row, model = run_trainer_lora(args, torch, tokenizer, device, dtype)
+        rows.append(row)
+        emit(args.results, row)
+        del model
+        release(torch)
+    if args.backend in {"trl_sft", "all"}:
+        row, model = run_trl_sft_lora(args, torch, tokenizer, device, dtype)
         rows.append(row)
         emit(args.results, row)
         del model
