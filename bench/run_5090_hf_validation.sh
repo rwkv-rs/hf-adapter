@@ -31,6 +31,19 @@ MATH_LIMIT="${MATH_LIMIT:-2}"
 MATH_MAX_NEW_TOKENS="${MATH_MAX_NEW_TOKENS:-64}"
 MATH_BSZ="${MATH_BSZ:-8}"
 MATH_SMOKE_DATASET="${MATH_SMOKE_DATASET:-${OUT_DIR}/math500_smoke.jsonl}"
+RUN_NATIVE_TRAINING="${RUN_NATIVE_TRAINING:-1}"
+NATIVE_TRAIN_DTYPE="${NATIVE_TRAIN_DTYPE:-fp32}"
+NATIVE_TRAIN_STEPS="${NATIVE_TRAIN_STEPS:-6}"
+NATIVE_TRAIN_BATCH_SIZE="${NATIVE_TRAIN_BATCH_SIZE:-2}"
+NATIVE_TRAIN_LENGTH="${NATIVE_TRAIN_LENGTH:-32}"
+RUN_CHUNKED_PREFILL="${RUN_CHUNKED_PREFILL:-1}"
+CHUNKED_BATCH_SIZE="${CHUNKED_BATCH_SIZE:-1}"
+CHUNKED_PROMPT_TOKENS="${CHUNKED_PROMPT_TOKENS:-512}"
+CHUNKED_SIZES="${CHUNKED_SIZES:-64 128 256}"
+RUN_FUSED_AB="${RUN_FUSED_AB:-1}"
+FUSED_AB_BATCH_SIZE="${FUSED_AB_BATCH_SIZE:-1}"
+FUSED_AB_PROMPT_TOKENS="${FUSED_AB_PROMPT_TOKENS:-64}"
+FUSED_AB_STEPS="${FUSED_AB_STEPS:-32}"
 
 export PYTHONNOUSERSITE="${PYTHONNOUSERSITE:-1}"
 export RWKV_V7_ON="${RWKV_V7_ON:-1}"
@@ -76,10 +89,14 @@ run python -m py_compile \
   bench/eval_math500_hf.py \
   bench/bench_batch_sweep.py \
   bench/analyze_results.py \
+  bench/bench_chunked_prefill.py \
+  bench/bench_native_graph_fused_output.py \
+  bench/bench_native_graph_fused_recurrent_output.py \
   tests/smoke_hf_generate.py \
   tests/test_hf_api_contract.py \
   tests/test_fast_prefill_forward.py \
-  tests/test_quantized_inference.py
+  tests/test_quantized_inference.py \
+  tests/test_native_trainer_smoke.py
 
 run python tests/smoke_hf_generate.py --model "${HF_DIR}" --device "${DEVICE}" --max-new-tokens 4 \
   | tee "${OUT_DIR}/smoke_hf_generate.log"
@@ -87,6 +104,13 @@ run python tests/test_hf_api_contract.py --model "${HF_DIR}" --device "${DEVICE}
   | tee "${OUT_DIR}/hf_api_contract.log"
 run python tests/test_fast_prefill_forward.py --model "${HF_DIR}" --device "${DEVICE}" --prompt-tokens "${PROMPT_TOKENS}" --gen-tokens 2 \
   | tee "${OUT_DIR}/fast_prefill_forward.log"
+
+if [[ "${RUN_NATIVE_TRAINING}" != "0" ]]; then
+  run python tests/test_native_trainer_smoke.py --model "${HF_DIR}" --dtype "${NATIVE_TRAIN_DTYPE}" --max-steps "${NATIVE_TRAIN_STEPS}" --batch-size "${NATIVE_TRAIN_BATCH_SIZE}" --length "${NATIVE_TRAIN_LENGTH}" \
+    | tee "${OUT_DIR}/native_trainer_smoke.log"
+else
+  echo "SKIP native trainer smoke: RUN_NATIVE_TRAINING=0" | tee "${OUT_DIR}/native_trainer_smoke.log"
+fi
 
 run python tests/test_quantized_inference.py --model "${HF_DIR}" --device "${DEVICE}" --dtype "${DTYPE}" --quantization 8bit --max-new-tokens 2 --optional --skip-fast-forward-check \
   | tee "${OUT_DIR}/quant_8bit.log"
@@ -103,6 +127,41 @@ run python bench/bench_batch_sweep.py \
   --warmup 1 --runs 1 \
   --results "${RESULTS}" \
   | tee "${OUT_DIR}/batch_sweep.log"
+
+if [[ "${RUN_CHUNKED_PREFILL}" != "0" ]]; then
+  run python bench/bench_chunked_prefill.py \
+    --hf-dir "${HF_DIR}" \
+    --dtype "${DTYPE}" --device "${DEVICE}" \
+    --attn-mode fused_recurrent --fuse-norm false \
+    --batch-size "${CHUNKED_BATCH_SIZE}" --prompt-tokens "${CHUNKED_PROMPT_TOKENS}" \
+    --chunk-sizes ${CHUNKED_SIZES} \
+    --warmup 1 --runs 1 \
+    --results "${RESULTS}" \
+    | tee "${OUT_DIR}/chunked_prefill.log"
+else
+  echo "SKIP chunked prefill: RUN_CHUNKED_PREFILL=0" | tee "${OUT_DIR}/chunked_prefill.log"
+fi
+
+if [[ "${RUN_FUSED_AB}" != "0" ]]; then
+  run python bench/bench_native_graph_fused_output.py \
+    --hf-dir "${HF_DIR}" \
+    --dtype "${DTYPE}" --device "${DEVICE}" \
+    --attn-mode fused_recurrent --fuse-norm false --fast-cache true \
+    --batch-size "${FUSED_AB_BATCH_SIZE}" --prompt-tokens "${FUSED_AB_PROMPT_TOKENS}" \
+    --warmup 1 --steps "${FUSED_AB_STEPS}" \
+    --results "${RESULTS}" \
+    | tee "${OUT_DIR}/fused_output_ab.log"
+  run python bench/bench_native_graph_fused_recurrent_output.py \
+    --hf-dir "${HF_DIR}" \
+    --dtype "${DTYPE}" --device "${DEVICE}" \
+    --attn-mode fused_recurrent --fuse-norm false --fast-cache true \
+    --batch-size "${FUSED_AB_BATCH_SIZE}" --prompt-tokens "${FUSED_AB_PROMPT_TOKENS}" \
+    --warmup 1 --steps "${FUSED_AB_STEPS}" \
+    --results "${RESULTS}" \
+    | tee "${OUT_DIR}/fused_recurrent_output_ab.log"
+else
+  echo "SKIP fused A/B: RUN_FUSED_AB=0" | tee "${OUT_DIR}/fused_output_ab.log"
+fi
 
 run python bench/eval_math500_hf.py \
   --hf-dir "${HF_DIR}" \
