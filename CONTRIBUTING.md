@@ -244,7 +244,7 @@ python scripts/sync_hf_adapter_code.py /path/to/rwkv7-g1d-0.1b-hf
 
 Include the `torch_mps_built` / `torch_mps_available` lines printed by the
 wrapper. On 16GB machines, start with tiny / 0.1B first, then short 0.4B
-generate before longer sweeps.
+generate before 0.4B PEFT/Trainer/TRL one-step smoke and longer sweeps.
 
 ## Reporting hardware results
 
