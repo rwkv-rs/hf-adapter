@@ -199,6 +199,8 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 继续走 fast-token / native-graph 路线,而非堆 wrapper 层。当前路线:`native_graph → fused fp16 kernel → fused W8/W4 kernel`(详见 FUSED_BACKEND)。需补:
 
 - 同卡同 checkpoint 的 prefill / decode / batch-size sweep;
+- final MATH500 acceptance runner 已补(`bench/run_math500_final_acceptance.py` + `scripts/run_math500_final_acceptance.sh`): 自动 best-bsz sweep → full avg@64 → Albatross summary gate → uncheatable compression alignment;接下来要在 5090/H100 等正式机器上产出 artifact;
+- 后续补严格同模型/同卡 Albatross baseline：同一 checkpoint、同一 GPU、同一 bsz/tuned linear layout/Albatross 最新 v3a-v4 路径，避免只和历史 0.4B reference 比较;
 - latency 与峰值显存行;
 - cache 命中率行;
 - `bench/analyze_results.py` / `bench/check_results.py` 里的明确 ratio gate。

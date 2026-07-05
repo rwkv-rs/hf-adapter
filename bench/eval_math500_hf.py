@@ -296,7 +296,54 @@ def cache_tensors(cache) -> list[dict[str, Any]]:
     return list(cache)
 
 
+def _is_native_tuple_cache(cache) -> bool:
+    return all(hasattr(cache, attr) for attr in ("_state", "_xpa", "_xpf", "_v_first"))
+
+
+def _zeros_like_batch(value, batch_size: int):
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        shape = list(value.shape)
+        if not shape:
+            raise ValueError("cache tensor is scalar")
+        shape[0] = batch_size
+        return torch.zeros(shape, device=value.device, dtype=value.dtype)
+    if isinstance(value, list):
+        return [_zeros_like_batch(v, batch_size) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_zeros_like_batch(v, batch_size) for v in value)
+    if isinstance(value, dict):
+        return {k: _zeros_like_batch(v, batch_size) for k, v in value.items()}
+    return value
+
+
+def _copy_cache_row(dst, row: int, src) -> None:
+    if src is None or dst is None:
+        return
+    if isinstance(src, torch.Tensor) and isinstance(dst, torch.Tensor):
+        with torch.inference_mode():
+            dst[row : row + 1].copy_(src.to(device=dst.device, dtype=dst.dtype))
+        return
+    if isinstance(src, (list, tuple)) and isinstance(dst, (list, tuple)):
+        for d, s in zip(dst, src, strict=False):
+            _copy_cache_row(d, row, s)
+        return
+    if isinstance(src, dict) and isinstance(dst, dict):
+        for key, value in src.items():
+            if key in dst:
+                _copy_cache_row(dst[key], row, value)
+
+
 def build_batch_cache(cache_cls, example_cache, batch_size: int):
+    if _is_native_tuple_cache(example_cache):
+        return cache_cls(
+            _zeros_like_batch(getattr(example_cache, "_state", None), batch_size),
+            _zeros_like_batch(getattr(example_cache, "_xpa", None), batch_size),
+            _zeros_like_batch(getattr(example_cache, "_xpf", None), batch_size),
+            _zeros_like_batch(getattr(example_cache, "_v_first", None), batch_size),
+            seen_tokens=0,
+        )
     batch_cache = cache_cls(seen_tokens=0)
     batch_cache.states = []
     for state in cache_tensors(example_cache):
@@ -314,6 +361,10 @@ def build_batch_cache(cache_cls, example_cache, batch_size: int):
 
 
 def copy_single_cache_into_batch(batch_cache, row: int, single_cache) -> None:
+    if _is_native_tuple_cache(batch_cache) and _is_native_tuple_cache(single_cache):
+        for attr in ("_state", "_xpa", "_xpf", "_v_first"):
+            _copy_cache_row(getattr(batch_cache, attr), row, getattr(single_cache, attr))
+        return
     for layer_idx, src in enumerate(cache_tensors(single_cache)):
         dst = batch_cache._ensure_layer(layer_idx)
         if not isinstance(src, dict):
@@ -333,6 +384,38 @@ def prefill_one(args: argparse.Namespace, model, ids: torch.Tensor):
     return model(ids, use_cache=True, logits_to_keep=1, return_dict=True)
 
 
+
+
+def clone_detach_cache(cache):
+    """Clone an HF/RWKV recurrent cache and detach tensors when the cache supports it.
+
+    Older NativeRWKV7Cache snapshots expose ``clone()`` but not ``detach()``.
+    The MATH500 prompt-cache path only needs an inference-safe immutable copy,
+    so recursively detaching common private tensor containers is sufficient and
+    keeps the evaluator compatible with already-converted model dirs.
+    """
+
+    cloned = cache.clone() if hasattr(cache, "clone") else cache
+    detach = getattr(cloned, "detach", None)
+    if callable(detach):
+        return detach(inplace=True)
+
+    def detach_value(value):
+        if isinstance(value, torch.Tensor):
+            return value.detach()
+        if isinstance(value, list):
+            return [detach_value(v) for v in value]
+        if isinstance(value, tuple):
+            return tuple(detach_value(v) for v in value)
+        if isinstance(value, dict):
+            return {k: detach_value(v) for k, v in value.items()}
+        return value
+
+    for attr in ("_state", "_xpa", "_xpf", "_v_first", "states"):
+        if hasattr(cloned, attr):
+            setattr(cloned, attr, detach_value(getattr(cloned, attr)))
+    return cloned
+
 def build_prefill_cache(
     args: argparse.Namespace,
     tasks: list[Task],
@@ -345,7 +428,7 @@ def build_prefill_cache(
         ids = encode_prompt(args, tokenizer, task.problem).to(args.device)
         with torch.inference_mode():
             out = prefill_one(args, model, ids)
-        state = out.past_key_values.clone().detach(inplace=True)
+        state = clone_detach_cache(out.past_key_values)
         logits = out.logits[:, -1, :].reshape(-1).detach().clone()
         cache[task.index] = (state, logits, int(ids.shape[1]))
         if args.progress_every > 0 and done % args.progress_every == 0:
