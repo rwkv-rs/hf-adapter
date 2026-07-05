@@ -18,7 +18,18 @@ class DummyConfig:
 
 
 class DummyModel:
-    pass
+    def __init__(self, config):
+        self.config = config
+        self.dtype = None
+
+    def to(self, dtype=None):
+        self.dtype = dtype
+        return self
+
+
+class MissingFlaModel:
+    def __init__(self, config):
+        raise ImportError("flash-linear-attention (`fla`) is required")
 
 
 def install_stubs() -> None:
@@ -31,9 +42,14 @@ def install_stubs() -> None:
     sys.modules["torch"] = torch_mod
 
     hf_mod = types.ModuleType("rwkv7_hf")
+    hf_mod.__path__ = []
     hf_mod.RWKV7Config = DummyConfig
     hf_mod.RWKV7ForCausalLM = DummyModel
     sys.modules["rwkv7_hf"] = hf_mod
+
+    native_mod = types.ModuleType("rwkv7_hf.native_model")
+    native_mod.NativeRWKV7ForCausalLM = DummyModel
+    sys.modules["rwkv7_hf.native_model"] = native_mod
 
 
 def import_converter():
@@ -80,6 +96,15 @@ def main() -> int:
     assert cfg.v_low_rank_dim == 16
     assert cfg.torch_dtype == "float16"
     assert cfg.fuse_norm is False
+
+    template = conv.build_template_model(cfg, "float16")
+    assert isinstance(template, DummyModel)
+    assert template.dtype == "float16"
+
+    conv.RWKV7ForCausalLM = MissingFlaModel
+    fallback_template = conv.build_template_model(cfg, "float16")
+    assert isinstance(fallback_template, DummyModel)
+    assert fallback_template.dtype == "float16"
 
     assert conv.infer_num_layers(weights) == 3
     assert conv.infer_head_dim(weights, 1024) == 128

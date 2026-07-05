@@ -107,7 +107,7 @@ def config_summary(config) -> dict[str, Any]:
         "num_heads": hidden // head_dim if hidden and head_dim else None,
         "attn_mode": getattr(config, "attn_mode", None),
         "fuse_norm": getattr(config, "fuse_norm", None),
-        "torch_dtype": str(getattr(config, "torch_dtype", None)),
+        "config_torch_dtype": str(getattr(config, "torch_dtype", None)),
     }
     out.update(value_dim_summary(getattr(config, "value_dim", None)))
     return out
@@ -216,6 +216,7 @@ def main() -> int:
         "generate_tokps": round(args.max_new_tokens / generate_s, 2) if generate_s > 0 else None,
         "model_footprint_mb": footprint_mb,
         "peak_vram_mb": peak_mb(args.device),
+        "torch_dtype": str(next(model.parameters()).dtype),
     }
     row.update(cfg_fields)
 

@@ -29,6 +29,9 @@ SCRIPTS = [
     "scripts/run_apple_silicon_mlx_session_batch_smoke.sh",
     "scripts/run_apple_silicon_mlx_generation_sweep.sh",
 ]
+BENCH_RUNNERS = [
+    "bench/run_a6000_hf_validation.sh",
+]
 
 
 def run_bash(script: str, *, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -57,12 +60,42 @@ def assert_ok(proc: subprocess.CompletedProcess[str]) -> None:
 
 
 def test_shell_syntax_and_executable_bits() -> None:
-    for rel in SCRIPTS:
+    for rel in SCRIPTS + BENCH_RUNNERS:
         path = ROOT / rel
         assert path.exists(), rel
         assert path.stat().st_mode & stat.S_IXUSR, f"{rel} should be executable"
         proc = run_bash(f"bash -n {rel}")
         assert_ok(proc)
+
+
+def test_a6000_validation_runner_contract() -> None:
+    text = (ROOT / "bench/run_a6000_hf_validation.sh").read_text(encoding="utf-8")
+    assert "PYTHON_BIN=\"${PYTHON_BIN:-/home/zhiyuanzhou/draft/venv/bin/python}\"" in text
+    assert "MODEL_ROOT=\"${MODEL_ROOT:-/home/zhiyuanzhou/rwkv_models}\"" in text
+    assert "A6000_SINGLE_VISIBLE_DEVICES=\"${A6000_SINGLE_VISIBLE_DEVICES:-2}\"" in text
+    assert "A6000_MULTI_VISIBLE_DEVICES=\"${A6000_MULTI_VISIBLE_DEVICES:-2,3}\"" in text
+    assert "rwkv_vocab_v20230424.txt" in text
+    assert "rwkv7-g1d-0.1b-20260129-ctx8192.pth" in text
+    assert "rwkv7-g1d-0.4b-20260210-ctx8192.pth" in text
+    assert "rwkv7-g1g-1.5b-20260526-ctx8192.pth" in text
+    assert "rwkv7-g1g-2.9b-20260526-ctx8192.pth" in text
+    assert "rwkv7-g1g-7.2b-20260523-ctx8192.pth" in text
+    assert "scripts/convert_rwkv7_to_hf.py" in text
+    assert "bench/bench_larger_model_smoke.py" in text
+    assert "bench/bench_batch_sweep.py" in text
+    assert "bench/bench_quantization.py" in text
+    assert "bench/bench_native_mm_quant_decode.py" in text
+    assert "scripts/run_hf_training_matrix.sh" in text
+    assert "scripts/run_zero_training_smoke.sh" in text
+    assert "tests/test_deepspeed_resume_smoke.py" in text
+    assert "scripts/print_env.sh" in text
+    assert "RESULTS=\"${RESULTS:-bench/results.jsonl}\"" in text
+    assert "VALIDATION_MODEL_LABELS=\"${VALIDATION_MODEL_LABELS:-0.4b 1.5b 2.9b 7.2b}\"" in text
+    assert "TRAIN_MODEL_LABELS=\"${TRAIN_MODEL_LABELS:-0.4b 1.5b 2.9b}\"" in text
+    assert "ZERO_MODEL_LABELS=\"${ZERO_MODEL_LABELS:-0.4b 1.5b 2.9b}\"" in text
+    assert "--model-size-label" in text
+    assert "a6000_hf_validation_$(date" not in text
+    assert "OUT_DIR=" not in text
 
 
 def test_acceptance_requires_model() -> None:
