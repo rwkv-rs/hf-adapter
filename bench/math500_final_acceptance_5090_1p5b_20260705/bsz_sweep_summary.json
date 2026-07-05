@@ -1,0 +1,67 @@
+[
+  {
+    "bsz": 128,
+    "effective_bsz": 128,
+    "generation_token_per_sec": 4855.720807888412,
+    "token_per_sec": 4855.720807888412,
+    "decode_sec": 9.103443134925328,
+    "decoded_token_events": 65517,
+    "prefill_sec": 4.38930131890811,
+    "verification_sec": 4.831178784021176,
+    "pass_at_rollout_accuracy": 0.25,
+    "correct_generations": 19,
+    "summary_path": "/workspace/projects/rwkv7-hf-adapter-final-bench/bench/math500_final_acceptance_5090_1p5b_20260705/bsz_sweep/bsz_128/summary.json"
+  },
+  {
+    "bsz": 96,
+    "effective_bsz": 96,
+    "generation_token_per_sec": 4412.24999924085,
+    "token_per_sec": 4412.24999924085,
+    "decode_sec": 10.442747736000456,
+    "decoded_token_events": 65517,
+    "prefill_sec": 4.406138889025897,
+    "verification_sec": 4.831829268950969,
+    "pass_at_rollout_accuracy": 0.25,
+    "correct_generations": 19,
+    "summary_path": "/workspace/projects/rwkv7-hf-adapter-final-bench/bench/math500_final_acceptance_5090_1p5b_20260705/bsz_sweep/bsz_96/summary.json"
+  },
+  {
+    "bsz": 64,
+    "effective_bsz": 64,
+    "generation_token_per_sec": 3970.580250547303,
+    "token_per_sec": 3970.580250547303,
+    "decode_sec": 12.01773626904469,
+    "decoded_token_events": 65517,
+    "prefill_sec": 4.482874691020697,
+    "verification_sec": 4.718928006011993,
+    "pass_at_rollout_accuracy": 0.25,
+    "correct_generations": 19,
+    "summary_path": "/workspace/projects/rwkv7-hf-adapter-final-bench/bench/math500_final_acceptance_5090_1p5b_20260705/bsz_sweep/bsz_64/summary.json"
+  },
+  {
+    "bsz": 192,
+    "effective_bsz": 192,
+    "generation_token_per_sec": 3731.1909337166508,
+    "token_per_sec": 3731.1909337166508,
+    "decode_sec": 13.145277931005694,
+    "decoded_token_events": 65517,
+    "prefill_sec": 4.413995009963401,
+    "verification_sec": 5.003031731001101,
+    "pass_at_rollout_accuracy": 0.25,
+    "correct_generations": 19,
+    "summary_path": "/workspace/projects/rwkv7-hf-adapter-final-bench/bench/math500_final_acceptance_5090_1p5b_20260705/bsz_sweep/bsz_192/summary.json"
+  },
+  {
+    "bsz": 32,
+    "effective_bsz": 32,
+    "generation_token_per_sec": 2463.45293907429,
+    "token_per_sec": 2463.45293907429,
+    "decode_sec": 22.137935952981934,
+    "decoded_token_events": 65513,
+    "prefill_sec": 4.456036661984399,
+    "verification_sec": 4.84788962895982,
+    "pass_at_rollout_accuracy": 0.25,
+    "correct_generations": 23,
+    "summary_path": "/workspace/projects/rwkv7-hf-adapter-final-bench/bench/math500_final_acceptance_5090_1p5b_20260705/bsz_sweep/bsz_32/summary.json"
+  }
+]
