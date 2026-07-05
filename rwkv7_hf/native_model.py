@@ -165,8 +165,10 @@ class NativeRWKV7Config(PretrainedConfig):
         self.use_cache = kwargs.get("use_cache", True)
         self.use_native_mm8 = kwargs.get("use_native_mm8", False)
         self.native_mm8_min_params = kwargs.get("native_mm8_min_params", 8_000_000)
+        self.native_mm8_policy = kwargs.get("native_mm8_policy", "memory")
         self.use_native_mm4 = kwargs.get("use_native_mm4", False)
         self.native_mm4_min_params = kwargs.get("native_mm4_min_params", 8_000_000)
+        self.native_mm4_policy = kwargs.get("native_mm4_policy", "memory")
 
 
 class _LoRA(nn.Module):
@@ -324,6 +326,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
                 quantize_model_mm8(
                     self,
                     min_params=int(getattr(self.config, "native_mm8_min_params", 8_000_000)),
+                    policy=str(getattr(self.config, "native_mm8_policy", "memory")),
                 )
             )
             quantization = "mm8"
@@ -334,6 +337,7 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
                 quantize_model_mm4(
                     self,
                     min_params=int(getattr(self.config, "native_mm4_min_params", 8_000_000)),
+                    policy=str(getattr(self.config, "native_mm4_policy", "memory")),
                 )
             )
             quantization = "mm4"

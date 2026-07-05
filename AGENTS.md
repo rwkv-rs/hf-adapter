@@ -39,8 +39,10 @@ roadmap.
   Do not spend the next phase on wrapper/cache micro-optimizations.
 - Forbidden directions: wrapper micro-optimization as the main plan, native
   vLLM/SGLang work, defaulting the full-head scan+output fused prefill path,
-  and quantized-speed claims before a native fused quant kernel beats fp16
-  end-to-end.
+  and full-memory quantized-speed claims before a native fused quant kernel
+  beats fp16 end-to-end. Speed-oriented quantization may be claimed separately
+  only when W8/W4 rows show lower model footprint, fp16-or-better decode on the
+  exact card, and logits/greedy-token alignment vs fp16.
 - Required next validation loop: RTX 4090 fp16, bsz=1/4, prompt512 prefill,
   decode, correctness, peak memory/VRAM, and `bench/analyze_results.py`
   reporting.
@@ -433,9 +435,11 @@ Run this checklist for every new GPU before marking it as supported:
   bnb W8/W4 speed, native mm8/mm4 speed, `bench_speed`, and bsz 1/2/4
   `bench_batch_sweep` pass under the default native/no-FLA route. Optional 0.4B
   fp16 `bench_speed` also passes. Training was not run.
-- Quant rule: current bnb W8/W4 rows are slower than fp16; native mm8/mm4 rows
-  are usable for 0.1B `lm_head` quantization but broader promotion needs
-  card-local rows where more projections cross the quantization gate.
+- Quant rule: current bnb W8/W4 rows are slower than fp16. Native mm8/mm4
+  `speed` policy (`lm_head` only) can be used for the "footprint drops while
+  decode is not slower" acceptance lane when exact-card rows also include
+  logits/greedy-token parity. Native `memory` policy remains a footprint lane,
+  not a speed claim, until fused quantized block kernels beat fp16.
 - Promotion rule: never inherit V100/4090/5070 fused defaults without Pascal rows.
 
 #### Volta / V100 (`sm_70`)
@@ -448,8 +452,10 @@ Run this checklist for every new GPU before marking it as supported:
 - Required validation: functional checklist plus HF Trainer, PEFT LoRA, TRL
   SFT/DPO/GRPO, checkpoint resume, decode greedy-match, cache telemetry, and
   Albatross A/B rows when available.
-- Quant rule: W8/W4 memory rows are valid; speed is unsolved until native/fused
-  quant beats fp16 end-to-end on V100.
+- Quant rule: W8/W4 memory rows are valid footprint evidence. Treat bnb and
+  native `memory` rows as non-speed paths unless they beat fp16. Native
+  `speed` policy may be reported as the speed-acceptance lane only with
+  card-local footprint, speed, and logits/greedy-token parity rows.
 - Promotion rule: any default change must preserve V100 training and decode rows.
 
 #### Turing / RTX 20 / T4 (`sm_75`)
@@ -678,8 +684,11 @@ Recent completed evidence:
   prefill/decode ratios.
 - W8/W4 quantization rows record both canonical memory-target bnb behavior and
   `decode_hot` hybrid variants. The hybrid variants improve decode over generic
-  bnb on V100 while remaining below fp16/native-graph speed, so fused/native
-  quantized projection kernels remain the main quantization performance gap.
+  bnb on V100 while remaining below fp16/native-graph speed. For native
+  mm8/mm4, distinguish `memory` policy (maximum footprint reduction, may be
+  slower) from `speed` policy (small but real footprint reduction, speed gate).
+  Fused/native quantized projection kernels remain the main path for combining
+  large footprint reductions with fp16-or-better speed.
 
 ## Important Paths
 
@@ -789,8 +798,11 @@ python /home/data/wangyue/projects/rwkv7-hf-adapter/tests/test_peft_lora.py \
    fp16 kernel boundaries, GPU-specific layout/autotune, and DPLR/chunked
    prefill for bsz=1 prompt-prefill. Keep wrapper/cache work to compatibility
    and telemetry fixes.
-6. Finish HF quantized W8/W4 inference as memory-compatible first, and claim
-   quant speed only after native fused quant kernels beat W16/fp16 end-to-end.
+6. Finish HF quantized W8/W4 inference as two explicit lanes: `speed` policy
+   for the acceptance target (footprint lower than fp16, W8/W4 decode not
+   slower, logits aligned), and `memory` policy for maximum footprint reduction
+   that still needs fused quant kernels before it can claim fp16-or-better
+   speed.
 7. Validate on more GPUs and larger batch sizes.
 8. Start native Transformers implementation under `src/transformers/models/rwkv7/` style layout.
 9. Remove mandatory FLA dependency from the final HF implementation.

@@ -11,6 +11,7 @@ actual end-to-end speed wins.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import re
@@ -97,15 +98,22 @@ def last_fast_token_backend(model):
     return getattr(model, "_rwkv7_last_fast_token_backend", None)
 
 
-def quantize_model(model, quantization: str, min_params: int) -> tuple[int, dict[str, int]]:
+def last_native_model_decode_backend(model):
+    getter = getattr(model, "rwkv7_native_model_last_decode_backend", None)
+    if callable(getter):
+        return getter()
+    return getattr(model, "_rwkv7_native_model_last_decode_backend", None)
+
+
+def quantize_model(model, quantization: str, min_params: int, policy: str) -> tuple[int, dict[str, int]]:
     if quantization == "none":
         return 0, count_modules(model)
     if quantization == "mm8":
         from rwkv7_hf.native_quant_mm8 import quantize_model_mm8
-        replaced = quantize_model_mm8(model, min_params=min_params, fused=True)
+        replaced = quantize_model_mm8(model, min_params=min_params, fused=True, policy=policy)
     elif quantization == "mm4":
         from rwkv7_hf.native_quant_mm4 import quantize_model_mm4
-        replaced = quantize_model_mm4(model, min_params=min_params)
+        replaced = quantize_model_mm4(model, min_params=min_params, policy=policy)
     else:  # pragma: no cover
         raise ValueError(quantization)
     return int(replaced), count_modules(model)
@@ -148,7 +156,15 @@ def benchmark_decode(args, tok, model, ids):
     if fast_fn is None and ids.shape[0] == 1:
         fast_fn = getattr(model, "rwkv7_forward_one", None)
     if fast_fn is None:
-        raise RuntimeError("model does not expose rwkv7_forward_token / rwkv7_forward_one")
+        def step_fn(token_ids, *, past_key_values):
+            return model(token_ids, past_key_values=past_key_values, use_cache=True, logits_to_keep=1)
+
+        step_backend = "module_call"
+    else:
+        def step_fn(token_ids, *, past_key_values):
+            return fast_fn(token_ids, past_key_values=past_key_values)
+
+        step_backend = last_fast_token_backend(model) or os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "auto")
 
     with torch.inference_mode():
         out = model(ids, use_cache=True, logits_to_keep=1)
@@ -156,13 +172,13 @@ def benchmark_decode(args, tok, model, ids):
         nxt = out.logits[:, -1:].argmax(dim=-1)
         prompt_logits = out.logits[:, -1].float().detach().cpu()
         for _ in range(args.warmup):
-            out = fast_fn(nxt, past_key_values=state)
+            out = step_fn(nxt, past_key_values=state)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
         cuda_sync(args.device)
         t0 = time.time()
         for _ in range(args.decode_tokens):
-            out = fast_fn(nxt, past_key_values=state)
+            out = step_fn(nxt, past_key_values=state)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
         cuda_sync(args.device)
@@ -176,7 +192,8 @@ def benchmark_decode(args, tok, model, ids):
         "prompt_logits": prompt_logits,
         "final_logits": final_logits,
         "next_token": int(nxt[0, -1].detach().cpu()),
-        "fast_token_backend_effective": last_fast_token_backend(model) or os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "auto"),
+        "fast_token_backend_effective": step_backend,
+        "native_model_decode_backend_effective": last_native_model_decode_backend(model),
         "cache_type": type(state).__name__ if state is not None else None,
     }
 
@@ -193,6 +210,12 @@ def main() -> int:
     ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="native_graph")
     ap.add_argument("--quantizations", nargs="+", choices=["none", "mm8", "mm4"], default=["none", "mm8", "mm4"])
     ap.add_argument("--min-params", type=int, default=8_000_000)
+    ap.add_argument(
+        "--policy",
+        default="memory",
+        choices=["memory", "speed"],
+        help="native MM module-selection policy: memory=all size-gated linears, speed=lm_head only",
+    )
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--prompt-tokens", type=int, default=32)
     ap.add_argument("--decode-tokens", type=int, default=32)
@@ -210,13 +233,16 @@ def main() -> int:
     baseline_next = None
     baseline_tokps = None
     baseline_footprint = None
+    out_path = Path(args.results) if args.results else None
+    if out_path is not None:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
 
     for quantization in args.quantizations:
         if args.device.startswith("cuda"):
             torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats()
         model = load_model(args, dtype)
-        replaced, module_counts = quantize_model(model, quantization, args.min_params)
+        replaced, module_counts = quantize_model(model, quantization, args.min_params, args.policy)
         footprint = module_footprint_mb(model)
         res = benchmark_decode(args, tok, model, ids)
         if quantization == "none":
@@ -252,6 +278,7 @@ def main() -> int:
             "prompt_tokens": int(ids.shape[1]),
             "decode_tokens": args.decode_tokens,
             "min_params": args.min_params,
+            "native_mm_policy": args.policy,
             "replaced_modules": replaced,
             "module_counts": module_counts,
             "model_footprint_mb": footprint,
@@ -266,14 +293,14 @@ def main() -> int:
         rows.append(row)
         print(json.dumps(row, indent=2), flush=True)
         del model
-
-    if args.results:
-        out = Path(args.results)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        with out.open("a", encoding="utf-8") as f:
-            for row in rows:
+        gc.collect()
+        if args.device.startswith("cuda"):
+            torch.cuda.empty_cache()
+        if out_path is not None:
+            with out_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
-        print(f"appended {len(rows)} row(s) -> {out}", flush=True)
+            print(f"appended 1 row -> {out_path}", flush=True)
+
     return 0
 
 
