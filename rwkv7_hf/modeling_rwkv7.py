@@ -26,6 +26,17 @@ except ImportError:  # pragma: no cover - direct remote-file execution fallback
 if _rwkv7_apply_runtime_compat is not None:
     _rwkv7_apply_runtime_compat()
 
+# Keep native_quant_policy as a first-level remote-code dependency. Some
+# Transformers trust_remote_code versions copy only direct relative imports into
+# the module cache before scanning helper files such as native_quant_mm8/mm4.
+try:  # pragma: no cover - packaging guard
+    from .native_quant_policy import NATIVE_MM_POLICIES as _RWKV7_NATIVE_MM_POLICIES
+except ImportError:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from native_quant_policy import NATIVE_MM_POLICIES as _RWKV7_NATIVE_MM_POLICIES
+    except Exception:
+        _RWKV7_NATIVE_MM_POLICIES = ("memory", "speed")
+
 try:
     from fla.models.rwkv7.modeling_rwkv7 import RWKV7Model as _RWKV7Model
     from fla.models.rwkv7.modeling_rwkv7 import RWKV7ForCausalLM as _RWKV7ForCausalLM
@@ -1207,6 +1218,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                 replaced = quantize_model_mm8(
                     model,
                     min_params=int(getattr(model.config, "native_mm8_min_params", 8_000_000)),
+                    policy=str(getattr(model.config, "native_mm8_policy", "memory")),
                 )
                 setattr(model, "_rwkv7_native_mm_quantization", "mm8")
                 setattr(model, "_rwkv7_native_mm_replaced_modules", int(replaced))
@@ -1216,6 +1228,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                 replaced = quantize_model_mm4(
                     model,
                     min_params=int(getattr(model.config, "native_mm4_min_params", 8_000_000)),
+                    policy=str(getattr(model.config, "native_mm4_policy", "memory")),
                 )
                 setattr(model, "_rwkv7_native_mm_quantization", "mm4")
                 setattr(model, "_rwkv7_native_mm_replaced_modules", int(replaced))

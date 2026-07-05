@@ -18,7 +18,7 @@ import torch.nn.functional as F
 from rwkv7_hf.native_model import NativeRWKV7Config, NativeRWKV7ForCausalLM
 
 
-def build_tiny_config(*, quantization: str | None = None) -> NativeRWKV7Config:
+def build_tiny_config(*, quantization: str | None = None, policy: str = "memory") -> NativeRWKV7Config:
     return NativeRWKV7Config(
         vocab_size=41,
         hidden_size=16,
@@ -34,6 +34,8 @@ def build_tiny_config(*, quantization: str | None = None) -> NativeRWKV7Config:
         use_native_mm4=quantization == "mm4",
         native_mm8_min_params=1,
         native_mm4_min_params=1,
+        native_mm8_policy=policy,
+        native_mm4_policy=policy,
     )
 
 
@@ -104,10 +106,21 @@ def test_native_mm8_mm4_are_mutually_exclusive() -> None:
         raise AssertionError("expected mutually-exclusive native quant config to fail")
 
 
+def test_native_mm_speed_policy_quantizes_lm_head_only() -> None:
+    for quantization, class_name in [("mm8", "MM8Linear"), ("mm4", "MM4Linear")]:
+        model = NativeRWKV7ForCausalLM(build_tiny_config(quantization=quantization, policy="speed")).eval()
+        replaced = model.apply_native_mm_quantization_from_config()
+        count = sum(1 for module in model.modules() if type(module).__name__ == class_name)
+        assert replaced == 1
+        assert count == 1
+        assert type(model.lm_head).__name__ == class_name
+
+
 def main() -> int:
     test_native_mm8_config_roundtrip()
     test_native_mm4_config_roundtrip()
     test_native_mm8_mm4_are_mutually_exclusive()
+    test_native_mm_speed_policy_quantizes_lm_head_only()
     print("NATIVE QUANT CONFIG PASS")
     return 0
 

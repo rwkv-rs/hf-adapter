@@ -19,6 +19,7 @@ from rwkv7_hf.native_quant_mm8 import (
     quantize_mm8,
     quantize_model_mm8,
 )
+from rwkv7_hf.native_quant_mm4 import MM4Linear
 
 
 def main() -> int:
@@ -32,6 +33,20 @@ def main() -> int:
     out = q(x)
     assert out.shape == (6, 16)
     assert torch.isfinite(out).all()
+    out_1d = q(torch.randn(32))
+    out_row = q(torch.randn(1, 32))
+    assert out_1d.shape == (16,)
+    assert out_row.shape == (1, 16)
+    assert torch.isfinite(out_1d).all()
+    assert torch.isfinite(out_row).all()
+
+    q4 = MM4Linear(lin, fused=True)
+    out4_1d = q4(torch.randn(32))
+    out4_row = q4(torch.randn(1, 32))
+    assert out4_1d.shape == (16,)
+    assert out4_row.shape == (1, 16)
+    assert torch.isfinite(out4_1d).all()
+    assert torch.isfinite(out4_row).all()
 
     # Direct matmul_triton wrapper should also fall back for CPU or large 2D
     # inputs, matching the reference shape without launching Triton.
