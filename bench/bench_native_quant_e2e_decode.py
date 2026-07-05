@@ -77,6 +77,63 @@ def model_metadata(args, model) -> dict[str, Any]:
     }
 
 
+def _safe_slug(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_")
+
+
+def baseline_path(args) -> Path | None:
+    if not args.baseline_dir:
+        return None
+    key = args.baseline_key or "_".join(
+        [
+            infer_model_size_label(args.hf_dir, args.model_size_label) or Path(args.hf_dir).name,
+            Path(args.hf_dir).name,
+            f"dtype-{args.dtype}",
+            f"attn-{args.attn_mode}",
+            f"fast-{args.fast_token_backend}",
+            f"bsz-{args.batch_size}",
+            f"prompt-{args.prompt_tokens}",
+            f"decode-{args.decode_tokens}",
+            f"min-{args.min_params}",
+            f"policy-{args.policy}",
+        ]
+    )
+    return Path(args.baseline_dir) / f"{_safe_slug(key)}.pt"
+
+
+def save_baseline(args, row: dict[str, Any], prompt_logits, final_logits) -> None:
+    path = baseline_path(args)
+    if path is None:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "row": row,
+            "prompt_logits": prompt_logits.cpu(),
+            "final_logits": final_logits.cpu(),
+            "next_token": int(row["next_token"]),
+            "decode_tokps_total": float(row["decode_tokps_total"]),
+            "model_footprint_mb": float(row["model_footprint_mb"]),
+        },
+        path,
+    )
+    print(f"saved fp16 baseline -> {path}", flush=True)
+
+
+def load_baseline(args) -> dict[str, Any] | None:
+    path = baseline_path(args)
+    if path is None:
+        return None
+    if not path.exists():
+        if args.allow_missing_baseline:
+            return None
+        raise FileNotFoundError(f"missing fp16 baseline: {path}")
+    try:
+        return torch.load(path, map_location="cpu", weights_only=False)
+    except TypeError:  # older torch without weights_only
+        return torch.load(path, map_location="cpu")
+
+
 def set_attn_mode(model, attn_mode: str) -> None:
     model.config.attn_mode = attn_mode
     for layer in getattr(model.model, "layers", []):
@@ -209,6 +266,12 @@ def main() -> int:
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="true")
     ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="native_graph")
     ap.add_argument("--quantizations", nargs="+", choices=["none", "mm8", "mm4"], default=["none", "mm8", "mm4"])
+    ap.add_argument(
+        "--single-quantization",
+        choices=["none", "mm8", "mm4"],
+        default=None,
+        help="Run exactly one quantization in this process. Useful for fresh-process 7B+ rows.",
+    )
     ap.add_argument("--min-params", type=int, default=8_000_000)
     ap.add_argument(
         "--policy",
@@ -220,9 +283,15 @@ def main() -> int:
     ap.add_argument("--prompt-tokens", type=int, default=32)
     ap.add_argument("--decode-tokens", type=int, default=32)
     ap.add_argument("--warmup", type=int, default=1)
+    ap.add_argument("--baseline-dir", default="", help="Directory for fp16 baseline logits/tokps used by fresh quant-only runs")
+    ap.add_argument("--baseline-key", default="", help="Optional explicit baseline-cache key shared by fp16/mm8/mm4 subprocesses")
+    ap.add_argument("--allow-missing-baseline", action="store_true", help="Emit quant-only rows with null ratios when fp16 OOM/no baseline")
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     args = ap.parse_args()
-    args.quantizations = list(dict.fromkeys(["none", *args.quantizations]))
+    if args.single_quantization is not None:
+        args.quantizations = [args.single_quantization]
+    else:
+        args.quantizations = list(dict.fromkeys(["none", *args.quantizations]))
 
     dtype = DTYPES[args.dtype]
     tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
@@ -245,6 +314,8 @@ def main() -> int:
         replaced, module_counts = quantize_model(model, quantization, args.min_params, args.policy)
         footprint = module_footprint_mb(model)
         res = benchmark_decode(args, tok, model, ids)
+        prompt_logits_for_baseline = res["prompt_logits"]
+        final_logits_for_baseline = res["final_logits"]
         if quantization == "none":
             baseline_prompt = res.pop("prompt_logits")
             baseline_final = res.pop("final_logits")
@@ -256,13 +327,29 @@ def main() -> int:
             speed_ratio = 1.0
             footprint_ratio = 1.0
         else:
+            if baseline_prompt is None or baseline_final is None:
+                cached_baseline = load_baseline(args)
+                if cached_baseline is not None:
+                    baseline_prompt = cached_baseline["prompt_logits"]
+                    baseline_final = cached_baseline["final_logits"]
+                    baseline_next = int(cached_baseline["next_token"])
+                    baseline_tokps = float(cached_baseline["decode_tokps_total"])
+                    baseline_footprint = float(cached_baseline["model_footprint_mb"])
             prompt_logits = res.pop("prompt_logits")
             final_logits = res.pop("final_logits")
-            prompt_cos = F.cosine_similarity(baseline_prompt.flatten().unsqueeze(0), prompt_logits.flatten().unsqueeze(0)).item()
-            final_cos = F.cosine_similarity(baseline_final.flatten().unsqueeze(0), final_logits.flatten().unsqueeze(0)).item()
-            same_next = int(res["next_token"]) == int(baseline_next)
-            speed_ratio = float(res["decode_tokps_total"]) / float(baseline_tokps)
-            footprint_ratio = float(footprint) / float(baseline_footprint)
+            if baseline_prompt is None or baseline_final is None:
+                if not args.allow_missing_baseline:
+                    raise RuntimeError("quantized run has no in-process or cached fp16 baseline")
+                prompt_cos = final_cos = None
+                same_next = None
+                speed_ratio = None
+                footprint_ratio = None
+            else:
+                prompt_cos = F.cosine_similarity(baseline_prompt.flatten().unsqueeze(0), prompt_logits.flatten().unsqueeze(0)).item()
+                final_cos = F.cosine_similarity(baseline_final.flatten().unsqueeze(0), final_logits.flatten().unsqueeze(0)).item()
+                same_next = int(res["next_token"]) == int(baseline_next)
+                speed_ratio = float(res["decode_tokps_total"]) / float(baseline_tokps)
+                footprint_ratio = float(footprint) / float(baseline_footprint)
         row = {
             "axis": "native_quant_e2e_decode",
             "backend": "hf_adapter",
@@ -282,14 +369,16 @@ def main() -> int:
             "replaced_modules": replaced,
             "module_counts": module_counts,
             "model_footprint_mb": footprint,
-            "footprint_ratio_vs_fp16": round(footprint_ratio, 4),
-            "decode_speed_ratio_vs_fp16": round(speed_ratio, 4),
-            "prompt_logits_cos_vs_fp16": round(float(prompt_cos), 8),
-            "final_logits_cos_vs_fp16": round(float(final_cos), 8),
-            "same_next_token_as_fp16": bool(same_next),
+            "footprint_ratio_vs_fp16": round(footprint_ratio, 4) if footprint_ratio is not None else None,
+            "decode_speed_ratio_vs_fp16": round(speed_ratio, 4) if speed_ratio is not None else None,
+            "prompt_logits_cos_vs_fp16": round(float(prompt_cos), 8) if prompt_cos is not None else None,
+            "final_logits_cos_vs_fp16": round(float(final_cos), 8) if final_cos is not None else None,
+            "same_next_token_as_fp16": bool(same_next) if same_next is not None else None,
             "peak_vram_mb": peak_mb(args.device),
             **{k: v for k, v in res.items() if k not in {"prompt_logits", "final_logits"}},
         }
+        if quantization == "none":
+            save_baseline(args, row, prompt_logits_for_baseline, final_logits_for_baseline)
         rows.append(row)
         print(json.dumps(row, indent=2), flush=True)
         del model
