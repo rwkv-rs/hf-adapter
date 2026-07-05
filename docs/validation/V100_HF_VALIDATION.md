@@ -20,7 +20,7 @@ Notes:
 
 - 2.9B FLA-backed SFT on a V100 hit the current FLA/Triton path limits (`fp32` autotune OOM; `fp16` produced finite loss but no LoRA update). The native/no-FLA SFT/DPO/GRPO path passed and is the correct HF compatibility route for this size on V100.
 - 7.2B native Trainer resume in fp16 hit V100 32GB memory limits. Manual PEFT LoRA training still works, and quantized inference works.
-- DeepSpeed ZeRO3 base training smoke passes, and the 2026-07-03 addendum validates ZeRO3 checkpoint-resume on 2×V100 with the 0.1B native/HF path. ZeRO2 resume is validated through 2.9B; ZeRO3 resume still needs scale-up to 0.4B+.
+- DeepSpeed ZeRO3 base training smoke passes, and the 2026-07-03 addendum validates ZeRO3 checkpoint-resume on 2×V100 with the 0.1B native/HF path. ZeRO2 resume is validated through 2.9B; ZeRO3 resume validated through 2.9B (0.1B/0.4B/1.5B/2.9B all pass on 2×V100 fp32 native/HF path, 2026-07-05).
 - 13.3B is inference-only on a single V100-32GB: official alignment + decode speed are validated (see [13.3B inference validation](#133b-inference-validation)). Full training needs >32GB / multi-card / offload.
 
 ## New V100 passes from this run
