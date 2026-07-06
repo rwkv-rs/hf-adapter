@@ -47,6 +47,30 @@ The shared baseline runner is:
 PYTHONPATH=. python bench/run_qwen35_apple_baseline.py --help
 ```
 
+For end-to-end local collection, use the one-command wrapper:
+
+```bash
+# Dry-run the full Qwen/RWKV/CoreML plan without contacting runtimes.
+DRY_RUN=1 \
+RWKV_MLX_MODELS=/path/to/rwkv7-g1d-0.4b-hf,/path/to/rwkv7-g1g-1.5b-hf \
+COREML_EXPORT_MODELS=/path/to/rwkv7-g1g-1.5b-hf \
+scripts/run_qwen35_apple_acceptance.sh
+
+# Live same-device acceptance. Set PULL_QWEN=1 only when you want the wrapper
+# to run `ollama pull` before collecting rows.
+PULL_QWEN=1 \
+RWKV_MLX_MODELS=/path/to/rwkv7-g1d-0.4b-hf,/path/to/rwkv7-g1g-1.5b-hf \
+COREML_EXPORT_MODELS=/path/to/rwkv7-g1g-1.5b-hf \
+RESULTS=bench/results_qwen35_apple_baseline.jsonl \
+scripts/run_qwen35_apple_acceptance.sh
+```
+
+The wrapper runs `bench/run_qwen35_apple_baseline.py`, optionally runs
+`scripts/export_rwkv7_coreml.py`, then appends
+`bench/compare_qwen35_apple_baseline.py` gate rows.  The default comparison
+pairs cover the currently available 0.4B/1.5B RWKV classes; override `PAIRS`,
+`QWEN_MODELS`, and `RWKV_MLX_MODELS` for 4B/9B or distilled-mobile gates.
+
 It emits rows with `axis=qwen35_apple_baseline` and can run:
 
 1. Qwen3.5 through a local Ollama server using the streaming `/api/generate`
