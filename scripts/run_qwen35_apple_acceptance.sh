@@ -63,6 +63,14 @@ COREML_STATE_MODE="${COREML_STATE_MODE:-wkv-coreml}"
 COREML_QUANTIZATION="${COREML_QUANTIZATION:-lut4}"
 COREML_DEPLOYMENT_TARGET="${COREML_DEPLOYMENT_TARGET:-iOS18}"
 COREML_COMPUTE_UNITS="${COREML_COMPUTE_UNITS:-cpu-and-ne}"
+COREML_RUNTIME_MANIFESTS="${COREML_RUNTIME_MANIFESTS:-}"
+COREML_RUN_EXPORTED="${COREML_RUN_EXPORTED:-1}"
+COREML_RUNTIME_DRY_RUN="${COREML_RUNTIME_DRY_RUN:-${COREML_DRY_RUN}}"
+COREML_RUNTIME_REQUIRE_TOOLS="${COREML_RUNTIME_REQUIRE_TOOLS:-0}"
+COREML_RUNTIME_PROMPT_TARGET_CHARS="${COREML_RUNTIME_PROMPT_TARGET_CHARS:-${PROMPT_TARGET_CHARS}}"
+COREML_RUNTIME_DECODE_LENGTHS="${COREML_RUNTIME_DECODE_LENGTHS:-${DECODE_LENGTHS}}"
+COREML_RUNTIME_REPEAT="${COREML_RUNTIME_REPEAT:-${REPEAT}}"
+COREML_RUNTIME_COMPUTE_UNITS="${COREML_RUNTIME_COMPUTE_UNITS:-${COREML_COMPUTE_UNITS}}"
 
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
@@ -72,8 +80,9 @@ export RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION="${RWKV7_MLX_GROUP_RKV_QUANT_PROJECT
 rwkv7_csv_items() {
   local raw="$1"
   local item
+  local -a _rwkv7_items=()
   IFS=',' read -r -a _rwkv7_items <<< "${raw}"
-  for item in "${_rwkv7_items[@]}"; do
+  for item in "${_rwkv7_items[@]-}"; do
     item="${item#${item%%[![:space:]]*}}"
     item="${item%${item##*[![:space:]]}}"
     if [[ -n "${item}" ]]; then
@@ -110,6 +119,7 @@ if [[ "${PULL_QWEN}" == "1" && "${RUN_QWEN}" == "1" ]]; then
   done < <(rwkv7_csv_items "${QWEN_MODELS}")
 fi
 
+coreml_runtime_manifests=()
 if [[ -n "${COREML_EXPORT_MODELS}" ]]; then
   while IFS= read -r model; do
     out_dir="${COREML_OUTPUT_ROOT}/$(basename "${model}")"
@@ -133,7 +143,34 @@ if [[ -n "${COREML_EXPORT_MODELS}" ]]; then
     fi
     rwkv7_log "CoreML export manifest/prototype for ${model}"
     rwkv7_run "${PYTHON_BIN}" scripts/export_rwkv7_coreml.py "${args[@]}"
+    if [[ "${COREML_RUN_EXPORTED}" == "1" ]]; then
+      coreml_runtime_manifests+=("${out_dir}/coreml_export_manifest.json")
+    fi
   done < <(rwkv7_csv_items "${COREML_EXPORT_MODELS}")
+fi
+while IFS= read -r manifest; do
+  coreml_runtime_manifests+=("${manifest}")
+done < <(rwkv7_csv_items "${COREML_RUNTIME_MANIFESTS}")
+
+if (( ${#coreml_runtime_manifests[@]} > 0 )); then
+  for manifest in "${coreml_runtime_manifests[@]}"; do
+    args=(
+      --manifest "${manifest}"
+      --prompt-target-chars "${COREML_RUNTIME_PROMPT_TARGET_CHARS}"
+      --decode-lengths "${COREML_RUNTIME_DECODE_LENGTHS}"
+      --repeat "${COREML_RUNTIME_REPEAT}"
+      --compute-units "${COREML_RUNTIME_COMPUTE_UNITS}"
+      --results "${RESULTS}"
+    )
+    if [[ "${COREML_RUNTIME_DRY_RUN}" == "1" ]]; then
+      args+=(--dry-run)
+    fi
+    if [[ "${COREML_RUNTIME_REQUIRE_TOOLS}" == "1" ]]; then
+      args+=(--require-coremltools)
+    fi
+    rwkv7_log "CoreML runtime baseline rows for ${manifest}"
+    rwkv7_run "${PYTHON_BIN}" bench/run_coreml_apple_baseline.py "${args[@]}"
+  done
 fi
 
 baseline_args=(
