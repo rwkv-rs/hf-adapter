@@ -198,6 +198,7 @@ def ollama_row_from_chunks(
     max_new_tokens: int,
     chunks: list[dict[str, Any]],
     elapsed_s: float,
+    store_response: bool = False,
 ) -> dict[str, Any]:
     final = chunks[-1] if chunks else {}
     first_response_chunk_index = None
@@ -211,7 +212,8 @@ def ollama_row_from_chunks(
     eval_duration = _safe_int(final.get("eval_duration"))
     total_duration = _safe_int(final.get("total_duration"))
     load_duration = _safe_int(final.get("load_duration"))
-    return {
+    response_text = "".join(str(chunk.get("response", "")) for chunk in chunks)
+    row = {
         "axis": AXIS,
         "status": "pass",
         "engine": "ollama",
@@ -233,8 +235,12 @@ def ollama_row_from_chunks(
         "decode_tok_s": tok_s(eval_count, eval_duration),
         "ollama_chunk_count": len(chunks),
         "first_response_chunk_index": first_response_chunk_index,
-        "response_preview": "".join(str(chunk.get("response", "")) for chunk in chunks)[:160],
+        "response_preview": response_text[:160],
+        "response_chars": len(response_text),
     }
+    if store_response:
+        row["response_text"] = response_text
+    return row
 
 
 def run_ollama_qwen(
@@ -247,6 +253,7 @@ def run_ollama_qwen(
     temperature: float,
     timeout_s: float,
     results: str,
+    store_response: bool = False,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for max_new_tokens in decode_lengths:
@@ -266,6 +273,7 @@ def run_ollama_qwen(
                     max_new_tokens=max_new_tokens,
                     chunks=chunks,
                     elapsed_s=elapsed_s,
+                    store_response=store_response,
                 )
                 row["repeat_index"] = int(repeat_index)
                 row["repeat"] = int(repeats)
@@ -304,6 +312,7 @@ def run_rwkv_mlx(
     wkv_backend: str,
     chunk_size: int,
     results: str,
+    store_response: bool = False,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     try:
@@ -387,6 +396,7 @@ def run_rwkv_mlx(
                 next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
                 mx.eval(next_token)
             decode_s = first_s + decode_step_s
+            response_text = tokenizer.decode(generated_preview, skip_special_tokens=True) if store_response else ""
             telemetry = model.telemetry()
             row = {
                 "axis": AXIS,
@@ -417,6 +427,7 @@ def run_rwkv_mlx(
                 "prefill_tok_s": round(float(len(prompt_ids) / prefill_s), 6) if prefill_s > 0 else None,
                 "decode_tok_s": round(float(max_new_tokens / decode_s), 6) if decode_s > 0 else None,
                 "generated_preview": generated_preview[:16],
+                "response_chars": len(response_text) if store_response else None,
                 "seen_tokens_after_generate": int(final_state.seen_tokens),
                 "expected_seen_tokens": int(len(prompt_ids) + max_new_tokens),
                 "quantized_linear_last_backend_counts": telemetry.get("quantized_linear_last_backend_counts"),
@@ -425,6 +436,10 @@ def run_rwkv_mlx(
                 "group_rkv_quant_projection_counts": telemetry.get("group_rkv_quant_projection_counts"),
                 **mlx_memory_telemetry(),
             }
+            if store_response:
+                row["generated_token_ids"] = generated_preview
+                row["response_text"] = response_text
+                row["response_preview"] = response_text[:160]
             if chunk_diff is not None:
                 row.update(
                     {
@@ -485,6 +500,7 @@ def main() -> int:
     ap.add_argument("--prompt-seed", default=DEFAULT_PROMPT_SEED)
     ap.add_argument("--decode-lengths", default="128", help="Comma-separated max_new_tokens values.")
     ap.add_argument("--repeat", type=int, default=1)
+    ap.add_argument("--store-responses", action="store_true", help="Store full generated response text/token ids for quality evaluation rows.")
     ap.add_argument("--qwen-models", default=",".join(DEFAULT_QWEN_MODELS), help="Comma-separated Ollama Qwen3.5 models; empty disables Qwen.")
     ap.add_argument("--ollama-host", default=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"))
     ap.add_argument("--ollama-timeout-s", type=float, default=600.0)
@@ -518,6 +534,7 @@ def main() -> int:
         "prompt_cases": [{"name": case.name, "target_chars": case.target_chars} for case in prompt_cases],
         "decode_lengths": decode_lengths,
         "repeat": int(args.repeat),
+        "store_responses": bool(args.store_responses),
         "ollama_host": args.ollama_host,
         **device_info(),
     }
@@ -534,6 +551,7 @@ def main() -> int:
             "rwkv_mlx_models": rwkv_models,
             "prompt_cases": [{"name": case.name, "chars": len(case.prompt)} for case in prompt_cases],
             "decode_lengths": decode_lengths,
+            "store_responses": bool(args.store_responses),
         }
         print(json.dumps(plan, ensure_ascii=False))
         append_jsonl(args.results, plan)
@@ -552,6 +570,7 @@ def main() -> int:
                     temperature=float(args.temperature),
                     timeout_s=float(args.ollama_timeout_s),
                     results=args.results,
+                    store_response=bool(args.store_responses),
                 )
             )
         for model_path in rwkv_models:
@@ -568,6 +587,7 @@ def main() -> int:
                     wkv_backend=args.rwkv_wkv_backend,
                     chunk_size=int(args.rwkv_chunk_size),
                     results=args.results,
+                    store_response=bool(args.store_responses),
                 )
             )
     summary = summarize_rows(rows)
