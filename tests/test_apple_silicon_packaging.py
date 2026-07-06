@@ -193,6 +193,14 @@ def test_apple_smoke_script_static() -> None:
     quant_bench_script = ROOT / "scripts/mlx_quant_projection_bench.py"
     assert quant_bench_script.exists()
     assert quant_bench_script.stat().st_mode & stat.S_IXUSR
+    coreml_export_script = ROOT / "scripts/export_rwkv7_coreml.py"
+    assert coreml_export_script.exists()
+    assert coreml_export_script.stat().st_mode & stat.S_IXUSR
+    coreml_export_text = coreml_export_script.read_text(encoding="utf-8")
+    assert "rwkv7_coreml_export" in coreml_export_text
+    assert "full-logits" in coreml_export_text
+    assert "wkv-coreml" in coreml_export_text
+    assert "lut4" in coreml_export_text
     quant_bench_text = quant_bench_script.read_text(encoding="utf-8")
     assert "mlx_quant_projection_bench" in quant_bench_text
     assert "speedup_vs_dense" in quant_bench_text
@@ -232,6 +240,7 @@ def test_apple_doc_links_entry_points() -> None:
     assert "scripts/mlx_session_batch_smoke.py" in text
     assert "scripts/mlx_generation_sweep.py" in text
     assert "scripts/mlx_quant_projection_bench.py" in text
+    assert "scripts/export_rwkv7_coreml.py" in text
     assert "tests/test_apple_silicon_model_training_smoke.py" in text
     assert "tests/test_apple_silicon_model_sweep.py" in text
     assert "tests/test_apple_silicon_quant_smoke.py" in text
