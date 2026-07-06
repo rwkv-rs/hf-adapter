@@ -67,7 +67,8 @@ scripts/run_qwen35_apple_acceptance.sh
 
 The wrapper runs `bench/run_qwen35_apple_baseline.py`, optionally runs
 `scripts/export_rwkv7_coreml.py`, optionally emits CoreML runtime/plan rows via
-`bench/run_coreml_apple_baseline.py`, then appends
+`bench/run_coreml_apple_baseline.py`, optionally scores response quality via
+`bench/score_qwen35_quality.py`, then appends
 `bench/compare_qwen35_apple_baseline.py` gate rows.  The default comparison
 pairs cover the currently available 0.4B/1.5B RWKV classes; override `PAIRS`,
 `QWEN_MODELS`, and `RWKV_MLX_MODELS` for 4B/9B or distilled-mobile gates.
@@ -203,6 +204,27 @@ Summarize an existing result file:
 PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --summarize bench/results_qwen35_apple_baseline.jsonl
 ```
+
+Score quality rows after collecting responses:
+
+```bash
+# Collect full response text/token ids first.
+STORE_RESPONSES=1 \
+QUALITY_RUBRIC=docs/hardware/qwen35_quality_rubric.example.json \
+scripts/run_qwen35_apple_acceptance.sh
+
+# Or score an existing JSONL file directly.
+PYTHONPATH=. python bench/score_qwen35_quality.py \
+  --results bench/results_qwen35_apple_baseline.jsonl \
+  --rubric docs/hardware/qwen35_quality_rubric.example.json \
+  --pair qwen3.5:0.8b-mlx=rwkv7-g1d-0.4b-hf \
+  --append bench/results_qwen35_apple_baseline.jsonl
+```
+
+Quality rows use `axis=qwen35_apple_quality`; pairwise quality comparisons use
+`axis=qwen35_apple_quality_comparison`.  Missing full `response_text` is
+reported as `unknown`, so quality parity cannot be claimed from truncated
+previews.
 
 Compare RWKV rows against Qwen3.5 rows and emit explicit gate results:
 
