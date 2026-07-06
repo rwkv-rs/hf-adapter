@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import torch
 
+from rwkv7_hf.native_quant_mm4 import MM4Linear
 from rwkv7_hf.native_quant_mm8 import (
     MM8Linear,
     mm8_gemv_available,
