@@ -152,6 +152,7 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 - RWKV 覆盖 0.4B / 1.5B / 2.9B,并分别记录 fp16、W4/Metal、后续 CoreML/LUT/INT4;
 - JSONL 字段包含 TTFT、prefill tok/s、decode tok/s、显存/MLX peak/cache、量化 backend、chunked prefill diff、seen-token 检查;
 - 在 PR body 和 `BENCHMARK.md` 摘要里只根据实测行 claim,不得把 harness 存在当作性能达成;
+- 用 `bench/compare_qwen35_apple_baseline.py` 生成 `qwen35_apple_baseline_comparison` gate 行,通过后再写“超过”;
 - CoreML/ANE export 完成前,移动端“超过”只能算 MLX/Mac 侧阶段证据。
 
 最小 dry-run:

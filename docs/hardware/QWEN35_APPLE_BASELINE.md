@@ -121,6 +121,17 @@ PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --summarize bench/results_qwen35_apple_baseline.jsonl
 ```
 
+Compare RWKV rows against Qwen3.5 rows and emit explicit gate results:
+
+```bash
+PYTHONPATH=. python bench/compare_qwen35_apple_baseline.py   --results bench/results_qwen35_apple_baseline.jsonl   --pair qwen3.5:0.8b-mlx=rwkv7-g1d-0.4b-hf   --pair qwen3.5:2b-mlx=rwkv7-g1g-1.5b-hf   --min-decode-ratio 1.0   --require-prefill   --require-ttft   --max-ttft-ratio 1.1   --append bench/results_qwen35_apple_baseline.jsonl
+```
+
+The comparison rows use `axis=qwen35_apple_baseline_comparison`; the summary row
+uses `axis=qwen35_apple_baseline_comparison_summary`.  Missing required metrics
+produce `status=unknown`, not `pass`, so a PR cannot claim a Qwen3.5 win from an
+incomplete row.
+
 ## Initial acceptance matrix
 
 | RWKV target | Qwen3.5 comparator | Runtime gate | Current status |
