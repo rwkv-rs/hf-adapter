@@ -138,6 +138,33 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 | P2 | AMD ROCm | 先做 native / 无 FLA 兼容并记录缺口。 |
 | P2 | CPU | 保持 tiny native / 无 FLA import 与 API 测试可用。 |
 
+
+### 4.1 Apple / Qwen3.5 同机对齐矩阵 【新增 harness,待实测】
+
+目标是把“Apple / 移动端超过 Qwen3.5”从口号变成可复现 evidence。入口文档见
+[`docs/hardware/QWEN35_APPLE_BASELINE.md`](docs/hardware/QWEN35_APPLE_BASELINE.md),
+共用 runner 为 `bench/run_qwen35_apple_baseline.py`。
+
+完成定义:
+
+- 同一台 Apple 设备、同一 prompt 文本,同时记录 Qwen3.5 MLX/Ollama 与 RWKV-7 MLX/CoreML 行;
+- 覆盖 `qwen3.5:0.8b-mlx`、`2b-mlx`、`4b-mlx`、`9b-mlx` 至少前三档;
+- RWKV 覆盖 0.4B / 1.5B / 2.9B,并分别记录 fp16、W4/Metal、后续 CoreML/LUT/INT4;
+- JSONL 字段包含 TTFT、prefill tok/s、decode tok/s、显存/MLX peak/cache、量化 backend、chunked prefill diff、seen-token 检查;
+- 在 PR body 和 `BENCHMARK.md` 摘要里只根据实测行 claim,不得把 harness 存在当作性能达成;
+- CoreML/ANE export 完成前,移动端“超过”只能算 MLX/Mac 侧阶段证据。
+
+最小 dry-run:
+
+```bash
+PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
+  --dry-run \
+  --prompt-target-chars 1024,4096 \
+  --decode-lengths 128,512 \
+  --qwen-models qwen3.5:0.8b-mlx,qwen3.5:2b-mlx \
+  --rwkv-mlx-models /path/to/rwkv7-g1d-0.4b-hf,/path/to/rwkv7-g1g-1.5b-hf
+```
+
 ## P1:生产化 HF 体验
 
 ### 5. Accelerate / `device_map` / offload
