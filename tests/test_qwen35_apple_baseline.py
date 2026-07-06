@@ -21,9 +21,12 @@ from bench.run_qwen35_apple_baseline import (
 )
 from bench.compare_qwen35_apple_baseline import (
     COMPARISON_AXIS,
+    DIAGNOSTIC_AXIS,
     SUMMARY_AXIS,
     Pair,
     compare_rows,
+    comparison_gap_actions,
+    gap_diagnostic_rows,
     summarize_comparisons,
 )
 from bench.score_qwen35_quality import (
@@ -369,6 +372,114 @@ def test_compare_rows_keeps_missing_memory_unknown() -> None:
     assert comparisons[0]["status"] == "unknown"
     assert comparisons[0]["memory_ratio_rwkv_over_qwen"] is None
     assert summarize_comparisons(comparisons)["status"] == "unknown"
+
+
+def test_compare_rows_emit_gap_diagnostics_for_failed_gates() -> None:
+    rows = [
+        {
+            "axis": AXIS,
+            "status": "pass",
+            "engine": "ollama",
+            "runtime": "ollama_mlx",
+            "model": "qwen3.5:2b-mlx",
+            "prompt_case": "chars4096",
+            "requested_generated_tokens": 256,
+            "decode_tok_s": 100.0,
+            "prefill_tok_s": 200.0,
+            "ttft_s": 1.0,
+            "peak_memory_bytes": 2_000_000_000,
+        },
+        {
+            "axis": AXIS,
+            "status": "pass",
+            "engine": "rwkv7_hf",
+            "runtime": "mlx",
+            "model": "rwkv7-g1g-1.5b-hf",
+            "prompt_case": "chars4096",
+            "requested_generated_tokens": 256,
+            "decode_tok_s": 70.0,
+            "prefill_tok_s": 150.0,
+            "ttft_s": 1.5,
+            "mlx_peak_memory_bytes": 3_000_000_000,
+        },
+    ]
+    comparisons = compare_rows(
+        rows,
+        pairs=[Pair("qwen3.5:2b-mlx", "rwkv7-g1g-1.5b-hf")],
+        require_prefill=True,
+        require_ttft=True,
+        require_memory=True,
+    )
+    comparison = comparisons[0]
+    assert comparison["status"] == "fail"
+    actions = comparison_gap_actions(comparison)
+    assert {action["action"] for action in actions} == {
+        "optimize_decode_kernel_or_batching",
+        "optimize_prefill_or_chunked_prefill",
+        "reduce_ttft_load_prefill_or_first_token",
+        "reduce_peak_memory_or_quantize_more",
+    }
+    decode_action = next(action for action in actions if action["metric"] == "decode")
+    assert decode_action["current"] == 70.0
+    assert decode_action["target"] == 100.0
+    assert decode_action["needed_speedup_over_current"] == 1.428571
+    diagnostics = gap_diagnostic_rows(comparisons)
+    assert diagnostics[0]["axis"] == DIAGNOSTIC_AXIS
+    assert diagnostics[0]["action_count"] == 4
+    summary = summarize_comparisons(comparisons)
+    assert summary["gap_action_counts"]["optimize_decode_kernel_or_batching"] == 1
+    assert summary["top_gap_actions"][0]["count"] == 1
+
+
+def test_compare_cli_can_append_gap_diagnostics(tmp_path: Path) -> None:
+    source = tmp_path / "baseline.jsonl"
+    compared = tmp_path / "compared.jsonl"
+    source.write_text(
+        "".join(
+            json.dumps(row) + "\n"
+            for row in [
+                {
+                    "axis": AXIS,
+                    "status": "pass",
+                    "model": "qwen3.5:0.8b-mlx",
+                    "prompt_case": "chars64",
+                    "requested_generated_tokens": 8,
+                    "decode_tok_s": 30.0,
+                },
+                {
+                    "axis": AXIS,
+                    "status": "pass",
+                    "model": "rwkv7-g1d-0.4b-hf",
+                    "prompt_case": "chars64",
+                    "requested_generated_tokens": 8,
+                    "decode_tok_s": 10.0,
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "bench/compare_qwen35_apple_baseline.py",
+            "--results",
+            str(source),
+            "--pair",
+            "qwen3.5:0.8b-mlx=rwkv7-g1d-0.4b-hf",
+            "--append",
+            str(compared),
+            "--diagnostics",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    rows = [json.loads(line) for line in compared.read_text(encoding="utf-8").splitlines()]
+    assert [row["axis"] for row in rows] == [COMPARISON_AXIS, DIAGNOSTIC_AXIS, SUMMARY_AXIS]
+    assert rows[1]["actions"][0]["action"] == "optimize_decode_kernel_or_batching"
+    assert rows[-1]["gap_action_counts"] == {"optimize_decode_kernel_or_batching": 1}
 
 
 def test_compare_cli_writes_comparison_rows(tmp_path: Path) -> None:

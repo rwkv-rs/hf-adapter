@@ -23,6 +23,7 @@ from typing import Any, Iterable
 BASELINE_AXIS = "qwen35_apple_baseline"
 COMPARISON_AXIS = "qwen35_apple_baseline_comparison"
 SUMMARY_AXIS = "qwen35_apple_baseline_comparison_summary"
+DIAGNOSTIC_AXIS = "qwen35_apple_baseline_gap_diagnostic"
 
 
 @dataclass(frozen=True)
@@ -161,6 +162,261 @@ def bool_status(values: list[bool | None]) -> tuple[str, list[str]]:
     if unknown:
         return "unknown", ["one or more required comparison metrics are missing"]
     return "pass", []
+
+
+def _action(
+    *,
+    action: str,
+    metric: str,
+    severity: str,
+    reason: str,
+    current: Any = None,
+    target: Any = None,
+    ratio_value: Any = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "action": action,
+        "metric": metric,
+        "severity": severity,
+        "reason": reason,
+    }
+    if current is not None:
+        row["current"] = current
+    if target is not None:
+        row["target"] = target
+    if ratio_value is not None:
+        row["ratio"] = ratio_value
+    if extra:
+        row.update(extra)
+    return row
+
+
+def _required_speed(qwen_speed: Any, threshold: Any) -> float | None:
+    q = safe_float(qwen_speed)
+    t = safe_float(threshold)
+    if q is None or t is None:
+        return None
+    return round(q * t, 6)
+
+
+def _required_latency(qwen_latency: Any, threshold: Any) -> float | None:
+    q = safe_float(qwen_latency)
+    t = safe_float(threshold)
+    if q is None or t is None:
+        return None
+    return round(q * t, 6)
+
+
+def _required_memory(qwen_memory: Any, threshold: Any) -> int | None:
+    q = safe_float(qwen_memory)
+    t = safe_float(threshold)
+    if q is None or t is None:
+        return None
+    return int(q * t)
+
+
+def comparison_gap_actions(row: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return concrete next actions for a comparison row.
+
+    The comparison gate is intentionally conservative: missing metrics become
+    ``unknown`` instead of pass.  These actions make that conservative result
+    operational by spelling out whether the next run should collect data, tune
+    decode/prefill speed, reduce TTFT, or lower memory.
+    """
+
+    actions: list[dict[str, Any]] = []
+    status = str(row.get("status") or "unknown")
+    qwen = row.get("qwen") if isinstance(row.get("qwen"), dict) else {}
+    rwkv = row.get("rwkv") if isinstance(row.get("rwkv"), dict) else {}
+    gates = row.get("gates") if isinstance(row.get("gates"), dict) else {}
+
+    if status == "pass":
+        return actions
+
+    if status == "missing" or qwen.get("count", 0) == 0:
+        actions.append(
+            _action(
+                action="collect_qwen_baseline_rows",
+                metric="coverage",
+                severity="blocker",
+                reason="missing Qwen3.5 same-prompt baseline rows for this model/prompt/decode shape",
+            )
+        )
+    if status == "missing" or rwkv.get("count", 0) == 0:
+        actions.append(
+            _action(
+                action="collect_rwkv_mlx_or_coreml_rows",
+                metric="coverage",
+                severity="blocker",
+                reason="missing RWKV-7 same-prompt comparison rows for this model/prompt/decode shape",
+            )
+        )
+
+    decode_threshold = safe_float(gates.get("min_decode_ratio"))
+    decode_ratio = safe_float(row.get("decode_ratio_rwkv_over_qwen"))
+    if decode_threshold is not None:
+        if decode_ratio is None:
+            actions.append(
+                _action(
+                    action="collect_decode_tok_s",
+                    metric="decode",
+                    severity="blocker",
+                    reason="decode gate requested but decode_tok_s is missing on one or both sides",
+                    extra={"qwen_min_decode_tok_s": qwen.get("min_decode_tok_s"), "rwkv_min_decode_tok_s": rwkv.get("min_decode_tok_s")},
+                )
+            )
+        elif decode_ratio < decode_threshold:
+            target = _required_speed(qwen.get("min_decode_tok_s"), decode_threshold)
+            current = rwkv.get("min_decode_tok_s")
+            extra: dict[str, Any] = {"qwen_min_decode_tok_s": qwen.get("min_decode_tok_s")}
+            current_f = safe_float(current)
+            if target is not None and current_f and current_f > 0:
+                extra["needed_speedup_over_current"] = round(target / current_f, 6)
+            actions.append(
+                _action(
+                    action="optimize_decode_kernel_or_batching",
+                    metric="decode",
+                    severity="fail",
+                    reason="RWKV decode tok/s is below the configured Qwen3.5 ratio gate",
+                    current=current,
+                    target=target,
+                    ratio_value=decode_ratio,
+                    extra=extra,
+                )
+            )
+
+    prefill_threshold = safe_float(gates.get("min_prefill_ratio"))
+    prefill_ratio = safe_float(row.get("prefill_ratio_rwkv_over_qwen"))
+    if prefill_threshold is not None:
+        if prefill_ratio is None:
+            actions.append(
+                _action(
+                    action="collect_prefill_tok_s",
+                    metric="prefill",
+                    severity="blocker",
+                    reason="prefill gate requested but prefill_tok_s is missing on one or both sides",
+                    extra={"qwen_min_prefill_tok_s": qwen.get("min_prefill_tok_s"), "rwkv_min_prefill_tok_s": rwkv.get("min_prefill_tok_s")},
+                )
+            )
+        elif prefill_ratio < prefill_threshold:
+            target = _required_speed(qwen.get("min_prefill_tok_s"), prefill_threshold)
+            current = rwkv.get("min_prefill_tok_s")
+            extra = {"qwen_min_prefill_tok_s": qwen.get("min_prefill_tok_s")}
+            current_f = safe_float(current)
+            if target is not None and current_f and current_f > 0:
+                extra["needed_speedup_over_current"] = round(target / current_f, 6)
+            actions.append(
+                _action(
+                    action="optimize_prefill_or_chunked_prefill",
+                    metric="prefill",
+                    severity="fail",
+                    reason="RWKV prefill tok/s is below the configured Qwen3.5 ratio gate",
+                    current=current,
+                    target=target,
+                    ratio_value=prefill_ratio,
+                    extra=extra,
+                )
+            )
+
+    ttft_threshold = safe_float(gates.get("max_ttft_ratio"))
+    ttft_ratio = safe_float(row.get("ttft_ratio_rwkv_over_qwen"))
+    if ttft_threshold is not None:
+        if ttft_ratio is None:
+            actions.append(
+                _action(
+                    action="collect_ttft_s",
+                    metric="ttft",
+                    severity="blocker",
+                    reason="TTFT gate requested but ttft_s is missing on one or both sides",
+                    extra={"qwen_max_ttft_s": qwen.get("max_ttft_s"), "rwkv_max_ttft_s": rwkv.get("max_ttft_s")},
+                )
+            )
+        elif ttft_ratio > ttft_threshold:
+            target = _required_latency(qwen.get("max_ttft_s"), ttft_threshold)
+            current = rwkv.get("max_ttft_s")
+            extra = {"qwen_max_ttft_s": qwen.get("max_ttft_s")}
+            current_f = safe_float(current)
+            if target is not None and current_f and current_f > 0:
+                extra["needed_latency_ratio_over_current"] = round(target / current_f, 6)
+            actions.append(
+                _action(
+                    action="reduce_ttft_load_prefill_or_first_token",
+                    metric="ttft",
+                    severity="fail",
+                    reason="RWKV TTFT is above the configured Qwen3.5 ratio gate",
+                    current=current,
+                    target=target,
+                    ratio_value=ttft_ratio,
+                    extra=extra,
+                )
+            )
+
+    memory_threshold = safe_float(gates.get("max_memory_ratio"))
+    memory_ratio_value = safe_float(row.get("memory_ratio_rwkv_over_qwen"))
+    if memory_threshold is not None:
+        if memory_ratio_value is None:
+            actions.append(
+                _action(
+                    action="collect_memory_telemetry",
+                    metric="memory",
+                    severity="blocker",
+                    reason="memory gate requested but peak memory telemetry is missing on one or both sides",
+                    extra={"qwen_max_memory_bytes": qwen.get("max_memory_bytes"), "rwkv_max_memory_bytes": rwkv.get("max_memory_bytes")},
+                )
+            )
+        elif memory_ratio_value > memory_threshold:
+            target = _required_memory(qwen.get("max_memory_bytes"), memory_threshold)
+            current = rwkv.get("max_memory_bytes")
+            extra = {"qwen_max_memory_bytes": qwen.get("max_memory_bytes")}
+            current_f = safe_float(current)
+            if target is not None and current_f and current_f > 0:
+                extra["needed_memory_ratio_over_current"] = round(target / current_f, 6)
+                extra["needed_memory_reduction_bytes"] = int(current_f - target)
+            actions.append(
+                _action(
+                    action="reduce_peak_memory_or_quantize_more",
+                    metric="memory",
+                    severity="fail",
+                    reason="RWKV peak memory is above the configured Qwen3.5 ratio gate",
+                    current=current,
+                    target=target,
+                    ratio_value=memory_ratio_value,
+                    extra=extra,
+                )
+            )
+
+    return actions
+
+
+def gap_diagnostic_rows(comparisons: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for comparison in comparisons:
+        actions = comparison_gap_actions(comparison)
+        if not actions:
+            continue
+        rows.append(
+            {
+                "axis": DIAGNOSTIC_AXIS,
+                "status": comparison.get("status", "unknown"),
+                "qwen_model": comparison.get("qwen_model"),
+                "rwkv_model": comparison.get("rwkv_model"),
+                "prompt_case": comparison.get("prompt_case"),
+                "requested_generated_tokens": comparison.get("requested_generated_tokens"),
+                "actions": actions,
+                "action_count": len(actions),
+            }
+        )
+    return rows
+
+
+def summarize_gap_actions(comparisons: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for comparison in comparisons:
+        for action in comparison_gap_actions(comparison):
+            key = str(action.get("action") or "unknown")
+            counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 def compare_group(
@@ -309,11 +565,17 @@ def summarize_comparisons(comparisons: list[dict[str, Any]]) -> dict[str, Any]:
         status = "unknown"
     else:
         status = "pass"
+    gap_action_counts = summarize_gap_actions(comparisons)
     return {
         "axis": SUMMARY_AXIS,
         "status": status,
         "comparisons": len(comparisons),
         "status_counts": counts,
+        "gap_action_counts": gap_action_counts,
+        "top_gap_actions": [
+            {"action": action, "count": count}
+            for action, count in sorted(gap_action_counts.items(), key=lambda item: (-item[1], item[0]))[:8]
+        ],
         "min_decode_ratio": min(
             (float(row["decode_ratio_rwkv_over_qwen"]) for row in comparisons if row.get("decode_ratio_rwkv_over_qwen") is not None),
             default=None,
@@ -350,6 +612,7 @@ def main() -> int:
     ap.add_argument("--require-ttft", action="store_true")
     ap.add_argument("--require-memory", action="store_true")
     ap.add_argument("--append", default="", help="Optional JSONL path to append comparison rows and summary.")
+    ap.add_argument("--diagnostics", action="store_true", help="Emit gap-diagnostic rows with concrete next actions for missing/failing gates.")
     ap.add_argument("--fail-on-gate", action="store_true", help="Exit 1 if summary is fail/unknown.")
     args = ap.parse_args()
 
@@ -368,11 +631,14 @@ def main() -> int:
         require_ttft=bool(args.require_ttft),
         require_memory=bool(args.require_memory),
     )
+    diagnostics = gap_diagnostic_rows(comparisons) if args.diagnostics else []
     summary = summarize_comparisons(comparisons)
     for row in comparisons:
         print(json.dumps(row, ensure_ascii=False))
+    for row in diagnostics:
+        print(json.dumps(row, ensure_ascii=False))
     print(json.dumps(summary, ensure_ascii=False))
-    append_jsonl(args.append, [*comparisons, summary])
+    append_jsonl(args.append, [*comparisons, *diagnostics, summary])
     if args.fail_on_gate and summary.get("status") != "pass":
         return 1
     return 0
