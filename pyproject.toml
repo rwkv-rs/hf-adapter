@@ -5,7 +5,7 @@ description = "First-stage Hugging Face adapter and converter for official RWKV-
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "dsadsasdaddas", email = "wangyue20060908@gmail.com" }]
+authors = [{ name = "123123213weqw", email = "300659282+123123213weqw@users.noreply.github.com" }]
 dependencies = [
   "torch",
   "transformers",

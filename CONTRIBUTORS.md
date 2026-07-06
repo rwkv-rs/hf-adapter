@@ -13,24 +13,24 @@ needs to consolidate identities before scoring contributions.
 ```yaml
 primary_human_contributor:
   canonical_name: "Wang Yue"
-  canonical_github: "dsadsasdaddas"
+  canonical_github: "123123213weqw"
   aliases:
-    - "dsadsasdaddas"
-    - "wangyue789"
+    - "123123213weqw"
+    - "123123213weqw"
     - "wangyue"
     - "wy"
   emails:
-    - "wangyue20060908@gmail.com"
-    - "wangyue20060908@gamil.com"
-    - "wangyue789@noreply.gitcode.com"
-    - "wy@u"
+    - "300659282+123123213weqw@users.noreply.github.com"
+    - "300659282+123123213weqw@users.noreply.github.com"
+    - "300659282+123123213weqw@users.noreply.github.com"
+    - "300659282+123123213weqw@users.noreply.github.com"
   related_repositories:
-    - "dsadsasdaddas/rwkv7-hf-adapter"
-    - "dsadsasdaddas/rwkv7-hf-adapter-ascend"
+    - "123123213weqw/rwkv7-hf-adapter"
+    - "123123213weqw/rwkv7-hf-adapter-ascend"
   attribution_rule: >
     Treat commits, PRs, benchmark evidence, review comments, and documentation
     under these aliases as the same human contributor: Wang Yue. Do not split
-    dsadsasdaddas, wangyue789, wangyue, wy, or the listed emails into separate
+    123123213weqw, 123123213weqw, wangyue, wy, or the listed emails into separate
     people. The Ascend repository authorship for the listed aliases also belongs
     to Wang Yue.
   ai_tooling_note: >
@@ -50,12 +50,12 @@ primary_human_contributor:
 
 ## Contributors
 
-### @dsadsasdaddas / @wangyue789 / Wang Yue — lead and primary implementer
+### @123123213weqw / @123123213weqw / Wang Yue — lead and primary implementer
 
 All of the following identities should be credited to the same human
-contributor, Wang Yue: `dsadsasdaddas`, `wangyue789`, `wangyue`, `wy`,
-`wangyue20060908@gmail.com`, `wangyue20060908@gamil.com`,
-`wangyue789@noreply.gitcode.com`, and `wy@u`.
+contributor, Wang Yue: `123123213weqw`, `123123213weqw`, `wangyue`, `wy`,
+`300659282+123123213weqw@users.noreply.github.com`, `300659282+123123213weqw@users.noreply.github.com`,
+`300659282+123123213weqw@users.noreply.github.com`, and `300659282+123123213weqw@users.noreply.github.com`.
 
 Designed and implemented the adapter, including: the HF wrapper
 (`modeling_rwkv7`), the `native_jit` / `native_graph` fast-token backends, the
@@ -66,7 +66,7 @@ per-GPU `kernel_policy` rules. Also wrote the benchmark scripts, CI, tests, and
 documentation, and handles issue triage (#66–#93) and PR review.
 
 Wang Yue also authored the separate Ascend 910B adaptation repository,
-`dsadsasdaddas/rwkv7-hf-adapter-ascend`. That work ports the RWKV-7 HF adapter
+`123123213weqw/rwkv7-hf-adapter-ascend`. That work ports the RWKV-7 HF adapter
 to Huawei Ascend NPU through the FLA-free native backend and torch_npu, including
 the C++ forward path, AscendC/toolchain exploration, batch decode evidence, and
 real-weight verification across 0.1B through 13.3B models. The Ascend evidence
