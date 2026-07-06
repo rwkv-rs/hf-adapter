@@ -119,6 +119,17 @@ def test_apple_smoke_script_static() -> None:
     assert mlx_sweep_wrapper.exists()
     assert mlx_sweep_wrapper.stat().st_mode & stat.S_IXUSR
     subprocess.run(["bash", "-n", str(mlx_sweep_wrapper)], cwd=ROOT, check=True)
+    qwen_acceptance_wrapper = ROOT / "scripts/run_qwen35_apple_acceptance.sh"
+    assert qwen_acceptance_wrapper.exists()
+    assert qwen_acceptance_wrapper.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(qwen_acceptance_wrapper)], cwd=ROOT, check=True)
+    qwen_acceptance_text = qwen_acceptance_wrapper.read_text(encoding="utf-8")
+    assert "bench/run_qwen35_apple_baseline.py" in qwen_acceptance_text
+    assert "bench/compare_qwen35_apple_baseline.py" in qwen_acceptance_text
+    assert "scripts/export_rwkv7_coreml.py" in qwen_acceptance_text
+    assert "PULL_QWEN" in qwen_acceptance_text
+    assert "RWKV_MLX_MODELS" in qwen_acceptance_text
+    assert "COREML_EXPORT_MODELS" in qwen_acceptance_text
     convert_mlx_script = ROOT / "scripts/convert_hf_to_mlx.py"
     assert convert_mlx_script.exists()
     assert convert_mlx_script.stat().st_mode & stat.S_IXUSR
@@ -241,6 +252,7 @@ def test_apple_doc_links_entry_points() -> None:
     assert "scripts/mlx_generation_sweep.py" in text
     assert "scripts/mlx_quant_projection_bench.py" in text
     assert "scripts/export_rwkv7_coreml.py" in text
+    assert "scripts/run_qwen35_apple_acceptance.sh" in text
     assert "tests/test_apple_silicon_model_training_smoke.py" in text
     assert "tests/test_apple_silicon_model_sweep.py" in text
     assert "tests/test_apple_silicon_quant_smoke.py" in text
@@ -290,6 +302,17 @@ def test_apple_doc_links_entry_points() -> None:
     assert mlx_sweep_wrapper.exists()
     assert mlx_sweep_wrapper.stat().st_mode & stat.S_IXUSR
     subprocess.run(["bash", "-n", str(mlx_sweep_wrapper)], cwd=ROOT, check=True)
+    qwen_acceptance_wrapper = ROOT / "scripts/run_qwen35_apple_acceptance.sh"
+    assert qwen_acceptance_wrapper.exists()
+    assert qwen_acceptance_wrapper.stat().st_mode & stat.S_IXUSR
+    subprocess.run(["bash", "-n", str(qwen_acceptance_wrapper)], cwd=ROOT, check=True)
+    qwen_acceptance_text = qwen_acceptance_wrapper.read_text(encoding="utf-8")
+    assert "bench/run_qwen35_apple_baseline.py" in qwen_acceptance_text
+    assert "bench/compare_qwen35_apple_baseline.py" in qwen_acceptance_text
+    assert "scripts/export_rwkv7_coreml.py" in qwen_acceptance_text
+    assert "PULL_QWEN" in qwen_acceptance_text
+    assert "RWKV_MLX_MODELS" in qwen_acceptance_text
+    assert "COREML_EXPORT_MODELS" in qwen_acceptance_text
     convert_mlx_script = ROOT / "scripts/convert_hf_to_mlx.py"
     assert convert_mlx_script.exists()
     assert convert_mlx_script.stat().st_mode & stat.S_IXUSR
