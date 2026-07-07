@@ -35,6 +35,28 @@ Committed evidence files:
 - [`../../bench/apple_qwen35_live_m5_20260707/results_rwkv_fp16_smoke.jsonl`](../../bench/apple_qwen35_live_m5_20260707/results_rwkv_fp16_smoke.jsonl)
 - [`../../bench/apple_qwen35_live_m5_20260707/results_rwkv_mm4_smoke.jsonl`](../../bench/apple_qwen35_live_m5_20260707/results_rwkv_mm4_smoke.jsonl)
 
+Additional Apple/Qwen3.5 evidence sets collected later the same day:
+
+- [`../../bench/apple_qwen35_08b_tokenonly_m5_20260707/`](../../bench/apple_qwen35_08b_tokenonly_m5_20260707/) — Qwen3.5 0.8B MLX-4bit token-only vs RWKV-7 0.4B/mm4 at `512 chars / 64 tokens`.
+- [`../../bench/apple_rkv_quant_min_m5_20260707/`](../../bench/apple_rkv_quant_min_m5_20260707/) — R/K/V projection quantization threshold activation.
+- [`../../bench/apple_step_eval_interval_m5_20260707/`](../../bench/apple_step_eval_interval_m5_20260707/) — `RWKV7_MLX_STEP_EVAL_INTERVAL=2` Apple smoke.
+- [`../../bench/apple_qwen35_2b_tokenonly_m5_20260707/`](../../bench/apple_qwen35_2b_tokenonly_m5_20260707/) — Qwen3.5 2B MLX-4bit token-only vs RWKV-7 1.5B/mm4 + RKV quant at `512 chars / 64 tokens`.
+
+## Qwen3.5 2B / RWKV-7 1.5B current gap
+
+The 2B-size row confirms that the Apple path runs above the tiny smoke scale,
+but it is not a performance win yet:
+
+| Model | Runtime | TTFT | Prefill tok/s | Decode tok/s | Peak memory |
+|---|---|---:|---:|---:|---:|
+| Qwen3.5 2B MLX-4bit | mlx-vlm token-only | 0.378899s | 335.181414 | 37.070964 | 2,020,245,484 B |
+| RWKV-7 1.5B mm4 + RKV quant | rwkv7_hf MLX | 11.019150s | 12.083573 | 8.979128 | 1,225,111,246 B |
+
+Gate ratios: `decode=0.242215`, `prefill=0.036051`, `ttft=29.082024`,
+`memory=0.606417`.  Memory is the passing gate; decode, prefill, and TTFT remain
+open.  The immediate engineering target is fused recurrent/prefill work before
+claiming the 2B-size Apple/Qwen3.5 gate.
+
 ## RWKV-7 MLX smoke rows collected
 
 The local RWKV MLX path is runnable on the same device with the 0.1B converted

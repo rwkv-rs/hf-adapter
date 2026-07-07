@@ -174,6 +174,7 @@ The MLX/VLM rows use `engine=mlx_vlm`, `runtime=mlx_vlm`, and the same
 `prefill_tok_s`, `decode_tok_s`, `ttft_s`, response, and MLX peak-memory fields
 as the rest of the `qwen35_apple_baseline` matrix.  Known public model ids are
 `mlx-community/Qwen3.5-0.8B-MLX-4bit`,
+`mlx-community/Qwen3.5-2B-MLX-4bit`,
 `mlx-community/Qwen3.5-4B-MLX-4bit`, and
 `mlx-community/Qwen3.5-9B-MLX-4bit`.
 Token-only rows use `runtime=mlx_vlm_token_only`, keep the same speed/memory
@@ -200,6 +201,19 @@ This stronger baseline shows RWKV-7 0.4B/mm4 still passing memory
 `prefill_ratio_rwkv_over_qwen=0.039915`, `ttft_ratio_rwkv_over_qwen=26.245268`).
 The next production-performance work therefore remains fused decode, faster
 prefill/chunked prefill, and TTFT reduction.
+
+The 2B-size token-only row is recorded in
+[`../../bench/apple_qwen35_2b_tokenonly_m5_20260707/`](../../bench/apple_qwen35_2b_tokenonly_m5_20260707/).
+The Qwen3.5 2B MLX-4bit snapshot can stall during the large Xet-backed weight
+file after small metadata files have downloaded; `scripts/hf_parallel_download.py`
+provides a bounded, resumable HTTP Range fallback for the single
+`model.safetensors` shard.  On the same `512 chars / 64 tokens` row, RWKV-7
+1.5B/mm4 + RKV quant is runnable and passes the memory gate
+(`memory_ratio_rwkv_over_qwen=0.606417`) but remains below the Qwen3.5 2B token
+baseline on speed (`decode_ratio_rwkv_over_qwen=0.242215`,
+`prefill_ratio_rwkv_over_qwen=0.036051`, `ttft_ratio_rwkv_over_qwen=29.082024`).
+This row needs about `4.13x` decode and `27.74x` prefill speedup to match the
+measured Qwen3.5 2B baseline.
 
 Run RWKV-7 MLX rows against the same prompt text:
 
@@ -360,7 +374,7 @@ enables these rows by default with `COMPARE_DIAGNOSTICS=1`.
 | RWKV target | Qwen3.5 comparator | Runtime gate | Current status |
 |---|---|---|---|
 | RWKV-7 0.4B W4/MLX | `qwen3.5:0.8b-mlx` | lower memory and higher decode tok/s at prompt 1k/4k/8k, decode 128/512 | needs same-device rows |
-| RWKV-7 1.5B W4/MLX | `qwen3.5:2b-mlx` | lower memory and higher or equal decode tok/s; TTFT no worse by >10% | needs same-device rows |
+| RWKV-7 1.5B W4/MLX | `qwen3.5:2b-mlx` / `mlx-community/Qwen3.5-2B-MLX-4bit` | lower memory and higher or equal decode tok/s; TTFT no worse by >10% | same-device 512/64 token-only row collected: memory pass, speed/TTFT fail |
 | RWKV-7 2.9B W4/MLX/CoreML | `qwen3.5:4b-mlx` | lower memory and higher decode tok/s | CoreML export prototype exists; ANE runtime rows not landed |
 | RWKV-7 larger / distilled mobile | `qwen3.5:9b-mlx` | mobile-useful memory envelope plus quality eval | requires model/quality work |
 
