@@ -93,6 +93,81 @@ def qwen35_public_metadata(model: str) -> dict[str, Any]:
         return row
     return {"family": "qwen3.5"}
 
+
+def _mlx_vlm_add_special_tokens(model: Any, processor: Any) -> bool:
+    model_type = getattr(getattr(model, "config", None), "model_type", "")
+    if model_type in ["gemma3", "gemma3n", "gemma4", "gemma4_unified"]:
+        return getattr(processor, "chat_template", None) is None
+    return True
+
+
+def _token_only_mlx_vlm_generation(
+    *,
+    model: Any,
+    processor: Any,
+    prompt: str,
+    max_new_tokens: int,
+    temperature: float,
+) -> dict[str, Any]:
+    import mlx.core as mx
+    from mlx_vlm.generate.ar import generate_step
+    from mlx_vlm.utils import prepare_inputs
+
+    reset_peak = getattr(mx, "reset_peak_memory", None)
+    if callable(reset_peak):
+        reset_peak()
+    inputs = prepare_inputs(
+        processor,
+        images=None,
+        audio=None,
+        videos=None,
+        prompts=prompt,
+        image_token_index=getattr(getattr(model, "config", None), "image_token_index", None),
+        add_special_tokens=_mlx_vlm_add_special_tokens(model, processor),
+    )
+    input_ids = inputs.get("input_ids")
+    mask = inputs.get("attention_mask")
+    if input_ids is None:
+        raise ValueError("MLX-VLM token-only fallback produced no input_ids")
+
+    prompt_tokens = int(input_ids.shape[-1])
+    generated_ids: list[int] = []
+    first_token_s = None
+    t0 = time.perf_counter()
+    for token, _logprobs in generate_step(
+        input_ids,
+        model,
+        None,
+        mask,
+        max_tokens=int(max_new_tokens),
+        temperature=float(temperature),
+    ):
+        if first_token_s is None:
+            first_token_s = time.perf_counter() - t0
+        generated_ids.append(int(token))
+    wall_s = time.perf_counter() - t0
+    try:
+        peak_memory_gb = float(mx.get_peak_memory()) / 1e9
+    except Exception:
+        peak_memory_gb = None
+    decode_s = max(float(wall_s) - float(first_token_s or 0.0), 0.0)
+    return {
+        "prompt_eval_tokens": int(prompt_tokens),
+        "generated_tokens": int(len(generated_ids)),
+        "wall_s": round(float(wall_s), 6),
+        "first_token_s": round(float(first_token_s), 6) if first_token_s is not None else None,
+        "ttft_s": round(float(first_token_s), 6) if first_token_s is not None else None,
+        "decode_s": round(float(decode_s), 6),
+        "prefill_tok_s": round(float(prompt_tokens) / float(first_token_s), 6) if first_token_s else None,
+        "decode_tok_s": round(float(len(generated_ids)) / float(decode_s), 6) if decode_s > 0 else None,
+        "mlx_vlm_chunk_count": int(len(generated_ids)),
+        "mlx_peak_memory_gb": round(float(peak_memory_gb), 6) if peak_memory_gb is not None else None,
+        "mlx_peak_memory_bytes": int(float(peak_memory_gb) * 1e9) if peak_memory_gb is not None else None,
+        "generated_preview": generated_ids[:16],
+        "response_preview": "",
+        "response_chars": 0,
+    }
+
 DEFAULT_PROMPT_SEED = (
     "User: Compare RWKV-7 and Qwen3.5 on Apple Silicon. "
     "Report throughput, latency, memory, state-cache behavior, and quantization stability.\n"
@@ -354,6 +429,7 @@ def run_mlx_vlm_qwen(
     temperature: float,
     results: str,
     store_response: bool = False,
+    token_only: bool = False,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     try:
@@ -410,71 +486,126 @@ def run_mlx_vlm_qwen(
     for max_new_tokens in decode_lengths:
         for repeat_index in range(1, repeats + 1):
             try:
-                reset_peak = getattr(mx, "reset_peak_memory", None)
-                if callable(reset_peak):
-                    reset_peak()
-                response_text = ""
-                first_token_s = None
-                last_response = None
-                chunk_count = 0
-                t0 = time.perf_counter()
-                for response in stream_generate(
-                    model,
-                    processor,
-                    prompt_case.prompt,
-                    image=None,
-                    max_tokens=int(max_new_tokens),
+                if token_only:
+                    metrics = _token_only_mlx_vlm_generation(
+                        model=model,
+                        processor=processor,
+                        prompt=prompt_case.prompt,
+                        max_new_tokens=int(max_new_tokens),
+                        temperature=float(temperature),
+                    )
+                    row = {
+                        "axis": AXIS,
+                        "status": "pass",
+                        "engine": "mlx_vlm",
+                        "runtime": "mlx_vlm_token_only",
+                        "model": model_id,
+                        **qwen35_public_metadata(model_id),
+                        "prompt_case": prompt_case.name,
+                        "prompt_target_chars": int(prompt_case.target_chars),
+                        "prompt_chars": len(prompt_case.prompt),
+                        "requested_generated_tokens": int(max_new_tokens),
+                        "repeat_index": int(repeat_index),
+                        "repeat": int(repeats),
+                        "load_s": round(float(load_s), 6),
+                        **metrics,
+                    }
+                    if store_response:
+                        row["response_text"] = ""
+                else:
+                    reset_peak = getattr(mx, "reset_peak_memory", None)
+                    if callable(reset_peak):
+                        reset_peak()
+                    response_text = ""
+                    first_token_s = None
+                    last_response = None
+                    chunk_count = 0
+                    t0 = time.perf_counter()
+                    for response in stream_generate(
+                        model,
+                        processor,
+                        prompt_case.prompt,
+                        image=None,
+                        max_tokens=int(max_new_tokens),
+                        temperature=float(temperature),
+                        verbose=False,
+                    ):
+                        chunk_count += 1
+                        if not getattr(response, "is_draft", False):
+                            token = getattr(response, "token", None)
+                            text = str(getattr(response, "text", "") or "")
+                            if first_token_s is None and (token is not None or text):
+                                first_token_s = time.perf_counter() - t0
+                            response_text += text
+                            last_response = response
+                    wall_s = time.perf_counter() - t0
+                    prompt_tokens = _safe_int(getattr(last_response, "prompt_tokens", None))
+                    generated_tokens = _safe_int(getattr(last_response, "generation_tokens", None))
+                    prompt_tps = _safe_float(getattr(last_response, "prompt_tps", None))
+                    generation_tps = _safe_float(getattr(last_response, "generation_tps", None))
+                    peak_memory_gb = _safe_float(getattr(last_response, "peak_memory", None))
+                    if not peak_memory_gb:
+                        try:
+                            peak_memory_gb = float(mx.get_peak_memory()) / 1e9
+                        except Exception:
+                            peak_memory_gb = None
+                    row = {
+                        "axis": AXIS,
+                        "status": "pass",
+                        "engine": "mlx_vlm",
+                        "runtime": "mlx_vlm",
+                        "model": model_id,
+                        **qwen35_public_metadata(model_id),
+                        "prompt_case": prompt_case.name,
+                        "prompt_target_chars": int(prompt_case.target_chars),
+                        "prompt_chars": len(prompt_case.prompt),
+                        "prompt_eval_tokens": prompt_tokens,
+                        "generated_tokens": generated_tokens,
+                        "requested_generated_tokens": int(max_new_tokens),
+                        "repeat_index": int(repeat_index),
+                        "repeat": int(repeats),
+                        "load_s": round(float(load_s), 6),
+                        "wall_s": round(float(wall_s), 6),
+                        "first_token_s": round(float(first_token_s), 6) if first_token_s is not None else None,
+                        "ttft_s": round(float(first_token_s), 6) if first_token_s is not None else None,
+                        "prefill_tok_s": round(float(prompt_tps), 6) if prompt_tps else None,
+                        "decode_tok_s": round(float(generation_tps), 6) if generation_tps else None,
+                        "mlx_vlm_chunk_count": int(chunk_count),
+                        "mlx_peak_memory_gb": round(float(peak_memory_gb), 6) if peak_memory_gb is not None else None,
+                        "mlx_peak_memory_bytes": int(float(peak_memory_gb) * 1e9) if peak_memory_gb is not None else None,
+                        "response_preview": response_text[:160],
+                        "response_chars": len(response_text),
+                    }
+                    if store_response:
+                        row["response_text"] = response_text
+            except UnicodeDecodeError as exc:
+                metrics = _token_only_mlx_vlm_generation(
+                    model=model,
+                    processor=processor,
+                    prompt=prompt_case.prompt,
+                    max_new_tokens=int(max_new_tokens),
                     temperature=float(temperature),
-                    verbose=False,
-                ):
-                    chunk_count += 1
-                    if not getattr(response, "is_draft", False):
-                        token = getattr(response, "token", None)
-                        text = str(getattr(response, "text", "") or "")
-                        if first_token_s is None and (token is not None or text):
-                            first_token_s = time.perf_counter() - t0
-                        response_text += text
-                        last_response = response
-                wall_s = time.perf_counter() - t0
-                prompt_tokens = _safe_int(getattr(last_response, "prompt_tokens", None))
-                generated_tokens = _safe_int(getattr(last_response, "generation_tokens", None))
-                prompt_tps = _safe_float(getattr(last_response, "prompt_tps", None))
-                generation_tps = _safe_float(getattr(last_response, "generation_tps", None))
-                peak_memory_gb = _safe_float(getattr(last_response, "peak_memory", None))
-                if not peak_memory_gb:
-                    try:
-                        peak_memory_gb = float(mx.get_peak_memory()) / 1e9
-                    except Exception:
-                        peak_memory_gb = None
+                )
                 row = {
                     "axis": AXIS,
                     "status": "pass",
                     "engine": "mlx_vlm",
-                    "runtime": "mlx_vlm",
+                    "runtime": "mlx_vlm_token_only",
                     "model": model_id,
                     **qwen35_public_metadata(model_id),
                     "prompt_case": prompt_case.name,
                     "prompt_target_chars": int(prompt_case.target_chars),
                     "prompt_chars": len(prompt_case.prompt),
-                    "prompt_eval_tokens": prompt_tokens,
-                    "generated_tokens": generated_tokens,
                     "requested_generated_tokens": int(max_new_tokens),
                     "repeat_index": int(repeat_index),
                     "repeat": int(repeats),
                     "load_s": round(float(load_s), 6),
-                    "wall_s": round(float(wall_s), 6),
-                    "first_token_s": round(float(first_token_s), 6) if first_token_s is not None else None,
-                    "ttft_s": round(float(first_token_s), 6) if first_token_s is not None else None,
-                    "prefill_tok_s": round(float(prompt_tps), 6) if prompt_tps else None,
-                    "decode_tok_s": round(float(generation_tps), 6) if generation_tps else None,
-                    "mlx_vlm_chunk_count": int(chunk_count),
-                    "mlx_peak_memory_gb": round(float(peak_memory_gb), 6) if peak_memory_gb is not None else None,
-                    "mlx_peak_memory_bytes": int(float(peak_memory_gb) * 1e9) if peak_memory_gb is not None else None,
-                    "response_preview": response_text[:160],
-                    "response_chars": len(response_text),
+                    "text_decode_error": f"{type(exc).__name__}: {exc}",
+                    "fallback_after_text_decode_error": True,
+                    **metrics,
                 }
                 if store_response:
-                    row["response_text"] = response_text
+                    row["response_text"] = ""
             except Exception as exc:
                 row = {
                     "axis": AXIS,
@@ -708,6 +839,14 @@ def main() -> int:
             "empty disables this fallback baseline lane."
         ),
     )
+    ap.add_argument(
+        "--qwen-mlx-vlm-token-only",
+        action="store_true",
+        help=(
+            "Benchmark MLX-VLM Qwen models by generated token ids only. This avoids text detokenizer "
+            "UnicodeDecodeError failures and records speed/memory rows without response text."
+        ),
+    )
     ap.add_argument("--ollama-host", default=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"))
     ap.add_argument("--ollama-timeout-s", type=float, default=600.0)
     ap.add_argument("--temperature", type=float, default=0.0)
@@ -738,6 +877,7 @@ def main() -> int:
         "status": "info",
         "qwen_models": qwen_models,
         "qwen_mlx_vlm_models": qwen_mlx_vlm_models,
+        "qwen_mlx_vlm_token_only": bool(args.qwen_mlx_vlm_token_only),
         "rwkv_mlx_models": rwkv_models,
         "prompt_cases": [{"name": case.name, "target_chars": case.target_chars} for case in prompt_cases],
         "decode_lengths": decode_lengths,
@@ -761,6 +901,7 @@ def main() -> int:
             "rwkv_mlx_jobs": len(rwkv_models) * len(prompt_cases) * len(decode_lengths) * int(args.repeat),
             "qwen_models": qwen_models,
             "qwen_mlx_vlm_models": qwen_mlx_vlm_models,
+            "qwen_mlx_vlm_token_only": bool(args.qwen_mlx_vlm_token_only),
             "rwkv_mlx_models": rwkv_models,
             "prompt_cases": [{"name": case.name, "chars": len(case.prompt)} for case in prompt_cases],
             "decode_lengths": decode_lengths,
@@ -796,6 +937,7 @@ def main() -> int:
                     temperature=float(args.temperature),
                     results=args.results,
                     store_response=bool(args.store_responses),
+                    token_only=bool(args.qwen_mlx_vlm_token_only),
                 )
             )
         for model_path in rwkv_models:

@@ -25,6 +25,7 @@ QWEN_MODELS="${QWEN_MODELS:-qwen3.5:0.8b-mlx,qwen3.5:2b-mlx,qwen3.5:4b-mlx,qwen3
 RUN_QWEN="${RUN_QWEN:-auto}"
 QWEN_MLX_VLM_MODELS="${QWEN_MLX_VLM_MODELS:-}"
 RUN_QWEN_MLX_VLM="${RUN_QWEN_MLX_VLM:-auto}"
+QWEN_MLX_VLM_TOKEN_ONLY="${QWEN_MLX_VLM_TOKEN_ONLY:-0}"
 PULL_QWEN="${PULL_QWEN:-0}"
 OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
 OLLAMA_TIMEOUT_S="${OLLAMA_TIMEOUT_S:-600}"
@@ -225,6 +226,9 @@ if [[ "${RUN_QWEN_MLX_VLM}" == "1" ]]; then
   baseline_args+=(--qwen-mlx-vlm-models "${QWEN_MLX_VLM_MODELS}")
 else
   baseline_args+=(--qwen-mlx-vlm-models "")
+fi
+if [[ "${QWEN_MLX_VLM_TOKEN_ONLY}" == "1" ]]; then
+  baseline_args+=(--qwen-mlx-vlm-token-only)
 fi
 if [[ "${RUN_RWKV}" == "1" ]]; then
   baseline_args+=(--rwkv-mlx-models "${RWKV_MLX_MODELS}")
