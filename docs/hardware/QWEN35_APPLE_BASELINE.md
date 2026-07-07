@@ -307,11 +307,15 @@ decode/WKV/projection fusion.
 
 `RWKV7_MLX_STEP_EVAL_INTERVAL` controls how often the MLX recurrent loop forces
 state evaluation.  The model default is `1` for historical behavior; the
-Qwen3.5 Apple acceptance wrapper defaults to `2` after the M5 smoke in
+Qwen3.5 Apple acceptance wrapper now defaults to `8`.  The first M5 smoke in
 [`../../bench/apple_step_eval_interval_m5_20260707/`](../../bench/apple_step_eval_interval_m5_20260707/)
-improved the same `512 chars / 64 tokens` 0.4B/mm4 direct R/K/V row from
+improved the `512 chars / 64 tokens` 0.4B/mm4 direct R/K/V row from
 ≈69.06/50.51 prefill/decode tok/s to ≈76.91/58.36 tok/s at essentially the same
-peak memory and with chunked/full prefill `max_abs=0.0`.
+peak memory and with chunked/full prefill `max_abs=0.0`.  The follow-up 1.5B/mm4
+fused-FFN sweep in
+[`../../bench/apple_step_eval_interval_15b_m5_20260707/`](../../bench/apple_step_eval_interval_15b_m5_20260707/)
+showed interval 8 as the best prefill/TTFT point (`29.72` prefill tok/s,
+`4.48s` TTFT) while still improving decode over interval 2.
 
 Run CoreML runtime rows from an export manifest:
 

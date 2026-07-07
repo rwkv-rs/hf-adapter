@@ -954,6 +954,7 @@ def main() -> int:
         "rwkv_quant_rkv_min_params": None
         if int(args.rwkv_quant_rkv_min_params) < 0
         else int(args.rwkv_quant_rkv_min_params),
+        "rwkv_step_eval_interval_env": os.environ.get("RWKV7_MLX_STEP_EVAL_INTERVAL", ""),
         "rwkv_fused_ffn_key_relu2_env": os.environ.get("RWKV7_MLX_FUSED_FFN_KEY_RELU2", ""),
         **device_info(),
     }
@@ -988,6 +989,7 @@ def main() -> int:
             "rwkv_quant_rkv_min_params": None
             if int(args.rwkv_quant_rkv_min_params) < 0
             else int(args.rwkv_quant_rkv_min_params),
+            "rwkv_step_eval_interval_env": os.environ.get("RWKV7_MLX_STEP_EVAL_INTERVAL", ""),
             "rwkv_fused_ffn_key_relu2_env": os.environ.get("RWKV7_MLX_FUSED_FFN_KEY_RELU2", ""),
         }
         print(json.dumps(plan, ensure_ascii=False))
