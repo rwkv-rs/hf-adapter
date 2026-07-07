@@ -89,14 +89,14 @@ Cold-row comparison gates:
 | Model | Runtime | Prompt tokens | Generated tokens | TTFT | Prefill tok/s | Decode tok/s | Peak memory | Kernel evidence | Gate note |
 |---|---|---:|---:|---:|---:|---:|---:|---|---|
 | Qwen3.5 2B MLX-4bit | mlx-vlm token-only | 127 | 64 | 0.105343s | 1205.584132 | 110.627117 | 2,193,064,509 B | mlx-vlm token-only | baseline |
-| RWKV-7 1.5B mm4 + RKV quant | rwkv7_hf MLX | 133 | 64 | 3.119722s | 42.634884 | 31.629163 | 1,250,679,010 B | WKV Metal 7920, RKV Metal 7920/fallback 0 | memory pass, speed fail |
+| RWKV-7 1.5B mm4 + RKV quant | rwkv7_hf MLX | 133 | 64 | 3.105107s | 42.835321 | 31.695076 | 1,238,026,466 B | WKV Metal 4728, RKV Metal 4728/fallback 0 | memory pass, speed fail |
 
 Warm-row comparison gates:
 
-- `decode_ratio_rwkv_over_qwen=0.285908`
-- `prefill_ratio_rwkv_over_qwen=0.035365`
-- `ttft_ratio_rwkv_over_qwen=29.614896`
-- `memory_ratio_rwkv_over_qwen=0.570288`
+- `decode_ratio_rwkv_over_qwen=0.286504`
+- `prefill_ratio_rwkv_over_qwen=0.035531`
+- `ttft_ratio_rwkv_over_qwen=29.476159`
+- `memory_ratio_rwkv_over_qwen=0.564519`
 
 Interpretation:
 
@@ -107,7 +107,10 @@ Interpretation:
 - Warmup matters for MLX/Metal rows.  The RWKV warmed row proves WKV and grouped
   R/K/V quant projection are actually on Metal, but Qwen also speeds up after
   warmup, so this does not close the speed gate.
-- On the warmed row, RWKV still needs about `3.50x` decode speedup and `28.28x`
+- Main generation telemetry is separated from `chunked_prefill` correctness
+  telemetry: the warmed row records main WKV/RKV Metal counts of 4728 and
+  chunked-prefill WKV/RKV Metal counts of 3192 with max diff `0.0`.
+- On the warmed row, RWKV still needs about `3.49x` decode speedup and `28.14x`
   prefill speedup to match the measured Qwen3.5 2B token baseline.
 - The next optimization lane remains fused recurrent/prefill work first, then
   deeper fused quant projection and TTFT reduction.

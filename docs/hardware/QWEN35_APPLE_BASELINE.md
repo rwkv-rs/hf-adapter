@@ -217,10 +217,10 @@ baseline on speed (`decode_ratio_rwkv_over_qwen=0.242215`,
 The same harness now supports `--warmup-repeats` so Apple rows can separate
 MLX/Metal compile cold-start from steady-state generation.  With
 `--warmup-repeats 1`, Qwen3.5 2B reaches ≈1205.58 prefill tok/s and ≈110.63
-decode tok/s, while RWKV-7 1.5B/mm4 + RKV quant reaches ≈42.63 prefill tok/s
-and ≈31.63 decode tok/s with `wkv_backend_counts={"metal":7920}` and grouped
+decode tok/s, while RWKV-7 1.5B/mm4 + RKV quant reaches ≈42.84 prefill tok/s
+and ≈31.70 decode tok/s with `wkv_backend_counts={"metal":4728}` and grouped
 R/K/V quant `fallback=0`.  The warmed row improves RWKV absolute decode but still
-needs about `3.50x` decode and `28.28x` prefill speedup to match the warmed
+needs about `3.49x` decode and `28.14x` prefill speedup to match the warmed
 Qwen3.5 2B baseline.
 
 Run RWKV-7 MLX rows against the same prompt text:

@@ -54,7 +54,7 @@ but it is not a performance win yet:
 
 Cold gate ratios: `decode=0.242215`, `prefill=0.036051`, `ttft=29.082024`,
 `memory=0.606417`.  With `--warmup-repeats 1`, the warmed row records
-`decode=0.285908`, `prefill=0.035365`, `ttft=29.614896`, `memory=0.570288` and
+`decode=0.286504`, `prefill=0.035531`, `ttft=29.476159`, `memory=0.564519` and
 proves the RWKV path used WKV Metal plus grouped R/K/V quant Metal with no R/K/V
 fallback.  Memory is the passing gate; decode, prefill, and TTFT remain open.
 The immediate engineering target is fused recurrent/prefill work before claiming

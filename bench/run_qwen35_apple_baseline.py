@@ -718,19 +718,12 @@ def run_rwkv_mlx(
             t_prefill = time.perf_counter()
             logits, state = model.prefill([prompt_ids])
             mx.eval(logits)
+            prefill_logits = logits
             prefill_s = time.perf_counter() - t_prefill
             chunk_diff = None
             chunk_s = None
-            if int(chunk_size) > 0:
-                t_chunk = time.perf_counter()
-                chunk_logits, chunk_state = model.chunked_prefill([prompt_ids], chunk_size=int(chunk_size))
-                mx.eval(chunk_logits)
-                chunk_s = time.perf_counter() - t_chunk
-                chunk_diff = float(mx.max(mx.abs(logits.astype(mx.float32) - chunk_logits.astype(mx.float32))))
-                if int(chunk_state.seen_tokens) != len(prompt_ids):
-                    raise AssertionError(
-                        f"chunked state seen_tokens={chunk_state.seen_tokens}, expected {len(prompt_ids)}"
-                    )
+            chunk_telemetry = None
+            chunk_memory = None
             # Streaming-shaped greedy decode.  The first token is available as
             # soon as the prefill logits are evaluated; then each emitted token
             # is fed once to advance the recurrent state and prepare the next
@@ -754,6 +747,23 @@ def run_rwkv_mlx(
             decode_s = first_s + decode_step_s
             response_text = tokenizer.decode(generated_preview, skip_special_tokens=True) if store_response else ""
             telemetry = model.telemetry()
+            main_memory = mlx_memory_telemetry()
+            if int(chunk_size) > 0:
+                reset_counters = getattr(model, "reset_telemetry_counters", None)
+                if callable(reset_counters):
+                    reset_counters()
+                reset_mlx_peak_memory()
+                t_chunk = time.perf_counter()
+                chunk_logits, chunk_state = model.chunked_prefill([prompt_ids], chunk_size=int(chunk_size))
+                mx.eval(chunk_logits)
+                chunk_s = time.perf_counter() - t_chunk
+                chunk_diff = float(mx.max(mx.abs(prefill_logits.astype(mx.float32) - chunk_logits.astype(mx.float32))))
+                if int(chunk_state.seen_tokens) != len(prompt_ids):
+                    raise AssertionError(
+                        f"chunked state seen_tokens={chunk_state.seen_tokens}, expected {len(prompt_ids)}"
+                    )
+                chunk_telemetry = model.telemetry()
+                chunk_memory = mlx_memory_telemetry()
             row = {
                 "axis": AXIS,
                 "status": "pass",
@@ -796,7 +806,7 @@ def run_rwkv_mlx(
                 "group_rkv_quant_projection": telemetry.get("group_rkv_quant_projection"),
                 "group_rkv_quant_projection_mode": telemetry.get("group_rkv_quant_projection_mode"),
                 "group_rkv_quant_projection_counts": telemetry.get("group_rkv_quant_projection_counts"),
-                **mlx_memory_telemetry(),
+                **main_memory,
             }
             if store_response:
                 row["generated_token_ids"] = generated_preview
@@ -808,6 +818,10 @@ def run_rwkv_mlx(
                         "chunk_size": int(chunk_size),
                         "chunked_prefill_s": round(float(chunk_s), 6) if chunk_s is not None else None,
                         "chunked_prefill_max_abs": round(float(chunk_diff), 8),
+                        "chunked_wkv_backend_counts": (chunk_telemetry or {}).get("wkv_backend_counts"),
+                        "chunked_quantized_linear_last_backend_counts": (chunk_telemetry or {}).get("quantized_linear_last_backend_counts"),
+                        "chunked_group_rkv_quant_projection_counts": (chunk_telemetry or {}).get("group_rkv_quant_projection_counts"),
+                        "chunked_mlx_peak_memory_bytes": (chunk_memory or {}).get("mlx_peak_memory_bytes"),
                     }
                 )
             if is_warmup:
