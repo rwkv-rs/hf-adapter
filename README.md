@@ -144,6 +144,11 @@ counts `[2, 3]`, aggregate round min≈25.32 tok/s, and peak≈1434MB.
 `auto_mm4_metal_batch_exactness_guard` and uses the sequential safe path until
 that batched gap is closed, so longer end-to-end speed gates are still needed
 before enabling it by default.
+`RWKV7_MLX_STEP_EVAL_INTERVAL` can reduce recurrent-loop synchronization
+overhead; the model default stays `1`, while the Apple/Qwen3.5 acceptance
+wrapper defaults to `2` after an M5 0.4B/mm4 512/64 smoke improved
+prefill/decode from ≈69.06/50.51 to ≈76.91/58.36 tok/s at the same memory
+class.
 
 ## Layout
 
