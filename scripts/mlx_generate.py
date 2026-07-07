@@ -31,6 +31,7 @@ def main() -> int:
     ap.add_argument("--skip-special-tokens", action="store_true")
     ap.add_argument("--quantization", default="none", choices=["none", "mm8", "mm4"], help="Optional MLX packed W8/W4 projection path.")
     ap.add_argument("--quant-min-params", type=int, default=8_000_000)
+    ap.add_argument("--quant-rkv-min-params", type=int, default=-1, help="Separate min-params threshold for attention r/k/v projection quantization; -1 preserves --quant-min-params.")
     ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference", "metal", "auto"])
     ap.add_argument("--require-mlx", action="store_true")
     ap.add_argument("--json-only", action="store_true")
@@ -47,6 +48,7 @@ def main() -> int:
             "model": Path(args.model).name,
             "quantization": args.quantization,
             "quant_min_params": int(args.quant_min_params),
+            "quant_rkv_min_params": None if int(args.quant_rkv_min_params) < 0 else int(args.quant_rkv_min_params),
             "quant_backend": args.quant_backend,
         }
         print(json.dumps(row, ensure_ascii=False))
@@ -62,6 +64,7 @@ def main() -> int:
         skip_special_tokens=bool(args.skip_special_tokens),
         quantization=args.quantization,
         quant_min_params=int(args.quant_min_params),
+        quant_rkv_min_params=None if int(args.quant_rkv_min_params) < 0 else int(args.quant_rkv_min_params),
         quant_backend=args.quant_backend,
     )
     row = {
@@ -71,6 +74,7 @@ def main() -> int:
         "dtype": args.dtype,
         "quantization": args.quantization,
         "quant_min_params": int(args.quant_min_params),
+        "quant_rkv_min_params": None if int(args.quant_rkv_min_params) < 0 else int(args.quant_rkv_min_params),
         "quant_backend": args.quant_backend,
         "prompt_preview": args.prompt[:80],
         "text": output.text,

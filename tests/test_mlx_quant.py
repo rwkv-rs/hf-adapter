@@ -222,6 +222,25 @@ def test_mlx_model_metal_quantized_linear_hook_if_available():
     assert int(state.seen_tokens) == 3
 
 
+def test_mlx_model_rkv_quant_min_params_if_available():
+    if importlib.util.find_spec("mlx") is None:
+        return
+
+    from tests.test_apple_silicon_mlx_model_smoke import tiny_torch_model_to_mlx
+
+    _, model, _ = tiny_torch_model_to_mlx()
+    replaced = model.quantize_linears("mm4", min_params=10**9, rkv_min_params=1, backend="auto")
+    assert replaced > 0
+    keys = set(model.quantized_linears)
+    assert "model.layers.0.attn.r_proj.weight" in keys
+    assert "model.layers.0.attn.k_proj.weight" in keys
+    assert "model.layers.0.attn.v_proj.weight" in keys
+    assert "model.layers.0.attn.o_proj.weight" not in keys
+    telemetry = model.telemetry()
+    assert telemetry["quantized_linear_min_params"] == 10**9
+    assert telemetry["quantized_linear_rkv_min_params"] == 1
+
+
 def test_mlx_model_grouped_rkv_quant_projection_if_available():
     if importlib.util.find_spec("mlx") is None:
         return
@@ -286,6 +305,7 @@ if __name__ == "__main__":
     test_mlx_quant_formula_if_available()
     test_mlx_model_quantized_linear_hook_if_available()
     test_mlx_model_metal_quantized_linear_hook_if_available()
+    test_mlx_model_rkv_quant_min_params_if_available()
     test_mlx_model_grouped_rkv_quant_projection_if_available()
     test_mlx_model_auto_quantized_linear_hook_if_available()
     print("MLX QUANT TESTS PASS")
