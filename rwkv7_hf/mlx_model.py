@@ -818,6 +818,8 @@ class MLXRWKV7Model:
         self.step_eval_interval = max(1, _env_int("RWKV7_MLX_STEP_EVAL_INTERVAL", 1))
         self.fused_ffn_key_relu2 = _env_flag("RWKV7_MLX_FUSED_FFN_KEY_RELU2", False)
         self.fused_ffn_key_relu2_counts: dict[str, int] = {"metal": 0, "fallback": 0}
+        self.state_only_prefill_calls = 0
+        self.state_only_prefill_tokens = 0
         self.group_rkv_quant_projection = _env_flag("RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION", False)
         self.group_rkv_quant_projection_mode = _env_choice(
             "RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE",
@@ -953,6 +955,8 @@ class MLXRWKV7Model:
         self.wkv_backend_last = None
         self.wkv_backend_counts = {"reference": 0, "metal": 0}
         self.fused_ffn_key_relu2_counts = {"metal": 0, "fallback": 0}
+        self.state_only_prefill_calls = 0
+        self.state_only_prefill_tokens = 0
         self.group_rkv_quant_projection_counts = {"metal": 0, "fallback": 0}
         for qlinear in self.quantized_linears.values():
             qlinear.last_backend = None
@@ -973,6 +977,8 @@ class MLXRWKV7Model:
             "step_eval_interval": int(self.step_eval_interval),
             "fused_ffn_key_relu2": bool(self.fused_ffn_key_relu2),
             "fused_ffn_key_relu2_counts": dict(self.fused_ffn_key_relu2_counts),
+            "state_only_prefill_calls": int(self.state_only_prefill_calls),
+            "state_only_prefill_tokens": int(self.state_only_prefill_tokens),
             **summarize_mlx_arrays(self.arrays),
         }
         if self.quantized_linears:
@@ -1303,6 +1309,47 @@ class MLXRWKV7Model:
             mx.eval(out)
         return out, state
 
+    def prefill_state_only(
+        self,
+        input_ids: Iterable[Iterable[int]] | Any,
+        state: MLXRWKV7State | None = None,
+    ) -> MLXRWKV7State:
+        """Advance recurrent state over ``input_ids`` without producing logits.
+
+        This is the serving/chunked-prefill fast path for non-final chunks:
+        intermediate chunks only need to update recurrent state, so running the
+        final layer norm and ``lm_head`` on every chunk boundary is wasted work.
+        The full ``prefill`` path remains unchanged and final chunks still call
+        ``forward(..., collect_all=False)`` to produce comparable last-token
+        logits.
+        """
+
+        mx = _mx()
+        ids = mx.array(input_ids, dtype=mx.int32)
+        if ids.ndim == 1:
+            ids = ids.reshape(1, -1)
+        if ids.ndim != 2:
+            raise ValueError("MLXRWKV7Model.prefill_state_only expects input ids shaped [batch, seq]")
+        B, T = int(ids.shape[0]), int(ids.shape[1])
+        if T <= 0 or B <= 0:
+            raise ValueError("MLXRWKV7Model.prefill_state_only requires a non-empty batch and sequence")
+        if state is None:
+            state = self.init_state(B)
+        elif state.batch_size != B:
+            raise ValueError(f"state batch size {state.batch_size} does not match input batch size {B}")
+        last = None
+        for t in range(T):
+            last, state = self._step_token(ids[:, t], state)
+        self.state_only_prefill_calls += 1
+        self.state_only_prefill_tokens += T
+        # Force the recurrent cache to materialize at the chunk boundary so the
+        # lazy graph does not span an unbounded prompt.  This mirrors
+        # ``forward(..., collect_all=False)`` final synchronization without the
+        # last-token norm/lm_head projection.
+        if last is not None:
+            self._eval_step_state(last, state)
+        return state
+
     def prefill(self, input_ids: Iterable[Iterable[int]] | Any, state: MLXRWKV7State | None = None):
         return self.forward(input_ids, state=state, collect_all=False)
 
@@ -1341,8 +1388,14 @@ class MLXRWKV7Model:
             raise ValueError("chunk_size must be positive")
         state = self.init_state(int(ids.shape[0]))
         logits = None
-        for start in range(0, int(ids.shape[1]), int(chunk_size)):
-            logits, state = self.forward(ids[:, start : start + int(chunk_size)], state=state, collect_all=False)
+        total_tokens = int(ids.shape[1])
+        for start in range(0, total_tokens, int(chunk_size)):
+            end = min(start + int(chunk_size), total_tokens)
+            chunk = ids[:, start:end]
+            if end < total_tokens:
+                state = self.prefill_state_only(chunk, state=state)
+            else:
+                logits, state = self.forward(chunk, state=state, collect_all=False)
         if logits is None:
             raise ValueError("chunked_prefill requires non-empty input")
         return logits, state

@@ -822,6 +822,8 @@ def run_rwkv_mlx(
                         "chunked_prefill_max_abs": round(float(chunk_diff), 8),
                         "chunked_wkv_backend_counts": (chunk_telemetry or {}).get("wkv_backend_counts"),
                         "chunked_fused_ffn_key_relu2_counts": (chunk_telemetry or {}).get("fused_ffn_key_relu2_counts"),
+                        "chunked_state_only_prefill_calls": (chunk_telemetry or {}).get("state_only_prefill_calls"),
+                        "chunked_state_only_prefill_tokens": (chunk_telemetry or {}).get("state_only_prefill_tokens"),
                         "chunked_quantized_linear_last_backend_counts": (chunk_telemetry or {}).get("quantized_linear_last_backend_counts"),
                         "chunked_group_rkv_quant_projection_counts": (chunk_telemetry or {}).get("group_rkv_quant_projection_counts"),
                         "chunked_mlx_peak_memory_bytes": (chunk_memory or {}).get("mlx_peak_memory_bytes"),
