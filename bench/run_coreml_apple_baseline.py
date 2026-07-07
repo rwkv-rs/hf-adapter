@@ -87,6 +87,21 @@ def full_logits_seq_len(manifest: dict[str, Any]) -> int | None:
     return safe_int(input_ids[1])
 
 
+def stateful_function_status(manifest: dict[str, Any]) -> dict[str, Any]:
+    decode = manifest_function(manifest, "decode") or {}
+    prefill = manifest_function(manifest, "prefill") or {}
+    contract = manifest.get("state_contract") if isinstance(manifest.get("state_contract"), dict) else {}
+    return {
+        "stateful_contract_present": bool(contract),
+        "state_contract_version": contract.get("version"),
+        "state_mode": manifest.get("state_mode"),
+        "decode_implemented": bool(decode.get("implemented")),
+        "prefill_implemented": bool(prefill.get("implemented")),
+        "state_tensors_per_layer": sorted((contract.get("state_tensors_per_layer") or {}).keys()),
+        "global_state_tensors": sorted((contract.get("global_state_tensors") or {}).keys()),
+    }
+
+
 def infer_coreml_package(manifest: dict[str, Any]) -> Path:
     output_dir = Path(str(manifest.get("output_dir") or "."))
     basename = str(manifest.get("basename") or Path(str(manifest.get("source_model") or "rwkv7")).name)
@@ -151,6 +166,7 @@ def plan_row(
         "state_mode": manifest.get("state_mode"),
         "quantization": manifest.get("quantization"),
         "full_logits_seq_len": full_logits_seq_len(manifest),
+        **stateful_function_status(manifest),
         "prompt_target_chars": prompt_target_chars,
         "decode_lengths": decode_lengths,
         "repeat": int(repeat),
@@ -269,6 +285,7 @@ def run_full_logits_rows(
                     "state_mode": manifest.get("state_mode"),
                     "quantization": manifest.get("quantization"),
                     "compute_units": compute_units,
+                    **stateful_function_status(manifest),
                     "prompt_case": prompt_case,
                     "prompt_target_chars": int(chars),
                     "prompt_chars": int(chars),

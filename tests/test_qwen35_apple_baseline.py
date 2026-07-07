@@ -269,6 +269,8 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
             "32,64",
             "--decode-lengths",
             "4,8",
+            "--warmup-repeats",
+            "2",
             "--qwen-models",
             "qwen3.5:0.8b-mlx",
             "--qwen-mlx-vlm-models",
@@ -290,8 +292,13 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
     rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert rows[0]["axis"] == AXIS + "_env"
     assert rows[1]["axis"] == AXIS + "_plan"
+    assert rows[0]["warmup_repeats"] == 2
+    assert "rwkv_step_eval_interval_env" in rows[0]
+    assert "rwkv_step_eval_interval_env" in rows[1]
     assert rows[1]["qwen_jobs"] == 4
     assert rows[1]["qwen_mlx_vlm_jobs"] == 4
+    assert rows[1]["warmup_repeats"] == 2
+    assert rows[1]["warmup_jobs"] == 32
     assert rows[1]["qwen_mlx_vlm_models"] == ["mlx-community/Qwen3.5-0.8B-MLX-4bit"]
     assert rows[1]["qwen_mlx_vlm_token_only"] is True
     assert rows[1]["rwkv_quant_min_params"] == 4_000_000
@@ -312,6 +319,7 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
             "RWKV_QUANT_RKV_MIN_PARAMS": "0",
             "PROMPT_TARGET_CHARS": "16",
             "DECODE_LENGTHS": "4",
+            "WARMUP_REPEATS": "1",
             "RESULTS": str(out),
             "PYTHON_BIN": sys.executable,
             "SKIP_COMPARE": "1",
@@ -329,9 +337,16 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
     rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert rows[0]["axis"] == AXIS + "_env"
     assert rows[1]["axis"] == AXIS + "_plan"
+    assert rows[0]["warmup_repeats"] == 1
+    assert rows[0]["rwkv_step_eval_interval_env"] == "8"
+    assert rows[1]["rwkv_step_eval_interval_env"] == "8"
+    assert rows[0]["rwkv_fused_ffn_key_relu2_env"] == "1"
+    assert rows[1]["rwkv_fused_ffn_key_relu2_env"] == "1"
     assert rows[1]["qwen_jobs"] == 0
     assert rows[1]["qwen_mlx_vlm_jobs"] == 1
     assert rows[1]["rwkv_mlx_jobs"] == 2
+    assert rows[1]["warmup_repeats"] == 1
+    assert rows[1]["warmup_jobs"] == 3
     assert rows[1]["qwen_mlx_vlm_models"] == ["mlx-community/Qwen3.5-0.8B-MLX-4bit"]
     assert rows[1]["qwen_mlx_vlm_token_only"] is True
     assert rows[1]["rwkv_quant_rkv_min_params"] == 0
@@ -577,3 +592,29 @@ def test_compare_cli_writes_comparison_rows(tmp_path: Path) -> None:
     assert output_rows[-1]["status"] == "pass"
     appended_rows = [json.loads(line) for line in compared.read_text(encoding="utf-8").splitlines()]
     assert [row["axis"] for row in appended_rows] == [COMPARISON_AXIS, SUMMARY_AXIS]
+
+
+def test_mlx_model_reset_telemetry_counters_without_mlx_runtime() -> None:
+    from rwkv7_hf.mlx_model import MLXRWKV7Model
+
+    class DummyQLinear:
+        def __init__(self) -> None:
+            self.last_backend = "metal"
+            self.backend_counts = {"reference": 1, "affine": 2, "metal": 3}
+
+    model = object.__new__(MLXRWKV7Model)
+    model.wkv_backend_last = "metal"
+    model.wkv_backend_counts = {"reference": 4, "metal": 5}
+    model.fused_ffn_key_relu2_counts = {"metal": 8, "fallback": 9}
+    model.group_rkv_quant_projection_counts = {"metal": 6, "fallback": 7}
+    qlinear = DummyQLinear()
+    model.quantized_linears = {"x.weight": qlinear}
+
+    model.reset_telemetry_counters()
+
+    assert model.wkv_backend_last is None
+    assert model.wkv_backend_counts == {"reference": 0, "metal": 0}
+    assert model.fused_ffn_key_relu2_counts == {"metal": 0, "fallback": 0}
+    assert model.group_rkv_quant_projection_counts == {"metal": 0, "fallback": 0}
+    assert qlinear.last_backend is None
+    assert qlinear.backend_counts == {"reference": 0, "affine": 0, "metal": 0}

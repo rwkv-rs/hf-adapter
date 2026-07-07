@@ -284,6 +284,20 @@ class MLXQuantizedLinear:
         self.backend_counts[backend] = int(self.backend_counts.get(backend, 0)) + 1
         return y
 
+    def relu2(self, x: Any) -> Any:
+        """Run ``relu(linear(x)) ** 2`` with a fused MM4/Metal fast path."""
+
+        mx = _mx()
+        backend = self._selected_backend(x)
+        if isinstance(self.weight, MLXMM4Weight) and backend == "metal":
+            y = mm4_matmul_relu2_metal(x, self.weight)
+            self.last_backend = backend
+            self.backend_counts[backend] = int(self.backend_counts.get(backend, 0)) + 1
+            return y
+        y = self(x)
+        y = mx.maximum(y, 0)
+        return y * y
+
     def telemetry(self) -> dict[str, Any]:
         return {
             "bits": self.bits,
@@ -903,6 +917,77 @@ def mm4_matmul_metal(x: Any, q: MLXMM4Weight) -> Any:
     rows = int(x2.shape[0])
     dims = mx.array([rows, q.n, q.m_orig], dtype=mx.uint32)
     out = _metal_mm4_kernel()(
+        inputs=[
+            x2,
+            _mm4_packed_t(q),
+            q.mx.reshape(q.m_padded),
+            q.rx_s.reshape(q.m_padded),
+            q.my.reshape(q.n),
+            q.ry_s.reshape(q.n),
+            dims,
+        ],
+        grid=(rows * q.m_orig, 1, 1),
+        threadgroup=(min(256, max(1, q.m_orig)), 1, 1),
+        output_shapes=[(rows, q.m_orig)],
+        output_dtypes=[x.dtype],
+    )[0]
+    return out.reshape(*x.shape[:-1], q.m_orig)
+
+
+@lru_cache(maxsize=1)
+def _metal_mm4_relu2_kernel():
+    mx = require_mlx()
+    if not metal_quant_available():
+        raise RuntimeError("MLX custom Metal kernels are not available in this runtime")
+
+    source = r'''
+        uint row_id = thread_position_in_grid.x;
+        uint R = uint(dims[0]);
+        uint N = uint(dims[1]);
+        uint M = uint(dims[2]);
+        uint total = R * M;
+        if (row_id >= total) {
+            return;
+        }
+
+        uint r_id = row_id / M;
+        uint m_id = row_id - r_id * M;
+        uint packed_col = m_id >> 1;
+        bool high = (m_id & 1) != 0;
+        uint x_base = r_id * N;
+        uint q_base = packed_col * N;
+
+        float rx_m = float(rx_s[m_id]);
+        float mx_m = float(mx_col[m_id]);
+        float acc = 0.0f;
+        for (uint n = 0; n < N; ++n) {
+            uint byte_v = uint(packed_t[q_base + n]);
+            uint q_u4 = high ? ((byte_v >> 4) & 0x0Fu) : (byte_v & 0x0Fu);
+            float xv = float(x[x_base + n]);
+            float qv = float(q_u4) + 0.5f;
+            float deq = qv * float(ry_s[n]) * rx_m + float(my[n]) + mx_m;
+            acc += xv * deq;
+        }
+        float relu = acc > 0.0f ? acc : 0.0f;
+        out[row_id] = relu * relu;
+    '''
+    return mx.fast.metal_kernel(
+        name="rwkv7_mm4_affine_matmul_relu2",
+        input_names=["x", "packed_t", "mx_col", "rx_s", "my", "ry_s", "dims"],
+        output_names=["out"],
+        source=source,
+        ensure_row_contiguous=True,
+    )
+
+
+def mm4_matmul_relu2_metal(x: Any, q: MLXMM4Weight) -> Any:
+    """Run fused Metal ``relu(x @ dequant(q)) ** 2`` for FFN key projections."""
+
+    mx = _mx()
+    x2 = x.reshape(-1, q.n)
+    rows = int(x2.shape[0])
+    dims = mx.array([rows, q.n, q.m_orig], dtype=mx.uint32)
+    out = _metal_mm4_relu2_kernel()(
         inputs=[
             x2,
             _mm4_packed_t(q),

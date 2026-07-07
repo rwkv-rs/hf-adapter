@@ -1,0 +1,175 @@
+{
+  "axis": "rwkv7_coreml_export",
+  "basename": "rwkv7-g1d-0.4b-hf",
+  "chunks": 4,
+  "compute_units": "cpu-and-ne",
+  "deployment_target": "iOS18",
+  "export_kind": "full-logits",
+  "follow_up_required": [
+    "stateful decode/prefill CoreML functions",
+    "CoreML state serialization correctness test",
+    "ANE runtime benchmark rows in qwen35_apple_baseline schema",
+    "CoreML int4/lut4 accuracy and speed gates"
+  ],
+  "format": "rwkv7_coreml_export_manifest_v1",
+  "functions": [
+    {
+      "implemented": true,
+      "input": {
+        "input_ids": [
+          1,
+          128
+        ]
+      },
+      "name": "full_logits",
+      "output": {
+        "logits": [
+          1,
+          128,
+          65536
+        ]
+      }
+    },
+    {
+      "implemented": false,
+      "name": "decode",
+      "planned_input": {
+        "input_ids": [
+          1,
+          1
+        ]
+      },
+      "planned_output": {
+        "logits": [
+          1,
+          1,
+          65536
+        ]
+      },
+      "state_contract_version": "rwkv7_coreml_state_contract_v1",
+      "state_mode": "wkv-coreml"
+    },
+    {
+      "implemented": false,
+      "name": "prefill",
+      "planned_input": {
+        "input_ids": [
+          1,
+          4096
+        ]
+      },
+      "planned_output": {
+        "logits": [
+          1,
+          4096,
+          65536
+        ]
+      },
+      "state_contract_version": "rwkv7_coreml_state_contract_v1",
+      "state_mode": "wkv-coreml"
+    }
+  ],
+  "minimum_os_note": "Stateful CoreML RWKV decode/prefill is planned for iOS18/macOS15+.",
+  "output_dir": "bench/apple_coreml_state_contract_m5_20260707/coreml-rwkv7-g1d-0.4b",
+  "prefill_seq_length": 4096,
+  "quantization": "lut4",
+  "sample_seq_length": 128,
+  "shape": {
+    "architectures": [
+      "RWKV7ForCausalLM"
+    ],
+    "head_dim": 64,
+    "hidden_size": 1024,
+    "max_position_embeddings": 2048,
+    "model_type": "rwkv7_hf_adapter",
+    "num_heads": 16,
+    "num_hidden_layers": 24,
+    "vocab_size": 65536
+  },
+  "source_model": "/Users/wangyue/Documents/vllmsp/models/rwkv7-g1d-0.4b-hf",
+  "state_contract": {
+    "batch_size": 1,
+    "decode": {
+      "implemented": false,
+      "input_ids": [
+        1,
+        1
+      ],
+      "logits": [
+        1,
+        1,
+        65536
+      ],
+      "state_in": "rwkv recurrent state tensors",
+      "state_out": "updated rwkv recurrent state tensors"
+    },
+    "global_state_tensors": {
+      "seen_tokens": {
+        "dtype": "int32",
+        "shape": [
+          1
+        ]
+      },
+      "v_first": {
+        "dtype": "float16",
+        "shape": [
+          1,
+          1024
+        ]
+      }
+    },
+    "head_dim": 64,
+    "hidden_size": 1024,
+    "num_heads": 16,
+    "num_hidden_layers": 24,
+    "prefill": {
+      "chunk_size": 128,
+      "implemented": false,
+      "input_ids": [
+        1,
+        4096
+      ],
+      "logits": [
+        1,
+        4096,
+        65536
+      ],
+      "state_in": "rwkv recurrent state tensors or zero state",
+      "state_out": "updated rwkv recurrent state tensors"
+    },
+    "runtime_pass_requires": [
+      "CoreML package exposes implemented decode and prefill functions",
+      "state tensors round-trip across decode/prefill calls",
+      "HF/MLX/CoreML logits/state correctness check",
+      "TTFT, prefill tok/s, decode tok/s, memory, and quant rows"
+    ],
+    "state_mode": "wkv-coreml",
+    "state_tensors_per_layer": {
+      "attn_x_prev": {
+        "dtype": "float16",
+        "shape": [
+          1,
+          1024
+        ]
+      },
+      "ffn_x_prev": {
+        "dtype": "float16",
+        "shape": [
+          1,
+          1024
+        ]
+      },
+      "wkv_state": {
+        "dtype": "float32",
+        "shape": [
+          1,
+          16,
+          64,
+          64
+        ]
+      }
+    },
+    "version": "rwkv7_coreml_state_contract_v1"
+  },
+  "state_mode": "wkv-coreml"
+}

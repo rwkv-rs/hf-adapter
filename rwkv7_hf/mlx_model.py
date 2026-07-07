@@ -32,6 +32,7 @@ from .mlx_quant import (
     pack_mlx_mm4_group,
     pack_mlx_mm8_group,
 )
+from .mlx_mix import attn_mix, metal_attn_mix_available
 from .mlx_wkv import metal_wkv_available, wkv_update
 
 
@@ -816,6 +817,12 @@ class MLXRWKV7Model:
         self.quantized_linear_min_params: int | None = None
         self.quantized_linear_rkv_min_params: int | None = None
         self.step_eval_interval = max(1, _env_int("RWKV7_MLX_STEP_EVAL_INTERVAL", 1))
+        self.fused_ffn_key_relu2 = _env_flag("RWKV7_MLX_FUSED_FFN_KEY_RELU2", False)
+        self.fused_ffn_key_relu2_counts: dict[str, int] = {"metal": 0, "fallback": 0}
+        self.fused_attn_mix = _env_flag("RWKV7_MLX_FUSED_ATTN_MIX", False)
+        self.fused_attn_mix_counts: dict[str, int] = {"metal": 0, "fallback": 0}
+        self.state_only_prefill_calls = 0
+        self.state_only_prefill_tokens = 0
         self.group_rkv_quant_projection = _env_flag("RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION", False)
         self.group_rkv_quant_projection_mode = _env_choice(
             "RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE",
@@ -945,6 +952,20 @@ class MLXRWKV7Model:
         self.quantized_linear_rkv_min_params = effective_rkv_min_params if selected else None
         return len(selected)
 
+    def reset_telemetry_counters(self) -> None:
+        """Reset per-run backend counters without changing weights or caches."""
+
+        self.wkv_backend_last = None
+        self.wkv_backend_counts = {"reference": 0, "metal": 0}
+        self.fused_ffn_key_relu2_counts = {"metal": 0, "fallback": 0}
+        self.fused_attn_mix_counts = {"metal": 0, "fallback": 0}
+        self.state_only_prefill_calls = 0
+        self.state_only_prefill_tokens = 0
+        self.group_rkv_quant_projection_counts = {"metal": 0, "fallback": 0}
+        for qlinear in self.quantized_linears.values():
+            qlinear.last_backend = None
+            qlinear.backend_counts = {"reference": 0, "affine": 0, "metal": 0}
+
     def telemetry(self) -> dict[str, Any]:
         out = {
             "num_hidden_layers": self.num_hidden_layers,
@@ -958,6 +979,13 @@ class MLXRWKV7Model:
             "wkv_metal_available": metal_wkv_available(),
             "quant_metal_available": metal_quant_available(),
             "step_eval_interval": int(self.step_eval_interval),
+            "fused_ffn_key_relu2": bool(self.fused_ffn_key_relu2),
+            "fused_ffn_key_relu2_counts": dict(self.fused_ffn_key_relu2_counts),
+            "fused_attn_mix": bool(self.fused_attn_mix),
+            "fused_attn_mix_counts": dict(self.fused_attn_mix_counts),
+            "fused_attn_mix_metal_available": metal_attn_mix_available(),
+            "state_only_prefill_calls": int(self.state_only_prefill_calls),
+            "state_only_prefill_tokens": int(self.state_only_prefill_tokens),
             **summarize_mlx_arrays(self.arrays),
         }
         if self.quantized_linears:
@@ -1117,13 +1145,30 @@ class MLXRWKV7Model:
         H = self.num_heads
         N = self.head_dim
         prefix = f"model.layers.{layer}.attn"
-        xx = x_prev - x
-        xr = x + xx * self._get(f"{prefix}.x_r").reshape(1, hidden)
-        xw = x + xx * self._get(f"{prefix}.x_w").reshape(1, hidden)
-        xk = x + xx * self._get(f"{prefix}.x_k").reshape(1, hidden)
-        xv = x + xx * self._get(f"{prefix}.x_v").reshape(1, hidden)
-        xa = x + xx * self._get(f"{prefix}.x_a").reshape(1, hidden)
-        xg = x + xx * self._get(f"{prefix}.x_g").reshape(1, hidden)
+        if self.fused_attn_mix:
+            (xr, xw, xk, xv, xa, xg), mix_backend = attn_mix(
+                x,
+                x_prev,
+                self._get(f"{prefix}.x_r"),
+                self._get(f"{prefix}.x_w"),
+                self._get(f"{prefix}.x_k"),
+                self._get(f"{prefix}.x_v"),
+                self._get(f"{prefix}.x_a"),
+                self._get(f"{prefix}.x_g"),
+                backend="auto",
+            )
+            if mix_backend == "metal":
+                self.fused_attn_mix_counts["metal"] = int(self.fused_attn_mix_counts.get("metal", 0)) + 1
+            else:
+                self.fused_attn_mix_counts["fallback"] = int(self.fused_attn_mix_counts.get("fallback", 0)) + 1
+        else:
+            xx = x_prev - x
+            xr = x + xx * self._get(f"{prefix}.x_r").reshape(1, hidden)
+            xw = x + xx * self._get(f"{prefix}.x_w").reshape(1, hidden)
+            xk = x + xx * self._get(f"{prefix}.x_k").reshape(1, hidden)
+            xv = x + xx * self._get(f"{prefix}.x_v").reshape(1, hidden)
+            xa = x + xx * self._get(f"{prefix}.x_a").reshape(1, hidden)
+            xg = x + xx * self._get(f"{prefix}.x_g").reshape(1, hidden)
 
         grouped_rkv = self._grouped_rkv_projection(layer, xr, xk, xv, prefix)
         if grouped_rkv is None:
@@ -1194,8 +1239,25 @@ class MLXRWKV7Model:
         prefix = f"model.layers.{layer}.ffn"
         xx = x_prev - x
         k = x + xx * self._get(f"{prefix}.x_k").reshape(1, self.hidden_size)
-        k = mx.maximum(self._linear(k, f"{prefix}.key.weight"), 0)
-        k = k * k
+        key_weight = f"{prefix}.key.weight"
+        key_qlinear = self.quantized_linears.get(key_weight)
+        if (
+            self.fused_ffn_key_relu2
+            and key_qlinear is not None
+            and int(key_qlinear.bits) == 4
+            and key_qlinear._selected_backend(k) == "metal"
+        ):
+            k = key_qlinear.relu2(k)
+            self.fused_ffn_key_relu2_counts["metal"] = int(
+                self.fused_ffn_key_relu2_counts.get("metal", 0)
+            ) + 1
+        else:
+            if self.fused_ffn_key_relu2:
+                self.fused_ffn_key_relu2_counts["fallback"] = int(
+                    self.fused_ffn_key_relu2_counts.get("fallback", 0)
+                ) + 1
+            k = mx.maximum(self._linear(k, key_weight), 0)
+            k = k * k
         return self._linear(k, f"{prefix}.value.weight"), x
 
     def _embedding(self, token_ids):
@@ -1271,6 +1333,47 @@ class MLXRWKV7Model:
             mx.eval(out)
         return out, state
 
+    def prefill_state_only(
+        self,
+        input_ids: Iterable[Iterable[int]] | Any,
+        state: MLXRWKV7State | None = None,
+    ) -> MLXRWKV7State:
+        """Advance recurrent state over ``input_ids`` without producing logits.
+
+        This is the serving/chunked-prefill fast path for non-final chunks:
+        intermediate chunks only need to update recurrent state, so running the
+        final layer norm and ``lm_head`` on every chunk boundary is wasted work.
+        The full ``prefill`` path remains unchanged and final chunks still call
+        ``forward(..., collect_all=False)`` to produce comparable last-token
+        logits.
+        """
+
+        mx = _mx()
+        ids = mx.array(input_ids, dtype=mx.int32)
+        if ids.ndim == 1:
+            ids = ids.reshape(1, -1)
+        if ids.ndim != 2:
+            raise ValueError("MLXRWKV7Model.prefill_state_only expects input ids shaped [batch, seq]")
+        B, T = int(ids.shape[0]), int(ids.shape[1])
+        if T <= 0 or B <= 0:
+            raise ValueError("MLXRWKV7Model.prefill_state_only requires a non-empty batch and sequence")
+        if state is None:
+            state = self.init_state(B)
+        elif state.batch_size != B:
+            raise ValueError(f"state batch size {state.batch_size} does not match input batch size {B}")
+        last = None
+        for t in range(T):
+            last, state = self._step_token(ids[:, t], state)
+        self.state_only_prefill_calls += 1
+        self.state_only_prefill_tokens += T
+        # Force the recurrent cache to materialize at the chunk boundary so the
+        # lazy graph does not span an unbounded prompt.  This mirrors
+        # ``forward(..., collect_all=False)`` final synchronization without the
+        # last-token norm/lm_head projection.
+        if last is not None:
+            self._eval_step_state(last, state)
+        return state
+
     def prefill(self, input_ids: Iterable[Iterable[int]] | Any, state: MLXRWKV7State | None = None):
         return self.forward(input_ids, state=state, collect_all=False)
 
@@ -1309,8 +1412,14 @@ class MLXRWKV7Model:
             raise ValueError("chunk_size must be positive")
         state = self.init_state(int(ids.shape[0]))
         logits = None
-        for start in range(0, int(ids.shape[1]), int(chunk_size)):
-            logits, state = self.forward(ids[:, start : start + int(chunk_size)], state=state, collect_all=False)
+        total_tokens = int(ids.shape[1])
+        for start in range(0, total_tokens, int(chunk_size)):
+            end = min(start + int(chunk_size), total_tokens)
+            chunk = ids[:, start:end]
+            if end < total_tokens:
+                state = self.prefill_state_only(chunk, state=state)
+            else:
+                logits, state = self.forward(chunk, state=state, collect_all=False)
         if logits is None:
             raise ValueError("chunked_prefill requires non-empty input")
         return logits, state

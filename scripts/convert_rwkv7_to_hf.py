@@ -221,6 +221,7 @@ def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
         "kernel_policy.py",
         "mlx_bridge.py",
         "mlx_model.py",
+        "mlx_mix.py",
         "mlx_quant.py",
         "mlx_wkv.py",
         "modeling_rwkv7.py",

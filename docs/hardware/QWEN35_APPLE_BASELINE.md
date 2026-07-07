@@ -160,6 +160,8 @@ use the token-only lane:
 PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --prompt-target-chars 1024,4096 \
   --decode-lengths 128,512 \
+  --repeat 1 \
+  --warmup-repeats 1 \
   --qwen-models '' \
   --qwen-mlx-vlm-models mlx-community/Qwen3.5-0.8B-MLX-4bit \
   --qwen-mlx-vlm-token-only \
@@ -174,6 +176,7 @@ The MLX/VLM rows use `engine=mlx_vlm`, `runtime=mlx_vlm`, and the same
 `prefill_tok_s`, `decode_tok_s`, `ttft_s`, response, and MLX peak-memory fields
 as the rest of the `qwen35_apple_baseline` matrix.  Known public model ids are
 `mlx-community/Qwen3.5-0.8B-MLX-4bit`,
+`mlx-community/Qwen3.5-2B-MLX-4bit`,
 `mlx-community/Qwen3.5-4B-MLX-4bit`, and
 `mlx-community/Qwen3.5-9B-MLX-4bit`.
 Token-only rows use `runtime=mlx_vlm_token_only`, keep the same speed/memory
@@ -201,12 +204,92 @@ This stronger baseline shows RWKV-7 0.4B/mm4 still passing memory
 The next production-performance work therefore remains fused decode, faster
 prefill/chunked prefill, and TTFT reduction.
 
+The 2B-size token-only row is recorded in
+[`../../bench/apple_qwen35_2b_tokenonly_m5_20260707/`](../../bench/apple_qwen35_2b_tokenonly_m5_20260707/).
+The current goal-level audit over the 0.8B and 2B token-only evidence is
+recorded in
+[`../../bench/apple_qwen35_goal_audit_m5_20260707/`](../../bench/apple_qwen35_goal_audit_m5_20260707/).
+It marks the overall Apple/Qwen3.5 goal as non-passing: the available rows cover
+same-prompt Qwen/RWKV MLX, W4 quantization, and chunked/state-cache checks for
+0.8B/2B, but still require speed/latency closure, response-quality rows,
+long-context rows, stateful CoreML decode/prefill runtime rows, and 4B/9B tier
+coverage.
+
+The first explicit 0.8B long-context row is recorded in
+[`../../bench/apple_qwen35_08b_longctx_m5_20260707/`](../../bench/apple_qwen35_08b_longctx_m5_20260707/).
+On the same Apple M5 `4096 chars / 128 tokens` token-only shape, RWKV-7 0.4B/mm4
++ grouped R/K/V quant + fused FFN key/relu² passes the memory gate
+(`memory_ratio_rwkv_over_qwen=0.180759`) and fills the long-context audit slot,
+but it remains far behind the Qwen3.5 0.8B MLX-4bit token-only baseline on
+speed/latency (`decode_ratio_rwkv_over_qwen=0.474667`,
+`prefill_ratio_rwkv_over_qwen=0.034954`, `ttft_ratio_rwkv_over_qwen=30.184709`).
+This makes the next Apple performance target concrete: roughly `2.11x` decode
+and `28.61x` prefill speedup are needed on this long-context 0.8B tier before a
+Qwen3.5-over-Apple claim can pass.
+
+The chunked-prefill state-only follow-up is recorded in
+[`../../bench/apple_mlx_chunked_state_only_m5_20260707/`](../../bench/apple_mlx_chunked_state_only_m5_20260707/).
+It adds a production-shaped MLX seam where non-final chunks update only the RWKV
+recurrent state and skip final logits/lm_head; the same long-context row records
+`chunked_state_only_prefill_calls=2`, `chunked_state_only_prefill_tokens=1024`,
+and `chunked_prefill_max_abs=0.0`.  This removes two unnecessary chunk-boundary
+logits projections at `chunk_size=512`; it is a correctness/dispatch cleanup,
+not the main prefill-gap solution.  The remaining bottleneck is still the
+per-token/per-layer recurrent WKV and projection launch count.
+
+The decode synchronization cleanup and attention-mix probe are recorded in
+[`../../bench/apple_mlx_decode_sync_m5_20260707/`](../../bench/apple_mlx_decode_sync_m5_20260707/).
+The baseline harness no longer adds an extra `mx.eval(logits)` after MLX
+`prefill()` / `decode_step()` / `chunked_prefill()` because those paths already
+synchronize returned logits and recurrent state; decode timing now waits for the
+streaming `next_token` sync instead.  The optional `RWKV7_MLX_FUSED_ATTN_MIX=1`
+seam fuses the six attention mix tensors into one Metal kernel and records
+`fused_attn_mix_counts`, but the 512/64 AB row keeps it disabled by default
+because decode regressed while prefill improved only modestly.
+The component-profile follow-up is recorded in
+[`../../bench/apple_mlx_component_profile_m5_20260707/`](../../bench/apple_mlx_component_profile_m5_20260707/).
+It uses synchronized component boundaries on the same Apple M5 1.5B/mm4 path and
+shows the top profiled buckets as FFN step ≈39.46%, attention/WKV step ≈33.15%,
+attention layernorm ≈18.54%, and FFN layernorm ≈6.83%.  Treat this as a fusion
+ranking, not an end-to-end speed row: the next Apple MLX kernel work should
+prioritize FFN step fusion plus attention/norm fusion before spending effort on
+final logits.
+
+The first positive FFN fusion seam is recorded in
+[`../../bench/apple_mlx_fused_ffn_relu2_m5_20260707/`](../../bench/apple_mlx_fused_ffn_relu2_m5_20260707/).
+`RWKV7_MLX_FUSED_FFN_KEY_RELU2=1` fuses the MM4 FFN key projection and `relu²`
+activation into one Metal kernel.  On the same 1.5B/mm4 `512 chars / 64 tokens`
+smoke it keeps the generated preview identical, keeps chunked prefill exact, and
+improves prefill/decode/TTFT by about `1.05x` / `1.026x` / `1.05x`.  This is a
+real speed seam but not yet enough to close the Qwen3.5 2B gap; the one-command
+Apple acceptance wrapper enables it by default while the base model keeps the
+feature opt-in through the environment variable.
+
+The Qwen3.5 2B MLX-4bit snapshot can stall during the large Xet-backed weight
+file after small metadata files have downloaded; `scripts/hf_parallel_download.py`
+provides a bounded, resumable HTTP Range fallback for the single
+`model.safetensors` shard.  On the same `512 chars / 64 tokens` row, RWKV-7
+1.5B/mm4 + RKV quant is runnable and passes the memory gate
+(`memory_ratio_rwkv_over_qwen=0.606417`) but remains below the Qwen3.5 2B token
+baseline on speed (`decode_ratio_rwkv_over_qwen=0.242215`,
+`prefill_ratio_rwkv_over_qwen=0.036051`, `ttft_ratio_rwkv_over_qwen=29.082024`).
+The same harness now supports `--warmup-repeats` so Apple rows can separate
+MLX/Metal compile cold-start from steady-state generation.  With
+`--warmup-repeats 1`, Qwen3.5 2B reaches ≈1205.58 prefill tok/s and ≈110.63
+decode tok/s, while RWKV-7 1.5B/mm4 + RKV quant reaches ≈42.84 prefill tok/s
+and ≈31.70 decode tok/s with `wkv_backend_counts={"metal":4728}` and grouped
+R/K/V quant `fallback=0`.  The warmed row improves RWKV absolute decode but still
+needs about `3.49x` decode and `28.14x` prefill speedup to match the warmed
+Qwen3.5 2B baseline.
+
 Run RWKV-7 MLX rows against the same prompt text:
 
 ```bash
 PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --prompt-target-chars 1024,4096,8192 \
   --decode-lengths 128,512 \
+  --repeat 1 \
+  --warmup-repeats 1 \
   --qwen-models '' \
   --rwkv-mlx-models /path/to/rwkv7-g1d-0.4b-hf,/path/to/rwkv7-g1g-1.5b-hf \
   --rwkv-dtype fp16 \
@@ -223,6 +306,8 @@ RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION=1 \
 PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --prompt-target-chars 1024,4096,8192 \
   --decode-lengths 128,512 \
+  --repeat 1 \
+  --warmup-repeats 1 \
   --qwen-models '' \
   --rwkv-mlx-models /path/to/rwkv7-g1d-0.4b-hf,/path/to/rwkv7-g1g-1.5b-hf \
   --rwkv-dtype fp16 \
@@ -254,11 +339,25 @@ decode/WKV/projection fusion.
 
 `RWKV7_MLX_STEP_EVAL_INTERVAL` controls how often the MLX recurrent loop forces
 state evaluation.  The model default is `1` for historical behavior; the
-Qwen3.5 Apple acceptance wrapper defaults to `2` after the M5 smoke in
+Qwen3.5 Apple acceptance wrapper now defaults to `8`.  The first M5 smoke in
 [`../../bench/apple_step_eval_interval_m5_20260707/`](../../bench/apple_step_eval_interval_m5_20260707/)
-improved the same `512 chars / 64 tokens` 0.4B/mm4 direct R/K/V row from
+improved the `512 chars / 64 tokens` 0.4B/mm4 direct R/K/V row from
 ≈69.06/50.51 prefill/decode tok/s to ≈76.91/58.36 tok/s at essentially the same
-peak memory and with chunked/full prefill `max_abs=0.0`.
+peak memory and with chunked/full prefill `max_abs=0.0`.  The follow-up 1.5B/mm4
+fused-FFN sweep in
+[`../../bench/apple_step_eval_interval_15b_m5_20260707/`](../../bench/apple_step_eval_interval_15b_m5_20260707/)
+showed interval 8 as the best prefill/TTFT point (`29.72` prefill tok/s,
+`4.48s` TTFT) while still improving decode over interval 2.
+
+The CoreML stateful-contract follow-up is recorded in
+[`../../bench/apple_coreml_state_contract_m5_20260707/`](../../bench/apple_coreml_state_contract_m5_20260707/).
+The export manifest now contains `state_contract.version=rwkv7_coreml_state_contract_v1`
+with explicit per-layer `wkv_state`, `attn_x_prev`, `ffn_x_prev`, and global
+`v_first` / `seen_tokens` tensor shapes.  The runtime plan row surfaces
+`stateful_contract_present=true`, while keeping `decode_implemented=false` and
+`prefill_implemented=false`; the goal audit therefore reports CoreML as
+`prototype`, not `pass`, until a real stateful `.mlpackage` emits TTFT,
+prefill/decode throughput, memory, quantization, and correctness rows.
 
 Run CoreML runtime rows from an export manifest:
 
@@ -355,12 +454,37 @@ gates into concrete actions such as `collect_qwen_baseline_rows`,
 `reduce_peak_memory_or_quantize_more`; `scripts/run_qwen35_apple_acceptance.sh`
 enables these rows by default with `COMPARE_DIAGNOSTICS=1`.
 
+Audit the full Apple/mobile goal coverage:
+
+```bash
+PYTHONPATH=. python bench/audit_qwen35_apple_goal.py \
+  --results bench/results_qwen35_apple_baseline.jsonl \
+  --results bench/apple_qwen35_2b_tokenonly_m5_20260707 \
+  --required-shape chars1024:128 \
+  --required-shape chars4096:512 \
+  --require-quality \
+  --require-coreml \
+  --append bench/results_qwen35_apple_baseline.jsonl
+```
+
+The audit accepts one or more JSONL files or evidence directories, and emits
+`axis=qwen35_apple_goal_audit` rows plus a
+`qwen35_apple_goal_audit_summary`.  It is intentionally broader than the speed
+comparator: for every configured Qwen3.5/RWKV tier it checks same-prompt Qwen
+coverage, RWKV MLX coverage, decode/prefill/TTFT/memory fields, W8/W4 quantized
+rows, chunked-prefill/state-cache correctness, comparison-gate rows, quality
+comparison rows, long-context rows, and stateful CoreML runtime evidence.  The
+one-command wrapper runs this audit after comparison gates by default; tune it
+with `GOAL_AUDIT_TIERS`, `GOAL_AUDIT_SHAPES`,
+`GOAL_AUDIT_REQUIRE_QUALITY`, `GOAL_AUDIT_REQUIRE_COREML`, and
+`GOAL_AUDIT_FAIL_ON_GATE`.
+
 ## Initial acceptance matrix
 
 | RWKV target | Qwen3.5 comparator | Runtime gate | Current status |
 |---|---|---|---|
 | RWKV-7 0.4B W4/MLX | `qwen3.5:0.8b-mlx` | lower memory and higher decode tok/s at prompt 1k/4k/8k, decode 128/512 | needs same-device rows |
-| RWKV-7 1.5B W4/MLX | `qwen3.5:2b-mlx` | lower memory and higher or equal decode tok/s; TTFT no worse by >10% | needs same-device rows |
+| RWKV-7 1.5B W4/MLX | `qwen3.5:2b-mlx` / `mlx-community/Qwen3.5-2B-MLX-4bit` | lower memory and higher or equal decode tok/s; TTFT no worse by >10% | same-device 512/64 token-only row collected: memory pass, speed/TTFT fail |
 | RWKV-7 2.9B W4/MLX/CoreML | `qwen3.5:4b-mlx` | lower memory and higher decode tok/s | CoreML export prototype exists; ANE runtime rows not landed |
 | RWKV-7 larger / distilled mobile | `qwen3.5:9b-mlx` | mobile-useful memory envelope plus quality eval | requires model/quality work |
 
