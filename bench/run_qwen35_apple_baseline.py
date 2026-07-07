@@ -637,6 +637,7 @@ def run_rwkv_mlx(
     dtype: str,
     quantization: str,
     quant_min_params: int,
+    quant_rkv_min_params: int | None,
     quant_backend: str,
     wkv_backend: str,
     chunk_size: int,
@@ -676,6 +677,7 @@ def run_rwkv_mlx(
         dtype=dtype,
         quantization=quantization,
         quant_min_params=int(quant_min_params),
+        quant_rkv_min_params=quant_rkv_min_params,
         quant_backend=quant_backend,
         wkv_backend=wkv_backend,
     )
@@ -738,6 +740,7 @@ def run_rwkv_mlx(
                 "dtype": dtype,
                 "quantization": quantization,
                 "quant_min_params": int(quant_min_params),
+                "quant_rkv_min_params": quant_rkv_min_params,
                 "quant_backend": quant_backend,
                 "wkv_backend": wkv_backend,
                 "prompt_case": prompt_case.name,
@@ -854,6 +857,16 @@ def main() -> int:
     ap.add_argument("--rwkv-dtype", default="fp16", choices=["keep", "fp32", "fp16", "bf16"])
     ap.add_argument("--rwkv-quantization", default="none", choices=["none", "mm8", "mm4"])
     ap.add_argument("--rwkv-quant-min-params", type=int, default=8_000_000)
+    ap.add_argument(
+        "--rwkv-quant-rkv-min-params",
+        type=int,
+        default=-1,
+        help=(
+            "Optional separate min-params threshold for attention r/k/v projection quantization. "
+            "Use 0 with RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION=1 to exercise fused quant RKV; "
+            "-1 preserves --rwkv-quant-min-params."
+        ),
+    )
     ap.add_argument("--rwkv-quant-backend", default="auto", choices=["affine", "reference", "metal", "auto"])
     ap.add_argument("--rwkv-wkv-backend", default="auto", choices=["reference", "metal", "auto"])
     ap.add_argument("--rwkv-chunk-size", type=int, default=0)
@@ -884,6 +897,10 @@ def main() -> int:
         "repeat": int(args.repeat),
         "store_responses": bool(args.store_responses),
         "ollama_host": args.ollama_host,
+        "rwkv_quant_min_params": int(args.rwkv_quant_min_params),
+        "rwkv_quant_rkv_min_params": None
+        if int(args.rwkv_quant_rkv_min_params) < 0
+        else int(args.rwkv_quant_rkv_min_params),
         **device_info(),
     }
     print(json.dumps(env, ensure_ascii=False))
@@ -906,6 +923,10 @@ def main() -> int:
             "prompt_cases": [{"name": case.name, "chars": len(case.prompt)} for case in prompt_cases],
             "decode_lengths": decode_lengths,
             "store_responses": bool(args.store_responses),
+            "rwkv_quant_min_params": int(args.rwkv_quant_min_params),
+            "rwkv_quant_rkv_min_params": None
+            if int(args.rwkv_quant_rkv_min_params) < 0
+            else int(args.rwkv_quant_rkv_min_params),
         }
         print(json.dumps(plan, ensure_ascii=False))
         append_jsonl(args.results, plan)
@@ -950,6 +971,9 @@ def main() -> int:
                     dtype=args.rwkv_dtype,
                     quantization=args.rwkv_quantization,
                     quant_min_params=int(args.rwkv_quant_min_params),
+                    quant_rkv_min_params=(
+                        None if int(args.rwkv_quant_rkv_min_params) < 0 else int(args.rwkv_quant_rkv_min_params)
+                    ),
                     quant_backend=args.rwkv_quant_backend,
                     wkv_backend=args.rwkv_wkv_backend,
                     chunk_size=int(args.rwkv_chunk_size),

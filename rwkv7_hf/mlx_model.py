@@ -65,6 +65,10 @@ def _env_choice(name: str, default: str, choices: set[str]) -> str:
     return value if value in choices else default
 
 
+def _is_attn_rkv_projection_weight(key: str) -> bool:
+    return key.endswith((".attn.r_proj.weight", ".attn.k_proj.weight", ".attn.v_proj.weight"))
+
+
 def _as_list(values: Iterable[int] | Any) -> list[int]:
     if isinstance(values, list):
         return [int(v) for v in values]
@@ -799,6 +803,8 @@ class MLXRWKV7Model:
         self.quantized_linear_bytes = 0
         self.quantized_linear_bits: int | None = None
         self.quantized_linear_backend: str | None = None
+        self.quantized_linear_min_params: int | None = None
+        self.quantized_linear_rkv_min_params: int | None = None
         self.group_rkv_quant_projection = _env_flag("RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION", False)
         self.group_rkv_quant_projection_mode = _env_choice(
             "RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE",
@@ -831,6 +837,7 @@ class MLXRWKV7Model:
         dtype: str | None = "fp16",
         quantization: str | None = None,
         quant_min_params: int = 8_000_000,
+        quant_rkv_min_params: int | None = None,
         quant_backend: str = "affine",
         wkv_backend: str = "reference",
     ) -> "MLXRWKV7Model":
@@ -839,25 +846,49 @@ class MLXRWKV7Model:
         arrays = load_selected_hf_tensors_as_mlx(root, tensor_regex=r".*", dtype=dtype)
         model = cls(config, arrays, wkv_backend=wkv_backend)
         if quantization and quantization.lower() not in {"none", "off", "false", "0"}:
-            model.quantize_linears(quantization, min_params=quant_min_params, backend=quant_backend)
+            model.quantize_linears(
+                quantization,
+                min_params=quant_min_params,
+                rkv_min_params=quant_rkv_min_params,
+                backend=quant_backend,
+            )
         return model
 
     @classmethod
     def from_arrays(cls, config: dict[str, Any], arrays: dict[str, Any], *, wkv_backend: str = "reference") -> "MLXRWKV7Model":
         return cls(config, arrays, wkv_backend=wkv_backend)
 
-    def _is_quantizable_linear_weight(self, key: str, value: Any, min_params: int) -> bool:
+    def _is_quantizable_linear_weight(
+        self,
+        key: str,
+        value: Any,
+        min_params: int,
+        *,
+        rkv_min_params: int | None = None,
+    ) -> bool:
         if not key.endswith(".weight"):
             return False
         if key == "model.embeddings.weight":
             return False
         if getattr(value, "ndim", 0) != 2:
             return False
-        if int(value.size) < int(min_params):
+        threshold = (
+            int(rkv_min_params)
+            if rkv_min_params is not None and int(rkv_min_params) >= 0 and _is_attn_rkv_projection_weight(key)
+            else int(min_params)
+        )
+        if int(value.size) < threshold:
             return False
         return True
 
-    def quantize_linears(self, quantization: str, *, min_params: int = 8_000_000, backend: str = "affine") -> int:
+    def quantize_linears(
+        self,
+        quantization: str,
+        *,
+        min_params: int = 8_000_000,
+        rkv_min_params: int | None = None,
+        backend: str = "affine",
+    ) -> int:
         """Replace eligible dense MLX Linear weights with packed W8/W4 weights.
 
         This is the Apple packed-quant projection seam.  ``backend=affine`` runs
@@ -866,6 +897,13 @@ class MLXRWKV7Model:
         fallback; ``backend=metal`` enables the fused dequant-projection kernel;
         ``backend=auto`` selects the safe small-batch Metal path where current
         exactness and speed gates allow it.
+
+        ``rkv_min_params`` is an Apple performance knob for the fused/grouped
+        R/K/V projection path.  It lets callers quantize attention
+        ``r_proj``/``k_proj``/``v_proj`` weights even when the general
+        ``min_params`` threshold intentionally keeps smaller dense matrices
+        unquantized.  Leave it as ``None`` to preserve the historical single
+        threshold policy.
         """
 
         backend = (backend or "affine").lower().strip()
@@ -878,9 +916,10 @@ class MLXRWKV7Model:
             bits = 4
         else:
             raise ValueError(f"unsupported MLX quantization {quantization!r}; expected mm8/mm4")
+        effective_rkv_min_params = None if rkv_min_params is None or int(rkv_min_params) < 0 else int(rkv_min_params)
         selected = [
             key for key, value in list(self.arrays.items())
-            if self._is_quantizable_linear_weight(key, value, min_params)
+            if self._is_quantizable_linear_weight(key, value, min_params, rkv_min_params=effective_rkv_min_params)
         ]
         for key in selected:
             dense = self.arrays.pop(key)
@@ -891,6 +930,8 @@ class MLXRWKV7Model:
         self._rkv_group_quant_cache.clear()
         self.quantized_linear_bits = bits if selected else None
         self.quantized_linear_backend = backend if selected else None
+        self.quantized_linear_min_params = int(min_params) if selected else None
+        self.quantized_linear_rkv_min_params = effective_rkv_min_params if selected else None
         return len(selected)
 
     def telemetry(self) -> dict[str, Any]:
@@ -913,6 +954,8 @@ class MLXRWKV7Model:
                     "quantized_linear_count": len(self.quantized_linears),
                     "quantized_linear_bits": self.quantized_linear_bits,
                     "quantized_linear_backend": self.quantized_linear_backend,
+                    "quantized_linear_min_params": self.quantized_linear_min_params,
+                    "quantized_linear_rkv_min_params": self.quantized_linear_rkv_min_params,
                     "quantized_linear_bytes": int(self.quantized_linear_bytes),
                     "quantized_dense_equivalent_bytes": int(self.quantized_dense_equivalent_bytes),
                     "quantized_footprint_ratio": round(
@@ -1287,6 +1330,7 @@ def load_mlx_rwkv7_model(
     dtype: str | None = "fp16",
     quantization: str | None = None,
     quant_min_params: int = 8_000_000,
+    quant_rkv_min_params: int | None = None,
     quant_backend: str = "affine",
     wkv_backend: str = "reference",
 ) -> MLXRWKV7Model:
@@ -1295,6 +1339,7 @@ def load_mlx_rwkv7_model(
         dtype=dtype,
         quantization=quantization,
         quant_min_params=quant_min_params,
+        quant_rkv_min_params=quant_rkv_min_params,
         quant_backend=quant_backend,
         wkv_backend=wkv_backend,
     )
@@ -1308,6 +1353,7 @@ def load_mlx_generation_session(
     skip_special_tokens: bool = False,
     quantization: str | None = None,
     quant_min_params: int = 8_000_000,
+    quant_rkv_min_params: int | None = None,
     quant_backend: str = "affine",
     wkv_backend: str = "reference",
 ) -> MLXGenerationSession:
@@ -1320,6 +1366,7 @@ def load_mlx_generation_session(
         dtype=dtype,
         quantization=quantization,
         quant_min_params=quant_min_params,
+        quant_rkv_min_params=quant_rkv_min_params,
         quant_backend=quant_backend,
         wkv_backend=wkv_backend,
     )
@@ -1341,6 +1388,7 @@ def generate_text_from_hf(
     skip_special_tokens: bool = False,
     quantization: str | None = None,
     quant_min_params: int = 8_000_000,
+    quant_rkv_min_params: int | None = None,
     quant_backend: str = "affine",
     wkv_backend: str = "reference",
 ) -> MLXGenerateOutput:
@@ -1353,6 +1401,7 @@ def generate_text_from_hf(
         dtype=dtype,
         quantization=quantization,
         quant_min_params=quant_min_params,
+        quant_rkv_min_params=quant_rkv_min_params,
         quant_backend=quant_backend,
         wkv_backend=wkv_backend,
     )

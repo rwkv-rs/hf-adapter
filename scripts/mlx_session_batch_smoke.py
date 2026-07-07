@@ -229,6 +229,7 @@ def run_backend_compare(
     skip_special_tokens: bool,
     quantization: str,
     quant_min_params: int,
+    quant_rkv_min_params: int | None,
     quant_backend: str,
     wkv_backend: str,
     session_backend: str,
@@ -345,6 +346,7 @@ def run_backend_compare(
         "dtype": dtype,
         "quantization": quantization,
         "quant_min_params": int(quant_min_params),
+        "quant_rkv_min_params": quant_rkv_min_params,
         "quant_backend": quant_backend,
         "wkv_backend": wkv_backend,
         "session_backend": session_backend,
@@ -388,6 +390,7 @@ def run_interleaved_batch(
     skip_special_tokens: bool,
     quantization: str,
     quant_min_params: int,
+    quant_rkv_min_params: int | None,
     quant_backend: str,
     wkv_backend: str,
     session_backend: str,
@@ -455,6 +458,7 @@ def run_interleaved_batch(
         "dtype": dtype,
         "quantization": quantization,
         "quant_min_params": int(quant_min_params),
+        "quant_rkv_min_params": quant_rkv_min_params,
         "quant_backend": quant_backend,
         "repeat_index": int(repeat_index),
         "repeat": int(repeat),
@@ -487,6 +491,7 @@ def main() -> int:
     ap.add_argument("--repeat", type=int, default=1, help="Repeat the full interleaved-session workload for pressure telemetry.")
     ap.add_argument("--quantization", default="none", choices=["none", "mm8", "mm4"], help="Optional MLX packed W8/W4 projection path.")
     ap.add_argument("--quant-min-params", type=int, default=8_000_000)
+    ap.add_argument("--quant-rkv-min-params", type=int, default=-1, help="Separate min-params threshold for attention r/k/v projection quantization; -1 preserves --quant-min-params.")
     ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference", "metal", "auto"])
     ap.add_argument("--wkv-backend", default="reference", choices=["reference", "metal", "auto"])
     ap.add_argument(
@@ -564,6 +569,7 @@ def main() -> int:
             "repeat": int(repeat),
             "quantization": args.quantization,
             "quant_min_params": int(args.quant_min_params),
+            "quant_rkv_min_params": None if int(args.quant_rkv_min_params) < 0 else int(args.quant_rkv_min_params),
             "quant_backend": args.quant_backend,
             "wkv_backend": args.wkv_backend,
             "session_backend": args.session_backend,
@@ -586,6 +592,7 @@ def main() -> int:
         dtype=args.dtype,
         quantization=args.quantization,
         quant_min_params=int(args.quant_min_params),
+        quant_rkv_min_params=None if int(args.quant_rkv_min_params) < 0 else int(args.quant_rkv_min_params),
         quant_backend=args.quant_backend,
         wkv_backend=args.wkv_backend,
     )
@@ -598,6 +605,7 @@ def main() -> int:
         "dtype": args.dtype,
         "quantization": args.quantization,
         "quant_min_params": int(args.quant_min_params),
+        "quant_rkv_min_params": None if int(args.quant_rkv_min_params) < 0 else int(args.quant_rkv_min_params),
         "quant_backend": args.quant_backend,
         "wkv_backend": args.wkv_backend,
         "session_backend": args.session_backend,
@@ -631,6 +639,9 @@ def main() -> int:
                 skip_special_tokens=bool(args.skip_special_tokens),
                 quantization=args.quantization,
                 quant_min_params=int(args.quant_min_params),
+                quant_rkv_min_params=None
+                if int(args.quant_rkv_min_params) < 0
+                else int(args.quant_rkv_min_params),
                 quant_backend=args.quant_backend,
                 wkv_backend=args.wkv_backend,
                 session_backend=args.session_backend,
@@ -649,6 +660,7 @@ def main() -> int:
             "dtype": args.dtype,
             "quantization": args.quantization,
             "quant_min_params": int(args.quant_min_params),
+            "quant_rkv_min_params": None if int(args.quant_rkv_min_params) < 0 else int(args.quant_rkv_min_params),
             "quant_backend": args.quant_backend,
             "repeat": int(repeat),
             "rows": len(rows),
@@ -691,6 +703,7 @@ def main() -> int:
             skip_special_tokens=bool(args.skip_special_tokens),
             quantization=args.quantization,
             quant_min_params=int(args.quant_min_params),
+            quant_rkv_min_params=None if int(args.quant_rkv_min_params) < 0 else int(args.quant_rkv_min_params),
             quant_backend=args.quant_backend,
             wkv_backend=args.wkv_backend,
             session_backend=args.session_backend,

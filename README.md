@@ -126,7 +126,10 @@ default-off model-level grouped R/K/V quant projection seam for MLX/Metal
 experiments. The default grouped mode is now `direct`, which uses one Metal
 launch for the three existing R/K/V packed weights without duplicating them into
 a grouped cache; `RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE=packed` keeps the
-older prepacked A/B path. Initial 0.4B/1.5B W4 and W8 rows show positive
+older prepacked A/B path. Use `--quant-rkv-min-params 0` (or
+`--rwkv-quant-rkv-min-params 0` in the Qwen3.5 Apple acceptance harness) when a
+larger general quant threshold would otherwise leave attention R/K/V dense and
+turn the grouped path into fallbacks. Initial 0.4B/1.5B W4 and W8 rows show positive
 prefill/decode movement with grouped hits and zero fallbacks; the direct path
 now has W4 and W8 prompt512/decode16, broader-threshold prompt2048/decode128
 rows, new W4 prompt4096/decode256 rows for 0.4B/1.5B (chunked/full prefill
