@@ -528,3 +528,22 @@ The next repository lane should add:
 - It does not implement final stateful CoreML decode/prefill yet; the current CoreML path is an export prototype and manifest contract.
 - It does not mark W8/W4 as fp16-beating until JSONL evidence proves it.
 - It does not replace the existing Apple MLX session and quant regression tests.
+
+## 2026-07-07 MLX WKV scan prefill end-to-end row
+
+The first opt-in end-to-end MLX multi-token WKV scan path is now wired behind
+`RWKV_WKV_SCAN_PREFILL=1` / `RWKV7_MLX_WKV_SCAN_PREFILL=1`.
+Evidence lives in `bench/apple_e2e_scan_prefill_m5_20260707/`.
+
+Short-prompt Apple M5 smoke rows show the prefill path is active via
+`wkv_scan_prefill=true` and `wkv_scan_prefill_counts={"metal": 24}`:
+
+| Model | Previous token-major prefill tok/s | Scan prefill tok/s | Speedup | Notes |
+|---|---:|---:|---:|---|
+| RWKV-7 0.4B mm4 | 53.62 | 178.51 | 3.33x | decode remains single-token path |
+| RWKV-7 1.5B mm4 | 21.49 | 38.11 | 1.77x | decode remains single-token path |
+
+This is not yet the final Qwen3.5 acceptance win: the flag remains opt-in while
+longer prompts, larger batches, quality drift, and same-device Qwen comparison
+matrices are expanded.  It is the first real end-to-end replacement of the
+prefill token-major WKV loop with a layer-major multi-token scan.
