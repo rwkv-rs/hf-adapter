@@ -22,7 +22,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 model_id = "wangyue114514/rwkv7-g1d-0.1b-hf"
 tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 model = AutoModelForCausalLM.from_pretrained(
-    model_id, trust_remote_code=True, dtype=torch.float16
+    model_id, trust_remote_code=True, torch_dtype=torch.float16
 ).cuda().eval()
 
 inputs = tokenizer("User: Hello! Assistant:", return_tensors="pt").to("cuda")

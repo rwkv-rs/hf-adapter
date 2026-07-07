@@ -89,7 +89,7 @@ def main():
             args.model,
             revision=args.revision,
             trust_remote_code=True,
-            dtype=dtype,
+            torch_dtype=dtype,
         ).to(device).eval()
         encoded = tokenizer(
             "User: Hello! Assistant:", return_tensors="pt"

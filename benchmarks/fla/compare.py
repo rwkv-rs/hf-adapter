@@ -362,7 +362,7 @@ def main():
 
         clean_config = RWKV7Config.from_pretrained(args.model)
         clean = RWKV7ForCausalLM.from_pretrained(
-            args.model, config=clean_config, dtype=dtype
+            args.model, config=clean_config, torch_dtype=dtype
         ).to(device).eval()
         clean_logits = {}
         with torch.inference_mode():
@@ -384,7 +384,7 @@ def main():
 
     fla_config = FLAConfig.from_pretrained(args.model)
     fla = FLAModel.from_pretrained(
-        args.model, config=fla_config, dtype=dtype
+        args.model, config=fla_config, torch_dtype=dtype
     ).to(device).eval()
     comparisons = {}
     with torch.inference_mode():

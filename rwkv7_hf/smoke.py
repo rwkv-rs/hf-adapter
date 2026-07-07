@@ -103,7 +103,7 @@ def run_smoke(args: argparse.Namespace) -> dict[str, Any]:
             args.model,
             revision=args.revision,
             trust_remote_code=True,
-            dtype=dtype,
+            torch_dtype=dtype,
             local_files_only=args.local_files_only,
         )
         .to(device)

@@ -93,7 +93,7 @@ tokenizer = AutoTokenizer.from_pretrained(
     model_id, revision=revision, trust_remote_code=True
 )
 model = AutoModelForCausalLM.from_pretrained(
-    model_id, revision=revision, trust_remote_code=True, dtype="auto"
+    model_id, revision=revision, trust_remote_code=True, torch_dtype="auto"
 ).eval()
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model = model.to(device)

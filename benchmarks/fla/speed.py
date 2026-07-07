@@ -181,7 +181,7 @@ def load_model(kind: str, model_path: Path, dtype: torch.dtype):
         from fla.models.rwkv7.modeling_rwkv7 import RWKV7ForCausalLM
     config = RWKV7Config.from_pretrained(model_path)
     return RWKV7ForCausalLM.from_pretrained(
-        model_path, config=config, dtype=dtype
+        model_path, config=config, torch_dtype=dtype
     ).cuda().eval()
 
 

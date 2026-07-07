@@ -1,11 +1,33 @@
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
+from pathlib import Path
 
 import torch
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 
 from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
+
+
+def test_dotted_hub_repo_dynamic_module_fallback():
+    """Older Transformers leaves dots in the dynamic package name."""
+
+    source = Path(__file__).parents[1] / "rwkv7_hf" / "modeling_rwkv7.py"
+    module_name = (
+        "transformers_modules.owner.rwkv7-g1d-0.1b-hf.revision.modeling_rwkv7"
+    )
+    spec = importlib.util.spec_from_file_location(module_name, source)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+        assert module.RWKV7Config.model_type == "rwkv7"
+        assert module.RWKV7ForCausalLM.__name__ == "RWKV7ForCausalLM"
+    finally:
+        sys.modules.pop(module_name, None)
 
 
 def test_save_reload_and_package_free_auto_model(tmp_path, tiny_config):

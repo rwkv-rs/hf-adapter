@@ -577,7 +577,7 @@ def main():
     oracle = OfficialRWKV7(args.checkpoint, device=device, dtype=dtype)
     config = RWKV7Config.from_pretrained(args.model)
     model = RWKV7ForCausalLM.from_pretrained(
-        args.model, config=config, dtype=dtype
+        args.model, config=config, torch_dtype=dtype
     ).to(device).eval()
 
     comparisons = {}

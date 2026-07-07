@@ -26,7 +26,7 @@ tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
 model = AutoModelForCausalLM.from_pretrained(
     model_id,
     trust_remote_code=True,
-    dtype=torch.float16,
+    torch_dtype=torch.float16,
 ).cuda().eval()
 
 inputs = tokenizer("User: Hello! Assistant:", return_tensors="pt").to("cuda")

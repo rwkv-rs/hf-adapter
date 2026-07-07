@@ -8,7 +8,11 @@ is rwkv7_recurrent in ops_rwkv7.py.
 """
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import math
+import sys
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -22,9 +26,34 @@ try:
 except ImportError:  # pragma: no cover - older Transformers
     from transformers.generation.utils import GenerationMixin
 
-from .cache_rwkv7 import RWKV7Cache
-from .configuration_rwkv7 import RWKV7Config
-from .ops_rwkv7 import rwkv7_recurrent
+try:
+    from .cache_rwkv7 import RWKV7Cache
+    from .configuration_rwkv7 import RWKV7Config
+    from .ops_rwkv7 import rwkv7_recurrent
+except ModuleNotFoundError:
+    # Transformers < 5 does not sanitize dots in Hub repository names when it
+    # constructs the dynamic-module package. Repositories such as
+    # ``rwkv7-g1d-0.1b-hf`` therefore give this module an invalid dotted
+    # package path and break ordinary relative imports. Load the already
+    # downloaded sibling files directly; normal package and local-directory
+    # loading continues to use the readable relative imports above.
+    def _load_remote_sibling(name: str):
+        path = Path(__file__).with_name(f"{name}.py")
+        digest = hashlib.sha256(str(path.parent).encode()).hexdigest()[:12]
+        module_name = f"_rwkv7_hf_remote_{digest}_{name}"
+        if module_name in sys.modules:
+            return sys.modules[module_name]
+        spec = importlib.util.spec_from_file_location(module_name, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"cannot load RWKV-7 remote module {path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    RWKV7Cache = _load_remote_sibling("cache_rwkv7").RWKV7Cache
+    RWKV7Config = _load_remote_sibling("configuration_rwkv7").RWKV7Config
+    rwkv7_recurrent = _load_remote_sibling("ops_rwkv7").rwkv7_recurrent
 
 
 # Mathematically equivalent form used by the official NumPy reference.
