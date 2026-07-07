@@ -126,6 +126,8 @@ def test_apple_smoke_script_static() -> None:
     qwen_acceptance_text = qwen_acceptance_wrapper.read_text(encoding="utf-8")
     assert "bench/run_qwen35_apple_baseline.py" in qwen_acceptance_text
     assert "bench/compare_qwen35_apple_baseline.py" in qwen_acceptance_text
+    assert "COMPARE_DIAGNOSTICS" in qwen_acceptance_text
+    assert "--diagnostics" in qwen_acceptance_text
     assert "bench/run_coreml_apple_baseline.py" in qwen_acceptance_text or "COREML_RUNTIME_MANIFESTS" in qwen_acceptance_text
     assert "bench/score_qwen35_quality.py" in qwen_acceptance_text or "QUALITY_RUBRIC" in qwen_acceptance_text
     assert "scripts/export_rwkv7_coreml.py" in qwen_acceptance_text
@@ -256,6 +258,7 @@ def test_apple_doc_links_entry_points() -> None:
     assert "scripts/export_rwkv7_coreml.py" in text
     assert "bench/run_coreml_apple_baseline.py" in text
     assert "bench/score_qwen35_quality.py" in text
+    assert "qwen35_apple_baseline_gap_diagnostic" in text
     assert "scripts/run_qwen35_apple_acceptance.sh" in text
     assert "tests/test_apple_silicon_model_training_smoke.py" in text
     assert "tests/test_apple_silicon_model_sweep.py" in text
@@ -313,6 +316,8 @@ def test_apple_doc_links_entry_points() -> None:
     qwen_acceptance_text = qwen_acceptance_wrapper.read_text(encoding="utf-8")
     assert "bench/run_qwen35_apple_baseline.py" in qwen_acceptance_text
     assert "bench/compare_qwen35_apple_baseline.py" in qwen_acceptance_text
+    assert "COMPARE_DIAGNOSTICS" in qwen_acceptance_text
+    assert "--diagnostics" in qwen_acceptance_text
     assert "bench/run_coreml_apple_baseline.py" in qwen_acceptance_text or "COREML_RUNTIME_MANIFESTS" in qwen_acceptance_text
     assert "bench/score_qwen35_quality.py" in qwen_acceptance_text or "QUALITY_RUBRIC" in qwen_acceptance_text
     assert "scripts/export_rwkv7_coreml.py" in qwen_acceptance_text

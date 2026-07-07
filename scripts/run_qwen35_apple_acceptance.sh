@@ -50,6 +50,7 @@ MIN_PREFILL_RATIO="${MIN_PREFILL_RATIO:-1.0}"
 MAX_TTFT_RATIO="${MAX_TTFT_RATIO:-1.1}"
 MAX_MEMORY_RATIO="${MAX_MEMORY_RATIO:-1.0}"
 COMPARE_APPEND="${COMPARE_APPEND:-${RESULTS}}"
+COMPARE_DIAGNOSTICS="${COMPARE_DIAGNOSTICS:-1}"
 QUALITY_RUBRIC="${QUALITY_RUBRIC:-}"
 QUALITY_PAIRS="${QUALITY_PAIRS:-${PAIRS}}"
 QUALITY_APPEND="${QUALITY_APPEND:-${RESULTS}}"
@@ -264,6 +265,9 @@ if [[ "${REQUIRE_MEMORY}" == "1" ]]; then
 fi
 if [[ -n "${COMPARE_APPEND}" ]]; then
   compare_args+=(--append "${COMPARE_APPEND}")
+fi
+if [[ "${COMPARE_DIAGNOSTICS}" == "1" ]]; then
+  compare_args+=(--diagnostics)
 fi
 if [[ "${FAIL_ON_GATE}" == "1" ]]; then
   compare_args+=(--fail-on-gate)
