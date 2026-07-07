@@ -711,6 +711,9 @@ def run_rwkv_mlx(
         for iteration_index in range(1, warmups + repeats + 1):
             is_warmup = iteration_index <= warmups
             repeat_index = iteration_index - warmups
+            reset_counters = getattr(model, "reset_telemetry_counters", None)
+            if callable(reset_counters):
+                reset_counters()
             reset_mlx_peak_memory()
             t_prefill = time.perf_counter()
             logits, state = model.prefill([prompt_ids])
