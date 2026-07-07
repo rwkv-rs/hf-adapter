@@ -52,10 +52,13 @@ but it is not a performance win yet:
 | Qwen3.5 2B MLX-4bit | mlx-vlm token-only | 0.378899s | 335.181414 | 37.070964 | 2,020,245,484 B |
 | RWKV-7 1.5B mm4 + RKV quant | rwkv7_hf MLX | 11.019150s | 12.083573 | 8.979128 | 1,225,111,246 B |
 
-Gate ratios: `decode=0.242215`, `prefill=0.036051`, `ttft=29.082024`,
-`memory=0.606417`.  Memory is the passing gate; decode, prefill, and TTFT remain
-open.  The immediate engineering target is fused recurrent/prefill work before
-claiming the 2B-size Apple/Qwen3.5 gate.
+Cold gate ratios: `decode=0.242215`, `prefill=0.036051`, `ttft=29.082024`,
+`memory=0.606417`.  With `--warmup-repeats 1`, the warmed row records
+`decode=0.284346`, `prefill=0.035110`, `ttft=29.829376`, `memory=0.570288` and
+proves the RWKV path used WKV Metal plus grouped R/K/V quant Metal with no R/K/V
+fallback.  Memory is the passing gate; decode, prefill, and TTFT remain open.
+The immediate engineering target is fused recurrent/prefill work before claiming
+the 2B-size Apple/Qwen3.5 gate.
 
 ## RWKV-7 MLX smoke rows collected
 

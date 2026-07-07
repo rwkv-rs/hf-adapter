@@ -160,6 +160,8 @@ use the token-only lane:
 PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --prompt-target-chars 1024,4096 \
   --decode-lengths 128,512 \
+  --repeat 1 \
+  --warmup-repeats 1 \
   --qwen-models '' \
   --qwen-mlx-vlm-models mlx-community/Qwen3.5-0.8B-MLX-4bit \
   --qwen-mlx-vlm-token-only \
@@ -212,8 +214,14 @@ provides a bounded, resumable HTTP Range fallback for the single
 (`memory_ratio_rwkv_over_qwen=0.606417`) but remains below the Qwen3.5 2B token
 baseline on speed (`decode_ratio_rwkv_over_qwen=0.242215`,
 `prefill_ratio_rwkv_over_qwen=0.036051`, `ttft_ratio_rwkv_over_qwen=29.082024`).
-This row needs about `4.13x` decode and `27.74x` prefill speedup to match the
-measured Qwen3.5 2B baseline.
+The same harness now supports `--warmup-repeats` so Apple rows can separate
+MLX/Metal compile cold-start from steady-state generation.  With
+`--warmup-repeats 1`, Qwen3.5 2B reaches ≈1205.58 prefill tok/s and ≈110.63
+decode tok/s, while RWKV-7 1.5B/mm4 + RKV quant reaches ≈42.33 prefill tok/s
+and ≈31.46 decode tok/s with `wkv_backend_counts={"metal":15840}` and grouped
+R/K/V quant `fallback=0`.  The warmed row improves RWKV absolute decode but still
+needs about `3.52x` decode and `28.48x` prefill speedup to match the warmed
+Qwen3.5 2B baseline.
 
 Run RWKV-7 MLX rows against the same prompt text:
 
@@ -221,6 +229,8 @@ Run RWKV-7 MLX rows against the same prompt text:
 PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --prompt-target-chars 1024,4096,8192 \
   --decode-lengths 128,512 \
+  --repeat 1 \
+  --warmup-repeats 1 \
   --qwen-models '' \
   --rwkv-mlx-models /path/to/rwkv7-g1d-0.4b-hf,/path/to/rwkv7-g1g-1.5b-hf \
   --rwkv-dtype fp16 \
@@ -237,6 +247,8 @@ RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION=1 \
 PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --prompt-target-chars 1024,4096,8192 \
   --decode-lengths 128,512 \
+  --repeat 1 \
+  --warmup-repeats 1 \
   --qwen-models '' \
   --rwkv-mlx-models /path/to/rwkv7-g1d-0.4b-hf,/path/to/rwkv7-g1g-1.5b-hf \
   --rwkv-dtype fp16 \

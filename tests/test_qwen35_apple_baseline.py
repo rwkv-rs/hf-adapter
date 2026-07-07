@@ -269,6 +269,8 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
             "32,64",
             "--decode-lengths",
             "4,8",
+            "--warmup-repeats",
+            "2",
             "--qwen-models",
             "qwen3.5:0.8b-mlx",
             "--qwen-mlx-vlm-models",
@@ -290,8 +292,11 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
     rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert rows[0]["axis"] == AXIS + "_env"
     assert rows[1]["axis"] == AXIS + "_plan"
+    assert rows[0]["warmup_repeats"] == 2
     assert rows[1]["qwen_jobs"] == 4
     assert rows[1]["qwen_mlx_vlm_jobs"] == 4
+    assert rows[1]["warmup_repeats"] == 2
+    assert rows[1]["warmup_jobs"] == 32
     assert rows[1]["qwen_mlx_vlm_models"] == ["mlx-community/Qwen3.5-0.8B-MLX-4bit"]
     assert rows[1]["qwen_mlx_vlm_token_only"] is True
     assert rows[1]["rwkv_quant_min_params"] == 4_000_000
@@ -312,6 +317,7 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
             "RWKV_QUANT_RKV_MIN_PARAMS": "0",
             "PROMPT_TARGET_CHARS": "16",
             "DECODE_LENGTHS": "4",
+            "WARMUP_REPEATS": "1",
             "RESULTS": str(out),
             "PYTHON_BIN": sys.executable,
             "SKIP_COMPARE": "1",
@@ -329,9 +335,12 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
     rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert rows[0]["axis"] == AXIS + "_env"
     assert rows[1]["axis"] == AXIS + "_plan"
+    assert rows[0]["warmup_repeats"] == 1
     assert rows[1]["qwen_jobs"] == 0
     assert rows[1]["qwen_mlx_vlm_jobs"] == 1
     assert rows[1]["rwkv_mlx_jobs"] == 2
+    assert rows[1]["warmup_repeats"] == 1
+    assert rows[1]["warmup_jobs"] == 3
     assert rows[1]["qwen_mlx_vlm_models"] == ["mlx-community/Qwen3.5-0.8B-MLX-4bit"]
     assert rows[1]["qwen_mlx_vlm_token_only"] is True
     assert rows[1]["rwkv_quant_rkv_min_params"] == 0
