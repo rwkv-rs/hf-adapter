@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "generated_at": "2026-08-27T03:16:24.796765+00:00",
+  "source_git_sha": "b8438cab0dc7d11238942efca4c05135d53fcaf8",
+  "hardware": "2x Tesla V100-PCIE-32GB",
+  "software": {
+    "python": "3.11.15",
+    "torch": "2.5.1+cu124",
+    "transformers": "4.52.4",
+    "cuda": "12.4"
+  },
+  "hub_metadata": [
+    {
+      "model": "wangyue114514/rwkv7-g1d-0.1b-hf",
+      "revision": "f2e07131973ae9d6f1ee0e84db1b6e346e58d1f0",
+      "commit": "f2e07131973ae9d6f1ee0e84db1b6e346e58d1f0",
+      "weight_files": 1,
+      "weight_bytes": 382110672
+    },
+    {
+      "model": "wangyue114514/rwkv7-g1d-0.4b-hf",
+      "revision": "8ac0dc2e0562efac2d2055258069f08ec23c813d",
+      "commit": "8ac0dc2e0562efac2d2055258069f08ec23c813d",
+      "weight_files": 1,
+      "weight_bytes": 901619536
+    },
+    {
+      "model": "wangyue114514/rwkv7-g1g-1.5b-hf",
+      "revision": "d0f3488f9752154aac25811bf45506f36d68f1c0",
+      "commit": "d0f3488f9752154aac25811bf45506f36d68f1c0",
+      "weight_files": 6,
+      "weight_bytes": 3054892712
+    },
+    {
+      "model": "wangyue114514/rwkv7-g1g-13.3b-hf",
+      "revision": "58a171ca3bcf4df0b923a5489c13372818f930d6",
+      "commit": "58a171ca3bcf4df0b923a5489c13372818f930d6",
+      "weight_files": 7,
+      "weight_bytes": 26538708640
+    },
+    {
+      "model": "wangyue114514/rwkv7-g1g-2.9b-hf",
+      "revision": "bf64a220cfc9158efdbf3f119ae8b1714eefa146",
+      "commit": "bf64a220cfc9158efdbf3f119ae8b1714eefa146",
+      "weight_files": 13,
+      "weight_bytes": 5895582248
+    },
+    {
+      "model": "wangyue114514/rwkv7-g1g-7.2b-hf",
+      "revision": "4505870e040f6338e34eb8d18684cfa6d65745c8",
+      "commit": "4505870e040f6338e34eb8d18684cfa6d65745c8",
+      "weight_files": 4,
+      "weight_bytes": 14398397464
+    }
+  ],
+  "hub_package_free_smoke": [
+    {
+      "model": "wangyue114514/rwkv7-g1d-0.1b-hf",
+      "revision": "f2e07131973ae9d6f1ee0e84db1b6e346e58d1f0",
+      "commit": "f2e07131973ae9d6f1ee0e84db1b6e346e58d1f0",
+      "model_class": "RWKV7ForCausalLM",
+      "cache_class": "RWKV7Cache",
+      "generated": [
+        24281,
+        59,
+        36786,
+        34,
+        58683,
+        59,
+        308,
+        459
+      ]
+    },
+    {
+      "model": "wangyue114514/rwkv7-g1d-0.4b-hf",
+      "revision": "8ac0dc2e0562efac2d2055258069f08ec23c813d",
+      "commit": "8ac0dc2e0562efac2d2055258069f08ec23c813d",
+      "model_class": "RWKV7ForCausalLM",
+      "cache_class": "RWKV7Cache",
+      "generated": [
+        24281,
+        59,
+        36786,
+        34,
+        58683,
+        59,
+        36786,
+        34
+      ]
+    },
+    {
+      "model": "wangyue114514/rwkv7-g1g-1.5b-hf",
+      "revision": "d0f3488f9752154aac25811bf45506f36d68f1c0",
+      "commit": "d0f3488f9752154aac25811bf45506f36d68f1c0",
+      "model_class": "RWKV7ForCausalLM",
+      "cache_class": "RWKV7Cache",
+      "generated": [
+        24281,
+        59,
+        36786,
+        34,
+        58683,
+        59,
+        36786,
+        34
+      ]
+    }
+  ],
+  "large_local_source_smoke": [
+    {
+      "model": "wangyue114514/rwkv7-g1g-13.3b-hf",
+      "revision": "58a171ca3bcf4df0b923a5489c13372818f930d6",
+      "status": "passed",
+      "finite_logits": true,
+      "finite_cached_logits": true,
+      "cache_class": "RWKV7Cache",
+      "cache_seq_length": 3,
+      "generated": [
+        1,
+        2,
+        1
+      ],
+      "peak_gpu_bytes": 26716598784
+    },
+    {
+      "model": "wangyue114514/rwkv7-g1g-2.9b-hf",
+      "revision": "bf64a220cfc9158efdbf3f119ae8b1714eefa146",
+      "status": "passed",
+      "finite_logits": true,
+      "finite_cached_logits": true,
+      "cache_class": "RWKV7Cache",
+      "cache_seq_length": 3,
+      "generated": [
+        1,
+        2,
+        1
+      ],
+      "peak_gpu_bytes": 5965444608
+    },
+    {
+      "model": "wangyue114514/rwkv7-g1g-7.2b-hf",
+      "revision": "4505870e040f6338e34eb8d18684cfa6d65745c8",
+      "status": "passed",
+      "finite_logits": true,
+      "finite_cached_logits": true,
+      "cache_class": "RWKV7Cache",
+      "cache_seq_length": 3,
+      "generated": [
+        1,
+        2,
+        1
+      ],
+      "peak_gpu_bytes": 14494511616
+    }
+  ],
+  "large_local_source_weight_match": {
+    "wangyue114514/rwkv7-g1g-13.3b-hf": {
+      "expected_sha256": "54358207992c861fe3bbbcbf8c7f7c252e984b7b0a8442def06bc5a3e6494fec",
+      "actual_sha256": "54358207992c861fe3bbbcbf8c7f7c252e984b7b0a8442def06bc5a3e6494fec",
+      "expected_bytes": 26538712072,
+      "actual_bytes": 26538712072,
+      "passed": true
+    },
+    "wangyue114514/rwkv7-g1g-2.9b-hf": {
+      "expected_sha256": "f32497cf89f472cdafa157b583d8f419a6518d60b59464cd41729ef9e04ba75e",
+      "actual_sha256": "f32497cf89f472cdafa157b583d8f419a6518d60b59464cd41729ef9e04ba75e",
+      "expected_bytes": 5895583864,
+      "actual_bytes": 5895583864,
+      "passed": true
+    },
+    "wangyue114514/rwkv7-g1g-7.2b-hf": {
+      "expected_sha256": "c9e6b2687b822317bcc0ff12e1f0bca7c0f91b6f4bb5b30e299e8d518f05476b",
+      "actual_sha256": "c9e6b2687b822317bcc0ff12e1f0bca7c0f91b6f4bb5b30e299e8d518f05476b",
+      "expected_bytes": 14398398496,
+      "actual_bytes": 14398398496,
+      "passed": true
+    }
+  },
+  "notes": [
+    "0.1B/0.4B/1.5B loaded directly from exact Hub revisions.",
+    "2.9B/7.2B/13.3B used server-local single-file safetensors; each SHA256 and byte size matches conversion_manifest.json source_single_file_conversion for the published sharded Hub weights.",
+    "All models produced finite prefill and cached-decode logits and an RWKV7Cache."
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "manifest_version": 1,
+  "model_id": "wangyue114514/rwkv7-g1g-13.3b-hf",
+  "layout": "pypi-thin",
+  "source": {
+    "repository": "BlinkDL/rwkv7-g1",
+    "revision": "41251fab280e3fba70a3fc49e843f3a034d49d33",
+    "filename": "rwkv7-g1g-13.3b-20260523-ctx8192.pth",
+    "size_bytes": 26540868485,
+    "sha256": "0aa686d3ca4bb486e83e3071f4798a210f960e1fc1f5042e6cb418cc463814d6"
+  },
+  "weights": {
+    "format": "safetensors",
+    "layout": "sharded",
+    "index_filename": "model.safetensors.index.json",
+    "dtype": "float16",
+    "parameter_count": 13269245952,
+    "total_tensor_bytes": 26538491904,
+    "max_shard_size_bytes": 4000000000,
+    "source_single_file_conversion": {
+      "size_bytes": 26538712072,
+      "sha256": "54358207992c861fe3bbbcbf8c7f7c252e984b7b0a8442def06bc5a3e6494fec"
+    },
+    "shards": [
+      {
+        "filename": "model-00001-of-00007.safetensors",
+        "size_bytes": 3997254400,
+        "sha256": "5bfcb7bf42ab597db2c5e266ad1ab19df7453cd092b8b5ba6747bccec94ef176"
+      },
+      {
+        "filename": "model-00002-of-00007.safetensors",
+        "size_bytes": 3903309608,
+        "sha256": "eeae58b5fc1a4e2ad18ab6669b87d497e64f2455ad49a5eb53933f30e8cae0cd"
+      },
+      {
+        "filename": "model-00003-of-00007.safetensors",
+        "size_bytes": 3891649880,
+        "sha256": "f8279880910e1197c3a0245a642a3c0e57111ae4df77fa0e37ebdc20cfcdf242"
+      },
+      {
+        "filename": "model-00004-of-00007.safetensors",
+        "size_bytes": 3968271248,
+        "sha256": "683536b388c23deb196e0dbfb15a71175ef4d99a4c515d332e28f6f17b1a9b22"
+      },
+      {
+        "filename": "model-00005-of-00007.safetensors",
+        "size_bytes": 3964085248,
+        "sha256": "2cc8a4e876380d748a2fbf80487666e898ab7101d365ec16076b05292edca659"
+      },
+      {
+        "filename": "model-00006-of-00007.safetensors",
+        "size_bytes": 3968271248,
+        "sha256": "e4530d7df57b1977331f9d6956043de085cc864644ac121e4a88d0f1d6f91ad0"
+      },
+      {
+        "filename": "model-00007-of-00007.safetensors",
+        "size_bytes": 2845867008,
+        "sha256": "9cd51568b8317b7009b401d7425f04b5c325d04fc25f6166ec09844b80dc59f8"
+      }
+    ]
+  },
+  "runtime": {
+    "package": "rwkv7-hf",
+    "version": "0.7.0",
+    "pypi_wheel_sha256": "afca18967d30fdb0d6e0775001a8b328a7b52a7e01314caaf185d7fe12dd0f49",
+    "source_repository": "rwkv-rs/hf-adapter",
+    "release_tag": "v0.7.0",
+    "release_commit": "aff3982f68aeccd9b75b6d7cce8ad77e6df37145"
+  },
+  "validation": {
+    "status": "passed",
+    "python": "3.10.12",
+    "torch": "2.12.1+cu130",
+    "transformers": "5.13.0",
+    "missing_keys": 0,
+    "unexpected_keys": 0,
+    "mismatched_keys": 0,
+    "parameter_count_loaded": 13269245952,
+    "forward_logits_shape": [
+      1,
+      1,
+      65536
+    ],
+    "forward_all_finite": true,
+    "storage_layout": "sharded",
+    "shard_tensor_equality": true
+  }
+}

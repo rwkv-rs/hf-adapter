@@ -1,0 +1,37 @@
+{
+  "status": "passed",
+  "model": "wangyue114514/rwkv7-g1d-0.4b-hf",
+  "revision": "8ac0dc2e0562efac2d2055258069f08ec23c813d",
+  "commit": "8ac0dc2e0562efac2d2055258069f08ec23c813d",
+  "required_files": [
+    "cache_rwkv7.py",
+    "chat_template.jinja",
+    "config.json",
+    "configuration_rwkv7.py",
+    "modeling_rwkv7.py",
+    "ops_rwkv7.py",
+    "rwkv_vocab_v20230424.txt",
+    "tokenization_rwkv7.py",
+    "tokenizer_config.json"
+  ],
+  "weights": [
+    {
+      "name": "model.safetensors",
+      "bytes": 901619536,
+      "sha256": "8aa0fb580a0c5d442b28f63b9b08c2c60a81821f7c60e79307c11a1a3a2693e0"
+    }
+  ],
+  "python": "3.11.15",
+  "model_class": "RWKV7ForCausalLM",
+  "cache_class": "RWKV7Cache",
+  "generated": [
+    24281,
+    59,
+    36786,
+    34,
+    58683,
+    59,
+    36786,
+    34
+  ]
+}

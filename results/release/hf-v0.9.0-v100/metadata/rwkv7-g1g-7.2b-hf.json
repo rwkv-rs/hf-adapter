@@ -1,0 +1,40 @@
+{
+  "status": "passed",
+  "model": "wangyue114514/rwkv7-g1g-7.2b-hf",
+  "revision": "4505870e040f6338e34eb8d18684cfa6d65745c8",
+  "commit": "4505870e040f6338e34eb8d18684cfa6d65745c8",
+  "required_files": [
+    "cache_rwkv7.py",
+    "chat_template.jinja",
+    "config.json",
+    "configuration_rwkv7.py",
+    "modeling_rwkv7.py",
+    "ops_rwkv7.py",
+    "rwkv_vocab_v20230424.txt",
+    "tokenization_rwkv7.py",
+    "tokenizer_config.json"
+  ],
+  "weights": [
+    {
+      "name": "model-00001-of-00004.safetensors",
+      "bytes": 3997287800,
+      "sha256": "1649a14256f4277cf0683363c4939c76c29b1a7f7be99992992f6d381e8a3c90"
+    },
+    {
+      "name": "model-00002-of-00004.safetensors",
+      "bytes": 3885974712,
+      "sha256": "e119188edf706c8c60d6e7413242c16e9b16ca42fcc8a98276416d942f5c4aa2"
+    },
+    {
+      "name": "model-00003-of-00004.safetensors",
+      "bytes": 3882212680,
+      "sha256": "b4e820d09a0e65549d7fe75a1aaefd9c806e80d3d6c0ed7243f2273d37c6b575"
+    },
+    {
+      "name": "model-00004-of-00004.safetensors",
+      "bytes": 2632922272,
+      "sha256": "b0c69dff89d7f04a5fde42f0f59ef1ee98882726e346c3b0c1552061d5a2f399"
+    }
+  ],
+  "python": "3.11.15"
+}

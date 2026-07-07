@@ -1,0 +1,85 @@
+{
+  "status": "passed",
+  "model": "wangyue114514/rwkv7-g1g-2.9b-hf",
+  "revision": "bf64a220cfc9158efdbf3f119ae8b1714eefa146",
+  "commit": "bf64a220cfc9158efdbf3f119ae8b1714eefa146",
+  "required_files": [
+    "cache_rwkv7.py",
+    "chat_template.jinja",
+    "config.json",
+    "configuration_rwkv7.py",
+    "modeling_rwkv7.py",
+    "ops_rwkv7.py",
+    "rwkv_vocab_v20230424.txt",
+    "tokenization_rwkv7.py",
+    "tokenizer_config.json"
+  ],
+  "weights": [
+    {
+      "name": "model-00001-of-00013.safetensors",
+      "bytes": 335544448,
+      "sha256": "271974b51c2783ed1ba9ac2aaffee1514ddeda87e66a0950feabd38645ae549b"
+    },
+    {
+      "name": "model-00002-of-00013.safetensors",
+      "bytes": 528685696,
+      "sha256": "283a3e272faf8963c0a78b3d9e3c310e7b3eb2cee1112604415ae2665dbc21d6"
+    },
+    {
+      "name": "model-00003-of-00013.safetensors",
+      "bytes": 517761928,
+      "sha256": "4d2fa4521d54385068ecf6befdc425c07d8c7f90af94af21195388338a9223ba"
+    },
+    {
+      "name": "model-00004-of-00013.safetensors",
+      "bytes": 489856280,
+      "sha256": "7aaee9ff55454c12357797c90614d06abf9dea8a0d1b2e6bade57be496c82c04"
+    },
+    {
+      "name": "model-00005-of-00013.safetensors",
+      "bytes": 489856280,
+      "sha256": "4e81d67ef90f516d153cd439d9137d7ec0021bea58b61ba0037f7455b509fded"
+    },
+    {
+      "name": "model-00006-of-00013.safetensors",
+      "bytes": 489856248,
+      "sha256": "acef40dd5af35792068cb30c95c4e1adc09773885f00b07a02995b34c5d56787"
+    },
+    {
+      "name": "model-00007-of-00013.safetensors",
+      "bytes": 489856280,
+      "sha256": "6b571c72f28478ac9ebef98b2265d6619a9379962251323bf881254dbf8ddf11"
+    },
+    {
+      "name": "model-00008-of-00013.safetensors",
+      "bytes": 489856280,
+      "sha256": "94035f1a1fa15d9c9f539f132792a45fbf5f5677d41f9379df3a5070118ad004"
+    },
+    {
+      "name": "model-00009-of-00013.safetensors",
+      "bytes": 489856280,
+      "sha256": "cce02f18086afd35eec88a5c4cd5d8c1d34592a4ac161bebb4e5764185f7b611"
+    },
+    {
+      "name": "model-00010-of-00013.safetensors",
+      "bytes": 489856248,
+      "sha256": "70177814c7c9a8adb56c5162b93b3b3f8b79b7c19178f2a0cbd6cd71450f8b1b"
+    },
+    {
+      "name": "model-00011-of-00013.safetensors",
+      "bytes": 489856184,
+      "sha256": "c417c96f039acc565374eaa60501d2cfed18d746a368dd862e4d760d91258019"
+    },
+    {
+      "name": "model-00012-of-00013.safetensors",
+      "bytes": 489856184,
+      "sha256": "6e9a590a0635c14d8195002dbb28618801e8d627dc8a66f26202adb6a0726f94"
+    },
+    {
+      "name": "model-00013-of-00013.safetensors",
+      "bytes": 104883912,
+      "sha256": "eb0444f035a9a74e048b8ee75dcb1a2a402bea8e50e8aca2a652684bd4425fd3"
+    }
+  ],
+  "python": "3.11.15"
+}

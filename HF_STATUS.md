@@ -16,7 +16,10 @@ Release gates:
       batch-pair reruns; merged validator passed)
 - [x] canonical SFT, DPO and GRPO runs, exact resume, and W&B offline smoke
 - [x] clean wheel build, metadata check, isolated install and CLI/model smoke
-- [ ] six model repositories updated and tagged v0.9.0
+- [x] six model repositories updated and tagged v0.9.0; exact-revision Hub
+      metadata passed for all six, direct Hub loading passed for
+      0.1B/0.4B/1.5B, and V100 local-source smoke passed for
+      2.9B/7.2B/13.3B with hashes matched to each conversion manifest
 - [ ] PyPI 0.9.0 published
 
 A release is not complete until every unchecked item passes.
@@ -26,3 +29,6 @@ The optional optimized-backend comparison is preserved in
 It records numerical differences but is not a correctness oracle and does not
 block release. Official RWKV checkpoints, HF invariants, formal evaluation,
 and training reproducibility are the release gates.
+
+The compact six-model release evidence is archived in
+[`results/release/hf-v0.9.0-v100`](results/release/hf-v0.9.0-v100/README.md).

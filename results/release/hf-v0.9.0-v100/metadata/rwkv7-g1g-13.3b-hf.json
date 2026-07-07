@@ -1,0 +1,55 @@
+{
+  "status": "passed",
+  "model": "wangyue114514/rwkv7-g1g-13.3b-hf",
+  "revision": "58a171ca3bcf4df0b923a5489c13372818f930d6",
+  "commit": "58a171ca3bcf4df0b923a5489c13372818f930d6",
+  "required_files": [
+    "cache_rwkv7.py",
+    "chat_template.jinja",
+    "config.json",
+    "configuration_rwkv7.py",
+    "modeling_rwkv7.py",
+    "ops_rwkv7.py",
+    "rwkv_vocab_v20230424.txt",
+    "tokenization_rwkv7.py",
+    "tokenizer_config.json"
+  ],
+  "weights": [
+    {
+      "name": "model-00001-of-00007.safetensors",
+      "bytes": 3997254400,
+      "sha256": "5bfcb7bf42ab597db2c5e266ad1ab19df7453cd092b8b5ba6747bccec94ef176"
+    },
+    {
+      "name": "model-00002-of-00007.safetensors",
+      "bytes": 3903309608,
+      "sha256": "eeae58b5fc1a4e2ad18ab6669b87d497e64f2455ad49a5eb53933f30e8cae0cd"
+    },
+    {
+      "name": "model-00003-of-00007.safetensors",
+      "bytes": 3891649880,
+      "sha256": "f8279880910e1197c3a0245a642a3c0e57111ae4df77fa0e37ebdc20cfcdf242"
+    },
+    {
+      "name": "model-00004-of-00007.safetensors",
+      "bytes": 3968271248,
+      "sha256": "683536b388c23deb196e0dbfb15a71175ef4d99a4c515d332e28f6f17b1a9b22"
+    },
+    {
+      "name": "model-00005-of-00007.safetensors",
+      "bytes": 3964085248,
+      "sha256": "2cc8a4e876380d748a2fbf80487666e898ab7101d365ec16076b05292edca659"
+    },
+    {
+      "name": "model-00006-of-00007.safetensors",
+      "bytes": 3968271248,
+      "sha256": "e4530d7df57b1977331f9d6956043de085cc864644ac121e4a88d0f1d6f91ad0"
+    },
+    {
+      "name": "model-00007-of-00007.safetensors",
+      "bytes": 2845867008,
+      "sha256": "9cd51568b8317b7009b401d7425f04b5c325d04fc25f6166ec09844b80dc59f8"
+    }
+  ],
+  "python": "3.11.15"
+}

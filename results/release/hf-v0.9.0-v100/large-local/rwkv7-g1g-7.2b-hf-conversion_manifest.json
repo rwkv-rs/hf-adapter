@@ -1,0 +1,73 @@
+{
+  "manifest_version": 1,
+  "model_id": "wangyue114514/rwkv7-g1g-7.2b-hf",
+  "layout": "pypi-thin",
+  "source": {
+    "repository": "BlinkDL/rwkv7-g1",
+    "revision": "41251fab280e3fba70a3fc49e843f3a034d49d33",
+    "filename": "rwkv7-g1g-7.2b-20260523-ctx8192.pth",
+    "size_bytes": 14400007869,
+    "sha256": "425fc9bda2d12d4ce3b6bfe5c3b3f355be8b14d85960cf40fcca58a19d632630"
+  },
+  "weights": {
+    "format": "safetensors",
+    "layout": "sharded",
+    "index_filename": "model.safetensors.index.json",
+    "dtype": "float16",
+    "parameter_count": 7199141888,
+    "total_tensor_bytes": 14398283776,
+    "max_shard_size_bytes": 4000000000,
+    "source_single_file_conversion": {
+      "size_bytes": 14398398496,
+      "sha256": "c9e6b2687b822317bcc0ff12e1f0bca7c0f91b6f4bb5b30e299e8d518f05476b"
+    },
+    "shards": [
+      {
+        "filename": "model-00001-of-00004.safetensors",
+        "size_bytes": 3997287800,
+        "sha256": "1649a14256f4277cf0683363c4939c76c29b1a7f7be99992992f6d381e8a3c90"
+      },
+      {
+        "filename": "model-00002-of-00004.safetensors",
+        "size_bytes": 3885974712,
+        "sha256": "e119188edf706c8c60d6e7413242c16e9b16ca42fcc8a98276416d942f5c4aa2"
+      },
+      {
+        "filename": "model-00003-of-00004.safetensors",
+        "size_bytes": 3882212680,
+        "sha256": "b4e820d09a0e65549d7fe75a1aaefd9c806e80d3d6c0ed7243f2273d37c6b575"
+      },
+      {
+        "filename": "model-00004-of-00004.safetensors",
+        "size_bytes": 2632922272,
+        "sha256": "b0c69dff89d7f04a5fde42f0f59ef1ee98882726e346c3b0c1552061d5a2f399"
+      }
+    ]
+  },
+  "runtime": {
+    "package": "rwkv7-hf",
+    "version": "0.7.0",
+    "pypi_wheel_sha256": "afca18967d30fdb0d6e0775001a8b328a7b52a7e01314caaf185d7fe12dd0f49",
+    "source_repository": "rwkv-rs/hf-adapter",
+    "release_tag": "v0.7.0",
+    "release_commit": "aff3982f68aeccd9b75b6d7cce8ad77e6df37145"
+  },
+  "validation": {
+    "status": "passed",
+    "python": "3.10.12",
+    "torch": "2.12.1+cu130",
+    "transformers": "5.13.0",
+    "missing_keys": 0,
+    "unexpected_keys": 0,
+    "mismatched_keys": 0,
+    "parameter_count_loaded": 7199141888,
+    "forward_logits_shape": [
+      1,
+      1,
+      65536
+    ],
+    "forward_all_finite": true,
+    "storage_layout": "sharded",
+    "shard_tensor_equality": true
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "status": "passed",
+  "model": "/home/data/wangyue/results/rwkv7-hf-v090-large-local/stage/rwkv7-g1g-7.2b-hf",
+  "repo": "wangyue114514/rwkv7-g1g-7.2b-hf",
+  "revision": "4505870e040f6338e34eb8d18684cfa6d65745c8",
+  "python": "3.11.15",
+  "torch": "2.5.1+cu124",
+  "transformers": "4.52.4",
+  "cuda": "12.4",
+  "gpu": "Tesla V100-PCIE-32GB",
+  "weight_files": [
+    {
+      "name": "model.safetensors",
+      "bytes": 14398398496,
+      "target": "/home/data/wangyue/models/rwkv7/rwkv7-g1g-7.2b-hf/model.safetensors"
+    }
+  ],
+  "tokenizer_class": "RWKV7Tokenizer",
+  "load_cpu_seconds": 4.067848698003218,
+  "to_gpu_seconds": 13.9418818668928,
+  "forward_seconds": 0.5739298360422254,
+  "cached_decode_seconds": 0.13977318909019232,
+  "model_class": "RWKV7ForCausalLM",
+  "cache_class": "RWKV7Cache",
+  "logits_shape": [
+    1,
+    2,
+    65536
+  ],
+  "cached_logits_shape": [
+    1,
+    1,
+    65536
+  ],
+  "finite_logits": true,
+  "finite_cached_logits": true,
+  "cache_seq_length": 3,
+  "generated": [
+    1,
+    2,
+    1
+  ],
+  "peak_gpu_bytes": 14494511616
+}
