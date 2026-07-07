@@ -246,6 +246,16 @@ streaming `next_token` sync instead.  The optional `RWKV7_MLX_FUSED_ATTN_MIX=1`
 seam fuses the six attention mix tensors into one Metal kernel and records
 `fused_attn_mix_counts`, but the 512/64 AB row keeps it disabled by default
 because decode regressed while prefill improved only modestly.
+
+The first multi-token WKV scan prototype is recorded in
+[`../../bench/apple_mlx_wkv_scan_m5_20260707/`](../../bench/apple_mlx_wkv_scan_m5_20260707/).
+It adds `rwkv7_hf.mlx_scan.wkv_scan()`, a Metal recurrent scan over
+`r/w/v/k/kk/a [B,T,H,N]` for one layer.  In the isolated Apple M5 WKV microbench,
+the scan kernel is `2.49x` faster than a per-token Metal WKV loop at `T=32` and
+`4.09x` faster at `T=128`.  This is the first kernel with the right shape to
+attack the long-context prefill gap, but it is not yet wired into full MLX
+prefill; the next step is a layer-major prefill path with full-model parity and
+Qwen3.5 end-to-end evidence.
 The component-profile follow-up is recorded in
 [`../../bench/apple_mlx_component_profile_m5_20260707/`](../../bench/apple_mlx_component_profile_m5_20260707/).
 It uses synchronized component boundaries on the same Apple M5 1.5B/mm4 path and
