@@ -32,6 +32,7 @@ from .mlx_quant import (
     pack_mlx_mm4_group,
     pack_mlx_mm8_group,
 )
+from .mlx_mix import attn_mix, metal_attn_mix_available
 from .mlx_wkv import metal_wkv_available, wkv_update
 
 
@@ -818,6 +819,8 @@ class MLXRWKV7Model:
         self.step_eval_interval = max(1, _env_int("RWKV7_MLX_STEP_EVAL_INTERVAL", 1))
         self.fused_ffn_key_relu2 = _env_flag("RWKV7_MLX_FUSED_FFN_KEY_RELU2", False)
         self.fused_ffn_key_relu2_counts: dict[str, int] = {"metal": 0, "fallback": 0}
+        self.fused_attn_mix = _env_flag("RWKV7_MLX_FUSED_ATTN_MIX", False)
+        self.fused_attn_mix_counts: dict[str, int] = {"metal": 0, "fallback": 0}
         self.state_only_prefill_calls = 0
         self.state_only_prefill_tokens = 0
         self.group_rkv_quant_projection = _env_flag("RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION", False)
@@ -955,6 +958,7 @@ class MLXRWKV7Model:
         self.wkv_backend_last = None
         self.wkv_backend_counts = {"reference": 0, "metal": 0}
         self.fused_ffn_key_relu2_counts = {"metal": 0, "fallback": 0}
+        self.fused_attn_mix_counts = {"metal": 0, "fallback": 0}
         self.state_only_prefill_calls = 0
         self.state_only_prefill_tokens = 0
         self.group_rkv_quant_projection_counts = {"metal": 0, "fallback": 0}
@@ -977,6 +981,9 @@ class MLXRWKV7Model:
             "step_eval_interval": int(self.step_eval_interval),
             "fused_ffn_key_relu2": bool(self.fused_ffn_key_relu2),
             "fused_ffn_key_relu2_counts": dict(self.fused_ffn_key_relu2_counts),
+            "fused_attn_mix": bool(self.fused_attn_mix),
+            "fused_attn_mix_counts": dict(self.fused_attn_mix_counts),
+            "fused_attn_mix_metal_available": metal_attn_mix_available(),
             "state_only_prefill_calls": int(self.state_only_prefill_calls),
             "state_only_prefill_tokens": int(self.state_only_prefill_tokens),
             **summarize_mlx_arrays(self.arrays),
@@ -1138,13 +1145,30 @@ class MLXRWKV7Model:
         H = self.num_heads
         N = self.head_dim
         prefix = f"model.layers.{layer}.attn"
-        xx = x_prev - x
-        xr = x + xx * self._get(f"{prefix}.x_r").reshape(1, hidden)
-        xw = x + xx * self._get(f"{prefix}.x_w").reshape(1, hidden)
-        xk = x + xx * self._get(f"{prefix}.x_k").reshape(1, hidden)
-        xv = x + xx * self._get(f"{prefix}.x_v").reshape(1, hidden)
-        xa = x + xx * self._get(f"{prefix}.x_a").reshape(1, hidden)
-        xg = x + xx * self._get(f"{prefix}.x_g").reshape(1, hidden)
+        if self.fused_attn_mix:
+            (xr, xw, xk, xv, xa, xg), mix_backend = attn_mix(
+                x,
+                x_prev,
+                self._get(f"{prefix}.x_r"),
+                self._get(f"{prefix}.x_w"),
+                self._get(f"{prefix}.x_k"),
+                self._get(f"{prefix}.x_v"),
+                self._get(f"{prefix}.x_a"),
+                self._get(f"{prefix}.x_g"),
+                backend="auto",
+            )
+            if mix_backend == "metal":
+                self.fused_attn_mix_counts["metal"] = int(self.fused_attn_mix_counts.get("metal", 0)) + 1
+            else:
+                self.fused_attn_mix_counts["fallback"] = int(self.fused_attn_mix_counts.get("fallback", 0)) + 1
+        else:
+            xx = x_prev - x
+            xr = x + xx * self._get(f"{prefix}.x_r").reshape(1, hidden)
+            xw = x + xx * self._get(f"{prefix}.x_w").reshape(1, hidden)
+            xk = x + xx * self._get(f"{prefix}.x_k").reshape(1, hidden)
+            xv = x + xx * self._get(f"{prefix}.x_v").reshape(1, hidden)
+            xa = x + xx * self._get(f"{prefix}.x_a").reshape(1, hidden)
+            xg = x + xx * self._get(f"{prefix}.x_g").reshape(1, hidden)
 
         grouped_rkv = self._grouped_rkv_projection(layer, xr, xk, xv, prefix)
         if grouped_rkv is None:

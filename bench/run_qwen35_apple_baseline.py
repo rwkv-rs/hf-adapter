@@ -717,7 +717,9 @@ def run_rwkv_mlx(
             reset_mlx_peak_memory()
             t_prefill = time.perf_counter()
             logits, state = model.prefill([prompt_ids])
-            mx.eval(logits)
+            # model.prefill()/forward() already synchronizes the returned logits
+            # and recurrent state.  A second mx.eval(logits) here only adds a
+            # redundant host/device barrier to TTFT measurement.
             prefill_logits = logits
             prefill_s = time.perf_counter() - t_prefill
             chunk_diff = None
@@ -740,10 +742,9 @@ def run_rwkv_mlx(
                 generated_preview.extend(int(x) for x in next_token.reshape(-1).tolist())
                 t_step = time.perf_counter()
                 logits, final_state = model.decode_step(next_token, final_state)
-                mx.eval(logits)
-                decode_step_s += time.perf_counter() - t_step
                 next_token = mx.argmax(logits[:, -1, :], axis=-1).astype(mx.int32)
                 mx.eval(next_token)
+                decode_step_s += time.perf_counter() - t_step
             decode_s = first_s + decode_step_s
             response_text = tokenizer.decode(generated_preview, skip_special_tokens=True) if store_response else ""
             telemetry = model.telemetry()
@@ -755,7 +756,8 @@ def run_rwkv_mlx(
                 reset_mlx_peak_memory()
                 t_chunk = time.perf_counter()
                 chunk_logits, chunk_state = model.chunked_prefill([prompt_ids], chunk_size=int(chunk_size))
-                mx.eval(chunk_logits)
+                # chunked_prefill() also synchronizes final logits/state through
+                # forward(); avoid a second barrier before measuring elapsed.
                 chunk_s = time.perf_counter() - t_chunk
                 chunk_diff = float(mx.max(mx.abs(prefill_logits.astype(mx.float32) - chunk_logits.astype(mx.float32))))
                 if int(chunk_state.seen_tokens) != len(prompt_ids):
@@ -784,6 +786,9 @@ def run_rwkv_mlx(
                 "step_eval_interval": telemetry.get("step_eval_interval"),
                 "fused_ffn_key_relu2": telemetry.get("fused_ffn_key_relu2"),
                 "fused_ffn_key_relu2_counts": telemetry.get("fused_ffn_key_relu2_counts"),
+                "fused_attn_mix": telemetry.get("fused_attn_mix"),
+                "fused_attn_mix_counts": telemetry.get("fused_attn_mix_counts"),
+                "fused_attn_mix_metal_available": telemetry.get("fused_attn_mix_metal_available"),
                 "prompt_case": prompt_case.name,
                 "prompt_target_chars": int(prompt_case.target_chars),
                 "prompt_chars": len(prompt_case.prompt),
@@ -822,6 +827,7 @@ def run_rwkv_mlx(
                         "chunked_prefill_max_abs": round(float(chunk_diff), 8),
                         "chunked_wkv_backend_counts": (chunk_telemetry or {}).get("wkv_backend_counts"),
                         "chunked_fused_ffn_key_relu2_counts": (chunk_telemetry or {}).get("fused_ffn_key_relu2_counts"),
+                        "chunked_fused_attn_mix_counts": (chunk_telemetry or {}).get("fused_attn_mix_counts"),
                         "chunked_state_only_prefill_calls": (chunk_telemetry or {}).get("state_only_prefill_calls"),
                         "chunked_state_only_prefill_tokens": (chunk_telemetry or {}).get("state_only_prefill_tokens"),
                         "chunked_quantized_linear_last_backend_counts": (chunk_telemetry or {}).get("quantized_linear_last_backend_counts"),
