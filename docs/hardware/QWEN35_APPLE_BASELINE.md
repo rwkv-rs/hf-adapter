@@ -80,8 +80,11 @@ It emits rows with `axis=qwen35_apple_baseline` and can run:
 
 1. Qwen3.5 through a local Ollama server using the streaming `/api/generate`
    endpoint.
-2. RWKV-7 through this repository's optional MLX recurrent backend.
-3. CoreML/ANE rows in the same schema once the CoreML runtime runner lands.
+2. Qwen3.5 through Hugging Face `mlx-community/*-MLX-4bit` models using the
+   optional `mlx-vlm` runtime.  This is the fallback path when Ollama model
+   pulls are unavailable or stuck.
+3. RWKV-7 through this repository's optional MLX recurrent backend.
+4. CoreML/ANE rows in the same schema once the CoreML runtime runner lands.
 
 The companion export entry point is `scripts/export_rwkv7_coreml.py`; the companion runtime row generator is `bench/run_coreml_apple_baseline.py`.  It writes
 a reproducible CoreML export manifest in `--dry-run` mode on any machine, and
@@ -127,6 +130,41 @@ PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --rwkv-mlx-models '' \
   --results bench/results_qwen35_apple_baseline.jsonl
 ```
+
+Run Qwen3.5 directly from Hugging Face MLX/VLM weights when Ollama is blocked:
+
+```bash
+# Install the optional runtime in the Apple environment first.
+python -m pip install mlx-vlm
+
+# If your machine needs a local proxy for HF large files, export it before the
+# run; the runner leaves network policy to the caller.
+export HTTP_PROXY=http://127.0.0.1:7897
+export HTTPS_PROXY=http://127.0.0.1:7897
+export ALL_PROXY=http://127.0.0.1:7897
+
+PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
+  --prompt-target-chars 1024,4096 \
+  --decode-lengths 128,512 \
+  --qwen-models '' \
+  --qwen-mlx-vlm-models mlx-community/Qwen3.5-0.8B-MLX-4bit \
+  --rwkv-mlx-models '' \
+  --results bench/results_qwen35_apple_baseline.jsonl
+```
+
+The MLX/VLM rows use `engine=mlx_vlm`, `runtime=mlx_vlm`, and the same
+`prefill_tok_s`, `decode_tok_s`, `ttft_s`, response, and MLX peak-memory fields
+as the rest of the `qwen35_apple_baseline` matrix.  Known public model ids are
+`mlx-community/Qwen3.5-0.8B-MLX-4bit`,
+`mlx-community/Qwen3.5-4B-MLX-4bit`, and
+`mlx-community/Qwen3.5-9B-MLX-4bit`.
+
+The first local MLX/VLM smoke is recorded in
+[`../../bench/apple_qwen35_mlx_vlm_m5_20260707/`](../../bench/apple_qwen35_mlx_vlm_m5_20260707/).
+On the Apple M5 smoke row, RWKV-7 0.4B/mm4 beats the Qwen3.5 0.8B MLX-4bit row
+on TTFT, prefill, and peak memory, while decode is still below the configured
+1.0x gate (`decode_ratio_rwkv_over_qwen=0.721342`), so the next engineering
+action remains decode-kernel/batching optimization.
 
 Run RWKV-7 MLX rows against the same prompt text:
 
