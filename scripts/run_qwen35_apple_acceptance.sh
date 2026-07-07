@@ -26,6 +26,10 @@ RUN_QWEN="${RUN_QWEN:-auto}"
 PULL_QWEN="${PULL_QWEN:-0}"
 OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
 OLLAMA_TIMEOUT_S="${OLLAMA_TIMEOUT_S:-600}"
+OLLAMA_PULL_TIMEOUT_S="${OLLAMA_PULL_TIMEOUT_S:-7200}"
+OLLAMA_PULL_IDLE_TIMEOUT_S="${OLLAMA_PULL_IDLE_TIMEOUT_S:-120}"
+OLLAMA_PULL_FAIL_ON_TIMEOUT="${OLLAMA_PULL_FAIL_ON_TIMEOUT:-1}"
+OLLAMA_PULL_RESULTS="${OLLAMA_PULL_RESULTS:-${RESULTS}}"
 TEMPERATURE="${TEMPERATURE:-0.0}"
 
 RWKV_MLX_MODELS="${RWKV_MLX_MODELS:-}"
@@ -122,7 +126,17 @@ if [[ "${PULL_QWEN}" == "1" && "${RUN_QWEN}" == "1" ]]; then
   fi
   while IFS= read -r model; do
     rwkv7_log "Pulling ${model} through Ollama"
-    rwkv7_run ollama pull "${model}"
+    pull_args=(
+      "${model}"
+      --host "${OLLAMA_HOST}"
+      --timeout-s "${OLLAMA_PULL_TIMEOUT_S}"
+      --idle-timeout-s "${OLLAMA_PULL_IDLE_TIMEOUT_S}"
+      --results "${OLLAMA_PULL_RESULTS}"
+    )
+    if [[ "${OLLAMA_PULL_FAIL_ON_TIMEOUT}" != "1" ]]; then
+      pull_args+=(--no-fail-on-timeout)
+    fi
+    rwkv7_run "${PYTHON_BIN}" scripts/ollama_pull_with_timeout.py "${pull_args[@]}"
   done < <(rwkv7_csv_items "${QWEN_MODELS}")
 fi
 

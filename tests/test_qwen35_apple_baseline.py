@@ -38,6 +38,8 @@ from bench.score_qwen35_quality import (
     score_rows,
     summarize as summarize_quality,
 )
+from scripts.ollama_pull_with_timeout import AXIS as PULL_AXIS
+from scripts.ollama_pull_with_timeout import PullProgress, format_event
 
 
 def test_make_prompt_hits_target_chars() -> None:
@@ -99,6 +101,30 @@ def test_ollama_row_can_store_full_response_for_quality() -> None:
     assert row["response_preview"] == "answer throughput"
     assert row["response_text"] == "answer throughput"
     assert row["response_chars"] == len("answer throughput")
+
+
+def test_ollama_pull_progress_times_out_repeated_non_progress() -> None:
+    progress = PullProgress(model="qwen3.5:0.8b-mlx", timeout_s=120.0, idle_timeout_s=10.0, start_s=0.0)
+    assert progress.observe({"status": "pulling manifest"}, now_s=1.0) is None
+    assert progress.observe({"status": "pulling model", "digest": "sha256:model", "total": 100}, now_s=2.0) is None
+    row = progress.observe({"status": "pulling model", "digest": "sha256:model", "total": 100}, now_s=13.5)
+    assert row is not None
+    assert row["axis"] == PULL_AXIS
+    assert row["status"] == "fail"
+    assert "no byte/status progress" in row["reason"]
+    assert row["last_pull_event"]["digest"] == "sha256:model"
+
+
+def test_ollama_pull_progress_accepts_completed_bytes_and_success() -> None:
+    progress = PullProgress(model="qwen3.5:0.8b-mlx", timeout_s=120.0, idle_timeout_s=10.0, start_s=0.0)
+    assert progress.observe({"status": "pulling model", "digest": "sha256:abc", "total": 100, "completed": 10}, now_s=1.0) is None
+    assert progress.observe({"status": "pulling model", "digest": "sha256:abc", "total": 100, "completed": 20}, now_s=11.0) is None
+    row = progress.observe({"status": "success"}, now_s=12.0)
+    assert row is not None
+    assert row["axis"] == PULL_AXIS
+    assert row["status"] == "pass"
+    assert row["last_completed"] == 20
+    assert format_event({"status": "pulling model", "total": 100, "completed": 25}) == "pulling model 25.0% 25/100"
 
 
 def test_quality_scoring_and_pair_comparison() -> None:
