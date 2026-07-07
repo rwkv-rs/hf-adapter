@@ -39,13 +39,59 @@ DEFAULT_QWEN_MODELS = [
     "qwen3.5:9b-mlx",
 ]
 
+DEFAULT_QWEN_MLX_VLM_MODELS = [
+    "mlx-community/Qwen3.5-0.8B-MLX-4bit",
+    "mlx-community/Qwen3.5-4B-MLX-4bit",
+    "mlx-community/Qwen3.5-9B-MLX-4bit",
+]
+
 # Public package sizes from the Ollama qwen3.5 model page, used only as metadata.
 QWEN35_PUBLIC_BASELINE = {
     "qwen3.5:0.8b-mlx": {"family": "qwen3.5", "size_class": "0.8B", "public_package_gb": 1.2},
     "qwen3.5:2b-mlx": {"family": "qwen3.5", "size_class": "2B", "public_package_gb": 3.1},
     "qwen3.5:4b-mlx": {"family": "qwen3.5", "size_class": "4B", "public_package_gb": 4.0},
     "qwen3.5:9b-mlx": {"family": "qwen3.5", "size_class": "9B", "public_package_gb": 8.9},
+    "mlx-community/Qwen3.5-0.8B-MLX-4bit": {
+        "family": "qwen3.5",
+        "size_class": "0.8B",
+        "public_package_gb": 0.63,
+        "quantization": "4bit",
+        "source": "huggingface_mlx_community",
+    },
+    "mlx-community/Qwen3.5-4B-MLX-4bit": {
+        "family": "qwen3.5",
+        "size_class": "4B",
+        "public_package_gb": 2.4,
+        "quantization": "4bit",
+        "source": "huggingface_mlx_community",
+    },
+    "mlx-community/Qwen3.5-9B-MLX-4bit": {
+        "family": "qwen3.5",
+        "size_class": "9B",
+        "public_package_gb": 5.7,
+        "quantization": "4bit",
+        "source": "huggingface_mlx_community",
+    },
 }
+
+
+def qwen35_public_metadata(model: str) -> dict[str, Any]:
+    if model in QWEN35_PUBLIC_BASELINE:
+        return dict(QWEN35_PUBLIC_BASELINE[model])
+    name = Path(str(model)).name.lower().replace("_", "-")
+    if ("qwen3.5-0.8b" in name or "qwen35-0.8b" in name) and "mlx" in name:
+        row = dict(QWEN35_PUBLIC_BASELINE["mlx-community/Qwen3.5-0.8B-MLX-4bit"])
+        row["source"] = "huggingface_mlx_community_local"
+        return row
+    if ("qwen3.5-4b" in name or "qwen35-4b" in name) and "mlx" in name:
+        row = dict(QWEN35_PUBLIC_BASELINE["mlx-community/Qwen3.5-4B-MLX-4bit"])
+        row["source"] = "huggingface_mlx_community_local"
+        return row
+    if ("qwen3.5-9b" in name or "qwen35-9b" in name) and "mlx" in name:
+        row = dict(QWEN35_PUBLIC_BASELINE["mlx-community/Qwen3.5-9B-MLX-4bit"])
+        row["source"] = "huggingface_mlx_community_local"
+        return row
+    return {"family": "qwen3.5"}
 
 DEFAULT_PROMPT_SEED = (
     "User: Compare RWKV-7 and Qwen3.5 on Apple Silicon. "
@@ -219,7 +265,7 @@ def ollama_row_from_chunks(
         "engine": "ollama",
         "runtime": "ollama_mlx",
         "model": model,
-        **QWEN35_PUBLIC_BASELINE.get(model, {"family": "qwen3.5"}),
+        **qwen35_public_metadata(model),
         "prompt_case": prompt_case.name,
         "prompt_target_chars": int(prompt_case.target_chars),
         "prompt_chars": len(prompt_case.prompt),
@@ -284,7 +330,7 @@ def run_ollama_qwen(
                     "engine": "ollama",
                     "runtime": "ollama_mlx",
                     "model": model,
-                    **QWEN35_PUBLIC_BASELINE.get(model, {"family": "qwen3.5"}),
+                    **qwen35_public_metadata(model),
                     "prompt_case": prompt_case.name,
                     "prompt_target_chars": int(prompt_case.target_chars),
                     "prompt_chars": len(prompt_case.prompt),
@@ -292,6 +338,158 @@ def run_ollama_qwen(
                     "repeat_index": int(repeat_index),
                     "repeat": int(repeats),
                     "reason": f"ollama request failed: {type(exc).__name__}: {exc}",
+                }
+            print(json.dumps(row, ensure_ascii=False))
+            append_jsonl(results, row)
+            rows.append(row)
+    return rows
+
+
+def run_mlx_vlm_qwen(
+    *,
+    model_id: str,
+    prompt_case: PromptCase,
+    decode_lengths: list[int],
+    repeats: int,
+    temperature: float,
+    results: str,
+    store_response: bool = False,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    try:
+        import mlx.core as mx
+        from mlx_vlm import load, stream_generate
+    except Exception as exc:  # pragma: no cover - optional Apple dependency
+        for max_new_tokens in decode_lengths:
+            row = {
+                "axis": AXIS,
+                "status": "skip",
+                "engine": "mlx_vlm",
+                "runtime": "mlx_vlm",
+                "model": model_id,
+                **qwen35_public_metadata(model_id),
+                "prompt_case": prompt_case.name,
+                "prompt_target_chars": int(prompt_case.target_chars),
+                "prompt_chars": len(prompt_case.prompt),
+                "requested_generated_tokens": int(max_new_tokens),
+                "reason": f"MLX-VLM import prerequisites unavailable: {type(exc).__name__}: {exc}",
+            }
+            print(json.dumps(row, ensure_ascii=False))
+            append_jsonl(results, row)
+            rows.append(row)
+        return rows
+
+    try:
+        t_load = time.perf_counter()
+        model, processor = load(model_id)
+        try:
+            mx.eval(model.parameters())
+        except Exception:
+            pass
+        load_s = time.perf_counter() - t_load
+    except Exception as exc:
+        for max_new_tokens in decode_lengths:
+            row = {
+                "axis": AXIS,
+                "status": "skip",
+                "engine": "mlx_vlm",
+                "runtime": "mlx_vlm",
+                "model": model_id,
+                **qwen35_public_metadata(model_id),
+                "prompt_case": prompt_case.name,
+                "prompt_target_chars": int(prompt_case.target_chars),
+                "prompt_chars": len(prompt_case.prompt),
+                "requested_generated_tokens": int(max_new_tokens),
+                "reason": f"MLX-VLM model load failed: {type(exc).__name__}: {exc}",
+            }
+            print(json.dumps(row, ensure_ascii=False))
+            append_jsonl(results, row)
+            rows.append(row)
+        return rows
+
+    for max_new_tokens in decode_lengths:
+        for repeat_index in range(1, repeats + 1):
+            try:
+                reset_peak = getattr(mx, "reset_peak_memory", None)
+                if callable(reset_peak):
+                    reset_peak()
+                response_text = ""
+                first_token_s = None
+                last_response = None
+                chunk_count = 0
+                t0 = time.perf_counter()
+                for response in stream_generate(
+                    model,
+                    processor,
+                    prompt_case.prompt,
+                    image=None,
+                    max_tokens=int(max_new_tokens),
+                    temperature=float(temperature),
+                    verbose=False,
+                ):
+                    chunk_count += 1
+                    if not getattr(response, "is_draft", False):
+                        token = getattr(response, "token", None)
+                        text = str(getattr(response, "text", "") or "")
+                        if first_token_s is None and (token is not None or text):
+                            first_token_s = time.perf_counter() - t0
+                        response_text += text
+                        last_response = response
+                wall_s = time.perf_counter() - t0
+                prompt_tokens = _safe_int(getattr(last_response, "prompt_tokens", None))
+                generated_tokens = _safe_int(getattr(last_response, "generation_tokens", None))
+                prompt_tps = _safe_float(getattr(last_response, "prompt_tps", None))
+                generation_tps = _safe_float(getattr(last_response, "generation_tps", None))
+                peak_memory_gb = _safe_float(getattr(last_response, "peak_memory", None))
+                if not peak_memory_gb:
+                    try:
+                        peak_memory_gb = float(mx.get_peak_memory()) / 1e9
+                    except Exception:
+                        peak_memory_gb = None
+                row = {
+                    "axis": AXIS,
+                    "status": "pass",
+                    "engine": "mlx_vlm",
+                    "runtime": "mlx_vlm",
+                    "model": model_id,
+                    **qwen35_public_metadata(model_id),
+                    "prompt_case": prompt_case.name,
+                    "prompt_target_chars": int(prompt_case.target_chars),
+                    "prompt_chars": len(prompt_case.prompt),
+                    "prompt_eval_tokens": prompt_tokens,
+                    "generated_tokens": generated_tokens,
+                    "requested_generated_tokens": int(max_new_tokens),
+                    "repeat_index": int(repeat_index),
+                    "repeat": int(repeats),
+                    "load_s": round(float(load_s), 6),
+                    "wall_s": round(float(wall_s), 6),
+                    "first_token_s": round(float(first_token_s), 6) if first_token_s is not None else None,
+                    "ttft_s": round(float(first_token_s), 6) if first_token_s is not None else None,
+                    "prefill_tok_s": round(float(prompt_tps), 6) if prompt_tps else None,
+                    "decode_tok_s": round(float(generation_tps), 6) if generation_tps else None,
+                    "mlx_vlm_chunk_count": int(chunk_count),
+                    "mlx_peak_memory_gb": round(float(peak_memory_gb), 6) if peak_memory_gb is not None else None,
+                    "mlx_peak_memory_bytes": int(float(peak_memory_gb) * 1e9) if peak_memory_gb is not None else None,
+                    "response_preview": response_text[:160],
+                    "response_chars": len(response_text),
+                }
+                if store_response:
+                    row["response_text"] = response_text
+            except Exception as exc:
+                row = {
+                    "axis": AXIS,
+                    "status": "skip",
+                    "engine": "mlx_vlm",
+                    "runtime": "mlx_vlm",
+                    "model": model_id,
+                    **qwen35_public_metadata(model_id),
+                    "prompt_case": prompt_case.name,
+                    "prompt_target_chars": int(prompt_case.target_chars),
+                    "prompt_chars": len(prompt_case.prompt),
+                    "requested_generated_tokens": int(max_new_tokens),
+                    "repeat_index": int(repeat_index),
+                    "repeat": int(repeats),
+                    "reason": f"MLX-VLM generation failed: {type(exc).__name__}: {exc}",
                 }
             print(json.dumps(row, ensure_ascii=False))
             append_jsonl(results, row)
@@ -502,6 +700,14 @@ def main() -> int:
     ap.add_argument("--repeat", type=int, default=1)
     ap.add_argument("--store-responses", action="store_true", help="Store full generated response text/token ids for quality evaluation rows.")
     ap.add_argument("--qwen-models", default=",".join(DEFAULT_QWEN_MODELS), help="Comma-separated Ollama Qwen3.5 models; empty disables Qwen.")
+    ap.add_argument(
+        "--qwen-mlx-vlm-models",
+        default="",
+        help=(
+            "Comma-separated Hugging Face MLX-VLM Qwen3.5 model ids or local dirs; "
+            "empty disables this fallback baseline lane."
+        ),
+    )
     ap.add_argument("--ollama-host", default=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"))
     ap.add_argument("--ollama-timeout-s", type=float, default=600.0)
     ap.add_argument("--temperature", type=float, default=0.0)
@@ -524,12 +730,14 @@ def main() -> int:
     prompt_cases = build_prompt_cases(parse_int_csv(args.prompt_target_chars), args.prompt_seed)
     decode_lengths = parse_int_csv(args.decode_lengths)
     qwen_models = parse_csv(args.qwen_models)
+    qwen_mlx_vlm_models = parse_csv(args.qwen_mlx_vlm_models)
     rwkv_models = parse_csv(args.rwkv_mlx_models)
 
     env = {
         "axis": AXIS + "_env",
         "status": "info",
         "qwen_models": qwen_models,
+        "qwen_mlx_vlm_models": qwen_mlx_vlm_models,
         "rwkv_mlx_models": rwkv_models,
         "prompt_cases": [{"name": case.name, "target_chars": case.target_chars} for case in prompt_cases],
         "decode_lengths": decode_lengths,
@@ -546,8 +754,13 @@ def main() -> int:
             "axis": AXIS + "_plan",
             "status": "plan",
             "qwen_jobs": len(qwen_models) * len(prompt_cases) * len(decode_lengths) * int(args.repeat),
+            "qwen_mlx_vlm_jobs": len(qwen_mlx_vlm_models)
+            * len(prompt_cases)
+            * len(decode_lengths)
+            * int(args.repeat),
             "rwkv_mlx_jobs": len(rwkv_models) * len(prompt_cases) * len(decode_lengths) * int(args.repeat),
             "qwen_models": qwen_models,
+            "qwen_mlx_vlm_models": qwen_mlx_vlm_models,
             "rwkv_mlx_models": rwkv_models,
             "prompt_cases": [{"name": case.name, "chars": len(case.prompt)} for case in prompt_cases],
             "decode_lengths": decode_lengths,
@@ -569,6 +782,18 @@ def main() -> int:
                     repeats=int(args.repeat),
                     temperature=float(args.temperature),
                     timeout_s=float(args.ollama_timeout_s),
+                    results=args.results,
+                    store_response=bool(args.store_responses),
+                )
+            )
+        for model in qwen_mlx_vlm_models:
+            rows.extend(
+                run_mlx_vlm_qwen(
+                    model_id=model,
+                    prompt_case=case,
+                    decode_lengths=decode_lengths,
+                    repeats=int(args.repeat),
+                    temperature=float(args.temperature),
                     results=args.results,
                     store_response=bool(args.store_responses),
                 )
