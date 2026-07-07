@@ -15,6 +15,10 @@ CMix、残差、归一化、层循环、loss 与 cache 都能直接从
 python -m pip install "torch" "transformers>=4.48,<6"
 ```
 
+请先安装与显卡匹配的 PyTorch。当前部分默认 CUDA 13 wheel 已不包含
+`sm_70`，V100 应从 PyTorch 官方索引选择兼容的 CUDA 12.x wheel。PyTorch
+已经存在时，再执行 `pip install rwkv7-hf==0.9.0` 不会替换它。
+
 ```python
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -38,6 +42,7 @@ kernel wheel。
 ## 转换官方 .pth
 
 ```bash
+python -m pip install "torch"  # 先选择与 CUDA/显卡匹配的 wheel
 python -m pip install "rwkv7-hf==0.9.0"
 rwkv7-hf convert \
   --input /path/to/model.pth \

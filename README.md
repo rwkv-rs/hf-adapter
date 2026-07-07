@@ -17,6 +17,11 @@ branch is part of this reference line.
 python -m pip install "torch" "transformers>=4.48,<6"
 ```
 
+Install the PyTorch build that matches the GPU before installing the adapter.
+In particular, current default CUDA 13 wheels may omit `sm_70`; V100 users
+should select a compatible CUDA 12.x wheel from the official PyTorch index.
+Once PyTorch is present, `pip install rwkv7-hf==0.9.0` keeps that installation.
+
 ```python
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -42,6 +47,7 @@ require `rwkv7-hf`, FLA, Triton, a compiler, or a kernel wheel.
 ## Convert an official checkpoint
 
 ```bash
+python -m pip install "torch"  # choose the wheel for your CUDA/GPU first
 python -m pip install "rwkv7-hf==0.9.0"
 rwkv7-hf convert \
   --input /path/to/model.pth \
