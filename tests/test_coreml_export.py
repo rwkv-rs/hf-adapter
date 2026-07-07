@@ -84,6 +84,10 @@ def test_coreml_export_dry_run_cli_writes_manifest_and_results() -> None:
         assert row["status"] == "plan"
         assert row["quantization"] == "lut4"
         assert row["state_mode"] == "wkv-coreml"
+        assert row["stateful_contract_present"] is True
+        assert row["state_contract_version"] == "rwkv7_coreml_state_contract_v1"
+        assert row["decode_implemented"] is False
+        assert row["prefill_implemented"] is False
         manifest_path = out / "coreml_export_manifest.json"
         assert Path(row["manifest"]) == manifest_path
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -100,7 +104,16 @@ def test_coreml_export_dry_run_cli_writes_manifest_and_results() -> None:
         assert functions["full_logits"]["output"]["logits"] == [1, 8, 1000]
         assert functions["decode"]["state_mode"] == "wkv-coreml"
         assert functions["decode"]["implemented"] is False
+        assert functions["decode"]["planned_output"]["logits"] == [1, 1, 1000]
+        assert functions["decode"]["state_contract_version"] == "rwkv7_coreml_state_contract_v1"
         assert functions["prefill"]["planned_input"]["input_ids"] == [1, 32]
+        assert functions["prefill"]["planned_output"]["logits"] == [1, 32, 1000]
+        contract = manifest["state_contract"]
+        assert contract["version"] == "rwkv7_coreml_state_contract_v1"
+        assert contract["state_tensors_per_layer"]["wkv_state"]["shape"] == [1, 4, 16, 16]
+        assert contract["state_tensors_per_layer"]["attn_x_prev"]["shape"] == [1, 64]
+        assert contract["global_state_tensors"]["v_first"]["shape"] == [1, 64]
+        assert contract["global_state_tensors"]["seen_tokens"]["dtype"] == "int32"
         result_rows = [json.loads(line) for line in results.read_text(encoding="utf-8").splitlines()]
         assert result_rows == [row]
 
@@ -222,6 +235,12 @@ def test_coreml_runtime_dry_run_cli_uses_manifest(tmp_path: Path) -> None:
     assert row["prompt_target_chars"] == [32, 64]
     assert row["decode_lengths"] == [4, 8]
     assert row["pass_status_requires_stateful_decode"] is True
+    assert row["stateful_contract_present"] is True
+    assert row["state_contract_version"] == "rwkv7_coreml_state_contract_v1"
+    assert row["decode_implemented"] is False
+    assert row["prefill_implemented"] is False
+    assert row["state_tensors_per_layer"] == ["attn_x_prev", "ffn_x_prev", "wkv_state"]
+    assert row["global_state_tensors"] == ["seen_tokens", "v_first"]
     assert [json.loads(line) for line in results.read_text(encoding="utf-8").splitlines()] == [row]
 
 
@@ -270,6 +289,8 @@ def test_coreml_runtime_static_contract() -> None:
     assert "rwkv7_coreml_runtime_plan" in text
     assert "partial_reason" in text
     assert "full_logits CoreML package lacks stateful recurrent decode/prefill" in text
+    assert "stateful_contract_present" in text
+    assert "decode_implemented" in text
     assert "ct.ComputeUnit.CPU_AND_NE" in text
 
 
@@ -288,6 +309,8 @@ def test_coreml_export_static_contract() -> None:
     assert "PostTrainingQuantizer" in text
     assert "PostTrainingPalettizer" in text
     assert "ANE runtime benchmark rows" in text
+    assert "rwkv7_coreml_state_contract_v1" in text
+    assert "state_tensors_per_layer" in text
 
 
 def main() -> int:

@@ -272,11 +272,25 @@ def coreml_status(rows: list[dict[str, Any]], tier: Tier) -> tuple[str, list[str
         and row_matches_model(row, tier.rwkv_aliases)
     ]
     plan_rows = [row for row in rows if row.get("axis") == COREML_PLAN_AXIS and row_matches_model(row, tier.rwkv_aliases)]
+    contract_rows = [
+        row
+        for row in export_pass + plan_rows + partial_runtime
+        if row.get("stateful_contract_present") or isinstance(row.get("state_contract"), dict)
+    ]
     if partial_runtime or export_pass or plan_rows:
+        reason = (
+            "CoreML stateful decode/prefill contract exists, but runtime pass row is missing"
+            if contract_rows
+            else "CoreML evidence is export/plan/full-logits only; stateful decode/prefill runtime row is missing"
+        )
         return (
             "prototype",
-            ["CoreML evidence is export/plan/full-logits only; stateful decode/prefill runtime row is missing"],
-            {"partial_runtime_rows": len(partial_runtime), "export_or_plan_rows": len(export_pass) + len(plan_rows)},
+            [reason],
+            {
+                "partial_runtime_rows": len(partial_runtime),
+                "export_or_plan_rows": len(export_pass) + len(plan_rows),
+                "stateful_contract_rows": len(contract_rows),
+            },
         )
     return "missing", ["missing CoreML export/runtime evidence for this RWKV tier"], {}
 

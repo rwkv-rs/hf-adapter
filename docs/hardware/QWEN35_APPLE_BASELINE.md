@@ -349,6 +349,16 @@ fused-FFN sweep in
 showed interval 8 as the best prefill/TTFT point (`29.72` prefill tok/s,
 `4.48s` TTFT) while still improving decode over interval 2.
 
+The CoreML stateful-contract follow-up is recorded in
+[`../../bench/apple_coreml_state_contract_m5_20260707/`](../../bench/apple_coreml_state_contract_m5_20260707/).
+The export manifest now contains `state_contract.version=rwkv7_coreml_state_contract_v1`
+with explicit per-layer `wkv_state`, `attn_x_prev`, `ffn_x_prev`, and global
+`v_first` / `seen_tokens` tensor shapes.  The runtime plan row surfaces
+`stateful_contract_present=true`, while keeping `decode_implemented=false` and
+`prefill_implemented=false`; the goal audit therefore reports CoreML as
+`prototype`, not `pass`, until a real stateful `.mlpackage` emits TTFT,
+prefill/decode throughput, memory, quantization, and correctness rows.
+
 Run CoreML runtime rows from an export manifest:
 
 ```bash
