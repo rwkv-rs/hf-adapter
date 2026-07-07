@@ -71,6 +71,20 @@ def _env_int(name: str, default: int) -> int:
         return int(default)
 
 
+def _env_scan_prefill_mode(name: str, default: str = "off") -> str:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        raw = default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on", "force", "forced"}:
+        return "on"
+    if value in {"0", "false", "no", "off", "disable", "disabled"}:
+        return "off"
+    if value == "auto":
+        return "auto"
+    return default
+
+
 def _env_choice(name: str, default: str, choices: set[str]) -> str:
     raw = os.environ.get(name)
     value = (raw if raw is not None and raw != "" else default).strip().lower()
@@ -822,8 +836,10 @@ class MLXRWKV7Model:
         self.fused_ffn_key_relu2_counts: dict[str, int] = {"metal": 0, "fallback": 0}
         self.fused_attn_mix = _env_flag("RWKV7_MLX_FUSED_ATTN_MIX", False)
         self.fused_attn_mix_counts: dict[str, int] = {"metal": 0, "fallback": 0}
-        self.wkv_scan_prefill = _env_flag("RWKV7_MLX_WKV_SCAN_PREFILL", False)
+        self.wkv_scan_prefill_mode = _env_scan_prefill_mode("RWKV7_MLX_WKV_SCAN_PREFILL", "off")
+        self.wkv_scan_prefill_min_tokens = max(2, _env_int("RWKV7_MLX_WKV_SCAN_PREFILL_MIN_TOKENS", 32))
         self.wkv_scan_prefill_counts: dict[str, int] = {"reference": 0, "metal": 0, "fallback": 0}
+        self.wkv_scan_prefill_reason_counts: dict[str, int] = {}
         self.state_only_prefill_calls = 0
         self.state_only_prefill_tokens = 0
         self.group_rkv_quant_projection = _env_flag("RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION", False)
@@ -963,6 +979,7 @@ class MLXRWKV7Model:
         self.fused_ffn_key_relu2_counts = {"metal": 0, "fallback": 0}
         self.fused_attn_mix_counts = {"metal": 0, "fallback": 0}
         self.wkv_scan_prefill_counts = {"reference": 0, "metal": 0, "fallback": 0}
+        self.wkv_scan_prefill_reason_counts = {}
         self.state_only_prefill_calls = 0
         self.state_only_prefill_tokens = 0
         self.group_rkv_quant_projection_counts = {"metal": 0, "fallback": 0}
@@ -988,8 +1005,11 @@ class MLXRWKV7Model:
             "fused_attn_mix": bool(self.fused_attn_mix),
             "fused_attn_mix_counts": dict(self.fused_attn_mix_counts),
             "fused_attn_mix_metal_available": metal_attn_mix_available(),
-            "wkv_scan_prefill": bool(self.wkv_scan_prefill),
+            "wkv_scan_prefill": self.wkv_scan_prefill_mode != "off",
+            "wkv_scan_prefill_mode": self.wkv_scan_prefill_mode,
+            "wkv_scan_prefill_min_tokens": int(self.wkv_scan_prefill_min_tokens),
             "wkv_scan_prefill_counts": dict(self.wkv_scan_prefill_counts),
+            "wkv_scan_prefill_reason_counts": dict(self.wkv_scan_prefill_reason_counts),
             "wkv_scan_metal_available": metal_wkv_scan_available(),
             "state_only_prefill_calls": int(self.state_only_prefill_calls),
             "state_only_prefill_tokens": int(self.state_only_prefill_tokens),
@@ -1389,6 +1409,28 @@ class MLXRWKV7Model:
             k = k * k
         return self._linear(k, f"{prefix}.value.weight"), x[:, -1, :]
 
+    def _should_scan_prefill(self, tokens: int) -> tuple[bool, str]:
+        T = int(tokens)
+        mode = self.wkv_scan_prefill_mode
+        if T <= 1:
+            return False, "single_token"
+        if mode == "off":
+            return False, "disabled"
+        if mode == "on":
+            return True, "forced"
+        if mode == "auto":
+            if self.wkv_backend == "metal" and not metal_wkv_scan_available():
+                return False, "metal_unavailable"
+            if T < int(self.wkv_scan_prefill_min_tokens):
+                return False, "below_min_tokens"
+            return True, "auto"
+        return False, "disabled"
+
+    def _record_scan_prefill_reason(self, reason: str) -> None:
+        self.wkv_scan_prefill_reason_counts[reason] = int(
+            self.wkv_scan_prefill_reason_counts.get(reason, 0)
+        ) + 1
+
     def _forward_scan_prefill(
         self,
         input_ids: Iterable[Iterable[int]] | Any,
@@ -1501,7 +1543,9 @@ class MLXRWKV7Model:
         B, T = int(ids.shape[0]), int(ids.shape[1])
         if T <= 0 or B <= 0:
             raise ValueError("MLXRWKV7Model.forward requires a non-empty batch and sequence")
-        if self.wkv_scan_prefill and T > 1:
+        use_scan, scan_reason = self._should_scan_prefill(T)
+        self._record_scan_prefill_reason(scan_reason)
+        if use_scan:
             return self._forward_scan_prefill(ids, state=state, collect_all=collect_all)
         if state is None:
             state = self.init_state(B)
@@ -1547,7 +1591,9 @@ class MLXRWKV7Model:
         B, T = int(ids.shape[0]), int(ids.shape[1])
         if T <= 0 or B <= 0:
             raise ValueError("MLXRWKV7Model.prefill_state_only requires a non-empty batch and sequence")
-        if self.wkv_scan_prefill and T > 1:
+        use_scan, scan_reason = self._should_scan_prefill(T)
+        self._record_scan_prefill_reason(scan_reason)
+        if use_scan:
             return self._forward_scan_prefill(ids, state=state, state_only=True)
         if state is None:
             state = self.init_state(B)

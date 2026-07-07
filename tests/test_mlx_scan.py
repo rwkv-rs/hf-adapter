@@ -87,3 +87,36 @@ def test_mlx_model_scan_prefill_state_only_if_available(monkeypatch):
     telemetry = scan_model.telemetry()
     assert telemetry["state_only_prefill_calls"] == 1
     assert telemetry["state_only_prefill_tokens"] == 4
+
+
+def test_mlx_model_scan_prefill_auto_threshold_if_available(monkeypatch):
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    from rwkv7_hf.mlx_model import MLXRWKV7Model
+    from tests.test_apple_silicon_mlx_model_smoke import tiny_torch_model_to_mlx
+
+    _, _token_model, cfg = tiny_torch_model_to_mlx()
+    ids = [[1, 2, 3, 4]]
+
+    monkeypatch.setenv("RWKV7_MLX_WKV_SCAN_PREFILL", "auto")
+    monkeypatch.setenv("RWKV7_MLX_WKV_SCAN_PREFILL_MIN_TOKENS", "4")
+    scan_model = MLXRWKV7Model.from_arrays(cfg, dict(_token_model.arrays), wkv_backend="reference")
+    logits, state = scan_model.forward(ids, collect_all=True)
+    mx.eval(logits)
+    telemetry = scan_model.telemetry()
+    assert int(state.seen_tokens) == 4
+    assert telemetry["wkv_scan_prefill_mode"] == "auto"
+    assert telemetry["wkv_scan_prefill_min_tokens"] == 4
+    assert telemetry["wkv_scan_prefill_counts"]["reference"] == int(cfg["num_hidden_layers"])
+    assert telemetry["wkv_scan_prefill_reason_counts"]["auto"] == 1
+
+    monkeypatch.setenv("RWKV7_MLX_WKV_SCAN_PREFILL_MIN_TOKENS", "8")
+    token_model = MLXRWKV7Model.from_arrays(cfg, dict(_token_model.arrays), wkv_backend="reference")
+    logits, state = token_model.forward(ids, collect_all=True)
+    mx.eval(logits)
+    telemetry = token_model.telemetry()
+    assert int(state.seen_tokens) == 4
+    assert telemetry["wkv_scan_prefill_counts"]["reference"] == 0
+    assert telemetry["wkv_scan_prefill_reason_counts"]["below_min_tokens"] == 1

@@ -790,7 +790,10 @@ def run_rwkv_mlx(
                 "fused_attn_mix_counts": telemetry.get("fused_attn_mix_counts"),
                 "fused_attn_mix_metal_available": telemetry.get("fused_attn_mix_metal_available"),
                 "wkv_scan_prefill": telemetry.get("wkv_scan_prefill"),
+                "wkv_scan_prefill_mode": telemetry.get("wkv_scan_prefill_mode"),
+                "wkv_scan_prefill_min_tokens": telemetry.get("wkv_scan_prefill_min_tokens"),
                 "wkv_scan_prefill_counts": telemetry.get("wkv_scan_prefill_counts"),
+                "wkv_scan_prefill_reason_counts": telemetry.get("wkv_scan_prefill_reason_counts"),
                 "wkv_scan_metal_available": telemetry.get("wkv_scan_metal_available"),
                 "prompt_case": prompt_case.name,
                 "prompt_target_chars": int(prompt_case.target_chars),
@@ -832,6 +835,7 @@ def run_rwkv_mlx(
                         "chunked_fused_ffn_key_relu2_counts": (chunk_telemetry or {}).get("fused_ffn_key_relu2_counts"),
                         "chunked_fused_attn_mix_counts": (chunk_telemetry or {}).get("fused_attn_mix_counts"),
                         "chunked_wkv_scan_prefill_counts": (chunk_telemetry or {}).get("wkv_scan_prefill_counts"),
+                        "chunked_wkv_scan_prefill_reason_counts": (chunk_telemetry or {}).get("wkv_scan_prefill_reason_counts"),
                         "chunked_state_only_prefill_calls": (chunk_telemetry or {}).get("state_only_prefill_calls"),
                         "chunked_state_only_prefill_tokens": (chunk_telemetry or {}).get("state_only_prefill_tokens"),
                         "chunked_quantized_linear_last_backend_counts": (chunk_telemetry or {}).get("quantized_linear_last_backend_counts"),
@@ -969,6 +973,7 @@ def main() -> int:
         "rwkv_step_eval_interval_env": os.environ.get("RWKV7_MLX_STEP_EVAL_INTERVAL", ""),
         "rwkv_fused_ffn_key_relu2_env": os.environ.get("RWKV7_MLX_FUSED_FFN_KEY_RELU2", ""),
         "rwkv_wkv_scan_prefill_env": os.environ.get("RWKV7_MLX_WKV_SCAN_PREFILL", ""),
+        "rwkv_wkv_scan_prefill_min_tokens_env": os.environ.get("RWKV7_MLX_WKV_SCAN_PREFILL_MIN_TOKENS", ""),
         **device_info(),
     }
     print(json.dumps(env, ensure_ascii=False))
@@ -1005,6 +1010,7 @@ def main() -> int:
             "rwkv_step_eval_interval_env": os.environ.get("RWKV7_MLX_STEP_EVAL_INTERVAL", ""),
             "rwkv_fused_ffn_key_relu2_env": os.environ.get("RWKV7_MLX_FUSED_FFN_KEY_RELU2", ""),
         "rwkv_wkv_scan_prefill_env": os.environ.get("RWKV7_MLX_WKV_SCAN_PREFILL", ""),
+        "rwkv_wkv_scan_prefill_min_tokens_env": os.environ.get("RWKV7_MLX_WKV_SCAN_PREFILL_MIN_TOKENS", ""),
         }
         print(json.dumps(plan, ensure_ascii=False))
         append_jsonl(args.results, plan)
