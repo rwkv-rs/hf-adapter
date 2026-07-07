@@ -116,15 +116,16 @@ The model follows the standard `AutoModelForCausalLM` contract and supports
 `Trainer`, Accelerate, PEFT LoRA, TRL SFT/DPO/GRPO, and `lm_eval` through the
 ordinary Transformers path.  Set `model.config.use_cache = False` during
 training.  Reproducible examples and evaluation manifests are in
-[rwkv-rs/hf-adapter](https://github.com/rwkv-rs/hf-adapter).
+[123123213weqw/hf-adapter](https://github.com/123123213weqw/hf-adapter).
 
 ## Reference versus optimized execution
 
 The `v0.9.0` model code intentionally favors readability and compatibility.
 It is the correctness/reference path, not a peak-throughput benchmark backend.
-Historical CUDA/JIT/Graph optimizations are maintained separately on the
-`perf/native-kernels-v0.8` branch and do not change this model repository's
-public HF contract.
+Optional CUDA Graph and Triton work is maintained separately on
+`perf/optional-native-backend-v0.10`; older CUDA/JIT/quantization and KV-v2
+experiments remain on `perf/native-kernels-v0.8`. Neither branch changes this
+model repository's public HF contract.
 
 ## Model and provenance
 

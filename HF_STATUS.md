@@ -1,7 +1,9 @@
 # RWKV-7 HF v0.9 status
 
-The main line is the readable pure-PyTorch reference implementation. Historical
-performance backends and evidence are preserved on `perf/native-kernels-v0.8`.
+The main line is the readable pure-PyTorch reference implementation. Optional
+CUDA Graph/Triton development is isolated on
+`perf/optional-native-backend-v0.10`; older native-kernel experiments remain
+preserved on `perf/native-kernels-v0.8`.
 
 Release gates:
 
@@ -10,7 +12,8 @@ Release gates:
 - [x] tiny cache, padding, generation, loss and gradient tests
 - [x] non-blocking RTX 4080 FLA backend diagnostics archived
 - [x] official checkpoint oracle matrix (V100 6/6; RTX 4080 9/9)
-- [ ] formal 48-unit lm_eval run
+- [x] formal 48-unit lm_eval run (42 retained units plus six affected 1.5B
+      batch-pair reruns; merged validator passed)
 - [x] canonical SFT, DPO and GRPO runs, exact resume, and W&B offline smoke
 - [x] clean wheel build, metadata check, isolated install and CLI/model smoke
 - [ ] six model repositories updated and tagged v0.9.0

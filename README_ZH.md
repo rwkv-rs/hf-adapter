@@ -5,8 +5,9 @@
 0.9 是兼容性优先、可阅读、可复现的纯 PyTorch RWKV-7 HF 实现。TMix、
 CMix、残差、归一化、层循环、loss 与 cache 都能直接从
 `rwkv7_hf/modeling_rwkv7.py` 看懂；WKV 递推只通过
-`rwkv7_hf/ops_rwkv7.py` 这一处明确边界。CUDA/JIT/CUDA Graph/量化和硬件
-特调完整保存在 `perf/native-kernels-v0.8`，不进入参考线。
+`rwkv7_hf/ops_rwkv7.py` 这一处明确边界。可选 CUDA Graph 与 Triton 后端在
+`perf/optional-native-backend-v0.10` 继续开发；旧 CUDA/JIT/量化、硬件特调
+和 KV-v2 实验保存在 `perf/native-kernels-v0.8`。两个性能分支都不进入参考线。
 
 ## 直接使用 HF 模型
 

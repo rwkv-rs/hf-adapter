@@ -6,8 +6,10 @@ A readable, pure-PyTorch RWKV-7 implementation for Hugging Face Transformers.
 Version 0.9 makes compatibility and reproducibility the default: the model
 architecture is visible in one `modeling_rwkv7.py`, recurrent math has one
 small boundary in `ops_rwkv7.py`, and each converted model is self-contained.
-CUDA/JIT/graph/quantization kernels remain on the long-lived
-`perf/native-kernels-v0.8` branch and are not part of this reference line.
+Optional CUDA Graph and Triton work remains on
+`perf/optional-native-backend-v0.10`; older CUDA/JIT/quantization and KV-v2
+experiments remain archived on `perf/native-kernels-v0.8`. Neither performance
+branch is part of this reference line.
 
 ## Install and use a published model
 

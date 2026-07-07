@@ -1,0 +1,17 @@
+{
+  "schema": "rwkv7-lm-eval-composite-v1",
+  "old_source": "/home/data/wangyue/results/rwkv7-native-backend-v010/formal-530d935-isolated/v100/lm-eval-optimized/merged",
+  "replacement_source": "/home/data/wangyue/results/rwkv7-native-backend-v010/targeted-cfeb5ae-v3/v100/lm-eval-failed-pairs",
+  "base_units": 42,
+  "replacement_units": [
+    "1.5b-b1-openbookqa",
+    "1.5b-b1-piqa",
+    "1.5b-b1-winogrande",
+    "1.5b-b8-openbookqa",
+    "1.5b-b8-piqa",
+    "1.5b-b8-winogrande"
+  ],
+  "base_code_sha": "530d935b9b95d5ec4f09d04eb164a38c8669a1ec",
+  "replacement_code_sha": "cfeb5aeca860ce444ebb3515a20cc22f7e2b090b",
+  "reason": "Only the three failed 1.5B batch-1/batch-8 pairs were rerun after the batch-regrouping fix, by explicit release decision."
+}
