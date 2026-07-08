@@ -837,6 +837,7 @@ class MLXRWKV7Model:
         self.fused_attn_mix = _env_flag("RWKV7_MLX_FUSED_ATTN_MIX", False)
         self.fused_attn_mix_counts: dict[str, int] = {"metal": 0, "fallback": 0}
         self.fast_layer_norm = _env_flag("RWKV7_MLX_FAST_LAYER_NORM", False)
+        self.fast_group_norm = _env_flag("RWKV7_MLX_FAST_GROUP_NORM", False)
         self.wkv_scan_prefill_mode = _env_scan_prefill_mode("RWKV7_MLX_WKV_SCAN_PREFILL", "off")
         self.wkv_scan_prefill_min_tokens = max(2, _env_int("RWKV7_MLX_WKV_SCAN_PREFILL_MIN_TOKENS", 32))
         self.wkv_scan_prefill_counts: dict[str, int] = {"reference": 0, "metal": 0, "fallback": 0}
@@ -1007,6 +1008,7 @@ class MLXRWKV7Model:
             "fused_attn_mix_counts": dict(self.fused_attn_mix_counts),
             "fused_attn_mix_metal_available": metal_attn_mix_available(),
             "fast_layer_norm": bool(self.fast_layer_norm),
+            "fast_group_norm": bool(self.fast_group_norm),
             "wkv_scan_prefill": self.wkv_scan_prefill_mode != "off",
             "wkv_scan_prefill_mode": self.wkv_scan_prefill_mode,
             "wkv_scan_prefill_min_tokens": int(self.wkv_scan_prefill_min_tokens),
@@ -1142,12 +1144,21 @@ class MLXRWKV7Model:
     def _group_norm_heads(self, x, layer: int):
         mx = _mx()
         leading = tuple(int(dim) for dim in x.shape[:-1])
+        prefix = f"model.layers.{layer}.attn.g_norm"
+        if self.fast_group_norm and hasattr(mx, "fast") and hasattr(mx.fast, "layer_norm"):
+            xh = x.reshape(*leading, self.num_heads, self.head_dim)
+            weight = self._get(f"{prefix}.weight").reshape(1, self.num_heads, self.head_dim)
+            bias = self._get(f"{prefix}.bias").reshape(1, self.num_heads, self.head_dim)
+            y = mx.fast.layer_norm(xh, None, None, self.head_dim * 1e-5)
+            if len(leading) > 1:
+                weight = weight.reshape(*([1] * (len(leading) - 1)), self.num_heads, self.head_dim)
+                bias = bias.reshape(*([1] * (len(leading) - 1)), self.num_heads, self.head_dim)
+            return (y * weight + bias).reshape(*leading, self.hidden_size)
         xf = x.astype(mx.float32).reshape(*leading, self.num_heads, self.head_dim)
         mean = mx.mean(xf, axis=-1, keepdims=True)
         var = mx.mean((xf - mean) * (xf - mean), axis=-1, keepdims=True)
         y = (xf - mean) * mx.rsqrt(var + self.head_dim * 1e-5)
         y = y.reshape(*leading, self.hidden_size).astype(x.dtype)
-        prefix = f"model.layers.{layer}.attn.g_norm"
         return y * self._get(f"{prefix}.weight") + self._get(f"{prefix}.bias")
 
     def _normalize_last_dim(self, x, eps: float = 1e-12):
