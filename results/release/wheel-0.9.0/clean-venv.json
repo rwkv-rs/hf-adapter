@@ -1,0 +1,19 @@
+{
+  "status": "passed",
+  "python": "3.12.2",
+  "torch": "2.13.0+cu126",
+  "transformers": "5.16.1",
+  "rwkv7_hf": "0.9.0",
+  "cuda": "12.6",
+  "cuda_available": true,
+  "arches": [
+    "sm_50",
+    "sm_60",
+    "sm_70",
+    "sm_75",
+    "sm_80",
+    "sm_86",
+    "sm_90"
+  ],
+  "gpu": "Tesla V100-PCIE-32GB"
+}

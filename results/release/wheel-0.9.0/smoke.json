@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
   "status": "passed",
-  "model": "/home/wzu/codex-run/rwkv7-wheel-final-smoke/model",
+  "model": "/home/data/wangyue/results/rwkv7-hf-v090-final-wheel/clean-converted-0.1b-1b5632c",
   "revision": "main",
   "device": "cuda",
   "dtype": "torch.float16",
   "versions": {
     "python": "3.12.2",
-    "torch": "2.11.0+cu130",
-    "transformers": "5.8.0",
+    "torch": "2.13.0+cu126",
+    "transformers": "5.16.1",
     "rwkv7_hf": "0.9.0"
   },
   "prompt_tokens": 6,
@@ -19,13 +19,13 @@
   ],
   "generated_text": " I'm",
   "timing": {
-    "load_seconds": 0.735702,
-    "prefill_seconds": 0.248599,
-    "prefill_tokens_per_second": 24.135,
+    "load_seconds": 2.228293,
+    "prefill_seconds": 2.036425,
+    "prefill_tokens_per_second": 2.946,
     "decode_steps": 1,
-    "decode_seconds": 0.011699,
-    "decode_tokens_per_second": 85.474
+    "decode_seconds": 0.048394,
+    "decode_tokens_per_second": 20.664
   },
-  "peak_memory_bytes": 420133376,
+  "peak_memory_bytes": 419084800,
   "cache_type": "RWKV7Cache"
 }

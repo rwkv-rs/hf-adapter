@@ -1,9 +1,12 @@
-# rwkv7-hf 0.9.0 wheel verification
+# rwkv7-hf 0.9.0 final-wheel verification
 
-- Source code: `559a07f2faa458be11fa67a8b36f636ec5b626ba`
+- Runtime/documentation source: `1b5632c2cbd1ecb975d8fa071604827a69038eb8`
 - `python -m build`: passed
-- `python -m twine check dist/*`: passed
-- Wheel installed into a new Python 3.12 virtual environment with no source checkout.
-- The installed `rwkv7-hf convert` converted the official 0.1B checkpoint with the default complete `reference` layout and `--low-memory`.
-- The installed `rwkv7-hf smoke --model ...` loaded that package-free directory on RTX 4080, ran prefill and cached decode, and passed.
-- `smoke.json` records package/runtime versions, generated tokens, timing and memory. The checksum files record both distributions and the converted output.
+- `python -m twine check --strict dist/*`: passed
+- The final wheel was installed in a new Python 3.12 virtual environment with no source checkout.
+- PyTorch `2.13.0+cu126` was installed first so the wheel included `sm_70` support for V100; `clean-venv.json` records the environment and CUDA architectures.
+- Exact-revision package-free Hub loading, forward, `RWKV7Cache`, and generation passed (`clean-hub-smoke.json`).
+- The installed `rwkv7-hf convert` converted the official 0.1B checkpoint using the default complete `reference` layout and `--low-memory`.
+- The installed `rwkv7-hf smoke` loaded that package-free output on Tesla V100 32GB, ran prefill and cached decode, and passed (`smoke.json`).
+
+The checksum files record the locally validated release distributions and converted model files. GitHub Actions rebuilds version 0.9.0 from the immutable release tag for trusted PyPI publishing.
