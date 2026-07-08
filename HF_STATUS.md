@@ -20,7 +20,9 @@ Release gates:
       metadata passed for all six, direct Hub loading passed for
       0.1B/0.4B/1.5B, and V100 local-source smoke passed for
       2.9B/7.2B/13.3B with hashes matched to each conversion manifest
-- [ ] PyPI 0.9.0 published
+- [x] PyPI 0.9.0 published through the upstream trusted-publishing workflow;
+      the wheel was downloaded back from PyPI and passed CLI plus V100 Hub
+      smoke in the clean Python 3.12/CUDA 12.6 environment
 
 A release is not complete until every unchecked item passes.
 
