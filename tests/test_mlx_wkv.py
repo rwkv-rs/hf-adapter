@@ -87,3 +87,23 @@ if __name__ == "__main__":
     test_mlx_wkv_formula_if_available()
     test_mlx_model_metal_wkv_hook_if_available()
     print("MLX WKV TESTS PASS")
+
+
+def test_mlx_model_decode_step_matches_forward_t1_if_available():
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    from rwkv7_hf.mlx_model import MLXRWKV7Model
+    from tests.test_apple_silicon_mlx_model_smoke import tiny_torch_model_to_mlx
+
+    _, base_model, cfg = tiny_torch_model_to_mlx()
+    old_model = MLXRWKV7Model.from_arrays(cfg, dict(base_model.arrays), wkv_backend="reference")
+    new_model = MLXRWKV7Model.from_arrays(cfg, dict(base_model.arrays), wkv_backend="reference")
+    _, old_state = old_model.prefill([[1, 2, 3]])
+    _, new_state = new_model.prefill([[1, 2, 3]])
+    old_logits, old_state = old_model.forward([[4]], state=old_state, collect_all=False)
+    new_logits, new_state = new_model.decode_step([4], new_state)
+    mx.eval(old_logits, new_logits)
+    assert float(mx.max(mx.abs(old_logits - new_logits))) < 1e-5
+    assert int(old_state.seen_tokens) == int(new_state.seen_tokens) == 4
