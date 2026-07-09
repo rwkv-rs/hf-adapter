@@ -38,37 +38,37 @@
 
 ### Layout
 
-- [ ] Create `kernels/pyproject.toml` for distribution `rwkv7-kernels`.
-- [ ] Create `kernels/rwkv7_kernels/protocol.py`.
-- [ ] Port exact CUDA-graph recurrence into
+- [x] Create `kernels/pyproject.toml` for distribution `rwkv7-kernels`.
+- [x] Create `kernels/rwkv7_kernels/protocol.py`.
+- [x] Port exact CUDA-graph recurrence into
       `kernels/rwkv7_kernels/recurrent/graph.py`.
-- [ ] Port Triton rank-1 scan into
+- [x] Port Triton rank-1 scan into
       `kernels/rwkv7_kernels/recurrent/triton.py`.
-- [ ] Keep implementation selection and environment parsing inside the kernel
+- [x] Keep implementation selection and environment parsing inside the kernel
       wheel, not in `rwkv7_hf/`.
-- [ ] Expose only `RWKV7_KERNEL_API_VERSION`, `probe_recurrent_v1`, and
+- [x] Expose only `RWKV7_KERNEL_API_VERSION`, `probe_recurrent_v1`, and
       `recurrent_v1` as the v1 public kernel protocol.
 
 ### Core boundary
 
-- [ ] Split `ops_rwkv7.py` into visibly separate
+- [x] Split `ops_rwkv7.py` into visibly separate
       `rwkv7_recurrent_reference(...)` and `rwkv7_recurrent(...)` functions.
-- [ ] Add one lazy optional-package call in `rwkv7_recurrent(...)`.
-- [ ] Preserve package-free Hub loading when `rwkv7-kernels` is absent.
-- [ ] Record the actual route and implementation for validation without adding
+- [x] Add one lazy optional-package call in `rwkv7_recurrent(...)`.
+- [x] Preserve package-free Hub loading when `rwkv7-kernels` is absent.
+- [x] Record the actual route and implementation for validation without adding
       hardware fields to the model config.
 
 ### Local tests
 
-- [ ] Core model package still contains only canonical HF files.
-- [ ] Core never imports `rwkv7_hf_tools`.
-- [ ] Missing kernel package uses reference.
-- [ ] `auto` falls back on unsupported inputs and autograd.
-- [ ] `optimized` fails clearly rather than silently falling back.
-- [ ] API version mismatch fails clearly.
-- [ ] Broken probe/kernel is contained in `auto` and surfaced in `optimized`.
-- [ ] Kernel wheel and HF wheel build independently.
-- [ ] Package-free converted directory loads without either installed wheel.
+- [x] Core model package still contains only canonical HF files.
+- [x] Core never imports `rwkv7_hf_tools`.
+- [x] Missing kernel package uses reference.
+- [x] `auto` falls back on unsupported inputs and autograd.
+- [x] `optimized` fails clearly rather than silently falling back.
+- [x] API version mismatch fails clearly.
+- [x] Broken probe/kernel is contained in `auto` and surfaced in `optimized`.
+- [x] Kernel wheel and HF wheel build independently.
+- [x] Package-free converted directory loads without either installed wheel.
 
 ## Phase 2 — RTX 4080 recurrent acceptance
 
@@ -214,3 +214,24 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - Branch: `perf/optional-kernels-v1`.
 - Next action: port only the existing recurrent kernel wheel and protocol, run
   local fallback/package gates, then sync exact wheels to RTX 4080.
+
+### 2026-08-27 — recurrent-v1 local gate
+
+- Added sibling distribution layout:
+  `kernels/rwkv7_kernels/{protocol,dispatcher,recurrent/*}.py`.
+- The public model/config/cache remain free of hardware policy. The only model
+  change is the semantic `training=self.training` hint at the operator call.
+- `rwkv7_hf/ops_rwkv7.py` now keeps the complete readable reference recurrence
+  and one lazy versioned optional-package boundary.
+- Local test command:
+  `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q`.
+- Local result: `46 passed`.
+- HF wheel: `rwkv7_hf-1.0.0-py3-none-any.whl`, SHA256
+  `07b4f6668c3123a3e996e33d4fab8230c468db23bbd7249c3454a93e2f04338f`.
+- Kernel wheel: `rwkv7_kernels-1.0.0.dev0-py3-none-any.whl`, SHA256
+  `31c0892a5284a26f89790567dbbdf4f6255b996cf5f7a32c14fa2406c15e24c9`.
+- Both wheels passed `twine check --strict` and independent target-directory
+  imports. A saved local model loaded through AutoModelForCausalLM while
+  top-level `rwkv7_hf` and `rwkv7_kernels` imports were explicitly blocked.
+- Next action: sync this exact commit and these wheel hashes to RTX 4080; record
+  the actual Graph/Triton routes before accepting any benchmark result.

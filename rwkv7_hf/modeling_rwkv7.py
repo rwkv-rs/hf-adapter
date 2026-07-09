@@ -403,6 +403,7 @@ class RWKV7TimeMix(nn.Module):
             (normalized_key * in_context_learning).view(shape),
             recurrent_state,
             attention_mask,
+            training=self.training,
         )
 
         recurrent_output = recurrent_output.reshape(

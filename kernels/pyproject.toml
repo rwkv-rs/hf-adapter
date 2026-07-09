@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rwkv7-kernels"
+version = "1.0.0.dev0"
+description = "Optional optimized recurrent operators for rwkv7-hf"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "123123213weqw", email = "300659282+123123213weqw@users.noreply.github.com" }]
+dependencies = ["torch"]
+
+[project.urls]
+Repository = "https://github.com/123123213weqw/hf-adapter"
+Issues = "https://github.com/123123213weqw/hf-adapter/issues"
+
+[tool.setuptools.packages.find]
+include = ["rwkv7_kernels*"]

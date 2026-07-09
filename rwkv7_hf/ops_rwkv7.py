@@ -1,11 +1,33 @@
 # coding=utf-8
-"""Small, hardware-neutral PyTorch operator boundary for RWKV-7."""
+"""Readable RWKV-7 recurrence with one optional operator boundary.
+
+The reference implementation below is the source of truth.  An independently
+installed :mod:`rwkv7_kernels` wheel may replace this single recurrence during
+inference; model structure, cache semantics, and Hugging Face APIs stay here.
+"""
 from __future__ import annotations
+
+from contextvars import ContextVar
+import importlib
+import os
+from types import ModuleType
+from typing import Any
 
 import torch
 
 
-def rwkv7_recurrent(
+_KERNEL_API_VERSION = 1
+_BACKEND_ENV = "RWKV7_BACKEND"
+_BACKEND_MODES = ("auto", "reference", "optimized")
+_kernel_module: ModuleType | None = None
+_kernel_import_attempted = False
+_kernel_import_error: str | None = None
+_last_recurrent_route: ContextVar[dict[str, str] | None] = ContextVar(
+    "rwkv7_last_recurrent_route", default=None
+)
+
+
+def rwkv7_recurrent_reference(
     receptance: torch.Tensor,
     decay: torch.Tensor,
     key: torch.Tensor,
@@ -32,9 +54,8 @@ def rwkv7_recurrent(
         Sequence outputs [batch, time, heads, value_dim] and the final
         recurrent state [batch, heads, key_dim, value_dim].
 
-    This deliberately contains no dispatch, compilation, environment-variable,
-    device, or layout policy. A performance branch can replace this one
-    boundary while the surrounding HF model remains unchanged.
+    This function deliberately contains no dispatch, compilation,
+    environment-variable, device, or layout policy.
     """
 
     if receptance.ndim != 4:
@@ -119,4 +140,269 @@ def rwkv7_recurrent(
     )
 
 
-__all__ = ["rwkv7_recurrent"]
+def _backend_mode(value: str | None) -> str:
+    normalized = (
+        os.environ.get(_BACKEND_ENV, "auto") if value is None else value
+    ).strip().lower()
+    if normalized not in _BACKEND_MODES:
+        choices = ", ".join(_BACKEND_MODES)
+        raise ValueError(f"RWKV7 backend must be one of {choices}; got {value!r}")
+    return normalized
+
+
+def _record_route(
+    *, requested: str, selected: str, implementation: str, reason: str
+) -> None:
+    _last_recurrent_route.set(
+        {
+            "requested": requested,
+            "selected": selected,
+            "implementation": implementation,
+            "reason": reason,
+        }
+    )
+
+
+def get_last_recurrent_route() -> dict[str, str] | None:
+    """Return the actual route taken by the most recent call in this context."""
+
+    route = _last_recurrent_route.get()
+    return None if route is None else dict(route)
+
+
+def _load_kernel_module() -> ModuleType | None:
+    global _kernel_import_attempted, _kernel_import_error, _kernel_module
+    if _kernel_import_attempted:
+        return _kernel_module
+    _kernel_import_attempted = True
+    try:
+        module = importlib.import_module("rwkv7_kernels")
+    except Exception as exc:  # optional companion package
+        _kernel_import_error = f"{type(exc).__name__}: {exc}"
+        return None
+    version = getattr(module, "RWKV7_KERNEL_API_VERSION", None)
+    if version != _KERNEL_API_VERSION:
+        _kernel_import_error = (
+            "kernel API mismatch: "
+            f"package={version!r}, adapter={_KERNEL_API_VERSION}"
+        )
+        return None
+    _kernel_module = module
+    _kernel_import_error = None
+    return module
+
+
+def _reset_kernel_discovery_for_tests() -> None:
+    """Reset optional-package discovery for isolated protocol tests."""
+
+    global _kernel_import_attempted, _kernel_import_error, _kernel_module
+    _kernel_module = None
+    _kernel_import_attempted = False
+    _kernel_import_error = None
+    _last_recurrent_route.set(None)
+
+
+def _probe_fields(value: Any) -> tuple[bool, str, str]:
+    if not isinstance(value, dict):
+        raise TypeError("rwkv7_kernels.probe_recurrent_v1() must return a dict")
+    missing = {"supported", "implementation", "reason"} - set(value)
+    if missing:
+        names = ", ".join(sorted(missing))
+        raise TypeError(f"kernel probe result is missing: {names}")
+    return (
+        bool(value["supported"]),
+        str(value["implementation"]),
+        str(value["reason"]),
+    )
+
+
+def _validate_kernel_result(
+    result: Any,
+    *,
+    value: torch.Tensor,
+    initial_state: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if not isinstance(result, tuple) or len(result) != 2:
+        raise TypeError("rwkv7_kernels.recurrent_v1() must return two tensors")
+    output, final_state = result
+    if not isinstance(output, torch.Tensor) or not isinstance(
+        final_state, torch.Tensor
+    ):
+        raise TypeError("rwkv7_kernels.recurrent_v1() must return two tensors")
+    if tuple(output.shape) != tuple(value.shape):
+        raise ValueError(
+            "kernel output shape mismatch: "
+            f"expected {tuple(value.shape)}, got {tuple(output.shape)}"
+        )
+    if tuple(final_state.shape) != tuple(initial_state.shape):
+        raise ValueError(
+            "kernel state shape mismatch: "
+            f"expected {tuple(initial_state.shape)}, got {tuple(final_state.shape)}"
+        )
+    return output, final_state
+
+
+def rwkv7_recurrent(
+    receptance: torch.Tensor,
+    decay: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    a: torch.Tensor,
+    b: torch.Tensor,
+    initial_state: torch.Tensor,
+    attention_mask: torch.Tensor | None = None,
+    *,
+    backend: str | None = None,
+    training: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Run recurrent semantics through reference or optional protocol v1.
+
+    ``auto`` is failure-contained and always retains the readable reference
+    path. ``optimized`` is a validation mode: missing, unsupported, malformed,
+    or failing kernels raise instead of silently changing the claimed route.
+    The optional v1 protocol is inference-only, so training always uses the
+    differentiable reference implementation.
+    """
+
+    requested = _backend_mode(backend)
+    if requested == "reference":
+        reason = "reference backend was explicitly requested"
+        _record_route(
+            requested=requested,
+            selected="reference",
+            implementation="torch-reference-v1",
+            reason=reason,
+        )
+        return rwkv7_recurrent_reference(
+            receptance,
+            decay,
+            key,
+            value,
+            a,
+            b,
+            initial_state,
+            attention_mask,
+        )
+
+    if training:
+        reason = "the recurrent-v1 optional kernel protocol is inference-only"
+        if requested == "optimized":
+            raise RuntimeError(
+                f"optimized RWKV7 backend does not support this request: {reason}"
+            )
+        _record_route(
+            requested=requested,
+            selected="reference",
+            implementation="torch-reference-v1",
+            reason=reason,
+        )
+        return rwkv7_recurrent_reference(
+            receptance,
+            decay,
+            key,
+            value,
+            a,
+            b,
+            initial_state,
+            attention_mask,
+        )
+
+    module = _load_kernel_module()
+    if module is None:
+        reason = _kernel_import_error or "rwkv7_kernels is not installed"
+        if requested == "optimized":
+            raise RuntimeError(f"optimized RWKV7 backend is unavailable: {reason}")
+        _record_route(
+            requested=requested,
+            selected="reference",
+            implementation="torch-reference-v1",
+            reason=reason,
+        )
+        return rwkv7_recurrent_reference(
+            receptance,
+            decay,
+            key,
+            value,
+            a,
+            b,
+            initial_state,
+            attention_mask,
+        )
+
+    probe = getattr(module, "probe_recurrent_v1", None)
+    run = getattr(module, "recurrent_v1", None)
+    if not callable(probe) or not callable(run):
+        failure: Exception = RuntimeError(
+            "rwkv7_kernels does not implement recurrent protocol v1"
+        )
+    else:
+        args = (
+            receptance,
+            decay,
+            key,
+            value,
+            a,
+            b,
+            initial_state,
+            attention_mask,
+        )
+        try:
+            supported, implementation, reason = _probe_fields(probe(*args))
+            if not supported:
+                if requested == "optimized":
+                    raise RuntimeError(
+                        "optimized RWKV7 backend does not support this request: "
+                        f"{reason}"
+                    )
+                _record_route(
+                    requested=requested,
+                    selected="reference",
+                    implementation="torch-reference-v1",
+                    reason=reason,
+                )
+                return rwkv7_recurrent_reference(*args)
+            result = _validate_kernel_result(
+                run(*args), value=value, initial_state=initial_state
+            )
+        except Exception as exc:
+            if requested == "optimized":
+                raise RuntimeError(
+                    "optimized RWKV7 recurrent-v1 execution failed: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+            failure = exc
+        else:
+            _record_route(
+                requested=requested,
+                selected="optimized",
+                implementation=implementation,
+                reason=reason,
+            )
+            return result
+
+    reason = f"optional kernel failure: {type(failure).__name__}: {failure}"
+    if requested == "optimized":
+        raise RuntimeError(reason) from failure
+    _record_route(
+        requested=requested,
+        selected="reference",
+        implementation="torch-reference-v1",
+        reason=reason,
+    )
+    return rwkv7_recurrent_reference(
+        receptance,
+        decay,
+        key,
+        value,
+        a,
+        b,
+        initial_state,
+        attention_mask,
+    )
+
+
+__all__ = [
+    "get_last_recurrent_route",
+    "rwkv7_recurrent",
+    "rwkv7_recurrent_reference",
+]
