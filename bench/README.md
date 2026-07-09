@@ -4,6 +4,23 @@ This directory stores benchmark entrypoints, raw evidence, and comparison artifa
 
 The goal is to keep benchmark evidence reproducible without making the repository root impossible to read. New benchmark work should add a timestamped evidence directory with a short `README.md`, keep raw `.jsonl` rows, and link promoted conclusions from `BENCHMARK.md` or the relevant docs page.
 
+
+## Relationship with the main docs
+
+Benchmark evidence should be read together with the rest of the documentation:
+
+| Need | Doc |
+|---|---|
+| Full documentation map | [`../docs/README.md`](../docs/README.md) |
+| Current numeric summary | [`../BENCHMARK.md`](../BENCHMARK.md) |
+| HF status / gaps | [`../HF_STATUS.md`](../HF_STATUS.md), [`../HF_TODO.md`](../HF_TODO.md) |
+| Acceptance criteria | [`../docs/reference/HF_CRITERIA.md`](../docs/reference/HF_CRITERIA.md) |
+| Fused performance route | [`../docs/performance/FUSED_BACKEND.md`](../docs/performance/FUSED_BACKEND.md), [`../docs/native_fused_roadmap.md`](../docs/native_fused_roadmap.md) |
+| Apple / Qwen3.5 lane | [`../docs/hardware/APPLE_SILICON.md`](../docs/hardware/APPLE_SILICON.md), [`../docs/hardware/QWEN35_APPLE_BASELINE.md`](../docs/hardware/QWEN35_APPLE_BASELINE.md) |
+| MATH500 quality lane | [`../docs/validation/math500_acceptance.md`](../docs/validation/math500_acceptance.md), [`../docs/validation/math500_accuracy_parity.md`](../docs/validation/math500_accuracy_parity.md) |
+
+`bench/INDEX.md` is an inventory. `BENCHMARK.md` is the promoted numeric summary. Platform docs explain why a row matters and what remains blocked.
+
 ## Directory contract
 
 ```text

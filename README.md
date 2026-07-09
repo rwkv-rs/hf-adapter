@@ -28,6 +28,7 @@ Contributor status and roadmap docs:
 - [`docs/BACKENDS.md`](docs/BACKENDS.md): backend boundaries and rules that keep card-specific validation out of core model code.
 - [`docs/reference/HF_CRITERIA.md`](docs/reference/HF_CRITERIA.md): high-level HF acceptance criteria and optimization rules.
 - [`BENCHMARK.md`](BENCHMARK.md): numeric evidence and benchmark contract.
+- [`bench/README.md`](bench/README.md) and [`bench/INDEX.md`](bench/INDEX.md): benchmark evidence layout, naming rules, and current evidence inventory.
 - [`docs/validation/A100_HF_VALIDATION.md`](docs/validation/A100_HF_VALIDATION.md): latest A100 40GB HF training/quant/ZeRO validation matrix.
 - [`docs/validation/V100_HF_VALIDATION.md`](docs/validation/V100_HF_VALIDATION.md): latest V100 HF training/quant/ZeRO validation matrix.
 - [`docs/hardware/APPLE_SILICON.md`](docs/hardware/APPLE_SILICON.md): Apple Silicon / MPS / MLX compatibility lane and smoke commands.
