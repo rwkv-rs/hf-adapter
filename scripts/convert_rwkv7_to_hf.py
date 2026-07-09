@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # coding=utf-8
-"""Backward-compatible source-checkout wrapper for ``rwkv7-hf convert``."""
+"""Source-checkout wrapper for ``rwkv7-hf convert``."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from rwkv7_hf.converter import *  # noqa: F401,F403,E402
-from rwkv7_hf.converter import main as _main  # noqa: E402
+from rwkv7_hf_tools.converter import *  # noqa: F401,F403,E402
+from rwkv7_hf_tools.converter import main as _main  # noqa: E402
 
 
 if __name__ == "__main__":

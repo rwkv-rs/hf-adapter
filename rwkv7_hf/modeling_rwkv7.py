@@ -1012,11 +1012,6 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
         )
 
 
-# Compatibility aliases for 0.8 callers. New model repositories use RWKV7*.
-NativeRWKV7Model = RWKV7Model
-NativeRWKV7ForCausalLM = RWKV7ForCausalLM
-
-
 try:
     RWKV7Model.register_for_auto_class("AutoModel")
     RWKV7ForCausalLM.register_for_auto_class("AutoModelForCausalLM")
@@ -1031,6 +1026,4 @@ __all__ = [
     "RWKV7PreTrainedModel",
     "RWKV7Model",
     "RWKV7ForCausalLM",
-    "NativeRWKV7Model",
-    "NativeRWKV7ForCausalLM",
 ]

@@ -3,9 +3,11 @@
 [English](README.md) | [中文](README_ZH.md)
 
 A readable, pure-PyTorch RWKV-7 implementation for Hugging Face Transformers.
-Version 0.9 makes compatibility and reproducibility the default: the model
+Version 1.0 makes readability and reproducibility the default: the model
 architecture is visible in one `modeling_rwkv7.py`, recurrent math has one
 small boundary in `ops_rwkv7.py`, and each converted model is self-contained.
+The `rwkv7_hf` package contains model code only; conversion and smoke-test
+commands live in the separate `rwkv7_hf_tools` package.
 Optional CUDA Graph and Triton work remains on
 `perf/optional-native-backend-v0.10`; older CUDA/JIT/quantization and KV-v2
 experiments remain archived on `perf/native-kernels-v0.8`. Neither performance
@@ -20,7 +22,7 @@ python -m pip install "torch" "transformers>=4.48,<6"
 Install the PyTorch build that matches the GPU before installing the adapter.
 In particular, current default CUDA 13 wheels may omit `sm_70`; V100 users
 should select a compatible CUDA 12.x wheel from the official PyTorch index.
-Once PyTorch is present, `pip install rwkv7-hf==0.9.0` keeps that installation.
+Once PyTorch is present, `pip install rwkv7-hf==1.0.0` keeps that installation.
 
 ```python
 import torch
@@ -48,19 +50,16 @@ require `rwkv7-hf`, FLA, Triton, a compiler, or a kernel wheel.
 
 ```bash
 python -m pip install "torch"  # choose the wheel for your CUDA/GPU first
-python -m pip install "rwkv7-hf==0.9.0"
+python -m pip install "rwkv7-hf==1.0.0"
 rwkv7-hf convert \
   --input /path/to/model.pth \
   --output ./rwkv7-model-hf \
   --vocab-file /path/to/rwkv_vocab_v20230424.txt \
   --precision fp16 \
-  --adapter-layout reference \
-  --no-fuse-norm \
   --low-memory
 ```
 
-`reference` is the default. `thin` remains only as a legacy package-backed
-layout for older deployment workflows.
+The converter always writes the complete, self-contained reference layout.
 
 ## Public architecture
 
@@ -71,7 +70,14 @@ layout for older deployment workflows.
 - standard loss, cache, generation, save/reload, gradient checkpointing, PEFT
   and Trainer/TRL surfaces
 
-Historical `NativeRWKV7*` class names are 0.9 compatibility aliases.
+The public API uses only the canonical `RWKV7*` class names.
+
+## Source packages
+
+- `rwkv7_hf/` contains only the HF configuration, cache, operator boundary,
+  modeling, tokenizer, and chat template.
+- `rwkv7_hf_tools/` contains the CLI, checkpoint converter, manifest helpers,
+  and public-model smoke test.
 
 ## Reproduction
 

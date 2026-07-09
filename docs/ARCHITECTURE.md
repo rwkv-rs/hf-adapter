@@ -7,6 +7,10 @@ The reference line copies four model files into every converted model repository
 3. `ops_rwkv7.py` — one pure-PyTorch WKV recurrence boundary.
 4. `modeling_rwkv7.py` — TMix, CMix, blocks, backbone and causal LM.
 
+The installed source tree keeps these model modules in `rwkv7_hf/`. CLI,
+conversion, manifest, and smoke-test code is isolated in the sibling
+`rwkv7_hf_tools/` package and is never copied into model repositories.
+
 `RWKV7TimeMix` computes shifts and R/W/K/V/A/G projections, calls
 `rwkv7_recurrent`, applies GroupNorm and the direct RKV term, then projects
 back to the residual width. `RWKV7ChannelMix` is the shifted squared-ReLU

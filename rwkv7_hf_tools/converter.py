@@ -2,9 +2,9 @@
 # coding=utf-8
 """Convert official RWKV-7 checkpoints to self-contained HF model directories.
 
-The default reference layout copies the readable PyTorch configuration, cache,
-operator, modeling, and tokenizer files next to the safetensors weights. It
-only requires PyTorch and Transformers at model load time.
+The converter copies the readable PyTorch configuration, cache, operator,
+modeling, and tokenizer files next to the safetensors weights. Converted
+models only require PyTorch and Transformers at load time.
 """
 from __future__ import annotations
 
@@ -12,20 +12,15 @@ import argparse
 import json
 import re
 import shutil
-from importlib import metadata
 from pathlib import Path
 from typing import Dict, Sequence, Tuple
 
 import torch
 
-from .adapter_manifest import (
-    LEGACY_REMOTE_CODE_FILES,
-    OBSOLETE_08_ADAPTER_FILES,
-    copy_manifest_files,
-    remove_manifest_files,
-)
-from .configuration_rwkv7 import RWKV7Config
-from .modeling_rwkv7 import RWKV7ForCausalLM
+from rwkv7_hf.configuration_rwkv7 import RWKV7Config
+from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
+
+from .manifest import copy_manifest_files, remove_manifest_files
 
 
 DTYPES = {
@@ -37,8 +32,7 @@ DTYPES = {
     "float32": ("float32", torch.float32),
 }
 
-ADAPTER_LAYOUTS = ("reference", "thin")
-REFERENCE_ADAPTER_FILES = (
+MODEL_CODE_FILES = (
     "configuration_rwkv7.py",
     "cache_rwkv7.py",
     "ops_rwkv7.py",
@@ -46,103 +40,6 @@ REFERENCE_ADAPTER_FILES = (
     "tokenization_rwkv7.py",
     "chat_template.jinja",
 )
-THIN_ADAPTER_FILES = (
-    "configuration_rwkv7.py",
-    "modeling_rwkv7.py",
-    "tokenization_rwkv7.py",
-)
-
-
-def project_runtime_version() -> str:
-    """Return the installed runtime version, with a source-tree fallback."""
-
-    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
-    if pyproject.is_file():
-        in_project = False
-        for raw_line in pyproject.read_text(encoding="utf-8").splitlines():
-            line = raw_line.strip()
-            if line.startswith("["):
-                in_project = line == "[project]"
-                continue
-            if in_project:
-                match = re.fullmatch(
-                    r'version\s*=\s*["\']([^"\']+)["\']', line
-                )
-                if match:
-                    return match.group(1)
-        raise RuntimeError(f"Could not read [project].version from {pyproject}")
-    try:
-        return metadata.version("rwkv7-hf")
-    except metadata.PackageNotFoundError as exc:
-        raise RuntimeError("Could not determine the rwkv7-hf runtime version") from exc
-
-
-def thin_adapter_sources(runtime_version: str) -> dict[str, str]:
-    """Return the three package-backed remote-code entrypoints."""
-
-    version_literal = json.dumps(runtime_version)
-    header = (
-        "# coding=utf-8\n"
-        '"""Thin Hugging Face remote-code entrypoint backed by ``rwkv7-hf``."""\n\n'
-        f"_REQUIRED_RUNTIME_VERSION = {version_literal}\n\n"
-    )
-    guard = (
-        "except ImportError as exc:  # pragma: no cover - user environment guard\n"
-        "    raise ImportError(\n"
-        "        f\"This model requires rwkv7-hf=={_REQUIRED_RUNTIME_VERSION}. \"\n"
-        "        f\"Install it with `pip install rwkv7-hf=={_REQUIRED_RUNTIME_VERSION}`.\"\n"
-        "    ) from exc\n\n"
-    )
-    return {
-        "configuration_rwkv7.py": (
-            header
-            + "try:\n"
-            + "    from rwkv7_hf.configuration_rwkv7 import RWKV7Config as _PackageRWKV7Config\n"
-            + guard
-            + "class RWKV7Config(_PackageRWKV7Config):\n"
-            + '    """Thin package-backed config preserved by ``save_pretrained``."""\n\n'
-            + "    pass\n\n"
-            + "try:\n"
-            + "    RWKV7Config.register_for_auto_class()\n"
-            + "except Exception:\n"
-            + "    pass\n\n"
-            + '__all__ = ["RWKV7Config"]\n'
-        ),
-        "modeling_rwkv7.py": (
-            header
-            + "try:\n"
-            + "    from rwkv7_hf.modeling_rwkv7 import (\n"
-            + "        RWKV7ForCausalLM as _PackageRWKV7ForCausalLM,\n"
-            + "        RWKV7Model as _PackageRWKV7Model,\n"
-            + "    )\n"
-            + "    from .configuration_rwkv7 import RWKV7Config\n"
-            + guard
-            + "class RWKV7Model(_PackageRWKV7Model):\n"
-            + "    config_class = RWKV7Config\n\n"
-            + "class RWKV7ForCausalLM(_PackageRWKV7ForCausalLM):\n"
-            + "    config_class = RWKV7Config\n\n"
-            + "try:\n"
-            + '    RWKV7Model.register_for_auto_class("AutoModel")\n'
-            + '    RWKV7ForCausalLM.register_for_auto_class("AutoModelForCausalLM")\n'
-            + "except Exception:\n"
-            + "    pass\n\n"
-            + '__all__ = ["RWKV7Model", "RWKV7ForCausalLM"]\n'
-        ),
-        "tokenization_rwkv7.py": (
-            header
-            + "try:\n"
-            + "    from rwkv7_hf.tokenization_rwkv7 import RWKV7Tokenizer as _PackageRWKV7Tokenizer\n"
-            + guard
-            + "class RWKV7Tokenizer(_PackageRWKV7Tokenizer):\n"
-            + '    """Thin package-backed tokenizer preserved by ``save_pretrained``."""\n\n'
-            + "    pass\n\n"
-            + "try:\n"
-            + '    RWKV7Tokenizer.register_for_auto_class("AutoTokenizer")\n'
-            + "except Exception:\n"
-            + "    pass\n\n"
-            + '__all__ = ["RWKV7Tokenizer"]\n'
-        ),
-    }
 
 
 def tensor_shape(weights: Dict[str, torch.Tensor], name: str) -> tuple[int, ...]:
@@ -176,12 +73,6 @@ def infer_attention_shape(weights: Dict[str, torch.Tensor]) -> tuple[int, int, i
     if num_heads <= 0 or head_dim <= 0:
         raise ValueError(f"Invalid attention shape from blocks.0.att.r_k={rk_shape}")
     return num_heads, head_dim, num_heads * head_dim
-
-
-def infer_head_dim(weights: Dict[str, torch.Tensor], hidden_size: int | None = None) -> int:
-    """Compatibility helper returning N without requiring attention width A=D."""
-    del hidden_size
-    return infer_attention_shape(weights)[1]
 
 
 def infer_value_dim(
@@ -276,8 +167,6 @@ def validate_layer_shapes(
 def infer_config(
     weights: Dict[str, torch.Tensor],
     dtype_name: str,
-    attn_mode: str,
-    fuse_norm: bool,
 ) -> RWKV7Config:
     hidden_size = tensor_shape(weights, "blocks.0.ffn.key.weight")[1]
     intermediate_size = tensor_shape(weights, "blocks.0.ffn.key.weight")[0]
@@ -302,7 +191,6 @@ def infer_config(
     except KeyError:
         v_low_rank_dim = 32
     cfg = RWKV7Config(
-        attn_mode=attn_mode,
         vocab_size=tensor_shape(weights, "emb.weight")[0],
         hidden_size=hidden_size,
         attention_hidden_size=attention_hidden_size,
@@ -321,7 +209,6 @@ def infer_config(
         eos_token_id=0,
         bos_token_id=1,
         tie_word_embeddings=False,
-        fuse_norm=fuse_norm,
     )
     cfg.torch_dtype = dtype_name
     return cfg
@@ -371,88 +258,28 @@ def translate_name(name: str, num_layers: int) -> Tuple[str, bool]:
     return ".".join(parts), transposed
 
 
-def copy_reference_adapter_files(output: Path, vocab_file: Path | None) -> None:
+def copy_model_files(output: Path, vocab_file: Path | None) -> None:
     """Install the self-contained readable reference implementation."""
 
-    package_root = Path(__file__).resolve().parent
-    remove_manifest_files(
-        output,
-        tuple(OBSOLETE_08_ADAPTER_FILES) + tuple(LEGACY_REMOTE_CODE_FILES),
-    )
-    remove_manifest_files(output, REFERENCE_ADAPTER_FILES)
-    copy_manifest_files(package_root, output, REFERENCE_ADAPTER_FILES)
+    package_root = Path(__file__).resolve().parents[1] / "rwkv7_hf"
+    remove_manifest_files(output, MODEL_CODE_FILES)
+    copy_manifest_files(package_root, output, MODEL_CODE_FILES)
     if vocab_file is not None:
         destination = output / "rwkv_vocab_v20230424.txt"
         if vocab_file.resolve() != destination.resolve():
             shutil.copyfile(vocab_file, destination)
 
 
-def write_thin_adapter_files(
-    output: Path,
-    vocab_file: Path | None,
-    *,
-    runtime_version: str,
-) -> None:
-    """Install the three legacy package-backed entrypoints."""
-
-    remove_manifest_files(output, OBSOLETE_08_ADAPTER_FILES)
-    remove_manifest_files(output, REFERENCE_ADAPTER_FILES)
-    remove_manifest_files(output, LEGACY_REMOTE_CODE_FILES)
-    for name, source in thin_adapter_sources(runtime_version).items():
-        (output / name).write_text(source, encoding="utf-8")
-    if vocab_file is not None:
-        destination = output / "rwkv_vocab_v20230424.txt"
-        if vocab_file.resolve() != destination.resolve():
-            shutil.copyfile(vocab_file, destination)
-
-
-def install_adapter_layout(
-    output: Path,
-    vocab_file: Path | None,
-    *,
-    adapter_layout: str,
-    runtime_version: str,
-) -> None:
-    if adapter_layout == "reference":
-        copy_reference_adapter_files(output, vocab_file)
-        return
-    if adapter_layout == "thin":
-        write_thin_adapter_files(
-            output,
-            vocab_file,
-            runtime_version=runtime_version,
-        )
-        return
-    raise ValueError(
-        f"Unsupported adapter layout {adapter_layout!r}; choose one of {ADAPTER_LAYOUTS}"
-    )
-
-
-def patch_hf_metadata(
-    output: Path,
-    *,
-    adapter_layout: str = "reference",
-    runtime_version: str | None = None,
-) -> None:
+def patch_hf_metadata(output: Path) -> None:
     cfg_path = output / "config.json"
     cfg = json.loads(cfg_path.read_text())
     cfg["model_type"] = "rwkv7"
-    cfg["rwkv7_hf_adapter_layout"] = adapter_layout
     cfg["architectures"] = ["RWKV7ForCausalLM"]
     cfg["auto_map"] = {
         "AutoConfig": "configuration_rwkv7.RWKV7Config",
         "AutoModel": "modeling_rwkv7.RWKV7Model",
         "AutoModelForCausalLM": "modeling_rwkv7.RWKV7ForCausalLM",
     }
-    if adapter_layout == "thin":
-        runtime_version = runtime_version or project_runtime_version()
-        cfg["rwkv7_hf_runtime_version"] = runtime_version
-    elif adapter_layout == "reference":
-        cfg.pop("rwkv7_hf_runtime_version", None)
-    else:
-        raise ValueError(
-            f"Unsupported adapter layout {adapter_layout!r}; choose one of {ADAPTER_LAYOUTS}"
-        )
     cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
 
     tok_cfg = {
@@ -575,12 +402,6 @@ def save_low_memory_model(
 
 def convert(args: argparse.Namespace) -> None:
     dtype_name, dtype = DTYPES[args.precision]
-    adapter_layout = getattr(args, "adapter_layout", "reference")
-    runtime_version = getattr(args, "runtime_package_version", None) or project_runtime_version()
-    if adapter_layout not in ADAPTER_LAYOUTS:
-        raise ValueError(
-            f"Unsupported adapter layout {adapter_layout!r}; choose one of {ADAPTER_LAYOUTS}"
-        )
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
     weights = torch.load(
@@ -589,7 +410,7 @@ def convert(args: argparse.Namespace) -> None:
         map_location="cpu",
         mmap=bool(args.low_memory),
     )
-    config = infer_config(weights, dtype_name=dtype_name, attn_mode=args.attn_mode, fuse_norm=args.fuse_norm)
+    config = infer_config(weights, dtype_name=dtype_name)
     if args.low_memory:
         save_low_memory_model(
             weights=weights,
@@ -599,20 +420,11 @@ def convert(args: argparse.Namespace) -> None:
             max_shard_size=args.max_shard_size,
         )
         vocab = Path(args.vocab_file) if args.vocab_file else None
-        install_adapter_layout(
-            output,
-            vocab,
-            adapter_layout=adapter_layout,
-            runtime_version=runtime_version,
-        )
-        patch_hf_metadata(
-            output,
-            adapter_layout=adapter_layout,
-            runtime_version=runtime_version,
-        )
+        copy_model_files(output, vocab)
+        patch_hf_metadata(output)
         print(
-            f"Saved HF RWKV-7 model to: {output} "
-            f"(low-memory path, adapter layout: {adapter_layout})"
+            f"Saved self-contained HF RWKV-7 model to: {output} "
+            "(low-memory path)"
         )
         return
 
@@ -648,18 +460,9 @@ def convert(args: argparse.Namespace) -> None:
         vocab = Path(args.vocab_file)
     else:
         vocab = None
-    install_adapter_layout(
-        output,
-        vocab,
-        adapter_layout=adapter_layout,
-        runtime_version=runtime_version,
-    )
-    patch_hf_metadata(
-        output,
-        adapter_layout=adapter_layout,
-        runtime_version=runtime_version,
-    )
-    print(f"Saved HF RWKV-7 model to: {output} (adapter layout: {adapter_layout})")
+    copy_model_files(output, vocab)
+    patch_hf_metadata(output)
+    print(f"Saved self-contained HF RWKV-7 model to: {output}")
 
 
 def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
@@ -674,35 +477,6 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
     parser.add_argument("--output", required=True, help="Output HF model directory")
     parser.add_argument("--vocab-file", default=None, help="rwkv_vocab_v20230424.txt to copy into the model dir")
     parser.add_argument("--precision", choices=sorted(DTYPES), default="fp16")
-    parser.add_argument("--attn-mode", choices=["chunk", "fused_recurrent"], default="chunk")
-    parser.add_argument(
-        "--adapter-layout",
-        choices=ADAPTER_LAYOUTS,
-        default="reference",
-        help=(
-            "reference copies the complete readable PyTorch HF implementation "
-            "(default); thin writes package-backed compatibility entrypoints"
-        ),
-    )
-    parser.add_argument(
-        "--runtime-package-version",
-        default=project_runtime_version(),
-        help="rwkv7-hf version named by thin entrypoints (default: checkout version)",
-    )
-    norm_group = parser.add_mutually_exclusive_group()
-    norm_group.add_argument(
-        "--fuse-norm",
-        dest="fuse_norm",
-        action="store_true",
-        help="Deprecated 0.8 flag; the reference model always uses PyTorch normalization",
-    )
-    norm_group.add_argument(
-        "--no-fuse-norm",
-        dest="fuse_norm",
-        action="store_false",
-        help="Use PyTorch normalization (the reference default)",
-    )
-    parser.set_defaults(fuse_norm=False)
     parser.add_argument("--max-shard-size", default="1000GB")
     parser.add_argument(
         "--low-memory",
@@ -730,7 +504,7 @@ def main(
 
 
 def cli() -> None:
-    raise SystemExit(main(prog="rwkv7-hf-convert"))
+    raise SystemExit(main(prog="rwkv7-hf convert"))
 
 
 if __name__ == "__main__":

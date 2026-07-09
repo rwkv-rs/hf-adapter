@@ -36,8 +36,6 @@ class RWKV7Config(PretrainedConfig):
         norm_bias: bool = True,
         initializer_range: float = 0.02,
         use_cache: bool = True,
-        attn_mode: str = "reference",
-        fuse_norm: bool = False,
         **kwargs,
     ):
         # The official trie vocabulary reserves id 0; using it as both the
@@ -110,14 +108,6 @@ class RWKV7Config(PretrainedConfig):
         self.norm_bias = bool(norm_bias)
         self.initializer_range = float(initializer_range)
         self.use_cache = bool(use_cache)
-        # Kept so existing converted configs remain loadable. The reference
-        # implementation deliberately ignores backend/fusion selections.
-        self.attn_mode = str(attn_mode)
-        self.fuse_norm = bool(fuse_norm)
-
-
-# 0.9 compatibility name. New configs and docs use RWKV7Config.
-NativeRWKV7Config = RWKV7Config
 
 
 try:
@@ -126,4 +116,4 @@ except Exception:  # pragma: no cover - older Transformers
     pass
 
 
-__all__ = ["RWKV7Config", "NativeRWKV7Config"]
+__all__ = ["RWKV7Config"]

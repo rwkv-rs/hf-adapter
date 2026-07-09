@@ -6,8 +6,6 @@ rwkv7-hf convert \
   --output /absolute/model-hf \
   --vocab-file /absolute/rwkv_vocab_v20230424.txt \
   --precision fp16 \
-  --adapter-layout reference \
-  --no-fuse-norm \
   --low-memory
 ```
 
@@ -38,3 +36,5 @@ model = AutoModelForCausalLM.from_pretrained(
 
 The low-memory path builds the shape template on the meta device and avoids a
 second full dense model allocation. `--max-shard-size` controls sharding.
+There is one output layout: the complete self-contained reference model. The
+converter has no package-backed or legacy layout mode.

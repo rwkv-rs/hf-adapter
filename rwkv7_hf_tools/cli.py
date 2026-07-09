@@ -13,11 +13,11 @@ from typing import Sequence
 
 COMMANDS = {
     "convert": (
-        "rwkv7_hf.converter",
+        "rwkv7_hf_tools.converter",
         "convert an official RWKV-7 .pth checkpoint to Hugging Face format",
     ),
     "smoke": (
-        "rwkv7_hf.smoke",
+        "rwkv7_hf_tools.smoke",
         "load a local or Hub model and run a first-generation smoke test",
     ),
 }

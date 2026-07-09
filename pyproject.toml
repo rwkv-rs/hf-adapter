@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rwkv7-hf"
-version = "0.9.0"
+version = "1.0.0"
 description = "Readable pure-PyTorch Hugging Face reference model and converter for RWKV-7."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,7 +12,7 @@ license = "MIT"
 authors = [{ name = "123123213weqw", email = "300659282+123123213weqw@users.noreply.github.com" }]
 keywords = ["rwkv", "transformers", "huggingface", "language-model", "pytorch"]
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "Intended Audience :: Science/Research",
   "Programming Language :: Python :: 3",
@@ -29,9 +29,7 @@ dependencies = [
 ]
 
 [project.scripts]
-rwkv7-hf = "rwkv7_hf.cli:cli"
-rwkv7-hf-convert = "rwkv7_hf.converter:cli"
-rwkv7-hf-smoke = "rwkv7_hf.smoke:cli"
+rwkv7-hf = "rwkv7_hf_tools.cli:cli"
 
 [project.optional-dependencies]
 test = [
