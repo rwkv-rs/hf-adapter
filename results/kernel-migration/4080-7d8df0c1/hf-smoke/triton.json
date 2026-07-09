@@ -1,0 +1,130 @@
+{
+  "code_sha": "7d8df0c1",
+  "environment": {
+    "cuda": "13.0",
+    "gpu": "NVIDIA GeForce RTX 4080",
+    "python": "3.12.2",
+    "rwkv7_hf": "1.0.0",
+    "rwkv7_kernels": "1.0.0.dev0",
+    "torch": "2.11.0+cu130",
+    "transformers": "5.8.0",
+    "triton": "3.6.0"
+  },
+  "implementation": "triton",
+  "models": {
+    "0.1B": {
+      "backbone_route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "backbone_shape": [
+        1,
+        2,
+        768
+      ],
+      "beam_shape": [
+        1,
+        4
+      ],
+      "causal_route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "config_model_type": "rwkv7",
+      "greedy_shape": [
+        1,
+        6
+      ],
+      "logits_finite": true,
+      "passed": true,
+      "path": "/home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/01b",
+      "save_reload_equal": true,
+      "tokenizer_class": "RWKV7Tokenizer",
+      "weight_sha256": "12d208adf2880927615656c2dc3f6fb6a3ea3120a9ed9fdfeeea55c841723d79"
+    },
+    "0.4B": {
+      "backbone_route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "backbone_shape": [
+        1,
+        2,
+        1024
+      ],
+      "beam_shape": [
+        1,
+        4
+      ],
+      "causal_route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "config_model_type": "rwkv7",
+      "greedy_shape": [
+        1,
+        6
+      ],
+      "logits_finite": true,
+      "passed": true,
+      "path": "/home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/04b",
+      "tokenizer_class": "RWKV7Tokenizer",
+      "weight_sha256": "8aa0fb580a0c5d442b28f63b9b08c2c60a81821f7c60e79307c11a1a3a2693e0"
+    },
+    "1.5B": {
+      "backbone_route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "backbone_shape": [
+        1,
+        2,
+        2048
+      ],
+      "beam_shape": [
+        1,
+        4
+      ],
+      "causal_route": {
+        "implementation": "native-triton-rank1-scan-v1",
+        "reason": "FP16 K=V=64 inference request is supported",
+        "requested": "optimized",
+        "selected": "optimized"
+      },
+      "config_model_type": "rwkv7",
+      "greedy_shape": [
+        1,
+        6
+      ],
+      "logits_finite": true,
+      "passed": true,
+      "path": "/home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/15b",
+      "tokenizer_class": "RWKV7Tokenizer",
+      "weight_sha256": "d580d0c687d4e7e6c86985c61418712fc2904189575ac1b4cf199845497b9c23"
+    }
+  },
+  "passed": true,
+  "schema": "rwkv7-hf-optional-kernel-smoke-v1",
+  "training_fallback": {
+    "gradient_tensors": 399,
+    "loss": 15.815789222717285,
+    "model": "0.1B",
+    "passed": true,
+    "route": {
+      "implementation": "torch-reference-v1",
+      "reason": "the recurrent-v1 optional kernel protocol is inference-only",
+      "requested": "auto",
+      "selected": "reference"
+    }
+  }
+}

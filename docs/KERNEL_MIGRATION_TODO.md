@@ -74,10 +74,10 @@
 
 ### Environment and artifact identity
 
-- [ ] Record GPU, driver, CUDA, Python, Torch, Transformers, Triton and FLA.
-- [ ] Record source SHA, HF wheel SHA256, kernel wheel SHA256, model SHA256,
+- [x] Record GPU, driver, CUDA, Python, Torch, Transformers, Triton and FLA.
+- [x] Record source SHA, HF wheel SHA256, kernel wheel SHA256, model SHA256,
       tokenizer SHA256, command, seed, dtype and environment variables.
-- [ ] Verify JSON reports the real implementation route; filenames or requested
+- [x] Verify JSON reports the real implementation route; filenames or requested
       environment variables are not accepted as route evidence.
 
 ### Correctness matrix
@@ -90,26 +90,26 @@ T = 1 / 17 / 128 / 512
 Dtype = FP32 / FP16 / BF16 where supported
 ```
 
-- [ ] Output parity.
-- [ ] Final recurrent-state parity.
+- [x] Output parity.
+- [x] Final recurrent-state parity.
 - [ ] Attention-mask and unequal-length batch parity.
-- [ ] Input and state gradients for training-capable routes.
-- [ ] All outputs and states finite.
+- [x] Input and state gradients for training-capable routes.
+- [x] All outputs and states finite.
 - [ ] No state update at masked positions.
 
 ### HF model matrix
 
 Use 0.1B, 0.4B, and 1.5B:
 
-- [ ] AutoConfig/AutoTokenizer/AutoModel/AutoModelForCausalLM.
-- [ ] No-cache logits.
-- [ ] Prefill state.
-- [ ] Teacher-forced cached decode.
+- [x] AutoConfig/AutoTokenizer/AutoModel/AutoModelForCausalLM.
+- [x] No-cache logits.
+- [x] Prefill state.
+- [x] Teacher-forced cached decode.
 - [ ] Left/right padding.
-- [ ] 64-token greedy equality.
-- [ ] Beam generation.
-- [ ] Save/reload.
-- [ ] Training/autograd reference fallback.
+- [x] 64-token greedy equality.
+- [x] Beam generation.
+- [x] Save/reload.
+- [x] Training/autograd reference fallback.
 
 ## Phase 3 — fair RTX 4080 speed comparison
 
@@ -124,11 +124,11 @@ B = 1 / 4 / 8
 T = 1 / 17 / 128 / 512 / 2048
 ```
 
-- [ ] Reference vs optimized recurrent vs FLA fused recurrent.
+- [x] Reference vs optimized recurrent vs FLA fused recurrent.
 - [ ] Reference vs optimized prefill vs FLA chunk where semantically matched.
-- [ ] Forward latency and tokens/s.
+- [x] Forward latency and tokens/s.
 - [ ] Forward+backward latency for training-capable routes.
-- [ ] Peak VRAM, warmup count, measured iterations, median and p95.
+- [x] Peak VRAM, warmup count, measured iterations, median and p95.
 
 ### Whole-model table
 
@@ -235,3 +235,28 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   top-level `rwkv7_hf` and `rwkv7_kernels` imports were explicitly blocked.
 - Next action: sync this exact commit and these wheel hashes to RTX 4080; record
   the actual Graph/Triton routes before accepting any benchmark result.
+
+### 2026-08-27 — first RTX 4080 acceptance slice
+
+- Compact evidence:
+  `results/kernel-migration/4080-7d8df0c1/` with verified
+  `MANIFEST.sha256`.
+- Environment: RTX 4080, driver 595.84, CUDA 13.0, Torch 2.11.0+cu130,
+  Transformers 5.8.0, Triton 3.6.0, pinned FLA
+  `80e494f6c588e091fc8316b612870df29375c5b8`.
+- Graph actual route `torch-cuda-graph-reference-v1`: 12/12 FP16 operator
+  cases passed; 0.1B/0.4B/1.5B model/cache/64-token greedy gates passed.
+- Triton actual route `native-triton-rank1-scan-v1`: 12/12 operator cases,
+  finite/state/cache/greedy passed. Strict aggregate remains failed because
+  the 0.4B B1/T17 logits max-abs is `0.15625`, above the fixed `0.15` gate.
+- Both optional routes passed AutoConfig/AutoTokenizer/AutoModel,
+  AutoModelForCausalLM, greedy, beam, save/reload, and training reference
+  fallback. A separate no-wheel environment passed package-free 0.1B loading.
+- Eager operator matrix: Graph is 1.35x-3.18x faster than the readable
+  recurrence. Triton is 1.08x-1.49x faster than pinned FLA fused recurrent in
+  all 12 measured B/T cases. FLA chunk remains faster at T=512, so no
+  whole-model or long-prefill claim is made.
+- Clean reference vs FLA 0.4B retained `outside_thresholds`: operator, state,
+  and 64-token greedy passed, but B4/T128 logits max-abs reached `0.1875`.
+- Still open: FP32/BF16 expansion, explicit left/right padding, whole-model
+  prefill/decode, backward speed, and the three-way 144-unit lm_eval matrix.

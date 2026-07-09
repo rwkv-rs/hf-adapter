@@ -1,0 +1,190 @@
+{
+  "clean_vs_fla": {
+    "fla_commit": "80e494f6c588e091fc8316b612870df29375c5b8",
+    "gates": {
+      "greedy": true,
+      "logits": false,
+      "operator": true,
+      "state": true
+    },
+    "status": "outside_thresholds"
+  },
+  "core_kernel_commit": "0b26ce24",
+  "graph": {
+    "hf_smoke_passed": true,
+    "models": {
+      "0.1B": true,
+      "0.4B": true,
+      "1.5B": true
+    },
+    "operator_passed": 12,
+    "operator_total": 12,
+    "validation_passed": true
+  },
+  "package_free_no_wheels": true,
+  "schema": "rwkv7-kernels-4080-acceptance-summary-v1",
+  "source_sha": "7d8df0c1",
+  "speed_cases": {
+    "b1_t1": {
+      "fla_chunk_ms": 0.2380110090598464,
+      "fla_fused_ms": 0.07277191616594791,
+      "graph_ms": 0.07085211109369993,
+      "graph_speedup_vs_reference": 1.3467216549049892,
+      "reference_ms": 0.09541807230561972,
+      "triton_ms": 0.05490204785019159,
+      "triton_speedup_vs_fla_chunk": 4.335193647225962,
+      "triton_speedup_vs_fla_fused": 1.3254863710096374,
+      "triton_speedup_vs_reference": 1.7379692751349116
+    },
+    "b1_t128": {
+      "fla_chunk_ms": 0.22974703460931778,
+      "fla_fused_ms": 0.12383004650473595,
+      "graph_ms": 2.5417060824111104,
+      "graph_speedup_vs_reference": 2.8755350651481337,
+      "reference_ms": 7.30876496527344,
+      "triton_ms": 0.10974705219268799,
+      "triton_speedup_vs_fla_chunk": 2.0934232858112694,
+      "triton_speedup_vs_fla_fused": 1.1283223014256618,
+      "triton_speedup_vs_reference": 66.59645812118126
+    },
+    "b1_t17": {
+      "fla_chunk_ms": 0.23107894230633974,
+      "fla_fused_ms": 0.05790404975414276,
+      "graph_ms": 0.38069707807153463,
+      "graph_speedup_vs_reference": 2.6598444787002973,
+      "reference_ms": 1.0125950211659074,
+      "triton_ms": 0.049912952817976475,
+      "triton_speedup_vs_fla_chunk": 4.629638786329531,
+      "triton_speedup_vs_fla_fused": 1.1601006649578192,
+      "triton_speedup_vs_reference": 20.287219328791437
+    },
+    "b1_t512": {
+      "fla_chunk_ms": 0.22971595171839,
+      "fla_fused_ms": 0.35200605634599924,
+      "graph_ms": 10.019182926043868,
+      "graph_speedup_vs_reference": 2.8996648963820304,
+      "reference_ms": 29.0522730210796,
+      "triton_ms": 0.3243819810450077,
+      "triton_speedup_vs_fla_chunk": 0.7081649571852053,
+      "triton_speedup_vs_fla_fused": 1.0851590930297659,
+      "triton_speedup_vs_reference": 89.56191995463713
+    },
+    "b4_t1": {
+      "fla_chunk_ms": 0.22058095782995224,
+      "fla_fused_ms": 0.05747308023273945,
+      "graph_ms": 0.1290310174226761,
+      "graph_speedup_vs_reference": 2.340243493135854,
+      "reference_ms": 0.3019639989361167,
+      "triton_ms": 0.03848306369036436,
+      "triton_speedup_vs_fla_chunk": 5.731897013313489,
+      "triton_speedup_vs_fla_fused": 1.4934642598928507,
+      "triton_speedup_vs_reference": 7.846672535371044
+    },
+    "b4_t128": {
+      "fla_chunk_ms": 0.2352189039811492,
+      "fla_fused_ms": 0.12278801295906305,
+      "graph_ms": 10.030308039858937,
+      "graph_speedup_vs_reference": 3.034208212680431,
+      "reference_ms": 30.434043030254543,
+      "triton_ms": 0.10752503294497728,
+      "triton_speedup_vs_fla_chunk": 2.187573419312649,
+      "triton_speedup_vs_fla_fused": 1.1419481547324533,
+      "triton_speedup_vs_reference": 283.04146668644364
+    },
+    "b4_t17": {
+      "fla_chunk_ms": 0.2268720418214798,
+      "fla_fused_ms": 0.058884965255856514,
+      "graph_ms": 1.3766030315309763,
+      "graph_speedup_vs_reference": 2.9940745526612,
+      "reference_ms": 4.121652105823159,
+      "triton_ms": 0.04578498192131519,
+      "triton_speedup_vs_fla_chunk": 4.9551628569249155,
+      "triton_speedup_vs_fla_fused": 1.286119657250375,
+      "triton_speedup_vs_reference": 90.02192275420174
+    },
+    "b4_t512": {
+      "fla_chunk_ms": 0.23500400129705667,
+      "fla_fused_ms": 0.3510499373078346,
+      "graph_ms": 40.45114491600543,
+      "graph_speedup_vs_reference": 2.9917513402038916,
+      "reference_ms": 121.01976701524109,
+      "triton_ms": 0.3254520706832409,
+      "triton_speedup_vs_fla_chunk": 0.7220848243604621,
+      "triton_speedup_vs_fla_fused": 1.0786532608960042,
+      "triton_speedup_vs_reference": 371.8512737103718
+    },
+    "b8_t1": {
+      "fla_chunk_ms": 0.22914295550435781,
+      "fla_fused_ms": 0.05424802657216787,
+      "graph_ms": 0.2096869284287095,
+      "graph_speedup_vs_reference": 2.7139413401199315,
+      "reference_ms": 0.569078023545444,
+      "triton_ms": 0.038002035580575466,
+      "triton_speedup_vs_fla_chunk": 6.029754775070075,
+      "triton_speedup_vs_fla_fused": 1.4275031782743886,
+      "triton_speedup_vs_reference": 14.974935285738356
+    },
+    "b8_t128": {
+      "fla_chunk_ms": 0.22272509522736073,
+      "fla_fused_ms": 0.12313597835600376,
+      "graph_ms": 20.02592699136585,
+      "graph_speedup_vs_reference": 3.062704115952362,
+      "reference_ms": 61.33348902221769,
+      "triton_ms": 0.10727997869253159,
+      "triton_speedup_vs_fla_chunk": 2.0761105468309156,
+      "triton_speedup_vs_fla_fused": 1.1478001753609224,
+      "triton_speedup_vs_reference": 571.7142170395257
+    },
+    "b8_t17": {
+      "fla_chunk_ms": 0.21943391766399145,
+      "fla_fused_ms": 0.057818018831312656,
+      "graph_ms": 2.6475859340280294,
+      "graph_speedup_vs_reference": 3.1164518201313043,
+      "reference_ms": 8.251074003055692,
+      "triton_ms": 0.04610803443938494,
+      "triton_speedup_vs_fla_chunk": 4.759125396083976,
+      "triton_speedup_vs_fla_fused": 1.2539684142754346,
+      "triton_speedup_vs_reference": 178.95089442389508
+    },
+    "b8_t512": {
+      "fla_chunk_ms": 0.23970205802470446,
+      "fla_fused_ms": 0.3524459898471832,
+      "graph_ms": 76.61802996881306,
+      "graph_speedup_vs_reference": 3.180327073047582,
+      "reference_ms": 243.67039499338716,
+      "triton_ms": 0.32695895060896873,
+      "triton_speedup_vs_fla_chunk": 0.7331258483006926,
+      "triton_speedup_vs_fla_fused": 1.0779518015663565,
+      "triton_speedup_vs_reference": 745.2629589725111
+    }
+  },
+  "triton": {
+    "hf_smoke_passed": true,
+    "models": {
+      "0.1B": true,
+      "0.4B": false,
+      "1.5B": true
+    },
+    "numerical_failures": [
+      {
+        "batch": 1,
+        "length": 17,
+        "logits": {
+          "cosine": 0.9999967813491821,
+          "finite": true,
+          "max_abs": 0.15625
+        },
+        "model": "0.4B",
+        "route": {
+          "implementation": "native-triton-rank1-scan-v1",
+          "reason": "FP16 K=V=64 inference request is supported",
+          "requested": "optimized",
+          "selected": "optimized"
+        }
+      }
+    ],
+    "operator_passed": 12,
+    "operator_total": 12,
+    "validation_passed": false
+  }
+}

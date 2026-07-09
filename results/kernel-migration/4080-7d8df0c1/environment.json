@@ -1,0 +1,16 @@
+{
+  "core_kernel_commit": "0b26ce24",
+  "cuda": "13.0",
+  "driver": "595.84",
+  "fla_commit": "80e494f6c588e091fc8316b612870df29375c5b8",
+  "gpu": "NVIDIA GeForce RTX 4080",
+  "packages": {
+    "rwkv7-hf": "1.0.0",
+    "rwkv7-kernels": "1.0.0.dev0",
+    "torch": "2.11.0",
+    "transformers": "5.8.0",
+    "triton": "3.6.0"
+  },
+  "python": "3.12.2",
+  "source_sha": "7d8df0c1"
+}

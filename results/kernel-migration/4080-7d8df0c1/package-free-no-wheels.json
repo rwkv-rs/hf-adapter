@@ -1,0 +1,13 @@
+{
+  "logits_finite": true,
+  "model_type": "rwkv7",
+  "passed": true,
+  "route": {
+    "implementation": "torch-reference-v1",
+    "reason": "ModuleNotFoundError: No module named 'rwkv7_kernels'",
+    "requested": "auto",
+    "selected": "reference"
+  },
+  "rwkv7_hf_installed": false,
+  "rwkv7_kernels_installed": false
+}
