@@ -4,6 +4,8 @@ This file is the persistent benchmark contract for the RWKV-7 HF adapter work.
 The goal is to iterate until the HF path approaches the official `rwkv` package
 and Albatross-style paths in correctness, speed, and memory.
 
+For benchmark directory layout, evidence naming, and the current script/directory inventory, see [`bench/README.md`](bench/README.md) and [`bench/INDEX.md`](bench/INDEX.md).
+
 ## Hardware currently measured
 
 - Development server: **Tesla V100-PCIE-32GB**, CUDA fp16.
