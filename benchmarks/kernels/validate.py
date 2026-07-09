@@ -186,10 +186,11 @@ def operator_matrix(
                 * 0.01
             )
             mask = torch.ones(batch, length, device=device, dtype=torch.bool)
-            if batch > 1 and length > 1:
-                mask[1, : min(3, length)] = False
-                mask[2, -min(4, length) :] = False
+            if batch > 1:
                 mask[-1] = False
+                if length > 1:
+                    mask[1, : min(3, length)] = False
+                    mask[2, -min(4, length) :] = False
             with torch.inference_mode():
                 reference = rwkv7_recurrent_reference(*values, state, mask)
                 _reset_kernel_discovery_for_tests()
