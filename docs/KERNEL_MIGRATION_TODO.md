@@ -1,0 +1,216 @@
+# RWKV7 optional-kernel migration TODO
+
+> **Working rule:** read this file before every implementation, benchmark, or
+> validation session. Update the checkboxes, evidence paths, actual route,
+> commands, code SHA, and blockers before ending that session.
+
+## Fixed decisions
+
+- Clean base: `4bbd911e4dcb446e8c21fb795e373b4a59775ff3`.
+- Working branch: `perf/optional-kernels-v1`.
+- `rwkv7_hf/` remains the readable HF source of truth and contains only the
+  canonical model modules.
+- CLI/conversion/smoke stay in the sibling `rwkv7_hf_tools/` package.
+- Optimized code is built as a separate `rwkv7-kernels` wheel from `kernels/`.
+- Model weights, `config.json`, public cache ABI, and HF forward/generation
+  signatures do not select hardware or kernel policy.
+- Public recurrent state remains canonical `[B,H,K,V]`.
+- Unsupported device/dtype/shape, missing wheel, autograd, or probe failure
+  falls back to `rwkv7_recurrent_reference` in `auto` mode.
+- No old model wrapper, compatibility module, monkey patch, or performance
+  policy may be copied from `perf/native-kernels-v0.8` or
+  `perf/optional-native-backend-v0.10` into `rwkv7_hf/`.
+- FLA comparison is pinned to commit
+  `80e494f6c588e091fc8316b612870df29375c5b8`.
+- RTX 4080 is the first release device. V100 and RTX 4090 follow only after the
+  4080 evidence bundle is internally consistent.
+
+## Phase 0 — clean layout
+
+- [x] Move CLI/converter/manifest/smoke to `rwkv7_hf_tools/`.
+- [x] Remove `model_cache.py`, `model_config.py`, `native_model.py` and old
+      `NativeRWKV7*` aliases.
+- [x] Remove package-backed `thin` conversion and duplicate console scripts.
+- [x] Build and load a real converted 0.1B model package-free on V100.
+- [x] Confirm the v1 conversion produces byte-identical safetensors.
+
+## Phase 1 — recurrent plugin v1
+
+### Layout
+
+- [ ] Create `kernels/pyproject.toml` for distribution `rwkv7-kernels`.
+- [ ] Create `kernels/rwkv7_kernels/protocol.py`.
+- [ ] Port exact CUDA-graph recurrence into
+      `kernels/rwkv7_kernels/recurrent/graph.py`.
+- [ ] Port Triton rank-1 scan into
+      `kernels/rwkv7_kernels/recurrent/triton.py`.
+- [ ] Keep implementation selection and environment parsing inside the kernel
+      wheel, not in `rwkv7_hf/`.
+- [ ] Expose only `RWKV7_KERNEL_API_VERSION`, `probe_recurrent_v1`, and
+      `recurrent_v1` as the v1 public kernel protocol.
+
+### Core boundary
+
+- [ ] Split `ops_rwkv7.py` into visibly separate
+      `rwkv7_recurrent_reference(...)` and `rwkv7_recurrent(...)` functions.
+- [ ] Add one lazy optional-package call in `rwkv7_recurrent(...)`.
+- [ ] Preserve package-free Hub loading when `rwkv7-kernels` is absent.
+- [ ] Record the actual route and implementation for validation without adding
+      hardware fields to the model config.
+
+### Local tests
+
+- [ ] Core model package still contains only canonical HF files.
+- [ ] Core never imports `rwkv7_hf_tools`.
+- [ ] Missing kernel package uses reference.
+- [ ] `auto` falls back on unsupported inputs and autograd.
+- [ ] `optimized` fails clearly rather than silently falling back.
+- [ ] API version mismatch fails clearly.
+- [ ] Broken probe/kernel is contained in `auto` and surfaced in `optimized`.
+- [ ] Kernel wheel and HF wheel build independently.
+- [ ] Package-free converted directory loads without either installed wheel.
+
+## Phase 2 — RTX 4080 recurrent acceptance
+
+### Environment and artifact identity
+
+- [ ] Record GPU, driver, CUDA, Python, Torch, Transformers, Triton and FLA.
+- [ ] Record source SHA, HF wheel SHA256, kernel wheel SHA256, model SHA256,
+      tokenizer SHA256, command, seed, dtype and environment variables.
+- [ ] Verify JSON reports the real implementation route; filenames or requested
+      environment variables are not accepted as route evidence.
+
+### Correctness matrix
+
+Run reference, optimized Graph, optimized Triton, and pinned FLA with:
+
+```text
+B = 1 / 4 / 8
+T = 1 / 17 / 128 / 512
+Dtype = FP32 / FP16 / BF16 where supported
+```
+
+- [ ] Output parity.
+- [ ] Final recurrent-state parity.
+- [ ] Attention-mask and unequal-length batch parity.
+- [ ] Input and state gradients for training-capable routes.
+- [ ] All outputs and states finite.
+- [ ] No state update at masked positions.
+
+### HF model matrix
+
+Use 0.1B, 0.4B, and 1.5B:
+
+- [ ] AutoConfig/AutoTokenizer/AutoModel/AutoModelForCausalLM.
+- [ ] No-cache logits.
+- [ ] Prefill state.
+- [ ] Teacher-forced cached decode.
+- [ ] Left/right padding.
+- [ ] 64-token greedy equality.
+- [ ] Beam generation.
+- [ ] Save/reload.
+- [ ] Training/autograd reference fallback.
+
+## Phase 3 — fair RTX 4080 speed comparison
+
+Produce separate result tables. Do not mix these modes.
+
+### Eager/operator table
+
+Disable model-level CUDA Graph and `torch.compile` for all lanes:
+
+```text
+B = 1 / 4 / 8
+T = 1 / 17 / 128 / 512 / 2048
+```
+
+- [ ] Reference vs optimized recurrent vs FLA fused recurrent.
+- [ ] Reference vs optimized prefill vs FLA chunk where semantically matched.
+- [ ] Forward latency and tokens/s.
+- [ ] Forward+backward latency for training-capable routes.
+- [ ] Peak VRAM, warmup count, measured iterations, median and p95.
+
+### Whole-model table
+
+Use 0.4B and 1.5B:
+
+- [ ] Prefill B1/B4/B8 × T128/T512/T2048.
+- [ ] Cached decode B1/B4/B8 for 256 generated tokens.
+- [ ] Separate compile/capture time from steady-state latency.
+
+### Production table
+
+- [ ] Our best validated Graph/Triton/CUDA route.
+- [ ] FLA best supported official route.
+- [ ] End-to-end prefill and generation, including framework overhead.
+
+## Phase 4 — three-way lm_eval equivalence
+
+Lanes:
+
+```text
+hf-reference / hf-optimized / fla-rwkv7
+```
+
+Models and batches:
+
+```text
+0.1B / 0.4B / 1.5B
+batch 1 / 8
+```
+
+Tasks:
+
+```text
+wikitext, lambada_openai, piqa, hellaswag, winogrande,
+arc_easy, arc_challenge, openbookqa
+```
+
+Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
+
+- [ ] All 144 commands exit zero without NaN/Inf.
+- [ ] Classification/LAMBADA per-sample selected answers match across lanes.
+- [ ] Aggregate discrete metrics match exactly.
+- [ ] Wikitext mean NLL is recorded and perplexity relative difference is
+      `<=0.1%`.
+- [ ] Batch 1/8 discrete predictions match and continuous Wikitext metrics stay
+      within `0.1%`.
+- [ ] Store raw per-sample outputs outside Git; commit only compact summaries,
+      manifests, hashes, commands, and validators.
+
+## Phase 5 — full fast decode and prefill
+
+- [ ] Define `probe_decode_step_v1` / `decode_step_v1`.
+- [ ] Port fused token, W/A/G/V, state pool and CUDA Graph replay without
+      replacing `modeling_rwkv7.py`.
+- [ ] Define `probe_prefill_v1` / `prefill_v1`.
+- [ ] Port chunk/fused prefill and shape routing behind the protocol.
+- [ ] Keep canonical cache visible to HF; internal layouts never escape the
+      kernel package.
+
+## Phase 6 — training kernels
+
+- [ ] Define versioned forward/backward operator ABI.
+- [ ] Compare outputs, states and all gradients against reference and FLA.
+- [ ] Run Trainer/Accelerate/PEFT/TRL SFT, DPO and GRPO.
+- [ ] Distinguish optimized training from reference fallback in every report.
+- [ ] Benchmark forward+backward only after numerical gates pass.
+
+## Release gate
+
+- [ ] `rwkv7_hf/` remains clean after kernel installation.
+- [ ] `rwkv7-hf` and `rwkv7-kernels` install independently.
+- [ ] RTX 4080 correctness, HF, FLA speed and three-way lm_eval gates pass.
+- [ ] Equivalent V100 and RTX 4090 gates pass.
+- [ ] Six Hub repositories contain only self-contained reference code and
+      unchanged weights where hashes match.
+- [ ] GitHub, Hub and PyPI versions/tags agree.
+
+## Session log
+
+### 2026-08-27 — checklist created
+
+- Base commit: `4bbd911e4dcb446e8c21fb795e373b4a59775ff3`.
+- Branch: `perf/optional-kernels-v1`.
+- Next action: port only the existing recurrent kernel wheel and protocol, run
+  local fallback/package gates, then sync exact wheels to RTX 4080.
