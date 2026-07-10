@@ -205,7 +205,7 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 
 ## Phase 6 — backend-v2 training implementation and unified acceptance
 
-- [ ] Port the existing versioned forward/backward autograd operators behind
+- [x] Port the existing versioned forward/backward autograd operators behind
       `model_forward_v1`; do not create a separate model class or cache.
 - [ ] Compare outputs, states and all gradients against reference and FLA.
 - [ ] Run Trainer/Accelerate/PEFT/TRL SFT, DPO and GRPO.
@@ -258,6 +258,21 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - Local result: `46 passed`.
 - HF wheel: `rwkv7_hf-1.0.0-py3-none-any.whl`, SHA256
   `07b4f6668c3123a3e996e33d4fab8230c468db23bbd7249c3454a93e2f04338f`.
+
+### 2026-08-27 — backend-v2 training boundary wired locally
+
+- Added `nvidia/training_runtime.py`, which directly executes the clean
+  model's layer structure through the migrated train-temp autograd operators;
+  it does not replace model methods or own a second model/cache class.
+- Added an explicit `native-nvidia-train-temp-autograd-v2` capability probe
+  for dense, unpadded BF16 CUDA training. Unsupported labels, masks, dtypes,
+  shapes, or devices remain reference fallbacks in production `auto`.
+- Local tests replace only the CUDA leaf operators with differentiable Python
+  equivalents and verify logits, loss, and parameter gradients against the
+  clean reference model. Structural tests reject method monkeypatching.
+- Local command: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q`.
+  Result: `62 passed`. CUDA extension build and numerical/throughput gates are
+  still pending on the 4080; this checkbox records protocol migration only.
 - Kernel wheel: `rwkv7_kernels-1.0.0.dev0-py3-none-any.whl`, SHA256
   `31c0892a5284a26f89790567dbbdf4f6255b996cf5f7a32c14fa2406c15e24c9`.
 - Both wheels passed `twine check --strict` and independent target-directory

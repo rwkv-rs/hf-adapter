@@ -115,6 +115,43 @@ def test_explicit_native_prefill_reports_unsupported_cpu(monkeypatch):
     assert "CUDA" in support["reason"]
 
 
+def test_explicit_native_training_reports_actual_training_capability(monkeypatch):
+    monkeypatch.setenv("RWKV7_MODEL_KERNEL_IMPL", "native")
+    kernels = importlib.import_module("rwkv7_kernels")
+
+    class Config:
+        head_dim = 64
+
+    class Base:
+        embeddings = type(
+            "Embeddings",
+            (),
+            {"weight": torch.zeros(4, 4, dtype=torch.bfloat16)},
+        )()
+
+    owner = type(
+        "Owner",
+        (),
+        {"model": Base(), "lm_head": object(), "config": Config()},
+    )()
+    request = {
+        "model_kind": "causal_lm",
+        "training": True,
+        "grad_enabled": True,
+        "use_cache": False,
+        "input_ids": torch.ones(1, 16, dtype=torch.long),
+        "inputs_embeds": None,
+        "labels": None,
+        "output_hidden_states": False,
+        "output_attentions": False,
+    }
+    support = kernels.probe_model_forward_v1(owner, request)
+    assert not support["supported"]
+    assert support["implementation"] == "native-nvidia-train-temp-autograd-v2"
+    assert support["phase"] == "training"
+    assert "CUDA" in support["reason"]
+
+
 def test_default_auto_prefill_reports_graph_implementation_on_cpu():
     kernels = importlib.import_module("rwkv7_kernels")
     support = kernels.probe_recurrent_v1(*cpu_inputs())

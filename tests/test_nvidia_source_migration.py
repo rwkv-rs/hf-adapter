@@ -74,3 +74,7 @@ def test_nvidia_sources_do_not_reintroduce_model_config_or_cache_ownership():
                 assert all(not name.name.startswith("rwkv7_hf") for name in node.names)
             elif isinstance(node, ast.ImportFrom):
                 assert not (node.module or "").startswith("rwkv7_hf")
+
+    training_runtime = (NVIDIA / "training_runtime.py").read_text()
+    assert ".forward =" not in training_runtime
+    assert "types.MethodType" not in training_runtime

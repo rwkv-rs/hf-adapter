@@ -199,7 +199,7 @@ def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
                 if _op_registered(namespace):
                     continue
                 cpp_extension.load(
-                    name=f"rwkv7_hf_{namespace}",
+                    name=f"rwkv7_kernels_{namespace}",
                     sources=[str(root / filename) for filename in filenames],
                     extra_cflags=["-O3"],
                     extra_cuda_cflags=list(_COMMON_CUDA_FLAGS),
@@ -209,7 +209,7 @@ def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
                 )
             if not _op_registered("rwkv7_clampw_v3"):
                 cpp_extension.load(
-                    name="rwkv7_hf_clampw_v3",
+                    name="rwkv7_kernels_clampw_v3",
                     sources=[
                         str(root / "rwkv7_clampw_v3_for_h100.cu"),
                         str(root / "rwkv7_clampw_v3.cpp"),
@@ -225,7 +225,7 @@ def load_train_temp_cuda_extension(*, verbose: bool | None = None) -> None:
                     verbose=bool(verbose),
                 )
             _L2WRAP_EXTENSION = cpp_extension.load(
-                name="rwkv7_hf_l2wrap_ce_bf16_v2",
+                name="rwkv7_kernels_l2wrap_ce_bf16_v2",
                 sources=[
                     str(root / "rwkv7_l2wrap_ce_bf16_v2.cpp"),
                     str(root / "rwkv7_l2wrap_ce_bf16_v2.cu"),

@@ -26,6 +26,7 @@ _MODEL_IMPLS = ("auto", "dense", "native")
 _DENSE_IMPLEMENTATION = "native-torchscript-dense-sequential-v2"
 _NATIVE_PREFILL_IMPLEMENTATION = "native-nvidia-prefill-v2"
 _NATIVE_DECODE_IMPLEMENTATION = "native-nvidia-fused-decode-v2"
+_NATIVE_TRAINING_IMPLEMENTATION = "native-nvidia-train-temp-autograd-v2"
 
 
 def _phase(request: dict[str, Any]) -> str:
@@ -126,9 +127,11 @@ def _probe_native(owner: Any, request: dict[str, Any]):
         return _unsupported_native(
             request, "native prefill requires the causal-LM boundary"
         )
-    if bool(request["training"]) or bool(request.get("grad_enabled", False)):
+    if bool(request["training"]):
+        return _probe_native_training(owner, request)
+    if bool(request.get("grad_enabled", False)):
         return _unsupported_native(
-            request, "native prefill is inference-only while training kernels migrate"
+            request, "native inference requires torch.no_grad or inference_mode"
         )
     if request.get("labels") is not None:
         return _unsupported_native(request, "native prefill does not accept labels")
@@ -210,6 +213,77 @@ def _probe_native(owner: Any, request: dict[str, Any]):
         implementation=implementation,
         reason=f"explicit migrated NVIDIA {_phase(request)} implementation selected",
         phase=_phase(request),
+    )
+
+
+def _unsupported_training(reason: str):
+    return support_result(
+        supported=False,
+        implementation=_NATIVE_TRAINING_IMPLEMENTATION,
+        reason=reason,
+        phase="training",
+    )
+
+
+def _probe_native_training(owner: Any, request: dict[str, Any]):
+    if not bool(request.get("grad_enabled")):
+        return _unsupported_training("native training requires autograd to be enabled")
+    if bool(request.get("use_cache")):
+        return _unsupported_training("native training is a dense no-cache path")
+    if bool(request.get("output_hidden_states")):
+        return _unsupported_training(
+            "native training hidden-state history is not enabled"
+        )
+    if bool(request.get("output_attentions")):
+        return _unsupported_training(
+            "RWKV7 does not expose Transformer attention matrices"
+        )
+    input_ids = request.get("input_ids")
+    inputs_embeds = request.get("inputs_embeds")
+    if (input_ids is None) == (inputs_embeds is None):
+        return _unsupported_training(
+            "native training requires exactly one of input_ids or inputs_embeds"
+        )
+    value = inputs_embeds if inputs_embeds is not None else input_ids
+    if not isinstance(value, torch.Tensor) or value.ndim not in (2, 3):
+        return _unsupported_training("native training input shape is invalid")
+    if value.device.type != "cuda":
+        return _unsupported_training("native training requires CUDA tensors")
+    tokens = int(value.shape[1])
+    if tokens <= 0 or tokens % 16:
+        return _unsupported_training(
+            "native training sequence length must be divisible by 16"
+        )
+    if owner.model.embeddings.weight.dtype != torch.bfloat16:
+        return _unsupported_training("native training requires a BF16 checkpoint")
+    if int(owner.config.head_dim) != 64:
+        return _unsupported_training("native training requires head_dim=64")
+    mask = request.get("attention_mask")
+    if mask is not None and not bool(mask.to(dtype=torch.bool).all().detach().cpu()):
+        return _unsupported_training("native training does not accept padded batches")
+    labels = request.get("labels")
+    if labels is not None:
+        if not isinstance(labels, torch.Tensor) or labels.dtype != torch.long:
+            return _unsupported_training("native training labels must be int64")
+        if labels.device != value.device:
+            return _unsupported_training(
+                "native training labels and inputs must share a device"
+            )
+        if bool((labels < 0).any().detach().cpu()):
+            return _unsupported_training(
+                "native fused loss does not accept -100 or negative labels"
+            )
+    from .nvidia.train_temp_cuda import train_temp_cuda_available
+
+    if not train_temp_cuda_available(build=False):
+        return _unsupported_training(
+            "native train_temp CUDA runtime is unavailable on this device"
+        )
+    return support_result(
+        supported=True,
+        implementation=_NATIVE_TRAINING_IMPLEMENTATION,
+        reason="migrated train_temp autograd implementation selected",
+        phase="training",
     )
 
 
@@ -408,6 +482,10 @@ def model_forward_v1(owner: Any, request: dict[str, Any]):
         support = _probe_native(owner, request)
         if not support["supported"]:
             raise RuntimeError(support["reason"])
+        if bool(request["training"]):
+            from .nvidia.training_runtime import run_training
+
+            return run_training(owner, request)
         cache = request["past_key_values"]
         if int(cache.get_seq_length()) > 0:
             return _run_native_decode(owner, request)

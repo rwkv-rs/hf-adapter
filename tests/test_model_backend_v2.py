@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 
 import torch
+import torch.nn.functional as F
 
 from rwkv7_hf.cache_rwkv7 import RWKV7Cache
 from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM, RWKV7Model
@@ -181,3 +182,81 @@ def test_graph_runner_binding_exposes_only_canonical_cache_views(monkeypatch):
     detached = cache.recurrent_state[0].clone()
     runner.state[0].add_(1)
     torch.testing.assert_close(cache.recurrent_state[0], detached)
+
+
+def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
+    tiny_config, monkeypatch
+):
+    _load_dense_backend(monkeypatch)
+    runtime = importlib.import_module("rwkv7_kernels.nvidia.training_runtime")
+    train_temp = importlib.import_module("rwkv7_kernels.nvidia.train_temp_cuda")
+    monkeypatch.setattr(train_temp, "load_train_temp_cuda_extension", lambda: None)
+
+    def attention_forward(module, hidden, v_first, *, native_lora_math):
+        del native_lora_math
+        batch, tokens, _ = hidden.shape
+        state = torch.zeros(
+            batch,
+            module.num_heads,
+            module.head_dim,
+            module.head_dim,
+            dtype=torch.float32,
+            device=hidden.device,
+        )
+        shift = torch.zeros(
+            batch, module.hidden_size, dtype=hidden.dtype, device=hidden.device
+        )
+        mask = torch.ones(batch, tokens, dtype=torch.bool, device=hidden.device)
+        output, _state, _shift, v_first = module(
+            hidden, state, shift, v_first, mask
+        )
+        return output, v_first
+
+    class FakeCMix:
+        @staticmethod
+        def apply(hidden, x_k, key_weight, value_weight):
+            shifted = torch.cat(
+                (torch.zeros_like(hidden[:, :1]), hidden[:, :-1]), dim=1
+            )
+            mixed = hidden + (shifted - hidden) * x_k.view(1, 1, -1)
+            return F.linear(torch.relu(F.linear(mixed, key_weight)).square(), value_weight)
+
+    def causal_loss(logits, labels):
+        return F.cross_entropy(
+            logits[:, :-1].reshape(-1, logits.shape[-1]).float(),
+            labels[:, 1:].reshape(-1),
+        )
+
+    monkeypatch.setattr(train_temp, "_train_temp_attention_forward", attention_forward)
+    monkeypatch.setattr(train_temp, "_CMix", FakeCMix)
+    monkeypatch.setattr(train_temp, "train_temp_causal_cross_entropy", causal_loss)
+
+    torch.manual_seed(113)
+    reference = RWKV7ForCausalLM(tiny_config).train()
+    migrated = RWKV7ForCausalLM(tiny_config).train()
+    migrated.load_state_dict(reference.state_dict())
+    ids = torch.tensor([[3, 5, 7, 11], [13, 17, 19, 23]])
+
+    expected = reference(input_ids=ids, labels=ids, use_cache=False)
+    actual = runtime.run_training(
+        migrated,
+        {
+            "model_kind": "causal_lm",
+            "input_ids": ids,
+            "inputs_embeds": None,
+            "labels": ids,
+            "training": True,
+            "gradient_checkpointing": False,
+            "grad_enabled": True,
+            "use_cache": False,
+            "logits_to_keep": 0,
+        },
+    )
+    torch.testing.assert_close(actual["logits"], expected.logits)
+    torch.testing.assert_close(actual["loss"], expected.loss)
+    expected.loss.backward()
+    actual["loss"].backward()
+    torch.testing.assert_close(
+        migrated.model.layers[0].attn.r_proj.weight.grad,
+        reference.model.layers[0].attn.r_proj.weight.grad,
+    )
