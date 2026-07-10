@@ -64,6 +64,36 @@ loop:
   max-diff/cosine/greedy checks are smoke tests only and are not enough for
   acceptance.
 
+## Current Experiment: KernelBench-Mega-style W4A16 Decode
+
+Branch: `wangyue/kernelbench-mega-w4a16-bench`.
+
+The experiment applies the KernelBench-Mega whole-timed-path lesson to the
+RWKV-7 decode-hot R/K/V projections. The previous single-launch W4 kernel kept
+R/K/V tiles and three fp32 accumulators in every Triton program. The candidate
+keeps one launch but makes projection a grid axis and consumes pre-stacked
+`[batch, 3, hidden]` activations plus projection-major packed weights.
+
+Validated V100 evidence for the 0.4B model, sampled layers 0/1/11:
+
+- existing fused W4 batch-1: about `0.0897 ms`;
+- projection-axis pre-stacked W4 batch-1: about `0.0537 ms`, `1.67x` faster
+  than existing W4 and `1.33x` faster than three fp16 linears;
+- the same kernel remains about `1.67x` faster than existing W4 for batch
+  2/4/8 and is bit-identical to the existing W4 output;
+- packed weight footprint remains `0.252x` fp16;
+- paying `torch.stack` in the timed path reduces the result below fp16, so do
+  not integrate a wrapper-level stack and call the goal complete.
+
+Required next gate: make the native shift/mix producer write the stacked
+activation layout directly, keep packed R/K/V weights projection-major at model
+load time, and benchmark complete layer/model decode. Row-wise W4 accuracy is a
+separate unfinished task; batch-8 random-vector minimum cosine was about
+`0.9789` even though the new kernel exactly matches the old W4 path.
+
+See `docs/performance/kernelbench_mega_w4a16_rkv_v100_20260710.md` and
+`bench/results_kernelbench_mega_w4a16_rkv_v100_20260710.jsonl`.
+
 ## Current Branch Goal: DPLR/WY Compiled Prefill Prototype
 
 Active branch work is now the opt-in DPLR/WY compiled prefill backend, not

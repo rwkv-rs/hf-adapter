@@ -250,6 +250,64 @@ if _HAS_TRITON:
         tl.store(out_k_ptr + out_base, acc_k * scale_k, mask=mask_m)
         tl.store(out_v_ptr + out_base, acc_v * scale_v, mask=mask_m)
 
+    @triton.jit
+    def _int4_stacked_rkv_gemv_kernel(
+        x_ptr,
+        q_weight_ptr,
+        scale_ptr,
+        out_ptr,
+        batch: tl.constexpr,
+        projections: tl.constexpr,
+        hidden: tl.constexpr,
+        packed_hidden: tl.constexpr,
+        BLOCK_M: tl.constexpr,
+        BLOCK_K: tl.constexpr,
+    ):
+        """Projection-axis W4A16 GEMV with one accumulator per program.
+
+        The original fused R/K/V prototype keeps three activation tiles, three
+        packed-weight tiles, and three fp32 accumulators live in every program.
+        That saves launches but creates substantial register pressure.  This
+        KernelBench-Mega-style layout keeps the launch fused while making R/K/V
+        a grid dimension.  Inputs and packed weights are pre-stacked as
+        ``[batch, 3, hidden]`` and ``[3, hidden, packed_hidden]`` so each program
+        follows a single projection and only needs one accumulator.
+        """
+
+        batch_id = tl.program_id(0)
+        projection_id = tl.program_id(1)
+        block_id = tl.program_id(2)
+        offs_m = block_id * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_p = tl.arange(0, BLOCK_K)
+        mask_m = offs_m < hidden
+
+        x_base = (batch_id * projections + projection_id) * hidden
+        q_base = projection_id * hidden * packed_hidden
+        scale_base = projection_id * hidden
+        out_base = (batch_id * projections + projection_id) * hidden
+
+        acc = tl.zeros((BLOCK_M,), tl.float32)
+        for start in range(0, packed_hidden, BLOCK_K):
+            pidx = start + offs_p
+            mask_p = pidx < packed_hidden
+            k0 = pidx * 2
+            k1 = k0 + 1
+            mask_k0 = mask_p & (k0 < hidden)
+            mask_k1 = mask_p & (k1 < hidden)
+            x0 = tl.load(x_ptr + x_base + k0, mask=mask_k0, other=0.0).to(tl.float32)
+            x1 = tl.load(x_ptr + x_base + k1, mask=mask_k1, other=0.0).to(tl.float32)
+
+            q_offsets = q_base + offs_m[:, None] * packed_hidden + pidx[None, :]
+            packed = tl.load(q_weight_ptr + q_offsets, mask=mask_m[:, None] & mask_p[None, :], other=0).to(tl.int32)
+            q0_u4 = packed & 0xF
+            q1_u4 = (packed >> 4) & 0xF
+            q0 = tl.where(q0_u4 >= 8, q0_u4 - 16, q0_u4).to(tl.float32)
+            q1 = tl.where(q1_u4 >= 8, q1_u4 - 16, q1_u4).to(tl.float32)
+            acc += tl.sum(q0 * x0[None, :] + q1 * x1[None, :], axis=1)
+
+        scale = tl.load(scale_ptr + scale_base + offs_m, mask=mask_m, other=0.0).to(tl.float32)
+        tl.store(out_ptr + out_base + offs_m, acc * scale, mask=mask_m)
+
 
 def native_int8_gemv_available() -> bool:
     """Return whether the optional Triton int8 dequant-GEMV prototype can run."""
@@ -271,6 +329,12 @@ def native_int8_fused_rkv_available() -> bool:
 
 def native_int4_fused_rkv_available() -> bool:
     """Return whether the optional fused int4 R/K/V prototype can run."""
+
+    return bool(_HAS_TRITON and torch is not None)
+
+
+def native_int4_stacked_rkv_available() -> bool:
+    """Return whether the projection-axis W4A16 R/K/V kernel can run."""
 
     return bool(_HAS_TRITON and torch is not None)
 
@@ -662,6 +726,87 @@ def int4_fused_rkv_gemv(
     if had_seq:
         return r.unsqueeze(1), k.unsqueeze(1), v.unsqueeze(1)
     return r, k, v
+
+
+def int4_stacked_rkv_gemv(
+    x: Any,
+    q_weight: Any,
+    scales: Any,
+    *,
+    block_m: int = 16,
+    block_k: int = 64,
+    num_warps: int = 4,
+    force_fallback: bool = False,
+):
+    """Run a pre-stacked projection-axis W4A16 R/K/V GEMV.
+
+    Args:
+        x: Activations with shape ``[batch, 3, hidden]``.
+        q_weight: Packed signed-int4 weights with shape
+            ``[3, hidden, ceil(hidden / 2)]``.
+        scales: Symmetric row scales with shape ``[3, hidden]``.
+
+    The pre-stacked contract is deliberate: a native RWKV decode path can have
+    its shift/mix kernel write R/K/V activations directly into this layout and
+    can pack the three projection weights once at load time.  Keeping stack
+    copies out of the timed kernel exposes whether projection-axis decomposition
+    removes enough register pressure to justify that producer/weight layout.
+    """
+
+    if torch is None or F is None:
+        raise RuntimeError("int4_stacked_rkv_gemv requires torch")
+    if x.dim() != 3 or int(x.shape[1]) != 3:
+        raise ValueError(f"x must be [batch, 3, hidden], got {tuple(x.shape)}")
+    batch, projections, hidden = (int(x.shape[0]), int(x.shape[1]), int(x.shape[2]))
+    packed_hidden = (hidden + 1) // 2
+    expected_q_shape = (projections, hidden, packed_hidden)
+    if q_weight.dim() != 3 or tuple(int(v) for v in q_weight.shape) != expected_q_shape:
+        raise ValueError(f"q_weight must be {expected_q_shape}, got {tuple(q_weight.shape)}")
+    if q_weight.dtype != torch.uint8:
+        raise ValueError(f"q_weight must be torch.uint8, got {q_weight.dtype}")
+    if scales.dim() != 2 or tuple(int(v) for v in scales.shape) != (projections, hidden):
+        raise ValueError(f"scales must be [{projections}, {hidden}], got {tuple(scales.shape)}")
+    if int(block_m) <= 0 or int(block_k) <= 0:
+        raise ValueError("block_m and block_k must be positive")
+    if int(num_warps) not in (1, 2, 4, 8):
+        raise ValueError("num_warps must be one of 1, 2, 4, 8")
+
+    use_triton = (
+        not force_fallback
+        and native_int4_stacked_rkv_available()
+        and x.is_cuda
+        and q_weight.is_cuda
+        and scales.is_cuda
+        and x.dtype in (torch.float16, torch.bfloat16, torch.float32)
+    )
+    if not use_triton:
+        outputs = []
+        for projection in range(projections):
+            weight = dequantize_int4_rowwise(q_weight[projection], scales[projection], hidden).to(
+                dtype=x.dtype, device=x.device
+            )
+            outputs.append(F.linear(x[:, projection, :], weight))
+        return torch.stack(outputs, dim=1)
+
+    x_c = x.contiguous()
+    q_c = q_weight.contiguous()
+    s_c = scales.contiguous()
+    out = torch.empty((batch, projections, hidden), device=x.device, dtype=x.dtype)
+    grid = (batch, projections, triton.cdiv(hidden, int(block_m)))
+    _int4_stacked_rkv_gemv_kernel[grid](
+        x_c,
+        q_c,
+        s_c,
+        out,
+        batch,
+        projections,
+        hidden,
+        packed_hidden,
+        BLOCK_M=int(block_m),
+        BLOCK_K=int(block_k),
+        num_warps=int(num_warps),
+    )
+    return out
 
 
 def int4_rowwise_gemv(
