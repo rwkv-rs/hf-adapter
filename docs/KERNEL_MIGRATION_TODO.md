@@ -450,3 +450,21 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - The older recurrent-v1 RTX 4080 formal 144-unit job remains untouched and
   running. Backend-v2 GPU validation starts only after that job releases the
   card; its results cannot be relabeled as backend-v2 evidence.
+
+### 2026-08-28 — quantized Graph boundary closed before GPU acceptance
+
+- Restored the historical fail-closed distinction between adapter-owned
+  packed Linear modules and external TorchAO/BitsAndBytes wrappers. Native
+  MM8/MM4/A8W8/Marlin modules must expose the package-owned
+  `rwkv7_forward_into` stable-output ABI before decode or prefill may attempt a
+  CUDA Graph. External wrappers require the exact-card policy or the explicit
+  graph override and otherwise execute the fused eager model route.
+- Quantization reports now record dynamic prefill/decode Graph capability and
+  its reason. The validator separately records the actual native prefill route,
+  native cached-decode route, and Graph capability; a requested selector is
+  still not accepted as evidence.
+- Local command:
+  `python -m compileall -q evaluation kernels/rwkv7_kernels rwkv7_hf tests &&
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q && git diff --check`.
+  Result: `76 passed`. GPU numerical acceptance remains pending and production
+  `RWKV7_MODEL_KERNEL_IMPL=auto` stays disabled.

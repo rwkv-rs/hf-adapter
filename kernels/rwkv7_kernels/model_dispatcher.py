@@ -347,14 +347,21 @@ def _run_native_prefill(owner: Any, request: dict[str, Any]):
     graph_effective: tuple[str, ...] = ()
     if not masked:
         from .nvidia.prefill_graph_runtime import prefill_graph_supported
-        from .quantization import quantization_report
+        from .quantization import (
+            quantization_graph_support,
+            quantization_report,
+        )
 
         quantized = quantization_report(owner) is not None
+        quant_graph_safe, _quant_graph_reason = quantization_graph_support(
+            owner,
+            phase="prefill",
+        )
         graph_supported, _graph_reason = prefill_graph_supported(
             owner,
             batch_size=int(input_ids.shape[0]),
             prompt_tokens=int(input_ids.shape[1]),
-            quantized=quantized,
+            quantized=bool(quantized and not quant_graph_safe),
         )
         if graph_supported:
             from .nvidia.prefill_graph_pool import get_native_prefill_graph_runner
@@ -477,8 +484,19 @@ def _run_native_decode(owner: Any, request: dict[str, Any]):
     batch = int(input_ids.shape[0])
     dtype = owner.model.embeddings.weight.dtype
     mask = _effective_attention_mask(request, input_ids)[:, 0]
+    from .quantization import quantization_graph_support, quantization_report
 
-    if bool(request["use_cache"]) and bool(mask.all().detach().cpu()):
+    quantized = quantization_report(owner) is not None
+    quant_graph_safe, _quant_graph_reason = quantization_graph_support(
+        owner,
+        phase="decode",
+    )
+
+    if (
+        bool(request["use_cache"])
+        and bool(mask.all().detach().cpu())
+        and quant_graph_safe
+    ):
         from .nvidia.graph_pool import get_native_graph_runner
         from .nvidia.native_graph_runtime import native_graph_available
 
@@ -610,6 +628,8 @@ def _run_native_decode(owner: Any, request: dict[str, Any]):
 
     if compact:
         events.add("masked_compact")
+    if quantized and not quant_graph_safe:
+        events.add("quant_eager")
     suffix = "+".join(sorted(events)) if events else "dense_fallback"
     return {
         "output_kind": "causal_lm",

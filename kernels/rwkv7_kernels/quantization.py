@@ -33,6 +33,107 @@ _METHODS = {
     "bitsandbytes_w4": "bnb4",
 }
 
+_NATIVE_GRAPH_METHODS = {
+    "native_w8",
+    "native_w4",
+    "a8w8",
+    "marlin_w4",
+    "marlin_bntn_w4",
+}
+
+
+def _owned_graph_modules(model: Any) -> tuple[list[Any], str | None]:
+    """Return native packed Linear replacements or a fail-closed reason.
+
+    Decode and prefill graphs need static output storage for every packed
+    projection. Adapter-owned modules expose ``rwkv7_forward_into`` for that
+    contract. Dense ``nn.Linear`` modules are ordinary graph operands and are
+    intentionally ignored here.
+    """
+
+    packed: list[Any] = []
+    for module in model.modules():
+        if type(module) is torch.nn.Linear:
+            continue
+        if not (
+            hasattr(module, "in_features")
+            and hasattr(module, "out_features")
+        ):
+            continue
+        if not type(module).__module__.startswith("rwkv7_kernels."):
+            return [], (
+                "quantized Linear wrapper is not owned by rwkv7-kernels: "
+                f"{type(module).__module__}.{type(module).__name__}"
+            )
+        if not callable(getattr(module, "rwkv7_forward_into", None)):
+            return [], (
+                "native packed Linear lacks rwkv7_forward_into: "
+                f"{type(module).__name__}"
+            )
+        packed.append(module)
+    if not packed:
+        return [], "no graph-safe native packed Linear was found"
+    return packed, None
+
+
+def quantization_graph_support(
+    model: Any,
+    *,
+    phase: str,
+) -> tuple[bool, str]:
+    """Return whether one quantized model may enter a CUDA Graph.
+
+    Native MM8/MM4/A8W8/Marlin modules have an explicit preallocated-output
+    ABI and are safe to attempt in the diagnostic graph lane. TorchAO and
+    BitsAndBytes are external implementations; they remain fail-closed unless
+    the card policy or an explicit environment override enables the historical
+    measured bridge. Numerical acceptance is still enforced by the GPU
+    validators and is not implied by this structural capability result.
+    """
+
+    normalized_phase = str(phase).strip().lower()
+    if normalized_phase not in {"prefill", "decode"}:
+        raise ValueError("quantization graph phase must be prefill or decode")
+    report = _REPORTS.get(model)
+    if report is None:
+        return True, "model has no package-owned quantization report"
+    method = str(report.get("method", ""))
+    if method in _NATIVE_GRAPH_METHODS:
+        packed, reason = _owned_graph_modules(model)
+        if reason is not None:
+            return False, reason
+        return True, (
+            f"{len(packed)} native packed Linear modules expose stable graph outputs"
+        )
+
+    from .nvidia.kernel_policy import current_kernel_policy, env_flag
+
+    try:
+        parameter = next(model.parameters())
+        device = parameter.device
+    except (StopIteration, AttributeError):
+        device = None
+    policy = current_kernel_policy(device=device, torch_module=torch)
+    if normalized_phase == "prefill":
+        enabled = env_flag(
+            "RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH",
+            bool(getattr(policy, "native_external_quant_prefill_graph", False)),
+        )
+    else:
+        enabled = env_flag(
+            "RWKV7_NATIVE_GRAPH_EXTERNAL_QUANT",
+            bool(getattr(policy, "native_external_quant_graph", False)),
+        )
+    if not enabled:
+        return False, (
+            f"{method or 'external'} quantization has no validated "
+            f"{normalized_phase} CUDA Graph policy on this device"
+        )
+    return True, (
+        f"{method or 'external'} quantization is enabled by the exact-device "
+        f"{normalized_phase} graph policy"
+    )
+
 
 def _normalize_method(method: str) -> str:
     value = str(method).strip().lower().replace("-", "_")
@@ -336,6 +437,17 @@ def quantize_model(
         "graph_cache_invalidated": True,
     }
     _REPORTS[model] = report
+    decode_graph, decode_reason = quantization_graph_support(model, phase="decode")
+    prefill_graph, prefill_reason = quantization_graph_support(model, phase="prefill")
+    report.update(
+        {
+            "decode_cuda_graph_structurally_supported": bool(decode_graph),
+            "decode_cuda_graph_reason": decode_reason,
+            "prefill_cuda_graph_structurally_supported": bool(prefill_graph),
+            "prefill_cuda_graph_reason": prefill_reason,
+        }
+    )
+    _REPORTS[model] = report
     return dict(report)
 
 
@@ -348,6 +460,7 @@ def quantization_report(model: Any) -> dict[str, Any] | None:
 
 __all__ = [
     "prepare_bitsandbytes_config",
+    "quantization_graph_support",
     "quantization_report",
     "quantize_model",
     "rwkv7_bitsandbytes_skip_modules",

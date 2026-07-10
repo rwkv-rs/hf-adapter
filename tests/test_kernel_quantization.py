@@ -52,6 +52,14 @@ def test_native_quantization_is_structural_and_package_owned(method, module_name
     assert torch.isfinite(actual).all()
     assert actual.shape == (2, 3, 8)
     assert quantization.quantization_report(model) == report
+    decode_supported, decode_reason = quantization.quantization_graph_support(
+        model, phase="decode"
+    )
+    prefill_supported, prefill_reason = quantization.quantization_graph_support(
+        model, phase="prefill"
+    )
+    assert decode_supported and "stable graph outputs" in decode_reason
+    assert prefill_supported and "stable graph outputs" in prefill_reason
     assert not any(name.startswith("_rwkv7_native_mm_") for name in vars(model))
 
 
@@ -78,3 +86,51 @@ def test_bitsandbytes_adoption_rejects_an_unquantized_model():
     quantization = importlib.import_module("rwkv7_kernels.quantization")
     with pytest.raises(RuntimeError, match="prepare_bitsandbytes_config"):
         quantization.quantize_model(TinyQuantModel(), "bnb8")
+
+
+def test_external_quantization_graphs_fail_closed_without_device_policy(monkeypatch):
+    quantization = importlib.import_module("rwkv7_kernels.quantization")
+    policy_type = type(
+        "Policy",
+        (),
+        {
+            "native_external_quant_graph": False,
+            "native_external_quant_prefill_graph": False,
+        },
+    )
+    kernel_policy = importlib.import_module("rwkv7_kernels.nvidia.kernel_policy")
+    monkeypatch.setattr(kernel_policy, "current_kernel_policy", lambda **_: policy_type())
+    model = TinyQuantModel().eval()
+    quantization._REPORTS[model] = {"method": "bnb4"}
+
+    for phase in ("prefill", "decode"):
+        supported, reason = quantization.quantization_graph_support(
+            model, phase=phase
+        )
+        assert not supported
+        assert "no validated" in reason
+
+
+def test_external_quantization_graph_override_is_explicit(monkeypatch):
+    quantization = importlib.import_module("rwkv7_kernels.quantization")
+    policy_type = type(
+        "Policy",
+        (),
+        {
+            "native_external_quant_graph": False,
+            "native_external_quant_prefill_graph": False,
+        },
+    )
+    kernel_policy = importlib.import_module("rwkv7_kernels.nvidia.kernel_policy")
+    monkeypatch.setattr(kernel_policy, "current_kernel_policy", lambda **_: policy_type())
+    monkeypatch.setenv("RWKV7_NATIVE_GRAPH_EXTERNAL_QUANT", "1")
+    model = TinyQuantModel().eval()
+    quantization._REPORTS[model] = {"method": "torchao_w8"}
+
+    supported, reason = quantization.quantization_graph_support(
+        model, phase="decode"
+    )
+    assert supported
+    assert "exact-device" in reason
+    with pytest.raises(ValueError, match="prefill or decode"):
+        quantization.quantization_graph_support(model, phase="training")

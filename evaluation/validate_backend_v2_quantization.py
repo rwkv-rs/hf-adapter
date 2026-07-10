@@ -141,6 +141,7 @@ def validate_method(
 ) -> dict[str, Any]:
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
     from rwkv7_hf.ops_rwkv7 import get_last_model_route
+    from rwkv7_kernels.quantization import quantization_graph_support
 
     dtype = model_dtype(method)
     dense = RWKV7ForCausalLM.from_pretrained(path, dtype=dtype).cuda().eval()
@@ -156,7 +157,7 @@ def validate_method(
         quant_reference = model(input_ids=ids, use_cache=True)
         route(True)
         quant_native = model(input_ids=ids, use_cache=True)
-    actual_route = get_last_model_route()
+    prefill_route = get_last_model_route()
     backend_logits = metric(quant_native.logits, quant_reference.logits)
     backend_cache = cache_metric(
         quant_native.past_key_values, quant_reference.past_key_values
@@ -176,6 +177,14 @@ def validate_method(
         reference_tokens = model.generate(prompt, **generate_kwargs)
         route(True)
         native_tokens = model.generate(prompt, **generate_kwargs)
+    decode_route = get_last_model_route()
+    graph_capability = {
+        phase: {"supported": supported, "reason": reason}
+        for phase, (supported, reason) in (
+            ("prefill", quantization_graph_support(model, phase="prefill")),
+            ("decode", quantization_graph_support(model, phase="decode")),
+        )
+    }
     greedy_equal = bool(torch.equal(native_tokens, reference_tokens))
     quality_limit = 0.995 if method in {"native_w8", "a8w8", "torchao_w8", "bnb8"} else 0.97
     passed = bool(
@@ -187,9 +196,13 @@ def validate_method(
         and quality_logits["finite"]
         and quality_logits["cosine"] >= quality_limit
         and greedy_equal
-        and actual_route
-        and str(actual_route.get("implementation", "")).startswith(
+        and prefill_route
+        and str(prefill_route.get("implementation", "")).startswith(
             "native-nvidia-prefill-v2["
+        )
+        and decode_route
+        and str(decode_route.get("implementation", "")).startswith(
+            "native-nvidia-fused-decode-v2["
         )
     )
     result = {
@@ -201,7 +214,9 @@ def validate_method(
         "backend_cache": backend_cache,
         "dense_quality_logits": quality_logits,
         "greedy_equal_between_quant_routes": greedy_equal,
-        "route": actual_route,
+        "prefill_route": prefill_route,
+        "decode_route": decode_route,
+        "cuda_graph_capability": graph_capability,
     }
     del model
     torch.cuda.empty_cache()
