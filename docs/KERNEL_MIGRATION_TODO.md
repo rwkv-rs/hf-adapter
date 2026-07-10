@@ -529,3 +529,14 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   FLA commit in all three lane bundles before comparing predictions or
   metrics. This prevents results from different installed artifacts being
   merged into a nominal 144-unit matrix.
+
+### 2026-08-28 — full backend evidence provenance
+
+- The common GPU evidence helper now hashes every model config, remote-code
+  module, tokenizer/vocabulary/template payload and safetensors file into one
+  deterministic model revision instead of recording only config and weights.
+- Environment reports now include Accelerate, Datasets, PEFT, TRL, W&B,
+  BitsAndBytes, TorchAO, lm_eval and both RWKV7 distribution versions in
+  addition to Python/Torch/Transformers/Triton/FLA/CUDA/driver/GPU. All
+  backend-v2 inference, training, quantization, FLA, benchmark and ecosystem
+  reports therefore share the same complete provenance schema.
