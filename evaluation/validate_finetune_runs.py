@@ -30,7 +30,13 @@ def read(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def validate_run(path: Path, name: str, expected_step: int) -> dict:
+def validate_run(
+    path: Path,
+    name: str,
+    expected_step: int,
+    *,
+    require_backend_v2_routes: bool,
+) -> dict:
     exit_status = read(path / "exit_status.json")
     checks = read(path / "training_checks.json")
     reload = read(path / "adapter_reload.json")
@@ -40,6 +46,8 @@ def validate_run(path: Path, name: str, expected_step: int) -> dict:
     environment = read(path / "environment.json")
     model = read(path / "model_provenance.json")
     fingerprints = read(path / "dataset_fingerprints.json")
+    artifacts = read(path / "artifact_provenance.json")
+    routes = read(path / "backend_routes.json")
     metrics_path = path / "metrics.jsonl"
     metrics = [
         json.loads(line)
@@ -91,15 +99,43 @@ def validate_run(path: Path, name: str, expected_step: int) -> dict:
     }
     if mismatches:
         failures.append(f"non-canonical resolved config: {mismatches}")
-    if environment.get("transformers") != "4.56.2" or environment.get("trl") != "0.20.0":
+    if (
+        environment.get("transformers") != "4.56.2"
+        or environment.get("trl") != "0.20.0"
+    ):
         failures.append("unexpected canonical Transformers/TRL environment")
     if not config.get("source_revision") or not config.get("code_sha"):
         failures.append("missing source revision")
-    if not model.get("resolved_revision") or not model.get("files", {}).get("model.safetensors"):
+    if not model.get("resolved_revision") or not model.get("files", {}).get(
+        "model.safetensors"
+    ):
         failures.append("missing model/weight provenance")
-    if not all(fingerprints.get(split, {}).get("selected") for split in ("train", "eval")):
+    if not all(
+        fingerprints.get(split, {}).get("selected") for split in ("train", "eval")
+    ):
         failures.append("missing deterministic dataset fingerprints")
-    if name == "grpo" and not any(float(row.get("reward_std", 0.0)) > 0.0 for row in metrics):
+    if require_backend_v2_routes:
+        if not artifacts.get("rwkv7_hf", {}).get("sha256"):
+            failures.append("missing rwkv7-hf wheel SHA256")
+        if not artifacts.get("rwkv7_kernels", {}).get("sha256"):
+            failures.append("missing rwkv7-kernels wheel SHA256")
+        adapter_fallback = any(
+            row.get("event") == "pre_optimizer_step"
+            and row.get("selected") == "reference"
+            and row.get("phase") == "training"
+            and row.get("implementation") == "torch-reference-model-v1"
+            and "adapter" in str(row.get("reason", "")).lower()
+            for row in routes
+        )
+        if not adapter_fallback or not checks.get("adapter_reference_fallback"):
+            failures.append("LoRA training did not prove adapter reference fallback")
+        if checks.get("native_training"):
+            failures.append(
+                "LoRA unexpectedly bypassed adapters through native training"
+            )
+    if name == "grpo" and not any(
+        float(row.get("reward_std", 0.0)) > 0.0 for row in metrics
+    ):
         failures.append("GRPO never observed nonzero within-group reward variance")
     return {
         "path": str(path),
@@ -108,17 +144,27 @@ def validate_run(path: Path, name: str, expected_step: int) -> dict:
         "changed_parameters": len(changed),
         "inventory_files": len(inventory),
         "adapter_reload_max_abs": reload.get("max_abs"),
+        "backend_routes": routes,
+        "artifacts": artifacts,
         "status": "passed" if not failures else "failed",
         "failures": failures,
     }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Validate canonical SFT/DPO/GRPO artifacts")
+    parser = argparse.ArgumentParser(
+        description="Validate canonical SFT/DPO/GRPO artifacts"
+    )
     parser.add_argument("--result-dir", type=Path, required=True)
+    parser.add_argument("--require-backend-v2-routes", action="store_true")
     args = parser.parse_args()
     runs = {
-        name: validate_run(args.result_dir / name, name, 100)
+        name: validate_run(
+            args.result_dir / name,
+            name,
+            100,
+            require_backend_v2_routes=args.require_backend_v2_routes,
+        )
         for name in ("sft", "dpo", "grpo")
     }
     resume = read(args.result_dir / "sft-resume" / "resume_check.json")
@@ -127,7 +173,8 @@ def main() -> None:
     wandb_exit = read(args.result_dir / "sft-wandb-offline" / "exit_status.json")
     ancillary = {
         "resume": {
-            "passed": bool(resume.get("advanced")) and resume_exit.get("returncode") == 0,
+            "passed": bool(resume.get("advanced"))
+            and resume_exit.get("returncode") == 0,
             **resume,
         },
         "wandb_offline": {

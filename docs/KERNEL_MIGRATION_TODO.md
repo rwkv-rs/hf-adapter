@@ -503,3 +503,17 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - Local gate: `80 passed`; Ruff, format check, compileall and
   `git diff --check` pass. RTX 4080 execution waits for the untouched formal
   recurrent-v1 lm_eval job and the already queued immutable backend-v2 smoke.
+
+### 2026-08-28 — canonical finetune backend route provenance
+
+- Canonical SFT/DPO/GRPO runs now accept optional exact HF/kernel wheel paths
+  and hash them into `artifact_provenance.json`. Local model provenance also
+  includes vocabulary, tokenizer, template, config, code and weight payloads.
+- The shared Trainer callback records de-duplicated actual model routes at log
+  and pre-optimizer events. `training_checks.json` distinguishes native dense
+  BF16 training from the required adapter-aware reference fallback.
+- `validate_finetune_runs.py --require-backend-v2-routes` now requires both
+  wheel SHA256 values and proves that every LoRA method used the clean
+  reference autograd path for optimizer-bearing forwards rather than silently
+  bypassing the adapters. The ordinary clean-reference validator remains able
+  to run without an installed optional backend.

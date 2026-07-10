@@ -41,9 +41,10 @@ def run_captured(main) -> int:
     stderr_path = output / "stderr.log"
     child_env = dict(os.environ)
     child_env[marker] = "1"
-    with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open(
-        "w", encoding="utf-8"
-    ) as stderr:
+    with (
+        stdout_path.open("w", encoding="utf-8") as stdout,
+        stderr_path.open("w", encoding="utf-8") as stderr,
+    ):
         process = subprocess.run(
             [sys.executable, str(Path(sys.argv[0]).resolve()), *sys.argv[1:]],
             env=child_env,
@@ -93,6 +94,19 @@ def package_version(name: str) -> str | None:
         return None
 
 
+def optional_artifact(path: str | None) -> dict | None:
+    if not path:
+        return None
+    artifact = Path(path).expanduser().resolve()
+    if not artifact.is_file():
+        raise RuntimeError(f"artifact does not exist: {artifact}")
+    return {
+        "path": str(artifact),
+        "bytes": artifact.stat().st_size,
+        "sha256": sha256(artifact),
+    }
+
+
 def model_provenance(model: str, requested_revision: str) -> dict:
     path = Path(model).expanduser()
     if path.exists():
@@ -101,12 +115,14 @@ def model_provenance(model: str, requested_revision: str) -> dict:
             for candidate in path.rglob("*")
             if candidate.is_file()
             and (
-                candidate.name in {"config.json", "tokenizer_config.json"}
-                or candidate.suffix in {".py", ".safetensors"}
+                candidate.suffix
+                in {".json", ".jinja", ".model", ".py", ".safetensors", ".txt"}
                 or candidate.name.endswith(".safetensors.index.json")
             )
         )
-        hashes = {str(candidate.relative_to(path)): sha256(candidate) for candidate in files}
+        hashes = {
+            str(candidate.relative_to(path)): sha256(candidate) for candidate in files
+        }
         aggregate = hashlib.sha256()
         for name, digest in hashes.items():
             aggregate.update(f"{name}\0{digest}\n".encode())
@@ -126,9 +142,9 @@ def model_provenance(model: str, requested_revision: str) -> dict:
     try:
         from huggingface_hub import HfApi
 
-        result["resolved_revision"] = HfApi().model_info(
-            model, revision=requested_revision
-        ).sha
+        result["resolved_revision"] = (
+            HfApi().model_info(model, revision=requested_revision).sha
+        )
     except Exception as error:
         result["resolution_error"] = f"{type(error).__name__}: {error}"
     return result
@@ -164,8 +180,17 @@ def prepare_run(args, dataset_name: str, dataset_revision: str) -> Path:
         "datasets": package_version("datasets"),
         "wandb": package_version("wandb"),
     }
-    (output / "environment.json").write_text(
-        json.dumps(environment, indent=2) + "\n"
+    (output / "environment.json").write_text(json.dumps(environment, indent=2) + "\n")
+    artifacts = {
+        name: row
+        for name, row in (
+            ("rwkv7_hf", optional_artifact(args.hf_wheel)),
+            ("rwkv7_kernels", optional_artifact(args.kernel_wheel)),
+        )
+        if row is not None
+    }
+    (output / "artifact_provenance.json").write_text(
+        json.dumps(artifacts, indent=2) + "\n", encoding="utf-8"
     )
     (output / "model_provenance.json").write_text(
         json.dumps(
@@ -185,9 +210,7 @@ def deterministic_subset(dataset, count: int, seed: int, output: Path, name: str
     random.Random(seed).shuffle(indices)
     selected = sorted(indices[:count])
     selected_dataset = dataset.select(selected)
-    (output / f"{name}_indices.json").write_text(
-        json.dumps(selected) + "\n"
-    )
+    (output / f"{name}_indices.json").write_text(json.dumps(selected) + "\n")
     fingerprint_path = output / "dataset_fingerprints.json"
     fingerprints = (
         json.loads(fingerprint_path.read_text(encoding="utf-8"))
@@ -214,7 +237,9 @@ def validate_resume(resume_from_checkpoint: str | None, global_step: int, output
     if resume_from_checkpoint:
         state_path = Path(resume_from_checkpoint) / "trainer_state.json"
         if not state_path.is_file():
-            raise RuntimeError(f"resume checkpoint has no trainer_state.json: {state_path}")
+            raise RuntimeError(
+                f"resume checkpoint has no trainer_state.json: {state_path}"
+            )
         prior = int(json.loads(state_path.read_text())["global_step"])
         result["prior_global_step"] = prior
         result["advanced"] = int(global_step) > prior
@@ -239,9 +264,7 @@ def checkpoint_inventory(output: Path) -> list[dict]:
                     "sha256": sha256(path),
                 }
             )
-    (output / "checkpoint_inventory.json").write_text(
-        json.dumps(rows, indent=2) + "\n"
-    )
+    (output / "checkpoint_inventory.json").write_text(json.dumps(rows, indent=2) + "\n")
     return rows
 
 
@@ -294,12 +317,10 @@ def validate_adapter_reload(
     reloaded.config.bos_token_id = trained_model.config.bos_token_id
     with torch.inference_mode():
         actual = reloaded(input_ids=sample, use_cache=False).logits.float().cpu()
-        expected_repeat = trained_model(
-            input_ids=sample, use_cache=False
-        ).logits.float().cpu()
-        actual_repeat = reloaded(
-            input_ids=sample, use_cache=False
-        ).logits.float().cpu()
+        expected_repeat = (
+            trained_model(input_ids=sample, use_cache=False).logits.float().cpu()
+        )
+        actual_repeat = reloaded(input_ids=sample, use_cache=False).logits.float().cpu()
     max_abs = float((expected - actual).abs().max())
     expected_parameters = dict(trained_model.named_parameters())
     parameter_differences = []
@@ -314,9 +335,7 @@ def validate_adapter_reload(
             .max()
         )
         if difference:
-            parameter_differences.append(
-                {"name": name, "max_abs": difference}
-            )
+            parameter_differences.append({"name": name, "max_abs": difference})
     expected_buffers = dict(trained_model.named_buffers())
     buffer_differences = []
     for name, buffer in reloaded.named_buffers():
@@ -331,11 +350,14 @@ def validate_adapter_reload(
             if hasattr(module, "lora_A") and hasattr(module, "scaling"):
                 return {
                     "active_adapters": list(getattr(module, "active_adapters", [])),
-                    "disable_adapters": bool(getattr(module, "disable_adapters", False)),
+                    "disable_adapters": bool(
+                        getattr(module, "disable_adapters", False)
+                    ),
                     "merged": bool(getattr(module, "merged", False)),
                     "scaling": dict(getattr(module, "scaling", {})),
                 }
         return {}
+
     result = {
         "max_abs": max_abs,
         "close": bool(torch.allclose(expected, actual, rtol=1e-5, atol=1e-5)),
@@ -348,24 +370,26 @@ def validate_adapter_reload(
         "trained_repeat_max_abs": float((expected - expected_repeat).abs().max()),
         "reloaded_repeat_max_abs": float((actual - actual_repeat).abs().max()),
         "trained_gradient_checkpointing": bool(
-            getattr(trained_model.base_model.model.model, "gradient_checkpointing", False)
+            getattr(
+                trained_model.base_model.model.model, "gradient_checkpointing", False
+            )
         ),
         "reloaded_gradient_checkpointing": bool(
             getattr(reloaded.base_model.model.model, "gradient_checkpointing", False)
         ),
         "config_differences": {
-            key: [trained_model.config.to_dict().get(key), reloaded.config.to_dict().get(key)]
+            key: [
+                trained_model.config.to_dict().get(key),
+                reloaded.config.to_dict().get(key),
+            ]
             for key in sorted(
-                trained_model.config.to_dict().keys()
-                | reloaded.config.to_dict().keys()
+                trained_model.config.to_dict().keys() | reloaded.config.to_dict().keys()
             )
             if trained_model.config.to_dict().get(key)
             != reloaded.config.to_dict().get(key)
         },
     }
-    (output / "adapter_reload.json").write_text(
-        json.dumps(result, indent=2) + "\n"
-    )
+    (output / "adapter_reload.json").write_text(json.dumps(result, indent=2) + "\n")
     if not result["close"]:
         raise RuntimeError(f"adapter reload changed logits: {result}")
 
@@ -376,8 +400,23 @@ class ReproCallback(TrainerCallback):
         self.metrics = output / "metrics.jsonl"
         self.saw_finite_loss = False
         self.saw_nonzero_gradient = False
+        self.backend_routes = []
+
+    def _capture_backend_route(self, event: str):
+        try:
+            from rwkv7_hf.ops_rwkv7 import get_last_model_route
+
+            route = get_last_model_route()
+        except Exception:
+            route = None
+        if not isinstance(route, dict):
+            return
+        row = {"event": event, **route}
+        if row not in self.backend_routes:
+            self.backend_routes.append(row)
 
     def on_log(self, args, state, control, logs=None, **kwargs):
+        self._capture_backend_route("log")
         logs = dict(logs or {})
         loss = logs.get("loss")
         if loss is not None and torch.isfinite(torch.tensor(float(loss))):
@@ -387,20 +426,44 @@ class ReproCallback(TrainerCallback):
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     def on_pre_optimizer_step(self, args, state, control, model=None, **kwargs):
+        self._capture_backend_route("pre_optimizer_step")
         if model is None:
             return
         for parameter in model.parameters():
             if parameter.requires_grad and parameter.grad is not None:
-                if torch.isfinite(parameter.grad).all() and float(parameter.grad.abs().sum()) > 0:
+                if (
+                    torch.isfinite(parameter.grad).all()
+                    and float(parameter.grad.abs().sum()) > 0
+                ):
                     self.saw_nonzero_gradient = True
                     break
 
     def write_status(self, global_step: int):
+        adapter_fallback = any(
+            route.get("event") == "pre_optimizer_step"
+            and route.get("selected") == "reference"
+            and route.get("phase") == "training"
+            and route.get("implementation") == "torch-reference-model-v1"
+            and "adapter" in str(route.get("reason", "")).lower()
+            for route in self.backend_routes
+        )
+        native_training = any(
+            route.get("event") == "pre_optimizer_step"
+            and route.get("selected") == "optimized"
+            and route.get("phase") == "training"
+            and route.get("implementation") == "native-nvidia-train-temp-autograd-v2"
+            for route in self.backend_routes
+        )
         status = {
             "finite_loss": self.saw_finite_loss,
             "nonzero_gradient": self.saw_nonzero_gradient,
             "global_step": int(global_step),
+            "adapter_reference_fallback": adapter_fallback,
+            "native_training": native_training,
         }
+        (self.output / "backend_routes.json").write_text(
+            json.dumps(self.backend_routes, indent=2) + "\n", encoding="utf-8"
+        )
         (self.output / "training_checks.json").write_text(
             json.dumps(status, indent=2) + "\n"
         )
@@ -422,14 +485,22 @@ def lora_config():
 
 
 def common_arguments(parser):
-    parser.add_argument(
-        "--model", default="wangyue114514/rwkv7-g1d-0.1b-hf"
-    )
+    parser.add_argument("--model", default="wangyue114514/rwkv7-g1d-0.1b-hf")
     parser.add_argument("--model-revision", default="v0.9.0")
     parser.add_argument(
         "--code-sha",
         default=None,
         help="Source revision for rsync deployments without a .git directory",
+    )
+    parser.add_argument(
+        "--hf-wheel",
+        default=None,
+        help="Exact rwkv7-hf wheel whose SHA256 should be recorded",
+    )
+    parser.add_argument(
+        "--kernel-wheel",
+        default=None,
+        help="Exact rwkv7-kernels wheel whose SHA256 should be recorded",
     )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--seed", type=int, default=42)
@@ -444,9 +515,7 @@ def common_arguments(parser):
         help="Keep the readable reference examples bounded; increase for a larger effective batch",
     )
     parser.add_argument("--resume-from-checkpoint", default=None)
-    parser.add_argument(
-        "--report-to", choices=("none", "wandb"), default="none"
-    )
+    parser.add_argument("--report-to", choices=("none", "wandb"), default="none")
 
 
 def report_target(args) -> str:
