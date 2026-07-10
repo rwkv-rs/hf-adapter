@@ -82,6 +82,10 @@ traces out of `response_text` and unloads Ollama after each row so a completed
 prompt cannot be reported as near-zero prefill. The runner records both steady
 `ttft_s` (load duration removed) and load-inclusive `cold_ttft_s`. Override
 these defaults only when deliberately measuring a shared prompt-cache service.
+With the default isolated policy it temporarily keeps the model alive long
+enough to query official `/api/ps`, records `ollama_loaded_memory_bytes`, and
+then explicitly unloads it. This is loaded-runtime memory, not peak memory, so
+the strict peak-to-peak gate remains unknown.
 
 It emits rows with `axis=qwen35_apple_baseline` and can run:
 
@@ -508,17 +512,18 @@ with `GOAL_AUDIT_TIERS`, `GOAL_AUDIT_SHAPES`,
 ## Initial acceptance matrix
 
 The first M5/16GB live 0.8B-vs-0.4B matrix is now present. At 128/512 prompt
-characters and 32 generated tokens, RWKV fp16 decode reaches about
-`0.94x/0.90x` Qwen, while prefill reaches only `0.105x/0.071x`. RWKV W4 lowers
+characters and 32 generated tokens, the retained conservative RWKV fp16 decode
+rows reach about `0.82x/0.92x` Qwen, while prefill reaches only `0.090x/0.049x`. RWKV W4 lowers
 its own peak memory from about `929MB` to `528MB`, but decode falls to about
-`0.60x` Qwen and prefill to `0.064x/0.032x`. Qwen runtime memory is not yet
-captured, and W4 does not preserve fp16 tokens on every prompt, so neither the
-memory nor quality gate is complete. See the two
+`0.62x/0.60x` Qwen and prefill to `0.064x/0.030x`. Qwen `/api/ps` loaded memory
+is about `1.09-1.11GB`, but peak memory is not yet captured. W4 does not
+preserve fp16 tokens on every prompt, so neither the peak-memory nor quality
+gate is complete. See the two
 `bench/results_qwen35_apple_m5_20260710_*.jsonl` files.
 
 | RWKV target | Qwen3.5 comparator | Runtime gate | Current status |
 |---|---|---|---|
-| RWKV-7 0.4B fp16/W4 MLX | `qwen3.5:0.8b-mlx` | lower memory and higher decode tok/s at prompt 1k/4k/8k, decode 128/512 | first short same-device rows landed; decode/prefill/TTFT gates fail and Qwen memory is unknown |
+| RWKV-7 0.4B fp16/W4 MLX | `qwen3.5:0.8b-mlx` | lower memory and higher decode tok/s at prompt 1k/4k/8k, decode 128/512 | first short same-device rows landed; decode/prefill/TTFT gates fail, Qwen loaded memory is recorded, and Qwen peak memory is unknown |
 | RWKV-7 1.5B W4/MLX | `qwen3.5:2b-mlx` / `mlx-community/Qwen3.5-2B-MLX-4bit` | lower memory and higher or equal decode tok/s; TTFT no worse by >10% | same-device 512/64 token-only row collected: memory pass, speed/TTFT fail |
 | RWKV-7 2.9B W4/MLX/CoreML | `qwen3.5:4b-mlx` | lower memory and higher decode tok/s | 0.1B stateful CoreML correctness passes; 2.9B quantized/ANE rows not landed |
 | RWKV-7 larger / distilled mobile | `qwen3.5:9b-mlx` | mobile-useful memory envelope plus quality eval | requires model/quality work |

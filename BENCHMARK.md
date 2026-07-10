@@ -3068,15 +3068,17 @@ across two repeats:
 
 | RWKV mode | Prompt chars | Qwen/RWKV tokens | Qwen/RWKV decode tok/s | Decode ratio | Qwen/RWKV prefill tok/s | Prefill ratio | Qwen/RWKV TTFT | RWKV peak |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| fp16 + Metal WKV | 128 | 54 / 43 | 110.52 / 103.87 | 0.940x | 1092.79 / 115.02 | 0.105x | 0.067 / 0.376 s | 929.0MB |
-| fp16 + Metal WKV | 512 | 173 / 164 | 115.99 / 104.87 | 0.904x | 1692.46 / 120.49 | 0.071x | 0.117 / 1.361 s | 929.1MB |
-| W4 auto + Metal WKV | 128 | 54 / 43 | 114.58 / 69.29 | 0.605x | 1062.53 / 68.48 | 0.064x | 0.069 / 0.628 s | 527.6MB |
-| W4 auto + Metal WKV | 512 | 173 / 164 | 115.35 / 68.67 | 0.595x | 2342.42 / 74.56 | 0.032x | 0.105 / 2.200 s | 527.7MB |
+| fp16 + Metal WKV | 128 | 54 / 43 | 112.15 / 92.14 | 0.822x | 1041.27 / 93.43 | 0.090x | 0.071 / 0.460 s | 929.0MB |
+| fp16 + Metal WKV | 512 | 173 / 164 | 111.41 / 102.13 | 0.917x | 2403.92 / 116.99 | 0.049x | 0.087 / 1.402 s | 929.1MB |
+| W4 auto + Metal WKV | 128 | 54 / 43 | 109.14 / 68.11 | 0.624x | 1126.44 / 72.62 | 0.064x | 0.064 / 0.593 s | 527.6MB |
+| W4 auto + Metal WKV | 512 | 173 / 164 | 113.73 / 68.62 | 0.603x | 2460.76 / 73.40 | 0.030x | 0.087 / 2.235 s | 527.7MB |
 
-This is a clear **gap**, not a win. fp16 decode is relatively close (about
-`0.90x-0.94x` Qwen), but the sequential MLX prefill path is only about
-`0.07x-0.11x`. Current W4 lowers RWKV peak memory to about `0.568x` fp16 but
-also lowers decode to about `0.65x-0.67x` fp16. W4 matched fp16 greedy tokens
+This is a clear **gap**, not a win. fp16 decode is relatively close but variable
+(about `0.82x-0.92x` Qwen in the retained repeat), while the sequential MLX
+prefill path is only about `0.05x-0.09x`. Current W4 lowers RWKV peak memory to
+about `0.568x` fp16 but also lowers decode to about `0.67x-0.74x` fp16. W4 matched fp16 greedy tokens
 for the 512-character sample and diverged at token zero for the 128-character
 sample, so no quality-parity claim is made. Ollama runtime memory is still
-missing, so the cross-engine memory gate remains unknown.
+missing, so the cross-engine peak-memory gate remains unknown. The runner now
+also records Ollama's official `/api/ps` loaded-memory value separately
+(`1.09-1.11GB` here); it is not mislabeled as peak memory.

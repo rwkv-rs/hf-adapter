@@ -685,9 +685,10 @@ Run this checklist for every new GPU before marking it as supported:
   INT4/LUT4 reduce package size further while failing the current HF greedy gate.
 - First live same-device Qwen gate: M5/16GB, Ollama 0.31.1
   `qwen3.5:0.8b-mlx` vs RWKV-7 0.4B MLX, 128/512 prompt chars and decode32.
-  fp16 decode is about `0.94x/0.90x` Qwen but prefill only `0.105x/0.071x`;
+  retained fp16 decode is about `0.82x/0.92x` Qwen but prefill only `0.090x/0.049x`;
   W4 lowers RWKV peak to about `0.568x` fp16 while decode drops to about
-  `0.60x` Qwen. Treat Qwen memory and quality as open gates.
+  `0.60x` Qwen. Treat Qwen peak memory and quality as open gates; `/api/ps`
+  loaded memory is telemetry, not a peak substitute.
 - CoreML state contract: state is fp16-only, so WKV uses fp16 high + fp16
   residual tensors; attention/FFN previous inputs and `v_first` are separate
   states. `--coreml-compute-precision auto` must resolve to fp32 for stateful
