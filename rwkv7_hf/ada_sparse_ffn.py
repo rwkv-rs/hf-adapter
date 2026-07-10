@@ -1,10 +1,10 @@
 # coding=utf-8
-"""Optional Ada fp16 sparse FFN contraction for small-row decode.
+"""Optional sm_89 fp16 sparse FFN contraction for small-row decode.
 
 RWKV-7 applies ``ReLU(key(x)) ** 2`` before the FFN value projection.  At
 decode batch sizes the activation is naturally sparse, so reading only the
 positive rows of a packed ``[ffn, hidden]`` value matrix is faster than a
-dense GEMM on RTX 4090.  The CUDA kernel is derived from Albatross' Apache-2.0
+dense GEMM on sm_89.  The CUDA kernel is derived from Albatross' Apache-2.0
 ``cmix_sparse_spmv_relu_rows_kernel`` and adds the residual while initializing
 the output, avoiding a separate residual-add launch.
 
@@ -40,11 +40,11 @@ torch::Tensor rwkv7_ada_linear_cuda(torch::Tensor x, torch::Tensor weight);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("sparse_down_add", &rwkv7_ada_sparse_ffn_cuda,
-        "RWKV-7 Ada sparse ReLU2 FFN down projection + residual");
+        "RWKV-7 sm_89 sparse ReLU2 FFN down projection + residual");
   m.def("ffn_up", &rwkv7_ada_linear_cuda,
-        "RWKV-7 Ada small-row FFN expansion projection");
+        "RWKV-7 sm_89 small-row FFN expansion projection");
   m.def("linear", &rwkv7_ada_linear_cuda,
-        "RWKV-7 Ada small-row fp16 linear");
+        "RWKV-7 sm_89 small-row fp16 linear");
 }
 """
 
@@ -355,7 +355,7 @@ torch::Tensor rwkv7_ada_linear_cuda(torch::Tensor x, torch::Tensor weight) {
   const int64_t hidden = x.size(1);
   const int64_t ffn = weight.size(0);
   TORCH_CHECK(rows == 1 || rows == 2 || rows == 4,
-              "Ada linear supports one, two, or four rows");
+              "sm_89 linear supports one, two, or four rows");
   TORCH_CHECK(weight.size(1) == hidden, "linear shape mismatch");
   TORCH_CHECK((hidden % 4) == 0 && (ffn % 2) == 0,
               "linear input must be divisible by four and output by two");
@@ -392,7 +392,7 @@ torch::Tensor rwkv7_ada_linear_cuda(torch::Tensor x, torch::Tensor weight) {
         reinterpret_cast<const half*>(weight.data_ptr<at::Half>()),
         reinterpret_cast<half*>(output.data_ptr<at::Half>()));
   } else {
-    TORCH_CHECK(false, "four-row Ada linear supports square or 4x expansion shapes");
+    TORCH_CHECK(false, "four-row sm_89 linear supports square or 4x expansion shapes");
   }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return output;
@@ -521,7 +521,7 @@ def _load_extension() -> Any | None:
 
 
 def ada_sparse_ffn_should_use(rows: int, outputs: int, inputs: int) -> bool:
-    """Return whether a shape is in the measured RTX 4090 sparse decode set."""
+    """Return whether a shape is in the measured sm_89 sparse decode set."""
 
     rows, outputs, inputs = int(rows), int(outputs), int(inputs)
     return 1 <= rows <= 19 and inputs == 4 * outputs and outputs % 256 == 0
@@ -598,7 +598,7 @@ def ada_sparse_ffn_down_add(
     *,
     force_fallback: bool = False,
 ) -> Any:
-    """Apply sparse ``ReLU²`` contraction and residual add on Ada decode."""
+    """Apply sparse ``ReLU²`` contraction and residual add on sm_89 decode."""
 
     if torch is None or F is None:
         raise RuntimeError("ada_sparse_ffn_down_add requires torch")
@@ -633,7 +633,7 @@ def ada_sparse_ffn_down_add(
 
 
 def ada_ffn_up(x: Any, weight: Any, *, force_fallback: bool = False) -> Any:
-    """Apply the measured no-copy small-row FFN expansion on RTX 4090."""
+    """Apply the measured no-copy small-row FFN expansion on sm_89."""
 
     if torch is None or F is None:
         raise RuntimeError("ada_ffn_up requires torch")
@@ -662,7 +662,7 @@ def ada_ffn_up(x: Any, weight: Any, *, force_fallback: bool = False) -> Any:
 
 
 def ada_linear(x: Any, weight: Any, *, force_fallback: bool = False) -> Any:
-    """Apply the no-copy exact-row Ada linear probe with a torch fallback."""
+    """Apply the no-copy exact-row sm_89 linear probe with a torch fallback."""
 
     if torch is None or F is None:
         raise RuntimeError("ada_linear requires torch")

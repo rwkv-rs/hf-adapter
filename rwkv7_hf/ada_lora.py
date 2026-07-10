@@ -1,5 +1,5 @@
 # coding=utf-8
-"""Optional RTX 4090 fused W/A/G/V low-rank decode kernels.
+"""Optional sm_89 fused W/A/G/V low-rank decode kernels.
 
 The layer>0 RWKV-7 time-mix path contains four independent rank-in projections
 and four rank-out projections.  For one to four decode rows, launching each as
@@ -43,9 +43,9 @@ std::vector<torch::Tensor> rwkv7_ada_wagv_rank_out_cuda(
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("rank_in", &rwkv7_ada_wagv_rank_in_cuda,
-        "RWKV-7 Ada fused W/A/G/V rank-in");
+        "RWKV-7 sm_89 fused W/A/G/V rank-in");
   m.def("rank_out", &rwkv7_ada_wagv_rank_out_cuda,
-        "RWKV-7 Ada fused W/A/G/V rank-out and V interpolation");
+        "RWKV-7 sm_89 fused W/A/G/V rank-out and V interpolation");
 }
 """
 

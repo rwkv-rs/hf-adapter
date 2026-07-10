@@ -292,7 +292,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         sm70_rkv_should_use = None  # type: ignore[assignment]
         sm70_rkv_threads = None  # type: ignore[assignment]
 
-try:  # pragma: no cover - optional RTX 4090 sparse FFN contraction
+try:  # pragma: no cover - optional sm_89 sparse FFN contraction
     from .ada_sparse_ffn import (
         ada_ffn_up,
         ada_linear,
@@ -316,7 +316,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         ada_sparse_ffn_down_add = None  # type: ignore[assignment]
         ada_sparse_ffn_should_use = None  # type: ignore[assignment]
 
-try:  # pragma: no cover - optional RTX 4090 grouped W/A/G/V LoRA
+try:  # pragma: no cover - optional sm_89 grouped W/A/G/V LoRA
     from .ada_lora import ada_wagv_lora, ada_wagv_lora_should_use
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
@@ -791,7 +791,7 @@ def _native_graph_sm70_linear_enabled() -> bool:
 
 
 def _native_graph_ada_sparse_ffn_enabled() -> bool:
-    """Whether the measured RTX 4090 sparse FFN route may be captured."""
+    """Whether the measured sm_89 sparse FFN route may be captured."""
 
     policy = _kernel_policy()
     return bool(
@@ -806,7 +806,7 @@ def _native_graph_ada_sparse_ffn_enabled() -> bool:
 
 
 def _native_graph_ada_linear_enabled() -> bool:
-    """Whether measured no-copy RTX 4090 exact-row linears may be captured."""
+    """Whether measured no-copy sm_89 exact-row linears may be captured."""
 
     policy = _kernel_policy()
     return bool(
@@ -837,7 +837,7 @@ def _native_graph_ada_linear_should_route(rows: int, role: str) -> bool:
 
 
 def _native_graph_ada_wagv_lora_enabled(rows: int, hidden_size: int, max_rank: int) -> bool:
-    """Whether the no-copy RTX 4090 grouped low-rank route may be captured."""
+    """Whether the no-copy sm_89 grouped low-rank route may be captured."""
 
     policy = _kernel_policy()
     return bool(
