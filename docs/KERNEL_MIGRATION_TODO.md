@@ -544,3 +544,13 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   addition to Python/Torch/Transformers/Triton/FLA/CUDA/driver/GPU. All
   backend-v2 inference, training, quantization, FLA, benchmark and ecosystem
   reports therefore share the same complete provenance schema.
+
+### 2026-08-28 — optional-backend user and reproduction documentation
+
+- Expanded the separate kernel package README with the API-v2 ownership,
+  canonical-cache rule, supported NVIDIA/quant/training families, fail-closed
+  adapter behavior and explicit pre-release route selectors.
+- Added copyable artifact-hashed SFT/DPO/GRPO validation and three-way 144-unit
+  lm_eval commands. The documentation distinguishes dense native BF16
+  autograd from LoRA reference fallback and states every provenance/prediction
+  gate without claiming GPU acceptance before its JSON passes.

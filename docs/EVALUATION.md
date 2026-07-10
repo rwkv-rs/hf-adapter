@@ -105,3 +105,49 @@ difference must be at most 0.001; Wikitext perplexity relative difference must
 be at most 0.1%. The fixed execution shapes described in
 [`ARCHITECTURE.md`](ARCHITECTURE.md#numerical-reproducibility) prevent normal
 FP16 GEMM shape selection from changing close multiple-choice decisions.
+
+## Three-way optional-backend lm_eval
+
+The optional-backend release matrix is distinct from the single reference
+lane above. It runs `reference`, strict backend-v2 `optimized`, and the pinned
+FLA wrapper for 0.1B/0.4B/1.5B, batch 1/8, and all eight tasks: 144 formal
+commands in total. All lanes use one immutable HF wheel, one immutable kernel
+wheel and FLA commit
+`80e494f6c588e091fc8316b612870df29375c5b8`.
+
+Each lane uses the same command shape (shown for the optimized lane):
+
+```bash
+python evaluation/run_lm_eval_matrix.py \
+  --output-dir results/backend-v2/lm_eval/optimized \
+  --lane optimized \
+  --optimized-model-impl native \
+  --model 0.1b=/models/rwkv7-0.1b-hf \
+  --model 0.4b=/models/rwkv7-0.4b-hf \
+  --model 1.5b=/models/rwkv7-1.5b-hf \
+  --hf-wheel /artifacts/rwkv7_hf-1.0.0-py3-none-any.whl \
+  --kernel-wheel /artifacts/rwkv7_kernels-1.0.0.dev0-py3-none-any.whl \
+  --fla-source /sources/fla-80e494f6 \
+  --code-sha "$(git rev-parse HEAD)"
+```
+
+Use the clean model directories for `reference`/`optimized` and directories
+created by `prepare_fla_lm_eval_model.py` for `fla`. Then run:
+
+```bash
+python evaluation/validate_lm_eval_three_way.py \
+  --reference-dir results/backend-v2/lm_eval/reference \
+  --optimized-dir results/backend-v2/lm_eval/optimized \
+  --fla-dir results/backend-v2/lm_eval/fla \
+  --output results/backend-v2/lm_eval/validation.json \
+  --require-model-routes
+```
+
+The validator rejects requested-route labels without actual backend-v2 trace
+counts. It also rejects different wheel hashes, FLA revisions, weights,
+tokenizer/vocabulary/template payloads, datasets, or harness SHAs. For
+classification it reconstructs each raw and normalized selected answer;
+LAMBADA compares greedy-continuation outcomes; Wikitext compares per-document
+rolling NLL/word/byte counts and aggregate NLL/PPL at the 0.1% relative gate.
+Raw samples remain outside Git; only compact manifests, hashes, commands and
+validation summaries are committed.

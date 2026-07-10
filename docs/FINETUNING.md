@@ -62,3 +62,39 @@ The small parent launcher also records `stdout.log`, `stderr.log`, and
 
 W&B is off by default. Enable it with `--report-to wandb`; local artifacts
 remain authoritative and no token is written to disk.
+
+## Optional backend acceptance
+
+The examples remain ordinary TRL programs when the optional kernel wheel is
+installed. A formal backend run supplies the exact wheel paths so their hashes
+are recorded with the dataset/model revisions:
+
+```bash
+export RWKV7_BACKEND=auto
+export RWKV7_MODEL_KERNEL_IMPL=native
+export RWKV7_KERNEL_IMPL=auto
+
+python examples/finetune/sft_lora.py \
+  --model /models/rwkv7-0.1b-hf \
+  --output-dir results/backend-v2/finetune/sft \
+  --code-sha "$(git rev-parse HEAD)" \
+  --hf-wheel /artifacts/rwkv7_hf-1.0.0-py3-none-any.whl \
+  --kernel-wheel /artifacts/rwkv7_kernels-1.0.0.dev0-py3-none-any.whl
+```
+
+Run DPO and GRPO with the same artifact arguments, then validate all canonical
+runs with:
+
+```bash
+python evaluation/validate_finetune_runs.py \
+  --result-dir results/backend-v2/finetune \
+  --require-backend-v2-routes
+```
+
+The callback records actual routes at optimizer-bearing forwards. Dense BF16
+training has a separate native-autograd gate. The canonical LoRA target set
+wraps the ChannelMix `key`/`value` modules, so the whole-model training probe
+must report the adapter-aware reference autograd fallback; this is intentional
+and prevents a fused implementation from silently ignoring trainable adapter
+weights. Finite loss/gradients, changed parameters and adapter save/reload are
+still mandatory.
