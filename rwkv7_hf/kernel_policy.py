@@ -35,6 +35,7 @@ class GPUProfile:
     device_index: int | None = None
     is_cuda: bool = False
     is_hip: bool = False
+    is_mps: bool = False
 
 
 @dataclass(frozen=True)
@@ -140,6 +141,27 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
         required_benchmarks=("CPU smoke only; no GPU performance claim",),
         quant_rule="do not claim W8/W4 speed without a real accelerator row",
         promotion_rule="never promote GPU defaults from CPU-only evidence",
+    ),
+    "apple_mps": GPUAdaptationRule(
+        family="apple_mps",
+        cards=("Apple Silicon M-series / MPS", "Apple MLX / Metal", "CoreML / ANE"),
+        status="M5 compatibility and MLX rows exist; stateful CoreML 0.1B correctness passes",
+        default_stance="native/no-FLA compatibility; CUDA/Triton kernels off; MLX/CoreML are separate explicit backends",
+        default_on=("fast_cache", "native_model fallback"),
+        default_off=("CUDA native_graph fused kernels", "bnb CUDA quantization"),
+        required_functional=(
+            "MPS load/generate",
+            "PEFT/Trainer/TRL smoke",
+            "MLX recurrent/cache/chunked-prefill smoke",
+            "CoreML state transfer + chunk split + HF greedy parity when CoreML is claimed",
+        ),
+        required_benchmarks=(
+            "exact M-series chip/memory/macOS rows",
+            "MLX fp16 and W8/W4 speed/footprint rows",
+            "CoreML runtime placement evidence before ANE claims",
+        ),
+        quant_rule="native/MLX/CoreML W8/W4 only; require footprint reduction, greedy/quality parity, and exact-device speed rows",
+        promotion_rule="do not infer ANE use from CPU_AND_NE eligibility or promote fp16 CoreML while HF greedy parity fails",
     ),
     "legacy_cuda": GPUAdaptationRule(
         family="legacy_cuda",
@@ -293,11 +315,19 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
 }
 
 
-def classify_gpu(name: str | None, capability: tuple[int, int] | None, *, is_hip: bool = False) -> GPUProfile:
+def classify_gpu(
+    name: str | None,
+    capability: tuple[int, int] | None,
+    *,
+    is_hip: bool = False,
+    is_mps: bool = False,
+) -> GPUProfile:
     """Classify a GPU without requiring torch/CUDA to be available."""
 
     gpu_name = (name or "unknown").strip() or "unknown"
     lower = gpu_name.lower()
+    if is_mps or any(token in lower for token in ("apple silicon", "apple m1", "apple m2", "apple m3", "apple m4", "apple m5")):
+        return GPUProfile(name=gpu_name, vendor="apple", family="apple_mps", is_mps=True)
     if is_hip or any(token in lower for token in ("amd", "radeon", "instinct", "mi250", "mi300")):
         return GPUProfile(name=gpu_name, vendor="amd", family="amd_hip", capability=capability, is_cuda=False, is_hip=True)
     if capability is None:
@@ -334,6 +364,20 @@ def detect_gpu_profile(device: int | str | None = None, torch_module: Any | None
             torch_module = None
     if torch_module is None:
         return classify_gpu(None, None)
+
+    mps = getattr(getattr(torch_module, "backends", None), "mps", None)
+    mps_available = getattr(mps, "is_available", None)
+    if callable(mps_available):
+        try:
+            if bool(mps_available()):
+                return GPUProfile(
+                    name="Apple Silicon MPS",
+                    vendor="apple",
+                    family="apple_mps",
+                    is_mps=True,
+                )
+        except Exception:
+            pass
 
     is_hip = bool(getattr(getattr(torch_module, "version", None), "hip", None))
     cuda = getattr(torch_module, "cuda", None)
@@ -378,6 +422,17 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_output=True,
             fused_prefill_scan=False,
             notes="no live GPU detected: preserve historical request defaults; runtime availability gates still prevent CUDA use",
+        )
+    if family == "apple_mps":
+        return KernelPolicy(
+            profile=profile,
+            fast_token_backend="native",
+            fast_cache=True,
+            fused_recurrent_output=False,
+            fused_output=False,
+            fused_prefill_scan=False,
+            quant_policy="apple_native_mlx_coreml",
+            notes="Apple MPS: use native/no-FLA HF compatibility; CUDA/Triton fusions off; MLX/CoreML selected explicitly",
         )
     if family in {"amd_hip", "legacy_cuda", "pascal", "unknown_cuda"}:
         return KernelPolicy(

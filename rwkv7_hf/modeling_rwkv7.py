@@ -174,7 +174,7 @@ def _native_model_backend_requested() -> bool:
     # Some older CUDA families cannot reliably run the optimized FLA/Triton
     # RWKV-7 kernels. Route them to the pure PyTorch backend unless the user
     # overrides it.
-    return family in {"pascal", "legacy_cuda"}
+    return family in {"pascal", "legacy_cuda", "apple_mps"}
 
 
 def _fast_cache_enabled() -> bool:
