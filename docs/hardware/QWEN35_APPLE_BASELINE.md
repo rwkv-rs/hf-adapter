@@ -87,6 +87,13 @@ enough to query official `/api/ps`, records `ollama_loaded_memory_bytes`, and
 then explicitly unloads it. This is loaded-runtime memory, not peak memory, so
 the strict peak-to-peak gate remains unknown.
 
+The wrapper also defaults `RWKV_PREFILL_EVAL_INTERVAL=2`. This batches two
+lazy MLX recurrent prompt steps between graph evaluations. The reusable model
+API keeps the safer interval-1 default. Before changing this value on a new
+model/device, run `scripts/mlx_prefill_eval_interval_bench.py`; it treats
+logits, all recurrent/cache tensors, seen-token count, and next-token parity as
+a hard gate rather than inferring correctness from throughput alone.
+
 It emits rows with `axis=qwen35_apple_baseline` and can run:
 
 1. Qwen3.5 through a local Ollama server using the streaming `/api/generate`
@@ -317,6 +324,7 @@ PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --rwkv-quantization none \
   --rwkv-wkv-backend metal \
   --rwkv-chunk-size 2048 \
+  --rwkv-prefill-eval-interval 2 \
   --results bench/results_qwen35_apple_baseline.jsonl
 ```
 
@@ -338,6 +346,7 @@ PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --rwkv-quant-backend auto \
   --rwkv-wkv-backend metal \
   --rwkv-chunk-size 2048 \
+  --rwkv-prefill-eval-interval 2 \
   --results bench/results_qwen35_apple_baseline.jsonl
 ```
 
