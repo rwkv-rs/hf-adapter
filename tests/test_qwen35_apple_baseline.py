@@ -369,9 +369,15 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
             "256",
             "--rwkv-decode-backend",
             "compiled",
+            "--rwkv-decode-norm-backend",
+            "fast",
             "--rwkv-prepare-compiled-decode",
             "--rwkv-compiled-decode-validation-tokens",
             "12",
+            "--rwkv-compiled-decode-reference-logits-atol",
+            "0.3",
+            "--rwkv-compiled-decode-reference-state-atol",
+            "0.6",
         ],
         cwd=ROOT,
         text=True,
@@ -404,8 +410,11 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
     assert rows[0]["rwkv_dplr_layer_eval_min_tokens"] == 192
     assert rows[0]["rwkv_dplr_window_tokens"] == 256
     assert rows[0]["rwkv_decode_backend"] == "compiled"
+    assert rows[0]["rwkv_decode_norm_backend"] == "fast"
     assert rows[0]["rwkv_prepare_compiled_decode"] is True
     assert rows[0]["rwkv_compiled_decode_validation_tokens"] == 12
+    assert rows[0]["rwkv_compiled_decode_reference_logits_atol"] == 0.3
+    assert rows[0]["rwkv_compiled_decode_reference_state_atol"] == 0.6
 
 
 def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
@@ -434,8 +443,11 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
             "RWKV_DPLR_LAYER_EVAL_MIN_TOKENS": "192",
             "RWKV_DPLR_WINDOW_TOKENS": "256",
             "RWKV_DECODE_BACKEND": "compiled",
+            "RWKV_DECODE_NORM_BACKEND": "fast",
             "RWKV_PREPARE_COMPILED_DECODE": "1",
             "RWKV_COMPILED_DECODE_VALIDATION_TOKENS": "12",
+            "RWKV_COMPILED_DECODE_REFERENCE_LOGITS_ATOL": "0.3",
+            "RWKV_COMPILED_DECODE_REFERENCE_STATE_ATOL": "0.6",
         }
     )
     result = subprocess.run(
@@ -473,8 +485,11 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
     assert rows[0]["rwkv_dplr_layer_eval_min_tokens"] == 192
     assert rows[0]["rwkv_dplr_window_tokens"] == 256
     assert rows[0]["rwkv_decode_backend"] == "compiled"
+    assert rows[0]["rwkv_decode_norm_backend"] == "fast"
     assert rows[0]["rwkv_prepare_compiled_decode"] is True
     assert rows[0]["rwkv_compiled_decode_validation_tokens"] == 12
+    assert rows[0]["rwkv_compiled_decode_reference_logits_atol"] == 0.3
+    assert rows[0]["rwkv_compiled_decode_reference_state_atol"] == 0.6
 
 
 def test_mlx_prefill_eval_interval_bench_dry_run(tmp_path: Path) -> None:

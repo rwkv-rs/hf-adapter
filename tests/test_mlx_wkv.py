@@ -156,12 +156,14 @@ def test_mlx_compiled_decode_matches_eager_if_available():
     assert compiled_model.decode_backend_last == "eager"
     assert compiled_model.decode_backend_counts["eager"] == 1
     assert int(probe_state.seen_tokens) == 5
+    kernel_counts_before_validation = dict(compiled_model.wkv_backend_counts)
     validation = compiled_model.validate_compiled_decode(
         compiled_logits,
         compiled_state,
         steps=4,
     )
     assert validation["status"] == "pass"
+    assert compiled_model.wkv_backend_counts == kernel_counts_before_validation
     eager_tokens: list[list[int]] = []
     compiled_tokens: list[list[int]] = []
     for _ in range(4):
@@ -198,6 +200,29 @@ def test_mlx_compiled_decode_matches_eager_if_available():
     assert telemetry["decode_compiled_rejected_batches"] == []
     assert telemetry["decode_compiled_validation_by_batch"][2]["status"] == "pass"
     assert telemetry["decode_compile_s_by_batch"][2] >= 0.0
+    assert telemetry["decode_norm_backend"] == "reference"
+    assert telemetry["decode_compiled_norm_backend_by_batch"][2] == "reference"
+    assert validation["reference_norm_gate_required"] is False
+    assert validation["reference_norm_gate_pass"] is True
+
+    # Changing the decode math invalidates the compiled graph. The fast
+    # LayerNorm variant must pass exact internal parity plus a bounded
+    # reference-math trajectory gate before auto can promote it.
+    compiled_model.decode_norm_backend = "fast"
+    assert compiled_model.prepare_compiled_decode(batch_size=2) >= 0.0
+    fast_telemetry = compiled_model.telemetry()
+    assert fast_telemetry["decode_compiled_validated_batches"] == []
+    assert fast_telemetry["decode_compiled_norm_backend_by_batch"][2] == "fast"
+    fast_logits, fast_state = compiled_model.prefill(ids)
+    fast_validation = compiled_model.validate_compiled_decode(
+        fast_logits,
+        fast_state,
+        steps=4,
+    )
+    assert fast_validation["status"] == "pass"
+    assert fast_validation["reference_norm_gate_required"] is True
+    assert fast_validation["reference_generated_tokens_match"] is True
+    assert fast_validation["reference_norm_gate_pass"] is True
 
 
 def test_mlx_decode_compile_bench_dry_run(tmp_path: Path):
@@ -210,6 +235,12 @@ def test_mlx_decode_compile_bench_dry_run(tmp_path: Path):
             "/tmp/rwkv-a,/tmp/rwkv-b",
             "--decode-tokens",
             "16",
+            "--decode-norm-backend",
+            "fast",
+            "--reference-logits-atol",
+            "0.3",
+            "--reference-state-atol",
+            "0.6",
             "--results",
             str(output),
             "--dry-run",
@@ -224,6 +255,9 @@ def test_mlx_decode_compile_bench_dry_run(tmp_path: Path):
     assert row["axis"] == "mlx_decode_compile_env"
     assert row["models"] == ["/tmp/rwkv-a", "/tmp/rwkv-b"]
     assert row["decode_tokens"] == 16
+    assert row["decode_norm_backend"] == "fast"
+    assert row["reference_logits_atol"] == 0.3
+    assert row["reference_state_atol"] == 0.6
 
 
 if __name__ == "__main__":

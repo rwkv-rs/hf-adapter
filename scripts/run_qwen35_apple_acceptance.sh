@@ -70,8 +70,11 @@ RWKV_DPLR_LAYER_EVAL_INTERVAL="${RWKV_DPLR_LAYER_EVAL_INTERVAL:-4}"
 RWKV_DPLR_LAYER_EVAL_MIN_TOKENS="${RWKV_DPLR_LAYER_EVAL_MIN_TOKENS:-64}"
 RWKV_DPLR_WINDOW_TOKENS="${RWKV_DPLR_WINDOW_TOKENS:-512}"
 RWKV_DECODE_BACKEND="${RWKV_DECODE_BACKEND:-auto}"
+RWKV_DECODE_NORM_BACKEND="${RWKV_DECODE_NORM_BACKEND:-reference}"
 RWKV_PREPARE_COMPILED_DECODE="${RWKV_PREPARE_COMPILED_DECODE:-0}"
 RWKV_COMPILED_DECODE_VALIDATION_TOKENS="${RWKV_COMPILED_DECODE_VALIDATION_TOKENS:-32}"
+RWKV_COMPILED_DECODE_REFERENCE_LOGITS_ATOL="${RWKV_COMPILED_DECODE_REFERENCE_LOGITS_ATOL:-0.25}"
+RWKV_COMPILED_DECODE_REFERENCE_STATE_ATOL="${RWKV_COMPILED_DECODE_REFERENCE_STATE_ATOL:-0.5}"
 
 # Comparison defaults cover the current local/public model classes.  Add the
 # 4B/9B pairs once matching RWKV 2.9B/larger or distilled mobile exports exist.
@@ -300,7 +303,10 @@ baseline_args=(
   --rwkv-dplr-layer-eval-min-tokens "${RWKV_DPLR_LAYER_EVAL_MIN_TOKENS}"
   --rwkv-dplr-window-tokens "${RWKV_DPLR_WINDOW_TOKENS}"
   --rwkv-decode-backend "${RWKV_DECODE_BACKEND}"
+  --rwkv-decode-norm-backend "${RWKV_DECODE_NORM_BACKEND}"
   --rwkv-compiled-decode-validation-tokens "${RWKV_COMPILED_DECODE_VALIDATION_TOKENS}"
+  --rwkv-compiled-decode-reference-logits-atol "${RWKV_COMPILED_DECODE_REFERENCE_LOGITS_ATOL}"
+  --rwkv-compiled-decode-reference-state-atol "${RWKV_COMPILED_DECODE_REFERENCE_STATE_ATOL}"
 )
 if [[ "${RWKV_PREPARE_COMPILED_DECODE}" == "1" ]]; then
   baseline_args+=(--rwkv-prepare-compiled-decode)

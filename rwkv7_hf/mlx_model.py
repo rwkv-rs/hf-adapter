@@ -320,6 +320,28 @@ class MLXGenerationSession:
     def prompt_tokens(self) -> int:
         return len(self.prompt_ids)
 
+    def prepare_compiled_decode(
+        self,
+        *,
+        validation_tokens: int = 32,
+        logits_atol: float = 0.0,
+        state_atol: float = 0.0,
+        reference_logits_atol: float = 0.25,
+        reference_state_atol: float = 0.5,
+    ) -> dict[str, Any]:
+        """Warm and parity-gate compiled batch-one decode for this prompt."""
+
+        self.model.prepare_compiled_decode(batch_size=1)
+        return self.model.validate_compiled_decode(
+            self.logits,
+            self.state,
+            steps=int(validation_tokens),
+            logits_atol=float(logits_atol),
+            state_atol=float(state_atol),
+            reference_logits_atol=float(reference_logits_atol),
+            reference_state_atol=float(reference_state_atol),
+        )
+
     @property
     def generated_tokens(self) -> int:
         return len(self.generated_ids)
@@ -830,8 +852,14 @@ class MLXRWKV7Model:
         )
         self.decode_backend_last: str | None = None
         self.decode_backend_counts: dict[str, int] = {"eager": 0, "compiled": 0}
+        self.decode_norm_backend = _env_choice(
+            "RWKV7_MLX_DECODE_NORM_BACKEND",
+            "reference",
+            {"reference", "fast"},
+        )
         self.decode_compile_s_by_batch: dict[int, float] = {}
         self._compiled_decode_functions: dict[int, Any] = {}
+        self._compiled_decode_norm_backend_by_batch: dict[int, str] = {}
         self._compiled_decode_validated_batches: set[int] = set()
         self._compiled_decode_rejected_batches: set[int] = set()
         self.decode_compiled_validation_by_batch: dict[int, dict[str, Any]] = {}
@@ -1054,7 +1082,11 @@ class MLXRWKV7Model:
             "decode_backend": self.decode_backend,
             "decode_backend_last": self.decode_backend_last,
             "decode_backend_counts": dict(self.decode_backend_counts),
+            "decode_norm_backend": self.decode_norm_backend,
             "decode_compiled_batches": sorted(self._compiled_decode_functions),
+            "decode_compiled_norm_backend_by_batch": dict(
+                self._compiled_decode_norm_backend_by_batch
+            ),
             "decode_compiled_validated_batches": sorted(self._compiled_decode_validated_batches),
             "decode_compiled_rejected_batches": sorted(self._compiled_decode_rejected_batches),
             "decode_compile_s_by_batch": dict(self.decode_compile_s_by_batch),
@@ -1204,24 +1236,32 @@ class MLXRWKV7Model:
         ) + 1
         return y_group[0], y_group[1], y_group[2]
 
-    def _layer_norm(self, x, prefix: str):
+    def _layer_norm(self, x, prefix: str, *, backend: str = "reference"):
         mx = _mx()
         weight = self._get(f"{prefix}.weight")
         bias = self._get(f"{prefix}.bias")
         if self.fast_layer_norm and hasattr(mx, "fast") and hasattr(mx.fast, "layer_norm"):
             return mx.fast.layer_norm(x, weight, bias, self.norm_eps)
         xf = x.astype(mx.float32)
-        mean = mx.mean(xf, axis=-1, keepdims=True)
-        var = mx.mean((xf - mean) * (xf - mean), axis=-1, keepdims=True)
-        y = (xf - mean) * mx.rsqrt(var + self.norm_eps)
+        if backend == "fast":
+            y = mx.fast.layer_norm(xf, None, None, self.norm_eps)
+        else:
+            mean = mx.mean(xf, axis=-1, keepdims=True)
+            var = mx.mean((xf - mean) * (xf - mean), axis=-1, keepdims=True)
+            y = (xf - mean) * mx.rsqrt(var + self.norm_eps)
         y = y.astype(x.dtype)
         return y * weight + bias
 
-    def _group_norm_heads(self, x, layer: int):
+    def _group_norm_heads(self, x, layer: int, *, backend: str = "reference"):
         mx = _mx()
         leading = tuple(int(dim) for dim in x.shape[:-1])
         prefix = f"model.layers.{layer}.attn.g_norm"
-        if self.fast_group_norm and hasattr(mx, "fast") and hasattr(mx.fast, "layer_norm"):
+        use_fast = (
+            (backend == "fast" or self.fast_group_norm)
+            and hasattr(mx, "fast")
+            and hasattr(mx.fast, "layer_norm")
+        )
+        if use_fast:
             xh = x.reshape(*leading, self.num_heads, self.head_dim)
             weight = self._get(f"{prefix}.weight").reshape(1, self.num_heads, self.head_dim)
             bias = self._get(f"{prefix}.bias").reshape(1, self.num_heads, self.head_dim)
@@ -1258,7 +1298,14 @@ class MLXRWKV7Model:
         mx.eval(v_first, *state, *xpa, *xpf)
         return MLXRWKV7State(state, xpa, xpf, v_first, seen_tokens=0)
 
-    def _attn_step(self, layer: int, x, x_prev, v_first, state):
+    def _attn_step(
+        self,
+        layer: int,
+        x,
+        x_prev,
+        v_first,
+        state,
+    ):
         mx = _mx()
         B = int(x.shape[0])
         hidden = self.hidden_size
@@ -1344,7 +1391,11 @@ class MLXRWKV7Model:
         self.wkv_backend_last = backend_used
         self.wkv_backend_counts[backend_used] = int(self.wkv_backend_counts.get(backend_used, 0)) + 1
         out = out_heads.reshape(B, hidden)
-        out = self._group_norm_heads(out, layer)
+        # Keep per-head GroupNorm on the reference formulation. The compiled
+        # parity issue comes from the three standard LayerNorm boundaries;
+        # forcing GroupNorm through a separate fast primitive adds launches
+        # without improving parity.
+        out = self._group_norm_heads(out, layer, backend="reference")
         sk = (
             r.reshape(B, H, N)
             * k.reshape(B, H, N)
@@ -1768,12 +1819,31 @@ class MLXRWKV7Model:
         ids = token_ids.astype(mx.int32).reshape(-1)
         return self._get("model.embeddings.weight")[ids]
 
-    def _step_token(self, token_ids, state: MLXRWKV7State, *, evaluate: bool = True):
+    def _step_token(
+        self,
+        token_ids,
+        state: MLXRWKV7State,
+        *,
+        evaluate: bool = True,
+        norm_backend: str = "reference",
+    ):
         mx = _mx()
         x = self._embedding(token_ids)
         for layer in range(self.num_hidden_layers):
-            residual = self._layer_norm(x, f"model.layers.{layer}.pre_norm") if layer == 0 else x
-            h = self._layer_norm(residual, f"model.layers.{layer}.attn_norm")
+            residual = (
+                self._layer_norm(
+                    x,
+                    f"model.layers.{layer}.pre_norm",
+                    backend=norm_backend,
+                )
+                if layer == 0
+                else x
+            )
+            h = self._layer_norm(
+                residual,
+                f"model.layers.{layer}.attn_norm",
+                backend=norm_backend,
+            )
             a, state.attn_x_prev[layer], state.recurrent_state[layer], state.v_first = self._attn_step(
                 layer,
                 h,
@@ -1783,7 +1853,11 @@ class MLXRWKV7Model:
             )
             x = residual + a
             residual = x
-            h2 = self._layer_norm(x, f"model.layers.{layer}.ffn_norm")
+            h2 = self._layer_norm(
+                x,
+                f"model.layers.{layer}.ffn_norm",
+                backend=norm_backend,
+            )
             f, state.ffn_x_prev[layer] = self._ffn_step(layer, h2, state.ffn_x_prev[layer])
             x = residual + f
         state.seen_tokens += 1
@@ -1879,7 +1953,12 @@ class MLXRWKV7Model:
         eval_interval = int(self.prefill_eval_interval) if T > 1 and not collect_all else 1
         for t in range(T):
             evaluate = eval_interval == 1 or (t + 1) % eval_interval == 0 or t + 1 == T
-            last, state = self._step_token(ids[:, t], state, evaluate=evaluate)
+            last, state = self._step_token(
+                ids[:, t],
+                state,
+                evaluate=evaluate,
+                norm_backend=(self.decode_norm_backend if T == 1 else "reference"),
+            )
             if collect_all:
                 logits.append(self._logits_from_hidden(last))
         if collect_all:
@@ -1967,6 +2046,29 @@ class MLXRWKV7Model:
             seen_tokens=int(seen_tokens),
         )
 
+    def _decode_kernel_counter_snapshot(self) -> dict[str, Any]:
+        return {
+            "wkv_backend_last": self.wkv_backend_last,
+            "wkv_backend_counts": dict(self.wkv_backend_counts),
+            "group_rkv_quant_projection_counts": dict(self.group_rkv_quant_projection_counts),
+            "quantized_linears": {
+                key: (value.last_backend, dict(value.backend_counts))
+                for key, value in self.quantized_linears.items()
+            },
+        }
+
+    def _restore_decode_kernel_counters(self, snapshot: dict[str, Any]) -> None:
+        self.wkv_backend_last = snapshot["wkv_backend_last"]
+        self.wkv_backend_counts = dict(snapshot["wkv_backend_counts"])
+        self.group_rkv_quant_projection_counts = dict(
+            snapshot["group_rkv_quant_projection_counts"]
+        )
+        for key, (last_backend, backend_counts) in snapshot["quantized_linears"].items():
+            value = self.quantized_linears.get(key)
+            if value is not None:
+                value.last_backend = last_backend
+                value.backend_counts = dict(backend_counts)
+
     def _build_compiled_decode_function(self, batch_size: int):
         mx = _mx()
         batch = int(batch_size)
@@ -1982,7 +2084,12 @@ class MLXRWKV7Model:
                 v_first=v_first,
                 seen_tokens=0,
             )
-            hidden, state = self._step_token(token_ids.reshape(batch), state, evaluate=False)
+            hidden, state = self._step_token(
+                token_ids.reshape(batch),
+                state,
+                evaluate=False,
+                norm_backend=self.decode_norm_backend,
+            )
             logits = self._logits_from_hidden(hidden).reshape(batch, 1, self.vocab_size)
             return (logits, *self._flatten_compiled_decode_state(state))
 
@@ -2002,18 +2109,30 @@ class MLXRWKV7Model:
 
         mx = _mx()
         batch = int(batch_size)
+        compiled_norm_backend = self._compiled_decode_norm_backend_by_batch.get(batch)
+        if compiled_norm_backend != self.decode_norm_backend:
+            self._compiled_decode_functions.pop(batch, None)
+            self.decode_compile_s_by_batch.pop(batch, None)
+            self._compiled_decode_validated_batches.discard(batch)
+            self._compiled_decode_rejected_batches.discard(batch)
+            self.decode_compiled_validation_by_batch.pop(batch, None)
         if batch in self._compiled_decode_functions and batch in self.decode_compile_s_by_batch:
             return float(self.decode_compile_s_by_batch[batch])
+        counter_snapshot = self._decode_kernel_counter_snapshot()
         function = self._compiled_decode_functions.get(batch)
         if function is None:
             function = self._build_compiled_decode_function(batch)
             self._compiled_decode_functions[batch] = function
+            self._compiled_decode_norm_backend_by_batch[batch] = self.decode_norm_backend
         token_ids = mx.zeros((batch,), dtype=mx.int32)
         state = self.init_state(batch)
         started = time.perf_counter()
-        outputs = function(token_ids, *self._flatten_compiled_decode_state(state))
-        mx.eval(*outputs)
-        elapsed = time.perf_counter() - started
+        try:
+            outputs = function(token_ids, *self._flatten_compiled_decode_state(state))
+            mx.eval(*outputs)
+            elapsed = time.perf_counter() - started
+        finally:
+            self._restore_decode_kernel_counters(counter_snapshot)
         self.decode_compile_s_by_batch[batch] = float(elapsed)
         return float(elapsed)
 
@@ -2021,9 +2140,17 @@ class MLXRWKV7Model:
         mx = _mx()
         batch = int(state.batch_size)
         function = self._compiled_decode_functions.get(batch)
-        if function is None:
+        if (
+            function is None
+            or self._compiled_decode_norm_backend_by_batch.get(batch) != self.decode_norm_backend
+        ):
+            self._compiled_decode_validated_batches.discard(batch)
+            self._compiled_decode_rejected_batches.discard(batch)
+            self.decode_compile_s_by_batch.pop(batch, None)
+            self.decode_compiled_validation_by_batch.pop(batch, None)
             function = self._build_compiled_decode_function(batch)
             self._compiled_decode_functions[batch] = function
+            self._compiled_decode_norm_backend_by_batch[batch] = self.decode_norm_backend
         ids = mx.array(token_ids, dtype=mx.int32).reshape(-1)
         if int(ids.shape[0]) != batch:
             raise ValueError(f"token batch size {int(ids.shape[0])} does not match state batch size {batch}")
@@ -2049,6 +2176,8 @@ class MLXRWKV7Model:
         steps: int = 32,
         logits_atol: float = 0.0,
         state_atol: float = 0.0,
+        reference_logits_atol: float = 0.25,
+        reference_state_atol: float = 0.5,
     ) -> dict[str, Any]:
         """Parity-gate a prepared compiled graph against eager greedy decode.
 
@@ -2056,13 +2185,15 @@ class MLXRWKV7Model:
         graph must first pass this gate for the concrete batch/model/backend.
         This is necessary because aggressive graph fusion can accumulate
         model-dependent low-margin drift even when one-step parity looks good.
+        The opt-in fast-LayerNorm route additionally follows a reference-norm
+        trajectory and requires exact greedy tokens plus bounded numeric drift.
         """
 
         mx = _mx()
         count = int(steps)
         if count <= 0:
             raise ValueError("compiled decode validation steps must be positive")
-        if logits_atol < 0 or state_atol < 0:
+        if min(logits_atol, state_atol, reference_logits_atol, reference_state_atol) < 0:
             raise ValueError("compiled decode validation tolerances must be non-negative")
         batch = int(state.batch_size)
         self.prepare_compiled_decode(batch)
@@ -2070,32 +2201,55 @@ class MLXRWKV7Model:
         compiled_logits = logits
         eager_state = state.clone()
         compiled_state = state.clone()
+        reference_logits = logits
+        reference_state = state.clone()
         eager_tokens: list[list[int]] = []
         compiled_tokens: list[list[int]] = []
+        reference_tokens: list[list[int]] = []
+        require_reference_gate = self.decode_norm_backend == "fast"
         previous_backend = self.decode_backend
+        previous_norm_backend = self.decode_norm_backend
         previous_last = self.decode_backend_last
         previous_counts = dict(self.decode_backend_counts)
+        counter_snapshot = self._decode_kernel_counter_snapshot()
         try:
             for _ in range(count):
                 eager_token = mx.argmax(eager_logits[:, -1, :], axis=-1).astype(mx.int32)
                 compiled_token = mx.argmax(compiled_logits[:, -1, :], axis=-1).astype(mx.int32)
-                mx.eval(eager_token, compiled_token)
+                reference_token = mx.argmax(reference_logits[:, -1, :], axis=-1).astype(mx.int32)
+                mx.eval(eager_token, compiled_token, reference_token)
                 eager_tokens.append([int(value) for value in eager_token.tolist()])
                 compiled_tokens.append([int(value) for value in compiled_token.tolist()])
+                reference_tokens.append([int(value) for value in reference_token.tolist()])
                 self.decode_backend = "eager"
+                self.decode_norm_backend = previous_norm_backend
                 eager_logits, eager_state = self.decode_step(eager_token, eager_state)
                 self.decode_backend = "compiled"
                 compiled_logits, compiled_state = self.decode_step(compiled_token, compiled_state)
+                if require_reference_gate:
+                    self.decode_backend = "eager"
+                    self.decode_norm_backend = "reference"
+                    reference_logits, reference_state = self.decode_step(
+                        reference_token,
+                        reference_state,
+                    )
+                    self.decode_norm_backend = previous_norm_backend
+                else:
+                    reference_logits, reference_state = eager_logits, eager_state
             mx.eval(
                 eager_logits,
                 compiled_logits,
+                reference_logits,
                 *self._flatten_compiled_decode_state(eager_state),
                 *self._flatten_compiled_decode_state(compiled_state),
+                *self._flatten_compiled_decode_state(reference_state),
             )
         finally:
             self.decode_backend = previous_backend
+            self.decode_norm_backend = previous_norm_backend
             self.decode_backend_last = previous_last
             self.decode_backend_counts = previous_counts
+            self._restore_decode_kernel_counters(counter_snapshot)
         logits_diff = float(
             mx.max(mx.abs(eager_logits.astype(mx.float32) - compiled_logits.astype(mx.float32)))
         )
@@ -2108,7 +2262,29 @@ class MLXRWKV7Model:
             )
         )
         tokens_match = eager_tokens == compiled_tokens
-        passed = bool(tokens_match and logits_diff <= logits_atol and state_diff <= state_atol)
+        reference_logits_diff = float(
+            mx.max(mx.abs(reference_logits.astype(mx.float32) - eager_logits.astype(mx.float32)))
+        )
+        reference_state_diff = max(
+            float(mx.max(mx.abs(left.astype(mx.float32) - right.astype(mx.float32))))
+            for left, right in zip(
+                self._flatten_compiled_decode_state(reference_state),
+                self._flatten_compiled_decode_state(eager_state),
+                strict=True,
+            )
+        )
+        reference_tokens_match = reference_tokens == eager_tokens
+        reference_passed = bool(
+            reference_tokens_match
+            and reference_logits_diff <= reference_logits_atol
+            and reference_state_diff <= reference_state_atol
+        )
+        passed = bool(
+            tokens_match
+            and logits_diff <= logits_atol
+            and state_diff <= state_atol
+            and reference_passed
+        )
         result = {
             "status": "pass" if passed else "fail",
             "batch_size": batch,
@@ -2128,6 +2304,24 @@ class MLXRWKV7Model:
             "state_max_abs": state_diff,
             "logits_atol": float(logits_atol),
             "state_atol": float(state_atol),
+            "decode_norm_backend": previous_norm_backend,
+            "reference_norm_gate_required": require_reference_gate,
+            "reference_generated_tokens_match": reference_tokens_match,
+            "reference_first_token_mismatch_step": next(
+                (
+                    index + 1
+                    for index, (reference, eager) in enumerate(
+                        zip(reference_tokens, eager_tokens, strict=True)
+                    )
+                    if reference != eager
+                ),
+                None,
+            ),
+            "reference_logits_max_abs": reference_logits_diff,
+            "reference_state_max_abs": reference_state_diff,
+            "reference_logits_atol": float(reference_logits_atol),
+            "reference_state_atol": float(reference_state_atol),
+            "reference_norm_gate_pass": reference_passed,
         }
         self.decode_compiled_validation_by_batch[batch] = result
         if passed:
@@ -2270,11 +2464,32 @@ def load_mlx_generation_session(
     quant_rkv_min_params: int | None = None,
     quant_backend: str = "affine",
     wkv_backend: str = "reference",
+    decode_backend: str | None = None,
+    decode_norm_backend: str | None = None,
+    prepare_compiled_decode: bool = False,
+    compiled_decode_validation_tokens: int = 32,
+    compiled_decode_logits_atol: float = 0.0,
+    compiled_decode_state_atol: float = 0.0,
+    compiled_decode_reference_logits_atol: float = 0.25,
+    compiled_decode_reference_state_atol: float = 0.5,
 ) -> MLXGenerationSession:
     """Load a converted HF directory and prefill a tokenizer-backed MLX session."""
 
     from transformers import AutoTokenizer
 
+    if decode_backend is not None and decode_backend not in {"eager", "compiled", "auto"}:
+        raise ValueError("decode_backend must be eager, compiled, auto, or None")
+    if decode_norm_backend is not None and decode_norm_backend not in {"reference", "fast"}:
+        raise ValueError("decode_norm_backend must be reference, fast, or None")
+    if prepare_compiled_decode and int(compiled_decode_validation_tokens) <= 0:
+        raise ValueError("compiled_decode_validation_tokens must be positive")
+    if min(
+        compiled_decode_logits_atol,
+        compiled_decode_state_atol,
+        compiled_decode_reference_logits_atol,
+        compiled_decode_reference_state_atol,
+    ) < 0:
+        raise ValueError("compiled decode tolerances must be non-negative")
     model = load_mlx_rwkv7_model(
         model_dir,
         dtype=dtype,
@@ -2284,13 +2499,26 @@ def load_mlx_generation_session(
         quant_backend=quant_backend,
         wkv_backend=wkv_backend,
     )
+    if decode_backend is not None:
+        model.decode_backend = str(decode_backend)
+    if decode_norm_backend is not None:
+        model.decode_norm_backend = str(decode_norm_backend)
     tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
-    return MLXGenerationSession.from_prompt(
+    session = MLXGenerationSession.from_prompt(
         model,
         tokenizer,
         prompt,
         skip_special_tokens=skip_special_tokens,
     )
+    if prepare_compiled_decode:
+        session.prepare_compiled_decode(
+            validation_tokens=int(compiled_decode_validation_tokens),
+            logits_atol=float(compiled_decode_logits_atol),
+            state_atol=float(compiled_decode_state_atol),
+            reference_logits_atol=float(compiled_decode_reference_logits_atol),
+            reference_state_atol=float(compiled_decode_reference_state_atol),
+        )
+    return session
 
 
 def generate_text_from_hf(
@@ -2305,24 +2533,35 @@ def generate_text_from_hf(
     quant_rkv_min_params: int | None = None,
     quant_backend: str = "affine",
     wkv_backend: str = "reference",
+    decode_backend: str | None = None,
+    decode_norm_backend: str | None = None,
+    prepare_compiled_decode: bool = False,
+    compiled_decode_validation_tokens: int = 32,
+    compiled_decode_logits_atol: float = 0.0,
+    compiled_decode_state_atol: float = 0.0,
+    compiled_decode_reference_logits_atol: float = 0.25,
+    compiled_decode_reference_state_atol: float = 0.5,
 ) -> MLXGenerateOutput:
     """Load a converted HF directory and run tokenizer-integrated MLX generate."""
 
-    from transformers import AutoTokenizer
-
-    model = load_mlx_rwkv7_model(
+    session = load_mlx_generation_session(
         model_dir,
+        prompt,
         dtype=dtype,
+        skip_special_tokens=skip_special_tokens,
         quantization=quantization,
         quant_min_params=quant_min_params,
         quant_rkv_min_params=quant_rkv_min_params,
         quant_backend=quant_backend,
         wkv_backend=wkv_backend,
+        decode_backend=decode_backend,
+        decode_norm_backend=decode_norm_backend,
+        prepare_compiled_decode=prepare_compiled_decode,
+        compiled_decode_validation_tokens=compiled_decode_validation_tokens,
+        compiled_decode_logits_atol=compiled_decode_logits_atol,
+        compiled_decode_state_atol=compiled_decode_state_atol,
+        compiled_decode_reference_logits_atol=compiled_decode_reference_logits_atol,
+        compiled_decode_reference_state_atol=compiled_decode_reference_state_atol,
     )
-    tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
-    return model.generate_text(
-        tokenizer,
-        prompt,
-        max_new_tokens=max_new_tokens,
-        skip_special_tokens=skip_special_tokens,
-    )
+    session.decode(int(max_new_tokens))
+    return session.output()
