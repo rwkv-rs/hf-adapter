@@ -771,6 +771,9 @@ def run_rwkv_mlx(
     dplr_layer_eval_interval: int,
     dplr_layer_eval_min_tokens: int,
     dplr_window_tokens: int,
+    decode_backend: str,
+    prepare_compiled_decode: bool,
+    compiled_decode_validation_tokens: int,
     results: str,
     store_response: bool = False,
 ) -> list[dict[str, Any]]:
@@ -819,11 +822,24 @@ def run_rwkv_mlx(
     model.dplr_layer_eval_interval = int(dplr_layer_eval_interval)
     model.dplr_layer_eval_min_tokens = int(dplr_layer_eval_min_tokens)
     model.dplr_window_tokens = int(dplr_window_tokens)
+    model.decode_backend = str(decode_backend)
+    if prepare_compiled_decode:
+        model.prepare_compiled_decode(batch_size=1)
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    load_s = time.perf_counter() - t_load
     prompt_ids = [int(x) for x in tokenizer(prompt_case.prompt, add_special_tokens=False).input_ids]
     if not prompt_ids:
         raise ValueError("RWKV tokenizer produced zero prompt tokens")
+    compiled_decode_validation = None
+    if prepare_compiled_decode:
+        validation_logits, validation_state = model.prefill([prompt_ids])
+        mx.eval(validation_logits, *validation_state.recurrent_state)
+        compiled_decode_validation = model.validate_compiled_decode(
+            validation_logits,
+            validation_state,
+            steps=int(compiled_decode_validation_tokens),
+        )
+        mx.clear_cache()
+    load_s = time.perf_counter() - t_load
 
     warmups = max(0, int(warmup_repeats))
     for max_new_tokens in decode_lengths:
@@ -930,6 +946,18 @@ def run_rwkv_mlx(
                 ),
                 "dplr_window_tokens": telemetry.get("dplr_window_tokens"),
                 "dplr_windows_last": telemetry.get("dplr_windows_last"),
+                "decode_backend": telemetry.get("decode_backend"),
+                "decode_backend_last": telemetry.get("decode_backend_last"),
+                "decode_backend_counts": telemetry.get("decode_backend_counts"),
+                "decode_compiled_batches": telemetry.get("decode_compiled_batches"),
+                "decode_compiled_validated_batches": telemetry.get(
+                    "decode_compiled_validated_batches"
+                ),
+                "decode_compiled_rejected_batches": telemetry.get(
+                    "decode_compiled_rejected_batches"
+                ),
+                "decode_compile_s_by_batch": telemetry.get("decode_compile_s_by_batch"),
+                "compiled_decode_validation": compiled_decode_validation,
                 "prompt_case": prompt_case.name,
                 "prompt_target_chars": int(prompt_case.target_chars),
                 "prompt_chars": len(prompt_case.prompt),
@@ -1091,6 +1119,13 @@ def main() -> int:
     ap.add_argument("--rwkv-dplr-layer-eval-interval", type=int, default=4)
     ap.add_argument("--rwkv-dplr-layer-eval-min-tokens", type=int, default=64)
     ap.add_argument("--rwkv-dplr-window-tokens", type=int, default=512)
+    ap.add_argument(
+        "--rwkv-decode-backend",
+        default="auto",
+        choices=["eager", "compiled", "auto"],
+    )
+    ap.add_argument("--rwkv-prepare-compiled-decode", action="store_true")
+    ap.add_argument("--rwkv-compiled-decode-validation-tokens", type=int, default=32)
     ap.add_argument("--ollama-cache-prompt", action="store_true", help="Allow Ollama/runner prompt-cache reuse across rows.")
     ap.add_argument("--no-ollama-memory", action="store_true", help="Skip official /api/ps loaded-memory telemetry.")
     ap.add_argument("--temperature", type=float, default=0.0)
@@ -1135,6 +1170,8 @@ def main() -> int:
         raise ValueError("--rwkv-dplr-layer-eval-min-tokens must be positive")
     if args.rwkv_dplr_window_tokens < 0:
         raise ValueError("--rwkv-dplr-window-tokens must be non-negative")
+    if args.rwkv_compiled_decode_validation_tokens <= 0:
+        raise ValueError("--rwkv-compiled-decode-validation-tokens must be positive")
     if args.summarize:
         rows = load_jsonl(args.summarize)
         print(json.dumps(summarize_rows(rows), ensure_ascii=False))
@@ -1180,6 +1217,9 @@ def main() -> int:
         "rwkv_dplr_layer_eval_interval": int(args.rwkv_dplr_layer_eval_interval),
         "rwkv_dplr_layer_eval_min_tokens": int(args.rwkv_dplr_layer_eval_min_tokens),
         "rwkv_dplr_window_tokens": int(args.rwkv_dplr_window_tokens),
+        "rwkv_decode_backend": args.rwkv_decode_backend,
+        "rwkv_prepare_compiled_decode": bool(args.rwkv_prepare_compiled_decode),
+        "rwkv_compiled_decode_validation_tokens": int(args.rwkv_compiled_decode_validation_tokens),
         **device_info(),
     }
     print(json.dumps(env, ensure_ascii=False))
@@ -1225,6 +1265,9 @@ def main() -> int:
             "rwkv_dplr_layer_eval_interval": int(args.rwkv_dplr_layer_eval_interval),
             "rwkv_dplr_layer_eval_min_tokens": int(args.rwkv_dplr_layer_eval_min_tokens),
             "rwkv_dplr_window_tokens": int(args.rwkv_dplr_window_tokens),
+            "rwkv_decode_backend": args.rwkv_decode_backend,
+            "rwkv_prepare_compiled_decode": bool(args.rwkv_prepare_compiled_decode),
+            "rwkv_compiled_decode_validation_tokens": int(args.rwkv_compiled_decode_validation_tokens),
         }
         print(json.dumps(plan, ensure_ascii=False))
         append_jsonl(args.results, plan)
@@ -1290,6 +1333,9 @@ def main() -> int:
                     dplr_layer_eval_interval=int(args.rwkv_dplr_layer_eval_interval),
                     dplr_layer_eval_min_tokens=int(args.rwkv_dplr_layer_eval_min_tokens),
                     dplr_window_tokens=int(args.rwkv_dplr_window_tokens),
+                    decode_backend=args.rwkv_decode_backend,
+                    prepare_compiled_decode=bool(args.rwkv_prepare_compiled_decode),
+                    compiled_decode_validation_tokens=int(args.rwkv_compiled_decode_validation_tokens),
                     results=args.results,
                     store_response=bool(args.store_responses),
                 )

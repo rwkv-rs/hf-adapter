@@ -287,6 +287,38 @@ Tiled-summary / long-context checkpoint:
   chars512 rows), then cold short-prompt compilation and broader M1-M4/M5 Pro
   validation. Do not return to scalar summary optimization.
 
+Guarded compiled-decode checkpoint:
+
+- `MLXRWKV7Model` now has a full-model `mx.compile` decode graph with flattened
+  recurrent/cache state. Compilation/warmup is explicit, and `auto` never
+  promotes a graph until `validate_compiled_decode()` has compared eager and
+  compiled greedy tokens, final logits, and every state tensor for the concrete
+  model and batch size. A failed gate leaves serving on eager decode.
+- M5 0.4B, batch1, prompt512/64-token fp16 decode: eager median `96.39 tok/s`,
+  guarded compiled median `119.99 tok/s` (`1.245x`), with all 64 tokens and
+  final logits/state exact. W4 is `97.79 -> 119.46 tok/s` (`1.222x`) with the
+  same exact gate. Peak MLX memory rises only about `0.6%-0.7%` in these rows.
+- The guard is required rather than decorative. The 0.1B fp16 graph retained
+  greedy tokens but failed strict numeric parity after 64 tokens; the 1.5B
+  graph first changed a greedy token at step 17. Both are rejected by `auto`
+  and their served benchmark rows remain eager/exact.
+- With prepared+validated 0.4B fp16 decode and tiled DPLR prefill, the repeated
+  M5 same-run Qwen3.5 0.8B comparison passes every available conservative speed
+  gate at chars128 and chars512. RWKV/Qwen minimum ratios are decode
+  `1.136x/1.157x`, prefill `1.035x/1.687x`, and TTFT
+  `0.473x/0.461x` (lower is better). The overall result remains `unknown`
+  because Ollama exposes loaded memory, not a structured peak-to-peak metric.
+- Evidence: `bench/results_mlx_decode_compile_m5_20260710_{fp16,w4}.jsonl`
+  and
+  `bench/results_qwen35_apple_m5_20260710_dplr_tiled_compiled_fp16.jsonl`.
+  `scripts/mlx_decode_compile_bench.py` is the permanent eager/guarded-auto
+  parity and speed harness. First-use compilation has been observed as high as
+  about `1.43s`; wrappers must charge warmup+validation to load time rather
+  than hiding it in first-token latency.
+- Next Apple work is to recover exact compiled promotion for 0.1B/1.5B, fuse
+  W4 projection/dequant further, collect true peak memory, and run the same
+  gates on M1-M4/M5 Pro/Max. Do not default compiled decode without the guard.
+
 ## Active Goal: Finish the Current HF Adapter First
 
 Current priority: finish the RWKV-7 Hugging Face / Transformers adapter with

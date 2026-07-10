@@ -69,6 +69,9 @@ RWKV_DPLR_SUMMARY_IMPLEMENTATION="${RWKV_DPLR_SUMMARY_IMPLEMENTATION:-tiled}"
 RWKV_DPLR_LAYER_EVAL_INTERVAL="${RWKV_DPLR_LAYER_EVAL_INTERVAL:-4}"
 RWKV_DPLR_LAYER_EVAL_MIN_TOKENS="${RWKV_DPLR_LAYER_EVAL_MIN_TOKENS:-64}"
 RWKV_DPLR_WINDOW_TOKENS="${RWKV_DPLR_WINDOW_TOKENS:-512}"
+RWKV_DECODE_BACKEND="${RWKV_DECODE_BACKEND:-auto}"
+RWKV_PREPARE_COMPILED_DECODE="${RWKV_PREPARE_COMPILED_DECODE:-0}"
+RWKV_COMPILED_DECODE_VALIDATION_TOKENS="${RWKV_COMPILED_DECODE_VALIDATION_TOKENS:-32}"
 
 # Comparison defaults cover the current local/public model classes.  Add the
 # 4B/9B pairs once matching RWKV 2.9B/larger or distilled mobile exports exist.
@@ -296,7 +299,12 @@ baseline_args=(
   --rwkv-dplr-layer-eval-interval "${RWKV_DPLR_LAYER_EVAL_INTERVAL}"
   --rwkv-dplr-layer-eval-min-tokens "${RWKV_DPLR_LAYER_EVAL_MIN_TOKENS}"
   --rwkv-dplr-window-tokens "${RWKV_DPLR_WINDOW_TOKENS}"
+  --rwkv-decode-backend "${RWKV_DECODE_BACKEND}"
+  --rwkv-compiled-decode-validation-tokens "${RWKV_COMPILED_DECODE_VALIDATION_TOKENS}"
 )
+if [[ "${RWKV_PREPARE_COMPILED_DECODE}" == "1" ]]; then
+  baseline_args+=(--rwkv-prepare-compiled-decode)
+fi
 if [[ "${OLLAMA_THINK}" == "1" ]]; then
   baseline_args+=(--ollama-think)
 fi

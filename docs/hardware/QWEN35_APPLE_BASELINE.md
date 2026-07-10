@@ -111,6 +111,26 @@ W4 passed prefill and TTFT but decode remained `0.950x`. Chars128 cold compile
 and cross-run stability remain open, so do not generalize the single matrix to
 an unconditional Qwen3.5 win.
 
+For compiled decode, use `RWKV_DECODE_BACKEND=auto` together with
+`RWKV_PREPARE_COMPILED_DECODE=1` and a nontrivial
+`RWKV_COMPILED_DECODE_VALIDATION_TOKENS` (64 in the current evidence). The
+wrapper charges compile/warmup plus eager-vs-compiled validation to `load_s`.
+`auto` only selects compiled decode after exact generated-token, final-logit,
+and full-state parity for the concrete model and batch size; otherwise it
+serves eager decode. Do not use `RWKV_DECODE_BACKEND=compiled` as a production
+shortcut around that gate.
+
+On M5, guarded compiled decode improves 0.4B batch1 prompt512/decode64 fp16
+from `96.39` to `119.99 tok/s` (`1.245x`) and W4 from `97.79` to
+`119.46 tok/s` (`1.222x`), with exact 64-token/logit/state parity. The 0.1B
+and 1.5B candidates fail strict validation and remain eager under `auto`.
+Combined with tiled DPLR, the repeated fp16 same-run rows in
+`bench/results_qwen35_apple_m5_20260710_dplr_tiled_compiled_fp16.jsonl` pass
+all available conservative speed gates at chars128 and chars512: decode
+`1.136x/1.157x`, prefill `1.035x/1.687x`, and TTFT
+`0.473x/0.461x` RWKV/Qwen. The comparison remains `unknown` because the Qwen
+structured telemetry is loaded memory rather than a comparable peak metric.
+
 It emits rows with `axis=qwen35_apple_baseline` and can run:
 
 1. Qwen3.5 through a local Ollama server using the streaming `/api/generate`
