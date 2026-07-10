@@ -196,12 +196,12 @@ Remaining before this goal is complete:
   WY/low-rank factors to reduce memory traffic and close the Albatross gap.
 - Make the explicit three-stage path at least competitive with the P0 fused
   recurrent scan; current dense3 is correctness-first and slower than P0.
-- The 4090 native prefill benchmark has moved 0.4B prompt512 bsz1 past the
-  `>=0.45x` checkpoint with the opt-in fused state-scan row (`0.4921x`). The
-  remaining stretch is `>=0.60x`; current gap is about `5,626 tok/s`. The next
-  concrete kernel task is deeper fusion beyond state-prep+scan, especially
-  output-prep/application fusion and DPLR-specific apply/output fusion;
-  wrapper-only work is not the performance route.
+- The exact-4090 fixed-shape prefill graph now runs 0.4B prompt512 at
+  `60736.2 tok/s` for bsz1 (`1.0115x` Albatross) and `102417.7 tok/s` for bsz4
+  (`0.8695x`). Bsz1 is closed; the active prefill gap is larger-batch parity.
+  Continue with deeper scan/projection/layout work for bsz4 rather than wrapper
+  micro-optimization. Keep DPLR/WY as the cross-card/variable-shape algorithmic
+  route rather than deleting it because one fixed shape passes.
 - Do not call the DPLR/WY goal finished until compact WY or an equivalent
   compiled path is verified end-to-end against the original acceptance target.
 
@@ -562,50 +562,39 @@ Run this checklist for every new GPU before marking it as supported:
 
 - Policy family: `ada`.
 - Role: high-end consumer validation target.
-- Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
-- Default-off: `fused_output_project`, projection/LoRA fusions, and prefill-scan
-  as a default.
+- Exact-4090 default-on: `fast_cache`, `fast_prefill`, fixed-shape prefill
+  graph, split prefill scan, fused prefill state prep/output/shift,
+  `fused_recurrent_output`, and decode `fused_output`.
+- Other Ada default-off: prefill graph/scan and unmeasured prefill fusions;
+  all cards keep the compatible dense fallback. `fused_output_project` and
+  projection/LoRA experiments remain opt-in everywhere.
 - 4090 adaptation rule:
   - cuBLAS/torch remains the baseline for shallow R/K/V projection; split-K/layout
     prototype rows were slower and must stay telemetry-only.
-  - Native fused prefill scan can be used under explicit A/B flags
-    (`RWKV7_FAST_PREFILL=1` + `RWKV7_NATIVE_PREFILL_FUSED_SCAN=1`) after
-    cache-handoff correctness rows, but it is not a blanket default until the
-    broader batch/model matrix passes.
-  - Native prefill state-prep fusion
-    (`RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP=1`) is a small positive Ada probe:
-    4090 / 0.4B / fp16 / prompt512 moves bsz=1 from `21857.3` to `22358.5`
-    tok/s and bsz=4 stays neutral (`81144.8` tok/s). Keep it explicit until
-    the larger model/card matrix passes. For this exact Ada shape,
-    `RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M=8` is the best recorded scan tile; `4`,
-    `16`, and `32` were slower end-to-end.
-  - Native fused state-prep + recurrent scan
-    (`RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN=1`) is the current best Ada bsz=1
-    prefill row when paired with `RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1`: 4090 /
-    0.4B / fp16 / prompt512 confirms at `25,663.2 tok/s` (`0.4921x`
-    Albatross) with greedy/cache smoke passing. It is opt-in only: before
-    defaulting, validate bsz=1/2/4/8, larger checkpoints, memory, and other
-    card families; do not reuse the Ada full-head `N=64` kernel as a generic
-    V100/A100/H100/Blackwell default.
-  - `RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS` is a telemetry override only. The
-    4090 scan microbench shows batch-dependent winners (`8` warps at bsz=1,
-    `1` warp at bsz=4), but full prefill rows do not beat the best
-    state-prep-only row, so do not promote a warp count without exact-card
-    end-to-end wins across the claimed bsz set.
-  - `RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX=1` supports prefill-shaped tensors
-    but remains telemetry-only. 4090 isolated shift-mix is slower than torch
-    addcmul, and the full-prefill row only gives a tiny bsz=4 bump while bsz=1
-    stays below the best state-prep-only row. Do not default it outside a
-    larger fused norm/shift/projection/state-prep design.
+  - Fixed-shape CUDA Graph replay is the promoted serving path. It captures the
+    complete native prefill layer sequence and removes the launch gaps that made
+    isolated positive kernels regress end-to-end. Use
+    `rwkv7_warmup_fast_prefill()` before serving and clear the graph cache after
+    changing capture-affecting environment settings.
+  - For 0.4B/fp16/prompt512, exact-4090 defaults use scan tile 4 at bsz1 and
+    tile 8 at bsz>=2, both with four warps. Public API rows are `60736.2 tok/s`
+    at bsz1 (`1.0115x` Albatross) and `102417.7 tok/s` at bsz4 (`0.8695x`).
+    1.5B bsz1 reaches `32357.8 tok/s`. Greedy/cache handoff and full-vs-chunked
+    prompt1024 tests pass.
+  - Keep separate fused state prep + split scan inside the graph. The combined
+    state-prep+scan kernel is slower under graph replay. Fused output prep and
+    fused shift mix are positive only as part of the whole captured sequence.
+  - Do not generalize the 4090 tile/defaults to 4070/4080 or another GPU family
+    without card-local rows. Do not claim universal parity: bsz4 remains below
+    the strongest Albatross row.
   - Latest fine prefill breakdown splits dense R/K/V projection separately:
     bsz=1 prompt512 has scan `7.6627ms`, LoRA sum `6.2419ms`, norm/shift/mix
     `3.8281ms`, state-prep `3.1581ms`, and dense R/K/V sum `2.2056ms`. The
     next Ada prefill experiment should fuse across these buckets rather than
     optimizing cache or a single shallow pointwise kernel.
-  - Prefill output-prep fusion (`RWKV7_NATIVE_PREFILL_FUSED_OUTPUT=1`) is
-    correctness-clean but not defaultable on the current 4090 prompt512 rows:
-    it reduces the isolated output-prep bucket yet end-to-end bsz=1/4 stays
-    below the state-prep-only path.
+  - Prefill output-prep fusion remains negative on the uncaptured direct path,
+    but is positive together with shift mix inside whole-prefill graph replay;
+    this promotion is exact-4090-only and does not reverse the cross-card rule.
   - Prefill WAVG LoRA grouping must stay telemetry-only:
     `RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA=1` improves isolated `B*T=512`
     microbench but regresses end-to-end bsz=1 prefill (`21773.4` tok/s) and is
@@ -839,8 +828,11 @@ python /home/data/wangyue/projects/rwkv7-hf-adapter/tests/test_peft_lora.py \
 6. Finish HF quantized W8/W4 inference as two explicit lanes: `speed` policy
    for the acceptance target (footprint lower than fp16, W8/W4 decode not
    slower, logits aligned), and `memory` policy for maximum footprint reduction
-   that still needs fused quant kernels before it can claim fp16-or-better
-   speed.
+   that still needs fused quant prefill before it can claim fp16-or-better
+   speed. Exact-4090 0.4B `speed` rows now pass both prefill and decode: W8
+   payload `0.926x`, W4 payload `0.891x`; continue the same all-phase gate on
+   larger models/cards. The W4 `memory` lane keeps `0.399x` payload and faster
+   decode but does not yet pass prefill.
 7. Validate on more GPUs and larger batch sizes.
 8. Start native Transformers implementation under `src/transformers/models/rwkv7/` style layout.
 9. Remove mandatory FLA dependency from the final HF implementation.

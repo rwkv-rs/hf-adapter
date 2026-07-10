@@ -243,6 +243,7 @@ def test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch() -> None:
     old_env = os.environ.get(key)
     old_available = native_jit.torch.cuda.is_available
     old_capability = native_jit.torch.cuda.get_device_capability
+    old_device_name = native_jit.torch.cuda.get_device_name
     try:
         os.environ.pop(key, None)
         native_jit.torch.cuda.is_available = lambda: True
@@ -251,11 +252,18 @@ def test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch() -> None:
         assert native_jit._native_prefill_scan_block_m(64, 4) == 32
         native_jit.torch.cuda.get_device_capability = lambda: (7, 5)
         assert native_jit._native_prefill_scan_block_m(64, 1) == 64
+        native_jit.torch.cuda.get_device_capability = lambda: (8, 9)
+        native_jit.torch.cuda.get_device_name = lambda: "NVIDIA GeForce RTX 4090"
+        assert native_jit._native_prefill_scan_block_m(64, 1) == 4
+        assert native_jit._native_prefill_scan_block_m(64, 4) == 8
+        native_jit.torch.cuda.get_device_name = lambda: "NVIDIA GeForce RTX 4070"
+        assert native_jit._native_prefill_scan_block_m(64, 1) == 64
         os.environ[key] = "8"
         assert native_jit._native_prefill_scan_block_m(64, 4) == 8
     finally:
         native_jit.torch.cuda.is_available = old_available
         native_jit.torch.cuda.get_device_capability = old_capability
+        native_jit.torch.cuda.get_device_name = old_device_name
         if old_env is None:
             os.environ.pop(key, None)
         else:

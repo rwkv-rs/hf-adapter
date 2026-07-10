@@ -45,6 +45,7 @@ ADAPTER_FILES = [
     "native_jit.py",
     "native_model.py",
     "native_quant.py",
+    "native_quant_a8w8.py",
     "native_quant_mm4.py",
     "native_quant_mm8.py",
     "native_quant_torchao.py",

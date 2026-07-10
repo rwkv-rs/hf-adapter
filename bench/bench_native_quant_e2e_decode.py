@@ -199,13 +199,28 @@ def quantize_model(model, quantization: str, min_params: int, policy: str) -> tu
             min_params=min_params,
             policy=policy,
         )
+    elif quantization == "a8w8":
+        from rwkv7_hf.native_quant_a8w8 import quantize_model_a8w8
+
+        replaced = quantize_model_a8w8(
+            model,
+            min_params=min_params,
+            policy=policy,
+        )
     else:  # pragma: no cover
         raise ValueError(quantization)
     return int(replaced), count_modules(model)
 
 
 def count_modules(model) -> dict[str, int]:
-    counts = {"linear_dense": 0, "mm8": 0, "mm4": 0, "torchao_w8": 0, "torchao_w4": 0}
+    counts = {
+        "linear_dense": 0,
+        "mm8": 0,
+        "mm4": 0,
+        "a8w8": 0,
+        "torchao_w8": 0,
+        "torchao_w4": 0,
+    }
     for mod in model.modules():
         name = type(mod).__name__
         if isinstance(mod, torch.nn.Linear):
@@ -220,6 +235,8 @@ def count_modules(model) -> dict[str, int]:
             counts["mm8"] += 1
         elif name == "MM4Linear":
             counts["mm4"] += 1
+        elif name == "A8W8Linear":
+            counts["a8w8"] += 1
     return counts
 
 
@@ -299,7 +316,7 @@ def main() -> int:
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="true")
     ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="native_graph")
-    quantization_choices = ["none", "mm8", "mm4", "torchao_w8", "torchao_w4"]
+    quantization_choices = ["none", "mm8", "mm4", "a8w8", "torchao_w8", "torchao_w4"]
     ap.add_argument("--quantizations", nargs="+", choices=quantization_choices, default=["none", "mm8", "mm4"])
     ap.add_argument(
         "--single-quantization",
@@ -348,6 +365,12 @@ def main() -> int:
         model = load_model(args, dtype)
         replaced, module_counts = quantize_model(model, quantization, args.min_params, args.policy)
         footprint = module_footprint_mb(model)
+        # Measure steady-state inference memory, not temporary fp32 tensors
+        # created while quantizing a dense checkpoint at process startup.
+        # Production deployments normally load an already packed checkpoint.
+        if args.device.startswith("cuda"):
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
         res = benchmark_decode(args, tok, model, ids)
         prompt_logits_for_baseline = res["prompt_logits"]
         final_logits_for_baseline = res["final_logits"]
