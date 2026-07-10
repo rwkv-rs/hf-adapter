@@ -198,6 +198,7 @@ def test_prefill_opt_in_fused_state_scan_fallback_matches_token_loop() -> None:
         key: os.environ.get(key)
         for key in (
             "RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN",
+            "RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_MAX_BATCH",
             "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT",
             "RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT",
         )
@@ -206,12 +207,15 @@ def test_prefill_opt_in_fused_state_scan_fallback_matches_token_loop() -> None:
     old_output_avail = native_jit.fused_attn_output_prepare_available
     try:
         os.environ["RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN"] = "1"
+        os.environ["RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_MAX_BATCH"] = "1"
         os.environ["RWKV7_NATIVE_PREFILL_FUSED_OUTPUT"] = "1"
         # The state-scan path intentionally stays separate from the older
         # scan+output fusion probe, which consumes already-prepared W/K/V/KK.
         os.environ.pop("RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT", None)
         native_jit.fused_recurrent_scan_state_prep_available = lambda: True
         native_jit.fused_attn_output_prepare_available = lambda: True
+        assert native_jit._native_prefill_fused_state_scan_enabled(1)
+        assert not native_jit._native_prefill_fused_state_scan_enabled(2)
         with torch.no_grad():
             ref = native_jit.forward(model, ids, packs).float().view(1, -1)
             logits, state, xpa, xpf = native_jit.prefill(model, ids, packs, logits_to_keep=1)
@@ -232,6 +236,32 @@ def test_prefill_opt_in_fused_state_scan_fallback_matches_token_loop() -> None:
     assert xpf[1].shape == (1, 8)
 
 
+def test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch() -> None:
+    from rwkv7_hf import native_jit
+
+    key = "RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M"
+    old_env = os.environ.get(key)
+    old_available = native_jit.torch.cuda.is_available
+    old_capability = native_jit.torch.cuda.get_device_capability
+    try:
+        os.environ.pop(key, None)
+        native_jit.torch.cuda.is_available = lambda: True
+        native_jit.torch.cuda.get_device_capability = lambda: (7, 0)
+        assert native_jit._native_prefill_scan_block_m(64, 1) == 16
+        assert native_jit._native_prefill_scan_block_m(64, 4) == 32
+        native_jit.torch.cuda.get_device_capability = lambda: (7, 5)
+        assert native_jit._native_prefill_scan_block_m(64, 1) == 64
+        os.environ[key] = "8"
+        assert native_jit._native_prefill_scan_block_m(64, 4) == 8
+    finally:
+        native_jit.torch.cuda.is_available = old_available
+        native_jit.torch.cuda.get_device_capability = old_capability
+        if old_env is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = old_env
+
+
 def main() -> int:
     if torch is None:
         print("SKIP native prefill scan test: torch unavailable")
@@ -239,6 +269,7 @@ def main() -> int:
     test_prefill_matches_token_loop()
     test_prefill_opt_in_lora_state_prep_fallback_matches_token_loop()
     test_prefill_opt_in_fused_state_scan_fallback_matches_token_loop()
+    test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch()
     print("PASS")
     return 0
 
