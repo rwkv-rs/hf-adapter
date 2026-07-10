@@ -203,6 +203,14 @@ def install_fake_model_kernel(
     def run(_owner, request):
         if malformed:
             return {"output_kind": request["model_kind"]}
+        if request["model_kind"] == "causal_lm":
+            return {
+                "output_kind": "causal_lm",
+                "logits": torch.full((1, 2, 7), 3.0),
+                "past_key_values": request["past_key_values"],
+                "implementation": "fake-causal-prefill-v1",
+                "phase": "prefill",
+            }
         return {
             "output_kind": request["model_kind"],
             "last_hidden_state": torch.ones(1, 1, 4),
@@ -241,3 +249,16 @@ def test_model_protocol_auto_falls_back_but_optimized_is_strict(monkeypatch):
     install_fake_model_kernel(monkeypatch, malformed=True)
     assert maybe_model_forward(object(), model_request()) is None
     assert "kernel model result is missing" in get_last_model_route()["reason"]
+
+
+def test_causal_lm_uses_single_early_model_boundary(monkeypatch, tiny_config):
+    from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
+
+    install_fake_model_kernel(monkeypatch)
+    model = RWKV7ForCausalLM(tiny_config).eval()
+    with torch.inference_mode():
+        output = model(input_ids=torch.tensor([[1, 2]]), use_cache=True)
+    assert tuple(output.logits.shape) == (1, 2, 7)
+    assert bool((output.logits == 3).all())
+    assert get_last_model_route()["implementation"] == "fake-causal-prefill-v1"
+    assert get_last_model_route()["phase"] == "prefill"

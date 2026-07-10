@@ -18,3 +18,9 @@ Issues = "https://github.com/123123213weqw/hf-adapter/issues"
 
 [tool.setuptools.packages.find]
 include = ["rwkv7_kernels*"]
+
+[tool.setuptools.package-data]
+rwkv7_kernels = [
+  "nvidia/MIGRATION_MANIFEST.json",
+  "nvidia/csrc/**/*",
+]

@@ -987,6 +987,69 @@ class RWKV7ForCausalLM(RWKV7PreTrainedModel, GenerationMixin):
                     )
             logits_to_keep = num_logits_to_keep
 
+        effective_use_cache = (
+            self.config.use_cache if use_cache is None else bool(use_cache)
+        )
+        if self.training or (
+            self.model.gradient_checkpointing and torch.is_grad_enabled()
+        ):
+            effective_use_cache = False
+        effective_hidden_states = (
+            self.config.output_hidden_states
+            if output_hidden_states is None
+            else bool(output_hidden_states)
+        )
+        optimized_cache = (
+            past_key_values
+            if past_key_values is not None
+            else RWKV7Cache(num_layers=len(self.model.layers))
+        )
+        optimized = maybe_model_forward(
+            self,
+            {
+                "model_kind": "causal_lm",
+                "input_ids": input_ids,
+                "inputs_embeds": inputs_embeds,
+                "attention_mask": attention_mask,
+                "past_key_values": optimized_cache,
+                "labels": labels,
+                "training": bool(self.training),
+                "gradient_checkpointing": bool(
+                    self.model.gradient_checkpointing
+                ),
+                "grad_enabled": bool(torch.is_grad_enabled()),
+                "use_cache": effective_use_cache,
+                "output_hidden_states": effective_hidden_states,
+                "output_attentions": output_attentions,
+                "cache_position": cache_position,
+                "logits_to_keep": logits_to_keep,
+            },
+        )
+        if optimized is not None:
+            optimized_loss = optimized.get("loss")
+            optimized_logits = optimized["logits"]
+            optimized_past = optimized.get("past_key_values")
+            optimized_history = optimized.get("hidden_states")
+            return_dict = (
+                self.config.use_return_dict
+                if return_dict is None
+                else bool(return_dict)
+            )
+            if not return_dict:
+                values = (
+                    optimized_loss,
+                    optimized_logits,
+                    optimized_past,
+                    optimized_history,
+                )
+                return tuple(value for value in values if value is not None)
+            return CausalLMOutputWithPast(
+                loss=optimized_loss,
+                logits=optimized_logits,
+                past_key_values=optimized_past,
+                hidden_states=optimized_history,
+            )
+
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,

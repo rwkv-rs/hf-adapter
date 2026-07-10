@@ -367,6 +367,12 @@ def maybe_model_forward(
             result = _validate_model_result(
                 run(owner, request), expected_kind=str(model_kind)
             )
+            actual_implementation = str(result.get("implementation", implementation))
+            actual_phase = str(result.get("phase", phase))
+            if actual_phase not in ("prefill", "decode", "training"):
+                raise ValueError(
+                    "kernel model result phase must be prefill, decode, or training"
+                )
         except Exception as exc:
             if requested == "optimized":
                 raise RuntimeError(
@@ -375,7 +381,12 @@ def maybe_model_forward(
                 ) from exc
             failure = exc
         else:
-            record("optimized", implementation, reason, phase)
+            record(
+                "optimized",
+                actual_implementation,
+                reason,
+                actual_phase,
+            )
             return result
 
     reason = f"optional kernel failure: {type(failure).__name__}: {failure}"

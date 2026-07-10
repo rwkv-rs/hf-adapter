@@ -85,6 +85,36 @@ def test_explicit_dense_model_diagnostic_reports_unsupported_cpu(monkeypatch):
     assert "CUDA" in support["reason"]
 
 
+def test_explicit_native_prefill_reports_unsupported_cpu(monkeypatch):
+    monkeypatch.setenv("RWKV7_MODEL_KERNEL_IMPL", "native")
+    kernels = importlib.import_module("rwkv7_kernels")
+
+    class Base:
+        embeddings = type(
+            "Embeddings",
+            (),
+            {"weight": torch.zeros(4, 4, dtype=torch.float16)},
+        )()
+
+    owner = type("Owner", (), {"model": Base(), "lm_head": object()})()
+    request = {
+        "model_kind": "causal_lm",
+        "training": False,
+        "grad_enabled": False,
+        "use_cache": True,
+        "input_ids": torch.ones(1, 2, dtype=torch.long),
+        "inputs_embeds": None,
+        "labels": None,
+        "output_hidden_states": False,
+        "output_attentions": False,
+    }
+    support = kernels.probe_model_forward_v1(owner, request)
+    assert not support["supported"]
+    assert support["implementation"] == "native-nvidia-prefill-v2"
+    assert support["phase"] == "prefill"
+    assert "CUDA" in support["reason"]
+
+
 def test_default_auto_prefill_reports_graph_implementation_on_cpu():
     kernels = importlib.import_module("rwkv7_kernels")
     support = kernels.probe_recurrent_v1(*cpu_inputs())

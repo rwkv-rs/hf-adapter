@@ -11,6 +11,7 @@ import os
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 
 from .protocol import (
     support_result,
@@ -21,16 +22,26 @@ _NOT_MIGRATED = (
     "the adapter will use its readable reference layer loop"
 )
 _MODEL_IMPL_ENV = "RWKV7_MODEL_KERNEL_IMPL"
-_MODEL_IMPLS = ("auto", "dense")
+_MODEL_IMPLS = ("auto", "dense", "native")
 _DENSE_IMPLEMENTATION = "native-torchscript-dense-sequential-v2"
+_NATIVE_PREFILL_IMPLEMENTATION = "native-nvidia-prefill-v2"
+_NATIVE_DECODE_IMPLEMENTATION = "native-nvidia-fused-decode-v2"
 
 
 def _phase(request: dict[str, Any]) -> str:
     if bool(request["training"]) or bool(request.get("grad_enabled", False)):
         return "training"
-    hidden = request.get("hidden_states")
-    if isinstance(hidden, torch.Tensor) and hidden.ndim >= 2:
-        return "decode" if int(hidden.shape[1]) == 1 else "prefill"
+    cache = request.get("past_key_values")
+    get_seq_length = getattr(cache, "get_seq_length", None)
+    if callable(get_seq_length) and int(get_seq_length()) > 0:
+        return "decode"
+    value = request.get("hidden_states")
+    if value is None:
+        value = request.get("input_ids")
+    if isinstance(value, torch.Tensor) and value.ndim >= 2:
+        if request.get("model_kind") == "causal_lm":
+            return "prefill"
+        return "decode" if int(value.shape[1]) == 1 else "prefill"
     return "prefill"
 
 
@@ -94,12 +105,251 @@ def _probe_dense(owner: Any, request: dict[str, Any]):
     )
 
 
+def _unsupported_native(request: dict[str, Any], reason: str):
+    implementation = (
+        _NATIVE_DECODE_IMPLEMENTATION
+        if _phase(request) == "decode"
+        else _NATIVE_PREFILL_IMPLEMENTATION
+    )
+    return support_result(
+        supported=False,
+        implementation=implementation,
+        reason=reason,
+        phase=_phase(request),
+    )
+
+
+def _probe_native(owner: Any, request: dict[str, Any]):
+    """Capability gate for the migrated fused prefill runtime."""
+
+    if request["model_kind"] != "causal_lm":
+        return _unsupported_native(
+            request, "native prefill requires the causal-LM boundary"
+        )
+    if bool(request["training"]) or bool(request.get("grad_enabled", False)):
+        return _unsupported_native(
+            request, "native prefill is inference-only while training kernels migrate"
+        )
+    if request.get("labels") is not None:
+        return _unsupported_native(request, "native prefill does not accept labels")
+    if request.get("inputs_embeds") is not None:
+        return _unsupported_native(
+            request, "native prefill currently requires input_ids"
+        )
+    if bool(request.get("output_hidden_states")):
+        return _unsupported_native(
+            request, "native prefill hidden-state history is not enabled"
+        )
+    if bool(request.get("output_attentions")):
+        return _unsupported_native(
+            request, "RWKV7 does not expose Transformer attention matrices"
+        )
+    input_ids = request.get("input_ids")
+    if not isinstance(input_ids, torch.Tensor):
+        return _unsupported_native(request, "native prefill requires input_ids")
+    if input_ids.ndim == 1:
+        input_ids = input_ids.unsqueeze(0)
+    if input_ids.ndim != 2 or input_ids.numel() == 0:
+        return _unsupported_native(
+            request, "native prefill requires non-empty [B,T] input_ids"
+        )
+    if input_ids.device.type != "cuda":
+        return _unsupported_native(request, "native prefill requires CUDA input_ids")
+    if not hasattr(owner, "model") or not hasattr(owner, "lm_head"):
+        return _unsupported_native(
+            request, "owner does not expose the clean RWKV7 causal-LM structure"
+        )
+    dtype = owner.model.embeddings.weight.dtype
+    if dtype != torch.float16:
+        return _unsupported_native(
+            request, "native prefill v2 currently accepts FP16 checkpoints"
+        )
+    mask = request.get("attention_mask")
+    if mask is not None:
+        if not isinstance(mask, torch.Tensor) or mask.ndim not in (1, 2):
+            return _unsupported_native(
+                request, "native prefill attention_mask must be rank 1 or 2"
+            )
+        if not bool(mask.to(dtype=torch.bool).all().detach().cpu()):
+            return _unsupported_native(
+                request, "native prefill padding migration is not complete"
+            )
+    cache = request.get("past_key_values")
+    if cache is None or not hasattr(cache, "get_seq_length"):
+        return _unsupported_native(
+            request, "native prefill requires the canonical RWKV7 cache envelope"
+        )
+    seen_tokens = int(cache.get_seq_length())
+    initialized = bool(cache.is_initialized())
+    sequence = int(input_ids.shape[1])
+    if seen_tokens > 0:
+        if sequence != 1:
+            return _unsupported_native(
+                request, "native cached decode currently accepts one token"
+            )
+        if not initialized:
+            return _unsupported_native(
+                request, "native cached decode requires every layer state"
+            )
+    elif initialized:
+        return _unsupported_native(
+            request, "zero-length cache must not contain initialized state"
+        )
+    keep = request.get("logits_to_keep")
+    if isinstance(keep, torch.Tensor):
+        return _unsupported_native(
+            request, "native prefill tensor logits_to_keep is not enabled"
+        )
+    implementation = (
+        _NATIVE_DECODE_IMPLEMENTATION
+        if seen_tokens > 0
+        else _NATIVE_PREFILL_IMPLEMENTATION
+    )
+    return support_result(
+        supported=True,
+        implementation=implementation,
+        reason=f"explicit migrated NVIDIA {_phase(request)} implementation selected",
+        phase=_phase(request),
+    )
+
+
+def _run_native_prefill(owner: Any, request: dict[str, Any]):
+    from types import SimpleNamespace
+
+    from .nvidia import native_jit
+
+    input_ids = request["input_ids"]
+    if input_ids.ndim == 1:
+        input_ids = input_ids.unsqueeze(0)
+    proxy = SimpleNamespace(model=owner.model, lm_head=owner.lm_head)
+    packs, _heads, _head_dim, _eps = native_jit.extract_graph(proxy)
+    logits, state_vk, attention_shift, ffn_shift = native_jit.prefill(
+        proxy,
+        input_ids,
+        packs,
+        logits_to_keep=request.get("logits_to_keep"),
+    )
+
+    output_cache = None
+    if bool(request["use_cache"]):
+        output_cache = request["past_key_values"]
+        for layer_idx in range(len(packs)):
+            output_cache.set_layer(
+                layer_idx,
+                state_vk[layer_idx].transpose(-1, -2).contiguous(),
+                attention_shift[layer_idx],
+                ffn_shift[layer_idx],
+            )
+        output_cache.seen_tokens += int(input_ids.shape[1])
+
+    effective = []
+    for field, label in (
+        ("_rwkv7_native_prefill_clampw_scan_effective", "clampw"),
+        ("_rwkv7_native_prefill_self_chunk_effective", "self_chunk"),
+        ("_rwkv7_native_prefill_sequence_ffn_effective", "sequence_ffn"),
+        ("_rwkv7_native_prefill_stacked_rkv_effective", "stacked_rkv"),
+        ("_rwkv7_native_prefill_wavg_lora_effective", "wavg_lora"),
+        ("_rwkv7_native_prefill_fp16_recurrent_effective", "fp16_state"),
+    ):
+        if bool(getattr(proxy, field, False)):
+            effective.append(label)
+    suffix = "+".join(effective) if effective else "dense_fallback"
+    return {
+        "output_kind": "causal_lm",
+        "logits": logits,
+        "loss": None,
+        "past_key_values": output_cache,
+        "hidden_states": None,
+        "implementation": f"{_NATIVE_PREFILL_IMPLEMENTATION}[{suffix}]",
+        "phase": _phase(request),
+    }
+
+
+def _run_native_decode(owner: Any, request: dict[str, Any]):
+    from types import SimpleNamespace
+
+    from .nvidia import native_jit
+
+    input_ids = request["input_ids"]
+    if input_ids.ndim == 1:
+        input_ids = input_ids.unsqueeze(0)
+    cache = request["past_key_values"]
+    proxy = SimpleNamespace(model=owner.model, lm_head=owner.lm_head)
+    packs, heads, head_dim, _eps = native_jit.extract_graph(proxy)
+    batch = int(input_ids.shape[0])
+    dtype = owner.model.embeddings.weight.dtype
+
+    state_vk = []
+    attention_shift = []
+    ffn_shift = []
+    for layer_idx in range(len(packs)):
+        recurrent = cache.recurrent_state[layer_idx]
+        attn_previous = cache.attention_shift[layer_idx]
+        ffn_previous = cache.ffn_shift[layer_idx]
+        if recurrent is None or attn_previous is None or ffn_previous is None:
+            raise RuntimeError("native decode received an incomplete canonical cache")
+        state_vk.append(recurrent.transpose(-1, -2).contiguous())
+        attention_shift.append(attn_previous.clone())
+        ffn_shift.append(ffn_previous.clone())
+
+    token = F.embedding(input_ids[:, 0], owner.model.embeddings.weight)
+    v_first = torch.zeros(
+        batch,
+        int(heads * head_dim),
+        device=token.device,
+        dtype=dtype,
+    )
+    events: set[str] = set()
+
+    def observe(name: str, _layer_idx: int) -> None:
+        events.add(str(name).removesuffix("_selected").removesuffix("_effective"))
+
+    for layer_idx, pack in enumerate(packs):
+        token = native_jit._block_ip_batched(
+            token,
+            state_vk[layer_idx],
+            attention_shift[layer_idx],
+            ffn_shift[layer_idx],
+            v_first,
+            pack,
+            route_observer=observe,
+            state_layout="vk_v1",
+        )
+    token = owner.model.norm(token)
+    logits = owner.lm_head(token).unsqueeze(1)
+
+    output_cache = None
+    if bool(request["use_cache"]):
+        output_cache = cache
+        for layer_idx in range(len(packs)):
+            output_cache.set_layer(
+                layer_idx,
+                state_vk[layer_idx].transpose(-1, -2).contiguous(),
+                attention_shift[layer_idx],
+                ffn_shift[layer_idx],
+            )
+        output_cache.seen_tokens += 1
+
+    suffix = "+".join(sorted(events)) if events else "dense_fallback"
+    return {
+        "output_kind": "causal_lm",
+        "logits": logits,
+        "loss": None,
+        "past_key_values": output_cache,
+        "hidden_states": None,
+        "implementation": f"{_NATIVE_DECODE_IMPLEMENTATION}[{suffix}]",
+        "phase": "decode",
+    }
+
+
 def probe_model_forward_v1(owner: Any, request: dict[str, Any]):
     """Return whether a migrated whole-model implementation accepts a call."""
 
     validate_model_request(request)
     if _requested_implementation() == "dense":
         return _probe_dense(owner, request)
+    if _requested_implementation() == "native":
+        return _probe_native(owner, request)
     # Keep production auto disabled until every phase in the frozen one-shot
     # inventory has passed. Explicit dense diagnostics exercise the final ABI
     # without advertising a half-migrated production route.
@@ -121,6 +371,14 @@ def model_forward_v1(owner: Any, request: dict[str, Any]):
 
     validate_model_request(request)
     implementation = _requested_implementation()
+    if implementation == "native":
+        support = _probe_native(owner, request)
+        if not support["supported"]:
+            raise RuntimeError(support["reason"])
+        cache = request["past_key_values"]
+        if int(cache.get_seq_length()) > 0:
+            return _run_native_decode(owner, request)
+        return _run_native_prefill(owner, request)
     if implementation != "dense":
         raise RuntimeError(_NOT_MIGRATED)
     support = _probe_dense(owner, request)

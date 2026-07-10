@@ -200,7 +200,7 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
       model-forward protocol.
 - [ ] Port SM70, Ada and Blackwell NVIDIA policy families.
 - [ ] Port W8/W4/A8W8/BnTn/BnB/Marlin/TorchAO implementation adapters.
-- [ ] Keep canonical cache visible to HF; internal layouts never escape the
+- [x] Keep canonical cache visible to HF; internal layouts never escape the
       kernel package.
 
 ## Phase 6 — backend-v2 training implementation and unified acceptance
@@ -265,6 +265,27 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   top-level `rwkv7_hf` and `rwkv7_kernels` imports were explicitly blocked.
 - Next action: sync this exact commit and these wheel hashes to RTX 4080; record
   the actual Graph/Triton routes before accepting any benchmark result.
+
+### 2026-08-27 — NVIDIA operator-source transfer and first model runtime bridge
+
+- Added a byte-verified first migration manifest for 97 implementation/source
+  artifacts from `perf/native-kernels-v0.8`. It covers fused projection,
+  norm/mix, recurrent/output, FFN/LoRA, DPLR/self-chunk prefill, SM70/Ada/
+  Blackwell, W8/W4/A8W8/BnTn/BnB/Marlin/TorchAO and training CUDA sources.
+- The migrated NVIDIA namespace contains no model, configuration, tokenizer or
+  cache class and imports no `rwkv7_hf` implementation module.
+- Added the raw causal-LM model boundary required by the frozen design. The
+  explicit `RWKV7_MODEL_KERNEL_IMPL=native` diagnostic route now executes the
+  migrated sequence prefill engine and the migrated fused per-token decode
+  engine while returning the ordinary canonical `RWKV7Cache`.
+- Actual prefill/decode route names are returned by execution, including the
+  effective fused subroutes, rather than copied from the requested selector.
+- CPU dense-fallback parity proves full logits, prefill state, cached decode
+  logits and final cache across the new boundary. Production `auto` remains
+  disabled until NVIDIA GPU fused routes, padding, training and quantization
+  complete the same-wheel acceptance matrix.
+- Local gate: `59 passed`; all 97 migrated artifacts match the manifest SHA256
+  and the kernel wheel includes every CUDA/C++ header/source and license file.
 
 ### 2026-08-27 — first RTX 4080 acceptance slice
 
