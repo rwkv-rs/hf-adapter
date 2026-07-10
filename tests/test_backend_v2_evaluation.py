@@ -10,6 +10,10 @@ EVALUATION = Path(__file__).resolve().parents[1] / "evaluation"
 sys.path.insert(0, str(EVALUATION))
 
 from benchmark_backend_v2 import add_speedups, percentile, routes_passed  # noqa: E402
+from validate_backend_v2_ecosystem import (  # noqa: E402
+    adapter_fallback_route,
+    native_training_route,
+)
 from fla_common import (  # noqa: E402
     compare_states,
     gradient_metrics,
@@ -61,12 +65,8 @@ def test_speed_report_and_actual_route_gate():
                         "decode": {"case": {"median_ms": 6.0}},
                     },
                     "optimized": {
-                        "prefill": {
-                            "case": {"median_ms": 4.0, "route": prefill_route}
-                        },
-                        "decode": {
-                            "case": {"median_ms": 2.0, "route": decode_route}
-                        },
+                        "prefill": {"case": {"median_ms": 4.0, "route": prefill_route}},
+                        "decode": {"case": {"median_ms": 2.0, "route": decode_route}},
                     },
                     "fla": {
                         "prefill": {"case": {"median_ms": 3.0}},
@@ -77,15 +77,36 @@ def test_speed_report_and_actual_route_gate():
         }
     }
     add_speedups(report)
-    assert report["models"]["0.4b"]["lanes"]["optimized"]["prefill"][
-        "case"
-    ]["speedup_vs_reference"] == 3.0
+    assert (
+        report["models"]["0.4b"]["lanes"]["optimized"]["prefill"]["case"][
+            "speedup_vs_reference"
+        ]
+        == 3.0
+    )
     assert routes_passed(report)
-    report["models"]["0.4b"]["lanes"]["optimized"]["decode"]["case"][
-        "route"
-    ] = {"implementation": "requested-native-only"}
+    report["models"]["0.4b"]["lanes"]["optimized"]["decode"]["case"]["route"] = {
+        "implementation": "requested-native-only"
+    }
     assert not routes_passed(report)
 
 
 def test_percentile_uses_nearest_rank():
     assert percentile([1.0, 2.0, 3.0, 4.0, 5.0], 0.95) == 5.0
+
+
+def test_ecosystem_route_gates_distinguish_native_and_adapter_fallback():
+    native = {
+        "selected": "optimized",
+        "phase": "training",
+        "implementation": "native-nvidia-train-temp-autograd-v2",
+    }
+    fallback = {
+        "selected": "reference",
+        "phase": "training",
+        "implementation": "torch-reference-model-v1",
+        "reason": "adapter-wrapped FFN modules use reference autograd",
+    }
+    assert native_training_route(native)
+    assert not adapter_fallback_route(native)
+    assert adapter_fallback_route(fallback)
+    assert not native_training_route(fallback)

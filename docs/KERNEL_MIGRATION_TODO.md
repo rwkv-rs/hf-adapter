@@ -483,3 +483,23 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   comparing the aggregate metric.
 - Local gate after these evidence changes: `79 passed`; Ruff, compileall, and
   `git diff --check` pass. Existing raw samples remain outside Git.
+
+### 2026-08-28 — immutable-wheel HF ecosystem acceptance harness
+
+- Added `evaluation/validate_backend_v2_ecosystem.py` to exercise one staged
+  model and the exact HF/kernel wheel pair through standard AutoConfig,
+  AutoTokenizer, AutoModel, AutoModelForCausalLM, greedy/beam generation and
+  safe save/reload, followed by one-step Accelerate and Transformers Trainer
+  BF16 training.
+- Plain dense BF16 training is accepted only when the actual model route is
+  `native-nvidia-train-temp-autograd-v2`; merely requesting the native backend
+  is not evidence. PEFT LoRA and TRL SFT deliberately require the readable
+  reference autograd route with an adapter-specific rejection reason, and
+  verify non-zero finite gradients, parameter changes and PEFT save/reload.
+- The ecosystem harness uses a deterministic local synthetic dataset and no
+  network access. Its report records environment, model fingerprint, wheel
+  hashes, source SHA, backend environment and every actual route. Canonical
+  SFT/DPO/GRPO dataset runs remain a separate release gate.
+- Local gate: `80 passed`; Ruff, format check, compileall and
+  `git diff --check` pass. RTX 4080 execution waits for the untouched formal
+  recurrent-v1 lm_eval job and the already queued immutable backend-v2 smoke.
