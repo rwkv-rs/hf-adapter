@@ -236,6 +236,26 @@ support partial final chunks, then refactor MLX model prefill to layer-major
 sequence execution and route attention WKV through this three-stage backend.
 Do not claim Qwen/Albatross-level model performance from the synthetic row.
 
+Model integration checkpoint on the child branch:
+
+- `MLXRWKV7Model` now has opt-in layer-major sequence prefill with vectorized
+  shift-mix/projections/FFN and Metal DPLR attention. Partial final chunks are
+  padded with identity/no-op recurrence and trimmed from outputs.
+- Default remains `prefill_backend=recurrent`. `auto` uses DPLR only at
+  `T>=RWKV7_MLX_DPLR_MIN_TOKENS` (default 128); explicit `dplr_metal` is for
+  validation. Chunk size defaults to 64.
+- M5 real-model prompt512 (111 tokens), fp16 median recurrent -> DPLR:
+  0.1B `262.04 -> 408.63 tok/s` (`1.56x`), 0.4B
+  `117.91 -> 175.83` (`1.49x`), 1.5B `37.57 -> 123.45` (`3.29x`).
+- 0.4B W4 median: `78.29 -> 115.40 tok/s` (`1.47x`).
+- All rows preserve the 8-token continuation; logits max-abs is at most
+  `0.0625`, state max-abs at most `0.128`. DPLR peak memory is higher by about
+  `8%-24%` depending on size/mode, so it stays opt-in.
+- Same-prompt 0.4B Qwen acceptance rows preserve all 32 recurrent continuation
+  tokens for fp16 and W4. The Qwen prefill gate still fails.
+- Evidence: `bench/results_mlx_dplr_model_m5_20260710_{fp16,w4}.jsonl` and
+  `bench/results_qwen35_apple_m5_20260710_dplr_auto_{fp16,w4}.jsonl`.
+
 ## Active Goal: Finish the Current HF Adapter First
 
 Current priority: finish the RWKV-7 Hugging Face / Transformers adapter with

@@ -94,6 +94,13 @@ model/device, run `scripts/mlx_prefill_eval_interval_bench.py`; it treats
 logits, all recurrent/cache tensors, seen-token count, and next-token parity as
 a hard gate rather than inferring correctness from throughput alone.
 
+The DPLR model prefill path is deliberately opt-in. Set
+`RWKV_PREFILL_BACKEND=auto`, `RWKV_DPLR_MIN_TOKENS=128`, and
+`RWKV_DPLR_CHUNK_SIZE=64` to use recurrent prefill for short prompts and the
+layer-major Metal DPLR route for longer prompts. Keep the default
+`RWKV_PREFILL_BACKEND=recurrent` for production claims until long-context,
+peak-memory, decode-after-prefill, quality, and cross-device gates pass.
+
 It emits rows with `axis=qwen35_apple_baseline` and can run:
 
 1. Qwen3.5 through a local Ollama server using the streaming `/api/generate`
