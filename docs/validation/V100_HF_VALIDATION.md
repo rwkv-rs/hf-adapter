@@ -118,3 +118,17 @@ Decode speed — `bench/bench_speed.py`, prompt=128, decode=64, fp16, single V10
 - 7.2B Trainer/SFT/DPO/GRPO on a single V100 32GB is memory-bound; use larger GPU or more aggressive offload for full training proof.
 - ZeRO3 resume has an initial 0.1B 2×V100 pass; expand the same proof to 0.4B/1.5B/2.9B and then re-run A100 large-model ZeRO3 resume.
 - Quantized inference is functionally validated with lower VRAM. Quantized speed is still not the final Albatross-level performance target; fused quant kernels are still required.
+
+## 2026-07-10 fused-decode addendum
+
+The Volta-native graph path now combines norm/mix kernels, shape-routed sm70
+projection/FFN kernels, and raw recurrent-output preparation. On the idle
+V100 GPU1, matching-checkpoint FP16 decode passes P1 (`>=0.55x` Albatross) for
+all 0.1B/0.4B/1.5B and bsz=1/2/4/8 rows. All three bsz=8 rows pass P3; 0.4B
+and 1.5B bsz=8 exceed the measured Albatross throughput. The 0.4B and 1.5B
+raw-recurrent A/B windows retain 32-step greedy equality. See the raw evidence
+and ratio table in
+[`bench/v100_sm70_decode_gap_20260710/README.md`](../../bench/v100_sm70_decode_gap_20260710/README.md).
+
+This addendum closes the V100 decode P1 floor. It does not close W8/W4 speed,
+cross-card promotion, or universal P3 parity.

@@ -532,6 +532,65 @@ def assert_albatross_decode_uses_default_native_graph_batch_rows(tmpdir: Path) -
     assert any("experimental native_graph flags" in item and "fused_wavg_lora=True" in item and "min_ratio=0.50x" in item for item in report["next_focus"])
 
 
+def assert_albatross_decode_is_model_aware_for_overhead_rows(tmpdir: Path) -> None:
+    rows = []
+    for label, hf_tokps, alb_tokps in (("0.1b", 800.0, 1000.0), ("1.5b", 200.0, 250.0)):
+        rows.extend(
+            [
+                {
+                    "axis": "native_graph_replay_overhead",
+                    "backend": "hf_adapter",
+                    "dtype": "fp16",
+                    "device": "Tesla V100-PCIE-32GB",
+                    "model_size_label": label,
+                    "batch_size": 1,
+                    "fast_token_backend_effective": "native_graph",
+                    "api_decode_tokps_total": hf_tokps,
+                },
+                {
+                    "axis": "albatross_speed",
+                    "backend": "albatross",
+                    "engine": "faster3a",
+                    "engine_config": "wkv=fp32io16",
+                    "status": "pass",
+                    "dtype": "fp16",
+                    "device": "Tesla V100-PCIE-32GB",
+                    "model_size_label": label,
+                    "batch_size": 1,
+                    "tokens_per_sequence": 1,
+                    "tokps_p50": alb_tokps,
+                },
+            ]
+        )
+    path = tmpdir / "albatross_model_aware_overhead.jsonl"
+    write_jsonl(path, rows)
+    analyzed = subprocess.run(
+        [
+            sys.executable,
+            "bench/analyze_results.py",
+            "--results",
+            str(path),
+            "--device",
+            "V100",
+            "--dtype",
+            "fp16",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert analyzed.returncode == 0, analyzed.stdout + analyzed.stderr
+    report = json.loads(analyzed.stdout)
+    comparisons = report["albatross_decode_comparison"]
+    assert [(row["model_size_label"], row["hf_vs_albatross_ratio"]) for row in comparisons] == [
+        ("0.1b", 0.8),
+        ("1.5b", 0.8),
+    ]
+    assert report["fused_backend_targets"]["albatross_decode"]["current_ratio_min"] == 0.8
+
+
 def assert_projection_kernel_plan_is_reported(tmpdir: Path) -> None:
     rows = [
         {
@@ -2986,6 +3045,7 @@ def main() -> int:
         assert_fused_backend_targets_are_reported(tmpdir)
         assert_albatross_prefill_ignores_short_prompt_probe(tmpdir)
         assert_albatross_decode_uses_default_native_graph_batch_rows(tmpdir)
+        assert_albatross_decode_is_model_aware_for_overhead_rows(tmpdir)
         assert_projection_kernel_plan_is_reported(tmpdir)
         assert_fused_projection_proto_is_reported(tmpdir)
         assert_fused_wa_lora_proto_is_reported(tmpdir)

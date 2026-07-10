@@ -255,12 +255,11 @@ scripts/run_qwen35_apple_acceptance.sh
 
 继续走 fast-token / native-graph 路线,而非堆 wrapper 层。当前路线:`native_graph → fused fp16 kernel → fused W8/W4 kernel`(详见 FUSED_BACKEND)。需补:
 
-- 同卡同 checkpoint 的 prefill / decode / batch-size sweep;
+- V100 0.1B/0.4B/1.5B 的同卡同 checkpoint prefill/decode/bsz1/2/4/8 已闭环;继续补 2.9B/7.2B 与 4090/A100/H100/AMD 同口径矩阵;
 - final MATH500 acceptance runner 已补(`bench/run_math500_final_acceptance.py` + `scripts/run_math500_final_acceptance.sh`): 自动 best-bsz sweep → full avg@64 → Albatross summary gate → uncheatable compression alignment;接下来要在 5090/H100 等正式机器上产出 artifact;
-- 后续补严格同模型/同卡 Albatross baseline：同一 checkpoint、同一 GPU、同一 bsz/tuned linear layout/Albatross 最新 v3a-v4 路径，避免只和历史 0.4B reference 比较;
-- latency 与峰值显存行;
-- cache 命中率行;
-- `bench/analyze_results.py` / `bench/check_results.py` 里的明确 ratio gate。
+- V100 faster3a v3a 的严格同模型/同卡 baseline 已补;继续补 Albatross 更新路径和其他 GPU，避免跨卡或历史数字比较;
+- V100 decode latency、峰值显存、public API/runner diff 与 cache 命中率行已补;继续扩到长稳态和跨卡;
+- `bench/analyze_results.py` 已支持按模型区分 overhead/Albatross ratio；继续把全矩阵 P2/P3 约束接入 release gate。
 
 ### 11. 量化速度
 

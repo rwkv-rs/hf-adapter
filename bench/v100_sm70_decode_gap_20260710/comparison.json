@@ -1,0 +1,116 @@
+{
+  "device": "Tesla V100-PCIE-32GB",
+  "dtype": "fp16",
+  "hf_path": "native_graph API",
+  "albatross_engine": "faster3a wkv=fp32io16",
+  "rows": [
+    {
+      "model": "0.1b",
+      "batch_size": 1,
+      "hf_api_tokps": 637.9,
+      "albatross_tokps_p50": 788.19,
+      "ratio": 0.8093,
+      "gate": "P2",
+      "peak_vram_mb": 405.5
+    },
+    {
+      "model": "0.1b",
+      "batch_size": 2,
+      "hf_api_tokps": 1114.0,
+      "albatross_tokps_p50": 1504.72,
+      "ratio": 0.7403,
+      "gate": "P1",
+      "peak_vram_mb": 428.4
+    },
+    {
+      "model": "0.1b",
+      "batch_size": 4,
+      "hf_api_tokps": 1852.8,
+      "albatross_tokps_p50": 2612.88,
+      "ratio": 0.7091,
+      "gate": "P1",
+      "peak_vram_mb": 470.4
+    },
+    {
+      "model": "0.1b",
+      "batch_size": 8,
+      "hf_api_tokps": 3531.7,
+      "albatross_tokps_p50": 3611.88,
+      "ratio": 0.9778,
+      "gate": "P3",
+      "peak_vram_mb": 549.6
+    },
+    {
+      "model": "0.4b",
+      "batch_size": 1,
+      "hf_api_tokps": 331.5,
+      "albatross_tokps_p50": 469.16,
+      "ratio": 0.7066,
+      "gate": "P1",
+      "peak_vram_mb": 927.6
+    },
+    {
+      "model": "0.4b",
+      "batch_size": 2,
+      "hf_api_tokps": 573.4,
+      "albatross_tokps_p50": 810.76,
+      "ratio": 0.7072,
+      "gate": "P1",
+      "peak_vram_mb": 973.5
+    },
+    {
+      "model": "0.4b",
+      "batch_size": 4,
+      "hf_api_tokps": 970.6,
+      "albatross_tokps_p50": 1281.16,
+      "ratio": 0.7576,
+      "gate": "P2",
+      "peak_vram_mb": 1068.9
+    },
+    {
+      "model": "0.4b",
+      "batch_size": 8,
+      "hf_api_tokps": 1855.7,
+      "albatross_tokps_p50": 1565.95,
+      "ratio": 1.185,
+      "gate": "P3",
+      "peak_vram_mb": 1251.7
+    },
+    {
+      "model": "1.5b",
+      "batch_size": 1,
+      "hf_api_tokps": 162.0,
+      "albatross_tokps_p50": 239.12,
+      "ratio": 0.6775,
+      "gate": "P1",
+      "peak_vram_mb": 3023.9
+    },
+    {
+      "model": "1.5b",
+      "batch_size": 2,
+      "hf_api_tokps": 261.1,
+      "albatross_tokps_p50": 415.21,
+      "ratio": 0.6288,
+      "gate": "P1",
+      "peak_vram_mb": 3106.8
+    },
+    {
+      "model": "1.5b",
+      "batch_size": 4,
+      "hf_api_tokps": 459.1,
+      "albatross_tokps_p50": 594.33,
+      "ratio": 0.7725,
+      "gate": "P2",
+      "peak_vram_mb": 3288.1
+    },
+    {
+      "model": "1.5b",
+      "batch_size": 8,
+      "hf_api_tokps": 874.0,
+      "albatross_tokps_p50": 860.64,
+      "ratio": 1.0155,
+      "gate": "P3",
+      "peak_vram_mb": 3642.5
+    }
+  ]
+}
