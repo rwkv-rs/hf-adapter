@@ -5,9 +5,9 @@ separate hardware-adaptation lane from the CUDA / Albatross performance route:
 CUDA fused kernels remain the production-speed target for NVIDIA cards, while
 Apple Silicon uses the FLA-free native PyTorch path today plus an optional MLX
 reference backend. An initial opt-in MLX/Metal WKV custom-kernel seam and a
-CoreML export prototype now exist; production fused MLX/Metal
-WKV/projection/packed-quant kernels plus stateful CoreML/ANE decode remain the
-next Apple performance layer.
+live CoreML stateful prefill/decode multifunction path now exist. Production
+fused MLX/Metal WKV/projection/packed-quant kernels, longer CoreML parity rows,
+and confirmed ANE placement remain the next Apple performance layer.
 
 ## Qwen3.5 Apple/mobile comparison lane
 
@@ -28,7 +28,7 @@ CoreML export manifest/prototype, and the follow-up CoreML/ANE runtime lane.
 | Quantization | broader functional native smoke + initial MLX/Metal packed speed path | `bitsandbytes` W8/W4 is CUDA-oriented and is not the Apple path. Native MM8/MM4 config-driven module replacement now runs on MPS for tiny, 0.1B, 0.4B, and 1.5B smoke rows. MLX now has a packed W8/W4 affine dequant-matmul projection path (`--quantization mm8/mm4`), an opt-in fused MLX/Metal dequant-projection seam (`--quant-backend metal`), and a conservative backend router (`--quant-backend auto`) with 0.1B short smoke and 0.4B/1.5B prompt128/256 decode4/8 plus prompt512/1024 decode16 and W4 prompt2048/decode128 pressure rows. Same-shape fp16 Metal baselines are now recorded for the prompt512/1024 decode16 ratio gate, and quant+Metal session-batch pressure rows now cover 0.4B 6-session repeat=3 plus 1.5B 5-session repeat=2. Memory drops, but W8/W4 do not yet beat fp16 end to end. Production-speed Apple quant still needs longer repeat/session pressure, more Apple GPU coverage, and fused speed work. |
 | Production speed | not claimed | PyTorch MPS is a compatibility path, not the final Apple performance backend. |
 | Qwen3.5 Apple acceptance wrapper | harness | `scripts/run_qwen35_apple_acceptance.sh` wraps Ollama/Qwen3.5 collection, RWKV MLX collection, optional CoreML export/runtime rows, optional `bench/score_qwen35_quality.py` response-quality scoring, comparison gates, and default `qwen35_apple_baseline_gap_diagnostic` next-action rows into one reproducible command. It is an evidence runner, not a performance claim by itself. |
-| CoreML / ANE export + runtime | prototype | `scripts/export_rwkv7_coreml.py` is import-safe without CoreMLTools, writes `axis=rwkv7_coreml_export` manifest rows in `--dry-run`, and can attempt a first `full-logits` `.mlpackage` export with CoreMLTools plus int8/int4/LUT knobs. `bench/run_coreml_apple_baseline.py` can emit CoreML runtime plan/skip/partial rows in the Qwen3.5 baseline schema. Stateful `decode`/`prefill`, CoreML state serialization, and ANE pass rows are still open. |
+| CoreML / ANE export + runtime | stateful 0.1B/0.4B correctness + initial W8 pass; production ANE open | `scripts/export_rwkv7_coreml.py --export-kind stateful-multifunction` now exports deduplicated `prefill` + `decode` functions with packed RWKV state. The WKV fp32 cache is represented as fp16 high + fp16 residual because Core ML state is fp16-only. `bench/run_coreml_apple_baseline.py` transfers `MLState`, runs exact shared prompts, greedy decode, chunk-boundary checks, and optional HF parity. M5/16GB live 0.1B and 0.4B fp32-compute rows pass state transfer (`max_abs=0`), chunk split (`logits/state max_abs=0`), and HF greedy tokens. 0.1B/0.4B INT8 packages are≈0.45x/0.36x and preserve the short greedy gates; decode is≈0.95x/0.98x fp32, so speed acceptance is still open. 0.1B INT4/LUT4 reduce package to≈0.38x/0.13x but fail HF greedy parity. `CPU_AND_NE` eligibility passes but does not prove ANE occupancy; longer/quality/placement rows remain open. |
 | MLX recurrent backend / Metal backend | initial MLX recurrent + Metal WKV + Metal packed quant seams | Optional `.[mlx]` install, `rwkv7_hf.mlx_bridge`, `rwkv7_hf.mlx_model`, `rwkv7_hf.mlx_quant`, `rwkv7_hf.mlx_wkv`, `scripts/convert_hf_to_mlx.py`, `scripts/mlx_generate.py`, `scripts/mlx_session_smoke.py`, `scripts/mlx_session_batch_smoke.py`, `scripts/mlx_generation_sweep.py`, `scripts/mlx_quant_projection_bench.py`, `scripts/run_apple_silicon_mlx_smoke.sh`, `scripts/run_apple_silicon_mlx_model_smoke.sh`, `scripts/run_apple_silicon_mlx_session_smoke.sh`, `scripts/run_apple_silicon_mlx_session_batch_smoke.sh`, and `scripts/run_apple_silicon_mlx_generation_sweep.sh` now validate HF safetensor → MLX array/export, tiny torch/MLX recurrent parity, MLX state-cache select/chunked-prefill/session behavior, tokenizer-backed prompt smoke, dynamic-batch state select, reusable MLX text generate, prefill-once/session decode, interleaved multi-session decode, optional equal-round `--session-backend batched|auto` MLX session batching, prompt/decode sweeps, optional MLX packed W8/W4 projection rows, opt-in `--wkv-backend metal|auto`, opt-in `--quant-backend metal` fused dequant-projection rows, and `--quant-backend auto` backend-routing rows. `scripts/mlx_quant_projection_bench.py` now isolates dense/affine/Metal/auto projection speed so fused WKV+quant work has a reproducible microbench. Production fused Metal still needs longer pressure and cross-device tuning. |
 
 ## Why the Apple path is native / no-FLA by default
@@ -328,18 +328,28 @@ COREML_EXPORT_MODELS=/path/to/rwkv7-g1g-1.5b-hf \
 RESULTS=bench/results_qwen35_apple_baseline.jsonl \
 scripts/run_qwen35_apple_acceptance.sh
 
-# CoreML export manifest/prototype. Dry-run works without CoreMLTools; live
-# export currently targets first-step full-logits packages while stateful
-# decode/prefill remains a follow-up.
+# CoreML stateful multifunction. Dry-run works without CoreMLTools. `auto`
+# selects fp32 compute for the correctness lane; fp16 is explicit/experimental.
 PYTHONPATH=. python scripts/export_rwkv7_coreml.py \
-  /path/to/rwkv7-g1g-1.5b-hf \
-  exports/rwkv7-g1g-1.5b-coreml \
-  --dry-run \
-  --chunks 4 \
-  --prefill-seq-length 2048 \
-  --sample-seq-length 128 \
+  /path/to/rwkv7-g1d-0.1b-hf \
+  exports/rwkv7-g1d-0.1b-coreml \
+  --export-kind stateful-multifunction \
+  --prefill-seq-length 16 \
   --state-mode wkv-coreml \
-  --quantization lut4 \
+  --quantization none \
+  --coreml-compute-precision auto \
+  --results bench/results_qwen35_apple_baseline.jsonl
+
+# The exported prefill graph is statically unrolled. Keep the chunk small
+# (default 16, maximum 128); longer prompts stream through repeated masked calls.
+PYTHONPATH=. python bench/run_coreml_apple_baseline.py \
+  --manifest exports/rwkv7-g1d-0.1b-coreml/coreml_export_manifest.json \
+  --prompt-target-chars 1024 \
+  --decode-lengths 128 \
+  --verify-chunked-prefill \
+  --verify-hf-parity \
+  --require-hf-greedy-match \
+  --compute-units cpu-and-ne \
   --results bench/results_qwen35_apple_baseline.jsonl
 
 # Export selected HF safetensors into an MLX-readable bundle.
@@ -455,7 +465,7 @@ RESULTS=bench/results_apple_silicon_m5_20260704.jsonl \
   scripts/run_apple_silicon_mlx_model_smoke.sh
 ```
 
-The Qwen3.5 Apple acceptance wrapper is `scripts/run_qwen35_apple_acceptance.sh`; it can dry-run the planned Qwen/RWKV/CoreML matrix, optionally pull Ollama Qwen3.5 models, run RWKV MLX rows, emit CoreML export/runtime rows, run `bench/score_qwen35_quality.py` when `QUALITY_RUBRIC` is set, append comparison gates, and emit `qwen35_apple_baseline_gap_diagnostic` rows that say whether the next step is missing data, decode/prefill speed, TTFT, or memory. The Trainer wrapper calls `tests/test_apple_silicon_trainer_smoke.py` directly. The 0.1B/0.4B/1.5B model-training, TRL SFT, and TRL RL wrappers call `tests/test_apple_silicon_model_training_smoke.py`. The generation sweep wrapper calls `tests/test_apple_silicon_model_sweep.py`. The native quant wrapper calls `tests/test_apple_silicon_quant_smoke.py`. The MLX bridge wrapper calls `tests/test_apple_silicon_mlx_smoke.py`; the full recurrent MLX wrapper calls `tests/test_apple_silicon_mlx_model_smoke.py`; the reusable MLX generation CLI is `scripts/mlx_generate.py`; the MLX prompt/decode sweep CLI is `scripts/mlx_generation_sweep.py`; the isolated quant projection microbench is `scripts/mlx_quant_projection_bench.py`; the CoreML export prototype is `scripts/export_rwkv7_coreml.py`; the CoreML runtime row generator is `bench/run_coreml_apple_baseline.py`; the serving-style prefill-once/session-decode CLI is `scripts/mlx_session_smoke.py` with wrapper `scripts/run_apple_silicon_mlx_session_smoke.sh`; the interleaved multi-session CLI is `scripts/mlx_session_batch_smoke.py` with wrapper `scripts/run_apple_silicon_mlx_session_batch_smoke.sh` and `SESSION_BACKEND=batched|auto` for equal-round MLX batching; and the HF→MLX exporter is `scripts/convert_hf_to_mlx.py`.
+The Qwen3.5 Apple acceptance wrapper is `scripts/run_qwen35_apple_acceptance.sh`; it can dry-run the planned Qwen/RWKV/CoreML matrix, optionally pull Ollama Qwen3.5 models, run RWKV MLX rows, emit CoreML export/runtime rows, run `bench/score_qwen35_quality.py` when `QUALITY_RUBRIC` is set, append comparison gates, and emit `qwen35_apple_baseline_gap_diagnostic` rows that say whether the next step is missing data, decode/prefill speed, TTFT, or memory. The Trainer wrapper calls `tests/test_apple_silicon_trainer_smoke.py` directly. The 0.1B/0.4B/1.5B model-training, TRL SFT, and TRL RL wrappers call `tests/test_apple_silicon_model_training_smoke.py`. The generation sweep wrapper calls `tests/test_apple_silicon_model_sweep.py`. The native quant wrapper calls `tests/test_apple_silicon_quant_smoke.py`. The MLX bridge wrapper calls `tests/test_apple_silicon_mlx_smoke.py`; the full recurrent MLX wrapper calls `tests/test_apple_silicon_mlx_model_smoke.py`; the reusable MLX generation CLI is `scripts/mlx_generate.py`; the MLX prompt/decode sweep CLI is `scripts/mlx_generation_sweep.py`; the isolated quant projection microbench is `scripts/mlx_quant_projection_bench.py`; the CoreML stateful exporter is `scripts/export_rwkv7_coreml.py`; the CoreML runtime row generator is `bench/run_coreml_apple_baseline.py`; the serving-style prefill-once/session-decode CLI is `scripts/mlx_session_smoke.py` with wrapper `scripts/run_apple_silicon_mlx_session_smoke.sh`; the interleaved multi-session CLI is `scripts/mlx_session_batch_smoke.py` with wrapper `scripts/run_apple_silicon_mlx_session_batch_smoke.sh` and `SESSION_BACKEND=batched|auto` for equal-round MLX batching; and the HF→MLX exporter is `scripts/convert_hf_to_mlx.py`.
 
 Recorded rows: [`../../bench/results_apple_silicon_m5_20260704.jsonl`](../../bench/results_apple_silicon_m5_20260704.jsonl).
 
@@ -793,13 +803,26 @@ test script.
   prompt8192/decode512 shows 1.5B W4 auto at decode≈0.81x fp16 with peak≈0.54x, and direct grouped W4 prompt8192/decode1024 reaches≈20.48 tok/s with peak≈0.35x of the fp16 8192/decode512 baseline. Production Apple W8/W4
   still needs longer repeat/session pressure, more M-series coverage, and stable
   speed rows that beat fp16 end to end.
-- The CoreML path is now an export prototype, not an ANE performance backend.
-  `scripts/export_rwkv7_coreml.py` records the intended state mode, chunking,
-  deployment target, and W8/W4/LUT/INT4 quantization contract, and can attempt a
-  first `full-logits` `.mlpackage` when CoreMLTools is installed.
-  `bench/run_coreml_apple_baseline.py` emits plan/skip/partial rows in the shared Apple/Qwen3.5 JSONL schema for those packages. Stateful
-  decode/prefill functions, CoreML state serialization, ANE correctness checks,
-  and same-prompt Qwen3.5 comparison rows remain open. `bench/score_qwen35_quality.py` provides the first response-quality matrix, but quality wins still require stored responses and task rubrics.
+- The CoreML path now has a live stateful multifunction correctness lane, but is
+  not yet an ANE performance backend. `stateful-multifunction` exports fixed
+  masked prefill chunks plus one-token decode with five Core ML states: WKV high
+  and residual halves, attention previous input, FFN previous input, and
+  `v_first`. The runtime uses `MLState.read_state/write_state` to transfer state
+  between function handles. On M5 / CoreMLTools 9.0, the 0.1B fp32-compute
+  probe passes exact state transfer, alternate chunk split, and HF greedy-token
+  parity; CPU-only prefill/decode are about `101.78/72.19 tok/s` for the tiny
+  4-token/2-token probe, while `CPU_AND_NE` records about `99.78/70.74 tok/s`.
+  These are bring-up rows, not production throughput claims, and
+  `CPU_AND_NE` does not prove ANE occupancy. The fp16-compute experiment is
+  explicitly not the default because it produced different greedy tokens on
+  the same probe. Initial 0.1B/0.4B INT8 stateful exports reduce package size
+  to≈0.45x/0.36x and preserve the two-token HF greedy gates, but decode is
+  ≈0.95x/0.98x fp32. The 0.4B matrix also passes a 67-token prompt / 32-token
+  decode with chunk/state max-abs `0.0` and HF greedy 32/32; warmed INT8 decode
+  remains near parity rather than a stable speed win.
+  INT4/LUT4 reduce package size to≈0.38x/0.13x while failing that greedy gate,
+  so W4 is not a quality pass. Longer prompts, 1.5B, calibrated/mixed W4,
+  runtime placement telemetry, and same-device Qwen3.5 rows remain open.
 - The MLX path is now a correctness-first recurrent reference backend plus an
   initial opt-in MLX/Metal WKV custom-kernel seam, not a production-speed
   backend. It verifies HF safetensor loading/export, full
@@ -845,9 +868,10 @@ next backend layer:
    0.1B prompt256/decode8, 0.4B prompt4096/decode256 and 1.5B prompt8192/decode512 / direct W4 decode1024 matrices, 0.4B 8-session repeat=2, and 1.5B 5-session repeat=4 rows to longer prompt distributions,
    stronger memory-pressure telemetry, and longer production-style concurrent session reuse.
 5. Use `scripts/run_qwen35_apple_acceptance.sh` to collect the first real same-device Qwen3.5 0.8B/2B/4B/9B vs RWKV MLX/CoreML rows, then keep only evidence-backed claims in docs/PRs.
-6. Extend the CoreML export/runtime prototype from `full-logits` partial rows into stateful
-   decode/prefill multifunction export with CoreML state correctness and ANE
-   benchmark rows.
+6. Extend the now-live CoreML stateful multifunction path from the 0.1B short
+   fp32 correctness row to prompt/decode sweeps, 0.4B/1.5B, LUT4/INT4, and
+   confirmed ANE-placement benchmark rows. Keep fp16 stateful compute opt-in
+   until its HF greedy-token mismatch is fixed.
 7. Extend the initial Metal WKV and W8/W4 dequant-projection seams into a production fused path that can beat fp16 end to end.
 8. Decide whether the production Metal WKV-7 kernel belongs in this repo as an
    optional backend or in a sibling `rwkv7-mlx` / `rwkv7-metal` package.

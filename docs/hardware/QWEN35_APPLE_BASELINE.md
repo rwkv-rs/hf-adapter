@@ -78,14 +78,15 @@ It emits rows with `axis=qwen35_apple_baseline` and can run:
 1. Qwen3.5 through a local Ollama server using the streaming `/api/generate`
    endpoint.
 2. RWKV-7 through this repository's optional MLX recurrent backend.
-3. CoreML/ANE rows in the same schema once the CoreML runtime runner lands.
+3. RWKV-7 through the stateful CoreML multifunction runner; confirmed ANE
+   placement remains a separate gate.
 
 The companion export entry point is `scripts/export_rwkv7_coreml.py`; the companion runtime row generator is `bench/run_coreml_apple_baseline.py`.  It writes
-a reproducible CoreML export manifest in `--dry-run` mode on any machine, and
-attempts a first `full-logits` `.mlpackage` export when `coremltools`, `torch`,
-and `transformers` are installed.  Stateful `decode`/`prefill` CoreML functions
-remain follow-up work and are tracked in the manifest rather than claimed as
-complete.
+a reproducible CoreML export manifest in `--dry-run` mode on any machine. With
+`--export-kind stateful-multifunction` it exports masked `prefill` and one-token
+`decode` functions with packed RWKV Core ML state. The runtime records state
+transfer, chunk-boundary drift, HF greedy parity, TTFT, throughput, package
+bytes, and peak process memory.
 
 Dry-run the matrix without contacting runtimes:
 
@@ -158,11 +159,13 @@ PYTHONPATH=. python bench/run_coreml_apple_baseline.py \
   --decode-lengths 128,512 \
   --results bench/results_qwen35_apple_baseline.jsonl
 
-# Live full-logits runtime smoke. Rows are marked partial until stateful
-# decode/prefill lands, so comparison gates will not treat them as wins.
+# Live stateful runtime + correctness gates.
 PYTHONPATH=. python bench/run_coreml_apple_baseline.py \
   --manifest exports/rwkv7-g1g-1.5b-coreml/coreml_export_manifest.json \
   --compute-units cpu-and-ne \
+  --verify-chunked-prefill \
+  --verify-hf-parity \
+  --require-hf-greedy-match \
   --results bench/results_qwen35_apple_baseline.jsonl
 ```
 
@@ -174,28 +177,35 @@ PYTHONPATH=. python scripts/export_rwkv7_coreml.py \
   /path/to/rwkv7-g1g-1.5b-hf \
   exports/rwkv7-g1g-1.5b-coreml \
   --dry-run \
+  --export-kind stateful-multifunction \
   --chunks 4 \
-  --prefill-seq-length 2048 \
+  --prefill-seq-length 16 \
   --sample-seq-length 128 \
   --state-mode wkv-coreml \
-  --quantization lut4 \
+  --quantization none \
   --results bench/results_qwen35_apple_baseline.jsonl
 
-# Live first-step export when CoreMLTools is installed.
+# Live correctness-first stateful export when CoreMLTools is installed.
 PYTHONPATH=. python scripts/export_rwkv7_coreml.py \
-  /path/to/rwkv7-g1g-1.5b-hf \
-  exports/rwkv7-g1g-1.5b-coreml \
-  --sample-seq-length 128 \
+  /path/to/rwkv7-g1d-0.1b-hf \
+  exports/rwkv7-g1d-0.1b-coreml \
+  --export-kind stateful-multifunction \
+  --prefill-seq-length 16 \
   --deployment-target iOS18 \
   --compute-units cpu-and-ne \
-  --quantization lut4 \
+  --coreml-compute-precision auto \
+  --quantization none \
   --results bench/results_qwen35_apple_baseline.jsonl
 ```
 
+Stateful TorchScript prefill is statically unrolled, so the exported chunk is
+intentionally small (default `16`, maximum `128`). Longer prompts do not require
+a larger package: the runtime streams them through repeated masked chunks.
+
 The export row uses `axis=rwkv7_coreml_export`.  `status=plan` only records the
 manifest/contract; `status=pass` means a `.mlpackage` was produced.  A CoreML
-export row is **not** a Qwen3.5 performance win until a later CoreML runner adds
-TTFT, prefill/decode tok/s, memory, and correctness fields to the
+export row alone is **not** a Qwen3.5 performance win. Only live stateful runtime
+rows with TTFT, prefill/decode tok/s, memory, and correctness fields enter the
 `qwen35_apple_baseline` matrix.
 
 Summarize an existing result file:
@@ -248,7 +258,7 @@ enables these rows by default with `COMPARE_DIAGNOSTICS=1`.
 |---|---|---|---|
 | RWKV-7 0.4B W4/MLX | `qwen3.5:0.8b-mlx` | lower memory and higher decode tok/s at prompt 1k/4k/8k, decode 128/512 | needs same-device rows |
 | RWKV-7 1.5B W4/MLX | `qwen3.5:2b-mlx` | lower memory and higher or equal decode tok/s; TTFT no worse by >10% | needs same-device rows |
-| RWKV-7 2.9B W4/MLX/CoreML | `qwen3.5:4b-mlx` | lower memory and higher decode tok/s | CoreML export prototype exists; ANE runtime rows not landed |
+| RWKV-7 2.9B W4/MLX/CoreML | `qwen3.5:4b-mlx` | lower memory and higher decode tok/s | 0.1B stateful CoreML correctness passes; 2.9B quantized/ANE rows not landed |
 | RWKV-7 larger / distilled mobile | `qwen3.5:9b-mlx` | mobile-useful memory envelope plus quality eval | requires model/quality work |
 
 ## CoreML / ANE follow-up
@@ -261,23 +271,24 @@ enables these rows by default with `COMPARE_DIAGNOSTICS=1`.
 - async prefill loading
 - int8 / int4 / LUT quantization
 
-The repository now has `scripts/export_rwkv7_coreml.py` as the first
-CoreML/ANE bridge.  It records the intended chunking, state mode, quantization,
-and deployment target, supports a first `full-logits` export, and deliberately
-keeps stateful decode/prefill marked as unimplemented in the manifest.
+The repository now has a live CoreML bridge. It records chunking, state mode,
+quantization, deployment target, and compute precision, and exports deduplicated
+stateful prefill/decode functions. On M5, the 0.1B fp32-compute short row passes
+MLState transfer, alternate chunk split, and HF greedy-token parity. fp16
+stateful compute remains opt-in because its first live row mismatched HF tokens.
 
 The next repository lane should add:
 
-1. HF RWKV-7 -> Torch traced decode/prefill -> CoreML multifunction export.
-2. CoreML correctness checks against HF/MLX logits and state.
-3. CoreML W4/LUT/INT4 export rows in the same `qwen35_apple_baseline` schema.
-4. A CoreML runtime benchmark runner that emits TTFT, prefill/decode tok/s,
-   memory, chunked-prefill correctness, and state-cache reuse rows.
-5. iPhone/iPad rows once device access is available.
+1. Extend live correctness rows to prefill chunks 16/64 and long prompts/decode.
+2. Add 0.4B/1.5B and CoreML W4/LUT/INT4 rows in the same schema.
+3. Fix/selectively preserve recurrent precision in the fp16/ANE lane.
+4. Record confirmed runtime placement rather than treating `CPU_AND_NE` as
+   proof of ANE use.
+5. Add iPhone/iPad rows once device access is available.
 
 ## Non-goals for the first baseline PR
 
 - It does not claim final quality superiority over Qwen3.5.
-- It does not implement final stateful CoreML decode/prefill yet; the current CoreML path is an export prototype and manifest contract.
+- It does not claim the short 0.1B CoreML correctness row as production ANE performance.
 - It does not mark W8/W4 as fp16-beating until JSONL evidence proves it.
 - It does not replace the existing Apple MLX session and quant regression tests.
