@@ -76,5 +76,7 @@ def test_nvidia_sources_do_not_reintroduce_model_config_or_cache_ownership():
                 assert not (node.module or "").startswith("rwkv7_hf")
 
     training_runtime = (NVIDIA / "training_runtime.py").read_text()
-    assert ".forward =" not in training_runtime
-    assert "types.MethodType" not in training_runtime
+    train_temp_runtime = (NVIDIA / "train_temp_cuda.py").read_text()
+    for source in (training_runtime, train_temp_runtime):
+        assert ".forward =" not in source
+        assert "types.MethodType" not in source

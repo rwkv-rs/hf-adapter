@@ -247,6 +247,19 @@ def _probe_native_training(owner: Any, request: dict[str, Any]):
     value = inputs_embeds if inputs_embeds is not None else input_ids
     if not isinstance(value, torch.Tensor) or value.ndim not in (2, 3):
         return _unsupported_training("native training input shape is invalid")
+    if not hasattr(owner, "model") or not hasattr(owner.model, "layers"):
+        return _unsupported_training(
+            "owner does not expose the clean RWKV7 causal-LM structure"
+        )
+    if any(
+        type(layer.ffn.key) is not torch.nn.Linear
+        or type(layer.ffn.value) is not torch.nn.Linear
+        for layer in owner.model.layers
+    ):
+        return _unsupported_training(
+            "native train_temp bypasses wrapped FFN modules; adapters use the "
+            "reference autograd path"
+        )
     if value.device.type != "cuda":
         return _unsupported_training("native training requires CUDA tensors")
     tokens = int(value.shape[1])
@@ -256,6 +269,8 @@ def _probe_native_training(owner: Any, request: dict[str, Any]):
         )
     if owner.model.embeddings.weight.dtype != torch.bfloat16:
         return _unsupported_training("native training requires a BF16 checkpoint")
+    if inputs_embeds is not None and inputs_embeds.dtype != torch.bfloat16:
+        return _unsupported_training("native training inputs_embeds must be BF16")
     if int(owner.config.head_dim) != 64:
         return _unsupported_training("native training requires head_dim=64")
     mask = request.get("attention_mask")
@@ -268,6 +283,10 @@ def _probe_native_training(owner: Any, request: dict[str, Any]):
         if labels.device != value.device:
             return _unsupported_training(
                 "native training labels and inputs must share a device"
+            )
+        if tuple(labels.shape) != tuple(value.shape[:2]):
+            return _unsupported_training(
+                "native training labels must match the input batch and sequence"
             )
         if bool((labels < 0).any().detach().cpu()):
             return _unsupported_training(

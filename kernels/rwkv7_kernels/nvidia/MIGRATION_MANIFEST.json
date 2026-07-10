@@ -584,7 +584,7 @@
     },
     {
       "destination": "kernels/rwkv7_kernels/nvidia/train_temp_cuda.py",
-      "destination_sha256": "6b099989ee450d3ee64ad757765cf578dae3945da39bf8a5cfd67405fa91215e",
+      "destination_sha256": "0a6165cc30194d64c07a5e00eb767bec02b57dcaa416742b3e1e276610a1cd98",
       "git_blob": "5035693937a5912dfd7c261b4d751bbb67acd2a6",
       "source": "rwkv7_hf/train_temp_cuda.py"
     },

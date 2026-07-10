@@ -128,6 +128,22 @@ def test_explicit_native_training_reports_actual_training_capability(monkeypatch
             (),
             {"weight": torch.zeros(4, 4, dtype=torch.bfloat16)},
         )()
+        layers = [
+            type(
+                "Layer",
+                (),
+                {
+                    "ffn": type(
+                        "FFN",
+                        (),
+                        {
+                            "key": torch.nn.Linear(4, 4),
+                            "value": torch.nn.Linear(4, 4),
+                        },
+                    )()
+                },
+            )()
+        ]
 
     owner = type(
         "Owner",
@@ -150,6 +166,62 @@ def test_explicit_native_training_reports_actual_training_capability(monkeypatch
     assert support["implementation"] == "native-nvidia-train-temp-autograd-v2"
     assert support["phase"] == "training"
     assert "CUDA" in support["reason"]
+
+
+def test_native_training_never_bypasses_wrapped_ffn_adapters(monkeypatch):
+    monkeypatch.setenv("RWKV7_MODEL_KERNEL_IMPL", "native")
+    kernels = importlib.import_module("rwkv7_kernels")
+
+    class WrappedLinear(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.base_layer = torch.nn.Linear(4, 4)
+
+        def forward(self, value):
+            return self.base_layer(value)
+
+    ffn = type(
+        "FFN",
+        (),
+        {"key": WrappedLinear(), "value": WrappedLinear()},
+    )()
+    base = type(
+        "Base",
+        (),
+        {
+            "embeddings": type(
+                "Embeddings",
+                (),
+                {"weight": torch.zeros(4, 4, dtype=torch.bfloat16)},
+            )(),
+            "layers": [type("Layer", (), {"ffn": ffn})()],
+        },
+    )()
+    owner = type(
+        "Owner",
+        (),
+        {
+            "model": base,
+            "lm_head": object(),
+            "config": type("Config", (), {"head_dim": 64})(),
+        },
+    )()
+    support = kernels.probe_model_forward_v1(
+        owner,
+        {
+            "model_kind": "causal_lm",
+            "training": True,
+            "grad_enabled": True,
+            "use_cache": False,
+            "input_ids": torch.ones(1, 16, dtype=torch.long),
+            "inputs_embeds": None,
+            "labels": None,
+            "output_hidden_states": False,
+            "output_attentions": False,
+        },
+    )
+    assert not support["supported"]
+    assert "adapters use the reference autograd path" in support["reason"]
 
 
 def test_default_auto_prefill_reports_graph_implementation_on_cpu():
