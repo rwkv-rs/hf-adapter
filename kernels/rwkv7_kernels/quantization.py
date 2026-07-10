@@ -24,8 +24,8 @@ _METHODS = {
     "a8w8": "a8w8",
     "torchao_w8": "torchao_w8",
     "torchao_w4": "torchao_w4",
-    "marlin": "marlin_bntn_w4",
-    "marlin_w4": "marlin_bntn_w4",
+    "marlin": "marlin_w4",
+    "marlin_w4": "marlin_w4",
     "marlin_bntn_w4": "marlin_bntn_w4",
     "bnb8": "bnb8",
     "bitsandbytes_w8": "bnb8",
@@ -47,8 +47,10 @@ def _clear_runtime_state(model: Any) -> None:
     """Invalidate only optional-package caches after module replacement."""
 
     from .nvidia.graph_pool import clear_native_graph_runners
+    from .nvidia.prefill_graph_pool import clear_native_prefill_graph_runners
 
     clear_native_graph_runners(model)
+    clear_native_prefill_graph_runners(model)
     # Historical quantizers attach diagnostic values while packing.  The v2
     # package owns those values instead of putting policy on the HF model.
     for name in tuple(vars(model)):
@@ -230,7 +232,7 @@ def quantize_model(
     group_policy: str = "all",
     fused: bool = True,
     fp32_reduce: bool = True,
-    production_bn_tn: bool = True,
+    production_bn_tn: bool | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Apply or adopt one quantization family and return its actual report.
@@ -285,16 +287,32 @@ def quantize_model(
             **kwargs,
         )
         implementation = normalized.replace("_", "-")
-    elif normalized == "marlin_bntn_w4":
+    elif normalized in {"marlin_w4", "marlin_bntn_w4"}:
+        exact_bn_tn = (
+            normalized == "marlin_bntn_w4"
+            if production_bn_tn is None
+            else bool(production_bn_tn)
+        )
+        if exact_bn_tn:
+            if not torch.cuda.is_available():
+                raise RuntimeError("Marlin BN/TN requires a CUDA device")
+            capability = tuple(torch.cuda.get_device_capability())
+            if capability != (12, 0):
+                raise RuntimeError(
+                    "marlin_bntn_w4 is an exact SM120/Blackwell route; "
+                    f"detected sm{capability[0]}{capability[1]}"
+                )
         replaced = _quantize_marlin(
             model,
             min_params=int(min_params),
             policy=policy,
             group_size=int(group_size or 128),
             fp32_reduce=bool(fp32_reduce),
-            production_bn_tn=bool(production_bn_tn),
+            production_bn_tn=exact_bn_tn,
         )
-        implementation = "marlin-bntn-bf16-w4"
+        implementation = (
+            "marlin-bntn-bf16-w4" if exact_bn_tn else "marlin-bf16-w4"
+        )
     else:
         names = _bitsandbytes_modules(model, normalized)
         if not names:

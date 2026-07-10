@@ -22,5 +22,6 @@ include = ["rwkv7_kernels*"]
 [tool.setuptools.package-data]
 rwkv7_kernels = [
   "nvidia/MIGRATION_MANIFEST.json",
+  "nvidia/SELF_CHUNK_LICENSE",
   "nvidia/csrc/**/*",
 ]

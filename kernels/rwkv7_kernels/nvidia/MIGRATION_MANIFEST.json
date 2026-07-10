@@ -1,6 +1,12 @@
 {
   "files": [
     {
+      "destination": "kernels/rwkv7_kernels/nvidia/SELF_CHUNK_LICENSE",
+      "destination_sha256": "41a83c8187efc1e3ccc21909e806a9e52338e69448554d9754706c3d1cd610e7",
+      "git_blob": "7ced50191b7f5f0eec4e14114d2bc613922bc3b2",
+      "source": "rwkv7_hf/SELF_CHUNK_LICENSE"
+    },
+    {
       "destination": "kernels/rwkv7_kernels/nvidia/ada_lora.py",
       "destination_sha256": "0f1f93ee29a12632abeb6696164c73be1104aa55ca71d6e7b403907f8d6baa3b",
       "git_blob": "504e9721e8cfb12a60eeec5c57e2cad6f24d913f",
@@ -17,6 +23,12 @@
       "destination_sha256": "02c809471cf1065bf1de6963448c752aba916e10e91c98c7571eaf4e797aa655",
       "git_blob": "f741c74b6f37d281ae69ff39e75d7fe02362d255",
       "source": "rwkv7_hf/blackwell_norm_mix.py"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/bn_tn_tuning.py",
+      "destination_sha256": "07c88c8a6878ef42cd974f995e3fb33dc9bdec82f98b16617d77fa198fe5b585",
+      "git_blob": "1dd99d9eff039ac4557a8b1b12ebaf8482ce2ae7",
+      "source": "rwkv7_hf/bn_tn_tuning.py"
     },
     {
       "destination": "kernels/rwkv7_kernels/nvidia/csrc/marlin/LICENSE",
@@ -593,6 +605,12 @@
       "destination_sha256": "19f2b6a3e5889845b0e0edc49f666f43dd602b9c202d45dd5f9d00a2dd824610",
       "git_blob": "b5e1db88c09c34b8dc5c97be2766f26590bbb39b",
       "source": "rwkv7_hf/train_temp_resume.py"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/triton_compat.py",
+      "destination_sha256": "265deccceb3bcbd017b5585503eb601ad8f7829af41aab24218a262d3ac7c37e",
+      "git_blob": "d17bc63e61bc95a0a52b8f09434fd82aa1bf42ff",
+      "source": "rwkv7_hf/triton_compat.py"
     }
   ],
   "schema": "rwkv7-nvidia-source-migration-v1",

@@ -19,6 +19,7 @@ METHODS = (
     "a8w8",
     "torchao_w8",
     "torchao_w4",
+    "marlin_w4",
     "marlin_bntn_w4",
     "bnb8",
     "bnb4",
@@ -76,7 +77,7 @@ def metric(candidate: torch.Tensor, reference: torch.Tensor) -> dict[str, Any]:
 def model_dtype(method: str) -> torch.dtype:
     return (
         torch.bfloat16
-        if method in {"torchao_w4", "marlin_bntn_w4"}
+        if method in {"torchao_w4", "marlin_w4", "marlin_bntn_w4"}
         else torch.float16
     )
 
@@ -224,24 +225,30 @@ def main() -> int:
         device="cuda",
     )
     results = []
+    capability = tuple(torch.cuda.get_device_capability())
     for method in methods:
         try:
             results.append(validate_method(path, method, args, ids))
         except Exception as exc:
-            results.append(
-                {
-                    "method": method,
-                    "status": "failed",
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-            )
+            expected_unsupported = method == "marlin_bntn_w4" and capability != (12, 0)
+            results.append({
+                "method": method,
+                "status": "not_applicable" if expected_unsupported else "failed",
+                "expected_supported": not expected_unsupported,
+                "device_capability": capability,
+                "error": f"{type(exc).__name__}: {exc}",
+            })
     wheels = {}
     for name, wheel in (("rwkv7_hf", args.hf_wheel), ("rwkv7_kernels", args.kernel_wheel)):
         if wheel is not None:
             wheels[name] = {"path": str(wheel), "sha256": sha256_file(wheel)}
     report = {
         "schema": "rwkv7-backend-v2-quantization-validation-v1",
-        "status": "passed" if all(row["status"] == "passed" for row in results) else "failed",
+        "status": (
+            "passed"
+            if all(row["status"] in {"passed", "not_applicable"} for row in results)
+            else "failed"
+        ),
         "code_sha": args.code_sha or git_revision(Path(__file__).resolve().parents[1]),
         "environment": environment(),
         "model": model_fingerprint(path),

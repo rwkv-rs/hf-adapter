@@ -14,7 +14,7 @@ def test_nvidia_migration_manifest_is_complete_and_byte_verified():
     manifest = json.loads((NVIDIA / "MIGRATION_MANIFEST.json").read_text())
     assert manifest["schema"] == "rwkv7-nvidia-source-migration-v1"
     assert manifest["source_branch"] == "perf/native-kernels-v0.8"
-    assert len(manifest["files"]) == 99
+    assert len(manifest["files"]) == 102
 
     destinations = set()
     for entry in manifest["files"]:
@@ -42,6 +42,7 @@ def test_nvidia_migration_manifest_is_complete_and_byte_verified():
         "ada_lora.py",
         "ada_sparse_ffn.py",
         "blackwell_norm_mix.py",
+        "bn_tn_tuning.py",
         "native_quant_mm4.py",
         "native_quant_mm8.py",
         "native_quant_a8w8.py",
@@ -54,6 +55,8 @@ def test_nvidia_migration_manifest_is_complete_and_byte_verified():
         "native_graph_runtime.py",
         "recurrent_state.py",
         "train_temp_cuda.py",
+        "triton_compat.py",
+        "SELF_CHUNK_LICENSE",
     }
     assert required_families <= destinations
 
@@ -66,6 +69,8 @@ def test_nvidia_sources_do_not_reintroduce_model_config_or_cache_ownership():
         "model_config.py",
     }
     assert not forbidden_names.intersection(path.name for path in NVIDIA.rglob("*"))
+    assert (NVIDIA / "prefill_graph_runtime.py").is_file()
+    assert (NVIDIA / "prefill_graph_pool.py").is_file()
 
     for path in NVIDIA.glob("*.py"):
         tree = ast.parse(path.read_text())

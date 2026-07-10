@@ -412,3 +412,41 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - The formal 144-unit three-way matrix is running sequentially on the RTX 4080
   under `/home/wzu/codex-run/results/rwkv7-kernels-v1/4080-auto-v1/lm-eval`.
   Do not check Phase 4 until all three 48-unit manifests and the validator pass.
+
+### 2026-08-28 — complete-source audit, prefill Graph, and final comparison harnesses
+
+- Re-audited every file in `perf/native-kernels-v0.8/rwkv7_hf` instead of
+  treating the first 99-file transfer as final. The byte-verified manifest now
+  contains 102 artifacts and adds the self-chunk license, physical BN/TN sweep
+  helper, and explicit legacy Triton compatibility helper. The ownership and
+  exclusion decision for every remaining historical module is recorded in
+  `docs/NVIDIA_MIGRATION_AUDIT.md`.
+- Adapted the old fixed-shape sequence-prefill CUDA Graph into
+  `nvidia/prefill_graph_runtime.py` and a package-owned weak/LRU pool. It uses
+  the structural clean model owner, supports only allowlisted dense FP16
+  shapes, clones every replay output, and lets `model_dispatcher.py` copy state
+  into canonical FP32 `[B,H,K,V]` cache tensors. No graph metadata or private
+  layout was added to `RWKV7Cache`.
+- Split generic BF16 Marlin W4 from the physical SM120-only BN/TN route. The
+  latter now fails closed on non-SM120 GPUs and is recorded as not applicable,
+  rather than being mislabeled as an Ada/V100 success. BF16 native model
+  probing is enabled for the TorchAO/Marlin paths; numerical/route evidence is
+  still pending on the RTX 4080.
+- Added immutable-wheel release harnesses:
+  `validate_backend_v2_fla.py` covers recurrent output/state/gradients plus
+  0.1B/0.4B/1.5B full logits/cache/padding/cached decode/64-token greedy and
+  BF16 full-model all-gradient parity; `benchmark_backend_v2.py` records
+  reference/optimized/pinned-FLA operator, prefill, 256-step cached decode and
+  forward+backward timing with cold capture separated from steady state.
+  Actual model/recurrent routes are mandatory.
+- Local gate: `74 passed`; compileall and `git diff --check` pass. Diagnostic
+  wheel hashes (not release-final until GPU fixes stop):
+  `rwkv7_hf-1.0.0-py3-none-any.whl =
+  0ba2a1e8196d120b412fe1eeea5e87a8321bbc692833e4d42dd1d1ffed94c531`,
+  `rwkv7_kernels-1.0.0.dev0-py3-none-any.whl =
+  bb20cf15b3837a370fe6024aafbd77c130258c1118169e95fff6aa253922436d`.
+  Both pass `twine check --strict`; the kernel wheel contains the new graph
+  runtime, license, BN/TN, compatibility and all CUDA/C++ sources.
+- The older recurrent-v1 RTX 4080 formal 144-unit job remains untouched and
+  running. Backend-v2 GPU validation starts only after that job releases the
+  card; its results cannot be relabeled as backend-v2 evidence.

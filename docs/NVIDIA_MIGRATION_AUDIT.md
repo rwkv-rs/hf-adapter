@@ -1,0 +1,80 @@
+# NVIDIA performance migration audit
+
+This audit answers a narrow question: whether the NVIDIA implementation from
+`perf/native-kernels-v0.8` has been preserved behind the clean optional-kernel
+boundary, without copying its duplicate Hugging Face model stack back into
+`rwkv7_hf`.
+
+## Exact source transfer
+
+`kernels/rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json` records **102** files
+from `perf/native-kernels-v0.8`.  Each row contains the old path, Git blob,
+new path, and destination SHA256.  The wheel test recomputes every hash.  The
+set includes:
+
+- CUDA/Triton fused projection, norm/mix, W/A/G/V LoRA, recurrent output,
+  FFN, DPLR, self-chunk, and sequence-prefill implementations;
+- SM70, Ada, and Blackwell policies and kernels;
+- W8, W4, A8W8, BitsAndBytes, TorchAO, Marlin, and physical BN/TN code;
+- decode graph, state-layout, native packing, and runtime policy code;
+- the complete train-temp CUDA/C++ forward/backward leaf operators;
+- Marlin and self-chunk licenses;
+- explicit BN/TN sweep helpers and the opt-in legacy Triton compatibility
+  utility.
+
+## Adapted rather than copied
+
+The following old modules mixed performance code with a second model/config/
+cache implementation.  Their functionality is represented by new
+package-owned modules instead of byte-copying the duplicate classes:
+
+| old module family | new owner |
+|---|---|
+| `model_prefill_graph.py` | `nvidia/prefill_graph_runtime.py` and `nvidia/prefill_graph_pool.py`; replay clones are copied into canonical `RWKV7Cache` |
+| `model_runtime_policy.py` | `nvidia/kernel_policy.py` and runtime policy helpers |
+| `model_quantization.py` | `rwkv7_kernels/quantization.py` plus the migrated quant operators |
+| `model_backbone.py`, `model_layers.py`, `native.py`, `native_model.py`, `model_runtime.py` | the versioned model-forward protocol, `model_dispatcher.py`, `native_jit.py`, decode/prefill runtimes, and the clean structural owner passed at call time |
+| `model_generation.py` | canonical `RWKV7Cache` batch reorder/select/repeat and standard Transformers generation methods |
+| `model_fast_api.py` | standard HF `forward()`/`generate()` plus route trace and validation tools; no methods are injected into the model |
+| `model_speculative.py` | not a kernel or required HF contract; it remains preserved on the historical branch and is intentionally not injected into the reference model |
+
+The last row is an explicit scope decision, not a missing operator.  A future
+speculative-decoding helper can consume the same public HF forward/cache API
+without moving an implementation into `modeling_rwkv7.py`.
+
+## Clean/reference and tooling ownership
+
+These historical paths are not NVIDIA operators and therefore are not copied
+to the kernel wheel:
+
+- `configuration_rwkv7.py`, `modeling_rwkv7.py`, `model_config.py`,
+  `model_cache.py`, `tokenization_rwkv7.py`: replaced by the canonical clean
+  HF reference modules;
+- `cli.py`, `converter.py`, `doctor.py`, `kernels_cli.py`, `smoke.py`,
+  `adapter_manifest.py`: conversion/release tooling lives outside the model
+  package in `rwkv7_hf_tools` or evaluation scripts;
+- package `__init__` and old remote-code glue: replaced by the two small,
+  independent package entry points.
+
+## Deliberately separate hardware distributions
+
+Ascend, MUSA, Biren, MetaX, MLX, and CoreML files are not NVIDIA backend-v2.
+They remain intact on `perf/native-kernels-v0.8` and require their own optional
+distributions.  They are excluded from `rwkv7-kernels` so installing an NVIDIA
+wheel does not import unrelated runtimes or combine incompatible licenses.
+
+## Acceptance rule
+
+Source presence alone is not acceptance.  Production `auto` remains disabled
+until one immutable HF wheel and one immutable kernel wheel pass:
+
+1. reference/optimized/pinned-FLA operator and full-model parity;
+2. cache, padding, cached decode, greedy/beam, loss and all-gradient gates;
+3. dense and quantized route gates, HF ecosystem, SFT/DPO/GRPO;
+4. the 144-unit three-way `lm_eval` matrix;
+5. honest prefill/decode/forward-backward speed matrices on RTX 4080, V100,
+   and RTX 4090.
+
+Requested environment selectors are never accepted as proof.  Result bundles
+must contain the actual `native-nvidia-*-v2[...]` or recurrent implementation
+route together with code, model, environment, and wheel hashes.

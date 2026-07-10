@@ -190,9 +190,9 @@ def _probe_native(owner: Any, request: dict[str, Any]):
             request, "owner does not expose the clean RWKV7 causal-LM structure"
         )
     dtype = owner.model.embeddings.weight.dtype
-    if dtype != torch.float16:
+    if dtype not in (torch.float16, torch.bfloat16):
         return _unsupported_native(
-            request, "native prefill v2 currently accepts FP16 checkpoints"
+            request, "native prefill v2 requires FP16 or BF16 checkpoints"
         )
     mask = request.get("attention_mask")
     if mask is not None:
@@ -344,13 +344,37 @@ def _run_native_prefill(owner: Any, request: dict[str, Any]):
     packs, _heads, _head_dim, _eps = native_jit.extract_graph(proxy)
     mask = _effective_attention_mask(request, input_ids)
     masked = not bool(mask.all().detach().cpu())
+    graph_effective: tuple[str, ...] = ()
     if not masked:
-        logits, state_vk, attention_shift, ffn_shift = native_jit.prefill(
-            proxy,
-            input_ids,
-            packs,
-            logits_to_keep=request.get("logits_to_keep"),
+        from .nvidia.prefill_graph_runtime import prefill_graph_supported
+        from .quantization import quantization_report
+
+        quantized = quantization_report(owner) is not None
+        graph_supported, _graph_reason = prefill_graph_supported(
+            owner,
+            batch_size=int(input_ids.shape[0]),
+            prompt_tokens=int(input_ids.shape[1]),
+            quantized=quantized,
         )
+        if graph_supported:
+            from .nvidia.prefill_graph_pool import get_native_prefill_graph_runner
+
+            runner = get_native_prefill_graph_runner(
+                owner,
+                packs,
+                int(input_ids.shape[0]),
+                int(input_ids.shape[1]),
+                request.get("logits_to_keep"),
+            )
+            logits, state_vk, attention_shift, ffn_shift = runner.replay(input_ids)
+            graph_effective = runner.effective_routes()
+        else:
+            logits, state_vk, attention_shift, ffn_shift = native_jit.prefill(
+                proxy,
+                input_ids,
+                packs,
+                logits_to_keep=request.get("logits_to_keep"),
+            )
     else:
         batch, sequence = int(input_ids.shape[0]), int(input_ids.shape[1])
         vocab = int(owner.lm_head.out_features)
@@ -424,6 +448,7 @@ def _run_native_prefill(owner: Any, request: dict[str, Any]):
     ):
         if bool(getattr(proxy, field, False)):
             effective.append(label)
+    effective.extend(label for label in graph_effective if label not in effective)
     if masked:
         effective.append("masked_compact")
     suffix = "+".join(effective) if effective else "dense_fallback"
