@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .mlx_bridge import load_selected_hf_tensors_as_mlx, mlx_array_nbytes, require_mlx, summarize_mlx_arrays
+from .mlx_dplr_prefill import mlx_compact_wy_three_stage_metal, mlx_dplr_metal_available
 from .mlx_quant import (
     MLXQuantizedLinear,
     metal_quant_available,
@@ -819,6 +820,20 @@ class MLXRWKV7Model:
         # state arrays after every prompt token. Keep interval=1 as the safe
         # default while exposing an opt-in graph-batching seam for prefill.
         self.prefill_eval_interval = _env_int("RWKV7_MLX_PREFILL_EVAL_INTERVAL", 1)
+        self.prefill_backend = _env_choice(
+            "RWKV7_MLX_PREFILL_BACKEND",
+            "recurrent",
+            {"recurrent", "dplr_metal", "auto"},
+        )
+        self.dplr_chunk_size = _env_int("RWKV7_MLX_DPLR_CHUNK_SIZE", 64, upper=64)
+        self.dplr_min_tokens = _env_int("RWKV7_MLX_DPLR_MIN_TOKENS", 128)
+        self.dplr_clear_cache = _env_flag("RWKV7_MLX_DPLR_CLEAR_CACHE", True)
+        self.prefill_backend_last: str | None = None
+        self.prefill_backend_counts: dict[str, int] = {
+            "recurrent": 0,
+            "dplr_metal": 0,
+            "fallback": 0,
+        }
         self._rkv_group_quant_cache: dict[tuple[int, int], Any] = {}
         self.layer_ids = _layer_indices(self.arrays)
         self.num_hidden_layers = int(self.config.get("num_hidden_layers", len(self.layer_ids)))
@@ -919,6 +934,13 @@ class MLXRWKV7Model:
             "wkv_metal_available": metal_wkv_available(),
             "quant_metal_available": metal_quant_available(),
             "prefill_eval_interval": int(self.prefill_eval_interval),
+            "prefill_backend": self.prefill_backend,
+            "prefill_backend_last": self.prefill_backend_last,
+            "prefill_backend_counts": dict(self.prefill_backend_counts),
+            "dplr_chunk_size": int(self.dplr_chunk_size),
+            "dplr_min_tokens": int(self.dplr_min_tokens),
+            "dplr_clear_cache": bool(self.dplr_clear_cache),
+            "dplr_metal_available": mlx_dplr_metal_available(),
             **summarize_mlx_arrays(self.arrays),
         }
         if self.quantized_linears:
@@ -1157,6 +1179,169 @@ class MLXRWKV7Model:
         k = k * k
         return self._linear(k, f"{prefix}.value.weight"), x
 
+    def _group_norm_heads_sequence(self, x, layer: int):
+        mx = _mx()
+        batch, tokens = int(x.shape[0]), int(x.shape[1])
+        xf = x.astype(mx.float32).reshape(batch * tokens, self.num_heads, self.head_dim)
+        mean = mx.mean(xf, axis=-1, keepdims=True)
+        var = mx.mean((xf - mean) * (xf - mean), axis=-1, keepdims=True)
+        y = (xf - mean) * mx.rsqrt(var + self.head_dim * 1e-5)
+        y = y.reshape(batch, tokens, self.hidden_size).astype(x.dtype)
+        prefix = f"model.layers.{layer}.attn.g_norm"
+        return y * self._get(f"{prefix}.weight") + self._get(f"{prefix}.bias")
+
+    def _sequence_shift(self, x, x_prev):
+        mx = _mx()
+        previous = mx.concatenate((x_prev[:, None, :], x[:, :-1, :]), axis=1)
+        return previous - x, x[:, -1, :]
+
+    def _pad_dplr_sequence(self, x, padded_tokens: int, *, fill: float = 0.0):
+        mx = _mx()
+        tokens = int(x.shape[1])
+        if padded_tokens == tokens:
+            return x
+        shape = (int(x.shape[0]), padded_tokens - tokens, int(x.shape[2]), int(x.shape[3]))
+        if fill == 1.0:
+            padding = mx.ones(shape, dtype=x.dtype)
+        else:
+            padding = mx.zeros(shape, dtype=x.dtype)
+        return mx.concatenate((x, padding), axis=1)
+
+    def _attn_sequence_dplr(self, layer: int, x, x_prev, v_first_sequence, state):
+        mx = _mx()
+        batch, tokens = int(x.shape[0]), int(x.shape[1])
+        hidden = self.hidden_size
+        heads = self.num_heads
+        head_dim = self.head_dim
+        prefix = f"model.layers.{layer}.attn"
+        xx, next_x_prev = self._sequence_shift(x, x_prev)
+        xr = x + xx * self._get(f"{prefix}.x_r")
+        xw = x + xx * self._get(f"{prefix}.x_w")
+        xk = x + xx * self._get(f"{prefix}.x_k")
+        xv = x + xx * self._get(f"{prefix}.x_v")
+        xa = x + xx * self._get(f"{prefix}.x_a")
+        xg = x + xx * self._get(f"{prefix}.x_g")
+
+        grouped_rkv = self._grouped_rkv_projection(layer, xr, xk, xv, prefix)
+        if grouped_rkv is None:
+            r = self._linear(xr, f"{prefix}.r_proj.weight")
+            k = self._linear(xk, f"{prefix}.k_proj.weight")
+            v = self._linear(xv, f"{prefix}.v_proj.weight")
+        else:
+            r, k, v = grouped_rkv
+        w = self._linear(
+            mx.tanh(self._linear(xw, f"{prefix}.w_lora.lora.0.weight")),
+            f"{prefix}.w_lora.lora.2.weight",
+            f"{prefix}.w_lora.lora.2.bias",
+        )
+        a = mx.sigmoid(
+            self._linear(
+                self._linear(xa, f"{prefix}.a_lora.lora.0.weight"),
+                f"{prefix}.a_lora.lora.2.weight",
+                f"{prefix}.a_lora.lora.2.bias",
+            )
+        )
+        g = self._linear(
+            mx.sigmoid(self._linear(xg, f"{prefix}.g_lora.lora.0.weight")),
+            f"{prefix}.g_lora.lora.2.weight",
+        )
+
+        kk = self._normalize_last_dim(
+            (k * self._get(f"{prefix}.k_k")).reshape(batch, tokens, heads, head_dim)
+        ).reshape(batch, tokens, hidden)
+        k = k * (1 + (a - 1) * self._get(f"{prefix}.k_a"))
+        if layer == 0:
+            v_first_sequence = v
+        else:
+            if v_first_sequence is None:
+                raise RuntimeError("DPLR prefill requires layer-0 v_first sequence")
+            v_mix = mx.sigmoid(
+                self._linear(
+                    self._linear(xv, f"{prefix}.v_lora.lora.0.weight"),
+                    f"{prefix}.v_lora.lora.2.weight",
+                    f"{prefix}.v_lora.lora.2.bias",
+                )
+            )
+            v = v + (v_first_sequence - v) * v_mix
+        w = mx.exp(-EXP_HALF * mx.sigmoid(w.astype(mx.float32)))
+
+        chunk_size = int(self.dplr_chunk_size)
+        padded_tokens = ((tokens + chunk_size - 1) // chunk_size) * chunk_size
+        r4 = self._pad_dplr_sequence(r.reshape(batch, tokens, heads, head_dim), padded_tokens)
+        w4 = self._pad_dplr_sequence(w.reshape(batch, tokens, heads, head_dim), padded_tokens, fill=1.0)
+        k4 = self._pad_dplr_sequence(k.reshape(batch, tokens, heads, head_dim), padded_tokens)
+        v4 = self._pad_dplr_sequence(v.reshape(batch, tokens, heads, head_dim), padded_tokens)
+        kk4 = self._pad_dplr_sequence(kk.reshape(batch, tokens, heads, head_dim), padded_tokens)
+        a4 = self._pad_dplr_sequence(a.reshape(batch, tokens, heads, head_dim), padded_tokens)
+        out_heads, final_state, _ = mlx_compact_wy_three_stage_metal(
+            r4,
+            w4,
+            k4,
+            v4,
+            kk4,
+            a4,
+            state,
+            chunk_size=chunk_size,
+        )
+        out_heads = out_heads[:, :tokens].astype(r.dtype)
+        out = self._group_norm_heads_sequence(out_heads.reshape(batch, tokens, hidden), layer)
+        sk = (
+            r.reshape(batch, tokens, heads, head_dim)
+            * k.reshape(batch, tokens, heads, head_dim)
+            * self._get(f"{prefix}.r_k").reshape(1, 1, heads, head_dim)
+        ).sum(axis=-1, keepdims=True)
+        out = out + (sk * v.reshape(batch, tokens, heads, head_dim)).reshape(batch, tokens, hidden)
+        out = self._linear(out * g, f"{prefix}.o_proj.weight")
+        return out, next_x_prev, final_state, v_first_sequence
+
+    def _ffn_sequence(self, layer: int, x, x_prev):
+        mx = _mx()
+        prefix = f"model.layers.{layer}.ffn"
+        xx, next_x_prev = self._sequence_shift(x, x_prev)
+        k = x + xx * self._get(f"{prefix}.x_k")
+        k = mx.maximum(self._linear(k, f"{prefix}.key.weight"), 0)
+        k = k * k
+        return self._linear(k, f"{prefix}.value.weight"), next_x_prev
+
+    def _forward_dplr_prefill(self, ids, state: MLXRWKV7State):
+        mx = _mx()
+        batch, tokens = int(ids.shape[0]), int(ids.shape[1])
+        x = self._get("model.embeddings.weight")[ids]
+        v_first_sequence = None
+        for layer in range(self.num_hidden_layers):
+            residual = self._layer_norm(x, f"model.layers.{layer}.pre_norm") if layer == 0 else x
+            h = self._layer_norm(residual, f"model.layers.{layer}.attn_norm")
+            a, state.attn_x_prev[layer], state.recurrent_state[layer], v_first_sequence = (
+                self._attn_sequence_dplr(
+                    layer,
+                    h,
+                    state.attn_x_prev[layer],
+                    v_first_sequence,
+                    state.recurrent_state[layer],
+                )
+            )
+            x = residual + a
+            h2 = self._layer_norm(x, f"model.layers.{layer}.ffn_norm")
+            f, state.ffn_x_prev[layer] = self._ffn_sequence(layer, h2, state.ffn_x_prev[layer])
+            x = x + f
+        if v_first_sequence is None:
+            raise RuntimeError("DPLR prefill produced no v_first sequence")
+        # Sequence slicing leaves strided views. Materialize compact cache
+        # tensors before decode so the one-token Metal path does not pay
+        # hidden contiguous copies on every layer/step.
+        state.v_first = mx.contiguous(v_first_sequence[:, -1, :])
+        state.recurrent_state = [mx.contiguous(value) for value in state.recurrent_state]
+        state.attn_x_prev = [mx.contiguous(value) for value in state.attn_x_prev]
+        state.ffn_x_prev = [mx.contiguous(value) for value in state.ffn_x_prev]
+        state.seen_tokens += tokens
+        out = self._logits_from_hidden(x[:, -1, :]).reshape(batch, 1, self.vocab_size)
+        mx.eval(out, state.v_first, *state.recurrent_state, *state.attn_x_prev, *state.ffn_x_prev)
+        if self.dplr_clear_cache:
+            clear_cache = getattr(mx, "clear_cache", None)
+            if callable(clear_cache):
+                clear_cache()
+        return out, state
+
     def _embedding(self, token_ids):
         mx = _mx()
         ids = token_ids.astype(mx.int32).reshape(-1)
@@ -1210,6 +1395,27 @@ class MLXRWKV7Model:
             state = self.init_state(B)
         elif state.batch_size != B:
             raise ValueError(f"state batch size {state.batch_size} does not match input batch size {B}")
+        is_prefill = T > 1 and not collect_all
+        use_dplr = self.prefill_backend == "dplr_metal" or (
+            self.prefill_backend == "auto" and T >= int(self.dplr_min_tokens)
+        )
+        if is_prefill and use_dplr:
+            if mlx_dplr_metal_available():
+                self.prefill_backend_last = "dplr_metal"
+                self.prefill_backend_counts["dplr_metal"] = int(
+                    self.prefill_backend_counts.get("dplr_metal", 0)
+                ) + 1
+                return self._forward_dplr_prefill(ids, state)
+            if self.prefill_backend == "dplr_metal":
+                raise RuntimeError("RWKV7_MLX_PREFILL_BACKEND=dplr_metal requires MLX custom Metal kernels")
+            self.prefill_backend_counts["fallback"] = int(self.prefill_backend_counts.get("fallback", 0)) + 1
+        elif is_prefill and self.prefill_backend == "auto":
+            self.prefill_backend_counts["fallback"] = int(self.prefill_backend_counts.get("fallback", 0)) + 1
+        if is_prefill:
+            self.prefill_backend_last = "recurrent"
+            self.prefill_backend_counts["recurrent"] = int(
+                self.prefill_backend_counts.get("recurrent", 0)
+            ) + 1
         logits = []
         last = None
         eval_interval = int(self.prefill_eval_interval) if T > 1 and not collect_all else 1

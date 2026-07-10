@@ -2951,3 +2951,47 @@ PYTHONPATH=. python scripts/mlx_dplr_prefill_bench.py \
   --dtype fp16 --warmup 2 --repeat 5 --atol 0.01 \
   --results bench/results_mlx_dplr_stage1.jsonl
 ```
+
+### MLX DPLR/WY real-model Stage 2
+
+The opt-in DPLR backend is now wired into `MLXRWKV7Model.prefill()` through a
+layer-major sequence path. Shift-mix, dense/quant projections, V-first mixing,
+group norm, residuals, and FFN run over `[B,T,D]`; each layer's WKV sequence
+uses the three-stage DPLR backend. A partial final chunk is padded with
+`w=1` and zero rank/additive inputs, then output padding is discarded.
+
+The safe default remains `recurrent`. `prefill_backend=auto` selects DPLR only
+for at least 128 tokens; `dplr_metal` forces the experimental path. DPLR cache
+arrays are materialized contiguously before decode, and its temporary allocator
+cache is released after prefill.
+
+M5, prompt512 (111 RWKV tokens), chunk64, fp16, three measured repeats:
+
+| Model/mode | Recurrent median | DPLR median | Speedup | Recurrent/DPLR peak | Parity |
+|---|---:|---:|---:|---:|---|
+| 0.1B fp16 | 262.04 tok/s | 408.63 tok/s | 1.56x | 390.8/466.9MB | 8 tokens exact; logits/state max `0.0469/0.0469` |
+| 0.4B fp16 | 117.91 tok/s | 175.83 tok/s | 1.49x | 922.6/1050.7MB | 8 tokens exact; `0.0625/0.0625` |
+| 1.5B fp16 | 37.57 tok/s | 123.45 tok/s | 3.29x | 3096.7/3345.5MB | 8 tokens exact; `0.0625/0.1280` |
+| 0.4B W4 | 78.29 tok/s | 115.40 tok/s | 1.47x | 521.2/645.4MB | 8 tokens exact; `0.0625/0.0840` |
+
+These are real full-model prefill rows, but still not a production promotion:
+DPLR raises peak memory by roughly `8%-24%`, only one prompt distribution and
+one M-series chip are covered, and decode/TTFT remains variable after the
+larger prefill. `scripts/mlx_dplr_model_prefill_bench.py` is the parity gate.
+
+The isolated Qwen reruns are recorded in
+`bench/results_qwen35_apple_m5_20260710_dplr_auto_{fp16,w4}.jsonl`. Auto keeps
+the 43-token case recurrent and routes the 164-token case to DPLR. Both fp16
+and W4 preserve all 32 continuation tokens from the earlier recurrent rows.
+The 512-character prefill comparison still fails: the retained same-run ratios
+are `0.150x` Qwen for fp16 and `0.051x` for W4, with Qwen throughput varying
+substantially between the two isolated runs. No Qwen win is claimed.
+
+```bash
+PYTHONPATH=. python scripts/mlx_dplr_model_prefill_bench.py \
+  --models /path/to/rwkv7-g1d-0.4b-hf,/path/to/rwkv7-g1g-1.5b-hf \
+  --prompt-target-chars 512 --dplr-chunk-sizes 64 \
+  --repeat 3 --warmup 1 --decode-tokens 8 \
+  --dtype fp16 --quantization none --wkv-backend metal \
+  --results bench/results_mlx_dplr_model.jsonl
+```

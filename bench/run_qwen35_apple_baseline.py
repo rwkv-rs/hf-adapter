@@ -415,6 +415,9 @@ def run_rwkv_mlx(
     wkv_backend: str,
     chunk_size: int,
     prefill_eval_interval: int,
+    prefill_backend: str,
+    dplr_chunk_size: int,
+    dplr_min_tokens: int,
     results: str,
     store_response: bool = False,
 ) -> list[dict[str, Any]]:
@@ -455,6 +458,9 @@ def run_rwkv_mlx(
         wkv_backend=wkv_backend,
     )
     model.prefill_eval_interval = int(prefill_eval_interval)
+    model.prefill_backend = str(prefill_backend)
+    model.dplr_chunk_size = int(dplr_chunk_size)
+    model.dplr_min_tokens = int(dplr_min_tokens)
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     load_s = time.perf_counter() - t_load
     prompt_ids = [int(x) for x in tokenizer(prompt_case.prompt, add_special_tokens=False).input_ids]
@@ -517,6 +523,11 @@ def run_rwkv_mlx(
                 "quant_backend": quant_backend,
                 "wkv_backend": wkv_backend,
                 "prefill_eval_interval": int(model.prefill_eval_interval),
+                "prefill_backend": telemetry.get("prefill_backend"),
+                "prefill_backend_last": telemetry.get("prefill_backend_last"),
+                "prefill_backend_counts": telemetry.get("prefill_backend_counts"),
+                "dplr_chunk_size": telemetry.get("dplr_chunk_size"),
+                "dplr_min_tokens": telemetry.get("dplr_min_tokens"),
                 "prompt_case": prompt_case.name,
                 "prompt_target_chars": int(prompt_case.target_chars),
                 "prompt_chars": len(prompt_case.prompt),
@@ -633,6 +644,13 @@ def main() -> int:
         default="0",
         help="Ollama keep_alive value. Default 0 unloads after each row to prevent prompt-cache prefill artifacts.",
     )
+    ap.add_argument(
+        "--rwkv-prefill-backend",
+        default="recurrent",
+        choices=["recurrent", "dplr_metal", "auto"],
+    )
+    ap.add_argument("--rwkv-dplr-chunk-size", type=int, default=64)
+    ap.add_argument("--rwkv-dplr-min-tokens", type=int, default=128)
     ap.add_argument("--ollama-cache-prompt", action="store_true", help="Allow Ollama/runner prompt-cache reuse across rows.")
     ap.add_argument("--no-ollama-memory", action="store_true", help="Skip official /api/ps loaded-memory telemetry.")
     ap.add_argument("--temperature", type=float, default=0.0)
@@ -655,6 +673,10 @@ def main() -> int:
         raise ValueError("--repeat must be positive")
     if args.rwkv_prefill_eval_interval <= 0:
         raise ValueError("--rwkv-prefill-eval-interval must be positive")
+    if not 1 <= args.rwkv_dplr_chunk_size <= 64:
+        raise ValueError("--rwkv-dplr-chunk-size must be in [1, 64]")
+    if args.rwkv_dplr_min_tokens <= 0:
+        raise ValueError("--rwkv-dplr-min-tokens must be positive")
     if args.summarize:
         rows = load_jsonl(args.summarize)
         print(json.dumps(summarize_rows(rows), ensure_ascii=False))
@@ -681,6 +703,9 @@ def main() -> int:
         "ollama_cache_prompt": bool(args.ollama_cache_prompt),
         "ollama_capture_memory": not bool(args.no_ollama_memory),
         "rwkv_prefill_eval_interval": int(args.rwkv_prefill_eval_interval),
+        "rwkv_prefill_backend": args.rwkv_prefill_backend,
+        "rwkv_dplr_chunk_size": int(args.rwkv_dplr_chunk_size),
+        "rwkv_dplr_min_tokens": int(args.rwkv_dplr_min_tokens),
         **device_info(),
     }
     print(json.dumps(env, ensure_ascii=False))
@@ -698,6 +723,9 @@ def main() -> int:
             "decode_lengths": decode_lengths,
             "store_responses": bool(args.store_responses),
             "rwkv_prefill_eval_interval": int(args.rwkv_prefill_eval_interval),
+            "rwkv_prefill_backend": args.rwkv_prefill_backend,
+            "rwkv_dplr_chunk_size": int(args.rwkv_dplr_chunk_size),
+            "rwkv_dplr_min_tokens": int(args.rwkv_dplr_min_tokens),
         }
         print(json.dumps(plan, ensure_ascii=False))
         append_jsonl(args.results, plan)
@@ -737,6 +765,9 @@ def main() -> int:
                     wkv_backend=args.rwkv_wkv_backend,
                     chunk_size=int(args.rwkv_chunk_size),
                     prefill_eval_interval=int(args.rwkv_prefill_eval_interval),
+                    prefill_backend=args.rwkv_prefill_backend,
+                    dplr_chunk_size=int(args.rwkv_dplr_chunk_size),
+                    dplr_min_tokens=int(args.rwkv_dplr_min_tokens),
                     results=args.results,
                     store_response=bool(args.store_responses),
                 )
