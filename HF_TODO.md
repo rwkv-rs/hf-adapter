@@ -154,7 +154,7 @@ torchrun --standalone --nproc_per_node=2 tests/test_deepspeed_training_smoke.py 
 - 在 PR body 和 `BENCHMARK.md` 摘要里只根据实测行 claim,不得把 harness 存在当作性能达成;
 - 用 `bench/compare_qwen35_apple_baseline.py` 生成 `qwen35_apple_baseline_comparison` gate 行,通过后再写“超过”;
 - `scripts/export_rwkv7_coreml.py` 已提供 import-safe manifest、full-logits 兼容导出和真实 `stateful-multifunction` prefill/decode 导出;`bench/run_coreml_apple_baseline.py` 已能做 MLState transfer、chunk split、HF greedy parity。M5 0.1B/0.4B fp32-compute 正确性行已通过,但 1.5B、生产长度上下文、LUT4/INT4 质量、确认 ANE placement 和 Qwen3.5 2B+ 完整同机矩阵仍未完成;在此之前,移动端“超过”仍不能正式 claim。
-- M5/16GB 首批 `qwen3.5:0.8b-mlx` vs RWKV-7 0.4B 同文本实测已落(`bench/results_qwen35_apple_m5_20260710_{fp16,w4}.jsonl`)。修复了 Ollama thinking 空响应、prompt-cache 伪 prefill、TTFT load 混算和跨 prompt MLX 模型未释放导致的 2x 内存污染。128/512 chars + decode32 下,fp16 decode≈0.94x/0.90x Qwen,prefill≈0.105x/0.071x;W4 decode≈0.60x,prefill≈0.064x/0.032x,但 RWKV peak≈0.568x fp16。Qwen runtime memory、1k/4k/8k、2B+ 和正式 quality rubric 仍待补,当前不能 claim “超过”。
+- M5/16GB 首批 `qwen3.5:0.8b-mlx` vs RWKV-7 0.4B 同文本实测已落(`bench/results_qwen35_apple_m5_20260710_{fp16,w4}.jsonl`)。修复了 Ollama thinking 空响应、prompt-cache 伪 prefill、TTFT load 混算和跨 prompt MLX 模型未释放导致的 2x 内存污染。128/512 chars + decode32 保守 repeat 下,fp16 decode≈0.82x/0.92x Qwen,prefill≈0.090x/0.049x;W4 decode≈0.62x/0.60x,prefill≈0.064x/0.030x,但 RWKV peak≈0.568x fp16。已记录 Qwen `/api/ps` loaded memory≈1.09-1.11GB,但它不是 peak;1k/4k/8k、2B+ 和正式 quality rubric 仍待补,当前不能 claim “超过”。
 
 最小 dry-run:
 

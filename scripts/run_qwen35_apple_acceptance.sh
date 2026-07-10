@@ -29,6 +29,7 @@ OLLAMA_TIMEOUT_S="${OLLAMA_TIMEOUT_S:-600}"
 OLLAMA_THINK="${OLLAMA_THINK:-0}"
 OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-0}"
 OLLAMA_CACHE_PROMPT="${OLLAMA_CACHE_PROMPT:-0}"
+OLLAMA_CAPTURE_MEMORY="${OLLAMA_CAPTURE_MEMORY:-1}"
 TEMPERATURE="${TEMPERATURE:-0.0}"
 
 RWKV_MLX_MODELS="${RWKV_MLX_MODELS:-}"
@@ -233,6 +234,9 @@ if [[ "${OLLAMA_THINK}" == "1" ]]; then
 fi
 if [[ "${OLLAMA_CACHE_PROMPT}" == "1" ]]; then
   baseline_args+=(--ollama-cache-prompt)
+fi
+if [[ "${OLLAMA_CAPTURE_MEMORY}" != "1" ]]; then
+  baseline_args+=(--no-ollama-memory)
 fi
 if [[ "${STORE_RESPONSES}" == "1" ]]; then
   baseline_args+=(--store-responses)

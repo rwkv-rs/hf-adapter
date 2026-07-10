@@ -168,6 +168,40 @@ def tok_s(count: int | None, duration_ns: int | None) -> float | None:
     return round(float(count) / (float(duration_ns) / 1_000_000_000.0), 6)
 
 
+def ollama_loaded_model_telemetry(*, host: str, model: str, timeout_s: float) -> dict[str, Any]:
+    """Read official `/api/ps` loaded-memory telemetry for one model."""
+
+    request = urllib.request.Request(host.rstrip("/") + "/api/ps", method="GET")
+    with urllib.request.urlopen(request, timeout=float(timeout_s)) as response:  # noqa: S310 - local benchmark endpoint
+        payload = json.loads(response.read().decode("utf-8", errors="replace"))
+    for item in payload.get("models") or []:
+        if str(item.get("name") or item.get("model") or "") != model:
+            continue
+        details = item.get("details") if isinstance(item.get("details"), dict) else {}
+        return {
+            # `size_vram` is the official loaded-runtime allocation, not a
+            # sampled peak. Keep the name distinct from peak memory so strict
+            # peak-to-peak gates cannot pass accidentally.
+            "ollama_loaded_memory_bytes": _safe_int(item.get("size_vram")),
+            "ollama_model_size_bytes": _safe_int(item.get("size")),
+            "ollama_context_length": _safe_int(item.get("context_length")),
+            "ollama_quantization_level": details.get("quantization_level"),
+        }
+    return {"ollama_memory_telemetry_reason": f"model {model!r} missing from /api/ps"}
+
+
+def unload_ollama_model(*, host: str, model: str, timeout_s: float) -> None:
+    data = json.dumps({"model": model, "stream": False, "keep_alive": 0}).encode("utf-8")
+    request = urllib.request.Request(
+        host.rstrip("/") + "/api/generate",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=float(timeout_s)) as response:  # noqa: S310 - local benchmark endpoint
+        response.read()
+
+
 def post_ollama_generate(
     *,
     host: str,
@@ -179,8 +213,10 @@ def post_ollama_generate(
     think: bool = False,
     keep_alive: str | int = 0,
     cache_prompt: bool = False,
-) -> tuple[list[dict[str, Any]], float]:
+    capture_memory: bool = True,
+) -> tuple[list[dict[str, Any]], float, dict[str, Any]]:
     url = host.rstrip("/") + "/api/generate"
+    isolate_after_row = bool(capture_memory and keep_alive == 0)
     payload = {
         "model": model,
         "prompt": prompt,
@@ -192,7 +228,10 @@ def post_ollama_generate(
         # Default to an isolated model lifetime. Ollama otherwise reuses a
         # completed prompt across rows and can report sub-microsecond
         # prompt_eval_duration, which is a cache-hit metric rather than prefill.
-        "keep_alive": keep_alive,
+        # Keep the model alive just long enough to query `/api/ps`, then issue
+        # an explicit unload below. This preserves row isolation and captures
+        # the official loaded-memory value in the same run.
+        "keep_alive": -1 if isolate_after_row else keep_alive,
         "cache_prompt": bool(cache_prompt),
         "options": {
             "num_predict": int(max_new_tokens),
@@ -213,7 +252,22 @@ def post_ollama_generate(
             chunks.append(chunk)
             if chunks[-1].get("done"):
                 break
-    return chunks, time.perf_counter() - t0
+    elapsed_s = time.perf_counter() - t0
+    telemetry: dict[str, Any] = {}
+    if capture_memory:
+        try:
+            telemetry.update(ollama_loaded_model_telemetry(host=host, model=model, timeout_s=timeout_s))
+        except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+            telemetry["ollama_memory_telemetry_reason"] = f"{type(exc).__name__}: {exc}"
+    if isolate_after_row:
+        try:
+            unload_ollama_model(host=host, model=model, timeout_s=timeout_s)
+        except (urllib.error.URLError, TimeoutError, OSError):
+            # Do not discard a completed performance row solely because the
+            # cleanup request failed; the next row will expose cache reuse in
+            # prompt_eval_duration and the env row records the policy.
+            telemetry["ollama_unload_failed"] = True
+    return chunks, elapsed_s, telemetry
 
 
 def ollama_row_from_chunks(
@@ -297,12 +351,13 @@ def run_ollama_qwen(
     think: bool = False,
     keep_alive: str | int = 0,
     cache_prompt: bool = False,
+    capture_memory: bool = True,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for max_new_tokens in decode_lengths:
         for repeat_index in range(1, repeats + 1):
             try:
-                chunks, elapsed_s = post_ollama_generate(
+                chunks, elapsed_s, runtime_telemetry = post_ollama_generate(
                     host=host,
                     model=model,
                     prompt=prompt_case.prompt,
@@ -312,6 +367,7 @@ def run_ollama_qwen(
                     think=think,
                     keep_alive=keep_alive,
                     cache_prompt=cache_prompt,
+                    capture_memory=capture_memory,
                 )
                 row = ollama_row_from_chunks(
                     model=model,
@@ -323,6 +379,7 @@ def run_ollama_qwen(
                 )
                 row["repeat_index"] = int(repeat_index)
                 row["repeat"] = int(repeats)
+                row.update(runtime_telemetry)
             except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
                 row = {
                     "axis": AXIS,
@@ -574,6 +631,7 @@ def main() -> int:
         help="Ollama keep_alive value. Default 0 unloads after each row to prevent prompt-cache prefill artifacts.",
     )
     ap.add_argument("--ollama-cache-prompt", action="store_true", help="Allow Ollama/runner prompt-cache reuse across rows.")
+    ap.add_argument("--no-ollama-memory", action="store_true", help="Skip official /api/ps loaded-memory telemetry.")
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--rwkv-mlx-models", default="", help="Comma-separated converted RWKV-7 HF model dirs; empty disables RWKV MLX.")
     ap.add_argument("--rwkv-dtype", default="fp16", choices=["keep", "fp32", "fp16", "bf16"])
@@ -610,6 +668,7 @@ def main() -> int:
         "ollama_think": bool(args.ollama_think),
         "ollama_keep_alive": ollama_keep_alive,
         "ollama_cache_prompt": bool(args.ollama_cache_prompt),
+        "ollama_capture_memory": not bool(args.no_ollama_memory),
         **device_info(),
     }
     print(json.dumps(env, ensure_ascii=False))
@@ -648,6 +707,7 @@ def main() -> int:
                     think=bool(args.ollama_think),
                     keep_alive=ollama_keep_alive,
                     cache_prompt=bool(args.ollama_cache_prompt),
+                    capture_memory=not bool(args.no_ollama_memory),
                 )
             )
         for model_path in rwkv_models:
