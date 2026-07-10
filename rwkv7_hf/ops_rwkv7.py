@@ -1,9 +1,9 @@
 # coding=utf-8
-"""Readable RWKV-7 recurrence with one optional operator boundary.
+"""Readable RWKV-7 math with versioned optional operator boundaries.
 
 The reference implementation below is the source of truth.  An independently
-installed :mod:`rwkv7_kernels` wheel may replace this single recurrence during
-inference; model structure, cache semantics, and Hugging Face APIs stay here.
+installed :mod:`rwkv7_kernels` wheel may replace recurrence or the complete
+layer loop; model structure, cache semantics, and Hugging Face APIs stay here.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from typing import Any
 import torch
 
 
-_KERNEL_API_VERSION = 1
+_KERNEL_API_VERSION = 2
 _BACKEND_ENV = "RWKV7_BACKEND"
 _BACKEND_MODES = ("auto", "reference", "optimized")
 _kernel_module: ModuleType | None = None
@@ -24,6 +24,9 @@ _kernel_import_attempted = False
 _kernel_import_error: str | None = None
 _last_recurrent_route: ContextVar[dict[str, str] | None] = ContextVar(
     "rwkv7_last_recurrent_route", default=None
+)
+_last_model_route: ContextVar[dict[str, str] | None] = ContextVar(
+    "rwkv7_last_model_route", default=None
 )
 
 
@@ -170,6 +173,13 @@ def get_last_recurrent_route() -> dict[str, str] | None:
     return None if route is None else dict(route)
 
 
+def get_last_model_route() -> dict[str, str] | None:
+    """Return the actual whole-model route taken by the latest call."""
+
+    route = _last_model_route.get()
+    return None if route is None else dict(route)
+
+
 def _load_kernel_module() -> ModuleType | None:
     global _kernel_import_attempted, _kernel_import_error, _kernel_module
     if _kernel_import_attempted:
@@ -200,6 +210,7 @@ def _reset_kernel_discovery_for_tests() -> None:
     _kernel_import_attempted = False
     _kernel_import_error = None
     _last_recurrent_route.set(None)
+    _last_model_route.set(None)
 
 
 def _probe_fields(value: Any) -> tuple[bool, str, str]:
@@ -214,6 +225,18 @@ def _probe_fields(value: Any) -> tuple[bool, str, str]:
         str(value["implementation"]),
         str(value["reason"]),
     )
+
+
+def _model_probe_fields(value: Any) -> tuple[bool, str, str, str]:
+    supported, implementation, reason = _probe_fields(value)
+    if not isinstance(value, dict) or "phase" not in value:
+        raise TypeError("model-forward probe result is missing: phase")
+    phase = str(value["phase"])
+    if phase not in ("prefill", "decode", "training"):
+        raise ValueError(
+            "model-forward probe phase must be prefill, decode, or training"
+        )
+    return supported, implementation, reason, phase
 
 
 def _validate_kernel_result(
@@ -240,6 +263,126 @@ def _validate_kernel_result(
             f"expected {tuple(initial_state.shape)}, got {tuple(final_state.shape)}"
         )
     return output, final_state
+
+
+def _validate_model_result(result: Any, *, expected_kind: str) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        raise TypeError("rwkv7_kernels.model_forward_v1() must return a dict")
+    kind = result.get("output_kind")
+    if kind != expected_kind:
+        raise ValueError(
+            "kernel model output kind mismatch: "
+            f"expected {expected_kind!r}, got {kind!r}"
+        )
+    required = {"last_hidden_state"} if kind == "base" else {"logits"}
+    missing = required - set(result)
+    if missing:
+        names = ", ".join(sorted(missing))
+        raise TypeError(f"kernel model result is missing: {names}")
+    tensor_name = "last_hidden_state" if kind == "base" else "logits"
+    if not isinstance(result[tensor_name], torch.Tensor):
+        raise TypeError(f"kernel model result {tensor_name} must be a tensor")
+    return result
+
+
+def maybe_model_forward(
+    owner: Any,
+    request: dict[str, Any],
+    *,
+    backend: str | None = None,
+) -> dict[str, Any] | None:
+    """Try the optional whole-model protocol and otherwise request fallback.
+
+    Returning ``None`` means that the readable layer loop must run.  ``auto``
+    contains missing/unsupported/failing optional implementations, whereas
+    ``optimized`` is strict and exposes the exact failure.  The request and
+    result are plain mappings so the optional wheel never owns HF output types.
+    """
+
+    requested = _backend_mode(backend)
+    if not isinstance(request, dict):
+        raise TypeError("RWKV7 model-forward request must be a dict")
+    model_kind = request.get("model_kind")
+    if model_kind not in ("base", "causal_lm"):
+        raise ValueError("model_kind must be 'base' or 'causal_lm'")
+
+    hidden = request.get("hidden_states")
+    fallback_phase = "training" if bool(request.get("training")) else "prefill"
+    if (
+        fallback_phase != "training"
+        and isinstance(hidden, torch.Tensor)
+        and hidden.ndim >= 2
+        and int(hidden.shape[1]) == 1
+    ):
+        fallback_phase = "decode"
+
+    def record(
+        selected: str, implementation: str, reason: str, phase: str = fallback_phase
+    ) -> None:
+        _last_model_route.set(
+            {
+                "requested": requested,
+                "selected": selected,
+                "implementation": implementation,
+                "reason": reason,
+                "phase": phase,
+            }
+        )
+
+    if requested == "reference":
+        record(
+            "reference",
+            "torch-reference-model-v1",
+            "reference backend was explicitly requested",
+        )
+        return None
+
+    module = _load_kernel_module()
+    if module is None:
+        reason = _kernel_import_error or "rwkv7_kernels is not installed"
+        if requested == "optimized":
+            raise RuntimeError(f"optimized RWKV7 backend is unavailable: {reason}")
+        record("reference", "torch-reference-model-v1", reason)
+        return None
+
+    probe = getattr(module, "probe_model_forward_v1", None)
+    run = getattr(module, "model_forward_v1", None)
+    if not callable(probe) or not callable(run):
+        failure: Exception = RuntimeError(
+            "rwkv7_kernels does not implement model-forward protocol v1"
+        )
+    else:
+        try:
+            supported, implementation, reason, phase = _model_probe_fields(
+                probe(owner, request)
+            )
+            if not supported:
+                if requested == "optimized":
+                    raise RuntimeError(
+                        "optimized RWKV7 backend does not support this request: "
+                        f"{reason}"
+                    )
+                record("reference", "torch-reference-model-v1", reason, phase)
+                return None
+            result = _validate_model_result(
+                run(owner, request), expected_kind=str(model_kind)
+            )
+        except Exception as exc:
+            if requested == "optimized":
+                raise RuntimeError(
+                    "optimized RWKV7 model-forward-v1 execution failed: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+            failure = exc
+        else:
+            record("optimized", implementation, reason, phase)
+            return result
+
+    reason = f"optional kernel failure: {type(failure).__name__}: {failure}"
+    if requested == "optimized":
+        raise RuntimeError(reason) from failure
+    record("reference", "torch-reference-model-v1", reason)
+    return None
 
 
 def rwkv7_recurrent(
@@ -402,7 +545,9 @@ def rwkv7_recurrent(
 
 
 __all__ = [
+    "get_last_model_route",
     "get_last_recurrent_route",
+    "maybe_model_forward",
     "rwkv7_recurrent",
     "rwkv7_recurrent_reference",
 ]

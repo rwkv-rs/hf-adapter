@@ -28,6 +28,10 @@
   `80e494f6c588e091fc8316b612870df29375c5b8`.
 - RTX 4080 is the first release device. V100 and RTX 4090 follow only after the
   4080 evidence bundle is internally consistent.
+- Full NVIDIA prefill/decode/quant/training migration uses the frozen one-shot
+  design in `docs/KERNEL_BACKEND_V2_DESIGN.md`. Its public ABI is fixed before
+  implementation; diagnostic stages may identify failures but do not redesign
+  the clean model boundary.
 
 ## Phase 0 — clean layout
 
@@ -182,19 +186,27 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - [ ] Store raw per-sample outputs outside Git; commit only compact summaries,
       manifests, hashes, commands, and validators.
 
-## Phase 5 — full fast decode and prefill
+## Phase 5 — one-shot complete NVIDIA backend-v2
 
-- [ ] Define `probe_decode_step_v1` / `decode_step_v1`.
-- [ ] Port fused token, W/A/G/V, state pool and CUDA Graph replay without
-      replacing `modeling_rwkv7.py`.
-- [ ] Define `probe_prefill_v1` / `prefill_v1`.
-- [ ] Port chunk/fused prefill and shape routing behind the protocol.
+- [x] Freeze the complete model-forward ABI and migration inventory before
+      moving implementation code.
+- [x] Add the kernel API v2 request/result envelope, explicit diagnostic probe,
+      and the single early clean-model hook; production auto stays disabled.
+- [ ] Complete every `probe_model_forward_v1` / `model_forward_v1` phase and
+      enable production auto only after the unified wheel passes.
+- [ ] Port fused token, W/A/G/V, projection, FFN, norm, state pool and CUDA
+      Graph replay without replacing `modeling_rwkv7.py`.
+- [ ] Port DPLR/self-chunk/fused prefill and all shape routing behind the same
+      model-forward protocol.
+- [ ] Port SM70, Ada and Blackwell NVIDIA policy families.
+- [ ] Port W8/W4/A8W8/BnTn/BnB/Marlin/TorchAO implementation adapters.
 - [ ] Keep canonical cache visible to HF; internal layouts never escape the
       kernel package.
 
-## Phase 6 — training kernels
+## Phase 6 — backend-v2 training implementation and unified acceptance
 
-- [ ] Define versioned forward/backward operator ABI.
+- [ ] Port the existing versioned forward/backward autograd operators behind
+      `model_forward_v1`; do not create a separate model class or cache.
 - [ ] Compare outputs, states and all gradients against reference and FLA.
 - [ ] Run Trainer/Accelerate/PEFT/TRL SFT, DPO and GRPO.
 - [ ] Distinguish optimized training from reference fallback in every report.
@@ -229,6 +241,20 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   and one lazy versioned optional-package boundary.
 - Local test command:
   `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q`.
+
+### 2026-08-27 — backend-v2 one-shot migration started
+
+- Frozen `docs/KERNEL_BACKEND_V2_DESIGN.md` before moving implementation code.
+- Kernel package API advanced to v2 with one whole-model request/result
+  envelope; the clean model gained one early layer-loop hook and no hardware
+  policy.
+- Migrated the historical tensor-only dense sequential layer executor and
+  structural packer as an internal diagnostic implementation. Canonical cache
+  remains `[B,H,K,V]`; internal `[V,K]` never crosses the boundary.
+- Production `auto` intentionally remains unsupported until fused prefill,
+  decode, quantization and training all pass as one wheel.
+- Local gate: `54 passed`; dense executor matches the clean model on full
+  hidden outputs, hidden-state history, padding and final recurrent state.
 - Local result: `46 passed`.
 - HF wheel: `rwkv7_hf-1.0.0-py3-none-any.whl`, SHA256
   `07b4f6668c3123a3e996e33d4fab8230c468db23bbd7249c3454a93e2f04338f`.

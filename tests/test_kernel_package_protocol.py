@@ -22,6 +22,7 @@ def unload_kernel_package():
 def source_kernel_package(monkeypatch):
     monkeypatch.syspath_prepend(str(ROOT / "kernels"))
     monkeypatch.delenv("RWKV7_KERNEL_IMPL", raising=False)
+    monkeypatch.delenv("RWKV7_MODEL_KERNEL_IMPL", raising=False)
     unload_kernel_package()
     yield
     unload_kernel_package()
@@ -36,12 +37,52 @@ def cpu_inputs():
 
 def test_public_kernel_surface_is_versioned_and_small():
     kernels = importlib.import_module("rwkv7_kernels")
-    assert kernels.RWKV7_KERNEL_API_VERSION == 1
+    assert kernels.RWKV7_KERNEL_API_VERSION == 2
     assert kernels.__all__ == [
         "RWKV7_KERNEL_API_VERSION",
+        "model_forward_v1",
+        "probe_model_forward_v1",
         "probe_recurrent_v1",
         "recurrent_v1",
     ]
+
+
+def test_model_forward_protocol_is_explicitly_capability_gated():
+    kernels = importlib.import_module("rwkv7_kernels")
+    request = {
+        "model_kind": "base",
+        "training": False,
+        "use_cache": True,
+    }
+    support = kernels.probe_model_forward_v1(object(), request)
+    assert support == {
+        "supported": False,
+        "implementation": "rwkv7-model-backend-v2",
+        "reason": (
+            "whole-model backend-v2 is not available for this shape; "
+            "the adapter will use its readable reference layer loop"
+        ),
+        "phase": "prefill",
+    }
+    with pytest.raises(RuntimeError, match="whole-model backend-v2"):
+        kernels.model_forward_v1(object(), request)
+
+
+def test_explicit_dense_model_diagnostic_reports_unsupported_cpu(monkeypatch):
+    monkeypatch.setenv("RWKV7_MODEL_KERNEL_IMPL", "dense")
+    kernels = importlib.import_module("rwkv7_kernels")
+    request = {
+        "model_kind": "base",
+        "training": False,
+        "grad_enabled": False,
+        "use_cache": True,
+        "hidden_states": torch.zeros(1, 1, 8, dtype=torch.float16),
+    }
+    support = kernels.probe_model_forward_v1(object(), request)
+    assert not support["supported"]
+    assert support["implementation"] == "native-torchscript-dense-sequential-v2"
+    assert support["phase"] == "decode"
+    assert "CUDA" in support["reason"]
 
 
 def test_default_auto_prefill_reports_graph_implementation_on_cpu():

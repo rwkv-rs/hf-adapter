@@ -8,7 +8,9 @@ import torch
 
 from rwkv7_hf import ops_rwkv7
 from rwkv7_hf.ops_rwkv7 import (
+    get_last_model_route,
     get_last_recurrent_route,
+    maybe_model_forward,
     rwkv7_recurrent,
     rwkv7_recurrent_reference,
 )
@@ -40,7 +42,7 @@ def reset_optional_kernel(monkeypatch):
 def install_fake_kernel(
     monkeypatch,
     *,
-    api_version: int = 1,
+    api_version: int = 2,
     supported: bool = True,
     probe_error: Exception | None = None,
     run_error: Exception | None = None,
@@ -182,3 +184,60 @@ def test_invalid_backend_mode_is_rejected():
     with pytest.raises(ValueError, match="auto, reference, optimized"):
         rwkv7_recurrent(*recurrent_inputs(), backend="fastest")
 
+
+def install_fake_model_kernel(
+    monkeypatch,
+    *,
+    supported: bool = True,
+    malformed: bool = False,
+):
+    module = types.ModuleType("rwkv7_kernels")
+    module.RWKV7_KERNEL_API_VERSION = 2
+    module.probe_model_forward_v1 = lambda _owner, _request: {
+        "supported": supported,
+        "implementation": "fake-model-v1",
+        "reason": "fake model route" if supported else "fake model unsupported",
+        "phase": "decode",
+    }
+
+    def run(_owner, request):
+        if malformed:
+            return {"output_kind": request["model_kind"]}
+        return {
+            "output_kind": request["model_kind"],
+            "last_hidden_state": torch.ones(1, 1, 4),
+        }
+
+    module.model_forward_v1 = run
+    monkeypatch.setitem(sys.modules, "rwkv7_kernels", module)
+    ops_rwkv7._reset_kernel_discovery_for_tests()
+
+
+def model_request():
+    return {"model_kind": "base", "training": False, "use_cache": True}
+
+
+def test_model_protocol_selects_supported_result_and_records_route(monkeypatch):
+    install_fake_model_kernel(monkeypatch)
+    result = maybe_model_forward(object(), model_request())
+    assert result is not None
+    assert tuple(result["last_hidden_state"].shape) == (1, 1, 4)
+    assert get_last_model_route() == {
+        "requested": "auto",
+        "selected": "optimized",
+        "implementation": "fake-model-v1",
+        "reason": "fake model route",
+        "phase": "decode",
+    }
+
+
+def test_model_protocol_auto_falls_back_but_optimized_is_strict(monkeypatch):
+    install_fake_model_kernel(monkeypatch, supported=False)
+    assert maybe_model_forward(object(), model_request()) is None
+    assert get_last_model_route()["selected"] == "reference"
+    with pytest.raises(RuntimeError, match="fake model unsupported"):
+        maybe_model_forward(object(), model_request(), backend="optimized")
+
+    install_fake_model_kernel(monkeypatch, malformed=True)
+    assert maybe_model_forward(object(), model_request()) is None
+    assert "kernel model result is missing" in get_last_model_route()["reason"]

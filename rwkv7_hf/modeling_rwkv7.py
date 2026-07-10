@@ -3,8 +3,9 @@
 
 The file intentionally shows the full model structure: token mixing, channel
 mixing, residuals, normalization, layer iteration, cache handling, language
-model loss, and generation integration. The only mathematical operator boundary
-is rwkv7_recurrent in ops_rwkv7.py.
+model loss, and generation integration. Optional acceleration enters through
+the two versioned boundaries in ops_rwkv7.py: the recurrence and one early
+whole-layer-loop hook. Neither boundary owns model/config/cache definitions.
 """
 from __future__ import annotations
 
@@ -29,7 +30,7 @@ except ImportError:  # pragma: no cover - older Transformers
 try:
     from .cache_rwkv7 import RWKV7Cache
     from .configuration_rwkv7 import RWKV7Config
-    from .ops_rwkv7 import rwkv7_recurrent
+    from .ops_rwkv7 import maybe_model_forward, rwkv7_recurrent
 except ModuleNotFoundError:
     # Transformers < 5 does not sanitize dots in Hub repository names when it
     # constructs the dynamic-module package. Repositories such as
@@ -53,7 +54,9 @@ except ModuleNotFoundError:
 
     RWKV7Cache = _load_remote_sibling("cache_rwkv7").RWKV7Cache
     RWKV7Config = _load_remote_sibling("configuration_rwkv7").RWKV7Config
-    rwkv7_recurrent = _load_remote_sibling("ops_rwkv7").rwkv7_recurrent
+    _remote_ops = _load_remote_sibling("ops_rwkv7")
+    maybe_model_forward = _remote_ops.maybe_model_forward
+    rwkv7_recurrent = _remote_ops.rwkv7_recurrent
 
 
 # Mathematically equivalent form used by the official NumPy reference.
@@ -758,6 +761,37 @@ class RWKV7Model(RWKV7PreTrainedModel):
         if cached_batch is not None and cached_batch != int(batch_size):
             raise ValueError(
                 "past_key_values batch size does not match the current input"
+            )
+
+        optimized = maybe_model_forward(
+            self,
+            {
+                "model_kind": "base",
+                "hidden_states": hidden_states,
+                "attention_mask": mask,
+                "past_key_values": working_cache,
+                "training": bool(self.training),
+                "gradient_checkpointing": bool(self.gradient_checkpointing),
+                "grad_enabled": bool(torch.is_grad_enabled()),
+                "use_cache": use_cache,
+                "output_hidden_states": output_hidden_states,
+            },
+        )
+        if optimized is not None:
+            optimized_hidden = optimized["last_hidden_state"]
+            optimized_cache = optimized.get("past_key_values")
+            optimized_history = optimized.get("hidden_states")
+            if not return_dict:
+                values = (
+                    optimized_hidden,
+                    optimized_cache,
+                    optimized_history,
+                )
+                return tuple(value for value in values if value is not None)
+            return BaseModelOutputWithPast(
+                last_hidden_state=optimized_hidden,
+                past_key_values=optimized_cache,
+                hidden_states=optimized_history,
             )
 
         all_hidden_states = (hidden_states,) if output_hidden_states else None
