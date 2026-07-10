@@ -529,6 +529,10 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   FLA commit in all three lane bundles before comparing predictions or
   metrics. This prevents results from different installed artifacts being
   merged into a nominal 144-unit matrix.
+- It also requires identical safetensors, vocabulary, tokenizer/template
+  payloads, dataset fingerprints and harness source SHA for each corresponding
+  unit. FLA's intentionally different config/model wrapper is excluded from
+  this semantic identity check; its underlying weights and inputs are not.
 
 ### 2026-08-28 — full backend evidence provenance
 

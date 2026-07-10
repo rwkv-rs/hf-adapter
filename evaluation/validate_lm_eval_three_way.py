@@ -51,6 +51,25 @@ def artifact_provenance(root: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def semantic_model_files(provenance: dict[str, Any]) -> dict[str, str]:
+    files = provenance.get("files", {})
+    return {
+        name: digest
+        for name, digest in files.items()
+        if name.endswith(".safetensors")
+        or name.endswith(".safetensors.index.json")
+        or name
+        in {
+            "chat_template.jinja",
+            "rwkv_vocab_v20230424.txt",
+            "special_tokens_map.json",
+            "tokenization_rwkv7.py",
+            "tokenizer.json",
+            "tokenizer_config.json",
+        }
+    }
+
+
 def result_json(unit_dir: Path) -> Path:
     rows = [path for path in unit_dir.rglob("results_*.json") if path.is_file()]
     if not rows:
@@ -283,6 +302,53 @@ def main() -> int:
     common_units = set.intersection(*(set(rows) for rows in manifests.values()))
     if len(common_units) != 48:
         failures.append({"reason": f"three lanes share only {len(common_units)} units"})
+    for unit in sorted(common_units):
+        reference_row = manifests["reference"][unit]
+        reference_model = semantic_model_files(
+            reference_row.get("model_provenance", {})
+        )
+        reference_dataset = reference_row.get("task_provenance", {}).get(
+            "dataset_fingerprint"
+        )
+        reference_code = reference_row.get("code_sha")
+        for lane in ("optimized", "fla"):
+            candidate = manifests[lane][unit]
+            candidate_model = semantic_model_files(
+                candidate.get("model_provenance", {})
+            )
+            if candidate_model != reference_model:
+                failures.append(
+                    {
+                        "lane": lane,
+                        "unit": unit,
+                        "reason": "weight/tokenizer provenance differs",
+                        "reference": reference_model,
+                        "candidate": candidate_model,
+                    }
+                )
+            candidate_dataset = candidate.get("task_provenance", {}).get(
+                "dataset_fingerprint"
+            )
+            if candidate_dataset != reference_dataset:
+                failures.append(
+                    {
+                        "lane": lane,
+                        "unit": unit,
+                        "reason": "dataset fingerprint differs",
+                        "reference": reference_dataset,
+                        "candidate": candidate_dataset,
+                    }
+                )
+            if candidate.get("code_sha") != reference_code:
+                failures.append(
+                    {
+                        "lane": lane,
+                        "unit": unit,
+                        "reason": "harness source SHA differs",
+                        "reference": reference_code,
+                        "candidate": candidate.get("code_sha"),
+                    }
+                )
 
     aggregates: dict[tuple[str, str], dict[str, float]] = {}
     samples: dict[tuple[str, str], dict[str, tuple[Any, ...]]] = {}

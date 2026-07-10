@@ -13,6 +13,7 @@ from evaluation.run_lm_eval_matrix import (
 from evaluation.validate_lm_eval_three_way import (
     compare_sample_outcomes,
     sample_outcomes,
+    semantic_model_files,
 )
 
 
@@ -57,6 +58,23 @@ def test_formal_artifact_and_pinned_fla_provenance(tmp_path):
         EXPECTED_FLA_COMMIT + "\n", encoding="utf-8"
     )
     assert fla_revision(fla)["commit"] == EXPECTED_FLA_COMMIT
+
+
+def test_semantic_model_identity_excludes_fla_wrapper_but_keeps_weights():
+    provenance = {
+        "files": {
+            "config.json": "different-by-design",
+            "modeling_rwkv7_fla.py": "wrapper",
+            "model.safetensors": "same-weight",
+            "rwkv_vocab_v20230424.txt": "same-vocab",
+            "tokenizer_config.json": "same-tokenizer",
+        }
+    }
+    assert semantic_model_files(provenance) == {
+        "model.safetensors": "same-weight",
+        "rwkv_vocab_v20230424.txt": "same-vocab",
+        "tokenizer_config.json": "same-tokenizer",
+    }
 
 
 def _write_samples(path, rows):
