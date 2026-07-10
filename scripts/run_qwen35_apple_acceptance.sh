@@ -40,6 +40,10 @@ RWKV_QUANT_MIN_PARAMS="${RWKV_QUANT_MIN_PARAMS:-4000000}"
 RWKV_QUANT_BACKEND="${RWKV_QUANT_BACKEND:-auto}"
 RWKV_WKV_BACKEND="${RWKV_WKV_BACKEND:-metal}"
 RWKV_CHUNK_SIZE="${RWKV_CHUNK_SIZE:-2048}"
+# Interval 2 is exact on the current 0.1B/0.4B/1.5B fp16 and 0.4B/1.5B
+# W4 Apple matrix, while avoiding one host/GPU synchronization per prompt
+# token. The model API itself retains interval 1 as its conservative default.
+RWKV_PREFILL_EVAL_INTERVAL="${RWKV_PREFILL_EVAL_INTERVAL:-2}"
 
 # Comparison defaults cover the current local/public model classes.  Add the
 # 4B/9B pairs once matching RWKV 2.9B/larger or distilled mobile exports exist.
@@ -228,6 +232,7 @@ baseline_args=(
   --rwkv-quant-backend "${RWKV_QUANT_BACKEND}"
   --rwkv-wkv-backend "${RWKV_WKV_BACKEND}"
   --rwkv-chunk-size "${RWKV_CHUNK_SIZE}"
+  --rwkv-prefill-eval-interval "${RWKV_PREFILL_EVAL_INTERVAL}"
 )
 if [[ "${OLLAMA_THINK}" == "1" ]]; then
   baseline_args+=(--ollama-think)

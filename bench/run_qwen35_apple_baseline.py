@@ -414,6 +414,7 @@ def run_rwkv_mlx(
     quant_backend: str,
     wkv_backend: str,
     chunk_size: int,
+    prefill_eval_interval: int,
     results: str,
     store_response: bool = False,
 ) -> list[dict[str, Any]]:
@@ -453,6 +454,7 @@ def run_rwkv_mlx(
         quant_backend=quant_backend,
         wkv_backend=wkv_backend,
     )
+    model.prefill_eval_interval = int(prefill_eval_interval)
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     load_s = time.perf_counter() - t_load
     prompt_ids = [int(x) for x in tokenizer(prompt_case.prompt, add_special_tokens=False).input_ids]
@@ -514,6 +516,7 @@ def run_rwkv_mlx(
                 "quant_min_params": int(quant_min_params),
                 "quant_backend": quant_backend,
                 "wkv_backend": wkv_backend,
+                "prefill_eval_interval": int(model.prefill_eval_interval),
                 "prompt_case": prompt_case.name,
                 "prompt_target_chars": int(prompt_case.target_chars),
                 "prompt_chars": len(prompt_case.prompt),
@@ -640,10 +643,18 @@ def main() -> int:
     ap.add_argument("--rwkv-quant-backend", default="auto", choices=["affine", "reference", "metal", "auto"])
     ap.add_argument("--rwkv-wkv-backend", default="auto", choices=["reference", "metal", "auto"])
     ap.add_argument("--rwkv-chunk-size", type=int, default=0)
+    ap.add_argument(
+        "--rwkv-prefill-eval-interval",
+        type=int,
+        default=1,
+        help="Evaluate lazy MLX prefill graphs every N prompt tokens; 1 preserves the reference schedule.",
+    )
     args = ap.parse_args()
 
     if args.repeat <= 0:
         raise ValueError("--repeat must be positive")
+    if args.rwkv_prefill_eval_interval <= 0:
+        raise ValueError("--rwkv-prefill-eval-interval must be positive")
     if args.summarize:
         rows = load_jsonl(args.summarize)
         print(json.dumps(summarize_rows(rows), ensure_ascii=False))
@@ -669,6 +680,7 @@ def main() -> int:
         "ollama_keep_alive": ollama_keep_alive,
         "ollama_cache_prompt": bool(args.ollama_cache_prompt),
         "ollama_capture_memory": not bool(args.no_ollama_memory),
+        "rwkv_prefill_eval_interval": int(args.rwkv_prefill_eval_interval),
         **device_info(),
     }
     print(json.dumps(env, ensure_ascii=False))
@@ -685,6 +697,7 @@ def main() -> int:
             "prompt_cases": [{"name": case.name, "chars": len(case.prompt)} for case in prompt_cases],
             "decode_lengths": decode_lengths,
             "store_responses": bool(args.store_responses),
+            "rwkv_prefill_eval_interval": int(args.rwkv_prefill_eval_interval),
         }
         print(json.dumps(plan, ensure_ascii=False))
         append_jsonl(args.results, plan)
@@ -723,6 +736,7 @@ def main() -> int:
                     quant_backend=args.rwkv_quant_backend,
                     wkv_backend=args.rwkv_wkv_backend,
                     chunk_size=int(args.rwkv_chunk_size),
+                    prefill_eval_interval=int(args.rwkv_prefill_eval_interval),
                     results=args.results,
                     store_response=bool(args.store_responses),
                 )

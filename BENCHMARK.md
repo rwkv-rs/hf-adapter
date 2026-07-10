@@ -2872,3 +2872,43 @@ sample, so no quality-parity claim is made. Ollama runtime memory is still
 missing, so the cross-engine peak-memory gate remains unknown. The runner now
 also records Ollama's official `/api/ps` loaded-memory value separately
 (`1.09-1.11GB` here); it is not mislabeled as peak memory.
+
+### MLX prefill graph-evaluation batching
+
+The recurrent MLX reference historically called `mx.eval` after every prompt
+token. `RWKV7_MLX_PREFILL_EVAL_INTERVAL` and
+`--rwkv-prefill-eval-interval` now expose a conservative graph-batching seam:
+the model default stays `1`, while the Apple acceptance wrapper defaults to
+`2`. `scripts/mlx_prefill_eval_interval_bench.py` rotates interval order in one
+loaded process and compares logits, all WKV/attention/FFN/v-first cache arrays,
+seen-token count, and next token against interval `1`.
+
+M5, 512 prompt characters (107 RWKV tokens), four interleaved repeats:
+
+| Mode | Model | interval=1 median | interval=2 median | Speedup | Parity |
+|---|---|---:|---:|---:|---|
+| fp16 | 0.1B | 243.03 tok/s | 255.37 tok/s | 1.05x | exact |
+| fp16 | 0.4B | 115.47 tok/s | 148.08 tok/s | 1.28x | exact |
+| fp16 | 1.5B | 42.52 tok/s | 46.38 tok/s | 1.09x | exact |
+| W4/Metal | 0.4B | 72.49 tok/s | 99.77 tok/s | 1.38x | exact |
+| W4/Metal | 1.5B | 26.80 tok/s | 35.39 tok/s | 1.32x | exact |
+
+Raw rows are in `bench/results_mlx_prefill_eval_m5_20260710_fp16.jsonl`
+and `bench/results_mlx_prefill_eval_m5_20260710_w4.jsonl`. The corresponding
+isolated Qwen rerun is in
+`bench/results_qwen35_apple_m5_20260710_eval2_{fp16,w4}.jsonl`. Conservative
+eval2 comparisons remain gaps: fp16 prefill is `0.120x/0.050x` Qwen for
+128/512 characters; W4 is `0.088x/0.042x`. Removing synchronization overhead
+therefore helps but cannot close the sequential-recurrence gap. The next Apple
+prefill milestone is a native MLX/Metal port of DPLR/WY chunk summary, prefix
+combine, and chunk apply/output—not a larger eval interval.
+
+Reproduce the interval sweep:
+
+```bash
+PYTHONPATH=. python scripts/mlx_prefill_eval_interval_bench.py \
+  --models /path/to/rwkv7-g1d-0.4b-hf,/path/to/rwkv7-g1g-1.5b-hf \
+  --intervals 1,2,4 --prompt-target-chars 512 --repeat 4 --warmup 1 \
+  --dtype fp16 --quantization none --wkv-backend metal --atol 0 \
+  --results bench/results_mlx_prefill_eval.jsonl
+```

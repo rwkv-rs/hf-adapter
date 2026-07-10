@@ -133,7 +133,11 @@ def test_apple_smoke_script_static() -> None:
     assert "scripts/export_rwkv7_coreml.py" in qwen_acceptance_text
     assert "PULL_QWEN" in qwen_acceptance_text
     assert "RWKV_MLX_MODELS" in qwen_acceptance_text
+    assert "RWKV_PREFILL_EVAL_INTERVAL" in qwen_acceptance_text
     assert "COREML_EXPORT_MODELS" in qwen_acceptance_text
+    mlx_prefill_eval_bench = ROOT / "scripts/mlx_prefill_eval_interval_bench.py"
+    assert mlx_prefill_eval_bench.exists()
+    assert mlx_prefill_eval_bench.stat().st_mode & stat.S_IXUSR
     convert_mlx_script = ROOT / "scripts/convert_hf_to_mlx.py"
     assert convert_mlx_script.exists()
     assert convert_mlx_script.stat().st_mode & stat.S_IXUSR
@@ -323,7 +327,11 @@ def test_apple_doc_links_entry_points() -> None:
     assert "scripts/export_rwkv7_coreml.py" in qwen_acceptance_text
     assert "PULL_QWEN" in qwen_acceptance_text
     assert "RWKV_MLX_MODELS" in qwen_acceptance_text
+    assert "RWKV_PREFILL_EVAL_INTERVAL" in qwen_acceptance_text
     assert "COREML_EXPORT_MODELS" in qwen_acceptance_text
+    mlx_prefill_eval_bench = ROOT / "scripts/mlx_prefill_eval_interval_bench.py"
+    assert mlx_prefill_eval_bench.exists()
+    assert mlx_prefill_eval_bench.stat().st_mode & stat.S_IXUSR
     convert_mlx_script = ROOT / "scripts/convert_hf_to_mlx.py"
     assert convert_mlx_script.exists()
     assert convert_mlx_script.stat().st_mode & stat.S_IXUSR

@@ -316,6 +316,8 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
             "qwen3.5:0.8b-mlx",
             "--rwkv-mlx-models",
             "/tmp/rwkv-a,/tmp/rwkv-b",
+            "--rwkv-prefill-eval-interval",
+            "3",
         ],
         cwd=ROOT,
         text=True,
@@ -328,6 +330,8 @@ def test_dry_run_cli_writes_jsonl(tmp_path: Path) -> None:
     assert rows[1]["axis"] == AXIS + "_plan"
     assert rows[1]["qwen_jobs"] == 4
     assert rows[1]["rwkv_mlx_jobs"] == 8
+    assert rows[0]["rwkv_prefill_eval_interval"] == 3
+    assert rows[1]["rwkv_prefill_eval_interval"] == 3
 
 
 def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
@@ -343,6 +347,7 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
             "RESULTS": str(out),
             "PYTHON_BIN": sys.executable,
             "SKIP_COMPARE": "1",
+            "RWKV_PREFILL_EVAL_INTERVAL": "3",
         }
     )
     result = subprocess.run(
@@ -360,6 +365,36 @@ def test_acceptance_wrapper_dry_run(tmp_path: Path) -> None:
     assert rows[1]["qwen_jobs"] == 0
     assert rows[1]["rwkv_mlx_jobs"] == 2
     assert rows[1]["rwkv_mlx_models"] == ["/tmp/rwkv-a", "/tmp/rwkv-b"]
+    assert rows[0]["rwkv_prefill_eval_interval"] == 3
+
+
+def test_mlx_prefill_eval_interval_bench_dry_run(tmp_path: Path) -> None:
+    out = tmp_path / "prefill_eval_plan.jsonl"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/mlx_prefill_eval_interval_bench.py",
+            "--models",
+            "/tmp/rwkv-a,/tmp/rwkv-b",
+            "--intervals",
+            "1,2,4",
+            "--prompt-target-chars",
+            "64",
+            "--results",
+            str(out),
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    row = json.loads(out.read_text(encoding="utf-8").strip())
+    assert row["axis"] == "mlx_prefill_eval_interval_env"
+    assert row["models"] == ["/tmp/rwkv-a", "/tmp/rwkv-b"]
+    assert row["intervals"] == [1, 2, 4]
+    assert row["prompt_chars"] == 64
 
 
 def test_compare_rows_reports_decode_and_memory_pass() -> None:

@@ -655,6 +655,14 @@ Run this checklist for every new GPU before marking it as supported:
   W4 lowers RWKV peak to about `0.568x` fp16 while decode drops to about
   `0.60x` Qwen. Treat Qwen peak memory and quality as open gates; `/api/ps`
   loaded memory is telemetry, not a peak substitute.
+- MLX prompt graph-evaluation batching is now an explicit, parity-gated seam.
+  The model-level conservative default remains interval `1`; the Apple/Qwen
+  acceptance wrapper uses interval `2`. On M5, 512-character interleaved rows
+  keep logits, every recurrent/cache tensor, seen-token count, and next token
+  exact while interval `2` changes median prefill by `1.05x/1.28x/1.09x` for
+  0.1B/0.4B/1.5B fp16 and `1.38x/1.32x` for 0.4B/1.5B W4. This removes host
+  synchronization overhead only; it does not replace the required MLX/Metal
+  DPLR/WY chunk-summary, prefix-combine, and chunk-apply/output implementation.
 - CoreML state contract: state is fp16-only, so WKV uses fp16 high + fp16
   residual tensors; attention/FFN previous inputs and `v_first` are separate
   states. `--coreml-compute-precision auto` must resolve to fp32 for stateful

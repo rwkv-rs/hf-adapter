@@ -59,6 +59,15 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
+def _env_int(name: str, default: int, *, lower: int = 1, upper: int = 4096) -> int:
+    raw = os.environ.get(name)
+    try:
+        value = int(raw) if raw not in {None, ""} else int(default)
+    except ValueError:
+        value = int(default)
+    return max(int(lower), min(int(upper), value))
+
+
 def _env_choice(name: str, default: str, choices: set[str]) -> str:
     raw = os.environ.get(name)
     value = (raw if raw is not None and raw != "" else default).strip().lower()
@@ -806,6 +815,10 @@ class MLXRWKV7Model:
             {"direct", "packed"},
         )
         self.group_rkv_quant_projection_counts: dict[str, int] = {"metal": 0, "fallback": 0}
+        # MLX is lazy, but the historical recurrent reference synchronized all
+        # state arrays after every prompt token. Keep interval=1 as the safe
+        # default while exposing an opt-in graph-batching seam for prefill.
+        self.prefill_eval_interval = _env_int("RWKV7_MLX_PREFILL_EVAL_INTERVAL", 1)
         self._rkv_group_quant_cache: dict[tuple[int, int], Any] = {}
         self.layer_ids = _layer_indices(self.arrays)
         self.num_hidden_layers = int(self.config.get("num_hidden_layers", len(self.layer_ids)))
@@ -905,6 +918,7 @@ class MLXRWKV7Model:
             "wkv_backend_counts": dict(self.wkv_backend_counts),
             "wkv_metal_available": metal_wkv_available(),
             "quant_metal_available": metal_quant_available(),
+            "prefill_eval_interval": int(self.prefill_eval_interval),
             **summarize_mlx_arrays(self.arrays),
         }
         if self.quantized_linears:
@@ -1148,7 +1162,7 @@ class MLXRWKV7Model:
         ids = token_ids.astype(mx.int32).reshape(-1)
         return self._get("model.embeddings.weight")[ids]
 
-    def _step_token(self, token_ids, state: MLXRWKV7State):
+    def _step_token(self, token_ids, state: MLXRWKV7State, *, evaluate: bool = True):
         mx = _mx()
         x = self._embedding(token_ids)
         for layer in range(self.num_hidden_layers):
@@ -1167,7 +1181,8 @@ class MLXRWKV7Model:
             f, state.ffn_x_prev[layer] = self._ffn_step(layer, h2, state.ffn_x_prev[layer])
             x = residual + f
         state.seen_tokens += 1
-        mx.eval(x, state.v_first, *state.recurrent_state, *state.attn_x_prev, *state.ffn_x_prev)
+        if evaluate:
+            mx.eval(x, state.v_first, *state.recurrent_state, *state.attn_x_prev, *state.ffn_x_prev)
         return x, state
 
     def _logits_from_hidden(self, x):
@@ -1197,8 +1212,10 @@ class MLXRWKV7Model:
             raise ValueError(f"state batch size {state.batch_size} does not match input batch size {B}")
         logits = []
         last = None
+        eval_interval = int(self.prefill_eval_interval) if T > 1 and not collect_all else 1
         for t in range(T):
-            last, state = self._step_token(ids[:, t], state)
+            evaluate = eval_interval == 1 or (t + 1) % eval_interval == 0 or t + 1 == T
+            last, state = self._step_token(ids[:, t], state, evaluate=evaluate)
             if collect_all:
                 logits.append(self._logits_from_hidden(last))
         if collect_all:
