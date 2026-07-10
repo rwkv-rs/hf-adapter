@@ -8,6 +8,16 @@ failing at module import time.
 """
 
 try:
+    from .triton_compat import apply_runtime_compat as _rwkv7_apply_runtime_compat
+except ImportError:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from triton_compat import apply_runtime_compat as _rwkv7_apply_runtime_compat
+    except Exception:  # pragma: no cover - compatibility helper is optional
+        _rwkv7_apply_runtime_compat = None
+if _rwkv7_apply_runtime_compat is not None:
+    _rwkv7_apply_runtime_compat()
+
+try:
     from fla.models.rwkv7.configuration_rwkv7 import RWKV7Config as _RWKV7Config
 except Exception:  # pragma: no cover - exercised by fla-free native backend tests
     from transformers import PretrainedConfig

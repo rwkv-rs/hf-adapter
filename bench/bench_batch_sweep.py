@@ -167,7 +167,11 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
     with torch.inference_mode():
         for _ in range(args.warmup):
             _ = model(ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
-    prefill_dt = timed(lambda: model(ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep), args.device, args.runs)
+        prefill_dt = timed(
+            lambda: model(ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep),
+            args.device,
+            args.runs,
+        )
 
     with torch.inference_mode():
         out = model(ids[:, :8], use_cache=True, logits_to_keep=args.hf_logits_to_keep)
@@ -249,6 +253,9 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
             "native_graph_fused_projection": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_PROJECTION", "0") not in {"0", "false", "False", "no", "off"},
             "native_graph_fused_norm_mix": effective_flag(model, "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX", "fused_norm_mix", False),
             "native_graph_sm70_linear": effective_flag(model, "RWKV7_NATIVE_GRAPH_SM70_LINEAR", "sm70_linear", False),
+            "native_graph_ada_linear": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_LINEAR", "ada_linear", False),
+            "native_graph_ada_wagv_lora": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA", "ada_wagv_lora", False),
+            "native_graph_ada_sparse_ffn": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN", "ada_sparse_ffn", False),
             "decode_tokps_total": round((bsz * args.decode_tokens) / fast_dt, 1),
             "decode_tokps_per_seq": round(args.decode_tokens / fast_dt, 1),
             "decode_ms_per_step": round(1000 * fast_dt / args.decode_tokens, 2),
