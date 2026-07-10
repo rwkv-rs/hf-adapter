@@ -26,6 +26,9 @@ RUN_QWEN="${RUN_QWEN:-auto}"
 PULL_QWEN="${PULL_QWEN:-0}"
 OLLAMA_HOST="${OLLAMA_HOST:-http://127.0.0.1:11434}"
 OLLAMA_TIMEOUT_S="${OLLAMA_TIMEOUT_S:-600}"
+OLLAMA_THINK="${OLLAMA_THINK:-0}"
+OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-0}"
+OLLAMA_CACHE_PROMPT="${OLLAMA_CACHE_PROMPT:-0}"
 TEMPERATURE="${TEMPERATURE:-0.0}"
 
 RWKV_MLX_MODELS="${RWKV_MLX_MODELS:-}"
@@ -216,6 +219,7 @@ baseline_args=(
   --repeat "${REPEAT}"
   --ollama-host "${OLLAMA_HOST}"
   --ollama-timeout-s "${OLLAMA_TIMEOUT_S}"
+  --ollama-keep-alive "${OLLAMA_KEEP_ALIVE}"
   --temperature "${TEMPERATURE}"
   --rwkv-dtype "${RWKV_DTYPE}"
   --rwkv-quantization "${RWKV_QUANTIZATION}"
@@ -224,6 +228,12 @@ baseline_args=(
   --rwkv-wkv-backend "${RWKV_WKV_BACKEND}"
   --rwkv-chunk-size "${RWKV_CHUNK_SIZE}"
 )
+if [[ "${OLLAMA_THINK}" == "1" ]]; then
+  baseline_args+=(--ollama-think)
+fi
+if [[ "${OLLAMA_CACHE_PROMPT}" == "1" ]]; then
+  baseline_args+=(--ollama-cache-prompt)
+fi
 if [[ "${STORE_RESPONSES}" == "1" ]]; then
   baseline_args+=(--store-responses)
 fi

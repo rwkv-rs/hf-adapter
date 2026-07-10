@@ -2838,3 +2838,35 @@ is near parity rather than a stable win (roughly `0.99x` median in the sampled
 runs), and first model warmup/compilation is much longer for the compressed
 package. The runtime now exposes `--warmup` and records `warmup_s` so cold
 CoreML compilation cannot silently contaminate steady-state throughput rows.
+
+## Apple M5 live Qwen3.5 0.8B comparison (2026-07-10)
+
+The first real same-device Qwen3.5 row is recorded in
+`bench/results_qwen35_apple_m5_20260710_fp16.jsonl` and
+`bench/results_qwen35_apple_m5_20260710_w4.jsonl`. Environment: MacBook Air,
+Apple M5, 16GB, macOS 26.5, Ollama 0.31.1 with
+`qwen3.5:0.8b-mlx` (1.2GB public package), and MLX 0.32.0. Both engines receive
+the same prompt text; tokenizer token counts differ naturally.
+
+The Ollama runner disables thinking for response comparability and uses
+`keep_alive=0` per row. This prevents an already-completed prompt from turning
+`prompt_eval_duration` into a cache-hit number. `ttft_s` excludes the reported
+model load duration on both sides; `cold_ttft_s` retains load-inclusive latency.
+
+Conservative comparison values use minimum throughput and maximum steady TTFT
+across two repeats:
+
+| RWKV mode | Prompt chars | Qwen/RWKV tokens | Qwen/RWKV decode tok/s | Decode ratio | Qwen/RWKV prefill tok/s | Prefill ratio | Qwen/RWKV TTFT | RWKV peak |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| fp16 + Metal WKV | 128 | 54 / 43 | 110.52 / 103.87 | 0.940x | 1092.79 / 115.02 | 0.105x | 0.067 / 0.376 s | 929.0MB |
+| fp16 + Metal WKV | 512 | 173 / 164 | 115.99 / 104.87 | 0.904x | 1692.46 / 120.49 | 0.071x | 0.117 / 1.361 s | 929.1MB |
+| W4 auto + Metal WKV | 128 | 54 / 43 | 114.58 / 69.29 | 0.605x | 1062.53 / 68.48 | 0.064x | 0.069 / 0.628 s | 527.6MB |
+| W4 auto + Metal WKV | 512 | 173 / 164 | 115.35 / 68.67 | 0.595x | 2342.42 / 74.56 | 0.032x | 0.105 / 2.200 s | 527.7MB |
+
+This is a clear **gap**, not a win. fp16 decode is relatively close (about
+`0.90x-0.94x` Qwen), but the sequential MLX prefill path is only about
+`0.07x-0.11x`. Current W4 lowers RWKV peak memory to about `0.568x` fp16 but
+also lowers decode to about `0.65x-0.67x` fp16. W4 matched fp16 greedy tokens
+for the 512-character sample and diverged at token zero for the 128-character
+sample, so no quality-parity claim is made. Ollama runtime memory is still
+missing, so the cross-engine memory gate remains unknown.
