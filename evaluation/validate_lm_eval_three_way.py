@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Validate reference/optimized/FLA formal lm_eval bundles as one matrix."""
+
 from __future__ import annotations
 
 import argparse
@@ -18,6 +19,7 @@ ALLOWED_MODEL_ROUTE_PREFIXES = (
     "native-nvidia-prefill-v2[",
     "native-nvidia-fused-decode-v2[",
 )
+EXPECTED_FLA_COMMIT = "80e494f6c588e091fc8316b612870df29375c5b8"
 
 
 def arguments() -> argparse.Namespace:
@@ -40,6 +42,13 @@ def latest_manifest(root: Path) -> dict[str, dict[str, Any]]:
             row = json.loads(line)
             latest[row["unit"]] = row
     return latest
+
+
+def artifact_provenance(root: Path) -> dict[str, Any]:
+    path = root / "artifacts.json"
+    if not path.is_file():
+        raise FileNotFoundError(f"missing artifact provenance: {path}")
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def result_json(unit_dir: Path) -> Path:
@@ -184,10 +193,43 @@ def main() -> int:
     roots = {lane: getattr(args, f"{lane}_dir") for lane in LANES}
     manifests = {lane: latest_manifest(root) for lane, root in roots.items()}
     failures: list[dict[str, Any]] = []
+    artifacts = {lane: artifact_provenance(root) for lane, root in roots.items()}
+    wheel_hashes = {
+        lane: {
+            name: row.get("sha256") for name, row in payload.get("wheels", {}).items()
+        }
+        for lane, payload in artifacts.items()
+    }
+    expected_wheels = wheel_hashes["reference"]
+    if set(expected_wheels) != {"rwkv7_hf", "rwkv7_kernels"} or not all(
+        expected_wheels.values()
+    ):
+        failures.append({"reason": "reference lane lacks both immutable wheel hashes"})
+    for lane, hashes in wheel_hashes.items():
+        if hashes != expected_wheels:
+            failures.append(
+                {
+                    "lane": lane,
+                    "reason": "wheel hashes differ from reference",
+                    "expected": expected_wheels,
+                    "actual": hashes,
+                }
+            )
+        fla = artifacts[lane].get("fla") or {}
+        if fla.get("commit") != EXPECTED_FLA_COMMIT:
+            failures.append(
+                {
+                    "lane": lane,
+                    "reason": f"FLA commit is not pinned to {EXPECTED_FLA_COMMIT}",
+                    "actual": fla.get("commit"),
+                }
+            )
 
     for lane, rows in manifests.items():
         if len(rows) != 48:
-            failures.append({"lane": lane, "reason": f"expected 48 units, got {len(rows)}"})
+            failures.append(
+                {"lane": lane, "reason": f"expected 48 units, got {len(rows)}"}
+            )
         for unit, row in rows.items():
             if row.get("exit_code") != 0:
                 failures.append({"lane": lane, "unit": unit, "reason": "nonzero exit"})
@@ -196,14 +238,20 @@ def main() -> int:
             if row.get("lane", lane) != lane:
                 failures.append({"lane": lane, "unit": unit, "reason": "lane mismatch"})
             if not row.get("task_provenance", {}).get("dataset_fingerprint"):
-                failures.append({"lane": lane, "unit": unit, "reason": "missing provenance"})
+                failures.append(
+                    {"lane": lane, "unit": unit, "reason": "missing provenance"}
+                )
             if lane == "optimized":
                 trace = row.get("kernel_route_trace", {})
                 counts = trace.get("actual_recurrent_calls", {})
                 unknown = set(counts) - ALLOWED_OPTIMIZED_ROUTES
                 if unknown:
                     failures.append(
-                        {"lane": lane, "unit": unit, "reason": f"unknown routes {sorted(unknown)}"}
+                        {
+                            "lane": lane,
+                            "unit": unit,
+                            "reason": f"unknown routes {sorted(unknown)}",
+                        }
                     )
                 model_counts = trace.get("actual_model_calls", {})
                 unknown_model = [
@@ -246,7 +294,9 @@ def main() -> int:
             payload = json.loads(result_json(root / unit).read_text(encoding="utf-8"))
             metrics = numeric_metrics(payload, row["task"])
             if any(not math.isfinite(value) for value in metrics.values()):
-                failures.append({"lane": lane, "unit": unit, "reason": "non-finite metric"})
+                failures.append(
+                    {"lane": lane, "unit": unit, "reason": "non-finite metric"}
+                )
             aggregates[(lane, unit)] = metrics
             samples[(lane, unit)] = sample_outcomes(
                 sample_jsonl(root / unit, row["task"]), row["task"]
@@ -297,7 +347,14 @@ def main() -> int:
             ] = unit
         for (model, task), units in grouped.items():
             if set(units) != {1, 8}:
-                failures.append({"lane": lane, "model": model, "task": task, "reason": "missing batch"})
+                failures.append(
+                    {
+                        "lane": lane,
+                        "model": model,
+                        "task": task,
+                        "reason": "missing batch",
+                    }
+                )
                 continue
             left = aggregates.get((lane, units[1]), {})
             right = aggregates.get((lane, units[8]), {})
@@ -342,12 +399,21 @@ def main() -> int:
         "units": sum(len(rows) for rows in manifests.values()),
         "status": "passed" if not failures else "failed",
         "require_model_routes": bool(args.require_model_routes),
+        "artifacts": artifacts,
         "failures": failures,
         "comparisons": comparisons,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-    print(json.dumps({"output": str(args.output), "status": report["status"], "failures": len(failures)}))
+    print(
+        json.dumps(
+            {
+                "output": str(args.output),
+                "status": report["status"],
+                "failures": len(failures),
+            }
+        )
+    )
     return 0 if not failures else 1
 
 

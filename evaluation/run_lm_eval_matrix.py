@@ -14,6 +14,7 @@ from pathlib import Path
 
 
 EXPECTED_LM_EVAL = "0.4.9.1"
+EXPECTED_FLA_COMMIT = "80e494f6c588e091fc8316b612870df29375c5b8"
 TASKS = (
     "wikitext",
     "lambada_openai",
@@ -41,7 +42,9 @@ def parse_model(value: str):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Run the formal 48-unit lm_eval matrix")
+    parser = argparse.ArgumentParser(
+        description="Run the formal 48-unit lm_eval matrix"
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument(
         "--lane",
@@ -72,6 +75,13 @@ def parse_args():
         "--code-sha",
         default=None,
         help="Source revision for rsync deployments without a .git directory",
+    )
+    parser.add_argument("--hf-wheel", type=Path)
+    parser.add_argument("--kernel-wheel", type=Path)
+    parser.add_argument(
+        "--fla-source",
+        type=Path,
+        help="Pinned FLA checkout/source tree used by the comparison lane",
     )
     parser.add_argument(
         "--smoke-limit",
@@ -123,6 +133,43 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def artifact(path: Path | None) -> dict | None:
+    if path is None:
+        return None
+    path = path.expanduser().resolve()
+    if not path.is_file():
+        raise RuntimeError(f"artifact does not exist: {path}")
+    return {
+        "path": str(path),
+        "bytes": path.stat().st_size,
+        "sha256": sha256_file(path),
+    }
+
+
+def fla_revision(source: Path | None) -> dict | None:
+    if source is None:
+        return None
+    source = source.expanduser().resolve()
+    marker = source / ".fla-upstream-commit"
+    if marker.is_file():
+        revision = marker.read_text(encoding="utf-8").strip()
+    else:
+        try:
+            revision = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=source,
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise RuntimeError(f"cannot resolve FLA revision in {source}") from exc
+    if revision != EXPECTED_FLA_COMMIT:
+        raise RuntimeError(
+            f"FLA revision mismatch: expected {EXPECTED_FLA_COMMIT}, got {revision}"
+        )
+    return {"path": str(source), "commit": revision}
+
+
 def resolve_model(source: str, revision: str | None) -> dict:
     path = Path(source).expanduser()
     if path.exists():
@@ -144,7 +191,10 @@ def resolve_model(source: str, revision: str | None) -> dict:
                 or candidate.name.endswith(".safetensors.index.json")
             )
         )
-        hashes = {str(candidate.relative_to(path)): sha256_file(candidate) for candidate in files}
+        hashes = {
+            str(candidate.relative_to(path)): sha256_file(candidate)
+            for candidate in files
+        }
         aggregate = hashlib.sha256()
         for name, digest in hashes.items():
             aggregate.update(name.encode())
@@ -169,7 +219,9 @@ def resolve_model(source: str, revision: str | None) -> dict:
         from huggingface_hub import HfApi
 
         result["resolved_revision"] = HfApi().model_info(source, revision=revision).sha
-    except Exception as error:  # Hub metadata is useful provenance, not an execution gate.
+    except (
+        Exception
+    ) as error:  # Hub metadata is useful provenance, not an execution gate.
         result["resolution_error"] = f"{type(error).__name__}: {error}"
     return result
 
@@ -204,7 +256,9 @@ def environment() -> dict:
                     "index": index,
                     "name": torch.cuda.get_device_name(index),
                     "capability": list(torch.cuda.get_device_capability(index)),
-                    "total_memory": torch.cuda.get_device_properties(index).total_memory,
+                    "total_memory": torch.cuda.get_device_properties(
+                        index
+                    ).total_memory,
                 }
                 for index in range(torch.cuda.device_count())
             ],
@@ -231,7 +285,9 @@ def find_result_json(unit_dir: Path) -> Path | None:
     # the subprocess exits, so selecting the newest arbitrary JSON would
     # silently treat the route trace as the evaluation result.
     candidates = [path for path in unit_dir.rglob("results_*.json") if path.is_file()]
-    return max(candidates, key=lambda path: path.stat().st_mtime) if candidates else None
+    return (
+        max(candidates, key=lambda path: path.stat().st_mtime) if candidates else None
+    )
 
 
 def task_provenance(unit_dir: Path, task: str) -> dict:
@@ -319,11 +375,32 @@ def main():
     model_provenance = {
         label: resolve_model(source, revision) for label, source, revision in specs
     }
+    artifacts = {
+        name: row
+        for name, row in (
+            ("rwkv7_hf", artifact(args.hf_wheel)),
+            ("rwkv7_kernels", artifact(args.kernel_wheel)),
+        )
+        if row is not None
+    }
+    pinned_fla = fla_revision(args.fla_source)
+    runtime["artifacts"] = artifacts
+    runtime["fla"] = pinned_fla
     (args.output_dir / "environment.json").write_text(
         json.dumps(runtime, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     (args.output_dir / "models.json").write_text(
-        json.dumps(model_provenance, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        json.dumps(model_provenance, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    (args.output_dir / "artifacts.json").write_text(
+        json.dumps(
+            {"wheels": artifacts, "fla": pinned_fla},
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
     )
 
     with manifest_path.open("a", encoding="utf-8") as manifest:
@@ -414,7 +491,10 @@ def main():
                             "TORCHINDUCTOR_COMPILE_THREADS", "1"
                         )
                     started = datetime.now(timezone.utc).isoformat()
-                    with stdout_path.open("w") as stdout, stderr_path.open("w") as stderr:
+                    with (
+                        stdout_path.open("w") as stdout,
+                        stderr_path.open("w") as stderr,
+                    ):
                         result = subprocess.run(
                             command,
                             stdout=stdout,
@@ -435,6 +515,8 @@ def main():
                         "max_length": args.max_length,
                         "seed": args.seed,
                         "lm_eval": version,
+                        "artifacts": artifacts,
+                        "fla": pinned_fla,
                         "formal": args.smoke_limit is None,
                         "limit": args.smoke_limit,
                         "optimized_model_impl": (
@@ -470,7 +552,11 @@ def main():
     failures = sum(
         1 for unit in expected_units if latest.get(unit, {}).get("exit_code") != 0
     )
-    print(json.dumps({"units": expected, "failures": failures, "manifest": str(manifest_path)}))
+    print(
+        json.dumps(
+            {"units": expected, "failures": failures, "manifest": str(manifest_path)}
+        )
+    )
     raise SystemExit(1 if failures else 0)
 
 

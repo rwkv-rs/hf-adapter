@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 
 from evaluation.run_lm_eval_matrix import (
+    EXPECTED_FLA_COMMIT,
+    artifact,
     find_result_json,
+    fla_revision,
     resolve_model,
     task_provenance,
 )
@@ -41,10 +44,23 @@ def test_local_model_provenance_hashes_rwkv_vocabulary(tmp_path):
     assert "rwkv_vocab_v20230424.txt" in provenance["files"]
 
 
-def _write_samples(path, rows):
-    path.write_text(
-        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+def test_formal_artifact_and_pinned_fla_provenance(tmp_path):
+    wheel = tmp_path / "rwkv7_kernels.whl"
+    wheel.write_bytes(b"immutable")
+    row = artifact(wheel)
+    assert row["bytes"] == 9
+    assert len(row["sha256"]) == 64
+
+    fla = tmp_path / "fla"
+    fla.mkdir()
+    (fla / ".fla-upstream-commit").write_text(
+        EXPECTED_FLA_COMMIT + "\n", encoding="utf-8"
     )
+    assert fla_revision(fla)["commit"] == EXPECTED_FLA_COMMIT
+
+
+def _write_samples(path, rows):
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
 
 
 def test_sample_outcomes_compare_selected_choices_not_only_accuracy(tmp_path):
@@ -108,9 +124,15 @@ def test_wikitext_sample_nll_gate_is_point_one_percent(tmp_path):
     _write_samples(near, [{**base, "filtered_resps": ["-100.05"]}])
     _write_samples(far, [{**base, "filtered_resps": ["-100.2"]}])
     reference = sample_outcomes(left, "wikitext")
-    assert compare_sample_outcomes(
-        reference, sample_outcomes(near, "wikitext"), "wikitext"
-    )["continuous_mismatches"] == 0
-    assert compare_sample_outcomes(
-        reference, sample_outcomes(far, "wikitext"), "wikitext"
-    )["continuous_mismatches"] == 1
+    assert (
+        compare_sample_outcomes(
+            reference, sample_outcomes(near, "wikitext"), "wikitext"
+        )["continuous_mismatches"]
+        == 0
+    )
+    assert (
+        compare_sample_outcomes(
+            reference, sample_outcomes(far, "wikitext"), "wikitext"
+        )["continuous_mismatches"]
+        == 1
+    )

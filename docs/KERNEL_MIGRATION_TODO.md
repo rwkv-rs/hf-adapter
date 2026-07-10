@@ -517,3 +517,15 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   reference autograd path for optimizer-bearing forwards rather than silently
   bypassing the adapters. The ordinary clean-reference validator remains able
   to run without an installed optional backend.
+
+### 2026-08-28 — formal lm_eval artifact identity gate
+
+- `run_lm_eval_matrix.py` now records the exact HF/kernel wheel SHA256 values
+  and the pinned FLA source revision in both lane-level provenance and every
+  manifest row. The runner refuses an FLA tree that does not resolve to
+  `80e494f6c588e091fc8316b612870df29375c5b8`.
+- The three-way validator requires both immutable wheel hashes to be present
+  and identical across reference/optimized/FLA lanes, and requires the exact
+  FLA commit in all three lane bundles before comparing predictions or
+  metrics. This prevents results from different installed artifacts being
+  merged into a nominal 144-unit matrix.
