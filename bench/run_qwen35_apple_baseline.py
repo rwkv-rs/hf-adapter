@@ -18,6 +18,7 @@ prevents every runner from inventing its own metric names.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import platform
@@ -197,6 +198,16 @@ def parse_int_csv(raw: str) -> list[int]:
     return values
 
 
+def parse_keep_alive(raw: str | int) -> str | int:
+    value = str(raw).strip()
+    try:
+        return int(value)
+    except ValueError:
+        if not value:
+            raise ValueError("--ollama-keep-alive must not be empty")
+        return value
+
+
 def make_prompt(seed: str, target_chars: int) -> str:
     target = int(target_chars)
     if target <= 0:
@@ -286,12 +297,24 @@ def post_ollama_generate(
     max_new_tokens: int,
     temperature: float,
     timeout_s: float,
+    think: bool = False,
+    keep_alive: str | int = 0,
+    cache_prompt: bool = False,
 ) -> tuple[list[dict[str, Any]], float]:
     url = host.rstrip("/") + "/api/generate"
     payload = {
         "model": model,
         "prompt": prompt,
         "stream": True,
+        # Thinking tokens are valid generated tokens, but they leave
+        # ``response`` empty on short rows and make response-quality scoring
+        # incomparable with RWKV. Keep thinking opt-in for this baseline.
+        "think": bool(think),
+        # Default to an isolated model lifetime. Ollama otherwise reuses a
+        # completed prompt across rows and can report sub-microsecond
+        # prompt_eval_duration, which is a cache-hit metric rather than prefill.
+        "keep_alive": keep_alive,
+        "cache_prompt": bool(cache_prompt),
         "options": {
             "num_predict": int(max_new_tokens),
             "temperature": float(temperature),
@@ -306,7 +329,9 @@ def post_ollama_generate(
             line = raw.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
-            chunks.append(json.loads(line))
+            chunk = json.loads(line)
+            chunk["_client_elapsed_s"] = time.perf_counter() - t0
+            chunks.append(chunk)
             if chunks[-1].get("done"):
                 break
     return chunks, time.perf_counter() - t0
@@ -323,10 +348,14 @@ def ollama_row_from_chunks(
 ) -> dict[str, Any]:
     final = chunks[-1] if chunks else {}
     first_response_chunk_index = None
+    first_output_chunk_index = None
+    first_output_s = None
     for idx, chunk in enumerate(chunks):
-        if chunk.get("response"):
+        if first_response_chunk_index is None and chunk.get("response"):
             first_response_chunk_index = idx
-            break
+        if first_output_chunk_index is None and (chunk.get("response") or chunk.get("thinking")):
+            first_output_chunk_index = idx
+            first_output_s = _safe_float(chunk.get("_client_elapsed_s"))
     prompt_eval_count = _safe_int(final.get("prompt_eval_count"))
     eval_count = _safe_int(final.get("eval_count"))
     prompt_eval_duration = _safe_int(final.get("prompt_eval_duration"))
@@ -334,6 +363,10 @@ def ollama_row_from_chunks(
     total_duration = _safe_int(final.get("total_duration"))
     load_duration = _safe_int(final.get("load_duration"))
     response_text = "".join(str(chunk.get("response", "")) for chunk in chunks)
+    thinking_text = "".join(str(chunk.get("thinking", "")) for chunk in chunks)
+    display_text = response_text or thinking_text
+    load_s = float(load_duration) / 1_000_000_000.0 if load_duration is not None else 0.0
+    steady_ttft_s = max(0.0, float(first_output_s) - load_s) if first_output_s is not None else None
     row = {
         "axis": AXIS,
         "status": "pass",
@@ -350,17 +383,24 @@ def ollama_row_from_chunks(
         "wall_s": round(float(elapsed_s), 6),
         "total_duration_ns": total_duration,
         "load_duration_ns": load_duration,
+        "load_s": round(load_s, 6) if load_duration is not None else None,
         "prompt_eval_duration_ns": prompt_eval_duration,
         "eval_duration_ns": eval_duration,
         "prefill_tok_s": tok_s(prompt_eval_count, prompt_eval_duration),
         "decode_tok_s": tok_s(eval_count, eval_duration),
+        "first_token_s": round(float(steady_ttft_s), 6) if steady_ttft_s is not None else None,
+        "ttft_s": round(float(steady_ttft_s), 6) if steady_ttft_s is not None else None,
+        "cold_ttft_s": round(float(first_output_s), 6) if first_output_s is not None else None,
         "ollama_chunk_count": len(chunks),
         "first_response_chunk_index": first_response_chunk_index,
-        "response_preview": response_text[:160],
+        "first_output_chunk_index": first_output_chunk_index,
+        "response_preview": display_text[:160],
         "response_chars": len(response_text),
+        "thinking_chars": len(thinking_text),
     }
     if store_response:
         row["response_text"] = response_text
+        row["thinking_text"] = thinking_text
     return row
 
 
@@ -376,6 +416,9 @@ def run_ollama_qwen(
     timeout_s: float,
     results: str,
     store_response: bool = False,
+    think: bool = False,
+    keep_alive: str | int = 0,
+    cache_prompt: bool = False,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     warmups = max(0, int(warmup_repeats))
@@ -391,6 +434,9 @@ def run_ollama_qwen(
                     max_new_tokens=max_new_tokens,
                     temperature=temperature,
                     timeout_s=timeout_s,
+                    think=think,
+                    keep_alive=keep_alive,
+                    cache_prompt=cache_prompt,
                 )
                 row = ollama_row_from_chunks(
                     model=model,
@@ -810,6 +856,7 @@ def run_rwkv_mlx(
                 "prefill_s": round(float(prefill_s), 6),
                 "first_token_s": round(float(first_s), 6),
                 "ttft_s": round(float(prefill_s + first_s), 6),
+                "cold_ttft_s": round(float(load_s + prefill_s + first_s), 6),
                 "decode_s": round(float(decode_s), 6),
                 "prefill_tok_s": round(float(len(prompt_ids) / prefill_s), 6) if prefill_s > 0 else None,
                 "decode_tok_s": round(float(max_new_tokens / decode_s), 6) if decode_s > 0 else None,
@@ -850,6 +897,22 @@ def run_rwkv_mlx(
             print(json.dumps(row, ensure_ascii=False))
             append_jsonl(results, row)
             rows.append(row)
+    # ``main`` invokes this runner once per prompt case. Explicitly release the
+    # model and the final lazy arrays before the next case; otherwise MLX keeps
+    # both model instances live and the second case reports roughly 2x memory.
+    model = None
+    tokenizer = None
+    logits = None
+    state = None
+    final_state = None
+    next_token = None
+    if int(chunk_size) > 0:
+        chunk_logits = None
+        chunk_state = None
+    gc.collect()
+    clear_cache = getattr(mx, "clear_cache", None)
+    if callable(clear_cache):
+        clear_cache()
     return rows
 
 
@@ -920,6 +983,13 @@ def main() -> int:
     )
     ap.add_argument("--ollama-host", default=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"))
     ap.add_argument("--ollama-timeout-s", type=float, default=600.0)
+    ap.add_argument("--ollama-think", action="store_true", help="Enable Qwen thinking output; disabled by default for comparable response rows.")
+    ap.add_argument(
+        "--ollama-keep-alive",
+        default="0",
+        help="Ollama keep_alive value. Default 0 unloads after each row to prevent prompt-cache prefill artifacts.",
+    )
+    ap.add_argument("--ollama-cache-prompt", action="store_true", help="Allow Ollama/runner prompt-cache reuse across rows.")
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--rwkv-mlx-models", default="", help="Comma-separated converted RWKV-7 HF model dirs; empty disables RWKV MLX.")
     ap.add_argument("--rwkv-dtype", default="fp16", choices=["keep", "fp32", "fp16", "bf16"])
@@ -954,6 +1024,7 @@ def main() -> int:
     qwen_models = parse_csv(args.qwen_models)
     qwen_mlx_vlm_models = parse_csv(args.qwen_mlx_vlm_models)
     rwkv_models = parse_csv(args.rwkv_mlx_models)
+    ollama_keep_alive = parse_keep_alive(args.ollama_keep_alive)
 
     env = {
         "axis": AXIS + "_env",
@@ -976,6 +1047,9 @@ def main() -> int:
         "rwkv_fused_ffn_key_relu2_env": os.environ.get("RWKV7_MLX_FUSED_FFN_KEY_RELU2", ""),
         "rwkv_wkv_scan_prefill_env": os.environ.get("RWKV7_MLX_WKV_SCAN_PREFILL", ""),
         "rwkv_wkv_scan_prefill_min_tokens_env": os.environ.get("RWKV7_MLX_WKV_SCAN_PREFILL_MIN_TOKENS", ""),
+        "ollama_think": bool(args.ollama_think),
+        "ollama_keep_alive": ollama_keep_alive,
+        "ollama_cache_prompt": bool(args.ollama_cache_prompt),
         **device_info(),
     }
     print(json.dumps(env, ensure_ascii=False))
@@ -1033,6 +1107,9 @@ def main() -> int:
                     timeout_s=float(args.ollama_timeout_s),
                     results=args.results,
                     store_response=bool(args.store_responses),
+                    think=bool(args.ollama_think),
+                    keep_alive=ollama_keep_alive,
+                    cache_prompt=bool(args.ollama_cache_prompt),
                 )
             )
         for model in qwen_mlx_vlm_models:
