@@ -14,6 +14,10 @@ ALLOWED_OPTIMIZED_ROUTES = {
     "native-triton-rank1-scan-v1",
     "torch-cuda-graph-reference-v1",
 }
+ALLOWED_MODEL_ROUTE_PREFIXES = (
+    "native-nvidia-prefill-v2[",
+    "native-nvidia-fused-decode-v2[",
+)
 
 
 def arguments() -> argparse.Namespace:
@@ -21,6 +25,11 @@ def arguments() -> argparse.Namespace:
     for lane in LANES:
         parser.add_argument(f"--{lane}-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--require-model-routes",
+        action="store_true",
+        help="require backend-v2 whole-model execution in every optimized unit",
+    )
     return parser.parse_args()
 
 
@@ -95,12 +104,36 @@ def main() -> int:
             if lane == "optimized":
                 trace = row.get("kernel_route_trace", {})
                 counts = trace.get("actual_recurrent_calls", {})
-                if not counts:
-                    failures.append({"lane": lane, "unit": unit, "reason": "missing actual route"})
                 unknown = set(counts) - ALLOWED_OPTIMIZED_ROUTES
                 if unknown:
                     failures.append(
                         {"lane": lane, "unit": unit, "reason": f"unknown routes {sorted(unknown)}"}
+                    )
+                model_counts = trace.get("actual_model_calls", {})
+                unknown_model = [
+                    name
+                    for name in model_counts
+                    if not str(name).startswith(ALLOWED_MODEL_ROUTE_PREFIXES)
+                ]
+                if unknown_model:
+                    failures.append(
+                        {
+                            "lane": lane,
+                            "unit": unit,
+                            "reason": f"unknown model routes {sorted(unknown_model)}",
+                        }
+                    )
+                if args.require_model_routes and not model_counts:
+                    failures.append(
+                        {
+                            "lane": lane,
+                            "unit": unit,
+                            "reason": "missing backend-v2 actual model route",
+                        }
+                    )
+                elif not model_counts and not counts:
+                    failures.append(
+                        {"lane": lane, "unit": unit, "reason": "missing actual route"}
                     )
 
     common_units = set.intersection(*(set(rows) for rows in manifests.values()))
@@ -196,6 +229,7 @@ def main() -> int:
         "schema": "rwkv7-lm-eval-three-way-validation-v1",
         "units": sum(len(rows) for rows in manifests.values()),
         "status": "passed" if not failures else "failed",
+        "require_model_routes": bool(args.require_model_routes),
         "failures": failures,
         "comparisons": comparisons,
     }

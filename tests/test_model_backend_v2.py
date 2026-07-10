@@ -147,6 +147,78 @@ def test_migrated_native_prefill_and_cached_decode_preserve_canonical_cache(
         torch.testing.assert_close(migrated, reference, rtol=2e-5, atol=2e-6)
 
 
+def test_native_model_runtime_compacts_left_right_padding_without_state_updates(
+    tiny_config, monkeypatch
+):
+    _load_dense_backend(monkeypatch)
+    dispatcher = importlib.import_module("rwkv7_kernels.model_dispatcher")
+    torch.manual_seed(110)
+    model = RWKV7ForCausalLM(tiny_config).eval()
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.normal_(mean=0.0, std=0.03)
+
+    prompt = torch.tensor([[3, 5, 0, 0], [0, 0, 11, 13]])
+    mask = torch.tensor([[1, 1, 0, 0], [0, 0, 1, 1]], dtype=torch.bool)
+    with torch.inference_mode():
+        expected = model(input_ids=prompt, attention_mask=mask, use_cache=True)
+        actual = dispatcher._run_native_prefill(
+            model,
+            {
+                "model_kind": "causal_lm",
+                "input_ids": prompt,
+                "attention_mask": mask,
+                "past_key_values": RWKV7Cache(
+                    num_layers=tiny_config.num_hidden_layers
+                ),
+                "training": False,
+                "grad_enabled": False,
+                "use_cache": True,
+                "logits_to_keep": 0,
+            },
+        )
+    torch.testing.assert_close(actual["logits"], expected.logits, rtol=2e-5, atol=2e-6)
+    assert "masked_compact" in actual["implementation"]
+    for migrated, reference in zip(
+        actual["past_key_values"].recurrent_state,
+        expected.past_key_values.recurrent_state,
+    ):
+        assert migrated.dtype == torch.float32
+        torch.testing.assert_close(migrated, reference, rtol=2e-5, atol=2e-6)
+
+    expected_cache = expected.past_key_values.clone()
+    actual_cache = actual["past_key_values"].clone()
+    token = torch.tensor([[17], [19]])
+    decode_mask = torch.tensor([[1], [0]], dtype=torch.bool)
+    with torch.inference_mode():
+        expected_decode = model(
+            input_ids=token,
+            attention_mask=decode_mask,
+            past_key_values=expected_cache,
+            use_cache=True,
+        )
+        actual_decode = dispatcher._run_native_decode(
+            model,
+            {
+                "model_kind": "causal_lm",
+                "input_ids": token,
+                "attention_mask": decode_mask,
+                "past_key_values": actual_cache,
+                "training": False,
+                "grad_enabled": False,
+                "use_cache": True,
+            },
+        )
+    torch.testing.assert_close(
+        actual_decode["logits"], expected_decode.logits, rtol=2e-5, atol=2e-6
+    )
+    assert "masked_compact" in actual_decode["implementation"]
+    for migrated, reference in zip(
+        actual_decode["past_key_values"].recurrent_state,
+        expected_decode.past_key_values.recurrent_state,
+    ):
+        torch.testing.assert_close(migrated, reference, rtol=2e-5, atol=2e-6)
+
 def test_graph_runner_binding_exposes_only_canonical_cache_views(monkeypatch):
     _load_dense_backend(monkeypatch)
     graph = importlib.import_module("rwkv7_kernels.nvidia.native_graph_runtime")

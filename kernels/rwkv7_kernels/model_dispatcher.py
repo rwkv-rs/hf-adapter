@@ -17,6 +17,7 @@ from .protocol import (
     support_result,
     validate_model_request,
 )
+from .trace import record_model
 _NOT_MIGRATED = (
     "whole-model backend-v2 is not available for this shape; "
     "the adapter will use its readable reference layer loop"
@@ -120,6 +121,32 @@ def _unsupported_native(request: dict[str, Any], reason: str):
     )
 
 
+def _effective_attention_mask(
+    request: dict[str, Any], input_ids: torch.Tensor
+) -> torch.Tensor:
+    batch, sequence = int(input_ids.shape[0]), int(input_ids.shape[1])
+    mask = request.get("attention_mask")
+    if mask is None:
+        return torch.ones(
+            batch,
+            sequence,
+            device=input_ids.device,
+            dtype=torch.bool,
+        )
+    if not isinstance(mask, torch.Tensor) or mask.ndim not in (1, 2):
+        raise ValueError("native attention_mask must be rank 1 or 2")
+    if mask.ndim == 1:
+        mask = mask.unsqueeze(0)
+    if int(mask.shape[0]) not in (1, batch) or int(mask.shape[1]) < sequence:
+        raise ValueError(
+            "native attention_mask must broadcast to the input batch and cover "
+            "the current sequence"
+        )
+    if int(mask.shape[0]) == 1 and batch != 1:
+        mask = mask.expand(batch, -1)
+    return mask[:, -sequence:].to(device=input_ids.device, dtype=torch.bool)
+
+
 def _probe_native(owner: Any, request: dict[str, Any]):
     """Capability gate for the migrated fused prefill runtime."""
 
@@ -169,13 +196,11 @@ def _probe_native(owner: Any, request: dict[str, Any]):
         )
     mask = request.get("attention_mask")
     if mask is not None:
-        if not isinstance(mask, torch.Tensor) or mask.ndim not in (1, 2):
+        try:
+            _effective_attention_mask(request, input_ids)
+        except ValueError as exc:
             return _unsupported_native(
-                request, "native prefill attention_mask must be rank 1 or 2"
-            )
-        if not bool(mask.to(dtype=torch.bool).all().detach().cpu()):
-            return _unsupported_native(
-                request, "native prefill padding migration is not complete"
+                request, str(exc)
             )
     cache = request.get("past_key_values")
     if cache is None or not hasattr(cache, "get_seq_length"):
@@ -316,12 +341,64 @@ def _run_native_prefill(owner: Any, request: dict[str, Any]):
         input_ids = input_ids.unsqueeze(0)
     proxy = SimpleNamespace(model=owner.model, lm_head=owner.lm_head)
     packs, _heads, _head_dim, _eps = native_jit.extract_graph(proxy)
-    logits, state_vk, attention_shift, ffn_shift = native_jit.prefill(
-        proxy,
-        input_ids,
-        packs,
-        logits_to_keep=request.get("logits_to_keep"),
-    )
+    mask = _effective_attention_mask(request, input_ids)
+    masked = not bool(mask.all().detach().cpu())
+    if not masked:
+        logits, state_vk, attention_shift, ffn_shift = native_jit.prefill(
+            proxy,
+            input_ids,
+            packs,
+            logits_to_keep=request.get("logits_to_keep"),
+        )
+    else:
+        batch, sequence = int(input_ids.shape[0]), int(input_ids.shape[1])
+        vocab = int(owner.lm_head.out_features)
+        logits = owner.model.embeddings.weight.new_zeros(batch, sequence, vocab)
+        state_vk = [
+            torch.zeros(
+                batch,
+                int(_heads),
+                int(_head_dim),
+                int(_head_dim),
+                device=input_ids.device,
+                dtype=torch.float32,
+            )
+            for _ in packs
+        ]
+        attention_shift = [
+            owner.model.embeddings.weight.new_zeros(
+                batch, int(owner.config.hidden_size)
+            )
+            for _ in packs
+        ]
+        ffn_shift = [value.clone() for value in attention_shift]
+        for batch_index in range(batch):
+            positions = torch.nonzero(mask[batch_index], as_tuple=False).flatten()
+            if positions.numel() == 0:
+                continue
+            compact_ids = input_ids[batch_index : batch_index + 1].index_select(
+                1, positions
+            )
+            row_logits, row_state, row_attention, row_ffn = native_jit.prefill(
+                proxy,
+                compact_ids,
+                packs,
+                logits_to_keep=0,
+            )
+            logits[batch_index].index_copy_(0, positions, row_logits[0])
+            for layer_index in range(len(packs)):
+                state_vk[layer_index][batch_index : batch_index + 1].copy_(
+                    row_state[layer_index].float()
+                )
+                attention_shift[layer_index][
+                    batch_index : batch_index + 1
+                ].copy_(row_attention[layer_index])
+                ffn_shift[layer_index][batch_index : batch_index + 1].copy_(
+                    row_ffn[layer_index]
+                )
+        keep = request.get("logits_to_keep")
+        if keep is not None and int(keep) > 0:
+            logits = logits[:, -min(int(keep), sequence) :]
 
     output_cache = None
     if bool(request["use_cache"]):
@@ -329,7 +406,7 @@ def _run_native_prefill(owner: Any, request: dict[str, Any]):
         for layer_idx in range(len(packs)):
             output_cache.set_layer(
                 layer_idx,
-                state_vk[layer_idx].transpose(-1, -2).contiguous(),
+                state_vk[layer_idx].float().transpose(-1, -2).contiguous(),
                 attention_shift[layer_idx],
                 ffn_shift[layer_idx],
             )
@@ -346,6 +423,8 @@ def _run_native_prefill(owner: Any, request: dict[str, Any]):
     ):
         if bool(getattr(proxy, field, False)):
             effective.append(label)
+    if masked:
+        effective.append("masked_compact")
     suffix = "+".join(effective) if effective else "dense_fallback"
     return {
         "output_kind": "causal_lm",
@@ -371,8 +450,9 @@ def _run_native_decode(owner: Any, request: dict[str, Any]):
     packs, heads, head_dim, _eps = native_jit.extract_graph(proxy)
     batch = int(input_ids.shape[0])
     dtype = owner.model.embeddings.weight.dtype
+    mask = _effective_attention_mask(request, input_ids)[:, 0]
 
-    if bool(request["use_cache"]):
+    if bool(request["use_cache"]) and bool(mask.all().detach().cpu()):
         from .nvidia.graph_pool import get_native_graph_runner
         from .nvidia.native_graph_runtime import native_graph_available
 
@@ -418,9 +498,42 @@ def _run_native_decode(owner: Any, request: dict[str, Any]):
         attention_shift.append(attn_previous.clone())
         ffn_shift.append(ffn_previous.clone())
 
-    token = F.embedding(input_ids[:, 0], owner.model.embeddings.weight)
+    active = torch.nonzero(mask, as_tuple=False).flatten()
+    if active.numel() == 0:
+        logits = owner.model.embeddings.weight.new_zeros(
+            batch, 1, int(owner.lm_head.out_features)
+        )
+        cache.seen_tokens += 1
+        return {
+            "output_kind": "causal_lm",
+            "logits": logits,
+            "loss": None,
+            "past_key_values": cache if bool(request["use_cache"]) else None,
+            "hidden_states": None,
+            "implementation": f"{_NATIVE_DECODE_IMPLEMENTATION}[masked_noop]",
+            "phase": "decode",
+        }
+
+    compact = int(active.numel()) != batch
+    work_state = (
+        [value.index_select(0, active) for value in state_vk]
+        if compact
+        else state_vk
+    )
+    work_attention = (
+        [value.index_select(0, active) for value in attention_shift]
+        if compact
+        else attention_shift
+    )
+    work_ffn = (
+        [value.index_select(0, active) for value in ffn_shift]
+        if compact
+        else ffn_shift
+    )
+    active_ids = input_ids.index_select(0, active) if compact else input_ids
+    token = F.embedding(active_ids[:, 0], owner.model.embeddings.weight)
     v_first = torch.zeros(
-        batch,
+        int(active.numel()),
         int(heads * head_dim),
         device=token.device,
         dtype=dtype,
@@ -433,16 +546,29 @@ def _run_native_decode(owner: Any, request: dict[str, Any]):
     for layer_idx, pack in enumerate(packs):
         token = native_jit._block_ip_batched(
             token,
-            state_vk[layer_idx],
-            attention_shift[layer_idx],
-            ffn_shift[layer_idx],
+            work_state[layer_idx],
+            work_attention[layer_idx],
+            work_ffn[layer_idx],
             v_first,
             pack,
             route_observer=observe,
             state_layout="vk_v1",
         )
     token = owner.model.norm(token)
-    logits = owner.lm_head(token).unsqueeze(1)
+    active_logits = owner.lm_head(token).unsqueeze(1)
+    if compact:
+        logits = active_logits.new_zeros(
+            batch, 1, int(active_logits.shape[-1])
+        )
+        logits.index_copy_(0, active, active_logits)
+        for layer_idx in range(len(packs)):
+            state_vk[layer_idx].index_copy_(0, active, work_state[layer_idx])
+            attention_shift[layer_idx].index_copy_(
+                0, active, work_attention[layer_idx]
+            )
+            ffn_shift[layer_idx].index_copy_(0, active, work_ffn[layer_idx])
+    else:
+        logits = active_logits
 
     output_cache = None
     if bool(request["use_cache"]):
@@ -456,6 +582,8 @@ def _run_native_decode(owner: Any, request: dict[str, Any]):
             )
         output_cache.seen_tokens += 1
 
+    if compact:
+        events.add("masked_compact")
     suffix = "+".join(sorted(events)) if events else "dense_fallback"
     return {
         "output_kind": "causal_lm",
@@ -496,6 +624,14 @@ def model_forward_v1(owner: Any, request: dict[str, Any]):
     """
 
     validate_model_request(request)
+
+    def traced(result: dict[str, Any]) -> dict[str, Any]:
+        record_model(
+            str(result.get("implementation", "unknown-model-implementation")),
+            str(result.get("phase", _phase(request))),
+        )
+        return result
+
     implementation = _requested_implementation()
     if implementation == "native":
         support = _probe_native(owner, request)
@@ -504,11 +640,11 @@ def model_forward_v1(owner: Any, request: dict[str, Any]):
         if bool(request["training"]):
             from .nvidia.training_runtime import run_training
 
-            return run_training(owner, request)
+            return traced(run_training(owner, request))
         cache = request["past_key_values"]
         if int(cache.get_seq_length()) > 0:
-            return _run_native_decode(owner, request)
-        return _run_native_prefill(owner, request)
+            return traced(_run_native_decode(owner, request))
+        return traced(_run_native_prefill(owner, request))
     if implementation != "dense":
         raise RuntimeError(_NOT_MIGRATED)
     support = _probe_dense(owner, request)
@@ -516,7 +652,7 @@ def model_forward_v1(owner: Any, request: dict[str, Any]):
         raise RuntimeError(support["reason"])
     from .model.dense import run_base_model
 
-    return run_base_model(owner, request)
+    return traced(run_base_model(owner, request))
 
 
 __all__ = ["model_forward_v1", "probe_model_forward_v1"]

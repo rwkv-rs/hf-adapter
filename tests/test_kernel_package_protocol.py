@@ -291,8 +291,60 @@ def test_optional_route_trace_records_executed_implementation(monkeypatch, tmp_p
     assert dispatcher.recurrent_v1(*decode) == "ran"
     dispatcher._write_trace()
     payload = json.loads(trace.read_text())
+    assert payload["schema"] == "rwkv7-kernel-route-trace-v2"
     assert payload["requested_policy"] == "auto"
     assert payload["actual_recurrent_calls"] == {"triton-test": 1}
+
+
+def test_route_trace_records_executed_whole_model_phase(monkeypatch, tmp_path):
+    trace_path = tmp_path / "route.json"
+    monkeypatch.setenv("RWKV7_KERNEL_TRACE_PATH", str(trace_path))
+    monkeypatch.setenv("RWKV7_MODEL_KERNEL_IMPL", "native")
+    dispatcher = importlib.import_module("rwkv7_kernels.model_dispatcher")
+    monkeypatch.setattr(
+        dispatcher,
+        "_probe_native",
+        lambda _owner, _request: {
+            "supported": True,
+            "implementation": "probe-name",
+            "reason": "test",
+            "phase": "prefill",
+        },
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "_run_native_prefill",
+        lambda _owner, _request: {
+            "output_kind": "causal_lm",
+            "logits": torch.zeros(1, 2, 3),
+            "loss": None,
+            "past_key_values": None,
+            "hidden_states": None,
+            "implementation": "native-prefill-test[fused]",
+            "phase": "prefill",
+        },
+    )
+
+    class EmptyCache:
+        @staticmethod
+        def get_seq_length():
+            return 0
+
+    result = dispatcher.model_forward_v1(
+        object(),
+        {
+            "model_kind": "causal_lm",
+            "training": False,
+            "use_cache": True,
+            "past_key_values": EmptyCache(),
+        },
+    )
+    assert result["implementation"] == "native-prefill-test[fused]"
+    importlib.import_module("rwkv7_kernels.trace").write_trace()
+    payload = json.loads(trace_path.read_text())
+    assert payload["requested_model_policy"] == "native"
+    assert payload["actual_model_calls"] == {"native-prefill-test[fused]": 1}
+    assert payload["actual_model_phases"] == {"prefill": 1}
 
 
 def test_unknown_kernel_implementation_is_rejected(monkeypatch):

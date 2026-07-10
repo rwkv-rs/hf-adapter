@@ -290,6 +290,20 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - CPU reference tests exercise native MM8/MM4 module replacement and confirm
   ordinary Linear call semantics. GPU correctness, quality and throughput
   remain release gates rather than migration checkboxes.
+
+### 2026-08-27 — backend-v2 padding and route evidence completed locally
+
+- Native prefill compacts active tokens per sample for mixed left/right padded
+  batches, scatters zero logits at masked positions, and returns canonical
+  FP32 `[B,H,K,V]` state. Mixed masked decode updates only active cache rows.
+- The process route trace is now shared by recurrent-v1 and model-forward-v1;
+  it records actual fused implementation suffixes and prefill/decode/training
+  phase counts. A requested selector alone is not accepted as evidence.
+- `run_lm_eval_matrix.py` can run the strict pre-release whole-model native
+  route, and `validate_lm_eval_three_way.py --require-model-routes` rejects an
+  optimized unit that never executed backend-v2.
+- CPU parity covers one batch containing both right and left padding followed
+  by a mixed active/masked cached-decode step. RTX 4080 validation is pending.
 - Kernel wheel: `rwkv7_kernels-1.0.0.dev0-py3-none-any.whl`, SHA256
   `31c0892a5284a26f89790567dbbdf4f6255b996cf5f7a32c14fa2406c15e24c9`.
 - Both wheels passed `twine check --strict` and independent target-directory

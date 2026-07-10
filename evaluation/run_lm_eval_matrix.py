@@ -81,6 +81,15 @@ def parse_args():
     )
     parser.add_argument("--wandb-args", default=None)
     parser.add_argument(
+        "--optimized-model-impl",
+        choices=("auto", "native"),
+        default="auto",
+        help=(
+            "whole-model policy for the optimized lane; native is the strict "
+            "pre-release backend-v2 diagnostic"
+        ),
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Rerun successful units instead of resuming from the manifest",
@@ -298,7 +307,11 @@ def main():
     runtime = environment()
     runtime["lane"] = args.lane
     runtime["kernel_policy"] = (
-        {"RWKV7_BACKEND": "optimized", "RWKV7_KERNEL_IMPL": "auto"}
+        {
+            "RWKV7_BACKEND": "optimized",
+            "RWKV7_KERNEL_IMPL": "auto",
+            "RWKV7_MODEL_KERNEL_IMPL": args.optimized_model_impl,
+        }
         if args.lane == "optimized"
         else None
     )
@@ -373,18 +386,24 @@ def main():
                     route_trace_path = unit_dir / "kernel-route.json"
                     command_environment = os.environ.copy()
                     command_environment.pop("RWKV7_KERNEL_TRACE_PATH", None)
+                    command_environment.pop("RWKV7_MODEL_KERNEL_IMPL", None)
                     if args.lane == "reference":
                         command_environment["RWKV7_BACKEND"] = "reference"
                         command_environment["RWKV7_KERNEL_IMPL"] = "auto"
+                        command_environment["RWKV7_MODEL_KERNEL_IMPL"] = "auto"
                     elif args.lane == "optimized":
                         command_environment["RWKV7_BACKEND"] = "optimized"
                         command_environment["RWKV7_KERNEL_IMPL"] = "auto"
+                        command_environment["RWKV7_MODEL_KERNEL_IMPL"] = (
+                            args.optimized_model_impl
+                        )
                         command_environment["RWKV7_KERNEL_TRACE_PATH"] = str(
                             route_trace_path.resolve()
                         )
                     else:
                         command_environment.pop("RWKV7_BACKEND", None)
                         command_environment.pop("RWKV7_KERNEL_IMPL", None)
+                        command_environment.pop("RWKV7_MODEL_KERNEL_IMPL", None)
                         # TorchInductor's multi-process compile pool can remain
                         # alive after FLA/lm_eval has written its results on
                         # some Torch releases.  A single compile worker keeps
@@ -417,6 +436,11 @@ def main():
                         "lm_eval": version,
                         "formal": args.smoke_limit is None,
                         "limit": args.smoke_limit,
+                        "optimized_model_impl": (
+                            args.optimized_model_impl
+                            if args.lane == "optimized"
+                            else None
+                        ),
                         "started_at": started,
                         "ended_at": datetime.now(timezone.utc).isoformat(),
                         "command": command,
