@@ -3054,3 +3054,56 @@ PYTHONPATH=. python scripts/mlx_dplr_model_prefill_bench.py \
   --dplr-layer-eval-interval 4 --dplr-layer-eval-min-tokens 64 \
   --dplr-window-tokens 512 --repeat 3 --decode-tokens 8
 ```
+
+### Guarded MLX full-model compiled decode
+
+`MLXRWKV7Model.prepare_compiled_decode()` now compiles and warms a pure
+full-model one-token graph with all recurrent/cache tensors passed explicitly.
+Preparation alone does not enable the graph in `decode_backend=auto`.
+`validate_compiled_decode()` first runs eager and compiled greedy trajectories
+from cloned prompt state and compares every generated token, final logits, and
+the complete state. A failed model/batch gate remains on eager decode.
+
+M5, batch1, 0.4B, prompt512/64-token decode, warmup1/repeat5 medians:
+
+| Mode | Eager | Guarded compiled | Speedup | 64-token parity |
+|---|---:|---:|---:|---|
+| fp16 | 96.39 tok/s | 119.99 tok/s | 1.245x | logits/state/tokens exact |
+| W4 (`mm4`) | 97.79 tok/s | 119.46 tok/s | 1.222x | logits/state/tokens exact |
+
+Compiled peak is about `935.0MB` versus `929.3MB` eager for fp16 and
+`834.6MB` versus `828.8MB` eager for W4. The 0.1B fp16 candidate fails strict
+numeric parity after 64 tokens despite matching greedy tokens; the 1.5B
+candidate first mismatches a greedy token at step 17. Guarded `auto` therefore
+falls back to eager for both sizes. This is why raw `decode_backend=compiled`
+is an experiment, not the production default.
+
+The prepared 0.4B fp16 route also closes the available speed portion of the
+same-run Qwen3.5 0.8B M5 gate at both prompt sizes:
+
+| Prompt | Decode RWKV/Qwen | Prefill RWKV/Qwen | TTFT RWKV/Qwen |
+|---|---:|---:|---:|
+| chars128 | 1.136x | 1.035x | 0.473x |
+| chars512 | 1.157x | 1.687x | 0.461x |
+
+These are conservative min/min/max comparison rows; lower TTFT is better.
+The overall comparison remains `unknown`, not `pass`, because Ollama's
+structured rows contain loaded-memory telemetry rather than a comparable peak
+metric. Compile and validation time is charged to `load_s`; it is not hidden
+inside TTFT. A cold prototype compile took about `1.43s`, while later runs can
+hit MLX's process/global graph cache and must not be generalized from their
+much smaller reported preparation time.
+
+Evidence:
+
+- `bench/results_mlx_decode_compile_m5_20260710_fp16.jsonl`
+- `bench/results_mlx_decode_compile_m5_20260710_w4.jsonl`
+- `bench/results_qwen35_apple_m5_20260710_dplr_tiled_compiled_fp16.jsonl`
+
+```bash
+PYTHONPATH=. python scripts/mlx_decode_compile_bench.py \
+  --models /path/to/rwkv7-g1d-0.4b-hf \
+  --prompt-target-chars 512 --decode-tokens 64 \
+  --validation-tokens 64 --repeat 5 --warmup 1 \
+  --dtype fp16 --quantization none --wkv-backend metal
+```

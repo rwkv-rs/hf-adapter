@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -125,9 +127,109 @@ def test_mlx_prefill_eval_interval_parity_if_available():
     assert batched_model.telemetry()["prefill_eval_interval"] == 4
 
 
+def test_mlx_compiled_decode_matches_eager_if_available():
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    from rwkv7_hf.mlx_model import MLXRWKV7Model
+    from rwkv7_hf.mlx_wkv import metal_wkv_available
+    from tests.test_apple_silicon_mlx_model_smoke import tiny_torch_model_to_mlx
+
+    if not metal_wkv_available() or not callable(getattr(mx, "compile", None)):
+        return
+    _, source_model, cfg = tiny_torch_model_to_mlx()
+    eager_model = MLXRWKV7Model.from_arrays(cfg, dict(source_model.arrays), wkv_backend="metal")
+    compiled_model = MLXRWKV7Model.from_arrays(cfg, dict(source_model.arrays), wkv_backend="metal")
+    eager_model.decode_backend = "eager"
+    compiled_model.decode_backend = "auto"
+    compile_s = compiled_model.prepare_compiled_decode(batch_size=2)
+    assert compile_s >= 0.0
+
+    ids = [[1, 2, 3, 4], [4, 3, 2, 1]]
+    eager_logits, eager_state = eager_model.prefill(ids)
+    compiled_logits, compiled_state = compiled_model.prefill(ids)
+    # Merely compiling a graph is not enough to promote it in auto mode.
+    # Model-dependent fusion drift is parity-gated below.
+    probe_token = mx.argmax(compiled_logits[:, -1, :], axis=-1).astype(mx.int32)
+    _, probe_state = compiled_model.decode_step(probe_token, compiled_state.clone())
+    assert compiled_model.decode_backend_last == "eager"
+    assert compiled_model.decode_backend_counts["eager"] == 1
+    assert int(probe_state.seen_tokens) == 5
+    validation = compiled_model.validate_compiled_decode(
+        compiled_logits,
+        compiled_state,
+        steps=4,
+    )
+    assert validation["status"] == "pass"
+    eager_tokens: list[list[int]] = []
+    compiled_tokens: list[list[int]] = []
+    for _ in range(4):
+        eager_token = mx.argmax(eager_logits[:, -1, :], axis=-1).astype(mx.int32)
+        compiled_token = mx.argmax(compiled_logits[:, -1, :], axis=-1).astype(mx.int32)
+        mx.eval(eager_token, compiled_token)
+        eager_tokens.append([int(value) for value in eager_token.tolist()])
+        compiled_tokens.append([int(value) for value in compiled_token.tolist()])
+        eager_logits, eager_state = eager_model.decode_step(eager_token, eager_state)
+        compiled_logits, compiled_state = compiled_model.decode_step(compiled_token, compiled_state)
+        mx.eval(
+            eager_logits,
+            compiled_logits,
+            *eager_state.recurrent_state,
+            *compiled_state.recurrent_state,
+        )
+
+    assert eager_tokens == compiled_tokens
+    assert float(mx.max(mx.abs(eager_logits.astype(mx.float32) - compiled_logits.astype(mx.float32)))) < 1e-5
+    for eager_layer, compiled_layer in zip(
+        eager_state.recurrent_state,
+        compiled_state.recurrent_state,
+        strict=True,
+    ):
+        assert float(mx.max(mx.abs(eager_layer - compiled_layer))) < 1e-5
+    assert int(eager_state.seen_tokens) == int(compiled_state.seen_tokens) == 8
+    telemetry = compiled_model.telemetry()
+    assert telemetry["decode_backend"] == "auto"
+    assert telemetry["decode_backend_last"] == "compiled"
+    assert telemetry["decode_backend_counts"]["eager"] == 1
+    assert telemetry["decode_backend_counts"]["compiled"] == 4
+    assert telemetry["decode_compiled_batches"] == [2]
+    assert telemetry["decode_compiled_validated_batches"] == [2]
+    assert telemetry["decode_compiled_rejected_batches"] == []
+    assert telemetry["decode_compiled_validation_by_batch"][2]["status"] == "pass"
+    assert telemetry["decode_compile_s_by_batch"][2] >= 0.0
+
+
+def test_mlx_decode_compile_bench_dry_run(tmp_path: Path):
+    output = tmp_path / "mlx_decode_compile_plan.jsonl"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/mlx_decode_compile_bench.py",
+            "--models",
+            "/tmp/rwkv-a,/tmp/rwkv-b",
+            "--decode-tokens",
+            "16",
+            "--results",
+            str(output),
+            "--dry-run",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    row = json.loads(output.read_text(encoding="utf-8").strip())
+    assert row["axis"] == "mlx_decode_compile_env"
+    assert row["models"] == ["/tmp/rwkv-a", "/tmp/rwkv-b"]
+    assert row["decode_tokens"] == 16
+
+
 if __name__ == "__main__":
     test_mlx_wkv_import_safe()
     test_mlx_wkv_formula_if_available()
     test_mlx_model_metal_wkv_hook_if_available()
     test_mlx_prefill_eval_interval_parity_if_available()
+    test_mlx_compiled_decode_matches_eager_if_available()
     print("MLX WKV TESTS PASS")
