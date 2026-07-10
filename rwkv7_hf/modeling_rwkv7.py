@@ -106,6 +106,7 @@ try:
     from .native_jit import block_step as _native_jit_block_step
     from .native_jit import block_step_batched as _native_jit_block_step_batched
     from .native_jit import extract as _native_jit_extract
+    from .native_jit import extract_graph as _native_graph_extract
     from .native_jit import _block_ip as _native_graph_block_ip
     from .native_jit import _block_ip_batched as _native_graph_block_ip_batched
     from .native_jit import _native_graph_linear_dispatch
@@ -115,6 +116,7 @@ except Exception:  # pragma: no cover - optional remote-code fast path
         from native_jit import block_step as _native_jit_block_step
         from native_jit import block_step_batched as _native_jit_block_step_batched
         from native_jit import extract as _native_jit_extract
+        from native_jit import extract_graph as _native_graph_extract
         from native_jit import _block_ip as _native_graph_block_ip
         from native_jit import _block_ip_batched as _native_graph_block_ip_batched
         from native_jit import _native_graph_linear_dispatch
@@ -123,6 +125,7 @@ except Exception:  # pragma: no cover - optional remote-code fast path
         _native_jit_block_step = None
         _native_jit_block_step_batched = None
         _native_jit_extract = None
+        _native_graph_extract = None
         _native_graph_block_ip = None
         _native_graph_block_ip_batched = None
         _native_graph_linear_dispatch = None
@@ -343,6 +346,32 @@ def _native_graph_fused_norm_mix_num_warps() -> int:
 def _native_graph_sm70_linear_requested() -> bool:
     policy = _rwkv7_kernel_policy()
     return env_flag("RWKV7_NATIVE_GRAPH_SM70_LINEAR", bool(getattr(policy, "sm70_linear", False)))
+
+
+def _native_graph_ada_linear_requested() -> bool:
+    policy = _rwkv7_kernel_policy()
+    return env_flag("RWKV7_NATIVE_GRAPH_ADA_LINEAR", bool(getattr(policy, "ada_linear", False)))
+
+
+def _native_graph_ada_linear_signature() -> tuple[str, str]:
+    return (
+        os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROWS", "2 4"),
+        os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROLES", "auto"),
+    )
+
+
+def _native_graph_ada_wagv_lora_requested() -> bool:
+    policy = _rwkv7_kernel_policy()
+    return env_flag(
+        "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA", bool(getattr(policy, "ada_wagv_lora", False))
+    )
+
+
+def _native_graph_ada_sparse_ffn_requested() -> bool:
+    policy = _rwkv7_kernel_policy()
+    return env_flag(
+        "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN", bool(getattr(policy, "ada_sparse_ffn", False))
+    )
 
 
 def _native_graph_rkv_policy() -> str:
@@ -1639,10 +1668,13 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return logits, past_key_values
         return CausalLMOutputWithPast(logits=logits, past_key_values=past_key_values)
 
-    def _rwkv7_native_jit_packs(self):
+    def _rwkv7_native_jit_packs(self, *, for_graph: bool = False):
         if _native_jit_block_step is None or _native_jit_block_step_batched is None or _native_jit_extract is None:
             raise RuntimeError("native_jit fast-token backend is unavailable; copy native_jit.py into the model repo")
-        cache = getattr(self, "_rwkv7_native_jit_pack_cache", None)
+        if for_graph and _native_graph_extract is None:
+            raise RuntimeError("native_graph operand extraction is unavailable; copy native_jit.py into the model repo")
+        cache_name = "_rwkv7_native_graph_pack_cache" if for_graph else "_rwkv7_native_jit_pack_cache"
+        cache = getattr(self, cache_name, None)
         weight = self.model.embeddings.weight
         key = (
             weight.device.type,
@@ -1650,10 +1682,14 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             weight.dtype,
             _native_graph_rkv_policy(),
             _native_graph_vkwr_rkv_thresholds(),
+            bool(for_graph),
+            str(getattr(self, "_rwkv7_native_mm_quantization", "none")),
+            int(getattr(self, "_rwkv7_native_mm_replaced_modules", 0)),
         )
         if cache is None or cache[0] != key:
-            packs, _, _, _ = _native_jit_extract(self)
-            self._rwkv7_native_jit_pack_cache = (key, packs)
+            extractor = _native_graph_extract if for_graph else _native_jit_extract
+            packs, _, _, _ = extractor(self)
+            setattr(self, cache_name, (key, packs))
             return packs
         return cache[1]
 
@@ -1681,6 +1717,10 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_fused_norm_mix_requested(),
             _native_graph_fused_norm_mix_num_warps(),
             _native_graph_sm70_linear_requested(),
+            _native_graph_ada_linear_requested(),
+            _native_graph_ada_linear_signature(),
+            _native_graph_ada_wagv_lora_requested(),
+            _native_graph_ada_sparse_ffn_requested(),
             _native_graph_rkv_policy(),
             _native_graph_vkwr_rkv_thresholds(),
             int(batch_size),
@@ -2236,7 +2276,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         small LRU per model instance, keyed by active batch size. Set
         `RWKV7_NATIVE_GRAPH_CACHE_SIZE` to tune the retained runner count.
         """
-        packs = self._rwkv7_native_jit_packs()
+        packs = self._rwkv7_native_jit_packs(for_graph=True)
         runner = self._rwkv7_native_graph_runner(packs, int(token.numel()))
         logits = runner.replay(token, past_key_values)
         past_key_values._seen_tokens += 1

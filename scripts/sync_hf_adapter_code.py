@@ -19,6 +19,8 @@ from pathlib import Path
 
 
 ADAPTER_FILES = [
+    "ada_lora.py",
+    "ada_sparse_ffn.py",
     "configuration_rwkv7.py",
     "dplr_prefill.py",
     "dplr_prefill_triton.py",
@@ -45,6 +47,7 @@ ADAPTER_FILES = [
     "native_quant.py",
     "native_quant_mm4.py",
     "native_quant_mm8.py",
+    "native_quant_torchao.py",
     "native_quant_policy.py",
     "sm70_linear.py",
     "triton_compat.py",

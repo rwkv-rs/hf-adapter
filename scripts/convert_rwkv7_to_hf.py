@@ -206,6 +206,8 @@ def translate_name(name: str, num_layers: int) -> Tuple[str, bool]:
 def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
     root = Path(__file__).resolve().parents[1]
     for name in [
+        "ada_lora.py",
+        "ada_sparse_ffn.py",
         "configuration_rwkv7.py",
         "dplr_prefill.py",
         "dplr_prefill_triton.py",
@@ -232,6 +234,7 @@ def copy_adapter_files(output: Path, vocab_file: Path | None) -> None:
         "native_quant.py",
         "native_quant_mm4.py",
         "native_quant_mm8.py",
+        "native_quant_torchao.py",
         "native_quant_policy.py",
         "sm70_linear.py",
         "triton_compat.py",

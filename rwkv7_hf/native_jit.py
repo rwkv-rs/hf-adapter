@@ -21,6 +21,49 @@ def _linear_module(module, x: torch.Tensor) -> torch.Tensor:
     return module(x)
 
 
+def _graph_linear_operand(module):
+    """Return a dense weight when possible, otherwise retain the quant module.
+
+    Native CUDA-graph decode historically packed bare ``nn.Linear.weight``
+    tensors.  MM8/MM4 modules intentionally have no dense weight, so retaining
+    the module lets graph capture record their fused dequant GEMV without
+    materialising a second fp16 copy of the model.
+    """
+
+    if type(module) is torch.nn.Linear and type(module.weight) is torch.nn.Parameter:
+        return module.weight
+    return module
+
+
+def _graph_linear_is_dense(operand) -> bool:
+    return isinstance(operand, torch.Tensor)
+
+
+def _graph_linear_shape(operand) -> tuple[int, int]:
+    if _graph_linear_is_dense(operand):
+        return int(operand.shape[0]), int(operand.shape[1])
+    return int(operand.out_features), int(operand.in_features)
+
+
+def _graph_linear_call(x: torch.Tensor, operand) -> torch.Tensor:
+    if _graph_linear_is_dense(operand):
+        return F.linear(x, operand)
+    return operand(x)
+
+
+def _graph_linears_are_dense(*operands) -> bool:
+    return all(_graph_linear_is_dense(item) for item in operands)
+
+
+def _graph_linear_call_with_explicit_bias(x: torch.Tensor, operand, bias) -> torch.Tensor:
+    """Apply a packed linear whose module form already owns ``bias``."""
+
+    y = _graph_linear_call(x, operand)
+    if _graph_linear_is_dense(operand) and bias is not None:
+        y = y + bias
+    return y
+
+
 def _lm_head(model, x: torch.Tensor) -> torch.Tensor:
     return _linear_module(model.lm_head, x)
 
@@ -248,6 +291,39 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         sm70_rkv = None  # type: ignore[assignment]
         sm70_rkv_should_use = None  # type: ignore[assignment]
         sm70_rkv_threads = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional sm_89 sparse FFN contraction
+    from .ada_sparse_ffn import (
+        ada_ffn_up,
+        ada_linear,
+        ada_linear_should_use,
+        ada_sparse_ffn_down_add,
+        ada_sparse_ffn_should_use,
+    )
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from ada_sparse_ffn import (
+            ada_ffn_up,
+            ada_linear,
+            ada_linear_should_use,
+            ada_sparse_ffn_down_add,
+            ada_sparse_ffn_should_use,
+        )
+    except Exception:
+        ada_ffn_up = None  # type: ignore[assignment]
+        ada_linear = None  # type: ignore[assignment]
+        ada_linear_should_use = None  # type: ignore[assignment]
+        ada_sparse_ffn_down_add = None  # type: ignore[assignment]
+        ada_sparse_ffn_should_use = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional sm_89 grouped W/A/G/V LoRA
+    from .ada_lora import ada_wagv_lora, ada_wagv_lora_should_use
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from ada_lora import ada_wagv_lora, ada_wagv_lora_should_use
+    except Exception:
+        ada_wagv_lora = None  # type: ignore[assignment]
+        ada_wagv_lora_should_use = None  # type: ignore[assignment]
 
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
@@ -714,28 +790,106 @@ def _native_graph_sm70_linear_enabled() -> bool:
     )
 
 
-def _native_graph_linear_dispatch(x: torch.Tensor, weight: torch.Tensor, *, role: str) -> torch.Tensor:
-    """Use the exact measured sm_70 route for a native-graph dense linear."""
+def _native_graph_ada_sparse_ffn_enabled() -> bool:
+    """Whether the measured sm_89 sparse FFN route may be captured."""
 
+    policy = _kernel_policy()
+    return bool(
+        env_flag(
+            "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN",
+            bool(getattr(policy, "ada_sparse_ffn", False)),
+        )
+        and ada_sparse_ffn_down_add is not None
+        and ada_ffn_up is not None
+        and ada_sparse_ffn_should_use is not None
+    )
+
+
+def _native_graph_ada_linear_enabled() -> bool:
+    """Whether measured no-copy sm_89 exact-row linears may be captured."""
+
+    policy = _kernel_policy()
+    return bool(
+        env_flag(
+            "RWKV7_NATIVE_GRAPH_ADA_LINEAR",
+            bool(getattr(policy, "ada_linear", False)),
+        )
+        and ada_linear is not None
+        and ada_linear_should_use is not None
+    )
+
+
+def _native_graph_ada_linear_should_route(rows: int, role: str) -> bool:
+    """Shape/role gate; row 1 remains a probe while measured row 2 is default."""
+
+    if not _native_graph_ada_linear_enabled():
+        return False
+    raw_rows = os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROWS", "2 4")
+    try:
+        enabled_rows = {int(item) for item in raw_rows.replace(",", " ").split()}
+    except ValueError:
+        enabled_rows = {2}
+    raw_roles = os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROLES")
+    if raw_roles is None:
+        raw_roles = "hidden" if int(rows) == 4 else "hidden,ffn_up,ffn_down"
+    enabled_roles = {item.strip().lower() for item in raw_roles.replace(",", " ").split() if item.strip()}
+    return int(rows) in enabled_rows and role.lower() in enabled_roles
+
+
+def _native_graph_ada_wagv_lora_enabled(rows: int, hidden_size: int, max_rank: int) -> bool:
+    """Whether the no-copy sm_89 grouped low-rank route may be captured."""
+
+    policy = _kernel_policy()
+    return bool(
+        env_flag(
+            "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA",
+            bool(getattr(policy, "ada_wagv_lora", False)),
+        )
+        and ada_wagv_lora is not None
+        and ada_wagv_lora_should_use is not None
+        and ada_wagv_lora_should_use(int(rows), int(hidden_size), int(max_rank))
+    )
+
+
+def _native_graph_linear_dispatch(x: torch.Tensor, weight, *, role: str) -> torch.Tensor:
+    """Dispatch dense or native-quantized linears during graph capture."""
+
+    rows = 1 if x.dim() == 1 else int(x.shape[0])
+    outputs, inputs = _graph_linear_shape(weight)
+    if (
+        _graph_linear_is_dense(weight)
+        and role != "head"
+        and _native_graph_ada_linear_should_route(rows, role)
+        and ada_linear_should_use(rows, outputs, inputs)
+    ):
+        return ada_linear(x, weight)
+    if not _graph_linear_is_dense(weight):
+        return _graph_linear_call(x, weight)
     if not _native_graph_sm70_linear_enabled():
         return F.linear(x, weight)
-    rows = 1 if x.dim() == 1 else int(x.shape[0])
-    outputs, inputs = int(weight.shape[0]), int(weight.shape[1])
     if not sm70_linear_should_use(rows, outputs, inputs, role=role):
         return F.linear(x, weight)
     threads = sm70_linear_threads(rows, outputs, inputs, role=role)
     return sm70_linear(x, weight, threads=threads)
 
 
-def _native_graph_ffn_up_relu2_dispatch(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+def _native_graph_ffn_up_relu2_dispatch(x: torch.Tensor, weight) -> torch.Tensor:
+    rows = 1 if x.dim() == 1 else int(x.shape[0])
+    outputs, inputs = _graph_linear_shape(weight)
+    if (
+        _graph_linear_is_dense(weight)
+        and _native_graph_ada_linear_should_route(rows, "ffn_up")
+        and ada_linear_should_use(rows, outputs, inputs)
+    ):
+        return torch.relu(ada_linear(x, weight)) ** 2
+    if not _graph_linear_is_dense(weight):
+        return torch.relu(_graph_linear_call(x, weight)) ** 2
     if (
         not _native_graph_sm70_linear_enabled()
         or sm70_ffn_up_relu2 is None
         or sm70_ffn_up_relu2_should_use is None
     ):
         return torch.relu(F.linear(x, weight)) ** 2
-    rows = 1 if x.dim() == 1 else int(x.shape[0])
-    outputs, inputs = int(weight.shape[0]), int(weight.shape[1])
     if not sm70_ffn_up_relu2_should_use(rows, outputs, inputs):
         return torch.relu(F.linear(x, weight)) ** 2
     threads = sm70_linear_threads(rows, outputs, inputs, role="ffn_up")
@@ -744,21 +898,51 @@ def _native_graph_ffn_up_relu2_dispatch(x: torch.Tensor, weight: torch.Tensor) -
 
 def _native_graph_ffn_down_add_dispatch(
     x: torch.Tensor,
-    weight: torch.Tensor,
+    weight,
     residual: torch.Tensor,
 ) -> torch.Tensor:
+    rows = 1 if x.dim() == 1 else int(x.shape[0])
+    outputs, inputs = _graph_linear_shape(weight)
+    if (
+        _graph_linear_is_dense(weight)
+        and _native_graph_ada_linear_should_route(rows, "ffn_down")
+        and ada_linear_should_use(rows, outputs, inputs)
+    ):
+        return residual + ada_linear(x, weight)
+    if not _graph_linear_is_dense(weight):
+        return residual + _graph_linear_call(x, weight)
     if (
         not _native_graph_sm70_linear_enabled()
         or sm70_ffn_down_add is None
         or sm70_ffn_down_add_should_use is None
     ):
         return residual + F.linear(x, weight)
-    rows = 1 if x.dim() == 1 else int(x.shape[0])
-    outputs, inputs = int(weight.shape[0]), int(weight.shape[1])
     if not sm70_ffn_down_add_should_use(rows, outputs, inputs):
         return residual + F.linear(x, weight)
     threads = sm70_linear_threads(rows, outputs, inputs, role="ffn_down")
     return sm70_ffn_down_add(x, weight, residual, threads=threads)
+
+
+def _native_graph_ffn_dispatch(
+    x: torch.Tensor,
+    up_weight,
+    down_weight,
+    residual: torch.Tensor,
+) -> torch.Tensor:
+    """Route the complete FFN boundary so sparse kernels can avoid ReLU² IO."""
+
+    rows = 1 if x.dim() == 1 else int(x.shape[0])
+    outputs, inputs = _graph_linear_shape(down_weight)
+    if (
+        _graph_linear_is_dense(up_weight)
+        and _graph_linear_is_dense(down_weight)
+        and _native_graph_ada_sparse_ffn_enabled()
+        and ada_sparse_ffn_should_use(rows, outputs, inputs)
+    ):
+        preact = ada_ffn_up(x, up_weight)
+        return ada_sparse_ffn_down_add(preact, down_weight, residual)
+    hidden = _native_graph_ffn_up_relu2_dispatch(x, up_weight)
+    return _native_graph_ffn_down_add_dispatch(hidden, down_weight, residual)
 
 
 def _native_graph_rkv_policy() -> str:
@@ -817,16 +1001,17 @@ def _native_graph_rkv_project(
     xr: torch.Tensor,
     xk: torch.Tensor,
     xv: torch.Tensor,
-    Rw: torch.Tensor,
-    Kw: torch.Tensor,
-    Vw: torch.Tensor,
+    Rw,
+    Kw,
+    Vw,
     RKVw: torch.Tensor,
     rows: int,
     hidden_size: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Project R/K/V with either separate linears or VKWR-style stacked bmm."""
 
-    if _native_graph_vkwr_rkv_dispatch(int(rows), int(hidden_size)) and RKVw.numel() != 0:
+    dense_rkv = all(_graph_linear_is_dense(item) for item in (Rw, Kw, Vw))
+    if dense_rkv and _native_graph_vkwr_rkv_dispatch(int(rows), int(hidden_size)) and RKVw.numel() != 0:
         if xr.dim() == 1:
             flat = torch.stack(
                 (
@@ -849,7 +1034,8 @@ def _native_graph_rkv_project(
         rkv = torch.bmm(flat, RKVw)
         return rkv[0], rkv[1], rkv[2]
     if (
-        _native_graph_sm70_linear_enabled()
+        dense_rkv
+        and _native_graph_sm70_linear_enabled()
         and sm70_rkv is not None
         and sm70_rkv_should_use is not None
         and sm70_rkv_threads is not None
@@ -1128,6 +1314,75 @@ def extract(model):
             torch.stack((a.r_proj.weight.t(), a.k_proj.weight.t(), a.v_proj.weight.t())).contiguous()
             if stack_rkv
             else ref.new_empty((0,)),
+        ))
+    return packs, H, N, eps
+
+
+def extract_graph(model):
+    """Pack CUDA-graph operands while preserving MM8/MM4 modules.
+
+    Dense models keep the exact historical tensor tuple. Quantized projection
+    modules are retained as callable operands and are consumed by the eager
+    graph-capture dispatchers below. This function is intentionally separate
+    from :func:`extract`: TorchScript decode still requires tensor-only packs.
+    """
+
+    layers = model.model.layers
+    H = layers[0].attn.num_heads
+    N = layers[0].attn.head_dim
+    eps = float(N * 1e-5)
+    packs = []
+    hidden = int(layers[0].attn.hidden_size)
+    stack_rkv = _native_graph_rkv_policy() == "vkwr_auto"
+    embed_ref = model.model.embeddings.weight
+    for i, layer in enumerate(layers):
+        a = layer.attn
+        vl = getattr(a, "v_lora", None)
+        if vl is not None:
+            v1 = _graph_linear_operand(vl.lora[0])
+            v2 = _graph_linear_operand(vl.lora[2])
+            v0 = vl.lora[2].bias
+        else:
+            v1 = torch.zeros(1, hidden, device=embed_ref.device, dtype=embed_ref.dtype)
+            v2 = torch.zeros(hidden, 1, device=embed_ref.device, dtype=embed_ref.dtype)
+            v0 = torch.zeros(hidden, device=embed_ref.device, dtype=embed_ref.dtype)
+        if hasattr(layer, "pre_norm"):
+            pre_w, pre_b, has_pre = layer.pre_norm.weight, layer.pre_norm.bias, 1
+        else:
+            pre_w = torch.zeros(hidden, device=embed_ref.device, dtype=embed_ref.dtype)
+            pre_b = torch.zeros(hidden, device=embed_ref.device, dtype=embed_ref.dtype)
+            has_pre = 0
+
+        r_op = _graph_linear_operand(a.r_proj)
+        k_op = _graph_linear_operand(a.k_proj)
+        v_op = _graph_linear_operand(a.v_proj)
+        if stack_rkv and all(_graph_linear_is_dense(item) for item in (r_op, k_op, v_op)):
+            stacked_rkv = torch.stack((r_op.t(), k_op.t(), v_op.t())).contiguous()
+        else:
+            stacked_rkv = embed_ref.new_empty((0,))
+
+        packs.append((
+            i, H, N, eps, has_pre,
+            pre_w, pre_b, layer.attn_norm.weight, layer.attn_norm.bias,
+            layer.ffn_norm.weight, layer.ffn_norm.bias,
+            a.x_r.reshape(-1), a.x_w.reshape(-1), a.x_k.reshape(-1),
+            a.x_v.reshape(-1), a.x_a.reshape(-1), a.x_g.reshape(-1),
+            a.k_k, a.k_a, a.r_k,
+            r_op, k_op, v_op, _graph_linear_operand(a.o_proj),
+            _graph_linear_operand(a.w_lora.lora[0]),
+            _graph_linear_operand(a.w_lora.lora[2]),
+            a.w_lora.lora[2].bias,
+            _graph_linear_operand(a.a_lora.lora[0]),
+            _graph_linear_operand(a.a_lora.lora[2]),
+            a.a_lora.lora[2].bias,
+            v1, v2, v0,
+            _graph_linear_operand(a.g_lora.lora[0]),
+            _graph_linear_operand(a.g_lora.lora[2]),
+            a.g_norm.weight, a.g_norm.bias,
+            layer.ffn.x_k,
+            _graph_linear_operand(layer.ffn.key),
+            _graph_linear_operand(layer.ffn.value),
+            stacked_rkv,
         ))
     return packs, H, N, eps
 
@@ -1624,7 +1879,9 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
         xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
     v_gate = None
-    if _native_graph_fused_projection_enabled():
+    v_mixed = False
+    lora_dense = _graph_linears_are_dense(w1, w2, a1, a2, v1, v2, g1, g2)
+    if _native_graph_fused_projection_enabled() and lora_dense and _graph_linears_are_dense(Rw, Kw, Vw):
         r, k, v, w, a, g, v_gate = fused_rkv_wavg_projection(
             xr.view(1, H * N),
             xk.view(1, H * N),
@@ -1655,7 +1912,19 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         a = torch.sigmoid(a.view(H * N))
         g = g.view(H * N)
         v_gate = torch.sigmoid(v_gate.view(H * N))
-    elif _native_graph_fused_wavg_lora_enabled(1, H * N):
+    elif i > 0 and lora_dense and _native_graph_ada_wagv_lora_enabled(
+        1,
+        H * N,
+        max(_graph_linear_shape(w1)[0], _graph_linear_shape(a1)[0], _graph_linear_shape(g1)[0], _graph_linear_shape(v1)[0]),
+    ):
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
+        w, a, g, v = ada_wagv_lora(
+            xw, xa, xg, xv, w1, a1, g1, v1, w2, a2, g2, v2,
+            w0, a0, v0, v, v_first,
+        )
+        a = torch.sigmoid(a)
+        v_mixed = True
+    elif lora_dense and _native_graph_fused_wavg_lora_enabled(1, H * N):
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
         if i == 0:
             w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
@@ -1689,7 +1958,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
             g = g.view(H * N)
             v_gate = v_gate.view(H * N)
         a = torch.sigmoid(a)
-    elif _native_graph_fused_wag_lora_enabled():
+    elif lora_dense and _native_graph_fused_wag_lora_enabled():
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
         block_m, block_r, block_k = _native_graph_fused_wag_lora_blocks()
         w, a, g = fused_wag_lora(
@@ -1714,9 +1983,9 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         g = g.view(H * N)
     else:
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
-        w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
-        a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
-        g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
+        w = _graph_linear_call_with_explicit_bias(torch.tanh(_graph_linear_call(xw, w1)), w2, w0)
+        a = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xa, a1), a2, a0))
+        g = _graph_linear_call(torch.sigmoid(_graph_linear_call(xg, g1)), g2)
     use_fused_recurrent_output = _native_graph_fused_recurrent_output_enabled()
     use_fused_recurrent_raw = use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
     if not use_fused_recurrent_raw:
@@ -1724,9 +1993,9 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         k = k * (1 + (a - 1) * k_a)
     if i == 0:
         v_first.copy_(v)
-    else:
+    elif not v_mixed:
         if v_gate is None:
-            v_gate = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
+            v_gate = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xv, v1), v2, v0))
         v = v + (v_first - v) * v_gate
     if use_fused_recurrent_raw:
         out, new_state = fused_recurrent_output_prepare_raw(
@@ -1771,7 +2040,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         out, new_state = _recurrent_update_unbatched(r, w, k, v, kk, a, state, H, N)
     if use_fused_recurrent_output:
         out = _native_graph_linear_dispatch(out, Ow, role="hidden")
-    elif _native_graph_fused_output_project_enabled():
+    elif _native_graph_fused_output_project_enabled() and _graph_linear_is_dense(Ow):
         out = fused_attn_output_project(
             out.view(1, H * N),
             r.view(1, H, N),
@@ -1828,8 +2097,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         fxx = xpf - h2
         fk = h2 + fxx * fx_k
         xpf.copy_(h2)
-    fk = _native_graph_ffn_up_relu2_dispatch(fk, fK)
-    return _native_graph_ffn_down_add_dispatch(fk, fV, residual)
+    return _native_graph_ffn_dispatch(fk, fK, fV, residual)
 
 
 def _block_ip_batched(x, state, xpa, xpf, v_first, p):
@@ -1870,7 +2138,9 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
         xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
     v_gate = None
-    if _native_graph_fused_projection_enabled():
+    v_mixed = False
+    lora_dense = _graph_linears_are_dense(w1, w2, a1, a2, v1, v2, g1, g2)
+    if _native_graph_fused_projection_enabled() and lora_dense and _graph_linears_are_dense(Rw, Kw, Vw):
         r, k, v, w, a, g, v_gate = fused_rkv_wavg_projection(
             xr,
             xk,
@@ -1896,7 +2166,19 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         )
         a = torch.sigmoid(a)
         v_gate = torch.sigmoid(v_gate)
-    elif _native_graph_fused_wavg_lora_enabled(B, H * N):
+    elif i > 0 and lora_dense and _native_graph_ada_wagv_lora_enabled(
+        B,
+        H * N,
+        max(_graph_linear_shape(w1)[0], _graph_linear_shape(a1)[0], _graph_linear_shape(g1)[0], _graph_linear_shape(v1)[0]),
+    ):
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
+        w, a, g, v = ada_wagv_lora(
+            xw, xa, xg, xv, w1, a1, g1, v1, w2, a2, g2, v2,
+            w0, a0, v0, v, v_first,
+        )
+        a = torch.sigmoid(a)
+        v_mixed = True
+    elif lora_dense and _native_graph_fused_wavg_lora_enabled(B, H * N):
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
         if i == 0:
             w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
@@ -1926,7 +2208,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
                 block_k=block_k,
             )
         a = torch.sigmoid(a)
-    elif _native_graph_fused_wag_lora_enabled():
+    elif lora_dense and _native_graph_fused_wag_lora_enabled():
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
         block_m, block_r, block_k = _native_graph_fused_wag_lora_blocks()
         w, a, g = fused_wag_lora(
@@ -1949,9 +2231,9 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         a = torch.sigmoid(a)
     else:
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
-        w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
-        a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
-        g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
+        w = _graph_linear_call_with_explicit_bias(torch.tanh(_graph_linear_call(xw, w1)), w2, w0)
+        a = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xa, a1), a2, a0))
+        g = _graph_linear_call(torch.sigmoid(_graph_linear_call(xg, g1)), g2)
     use_fused_recurrent_output = _native_graph_fused_recurrent_output_enabled()
     use_fused_recurrent_raw = use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
     if not use_fused_recurrent_raw:
@@ -1959,9 +2241,9 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         k = k * (1 + (a - 1) * k_a)
     if i == 0:
         v_first.copy_(v)
-    else:
+    elif not v_mixed:
         if v_gate is None:
-            v_gate = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
+            v_gate = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xv, v1), v2, v0))
         v = v + (v_first - v) * v_gate
     if use_fused_recurrent_raw:
         out, new_state = fused_recurrent_output_prepare_raw(
@@ -2004,7 +2286,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         out, new_state = _recurrent_update_batched(r, w, k, v, kk, a, state, B, H, N)
     if use_fused_recurrent_output:
         out = _native_graph_linear_dispatch(out, Ow, role="hidden")
-    elif _native_graph_fused_output_project_enabled():
+    elif _native_graph_fused_output_project_enabled() and _graph_linear_is_dense(Ow):
         out = fused_attn_output_project(
             out,
             r.view(B, H, N),
@@ -2061,8 +2343,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         fxx = xpf - h2
         fk = h2 + fxx * fx_k
         xpf.copy_(h2)
-    fk = _native_graph_ffn_up_relu2_dispatch(fk, fK)
-    return _native_graph_ffn_down_add_dispatch(fk, fV, residual)
+    return _native_graph_ffn_dispatch(fk, fK, fV, residual)
 
 
 def cuda_graph_decode(model, ids, packs, n=128):
