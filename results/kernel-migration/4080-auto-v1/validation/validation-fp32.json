@@ -1,0 +1,837 @@
+{
+  "code_sha": "worktree-9d3ba79a-auto-v1",
+  "dtype": "fp32",
+  "environment": {
+    "cuda": "13.0",
+    "device": "NVIDIA GeForce RTX 4080",
+    "kernel": {
+      "adapter_mode": "auto",
+      "api_version": 1,
+      "implementation_mode": "auto",
+      "last_route": null,
+      "package_version": "1.0.0.dev0"
+    },
+    "platform": "Linux-7.0.0-29-generic-x86_64-with-glibc2.39",
+    "python": "3.12.2 | packaged by conda-forge | (main, Feb 16 2024, 20:50:58) [GCC 12.3.0]",
+    "rwkv7_hf": "1.0.0",
+    "torch": "2.11.0+cu130",
+    "transformers": "5.8.0",
+    "triton": "3.6.0"
+  },
+  "expected_route": "reference",
+  "implementation": "auto",
+  "models": {
+    "0.1B": {
+      "batch_regrouping": {
+        "exact": true,
+        "grouped_batch": 8,
+        "isolated_batch": 1,
+        "logits": {
+          "cosine": 1.0,
+          "finite": true,
+          "max_abs": 0.0
+        },
+        "passed": true,
+        "prefix_tokens": 17,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "unsupported input dtype torch.float32",
+          "requested": "auto",
+          "selected": "reference"
+        }
+      },
+      "cached_and_greedy": {
+        "final_state_min_cosine": 0.9999997019767761,
+        "greedy_equal": true,
+        "greedy_tokens": 64,
+        "passed": true,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "unsupported input dtype torch.float32",
+          "requested": "auto",
+          "selected": "reference"
+        },
+        "teacher_forced_logits": {
+          "cosine": 1.0,
+          "finite": true,
+          "max_abs": 0.0
+        }
+      },
+      "cases": [
+        {
+          "batch": 1,
+          "length": 17,
+          "logits": {
+            "cosine": 1.000000238418579,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 0.9999998807907104
+        },
+        {
+          "batch": 1,
+          "length": 128,
+          "logits": {
+            "cosine": 1.0,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 0.9999998807907104
+        },
+        {
+          "batch": 4,
+          "length": 17,
+          "logits": {
+            "cosine": 1.0,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 0.9999997615814209
+        },
+        {
+          "batch": 4,
+          "length": 128,
+          "logits": {
+            "cosine": 1.000000238418579,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 1.0
+        },
+        {
+          "batch": 8,
+          "length": 17,
+          "logits": {
+            "cosine": 0.9999999403953552,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 0.9999998807907104
+        },
+        {
+          "batch": 8,
+          "length": 128,
+          "logits": {
+            "cosine": 1.0,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 0.9999997615814209
+        }
+      ],
+      "config_sha256": "983e4fd48d1c5181864457c2dc745e622eb842fc212ac279b66c7bd16b2d38c1",
+      "padding_parity": {
+        "left_cache_equal": true,
+        "left_logits": {
+          "cosine": 1.0,
+          "finite": true,
+          "max_abs": 0.0
+        },
+        "padding_tokens": 5,
+        "passed": true,
+        "right_cache_equal": true,
+        "right_logits": {
+          "cosine": 1.0,
+          "finite": true,
+          "max_abs": 0.0
+        },
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "unsupported input dtype torch.float32",
+          "requested": "auto",
+          "selected": "reference"
+        },
+        "tokens": 17
+      },
+      "passed": true,
+      "path": "/home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/01b"
+    },
+    "0.4B": {
+      "batch_regrouping": {
+        "exact": true,
+        "grouped_batch": 8,
+        "isolated_batch": 1,
+        "logits": {
+          "cosine": 1.0,
+          "finite": true,
+          "max_abs": 0.0
+        },
+        "passed": true,
+        "prefix_tokens": 17,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "unsupported input dtype torch.float32",
+          "requested": "auto",
+          "selected": "reference"
+        }
+      },
+      "cached_and_greedy": {
+        "final_state_min_cosine": 0.9999998807907104,
+        "greedy_equal": true,
+        "greedy_tokens": 64,
+        "passed": true,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "unsupported input dtype torch.float32",
+          "requested": "auto",
+          "selected": "reference"
+        },
+        "teacher_forced_logits": {
+          "cosine": 0.9999998211860657,
+          "finite": true,
+          "max_abs": 0.0
+        }
+      },
+      "cases": [
+        {
+          "batch": 1,
+          "length": 17,
+          "logits": {
+            "cosine": 1.0,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 0.9999998807907104
+        },
+        {
+          "batch": 1,
+          "length": 128,
+          "logits": {
+            "cosine": 1.0,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 0.9999997615814209
+        },
+        {
+          "batch": 4,
+          "length": 17,
+          "logits": {
+            "cosine": 1.0,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 0.9999998807907104
+        },
+        {
+          "batch": 4,
+          "length": 128,
+          "logits": {
+            "cosine": 1.0,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 0.9999998807907104
+        },
+        {
+          "batch": 8,
+          "length": 17,
+          "logits": {
+            "cosine": 0.9999998807907104,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 0.9999998211860657
+        },
+        {
+          "batch": 8,
+          "length": 128,
+          "logits": {
+            "cosine": 1.0,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 0.9999998807907104
+        }
+      ],
+      "config_sha256": "ebbcc329fd332479b5f9730543d2c0d5b7412ae93688733536c209072d4eae11",
+      "padding_parity": {
+        "left_cache_equal": true,
+        "left_logits": {
+          "cosine": 0.9999999403953552,
+          "finite": true,
+          "max_abs": 0.0
+        },
+        "padding_tokens": 5,
+        "passed": true,
+        "right_cache_equal": true,
+        "right_logits": {
+          "cosine": 0.9999999403953552,
+          "finite": true,
+          "max_abs": 0.0
+        },
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "unsupported input dtype torch.float32",
+          "requested": "auto",
+          "selected": "reference"
+        },
+        "tokens": 17
+      },
+      "passed": true,
+      "path": "/home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/04b"
+    },
+    "1.5B": {
+      "batch_regrouping": {
+        "exact": true,
+        "grouped_batch": 8,
+        "isolated_batch": 1,
+        "logits": {
+          "cosine": 1.0,
+          "finite": true,
+          "max_abs": 0.0
+        },
+        "passed": true,
+        "prefix_tokens": 17,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "unsupported input dtype torch.float32",
+          "requested": "auto",
+          "selected": "reference"
+        }
+      },
+      "cached_and_greedy": {
+        "final_state_min_cosine": 0.9999998211860657,
+        "greedy_equal": true,
+        "greedy_tokens": 64,
+        "passed": true,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "unsupported input dtype torch.float32",
+          "requested": "auto",
+          "selected": "reference"
+        },
+        "teacher_forced_logits": {
+          "cosine": 1.0000001192092896,
+          "finite": true,
+          "max_abs": 0.0
+        }
+      },
+      "cases": [
+        {
+          "batch": 1,
+          "length": 17,
+          "logits": {
+            "cosine": 1.0,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 0.9999998211860657
+        },
+        {
+          "batch": 1,
+          "length": 128,
+          "logits": {
+            "cosine": 1.0,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 0.9999998807907104
+        },
+        {
+          "batch": 4,
+          "length": 17,
+          "logits": {
+            "cosine": 1.0,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 0.9999998807907104
+        },
+        {
+          "batch": 4,
+          "length": 128,
+          "logits": {
+            "cosine": 1.0,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 0.9999998807907104
+        },
+        {
+          "batch": 8,
+          "length": 17,
+          "logits": {
+            "cosine": 0.9999999403953552,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 0.9999998807907104
+        },
+        {
+          "batch": 8,
+          "length": 128,
+          "logits": {
+            "cosine": 1.0,
+            "finite": true,
+            "max_abs": 0.0
+          },
+          "passed": true,
+          "route": {
+            "implementation": "torch-reference-v1",
+            "reason": "unsupported input dtype torch.float32",
+            "requested": "auto",
+            "selected": "reference"
+          },
+          "state_max_abs": 0.0,
+          "state_min_cosine": 0.9999998211860657
+        }
+      ],
+      "config_sha256": "b7a9d98f1499f2e66dc14f97c94944a4c1e61b3e4acd2f822f353825ed53f9a8",
+      "padding_parity": {
+        "left_cache_equal": true,
+        "left_logits": {
+          "cosine": 1.0,
+          "finite": true,
+          "max_abs": 0.0
+        },
+        "padding_tokens": 5,
+        "passed": true,
+        "right_cache_equal": true,
+        "right_logits": {
+          "cosine": 1.0,
+          "finite": true,
+          "max_abs": 0.0
+        },
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "unsupported input dtype torch.float32",
+          "requested": "auto",
+          "selected": "reference"
+        },
+        "tokens": 17
+      },
+      "passed": true,
+      "path": "/home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/15b"
+    }
+  },
+  "operator": [
+    {
+      "batch": 1,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 1,
+      "output": {
+        "cosine": 1.0,
+        "finite": true,
+        "max_abs": 0.0
+      },
+      "passed": true,
+      "route": {
+        "implementation": "torch-reference-v1",
+        "reason": "unsupported input dtype torch.float32",
+        "requested": "auto",
+        "selected": "reference"
+      },
+      "state": {
+        "cosine": 1.0000001192092896,
+        "finite": true,
+        "max_abs": 0.0
+      }
+    },
+    {
+      "batch": 1,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 17,
+      "output": {
+        "cosine": 1.0,
+        "finite": true,
+        "max_abs": 0.0
+      },
+      "passed": true,
+      "route": {
+        "implementation": "torch-reference-v1",
+        "reason": "unsupported input dtype torch.float32",
+        "requested": "auto",
+        "selected": "reference"
+      },
+      "state": {
+        "cosine": 1.0,
+        "finite": true,
+        "max_abs": 0.0
+      }
+    },
+    {
+      "batch": 1,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 128,
+      "output": {
+        "cosine": 1.0000001192092896,
+        "finite": true,
+        "max_abs": 0.0
+      },
+      "passed": true,
+      "route": {
+        "implementation": "torch-reference-v1",
+        "reason": "unsupported input dtype torch.float32",
+        "requested": "auto",
+        "selected": "reference"
+      },
+      "state": {
+        "cosine": 1.0,
+        "finite": true,
+        "max_abs": 0.0
+      }
+    },
+    {
+      "batch": 1,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 512,
+      "output": {
+        "cosine": 0.9999998807907104,
+        "finite": true,
+        "max_abs": 0.0
+      },
+      "passed": true,
+      "route": {
+        "implementation": "torch-reference-v1",
+        "reason": "unsupported input dtype torch.float32",
+        "requested": "auto",
+        "selected": "reference"
+      },
+      "state": {
+        "cosine": 0.9999998807907104,
+        "finite": true,
+        "max_abs": 0.0
+      }
+    },
+    {
+      "batch": 4,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 1,
+      "output": {
+        "cosine": 1.0,
+        "finite": true,
+        "max_abs": 0.0
+      },
+      "passed": true,
+      "route": {
+        "implementation": "torch-reference-v1",
+        "reason": "unsupported input dtype torch.float32",
+        "requested": "auto",
+        "selected": "reference"
+      },
+      "state": {
+        "cosine": 0.9999999403953552,
+        "finite": true,
+        "max_abs": 0.0
+      }
+    },
+    {
+      "batch": 4,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 17,
+      "output": {
+        "cosine": 0.9999998807907104,
+        "finite": true,
+        "max_abs": 0.0
+      },
+      "passed": true,
+      "route": {
+        "implementation": "torch-reference-v1",
+        "reason": "unsupported input dtype torch.float32",
+        "requested": "auto",
+        "selected": "reference"
+      },
+      "state": {
+        "cosine": 0.9999999403953552,
+        "finite": true,
+        "max_abs": 0.0
+      }
+    },
+    {
+      "batch": 4,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 128,
+      "output": {
+        "cosine": 1.0,
+        "finite": true,
+        "max_abs": 0.0
+      },
+      "passed": true,
+      "route": {
+        "implementation": "torch-reference-v1",
+        "reason": "unsupported input dtype torch.float32",
+        "requested": "auto",
+        "selected": "reference"
+      },
+      "state": {
+        "cosine": 1.0,
+        "finite": true,
+        "max_abs": 0.0
+      }
+    },
+    {
+      "batch": 4,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 512,
+      "output": {
+        "cosine": 1.0,
+        "finite": true,
+        "max_abs": 0.0
+      },
+      "passed": true,
+      "route": {
+        "implementation": "torch-reference-v1",
+        "reason": "unsupported input dtype torch.float32",
+        "requested": "auto",
+        "selected": "reference"
+      },
+      "state": {
+        "cosine": 1.0,
+        "finite": true,
+        "max_abs": 0.0
+      }
+    },
+    {
+      "batch": 8,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 1,
+      "output": {
+        "cosine": 0.9999999403953552,
+        "finite": true,
+        "max_abs": 0.0
+      },
+      "passed": true,
+      "route": {
+        "implementation": "torch-reference-v1",
+        "reason": "unsupported input dtype torch.float32",
+        "requested": "auto",
+        "selected": "reference"
+      },
+      "state": {
+        "cosine": 0.9999999403953552,
+        "finite": true,
+        "max_abs": 0.0
+      }
+    },
+    {
+      "batch": 8,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 17,
+      "output": {
+        "cosine": 0.9999999403953552,
+        "finite": true,
+        "max_abs": 0.0
+      },
+      "passed": true,
+      "route": {
+        "implementation": "torch-reference-v1",
+        "reason": "unsupported input dtype torch.float32",
+        "requested": "auto",
+        "selected": "reference"
+      },
+      "state": {
+        "cosine": 0.9999998807907104,
+        "finite": true,
+        "max_abs": 0.0
+      }
+    },
+    {
+      "batch": 8,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 128,
+      "output": {
+        "cosine": 1.0,
+        "finite": true,
+        "max_abs": 0.0
+      },
+      "passed": true,
+      "route": {
+        "implementation": "torch-reference-v1",
+        "reason": "unsupported input dtype torch.float32",
+        "requested": "auto",
+        "selected": "reference"
+      },
+      "state": {
+        "cosine": 1.0000001192092896,
+        "finite": true,
+        "max_abs": 0.0
+      }
+    },
+    {
+      "batch": 8,
+      "fully_masked_output_zero": true,
+      "fully_masked_state_unchanged": true,
+      "length": 512,
+      "output": {
+        "cosine": 0.9999999403953552,
+        "finite": true,
+        "max_abs": 0.0
+      },
+      "passed": true,
+      "route": {
+        "implementation": "torch-reference-v1",
+        "reason": "unsupported input dtype torch.float32",
+        "requested": "auto",
+        "selected": "reference"
+      },
+      "state": {
+        "cosine": 1.0,
+        "finite": true,
+        "max_abs": 0.0
+      }
+    }
+  ],
+  "passed": true,
+  "schema": "rwkv7-native-backend-validation-v1",
+  "seed": 42,
+  "training_fallback": {
+    "finite": true,
+    "gradient_max_abs": 0.0,
+    "gradient_min_cosine": 0.9999998807907104,
+    "passed": true,
+    "route": {
+      "implementation": "torch-reference-v1",
+      "reason": "the recurrent-v1 optional kernel protocol is inference-only",
+      "requested": "auto",
+      "selected": "reference"
+    }
+  }
+}

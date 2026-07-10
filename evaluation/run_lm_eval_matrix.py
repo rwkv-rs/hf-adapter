@@ -43,6 +43,12 @@ def parse_model(value: str):
 def parse_args():
     parser = argparse.ArgumentParser(description="Run the formal 48-unit lm_eval matrix")
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--lane",
+        choices=("reference", "optimized", "fla"),
+        default="reference",
+        help="Execution lane recorded in provenance; FLA uses prepared wrapper models",
+    )
     parser.add_argument("--model", action="append", default=[])
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--max-length", type=int, default=2048)
@@ -210,11 +216,11 @@ def read_manifest(path: Path) -> dict[str, dict]:
 
 
 def find_result_json(unit_dir: Path) -> Path | None:
-    candidates = [
-        path
-        for path in unit_dir.rglob("*.json")
-        if "samples_" not in path.name and path.name != "manifest.json"
-    ]
+    # lm_eval writes ``results_<timestamp>.json`` below a model-specific
+    # directory.  Optional-kernel runs also write ``kernel-route.json`` after
+    # the subprocess exits, so selecting the newest arbitrary JSON would
+    # silently treat the route trace as the evaluation result.
+    candidates = [path for path in unit_dir.rglob("results_*.json") if path.is_file()]
     return max(candidates, key=lambda path: path.stat().st_mtime) if candidates else None
 
 
@@ -290,6 +296,12 @@ def main():
     latest = read_manifest(manifest_path)
     code_sha = source_sha(args.code_sha)
     runtime = environment()
+    runtime["lane"] = args.lane
+    runtime["kernel_policy"] = (
+        {"RWKV7_BACKEND": "optimized", "RWKV7_KERNEL_IMPL": "auto"}
+        if args.lane == "optimized"
+        else None
+    )
     model_provenance = {
         label: resolve_model(source, revision) for label, source, revision in specs
     }
@@ -358,12 +370,41 @@ def main():
                         command += ["--wandb_args", args.wandb_args]
                     stdout_path = unit_dir / "stdout.log"
                     stderr_path = unit_dir / "stderr.log"
+                    route_trace_path = unit_dir / "kernel-route.json"
+                    command_environment = os.environ.copy()
+                    command_environment.pop("RWKV7_KERNEL_TRACE_PATH", None)
+                    if args.lane == "reference":
+                        command_environment["RWKV7_BACKEND"] = "reference"
+                        command_environment["RWKV7_KERNEL_IMPL"] = "auto"
+                    elif args.lane == "optimized":
+                        command_environment["RWKV7_BACKEND"] = "optimized"
+                        command_environment["RWKV7_KERNEL_IMPL"] = "auto"
+                        command_environment["RWKV7_KERNEL_TRACE_PATH"] = str(
+                            route_trace_path.resolve()
+                        )
+                    else:
+                        command_environment.pop("RWKV7_BACKEND", None)
+                        command_environment.pop("RWKV7_KERNEL_IMPL", None)
+                        # TorchInductor's multi-process compile pool can remain
+                        # alive after FLA/lm_eval has written its results on
+                        # some Torch releases.  A single compile worker keeps
+                        # the model semantics unchanged and lets every formal
+                        # unit terminate deterministically.
+                        command_environment.setdefault(
+                            "TORCHINDUCTOR_COMPILE_THREADS", "1"
+                        )
                     started = datetime.now(timezone.utc).isoformat()
                     with stdout_path.open("w") as stdout, stderr_path.open("w") as stderr:
-                        result = subprocess.run(command, stdout=stdout, stderr=stderr)
+                        result = subprocess.run(
+                            command,
+                            stdout=stdout,
+                            stderr=stderr,
+                            env=command_environment,
+                        )
                     row = {
                         "schema_version": 2,
                         "unit": unit,
+                        "lane": args.lane,
                         "model_label": label,
                         "model": source,
                         "revision": revision,
@@ -383,6 +424,10 @@ def main():
                         "stderr": str(stderr_path),
                         "exit_code": result.returncode,
                     }
+                    if route_trace_path.is_file():
+                        row["kernel_route_trace"] = json.loads(
+                            route_trace_path.read_text(encoding="utf-8")
+                        )
                     if result.returncode == 0:
                         row["task_provenance"] = task_provenance(unit_dir, task)
                     manifest.write(json.dumps(row, ensure_ascii=False) + "\n")

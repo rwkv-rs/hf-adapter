@@ -28,7 +28,9 @@ def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fla-source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--implementation", choices=("graph", "triton"), required=True)
+    parser.add_argument(
+        "--implementation", choices=("auto", "graph", "triton"), required=True
+    )
     parser.add_argument("--batches", default="1,4,8")
     parser.add_argument("--lengths", default="1,17,128,512")
     parser.add_argument("--heads", type=int, default=2)

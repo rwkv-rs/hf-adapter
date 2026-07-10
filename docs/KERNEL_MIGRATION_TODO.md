@@ -15,6 +15,10 @@
 - Model weights, `config.json`, public cache ABI, and HF forward/generation
   signatures do not select hardware or kernel policy.
 - Public recurrent state remains canonical `[B,H,K,V]`.
+- Kernel-policy `auto` routes one-token FP16 decode to Triton and multi-token
+  FP16 prefill to the exact CUDA-graph implementation. Explicit `triton` and
+  `graph` modes remain available for isolated evidence; requested policy is
+  never reported as the actual route.
 - Unsupported device/dtype/shape, missing wheel, autograd, or probe failure
   falls back to `rwkv7_recurrent_reference` in `auto` mode.
 - No old model wrapper, compatibility module, monkey patch, or performance
@@ -92,10 +96,10 @@ Dtype = FP32 / FP16 / BF16 where supported
 
 - [x] Output parity.
 - [x] Final recurrent-state parity.
-- [ ] Attention-mask and unequal-length batch parity.
+- [x] Attention-mask and unequal-length batch parity.
 - [x] Input and state gradients for training-capable routes.
 - [x] All outputs and states finite.
-- [ ] No state update at masked positions.
+- [x] No state update at masked positions.
 
 ### HF model matrix
 
@@ -105,7 +109,7 @@ Use 0.1B, 0.4B, and 1.5B:
 - [x] No-cache logits.
 - [x] Prefill state.
 - [x] Teacher-forced cached decode.
-- [ ] Left/right padding.
+- [x] Left/right padding.
 - [x] 64-token greedy equality.
 - [x] Beam generation.
 - [x] Save/reload.
@@ -125,7 +129,7 @@ T = 1 / 17 / 128 / 512 / 2048
 ```
 
 - [x] Reference vs optimized recurrent vs FLA fused recurrent.
-- [ ] Reference vs optimized prefill vs FLA chunk where semantically matched.
+- [x] Reference vs optimized prefill vs FLA chunk where semantically matched.
 - [x] Forward latency and tokens/s.
 - [ ] Forward+backward latency for training-capable routes.
 - [x] Peak VRAM, warmup count, measured iterations, median and p95.
@@ -134,15 +138,15 @@ T = 1 / 17 / 128 / 512 / 2048
 
 Use 0.4B and 1.5B:
 
-- [ ] Prefill B1/B4/B8 × T128/T512/T2048.
-- [ ] Cached decode B1/B4/B8 for 256 generated tokens.
-- [ ] Separate compile/capture time from steady-state latency.
+- [x] Prefill B1/B4/B8 × T128/T512/T2048.
+- [x] Cached decode B1/B4/B8 for 256 generated tokens.
+- [x] Separate compile/capture time from steady-state latency.
 
 ### Production table
 
-- [ ] Our best validated Graph/Triton/CUDA route.
-- [ ] FLA best supported official route.
-- [ ] End-to-end prefill and generation, including framework overhead.
+- [x] Our best validated Graph/Triton/CUDA route.
+- [x] FLA best supported official route.
+- [x] End-to-end prefill and generation, including framework overhead.
 
 ## Phase 4 — three-way lm_eval equivalence
 
@@ -260,3 +264,50 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   and 64-token greedy passed, but B4/T128 logits max-abs reached `0.1875`.
 - Still open: FP32/BF16 expansion, explicit left/right padding, whole-model
   prefill/decode, backward speed, and the three-way 144-unit lm_eval matrix.
+
+### 2026-08-27 — promoted RTX 4080 auto route
+
+- Production policy is now shape-based inside the separate kernel wheel:
+  `RWKV7_KERNEL_IMPL=auto` selects actual route
+  `native-triton-rank1-scan-v1` for `T=1` and
+  `torch-cuda-graph-reference-v1` for `T>1`.
+- Final route-traced kernel wheel SHA256:
+  `22c3ef0fb0af1743261efed7ed23cfc2185982b8d03ea3c13bf3864b27dc932f`.
+- RTX 4080 full validation evidence root:
+  `/home/wzu/codex-run/results/rwkv7-kernels-v1/4080-auto-v1`.
+- FP16, BF16, and FP32 validation all exit zero. FP16 covers 12 operator
+  B/T cases, 0.1B/0.4B/1.5B model B=`1/4/8` T=`17/128`, cached teacher
+  decode, 64-token greedy, regrouping, explicit left/right padding, cache
+  equality, and training fallback. All six multi-token model cases per model
+  take the Graph route with exact logits; cached decode takes the Triton route
+  and stays within the fixed FP16 gate with identical greedy tokens.
+- Auto HF smoke passes all three models for AutoConfig, AutoTokenizer,
+  AutoModel, AutoModelForCausalLM, greedy, beam, save/reload, and finite
+  training gradients with actual reference fallback.
+- Whole-model auto versus readable reference speed evidence is stored under
+  `4080-auto-v1/speed`: Graph prefill is 2.28x–2.78x faster on the measured
+  0.4B/1.5B cases, and Triton cached decode is 1.05x–1.32x faster.
+- Explicit long-sequence Triton remains an experimental operator lane. Attempts
+  to match CUTLASS's final FP16 readout reduction reached exact FP32 state
+  updates and up to 99.98% elementwise readout equality, but either retained
+  a few full-model logits above 0.15 or removed the FLA speed advantage. Those
+  failed experiment bundles remain outside Git and are not release evidence.
+- Final-wheel FP16 route trace records 7,623 actual
+  `native-triton-rank1-scan-v1` calls and 789 actual
+  `torch-cuda-graph-reference-v1` calls; validation and HF smoke both passed.
+- The final eager/operator matrix covers B=`1/4/8`,
+  T=`1/17/128/512/2048`. T=1 Triton is 1.26x–1.33x faster than pinned FLA
+  fused recurrent. Exact Graph prefill remains slower than FLA chunk/fused.
+- The production whole-model matrix covers 0.4B/1.5B prefill B=`1/4/8`,
+  T=`128/512/2048`, plus 256-step cached decode B=`1/4/8`. Production `auto`
+  beats the readable reference but is currently 1.36x–1.49x slower than FLA
+  on cached decode and roughly 3.9x–13.5x slower on prefill. These results are
+  reported directly; no FLA speed advantage is hidden.
+- Reference/optimized/FLA PIQA smoke passed with identical selected answers.
+  The optimized manifest records 96 actual Graph calls. A provenance bug that
+  could select `kernel-route.json` instead of lm_eval's result JSON was found,
+  fixed, and regression-tested. FLA is run with one TorchInductor compile
+  worker so each subprocess exits deterministically.
+- The formal 144-unit three-way matrix is running sequentially on the RTX 4080
+  under `/home/wzu/codex-run/results/rwkv7-kernels-v1/4080-auto-v1/lm-eval`.
+  Do not check Phase 4 until all three 48-unit manifests and the validator pass.

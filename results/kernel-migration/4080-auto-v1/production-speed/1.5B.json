@@ -1,0 +1,773 @@
+{
+  "backends": {
+    "fla": {
+      "cached_decode_b1": {
+        "max_ms": 3983.905907953158,
+        "median_ms": 3969.770197989419,
+        "milliseconds_per_step": 15.506914835896168,
+        "min_ms": 3967.6447609672323,
+        "p95_ms": 3983.905907953158,
+        "peak_memory_bytes": 3251832320,
+        "route": {
+          "implementation": "fla-rwkv7-pinned",
+          "selected": "fla"
+        },
+        "samples_ms": [
+          3983.905907953158,
+          3969.770197989419,
+          3967.6447609672323
+        ],
+        "speedup_vs_reference": 1.5650677117600469,
+        "tokens_per_second": 64.4873600314842,
+        "warmup_ms": 3974.9238210497424
+      },
+      "cached_decode_b4": {
+        "max_ms": 4152.859003050253,
+        "median_ms": 4144.7974250186235,
+        "milliseconds_per_step": 16.190614941478998,
+        "min_ms": 4133.633183897473,
+        "p95_ms": 4152.859003050253,
+        "peak_memory_bytes": 3292785152,
+        "route": {
+          "implementation": "fla-rwkv7-pinned",
+          "selected": "fla"
+        },
+        "samples_ms": [
+          4152.859003050253,
+          4144.7974250186235,
+          4133.633183897473
+        ],
+        "speedup_vs_reference": 1.9312710811063525,
+        "tokens_per_second": 247.05670627446864,
+        "warmup_ms": 4139.837092952803
+      },
+      "cached_decode_b8": {
+        "max_ms": 4150.291407015175,
+        "median_ms": 4145.823928993195,
+        "milliseconds_per_step": 16.19462472262967,
+        "min_ms": 4145.063361036591,
+        "p95_ms": 4150.291407015175,
+        "peak_memory_bytes": 3347388928,
+        "route": {
+          "implementation": "fla-rwkv7-pinned",
+          "selected": "fla"
+        },
+        "samples_ms": [
+          4145.063361036591,
+          4145.823928993195,
+          4150.291407015175
+        ],
+        "speedup_vs_reference": 2.410644834926253,
+        "tokens_per_second": 493.9910703099619,
+        "warmup_ms": 4157.0998260285705
+      },
+      "prefill_b1_t128": {
+        "max_ms": 25.86474409326911,
+        "median_ms": 25.55775991640985,
+        "min_ms": 25.265084928832948,
+        "p95_ms": 25.86474409326911,
+        "peak_memory_bytes": 3272322560,
+        "route": {
+          "implementation": "fla-rwkv7-pinned",
+          "selected": "fla"
+        },
+        "samples_ms": [
+          25.86474409326911,
+          25.265084928832948,
+          25.55775991640985
+        ],
+        "speedup_vs_reference": 8.984356012384943,
+        "tokens_per_second": 5008.263651377958,
+        "warmup_ms": 22037.34718693886
+      },
+      "prefill_b1_t2048": {
+        "max_ms": 235.36740301642567,
+        "median_ms": 233.57717297039926,
+        "min_ms": 233.22907101828605,
+        "p95_ms": 235.36740301642567,
+        "peak_memory_bytes": 3594775040,
+        "route": {
+          "implementation": "fla-rwkv7-pinned",
+          "selected": "fla"
+        },
+        "samples_ms": [
+          235.36740301642567,
+          233.22907101828605,
+          233.57717297039926
+        ],
+        "speedup_vs_reference": 14.647412024524938,
+        "tokens_per_second": 8767.980081082404,
+        "warmup_ms": 2400.511270039715
+      },
+      "prefill_b1_t512": {
+        "max_ms": 59.15438896045089,
+        "median_ms": 59.149348991923034,
+        "min_ms": 59.109791996888816,
+        "p95_ms": 59.15438896045089,
+        "peak_memory_bytes": 3336813056,
+        "route": {
+          "implementation": "fla-rwkv7-pinned",
+          "selected": "fla"
+        },
+        "samples_ms": [
+          59.109791996888816,
+          59.15438896045089,
+          59.149348991923034
+        ],
+        "speedup_vs_reference": 14.691413630357808,
+        "tokens_per_second": 8656.054694193079,
+        "warmup_ms": 238.64751402288675
+      },
+      "prefill_b4_t128": {
+        "max_ms": 58.89305390883237,
+        "median_ms": 58.866910985670984,
+        "min_ms": 58.29044210258871,
+        "p95_ms": 58.89305390883237,
+        "peak_memory_bytes": 3375139328,
+        "route": {
+          "implementation": "fla-rwkv7-pinned",
+          "selected": "fla"
+        },
+        "samples_ms": [
+          58.89305390883237,
+          58.866910985670984,
+          58.29044210258871
+        ],
+        "speedup_vs_reference": 15.114615462753482,
+        "tokens_per_second": 8697.585645773528,
+        "warmup_ms": 201.47005701437593
+      },
+      "prefill_b4_t2048": {
+        "max_ms": 952.8554619755596,
+        "median_ms": 952.8452010126784,
+        "min_ms": 952.5273600593209,
+        "p95_ms": 952.8554619755596,
+        "peak_memory_bytes": 4664949248,
+        "route": {
+          "implementation": "fla-rwkv7-pinned",
+          "selected": "fla"
+        },
+        "samples_ms": [
+          952.5273600593209,
+          952.8554619755596,
+          952.8452010126784
+        ],
+        "speedup_vs_reference": 14.665813788097177,
+        "tokens_per_second": 8597.409097819445,
+        "warmup_ms": 3229.640467907302
+      },
+      "prefill_b4_t512": {
+        "max_ms": 233.0683049513027,
+        "median_ms": 232.7156950486824,
+        "min_ms": 232.45342902373523,
+        "p95_ms": 233.0683049513027,
+        "peak_memory_bytes": 3633101312,
+        "route": {
+          "implementation": "fla-rwkv7-pinned",
+          "selected": "fla"
+        },
+        "samples_ms": [
+          233.0683049513027,
+          232.7156950486824,
+          232.45342902373523
+        ],
+        "speedup_vs_reference": 15.040367063739552,
+        "tokens_per_second": 8800.437802751438,
+        "warmup_ms": 235.81954406108707
+      },
+      "prefill_b8_t128": {
+        "max_ms": 115.24337902665138,
+        "median_ms": 115.2243179967627,
+        "min_ms": 115.17082201316953,
+        "p95_ms": 115.24337902665138,
+        "peak_memory_bytes": 3512228352,
+        "route": {
+          "implementation": "fla-rwkv7-pinned",
+          "selected": "fla"
+        },
+        "samples_ms": [
+          115.24337902665138,
+          115.17082201316953,
+          115.2243179967627
+        ],
+        "speedup_vs_reference": 15.290584163418558,
+        "tokens_per_second": 8887.01289626006,
+        "warmup_ms": 115.3036339674145
+      },
+      "prefill_b8_t2048": {
+        "max_ms": 1934.7492409870028,
+        "median_ms": 1934.4554219860584,
+        "min_ms": 1934.277207008563,
+        "p95_ms": 1934.7492409870028,
+        "peak_memory_bytes": 6091848192,
+        "route": {
+          "implementation": "fla-rwkv7-pinned",
+          "selected": "fla"
+        },
+        "samples_ms": [
+          1934.277207008563,
+          1934.7492409870028,
+          1934.4554219860584
+        ],
+        "speedup_vs_reference": 14.508289240013617,
+        "tokens_per_second": 8469.567100791057,
+        "warmup_ms": 1934.5971749862656
+      },
+      "prefill_b8_t512": {
+        "max_ms": 471.6507609700784,
+        "median_ms": 471.57397505361587,
+        "min_ms": 471.39027900993824,
+        "p95_ms": 471.6507609700784,
+        "peak_memory_bytes": 4028152320,
+        "route": {
+          "implementation": "fla-rwkv7-pinned",
+          "selected": "fla"
+        },
+        "samples_ms": [
+          471.57397505361587,
+          471.39027900993824,
+          471.6507609700784
+        ],
+        "speedup_vs_reference": 14.8429857290433,
+        "tokens_per_second": 8685.805868600579,
+        "warmup_ms": 471.61927504930645
+      }
+    },
+    "optimized": {
+      "cached_decode_b1": {
+        "max_ms": 5922.1906289458275,
+        "median_ms": 5916.66065400932,
+        "milliseconds_per_step": 23.111955679723906,
+        "min_ms": 5916.502859909087,
+        "p95_ms": 5922.1906289458275,
+        "peak_memory_bytes": 3739456000,
+        "route": {
+          "implementation": "native-triton-rank1-scan-v1",
+          "reason": "FP16 K=V=64 inference request is supported",
+          "requested": "optimized",
+          "selected": "optimized"
+        },
+        "samples_ms": [
+          5922.1906289458275,
+          5916.502859909087,
+          5916.66065400932
+        ],
+        "speedup_vs_fla": 0.6709477575495858,
+        "speedup_vs_reference": 1.050078671618665,
+        "tokens_per_second": 43.26764960341711,
+        "warmup_ms": 5921.933675999753
+      },
+      "cached_decode_b4": {
+        "max_ms": 6136.023361934349,
+        "median_ms": 6135.3917479282245,
+        "milliseconds_per_step": 23.966374015344627,
+        "min_ms": 6133.162947953679,
+        "p95_ms": 6136.023361934349,
+        "peak_memory_bytes": 3263604736,
+        "route": {
+          "implementation": "native-triton-rank1-scan-v1",
+          "reason": "FP16 K=V=64 inference request is supported",
+          "requested": "optimized",
+          "selected": "optimized"
+        },
+        "samples_ms": [
+          6136.023361934349,
+          6133.162947953679,
+          6135.3917479282245
+        ],
+        "speedup_vs_fla": 0.6755554649657413,
+        "speedup_vs_reference": 1.3046807331716916,
+        "tokens_per_second": 166.90050808015323,
+        "warmup_ms": 6137.113188044168
+      },
+      "cached_decode_b8": {
+        "max_ms": 6155.026310007088,
+        "median_ms": 6154.48208199814,
+        "milliseconds_per_step": 24.040945632805233,
+        "min_ms": 6154.26567196846,
+        "p95_ms": 6155.026310007088,
+        "peak_memory_bytes": 3362068992,
+        "route": {
+          "implementation": "native-triton-rank1-scan-v1",
+          "reason": "FP16 K=V=64 inference request is supported",
+          "requested": "optimized",
+          "selected": "optimized"
+        },
+        "samples_ms": [
+          6154.48208199814,
+          6155.026310007088,
+          6154.26567196846
+        ],
+        "speedup_vs_fla": 0.6736267769987877,
+        "speedup_vs_reference": 1.6238749106401464,
+        "tokens_per_second": 332.76561255908115,
+        "warmup_ms": 6154.8468680121005
+      },
+      "prefill_b1_t128": {
+        "max_ms": 103.66411495488137,
+        "median_ms": 101.56581702176481,
+        "min_ms": 101.45219904370606,
+        "p95_ms": 103.66411495488137,
+        "peak_memory_bytes": 3175365120,
+        "route": {
+          "implementation": "torch-cuda-graph-reference-v1",
+          "reason": "exact FP16 inference recurrence is CUDA-graph compatible",
+          "requested": "optimized",
+          "selected": "optimized"
+        },
+        "samples_ms": [
+          103.66411495488137,
+          101.56581702176481,
+          101.45219904370606
+        ],
+        "speedup_vs_fla": 0.2516374176454762,
+        "speedup_vs_reference": 2.260800146164155,
+        "tokens_per_second": 1260.266532120453,
+        "warmup_ms": 138.51601106580347
+      },
+      "prefill_b1_t2048": {
+        "max_ms": 1354.2446540668607,
+        "median_ms": 1354.0189620107412,
+        "min_ms": 1353.9384090108797,
+        "p95_ms": 1354.2446540668607,
+        "peak_memory_bytes": 4413488640,
+        "route": {
+          "implementation": "torch-cuda-graph-reference-v1",
+          "reason": "exact FP16 inference recurrence is CUDA-graph compatible",
+          "requested": "optimized",
+          "selected": "optimized"
+        },
+        "samples_ms": [
+          1354.2446540668607,
+          1354.0189620107412,
+          1353.9384090108797
+        ],
+        "speedup_vs_fla": 0.17250657451911394,
+        "speedup_vs_reference": 2.526774873920877,
+        "tokens_per_second": 1512.5342092393485,
+        "warmup_ms": 1865.5433950480074
+      },
+      "prefill_b1_t512": {
+        "max_ms": 350.3405350493267,
+        "median_ms": 343.5850009554997,
+        "min_ms": 343.5181309469044,
+        "p95_ms": 350.3405350493267,
+        "peak_memory_bytes": 3429779456,
+        "route": {
+          "implementation": "torch-cuda-graph-reference-v1",
+          "reason": "exact FP16 inference recurrence is CUDA-graph compatible",
+          "requested": "optimized",
+          "selected": "optimized"
+        },
+        "samples_ms": [
+          350.3405350493267,
+          343.5181309469044,
+          343.5850009554997
+        ],
+        "speedup_vs_fla": 0.17215346661650086,
+        "speedup_vs_reference": 2.5291777859630087,
+        "tokens_per_second": 1490.1698228273735,
+        "warmup_ms": 488.68013091851026
+      },
+      "prefill_b4_t128": {
+        "max_ms": 359.439781983383,
+        "median_ms": 350.963038043119,
+        "min_ms": 349.4438760681078,
+        "p95_ms": 359.439781983383,
+        "peak_memory_bytes": 3550629376,
+        "route": {
+          "implementation": "torch-cuda-graph-reference-v1",
+          "reason": "exact FP16 inference recurrence is CUDA-graph compatible",
+          "requested": "optimized",
+          "selected": "optimized"
+        },
+        "samples_ms": [
+          359.439781983383,
+          350.963038043119,
+          349.4438760681078
+        ],
+        "speedup_vs_fla": 0.1677296598351153,
+        "speedup_vs_reference": 2.5351693101062156,
+        "tokens_per_second": 1458.8430817523756,
+        "warmup_ms": 513.8375489041209
+      },
+      "prefill_b4_t2048": {
+        "max_ms": 5596.4962569996715,
+        "median_ms": 5596.386929042637,
+        "min_ms": 5596.2575400481,
+        "p95_ms": 5596.4962569996715,
+        "peak_memory_bytes": 8384240640,
+        "route": {
+          "implementation": "torch-cuda-graph-reference-v1",
+          "reason": "exact FP16 inference recurrence is CUDA-graph compatible",
+          "requested": "optimized",
+          "selected": "optimized"
+        },
+        "samples_ms": [
+          5596.386929042637,
+          5596.2575400481,
+          5596.4962569996715
+        ],
+        "speedup_vs_fla": 0.17026077951612967,
+        "speedup_vs_reference": 2.4970128877998277,
+        "tokens_per_second": 1463.8015748138039,
+        "warmup_ms": 7559.548713965341
+      },
+      "prefill_b4_t512": {
+        "max_ms": 1377.4119559675455,
+        "median_ms": 1377.2759130224586,
+        "min_ms": 1377.0517209777609,
+        "p95_ms": 1377.4119559675455,
+        "peak_memory_bytes": 4474568192,
+        "route": {
+          "implementation": "torch-cuda-graph-reference-v1",
+          "reason": "exact FP16 inference recurrence is CUDA-graph compatible",
+          "requested": "optimized",
+          "selected": "optimized"
+        },
+        "samples_ms": [
+          1377.4119559675455,
+          1377.2759130224586,
+          1377.0517209777609
+        ],
+        "speedup_vs_fla": 0.1689681006168062,
+        "speedup_vs_reference": 2.5413422553396425,
+        "tokens_per_second": 1486.9932601272496,
+        "warmup_ms": 1896.2534429738298
+      },
+      "prefill_b8_t128": {
+        "max_ms": 692.7368090255186,
+        "median_ms": 692.5884850788862,
+        "min_ms": 692.5800180761144,
+        "p95_ms": 692.7368090255186,
+        "peak_memory_bytes": 4156454912,
+        "route": {
+          "implementation": "torch-cuda-graph-reference-v1",
+          "reason": "exact FP16 inference recurrence is CUDA-graph compatible",
+          "requested": "optimized",
+          "selected": "optimized"
+        },
+        "samples_ms": [
+          692.5884850788862,
+          692.7368090255186,
+          692.5800180761144
+        ],
+        "speedup_vs_fla": 0.16636764901402973,
+        "speedup_vs_reference": 2.5438585393190998,
+        "tokens_per_second": 1478.511442308149,
+        "warmup_ms": 1025.9798519546166
+      },
+      "prefill_b8_t2048": {
+        "max_ms": 11278.160997084342,
+        "median_ms": 11278.022843995132,
+        "min_ms": 11277.889152057469,
+        "p95_ms": 11278.160997084342,
+        "peak_memory_bytes": 13669139456,
+        "route": {
+          "implementation": "torch-cuda-graph-reference-v1",
+          "reason": "exact FP16 inference recurrence is CUDA-graph compatible",
+          "requested": "optimized",
+          "selected": "optimized"
+        },
+        "samples_ms": [
+          11278.160997084342,
+          11278.022843995132,
+          11277.889152057469
+        ],
+        "speedup_vs_fla": 0.17152433974861467,
+        "speedup_vs_reference": 2.488524732775266,
+        "tokens_per_second": 1452.7369049197746,
+        "warmup_ms": 15112.776546971872
+      },
+      "prefill_b8_t512": {
+        "max_ms": 2770.118762040511,
+        "median_ms": 2769.001652020961,
+        "min_ms": 2768.995655933395,
+        "p95_ms": 2770.118762040511,
+        "peak_memory_bytes": 5859100672,
+        "route": {
+          "implementation": "torch-cuda-graph-reference-v1",
+          "reason": "exact FP16 inference recurrence is CUDA-graph compatible",
+          "requested": "optimized",
+          "selected": "optimized"
+        },
+        "samples_ms": [
+          2770.118762040511,
+          2769.001652020961,
+          2768.995655933395
+        ],
+        "speedup_vs_fla": 0.17030469256290862,
+        "speedup_vs_reference": 2.5278301213003593,
+        "tokens_per_second": 1479.2334981131291,
+        "warmup_ms": 3758.3877100842074
+      }
+    },
+    "reference": {
+      "cached_decode_b1": {
+        "max_ms": 6213.217571959831,
+        "median_ms": 6212.959159980528,
+        "milliseconds_per_step": 24.269371718673938,
+        "min_ms": 6209.234177949838,
+        "p95_ms": 6213.217571959831,
+        "peak_memory_bytes": 3095219200,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "reference backend was explicitly requested",
+          "requested": "reference",
+          "selected": "reference"
+        },
+        "samples_ms": [
+          6212.959159980528,
+          6209.234177949838,
+          6213.217571959831
+        ],
+        "tokens_per_second": 41.204198097578086,
+        "warmup_ms": 6221.256525954232
+      },
+      "cached_decode_b4": {
+        "max_ms": 8005.729367956519,
+        "median_ms": 8004.7274039825425,
+        "milliseconds_per_step": 31.268466421806806,
+        "min_ms": 8004.128856002353,
+        "p95_ms": 8005.729367956519,
+        "peak_memory_bytes": 3135152128,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "reference backend was explicitly requested",
+          "requested": "reference",
+          "selected": "reference"
+        },
+        "samples_ms": [
+          8004.7274039825425,
+          8005.729367956519,
+          8004.128856002353
+        ],
+        "tokens_per_second": 127.92440620657933,
+        "warmup_ms": 8002.6923740515485
+      },
+      "cached_decode_b8": {
+        "max_ms": 9995.667037088424,
+        "median_ms": 9994.109040941112,
+        "milliseconds_per_step": 39.03948844117622,
+        "min_ms": 9981.56838095747,
+        "p95_ms": 9995.667037088424,
+        "peak_memory_bytes": 3188396032,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "reference backend was explicitly requested",
+          "requested": "reference",
+          "selected": "reference"
+        },
+        "samples_ms": [
+          9981.56838095747,
+          9994.109040941112,
+          9995.667037088424
+        ],
+        "tokens_per_second": 204.92071795597965,
+        "warmup_ms": 9989.065753063187
+      },
+      "prefill_b1_t128": {
+        "max_ms": 229.69472303520888,
+        "median_ms": 229.62001396808773,
+        "min_ms": 229.25613704137504,
+        "p95_ms": 229.69472303520888,
+        "peak_memory_bytes": 3153081344,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "reference backend was explicitly requested",
+          "requested": "reference",
+          "selected": "reference"
+        },
+        "samples_ms": [
+          229.69472303520888,
+          229.62001396808773,
+          229.25613704137504
+        ],
+        "tokens_per_second": 557.442697559409,
+        "warmup_ms": 457.9616729170084
+      },
+      "prefill_b1_t2048": {
+        "max_ms": 3477.6549100643024,
+        "median_ms": 3421.3010920211673,
+        "min_ms": 3389.6984489401802,
+        "p95_ms": 3477.6549100643024,
+        "peak_memory_bytes": 4293423104,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "reference backend was explicitly requested",
+          "requested": "reference",
+          "selected": "reference"
+        },
+        "samples_ms": [
+          3421.3010920211673,
+          3477.6549100643024,
+          3389.6984489401802
+        ],
+        "tokens_per_second": 598.6026791901335,
+        "warmup_ms": 3423.0349169811234
+      },
+      "prefill_b1_t512": {
+        "max_ms": 869.4212400587276,
+        "median_ms": 868.987552006729,
+        "min_ms": 868.8182870391756,
+        "p95_ms": 869.4212400587276,
+        "peak_memory_bytes": 3381149696,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "reference backend was explicitly requested",
+          "requested": "reference",
+          "selected": "reference"
+        },
+        "samples_ms": [
+          869.4212400587276,
+          868.8182870391756,
+          868.987552006729
+        ],
+        "tokens_per_second": 589.1914088040186,
+        "warmup_ms": 869.1811140161008
+      },
+      "prefill_b4_t128": {
+        "max_ms": 890.1983979158103,
+        "median_ms": 889.7507230285555,
+        "min_ms": 889.7385690361261,
+        "p95_ms": 890.1983979158103,
+        "peak_memory_bytes": 3418898432,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "reference backend was explicitly requested",
+          "requested": "reference",
+          "selected": "reference"
+        },
+        "samples_ms": [
+          890.1983979158103,
+          889.7385690361261,
+          889.7507230285555
+        ],
+        "tokens_per_second": 575.4420724236579,
+        "warmup_ms": 892.1006919117644
+      },
+      "prefill_b4_t2048": {
+        "max_ms": 13975.16229597386,
+        "median_ms": 13974.250286933966,
+        "min_ms": 13970.008932985365,
+        "p95_ms": 13975.16229597386,
+        "peak_memory_bytes": 7980265472,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "reference backend was explicitly requested",
+          "requested": "reference",
+          "selected": "reference"
+        },
+        "samples_ms": [
+          13970.008932985365,
+          13974.250286933966,
+          13975.16229597386
+        ],
+        "tokens_per_second": 586.2210731733912,
+        "warmup_ms": 14018.35570205003
+      },
+      "prefill_b4_t512": {
+        "max_ms": 3502.4247519904748,
+        "median_ms": 3500.12947502546,
+        "min_ms": 3495.3373089665547,
+        "p95_ms": 3502.4247519904748,
+        "peak_memory_bytes": 4331171840,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "reference backend was explicitly requested",
+          "requested": "reference",
+          "selected": "reference"
+        },
+        "samples_ms": [
+          3502.4247519904748,
+          3495.3373089665547,
+          3500.12947502546
+        ],
+        "tokens_per_second": 585.1212118332002,
+        "warmup_ms": 3503.7021019961685
+      },
+      "prefill_b8_t128": {
+        "max_ms": 1761.899795033969,
+        "median_ms": 1761.8471320020035,
+        "min_ms": 1759.8297810181975,
+        "p95_ms": 1761.899795033969,
+        "peak_memory_bytes": 3773321216,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "reference backend was explicitly requested",
+          "requested": "reference",
+          "selected": "reference"
+        },
+        "samples_ms": [
+          1761.8471320020035,
+          1759.8297810181975,
+          1761.899795033969
+        ],
+        "tokens_per_second": 581.2081998489955,
+        "warmup_ms": 1763.778576045297
+      },
+      "prefill_b8_t2048": {
+        "max_ms": 28096.368544036523,
+        "median_ms": 28065.63878408633,
+        "min_ms": 28040.17210297752,
+        "p95_ms": 28096.368544036523,
+        "peak_memory_bytes": 12896055296,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "reference backend was explicitly requested",
+          "requested": "reference",
+          "selected": "reference"
+        },
+        "samples_ms": [
+          28065.63878408633,
+          28040.17210297752,
+          28096.368544036523
+        ],
+        "tokens_per_second": 583.7743486276888,
+        "warmup_ms": 28153.18860800471
+      },
+      "prefill_b8_t512": {
+        "max_ms": 7001.325576915406,
+        "median_ms": 6999.565781909041,
+        "min_ms": 6995.262961951084,
+        "p95_ms": 7001.325576915406,
+        "peak_memory_bytes": 5597868032,
+        "route": {
+          "implementation": "torch-reference-v1",
+          "reason": "reference backend was explicitly requested",
+          "requested": "reference",
+          "selected": "reference"
+        },
+        "samples_ms": [
+          6999.565781909041,
+          6995.262961951084,
+          7001.325576915406
+        ],
+        "tokens_per_second": 585.1791564823138,
+        "warmup_ms": 6992.258599959314
+      }
+    }
+  },
+  "code_sha": "worktree-9d3ba79a-auto-v1",
+  "environment": {
+    "cuda": "13.0",
+    "gpu": "NVIDIA GeForce RTX 4080",
+    "python": "3.12.2",
+    "rwkv7_hf": "1.0.0",
+    "rwkv7_kernels": "1.0.0.dev0",
+    "torch": "2.11.0+cu130",
+    "transformers": "5.8.0",
+    "triton": "3.6.0"
+  },
+  "fla_commit": "80e494f6c588e091fc8316b612870df29375c5b8",
+  "model": "/home/wzu/codex-run/results/rwkv7-kernels-v1/4080-4d4dfc27/models/15b",
+  "schema": "rwkv7-production-speed-v1",
+  "settings": {
+    "decode_tokens": 256,
+    "dtype": "fp16",
+    "logits_to_keep": 1,
+    "optimized_policy": "auto: T=1 Triton, T>1 exact CUDA Graph",
+    "repeats": 3,
+    "warmup": 1
+  }
+}

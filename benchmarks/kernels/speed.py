@@ -39,7 +39,7 @@ def kernel_status() -> dict:
     return {
         "api_version": rwkv7_kernels.RWKV7_KERNEL_API_VERSION,
         "package_version": package_version("rwkv7-kernels"),
-        "implementation_mode": os.environ.get("RWKV7_KERNEL_IMPL", "graph"),
+        "implementation_mode": os.environ.get("RWKV7_KERNEL_IMPL", "auto"),
         "last_route": get_last_recurrent_route(),
     }
 
@@ -49,7 +49,9 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--dtype", choices=("fp16", "bf16"), default="fp16")
-    parser.add_argument("--implementation", choices=("graph", "triton"), required=True)
+    parser.add_argument(
+        "--implementation", choices=("auto", "graph", "triton"), required=True
+    )
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--decode-tokens", type=int, default=64)

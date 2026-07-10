@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 from pathlib import Path
 import sys
 
@@ -43,7 +44,7 @@ def test_public_kernel_surface_is_versioned_and_small():
     ]
 
 
-def test_default_graph_lane_reports_real_implementation_on_cpu():
+def test_default_auto_prefill_reports_graph_implementation_on_cpu():
     kernels = importlib.import_module("rwkv7_kernels")
     support = kernels.probe_recurrent_v1(*cpu_inputs())
     assert not support["supported"]
@@ -58,6 +59,60 @@ def test_explicit_triton_lane_reports_real_implementation_on_cpu(monkeypatch):
     assert not support["supported"]
     assert support["implementation"] == "native-triton-rank1-scan-v1"
     assert "CUDA" in support["reason"] or "Triton" in support["reason"]
+
+
+def test_auto_routes_decode_to_triton_and_prefill_to_graph(monkeypatch):
+    dispatcher = importlib.import_module("rwkv7_kernels.dispatcher")
+
+    def supported(name):
+        def probe(*_args, **_kwargs):
+            return {"supported": True, "implementation": name, "reason": name}
+
+        return probe
+
+    monkeypatch.setattr(dispatcher, "_probe_triton", supported("triton"))
+    monkeypatch.setattr(dispatcher, "_probe_graph", supported("graph"))
+    monkeypatch.setattr(dispatcher, "_run_triton", object())
+    monkeypatch.setattr(dispatcher, "_run_graph", object())
+    prefill = cpu_inputs()
+    decode = tuple(
+        value[:, :1] if isinstance(value, torch.Tensor) and value.ndim == 4 else value
+        for value in prefill
+    )
+
+    decode_support, decode_run = dispatcher._select(*decode)
+    prefill_support, prefill_run = dispatcher._select(*prefill)
+    assert decode_support["implementation"] == "triton"
+    assert decode_run is dispatcher._run_triton
+    assert prefill_support["implementation"] == "graph"
+    assert prefill_run is dispatcher._run_graph
+
+
+def test_optional_route_trace_records_executed_implementation(monkeypatch, tmp_path):
+    dispatcher = importlib.import_module("rwkv7_kernels.dispatcher")
+    trace = tmp_path / "route.json"
+    monkeypatch.setenv("RWKV7_KERNEL_TRACE_PATH", str(trace))
+    monkeypatch.setattr(
+        dispatcher,
+        "_probe_triton",
+        lambda *_args, **_kwargs: {
+            "supported": True,
+            "implementation": "triton-test",
+            "reason": "test",
+        },
+    )
+    monkeypatch.setattr(dispatcher, "_run_triton", lambda *_args, **_kwargs: "ran")
+    prefill = cpu_inputs()
+    decode = tuple(
+        value[:, :1] if isinstance(value, torch.Tensor) and value.ndim == 4 else value
+        for value in prefill
+    )
+
+    assert dispatcher.recurrent_v1(*decode) == "ran"
+    dispatcher._write_trace()
+    payload = json.loads(trace.read_text())
+    assert payload["requested_policy"] == "auto"
+    assert payload["actual_recurrent_calls"] == {"triton-test": 1}
 
 
 def test_unknown_kernel_implementation_is_rejected(monkeypatch):
@@ -85,4 +140,3 @@ def test_graph_reference_math_is_batch_regrouping_invariant():
     )
     torch.testing.assert_close(grouped[0][5:6], isolated[0], rtol=0, atol=0)
     torch.testing.assert_close(grouped[1][5:6], isolated[1], rtol=0, atol=0)
-

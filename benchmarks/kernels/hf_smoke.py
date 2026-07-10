@@ -19,7 +19,9 @@ from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokeni
 def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", action="append", required=True, help="label=path")
-    parser.add_argument("--implementation", choices=("graph", "triton"), required=True)
+    parser.add_argument(
+        "--implementation", choices=("auto", "graph", "triton"), required=True
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--reload-dir", type=Path, required=True)
     parser.add_argument("--code-sha", required=True)
@@ -124,6 +126,7 @@ def main() -> int:
             )
         causal_route = dynamic_route(model)
         expected_impl = {
+            "auto": "native-triton-rank1-scan-v1",
             "graph": "torch-cuda-graph-reference-v1",
             "triton": "native-triton-rank1-scan-v1",
         }[args.implementation]

@@ -1,0 +1,9 @@
+{
+  "actual_recurrent_calls": {
+    "native-triton-rank1-scan-v1": 7623,
+    "torch-cuda-graph-reference-v1": 789
+  },
+  "process_id": 3881898,
+  "requested_policy": "auto",
+  "schema": "rwkv7-kernel-route-trace-v1"
+}

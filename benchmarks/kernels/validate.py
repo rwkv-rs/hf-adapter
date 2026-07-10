@@ -32,7 +32,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--dtype", choices=("fp32", "fp16", "bf16"), required=True)
     result.add_argument("--device", default="cuda")
     result.add_argument("--output", type=Path, required=True)
-    result.add_argument("--implementation", choices=("graph", "triton"), required=True)
+    result.add_argument(
+        "--implementation", choices=("auto", "graph", "triton"), required=True
+    )
     result.add_argument("--operator-batches", default="1,4,8")
     result.add_argument("--operator-lengths", default="1,17,128,512")
     result.add_argument("--model-batches", default="1,4")
@@ -138,13 +140,26 @@ def expected_route(dtype_name: str) -> str:
     return "optimized" if dtype_name == "fp16" else "reference"
 
 
-def route_passed(route: dict[str, str] | None, dtype_name: str) -> bool:
+def automatic_backend(dtype_name: str) -> str:
+    """Force the promoted FP16 lane; permit typed fallback otherwise."""
+
+    return "optimized" if dtype_name == "fp16" else "auto"
+
+
+def route_passed(
+    route: dict[str, str] | None, dtype_name: str, *, tokens: int
+) -> bool:
     if not route or route.get("selected") != expected_route(dtype_name):
         return False
-    requested_impl = os.environ.get("RWKV7_KERNEL_IMPL", "graph")
+    requested_impl = os.environ.get("RWKV7_KERNEL_IMPL", "auto")
     expected_impl = {
         "graph": "torch-cuda-graph-reference-v1",
         "triton": "native-triton-rank1-scan-v1",
+        "auto": (
+            "native-triton-rank1-scan-v1"
+            if tokens == 1
+            else "torch-cuda-graph-reference-v1"
+        ),
     }[requested_impl]
     return dtype_name != "fp16" or route.get("implementation") == expected_impl
 
@@ -195,7 +210,10 @@ def operator_matrix(
                 reference = rwkv7_recurrent_reference(*values, state, mask)
                 _reset_kernel_discovery_for_tests()
                 automatic = rwkv7_recurrent(
-                    *values, state, mask, backend="optimized"
+                    *values,
+                    state,
+                    mask,
+                    backend=automatic_backend(dtype_name),
                 )
             route = get_last_recurrent_route()
             output_metrics = metrics(automatic[0], reference[0])
@@ -210,7 +228,7 @@ def operator_matrix(
                 automatic[0], reference[0], dtype_name, logits=False
             ) and passed_metrics(
                 automatic[1], reference[1], dtype_name, logits=False
-            ) and route_passed(route, dtype_name)
+            ) and route_passed(route, dtype_name, tokens=length)
             passed = passed and masked_output_zero and masked_state_unchanged
             rows.append(
                 {
@@ -295,7 +313,7 @@ def model_case(
             use_cache=True,
         )
     _reset_kernel_discovery_for_tests()
-    with torch.inference_mode(), backend_mode("optimized"):
+    with torch.inference_mode(), backend_mode(automatic_backend(dtype_name)):
         automatic = model(
             input_ids=ids,
             attention_mask=mask,
@@ -324,7 +342,9 @@ def model_case(
         "state_max_abs": max(row["max_abs"] for row in state_rows),
         "route": route,
         "passed": bool(
-            logits_passed and states_passed and route_passed(route, dtype_name)
+            logits_passed
+            and states_passed
+            and route_passed(route, dtype_name, tokens=int(ids.shape[1]))
         ),
     }
 
@@ -350,7 +370,7 @@ def batch_regrouping(
     grouped[5, sample.shape[1] :] = 0
 
     _reset_kernel_discovery_for_tests()
-    with torch.inference_mode(), backend_mode("optimized"):
+    with torch.inference_mode(), backend_mode(automatic_backend(dtype_name)):
         isolated = model(input_ids=sample, use_cache=False).logits
         grouped_logits = model(input_ids=grouped, use_cache=False).logits[
             5:6, : sample.shape[1]
@@ -364,7 +384,78 @@ def batch_regrouping(
         "logits": metrics(grouped_logits, isolated),
         "exact": exact,
         "route": route,
-        "passed": bool(exact and route_passed(route, dtype_name)),
+        "passed": bool(exact and route_passed(route, dtype_name, tokens=31)),
+    }
+
+
+def padding_parity(
+    model,
+    *,
+    dtype_name: str,
+    device: torch.device,
+    vocab_size: int,
+    seed: int,
+) -> dict[str, Any]:
+    """Prove left/right padding neither changes active logits nor cache state."""
+
+    generator = torch.Generator(device=device).manual_seed(seed + 80_000)
+    sample = torch.randint(
+        1, vocab_size, (1, 17), generator=generator, device=device
+    )
+    pad = torch.zeros(1, 5, dtype=sample.dtype, device=device)
+    left_ids = torch.cat((pad, sample), dim=1)
+    right_ids = torch.cat((sample, pad), dim=1)
+    active = torch.ones_like(sample, dtype=torch.bool)
+    masked = torch.zeros_like(pad, dtype=torch.bool)
+    left_mask = torch.cat((masked, active), dim=1)
+    right_mask = torch.cat((active, masked), dim=1)
+
+    _reset_kernel_discovery_for_tests()
+    with torch.inference_mode(), backend_mode(automatic_backend(dtype_name)):
+        base = model(input_ids=sample, attention_mask=active, use_cache=True)
+        left = model(input_ids=left_ids, attention_mask=left_mask, use_cache=True)
+        right = model(input_ids=right_ids, attention_mask=right_mask, use_cache=True)
+    route = get_last_recurrent_route()
+
+    left_logits = left.logits[:, -sample.shape[1] :]
+    right_logits = right.logits[:, : sample.shape[1]]
+    left_logit_metrics = metrics(left_logits, base.logits)
+    right_logit_metrics = metrics(right_logits, base.logits)
+
+    def cache_tensors(cache):
+        rows = []
+        for name in ("recurrent_state", "attention_shift", "ffn_shift"):
+            rows.extend(value for value in getattr(cache, name) if value is not None)
+        return rows
+
+    base_cache = cache_tensors(base.past_key_values)
+    left_cache = cache_tensors(left.past_key_values)
+    right_cache = cache_tensors(right.past_key_values)
+    left_cache_equal = all(
+        torch.equal(actual, expected)
+        for actual, expected in zip(left_cache, base_cache)
+    )
+    right_cache_equal = all(
+        torch.equal(actual, expected)
+        for actual, expected in zip(right_cache, base_cache)
+    )
+    logits_passed = passed_metrics(
+        left_logits, base.logits, dtype_name, logits=True
+    ) and passed_metrics(right_logits, base.logits, dtype_name, logits=True)
+    return {
+        "tokens": int(sample.shape[1]),
+        "padding_tokens": int(pad.shape[1]),
+        "left_logits": left_logit_metrics,
+        "right_logits": right_logit_metrics,
+        "left_cache_equal": left_cache_equal,
+        "right_cache_equal": right_cache_equal,
+        "route": route,
+        "passed": bool(
+            logits_passed
+            and left_cache_equal
+            and right_cache_equal
+            and route_passed(route, dtype_name, tokens=int(left_ids.shape[1]))
+        ),
     }
 
 
@@ -417,7 +508,7 @@ def cached_and_greedy(
 
     reference = teacher("reference")
     _reset_kernel_discovery_for_tests()
-    automatic = teacher("optimized")
+    automatic = teacher(automatic_backend(dtype_name))
     state_pairs = list(
         zip(automatic[1].recurrent_state, reference[1].recurrent_state)
     )
@@ -442,7 +533,7 @@ def cached_and_greedy(
             logits_passed
             and states_passed
             and greedy_equal
-            and route_passed(route, dtype_name)
+            and route_passed(route, dtype_name, tokens=1)
         ),
     }
 
@@ -534,16 +625,25 @@ def main() -> int:
             vocab_size=vocab_size,
             seed=args.seed + model_index,
         )
+        padding = padding_parity(
+            model,
+            dtype_name=args.dtype,
+            device=device,
+            vocab_size=vocab_size,
+            seed=args.seed + model_index,
+        )
         bundle["models"][label] = {
             "path": str(path),
             "config_sha256": sha256(path / "config.json"),
             "cases": rows,
             "cached_and_greedy": generation,
             "batch_regrouping": regrouping,
+            "padding_parity": padding,
             "passed": bool(
                 all(row["passed"] for row in rows)
                 and generation["passed"]
                 and regrouping["passed"]
+                and padding["passed"]
             ),
         }
         del model
