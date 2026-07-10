@@ -194,12 +194,12 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
       and the single early clean-model hook; production auto stays disabled.
 - [ ] Complete every `probe_model_forward_v1` / `model_forward_v1` phase and
       enable production auto only after the unified wheel passes.
-- [ ] Port fused token, W/A/G/V, projection, FFN, norm, state pool and CUDA
+- [x] Port fused token, W/A/G/V, projection, FFN, norm, state pool and CUDA
       Graph replay without replacing `modeling_rwkv7.py`.
-- [ ] Port DPLR/self-chunk/fused prefill and all shape routing behind the same
+- [x] Port DPLR/self-chunk/fused prefill and all shape routing behind the same
       model-forward protocol.
-- [ ] Port SM70, Ada and Blackwell NVIDIA policy families.
-- [ ] Port W8/W4/A8W8/BnTn/BnB/Marlin/TorchAO implementation adapters.
+- [x] Port SM70, Ada and Blackwell NVIDIA policy families.
+- [x] Port W8/W4/A8W8/BnTn/BnB/Marlin/TorchAO implementation adapters.
 - [x] Keep canonical cache visible to HF; internal layouts never escape the
       kernel package.
 
@@ -273,6 +273,19 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - Local command: `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q`.
   Result: `62 passed`. CUDA extension build and numerical/throughput gates are
   still pending on the 4080; this checkbox records protocol migration only.
+
+### 2026-08-27 — quantization ownership moved into the kernel wheel
+
+- Added `rwkv7_kernels.quantization` as the single structural setup layer for
+  native W8/W4, dynamic A8W8, TorchAO W8/W4 and Marlin Bn/Tn W4.
+- BitsAndBytes remains loaded through standard HF `BitsAndBytesConfig`; the
+  kernel wheel supplies config construction plus adoption/route validation.
+- Quantization metadata and graph pools are package-owned. Packing replaces
+  only `nn.Linear` modules, invalidates graph runners, and does not write
+  quantization policy into `RWKV7Config` or `RWKV7Cache`.
+- CPU reference tests exercise native MM8/MM4 module replacement and confirm
+  ordinary Linear call semantics. GPU correctness, quality and throughput
+  remain release gates rather than migration checkboxes.
 - Kernel wheel: `rwkv7_kernels-1.0.0.dev0-py3-none-any.whl`, SHA256
   `31c0892a5284a26f89790567dbbdf4f6255b996cf5f7a32c14fa2406c15e24c9`.
 - Both wheels passed `twine check --strict` and independent target-directory

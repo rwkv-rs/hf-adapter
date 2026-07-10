@@ -1,0 +1,74 @@
+from __future__ import annotations
+
+import importlib
+from pathlib import Path
+import sys
+
+import pytest
+import torch
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(autouse=True)
+def source_kernel_package(monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / "kernels"))
+    for name in tuple(sys.modules):
+        if name == "rwkv7_kernels" or name.startswith("rwkv7_kernels."):
+            sys.modules.pop(name)
+
+
+class TinyQuantModel(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.proj = torch.nn.Linear(8, 8, bias=False)
+
+    def forward(self, value):
+        return self.proj(value)
+
+
+@pytest.mark.parametrize(
+    ("method", "module_name"),
+    [("native_w8", "MM8Linear"), ("native_w4", "MM4Linear")],
+)
+def test_native_quantization_is_structural_and_package_owned(method, module_name):
+    quantization = importlib.import_module("rwkv7_kernels.quantization")
+    torch.manual_seed(127)
+    model = TinyQuantModel().eval()
+    value = torch.randn(2, 3, 8)
+
+    report = quantization.quantize_model(
+        model,
+        method,
+        min_params=0,
+        fused=False,
+    )
+    actual = model(value)
+
+    assert type(model.proj).__name__ == module_name
+    assert report["replaced_modules"] == 1
+    assert report["graph_cache_invalidated"] is True
+    assert torch.isfinite(actual).all()
+    assert actual.shape == (2, 3, 8)
+    assert quantization.quantization_report(model) == report
+    assert not any(name.startswith("_rwkv7_native_mm_") for name in vars(model))
+
+
+def test_bitsandbytes_adapter_uses_standard_hf_configuration():
+    quantization = importlib.import_module("rwkv7_kernels.quantization")
+    config = quantization.prepare_bitsandbytes_config(
+        "bnb8",
+        skip_modules=["lm_head"],
+        int8_threshold=5.5,
+    )
+    assert config.load_in_8bit
+    assert not config.load_in_4bit
+    assert config.llm_int8_threshold == 5.5
+    assert config.llm_int8_skip_modules == ["lm_head"]
+
+
+def test_bitsandbytes_adoption_rejects_an_unquantized_model():
+    quantization = importlib.import_module("rwkv7_kernels.quantization")
+    with pytest.raises(RuntimeError, match="prepare_bitsandbytes_config"):
+        quantization.quantize_model(TinyQuantModel(), "bnb8")
