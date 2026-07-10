@@ -81,6 +81,7 @@ def main() -> int:
     from rwkv7_hf.mlx_dplr_prefill import (
         mlx_compact_wy_chunk_apply,
         mlx_compact_wy_chunk_apply_metal,
+        mlx_compact_wy_chunk_apply_output_metal,
         mlx_compact_wy_chunk_summary,
         mlx_compact_wy_chunk_summary_metal,
         mlx_compact_wy_prefix_combine,
@@ -119,8 +120,39 @@ def main() -> int:
         value = mlx_compact_wy_chunk_summary(w, k, v, kk, a, chunk_size=args.chunk_size)
         return _summary_arrays(value), lambda: {}
 
-    def chunk_summary_metal() -> tuple[list[Any], Callable[[], dict[str, float]]]:
-        value = mlx_compact_wy_chunk_summary_metal(w, k, v, kk, a, chunk_size=args.chunk_size)
+    def chunk_summary_metal_scalar() -> tuple[list[Any], Callable[[], dict[str, float]]]:
+        value = mlx_compact_wy_chunk_summary_metal(
+            w,
+            k,
+            v,
+            kk,
+            a,
+            chunk_size=args.chunk_size,
+            implementation="scalar",
+        )
+        return _summary_arrays(value), lambda: {
+            "factor_max_abs": max(
+                _max_abs(mx, value[key], summary[key])
+                for key in (
+                    "transition_diag",
+                    "transition_left",
+                    "transition_right",
+                    "additive_left",
+                    "additive_right",
+                )
+            )
+        }
+
+    def chunk_summary_metal_tiled() -> tuple[list[Any], Callable[[], dict[str, float]]]:
+        value = mlx_compact_wy_chunk_summary_metal(
+            w,
+            k,
+            v,
+            kk,
+            a,
+            chunk_size=args.chunk_size,
+            implementation="tiled",
+        )
         return _summary_arrays(value), lambda: {
             "factor_max_abs": max(
                 _max_abs(mx, value[key], summary[key])
@@ -153,6 +185,12 @@ def main() -> int:
             "output_max_abs": _max_abs(mx, out, ref_out),
             "state_max_abs": _max_abs(mx, ends[:, -1], ref_state),
         }
+
+    def chunk_apply_output_metal() -> tuple[list[Any], Callable[[], dict[str, float]]]:
+        out = mlx_compact_wy_chunk_apply_output_metal(
+            r, w, k, v, kk, a, starts, chunk_size=args.chunk_size
+        )
+        return [out], lambda: {"output_max_abs": _max_abs(mx, out, ref_out)}
 
     def three_stage() -> tuple[list[Any], Callable[[], dict[str, float]]]:
         out, final, telemetry = mlx_compact_wy_three_stage(
@@ -198,6 +236,48 @@ def main() -> int:
             "state_max_abs": _max_abs(mx, final, ref_state),
         }
 
+    def three_stage_metal_scalar() -> tuple[list[Any], Callable[[], dict[str, float]]]:
+        out, final, telemetry = mlx_compact_wy_three_stage_metal(
+            r,
+            w,
+            k,
+            v,
+            kk,
+            a,
+            state,
+            chunk_size=args.chunk_size,
+            summary_implementation="scalar",
+        )
+        arrays = [
+            out,
+            final,
+            telemetry["start_states"],
+            telemetry["chunk_ends"],
+            *_summary_arrays(telemetry["summary"]),
+        ]
+        return arrays, lambda: {
+            "output_max_abs": _max_abs(mx, out, ref_out),
+            "state_max_abs": _max_abs(mx, final, ref_state),
+        }
+
+    def three_stage_metal_serving() -> tuple[list[Any], Callable[[], dict[str, float]]]:
+        out, final, _ = mlx_compact_wy_three_stage_metal(
+            r,
+            w,
+            k,
+            v,
+            kk,
+            a,
+            state,
+            chunk_size=args.chunk_size,
+            summary_implementation="tiled",
+            return_telemetry=False,
+        )
+        return [out, final], lambda: {
+            "output_max_abs": _max_abs(mx, out, ref_out),
+            "state_max_abs": _max_abs(mx, final, ref_state),
+        }
+
     stages: list[tuple[str, Callable[[], tuple[list[Any], Callable[[], dict[str, float]]]]]] = [
         ("recurrent_reference", recurrent),
         ("chunk_summary", chunk_summary),
@@ -208,10 +288,14 @@ def main() -> int:
     if mlx_dplr_metal_available():
         stages.extend(
             [
-                ("chunk_summary_metal", chunk_summary_metal),
+                ("chunk_summary_metal_scalar", chunk_summary_metal_scalar),
+                ("chunk_summary_metal_tiled", chunk_summary_metal_tiled),
                 ("chunk_apply_output_metal", chunk_apply_metal),
+                ("chunk_apply_output_only_metal", chunk_apply_output_metal),
                 ("three_stage_metal_summary", three_stage_metal_summary),
+                ("three_stage_metal_scalar", three_stage_metal_scalar),
                 ("three_stage_metal", three_stage_metal),
+                ("three_stage_metal_serving", three_stage_metal_serving),
             ]
         )
 

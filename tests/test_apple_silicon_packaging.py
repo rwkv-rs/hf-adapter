@@ -137,6 +137,10 @@ def test_apple_smoke_script_static() -> None:
     assert "RWKV_PREFILL_BACKEND" in qwen_acceptance_text
     assert "RWKV_DPLR_CHUNK_SIZE" in qwen_acceptance_text
     assert "RWKV_DPLR_MIN_TOKENS" in qwen_acceptance_text
+    assert "RWKV_DPLR_SUMMARY_IMPLEMENTATION" in qwen_acceptance_text
+    assert "RWKV_DPLR_LAYER_EVAL_INTERVAL" in qwen_acceptance_text
+    assert "RWKV_DPLR_LAYER_EVAL_MIN_TOKENS" in qwen_acceptance_text
+    assert "RWKV_DPLR_WINDOW_TOKENS" in qwen_acceptance_text
     assert "COREML_EXPORT_MODELS" in qwen_acceptance_text
     mlx_prefill_eval_bench = ROOT / "scripts/mlx_prefill_eval_interval_bench.py"
     assert mlx_prefill_eval_bench.exists()
@@ -345,6 +349,10 @@ def test_apple_doc_links_entry_points() -> None:
     assert "RWKV_PREFILL_BACKEND" in qwen_acceptance_text
     assert "RWKV_DPLR_CHUNK_SIZE" in qwen_acceptance_text
     assert "RWKV_DPLR_MIN_TOKENS" in qwen_acceptance_text
+    assert "RWKV_DPLR_SUMMARY_IMPLEMENTATION" in qwen_acceptance_text
+    assert "RWKV_DPLR_LAYER_EVAL_INTERVAL" in qwen_acceptance_text
+    assert "RWKV_DPLR_LAYER_EVAL_MIN_TOKENS" in qwen_acceptance_text
+    assert "RWKV_DPLR_WINDOW_TOKENS" in qwen_acceptance_text
     assert "COREML_EXPORT_MODELS" in qwen_acceptance_text
     mlx_prefill_eval_bench = ROOT / "scripts/mlx_prefill_eval_interval_bench.py"
     assert mlx_prefill_eval_bench.exists()
