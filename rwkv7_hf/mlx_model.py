@@ -826,7 +826,30 @@ class MLXRWKV7Model:
             {"recurrent", "dplr_metal", "auto"},
         )
         self.dplr_chunk_size = _env_int("RWKV7_MLX_DPLR_CHUNK_SIZE", 64, upper=64)
-        self.dplr_min_tokens = _env_int("RWKV7_MLX_DPLR_MIN_TOKENS", 128)
+        self.dplr_min_tokens = _env_int("RWKV7_MLX_DPLR_MIN_TOKENS", 8)
+        self.dplr_summary_implementation = _env_choice(
+            "RWKV7_MLX_DPLR_SUMMARY_IMPLEMENTATION",
+            "tiled",
+            {"scalar", "tiled"},
+        )
+        self.dplr_layer_eval_interval = _env_int(
+            "RWKV7_MLX_DPLR_LAYER_EVAL_INTERVAL",
+            4,
+            lower=0,
+            upper=4096,
+        )
+        self.dplr_layer_eval_min_tokens = _env_int(
+            "RWKV7_MLX_DPLR_LAYER_EVAL_MIN_TOKENS",
+            64,
+        )
+        self.dplr_layer_eval_interval_effective_last = 0
+        self.dplr_window_tokens = _env_int(
+            "RWKV7_MLX_DPLR_WINDOW_TOKENS",
+            512,
+            lower=0,
+            upper=1 << 20,
+        )
+        self.dplr_windows_last = 0
         self.dplr_clear_cache = _env_flag("RWKV7_MLX_DPLR_CLEAR_CACHE", True)
         self.prefill_backend_last: str | None = None
         self.prefill_backend_counts: dict[str, int] = {
@@ -939,6 +962,14 @@ class MLXRWKV7Model:
             "prefill_backend_counts": dict(self.prefill_backend_counts),
             "dplr_chunk_size": int(self.dplr_chunk_size),
             "dplr_min_tokens": int(self.dplr_min_tokens),
+            "dplr_summary_implementation": self.dplr_summary_implementation,
+            "dplr_layer_eval_interval": int(self.dplr_layer_eval_interval),
+            "dplr_layer_eval_min_tokens": int(self.dplr_layer_eval_min_tokens),
+            "dplr_layer_eval_interval_effective_last": int(
+                self.dplr_layer_eval_interval_effective_last
+            ),
+            "dplr_window_tokens": int(self.dplr_window_tokens),
+            "dplr_windows_last": int(self.dplr_windows_last),
             "dplr_clear_cache": bool(self.dplr_clear_cache),
             "dplr_metal_available": mlx_dplr_metal_available(),
             **summarize_mlx_arrays(self.arrays),
@@ -1282,6 +1313,8 @@ class MLXRWKV7Model:
             a4,
             state,
             chunk_size=chunk_size,
+            summary_implementation=self.dplr_summary_implementation,
+            return_telemetry=False,
         )
         out_heads = out_heads[:, :tokens].astype(r.dtype)
         out = self._group_norm_heads_sequence(out_heads.reshape(batch, tokens, hidden), layer)
@@ -1303,7 +1336,7 @@ class MLXRWKV7Model:
         k = k * k
         return self._linear(k, f"{prefix}.value.weight"), next_x_prev
 
-    def _forward_dplr_prefill(self, ids, state: MLXRWKV7State):
+    def _forward_dplr_prefill(self, ids, state: MLXRWKV7State, *, compute_logits: bool = True):
         mx = _mx()
         batch, tokens = int(ids.shape[0]), int(ids.shape[1])
         x = self._get("model.embeddings.weight")[ids]
@@ -1324,6 +1357,23 @@ class MLXRWKV7Model:
             h2 = self._layer_norm(x, f"model.layers.{layer}.ffn_norm")
             f, state.ffn_x_prev[layer] = self._ffn_sequence(layer, h2, state.ffn_x_prev[layer])
             x = x + f
+            eval_interval = (
+                int(self.dplr_layer_eval_interval)
+                if tokens >= int(self.dplr_layer_eval_min_tokens)
+                else 0
+            )
+            self.dplr_layer_eval_interval_effective_last = int(eval_interval)
+            if eval_interval > 0 and (
+                (layer + 1) % eval_interval == 0 or layer + 1 == self.num_hidden_layers
+            ):
+                first_layer = max(0, layer + 1 - eval_interval)
+                mx.eval(
+                    x,
+                    v_first_sequence,
+                    *state.recurrent_state[first_layer : layer + 1],
+                    *state.attn_x_prev[first_layer : layer + 1],
+                    *state.ffn_x_prev[first_layer : layer + 1],
+                )
         if v_first_sequence is None:
             raise RuntimeError("DPLR prefill produced no v_first sequence")
         # Sequence slicing leaves strided views. Materialize compact cache
@@ -1334,8 +1384,15 @@ class MLXRWKV7Model:
         state.attn_x_prev = [mx.contiguous(value) for value in state.attn_x_prev]
         state.ffn_x_prev = [mx.contiguous(value) for value in state.ffn_x_prev]
         state.seen_tokens += tokens
-        out = self._logits_from_hidden(x[:, -1, :]).reshape(batch, 1, self.vocab_size)
-        mx.eval(out, state.v_first, *state.recurrent_state, *state.attn_x_prev, *state.ffn_x_prev)
+        out = (
+            self._logits_from_hidden(x[:, -1, :]).reshape(batch, 1, self.vocab_size)
+            if compute_logits
+            else None
+        )
+        eval_values = [state.v_first, *state.recurrent_state, *state.attn_x_prev, *state.ffn_x_prev]
+        if out is not None:
+            eval_values.insert(0, out)
+        mx.eval(*eval_values)
         if self.dplr_clear_cache:
             clear_cache = getattr(mx, "clear_cache", None)
             if callable(clear_cache):
@@ -1396,6 +1453,9 @@ class MLXRWKV7Model:
         elif state.batch_size != B:
             raise ValueError(f"state batch size {state.batch_size} does not match input batch size {B}")
         is_prefill = T > 1 and not collect_all
+        if is_prefill:
+            self.dplr_windows_last = 0
+            self.dplr_layer_eval_interval_effective_last = 0
         use_dplr = self.prefill_backend == "dplr_metal" or (
             self.prefill_backend == "auto" and T >= int(self.dplr_min_tokens)
         )
@@ -1405,6 +1465,33 @@ class MLXRWKV7Model:
                 self.prefill_backend_counts["dplr_metal"] = int(
                     self.prefill_backend_counts.get("dplr_metal", 0)
                 ) + 1
+                window_tokens = int(self.dplr_window_tokens)
+                if window_tokens > 0 and T > window_tokens:
+                    # Keep boundaries chunk-aligned so only the final window
+                    # pays identity/no-op padding.
+                    window_tokens = max(
+                        int(self.dplr_chunk_size),
+                        (window_tokens // int(self.dplr_chunk_size)) * int(self.dplr_chunk_size),
+                    )
+                    windows = (T + window_tokens - 1) // window_tokens
+                    self.dplr_windows_last = int(windows)
+                    out = None
+                    effective_eval_interval = 0
+                    for window_index, start in enumerate(range(0, T, window_tokens)):
+                        out, state = self._forward_dplr_prefill(
+                            ids[:, start : start + window_tokens],
+                            state,
+                            compute_logits=window_index + 1 == windows,
+                        )
+                        effective_eval_interval = max(
+                            effective_eval_interval,
+                            int(self.dplr_layer_eval_interval_effective_last),
+                        )
+                    self.dplr_layer_eval_interval_effective_last = effective_eval_interval
+                    if out is None:
+                        raise RuntimeError("DPLR windowed prefill produced no logits")
+                    return out, state
+                self.dplr_windows_last = 1
                 return self._forward_dplr_prefill(ids, state)
             if self.prefill_backend == "dplr_metal":
                 raise RuntimeError("RWKV7_MLX_PREFILL_BACKEND=dplr_metal requires MLX custom Metal kernels")

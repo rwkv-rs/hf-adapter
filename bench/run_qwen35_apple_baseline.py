@@ -418,6 +418,10 @@ def run_rwkv_mlx(
     prefill_backend: str,
     dplr_chunk_size: int,
     dplr_min_tokens: int,
+    dplr_summary_implementation: str,
+    dplr_layer_eval_interval: int,
+    dplr_layer_eval_min_tokens: int,
+    dplr_window_tokens: int,
     results: str,
     store_response: bool = False,
 ) -> list[dict[str, Any]]:
@@ -461,6 +465,10 @@ def run_rwkv_mlx(
     model.prefill_backend = str(prefill_backend)
     model.dplr_chunk_size = int(dplr_chunk_size)
     model.dplr_min_tokens = int(dplr_min_tokens)
+    model.dplr_summary_implementation = str(dplr_summary_implementation)
+    model.dplr_layer_eval_interval = int(dplr_layer_eval_interval)
+    model.dplr_layer_eval_min_tokens = int(dplr_layer_eval_min_tokens)
+    model.dplr_window_tokens = int(dplr_window_tokens)
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     load_s = time.perf_counter() - t_load
     prompt_ids = [int(x) for x in tokenizer(prompt_case.prompt, add_special_tokens=False).input_ids]
@@ -528,6 +536,14 @@ def run_rwkv_mlx(
                 "prefill_backend_counts": telemetry.get("prefill_backend_counts"),
                 "dplr_chunk_size": telemetry.get("dplr_chunk_size"),
                 "dplr_min_tokens": telemetry.get("dplr_min_tokens"),
+                "dplr_summary_implementation": telemetry.get("dplr_summary_implementation"),
+                "dplr_layer_eval_interval": telemetry.get("dplr_layer_eval_interval"),
+                "dplr_layer_eval_min_tokens": telemetry.get("dplr_layer_eval_min_tokens"),
+                "dplr_layer_eval_interval_effective_last": telemetry.get(
+                    "dplr_layer_eval_interval_effective_last"
+                ),
+                "dplr_window_tokens": telemetry.get("dplr_window_tokens"),
+                "dplr_windows_last": telemetry.get("dplr_windows_last"),
                 "prompt_case": prompt_case.name,
                 "prompt_target_chars": int(prompt_case.target_chars),
                 "prompt_chars": len(prompt_case.prompt),
@@ -650,7 +666,15 @@ def main() -> int:
         choices=["recurrent", "dplr_metal", "auto"],
     )
     ap.add_argument("--rwkv-dplr-chunk-size", type=int, default=64)
-    ap.add_argument("--rwkv-dplr-min-tokens", type=int, default=128)
+    ap.add_argument("--rwkv-dplr-min-tokens", type=int, default=8)
+    ap.add_argument(
+        "--rwkv-dplr-summary-implementation",
+        default="tiled",
+        choices=["scalar", "tiled"],
+    )
+    ap.add_argument("--rwkv-dplr-layer-eval-interval", type=int, default=4)
+    ap.add_argument("--rwkv-dplr-layer-eval-min-tokens", type=int, default=64)
+    ap.add_argument("--rwkv-dplr-window-tokens", type=int, default=512)
     ap.add_argument("--ollama-cache-prompt", action="store_true", help="Allow Ollama/runner prompt-cache reuse across rows.")
     ap.add_argument("--no-ollama-memory", action="store_true", help="Skip official /api/ps loaded-memory telemetry.")
     ap.add_argument("--temperature", type=float, default=0.0)
@@ -677,6 +701,12 @@ def main() -> int:
         raise ValueError("--rwkv-dplr-chunk-size must be in [1, 64]")
     if args.rwkv_dplr_min_tokens <= 0:
         raise ValueError("--rwkv-dplr-min-tokens must be positive")
+    if args.rwkv_dplr_layer_eval_interval < 0:
+        raise ValueError("--rwkv-dplr-layer-eval-interval must be non-negative")
+    if args.rwkv_dplr_layer_eval_min_tokens <= 0:
+        raise ValueError("--rwkv-dplr-layer-eval-min-tokens must be positive")
+    if args.rwkv_dplr_window_tokens < 0:
+        raise ValueError("--rwkv-dplr-window-tokens must be non-negative")
     if args.summarize:
         rows = load_jsonl(args.summarize)
         print(json.dumps(summarize_rows(rows), ensure_ascii=False))
@@ -706,6 +736,10 @@ def main() -> int:
         "rwkv_prefill_backend": args.rwkv_prefill_backend,
         "rwkv_dplr_chunk_size": int(args.rwkv_dplr_chunk_size),
         "rwkv_dplr_min_tokens": int(args.rwkv_dplr_min_tokens),
+        "rwkv_dplr_summary_implementation": args.rwkv_dplr_summary_implementation,
+        "rwkv_dplr_layer_eval_interval": int(args.rwkv_dplr_layer_eval_interval),
+        "rwkv_dplr_layer_eval_min_tokens": int(args.rwkv_dplr_layer_eval_min_tokens),
+        "rwkv_dplr_window_tokens": int(args.rwkv_dplr_window_tokens),
         **device_info(),
     }
     print(json.dumps(env, ensure_ascii=False))
@@ -726,6 +760,10 @@ def main() -> int:
             "rwkv_prefill_backend": args.rwkv_prefill_backend,
             "rwkv_dplr_chunk_size": int(args.rwkv_dplr_chunk_size),
             "rwkv_dplr_min_tokens": int(args.rwkv_dplr_min_tokens),
+            "rwkv_dplr_summary_implementation": args.rwkv_dplr_summary_implementation,
+            "rwkv_dplr_layer_eval_interval": int(args.rwkv_dplr_layer_eval_interval),
+            "rwkv_dplr_layer_eval_min_tokens": int(args.rwkv_dplr_layer_eval_min_tokens),
+            "rwkv_dplr_window_tokens": int(args.rwkv_dplr_window_tokens),
         }
         print(json.dumps(plan, ensure_ascii=False))
         append_jsonl(args.results, plan)
@@ -768,6 +806,10 @@ def main() -> int:
                     prefill_backend=args.rwkv_prefill_backend,
                     dplr_chunk_size=int(args.rwkv_dplr_chunk_size),
                     dplr_min_tokens=int(args.rwkv_dplr_min_tokens),
+                    dplr_summary_implementation=args.rwkv_dplr_summary_implementation,
+                    dplr_layer_eval_interval=int(args.rwkv_dplr_layer_eval_interval),
+                    dplr_layer_eval_min_tokens=int(args.rwkv_dplr_layer_eval_min_tokens),
+                    dplr_window_tokens=int(args.rwkv_dplr_window_tokens),
                     results=args.results,
                     store_response=bool(args.store_responses),
                 )

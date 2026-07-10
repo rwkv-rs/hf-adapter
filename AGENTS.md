@@ -198,9 +198,9 @@ Model integration checkpoint on the child branch:
 - `MLXRWKV7Model` now has opt-in layer-major sequence prefill with vectorized
   shift-mix/projections/FFN and Metal DPLR attention. Partial final chunks are
   padded with identity/no-op recurrence and trimmed from outputs.
-- Default remains `prefill_backend=recurrent`. `auto` uses DPLR only at
-  `T>=RWKV7_MLX_DPLR_MIN_TOKENS` (default 128); explicit `dplr_metal` is for
-  validation. Chunk size defaults to 64.
+- At this Stage-2 checkpoint, default remained `prefill_backend=recurrent` and
+  `auto` used DPLR at 128 tokens. The Stage-3 checkpoint below supersedes the
+  auto threshold and tuning; chunk size remains 64.
 - M5 real-model prompt512 (111 tokens), fp16 median recurrent -> DPLR:
   0.1B `262.04 -> 408.63 tok/s` (`1.56x`), 0.4B
   `117.91 -> 175.83` (`1.49x`), 1.5B `37.57 -> 123.45` (`3.29x`).
@@ -212,6 +212,37 @@ Model integration checkpoint on the child branch:
   tokens for fp16 and W4. The Qwen prefill gate still fails.
 - Evidence: `bench/results_mlx_dplr_model_m5_20260710_{fp16,w4}.jsonl` and
   `bench/results_qwen35_apple_m5_20260710_dplr_auto_{fp16,w4}.jsonl`.
+
+Tiled-summary / long-context checkpoint:
+
+- The production Metal summary is now head-dimension parallel: one
+  threadgroup owns one `(batch, chunk, head)` and one lane owns one state row.
+  The old one-thread summary remains as the independent `scalar` oracle.
+- M5 synthetic `B1/T512/H16/N64/C64/fp16`, seven-repeat medians: scalar
+  summary `54.801ms`, tiled `3.399ms` (`16.12x`); factors are bit-identical.
+  Full tiled three-stage is `3.421ms`; serving apply omits chunk-end telemetry.
+- Final default tuning for the opt-in/auto DPLR path is chunk64, tiled summary,
+  auto threshold 8 tokens, layer materialization every 4 layers from 64 tokens,
+  and a 512-token outer window. Backend default remains `recurrent`.
+- M5 real-model prompt512/111-token fp16 medians recurrent -> tiled DPLR:
+  0.1B `257.42 -> 5058.87` (`19.65x`), 0.4B
+  `118.62 -> 2143.54` (`18.07x`), 1.5B `37.56 -> 1006.19`
+  (`26.79x`). Median peak ratios are `1.16x/1.09x/1.05x`; every row keeps
+  the recurrent 8-token continuation.
+- 0.4B long-context parity passes at 223/888/1774 prompt tokens with exact
+  8-token continuations. The 512-token window bounds the 888/1774-token M5
+  peak near `1.16-1.17GB` in the recorded memory-first tuning run.
+- Qwen3.5 0.8B comparison is no longer a universal prefill failure. The final
+  chars512 fp16 row passed that run's conservative decode/prefill/TTFT gates;
+  W4 passed prefill and TTFT but decode was `0.950x`. The chars128 cold-compile
+  row still fails, and cross-run variance means no blanket Qwen win claim.
+- Evidence: `bench/results_mlx_dplr_tiled_stage_m5_20260710.jsonl`,
+  `bench/results_mlx_dplr_tiled_model_m5_20260710_final_fp16.jsonl`,
+  `bench/results_mlx_dplr_tiled_long_m5_20260710_fp16.jsonl`, and
+  `bench/results_qwen35_apple_m5_20260710_dplr_tiled_final_{fp16,w4}.jsonl`.
+- Next Apple bottleneck is decode (`~0.90-0.95x` Qwen in representative
+  chars512 rows), then cold short-prompt compilation and broader M1-M4/M5 Pro
+  validation. Do not return to scalar summary optimization.
 
 ## Active Goal: Finish the Current HF Adapter First
 
