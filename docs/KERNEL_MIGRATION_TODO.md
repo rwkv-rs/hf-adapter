@@ -468,3 +468,18 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q && git diff --check`.
   Result: `76 passed`. GPU numerical acceptance remains pending and production
   `RWKV7_MODEL_KERNEL_IMPL=auto` stays disabled.
+
+### 2026-08-28 — lm_eval selected-answer and NLL evidence tightened
+
+- Local model provenance now hashes the RWKV vocabulary and other tokenizer
+  payloads in addition to code, config, and safetensors.
+- The three-way validator no longer treats per-sample `acc`/`acc_norm`
+  correctness booleans as proof that two lanes selected the same option. It
+  reconstructs the raw and length-normalized selected choice from each
+  `filtered_resps`/request record, checks LAMBADA greedy continuation outcomes,
+  and compares them both across lanes and across batch 1/8.
+- Wikitext validation now checks each document's rolling NLL and word/byte
+  counts at the same `0.1%` relative gate as aggregate NLL/PPL instead of only
+  comparing the aggregate metric.
+- Local gate after these evidence changes: `79 passed`; Ruff, compileall, and
+  `git diff --check` pass. Existing raw samples remain outside Git.

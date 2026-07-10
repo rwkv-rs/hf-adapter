@@ -139,7 +139,8 @@ def resolve_model(source: str, revision: str | None) -> dict:
             if candidate.is_file()
             and (
                 candidate.name in names
-                or candidate.suffix in {".py", ".safetensors"}
+                or candidate.suffix
+                in {".py", ".safetensors", ".txt", ".model", ".jinja"}
                 or candidate.name.endswith(".safetensors.index.json")
             )
         )

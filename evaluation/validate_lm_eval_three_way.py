@@ -64,7 +64,33 @@ def numeric_metrics(payload: dict[str, Any], task: str) -> dict[str, float]:
     }
 
 
+def _response_pair(value: Any) -> tuple[float, bool]:
+    if not isinstance(value, (list, tuple)) or len(value) < 2:
+        raise ValueError(f"expected a loglikelihood response pair, got {value!r}")
+    score = float(value[0])
+    raw_greedy = value[1]
+    if isinstance(raw_greedy, str):
+        greedy = raw_greedy.strip().lower() in {"1", "true", "yes"}
+    else:
+        greedy = bool(raw_greedy)
+    return score, greedy
+
+
+def _choice_lengths(sample: dict[str, Any], count: int) -> list[int]:
+    arguments = sample.get("arguments", {})
+    rows = []
+    for index in range(count):
+        value = arguments.get(f"gen_args_{index}", {}).get("arg_1", "")
+        # lm_eval's multiple-choice normalization uses the visible choice
+        # length. Requests commonly prepend one formatting space, so remove
+        # only leading whitespace introduced at the request boundary.
+        rows.append(max(1, len(str(value).lstrip())))
+    return rows
+
+
 def sample_outcomes(path: Path, task: str) -> dict[str, tuple[Any, ...]]:
+    """Extract predictions, not merely per-sample correctness booleans."""
+
     rows = {}
     with path.open(encoding="utf-8") as handle:
         for line in handle:
@@ -72,11 +98,81 @@ def sample_outcomes(path: Path, task: str) -> dict[str, tuple[Any, ...]]:
                 continue
             sample = json.loads(line)
             if task == "wikitext":
-                outcome = tuple(sample.get("filtered_resps", ()))
+                filtered = sample.get("filtered_resps", ())
+                if not filtered:
+                    raise ValueError("wikitext sample has no rolling loglikelihood")
+                score = float(filtered[0])
+                word_metric = sample.get("word_perplexity", (score, 0))
+                byte_metric = sample.get("byte_perplexity", (score, 0))
+                outcome = (
+                    "rolling",
+                    -score,
+                    int(word_metric[1]),
+                    int(byte_metric[1]),
+                )
             else:
-                outcome = tuple(sample.get(name) for name in sample.get("metrics", ()))
+                filtered = sample.get("filtered_resps", ())
+                if not filtered:
+                    raise ValueError(f"{task} sample has no filtered responses")
+                pairs = [_response_pair(value) for value in filtered]
+                if len(pairs) == 1:
+                    # LAMBADA has one continuation; its discrete prediction is
+                    # whether every continuation token was greedily selected.
+                    outcome = ("loglikelihood", pairs[0][1])
+                else:
+                    scores = [value[0] for value in pairs]
+                    lengths = _choice_lengths(sample, len(scores))
+                    raw_choice = max(range(len(scores)), key=scores.__getitem__)
+                    normalized = [
+                        score / length for score, length in zip(scores, lengths)
+                    ]
+                    normalized_choice = max(
+                        range(len(normalized)), key=normalized.__getitem__
+                    )
+                    outcome = (
+                        "multiple_choice",
+                        int(raw_choice),
+                        int(normalized_choice),
+                    )
             rows[sample["doc_hash"]] = outcome
     return rows
+
+
+def compare_sample_outcomes(
+    reference: dict[str, tuple[Any, ...]],
+    candidate: dict[str, tuple[Any, ...]],
+    task: str,
+) -> dict[str, Any]:
+    common = reference.keys() & candidate.keys()
+    missing_docs = len(reference.keys() ^ candidate.keys())
+    if task != "wikitext":
+        mismatches = sum(reference[key] != candidate[key] for key in common)
+        return {
+            "prediction_mismatches": int(mismatches),
+            "continuous_mismatches": 0,
+            "max_relative_nll_difference": 0.0,
+            "missing_docs": int(missing_docs),
+        }
+    continuous_mismatches = 0
+    maximum = 0.0
+    for key in common:
+        left = reference[key]
+        right = candidate[key]
+        if left[0] != "rolling" or right[0] != "rolling":
+            continuous_mismatches += 1
+            continue
+        if left[2:] != right[2:]:
+            continuous_mismatches += 1
+        difference = relative_difference(float(left[1]), float(right[1]))
+        maximum = max(maximum, difference)
+        if difference > 0.001:
+            continuous_mismatches += 1
+    return {
+        "prediction_mismatches": 0,
+        "continuous_mismatches": int(continuous_mismatches),
+        "max_relative_nll_difference": float(maximum),
+        "missing_docs": int(missing_docs),
+    }
 
 
 def relative_difference(left: float, right: float) -> float:
@@ -172,26 +268,23 @@ def main() -> int:
                 elif left != right:
                     metric_failures.append((name, left, right))
             candidate_samples = samples.get((lane, unit), {})
-            common_docs = baseline_samples.keys() & candidate_samples.keys()
-            prediction_mismatches = (
-                0
-                if task == "wikitext"
-                else sum(
-                    baseline_samples[key] != candidate_samples[key]
-                    for key in common_docs
-                )
+            sample_comparison = compare_sample_outcomes(
+                baseline_samples, candidate_samples, task
             )
-            missing_docs = len(set(baseline_samples) ^ set(candidate_samples))
             row = {
                 "unit": unit,
                 "candidate_lane": lane,
                 "task": task,
                 "metric_failures": metric_failures,
-                "prediction_mismatches": prediction_mismatches,
-                "missing_docs": missing_docs,
+                **sample_comparison,
             }
             comparisons.append(row)
-            if metric_failures or prediction_mismatches or missing_docs:
+            if (
+                metric_failures
+                or sample_comparison["prediction_mismatches"]
+                or sample_comparison["continuous_mismatches"]
+                or sample_comparison["missing_docs"]
+            ):
                 failures.append(row)
 
     # Batch-size invariance inside each lane.
@@ -224,6 +317,25 @@ def main() -> int:
                             "batch_8": right[name],
                         }
                     )
+            sample_comparison = compare_sample_outcomes(
+                samples.get((lane, units[1]), {}),
+                samples.get((lane, units[8]), {}),
+                task,
+            )
+            if (
+                sample_comparison["prediction_mismatches"]
+                or sample_comparison["continuous_mismatches"]
+                or sample_comparison["missing_docs"]
+            ):
+                failures.append(
+                    {
+                        "lane": lane,
+                        "model": model,
+                        "task": task,
+                        "reason": "batch sample outcomes differ",
+                        **sample_comparison,
+                    }
+                )
 
     report = {
         "schema": "rwkv7-lm-eval-three-way-validation-v1",
