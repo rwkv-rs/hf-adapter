@@ -2689,6 +2689,36 @@ single-batch fixed-shape greedy path, but it gives a concrete implementation
 direction: move the TorchScript block-step packing / graph-capture idea into the
 HF fast-token API while preserving batched state-cache semantics.
 
+### V100 sm70 native-prefill policy (fp16, prompt 512)
+
+The V100 path now uses a split-row Triton recurrent scan instead of keeping the
+complete 64x64 state tile live in one program. Runtime policy selects tile 16
+for bsz 1/2, tile 32 for bsz >=4, and limits the larger fused state-prep + scan
+kernel to bsz 1. Explicit environment settings remain available for A/B and
+fallback.
+
+Same-card matching-checkpoint comparison against Albatross `faster3a` with
+`--wkv fp32io16`:
+
+| Model | bsz | HF native prefill tok/s | Albatross tok/s | Ratio | Stage |
+|---|---:|---:|---:|---:|---|
+| 0.1B | 1 | 32058.9 | 39323.63 | 0.8153x | P2 |
+| 0.1B | 2 | 56598.4 | 71382.68 | 0.7929x | P1, near P2 |
+| 0.1B | 4 | 94135.9 | 109051.25 | 0.8632x | P2 |
+| 0.1B | 8 | 122043.7 | 153368.36 | 0.7958x | P1, near P2 |
+| 0.4B | 1/2/4/8 | 16439.1 / 27492.5 / 38753.8 / 46475.0 | 18462.45 / 31264.66 / 45953.77 / 59046.69 | 0.8904x / 0.8793x / 0.8433x / 0.7871x | P2/P2/P2/P1 |
+| 1.5B | 1/2/4/8 | 10305.4 / 14419.5 / 17108.3 / 17752.3 | 11911.85 / 16332.13 / 20141.39 / 21807.28 | 0.8651x / 0.8829x / 0.8494x / 0.8141x | P2/P2/P2/P2 |
+
+The 0.1B figures are medians across three fresh processes and are
+`1.162x`-`1.234x` faster than the old full-head fused state-scan route. A
+separate no-env run verifies default dispatch at bsz 1/2/4/8. Independent
+unfused native token-loop alignment passes prefill and cached-next-token greedy
+checks for 0.1B/0.4B/1.5B at bsz 1/4; ordinary HF `model.generate()` reports
+`native_prefill` + `native_graph` and passes for the same six cases.
+
+Raw evidence and exact caveats:
+[`bench/v100_sm70_prefill_policy_20260710/README.md`](bench/v100_sm70_prefill_policy_20260710/README.md).
+
 ### V100 experimental native-model telemetry
 
 The FLA-free `NativeRWKV7ForCausalLM` remains an experimental fallback, not the

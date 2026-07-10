@@ -38,12 +38,20 @@ def test_policy_defaults_are_conservative() -> None:
     v100 = policy_for_profile(classify_gpu("Tesla V100-PCIE-32GB", (7, 0)))
     assert v100.fused_output
     assert v100.fused_recurrent_output
+    assert v100.fast_prefill
+    assert v100.fused_prefill_scan
+    assert v100.fused_prefill_state_prep
+    assert v100.fused_prefill_state_scan
+    assert v100.fused_prefill_state_scan_max_batch == 1
+    assert v100.fused_prefill_output
     assert not v100.fused_projection
     assert not v100.fused_output_project
 
     ada = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 4090", (8, 9)))
     assert ada.fused_output
     assert ada.fused_recurrent_output
+    assert not ada.fast_prefill
+    assert not ada.fused_prefill_state_scan
     assert not ada.fused_projection
 
     blackwell = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 5090", (12, 0)))

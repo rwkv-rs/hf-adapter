@@ -206,7 +206,8 @@ def _fast_forward_quant_enabled() -> bool:
 def _fast_prefill_enabled() -> bool:
     """Allow normal HF forward/generate to use the native prefill path."""
 
-    return env_flag("RWKV7_FAST_PREFILL", False)
+    policy = _rwkv7_kernel_policy()
+    return env_flag("RWKV7_FAST_PREFILL", bool(getattr(policy, "fast_prefill", False)))
 
 
 def _bnb_skip_policy(policy: str | None = None) -> str:
