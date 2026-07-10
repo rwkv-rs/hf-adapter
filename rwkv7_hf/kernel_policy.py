@@ -48,15 +48,27 @@ class KernelPolicy:
     profile: GPUProfile
     fast_token_backend: str = "auto"
     fast_cache: bool = True
+    fast_prefill: bool = False
     bnb_skip_policy: str = "memory"
     fused_recurrent: bool = False
     fused_prefill_scan: bool = False
+    fused_prefill_state_prep: bool = False
+    fused_prefill_state_scan: bool = False
+    fused_prefill_state_scan_max_batch: int | None = None
+    fused_prefill_output: bool = False
     fused_recurrent_output: bool = False
+    fused_recurrent_raw: bool = False
     fused_output: bool = False
+    fused_norm_mix: bool = False
+    sm70_linear: bool = False
+    ada_linear: bool = False
+    ada_wagv_lora: bool = False
+    ada_sparse_ffn: bool = False
     fused_output_project: bool = False
     fused_projection: bool = False
     fused_wag_lora: bool = False
     fused_wavg_lora: bool = False
+    wavg_lora_bsz1_max_hidden: int | None = None
     output_project_block_m: int = 16
     wag_lora_blocks: tuple[int, int, int] = (64, 64, 64)
     wavg_lora_blocks: tuple[int, int, int] = (64, 64, 64)
@@ -145,13 +157,20 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     "pascal": GPUAdaptationRule(
         family="pascal",
         cards=("Tesla P100", "GTX 10-series"),
-        status="TODO validation target",
+        status="touched; GTX 1080 Ti 0.1B smoke/bnb+native-mm quant speed rows and 0.4B fp16 row exist",
         default_stance="compatibility-first; Pascal lacks the newer tensor-core path",
         default_on=("fast_cache",),
         default_off=("fused_recurrent_output", "fused_output", "projection/LoRA fusions", "fused_prefill_scan"),
-        required_functional=COMMON_FUNCTIONAL_SMOKES,
+        required_functional=(
+            "import_from_pretrained",
+            "generate_use_cache",
+            "default native/no-FLA decode",
+            "batch_cache",
+            "dynamic_batch_cache",
+            "chunked_prefill",
+        ),
         required_benchmarks=COMMON_PERF_BENCHMARKS,
-        quant_rule="memory-only until card-local W8/W4 rows beat fp16",
+        quant_rule="bnb W8/W4 rows are slower than fp16; native mm8/mm4 0.1B lm_head rows pass, broader promotion needs larger exact-card quant rows",
         promotion_rule="require exact-card decode greedy match plus non-negative speed before any default",
     ),
     "volta": GPUAdaptationRule(
@@ -159,8 +178,17 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
         cards=("Tesla V100-PCIE-32GB", "Tesla V100-SXM"),
         status="current regression baseline",
         default_stance="conservative production-smoke baseline",
-        default_on=("fast_cache", "fused_recurrent_output", "fused_output"),
-        default_off=("fused_recurrent", "fused_prefill_scan", "fused_output_project", "projection/LoRA fusions"),
+        default_on=(
+            "fast_cache",
+            "fused_recurrent_output",
+            "fused_recurrent_raw",
+            "fused_output",
+            "fused_norm_mix",
+            "batch-routed fused_wavg_lora",
+            "shape-routed sm70_linear",
+            "batch-routed fused prefill",
+        ),
+        default_off=("fused_recurrent", "fused_output_project", "full projection fusion"),
         required_functional=COMMON_FUNCTIONAL_SMOKES
         + ("HF Trainer", "TRL SFT/DPO/GRPO", "PEFT save/load/merge"),
         required_benchmarks=COMMON_PERF_BENCHMARKS
@@ -182,8 +210,8 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     ),
     "ampere": GPUAdaptationRule(
         family="ampere",
-        cards=("A100", "A10", "A6000", "RTX 30-series"),
-        status="TODO validation target",
+        cards=("A100", "A800", "RTX A6000", "A10", "RTX 30-series"),
+        status="A100/A800/RTX A6000 validation rows exist; keep conservative Ampere defaults",
         default_stance="stable output fusions; tune larger batch and training paths per card",
         default_on=("fast_cache", "fused_recurrent_output", "fused_output"),
         default_off=("fused_prefill_scan", "fused_output_project", "projection/LoRA fusions"),
@@ -191,16 +219,19 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
         + ("ZeRO-2/ZeRO-3 smoke when training is claimed",),
         required_benchmarks=COMMON_PERF_BENCHMARKS
         + ("larger-batch prefill", "state-cache reuse/hit-rate rows"),
-        quant_rule="W8/W4 require exact-card footprint and speed rows",
+        quant_rule="bnb/native W8/W4 require exact-card footprint and speed telemetry rows; current A800/A6000 rows reduce memory but do not satisfy the quantized-speed gate",
         promotion_rule="do not reuse V100/4090 block sizes without an Ampere sweep",
     ),
     "ada": GPUAdaptationRule(
         family="ada",
         cards=("RTX 4090", "RTX 4080/4070", "RTX 40-series"),
-        status="touched; 4090 validation rows exist",
-        default_stance="high-end consumer path; cuBLAS beats shallow projection kernels",
-        default_on=("fast_cache", "fused_recurrent_output", "fused_output"),
-        default_off=("fused_output_project", "projection/LoRA fusions", "fused_prefill_scan by default"),
+        status="4090 decode optimized; exact-row B2 and grouped W/A/G/V B1/B2/B4 correctness/speed rows pass",
+        default_stance="high-end consumer path with shape-routed exact-row and grouped low-rank kernels",
+        default_on=(
+            "fast_cache", "fused_recurrent_output", "fused_recurrent_raw", "fused_output",
+            "fused_norm_mix", "ada_linear for rows=2 and rows=4 hidden projections", "ada_wagv_lora for rows<=4",
+        ),
+        default_off=("fused_output_project", "generic Triton projection/LoRA fusions", "ada_sparse_ffn", "fused_prefill_scan by default"),
         required_functional=COMMON_FUNCTIONAL_SMOKES,
         required_benchmarks=COMMON_PERF_BENCHMARKS
         + ("fast-prefill TTFT/TPOT rows when RWKV7_FAST_PREFILL is considered",),
@@ -223,15 +254,15 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     ),
     "blackwell": GPUAdaptationRule(
         family="blackwell",
-        cards=("RTX 5070 Laptop", "RTX 5080/5090", "RTX 50-series"),
-        status="touched; 5070 Laptop rows exist",
-        default_stance="prefer native/no-FLA fallback when FLA kernels fail on 50-series",
+        cards=("RTX 5070 Laptop", "RTX 5090", "RTX 5080/5090", "RTX 50-series"),
+        status="touched; 5070 Laptop rows and RTX 5090 HF/native-prefill/native-trainer rows exist",
+        default_stance="prefer native/no-FLA fallback when FLA kernels fail on 50-series; apply Blackwell Triton/torch.compile compatibility for early sm_120 stacks",
         default_on=("fast_cache", "fused_recurrent_output", "fused_output"),
         default_off=("fused_output_project", "projection/LoRA fusions", "fused_prefill_scan by default"),
         required_functional=COMMON_FUNCTIONAL_SMOKES
-        + ("native_model no-FLA training smoke", "bnb W8/W4 functional inference"),
+        + ("native_model no-FLA training smoke", "bnb W8/W4 functional inference", "triton_compat remote-code import"),
         required_benchmarks=COMMON_PERF_BENCHMARKS
-        + ("50-series FLA compatibility row", "native/no-FLA fallback row"),
+        + ("50-series FLA compatibility row", "native/no-FLA fallback row", "RTX 5090 HF validation runner artifact when claiming 5090"),
         quant_rule="microbench wins are insufficient; require end-to-end decode and quality rows",
         promotion_rule="promote only fusions with exact-card greedy match and min bsz speedup >= 1.0x",
     ),
@@ -342,17 +373,27 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             profile=profile,
             fused_recurrent_output=False,
             fused_output=False,
-            notes="compatibility-first: keep experimental Triton/native_graph fusions off until per-card smoke passes",
+            notes="compatibility-first: keep experimental Triton/native_graph fusions off; Pascal uses native/no-FLA fallback unless overridden",
         )
     if family == "volta":
         return KernelPolicy(
             profile=profile,
+            fast_prefill=True,
             fused_recurrent_output=True,
+            fused_recurrent_raw=True,
             fused_output=True,
-            fused_prefill_scan=False,
+            fused_prefill_scan=True,
+            fused_prefill_state_prep=True,
+            fused_prefill_state_scan=True,
+            fused_prefill_state_scan_max_batch=1,
+            fused_prefill_output=True,
+            fused_norm_mix=True,
+            fused_wavg_lora=True,
+            wavg_lora_bsz1_max_hidden=1024,
+            sm70_linear=True,
             output_project_block_m=16,
             quant_policy="memory_first_decode_hot_optional",
-            notes="V100 baseline: output/recurrent-output fusions are default; projection/output-project/LoRA fusions remain opt-in",
+            notes="V100 baseline: batch-routed split-row prefill and WAVG-LoRA plus shape-routed sm70 linear/RKV, output/recurrent-output, and decode norm/mix fusions are default; WAVG bsz=1 is limited to hidden<=1024 and full projection/output-project remain opt-in",
         )
     if family in {"turing", "ampere"}:
         return KernelPolicy(
@@ -367,10 +408,15 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
         return KernelPolicy(
             profile=profile,
             fused_recurrent_output=True,
+            fused_recurrent_raw=True,
             fused_output=True,
+            fused_norm_mix=True,
             fused_prefill_scan=False,
+            ada_linear=True,
+            ada_wagv_lora=True,
+            ada_sparse_ffn=False,
             output_project_block_m=16,
-            notes="RTX 40/Ada: stable output fusions on by default; shallow split-K projection stays off",
+            notes="RTX 40/Ada: 4090 rows promote raw recurrent, decode norm/mix, rows=2 exact linear, rows=4 hidden exact linear, and rows<=4 grouped W/A/G/V LoRA; sparse FFN and shallow split-K projection remain off",
         )
     if family == "hopper":
         return KernelPolicy(
@@ -388,7 +434,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_output=True,
             fused_prefill_scan=False,
             output_project_block_m=32,
-            notes="RTX 50/Blackwell: prefer native/no-FLA compatibility smokes; keep unvalidated projection/LoRA fusions off",
+            notes="RTX 50/Blackwell: use triton_compat for early sm_120 stacks, prefer native/no-FLA smokes, keep unvalidated projection/LoRA fusions off",
         )
     return KernelPolicy(profile=profile)
 

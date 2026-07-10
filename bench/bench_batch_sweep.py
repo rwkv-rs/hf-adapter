@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -24,6 +25,39 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
 SEED = "The quick brown fox jumps over the lazy dog. " * 256
+_FALSE_VALUES = {"0", "false", "False", "no", "off"}
+
+
+def _model_kernel_policy(model):
+    module = sys.modules.get(model.__class__.__module__)
+    getter = getattr(module, "_rwkv7_kernel_policy", None)
+    if callable(getter):
+        try:
+            return getter()
+        except Exception:
+            return None
+    return None
+
+
+def effective_flag(model, env_name: str, policy_attr: str, fallback: bool) -> bool:
+    raw = os.environ.get(env_name)
+    if raw is not None:
+        return raw not in _FALSE_VALUES
+    return bool(getattr(_model_kernel_policy(model), policy_attr, fallback))
+
+
+def effective_wavg_lora(model, batch_size: int) -> bool:
+    if not effective_flag(model, "RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA", "fused_wavg_lora", False):
+        return False
+    policy = _model_kernel_policy(model)
+    default_max = getattr(policy, "wavg_lora_bsz1_max_hidden", None)
+    raw = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BSZ1_MAX_HIDDEN")
+    try:
+        max_hidden = int(raw) if raw is not None else (0 if default_max is None else int(default_max))
+    except ValueError:
+        max_hidden = 0 if default_max is None else int(default_max)
+    hidden = int(getattr(model.config, "hidden_size", 0))
+    return not (int(batch_size) == 1 and max_hidden > 0 and hidden > max_hidden)
 
 
 def infer_model_size_label(hf_dir: str, explicit: str = "") -> str | None:
@@ -133,11 +167,11 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
     with torch.inference_mode():
         for _ in range(args.warmup):
             _ = model(ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
-    def prefill_once():
-        with torch.inference_mode():
-            return model(ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep)
-
-    prefill_dt = timed(prefill_once, args.device, args.runs)
+        prefill_dt = timed(
+            lambda: model(ids, use_cache=True, logits_to_keep=args.hf_logits_to_keep),
+            args.device,
+            args.runs,
+        )
 
     with torch.inference_mode():
         out = model(ids[:, :8], use_cache=True, logits_to_keep=args.hf_logits_to_keep)
@@ -211,11 +245,17 @@ def bench_one(args, tok, model, bsz: int) -> list[dict[str, Any]]:
             "fast_token_backend_effective": last_fast_token_backend(model) or requested_backend,
             "native_graph_fused_recurrent": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT", "0") not in {"0", "false", "False", "no", "off"},
             "native_graph_fused_recurrent_output": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", "1") not in {"0", "false", "False", "no", "off"},
+            "native_graph_fused_recurrent_raw": effective_flag(model, "RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW", "fused_recurrent_raw", False),
             "native_graph_fused_output": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT", "1") not in {"0", "false", "False", "no", "off"},
             "native_graph_fused_output_project": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT_PROJECT", "0") not in {"0", "false", "False", "no", "off"},
             "native_graph_fused_wag_lora": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAG_LORA", "0") not in {"0", "false", "False", "no", "off"},
-            "native_graph_fused_wavg_lora": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA", "0") not in {"0", "false", "False", "no", "off"},
+            "native_graph_fused_wavg_lora": effective_wavg_lora(model, bsz),
             "native_graph_fused_projection": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_PROJECTION", "0") not in {"0", "false", "False", "no", "off"},
+            "native_graph_fused_norm_mix": effective_flag(model, "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX", "fused_norm_mix", False),
+            "native_graph_sm70_linear": effective_flag(model, "RWKV7_NATIVE_GRAPH_SM70_LINEAR", "sm70_linear", False),
+            "native_graph_ada_linear": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_LINEAR", "ada_linear", False),
+            "native_graph_ada_wagv_lora": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA", "ada_wagv_lora", False),
+            "native_graph_ada_sparse_ffn": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN", "ada_sparse_ffn", False),
             "decode_tokps_total": round((bsz * args.decode_tokens) / fast_dt, 1),
             "decode_tokps_per_seq": round(args.decode_tokens / fast_dt, 1),
             "decode_ms_per_step": round(1000 * fast_dt / args.decode_tokens, 2),

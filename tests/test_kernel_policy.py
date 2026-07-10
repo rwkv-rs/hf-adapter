@@ -17,9 +17,12 @@ def test_gpu_family_classification() -> None:
     cases = [
         ("Tesla P100-PCIE-16GB", (6, 0), "pascal"),
         ("Tesla V100-PCIE-32GB", (7, 0), "volta"),
+        ("NVIDIA A800-SXM4-80GB", (8, 0), "ampere"),
+        ("NVIDIA RTX A6000", (8, 6), "ampere"),
         ("NVIDIA GeForce RTX 4090", (8, 9), "ada"),
         ("NVIDIA H100 SXM", (9, 0), "hopper"),
         ("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0), "blackwell"),
+        ("NVIDIA GeForce RTX 5090", (12, 0), "blackwell"),
         ("AMD Instinct MI300X", None, "amd_hip"),
     ]
     for name, capability, family in cases:
@@ -35,18 +38,37 @@ def test_policy_defaults_are_conservative() -> None:
     v100 = policy_for_profile(classify_gpu("Tesla V100-PCIE-32GB", (7, 0)))
     assert v100.fused_output
     assert v100.fused_recurrent_output
+    assert v100.fused_recurrent_raw
+    assert v100.fast_prefill
+    assert v100.fused_prefill_scan
+    assert v100.fused_prefill_state_prep
+    assert v100.fused_prefill_state_scan
+    assert v100.fused_prefill_state_scan_max_batch == 1
+    assert v100.fused_prefill_output
+    assert v100.fused_norm_mix
+    assert v100.fused_wavg_lora
+    assert v100.wavg_lora_bsz1_max_hidden == 1024
+    assert v100.sm70_linear
     assert not v100.fused_projection
     assert not v100.fused_output_project
 
     ada = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 4090", (8, 9)))
     assert ada.fused_output
     assert ada.fused_recurrent_output
+    assert ada.fused_recurrent_raw
+    assert ada.fused_norm_mix
+    assert not ada.fast_prefill
+    assert not ada.fused_prefill_state_scan
     assert not ada.fused_projection
+    assert ada.ada_linear
+    assert ada.ada_wagv_lora
+    assert not ada.ada_sparse_ffn
 
-    blackwell = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0)))
+    blackwell = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 5090", (12, 0)))
     assert blackwell.fused_output
     assert blackwell.fused_recurrent_output
     assert not blackwell.fused_projection
+    assert "triton_compat" in blackwell.notes
 
 
 def test_every_policy_family_has_an_adaptation_rule() -> None:
@@ -57,9 +79,12 @@ def test_every_policy_family_has_an_adaptation_rule() -> None:
         classify_gpu("Tesla V100-PCIE-32GB", (7, 0)),
         classify_gpu("NVIDIA T4", (7, 5)),
         classify_gpu("NVIDIA A100-SXM4-80GB", (8, 0)),
+        classify_gpu("NVIDIA A800-SXM4-80GB", (8, 0)),
+        classify_gpu("NVIDIA RTX A6000", (8, 6)),
         classify_gpu("NVIDIA GeForce RTX 4090", (8, 9)),
         classify_gpu("NVIDIA H100 SXM", (9, 0)),
         classify_gpu("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0)),
+        classify_gpu("NVIDIA GeForce RTX 5090", (12, 0)),
         classify_gpu("AMD Instinct MI300X", None, is_hip=True),
     ]
     for profile in cases:
@@ -73,6 +98,7 @@ def test_every_policy_family_has_an_adaptation_rule() -> None:
     # also documents unvalidated fallback families.
     for family in ("unknown_cuda", "legacy_cuda", "pascal", "volta", "ada", "blackwell", "amd_hip"):
         assert family in ADAPTATION_RULES
+    assert any("A6000" in card for card in ADAPTATION_RULES["ampere"].cards)
 
 
 def test_env_helpers_override_defaults() -> None:

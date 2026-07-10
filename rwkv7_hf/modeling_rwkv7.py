@@ -17,6 +17,27 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 _FLA_IMPORT_ERROR: Exception | None = None
 
 try:
+    from .triton_compat import apply_runtime_compat as _rwkv7_apply_runtime_compat
+except ImportError:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from triton_compat import apply_runtime_compat as _rwkv7_apply_runtime_compat
+    except Exception:  # pragma: no cover - compatibility helper is optional
+        _rwkv7_apply_runtime_compat = None
+if _rwkv7_apply_runtime_compat is not None:
+    _rwkv7_apply_runtime_compat()
+
+# Keep native_quant_policy as a first-level remote-code dependency. Some
+# Transformers trust_remote_code versions copy only direct relative imports into
+# the module cache before scanning helper files such as native_quant_mm8/mm4.
+try:  # pragma: no cover - packaging guard
+    from .native_quant_policy import NATIVE_MM_POLICIES as _RWKV7_NATIVE_MM_POLICIES
+except ImportError:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from native_quant_policy import NATIVE_MM_POLICIES as _RWKV7_NATIVE_MM_POLICIES
+    except Exception:
+        _RWKV7_NATIVE_MM_POLICIES = ("memory", "speed")
+
+try:
     from fla.models.rwkv7.modeling_rwkv7 import RWKV7Model as _RWKV7Model
     from fla.models.rwkv7.modeling_rwkv7 import RWKV7ForCausalLM as _RWKV7ForCausalLM
     from fla.models.utils import Cache as _FLACache
@@ -85,24 +106,47 @@ try:
     from .native_jit import block_step as _native_jit_block_step
     from .native_jit import block_step_batched as _native_jit_block_step_batched
     from .native_jit import extract as _native_jit_extract
+    from .native_jit import extract_graph as _native_graph_extract
     from .native_jit import _block_ip as _native_graph_block_ip
     from .native_jit import _block_ip_batched as _native_graph_block_ip_batched
+    from .native_jit import _native_graph_linear_dispatch
     from .native_jit import prefill as _native_jit_prefill
 except Exception:  # pragma: no cover - optional remote-code fast path
     try:
         from native_jit import block_step as _native_jit_block_step
         from native_jit import block_step_batched as _native_jit_block_step_batched
         from native_jit import extract as _native_jit_extract
+        from native_jit import extract_graph as _native_graph_extract
         from native_jit import _block_ip as _native_graph_block_ip
         from native_jit import _block_ip_batched as _native_graph_block_ip_batched
+        from native_jit import _native_graph_linear_dispatch
         from native_jit import prefill as _native_jit_prefill
     except Exception:
         _native_jit_block_step = None
         _native_jit_block_step_batched = None
         _native_jit_extract = None
+        _native_graph_extract = None
         _native_graph_block_ip = None
         _native_graph_block_ip_batched = None
+        _native_graph_linear_dispatch = None
         _native_jit_prefill = None
+
+# HF dynamic-module discovery copies files referenced by direct relative
+# imports in this top-level remote-code file.  The native backend reaches
+# ``native.py`` through ``native_model.py``; keep an explicit non-executed edge
+# here so fresh caches contain the whole native dependency set.
+if False:  # pragma: no cover
+    from .dplr_prefill import dplr_chunk_scan as _rwkv7_dplr_dependency_sentinel
+    from .dplr_prefill_triton import dplr_chunk_scan_triton as _rwkv7_dplr_triton_dependency_sentinel
+    from .fused_attention_projection import fused_rkv_wag_projection as _rwkv7_fused_attn_projection_dependency_sentinel
+    from .fused_decode_norm_mix import fused_attn_norm_mix6_decode as _rwkv7_fused_decode_norm_mix_dependency_sentinel
+    from .sm70_linear import sm70_linear as _rwkv7_sm70_linear_dependency_sentinel
+    from .fused_lora import fused_wag_lora as _rwkv7_fused_lora_dependency_sentinel
+    from .fused_output import fused_attn_output_prepare as _rwkv7_fused_output_dependency_sentinel
+    from .fused_prefill import fused_prefill_state_prep as _rwkv7_fused_prefill_dependency_sentinel
+    from .fused_recurrent_update import fused_recurrent_update as _rwkv7_fused_recurrent_dependency_sentinel
+    from .fused_time_mix import fused_attn_shift_mix as _rwkv7_fused_time_mix_dependency_sentinel
+    from .native import _init_state_batched as _rwkv7_native_dependency_sentinel
 
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
@@ -115,6 +159,19 @@ def _rwkv7_kernel_policy():
         return current_kernel_policy(torch_module=torch)
     except Exception:
         return None
+
+
+def _native_model_backend_requested() -> bool:
+    raw = os.environ.get("RWKV7_NATIVE_MODEL")
+    if raw is not None:
+        return raw not in _FALSE_VALUES
+    policy = _rwkv7_kernel_policy()
+    profile = getattr(policy, "profile", None)
+    family = getattr(profile, "family", None)
+    # Some older CUDA families cannot reliably run the optimized FLA/Triton
+    # RWKV-7 kernels. Route them to the pure PyTorch backend unless the user
+    # overrides it.
+    return family in {"pascal", "legacy_cuda"}
 
 
 def _fast_cache_enabled() -> bool:
@@ -157,7 +214,8 @@ def _fast_forward_quant_enabled() -> bool:
 def _fast_prefill_enabled() -> bool:
     """Allow normal HF forward/generate to use the native prefill path."""
 
-    return env_flag("RWKV7_FAST_PREFILL", False)
+    policy = _rwkv7_kernel_policy()
+    return env_flag("RWKV7_FAST_PREFILL", bool(getattr(policy, "fast_prefill", False)))
 
 
 def _bnb_skip_policy(policy: str | None = None) -> str:
@@ -208,6 +266,14 @@ def _native_graph_fused_recurrent_output_requested() -> bool:
     return env_flag("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", default)
 
 
+def _native_graph_fused_recurrent_raw_requested() -> bool:
+    """Whether W decay and K/KK preparation are folded into recurrence."""
+
+    policy = _rwkv7_kernel_policy()
+    default = bool(getattr(policy, "fused_recurrent_raw", False))
+    return env_flag("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW", default)
+
+
 def _native_graph_fused_output_requested() -> bool:
     """Whether native-graph runners should capture the experimental output-prep kernel."""
 
@@ -254,44 +320,58 @@ def _native_graph_fused_wavg_lora_requested() -> bool:
     return env_flag("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA", default)
 
 
-def _native_graph_w4_rkv_requested() -> bool:
-    """Whether native-graph packs should include projection-major W4 R/K/V."""
-
-    return env_flag("RWKV7_NATIVE_GRAPH_W4_RKV", False)
-
-
-def _native_graph_w4_rkv_config_key(batch_size: int) -> tuple[int, int, int]:
-    """Cache-key mirror of the native-jit W4 kernel configuration."""
-
+def _native_graph_fused_wavg_lora_bsz1_max_hidden() -> int:
     policy = _rwkv7_kernel_policy()
-    family = str(getattr(getattr(policy, "profile", None), "family", ""))
-    group_size = _native_graph_w4_rkv_group_size_key()
-    if family == "ada" and int(batch_size) <= 1:
-        defaults = (32, 64, 4)
-    elif int(batch_size) <= 1:
-        defaults = (8, 64, 1)
-    elif int(batch_size) <= 4:
-        defaults = (16, 128, 4)
-    else:
-        defaults = (16, 128, 2)
-    if group_size:
-        defaults = (defaults[0], group_size // 2, defaults[2])
-    return (
-        env_int("RWKV7_NATIVE_GRAPH_W4_RKV_BLOCK_M", defaults[0], lower=1, upper=128),
-        env_int("RWKV7_NATIVE_GRAPH_W4_RKV_BLOCK_K", defaults[1], lower=1, upper=512),
-        env_int("RWKV7_NATIVE_GRAPH_W4_RKV_NUM_WARPS", defaults[2], lower=1, upper=8),
+    default = getattr(policy, "wavg_lora_bsz1_max_hidden", None)
+    return env_int(
+        "RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BSZ1_MAX_HIDDEN",
+        0 if default is None else int(default),
+        lower=0,
     )
 
 
-def _native_graph_w4_rkv_group_size_key() -> int:
+def _native_graph_fused_norm_mix_requested() -> bool:
     policy = _rwkv7_kernel_policy()
-    family = str(getattr(getattr(policy, "profile", None), "family", ""))
-    value = env_int(
-        "RWKV7_NATIVE_GRAPH_W4_RKV_GROUP_SIZE", 32 if family == "ada" else 0, lower=0, upper=1024
-    )
-    if value and value % 2:
-        raise ValueError("RWKV7_NATIVE_GRAPH_W4_RKV_GROUP_SIZE must be even")
+    default = bool(getattr(policy, "fused_norm_mix", False))
+    return env_flag("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX", default)
+
+
+def _native_graph_fused_norm_mix_num_warps() -> int:
+    value = env_int("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS", 4, lower=1, upper=8)
+    if value not in {1, 2, 4, 8}:
+        raise ValueError(f"RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS must be one of 1, 2, 4, or 8; got {value}")
     return value
+
+
+def _native_graph_sm70_linear_requested() -> bool:
+    policy = _rwkv7_kernel_policy()
+    return env_flag("RWKV7_NATIVE_GRAPH_SM70_LINEAR", bool(getattr(policy, "sm70_linear", False)))
+
+
+def _native_graph_ada_linear_requested() -> bool:
+    policy = _rwkv7_kernel_policy()
+    return env_flag("RWKV7_NATIVE_GRAPH_ADA_LINEAR", bool(getattr(policy, "ada_linear", False)))
+
+
+def _native_graph_ada_linear_signature() -> tuple[str, str]:
+    return (
+        os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROWS", "2 4"),
+        os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROLES", "auto"),
+    )
+
+
+def _native_graph_ada_wagv_lora_requested() -> bool:
+    policy = _rwkv7_kernel_policy()
+    return env_flag(
+        "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA", bool(getattr(policy, "ada_wagv_lora", False))
+    )
+
+
+def _native_graph_ada_sparse_ffn_requested() -> bool:
+    policy = _rwkv7_kernel_policy()
+    return env_flag(
+        "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN", bool(getattr(policy, "ada_sparse_ffn", False))
+    )
 
 
 def _native_graph_rkv_policy() -> str:
@@ -313,7 +393,7 @@ def _native_graph_vkwr_rkv_thresholds() -> tuple[int, int]:
     vals = []
     for name, default, lower, upper in (
         ("RWKV7_NATIVE_GRAPH_RKV_MIN_HIDDEN", 1, 1, None),
-        ("RWKV7_NATIVE_GRAPH_RKV_MAX_ROWS", 64, 4, 4096),
+        ("RWKV7_NATIVE_GRAPH_RKV_MAX_ROWS", 64, 1, 4096),
     ):
         raw = os.environ.get(name, str(default)).strip()
         try:
@@ -367,6 +447,16 @@ def _linear_direct(module, x: torch.Tensor) -> torch.Tensor:
     if type(module) is not torch.nn.Linear:
         return module(x)
     return F.linear(x, module.weight, module.bias)
+
+
+def _native_graph_head_linear(module, x: torch.Tensor) -> torch.Tensor:
+    """Native-graph lm_head with an optional measured sm_70 bsz=1 route."""
+
+    if type(module) is not torch.nn.Linear or module.bias is not None:
+        return module(x)
+    if _native_graph_linear_dispatch is None:
+        return F.linear(x, module.weight)
+    return _native_graph_linear_dispatch(x, module.weight, role="head")
 
 
 def _lora_direct(module, x: torch.Tensor) -> torch.Tensor:
@@ -526,7 +616,7 @@ class _RWKV7NativeGraphTokenRunner:
         for li, p in enumerate(self.packs):
             x = _native_graph_block_ip(x, self.state[li], self.xpa[li], self.xpf[li], self.v_first, p)
         out = F.layer_norm(x, [self.hidden], self.norm_w, self.norm_b, 1e-5)
-        self.logits.copy_(_linear_direct(self.head_module, out).reshape(-1))
+        self.logits.copy_(_native_graph_head_linear(self.head_module, out).reshape(-1))
 
     def _capture(self) -> None:
         warm = torch.cuda.Stream(device=self.device)
@@ -675,7 +765,7 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         for li, p in enumerate(self.packs):
             x = _native_graph_block_ip_batched(x, self.state[li], self.xpa[li], self.xpf[li], self.v_first, p)
         out = F.layer_norm(x, [self.hidden], self.norm_w, self.norm_b, 1e-5)
-        self.logits.copy_(_linear_direct(self.head_module, out).reshape(self.batch_size, self.vocab_size))
+        self.logits.copy_(_native_graph_head_linear(self.head_module, out).reshape(self.batch_size, self.vocab_size))
 
     def _capture(self) -> None:
         warm = torch.cuda.Stream(device=self.device)
@@ -1095,17 +1185,17 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     config_class = RWKV7Config
     # Transformers >=5 expects dict-like _tied_weights_keys in save_pretrained.
     _tied_weights_keys = {}
-    # Generic bitsandbytes quantization is very slow on the tiny RWKV-7 LoRA
-    # rank projections (for example rank=32 is not covered by efficient 4-bit
-    # kernels on V100). Keep those small matrices dense and quantize the large
-    # projections/FFN weights instead; this preserves the memory-saving direction
-    # while avoiding a known low-throughput quantized micro-kernel.
+    # Generic bitsandbytes quantization is very slow on tiny RWKV-7 LoRA rank
+    # projections on some accelerators. Keep those small matrices dense and
+    # quantize the large projections/FFN weights instead; this preserves the
+    # memory-saving direction while avoiding known low-throughput quantized
+    # micro-kernels.
     _rwkv7_bnb_skip_modules = ["lm_head", r".*_lora\.lora\.[02]"]
     # Optional speed/memory trade-off policies for bitsandbytes inference:
     # - memory: quantize all large projection/FFN matrices (smallest footprint).
-    # - decode_hot: keep attention r/k/v/o projections dense; V100 smoke showed
-    #   this improves W4 cached decode while still keeping a lower footprint
-    #   than fp16. FFN key/value remain quantized.
+    # - decode_hot: keep attention r/k/v/o projections dense; validation smoke
+    #   showed this can improve W4 cached decode while still keeping a lower
+    #   footprint than fp16. FFN key/value remain quantized.
     # - dense: keep all large Linear modules dense (diagnostic upper bound).
     _rwkv7_bnb_policy_extra_skips = {
         "memory": [],
@@ -1145,18 +1235,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         )
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
-        if os.environ.get("RWKV7_NATIVE_MODEL", "0") not in _FALSE_VALUES:
-            # Opt-in fla-free backend: load NativeRWKV7ForCausalLM instead of
-            # the FLA wrapper. Same checkpoint, same HF from_pretrained/generate
-            # API; bypasses the fla runtime dependency and the FLA backward
-            # kernels that fail on some GPUs (e.g. Blackwell sm_120 shared-mem).
-            from .native_model import NativeRWKV7ForCausalLM
-
-            kwargs.pop("rwkv7_bnb_skip_policy", None)
-            return NativeRWKV7ForCausalLM.from_pretrained(
-                pretrained_model_name_or_path, *model_args, **kwargs
-            )
+    def _rwkv7_prepare_bnb_kwargs(cls, pretrained_model_name_or_path, kwargs: dict[str, Any]):
         rwkv7_bnb_skip_policy = _bnb_skip_policy(kwargs.pop("rwkv7_bnb_skip_policy", None))
         quantization_config = kwargs.get("quantization_config")
         if quantization_config is None and (kwargs.get("load_in_8bit") or kwargs.get("load_in_4bit")):
@@ -1178,20 +1257,62 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             existing = list(getattr(quantization_config, "llm_int8_skip_modules", None) or [])
             merged = list(dict.fromkeys([*existing, *cls.rwkv7_bnb_skip_modules(rwkv7_bnb_skip_policy, config_for_skip)]))
             quantization_config.llm_int8_skip_modules = merged
+        return rwkv7_bnb_skip_policy, quantization_config
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
+        rwkv7_bnb_skip_policy, quantization_config = cls._rwkv7_prepare_bnb_kwargs(
+            pretrained_model_name_or_path,
+            kwargs,
+        )
+        if _native_model_backend_requested():
+            # FLA-free backend: explicit opt-in via RWKV7_NATIVE_MODEL, or a
+            # conservative policy fallback for CUDA generations whose FLA/Triton
+            # kernels are known to be unavailable. Same checkpoint and HF API.
+            from .native_model import NativeRWKV7ForCausalLM
+
+            model = NativeRWKV7ForCausalLM.from_pretrained(
+                pretrained_model_name_or_path, *model_args, **kwargs
+            )
+            if quantization_config is not None:
+                setattr(model, "_rwkv7_bnb_skip_policy", rwkv7_bnb_skip_policy)
+                if getattr(model, "config", None) is not None:
+                    setattr(model.config, "rwkv7_bnb_skip_policy", rwkv7_bnb_skip_policy)
+            return model
         model = super().from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
         if quantization_config is not None:
             setattr(model, "_rwkv7_bnb_skip_policy", rwkv7_bnb_skip_policy)
             if getattr(model, "config", None) is not None:
                 setattr(model.config, "rwkv7_bnb_skip_policy", rwkv7_bnb_skip_policy)
-        if quantization_config is None and bool(getattr(model.config, "use_native_mm8", False)):
-            # Persisted native int8 (mm8): re-quantize eligible linears from the
-            # fp16 weights. Deterministic, so it round-trips the saved state.
-            from .native_quant_mm8 import quantize_model_mm8
+        use_native_mm8 = bool(getattr(model.config, "use_native_mm8", False))
+        use_native_mm4 = bool(getattr(model.config, "use_native_mm4", False))
+        if quantization_config is None:
+            if use_native_mm8 and use_native_mm4:
+                raise ValueError("use_native_mm8 and use_native_mm4 are mutually exclusive")
+            # Persisted native W8/W4: re-quantize eligible linears from fp
+            # weights. Deterministic, so it round-trips the saved state.
+            # This path is bitsandbytes-free and is also used by Apple/CPU
+            # native fallback smokes.
+            if use_native_mm8:
+                from .native_quant_mm8 import quantize_model_mm8
 
-            quantize_model_mm8(
-                model,
-                min_params=int(getattr(model.config, "native_mm8_min_params", 8_000_000)),
-            )
+                replaced = quantize_model_mm8(
+                    model,
+                    min_params=int(getattr(model.config, "native_mm8_min_params", 8_000_000)),
+                    policy=str(getattr(model.config, "native_mm8_policy", "memory")),
+                )
+                setattr(model, "_rwkv7_native_mm_quantization", "mm8")
+                setattr(model, "_rwkv7_native_mm_replaced_modules", int(replaced))
+            elif use_native_mm4:
+                from .native_quant_mm4 import quantize_model_mm4
+
+                replaced = quantize_model_mm4(
+                    model,
+                    min_params=int(getattr(model.config, "native_mm4_min_params", 8_000_000)),
+                    policy=str(getattr(model.config, "native_mm4_policy", "memory")),
+                )
+                setattr(model, "_rwkv7_native_mm_quantization", "mm4")
+                setattr(model, "_rwkv7_native_mm_replaced_modules", int(replaced))
         return model
 
     def resize_token_embeddings(self, new_num_tokens: int | None = None, *args, **kwargs):
@@ -1547,10 +1668,13 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return logits, past_key_values
         return CausalLMOutputWithPast(logits=logits, past_key_values=past_key_values)
 
-    def _rwkv7_native_jit_packs(self):
+    def _rwkv7_native_jit_packs(self, *, for_graph: bool = False):
         if _native_jit_block_step is None or _native_jit_block_step_batched is None or _native_jit_extract is None:
             raise RuntimeError("native_jit fast-token backend is unavailable; copy native_jit.py into the model repo")
-        cache = getattr(self, "_rwkv7_native_jit_pack_cache", None)
+        if for_graph and _native_graph_extract is None:
+            raise RuntimeError("native_graph operand extraction is unavailable; copy native_jit.py into the model repo")
+        cache_name = "_rwkv7_native_graph_pack_cache" if for_graph else "_rwkv7_native_jit_pack_cache"
+        cache = getattr(self, cache_name, None)
         weight = self.model.embeddings.weight
         key = (
             weight.device.type,
@@ -1558,14 +1682,14 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             weight.dtype,
             _native_graph_rkv_policy(),
             _native_graph_vkwr_rkv_thresholds(),
-            _native_graph_w4_rkv_requested(),
-            _native_graph_w4_rkv_group_size_key(),
-            env_flag("RWKV7_NATIVE_GRAPH_W4_RKV_MSE_SEARCH", True),
-            env_flag("RWKV7_NATIVE_GRAPH_W4_RKV_RELEASE_DENSE", False),
+            bool(for_graph),
+            str(getattr(self, "_rwkv7_native_mm_quantization", "none")),
+            int(getattr(self, "_rwkv7_native_mm_replaced_modules", 0)),
         )
         if cache is None or cache[0] != key:
-            packs, _, _, _ = _native_jit_extract(self)
-            self._rwkv7_native_jit_pack_cache = (key, packs)
+            extractor = _native_graph_extract if for_graph else _native_jit_extract
+            packs, _, _, _ = extractor(self)
+            setattr(self, cache_name, (key, packs))
             return packs
         return cache[1]
 
@@ -1580,6 +1704,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             int(packs[0][2]),
             _native_graph_fused_recurrent_requested(),
             _native_graph_fused_recurrent_output_requested(),
+            _native_graph_fused_recurrent_raw_requested(),
             _native_graph_fused_output_requested(),
             _native_graph_fused_output_project_requested(),
             _native_graph_fused_output_project_block_m(),
@@ -1587,14 +1712,17 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_fused_wag_lora_requested(),
             _native_graph_fused_wag_lora_blocks(),
             _native_graph_fused_wavg_lora_requested(),
+            _native_graph_fused_wavg_lora_bsz1_max_hidden(),
             _native_graph_fused_wavg_lora_blocks(),
+            _native_graph_fused_norm_mix_requested(),
+            _native_graph_fused_norm_mix_num_warps(),
+            _native_graph_sm70_linear_requested(),
+            _native_graph_ada_linear_requested(),
+            _native_graph_ada_linear_signature(),
+            _native_graph_ada_wagv_lora_requested(),
+            _native_graph_ada_sparse_ffn_requested(),
             _native_graph_rkv_policy(),
             _native_graph_vkwr_rkv_thresholds(),
-            _native_graph_w4_rkv_requested(),
-            _native_graph_w4_rkv_group_size_key(),
-            env_flag("RWKV7_NATIVE_GRAPH_W4_RKV_MSE_SEARCH", True),
-            env_flag("RWKV7_NATIVE_GRAPH_W4_RKV_RELEASE_DENSE", False),
-            _native_graph_w4_rkv_config_key(int(batch_size)),
             int(batch_size),
         )
         cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)
@@ -2148,7 +2276,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         small LRU per model instance, keyed by active batch size. Set
         `RWKV7_NATIVE_GRAPH_CACHE_SIZE` to tune the retained runner count.
         """
-        packs = self._rwkv7_native_jit_packs()
+        packs = self._rwkv7_native_jit_packs(for_graph=True)
         runner = self._rwkv7_native_graph_runner(packs, int(token.numel()))
         logits = runner.replay(token, past_key_values)
         past_key_values._seen_tokens += 1

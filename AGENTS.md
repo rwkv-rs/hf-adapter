@@ -39,87 +39,53 @@ roadmap.
   Do not spend the next phase on wrapper/cache micro-optimizations.
 - Forbidden directions: wrapper micro-optimization as the main plan, native
   vLLM/SGLang work, defaulting the full-head scan+output fused prefill path,
-  and quantized-speed claims before a native fused quant kernel beats fp16
-  end-to-end.
+  and full-memory quantized-speed claims before a native fused quant kernel
+  beats fp16 end-to-end. Speed-oriented quantization may be claimed separately
+  only when W8/W4 rows show lower model footprint, fp16-or-better decode on the
+  exact card, and logits/greedy-token alignment vs fp16.
 - Required next validation loop: RTX 4090 fp16, bsz=1/4, prompt512 prefill,
   decode, correctness, peak memory/VRAM, and `bench/analyze_results.py`
   reporting.
 
-## Speed + Accuracy Acceptance Overlay
+## Current RTX 4090 Milestone (2026-07-10)
 
-Do not optimize against speed-only or shallow logit-diff checks. The current
-acceptance target must include the Albatross-style combined speed/accuracy
-loop:
+- 0.4B dense fp16 native-graph decode is now about `694/1344/2419/2984`
+  tok/s for bsz1/2/4/8, approximately `0.88x/0.93x/0.94x/1.33x` of the
+  matching Albatross rows.
+- The optional TorchAO group-128 W4 lane is a real speed lane, not only a
+  memory smoke. With bf16 activations and the Ada bf16 W/A/G/V fusion it reaches
+  `927/1713/3093/3407 tok/s`, or `1.17x-1.52x` Albatross, for 0.4B
+  bsz1/2/4/8. Payload is `0.399x`, logit cosine is `>=0.999239`, and next-token
+  equality passes. 1.5B bsz1/2 is `2.17x/2.37x` its bf16 baseline with
+  `0.355x` payload.
+- Do not generalize the W4 decode result to all quantization: W4 prefill is only
+  `0.819x-0.831x` bf16 for the measured B1/B4 T64/T256 rows, and W8 remains
+  below fp16. The next quant priority is W8 tensor-core/grouped projection,
+  followed by quantized prefill.
+- Evidence and reproduce commands are in the RTX 4090 section of
+  `BENCHMARK.md`; the runtime integration is
+  `rwkv7_hf/native_quant_torchao.py` plus quant-aware native-graph operand
+  extraction in `rwkv7_hf/native_jit.py`.
 
-- Reference script: `BlinkDL/Albatross/faster3a_2605/eval_math500.py`.
-- Speed target: find the fastest GPU throughput by sweeping batch size / bsz
-  and report the best passing setting, not only bsz=1 prompt-prefill tok/s.
-- Accuracy target: report MATH500 `avg@64` / rollout-style pass metric using
-  the same math-verification style as the reference script.
-- Model-specific caution: different RWKV checkpoints have different FFN
-  `relu^2` sparsity patterns, so sparse FFN shortcuts must be evaluated per
-  model for both speed and accuracy.
-- Logit alignment target: use uncheatable compression ratio as the primary
-  logit-alignment signal, including compression ratio vs token position. Simple
-  max-diff/cosine/greedy checks are smoke tests only and are not enough for
-  acceptance.
+## Current V100 Decode Milestone
 
-## Current Experiment: KernelBench-Mega-style W4A16 Decode
+The 2026-07-10 sm70 pass adds decode norm/mix fusion, grouped shape-routed
+projection/FFN kernels, and raw recurrent-output preparation. Same-host
+0.1B/0.4B/1.5B × bsz1/2/4/8 measurements now span `0.629x-1.185x`
+Albatross: all 12 rows pass P1, all bsz8 rows pass P3, and 0.4B/1.5B bsz8
+exceed Albatross. The raw recurrent A/B is 32-step greedy-exact at 0.4B and
+1.5B bsz2. Evidence is under
+`bench/v100_sm70_decode_gap_20260710/`.
 
-Branch: `wangyue/kernelbench-mega-w4a16-bench`.
+This closes the V100 decode P1 floor, not the final mission. The next workers
+must pursue, in order:
 
-The experiment applies the KernelBench-Mega whole-timed-path lesson to the
-RWKV-7 decode-hot R/K/V projections. The previous single-launch W4 kernel kept
-R/K/V tiles and three fp32 accumulators in every Triton program. The candidate
-keeps one launch but makes projection a grid axis and consumes pre-stacked
-`[batch, 3, hidden]` activations plus projection-major packed weights.
+1. universal V100 P2/P3 for the remaining bsz1/2/4 rows;
+2. native fused W8/W4 with lower footprint and end-to-end speed >= fp16;
+3. exact-card reproduction on 4090/A100/H100/Blackwell and AMD fallback;
+4. continued prefill/DPLR work without regressing the promoted decode routes.
 
-Validated V100 evidence for the 0.4B model, sampled layers 0/1/11:
-
-- existing fused W4 batch-1: about `0.0897 ms`;
-- projection-axis pre-stacked W4 batch-1: about `0.0537 ms`, `1.67x` faster
-  than existing W4 and `1.33x` faster than three fp16 linears;
-- the same kernel remains about `1.67x` faster than existing W4 for batch
-  2/4/8 and is bit-identical to the existing W4 output;
-- packed weight footprint remains `0.252x` fp16;
-- paying `torch.stack` in the timed path reduces the result below fp16, so do
-  not integrate a wrapper-level stack and call the goal complete.
-
-The producer-integration gate is now complete on the experiment branch:
-
-- fused shift/mix writes `[batch, 3, hidden]` directly, with no timed
-  `torch.stack`;
-- R/K/V weights are packed projection-major once during native pack extraction;
-- complete 24-layer native-graph token-step A/B on V100 improves by median
-  `1.2456x / 1.1734x / 1.1456x / 1.0704x` for batch `1/2/4/8`;
-- dense-vs-W4 logit cosine is about `0.99948`, and a 16-token greedy check
-  matches `16/16` per sequence for all tested batch sizes;
-- exact absolute tok/s is provisional because both server GPUs had long-running
-  co-tenant jobs; the same-process A/B speedups were stable across three runs.
-
-The RTX 4090 gate is now complete on the 0.4B model. Three preheated independent
-whole-graph runs improve over dense fp16 by median `1.1970x / 1.2122x /
-1.1867x / 1.1467x` for batch `1/2/4/8`, with minimum logit cosine about
-`0.99948` and every 16-token greedy continuation matching. Ada batch 1 uses the
-card-local `(BLOCK_M=32, BLOCK_K=64, warps=4)` default; batches 2/4/8 retain
-their independently confirmed layouts. The feature itself remains opt-in.
-
-Required next gate: remove/replace the dense R/K/V copies so the model-level
-memory footprint realizes the packed `0.252x` R/K/V storage, then replace the
-row-wise W4 format with group-wise/asymmetric quality comparable to the target
-Q*_K_M class. Row-wise W4 quality remains unfinished; the earlier random-vector
-batch-8 minimum cosine was about `0.9789` even though the new kernel exactly
-matches the old W4 path.
-
-See `docs/performance/kernelbench_mega_w4a16_rkv_v100_20260710.md` and
-`bench/results_kernelbench_mega_w4a16_rkv_v100_20260710.jsonl`. Full graph
-integration evidence is in
-`docs/performance/native_graph_w4_rkv_v100_20260711.md` and
-`bench/results_native_graph_w4_rkv_v100_20260711.jsonl`. RTX 4090 evidence is
-in `docs/performance/native_graph_w4_rkv_4090_20260711.md` and
-`bench/results_native_graph_w4_rkv_4090_20260711.jsonl`.
-
-## Current Branch Goal: DPLR/WY Compiled Prefill Prototype
+## Parallel Prefill Goal: DPLR/WY Compiled Prototype
 
 Active branch work is now the opt-in DPLR/WY compiled prefill backend, not
 wrapper micro-optimization. Keep the default HF behavior unchanged unless a
@@ -431,10 +397,40 @@ Current exact-card evidence status:
   that currently keeps prefill occupancy acceptable. Per-layer bsz=1 breakdown
   shows the prefill gap is broad across layers, so pursue reusable per-layer
   fusion patterns rather than layer-specific patches.
-- RTX 5070 Laptop / 50-series (`sm_120` observed): touched Blackwell path; native
-  no-FLA compatibility is important because some FLA training kernels can be
-  architecture-limited; fusion wins must be re-proven end-to-end on each 50-card.
-- Pascal/Turing/Ampere/Hopper/AMD: registry rules exist, but support remains TODO
+- RTX 5070 Laptop / RTX 5090 / 50-series (`sm_120` observed): touched
+  Blackwell path. RTX 5090 now has HF load/generate, HF API, native-prefill,
+  dynamic batching, W8/W4 functional quant, native mm8/mm4 benchmark rows,
+  native/no-FLA Trainer + PEFT LoRA, bsz sweep, and Blackwell
+  Triton/torch.compile compatibility evidence under
+  `bench/5090_blackwell_hf_matrix_20260704/` and
+  `bench/5090_blackwell_native_quant_20260704/`; keep adding exact-card
+  rows when new 50-series kernels are claimed. Native no-FLA compatibility is
+  important because some FLA training kernels can be architecture-limited;
+  fusion wins must be re-proven end-to-end on each 50-card.
+- A800 (`sm_80`): touched Ampere server validation card; 0.4B / 1.5B /
+  2.9B bsz=1/2/4 batch sweep and W8/W4 memory-policy quantization rows exist
+  on `NVIDIA A800-SXM4-80GB`, plus 0.1B generate/API/PEFT/alignment/Trainer/
+  SFT/DPO/GRPO rows, 7.2B HF `larger_model_smoke`, 0.4B single-GPU and
+  2-GPU ZeRO-2/3 base/checkpoint-resume rows, and native mm8/mm4 rows for
+  0.4B / 1.5B / 2.9B / 7.2B / 13.3B.
+  Keep the Ampere defaults conservative: output fusions remain allowed,
+  prefill-scan, projection/LoRA, and quantized-speed fusions stay opt-in until
+  exact-card sweeps prove end-to-end value.
+- RTX A6000 (`sm_86`): touched Ampere workstation validation card; 2026-07-04
+  rows on `NVIDIA RTX A6000` cover 0.1B core smoke, 0.4B / 1.5B / 2.9B /
+  7.2B fp16+bf16 load/generate and batch sweep, bnb W8/W4 functional/footprint
+  rows with slower decode telemetry, native mm8/mm4 decode telemetry, 0.4B /
+  1.5B / 2.9B Trainer/SFT/DPO and HF checkpoint resume, plus 2x A6000
+  ZeRO-2/ZeRO-3 base and resume to 2.9B.
+  These rows validate the conservative Ampere defaults on `sm_86`; they do not
+  promote prefill-scan, projection/LoRA, or quantized-speed kernels.
+- GTX 1080 Ti (`sm_61`): Pascal smoke evidence exists for 0.1B / fp16 /
+  default policy on one card. The safe default is native/no-FLA compatibility
+  because FLA/Triton RWKV-7 kernels can emit `sm_70` PTX features on Pascal.
+  Bnb 8/4-bit loading and decode speed rows exist but are slower than fp16, so
+  bnb remains a memory/compatibility fallback. Repository-native mm8/mm4 rows
+  exist for 0.1B with `lm_head` quantized and near-fp16 decode.
+- Turing/Hopper/AMD: registry rules exist, but support remains TODO
   until exact-card rows are added.
 
 #### Per-GPU adaptation checklist
@@ -467,9 +463,21 @@ Run this checklist for every new GPU before marking it as supported:
 - Default stance: compatibility-first; Pascal lacks the newer tensor-core path.
 - Default-on: `fast_cache` only.
 - Default-off: fused recurrent/output/projection/LoRA/prefill-scan kernels.
-- Required validation: common functional checklist plus at least one full
-  native_graph decode smoke on the exact card.
-- Quant rule: memory-only until a card-local W8/W4 row beats fp16 end-to-end.
+- Required validation: common functional checklist plus default native/no-FLA
+  decode smoke on the exact card. Native graph / fused-kernel smokes are opt-in
+  only and do not promote defaults without Pascal rows.
+- GTX 1080 Ti evidence: 2026-07-03, 0.1B, fp16, one `sm_61` GPU, driver
+  `550.127.05`, `nvidia-smi` CUDA `12.4`, PyTorch `2.7.1+cu118`,
+  Transformers `5.12.1`, bitsandbytes `0.49.2`, FLA `0.5.1`;
+  `smoke_hf_generate`, `test_hf_api_contract`, bnb W8/W4 quantized inference,
+  bnb W8/W4 speed, native mm8/mm4 speed, `bench_speed`, and bsz 1/2/4
+  `bench_batch_sweep` pass under the default native/no-FLA route. Optional 0.4B
+  fp16 `bench_speed` also passes. Training was not run.
+- Quant rule: current bnb W8/W4 rows are slower than fp16. Native mm8/mm4
+  `speed` policy (`lm_head` only) can be used for the "footprint drops while
+  decode is not slower" acceptance lane when exact-card rows also include
+  logits/greedy-token parity. Native `memory` policy remains a footprint lane,
+  not a speed claim, until fused quantized block kernels beat fp16.
 - Promotion rule: never inherit V100/4090/5070 fused defaults without Pascal rows.
 
 #### Volta / V100 (`sm_70`)
@@ -482,8 +490,10 @@ Run this checklist for every new GPU before marking it as supported:
 - Required validation: functional checklist plus HF Trainer, PEFT LoRA, TRL
   SFT/DPO/GRPO, checkpoint resume, decode greedy-match, cache telemetry, and
   Albatross A/B rows when available.
-- Quant rule: W8/W4 memory rows are valid; speed is unsolved until native/fused
-  quant beats fp16 end-to-end on V100.
+- Quant rule: W8/W4 memory rows are valid footprint evidence. Treat bnb and
+  native `memory` rows as non-speed paths unless they beat fp16. Native
+  `speed` policy may be reported as the speed-acceptance lane only with
+  card-local footprint, speed, and logits/greedy-token parity rows.
 - Promotion rule: any default change must preserve V100 training and decode rows.
 
 #### Turing / RTX 20 / T4 (`sm_75`)
@@ -498,7 +508,7 @@ Run this checklist for every new GPU before marking it as supported:
 - Promotion rule: projection/LoRA fusions stay opt-in until exact-card
   native_graph end-to-end speedup is measured.
 
-#### Ampere / A100 / RTX 30 (`sm_80`/`sm_86`)
+#### Ampere / A100 / A800 / RTX 30 (`sm_80`/`sm_86`)
 
 - Policy family: `ampere`.
 - Default stance: stable output/recurrent-output fusions may be enabled; larger
@@ -506,6 +516,42 @@ Run this checklist for every new GPU before marking it as supported:
 - Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
 - Default-off: prefill-scan by default, output-project, projection, WAG/WAVG LoRA
   fusions.
+- A800 adaptation rule:
+  - `NVIDIA A800-SXM4-80GB` has 0.4B / 1.5B / 2.9B fp16 HF adapter evidence
+    for bsz=1/2/4 native_graph decode and W8/W4 memory-policy quantization,
+    plus 0.1B generate/API/PEFT/alignment/Trainer/SFT/DPO/GRPO smokes, 7.2B
+    standard loading/generation, 13.3B bnb W8/W4 quantized smoke, 0.4B
+    single-GPU and 2-GPU ZeRO-2/3 base/checkpoint resume, and native mm8/mm4
+    rows for 0.4B / 1.5B / 2.9B / 7.2B / 13.3B. These rows validate the
+    conservative Ampere defaults only; they do not promote prefill-scan,
+    output-project, projection, LoRA, or quantized-speed kernels.
+  - Latest 2.9B prompt128/decode8 native_graph decode rows are `93.6`,
+    `199.1`, and `388.5` tok/s for bsz=1/2/4, with peak VRAM `6428.9`,
+    `7262.5`, and `8906.6` MiB. W8/W4 reduce 2.9B model footprint from
+    `5622.4` MB to `3222.4`/`2022.4` MB but remain slower than fp16. Native
+    mm8/mm4 reduce 2.9B model footprint from `5622.4` MB to `3865.7`/`2985.7`
+    MB, but decode falls from `110.7` tok/s fp16 to `20.5`/`19.5` tok/s. The
+    default `8_000_000` native-mm gate replaces every per-layer FFN
+    `key`/`value` matrix plus `lm_head`; A800 microbench rows show the current
+    Triton dequant-GEMV kernels do not beat fp16 cuBLAS on those shapes. A
+    `50_000_000` gate leaves only `lm_head` quantized and is roughly neutral for
+    1.5B/2.9B decode, but saves much less footprint. Larger native mm8/mm4 rows
+    also reduce footprint but remain slower than fp16: 7.2B falls from `36.1`
+    tok/s fp16 to `17.0`/`15.9` tok/s, and 13.3B falls from `10.2` tok/s fp16
+    to `7.7`/`8.6` tok/s. Quant speed is still unsolved on A800.
+- RTX A6000 adaptation rule:
+  - `NVIDIA RTX A6000` (`sm_86`, 48GB) has 2026-07-04 HF adapter rows in
+    `bench/results.jsonl` for 0.4B / 1.5B / 2.9B / 7.2B fp16+bf16 smoke,
+    native_graph batch sweep, bnb W8/W4, and native mm8/mm4 decode. Single-GPU
+    Trainer/SFT/DPO/resume rows pass for 0.4B / 1.5B / 2.9B; 2x A6000
+    ZeRO-2/ZeRO-3 base and resume rows pass to 2.9B.
+  - Latest fp16 native_graph decode rows are: 0.4B bsz1/8 `286.3`/`1750.2`
+    tok/s, 1.5B bsz1/4 `149.9`/`504.1` tok/s, 2.9B bsz1/2
+    `81.7`/`148.1` tok/s, and 7.2B bsz1/2 `41.4`/`78.7` tok/s. 7.2B fp16 and
+    bf16 load/generate fit within 48GB with `13997.8` MiB peak in the smoke
+    row. Bnb W8/W4 reduce footprint but are slower than fp16; native mm8/mm4
+    rows are real decode telemetry, not a production quant-speed win on larger
+    models.
 - Required validation: common functional checklist, larger-batch prefill, state
   cache reuse/hit-rate rows, W8/W4 rows, and ZeRO-2/ZeRO-3 smoke when training is
   claimed.
@@ -571,13 +617,6 @@ Run this checklist for every new GPU before marking it as supported:
     R/K/V+W/A/G rows are worse (`0.6823x` at bsz=1/T512 and `0.1471x` at
     bsz=4/T512), so do not wire the current two-launch projection prototype
     into prefill.
-  - Projection-axis W4 R/K/V decode is a separate positive opt-in path:
-    `RWKV7_NATIVE_GRAPH_W4_RKV=1` improves complete 24-layer token steps by
-    `1.1970x / 1.2122x / 1.1867x / 1.1467x` at bsz `1/2/4/8` on the 0.4B
-    checkpoint. Use Ada-local tiles `(32,64,4)`, `(16,128,4)`, `(16,128,4)`,
-    and `(16,128,2)` respectively; do not copy them to other GPU families.
-    This clears the speed gate for the quantized R/K/V slice, not the final W4
-    memory or quality gates, because dense fallback weights remain resident.
 - Required validation: common functional checklist, bsz=1/2/4/8 decode matrix,
   prefill scan A/B if fast prefill is claimed, quant end-to-end rows, and
   Albatross-ratio reporting.
@@ -612,8 +651,11 @@ Run this checklist for every new GPU before marking it as supported:
   - Quantization must include footprint, long/short decode speed, and greedy or
     quality rows. Treat bnb as a compatibility/memory baseline, not a fast path.
 - Mandatory before claiming support: import/generate, fast decode, dynamic batch,
-  chunked prefill, bnb W8/W4 functional inference, native_model no-FLA fallback,
-  and exact-card fused-kernel A/B rows.
+  chunked prefill, bnb W8/W4 functional inference, `triton_compat` remote-code
+  import on early sm_120 stacks, native_model no-FLA fallback/training smoke,
+  and exact-card fused-kernel A/B rows. For RTX 5090 specifically, keep
+  `bench/run_5090_hf_validation.sh` as the one-command smoke matrix and store
+  its dated output under `bench/5090_blackwell_*`.
 - Promotion rule: promote only kernels with exact-card greedy match and min bsz
   speedup >= 1.0x; otherwise leave them opt-in/telemetry.
 
@@ -640,6 +682,11 @@ Required goals:
 - Quantized speed should be no slower than fp16 as much as possible.
 - V100 may not be ideal for final int4/int8 speed validation because it lacks
   newer tensor core features.
+- Card-validation PRs must report native `mm8`/`mm4` decode tok/s + footprint
+  (PR #85/#88), not just bnb W8/W4. bnb is the generic fallback; `mm8`/`mm4`
+  (fused Triton dequant-GEMV) is this repo's quant path and the one that must
+  be validated per card. If `mm8`/`mm4` cannot run on a card (e.g. Pascal
+  sm_61 Triton `.evict_last` limits), record that as the conclusion instead.
 
 ## Current State
 
@@ -675,8 +722,11 @@ Recent completed evidence:
   prefill/decode ratios.
 - W8/W4 quantization rows record both canonical memory-target bnb behavior and
   `decode_hot` hybrid variants. The hybrid variants improve decode over generic
-  bnb on V100 while remaining below fp16/native-graph speed, so fused/native
-  quantized projection kernels remain the main quantization performance gap.
+  bnb on V100 while remaining below fp16/native-graph speed. For native
+  mm8/mm4, distinguish `memory` policy (maximum footprint reduction, may be
+  slower) from `speed` policy (small but real footprint reduction, speed gate).
+  Fused/native quantized projection kernels remain the main path for combining
+  large footprint reductions with fp16-or-better speed.
 
 ## Important Paths
 
@@ -786,8 +836,11 @@ python /home/data/wangyue/projects/rwkv7-hf-adapter/tests/test_peft_lora.py \
    fp16 kernel boundaries, GPU-specific layout/autotune, and DPLR/chunked
    prefill for bsz=1 prompt-prefill. Keep wrapper/cache work to compatibility
    and telemetry fixes.
-6. Finish HF quantized W8/W4 inference as memory-compatible first, and claim
-   quant speed only after native fused quant kernels beat W16/fp16 end-to-end.
+6. Finish HF quantized W8/W4 inference as two explicit lanes: `speed` policy
+   for the acceptance target (footprint lower than fp16, W8/W4 decode not
+   slower, logits aligned), and `memory` policy for maximum footprint reduction
+   that still needs fused quant kernels before it can claim fp16-or-better
+   speed.
 7. Validate on more GPUs and larger batch sizes.
 8. Start native Transformers implementation under `src/transformers/models/rwkv7/` style layout.
 9. Remove mandatory FLA dependency from the final HF implementation.

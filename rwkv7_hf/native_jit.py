@@ -21,6 +21,49 @@ def _linear_module(module, x: torch.Tensor) -> torch.Tensor:
     return module(x)
 
 
+def _graph_linear_operand(module):
+    """Return a dense weight when possible, otherwise retain the quant module.
+
+    Native CUDA-graph decode historically packed bare ``nn.Linear.weight``
+    tensors.  MM8/MM4 modules intentionally have no dense weight, so retaining
+    the module lets graph capture record their fused dequant GEMV without
+    materialising a second fp16 copy of the model.
+    """
+
+    if type(module) is torch.nn.Linear and type(module.weight) is torch.nn.Parameter:
+        return module.weight
+    return module
+
+
+def _graph_linear_is_dense(operand) -> bool:
+    return isinstance(operand, torch.Tensor)
+
+
+def _graph_linear_shape(operand) -> tuple[int, int]:
+    if _graph_linear_is_dense(operand):
+        return int(operand.shape[0]), int(operand.shape[1])
+    return int(operand.out_features), int(operand.in_features)
+
+
+def _graph_linear_call(x: torch.Tensor, operand) -> torch.Tensor:
+    if _graph_linear_is_dense(operand):
+        return F.linear(x, operand)
+    return operand(x)
+
+
+def _graph_linears_are_dense(*operands) -> bool:
+    return all(_graph_linear_is_dense(item) for item in operands)
+
+
+def _graph_linear_call_with_explicit_bias(x: torch.Tensor, operand, bias) -> torch.Tensor:
+    """Apply a packed linear whose module form already owns ``bias``."""
+
+    y = _graph_linear_call(x, operand)
+    if _graph_linear_is_dense(operand) and bias is not None:
+        y = y + bias
+    return y
+
+
 def _lm_head(model, x: torch.Tensor) -> torch.Tensor:
     return _linear_module(model.lm_head, x)
 
@@ -56,6 +99,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
     from .fused_recurrent_update import (
         fused_recurrent_output_prepare,
+        fused_recurrent_output_prepare_raw,
         fused_recurrent_output_prepare_available,
         fused_recurrent_scan,
         fused_recurrent_scan_available,
@@ -63,14 +107,6 @@ try:  # pragma: no cover - optional Triton fast path on CUDA hosts
         fused_recurrent_scan_clampw_available,
         fused_recurrent_scan_state_prep,
         fused_recurrent_scan_state_prep_available,
-        fused_recurrent_scan_state_prep_nokv,
-        fused_recurrent_scan_state_prep_nokv_available,
-        fused_recurrent_scan_state_prep_correction,
-        fused_recurrent_scan_state_prep_correction_available,
-        fused_recurrent_scan_state_prep_sk,
-        fused_recurrent_scan_state_prep_sk_available,
-        fused_recurrent_scan_state_prep_output_prepare,
-        fused_recurrent_scan_state_prep_output_prepare_available,
         fused_recurrent_scan_output_prepare,
         fused_recurrent_scan_output_prepare_available,
         fused_recurrent_update,
@@ -80,6 +116,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
         from fused_recurrent_update import (
             fused_recurrent_output_prepare,
+            fused_recurrent_output_prepare_raw,
             fused_recurrent_output_prepare_available,
             fused_recurrent_scan,
             fused_recurrent_scan_available,
@@ -87,14 +124,6 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
             fused_recurrent_scan_clampw_available,
             fused_recurrent_scan_state_prep,
             fused_recurrent_scan_state_prep_available,
-            fused_recurrent_scan_state_prep_nokv,
-            fused_recurrent_scan_state_prep_nokv_available,
-            fused_recurrent_scan_state_prep_correction,
-            fused_recurrent_scan_state_prep_correction_available,
-            fused_recurrent_scan_state_prep_sk,
-            fused_recurrent_scan_state_prep_sk_available,
-            fused_recurrent_scan_state_prep_output_prepare,
-            fused_recurrent_scan_state_prep_output_prepare_available,
             fused_recurrent_scan_output_prepare,
             fused_recurrent_scan_output_prepare_available,
             fused_recurrent_update,
@@ -102,6 +131,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         )
     except Exception:
         fused_recurrent_output_prepare = None  # type: ignore[assignment]
+        fused_recurrent_output_prepare_raw = None  # type: ignore[assignment]
         fused_recurrent_output_prepare_available = None  # type: ignore[assignment]
         fused_recurrent_scan = None  # type: ignore[assignment]
         fused_recurrent_scan_available = None  # type: ignore[assignment]
@@ -109,14 +139,6 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_recurrent_scan_clampw_available = None  # type: ignore[assignment]
         fused_recurrent_scan_state_prep = None  # type: ignore[assignment]
         fused_recurrent_scan_state_prep_available = None  # type: ignore[assignment]
-        fused_recurrent_scan_state_prep_nokv = None  # type: ignore[assignment]
-        fused_recurrent_scan_state_prep_nokv_available = None  # type: ignore[assignment]
-        fused_recurrent_scan_state_prep_correction = None  # type: ignore[assignment]
-        fused_recurrent_scan_state_prep_correction_available = None  # type: ignore[assignment]
-        fused_recurrent_scan_state_prep_sk = None  # type: ignore[assignment]
-        fused_recurrent_scan_state_prep_sk_available = None  # type: ignore[assignment]
-        fused_recurrent_scan_state_prep_output_prepare = None  # type: ignore[assignment]
-        fused_recurrent_scan_state_prep_output_prepare_available = None  # type: ignore[assignment]
         fused_recurrent_scan_output_prepare = None  # type: ignore[assignment]
         fused_recurrent_scan_output_prepare_available = None  # type: ignore[assignment]
         fused_recurrent_update = None  # type: ignore[assignment]
@@ -130,39 +152,10 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
     except Exception:
         dplr_chunk_scan = None  # type: ignore[assignment]
 
-try:  # pragma: no cover - optional CUDA extension prototype
-    from .cuda_state_scan import (
-        cuda_state_scan_prep,
-        cuda_state_scan_prep_available,
-        cuda_state_scan_prep_sk,
-        cuda_state_scan_prep_sk_available,
-    )
-except Exception:  # pragma: no cover - direct remote-file execution fallback
-    try:
-        from cuda_state_scan import (
-            cuda_state_scan_prep,
-            cuda_state_scan_prep_available,
-            cuda_state_scan_prep_sk,
-            cuda_state_scan_prep_sk_available,
-        )
-    except Exception:
-        cuda_state_scan_prep = None  # type: ignore[assignment]
-        cuda_state_scan_prep_available = None  # type: ignore[assignment]
-        cuda_state_scan_prep_sk = None  # type: ignore[assignment]
-        cuda_state_scan_prep_sk_available = None  # type: ignore[assignment]
-
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
     from .fused_output import (
         fused_attn_output_prepare,
         fused_attn_output_prepare_available,
-        fused_attn_output_prepare_from_correction,
-        fused_attn_output_prepare_from_correction_available,
-        fused_attn_output_prepare_from_g_mid,
-        fused_attn_output_prepare_from_g_mid_available,
-        fused_attn_output_prepare_from_sk_raw_v,
-        fused_attn_output_prepare_from_sk_raw_v_available,
-        fused_attn_output_prepare_raw_kv,
-        fused_attn_output_prepare_raw_kv_available,
         fused_attn_output_project,
         fused_attn_output_project_available,
     )
@@ -171,28 +164,12 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         from fused_output import (
             fused_attn_output_prepare,
             fused_attn_output_prepare_available,
-            fused_attn_output_prepare_from_correction,
-            fused_attn_output_prepare_from_correction_available,
-            fused_attn_output_prepare_from_g_mid,
-            fused_attn_output_prepare_from_g_mid_available,
-            fused_attn_output_prepare_from_sk_raw_v,
-            fused_attn_output_prepare_from_sk_raw_v_available,
-            fused_attn_output_prepare_raw_kv,
-            fused_attn_output_prepare_raw_kv_available,
             fused_attn_output_project,
             fused_attn_output_project_available,
         )
     except Exception:
         fused_attn_output_prepare = None  # type: ignore[assignment]
         fused_attn_output_prepare_available = None  # type: ignore[assignment]
-        fused_attn_output_prepare_from_correction = None  # type: ignore[assignment]
-        fused_attn_output_prepare_from_correction_available = None  # type: ignore[assignment]
-        fused_attn_output_prepare_from_g_mid = None  # type: ignore[assignment]
-        fused_attn_output_prepare_from_g_mid_available = None  # type: ignore[assignment]
-        fused_attn_output_prepare_from_sk_raw_v = None  # type: ignore[assignment]
-        fused_attn_output_prepare_from_sk_raw_v_available = None  # type: ignore[assignment]
-        fused_attn_output_prepare_raw_kv = None  # type: ignore[assignment]
-        fused_attn_output_prepare_raw_kv_available = None  # type: ignore[assignment]
         fused_attn_output_project = None  # type: ignore[assignment]
         fused_attn_output_project_available = None  # type: ignore[assignment]
 
@@ -218,27 +195,11 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_rkv_wavg_projection_available = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
-    from .fused_lora import (
-        fused_shift_wavg_lora,
-        fused_shift_wavg_lora_available,
-        fused_wag_lora,
-        fused_wag_lora_available,
-        fused_wavg_lora,
-        fused_wavg_lora_available,
-    )
+    from .fused_lora import fused_wag_lora, fused_wag_lora_available, fused_wavg_lora, fused_wavg_lora_available
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
-        from fused_lora import (
-            fused_shift_wavg_lora,
-            fused_shift_wavg_lora_available,
-            fused_wag_lora,
-            fused_wag_lora_available,
-            fused_wavg_lora,
-            fused_wavg_lora_available,
-        )
+        from fused_lora import fused_wag_lora, fused_wag_lora_available, fused_wavg_lora, fused_wavg_lora_available
     except Exception:
-        fused_shift_wavg_lora = None  # type: ignore[assignment]
-        fused_shift_wavg_lora_available = None  # type: ignore[assignment]
         fused_wag_lora = None  # type: ignore[assignment]
         fused_wag_lora_available = None  # type: ignore[assignment]
         fused_wavg_lora = None  # type: ignore[assignment]
@@ -266,76 +227,103 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_prefill_state_prep_available = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
-    from .fused_time_mix import (
-        fused_attn_shift_mix,
-        fused_attn_shift_mix_available,
-        fused_attn_shift_mix_stacked_rkv,
-        fused_attn_shift_mix_stacked_rkv_available,
-    )
+    from .fused_time_mix import fused_attn_shift_mix, fused_attn_shift_mix_available
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
-        from fused_time_mix import (
-            fused_attn_shift_mix,
-            fused_attn_shift_mix_available,
-            fused_attn_shift_mix_stacked_rkv,
-            fused_attn_shift_mix_stacked_rkv_available,
-        )
+        from fused_time_mix import fused_attn_shift_mix, fused_attn_shift_mix_available
     except Exception:
         fused_attn_shift_mix = None  # type: ignore[assignment]
         fused_attn_shift_mix_available = None  # type: ignore[assignment]
-        fused_attn_shift_mix_stacked_rkv = None  # type: ignore[assignment]
-        fused_attn_shift_mix_stacked_rkv_available = None  # type: ignore[assignment]
 
-try:  # pragma: no cover - optional native W4 projection experiment
-    from .native_quant import (
-        int4_stacked_rkv_gemv,
-        native_int4_stacked_rkv_available,
-        quantize_int4_groupwise,
-        quantize_int4_rowwise,
+try:  # pragma: no cover - optional decode-only norm/mix fast path
+    from .fused_decode_norm_mix import (
+        fused_attn_norm_mix6_decode,
+        fused_decode_norm_mix_available,
+        fused_ffn_add_norm_mix_decode,
     )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
-        from native_quant import (
-            int4_stacked_rkv_gemv,
-            native_int4_stacked_rkv_available,
-            quantize_int4_groupwise,
-            quantize_int4_rowwise,
+        from fused_decode_norm_mix import (
+            fused_attn_norm_mix6_decode,
+            fused_decode_norm_mix_available,
+            fused_ffn_add_norm_mix_decode,
         )
     except Exception:
-        int4_stacked_rkv_gemv = None  # type: ignore[assignment]
-        native_int4_stacked_rkv_available = None  # type: ignore[assignment]
-        quantize_int4_groupwise = None  # type: ignore[assignment]
-        quantize_int4_rowwise = None  # type: ignore[assignment]
+        fused_attn_norm_mix6_decode = None  # type: ignore[assignment]
+        fused_decode_norm_mix_available = None  # type: ignore[assignment]
+        fused_ffn_add_norm_mix_decode = None  # type: ignore[assignment]
 
-try:  # pragma: no cover - optional Triton fast path on CUDA hosts
-    from .fused_norm_mix import fused_attn_norm_shift_mix_prefill, fused_attn_norm_shift_mix_prefill_available
-except Exception:  # pragma: no cover - direct remote-file execution fallback
-    try:
-        from fused_norm_mix import fused_attn_norm_shift_mix_prefill, fused_attn_norm_shift_mix_prefill_available
-    except Exception:
-        fused_attn_norm_shift_mix_prefill = None  # type: ignore[assignment]
-        fused_attn_norm_shift_mix_prefill_available = None  # type: ignore[assignment]
-
-try:  # pragma: no cover - optional Triton fast path on CUDA hosts
-    from .fused_ffn import (
-        fused_ffn_norm_shift_prefill,
-        fused_ffn_norm_shift_prefill_available,
-        fused_relu_square_available,
-        fused_relu_square_inplace,
+try:  # pragma: no cover - optional sm_70 small-row fp16 linear
+    from .sm70_linear import (
+        sm70_linear,
+        sm70_linear_should_use,
+        sm70_linear_threads,
+        sm70_ffn_down_add,
+        sm70_ffn_down_add_should_use,
+        sm70_ffn_up_relu2,
+        sm70_ffn_up_relu2_should_use,
+        sm70_rkv,
+        sm70_rkv_should_use,
+        sm70_rkv_threads,
     )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
-        from fused_ffn import (
-            fused_ffn_norm_shift_prefill,
-            fused_ffn_norm_shift_prefill_available,
-            fused_relu_square_available,
-            fused_relu_square_inplace,
+        from sm70_linear import (
+            sm70_linear,
+            sm70_linear_should_use,
+            sm70_linear_threads,
+            sm70_ffn_down_add,
+            sm70_ffn_down_add_should_use,
+            sm70_ffn_up_relu2,
+            sm70_ffn_up_relu2_should_use,
+            sm70_rkv,
+            sm70_rkv_should_use,
+            sm70_rkv_threads,
         )
     except Exception:
-        fused_ffn_norm_shift_prefill = None  # type: ignore[assignment]
-        fused_ffn_norm_shift_prefill_available = None  # type: ignore[assignment]
-        fused_relu_square_available = None  # type: ignore[assignment]
-        fused_relu_square_inplace = None  # type: ignore[assignment]
+        sm70_linear = None  # type: ignore[assignment]
+        sm70_linear_should_use = None  # type: ignore[assignment]
+        sm70_linear_threads = None  # type: ignore[assignment]
+        sm70_ffn_down_add = None  # type: ignore[assignment]
+        sm70_ffn_down_add_should_use = None  # type: ignore[assignment]
+        sm70_ffn_up_relu2 = None  # type: ignore[assignment]
+        sm70_ffn_up_relu2_should_use = None  # type: ignore[assignment]
+        sm70_rkv = None  # type: ignore[assignment]
+        sm70_rkv_should_use = None  # type: ignore[assignment]
+        sm70_rkv_threads = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional RTX 4090 sparse FFN contraction
+    from .ada_sparse_ffn import (
+        ada_ffn_up,
+        ada_linear,
+        ada_linear_should_use,
+        ada_sparse_ffn_down_add,
+        ada_sparse_ffn_should_use,
+    )
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from ada_sparse_ffn import (
+            ada_ffn_up,
+            ada_linear,
+            ada_linear_should_use,
+            ada_sparse_ffn_down_add,
+            ada_sparse_ffn_should_use,
+        )
+    except Exception:
+        ada_ffn_up = None  # type: ignore[assignment]
+        ada_linear = None  # type: ignore[assignment]
+        ada_linear_should_use = None  # type: ignore[assignment]
+        ada_sparse_ffn_down_add = None  # type: ignore[assignment]
+        ada_sparse_ffn_should_use = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional RTX 4090 grouped W/A/G/V LoRA
+    from .ada_lora import ada_wagv_lora, ada_wagv_lora_should_use
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from ada_lora import ada_wagv_lora, ada_wagv_lora_should_use
+    except Exception:
+        ada_wagv_lora = None  # type: ignore[assignment]
+        ada_wagv_lora_should_use = None  # type: ignore[assignment]
 
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
@@ -420,32 +408,26 @@ def _native_prefill_fused_scan_output_enabled() -> bool:
         return False
 
 
-def _native_prefill_default_scan_block_m(head_dim: int) -> int:
-    """Default recurrent-scan row tile for the current CUDA architecture.
-
-    Ada/4090 validation prefers the full-head tile (`head_dim=64`), while the
-    sm70/V100 sweep prefers a narrower split-row tile.  Keep this as a default
-    only: explicit `RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M` still wins so benchmark
-    rows remain reproducible.
-    """
+def _native_prefill_default_scan_block_m(head_dim: int, batch_size: int | None = None) -> int:
+    """Architecture-aware default row tile for optional prefill scans."""
 
     head_dim = int(head_dim)
     if head_dim == 64 and torch.cuda.is_available():
         try:
-            major, _minor = torch.cuda.get_device_capability()
+            major, minor = torch.cuda.get_device_capability()
         except Exception:
-            major = 0
-        if int(major) == 7:
-            return 16
+            major, minor = 0, 0
+        if (int(major), int(minor)) == (7, 0):
+            return 32 if batch_size is not None and int(batch_size) >= 4 else 16
     return head_dim
 
 
-def _native_prefill_scan_block_m(head_dim: int) -> int:
-    """Row tile for the optional split-row recurrent scan kernel."""
+def _native_prefill_scan_block_m(head_dim: int, batch_size: int | None = None) -> int:
+    """Row tile for optional recurrent scans; explicit env always wins."""
 
     return env_int(
         "RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M",
-        _native_prefill_default_scan_block_m(head_dim),
+        _native_prefill_default_scan_block_m(head_dim, batch_size),
         lower=1,
         upper=int(head_dim),
     )
@@ -463,189 +445,6 @@ def _native_prefill_scan_num_warps(head_dim: int, block_m: int | None = None) ->
     return value
 
 
-def _native_prefill_scan_num_stages() -> int:
-    """Triton pipeline stage count for optional native prefill scan kernels."""
-
-    return env_int("RWKV7_NATIVE_PREFILL_SCAN_NUM_STAGES", 3, lower=1, upper=8)
-
-
-def _native_prefill_scan_algebraic_output_enabled() -> bool:
-    """Use an algebraically expanded recurrent output inside state-scan."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_SCAN_ALGEBRAIC_OUTPUT", False)
-
-
-def _native_prefill_scan_nomask64_enabled() -> bool:
-    """Use the specialized unmasked full-head scan for head_dim=64."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_SCAN_NOMASK64", False)
-
-
-def _native_prefill_cuda_state_scan_enabled() -> bool:
-    """Runtime switch for the experimental CUDA N=64 state-scan prototype."""
-
-    if not env_flag("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN", False):
-        return False
-    if cuda_state_scan_prep is None or cuda_state_scan_prep_available is None:
-        return False
-    try:
-        return bool(cuda_state_scan_prep_available())
-    except Exception:
-        return False
-
-
-def _native_prefill_cuda_state_scan_sk_enabled() -> bool:
-    """Use CUDA state-scan's SK-emitting no-K/V-writeback route."""
-
-    if not env_flag("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SK", False):
-        return False
-    if not _native_prefill_cuda_state_scan_enabled():
-        return False
-    if cuda_state_scan_prep_sk is None or cuda_state_scan_prep_sk_available is None:
-        return False
-    if fused_attn_output_prepare_from_sk_raw_v is None or fused_attn_output_prepare_from_sk_raw_v_available is None:
-        return False
-    if _native_prefill_cuda_state_scan_schedule() != "warp_specialized":
-        return False
-    if _native_prefill_cuda_state_scan_precompute_enabled():
-        return False
-    try:
-        return bool(cuda_state_scan_prep_sk_available() and fused_attn_output_prepare_from_sk_raw_v_available())
-    except Exception:
-        return False
-
-
-def _native_prefill_cuda_state_scan_lanes_per_row() -> int:
-    """Per-row CUDA parallelism for the experimental N=64 state-scan."""
-
-    value = env_int("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_LANES", 1, lower=1, upper=64)
-    if value not in {1, 2, 4, 8, 16, 64}:
-        raise ValueError("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_LANES must be one of 1, 2, 4, 8, 16, or 64")
-    return value
-
-
-def _native_prefill_cuda_state_scan_precompute_enabled() -> bool:
-    """Use two-stage vector precompute before the CUDA row-block scan."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_PRECOMPUTE", False)
-
-
-def _native_prefill_cuda_state_scan_precompute_mode() -> str:
-    """Vector precompute variant for the experimental CUDA row-block scan."""
-
-    if not _native_prefill_cuda_state_scan_precompute_enabled():
-        return "none"
-    value = os.environ.get("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_PRECOMPUTE_MODE", "full")
-    mode = str(value).strip().lower().replace("-", "_")
-    if mode in {"1", "true", "yes", "on", "full"}:
-        return "full"
-    if mode in {"2", "wk", "wkk", "w_kk", "reduced", "reduced_temp", "wk_fp16kv", "fp16kv"}:
-        return "wk"
-    if mode in {"3", "wk_half", "wk16", "half", "fp16", "fp16_temp", "half_temp"}:
-        return "wk_half"
-    if mode in {"0", "false", "no", "off", "none"}:
-        return "none"
-    raise ValueError(
-        "RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_PRECOMPUTE_MODE must be one of full, wk/reduced_temp, wk_half/fp16_temp, or none"
-    )
-
-
-def _native_prefill_cuda_state_scan_reuse_precompute_enabled() -> bool:
-    """Reuse preallocated fp16 W/KK temp buffers for CUDA wk_half precompute."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_REUSE_PRECOMPUTE", False)
-
-
-def _native_prefill_cuda_state_scan_inplace_kv_enabled() -> bool:
-    """Reuse raw K/V projection tensors as CUDA precompute K/V outputs."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_INPLACE_KV", False)
-
-
-def _native_prefill_cuda_state_scan_inplace_v_enabled() -> bool:
-    """Reuse the raw V projection tensor as the CUDA scan adjusted-V output."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_INPLACE_V", False)
-
-
-def _native_prefill_cuda_state_scan_inplace_kka_enabled() -> bool:
-    """Overwrite prefill A with normalized-KK*A for CUDA wk_half precompute."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_INPLACE_KKA", False)
-
-
-def _native_prefill_cuda_state_scan_rows_per_block() -> int:
-    """Rows handled by one CUDA row-block in the cooperative N=64 scan."""
-
-    value = env_int("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_ROWS_PER_BLOCK", 1, lower=1, upper=16)
-    if value not in {1, 2, 4, 8, 16}:
-        raise ValueError("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_ROWS_PER_BLOCK must be one of 1, 2, 4, 8, or 16")
-    return value
-
-
-def _native_prefill_cuda_state_scan_schedule() -> str:
-    """CUDA row-block schedule variant for the experimental N=64 scan."""
-
-    value = os.environ.get("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE", "default")
-    schedule = str(value).strip().lower().replace("-", "_")
-    if schedule in {"", "0", "default", "normal", "rowblock", "none"}:
-        return "default"
-    if schedule in {"1", "warp", "warp_specialized", "warp_specialised", "producer_worker", "producer"}:
-        return "warp_specialized"
-    if schedule in {
-        "2",
-        "warp2",
-        "warp_2",
-        "warp_specialized2",
-        "warp_specialized_2",
-        "producer_worker2",
-        "producer_worker_wide",
-        "wide",
-    }:
-        return "warp2"
-    if schedule in {"3", "head_reg16", "head_reg", "head", "reg16", "head_level", "headlevel"}:
-        return "head_reg16"
-    if schedule in {"4", "warp_pipelined", "warp_pipe", "pipelined", "pipeline", "pipe"}:
-        return "warp_pipelined"
-    if schedule in {
-        "7",
-        "warp_pipelined_half",
-        "warp_pipe_half",
-        "pipelined_half",
-        "pipeline_half",
-        "pipe_half",
-        "half_shared",
-    }:
-        return "warp_pipelined_half"
-    if schedule in {"8", "head_reg8", "head_reg_8", "reg8", "head8", "head_level8", "headlevel8"}:
-        return "head_reg8"
-    if schedule in {
-        "9",
-        "halfwarp_pair",
-        "half_warp_pair",
-        "hwarp_pair",
-        "warp_hpair",
-        "halfwarp",
-        "hwarp",
-    }:
-        return "halfwarp_pair"
-    if schedule in {"5", "warp_pair", "warppair", "pair", "paired", "row_pair", "rowpair"}:
-        return "warp_pair"
-    if schedule in {
-        "6",
-        "precomputed_warp",
-        "precompute_warp",
-        "precomp_warp",
-        "wk_half_warp",
-        "two_level",
-        "twolvl",
-    }:
-        return "precomputed_warp"
-    raise ValueError(
-        "RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SCHEDULE must be default, warp_specialized, warp2, head_reg16, warp_pipelined, warp_pair, precomputed_warp, warp_pipelined_half, head_reg8, or halfwarp_pair"
-    )
-
-
 def _native_prefill_fused_shift_mix_enabled() -> bool:
     """Runtime switch for prefill attention shift-mix fusion telemetry."""
 
@@ -659,23 +458,14 @@ def _native_prefill_fused_shift_mix_enabled() -> bool:
         return False
 
 
-def _native_prefill_fused_norm_mix_enabled() -> bool:
-    """Runtime switch for prefill attention norm plus time-mix fusion."""
-
-    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_NORM_MIX", False):
-        return False
-    if fused_attn_norm_shift_mix_prefill is None or fused_attn_norm_shift_mix_prefill_available is None:
-        return False
-    try:
-        return bool(fused_attn_norm_shift_mix_prefill_available())
-    except Exception:
-        return False
-
-
 def _native_prefill_fused_state_prep_enabled() -> bool:
     """Runtime switch for the native prefill state-prep fusion probe."""
 
-    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", False):
+    policy = _kernel_policy()
+    if not env_flag(
+        "RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP",
+        bool(getattr(policy, "fused_prefill_state_prep", False)),
+    ):
         return False
     if fused_prefill_state_prep is None or fused_prefill_state_prep_available is None:
         return False
@@ -685,126 +475,39 @@ def _native_prefill_fused_state_prep_enabled() -> bool:
         return False
 
 
-def _native_prefill_fused_state_scan_enabled() -> bool:
+def _native_prefill_fused_state_scan_max_batch() -> int | None:
+    """Optional batch ceiling for the fused state-prep scan route."""
+
+    raw = os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_MAX_BATCH")
+    if raw is None or not raw.strip():
+        policy = _kernel_policy()
+        value = getattr(policy, "fused_prefill_state_scan_max_batch", None)
+        return None if value is None else int(value)
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_MAX_BATCH must be an integer") from exc
+    if value < 1:
+        raise ValueError("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_MAX_BATCH must be >= 1")
+    return value
+
+
+def _native_prefill_fused_state_scan_enabled(batch_size: int | None = None) -> bool:
     """Runtime switch for the fused state-prep plus scan probe."""
 
-    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN", False):
+    policy = _kernel_policy()
+    if not env_flag(
+        "RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN",
+        bool(getattr(policy, "fused_prefill_state_scan", False)),
+    ):
+        return False
+    max_batch = _native_prefill_fused_state_scan_max_batch()
+    if max_batch is not None and batch_size is not None and int(batch_size) > max_batch:
         return False
     if fused_recurrent_scan_state_prep is None or fused_recurrent_scan_state_prep_available is None:
         return False
     try:
         return bool(fused_recurrent_scan_state_prep_available())
-    except Exception:
-        return False
-
-
-def _native_prefill_scan_precompute_w_enabled() -> bool:
-    """Opt-in precompute of W decay before the fused state-scan kernel.
-
-    The default fused state-scan computes ``exp(-0.606531 * sigmoid(w_raw))``
-    inside the dominant recurrent scan loop.  This experiment materializes the
-    decay once before the scan and lets the scan load it directly.  It is kept
-    behind an env flag because it trades extra pointwise launches and memory
-    traffic for lower special-function pressure inside the scan kernel.
-    """
-
-    return env_flag("RWKV7_NATIVE_PREFILL_SCAN_PRECOMPUTE_W", False)
-
-
-def _native_prefill_scan_precompute_w_dtype() -> str:
-    """Dtype for opt-in precomputed W decay passed to fused state-scan."""
-
-    raw = os.environ.get("RWKV7_NATIVE_PREFILL_SCAN_PRECOMPUTE_W_DTYPE", "fp32").strip().lower()
-    aliases = {
-        "fp32": "fp32",
-        "float32": "fp32",
-        "f32": "fp32",
-        "input": "input",
-        "model": "input",
-        "same": "input",
-        "fp16": "input",
-        "bf16": "input",
-    }
-    if raw not in aliases:
-        raise ValueError(
-            "RWKV7_NATIVE_PREFILL_SCAN_PRECOMPUTE_W_DTYPE must be 'fp32' or 'input' "
-            f"(aliases: same/model/fp16/bf16); got {raw!r}"
-        )
-    return aliases[raw]
-
-
-def _native_prefill_fused_state_scan_correction_enabled() -> bool:
-    """Runtime switch for state-scan that emits correction instead of K/V."""
-
-    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_CORRECTION", False):
-        return False
-    if (
-        fused_recurrent_scan_state_prep_correction is None
-        or fused_recurrent_scan_state_prep_correction_available is None
-        or fused_attn_output_prepare_from_correction is None
-        or fused_attn_output_prepare_from_correction_available is None
-    ):
-        return False
-    try:
-        return bool(fused_recurrent_scan_state_prep_correction_available()) and bool(
-            fused_attn_output_prepare_from_correction_available()
-        )
-    except Exception:
-        return False
-
-
-def _native_prefill_fused_state_scan_raw_output_enabled() -> bool:
-    """Runtime switch for no-K/V scan plus raw-K/V output-prep recompute."""
-
-    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_RAW_OUTPUT", False):
-        return False
-    if (
-        fused_recurrent_scan_state_prep_nokv is None
-        or fused_recurrent_scan_state_prep_nokv_available is None
-        or fused_attn_output_prepare_raw_kv is None
-        or fused_attn_output_prepare_raw_kv_available is None
-    ):
-        return False
-    try:
-        return bool(fused_recurrent_scan_state_prep_nokv_available()) and bool(
-            fused_attn_output_prepare_raw_kv_available()
-        )
-    except Exception:
-        return False
-
-
-def _native_prefill_fused_state_scan_sk_output_enabled() -> bool:
-    """Runtime switch for no-K/V scan that emits sk plus raw-V output prep."""
-
-    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_SK_OUTPUT", False):
-        return False
-    if (
-        fused_recurrent_scan_state_prep_sk is None
-        or fused_recurrent_scan_state_prep_sk_available is None
-        or fused_attn_output_prepare_from_sk_raw_v is None
-        or fused_attn_output_prepare_from_sk_raw_v_available is None
-    ):
-        return False
-    try:
-        return bool(fused_recurrent_scan_state_prep_sk_available()) and bool(
-            fused_attn_output_prepare_from_sk_raw_v_available()
-        )
-    except Exception:
-        return False
-
-
-def _native_prefill_fused_state_scan_output_enabled() -> bool:
-    """Runtime switch for fused state-prep plus scan plus output-prep."""
-
-    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_OUTPUT", False):
-        return False
-    if (
-        fused_recurrent_scan_state_prep_output_prepare is None
-        or fused_recurrent_scan_state_prep_output_prepare_available is None
-    ):
-        return False
-    try:
-        return bool(fused_recurrent_scan_state_prep_output_prepare_available())
     except Exception:
         return False
 
@@ -845,7 +548,11 @@ def _native_prefill_fused_output_enabled() -> bool:
     card/model shape.
     """
 
-    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT", False):
+    policy = _kernel_policy()
+    if not env_flag(
+        "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT",
+        bool(getattr(policy, "fused_prefill_output", False)),
+    ):
         return False
     if fused_attn_output_prepare is None or fused_attn_output_prepare_available is None:
         return False
@@ -853,12 +560,6 @@ def _native_prefill_fused_output_enabled() -> bool:
         return bool(fused_attn_output_prepare_available())
     except Exception:
         return False
-
-
-def _native_prefill_tail_norm_slice_enabled() -> bool:
-    """Only normalize the logits-to-keep tail at the end of native prefill."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_TAIL_NORM_SLICE", False)
 
 
 def _native_prefill_fused_output_project_enabled() -> bool:
@@ -896,7 +597,7 @@ def _native_prefill_fused_wavg_lora_requested() -> bool:
 def _native_prefill_fused_wavg_lora_max_m() -> int:
     """Maximum flattened rows for prefill WAVG LoRA before falling back.
 
-    The first RTX 4090 probe is profitable for `B*T=512` but slower for
+    Initial card-local probes were profitable for `B*T=512` but slower for
     `B*T=2048`, so the opt-in path defaults to the small-prefill shape until an
     exact-card sweep proves a larger tile.
     """
@@ -940,336 +641,6 @@ def _native_prefill_fused_wavg_lora_blocks() -> tuple[int, int, int]:
     return vals[0], vals[1], vals[2]
 
 
-def _native_prefill_fused_shift_wavg_lora_requested() -> bool:
-    """Return whether the prefill shift-mix + WAVG LoRA boundary is requested."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA", False)
-
-
-def _native_prefill_fused_shift_wavg_lora_enabled(total_rows: int) -> bool:
-    """Runtime switch for the prefill shift-mix + W/A/G/V-gate LoRA fusion."""
-
-    if not _native_prefill_fused_shift_wavg_lora_requested():
-        return False
-    if int(total_rows) > _native_prefill_fused_wavg_lora_max_m():
-        return False
-    if fused_shift_wavg_lora is None or fused_shift_wavg_lora_available is None:
-        return False
-    try:
-        return bool(fused_shift_wavg_lora_available())
-    except Exception:
-        return False
-
-
-def _native_prefill_fused_shift_wavg_lora_blocks() -> tuple[int, int, int]:
-    """Return ``(block_m, block_r, block_k)`` for shift-mix + WAVG LoRA.
-
-    The first 4090 sweep preferred a wider output tile than the older
-    standalone WAVG-LoRA path, so this route has its own defaults while still
-    accepting the older WAVG env names as fallbacks for shared sweeps.
-    """
-
-    vals = []
-    for name, fallback, default, upper in (
-        ("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_BLOCK_M", "RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_M", 128, 128),
-        ("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_BLOCK_R", "RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_R", 64, 128),
-        ("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_BLOCK_K", "RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_K", 64, 256),
-    ):
-        raw = os.environ.get(name, os.environ.get(fallback))
-        if raw is None:
-            vals.append(env_int(name, int(default), lower=1, upper=upper))
-        else:
-            try:
-                val = int(str(raw).strip())
-            except ValueError:
-                val = int(default)
-            vals.append(min(max(1, val), upper))
-    return vals[0], vals[1], vals[2]
-
-
-def _native_prefill_fused_shift_wavg_lora_warps() -> tuple[int, int]:
-    """Return ``(down_num_warps, up_num_warps)`` for shift-WAVG LoRA."""
-
-    down = env_int("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_DOWN_WARPS", 4, lower=1, upper=8)
-    up = env_int("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_UP_WARPS", 4, lower=1, upper=8)
-    return down, up
-
-
-def _native_prefill_fused_shift_wavg_lora_lean_down_requested() -> bool:
-    """Return whether shift-WAVG should use the lean down-kernel traffic probe."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_LEAN_DOWN", False)
-
-
-def _native_prefill_fused_shift_wavg_lora_lean_up_requested() -> bool:
-    """Return whether shift-WAVG should use the lean up-kernel rank-retile probe."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_LEAN_UP", False)
-
-
-def _native_prefill_fused_shift_wavg_lora_g_mid_output_requested() -> bool:
-    """Return whether output-prep should consume G LoRA mid activations."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_G_MID_OUTPUT", False)
-
-
-def _native_prefill_fused_shift_wavg_lora_g_mid_output_enabled() -> bool:
-    """Runtime switch for the shift-WAVG G-mid/output-prep boundary probe."""
-
-    if not _native_prefill_fused_shift_wavg_lora_g_mid_output_requested():
-        return False
-    if fused_attn_output_prepare_from_g_mid is None or fused_attn_output_prepare_from_g_mid_available is None:
-        return False
-    try:
-        return bool(fused_attn_output_prepare_from_g_mid_available())
-    except Exception:
-        return False
-
-
-def _native_prefill_fused_shift_wavg_lora_w_decay_requested() -> bool:
-    """Return whether shift-WAVG should emit W decay instead of raw W."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_W_DECAY", False)
-
-
-def _native_prefill_fused_shift_wavg_lora_w_decay_enabled(total_rows: int) -> bool:
-    """Runtime switch for moving W decay into the shift-WAVG LoRA kernel.
-
-    This is only safe when the downstream state-scan is told that W is already
-    decayed.  Native prefill therefore enables it only on the CUDA
-    warp-specialized state-scan route that accepts precomputed W decay.
-    """
-
-    if not _native_prefill_fused_shift_wavg_lora_w_decay_requested():
-        return False
-    if not _native_prefill_fused_shift_wavg_lora_enabled(total_rows):
-        return False
-    if not (_native_prefill_fused_state_scan_enabled() and _native_prefill_cuda_state_scan_enabled()):
-        return False
-    if _native_prefill_cuda_state_scan_lanes_per_row() != 64:
-        return False
-    if _native_prefill_cuda_state_scan_precompute_mode() != "none":
-        return False
-    return _native_prefill_cuda_state_scan_schedule() in {"warp_specialized", "warp_pipelined"}
-
-
-def _native_prefill_fused_shift_wavg_lora_a_sigmoid_requested() -> bool:
-    """Return whether shift-WAVG should emit post-sigmoid A directly."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_A_SIGMOID", False)
-
-
-def _native_prefill_fused_shift_wavg_lora_a_sigmoid_enabled(total_rows: int) -> bool:
-    """Runtime switch for moving A sigmoid into the shift-WAVG LoRA kernel."""
-
-    if not _native_prefill_fused_shift_wavg_lora_a_sigmoid_requested():
-        return False
-    return _native_prefill_fused_shift_wavg_lora_enabled(total_rows)
-
-
-def _native_prefill_fused_shift_wavg_lora_prev_cache_requested() -> bool:
-    """Return whether shift-WAVG should consume the attention prev cache directly."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_WAVG_LORA_PREV_CACHE", False)
-
-
-def _native_prefill_fused_shift_wavg_lora_prev_cache_enabled(total_rows: int) -> bool:
-    """Runtime switch for avoiding the materialized prefill ``prev_h`` tensor."""
-
-    if not _native_prefill_fused_shift_wavg_lora_prev_cache_requested():
-        return False
-    return _native_prefill_fused_shift_wavg_lora_enabled(total_rows)
-
-
-def _native_prefill_ffn_fused_act_requested() -> bool:
-    """Return whether the prefill FFN relu-square fusion probe is requested."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_FFN_FUSED_ACT", False)
-
-
-def _native_prefill_ffn_fused_act_enabled() -> bool:
-    """Runtime switch for opt-in ``relu(x)^2`` variants in prefill FFN.
-
-    This deliberately does not replace the two cuBLAS FFN GEMMs; it only fuses
-    or lowers the activation boundary between them.  Keep it opt-in until
-    exact-card benchmark rows prove it beats the default PyTorch expression.
-    """
-
-    if not _native_prefill_ffn_fused_act_requested():
-        return False
-    if _native_prefill_ffn_fused_act_mode() == "torch_inplace":
-        return True
-    if fused_relu_square_inplace is None or fused_relu_square_available is None:
-        return False
-    try:
-        return bool(fused_relu_square_available())
-    except Exception:
-        return False
-
-
-def _native_prefill_ffn_fused_act_mode() -> str:
-    """Activation implementation for the prefill FFN probe."""
-
-    raw = os.environ.get("RWKV7_NATIVE_PREFILL_FFN_FUSED_ACT_MODE", "triton").strip().lower()
-    aliases = {
-        "triton": "triton",
-        "triton_inplace": "triton",
-        "single_kernel": "triton",
-        "torch": "torch_inplace",
-        "torch_inplace": "torch_inplace",
-        "inplace": "torch_inplace",
-    }
-    if raw not in aliases:
-        raise ValueError(
-            "RWKV7_NATIVE_PREFILL_FFN_FUSED_ACT_MODE must be 'triton' or "
-            f"'torch_inplace' (aliases: torch/inplace); got {raw!r}"
-        )
-    return aliases[raw]
-
-
-def _native_prefill_ffn_fused_act_block_size() -> int:
-    """Element tile for the prefill FFN activation fusion probe."""
-
-    return env_int("RWKV7_NATIVE_PREFILL_FFN_FUSED_ACT_BLOCK_SIZE", 1024, lower=128, upper=8192)
-
-
-def _native_prefill_apply_ffn_activation(fk):
-    """Apply the opt-in or default prefill FFN activation to ``fk``."""
-
-    if _native_prefill_ffn_fused_act_enabled():
-        if _native_prefill_ffn_fused_act_mode() == "torch_inplace":
-            fk.relu_()
-            fk.mul_(fk)
-            return fk
-        return fused_relu_square_inplace(fk, block_size=_native_prefill_ffn_fused_act_block_size())
-    return torch.relu(fk) ** 2
-
-
-def _native_prefill_ffn_fused_norm_shift_requested() -> bool:
-    """Return whether prefill FFN norm+shift fusion is requested."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_FFN_FUSED_NORM_SHIFT", False)
-
-
-def _native_prefill_ffn_fused_norm_shift_enabled() -> bool:
-    """Runtime switch for prefill FFN layernorm plus time-shift fusion."""
-
-    if not _native_prefill_ffn_fused_norm_shift_requested():
-        return False
-    if fused_ffn_norm_shift_prefill is None or fused_ffn_norm_shift_prefill_available is None:
-        return False
-    try:
-        return bool(fused_ffn_norm_shift_prefill_available())
-    except Exception:
-        return False
-
-
-def _native_prefill_ffn_fused_norm_shift_block_h() -> int:
-    """Hidden tile for the prefill FFN norm+shift fusion probe."""
-
-    return env_int("RWKV7_NATIVE_PREFILL_FFN_FUSED_NORM_SHIFT_BLOCK_H", 1024, lower=128, upper=8192)
-
-
-def _native_prefill_ffn_fused_norm_shift_mode() -> str:
-    """Implementation mode for the prefill FFN norm+shift boundary."""
-
-    raw = os.environ.get("RWKV7_NATIVE_PREFILL_FFN_FUSED_NORM_SHIFT_MODE", "recompute").strip().lower().replace("-", "_")
-    aliases = {
-        "": "recompute",
-        "0": "recompute",
-        "default": "recompute",
-        "recompute": "recompute",
-        "recompute_prev": "recompute",
-        "single": "recompute",
-        "single_pass": "recompute",
-        "1": "two_pass",
-        "two": "two_pass",
-        "two_pass": "two_pass",
-        "twopass": "two_pass",
-        "materialize_h": "two_pass",
-        "norm_then_shift": "two_pass",
-    }
-    if raw not in aliases:
-        raise ValueError(
-            "RWKV7_NATIVE_PREFILL_FFN_FUSED_NORM_SHIFT_MODE must be "
-            f"'recompute' or 'two_pass'; got {raw!r}"
-        )
-    return aliases[raw]
-
-
-def _native_prefill_apply_ffn_norm_shift(x, cached_prev_h, fx_k, fn_w, fn_b, hidden: int):
-    """Return ``(fk, h_last)`` for the prefill FFN key input boundary."""
-
-    if _native_prefill_ffn_fused_norm_shift_enabled():
-        return fused_ffn_norm_shift_prefill(
-            x,
-            cached_prev_h.view(int(x.shape[0]), hidden),
-            fx_k,
-            fn_w,
-            fn_b,
-            eps=1e-5,
-            block_h=_native_prefill_ffn_fused_norm_shift_block_h(),
-            mode=_native_prefill_ffn_fused_norm_shift_mode(),
-        )
-    h2 = F.layer_norm(x, [hidden], fn_w, fn_b, 1e-5)
-    prev_h2 = torch.cat([cached_prev_h.view(int(x.shape[0]), 1, hidden), h2[:, :-1, :]], dim=1)
-    fxx = prev_h2 - h2
-    return h2 + fxx * fx_k.view(1, 1, hidden), h2[:, -1, :].contiguous()
-
-
-def _native_prefill_fused_projection_requested() -> bool:
-    """Return whether the prefill R/K/V + LoRA projection fusion probe is requested."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_FUSED_PROJECTION", False)
-
-
-def _native_prefill_fused_projection_max_m() -> int:
-    """Maximum flattened rows for the prefill fused projection experiment."""
-
-    return env_int("RWKV7_NATIVE_PREFILL_FUSED_PROJECTION_MAX_M", 1024, lower=1, upper=1 << 30)
-
-
-def _native_prefill_fused_projection_enabled(total_rows: int) -> bool:
-    """Runtime switch for prefill R/K/V + W/A/G(/V-gate) projection fusion."""
-
-    if not _native_prefill_fused_projection_requested():
-        return False
-    if int(total_rows) > _native_prefill_fused_projection_max_m():
-        return False
-    if (
-        fused_rkv_wag_projection is None
-        or fused_rkv_wag_projection_available is None
-        or fused_rkv_wavg_projection is None
-        or fused_rkv_wavg_projection_available is None
-    ):
-        return False
-    try:
-        return bool(fused_rkv_wag_projection_available()) and bool(fused_rkv_wavg_projection_available())
-    except Exception:
-        return False
-
-
-def _native_prefill_fused_projection_blocks() -> tuple[int, int, int]:
-    """Return ``(block_m, block_r, block_k)`` for prefill fused projection."""
-
-    vals = []
-    for name, fallback, default, upper in (
-        ("RWKV7_NATIVE_PREFILL_FUSED_PROJECTION_BLOCK_M", "RWKV7_NATIVE_GRAPH_FUSED_PROJECTION_BLOCK_M", 64, 128),
-        ("RWKV7_NATIVE_PREFILL_FUSED_PROJECTION_BLOCK_R", "RWKV7_NATIVE_GRAPH_FUSED_PROJECTION_BLOCK_R", 64, 128),
-        ("RWKV7_NATIVE_PREFILL_FUSED_PROJECTION_BLOCK_K", "RWKV7_NATIVE_GRAPH_FUSED_PROJECTION_BLOCK_K", 64, 256),
-    ):
-        raw = os.environ.get(name, os.environ.get(fallback))
-        if raw is None:
-            vals.append(env_int(name, int(default), lower=1, upper=upper))
-        else:
-            try:
-                val = int(str(raw).strip())
-            except ValueError:
-                val = int(default)
-            vals.append(min(max(1, val), upper))
-    return vals[0], vals[1], vals[2]
-
-
 def _native_graph_fused_recurrent_output_enabled() -> bool:
     """Runtime switch for fused recurrent update plus output-prep."""
 
@@ -1282,6 +653,15 @@ def _native_graph_fused_recurrent_output_enabled() -> bool:
         return bool(fused_recurrent_output_prepare_available())
     except Exception:
         return False
+
+
+def _native_graph_fused_recurrent_raw_enabled() -> bool:
+    """Fold W decay and K/KK preparation into recurrent output fusion."""
+
+    policy = _kernel_policy()
+    if not env_flag("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_RAW", bool(getattr(policy, "fused_recurrent_raw", False))):
+        return False
+    return bool(fused_recurrent_output_prepare_raw is not None and _native_graph_fused_recurrent_output_enabled())
 
 
 def _native_graph_fused_output_enabled() -> bool:
@@ -1348,11 +728,19 @@ def _native_graph_fused_wag_lora_enabled() -> bool:
         return False
 
 
-def _native_graph_fused_wavg_lora_enabled() -> bool:
+def _native_graph_fused_wavg_lora_enabled(rows: int, hidden_size: int) -> bool:
     """Runtime switch for the native-graph W/A/G/V-gate LoRA fusion probe."""
 
     policy = _kernel_policy()
     if not env_flag("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA", bool(getattr(policy, "fused_wavg_lora", False))):
+        return False
+    default_max = getattr(policy, "wavg_lora_bsz1_max_hidden", None)
+    bsz1_max_hidden = env_int(
+        "RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BSZ1_MAX_HIDDEN",
+        0 if default_max is None else int(default_max),
+        lower=0,
+    )
+    if int(rows) == 1 and bsz1_max_hidden > 0 and int(hidden_size) > bsz1_max_hidden:
         return False
     if fused_wavg_lora is None or fused_wavg_lora_available is None:
         return False
@@ -1360,6 +748,201 @@ def _native_graph_fused_wavg_lora_enabled() -> bool:
         return bool(fused_wavg_lora_available())
     except Exception:
         return False
+
+
+def _native_graph_fused_norm_mix_enabled() -> bool:
+    """Runtime switch for decode layer-norm/residual/time-mix fusion."""
+
+    policy = _kernel_policy()
+    if not env_flag(
+        "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX",
+        bool(getattr(policy, "fused_norm_mix", False)),
+    ):
+        return False
+    if (
+        fused_attn_norm_mix6_decode is None
+        or fused_ffn_add_norm_mix_decode is None
+        or fused_decode_norm_mix_available is None
+    ):
+        return False
+    try:
+        return bool(fused_decode_norm_mix_available())
+    except Exception:
+        return False
+
+
+def _native_graph_fused_norm_mix_num_warps() -> int:
+    value = env_int("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS", 4, lower=1, upper=8)
+    if value not in {1, 2, 4, 8}:
+        raise ValueError(f"RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS must be one of 1, 2, 4, or 8; got {value}")
+    return value
+
+
+def _native_graph_sm70_linear_enabled() -> bool:
+    """Whether measured sm_70 small-row linear routes may be captured."""
+
+    policy = _kernel_policy()
+    return bool(
+        env_flag("RWKV7_NATIVE_GRAPH_SM70_LINEAR", bool(getattr(policy, "sm70_linear", False)))
+        and sm70_linear is not None
+        and sm70_linear_should_use is not None
+        and sm70_linear_threads is not None
+    )
+
+
+def _native_graph_ada_sparse_ffn_enabled() -> bool:
+    """Whether the measured RTX 4090 sparse FFN route may be captured."""
+
+    policy = _kernel_policy()
+    return bool(
+        env_flag(
+            "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN",
+            bool(getattr(policy, "ada_sparse_ffn", False)),
+        )
+        and ada_sparse_ffn_down_add is not None
+        and ada_ffn_up is not None
+        and ada_sparse_ffn_should_use is not None
+    )
+
+
+def _native_graph_ada_linear_enabled() -> bool:
+    """Whether measured no-copy RTX 4090 exact-row linears may be captured."""
+
+    policy = _kernel_policy()
+    return bool(
+        env_flag(
+            "RWKV7_NATIVE_GRAPH_ADA_LINEAR",
+            bool(getattr(policy, "ada_linear", False)),
+        )
+        and ada_linear is not None
+        and ada_linear_should_use is not None
+    )
+
+
+def _native_graph_ada_linear_should_route(rows: int, role: str) -> bool:
+    """Shape/role gate; row 1 remains a probe while measured row 2 is default."""
+
+    if not _native_graph_ada_linear_enabled():
+        return False
+    raw_rows = os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROWS", "2 4")
+    try:
+        enabled_rows = {int(item) for item in raw_rows.replace(",", " ").split()}
+    except ValueError:
+        enabled_rows = {2}
+    raw_roles = os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROLES")
+    if raw_roles is None:
+        raw_roles = "hidden" if int(rows) == 4 else "hidden,ffn_up,ffn_down"
+    enabled_roles = {item.strip().lower() for item in raw_roles.replace(",", " ").split() if item.strip()}
+    return int(rows) in enabled_rows and role.lower() in enabled_roles
+
+
+def _native_graph_ada_wagv_lora_enabled(rows: int, hidden_size: int, max_rank: int) -> bool:
+    """Whether the no-copy RTX 4090 grouped low-rank route may be captured."""
+
+    policy = _kernel_policy()
+    return bool(
+        env_flag(
+            "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA",
+            bool(getattr(policy, "ada_wagv_lora", False)),
+        )
+        and ada_wagv_lora is not None
+        and ada_wagv_lora_should_use is not None
+        and ada_wagv_lora_should_use(int(rows), int(hidden_size), int(max_rank))
+    )
+
+
+def _native_graph_linear_dispatch(x: torch.Tensor, weight, *, role: str) -> torch.Tensor:
+    """Dispatch dense or native-quantized linears during graph capture."""
+
+    rows = 1 if x.dim() == 1 else int(x.shape[0])
+    outputs, inputs = _graph_linear_shape(weight)
+    if (
+        _graph_linear_is_dense(weight)
+        and role != "head"
+        and _native_graph_ada_linear_should_route(rows, role)
+        and ada_linear_should_use(rows, outputs, inputs)
+    ):
+        return ada_linear(x, weight)
+    if not _graph_linear_is_dense(weight):
+        return _graph_linear_call(x, weight)
+    if not _native_graph_sm70_linear_enabled():
+        return F.linear(x, weight)
+    if not sm70_linear_should_use(rows, outputs, inputs, role=role):
+        return F.linear(x, weight)
+    threads = sm70_linear_threads(rows, outputs, inputs, role=role)
+    return sm70_linear(x, weight, threads=threads)
+
+
+def _native_graph_ffn_up_relu2_dispatch(x: torch.Tensor, weight) -> torch.Tensor:
+    rows = 1 if x.dim() == 1 else int(x.shape[0])
+    outputs, inputs = _graph_linear_shape(weight)
+    if (
+        _graph_linear_is_dense(weight)
+        and _native_graph_ada_linear_should_route(rows, "ffn_up")
+        and ada_linear_should_use(rows, outputs, inputs)
+    ):
+        return torch.relu(ada_linear(x, weight)) ** 2
+    if not _graph_linear_is_dense(weight):
+        return torch.relu(_graph_linear_call(x, weight)) ** 2
+    if (
+        not _native_graph_sm70_linear_enabled()
+        or sm70_ffn_up_relu2 is None
+        or sm70_ffn_up_relu2_should_use is None
+    ):
+        return torch.relu(F.linear(x, weight)) ** 2
+    if not sm70_ffn_up_relu2_should_use(rows, outputs, inputs):
+        return torch.relu(F.linear(x, weight)) ** 2
+    threads = sm70_linear_threads(rows, outputs, inputs, role="ffn_up")
+    return sm70_ffn_up_relu2(x, weight, threads=threads)
+
+
+def _native_graph_ffn_down_add_dispatch(
+    x: torch.Tensor,
+    weight,
+    residual: torch.Tensor,
+) -> torch.Tensor:
+    rows = 1 if x.dim() == 1 else int(x.shape[0])
+    outputs, inputs = _graph_linear_shape(weight)
+    if (
+        _graph_linear_is_dense(weight)
+        and _native_graph_ada_linear_should_route(rows, "ffn_down")
+        and ada_linear_should_use(rows, outputs, inputs)
+    ):
+        return residual + ada_linear(x, weight)
+    if not _graph_linear_is_dense(weight):
+        return residual + _graph_linear_call(x, weight)
+    if (
+        not _native_graph_sm70_linear_enabled()
+        or sm70_ffn_down_add is None
+        or sm70_ffn_down_add_should_use is None
+    ):
+        return residual + F.linear(x, weight)
+    if not sm70_ffn_down_add_should_use(rows, outputs, inputs):
+        return residual + F.linear(x, weight)
+    threads = sm70_linear_threads(rows, outputs, inputs, role="ffn_down")
+    return sm70_ffn_down_add(x, weight, residual, threads=threads)
+
+
+def _native_graph_ffn_dispatch(
+    x: torch.Tensor,
+    up_weight,
+    down_weight,
+    residual: torch.Tensor,
+) -> torch.Tensor:
+    """Route the complete FFN boundary so sparse kernels can avoid ReLU² IO."""
+
+    rows = 1 if x.dim() == 1 else int(x.shape[0])
+    outputs, inputs = _graph_linear_shape(down_weight)
+    if (
+        _graph_linear_is_dense(up_weight)
+        and _graph_linear_is_dense(down_weight)
+        and _native_graph_ada_sparse_ffn_enabled()
+        and ada_sparse_ffn_should_use(rows, outputs, inputs)
+    ):
+        preact = ada_ffn_up(x, up_weight)
+        return ada_sparse_ffn_down_add(preact, down_weight, residual)
+    hidden = _native_graph_ffn_up_relu2_dispatch(x, up_weight)
+    return _native_graph_ffn_down_add_dispatch(hidden, down_weight, residual)
 
 
 def _native_graph_rkv_policy() -> str:
@@ -1380,97 +963,6 @@ def _native_graph_rkv_policy() -> str:
     if raw in {"vkwr", "vkwr_auto", "auto", "stacked", "bmm"}:
         return "vkwr_auto"
     return "manual"
-
-
-def _native_graph_w4_rkv_requested() -> bool:
-    """Whether native-graph decode should use packed W4 R/K/V projections."""
-
-    return env_flag("RWKV7_NATIVE_GRAPH_W4_RKV", False)
-
-
-def _native_graph_w4_rkv_enabled(q_weight: torch.Tensor, scales: torch.Tensor) -> bool:
-    """Runtime gate for the projection-axis W4A16 decode experiment."""
-
-    if not _native_graph_w4_rkv_requested():
-        return False
-    if q_weight.numel() == 0 or scales.numel() == 0:
-        return False
-    if (
-        int4_stacked_rkv_gemv is None
-        or native_int4_stacked_rkv_available is None
-        or fused_attn_shift_mix_stacked_rkv is None
-        or fused_attn_shift_mix_stacked_rkv_available is None
-    ):
-        return False
-    try:
-        return bool(native_int4_stacked_rkv_available()) and bool(fused_attn_shift_mix_stacked_rkv_available())
-    except Exception:
-        return False
-
-
-def _native_graph_w4_rkv_config(rows: int) -> tuple[int, int, int]:
-    """Return ``(block_m, block_k, num_warps)`` for the active decode batch.
-
-    Defaults come from card-local whole-graph sweeps. Every value remains
-    environment-overridable for new shapes and GPUs.
-    """
-
-    policy = _kernel_policy()
-    family = str(getattr(getattr(policy, "profile", None), "family", ""))
-    group_size = _native_graph_w4_rkv_group_size()
-    if family == "ada" and rows <= 1:
-        # RTX 4090, 0.4B, 24-layer graph: 1.206x dense versus 1.191x for
-        # the V100-oriented (8, 64, 1) default (3-run median, 256 steps).
-        defaults = (32, 64, 4)
-    elif rows <= 1:
-        defaults = (8, 64, 1)
-    elif rows <= 4:
-        defaults = (16, 128, 4)
-    else:
-        defaults = (16, 128, 2)
-    if group_size:
-        defaults = (defaults[0], group_size // 2, defaults[2])
-    return (
-        env_int("RWKV7_NATIVE_GRAPH_W4_RKV_BLOCK_M", defaults[0], lower=1, upper=128),
-        env_int("RWKV7_NATIVE_GRAPH_W4_RKV_BLOCK_K", defaults[1], lower=1, upper=512),
-        env_int("RWKV7_NATIVE_GRAPH_W4_RKV_NUM_WARPS", defaults[2], lower=1, upper=8),
-    )
-
-
-def _native_graph_w4_rkv_group_size() -> int:
-    """Return zero for legacy row-wise W4 or an even K-group size.
-
-    Group 32 matches the sub-block granularity used by high-quality K-family
-    4-bit formats while retaining a positive whole-graph decode speedup on the
-    RTX 4090 validation matrix.
-    """
-
-    policy = _kernel_policy()
-    family = str(getattr(getattr(policy, "profile", None), "family", ""))
-    value = env_int(
-        "RWKV7_NATIVE_GRAPH_W4_RKV_GROUP_SIZE",
-        32 if family == "ada" else 0,
-        lower=0,
-        upper=1024,
-    )
-    if value and value % 2:
-        raise ValueError("RWKV7_NATIVE_GRAPH_W4_RKV_GROUP_SIZE must be even")
-    return value
-
-
-def _native_graph_w4_rkv_mse_search() -> bool:
-    return env_flag("RWKV7_NATIVE_GRAPH_W4_RKV_MSE_SEARCH", True)
-
-
-def _native_graph_w4_rkv_release_dense_requested() -> bool:
-    """Inference-only switch that drops dense R/K/V after packing.
-
-    This is intended for steady-state decode workers after prompt prefill. The
-    ordinary HF/FLA forward path cannot be used again after its projection
-    parameters are released.
-    """
-
-    return env_flag("RWKV7_NATIVE_GRAPH_W4_RKV_RELEASE_DENSE", False)
 
 
 def _native_graph_int_env(name: str, default: int, *, lo: int = 1, hi: int | None = None) -> int:
@@ -1499,7 +991,7 @@ def _native_graph_vkwr_rkv_dispatch(rows: int, hidden_size: int) -> bool:
     if rows <= 0 or hidden_size <= 0:
         return False
     min_hidden = _native_graph_int_env("RWKV7_NATIVE_GRAPH_RKV_MIN_HIDDEN", 1, lo=1)
-    max_rows = _native_graph_int_env("RWKV7_NATIVE_GRAPH_RKV_MAX_ROWS", 64, lo=4, hi=4096)
+    max_rows = _native_graph_int_env("RWKV7_NATIVE_GRAPH_RKV_MAX_ROWS", 64, lo=1, hi=4096)
     if hidden_size < min_hidden:
         return False
     return rows == 1 or (4 <= rows <= max_rows)
@@ -1509,75 +1001,53 @@ def _native_graph_rkv_project(
     xr: torch.Tensor,
     xk: torch.Tensor,
     xv: torch.Tensor,
-    Rw: torch.Tensor,
-    Kw: torch.Tensor,
-    Vw: torch.Tensor,
+    Rw,
+    Kw,
+    Vw,
     RKVw: torch.Tensor,
     rows: int,
     hidden_size: int,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Project R/K/V with either separate linears or VKWR-style stacked bmm."""
 
-    if not _native_graph_vkwr_rkv_dispatch(int(rows), int(hidden_size)) or RKVw.numel() == 0:
-        return F.linear(xr, Rw), F.linear(xk, Kw), F.linear(xv, Vw)
-    return _stacked_rkv_bmm_project(xr, xk, xv, RKVw, rows, hidden_size)
-
-
-def _stacked_rkv_bmm_project(
-    xr: torch.Tensor,
-    xk: torch.Tensor,
-    xv: torch.Tensor,
-    RKVw: torch.Tensor,
-    rows: int,
-    hidden_size: int,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Project R/K/V with a packed ``[3, hidden, hidden]`` batched matmul."""
-
-    if xr.dim() == 1:
+    dense_rkv = all(_graph_linear_is_dense(item) for item in (Rw, Kw, Vw))
+    if dense_rkv and _native_graph_vkwr_rkv_dispatch(int(rows), int(hidden_size)) and RKVw.numel() != 0:
+        if xr.dim() == 1:
+            flat = torch.stack(
+                (
+                    xr.reshape(1, hidden_size),
+                    xk.reshape(1, hidden_size),
+                    xv.reshape(1, hidden_size),
+                ),
+                dim=0,
+            )
+            rkv = torch.bmm(flat, RKVw)
+            return rkv[0, 0], rkv[1, 0], rkv[2, 0]
         flat = torch.stack(
             (
-                xr.reshape(1, hidden_size),
-                xk.reshape(1, hidden_size),
-                xv.reshape(1, hidden_size),
+                xr.reshape(rows, hidden_size),
+                xk.reshape(rows, hidden_size),
+                xv.reshape(rows, hidden_size),
             ),
             dim=0,
         )
         rkv = torch.bmm(flat, RKVw)
-        return rkv[0, 0], rkv[1, 0], rkv[2, 0]
-    flat = torch.stack(
-        (
-            xr.reshape(rows, hidden_size),
-            xk.reshape(rows, hidden_size),
-            xv.reshape(rows, hidden_size),
-        ),
-        dim=0,
+        return rkv[0], rkv[1], rkv[2]
+    if (
+        dense_rkv
+        and _native_graph_sm70_linear_enabled()
+        and sm70_rkv is not None
+        and sm70_rkv_should_use is not None
+        and sm70_rkv_threads is not None
+        and sm70_rkv_should_use(int(rows), int(hidden_size))
+    ):
+        threads = sm70_rkv_threads(int(rows), int(hidden_size))
+        return sm70_rkv(xr, xk, xv, Rw, Kw, Vw, threads=threads)
+    return (
+        _native_graph_linear_dispatch(xr, Rw, role="hidden"),
+        _native_graph_linear_dispatch(xk, Kw, role="hidden"),
+        _native_graph_linear_dispatch(xv, Vw, role="hidden"),
     )
-    rkv = torch.bmm(flat, RKVw)
-    return rkv[0], rkv[1], rkv[2]
-
-
-def _native_prefill_rkv_bmm_requested() -> bool:
-    """Return whether native prefill should try packed R/K/V bmm projection."""
-
-    return env_flag("RWKV7_NATIVE_PREFILL_RKV_BMM", False)
-
-
-def _native_prefill_rkv_bmm_max_rows() -> int:
-    """Maximum flattened prefill rows for the packed R/K/V bmm probe."""
-
-    return env_int("RWKV7_NATIVE_PREFILL_RKV_BMM_MAX_ROWS", 4096, lower=1, upper=65536)
-
-
-def _native_prefill_rkv_bmm_enabled(rows: int, hidden_size: int, RKVw: torch.Tensor) -> bool:
-    """Runtime gate for the prefill packed R/K/V projection probe."""
-
-    if not _native_prefill_rkv_bmm_requested():
-        return False
-    if int(rows) <= 0 or int(hidden_size) <= 0:
-        return False
-    if int(rows) > _native_prefill_rkv_bmm_max_rows():
-        return False
-    return bool(RKVw.numel() > 0)
 
 
 def _native_graph_fused_wag_lora_blocks() -> tuple[int, int, int]:
@@ -1693,7 +1163,7 @@ def block_step(x: torch.Tensor, xpa: torch.Tensor, xpf: torch.Tensor,
                g1: torch.Tensor, g2: torch.Tensor,
                gn_w: torch.Tensor, gn_b: torch.Tensor,
                fx_k: torch.Tensor, fK: torch.Tensor, fV: torch.Tensor,
-               RKVw: torch.Tensor, Q_RKVw: torch.Tensor, S_RKVw: torch.Tensor):
+               RKVw: torch.Tensor):
     # --- block wiring (fuse_norm=False) ---
     if has_pre == 1:
         residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5)
@@ -1758,7 +1228,7 @@ def block_step_batched(x: torch.Tensor, xpa: torch.Tensor, xpf: torch.Tensor,
                        g1: torch.Tensor, g2: torch.Tensor,
                        gn_w: torch.Tensor, gn_b: torch.Tensor,
                        fx_k: torch.Tensor, fK: torch.Tensor, fV: torch.Tensor,
-                       RKVw: torch.Tensor, Q_RKVw: torch.Tensor, S_RKVw: torch.Tensor):
+                       RKVw: torch.Tensor):
     # Batched variant of block_step. Shapes:
     # x/xpa/xpf/v_first:[B,H*N], state:[B,H,N,N].
     B = x.shape[0]
@@ -1813,24 +1283,7 @@ def extract(model):
     eps = float(N * 1e-5)
     packs = []
     hidden = int(layers[0].attn.hidden_size)
-    pack_w4_rkv = _native_graph_w4_rkv_requested() and quantize_int4_rowwise is not None
-    # The packed W4 path consumes its own projection-major layout. Keeping the
-    # optional dense stacked RKV copy would defeat the quantized memory goal.
-    stack_rkv = (
-        _native_graph_rkv_policy() == "vkwr_auto" or _native_prefill_rkv_bmm_requested()
-    ) and not pack_w4_rkv
-    w4_group_size = _native_graph_w4_rkv_group_size()
-    release_dense_rkv = pack_w4_rkv and _native_graph_w4_rkv_release_dense_requested()
-    if release_dense_rkv:
-        available = (
-            native_int4_stacked_rkv_available is not None
-            and fused_attn_shift_mix_stacked_rkv_available is not None
-            and bool(native_int4_stacked_rkv_available())
-            and bool(fused_attn_shift_mix_stacked_rkv_available())
-            and layers[0].attn.r_proj.weight.is_cuda
-        )
-        if not available:
-            raise RuntimeError("dense R/K/V release requires the CUDA projection-axis W4 decode path")
+    stack_rkv = _native_graph_rkv_policy() == "vkwr_auto"
     for i, layer in enumerate(layers):
         a = layer.attn
         ref = a.w_lora.lora[0].weight
@@ -1844,29 +1297,6 @@ def extract(model):
             pre_w = torch.zeros(hidden, device=ref.device, dtype=ref.dtype)
             pre_b = torch.zeros(hidden, device=ref.device, dtype=ref.dtype)
             has_pre = 0
-        if pack_w4_rkv:
-            quantizer = quantize_int4_rowwise
-            kwargs = {}
-            if w4_group_size:
-                if quantize_int4_groupwise is None:
-                    raise RuntimeError("groupwise W4 quantizer is unavailable")
-                quantizer = quantize_int4_groupwise
-                kwargs = {"group_size": w4_group_size, "mse_search": _native_graph_w4_rkv_mse_search()}
-            qr, sr = quantizer(a.r_proj.weight.detach(), **kwargs)
-            qk, sk = quantizer(a.k_proj.weight.detach(), **kwargs)
-            qv, sv = quantizer(a.v_proj.weight.detach(), **kwargs)
-            q_rkv = torch.stack((qr, qk, qv), dim=0).contiguous()
-            s_rkv = torch.stack((sr, sk, sv), dim=0).contiguous()
-        else:
-            q_rkv = ref.new_empty((0,), dtype=torch.uint8)
-            s_rkv = ref.new_empty((0,), dtype=torch.float32)
-        dense_r = a.r_proj.weight
-        dense_k = a.k_proj.weight
-        dense_v = a.v_proj.weight
-        if release_dense_rkv:
-            dense_r = ref.new_empty((0,))
-            dense_k = ref.new_empty((0,))
-            dense_v = ref.new_empty((0,))
         packs.append((
             i, H, N, eps, has_pre,
             pre_w, pre_b, layer.attn_norm.weight, layer.attn_norm.bias,
@@ -1874,7 +1304,7 @@ def extract(model):
             a.x_r.reshape(-1), a.x_w.reshape(-1), a.x_k.reshape(-1),
             a.x_v.reshape(-1), a.x_a.reshape(-1), a.x_g.reshape(-1),
             a.k_k, a.k_a, a.r_k,
-            dense_r, dense_k, dense_v, a.o_proj.weight,
+            a.r_proj.weight, a.k_proj.weight, a.v_proj.weight, a.o_proj.weight,
             a.w_lora.lora[0].weight, a.w_lora.lora[2].weight, a.w_lora.lora[2].bias,
             a.a_lora.lora[0].weight, a.a_lora.lora[2].weight, a.a_lora.lora[2].bias,
             v1, v2, v0,
@@ -1884,40 +1314,77 @@ def extract(model):
             torch.stack((a.r_proj.weight.t(), a.k_proj.weight.t(), a.v_proj.weight.t())).contiguous()
             if stack_rkv
             else ref.new_empty((0,)),
-            q_rkv,
-            s_rkv,
         ))
-        if release_dense_rkv:
-            # Replace the registered parameters only after quantization and
-            # pack construction. No dense tensor remains referenced by either
-            # the module or the native pack.
-            a.r_proj.weight = torch.nn.Parameter(ref.new_empty((0,)), requires_grad=False)
-            a.k_proj.weight = torch.nn.Parameter(ref.new_empty((0,)), requires_grad=False)
-            a.v_proj.weight = torch.nn.Parameter(ref.new_empty((0,)), requires_grad=False)
     return packs, H, N, eps
 
 
-def _ensure_rkv_pack(p):
-    """Accept legacy packs and append optional dense/W4 RKV storage.
+def extract_graph(model):
+    """Pack CUDA-graph operands while preserving MM8/MM4 modules.
 
-    The native-graph VKWR/RKV policy appended ``RKVw`` to layer packs.  Some
-    synthetic tests and older remote-code checkpoints still build the previous
-    40-field pack shape.  Keep those callers working by appending an empty
-    tensor with the same device/dtype as the dense projection weights.
+    Dense models keep the exact historical tensor tuple. Quantized projection
+    modules are retained as callable operands and are consumed by the eager
+    graph-capture dispatchers below. This function is intentionally separate
+    from :func:`extract`: TorchScript decode still requires tensor-only packs.
     """
 
-    if len(p) == 43:
-        return p
-    if len(p) == 41:
-        return (*p, p[20].new_empty((0,), dtype=torch.uint8), p[20].new_empty((0,), dtype=torch.float32))
-    if len(p) == 40:
-        return (
-            *p,
-            p[20].new_empty((0,)),
-            p[20].new_empty((0,), dtype=torch.uint8),
-            p[20].new_empty((0,), dtype=torch.float32),
-        )
-    raise ValueError(f"unexpected native_jit layer pack length {len(p)}")
+    layers = model.model.layers
+    H = layers[0].attn.num_heads
+    N = layers[0].attn.head_dim
+    eps = float(N * 1e-5)
+    packs = []
+    hidden = int(layers[0].attn.hidden_size)
+    stack_rkv = _native_graph_rkv_policy() == "vkwr_auto"
+    embed_ref = model.model.embeddings.weight
+    for i, layer in enumerate(layers):
+        a = layer.attn
+        vl = getattr(a, "v_lora", None)
+        if vl is not None:
+            v1 = _graph_linear_operand(vl.lora[0])
+            v2 = _graph_linear_operand(vl.lora[2])
+            v0 = vl.lora[2].bias
+        else:
+            v1 = torch.zeros(1, hidden, device=embed_ref.device, dtype=embed_ref.dtype)
+            v2 = torch.zeros(hidden, 1, device=embed_ref.device, dtype=embed_ref.dtype)
+            v0 = torch.zeros(hidden, device=embed_ref.device, dtype=embed_ref.dtype)
+        if hasattr(layer, "pre_norm"):
+            pre_w, pre_b, has_pre = layer.pre_norm.weight, layer.pre_norm.bias, 1
+        else:
+            pre_w = torch.zeros(hidden, device=embed_ref.device, dtype=embed_ref.dtype)
+            pre_b = torch.zeros(hidden, device=embed_ref.device, dtype=embed_ref.dtype)
+            has_pre = 0
+
+        r_op = _graph_linear_operand(a.r_proj)
+        k_op = _graph_linear_operand(a.k_proj)
+        v_op = _graph_linear_operand(a.v_proj)
+        if stack_rkv and all(_graph_linear_is_dense(item) for item in (r_op, k_op, v_op)):
+            stacked_rkv = torch.stack((r_op.t(), k_op.t(), v_op.t())).contiguous()
+        else:
+            stacked_rkv = embed_ref.new_empty((0,))
+
+        packs.append((
+            i, H, N, eps, has_pre,
+            pre_w, pre_b, layer.attn_norm.weight, layer.attn_norm.bias,
+            layer.ffn_norm.weight, layer.ffn_norm.bias,
+            a.x_r.reshape(-1), a.x_w.reshape(-1), a.x_k.reshape(-1),
+            a.x_v.reshape(-1), a.x_a.reshape(-1), a.x_g.reshape(-1),
+            a.k_k, a.k_a, a.r_k,
+            r_op, k_op, v_op, _graph_linear_operand(a.o_proj),
+            _graph_linear_operand(a.w_lora.lora[0]),
+            _graph_linear_operand(a.w_lora.lora[2]),
+            a.w_lora.lora[2].bias,
+            _graph_linear_operand(a.a_lora.lora[0]),
+            _graph_linear_operand(a.a_lora.lora[2]),
+            a.a_lora.lora[2].bias,
+            v1, v2, v0,
+            _graph_linear_operand(a.g_lora.lora[0]),
+            _graph_linear_operand(a.g_lora.lora[2]),
+            a.g_norm.weight, a.g_norm.bias,
+            layer.ffn.x_k,
+            _graph_linear_operand(layer.ffn.key),
+            _graph_linear_operand(layer.ffn.value),
+            stacked_rkv,
+        ))
+    return packs, H, N, eps
 
 
 def _init(model, device, dtype):
@@ -1946,7 +1413,6 @@ def _init_batched_from_packs(packs, batch_size: int, device, dtype):
 
 def step(model, x, state, xpa, xpf, v_first, packs):
     for p in packs:
-        p = _ensure_rkv_pack(p)
         x, xpa[p[0]], xpf[p[0]], v_first, state[p[0]] = block_step(x, xpa[p[0]], xpf[p[0]], v_first, state[p[0]], *p)
     return x, state, xpa, xpf, v_first
 
@@ -1960,7 +1426,6 @@ def step_batched(model, x, state, xpa, xpf, v_first, packs):
     the same reduced-dispatch H2 decode idea without importing the wrapper.
     """
     for p in packs:
-        p = _ensure_rkv_pack(p)
         x, xpa[p[0]], xpf[p[0]], v_first, state[p[0]] = block_step_batched(
             x, xpa[p[0]], xpf[p[0]], v_first, state[p[0]], *p
         )
@@ -1985,7 +1450,7 @@ def _native_prefill_scan(
     """Run the recurrent prefill scan, using Triton only when explicitly enabled."""
 
     if w_is_raw and _native_prefill_fused_clampw_scan_enabled():
-        scan_block_m = _native_prefill_scan_block_m(N)
+        scan_block_m = _native_prefill_scan_block_m(N, B)
         out, new_state = fused_recurrent_scan_clampw(
             r.view(B, T, H, N),
             w.view(B, T, H, N),
@@ -2004,7 +1469,7 @@ def _native_prefill_scan(
         w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
 
     if _native_prefill_fused_scan_enabled():
-        scan_block_m = _native_prefill_scan_block_m(N)
+        scan_block_m = _native_prefill_scan_block_m(N, B)
         out, new_state = fused_recurrent_scan(
             r.view(B, T, H, N),
             w.view(B, T, H, N),
@@ -2093,221 +1558,37 @@ def prefill(
 
     x = F.embedding(ids, base.embeddings.weight).reshape(B, T, hidden)
     v_first_seq = torch.zeros(B, T, hidden, device=ids.device, dtype=dtype)
-    cuda_state_scan_w_temp = None
-    cuda_state_scan_kk_temp = None
 
     for p in packs:
-        p = _ensure_rkv_pack(p)
         (i, H, N, eps, has_pre,
          pre_w, pre_b, an_w, an_b, fn_w, fn_b,
          x_r, x_w, x_k, x_v, x_a, x_g, k_k, k_a, r_k,
          Rw, Kw, Vw, Ow, w1, w2, w0, a1, a2, a0, v1, v2, v0, g1, g2,
-         gn_w, gn_b, fx_k, fK, fV, RKVw, Q_RKVw, S_RKVw) = p
+         gn_w, gn_b, fx_k, fK, fV, _RKVw) = p
         layer_idx = int(i)
         H = int(H)
         N = int(N)
         hidden = H * N
-        use_prefill_projection = _native_prefill_fused_projection_enabled(B * T)
-        shift_wavg_lora_done = False
-        shift_wavg_lora_w_decay_done = False
-        shift_wavg_lora_g_mid_done = False
-        g_mid_for_output = None
 
-        if _native_prefill_fused_norm_mix_enabled():
-            norm_mix = fused_attn_norm_shift_mix_prefill(
-                x,
-                xpa[layer_idx].view(B, hidden),
-                x_r,
-                x_w,
-                x_k,
-                x_v,
-                x_a,
-                x_g,
-                pre_norm_weight=pre_w,
-                pre_norm_bias=pre_b,
-                norm_weight=an_w,
-                norm_bias=an_b,
-                has_pre_norm=int(has_pre) == 1,
-            )
-            residual, h, xr, xw, xk, xv, xa, xg = norm_mix.as_tuple()
+        residual = F.layer_norm(x, [hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
+        h = F.layer_norm(residual, [hidden], an_w, an_b, 1e-5)
+        prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h[:, :-1, :]], dim=1)
+        if _native_prefill_fused_shift_mix_enabled():
+            xr, xw, xk, xv, xa, xg = fused_attn_shift_mix(h, prev_h, x_r, x_w, x_k, x_v, x_a, x_g)
         else:
-            residual = F.layer_norm(x, [hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
-            h = F.layer_norm(residual, [hidden], an_w, an_b, 1e-5)
-            shift_wavg_prev_cache = (
-                not use_prefill_projection
-                and layer_idx > 0
-                and _native_prefill_fused_shift_wavg_lora_prev_cache_enabled(B * T)
-            )
-            prev_h = None
-            if not shift_wavg_prev_cache:
-                prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h[:, :-1, :]], dim=1)
-            if (
-                not use_prefill_projection
-                and layer_idx > 0
-                and _native_prefill_fused_shift_wavg_lora_enabled(B * T)
-            ):
-                block_m, block_r, block_k = _native_prefill_fused_shift_wavg_lora_blocks()
-                down_warps, up_warps = _native_prefill_fused_shift_wavg_lora_warps()
-                output_w_decay = _native_prefill_fused_shift_wavg_lora_w_decay_enabled(B * T)
-                output_a_sigmoid = _native_prefill_fused_shift_wavg_lora_a_sigmoid_enabled(B * T)
-                lean_down = _native_prefill_fused_shift_wavg_lora_lean_down_requested()
-                lean_up = _native_prefill_fused_shift_wavg_lora_lean_up_requested()
-                output_g_mid = (
-                    _native_prefill_fused_shift_wavg_lora_g_mid_output_enabled()
-                    and _native_prefill_fused_output_enabled()
-                    and not _native_prefill_fused_scan_output_enabled()
-                    and not _native_prefill_fused_state_scan_output_enabled()
-                    and not _native_prefill_fused_state_scan_correction_enabled()
-                    and not _native_prefill_fused_state_scan_raw_output_enabled()
-                    and not _native_prefill_fused_state_scan_sk_output_enabled()
-                    and not _native_prefill_fused_output_project_enabled()
-                )
-                xr2, xk2, xv2, w2_out, a2_out, g2_out, v_gate2 = fused_shift_wavg_lora(
-                    h.reshape(B * T, hidden),
-                    None if shift_wavg_prev_cache else prev_h.reshape(B * T, hidden),
-                    x_r,
-                    x_w,
-                    x_k,
-                    x_v,
-                    x_a,
-                    x_g,
-                    w1,
-                    a1,
-                    g1,
-                    v1,
-                    w2,
-                    a2,
-                    g2,
-                    v2,
-                    w0,
-                    a0,
-                    None,
-                    v0,
-                    block_m=block_m,
-                    block_r=block_r,
-                    block_k=block_k,
-                    down_num_warps=down_warps,
-                    up_num_warps=up_warps,
-                    output_w_decay=output_w_decay,
-                    output_a_sigmoid=output_a_sigmoid,
-                    lean_down=lean_down,
-                    lean_up=lean_up,
-                    output_g_mid=output_g_mid,
-                    prev_cache=xpa[layer_idx].view(B, hidden) if shift_wavg_prev_cache else None,
-                    seq_len=T if shift_wavg_prev_cache else None,
-                )
-                xr = xr2.view(B, T, hidden)
-                xk = xk2.view(B, T, hidden)
-                xv = xv2.view(B, T, hidden)
-                # xw/xa/xg are intentionally not materialized by this route.
-                xw = xa = xg = None
-                w = w2_out.view(B, T, hidden)
-                a = a2_out.view(B, T, hidden) if output_a_sigmoid else torch.sigmoid(a2_out.view(B, T, hidden))
-                if output_g_mid:
-                    g = None
-                    g_mid_for_output = g2_out.reshape(B * T, int(g1.shape[0]))
-                    shift_wavg_lora_g_mid_done = True
-                else:
-                    g = g2_out.view(B, T, hidden)
-                v_gate = v_gate2.view(B, T, hidden)
-                shift_wavg_lora_done = True
-                shift_wavg_lora_w_decay_done = bool(output_w_decay)
-            elif _native_prefill_fused_shift_mix_enabled():
-                if prev_h is None:
-                    prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h[:, :-1, :]], dim=1)
-                xr, xw, xk, xv, xa, xg = fused_attn_shift_mix(h, prev_h, x_r, x_w, x_k, x_v, x_a, x_g)
-            else:
-                if prev_h is None:
-                    prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h[:, :-1, :]], dim=1)
-                xx = prev_h - h
-                xr = h + xx * x_r.view(1, 1, hidden)
-                xw = h + xx * x_w.view(1, 1, hidden)
-                xk = h + xx * x_k.view(1, 1, hidden)
-                xv = h + xx * x_v.view(1, 1, hidden)
-                xa = h + xx * x_a.view(1, 1, hidden)
-                xg = h + xx * x_g.view(1, 1, hidden)
+            xx = prev_h - h
+            xr = h + xx * x_r.view(1, 1, hidden)
+            xw = h + xx * x_w.view(1, 1, hidden)
+            xk = h + xx * x_k.view(1, 1, hidden)
+            xv = h + xx * x_v.view(1, 1, hidden)
+            xa = h + xx * x_a.view(1, 1, hidden)
+            xg = h + xx * x_g.view(1, 1, hidden)
 
-        if not shift_wavg_lora_done:
-            v_gate = None
-        if use_prefill_projection:
-            block_m, block_r, block_k = _native_prefill_fused_projection_blocks()
-            if layer_idx == 0:
-                r, k, v, w, a, g = fused_rkv_wag_projection(
-                    xr,
-                    xk,
-                    xv,
-                    xw,
-                    xa,
-                    xg,
-                    Rw,
-                    Kw,
-                    Vw,
-                    w1,
-                    a1,
-                    g1,
-                    w2,
-                    a2,
-                    g2,
-                    w0,
-                    a0,
-                    None,
-                    block_m=block_m,
-                    block_r=block_r,
-                    block_k=block_k,
-                )
-                a = torch.sigmoid(a)
-            else:
-                r, k, v, w, a, g, v_gate = fused_rkv_wavg_projection(
-                    xr,
-                    xk,
-                    xv,
-                    xw,
-                    xa,
-                    xg,
-                    Rw,
-                    Kw,
-                    Vw,
-                    w1,
-                    a1,
-                    g1,
-                    v1,
-                    w2,
-                    a2,
-                    g2,
-                    v2,
-                    w0,
-                    a0,
-                    None,
-                    v0,
-                    block_m=block_m,
-                    block_r=block_r,
-                    block_k=block_k,
-                )
-                a = torch.sigmoid(a)
-                v_gate = torch.sigmoid(v_gate)
-        else:
-            if _native_prefill_rkv_bmm_enabled(B * T, hidden, RKVw):
-                r2, k2, v2 = _stacked_rkv_bmm_project(
-                    xr.reshape(B * T, hidden),
-                    xk.reshape(B * T, hidden),
-                    xv.reshape(B * T, hidden),
-                    RKVw,
-                    B * T,
-                    hidden,
-                )
-                r = r2.view(B, T, hidden)
-                k = k2.view(B, T, hidden)
-                v = v2.view(B, T, hidden)
-            else:
-                r = F.linear(xr, Rw)
-                k = F.linear(xk, Kw)
-                v = F.linear(xv, Vw)
-        use_prefill_wavg_lora = (
-            not shift_wavg_lora_done
-            and not use_prefill_projection
-            and layer_idx > 0
-            and _native_prefill_fused_wavg_lora_enabled(B * T)
-        )
+        r = F.linear(xr, Rw)
+        k = F.linear(xk, Kw)
+        v = F.linear(xv, Vw)
+        v_gate = None
+        use_prefill_wavg_lora = layer_idx > 0 and _native_prefill_fused_wavg_lora_enabled(B * T)
         if use_prefill_wavg_lora:
             block_m, block_r, block_k = _native_prefill_fused_wavg_lora_blocks()
             w, a, g, v_gate = fused_wavg_lora(
@@ -2335,444 +1616,25 @@ def prefill(
             a = torch.sigmoid(a.view(B, T, hidden))
             g = g.view(B, T, hidden)
             v_gate = v_gate.view(B, T, hidden)
-        elif not shift_wavg_lora_done and not use_prefill_projection:
+        else:
             w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
             a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
             g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
             if layer_idx != 0:
                 v_gate = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
-        use_fused_state_scan_output = _native_prefill_fused_state_scan_output_enabled()
-        use_fused_state_scan_correction = (
-            _native_prefill_fused_state_scan_correction_enabled() and not use_fused_state_scan_output
-        )
-        use_fused_state_scan_raw_output = (
-            _native_prefill_fused_state_scan_raw_output_enabled()
-            and not use_fused_state_scan_output
-            and not use_fused_state_scan_correction
-        )
-        use_fused_state_scan_sk_output = (
-            _native_prefill_fused_state_scan_sk_output_enabled()
-            and not use_fused_state_scan_output
-            and not use_fused_state_scan_correction
-            and not use_fused_state_scan_raw_output
-        )
-        use_fused_scan_output = (
-            _native_prefill_fused_scan_output_enabled()
-            and not use_fused_state_scan_output
-            and not use_fused_state_scan_correction
-            and not use_fused_state_scan_raw_output
-            and not use_fused_state_scan_sk_output
-        )
-        use_clampw_scan = (
-            _native_prefill_fused_clampw_scan_enabled()
-            and not use_fused_scan_output
-            and not use_fused_state_scan_output
-            and not use_fused_state_scan_correction
-            and not use_fused_state_scan_raw_output
-            and not use_fused_state_scan_sk_output
-        )
-        use_fused_state_scan = (
-            _native_prefill_fused_state_scan_enabled()
-            and not use_fused_scan_output
-            and not use_fused_state_scan_output
-            and not use_fused_state_scan_correction
-            and not use_fused_state_scan_raw_output
-            and not use_fused_state_scan_sk_output
-        )
+        use_fused_scan_output = _native_prefill_fused_scan_output_enabled()
+        use_clampw_scan = _native_prefill_fused_clampw_scan_enabled() and not use_fused_scan_output
+        use_fused_state_scan = _native_prefill_fused_state_scan_enabled(B) and not use_fused_scan_output
         if use_clampw_scan and _native_prefill_fused_state_prep_enabled() and fused_prefill_kv_kk_prep is None:
             use_clampw_scan = False
         state_scan_done = False
-        state_scan_output_done = False
-        state_scan_correction_done = False
-        state_scan_raw_output_done = False
-        state_scan_sk_output_done = False
-        correction = None
-        sk_scale = None
-        if use_fused_state_scan_output:
-            state_scan_num_warps = _native_prefill_scan_num_warps(N, N)
+        if use_fused_state_scan:
+            scan_block_m = _native_prefill_scan_block_m(N, B)
+            scan_num_warps = _native_prefill_scan_num_warps(N, scan_block_m)
             if layer_idx == 0:
-                out, new_state = fused_recurrent_scan_state_prep_output_prepare(
-                    r.view(B, T, H, N),
-                    w.view(B, T, H, N),
-                    k.view(B, T, H, N),
-                    v.view(B, T, H, N),
-                    a.view(B, T, H, N),
-                    state[layer_idx],
-                    k_k,
-                    k_a,
-                    g.view(B, T, H, N),
-                    r_k,
-                    gn_w,
-                    gn_b,
-                    eps=eps,
-                    block_n=N,
-                    num_warps=state_scan_num_warps,
-                )
-                v_first_seq = v
-            else:
-                out, new_state = fused_recurrent_scan_state_prep_output_prepare(
-                    r.view(B, T, H, N),
-                    w.view(B, T, H, N),
-                    k.view(B, T, H, N),
-                    v.view(B, T, H, N),
-                    a.view(B, T, H, N),
-                    state[layer_idx],
-                    k_k,
-                    k_a,
-                    g.view(B, T, H, N),
-                    r_k,
-                    gn_w,
-                    gn_b,
-                    eps=eps,
-                    v_first=v_first_seq.view(B, T, H, N),
-                    v_gate=v_gate.view(B, T, H, N),
-                    block_n=N,
-                    num_warps=state_scan_num_warps,
-                )
-            out = out.reshape(B, T, hidden)
-            state_scan_done = True
-            state_scan_output_done = True
-        elif use_fused_state_scan_correction:
-            state_scan_block_m = _native_prefill_scan_block_m(N)
-            state_scan_num_warps = _native_prefill_scan_num_warps(N, state_scan_block_m)
-            state_scan_num_stages = _native_prefill_scan_num_stages()
-            if layer_idx == 0:
-                out, new_state, correction = fused_recurrent_scan_state_prep_correction(
-                    r.view(B, T, H, N),
-                    w.view(B, T, H, N),
-                    k.view(B, T, H, N),
-                    v.view(B, T, H, N),
-                    a.view(B, T, H, N),
-                    state[layer_idx],
-                    k_k,
-                    k_a,
-                    r_k,
-                    block_n=N,
-                    block_m=state_scan_block_m,
-                    num_warps=state_scan_num_warps,
-                    num_stages=state_scan_num_stages,
-                )
-                # Layer 0 adjusted V is the raw V projection, so keep it for
-                # later layer V interpolation without materializing a scan V_out.
-                v_first_seq = v
-            else:
-                out, new_state, correction = fused_recurrent_scan_state_prep_correction(
-                    r.view(B, T, H, N),
-                    w.view(B, T, H, N),
-                    k.view(B, T, H, N),
-                    v.view(B, T, H, N),
-                    a.view(B, T, H, N),
-                    state[layer_idx],
-                    k_k,
-                    k_a,
-                    r_k,
-                    v_first=v_first_seq.view(B, T, H, N),
-                    v_gate=v_gate.view(B, T, H, N),
-                    block_n=N,
-                    block_m=state_scan_block_m,
-                    num_warps=state_scan_num_warps,
-                    num_stages=state_scan_num_stages,
-                )
-            out = out.reshape(B, T, hidden)
-            correction = correction.reshape(B, T, hidden)
-            state_scan_done = True
-            state_scan_correction_done = True
-        elif use_fused_state_scan_raw_output:
-            state_scan_block_m = _native_prefill_scan_block_m(N)
-            state_scan_num_warps = _native_prefill_scan_num_warps(N, state_scan_block_m)
-            state_scan_num_stages = _native_prefill_scan_num_stages()
-            use_cuda_state_scan_raw = (
-                _native_prefill_cuda_state_scan_enabled()
-                and N == 64
-                and state_scan_block_m == 64
-                and x.dtype == torch.float16
-                and _native_prefill_cuda_state_scan_lanes_per_row() == 64
-                and not _native_prefill_cuda_state_scan_precompute_enabled()
-                and _native_prefill_cuda_state_scan_schedule() == "warp_specialized"
-                and not shift_wavg_lora_w_decay_done
-            )
-            cuda_state_scan_rows_per_block = (
-                _native_prefill_cuda_state_scan_rows_per_block() if use_cuda_state_scan_raw else 1
-            )
-            if layer_idx == 0:
-                if use_cuda_state_scan_raw:
-                    out, new_state, _k_unused, _v_unused = cuda_state_scan_prep(
-                        r.view(B, T, H, N),
-                        w.view(B, T, H, N),
-                        k.view(B, T, H, N),
-                        v.view(B, T, H, N),
-                        a.view(B, T, H, N),
-                        state[layer_idx],
-                        k_k,
-                        k_a,
-                        lanes_per_row=64,
-                        precompute_vector=False,
-                        precompute_mode="none",
-                        rows_per_block=cuda_state_scan_rows_per_block,
-                        schedule="warp_specialized",
-                        write_kv=False,
-                    )
-                    _ = (_k_unused, _v_unused)
-                else:
-                    out, new_state = fused_recurrent_scan_state_prep_nokv(
-                        r.view(B, T, H, N),
-                        w.view(B, T, H, N),
-                        k.view(B, T, H, N),
-                        v.view(B, T, H, N),
-                        a.view(B, T, H, N),
-                        state[layer_idx],
-                        k_k,
-                        k_a,
-                        block_n=N,
-                        block_m=state_scan_block_m,
-                        num_warps=state_scan_num_warps,
-                        num_stages=state_scan_num_stages,
-                    )
-                # Raw V is also the adjusted V for layer 0.
-                v_first_seq = v
-            else:
-                if use_cuda_state_scan_raw:
-                    out, new_state, _k_unused, _v_unused = cuda_state_scan_prep(
-                        r.view(B, T, H, N),
-                        w.view(B, T, H, N),
-                        k.view(B, T, H, N),
-                        v.view(B, T, H, N),
-                        a.view(B, T, H, N),
-                        state[layer_idx],
-                        k_k,
-                        k_a,
-                        v_first=v_first_seq.view(B, T, H, N),
-                        v_gate=v_gate.view(B, T, H, N),
-                        lanes_per_row=64,
-                        precompute_vector=False,
-                        precompute_mode="none",
-                        rows_per_block=cuda_state_scan_rows_per_block,
-                        schedule="warp_specialized",
-                        write_kv=False,
-                    )
-                    _ = (_k_unused, _v_unused)
-                else:
-                    out, new_state = fused_recurrent_scan_state_prep_nokv(
-                        r.view(B, T, H, N),
-                        w.view(B, T, H, N),
-                        k.view(B, T, H, N),
-                        v.view(B, T, H, N),
-                        a.view(B, T, H, N),
-                        state[layer_idx],
-                        k_k,
-                        k_a,
-                        v_first=v_first_seq.view(B, T, H, N),
-                        v_gate=v_gate.view(B, T, H, N),
-                        block_n=N,
-                        block_m=state_scan_block_m,
-                        num_warps=state_scan_num_warps,
-                        num_stages=state_scan_num_stages,
-                    )
-            out = out.reshape(B, T, hidden)
-            state_scan_done = True
-            state_scan_raw_output_done = True
-        elif use_fused_state_scan_sk_output:
-            state_scan_block_m = _native_prefill_scan_block_m(N)
-            state_scan_num_warps = _native_prefill_scan_num_warps(N, state_scan_block_m)
-            state_scan_num_stages = _native_prefill_scan_num_stages()
-            state_scan_nomask64 = _native_prefill_scan_nomask64_enabled()
-            if layer_idx == 0:
-                out, new_state, sk_scale = fused_recurrent_scan_state_prep_sk(
-                    r.view(B, T, H, N),
-                    w.view(B, T, H, N),
-                    k.view(B, T, H, N),
-                    v.view(B, T, H, N),
-                    a.view(B, T, H, N),
-                    state[layer_idx],
-                    k_k,
-                    k_a,
-                    r_k,
-                    block_n=N,
-                    num_warps=state_scan_num_warps,
-                    num_stages=state_scan_num_stages,
-                    nomask64=state_scan_nomask64,
-                )
-                # Layer 0 adjusted V is the raw V projection.
-                v_first_seq = v
-            else:
-                out, new_state, sk_scale = fused_recurrent_scan_state_prep_sk(
-                    r.view(B, T, H, N),
-                    w.view(B, T, H, N),
-                    k.view(B, T, H, N),
-                    v.view(B, T, H, N),
-                    a.view(B, T, H, N),
-                    state[layer_idx],
-                    k_k,
-                    k_a,
-                    r_k,
-                    v_first=v_first_seq.view(B, T, H, N),
-                    v_gate=v_gate.view(B, T, H, N),
-                    block_n=N,
-                    num_warps=state_scan_num_warps,
-                    num_stages=state_scan_num_stages,
-                    nomask64=state_scan_nomask64,
-                )
-            out = out.reshape(B, T, hidden)
-            sk_scale = sk_scale.reshape(B * T, H)
-            state_scan_done = True
-            state_scan_sk_output_done = True
-        elif use_fused_state_scan:
-            state_scan_block_m = _native_prefill_scan_block_m(N)
-            state_scan_num_warps = _native_prefill_scan_num_warps(N, state_scan_block_m)
-            state_scan_num_stages = _native_prefill_scan_num_stages()
-            state_scan_algebraic_output = _native_prefill_scan_algebraic_output_enabled()
-            state_scan_nomask64 = _native_prefill_scan_nomask64_enabled()
-            use_cuda_state_scan = (
-                _native_prefill_cuda_state_scan_enabled()
-                and N == 64
-                and state_scan_block_m == 64
-                and x.dtype == torch.float16
-            )
-            use_cuda_state_scan_sk = bool(use_cuda_state_scan and _native_prefill_cuda_state_scan_sk_enabled())
-            cuda_state_scan_lanes = _native_prefill_cuda_state_scan_lanes_per_row() if use_cuda_state_scan else 1
-            cuda_state_scan_precompute = (
-                _native_prefill_cuda_state_scan_precompute_enabled() if use_cuda_state_scan else False
-            )
-            cuda_state_scan_precompute_mode = (
-                _native_prefill_cuda_state_scan_precompute_mode() if use_cuda_state_scan else "none"
-            )
-            cuda_state_scan_rows_per_block = (
-                _native_prefill_cuda_state_scan_rows_per_block() if use_cuda_state_scan else 1
-            )
-            cuda_state_scan_schedule = _native_prefill_cuda_state_scan_schedule() if use_cuda_state_scan else "default"
-            state_scan_w_precomputed = bool(shift_wavg_lora_w_decay_done)
-            cuda_state_scan_inplace_kv = bool(
-                use_cuda_state_scan
-                and _native_prefill_cuda_state_scan_inplace_kv_enabled()
-                and cuda_state_scan_precompute
-                and not state_scan_w_precomputed
-            )
-            cuda_state_scan_inplace_v = bool(
-                use_cuda_state_scan
-                and _native_prefill_cuda_state_scan_inplace_v_enabled()
-                and not cuda_state_scan_precompute
-                and not cuda_state_scan_inplace_kv
-            )
-            cuda_state_scan_inplace_kka = bool(
-                use_cuda_state_scan
-                and _native_prefill_cuda_state_scan_inplace_kka_enabled()
-                and cuda_state_scan_precompute
-                and cuda_state_scan_precompute_mode == "wk_half"
-                and not state_scan_w_precomputed
-            )
-            cuda_state_scan_reuse_precompute = bool(
-                use_cuda_state_scan
-                and _native_prefill_cuda_state_scan_reuse_precompute_enabled()
-                and cuda_state_scan_precompute
-                and cuda_state_scan_precompute_mode == "wk_half"
-                and not state_scan_w_precomputed
-            )
-            if cuda_state_scan_reuse_precompute:
-                temp_shape = (B, T, H, N)
-                if (
-                    cuda_state_scan_w_temp is None
-                    or tuple(cuda_state_scan_w_temp.shape) != temp_shape
-                    or cuda_state_scan_w_temp.device != ids.device
-                    or cuda_state_scan_w_temp.dtype != dtype
-                ):
-                    cuda_state_scan_w_temp = torch.empty(temp_shape, device=ids.device, dtype=dtype)
-                    cuda_state_scan_kk_temp = torch.empty(temp_shape, device=ids.device, dtype=dtype)
-                cuda_state_scan_w_temp_arg = cuda_state_scan_w_temp
-                cuda_state_scan_kk_temp_arg = cuda_state_scan_kk_temp
-            else:
-                cuda_state_scan_w_temp_arg = None
-                cuda_state_scan_kk_temp_arg = None
-            state_scan_precompute_w = state_scan_w_precomputed or (
-                _native_prefill_scan_precompute_w_enabled() and not use_cuda_state_scan
-            )
-            state_scan_precompute_w_dtype = _native_prefill_scan_precompute_w_dtype()
-            w_for_state_scan = w
-            if state_scan_precompute_w and not state_scan_w_precomputed:
-                w_for_state_scan = torch.sigmoid(w.float()).mul_(-0.606531).exp_()
-                if state_scan_precompute_w_dtype == "input":
-                    w_for_state_scan = w_for_state_scan.to(dtype=w.dtype)
-            if use_cuda_state_scan_sk and layer_idx == 0:
-                out, new_state, sk_scale = cuda_state_scan_prep_sk(
-                    r.view(B, T, H, N),
-                    w.view(B, T, H, N),
-                    k.view(B, T, H, N),
-                    v.view(B, T, H, N),
-                    a.view(B, T, H, N),
-                    state[layer_idx],
-                    k_k,
-                    k_a,
-                    r_k,
-                    rows_per_block=cuda_state_scan_rows_per_block,
-                    schedule=cuda_state_scan_schedule,
-                )
-                v_first_seq = v.reshape(B, T, hidden)
-            elif use_cuda_state_scan_sk:
-                out, new_state, sk_scale = cuda_state_scan_prep_sk(
-                    r.view(B, T, H, N),
-                    w.view(B, T, H, N),
-                    k.view(B, T, H, N),
-                    v.view(B, T, H, N),
-                    a.view(B, T, H, N),
-                    state[layer_idx],
-                    k_k,
-                    k_a,
-                    r_k,
-                    v_first=v_first_seq.view(B, T, H, N),
-                    v_gate=v_gate.view(B, T, H, N),
-                    rows_per_block=cuda_state_scan_rows_per_block,
-                    schedule=cuda_state_scan_schedule,
-                )
-            elif use_cuda_state_scan and layer_idx == 0:
-                out, new_state, k, v = cuda_state_scan_prep(
-                    r.view(B, T, H, N),
-                    w.view(B, T, H, N),
-                    k.view(B, T, H, N),
-                    v.view(B, T, H, N),
-                    a.view(B, T, H, N),
-                    state[layer_idx],
-                    k_k,
-                    k_a,
-                    lanes_per_row=cuda_state_scan_lanes,
-                    precompute_vector=cuda_state_scan_precompute,
-                    precompute_mode=cuda_state_scan_precompute_mode,
-                    rows_per_block=cuda_state_scan_rows_per_block,
-                    schedule=cuda_state_scan_schedule,
-                    w_precomputed=state_scan_w_precomputed,
-                    inplace_kv=cuda_state_scan_inplace_kv,
-                    inplace_v=cuda_state_scan_inplace_v,
-                    inplace_kka=cuda_state_scan_inplace_kka,
-                    w_temp=cuda_state_scan_w_temp_arg,
-                    kk_temp=cuda_state_scan_kk_temp_arg,
-                )
-                v_first_seq = v.reshape(B, T, hidden)
-            elif use_cuda_state_scan:
-                out, new_state, k, v = cuda_state_scan_prep(
-                    r.view(B, T, H, N),
-                    w.view(B, T, H, N),
-                    k.view(B, T, H, N),
-                    v.view(B, T, H, N),
-                    a.view(B, T, H, N),
-                    state[layer_idx],
-                    k_k,
-                    k_a,
-                    v_first=v_first_seq.view(B, T, H, N),
-                    v_gate=v_gate.view(B, T, H, N),
-                    lanes_per_row=cuda_state_scan_lanes,
-                    precompute_vector=cuda_state_scan_precompute,
-                    precompute_mode=cuda_state_scan_precompute_mode,
-                    rows_per_block=cuda_state_scan_rows_per_block,
-                    schedule=cuda_state_scan_schedule,
-                    w_precomputed=state_scan_w_precomputed,
-                    inplace_kv=cuda_state_scan_inplace_kv,
-                    inplace_v=cuda_state_scan_inplace_v,
-                    inplace_kka=cuda_state_scan_inplace_kka,
-                    w_temp=cuda_state_scan_w_temp_arg,
-                    kk_temp=cuda_state_scan_kk_temp_arg,
-                )
-            elif layer_idx == 0:
                 out, new_state, k, v = fused_recurrent_scan_state_prep(
                     r.view(B, T, H, N),
-                    w_for_state_scan.view(B, T, H, N),
+                    w.view(B, T, H, N),
                     k.view(B, T, H, N),
                     v.view(B, T, H, N),
                     a.view(B, T, H, N),
@@ -2780,18 +1642,14 @@ def prefill(
                     k_k,
                     k_a,
                     block_n=N,
-                    block_m=state_scan_block_m,
-                    num_warps=state_scan_num_warps,
-                    num_stages=state_scan_num_stages,
-                    algebraic_output=state_scan_algebraic_output,
-                    nomask64=state_scan_nomask64,
-                    precomputed_w=state_scan_precompute_w,
+                    block_m=scan_block_m,
+                    num_warps=scan_num_warps,
                 )
                 v_first_seq = v.reshape(B, T, hidden)
             else:
                 out, new_state, k, v = fused_recurrent_scan_state_prep(
                     r.view(B, T, H, N),
-                    w_for_state_scan.view(B, T, H, N),
+                    w.view(B, T, H, N),
                     k.view(B, T, H, N),
                     v.view(B, T, H, N),
                     a.view(B, T, H, N),
@@ -2801,20 +1659,12 @@ def prefill(
                     v_first=v_first_seq.view(B, T, H, N),
                     v_gate=v_gate.view(B, T, H, N),
                     block_n=N,
-                    block_m=state_scan_block_m,
-                    num_warps=state_scan_num_warps,
-                    num_stages=state_scan_num_stages,
-                    algebraic_output=state_scan_algebraic_output,
-                    nomask64=state_scan_nomask64,
-                    precomputed_w=state_scan_precompute_w,
+                    block_m=scan_block_m,
+                    num_warps=scan_num_warps,
                 )
             out = out.reshape(B, T, hidden)
-            if use_cuda_state_scan_sk:
-                sk_scale = sk_scale.reshape(B * T, H)
-                state_scan_sk_output_done = True
-            else:
-                k = k.reshape(B, T, hidden)
-                v = v.reshape(B, T, hidden)
+            k = k.reshape(B, T, hidden)
+            v = v.reshape(B, T, hidden)
             state_scan_done = True
         elif _native_prefill_fused_state_prep_enabled():
             if use_clampw_scan:
@@ -2878,9 +1728,7 @@ def prefill(
             if not use_clampw_scan:
                 w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
 
-        if use_fused_state_scan_output:
-            pass
-        elif use_fused_scan_output:
+        if use_fused_scan_output:
             out, new_state = fused_recurrent_scan_output_prepare(
                 r.view(B, T, H, N),
                 w.view(B, T, H, N),
@@ -2900,83 +1748,8 @@ def prefill(
         elif not state_scan_done:
             out, new_state = _native_prefill_scan(r, w, k, v, kk, a, state[layer_idx], B, T, H, N, w_is_raw=use_clampw_scan)
         out_projected = False
-        if state_scan_output_done or use_fused_scan_output:
+        if use_fused_scan_output:
             pass
-        elif state_scan_correction_done:
-            out = fused_attn_output_prepare_from_correction(
-                out.reshape(B * T, hidden),
-                correction.reshape(B * T, hidden),
-                g.reshape(B * T, hidden),
-                gn_w,
-                gn_b,
-                num_heads=H,
-                head_v_dim=N,
-                eps=eps,
-            ).view(B, T, hidden)
-        elif state_scan_raw_output_done:
-            if layer_idx == 0:
-                out = fused_attn_output_prepare_raw_kv(
-                    out.reshape(B * T, hidden),
-                    r.reshape(B * T, H, N),
-                    k.reshape(B * T, H, N),
-                    v.reshape(B * T, H, N),
-                    a.reshape(B * T, H, N),
-                    g.reshape(B * T, hidden),
-                    k_a.view(H, N),
-                    r_k,
-                    gn_w,
-                    gn_b,
-                    num_heads=H,
-                    head_dim=N,
-                    head_v_dim=N,
-                    eps=eps,
-                ).view(B, T, hidden)
-            else:
-                out = fused_attn_output_prepare_raw_kv(
-                    out.reshape(B * T, hidden),
-                    r.reshape(B * T, H, N),
-                    k.reshape(B * T, H, N),
-                    v.reshape(B * T, H, N),
-                    a.reshape(B * T, H, N),
-                    g.reshape(B * T, hidden),
-                    k_a.view(H, N),
-                    r_k,
-                    gn_w,
-                    gn_b,
-                    v_first=v_first_seq.reshape(B * T, H, N),
-                    v_gate=v_gate.reshape(B * T, H, N),
-                    num_heads=H,
-                    head_dim=N,
-                    head_v_dim=N,
-                    eps=eps,
-                ).view(B, T, hidden)
-        elif state_scan_sk_output_done:
-            if layer_idx == 0:
-                out = fused_attn_output_prepare_from_sk_raw_v(
-                    out.reshape(B * T, hidden),
-                    sk_scale,
-                    v.reshape(B * T, H, N),
-                    g.reshape(B * T, hidden),
-                    gn_w,
-                    gn_b,
-                    num_heads=H,
-                    head_v_dim=N,
-                    eps=eps,
-                ).view(B, T, hidden)
-            else:
-                out = fused_attn_output_prepare_from_sk_raw_v(
-                    out.reshape(B * T, hidden),
-                    sk_scale,
-                    v.reshape(B * T, H, N),
-                    g.reshape(B * T, hidden),
-                    gn_w,
-                    gn_b,
-                    v_first=v_first_seq.reshape(B * T, H, N),
-                    v_gate=v_gate.reshape(B * T, H, N),
-                    num_heads=H,
-                    head_v_dim=N,
-                    eps=eps,
-                ).view(B, T, hidden)
         elif _native_prefill_fused_output_project_enabled():
             out = fused_attn_output_project(
                 out.reshape(B * T, hidden),
@@ -2996,23 +1769,6 @@ def prefill(
                 block_m=_native_prefill_fused_output_project_block_m(),
             ).view(B, T, hidden)
             out_projected = True
-        elif shift_wavg_lora_g_mid_done and _native_prefill_fused_output_enabled():
-            out = fused_attn_output_prepare_from_g_mid(
-                out.reshape(B * T, hidden),
-                r.reshape(B * T, H, N),
-                k.reshape(B * T, H, N),
-                v.reshape(B * T, H, N),
-                g_mid_for_output,
-                g2,
-                None,
-                r_k,
-                gn_w,
-                gn_b,
-                num_heads=H,
-                head_dim=N,
-                head_v_dim=N,
-                eps=eps,
-            ).view(B, T, hidden)
         elif _native_prefill_fused_output_enabled():
             out = fused_attn_output_prepare(
                 out.reshape(B * T, hidden),
@@ -3039,20 +1795,17 @@ def prefill(
         state[layer_idx] = new_state.contiguous()
 
         residual = x
-        fk, h2_last = _native_prefill_apply_ffn_norm_shift(x, xpf[layer_idx], fx_k, fn_w, fn_b, hidden)
-        fk = F.linear(fk, fK)
-        fk = _native_prefill_apply_ffn_activation(fk)
+        h2 = F.layer_norm(x, [hidden], fn_w, fn_b, 1e-5)
+        prev_h2 = torch.cat([xpf[layer_idx].view(B, 1, hidden), h2[:, :-1, :]], dim=1)
+        fxx = prev_h2 - h2
+        fk = h2 + fxx * fx_k.view(1, 1, hidden)
+        fk = torch.relu(F.linear(fk, fK)) ** 2
         x = residual + F.linear(fk, fV)
-        xpf[layer_idx] = h2_last.contiguous()
+        xpf[layer_idx] = h2[:, -1, :].contiguous()
 
+    x = F.layer_norm(x, [hidden], base.norm.weight, base.norm.bias, 1e-5)
     keep = T if logits_to_keep is None or int(logits_to_keep) <= 0 else min(int(logits_to_keep), T)
-    x_for_logits = x if keep == T else x[:, -keep:, :]
-    if _native_prefill_tail_norm_slice_enabled() and keep < T:
-        x_for_logits = F.layer_norm(x_for_logits, [hidden], base.norm.weight, base.norm.bias, 1e-5)
-    else:
-        x = F.layer_norm(x, [hidden], base.norm.weight, base.norm.bias, 1e-5)
-        x_for_logits = x[:, -keep:, :]
-    logits = _lm_head(model, x_for_logits)
+    logits = _lm_head(model, x[:, -keep:, :])
     return logits, state, xpa, xpf
 
 
@@ -3103,103 +1856,32 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
      pre_w, pre_b, an_w, an_b, fn_w, fn_b,
      x_r, x_w, x_k, x_v, x_a, x_g, k_k, k_a, r_k,
      Rw, Kw, Vw, Ow, w1, w2, w0, a1, a2, a0, v1, v2, v0, g1, g2,
-     gn_w, gn_b, fx_k, fK, fV, RKVw, Q_RKVw, S_RKVw) = p
+     gn_w, gn_b, fx_k, fK, fV, RKVw) = p
     residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5) if has_pre else x
-    h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
-    use_w4_rkv = _native_graph_w4_rkv_enabled(Q_RKVw, S_RKVw)
-    if use_w4_rkv:
-        rkv_x, xw2, xa2, xg2 = fused_attn_shift_mix_stacked_rkv(
-            h.view(1, H * N),
-            xpa.view(1, H * N),
+    use_fused_norm_mix = _native_graph_fused_norm_mix_enabled()
+    if use_fused_norm_mix:
+        xr, xw, xk, xv, xa, xg = fused_attn_norm_mix6_decode(
+            residual,
+            xpa,
+            an_w,
+            an_b,
             x_r,
             x_w,
             x_k,
             x_v,
             x_a,
             x_g,
+            num_warps=_native_graph_fused_norm_mix_num_warps(),
         )
-        xw = xw2.view(H * N)
-        xa = xa2.view(H * N)
-        xg = xg2.view(H * N)
-        xv = rkv_x[:, 2, :].view(H * N)
-        block_m, block_k, num_warps = _native_graph_w4_rkv_config(1)
-        rkv = int4_stacked_rkv_gemv(
-            rkv_x,
-            Q_RKVw,
-            S_RKVw,
-            block_m=block_m,
-            block_k=block_k,
-            num_warps=num_warps,
-        )
-        r = rkv[:, 0, :].view(H * N)
-        k = rkv[:, 1, :].view(H * N)
-        v = rkv[:, 2, :].view(H * N)
     else:
+        h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
         xx = xpa - h
         xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
         xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
     v_gate = None
-    if use_w4_rkv:
-        if _native_graph_fused_wavg_lora_enabled():
-            if i == 0:
-                w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
-                a = a0 + F.linear(F.linear(xa, a1), a2)
-                g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
-            else:
-                block_m, block_r, block_k = _native_graph_fused_wavg_lora_blocks()
-                w, a, g, v_gate = fused_wavg_lora(
-                    xw.view(1, H * N),
-                    xa.view(1, H * N),
-                    xg.view(1, H * N),
-                    xv.view(1, H * N),
-                    w1,
-                    a1,
-                    g1,
-                    v1,
-                    w2,
-                    a2,
-                    g2,
-                    v2,
-                    w0,
-                    a0,
-                    None,
-                    v0,
-                    block_m=block_m,
-                    block_r=block_r,
-                    block_k=block_k,
-                )
-                w = w.view(H * N)
-                a = a.view(H * N)
-                g = g.view(H * N)
-                v_gate = v_gate.view(H * N)
-            a = torch.sigmoid(a)
-        elif _native_graph_fused_wag_lora_enabled():
-            block_m, block_r, block_k = _native_graph_fused_wag_lora_blocks()
-            w, a, g = fused_wag_lora(
-                xw.view(1, H * N),
-                xa.view(1, H * N),
-                xg.view(1, H * N),
-                w1,
-                a1,
-                g1,
-                w2,
-                a2,
-                g2,
-                w0,
-                a0,
-                None,
-                block_m=block_m,
-                block_r=block_r,
-                block_k=block_k,
-            )
-            w = w.view(H * N)
-            a = torch.sigmoid(a.view(H * N))
-            g = g.view(H * N)
-        else:
-            w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
-            a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
-            g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
-    elif _native_graph_fused_projection_enabled():
+    v_mixed = False
+    lora_dense = _graph_linears_are_dense(w1, w2, a1, a2, v1, v2, g1, g2)
+    if _native_graph_fused_projection_enabled() and lora_dense and _graph_linears_are_dense(Rw, Kw, Vw):
         r, k, v, w, a, g, v_gate = fused_rkv_wavg_projection(
             xr.view(1, H * N),
             xk.view(1, H * N),
@@ -3230,7 +1912,19 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         a = torch.sigmoid(a.view(H * N))
         g = g.view(H * N)
         v_gate = torch.sigmoid(v_gate.view(H * N))
-    elif _native_graph_fused_wavg_lora_enabled():
+    elif i > 0 and lora_dense and _native_graph_ada_wagv_lora_enabled(
+        1,
+        H * N,
+        max(_graph_linear_shape(w1)[0], _graph_linear_shape(a1)[0], _graph_linear_shape(g1)[0], _graph_linear_shape(v1)[0]),
+    ):
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
+        w, a, g, v = ada_wagv_lora(
+            xw, xa, xg, xv, w1, a1, g1, v1, w2, a2, g2, v2,
+            w0, a0, v0, v, v_first,
+        )
+        a = torch.sigmoid(a)
+        v_mixed = True
+    elif lora_dense and _native_graph_fused_wavg_lora_enabled(1, H * N):
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
         if i == 0:
             w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
@@ -3264,7 +1958,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
             g = g.view(H * N)
             v_gate = v_gate.view(H * N)
         a = torch.sigmoid(a)
-    elif _native_graph_fused_wag_lora_enabled():
+    elif lora_dense and _native_graph_fused_wag_lora_enabled():
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
         block_m, block_r, block_k = _native_graph_fused_wag_lora_blocks()
         w, a, g = fused_wag_lora(
@@ -3289,19 +1983,41 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         g = g.view(H * N)
     else:
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
-        w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
-        a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
-        g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
-    kk = F.normalize((k * k_k).view(H, N), dim=-1, p=2.0).view(H * N)
-    k = k * (1 + (a - 1) * k_a)
+        w = _graph_linear_call_with_explicit_bias(torch.tanh(_graph_linear_call(xw, w1)), w2, w0)
+        a = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xa, a1), a2, a0))
+        g = _graph_linear_call(torch.sigmoid(_graph_linear_call(xg, g1)), g2)
+    use_fused_recurrent_output = _native_graph_fused_recurrent_output_enabled()
+    use_fused_recurrent_raw = use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
+    if not use_fused_recurrent_raw:
+        kk = F.normalize((k * k_k).view(H, N), dim=-1, p=2.0).view(H * N)
+        k = k * (1 + (a - 1) * k_a)
     if i == 0:
         v_first.copy_(v)
-    else:
+    elif not v_mixed:
         if v_gate is None:
-            v_gate = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
+            v_gate = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xv, v1), v2, v0))
         v = v + (v_first - v) * v_gate
-    w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
-    if _native_graph_fused_recurrent_output_enabled():
+    if use_fused_recurrent_raw:
+        out, new_state = fused_recurrent_output_prepare_raw(
+            r.view(1, H, N),
+            w.view(1, H, N),
+            k.view(1, H, N),
+            v.view(1, H, N),
+            a.view(1, H, N),
+            state.view(1, H, N, N),
+            g.view(1, H, N),
+            k_k,
+            k_a,
+            r_k,
+            gn_w,
+            gn_b,
+            eps=eps,
+            block_n=N,
+        )
+        out = out.view(H * N)
+        new_state = new_state.view(H, N, N)
+    elif use_fused_recurrent_output:
+        w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
         out, new_state = fused_recurrent_output_prepare(
             r.view(1, H, N),
             w.view(1, H, N),
@@ -3320,10 +2036,11 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         out = out.view(H * N)
         new_state = new_state.view(H, N, N)
     else:
+        w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
         out, new_state = _recurrent_update_unbatched(r, w, k, v, kk, a, state, H, N)
-    if _native_graph_fused_recurrent_output_enabled():
-        out = F.linear(out, Ow)
-    elif _native_graph_fused_output_project_enabled():
+    if use_fused_recurrent_output:
+        out = _native_graph_linear_dispatch(out, Ow, role="hidden")
+    elif _native_graph_fused_output_project_enabled() and _graph_linear_is_dense(Ow):
         out = fused_attn_output_project(
             out.view(1, H * N),
             r.view(1, H, N),
@@ -3356,22 +2073,31 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
             head_v_dim=N,
             eps=eps,
         ).view(H * N)
-        out = F.linear(out, Ow)
+        out = _native_graph_linear_dispatch(out, Ow, role="hidden")
     else:
         out = F.group_norm(out.view(1, H * N), H, gn_w, gn_b, eps).view(H * N)
         sk = (r.view(H, N) * k.view(H, N) * r_k).sum(dim=-1, keepdim=True)
         out = (out + (sk * v.view(H, N)).view(H * N)) * g
-        out = F.linear(out, Ow)
-    xpa.copy_(h)
+        out = _native_graph_linear_dispatch(out, Ow, role="hidden")
     state.copy_(new_state)
-    x = residual + out
-    residual = x
-    h2 = F.layer_norm(x, [H * N], fn_w, fn_b, 1e-5)
-    fxx = xpf - h2
-    fk = h2 + fxx * fx_k
-    fk = torch.relu(F.linear(fk, fK)) ** 2
-    xpf.copy_(h2)
-    return residual + F.linear(fk, fV)
+    if use_fused_norm_mix:
+        residual, fk = fused_ffn_add_norm_mix_decode(
+            residual,
+            out,
+            xpf,
+            fn_w,
+            fn_b,
+            fx_k,
+            num_warps=_native_graph_fused_norm_mix_num_warps(),
+        )
+    else:
+        xpa.copy_(h)
+        residual = residual + out
+        h2 = F.layer_norm(residual, [H * N], fn_w, fn_b, 1e-5)
+        fxx = xpf - h2
+        fk = h2 + fxx * fx_k
+        xpf.copy_(h2)
+    return _native_graph_ffn_dispatch(fk, fK, fV, residual)
 
 
 def _block_ip_batched(x, state, xpa, xpf, v_first, p):
@@ -3388,95 +2114,33 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
      pre_w, pre_b, an_w, an_b, fn_w, fn_b,
      x_r, x_w, x_k, x_v, x_a, x_g, k_k, k_a, r_k,
      Rw, Kw, Vw, Ow, w1, w2, w0, a1, a2, a0, v1, v2, v0, g1, g2,
-     gn_w, gn_b, fx_k, fK, fV, RKVw, Q_RKVw, S_RKVw) = p
+     gn_w, gn_b, fx_k, fK, fV, RKVw) = p
     B = x.shape[0]
     residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5) if has_pre else x
-    h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
-    use_w4_rkv = _native_graph_w4_rkv_enabled(Q_RKVw, S_RKVw)
-    if use_w4_rkv:
-        rkv_x, xw, xa, xg = fused_attn_shift_mix_stacked_rkv(
-            h,
+    use_fused_norm_mix = _native_graph_fused_norm_mix_enabled()
+    if use_fused_norm_mix:
+        xr, xw, xk, xv, xa, xg = fused_attn_norm_mix6_decode(
+            residual,
             xpa,
+            an_w,
+            an_b,
             x_r,
             x_w,
             x_k,
             x_v,
             x_a,
             x_g,
+            num_warps=_native_graph_fused_norm_mix_num_warps(),
         )
-        xv = rkv_x[:, 2, :]
-        block_m, block_k, num_warps = _native_graph_w4_rkv_config(int(B))
-        rkv = int4_stacked_rkv_gemv(
-            rkv_x,
-            Q_RKVw,
-            S_RKVw,
-            block_m=block_m,
-            block_k=block_k,
-            num_warps=num_warps,
-        )
-        r = rkv[:, 0, :]
-        k = rkv[:, 1, :]
-        v = rkv[:, 2, :]
     else:
+        h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
         xx = xpa - h
         xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
         xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
     v_gate = None
-    if use_w4_rkv:
-        if _native_graph_fused_wavg_lora_enabled():
-            if i == 0:
-                w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
-                a = a0 + F.linear(F.linear(xa, a1), a2)
-                g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
-            else:
-                block_m, block_r, block_k = _native_graph_fused_wavg_lora_blocks()
-                w, a, g, v_gate = fused_wavg_lora(
-                    xw,
-                    xa,
-                    xg,
-                    xv,
-                    w1,
-                    a1,
-                    g1,
-                    v1,
-                    w2,
-                    a2,
-                    g2,
-                    v2,
-                    w0,
-                    a0,
-                    None,
-                    v0,
-                    block_m=block_m,
-                    block_r=block_r,
-                    block_k=block_k,
-                )
-            a = torch.sigmoid(a)
-        elif _native_graph_fused_wag_lora_enabled():
-            block_m, block_r, block_k = _native_graph_fused_wag_lora_blocks()
-            w, a, g = fused_wag_lora(
-                xw,
-                xa,
-                xg,
-                w1,
-                a1,
-                g1,
-                w2,
-                a2,
-                g2,
-                w0,
-                a0,
-                None,
-                block_m=block_m,
-                block_r=block_r,
-                block_k=block_k,
-            )
-            a = torch.sigmoid(a)
-        else:
-            w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
-            a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
-            g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
-    elif _native_graph_fused_projection_enabled():
+    v_mixed = False
+    lora_dense = _graph_linears_are_dense(w1, w2, a1, a2, v1, v2, g1, g2)
+    if _native_graph_fused_projection_enabled() and lora_dense and _graph_linears_are_dense(Rw, Kw, Vw):
         r, k, v, w, a, g, v_gate = fused_rkv_wavg_projection(
             xr,
             xk,
@@ -3502,7 +2166,19 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         )
         a = torch.sigmoid(a)
         v_gate = torch.sigmoid(v_gate)
-    elif _native_graph_fused_wavg_lora_enabled():
+    elif i > 0 and lora_dense and _native_graph_ada_wagv_lora_enabled(
+        B,
+        H * N,
+        max(_graph_linear_shape(w1)[0], _graph_linear_shape(a1)[0], _graph_linear_shape(g1)[0], _graph_linear_shape(v1)[0]),
+    ):
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
+        w, a, g, v = ada_wagv_lora(
+            xw, xa, xg, xv, w1, a1, g1, v1, w2, a2, g2, v2,
+            w0, a0, v0, v, v_first,
+        )
+        a = torch.sigmoid(a)
+        v_mixed = True
+    elif lora_dense and _native_graph_fused_wavg_lora_enabled(B, H * N):
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
         if i == 0:
             w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
@@ -3532,7 +2208,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
                 block_k=block_k,
             )
         a = torch.sigmoid(a)
-    elif _native_graph_fused_wag_lora_enabled():
+    elif lora_dense and _native_graph_fused_wag_lora_enabled():
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
         block_m, block_r, block_k = _native_graph_fused_wag_lora_blocks()
         w, a, g = fused_wag_lora(
@@ -3555,19 +2231,40 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         a = torch.sigmoid(a)
     else:
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
-        w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
-        a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
-        g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
-    kk = F.normalize((k * k_k).view(B, H, N), dim=-1, p=2.0).view(B, H * N)
-    k = k * (1 + (a - 1) * k_a)
+        w = _graph_linear_call_with_explicit_bias(torch.tanh(_graph_linear_call(xw, w1)), w2, w0)
+        a = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xa, a1), a2, a0))
+        g = _graph_linear_call(torch.sigmoid(_graph_linear_call(xg, g1)), g2)
+    use_fused_recurrent_output = _native_graph_fused_recurrent_output_enabled()
+    use_fused_recurrent_raw = use_fused_recurrent_output and _native_graph_fused_recurrent_raw_enabled()
+    if not use_fused_recurrent_raw:
+        kk = F.normalize((k * k_k).view(B, H, N), dim=-1, p=2.0).view(B, H * N)
+        k = k * (1 + (a - 1) * k_a)
     if i == 0:
         v_first.copy_(v)
-    else:
+    elif not v_mixed:
         if v_gate is None:
-            v_gate = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
+            v_gate = torch.sigmoid(_graph_linear_call_with_explicit_bias(_graph_linear_call(xv, v1), v2, v0))
         v = v + (v_first - v) * v_gate
-    w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
-    if _native_graph_fused_recurrent_output_enabled():
+    if use_fused_recurrent_raw:
+        out, new_state = fused_recurrent_output_prepare_raw(
+            r.view(B, H, N),
+            w.view(B, H, N),
+            k.view(B, H, N),
+            v.view(B, H, N),
+            a.view(B, H, N),
+            state,
+            g.view(B, H, N),
+            k_k,
+            k_a,
+            r_k,
+            gn_w,
+            gn_b,
+            eps=eps,
+            block_n=N,
+        )
+        out = out.reshape(B, H * N)
+    elif use_fused_recurrent_output:
+        w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
         out, new_state = fused_recurrent_output_prepare(
             r.view(B, H, N),
             w.view(B, H, N),
@@ -3585,10 +2282,11 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         )
         out = out.reshape(B, H * N)
     else:
+        w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
         out, new_state = _recurrent_update_batched(r, w, k, v, kk, a, state, B, H, N)
-    if _native_graph_fused_recurrent_output_enabled():
-        out = F.linear(out, Ow)
-    elif _native_graph_fused_output_project_enabled():
+    if use_fused_recurrent_output:
+        out = _native_graph_linear_dispatch(out, Ow, role="hidden")
+    elif _native_graph_fused_output_project_enabled() and _graph_linear_is_dense(Ow):
         out = fused_attn_output_project(
             out,
             r.view(B, H, N),
@@ -3621,23 +2319,31 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
             head_v_dim=N,
             eps=eps,
         )
-        out = F.linear(out, Ow)
+        out = _native_graph_linear_dispatch(out, Ow, role="hidden")
     else:
         out = F.group_norm(out, H, gn_w, gn_b, eps).view(B, H * N)
         sk = (r.view(B, H, N) * k.view(B, H, N) * r_k).sum(dim=-1, keepdim=True)
         out = (out + (sk * v.view(B, H, N)).view(B, H * N)) * g
-        out = F.linear(out, Ow)
-    xpa.copy_(h)
+        out = _native_graph_linear_dispatch(out, Ow, role="hidden")
     state.copy_(new_state)
-    x = residual + out
-
-    residual = x
-    h2 = F.layer_norm(x, [H * N], fn_w, fn_b, 1e-5)
-    fxx = xpf - h2
-    fk = h2 + fxx * fx_k
-    fk = torch.relu(F.linear(fk, fK)) ** 2
-    xpf.copy_(h2)
-    return residual + F.linear(fk, fV)
+    if use_fused_norm_mix:
+        residual, fk = fused_ffn_add_norm_mix_decode(
+            residual,
+            out,
+            xpf,
+            fn_w,
+            fn_b,
+            fx_k,
+            num_warps=_native_graph_fused_norm_mix_num_warps(),
+        )
+    else:
+        xpa.copy_(h)
+        residual = residual + out
+        h2 = F.layer_norm(residual, [H * N], fn_w, fn_b, 1e-5)
+        fxx = xpf - h2
+        fk = h2 + fxx * fx_k
+        xpf.copy_(h2)
+    return _native_graph_ffn_dispatch(fk, fK, fV, residual)
 
 
 def cuda_graph_decode(model, ids, packs, n=128):

@@ -1,22 +1,25 @@
 [project]
 name = "rwkv7-hf-adapter"
-version = "0.1.0"
+version = "0.5.0"
 description = "First-stage Hugging Face adapter and converter for official RWKV-7 checkpoints."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "dsadsasdaddas", email = "wangyue20060908@gmail.com" }]
+authors = [{ name = "123123213weqw", email = "300659282+123123213weqw@users.noreply.github.com" }]
 dependencies = [
   "torch",
   "transformers",
   "safetensors",
-  "flash-linear-attention",
 ]
 
 [project.optional-dependencies]
+fla = ["flash-linear-attention"]
+cuda = ["flash-linear-attention", "triton>=3.3.0; platform_system == 'Linux'"]
 test = ["peft", "accelerate", "datasets", "trl"]
 train = ["peft", "accelerate", "datasets", "trl", "deepspeed"]
 quant = ["bitsandbytes", "triton>=3.3.0; platform_system == 'Linux'"]
+torchao = ["torchao; platform_system == 'Linux'"]
+mlx = ["mlx; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 
 [tool.setuptools.packages.find]
 include = ["rwkv7_hf*"]
