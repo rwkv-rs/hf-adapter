@@ -268,7 +268,7 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 
 ### 2026-08-27 — NVIDIA operator-source transfer and first model runtime bridge
 
-- Added a byte-verified first migration manifest for 97 implementation/source
+- Added a byte-verified first migration manifest for 99 implementation/source
   artifacts from `perf/native-kernels-v0.8`. It covers fused projection,
   norm/mix, recurrent/output, FFN/LoRA, DPLR/self-chunk prefill, SM70/Ada/
   Blackwell, W8/W4/A8W8/BnTn/BnB/Marlin/TorchAO and training CUDA sources.
@@ -280,11 +280,16 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   engine while returning the ordinary canonical `RWKV7Cache`.
 - Actual prefill/decode route names are returned by execution, including the
   effective fused subroutes, rather than copied from the requested selector.
+- Ported the fixed-batch CUDA Graph runner and package-owned LRU state pool.
+  Runner buffers bind to canonical cache tensor views, detach safely when a
+  different cache is selected, and require no graph metadata/private methods
+  on `RWKV7Cache`. Public recurrent tensors remain FP32 `[B,H,K,V]` even when
+  the internal graph layout is `[V,K]`.
 - CPU dense-fallback parity proves full logits, prefill state, cached decode
   logits and final cache across the new boundary. Production `auto` remains
   disabled until NVIDIA GPU fused routes, padding, training and quantization
   complete the same-wheel acceptance matrix.
-- Local gate: `59 passed`; all 97 migrated artifacts match the manifest SHA256
+- Local gate: `60 passed`; all 99 migrated artifacts match the manifest SHA256
   and the kernel wheel includes every CUDA/C++ header/source and license file.
 
 ### 2026-08-27 — first RTX 4080 acceptance slice

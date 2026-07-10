@@ -14,7 +14,7 @@ def test_nvidia_migration_manifest_is_complete_and_byte_verified():
     manifest = json.loads((NVIDIA / "MIGRATION_MANIFEST.json").read_text())
     assert manifest["schema"] == "rwkv7-nvidia-source-migration-v1"
     assert manifest["source_branch"] == "perf/native-kernels-v0.8"
-    assert len(manifest["files"]) == 97
+    assert len(manifest["files"]) == 99
 
     destinations = set()
     for entry in manifest["files"]:
@@ -51,6 +51,8 @@ def test_nvidia_migration_manifest_is_complete_and_byte_verified():
         "native_jit.py",
         "native_jit_decode.py",
         "native_jit_packing.py",
+        "native_graph_runtime.py",
+        "recurrent_state.py",
         "train_temp_cuda.py",
     }
     assert required_families <= destinations

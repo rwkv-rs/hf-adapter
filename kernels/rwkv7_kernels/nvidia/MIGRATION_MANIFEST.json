@@ -367,6 +367,12 @@
       "source": "rwkv7_hf/marlin_autotune.py"
     },
     {
+      "destination": "kernels/rwkv7_kernels/nvidia/native_graph_runtime.py",
+      "destination_sha256": "1d389a409790786cc6963195908bc1e7eec5a8f88b43c8c04ee7cb2b8c30fb61",
+      "git_blob": "67bf1baef14e76148713679431975a2ec1213084",
+      "source": "rwkv7_hf/native_graph_runtime.py"
+    },
+    {
       "destination": "kernels/rwkv7_kernels/nvidia/native_jit.py",
       "destination_sha256": "b4159e863248718a06fcb175cf972b94c6dd93c6566b7f764d0735695f408fab",
       "git_blob": "98b44fde98ca2d5f26ddbaaa2c213f447d64773d",
@@ -497,6 +503,12 @@
       "destination_sha256": "4880fa46fa9991360894f5eba02dfde4ddf40c8966bc2c49b2012de6bb11a93a",
       "git_blob": "8bfddb6c50a678b294b2de34755b52b66a478665",
       "source": "rwkv7_hf/native_wkv_fp16.py"
+    },
+    {
+      "destination": "kernels/rwkv7_kernels/nvidia/recurrent_state.py",
+      "destination_sha256": "e9e858c2766c3c26ca6f0904803f979a29bcbc37dbf1bea5fa841c0089ee55aa",
+      "git_blob": "fb4afa5569df2170428e101347534d1f1f5da1f2",
+      "source": "rwkv7_hf/recurrent_state.py"
     },
     {
       "destination": "kernels/rwkv7_kernels/nvidia/self_chunk_A_fwd.py",

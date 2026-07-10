@@ -279,6 +279,39 @@ def _run_native_decode(owner: Any, request: dict[str, Any]):
     batch = int(input_ids.shape[0])
     dtype = owner.model.embeddings.weight.dtype
 
+    if bool(request["use_cache"]):
+        from .nvidia.graph_pool import get_native_graph_runner
+        from .nvidia.native_graph_runtime import native_graph_available
+
+        if native_graph_available():
+            runner = get_native_graph_runner(owner, packs, batch)
+            logits = runner.replay(input_ids[:, 0], cache, copy_logits=True)
+            cache.seen_tokens += 1
+            stats = runner.copy_stats()
+            effective = [
+                name
+                for name in (
+                    "ada_wagv_bmm",
+                    "sm120_wagv_bmm_g",
+                    "sm120_compiled_ffn",
+                    "sm70_wagv_lora",
+                    "fused_wavg_lora",
+                )
+                if bool(stats.get(f"{name}_effective"))
+            ]
+            effective.append("cuda_graph")
+            return {
+                "output_kind": "causal_lm",
+                "logits": logits,
+                "loss": None,
+                "past_key_values": cache,
+                "hidden_states": None,
+                "implementation": (
+                    f"{_NATIVE_DECODE_IMPLEMENTATION}[{'+'.join(effective)}]"
+                ),
+                "phase": "decode",
+            }
+
     state_vk = []
     attention_shift = []
     ffn_shift = []

@@ -144,3 +144,40 @@ def test_migrated_native_prefill_and_cached_decode_preserve_canonical_cache(
         expected_decode.past_key_values.recurrent_state,
     ):
         torch.testing.assert_close(migrated, reference, rtol=2e-5, atol=2e-6)
+
+
+def test_graph_runner_binding_exposes_only_canonical_cache_views(monkeypatch):
+    _load_dense_backend(monkeypatch)
+    graph = importlib.import_module("rwkv7_kernels.nvidia.native_graph_runtime")
+    layout = importlib.import_module("rwkv7_kernels.nvidia.recurrent_state")
+
+    runner = graph.NativeGraphRunner.__new__(graph.NativeGraphRunner)
+    runner.num_layers = 1
+    runner.single = False
+    runner.state_layout = layout.RecurrentStateLayout.VK_V1
+    runner.state = [torch.zeros(2, 1, 3, 3)]
+    runner.xpa = [torch.zeros(2, 4)]
+    runner.xpf = [torch.zeros(2, 4)]
+    runner.elapsed = None
+    runner._bound_cache_ref = None
+    runner.copy_from_cache_calls = 0
+    runner.copy_from_cache_fast_skips = 0
+    runner.bind_cache_calls = 0
+    runner.bind_cache_fast_skips = 0
+
+    canonical = torch.arange(18, dtype=torch.float32).view(2, 1, 3, 3)
+    attention = torch.randn(2, 4)
+    ffn = torch.randn(2, 4)
+    cache = RWKV7Cache([canonical.clone()], [attention.clone()], [ffn.clone()])
+    runner.copy_from_cache(cache)
+    torch.testing.assert_close(runner.state[0], canonical.transpose(-1, -2))
+    runner.bind_cache(cache)
+    torch.testing.assert_close(cache.recurrent_state[0], canonical)
+    assert runner._cache_bound_to_runner(cache)
+
+    runner.state[0].add_(1)
+    torch.testing.assert_close(cache.recurrent_state[0], canonical + 1)
+    runner.detach_bound_cache()
+    detached = cache.recurrent_state[0].clone()
+    runner.state[0].add_(1)
+    torch.testing.assert_close(cache.recurrent_state[0], detached)
