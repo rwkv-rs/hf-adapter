@@ -313,9 +313,10 @@ def _probe_native_training(owner: Any, request: dict[str, Any]):
             return _unsupported_training(
                 "native training labels must match the input batch and sequence"
             )
-        if bool((labels < 0).any().detach().cpu()):
+        invalid = (labels < -100) | ((labels < 0) & (labels != -100))
+        if bool(invalid.any().detach().cpu()):
             return _unsupported_training(
-                "native fused loss does not accept -100 or negative labels"
+                "native training labels must be token ids or -100"
             )
     from .nvidia.train_temp_cuda import train_temp_cuda_available
 

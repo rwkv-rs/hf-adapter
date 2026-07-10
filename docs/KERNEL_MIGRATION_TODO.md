@@ -268,6 +268,9 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   the CUDA leaf module. Adapter-wrapped FFN modules are rejected by the native
   probe and deterministically use the readable autograd path, so PEFT weights
   cannot be silently bypassed.
+- The optimized layer operators retain standard HF causal cross-entropy,
+  including `-100`; the historical fused L2Wrap loss remains an explicit leaf
+  operator because silently adding L2Wrap would change every HF gradient.
 - Added an explicit `native-nvidia-train-temp-autograd-v2` capability probe
   for dense, unpadded BF16 CUDA training. Unsupported labels, masks, dtypes,
   shapes, or devices remain reference fallbacks in production `auto`.

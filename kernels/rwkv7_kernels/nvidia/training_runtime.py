@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 
 from . import train_temp_cuda as train_temp
 
@@ -68,11 +69,23 @@ def run_training(owner: Any, request: dict[str, Any]) -> dict[str, Any]:
     hidden_states = owner.model.norm(hidden_states)
     full_logits = owner.lm_head(hidden_states)
     labels = request.get("labels")
-    loss = (
-        None
-        if labels is None
-        else train_temp.train_temp_causal_cross_entropy(full_logits, labels)
-    )
+    loss = None
+    if labels is not None:
+        shifted_logits = full_logits[:, :-1].contiguous()
+        shifted_labels = labels[:, 1:].contiguous()
+        if shifted_logits.numel() == 0 or not bool(
+            (shifted_labels != -100).any().detach().cpu()
+        ):
+            loss = full_logits.float().sum() * 0.0
+        else:
+            # Preserve the public HF loss exactly. The historical train_temp
+            # fused loss adds L2Wrap to the gradient and is therefore exposed
+            # only as a leaf operator, never substituted for standard CE.
+            loss = F.cross_entropy(
+                shifted_logits.view(-1, shifted_logits.shape[-1]).float(),
+                shifted_labels.reshape(-1),
+                ignore_index=-100,
+            )
 
     keep = request.get("logits_to_keep")
     logits = full_logits

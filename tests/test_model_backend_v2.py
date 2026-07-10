@@ -293,30 +293,25 @@ def test_training_runtime_uses_direct_layer_loop_without_monkeypatch(
             mixed = hidden + (shifted - hidden) * x_k.view(1, 1, -1)
             return F.linear(torch.relu(F.linear(mixed, key_weight)).square(), value_weight)
 
-    def causal_loss(logits, labels):
-        return F.cross_entropy(
-            logits[:, :-1].reshape(-1, logits.shape[-1]).float(),
-            labels[:, 1:].reshape(-1),
-        )
-
     monkeypatch.setattr(train_temp, "_train_temp_attention_forward", attention_forward)
     monkeypatch.setattr(train_temp, "_CMix", FakeCMix)
-    monkeypatch.setattr(train_temp, "train_temp_causal_cross_entropy", causal_loss)
 
     torch.manual_seed(113)
     reference = RWKV7ForCausalLM(tiny_config).train()
     migrated = RWKV7ForCausalLM(tiny_config).train()
     migrated.load_state_dict(reference.state_dict())
     ids = torch.tensor([[3, 5, 7, 11], [13, 17, 19, 23]])
+    labels = ids.clone()
+    labels[0, 2] = -100
 
-    expected = reference(input_ids=ids, labels=ids, use_cache=False)
+    expected = reference(input_ids=ids, labels=labels, use_cache=False)
     actual = runtime.run_training(
         migrated,
         {
             "model_kind": "causal_lm",
             "input_ids": ids,
             "inputs_embeds": None,
-            "labels": ids,
+            "labels": labels,
             "training": True,
             "gradient_checkpointing": False,
             "grad_enabled": True,
