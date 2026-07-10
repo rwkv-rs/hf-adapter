@@ -419,6 +419,13 @@ def _native_prefill_default_scan_block_m(head_dim: int, batch_size: int | None =
             major, minor = 0, 0
         if (int(major), int(minor)) == (7, 0):
             return 32 if batch_size is not None and int(batch_size) >= 4 else 16
+        if (int(major), int(minor)) == (8, 9):
+            try:
+                name = str(torch.cuda.get_device_name()).lower()
+            except Exception:
+                name = ""
+            if "4090" in name:
+                return 8 if batch_size is not None and int(batch_size) >= 2 else 4
     return head_dim
 
 
@@ -448,7 +455,11 @@ def _native_prefill_scan_num_warps(head_dim: int, block_m: int | None = None) ->
 def _native_prefill_fused_shift_mix_enabled() -> bool:
     """Runtime switch for prefill attention shift-mix fusion telemetry."""
 
-    if not env_flag("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX", False):
+    policy = _kernel_policy()
+    if not env_flag(
+        "RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX",
+        bool(getattr(policy, "fused_prefill_shift_mix", False)),
+    ):
         return False
     if fused_attn_shift_mix is None or fused_attn_shift_mix_available is None:
         return False
@@ -1283,6 +1294,7 @@ def extract(model):
     eps = float(N * 1e-5)
     packs = []
     hidden = int(layers[0].attn.hidden_size)
+    dense_ref = model.model.embeddings.weight
     stack_rkv = _native_graph_rkv_policy() == "vkwr_auto"
     for i, layer in enumerate(layers):
         a = layer.attn
@@ -1313,7 +1325,7 @@ def extract(model):
             layer.ffn.x_k, layer.ffn.key.weight, layer.ffn.value.weight,
             torch.stack((a.r_proj.weight.t(), a.k_proj.weight.t(), a.v_proj.weight.t())).contiguous()
             if stack_rkv
-            else ref.new_empty((0,)),
+            else dense_ref.new_empty((0,)),
         ))
     return packs, H, N, eps
 

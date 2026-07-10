@@ -113,7 +113,7 @@ def infer_model_size_label(model_path: str) -> str | None:
     return f"{match.group(1)}b" if match else None
 
 
-def scan_block_m(model) -> int | None:
+def scan_block_m(model, batch_size: int | None = None) -> int | None:
     raw = os.environ.get("RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M")
     if raw is not None:
         try:
@@ -122,7 +122,7 @@ def scan_block_m(model) -> int | None:
             return None
     try:
         head_dim = int(model._rwkv7_native_jit_packs()[0][2])
-        return model_native_jit_module(model)._native_prefill_scan_block_m(head_dim)
+        return model_native_jit_module(model)._native_prefill_scan_block_m(head_dim, batch_size)
     except Exception:
         return None
 
@@ -141,24 +141,42 @@ def scan_num_warps(model, block_m: int | None) -> int | None:
         return None
 
 
-def scan_num_stages(model) -> int | None:
-    raw = os.environ.get("RWKV7_NATIVE_PREFILL_SCAN_NUM_STAGES")
-    if raw is not None:
-        try:
-            return int(raw)
-        except ValueError:
-            return None
-    try:
-        return model_native_jit_module(model)._native_prefill_scan_num_stages()
-    except Exception:
-        return None
-
-
 def cosine_min(a: torch.Tensor, b: torch.Tensor) -> float:
     return float(F.cosine_similarity(a.float(), b.float(), dim=-1).min().detach().cpu())
 
 
+def _tensor_payload_bytes(tensor, seen: set[int]) -> int:
+    ident = id(tensor)
+    if ident in seen:
+        return 0
+    seen.add(ident)
+    flatten = getattr(tensor, "__tensor_flatten__", None)
+    if callable(flatten) and type(tensor) not in {torch.Tensor, torch.nn.Parameter}:
+        try:
+            payload = sum(
+                _tensor_payload_bytes(getattr(tensor, name), seen)
+                for name in flatten()[0]
+                if isinstance(getattr(tensor, name), torch.Tensor)
+            )
+            if payload:
+                return payload
+        except Exception:
+            pass
+    return int(tensor.numel()) * int(tensor.element_size())
+
+
+def model_payload_mb(model) -> float:
+    seen: set[int] = set()
+    total = sum(_tensor_payload_bytes(tensor, seen) for tensor in list(model.parameters()) + list(model.buffers()))
+    return round(total / 1024 / 1024, 1)
+
+
 def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_tokens: int) -> dict[str, Any]:
+    old_fast_prefill = os.environ.get("RWKV7_FAST_PREFILL")
+    # Keep the HF reference on FLA even when an exact-card policy promotes
+    # native prefill for ordinary model.forward(). The explicit native method
+    # below remains enabled and is the path under test.
+    os.environ["RWKV7_FAST_PREFILL"] = "0"
     nj = model_native_jit_module(model)
     ids = build_ids(tok, batch_size, prompt_tokens, args.device)
     if args.device.startswith("cuda"):
@@ -199,59 +217,8 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
     peak = None
     if args.device.startswith("cuda"):
         peak = round(torch.cuda.max_memory_allocated() / 1024 / 1024, 1)
-    scan_m = scan_block_m(model)
-    shift_wavg_blocks = getattr(nj, "_native_prefill_fused_shift_wavg_lora_blocks", lambda: (None, None, None))()
-    shift_wavg_warps = getattr(nj, "_native_prefill_fused_shift_wavg_lora_warps", lambda: (None, None))()
-    rkv_head_dim = None
-    try:
-        rkv_pack = nj._ensure_rkv_pack(model._rwkv7_native_jit_packs()[0])
-        rkv_head_dim = int(rkv_pack[2])
-        rkv_hidden = int(rkv_pack[1]) * rkv_head_dim
-        rkv_weight = rkv_pack[-1]
-        prefill_rkv_bmm_effective = getattr(nj, "_native_prefill_rkv_bmm_enabled", lambda *_args: False)(
-            batch_size * prompt_tokens,
-            rkv_hidden,
-            rkv_weight,
-        )
-    except Exception:
-        prefill_rkv_bmm_effective = False
-    cuda_state_scan_effective = getattr(nj, "_native_prefill_cuda_state_scan_enabled", lambda: False)()
-    cuda_state_scan_lanes = getattr(nj, "_native_prefill_cuda_state_scan_lanes_per_row", lambda: 1)()
-    cuda_state_scan_precompute = getattr(nj, "_native_prefill_cuda_state_scan_precompute_enabled", lambda: False)()
-    cuda_state_scan_precompute_mode = getattr(nj, "_native_prefill_cuda_state_scan_precompute_mode", lambda: "none")()
-    cuda_state_scan_reuse_precompute = getattr(
-        nj, "_native_prefill_cuda_state_scan_reuse_precompute_enabled", lambda: False
-    )()
-    cuda_state_scan_inplace_kv = getattr(
-        nj, "_native_prefill_cuda_state_scan_inplace_kv_enabled", lambda: False
-    )()
-    cuda_state_scan_inplace_v = getattr(
-        nj, "_native_prefill_cuda_state_scan_inplace_v_enabled", lambda: False
-    )()
-    cuda_state_scan_inplace_kka = getattr(
-        nj, "_native_prefill_cuda_state_scan_inplace_kka_enabled", lambda: False
-    )()
-    cuda_state_scan_rows_per_block = getattr(nj, "_native_prefill_cuda_state_scan_rows_per_block", lambda: 1)()
-    cuda_state_scan_schedule = getattr(nj, "_native_prefill_cuda_state_scan_schedule", lambda: "default")()
-    cuda_state_scan_w_precomputed = getattr(
-        nj, "_native_prefill_fused_shift_wavg_lora_w_decay_enabled", lambda _rows: False
-    )(batch_size * prompt_tokens)
-    fused_state_scan_raw_output_effective = getattr(
-        nj, "_native_prefill_fused_state_scan_raw_output_enabled", lambda: False
-    )()
-    cuda_state_scan_raw_nokv_effective = bool(
-        fused_state_scan_raw_output_effective
-        and cuda_state_scan_effective
-        and rkv_head_dim == 64
-        and scan_m == 64
-        and args.dtype == "fp16"
-        and int(cuda_state_scan_lanes) == 64
-        and not cuda_state_scan_precompute
-        and cuda_state_scan_precompute_mode == "none"
-        and cuda_state_scan_schedule == "warp_specialized"
-        and not cuda_state_scan_w_precomputed
-    )
-    return {
+    scan_m = scan_block_m(model, batch_size)
+    row = {
         "axis": "native_prefill_scan",
         "backend": "hf_adapter",
         "bench_case": os.environ.get("RWKV7_BENCH_CASE"),
@@ -263,73 +230,22 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "code_source": args.code_source,
         "native_jit_module": getattr(nj, "__name__", str(nj)),
         "model_size_label": infer_model_size_label(args.model),
+        "quantization": args.quantization,
+        "quant_policy": args.quant_policy,
+        "quantized_modules": int(getattr(model, "_rwkv7_native_mm_replaced_modules", 0)),
+        "model_payload_mb": model_payload_mb(model),
         "batch_size": batch_size,
         "prompt_tokens": prompt_tokens,
         "tokens_total": batch_size * prompt_tokens,
+        "prefill_graph_requested": os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH", "0").lower() not in {"0", "false", "no", "off"},
+        "prefill_backend_effective": getattr(model, "_rwkv7_last_fast_prefill_backend", None),
+        "prefill_graph_effective": getattr(model, "_rwkv7_last_fast_prefill_backend", None) == "native_prefill_graph",
         "fused_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN", "0") not in {"0", "false", "False", "no", "off"},
+        "fused_scan_effective": nj._native_prefill_fused_scan_enabled(),
         "scan_block_m": scan_m,
         "scan_num_warps": scan_num_warps(model, scan_m),
-        "scan_num_stages": scan_num_stages(model),
-        "scan_algebraic_output": getattr(nj, "_native_prefill_scan_algebraic_output_enabled", lambda: False)(),
-        "scan_nomask64": getattr(nj, "_native_prefill_scan_nomask64_enabled", lambda: False)(),
-        "scan_precompute_w": getattr(nj, "_native_prefill_scan_precompute_w_enabled", lambda: False)(),
-        "scan_precompute_w_dtype": getattr(nj, "_native_prefill_scan_precompute_w_dtype", lambda: "fp32")(),
-        "prefill_rkv_bmm_requested": getattr(nj, "_native_prefill_rkv_bmm_requested", lambda: False)(),
-        "prefill_rkv_bmm_effective": bool(prefill_rkv_bmm_effective),
-        "prefill_rkv_bmm_max_rows": getattr(nj, "_native_prefill_rkv_bmm_max_rows", lambda: None)(),
-        "prefill_cuda_state_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN", "0").lower() not in {"0", "false", "no", "off"},
-        "prefill_cuda_state_scan_effective": cuda_state_scan_effective,
-        "prefill_cuda_state_scan_sk_requested": os.environ.get("RWKV7_NATIVE_PREFILL_CUDA_STATE_SCAN_SK", "0").lower() not in {"0", "false", "no", "off"},
-        "prefill_cuda_state_scan_sk_effective": getattr(nj, "_native_prefill_cuda_state_scan_sk_enabled", lambda: False)(),
-        "prefill_cuda_state_scan_lanes": cuda_state_scan_lanes,
-        "prefill_cuda_state_scan_precompute": cuda_state_scan_precompute,
-        "prefill_cuda_state_scan_precompute_mode": cuda_state_scan_precompute_mode,
-        "prefill_cuda_state_scan_reuse_precompute": cuda_state_scan_reuse_precompute,
-        "prefill_cuda_state_scan_reuse_precompute_effective": bool(
-            cuda_state_scan_effective
-            and cuda_state_scan_reuse_precompute
-            and cuda_state_scan_precompute
-            and cuda_state_scan_precompute_mode == "wk_half"
-        ),
-        "prefill_cuda_state_scan_inplace_kv": cuda_state_scan_inplace_kv,
-        "prefill_cuda_state_scan_inplace_kv_effective": bool(
-            cuda_state_scan_effective
-            and cuda_state_scan_inplace_kv
-            and cuda_state_scan_precompute
-            and not cuda_state_scan_w_precomputed
-        ),
-        "prefill_cuda_state_scan_inplace_v": cuda_state_scan_inplace_v,
-        "prefill_cuda_state_scan_inplace_v_effective": bool(
-            cuda_state_scan_effective
-            and cuda_state_scan_inplace_v
-            and not cuda_state_scan_precompute
-            and not cuda_state_scan_inplace_kv
-        ),
-        "prefill_cuda_state_scan_inplace_kka": cuda_state_scan_inplace_kka,
-        "prefill_cuda_state_scan_inplace_kka_effective": bool(
-            cuda_state_scan_effective
-            and cuda_state_scan_inplace_kka
-            and cuda_state_scan_precompute
-            and cuda_state_scan_precompute_mode == "wk_half"
-            and not cuda_state_scan_w_precomputed
-        ),
-        "prefill_cuda_state_scan_rows_per_block": cuda_state_scan_rows_per_block,
-        "prefill_cuda_state_scan_schedule": cuda_state_scan_schedule,
-        "prefill_cuda_state_scan_w_precomputed": cuda_state_scan_w_precomputed,
-        "prefill_cuda_state_scan_raw_nokv_effective": cuda_state_scan_raw_nokv_effective,
-        "prefill_cuda_state_scan_write_kv": (
-            (not cuda_state_scan_raw_nokv_effective) if cuda_state_scan_effective else None
-        ),
         "prefill_fused_scan_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_scan_output_effective": nj._native_prefill_fused_scan_output_enabled(),
-        "prefill_fused_state_scan_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
-        "prefill_fused_state_scan_output_effective": getattr(nj, "_native_prefill_fused_state_scan_output_enabled", lambda: False)(),
-        "prefill_fused_state_scan_correction_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_CORRECTION", "0").lower() not in {"0", "false", "no", "off"},
-        "prefill_fused_state_scan_correction_effective": getattr(nj, "_native_prefill_fused_state_scan_correction_enabled", lambda: False)(),
-        "prefill_fused_state_scan_raw_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_RAW_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
-        "prefill_fused_state_scan_raw_output_effective": fused_state_scan_raw_output_effective,
-        "prefill_fused_state_scan_sk_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_SK_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
-        "prefill_fused_state_scan_sk_output_effective": getattr(nj, "_native_prefill_fused_state_scan_sk_output_enabled", lambda: False)(),
         "prefill_fused_clampw_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_CLAMPW_SCAN", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_clampw_scan_effective": nj._native_prefill_fused_clampw_scan_enabled(),
         "prefill_dplr_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_DPLR_SCAN", "0").lower() not in {"0", "false", "no", "off"},
@@ -345,38 +261,16 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_dplr_compact_block_n": os.environ.get("RWKV7_DPLR_TRITON_COMPACT_BLOCK_N"),
         "prefill_dplr_compact_block_r": os.environ.get("RWKV7_DPLR_TRITON_COMPACT_BLOCK_R"),
         "prefill_dplr_compact_prefix_block_m": os.environ.get("RWKV7_DPLR_TRITON_COMPACT_PREFIX_BLOCK_M"),
-        "prefill_dplr_compact_start_state_dtype": os.environ.get(
-            "RWKV7_DPLR_TRITON_COMPACT_START_STATE_DTYPE", "fp32"
-        ),
-        "prefill_dplr_compact_output_only": os.environ.get("RWKV7_DPLR_TRITON_COMPACT_OUTPUT_ONLY", "0").lower()
-        not in {"0", "false", "no", "off"},
-        "prefill_dplr_compact_recompute_starts": os.environ.get(
-            "RWKV7_DPLR_TRITON_COMPACT_RECOMPUTE_STARTS", "0"
-        ).lower()
-        not in {"0", "false", "no", "off"},
-        "prefill_dplr_compact_prefix_shared": os.environ.get(
-            "RWKV7_DPLR_TRITON_COMPACT_PREFIX_SHARED", "0"
-        ).lower()
-        not in {"0", "false", "no", "off"},
-        "prefill_dplr_compact_prefix_shared_group_size": int(
-            os.environ.get("RWKV7_DPLR_TRITON_COMPACT_PREFIX_SHARED_GROUP_SIZE", "0")
-        ),
         "prefill_fused_shift_mix_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_shift_mix_effective": nj._native_prefill_fused_shift_mix_enabled(),
-        "prefill_fused_norm_mix_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_NORM_MIX", "0").lower() not in {"0", "false", "no", "off"},
-        "prefill_fused_norm_mix_effective": getattr(nj, "_native_prefill_fused_norm_mix_enabled", lambda: False)(),
         "prefill_fused_state_prep_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_state_prep_effective": nj._native_prefill_fused_state_prep_enabled(),
         "prefill_fused_state_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN", "0").lower() not in {"0", "false", "no", "off"},
-        "prefill_fused_state_scan_effective": getattr(nj, "_native_prefill_fused_state_scan_enabled", lambda: False)(),
+        "prefill_fused_state_scan_effective": getattr(nj, "_native_prefill_fused_state_scan_enabled", lambda _batch_size=None: False)(batch_size),
+        "prefill_fused_state_scan_max_batch": getattr(nj, "_native_prefill_fused_state_scan_max_batch", lambda: None)(),
         "prefill_state_prep_w_dtype": nj._native_prefill_state_prep_w_dtype(),
         "prefill_fused_output_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_output_effective": nj._native_prefill_fused_output_enabled(),
-        "prefill_tail_norm_slice_requested": os.environ.get("RWKV7_NATIVE_PREFILL_TAIL_NORM_SLICE", "0").lower() not in {"0", "false", "no", "off"},
-        "prefill_tail_norm_slice_effective": bool(
-            getattr(nj, "_native_prefill_tail_norm_slice_enabled", lambda: False)()
-            and prompt_tokens > 1
-        ),
         "prefill_fused_output_project_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_PROJECT", "0").lower() not in {"0", "false", "no", "off"},
         "prefill_fused_output_project_effective": getattr(nj, "_native_prefill_fused_output_project_enabled", lambda: False)(),
         "prefill_fused_output_project_block_m": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_PROJECT_BLOCK_M"),
@@ -386,37 +280,6 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_fused_wavg_lora_block_m": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_M"),
         "prefill_fused_wavg_lora_block_r": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_R"),
         "prefill_fused_wavg_lora_block_k": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_K"),
-        "prefill_fused_shift_wavg_lora_requested": getattr(nj, "_native_prefill_fused_shift_wavg_lora_requested", lambda: False)(),
-        "prefill_fused_shift_wavg_lora_effective": getattr(nj, "_native_prefill_fused_shift_wavg_lora_enabled", lambda _rows: False)(batch_size * prompt_tokens),
-        "prefill_fused_shift_wavg_lora_block_m": shift_wavg_blocks[0],
-        "prefill_fused_shift_wavg_lora_block_r": shift_wavg_blocks[1],
-        "prefill_fused_shift_wavg_lora_block_k": shift_wavg_blocks[2],
-        "prefill_fused_shift_wavg_lora_down_warps": shift_wavg_warps[0],
-        "prefill_fused_shift_wavg_lora_up_warps": shift_wavg_warps[1],
-        "prefill_fused_shift_wavg_lora_lean_down": getattr(nj, "_native_prefill_fused_shift_wavg_lora_lean_down_requested", lambda: False)(),
-        "prefill_fused_shift_wavg_lora_lean_up": getattr(nj, "_native_prefill_fused_shift_wavg_lora_lean_up_requested", lambda: False)(),
-        "prefill_fused_shift_wavg_lora_g_mid_output_requested": getattr(nj, "_native_prefill_fused_shift_wavg_lora_g_mid_output_requested", lambda: False)(),
-        "prefill_fused_shift_wavg_lora_g_mid_output_effective": getattr(nj, "_native_prefill_fused_shift_wavg_lora_g_mid_output_enabled", lambda: False)(),
-        "prefill_fused_shift_wavg_lora_w_decay_requested": getattr(nj, "_native_prefill_fused_shift_wavg_lora_w_decay_requested", lambda: False)(),
-        "prefill_fused_shift_wavg_lora_w_decay_effective": getattr(nj, "_native_prefill_fused_shift_wavg_lora_w_decay_enabled", lambda _rows: False)(batch_size * prompt_tokens),
-        "prefill_fused_shift_wavg_lora_a_sigmoid_requested": getattr(nj, "_native_prefill_fused_shift_wavg_lora_a_sigmoid_requested", lambda: False)(),
-        "prefill_fused_shift_wavg_lora_a_sigmoid_effective": getattr(nj, "_native_prefill_fused_shift_wavg_lora_a_sigmoid_enabled", lambda _rows: False)(batch_size * prompt_tokens),
-        "prefill_fused_shift_wavg_lora_prev_cache_requested": getattr(nj, "_native_prefill_fused_shift_wavg_lora_prev_cache_requested", lambda: False)(),
-        "prefill_fused_shift_wavg_lora_prev_cache_effective": getattr(nj, "_native_prefill_fused_shift_wavg_lora_prev_cache_enabled", lambda _rows: False)(batch_size * prompt_tokens),
-        "prefill_ffn_fused_act_requested": getattr(nj, "_native_prefill_ffn_fused_act_requested", lambda: False)(),
-        "prefill_ffn_fused_act_effective": getattr(nj, "_native_prefill_ffn_fused_act_enabled", lambda: False)(),
-        "prefill_ffn_fused_act_mode": getattr(nj, "_native_prefill_ffn_fused_act_mode", lambda: "triton")(),
-        "prefill_ffn_fused_act_block_size": getattr(nj, "_native_prefill_ffn_fused_act_block_size", lambda: None)(),
-        "prefill_ffn_fused_norm_shift_requested": getattr(nj, "_native_prefill_ffn_fused_norm_shift_requested", lambda: False)(),
-        "prefill_ffn_fused_norm_shift_effective": getattr(nj, "_native_prefill_ffn_fused_norm_shift_enabled", lambda: False)(),
-        "prefill_ffn_fused_norm_shift_block_h": getattr(nj, "_native_prefill_ffn_fused_norm_shift_block_h", lambda: None)(),
-        "prefill_ffn_fused_norm_shift_mode": getattr(nj, "_native_prefill_ffn_fused_norm_shift_mode", lambda: "recompute")(),
-        "prefill_fused_projection_requested": getattr(nj, "_native_prefill_fused_projection_requested", lambda: False)(),
-        "prefill_fused_projection_effective": getattr(nj, "_native_prefill_fused_projection_enabled", lambda _rows: False)(batch_size * prompt_tokens),
-        "prefill_fused_projection_max_m": getattr(nj, "_native_prefill_fused_projection_max_m", lambda: None)(),
-        "prefill_fused_projection_block_m": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_PROJECTION_BLOCK_M"),
-        "prefill_fused_projection_block_r": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_PROJECTION_BLOCK_R"),
-        "prefill_fused_projection_block_k": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_PROJECTION_BLOCK_K"),
         "fast_token_backend_after_native_prefill": decode_backend,
         "hf_prefill_ms": round(ref_ms, 4),
         "native_prefill_ms": round(native_ms, 4),
@@ -430,6 +293,11 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "decode_after_prefill_greedy_match": decode_greedy_match,
         "peak_vram_mb": peak,
     }
+    if old_fast_prefill is None:
+        os.environ.pop("RWKV7_FAST_PREFILL", None)
+    else:
+        os.environ["RWKV7_FAST_PREFILL"] = old_fast_prefill
+    return row
 
 
 def parse_ints(raw: str) -> list[int]:
@@ -453,6 +321,9 @@ def main() -> int:
     ap.add_argument("--batch-sizes", default="1,4")
     ap.add_argument("--prompt-tokens", default="128")
     ap.add_argument("--fused-scan", choices=["auto", "true", "false"], default="auto")
+    ap.add_argument("--quantization", choices=["none", "a8w8", "torchao_w8", "torchao_w4"], default="none")
+    ap.add_argument("--quant-policy", choices=["memory", "speed"], default="speed")
+    ap.add_argument("--quant-min-params", type=int, default=1)
     ap.add_argument("--code-source", choices=["model", "repo"], default="model", help="load trust_remote_code from checkpoint files or overlay current repo rwkv7_hf/*.py")
     ap.add_argument("--warmup", type=int, default=2)
     ap.add_argument("--steps", type=int, default=5)
@@ -472,6 +343,19 @@ def main() -> int:
             torch_dtype=DTYPES[args.dtype],
             device_map=args.device if args.device.startswith("cuda") else None,
         ).eval()
+        if args.quantization == "a8w8":
+            from rwkv7_hf.native_quant_a8w8 import quantize_model_a8w8
+
+            quantize_model_a8w8(model, min_params=args.quant_min_params, policy=args.quant_policy)
+        elif args.quantization in {"torchao_w8", "torchao_w4"}:
+            from rwkv7_hf.native_quant_torchao import quantize_model_torchao
+
+            quantize_model_torchao(
+                model,
+                args.quantization,
+                min_params=args.quant_min_params,
+                policy=args.quant_policy,
+            )
         for bsz in parse_ints(args.batch_sizes):
             for prompt_tokens in parse_ints(args.prompt_tokens):
                 row = run_case(args, tok, model, bsz, prompt_tokens)

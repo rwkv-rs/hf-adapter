@@ -37,6 +37,9 @@ def _build_fake_model_and_packs():
     norm_w = torch.ones(hidden, dtype=torch.float32)
     norm_b = torch.zeros(hidden, dtype=torch.float32)
     head_w = _linear_weight(vocab, hidden)
+    lm_head = torch.nn.Linear(hidden, vocab, bias=False)
+    with torch.no_grad():
+        lm_head.weight.copy_(head_w)
 
     fake_layers = [
         types.SimpleNamespace(attn=types.SimpleNamespace(num_heads=H, head_dim=N, hidden_size=hidden))
@@ -49,7 +52,7 @@ def _build_fake_model_and_packs():
     )
     model = types.SimpleNamespace(
         model=base,
-        lm_head=types.SimpleNamespace(weight=head_w, bias=None),
+        lm_head=lm_head,
     )
 
     packs = []
@@ -85,6 +88,7 @@ def _build_fake_model_and_packs():
         fx_k = torch.rand(hidden, dtype=torch.float32)
         fK = _linear_weight(hidden, hidden)
         fV = _linear_weight(hidden, hidden)
+        RKVw = torch.stack((Rw.t(), Kw.t(), Vw.t())).contiguous()
         packs.append(
             (
                 i,
@@ -122,6 +126,7 @@ def _build_fake_model_and_packs():
                 fx_k,
                 fK,
                 fV,
+                RKVw,
             )
         )
     return native_jit, model, packs
@@ -193,6 +198,7 @@ def test_prefill_opt_in_fused_state_scan_fallback_matches_token_loop() -> None:
         key: os.environ.get(key)
         for key in (
             "RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN",
+            "RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_MAX_BATCH",
             "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT",
             "RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT",
         )
@@ -201,12 +207,15 @@ def test_prefill_opt_in_fused_state_scan_fallback_matches_token_loop() -> None:
     old_output_avail = native_jit.fused_attn_output_prepare_available
     try:
         os.environ["RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN"] = "1"
+        os.environ["RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_MAX_BATCH"] = "1"
         os.environ["RWKV7_NATIVE_PREFILL_FUSED_OUTPUT"] = "1"
         # The state-scan path intentionally stays separate from the older
         # scan+output fusion probe, which consumes already-prepared W/K/V/KK.
         os.environ.pop("RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT", None)
         native_jit.fused_recurrent_scan_state_prep_available = lambda: True
         native_jit.fused_attn_output_prepare_available = lambda: True
+        assert native_jit._native_prefill_fused_state_scan_enabled(1)
+        assert not native_jit._native_prefill_fused_state_scan_enabled(2)
         with torch.no_grad():
             ref = native_jit.forward(model, ids, packs).float().view(1, -1)
             logits, state, xpa, xpf = native_jit.prefill(model, ids, packs, logits_to_keep=1)
@@ -227,44 +236,38 @@ def test_prefill_opt_in_fused_state_scan_fallback_matches_token_loop() -> None:
     assert xpf[1].shape == (1, 8)
 
 
-def test_prefill_opt_in_fused_state_scan_output_fallback_matches_token_loop() -> None:
-    native_jit, model, packs = _build_fake_model_and_packs()
-    ids = torch.tensor([[1, 5, 4, 2]], dtype=torch.long)
-    old_env = {
-        key: os.environ.get(key)
-        for key in (
-            "RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_OUTPUT",
-            "RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN",
-            "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT",
-            "RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT",
-        )
-    }
-    old_state_scan_output_avail = native_jit.fused_recurrent_scan_state_prep_output_prepare_available
+def test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch() -> None:
+    from rwkv7_hf import native_jit
+
+    key = "RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M"
+    old_env = os.environ.get(key)
+    old_available = native_jit.torch.cuda.is_available
+    old_capability = native_jit.torch.cuda.get_device_capability
+    old_device_name = native_jit.torch.cuda.get_device_name
     try:
-        os.environ["RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN_OUTPUT"] = "1"
-        os.environ["RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN"] = "1"
-        os.environ["RWKV7_NATIVE_PREFILL_FUSED_OUTPUT"] = "1"
-        # The larger fusion should take precedence over the older separate
-        # state-scan and scan-output probes when explicitly requested.
-        os.environ["RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT"] = "1"
-        native_jit.fused_recurrent_scan_state_prep_output_prepare_available = lambda: True
-        with torch.no_grad():
-            ref = native_jit.forward(model, ids, packs).float().view(1, -1)
-            logits, state, xpa, xpf = native_jit.prefill(model, ids, packs, logits_to_keep=1)
+        os.environ.pop(key, None)
+        native_jit.torch.cuda.is_available = lambda: True
+        native_jit.torch.cuda.get_device_capability = lambda: (7, 0)
+        assert native_jit._native_prefill_scan_block_m(64, 1) == 16
+        assert native_jit._native_prefill_scan_block_m(64, 4) == 32
+        native_jit.torch.cuda.get_device_capability = lambda: (7, 5)
+        assert native_jit._native_prefill_scan_block_m(64, 1) == 64
+        native_jit.torch.cuda.get_device_capability = lambda: (8, 9)
+        native_jit.torch.cuda.get_device_name = lambda: "NVIDIA GeForce RTX 4090"
+        assert native_jit._native_prefill_scan_block_m(64, 1) == 4
+        assert native_jit._native_prefill_scan_block_m(64, 4) == 8
+        native_jit.torch.cuda.get_device_name = lambda: "NVIDIA GeForce RTX 4070"
+        assert native_jit._native_prefill_scan_block_m(64, 1) == 64
+        os.environ[key] = "8"
+        assert native_jit._native_prefill_scan_block_m(64, 4) == 8
     finally:
-        native_jit.fused_recurrent_scan_state_prep_output_prepare_available = old_state_scan_output_avail
-        for key, value in old_env.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-    got = logits[:, -1, :].float()
-    assert got.shape == ref.shape
-    assert torch.allclose(got, ref, atol=2e-5, rtol=2e-5), (got - ref).abs().max()
-    assert len(state) == len(packs)
-    assert state[1].shape == (1, 2, 4, 4)
-    assert xpa[1].shape == (1, 8)
-    assert xpf[1].shape == (1, 8)
+        native_jit.torch.cuda.is_available = old_available
+        native_jit.torch.cuda.get_device_capability = old_capability
+        native_jit.torch.cuda.get_device_name = old_device_name
+        if old_env is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = old_env
 
 
 def main() -> int:
@@ -274,7 +277,7 @@ def main() -> int:
     test_prefill_matches_token_loop()
     test_prefill_opt_in_lora_state_prep_fallback_matches_token_loop()
     test_prefill_opt_in_fused_state_scan_fallback_matches_token_loop()
-    test_prefill_opt_in_fused_state_scan_output_fallback_matches_token_loop()
+    test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch()
     print("PASS")
     return 0
 

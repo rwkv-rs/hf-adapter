@@ -95,6 +95,8 @@ def quantize_model_torchao(
         "_rwkv7_native_jit_pack_cache",
         "_rwkv7_native_graph_pack_cache",
         "_rwkv7_native_graph_runner_cache",
+        "_rwkv7_native_prefill_graph_runner_cache",
+        "_rwkv7_native_prefill_graph_hot_runner",
     ):
         if hasattr(model, attr):
             delattr(model, attr)

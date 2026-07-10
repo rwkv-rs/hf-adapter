@@ -787,12 +787,23 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   and exposes the chosen value through `rwkv7_last_fast_token_backend()`.
   Generic bitsandbytes 8-bit/4-bit loads intentionally stay on the FLA
   fast-token path until a dedicated quantized native projection path is added.
+- Exact RTX 4090 defaults fixed-shape inference prefill to whole-path CUDA Graph
+  replay. `rwkv7_warmup_fast_prefill([(1, 512), (4, 512)])` pre-captures common
+  serving shapes; `rwkv7_clear_native_prefill_graph_cache()` releases them.
+  On 0.4B fp16/prompt512, public API throughput is `60.7k tok/s` at bsz1
+  (`1.011x` Albatross) and `102.4k tok/s` at bsz4 (`0.870x`). Chunked replay
+  carries `RWKV7StateCache` and passes full-vs-chunked plus following-decode
+  greedy checks. Other Ada cards retain the fallback until measured.
 - An optional TorchAO tensor-core W4 path is available for Ada-class CUDA
   validation. Load the model in bf16, then call
   `quantize_model_torchao_w4(model, min_params=1_000_000)`. Unlike generic bnb,
   the resulting packed Linear modules are captured by `native_graph`. On RTX
   4090 / 0.4B this reduces packed payload to `0.399x` and exceeds both bf16 and
   Albatross decode for bsz=1/2/4/8; see the 4090 table in `BENCHMARK.md`.
+  The head-only `speed` policy is the all-phase lane: W4 payload is `0.891x`
+  with prefill/decode above bf16 on measured rows. Native A8/W8 `speed` uses a
+  graph-capturable tensor-core GEMM plus single-row W8A16 GEMV; payload is
+  `0.926x`, and measured prefill/decode rows are non-negative versus fp16.
   Install a Torch/Python-compatible release with `pip install -e '.[torchao]'`.
 - `RWKV7_FAST_FORWARD=1` (default) lets standard HF cached one-token
   `forward()` / `generate()` use the same fast-token path in eval/no-grad mode;
