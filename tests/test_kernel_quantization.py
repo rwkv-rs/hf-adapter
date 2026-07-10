@@ -57,15 +57,21 @@ def test_native_quantization_is_structural_and_package_owned(method, module_name
 
 def test_bitsandbytes_adapter_uses_standard_hf_configuration():
     quantization = importlib.import_module("rwkv7_kernels.quantization")
+    config_type = type("Config", (), {"num_hidden_layers": 2})
     config = quantization.prepare_bitsandbytes_config(
         "bnb8",
-        skip_modules=["lm_head"],
+        config=config_type(),
+        policy="decode_rk",
         int8_threshold=5.5,
     )
     assert config.load_in_8bit
     assert not config.load_in_4bit
     assert config.llm_int8_threshold == 5.5
-    assert config.llm_int8_skip_modules == ["lm_head"]
+    assert "lm_head" in config.llm_int8_skip_modules
+    assert "model.layers.0.attn.w_lora.lora.0" in config.llm_int8_skip_modules
+    assert "model.layers.1.attn.r_proj" in config.llm_int8_skip_modules
+    assert "model.layers.1.attn.k_proj" in config.llm_int8_skip_modules
+    assert "model.layers.1.attn.v_proj" not in config.llm_int8_skip_modules
 
 
 def test_bitsandbytes_adoption_rejects_an_unquantized_model():

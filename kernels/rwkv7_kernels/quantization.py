@@ -84,6 +84,8 @@ def _bitsandbytes_modules(model: Any, method: str) -> list[str]:
 def prepare_bitsandbytes_config(
     method: str,
     *,
+    config: Any | None = None,
+    policy: str = "memory",
     skip_modules: list[str] | tuple[str, ...] | None = None,
     int8_threshold: float = 6.0,
     compute_dtype: torch.dtype = torch.bfloat16,
@@ -99,9 +101,13 @@ def prepare_bitsandbytes_config(
         from transformers import BitsAndBytesConfig
     except Exception as exc:  # pragma: no cover - optional environment
         raise RuntimeError("BitsAndBytes loading requires Transformers") from exc
-    common: dict[str, Any] = {}
-    if skip_modules:
-        common["llm_int8_skip_modules"] = list(skip_modules)
+    common: dict[str, Any] = {
+        "llm_int8_skip_modules": rwkv7_bitsandbytes_skip_modules(
+            config,
+            policy=policy,
+            extra=skip_modules,
+        )
+    }
     if normalized == "bnb8":
         return BitsAndBytesConfig(
             load_in_8bit=True,
@@ -115,6 +121,59 @@ def prepare_bitsandbytes_config(
         bnb_4bit_use_double_quant=bool(double_quant),
         **common,
     )
+
+
+def rwkv7_bitsandbytes_skip_modules(
+    config: Any | None,
+    *,
+    policy: str = "memory",
+    extra: list[str] | tuple[str, ...] | None = None,
+) -> list[str]:
+    """Return concrete BnB skips needed by native RWKV projection packing."""
+
+    policies = {
+        "memory",
+        "output_hot",
+        "decode_rk",
+        "decode_hot",
+        "prefill_hot",
+        "dense",
+    }
+    normalized = str(policy).strip().lower().replace("-", "_")
+    if normalized not in policies:
+        raise ValueError(
+            f"unsupported BitsAndBytes skip policy {policy!r}; "
+            f"expected: {', '.join(sorted(policies))}"
+        )
+    skips = ["lm_head"]
+    num_layers = int(getattr(config, "num_hidden_layers", 0) or 0)
+    for layer_index in range(num_layers):
+        prefix = f"model.layers.{layer_index}"
+        for lora_name in ("w_lora", "a_lora", "g_lora", "v_lora"):
+            for linear_index in (0, 2):
+                skips.append(
+                    f"{prefix}.attn.{lora_name}.lora.{linear_index}"
+                )
+        if normalized == "output_hot":
+            skips.append(f"{prefix}.attn.o_proj")
+        if normalized in {"decode_rk", "decode_hot", "prefill_hot", "dense"}:
+            projection_names = (
+                ("r_proj", "k_proj")
+                if normalized == "decode_rk"
+                else ("r_proj", "k_proj", "v_proj", "o_proj")
+            )
+            skips.extend(f"{prefix}.attn.{name}" for name in projection_names)
+        if normalized == "prefill_hot":
+            skips.append(f"{prefix}.ffn.key")
+            # Preserve most value projections as dense hot operands. The
+            # historical measured policy quantized every fourth layer.
+            if (layer_index + 1) % 4:
+                skips.append(f"{prefix}.ffn.value")
+        if normalized == "dense":
+            skips.extend((f"{prefix}.ffn.key", f"{prefix}.ffn.value"))
+    if extra:
+        skips.extend(str(name) for name in extra)
+    return list(dict.fromkeys(skips))
 
 
 def _quantize_marlin(
@@ -273,4 +332,5 @@ __all__ = [
     "prepare_bitsandbytes_config",
     "quantization_report",
     "quantize_model",
+    "rwkv7_bitsandbytes_skip_modules",
 ]
