@@ -167,6 +167,32 @@ Remaining before this goal is complete:
 - Do not call the DPLR/WY goal finished until compact WY or an equivalent
   compiled path is verified end-to-end against the original acceptance target.
 
+## Current Apple Branch Checkpoint: MLX DPLR/WY Stage 1
+
+The Apple sibling path now has `rwkv7_hf/mlx_dplr_prefill.py` and
+`scripts/mlx_dplr_prefill_bench.py`. It ports the same compact factor contract
+to MLX and implements custom Metal kernels for chunk summary and chunk
+apply/output; prefix combine is still high-level MLX. This is a synthetic math
+and kernel checkpoint, not yet a model-level prefill route.
+
+- M5 production-shaped target: `B=1,T=512,H=16,N=64,chunk=64,fp16`,
+  warmup 2, repeat 5.
+- Recurrent reference median: `77.207 ms`, `6,631.48 effective tok/s`.
+- High-level three stage: `207.038 ms`, `2,472.98 tok/s`.
+- Metal summary: `58.801 ms`, factor max-abs `3.73e-08`.
+- Metal chunk apply/output: `0.863 ms`; full output max-abs `1.53e-04`.
+- Metal summary + MLX prefix + Metal apply: `60.249 ms`, `8,498.11 tok/s`,
+  about `1.28x` the synthetic recurrent reference and `3.44x` high-level
+  three-stage; final-state max-abs `1.14e-04`.
+- Raw evidence: `bench/results_mlx_dplr_stage1_target_m5_20260710.jsonl`;
+  the smaller kernel bring-up row remains in
+  `bench/results_mlx_dplr_stage1_m5_20260710.jsonl`.
+
+Next Apple critical path: parallelize/tile the still-dominant summary kernel,
+support partial final chunks, then refactor MLX model prefill to layer-major
+sequence execution and route attention WKV through this three-stage backend.
+Do not claim Qwen/Albatross-level model performance from the synthetic row.
+
 ## Active Goal: Finish the Current HF Adapter First
 
 Current priority: finish the RWKV-7 Hugging Face / Transformers adapter with

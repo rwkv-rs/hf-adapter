@@ -138,6 +138,9 @@ def test_apple_smoke_script_static() -> None:
     mlx_prefill_eval_bench = ROOT / "scripts/mlx_prefill_eval_interval_bench.py"
     assert mlx_prefill_eval_bench.exists()
     assert mlx_prefill_eval_bench.stat().st_mode & stat.S_IXUSR
+    mlx_dplr_prefill_bench = ROOT / "scripts/mlx_dplr_prefill_bench.py"
+    assert mlx_dplr_prefill_bench.exists()
+    assert mlx_dplr_prefill_bench.stat().st_mode & stat.S_IXUSR
     convert_mlx_script = ROOT / "scripts/convert_hf_to_mlx.py"
     assert convert_mlx_script.exists()
     assert convert_mlx_script.stat().st_mode & stat.S_IXUSR
@@ -332,6 +335,9 @@ def test_apple_doc_links_entry_points() -> None:
     mlx_prefill_eval_bench = ROOT / "scripts/mlx_prefill_eval_interval_bench.py"
     assert mlx_prefill_eval_bench.exists()
     assert mlx_prefill_eval_bench.stat().st_mode & stat.S_IXUSR
+    mlx_dplr_prefill_bench = ROOT / "scripts/mlx_dplr_prefill_bench.py"
+    assert mlx_dplr_prefill_bench.exists()
+    assert mlx_dplr_prefill_bench.stat().st_mode & stat.S_IXUSR
     convert_mlx_script = ROOT / "scripts/convert_hf_to_mlx.py"
     assert convert_mlx_script.exists()
     assert convert_mlx_script.stat().st_mode & stat.S_IXUSR
