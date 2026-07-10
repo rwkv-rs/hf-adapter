@@ -32,6 +32,7 @@ CoreML export manifest/prototype, and the follow-up CoreML/ANE runtime lane.
 | MLX DPLR/WY Stage 1 | synthetic Metal kernels pass | `rwkv7_hf/mlx_dplr_prefill.py` ports compact summary/prefix/apply math and custom Metal summary + apply/output kernels; `scripts/mlx_dplr_prefill_bench.py` records staged parity/speed. M5 production-shaped `B1/T512/H16/N64/C64/fp16` full scaffold median≈60.249ms/8,498.11 effective tok/s,≈1.28x recurrent oracle and≈3.44x high-level three-stage, with output/final-state max-abs≈1.53e-04/1.14e-04. Summary remains≈97.6% of staged latency. |
 | MLX DPLR/WY model prefill | opt-in real-model pass; first Qwen chars512 gate pass | Tiled Metal summary parallelizes head-dim rows and is≈16.12x the scalar summary on M5 T512/H16/N64/C64. Final prompt512 medians improve recurrent→DPLR by≈19.65x/18.07x/26.79x for 0.1B/0.4B/1.5B fp16; 8-token continuations match and peak ratios are≈1.161x/1.090x/1.053x. Auto starts at 8 tokens, materializes every four layers from T64, and windows at 512 tokens. Backend default remains recurrent. |
 | MLX guarded compiled decode | 0.4B fp16/W4 pass; 0.1B/1.5B safe fallback | Explicit full-model `mx.compile` warmup plus model/batch parity promotion. M5 B1 prompt512/decode64: fp16 `96.39→119.99 tok/s` (1.245x), W4 `97.79→119.46` (1.222x), with final logits/state/tokens exact. 0.1B numeric drift and 1.5B token mismatch reject promotion, so `auto` stays eager. With tiled DPLR, 0.4B fp16 beats Qwen3.5 0.8B on available chars128/512 conservative decode/prefill/TTFT speed gates; peak-memory and cross-M-series gates remain open. |
+| MLX fast-LayerNorm decode candidate | opt-in 0.1B fp16/W4 win; larger models remain policy-gated | Fast standard LayerNorm plus reference GroupNorm/prefill makes active eager/compiled fp16 exact for 0.1B/0.4B/1.5B and adds a bounded reference-norm trajectory gate. M5 fast eager→compiled medians are `203.47→255.01`, `88.09→101.02`, and `30.72→33.64 tok/s`; all reference greedy tokens match. Only 0.1B beats its reference route. 0.4B keeps reference compiled, 1.5B keeps reference eager, and 1.5B W4 remains strict fallback. |
 | CoreML / ANE export + runtime | stateful 0.1B/0.4B correctness + initial W8 pass; production ANE open | `scripts/export_rwkv7_coreml.py --export-kind stateful-multifunction` now exports deduplicated `prefill` + `decode` functions with packed RWKV state. The WKV fp32 cache is represented as fp16 high + fp16 residual because Core ML state is fp16-only. `bench/run_coreml_apple_baseline.py` transfers `MLState`, runs exact shared prompts, greedy decode, chunk-boundary checks, and optional HF parity. M5/16GB live 0.1B and 0.4B fp32-compute rows pass state transfer (`max_abs=0`), chunk split (`logits/state max_abs=0`), and HF greedy tokens. 0.1B/0.4B INT8 packages are≈0.45x/0.36x and preserve the short greedy gates; decode is≈0.95x/0.98x fp32, so speed acceptance is still open. 0.1B INT4/LUT4 reduce package to≈0.38x/0.13x but fail HF greedy parity. `CPU_AND_NE` eligibility passes but does not prove ANE occupancy; longer/quality/placement rows remain open. |
 | MLX recurrent backend / Metal backend | recurrent + Metal WKV/quant + tiled DPLR prefill + guarded decode compile | Optional `.[mlx]` install, `rwkv7_hf.mlx_bridge`, `rwkv7_hf.mlx_model`, `rwkv7_hf.mlx_quant`, `rwkv7_hf.mlx_wkv`, `rwkv7_hf.mlx_dplr_prefill`, and the Apple scripts validate HF safetensor → MLX arrays, recurrent/cache/session behavior, packed W8/W4 projections, custom Metal WKV/quant paths, partial chunks, layer-major tiled-DPLR model prefill, bounded long-context windows, and exact model/batch decode promotion gates. Remaining production work is 0.1B/1.5B compiled parity, true peak memory, quality pressure, and cross-device tuning. |
 
@@ -885,10 +886,12 @@ next backend layer:
    fp32 correctness row to prompt/decode sweeps, 0.4B/1.5B, LUT4/INT4, and
    confirmed ANE-placement benchmark rows. Keep fp16 stateful compute opt-in
    until its HF greedy-token mismatch is fixed.
-7. Extend guarded compiled decode beyond the exact 0.4B fp16/W4 result: recover
-   strict 0.1B/1.5B parity, validate batch sizes greater than one, and fuse W4
-   decode projection/dequant. Keep explicit compile+validation in load/warmup;
-   never promote a graph solely because it compiled.
+7. Turn the measured decode candidates into an explicit model/device policy:
+   0.1B may select fast-LayerNorm compiled after both gates, 0.4B keeps exact
+   reference compiled, and 1.5B stays reference eager on M5. Validate batch
+   sizes greater than one and fuse W4 decode projection/dequant. Keep explicit
+   compile+validation in load/warmup; never promote a graph solely because it
+   compiled or passed parity while remaining slower.
 8. Promote the now-fast tiled DPLR prefill and guarded decode only after
    cross-M-series gates. Collect true peak-to-peak Qwen memory and retain the
    scalar summary only as a correctness oracle.

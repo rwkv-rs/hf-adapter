@@ -276,6 +276,38 @@ Guarded compiled-decode checkpoint:
   W4 projection/dequant further, collect true peak memory, and run the same
   gates on M1-M4/M5 Pro/Max. Do not default compiled decode without the guard.
 
+Fast-LayerNorm parity extension:
+
+- `RWKV7_MLX_DECODE_NORM_BACKEND=fast` routes the three standard decode
+  LayerNorm boundaries through MLX's explicit fast primitive. Per-head
+  GroupNorm stays on the reference formulation; making it a separate fast
+  primitive added launches without helping parity. Prefill remains on the
+  reference norm path.
+- The compiled cache is now keyed/invalidation-guarded by decode norm backend.
+  Fast-norm promotion requires two gates: exact active eager/compiled
+  logits/state/tokens, plus a 64-token reference-norm trajectory with exact
+  tokens and bounded logits/state drift (defaults `0.25/0.5`).
+- M5 fp16 prompt512/decode64, repeat3 medians, fast eager -> fast compiled:
+  0.1B `203.47 -> 255.01 tok/s` (`1.253x`), 0.4B
+  `88.09 -> 101.02` (`1.147x`), 1.5B `30.72 -> 33.64` (`1.095x`).
+  All three have exact active eager/compiled arrays and match all reference
+  greedy tokens; reference max-abs logits is `0.0625`, state is at most
+  `0.1875`.
+- This is not a blanket default. Relative to the earlier reference-math rows,
+  fast-norm compiled improves 0.1B by about `1.16x`, but 0.4B should keep the
+  faster exact reference compiled route (`119.99 tok/s`) and 1.5B should keep
+  reference eager (`~36.5 tok/s`). W4 0.1B improves
+  `176.06 -> 227.22 tok/s` (`1.291x`); 1.5B W4 remains strict-fallback because
+  compiled logits differ by `0.015625` and W4 is still slower than fp16.
+- Evidence:
+  `bench/results_mlx_decode_fast_layernorm_m5_20260710_{fp16,w4}.jsonl`.
+  Device/model policy must benchmark both norm routes and promote only a route
+  that passes its gates and beats reference eager; parity alone is insufficient.
+- The route is not benchmark-only: `MLXGenerationSession.prepare_compiled_decode`,
+  `load_mlx_generation_session`, `generate_text_from_hf`, and
+  `scripts/mlx_generate.py --prepare-compiled-decode` expose the same guarded
+  warmup/validation contract to reusable and command-line generation.
+
 ## Active Goal: Finish the Current HF Adapter First
 
 Current priority: finish the RWKV-7 Hugging Face / Transformers adapter with

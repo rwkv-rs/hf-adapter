@@ -142,8 +142,11 @@ def test_apple_smoke_script_static() -> None:
     assert "RWKV_DPLR_LAYER_EVAL_MIN_TOKENS" in qwen_acceptance_text
     assert "RWKV_DPLR_WINDOW_TOKENS" in qwen_acceptance_text
     assert "RWKV_DECODE_BACKEND" in qwen_acceptance_text
+    assert "RWKV_DECODE_NORM_BACKEND" in qwen_acceptance_text
     assert "RWKV_PREPARE_COMPILED_DECODE" in qwen_acceptance_text
     assert "RWKV_COMPILED_DECODE_VALIDATION_TOKENS" in qwen_acceptance_text
+    assert "RWKV_COMPILED_DECODE_REFERENCE_LOGITS_ATOL" in qwen_acceptance_text
+    assert "RWKV_COMPILED_DECODE_REFERENCE_STATE_ATOL" in qwen_acceptance_text
     assert "COREML_EXPORT_MODELS" in qwen_acceptance_text
     mlx_prefill_eval_bench = ROOT / "scripts/mlx_prefill_eval_interval_bench.py"
     assert mlx_prefill_eval_bench.exists()
@@ -163,6 +166,10 @@ def test_apple_smoke_script_static() -> None:
     mlx_generate_script = ROOT / "scripts/mlx_generate.py"
     assert mlx_generate_script.exists()
     assert mlx_generate_script.stat().st_mode & stat.S_IXUSR
+    mlx_generate_text = mlx_generate_script.read_text(encoding="utf-8")
+    assert "--prepare-compiled-decode" in mlx_generate_text
+    assert "--decode-norm-backend" in mlx_generate_text
+    assert "load_mlx_generation_session" in mlx_generate_text
     mlx_session_script = ROOT / "scripts/mlx_session_smoke.py"
     assert mlx_session_script.exists()
     assert mlx_session_script.stat().st_mode & stat.S_IXUSR
@@ -355,8 +362,11 @@ def test_apple_doc_links_entry_points() -> None:
     assert "RWKV_DPLR_LAYER_EVAL_MIN_TOKENS" in qwen_acceptance_text
     assert "RWKV_DPLR_WINDOW_TOKENS" in qwen_acceptance_text
     assert "RWKV_DECODE_BACKEND" in qwen_acceptance_text
+    assert "RWKV_DECODE_NORM_BACKEND" in qwen_acceptance_text
     assert "RWKV_PREPARE_COMPILED_DECODE" in qwen_acceptance_text
     assert "RWKV_COMPILED_DECODE_VALIDATION_TOKENS" in qwen_acceptance_text
+    assert "RWKV_COMPILED_DECODE_REFERENCE_LOGITS_ATOL" in qwen_acceptance_text
+    assert "RWKV_COMPILED_DECODE_REFERENCE_STATE_ATOL" in qwen_acceptance_text
     assert "COREML_EXPORT_MODELS" in qwen_acceptance_text
     mlx_prefill_eval_bench = ROOT / "scripts/mlx_prefill_eval_interval_bench.py"
     assert mlx_prefill_eval_bench.exists()
@@ -376,6 +386,10 @@ def test_apple_doc_links_entry_points() -> None:
     mlx_generate_script = ROOT / "scripts/mlx_generate.py"
     assert mlx_generate_script.exists()
     assert mlx_generate_script.stat().st_mode & stat.S_IXUSR
+    mlx_generate_text = mlx_generate_script.read_text(encoding="utf-8")
+    assert "--prepare-compiled-decode" in mlx_generate_text
+    assert "--decode-norm-backend" in mlx_generate_text
+    assert "load_mlx_generation_session" in mlx_generate_text
     mlx_session_script = ROOT / "scripts/mlx_session_smoke.py"
     assert mlx_session_script.exists()
     assert mlx_session_script.stat().st_mode & stat.S_IXUSR

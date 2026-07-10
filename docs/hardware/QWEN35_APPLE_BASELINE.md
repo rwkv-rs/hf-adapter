@@ -128,6 +128,17 @@ all available conservative speed gates at chars128 and chars512: decode
 `0.473x/0.461x` RWKV/Qwen. The comparison remains `unknown` because the Qwen
 structured telemetry is loaded memory rather than a comparable peak metric.
 
+`RWKV_DECODE_NORM_BACKEND=fast` is a separate, opt-in candidate for model
+shapes whose reference LayerNorm formulation does not compile stably. It uses
+MLX fast LayerNorm for decode only; prefill and per-head GroupNorm stay on the
+reference math. Promotion adds a second reference trajectory gate controlled
+by `RWKV_COMPILED_DECODE_REFERENCE_LOGITS_ATOL` (default `0.25`) and
+`RWKV_COMPILED_DECODE_REFERENCE_STATE_ATOL` (default `0.5`). Generated tokens
+must still match exactly. On M5 this route is useful for 0.1B fp16/W4, but is
+slower than the accepted reference route for 0.4B and 1.5B. Therefore the
+Qwen3.5 0.4B comparison above must continue to use reference-norm compiled
+decode rather than enabling fast LayerNorm globally.
+
 It emits rows with `axis=qwen35_apple_baseline` and can run:
 
 1. Qwen3.5 through a local Ollama server using the streaming `/api/generate`

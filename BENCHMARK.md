@@ -3107,3 +3107,59 @@ PYTHONPATH=. python scripts/mlx_decode_compile_bench.py \
   --validation-tokens 64 --repeat 5 --warmup 1 \
   --dtype fp16 --quantization none --wkv-backend metal
 ```
+
+#### Fast-LayerNorm compiled parity route
+
+Some model shapes change reduction/fusion order when the high-level LayerNorm
+formula is absorbed into the full compiled graph. The opt-in
+`--decode-norm-backend fast` route uses the explicit MLX fast primitive for the
+three standard LayerNorm boundaries while retaining reference per-head
+GroupNorm and reference prefill. Compiled graphs are invalidated when this
+backend changes.
+
+Promotion is deliberately two-level:
+
+1. active fast eager versus fast compiled must match tokens, logits, and every
+   state array under the strict compiled tolerances;
+2. the active trajectory must match reference-norm greedy tokens and remain
+   within the separately reported reference logits/state bounds (defaults
+   `0.25/0.5`).
+
+M5 fp16, batch1, prompt512/decode64, warmup1/repeat3 medians:
+
+| Model | Fast eager | Fast compiled | Internal speedup | Reference-token gate | Reference logits/state max-abs |
+|---|---:|---:|---:|---|---:|
+| 0.1B | 203.47 | 255.01 tok/s | 1.253x | 64 exact | 0.0625 / 0.03125 |
+| 0.4B | 88.09 | 101.02 tok/s | 1.147x | 64 exact | 0.0625 / 0.1875 |
+| 1.5B | 30.72 | 33.64 tok/s | 1.095x | 64 exact | 0.0625 / 0.12644 |
+
+The hardware policy still chooses the faster accepted route, not the route
+with the most checkmarks. Against the earlier reference rows, fast compiled is
+useful for 0.1B (`~1.16x` reference eager), while 0.4B reference compiled
+remains faster (`119.99 tok/s`) and 1.5B reference eager remains faster
+(`~36.5 tok/s`). W4 0.1B fast eager/compiled is
+`176.06/227.22 tok/s` (`1.291x`). W4 1.5B keeps strict fallback: compiled
+logits differ by `0.015625` even though state and tokens match, and relaxing
+that single tolerance still does not make W4 competitive with fp16.
+
+Evidence:
+
+- `bench/results_mlx_decode_fast_layernorm_m5_20260710_fp16.jsonl`
+- `bench/results_mlx_decode_fast_layernorm_m5_20260710_w4.jsonl`
+
+```bash
+PYTHONPATH=. python scripts/mlx_decode_compile_bench.py \
+  --models /path/to/0.1b,/path/to/0.4b,/path/to/1.5b \
+  --decode-norm-backend fast --prompt-target-chars 512 \
+  --decode-tokens 64 --validation-tokens 64 --repeat 3
+```
+
+Serving-shaped smoke uses the identical guard:
+
+```bash
+PYTHONPATH=. python scripts/mlx_generate.py /path/to/0.1b \
+  --prompt "User: hello\nAssistant:" --max-new-tokens 64 \
+  --wkv-backend metal --decode-backend auto \
+  --decode-norm-backend fast --prepare-compiled-decode \
+  --compiled-decode-validation-tokens 64
+```

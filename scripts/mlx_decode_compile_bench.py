@@ -64,6 +64,7 @@ def main() -> int:
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--validation-tokens", type=int, default=64)
     parser.add_argument("--include-unguarded", action="store_true")
+    parser.add_argument("--decode-norm-backend", default="reference", choices=["reference", "fast"])
     parser.add_argument("--dtype", default="fp16", choices=["keep", "fp32", "fp16", "bf16"])
     parser.add_argument("--quantization", default="none", choices=["none", "mm8", "mm4"])
     parser.add_argument("--quant-min-params", type=int, default=8_000_000)
@@ -71,6 +72,8 @@ def main() -> int:
     parser.add_argument("--wkv-backend", default="metal", choices=["reference", "metal", "auto"])
     parser.add_argument("--logits-atol", type=float, default=1e-5)
     parser.add_argument("--state-atol", type=float, default=1e-5)
+    parser.add_argument("--reference-logits-atol", type=float, default=0.25)
+    parser.add_argument("--reference-state-atol", type=float, default=0.5)
     parser.add_argument("--results", default="")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -85,7 +88,13 @@ def main() -> int:
         or args.validation_tokens <= 0
     ):
         raise ValueError("prompt, decode tokens, and repeat must be positive")
-    if args.warmup < 0 or args.logits_atol < 0 or args.state_atol < 0:
+    if min(
+        args.warmup,
+        args.logits_atol,
+        args.state_atol,
+        args.reference_logits_atol,
+        args.reference_state_atol,
+    ) < 0:
         raise ValueError("warmup and tolerances must be non-negative")
     env = {
         "axis": AXIS + "_env",
@@ -97,6 +106,7 @@ def main() -> int:
         "warmup": int(args.warmup),
         "validation_tokens": int(args.validation_tokens),
         "include_unguarded": bool(args.include_unguarded),
+        "decode_norm_backend": args.decode_norm_backend,
         "dtype": args.dtype,
         "quantization": args.quantization,
         "quant_min_params": int(args.quant_min_params),
@@ -104,6 +114,8 @@ def main() -> int:
         "wkv_backend": args.wkv_backend,
         "logits_atol": float(args.logits_atol),
         "state_atol": float(args.state_atol),
+        "reference_logits_atol": float(args.reference_logits_atol),
+        "reference_state_atol": float(args.reference_state_atol),
         **device_info(),
     }
     print(json.dumps(env, ensure_ascii=False))
@@ -129,6 +141,7 @@ def main() -> int:
             wkv_backend=args.wkv_backend,
         )
         model.prefill_backend = "auto"
+        model.decode_norm_backend = args.decode_norm_backend
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         prompt_ids = [int(token) for token in tokenizer(prompt, add_special_tokens=False).input_ids]
         logits, base_state = model.prefill([prompt_ids])
@@ -140,6 +153,8 @@ def main() -> int:
             steps=int(args.validation_tokens),
             logits_atol=float(args.logits_atol),
             state_atol=float(args.state_atol),
+            reference_logits_atol=float(args.reference_logits_atol),
+            reference_state_atol=float(args.reference_state_atol),
         )
 
         reference_logits, reference_state, reference_tokens, _ = _decode(
@@ -191,6 +206,7 @@ def main() -> int:
                     "wkv_backend": args.wkv_backend,
                     "decode_backend": backend,
                     "decode_backend_used": model.decode_backend_last,
+                    "decode_norm_backend": args.decode_norm_backend,
                     "compile_s": round(float(compile_s), 6),
                     "compiled_validation": validation,
                     "prompt_tokens": len(prompt_ids),
@@ -223,6 +239,7 @@ def main() -> int:
                 "wkv_backend": args.wkv_backend,
                 "decode_backend": backend,
                 "decode_backend_used": selected[-1]["decode_backend_used"],
+                "decode_norm_backend": args.decode_norm_backend,
                 "compile_s": round(float(compile_s), 6),
                 "compiled_validation": validation,
                 "repeats": len(selected),

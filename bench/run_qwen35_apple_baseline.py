@@ -423,8 +423,11 @@ def run_rwkv_mlx(
     dplr_layer_eval_min_tokens: int,
     dplr_window_tokens: int,
     decode_backend: str,
+    decode_norm_backend: str,
     prepare_compiled_decode: bool,
     compiled_decode_validation_tokens: int,
+    compiled_decode_reference_logits_atol: float,
+    compiled_decode_reference_state_atol: float,
     results: str,
     store_response: bool = False,
 ) -> list[dict[str, Any]]:
@@ -473,6 +476,7 @@ def run_rwkv_mlx(
     model.dplr_layer_eval_min_tokens = int(dplr_layer_eval_min_tokens)
     model.dplr_window_tokens = int(dplr_window_tokens)
     model.decode_backend = str(decode_backend)
+    model.decode_norm_backend = str(decode_norm_backend)
     if prepare_compiled_decode:
         model.prepare_compiled_decode(batch_size=1)
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
@@ -487,6 +491,8 @@ def run_rwkv_mlx(
             validation_logits,
             validation_state,
             steps=int(compiled_decode_validation_tokens),
+            reference_logits_atol=float(compiled_decode_reference_logits_atol),
+            reference_state_atol=float(compiled_decode_reference_state_atol),
         )
         mx.clear_cache()
     load_s = time.perf_counter() - t_load
@@ -563,12 +569,16 @@ def run_rwkv_mlx(
                 "decode_backend": telemetry.get("decode_backend"),
                 "decode_backend_last": telemetry.get("decode_backend_last"),
                 "decode_backend_counts": telemetry.get("decode_backend_counts"),
+                "decode_norm_backend": telemetry.get("decode_norm_backend"),
                 "decode_compiled_batches": telemetry.get("decode_compiled_batches"),
                 "decode_compiled_validated_batches": telemetry.get(
                     "decode_compiled_validated_batches"
                 ),
                 "decode_compiled_rejected_batches": telemetry.get(
                     "decode_compiled_rejected_batches"
+                ),
+                "decode_compiled_norm_backend_by_batch": telemetry.get(
+                    "decode_compiled_norm_backend_by_batch"
                 ),
                 "decode_compile_s_by_batch": telemetry.get("decode_compile_s_by_batch"),
                 "compiled_decode_validation": compiled_decode_validation,
@@ -708,8 +718,15 @@ def main() -> int:
         default="auto",
         choices=["eager", "compiled", "auto"],
     )
+    ap.add_argument(
+        "--rwkv-decode-norm-backend",
+        default="reference",
+        choices=["reference", "fast"],
+    )
     ap.add_argument("--rwkv-prepare-compiled-decode", action="store_true")
     ap.add_argument("--rwkv-compiled-decode-validation-tokens", type=int, default=32)
+    ap.add_argument("--rwkv-compiled-decode-reference-logits-atol", type=float, default=0.25)
+    ap.add_argument("--rwkv-compiled-decode-reference-state-atol", type=float, default=0.5)
     ap.add_argument("--ollama-cache-prompt", action="store_true", help="Allow Ollama/runner prompt-cache reuse across rows.")
     ap.add_argument("--no-ollama-memory", action="store_true", help="Skip official /api/ps loaded-memory telemetry.")
     ap.add_argument("--temperature", type=float, default=0.0)
@@ -744,6 +761,11 @@ def main() -> int:
         raise ValueError("--rwkv-dplr-window-tokens must be non-negative")
     if args.rwkv_compiled_decode_validation_tokens <= 0:
         raise ValueError("--rwkv-compiled-decode-validation-tokens must be positive")
+    if min(
+        args.rwkv_compiled_decode_reference_logits_atol,
+        args.rwkv_compiled_decode_reference_state_atol,
+    ) < 0:
+        raise ValueError("compiled decode reference tolerances must be non-negative")
     if args.summarize:
         rows = load_jsonl(args.summarize)
         print(json.dumps(summarize_rows(rows), ensure_ascii=False))
@@ -778,8 +800,15 @@ def main() -> int:
         "rwkv_dplr_layer_eval_min_tokens": int(args.rwkv_dplr_layer_eval_min_tokens),
         "rwkv_dplr_window_tokens": int(args.rwkv_dplr_window_tokens),
         "rwkv_decode_backend": args.rwkv_decode_backend,
+        "rwkv_decode_norm_backend": args.rwkv_decode_norm_backend,
         "rwkv_prepare_compiled_decode": bool(args.rwkv_prepare_compiled_decode),
         "rwkv_compiled_decode_validation_tokens": int(args.rwkv_compiled_decode_validation_tokens),
+        "rwkv_compiled_decode_reference_logits_atol": float(
+            args.rwkv_compiled_decode_reference_logits_atol
+        ),
+        "rwkv_compiled_decode_reference_state_atol": float(
+            args.rwkv_compiled_decode_reference_state_atol
+        ),
         **device_info(),
     }
     print(json.dumps(env, ensure_ascii=False))
@@ -805,8 +834,15 @@ def main() -> int:
             "rwkv_dplr_layer_eval_min_tokens": int(args.rwkv_dplr_layer_eval_min_tokens),
             "rwkv_dplr_window_tokens": int(args.rwkv_dplr_window_tokens),
             "rwkv_decode_backend": args.rwkv_decode_backend,
+            "rwkv_decode_norm_backend": args.rwkv_decode_norm_backend,
             "rwkv_prepare_compiled_decode": bool(args.rwkv_prepare_compiled_decode),
             "rwkv_compiled_decode_validation_tokens": int(args.rwkv_compiled_decode_validation_tokens),
+            "rwkv_compiled_decode_reference_logits_atol": float(
+                args.rwkv_compiled_decode_reference_logits_atol
+            ),
+            "rwkv_compiled_decode_reference_state_atol": float(
+                args.rwkv_compiled_decode_reference_state_atol
+            ),
         }
         print(json.dumps(plan, ensure_ascii=False))
         append_jsonl(args.results, plan)
@@ -854,8 +890,15 @@ def main() -> int:
                     dplr_layer_eval_min_tokens=int(args.rwkv_dplr_layer_eval_min_tokens),
                     dplr_window_tokens=int(args.rwkv_dplr_window_tokens),
                     decode_backend=args.rwkv_decode_backend,
+                    decode_norm_backend=args.rwkv_decode_norm_backend,
                     prepare_compiled_decode=bool(args.rwkv_prepare_compiled_decode),
                     compiled_decode_validation_tokens=int(args.rwkv_compiled_decode_validation_tokens),
+                    compiled_decode_reference_logits_atol=float(
+                        args.rwkv_compiled_decode_reference_logits_atol
+                    ),
+                    compiled_decode_reference_state_atol=float(
+                        args.rwkv_compiled_decode_reference_state_atol
+                    ),
                     results=args.results,
                     store_response=bool(args.store_responses),
                 )
