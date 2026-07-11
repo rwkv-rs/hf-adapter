@@ -1084,3 +1084,8 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   was progressing at 27% with the GPU busy, not stalled.
 - Targeted Ruff, compileall, `git diff --check`, source-scope corruption tests,
   wheel ZIP audit and the complete local suite pass: `147 passed`.
+- Corrected both root READMEs: they no longer claim that performance remains
+  on an unrelated branch. They now document the independently installable
+  `rwkv7-kernels==1.0.0`, unchanged HF loading code, `auto`/`reference`/strict
+  `optimized` semantics, complete operator ownership and explicit
+  quantization choices in English and Chinese.

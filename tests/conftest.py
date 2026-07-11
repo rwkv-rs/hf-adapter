@@ -8,9 +8,11 @@ import pytest
 
 from rwkv7_hf.configuration_rwkv7 import RWKV7Config
 from scripts.audit_release_wheels import (
+    CAPABILITY_INVENTORY,
     HF_REQUIRED,
     KERNEL_REQUIRED,
     MIGRATION_MANIFEST,
+    SOURCE_SCOPE,
 )
 
 
@@ -36,6 +38,8 @@ def write_valid_kernel_wheel(
     manifest_path = ROOT / "kernels/rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json"
     manifest = json.loads(manifest_path.read_text())
     members: dict[str, bytes] = {MIGRATION_MANIFEST: manifest_path.read_bytes()}
+    for member in (CAPABILITY_INVENTORY, SOURCE_SCOPE):
+        members[member] = (ROOT / "kernels" / member).read_bytes()
     for row in manifest["files"]:
         source = ROOT / row["destination"]
         member = str(Path(*Path(row["destination"]).parts[1:])).replace("\\", "/")
