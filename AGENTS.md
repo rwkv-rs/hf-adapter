@@ -201,11 +201,12 @@ Remaining before this goal is complete:
 - Make the explicit three-stage path at least competitive with the P0 fused
   recurrent scan; current dense3 is correctness-first and slower than P0.
 - The exact-4090 fixed-shape prefill graph now runs 0.4B prompt512 at
-  `60736.2 tok/s` for bsz1 (`1.0115x` Albatross) and `102417.7 tok/s` for bsz4
-  (`0.8695x`). Bsz1 is closed; the active prefill gap is larger-batch parity.
-  Continue with deeper scan/projection/layout work for bsz4 rather than wrapper
-  micro-optimization. Keep DPLR/WY as the cross-card/variable-shape algorithmic
-  route rather than deleting it because one fixed shape passes.
+  `64511.2 tok/s` for bsz1 and `107870.1 tok/s` for bsz4. Bsz4 is `1.007x` a
+  same-session Albatross rerun and `0.916x` the older strongest recorded row.
+  The gain comes from no-`cat` sequence shift/state kernels plus fused ReLU²,
+  not wrapper work. Continue deeper scan/projection/layout work against the
+  historical high-water mark. Keep DPLR/WY as the cross-card/variable-shape
+  algorithmic route rather than deleting it because one fixed shape passes.
 - Do not call the DPLR/WY goal finished until compact WY or an equivalent
   compiled path is verified end-to-end against the original acceptance target.
 
@@ -581,16 +582,18 @@ Run this checklist for every new GPU before marking it as supported:
     `rwkv7_warmup_fast_prefill()` before serving and clear the graph cache after
     changing capture-affecting environment settings.
   - For 0.4B/fp16/prompt512, exact-4090 defaults use scan tile 4 at bsz1 and
-    tile 8 at bsz>=2, both with four warps. Public API rows are `60736.2 tok/s`
-    at bsz1 (`1.0115x` Albatross) and `102417.7 tok/s` at bsz4 (`0.8695x`).
-    1.5B bsz1 reaches `32357.8 tok/s`. Greedy/cache handoff and full-vs-chunked
-    prompt1024 tests pass.
+    tile 8 at bsz>=2, both with four warps. Public API rows after sequence
+    shift/state and ReLU² fusion are `64511.2 tok/s` at bsz1 and `107870.1
+    tok/s` at bsz4. Bsz4 is `1.007x` the current same-session Albatross row and
+    `0.916x` the historical strongest row. 1.5B bsz1 previously reached
+    `32357.8 tok/s`. Greedy/cache handoff, HF generate, dynamic-cache, and
+    full-vs-chunked tests pass.
   - Keep separate fused state prep + split scan inside the graph. The combined
     state-prep+scan kernel is slower under graph replay. Fused output prep and
     fused shift mix are positive only as part of the whole captured sequence.
   - Do not generalize the 4090 tile/defaults to 4070/4080 or another GPU family
-    without card-local rows. Do not claim universal parity: bsz4 remains below
-    the strongest Albatross row.
+    without card-local rows. Do not claim universal parity: same-session B4 is
+    closed, but it remains below the historical strongest Albatross row.
   - Latest fine prefill breakdown splits dense R/K/V projection separately:
     bsz=1 prompt512 has scan `7.6627ms`, LoRA sum `6.2419ms`, norm/shift/mix
     `3.8281ms`, state-prep `3.1581ms`, and dense R/K/V sum `2.2056ms`. The
