@@ -1089,3 +1089,13 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   `rwkv7-kernels==1.0.0`, unchanged HF loading code, `auto`/`reference`/strict
   `optimized` semantics, complete operator ownership and explicit
   quantization choices in English and Chinese.
+- Updated the six-repository publication document from the obsolete `v0.9.0`
+  wording to the final `v1.0.0` contract: unchanged weight hashes, independent
+  package-free Hub loading, optional kernel installation and mandatory fresh-
+  cache redownload evidence for all six repositories.
+- Updated the public evaluation commands to `v1.0.0` result roots and the
+  final stable `rwkv7_kernels-1.0.0` wheel name. Diagnostic `.dev0` artifacts
+  remain in the historical session log only and are no longer presented as
+  release commands.
+- Updated the canonical finetuning wrapper example to the same final stable
+  kernel wheel name, keeping every user-facing release command consistent.

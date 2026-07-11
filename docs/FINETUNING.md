@@ -79,7 +79,7 @@ python examples/finetune/sft_lora.py \
   --output-dir results/backend-v2/finetune/sft \
   --code-sha "$(git rev-parse HEAD)" \
   --hf-wheel /artifacts/rwkv7_hf-1.0.0-py3-none-any.whl \
-  --kernel-wheel /artifacts/rwkv7_kernels-1.0.0.dev0-py3-none-any.whl
+  --kernel-wheel /artifacts/rwkv7_kernels-1.0.0-py3-none-any.whl
 ```
 
 Run DPO and GRPO with the same artifact arguments, then validate all canonical

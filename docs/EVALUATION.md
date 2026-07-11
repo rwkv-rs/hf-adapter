@@ -60,10 +60,10 @@ Run the 48 units (3 models x 2 batch sizes x 8 tasks):
 
 ```bash
 python evaluation/run_lm_eval_matrix.py \
-  --output-dir results/lm_eval/v0.9.0 \
+  --output-dir results/lm_eval/v1.0.0 \
   --device cuda
 python evaluation/validate_lm_eval_matrix.py \
-  --result-dir results/lm_eval/v0.9.0
+  --result-dir results/lm_eval/v1.0.0
 ```
 
 On a two-GPU V100 host, the checked-in launcher partitions the eight tasks,
@@ -71,7 +71,7 @@ runs both shards concurrently, merges them, and invokes the same validator:
 
 ```bash
 MODEL_ROOT=/models/rwkv7-reference \
-OUTPUT_DIR="$PWD/results/lm_eval/v0.9.0" \
+OUTPUT_DIR="$PWD/results/lm_eval/v1.0.0" \
 PYTHON="$VIRTUAL_ENV/bin/python" \
 CODE_SHA="$(git rev-parse HEAD)" \
 bash evaluation/run_lm_eval_v100_parallel.sh
@@ -88,7 +88,7 @@ V100 capacity without changing any lm_eval command or batch size:
 ```bash
 python evaluation/run_lm_eval_v100_pool.py \
   --model-root /models/rwkv7-reference \
-  --output-dir results/lm_eval/v0.9.0 \
+  --output-dir results/lm_eval/v1.0.0 \
   --python "$VIRTUAL_ENV/bin/python" \
   --code-sha "$(git rev-parse HEAD)"
 ```
@@ -126,7 +126,7 @@ python evaluation/run_lm_eval_matrix.py \
   --model 0.4b=/models/rwkv7-0.4b-hf \
   --model 1.5b=/models/rwkv7-1.5b-hf \
   --hf-wheel /artifacts/rwkv7_hf-1.0.0-py3-none-any.whl \
-  --kernel-wheel /artifacts/rwkv7_kernels-1.0.0.dev0-py3-none-any.whl \
+  --kernel-wheel /artifacts/rwkv7_kernels-1.0.0-py3-none-any.whl \
   --fla-source /sources/fla-80e494f6 \
   --code-sha "$(git rev-parse HEAD)"
 ```
