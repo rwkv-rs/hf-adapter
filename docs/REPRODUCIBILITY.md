@@ -44,6 +44,19 @@ source SHA, fixed FLA commit, shared harness/wheel identities and every required
 device gate, and publishes the downloaded bytes. It deliberately does not
 rebuild either distribution in GitHub Actions.
 
+Before any GPU run, audit that the candidate wheel bytes contain the clean HF
+model and every migrated NVIDIA payload:
+
+```bash
+python scripts/audit_release_wheels.py \
+  --hf-wheel /artifacts/rwkv7_hf-1.0.0-py3-none-any.whl \
+  --kernel-wheel /artifacts/rwkv7_kernels-1.0.0-py3-none-any.whl
+```
+
+The final release verifier repeats this audit, including all 102 embedded
+migration-manifest hashes, so a locally complete source tree cannot hide an
+incomplete wheel.
+
 Generate the final provenance from the three compact bundles rather than
 writing it by hand:
 

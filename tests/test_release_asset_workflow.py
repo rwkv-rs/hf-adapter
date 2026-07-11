@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import write_valid_hf_wheel, write_valid_kernel_wheel
 from scripts.verify_release_assets import (
     DEVICES,
     FLA_COMMIT,
@@ -22,7 +23,12 @@ def write_release(tmp_path: Path, *, mismatch_device: str | None = None) -> Name
     sums = []
     for index, name in enumerate(expected_artifacts(version)):
         path = tmp_path / name
-        path.write_bytes(f"artifact-{index}".encode())
+        if name.endswith(".whl") and name.startswith("rwkv7_hf-"):
+            write_valid_hf_wheel(path)
+        elif name.endswith(".whl") and name.startswith("rwkv7_kernels-"):
+            write_valid_kernel_wheel(path)
+        else:
+            path.write_bytes(f"artifact-{index}".encode())
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         artifacts[name] = {"sha256": digest, "size": path.stat().st_size}
         sums.append(f"{digest}  {name}")

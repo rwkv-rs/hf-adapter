@@ -856,3 +856,34 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - Failure tests cover a failed primary gate, report from another wheel,
   missing actual route and unpinned FLA revision. Focused checks and the full
   local suite pass: `112 passed`.
+
+### 2026-08-28 — final wheel audit proves the full NVIDIA migration is shipped
+
+- Added `scripts/audit_release_wheels.py` and made it a mandatory part of
+  `verify_release_assets.py`. The audit opens the exact release wheels rather
+  than inspecting the checkout.
+- The kernel-wheel audit requires all adapted runtime/protocol/dispatcher/
+  recurrent/graph/training/quantization modules, rejects any copied HF
+  model/config/cache owner, reads the embedded source-migration manifest, and
+  recomputes every one of the 102 migrated NVIDIA payload hashes. The HF-wheel
+  audit independently requires the seven canonical model/tokenizer assets and
+  rejects the optional kernel package plus the removed compatibility/tooling
+  names.
+- The existing immutable diagnostic artifacts pass the new audit without a
+  rebuild: HF wheel
+  `237f4561ce59e3b4bbf385489bf9d0620e1b9f24877bd1990d8f00d9d7c6673c`
+  contains 18 members; kernel wheel
+  `a36be47896f17ba40fbaf0e78cf486a79b929c5e7ecc3d71ae1a16a619596156`
+  contains 125 members, including 102/102 byte-verified migrated files and all
+  15 required adapted runtime files. These remain diagnostic, not final stable
+  release artifacts.
+- Failure tests remove one migrated file, alter one migrated payload, omit the
+  manifest, and inject cross-package ownership in each direction. The full
+  release-provenance tests now use structurally valid wheel fixtures. Focused
+  Ruff/format/compile checks, `git diff --check`, and the complete local suite
+  pass: `117 passed`.
+- At `2026-08-28T03:48:20+08:00`, the untouched RTX 4080 recurrent-v1
+  reference lane reached 22/48 successful units with no recorded failure.
+  `0.4b-b1-arc_challenge` was the sole GPU process. The backend-v2 chain stayed
+  queued, and upstream draft PR #146 had all five current checks green at
+  source `ee6f9e3a977680ac775c876777eb864164b5c860`.

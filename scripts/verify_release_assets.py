@@ -10,6 +10,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+from scripts.audit_release_wheels import audit_hf_wheel, audit_kernel_wheel
+
 
 FLA_COMMIT = "80e494f6c588e091fc8316b612870df29375c5b8"
 DEVICES = {"rtx-4080", "tesla-v100", "rtx-4090"}
@@ -77,6 +79,8 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         if sums.get(name) != digest:
             raise ValueError(f"SHA256SUMS mismatch: {name}")
         artifacts[name] = {"sha256": digest, "size": path.stat().st_size}
+    audit_hf_wheel(root / f"rwkv7_hf-{args.version}-py3-none-any.whl")
+    audit_kernel_wheel(root / f"rwkv7_kernels-{args.version}-py3-none-any.whl")
 
     provenance_path = root / "release-provenance.json"
     if sums.get(provenance_path.name) != sha256_file(provenance_path):

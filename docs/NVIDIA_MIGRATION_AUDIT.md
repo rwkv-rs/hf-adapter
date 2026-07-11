@@ -22,6 +22,14 @@ set includes:
 - explicit BN/TN sweep helpers and the opt-in legacy Triton compatibility
   utility.
 
+Source-tree presence is not enough: `scripts/audit_release_wheels.py` opens the
+actual kernel wheel, rejects unsafe/cross-package members, reads the embedded
+manifest, and recomputes all 102 payload hashes. It also requires the adapted
+dispatcher, dense/prefill/decode, graph/state-pool, quantization, recurrent and
+training runtime modules that were intentionally not byte-copied from the old
+duplicate model stack. The same command checks that the `rwkv7-hf` wheel keeps
+only the canonical model package and does not contain `rwkv7_kernels`.
+
 ## Adapted rather than copied
 
 The following old modules mixed performance code with a second model/config/
