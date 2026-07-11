@@ -61,6 +61,30 @@ def test_nvidia_migration_manifest_is_complete_and_byte_verified():
     assert required_families <= destinations
 
 
+def test_nvidia_capability_inventory_maps_every_migrated_byte_once():
+    manifest = json.loads((NVIDIA / "MIGRATION_MANIFEST.json").read_text())
+    inventory = json.loads((NVIDIA / "CAPABILITY_INVENTORY.json").read_text())
+    assert inventory["schema"] == "rwkv7-nvidia-capability-inventory-v1"
+    assert inventory["kernel_api_version"] == 2
+    assert inventory["production_auto"].startswith("disabled")
+
+    migrated = {
+        Path(entry["destination"]).relative_to("kernels").as_posix()
+        for entry in manifest["files"]
+    }
+    mapped = [
+        member
+        for capability in inventory["capabilities"]
+        for member in capability["migration_files"]
+    ]
+    assert len(mapped) == len(set(mapped)) == 102
+    assert set(mapped) == migrated
+    assert all(
+        capability["implementation_status"] == "migrated"
+        for capability in inventory["capabilities"]
+    )
+
+
 def test_nvidia_sources_do_not_reintroduce_model_config_or_cache_ownership():
     forbidden_names = {
         "modeling_rwkv7.py",

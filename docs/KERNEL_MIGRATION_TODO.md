@@ -1007,3 +1007,31 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   term required by the post-publication GitHub audit.
 - Ruff, compileall, direct-entrypoint smoke, and the complete local suite pass:
   `134 passed`.
+
+### 2026-08-28 — every migrated high-performance family is semantically audited
+
+- Added the wheel-owned `nvidia/CAPABILITY_INVENTORY.json`. It maps all 102
+  byte-verified historical NVIDIA payloads exactly once into 16 capability
+  families covering recurrent, dense/fused decode, DPLR/self-chunk/fused
+  prefill, CUDA Graph/state pools, SM70/Ada/Blackwell, W8/W4/A8W8/BN-TN/BnB/
+  Marlin/TorchAO, common quant runtime, and train-temp autograd.
+- Extended `scripts/audit_release_wheels.py` to require the exact capability
+  set, API v2 ownership, real adapted runtime files and real `KernelPolicy`
+  fields. It now rejects missing/double-mapped historical files, unreachable
+  runtime references, invented policy flags, and incomplete capability
+  families in the built wheel.
+- Added direct source-policy tests for exact V100, RTX 4080, RTX 4090 and RTX
+  5090 route families plus adjacent-product fail-closed behavior. These tests
+  verify the migration is represented in hardware dispatch rather than only
+  stored as source files.
+- Production whole-model `auto` remains disabled. `migrated` means the
+  implementation and route ownership are complete; promotion still waits for
+  the immutable-wheel RTX 4080 -> V100 -> RTX 4090 acceptance and 144-unit
+  three-way `lm_eval` gate.
+- Targeted Ruff, compileall, `git diff --check`, and the complete local suite
+  pass: `143 passed`. A disposable development-wheel build was then audited
+  from its ZIP contents: 16/16 capability families, 102/102 mapped and
+  byte-verified migration files, 23 reachable adapted runtime files and 46
+  real policy flags. Its SHA256 is
+  `0a7f8f162fde9def8dd31ada789e5ef364eabf68093d771326a8d9775489a3df`;
+  it is a local audit artifact, not the final immutable `1.0.0` release wheel.

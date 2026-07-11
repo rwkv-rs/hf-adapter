@@ -56,3 +56,10 @@ hardware policy into `RWKV7Config` or `RWKV7Cache`. See
 [`docs/KERNEL_BACKEND_V2_DESIGN.md`](../docs/KERNEL_BACKEND_V2_DESIGN.md) and
 [`docs/NVIDIA_MIGRATION_AUDIT.md`](../docs/NVIDIA_MIGRATION_AUDIT.md) for the
 frozen boundary and byte-audited migration inventory.
+
+The built wheel embeds both `MIGRATION_MANIFEST.json` and
+`CAPABILITY_INVENTORY.json`. The first verifies all 102 historical NVIDIA
+payloads byte for byte. The second maps those payloads to the actual recurrent,
+prefill, decode, graph/state, SM70/Ada/Blackwell, quantization, and training
+runtime routes. Release auditing rejects a wheel that merely ships an
+unreachable source archive.

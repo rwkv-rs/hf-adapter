@@ -30,6 +30,24 @@ training runtime modules that were intentionally not byte-copied from the old
 duplicate model stack. The same command checks that the `rwkv7-hf` wheel keeps
 only the canonical model package and does not contain `rwkv7_kernels`.
 
+`kernels/rwkv7_kernels/nvidia/CAPABILITY_INVENTORY.json` is the second,
+semantic half of this audit. It assigns every one of those 102 files exactly
+once to one of 16 executable capability families: recurrent, dense decode,
+fused/DPLR/self-chunk prefill, graph/state pools, SM70, Ada, Blackwell, native
+W8/W4/A8W8, BN/TN, BitsAndBytes, Marlin, TorchAO, common quantization runtime,
+and training autograd. Each family also names its adapted runtime entry files,
+phases, activation status, devices and `KernelPolicy` fields. The wheel audit
+fails if a migrated byte is unmapped or double-mapped, a runtime file is
+absent, a policy flag is invented, or a required family is missing. Thus an
+opaque directory of preserved sources cannot satisfy the release gate.
+
+The inventory deliberately distinguishes `migrated` from `production auto`.
+All implementation families are present behind API v2, but full-model v2
+families remain diagnostic until the same immutable wheel passes the complete
+three-device gate. Native quantization stays an explicit user opt-in. This
+prevents a source-completeness statement from being mistaken for unmeasured
+device/shape promotion.
+
 ## Adapted rather than copied
 
 The following old modules mixed performance code with a second model/config/
