@@ -48,6 +48,35 @@ three-device gate. Native quantization stays an explicit user opt-in. This
 prevents a source-completeness statement from being mistaken for unmeasured
 device/shape promotion.
 
+## Complete historical scope, including every deliberate exclusion
+
+The number 102 is not a hand-selected denominator. The wheel also embeds
+`SOURCE_SCOPE.json`, which classifies the complete 153-file `rwkv7_hf` tree at
+historical commit `1014acf1a52fa4dee1e4d2b46e6059275c1d3bea`:
+
+| disposition | files |
+|---|---:|
+| byte-migrated NVIDIA implementation | 102 |
+| adapted to the clean model-forward protocol | 10 |
+| replaced by canonical reference ownership | 7 |
+| tooling relocated or retired | 6 |
+| separate non-NVIDIA hardware distribution | 27 |
+| non-kernel speculative helper retired | 1 |
+
+Every row retains its historical Git mode and blob ID. The wheel audit rebuilds
+the Git tree object from all 153 rows and requires the result to equal frozen
+tree `1bb1fe1cd64662bbd6d29f72c9002a8513af3691`. It then cross-checks the 102
+NVIDIA rows against `MIGRATION_MANIFEST.json` and requires every adapted kernel
+replacement to exist in the wheel. An omitted historical file, an
+`unclassified` row, or a relabelled blob changes the reconstructed tree and
+fails the release.
+
+The 27 separate-hardware files are explicitly identified as Ascend, Apple/MLX,
+Biren, MetaX or MUSA. They are not silently dropped and are not NVIDIA
+operators; combining their runtimes and licenses into `rwkv7-kernels` would
+violate the distribution boundary. The retired speculative helper is likewise
+recorded as a higher-level HF feature rather than misrepresented as a kernel.
+
 ## Adapted rather than copied
 
 The following old modules mixed performance code with a second model/config/

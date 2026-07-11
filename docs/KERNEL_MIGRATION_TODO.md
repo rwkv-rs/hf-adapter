@@ -1057,3 +1057,30 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   seconds, so no 4090 validation was started or fabricated. V100 remained
   reserved for the final stable wheel pair after RTX 4080 acceptance, in
   accordance with the fixed device order.
+
+### 2026-08-28 — historical denominator is now cryptographically complete
+
+- Audited the complete `perf/native-kernels-v0.8:rwkv7_hf` tree rather than
+  trusting the selected 102-file migration list. The frozen historical tree
+  contains 153 files: 102 byte-migrated NVIDIA files, 10 model/glue files
+  adapted behind the clean protocol, 7 canonical reference owners, 6
+  relocated/retired tools, 27 explicitly separate Ascend/MLX/Biren/MetaX/MUSA
+  files, and one retired non-kernel speculative helper.
+- Added wheel-owned `nvidia/SOURCE_SCOPE.json` with the historical mode/blob
+  identity and disposition of every file. `audit_release_wheels.py` rebuilds
+  the Git tree and requires exact tree
+  `1bb1fe1cd64662bbd6d29f72c9002a8513af3691`, cross-checks all NVIDIA rows
+  against `MIGRATION_MANIFEST.json`, and verifies adapted kernel replacements
+  are shipped. No `unknown` or `unclassified` disposition is accepted.
+- A disposable wheel ZIP passed all three audits: 153/153 historical files,
+  102/102 byte migrations, 16/16 capability families, 9 adapted kernel
+  replacement files and five named separate hardware families. Development
+  wheel SHA256:
+  `a9918fdd79c1f1c722e57b1dfa022280efe3b622aeb84981b3eda5501693d90a`;
+  this is not the final stable artifact.
+- The public Issue/GitHub audit now requires the 153-file source-scope proof
+  and `SOURCE_SCOPE.json` path in addition to the capability and byte
+  manifests. RTX 4080 remained untouched: its active 0.4B/B8 HellaSwag unit
+  was progressing at 27% with the GPU busy, not stalled.
+- Targeted Ruff, compileall, `git diff --check`, source-scope corruption tests,
+  wheel ZIP audit and the complete local suite pass: `147 passed`.

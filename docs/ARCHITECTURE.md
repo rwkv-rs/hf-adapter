@@ -58,7 +58,10 @@ to canonical `[B,H,K,V]` before the call returns.
 `nvidia/MIGRATION_MANIFEST.json` byte-verifies the 102 historical NVIDIA
 payloads. `nvidia/CAPABILITY_INVENTORY.json` maps every one of those payloads
 exactly once to an executable runtime family and real device-policy fields.
-The release-wheel audit checks both files from the built ZIP, not merely from
+`nvidia/SOURCE_SCOPE.json` independently classifies the entire 153-file
+historical package tree and reconstructs its frozen Git tree object, so the
+102-file NVIDIA set cannot hide an omitted source file. The release-wheel
+audit checks all three files from the built ZIP, not merely from
 the checkout. Full-model production `auto` is promoted only after the same
 immutable wheel passes the RTX 4080, V100 and RTX 4090 functional, HF/training,
 speed, FLA and 144-unit `lm_eval` gates.

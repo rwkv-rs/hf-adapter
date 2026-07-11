@@ -43,6 +43,7 @@ KERNEL_REQUIRED = {
     "rwkv7_kernels/nvidia/prefill_graph_pool.py",
     "rwkv7_kernels/nvidia/prefill_graph_runtime.py",
     "rwkv7_kernels/nvidia/training_runtime.py",
+    "rwkv7_kernels/nvidia/SOURCE_SCOPE.json",
     "rwkv7_kernels/protocol.py",
     "rwkv7_kernels/quantization.py",
     "rwkv7_kernels/recurrent/graph.py",
@@ -60,6 +61,9 @@ KERNEL_FORBIDDEN = {
 }
 MIGRATION_MANIFEST = "rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json"
 CAPABILITY_INVENTORY = "rwkv7_kernels/nvidia/CAPABILITY_INVENTORY.json"
+SOURCE_SCOPE = "rwkv7_kernels/nvidia/SOURCE_SCOPE.json"
+SOURCE_COMMIT = "1014acf1a52fa4dee1e4d2b46e6059275c1d3bea"
+SOURCE_TREE = "1bb1fe1cd64662bbd6d29f72c9002a8513af3691"
 REQUIRED_CAPABILITIES = {
     "recurrent",
     "dense_decode",
@@ -84,6 +88,14 @@ ALLOWED_ACTIVATION = {
     "exact_device_policy",
     "explicit_user_opt_in",
     "diagnostic_until_release_gate",
+}
+ALLOWED_DISPOSITIONS = {
+    "adapted_protocol",
+    "byte_migrated_nvidia",
+    "canonical_reference",
+    "non_kernel_feature_retired",
+    "separate_hardware_distribution",
+    "tooling_relocated_or_retired",
 }
 
 
@@ -189,6 +201,67 @@ def kernel_policy_fields(archive: zipfile.ZipFile) -> set[str]:
     raise ValueError("kernel wheel has no KernelPolicy declaration")
 
 
+def historical_tree_oid(rows: list[dict[str, Any]]) -> str:
+    """Rebuild the frozen ``rwkv7_hf`` Git tree from mode/blob evidence."""
+
+    root: dict[str, Any] = {}
+    for row in rows:
+        source = PurePosixPath(str(row.get("source", "")))
+        if not source.parts or source.parts[0] != "rwkv7_hf" or len(source.parts) < 2:
+            raise ValueError(f"unsafe historical source path: {source}")
+        mode = str(row.get("git_mode", ""))
+        blob = str(row.get("git_blob", ""))
+        if mode not in {"100644", "100755"}:
+            raise ValueError(f"historical source has invalid Git mode: {source}")
+        try:
+            blob_bytes = bytes.fromhex(blob)
+        except ValueError as exc:
+            raise ValueError(
+                f"historical source has invalid Git blob: {source}"
+            ) from exc
+        if len(blob_bytes) != 20:
+            raise ValueError(f"historical source has invalid Git blob: {source}")
+        node = root
+        for part in source.parts[1:-1]:
+            current = node.setdefault(part, {})
+            if not isinstance(current, dict):
+                raise ValueError(f"historical source path collides: {source}")
+            node = current
+        leaf = source.parts[-1]
+        if leaf in node:
+            raise ValueError(f"historical source path is duplicated: {source}")
+        node[leaf] = (mode, blob)
+
+    def tree_oid(node: dict[str, Any]) -> str:
+        payload: list[bytes] = []
+        ordered = sorted(
+            node.items(),
+            key=lambda item: (
+                item[0] + "/" if isinstance(item[1], dict) else item[0]
+            ).encode(),
+        )
+        for name, value in ordered:
+            if isinstance(value, dict):
+                mode, digest = "40000", tree_oid(value)
+            else:
+                mode, digest = value
+            payload.append(
+                mode.encode()
+                + b" "
+                + name.encode()
+                + b"\0"
+                + bytes.fromhex(digest)
+            )
+        body = b"".join(payload)
+        header = b"tree " + str(len(body)).encode() + b"\0"
+        return hashlib.sha1(  # noqa: S324 - Git object identity is SHA-1 by design.
+            header + body,
+            usedforsecurity=False,
+        ).hexdigest()
+
+    return tree_oid(root)
+
+
 def audit_capability_inventory(
     archive: zipfile.ZipFile,
     members: set[str],
@@ -283,12 +356,116 @@ def audit_capability_inventory(
     }
 
 
+def audit_source_scope(
+    archive: zipfile.ZipFile,
+    members: set[str],
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    if SOURCE_SCOPE not in members:
+        raise ValueError("kernel wheel is missing historical source-scope inventory")
+    scope = json.loads(archive.read(SOURCE_SCOPE))
+    if scope.get("schema") != "rwkv7-performance-source-scope-v1":
+        raise ValueError("unexpected historical source-scope schema")
+    if (
+        scope.get("source_branch") != "perf/native-kernels-v0.8"
+        or scope.get("source_commit") != SOURCE_COMMIT
+        or scope.get("source_subtree") != "rwkv7_hf"
+        or scope.get("source_subtree_git_tree") != SOURCE_TREE
+    ):
+        raise ValueError("historical source-scope identity differs")
+    rows = scope.get("entries")
+    if not isinstance(rows, list) or len(rows) != 153:
+        raise ValueError("historical source scope must classify all 153 files")
+    sources = [str(row.get("source", "")) for row in rows]
+    if len(sources) != len(set(sources)) or any(
+        not source.startswith("rwkv7_hf/") for source in sources
+    ):
+        raise ValueError("historical source scope has duplicate or unsafe paths")
+    rebuilt_tree = historical_tree_oid(rows)
+    if rebuilt_tree != SOURCE_TREE:
+        raise ValueError(
+            "historical source-scope entries do not reconstruct the frozen Git tree"
+        )
+    dispositions = [str(row.get("disposition", "")) for row in rows]
+    if not set(dispositions) <= ALLOWED_DISPOSITIONS:
+        unknown = sorted(set(dispositions) - ALLOWED_DISPOSITIONS)
+        raise ValueError(f"historical source scope has unknown dispositions: {unknown}")
+
+    counts = {name: dispositions.count(name) for name in ALLOWED_DISPOSITIONS}
+    counts = {name: count for name, count in sorted(counts.items()) if count}
+    if scope.get("counts") != counts:
+        raise ValueError("historical source-scope counts differ from its entries")
+
+    migration_by_source = {
+        str(row["source"]): (
+            manifest_member(row),
+            str(row["destination_sha256"]),
+        )
+        for row in manifest["files"]
+    }
+    scoped_migration: dict[str, tuple[str, str]] = {}
+    adapted_kernel_files: set[str] = set()
+    hardware_families: set[str] = set()
+    for row in rows:
+        source = str(row["source"])
+        disposition = str(row["disposition"])
+        if disposition == "byte_migrated_nvidia":
+            destination = inventory_member(row.get("destination"))
+            digest = str(row.get("destination_sha256", ""))
+            if destination not in members:
+                raise ValueError(f"historical source destination is absent: {source}")
+            scoped_migration[source] = (destination, digest)
+        elif disposition == "adapted_protocol":
+            replacements = row.get("replacements")
+            if not isinstance(replacements, list) or not replacements:
+                raise ValueError(f"adapted source has no replacements: {source}")
+            for replacement in map(str, replacements):
+                if replacement.startswith("rwkv7_kernels/"):
+                    normalized = inventory_member(replacement)
+                    if normalized not in members:
+                        raise ValueError(
+                            f"adapted source replacement is absent: {source} -> {normalized}"
+                        )
+                    adapted_kernel_files.add(normalized)
+        elif disposition == "separate_hardware_distribution":
+            family = str(row.get("hardware_family", ""))
+            if family not in {"ascend", "apple_mlx", "biren", "metax", "musa"}:
+                raise ValueError(
+                    f"separate hardware source has invalid family: {source}"
+                )
+            hardware_families.add(family)
+        elif disposition == "non_kernel_feature_retired" and not row.get("reason"):
+            raise ValueError(f"retired non-kernel source has no reason: {source}")
+    if scoped_migration != migration_by_source:
+        missing = sorted(set(migration_by_source) - set(scoped_migration))
+        extra = sorted(set(scoped_migration) - set(migration_by_source))
+        changed = sorted(
+            source
+            for source in set(scoped_migration) & set(migration_by_source)
+            if scoped_migration[source] != migration_by_source[source]
+        )
+        raise ValueError(
+            "historical byte-migration scope differs from manifest: "
+            f"missing={missing}, extra={extra}, changed={changed}"
+        )
+    return {
+        "status": "passed",
+        "historical_files": len(rows),
+        "reconstructed_git_tree": rebuilt_tree,
+        "dispositions": counts,
+        "adapted_kernel_files": len(adapted_kernel_files),
+        "separate_hardware_families": sorted(hardware_families),
+    }
+
+
 def audit_kernel_wheel(path: Path) -> dict[str, Any]:
     archive, members = open_wheel(path)
     try:
         names = set(members)
         if CAPABILITY_INVENTORY not in names:
             raise ValueError("kernel wheel is missing NVIDIA capability inventory")
+        if SOURCE_SCOPE not in names:
+            raise ValueError("kernel wheel is missing historical source-scope inventory")
         missing = sorted(KERNEL_REQUIRED - names)
         if missing:
             raise ValueError(f"kernel wheel is missing runtime files: {missing}")
@@ -327,9 +504,11 @@ def audit_kernel_wheel(path: Path) -> dict[str, Any]:
             names,
             migrated,
         )
+        source_scope_report = audit_source_scope(archive, names, manifest)
         return {
             "status": "passed",
             "capability_inventory": capability_report,
+            "source_scope": source_scope_report,
             "migrated_files": len(migrated),
             "runtime_files": len(KERNEL_REQUIRED),
             "members": len(members),

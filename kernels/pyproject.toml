@@ -23,6 +23,7 @@ include = ["rwkv7_kernels*"]
 rwkv7_kernels = [
   "nvidia/CAPABILITY_INVENTORY.json",
   "nvidia/MIGRATION_MANIFEST.json",
+  "nvidia/SOURCE_SCOPE.json",
   "nvidia/SELF_CHUNK_LICENSE",
   "nvidia/csrc/**/*",
 ]

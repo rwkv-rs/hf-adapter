@@ -159,6 +159,7 @@ def test_release_issue_is_rendered_from_complete_speed_and_eval_matrices():
     assert "Complete optional-kernel capability migration" in body
     assert "dense decode" in body and "DPLR/self-chunk" in body
     assert "SM70, Ada and Blackwell" in body
+    assert "source scope" in body and "all 153 files" in body
     normalized = body.lower().replace("lm-eval", "lm_eval")
     assert not [term for term in AUDIT.REQUIRED_ISSUE_TERMS if term not in normalized]
     assert len(body.encode()) < 65_000

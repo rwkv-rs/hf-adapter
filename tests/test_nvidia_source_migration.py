@@ -5,6 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from scripts.audit_release_wheels import historical_tree_oid
+
 
 ROOT = Path(__file__).resolve().parents[1]
 NVIDIA = ROOT / "kernels" / "rwkv7_kernels" / "nvidia"
@@ -82,6 +84,34 @@ def test_nvidia_capability_inventory_maps_every_migrated_byte_once():
     assert all(
         capability["implementation_status"] == "migrated"
         for capability in inventory["capabilities"]
+    )
+
+
+def test_historical_source_scope_classifies_the_entire_frozen_git_tree():
+    manifest = json.loads((NVIDIA / "MIGRATION_MANIFEST.json").read_text())
+    scope = json.loads((NVIDIA / "SOURCE_SCOPE.json").read_text())
+    assert scope["schema"] == "rwkv7-performance-source-scope-v1"
+    assert scope["source_commit"] == "1014acf1a52fa4dee1e4d2b46e6059275c1d3bea"
+    assert scope["source_subtree_git_tree"] == historical_tree_oid(scope["entries"])
+    assert len(scope["entries"]) == 153
+    assert scope["counts"] == {
+        "adapted_protocol": 10,
+        "byte_migrated_nvidia": 102,
+        "canonical_reference": 7,
+        "non_kernel_feature_retired": 1,
+        "separate_hardware_distribution": 27,
+        "tooling_relocated_or_retired": 6,
+    }
+    migrated_sources = {entry["source"] for entry in manifest["files"]}
+    scoped_sources = {
+        entry["source"]
+        for entry in scope["entries"]
+        if entry["disposition"] == "byte_migrated_nvidia"
+    }
+    assert scoped_sources == migrated_sources
+    assert not any(
+        entry["disposition"] in {"unknown", "unclassified"}
+        for entry in scope["entries"]
     )
 
 

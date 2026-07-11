@@ -58,6 +58,8 @@ REQUIRED_ISSUE_TERMS = (
     "marlin",
     "torchao",
     "autograd",
+    "153",
+    "source scope",
 )
 REQUIRED_SOURCE_PATHS = (
     ".github/workflows/publish.yml",
@@ -69,6 +71,7 @@ REQUIRED_SOURCE_PATHS = (
     "kernels/rwkv7_kernels/protocol.py",
     "kernels/rwkv7_kernels/nvidia/CAPABILITY_INVENTORY.json",
     "kernels/rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json",
+    "kernels/rwkv7_kernels/nvidia/SOURCE_SCOPE.json",
     "rwkv7_hf/cache_rwkv7.py",
     "rwkv7_hf/configuration_rwkv7.py",
     "rwkv7_hf/modeling_rwkv7.py",

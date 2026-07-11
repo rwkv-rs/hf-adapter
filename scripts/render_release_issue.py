@@ -223,6 +223,9 @@ def render_issue(
             "Bn/Tn, BitsAndBytes, Marlin and TorchAO adapters; and training autograd. "
             "Every migrated payload is mapped to an adapted runtime route by the embedded "
             "capability inventory; model/config/cache ownership remains in rwkv7_hf.",
+            "The embedded source scope also classifies all 153 files from the frozen "
+            "historical performance tree and reconstructs its Git tree identity, so the "
+            "102-file NVIDIA migration denominator has no silent omissions.",
             "",
             "## Actual routes",
             "",

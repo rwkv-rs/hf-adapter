@@ -9,6 +9,7 @@ from conftest import write_valid_hf_wheel, write_valid_kernel_wheel
 from scripts.audit_release_wheels import (
     CAPABILITY_INVENTORY,
     MIGRATION_MANIFEST,
+    SOURCE_SCOPE,
     audit_hf_wheel,
     audit_kernel_wheel,
 )
@@ -34,6 +35,8 @@ def test_release_wheel_audit_accepts_clean_hf_and_all_102_sources(tmp_path: Path
     assert report["migrated_files"] == 102
     assert report["capability_inventory"]["capabilities"] == 16
     assert report["capability_inventory"]["mapped_migration_files"] == 102
+    assert report["source_scope"]["historical_files"] == 153
+    assert report["source_scope"]["dispositions"]["byte_migrated_nvidia"] == 102
 
 
 def test_kernel_wheel_audit_rejects_omitted_migrated_source(tmp_path: Path):
@@ -77,6 +80,13 @@ def test_kernel_wheel_audit_rejects_missing_capability_inventory(tmp_path: Path)
         audit_kernel_wheel(kernel)
 
 
+def test_kernel_wheel_audit_rejects_missing_historical_source_scope(tmp_path: Path):
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(kernel, omit=SOURCE_SCOPE)
+    with pytest.raises(ValueError, match="missing historical source-scope"):
+        audit_kernel_wheel(kernel)
+
+
 def test_kernel_wheel_audit_rejects_unmapped_migrated_source(tmp_path: Path):
     root = Path(__file__).resolve().parents[1]
     inventory_path = (
@@ -106,4 +116,34 @@ def test_kernel_wheel_audit_rejects_unknown_policy_flag(tmp_path: Path):
         extra={CAPABILITY_INVENTORY: json.dumps(inventory).encode()},
     )
     with pytest.raises(ValueError, match="unknown policy flags"):
+        audit_kernel_wheel(kernel)
+
+
+def test_kernel_wheel_audit_rejects_unclassified_historical_source(tmp_path: Path):
+    root = Path(__file__).resolve().parents[1]
+    scope_path = root / "kernels/rwkv7_kernels/nvidia/SOURCE_SCOPE.json"
+    scope = json.loads(scope_path.read_text())
+    scope["entries"][0]["disposition"] = "unclassified"
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(
+        kernel,
+        extra={SOURCE_SCOPE: json.dumps(scope).encode()},
+    )
+    with pytest.raises(ValueError, match="unknown dispositions"):
+        audit_kernel_wheel(kernel)
+
+
+def test_kernel_wheel_audit_rejects_changed_historical_tree_identity(
+    tmp_path: Path,
+):
+    root = Path(__file__).resolve().parents[1]
+    scope_path = root / "kernels/rwkv7_kernels/nvidia/SOURCE_SCOPE.json"
+    scope = json.loads(scope_path.read_text())
+    scope["entries"][0]["git_blob"] = "0" * 40
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(
+        kernel,
+        extra={SOURCE_SCOPE: json.dumps(scope).encode()},
+    )
+    with pytest.raises(ValueError, match="do not reconstruct the frozen Git tree"):
         audit_kernel_wheel(kernel)

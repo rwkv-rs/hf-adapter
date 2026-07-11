@@ -63,3 +63,9 @@ payloads byte for byte. The second maps those payloads to the actual recurrent,
 prefill, decode, graph/state, SM70/Ada/Blackwell, quantization, and training
 runtime routes. Release auditing rejects a wheel that merely ships an
 unreachable source archive.
+
+`SOURCE_SCOPE.json` closes the denominator: it classifies every file in the
+153-file historical performance-package tree and cryptographically rebuilds
+the frozen Git tree ID. This distinguishes byte-migrated NVIDIA code, adapted
+protocol/model glue, canonical HF ownership, relocated tools, intentionally
+separate non-NVIDIA backends, and the one retired non-kernel helper.
