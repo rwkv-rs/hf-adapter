@@ -24,7 +24,7 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from rwkv7_hf.native_jit import _block_ip_batched, extract
+from rwkv7_hf.native_jit import _block_ip_batched, _native_graph_w4_rkv_config, extract
 
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
 SEED = "User: Explain recurrent inference and quantized state-space models.\nAssistant: " * 32
@@ -194,10 +194,7 @@ def run_batch(args, model, dense_packs, quant_packs, ids: torch.Tensor, batch: i
     del quant_graph
 
     diff = dense_logits.float() - quant_logits.float()
-    block_m = int(os.environ.get("RWKV7_NATIVE_GRAPH_W4_RKV_BLOCK_M", 8 if batch == 1 else 16))
-    block_k = int(os.environ.get("RWKV7_NATIVE_GRAPH_W4_RKV_BLOCK_K", 64 if batch == 1 else 128))
-    default_warps = 1 if batch == 1 else (4 if batch <= 4 else 2)
-    num_warps = int(os.environ.get("RWKV7_NATIVE_GRAPH_W4_RKV_NUM_WARPS", default_warps))
+    block_m, block_k, num_warps = _native_graph_w4_rkv_config(batch)
     return {
         "axis": "native_graph_w4_rkv",
         "backend": "hf_adapter_native_graph",

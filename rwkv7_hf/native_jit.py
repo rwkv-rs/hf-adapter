@@ -1408,11 +1408,17 @@ def _native_graph_w4_rkv_enabled(q_weight: torch.Tensor, scales: torch.Tensor) -
 def _native_graph_w4_rkv_config(rows: int) -> tuple[int, int, int]:
     """Return ``(block_m, block_k, num_warps)`` for the active decode batch.
 
-    Defaults come from the 2026-07-10 V100 sweep. Every value remains
-    environment-overridable so 4090/H100/Blackwell can keep card-local policy.
+    Defaults come from card-local whole-graph sweeps. Every value remains
+    environment-overridable for new shapes and GPUs.
     """
 
-    if rows <= 1:
+    policy = _kernel_policy()
+    family = str(getattr(getattr(policy, "profile", None), "family", ""))
+    if family == "ada" and rows <= 1:
+        # RTX 4090, 0.4B, 24-layer graph: 1.206x dense versus 1.191x for
+        # the V100-oriented (8, 64, 1) default (3-run median, 256 steps).
+        defaults = (32, 64, 4)
+    elif rows <= 1:
         defaults = (8, 64, 1)
     elif rows <= 4:
         defaults = (16, 128, 4)

@@ -97,17 +97,27 @@ The producer-integration gate is now complete on the experiment branch:
 - exact absolute tok/s is provisional because both server GPUs had long-running
   co-tenant jobs; the same-process A/B speedups were stable across three runs.
 
-Required next gate: repeat on an idle V100 and RTX 4090, then remove/replace the
-dense R/K/V copies so the model-level memory footprint realizes the packed
-`0.252x` R/K/V storage. Row-wise W4 quality remains separate unfinished work;
-the earlier random-vector batch-8 minimum cosine was about `0.9789` even though
-the new kernel exactly matches the old W4 path.
+The RTX 4090 gate is now complete on the 0.4B model. Three preheated independent
+whole-graph runs improve over dense fp16 by median `1.1970x / 1.2122x /
+1.1867x / 1.1467x` for batch `1/2/4/8`, with minimum logit cosine about
+`0.99948` and every 16-token greedy continuation matching. Ada batch 1 uses the
+card-local `(BLOCK_M=32, BLOCK_K=64, warps=4)` default; batches 2/4/8 retain
+their independently confirmed layouts. The feature itself remains opt-in.
+
+Required next gate: remove/replace the dense R/K/V copies so the model-level
+memory footprint realizes the packed `0.252x` R/K/V storage, then replace the
+row-wise W4 format with group-wise/asymmetric quality comparable to the target
+Q*_K_M class. Row-wise W4 quality remains unfinished; the earlier random-vector
+batch-8 minimum cosine was about `0.9789` even though the new kernel exactly
+matches the old W4 path.
 
 See `docs/performance/kernelbench_mega_w4a16_rkv_v100_20260710.md` and
 `bench/results_kernelbench_mega_w4a16_rkv_v100_20260710.jsonl`. Full graph
 integration evidence is in
 `docs/performance/native_graph_w4_rkv_v100_20260711.md` and
-`bench/results_native_graph_w4_rkv_v100_20260711.jsonl`.
+`bench/results_native_graph_w4_rkv_v100_20260711.jsonl`. RTX 4090 evidence is
+in `docs/performance/native_graph_w4_rkv_4090_20260711.md` and
+`bench/results_native_graph_w4_rkv_4090_20260711.jsonl`.
 
 ## Current Branch Goal: DPLR/WY Compiled Prefill Prototype
 
@@ -561,6 +571,13 @@ Run this checklist for every new GPU before marking it as supported:
     R/K/V+W/A/G rows are worse (`0.6823x` at bsz=1/T512 and `0.1471x` at
     bsz=4/T512), so do not wire the current two-launch projection prototype
     into prefill.
+  - Projection-axis W4 R/K/V decode is a separate positive opt-in path:
+    `RWKV7_NATIVE_GRAPH_W4_RKV=1` improves complete 24-layer token steps by
+    `1.1970x / 1.2122x / 1.1867x / 1.1467x` at bsz `1/2/4/8` on the 0.4B
+    checkpoint. Use Ada-local tiles `(32,64,4)`, `(16,128,4)`, `(16,128,4)`,
+    and `(16,128,2)` respectively; do not copy them to other GPU families.
+    This clears the speed gate for the quantized R/K/V slice, not the final W4
+    memory or quality gates, because dense fallback weights remain resident.
 - Required validation: common functional checklist, bsz=1/2/4/8 decode matrix,
   prefill scan A/B if fast prefill is claimed, quant end-to-end rows, and
   Albatross-ratio reporting.

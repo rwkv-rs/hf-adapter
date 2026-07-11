@@ -263,7 +263,11 @@ def _native_graph_w4_rkv_requested() -> bool:
 def _native_graph_w4_rkv_config_key(batch_size: int) -> tuple[int, int, int]:
     """Cache-key mirror of the native-jit W4 kernel configuration."""
 
-    if int(batch_size) <= 1:
+    policy = _rwkv7_kernel_policy()
+    family = str(getattr(getattr(policy, "profile", None), "family", ""))
+    if family == "ada" and int(batch_size) <= 1:
+        defaults = (32, 64, 4)
+    elif int(batch_size) <= 1:
         defaults = (8, 64, 1)
     elif int(batch_size) <= 4:
         defaults = (16, 128, 4)
