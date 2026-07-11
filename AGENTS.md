@@ -212,6 +212,8 @@ Remaining before this goal is complete:
 
 ## Current Apple Branch Checkpoint: MLX DPLR/WY Stage 1
 
+> **Historical checkpoint.** Apple M5 production-close and the current module map supersede this stage note. Use `docs/hardware/APPLE_PRODUCTION_CLOSE.md` and `docs/reference/MLX_RUNTIME_ARCHITECTURE.md` for active work; retain the measurements below only as provenance.
+
 The Apple sibling path now has `rwkv7_hf/mlx_dplr_prefill.py` and
 `scripts/mlx_dplr_prefill_bench.py`. It ports the same compact factor contract
 to MLX and implements custom Metal kernels for chunk summary and chunk

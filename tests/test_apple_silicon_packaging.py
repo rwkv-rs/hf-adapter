@@ -213,6 +213,7 @@ def test_apple_smoke_script_static() -> None:
     assert '"min_round_decode_tok_s": min_round_decode_tok_s(rows)' in mlx_session_batch_text
     assert '"round_backend_reasons": sorted(' in mlx_session_batch_text
     model_text = (ROOT / "rwkv7_hf/mlx_model.py").read_text(encoding="utf-8")
+    session_runtime_text = (ROOT / "rwkv7_hf/mlx_session.py").read_text(encoding="utf-8")
     quant_text = (ROOT / "rwkv7_hf/mlx_quant.py").read_text(encoding="utf-8")
     assert "auto_metal_max_rows" in quant_text
     assert "mm8_group_matmul_metal" in quant_text
@@ -224,17 +225,17 @@ def test_apple_smoke_script_static() -> None:
     assert "pack_mlx_mm8_group" in quant_text
     assert 'RWKV7_MLX_QUANT_AUTO_W4_METAL_MAX_ROWS", 4096' in quant_text
     assert "@lru_cache(maxsize=1)" in quant_text
-    assert "batched_stable" in model_text
-    assert "equal_positive_round_stable_argmax_tol" in model_text
-    assert "auto_mm8_metal_batch_exactness_guard" in model_text
-    assert "RWKV7_MLX_SESSION_AUTO_W8_STABLE" in model_text
-    assert "RWKV7_MLX_SESSION_AUTO_W4_STABLE" in model_text
-    assert "auto_mm4_metal_batch_exactness_guard" in model_text
-    assert "RWKV7_MLX_SESSION_STABLE_ARGMAX_TOLERANCE" in model_text
+    assert "batched_stable" in session_runtime_text
+    assert "equal_positive_round_stable_argmax_tol" in session_runtime_text
+    assert "auto_mm8_metal_batch_exactness_guard" in session_runtime_text
+    assert "RWKV7_MLX_SESSION_AUTO_W8_STABLE" in session_runtime_text
+    assert "RWKV7_MLX_SESSION_AUTO_W4_STABLE" in session_runtime_text
+    assert "auto_mm4_metal_batch_exactness_guard" in session_runtime_text
+    assert "RWKV7_MLX_SESSION_STABLE_ARGMAX_TOLERANCE" in session_runtime_text
     assert "--stable-argmax-tolerance" in mlx_session_batch_text
     assert "--stable-argmax-mode" in mlx_session_batch_text
-    assert "RWKV7_MLX_SESSION_STABLE_ARGMAX_MODE" in model_text
-    assert "round_stable_repair_counts" in model_text
+    assert "RWKV7_MLX_SESSION_STABLE_ARGMAX_MODE" in session_runtime_text
+    assert "round_stable_repair_counts" in session_runtime_text
     assert '"max_round_stable_repair_count"' in mlx_session_batch_text
     assert "RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION" in model_text
     assert "RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION_MODE" in model_text
@@ -243,7 +244,7 @@ def test_apple_smoke_script_static() -> None:
     assert "quantized_linear_rkv_min_params" in model_text
     assert "RWKV7_MLX_STEP_EVAL_INTERVAL" in model_text
     assert "step_eval_interval" in mlx_generation_sweep_text
-    assert "auto_metal_max_rows" in model_text
+    assert "auto_metal_max_rows" in session_runtime_text
     quant_bench_script = ROOT / "scripts/mlx_quant_projection_bench.py"
     assert quant_bench_script.exists()
     assert quant_bench_script.stat().st_mode & stat.S_IXUSR
@@ -261,8 +262,8 @@ def test_apple_smoke_script_static() -> None:
     assert "max_abs_vs_quant_reference" in quant_bench_text
     assert "mlx_quant_group_projection_bench" in quant_bench_text
     assert "speedup_vs_separate_metal" in quant_bench_text
-    assert "_uses_w8_metal_projection" in model_text
-    assert "round_backend_reasons" in model_text
+    assert "_uses_w8_metal_projection" in session_runtime_text
+    assert "round_backend_reasons" in session_runtime_text
     mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"
     assert mlx_session_batch_script.exists()
     assert mlx_session_batch_script.stat().st_mode & stat.S_IXUSR
