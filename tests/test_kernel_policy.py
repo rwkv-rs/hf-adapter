@@ -41,14 +41,24 @@ def test_policy_defaults_are_conservative() -> None:
     assert v100.fused_recurrent_raw
     assert v100.fast_prefill
     assert v100.fused_prefill_scan
+    assert v100.prefill_graph
+    assert v100.prefill_graph_cache_size == 4
+    assert v100.fused_prefill_shift_mix
     assert v100.fused_prefill_state_prep
     assert v100.fused_prefill_state_scan
     assert v100.fused_prefill_state_scan_max_batch == 1
     assert v100.fused_prefill_output
     assert v100.fused_norm_mix
     assert v100.fused_wavg_lora
-    assert v100.wavg_lora_bsz1_max_hidden == 1024
+    assert v100.wavg_lora_bsz1_max_hidden == 4096
+    assert v100.wavg_lora_blocks == (32, 64, 256)
+    assert v100.wavg_lora_num_warps == 8
     assert v100.sm70_linear
+    assert v100.sm70_wagv_lora
+    assert v100.ada_sparse_ffn
+    assert v100.ada_sparse_ffn_max_rows == 4
+    assert v100.ada_sparse_ffn_inplace
+    assert not v100.ada_sparse_ffn_up
     assert not v100.fused_projection
     assert not v100.fused_output_project
 

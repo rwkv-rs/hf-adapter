@@ -21,6 +21,13 @@ except Exception:  # pragma: no cover
 
 from .native_quant_policy import normalize_native_mm_policy, should_quantize_linear
 
+try:
+    from .sm70_quant import is_sm70, quantize_w8_row, w8_linear as sm70_w8_linear
+except Exception:  # pragma: no cover
+    is_sm70 = lambda _device=None: False  # type: ignore[assignment]
+    quantize_w8_row = None  # type: ignore[assignment]
+    sm70_w8_linear = None  # type: ignore[assignment]
+
 try:  # pragma: no cover - optional CUDA dependency
     import triton
     import triton.language as tl
@@ -228,10 +235,15 @@ class A8W8Linear(torch.nn.Module):
 
     def __init__(self, linear):
         super().__init__()
-        q_weight_t, weight_scale = quantize_weight_per_channel_int8(linear.weight)
         self.in_features = int(linear.in_features)
         self.out_features = int(linear.out_features)
-        self.register_buffer("q_weight_t", q_weight_t)
+        self.sm70_rowwise = bool(is_sm70(linear.weight.device) and quantize_w8_row is not None)
+        if self.sm70_rowwise:
+            q_weight_row, weight_scale = quantize_w8_row(linear.weight)
+            self.register_buffer("q_weight_row", q_weight_row)
+        else:
+            q_weight_t, weight_scale = quantize_weight_per_channel_int8(linear.weight)
+            self.register_buffer("q_weight_t", q_weight_t)
         self.register_buffer("weight_scale", weight_scale)
         if linear.bias is None:
             self.bias = None
@@ -239,11 +251,20 @@ class A8W8Linear(torch.nn.Module):
             self.register_buffer("bias", linear.bias.detach().clone())
 
     def forward(self, x):
+        if self.sm70_rowwise and sm70_w8_linear is not None:
+            result = sm70_w8_linear(x, self.q_weight_row, self.weight_scale)
+            return result if self.bias is None else result + self.bias
         return a8w8_linear(x, self.q_weight_t, self.weight_scale, self.bias)
 
     def rwkv7_forward_into(self, x, out):
         """Write graph-replay head output directly into a stable buffer."""
 
+        if self.sm70_rowwise and sm70_w8_linear is not None:
+            if self.bias is None:
+                return sm70_w8_linear(x, self.q_weight_row, self.weight_scale, out=out)
+            result = sm70_w8_linear(x, self.q_weight_row, self.weight_scale) + self.bias
+            out.copy_(result)
+            return out
         return a8w8_linear(x, self.q_weight_t, self.weight_scale, self.bias, out=out)
 
     def extra_repr(self) -> str:

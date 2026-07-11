@@ -52,6 +52,8 @@ ADAPTER_FILES = [
     "native_quant_torchao.py",
     "native_quant_policy.py",
     "sm70_linear.py",
+    "sm70_quant.py",
+    "sm70_wagv.py",
     "triton_compat.py",
     "tokenization_rwkv7.py",
 ]

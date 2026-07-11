@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -30,7 +31,12 @@ def patch_legacy_attrs_descriptor() -> bool:
     if hasattr(compiler, "AttrsDescriptor"):
         return False
 
+    @dataclass(init=False)
     class AttrsDescriptor:
+        divisible_by_16: tuple[Any, ...]
+        equal_to_1: tuple[Any, ...]
+        property_values: dict[str, int]
+
         def __init__(self, divisible_by_16=None, equal_to_1=None, **kwargs: Any):
             self.divisible_by_16 = tuple(divisible_by_16 or ())
             self.equal_to_1 = tuple(equal_to_1 or ())

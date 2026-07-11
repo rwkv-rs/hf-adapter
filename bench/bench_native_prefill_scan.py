@@ -10,6 +10,7 @@ native_graph decode path can continue from.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import json
 import os
 import re
@@ -96,6 +97,40 @@ def wall_ms(fn: Callable[[], Any], device: str) -> float:
     return (time.perf_counter() - t0) * 1000.0
 
 
+def measured_ms(fn: Callable[[], Any], device: str, timing: str) -> float:
+    """Match Albatross' CUDA-event graph timing while retaining wall fallback."""
+
+    if timing != "cuda-event" or not device.startswith("cuda"):
+        return wall_ms(fn, device)
+    begin = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    begin.record()
+    fn()
+    end.record()
+    end.synchronize()
+    return float(begin.elapsed_time(end))
+
+
+@contextmanager
+def env_override(**values: str | None):
+    """Temporarily set capture-affecting variables without leaking cases."""
+
+    previous = {name: os.environ.get(name) for name in values}
+    try:
+        for name, value in values.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
 def build_ids(tok, batch_size: int, prompt_tokens: int, device: str) -> torch.Tensor:
     ids = tok(SEED, return_tensors="pt", add_special_tokens=False).input_ids[:, :prompt_tokens]
     if int(ids.shape[1]) < prompt_tokens:
@@ -172,20 +207,39 @@ def model_payload_mb(model) -> float:
 
 
 def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_tokens: int) -> dict[str, Any]:
-    old_fast_prefill = os.environ.get("RWKV7_FAST_PREFILL")
-    # Keep the HF reference on FLA even when an exact-card policy promotes
-    # native prefill for ordinary model.forward(). The explicit native method
-    # below remains enabled and is the path under test.
-    os.environ["RWKV7_FAST_PREFILL"] = "0"
     nj = model_native_jit_module(model)
     ids = build_ids(tok, batch_size, prompt_tokens, args.device)
     if args.device.startswith("cuda"):
         torch.cuda.reset_peak_memory_stats()
 
-    # FLA/HF reference prefill.
+    def hf_reference_call():
+        return model(ids, use_cache=True, logits_to_keep=1, return_dict=True)
+
+    def native_direct_reference_call():
+        return model.rwkv7_prefill_native(ids, logits_to_keep=1, return_dict=True)
+
+    def candidate_call():
+        # Match Albatross graph timing by entering the dedicated native prefill
+        # helper directly; policy still selects/caches the fixed-shape runner.
+        return model.rwkv7_prefill_native(ids, logits_to_keep=1, return_dict=True)
+
+    reference_call = hf_reference_call if args.reference_backend == "hf" else native_direct_reference_call
+    reference_env = (
+        {"RWKV7_FAST_PREFILL": "0"}
+        if args.reference_backend == "hf"
+        else {
+            "RWKV7_FAST_PREFILL": "1",
+            "RWKV7_NATIVE_PREFILL_GRAPH": "0",
+            "RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX": "0",
+        }
+    )
+    candidate_env = {"RWKV7_FAST_PREFILL": "1"}
+
     with torch.inference_mode():
-        ref = model(ids, use_cache=True, logits_to_keep=1, return_dict=True)
-        native = model.rwkv7_prefill_native(ids, logits_to_keep=1, return_dict=True)
+        with env_override(**reference_env):
+            ref = reference_call()
+        with env_override(**candidate_env):
+            native = candidate_call()
         ref_logits = ref.logits[:, -1, :].detach()
         native_logits = native.logits[:, -1, :].detach()
         max_abs = float((ref_logits.float() - native_logits.float()).abs().max().detach().cpu())
@@ -193,24 +247,32 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         greedy_match = bool(torch.equal(ref_logits.argmax(dim=-1).detach().cpu(), native_logits.argmax(dim=-1).detach().cpu()))
 
         next_token = ref_logits.argmax(dim=-1, keepdim=True)
-        ref_next = model(next_token, past_key_values=ref.past_key_values, use_cache=True, logits_to_keep=1, return_dict=True)
+        if args.reference_backend == "hf":
+            ref_next = model(next_token, past_key_values=ref.past_key_values, use_cache=True, logits_to_keep=1, return_dict=True)
+        else:
+            ref_next = model.rwkv7_forward_token(next_token, past_key_values=ref.past_key_values, return_dict=True)
         native_next = model.rwkv7_forward_token(next_token, past_key_values=native.past_key_values, return_dict=True)
         decode_max_abs = float((ref_next.logits[:, -1].float() - native_next.logits[:, -1].float()).abs().max().detach().cpu())
         decode_greedy_match = bool(torch.equal(ref_next.logits[:, -1].argmax(dim=-1).detach().cpu(), native_next.logits[:, -1].argmax(dim=-1).detach().cpu()))
         decode_backend = getattr(model, "rwkv7_last_fast_token_backend", lambda: None)()
 
-    for _ in range(args.warmup):
-        with torch.inference_mode():
-            model(ids, use_cache=True, logits_to_keep=1, return_dict=True)
-            model.rwkv7_prefill_native(ids, logits_to_keep=1, return_dict=True)
+    with torch.inference_mode():
+        with env_override(**reference_env):
+            for _ in range(args.warmup):
+                reference_call()
+        with env_override(**candidate_env):
+            for _ in range(args.warmup):
+                candidate_call()
 
     ref_times: list[float] = []
     native_times: list[float] = []
     with torch.inference_mode():
-        for _ in range(args.steps):
-            ref_times.append(wall_ms(lambda: model(ids, use_cache=True, logits_to_keep=1, return_dict=True), args.device))
-        for _ in range(args.steps):
-            native_times.append(wall_ms(lambda: model.rwkv7_prefill_native(ids, logits_to_keep=1, return_dict=True), args.device))
+        with env_override(**reference_env):
+            for _ in range(args.steps):
+                ref_times.append(measured_ms(reference_call, args.device, args.timing))
+        with env_override(**candidate_env):
+            for _ in range(args.steps):
+                native_times.append(measured_ms(candidate_call, args.device, args.timing))
 
     ref_ms = median(ref_times)
     native_ms = median(native_times)
@@ -228,6 +290,8 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "model_path": args.model,
         "effective_model_path": getattr(args, "effective_model_path", args.model),
         "code_source": args.code_source,
+        "reference_backend": args.reference_backend,
+        "timing": args.timing,
         "native_jit_module": getattr(nj, "__name__", str(nj)),
         "model_size_label": infer_model_size_label(args.model),
         "quantization": args.quantization,
@@ -237,7 +301,10 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "batch_size": batch_size,
         "prompt_tokens": prompt_tokens,
         "tokens_total": batch_size * prompt_tokens,
-        "prefill_graph_requested": os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH", "0").lower() not in {"0", "false", "no", "off"},
+        "prefill_graph_requested": (
+            os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH", "").lower() not in {"", "0", "false", "no", "off"}
+            or getattr(model, "_rwkv7_last_fast_prefill_backend", None) == "native_prefill_graph"
+        ),
         "prefill_backend_effective": getattr(model, "_rwkv7_last_fast_prefill_backend", None),
         "prefill_graph_effective": getattr(model, "_rwkv7_last_fast_prefill_backend", None) == "native_prefill_graph",
         "fused_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN", "0") not in {"0", "false", "False", "no", "off"},
@@ -281,10 +348,13 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "prefill_fused_wavg_lora_block_r": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_R"),
         "prefill_fused_wavg_lora_block_k": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA_BLOCK_K"),
         "fast_token_backend_after_native_prefill": decode_backend,
-        "hf_prefill_ms": round(ref_ms, 4),
+        "reference_prefill_ms": round(ref_ms, 4),
+        "hf_prefill_ms": round(ref_ms, 4) if args.reference_backend == "hf" else None,
         "native_prefill_ms": round(native_ms, 4),
-        "native_vs_hf_speedup": round(ref_ms / native_ms, 4) if native_ms > 0 else None,
-        "hf_prefill_tokps_total": round(1000.0 * batch_size * prompt_tokens / ref_ms, 1) if ref_ms > 0 else None,
+        "native_vs_reference_speedup": round(ref_ms / native_ms, 4) if native_ms > 0 else None,
+        "native_vs_hf_speedup": round(ref_ms / native_ms, 4) if native_ms > 0 and args.reference_backend == "hf" else None,
+        "reference_prefill_tokps_total": round(1000.0 * batch_size * prompt_tokens / ref_ms, 1) if ref_ms > 0 else None,
+        "hf_prefill_tokps_total": round(1000.0 * batch_size * prompt_tokens / ref_ms, 1) if ref_ms > 0 and args.reference_backend == "hf" else None,
         "native_prefill_tokps_total": round(1000.0 * batch_size * prompt_tokens / native_ms, 1) if native_ms > 0 else None,
         "max_abs_diff": round(max_abs, 6),
         "min_cosine": round(min_cos, 8),
@@ -293,10 +363,6 @@ def run_case(args: argparse.Namespace, tok, model, batch_size: int, prompt_token
         "decode_after_prefill_greedy_match": decode_greedy_match,
         "peak_vram_mb": peak,
     }
-    if old_fast_prefill is None:
-        os.environ.pop("RWKV7_FAST_PREFILL", None)
-    else:
-        os.environ["RWKV7_FAST_PREFILL"] = old_fast_prefill
     return row
 
 
@@ -321,12 +387,19 @@ def main() -> int:
     ap.add_argument("--batch-sizes", default="1,4")
     ap.add_argument("--prompt-tokens", default="128")
     ap.add_argument("--fused-scan", choices=["auto", "true", "false"], default="auto")
-    ap.add_argument("--quantization", choices=["none", "a8w8", "torchao_w8", "torchao_w4"], default="none")
+    ap.add_argument(
+        "--reference-backend",
+        choices=["hf", "native-direct"],
+        default="hf",
+        help="HF/FLA reference, or independent direct-native reference for cards where FLA cannot compile",
+    )
+    ap.add_argument("--quantization", choices=["none", "a8w8", "mm4", "torchao_w8", "torchao_w4"], default="none")
     ap.add_argument("--quant-policy", choices=["memory", "speed"], default="speed")
     ap.add_argument("--quant-min-params", type=int, default=1)
     ap.add_argument("--code-source", choices=["model", "repo"], default="model", help="load trust_remote_code from checkpoint files or overlay current repo rwkv7_hf/*.py")
     ap.add_argument("--warmup", type=int, default=2)
     ap.add_argument("--steps", type=int, default=5)
+    ap.add_argument("--timing", choices=["cuda-event", "wall"], default="cuda-event")
     ap.add_argument("--results", default="")
     args = ap.parse_args()
 
@@ -347,6 +420,10 @@ def main() -> int:
             from rwkv7_hf.native_quant_a8w8 import quantize_model_a8w8
 
             quantize_model_a8w8(model, min_params=args.quant_min_params, policy=args.quant_policy)
+        elif args.quantization == "mm4":
+            from rwkv7_hf.native_quant_mm4 import quantize_model_mm4
+
+            quantize_model_mm4(model, min_params=args.quant_min_params, policy=args.quant_policy)
         elif args.quantization in {"torchao_w8", "torchao_w4"}:
             from rwkv7_hf.native_quant_torchao import quantize_model_torchao
 

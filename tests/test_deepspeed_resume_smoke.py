@@ -53,6 +53,19 @@ def maybe_barrier(torch: Any) -> None:
         pass
 
 
+def distributed_max(torch: Any, value: float) -> float:
+    """Return the global max for partition-local ZeRO parameter deltas."""
+    if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+        return float(value)
+    if torch.cuda.is_available():
+        device = torch.device("cuda", int(os.environ.get("LOCAL_RANK", "0")))
+    else:
+        device = torch.device("cpu")
+    tensor = torch.tensor(float(value), device=device, dtype=torch.float64)
+    torch.distributed.all_reduce(tensor, op=torch.distributed.ReduceOp.MAX)
+    return float(tensor.item())
+
+
 def release_cuda(torch: Any, *objs: Any) -> None:
     for obj in objs:
         del obj
@@ -124,7 +137,7 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
         first_result = trainer.train()
         maybe_barrier(torch)
         first_loss = float(first_result.training_loss)
-        first_delta = ds.max_trainable_delta(before_first, model)
+        first_delta = distributed_max(torch, ds.max_trainable_delta(before_first, model))
         ckpt = latest_checkpoint(out_dir)
         # Torch 2.5 + recent Transformers cannot weights_only-load numpy RNG
         # states. This smoke validates model/optimizer/Trainer continuity, so
@@ -162,7 +175,7 @@ def run_stage(args: argparse.Namespace, stage: int) -> dict[str, Any]:
         resume_result = resumed_trainer.train(resume_from_checkpoint=ckpt)
         maybe_barrier(torch)
         resume_loss = float(resume_result.training_loss)
-        resume_delta = ds.max_trainable_delta(before_resume, resumed_model)
+        resume_delta = distributed_max(torch, ds.max_trainable_delta(before_resume, resumed_model))
         global_step = int(resumed_trainer.state.global_step)
         metrics = dict(getattr(resume_result, "metrics", {}) or {})
     finally:
