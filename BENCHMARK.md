@@ -16,6 +16,7 @@ handoff, generation, and focused regression gates pass.
 
 Canonical rows, method, commands and the fail-closed gate are in
 [`bench/v100_production_close_20260711/README.md`](bench/v100_production_close_20260711/README.md).
+For benchmark directory layout, evidence naming, and the current script/directory inventory, see [`bench/README.md`](bench/README.md) and [`bench/INDEX.md`](bench/INDEX.md).
 
 ## Hardware currently measured
 
