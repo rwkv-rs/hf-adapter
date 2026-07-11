@@ -151,3 +151,24 @@ LAMBADA compares greedy-continuation outcomes; Wikitext compares per-document
 rolling NLL/word/byte counts and aggregate NLL/PPL at the 0.1% relative gate.
 Raw samples remain outside Git; only compact manifests, hashes, commands and
 validation summaries are committed.
+
+## Compact release evidence
+
+After a device result root passes, build its reviewable Git artifact without
+copying samples, lm_eval result payloads, stdout/stderr logs, checkpoints,
+weights, wheels, W&B runtime files, or model directories:
+
+```bash
+python evaluation/build_backend_v2_compact_bundle.py \
+  --input-dir /results/backend-v2/4080-final \
+  --output-dir results/backend-v2/4080-final-compact \
+  --device RTX-4080 \
+  --harness-sha "$(git rev-parse HEAD)"
+```
+
+The builder retains JSON/JSONL summaries and manifests, resolved configs,
+environment reports, command lines, exit codes and small text evidence. It
+rejects symlinks, oversized evidence, known token forms and output directories
+inside the raw result tree. `BUNDLE.json` records the filtering policy and
+builder SHA; `MANIFEST.sha256` covers every other bundled file and is verified
+before the directory is published.

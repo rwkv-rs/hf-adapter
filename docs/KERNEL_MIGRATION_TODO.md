@@ -747,3 +747,27 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   `317eea57dc541e8ac894e7ef247271bdbcfc942d`. GitGuardian, the clean reference
   model job, the training-stack job, Python 3.10 with Transformers 4.48.3, and
   Python 3.12 with Transformers `<6` all completed successfully.
+
+### 2026-08-28 — compact evidence builder is fail-closed
+
+- Added `evaluation/build_backend_v2_compact_bundle.py` for the final 4080,
+  V100, and 4090 Git evidence. It keeps small JSON/JSONL summaries, manifests,
+  configs, commands, exit codes and environment text while excluding raw
+  samples, lm_eval result payloads, runtime logs, weights, wheels, checkpoints,
+  W&B state and model/artifact trees.
+- The builder rejects symlinks, an output nested under the raw input, eligible
+  files above the size gate, and known Hugging Face/PyPI/W&B/bearer secret
+  forms. It writes builder provenance and exclusion counts to `BUNDLE.json`,
+  hashes every included file in `MANIFEST.sha256`, and validates complete
+  manifest coverage both before and after the atomic directory rename.
+- Added tests for inclusion, every major raw exclusion, manifest verification,
+  secret rejection, unsafe output layout and symlinks. Focused Ruff/format/
+  compile checks and the full local suite pass: `96 passed`.
+- At `2026-08-28 03:08 +08:00`, the untouched RTX 4080 recurrent-v1 reference
+  lane remained at 19/48. Its active 0.4B B1 HellaSwag unit was at 68%
+  (`27,413/40,168`, about 33 minutes remaining) with live GPU utilization;
+  all backend-v2 watchers were still asleep.
+- PyPI release configuration was inspected in both available browser sessions;
+  both are currently logged out. No credentials were entered and no publisher
+  setting was changed. The `rwkv7-kernels` pending trusted-publisher step
+  remains a final release prerequisite rather than being bypassed with a token.
