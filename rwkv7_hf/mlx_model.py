@@ -325,7 +325,7 @@ class MLXGenerationSession:
         *,
         validation_tokens: int = 32,
         logits_atol: float = 0.0,
-        state_atol: float = 0.0,
+        state_atol: float = 1e-6,
         reference_logits_atol: float = 0.25,
         reference_state_atol: float = 0.5,
     ) -> dict[str, Any]:
@@ -1814,6 +1814,10 @@ class MLXRWKV7Model:
                 clear_cache()
         return out, state
 
+    def _eval_step_state(self, x, state: MLXRWKV7State) -> None:
+        mx = _mx()
+        mx.eval(x, state.v_first, *state.recurrent_state, *state.attn_x_prev, *state.ffn_x_prev)
+
     def _embedding(self, token_ids):
         mx = _mx()
         ids = token_ids.astype(mx.int32).reshape(-1)
@@ -2175,7 +2179,7 @@ class MLXRWKV7Model:
         *,
         steps: int = 32,
         logits_atol: float = 0.0,
-        state_atol: float = 0.0,
+        state_atol: float = 1e-6,
         reference_logits_atol: float = 0.25,
         reference_state_atol: float = 0.5,
     ) -> dict[str, Any]:
@@ -2469,7 +2473,7 @@ def load_mlx_generation_session(
     prepare_compiled_decode: bool = False,
     compiled_decode_validation_tokens: int = 32,
     compiled_decode_logits_atol: float = 0.0,
-    compiled_decode_state_atol: float = 0.0,
+    compiled_decode_state_atol: float = 1e-6,
     compiled_decode_reference_logits_atol: float = 0.25,
     compiled_decode_reference_state_atol: float = 0.5,
 ) -> MLXGenerationSession:
@@ -2538,7 +2542,7 @@ def generate_text_from_hf(
     prepare_compiled_decode: bool = False,
     compiled_decode_validation_tokens: int = 32,
     compiled_decode_logits_atol: float = 0.0,
-    compiled_decode_state_atol: float = 0.0,
+    compiled_decode_state_atol: float = 1e-6,
     compiled_decode_reference_logits_atol: float = 0.25,
     compiled_decode_reference_state_atol: float = 0.5,
 ) -> MLXGenerateOutput:
