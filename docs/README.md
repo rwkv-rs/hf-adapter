@@ -18,7 +18,7 @@
 | 做 HF 适配贡献 | [`../CONTRIBUTING.md`](../CONTRIBUTING.md) → [`reference/HF_CRITERIA.md`](reference/HF_CRITERIA.md) → [`../HF_TODO.md`](../HF_TODO.md) |
 | 跑 benchmark / 整理证据 | [`../bench/README.md`](../bench/README.md) → [`../bench/INDEX.md`](../bench/INDEX.md) → [`../BENCHMARK.md`](../BENCHMARK.md) |
 | 做 Albatross / fused 性能 | [`performance/FUSED_BACKEND.md`](performance/FUSED_BACKEND.md) → [`native_fused_roadmap.md`](native_fused_roadmap.md) → [`../BENCHMARK.md`](../BENCHMARK.md) |
-| 做 Apple / MLX / Qwen3.5 | [`hardware/APPLE_SILICON.md`](hardware/APPLE_SILICON.md) → [`hardware/QWEN35_APPLE_BASELINE.md`](hardware/QWEN35_APPLE_BASELINE.md) → [`../bench/INDEX.md`](../bench/INDEX.md) 中 `apple_*` evidence |
+| 做 Apple / MLX / Qwen3.5 | [`hardware/APPLE_SILICON.md`](hardware/APPLE_SILICON.md) → [`hardware/QWEN35_APPLE_BASELINE.md`](hardware/QWEN35_APPLE_BASELINE.md) → [`hardware/APPLE_PRODUCTION_CLOSE.md`](hardware/APPLE_PRODUCTION_CLOSE.md) → [`../bench/INDEX.md`](../bench/INDEX.md) 中 `apple_*` evidence |
 | 做新卡适配 | [`BACKENDS.md`](BACKENDS.md) → 对应 [`validation/`](validation/) 或 [`hardware/`](hardware/) 文档 → [`../bench/README.md`](../bench/README.md) |
 | 做 MATH500 / 质量对齐 | [`validation/math500_acceptance.md`](validation/math500_acceptance.md) → [`validation/math500_accuracy_parity.md`](validation/math500_accuracy_parity.md) → [`../bench/INDEX.md`](../bench/INDEX.md) 中 `math500_*` evidence |
 | 做发布 / 贡献归因 | [`../CONTRIBUTORS.md`](../CONTRIBUTORS.md) → [`../CONTRIBUTIONS.md`](../CONTRIBUTIONS.md) → [`../CONTRIBUTING.md`](../CONTRIBUTING.md) |
@@ -53,6 +53,7 @@
 |---|---|---|
 | [`hardware/APPLE_SILICON.md`](hardware/APPLE_SILICON.md) | Apple Silicon / MPS / MLX 适配计划、smoke 命令、已知限制。 | [`../bench/INDEX.md`](../bench/INDEX.md) 中 `apple_*` |
 | [`hardware/QWEN35_APPLE_BASELINE.md`](hardware/QWEN35_APPLE_BASELINE.md) | Qwen3.5 Apple/mobile baseline、同机比较指标、runner 和 gate。 | `apple_qwen35_*`, `apple_scan_prefill_*`, `apple_e2e_scan_prefill_*` |
+| [`hardware/APPLE_PRODUCTION_CLOSE.md`](hardware/APPLE_PRODUCTION_CLOSE.md) | Apple M5 上 W4、DPLR、compiled/speculative decode 的生产门槛与复现证据。 | `apple_production_close_*` |
 | [`hardware/APPLE_QWEN35_LIVE_EVIDENCE_20260707.md`](hardware/APPLE_QWEN35_LIVE_EVIDENCE_20260707.md) | 2026-07-07 Apple/Qwen3.5 live evidence notes。 | `apple_qwen35_live_m5_20260707`, `apple_qwen35_2b_tokenonly_m5_20260707` |
 | [`hardware/BLACKWELL_50SERIES.md`](hardware/BLACKWELL_50SERIES.md) | RTX 50 系 / Blackwell 兼容、5090/5070 实测和问题记录。 | `5090_blackwell_*` |
 | [`validation/V100_HF_VALIDATION.md`](validation/V100_HF_VALIDATION.md) | V100 HF 训练/量化/ZeRO 验证矩阵。 | `results_v100_zero3_resume_2gpu_20260703.jsonl` 等 |

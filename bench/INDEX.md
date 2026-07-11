@@ -2,6 +2,14 @@
 
 Generated inventory of benchmark scripts and evidence directories. Keep this file lightweight: it is an orientation map, not the source of truth for benchmark conclusions.
 
+## Apple M5 production-close evidence
+
+The `apple_production_close_*_m5_20260711.jsonl` top-level files contain the
+checked Qwen3.5 0.8B/2B baselines, RWKV-7 0.4B compiled W4 rows, RWKV-7 1.5B
+W4/W8 compile rows, full-context RWKV draft speculation, and the final
+two-pair conservative gate. Conclusions and reproduction commands are in
+[`../docs/hardware/APPLE_PRODUCTION_CLOSE.md`](../docs/hardware/APPLE_PRODUCTION_CLOSE.md).
+
 ## Evidence directories
 
 | Directory | Title / purpose | JSONL | Logs |

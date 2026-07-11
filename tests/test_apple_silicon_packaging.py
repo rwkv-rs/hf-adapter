@@ -145,6 +145,10 @@ def test_apple_smoke_script_static() -> None:
     assert "RWKV_DECODE_NORM_BACKEND" in qwen_acceptance_text
     assert "RWKV_PREPARE_COMPILED_DECODE" in qwen_acceptance_text
     assert "RWKV_COMPILED_DECODE_VALIDATION_TOKENS" in qwen_acceptance_text
+    assert "RWKV_COMPILED_DECODE_LOGITS_ATOL" in qwen_acceptance_text
+    assert "RWKV_COMPILED_DECODE_STATE_ATOL" in qwen_acceptance_text
+    assert "RWKV_DRAFT_MODEL" in qwen_acceptance_text
+    assert "RWKV_SPECULATIVE_PROPOSAL_TOKENS" in qwen_acceptance_text
     assert "RWKV_COMPILED_DECODE_REFERENCE_LOGITS_ATOL" in qwen_acceptance_text
     assert "RWKV_COMPILED_DECODE_REFERENCE_STATE_ATOL" in qwen_acceptance_text
     assert "COREML_EXPORT_MODELS" in qwen_acceptance_text
@@ -174,14 +178,14 @@ def test_apple_smoke_script_static() -> None:
     assert mlx_session_script.exists()
     assert mlx_session_script.stat().st_mode & stat.S_IXUSR
     mlx_session_text = mlx_session_script.read_text(encoding="utf-8")
-    assert 'choices=["affine", "reference", "metal", "auto"]' in mlx_session_text
+    assert 'choices=["affine", "reference", "metal", "auto", "groupwise"]' in mlx_session_text
     assert 'choices=["reference", "metal", "auto"]' in mlx_session_text
     assert "--quant-rkv-min-params" in mlx_session_text
     mlx_session_batch_script = ROOT / "scripts/mlx_session_batch_smoke.py"
     assert mlx_session_batch_script.exists()
     assert mlx_session_batch_script.stat().st_mode & stat.S_IXUSR
     mlx_session_batch_text = mlx_session_batch_script.read_text(encoding="utf-8")
-    assert 'choices=["affine", "reference", "metal", "auto"]' in mlx_session_batch_text
+    assert 'choices=["affine", "reference", "metal", "auto", "groupwise"]' in mlx_session_batch_text
     assert 'choices=["reference", "metal", "auto"]' in mlx_session_batch_text
     assert 'choices=["sequential", "batched", "batched_stable", "auto"]' in mlx_session_batch_text
     assert 'choices=["none", "sequential", "batched", "batched_stable", "auto"]' in mlx_session_batch_text
@@ -370,6 +374,10 @@ def test_apple_doc_links_entry_points() -> None:
     assert "RWKV_DECODE_NORM_BACKEND" in qwen_acceptance_text
     assert "RWKV_PREPARE_COMPILED_DECODE" in qwen_acceptance_text
     assert "RWKV_COMPILED_DECODE_VALIDATION_TOKENS" in qwen_acceptance_text
+    assert "RWKV_COMPILED_DECODE_LOGITS_ATOL" in qwen_acceptance_text
+    assert "RWKV_COMPILED_DECODE_STATE_ATOL" in qwen_acceptance_text
+    assert "RWKV_DRAFT_MODEL" in qwen_acceptance_text
+    assert "RWKV_SPECULATIVE_PROPOSAL_TOKENS" in qwen_acceptance_text
     assert "RWKV_COMPILED_DECODE_REFERENCE_LOGITS_ATOL" in qwen_acceptance_text
     assert "RWKV_COMPILED_DECODE_REFERENCE_STATE_ATOL" in qwen_acceptance_text
     assert "COREML_EXPORT_MODELS" in qwen_acceptance_text

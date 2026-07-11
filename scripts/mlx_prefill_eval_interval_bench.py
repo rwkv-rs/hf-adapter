@@ -209,7 +209,7 @@ def main() -> int:
     parser.add_argument("--dtype", default="fp16", choices=["keep", "fp32", "fp16", "bf16"])
     parser.add_argument("--quantization", default="none", choices=["none", "mm8", "mm4"])
     parser.add_argument("--quant-min-params", type=int, default=4_000_000)
-    parser.add_argument("--quant-backend", default="auto", choices=["affine", "reference", "metal", "auto"])
+    parser.add_argument("--quant-backend", default="auto", choices=["affine", "reference", "metal", "auto", "groupwise"])
     parser.add_argument("--wkv-backend", default="metal", choices=["reference", "metal", "auto"])
     parser.add_argument("--atol", type=float, default=0.0)
     parser.add_argument("--results", default="")

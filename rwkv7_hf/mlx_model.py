@@ -1026,8 +1026,11 @@ class MLXRWKV7Model:
         """
 
         backend = (backend or "affine").lower().strip()
-        if backend not in {"affine", "reference", "metal", "auto"}:
-            raise ValueError(f"unsupported MLX quant backend {backend!r}; expected affine, reference, metal, or auto")
+        if backend not in {"affine", "reference", "metal", "auto", "groupwise"}:
+            raise ValueError(
+                f"unsupported MLX quant backend {backend!r}; "
+                "expected affine, reference, metal, auto, or groupwise"
+            )
         q = quantization.lower().strip()
         if q in {"mm8", "w8", "8", "int8"}:
             bits = 8
@@ -1067,7 +1070,7 @@ class MLXRWKV7Model:
         self.group_rkv_quant_projection_counts = {"metal": 0, "fallback": 0}
         for qlinear in self.quantized_linears.values():
             qlinear.last_backend = None
-            qlinear.backend_counts = {"reference": 0, "affine": 0, "metal": 0}
+            qlinear.backend_counts = {"reference": 0, "affine": 0, "metal": 0, "groupwise": 0}
 
     def telemetry(self) -> dict[str, Any]:
         out = {
@@ -1145,6 +1148,10 @@ class MLXRWKV7Model:
                         "reference": sum(int(q.backend_counts.get("reference", 0)) for q in self.quantized_linears.values()),
                         "affine": sum(int(q.backend_counts.get("affine", 0)) for q in self.quantized_linears.values()),
                         "metal": sum(int(q.backend_counts.get("metal", 0)) for q in self.quantized_linears.values()),
+                        "groupwise": sum(
+                            int(q.backend_counts.get("groupwise", 0))
+                            for q in self.quantized_linears.values()
+                        ),
                     },
                     "group_rkv_quant_projection": bool(self.group_rkv_quant_projection),
                     "group_rkv_quant_projection_mode": self.group_rkv_quant_projection_mode,
@@ -1751,7 +1758,14 @@ class MLXRWKV7Model:
         out = self._linear(out * g, f"{prefix}.o_proj.weight")
         return out, next_x_prev, final_state, v_first_sequence
 
-    def _forward_dplr_prefill(self, ids, state: MLXRWKV7State, *, compute_logits: bool = True):
+    def _forward_dplr_prefill(
+        self,
+        ids,
+        state: MLXRWKV7State,
+        *,
+        compute_logits: bool = True,
+        collect_all: bool = False,
+    ):
         mx = _mx()
         batch, tokens = int(ids.shape[0]), int(ids.shape[1])
         x = self._get("model.embeddings.weight")[ids]
@@ -1799,11 +1813,12 @@ class MLXRWKV7Model:
         state.attn_x_prev = [mx.contiguous(value) for value in state.attn_x_prev]
         state.ffn_x_prev = [mx.contiguous(value) for value in state.ffn_x_prev]
         state.seen_tokens += tokens
-        out = (
-            self._logits_from_hidden(x[:, -1, :]).reshape(batch, 1, self.vocab_size)
-            if compute_logits
-            else None
-        )
+        out = None
+        if compute_logits:
+            if collect_all:
+                out = self._logits_from_hidden(x).reshape(batch, tokens, self.vocab_size)
+            else:
+                out = self._logits_from_hidden(x[:, -1, :]).reshape(batch, 1, self.vocab_size)
         eval_values = [state.v_first, *state.recurrent_state, *state.attn_x_prev, *state.ffn_x_prev]
         if out is not None:
             eval_values.insert(0, out)
@@ -1901,7 +1916,9 @@ class MLXRWKV7Model:
             state = self.init_state(B)
         elif state.batch_size != B:
             raise ValueError(f"state batch size {state.batch_size} does not match input batch size {B}")
-        is_prefill = T > 1 and not collect_all
+        # DPLR produces the complete hidden sequence, so it can also serve
+        # speculative verification where every intermediate logit is needed.
+        is_prefill = T > 1
         if is_prefill:
             self.dplr_windows_last = 0
             self.dplr_layer_eval_interval_effective_last = 0
@@ -1925,23 +1942,34 @@ class MLXRWKV7Model:
                     windows = (T + window_tokens - 1) // window_tokens
                     self.dplr_windows_last = int(windows)
                     out = None
+                    window_outputs = []
                     effective_eval_interval = 0
                     for window_index, start in enumerate(range(0, T, window_tokens)):
-                        out, state = self._forward_dplr_prefill(
+                        window_out, state = self._forward_dplr_prefill(
                             ids[:, start : start + window_tokens],
                             state,
-                            compute_logits=window_index + 1 == windows,
+                            compute_logits=collect_all or window_index + 1 == windows,
+                            collect_all=collect_all,
                         )
+                        if collect_all:
+                            if window_out is None:
+                                raise RuntimeError("DPLR collect-all window produced no logits")
+                            window_outputs.append(window_out)
+                        else:
+                            out = window_out
                         effective_eval_interval = max(
                             effective_eval_interval,
                             int(self.dplr_layer_eval_interval_effective_last),
                         )
                     self.dplr_layer_eval_interval_effective_last = effective_eval_interval
+                    if collect_all:
+                        out = mx.concatenate(window_outputs, axis=1)
+                        mx.eval(out)
                     if out is None:
                         raise RuntimeError("DPLR windowed prefill produced no logits")
                     return out, state
                 self.dplr_windows_last = 1
-                return self._forward_dplr_prefill(ids, state)
+                return self._forward_dplr_prefill(ids, state, collect_all=collect_all)
             if self.prefill_backend == "dplr_metal":
                 raise RuntimeError("RWKV7_MLX_PREFILL_BACKEND=dplr_metal requires MLX custom Metal kernels")
             self.prefill_backend_counts["fallback"] = int(self.prefill_backend_counts.get("fallback", 0)) + 1
