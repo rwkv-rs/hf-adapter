@@ -8,9 +8,11 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 ENTRYPOINTS = (
     "evaluation/build_backend_v2_device_validation.py",
+    "evaluation/audit_github_release.py",
     "evaluation/preflight_cuda_toolchain.py",
     "scripts/audit_release_wheels.py",
     "scripts/build_release_provenance.py",
+    "scripts/verify_end_to_end_release.py",
     "scripts/verify_release_assets.py",
 )
 

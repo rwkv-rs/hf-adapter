@@ -951,3 +951,26 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   reference lane had 24/48 successful units and zero recorded failures. Its
   0.4B batch-8 Wikitext child was the only GPU process; all five backend-v2
   watchers remained asleep.
+
+### 2026-08-28 — final GitHub/Hub/PyPI completion gate is fail-closed
+
+- Extended `scripts/verify_hf_release.py` with a non-destructive fresh-cache
+  contract. Final Hub smokes must use a distinct absent/empty cache plus
+  `--force-download`; the report records that fact alongside the resolved tag,
+  model/cache class, finite forward and cached generation.
+- Added `evaluation/audit_github_release.py`. It resolves annotated tags to the
+  exact source commit, proves the tag is contained in default `main`, checks
+  the release PR is merged, verifies required architecture/evaluation/source
+  paths, downloads and hashes every release asset, and requires the public
+  validation Issue to cover 144-unit lm_eval, Wikitext NLL/PPL, SFT/DPO/GRPO,
+  Trainer/Accelerate/PEFT/TRL, state/cache/generation, quantization, actual
+  routes, three GPUs, FLA and SHA256 evidence.
+- Added `scripts/verify_end_to_end_release.py`. It repeats the immutable
+  three-device release-asset gate, then cross-checks the six Hub repositories,
+  unchanged weight baseline, six fresh-download smokes, exact PyPI wheel bytes,
+  and GitHub tag/release/branch/PR/docs/Issue evidence into one final JSON.
+- Ruff, compileall, `git diff --check`, direct-entrypoint smoke, and the full
+  local suite pass: `131 passed`.
+- At `2026-08-28T04:31:10+08:00`, the untouched RTX 4080 recurrent-v1
+  reference lane was 27/48 with zero recorded failures; the five backend-v2
+  watchers remained sequentially queued and did not receive competing work.

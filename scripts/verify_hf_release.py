@@ -27,13 +27,38 @@ def parse_args():
     parser.add_argument("--metadata-only", action="store_true")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--cache-dir", type=Path)
+    parser.add_argument("--force-download", action="store_true")
+    parser.add_argument(
+        "--require-empty-cache",
+        action="store_true",
+        help="fail unless --cache-dir is absent or empty before the Hub download",
+    )
     return parser.parse_args()
+
+
+def prepare_cache_dir(cache_dir: Path | None, require_empty: bool) -> dict:
+    if require_empty and cache_dir is None:
+        raise ValueError("--require-empty-cache requires --cache-dir")
+    if cache_dir is None:
+        return {"path": None, "was_empty": None}
+    cache_dir = cache_dir.expanduser().resolve()
+    was_empty = not cache_dir.exists() or not any(cache_dir.iterdir())
+    if require_empty and not was_empty:
+        raise ValueError(f"Hub smoke cache is not empty: {cache_dir}")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return {"path": str(cache_dir), "was_empty": was_empty}
 
 
 def main():
     args = parse_args()
     from huggingface_hub import HfApi, hf_hub_download
 
+    cache = prepare_cache_dir(args.cache_dir, args.require_empty_cache)
+    download_options = {
+        "cache_dir": cache["path"],
+        "force_download": args.force_download,
+    }
     info = HfApi().model_info(args.model, revision=args.revision, files_metadata=True)
     siblings = {row.rfilename: row for row in info.siblings}
     missing = sorted(REQUIRED_CODE - siblings.keys())
@@ -41,7 +66,12 @@ def main():
     if missing or not weights:
         raise SystemExit(f"missing={missing} weights={weights}")
 
-    config_path = hf_hub_download(args.model, "config.json", revision=args.revision)
+    config_path = hf_hub_download(
+        args.model,
+        "config.json",
+        revision=args.revision,
+        **download_options,
+    )
     config = json.loads(Path(config_path).read_text())
     expected_map = {
         "AutoConfig": "configuration_rwkv7.RWKV7Config",
@@ -80,6 +110,12 @@ def main():
             for name in weights
         ],
         "python": platform.python_version(),
+        "download": {
+            "cache_dir": cache["path"],
+            "cache_was_empty": cache["was_empty"],
+            "require_empty_cache": args.require_empty_cache,
+            "force_download": args.force_download,
+        },
     }
 
     if not args.metadata_only:
@@ -89,7 +125,10 @@ def main():
         device = torch.device(args.device)
         dtype = torch.float32 if device.type == "cpu" else torch.float16
         tokenizer = AutoTokenizer.from_pretrained(
-            args.model, revision=args.revision, trust_remote_code=True
+            args.model,
+            revision=args.revision,
+            trust_remote_code=True,
+            **download_options,
         )
         model = (
             AutoModelForCausalLM.from_pretrained(
@@ -97,6 +136,7 @@ def main():
                 revision=args.revision,
                 trust_remote_code=True,
                 torch_dtype=dtype,
+                **download_options,
             )
             .to(device)
             .eval()

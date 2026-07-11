@@ -55,6 +55,24 @@ The audit requires both versions, a non-yanked wheel for each distribution,
 valid PyPI SHA256 metadata, and exact filename, size and SHA256 equality with
 the immutable local wheels.
 
+Run every Hub smoke from a distinct empty cache so an earlier checkout cannot
+be mistaken for a release redownload:
+
+```bash
+python scripts/verify_hf_release.py \
+  --model wangyue114514/rwkv7-g1d-0.1b-hf \
+  --revision v1.0.0 \
+  --device cuda \
+  --cache-dir /results/hub-smoke/rwkv7-g1d-0.1b-hf/cache \
+  --require-empty-cache \
+  --force-download \
+  --output /results/hub-smoke/rwkv7-g1d-0.1b-hf.json
+```
+
+Repeat for all six repositories. The smoke report retains the resolved tag
+commit, weight metadata, `RWKV7ForCausalLM`, `RWKV7Cache`, finite logits, and
+cached generation.
+
 The GitHub release is prepared as a draft after the final wheel pair completes
 all three device gates. The exact wheel/source archives, `SHA256SUMS`, and
 `release-provenance.json` are attached before that draft is published. The
@@ -130,6 +148,43 @@ four already-built archives; it never builds or alters those archives.
 from the individual validator outputs. It checks the report schemas, exact
 wheel bytes, shared harness, pinned FLA revision, 144-unit result, actual
 prefill/decode/training/quantization routes, and separate SFT/DPO/GRPO results.
+
+After the GitHub release, validation Issue, Hub repositories, and PyPI files
+exist, audit the GitHub tag/branch/PR/source tree and download every release
+asset again before creating the final all-surfaces verdict:
+
+```bash
+python evaluation/audit_github_release.py \
+  --repo rwkv-rs/hf-adapter \
+  --tag v1.0.0 \
+  --version 1.0.0 \
+  --source-sha "$FINAL_SOURCE_SHA" \
+  --release-dir /artifacts/rwkv7-v1.0.0 \
+  --pull-request 146 \
+  --issue "$VALIDATION_ISSUE" \
+  --output /results/release/github-v1.0.0.json
+
+python scripts/verify_end_to_end_release.py \
+  --directory /artifacts/rwkv7-v1.0.0 \
+  --version 1.0.0 \
+  --source-sha "$FINAL_SOURCE_SHA" \
+  --hub-audit /results/release/hub-v1.0.0.json \
+  --pypi-audit /results/release/pypi-v1.0.0.json \
+  --github-audit /results/release/github-v1.0.0.json \
+  --hub-smoke wangyue114514/rwkv7-g1d-0.1b-hf=/results/hub-smoke/rwkv7-g1d-0.1b-hf.json \
+  --hub-smoke wangyue114514/rwkv7-g1d-0.4b-hf=/results/hub-smoke/rwkv7-g1d-0.4b-hf.json \
+  --hub-smoke wangyue114514/rwkv7-g1g-1.5b-hf=/results/hub-smoke/rwkv7-g1g-1.5b-hf.json \
+  --hub-smoke wangyue114514/rwkv7-g1g-2.9b-hf=/results/hub-smoke/rwkv7-g1g-2.9b-hf.json \
+  --hub-smoke wangyue114514/rwkv7-g1g-7.2b-hf=/results/hub-smoke/rwkv7-g1g-7.2b-hf.json \
+  --hub-smoke wangyue114514/rwkv7-g1g-13.3b-hf=/results/hub-smoke/rwkv7-g1g-13.3b-hf.json \
+  --output /results/release/end-to-end-v1.0.0.json
+```
+
+This final verifier repeats the three-device release-asset gate, requires the
+six Hub tags and unchanged weight baselines, exact PyPI wheel bytes, a GitHub
+tag contained in `main`, merged release PR, required architecture/evaluation
+documentation, a comprehensive public validation Issue, and six genuine
+empty-cache Hub redownload/load/cache/generation smokes.
 
 The historical fused implementation remains on `perf/native-kernels-v0.8`.
 The clean optional-package migration is reviewed separately on
