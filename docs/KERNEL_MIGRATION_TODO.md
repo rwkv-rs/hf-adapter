@@ -812,3 +812,28 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   fail before either trusted-publisher job starts.
 - Added workflow structural and release-provenance tests, including rejection
   when one card used another kernel wheel. Full local gate: `101 passed`.
+
+### 2026-08-28 — final provenance is generated from compact GPU evidence
+
+- Added `scripts/build_release_provenance.py`; final release metadata is no
+  longer hand-authored. It accepts the exact four stable archives plus the
+  compact RTX 4080, Tesla V100, and RTX 4090 bundles, validates every complete
+  manifest, and writes deterministic `release-provenance.json` and
+  `SHA256SUMS` without rebuilding or modifying an archive.
+- Every compact bundle must carry manifest-covered
+  `release-validation.json` evidence for correctness, HF ecosystem, dense
+  training/reference fallback, all quantization families, FLA, speed,
+  SFT/DPO/GRPO, and the 144-unit three-way `lm_eval` gate. Source SHA, harness
+  SHA, FLA commit and both wheel hashes must be identical across all cards.
+- Actual prefill, decode, training and quantization implementation routes are
+  mandatory. Policy selectors such as `auto`, `optimized`, `graph` or
+  `triton` are rejected as route evidence.
+- Failure tests cover a missing gate, different wheel bytes, wrong harness,
+  invalid compact manifest and selector-only routes. The release verifier now
+  independently rechecks the actual route map. Focused checks and the complete
+  local suite pass: `107 passed`.
+- At `2026-08-28T03:38:25+08:00`, the untouched RTX 4080 recurrent-v1
+  reference lane had advanced to 21/48 successful units with zero recorded
+  failures. `0.4b-b1-arc_easy` was the only active GPU child; all five
+  backend-v2 diagnostic/formal watchers remained asleep and were not restarted
+  or given competing work.

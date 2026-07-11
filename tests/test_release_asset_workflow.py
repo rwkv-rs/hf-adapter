@@ -49,6 +49,12 @@ def write_release(tmp_path: Path, *, mismatch_device: str | None = None) -> Name
             "compact_bundle_manifest_sha256": hashlib.sha256(
                 device.encode()
             ).hexdigest(),
+            "actual_routes": {
+                "prefill": ["native-self-chunk-prefill-v2"],
+                "decode": ["native-fused-token-decode-v2"],
+                "training": ["native-nvidia-train-temp-autograd-v2"],
+                "quantization": ["native-w8-linear-v1"],
+            },
         }
         for device in DEVICES
     }

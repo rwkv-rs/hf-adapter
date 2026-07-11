@@ -13,6 +13,15 @@ from typing import Any
 
 FLA_COMMIT = "80e494f6c588e091fc8316b612870df29375c5b8"
 DEVICES = {"rtx-4080", "tesla-v100", "rtx-4090"}
+REQUIRED_ROUTE_PHASES = {"prefill", "decode", "training", "quantization"}
+SELECTOR_ONLY_ROUTES = {
+    "auto",
+    "graph",
+    "native",
+    "optimized",
+    "reference",
+    "triton",
+}
 
 
 def arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -122,6 +131,20 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         bundle_sha = str(row.get("compact_bundle_manifest_sha256", ""))
         if not re.fullmatch(r"[0-9a-f]{64}", bundle_sha):
             raise ValueError(f"compact evidence identity is missing: {device}")
+        routes = row.get("actual_routes")
+        if not isinstance(routes, dict) or not REQUIRED_ROUTE_PHASES <= set(routes):
+            raise ValueError(f"actual route evidence is missing: {device}")
+        for phase in REQUIRED_ROUTE_PHASES:
+            values = routes[phase]
+            if isinstance(values, str):
+                values = [values]
+            if (
+                not isinstance(values, list)
+                or not values
+                or not all(isinstance(value, str) and value.strip() for value in values)
+                or any(value.lower() in SELECTOR_ONLY_ROUTES for value in values)
+            ):
+                raise ValueError(f"actual {phase} route evidence is invalid: {device}")
     return {
         "status": "passed",
         "version": args.version,
