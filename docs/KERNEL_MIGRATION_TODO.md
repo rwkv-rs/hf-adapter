@@ -1167,8 +1167,9 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   and kernels
   `d8c9add5731c0d8edf07a86ced093955d7d12995d5503b8cf86bf4bd058d0a3b`;
   they are not final stable artifacts. The complete local suite passes
-  `152 passed` with `133` expected TorchScript deprecation warnings, including
-  rejection of an undeclared third clean-boundary adaptation.
+  `153 passed` with `133` expected TorchScript deprecation warnings, including
+  rejection of an undeclared third clean-boundary adaptation and a rationale
+  that differs between the migration manifest and complete source scope.
 - No runtime source or running GPU process changed during this evidence
   correction. The queued RTX 4080 diagnostic continues to use its original
   immutable wheel pair; final stable wheels will include the corrected audit

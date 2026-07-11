@@ -208,3 +208,24 @@ def test_kernel_wheel_audit_rejects_changed_recurrent_blob_identity(
     )
     with pytest.raises(ValueError, match="do not reconstruct the frozen Git tree"):
         audit_kernel_wheel(kernel)
+
+
+def test_kernel_wheel_audit_rejects_mismatched_adaptation_rationale(
+    tmp_path: Path,
+):
+    root = Path(__file__).resolve().parents[1]
+    scope_path = root / "kernels/rwkv7_kernels/nvidia/SOURCE_SCOPE.json"
+    scope = json.loads(scope_path.read_text())
+    adapted = next(
+        row
+        for row in scope["entries"]
+        if row.get("destination") and row["disposition"] == "adapted_protocol"
+    )
+    adapted["adaptation"] = "different rationale"
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(
+        kernel,
+        extra={SOURCE_SCOPE: json.dumps(scope).encode()},
+    )
+    with pytest.raises(ValueError, match="historical NVIDIA migration scope differs"):
+        audit_kernel_wheel(kernel)

@@ -417,10 +417,11 @@ def audit_source_scope(
             str(row["destination_sha256"]),
             str(row["git_blob"]),
             str(row["transfer"]),
+            str(row.get("adaptation", "")),
         )
         for row in manifest["files"]
     }
-    scoped_migration: dict[str, tuple[str, str, str, str]] = {}
+    scoped_migration: dict[str, tuple[str, str, str, str, str]] = {}
     adapted_kernel_files: set[str] = set()
     hardware_families: set[str] = set()
     for row in rows:
@@ -437,6 +438,7 @@ def audit_source_scope(
                 digest,
                 blob,
                 "byte_identical",
+                "",
             )
         elif disposition == "adapted_protocol":
             replacements = row.get("replacements")
@@ -463,6 +465,7 @@ def audit_source_scope(
                     digest,
                     blob,
                     "adapted_clean_boundary",
+                    str(row.get("adaptation", "")),
                 )
         elif disposition == "separate_hardware_distribution":
             family = str(row.get("hardware_family", ""))
@@ -482,7 +485,7 @@ def audit_source_scope(
             if scoped_migration[source] != migration_by_source[source]
         )
         raise ValueError(
-            "historical byte-migration scope differs from manifest: "
+            "historical NVIDIA migration scope differs from manifest: "
             f"missing={missing}, extra={extra}, changed={changed}"
         )
     return {
