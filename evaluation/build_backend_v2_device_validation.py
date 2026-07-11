@@ -165,6 +165,15 @@ def require_native_training_toolkit(report: dict[str, Any]) -> None:
     provenance = toolkit.get("provenance") or {}
     if not toolkit.get("nvcc") or not toolkit.get("nvcc_version"):
         raise ValueError("native training report lacks CUDA compiler provenance")
+    cuda_home = Path(str(toolkit.get("cuda_home", "")))
+    nvcc = Path(str(toolkit["nvcc"]))
+    extensions = Path(str(toolkit.get("torch_extensions_dir", "")))
+    if (
+        not cuda_home.is_absolute()
+        or nvcc != cuda_home / "bin" / "nvcc"
+        or not extensions.is_absolute()
+    ):
+        raise ValueError("native training CUDA build paths are not bound")
     digest = str(provenance.get("sha256", ""))
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("native training report lacks CUDA toolkit identity")

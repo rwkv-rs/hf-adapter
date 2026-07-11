@@ -45,6 +45,8 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
         "torch": "2.11.0+cu130",
         "cuda": "13.0",
         "cuda_toolkit": {
+            "cuda_home": "/toolkit",
+            "torch_extensions_dir": "/extensions/backend-v2",
             "nvcc": "/toolkit/bin/nvcc",
             "nvcc_version": ["Cuda compilation tools, release 13.0, V13.0.88"],
             "provenance": {"sha256": "d" * 64},
@@ -244,4 +246,13 @@ def test_device_builder_rejects_native_training_with_mismatched_compiler(
     ]
     write_json(paths["training"], payload)
     with pytest.raises(ValueError, match="does not match PyTorch CUDA"):
+        build(args)
+
+
+def test_device_builder_rejects_unbound_native_build_paths(tmp_path: Path):
+    args, paths, _, _ = setup_reports(tmp_path)
+    payload = json.loads(paths["training"].read_text())
+    payload["environment"]["cuda_toolkit"]["torch_extensions_dir"] = None
+    write_json(paths["training"], payload)
+    with pytest.raises(ValueError, match="CUDA build paths are not bound"):
         build(args)
