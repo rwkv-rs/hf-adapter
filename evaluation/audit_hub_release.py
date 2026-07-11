@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 import hashlib
+import importlib.metadata
 import json
 from pathlib import Path
+import sys
 from typing import Any, Callable
 
 
@@ -64,6 +67,7 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--revision", default="main")
     parser.add_argument("--require-tag")
+    parser.add_argument("--code-sha", required=True)
     parser.add_argument(
         "--weight-baseline",
         type=Path,
@@ -229,6 +233,10 @@ def main() -> int:
     report = {
         "schema": "rwkv7-hub-release-audit-v1",
         "status": "passed" if passed else "failed",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "command": [sys.executable, *sys.argv],
+        "code_sha": args.code_sha,
+        "huggingface_hub": importlib.metadata.version("huggingface_hub"),
         "revision": args.revision,
         "required_tag": args.require_tag,
         "source_dir": str(source_dir),
