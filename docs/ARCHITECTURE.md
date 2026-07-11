@@ -30,6 +30,39 @@ The cache implements sequence length, reorder, select, repeat, reset, detach and
 device/dtype conversion without graph runners, counters, hardware policy or
 layout routing.
 
+## Optional high-performance boundary
+
+Installing `rwkv7-kernels` does not change the four reference files or add a
+second model class. The reference model has only two optional call boundaries:
+
+1. `rwkv7_recurrent(...)` can delegate the canonical recurrent tensors to the
+   versioned low-level kernel protocol;
+2. the base/causal-LM forward methods can offer one normalized request to the
+   versioned whole-model protocol before executing their unchanged readable
+   PyTorch body.
+
+The optional wheel sees the existing layer/Linear/norm structure, returns plain
+tensors plus the same `RWKV7Cache`, and never imports or replaces
+`modeling_rwkv7.py`. Unsupported devices, dtypes, shapes, adapter structures or
+training modes fail closed to the reference implementation in `auto` mode.
+There is no monkeypatch, optimized subclass, private checkpoint layout, or
+hardware field in `RWKV7Config`.
+
+The wheel owns all performance-specific code: recurrent Triton/CUDA routes;
+dense/fused decode; DPLR and self-chunk fused prefill; projection, norm, FFN
+and LoRA fusions; CUDA Graph/state pools; exact SM70, Ada and Blackwell policy;
+W8/W4/A8W8/BN-TN/BitsAndBytes/Marlin/TorchAO adapters; and the train-temp
+forward/backward autograd operators. Public recurrent state is converted back
+to canonical `[B,H,K,V]` before the call returns.
+
+`nvidia/MIGRATION_MANIFEST.json` byte-verifies the 102 historical NVIDIA
+payloads. `nvidia/CAPABILITY_INVENTORY.json` maps every one of those payloads
+exactly once to an executable runtime family and real device-policy fields.
+The release-wheel audit checks both files from the built ZIP, not merely from
+the checkout. Full-model production `auto` is promoted only after the same
+immutable wheel passes the RTX 4080, V100 and RTX 4090 functional, HF/training,
+speed, FLA and 144-unit `lm_eval` gates.
+
 ## Numerical reproducibility
 
 The model still uses ordinary `torch.nn.functional.linear` and PyTorch matrix

@@ -1041,3 +1041,8 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   Marlin/TorchAO route, and training autograd. The GitHub source-tree audit
   also requires both embedded inventories and this migration audit document;
   a release can no longer publish only generic “optimized” wording.
+- `docs/ARCHITECTURE.md` now documents the two optional protocol boundaries
+  and the complete operator families next to the readable model/cache
+  structure. It makes explicit that installation never replaces a model
+  class, cache ABI or checkpoint layout and that unsupported calls fall back
+  to the unchanged reference body.
