@@ -79,7 +79,7 @@ jobs:
           python scripts/verify_release_assets.py \
             --directory dist/release \
             --version "$VERSION" \
-            --source-sha "$GITHUB_SHA" \
+            --source-sha "$(git rev-parse HEAD)" \
             --require-validation-passed
           mkdir -p dist/hf dist/kernels
           cp "dist/release/rwkv7_hf-${VERSION}-py3-none-any.whl" \
