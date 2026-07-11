@@ -939,9 +939,12 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   version, source/object hashes, exit code and failures. A failed compiler,
   missing provenance, invalid SM target or mismatched toolkit writes a failed
   JSON report and exits nonzero.
+- The final per-device builder independently parses the native training
+  report and rejects an `nvcc` CUDA major/minor that differs from the PyTorch
+  CUDA runtime; it does not rely only on the standalone preflight verdict.
 - Direct-entrypoint and fake-compiler tests cover the documented invocation.
   Ruff, compileall, `git diff --check`, and the complete local suite pass:
-  `123 passed`.
+  `124 passed`.
 - At `2026-08-28T04:04:17+08:00`, the untouched RTX 4080 recurrent-v1
   reference lane had 24/48 successful units and zero recorded failures. Its
   0.4B batch-8 Wikitext child was the only GPU process; all five backend-v2

@@ -160,13 +160,26 @@ def require_environment(label: str, report: dict[str, Any]) -> None:
 
 
 def require_native_training_toolkit(report: dict[str, Any]) -> None:
-    toolkit = (report.get("environment") or {}).get("cuda_toolkit") or {}
+    environment = report.get("environment") or {}
+    toolkit = environment.get("cuda_toolkit") or {}
     provenance = toolkit.get("provenance") or {}
     if not toolkit.get("nvcc") or not toolkit.get("nvcc_version"):
         raise ValueError("native training report lacks CUDA compiler provenance")
     digest = str(provenance.get("sha256", ""))
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("native training report lacks CUDA toolkit identity")
+    torch_match = re.search(r"(\d+)\.(\d+)", str(environment.get("cuda", "")))
+    nvcc_match = re.search(
+        r"release\s+(\d+)\.(\d+)",
+        "\n".join(str(value) for value in toolkit["nvcc_version"]),
+        re.IGNORECASE,
+    )
+    if not torch_match or not nvcc_match:
+        raise ValueError("native training CUDA version provenance is incomplete")
+    torch_cuda = tuple(int(value) for value in torch_match.groups())
+    nvcc_cuda = tuple(int(value) for value in nvcc_match.groups())
+    if torch_cuda != nvcc_cuda:
+        raise ValueError("native training compiler does not match PyTorch CUDA")
 
 
 def validate_finetune(

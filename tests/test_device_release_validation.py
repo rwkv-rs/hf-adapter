@@ -43,6 +43,7 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
         "command": ["python", "validator.py"],
         "gpu": "NVIDIA GeForce RTX 4080",
         "torch": "2.11.0+cu130",
+        "cuda": "13.0",
         "cuda_toolkit": {
             "nvcc": "/toolkit/bin/nvcc",
             "nvcc_version": ["Cuda compilation tools, release 13.0, V13.0.88"],
@@ -230,4 +231,17 @@ def test_device_builder_rejects_native_training_without_compiler_identity(
     payload["environment"]["cuda_toolkit"]["provenance"] = None
     write_json(paths["training"], payload)
     with pytest.raises(ValueError, match="CUDA toolkit identity"):
+        build(args)
+
+
+def test_device_builder_rejects_native_training_with_mismatched_compiler(
+    tmp_path: Path,
+):
+    args, paths, _, _ = setup_reports(tmp_path)
+    payload = json.loads(paths["training"].read_text())
+    payload["environment"]["cuda_toolkit"]["nvcc_version"] = [
+        "Cuda compilation tools, release 12.8, V12.8.93"
+    ]
+    write_json(paths["training"], payload)
+    with pytest.raises(ValueError, match="does not match PyTorch CUDA"):
         build(args)
