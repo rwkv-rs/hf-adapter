@@ -154,6 +154,7 @@ def test_release_issue_is_rendered_from_complete_speed_and_eval_matrices():
     assert "Whole-model speed matrix" in body
     assert "Formal lm_eval accuracy/NLL/PPL matrix" in body
     assert "native-nvidia-prefill-v2[self_chunk]" in body
+    assert "| same | same |" in body
     assert "SFT" in body and "DPO" in body and "GRPO" in body
     normalized = body.lower().replace("lm-eval", "lm_eval")
     assert not [term for term in AUDIT.REQUIRED_ISSUE_TERMS if term not in normalized]

@@ -142,6 +142,12 @@ def metric_text(metrics: dict[str, Any]) -> str:
     )
 
 
+def candidate_metric_text(reference: dict[str, Any], candidate: dict[str, Any]) -> str:
+    if candidate == reference:
+        return "same"
+    return metric_text(candidate)
+
+
 def render_issue(
     *,
     version: str,
@@ -298,9 +304,11 @@ def render_issue(
     for device in DEVICES:
         metrics = lm_evals[device]["aggregate_metrics"]
         for unit in sorted(metrics["reference"]):
+            reference_metrics = metrics["reference"][unit]
             lines.append(
-                f"| {device} | {unit} | {metric_text(metrics['reference'][unit])} | "
-                f"{metric_text(metrics['optimized'][unit])} | {metric_text(metrics['fla'][unit])} |"
+                f"| {device} | {unit} | {metric_text(reference_metrics)} | "
+                f"{candidate_metric_text(reference_metrics, metrics['optimized'][unit])} | "
+                f"{candidate_metric_text(reference_metrics, metrics['fla'][unit])} |"
             )
         summary = lm_evals[device]["comparison_summary"]
         lines.append(
