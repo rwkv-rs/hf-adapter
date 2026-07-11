@@ -50,6 +50,19 @@ def test_scalar_fallback_preserves_shape() -> None:
     assert actual.shape == residual.shape
 
 
+def test_fallback_out_buffer_is_reused() -> None:
+    preact = torch.randn(3, 1024)
+    weight = torch.randn(256, 1024)
+    residual = torch.randn(3, 256)
+    out = torch.empty_like(residual)
+    expected = residual + F.linear(torch.relu(preact) ** 2, weight)
+    actual = ada_sparse_ffn_down_add(
+        preact, weight, residual, out=out, force_fallback=True
+    )
+    assert actual.data_ptr() == out.data_ptr()
+    torch.testing.assert_close(actual, expected)
+
+
 def test_ffn_up_cpu_fallback_matches_torch() -> None:
     x = torch.randn(3, 256)
     weight = torch.randn(1024, 256)

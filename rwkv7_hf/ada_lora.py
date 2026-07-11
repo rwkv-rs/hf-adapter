@@ -34,12 +34,13 @@ _CPP_SOURCE = r"""
 
 std::vector<torch::Tensor> rwkv7_ada_wagv_rank_in_cuda(
     torch::Tensor xw, torch::Tensor xa, torch::Tensor xg, torch::Tensor xv,
-    torch::Tensor w1, torch::Tensor a1, torch::Tensor g1, torch::Tensor v1);
+    torch::Tensor w1, torch::Tensor a1, torch::Tensor g1, torch::Tensor v1,
+    bool compute_v);
 std::vector<torch::Tensor> rwkv7_ada_wagv_rank_out_cuda(
     torch::Tensor wh, torch::Tensor ah, torch::Tensor gh, torch::Tensor vh,
     torch::Tensor w2, torch::Tensor a2, torch::Tensor g2, torch::Tensor v2,
     torch::Tensor w0, torch::Tensor a0, torch::Tensor v0,
-    torch::Tensor v, torch::Tensor v_first);
+    torch::Tensor v, torch::Tensor v_first, bool sigmoid_a, bool compute_v);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("rank_in", &rwkv7_ada_wagv_rank_in_cuda,
@@ -196,7 +197,8 @@ __global__ __launch_bounds__(Threads, 2) void wagv_rank_out_kernel(
     scalar_t* __restrict__ w,
     scalar_t* __restrict__ a,
     scalar_t* __restrict__ g,
-    scalar_t* __restrict__ v_out) {
+    scalar_t* __restrict__ v_out,
+    bool sigmoid_a) {
   const int hidden_start = blockIdx.x * OutTile;
   const int row = blockIdx.y;
   const int group = blockIdx.z;
@@ -259,7 +261,9 @@ __global__ __launch_bounds__(Threads, 2) void wagv_rank_out_kernel(
         if (group == 0) {
           output[index] = store_float<scalar_t>(sum + load_float(w0 + hidden_index));
         } else if (group == 1) {
-          output[index] = store_float<scalar_t>(sum + load_float(a0 + hidden_index));
+          float value = sum + load_float(a0 + hidden_index);
+          if (sigmoid_a) value = 1.0f / (1.0f + expf(-value));
+          output[index] = store_float<scalar_t>(value);
         } else if (group == 3) {
           const float current = load_float(v + index);
           const float first = load_float(v_first + index);
@@ -284,7 +288,8 @@ void check_tensor(const torch::Tensor& tensor, const char* name) {
 
 std::vector<torch::Tensor> rwkv7_ada_wagv_rank_in_cuda(
     torch::Tensor xw, torch::Tensor xa, torch::Tensor xg, torch::Tensor xv,
-    torch::Tensor w1, torch::Tensor a1, torch::Tensor g1, torch::Tensor v1) {
+    torch::Tensor w1, torch::Tensor a1, torch::Tensor g1, torch::Tensor v1,
+    bool compute_v) {
   check_tensor(xw, "xw"); check_tensor(xa, "xa");
   check_tensor(xg, "xg"); check_tensor(xv, "xv");
   check_tensor(w1, "w1"); check_tensor(a1, "a1");
@@ -313,7 +318,7 @@ std::vector<torch::Tensor> rwkv7_ada_wagv_rank_in_cuda(
   auto vh = torch::empty({rows, rv}, xw.options());
   auto stream = at::cuda::getCurrentCUDAStream(xw.get_device());
   if (xw.scalar_type() == at::kHalf) {
-    wagv_rank_in_kernel<half, 256><<<dim3(max_rank, rows, 4), 256, 0, stream>>>(
+    wagv_rank_in_kernel<half, 256><<<dim3(max_rank, rows, compute_v ? 4 : 3), 256, 0, stream>>>(
         rows, hidden, rw, ra, rg, rv, max_rank,
         reinterpret_cast<const half*>(xw.data_ptr<at::Half>()),
         reinterpret_cast<const half*>(xa.data_ptr<at::Half>()),
@@ -328,7 +333,7 @@ std::vector<torch::Tensor> rwkv7_ada_wagv_rank_in_cuda(
         reinterpret_cast<half*>(gh.data_ptr<at::Half>()),
         reinterpret_cast<half*>(vh.data_ptr<at::Half>()));
   } else {
-    wagv_rank_in_kernel<nv_bfloat16, 256><<<dim3(max_rank, rows, 4), 256, 0, stream>>>(
+    wagv_rank_in_kernel<nv_bfloat16, 256><<<dim3(max_rank, rows, compute_v ? 4 : 3), 256, 0, stream>>>(
         rows, hidden, rw, ra, rg, rv, max_rank,
         reinterpret_cast<const nv_bfloat16*>(xw.data_ptr<at::BFloat16>()),
         reinterpret_cast<const nv_bfloat16*>(xa.data_ptr<at::BFloat16>()),
@@ -351,7 +356,7 @@ std::vector<torch::Tensor> rwkv7_ada_wagv_rank_out_cuda(
     torch::Tensor wh, torch::Tensor ah, torch::Tensor gh, torch::Tensor vh,
     torch::Tensor w2, torch::Tensor a2, torch::Tensor g2, torch::Tensor v2,
     torch::Tensor w0, torch::Tensor a0, torch::Tensor v0,
-    torch::Tensor v, torch::Tensor v_first) {
+    torch::Tensor v, torch::Tensor v_first, bool sigmoid_a, bool compute_v) {
   check_tensor(wh, "wh"); check_tensor(ah, "ah");
   check_tensor(gh, "gh"); check_tensor(vh, "vh");
   check_tensor(w2, "w2"); check_tensor(a2, "a2");
@@ -381,10 +386,13 @@ std::vector<torch::Tensor> rwkv7_ada_wagv_rank_out_cuda(
   auto w = torch::empty({rows, hidden}, wh.options());
   auto a = torch::empty_like(w);
   auto g = torch::empty_like(w);
+  // Keep the custom-op outputs non-aliasing even when the V branch is skipped.
+  // CUDA graph pools may retain several batch-size captures concurrently and
+  // cannot infer pybind-only input/output aliasing from a function schema.
   auto v_out = torch::empty_like(w);
   auto stream = at::cuda::getCurrentCUDAStream(wh.get_device());
   if (wh.scalar_type() == at::kHalf) {
-    wagv_rank_out_kernel<half, 128, 4><<<dim3(hidden / 4, rows, 4), 128, 0, stream>>>(
+    wagv_rank_out_kernel<half, 128, 4><<<dim3(hidden / 4, rows, compute_v ? 4 : 3), 128, 0, stream>>>(
         rows, hidden, static_cast<int>(wh.size(1)), static_cast<int>(ah.size(1)),
         static_cast<int>(gh.size(1)), static_cast<int>(vh.size(1)),
         reinterpret_cast<const half*>(wh.data_ptr<at::Half>()),
@@ -403,9 +411,10 @@ std::vector<torch::Tensor> rwkv7_ada_wagv_rank_out_cuda(
         reinterpret_cast<half*>(w.data_ptr<at::Half>()),
         reinterpret_cast<half*>(a.data_ptr<at::Half>()),
         reinterpret_cast<half*>(g.data_ptr<at::Half>()),
-        reinterpret_cast<half*>(v_out.data_ptr<at::Half>()));
+        reinterpret_cast<half*>(v_out.data_ptr<at::Half>()),
+        sigmoid_a);
   } else {
-    wagv_rank_out_kernel<nv_bfloat16, 128, 4><<<dim3(hidden / 4, rows, 4), 128, 0, stream>>>(
+    wagv_rank_out_kernel<nv_bfloat16, 128, 4><<<dim3(hidden / 4, rows, compute_v ? 4 : 3), 128, 0, stream>>>(
         rows, hidden, static_cast<int>(wh.size(1)), static_cast<int>(ah.size(1)),
         static_cast<int>(gh.size(1)), static_cast<int>(vh.size(1)),
         reinterpret_cast<const nv_bfloat16*>(wh.data_ptr<at::BFloat16>()),
@@ -424,7 +433,8 @@ std::vector<torch::Tensor> rwkv7_ada_wagv_rank_out_cuda(
         reinterpret_cast<nv_bfloat16*>(w.data_ptr<at::BFloat16>()),
         reinterpret_cast<nv_bfloat16*>(a.data_ptr<at::BFloat16>()),
         reinterpret_cast<nv_bfloat16*>(g.data_ptr<at::BFloat16>()),
-        reinterpret_cast<nv_bfloat16*>(v_out.data_ptr<at::BFloat16>()));
+        reinterpret_cast<nv_bfloat16*>(v_out.data_ptr<at::BFloat16>()),
+        sigmoid_a);
   }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return {w, a, g, v_out};
@@ -470,7 +480,7 @@ def _load_extension() -> Any | None:
             from torch.utils.cpp_extension import load_inline
 
             _EXTENSION = load_inline(
-                name="rwkv7_ada_lora_v3",
+                name="rwkv7_ada_lora_v6",
                 cpp_sources=_CPP_SOURCE,
                 cuda_sources=_CUDA_SOURCE,
                 functions=None,
@@ -529,9 +539,15 @@ def ada_wagv_lora(
     v: Any,
     v_first: Any,
     *,
+    sigmoid_a: bool = False,
+    compute_v: bool = True,
     force_fallback: bool = False,
 ) -> tuple[Any, Any, Any, Any]:
-    """Return ``(w_raw, a_raw, g, interpolated_v)`` for layer>0 decode."""
+    """Return grouped W/A/G/V outputs for layer>0 decode.
+
+    ``sigmoid_a=True`` folds the A-gate sigmoid into the rank-out kernel and
+    avoids a separate pointwise launch in the captured decode graph.
+    """
 
     if torch is None or F is None:
         raise RuntimeError("ada_wagv_lora requires torch")
@@ -559,14 +575,27 @@ def ada_wagv_lora(
     )
     extension = _load_extension() if valid else None
     if extension is None:
-        outputs = _fallback(
-            xw2, xa2, xg2, xv2, w1, a1, g1, v1, w2, a2, g2, v2,
-            w0, a0, v0, v_current, v_first2,
-        )
+        if compute_v:
+            outputs = _fallback(
+                xw2, xa2, xg2, xv2, w1, a1, g1, v1, w2, a2, g2, v2,
+                w0, a0, v0, v_current, v_first2,
+            )
+        else:
+            outputs = (
+                F.linear(torch.tanh(F.linear(xw2, w1)), w2, w0),
+                F.linear(F.linear(xa2, a1), a2, a0),
+                F.linear(torch.sigmoid(F.linear(xg2, g1)), g2),
+                v_current,
+            )
+        if sigmoid_a:
+            outputs = (outputs[0], torch.sigmoid(outputs[1]), outputs[2], outputs[3])
     else:
-        hidden_states = extension.rank_in(xw2, xa2, xg2, xv2, w1, a1, g1, v1)
+        hidden_states = extension.rank_in(
+            xw2, xa2, xg2, xv2, w1, a1, g1, v1, bool(compute_v)
+        )
         outputs = extension.rank_out(
-            *hidden_states, w2, a2, g2, v2, w0, a0, v0, v_current, v_first2
+            *hidden_states, w2, a2, g2, v2, w0, a0, v0, v_current, v_first2,
+            bool(sigmoid_a), bool(compute_v),
         )
     if scalar:
         return tuple(item.reshape(hidden) for item in outputs)  # type: ignore[return-value]

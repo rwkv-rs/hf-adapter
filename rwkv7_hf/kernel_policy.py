@@ -62,10 +62,15 @@ class KernelPolicy:
     fused_recurrent_raw: bool = False
     fused_output: bool = False
     fused_norm_mix: bool = False
+    norm_mix_num_warps: int = 4
     sm70_linear: bool = False
     ada_linear: bool = False
+    ada_linear_rows: str = "2 4"
     ada_wagv_lora: bool = False
     ada_sparse_ffn: bool = False
+    ada_sparse_ffn_max_rows: int = 19
+    ada_sparse_ffn_inplace: bool = False
+    rkv_policy: str = "manual"
     fused_output_project: bool = False
     fused_projection: bool = False
     fused_wag_lora: bool = False
@@ -415,16 +420,21 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_recurrent_raw=True,
             fused_output=True,
             fused_norm_mix=True,
+            norm_mix_num_warps=8 if is_4090 else 4,
             fused_prefill_scan=is_4090,
             prefill_graph=is_4090,
             fused_prefill_shift_mix=is_4090,
             fused_prefill_state_prep=is_4090,
             fused_prefill_output=is_4090,
             ada_linear=True,
+            ada_linear_rows="1 2 4" if is_4090 else "2 4",
             ada_wagv_lora=True,
-            ada_sparse_ffn=False,
+            ada_sparse_ffn=is_4090,
+            ada_sparse_ffn_max_rows=2 if is_4090 else 19,
+            ada_sparse_ffn_inplace=is_4090,
+            rkv_policy="vkwr_auto" if is_4090 else "manual",
             output_project_block_m=16,
-            notes="RTX 40/Ada: exact-4090 rows promote fixed-shape prefill graph with split scan/state-prep/output/shift plus raw recurrent decode, decode norm/mix, rows=2 exact linear, rows=4 hidden exact linear, and rows<=4 grouped W/A/G/V LoRA; other Ada cards retain the compatible fallback until measured",
+            notes="RTX 40/Ada: exact-4090 rows promote fixed-shape prefill graph plus raw recurrent decode, 8-warp norm/mix, rows=1/2/4 exact linear, stacked-copy-free R/K/V, grouped W/A/G/V including layer 0, and graph-safe one/two-row sparse FFN; other Ada cards retain the compatible fallback until measured",
         )
     if family == "hopper":
         return KernelPolicy(

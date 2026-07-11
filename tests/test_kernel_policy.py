@@ -66,13 +66,22 @@ def test_policy_defaults_are_conservative() -> None:
     assert not ada.fused_prefill_state_scan
     assert not ada.fused_projection
     assert ada.ada_linear
+    assert ada.ada_linear_rows == "1 2 4"
     assert ada.ada_wagv_lora
-    assert not ada.ada_sparse_ffn
+    assert ada.ada_sparse_ffn
+    assert ada.ada_sparse_ffn_max_rows == 2
+    assert ada.ada_sparse_ffn_inplace
+    assert ada.rkv_policy == "vkwr_auto"
+    assert ada.norm_mix_num_warps == 8
 
     other_ada = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 4070", (8, 9)))
     assert not other_ada.fast_prefill
     assert not other_ada.prefill_graph
     assert not other_ada.fused_prefill_scan
+    assert not other_ada.ada_sparse_ffn
+    assert other_ada.rkv_policy == "manual"
+    assert other_ada.ada_linear_rows == "2 4"
+    assert other_ada.norm_mix_num_warps == 4
 
     blackwell = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 5090", (12, 0)))
     assert blackwell.fused_output
