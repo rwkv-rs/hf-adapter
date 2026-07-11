@@ -667,3 +667,24 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   and six small runtime/tokenizer files. No Hub write was performed.
 - `verify_hf_release.py` is now v1-generic and rejects backend policy leaked
   into model config. Local gate after the release-tool cleanup: `90 passed`.
+
+### 2026-08-28 — V100 final-harness verification while RTX 4080 remains occupied
+
+- Staged validation/release harness commit
+  `4408e9e1dbd27c946b7b915bfcb6332561cf6e3a` at
+  `/home/data/wangyue/repos/codex-build/hf-adapter-kernels-v1-harness-4408e9e1`.
+  Its `.codex-source-sha` marker and all inference/training/ecosystem/FLA and
+  Hub release entry points were verified before any V100 GPU work.
+- Removed macOS AppleDouble `._*` transport metadata from the staged tree;
+  these were never source files but made a recursive `compileall` attempt fail
+  with null-byte errors. After removal, the pinned inference Python completed
+  `compileall` over `evaluation/`, `examples/`, `scripts/`, and `rwkv7_hf/`.
+- All six canonical `rwkv7_hf/*.py` SHA256 values on V100 exactly match the
+  local `4408e9e1` worktree. This is source-transfer evidence only; the V100 GPU
+  acceptance sequence remains intentionally gated on internally consistent
+  RTX 4080 backend-v2 JSON.
+- At `2026-08-28 02:46 +08:00`, the older recurrent-v1 RTX 4080 formal matrix
+  had 19 successful reference manifest rows. Its active 0.4B batch-1
+  HellaSwag process was still live at 100% CPU, and all backend-v2 watchers
+  remained asleep. No process was terminated, restarted, or given competing
+  GPU work.
