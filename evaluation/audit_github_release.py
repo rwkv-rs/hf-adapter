@@ -59,7 +59,9 @@ REQUIRED_ISSUE_TERMS = (
     "torchao",
     "autograd",
     "153",
+    "100",
     "source scope",
+    "clean-boundary",
     "byte-identical",
     "v0.10",
 )

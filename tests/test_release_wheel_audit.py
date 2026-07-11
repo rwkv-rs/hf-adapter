@@ -34,10 +34,15 @@ def test_release_wheel_audit_accepts_clean_hf_and_all_102_sources(tmp_path: Path
     report = audit_kernel_wheel(kernel)
     assert report["status"] == "passed"
     assert report["migrated_files"] == 102
+    assert report["transfers"] == {
+        "adapted_clean_boundary": 2,
+        "byte_identical": 100,
+    }
     assert report["capability_inventory"]["capabilities"] == 16
     assert report["capability_inventory"]["mapped_migration_files"] == 102
     assert report["source_scope"]["historical_files"] == 153
-    assert report["source_scope"]["dispositions"]["byte_migrated_nvidia"] == 102
+    assert report["source_scope"]["dispositions"]["byte_migrated_nvidia"] == 100
+    assert report["source_scope"]["dispositions"]["adapted_protocol"] == 12
     assert report["recurrent_source_scope"]["historical_files"] == 3
     assert report["recurrent_source_scope"]["byte_identical_implementations"] == 2
 
@@ -55,6 +60,40 @@ def test_kernel_wheel_audit_rejects_changed_migrated_bytes(tmp_path: Path):
     member = first_migrated_member()
     write_valid_kernel_wheel(kernel, tamper=member)
     with pytest.raises(ValueError, match="source hash mismatch"):
+        audit_kernel_wheel(kernel)
+
+
+def test_kernel_wheel_audit_rejects_false_migrated_git_blob(tmp_path: Path):
+    root = Path(__file__).resolve().parents[1]
+    manifest_path = root / "kernels/rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["files"][0]["git_blob"] = "0" * 40
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(
+        kernel,
+        extra={MIGRATION_MANIFEST: json.dumps(manifest).encode()},
+    )
+    with pytest.raises(ValueError, match="source Git blob mismatch"):
+        audit_kernel_wheel(kernel)
+
+
+def test_kernel_wheel_audit_rejects_undeclared_clean_boundary_adaptation(
+    tmp_path: Path,
+):
+    root = Path(__file__).resolve().parents[1]
+    manifest_path = root / "kernels/rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text())
+    exact = next(
+        row for row in manifest["files"] if row["transfer"] == "byte_identical"
+    )
+    exact["transfer"] = "adapted_clean_boundary"
+    exact["adaptation"] = "undeclared adaptation"
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(
+        kernel,
+        extra={MIGRATION_MANIFEST: json.dumps(manifest).encode()},
+    )
+    with pytest.raises(ValueError, match="unexpected clean-boundary adaptation"):
         audit_kernel_wheel(kernel)
 
 

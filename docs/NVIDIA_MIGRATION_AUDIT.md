@@ -8,9 +8,20 @@ boundary, without copying its duplicate Hugging Face model stack back into
 ## Exact source transfer
 
 `kernels/rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json` records **102** files
-from `perf/native-kernels-v0.8`.  Each row contains the old path, Git blob,
-new path, and destination SHA256.  The wheel test recomputes every hash.  The
-set includes:
+from `perf/native-kernels-v0.8`. Each row contains the old path, Git blob, new
+path, destination SHA256, and transfer kind. The wheel test recomputes every
+destination hash. For the **100 byte-identical** rows it also reconstructs the
+Git blob directly from the wheel bytes. Two files require explicit
+clean-boundary adaptation rather than a false byte-identity claim:
+
+- `native_graph_runtime.py` now binds only canonical `RWKV7Cache` views rather
+  than the historical private `NativeRWKV7Cache` ABI;
+- `train_temp_cuda.py` now owns only the leaf forward/backward autograd
+  operators; whole-model/layer dispatch lives in `training_runtime.py` and no
+  model `forward` method is replaced.
+
+Both adapted destinations retain their old Git blob identity, new SHA256 and a
+machine-checked rationale. The complete 102-file set includes:
 
 - CUDA/Triton fused projection, norm/mix, W/A/G/V LoRA, recurrent output,
   FFN, DPLR, self-chunk, and sequence-prefill implementations;
@@ -24,7 +35,8 @@ set includes:
 
 Source-tree presence is not enough: `scripts/audit_release_wheels.py` opens the
 actual kernel wheel, rejects unsafe/cross-package members, reads the embedded
-manifest, and recomputes all 102 payload hashes. It also requires the adapted
+manifest, and recomputes all 102 destination hashes plus all 100 applicable
+source Git blobs. It also requires the adapted
 dispatcher, dense/prefill/decode, graph/state-pool, quantization, recurrent and
 training runtime modules that were intentionally not byte-copied from the old
 duplicate model stack. The same command checks that the `rwkv7-hf` wheel keeps
@@ -69,8 +81,8 @@ historical commit `1014acf1a52fa4dee1e4d2b46e6059275c1d3bea`:
 
 | disposition | files |
 |---|---:|
-| byte-migrated NVIDIA implementation | 102 |
-| adapted to the clean model-forward protocol | 10 |
+| byte-identical NVIDIA implementation | 100 |
+| adapted to the clean model-forward protocol | 12 |
 | replaced by canonical reference ownership | 7 |
 | tooling relocated or retired | 6 |
 | separate non-NVIDIA hardware distribution | 27 |
@@ -78,8 +90,9 @@ historical commit `1014acf1a52fa4dee1e4d2b46e6059275c1d3bea`:
 
 Every row retains its historical Git mode and blob ID. The wheel audit rebuilds
 the Git tree object from all 153 rows and requires the result to equal frozen
-tree `1bb1fe1cd64662bbd6d29f72c9002a8513af3691`. It then cross-checks the 102
-NVIDIA rows against `MIGRATION_MANIFEST.json` and requires every adapted kernel
+tree `1bb1fe1cd64662bbd6d29f72c9002a8513af3691`. It then cross-checks all 102
+NVIDIA rows (100 exact transfers and two clean adaptations) against
+`MIGRATION_MANIFEST.json` and requires every adapted kernel
 replacement to exist in the wheel. An omitted historical file, an
 `unclassified` row, or a relabelled blob changes the reconstructed tree and
 fails the release.

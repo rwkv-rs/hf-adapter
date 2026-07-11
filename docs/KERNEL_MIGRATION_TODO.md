@@ -865,7 +865,7 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - The kernel-wheel audit requires all adapted runtime/protocol/dispatcher/
   recurrent/graph/training/quantization modules, rejects any copied HF
   model/config/cache owner, reads the embedded source-migration manifest, and
-  recomputes every one of the 102 migrated NVIDIA payload hashes. The HF-wheel
+  recomputes every one of the 102 migrated NVIDIA destination hashes. The HF-wheel
   audit independently requires the seven canonical model/tokenizer assets and
   rejects the optional kernel package plus the removed compatibility/tooling
   names.
@@ -874,7 +874,7 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   `237f4561ce59e3b4bbf385489bf9d0620e1b9f24877bd1990d8f00d9d7c6673c`
   contains 18 members; kernel wheel
   `a36be47896f17ba40fbaf0e78cf486a79b929c5e7ecc3d71ae1a16a619596156`
-  contains 125 members, including 102/102 byte-verified migrated files and all
+  contains 125 members, including 102/102 destination-hash-verified files and all
   15 required adapted runtime files. These remain diagnostic, not final stable
   release artifacts.
 - Failure tests remove one migrated file, alter one migrated payload, omit the
@@ -1011,7 +1011,7 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 ### 2026-08-28 — every migrated high-performance family is semantically audited
 
 - Added the wheel-owned `nvidia/CAPABILITY_INVENTORY.json`. It maps all 102
-  byte-verified historical NVIDIA payloads exactly once into 16 capability
+  destination-hash-verified historical NVIDIA payloads exactly once into 16 capability
   families covering recurrent, dense/fused decode, DPLR/self-chunk/fused
   prefill, CUDA Graph/state pools, SM70/Ada/Blackwell, W8/W4/A8W8/BN-TN/BnB/
   Marlin/TorchAO, common quant runtime, and train-temp autograd.
@@ -1031,7 +1031,7 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - Targeted Ruff, compileall, `git diff --check`, and the complete local suite
   pass: `143 passed`. A disposable development-wheel build was then audited
   from its ZIP contents: 16/16 capability families, 102/102 mapped and
-  byte-verified migration files, 23 reachable adapted runtime files and 46
+  destination-hash-verified migration files, 23 reachable adapted runtime files and 46
   real policy flags. Its SHA256 is
   `0a7f8f162fde9def8dd31ada789e5ef364eabf68093d771326a8d9775489a3df`;
   it is a local audit artifact, not the final immutable `1.0.0` release wheel.
@@ -1062,8 +1062,8 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 
 - Audited the complete `perf/native-kernels-v0.8:rwkv7_hf` tree rather than
   trusting the selected 102-file migration list. The frozen historical tree
-  contains 153 files: 102 byte-migrated NVIDIA files, 10 model/glue files
-  adapted behind the clean protocol, 7 canonical reference owners, 6
+  contains 153 files: 100 byte-identical NVIDIA files, 12 model/glue or runtime
+  files adapted behind the clean protocol, 7 canonical reference owners, 6
   relocated/retired tools, 27 explicitly separate Ascend/MLX/Biren/MetaX/MUSA
   files, and one retired non-kernel speculative helper.
 - Added wheel-owned `nvidia/SOURCE_SCOPE.json` with the historical mode/blob
@@ -1073,7 +1073,7 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   against `MIGRATION_MANIFEST.json`, and verifies adapted kernel replacements
   are shipped. No `unknown` or `unclassified` disposition is accepted.
 - A disposable wheel ZIP passed all three audits: 153/153 historical files,
-  102/102 byte migrations, 16/16 capability families, 9 adapted kernel
+  102/102 destination migrations, 16/16 capability families, 11 adapted kernel
   replacement files and five named separate hardware families. Development
   wheel SHA256:
   `a9918fdd79c1f1c722e57b1dfa022280efe3b622aeb84981b3eda5501693d90a`;
@@ -1116,7 +1116,7 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   requirements so “all historical HF performance operators” covers both the
   large v0.8 NVIDIA tree and the later independently packaged recurrent line.
 - A disposable development-wheel ZIP passed the combined audit: 153/153 v0.8
-  source files, 102/102 NVIDIA byte migrations, 16/16 capability families,
+  source files, 102/102 NVIDIA destination migrations, 16/16 capability families,
   and 3/3 v0.10 recurrent-package files with 2/2 byte-identical
   implementations. Disposable wheel hashes are HF
   `4bb51faa154d7d51ccf3af2bac9f1eac712dde74fcc35a4fd58583172871253f`
@@ -1136,3 +1136,40 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   0.4B/batch-8 HellaSwag unit was at 56% (`22407/40168`) with approximately
   52 minutes remaining. It was the only GPU process; all backend-v2 watchers
   remained asleep and sequential.
+
+### 2026-08-28 — destination hashes are now tied to historical Git blobs
+
+- Strengthened the release-wheel audit so an entry cannot claim byte identity
+  merely by updating its destination SHA256 in the manifest. For every exact
+  transfer, the audit now reconstructs `sha1("blob <size>\\0" + payload)` from
+  the actual wheel member and requires it to equal the frozen historical Git
+  blob ID.
+- This stronger check found two deliberately adapted files that the earlier
+  manifest had incorrectly counted as byte-identical. The implementation was
+  already correct, but the evidence label was not: `native_graph_runtime.py`
+  binds the canonical `RWKV7Cache` instead of the old private cache, and
+  `train_temp_cuda.py` removes whole-model `forward` monkeypatching in favor of
+  `training_runtime.py` direct dispatch.
+- Corrected the machine-readable denominator to **100 byte-identical + 2
+  declared clean-boundary adaptations = all 102 NVIDIA transfers**. The
+  complete 153-file source scope is now 100 byte-identical NVIDIA, 12 adapted
+  protocol/runtime files, 7 canonical owners, 6 relocated tools, 27 separate
+  hardware files, and one retired non-kernel helper. The frozen source-tree ID
+  remains unchanged because every historical mode/blob row is still present.
+- The two adaptations are restricted by exact historical source path and must
+  carry a non-empty rationale; an undeclared third adaptation fails the wheel
+  audit. Capability coverage remains 102/102 across the same 16 families.
+- A newly built disposable ZIP passed the stronger combined audit: 100 exact
+  Git blobs, two declared adaptations, 102 destination SHA256 values, 153/153
+  historical rows, 16/16 capability families, and both byte-identical v0.10
+  recurrent implementations. Disposable hashes are HF
+  `0880882799243cd643391108f16b649a2009be06e68d26ad7024708767e7319f`
+  and kernels
+  `d8c9add5731c0d8edf07a86ced093955d7d12995d5503b8cf86bf4bd058d0a3b`;
+  they are not final stable artifacts. The complete local suite passes
+  `152 passed` with `133` expected TorchScript deprecation warnings, including
+  rejection of an undeclared third clean-boundary adaptation.
+- No runtime source or running GPU process changed during this evidence
+  correction. The queued RTX 4080 diagnostic continues to use its original
+  immutable wheel pair; final stable wheels will include the corrected audit
+  metadata after the diagnostic gate.

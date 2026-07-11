@@ -98,6 +98,11 @@ ALLOWED_DISPOSITIONS = {
     "separate_hardware_distribution",
     "tooling_relocated_or_retired",
 }
+ALLOWED_TRANSFERS = {"byte_identical", "adapted_clean_boundary"}
+ADAPTED_MIGRATION_SOURCES = {
+    "rwkv7_hf/native_graph_runtime.py",
+    "rwkv7_hf/train_temp_cuda.py",
+}
 
 
 def arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -410,10 +415,12 @@ def audit_source_scope(
         str(row["source"]): (
             manifest_member(row),
             str(row["destination_sha256"]),
+            str(row["git_blob"]),
+            str(row["transfer"]),
         )
         for row in manifest["files"]
     }
-    scoped_migration: dict[str, tuple[str, str]] = {}
+    scoped_migration: dict[str, tuple[str, str, str, str]] = {}
     adapted_kernel_files: set[str] = set()
     hardware_families: set[str] = set()
     for row in rows:
@@ -422,9 +429,15 @@ def audit_source_scope(
         if disposition == "byte_migrated_nvidia":
             destination = inventory_member(row.get("destination"))
             digest = str(row.get("destination_sha256", ""))
+            blob = str(row.get("git_blob", ""))
             if destination not in members:
                 raise ValueError(f"historical source destination is absent: {source}")
-            scoped_migration[source] = (destination, digest)
+            scoped_migration[source] = (
+                destination,
+                digest,
+                blob,
+                "byte_identical",
+            )
         elif disposition == "adapted_protocol":
             replacements = row.get("replacements")
             if not isinstance(replacements, list) or not replacements:
@@ -437,6 +450,20 @@ def audit_source_scope(
                             f"adapted source replacement is absent: {source} -> {normalized}"
                         )
                     adapted_kernel_files.add(normalized)
+            if "destination" in row:
+                destination = inventory_member(row.get("destination"))
+                digest = str(row.get("destination_sha256", ""))
+                blob = str(row.get("git_blob", ""))
+                if destination not in members:
+                    raise ValueError(
+                        f"adapted historical destination is absent: {source}"
+                    )
+                scoped_migration[source] = (
+                    destination,
+                    digest,
+                    blob,
+                    "adapted_clean_boundary",
+                )
         elif disposition == "separate_hardware_distribution":
             family = str(row.get("hardware_family", ""))
             if family not in {"ascend", "apple_mlx", "biren", "metax", "musa"}:
@@ -597,16 +624,38 @@ def audit_kernel_wheel(path: Path) -> dict[str, Any]:
         if not isinstance(rows, list) or len(rows) != 102:
             raise ValueError("NVIDIA migration manifest must contain all 102 files")
         migrated: set[str] = set()
+        transfers: dict[str, int] = {name: 0 for name in ALLOWED_TRANSFERS}
         for entry in rows:
             member = manifest_member(entry)
             if member in migrated:
                 raise ValueError(f"duplicate NVIDIA migration member: {member}")
             if member not in members:
                 raise ValueError(f"kernel wheel omitted migrated source: {member}")
-            digest = sha256_bytes(archive.read(member))
+            payload = archive.read(member)
+            digest = sha256_bytes(payload)
             if digest != entry.get("destination_sha256"):
                 raise ValueError(f"migrated source hash mismatch in wheel: {member}")
+            transfer = str(entry.get("transfer", ""))
+            if transfer not in ALLOWED_TRANSFERS:
+                raise ValueError(f"migrated source has invalid transfer: {member}")
+            source = str(entry.get("source", ""))
+            if transfer == "byte_identical" and git_blob_oid(payload) != entry.get(
+                "git_blob"
+            ):
+                raise ValueError(
+                    f"migrated source Git blob mismatch in wheel: {member}"
+                )
+            if transfer == "adapted_clean_boundary":
+                if source not in ADAPTED_MIGRATION_SOURCES:
+                    raise ValueError(f"unexpected clean-boundary adaptation: {source}")
+                if not str(entry.get("adaptation", "")).strip():
+                    raise ValueError(
+                        f"clean-boundary adaptation has no rationale: {source}"
+                    )
+            transfers[transfer] += 1
             migrated.add(member)
+        if transfers != {"adapted_clean_boundary": 2, "byte_identical": 100}:
+            raise ValueError(f"NVIDIA migration transfer counts differ: {transfers}")
         capability_report = audit_capability_inventory(
             archive,
             names,
@@ -623,6 +672,7 @@ def audit_kernel_wheel(path: Path) -> dict[str, Any]:
             "source_scope": source_scope_report,
             "recurrent_source_scope": recurrent_source_scope_report,
             "migrated_files": len(migrated),
+            "transfers": transfers,
             "runtime_files": len(KERNEL_REQUIRED),
             "members": len(members),
         }

@@ -19,15 +19,31 @@ def test_nvidia_migration_manifest_is_complete_and_byte_verified():
     assert len(manifest["files"]) == 102
 
     destinations = set()
+    transfers = {"byte_identical": 0, "adapted_clean_boundary": 0}
     for entry in manifest["files"]:
         destination = ROOT / entry["destination"]
         assert destination.is_file(), entry["destination"]
-        assert (
-            hashlib.sha256(destination.read_bytes()).hexdigest()
-            == entry["destination_sha256"]
-        )
-        assert len(entry["git_blob"]) == 40
+        payload = destination.read_bytes()
+        assert hashlib.sha256(payload).hexdigest() == entry["destination_sha256"]
+        transfer = entry["transfer"]
+        transfers[transfer] += 1
+        if transfer == "byte_identical":
+            header = b"blob " + str(len(payload)).encode() + b"\0"
+            assert (
+                hashlib.sha1(  # noqa: S324 - verifies historical Git identity.
+                    header + payload,
+                    usedforsecurity=False,
+                ).hexdigest()
+                == entry["git_blob"]
+            )
+        else:
+            assert entry["source"] in {
+                "rwkv7_hf/native_graph_runtime.py",
+                "rwkv7_hf/train_temp_cuda.py",
+            }
+            assert entry["adaptation"]
         destinations.add(destination.name)
+    assert transfers == {"byte_identical": 100, "adapted_clean_boundary": 2}
 
     required_families = {
         "fused_attention_projection.py",
@@ -96,8 +112,8 @@ def test_historical_source_scope_classifies_the_entire_frozen_git_tree():
     assert scope["source_subtree_git_tree"] == historical_tree_oid(scope["entries"])
     assert len(scope["entries"]) == 153
     assert scope["counts"] == {
-        "adapted_protocol": 10,
-        "byte_migrated_nvidia": 102,
+        "adapted_protocol": 12,
+        "byte_migrated_nvidia": 100,
         "canonical_reference": 7,
         "non_kernel_feature_retired": 1,
         "separate_hardware_distribution": 27,
@@ -107,7 +123,8 @@ def test_historical_source_scope_classifies_the_entire_frozen_git_tree():
     scoped_sources = {
         entry["source"]
         for entry in scope["entries"]
-        if entry["disposition"] == "byte_migrated_nvidia"
+        if "destination" in entry
+        and entry["disposition"] in {"byte_migrated_nvidia", "adapted_protocol"}
     }
     assert scoped_sources == migrated_sources
     assert not any(

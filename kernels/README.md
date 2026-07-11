@@ -59,13 +59,14 @@ frozen boundary and byte-audited migration inventory.
 
 The built wheel embeds both `MIGRATION_MANIFEST.json` and
 `CAPABILITY_INVENTORY.json`. The first verifies all 102 historical NVIDIA
-payloads byte for byte. The second maps those payloads to the actual recurrent,
-prefill, decode, graph/state, SM70/Ada/Blackwell, quantization, and training
-runtime routes. Release auditing rejects a wheel that merely ships an
-unreachable source archive.
+transfers: 100 are byte-identical, while graph-cache binding and train-temp
+dispatch are declared clean-boundary adaptations. The second maps all 102
+payloads to the actual recurrent, prefill, decode, graph/state,
+SM70/Ada/Blackwell, quantization, and training runtime routes. Release auditing
+rejects a wheel that merely ships an unreachable source archive.
 
 `SOURCE_SCOPE.json` closes the denominator: it classifies every file in the
 153-file historical performance-package tree and cryptographically rebuilds
-the frozen Git tree ID. This distinguishes byte-migrated NVIDIA code, adapted
+the frozen Git tree ID. This distinguishes byte-identical NVIDIA code, adapted
 protocol/model glue, canonical HF ownership, relocated tools, intentionally
 separate non-NVIDIA backends, and the one retired non-kernel helper.

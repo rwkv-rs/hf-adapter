@@ -1,7 +1,7 @@
 {
   "counts": {
-    "adapted_protocol": 10,
-    "byte_migrated_nvidia": 102,
+    "adapted_protocol": 12,
+    "byte_migrated_nvidia": 100,
     "canonical_reference": 7,
     "non_kernel_feature_retired": 1,
     "separate_hardware_distribution": 27,
@@ -909,11 +909,15 @@
       "source": "rwkv7_hf/native.py"
     },
     {
+      "adaptation": "adapted from the private NativeRWKV7Cache ABI to the canonical RWKV7Cache without changing graph kernels",
       "destination": "rwkv7_kernels/nvidia/native_graph_runtime.py",
       "destination_sha256": "1d389a409790786cc6963195908bc1e7eec5a8f88b43c8c04ee7cb2b8c30fb61",
-      "disposition": "byte_migrated_nvidia",
+      "disposition": "adapted_protocol",
       "git_blob": "67bf1baef14e76148713679431975a2ec1213084",
       "git_mode": "100644",
+      "replacements": [
+        "rwkv7_kernels/nvidia/native_graph_runtime.py"
+      ],
       "source": "rwkv7_hf/native_graph_runtime.py"
     },
     {
@@ -1234,11 +1238,15 @@
       "source": "rwkv7_hf/train_temp_alignment.py"
     },
     {
+      "adaptation": "adapted to expose leaf autograd operators only; whole-model dispatch moved to training_runtime.py without monkeypatching model forwards",
       "destination": "rwkv7_kernels/nvidia/train_temp_cuda.py",
       "destination_sha256": "0a6165cc30194d64c07a5e00eb767bec02b57dcaa416742b3e1e276610a1cd98",
-      "disposition": "byte_migrated_nvidia",
+      "disposition": "adapted_protocol",
       "git_blob": "5035693937a5912dfd7c261b4d751bbb67acd2a6",
       "git_mode": "100644",
+      "replacements": [
+        "rwkv7_kernels/nvidia/train_temp_cuda.py"
+      ],
       "source": "rwkv7_hf/train_temp_cuda.py"
     },
     {

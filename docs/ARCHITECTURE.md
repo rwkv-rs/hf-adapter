@@ -55,9 +55,11 @@ W8/W4/A8W8/BN-TN/BitsAndBytes/Marlin/TorchAO adapters; and the train-temp
 forward/backward autograd operators. Public recurrent state is converted back
 to canonical `[B,H,K,V]` before the call returns.
 
-`nvidia/MIGRATION_MANIFEST.json` byte-verifies the 102 historical NVIDIA
-payloads. `nvidia/CAPABILITY_INVENTORY.json` maps every one of those payloads
-exactly once to an executable runtime family and real device-policy fields.
+`nvidia/MIGRATION_MANIFEST.json` verifies all 102 historical NVIDIA transfers:
+100 remain byte-identical, while the graph-cache runtime and train-temp wrapper
+are explicitly adapted to the canonical cache and non-monkeypatch protocol.
+`nvidia/CAPABILITY_INVENTORY.json` maps every one of those payloads exactly once
+to an executable runtime family and real device-policy fields.
 `nvidia/SOURCE_SCOPE.json` independently classifies the entire 153-file
 historical package tree and reconstructs its frozen Git tree object, so the
 102-file NVIDIA set cannot hide an omitted source file.

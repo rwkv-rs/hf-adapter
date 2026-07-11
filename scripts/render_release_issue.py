@@ -225,7 +225,9 @@ def render_issue(
             "capability inventory; model/config/cache ownership remains in rwkv7_hf.",
             "The embedded source scope also classifies all 153 files from the frozen "
             "historical performance tree and reconstructs its Git tree identity, so the "
-            "102-file NVIDIA migration denominator has no silent omissions.",
+            "102-file NVIDIA migration denominator has no silent omissions: 100 are "
+            "byte-identical and two are declared clean-boundary adaptations for the "
+            "canonical cache and non-monkeypatch training protocol.",
             "The later v0.10 recurrent wheel is independently covered: its complete "
             "three-file package subtree is reconstructed and its Graph/Triton "
             "implementations remain byte-identical behind API v2.",
