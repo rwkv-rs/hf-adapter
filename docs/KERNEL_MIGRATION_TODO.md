@@ -1046,3 +1046,14 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   structure. It makes explicit that installation never replaces a model
   class, cache ABI or checkpoint layout and that unsupported calls fall back
   to the unchanged reference body.
+- Source and documentation commits were pushed as
+  `bf8ecdb0cdde9cc276507f6cd47833542e0ccc90` on
+  `perf/optional-kernels-v1`; draft PR #146 points to the same SHA. At
+  `2026-08-28T05:04:55+08:00`, the untouched RTX 4080 formal reference lane
+  was still the only RWKV GPU workload (0.4B/B8 HellaSwag); all backend-v2
+  watchers remained asleep and sequential. No process was stopped or
+  restarted.
+- A single read-only RTX 4090 probe at this stage timed out after eight
+  seconds, so no 4090 validation was started or fabricated. V100 remained
+  reserved for the final stable wheel pair after RTX 4080 acceptance, in
+  accordance with the fixed device order.
