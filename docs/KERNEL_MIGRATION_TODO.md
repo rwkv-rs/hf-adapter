@@ -771,3 +771,23 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   both are currently logged out. No credentials were entered and no publisher
   setting was changed. The `rwkv7-kernels` pending trusted-publisher step
   remains a final release prerequisite rather than being bypassed with a token.
+- The compact builder also passed a real repository preflight against
+  `results/release-preflight`: two evidence files plus `BUNDLE.json` were
+  copied to a temporary bundle and every `MANIFEST.sha256` row revalidated.
+
+### 2026-08-28 — exact PyPI byte audit added
+
+- Added `evaluation/audit_pypi_release.py`. The final command will query exact
+  `rwkv7-hf==1.0.0` and `rwkv7-kernels==1.0.0` version endpoints, require a
+  non-yanked wheel and valid SHA256 metadata for each, and compare the
+  published filename, size, and SHA256 with the immutable local wheel pair.
+- The report records its command, Python, index URL, harness SHA, dependency
+  metadata, every release file and upload timestamp. Missing projects and
+  network failures produce a written `status: failed` report rather than an
+  unstructured exception.
+- Live preflight proves the current expected boundary: `rwkv7-hf==0.9.0`
+  passes the public API audit, while `rwkv7-kernels==1.0.0` returns HTTP 404 and
+  keeps the aggregate report failed. No diagnostic or placeholder package was
+  uploaded to manufacture a passing result.
+- Added exact-byte success and mismatch tests. Focused Ruff/format/compile
+  checks and the full local suite pass: `98 passed`.
