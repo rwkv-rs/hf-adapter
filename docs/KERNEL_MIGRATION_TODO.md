@@ -791,3 +791,24 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   uploaded to manufacture a passing result.
 - Added exact-byte success and mismatch tests. Focused Ruff/format/compile
   checks and the full local suite pass: `98 passed`.
+
+### 2026-08-28 — publication now consumes the validated wheel bytes
+
+- Closed a release-integrity gap in `.github/workflows/publish.yml`: rebuilding
+  distributions after the GPU matrix could produce different wheel bytes from
+  those validated. The release workflow no longer invokes `python -m build`.
+- The final procedure is now draft-first. Attach the exact four validated wheel
+  and source archives, `SHA256SUMS`, and `release-provenance.json`; publishing
+  the GitHub release triggers a workflow that downloads and verifies those
+  assets before sending the same files to PyPI. `rwkv7-kernels` still publishes
+  first, and `rwkv7-hf` still cannot create a partial release if it fails.
+- Added `scripts/verify_release_assets.py`. It requires source/version/artifact
+  identity, fixed FLA commit, one shared harness and wheel pair, and compact
+  evidence for RTX 4080, Tesla V100, and RTX 4090. Each device must explicitly
+  pass correctness, HF ecosystem, training, quantization, FLA, speed,
+  SFT/DPO/GRPO, and all 144 formal lm_eval units.
+- `release-provenance.json` itself must be covered by `SHA256SUMS`; symlinked,
+  missing, byte-different, unvalidated, wrong-device, or wrong-wheel assets
+  fail before either trusted-publisher job starts.
+- Added workflow structural and release-provenance tests, including rejection
+  when one card used another kernel wheel. Full local gate: `101 passed`.

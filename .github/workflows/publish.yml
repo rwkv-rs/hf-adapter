@@ -8,8 +8,8 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build and validate both distributions
+  verify-assets:
+    name: Verify immutable validated release assets
     runs-on: ubuntu-latest
 
     steps:
@@ -20,8 +20,8 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install build tools
-        run: python -m pip install --upgrade build twine
+      - name: Install validation tools
+        run: python -m pip install --upgrade twine
 
       - name: Verify release tag matches both package versions
         env:
@@ -46,11 +46,46 @@ jobs:
           print(f"release version: {root_version}")
           PY
 
-      - name: Build rwkv7-hf wheel and source distribution
-        run: python -m build --outdir dist/hf
+      - name: Download immutable release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          mkdir -p dist/release
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir dist/release
 
-      - name: Build rwkv7-kernels wheel and source distribution
-        run: python -m build kernels --outdir dist/kernels
+      - name: Verify validated asset identities
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          expected=(
+            "rwkv7_hf-${VERSION}-py3-none-any.whl"
+            "rwkv7_hf-${VERSION}.tar.gz"
+            "rwkv7_kernels-${VERSION}-py3-none-any.whl"
+            "rwkv7_kernels-${VERSION}.tar.gz"
+            "SHA256SUMS"
+            "release-provenance.json"
+          )
+          for name in "${expected[@]}"; do
+            test -f "dist/release/$name" || {
+              echo "missing immutable release asset: $name" >&2
+              exit 1
+            }
+          done
+          (cd dist/release && sha256sum -c SHA256SUMS)
+          python scripts/verify_release_assets.py \
+            --directory dist/release \
+            --version "$VERSION" \
+            --source-sha "$GITHUB_SHA" \
+            --require-validation-passed
+          mkdir -p dist/hf dist/kernels
+          cp "dist/release/rwkv7_hf-${VERSION}-py3-none-any.whl" \
+             "dist/release/rwkv7_hf-${VERSION}.tar.gz" dist/hf/
+          cp "dist/release/rwkv7_kernels-${VERSION}-py3-none-any.whl" \
+             "dist/release/rwkv7_kernels-${VERSION}.tar.gz" dist/kernels/
 
       - name: Check distribution metadata
         run: python -m twine check --strict dist/hf/* dist/kernels/*
@@ -73,7 +108,7 @@ jobs:
     name: Publish rwkv7-hf to PyPI
     # Publish the new companion project first. If its pending trusted publisher
     # is not configured, do not create a half-published stable release.
-    needs: [build, publish-kernels]
+    needs: [verify-assets, publish-kernels]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -93,7 +128,7 @@ jobs:
 
   publish-kernels:
     name: Publish rwkv7-kernels to PyPI
-    needs: build
+    needs: verify-assets
     runs-on: ubuntu-latest
     environment:
       name: pypi

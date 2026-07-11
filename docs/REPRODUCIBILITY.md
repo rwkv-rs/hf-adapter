@@ -36,6 +36,14 @@ The audit requires both versions, a non-yanked wheel for each distribution,
 valid PyPI SHA256 metadata, and exact filename, size and SHA256 equality with
 the immutable local wheels.
 
+The GitHub release is prepared as a draft after the final wheel pair completes
+all three device gates. The exact wheel/source archives, `SHA256SUMS`, and
+`release-provenance.json` are attached before that draft is published. The
+release-triggered PyPI workflow downloads those assets, verifies their hashes,
+source SHA, fixed FLA commit, shared harness/wheel identities and every required
+device gate, and publishes the downloaded bytes. It deliberately does not
+rebuild either distribution in GitHub Actions.
+
 The historical fused implementation remains on `perf/native-kernels-v0.8`.
 The clean optional-package migration is reviewed separately on
 `perf/optional-kernels-v1`; neither branch changes the readable reference
