@@ -1796,6 +1796,14 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         config = getattr(self, "config", None)
         return getattr(config, "quantization_config", None) is not None
 
+    def _rwkv7_uses_native_mm_quantization(self) -> bool:
+        """Whether an adapter-owned MM/A8W8/TorchAO transform is active."""
+
+        return (
+            str(getattr(self, "_rwkv7_native_mm_quantization", "none")) != "none"
+            and int(getattr(self, "_rwkv7_native_mm_replaced_modules", 0)) > 0
+        )
+
     def _rwkv7_can_use_native_backend(self, backend: str, batch_size: int) -> bool:
         if self._rwkv7_has_multi_cuda_device_map():
             return False
@@ -2196,7 +2204,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         if int(input_ids.shape[1]) <= 0:
             raise ValueError("rwkv7_prefill_native requires at least one token")
         batch_size = int(input_ids.shape[0])
-        if self._rwkv7_uses_external_quantization():
+        if self._rwkv7_uses_external_quantization() or self._rwkv7_uses_native_mm_quantization():
             raise RuntimeError("native prefill currently requires dense floating-point weights")
         source_seen = None
         if past_key_values is not None and hasattr(past_key_values, "get_seq_length"):
@@ -2852,7 +2860,11 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return None
         if _native_jit_prefill is None:
             return None
-        if self._rwkv7_has_multi_cuda_device_map() or self._rwkv7_uses_external_quantization():
+        if (
+            self._rwkv7_has_multi_cuda_device_map()
+            or self._rwkv7_uses_external_quantization()
+            or self._rwkv7_uses_native_mm_quantization()
+        ):
             return None
         if kwargs.get("inputs_embeds") is not None or kwargs.get("labels") is not None:
             return None

@@ -67,3 +67,22 @@ def test_pytorch27_keeps_compile_enabled(monkeypatch) -> None:
 
     assert triton_compat.maybe_disable_incompatible_torch_compile(True) is False
     assert fake_torch.compile is original_compile
+
+
+def test_native_quantization_bypasses_tensor_only_prefill() -> None:
+    """TorchAO/A8W8 modules must stay on their quant-aware HF prefill path."""
+
+    tree = ast.parse((ROOT / "rwkv7_hf" / "modeling_rwkv7.py").read_text(encoding="utf-8"))
+    model_class = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "RWKV7ForCausalLM"
+    )
+    candidate = next(
+        node
+        for node in model_class.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_rwkv7_forward_prefill_candidate"
+    )
+    native_prefill = next(
+        node for node in model_class.body if isinstance(node, ast.FunctionDef) and node.name == "rwkv7_prefill_native"
+    )
+    assert "_rwkv7_uses_native_mm_quantization" in ast.unparse(candidate)
+    assert "_rwkv7_uses_native_mm_quantization" in ast.unparse(native_prefill)

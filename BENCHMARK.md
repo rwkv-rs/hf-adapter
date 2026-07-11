@@ -309,6 +309,13 @@ Thus `speed` is the all-phase non-regression lane with moderate memory saving;
 `memory` is the large-footprint-reduction lane (`0.399x` payload) with much
 faster decode but a remaining quantized-prefill kernel gap.
 
+The final 2026-07-11 A8/W8 decode repeat used 512 measured steps. Its ratios are
+`1.0316x/1.0166x/1.0156x/1.0171x` for bsz1/2/4/8; bsz4 is the median of three
+confirmation runs. Payload remains `796.0 MB` versus `859.8 MB` (`0.9258x`),
+minimum final-logit cosine is `0.999961`, and all next-token checks match.
+Artifacts: `bench/results_a8w8_speed_accept_4090_20260711.jsonl` and
+`bench/results_a8w8_b4_confirm_4090_20260711.jsonl`.
+
 ```bash
 # Run once with --quantization none, then repeat with a8w8 or torchao_w4.
 python bench/bench_native_prefill_scan.py \

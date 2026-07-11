@@ -69,10 +69,13 @@ roadmap.
   `0.999500-0.999586`, and preserves the next token. Treat group 32 as the
   Q4_K_M-like quality lane and group 128 as the maximum-throughput lane; it is
   a similarity in group granularity, not a claim of byte-format identity.
-- Do not generalize the W4 decode result to all quantization: W4 prefill is only
-  `0.819x-0.831x` bf16 for the measured B1/B4 T64/T256 rows, and W8 remains
-  below fp16. The next quant priority is W8 tensor-core/grouped projection,
-  followed by quantized prefill.
+- Do not generalize the maximum-memory W4 result to every phase: full-memory W4
+  prefill is still below bf16. The all-phase non-regression alternatives are
+  the speed policies. The native A8/W8 speed lane quantizes `lm_head`, reduces
+  payload to `0.9258x`, and on the final 512-step repeat reaches
+  `1.032x/1.017x/1.016x/1.017x` fp16 decode for bsz1/2/4/8; minimum final-logit
+  cosine is `0.999961` and every next-token check matches. Full-memory W8 and
+  maximum-memory W4 prefill remain open; do not describe those as solved.
 - Evidence and reproduce commands are in the RTX 4090 section of
   `BENCHMARK.md`; the runtime integration is
   `rwkv7_hf/native_quant_torchao.py` plus quant-aware native-graph operand
