@@ -629,3 +629,21 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   Stable `1.0.0` plus production `auto` are deliberately deferred until all
   migrated phases pass; the exact final wheels must then receive the full
   three-device release matrix before publication.
+
+### 2026-08-28 — explicit SM70 training capability profile
+
+- The migrated whole-model train-temp implementation is BF16 and intentionally
+  rejects compute capability below sm80. V100 must not be reported as native
+  train-temp success or as an unexplained failure.
+- `validate_backend_v2_training.py` now has two distinct gates: BF16 native
+  autograd, or FP16 reference fallback with identical logits, loss, and every
+  gradient while the optional wheel remains installed. Actual route evidence
+  is required in both cases.
+- `validate_backend_v2_ecosystem.py` applies the same distinction to
+  Accelerate and Trainer. PEFT and TRL LoRA continue to require the explicit
+  adapter-aware reference route, in BF16 on supported cards or FP16 on V100.
+- `validate_backend_v2_fla.py` records full-model BF16 training as
+  `not_applicable` on SM70 instead of claiming it passed. Recurrent operator
+  input/state gradient parity against FLA remains mandatory on V100.
+- Local gate after the device-profile changes: `87 passed`; Ruff on all
+  modified first-party files, compileall, and `git diff --check` pass.

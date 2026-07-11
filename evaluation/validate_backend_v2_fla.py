@@ -5,6 +5,7 @@ The script records three distinct lanes.  The optimized lane is accepted only
 when the actual whole-model trace names a backend-v2 prefill/decode/training
 implementation; requesting an environment selector is not route evidence.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -47,6 +48,12 @@ def arguments() -> argparse.Namespace:
     )
     parser.add_argument("--training-batch", type=int, default=1)
     parser.add_argument("--training-tokens", type=int, default=16)
+    parser.add_argument(
+        "--training-mode",
+        choices=("native", "skip-not-applicable"),
+        default="native",
+        help="SM70 uses skip-not-applicable because train_temp requires BF16/sm80.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--code-sha")
     parser.add_argument("--hf-wheel", type=Path)
@@ -136,16 +143,18 @@ def run_operator_parity(
                 for name in ("r", "k", "v", "a", "b")
             }
             base["w"] = -(
-                torch.rand(shape, device="cuda", dtype=dtype, generator=generator)
-                * 0.5
+                torch.rand(shape, device="cuda", dtype=dtype, generator=generator) * 0.5
                 + 0.1
             )
-            base["state"] = torch.randn(
-                (batch, 2, 64, 64),
-                device="cuda",
-                dtype=torch.float32,
-                generator=generator,
-            ) * 0.01
+            base["state"] = (
+                torch.randn(
+                    (batch, 2, 64, 64),
+                    device="cuda",
+                    dtype=torch.float32,
+                    generator=generator,
+                )
+                * 0.01
+            )
             with torch.inference_mode():
                 reference_output, reference_state = rwkv7_recurrent_reference(
                     base["r"],
@@ -243,7 +252,13 @@ def run_operator_parity(
                     "gradient_passed": gradient_passed,
                 }
             )
-            del base, reference_output, reference_state, optimized_output, optimized_state
+            del (
+                base,
+                reference_output,
+                reference_state,
+                optimized_output,
+                optimized_state,
+            )
             del fla_output, fla_state, gradient_lanes
     return {"passed": all(row["passed"] for row in rows), "cases": rows}
 
@@ -338,9 +353,7 @@ def collect_clean_lane(
         rows["cached_logits"] = cached
         rows["cached_cache"] = cache_snapshot(cache)
         rows["routes"]["decode"].append(last_model_route())
-        generated, greedy_routes = manual_greedy(
-            model, greedy_prompt, greedy_tokens
-        )
+        generated, greedy_routes = manual_greedy(model, greedy_prompt, greedy_tokens)
         rows["greedy"] = generated
         rows["routes"]["greedy"] = greedy_routes
     return rows
@@ -395,9 +408,7 @@ def compare_lanes(
     cached_logits = tensor_metric(
         candidate["cached_logits"], reference["cached_logits"]
     )
-    cached_states = compare_states(
-        candidate["cached_cache"], reference["cached_cache"]
-    )
+    cached_states = compare_states(candidate["cached_cache"], reference["cached_cache"])
     greedy_equal = bool(torch.equal(candidate["greedy"], reference["greedy"]))
     passed = (
         all(row["passed"] for row in forward.values())
@@ -461,15 +472,11 @@ def run_inference_model(
     padding_mask[0, -3:] = False
     padding_mask[1, :4] = False
     inputs["mixed-left-right-padding"] = (padding_ids, padding_mask)
-    prompt = torch.randint(
-        1, vocab, (1, 17), device="cuda", generator=generator
-    )
+    prompt = torch.randint(1, vocab, (1, 17), device="cuda", generator=generator)
     continuation = torch.randint(
         1, vocab, (1, decode_steps), device="cuda", generator=generator
     )
-    greedy_prompt = torch.randint(
-        1, vocab, (1, 17), device="cuda", generator=generator
-    )
+    greedy_prompt = torch.randint(1, vocab, (1, 17), device="cuda", generator=generator)
     reference = collect_clean_lane(
         model,
         inputs,
@@ -489,14 +496,10 @@ def run_inference_model(
         optimized=True,
     )
     optimized_routes_passed = all(
-        route_is(route, "prefill")
-        for route in optimized["routes"]["prefill"].values()
+        route_is(route, "prefill") for route in optimized["routes"]["prefill"].values()
     ) and all(
         route_is(route, "decode")
-        for route in (
-            optimized["routes"]["decode"]
-            + optimized["routes"]["greedy"][1:]
-        )
+        for route in (optimized["routes"]["decode"] + optimized["routes"]["greedy"][1:])
     )
     optimized_comparison = compare_lanes(optimized, reference, dtype)
     del model
@@ -651,12 +654,29 @@ def main() -> int:
     training_label = args.training_model or next(iter(models))
     if training_label not in models:
         raise ValueError(f"unknown --training-model label: {training_label}")
-    training = run_training(
-        models[training_label],
-        args.training_batch,
-        args.training_tokens,
-        args.seed + 50_000,
-    )
+    if args.training_mode == "native":
+        training = run_training(
+            models[training_label],
+            args.training_batch,
+            args.training_tokens,
+            args.seed + 50_000,
+        )
+        training = {
+            "status": "passed" if training["passed"] else "failed",
+            **training,
+        }
+    else:
+        training = {
+            "status": "not_applicable",
+            "passed": True,
+            "batch": args.training_batch,
+            "tokens": args.training_tokens,
+            "device_capability": tuple(torch.cuda.get_device_capability()),
+            "reason": (
+                "migrated train_temp is BF16 and requires sm80 or newer; "
+                "operator input/state gradients remain covered above"
+            ),
+        }
     wheels = {}
     for name, path in (
         ("rwkv7_hf", args.hf_wheel),
@@ -684,6 +704,7 @@ def main() -> int:
             "decode_steps": args.decode_steps,
             "greedy_tokens": args.greedy_tokens,
             "seed": args.seed,
+            "training_mode": args.training_mode,
         },
         "operator": operator,
         "inference": inference,

@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Validate native train-temp autograd behind the clean HF model protocol."""
+"""Validate backend-v2 training or an explicit hardware fallback.
+
+Ampere-or-newer devices run the migrated BF16 train-temp autograd path. SM70
+does not implement BF16 train-temp kernels, so its release profile instead
+proves that the same installed wheel takes the readable FP16 autograd path
+without changing loss, logits, or any gradient. The two outcomes are recorded
+as different capabilities and are never conflated.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -21,15 +29,43 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--batch", action="append", type=int, default=[])
     parser.add_argument("--tokens", action="append", type=int, default=[])
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--candidate-route",
+        choices=("native", "reference-fallback"),
+        default="native",
+    )
+    parser.add_argument("--dtype", choices=("bf16", "fp16"), default="bf16")
     parser.add_argument("--code-sha")
     parser.add_argument("--hf-wheel", type=Path)
     parser.add_argument("--kernel-wheel", type=Path)
     return parser.parse_args()
 
 
-def route(optimized: bool) -> None:
-    os.environ["RWKV7_BACKEND"] = "optimized" if optimized else "reference"
-    os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "native" if optimized else "auto"
+def route(candidate: bool, candidate_route: str) -> None:
+    if not candidate:
+        os.environ["RWKV7_BACKEND"] = "reference"
+        os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "auto"
+        return
+    os.environ["RWKV7_BACKEND"] = "optimized" if candidate_route == "native" else "auto"
+    os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "native"
+
+
+def candidate_route_passed(route_value: dict[str, Any] | None, expected: str) -> bool:
+    if expected == "native":
+        return bool(
+            route_value
+            and route_value.get("selected") == "optimized"
+            and route_value.get("phase") == "training"
+            and route_value.get("implementation")
+            == "native-nvidia-train-temp-autograd-v2"
+        )
+    return bool(
+        route_value
+        and route_value.get("selected") == "reference"
+        and route_value.get("phase") == "training"
+        and route_value.get("implementation") == "torch-reference-model-v1"
+        and route_value.get("reason")
+    )
 
 
 def tensor_metric(candidate: torch.Tensor, reference: torch.Tensor) -> dict[str, Any]:
@@ -48,7 +84,9 @@ def tensor_metric(candidate: torch.Tensor, reference: torch.Tensor) -> dict[str,
         )
     )
     return {
-        "finite": bool(torch.isfinite(candidate).all() and torch.isfinite(reference).all()),
+        "finite": bool(
+            torch.isfinite(candidate).all() and torch.isfinite(reference).all()
+        ),
         "cosine": cosine,
         "max_abs": float(delta.max()) if delta.numel() else 0.0,
         "mean_abs": float(delta.mean()) if delta.numel() else 0.0,
@@ -56,10 +94,12 @@ def tensor_metric(candidate: torch.Tensor, reference: torch.Tensor) -> dict[str,
     }
 
 
-def run_once(model, ids, labels, *, optimized: bool) -> dict[str, Any]:
+def run_once(
+    model, ids, labels, *, candidate: bool, candidate_route: str
+) -> dict[str, Any]:
     from rwkv7_hf.ops_rwkv7 import get_last_model_route
 
-    route(optimized)
+    route(candidate, candidate_route)
     model.zero_grad(set_to_none=True)
     torch.cuda.reset_peak_memory_stats()
     torch.cuda.synchronize()
@@ -90,11 +130,12 @@ def main() -> int:
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
 
     path = args.model.expanduser().resolve()
-    model = (
-        RWKV7ForCausalLM.from_pretrained(path, dtype=torch.bfloat16)
-        .cuda()
-        .train()
-    )
+    if args.candidate_route == "native" and args.dtype != "bf16":
+        raise ValueError("native train-temp acceptance requires --dtype bf16")
+    if args.candidate_route == "reference-fallback" and args.dtype != "fp16":
+        raise ValueError("SM70 fallback acceptance requires --dtype fp16")
+    dtype = torch.bfloat16 if args.dtype == "bf16" else torch.float16
+    model = RWKV7ForCausalLM.from_pretrained(path, dtype=dtype).cuda().train()
     vocab = int(model.config.vocab_size)
     batches = tuple(args.batch or (1, 4))
     tokens = tuple(args.tokens or (16, 128))
@@ -109,7 +150,9 @@ def main() -> int:
         for batch in batches:
             for sequence in tokens:
                 if sequence % 16:
-                    raise ValueError("train_temp sequence lengths must be divisible by 16")
+                    raise ValueError(
+                        "train_temp sequence lengths must be divisible by 16"
+                    )
                 ids = torch.randint(
                     0,
                     vocab,
@@ -119,8 +162,20 @@ def main() -> int:
                 )
                 labels = ids.clone()
                 labels[0, sequence // 2] = -100
-                reference = run_once(model, ids, labels, optimized=False)
-                candidate = run_once(model, ids, labels, optimized=True)
+                reference = run_once(
+                    model,
+                    ids,
+                    labels,
+                    candidate=False,
+                    candidate_route=args.candidate_route,
+                )
+                candidate = run_once(
+                    model,
+                    ids,
+                    labels,
+                    candidate=True,
+                    candidate_route=args.candidate_route,
+                )
                 logits = tensor_metric(candidate["logits"], reference["logits"])
                 loss = tensor_metric(candidate["loss"], reference["loss"])
                 gradient_rows = {}
@@ -146,9 +201,7 @@ def main() -> int:
                     and loss["finite"]
                     and abs(float(candidate["loss"] - reference["loss"])) <= 0.02
                     and gradient_passed
-                    and actual_route
-                    and actual_route.get("implementation")
-                    == "native-nvidia-train-temp-autograd-v2"
+                    and candidate_route_passed(actual_route, args.candidate_route)
                 )
                 row = {
                     "case": (
@@ -176,7 +229,10 @@ def main() -> int:
                     failures.append(row)
 
     wheels = {}
-    for name, wheel in (("rwkv7_hf", args.hf_wheel), ("rwkv7_kernels", args.kernel_wheel)):
+    for name, wheel in (
+        ("rwkv7_hf", args.hf_wheel),
+        ("rwkv7_kernels", args.kernel_wheel),
+    ):
         if wheel is not None:
             wheels[name] = {"path": str(wheel), "sha256": sha256_file(wheel)}
     report = {
@@ -186,6 +242,13 @@ def main() -> int:
         "environment": environment(),
         "model": model_fingerprint(path),
         "wheels": wheels,
+        "settings": {
+            "candidate_route": args.candidate_route,
+            "dtype": args.dtype,
+            "batches": batches,
+            "tokens": tokens,
+            "seed": args.seed,
+        },
         "cases": cases,
         "failures": failures,
     }

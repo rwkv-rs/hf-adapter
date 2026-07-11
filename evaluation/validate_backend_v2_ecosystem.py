@@ -4,6 +4,10 @@
 The plain BF16 training stages must execute the native train-temp route. LoRA
 stages deliberately require the clean PyTorch fallback because adapter-wrapped
 Linear modules must never be bypassed by packed native operands.
+
+For SM70, ``--training-mode reference-fallback --training-dtype fp16`` records
+the hardware limitation explicitly and requires ordinary HF training to remain
+fully functional. It is not reported as native optimized training.
 """
 
 from __future__ import annotations
@@ -30,6 +34,12 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--training-mode",
+        choices=("native", "reference-fallback"),
+        default="native",
+    )
+    parser.add_argument("--training-dtype", choices=("bf16", "fp16"), default="bf16")
     parser.add_argument("--code-sha")
     parser.add_argument("--hf-wheel", type=Path)
     parser.add_argument("--kernel-wheel", type=Path)
@@ -58,6 +68,30 @@ def native_training_route(route: dict[str, Any] | None) -> bool:
         and route.get("phase") == "training"
         and route.get("implementation") == NATIVE_TRAINING
     )
+
+
+def reference_training_route(route: dict[str, Any] | None) -> bool:
+    return bool(
+        route
+        and route.get("selected") == "reference"
+        and route.get("phase") == "training"
+        and route.get("implementation") == REFERENCE_MODEL
+        and route.get("reason")
+    )
+
+
+def expected_dense_training_route(
+    route: dict[str, Any] | None, training_mode: str
+) -> bool:
+    return (
+        native_training_route(route)
+        if training_mode == "native"
+        else reference_training_route(route)
+    )
+
+
+def training_dtype(name: str) -> torch.dtype:
+    return torch.bfloat16 if name == "bf16" else torch.float16
 
 
 def adapter_fallback_route(route: dict[str, Any] | None) -> bool:
@@ -208,13 +242,17 @@ def run_auto_model(path: Path, seed: int) -> dict[str, Any]:
     return row
 
 
-def run_accelerate(path: Path, seed: int) -> dict[str, Any]:
+def run_accelerate(
+    path: Path, seed: int, dtype_name: str, training_mode: str
+) -> dict[str, Any]:
     from accelerate import Accelerator
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
 
-    model = RWKV7ForCausalLM.from_pretrained(path, dtype=torch.bfloat16).train()
+    model = RWKV7ForCausalLM.from_pretrained(
+        path, dtype=training_dtype(dtype_name)
+    ).train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1.0e-5)
-    accelerator = Accelerator(mixed_precision="bf16")
+    accelerator = Accelerator(mixed_precision=dtype_name)
     model, optimizer = accelerator.prepare(model, optimizer)
     batch = token_batch(model, batch=1, tokens=16, seed=seed)
     optimizer.zero_grad(set_to_none=True)
@@ -226,7 +264,7 @@ def run_accelerate(path: Path, seed: int) -> dict[str, Any]:
     passed = bool(
         torch.isfinite(output.loss)
         and gradients_finite
-        and native_training_route(route)
+        and expected_dense_training_route(route, training_mode)
     )
     row = {
         "passed": passed,
@@ -254,7 +292,9 @@ def synthetic_dataset(vocab: int, seed: int):
     )
 
 
-def run_trainer(path: Path, seed: int) -> dict[str, Any]:
+def run_trainer(
+    path: Path, seed: int, dtype_name: str, training_mode: str
+) -> dict[str, Any]:
     from transformers import (
         DefaultDataCollator,
         Trainer,
@@ -262,7 +302,7 @@ def run_trainer(path: Path, seed: int) -> dict[str, Any]:
     )
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
 
-    model = RWKV7ForCausalLM.from_pretrained(path, dtype=torch.bfloat16)
+    model = RWKV7ForCausalLM.from_pretrained(path, dtype=training_dtype(dtype_name))
     dataset = synthetic_dataset(int(model.config.vocab_size), seed)
     with tempfile.TemporaryDirectory(prefix="rwkv7-backend-v2-trainer-") as directory:
         training_args = TrainingArguments(
@@ -270,7 +310,8 @@ def run_trainer(path: Path, seed: int) -> dict[str, Any]:
             max_steps=1,
             per_device_train_batch_size=1,
             learning_rate=1.0e-5,
-            bf16=True,
+            bf16=dtype_name == "bf16",
+            fp16=dtype_name == "fp16",
             save_strategy="no",
             report_to="none",
             remove_unused_columns=False,
@@ -289,7 +330,7 @@ def run_trainer(path: Path, seed: int) -> dict[str, Any]:
     passed = bool(
         result.global_step == 1
         and torch.isfinite(torch.tensor(loss))
-        and native_training_route(route)
+        and expected_dense_training_route(route, training_mode)
     )
     row = {
         "passed": passed,
@@ -313,11 +354,12 @@ def lora_config():
     )
 
 
-def run_peft(path: Path, seed: int) -> dict[str, Any]:
+def run_peft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
     from peft import PeftModel, get_peft_model
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
 
-    model = RWKV7ForCausalLM.from_pretrained(path, dtype=torch.bfloat16).cuda()
+    dtype = training_dtype(dtype_name)
+    model = RWKV7ForCausalLM.from_pretrained(path, dtype=dtype).cuda()
     model = get_peft_model(model, lora_config()).train()
     trainable = [
         parameter for parameter in model.parameters() if parameter.requires_grad
@@ -341,7 +383,7 @@ def run_peft(path: Path, seed: int) -> dict[str, Any]:
         expected = model(input_ids=probe_ids, use_cache=False).logits
     with tempfile.TemporaryDirectory(prefix="rwkv7-backend-v2-peft-") as directory:
         model.save_pretrained(directory)
-        base = RWKV7ForCausalLM.from_pretrained(path, dtype=torch.bfloat16).cuda()
+        base = RWKV7ForCausalLM.from_pretrained(path, dtype=dtype).cuda()
         reloaded = PeftModel.from_pretrained(base, directory).eval()
         with torch.inference_mode():
             actual = reloaded(input_ids=probe_ids, use_cache=False).logits
@@ -368,13 +410,13 @@ def run_peft(path: Path, seed: int) -> dict[str, Any]:
     return row
 
 
-def run_trl_sft(path: Path, seed: int) -> dict[str, Any]:
+def run_trl_sft(path: Path, seed: int, dtype_name: str) -> dict[str, Any]:
     from transformers import AutoTokenizer, DefaultDataCollator
     from trl import SFTConfig, SFTTrainer
     from rwkv7_hf.modeling_rwkv7 import RWKV7ForCausalLM
 
     tokenizer = AutoTokenizer.from_pretrained(path, trust_remote_code=True)
-    model = RWKV7ForCausalLM.from_pretrained(path, dtype=torch.bfloat16)
+    model = RWKV7ForCausalLM.from_pretrained(path, dtype=training_dtype(dtype_name))
     dataset = synthetic_dataset(int(model.config.vocab_size), seed)
     with tempfile.TemporaryDirectory(prefix="rwkv7-backend-v2-trl-") as directory:
         config = SFTConfig(
@@ -382,7 +424,8 @@ def run_trl_sft(path: Path, seed: int) -> dict[str, Any]:
             max_steps=1,
             per_device_train_batch_size=1,
             learning_rate=1.0e-3,
-            bf16=True,
+            bf16=dtype_name == "bf16",
+            fp16=dtype_name == "fp16",
             save_strategy="no",
             report_to="none",
             remove_unused_columns=False,
@@ -445,16 +488,40 @@ def main() -> int:
     if not torch.cuda.is_available():
         raise SystemExit("CUDA is required")
     backend_environment()
+    if args.training_mode == "native" and args.training_dtype != "bf16":
+        raise ValueError("native train-temp ecosystem acceptance requires BF16")
+    if args.training_mode == "reference-fallback" and args.training_dtype != "fp16":
+        raise ValueError("SM70 ecosystem fallback acceptance requires FP16")
     torch.manual_seed(args.seed)
     path = args.model.expanduser().resolve()
     stages = [
         execute("auto-model-save-generation", lambda: run_auto_model(path, args.seed)),
         execute(
-            "accelerate-native-training", lambda: run_accelerate(path, args.seed + 1)
+            f"accelerate-{args.training_mode}",
+            lambda: run_accelerate(
+                path,
+                args.seed + 1,
+                args.training_dtype,
+                args.training_mode,
+            ),
         ),
-        execute("trainer-native-training", lambda: run_trainer(path, args.seed + 2)),
-        execute("peft-lora-fallback", lambda: run_peft(path, args.seed + 3)),
-        execute("trl-sft-lora-fallback", lambda: run_trl_sft(path, args.seed + 4)),
+        execute(
+            f"trainer-{args.training_mode}",
+            lambda: run_trainer(
+                path,
+                args.seed + 2,
+                args.training_dtype,
+                args.training_mode,
+            ),
+        ),
+        execute(
+            "peft-lora-fallback",
+            lambda: run_peft(path, args.seed + 3, args.training_dtype),
+        ),
+        execute(
+            "trl-sft-lora-fallback",
+            lambda: run_trl_sft(path, args.seed + 4, args.training_dtype),
+        ),
     ]
     wheels = {}
     for name, wheel in (
@@ -474,6 +541,11 @@ def main() -> int:
         "environment": environment(),
         "model": model_fingerprint(path),
         "wheels": wheels,
+        "training_expectation": {
+            "mode": args.training_mode,
+            "dtype": args.training_dtype,
+            "native_supported": args.training_mode == "native",
+        },
         "backend_environment": {
             name: os.environ.get(name)
             for name in (

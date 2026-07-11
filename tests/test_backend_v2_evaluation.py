@@ -12,8 +12,11 @@ sys.path.insert(0, str(EVALUATION))
 from benchmark_backend_v2 import add_speedups, percentile, routes_passed  # noqa: E402
 from validate_backend_v2_ecosystem import (  # noqa: E402
     adapter_fallback_route,
+    expected_dense_training_route,
     native_training_route,
+    reference_training_route,
 )
+from validate_backend_v2_training import candidate_route_passed  # noqa: E402
 from fla_common import (  # noqa: E402
     compare_states,
     gradient_metrics,
@@ -110,3 +113,17 @@ def test_ecosystem_route_gates_distinguish_native_and_adapter_fallback():
     assert not adapter_fallback_route(native)
     assert adapter_fallback_route(fallback)
     assert not native_training_route(fallback)
+
+
+def test_sm70_training_fallback_is_explicit_and_not_native():
+    fallback = {
+        "selected": "reference",
+        "phase": "training",
+        "implementation": "torch-reference-model-v1",
+        "reason": "native training requires a BF16 checkpoint",
+    }
+    assert reference_training_route(fallback)
+    assert expected_dense_training_route(fallback, "reference-fallback")
+    assert not expected_dense_training_route(fallback, "native")
+    assert candidate_route_passed(fallback, "reference-fallback")
+    assert not candidate_route_passed(fallback, "native")
