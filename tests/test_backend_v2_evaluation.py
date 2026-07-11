@@ -93,6 +93,44 @@ def test_speed_report_and_actual_route_gate():
     assert not routes_passed(report)
 
 
+def test_speed_route_gate_distinguishes_v100_training_fallback():
+    fallback = {
+        "selected": "reference",
+        "phase": "training",
+        "implementation": "torch-reference-model-v1",
+        "reason": "native training requires BF16 and sm80 or newer",
+    }
+    report = {
+        "models": {},
+        "training": {
+            "mode": "reference-fallback",
+            "lanes": {"optimized": {"b1-t16": {"route": fallback}}},
+        },
+    }
+    assert routes_passed(report)
+    report["training"]["lanes"]["optimized"]["b1-t16"]["route"] = {
+        "selected": "optimized",
+        "phase": "training",
+        "implementation": "native-nvidia-train-temp-autograd-v2",
+    }
+    assert not routes_passed(report)
+
+
+def test_speed_route_gate_accepts_explicit_not_applicable_training():
+    report = {
+        "models": {},
+        "training": {
+            "mode": "skip-not-applicable",
+            "status": "not_applicable",
+            "reason": "native whole-model training requires BF16 and sm80 or newer",
+        },
+    }
+    add_speedups(report)
+    assert routes_passed(report)
+    report["training"]["status"] = "passed"
+    assert not routes_passed(report)
+
+
 def test_percentile_uses_nearest_rank():
     assert percentile([1.0, 2.0, 3.0, 4.0, 5.0], 0.95) == 5.0
 

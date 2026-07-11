@@ -6,6 +6,7 @@ reported separately from steady-state samples.  Cached-decode preparation is
 performed outside the timed region so prompt prefill is not mislabeled as
 decode throughput.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -45,6 +46,17 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--training-tokens", action="append", type=int, default=[])
     parser.add_argument("--training-warmup", type=int, default=1)
     parser.add_argument("--training-repeats", type=int, default=3)
+    parser.add_argument(
+        "--training-mode",
+        choices=("native", "reference-fallback", "skip-not-applicable"),
+        default="native",
+        help=(
+            "native benchmarks the BF16 optimized autograd route; "
+            "reference-fallback benchmarks the explicit clean-model fallback; "
+            "skip-not-applicable records the hardware limitation without timing"
+        ),
+    )
+    parser.add_argument("--training-dtype", choices=("bf16", "fp16"), default="bf16")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--code-sha")
     parser.add_argument("--hf-wheel", type=Path)
@@ -69,6 +81,15 @@ def route_mode(kind: str) -> None:
         os.environ["RWKV7_BACKEND"] = "reference"
         os.environ["RWKV7_KERNEL_IMPL"] = "auto"
         os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "auto"
+
+
+def training_route_mode(kind: str, training_mode: str) -> None:
+    if kind == "optimized" and training_mode == "reference-fallback":
+        os.environ["RWKV7_BACKEND"] = "auto"
+        os.environ["RWKV7_KERNEL_IMPL"] = "auto"
+        os.environ["RWKV7_MODEL_KERNEL_IMPL"] = "native"
+        return
+    route_mode(kind)
 
 
 def last_route(kind: str) -> dict[str, Any] | None:
@@ -244,16 +265,18 @@ def benchmark_operator_lane(
                 for name in ("r", "k", "v", "a", "b")
             }
             base["w"] = -(
-                torch.rand(shape, device="cuda", dtype=dtype, generator=generator)
-                * 0.5
+                torch.rand(shape, device="cuda", dtype=dtype, generator=generator) * 0.5
                 + 0.1
             )
-            base["state"] = torch.randn(
-                (batch, 2, 64, 64),
-                device="cuda",
-                dtype=torch.float32,
-                generator=generator,
-            ) * 0.01
+            base["state"] = (
+                torch.randn(
+                    (batch, 2, 64, 64),
+                    device="cuda",
+                    dtype=torch.float32,
+                    generator=generator,
+                )
+                * 0.01
+            )
 
             def invoke(values=base):
                 if kind == "fla":
@@ -269,17 +292,27 @@ def benchmark_operator_lane(
                     )
                 if kind == "optimized":
                     return rwkv7_recurrent(
-                        values["r"], values["w"].exp(), values["k"], values["v"],
-                        values["a"], values["b"], values["state"]
+                        values["r"],
+                        values["w"].exp(),
+                        values["k"],
+                        values["v"],
+                        values["a"],
+                        values["b"],
+                        values["state"],
                     )
                 return rwkv7_recurrent_reference(
-                    values["r"], values["w"].exp(), values["k"], values["v"],
-                    values["a"], values["b"], values["state"]
+                    values["r"],
+                    values["w"].exp(),
+                    values["k"],
+                    values["v"],
+                    values["a"],
+                    values["b"],
+                    values["state"],
                 )
 
             forward = timed_inference(invoke, warmup=warmup, repeats=repeats)
-            forward["tokens_per_second"] = batch * sequence / (
-                forward["median_ms"] / 1000.0
+            forward["tokens_per_second"] = (
+                batch * sequence / (forward["median_ms"] / 1000.0)
             )
             forward["route"] = (
                 get_last_recurrent_route() if kind == "optimized" else None
@@ -323,7 +356,9 @@ def benchmark_operator_lane(
                             values["state"],
                         )
                     )
-                    loss = output.float().square().mean() + state.float().square().mean()
+                    loss = (
+                        output.float().square().mean() + state.float().square().mean()
+                    )
                     loss.backward()
                     return loss
 
@@ -332,8 +367,8 @@ def benchmark_operator_lane(
                     warmup=max(1, min(warmup, 2)),
                     repeats=max(3, min(repeats, 5)),
                 )
-                backward["tokens_per_second"] = batch * sequence / (
-                    backward["median_ms"] / 1000.0
+                backward["tokens_per_second"] = (
+                    batch * sequence / (backward["median_ms"] / 1000.0)
                 )
             rows[f"b{batch}-t{sequence}"] = {
                 "forward": forward,
@@ -385,12 +420,12 @@ def benchmark_inference_lane(
                 1, vocab, (batch, sequence), generator=generator, device="cuda"
             )
 
-            def prefill(ids=ids):
+            def prefill(ids=ids, model=model):
                 return model(input_ids=ids, use_cache=True, logits_to_keep=1)
 
             result = timed_inference(prefill, warmup=warmup, repeats=repeats)
-            result["tokens_per_second"] = batch * sequence / (
-                result["median_ms"] / 1000.0
+            result["tokens_per_second"] = (
+                batch * sequence / (result["median_ms"] / 1000.0)
             )
             result["route"] = last_route(kind)
             rows["prefill"][f"b{batch}-t{sequence}"] = result
@@ -403,12 +438,12 @@ def benchmark_inference_lane(
             1, vocab, (batch, decode_steps), generator=generator, device="cuda"
         )
 
-        def prepare(prompt=prompt):
+        def prepare(prompt=prompt, model=model):
             return model(
                 input_ids=prompt, use_cache=True, logits_to_keep=1
             ).past_key_values
 
-        def decode(cache, continuation=continuation):
+        def decode(cache, continuation=continuation, model=model):
             output = None
             for index in range(decode_steps):
                 output = model(
@@ -428,8 +463,8 @@ def benchmark_inference_lane(
         )
         result["steps"] = decode_steps
         result["milliseconds_per_step"] = result["median_ms"] / decode_steps
-        result["tokens_per_second"] = batch * decode_steps / (
-            result["median_ms"] / 1000.0
+        result["tokens_per_second"] = (
+            batch * decode_steps / (result["median_ms"] / 1000.0)
         )
         result["route"] = last_route(kind)
         rows["decode"][f"b{batch}"] = result
@@ -499,31 +534,31 @@ def timed_training(
 def benchmark_training_lane(
     kind: str,
     path: Path,
+    dtype: torch.dtype,
+    training_mode: str,
     batches: tuple[int, ...],
     tokens: tuple[int, ...],
     warmup: int,
     repeats: int,
     seed: int,
 ) -> dict[str, Any]:
-    model = load_model(kind, path, torch.bfloat16, training=True)
-    route_mode(kind)
+    model = load_model(kind, path, dtype, training=True)
+    training_route_mode(kind, training_mode)
     vocab = int(model.config.vocab_size)
     generator = torch.Generator(device="cuda").manual_seed(seed)
     rows = {}
     for batch in batches:
         for sequence in tokens:
-            if sequence % 16:
+            if training_mode == "native" and sequence % 16:
                 raise ValueError("native training tokens must be divisible by 16")
             ids = torch.randint(
                 1, vocab, (batch, sequence), generator=generator, device="cuda"
             )
             labels = ids.clone()
             labels[0, sequence // 2] = -100
-            result = timed_training(
-                model, ids, labels, warmup=warmup, repeats=repeats
-            )
-            result["tokens_per_second"] = batch * sequence / (
-                result["median_ms"] / 1000.0
+            result = timed_training(model, ids, labels, warmup=warmup, repeats=repeats)
+            result["tokens_per_second"] = (
+                batch * sequence / (result["median_ms"] / 1000.0)
             )
             result["route"] = last_route(kind)
             rows[f"b{batch}-t{sequence}"] = result
@@ -570,14 +605,12 @@ def add_speedups(report: dict[str, Any]) -> None:
                 optimized[case]["speedup_vs_fla"] = (
                     fla[case]["median_ms"] / optimized[case]["median_ms"]
                 )
-                fla[case]["speedup_vs_reference"] = (
-                    base_ms / fla[case]["median_ms"]
-                )
+                fla[case]["speedup_vs_reference"] = base_ms / fla[case]["median_ms"]
                 fla[case]["speedup_vs_optimized"] = (
                     optimized[case]["median_ms"] / fla[case]["median_ms"]
                 )
     training = report.get("training")
-    if training:
+    if training and "lanes" in training:
         reference = training["lanes"]["reference"]
         optimized = training["lanes"]["optimized"]
         fla = training["lanes"]["fla"]
@@ -589,15 +622,13 @@ def add_speedups(report: dict[str, Any]) -> None:
             optimized[case]["speedup_vs_fla"] = (
                 fla[case]["median_ms"] / optimized[case]["median_ms"]
             )
-            fla[case]["speedup_vs_reference"] = (
-                base_ms / fla[case]["median_ms"]
-            )
+            fla[case]["speedup_vs_reference"] = base_ms / fla[case]["median_ms"]
 
 
 def routes_passed(report: dict[str, Any]) -> bool:
-    for row in report.get("operator", {}).get("lanes", {}).get(
-        "optimized", {}
-    ).values():
+    for row in (
+        report.get("operator", {}).get("lanes", {}).get("optimized", {}).values()
+    ):
         implementation = str(
             (row["forward"].get("route") or {}).get("implementation", "")
         )
@@ -619,9 +650,23 @@ def routes_passed(report: dict[str, Any]) -> bool:
                 return False
     training = report.get("training")
     if training:
+        mode = training.get("mode", "native")
+        if mode == "skip-not-applicable":
+            return training.get("status") == "not_applicable"
         for row in training["lanes"]["optimized"].values():
-            if (row.get("route") or {}).get("implementation") != (
-                "native-nvidia-train-temp-autograd-v2"
+            route = row.get("route") or {}
+            if mode == "native":
+                if (
+                    route.get("selected") != "optimized"
+                    or route.get("implementation")
+                    != "native-nvidia-train-temp-autograd-v2"
+                ):
+                    return False
+            elif not (
+                route.get("selected") == "reference"
+                and route.get("phase") == "training"
+                and route.get("implementation") == "torch-reference-model-v1"
+                and route.get("reason")
             ):
                 return False
     return True
@@ -712,28 +757,43 @@ def main() -> int:
         training_path = args.training_model.expanduser().resolve()
         train_batches = tuple(args.training_batch or (1, 4))
         train_tokens = tuple(args.training_tokens or (128, 512))
-        training_lanes = {}
-        for kind in ("reference", "optimized", "fla"):
-            training_lanes[kind] = benchmark_training_lane(
-                kind,
-                training_path,
-                train_batches,
-                train_tokens,
-                args.training_warmup,
-                args.training_repeats,
-                args.seed + 100_000,
+        if args.training_mode == "skip-not-applicable":
+            report["training"] = {
+                "model": model_fingerprint(training_path),
+                "dtype": args.training_dtype,
+                "mode": args.training_mode,
+                "status": "not_applicable",
+                "reason": "native whole-model training requires BF16 and sm80 or newer",
+            }
+        else:
+            train_dtype = (
+                torch.bfloat16 if args.training_dtype == "bf16" else torch.float16
             )
-        report["training"] = {
-            "model": model_fingerprint(training_path),
-            "dtype": "bf16",
-            "settings": {
-                "batches": train_batches,
-                "tokens": train_tokens,
-                "warmup": args.training_warmup,
-                "repeats": args.training_repeats,
-            },
-            "lanes": training_lanes,
-        }
+            training_lanes = {}
+            for kind in ("reference", "optimized", "fla"):
+                training_lanes[kind] = benchmark_training_lane(
+                    kind,
+                    training_path,
+                    train_dtype,
+                    args.training_mode,
+                    train_batches,
+                    train_tokens,
+                    args.training_warmup,
+                    args.training_repeats,
+                    args.seed + 100_000,
+                )
+            report["training"] = {
+                "model": model_fingerprint(training_path),
+                "dtype": args.training_dtype,
+                "mode": args.training_mode,
+                "settings": {
+                    "batches": train_batches,
+                    "tokens": train_tokens,
+                    "warmup": args.training_warmup,
+                    "repeats": args.training_repeats,
+                },
+                "lanes": training_lanes,
+            }
     add_speedups(report)
     report["route_gate"] = routes_passed(report)
     report["status"] = "passed" if report["route_gate"] else "failed"

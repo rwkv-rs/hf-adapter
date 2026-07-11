@@ -696,3 +696,21 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - A single read-only RTX 4090 SSH probe at the end of this session still timed
   out to `36.103.236.3:22`. No repeated connection loop or remote work was
   started; 4090 artifact staging remains pending connectivity.
+
+### 2026-08-28 — V100 training-speed capability is explicit
+
+- `benchmark_backend_v2.py` now accepts the same hardware capability split as
+  the correctness harnesses: `native`, `reference-fallback`, or
+  `skip-not-applicable`, plus an explicit BF16/FP16 training dtype.
+- The V100 diagnostic profile will use
+  `--training-mode reference-fallback --training-dtype fp16`. Its optimized
+  lane is accepted only when the installed optional wheel records the actual
+  `torch-reference-model-v1` training route and a non-empty fallback reason;
+  it cannot be mislabeled as native train-temp throughput.
+- A genuinely unsupported measurement can instead be recorded as
+  `status: not_applicable`; it is no longer necessary to omit the training
+  section and leave the result ambiguous. Native sm80+ behavior and route
+  requirements are unchanged.
+- This is validation-harness code only and does not change either immutable
+  diagnostic wheel. Focused Ruff/format/compile checks and the full local test
+  suite pass: `92 passed`.
