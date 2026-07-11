@@ -927,3 +927,22 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   identity on 4080/4090 and the distinct reference-fallback profile on V100.
   New failure tests cover a missing compiler identity; the complete local suite
   passes `121` tests.
+
+### 2026-08-28 — CUDA compiler preflight is now reproducible
+
+- Added `evaluation/preflight_cuda_toolchain.py` so the validation-only CUDA
+  setup is no longer evidenced by a one-off shell command. It requires the
+  PyTorch and `nvcc` CUDA major/minor versions to match, binds the
+  `PROVENANCE.txt` SHA256 and target SM, and compiles a small CUDA object before
+  any native-training GPU stage starts.
+- The report preserves the real command, runtime environment, compiler
+  version, source/object hashes, exit code and failures. A failed compiler,
+  missing provenance, invalid SM target or mismatched toolkit writes a failed
+  JSON report and exits nonzero.
+- Direct-entrypoint and fake-compiler tests cover the documented invocation.
+  Ruff, compileall, `git diff --check`, and the complete local suite pass:
+  `123 passed`.
+- At `2026-08-28T04:04:17+08:00`, the untouched RTX 4080 recurrent-v1
+  reference lane had 24/48 successful units and zero recorded failures. Its
+  0.4B batch-8 Wikitext child was the only GPU process; all five backend-v2
+  watchers remained asleep.

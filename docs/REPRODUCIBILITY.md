@@ -19,6 +19,18 @@ built. RTX 4080/4090 release summaries reject native training evidence that
 does not identify its compiler. The V100 summary instead requires the explicit
 SM70 `reference-fallback` training profile.
 
+Before a native-training run, create its compiler gate with:
+
+```bash
+python evaluation/preflight_cuda_toolchain.py \
+  --output results/toolchain-preflight.json
+```
+
+The command requires the PyTorch and `nvcc` CUDA major/minor versions to match,
+detects the active GPU SM target, and compiles a small CUDA object without
+launching GPU work. The report retains the compiler/provenance identity and
+object hash.
+
 Release bundles live below `results/`. Large task sample logs can be
 attached to a release artifact while the manifest and summary stay in Git.
 Committed result summaries must be immutable and must identify the exact GPU.
