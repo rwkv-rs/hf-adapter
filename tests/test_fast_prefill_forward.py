@@ -75,6 +75,8 @@ def main() -> int:
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--reference-backend", choices=("hf", "native-token-loop"), default="hf")
     ap.add_argument("--fused-scan", action="store_true")
+    ap.add_argument("--prefill-graph", action="store_true")
+    ap.add_argument("--chunk-size", type=int, default=0)
     args = ap.parse_args()
     if torch is None or not args.model:
         print("SKIP fast prefill forward test: torch/model unavailable")
@@ -92,7 +94,10 @@ def main() -> int:
     if args.device.startswith("cuda"):
         ids = ids.to(args.device)
 
-    old = {k: os.environ.get(k) for k in ("RWKV7_FAST_PREFILL", "RWKV7_NATIVE_PREFILL_FUSED_SCAN")}
+    old = {
+        k: os.environ.get(k)
+        for k in ("RWKV7_FAST_PREFILL", "RWKV7_NATIVE_PREFILL_FUSED_SCAN", "RWKV7_NATIVE_PREFILL_GRAPH")
+    }
     try:
         with torch.inference_mode():
             if args.reference_backend == "native-token-loop":
@@ -103,6 +108,10 @@ def main() -> int:
 
             os.environ["RWKV7_FAST_PREFILL"] = "1"
             os.environ["RWKV7_NATIVE_PREFILL_FUSED_SCAN"] = "1" if args.fused_scan else "0"
+            os.environ["RWKV7_NATIVE_PREFILL_GRAPH"] = "1" if args.prefill_graph else "0"
+            if args.prefill_graph:
+                warmed = model.rwkv7_warmup_fast_prefill((int(ids.shape[0]), int(ids.shape[1])))
+                assert warmed[f"{int(ids.shape[0])}x{int(ids.shape[1])}"] == "native_prefill_graph"
             fast = model(ids, use_cache=True, logits_to_keep=1, return_dict=True)
             seen_after_prefill = fast.past_key_values.get_seq_length() if hasattr(fast.past_key_values, "get_seq_length") else None
 
@@ -112,6 +121,16 @@ def main() -> int:
             min_cos = float(F.cosine_similarity(ref_logits, fast_logits, dim=-1).min().detach().cpu())
             greedy_match = bool(torch.equal(ref_logits.argmax(dim=-1).detach().cpu(), fast_logits.argmax(dim=-1).detach().cpu()))
 
+            chunked = None
+            chunked_match = True
+            chunked_decode_match = True
+            if args.prefill_graph and 0 < args.chunk_size < int(ids.shape[1]):
+                chunked = model.rwkv7_prefill_chunks(ids, chunk_size=args.chunk_size, logits_to_keep=1, return_dict=True)
+                chunked_logits = chunked.logits[:, -1].float()
+                chunked_match = bool(
+                    torch.equal(fast_logits.argmax(dim=-1).detach().cpu(), chunked_logits.argmax(dim=-1).detach().cpu())
+                )
+
             next_token = ref_logits.argmax(dim=-1, keepdim=True)
             if args.reference_backend == "native-token-loop":
                 ref_next = model.rwkv7_forward_token(next_token, past_key_values=ref.past_key_values, return_dict=True)
@@ -120,6 +139,20 @@ def main() -> int:
             fast_next = model(next_token, past_key_values=fast.past_key_values, use_cache=True, logits_to_keep=1, return_dict=True)
             decode_max_abs = float((ref_next.logits[:, -1].float() - fast_next.logits[:, -1].float()).abs().max().detach().cpu())
             decode_match = bool(torch.equal(ref_next.logits[:, -1].argmax(dim=-1).detach().cpu(), fast_next.logits[:, -1].argmax(dim=-1).detach().cpu()))
+            if chunked is not None:
+                chunked_next = model(
+                    next_token,
+                    past_key_values=chunked.past_key_values,
+                    use_cache=True,
+                    logits_to_keep=1,
+                    return_dict=True,
+                )
+                chunked_decode_match = bool(
+                    torch.equal(
+                        fast_next.logits[:, -1].argmax(dim=-1).detach().cpu(),
+                        chunked_next.logits[:, -1].argmax(dim=-1).detach().cpu(),
+                    )
+                )
 
             if args.reference_backend == "native-token-loop":
                 ref_gen = _native_token_loop_generate(model, ids, args.gen_tokens)
@@ -134,12 +167,16 @@ def main() -> int:
 
     print(
         f"FAST PREFILL FORWARD PASS reference={args.reference_backend} fused_scan={args.fused_scan} "
+        f"prefill_graph={args.prefill_graph} "
         f"max_abs={max_abs:.6f} min_cos={min_cos:.8f} greedy={greedy_match} "
         f"decode_max_abs={decode_max_abs:.6f} decode_greedy={decode_match} "
+        f"chunked_greedy={chunked_match} chunked_decode={chunked_decode_match} "
         f"generate_match={generate_match} seen={seen_after_prefill}"
     )
     assert greedy_match
     assert decode_match
+    assert chunked_match
+    assert chunked_decode_match
     assert generate_match
     assert seen_after_prefill == int(ids.shape[1])
     assert min_cos >= 0.999

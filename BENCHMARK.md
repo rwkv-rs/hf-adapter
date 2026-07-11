@@ -176,10 +176,105 @@ Issue #66 checklist status:
 | HF Trainer / TRL SFT | PASS, trainable delta ≈ `1e-4` |
 | TRL DPO | PASS, trainable delta ≈ `1e-4` |
 
-The 4090 fused-state-scan prefill kernel line separately reaches `25,663.2
-tok/s` (`0.4921x` of the current Albatross reference for 0.4B / bsz1 /
-prompt512), satisfying the near-term `>=0.45x` target. It remains opt-in; the
-default HF path is unchanged.
+The exact-4090 policy now promotes fixed-shape native prefill CUDA Graph replay
+with split recurrent scan, fused state prep/output, a no-`cat` sequence
+attention/FFN shift-mix, and a one-launch ReLU² kernel. On 0.4B fp16 / prompt512
+it reaches `64,511.2 tok/s` at bsz1 and `107,870.1 tok/s` at bsz4. A same-host,
+same-session Albatross rerun reaches `107,149.6 tok/s` at bsz4, so the current
+ratio is **`1.007x`**. Against the strongest older recorded Albatross bsz4 row
+(`117,789.0 tok/s`) the conservative ratio is **`0.916x`**; both references are
+retained rather than silently replacing the historical high-water mark. All HF
+rows pass logit greedy equality and prefill-to-decode cache handoff. The same
+public path previously reached `32,357.8 tok/s` on 1.5B / bsz1 / prompt512.
+Other Ada cards retain the compatible fallback until card-local rows exist.
+
+The serving API caches fixed `(batch, prompt_tokens)` graphs and exposes
+`rwkv7_warmup_fast_prefill()` for cold-start preparation. `rwkv7_prefill_chunks`
+can replay a captured chunk shape while carrying `RWKV7StateCache`; full-vs-two
+chunk prompt1024 and the following decode token preserve greedy equality.
+
+### RTX 4090 prefill sequence-fusion update (2026-07-11)
+
+Profiling showed that the two per-layer sequence `torch.cat` operations and
+separate FFN ReLU/power launches consumed a material part of the remaining B4
+gap. The promoted graph path now computes previous-token addressing directly
+inside Triton, writes the next attention/FFN shift state in the same launch, and
+computes ReLU² in one graph-safe kernel. This removes 48 `CatArrayBatchedCopy`
+launches per prefill replay without changing the public cache layout.
+
+| bsz | prompt | latency | throughput | greedy/cache handoff |
+|---:|---:|---:|---:|:---:|
+| 1 | 128 | 3.5970 ms | 35,585.6 tok/s | PASS |
+| 1 | 512 | 7.9366 ms | **64,511.2 tok/s** | PASS |
+| 1 | 1024 | 16.1203 ms | 63,522.3 tok/s | PASS |
+| 4 | 128 | 6.0730 ms | 84,308.0 tok/s | PASS |
+| 4 | 512 | 18.9858 ms | **107,870.1 tok/s** | PASS |
+| 4 | 1024 | 41.8619 ms | 97,845.6 tok/s | PASS |
+
+The B4/prompt512 path improved from `20.0067 ms` / `102,365.8 tok/s` to
+`18.9858 ms` / `107,870.1 tok/s` (**`1.054x`**). Under Nsight Systems, the
+captured HF graph's summed kernel time is now about `18.8 ms`, slightly below
+the same-session Albatross graph's approximately `18.9 ms`. Full HF forward,
+`generate`, full-vs-chunked prefill (chunk sizes 1/4/16/32), following-token
+decode, and dynamic cache select/reorder/compact checks pass.
+
+Evidence on the validation host:
+
+- `/data/rwkv4090/results/prefill_sequence_mix_matrix.jsonl`
+- `/data/rwkv4090/results/prefill_sequence_fusion_final.jsonl`
+- `/data/rwkv4090/results/prefill_relu2_block512.jsonl`
+- `/tmp/hfprof20_seq.nsys-rep` and `/tmp/hfprof20_seq_stats.csv`
+- `/tmp/albprof20.nsys-rep` and `/tmp/albprof20_stats.csv`
+
+### RTX 4090 dense fp16 decode parity update (2026-07-11)
+
+The exact-4090 dense `native_graph` policy now closes the recorded 0.4B
+Albatross decode rows at every required active batch size. The promoted path
+combines 8-warp norm/mix, copy-free stacked R/K/V input storage, grouped Ada
+W/A/G/V low-rank kernels, and the sparse FFN route for bsz1/2. Sparse value
+weights are packed outside graph capture and keyed by batch shape; this is
+required because sharing one packed allocation across independently replayable
+CUDA graphs corrupts later graph runners. Bsz4/8 retain the safe dense FFN
+contraction selected by the exact-card policy.
+
+| bsz | HF dense fp16 tok/s | Albatross fp16 tok/s | HF / Albatross | cumulative graph-cache peak VRAM |
+|---:|---:|---:|---:|---:|
+| 1 | **795.7** | 790.1 | **1.007x** | 1,414.0 MB |
+| 2 | **1,469.5** | 1,445.8 | **1.016x** | 1,684.5 MB |
+| 4 | **2,585.7** | 2,564.0 | **1.008x** | 1,807.1 MB |
+| 8 | **3,185.3** | 2,246.0 | **1.418x** | 2,047.9 MB |
+
+The peak column is intentionally cumulative: one process retains the B1/B2/B4/B8
+graph runners to validate production dynamic-batch residency. It is not the
+model payload size. A 32-step test with all four runners resident passes
+`32/32` greedy equality for every batch, maximum logits absolute difference
+`<=0.1875`, standard-HF fallback difference `<=0.09375`, and graph-cache
+warmup/retention checks. Evidence on the validation host:
+
+- `/data/rwkv4090/results/dense_albatross_parity_final_memory_fixed.jsonl`
+- `/data/rwkv4090/results/dense_albatross_parity_b1_confirm.jsonl`
+- `/data/rwkv4090/results/dense_multigraph_correctness_final.log`
+
+Post-change quant regression remains non-negative: the W8 speed lane is
+`1.057x` fp16 with `0.9258x` payload and cosine `0.99999398`; the W4 speed lane
+is `1.046x` bf16 with `0.8907x` payload and cosine `0.99990374`. Both preserve
+the next token after the prefill sequence-fusion change. Evidence:
+`quant_w8_post_prefill_fusion.jsonl` and `quant_w4_post_prefill_fusion.jsonl`
+in the same validation-host results directory.
+
+```bash
+PYTHONPATH=. python bench/bench_native_graph_overhead.py \
+  --hf-dir /path/to/rwkv7-g1d-0.4b-fp16 --dtype fp16 --device cuda \
+  --attn-mode fused_recurrent --batch-sizes 1 2 4 8 \
+  --warmup 100 --steps 1000 --fixed-token --results bench/results.jsonl
+```
+
+```bash
+PYTHONPATH=. python bench/bench_native_prefill_scan.py \
+  --model /path/to/rwkv7-g1d-0.4b-hf --code-source repo \
+  --device cuda --dtype fp16 --batch-sizes 1,4 --prompt-tokens 512 \
+  --fused-scan auto --warmup 20 --steps 50 --results bench/results.jsonl
+```
 
 ### RTX 4090 native-graph + TorchAO W4 update (2026-07-10)
 
@@ -222,11 +317,34 @@ python bench/bench_native_quant_e2e_decode.py \
   --batch-size 1 --prompt-tokens 32 --decode-tokens 128 --warmup 8
 ```
 
-This closes the 0.4B Ada W4 decode-speed lane for bsz 1/2/4/8. It does not
-close quantized prefill: for B1/B4 and T64/T256, W4 prefill is currently
-`0.819x-0.831x` of the same bf16 path. It also does not close W8: full-memory
-native MM8 is `0.369x` fp16 and the first TorchAO W8 probe is about `0.59x`;
-W8 tensor-core/fused projection work remains open.
+This closes the maximum-memory-saving W4 **decode** lane for bsz 1/2/4/8. The
+full-model W4 prefill graph reaches `26,652.9 tok/s`, `0.454x` the dense bf16
+prefill graph, although it is `3.58x` faster than the same quantized HF/FLA
+path. For applications
+that require every inference phase to stay non-negative, the `speed` policy
+quantizes `lm_head` only and uses the new prefill graph:
+
+- native A8/W8 speed lane: payload `0.9258x`, prompt512 prefill `1.011x` fp16,
+  decode ratios `1.001x/1.008x/1.020x/1.015x` at bsz1/2/4/8, prefill cosine
+  `0.999995`, and greedy equality;
+- TorchAO W4 speed lane: payload `0.8907x`, prompt512 prefill `1.010x` bf16,
+  and decode `1.043x/1.058x` bf16 at measured bsz1/4. Real-prompt prefill and
+  decode preserve the next token.
+
+Thus `speed` is the all-phase non-regression lane with moderate memory saving;
+`memory` is the large-footprint-reduction lane (`0.399x` payload) with much
+faster decode but a remaining quantized-prefill kernel gap.
+
+```bash
+# Run once with --quantization none, then repeat with a8w8 or torchao_w4.
+python bench/bench_native_prefill_scan.py \
+  --model /path/to/rwkv7-g1d-0.4b-hf --code-source repo \
+  --device cuda --dtype fp16 --batch-sizes 1 --prompt-tokens 512 \
+  --quantization a8w8 --quant-policy speed --quant-min-params 1 \
+  --warmup 50 --steps 50 --results bench/results.jsonl
+```
+
+Use `--dtype bf16 --quantization torchao_w4` for the W4 speed row.
 
 ## Ascend 910B status (华为昇腾 NPU)
 

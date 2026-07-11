@@ -111,6 +111,7 @@ try:
     from .native_jit import _block_ip_batched as _native_graph_block_ip_batched
     from .native_jit import _native_graph_linear_dispatch
     from .native_jit import prefill as _native_jit_prefill
+    from .native_jit import prewarm_ada_sparse_ffn as _native_graph_prewarm_sparse_ffn
 except Exception:  # pragma: no cover - optional remote-code fast path
     try:
         from native_jit import block_step as _native_jit_block_step
@@ -121,6 +122,7 @@ except Exception:  # pragma: no cover - optional remote-code fast path
         from native_jit import _block_ip_batched as _native_graph_block_ip_batched
         from native_jit import _native_graph_linear_dispatch
         from native_jit import prefill as _native_jit_prefill
+        from native_jit import prewarm_ada_sparse_ffn as _native_graph_prewarm_sparse_ffn
     except Exception:
         _native_jit_block_step = None
         _native_jit_block_step_batched = None
@@ -130,6 +132,7 @@ except Exception:  # pragma: no cover - optional remote-code fast path
         _native_graph_block_ip_batched = None
         _native_graph_linear_dispatch = None
         _native_jit_prefill = None
+        _native_graph_prewarm_sparse_ffn = None
 
 # HF dynamic-module discovery copies files referenced by direct relative
 # imports in this top-level remote-code file.  The native backend reaches
@@ -250,6 +253,40 @@ def _native_graph_cache_size() -> int:
         return 8
 
 
+def _native_prefill_graph_enabled() -> bool:
+    """Capture fixed-shape inference prefill as one CUDA graph."""
+
+    policy = _rwkv7_kernel_policy()
+    return env_flag("RWKV7_NATIVE_PREFILL_GRAPH", bool(getattr(policy, "prefill_graph", False)))
+
+
+def _native_prefill_graph_cache_size() -> int:
+    """Maximum fixed-shape prefill graphs retained by one model."""
+
+    return env_int("RWKV7_NATIVE_PREFILL_GRAPH_CACHE_SIZE", 2, lower=1, upper=16)
+
+
+def _native_prefill_graph_signature() -> tuple[tuple[str, str | None], ...]:
+    """Capture-affecting environment used in the prefill graph cache key."""
+
+    names = (
+        "RWKV7_NATIVE_PREFILL_DPLR_SCAN",
+        "RWKV7_NATIVE_PREFILL_FUSED_CLAMPW_SCAN",
+        "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT",
+        "RWKV7_NATIVE_PREFILL_FUSED_OUTPUT_PROJECT",
+        "RWKV7_NATIVE_PREFILL_FUSED_SCAN",
+        "RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT",
+        "RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX",
+        "RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP",
+        "RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN",
+        "RWKV7_NATIVE_PREFILL_FUSED_WAVG_LORA",
+        "RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M",
+        "RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS",
+        "RWKV7_NATIVE_PREFILL_STATE_PREP_W_DTYPE",
+    )
+    return tuple((name, os.environ.get(name)) for name in names)
+
+
 def _native_graph_fused_recurrent_requested() -> bool:
     """Whether native-graph runners should capture the experimental recurrent kernel."""
 
@@ -337,7 +374,9 @@ def _native_graph_fused_norm_mix_requested() -> bool:
 
 
 def _native_graph_fused_norm_mix_num_warps() -> int:
-    value = env_int("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS", 4, lower=1, upper=8)
+    policy = _rwkv7_kernel_policy()
+    default = int(getattr(policy, "norm_mix_num_warps", 4))
+    value = env_int("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS", default, lower=1, upper=8)
     if value not in {1, 2, 4, 8}:
         raise ValueError(f"RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS must be one of 1, 2, 4, or 8; got {value}")
     return value
@@ -354,8 +393,9 @@ def _native_graph_ada_linear_requested() -> bool:
 
 
 def _native_graph_ada_linear_signature() -> tuple[str, str]:
+    policy = _rwkv7_kernel_policy()
     return (
-        os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROWS", "2 4"),
+        os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROWS", str(getattr(policy, "ada_linear_rows", "2 4"))),
         os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROLES", "auto"),
     )
 
@@ -374,10 +414,29 @@ def _native_graph_ada_sparse_ffn_requested() -> bool:
     )
 
 
+def _native_graph_ada_sparse_ffn_signature() -> tuple[int, bool]:
+    policy = _rwkv7_kernel_policy()
+    raw_rows = os.environ.get(
+        "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_MAX_ROWS",
+        str(getattr(policy, "ada_sparse_ffn_max_rows", 19)),
+    )
+    try:
+        max_rows = min(19, max(1, int(raw_rows)))
+    except ValueError:
+        max_rows = int(getattr(policy, "ada_sparse_ffn_max_rows", 19))
+    inplace = env_flag(
+        "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_INPLACE",
+        bool(getattr(policy, "ada_sparse_ffn_inplace", False)),
+    )
+    return max_rows, inplace
+
+
 def _native_graph_rkv_policy() -> str:
     """Cache-key visible policy for VKWR-inspired stacked R/K/V projection."""
 
-    raw = os.environ.get("RWKV7_NATIVE_GRAPH_RKV_POLICY", "manual").strip().lower()
+    policy = _rwkv7_kernel_policy()
+    default = str(getattr(policy, "rkv_policy", "manual"))
+    raw = os.environ.get("RWKV7_NATIVE_GRAPH_RKV_POLICY", default).strip().lower()
     if raw in {"", "manual", "explicit", "env"}:
         return "manual"
     if raw in {"0", "false", "no", "off", "disabled"}:
@@ -457,6 +516,16 @@ def _native_graph_head_linear(module, x: torch.Tensor) -> torch.Tensor:
     if _native_graph_linear_dispatch is None:
         return F.linear(x, module.weight)
     return _native_graph_linear_dispatch(x, module.weight, role="head")
+
+
+def _native_graph_head_linear_into(module, x: torch.Tensor, out: torch.Tensor) -> bool:
+    """Let optional packed heads write directly into the graph output buffer."""
+
+    forward_into = getattr(module, "rwkv7_forward_into", None)
+    if not callable(forward_into):
+        return False
+    forward_into(x, out)
+    return True
 
 
 def _lora_direct(module, x: torch.Tensor) -> torch.Tensor:
@@ -595,6 +664,12 @@ class _RWKV7NativeGraphTokenRunner:
         ]
         self.xpa = [torch.zeros(self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
         self.xpf = [torch.zeros(self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
+        # Sparse FFN uses atomic accumulation. Keep one stable destination per
+        # layer/runner so independently captured batch graphs never share an
+        # allocator-owned intermediate buffer.
+        self.sparse_ffn_out = [
+            torch.empty(self.hidden, device=self.device, dtype=self.dtype) for _ in packs
+        ]
         self.v_first = torch.zeros(self.hidden, device=self.device, dtype=self.dtype)
         self.tok_id = torch.zeros(1, dtype=torch.long, device=self.device)
         self.emb = base.embeddings.weight
@@ -614,9 +689,13 @@ class _RWKV7NativeGraphTokenRunner:
     def _one_step(self) -> None:
         x = F.embedding(self.tok_id, self.emb).reshape(self.hidden)
         for li, p in enumerate(self.packs):
-            x = _native_graph_block_ip(x, self.state[li], self.xpa[li], self.xpf[li], self.v_first, p)
+            x = _native_graph_block_ip(
+                x, self.state[li], self.xpa[li], self.xpf[li], self.v_first, p,
+                self.sparse_ffn_out[li],
+            )
         out = F.layer_norm(x, [self.hidden], self.norm_w, self.norm_b, 1e-5)
-        self.logits.copy_(_native_graph_head_linear(self.head_module, out).reshape(-1))
+        if not _native_graph_head_linear_into(self.head_module, out, self.logits):
+            self.logits.copy_(_native_graph_head_linear(self.head_module, out).reshape(-1))
 
     def _capture(self) -> None:
         warm = torch.cuda.Stream(device=self.device)
@@ -744,6 +823,10 @@ class _RWKV7NativeGraphBatchedTokenRunner:
         ]
         self.xpa = [torch.zeros(self.batch_size, self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
         self.xpf = [torch.zeros(self.batch_size, self.hidden, device=self.device, dtype=self.dtype) for _ in packs]
+        self.sparse_ffn_out = [
+            torch.empty(self.batch_size, self.hidden, device=self.device, dtype=self.dtype)
+            for _ in packs
+        ]
         self.v_first = torch.zeros(self.batch_size, self.hidden, device=self.device, dtype=self.dtype)
         self.tok_id = torch.zeros(self.batch_size, dtype=torch.long, device=self.device)
         self.emb = base.embeddings.weight
@@ -763,9 +846,13 @@ class _RWKV7NativeGraphBatchedTokenRunner:
     def _one_step(self) -> None:
         x = F.embedding(self.tok_id, self.emb).reshape(self.batch_size, self.hidden)
         for li, p in enumerate(self.packs):
-            x = _native_graph_block_ip_batched(x, self.state[li], self.xpa[li], self.xpf[li], self.v_first, p)
+            x = _native_graph_block_ip_batched(
+                x, self.state[li], self.xpa[li], self.xpf[li], self.v_first, p,
+                self.sparse_ffn_out[li],
+            )
         out = F.layer_norm(x, [self.hidden], self.norm_w, self.norm_b, 1e-5)
-        self.logits.copy_(_native_graph_head_linear(self.head_module, out).reshape(self.batch_size, self.vocab_size))
+        if not _native_graph_head_linear_into(self.head_module, out, self.logits):
+            self.logits.copy_(_native_graph_head_linear(self.head_module, out).reshape(self.batch_size, self.vocab_size))
 
     def _capture(self) -> None:
         warm = torch.cuda.Stream(device=self.device)
@@ -1177,6 +1264,170 @@ class RWKV7StateCache(_FLACache):
         return cache
 
 
+class _RWKV7NativeGraphPrefillRunner:
+    """Fixed-shape CUDA-graph replay for inference prefill.
+
+    The recurrent input buffers are stable and read-only during replay. Output
+    state is bound to the public cache without a per-layer copy; when this
+    runner is reused by another cache, the previous cache is detached first.
+    """
+
+    def __init__(
+        self,
+        owner: "RWKV7ForCausalLM",
+        packs,
+        batch_size: int,
+        prompt_tokens: int,
+        logits_to_keep: int,
+    ) -> None:
+        if _native_jit_prefill is None or not torch.cuda.is_available():
+            raise RuntimeError("native prefill graph requires CUDA and native_jit.prefill")
+        self.owner = owner
+        self.packs = packs
+        self.batch_size = int(batch_size)
+        self.prompt_tokens = int(prompt_tokens)
+        self.logits_to_keep = int(logits_to_keep)
+        weight = owner.model.embeddings.weight
+        self.device = weight.device
+        self.dtype = weight.dtype
+        if self.device.type != "cuda":
+            raise RuntimeError("native prefill graph requires CUDA model weights")
+        self.input_ids = torch.zeros(
+            self.batch_size,
+            self.prompt_tokens,
+            device=self.device,
+            dtype=torch.long,
+        )
+        self.state_inputs: list[torch.Tensor] = []
+        self.xpa_inputs: list[torch.Tensor] = []
+        self.xpf_inputs: list[torch.Tensor] = []
+        for p in packs:
+            heads, head_dim = int(p[1]), int(p[2])
+            hidden = heads * head_dim
+            self.state_inputs.append(
+                torch.zeros(self.batch_size, heads, head_dim, head_dim, device=self.device, dtype=torch.float32)
+            )
+            self.xpa_inputs.append(torch.zeros(self.batch_size, hidden, device=self.device, dtype=self.dtype))
+            self.xpf_inputs.append(torch.zeros(self.batch_size, hidden, device=self.device, dtype=self.dtype))
+        self.inputs_are_zero = True
+        self.logits: torch.Tensor | None = None
+        self.state_outputs: list[torch.Tensor] = []
+        self.xpa_outputs: list[torch.Tensor] = []
+        self.xpf_outputs: list[torch.Tensor] = []
+        self.graph: torch.cuda.CUDAGraph | None = None
+        self._bound_cache_ref: weakref.ReferenceType[RWKV7StateCache] | None = None
+        self._capture()
+
+    def matches(self, batch_size: int, prompt_tokens: int, logits_to_keep: int) -> bool:
+        return (
+            self.batch_size == int(batch_size)
+            and self.prompt_tokens == int(prompt_tokens)
+            and self.logits_to_keep == int(logits_to_keep)
+        )
+
+    def _run_once(self):
+        # native_jit.prefill replaces entries in the Python lists. Pass shallow
+        # copies so the stable graph input buffers are never replaced.
+        return _native_jit_prefill(
+            self.owner,
+            self.input_ids,
+            self.packs,
+            state=list(self.state_inputs),
+            xpa=list(self.xpa_inputs),
+            xpf=list(self.xpf_inputs),
+            logits_to_keep=self.logits_to_keep,
+        )
+
+    def _capture(self) -> None:
+        warm = torch.cuda.Stream(device=self.device)
+        warm.wait_stream(torch.cuda.current_stream(self.device))
+        with torch.cuda.stream(warm):
+            with torch.no_grad():
+                for _ in range(3):
+                    self._run_once()
+        torch.cuda.current_stream(self.device).wait_stream(warm)
+        self.graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(self.graph):
+            outputs = self._run_once()
+        self.logits, self.state_outputs, self.xpa_outputs, self.xpf_outputs = outputs
+
+    @staticmethod
+    def _copy_or_zero(dst: torch.Tensor, src: torch.Tensor | None, *, transpose_last: bool = False) -> None:
+        if src is None:
+            dst.zero_()
+            return
+        if src.dim() == dst.dim() - 1:
+            src = src.unsqueeze(0)
+        if transpose_last:
+            src = src.transpose(-1, -2)
+        dst.copy_(src.to(device=dst.device, dtype=dst.dtype))
+
+    def _load_cache_inputs(self, past: RWKV7StateCache, initial_seen: int) -> None:
+        if int(initial_seen) <= 0:
+            if not self.inputs_are_zero:
+                for value in (*self.state_inputs, *self.xpa_inputs, *self.xpf_inputs):
+                    value.zero_()
+                self.inputs_are_zero = True
+            return
+        for li, p in enumerate(self.packs):
+            state = past._ensure_layer(int(p[0]))
+            self._copy_or_zero(self.state_inputs[li], state.get("recurrent_state"), transpose_last=True)
+            self._copy_or_zero(self.xpa_inputs[li], state.get("conv_state"))
+            self._copy_or_zero(self.xpf_inputs[li], state.get("ffn_state"))
+        self.inputs_are_zero = False
+
+    def _detach_bound_cache_if_different(self, past: RWKV7StateCache) -> None:
+        previous = self._bound_cache_ref() if self._bound_cache_ref is not None else None
+        if previous is None or previous is past:
+            return
+        for li, p in enumerate(self.packs):
+            layer_idx = int(p[0])
+            if layer_idx >= len(previous.states):
+                continue
+            state = previous.states[layer_idx]
+            recurrent_view = self.state_outputs[li].transpose(-1, -2)
+            if isinstance(state.get("recurrent_state"), torch.Tensor) and _same_tensor_view(
+                state["recurrent_state"], recurrent_view
+            ):
+                state["recurrent_state"] = recurrent_view.contiguous()
+            if isinstance(state.get("conv_state"), torch.Tensor) and _same_tensor_view(
+                state["conv_state"], self.xpa_outputs[li]
+            ):
+                state["conv_state"] = self.xpa_outputs[li].clone()
+            if isinstance(state.get("ffn_state"), torch.Tensor) and _same_tensor_view(
+                state["ffn_state"], self.xpf_outputs[li]
+            ):
+                state["ffn_state"] = self.xpf_outputs[li].clone()
+        self._bound_cache_ref = None
+
+    def _bind_cache(self, past: RWKV7StateCache, seen_tokens: int) -> None:
+        past._invalidate_native_graph_binding()
+        for li, p in enumerate(self.packs):
+            state = past._ensure_layer(int(p[0]))
+            state["recurrent_state"] = self.state_outputs[li].transpose(-1, -2)
+            state["conv_state"] = self.xpa_outputs[li]
+            state["ffn_state"] = self.xpf_outputs[li]
+            state["attn_state"] = None
+        past._seen_tokens = int(seen_tokens)
+        self._bound_cache_ref = weakref.ref(past)
+
+    def replay(
+        self,
+        input_ids: torch.LongTensor,
+        past: RWKV7StateCache,
+        initial_seen: int,
+    ) -> tuple[torch.Tensor, RWKV7StateCache]:
+        if tuple(input_ids.shape) != (self.batch_size, self.prompt_tokens):
+            raise ValueError("native prefill graph input shape changed after capture")
+        self._detach_bound_cache_if_different(past)
+        self._load_cache_inputs(past, int(initial_seen))
+        self.input_ids.copy_(input_ids.to(device=self.device))
+        assert self.graph is not None and self.logits is not None
+        self.graph.replay()
+        self._bind_cache(past, int(initial_seen) + self.prompt_tokens)
+        return self.logits.clone(), past
+
+
 class RWKV7Model(_RWKV7Model):
     config_class = RWKV7Config
 
@@ -1450,6 +1701,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         self._rwkv7_native_graph_cache_stats = _native_graph_stats_template()
         return self.rwkv7_native_graph_cache_stats()
 
+    @torch.inference_mode()
     def rwkv7_warmup_fast_token(
         self,
         batch_sizes: int | list[int] | tuple[int, ...] = (1,),
@@ -1721,6 +1973,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_ada_linear_signature(),
             _native_graph_ada_wagv_lora_requested(),
             _native_graph_ada_sparse_ffn_requested(),
+            _native_graph_ada_sparse_ffn_signature(),
             _native_graph_rkv_policy(),
             _native_graph_vkwr_rkv_thresholds(),
             int(batch_size),
@@ -1744,6 +1997,8 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return runner
 
         stats["misses"] = int(stats.get("misses", 0)) + 1
+        if _native_graph_ada_sparse_ffn_requested() and _native_graph_prewarm_sparse_ffn is not None:
+            _native_graph_prewarm_sparse_ffn(packs, int(batch_size))
         if int(batch_size) == 1:
             runner = _RWKV7NativeGraphTokenRunner(self, packs)
         else:
@@ -1772,6 +2027,90 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return 1
         self._rwkv7_native_graph_runner_cache = OrderedDict()
         return 0
+
+    def _rwkv7_native_prefill_graph_runner(
+        self,
+        packs,
+        batch_size: int,
+        prompt_tokens: int,
+        logits_to_keep: int,
+    ) -> _RWKV7NativeGraphPrefillRunner:
+        weight = self.model.embeddings.weight
+        key = (
+            weight.device.type,
+            weight.device.index,
+            weight.dtype,
+            int(batch_size),
+            int(prompt_tokens),
+            int(logits_to_keep),
+            _native_prefill_graph_signature(),
+            str(getattr(self, "_rwkv7_native_mm_quantization", "none")),
+        )
+        cache = getattr(self, "_rwkv7_native_prefill_graph_runner_cache", None)
+        if not isinstance(cache, OrderedDict):
+            cache = OrderedDict()
+            self._rwkv7_native_prefill_graph_runner_cache = cache
+        runner = cache.get(key)
+        if runner is not None:
+            cache.move_to_end(key)
+            self._rwkv7_native_prefill_graph_hot_runner = runner
+            return runner
+        runner = _RWKV7NativeGraphPrefillRunner(
+            self,
+            packs,
+            int(batch_size),
+            int(prompt_tokens),
+            int(logits_to_keep),
+        )
+        cache[key] = runner
+        cache.move_to_end(key)
+        while len(cache) > _native_prefill_graph_cache_size():
+            cache.popitem(last=False)
+        self._rwkv7_native_prefill_graph_hot_runner = runner
+        return runner
+
+    def rwkv7_clear_native_prefill_graph_cache(self) -> int:
+        """Drop fixed-shape native prefill CUDA graphs."""
+
+        cache = getattr(self, "_rwkv7_native_prefill_graph_runner_cache", None)
+        if not isinstance(cache, OrderedDict):
+            self._rwkv7_native_prefill_graph_runner_cache = OrderedDict()
+            self._rwkv7_native_prefill_graph_hot_runner = None
+            return 0
+        size = len(cache)
+        cache.clear()
+        self._rwkv7_native_prefill_graph_hot_runner = None
+        return size
+
+    def rwkv7_warmup_fast_prefill(
+        self,
+        shapes: tuple[int, int] | list[tuple[int, int]] | tuple[tuple[int, int], ...] = ((1, 512),),
+        *,
+        logits_to_keep: int = 1,
+    ) -> dict[str, str]:
+        """Pre-capture fixed ``(batch, prompt_tokens)`` serving shapes."""
+
+        if self.training:
+            raise RuntimeError("rwkv7_warmup_fast_prefill is inference-only; call model.eval() first")
+        if isinstance(shapes, tuple) and len(shapes) == 2 and all(isinstance(value, int) for value in shapes):
+            normalized = [shapes]
+        else:
+            normalized = list(shapes)
+        if not normalized:
+            raise ValueError("rwkv7_warmup_fast_prefill requires at least one shape")
+        packs = self._rwkv7_native_jit_packs()
+        warmed: dict[str, str] = {}
+        for batch_size, prompt_tokens in normalized:
+            if int(batch_size) <= 0 or int(prompt_tokens) <= 0:
+                raise ValueError("prefill warmup batch and prompt sizes must be positive")
+            self._rwkv7_native_prefill_graph_runner(
+                packs,
+                int(batch_size),
+                int(prompt_tokens),
+                int(logits_to_keep),
+            )
+            warmed[f"{int(batch_size)}x{int(prompt_tokens)}"] = "native_prefill_graph"
+        return warmed
 
     def _rwkv7_native_prefill_initial_state(
         self,
@@ -1859,7 +2198,6 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         batch_size = int(input_ids.shape[0])
         if self._rwkv7_uses_external_quantization():
             raise RuntimeError("native prefill currently requires dense floating-point weights")
-        packs = self._rwkv7_native_jit_packs()
         source_seen = None
         if past_key_values is not None and hasattr(past_key_values, "get_seq_length"):
             try:
@@ -1868,6 +2206,26 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                 source_seen = None
         past = RWKV7StateCache.from_legacy_cache(past_key_values)
         initial_seen = source_seen if source_seen is not None else (int(past.get_seq_length()) if hasattr(past, "get_seq_length") else 0)
+        if _native_prefill_graph_enabled():
+            keep_value = 0 if logits_to_keep is None else int(logits_to_keep)
+            prompt_tokens = int(input_ids.shape[1])
+            runner = getattr(self, "_rwkv7_native_prefill_graph_hot_runner", None)
+            if not isinstance(runner, _RWKV7NativeGraphPrefillRunner) or not runner.matches(
+                batch_size, prompt_tokens, keep_value
+            ):
+                packs = self._rwkv7_native_jit_packs()
+                runner = self._rwkv7_native_prefill_graph_runner(
+                    packs,
+                    batch_size,
+                    prompt_tokens,
+                    keep_value,
+                )
+            logits, past = runner.replay(input_ids, past, initial_seen)
+            self._rwkv7_last_fast_prefill_backend = "native_prefill_graph"
+            if not return_dict:
+                return logits, past
+            return CausalLMOutputWithPast(logits=logits, past_key_values=past)
+        packs = self._rwkv7_native_jit_packs()
         state_native, xpa, xpf = self._rwkv7_native_prefill_initial_state(past, packs, batch_size)
         logits, state_native, xpa, xpf = _native_jit_prefill(
             self,
@@ -1936,15 +2294,24 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             chunk_kwargs = dict(kwargs)
             if attention_mask is not None:
                 chunk_kwargs["attention_mask"] = attention_mask[:, start:end]
-            out = self(
-                input_ids[:, start:end],
-                attention_mask=chunk_kwargs.pop("attention_mask", None),
-                past_key_values=past,
-                use_cache=True,
-                logits_to_keep=logits_to_keep if end == total else 1,
-                return_dict=True,
-                **chunk_kwargs,
-            )
+            chunk_mask = chunk_kwargs.pop("attention_mask", None)
+            if _native_prefill_graph_enabled() and chunk_mask is None:
+                out = self.rwkv7_prefill_native(
+                    input_ids[:, start:end],
+                    past_key_values=past,
+                    logits_to_keep=logits_to_keep if end == total else 1,
+                    return_dict=True,
+                )
+            else:
+                out = self(
+                    input_ids[:, start:end],
+                    attention_mask=chunk_mask,
+                    past_key_values=past,
+                    use_cache=True,
+                    logits_to_keep=logits_to_keep if end == total else 1,
+                    return_dict=True,
+                    **chunk_kwargs,
+                )
             past = out.past_key_values
         if out is None:
             raise RuntimeError("unreachable: chunked prefill produced no output")
