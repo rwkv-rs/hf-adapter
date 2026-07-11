@@ -12,6 +12,7 @@ ENTRYPOINTS = (
     "evaluation/preflight_cuda_toolchain.py",
     "scripts/audit_release_wheels.py",
     "scripts/build_release_provenance.py",
+    "scripts/render_release_issue.py",
     "scripts/verify_end_to_end_release.py",
     "scripts/verify_release_assets.py",
 )

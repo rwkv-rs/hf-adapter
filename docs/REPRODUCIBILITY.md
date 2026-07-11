@@ -154,6 +154,20 @@ exist, audit the GitHub tag/branch/PR/source tree and download every release
 asset again before creating the final all-surfaces verdict:
 
 ```bash
+# Render the Issue body from the passed release/speed/lm_eval JSON first.
+python scripts/render_release_issue.py \
+  --directory /artifacts/rwkv7-v1.0.0 \
+  --version 1.0.0 \
+  --source-sha "$FINAL_SOURCE_SHA" \
+  --speed rtx-4080=/results/4080/speed.json \
+  --speed tesla-v100=/results/v100/speed.json \
+  --speed rtx-4090=/results/4090/speed.json \
+  --lm-eval rtx-4080=/results/4080/lm-eval/validation-three-way.json \
+  --lm-eval tesla-v100=/results/v100/lm-eval/validation-three-way.json \
+  --lm-eval rtx-4090=/results/4090/lm-eval/validation-three-way.json \
+  --output /results/release/validation-issue-v1.0.0.md \
+  --report /results/release/validation-issue-v1.0.0.json
+
 python evaluation/audit_github_release.py \
   --repo rwkv-rs/hf-adapter \
   --tag v1.0.0 \

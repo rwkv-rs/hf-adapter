@@ -990,3 +990,20 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   Status/exit codes alone are no longer sufficient evidence.
 - Ruff, compileall, `git diff --check`, and the complete local suite pass:
   `133 passed`.
+
+### 2026-08-28 — public validation Issue is rendered from evidence
+
+- Added `scripts/render_release_issue.py`. It accepts only a fully passed
+  three-device release provenance plus the exact speed and formal lm_eval JSON
+  from RTX 4080, V100 and RTX 4090.
+- The generated Markdown includes immutable source/harness/wheel/FLA SHA256
+  identities, every functional/HF/training/quantization/finetune gate, actual
+  implementation routes, complete whole-model/operator/training speed tables
+  against both reference and FLA, and every retained accuracy/NLL/PPL unit.
+- Rendering fails if a speed report uses another wheel/harness/FLA revision,
+  if the formal 144-unit metric matrix is incomplete, if any of the 96
+  candidate comparisons has a mismatch, or if the Issue would exceed the
+  GitHub size safety limit. The test also proves the renderer supplies every
+  term required by the post-publication GitHub audit.
+- Ruff, compileall, direct-entrypoint smoke, and the complete local suite pass:
+  `134 passed`.
