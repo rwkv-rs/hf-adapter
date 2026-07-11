@@ -1126,6 +1126,13 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   `150 passed` with `133` expected TorchScript deprecation warnings.
 - Recovered the prior documentation push from a GitHub HTTPS transport
   timeout using the fail-closed Git Database API path. Local branch, fork ref,
-  and upstream draft PR #146 now resolve to exact commit
+  and upstream draft PR #146 first converged on exact commit
   `00463f55a0189a70c4b54d58c5f6c10bad98f542`; no divergent history was
-  force-pushed.
+  force-pushed. The complete recurrent-audit change then pushed normally as
+  `e10a785444ae47fab54c98e57bb21de8f15e9e00`; local, fork and PR heads are
+  identical, and all five upstream checks passed.
+- At `2026-08-28T05:46:50+08:00`, the untouched RTX 4080 formal reference lane
+  still had 27/48 completed units with zero failures. Its active
+  0.4B/batch-8 HellaSwag unit was at 56% (`22407/40168`) with approximately
+  52 minutes remaining. It was the only GPU process; all backend-v2 watchers
+  remained asleep and sequential.
