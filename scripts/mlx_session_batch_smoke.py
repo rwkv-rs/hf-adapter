@@ -493,7 +493,7 @@ def main() -> int:
     ap.add_argument("--quantization", default="none", choices=["none", "mm8", "mm4"], help="Optional MLX packed W8/W4 projection path.")
     ap.add_argument("--quant-min-params", type=int, default=8_000_000)
     ap.add_argument("--quant-rkv-min-params", type=int, default=-1, help="Separate min-params threshold for attention r/k/v projection quantization; -1 preserves --quant-min-params.")
-    ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference", "metal", "auto"])
+    ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference", "metal", "auto", "groupwise"])
     ap.add_argument("--wkv-backend", default="reference", choices=["reference", "metal", "auto"])
     ap.add_argument(
         "--session-backend",

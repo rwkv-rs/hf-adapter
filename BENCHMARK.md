@@ -16,6 +16,7 @@ handoff, generation, and focused regression gates pass.
 
 Canonical rows, method, commands and the fail-closed gate are in
 [`bench/v100_production_close_20260711/README.md`](bench/v100_production_close_20260711/README.md).
+For benchmark directory layout, evidence naming, and the current script/directory inventory, see [`bench/README.md`](bench/README.md) and [`bench/INDEX.md`](bench/INDEX.md).
 
 ## Hardware currently measured
 
@@ -2940,3 +2941,435 @@ need a different serving-oriented fusion strategy. For the V100 branch, the next
 useful step is to validate this native JIT/CUDA-graph path on the V100 0.1B model
 and then decide whether to integrate its block-step packing into the HF fast-token
 API.
+
+## Apple M5 stateful CoreML multifunction bring-up (2026-07-10)
+
+The CoreML lane now has a live recurrent-state implementation rather than only
+`full_logits` planning. The export combines fixed masked `prefill` and one-token
+`decode` functions into one deduplicated `.mlpackage`. Core ML 8/9 state is
+fp16-only, so the fp32 WKV cache is stored as fp16 high + fp16 residual tensors;
+attention/FFN previous inputs and `v_first` are separate states. The runtime
+transfers these states between function handles with `MLState.read_state` /
+`write_state`, then performs exact shared-prompt greedy decode.
+
+Live environment: MacBook Air / Apple M5 / 16GB / macOS 26.5, Python 3.11.15,
+PyTorch 2.13.0, Transformers 5.13.0, CoreMLTools 9.0. PyTorch 2.13 is newer than
+the latest version advertised as tested by CoreMLTools 9, so the explicit
+runtime gates below are required.
+
+```bash
+PYTHONPATH=. RWKV7_NATIVE_MODEL=1 python scripts/export_rwkv7_coreml.py \
+  /path/to/rwkv7-g1d-0.1b-hf /tmp/rwkv7-coreml-0.1b \
+  --export-kind stateful-multifunction \
+  --prefill-seq-length 2 \
+  --compute-units cpu-only \
+  --coreml-compute-precision auto \
+  --deployment-target macOS15 \
+  --require-coremltools
+
+PYTHONPATH=. python bench/run_coreml_apple_baseline.py \
+  --manifest /tmp/rwkv7-coreml-0.1b/coreml_export_manifest.json \
+  --prompt-target-chars 16 --decode-lengths 2 \
+  --verify-chunked-prefill --verify-chunk-size 1 \
+  --verify-hf-parity --hf-parity-dtype fp32 \
+  --require-hf-greedy-match \
+  --compute-units cpu-and-ne --require-coremltools
+```
+
+| Compute units | CoreML compute | Prefill tok/s | Decode tok/s | State transfer max abs | Chunk logits/state max abs | HF greedy |
+|---|---|---:|---:|---:|---:|---|
+| CPU only | fp32 | 101.78 | 72.19 | 0.0 | 0.0 / 0.0 | 2/2 |
+| CPU + Neural Engine eligible | fp32 | 99.78 | 70.74 | 0.0 | 0.0 / 0.0 | 2/2 |
+
+The exact short prompt has four RWKV tokens and the generated ids are
+`[1184, 460]`, identical to the source HF native fp32 path. The package is
+`765,660,573` bytes and the transferred recurrent state is `4,795,392` bytes.
+`CPU_AND_NE` only constrains eligible compute units; it is **not** proof that the
+Neural Engine executed the graph. These are correctness bring-up rows, not
+production throughput claims.
+
+An explicit stateful fp16-compute experiment was smaller (`383,414,809` bytes)
+and faster on this short CPU-only shape, but generated `[47, 11]` instead of the
+HF `[1184, 460]`. Therefore `--coreml-compute-precision auto` resolves to fp32
+for stateful exports and fp16 remains opt-in until selective recurrent precision
+or an equivalent numerically stable ANE layout closes that mismatch. The next
+CoreML matrix is prefill chunks 16/64, longer prompts/decode, 0.4B/1.5B,
+LUT4/INT4, and measured runtime placement.
+
+The same stateful package was also exported through the initial CoreMLTools
+weight-compression modes. All rows keep fp32 recurrent compute, verify exact
+state transfer and alternate chunk splitting, and use the same four-token prompt
+plus two-token decode:
+
+| Weight mode | Package bytes | vs fp32 package | Prefill tok/s | Decode tok/s | HF greedy |
+|---|---:|---:|---:|---:|---|
+| fp32 weights | 765,660,573 | 1.000x | 99.78 | 70.74 | 2/2 |
+| INT8 per-channel | 344,882,067 | 0.450x | 104.80 | 67.49 | 2/2 |
+| INT4 per-block | 287,366,795 | 0.375x | 92.25 | 71.40 | 0/2 |
+| INT4 per-block, `lm_head` kept | 461,954,961 | 0.603x | 107.64 | 71.46 | 0/2 |
+| LUT4 grouped-channel | 98,213,860 | 0.128x | 85.36 | 67.06 | 0/2 |
+
+This closes a first **functional W8 CoreML stateful lane**: package footprint
+falls by about 55%, chunk/state gates remain exact, and short greedy tokens still
+match. It does not close the production speed target because decode is about
+`0.95x` the fp32-compute row. The W4/LUT4 lanes prove large package reduction
+and valid stateful execution, but fail the current HF greedy gate; they are
+quality experiments only until calibration/mixed-precision policies and broader
+quality scoring pass. Quantized rows may record the mismatch without failing the
+runtime harness when `--require-hf-greedy-match` is omitted, but acceptance
+runs for unquantized/W8 exactness should keep that flag enabled.
+
+### Apple M5 CoreML 0.4B extension
+
+The same live path also exports and runs `rwkv7-g1d-0.4b-hf` on the 16GB M5.
+The shape remains intentionally short (`prefill_seq_length=2`, shared prompt
+four tokens, decode two) so this row validates model-size generality before the
+long-context sweep:
+
+| 0.4B mode | Package bytes | Prefill tok/s | Decode tok/s | State bytes | Chunk max abs | HF greedy |
+|---|---:|---:|---:|---:|---:|---|
+| fp32 compute / uncompressed | 1,805,544,379 | 29.23 | 20.87 | 12,783,616 | 0.0 | 2/2 |
+| fp32 compute / INT8 per-channel | 657,633,909 | 32.94 | 20.47 | 12,783,616 | 0.0 | 2/2 |
+
+The 0.4B INT8 package is about `0.364x` the uncompressed package and improves
+short prefill to about `1.13x`, while decode is about `0.98x`; it therefore
+still misses the strict "quant decode no slower" production gate despite exact
+short greedy/state/chunk correctness. CoreMLTools emitted zero-scale division
+warnings while annotating a few zero-valued tensors, so larger prompt/quality
+rows must stay mandatory even though this runtime row is finite and passes.
+
+A longer 0.4B correctness row uses a 256-character shared prompt (`67` RWKV
+tokens), `32` generated tokens, ten-plus recurrent state crossings, and an
+alternate one-token chunk verification. Both uncompressed and INT8 keep
+`chunk logits/state max_abs=0.0` and HF greedy `32/32`. On one `CPU_AND_NE`
+run, uncompressed vs INT8 prefill/decode were `50.11/46.31` vs
+`55.96/46.30 tok/s`. Repeated warmed measurements remain variable: INT8 decode
+is near parity rather than a stable win (roughly `0.99x` median in the sampled
+runs), and first model warmup/compilation is much longer for the compressed
+package. The runtime now exposes `--warmup` and records `warmup_s` so cold
+CoreML compilation cannot silently contaminate steady-state throughput rows.
+
+## Apple M5 live Qwen3.5 0.8B comparison (2026-07-10)
+
+The first real same-device Qwen3.5 row is recorded in
+`bench/results_qwen35_apple_m5_20260710_fp16.jsonl` and
+`bench/results_qwen35_apple_m5_20260710_w4.jsonl`. Environment: MacBook Air,
+Apple M5, 16GB, macOS 26.5, Ollama 0.31.1 with
+`qwen3.5:0.8b-mlx` (1.2GB public package), and MLX 0.32.0. Both engines receive
+the same prompt text; tokenizer token counts differ naturally.
+
+The Ollama runner disables thinking for response comparability and uses
+`keep_alive=0` per row. This prevents an already-completed prompt from turning
+`prompt_eval_duration` into a cache-hit number. `ttft_s` excludes the reported
+model load duration on both sides; `cold_ttft_s` retains load-inclusive latency.
+
+Conservative comparison values use minimum throughput and maximum steady TTFT
+across two repeats:
+
+| RWKV mode | Prompt chars | Qwen/RWKV tokens | Qwen/RWKV decode tok/s | Decode ratio | Qwen/RWKV prefill tok/s | Prefill ratio | Qwen/RWKV TTFT | RWKV peak |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| fp16 + Metal WKV | 128 | 54 / 43 | 112.15 / 92.14 | 0.822x | 1041.27 / 93.43 | 0.090x | 0.071 / 0.460 s | 929.0MB |
+| fp16 + Metal WKV | 512 | 173 / 164 | 111.41 / 102.13 | 0.917x | 2403.92 / 116.99 | 0.049x | 0.087 / 1.402 s | 929.1MB |
+| W4 auto + Metal WKV | 128 | 54 / 43 | 109.14 / 68.11 | 0.624x | 1126.44 / 72.62 | 0.064x | 0.064 / 0.593 s | 527.6MB |
+| W4 auto + Metal WKV | 512 | 173 / 164 | 113.73 / 68.62 | 0.603x | 2460.76 / 73.40 | 0.030x | 0.087 / 2.235 s | 527.7MB |
+
+This is a clear **gap**, not a win. fp16 decode is relatively close but variable
+(about `0.82x-0.92x` Qwen in the retained repeat), while the sequential MLX
+prefill path is only about `0.05x-0.09x`. Current W4 lowers RWKV peak memory to
+about `0.568x` fp16 but also lowers decode to about `0.67x-0.74x` fp16. W4 matched fp16 greedy tokens
+for the 512-character sample and diverged at token zero for the 128-character
+sample, so no quality-parity claim is made. Ollama runtime memory is still
+missing, so the cross-engine peak-memory gate remains unknown. The runner now
+also records Ollama's official `/api/ps` loaded-memory value separately
+(`1.09-1.11GB` here); it is not mislabeled as peak memory.
+
+### MLX prefill graph-evaluation batching
+
+The recurrent MLX reference historically called `mx.eval` after every prompt
+token. `RWKV7_MLX_PREFILL_EVAL_INTERVAL` and
+`--rwkv-prefill-eval-interval` now expose a conservative graph-batching seam:
+the model default stays `1`, while the Apple acceptance wrapper defaults to
+`2`. `scripts/mlx_prefill_eval_interval_bench.py` rotates interval order in one
+loaded process and compares logits, all WKV/attention/FFN/v-first cache arrays,
+seen-token count, and next token against interval `1`.
+
+M5, 512 prompt characters (107 RWKV tokens), four interleaved repeats:
+
+| Mode | Model | interval=1 median | interval=2 median | Speedup | Parity |
+|---|---|---:|---:|---:|---|
+| fp16 | 0.1B | 243.03 tok/s | 255.37 tok/s | 1.05x | exact |
+| fp16 | 0.4B | 115.47 tok/s | 148.08 tok/s | 1.28x | exact |
+| fp16 | 1.5B | 42.52 tok/s | 46.38 tok/s | 1.09x | exact |
+| W4/Metal | 0.4B | 72.49 tok/s | 99.77 tok/s | 1.38x | exact |
+| W4/Metal | 1.5B | 26.80 tok/s | 35.39 tok/s | 1.32x | exact |
+
+Raw rows are in `bench/results_mlx_prefill_eval_m5_20260710_fp16.jsonl`
+and `bench/results_mlx_prefill_eval_m5_20260710_w4.jsonl`. The corresponding
+isolated Qwen rerun is in
+`bench/results_qwen35_apple_m5_20260710_eval2_{fp16,w4}.jsonl`. Conservative
+eval2 comparisons remain gaps: fp16 prefill is `0.120x/0.050x` Qwen for
+128/512 characters; W4 is `0.088x/0.042x`. Removing synchronization overhead
+therefore helps but cannot close the sequential-recurrence gap. The next Apple
+prefill milestone is a native MLX/Metal port of DPLR/WY chunk summary, prefix
+combine, and chunk apply/output—not a larger eval interval.
+
+Reproduce the interval sweep:
+
+```bash
+PYTHONPATH=. python scripts/mlx_prefill_eval_interval_bench.py \
+  --models /path/to/rwkv7-g1d-0.4b-hf,/path/to/rwkv7-g1g-1.5b-hf \
+  --intervals 1,2,4 --prompt-target-chars 512 --repeat 4 --warmup 1 \
+  --dtype fp16 --quantization none --wkv-backend metal --atol 0 \
+  --results bench/results_mlx_prefill_eval.jsonl
+```
+
+### MLX DPLR/WY three-stage Stage 1
+
+`rwkv7_hf/mlx_dplr_prefill.py` now ports the CUDA compact-WY factor contract
+to MLX and exposes summary, prefix-combine, and chunk-apply/output parity
+oracles. The first custom Metal kernels cover compact chunk summary and chunk
+apply/output for `head_dim<=64` and `chunk_size<=64`; prefix combine currently
+uses high-level MLX. `scripts/mlx_dplr_prefill_bench.py` times each boundary.
+
+M5 production-shaped synthetic row: `B=1,T=512,H=16,N=64,chunk=64,fp16`,
+warmup 2, repeat 5:
+
+| Stage | Median | Effective tok/s | Correctness |
+|---|---:|---:|---|
+| sequential recurrent MLX oracle | 77.207 ms | 6,631.48 | reference |
+| high-level MLX three-stage | 207.038 ms | 2,472.98 | output/final-state parity passes |
+| Metal compact summary | 58.801 ms | 8,707.32 | factor max-abs `3.73e-08` |
+| Metal chunk apply/output | 0.863 ms | 593,308.14 | state parity passes |
+| Metal summary + MLX prefix + Metal apply | 60.249 ms | 8,498.11 | output/final-state max-abs `1.53e-04/1.14e-04` |
+
+The three-stage Metal scaffold is about `1.28x` the synthetic recurrent oracle
+and `3.44x` the high-level three-stage implementation. This does **not** yet
+measure full model prefill: shift-mix, projections, layer execution, FFN, and
+output projection are absent. The summary kernel is still one thread per
+`(batch,chunk,head)` and dominates the staged time. Next gates are tiled
+summary reduction—the current summary is about `97.6%` of full staged
+latency—partial final chunks, layer-major MLX model integration,
+then 0.4B/1.5B exact-token and Qwen comparison rows.
+
+Raw evidence: `bench/results_mlx_dplr_stage1_target_m5_20260710.jsonl`. The
+smaller bring-up matrix remains in
+`bench/results_mlx_dplr_stage1_m5_20260710.jsonl`.
+
+```bash
+PYTHONPATH=. python scripts/mlx_dplr_prefill_bench.py \
+  --batch 1 --tokens 512 --heads 16 --head-dim 64 --chunk-size 64 \
+  --dtype fp16 --warmup 2 --repeat 5 --atol 0.01 \
+  --results bench/results_mlx_dplr_stage1.jsonl
+```
+
+### MLX DPLR/WY real-model Stage 2
+
+The opt-in DPLR backend is now wired into `MLXRWKV7Model.prefill()` through a
+layer-major sequence path. Shift-mix, dense/quant projections, V-first mixing,
+group norm, residuals, and FFN run over `[B,T,D]`; each layer's WKV sequence
+uses the three-stage DPLR backend. A partial final chunk is padded with
+`w=1` and zero rank/additive inputs, then output padding is discarded.
+
+The safe default remains `recurrent`. `prefill_backend=auto` selects DPLR only
+for at least 128 tokens; `dplr_metal` forces the experimental path. DPLR cache
+arrays are materialized contiguously before decode, and its temporary allocator
+cache is released after prefill.
+
+M5, prompt512 (111 RWKV tokens), chunk64, fp16, three measured repeats:
+
+| Model/mode | Recurrent median | DPLR median | Speedup | Recurrent/DPLR peak | Parity |
+|---|---:|---:|---:|---:|---|
+| 0.1B fp16 | 262.04 tok/s | 408.63 tok/s | 1.56x | 390.8/466.9MB | 8 tokens exact; logits/state max `0.0469/0.0469` |
+| 0.4B fp16 | 117.91 tok/s | 175.83 tok/s | 1.49x | 922.6/1050.7MB | 8 tokens exact; `0.0625/0.0625` |
+| 1.5B fp16 | 37.57 tok/s | 123.45 tok/s | 3.29x | 3096.7/3345.5MB | 8 tokens exact; `0.0625/0.1280` |
+| 0.4B W4 | 78.29 tok/s | 115.40 tok/s | 1.47x | 521.2/645.4MB | 8 tokens exact; `0.0625/0.0840` |
+
+These are real full-model prefill rows, but still not a production promotion:
+DPLR raises peak memory by roughly `8%-24%`, only one prompt distribution and
+one M-series chip are covered, and decode/TTFT remains variable after the
+larger prefill. `scripts/mlx_dplr_model_prefill_bench.py` is the parity gate.
+
+The isolated Qwen reruns are recorded in
+`bench/results_qwen35_apple_m5_20260710_dplr_auto_{fp16,w4}.jsonl`. Auto keeps
+the 43-token case recurrent and routes the 164-token case to DPLR. Both fp16
+and W4 preserve all 32 continuation tokens from the earlier recurrent rows.
+The 512-character prefill comparison still fails: the retained same-run ratios
+are `0.150x` Qwen for fp16 and `0.051x` for W4, with Qwen throughput varying
+substantially between the two isolated runs. No Qwen win is claimed.
+
+```bash
+PYTHONPATH=. python scripts/mlx_dplr_model_prefill_bench.py \
+  --models /path/to/rwkv7-g1d-0.4b-hf,/path/to/rwkv7-g1g-1.5b-hf \
+  --prompt-target-chars 512 --dplr-chunk-sizes 64 \
+  --repeat 3 --warmup 1 --decode-tokens 8 \
+  --dtype fp16 --quantization none --wkv-backend metal \
+  --results bench/results_mlx_dplr_model.jsonl
+```
+
+### MLX DPLR/WY tiled summary and bounded long-context prefill
+
+The Stage-2 summary assigned a whole `(batch,chunk,head)` to one Metal thread.
+The tiled kernel instead assigns one threadgroup to the summary and one lane
+to each head-dimension row. Token order stays sequential, while rank dot
+products and factor-row updates run in parallel. The scalar kernel remains an
+independent oracle; all five compact factors are bit-identical on M5.
+
+M5, `B1/T512/H16/N64/C64/fp16`, warmup2/repeat7 medians:
+
+| Stage | Median | Effective tok/s |
+|---|---:|---:|
+| scalar Metal summary | 54.801ms | 9,342.97 |
+| tiled Metal summary | 3.399ms | 150,617.78 |
+| tiled full three-stage | 3.421ms | 149,643.81 |
+| tiled serving three-stage (no chunk-end telemetry) | 3.776ms | 135,582.74 |
+
+The summary speedup is `16.12x`. Real-model defaults within the still-opt-in
+DPLR route are now chunk64, tiled summary, auto threshold 8 tokens, four-layer
+materialization from 64 tokens, and a 512-token outer window. The outer model
+backend default remains `recurrent`.
+
+M5 prompt512 (111 RWKV tokens), fp16, three-repeat medians:
+
+| Model | Recurrent | Tiled DPLR | Speedup | Median peak ratio | Parity |
+|---|---:|---:|---:|---:|---|
+| 0.1B | 257.42 tok/s | 5,058.87 tok/s | 19.65x | 1.161x | 8 tokens exact |
+| 0.4B | 118.62 tok/s | 2,143.54 tok/s | 18.07x | 1.090x | 8 tokens exact |
+| 1.5B | 37.56 tok/s | 1,006.19 tok/s | 26.79x | 1.053x | 8 tokens exact |
+
+The 0.4B long-context gate also passes at 223/888/1774 prompt tokens. In the
+recorded memory-first `eval2/min256/window512` sweep, DPLR medians are
+`2,834/2,734/1,483 tok/s`; all 8-token continuations match recurrent. The
+888/1774-token peak stays around `1.16-1.17GB` rather than growing with the
+entire prompt graph.
+
+The final same-run Qwen3.5 0.8B rows are mixed but materially improved. At
+chars512, fp16 passed that run's conservative decode/prefill/TTFT gates
+(`1.208x/1.107x/0.714x` RWKV/Qwen, where lower TTFT is better); W4 passed
+prefill and TTFT (`1.015x/0.743x`) but decode remained `0.950x`. Chars128 and
+cross-run stability still fail, so this is a first passing row, not a blanket
+Qwen superiority claim.
+
+Evidence:
+
+- `bench/results_mlx_dplr_tiled_stage_m5_20260710.jsonl`
+- `bench/results_mlx_dplr_tiled_model_m5_20260710_final_fp16.jsonl`
+- `bench/results_mlx_dplr_tiled_long_m5_20260710_fp16.jsonl`
+- `bench/results_qwen35_apple_m5_20260710_dplr_tiled_final_{fp16,w4}.jsonl`
+
+```bash
+PYTHONPATH=. python scripts/mlx_dplr_model_prefill_bench.py \
+  --models /path/to/rwkv7-g1d-0.4b-hf \
+  --prompt-target-chars-list 1024,4096,8192 \
+  --dplr-summary-implementations tiled --dplr-chunk-sizes 64 \
+  --dplr-layer-eval-interval 4 --dplr-layer-eval-min-tokens 64 \
+  --dplr-window-tokens 512 --repeat 3 --decode-tokens 8
+```
+
+### Guarded MLX full-model compiled decode
+
+`MLXRWKV7Model.prepare_compiled_decode()` now compiles and warms a pure
+full-model one-token graph with all recurrent/cache tensors passed explicitly.
+Preparation alone does not enable the graph in `decode_backend=auto`.
+`validate_compiled_decode()` first runs eager and compiled greedy trajectories
+from cloned prompt state and compares every generated token, final logits, and
+the complete state. A failed model/batch gate remains on eager decode.
+
+M5, batch1, 0.4B, prompt512/64-token decode, warmup1/repeat5 medians:
+
+| Mode | Eager | Guarded compiled | Speedup | 64-token parity |
+|---|---:|---:|---:|---|
+| fp16 | 96.39 tok/s | 119.99 tok/s | 1.245x | logits/state/tokens exact |
+| W4 (`mm4`) | 97.79 tok/s | 119.46 tok/s | 1.222x | logits/state/tokens exact |
+
+Compiled peak is about `935.0MB` versus `929.3MB` eager for fp16 and
+`834.6MB` versus `828.8MB` eager for W4. The 0.1B fp16 candidate fails strict
+numeric parity after 64 tokens despite matching greedy tokens; the 1.5B
+candidate first mismatches a greedy token at step 17. Guarded `auto` therefore
+falls back to eager for both sizes. This is why raw `decode_backend=compiled`
+is an experiment, not the production default.
+
+The prepared 0.4B fp16 route also closes the available speed portion of the
+same-run Qwen3.5 0.8B M5 gate at both prompt sizes:
+
+| Prompt | Decode RWKV/Qwen | Prefill RWKV/Qwen | TTFT RWKV/Qwen |
+|---|---:|---:|---:|
+| chars128 | 1.136x | 1.035x | 0.473x |
+| chars512 | 1.157x | 1.687x | 0.461x |
+
+These are conservative min/min/max comparison rows; lower TTFT is better.
+The overall comparison remains `unknown`, not `pass`, because Ollama's
+structured rows contain loaded-memory telemetry rather than a comparable peak
+metric. Compile and validation time is charged to `load_s`; it is not hidden
+inside TTFT. A cold prototype compile took about `1.43s`, while later runs can
+hit MLX's process/global graph cache and must not be generalized from their
+much smaller reported preparation time.
+
+Evidence:
+
+- `bench/results_mlx_decode_compile_m5_20260710_fp16.jsonl`
+- `bench/results_mlx_decode_compile_m5_20260710_w4.jsonl`
+- `bench/results_qwen35_apple_m5_20260710_dplr_tiled_compiled_fp16.jsonl`
+
+```bash
+PYTHONPATH=. python scripts/mlx_decode_compile_bench.py \
+  --models /path/to/rwkv7-g1d-0.4b-hf \
+  --prompt-target-chars 512 --decode-tokens 64 \
+  --validation-tokens 64 --repeat 5 --warmup 1 \
+  --dtype fp16 --quantization none --wkv-backend metal
+```
+
+#### Fast-LayerNorm compiled parity route
+
+Some model shapes change reduction/fusion order when the high-level LayerNorm
+formula is absorbed into the full compiled graph. The opt-in
+`--decode-norm-backend fast` route uses the explicit MLX fast primitive for the
+three standard LayerNorm boundaries while retaining reference per-head
+GroupNorm and reference prefill. Compiled graphs are invalidated when this
+backend changes.
+
+Promotion is deliberately two-level:
+
+1. active fast eager versus fast compiled must match tokens, logits, and every
+   state array under the strict compiled tolerances;
+2. the active trajectory must match reference-norm greedy tokens and remain
+   within the separately reported reference logits/state bounds (defaults
+   `0.25/0.5`).
+
+M5 fp16, batch1, prompt512/decode64, warmup1/repeat3 medians:
+
+| Model | Fast eager | Fast compiled | Internal speedup | Reference-token gate | Reference logits/state max-abs |
+|---|---:|---:|---:|---|---:|
+| 0.1B | 203.47 | 255.01 tok/s | 1.253x | 64 exact | 0.0625 / 0.03125 |
+| 0.4B | 88.09 | 101.02 tok/s | 1.147x | 64 exact | 0.0625 / 0.1875 |
+| 1.5B | 30.72 | 33.64 tok/s | 1.095x | 64 exact | 0.0625 / 0.12644 |
+
+The hardware policy still chooses the faster accepted route, not the route
+with the most checkmarks. Against the earlier reference rows, fast compiled is
+useful for 0.1B (`~1.16x` reference eager), while 0.4B reference compiled
+remains faster (`119.99 tok/s`) and 1.5B reference eager remains faster
+(`~36.5 tok/s`). W4 0.1B fast eager/compiled is
+`176.06/227.22 tok/s` (`1.291x`). W4 1.5B keeps strict fallback: compiled
+logits differ by `0.015625` even though state and tokens match, and relaxing
+that single tolerance still does not make W4 competitive with fp16.
+
+Evidence:
+
+- `bench/results_mlx_decode_fast_layernorm_m5_20260710_fp16.jsonl`
+- `bench/results_mlx_decode_fast_layernorm_m5_20260710_w4.jsonl`
+
+```bash
+PYTHONPATH=. python scripts/mlx_decode_compile_bench.py \
+  --models /path/to/0.1b,/path/to/0.4b,/path/to/1.5b \
+  --decode-norm-backend fast --prompt-target-chars 512 \
+  --decode-tokens 64 --validation-tokens 64 --repeat 3
+```
+
+Serving-shaped smoke uses the identical guard:
+
+```bash
+PYTHONPATH=. python scripts/mlx_generate.py /path/to/0.1b \
+  --prompt "User: hello\nAssistant:" --max-new-tokens 64 \
+  --wkv-backend metal --decode-backend auto \
+  --decode-norm-backend fast --prepare-compiled-decode \
+  --compiled-decode-validation-tokens 64
+```

@@ -22,6 +22,12 @@ styles:
     is the first Apple W8/W4 fused-kernel seam; it remains opt-in while the
     production speed path is tuned across model sizes and Apple GPUs.
 
+``groupwise``
+    Use MLX's native packed groupwise affine weights and fused
+    ``quantized_matmul``.  This is the production Apple W8/W4 route: it avoids
+    dense dequantized weights, reduces resident model memory, and reaches the
+    optimized MLX GPU kernels used by current Apple inference stacks.
+
 Weights use the same layout as the native Torch/CUDA helpers: quantize
 ``W: [N, M]`` used as ``y = x @ W``.  For an HF/torch Linear weight shaped
 ``[out, in]``, pass ``weight.T`` so ``N=in`` and ``M=out``.
@@ -220,14 +226,71 @@ class MLXMM4GroupWeight:
 
 
 @dataclass
+class MLXGroupwiseWeight:
+    """MLX-native groupwise affine weight used by ``mx.quantized_matmul``."""
+
+    w_q: Any
+    scales: Any
+    biases: Any
+    n: int
+    m: int
+    quant_bits: int
+    group_size: int
+    dense_dtype: Any
+
+    @property
+    def bits(self) -> int:
+        return int(self.quant_bits)
+
+    @property
+    def storage_bytes(self) -> int:
+        return sum(mlx_array_nbytes(x) for x in (self.w_q, self.scales, self.biases))
+
+
+def quantize_mlx_groupwise_linear(
+    dense_weight: Any,
+    *,
+    bits: int,
+    group_size: int = 64,
+) -> MLXGroupwiseWeight:
+    """Quantize ``Linear.weight [out, in]`` in MLX's fused native layout."""
+
+    mx = _mx()
+    out_features, in_features = int(dense_weight.shape[0]), int(dense_weight.shape[1])
+    if in_features % int(group_size):
+        raise ValueError(
+            f"groupwise quantization requires in_features divisible by {group_size}; got {in_features}"
+        )
+    w_q, scales, biases = mx.quantize(
+        dense_weight,
+        group_size=int(group_size),
+        bits=int(bits),
+        mode="affine",
+    )
+    mx.eval(w_q, scales, biases)
+    return MLXGroupwiseWeight(
+        w_q=w_q,
+        scales=scales,
+        biases=biases,
+        n=in_features,
+        m=out_features,
+        quant_bits=int(bits),
+        group_size=int(group_size),
+        dense_dtype=dense_weight.dtype,
+    )
+
+
+@dataclass
 class MLXQuantizedLinear:
     """Quantized MLX Linear weight with reference, affine, Metal, and auto backends."""
 
-    weight: MLXMM8Weight | MLXMM4Weight
+    weight: MLXMM8Weight | MLXMM4Weight | MLXGroupwiseWeight
     backend: str = "affine"
     auto_metal_max_rows: int = 0
     last_backend: str | None = None
-    backend_counts: dict[str, int] = field(default_factory=lambda: {"reference": 0, "affine": 0, "metal": 0})
+    backend_counts: dict[str, int] = field(
+        default_factory=lambda: {"reference": 0, "affine": 0, "metal": 0, "groupwise": 0}
+    )
 
     @property
     def bits(self) -> int:
@@ -239,7 +302,9 @@ class MLXQuantizedLinear:
 
     @property
     def out_features(self) -> int:
-        return int(self.weight.m if isinstance(self.weight, MLXMM8Weight) else self.weight.m_orig)
+        if isinstance(self.weight, MLXMM4Weight):
+            return int(self.weight.m_orig)
+        return int(self.weight.m)
 
     @property
     def storage_bytes(self) -> int:
@@ -250,8 +315,15 @@ class MLXQuantizedLinear:
         """Quantize an MLX Linear ``weight [out, in]`` for ``linear(x, weight)``."""
 
         backend = (backend or "affine").lower().strip()
-        if backend not in {"reference", "affine", "metal", "auto"}:
-            raise ValueError(f"unsupported MLX quant backend {backend!r}; expected reference, affine, metal, or auto")
+        if backend not in {"reference", "affine", "metal", "auto", "groupwise"}:
+            raise ValueError(
+                f"unsupported MLX quant backend {backend!r}; expected reference, affine, metal, auto, or groupwise"
+            )
+        if backend == "groupwise":
+            return cls(
+                quantize_mlx_groupwise_linear(dense_weight, bits=int(bits)),
+                backend=backend,
+            )
         auto_metal_max_rows = 0
         if backend == "auto" and metal_quant_available():
             if int(bits) == 4:
@@ -270,13 +342,27 @@ class MLXQuantizedLinear:
         if backend == "auto":
             rows = int(x.reshape(-1, self.in_features).shape[0])
             return "metal" if self.auto_metal_max_rows > 0 and rows <= self.auto_metal_max_rows else "affine"
-        if backend in {"reference", "affine", "metal"}:
+        if backend in {"reference", "affine", "metal", "groupwise"}:
             return backend
-        raise ValueError(f"unsupported MLX quant backend {self.backend!r}; expected reference, affine, metal, or auto")
+        raise ValueError(
+            f"unsupported MLX quant backend {self.backend!r}; expected reference, affine, metal, auto, or groupwise"
+        )
 
     def __call__(self, x: Any) -> Any:
         backend = self._selected_backend(x)
-        if isinstance(self.weight, MLXMM8Weight):
+        if isinstance(self.weight, MLXGroupwiseWeight):
+            mx = _mx()
+            y = mx.quantized_matmul(
+                x,
+                self.weight.w_q,
+                scales=self.weight.scales,
+                biases=self.weight.biases,
+                transpose=True,
+                group_size=int(self.weight.group_size),
+                bits=int(self.weight.bits),
+                mode="affine",
+            )
+        elif isinstance(self.weight, MLXMM8Weight):
             y = mm8_matmul_mlx(x, self.weight, backend=backend)
         else:
             y = mm4_matmul_mlx(x, self.weight, backend=backend)

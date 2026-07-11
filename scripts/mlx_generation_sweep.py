@@ -83,7 +83,7 @@ def main() -> int:
         default=-1,
         help="Separate min-params threshold for attention r/k/v projection quantization; -1 preserves --quant-min-params.",
     )
-    ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference", "metal", "auto"], help="MLX quantized matmul backend.")
+    ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference", "metal", "auto", "groupwise"], help="MLX quantized matmul backend.")
     ap.add_argument("--wkv-backend", default="reference", choices=["reference", "metal", "auto"], help="MLX recurrent WKV update backend.")
     ap.add_argument("--require-mlx", action="store_true")
     ap.add_argument("--json-only", action="store_true")

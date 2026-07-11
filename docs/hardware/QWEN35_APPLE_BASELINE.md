@@ -3,9 +3,13 @@
 This document defines the first reproducible gate for the goal: **RWKV-7 HF /
 Apple MLX / CoreML should beat Qwen3.5 on Apple/mobile deployment metrics**.
 
-The current repository does **not** claim that this gate is complete.  The point
-of this lane is to make "beat Qwen3.5" measurable before deeper MLX fused and
-CoreML/ANE optimization work starts.
+The original harness remains the definition of the gate. The bounded Apple M5
+`chars512/decode64` gate is now complete for the locally available 0.8B and 2B
+MLX baselines: both conservative comparisons pass decode, prefill, TTFT, and
+peak-memory requirements. See
+[APPLE_PRODUCTION_CLOSE.md](APPLE_PRODUCTION_CLOSE.md). Longer contexts, other
+M-series generations, 4B/9B classes, and CoreML/ANE are separate extension
+matrices rather than implied by this result.
 
 ## Public comparison targets
 
@@ -76,22 +80,88 @@ The wrapper runs `bench/run_qwen35_apple_baseline.py`, optionally runs
 pairs cover the currently available 0.4B/1.5B RWKV classes; override `PAIRS`,
 `QWEN_MODELS`, and `RWKV_MLX_MODELS` for 4B/9B or distilled-mobile gates.
 
+For reproducible prefill rows, the wrapper defaults to `OLLAMA_THINK=0`,
+`OLLAMA_KEEP_ALIVE=0`, and `OLLAMA_CACHE_PROMPT=0`. This keeps short thinking
+traces out of `response_text` and unloads Ollama after each row so a completed
+prompt cannot be reported as near-zero prefill. The runner records both steady
+`ttft_s` (load duration removed) and load-inclusive `cold_ttft_s`. Override
+these defaults only when deliberately measuring a shared prompt-cache service.
+With the default isolated policy it temporarily keeps the model alive long
+enough to query official `/api/ps`, records `ollama_loaded_memory_bytes`, and
+then explicitly unloads it. This is loaded-runtime memory, not peak memory, so
+the strict peak-to-peak gate remains unknown.
+
+The wrapper also defaults `RWKV_PREFILL_EVAL_INTERVAL=2`. This batches two
+lazy MLX recurrent prompt steps between graph evaluations. The reusable model
+API keeps the safer interval-1 default. Before changing this value on a new
+model/device, run `scripts/mlx_prefill_eval_interval_bench.py`; it treats
+logits, all recurrent/cache tensors, seen-token count, and next-token parity as
+a hard gate rather than inferring correctness from throughput alone.
+
+The DPLR model prefill path is deliberately opt-in. Set
+`RWKV_PREFILL_BACKEND=auto`, `RWKV_DPLR_MIN_TOKENS=8`,
+`RWKV_DPLR_CHUNK_SIZE=64`, `RWKV_DPLR_SUMMARY_IMPLEMENTATION=tiled`,
+`RWKV_DPLR_LAYER_EVAL_INTERVAL=4`,
+`RWKV_DPLR_LAYER_EVAL_MIN_TOKENS=64`, and
+`RWKV_DPLR_WINDOW_TOKENS=512`. This selects DPLR after its measured crossover,
+reclaims intermediates on larger prompts, and bounds long-context graph
+memory. Keep the outer default `RWKV_PREFILL_BACKEND=recurrent` for production
+claims until cross-device and repeated quality gates pass.
+
+The M5 final rows are
+`bench/results_qwen35_apple_m5_20260710_dplr_tiled_final_{fp16,w4}.jsonl`.
+Chars512 produced the first fp16 conservative decode/prefill/TTFT passing row;
+W4 passed prefill and TTFT but decode remained `0.950x`. Chars128 cold compile
+and cross-run stability remain open, so do not generalize the single matrix to
+an unconditional Qwen3.5 win.
+
+For compiled decode, use `RWKV_DECODE_BACKEND=auto` together with
+`RWKV_PREPARE_COMPILED_DECODE=1` and a nontrivial
+`RWKV_COMPILED_DECODE_VALIDATION_TOKENS` (64 in the current evidence). The
+wrapper charges compile/warmup plus eager-vs-compiled validation to `load_s`.
+`auto` only selects compiled decode after exact generated-token, final-logit,
+and full-state parity for the concrete model and batch size; otherwise it
+serves eager decode. Do not use `RWKV_DECODE_BACKEND=compiled` as a production
+shortcut around that gate.
+
+On M5, guarded compiled decode improves 0.4B batch1 prompt512/decode64 fp16
+from `96.39` to `119.99 tok/s` (`1.245x`) and W4 from `97.79` to
+`119.46 tok/s` (`1.222x`), with exact 64-token/logit/state parity. The 0.1B
+and 1.5B candidates fail strict validation and remain eager under `auto`.
+Combined with tiled DPLR, the repeated fp16 same-run rows in
+`bench/results_qwen35_apple_m5_20260710_dplr_tiled_compiled_fp16.jsonl` pass
+all available conservative speed gates at chars128 and chars512: decode
+`1.136x/1.157x`, prefill `1.035x/1.687x`, and TTFT
+`0.473x/0.461x` RWKV/Qwen. The comparison remains `unknown` because the Qwen
+structured telemetry is loaded memory rather than a comparable peak metric.
+
+`RWKV_DECODE_NORM_BACKEND=fast` is a separate, opt-in candidate for model
+shapes whose reference LayerNorm formulation does not compile stably. It uses
+MLX fast LayerNorm for decode only; prefill and per-head GroupNorm stay on the
+reference math. Promotion adds a second reference trajectory gate controlled
+by `RWKV_COMPILED_DECODE_REFERENCE_LOGITS_ATOL` (default `0.25`) and
+`RWKV_COMPILED_DECODE_REFERENCE_STATE_ATOL` (default `0.5`). Generated tokens
+must still match exactly. On M5 this route is useful for 0.1B fp16/W4, but is
+slower than the accepted reference route for 0.4B and 1.5B. Therefore the
+Qwen3.5 0.4B comparison above must continue to use reference-norm compiled
+decode rather than enabling fast LayerNorm globally.
+
 It emits rows with `axis=qwen35_apple_baseline` and can run:
 
 1. Qwen3.5 through a local Ollama server using the streaming `/api/generate`
    endpoint.
 2. Qwen3.5 through Hugging Face `mlx-community/*-MLX-4bit` models using the
-   optional `mlx-vlm` runtime.  This is the fallback path when Ollama model
-   pulls are unavailable or stuck.
+   optional `mlx-vlm` runtime when Ollama is unavailable.
 3. RWKV-7 through this repository's optional MLX recurrent backend.
-4. CoreML/ANE rows in the same schema once the CoreML runtime runner lands.
+4. RWKV-7 through the stateful CoreML multifunction runner; confirmed ANE
+   placement remains a separate gate.
 
 The companion export entry point is `scripts/export_rwkv7_coreml.py`; the companion runtime row generator is `bench/run_coreml_apple_baseline.py`.  It writes
-a reproducible CoreML export manifest in `--dry-run` mode on any machine, and
-attempts a first `full-logits` `.mlpackage` export when `coremltools`, `torch`,
-and `transformers` are installed.  Stateful `decode`/`prefill` CoreML functions
-remain follow-up work and are tracked in the manifest rather than claimed as
-complete.
+a reproducible CoreML export manifest in `--dry-run` mode on any machine. With
+`--export-kind stateful-multifunction` it exports masked `prefill` and one-token
+`decode` functions with packed RWKV Core ML state. The runtime records state
+transfer, chunk-boundary drift, HF greedy parity, TTFT, throughput, package
+bytes, and peak process memory.
 
 Dry-run the matrix without contacting runtimes:
 
@@ -246,6 +316,16 @@ streaming `next_token` sync instead.  The optional `RWKV7_MLX_FUSED_ATTN_MIX=1`
 seam fuses the six attention mix tensors into one Metal kernel and records
 `fused_attn_mix_counts`, but the 512/64 AB row keeps it disabled by default
 because decode regressed while prefill improved only modestly.
+
+The first multi-token WKV scan prototype is recorded in
+[`../../bench/apple_mlx_wkv_scan_m5_20260707/`](../../bench/apple_mlx_wkv_scan_m5_20260707/).
+It adds `rwkv7_hf.mlx_scan.wkv_scan()`, a Metal recurrent scan over
+`r/w/v/k/kk/a [B,T,H,N]` for one layer.  In the isolated Apple M5 WKV microbench,
+the scan kernel is `2.49x` faster than a per-token Metal WKV loop at `T=32` and
+`4.09x` faster at `T=128`.  This is the first kernel with the right shape to
+attack the long-context prefill gap, but it is not yet wired into full MLX
+prefill; the next step is a layer-major prefill path with full-model parity and
+Qwen3.5 end-to-end evidence.
 The component-profile follow-up is recorded in
 [`../../bench/apple_mlx_component_profile_m5_20260707/`](../../bench/apple_mlx_component_profile_m5_20260707/).
 It uses synchronized component boundaries on the same Apple M5 1.5B/mm4 path and
@@ -296,6 +376,7 @@ PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --rwkv-quantization none \
   --rwkv-wkv-backend metal \
   --rwkv-chunk-size 2048 \
+  --rwkv-prefill-eval-interval 2 \
   --results bench/results_qwen35_apple_baseline.jsonl
 ```
 
@@ -317,6 +398,7 @@ PYTHONPATH=. python bench/run_qwen35_apple_baseline.py \
   --rwkv-quant-backend auto \
   --rwkv-wkv-backend metal \
   --rwkv-chunk-size 2048 \
+  --rwkv-prefill-eval-interval 2 \
   --results bench/results_qwen35_apple_baseline.jsonl
 ```
 
@@ -370,11 +452,13 @@ PYTHONPATH=. python bench/run_coreml_apple_baseline.py \
   --decode-lengths 128,512 \
   --results bench/results_qwen35_apple_baseline.jsonl
 
-# Live full-logits runtime smoke. Rows are marked partial until stateful
-# decode/prefill lands, so comparison gates will not treat them as wins.
+# Live stateful runtime + correctness gates.
 PYTHONPATH=. python bench/run_coreml_apple_baseline.py \
   --manifest exports/rwkv7-g1g-1.5b-coreml/coreml_export_manifest.json \
   --compute-units cpu-and-ne \
+  --verify-chunked-prefill \
+  --verify-hf-parity \
+  --require-hf-greedy-match \
   --results bench/results_qwen35_apple_baseline.jsonl
 ```
 
@@ -386,28 +470,35 @@ PYTHONPATH=. python scripts/export_rwkv7_coreml.py \
   /path/to/rwkv7-g1g-1.5b-hf \
   exports/rwkv7-g1g-1.5b-coreml \
   --dry-run \
+  --export-kind stateful-multifunction \
   --chunks 4 \
-  --prefill-seq-length 2048 \
+  --prefill-seq-length 16 \
   --sample-seq-length 128 \
   --state-mode wkv-coreml \
-  --quantization lut4 \
+  --quantization none \
   --results bench/results_qwen35_apple_baseline.jsonl
 
-# Live first-step export when CoreMLTools is installed.
+# Live correctness-first stateful export when CoreMLTools is installed.
 PYTHONPATH=. python scripts/export_rwkv7_coreml.py \
-  /path/to/rwkv7-g1g-1.5b-hf \
-  exports/rwkv7-g1g-1.5b-coreml \
-  --sample-seq-length 128 \
+  /path/to/rwkv7-g1d-0.1b-hf \
+  exports/rwkv7-g1d-0.1b-coreml \
+  --export-kind stateful-multifunction \
+  --prefill-seq-length 16 \
   --deployment-target iOS18 \
   --compute-units cpu-and-ne \
-  --quantization lut4 \
+  --coreml-compute-precision auto \
+  --quantization none \
   --results bench/results_qwen35_apple_baseline.jsonl
 ```
 
+Stateful TorchScript prefill is statically unrolled, so the exported chunk is
+intentionally small (default `16`, maximum `128`). Longer prompts do not require
+a larger package: the runtime streams them through repeated masked chunks.
+
 The export row uses `axis=rwkv7_coreml_export`.  `status=plan` only records the
 manifest/contract; `status=pass` means a `.mlpackage` was produced.  A CoreML
-export row is **not** a Qwen3.5 performance win until a later CoreML runner adds
-TTFT, prefill/decode tok/s, memory, and correctness fields to the
+export row alone is **not** a Qwen3.5 performance win. Only live stateful runtime
+rows with TTFT, prefill/decode tok/s, memory, and correctness fields enter the
 `qwen35_apple_baseline` matrix.
 
 Summarize an existing result file:
@@ -481,11 +572,21 @@ with `GOAL_AUDIT_TIERS`, `GOAL_AUDIT_SHAPES`,
 
 ## Initial acceptance matrix
 
+The first M5/16GB live 0.8B-vs-0.4B matrix is now present. At 128/512 prompt
+characters and 32 generated tokens, the retained conservative RWKV fp16 decode
+rows reach about `0.82x/0.92x` Qwen, while prefill reaches only `0.090x/0.049x`. RWKV W4 lowers
+its own peak memory from about `929MB` to `528MB`, but decode falls to about
+`0.62x/0.60x` Qwen and prefill to `0.064x/0.030x`. Qwen `/api/ps` loaded memory
+is about `1.09-1.11GB`, but peak memory is not yet captured. W4 does not
+preserve fp16 tokens on every prompt, so neither the peak-memory nor quality
+gate is complete. See the two
+`bench/results_qwen35_apple_m5_20260710_*.jsonl` files.
+
 | RWKV target | Qwen3.5 comparator | Runtime gate | Current status |
 |---|---|---|---|
-| RWKV-7 0.4B W4/MLX | `qwen3.5:0.8b-mlx` | lower memory and higher decode tok/s at prompt 1k/4k/8k, decode 128/512 | needs same-device rows |
+| RWKV-7 0.4B fp16/W4 MLX | `qwen3.5:0.8b-mlx` | lower memory and higher decode tok/s at prompt 1k/4k/8k, decode 128/512 | first short same-device rows landed; decode/prefill/TTFT gates fail, Qwen loaded memory is recorded, and Qwen peak memory is unknown |
 | RWKV-7 1.5B W4/MLX | `qwen3.5:2b-mlx` / `mlx-community/Qwen3.5-2B-MLX-4bit` | lower memory and higher or equal decode tok/s; TTFT no worse by >10% | same-device 512/64 token-only row collected: memory pass, speed/TTFT fail |
-| RWKV-7 2.9B W4/MLX/CoreML | `qwen3.5:4b-mlx` | lower memory and higher decode tok/s | CoreML export prototype exists; ANE runtime rows not landed |
+| RWKV-7 2.9B W4/MLX/CoreML | `qwen3.5:4b-mlx` | lower memory and higher decode tok/s | 0.1B stateful CoreML correctness passes; 2.9B quantized/ANE rows not landed |
 | RWKV-7 larger / distilled mobile | `qwen3.5:9b-mlx` | mobile-useful memory envelope plus quality eval | requires model/quality work |
 
 ## CoreML / ANE follow-up
@@ -498,23 +599,97 @@ with `GOAL_AUDIT_TIERS`, `GOAL_AUDIT_SHAPES`,
 - async prefill loading
 - int8 / int4 / LUT quantization
 
-The repository now has `scripts/export_rwkv7_coreml.py` as the first
-CoreML/ANE bridge.  It records the intended chunking, state mode, quantization,
-and deployment target, supports a first `full-logits` export, and deliberately
-keeps stateful decode/prefill marked as unimplemented in the manifest.
+The repository now has a live CoreML bridge. It records chunking, state mode,
+quantization, deployment target, and compute precision, and exports deduplicated
+stateful prefill/decode functions. On M5, the 0.1B fp32-compute short row passes
+MLState transfer, alternate chunk split, and HF greedy-token parity. fp16
+stateful compute remains opt-in because its first live row mismatched HF tokens.
 
 The next repository lane should add:
 
-1. HF RWKV-7 -> Torch traced decode/prefill -> CoreML multifunction export.
-2. CoreML correctness checks against HF/MLX logits and state.
-3. CoreML W4/LUT/INT4 export rows in the same `qwen35_apple_baseline` schema.
-4. A CoreML runtime benchmark runner that emits TTFT, prefill/decode tok/s,
-   memory, chunked-prefill correctness, and state-cache reuse rows.
-5. iPhone/iPad rows once device access is available.
+1. Extend live correctness rows to prefill chunks 16/64 and long prompts/decode.
+2. Add 0.4B/1.5B and CoreML W4/LUT/INT4 rows in the same schema.
+3. Fix/selectively preserve recurrent precision in the fp16/ANE lane.
+4. Record confirmed runtime placement rather than treating `CPU_AND_NE` as
+   proof of ANE use.
+5. Add iPhone/iPad rows once device access is available.
 
 ## Non-goals for the first baseline PR
 
 - It does not claim final quality superiority over Qwen3.5.
-- It does not implement final stateful CoreML decode/prefill yet; the current CoreML path is an export prototype and manifest contract.
+- It does not claim the short 0.1B CoreML correctness row as production ANE performance.
 - It does not mark W8/W4 as fp16-beating until JSONL evidence proves it.
 - It does not replace the existing Apple MLX session and quant regression tests.
+
+## 2026-07-07 MLX WKV scan prefill end-to-end row
+
+The first opt-in end-to-end MLX multi-token WKV scan path is now wired behind
+`RWKV_WKV_SCAN_PREFILL=1` / `RWKV7_MLX_WKV_SCAN_PREFILL=1`.
+Evidence lives in `bench/apple_e2e_scan_prefill_m5_20260707/`.
+
+Short-prompt Apple M5 smoke rows show the prefill path is active via
+`wkv_scan_prefill=true` and `wkv_scan_prefill_counts={"metal": 24}`:
+
+| Model | Previous token-major prefill tok/s | Scan prefill tok/s | Speedup | Notes |
+|---|---:|---:|---:|---|
+| RWKV-7 0.4B mm4 | 53.62 | 178.51 | 3.33x | decode remains single-token path |
+| RWKV-7 1.5B mm4 | 21.49 | 38.11 | 1.77x | decode remains single-token path |
+
+This is not yet the final Qwen3.5 acceptance win: the flag remains opt-in while
+longer prompts, larger batches, quality drift, and same-device Qwen comparison
+matrices are expanded.  It is the first real end-to-end replacement of the
+prefill token-major WKV loop with a layer-major multi-token scan.
+
+## 2026-07-08 scan-prefill comparison gate
+
+A second Apple M5 evidence batch lives in
+`bench/apple_e2e_scan_prefill_m5_20260708/`.  It adds a reusable correctness and
+speed gate, `scripts/mlx_scan_prefill_compare.py`, which compares the previous
+MLX token-major prefill path against the opt-in scan-prefill path on the same
+HF model, prompt, quantization, and WKV backend.
+
+Recorded real-model rows:
+
+| Model | Token-major prefill tok/s | Scan prefill tok/s | Speedup | Generated ids |
+|---|---:|---:|---:|---|
+| RWKV-7 0.4B mm4 | 57.00 | 221.10 | 3.88x | identical |
+| RWKV-7 1.5B mm4 | 21.93 | 53.52 | 2.44x | identical |
+
+The Apple acceptance wrapper can run this gate with:
+
+```bash
+SCAN_PREFILL_COMPARE_MODELS=/path/to/rwkv7-hf-model \
+SCAN_PREFILL_COMPARE_FAIL_ON_GATE=1 \
+bash scripts/run_qwen35_apple_acceptance.sh
+```
+
+The gate appends `axis=mlx_scan_prefill_compare` rows and records logit drift,
+state drift, generated-id equality, token-major/scan prefill timing, and WKV
+kernel count reduction.
+
+## 2026-07-08 scan-prefill auto policy
+
+The MLX scan-prefill path now supports a production-shaped auto policy:
+
+```bash
+RWKV_WKV_SCAN_PREFILL=auto
+RWKV_WKV_SCAN_PREFILL_MIN_TOKENS=32
+```
+
+`auto` enables scan prefill for multi-token chunks above the threshold and keeps
+single-token decode on the existing decode path.  Telemetry records
+`wkv_scan_prefill_mode`, `wkv_scan_prefill_min_tokens`, and
+`wkv_scan_prefill_reason_counts`.
+
+Apple M5 evidence in `bench/apple_scan_prefill_auto_m5_20260708/`:
+
+| Model | Shape | Prefill tok/s | Decode tok/s | TTFT s | Peak memory |
+|---|---|---:|---:|---:|---:|
+| RWKV-7 0.4B mm4 | 1024 chars / 128 decode | 254.27 | 61.29 | 1.285 | 602 MB |
+| RWKV-7 1.5B mm4 | 1024 chars / 128 decode | 61.37 | 28.54 | 5.316 | 1.47 GB |
+| RWKV-7 0.4B mm4 | 4096 chars / 128 decode | 247.42 | 60.14 | 5.295 | 1.24 GB |
+| RWKV-7 1.5B mm4 | 4096 chars / 128 decode | 53.60 | 25.40 | 24.443 | 2.08 GB |
+
+The 4096-char rows also validate chunked prefill with three scan chunks
+(`chunked_wkv_scan_prefill_counts.metal=72`) and two state-only intermediate
+chunks.

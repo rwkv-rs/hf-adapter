@@ -210,6 +210,147 @@ Remaining before this goal is complete:
 - Do not call the DPLR/WY goal finished until compact WY or an equivalent
   compiled path is verified end-to-end against the original acceptance target.
 
+## Current Apple Branch Checkpoint: MLX DPLR/WY Stage 1
+
+The Apple sibling path now has `rwkv7_hf/mlx_dplr_prefill.py` and
+`scripts/mlx_dplr_prefill_bench.py`. It ports the same compact factor contract
+to MLX and implements custom Metal kernels for chunk summary and chunk
+apply/output; prefix combine is still high-level MLX. This is a synthetic math
+and kernel checkpoint, not yet a model-level prefill route.
+
+- M5 production-shaped target: `B=1,T=512,H=16,N=64,chunk=64,fp16`,
+  warmup 2, repeat 5.
+- Recurrent reference median: `77.207 ms`, `6,631.48 effective tok/s`.
+- High-level three stage: `207.038 ms`, `2,472.98 tok/s`.
+- Metal summary: `58.801 ms`, factor max-abs `3.73e-08`.
+- Metal chunk apply/output: `0.863 ms`; full output max-abs `1.53e-04`.
+- Metal summary + MLX prefix + Metal apply: `60.249 ms`, `8,498.11 tok/s`,
+  about `1.28x` the synthetic recurrent reference and `3.44x` high-level
+  three-stage; final-state max-abs `1.14e-04`.
+- Raw evidence: `bench/results_mlx_dplr_stage1_target_m5_20260710.jsonl`;
+  the smaller kernel bring-up row remains in
+  `bench/results_mlx_dplr_stage1_m5_20260710.jsonl`.
+
+Next Apple critical path: parallelize/tile the still-dominant summary kernel,
+support partial final chunks, then refactor MLX model prefill to layer-major
+sequence execution and route attention WKV through this three-stage backend.
+Do not claim Qwen/Albatross-level model performance from the synthetic row.
+
+Model integration checkpoint on the child branch:
+
+- `MLXRWKV7Model` now has opt-in layer-major sequence prefill with vectorized
+  shift-mix/projections/FFN and Metal DPLR attention. Partial final chunks are
+  padded with identity/no-op recurrence and trimmed from outputs.
+- At this Stage-2 checkpoint, default remained `prefill_backend=recurrent` and
+  `auto` used DPLR at 128 tokens. The Stage-3 checkpoint below supersedes the
+  auto threshold and tuning; chunk size remains 64.
+- M5 real-model prompt512 (111 tokens), fp16 median recurrent -> DPLR:
+  0.1B `262.04 -> 408.63 tok/s` (`1.56x`), 0.4B
+  `117.91 -> 175.83` (`1.49x`), 1.5B `37.57 -> 123.45` (`3.29x`).
+- 0.4B W4 median: `78.29 -> 115.40 tok/s` (`1.47x`).
+- All rows preserve the 8-token continuation; logits max-abs is at most
+  `0.0625`, state max-abs at most `0.128`. DPLR peak memory is higher by about
+  `8%-24%` depending on size/mode, so it stays opt-in.
+- Same-prompt 0.4B Qwen acceptance rows preserve all 32 recurrent continuation
+  tokens for fp16 and W4. The Qwen prefill gate still fails.
+- Evidence: `bench/results_mlx_dplr_model_m5_20260710_{fp16,w4}.jsonl` and
+  `bench/results_qwen35_apple_m5_20260710_dplr_auto_{fp16,w4}.jsonl`.
+
+Tiled-summary / long-context checkpoint:
+
+- The production Metal summary is now head-dimension parallel: one
+  threadgroup owns one `(batch, chunk, head)` and one lane owns one state row.
+  The old one-thread summary remains as the independent `scalar` oracle.
+- M5 synthetic `B1/T512/H16/N64/C64/fp16`, seven-repeat medians: scalar
+  summary `54.801ms`, tiled `3.399ms` (`16.12x`); factors are bit-identical.
+  Full tiled three-stage is `3.421ms`; serving apply omits chunk-end telemetry.
+- Final default tuning for the opt-in/auto DPLR path is chunk64, tiled summary,
+  auto threshold 8 tokens, layer materialization every 4 layers from 64 tokens,
+  and a 512-token outer window. Backend default remains `recurrent`.
+- M5 real-model prompt512/111-token fp16 medians recurrent -> tiled DPLR:
+  0.1B `257.42 -> 5058.87` (`19.65x`), 0.4B
+  `118.62 -> 2143.54` (`18.07x`), 1.5B `37.56 -> 1006.19`
+  (`26.79x`). Median peak ratios are `1.16x/1.09x/1.05x`; every row keeps
+  the recurrent 8-token continuation.
+- 0.4B long-context parity passes at 223/888/1774 prompt tokens with exact
+  8-token continuations. The 512-token window bounds the 888/1774-token M5
+  peak near `1.16-1.17GB` in the recorded memory-first tuning run.
+- Qwen3.5 0.8B comparison is no longer a universal prefill failure. The final
+  chars512 fp16 row passed that run's conservative decode/prefill/TTFT gates;
+  W4 passed prefill and TTFT but decode was `0.950x`. The chars128 cold-compile
+  row still fails, and cross-run variance means no blanket Qwen win claim.
+- Evidence: `bench/results_mlx_dplr_tiled_stage_m5_20260710.jsonl`,
+  `bench/results_mlx_dplr_tiled_model_m5_20260710_final_fp16.jsonl`,
+  `bench/results_mlx_dplr_tiled_long_m5_20260710_fp16.jsonl`, and
+  `bench/results_qwen35_apple_m5_20260710_dplr_tiled_final_{fp16,w4}.jsonl`.
+- Next Apple bottleneck is decode (`~0.90-0.95x` Qwen in representative
+  chars512 rows), then cold short-prompt compilation and broader M1-M4/M5 Pro
+  validation. Do not return to scalar summary optimization.
+
+Guarded compiled-decode checkpoint:
+
+- `MLXRWKV7Model` now has a full-model `mx.compile` decode graph with flattened
+  recurrent/cache state. Compilation/warmup is explicit, and `auto` never
+  promotes a graph until `validate_compiled_decode()` has compared eager and
+  compiled greedy tokens, final logits, and every state tensor for the concrete
+  model and batch size. A failed gate leaves serving on eager decode.
+- M5 0.4B, batch1, prompt512/64-token fp16 decode: eager median `96.39 tok/s`,
+  guarded compiled median `119.99 tok/s` (`1.245x`), with all 64 tokens and
+  final logits/state exact. W4 is `97.79 -> 119.46 tok/s` (`1.222x`) with the
+  same exact gate. Peak MLX memory rises only about `0.6%-0.7%` in these rows.
+- The guard is required rather than decorative. The 0.1B fp16 graph retained
+  greedy tokens but failed strict numeric parity after 64 tokens; the 1.5B
+  graph first changed a greedy token at step 17. Both are rejected by `auto`
+  and their served benchmark rows remain eager/exact.
+- With prepared+validated 0.4B fp16 decode and tiled DPLR prefill, the repeated
+  M5 same-run Qwen3.5 0.8B comparison passes every available conservative speed
+  gate at chars128 and chars512. RWKV/Qwen minimum ratios are decode
+  `1.136x/1.157x`, prefill `1.035x/1.687x`, and TTFT
+  `0.473x/0.461x` (lower is better). The overall result remains `unknown`
+  because Ollama exposes loaded memory, not a structured peak-to-peak metric.
+- Evidence: `bench/results_mlx_decode_compile_m5_20260710_{fp16,w4}.jsonl`
+  and
+  `bench/results_qwen35_apple_m5_20260710_dplr_tiled_compiled_fp16.jsonl`.
+  `scripts/mlx_decode_compile_bench.py` is the permanent eager/guarded-auto
+  parity and speed harness. First-use compilation has been observed as high as
+  about `1.43s`; wrappers must charge warmup+validation to load time rather
+  than hiding it in first-token latency.
+- Next Apple work is to recover exact compiled promotion for 0.1B/1.5B, fuse
+  W4 projection/dequant further, collect true peak memory, and run the same
+  gates on M1-M4/M5 Pro/Max. Do not default compiled decode without the guard.
+
+Fast-LayerNorm parity extension:
+
+- `RWKV7_MLX_DECODE_NORM_BACKEND=fast` routes the three standard decode
+  LayerNorm boundaries through MLX's explicit fast primitive. Per-head
+  GroupNorm stays on the reference formulation; making it a separate fast
+  primitive added launches without helping parity. Prefill remains on the
+  reference norm path.
+- The compiled cache is now keyed/invalidation-guarded by decode norm backend.
+  Fast-norm promotion requires two gates: exact active eager/compiled
+  logits/state/tokens, plus a 64-token reference-norm trajectory with exact
+  tokens and bounded logits/state drift (defaults `0.25/0.5`).
+- M5 fp16 prompt512/decode64, repeat3 medians, fast eager -> fast compiled:
+  0.1B `203.47 -> 255.01 tok/s` (`1.253x`), 0.4B
+  `88.09 -> 101.02` (`1.147x`), 1.5B `30.72 -> 33.64` (`1.095x`).
+  All three have exact active eager/compiled arrays and match all reference
+  greedy tokens; reference max-abs logits is `0.0625`, state is at most
+  `0.1875`.
+- This is not a blanket default. Relative to the earlier reference-math rows,
+  fast-norm compiled improves 0.1B by about `1.16x`, but 0.4B should keep the
+  faster exact reference compiled route (`119.99 tok/s`) and 1.5B should keep
+  reference eager (`~36.5 tok/s`). W4 0.1B improves
+  `176.06 -> 227.22 tok/s` (`1.291x`); 1.5B W4 remains strict-fallback because
+  compiled logits differ by `0.015625` and W4 is still slower than fp16.
+- Evidence:
+  `bench/results_mlx_decode_fast_layernorm_m5_20260710_{fp16,w4}.jsonl`.
+  Device/model policy must benchmark both norm routes and promote only a route
+  that passes its gates and beats reference eager; parity alone is insufficient.
+- The route is not benchmark-only: `MLXGenerationSession.prepare_compiled_decode`,
+  `load_mlx_generation_session`, `generate_text_from_hf`, and
+  `scripts/mlx_generate.py --prepare-compiled-decode` expose the same guarded
+  warmup/validation contract to reusable and command-line generation.
+
 ## Active Goal: Finish the Current HF Adapter First
 
 Current priority: finish the RWKV-7 Hugging Face / Transformers adapter with
@@ -667,6 +808,47 @@ Run this checklist for every new GPU before marking it as supported:
   forward/backward, cache smokes, and HIP-specific speed rows before parity
   claims.
 - Quant rule: no AMD quant performance claim until HIP-specific W8/W4 rows exist.
+
+#### Apple Silicon / MPS / MLX / CoreML
+
+- Policy family: `apple_mps` in `rwkv7_hf/kernel_policy.py`.
+- Default stance: native/no-FLA HF compatibility; all CUDA/Triton fused kernels
+  off. MLX/Metal and CoreML are explicit sibling backends, not CUDA-policy
+  fallbacks.
+- Default-on: `fast_cache` and automatic native-model fallback when MPS is
+  available. Default-off: CUDA native-graph kernels and CUDA/bitsandbytes quant.
+- Current exact-device evidence: MacBook Air / Apple M5 / 16GB / macOS 26.5.
+  MPS HF/PEFT/Trainer/TRL and MLX recurrent/session/quant rows exist. CoreMLTools
+  9.0 now has live 0.1B/0.4B `stateful-multifunction` rows: MLState transfer,
+  alternate chunk split, and HF fp32 greedy tokens all match exactly. Initial
+  CoreML INT8 reduces package size to about `0.45x`/`0.36x` and preserves the
+  short greedy gates, but decode remains about `0.95x`/`0.98x` fp32; 0.1B
+  INT4/LUT4 reduce package size further while failing the current HF greedy gate.
+- First live same-device Qwen gate: M5/16GB, Ollama 0.31.1
+  `qwen3.5:0.8b-mlx` vs RWKV-7 0.4B MLX, 128/512 prompt chars and decode32.
+  retained fp16 decode is about `0.82x/0.92x` Qwen but prefill only `0.090x/0.049x`;
+  W4 lowers RWKV peak to about `0.568x` fp16 while decode drops to about
+  `0.60x` Qwen. Treat Qwen peak memory and quality as open gates; `/api/ps`
+  loaded memory is telemetry, not a peak substitute.
+- MLX prompt graph-evaluation batching is now an explicit, parity-gated seam.
+  The model-level conservative default remains interval `1`; the Apple/Qwen
+  acceptance wrapper uses interval `2`. On M5, 512-character interleaved rows
+  keep logits, every recurrent/cache tensor, seen-token count, and next token
+  exact while interval `2` changes median prefill by `1.05x/1.28x/1.09x` for
+  0.1B/0.4B/1.5B fp16 and `1.38x/1.32x` for 0.4B/1.5B W4. This removes host
+  synchronization overhead only; it does not replace the required MLX/Metal
+  DPLR/WY chunk-summary, prefix-combine, and chunk-apply/output implementation.
+- CoreML state contract: state is fp16-only, so WKV uses fp16 high + fp16
+  residual tensors; attention/FFN previous inputs and `v_first` are separate
+  states. `--coreml-compute-precision auto` must resolve to fp32 for stateful
+  exports until the fp16 greedy mismatch is fixed.
+- Required validation before Apple production claims: exact M-series identity,
+  MPS/MLX/CoreML versions, prompt/decode matrix, peak memory, chunk/state/HF
+  parity, W8/W4 footprint and speed, and confirmed runtime placement. Never
+  treat `CPU_AND_NE` eligibility as proof that ANE executed the graph.
+- Promotion rule: keep fp16 stateful CoreML and quantized CoreML opt-in until
+  exact-device long-context greedy/quality gates pass; do not generalize M5 Air
+  numbers to M-series Pro/Max/Ultra or iPhone/iPad.
 
 ### Quantized Inference
 

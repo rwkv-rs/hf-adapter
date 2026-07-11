@@ -304,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--rwkv-quantization", default="mm4", choices=["none", "mm8", "mm4"])
     ap.add_argument("--rwkv-quant-min-params", type=int, default=8_000_000)
     ap.add_argument("--rwkv-quant-rkv-min-params", type=int, default=0)
-    ap.add_argument("--rwkv-quant-backend", default="auto", choices=["affine", "reference", "metal", "auto"])
+    ap.add_argument("--rwkv-quant-backend", default="auto", choices=["affine", "reference", "metal", "auto", "groupwise"])
     ap.add_argument("--rwkv-wkv-backend", default="auto", choices=["reference", "metal", "auto"])
     ap.add_argument("--component-limit", type=int, default=32)
     ap.add_argument("--no-component-sync", action="store_true", help="Record wrapper overhead without adding mx.eval boundaries.")

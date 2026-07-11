@@ -34,6 +34,10 @@ OLLAMA_PULL_TIMEOUT_S="${OLLAMA_PULL_TIMEOUT_S:-7200}"
 OLLAMA_PULL_IDLE_TIMEOUT_S="${OLLAMA_PULL_IDLE_TIMEOUT_S:-120}"
 OLLAMA_PULL_FAIL_ON_TIMEOUT="${OLLAMA_PULL_FAIL_ON_TIMEOUT:-1}"
 OLLAMA_PULL_RESULTS="${OLLAMA_PULL_RESULTS:-${RESULTS}}"
+OLLAMA_THINK="${OLLAMA_THINK:-0}"
+OLLAMA_KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:-0}"
+OLLAMA_CACHE_PROMPT="${OLLAMA_CACHE_PROMPT:-0}"
+OLLAMA_CAPTURE_MEMORY="${OLLAMA_CAPTURE_MEMORY:-1}"
 TEMPERATURE="${TEMPERATURE:-0.0}"
 
 RWKV_MLX_MODELS="${RWKV_MLX_MODELS:-}"
@@ -47,6 +51,35 @@ RWKV_WKV_BACKEND="${RWKV_WKV_BACKEND:-metal}"
 RWKV_CHUNK_SIZE="${RWKV_CHUNK_SIZE:-2048}"
 RWKV_FUSED_FFN_KEY_RELU2="${RWKV_FUSED_FFN_KEY_RELU2:-1}"
 RWKV_FUSED_ATTN_MIX="${RWKV_FUSED_ATTN_MIX:-0}"
+RWKV_WKV_SCAN_PREFILL="${RWKV_WKV_SCAN_PREFILL:-0}"
+RWKV_WKV_SCAN_PREFILL_MIN_TOKENS="${RWKV_WKV_SCAN_PREFILL_MIN_TOKENS:-32}"
+SCAN_PREFILL_COMPARE_MODELS="${SCAN_PREFILL_COMPARE_MODELS:-}"
+SCAN_PREFILL_COMPARE_APPEND="${SCAN_PREFILL_COMPARE_APPEND:-${RESULTS}}"
+SCAN_PREFILL_COMPARE_PROMPT_TARGET_CHARS="${SCAN_PREFILL_COMPARE_PROMPT_TARGET_CHARS:-512}"
+SCAN_PREFILL_COMPARE_MAX_NEW_TOKENS="${SCAN_PREFILL_COMPARE_MAX_NEW_TOKENS:-16}"
+SCAN_PREFILL_COMPARE_FAIL_ON_GATE="${SCAN_PREFILL_COMPARE_FAIL_ON_GATE:-0}"
+# Interval 2 is exact on the current 0.1B/0.4B/1.5B fp16 and 0.4B/1.5B
+# W4 Apple matrix, while avoiding one host/GPU synchronization per prompt
+# token. The model API itself retains interval 1 as its conservative default.
+RWKV_PREFILL_EVAL_INTERVAL="${RWKV_PREFILL_EVAL_INTERVAL:-2}"
+RWKV_PREFILL_BACKEND="${RWKV_PREFILL_BACKEND:-recurrent}"
+RWKV_DPLR_CHUNK_SIZE="${RWKV_DPLR_CHUNK_SIZE:-64}"
+RWKV_DPLR_MIN_TOKENS="${RWKV_DPLR_MIN_TOKENS:-8}"
+RWKV_DPLR_SUMMARY_IMPLEMENTATION="${RWKV_DPLR_SUMMARY_IMPLEMENTATION:-tiled}"
+RWKV_DPLR_LAYER_EVAL_INTERVAL="${RWKV_DPLR_LAYER_EVAL_INTERVAL:-4}"
+RWKV_DPLR_LAYER_EVAL_MIN_TOKENS="${RWKV_DPLR_LAYER_EVAL_MIN_TOKENS:-64}"
+RWKV_DPLR_WINDOW_TOKENS="${RWKV_DPLR_WINDOW_TOKENS:-512}"
+RWKV_DECODE_BACKEND="${RWKV_DECODE_BACKEND:-auto}"
+RWKV_DECODE_NORM_BACKEND="${RWKV_DECODE_NORM_BACKEND:-reference}"
+RWKV_PREPARE_COMPILED_DECODE="${RWKV_PREPARE_COMPILED_DECODE:-0}"
+RWKV_COMPILED_DECODE_VALIDATION_TOKENS="${RWKV_COMPILED_DECODE_VALIDATION_TOKENS:-32}"
+RWKV_COMPILED_DECODE_LOGITS_ATOL="${RWKV_COMPILED_DECODE_LOGITS_ATOL:-0.000001}"
+RWKV_COMPILED_DECODE_STATE_ATOL="${RWKV_COMPILED_DECODE_STATE_ATOL:-0.000001}"
+RWKV_COMPILED_DECODE_REFERENCE_LOGITS_ATOL="${RWKV_COMPILED_DECODE_REFERENCE_LOGITS_ATOL:-0.25}"
+RWKV_COMPILED_DECODE_REFERENCE_STATE_ATOL="${RWKV_COMPILED_DECODE_REFERENCE_STATE_ATOL:-0.5}"
+RWKV_DRAFT_MODEL="${RWKV_DRAFT_MODEL:-}"
+RWKV_DRAFT_PROMPT_TOKENS="${RWKV_DRAFT_PROMPT_TOKENS:-0}"
+RWKV_SPECULATIVE_PROPOSAL_TOKENS="${RWKV_SPECULATIVE_PROPOSAL_TOKENS:-32}"
 
 # Comparison defaults cover the current local/public model classes.  Add the
 # 4B/9B pairs once matching RWKV 2.9B/larger or distilled mobile exports exist.
@@ -88,12 +121,14 @@ COREML_OUTPUT_ROOT="${COREML_OUTPUT_ROOT:-exports/coreml}"
 COREML_DRY_RUN="${COREML_DRY_RUN:-1}"
 COREML_REQUIRE_TOOLS="${COREML_REQUIRE_TOOLS:-0}"
 COREML_CHUNKS="${COREML_CHUNKS:-4}"
-COREML_PREFILL_SEQ_LENGTH="${COREML_PREFILL_SEQ_LENGTH:-2048}"
+COREML_PREFILL_SEQ_LENGTH="${COREML_PREFILL_SEQ_LENGTH:-16}"
 COREML_SAMPLE_SEQ_LENGTH="${COREML_SAMPLE_SEQ_LENGTH:-128}"
+COREML_EXPORT_KIND="${COREML_EXPORT_KIND:-stateful-multifunction}"
 COREML_STATE_MODE="${COREML_STATE_MODE:-wkv-coreml}"
-COREML_QUANTIZATION="${COREML_QUANTIZATION:-lut4}"
+COREML_QUANTIZATION="${COREML_QUANTIZATION:-none}"
 COREML_DEPLOYMENT_TARGET="${COREML_DEPLOYMENT_TARGET:-iOS18}"
 COREML_COMPUTE_UNITS="${COREML_COMPUTE_UNITS:-cpu-and-ne}"
+COREML_COMPUTE_PRECISION="${COREML_COMPUTE_PRECISION:-auto}"
 COREML_RUNTIME_MANIFESTS="${COREML_RUNTIME_MANIFESTS:-}"
 COREML_RUN_EXPORTED="${COREML_RUN_EXPORTED:-1}"
 COREML_RUNTIME_DRY_RUN="${COREML_RUNTIME_DRY_RUN:-${COREML_DRY_RUN}}"
@@ -101,7 +136,14 @@ COREML_RUNTIME_REQUIRE_TOOLS="${COREML_RUNTIME_REQUIRE_TOOLS:-0}"
 COREML_RUNTIME_PROMPT_TARGET_CHARS="${COREML_RUNTIME_PROMPT_TARGET_CHARS:-${PROMPT_TARGET_CHARS}}"
 COREML_RUNTIME_DECODE_LENGTHS="${COREML_RUNTIME_DECODE_LENGTHS:-${DECODE_LENGTHS}}"
 COREML_RUNTIME_REPEAT="${COREML_RUNTIME_REPEAT:-${REPEAT}}"
+COREML_RUNTIME_WARMUP="${COREML_RUNTIME_WARMUP:-1}"
 COREML_RUNTIME_COMPUTE_UNITS="${COREML_RUNTIME_COMPUTE_UNITS:-${COREML_COMPUTE_UNITS}}"
+COREML_RUNTIME_VERIFY_CHUNKED="${COREML_RUNTIME_VERIFY_CHUNKED:-1}"
+COREML_RUNTIME_VERIFY_CHUNK_SIZE="${COREML_RUNTIME_VERIFY_CHUNK_SIZE:-1}"
+COREML_RUNTIME_REQUIRE_CHUNKED="${COREML_RUNTIME_REQUIRE_CHUNKED:-0}"
+COREML_RUNTIME_VERIFY_HF="${COREML_RUNTIME_VERIFY_HF:-1}"
+COREML_RUNTIME_HF_DTYPE="${COREML_RUNTIME_HF_DTYPE:-fp32}"
+COREML_RUNTIME_REQUIRE_HF_MATCH="${COREML_RUNTIME_REQUIRE_HF_MATCH:-1}"
 
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
@@ -110,6 +152,8 @@ export RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION="${RWKV7_MLX_GROUP_RKV_QUANT_PROJECT
 export RWKV7_MLX_STEP_EVAL_INTERVAL="${RWKV7_MLX_STEP_EVAL_INTERVAL:-8}"
 export RWKV7_MLX_FUSED_FFN_KEY_RELU2="${RWKV7_MLX_FUSED_FFN_KEY_RELU2:-${RWKV_FUSED_FFN_KEY_RELU2}}"
 export RWKV7_MLX_FUSED_ATTN_MIX="${RWKV7_MLX_FUSED_ATTN_MIX:-${RWKV_FUSED_ATTN_MIX}}"
+export RWKV7_MLX_WKV_SCAN_PREFILL="${RWKV7_MLX_WKV_SCAN_PREFILL:-${RWKV_WKV_SCAN_PREFILL}}"
+export RWKV7_MLX_WKV_SCAN_PREFILL_MIN_TOKENS="${RWKV7_MLX_WKV_SCAN_PREFILL_MIN_TOKENS:-${RWKV_WKV_SCAN_PREFILL_MIN_TOKENS}}"
 
 rwkv7_csv_items() {
   local raw="$1"
@@ -174,10 +218,12 @@ if [[ -n "${COREML_EXPORT_MODELS}" ]]; then
       --chunks "${COREML_CHUNKS}"
       --prefill-seq-length "${COREML_PREFILL_SEQ_LENGTH}"
       --sample-seq-length "${COREML_SAMPLE_SEQ_LENGTH}"
+      --export-kind "${COREML_EXPORT_KIND}"
       --state-mode "${COREML_STATE_MODE}"
       --quantization "${COREML_QUANTIZATION}"
       --deployment-target "${COREML_DEPLOYMENT_TARGET}"
       --compute-units "${COREML_COMPUTE_UNITS}"
+      --coreml-compute-precision "${COREML_COMPUTE_PRECISION}"
       --results "${RESULTS}"
     )
     if [[ "${COREML_DRY_RUN}" == "1" ]]; then
@@ -204,9 +250,26 @@ if (( ${#coreml_runtime_manifests[@]} > 0 )); then
       --prompt-target-chars "${COREML_RUNTIME_PROMPT_TARGET_CHARS}"
       --decode-lengths "${COREML_RUNTIME_DECODE_LENGTHS}"
       --repeat "${COREML_RUNTIME_REPEAT}"
+      --warmup "${COREML_RUNTIME_WARMUP}"
       --compute-units "${COREML_RUNTIME_COMPUTE_UNITS}"
+      --prompt-seed "${PROMPT_SEED}"
       --results "${RESULTS}"
     )
+    if [[ "${COREML_RUNTIME_VERIFY_CHUNKED}" == "1" ]]; then
+      args+=(--verify-chunked-prefill --verify-chunk-size "${COREML_RUNTIME_VERIFY_CHUNK_SIZE}")
+    fi
+    if [[ "${COREML_RUNTIME_REQUIRE_CHUNKED}" == "1" ]]; then
+      args+=(--require-chunked-prefill-match)
+    fi
+    if [[ "${COREML_RUNTIME_VERIFY_HF}" == "1" ]]; then
+      args+=(--verify-hf-parity --hf-parity-dtype "${COREML_RUNTIME_HF_DTYPE}")
+    fi
+    if [[ "${COREML_RUNTIME_REQUIRE_HF_MATCH}" == "1" ]]; then
+      args+=(--require-hf-greedy-match)
+    fi
+    if [[ "${STORE_RESPONSES}" == "1" ]]; then
+      args+=(--store-responses)
+    fi
     if [[ "${COREML_RUNTIME_DRY_RUN}" == "1" ]]; then
       args+=(--dry-run)
     fi
@@ -227,6 +290,7 @@ baseline_args=(
   --warmup-repeats "${WARMUP_REPEATS}"
   --ollama-host "${OLLAMA_HOST}"
   --ollama-timeout-s "${OLLAMA_TIMEOUT_S}"
+  --ollama-keep-alive "${OLLAMA_KEEP_ALIVE}"
   --temperature "${TEMPERATURE}"
   --rwkv-dtype "${RWKV_DTYPE}"
   --rwkv-quantization "${RWKV_QUANTIZATION}"
@@ -235,7 +299,41 @@ baseline_args=(
   --rwkv-quant-backend "${RWKV_QUANT_BACKEND}"
   --rwkv-wkv-backend "${RWKV_WKV_BACKEND}"
   --rwkv-chunk-size "${RWKV_CHUNK_SIZE}"
+  --rwkv-prefill-eval-interval "${RWKV_PREFILL_EVAL_INTERVAL}"
+  --rwkv-prefill-backend "${RWKV_PREFILL_BACKEND}"
+  --rwkv-dplr-chunk-size "${RWKV_DPLR_CHUNK_SIZE}"
+  --rwkv-dplr-min-tokens "${RWKV_DPLR_MIN_TOKENS}"
+  --rwkv-dplr-summary-implementation "${RWKV_DPLR_SUMMARY_IMPLEMENTATION}"
+  --rwkv-dplr-layer-eval-interval "${RWKV_DPLR_LAYER_EVAL_INTERVAL}"
+  --rwkv-dplr-layer-eval-min-tokens "${RWKV_DPLR_LAYER_EVAL_MIN_TOKENS}"
+  --rwkv-dplr-window-tokens "${RWKV_DPLR_WINDOW_TOKENS}"
+  --rwkv-decode-backend "${RWKV_DECODE_BACKEND}"
+  --rwkv-decode-norm-backend "${RWKV_DECODE_NORM_BACKEND}"
+  --rwkv-compiled-decode-validation-tokens "${RWKV_COMPILED_DECODE_VALIDATION_TOKENS}"
+  --rwkv-compiled-decode-logits-atol "${RWKV_COMPILED_DECODE_LOGITS_ATOL}"
+  --rwkv-compiled-decode-state-atol "${RWKV_COMPILED_DECODE_STATE_ATOL}"
+  --rwkv-compiled-decode-reference-logits-atol "${RWKV_COMPILED_DECODE_REFERENCE_LOGITS_ATOL}"
+  --rwkv-compiled-decode-reference-state-atol "${RWKV_COMPILED_DECODE_REFERENCE_STATE_ATOL}"
 )
+if [[ -n "${RWKV_DRAFT_MODEL}" ]]; then
+  baseline_args+=(
+    --rwkv-draft-model "${RWKV_DRAFT_MODEL}"
+    --rwkv-draft-prompt-tokens "${RWKV_DRAFT_PROMPT_TOKENS}"
+    --rwkv-speculative-proposal-tokens "${RWKV_SPECULATIVE_PROPOSAL_TOKENS}"
+  )
+fi
+if [[ "${RWKV_PREPARE_COMPILED_DECODE}" == "1" ]]; then
+  baseline_args+=(--rwkv-prepare-compiled-decode)
+fi
+if [[ "${OLLAMA_THINK}" == "1" ]]; then
+  baseline_args+=(--ollama-think)
+fi
+if [[ "${OLLAMA_CACHE_PROMPT}" == "1" ]]; then
+  baseline_args+=(--ollama-cache-prompt)
+fi
+if [[ "${OLLAMA_CAPTURE_MEMORY}" != "1" ]]; then
+  baseline_args+=(--no-ollama-memory)
+fi
 if [[ "${STORE_RESPONSES}" == "1" ]]; then
   baseline_args+=(--store-responses)
 fi
@@ -267,6 +365,33 @@ rwkv7_run "${PYTHON_BIN}" bench/run_qwen35_apple_baseline.py "${baseline_args[@]
 
 if [[ "${DRY_RUN}" == "1" ]]; then
   exit 0
+fi
+
+if [[ -n "${SCAN_PREFILL_COMPARE_MODELS}" ]]; then
+  while IFS= read -r model; do
+    scan_compare_args=(
+      "${model}"
+      --prompt-target-chars "${SCAN_PREFILL_COMPARE_PROMPT_TARGET_CHARS}"
+      --max-new-tokens "${SCAN_PREFILL_COMPARE_MAX_NEW_TOKENS}"
+      --dtype "${RWKV_DTYPE}"
+      --quantization "${RWKV_QUANTIZATION}"
+      --quant-min-params "${RWKV_QUANT_MIN_PARAMS}"
+      --quant-backend "${RWKV_QUANT_BACKEND}"
+      --wkv-backend "${RWKV_WKV_BACKEND}"
+    )
+    if [[ "${RWKV_QUANT_RKV_MIN_PARAMS}" != "" ]]; then
+      scan_compare_args+=(--quant-rkv-min-params "${RWKV_QUANT_RKV_MIN_PARAMS}")
+    fi
+    if [[ -n "${SCAN_PREFILL_COMPARE_APPEND}" ]]; then
+      scan_compare_args+=(--results "${SCAN_PREFILL_COMPARE_APPEND}")
+    fi
+    rwkv7_log "MLX WKV scan prefill vs token-major comparison for ${model}"
+    if [[ "${SCAN_PREFILL_COMPARE_FAIL_ON_GATE}" == "1" ]]; then
+      rwkv7_run "${PYTHON_BIN}" scripts/mlx_scan_prefill_compare.py "${scan_compare_args[@]}"
+    else
+      rwkv7_run "${PYTHON_BIN}" scripts/mlx_scan_prefill_compare.py "${scan_compare_args[@]}" || true
+    fi
+  done < <(rwkv7_csv_items "${SCAN_PREFILL_COMPARE_MODELS}")
 fi
 
 if [[ -n "${QUALITY_RUBRIC}" ]]; then

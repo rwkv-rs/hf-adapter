@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .mlx_bridge import load_selected_hf_tensors_as_mlx, mlx_array_nbytes, require_mlx, summarize_mlx_arrays
+from .mlx_dplr_prefill import mlx_compact_wy_three_stage_metal, mlx_dplr_metal_available
 from .mlx_quant import (
     MLXQuantizedLinear,
     metal_quant_available,
@@ -34,6 +35,7 @@ from .mlx_quant import (
 )
 from .mlx_mix import attn_mix, metal_attn_mix_available
 from .mlx_wkv import metal_wkv_available, wkv_update
+from .mlx_scan import metal_wkv_scan_available, wkv_scan
 
 
 EXP_HALF = 0.606531  # = exp(-0.5), RWKV-7 decay base used by the native torch path.
@@ -60,14 +62,26 @@ def _env_float(name: str, default: float) -> float:
         return float(default)
 
 
-def _env_int(name: str, default: int) -> int:
+def _env_int(name: str, default: int, *, lower: int = 1, upper: int = 4096) -> int:
+    raw = os.environ.get(name)
+    try:
+        value = int(raw) if raw not in {None, ""} else int(default)
+    except ValueError:
+        value = int(default)
+    return max(int(lower), min(int(upper), value))
+
+def _env_scan_prefill_mode(name: str, default: str = "off") -> str:
     raw = os.environ.get(name)
     if raw is None or raw == "":
-        return int(default)
-    try:
-        return int(raw)
-    except ValueError:
-        return int(default)
+        raw = default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on", "force", "forced"}:
+        return "on"
+    if value in {"0", "false", "no", "off", "disable", "disabled"}:
+        return "off"
+    if value == "auto":
+        return "auto"
+    return default
 
 
 def _env_choice(name: str, default: str, choices: set[str]) -> str:
@@ -305,6 +319,28 @@ class MLXGenerationSession:
     @property
     def prompt_tokens(self) -> int:
         return len(self.prompt_ids)
+
+    def prepare_compiled_decode(
+        self,
+        *,
+        validation_tokens: int = 32,
+        logits_atol: float = 0.0,
+        state_atol: float = 1e-6,
+        reference_logits_atol: float = 0.25,
+        reference_state_atol: float = 0.5,
+    ) -> dict[str, Any]:
+        """Warm and parity-gate compiled batch-one decode for this prompt."""
+
+        self.model.prepare_compiled_decode(batch_size=1)
+        return self.model.validate_compiled_decode(
+            self.logits,
+            self.state,
+            steps=int(validation_tokens),
+            logits_atol=float(logits_atol),
+            state_atol=float(state_atol),
+            reference_logits_atol=float(reference_logits_atol),
+            reference_state_atol=float(reference_state_atol),
+        )
 
     @property
     def generated_tokens(self) -> int:
@@ -809,6 +845,24 @@ class MLXRWKV7Model:
             raise ValueError(f"unsupported MLX WKV backend {wkv_backend!r}; expected reference, metal, or auto")
         self.wkv_backend_last: str | None = None
         self.wkv_backend_counts: dict[str, int] = {"reference": 0, "metal": 0}
+        self.decode_backend = _env_choice(
+            "RWKV7_MLX_DECODE_BACKEND",
+            "auto",
+            {"eager", "compiled", "auto"},
+        )
+        self.decode_backend_last: str | None = None
+        self.decode_backend_counts: dict[str, int] = {"eager": 0, "compiled": 0}
+        self.decode_norm_backend = _env_choice(
+            "RWKV7_MLX_DECODE_NORM_BACKEND",
+            "reference",
+            {"reference", "fast"},
+        )
+        self.decode_compile_s_by_batch: dict[int, float] = {}
+        self._compiled_decode_functions: dict[int, Any] = {}
+        self._compiled_decode_norm_backend_by_batch: dict[int, str] = {}
+        self._compiled_decode_validated_batches: set[int] = set()
+        self._compiled_decode_rejected_batches: set[int] = set()
+        self.decode_compiled_validation_by_batch: dict[int, dict[str, Any]] = {}
         self.quantized_linears: dict[str, MLXQuantizedLinear] = {}
         self.quantized_dense_equivalent_bytes = 0
         self.quantized_linear_bytes = 0
@@ -821,6 +875,12 @@ class MLXRWKV7Model:
         self.fused_ffn_key_relu2_counts: dict[str, int] = {"metal": 0, "fallback": 0}
         self.fused_attn_mix = _env_flag("RWKV7_MLX_FUSED_ATTN_MIX", False)
         self.fused_attn_mix_counts: dict[str, int] = {"metal": 0, "fallback": 0}
+        self.fast_layer_norm = _env_flag("RWKV7_MLX_FAST_LAYER_NORM", False)
+        self.fast_group_norm = _env_flag("RWKV7_MLX_FAST_GROUP_NORM", False)
+        self.wkv_scan_prefill_mode = _env_scan_prefill_mode("RWKV7_MLX_WKV_SCAN_PREFILL", "off")
+        self.wkv_scan_prefill_min_tokens = max(2, _env_int("RWKV7_MLX_WKV_SCAN_PREFILL_MIN_TOKENS", 32))
+        self.wkv_scan_prefill_counts: dict[str, int] = {"reference": 0, "metal": 0, "fallback": 0}
+        self.wkv_scan_prefill_reason_counts: dict[str, int] = {}
         self.state_only_prefill_calls = 0
         self.state_only_prefill_tokens = 0
         self.group_rkv_quant_projection = _env_flag("RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION", False)
@@ -830,6 +890,47 @@ class MLXRWKV7Model:
             {"direct", "packed"},
         )
         self.group_rkv_quant_projection_counts: dict[str, int] = {"metal": 0, "fallback": 0}
+        # MLX is lazy, but the historical recurrent reference synchronized all
+        # state arrays after every prompt token. Keep interval=1 as the safe
+        # default while exposing an opt-in graph-batching seam for prefill.
+        self.prefill_eval_interval = _env_int("RWKV7_MLX_PREFILL_EVAL_INTERVAL", 1)
+        self.prefill_backend = _env_choice(
+            "RWKV7_MLX_PREFILL_BACKEND",
+            "recurrent",
+            {"recurrent", "dplr_metal", "auto"},
+        )
+        self.dplr_chunk_size = _env_int("RWKV7_MLX_DPLR_CHUNK_SIZE", 64, upper=64)
+        self.dplr_min_tokens = _env_int("RWKV7_MLX_DPLR_MIN_TOKENS", 8)
+        self.dplr_summary_implementation = _env_choice(
+            "RWKV7_MLX_DPLR_SUMMARY_IMPLEMENTATION",
+            "tiled",
+            {"scalar", "tiled"},
+        )
+        self.dplr_layer_eval_interval = _env_int(
+            "RWKV7_MLX_DPLR_LAYER_EVAL_INTERVAL",
+            4,
+            lower=0,
+            upper=4096,
+        )
+        self.dplr_layer_eval_min_tokens = _env_int(
+            "RWKV7_MLX_DPLR_LAYER_EVAL_MIN_TOKENS",
+            64,
+        )
+        self.dplr_layer_eval_interval_effective_last = 0
+        self.dplr_window_tokens = _env_int(
+            "RWKV7_MLX_DPLR_WINDOW_TOKENS",
+            512,
+            lower=0,
+            upper=1 << 20,
+        )
+        self.dplr_windows_last = 0
+        self.dplr_clear_cache = _env_flag("RWKV7_MLX_DPLR_CLEAR_CACHE", True)
+        self.prefill_backend_last: str | None = None
+        self.prefill_backend_counts: dict[str, int] = {
+            "recurrent": 0,
+            "dplr_metal": 0,
+            "fallback": 0,
+        }
         self._rkv_group_quant_cache: dict[tuple[int, int], Any] = {}
         self.layer_ids = _layer_indices(self.arrays)
         self.num_hidden_layers = int(self.config.get("num_hidden_layers", len(self.layer_ids)))
@@ -925,8 +1026,11 @@ class MLXRWKV7Model:
         """
 
         backend = (backend or "affine").lower().strip()
-        if backend not in {"affine", "reference", "metal", "auto"}:
-            raise ValueError(f"unsupported MLX quant backend {backend!r}; expected affine, reference, metal, or auto")
+        if backend not in {"affine", "reference", "metal", "auto", "groupwise"}:
+            raise ValueError(
+                f"unsupported MLX quant backend {backend!r}; "
+                "expected affine, reference, metal, auto, or groupwise"
+            )
         q = quantization.lower().strip()
         if q in {"mm8", "w8", "8", "int8"}:
             bits = 8
@@ -959,12 +1063,14 @@ class MLXRWKV7Model:
         self.wkv_backend_counts = {"reference": 0, "metal": 0}
         self.fused_ffn_key_relu2_counts = {"metal": 0, "fallback": 0}
         self.fused_attn_mix_counts = {"metal": 0, "fallback": 0}
+        self.wkv_scan_prefill_counts = {"reference": 0, "metal": 0, "fallback": 0}
+        self.wkv_scan_prefill_reason_counts = {}
         self.state_only_prefill_calls = 0
         self.state_only_prefill_tokens = 0
         self.group_rkv_quant_projection_counts = {"metal": 0, "fallback": 0}
         for qlinear in self.quantized_linears.values():
             qlinear.last_backend = None
-            qlinear.backend_counts = {"reference": 0, "affine": 0, "metal": 0}
+            qlinear.backend_counts = {"reference": 0, "affine": 0, "metal": 0, "groupwise": 0}
 
     def telemetry(self) -> dict[str, Any]:
         out = {
@@ -976,6 +1082,18 @@ class MLXRWKV7Model:
             "wkv_backend": self.wkv_backend,
             "wkv_backend_last": self.wkv_backend_last,
             "wkv_backend_counts": dict(self.wkv_backend_counts),
+            "decode_backend": self.decode_backend,
+            "decode_backend_last": self.decode_backend_last,
+            "decode_backend_counts": dict(self.decode_backend_counts),
+            "decode_norm_backend": self.decode_norm_backend,
+            "decode_compiled_batches": sorted(self._compiled_decode_functions),
+            "decode_compiled_norm_backend_by_batch": dict(
+                self._compiled_decode_norm_backend_by_batch
+            ),
+            "decode_compiled_validated_batches": sorted(self._compiled_decode_validated_batches),
+            "decode_compiled_rejected_batches": sorted(self._compiled_decode_rejected_batches),
+            "decode_compile_s_by_batch": dict(self.decode_compile_s_by_batch),
+            "decode_compiled_validation_by_batch": dict(self.decode_compiled_validation_by_batch),
             "wkv_metal_available": metal_wkv_available(),
             "quant_metal_available": metal_quant_available(),
             "step_eval_interval": int(self.step_eval_interval),
@@ -984,8 +1102,32 @@ class MLXRWKV7Model:
             "fused_attn_mix": bool(self.fused_attn_mix),
             "fused_attn_mix_counts": dict(self.fused_attn_mix_counts),
             "fused_attn_mix_metal_available": metal_attn_mix_available(),
+            "fast_layer_norm": bool(self.fast_layer_norm),
+            "fast_group_norm": bool(self.fast_group_norm),
+            "wkv_scan_prefill": self.wkv_scan_prefill_mode != "off",
+            "wkv_scan_prefill_mode": self.wkv_scan_prefill_mode,
+            "wkv_scan_prefill_min_tokens": int(self.wkv_scan_prefill_min_tokens),
+            "wkv_scan_prefill_counts": dict(self.wkv_scan_prefill_counts),
+            "wkv_scan_prefill_reason_counts": dict(self.wkv_scan_prefill_reason_counts),
+            "wkv_scan_metal_available": metal_wkv_scan_available(),
             "state_only_prefill_calls": int(self.state_only_prefill_calls),
             "state_only_prefill_tokens": int(self.state_only_prefill_tokens),
+            "prefill_eval_interval": int(self.prefill_eval_interval),
+            "prefill_backend": self.prefill_backend,
+            "prefill_backend_last": self.prefill_backend_last,
+            "prefill_backend_counts": dict(self.prefill_backend_counts),
+            "dplr_chunk_size": int(self.dplr_chunk_size),
+            "dplr_min_tokens": int(self.dplr_min_tokens),
+            "dplr_summary_implementation": self.dplr_summary_implementation,
+            "dplr_layer_eval_interval": int(self.dplr_layer_eval_interval),
+            "dplr_layer_eval_min_tokens": int(self.dplr_layer_eval_min_tokens),
+            "dplr_layer_eval_interval_effective_last": int(
+                self.dplr_layer_eval_interval_effective_last
+            ),
+            "dplr_window_tokens": int(self.dplr_window_tokens),
+            "dplr_windows_last": int(self.dplr_windows_last),
+            "dplr_clear_cache": bool(self.dplr_clear_cache),
+            "dplr_metal_available": mlx_dplr_metal_available(),
             **summarize_mlx_arrays(self.arrays),
         }
         if self.quantized_linears:
@@ -1006,6 +1148,10 @@ class MLXRWKV7Model:
                         "reference": sum(int(q.backend_counts.get("reference", 0)) for q in self.quantized_linears.values()),
                         "affine": sum(int(q.backend_counts.get("affine", 0)) for q in self.quantized_linears.values()),
                         "metal": sum(int(q.backend_counts.get("metal", 0)) for q in self.quantized_linears.values()),
+                        "groupwise": sum(
+                            int(q.backend_counts.get("groupwise", 0))
+                            for q in self.quantized_linears.values()
+                        ),
                     },
                     "group_rkv_quant_projection": bool(self.group_rkv_quant_projection),
                     "group_rkv_quant_projection_mode": self.group_rkv_quant_projection_mode,
@@ -1097,24 +1243,45 @@ class MLXRWKV7Model:
         ) + 1
         return y_group[0], y_group[1], y_group[2]
 
-    def _layer_norm(self, x, prefix: str):
+    def _layer_norm(self, x, prefix: str, *, backend: str = "reference"):
         mx = _mx()
+        weight = self._get(f"{prefix}.weight")
+        bias = self._get(f"{prefix}.bias")
+        if self.fast_layer_norm and hasattr(mx, "fast") and hasattr(mx.fast, "layer_norm"):
+            return mx.fast.layer_norm(x, weight, bias, self.norm_eps)
         xf = x.astype(mx.float32)
-        mean = mx.mean(xf, axis=-1, keepdims=True)
-        var = mx.mean((xf - mean) * (xf - mean), axis=-1, keepdims=True)
-        y = (xf - mean) * mx.rsqrt(var + self.norm_eps)
+        if backend == "fast":
+            y = mx.fast.layer_norm(xf, None, None, self.norm_eps)
+        else:
+            mean = mx.mean(xf, axis=-1, keepdims=True)
+            var = mx.mean((xf - mean) * (xf - mean), axis=-1, keepdims=True)
+            y = (xf - mean) * mx.rsqrt(var + self.norm_eps)
         y = y.astype(x.dtype)
-        return y * self._get(f"{prefix}.weight") + self._get(f"{prefix}.bias")
+        return y * weight + bias
 
-    def _group_norm_heads(self, x, layer: int):
+    def _group_norm_heads(self, x, layer: int, *, backend: str = "reference"):
         mx = _mx()
-        B = int(x.shape[0])
-        xf = x.astype(mx.float32).reshape(B, self.num_heads, self.head_dim)
+        leading = tuple(int(dim) for dim in x.shape[:-1])
+        prefix = f"model.layers.{layer}.attn.g_norm"
+        use_fast = (
+            (backend == "fast" or self.fast_group_norm)
+            and hasattr(mx, "fast")
+            and hasattr(mx.fast, "layer_norm")
+        )
+        if use_fast:
+            xh = x.reshape(*leading, self.num_heads, self.head_dim)
+            weight = self._get(f"{prefix}.weight").reshape(1, self.num_heads, self.head_dim)
+            bias = self._get(f"{prefix}.bias").reshape(1, self.num_heads, self.head_dim)
+            y = mx.fast.layer_norm(xh, None, None, self.head_dim * 1e-5)
+            if len(leading) > 1:
+                weight = weight.reshape(*([1] * (len(leading) - 1)), self.num_heads, self.head_dim)
+                bias = bias.reshape(*([1] * (len(leading) - 1)), self.num_heads, self.head_dim)
+            return (y * weight + bias).reshape(*leading, self.hidden_size)
+        xf = x.astype(mx.float32).reshape(*leading, self.num_heads, self.head_dim)
         mean = mx.mean(xf, axis=-1, keepdims=True)
         var = mx.mean((xf - mean) * (xf - mean), axis=-1, keepdims=True)
         y = (xf - mean) * mx.rsqrt(var + self.head_dim * 1e-5)
-        y = y.reshape(B, self.hidden_size).astype(x.dtype)
-        prefix = f"model.layers.{layer}.attn.g_norm"
+        y = y.reshape(*leading, self.hidden_size).astype(x.dtype)
         return y * self._get(f"{prefix}.weight") + self._get(f"{prefix}.bias")
 
     def _normalize_last_dim(self, x, eps: float = 1e-12):
@@ -1138,7 +1305,14 @@ class MLXRWKV7Model:
         mx.eval(v_first, *state, *xpa, *xpf)
         return MLXRWKV7State(state, xpa, xpf, v_first, seen_tokens=0)
 
-    def _attn_step(self, layer: int, x, x_prev, v_first, state):
+    def _attn_step(
+        self,
+        layer: int,
+        x,
+        x_prev,
+        v_first,
+        state,
+    ):
         mx = _mx()
         B = int(x.shape[0])
         hidden = self.hidden_size
@@ -1224,7 +1398,11 @@ class MLXRWKV7Model:
         self.wkv_backend_last = backend_used
         self.wkv_backend_counts[backend_used] = int(self.wkv_backend_counts.get(backend_used, 0)) + 1
         out = out_heads.reshape(B, hidden)
-        out = self._group_norm_heads(out, layer)
+        # Keep per-head GroupNorm on the reference formulation. The compiled
+        # parity issue comes from the three standard LayerNorm boundaries;
+        # forcing GroupNorm through a separate fast primitive adds launches
+        # without improving parity.
+        out = self._group_norm_heads(out, layer, backend="reference")
         sk = (
             r.reshape(B, H, N)
             * k.reshape(B, H, N)
@@ -1260,21 +1438,431 @@ class MLXRWKV7Model:
             k = k * k
         return self._linear(k, f"{prefix}.value.weight"), x
 
-    def _embedding(self, token_ids):
+    def _shift_prev_sequence(self, x, x_prev):
+        """Return per-token previous activations for a layer-major sequence."""
+
         mx = _mx()
-        ids = token_ids.astype(mx.int32).reshape(-1)
-        return self._get("model.embeddings.weight")[ids]
+        B, T, hidden = (int(dim) for dim in x.shape)
+        first = x_prev.reshape(B, 1, hidden)
+        if T == 1:
+            return first
+        return mx.concatenate([first, x[:, :-1, :]], axis=1)
+
+    def _attn_sequence(self, layer: int, x, x_prev, v_first_seq, state):
+        """Layer-major attention over a full prefill chunk using WKV scan."""
+
+        mx = _mx()
+        B, T, hidden = (int(dim) for dim in x.shape)
+        H = self.num_heads
+        N = self.head_dim
+        prefix = f"model.layers.{layer}.attn"
+        xp = self._shift_prev_sequence(x, x_prev)
+        xx = xp - x
+        xr = x + xx * self._get(f"{prefix}.x_r").reshape(1, 1, hidden)
+        xw = x + xx * self._get(f"{prefix}.x_w").reshape(1, 1, hidden)
+        xk = x + xx * self._get(f"{prefix}.x_k").reshape(1, 1, hidden)
+        xv = x + xx * self._get(f"{prefix}.x_v").reshape(1, 1, hidden)
+        xa = x + xx * self._get(f"{prefix}.x_a").reshape(1, 1, hidden)
+        xg = x + xx * self._get(f"{prefix}.x_g").reshape(1, 1, hidden)
+
+        grouped_rkv = self._grouped_rkv_projection(layer, xr, xk, xv, prefix)
+        if grouped_rkv is None:
+            r = self._linear(xr, f"{prefix}.r_proj.weight")
+            k = self._linear(xk, f"{prefix}.k_proj.weight")
+            v = self._linear(xv, f"{prefix}.v_proj.weight")
+        else:
+            r, k, v = grouped_rkv
+        w = self._linear(
+            mx.tanh(self._linear(xw, f"{prefix}.w_lora.lora.0.weight")),
+            f"{prefix}.w_lora.lora.2.weight",
+            f"{prefix}.w_lora.lora.2.bias",
+        )
+        a = mx.sigmoid(
+            self._linear(
+                self._linear(xa, f"{prefix}.a_lora.lora.0.weight"),
+                f"{prefix}.a_lora.lora.2.weight",
+                f"{prefix}.a_lora.lora.2.bias",
+            )
+        )
+        g = self._linear(
+            mx.sigmoid(self._linear(xg, f"{prefix}.g_lora.lora.0.weight")),
+            f"{prefix}.g_lora.lora.2.weight",
+        )
+
+        kk = self._normalize_last_dim(
+            (k * self._get(f"{prefix}.k_k").reshape(1, 1, hidden)).reshape(B, T, H, N)
+        ).reshape(B, T, hidden)
+        k = k * (1 + (a - 1) * self._get(f"{prefix}.k_a").reshape(1, 1, hidden))
+        if layer == 0:
+            new_v_first_seq = v
+        else:
+            v_mix = mx.sigmoid(
+                self._linear(
+                    self._linear(xv, f"{prefix}.v_lora.lora.0.weight"),
+                    f"{prefix}.v_lora.lora.2.weight",
+                    f"{prefix}.v_lora.lora.2.bias",
+                )
+            )
+            v = v + (v_first_seq - v) * v_mix
+            new_v_first_seq = v_first_seq
+        w = mx.exp(-EXP_HALF * mx.sigmoid(w.astype(mx.float32)))
+
+        out_heads, state, backend_used = wkv_scan(
+            state,
+            w.reshape(B, T, H, N),
+            v.reshape(B, T, H, N),
+            k.reshape(B, T, H, N),
+            kk.reshape(B, T, H, N),
+            a.reshape(B, T, H, N),
+            r.reshape(B, T, H, N),
+            backend=self.wkv_backend,
+        )
+        self.wkv_backend_last = backend_used
+        self.wkv_backend_counts[backend_used] = int(self.wkv_backend_counts.get(backend_used, 0)) + 1
+        self.wkv_scan_prefill_counts[backend_used] = int(self.wkv_scan_prefill_counts.get(backend_used, 0)) + 1
+        out = out_heads.reshape(B, T, hidden)
+        out = self._group_norm_heads(out, layer)
+        sk = (
+            r.reshape(B, T, H, N)
+            * k.reshape(B, T, H, N)
+            * self._get(f"{prefix}.r_k").reshape(1, 1, H, N)
+        ).sum(axis=-1, keepdims=True)
+        out = out + (sk * v.reshape(B, T, H, N)).reshape(B, T, hidden)
+        out = self._linear(out * g, f"{prefix}.o_proj.weight")
+        return out, x[:, -1, :], state, new_v_first_seq
+
+    def _ffn_sequence(self, layer: int, x, x_prev):
+        mx = _mx()
+        B, T, hidden = (int(dim) for dim in x.shape)
+        prefix = f"model.layers.{layer}.ffn"
+        xp = self._shift_prev_sequence(x, x_prev)
+        xx = xp - x
+        k = x + xx * self._get(f"{prefix}.x_k").reshape(1, 1, hidden)
+        key_weight = f"{prefix}.key.weight"
+        key_qlinear = self.quantized_linears.get(key_weight)
+        if (
+            self.fused_ffn_key_relu2
+            and key_qlinear is not None
+            and int(key_qlinear.bits) == 4
+            and key_qlinear._selected_backend(k) == "metal"
+        ):
+            k = key_qlinear.relu2(k)
+            self.fused_ffn_key_relu2_counts["metal"] = int(
+                self.fused_ffn_key_relu2_counts.get("metal", 0)
+            ) + 1
+        else:
+            if self.fused_ffn_key_relu2:
+                self.fused_ffn_key_relu2_counts["fallback"] = int(
+                    self.fused_ffn_key_relu2_counts.get("fallback", 0)
+                ) + 1
+            k = mx.maximum(self._linear(k, key_weight), 0)
+            k = k * k
+        return self._linear(k, f"{prefix}.value.weight"), x[:, -1, :]
+
+    def _should_scan_prefill(self, tokens: int) -> tuple[bool, str]:
+        T = int(tokens)
+        mode = self.wkv_scan_prefill_mode
+        if T <= 1:
+            return False, "single_token"
+        if mode == "off":
+            return False, "disabled"
+        if mode == "on":
+            return True, "forced"
+        if mode == "auto":
+            if self.wkv_backend == "metal" and not metal_wkv_scan_available():
+                return False, "metal_unavailable"
+            if T < int(self.wkv_scan_prefill_min_tokens):
+                return False, "below_min_tokens"
+            return True, "auto"
+        return False, "disabled"
+
+    def _record_scan_prefill_reason(self, reason: str) -> None:
+        self.wkv_scan_prefill_reason_counts[reason] = int(
+            self.wkv_scan_prefill_reason_counts.get(reason, 0)
+        ) + 1
+
+    def _forward_scan_prefill(
+        self,
+        input_ids: Iterable[Iterable[int]] | Any,
+        state: MLXRWKV7State | None = None,
+        *,
+        collect_all: bool = False,
+        state_only: bool = False,
+    ):
+        """Layer-major prefill path that calls one multi-token WKV scan per layer."""
+
+        mx = _mx()
+        ids = mx.array(input_ids, dtype=mx.int32)
+        if ids.ndim == 1:
+            ids = ids.reshape(1, -1)
+        if ids.ndim != 2:
+            raise ValueError("MLXRWKV7Model scan prefill expects input ids shaped [batch, seq]")
+        B, T = int(ids.shape[0]), int(ids.shape[1])
+        if T <= 0 or B <= 0:
+            raise ValueError("MLXRWKV7Model scan prefill requires a non-empty batch and sequence")
+        if state is None:
+            state = self.init_state(B)
+        elif state.batch_size != B:
+            raise ValueError(f"state batch size {state.batch_size} does not match input batch size {B}")
+
+        x = self._get("model.embeddings.weight")[ids]
+        v_first_seq = None
+        for layer in range(self.num_hidden_layers):
+            residual = self._layer_norm(x, f"model.layers.{layer}.pre_norm") if layer == 0 else x
+            h = self._layer_norm(residual, f"model.layers.{layer}.attn_norm")
+            if layer > 0 and v_first_seq is None:
+                raise RuntimeError("RWKV-7 scan prefill missing layer-0 v_first sequence")
+            a, state.attn_x_prev[layer], state.recurrent_state[layer], v_first_seq = self._attn_sequence(
+                layer,
+                h,
+                state.attn_x_prev[layer],
+                v_first_seq if v_first_seq is not None else state.v_first.reshape(B, 1, self.hidden_size),
+                state.recurrent_state[layer],
+            )
+            x = residual + a
+            residual = x
+            h2 = self._layer_norm(x, f"model.layers.{layer}.ffn_norm")
+            f, state.ffn_x_prev[layer] = self._ffn_sequence(layer, h2, state.ffn_x_prev[layer])
+            x = residual + f
+
+        state.seen_tokens += T
+        if v_first_seq is not None:
+            state.v_first = v_first_seq[:, -1, :]
+        if state_only:
+            self.state_only_prefill_calls += 1
+            self.state_only_prefill_tokens += T
+            self._eval_step_state(x[:, -1, :], state)
+            return state
+        if collect_all:
+            out = self._logits_from_hidden(x)
+        else:
+            out = self._logits_from_hidden(x[:, -1, :]).reshape(B, 1, self.vocab_size)
+        self._eval_step_state(out, state)
+        return out, state
+
+
+    def _group_norm_heads_sequence(self, x, layer: int):
+        mx = _mx()
+        batch, tokens = int(x.shape[0]), int(x.shape[1])
+        xf = x.astype(mx.float32).reshape(batch * tokens, self.num_heads, self.head_dim)
+        mean = mx.mean(xf, axis=-1, keepdims=True)
+        var = mx.mean((xf - mean) * (xf - mean), axis=-1, keepdims=True)
+        y = (xf - mean) * mx.rsqrt(var + self.head_dim * 1e-5)
+        y = y.reshape(batch, tokens, self.hidden_size).astype(x.dtype)
+        prefix = f"model.layers.{layer}.attn.g_norm"
+        return y * self._get(f"{prefix}.weight") + self._get(f"{prefix}.bias")
+
+    def _sequence_shift(self, x, x_prev):
+        mx = _mx()
+        previous = mx.concatenate((x_prev[:, None, :], x[:, :-1, :]), axis=1)
+        return previous - x, x[:, -1, :]
+
+    def _pad_dplr_sequence(self, x, padded_tokens: int, *, fill: float = 0.0):
+        mx = _mx()
+        tokens = int(x.shape[1])
+        if padded_tokens == tokens:
+            return x
+        shape = (int(x.shape[0]), padded_tokens - tokens, int(x.shape[2]), int(x.shape[3]))
+        if fill == 1.0:
+            padding = mx.ones(shape, dtype=x.dtype)
+        else:
+            padding = mx.zeros(shape, dtype=x.dtype)
+        return mx.concatenate((x, padding), axis=1)
+
+    def _attn_sequence_dplr(self, layer: int, x, x_prev, v_first_sequence, state):
+        mx = _mx()
+        batch, tokens = int(x.shape[0]), int(x.shape[1])
+        hidden = self.hidden_size
+        heads = self.num_heads
+        head_dim = self.head_dim
+        prefix = f"model.layers.{layer}.attn"
+        xx, next_x_prev = self._sequence_shift(x, x_prev)
+        xr = x + xx * self._get(f"{prefix}.x_r")
+        xw = x + xx * self._get(f"{prefix}.x_w")
+        xk = x + xx * self._get(f"{prefix}.x_k")
+        xv = x + xx * self._get(f"{prefix}.x_v")
+        xa = x + xx * self._get(f"{prefix}.x_a")
+        xg = x + xx * self._get(f"{prefix}.x_g")
+
+        grouped_rkv = self._grouped_rkv_projection(layer, xr, xk, xv, prefix)
+        if grouped_rkv is None:
+            r = self._linear(xr, f"{prefix}.r_proj.weight")
+            k = self._linear(xk, f"{prefix}.k_proj.weight")
+            v = self._linear(xv, f"{prefix}.v_proj.weight")
+        else:
+            r, k, v = grouped_rkv
+        w = self._linear(
+            mx.tanh(self._linear(xw, f"{prefix}.w_lora.lora.0.weight")),
+            f"{prefix}.w_lora.lora.2.weight",
+            f"{prefix}.w_lora.lora.2.bias",
+        )
+        a = mx.sigmoid(
+            self._linear(
+                self._linear(xa, f"{prefix}.a_lora.lora.0.weight"),
+                f"{prefix}.a_lora.lora.2.weight",
+                f"{prefix}.a_lora.lora.2.bias",
+            )
+        )
+        g = self._linear(
+            mx.sigmoid(self._linear(xg, f"{prefix}.g_lora.lora.0.weight")),
+            f"{prefix}.g_lora.lora.2.weight",
+        )
+
+        kk = self._normalize_last_dim(
+            (k * self._get(f"{prefix}.k_k")).reshape(batch, tokens, heads, head_dim)
+        ).reshape(batch, tokens, hidden)
+        k = k * (1 + (a - 1) * self._get(f"{prefix}.k_a"))
+        if layer == 0:
+            v_first_sequence = v
+        else:
+            if v_first_sequence is None:
+                raise RuntimeError("DPLR prefill requires layer-0 v_first sequence")
+            v_mix = mx.sigmoid(
+                self._linear(
+                    self._linear(xv, f"{prefix}.v_lora.lora.0.weight"),
+                    f"{prefix}.v_lora.lora.2.weight",
+                    f"{prefix}.v_lora.lora.2.bias",
+                )
+            )
+            v = v + (v_first_sequence - v) * v_mix
+        w = mx.exp(-EXP_HALF * mx.sigmoid(w.astype(mx.float32)))
+
+        chunk_size = int(self.dplr_chunk_size)
+        padded_tokens = ((tokens + chunk_size - 1) // chunk_size) * chunk_size
+        r4 = self._pad_dplr_sequence(r.reshape(batch, tokens, heads, head_dim), padded_tokens)
+        w4 = self._pad_dplr_sequence(w.reshape(batch, tokens, heads, head_dim), padded_tokens, fill=1.0)
+        k4 = self._pad_dplr_sequence(k.reshape(batch, tokens, heads, head_dim), padded_tokens)
+        v4 = self._pad_dplr_sequence(v.reshape(batch, tokens, heads, head_dim), padded_tokens)
+        kk4 = self._pad_dplr_sequence(kk.reshape(batch, tokens, heads, head_dim), padded_tokens)
+        a4 = self._pad_dplr_sequence(a.reshape(batch, tokens, heads, head_dim), padded_tokens)
+        out_heads, final_state, _ = mlx_compact_wy_three_stage_metal(
+            r4,
+            w4,
+            k4,
+            v4,
+            kk4,
+            a4,
+            state,
+            chunk_size=chunk_size,
+            summary_implementation=self.dplr_summary_implementation,
+            return_telemetry=False,
+        )
+        out_heads = out_heads[:, :tokens].astype(r.dtype)
+        out = self._group_norm_heads_sequence(out_heads.reshape(batch, tokens, hidden), layer)
+        sk = (
+            r.reshape(batch, tokens, heads, head_dim)
+            * k.reshape(batch, tokens, heads, head_dim)
+            * self._get(f"{prefix}.r_k").reshape(1, 1, heads, head_dim)
+        ).sum(axis=-1, keepdims=True)
+        out = out + (sk * v.reshape(batch, tokens, heads, head_dim)).reshape(batch, tokens, hidden)
+        out = self._linear(out * g, f"{prefix}.o_proj.weight")
+        return out, next_x_prev, final_state, v_first_sequence
+
+    def _forward_dplr_prefill(
+        self,
+        ids,
+        state: MLXRWKV7State,
+        *,
+        compute_logits: bool = True,
+        collect_all: bool = False,
+    ):
+        mx = _mx()
+        batch, tokens = int(ids.shape[0]), int(ids.shape[1])
+        x = self._get("model.embeddings.weight")[ids]
+        v_first_sequence = None
+        for layer in range(self.num_hidden_layers):
+            residual = self._layer_norm(x, f"model.layers.{layer}.pre_norm") if layer == 0 else x
+            h = self._layer_norm(residual, f"model.layers.{layer}.attn_norm")
+            a, state.attn_x_prev[layer], state.recurrent_state[layer], v_first_sequence = (
+                self._attn_sequence_dplr(
+                    layer,
+                    h,
+                    state.attn_x_prev[layer],
+                    v_first_sequence,
+                    state.recurrent_state[layer],
+                )
+            )
+            x = residual + a
+            h2 = self._layer_norm(x, f"model.layers.{layer}.ffn_norm")
+            f, state.ffn_x_prev[layer] = self._ffn_sequence(layer, h2, state.ffn_x_prev[layer])
+            x = x + f
+            eval_interval = (
+                int(self.dplr_layer_eval_interval)
+                if tokens >= int(self.dplr_layer_eval_min_tokens)
+                else 0
+            )
+            self.dplr_layer_eval_interval_effective_last = int(eval_interval)
+            if eval_interval > 0 and (
+                (layer + 1) % eval_interval == 0 or layer + 1 == self.num_hidden_layers
+            ):
+                first_layer = max(0, layer + 1 - eval_interval)
+                mx.eval(
+                    x,
+                    v_first_sequence,
+                    *state.recurrent_state[first_layer : layer + 1],
+                    *state.attn_x_prev[first_layer : layer + 1],
+                    *state.ffn_x_prev[first_layer : layer + 1],
+                )
+        if v_first_sequence is None:
+            raise RuntimeError("DPLR prefill produced no v_first sequence")
+        # Sequence slicing leaves strided views. Materialize compact cache
+        # tensors before decode so the one-token Metal path does not pay
+        # hidden contiguous copies on every layer/step.
+        state.v_first = mx.contiguous(v_first_sequence[:, -1, :])
+        state.recurrent_state = [mx.contiguous(value) for value in state.recurrent_state]
+        state.attn_x_prev = [mx.contiguous(value) for value in state.attn_x_prev]
+        state.ffn_x_prev = [mx.contiguous(value) for value in state.ffn_x_prev]
+        state.seen_tokens += tokens
+        out = None
+        if compute_logits:
+            if collect_all:
+                out = self._logits_from_hidden(x).reshape(batch, tokens, self.vocab_size)
+            else:
+                out = self._logits_from_hidden(x[:, -1, :]).reshape(batch, 1, self.vocab_size)
+        eval_values = [state.v_first, *state.recurrent_state, *state.attn_x_prev, *state.ffn_x_prev]
+        if out is not None:
+            eval_values.insert(0, out)
+        mx.eval(*eval_values)
+        if self.dplr_clear_cache:
+            clear_cache = getattr(mx, "clear_cache", None)
+            if callable(clear_cache):
+                clear_cache()
+        return out, state
 
     def _eval_step_state(self, x, state: MLXRWKV7State) -> None:
         mx = _mx()
         mx.eval(x, state.v_first, *state.recurrent_state, *state.attn_x_prev, *state.ffn_x_prev)
 
-    def _step_token(self, token_ids, state: MLXRWKV7State):
+    def _embedding(self, token_ids):
+        mx = _mx()
+        ids = token_ids.astype(mx.int32).reshape(-1)
+        return self._get("model.embeddings.weight")[ids]
+
+    def _step_token(
+        self,
+        token_ids,
+        state: MLXRWKV7State,
+        *,
+        evaluate: bool = True,
+        norm_backend: str = "reference",
+    ):
         mx = _mx()
         x = self._embedding(token_ids)
         for layer in range(self.num_hidden_layers):
-            residual = self._layer_norm(x, f"model.layers.{layer}.pre_norm") if layer == 0 else x
-            h = self._layer_norm(residual, f"model.layers.{layer}.attn_norm")
+            residual = (
+                self._layer_norm(
+                    x,
+                    f"model.layers.{layer}.pre_norm",
+                    backend=norm_backend,
+                )
+                if layer == 0
+                else x
+            )
+            h = self._layer_norm(
+                residual,
+                f"model.layers.{layer}.attn_norm",
+                backend=norm_backend,
+            )
             a, state.attn_x_prev[layer], state.recurrent_state[layer], state.v_first = self._attn_step(
                 layer,
                 h,
@@ -1284,11 +1872,18 @@ class MLXRWKV7Model:
             )
             x = residual + a
             residual = x
-            h2 = self._layer_norm(x, f"model.layers.{layer}.ffn_norm")
+            h2 = self._layer_norm(
+                x,
+                f"model.layers.{layer}.ffn_norm",
+                backend=norm_backend,
+            )
             f, state.ffn_x_prev[layer] = self._ffn_step(layer, h2, state.ffn_x_prev[layer])
             x = residual + f
         state.seen_tokens += 1
-        if int(self.step_eval_interval) <= 1 or int(state.seen_tokens) % int(self.step_eval_interval) == 0:
+        if evaluate and (
+            int(self.step_eval_interval) <= 1
+            or int(state.seen_tokens) % int(self.step_eval_interval) == 0
+        ):
             self._eval_step_state(x, state)
         return x, state
 
@@ -1313,14 +1908,89 @@ class MLXRWKV7Model:
         B, T = int(ids.shape[0]), int(ids.shape[1])
         if T <= 0 or B <= 0:
             raise ValueError("MLXRWKV7Model.forward requires a non-empty batch and sequence")
+        use_scan, scan_reason = self._should_scan_prefill(T)
+        self._record_scan_prefill_reason(scan_reason)
+        if use_scan:
+            return self._forward_scan_prefill(ids, state=state, collect_all=collect_all)
         if state is None:
             state = self.init_state(B)
         elif state.batch_size != B:
             raise ValueError(f"state batch size {state.batch_size} does not match input batch size {B}")
+        # DPLR produces the complete hidden sequence, so it can also serve
+        # speculative verification where every intermediate logit is needed.
+        is_prefill = T > 1
+        if is_prefill:
+            self.dplr_windows_last = 0
+            self.dplr_layer_eval_interval_effective_last = 0
+        use_dplr = self.prefill_backend == "dplr_metal" or (
+            self.prefill_backend == "auto" and T >= int(self.dplr_min_tokens)
+        )
+        if is_prefill and use_dplr:
+            if mlx_dplr_metal_available():
+                self.prefill_backend_last = "dplr_metal"
+                self.prefill_backend_counts["dplr_metal"] = int(
+                    self.prefill_backend_counts.get("dplr_metal", 0)
+                ) + 1
+                window_tokens = int(self.dplr_window_tokens)
+                if window_tokens > 0 and T > window_tokens:
+                    # Keep boundaries chunk-aligned so only the final window
+                    # pays identity/no-op padding.
+                    window_tokens = max(
+                        int(self.dplr_chunk_size),
+                        (window_tokens // int(self.dplr_chunk_size)) * int(self.dplr_chunk_size),
+                    )
+                    windows = (T + window_tokens - 1) // window_tokens
+                    self.dplr_windows_last = int(windows)
+                    out = None
+                    window_outputs = []
+                    effective_eval_interval = 0
+                    for window_index, start in enumerate(range(0, T, window_tokens)):
+                        window_out, state = self._forward_dplr_prefill(
+                            ids[:, start : start + window_tokens],
+                            state,
+                            compute_logits=collect_all or window_index + 1 == windows,
+                            collect_all=collect_all,
+                        )
+                        if collect_all:
+                            if window_out is None:
+                                raise RuntimeError("DPLR collect-all window produced no logits")
+                            window_outputs.append(window_out)
+                        else:
+                            out = window_out
+                        effective_eval_interval = max(
+                            effective_eval_interval,
+                            int(self.dplr_layer_eval_interval_effective_last),
+                        )
+                    self.dplr_layer_eval_interval_effective_last = effective_eval_interval
+                    if collect_all:
+                        out = mx.concatenate(window_outputs, axis=1)
+                        mx.eval(out)
+                    if out is None:
+                        raise RuntimeError("DPLR windowed prefill produced no logits")
+                    return out, state
+                self.dplr_windows_last = 1
+                return self._forward_dplr_prefill(ids, state, collect_all=collect_all)
+            if self.prefill_backend == "dplr_metal":
+                raise RuntimeError("RWKV7_MLX_PREFILL_BACKEND=dplr_metal requires MLX custom Metal kernels")
+            self.prefill_backend_counts["fallback"] = int(self.prefill_backend_counts.get("fallback", 0)) + 1
+        elif is_prefill and self.prefill_backend == "auto":
+            self.prefill_backend_counts["fallback"] = int(self.prefill_backend_counts.get("fallback", 0)) + 1
+        if is_prefill:
+            self.prefill_backend_last = "recurrent"
+            self.prefill_backend_counts["recurrent"] = int(
+                self.prefill_backend_counts.get("recurrent", 0)
+            ) + 1
         logits = []
         last = None
+        eval_interval = int(self.prefill_eval_interval) if T > 1 and not collect_all else 1
         for t in range(T):
-            last, state = self._step_token(ids[:, t], state)
+            evaluate = eval_interval == 1 or (t + 1) % eval_interval == 0 or t + 1 == T
+            last, state = self._step_token(
+                ids[:, t],
+                state,
+                evaluate=evaluate,
+                norm_backend=(self.decode_norm_backend if T == 1 else "reference"),
+            )
             if collect_all:
                 logits.append(self._logits_from_hidden(last))
         if collect_all:
@@ -1357,6 +2027,10 @@ class MLXRWKV7Model:
         B, T = int(ids.shape[0]), int(ids.shape[1])
         if T <= 0 or B <= 0:
             raise ValueError("MLXRWKV7Model.prefill_state_only requires a non-empty batch and sequence")
+        use_scan, scan_reason = self._should_scan_prefill(T)
+        self._record_scan_prefill_reason(scan_reason)
+        if use_scan:
+            return self._forward_scan_prefill(ids, state=state, state_only=True)
         if state is None:
             state = self.init_state(B)
         elif state.batch_size != B:
@@ -1377,10 +2051,347 @@ class MLXRWKV7Model:
     def prefill(self, input_ids: Iterable[Iterable[int]] | Any, state: MLXRWKV7State | None = None):
         return self.forward(input_ids, state=state, collect_all=False)
 
-    def decode_step(self, token_ids: Iterable[int] | Any, state: MLXRWKV7State):
+    def _flatten_compiled_decode_state(self, state: MLXRWKV7State) -> tuple[Any, ...]:
+        return (
+            state.v_first,
+            *state.recurrent_state,
+            *state.attn_x_prev,
+            *state.ffn_x_prev,
+        )
+
+    def _compiled_decode_state_from_outputs(
+        self,
+        outputs: tuple[Any, ...] | list[Any],
+        *,
+        seen_tokens: int,
+    ) -> MLXRWKV7State:
+        layers = self.num_hidden_layers
+        if len(outputs) != 1 + 3 * layers:
+            raise RuntimeError(
+                f"compiled decode returned {len(outputs)} state arrays; expected {1 + 3 * layers}"
+            )
+        return MLXRWKV7State(
+            recurrent_state=list(outputs[1 : 1 + layers]),
+            attn_x_prev=list(outputs[1 + layers : 1 + 2 * layers]),
+            ffn_x_prev=list(outputs[1 + 2 * layers : 1 + 3 * layers]),
+            v_first=outputs[0],
+            seen_tokens=int(seen_tokens),
+        )
+
+    def _decode_kernel_counter_snapshot(self) -> dict[str, Any]:
+        return {
+            "wkv_backend_last": self.wkv_backend_last,
+            "wkv_backend_counts": dict(self.wkv_backend_counts),
+            "group_rkv_quant_projection_counts": dict(self.group_rkv_quant_projection_counts),
+            "quantized_linears": {
+                key: (value.last_backend, dict(value.backend_counts))
+                for key, value in self.quantized_linears.items()
+            },
+        }
+
+    def _restore_decode_kernel_counters(self, snapshot: dict[str, Any]) -> None:
+        self.wkv_backend_last = snapshot["wkv_backend_last"]
+        self.wkv_backend_counts = dict(snapshot["wkv_backend_counts"])
+        self.group_rkv_quant_projection_counts = dict(
+            snapshot["group_rkv_quant_projection_counts"]
+        )
+        for key, (last_backend, backend_counts) in snapshot["quantized_linears"].items():
+            value = self.quantized_linears.get(key)
+            if value is not None:
+                value.last_backend = last_backend
+                value.backend_counts = dict(backend_counts)
+
+    def _build_compiled_decode_function(self, batch_size: int):
         mx = _mx()
-        ids = mx.array(token_ids, dtype=mx.int32).reshape(-1, 1)
-        return self.forward(ids, state=state, collect_all=False)
+        batch = int(batch_size)
+        if batch <= 0:
+            raise ValueError("compiled decode batch size must be positive")
+        layers = self.num_hidden_layers
+
+        def pure_decode(token_ids, v_first, *flat_state):
+            state = MLXRWKV7State(
+                recurrent_state=list(flat_state[:layers]),
+                attn_x_prev=list(flat_state[layers : 2 * layers]),
+                ffn_x_prev=list(flat_state[2 * layers : 3 * layers]),
+                v_first=v_first,
+                seen_tokens=0,
+            )
+            hidden, state = self._step_token(
+                token_ids.reshape(batch),
+                state,
+                evaluate=False,
+                norm_backend=self.decode_norm_backend,
+            )
+            logits = self._logits_from_hidden(hidden).reshape(batch, 1, self.vocab_size)
+            return (logits, *self._flatten_compiled_decode_state(state))
+
+        compile_fn = getattr(mx, "compile", None)
+        if not callable(compile_fn):
+            raise RuntimeError("this MLX runtime does not expose mx.compile")
+        return compile_fn(pure_decode)
+
+    def prepare_compiled_decode(self, batch_size: int = 1) -> float:
+        """Compile and warm a pure full-model decode graph for ``batch_size``.
+
+        Compilation is explicit because its one-time latency belongs in model
+        loading/warmup, not in the first interactive token. ``decode_backend``
+        set to ``auto`` uses this graph only after it has also passed
+        :meth:`validate_compiled_decode` for the concrete model and batch size.
+        """
+
+        mx = _mx()
+        batch = int(batch_size)
+        compiled_norm_backend = self._compiled_decode_norm_backend_by_batch.get(batch)
+        if compiled_norm_backend != self.decode_norm_backend:
+            self._compiled_decode_functions.pop(batch, None)
+            self.decode_compile_s_by_batch.pop(batch, None)
+            self._compiled_decode_validated_batches.discard(batch)
+            self._compiled_decode_rejected_batches.discard(batch)
+            self.decode_compiled_validation_by_batch.pop(batch, None)
+        if batch in self._compiled_decode_functions and batch in self.decode_compile_s_by_batch:
+            return float(self.decode_compile_s_by_batch[batch])
+        counter_snapshot = self._decode_kernel_counter_snapshot()
+        function = self._compiled_decode_functions.get(batch)
+        if function is None:
+            function = self._build_compiled_decode_function(batch)
+            self._compiled_decode_functions[batch] = function
+            self._compiled_decode_norm_backend_by_batch[batch] = self.decode_norm_backend
+        token_ids = mx.zeros((batch,), dtype=mx.int32)
+        state = self.init_state(batch)
+        started = time.perf_counter()
+        try:
+            outputs = function(token_ids, *self._flatten_compiled_decode_state(state))
+            mx.eval(*outputs)
+            elapsed = time.perf_counter() - started
+        finally:
+            self._restore_decode_kernel_counters(counter_snapshot)
+        self.decode_compile_s_by_batch[batch] = float(elapsed)
+        return float(elapsed)
+
+    def _compiled_decode_step(self, token_ids: Iterable[int] | Any, state: MLXRWKV7State):
+        mx = _mx()
+        batch = int(state.batch_size)
+        function = self._compiled_decode_functions.get(batch)
+        if (
+            function is None
+            or self._compiled_decode_norm_backend_by_batch.get(batch) != self.decode_norm_backend
+        ):
+            self._compiled_decode_validated_batches.discard(batch)
+            self._compiled_decode_rejected_batches.discard(batch)
+            self.decode_compile_s_by_batch.pop(batch, None)
+            self.decode_compiled_validation_by_batch.pop(batch, None)
+            function = self._build_compiled_decode_function(batch)
+            self._compiled_decode_functions[batch] = function
+            self._compiled_decode_norm_backend_by_batch[batch] = self.decode_norm_backend
+        ids = mx.array(token_ids, dtype=mx.int32).reshape(-1)
+        if int(ids.shape[0]) != batch:
+            raise ValueError(f"token batch size {int(ids.shape[0])} does not match state batch size {batch}")
+        started = time.perf_counter() if batch not in self.decode_compile_s_by_batch else None
+        outputs = function(ids, *self._flatten_compiled_decode_state(state))
+        logits = outputs[0]
+        next_state = self._compiled_decode_state_from_outputs(
+            outputs[1:],
+            seen_tokens=int(state.seen_tokens) + 1,
+        )
+        mx.eval(logits)
+        if started is not None:
+            self.decode_compile_s_by_batch[batch] = float(time.perf_counter() - started)
+        self.decode_backend_last = "compiled"
+        self.decode_backend_counts["compiled"] = int(self.decode_backend_counts.get("compiled", 0)) + 1
+        return logits, next_state
+
+    def validate_compiled_decode(
+        self,
+        logits: Any,
+        state: MLXRWKV7State,
+        *,
+        steps: int = 32,
+        logits_atol: float = 0.0,
+        state_atol: float = 1e-6,
+        reference_logits_atol: float = 0.25,
+        reference_state_atol: float = 0.5,
+    ) -> dict[str, Any]:
+        """Parity-gate a prepared compiled graph against eager greedy decode.
+
+        ``auto`` never selects a compiled graph merely because it exists. The
+        graph must first pass this gate for the concrete batch/model/backend.
+        This is necessary because aggressive graph fusion can accumulate
+        model-dependent low-margin drift even when one-step parity looks good.
+        The opt-in fast-LayerNorm route additionally follows a reference-norm
+        trajectory and requires exact greedy tokens plus bounded numeric drift.
+        """
+
+        mx = _mx()
+        count = int(steps)
+        if count <= 0:
+            raise ValueError("compiled decode validation steps must be positive")
+        if min(logits_atol, state_atol, reference_logits_atol, reference_state_atol) < 0:
+            raise ValueError("compiled decode validation tolerances must be non-negative")
+        batch = int(state.batch_size)
+        self.prepare_compiled_decode(batch)
+        eager_logits = logits
+        compiled_logits = logits
+        eager_state = state.clone()
+        compiled_state = state.clone()
+        reference_logits = logits
+        reference_state = state.clone()
+        eager_tokens: list[list[int]] = []
+        compiled_tokens: list[list[int]] = []
+        reference_tokens: list[list[int]] = []
+        require_reference_gate = self.decode_norm_backend == "fast"
+        previous_backend = self.decode_backend
+        previous_norm_backend = self.decode_norm_backend
+        previous_last = self.decode_backend_last
+        previous_counts = dict(self.decode_backend_counts)
+        counter_snapshot = self._decode_kernel_counter_snapshot()
+        try:
+            for _ in range(count):
+                eager_token = mx.argmax(eager_logits[:, -1, :], axis=-1).astype(mx.int32)
+                compiled_token = mx.argmax(compiled_logits[:, -1, :], axis=-1).astype(mx.int32)
+                reference_token = mx.argmax(reference_logits[:, -1, :], axis=-1).astype(mx.int32)
+                mx.eval(eager_token, compiled_token, reference_token)
+                eager_tokens.append([int(value) for value in eager_token.tolist()])
+                compiled_tokens.append([int(value) for value in compiled_token.tolist()])
+                reference_tokens.append([int(value) for value in reference_token.tolist()])
+                self.decode_backend = "eager"
+                self.decode_norm_backend = previous_norm_backend
+                eager_logits, eager_state = self.decode_step(eager_token, eager_state)
+                self.decode_backend = "compiled"
+                compiled_logits, compiled_state = self.decode_step(compiled_token, compiled_state)
+                if require_reference_gate:
+                    self.decode_backend = "eager"
+                    self.decode_norm_backend = "reference"
+                    reference_logits, reference_state = self.decode_step(
+                        reference_token,
+                        reference_state,
+                    )
+                    self.decode_norm_backend = previous_norm_backend
+                else:
+                    reference_logits, reference_state = eager_logits, eager_state
+            mx.eval(
+                eager_logits,
+                compiled_logits,
+                reference_logits,
+                *self._flatten_compiled_decode_state(eager_state),
+                *self._flatten_compiled_decode_state(compiled_state),
+                *self._flatten_compiled_decode_state(reference_state),
+            )
+        finally:
+            self.decode_backend = previous_backend
+            self.decode_norm_backend = previous_norm_backend
+            self.decode_backend_last = previous_last
+            self.decode_backend_counts = previous_counts
+            self._restore_decode_kernel_counters(counter_snapshot)
+        logits_diff = float(
+            mx.max(mx.abs(eager_logits.astype(mx.float32) - compiled_logits.astype(mx.float32)))
+        )
+        state_diff = max(
+            float(mx.max(mx.abs(left.astype(mx.float32) - right.astype(mx.float32))))
+            for left, right in zip(
+                self._flatten_compiled_decode_state(eager_state),
+                self._flatten_compiled_decode_state(compiled_state),
+                strict=True,
+            )
+        )
+        tokens_match = eager_tokens == compiled_tokens
+        reference_logits_diff = float(
+            mx.max(mx.abs(reference_logits.astype(mx.float32) - eager_logits.astype(mx.float32)))
+        )
+        reference_state_diff = max(
+            float(mx.max(mx.abs(left.astype(mx.float32) - right.astype(mx.float32))))
+            for left, right in zip(
+                self._flatten_compiled_decode_state(reference_state),
+                self._flatten_compiled_decode_state(eager_state),
+                strict=True,
+            )
+        )
+        reference_tokens_match = reference_tokens == eager_tokens
+        reference_passed = bool(
+            reference_tokens_match
+            and reference_logits_diff <= reference_logits_atol
+            and reference_state_diff <= reference_state_atol
+        )
+        passed = bool(
+            tokens_match
+            and logits_diff <= logits_atol
+            and state_diff <= state_atol
+            and reference_passed
+        )
+        result = {
+            "status": "pass" if passed else "fail",
+            "batch_size": batch,
+            "steps": count,
+            "generated_tokens_match": tokens_match,
+            "first_token_mismatch_step": next(
+                (
+                    index + 1
+                    for index, (eager, compiled) in enumerate(
+                        zip(eager_tokens, compiled_tokens, strict=True)
+                    )
+                    if eager != compiled
+                ),
+                None,
+            ),
+            "logits_max_abs": logits_diff,
+            "state_max_abs": state_diff,
+            "logits_atol": float(logits_atol),
+            "state_atol": float(state_atol),
+            "decode_norm_backend": previous_norm_backend,
+            "reference_norm_gate_required": require_reference_gate,
+            "reference_generated_tokens_match": reference_tokens_match,
+            "reference_first_token_mismatch_step": next(
+                (
+                    index + 1
+                    for index, (reference, eager) in enumerate(
+                        zip(reference_tokens, eager_tokens, strict=True)
+                    )
+                    if reference != eager
+                ),
+                None,
+            ),
+            "reference_logits_max_abs": reference_logits_diff,
+            "reference_state_max_abs": reference_state_diff,
+            "reference_logits_atol": float(reference_logits_atol),
+            "reference_state_atol": float(reference_state_atol),
+            "reference_norm_gate_pass": reference_passed,
+        }
+        self.decode_compiled_validation_by_batch[batch] = result
+        if passed:
+            self._compiled_decode_validated_batches.add(batch)
+            self._compiled_decode_rejected_batches.discard(batch)
+        else:
+            self._compiled_decode_rejected_batches.add(batch)
+            self._compiled_decode_validated_batches.discard(batch)
+        return dict(result)
+
+    def decode_step(self, token_ids: Iterable[int] | Any, state: MLXRWKV7State):
+        """Advance one decode token without forcing a full state sync every step.
+
+        ``forward(..., T=1)`` is correctness-equivalent but always calls
+        ``_eval_step_state`` before returning.  Streaming decode already
+        materializes the next token from returned logits, while recurrent state
+        can be synchronized by ``_step_token`` according to
+        ``RWKV7_MLX_STEP_EVAL_INTERVAL``.  Keeping decode on this direct path
+        avoids an unnecessary per-token state barrier and makes the eval interval
+        policy effective.
+        """
+
+        batch = int(state.batch_size)
+        use_compiled = self.decode_backend == "compiled" or (
+            self.decode_backend == "auto" and batch in self._compiled_decode_validated_batches
+        )
+        if use_compiled:
+            return self._compiled_decode_step(token_ids, state)
+        self.decode_backend_last = "eager"
+        self.decode_backend_counts["eager"] = int(self.decode_backend_counts.get("eager", 0)) + 1
+        mx = _mx()
+        ids = mx.array(token_ids, dtype=mx.int32).reshape(-1)
+        B = int(ids.shape[0])
+        if state.batch_size != B:
+            raise ValueError(f"state batch size {state.batch_size} does not match input batch size {B}")
+        last, state = self._step_token(ids, state)
+        logits = self._logits_from_hidden(last).reshape(B, 1, self.vocab_size)
+        return logits, state
 
     def decode_greedy(self, logits: Any, state: MLXRWKV7State, *, max_new_tokens: int):
         """Continue decoding from an existing prefill ``logits`` + ``state``.
@@ -1485,11 +2496,32 @@ def load_mlx_generation_session(
     quant_rkv_min_params: int | None = None,
     quant_backend: str = "affine",
     wkv_backend: str = "reference",
+    decode_backend: str | None = None,
+    decode_norm_backend: str | None = None,
+    prepare_compiled_decode: bool = False,
+    compiled_decode_validation_tokens: int = 32,
+    compiled_decode_logits_atol: float = 0.0,
+    compiled_decode_state_atol: float = 1e-6,
+    compiled_decode_reference_logits_atol: float = 0.25,
+    compiled_decode_reference_state_atol: float = 0.5,
 ) -> MLXGenerationSession:
     """Load a converted HF directory and prefill a tokenizer-backed MLX session."""
 
     from transformers import AutoTokenizer
 
+    if decode_backend is not None and decode_backend not in {"eager", "compiled", "auto"}:
+        raise ValueError("decode_backend must be eager, compiled, auto, or None")
+    if decode_norm_backend is not None and decode_norm_backend not in {"reference", "fast"}:
+        raise ValueError("decode_norm_backend must be reference, fast, or None")
+    if prepare_compiled_decode and int(compiled_decode_validation_tokens) <= 0:
+        raise ValueError("compiled_decode_validation_tokens must be positive")
+    if min(
+        compiled_decode_logits_atol,
+        compiled_decode_state_atol,
+        compiled_decode_reference_logits_atol,
+        compiled_decode_reference_state_atol,
+    ) < 0:
+        raise ValueError("compiled decode tolerances must be non-negative")
     model = load_mlx_rwkv7_model(
         model_dir,
         dtype=dtype,
@@ -1499,13 +2531,26 @@ def load_mlx_generation_session(
         quant_backend=quant_backend,
         wkv_backend=wkv_backend,
     )
+    if decode_backend is not None:
+        model.decode_backend = str(decode_backend)
+    if decode_norm_backend is not None:
+        model.decode_norm_backend = str(decode_norm_backend)
     tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
-    return MLXGenerationSession.from_prompt(
+    session = MLXGenerationSession.from_prompt(
         model,
         tokenizer,
         prompt,
         skip_special_tokens=skip_special_tokens,
     )
+    if prepare_compiled_decode:
+        session.prepare_compiled_decode(
+            validation_tokens=int(compiled_decode_validation_tokens),
+            logits_atol=float(compiled_decode_logits_atol),
+            state_atol=float(compiled_decode_state_atol),
+            reference_logits_atol=float(compiled_decode_reference_logits_atol),
+            reference_state_atol=float(compiled_decode_reference_state_atol),
+        )
+    return session
 
 
 def generate_text_from_hf(
@@ -1520,24 +2565,35 @@ def generate_text_from_hf(
     quant_rkv_min_params: int | None = None,
     quant_backend: str = "affine",
     wkv_backend: str = "reference",
+    decode_backend: str | None = None,
+    decode_norm_backend: str | None = None,
+    prepare_compiled_decode: bool = False,
+    compiled_decode_validation_tokens: int = 32,
+    compiled_decode_logits_atol: float = 0.0,
+    compiled_decode_state_atol: float = 1e-6,
+    compiled_decode_reference_logits_atol: float = 0.25,
+    compiled_decode_reference_state_atol: float = 0.5,
 ) -> MLXGenerateOutput:
     """Load a converted HF directory and run tokenizer-integrated MLX generate."""
 
-    from transformers import AutoTokenizer
-
-    model = load_mlx_rwkv7_model(
+    session = load_mlx_generation_session(
         model_dir,
+        prompt,
         dtype=dtype,
+        skip_special_tokens=skip_special_tokens,
         quantization=quantization,
         quant_min_params=quant_min_params,
         quant_rkv_min_params=quant_rkv_min_params,
         quant_backend=quant_backend,
         wkv_backend=wkv_backend,
+        decode_backend=decode_backend,
+        decode_norm_backend=decode_norm_backend,
+        prepare_compiled_decode=prepare_compiled_decode,
+        compiled_decode_validation_tokens=compiled_decode_validation_tokens,
+        compiled_decode_logits_atol=compiled_decode_logits_atol,
+        compiled_decode_state_atol=compiled_decode_state_atol,
+        compiled_decode_reference_logits_atol=compiled_decode_reference_logits_atol,
+        compiled_decode_reference_state_atol=compiled_decode_reference_state_atol,
     )
-    tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
-    return model.generate_text(
-        tokenizer,
-        prompt,
-        max_new_tokens=max_new_tokens,
-        skip_special_tokens=skip_special_tokens,
-    )
+    session.decode(int(max_new_tokens))
+    return session.output()
