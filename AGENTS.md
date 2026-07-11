@@ -58,6 +58,13 @@ roadmap.
   bsz1/2/4/8. Payload is `0.399x`, logit cosine is `>=0.999239`, and next-token
   equality passes. 1.5B bsz1/2 is `2.17x/2.37x` its bf16 baseline with
   `0.355x` payload.
+- A quality-oriented group-32 W4 mode is now benchmark-selectable through
+  `--torchao-group-size 32`. On the same 0.4B/4090 matrix it keeps every
+  bsz1/2/4/8 decode row faster than bf16 (minimum observed speed ratio
+  `1.230x`), reduces payload to `0.4371x`, raises final-logit cosine to
+  `0.999500-0.999586`, and preserves the next token. Treat group 32 as the
+  Q4_K_M-like quality lane and group 128 as the maximum-throughput lane; it is
+  a similarity in group granularity, not a claim of byte-format identity.
 - Do not generalize the W4 decode result to all quantization: W4 prefill is only
   `0.819x-0.831x` bf16 for the measured B1/B4 T64/T256 rows, and W8 remains
   below fp16. The next quant priority is W8 tensor-core/grouped projection,

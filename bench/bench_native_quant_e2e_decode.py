@@ -181,7 +181,9 @@ def last_native_model_decode_backend(model):
     return getattr(model, "_rwkv7_native_model_last_decode_backend", None)
 
 
-def quantize_model(model, quantization: str, min_params: int, policy: str) -> tuple[int, dict[str, int]]:
+def quantize_model(
+    model, quantization: str, min_params: int, policy: str, torchao_group_size: int = 128
+) -> tuple[int, dict[str, int]]:
     if quantization == "none":
         return 0, count_modules(model)
     if quantization == "mm8":
@@ -198,6 +200,7 @@ def quantize_model(model, quantization: str, min_params: int, policy: str) -> tu
             quantization,
             min_params=min_params,
             policy=policy,
+            group_size=int(torchao_group_size),
         )
     else:  # pragma: no cover
         raise ValueError(quantization)
@@ -309,6 +312,13 @@ def main() -> int:
     )
     ap.add_argument("--min-params", type=int, default=8_000_000)
     ap.add_argument(
+        "--torchao-group-size",
+        type=int,
+        default=128,
+        choices=[32, 64, 128, 256],
+        help="group size for tensor-core TorchAO W4; smaller groups improve quality with extra scale metadata",
+    )
+    ap.add_argument(
         "--policy",
         default="memory",
         choices=["memory", "speed"],
@@ -346,7 +356,9 @@ def main() -> int:
             torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats()
         model = load_model(args, dtype)
-        replaced, module_counts = quantize_model(model, quantization, args.min_params, args.policy)
+        replaced, module_counts = quantize_model(
+            model, quantization, args.min_params, args.policy, args.torchao_group_size
+        )
         footprint = module_footprint_mb(model)
         res = benchmark_decode(args, tok, model, ids)
         prompt_logits_for_baseline = res["prompt_logits"]
@@ -401,6 +413,7 @@ def main() -> int:
             "decode_tokens": args.decode_tokens,
             "min_params": args.min_params,
             "native_mm_policy": args.policy,
+            "torchao_group_size": args.torchao_group_size if quantization == "torchao_w4" else None,
             "replaced_modules": replaced,
             "module_counts": module_counts,
             "model_footprint_mb": footprint,

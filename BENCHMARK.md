@@ -203,6 +203,16 @@ bsz 1/2/4/8, prompt-logit cosine is `0.999239-0.999344`, final-logit cosine is
 `/data/rwkv4090/results/torchao_w4_0.4b_b{1,2,4,8}_bf16ada.jsonl` on the
 validation host.
 
+For a higher-quality W4 trade-off, group 32 was also validated end-to-end.
+Payload is `375.8 MB` (`0.4371x` bf16), final-logit cosine improves to
+`0.999500-0.999586`, every bsz1/2/4/8 row keeps the same next token, and the
+minimum observed decode speed ratio versus its same-process bf16 baseline is
+`1.230x`. The validation host acquired an unrelated co-tenant process during
+this repeat, so use the ratios as the gate and retain the earlier clean
+group-128 rows for absolute tok/s. Artifacts are
+`bench/results_torchao_w4_g32_accept_4090_20260711.jsonl` and
+`bench/results_torchao_w4_g128_accept_4090_20260711.jsonl`.
+
 The same lane generalizes to the 1.5B checkpoint rather than relying on the
 0.4B shape: bsz1 improves from `267.2` to `580.5 tok/s` (`2.173x`) and bsz2
 from `461.6` to `1,094.5 tok/s` (`2.371x`). Packed payload is `1,033.3 MB`
@@ -218,6 +228,7 @@ python bench/bench_native_quant_e2e_decode.py \
   --dtype bf16 --device cuda --attn-mode chunk \
   --fast-token-backend native_graph \
   --quantizations none torchao_w4 \
+  --torchao-group-size 32 \
   --min-params 1000000 --policy memory \
   --batch-size 1 --prompt-tokens 32 --decode-tokens 128 --warmup 8
 ```
