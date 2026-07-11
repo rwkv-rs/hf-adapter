@@ -39,6 +39,16 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
     hf_sha = hashlib.sha256(hf_wheel.read_bytes()).hexdigest()
     kernel_sha = hashlib.sha256(kernel_wheel.read_bytes()).hexdigest()
     wheels = wheel_rows(hf_sha, kernel_sha)
+    environment = {
+        "command": ["python", "validator.py"],
+        "gpu": "NVIDIA GeForce RTX 4080",
+        "torch": "2.11.0+cu130",
+        "cuda_toolkit": {
+            "nvcc": "/toolkit/bin/nvcc",
+            "nvcc_version": ["Cuda compilation tools, release 13.0, V13.0.88"],
+            "provenance": {"sha256": "d" * 64},
+        },
+    }
     reports = {
         "correctness": {
             "models": [
@@ -60,8 +70,12 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
                 }
             ]
         },
-        "hf_ecosystem": {"stages": [{"passed": True}]},
+        "hf_ecosystem": {
+            "stages": [{"passed": True}],
+            "training_expectation": {"mode": "native"},
+        },
         "training": {
+            "settings": {"candidate_route": "native"},
             "cases": [
                 {
                     "route": {
@@ -69,7 +83,7 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
                         "implementation": "native-nvidia-train-temp-autograd-v2",
                     }
                 }
-            ]
+            ],
         },
         "quantization": {
             "methods": [
@@ -84,7 +98,10 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
             ]
         },
         "fla": {"fla": {"commit": EXPECTED_FLA_COMMIT}},
-        "speed": {"fla": {"commit": EXPECTED_FLA_COMMIT}},
+        "speed": {
+            "fla": {"commit": EXPECTED_FLA_COMMIT},
+            "training": {"mode": "native"},
+        },
     }
     paths = {}
     for label, report in reports.items():
@@ -94,6 +111,7 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
                 "status": "passed",
                 "code_sha": HARNESS_SHA,
                 "wheels": wheels,
+                "environment": environment,
             }
         )
         paths[label] = write_json(tmp_path / f"{label}.json", report)
@@ -201,4 +219,15 @@ def test_device_builder_rejects_unpinned_fla(tmp_path: Path):
     payload["fla"]["commit"] = "c" * 40
     write_json(paths["fla"], payload)
     with pytest.raises(ValueError, match="FLA commit mismatch"):
+        build(args)
+
+
+def test_device_builder_rejects_native_training_without_compiler_identity(
+    tmp_path: Path,
+):
+    args, paths, _, _ = setup_reports(tmp_path)
+    payload = json.loads(paths["training"].read_text())
+    payload["environment"]["cuda_toolkit"]["provenance"] = None
+    write_json(paths["training"], payload)
+    with pytest.raises(ValueError, match="CUDA toolkit identity"):
         build(args)

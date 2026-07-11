@@ -146,6 +146,29 @@ def require_fla_commit(label: str, report: dict[str, Any]) -> None:
         raise ValueError(f"{label} report FLA commit mismatch")
 
 
+def require_environment(label: str, report: dict[str, Any]) -> None:
+    environment = report.get("environment") or {}
+    command = environment.get("command")
+    if (
+        not isinstance(command, list)
+        or not command
+        or not all(isinstance(value, str) and value for value in command)
+    ):
+        raise ValueError(f"{label} report command provenance is missing")
+    if not environment.get("gpu") or not environment.get("torch"):
+        raise ValueError(f"{label} report runtime environment is incomplete")
+
+
+def require_native_training_toolkit(report: dict[str, Any]) -> None:
+    toolkit = (report.get("environment") or {}).get("cuda_toolkit") or {}
+    provenance = toolkit.get("provenance") or {}
+    if not toolkit.get("nvcc") or not toolkit.get("nvcc_version"):
+        raise ValueError("native training report lacks CUDA compiler provenance")
+    digest = str(provenance.get("sha256", ""))
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("native training report lacks CUDA toolkit identity")
+
+
 def validate_finetune(
     report: dict[str, Any],
     *,
@@ -245,8 +268,25 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             hf_wheel_sha256=hf_wheel_sha256,
             kernel_wheel_sha256=kernel_wheel_sha256,
         )
+        require_environment(label, report)
     require_fla_commit("fla", reports["fla"])
     require_fla_commit("speed", reports["speed"])
+
+    expected_training_mode = (
+        "reference-fallback" if args.device == "tesla-v100" else "native"
+    )
+    if (reports["training"].get("settings") or {}).get(
+        "candidate_route"
+    ) != expected_training_mode:
+        raise ValueError("training capability report does not match the release device")
+    if (reports["hf_ecosystem"].get("training_expectation") or {}).get(
+        "mode"
+    ) != expected_training_mode:
+        raise ValueError("HF ecosystem training mode does not match the release device")
+    if (reports["speed"].get("training") or {}).get("mode") != expected_training_mode:
+        raise ValueError("speed training mode does not match the release device")
+    if expected_training_mode == "native":
+        require_native_training_toolkit(reports["training"])
 
     actual_routes = {
         "prefill": phase_routes(reports["correctness"], "prefill"),

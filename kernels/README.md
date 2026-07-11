@@ -21,6 +21,13 @@ cache state remains canonical `[B,H,K,V]`; internal layouts never escape the
 wheel. Adapter-wrapped FFN training fails closed to reference autograd rather
 than bypassing PEFT parameters.
 
+The dense BF16 training route lazily compiles the vendored train-temp C++/CUDA
+leaf operators. It therefore requires a local `nvcc` toolchain matching the
+CUDA major/minor used by PyTorch. The release harness records `CUDA_HOME`,
+`TORCH_EXTENSIONS_DIR`, the compiler version, and the SHA256 of a small
+toolchain provenance file. SM70 uses the explicitly labelled FP16 reference
+autograd fallback and does not claim native train-temp compilation.
+
 During pre-release validation the whole-model implementation is selected
 explicitly:
 

@@ -12,6 +12,13 @@ Each evaluation or training run writes:
 - stdout/stderr paths and exit status;
 - optional W&B run ID and URL, never a token.
 
+GPU reports also record the requested backend selectors separately from the
+actual route, plus `CUDA_HOME`, `TORCH_EXTENSIONS_DIR`, `nvcc --version`, and a
+hash of the external CUDA toolchain provenance when lazy native extensions are
+built. RTX 4080/4090 release summaries reject native training evidence that
+does not identify its compiler. The V100 summary instead requires the explicit
+SM70 `reference-fallback` training profile.
+
 Release bundles live below `results/`. Large task sample logs can be
 attached to a release artifact while the manifest and summary stay in Git.
 Committed result summaries must be immutable and must identify the exact GPU.

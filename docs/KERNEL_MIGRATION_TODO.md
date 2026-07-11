@@ -893,3 +893,37 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   root and all documented `python scripts/...` / `python evaluation/...`
   commands return `--help` successfully. A subprocess test covers all four
   release entry points. The complete local suite now passes `118` tests.
+
+### 2026-08-28 — RTX 4080 native-training compiler preflight repaired early
+
+- A read-only preflight of every queued 4080 validator/finetune entry point and
+  both environments passed. Exact diagnostic wheel hashes still match; the
+  train environment has Torch `2.11.0`, Transformers `4.56.2`, Accelerate
+  `1.14.0`, PEFT `0.19.1`, TRL `0.20.0`, Datasets `5.0.1`, and W&B `0.28.2`.
+- The same preflight found a real infrastructure failure before it consumed
+  GPU time: Torch is `2.11.0+cu130`, but the host had no system `nvcc` and
+  `torch.utils.cpp_extension.CUDA_HOME` was `None`. The queued native
+  train-temp smoke would therefore have failed at lazy extension compilation.
+- Installed a validation-only CUDA 13.0.88 compiler overlay without touching
+  or rebuilding either immutable RWKV wheel. It is assembled from the exact
+  official package bytes:
+  `nvidia-cuda-nvcc` SHA256
+  `56fe502eb77625a12f25172caa3cdddb4e4c8ba2c8c17dba44b164761b380f03`,
+  `nvidia-nvvm` SHA256
+  `c5f41ffeb6466944a026dfa5317d7d85355c119bbec279205d22f1869d1054e0`,
+  and `nvidia-cuda-crt` SHA256
+  `2c8043c7c9e02492716426e9919fc78d2c5b3b2a7a768a88e952676b08aa55a4`.
+- The compiler prefix is
+  `/home/wzu/codex-run/toolkits/cuda-13.0.88`; validation-only
+  `sitecustomize.py` binds `CUDA_HOME` and a dedicated extensions cache for all
+  five already-sleeping backend-v2 watchers when their future Python children
+  start. `nvcc V13.0.88` successfully compiled an `sm_89` CUDA object without
+  using the GPU. The compiler-overlay provenance is recorded at
+  `/home/wzu/codex-run/results/rwkv7-kernels-v1/backend-v2-18836aee/4080/toolchain-preflight.json`
+  (SHA256
+  `18435be60f5ef54710e238ff0f0e438f9439dc5fdfc4226e2460e3585e607f70`).
+- `evaluation/common.py` now records compiler/backend environment provenance in
+  every final report. The per-device release builder requires native compiler
+  identity on 4080/4090 and the distinct reference-fallback profile on V100.
+  New failure tests cover a missing compiler identity; the complete local suite
+  passes `121` tests.

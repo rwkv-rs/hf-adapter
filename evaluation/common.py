@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import json
+import os
 import platform
 import subprocess
 import sys
@@ -64,6 +65,41 @@ def model_fingerprint(model_dir: Path) -> dict:
     }
 
 
+def cuda_toolkit_provenance() -> dict:
+    """Record the external CUDA compiler used by lazy extension builds."""
+
+    raw_home = os.environ.get("CUDA_HOME")
+    home = Path(raw_home).expanduser().resolve() if raw_home else None
+    nvcc = home / "bin" / "nvcc" if home is not None else None
+    provenance = home / "PROVENANCE.txt" if home is not None else None
+    nvcc_version = None
+    if nvcc is not None and nvcc.is_file() and not nvcc.is_symlink():
+        try:
+            nvcc_version = subprocess.check_output(
+                [str(nvcc), "--version"],
+                text=True,
+                stderr=subprocess.STDOUT,
+            ).splitlines()
+        except Exception as exc:
+            nvcc_version = [f"error: {type(exc).__name__}: {exc}"]
+    return {
+        "cuda_home": str(home) if home is not None else None,
+        "torch_extensions_dir": os.environ.get("TORCH_EXTENSIONS_DIR"),
+        "nvcc": str(nvcc) if nvcc is not None and nvcc.is_file() else None,
+        "nvcc_version": nvcc_version,
+        "provenance": (
+            {
+                "path": str(provenance),
+                "sha256": sha256_file(provenance),
+            }
+            if provenance is not None
+            and provenance.is_file()
+            and not provenance.is_symlink()
+            else None
+        ),
+    }
+
+
 def environment() -> dict:
     import torch
     import transformers
@@ -108,6 +144,15 @@ def environment() -> dict:
         "cuda": torch.version.cuda,
         "driver": driver,
         "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        "backend_environment": {
+            name: os.environ.get(name)
+            for name in (
+                "RWKV7_BACKEND",
+                "RWKV7_KERNEL_IMPL",
+                "RWKV7_MODEL_KERNEL_IMPL",
+            )
+        },
+        "cuda_toolkit": cuda_toolkit_provenance(),
     }
 
 
