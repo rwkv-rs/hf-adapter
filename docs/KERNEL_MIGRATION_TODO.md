@@ -743,3 +743,7 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - Both remote scripts pass `bash -n` and are deliberately not running. The
   activation file is absent, preserving the required device order while the
   untouched RTX 4080 formal job and its queued backend-v2 chain continue.
+- Upstream draft PR #146 now points at remote head
+  `317eea57dc541e8ac894e7ef247271bdbcfc942d`. GitGuardian, the clean reference
+  model job, the training-stack job, Python 3.10 with Transformers 4.48.3, and
+  Python 3.12 with Transformers `<6` all completed successfully.
