@@ -265,6 +265,7 @@ def _native_graph_w4_rkv_config_key(batch_size: int) -> tuple[int, int, int]:
 
     policy = _rwkv7_kernel_policy()
     family = str(getattr(getattr(policy, "profile", None), "family", ""))
+    group_size = _native_graph_w4_rkv_group_size_key()
     if family == "ada" and int(batch_size) <= 1:
         defaults = (32, 64, 4)
     elif int(batch_size) <= 1:
@@ -273,11 +274,24 @@ def _native_graph_w4_rkv_config_key(batch_size: int) -> tuple[int, int, int]:
         defaults = (16, 128, 4)
     else:
         defaults = (16, 128, 2)
+    if group_size:
+        defaults = (defaults[0], group_size // 2, defaults[2])
     return (
         env_int("RWKV7_NATIVE_GRAPH_W4_RKV_BLOCK_M", defaults[0], lower=1, upper=128),
         env_int("RWKV7_NATIVE_GRAPH_W4_RKV_BLOCK_K", defaults[1], lower=1, upper=512),
         env_int("RWKV7_NATIVE_GRAPH_W4_RKV_NUM_WARPS", defaults[2], lower=1, upper=8),
     )
+
+
+def _native_graph_w4_rkv_group_size_key() -> int:
+    policy = _rwkv7_kernel_policy()
+    family = str(getattr(getattr(policy, "profile", None), "family", ""))
+    value = env_int(
+        "RWKV7_NATIVE_GRAPH_W4_RKV_GROUP_SIZE", 32 if family == "ada" else 0, lower=0, upper=1024
+    )
+    if value and value % 2:
+        raise ValueError("RWKV7_NATIVE_GRAPH_W4_RKV_GROUP_SIZE must be even")
+    return value
 
 
 def _native_graph_rkv_policy() -> str:
@@ -1545,6 +1559,9 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_rkv_policy(),
             _native_graph_vkwr_rkv_thresholds(),
             _native_graph_w4_rkv_requested(),
+            _native_graph_w4_rkv_group_size_key(),
+            env_flag("RWKV7_NATIVE_GRAPH_W4_RKV_MSE_SEARCH", True),
+            env_flag("RWKV7_NATIVE_GRAPH_W4_RKV_RELEASE_DENSE", False),
         )
         if cache is None or cache[0] != key:
             packs, _, _, _ = _native_jit_extract(self)
@@ -1574,6 +1591,9 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_rkv_policy(),
             _native_graph_vkwr_rkv_thresholds(),
             _native_graph_w4_rkv_requested(),
+            _native_graph_w4_rkv_group_size_key(),
+            env_flag("RWKV7_NATIVE_GRAPH_W4_RKV_MSE_SEARCH", True),
+            env_flag("RWKV7_NATIVE_GRAPH_W4_RKV_RELEASE_DENSE", False),
             _native_graph_w4_rkv_config_key(int(batch_size)),
             int(batch_size),
         )

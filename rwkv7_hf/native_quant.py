@@ -308,6 +308,69 @@ if _HAS_TRITON:
         scale = tl.load(scale_ptr + scale_base + offs_m, mask=mask_m, other=0.0).to(tl.float32)
         tl.store(out_ptr + out_base + offs_m, acc * scale, mask=mask_m)
 
+    @triton.jit
+    def _int4_groupwise_stacked_rkv_gemv_kernel(
+        x_ptr,
+        q_weight_ptr,
+        scale_ptr,
+        out_ptr,
+        batch: tl.constexpr,
+        projections: tl.constexpr,
+        hidden: tl.constexpr,
+        packed_hidden: tl.constexpr,
+        num_groups: tl.constexpr,
+        GROUP_SIZE: tl.constexpr,
+        BLOCK_M: tl.constexpr,
+        BLOCK_K: tl.constexpr,
+    ):
+        """Projection-axis W4A16 GEMV with one scale per K group.
+
+        ``BLOCK_K`` is required to cover exactly one packed group. This keeps
+        the scale load outside the packed-value reduction instead of expanding
+        a scale tensor across every nibble.
+        """
+
+        batch_id = tl.program_id(0)
+        projection_id = tl.program_id(1)
+        block_id = tl.program_id(2)
+        offs_m = block_id * BLOCK_M + tl.arange(0, BLOCK_M)
+        offs_p = tl.arange(0, BLOCK_K)
+        mask_m = offs_m < hidden
+
+        x_base = (batch_id * projections + projection_id) * hidden
+        q_base = projection_id * hidden * packed_hidden
+        scale_base = projection_id * hidden * num_groups
+        out_base = (batch_id * projections + projection_id) * hidden
+
+        acc = tl.zeros((BLOCK_M,), tl.float32)
+        for start in range(0, packed_hidden, BLOCK_K):
+            pidx = start + offs_p
+            mask_p = pidx < packed_hidden
+            k0 = pidx * 2
+            k1 = k0 + 1
+            mask_k0 = mask_p & (k0 < hidden)
+            mask_k1 = mask_p & (k1 < hidden)
+            x0 = tl.load(x_ptr + x_base + k0, mask=mask_k0, other=0.0).to(tl.float32)
+            x1 = tl.load(x_ptr + x_base + k1, mask=mask_k1, other=0.0).to(tl.float32)
+
+            q_offsets = q_base + offs_m[:, None] * packed_hidden + pidx[None, :]
+            packed = tl.load(q_weight_ptr + q_offsets, mask=mask_m[:, None] & mask_p[None, :], other=0).to(tl.int32)
+            q0_u4 = packed & 0xF
+            q1_u4 = (packed >> 4) & 0xF
+            q0 = tl.where(q0_u4 >= 8, q0_u4 - 16, q0_u4).to(tl.float32)
+            q1 = tl.where(q1_u4 >= 8, q1_u4 - 16, q1_u4).to(tl.float32)
+            partial = tl.sum(q0 * x0[None, :] + q1 * x1[None, :], axis=1)
+            group_id = (start * 2) // GROUP_SIZE
+            scale = tl.load(
+                scale_ptr + scale_base + offs_m * num_groups + group_id,
+                mask=mask_m,
+                other=0.0,
+            ).to(tl.float32)
+            acc += partial * scale
+
+        tl.store(out_ptr + out_base + offs_m, acc, mask=mask_m)
+
+
 
 def native_int8_gemv_available() -> bool:
     """Return whether the optional Triton int8 dequant-GEMV prototype can run."""
@@ -398,6 +461,71 @@ def quantize_int4_rowwise(weight: Any, *, eps: float = 1e-8):
     return packed.contiguous(), scales.contiguous()
 
 
+def quantize_int4_groupwise(
+    weight: Any,
+    *,
+    group_size: int = 128,
+    mse_search: bool = True,
+    eps: float = 1e-8,
+):
+    """Pack signed W4 with independent scales along the input-feature axis.
+
+    Group-local scaling avoids a single outlier setting the quantization step
+    for an entire output row. Optional clipping-factor search minimizes weight
+    reconstruction MSE per group while retaining the same signed-nibble layout
+    consumed by the fast projection-axis kernel.
+    """
+
+    if torch is None:
+        raise RuntimeError("quantize_int4_groupwise requires torch")
+    if weight.dim() != 2:
+        raise ValueError(f"weight must be [out_features, in_features], got {tuple(weight.shape)}")
+    group_size = int(group_size)
+    if group_size <= 0 or group_size % 2:
+        raise ValueError(f"group_size must be a positive even integer, got {group_size}")
+
+    w = weight.detach().float()
+    out_features, in_features = int(w.shape[0]), int(w.shape[1])
+    num_groups = (in_features + group_size - 1) // group_size
+    padded_features = num_groups * group_size
+    if padded_features != in_features:
+        padded = torch.zeros((out_features, padded_features), device=w.device, dtype=w.dtype)
+        padded[:, :in_features] = w
+        w = padded
+    grouped = w.reshape(out_features, num_groups, group_size)
+    base_scales = grouped.abs().amax(dim=-1).clamp_min(float(eps)) / 7.0
+
+    if mse_search:
+        best_scales = base_scales
+        best_q = torch.round(grouped / best_scales[..., None]).clamp(-7, 7)
+        best_error = ((grouped - best_q * best_scales[..., None]) ** 2).mean(dim=-1)
+        # Clipping a small fraction of outliers usually lowers aggregate W4
+        # reconstruction error. Keep this deterministic and calibration-free.
+        for factor in (0.98, 0.95, 0.92, 0.89, 0.86, 0.83, 0.80):
+            candidate_scales = base_scales * factor
+            candidate_q = torch.round(grouped / candidate_scales[..., None]).clamp(-7, 7)
+            error = ((grouped - candidate_q * candidate_scales[..., None]) ** 2).mean(dim=-1)
+            better = error < best_error
+            best_error = torch.where(better, error, best_error)
+            best_scales = torch.where(better, candidate_scales, best_scales)
+            best_q = torch.where(better[..., None], candidate_q, best_q)
+        q = best_q
+        scales = best_scales
+    else:
+        scales = base_scales
+        q = torch.round(grouped / scales[..., None]).clamp(-7, 7)
+
+    q = q.reshape(out_features, padded_features)[:, :in_features].to(torch.int16)
+    q_u4 = torch.bitwise_and(q, 0xF).to(torch.uint8)
+    if in_features % 2:
+        q_u4 = torch.cat(
+            [q_u4, torch.zeros((out_features, 1), device=q_u4.device, dtype=torch.uint8)],
+            dim=1,
+        )
+    packed = torch.bitwise_or(q_u4[:, 0::2], q_u4[:, 1::2] << 4)
+    return packed.contiguous(), scales.to(torch.float16).contiguous()
+
+
 def _flatten_input(x: Any, in_features: int, *, name: str):
     if torch is None:
         raise RuntimeError("int8_rowwise_gemv requires torch")
@@ -448,6 +576,22 @@ def dequantize_int4_rowwise(q_weight: Any, scales: Any, in_features: int):
     q[:, 1::2] = high
     q = q[:, :in_features].float()
     return q * scales.float().reshape(-1, 1)
+
+
+def dequantize_int4_groupwise(q_weight: Any, scales: Any, in_features: int, group_size: int):
+    """Unpack signed W4 weights with ``[out_features, num_groups]`` scales."""
+
+    if scales.dim() != 2:
+        raise ValueError("groupwise scales must be [out_features, num_groups]")
+    unit_scales = torch.ones(int(q_weight.shape[0]), device=scales.device, dtype=torch.float32)
+    q = dequantize_int4_rowwise(q_weight, unit_scales, in_features)
+    expected_groups = (int(in_features) + int(group_size) - 1) // int(group_size)
+    if tuple(int(v) for v in scales.shape) != (int(q_weight.shape[0]), expected_groups):
+        raise ValueError(
+            f"scales must be [{int(q_weight.shape[0])}, {expected_groups}], got {tuple(scales.shape)}"
+        )
+    expanded = scales.float().repeat_interleave(int(group_size), dim=1)[:, :in_features]
+    return q * expanded
 
 
 def int8_rowwise_gemv(
@@ -744,7 +888,8 @@ def int4_stacked_rkv_gemv(
         x: Activations with shape ``[batch, 3, hidden]``.
         q_weight: Packed signed-int4 weights with shape
             ``[3, hidden, ceil(hidden / 2)]``.
-        scales: Symmetric row scales with shape ``[3, hidden]``.
+        scales: Symmetric row scales with shape ``[3, hidden]`` or groupwise
+            scales with shape ``[3, hidden, num_groups]``.
 
     The pre-stacked contract is deliberate: a native RWKV decode path can have
     its shift/mix kernel write R/K/V activations directly into this layout and
@@ -764,8 +909,21 @@ def int4_stacked_rkv_gemv(
         raise ValueError(f"q_weight must be {expected_q_shape}, got {tuple(q_weight.shape)}")
     if q_weight.dtype != torch.uint8:
         raise ValueError(f"q_weight must be torch.uint8, got {q_weight.dtype}")
-    if scales.dim() != 2 or tuple(int(v) for v in scales.shape) != (projections, hidden):
-        raise ValueError(f"scales must be [{projections}, {hidden}], got {tuple(scales.shape)}")
+    groupwise = scales.dim() == 3
+    if groupwise:
+        num_groups = int(scales.shape[2])
+        if tuple(int(v) for v in scales.shape[:2]) != (projections, hidden) or num_groups <= 0:
+            raise ValueError(f"groupwise scales must be [3, {hidden}, num_groups], got {tuple(scales.shape)}")
+        group_size = (hidden + num_groups - 1) // num_groups
+        if group_size % 2 or (group_size + 1) // 2 != int(block_k):
+            raise ValueError(
+                f"groupwise W4 requires block_k=group_size/2; got group_size={group_size}, block_k={block_k}"
+            )
+    else:
+        num_groups = 1
+        group_size = hidden
+        if scales.dim() != 2 or tuple(int(v) for v in scales.shape) != (projections, hidden):
+            raise ValueError(f"scales must be [{projections}, {hidden}], got {tuple(scales.shape)}")
     if int(block_m) <= 0 or int(block_k) <= 0:
         raise ValueError("block_m and block_k must be positive")
     if int(num_warps) not in (1, 2, 4, 8):
@@ -782,9 +940,14 @@ def int4_stacked_rkv_gemv(
     if not use_triton:
         outputs = []
         for projection in range(projections):
-            weight = dequantize_int4_rowwise(q_weight[projection], scales[projection], hidden).to(
-                dtype=x.dtype, device=x.device
-            )
+            if groupwise:
+                weight = dequantize_int4_groupwise(
+                    q_weight[projection], scales[projection], hidden, group_size
+                ).to(dtype=x.dtype, device=x.device)
+            else:
+                weight = dequantize_int4_rowwise(q_weight[projection], scales[projection], hidden).to(
+                    dtype=x.dtype, device=x.device
+                )
             outputs.append(F.linear(x[:, projection, :], weight))
         return torch.stack(outputs, dim=1)
 
@@ -793,19 +956,17 @@ def int4_stacked_rkv_gemv(
     s_c = scales.contiguous()
     out = torch.empty((batch, projections, hidden), device=x.device, dtype=x.dtype)
     grid = (batch, projections, triton.cdiv(hidden, int(block_m)))
-    _int4_stacked_rkv_gemv_kernel[grid](
-        x_c,
-        q_c,
-        s_c,
-        out,
-        batch,
-        projections,
-        hidden,
-        packed_hidden,
-        BLOCK_M=int(block_m),
-        BLOCK_K=int(block_k),
-        num_warps=int(num_warps),
-    )
+    if groupwise:
+        _int4_groupwise_stacked_rkv_gemv_kernel[grid](
+            x_c, q_c, s_c, out, batch, projections, hidden, packed_hidden,
+            num_groups, GROUP_SIZE=int(group_size), BLOCK_M=int(block_m), BLOCK_K=int(block_k),
+            num_warps=int(num_warps),
+        )
+    else:
+        _int4_stacked_rkv_gemv_kernel[grid](
+            x_c, q_c, s_c, out, batch, projections, hidden, packed_hidden,
+            BLOCK_M=int(block_m), BLOCK_K=int(block_k), num_warps=int(num_warps),
+        )
     return out
 
 

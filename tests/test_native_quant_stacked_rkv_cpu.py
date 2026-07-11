@@ -7,8 +7,10 @@ import torch
 
 from rwkv7_hf.fused_time_mix import fused_attn_shift_mix_stacked_rkv
 from rwkv7_hf.native_quant import (
+    dequantize_int4_groupwise,
     int4_fused_rkv_gemv,
     int4_stacked_rkv_gemv,
+    quantize_int4_groupwise,
     quantize_int4_rowwise,
 )
 
@@ -48,6 +50,28 @@ def main() -> int:
     torch.manual_seed(1234)
     run_case(hidden=32, batch=1)
     run_case(hidden=33, batch=2)
+
+    hidden = 32
+    group_size = 8
+    weights = [torch.randn(hidden, hidden) for _ in range(3)]
+    packed = [quantize_int4_groupwise(w, group_size=group_size) for w in weights]
+    q_stacked = torch.stack([item[0] for item in packed], dim=0)
+    scales_stacked = torch.stack([item[1] for item in packed], dim=0)
+    x_stacked = torch.randn(2, 3, hidden)
+    candidate = int4_stacked_rkv_gemv(
+        x_stacked, q_stacked, scales_stacked, block_k=group_size // 2, force_fallback=True
+    )
+    expected = torch.stack(
+        [
+            torch.nn.functional.linear(
+                x_stacked[:, projection],
+                dequantize_int4_groupwise(q_stacked[projection], scales_stacked[projection], hidden, group_size),
+            )
+            for projection in range(3)
+        ],
+        dim=1,
+    )
+    assert torch.equal(candidate, expected)
 
     hidden = 32
     batch = 2

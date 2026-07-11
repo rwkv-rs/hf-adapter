@@ -290,6 +290,7 @@ try:  # pragma: no cover - optional native W4 projection experiment
     from .native_quant import (
         int4_stacked_rkv_gemv,
         native_int4_stacked_rkv_available,
+        quantize_int4_groupwise,
         quantize_int4_rowwise,
     )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
@@ -297,11 +298,13 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         from native_quant import (
             int4_stacked_rkv_gemv,
             native_int4_stacked_rkv_available,
+            quantize_int4_groupwise,
             quantize_int4_rowwise,
         )
     except Exception:
         int4_stacked_rkv_gemv = None  # type: ignore[assignment]
         native_int4_stacked_rkv_available = None  # type: ignore[assignment]
+        quantize_int4_groupwise = None  # type: ignore[assignment]
         quantize_int4_rowwise = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
@@ -1414,6 +1417,7 @@ def _native_graph_w4_rkv_config(rows: int) -> tuple[int, int, int]:
 
     policy = _kernel_policy()
     family = str(getattr(getattr(policy, "profile", None), "family", ""))
+    group_size = _native_graph_w4_rkv_group_size()
     if family == "ada" and rows <= 1:
         # RTX 4090, 0.4B, 24-layer graph: 1.206x dense versus 1.191x for
         # the V100-oriented (8, 64, 1) default (3-run median, 256 steps).
@@ -1424,11 +1428,49 @@ def _native_graph_w4_rkv_config(rows: int) -> tuple[int, int, int]:
         defaults = (16, 128, 4)
     else:
         defaults = (16, 128, 2)
+    if group_size:
+        defaults = (defaults[0], group_size // 2, defaults[2])
     return (
         env_int("RWKV7_NATIVE_GRAPH_W4_RKV_BLOCK_M", defaults[0], lower=1, upper=128),
         env_int("RWKV7_NATIVE_GRAPH_W4_RKV_BLOCK_K", defaults[1], lower=1, upper=512),
         env_int("RWKV7_NATIVE_GRAPH_W4_RKV_NUM_WARPS", defaults[2], lower=1, upper=8),
     )
+
+
+def _native_graph_w4_rkv_group_size() -> int:
+    """Return zero for legacy row-wise W4 or an even K-group size.
+
+    Group 32 matches the sub-block granularity used by high-quality K-family
+    4-bit formats while retaining a positive whole-graph decode speedup on the
+    RTX 4090 validation matrix.
+    """
+
+    policy = _kernel_policy()
+    family = str(getattr(getattr(policy, "profile", None), "family", ""))
+    value = env_int(
+        "RWKV7_NATIVE_GRAPH_W4_RKV_GROUP_SIZE",
+        32 if family == "ada" else 0,
+        lower=0,
+        upper=1024,
+    )
+    if value and value % 2:
+        raise ValueError("RWKV7_NATIVE_GRAPH_W4_RKV_GROUP_SIZE must be even")
+    return value
+
+
+def _native_graph_w4_rkv_mse_search() -> bool:
+    return env_flag("RWKV7_NATIVE_GRAPH_W4_RKV_MSE_SEARCH", True)
+
+
+def _native_graph_w4_rkv_release_dense_requested() -> bool:
+    """Inference-only switch that drops dense R/K/V after packing.
+
+    This is intended for steady-state decode workers after prompt prefill. The
+    ordinary HF/FLA forward path cannot be used again after its projection
+    parameters are released.
+    """
+
+    return env_flag("RWKV7_NATIVE_GRAPH_W4_RKV_RELEASE_DENSE", False)
 
 
 def _native_graph_int_env(name: str, default: int, *, lo: int = 1, hi: int | None = None) -> int:
@@ -1771,8 +1813,24 @@ def extract(model):
     eps = float(N * 1e-5)
     packs = []
     hidden = int(layers[0].attn.hidden_size)
-    stack_rkv = _native_graph_rkv_policy() == "vkwr_auto" or _native_prefill_rkv_bmm_requested()
     pack_w4_rkv = _native_graph_w4_rkv_requested() and quantize_int4_rowwise is not None
+    # The packed W4 path consumes its own projection-major layout. Keeping the
+    # optional dense stacked RKV copy would defeat the quantized memory goal.
+    stack_rkv = (
+        _native_graph_rkv_policy() == "vkwr_auto" or _native_prefill_rkv_bmm_requested()
+    ) and not pack_w4_rkv
+    w4_group_size = _native_graph_w4_rkv_group_size()
+    release_dense_rkv = pack_w4_rkv and _native_graph_w4_rkv_release_dense_requested()
+    if release_dense_rkv:
+        available = (
+            native_int4_stacked_rkv_available is not None
+            and fused_attn_shift_mix_stacked_rkv_available is not None
+            and bool(native_int4_stacked_rkv_available())
+            and bool(fused_attn_shift_mix_stacked_rkv_available())
+            and layers[0].attn.r_proj.weight.is_cuda
+        )
+        if not available:
+            raise RuntimeError("dense R/K/V release requires the CUDA projection-axis W4 decode path")
     for i, layer in enumerate(layers):
         a = layer.attn
         ref = a.w_lora.lora[0].weight
@@ -1787,14 +1845,28 @@ def extract(model):
             pre_b = torch.zeros(hidden, device=ref.device, dtype=ref.dtype)
             has_pre = 0
         if pack_w4_rkv:
-            qr, sr = quantize_int4_rowwise(a.r_proj.weight.detach())
-            qk, sk = quantize_int4_rowwise(a.k_proj.weight.detach())
-            qv, sv = quantize_int4_rowwise(a.v_proj.weight.detach())
+            quantizer = quantize_int4_rowwise
+            kwargs = {}
+            if w4_group_size:
+                if quantize_int4_groupwise is None:
+                    raise RuntimeError("groupwise W4 quantizer is unavailable")
+                quantizer = quantize_int4_groupwise
+                kwargs = {"group_size": w4_group_size, "mse_search": _native_graph_w4_rkv_mse_search()}
+            qr, sr = quantizer(a.r_proj.weight.detach(), **kwargs)
+            qk, sk = quantizer(a.k_proj.weight.detach(), **kwargs)
+            qv, sv = quantizer(a.v_proj.weight.detach(), **kwargs)
             q_rkv = torch.stack((qr, qk, qv), dim=0).contiguous()
             s_rkv = torch.stack((sr, sk, sv), dim=0).contiguous()
         else:
             q_rkv = ref.new_empty((0,), dtype=torch.uint8)
             s_rkv = ref.new_empty((0,), dtype=torch.float32)
+        dense_r = a.r_proj.weight
+        dense_k = a.k_proj.weight
+        dense_v = a.v_proj.weight
+        if release_dense_rkv:
+            dense_r = ref.new_empty((0,))
+            dense_k = ref.new_empty((0,))
+            dense_v = ref.new_empty((0,))
         packs.append((
             i, H, N, eps, has_pre,
             pre_w, pre_b, layer.attn_norm.weight, layer.attn_norm.bias,
@@ -1802,7 +1874,7 @@ def extract(model):
             a.x_r.reshape(-1), a.x_w.reshape(-1), a.x_k.reshape(-1),
             a.x_v.reshape(-1), a.x_a.reshape(-1), a.x_g.reshape(-1),
             a.k_k, a.k_a, a.r_k,
-            a.r_proj.weight, a.k_proj.weight, a.v_proj.weight, a.o_proj.weight,
+            dense_r, dense_k, dense_v, a.o_proj.weight,
             a.w_lora.lora[0].weight, a.w_lora.lora[2].weight, a.w_lora.lora[2].bias,
             a.a_lora.lora[0].weight, a.a_lora.lora[2].weight, a.a_lora.lora[2].bias,
             v1, v2, v0,
@@ -1815,6 +1887,13 @@ def extract(model):
             q_rkv,
             s_rkv,
         ))
+        if release_dense_rkv:
+            # Replace the registered parameters only after quantization and
+            # pack construction. No dense tensor remains referenced by either
+            # the module or the native pack.
+            a.r_proj.weight = torch.nn.Parameter(ref.new_empty((0,)), requires_grad=False)
+            a.k_proj.weight = torch.nn.Parameter(ref.new_empty((0,)), requires_grad=False)
+            a.v_proj.weight = torch.nn.Parameter(ref.new_empty((0,)), requires_grad=False)
     return packs, H, N, eps
 
 
