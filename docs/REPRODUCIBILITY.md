@@ -48,6 +48,30 @@ Generate the final provenance from the three compact bundles rather than
 writing it by hand:
 
 ```bash
+# Run once per device before compacting the raw result directory.
+python evaluation/build_backend_v2_device_validation.py \
+  --device rtx-4080 \
+  --source-sha "$FINAL_SOURCE_SHA" \
+  --harness-sha "$FINAL_HARNESS_SHA" \
+  --hf-wheel /artifacts/rwkv7_hf-1.0.0-py3-none-any.whl \
+  --kernel-wheel /artifacts/rwkv7_kernels-1.0.0-py3-none-any.whl \
+  --correctness-report /results/4080/inference.json \
+  --hf-ecosystem-report /results/4080/hf-ecosystem.json \
+  --training-report /results/4080/training.json \
+  --quantization-report /results/4080/quantization.json \
+  --fla-report /results/4080/fla.json \
+  --speed-report /results/4080/speed.json \
+  --finetune-report /results/4080/finetune/validation.json \
+  --lm-eval-report /results/4080/lm-eval/validation-three-way.json \
+  --output /results/4080/release-validation.json
+
+python evaluation/build_backend_v2_compact_bundle.py \
+  --input-dir /results/4080 \
+  --output-dir /results/4080-final-compact \
+  --device rtx-4080 \
+  --harness-sha "$FINAL_HARNESS_SHA"
+
+# Run after all three device summaries and compact bundles pass.
 python scripts/build_release_provenance.py \
   --directory /artifacts/rwkv7-v1.0.0 \
   --version 1.0.0 \
@@ -70,6 +94,10 @@ route name, invalid compact manifest, different wheel byte hash, different
 harness/source revision, or an FLA revision other than the pinned commit. It
 then deterministically writes `release-provenance.json` and `SHA256SUMS` for the
 four already-built archives; it never builds or alters those archives.
+`build_backend_v2_device_validation.py` creates that device summary directly
+from the individual validator outputs. It checks the report schemas, exact
+wheel bytes, shared harness, pinned FLA revision, 144-unit result, actual
+prefill/decode/training/quantization routes, and separate SFT/DPO/GRPO results.
 
 The historical fused implementation remains on `perf/native-kernels-v0.8`.
 The clean optional-package migration is reviewed separately on

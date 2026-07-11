@@ -837,3 +837,22 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   failures. `0.4b-b1-arc_easy` was the only active GPU child; all five
   backend-v2 diagnostic/formal watchers remained asleep and were not restarted
   or given competing work.
+
+### 2026-08-28 — per-device release summary is also generated, not asserted
+
+- Added `evaluation/build_backend_v2_device_validation.py`. It consumes the
+  individual correctness, HF ecosystem, training, quantization, pinned-FLA,
+  speed, finetune and three-way `lm_eval` JSON files and produces the
+  `release-validation.json` later covered by the compact manifest.
+- The tool requires every primary report schema/status and harness SHA, checks
+  both exact wheel hashes in every primary report, checks the pinned FLA commit
+  in parity/speed/formal-eval evidence, and requires the formal result to have
+  144 units with whole-model route validation enabled.
+- SFT, DPO and GRPO are checked separately, including their wheel hashes and
+  adapter-aware actual training routes. Actual prefill/decode/training routes
+  are extracted from validator output; quantization routes bind each passed
+  method name to its executed implementation instead of trusting a requested
+  policy.
+- Failure tests cover a failed primary gate, report from another wheel,
+  missing actual route and unpinned FLA revision. Focused checks and the full
+  local suite pass: `112 passed`.
