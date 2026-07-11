@@ -9,6 +9,7 @@ from conftest import write_valid_hf_wheel, write_valid_kernel_wheel
 from scripts.audit_release_wheels import (
     CAPABILITY_INVENTORY,
     MIGRATION_MANIFEST,
+    RECURRENT_SOURCE_SCOPE,
     SOURCE_SCOPE,
     audit_hf_wheel,
     audit_kernel_wheel,
@@ -37,6 +38,8 @@ def test_release_wheel_audit_accepts_clean_hf_and_all_102_sources(tmp_path: Path
     assert report["capability_inventory"]["mapped_migration_files"] == 102
     assert report["source_scope"]["historical_files"] == 153
     assert report["source_scope"]["dispositions"]["byte_migrated_nvidia"] == 102
+    assert report["recurrent_source_scope"]["historical_files"] == 3
+    assert report["recurrent_source_scope"]["byte_identical_implementations"] == 2
 
 
 def test_kernel_wheel_audit_rejects_omitted_migrated_source(tmp_path: Path):
@@ -87,11 +90,16 @@ def test_kernel_wheel_audit_rejects_missing_historical_source_scope(tmp_path: Pa
         audit_kernel_wheel(kernel)
 
 
+def test_kernel_wheel_audit_rejects_missing_recurrent_source_scope(tmp_path: Path):
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(kernel, omit=RECURRENT_SOURCE_SCOPE)
+    with pytest.raises(ValueError, match="missing recurrent source-scope"):
+        audit_kernel_wheel(kernel)
+
+
 def test_kernel_wheel_audit_rejects_unmapped_migrated_source(tmp_path: Path):
     root = Path(__file__).resolve().parents[1]
-    inventory_path = (
-        root / "kernels/rwkv7_kernels/nvidia/CAPABILITY_INVENTORY.json"
-    )
+    inventory_path = root / "kernels/rwkv7_kernels/nvidia/CAPABILITY_INVENTORY.json"
     inventory = json.loads(inventory_path.read_text())
     inventory["capabilities"][0]["migration_files"].pop()
     kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
@@ -105,9 +113,7 @@ def test_kernel_wheel_audit_rejects_unmapped_migrated_source(tmp_path: Path):
 
 def test_kernel_wheel_audit_rejects_unknown_policy_flag(tmp_path: Path):
     root = Path(__file__).resolve().parents[1]
-    inventory_path = (
-        root / "kernels/rwkv7_kernels/nvidia/CAPABILITY_INVENTORY.json"
-    )
+    inventory_path = root / "kernels/rwkv7_kernels/nvidia/CAPABILITY_INVENTORY.json"
     inventory = json.loads(inventory_path.read_text())
     inventory["capabilities"][0]["policy_flags"].append("imaginary_kernel_flag")
     kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
@@ -144,6 +150,22 @@ def test_kernel_wheel_audit_rejects_changed_historical_tree_identity(
     write_valid_kernel_wheel(
         kernel,
         extra={SOURCE_SCOPE: json.dumps(scope).encode()},
+    )
+    with pytest.raises(ValueError, match="do not reconstruct the frozen Git tree"):
+        audit_kernel_wheel(kernel)
+
+
+def test_kernel_wheel_audit_rejects_changed_recurrent_blob_identity(
+    tmp_path: Path,
+):
+    root = Path(__file__).resolve().parents[1]
+    scope_path = root / "kernels/rwkv7_kernels/nvidia/RECURRENT_SOURCE_SCOPE.json"
+    scope = json.loads(scope_path.read_text())
+    scope["entries"][1]["git_blob"] = "0" * 40
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(
+        kernel,
+        extra={RECURRENT_SOURCE_SCOPE: json.dumps(scope).encode()},
     )
     with pytest.raises(ValueError, match="do not reconstruct the frozen Git tree"):
         audit_kernel_wheel(kernel)

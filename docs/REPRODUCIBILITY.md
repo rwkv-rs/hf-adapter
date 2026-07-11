@@ -91,8 +91,9 @@ python scripts/audit_release_wheels.py \
 ```
 
 The final release verifier repeats this audit, including all 102 embedded
-migration-manifest hashes, so a locally complete source tree cannot hide an
-incomplete wheel.
+migration-manifest hashes, the reconstructed 153-file historical tree, and the
+separate byte-identical v0.10 Graph/Triton recurrent subtree. A locally complete
+source tree therefore cannot hide an incomplete wheel.
 
 Generate the final provenance from the three compact bundles rather than
 writing it by hand:

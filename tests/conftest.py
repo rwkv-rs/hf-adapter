@@ -12,6 +12,7 @@ from scripts.audit_release_wheels import (
     HF_REQUIRED,
     KERNEL_REQUIRED,
     MIGRATION_MANIFEST,
+    RECURRENT_SOURCE_SCOPE,
     SOURCE_SCOPE,
 )
 
@@ -38,7 +39,7 @@ def write_valid_kernel_wheel(
     manifest_path = ROOT / "kernels/rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json"
     manifest = json.loads(manifest_path.read_text())
     members: dict[str, bytes] = {MIGRATION_MANIFEST: manifest_path.read_bytes()}
-    for member in (CAPABILITY_INVENTORY, SOURCE_SCOPE):
+    for member in (CAPABILITY_INVENTORY, RECURRENT_SOURCE_SCOPE, SOURCE_SCOPE):
         members[member] = (ROOT / "kernels" / member).read_bytes()
     for row in manifest["files"]:
         source = ROOT / row["destination"]

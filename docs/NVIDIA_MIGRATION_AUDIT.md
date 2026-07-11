@@ -41,6 +41,19 @@ fails if a migrated byte is unmapped or double-mapped, a runtime file is
 absent, a policy flag is invented, or a required family is missing. Thus an
 opaque directory of preserved sources cannot satisfy the release gate.
 
+The later recurrent-only performance line is audited separately rather than
+being hidden inside the larger v0.8 count. The wheel embeds
+`RECURRENT_SOURCE_SCOPE.json` for
+`perf/optional-native-backend-v0.10` commit
+`0c5ea30ac6868974ba9836c4a065fa8b2847af68`. It reconstructs the complete
+three-file historical `kernel_wheel/rwkv7_kernels` Git subtree
+(`7d2fe3ffff72ec2cd44993e14757ef4443ddfcbb`): the old package entry point is
+adapted to API v2, while `recurrent_graph.py` and `recurrent_triton.py` remain
+byte-identical as `recurrent/graph.py` and `recurrent/triton.py`. Release
+auditing recomputes both SHA256 and Git blob identity, so the earlier HF
+high-performance recurrent implementation is covered in addition to all 102
+v0.8 NVIDIA files.
+
 The inventory deliberately distinguishes `migrated` from `production auto`.
 All implementation families are present behind API v2, but full-model v2
 families remain diagnostic until the same immutable wheel passes the complete

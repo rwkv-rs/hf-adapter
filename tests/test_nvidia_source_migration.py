@@ -22,9 +22,10 @@ def test_nvidia_migration_manifest_is_complete_and_byte_verified():
     for entry in manifest["files"]:
         destination = ROOT / entry["destination"]
         assert destination.is_file(), entry["destination"]
-        assert hashlib.sha256(destination.read_bytes()).hexdigest() == entry[
-            "destination_sha256"
-        ]
+        assert (
+            hashlib.sha256(destination.read_bytes()).hexdigest()
+            == entry["destination_sha256"]
+        )
         assert len(entry["git_blob"]) == 40
         destinations.add(destination.name)
 
@@ -113,6 +114,35 @@ def test_historical_source_scope_classifies_the_entire_frozen_git_tree():
         entry["disposition"] in {"unknown", "unclassified"}
         for entry in scope["entries"]
     )
+
+
+def test_recurrent_source_scope_preserves_the_complete_v010_kernel_package():
+    scope = json.loads((NVIDIA / "RECURRENT_SOURCE_SCOPE.json").read_text())
+    assert scope["schema"] == "rwkv7-recurrent-source-scope-v1"
+    assert scope["source_commit"] == "0c5ea30ac6868974ba9836c4a065fa8b2847af68"
+    assert scope["source_subtree_git_tree"] == historical_tree_oid(
+        scope["entries"],
+        scope["source_subtree"],
+    )
+    assert len(scope["entries"]) == 3
+    migrated = [
+        entry
+        for entry in scope["entries"]
+        if entry["disposition"] == "byte_migrated_nvidia"
+    ]
+    assert len(migrated) == 2
+    for entry in migrated:
+        destination = ROOT / "kernels" / entry["destination"]
+        payload = destination.read_bytes()
+        assert hashlib.sha256(payload).hexdigest() == entry["destination_sha256"]
+        header = b"blob " + str(len(payload)).encode() + b"\0"
+        assert (
+            hashlib.sha1(  # noqa: S324 - verifies historical Git identity.
+                header + payload,
+                usedforsecurity=False,
+            ).hexdigest()
+            == entry["git_blob"]
+        )
 
 
 def test_nvidia_sources_do_not_reintroduce_model_config_or_cache_ownership():

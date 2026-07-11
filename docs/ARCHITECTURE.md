@@ -60,8 +60,10 @@ payloads. `nvidia/CAPABILITY_INVENTORY.json` maps every one of those payloads
 exactly once to an executable runtime family and real device-policy fields.
 `nvidia/SOURCE_SCOPE.json` independently classifies the entire 153-file
 historical package tree and reconstructs its frozen Git tree object, so the
-102-file NVIDIA set cannot hide an omitted source file. The release-wheel
-audit checks all three files from the built ZIP, not merely from
+102-file NVIDIA set cannot hide an omitted source file.
+`nvidia/RECURRENT_SOURCE_SCOPE.json` separately reconstructs the later v0.10
+recurrent-wheel subtree and byte-verifies its Graph and Triton implementations.
+The release-wheel audit checks all four files from the built ZIP, not merely from
 the checkout. Full-model production `auto` is promoted only after the same
 immutable wheel passes the RTX 4080, V100 and RTX 4090 functional, HF/training,
 speed, FLA and 144-unit `lm_eval` gates.

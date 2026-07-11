@@ -1099,3 +1099,33 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   release commands.
 - Updated the canonical finetuning wrapper example to the same final stable
   kernel wheel name, keeping every user-facing release command consistent.
+
+### 2026-08-28 — the later HF recurrent backend is also in the audited denominator
+
+- Added wheel-owned `nvidia/RECURRENT_SOURCE_SCOPE.json` for the complete
+  historical `perf/optional-native-backend-v0.10:kernel_wheel/rwkv7_kernels`
+  subtree at commit `0c5ea30ac6868974ba9836c4a065fa8b2847af68`.
+  Its three rows reconstruct frozen Git tree
+  `7d2fe3ffff72ec2cd44993e14757ef4443ddfcbb`.
+- The old API entry point is explicitly adapted to API v2. The old Graph and
+  Triton recurrence implementations are still byte-identical as
+  `recurrent/graph.py` and `recurrent/triton.py`; the release-wheel audit now
+  recomputes their SHA256 and Git blob identities in addition to the 153-file
+  v0.8 scope and 102-file NVIDIA manifest.
+- Updated architecture, reproducibility, migration-audit and generated Issue
+  requirements so “all historical HF performance operators” covers both the
+  large v0.8 NVIDIA tree and the later independently packaged recurrent line.
+- A disposable development-wheel ZIP passed the combined audit: 153/153 v0.8
+  source files, 102/102 NVIDIA byte migrations, 16/16 capability families,
+  and 3/3 v0.10 recurrent-package files with 2/2 byte-identical
+  implementations. Disposable wheel hashes are HF
+  `4bb51faa154d7d51ccf3af2bac9f1eac712dde74fcc35a4fd58583172871253f`
+  and kernels
+  `a198e7949307eac4e1037383b59023546b5a07af21857ac8522b2fad73875efa`;
+  neither is a final stable artifact. The complete local suite passes
+  `150 passed` with `133` expected TorchScript deprecation warnings.
+- Recovered the prior documentation push from a GitHub HTTPS transport
+  timeout using the fail-closed Git Database API path. Local branch, fork ref,
+  and upstream draft PR #146 now resolve to exact commit
+  `00463f55a0189a70c4b54d58c5f6c10bad98f542`; no divergent history was
+  force-pushed.

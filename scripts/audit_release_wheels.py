@@ -60,8 +60,11 @@ KERNEL_FORBIDDEN = {
 MIGRATION_MANIFEST = "rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json"
 CAPABILITY_INVENTORY = "rwkv7_kernels/nvidia/CAPABILITY_INVENTORY.json"
 SOURCE_SCOPE = "rwkv7_kernels/nvidia/SOURCE_SCOPE.json"
+RECURRENT_SOURCE_SCOPE = "rwkv7_kernels/nvidia/RECURRENT_SOURCE_SCOPE.json"
 SOURCE_COMMIT = "1014acf1a52fa4dee1e4d2b46e6059275c1d3bea"
 SOURCE_TREE = "1bb1fe1cd64662bbd6d29f72c9002a8513af3691"
+RECURRENT_SOURCE_COMMIT = "0c5ea30ac6868974ba9836c4a065fa8b2847af68"
+RECURRENT_SOURCE_TREE = "7d2fe3ffff72ec2cd44993e14757ef4443ddfcbb"
 REQUIRED_CAPABILITIES = {
     "recurrent",
     "dense_decode",
@@ -199,13 +202,22 @@ def kernel_policy_fields(archive: zipfile.ZipFile) -> set[str]:
     raise ValueError("kernel wheel has no KernelPolicy declaration")
 
 
-def historical_tree_oid(rows: list[dict[str, Any]]) -> str:
-    """Rebuild the frozen ``rwkv7_hf`` Git tree from mode/blob evidence."""
+def historical_tree_oid(
+    rows: list[dict[str, Any]],
+    source_subtree: str = "rwkv7_hf",
+) -> str:
+    """Rebuild a frozen Git subtree from mode/blob evidence."""
 
     root: dict[str, Any] = {}
+    prefix = PurePosixPath(source_subtree)
+    if prefix.is_absolute() or ".." in prefix.parts or not prefix.parts:
+        raise ValueError(f"unsafe historical source subtree: {prefix}")
     for row in rows:
         source = PurePosixPath(str(row.get("source", "")))
-        if not source.parts or source.parts[0] != "rwkv7_hf" or len(source.parts) < 2:
+        if (
+            len(source.parts) <= len(prefix.parts)
+            or source.parts[: len(prefix.parts)] != prefix.parts
+        ):
             raise ValueError(f"unsafe historical source path: {source}")
         mode = str(row.get("git_mode", ""))
         blob = str(row.get("git_blob", ""))
@@ -220,7 +232,7 @@ def historical_tree_oid(rows: list[dict[str, Any]]) -> str:
         if len(blob_bytes) != 20:
             raise ValueError(f"historical source has invalid Git blob: {source}")
         node = root
-        for part in source.parts[1:-1]:
+        for part in source.parts[len(prefix.parts) : -1]:
             current = node.setdefault(part, {})
             if not isinstance(current, dict):
                 raise ValueError(f"historical source path collides: {source}")
@@ -244,11 +256,7 @@ def historical_tree_oid(rows: list[dict[str, Any]]) -> str:
             else:
                 mode, digest = value
             payload.append(
-                mode.encode()
-                + b" "
-                + name.encode()
-                + b"\0"
-                + bytes.fromhex(digest)
+                mode.encode() + b" " + name.encode() + b"\0" + bytes.fromhex(digest)
             )
         body = b"".join(payload)
         header = b"tree " + str(len(body)).encode() + b"\0"
@@ -258,6 +266,14 @@ def historical_tree_oid(rows: list[dict[str, Any]]) -> str:
         ).hexdigest()
 
     return tree_oid(root)
+
+
+def git_blob_oid(payload: bytes) -> str:
+    header = b"blob " + str(len(payload)).encode() + b"\0"
+    return hashlib.sha1(  # noqa: S324 - Git object identity is SHA-1 by design.
+        header + payload,
+        usedforsecurity=False,
+    ).hexdigest()
 
 
 def audit_capability_inventory(
@@ -345,11 +361,7 @@ def audit_capability_inventory(
         "mapped_migration_files": len(mapped_migration),
         "runtime_files": len(runtime_members),
         "policy_flags": len(
-            {
-                str(flag)
-                for row in rows
-                for flag in row.get("policy_flags", [])
-            }
+            {str(flag) for row in rows for flag in row.get("policy_flags", [])}
         ),
     }
 
@@ -456,6 +468,100 @@ def audit_source_scope(
     }
 
 
+def audit_recurrent_source_scope(
+    archive: zipfile.ZipFile,
+    members: set[str],
+) -> dict[str, Any]:
+    """Verify the earlier optional recurrent wheel was not lost in v2.
+
+    The complete NVIDIA scope above proves the large v0.8 implementation
+    migration.  The later v0.10 line introduced the independently packaged
+    Graph and Triton recurrence files, so it has a second frozen subtree and
+    provenance record.  Both implementation files must still be byte-for-byte
+    identical to their historical Git blobs.
+    """
+
+    if RECURRENT_SOURCE_SCOPE not in members:
+        raise ValueError("kernel wheel is missing recurrent source-scope inventory")
+    scope = json.loads(archive.read(RECURRENT_SOURCE_SCOPE))
+    if scope.get("schema") != "rwkv7-recurrent-source-scope-v1":
+        raise ValueError("unexpected recurrent source-scope schema")
+    subtree = "kernel_wheel/rwkv7_kernels"
+    if (
+        scope.get("source_branch") != "perf/optional-native-backend-v0.10"
+        or scope.get("source_commit") != RECURRENT_SOURCE_COMMIT
+        or scope.get("source_subtree") != subtree
+        or scope.get("source_subtree_git_tree") != RECURRENT_SOURCE_TREE
+    ):
+        raise ValueError("recurrent source-scope identity differs")
+    rows = scope.get("entries")
+    if not isinstance(rows, list) or len(rows) != 3:
+        raise ValueError("recurrent source scope must classify all 3 package files")
+    sources = [str(row.get("source", "")) for row in rows]
+    if len(sources) != len(set(sources)) or any(
+        not source.startswith(f"{subtree}/") for source in sources
+    ):
+        raise ValueError("recurrent source scope has duplicate or unsafe paths")
+    rebuilt_tree = historical_tree_oid(rows, subtree)
+    if rebuilt_tree != RECURRENT_SOURCE_TREE:
+        raise ValueError(
+            "recurrent source-scope entries do not reconstruct the frozen Git tree"
+        )
+    dispositions = [str(row.get("disposition", "")) for row in rows]
+    if not set(dispositions) <= ALLOWED_DISPOSITIONS:
+        unknown = sorted(set(dispositions) - ALLOWED_DISPOSITIONS)
+        raise ValueError(f"recurrent source scope has unknown dispositions: {unknown}")
+    counts = {name: dispositions.count(name) for name in ALLOWED_DISPOSITIONS}
+    counts = {name: count for name, count in sorted(counts.items()) if count}
+    if scope.get("counts") != counts:
+        raise ValueError("recurrent source-scope counts differ from its entries")
+
+    byte_migrations = 0
+    adapted_files: set[str] = set()
+    for row in rows:
+        source = str(row["source"])
+        disposition = str(row["disposition"])
+        if disposition == "byte_migrated_nvidia":
+            destination = inventory_member(row.get("destination"))
+            if destination not in members:
+                raise ValueError(f"recurrent source destination is absent: {source}")
+            payload = archive.read(destination)
+            if sha256_bytes(payload) != row.get("destination_sha256"):
+                raise ValueError(
+                    f"recurrent source hash mismatch in wheel: {destination}"
+                )
+            if git_blob_oid(payload) != row.get("git_blob"):
+                raise ValueError(
+                    f"recurrent source is not byte-identical to Git blob: {source}"
+                )
+            byte_migrations += 1
+        elif disposition == "adapted_protocol":
+            replacements = row.get("replacements")
+            if not isinstance(replacements, list) or not replacements:
+                raise ValueError(
+                    f"adapted recurrent source has no replacements: {source}"
+                )
+            for replacement in map(inventory_member, replacements):
+                if replacement not in members:
+                    raise ValueError(
+                        "adapted recurrent source replacement is absent: "
+                        f"{source} -> {replacement}"
+                    )
+                adapted_files.add(replacement)
+    if byte_migrations != 2:
+        raise ValueError(
+            "recurrent source scope must preserve both implementation files"
+        )
+    return {
+        "status": "passed",
+        "historical_files": len(rows),
+        "reconstructed_git_tree": rebuilt_tree,
+        "dispositions": counts,
+        "byte_identical_implementations": byte_migrations,
+        "adapted_protocol_files": len(adapted_files),
+    }
+
+
 def audit_kernel_wheel(path: Path) -> dict[str, Any]:
     archive, members = open_wheel(path)
     try:
@@ -463,7 +569,11 @@ def audit_kernel_wheel(path: Path) -> dict[str, Any]:
         if CAPABILITY_INVENTORY not in names:
             raise ValueError("kernel wheel is missing NVIDIA capability inventory")
         if SOURCE_SCOPE not in names:
-            raise ValueError("kernel wheel is missing historical source-scope inventory")
+            raise ValueError(
+                "kernel wheel is missing historical source-scope inventory"
+            )
+        if RECURRENT_SOURCE_SCOPE not in names:
+            raise ValueError("kernel wheel is missing recurrent source-scope inventory")
         missing = sorted(KERNEL_REQUIRED - names)
         if missing:
             raise ValueError(f"kernel wheel is missing runtime files: {missing}")
@@ -503,10 +613,15 @@ def audit_kernel_wheel(path: Path) -> dict[str, Any]:
             migrated,
         )
         source_scope_report = audit_source_scope(archive, names, manifest)
+        recurrent_source_scope_report = audit_recurrent_source_scope(
+            archive,
+            names,
+        )
         return {
             "status": "passed",
             "capability_inventory": capability_report,
             "source_scope": source_scope_report,
+            "recurrent_source_scope": recurrent_source_scope_report,
             "migrated_files": len(migrated),
             "runtime_files": len(KERNEL_REQUIRED),
             "members": len(members),

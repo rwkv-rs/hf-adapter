@@ -226,6 +226,9 @@ def render_issue(
             "The embedded source scope also classifies all 153 files from the frozen "
             "historical performance tree and reconstructs its Git tree identity, so the "
             "102-file NVIDIA migration denominator has no silent omissions.",
+            "The later v0.10 recurrent wheel is independently covered: its complete "
+            "three-file package subtree is reconstructed and its Graph/Triton "
+            "implementations remain byte-identical behind API v2.",
             "",
             "## Actual routes",
             "",
