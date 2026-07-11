@@ -887,3 +887,9 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   `0.4b-b1-arc_challenge` was the sole GPU process. The backend-v2 chain stayed
   queued, and upstream draft PR #146 had all five current checks green at
   source `ee6f9e3a977680ac775c876777eb864164b5c860`.
+- A direct-entrypoint smoke exposed and fixed a packaging-independent CLI
+  issue: the newly added release/device tools imported repository namespace
+  packages only when invoked with `python -m`. They now bootstrap the checkout
+  root and all documented `python scripts/...` / `python evaluation/...`
+  commands return `--help` successfully. A subprocess test covers all four
+  release entry points. The complete local suite now passes `118` tests.

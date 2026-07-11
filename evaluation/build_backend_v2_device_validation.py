@@ -8,10 +8,15 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import sys
 import tempfile
 from typing import Any
 
-from evaluation.fla_common import EXPECTED_FLA_COMMIT
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from evaluation.fla_common import EXPECTED_FLA_COMMIT  # noqa: E402
 
 
 DEVICES = {"rtx-4080", "tesla-v100", "rtx-4090"}

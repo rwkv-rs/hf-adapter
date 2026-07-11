@@ -8,11 +8,20 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import sys
 import tempfile
 from typing import Any
 
-from evaluation.build_backend_v2_compact_bundle import validate_bundle
-from scripts.verify_release_assets import DEVICES, FLA_COMMIT, expected_artifacts
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from evaluation.build_backend_v2_compact_bundle import validate_bundle  # noqa: E402
+from scripts.verify_release_assets import (  # noqa: E402
+    DEVICES,
+    FLA_COMMIT,
+    expected_artifacts,
+)
 
 
 DEVICE_REPORT = "release-validation.json"

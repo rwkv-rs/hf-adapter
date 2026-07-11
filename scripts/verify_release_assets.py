@@ -8,9 +8,14 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import sys
 from typing import Any
 
-from scripts.audit_release_wheels import audit_hf_wheel, audit_kernel_wheel
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.audit_release_wheels import audit_hf_wheel, audit_kernel_wheel  # noqa: E402
 
 
 FLA_COMMIT = "80e494f6c588e091fc8316b612870df29375c5b8"
