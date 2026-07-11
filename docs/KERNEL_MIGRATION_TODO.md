@@ -596,3 +596,19 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   inference and canonical-training overlays. Both import `rwkv7_hf==1.0.0`
   and `rwkv7-kernels==1.0.0.dev0` from the overlay and expose kernel API v2;
   neither base virtual environment was mutated.
+
+### 2026-08-28 — six-repository Hub release baseline
+
+- Added `evaluation/audit_hub_release.py` with unit tests. It audits the six
+  Hub repositories without downloading weights: canonical code hashes,
+  required/forbidden files, `auto_map`, resolved main revision, tag target,
+  and every safetensors LFS SHA256/size are recorded.
+- Captured the pre-release weight baseline at
+  `results/release-preflight/hub-baseline-20260828.json` using harness commit
+  `b0077e3b53510ca1604b1780685496121129e1e5`. The report is intentionally
+  `failed`: every repository still has the v0.9 versions of
+  `cache_rwkv7.py`, `configuration_rwkv7.py`, `modeling_rwkv7.py`, and
+  `ops_rwkv7.py`. Tokenization and chat-template sources already match.
+- The six current main revisions and all 32 LFS weight shards are now frozen
+  as the before-release evidence. The final `v1.0.0` audit must pass while
+  matching these exact weight hashes and sizes.
