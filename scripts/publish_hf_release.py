@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish an audited staged v0.9.0 commit and tag to the six HF repositories.
+"""Publish an audited staged commit and tag to the six HF repositories.
 
 The command is a dry run unless ``--publish`` is supplied.  It uses each
 staged repository's recorded parent commit, so an unexpected concurrent Hub
@@ -7,6 +7,7 @@ change aborts instead of being overwritten.  Existing release tags are
 verified file-by-file, which makes an interrupted six-repository release safe
 to resume.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -39,7 +40,7 @@ def verify_existing_tag(repo_id: str, tag: str, target: Path, files: list[str]) 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage-dir", type=Path, required=True)
-    parser.add_argument("--tag", default="v0.9.0")
+    parser.add_argument("--tag", default="v1.0.0")
     parser.add_argument("--publish", action="store_true")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
@@ -51,16 +52,24 @@ def main() -> None:
         repo_id = row["repo_id"]
         target = args.stage_dir / repo_id.rsplit("/", 1)[-1]
         files = list(row["files"])
+        if row.get("tag") != args.tag:
+            raise SystemExit(
+                f"{repo_id}: staged tag {row.get('tag')!r} does not match {args.tag!r}"
+            )
         missing = [name for name in files if not (target / name).is_file()]
         if missing:
             raise SystemExit(f"{repo_id}: missing staged files: {missing}")
-        if "release.json" in files or any(name.endswith(".safetensors") for name in files):
+        if "release.json" in files or any(
+            name.endswith(".safetensors") for name in files
+        ):
             raise SystemExit(f"{repo_id}: unsafe release file list")
 
         tags = {ref.name: ref.ref for ref in api.list_repo_refs(repo_id).tags}
         if args.tag in tags:
             commit = verify_existing_tag(repo_id, args.tag, target, files)
-            report.append({"repo_id": repo_id, "status": "already-published", "commit": commit})
+            report.append(
+                {"repo_id": repo_id, "status": "already-published", "commit": commit}
+            )
             continue
 
         current = api.model_info(repo_id).sha
@@ -94,7 +103,10 @@ def main() -> None:
             repo_type="model",
             tag=args.tag,
             revision=commit.oid,
-            tag_message="Readable pure-PyTorch Hugging Face reference implementation",
+            tag_message=(
+                "Readable Hugging Face reference implementation with an optional "
+                "versioned kernel companion"
+            ),
         )
         verified = verify_existing_tag(repo_id, args.tag, target, files)
         report.append({"repo_id": repo_id, "status": "published", "commit": verified})

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Stage the six self-contained Hugging Face model repositories for v0.9.0.
+"""Stage the six self-contained Hugging Face model repositories for release.
 
 This script never downloads or rewrites model weights.  It resolves each
 current Hub commit, copies the reference implementation, updates config.json,
 and writes a model card that explicitly documents the package-free contract.
 Publishing remains a separate, auditable Hub commit.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -42,7 +43,9 @@ AUTO_MAP = {
 
 
 def git_sha(root: Path) -> str:
-    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    return subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=root, text=True
+    ).strip()
 
 
 def size_label(repo_id: str) -> str:
@@ -50,12 +53,44 @@ def size_label(repo_id: str) -> str:
     return match.group(1).upper() if match else repo_id.rsplit("/", 1)[-1]
 
 
-def model_card(repo_id: str, config: dict, manifest: dict, source_sha: str) -> str:
+def canonical_config(config: dict) -> dict:
+    """Return the release config with no optional-backend policy fields."""
+
+    config = dict(config)
+    config.update(
+        {
+            "model_type": "rwkv7",
+            "architectures": ["RWKV7ForCausalLM"],
+            "auto_map": AUTO_MAP,
+        }
+    )
+    for name in (
+        "attn_mode",
+        "fuse_norm",
+        "kernel_impl",
+        "model_kernel_impl",
+        "rwkv7_backend",
+    ):
+        config.pop(name, None)
+    attention_width = int(config.get("attention_hidden_size", config["hidden_size"]))
+    config.setdefault("head_dim", 64 if attention_width % 64 == 0 else attention_width)
+    config.setdefault("num_heads", attention_width // int(config["head_dim"]))
+    config["num_attention_heads"] = int(config["num_heads"])
+    return config
+
+
+def model_card(
+    repo_id: str, config: dict, manifest: dict, source_sha: str, tag: str
+) -> str:
     source = manifest.get("source", {})
     weights = manifest.get("weights", {})
     family = repo_id.rsplit("/", 1)[-1].split("-")[1].upper()
     parameter_count = weights.get("parameter_count")
-    parameters = f"{int(parameter_count):,}" if parameter_count is not None else "see weights index"
+    parameters = (
+        f"{int(parameter_count):,}"
+        if parameter_count is not None
+        else "see weights index"
+    )
     source_name = source.get("filename", "the original RWKV-7 checkpoint")
     source_hash = source.get("sha256", "recorded in conversion_manifest.json")
     return f"""---
@@ -73,7 +108,7 @@ tags:
 # RWKV-7 {family} {size_label(repo_id)} — Hugging Face reference model
 
 This repository is a self-contained Hugging Face conversion of
-`{source_name}`.  Release `v0.9.0` contains the complete readable,
+`{source_name}`. Release `{tag}` contains the complete readable,
 pure-PyTorch reference implementation next to the weights.  Normal inference
 does **not** require `rwkv7-hf`, FLA, a custom CUDA wheel, JIT, or CUDA Graphs.
 
@@ -88,7 +123,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 model_id = "{repo_id}"
-revision = "v0.9.0"
+revision = "{tag}"
 tokenizer = AutoTokenizer.from_pretrained(
     model_id, revision=revision, trust_remote_code=True
 )
@@ -118,30 +153,40 @@ ordinary Transformers path.  Set `model.config.use_cache = False` during
 training.  Reproducible examples and evaluation manifests are in
 [123123213weqw/hf-adapter](https://github.com/123123213weqw/hf-adapter).
 
-## Reference versus optimized execution
+## Optional optimized execution
 
-The `v0.9.0` model code intentionally favors readability and compatibility.
-It is the correctness/reference path, not a peak-throughput benchmark backend.
-Optional CUDA Graph and Triton work is maintained separately on
-`perf/optional-native-backend-v0.10`; older CUDA/JIT/quantization and KV-v2
-experiments remain on `perf/native-kernels-v0.8`. Neither branch changes this
-model repository's public HF contract.
+The checked-in model code is always the readable correctness path. Installing
+the separately versioned `rwkv7-kernels` package may replace the recurrence or
+the single whole-layer-loop operator boundary on supported NVIDIA devices. It
+does not replace the model/config/cache classes, checkpoint keys, or HF
+forward/generation contract. Unsupported devices, dtypes, shapes and adapter
+training stay on the reference implementation.
+
+```bash
+python -m pip install "rwkv7-hf==1.0.0" "rwkv7-kernels==1.0.0"
+```
+
+The optional package includes recurrent, fused prefill/decode, projection,
+norm, FFN/LoRA, CUDA Graph/state-pool, SM70/Ada/Blackwell, quantization and
+training operator families. Exact supported routes and three-device evidence
+are recorded in the source repository; requested environment settings alone
+are not accepted as proof that an optimized route executed.
 
 ## Model and provenance
 
 - Architecture: RWKV-7 recurrent causal language model
 - Checkpoint family: {family}
 - Parameters: {parameters}
-- Layers: {config.get('num_hidden_layers')}
-- Hidden size: {config.get('hidden_size')}
-- Vocabulary size: {config.get('vocab_size')}
-- Stored weight dtype: {weights.get('dtype', 'recorded in safetensors')}
+- Layers: {config.get("num_hidden_layers")}
+- Hidden size: {config.get("hidden_size")}
+- Vocabulary size: {config.get("vocab_size")}
+- Stored weight dtype: {weights.get("dtype", "recorded in safetensors")}
 - Original checkpoint SHA256: `{source_hash}`
 - Reference source revision: `{source_sha}`
-- Release tag: `v0.9.0`
+- Release tag: `{tag}`
 
 `conversion_manifest.json` retains the immutable original conversion and
-weight provenance.  v0.9.0 changes the checked-in runtime code and config only;
+weight provenance. {tag} changes the checked-in runtime code and config only;
 the safetensors bytes are not rewritten or re-uploaded.
 
 ## License
@@ -150,7 +195,13 @@ Apache-2.0. See `LICENSE`.
 """
 
 
-def stage(repo_id: str, output: Path, source_root: Path, source_sha: str) -> dict:
+def stage(
+    repo_id: str,
+    output: Path,
+    source_root: Path,
+    source_sha: str,
+    tag: str,
+) -> dict:
     api = HfApi()
     info = api.model_info(repo_id, files_metadata=True)
     target = output / repo_id.rsplit("/", 1)[-1]
@@ -160,24 +211,12 @@ def stage(repo_id: str, output: Path, source_root: Path, source_sha: str) -> dic
     manifest = json.loads(
         Path(hf_hub_download(repo_id, "conversion_manifest.json")).read_text()
     )
-    config.update(
-        {
-            "model_type": "rwkv7",
-            "architectures": ["RWKV7ForCausalLM"],
-            "auto_map": AUTO_MAP,
-            "attn_mode": "reference",
-            "fuse_norm": False,
-        }
-    )
-    attention_width = int(config.get("attention_hidden_size", config["hidden_size"]))
-    config.setdefault("head_dim", 64 if attention_width % 64 == 0 else attention_width)
-    config.setdefault("num_heads", attention_width // int(config["head_dim"]))
-    config["num_attention_heads"] = int(config["num_heads"])
+    config = canonical_config(config)
     (target / "config.json").write_text(
         json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     (target / "README.md").write_text(
-        model_card(repo_id, config, manifest, source_sha), encoding="utf-8"
+        model_card(repo_id, config, manifest, source_sha, tag), encoding="utf-8"
     )
     for name in REFERENCE_FILES:
         shutil.copy2(source_root / "rwkv7_hf" / name, target / name)
@@ -185,6 +224,7 @@ def stage(repo_id: str, output: Path, source_root: Path, source_sha: str) -> dic
         "repo_id": repo_id,
         "parent_commit": info.sha,
         "source_sha": source_sha,
+        "tag": tag,
         "files": ["README.md", "config.json", *REFERENCE_FILES],
         "weights_unchanged": True,
     }
@@ -199,12 +239,13 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--repo", action="append", default=[])
     parser.add_argument("--source-sha", default=None)
+    parser.add_argument("--tag", default="v1.0.0")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     source_sha = args.source_sha or git_sha(root)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     rows = [
-        stage(repo, args.output_dir, root, source_sha)
+        stage(repo, args.output_dir, root, source_sha, args.tag)
         for repo in (args.repo or REPOSITORIES)
     ]
     (args.output_dir / "manifest.json").write_text(

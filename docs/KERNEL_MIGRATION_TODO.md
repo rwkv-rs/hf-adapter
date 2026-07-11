@@ -647,3 +647,23 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   input/state gradient parity against FLA remains mandatory on V100.
 - Local gate after the device-profile changes: `87 passed`; Ruff on all
   modified first-party files, compileall, and `git diff --check` pass.
+
+### 2026-08-28 — generic v1 Hub staging and resumable publication
+
+- Replaced the version-locked `prepare_hf_v090_release.py` and
+  `publish_hf_v090_release.py` names with generic release tools. The tag is an
+  explicit staged field and defaults to `v1.0.0`; an inconsistent publish
+  request fails before any Hub write.
+- Staging now removes `attn_mode`, `fuse_norm` and all kernel/backend selectors
+  from `config.json`. Model repositories contain only architecture/tokenizer/HF
+  contract data; optional policy remains in `rwkv7-kernels`.
+- The v1 model card keeps package-free reference loading as the default and
+  documents the optional companion without making a route claim. Publishing
+  still uses each recorded parent commit, never uploads safetensors, and can
+  safely resume by verifying an existing tag file-by-file.
+- A six-repository dry run against the current Hub parents passed: all staged
+  canonical sources were byte-identical to `rwkv7_hf/`, all configs were free
+  of backend fields, and every planned commit contained only README, config,
+  and six small runtime/tokenizer files. No Hub write was performed.
+- `verify_hf_release.py` is now v1-generic and rejects backend policy leaked
+  into model config. Local gate after the release-tool cleanup: `90 passed`.

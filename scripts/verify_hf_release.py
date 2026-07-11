@@ -21,9 +21,9 @@ REQUIRED_CODE = {
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Verify an RWKV-7 HF v0.9 release")
+    parser = argparse.ArgumentParser(description="Verify an RWKV-7 HF release")
     parser.add_argument("--model", required=True)
-    parser.add_argument("--revision", default="v0.9.0")
+    parser.add_argument("--revision", default="v1.0.0")
     parser.add_argument("--metadata-only", action="store_true")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--output", type=Path)
@@ -37,15 +37,11 @@ def main():
     info = HfApi().model_info(args.model, revision=args.revision, files_metadata=True)
     siblings = {row.rfilename: row for row in info.siblings}
     missing = sorted(REQUIRED_CODE - siblings.keys())
-    weights = sorted(
-        name for name in siblings if name.endswith(".safetensors")
-    )
+    weights = sorted(name for name in siblings if name.endswith(".safetensors"))
     if missing or not weights:
         raise SystemExit(f"missing={missing} weights={weights}")
 
-    config_path = hf_hub_download(
-        args.model, "config.json", revision=args.revision
-    )
+    config_path = hf_hub_download(args.model, "config.json", revision=args.revision)
     config = json.loads(Path(config_path).read_text())
     expected_map = {
         "AutoConfig": "configuration_rwkv7.RWKV7Config",
@@ -53,7 +49,17 @@ def main():
         "AutoModelForCausalLM": "modeling_rwkv7.RWKV7ForCausalLM",
     }
     if config.get("model_type") != "rwkv7" or config.get("auto_map") != expected_map:
-        raise SystemExit("config.json is not the v0.9 reference contract")
+        raise SystemExit("config.json is not the canonical RWKV-7 HF contract")
+    forbidden_config = {
+        "attn_mode",
+        "fuse_norm",
+        "kernel_impl",
+        "model_kernel_impl",
+        "rwkv7_backend",
+    }
+    leaked = sorted(forbidden_config & config.keys())
+    if leaked:
+        raise SystemExit(f"hardware/backend policy leaked into config.json: {leaked}")
 
     report = {
         "status": "passed",
@@ -85,15 +91,17 @@ def main():
         tokenizer = AutoTokenizer.from_pretrained(
             args.model, revision=args.revision, trust_remote_code=True
         )
-        model = AutoModelForCausalLM.from_pretrained(
-            args.model,
-            revision=args.revision,
-            trust_remote_code=True,
-            torch_dtype=dtype,
-        ).to(device).eval()
-        encoded = tokenizer(
-            "User: Hello! Assistant:", return_tensors="pt"
-        ).to(device)
+        model = (
+            AutoModelForCausalLM.from_pretrained(
+                args.model,
+                revision=args.revision,
+                trust_remote_code=True,
+                torch_dtype=dtype,
+            )
+            .to(device)
+            .eval()
+        )
+        encoded = tokenizer("User: Hello! Assistant:", return_tensors="pt").to(device)
         with torch.inference_mode():
             output = model(**encoded, use_cache=True)
             generated = model.generate(**encoded, max_new_tokens=2)
