@@ -1035,3 +1035,9 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   real policy flags. Its SHA256 is
   `0a7f8f162fde9def8dd31ada789e5ef364eabf68093d771326a8d9775489a3df`;
   it is a local audit artifact, not the final immutable `1.0.0` release wheel.
+- The final public Issue renderer and GitHub audit now require the same full
+  capability vocabulary: recurrent, dense decode, DPLR/self-chunk prefill,
+  CUDA Graph/state pools, SM70/Ada/Blackwell, every W8/W4/A8W8/BN-TN/BnB/
+  Marlin/TorchAO route, and training autograd. The GitHub source-tree audit
+  also requires both embedded inventories and this migration audit document;
+  a release can no longer publish only generic “optimized” wording.

@@ -215,6 +215,15 @@ def render_issue(
             "evidence includes loss/all gradients plus SFT, DPO and GRPO. Quantization "
             "covers W8, W4, A8W8, Bn/Tn, BitsAndBytes, Marlin and TorchAO.",
             "",
+            "## Complete optional-kernel capability migration",
+            "",
+            "The optional wheel contains the complete audited NVIDIA families: recurrent; "
+            "dense decode; fused DPLR/self-chunk prefill; CUDA Graph and state pools; "
+            "exact-card SM70, Ada and Blackwell policy; native W8, W4 and A8W8; "
+            "Bn/Tn, BitsAndBytes, Marlin and TorchAO adapters; and training autograd. "
+            "Every migrated payload is mapped to an adapted runtime route by the embedded "
+            "capability inventory; model/config/cache ownership remains in rwkv7_hf.",
+            "",
             "## Actual routes",
             "",
             "| device | phase | implementation route |",
