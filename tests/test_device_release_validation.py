@@ -146,6 +146,17 @@ def setup_reports(tmp_path: Path) -> tuple[Namespace, dict[str, Path], str, str]
         "status": "passed",
         "units": 144,
         "require_model_routes": True,
+        "aggregate_metrics": {
+            lane: {f"unit-{index}": {"acc,none": 0.5} for index in range(48)}
+            for lane in ("reference", "optimized", "fla")
+        },
+        "comparison_summary": {
+            "candidate_comparisons": 96,
+            "metric_failures": 0,
+            "prediction_mismatches": 0,
+            "continuous_mismatches": 0,
+            "missing_docs": 0,
+        },
         "artifacts": {
             lane: {
                 "wheels": wheels,
@@ -255,4 +266,15 @@ def test_device_builder_rejects_unbound_native_build_paths(tmp_path: Path):
     payload["environment"]["cuda_toolkit"]["torch_extensions_dir"] = None
     write_json(paths["training"], payload)
     with pytest.raises(ValueError, match="CUDA build paths are not bound"):
+        build(args)
+
+
+def test_device_builder_rejects_lm_eval_without_compact_metric_matrix(
+    tmp_path: Path,
+):
+    args, _, _, _ = setup_reports(tmp_path)
+    payload = json.loads(args.lm_eval_report.read_text())
+    payload["aggregate_metrics"]["optimized"].pop("unit-0")
+    write_json(args.lm_eval_report, payload)
+    with pytest.raises(ValueError, match="aggregate metric matrix is incomplete"):
         build(args)

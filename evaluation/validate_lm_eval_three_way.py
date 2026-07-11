@@ -207,6 +207,31 @@ def relative_difference(left: float, right: float) -> float:
     return abs(left - right) / max(abs(left), 1e-12)
 
 
+def aggregate_report(
+    aggregates: dict[tuple[str, str], dict[str, float]],
+) -> dict[str, dict[str, dict[str, float]]]:
+    """Retain compact aggregate accuracy/NLL/PPL evidence for every unit."""
+
+    result: dict[str, dict[str, dict[str, float]]] = {lane: {} for lane in LANES}
+    for (lane, unit), metrics in sorted(aggregates.items()):
+        result[lane][unit] = dict(sorted(metrics.items()))
+    return result
+
+
+def comparison_summary(comparisons: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "candidate_comparisons": len(comparisons),
+        "metric_failures": sum(len(row["metric_failures"]) for row in comparisons),
+        "prediction_mismatches": sum(
+            int(row["prediction_mismatches"]) for row in comparisons
+        ),
+        "continuous_mismatches": sum(
+            int(row["continuous_mismatches"]) for row in comparisons
+        ),
+        "missing_docs": sum(int(row["missing_docs"]) for row in comparisons),
+    }
+
+
 def main() -> int:
     args = arguments()
     roots = {lane: getattr(args, f"{lane}_dir") for lane in LANES}
@@ -468,6 +493,8 @@ def main() -> int:
         "artifacts": artifacts,
         "failures": failures,
         "comparisons": comparisons,
+        "aggregate_metrics": aggregate_report(aggregates),
+        "comparison_summary": comparison_summary(comparisons),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

@@ -232,6 +232,20 @@ def validate_lm_eval(
         raise ValueError("formal three-way lm_eval gate did not pass")
     if report.get("require_model_routes") is not True:
         raise ValueError("formal lm_eval did not require whole-model route evidence")
+    aggregate_metrics = report.get("aggregate_metrics") or {}
+    if set(aggregate_metrics) != {"reference", "optimized", "fla"} or any(
+        len(aggregate_metrics[lane]) != 48 for lane in aggregate_metrics
+    ):
+        raise ValueError("formal lm_eval aggregate metric matrix is incomplete")
+    summary = report.get("comparison_summary") or {}
+    if summary != {
+        "candidate_comparisons": 96,
+        "metric_failures": 0,
+        "prediction_mismatches": 0,
+        "continuous_mismatches": 0,
+        "missing_docs": 0,
+    }:
+        raise ValueError("formal lm_eval per-sample or aggregate comparison failed")
     artifacts = report.get("artifacts") or {}
     if set(artifacts) != {"reference", "optimized", "fla"}:
         raise ValueError("formal lm_eval artifact lanes are incomplete")
@@ -346,6 +360,7 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
         "kernel_wheel_sha256": kernel_wheel_sha256,
         "lm_eval_units": 144,
         "lm_eval_status": "passed",
+        "lm_eval_comparison_summary": lm_eval["comparison_summary"],
         **{f"{label}_status": "passed" for label in PRIMARY_REPORTS},
         **finetune_statuses,
         "actual_routes": actual_routes,

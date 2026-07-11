@@ -11,10 +11,38 @@ from evaluation.run_lm_eval_matrix import (
     task_provenance,
 )
 from evaluation.validate_lm_eval_three_way import (
+    aggregate_report,
+    comparison_summary,
     compare_sample_outcomes,
     sample_outcomes,
     semantic_model_files,
 )
+
+
+def test_compact_lm_eval_summary_retains_accuracy_and_mismatch_counts():
+    aggregates = {
+        ("reference", "0.1b-b1-piqa"): {"acc,none": 0.5},
+        ("optimized", "0.1b-b1-piqa"): {"acc,none": 0.5},
+        ("fla", "0.1b-b1-piqa"): {"acc,none": 0.5},
+    }
+    report = aggregate_report(aggregates)
+    assert report["optimized"]["0.1b-b1-piqa"] == {"acc,none": 0.5}
+    assert comparison_summary(
+        [
+            {
+                "metric_failures": [],
+                "prediction_mismatches": 0,
+                "continuous_mismatches": 0,
+                "missing_docs": 0,
+            }
+        ]
+    ) == {
+        "candidate_comparisons": 1,
+        "metric_failures": 0,
+        "prediction_mismatches": 0,
+        "continuous_mismatches": 0,
+        "missing_docs": 0,
+    }
 
 
 def test_kernel_route_trace_is_not_mistaken_for_lm_eval_result(tmp_path):

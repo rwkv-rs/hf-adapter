@@ -974,3 +974,19 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - At `2026-08-28T04:31:10+08:00`, the untouched RTX 4080 recurrent-v1
   reference lane was 27/48 with zero recorded failures; the five backend-v2
   watchers remained sequentially queued and did not receive competing work.
+
+### 2026-08-28 — formal lm_eval compact evidence retains the actual metrics
+
+- `validate_lm_eval_three_way.py` now preserves the complete 144-unit compact
+  aggregate metric matrix in its validation JSON. Accuracy metrics and
+  Wikitext NLL/PPL no longer disappear when raw samples/results are excluded
+  from the Git bundle.
+- The report also records a fixed comparison summary for all 96
+  optimized/FLA-vs-reference comparisons: metric failures, selected-answer
+  mismatches, continuous NLL mismatches and missing documents must all be
+  zero.
+- The per-device release builder requires three 48-unit aggregate lanes and
+  the zero-mismatch summary before it can emit `release-validation.json`.
+  Status/exit codes alone are no longer sufficient evidence.
+- Ruff, compileall, `git diff --check`, and the complete local suite pass:
+  `133 passed`.
