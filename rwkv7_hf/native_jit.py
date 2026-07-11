@@ -266,13 +266,43 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_prefill_state_prep_available = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
-    from .fused_time_mix import fused_attn_shift_mix, fused_attn_shift_mix_available
+    from .fused_time_mix import (
+        fused_attn_shift_mix,
+        fused_attn_shift_mix_available,
+        fused_attn_shift_mix_stacked_rkv,
+        fused_attn_shift_mix_stacked_rkv_available,
+    )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
-        from fused_time_mix import fused_attn_shift_mix, fused_attn_shift_mix_available
+        from fused_time_mix import (
+            fused_attn_shift_mix,
+            fused_attn_shift_mix_available,
+            fused_attn_shift_mix_stacked_rkv,
+            fused_attn_shift_mix_stacked_rkv_available,
+        )
     except Exception:
         fused_attn_shift_mix = None  # type: ignore[assignment]
         fused_attn_shift_mix_available = None  # type: ignore[assignment]
+        fused_attn_shift_mix_stacked_rkv = None  # type: ignore[assignment]
+        fused_attn_shift_mix_stacked_rkv_available = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional native W4 projection experiment
+    from .native_quant import (
+        int4_stacked_rkv_gemv,
+        native_int4_stacked_rkv_available,
+        quantize_int4_rowwise,
+    )
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from native_quant import (
+            int4_stacked_rkv_gemv,
+            native_int4_stacked_rkv_available,
+            quantize_int4_rowwise,
+        )
+    except Exception:
+        int4_stacked_rkv_gemv = None  # type: ignore[assignment]
+        native_int4_stacked_rkv_available = None  # type: ignore[assignment]
+        quantize_int4_rowwise = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
     from .fused_norm_mix import fused_attn_norm_shift_mix_prefill, fused_attn_norm_shift_mix_prefill_available
@@ -1349,6 +1379,52 @@ def _native_graph_rkv_policy() -> str:
     return "manual"
 
 
+def _native_graph_w4_rkv_requested() -> bool:
+    """Whether native-graph decode should use packed W4 R/K/V projections."""
+
+    return env_flag("RWKV7_NATIVE_GRAPH_W4_RKV", False)
+
+
+def _native_graph_w4_rkv_enabled(q_weight: torch.Tensor, scales: torch.Tensor) -> bool:
+    """Runtime gate for the projection-axis W4A16 decode experiment."""
+
+    if not _native_graph_w4_rkv_requested():
+        return False
+    if q_weight.numel() == 0 or scales.numel() == 0:
+        return False
+    if (
+        int4_stacked_rkv_gemv is None
+        or native_int4_stacked_rkv_available is None
+        or fused_attn_shift_mix_stacked_rkv is None
+        or fused_attn_shift_mix_stacked_rkv_available is None
+    ):
+        return False
+    try:
+        return bool(native_int4_stacked_rkv_available()) and bool(fused_attn_shift_mix_stacked_rkv_available())
+    except Exception:
+        return False
+
+
+def _native_graph_w4_rkv_config(rows: int) -> tuple[int, int, int]:
+    """Return ``(block_m, block_k, num_warps)`` for the active decode batch.
+
+    Defaults come from the 2026-07-10 V100 sweep. Every value remains
+    environment-overridable so 4090/H100/Blackwell can keep card-local policy.
+    """
+
+    if rows <= 1:
+        defaults = (8, 64, 1)
+    elif rows <= 4:
+        defaults = (16, 128, 4)
+    else:
+        defaults = (16, 128, 2)
+    return (
+        env_int("RWKV7_NATIVE_GRAPH_W4_RKV_BLOCK_M", defaults[0], lower=1, upper=128),
+        env_int("RWKV7_NATIVE_GRAPH_W4_RKV_BLOCK_K", defaults[1], lower=1, upper=512),
+        env_int("RWKV7_NATIVE_GRAPH_W4_RKV_NUM_WARPS", defaults[2], lower=1, upper=8),
+    )
+
+
 def _native_graph_int_env(name: str, default: int, *, lo: int = 1, hi: int | None = None) -> int:
     raw = os.environ.get(name, str(default)).strip()
     try:
@@ -1569,7 +1645,7 @@ def block_step(x: torch.Tensor, xpa: torch.Tensor, xpf: torch.Tensor,
                g1: torch.Tensor, g2: torch.Tensor,
                gn_w: torch.Tensor, gn_b: torch.Tensor,
                fx_k: torch.Tensor, fK: torch.Tensor, fV: torch.Tensor,
-               RKVw: torch.Tensor):
+               RKVw: torch.Tensor, Q_RKVw: torch.Tensor, S_RKVw: torch.Tensor):
     # --- block wiring (fuse_norm=False) ---
     if has_pre == 1:
         residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5)
@@ -1634,7 +1710,7 @@ def block_step_batched(x: torch.Tensor, xpa: torch.Tensor, xpf: torch.Tensor,
                        g1: torch.Tensor, g2: torch.Tensor,
                        gn_w: torch.Tensor, gn_b: torch.Tensor,
                        fx_k: torch.Tensor, fK: torch.Tensor, fV: torch.Tensor,
-                       RKVw: torch.Tensor):
+                       RKVw: torch.Tensor, Q_RKVw: torch.Tensor, S_RKVw: torch.Tensor):
     # Batched variant of block_step. Shapes:
     # x/xpa/xpf/v_first:[B,H*N], state:[B,H,N,N].
     B = x.shape[0]
@@ -1690,6 +1766,7 @@ def extract(model):
     packs = []
     hidden = int(layers[0].attn.hidden_size)
     stack_rkv = _native_graph_rkv_policy() == "vkwr_auto" or _native_prefill_rkv_bmm_requested()
+    pack_w4_rkv = _native_graph_w4_rkv_requested() and quantize_int4_rowwise is not None
     for i, layer in enumerate(layers):
         a = layer.attn
         ref = a.w_lora.lora[0].weight
@@ -1703,6 +1780,15 @@ def extract(model):
             pre_w = torch.zeros(hidden, device=ref.device, dtype=ref.dtype)
             pre_b = torch.zeros(hidden, device=ref.device, dtype=ref.dtype)
             has_pre = 0
+        if pack_w4_rkv:
+            qr, sr = quantize_int4_rowwise(a.r_proj.weight.detach())
+            qk, sk = quantize_int4_rowwise(a.k_proj.weight.detach())
+            qv, sv = quantize_int4_rowwise(a.v_proj.weight.detach())
+            q_rkv = torch.stack((qr, qk, qv), dim=0).contiguous()
+            s_rkv = torch.stack((sr, sk, sv), dim=0).contiguous()
+        else:
+            q_rkv = ref.new_empty((0,), dtype=torch.uint8)
+            s_rkv = ref.new_empty((0,), dtype=torch.float32)
         packs.append((
             i, H, N, eps, has_pre,
             pre_w, pre_b, layer.attn_norm.weight, layer.attn_norm.bias,
@@ -1720,12 +1806,14 @@ def extract(model):
             torch.stack((a.r_proj.weight.t(), a.k_proj.weight.t(), a.v_proj.weight.t())).contiguous()
             if stack_rkv
             else ref.new_empty((0,)),
+            q_rkv,
+            s_rkv,
         ))
     return packs, H, N, eps
 
 
 def _ensure_rkv_pack(p):
-    """Accept legacy 40-field packs and current packs with optional RKVw.
+    """Accept legacy packs and append optional dense/W4 RKV storage.
 
     The native-graph VKWR/RKV policy appended ``RKVw`` to layer packs.  Some
     synthetic tests and older remote-code checkpoints still build the previous
@@ -1733,10 +1821,17 @@ def _ensure_rkv_pack(p):
     tensor with the same device/dtype as the dense projection weights.
     """
 
-    if len(p) == 41:
+    if len(p) == 43:
         return p
+    if len(p) == 41:
+        return (*p, p[20].new_empty((0,), dtype=torch.uint8), p[20].new_empty((0,), dtype=torch.float32))
     if len(p) == 40:
-        return (*p, p[20].new_empty((0,)))
+        return (
+            *p,
+            p[20].new_empty((0,)),
+            p[20].new_empty((0,), dtype=torch.uint8),
+            p[20].new_empty((0,), dtype=torch.float32),
+        )
     raise ValueError(f"unexpected native_jit layer pack length {len(p)}")
 
 
@@ -1922,7 +2017,7 @@ def prefill(
          pre_w, pre_b, an_w, an_b, fn_w, fn_b,
          x_r, x_w, x_k, x_v, x_a, x_g, k_k, k_a, r_k,
          Rw, Kw, Vw, Ow, w1, w2, w0, a1, a2, a0, v1, v2, v0, g1, g2,
-         gn_w, gn_b, fx_k, fK, fV, RKVw) = p
+         gn_w, gn_b, fx_k, fK, fV, RKVw, Q_RKVw, S_RKVw) = p
         layer_idx = int(i)
         H = int(H)
         N = int(N)
@@ -2923,14 +3018,103 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
      pre_w, pre_b, an_w, an_b, fn_w, fn_b,
      x_r, x_w, x_k, x_v, x_a, x_g, k_k, k_a, r_k,
      Rw, Kw, Vw, Ow, w1, w2, w0, a1, a2, a0, v1, v2, v0, g1, g2,
-     gn_w, gn_b, fx_k, fK, fV, RKVw) = p
+     gn_w, gn_b, fx_k, fK, fV, RKVw, Q_RKVw, S_RKVw) = p
     residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5) if has_pre else x
     h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
-    xx = xpa - h
-    xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
-    xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
+    use_w4_rkv = _native_graph_w4_rkv_enabled(Q_RKVw, S_RKVw)
+    if use_w4_rkv:
+        rkv_x, xw2, xa2, xg2 = fused_attn_shift_mix_stacked_rkv(
+            h.view(1, H * N),
+            xpa.view(1, H * N),
+            x_r,
+            x_w,
+            x_k,
+            x_v,
+            x_a,
+            x_g,
+        )
+        xw = xw2.view(H * N)
+        xa = xa2.view(H * N)
+        xg = xg2.view(H * N)
+        xv = rkv_x[:, 2, :].view(H * N)
+        block_m, block_k, num_warps = _native_graph_w4_rkv_config(1)
+        rkv = int4_stacked_rkv_gemv(
+            rkv_x,
+            Q_RKVw,
+            S_RKVw,
+            block_m=block_m,
+            block_k=block_k,
+            num_warps=num_warps,
+        )
+        r = rkv[:, 0, :].view(H * N)
+        k = rkv[:, 1, :].view(H * N)
+        v = rkv[:, 2, :].view(H * N)
+    else:
+        xx = xpa - h
+        xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
+        xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
     v_gate = None
-    if _native_graph_fused_projection_enabled():
+    if use_w4_rkv:
+        if _native_graph_fused_wavg_lora_enabled():
+            if i == 0:
+                w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
+                a = a0 + F.linear(F.linear(xa, a1), a2)
+                g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
+            else:
+                block_m, block_r, block_k = _native_graph_fused_wavg_lora_blocks()
+                w, a, g, v_gate = fused_wavg_lora(
+                    xw.view(1, H * N),
+                    xa.view(1, H * N),
+                    xg.view(1, H * N),
+                    xv.view(1, H * N),
+                    w1,
+                    a1,
+                    g1,
+                    v1,
+                    w2,
+                    a2,
+                    g2,
+                    v2,
+                    w0,
+                    a0,
+                    None,
+                    v0,
+                    block_m=block_m,
+                    block_r=block_r,
+                    block_k=block_k,
+                )
+                w = w.view(H * N)
+                a = a.view(H * N)
+                g = g.view(H * N)
+                v_gate = v_gate.view(H * N)
+            a = torch.sigmoid(a)
+        elif _native_graph_fused_wag_lora_enabled():
+            block_m, block_r, block_k = _native_graph_fused_wag_lora_blocks()
+            w, a, g = fused_wag_lora(
+                xw.view(1, H * N),
+                xa.view(1, H * N),
+                xg.view(1, H * N),
+                w1,
+                a1,
+                g1,
+                w2,
+                a2,
+                g2,
+                w0,
+                a0,
+                None,
+                block_m=block_m,
+                block_r=block_r,
+                block_k=block_k,
+            )
+            w = w.view(H * N)
+            a = torch.sigmoid(a.view(H * N))
+            g = g.view(H * N)
+        else:
+            w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
+            a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
+            g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
+    elif _native_graph_fused_projection_enabled():
         r, k, v, w, a, g, v_gate = fused_rkv_wavg_projection(
             xr.view(1, H * N),
             xk.view(1, H * N),
@@ -3119,15 +3303,95 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
      pre_w, pre_b, an_w, an_b, fn_w, fn_b,
      x_r, x_w, x_k, x_v, x_a, x_g, k_k, k_a, r_k,
      Rw, Kw, Vw, Ow, w1, w2, w0, a1, a2, a0, v1, v2, v0, g1, g2,
-     gn_w, gn_b, fx_k, fK, fV, RKVw) = p
+     gn_w, gn_b, fx_k, fK, fV, RKVw, Q_RKVw, S_RKVw) = p
     B = x.shape[0]
     residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5) if has_pre else x
     h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
-    xx = xpa - h
-    xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
-    xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
+    use_w4_rkv = _native_graph_w4_rkv_enabled(Q_RKVw, S_RKVw)
+    if use_w4_rkv:
+        rkv_x, xw, xa, xg = fused_attn_shift_mix_stacked_rkv(
+            h,
+            xpa,
+            x_r,
+            x_w,
+            x_k,
+            x_v,
+            x_a,
+            x_g,
+        )
+        xv = rkv_x[:, 2, :]
+        block_m, block_k, num_warps = _native_graph_w4_rkv_config(int(B))
+        rkv = int4_stacked_rkv_gemv(
+            rkv_x,
+            Q_RKVw,
+            S_RKVw,
+            block_m=block_m,
+            block_k=block_k,
+            num_warps=num_warps,
+        )
+        r = rkv[:, 0, :]
+        k = rkv[:, 1, :]
+        v = rkv[:, 2, :]
+    else:
+        xx = xpa - h
+        xr = h + xx * x_r; xw = h + xx * x_w; xk = h + xx * x_k
+        xv = h + xx * x_v; xa = h + xx * x_a; xg = h + xx * x_g
     v_gate = None
-    if _native_graph_fused_projection_enabled():
+    if use_w4_rkv:
+        if _native_graph_fused_wavg_lora_enabled():
+            if i == 0:
+                w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
+                a = a0 + F.linear(F.linear(xa, a1), a2)
+                g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
+            else:
+                block_m, block_r, block_k = _native_graph_fused_wavg_lora_blocks()
+                w, a, g, v_gate = fused_wavg_lora(
+                    xw,
+                    xa,
+                    xg,
+                    xv,
+                    w1,
+                    a1,
+                    g1,
+                    v1,
+                    w2,
+                    a2,
+                    g2,
+                    v2,
+                    w0,
+                    a0,
+                    None,
+                    v0,
+                    block_m=block_m,
+                    block_r=block_r,
+                    block_k=block_k,
+                )
+            a = torch.sigmoid(a)
+        elif _native_graph_fused_wag_lora_enabled():
+            block_m, block_r, block_k = _native_graph_fused_wag_lora_blocks()
+            w, a, g = fused_wag_lora(
+                xw,
+                xa,
+                xg,
+                w1,
+                a1,
+                g1,
+                w2,
+                a2,
+                g2,
+                w0,
+                a0,
+                None,
+                block_m=block_m,
+                block_r=block_r,
+                block_k=block_k,
+            )
+            a = torch.sigmoid(a)
+        else:
+            w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
+            a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
+            g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
+    elif _native_graph_fused_projection_enabled():
         r, k, v, w, a, g, v_gate = fused_rkv_wavg_projection(
             xr,
             xk,

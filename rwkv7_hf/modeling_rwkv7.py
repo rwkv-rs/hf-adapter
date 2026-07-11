@@ -254,6 +254,28 @@ def _native_graph_fused_wavg_lora_requested() -> bool:
     return env_flag("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA", default)
 
 
+def _native_graph_w4_rkv_requested() -> bool:
+    """Whether native-graph packs should include projection-major W4 R/K/V."""
+
+    return env_flag("RWKV7_NATIVE_GRAPH_W4_RKV", False)
+
+
+def _native_graph_w4_rkv_config_key(batch_size: int) -> tuple[int, int, int]:
+    """Cache-key mirror of the native-jit W4 kernel configuration."""
+
+    if int(batch_size) <= 1:
+        defaults = (8, 64, 1)
+    elif int(batch_size) <= 4:
+        defaults = (16, 128, 4)
+    else:
+        defaults = (16, 128, 2)
+    return (
+        env_int("RWKV7_NATIVE_GRAPH_W4_RKV_BLOCK_M", defaults[0], lower=1, upper=128),
+        env_int("RWKV7_NATIVE_GRAPH_W4_RKV_BLOCK_K", defaults[1], lower=1, upper=512),
+        env_int("RWKV7_NATIVE_GRAPH_W4_RKV_NUM_WARPS", defaults[2], lower=1, upper=8),
+    )
+
+
 def _native_graph_rkv_policy() -> str:
     """Cache-key visible policy for VKWR-inspired stacked R/K/V projection."""
 
@@ -1518,6 +1540,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             weight.dtype,
             _native_graph_rkv_policy(),
             _native_graph_vkwr_rkv_thresholds(),
+            _native_graph_w4_rkv_requested(),
         )
         if cache is None or cache[0] != key:
             packs, _, _, _ = _native_jit_extract(self)
@@ -1546,6 +1569,8 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_fused_wavg_lora_blocks(),
             _native_graph_rkv_policy(),
             _native_graph_vkwr_rkv_thresholds(),
+            _native_graph_w4_rkv_requested(),
+            _native_graph_w4_rkv_config_key(int(batch_size)),
             int(batch_size),
         )
         cache = getattr(self, "_rwkv7_native_graph_runner_cache", None)

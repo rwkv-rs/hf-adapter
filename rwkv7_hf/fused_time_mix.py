@@ -82,9 +82,60 @@ if _HAS_TRITON:
         tl.store(out_a_ptr + offsets, x + delta * xa, mask=mask)
         tl.store(out_g_ptr + offsets, x + delta * xg, mask=mask)
 
+    @triton.jit
+    def _attn_shift_mix_stacked_rkv_kernel(
+        x_ptr,
+        prev_ptr,
+        xr_mix_ptr,
+        xw_mix_ptr,
+        xk_mix_ptr,
+        xv_mix_ptr,
+        xa_mix_ptr,
+        xg_mix_ptr,
+        out_rkv_ptr,
+        out_w_ptr,
+        out_a_ptr,
+        out_g_ptr,
+        hidden: tl.constexpr,
+        total: tl.constexpr,
+        BLOCK_SIZE: tl.constexpr,
+    ):
+        """Write R/K/V directly in projection-major activation layout."""
+
+        pid = tl.program_id(0)
+        offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)
+        mask = offsets < total
+        h_offsets = offsets % hidden
+        row_offsets = offsets // hidden
+
+        x = tl.load(x_ptr + offsets, mask=mask, other=0.0)
+        prev = tl.load(prev_ptr + offsets, mask=mask, other=0.0)
+        delta = prev - x
+
+        xr = tl.load(xr_mix_ptr + h_offsets, mask=mask, other=0.0)
+        xw = tl.load(xw_mix_ptr + h_offsets, mask=mask, other=0.0)
+        xk = tl.load(xk_mix_ptr + h_offsets, mask=mask, other=0.0)
+        xv = tl.load(xv_mix_ptr + h_offsets, mask=mask, other=0.0)
+        xa = tl.load(xa_mix_ptr + h_offsets, mask=mask, other=0.0)
+        xg = tl.load(xg_mix_ptr + h_offsets, mask=mask, other=0.0)
+
+        rkv_row_base = row_offsets * 3 * hidden
+        tl.store(out_rkv_ptr + rkv_row_base + h_offsets, x + delta * xr, mask=mask)
+        tl.store(out_rkv_ptr + rkv_row_base + hidden + h_offsets, x + delta * xk, mask=mask)
+        tl.store(out_rkv_ptr + rkv_row_base + 2 * hidden + h_offsets, x + delta * xv, mask=mask)
+        tl.store(out_w_ptr + offsets, x + delta * xw, mask=mask)
+        tl.store(out_a_ptr + offsets, x + delta * xa, mask=mask)
+        tl.store(out_g_ptr + offsets, x + delta * xg, mask=mask)
+
 
 def fused_attn_shift_mix_available() -> bool:
     """Return whether the optional Triton attention shift-mix prototype can run."""
+
+    return bool(_HAS_TRITON and torch is not None)
+
+
+def fused_attn_shift_mix_stacked_rkv_available() -> bool:
+    """Return whether the stacked-R/K/V shift-mix producer can run."""
 
     return bool(_HAS_TRITON and torch is not None)
 
@@ -190,3 +241,83 @@ def fused_attn_shift_mix(
     if restore_shape is not None:
         return tuple(out.reshape(restore_shape) for out in outs)
     return outs
+
+
+def fused_attn_shift_mix_stacked_rkv(
+    x: Any,
+    prev: Any,
+    x_r: Any,
+    x_w: Any,
+    x_k: Any,
+    x_v: Any,
+    x_a: Any,
+    x_g: Any,
+    *,
+    block_size: int = 256,
+    force_fallback: bool = False,
+):
+    """Fuse time-mix and emit projection-major R/K/V activations.
+
+    Returns ``(rkv, xw, xa, xg)`` where ``rkv`` is shaped
+    ``[rows, 3, hidden]``. Inputs may be ``[batch, hidden]`` or
+    ``[batch, tokens, hidden]``; three-dimensional inputs flatten batch/tokens
+    into ``rows`` because the W4 projection consumer uses that row layout.
+    Unlike a wrapper-level ``torch.stack``, the Triton path writes the final
+    layout directly in the same launch that computes time mixing.
+    """
+
+    if torch is None:
+        raise RuntimeError("fused_attn_shift_mix_stacked_rkv requires torch")
+    x2, _ = _flatten_hidden_input(x, name="x")
+    prev2, _ = _flatten_hidden_input(prev, name="prev")
+    if tuple(x2.shape) != tuple(prev2.shape):
+        raise ValueError("x and prev must have identical flattened shapes")
+    rows, hidden = int(x2.shape[0]), int(x2.shape[1])
+    mixes = tuple(
+        _flatten_mix(m, hidden, name=n)
+        for m, n in (
+            (x_r, "x_r"),
+            (x_w, "x_w"),
+            (x_k, "x_k"),
+            (x_v, "x_v"),
+            (x_a, "x_a"),
+            (x_g, "x_g"),
+        )
+    )
+    use_triton = (
+        not force_fallback
+        and fused_attn_shift_mix_stacked_rkv_available()
+        and x2.is_cuda
+        and prev2.is_cuda
+        and all(m.is_cuda for m in mixes)
+        and x2.dtype in (torch.float16, torch.bfloat16, torch.float32)
+        and prev2.dtype == x2.dtype
+        and all(m.dtype == x2.dtype for m in mixes)
+    )
+    if not use_triton:
+        xr, xw, xk, xv, xa, xg = _torch_attn_shift_mix(x2, prev2, *mixes)
+        return torch.stack((xr, xk, xv), dim=1), xw, xa, xg
+
+    x_c = x2.contiguous()
+    prev_c = prev2.contiguous()
+    mixes_c = tuple(m.contiguous() for m in mixes)
+    rkv = torch.empty((rows, 3, hidden), device=x2.device, dtype=x2.dtype)
+    xw = torch.empty((rows, hidden), device=x2.device, dtype=x2.dtype)
+    xa = torch.empty_like(xw)
+    xg = torch.empty_like(xw)
+    total = rows * hidden
+    grid = (triton.cdiv(total, int(block_size)),)
+    _attn_shift_mix_stacked_rkv_kernel[grid](
+        x_c,
+        prev_c,
+        *mixes_c,
+        rkv,
+        xw,
+        xa,
+        xg,
+        hidden,
+        total,
+        BLOCK_SIZE=int(block_size),
+        num_warps=4,
+    )
+    return rkv, xw, xa, xg

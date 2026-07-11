@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import torch
 
+from rwkv7_hf.fused_time_mix import fused_attn_shift_mix_stacked_rkv
 from rwkv7_hf.native_quant import (
     int4_fused_rkv_gemv,
     int4_stacked_rkv_gemv,
@@ -47,6 +48,26 @@ def main() -> int:
     torch.manual_seed(1234)
     run_case(hidden=32, batch=1)
     run_case(hidden=33, batch=2)
+
+    hidden = 32
+    batch = 2
+    x = torch.randn(batch, hidden)
+    previous = torch.randn_like(x)
+    mixes = [torch.randn(hidden) for _ in range(6)]
+    rkv, xw, xa, xg = fused_attn_shift_mix_stacked_rkv(
+        x,
+        previous,
+        *mixes,
+        force_fallback=True,
+    )
+    delta = previous - x
+    expected = [x + delta * mix for mix in mixes]
+    assert torch.allclose(rkv[:, 0, :], expected[0], atol=1e-6, rtol=1e-6)
+    assert torch.allclose(rkv[:, 1, :], expected[2], atol=1e-6, rtol=1e-6)
+    assert torch.allclose(rkv[:, 2, :], expected[3], atol=1e-6, rtol=1e-6)
+    assert torch.allclose(xw, expected[1], atol=1e-6, rtol=1e-6)
+    assert torch.allclose(xa, expected[4], atol=1e-6, rtol=1e-6)
+    assert torch.allclose(xg, expected[5], atol=1e-6, rtol=1e-6)
 
     x = torch.randn(1, 2, 32)
     q = torch.zeros(3, 32, 16, dtype=torch.uint8)

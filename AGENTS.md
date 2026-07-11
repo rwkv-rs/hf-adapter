@@ -85,14 +85,29 @@ Validated V100 evidence for the 0.4B model, sampled layers 0/1/11:
 - paying `torch.stack` in the timed path reduces the result below fp16, so do
   not integrate a wrapper-level stack and call the goal complete.
 
-Required next gate: make the native shift/mix producer write the stacked
-activation layout directly, keep packed R/K/V weights projection-major at model
-load time, and benchmark complete layer/model decode. Row-wise W4 accuracy is a
-separate unfinished task; batch-8 random-vector minimum cosine was about
-`0.9789` even though the new kernel exactly matches the old W4 path.
+The producer-integration gate is now complete on the experiment branch:
+
+- fused shift/mix writes `[batch, 3, hidden]` directly, with no timed
+  `torch.stack`;
+- R/K/V weights are packed projection-major once during native pack extraction;
+- complete 24-layer native-graph token-step A/B on V100 improves by median
+  `1.2456x / 1.1734x / 1.1456x / 1.0704x` for batch `1/2/4/8`;
+- dense-vs-W4 logit cosine is about `0.99948`, and a 16-token greedy check
+  matches `16/16` per sequence for all tested batch sizes;
+- exact absolute tok/s is provisional because both server GPUs had long-running
+  co-tenant jobs; the same-process A/B speedups were stable across three runs.
+
+Required next gate: repeat on an idle V100 and RTX 4090, then remove/replace the
+dense R/K/V copies so the model-level memory footprint realizes the packed
+`0.252x` R/K/V storage. Row-wise W4 quality remains separate unfinished work;
+the earlier random-vector batch-8 minimum cosine was about `0.9789` even though
+the new kernel exactly matches the old W4 path.
 
 See `docs/performance/kernelbench_mega_w4a16_rkv_v100_20260710.md` and
-`bench/results_kernelbench_mega_w4a16_rkv_v100_20260710.jsonl`.
+`bench/results_kernelbench_mega_w4a16_rkv_v100_20260710.jsonl`. Full graph
+integration evidence is in
+`docs/performance/native_graph_w4_rkv_v100_20260711.md` and
+`bench/results_native_graph_w4_rkv_v100_20260711.jsonl`.
 
 ## Current Branch Goal: DPLR/WY Compiled Prefill Prototype
 
