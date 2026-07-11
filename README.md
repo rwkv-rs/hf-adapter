@@ -794,6 +794,11 @@ For `rwkv7-g1d-0.1b-20260129-ctx8192`:
   (`1.011x` Albatross) and `102.4k tok/s` at bsz4 (`0.870x`). Chunked replay
   carries `RWKV7StateCache` and passes full-vs-chunked plus following-decode
   greedy checks. Other Ada cards retain the fallback until measured.
+- Exact RTX 4090 dense fp16 decode now matches or exceeds the recorded
+  Albatross 0.4B rows at bsz1/2/4/8: `795.7/1469.5/2585.7/3185.3 tok/s`, or
+  `1.007x/1.016x/1.008x/1.418x`. Batch-keyed sparse-FFN packs allow all four
+  graph runners to remain resident while preserving 32-step greedy and HF
+  fallback correctness; see `BENCHMARK.md` for the full evidence table.
 - An optional TorchAO tensor-core W4 path is available for Ada-class CUDA
   validation. Load the model in bf16, then call
   `quantize_model_torchao_w4(model, min_params=1_000_000)`. Unlike generic bnb,

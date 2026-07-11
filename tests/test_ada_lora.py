@@ -32,6 +32,29 @@ def test_cpu_fallback_shapes_and_values() -> None:
     assert all(torch.isfinite(item).all() for item in outputs)
 
 
+def test_cpu_fallback_can_fuse_a_sigmoid_and_skip_v() -> None:
+    torch.manual_seed(8)
+    rows, hidden = 2, 32
+    ranks = (8, 6, 4, 5)
+    x = [torch.randn(rows, hidden) for _ in range(4)]
+    down = [torch.randn(rank, hidden) for rank in ranks]
+    up = [torch.randn(hidden, rank) for rank in ranks]
+    w0, a0, v0 = (torch.randn(hidden) for _ in range(3))
+    v = torch.randn(rows, hidden)
+    v_first = torch.randn(rows, hidden)
+    reference = ada_wagv_lora(
+        *x, *down, *up, w0, a0, v0, v, v_first, force_fallback=True
+    )
+    fused = ada_wagv_lora(
+        *x, *down, *up, w0, a0, v0, v, v_first,
+        sigmoid_a=True, compute_v=False, force_fallback=True,
+    )
+    torch.testing.assert_close(fused[0], reference[0])
+    torch.testing.assert_close(fused[1], torch.sigmoid(reference[1]))
+    torch.testing.assert_close(fused[2], reference[2])
+    torch.testing.assert_close(fused[3], v)
+
+
 @pytest.mark.parametrize("dtype,max_abs", [(torch.float16, 0.02), (torch.bfloat16, 0.03)])
 def test_ada_cuda_matches_fallback_for_fp16_and_bf16(dtype, max_abs) -> None:
     if not torch.cuda.is_available() or not ada_wagv_lora_available("cuda"):

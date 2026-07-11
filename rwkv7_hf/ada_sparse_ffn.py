@@ -1,10 +1,10 @@
 # coding=utf-8
-"""Optional Ada fp16 sparse FFN contraction for small-row decode.
+"""Optional sm_89 fp16 sparse FFN contraction for small-row decode.
 
 RWKV-7 applies ``ReLU(key(x)) ** 2`` before the FFN value projection.  At
 decode batch sizes the activation is naturally sparse, so reading only the
 positive rows of a packed ``[ffn, hidden]`` value matrix is faster than a
-dense GEMM on RTX 4090.  The CUDA kernel is derived from Albatross' Apache-2.0
+dense GEMM on sm_89.  The CUDA kernel is derived from Albatross' Apache-2.0
 ``cmix_sparse_spmv_relu_rows_kernel`` and adds the residual while initializing
 the output, avoiding a separate residual-add launch.
 
@@ -36,15 +36,20 @@ _CPP_SOURCE = r"""
 
 torch::Tensor rwkv7_ada_sparse_ffn_cuda(
     torch::Tensor preact, torch::Tensor packed_value, torch::Tensor residual);
+torch::Tensor rwkv7_ada_sparse_ffn_out_cuda(
+    torch::Tensor preact, torch::Tensor packed_value, torch::Tensor residual,
+    torch::Tensor output);
 torch::Tensor rwkv7_ada_linear_cuda(torch::Tensor x, torch::Tensor weight);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("sparse_down_add", &rwkv7_ada_sparse_ffn_cuda,
-        "RWKV-7 Ada sparse ReLU2 FFN down projection + residual");
+        "RWKV-7 sm_89 sparse ReLU2 FFN down projection + residual");
+  m.def("sparse_down_add_out", &rwkv7_ada_sparse_ffn_out_cuda,
+        "RWKV-7 sm_89 sparse ReLU2 FFN down projection + residual (out)");
   m.def("ffn_up", &rwkv7_ada_linear_cuda,
-        "RWKV-7 Ada small-row FFN expansion projection");
+        "RWKV-7 sm_89 small-row FFN expansion projection");
   m.def("linear", &rwkv7_ada_linear_cuda,
-        "RWKV-7 Ada small-row fp16 linear");
+        "RWKV-7 sm_89 small-row fp16 linear");
 }
 """
 
@@ -355,7 +360,7 @@ torch::Tensor rwkv7_ada_linear_cuda(torch::Tensor x, torch::Tensor weight) {
   const int64_t hidden = x.size(1);
   const int64_t ffn = weight.size(0);
   TORCH_CHECK(rows == 1 || rows == 2 || rows == 4,
-              "Ada linear supports one, two, or four rows");
+              "sm_89 linear supports one, two, or four rows");
   TORCH_CHECK(weight.size(1) == hidden, "linear shape mismatch");
   TORCH_CHECK((hidden % 4) == 0 && (ffn % 2) == 0,
               "linear input must be divisible by four and output by two");
@@ -392,30 +397,33 @@ torch::Tensor rwkv7_ada_linear_cuda(torch::Tensor x, torch::Tensor weight) {
         reinterpret_cast<const half*>(weight.data_ptr<at::Half>()),
         reinterpret_cast<half*>(output.data_ptr<at::Half>()));
   } else {
-    TORCH_CHECK(false, "four-row Ada linear supports square or 4x expansion shapes");
+    TORCH_CHECK(false, "four-row sm_89 linear supports square or 4x expansion shapes");
   }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return output;
 }
 
-torch::Tensor rwkv7_ada_sparse_ffn_cuda(
+torch::Tensor rwkv7_ada_sparse_ffn_out_cuda(
     torch::Tensor preact,
     torch::Tensor packed_value,
-    torch::Tensor residual) {
-  TORCH_CHECK(preact.is_cuda() && packed_value.is_cuda() && residual.is_cuda(),
+    torch::Tensor residual,
+    torch::Tensor output) {
+  TORCH_CHECK(preact.is_cuda() && packed_value.is_cuda() && residual.is_cuda() && output.is_cuda(),
               "CUDA tensors required");
   TORCH_CHECK(preact.scalar_type() == at::kHalf &&
               packed_value.scalar_type() == at::kHalf &&
-              residual.scalar_type() == at::kHalf, "fp16 tensors required");
-  TORCH_CHECK(preact.dim() == 2 && packed_value.dim() == 2 && residual.dim() == 2,
-              "preact, packed_value, and residual must be rank-2");
-  TORCH_CHECK(preact.is_contiguous() && packed_value.is_contiguous() && residual.is_contiguous(),
+              residual.scalar_type() == at::kHalf &&
+              output.scalar_type() == at::kHalf, "fp16 tensors required");
+  TORCH_CHECK(preact.dim() == 2 && packed_value.dim() == 2 && residual.dim() == 2 && output.dim() == 2,
+              "preact, packed_value, residual, and output must be rank-2");
+  TORCH_CHECK(preact.is_contiguous() && packed_value.is_contiguous() && residual.is_contiguous() && output.is_contiguous(),
               "contiguous tensors required");
   const int64_t rows = preact.size(0);
   const int64_t ffn = preact.size(1);
   const int64_t hidden = residual.size(1);
   TORCH_CHECK(rows >= 1 && rows <= 19, "sparse FFN supports 1..19 rows");
   TORCH_CHECK(residual.size(0) == rows, "residual row mismatch");
+  TORCH_CHECK(output.sizes() == residual.sizes(), "output shape must match residual");
   TORCH_CHECK(packed_value.size(0) == ffn && packed_value.size(1) == hidden,
               "packed value weight must have shape [ffn, hidden]");
   TORCH_CHECK(ffn == 4 * hidden, "expected RWKV ffn == 4 * hidden");
@@ -423,13 +431,14 @@ torch::Tensor rwkv7_ada_sparse_ffn_cuda(
               "ffn must be divisible by 128 and hidden by 256");
 
   c10::cuda::CUDAGuard device_guard(preact.device());
-  auto output = torch::empty_like(residual);
   auto stream = at::cuda::getCurrentCUDAStream(preact.get_device());
   const int64_t vec4_count = output.numel() / 8;
-  copy_residual_vec4_kernel<<<static_cast<int>((vec4_count + 127) / 128), 128, 0, stream>>>(
-      reinterpret_cast<const half*>(residual.data_ptr<at::Half>()),
-      reinterpret_cast<half*>(output.data_ptr<at::Half>()),
-      vec4_count);
+  if (output.data_ptr() != residual.data_ptr()) {
+    copy_residual_vec4_kernel<<<static_cast<int>((vec4_count + 127) / 128), 128, 0, stream>>>(
+        reinterpret_cast<const half*>(residual.data_ptr<at::Half>()),
+        reinterpret_cast<half*>(output.data_ptr<at::Half>()),
+        vec4_count);
+  }
   sparse_relu2_down_rows_kernel<<<
       dim3(static_cast<unsigned>(ffn / FFN_TILE),
            static_cast<unsigned>(hidden / (2 * THREADS)),
@@ -442,6 +451,14 @@ torch::Tensor rwkv7_ada_sparse_ffn_cuda(
       reinterpret_cast<half*>(output.data_ptr<at::Half>()));
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return output;
+}
+
+torch::Tensor rwkv7_ada_sparse_ffn_cuda(
+    torch::Tensor preact,
+    torch::Tensor packed_value,
+    torch::Tensor residual) {
+  auto output = torch::empty_like(residual);
+  return rwkv7_ada_sparse_ffn_out_cuda(preact, packed_value, residual, output);
 }
 """
 
@@ -503,7 +520,7 @@ def _load_extension() -> Any | None:
             from torch.utils.cpp_extension import load_inline
 
             _EXTENSION = load_inline(
-                name="rwkv7_ada_sparse_ffn_v5",
+                name="rwkv7_ada_sparse_ffn_v9",
                 cpp_sources=_CPP_SOURCE,
                 cuda_sources=_CUDA_SOURCE,
                 functions=None,
@@ -521,7 +538,7 @@ def _load_extension() -> Any | None:
 
 
 def ada_sparse_ffn_should_use(rows: int, outputs: int, inputs: int) -> bool:
-    """Return whether a shape is in the measured RTX 4090 sparse decode set."""
+    """Return whether a shape is in the measured sm_89 sparse decode set."""
 
     rows, outputs, inputs = int(rows), int(outputs), int(inputs)
     return 1 <= rows <= 19 and inputs == 4 * outputs and outputs % 256 == 0
@@ -548,7 +565,7 @@ def ada_sparse_ffn_build_error() -> str | None:
     return _EXTENSION_ERROR
 
 
-def _weight_cache_key(weight: Any) -> tuple[Any, ...]:
+def _weight_cache_key(weight: Any, cache_tag: Any = None) -> tuple[Any, ...]:
     index = weight.device.index
     if index is None and torch is not None:
         index = torch.cuda.current_device()
@@ -564,13 +581,14 @@ def _weight_cache_key(weight: Any) -> tuple[Any, ...]:
         version,
         tuple(int(v) for v in weight.shape),
         weight.dtype,
+        cache_tag,
     )
 
 
-def ada_sparse_ffn_pack_weight(weight: Any) -> Any:
+def ada_sparse_ffn_pack_weight(weight: Any, *, cache_tag: Any = None) -> Any:
     """Return a cached contiguous ``[ffn, hidden]`` inference layout."""
 
-    key = _weight_cache_key(weight)
+    key = _weight_cache_key(weight, cache_tag)
     cached = _PACKED_WEIGHTS.get(key)
     if cached is not None and cached[0]() is weight:
         return cached[1]
@@ -578,6 +596,11 @@ def ada_sparse_ffn_pack_weight(weight: Any) -> Any:
         cached = _PACKED_WEIGHTS.get(key)
         if cached is not None and cached[0]() is weight:
             return cached[1]
+        if torch is not None and weight.is_cuda and torch.cuda.is_current_stream_capturing():
+            raise RuntimeError(
+                "sparse FFN weights must be packed before CUDA graph capture; "
+                "call prewarm_ada_sparse_ffn first"
+            )
         packed = weight.transpose(0, 1).contiguous()
         _PACKED_WEIGHTS[key] = (weakref.ref(weight), packed)
         stale = [item for item, value in _PACKED_WEIGHTS.items() if value[0]() is None]
@@ -596,9 +619,10 @@ def ada_sparse_ffn_down_add(
     weight: Any,
     residual: Any,
     *,
+    out: Any | None = None,
     force_fallback: bool = False,
 ) -> Any:
-    """Apply sparse ``ReLU²`` contraction and residual add on Ada decode."""
+    """Apply sparse ``ReLU²`` contraction and residual add on sm_89 decode."""
 
     if torch is None or F is None:
         raise RuntimeError("ada_sparse_ffn_down_add requires torch")
@@ -626,14 +650,33 @@ def ada_sparse_ffn_down_add(
     )
     extension = _load_extension() if valid else None
     if extension is None:
-        return residual + F.linear(torch.relu(preact) ** 2, weight)
-    packed = ada_sparse_ffn_pack_weight(weight)
-    output = extension.sparse_down_add(preact2, packed, residual2)
+        result = residual + F.linear(torch.relu(preact) ** 2, weight)
+        if out is not None:
+            if tuple(out.shape) != tuple(result.shape):
+                raise ValueError(
+                    f"out shape must match result shape {tuple(result.shape)}; got {tuple(out.shape)}"
+                )
+            out.copy_(result)
+            return out
+        return result
+    # Batch-shape graph runners keep distinct packed storage. CUDA graph nodes
+    # containing the sparse atomic kernel must not share its packed operand
+    # allocation across independently replayable graphs.
+    packed = ada_sparse_ffn_pack_weight(weight, cache_tag=rows)
+    if out is None:
+        output = extension.sparse_down_add(preact2, packed, residual2)
+    else:
+        out2 = out.reshape(1, -1) if scalar else out
+        if tuple(out2.shape) != tuple(residual2.shape):
+            raise ValueError(
+                f"out shape must match residual shape {tuple(residual2.shape)}; got {tuple(out2.shape)}"
+            )
+        output = extension.sparse_down_add_out(preact2, packed, residual2, out2)
     return output.reshape(outputs) if scalar else output
 
 
 def ada_ffn_up(x: Any, weight: Any, *, force_fallback: bool = False) -> Any:
-    """Apply the measured no-copy small-row FFN expansion on RTX 4090."""
+    """Apply the measured no-copy small-row FFN expansion on sm_89."""
 
     if torch is None or F is None:
         raise RuntimeError("ada_ffn_up requires torch")
@@ -662,7 +705,7 @@ def ada_ffn_up(x: Any, weight: Any, *, force_fallback: bool = False) -> Any:
 
 
 def ada_linear(x: Any, weight: Any, *, force_fallback: bool = False) -> Any:
-    """Apply the no-copy exact-row Ada linear probe with a torch fallback."""
+    """Apply the no-copy exact-row sm_89 linear probe with a torch fallback."""
 
     if torch is None or F is None:
         raise RuntimeError("ada_linear requires torch")

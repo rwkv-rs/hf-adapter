@@ -235,6 +235,7 @@ def run_one(args: argparse.Namespace, tok, model, batch_size: int) -> dict[str, 
     denom = float(args.steps)
     wall_ms_per_token = wall_ms / denom
     api_ms_per_token = api_wall_ms / denom
+    policy = _model_kernel_policy(model)
     return {
         "axis": "native_graph_replay_overhead",
         "backend": "hf_adapter",
@@ -252,13 +253,35 @@ def run_one(args: argparse.Namespace, tok, model, batch_size: int) -> dict[str, 
         "native_graph_fused_output": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_OUTPUT", "1") not in _FALSE_VALUES,
         "native_graph_fused_projection": os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_PROJECTION", "0") not in _FALSE_VALUES,
         "native_graph_fused_norm_mix": effective_flag(model, "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX", "fused_norm_mix", False),
-        "native_graph_fused_norm_mix_num_warps": int(os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS", "4")),
+        "native_graph_fused_norm_mix_num_warps": int(os.environ.get(
+            "RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS",
+            str(getattr(policy, "norm_mix_num_warps", 4)),
+        )),
         "native_graph_fused_wavg_lora": effective_wavg_lora(model, batch_size),
         "native_graph_sm70_linear": effective_flag(model, "RWKV7_NATIVE_GRAPH_SM70_LINEAR", "sm70_linear", False),
         "native_graph_ada_linear": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_LINEAR", "ada_linear", False),
-        "native_graph_ada_linear_rows": os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROWS", "2 4"),
+        "native_graph_ada_linear_rows": os.environ.get(
+            "RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROWS",
+            str(getattr(policy, "ada_linear_rows", "2 4")),
+        ),
+        "native_graph_rkv_policy": os.environ.get(
+            "RWKV7_NATIVE_GRAPH_RKV_POLICY",
+            str(getattr(policy, "rkv_policy", "manual")),
+        ),
         "native_graph_ada_wagv_lora": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_WAGV_LORA", "ada_wagv_lora", False),
         "native_graph_ada_sparse_ffn": effective_flag(model, "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN", "ada_sparse_ffn", False),
+        "native_graph_ada_sparse_ffn_max_rows": int(
+            os.environ.get(
+                "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_MAX_ROWS",
+                str(getattr(policy, "ada_sparse_ffn_max_rows", 19)),
+            )
+        ),
+        "native_graph_ada_sparse_ffn_inplace": effective_flag(
+            model,
+            "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_INPLACE",
+            "ada_sparse_ffn_inplace",
+            False,
+        ),
         "batch_size": batch_size,
         "prompt_tokens": int(ids.shape[1]),
         "steps": args.steps,

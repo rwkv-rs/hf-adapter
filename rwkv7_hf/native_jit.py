@@ -298,6 +298,7 @@ try:  # pragma: no cover - optional RTX 4090 sparse FFN contraction
         ada_linear,
         ada_linear_should_use,
         ada_sparse_ffn_down_add,
+        ada_sparse_ffn_pack_weight,
         ada_sparse_ffn_should_use,
     )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
@@ -307,6 +308,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
             ada_linear,
             ada_linear_should_use,
             ada_sparse_ffn_down_add,
+            ada_sparse_ffn_pack_weight,
             ada_sparse_ffn_should_use,
         )
     except Exception:
@@ -314,6 +316,7 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         ada_linear = None  # type: ignore[assignment]
         ada_linear_should_use = None  # type: ignore[assignment]
         ada_sparse_ffn_down_add = None  # type: ignore[assignment]
+        ada_sparse_ffn_pack_weight = None  # type: ignore[assignment]
         ada_sparse_ffn_should_use = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional RTX 4090 grouped W/A/G/V LoRA
@@ -783,7 +786,9 @@ def _native_graph_fused_norm_mix_enabled() -> bool:
 
 
 def _native_graph_fused_norm_mix_num_warps() -> int:
-    value = env_int("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS", 4, lower=1, upper=8)
+    policy = _kernel_policy()
+    default = int(getattr(policy, "norm_mix_num_warps", 4))
+    value = env_int("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS", default, lower=1, upper=8)
     if value not in {1, 2, 4, 8}:
         raise ValueError(f"RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS must be one of 1, 2, 4, or 8; got {value}")
     return value
@@ -835,7 +840,11 @@ def _native_graph_ada_linear_should_route(rows: int, role: str) -> bool:
 
     if not _native_graph_ada_linear_enabled():
         return False
-    raw_rows = os.environ.get("RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROWS", "2 4")
+    policy = _kernel_policy()
+    raw_rows = os.environ.get(
+        "RWKV7_NATIVE_GRAPH_ADA_LINEAR_ROWS",
+        str(getattr(policy, "ada_linear_rows", "2 4")),
+    )
     try:
         enabled_rows = {int(item) for item in raw_rows.replace(",", " ").split()}
     except ValueError:
@@ -939,6 +948,8 @@ def _native_graph_ffn_dispatch(
     up_weight,
     down_weight,
     residual: torch.Tensor,
+    *,
+    sparse_out: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Route the complete FFN boundary so sparse kernels can avoid ReLU² IO."""
 
@@ -948,12 +959,58 @@ def _native_graph_ffn_dispatch(
         _graph_linear_is_dense(up_weight)
         and _graph_linear_is_dense(down_weight)
         and _native_graph_ada_sparse_ffn_enabled()
+        and rows <= env_int(
+            "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_MAX_ROWS",
+            int(getattr(_kernel_policy(), "ada_sparse_ffn_max_rows", 19)),
+            lower=1,
+            upper=19,
+        )
         and ada_sparse_ffn_should_use(rows, outputs, inputs)
     ):
-        preact = ada_ffn_up(x, up_weight)
-        return ada_sparse_ffn_down_add(preact, down_weight, residual)
+        if env_flag("RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_UP", True):
+            preact = ada_ffn_up(x, up_weight)
+        else:
+            preact = F.linear(x, up_weight)
+        target = residual if env_flag(
+            "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_INPLACE",
+            bool(getattr(_kernel_policy(), "ada_sparse_ffn_inplace", False)),
+        ) else sparse_out
+        return ada_sparse_ffn_down_add(preact, down_weight, residual, out=target)
     hidden = _native_graph_ffn_up_relu2_dispatch(x, up_weight)
     return _native_graph_ffn_down_add_dispatch(hidden, down_weight, residual)
+
+
+def prewarm_ada_sparse_ffn(packs, rows: int = 1) -> int:
+    """Pack sparse FFN down weights before CUDA graph capture.
+
+    Creating the transposed weights during capture places them in a graph
+    private pool. Prepacking on the normal stream gives each enabled batch
+    shape a stable read-only operand before its independent graph is captured.
+    """
+
+    max_rows = env_int(
+        "RWKV7_NATIVE_GRAPH_ADA_SPARSE_FFN_MAX_ROWS",
+        int(getattr(_kernel_policy(), "ada_sparse_ffn_max_rows", 19)),
+        lower=1,
+        upper=19,
+    )
+    if (
+        not _native_graph_ada_sparse_ffn_enabled()
+        or ada_sparse_ffn_pack_weight is None
+        or int(rows) > max_rows
+    ):
+        return 0
+    packed = 0
+    for operands in packs:
+        down_weight = operands[-2]
+        if not _graph_linear_is_dense(down_weight):
+            continue
+        outputs, inputs = _graph_linear_shape(down_weight)
+        if not ada_sparse_ffn_should_use(1, outputs, inputs):
+            continue
+        ada_sparse_ffn_pack_weight(down_weight, cache_tag=int(rows))
+        packed += 1
+    return packed
 
 
 def _native_graph_rkv_policy() -> str:
@@ -966,7 +1023,9 @@ def _native_graph_rkv_policy() -> str:
     telemetry.
     """
 
-    raw = os.environ.get("RWKV7_NATIVE_GRAPH_RKV_POLICY", "manual").strip().lower()
+    policy = _kernel_policy()
+    default = str(getattr(policy, "rkv_policy", "manual"))
+    raw = os.environ.get("RWKV7_NATIVE_GRAPH_RKV_POLICY", default).strip().lower()
     if raw in {"", "manual", "explicit", "env"}:
         return "manual"
     if raw in {"0", "false", "no", "off", "disabled"}:
@@ -1023,7 +1082,26 @@ def _native_graph_rkv_project(
 
     dense_rkv = all(_graph_linear_is_dense(item) for item in (Rw, Kw, Vw))
     if dense_rkv and _native_graph_vkwr_rkv_dispatch(int(rows), int(hidden_size)) and RKVw.numel() != 0:
-        if xr.dim() == 1:
+        shared_storage = False
+        try:
+            row_values = int(rows) * int(hidden_size)
+            shared_storage = bool(
+                xr.is_contiguous()
+                and xk.is_contiguous()
+                and xv.is_contiguous()
+                and xr.untyped_storage().data_ptr() == xk.untyped_storage().data_ptr()
+                and xr.untyped_storage().data_ptr() == xv.untyped_storage().data_ptr()
+                and int(xk.storage_offset()) == int(xr.storage_offset()) + row_values
+                and int(xv.storage_offset()) == int(xr.storage_offset()) + 2 * row_values
+            )
+        except Exception:
+            shared_storage = False
+        if shared_storage:
+            flat = xr.as_strided(
+                (3, int(rows), int(hidden_size)),
+                (int(rows) * int(hidden_size), int(hidden_size), 1),
+            )
+        elif xr.dim() == 1:
             flat = torch.stack(
                 (
                     xr.reshape(1, hidden_size),
@@ -1032,17 +1110,18 @@ def _native_graph_rkv_project(
                 ),
                 dim=0,
             )
-            rkv = torch.bmm(flat, RKVw)
-            return rkv[0, 0], rkv[1, 0], rkv[2, 0]
-        flat = torch.stack(
-            (
-                xr.reshape(rows, hidden_size),
-                xk.reshape(rows, hidden_size),
-                xv.reshape(rows, hidden_size),
-            ),
-            dim=0,
-        )
+        else:
+            flat = torch.stack(
+                (
+                    xr.reshape(rows, hidden_size),
+                    xk.reshape(rows, hidden_size),
+                    xv.reshape(rows, hidden_size),
+                ),
+                dim=0,
+            )
         rkv = torch.bmm(flat, RKVw)
+        if xr.dim() == 1:
+            return rkv[0, 0], rkv[1, 0], rkv[2, 0]
         return rkv[0], rkv[1], rkv[2]
     if (
         dense_rkv
@@ -1861,7 +1940,7 @@ def decode_speed(model, ids, packs, n=128):
     return n / dt
 
 
-def _block_ip(x, state, xpa, xpf, v_first, p):
+def _block_ip(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
     """In-place (eager) block step for CUDA-graph capture: state/xpa/xpf/v_first
     are fixed buffers updated in place. Same math as block_step."""
     (i, H, N, eps, has_pre,
@@ -1872,6 +1951,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
     residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5) if has_pre else x
     use_fused_norm_mix = _native_graph_fused_norm_mix_enabled()
     if use_fused_norm_mix:
+        stack_rkv = _native_graph_vkwr_rkv_dispatch(1, H * N) and RKVw.numel() != 0
         xr, xw, xk, xv, xa, xg = fused_attn_norm_mix6_decode(
             residual,
             xpa,
@@ -1884,6 +1964,7 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
             x_a,
             x_g,
             num_warps=_native_graph_fused_norm_mix_num_warps(),
+            stack_rkv=stack_rkv,
         )
     else:
         h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
@@ -1932,10 +2013,19 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
         w, a, g, v = ada_wagv_lora(
             xw, xa, xg, xv, w1, a1, g1, v1, w2, a2, g2, v2,
-            w0, a0, v0, v, v_first,
+            w0, a0, v0, v, v_first, sigmoid_a=True,
         )
-        a = torch.sigmoid(a)
         v_mixed = True
+    elif i == 0 and lora_dense and _native_graph_ada_wagv_lora_enabled(
+        1,
+        H * N,
+        max(_graph_linear_shape(w1)[0], _graph_linear_shape(a1)[0], _graph_linear_shape(g1)[0]),
+    ):
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
+        w, a, g, _unused_v = ada_wagv_lora(
+            xw, xa, xg, xg, w1, a1, g1, g1, w2, a2, g2, g2,
+            w0, a0, a0, v, v, sigmoid_a=True, compute_v=False,
+        )
     elif lora_dense and _native_graph_fused_wavg_lora_enabled(1, H * N):
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, 1, H * N)
         if i == 0:
@@ -2109,10 +2199,10 @@ def _block_ip(x, state, xpa, xpf, v_first, p):
         fxx = xpf - h2
         fk = h2 + fxx * fx_k
         xpf.copy_(h2)
-    return _native_graph_ffn_dispatch(fk, fK, fV, residual)
+    return _native_graph_ffn_dispatch(fk, fK, fV, residual, sparse_out=sparse_ffn_out)
 
 
-def _block_ip_batched(x, state, xpa, xpf, v_first, p):
+def _block_ip_batched(x, state, xpa, xpf, v_first, p, sparse_ffn_out=None):
     """In-place batched block step for CUDA-graph capture.
 
     Shapes:
@@ -2131,6 +2221,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
     residual = F.layer_norm(x, [H * N], pre_w, pre_b, 1e-5) if has_pre else x
     use_fused_norm_mix = _native_graph_fused_norm_mix_enabled()
     if use_fused_norm_mix:
+        stack_rkv = _native_graph_vkwr_rkv_dispatch(B, H * N) and RKVw.numel() != 0
         xr, xw, xk, xv, xa, xg = fused_attn_norm_mix6_decode(
             residual,
             xpa,
@@ -2143,6 +2234,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
             x_a,
             x_g,
             num_warps=_native_graph_fused_norm_mix_num_warps(),
+            stack_rkv=stack_rkv,
         )
     else:
         h = F.layer_norm(residual, [H * N], an_w, an_b, 1e-5)
@@ -2186,10 +2278,19 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
         w, a, g, v = ada_wagv_lora(
             xw, xa, xg, xv, w1, a1, g1, v1, w2, a2, g2, v2,
-            w0, a0, v0, v, v_first,
+            w0, a0, v0, v, v_first, sigmoid_a=True,
         )
-        a = torch.sigmoid(a)
         v_mixed = True
+    elif i == 0 and lora_dense and _native_graph_ada_wagv_lora_enabled(
+        B,
+        H * N,
+        max(_graph_linear_shape(w1)[0], _graph_linear_shape(a1)[0], _graph_linear_shape(g1)[0]),
+    ):
+        r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
+        w, a, g, _unused_v = ada_wagv_lora(
+            xw, xa, xg, xg, w1, a1, g1, g1, w2, a2, g2, g2,
+            w0, a0, a0, v, v, sigmoid_a=True, compute_v=False,
+        )
     elif lora_dense and _native_graph_fused_wavg_lora_enabled(B, H * N):
         r, k, v = _native_graph_rkv_project(xr, xk, xv, Rw, Kw, Vw, RKVw, B, H * N)
         if i == 0:
@@ -2355,7 +2456,7 @@ def _block_ip_batched(x, state, xpa, xpf, v_first, p):
         fxx = xpf - h2
         fk = h2 + fxx * fx_k
         xpf.copy_(h2)
-    return _native_graph_ffn_dispatch(fk, fK, fV, residual)
+    return _native_graph_ffn_dispatch(fk, fK, fV, residual, sparse_out=sparse_ffn_out)
 
 
 def cuda_graph_decode(model, ids, packs, n=128):
