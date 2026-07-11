@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   build:
-    name: Build and validate distribution
+    name: Build and validate both distributions
     runs-on: ubuntu-latest
 
     steps:
@@ -23,7 +23,7 @@ jobs:
       - name: Install build tools
         run: python -m pip install --upgrade build twine
 
-      - name: Verify release tag matches package version
+      - name: Verify release tag matches both package versions
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
@@ -32,30 +32,48 @@ jobs:
           import pathlib
           import tomllib
 
-          version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
-          expected = f"v{version}"
+          root_version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+          kernel_version = tomllib.loads(pathlib.Path("kernels/pyproject.toml").read_text())["project"]["version"]
+          if root_version != kernel_version:
+              raise SystemExit(
+                  "release requires matching rwkv7-hf and rwkv7-kernels versions: "
+                  f"{root_version!r} != {kernel_version!r}"
+              )
+          expected = f"v{root_version}"
           actual = os.environ["RELEASE_TAG"]
           if actual != expected:
               raise SystemExit(f"release tag {actual!r} does not match {expected!r}")
-          print(f"release version: {version}")
+          print(f"release version: {root_version}")
           PY
 
-      - name: Build wheel and source distribution
-        run: python -m build
+      - name: Build rwkv7-hf wheel and source distribution
+        run: python -m build --outdir dist/hf
+
+      - name: Build rwkv7-kernels wheel and source distribution
+        run: python -m build kernels --outdir dist/kernels
 
       - name: Check distribution metadata
-        run: python -m twine check --strict dist/*
+        run: python -m twine check --strict dist/hf/* dist/kernels/*
 
       - uses: actions/upload-artifact@v4
         with:
-          name: python-package-distributions
-          path: dist/
+          name: rwkv7-hf-distributions
+          path: dist/hf/
           if-no-files-found: error
           retention-days: 7
 
-  publish:
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rwkv7-kernels-distributions
+          path: dist/kernels/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-hf:
     name: Publish rwkv7-hf to PyPI
-    needs: build
+    # Publish the new companion project first. If its pending trusted publisher
+    # is not configured, do not create a half-published stable release.
+    needs: [build, publish-kernels]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -66,7 +84,29 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: python-package-distributions
-          path: dist/
+          name: rwkv7-hf-distributions
+          path: dist/hf/
 
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/hf/
+
+  publish-kernels:
+    name: Publish rwkv7-kernels to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/rwkv7-kernels
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rwkv7-kernels-distributions
+          path: dist/kernels/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/kernels/

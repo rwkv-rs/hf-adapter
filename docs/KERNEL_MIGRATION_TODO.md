@@ -612,3 +612,20 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - The six current main revisions and all 32 LFS weight shards are now frozen
   as the before-release evidence. The final `v1.0.0` audit must pass while
   matching these exact weight hashes and sizes.
+
+### 2026-08-28 — atomic two-package PyPI workflow
+
+- Updated `.github/workflows/publish.yml` to build and `twine check --strict`
+  both `rwkv7-hf` and `rwkv7-kernels`, require their versions to equal the
+  GitHub release tag, and publish them from separate immutable artifacts.
+- `rwkv7-kernels` publishes first. The stable `rwkv7-hf` job depends on it, so
+  a missing companion-project trusted publisher cannot create an HF-only
+  partial release.
+- Current PyPI API state is `rwkv7-hf==0.9.0` present and `rwkv7-kernels` not
+  yet created (HTTP 404). Before the release is published, the pending trusted
+  publisher for `rwkv7-kernels` must name this repository, `publish.yml`, and
+  the `pypi` GitHub environment. No token is stored in the repository.
+- The kernel candidate remains `1.0.0.dev0` during diagnostic GPU acceptance.
+  Stable `1.0.0` plus production `auto` are deliberately deferred until all
+  migrated phases pass; the exact final wheels must then receive the full
+  three-device release matrix before publication.
