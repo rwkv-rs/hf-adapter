@@ -72,7 +72,14 @@
 - ZeRO base smoke:跑 `scripts/run_zero_training_smoke.sh`;
 - 新脚本/新参数必须继续支持 `MODEL`、`RESULTS`、`CUDA_VISIBLE_DEVICES`、dtype override 和环境元数据打印。
 
-### 4. 卡适配矩阵 【4090 进行中】
+### 4. 卡适配矩阵 【V100 production-close 已完成，继续扩卡】
+
+V100 exact-sm70 已完成 0.1B/0.4B/1.5B × bsz1/2/4/8 dense
+decode/prefill Albatross P1、native W8/W4 speed/footprint、正确性和 cache
+handoff 验收。结果与 fail-closed gate 见
+[`bench/v100_production_close_20260711/README.md`](bench/v100_production_close_20260711/README.md)。
+下一步不再重复 V100 小矩阵，优先扩到 Turing/Hopper/ROCm、更大模型与
+full-memory quant lane。
 
 搭一个可复现的卡矩阵。目标是常见专业 / 消费硬件上的生产级信心,而不只是一台服务器。
 

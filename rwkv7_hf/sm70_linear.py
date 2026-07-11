@@ -403,7 +403,11 @@ def sm70_linear_should_use(rows: int, outputs: int, inputs: int, *, role: str) -
     if role == "hidden":
         if outputs != inputs:
             return False
-        return rows == 1 or (rows == 2 and outputs == 2048)
+        return (
+            rows == 1
+            or (rows == 2 and outputs <= 2048)
+            or (rows == 4 and outputs <= 1024)
+        )
     if role == "ffn_up":
         return rows == 1 and outputs == 4 * inputs
     if role == "ffn_down":
@@ -420,15 +424,32 @@ def sm70_linear_threads(rows: int, outputs: int, inputs: int, *, role: str) -> i
 
     rows, outputs, inputs = int(rows), int(outputs), int(inputs)
     if role == "head":
-        return 128
+        return 256
+    if rows == 4:
+        return 256
     if rows == 2:
+        if role == "hidden":
+            return 128
+        if role == "ffn_down":
+            return 64 if outputs == 1024 else 256
         return 128 if outputs >= 2048 else 256
-    hidden = min(outputs, inputs)
-    if hidden >= 4096:
-        return 64
-    if hidden >= 2048:
+    if role == "hidden":
         return 128
-    return 256
+    if role == "ffn_up":
+        if inputs <= 768:
+            return 256
+        if inputs == 1024:
+            return 128
+        if inputs == 2048:
+            return 256
+        return 64
+    if role == "ffn_down":
+        if outputs <= 768:
+            return 128
+        if outputs <= 2048:
+            return 64
+        return 256
+    return 128
 
 
 def sm70_rkv_should_use(rows: int, hidden: int) -> bool:
@@ -441,8 +462,10 @@ def sm70_rkv_should_use(rows: int, hidden: int) -> bool:
 def sm70_rkv_threads(rows: int, hidden: int) -> int:
     rows, hidden = int(rows), int(hidden)
     if rows == 1:
-        return 256 if hidden <= 768 else 64
-    return 128 if hidden == 1024 else 64
+        return 256 if hidden <= 2048 else 64
+    if hidden <= 768:
+        return 128
+    return 256
 
 
 def sm70_rkv(

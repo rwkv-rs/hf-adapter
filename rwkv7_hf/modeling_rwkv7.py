@@ -263,7 +263,9 @@ def _native_prefill_graph_enabled() -> bool:
 def _native_prefill_graph_cache_size() -> int:
     """Maximum fixed-shape prefill graphs retained by one model."""
 
-    return env_int("RWKV7_NATIVE_PREFILL_GRAPH_CACHE_SIZE", 2, lower=1, upper=16)
+    policy = _rwkv7_kernel_policy()
+    default = int(getattr(policy, "prefill_graph_cache_size", 2))
+    return env_int("RWKV7_NATIVE_PREFILL_GRAPH_CACHE_SIZE", default, lower=1, upper=16)
 
 
 def _native_prefill_graph_signature() -> tuple[tuple[str, str | None], ...]:

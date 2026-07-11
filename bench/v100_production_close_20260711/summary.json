@@ -1,0 +1,29 @@
+{
+  "status": "pass",
+  "dense_decode_rows": 12,
+  "dense_prefill_rows": 12,
+  "quant_decode_rows": 24,
+  "quant_prefill_rows": 24,
+  "dense_decode_ratio_min": 0.908,
+  "dense_decode_ratio_max": 1.2475,
+  "dense_prefill_ratio_min": 0.9298,
+  "dense_prefill_ratio_max": 1.0467,
+  "quant_decode_ratio_min": 1.0062,
+  "quant_decode_ratio_max": 1.1278,
+  "quant_prefill_ratio_min": 0.9964,
+  "quant_prefill_ratio_max": 1.0068,
+  "quant_payload_ratio_min": 0.8027,
+  "quant_payload_ratio_max": 0.9561,
+  "chunk512_speed_ratio_vs_full": 0.8512,
+  "chunk512_vram_ratio_vs_full": 0.7939,
+  "dynamic_batch_cache_hit_rate": 1.0,
+  "device_map_2gpu_status": "pass",
+  "training_backends": [
+    "trainer",
+    "trl_sft"
+  ],
+  "zero_resume_stages": [
+    2,
+    3
+  ]
+}
