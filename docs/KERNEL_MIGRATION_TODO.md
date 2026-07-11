@@ -714,3 +714,32 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - This is validation-harness code only and does not change either immutable
   diagnostic wheel. Focused Ruff/format/compile checks and the full local test
   suite pass: `92 passed`.
+
+### 2026-08-28 — V100 diagnostic and formal runners staged, not started
+
+- Staged harness commit
+  `185ac15544e044c1a8cc3ca92e40f550334a5690` under
+  `/home/data/wangyue/repos/codex-build/hf-adapter-kernels-v1-harness-185ac155`.
+  The marker, recursive compile, and all six canonical model-source hashes
+  pass. The package code and diagnostic wheel hashes remain unchanged.
+- Added `torchao==0.12.0` only to the independent V100 inference overlay. It
+  imports with the existing `torch==2.5.1+cu124`, including the required
+  `torchao.quantization.quantize_` API; neither base virtual environment was
+  modified.
+- Staged the resumable V100 correctness/HF/training/quant/FLA/finetune/speed
+  runner at `/home/data/wangyue/codex-run/run-backend-v2-18836aee-v100.sh`,
+  SHA256
+  `908ffd948271a15fa266bac5afaa705d48696046230783b20893a2d31e8978a5`.
+  It records every command and exit code, skips only stages with an explicit
+  passed marker, uses FP16 reference-fallback route gates on SM70, and refuses
+  to start while its activation file is absent.
+- Staged the dependent formal three-way runner at
+  `/home/data/wangyue/codex-run/run-backend-v2-18836aee-v100-lmeval.sh`, SHA256
+  `7c1e5e153c214167711044faa1902c81ac07594b83aa7a7fd51ed1bd19da0d4e`.
+  Reference and optimized 48-unit lanes use the two V100s concurrently, FLA
+  follows after both exit zero, and the strict 144-unit validator is last.
+  The runner refuses to start unless the preceding V100 diagnostic JSON says
+  `passed`.
+- Both remote scripts pass `bash -n` and are deliberately not running. The
+  activation file is absent, preserving the required device order while the
+  untouched RTX 4080 formal job and its queued backend-v2 chain continue.
