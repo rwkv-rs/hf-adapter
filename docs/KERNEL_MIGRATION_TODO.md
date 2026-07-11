@@ -688,3 +688,11 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   HellaSwag process was still live at 100% CPU, and all backend-v2 watchers
   remained asleep. No process was terminated, restarted, or given competing
   GPU work.
+- Opened upstream draft PR
+  [`rwkv-rs/hf-adapter#146`](https://github.com/rwkv-rs/hf-adapter/pull/146)
+  from `123123213weqw:perf/optional-kernels-v1`. The PR explicitly remains a
+  draft and says production `auto`, stable `1.0.0`, and merge are blocked on
+  the final immutable three-device matrix.
+- A single read-only RTX 4090 SSH probe at the end of this session still timed
+  out to `36.103.236.3:22`. No repeated connection loop or remote work was
+  started; 4090 artifact staging remains pending connectivity.
