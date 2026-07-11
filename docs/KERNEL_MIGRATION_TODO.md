@@ -554,3 +554,25 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   lm_eval commands. The documentation distinguishes dense native BF16
   autograd from LoRA reference fallback and states every provenance/prediction
   gate without claiming GPU acceptance before its JSON passes.
+
+### 2026-08-28 — final RTX 4080 backend-v2 queue frozen
+
+- The immutable package artifacts remain the wheel pair built from package
+  commit `18836aee380582253944231085f5de11c9e36303`:
+  HF `237f4561ce59e3b4bbf385489bf9d0620e1b9f24877bd1990d8f00d9d7c6673c`,
+  kernels `a36be47896f17ba40fbaf0e78cf486a79b929c5e7ecc3d71ae1a16a619596156`.
+  The final validation-harness source is
+  `ead3bee19348392e6a19dc8e9d0ccbf61cf3da0b`; package code did not change.
+- The older recurrent-v1 three-way formal job remains untouched at PID
+  `3883946`. At 2026-08-28 01:29 CST it had 18 reference manifest rows and
+  was the only GPU consumer. No backend-v2 watcher competes with it.
+- Final sequential RTX 4080 dependency chain:
+  backend smoke PID `3892299`; HF ecosystem PID `3898158`, result
+  `ecosystem-ead3bee1`; canonical SFT/DPO/GRPO PID `3898167`, result
+  `finetune-ead3bee1`; BF16/training/all-quant/FLA/benchmark PID `3898175`,
+  result `full-ead3bee1`; artifact-bound 144-unit matrix PID `3898230`, result
+  `lm-eval-ead3bee1-v2`.
+- Earlier provenance-incomplete waiting scripts were stopped before GPU
+  execution and marked `superseded`; no formal computation was terminated.
+  All final watchers verify the upstream JSON before proceeding and wait for
+  an empty GPU process list, so every stage uses the same card exclusively.
