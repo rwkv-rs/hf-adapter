@@ -576,3 +576,23 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   execution and marked `superseded`; no formal computation was terminated.
   All final watchers verify the upstream JSON before proceeding and wait for
   an empty GPU process list, so every stage uses the same card exclusively.
+
+### 2026-08-28 — V100 immutable-artifact pre-staging
+
+- Kept the fixed device order: no V100 GPU gate was started before the final
+  RTX 4080 backend-v2 evidence becomes internally consistent.
+- Verified the same immutable wheel pair on V100 under
+  `/home/data/wangyue/artifacts/backend-v2-18836aee`; `sha256sum -c
+  SHA256SUMS` passes with the frozen HF and kernel hashes above.
+- Staged 0.1B/0.4B/1.5B directories under
+  `/home/data/wangyue/models/rwkv7/backend-v2-18836aee`. Their safetensors
+  hashes exactly match the RTX 4080/reference artifacts, all six canonical HF
+  source files match validation harness `ead3bee19348392e6a19dc8e9d0ccbf61cf3da0b`,
+  and no legacy `kernel_bridge.py` is present.
+- Created pinned-FLA wrappers under
+  `/home/data/wangyue/models/rwkv7/backend-v2-18836aee-fla` and verified the
+  source marker is exactly `80e494f6c588e091fc8316b612870df29375c5b8`.
+- Installed the exact two wheels with `--no-deps --target` into independent
+  inference and canonical-training overlays. Both import `rwkv7_hf==1.0.0`
+  and `rwkv7-kernels==1.0.0.dev0` from the overlay and expose kernel API v2;
+  neither base virtual environment was mutated.
