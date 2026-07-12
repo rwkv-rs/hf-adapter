@@ -154,6 +154,41 @@ def test_comparator_supports_strict_nonnegative_quant_gate(tmp_path: Path) -> No
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
+def test_red_candidate_rerunner_builds_append_only_command(tmp_path: Path) -> None:
+    results = tmp_path / "results.jsonl"
+    write_rows(
+        results,
+        [
+            {
+                **row("candidate", prompt=128, prefill=90.0, decode=180.0),
+                "model_id_or_path": "/models/rwkv",
+                "model_size_label": "1.5b",
+                "qwen_backend_requested": "auto",
+            },
+            row("reference", prompt=128, prefill=100.0, decode=200.0),
+        ],
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "bench/rerun_qwen35_red_candidates.py",
+            "--results",
+            str(results),
+            "--expected-cells",
+            "1",
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert proc.returncode == 1
+    assert "[1/1]" in proc.stdout
+    assert "--model /models/rwkv" in proc.stdout
+
+
 class FakeTokenizer:
     def __call__(self, _text: str, **_kwargs):
         return SimpleNamespace(input_ids=torch.tensor([[5, 6, 7]], dtype=torch.long))
@@ -298,6 +333,8 @@ def main() -> int:
         test_comparator_reports_missing_and_slow_cells(Path(td))
     with tempfile.TemporaryDirectory() as td:
         test_comparator_supports_strict_nonnegative_quant_gate(Path(td))
+    with tempfile.TemporaryDirectory() as td:
+        test_red_candidate_rerunner_builds_append_only_command(Path(td))
     test_worker_helpers_build_exact_shape_and_metadata()
     test_worker_helpers_validate_and_emit_failure()
     test_orchestrator_expands_432_raw_rows()
