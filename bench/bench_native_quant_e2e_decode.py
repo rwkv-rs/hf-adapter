@@ -15,6 +15,8 @@ import gc
 import json
 import os
 import re
+import shutil
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -241,13 +243,31 @@ def count_modules(model) -> dict[str, int]:
     return counts
 
 
-def load_model(args, dtype):
+def prepare_model_dir(model_path: str, code_source: str):
+    if code_source == "model":
+        return model_path, None
+    source = Path(model_path).resolve()
+    if not source.is_dir():
+        raise ValueError("--code-source repo requires a local converted model directory")
+    repo_code = Path(__file__).resolve().parents[1] / "rwkv7_hf"
+    temporary = tempfile.TemporaryDirectory(prefix="rwkv7_native_quant_e2e_")
+    target = Path(temporary.name)
+    for item in source.iterdir():
+        if item.name == "__pycache__" or item.suffix == ".py":
+            continue
+        (target / item.name).symlink_to(item, target_is_directory=item.is_dir())
+    for py_file in repo_code.glob("*.py"):
+        shutil.copy2(py_file, target / py_file.name)
+    return str(target), temporary
+
+
+def load_model(args, dtype, model_path: str | None = None):
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN"] = "1" if args.fused_quant_ffn else "0"
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
     model = AutoModelForCausalLM.from_pretrained(
-        args.hf_dir,
+        model_path or args.hf_dir,
         trust_remote_code=True,
         torch_dtype=dtype,
         device_map=args.device if args.device.startswith("cuda") else None,
@@ -319,6 +339,12 @@ def benchmark_decode(args, tok, model, ids):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hf-dir", required=True)
+    ap.add_argument(
+        "--code-source",
+        choices=["model", "repo"],
+        default="model",
+        help="Use checkpoint-bundled Python or stage the current rwkv7_hf repo code beside linked weights",
+    )
     ap.add_argument("--model-size-label", default="")
     ap.add_argument("--dtype", default="fp16", choices=sorted(DTYPES))
     ap.add_argument("--device", default="cuda")
@@ -369,7 +395,8 @@ def main() -> int:
         args.quantizations = list(dict.fromkeys(["none", *args.quantizations]))
 
     dtype = DTYPES[args.dtype]
-    tok = AutoTokenizer.from_pretrained(args.hf_dir, trust_remote_code=True)
+    effective_hf_dir, temporary_model_dir = prepare_model_dir(args.hf_dir, args.code_source)
+    tok = AutoTokenizer.from_pretrained(effective_hf_dir, trust_remote_code=True)
     ids = encode(tok, args.prompt_tokens, args.batch_size, args.device)
     rows = []
     baseline_prompt = None
@@ -385,7 +412,7 @@ def main() -> int:
         if args.device.startswith("cuda"):
             torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats()
-        model = load_model(args, dtype)
+        model = load_model(args, dtype, effective_hf_dir)
         if quantization != "none" and args.paired_baseline:
             dense_footprint = module_footprint_mb(model)
             dense_res = benchmark_decode(args, tok, model, ids)
@@ -483,6 +510,8 @@ def main() -> int:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
             print(f"appended 1 row -> {out_path}", flush=True)
 
+    if temporary_model_dir is not None:
+        temporary_model_dir.cleanup()
     return 0
 
 
