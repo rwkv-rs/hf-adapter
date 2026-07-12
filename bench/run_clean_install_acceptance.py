@@ -45,13 +45,22 @@ def parse_test_counts(text: str) -> dict[str, int | None]:
     # The first pytest invocation is collect-only; the last summary belongs to
     # the actual profile. Keep both so collection cannot be inferred from a
     # passing subset.
-    collected = last_int(r"(\d+)\s+(?:tests?\s+)?collected", text)
+    collected = last_int(r"^(\d+)\s+(?:tests?\s+)?collected\b", text)
+    summary_line = next(
+        (line for line in reversed(text.splitlines()) if re.search(r"\b\d+\s+passed\b", line)),
+        "",
+    )
+
+    def summary_count(label: str) -> int:
+        match = re.search(rf"\b(\d+)\s+{label}\b", summary_line, flags=re.IGNORECASE)
+        return int(match.group(1)) if match else 0
+
     return {
         "collected": collected,
-        "passed": last_int(r"(\d+)\s+passed", text),
-        "failed": last_int(r"(\d+)\s+failed", text) or 0,
-        "skipped": last_int(r"(\d+)\s+skipped", text) or 0,
-        "errors": last_int(r"(\d+)\s+errors?", text) or 0,
+        "passed": summary_count("passed"),
+        "failed": summary_count("failed"),
+        "skipped": summary_count("skipped"),
+        "errors": summary_count("errors?"),
     }
 
 

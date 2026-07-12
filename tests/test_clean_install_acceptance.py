@@ -17,6 +17,7 @@ No broken requirements found.
 installed rwkv7-hf-adapter=0.5.0 from /tmp/venv/site-packages/rwkv7_hf/__init__.py
 193 tests collected in 1.23s
 186 passed, 6 skipped in 9.87s
+SKIPPED Apple executable profile on Darwin arm64
 """
     assert parse_test_counts(output) == {
         "collected": 193,
