@@ -48,6 +48,23 @@ except Exception:  # Optional MLX runtime.
     MLXSpeculativeResult = None
     speculative_decode_greedy = None
 
+try:
+    from .mlx_cache import MLXPrefixCacheHit, MLXPrefixStateCache, mlx_model_cache_fingerprint
+    from .mlx_scheduler import (
+        MLXBackpressureError,
+        MLXDynamicBatchScheduler,
+        MLXDynamicRequest,
+        create_cached_mlx_generation_session,
+    )
+except Exception:  # Optional MLX serving runtime.
+    MLXPrefixCacheHit = None
+    MLXPrefixStateCache = None
+    mlx_model_cache_fingerprint = None
+    MLXBackpressureError = None
+    MLXDynamicBatchScheduler = None
+    MLXDynamicRequest = None
+    create_cached_mlx_generation_session = None
+
 __all__ = [
     "RWKV7Config",
     "RWKV7ForCausalLM",
@@ -66,4 +83,11 @@ __all__ = [
     "load_mlx_generation_session",
     "MLXSpeculativeResult",
     "speculative_decode_greedy",
+    "MLXPrefixCacheHit",
+    "MLXPrefixStateCache",
+    "mlx_model_cache_fingerprint",
+    "MLXBackpressureError",
+    "MLXDynamicBatchScheduler",
+    "MLXDynamicRequest",
+    "create_cached_mlx_generation_session",
 ]
