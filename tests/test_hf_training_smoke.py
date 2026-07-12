@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import re
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,6 +84,39 @@ class CausalCollator:
 
 def device_name(device: str) -> str:
     return torch.cuda.get_device_name(0) if device.startswith("cuda") and torch.cuda.is_available() else device
+
+
+def runtime_metadata(model) -> dict[str, Any]:
+    root = Path(__file__).resolve().parents[1]
+
+    def git(*args: str) -> str | None:
+        proc = subprocess.run(
+            ["git", *args], cwd=root, text=True, capture_output=True, check=False
+        )
+        return proc.stdout.strip() if proc.returncode == 0 else None
+
+    chip = None
+    if platform.system() == "Darwin":
+        proc = subprocess.run(
+            ["sysctl", "-n", "machdep.cpu.brand_string"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        chip = proc.stdout.strip() or None
+    dirty = git("status", "--porcelain")
+    return {
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "chip": chip,
+        "python": platform.python_version(),
+        "torch_version": torch.__version__,
+        "mps_available": bool(torch.backends.mps.is_available()),
+        "parameter_device": str(next(model.parameters()).device),
+        "git_commit": git("rev-parse", "HEAD"),
+        "git_dirty": bool(dirty) if dirty is not None else None,
+        "process_isolated": True,
+    }
 
 
 def metric(metrics: dict[str, Any], key: str) -> float | None:
@@ -234,6 +269,7 @@ def run_trainer(args) -> dict[str, Any]:
         "train_samples_per_second": metric(metrics, "train_samples_per_second"),
         "train_steps_per_second": metric(metrics, "train_steps_per_second"),
         "max_trainable_delta": delta,
+        **runtime_metadata(model),
     }
     print("trainer_train_loss", result.training_loss, "max_trainable_delta", delta)
     return row
@@ -295,6 +331,7 @@ def run_trl(args) -> dict[str, Any]:
         "train_samples_per_second": metric(metrics, "train_samples_per_second"),
         "train_steps_per_second": metric(metrics, "train_steps_per_second"),
         "max_trainable_delta": delta,
+        **runtime_metadata(model),
     }
     print("trl_sft_train_loss", result.training_loss, "max_trainable_delta", delta)
     return row
@@ -315,6 +352,8 @@ def main() -> int:
     ap.add_argument("--backend", choices=["trainer", "trl", "both"], default="both")
     ap.add_argument("--results", default="")
     args = ap.parse_args()
+    if args.device == "mps":
+        os.environ.setdefault("RWKV7_NATIVE_MODEL", "1")
     if args.train_dtype is None:
         args.train_dtype = "bf16" if args.device.startswith("cuda") else "fp32"
 
