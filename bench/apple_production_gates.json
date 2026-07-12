@@ -1,6 +1,6 @@
 {
   "schema": "rwkv7.apple.production-gates.v1",
-  "version": "2026-07-12.3",
+  "version": "2026-07-12.4",
   "policy": {
     "completion": "Every required gate must have machine-verifiable passing evidence. Missing, unknown, or failed evidence makes the aggregate incomplete.",
     "no_inference_from_source": true,
@@ -64,21 +64,441 @@
       "category": "release",
       "title": "干净环境安装",
       "criterion": "在受支持 macOS/arm64 的全新虚拟环境中安装基础包及 mlx extra；不需要 CUDA、Triton 或 FLA，安装、导入和最小推理均成功。",
-      "required": true
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "tracked_files",
+            "paths": [
+              "pyproject.toml",
+              "scripts/run_clean_install_tests.sh",
+              "bench/run_clean_install_acceptance.py",
+              "tests/test_clean_install_packaging.py",
+              "tests/test_clean_install_acceptance.py",
+              "bench/apple_clean_install_apple_m5_20260712.jsonl",
+              "bench/logs/clean_install_apple_m5_20260712.log",
+              "bench/apple_clean_install_apple_m5_rows_20260712.jsonl"
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_clean_install_apple_m5_20260712.jsonl",
+            "axis": "apple_clean_install_acceptance",
+            "where": [
+              {
+                "field": "profile",
+                "op": "eq",
+                "value": "apple"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "git_dirty",
+                "op": "falsy"
+              },
+              {
+                "field": "returncode",
+                "op": "eq",
+                "value": 0
+              },
+              {
+                "field": "timed_out",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_wheel_import_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "pip_check_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "pytest_collection_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "collected",
+                "op": "ge",
+                "value": 195
+              },
+              {
+                "field": "passed",
+                "op": "ge",
+                "value": 189
+              },
+              {
+                "field": "failed",
+                "op": "eq",
+                "value": 0
+              },
+              {
+                "field": "errors",
+                "op": "eq",
+                "value": 0
+              },
+              {
+                "field": "clean_environment.machine",
+                "op": "eq",
+                "value": "arm64"
+              },
+              {
+                "field": "clean_environment.cuda_available",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.mps_available",
+                "op": "truthy"
+              },
+              {
+                "field": "clean_environment.modules.mlx",
+                "op": "truthy"
+              },
+              {
+                "field": "clean_environment.modules.triton",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.modules.fla",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.modules.flash_linear_attention",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.modules.bitsandbytes",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.versions.mlx",
+                "op": "not_none"
+              }
+            ],
+            "all_matches": true,
+            "min_matches": 1
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_clean_install_apple_m5_rows_20260712.jsonl",
+            "axis": "apple_silicon_model_generate_sweep",
+            "where": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              }
+            ],
+            "require": [
+              {
+                "field": "model_size_label",
+                "op": "eq",
+                "value": "0.1b"
+              },
+              {
+                "field": "device",
+                "op": "eq",
+                "value": "mps"
+              }
+            ],
+            "min_matches": 3
+          }
+        ]
+      }
     },
     {
       "id": "release.import_without_cuda",
       "category": "release",
       "title": "无 CUDA/FLA 安全导入",
       "criterion": "未安装 CUDA、Triton、flash-linear-attention、bitsandbytes 时，rwkv7_hf 与 HF auto classes 可安全导入，Apple 后端延迟加载。",
-      "required": true
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "tracked_files",
+            "paths": [
+              "tests/test_native_fla_free_import.py",
+              "tests/test_backend_boundaries.py",
+              "tests/test_clean_install_packaging.py",
+              "bench/apple_clean_install_apple_m5_20260712.jsonl"
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_clean_install_apple_m5_20260712.jsonl",
+            "axis": "apple_clean_install_acceptance",
+            "where": [
+              {
+                "field": "profile",
+                "op": "eq",
+                "value": "apple"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "git_dirty",
+                "op": "falsy"
+              },
+              {
+                "field": "returncode",
+                "op": "eq",
+                "value": 0
+              },
+              {
+                "field": "timed_out",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_wheel_import_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "pip_check_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "pytest_collection_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "collected",
+                "op": "ge",
+                "value": 195
+              },
+              {
+                "field": "passed",
+                "op": "ge",
+                "value": 189
+              },
+              {
+                "field": "failed",
+                "op": "eq",
+                "value": 0
+              },
+              {
+                "field": "errors",
+                "op": "eq",
+                "value": 0
+              },
+              {
+                "field": "clean_environment.machine",
+                "op": "eq",
+                "value": "arm64"
+              },
+              {
+                "field": "clean_environment.cuda_available",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.mps_available",
+                "op": "truthy"
+              },
+              {
+                "field": "clean_environment.modules.mlx",
+                "op": "truthy"
+              },
+              {
+                "field": "clean_environment.modules.triton",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.modules.fla",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.modules.flash_linear_attention",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.modules.bitsandbytes",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.versions.mlx",
+                "op": "not_none"
+              }
+            ],
+            "all_matches": true,
+            "min_matches": 1
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_clean_install_apple_m5_rows_20260712.jsonl",
+            "axis": "apple_silicon_tiny_native",
+            "where": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              }
+            ],
+            "require": [
+              {
+                "field": "device",
+                "op": "eq",
+                "value": "mps"
+              }
+            ],
+            "min_matches": 1
+          }
+        ]
+      }
     },
     {
       "id": "release.mlx_optional_extra",
       "category": "release",
       "title": "MLX 可选依赖契约",
       "criterion": "pyproject 的 mlx extra 能安装受支持版本；非 macOS 平台不会误装或在 import 时失败。",
-      "required": true
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "tracked_files",
+            "paths": [
+              "pyproject.toml",
+              "rwkv7_hf/mlx_bridge.py",
+              "tests/test_apple_silicon_packaging.py",
+              "bench/apple_clean_install_apple_m5_20260712.jsonl"
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_clean_install_apple_m5_20260712.jsonl",
+            "axis": "apple_clean_install_acceptance",
+            "where": [
+              {
+                "field": "profile",
+                "op": "eq",
+                "value": "apple"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "git_dirty",
+                "op": "falsy"
+              },
+              {
+                "field": "returncode",
+                "op": "eq",
+                "value": 0
+              },
+              {
+                "field": "timed_out",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_wheel_import_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "pip_check_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "pytest_collection_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "collected",
+                "op": "ge",
+                "value": 195
+              },
+              {
+                "field": "passed",
+                "op": "ge",
+                "value": 189
+              },
+              {
+                "field": "failed",
+                "op": "eq",
+                "value": 0
+              },
+              {
+                "field": "errors",
+                "op": "eq",
+                "value": 0
+              },
+              {
+                "field": "clean_environment.machine",
+                "op": "eq",
+                "value": "arm64"
+              },
+              {
+                "field": "clean_environment.cuda_available",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.mps_available",
+                "op": "truthy"
+              },
+              {
+                "field": "clean_environment.modules.mlx",
+                "op": "truthy"
+              },
+              {
+                "field": "clean_environment.modules.triton",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.modules.fla",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.modules.flash_linear_attention",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.modules.bitsandbytes",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.versions.mlx",
+                "op": "not_none"
+              }
+            ],
+            "all_matches": true,
+            "min_matches": 1
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_clean_install_apple_m5_rows_20260712.jsonl",
+            "axis": "apple_silicon_mlx_tiny",
+            "where": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              }
+            ],
+            "require": [
+              {
+                "field": "tensor_count",
+                "op": "ge",
+                "value": 1
+              }
+            ],
+            "min_matches": 1
+          }
+        ]
+      }
     },
     {
       "id": "release.converter_cli",
@@ -110,7 +530,155 @@
       "category": "release",
       "title": "机器可读证据",
       "criterion": "每次功能/性能/质量运行输出带 axis、status、环境、模型、精度、后端、参数和测量值的 append-only JSONL。",
-      "required": true
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "tracked_files",
+            "paths": [
+              "bench/run_clean_install_acceptance.py",
+              "bench/run_mlx_quant_quality.py",
+              "scripts/mlx_dynamic_serving_bench.py",
+              "bench/apple_clean_install_apple_m5_20260712.jsonl",
+              "bench/apple_quant_quality_q4km_m5_20260712.jsonl",
+              "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl"
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_clean_install_apple_m5_20260712.jsonl",
+            "axis": "apple_clean_install_acceptance",
+            "where": [
+              {
+                "field": "profile",
+                "op": "eq",
+                "value": "apple"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "git_dirty",
+                "op": "falsy"
+              },
+              {
+                "field": "returncode",
+                "op": "eq",
+                "value": 0
+              },
+              {
+                "field": "timed_out",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_wheel_import_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "pip_check_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "pytest_collection_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "collected",
+                "op": "ge",
+                "value": 195
+              },
+              {
+                "field": "passed",
+                "op": "ge",
+                "value": 189
+              },
+              {
+                "field": "failed",
+                "op": "eq",
+                "value": 0
+              },
+              {
+                "field": "errors",
+                "op": "eq",
+                "value": 0
+              },
+              {
+                "field": "clean_environment.machine",
+                "op": "eq",
+                "value": "arm64"
+              },
+              {
+                "field": "clean_environment.cuda_available",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.mps_available",
+                "op": "truthy"
+              },
+              {
+                "field": "clean_environment.modules.mlx",
+                "op": "truthy"
+              },
+              {
+                "field": "clean_environment.modules.triton",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.modules.fla",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.modules.flash_linear_attention",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.modules.bitsandbytes",
+                "op": "falsy"
+              },
+              {
+                "field": "clean_environment.versions.mlx",
+                "op": "not_none"
+              }
+            ],
+            "all_matches": true,
+            "min_matches": 1
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
+            "axis": "mlx_dynamic_serving_env",
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "info"
+              },
+              {
+                "field": "git_commit",
+                "op": "not_none"
+              },
+              {
+                "field": "git_dirty",
+                "op": "falsy"
+              },
+              {
+                "field": "chip",
+                "op": "not_none"
+              },
+              {
+                "field": "models",
+                "op": "not_empty"
+              }
+            ],
+            "min_matches": 1
+          }
+        ]
+      }
     },
     {
       "id": "release.safe_defaults",
@@ -124,7 +692,102 @@
       "category": "release",
       "title": "路由与回退遥测",
       "criterion": "每次请求可观测实际 prefill/decode/WKV/quant backend、策略原因、编译命中/回退原因和数值门结果。",
-      "required": true
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "tracked_files",
+            "paths": [
+              "rwkv7_hf/mlx_model.py",
+              "rwkv7_hf/mlx_session.py",
+              "rwkv7_hf/mlx_scheduler.py",
+              "scripts/mlx_dynamic_serving_bench.py",
+              "bench/run_qwen35_apple_baseline.py"
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
+            "axis": "mlx_dynamic_serving",
+            "where": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              }
+            ],
+            "require": [
+              {
+                "field": "scheduler.batch_backend_history",
+                "op": "not_empty"
+              },
+              {
+                "field": "scheduler.batch_backend_reason_history",
+                "op": "not_empty"
+              },
+              {
+                "field": "prefix_cache.key_schema",
+                "op": "not_empty"
+              },
+              {
+                "field": "git_commit",
+                "op": "not_none"
+              },
+              {
+                "field": "git_dirty",
+                "op": "falsy"
+              }
+            ],
+            "all_matches": true,
+            "min_matches": 3,
+            "coverage": [
+              {
+                "field": "model",
+                "values": [
+                  "rwkv7-g1d-0.1b-hf",
+                  "rwkv7-g1d-0.4b-hf",
+                  "rwkv7-g1g-1.5b-hf"
+                ]
+              }
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_groupwise_compiled_w4_04_m5_20260711.jsonl",
+            "axis": "qwen35_apple_baseline",
+            "where": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              }
+            ],
+            "require": [
+              {
+                "field": "prefill_backend_last",
+                "op": "not_none"
+              },
+              {
+                "field": "decode_backend_last",
+                "op": "not_none"
+              },
+              {
+                "field": "compiled_decode_validation.status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "quantized_linear_last_backend_counts.groupwise",
+                "op": "ge",
+                "value": 1
+              }
+            ],
+            "all_matches": true,
+            "min_matches": 3
+          }
+        ]
+      }
     },
     {
       "id": "release.artifact_roundtrip",
