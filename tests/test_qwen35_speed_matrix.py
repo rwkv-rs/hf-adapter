@@ -235,6 +235,14 @@ def test_orchestrator_forces_production_rwkv_wrapper() -> None:
     assert env["PYTHONPATH"].endswith(f"{os.pathsep}/existing")
 
 
+def test_v100_entrypoint_is_fail_closed() -> None:
+    script = (ROOT / "bench" / "run_v100_qwen35_speed_matrix.sh").read_text(encoding="utf-8")
+    assert "--expected-cells 216" in script
+    assert "--min-prefill-speedup 1.05" in script
+    assert "--min-decode-speedup 1.05" in script
+    assert "--fail-on-gate" in script
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         test_comparator_passes_complete_matrix(Path(td))
@@ -246,6 +254,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         test_orchestrator_existing_keys_are_resumable(Path(td))
     test_orchestrator_forces_production_rwkv_wrapper()
+    test_v100_entrypoint_is_fail_closed()
     print("QWEN35 SPEED MATRIX TESTS PASS")
     return 0
 
