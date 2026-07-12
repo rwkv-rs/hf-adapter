@@ -1,6 +1,8 @@
 # Apple Silicon 生产级硬门清单
 
-> **结论：尚未达到生产级。** 当前通过 **31 / 139** 个必选硬门。任何 `FAIL`、`MISSING` 或 `UNKNOWN` 都禁止声明 Apple 生产级完成。
+> **结论：尚未达到生产级。** 当前通过 **31 / 148** 个必选硬门。任何 `FAIL`、`MISSING` 或 `UNKNOWN` 都禁止声明 Apple 生产级完成。
+
+Manifest 版本：`2026-07-12.3`。当前状态由已提交 JSONL 和明确登记的文件证据实时计算，不从源码功能名或说明文字推断 PASS。
 
 本清单覆盖 RWKV-7 Hugging Face 适配中的 Apple 路线：HF/MPS 兼容与训练、MLX/Metal 生产推理、CoreML/ANE 部署。CUDA、vLLM、SGLang、DeepSpeed ZeRO 属于其他验收路线，不用 Apple 兼容结果替代。
 
@@ -11,22 +13,37 @@
 3. 性能通过必须在同一配置同时通过正确性/质量门，并记录冷/热、真实峰值内存、重复次数和精确硬件。
 4. W8/W4 必须实际降低峰值内存，并在所有声明支持的 Apple 卡型/模型/bsz 上不慢于 W16；否则只是功能完成。
 5. CoreML 只有实际运行证据；设置 `compute_units` 不能替代 ANE 落核证明。
-6. 运行严格审计：`STRICT=1 scripts/run_apple_production_acceptance.sh`。任一硬门未通过时命令必须非零退出。
+6. 运行严格审计：`STRICT=1 scripts/run_apple_production_acceptance.sh` 或 `python bench/check_apple_production_acceptance.py --strict`。任一硬门未通过时命令必须非零退出。
+
+## Apple M5 Production Close 与质量 Proxy（限定范围）
+
+最新主线已经关闭 Apple M5 16GB、batch1、chars512/decode64 的一组原子门；同 checkpoint fp16 量化质量 proxy 也在此登记，但只有证据 JSONL 被 Git 跟踪后才会 PASS。这些原子门只证明表内精确配置，**不替代**完整 bsz/上下文、M1-M4、外部 Q*_K_M 对照、CoreML/ANE 或稳定性门。
+
+| 状态 | Gate ID | 已证明范围 | 当前证据 |
+|---|---|---|---|
+| ✅ PASS | `release.mlx_runtime_boundaries` | 最新 main 的 model/state/session/policy/quant/speculative 模块、兼容入口、架构文档和边界测试文件齐备；该结构门不替代任何真实模型、性能或压力证据。 | all required evidence files exist |
+| ✅ PASS | `mlx.speculative_m5_b1_exact` | M5 16GB、1.5B W4 target + 0.1B W4 draft、chars512/decode64、proposal32、repeat3；最终 token 与 target greedy 完全一致，seen_tokens 正确，并记录接受率、verify/replay/fallback。 | 3/3 child proofs pass |
+| ✅ PASS | `perf.m5_close_qwen_0p4_w4_b1` | 同一 M5 16GB、batch1、chars512/decode64、warmup1+repeat3：RWKV decode/prefill≥Qwen、TTFT≤1.1×、真实峰值内存≤Qwen；仅关闭该形状，不替代完整矩阵。 | 2/2 child proofs pass |
+| ✅ PASS | `perf.m5_close_qwen_1p5_spec_w4_b1` | 同一 M5 16GB、batch1、chars512/decode64、warmup1+repeat3：1.5B W4+0.1B draft 的decode/prefill≥Qwen2B、TTFT≤1.1×、真实峰值内存≤Qwen，并通过 target-greedy oracle；仅关闭该形状。 | 3/3 child proofs pass |
+| ✅ PASS | `quant.groupwise_w8_1p5_m5_close` | M5 batch1 chars512/decode64、warmup1+repeat2 的已提交保留行：groupwise W8 guarded compiled min decode≥46 tok/s、peak≤2.25GB，64-token token/logits/state 门通过。repeat2 是显式限定，仍不足以关闭全量 W8 生产性能门。 | 3/3 child proofs pass |
+| ✅ PASS | `quant.groupwise_w4_0p4_m5_close` | M5 batch1 chars512/decode64、warmup1+repeat3 的 native groupwise W4 路径实际 dispatch packed quantized matmul；compiled validation token 一致、logits/state≤0.125，peak≤0.51GB。 | 2/2 child proofs pass |
+| ✅ PASS | `quant.groupwise_w4_1p5_m5_close` | M5 batch1 chars512/decode64、warmup1+repeat3：groupwise W4 guarded compiled min decode≥55 tok/s、peak≤1.78GB，64-token token/logits/state 门通过；不替代全 bsz/长上下文/质量门。 | 3/3 child proofs pass |
+| ⬜ MISSING | `quant.quality_fp16_proxy_m5` | M5 上以同一 RWKV checkpoint 的 fp16 为 teacher，覆盖 0.4B/1.5B、276 scored tokens、4 个 greedy prompts：W8 NLL delta≤0.02、perplexity ratio≤1.02、teacher top1≥0.95；mixed W8/W4 q4_k_m proxy 分别≤0.08/1.09/≥0.80，且权重存储下降。该门不声称 llama.cpp/GGUF Q*_K_M 等价，也不关闭 greedy/state parity。 | registered proof is incomplete; run the auditor for missing paths and child details |
 
 ## 分类状态
 
-| 分类 | PASS | 未完成 | 总数 |
-|---|---:|---:|---:|
-| 发布、安装与证据 (`release`) | 2 | 8 | 10 |
-| HF/Transformers MPS 推理 (`hf_mps_inference`) | 1 | 13 | 14 |
-| HF PEFT/Trainer/TRL 训练 (`hf_mps_training`) | 6 | 8 | 14 |
-| MLX/Metal 数值与模型正确性 (`mlx_correctness`) | 8 | 10 | 18 |
-| MLX 生产服务能力 (`mlx_serving`) | 7 | 5 | 12 |
-| 性能与 Qwen3.5 验收 (`performance`) | 2 | 14 | 16 |
-| W8/W4 量化 (`quantization`) | 3 | 12 | 15 |
-| CoreML/ANE 部署 (`coreml_ane`) | 0 | 17 | 17 |
-| 稳定性、运维与 CI (`reliability`) | 0 | 13 | 13 |
-| Apple 芯片与内存档覆盖 (`hardware`) | 2 | 8 | 10 |
+| 分类 | PASS | FAIL | MISSING | UNKNOWN | 总数 |
+|---|---:|---:|---:|---:|---:|
+| 发布、安装与证据 (`release`) | 3 | 0 | 8 | 0 | 11 |
+| HF/Transformers MPS 推理 (`hf_mps_inference`) | 1 | 0 | 13 | 0 | 14 |
+| HF PEFT/Trainer/TRL 训练 (`hf_mps_training`) | 6 | 0 | 8 | 0 | 14 |
+| MLX/Metal 数值与模型正确性 (`mlx_correctness`) | 7 | 0 | 13 | 0 | 20 |
+| MLX 生产服务能力 (`mlx_serving`) | 1 | 0 | 11 | 0 | 12 |
+| 性能与 Qwen3.5 验收 (`performance`) | 5 | 0 | 13 | 0 | 18 |
+| W8/W4 量化 (`quantization`) | 6 | 0 | 13 | 0 | 19 |
+| CoreML/ANE 部署 (`coreml_ane`) | 0 | 0 | 17 | 0 | 17 |
+| 稳定性、运维与 CI (`reliability`) | 0 | 0 | 13 | 0 | 13 |
+| Apple 芯片与内存档覆盖 (`hardware`) | 2 | 0 | 8 | 0 | 10 |
 
 ## 全部硬门
 
@@ -44,6 +61,7 @@
 | ⬜ MISSING | `release.backend_telemetry` | 路由与回退遥测 | 每次请求可观测实际 prefill/decode/WKV/quant backend、策略原因、编译命中/回退原因和数值门结果。 | no machine-verifiable proof registered |
 | ⬜ MISSING | `release.artifact_roundtrip` | 保存与重载 | HF、MLX 及量化产物 save/load 后 config、tokenizer、权重、量化布局和固定输入输出保持一致。 | no machine-verifiable proof registered |
 | ✅ PASS | `release.production_runbook` | 生产运维文档 | 文档覆盖安装、转换、服务、训练、量化、性能复现、故障排查、限制和硬门状态，且列出所有验收项。 | all required evidence files exist |
+| ✅ PASS | `release.mlx_runtime_boundaries` | MLX runtime 模块边界材料 | 最新 main 的 model/state/session/policy/quant/speculative 模块、兼容入口、架构文档和边界测试文件齐备；该结构门不替代任何真实模型、性能或压力证据。 | all required evidence files exist |
 
 ### HF/Transformers MPS 推理
 
@@ -100,11 +118,13 @@
 | ⬜ MISSING | `mlx.cache_select_reorder` | MLX cache select/reorder/clone | 状态 cache select、reorder、clone、concat、split 后每个序列 continuation 与独立运行一致，源 cache 不被修改。 | no machine-verifiable proof registered |
 | ✅ PASS | `mlx.compiled_decode_fp16_0p4` | 0.4B fp16 guarded compiled decode | 0.4B fp16 batch1 64-token eager/compiled token、logits、全部 state 严格一致，auto 实际选择 compiled。 | proof matched 1 evidence rows |
 | ✅ PASS | `mlx.compiled_decode_w4_0p4` | 0.4B W4 guarded compiled decode | 0.4B W4 batch1 64-token eager/compiled token、logits、全部 state 严格一致，auto 实际选择 compiled。 | proof matched 1 evidence rows |
-| ✅ PASS | `mlx.decode_policy_model_matrix` | 自动 decode 策略全模型 | 按 chip+model shape+dtype+quant+bsz 自动选择 reference/fast norm 与 eager/compiled；0.1B/0.4B/1.5B 全部通过数值门且不得比安全基线慢。 | proof matched 3 evidence rows |
-| ✅ PASS | `mlx.decode_policy_batch_matrix` | Compiled decode 批矩阵 | bsz 1/2/4/8 分别编译、验证和缓存图；动态批切换不复用错误 shape 图，失败自动回退。 | 4/4 child proofs pass |
+| ⬜ MISSING | `mlx.decode_policy_model_matrix` | 自动 decode 策略全模型 | 按 chip+model shape+dtype+quant+bsz 自动选择 reference/fast norm 与 eager/compiled；0.1B/0.4B/1.5B 全部通过数值门且不得比安全基线慢。 | registered proof is incomplete; run the auditor for missing paths and child details |
+| ⬜ MISSING | `mlx.decode_policy_batch_matrix` | Compiled decode 批矩阵 | bsz 1/2/4/8 分别编译、验证和缓存图；动态批切换不复用错误 shape 图，失败自动回退。 | registered proof is incomplete; run the auditor for missing paths and child details |
 | ⬜ MISSING | `mlx.fast_norm_matrix` | Fast LayerNorm 全矩阵 | 0.1B/0.4B/1.5B、fp16/W8/W4、bsz 1/2/4/8 与 reference norm 的 greedy、logits、state 和质量门通过。 | no machine-verifiable proof registered |
 | ⬜ MISSING | `mlx.fallback_contract` | 不支持形状安全回退 | Metal/DPLR/compiled/quant 的不支持 dtype、shape、芯片和 batch 明确回退；输出正确、原因可观测、无崩溃。 | no machine-verifiable proof registered |
 | ⬜ MISSING | `mlx.determinism` | MLX 确定性 | 固定 seed/greedy 下跨进程、冷/热图、chunk 切分和会话调度产生相同 token；数值差在门限内。 | no machine-verifiable proof registered |
+| ✅ PASS | `mlx.speculative_m5_b1_exact` | M5 batch1 初步投机解码精确性 | M5 16GB、1.5B W4 target + 0.1B W4 draft、chars512/decode64、proposal32、repeat3；最终 token 与 target greedy 完全一致，seen_tokens 正确，并记录接受率、verify/replay/fallback。 | 3/3 child proofs pass |
+| ⬜ MISSING | `mlx.speculative_rejection_fallback` | 投机解码拒绝重放与低接受率回退 | 真实 target/draft 在包含接受、拒绝、部分 block、EOS 和低接受率的语料矩阵上与 target greedy 完全一致；拒绝后 state replay 正确，低于阈值时安全回退且无状态污染。 | no machine-verifiable proof registered |
 
 ### MLX 生产服务能力
 
@@ -112,13 +132,13 @@
 |---|---|---|---|---|
 | ✅ PASS | `serve.interleaved_sessions_smoke` | 多会话交错执行实测 | 0.1B/0.4B/1.5B 至少 2 个会话交错执行，one-shot token/text/seen_tokens 全匹配。 | proof matched 91 evidence rows |
 | ⬜ MISSING | `serve.true_dynamic_batch` | 真实动态批处理 | 非顺序循环伪批：bsz 1/2/4/8 使用实际 batched kernel，吞吐随批量合理增长且每会话严格对齐。 | no machine-verifiable proof registered |
-| ✅ PASS | `serve.ragged_mixed_prompts` | 不等长 prompt 批处理 | 混合 prompt/已生成长度在同轮 compact/expand，mask/state 索引正确，无跨请求污染。 | 2/2 child proofs pass |
-| ✅ PASS | `serve.arrival_departure` | 请求动态加入退出 | 持续 decode 中请求可加入、完成、取消并释放槽位；剩余请求输出和延迟不受错误影响。 | 2/2 child proofs pass |
-| ✅ PASS | `serve.state_prefix_cache` | State/prefix cache | 规范化 token prefix 生成可复用 RWKV state；命中后 continuation 与完整 prefill 一致，支持 chunk boundary。 | 2/2 child proofs pass |
-| ✅ PASS | `serve.cache_key_isolation` | Cache key 与模型隔离 | cache key 包含 model/revision/tokenizer/dtype/quant/backend/prefix；不同租户或配置不得误命中。 | 2/2 child proofs pass |
-| ✅ PASS | `serve.cache_eviction` | Cache 容量与淘汰 | LRU/TTL/显存水位淘汰可配置；引用中的 state 不被提前释放，淘汰后内存回收。 | 2/2 child proofs pass |
+| ⬜ MISSING | `serve.ragged_mixed_prompts` | 不等长 prompt 批处理 | 混合 prompt/已生成长度在同轮 compact/expand，mask/state 索引正确，无跨请求污染。 | registered proof is incomplete; run the auditor for missing paths and child details |
+| ⬜ MISSING | `serve.arrival_departure` | 请求动态加入退出 | 持续 decode 中请求可加入、完成、取消并释放槽位；剩余请求输出和延迟不受错误影响。 | registered proof is incomplete; run the auditor for missing paths and child details |
+| ⬜ MISSING | `serve.state_prefix_cache` | State/prefix cache | 规范化 token prefix 生成可复用 RWKV state；命中后 continuation 与完整 prefill 一致，支持 chunk boundary。 | registered proof is incomplete; run the auditor for missing paths and child details |
+| ⬜ MISSING | `serve.cache_key_isolation` | Cache key 与模型隔离 | cache key 包含 model/revision/tokenizer/dtype/quant/backend/prefix；不同租户或配置不得误命中。 | registered proof is incomplete; run the auditor for missing paths and child details |
+| ⬜ MISSING | `serve.cache_eviction` | Cache 容量与淘汰 | LRU/TTL/显存水位淘汰可配置；引用中的 state 不被提前释放，淘汰后内存回收。 | registered proof is incomplete; run the auditor for missing paths and child details |
 | ⬜ MISSING | `serve.cache_hit_rate` | 合理 cache 命中率 | 公开可复现的 Zipf/共享前缀负载下报告请求/字节加权命中率；达到预设 workload SLO，不能用合成全相同 prompt 夸大。 | no machine-verifiable proof registered |
-| ✅ PASS | `serve.cancellation_backpressure` | 取消与背压 | 队列上限、超时、取消、过载拒绝和清理路径正确；不会无限排队或遗留 state/graph。 | 2/2 child proofs pass |
+| ⬜ MISSING | `serve.cancellation_backpressure` | 取消与背压 | 队列上限、超时、取消、过载拒绝和清理路径正确；不会无限排队或遗留 state/graph。 | registered proof is incomplete; run the auditor for missing paths and child details |
 | ⬜ MISSING | `serve.streaming_api` | 流式生成接口 | 逐 token 流式输出、停止词/EOS、客户端取消和错误传播正确，首 token/结束状态可观测。 | no machine-verifiable proof registered |
 | ⬜ MISSING | `serve.concurrency_32` | 高并发稳定性 | 在能容纳的量化模型上 32 并发、混合长度、至少 10k 请求；无错 token、死锁、崩溃或无界内存。 | no machine-verifiable proof registered |
 | ⬜ MISSING | `serve.latency_percentiles` | 服务延迟分位数 | 统一负载报告 TTFT/TPOT/E2E 的 p50/p95/p99、吞吐、公平性、队列时间及冷/热状态。 | no machine-verifiable proof registered |
@@ -129,9 +149,11 @@
 |---|---|---|---|---|
 | ✅ PASS | `perf.dplr_prefill_m5_models` | M5 DPLR prefill 性能台阶 | M5 prompt111 fp16 tiled DPLR：0.1B median≥4.5k、0.4B≥2.0k、1.5B≥0.9k tok/s，且每项三次以上正确性通过。 | 3/3 child proofs pass |
 | ✅ PASS | `perf.qwen_0p4_short_speed` | 0.4B 对 Qwen0.8B 短请求速度 | M5 chars128/512、decode32、repeat3：RWKV decode/prefill≥Qwen，TTFT≤1.1×Qwen；独立于内存门。 | proof matched 2 evidence rows |
-| ⬜ MISSING | `perf.qwen_0p4_memory` | 0.4B 对 Qwen0.8B 峰值内存 | 相同实际运行范围内捕获双方 process/device true peak；RWKV≤Qwen，不能用包大小替代 Qwen 峰值。 | no machine-verifiable proof registered |
+| ✅ PASS | `perf.qwen_0p4_memory` | 0.4B 对 Qwen0.8B 峰值内存 | 相同实际运行范围内捕获双方 process/device true peak；RWKV≤Qwen，不能用包大小替代 Qwen 峰值。 | 2/2 child proofs pass |
+| ✅ PASS | `perf.m5_close_qwen_0p4_w4_b1` | M5 0.4B W4 对 Qwen0.8B W4 限定门 | 同一 M5 16GB、batch1、chars512/decode64、warmup1+repeat3：RWKV decode/prefill≥Qwen、TTFT≤1.1×、真实峰值内存≤Qwen；仅关闭该形状，不替代完整矩阵。 | 2/2 child proofs pass |
 | ⬜ MISSING | `perf.qwen_0p4_full_matrix` | 0.4B 对 Qwen0.8B 完整矩阵 | prompt 128/512/1k/4k/8k tokens、decode 32/128/512、bsz 1/2/4/8 的 prefill/decode/TTFT/峰值内存全部不差于 Qwen。 | no machine-verifiable proof registered |
 | ⬜ MISSING | `perf.qwen_1p5_vs_2b` | 1.5B 对 Qwen3.5 2B | 同 prompt、tokenizer 统计透明、相同精度级别和运行条件下，全部长度/bsz 的速度、TTFT、峰值内存与质量通过。 | no machine-verifiable proof registered |
+| ✅ PASS | `perf.m5_close_qwen_1p5_spec_w4_b1` | M5 1.5B W4 投机对 Qwen2B W4 限定门 | 同一 M5 16GB、batch1、chars512/decode64、warmup1+repeat3：1.5B W4+0.1B draft 的decode/prefill≥Qwen2B、TTFT≤1.1×、真实峰值内存≤Qwen，并通过 target-greedy oracle；仅关闭该形状。 | 3/3 child proofs pass |
 | ⬜ MISSING | `perf.qwen_2p9_vs_4b` | 2.9B 对 Qwen3.5 4B | 同 prompt、相同运行条件下，全部长度/bsz 的速度、TTFT、峰值内存与质量通过。 | no machine-verifiable proof registered |
 | ⬜ MISSING | `perf.qwen_7p2_vs_9b` | 7.2B 对 Qwen3.5 9B | 同 prompt、相同运行条件下，全部长度/bsz 的速度、TTFT、峰值内存与质量通过；不适配内存不足机器时明确能力边界。 | no machine-verifiable proof registered |
 | ⬜ MISSING | `perf.batch_scaling` | 吞吐批量扩展 | 0.1B/0.4B/1.5B、fp16/W8/W4 在 bsz 1/2/4/8 的 prefill/decode 总吞吐、每请求延迟和内存满足生产 SLO。 | no machine-verifiable proof registered |
@@ -149,8 +171,12 @@
 | 状态 | Gate ID | 验收点 | 硬判据 | 当前证据 |
 |---|---|---|---|---|
 | ✅ PASS | `quant.w8_memory_1p5b` | 1.5B W8 内存下降 | 同 M5 4k 形状下 1.5B W8 peak≤2.2GB，fp16 peak≥3.0GB，证明实际运行峰值下降。 | 2/2 child proofs pass |
+| ✅ PASS | `quant.groupwise_w8_1p5_m5_close` | M5 1.5B groupwise W8 decode 保留门 | M5 batch1 chars512/decode64、warmup1+repeat2 的已提交保留行：groupwise W8 guarded compiled min decode≥46 tok/s、peak≤2.25GB，64-token token/logits/state 门通过。repeat2 是显式限定，仍不足以关闭全量 W8 生产性能门。 | 3/3 child proofs pass |
 | ✅ PASS | `quant.w4_memory_0p4b` | 0.4B W4 内存下降 | 同 M5 4k 形状下优化 W4 peak≤0.60GB，fp16 peak≥0.90GB。 | 2/2 child proofs pass |
+| ✅ PASS | `quant.groupwise_w4_0p4_m5_close` | M5 0.4B groupwise W4 compiled 限定门 | M5 batch1 chars512/decode64、warmup1+repeat3 的 native groupwise W4 路径实际 dispatch packed quantized matmul；compiled validation token 一致、logits/state≤0.125，peak≤0.51GB。 | 2/2 child proofs pass |
 | ✅ PASS | `quant.w4_memory_1p5b` | 1.5B W4 内存下降 | 同 M5 4k 形状下优化 W4 peak≤1.20GB，fp16 peak≥3.0GB。 | 2/2 child proofs pass |
+| ✅ PASS | `quant.groupwise_w4_1p5_m5_close` | M5 1.5B groupwise W4 decode 限定门 | M5 batch1 chars512/decode64、warmup1+repeat3：groupwise W4 guarded compiled min decode≥55 tok/s、peak≤1.78GB，64-token token/logits/state 门通过；不替代全 bsz/长上下文/质量门。 | 3/3 child proofs pass |
+| ⬜ MISSING | `quant.quality_fp16_proxy_m5` | M5 同 checkpoint FP16 量化质量 proxy | M5 上以同一 RWKV checkpoint 的 fp16 为 teacher，覆盖 0.4B/1.5B、276 scored tokens、4 个 greedy prompts：W8 NLL delta≤0.02、perplexity ratio≤1.02、teacher top1≥0.95；mixed W8/W4 q4_k_m proxy 分别≤0.08/1.09/≥0.80，且权重存储下降。该门不声称 llama.cpp/GGUF Q*_K_M 等价，也不关闭 greedy/state parity。 | registered proof is incomplete; run the auditor for missing paths and child details |
 | ⬜ MISSING | `quant.memory_all_models` | W8/W4 全模型内存矩阵 | 0.1B/0.4B/1.5B/可运行更大模型的真实 process/device peak 分别低于 W16，W8/W4 降幅接近权重量化理论且无隐藏全量反量化副本。 | no machine-verifiable proof registered |
 | ⬜ MISSING | `quant.w8_decode_faster` | W8 decode 不慢于 W16 | 所有支持 Apple 芯片、模型和 bsz 上，稳态 W8 decode tok/s≥W16；正确性/质量门同时通过。 | no machine-verifiable proof registered |
 | ⬜ MISSING | `quant.w4_decode_faster` | W4 decode 不慢于 W16 | 所有支持 Apple 芯片、模型和 bsz 上，稳态 W4 decode tok/s≥W16；正确性/质量门同时通过。 | no machine-verifiable proof registered |
@@ -212,21 +238,21 @@
 | ⬜ MISSING | `hardware.m2_family` | Apple M2 系列 | 至少 M2 base 与一款高 GPU/内存档实测全部适用门；专门策略不得照搬 M5。 | no machine-verifiable proof registered |
 | ⬜ MISSING | `hardware.m3_family` | Apple M3 系列 | 至少 M3 base 与一款高 GPU/内存档实测全部适用门。 | no machine-verifiable proof registered |
 | ⬜ MISSING | `hardware.m4_family` | Apple M4 系列 | 至少 M4 base 与一款高 GPU/内存档实测全部适用门。 | no machine-verifiable proof registered |
-| ✅ PASS | `hardware.m5_base` | Apple M5 base 证据 | M5 base 机器环境、MPS 与 MLX 真机结果可追溯。 | proof matched 1 evidence rows |
+| ✅ PASS | `hardware.m5_base` | Apple M5 base 证据 | M5 base 机器环境、MPS 与 MLX 真机结果可追溯。 | 2/2 child proofs pass |
 | ⬜ MISSING | `hardware.m5_high_tier` | Apple M5 高配档 | M5 系列可商购高 GPU/内存档至少一款完成适用全门，记录具体 SKU/核心数/内存带宽。 | no machine-verifiable proof registered |
 | ⬜ MISSING | `hardware.memory_8gb` | 8GB 统一内存档 | 8GB 真机验证能运行的模型/量化、并发、OOM 防护和系统响应；明确不能运行的边界。 | no machine-verifiable proof registered |
-| ✅ PASS | `hardware.memory_16gb` | 16GB 统一内存档 | 16GB M5 真机环境与峰值证据存在。 | proof matched 1 evidence rows |
+| ✅ PASS | `hardware.memory_16gb` | 16GB 统一内存档 | 16GB M5 真机环境与峰值证据存在。 | proof matched 4 evidence rows |
 | ⬜ MISSING | `hardware.memory_32gb_plus` | 32GB+ 统一内存档 | 32GB 或更高真机覆盖较大模型、并发、长上下文和 W8/W4 性能门。 | no machine-verifiable proof registered |
 | ⬜ MISSING | `hardware.mobile_ane` | iPhone/iPad ANE 真机 | 至少一代仍受支持 iPhone 与 iPad 真机完成 CoreML/ANE 正确性、内存、速度、能耗和热稳态门。 | no machine-verifiable proof registered |
 
 ## 当前实施顺序
 
-1. **MLX 自动策略与真实动态批**：按芯片/模型/dtype/quant/bsz 安全选择 DPLR、norm、compiled decode，并补 bsz 1/2/4/8。
-2. **W8/W4 性能闭环**：packed Metal fused kernel；所有矩阵内存下降且 prefill/decode 不慢于 W16。
-3. **Qwen3.5 全矩阵**：补真实 Qwen 峰值内存、1k/4k/8k、0.8B/2B/4B/9B 配对和质量。
-4. **CoreML/ANE**：真实 export/runtime、HF/state/chunk parity、INT8/INT4、Instruments/compute-plan 落核证据。
-5. **训练与可靠性**：1000 步 Trainer/SFT/DPO/GRPO、断点续训、24h/10k 请求、泄漏/OOM/热稳态。
-6. **跨设备**：M1/M2/M3/M4/M5、8GB/16GB/32GB+ 和 iPhone/iPad ANE 真机矩阵。
+1. **先关闭正确性广义门**：HF/MPS 与 MLX 的 dtype、bsz、chunk、长上下文、fallback、determinism 全矩阵。
+2. **量化生产闭环**：保留已通过的 M5 groupwise W8/W4 原子门，补 W16 对照、bsz 1/2/4/8、1k/4k/8k、Q*_K_M 质量和序列化。
+3. **Qwen3.5 全矩阵**：从已通过的两个 batch1/512/64 配对扩展到所有长度、bsz、0.8B/2B/4B/9B，并加入冷/热与热稳态。
+4. **投机解码负路径**：补拒绝重放、部分 block、EOS、低接受率 fallback、不同 draft 与长跑，不能用 100% 接受单行替代。
+5. **CoreML/ANE**：真实 export/runtime、HF/state/chunk parity、INT8/INT4、Instruments/compute-plan 落核证据。
+6. **训练、可靠性与设备矩阵**：1000 步 Trainer/TRL、24h/10k、泄漏/OOM/热稳态，以及 M1-M4、不同内存档和 iPhone/iPad。
 
 ## 证据文件
 
@@ -234,5 +260,7 @@
 - 严格审计器：`bench/check_apple_production_acceptance.py`
 - 一键入口：`scripts/run_apple_production_acceptance.sh`
 - 审计输出：`bench/results_apple_production_acceptance.jsonl`（默认 append-only）
+- 最新限定 M5 说明：`docs/hardware/APPLE_PRODUCTION_CLOSE.md`
+- 最新限定 M5 汇总：`bench/apple_production_close_qwen35_gate_m5_20260711.jsonl`
 
 本文件由 `bench/render_apple_production_acceptance.py` 从 manifest 和已提交证据生成；新增或修改硬门后必须重新生成。

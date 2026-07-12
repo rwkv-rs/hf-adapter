@@ -1,12 +1,20 @@
 {
   "schema": "rwkv7.apple.production-gates.v1",
-  "version": "2026-07-11.4",
+  "version": "2026-07-12.3",
   "policy": {
     "completion": "Every required gate must have machine-verifiable passing evidence. Missing, unknown, or failed evidence makes the aggregate incomplete.",
     "no_inference_from_source": true,
     "no_smoke_as_production_substitute": true,
     "performance_statistics": "Production performance rows require exact hardware identity, cold/warm separation, true peak memory, at least five repeats unless a gate explicitly says otherwise, and correctness/quality passing in the same configuration.",
-    "scope": "Apple Silicon support for the RWKV-7 Hugging Face adapter: HF/MPS training and compatibility, MLX/Metal production inference, CoreML/ANE deployment. CUDA, vLLM, SGLang and DeepSpeed ZeRO are separate non-Apple gates."
+    "scope": "Apple Silicon support for the RWKV-7 Hugging Face adapter: HF/MPS training and compatibility, MLX/Metal production inference, CoreML/ANE deployment. CUDA, vLLM, SGLang and DeepSpeed ZeRO are separate non-Apple gates.",
+    "gate_statuses": [
+      "pass",
+      "fail",
+      "missing",
+      "unknown"
+    ],
+    "bounded_m5_close": "APPLE_PRODUCTION_CLOSE proves only Apple M5 16GB, batch 1, chars512/decode64 retained rows. Its passing atomic gates do not satisfy cross-chip, all-batch, long-context, quality, ANE, or reliability gates.",
+    "quant_quality_proxy": "The M5 fp16 proxy gate compares RWKV MLX W8 and mixed W8/W4 against the same RWKV checkpoint in fp16. It is not an external llama.cpp/GGUF Q*_K_M equivalence claim and does not close greedy/state parity."
   },
   "categories": [
     {
@@ -90,7 +98,10 @@
         "paths": [
           "scripts/run_apple_production_acceptance.sh",
           "bench/apple_production_gates.json",
-          "bench/check_apple_production_acceptance.py"
+          "bench/check_apple_production_acceptance.py",
+          "bench/render_apple_production_acceptance.py",
+          "tests/test_apple_production_acceptance.py",
+          "docs/hardware/APPLE_PRODUCTION_ACCEPTANCE.md"
         ]
       }
     },
@@ -132,8 +143,31 @@
         "type": "files",
         "paths": [
           "docs/hardware/APPLE_PRODUCTION_ACCEPTANCE.md",
+          "docs/hardware/APPLE_PRODUCTION_CLOSE.md",
           "docs/hardware/APPLE_SILICON.md",
+          "docs/reference/MLX_RUNTIME_ARCHITECTURE.md",
           "AGENTS.md"
+        ]
+      }
+    },
+    {
+      "id": "release.mlx_runtime_boundaries",
+      "category": "release",
+      "title": "MLX runtime 模块边界材料",
+      "criterion": "最新 main 的 model/state/session/policy/quant/speculative 模块、兼容入口、架构文档和边界测试文件齐备；该结构门不替代任何真实模型、性能或压力证据。",
+      "required": true,
+      "milestone": "apple_m5_close_20260711",
+      "proof": {
+        "type": "files",
+        "paths": [
+          "rwkv7_hf/mlx_model.py",
+          "rwkv7_hf/mlx_state.py",
+          "rwkv7_hf/mlx_session.py",
+          "rwkv7_hf/mlx_policy.py",
+          "rwkv7_hf/mlx_quant.py",
+          "rwkv7_hf/mlx_speculative.py",
+          "tests/test_mlx_module_boundaries.py",
+          "docs/reference/MLX_RUNTIME_ARCHITECTURE.md"
         ]
       }
     },
@@ -1244,6 +1278,200 @@
       "required": true
     },
     {
+      "id": "mlx.speculative_m5_b1_exact",
+      "category": "mlx_correctness",
+      "title": "M5 batch1 初步投机解码精确性",
+      "criterion": "M5 16GB、1.5B W4 target + 0.1B W4 draft、chars512/decode64、proposal32、repeat3；最终 token 与 target greedy 完全一致，seen_tokens 正确，并记录接受率、verify/replay/fallback。",
+      "required": true,
+      "milestone": "apple_m5_close_20260711",
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "files",
+            "paths": [
+              "rwkv7_hf/mlx_speculative.py",
+              "tests/test_mlx_speculative.py"
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "axis": "qwen35_apple_baseline_speculative_validation",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1g-1.5b-hf"
+              },
+              {
+                "field": "draft_model",
+                "op": "eq",
+                "value": "rwkv7-g1d-0.1b-hf"
+              },
+              {
+                "field": "prompt_case",
+                "op": "eq",
+                "value": "chars512"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "generated_tokens",
+                "op": "eq",
+                "value": 64
+              },
+              {
+                "field": "measured_repeats",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "target_greedy_match",
+                "op": "truthy"
+              }
+            ],
+            "min_matches": 1,
+            "coverage": [],
+            "all_matches": true
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "axis": "qwen35_apple_baseline",
+            "where": [
+              {
+                "field": "runtime",
+                "op": "eq",
+                "value": "mlx_speculative"
+              },
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1g-1.5b-hf"
+              },
+              {
+                "field": "draft_model",
+                "op": "eq",
+                "value": "rwkv7-g1d-0.1b-hf"
+              },
+              {
+                "field": "prompt_case",
+                "op": "eq",
+                "value": "chars512"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "mm4"
+              },
+              {
+                "field": "quant_backend",
+                "op": "eq",
+                "value": "groupwise"
+              },
+              {
+                "field": "speculative_proposal_tokens",
+                "op": "eq",
+                "value": 32
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "generated_tokens",
+                "op": "eq",
+                "value": 64
+              },
+              {
+                "field": "repeat",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "warmup_repeats",
+                "op": "ge",
+                "value": 1
+              },
+              {
+                "field": "seen_tokens_after_generate",
+                "op": "eq",
+                "value": 197
+              },
+              {
+                "field": "expected_seen_tokens",
+                "op": "eq",
+                "value": 197
+              },
+              {
+                "field": "speculative_telemetry.generated_tokens",
+                "op": "eq",
+                "value": 64
+              },
+              {
+                "field": "speculative_telemetry.draft_tokens",
+                "op": "eq",
+                "value": 64
+              },
+              {
+                "field": "speculative_telemetry.accepted_draft_tokens",
+                "op": "eq",
+                "value": 64
+              },
+              {
+                "field": "speculative_telemetry.acceptance_rate",
+                "op": "eq",
+                "value": 1.0
+              },
+              {
+                "field": "speculative_telemetry.target_verify_calls",
+                "op": "eq",
+                "value": 2
+              },
+              {
+                "field": "speculative_telemetry.target_replay_calls",
+                "op": "eq",
+                "value": 0
+              },
+              {
+                "field": "speculative_telemetry.adaptive_fallback",
+                "op": "falsy"
+              },
+              {
+                "field": "speculative_telemetry.fallback_tokens",
+                "op": "eq",
+                "value": 0
+              },
+              {
+                "field": "quantized_linear_last_backend_counts.groupwise",
+                "op": "gt",
+                "value": 0
+              }
+            ],
+            "min_matches": 3,
+            "coverage": [],
+            "all_matches": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "mlx.speculative_rejection_fallback",
+      "category": "mlx_correctness",
+      "title": "投机解码拒绝重放与低接受率回退",
+      "criterion": "真实 target/draft 在包含接受、拒绝、部分 block、EOS 和低接受率的语料矩阵上与 target greedy 完全一致；拒绝后 state replay 正确，低于阈值时安全回退且无状态污染。",
+      "required": true
+    },
+    {
       "id": "serve.interleaved_sessions_smoke",
       "category": "mlx_serving",
       "title": "多会话交错执行实测",
@@ -1311,8 +1539,8 @@
           {
             "type": "files",
             "paths": [
-              "rwkv7_hf/mlx_cache.py",
-              "rwkv7_hf/mlx_scheduler.py",
+              "rwkv7_hf/mlx_state.py",
+              "rwkv7_hf/mlx_session.py",
               "rwkv7_hf/mlx_model.py",
               "scripts/mlx_dynamic_serving_bench.py",
               "tests/test_mlx_prefix_cache.py",
@@ -1390,8 +1618,8 @@
           {
             "type": "files",
             "paths": [
-              "rwkv7_hf/mlx_cache.py",
-              "rwkv7_hf/mlx_scheduler.py",
+              "rwkv7_hf/mlx_state.py",
+              "rwkv7_hf/mlx_session.py",
               "rwkv7_hf/mlx_model.py",
               "scripts/mlx_dynamic_serving_bench.py",
               "tests/test_mlx_prefix_cache.py",
@@ -1947,7 +2175,313 @@
       "category": "performance",
       "title": "0.4B 对 Qwen0.8B 峰值内存",
       "criterion": "相同实际运行范围内捕获双方 process/device true peak；RWKV≤Qwen，不能用包大小替代 Qwen 峰值。",
-      "required": true
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "axis": "qwen35_apple_baseline_env",
+            "where": [
+              {
+                "field": "mac_chip",
+                "op": "eq",
+                "value": "Apple M5"
+              },
+              {
+                "field": "machine",
+                "op": "eq",
+                "value": "arm64"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "info"
+              },
+              {
+                "field": "mac_memsize_bytes",
+                "op": "ge",
+                "value": 17179869184
+              },
+              {
+                "field": "repeat",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "warmup_repeats",
+                "op": "ge",
+                "value": 1
+              },
+              {
+                "field": "decode_lengths",
+                "op": "contains",
+                "value": 64
+              }
+            ],
+            "min_matches": 4,
+            "coverage": [],
+            "all_matches": true
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "axis": "qwen35_apple_baseline_comparison",
+            "where": [
+              {
+                "field": "rwkv_model",
+                "op": "eq",
+                "value": "rwkv7-g1d-0.4b-hf"
+              },
+              {
+                "field": "qwen_model",
+                "op": "contains",
+                "value": "qwen35-0.8b-mlx-4bit"
+              },
+              {
+                "field": "prompt_case",
+                "op": "eq",
+                "value": "chars512"
+              },
+              {
+                "field": "requested_generated_tokens",
+                "op": "eq",
+                "value": 64
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "qwen.count",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "rwkv.count",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "qwen.min_generated_tokens",
+                "op": "ge",
+                "value": 64
+              },
+              {
+                "field": "rwkv.min_generated_tokens",
+                "op": "ge",
+                "value": 64
+              },
+              {
+                "field": "decode_ratio_rwkv_over_qwen",
+                "op": "ge",
+                "value": 1.0
+              },
+              {
+                "field": "prefill_ratio_rwkv_over_qwen",
+                "op": "ge",
+                "value": 1.0
+              },
+              {
+                "field": "ttft_ratio_rwkv_over_qwen",
+                "op": "le",
+                "value": 1.1
+              },
+              {
+                "field": "memory_ratio_rwkv_over_qwen",
+                "op": "le",
+                "value": 1.0
+              },
+              {
+                "field": "gates.decode_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "gates.prefill_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "gates.ttft_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "gates.memory_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "unknown_reasons",
+                "op": "empty"
+              }
+            ],
+            "min_matches": 1,
+            "coverage": [],
+            "all_matches": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "perf.m5_close_qwen_0p4_w4_b1",
+      "category": "performance",
+      "title": "M5 0.4B W4 对 Qwen0.8B W4 限定门",
+      "criterion": "同一 M5 16GB、batch1、chars512/decode64、warmup1+repeat3：RWKV decode/prefill≥Qwen、TTFT≤1.1×、真实峰值内存≤Qwen；仅关闭该形状，不替代完整矩阵。",
+      "required": true,
+      "milestone": "apple_m5_close_20260711",
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "axis": "qwen35_apple_baseline_env",
+            "where": [
+              {
+                "field": "mac_chip",
+                "op": "eq",
+                "value": "Apple M5"
+              },
+              {
+                "field": "machine",
+                "op": "eq",
+                "value": "arm64"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "info"
+              },
+              {
+                "field": "mac_memsize_bytes",
+                "op": "ge",
+                "value": 17179869184
+              },
+              {
+                "field": "repeat",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "warmup_repeats",
+                "op": "ge",
+                "value": 1
+              },
+              {
+                "field": "decode_lengths",
+                "op": "contains",
+                "value": 64
+              }
+            ],
+            "min_matches": 4,
+            "coverage": [],
+            "all_matches": true
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "axis": "qwen35_apple_baseline_comparison",
+            "where": [
+              {
+                "field": "rwkv_model",
+                "op": "eq",
+                "value": "rwkv7-g1d-0.4b-hf"
+              },
+              {
+                "field": "qwen_model",
+                "op": "contains",
+                "value": "qwen35-0.8b-mlx-4bit"
+              },
+              {
+                "field": "prompt_case",
+                "op": "eq",
+                "value": "chars512"
+              },
+              {
+                "field": "requested_generated_tokens",
+                "op": "eq",
+                "value": 64
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "qwen.count",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "rwkv.count",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "qwen.min_generated_tokens",
+                "op": "ge",
+                "value": 64
+              },
+              {
+                "field": "rwkv.min_generated_tokens",
+                "op": "ge",
+                "value": 64
+              },
+              {
+                "field": "decode_ratio_rwkv_over_qwen",
+                "op": "ge",
+                "value": 1.0
+              },
+              {
+                "field": "prefill_ratio_rwkv_over_qwen",
+                "op": "ge",
+                "value": 1.0
+              },
+              {
+                "field": "ttft_ratio_rwkv_over_qwen",
+                "op": "le",
+                "value": 1.1
+              },
+              {
+                "field": "memory_ratio_rwkv_over_qwen",
+                "op": "le",
+                "value": 1.0
+              },
+              {
+                "field": "gates.decode_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "gates.prefill_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "gates.ttft_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "gates.memory_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "unknown_reasons",
+                "op": "empty"
+              }
+            ],
+            "min_matches": 1,
+            "coverage": [],
+            "all_matches": true
+          }
+        ]
+      }
     },
     {
       "id": "perf.qwen_0p4_full_matrix",
@@ -1962,6 +2496,204 @@
       "title": "1.5B 对 Qwen3.5 2B",
       "criterion": "同 prompt、tokenizer 统计透明、相同精度级别和运行条件下，全部长度/bsz 的速度、TTFT、峰值内存与质量通过。",
       "required": true
+    },
+    {
+      "id": "perf.m5_close_qwen_1p5_spec_w4_b1",
+      "category": "performance",
+      "title": "M5 1.5B W4 投机对 Qwen2B W4 限定门",
+      "criterion": "同一 M5 16GB、batch1、chars512/decode64、warmup1+repeat3：1.5B W4+0.1B draft 的decode/prefill≥Qwen2B、TTFT≤1.1×、真实峰值内存≤Qwen，并通过 target-greedy oracle；仅关闭该形状。",
+      "required": true,
+      "milestone": "apple_m5_close_20260711",
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "axis": "qwen35_apple_baseline_env",
+            "where": [
+              {
+                "field": "mac_chip",
+                "op": "eq",
+                "value": "Apple M5"
+              },
+              {
+                "field": "machine",
+                "op": "eq",
+                "value": "arm64"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "info"
+              },
+              {
+                "field": "mac_memsize_bytes",
+                "op": "ge",
+                "value": 17179869184
+              },
+              {
+                "field": "repeat",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "warmup_repeats",
+                "op": "ge",
+                "value": 1
+              },
+              {
+                "field": "decode_lengths",
+                "op": "contains",
+                "value": 64
+              }
+            ],
+            "min_matches": 4,
+            "coverage": [],
+            "all_matches": true
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "axis": "qwen35_apple_baseline_comparison",
+            "where": [
+              {
+                "field": "rwkv_model",
+                "op": "eq",
+                "value": "rwkv7-g1g-1.5b-hf"
+              },
+              {
+                "field": "qwen_model",
+                "op": "contains",
+                "value": "qwen35-2b-mlx-4bit"
+              },
+              {
+                "field": "prompt_case",
+                "op": "eq",
+                "value": "chars512"
+              },
+              {
+                "field": "requested_generated_tokens",
+                "op": "eq",
+                "value": 64
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "qwen.count",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "rwkv.count",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "qwen.min_generated_tokens",
+                "op": "ge",
+                "value": 64
+              },
+              {
+                "field": "rwkv.min_generated_tokens",
+                "op": "ge",
+                "value": 64
+              },
+              {
+                "field": "decode_ratio_rwkv_over_qwen",
+                "op": "ge",
+                "value": 1.0
+              },
+              {
+                "field": "prefill_ratio_rwkv_over_qwen",
+                "op": "ge",
+                "value": 1.0
+              },
+              {
+                "field": "ttft_ratio_rwkv_over_qwen",
+                "op": "le",
+                "value": 1.1
+              },
+              {
+                "field": "memory_ratio_rwkv_over_qwen",
+                "op": "le",
+                "value": 1.0
+              },
+              {
+                "field": "gates.decode_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "gates.prefill_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "gates.ttft_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "gates.memory_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "unknown_reasons",
+                "op": "empty"
+              }
+            ],
+            "min_matches": 1,
+            "coverage": [],
+            "all_matches": true
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "axis": "qwen35_apple_baseline_speculative_validation",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1g-1.5b-hf"
+              },
+              {
+                "field": "draft_model",
+                "op": "eq",
+                "value": "rwkv7-g1d-0.1b-hf"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "generated_tokens",
+                "op": "eq",
+                "value": 64
+              },
+              {
+                "field": "measured_repeats",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "target_greedy_match",
+                "op": "truthy"
+              }
+            ],
+            "min_matches": 1,
+            "coverage": [],
+            "all_matches": true
+          }
+        ]
+      }
     },
     {
       "id": "perf.qwen_2p9_vs_4b",
@@ -2125,6 +2857,193 @@
       }
     },
     {
+      "id": "quant.groupwise_w8_1p5_m5_close",
+      "category": "quantization",
+      "title": "M5 1.5B groupwise W8 decode 保留门",
+      "criterion": "M5 batch1 chars512/decode64、warmup1+repeat2 的已提交保留行：groupwise W8 guarded compiled min decode≥46 tok/s、peak≤2.25GB，64-token token/logits/state 门通过。repeat2 是显式限定，仍不足以关闭全量 W8 生产性能门。",
+      "required": true,
+      "milestone": "apple_m5_close_20260711",
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_groupwise_w8_15_m5_20260711.jsonl",
+            "axis": "mlx_decode_compile_env",
+            "where": [
+              {
+                "field": "mac_chip",
+                "op": "eq",
+                "value": "Apple M5"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "mm8"
+              },
+              {
+                "field": "quant_backend",
+                "op": "eq",
+                "value": "groupwise"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "info"
+              },
+              {
+                "field": "decode_tokens",
+                "op": "eq",
+                "value": 64
+              },
+              {
+                "field": "repeat",
+                "op": "ge",
+                "value": 2
+              },
+              {
+                "field": "warmup",
+                "op": "ge",
+                "value": 1
+              },
+              {
+                "field": "validation_tokens",
+                "op": "ge",
+                "value": 64
+              }
+            ],
+            "min_matches": 1,
+            "coverage": [],
+            "all_matches": true
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_groupwise_w8_15_m5_20260711.jsonl",
+            "axis": "mlx_decode_compile_summary",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1g-1.5b-hf"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "mm8"
+              },
+              {
+                "field": "quant_backend",
+                "op": "eq",
+                "value": "groupwise"
+              },
+              {
+                "field": "decode_backend",
+                "op": "eq",
+                "value": "auto"
+              },
+              {
+                "field": "decode_backend_used",
+                "op": "eq",
+                "value": "compiled"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "repeats",
+                "op": "ge",
+                "value": 2
+              },
+              {
+                "field": "min_decode_tok_s",
+                "op": "ge",
+                "value": 46
+              },
+              {
+                "field": "compiled_validation.status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "compiled_validation.steps",
+                "op": "ge",
+                "value": 64
+              },
+              {
+                "field": "compiled_validation.generated_tokens_match",
+                "op": "truthy"
+              },
+              {
+                "field": "compiled_validation.logits_max_abs",
+                "op": "le",
+                "value": 0.125
+              },
+              {
+                "field": "compiled_validation.state_max_abs",
+                "op": "le",
+                "value": 0.125
+              }
+            ],
+            "min_matches": 1,
+            "coverage": [],
+            "all_matches": true
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_groupwise_w8_15_m5_20260711.jsonl",
+            "axis": "mlx_decode_compile",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1g-1.5b-hf"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "mm8"
+              },
+              {
+                "field": "quant_backend",
+                "op": "eq",
+                "value": "groupwise"
+              },
+              {
+                "field": "decode_backend_used",
+                "op": "eq",
+                "value": "compiled"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "generated_tokens_match",
+                "op": "truthy"
+              },
+              {
+                "field": "mlx_peak_memory_bytes",
+                "op": "le",
+                "value": 2250000000
+              }
+            ],
+            "min_matches": 2,
+            "coverage": [],
+            "all_matches": true
+          }
+        ]
+      }
+    },
+    {
       "id": "quant.w4_memory_0p4b",
       "category": "quantization",
       "title": "0.4B W4 内存下降",
@@ -2214,6 +3133,127 @@
       }
     },
     {
+      "id": "quant.groupwise_w4_0p4_m5_close",
+      "category": "quantization",
+      "title": "M5 0.4B groupwise W4 compiled 限定门",
+      "criterion": "M5 batch1 chars512/decode64、warmup1+repeat3 的 native groupwise W4 路径实际 dispatch packed quantized matmul；compiled validation token 一致、logits/state≤0.125，peak≤0.51GB。",
+      "required": true,
+      "milestone": "apple_m5_close_20260711",
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "files",
+            "paths": [
+              "rwkv7_hf/mlx_quant.py",
+              "tests/test_mlx_quant.py"
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_groupwise_compiled_w4_04_m5_20260711.jsonl",
+            "axis": "qwen35_apple_baseline",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1d-0.4b-hf"
+              },
+              {
+                "field": "runtime",
+                "op": "eq",
+                "value": "mlx"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "mm4"
+              },
+              {
+                "field": "quant_backend",
+                "op": "eq",
+                "value": "groupwise"
+              },
+              {
+                "field": "decode_backend",
+                "op": "eq",
+                "value": "compiled"
+              },
+              {
+                "field": "decode_backend_last",
+                "op": "eq",
+                "value": "compiled"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "repeat",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "warmup_repeats",
+                "op": "ge",
+                "value": 1
+              },
+              {
+                "field": "generated_tokens",
+                "op": "eq",
+                "value": 64
+              },
+              {
+                "field": "seen_tokens_after_generate",
+                "op": "eq",
+                "value": 197
+              },
+              {
+                "field": "expected_seen_tokens",
+                "op": "eq",
+                "value": 197
+              },
+              {
+                "field": "compiled_decode_validation.status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "compiled_decode_validation.generated_tokens_match",
+                "op": "truthy"
+              },
+              {
+                "field": "compiled_decode_validation.logits_max_abs",
+                "op": "le",
+                "value": 0.125
+              },
+              {
+                "field": "compiled_decode_validation.state_max_abs",
+                "op": "le",
+                "value": 0.125
+              },
+              {
+                "field": "quantized_linear_last_backend_counts.groupwise",
+                "op": "gt",
+                "value": 0
+              },
+              {
+                "field": "mlx_peak_memory_bytes",
+                "op": "le",
+                "value": 510000000
+              }
+            ],
+            "min_matches": 3,
+            "coverage": [],
+            "all_matches": true
+          }
+        ]
+      }
+    },
+    {
       "id": "quant.w4_memory_1p5b",
       "category": "quantization",
       "title": "1.5B W4 内存下降",
@@ -2298,6 +3338,580 @@
             ],
             "min_matches": 1,
             "coverage": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "quant.groupwise_w4_1p5_m5_close",
+      "category": "quantization",
+      "title": "M5 1.5B groupwise W4 decode 限定门",
+      "criterion": "M5 batch1 chars512/decode64、warmup1+repeat3：groupwise W4 guarded compiled min decode≥55 tok/s、peak≤1.78GB，64-token token/logits/state 门通过；不替代全 bsz/长上下文/质量门。",
+      "required": true,
+      "milestone": "apple_m5_close_20260711",
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_groupwise_w4_15_m5_20260711.jsonl",
+            "axis": "mlx_decode_compile_env",
+            "where": [
+              {
+                "field": "mac_chip",
+                "op": "eq",
+                "value": "Apple M5"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "mm4"
+              },
+              {
+                "field": "quant_backend",
+                "op": "eq",
+                "value": "groupwise"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "info"
+              },
+              {
+                "field": "decode_tokens",
+                "op": "eq",
+                "value": 64
+              },
+              {
+                "field": "repeat",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "warmup",
+                "op": "ge",
+                "value": 1
+              },
+              {
+                "field": "validation_tokens",
+                "op": "ge",
+                "value": 64
+              }
+            ],
+            "min_matches": 1,
+            "coverage": [],
+            "all_matches": true
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_groupwise_w4_15_m5_20260711.jsonl",
+            "axis": "mlx_decode_compile_summary",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1g-1.5b-hf"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "mm4"
+              },
+              {
+                "field": "quant_backend",
+                "op": "eq",
+                "value": "groupwise"
+              },
+              {
+                "field": "decode_backend",
+                "op": "eq",
+                "value": "auto"
+              },
+              {
+                "field": "decode_backend_used",
+                "op": "eq",
+                "value": "compiled"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "repeats",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "min_decode_tok_s",
+                "op": "ge",
+                "value": 55
+              },
+              {
+                "field": "compiled_validation.status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "compiled_validation.steps",
+                "op": "ge",
+                "value": 64
+              },
+              {
+                "field": "compiled_validation.generated_tokens_match",
+                "op": "truthy"
+              },
+              {
+                "field": "compiled_validation.logits_max_abs",
+                "op": "le",
+                "value": 0.125
+              },
+              {
+                "field": "compiled_validation.state_max_abs",
+                "op": "le",
+                "value": 0.125
+              }
+            ],
+            "min_matches": 1,
+            "coverage": [],
+            "all_matches": true
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_groupwise_w4_15_m5_20260711.jsonl",
+            "axis": "mlx_decode_compile",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1g-1.5b-hf"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "mm4"
+              },
+              {
+                "field": "quant_backend",
+                "op": "eq",
+                "value": "groupwise"
+              },
+              {
+                "field": "decode_backend_used",
+                "op": "eq",
+                "value": "compiled"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "generated_tokens_match",
+                "op": "truthy"
+              },
+              {
+                "field": "mlx_peak_memory_bytes",
+                "op": "le",
+                "value": 1780000000
+              }
+            ],
+            "min_matches": 3,
+            "coverage": [],
+            "all_matches": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "quant.quality_fp16_proxy_m5",
+      "category": "quantization",
+      "title": "M5 同 checkpoint FP16 量化质量 proxy",
+      "criterion": "M5 上以同一 RWKV checkpoint 的 fp16 为 teacher，覆盖 0.4B/1.5B、276 scored tokens、4 个 greedy prompts：W8 NLL delta≤0.02、perplexity ratio≤1.02、teacher top1≥0.95；mixed W8/W4 q4_k_m proxy 分别≤0.08/1.09/≥0.80，且权重存储下降。该门不声称 llama.cpp/GGUF Q*_K_M 等价，也不关闭 greedy/state parity。",
+      "required": true,
+      "milestone": "apple_m5_quant_quality_proxy_20260712",
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "files",
+            "paths": [
+              "bench/run_mlx_quant_quality.py",
+              "tests/test_mlx_quant_quality.py"
+            ]
+          },
+          {
+            "type": "tracked_files",
+            "paths": [
+              "bench/apple_quant_quality_q4km_m5_20260712.jsonl"
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_quant_quality_q4km_m5_20260712.jsonl",
+            "axis": "mlx_quant_quality_env",
+            "where": [
+              {
+                "field": "git_commit",
+                "op": "contains",
+                "value": "00fa329"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "info"
+              },
+              {
+                "field": "platform",
+                "op": "contains",
+                "value": "macOS"
+              },
+              {
+                "field": "quantizations",
+                "op": "contains",
+                "value": "mm8"
+              },
+              {
+                "field": "quantizations",
+                "op": "contains",
+                "value": "mm4"
+              },
+              {
+                "field": "quant_backend",
+                "op": "eq",
+                "value": "groupwise"
+              },
+              {
+                "field": "quant_group_size",
+                "op": "eq",
+                "value": 64
+              },
+              {
+                "field": "w4_profile",
+                "op": "eq",
+                "value": "q4_k_m"
+              },
+              {
+                "field": "max_corpus_tokens",
+                "op": "ge",
+                "value": 512
+              },
+              {
+                "field": "chunk_tokens",
+                "op": "eq",
+                "value": 128
+              },
+              {
+                "field": "greedy_tokens",
+                "op": "eq",
+                "value": 32
+              }
+            ],
+            "min_matches": 1,
+            "coverage": [],
+            "all_matches": true
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_quant_quality_q4km_m5_20260712.jsonl",
+            "axis": "mlx_quant_quality",
+            "where": [
+              {
+                "field": "dtype",
+                "op": "eq",
+                "value": "fp16"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "none"
+              },
+              {
+                "field": "quant_profile",
+                "op": "eq",
+                "value": "none"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "mean_nll",
+                "op": "ge",
+                "value": 0
+              },
+              {
+                "field": "perplexity",
+                "op": "ge",
+                "value": 1
+              },
+              {
+                "field": "scored_tokens",
+                "op": "ge",
+                "value": 276
+              },
+              {
+                "field": "greedy_prompts",
+                "op": "ge",
+                "value": 4
+              },
+              {
+                "field": "greedy_tokens_per_prompt",
+                "op": "ge",
+                "value": 32
+              },
+              {
+                "field": "weight_storage_bytes",
+                "op": "gt",
+                "value": 0
+              }
+            ],
+            "min_matches": 2,
+            "coverage": [
+              {
+                "field": "model",
+                "values": [
+                  "rwkv7-g1d-0.4b-hf",
+                  "rwkv7-g1g-1.5b-hf"
+                ]
+              }
+            ],
+            "all_matches": true
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_quant_quality_q4km_m5_20260712.jsonl",
+            "axis": "mlx_quant_quality",
+            "where": [
+              {
+                "field": "dtype",
+                "op": "eq",
+                "value": "fp16"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "mm8"
+              },
+              {
+                "field": "quant_backend",
+                "op": "eq",
+                "value": "groupwise"
+              },
+              {
+                "field": "quant_profile",
+                "op": "eq",
+                "value": "uniform"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "nll_delta",
+                "op": "le",
+                "value": 0.02
+              },
+              {
+                "field": "perplexity_ratio",
+                "op": "le",
+                "value": 1.02
+              },
+              {
+                "field": "teacher_top1_agreement",
+                "op": "ge",
+                "value": 0.95
+              },
+              {
+                "field": "scored_tokens",
+                "op": "ge",
+                "value": 276
+              },
+              {
+                "field": "greedy_prompt_count",
+                "op": "ge",
+                "value": 4
+              },
+              {
+                "field": "weight_storage_ratio",
+                "op": "lt",
+                "value": 1.0
+              },
+              {
+                "field": "quantized_linear_count",
+                "op": "gt",
+                "value": 0
+              },
+              {
+                "field": "quantized_linear_bits_histogram.8",
+                "op": "gt",
+                "value": 0
+              },
+              {
+                "field": "failed_gates",
+                "op": "empty"
+              }
+            ],
+            "min_matches": 2,
+            "coverage": [
+              {
+                "field": "model",
+                "values": [
+                  "rwkv7-g1d-0.4b-hf",
+                  "rwkv7-g1g-1.5b-hf"
+                ]
+              }
+            ],
+            "all_matches": true
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_quant_quality_q4km_m5_20260712.jsonl",
+            "axis": "mlx_quant_quality",
+            "where": [
+              {
+                "field": "dtype",
+                "op": "eq",
+                "value": "fp16"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "mm4"
+              },
+              {
+                "field": "quant_backend",
+                "op": "eq",
+                "value": "groupwise"
+              },
+              {
+                "field": "quant_profile",
+                "op": "eq",
+                "value": "q4_k_m"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "nll_delta",
+                "op": "le",
+                "value": 0.08
+              },
+              {
+                "field": "perplexity_ratio",
+                "op": "le",
+                "value": 1.09
+              },
+              {
+                "field": "teacher_top1_agreement",
+                "op": "ge",
+                "value": 0.8
+              },
+              {
+                "field": "scored_tokens",
+                "op": "ge",
+                "value": 276
+              },
+              {
+                "field": "greedy_prompt_count",
+                "op": "ge",
+                "value": 4
+              },
+              {
+                "field": "weight_storage_ratio",
+                "op": "lt",
+                "value": 1.0
+              },
+              {
+                "field": "quantized_linear_count",
+                "op": "gt",
+                "value": 0
+              },
+              {
+                "field": "quantized_linear_bits_histogram.8",
+                "op": "gt",
+                "value": 0
+              },
+              {
+                "field": "quantized_linear_bits_histogram.4",
+                "op": "gt",
+                "value": 0
+              },
+              {
+                "field": "failed_gates",
+                "op": "empty"
+              }
+            ],
+            "min_matches": 2,
+            "coverage": [
+              {
+                "field": "model",
+                "values": [
+                  "rwkv7-g1d-0.4b-hf",
+                  "rwkv7-g1g-1.5b-hf"
+                ]
+              }
+            ],
+            "all_matches": true
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/apple_quant_quality_q4km_m5_20260712.jsonl",
+            "axis": "mlx_quant_quality_summary",
+            "where": [],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "models",
+                "op": "eq",
+                "value": 2
+              },
+              {
+                "field": "quant_rows",
+                "op": "eq",
+                "value": 4
+              },
+              {
+                "field": "pass_rows",
+                "op": "eq",
+                "value": 4
+              },
+              {
+                "field": "fail_rows",
+                "op": "eq",
+                "value": 0
+              },
+              {
+                "field": "note",
+                "op": "contains",
+                "value": "external baseline"
+              }
+            ],
+            "min_matches": 1,
+            "coverage": [],
+            "all_matches": true
           }
         ]
       }
@@ -2631,34 +4245,86 @@
       "criterion": "M5 base 机器环境、MPS 与 MLX 真机结果可追溯。",
       "required": true,
       "proof": {
-        "type": "jsonl_query",
-        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
-        "axis": "apple_silicon_env",
-        "where": [
+        "type": "all",
+        "proofs": [
           {
-            "field": "chip",
-            "op": "eq",
-            "value": "Apple M5"
+            "type": "jsonl_query",
+            "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+            "axis": "apple_silicon_env",
+            "where": [
+              {
+                "field": "chip",
+                "op": "eq",
+                "value": "Apple M5"
+              },
+              {
+                "field": "machine",
+                "op": "eq",
+                "value": "arm64"
+              }
+            ],
+            "require": [
+              {
+                "field": "mps_available",
+                "op": "truthy"
+              },
+              {
+                "field": "memory_gb",
+                "op": "ge",
+                "value": 16
+              }
+            ],
+            "min_matches": 1,
+            "coverage": []
           },
           {
-            "field": "machine",
-            "op": "eq",
-            "value": "arm64"
+            "type": "jsonl_query",
+            "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+            "axis": "qwen35_apple_baseline_env",
+            "where": [
+              {
+                "field": "mac_chip",
+                "op": "eq",
+                "value": "Apple M5"
+              },
+              {
+                "field": "machine",
+                "op": "eq",
+                "value": "arm64"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "info"
+              },
+              {
+                "field": "mac_memsize_bytes",
+                "op": "ge",
+                "value": 17179869184
+              },
+              {
+                "field": "repeat",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "warmup_repeats",
+                "op": "ge",
+                "value": 1
+              },
+              {
+                "field": "decode_lengths",
+                "op": "contains",
+                "value": 64
+              }
+            ],
+            "min_matches": 4,
+            "coverage": [],
+            "all_matches": true
           }
-        ],
-        "require": [
-          {
-            "field": "mps_available",
-            "op": "truthy"
-          },
-          {
-            "field": "memory_gb",
-            "op": "ge",
-            "value": 16
-          }
-        ],
-        "min_matches": 1,
-        "coverage": []
+        ]
       }
     },
     {
@@ -2683,9 +4349,14 @@
       "required": true,
       "proof": {
         "type": "jsonl_query",
-        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
-        "axis": "apple_silicon_env",
+        "path": "bench/apple_production_close_qwen35_gate_m5_20260711.jsonl",
+        "axis": "qwen35_apple_baseline_env",
         "where": [
+          {
+            "field": "mac_chip",
+            "op": "eq",
+            "value": "Apple M5"
+          },
           {
             "field": "machine",
             "op": "eq",
@@ -2694,13 +4365,34 @@
         ],
         "require": [
           {
-            "field": "memory_gb",
+            "field": "status",
+            "op": "eq",
+            "value": "info"
+          },
+          {
+            "field": "mac_memsize_bytes",
             "op": "ge",
-            "value": 16
+            "value": 17179869184
+          },
+          {
+            "field": "repeat",
+            "op": "ge",
+            "value": 3
+          },
+          {
+            "field": "warmup_repeats",
+            "op": "ge",
+            "value": 1
+          },
+          {
+            "field": "decode_lengths",
+            "op": "contains",
+            "value": 64
           }
         ],
-        "min_matches": 1,
-        "coverage": []
+        "min_matches": 4,
+        "coverage": [],
+        "all_matches": true
       }
     },
     {
