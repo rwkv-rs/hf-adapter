@@ -12,7 +12,9 @@ import gc
 import importlib.util
 import json
 import os
+import shutil
 import statistics
+import tempfile
 import time
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -163,7 +165,26 @@ def set_rwkv_runtime(model, args: argparse.Namespace) -> None:
             attn.mode = args.rwkv_attn_mode
 
 
-def load_model(args: argparse.Namespace, dtype: torch.dtype):
+def prepare_rwkv_model_dir(model_path: str, code_source: str) -> tuple[str, tempfile.TemporaryDirectory[str] | None]:
+    if code_source == "model":
+        return model_path, None
+    source = Path(model_path).resolve()
+    repo_code = Path(__file__).resolve().parents[1] / "rwkv7_hf"
+    if not source.is_dir():
+        raise ValueError("--rwkv-code-source repo requires a local converted model directory")
+    temporary = tempfile.TemporaryDirectory(prefix="rwkv7_qwen35_repo_code_")
+    target = Path(temporary.name)
+    for item in source.iterdir():
+        if item.name == "__pycache__" or item.suffix == ".py":
+            continue
+        link = target / item.name
+        link.symlink_to(item, target_is_directory=item.is_dir())
+    for py_file in repo_code.glob("*.py"):
+        shutil.copy2(py_file, target / py_file.name)
+    return str(target), temporary
+
+
+def load_model(args: argparse.Namespace, dtype: torch.dtype, model_path: str | None = None):
     kwargs: dict[str, Any] = {
         "torch_dtype": dtype,
         "device_map": device_map_for(args.device),
@@ -174,7 +195,7 @@ def load_model(args: argparse.Namespace, dtype: torch.dtype):
         kwargs["quantization_config"] = qconfig
     if args.model_kind == "rwkv":
         kwargs["trust_remote_code"] = True
-        model = AutoModelForCausalLM.from_pretrained(args.model, **kwargs).eval()
+        model = AutoModelForCausalLM.from_pretrained(model_path or args.model, **kwargs).eval()
         set_rwkv_runtime(model, args)
         return model
 
@@ -276,8 +297,12 @@ def environment_metadata(args: argparse.Namespace) -> dict[str, Any]:
 def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     dtype = DTYPES[args.dtype]
     started = time.perf_counter()
-    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=args.model_kind == "rwkv")
-    model = load_model(args, dtype)
+    effective_model_path = args.model
+    temporary = None
+    if args.model_kind == "rwkv":
+        effective_model_path, temporary = prepare_rwkv_model_dir(args.model, args.rwkv_code_source)
+    tokenizer = AutoTokenizer.from_pretrained(effective_model_path, trust_remote_code=args.model_kind == "rwkv")
+    model = load_model(args, dtype, effective_model_path)
     load_s = time.perf_counter() - started
     input_device = str(next(model.parameters()).device)
     ids = build_exact_prompt(tokenizer, args.prompt_tokens, args.batch_size, input_device)
@@ -319,6 +344,8 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
     gc.collect()
     if args.device.startswith("cuda"):
         torch.cuda.empty_cache()
+    if temporary is not None:
+        temporary.cleanup()
     return row
 
 
@@ -347,6 +374,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--warmup", type=int, default=1)
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--rwkv-attn-mode", choices=["chunk", "fused_recurrent"], default="fused_recurrent")
+    ap.add_argument("--rwkv-code-source", choices=["repo", "model"], default="repo")
     ap.add_argument("--results", default="")
     ap.add_argument("--optional", action="store_true")
     args = ap.parse_args()

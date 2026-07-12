@@ -184,6 +184,8 @@ def worker_command(args: argparse.Namespace, spec: RunSpec) -> list[str]:
         str(args.runs),
         "--rwkv-attn-mode",
         args.rwkv_attn_mode,
+        "--rwkv-code-source",
+        args.rwkv_code_source,
         "--results",
         str(args.results),
     ]
@@ -243,6 +245,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--warmup", type=int, default=1)
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--rwkv-attn-mode", choices=["chunk", "fused_recurrent"], default="fused_recurrent")
+    ap.add_argument("--rwkv-code-source", choices=["repo", "model"], default="repo")
     ap.add_argument("--rwkv-fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="native_graph")
     ap.add_argument("--python-bin", default=sys.executable)
     ap.add_argument("--bench-script", default=str(Path(__file__).with_name("bench_cross_model_speed.py")))
