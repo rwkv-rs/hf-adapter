@@ -74,6 +74,36 @@ def _layer_indices(arrays: dict[str, Any]) -> list[int]:
     return sorted(found)
 
 
+MLX_QUANT_PROFILES = {"uniform", "q4_k_m"}
+
+
+def mlx_quant_bits_for_weight(weight_key: str, *, bits: int, profile: str = "uniform") -> int:
+    """Return the per-weight bit width for an MLX quantization profile.
+
+    ``q4_k_m`` is a Q4_K_M-inspired mixed-precision profile rather than a
+    claim of GGUF bit-for-bit compatibility. RWKV calibration on measured MLX hardware
+    shows that the output head, FFN value/down projection, and attention
+    receptance/value projections are substantially more sensitive than the
+    remaining large matrices. They stay at W8 while the rest use W4.
+    """
+
+    normalized = (profile or "uniform").lower().strip()
+    if normalized not in MLX_QUANT_PROFILES:
+        raise ValueError(
+            f"unsupported MLX quant profile {profile!r}; expected one of {sorted(MLX_QUANT_PROFILES)}"
+        )
+    base_bits = int(bits)
+    if base_bits != 4 or normalized == "uniform":
+        return base_bits
+    sensitive = (
+        weight_key == "lm_head.weight"
+        or ".ffn.value.weight" in weight_key
+        or ".attn.r_proj.weight" in weight_key
+        or ".attn.v_proj.weight" in weight_key
+    )
+    return 8 if sensitive else 4
+
+
 class MLXRWKV7Model:
     """Minimal MLX-native RWKV-7 recurrent model loaded from HF safetensors."""
 
@@ -110,6 +140,9 @@ class MLXRWKV7Model:
         self.quantized_linear_backend: str | None = None
         self.quantized_linear_min_params: int | None = None
         self.quantized_linear_rkv_min_params: int | None = None
+        self.quantized_linear_profile: str | None = None
+        self.quantized_linear_group_size: int | None = None
+        self.quantized_linear_bits_histogram: dict[int, int] = {}
         self.step_eval_interval = max(1, _env_int("RWKV7_MLX_STEP_EVAL_INTERVAL", 1))
         self.fused_ffn_key_relu2 = _env_flag("RWKV7_MLX_FUSED_FFN_KEY_RELU2", False)
         self.fused_ffn_key_relu2_counts: dict[str, int] = {"metal": 0, "fallback": 0}
@@ -198,6 +231,8 @@ class MLXRWKV7Model:
         quant_min_params: int = 8_000_000,
         quant_rkv_min_params: int | None = None,
         quant_backend: str = "affine",
+        quant_profile: str = "uniform",
+        quant_group_size: int = 64,
         wkv_backend: str = "reference",
     ) -> "MLXRWKV7Model":
         root = Path(model_dir)
@@ -210,6 +245,8 @@ class MLXRWKV7Model:
                 min_params=quant_min_params,
                 rkv_min_params=quant_rkv_min_params,
                 backend=quant_backend,
+                profile=quant_profile,
+                group_size=quant_group_size,
             )
         return model
 
@@ -247,6 +284,8 @@ class MLXRWKV7Model:
         min_params: int = 8_000_000,
         rkv_min_params: int | None = None,
         backend: str = "affine",
+        profile: str = "uniform",
+        group_size: int = 64,
     ) -> int:
         """Replace eligible dense MLX Linear weights with packed W8/W4 weights.
 
@@ -271,6 +310,13 @@ class MLXRWKV7Model:
                 f"unsupported MLX quant backend {backend!r}; "
                 "expected affine, reference, metal, auto, or groupwise"
             )
+        profile = (profile or "uniform").lower().strip()
+        if profile not in MLX_QUANT_PROFILES:
+            raise ValueError(
+                f"unsupported MLX quant profile {profile!r}; expected one of {sorted(MLX_QUANT_PROFILES)}"
+            )
+        if int(group_size) not in {32, 64, 128}:
+            raise ValueError("MLX quant group_size must be one of 32, 64, or 128")
         q = quantization.lower().strip()
         if q in {"mm8", "w8", "8", "int8"}:
             bits = 8
@@ -286,7 +332,13 @@ class MLXRWKV7Model:
         for key in selected:
             dense = self.arrays.pop(key)
             self.quantized_dense_equivalent_bytes += mlx_array_nbytes(dense)
-            qlinear = MLXQuantizedLinear.from_linear_weight(dense, bits=bits, backend=backend)
+            weight_bits = mlx_quant_bits_for_weight(key, bits=bits, profile=profile)
+            qlinear = MLXQuantizedLinear.from_linear_weight(
+                dense,
+                bits=weight_bits,
+                backend=backend,
+                group_size=int(group_size),
+            )
             self.quantized_linears[key] = qlinear
             self.quantized_linear_bytes += qlinear.storage_bytes
         self._rkv_group_quant_cache.clear()
@@ -294,6 +346,12 @@ class MLXRWKV7Model:
         self.quantized_linear_backend = backend if selected else None
         self.quantized_linear_min_params = int(min_params) if selected else None
         self.quantized_linear_rkv_min_params = effective_rkv_min_params if selected else None
+        self.quantized_linear_profile = profile if selected else None
+        self.quantized_linear_group_size = int(group_size) if selected and backend == "groupwise" else None
+        histogram: dict[int, int] = {}
+        for qlinear in self.quantized_linears.values():
+            histogram[int(qlinear.bits)] = histogram.get(int(qlinear.bits), 0) + 1
+        self.quantized_linear_bits_histogram = histogram
         return len(selected)
 
     def reset_telemetry_counters(self) -> None:
@@ -378,6 +436,9 @@ class MLXRWKV7Model:
                     "quantized_linear_backend": self.quantized_linear_backend,
                     "quantized_linear_min_params": self.quantized_linear_min_params,
                     "quantized_linear_rkv_min_params": self.quantized_linear_rkv_min_params,
+                    "quantized_linear_profile": self.quantized_linear_profile,
+                    "quantized_linear_group_size": self.quantized_linear_group_size,
+                    "quantized_linear_bits_histogram": dict(self.quantized_linear_bits_histogram),
                     "quantized_linear_bytes": int(self.quantized_linear_bytes),
                     "quantized_dense_equivalent_bytes": int(self.quantized_dense_equivalent_bytes),
                     "quantized_footprint_ratio": round(
@@ -1712,6 +1773,8 @@ def load_mlx_rwkv7_model(
     quant_min_params: int = 8_000_000,
     quant_rkv_min_params: int | None = None,
     quant_backend: str = "affine",
+    quant_profile: str = "uniform",
+    quant_group_size: int = 64,
     wkv_backend: str = "reference",
 ) -> MLXRWKV7Model:
     return MLXRWKV7Model.from_hf(
@@ -1721,6 +1784,8 @@ def load_mlx_rwkv7_model(
         quant_min_params=quant_min_params,
         quant_rkv_min_params=quant_rkv_min_params,
         quant_backend=quant_backend,
+        quant_profile=quant_profile,
+        quant_group_size=quant_group_size,
         wkv_backend=wkv_backend,
     )
 
@@ -1735,6 +1800,8 @@ def load_mlx_generation_session(
     quant_min_params: int = 8_000_000,
     quant_rkv_min_params: int | None = None,
     quant_backend: str = "affine",
+    quant_profile: str = "uniform",
+    quant_group_size: int = 64,
     wkv_backend: str = "reference",
     decode_backend: str | None = None,
     decode_norm_backend: str | None = None,
@@ -1769,6 +1836,8 @@ def load_mlx_generation_session(
         quant_min_params=quant_min_params,
         quant_rkv_min_params=quant_rkv_min_params,
         quant_backend=quant_backend,
+        quant_profile=quant_profile,
+        quant_group_size=quant_group_size,
         wkv_backend=wkv_backend,
     )
     if decode_backend is not None:
@@ -1804,6 +1873,8 @@ def generate_text_from_hf(
     quant_min_params: int = 8_000_000,
     quant_rkv_min_params: int | None = None,
     quant_backend: str = "affine",
+    quant_profile: str = "uniform",
+    quant_group_size: int = 64,
     wkv_backend: str = "reference",
     decode_backend: str | None = None,
     decode_norm_backend: str | None = None,
@@ -1825,6 +1896,8 @@ def generate_text_from_hf(
         quant_min_params=quant_min_params,
         quant_rkv_min_params=quant_rkv_min_params,
         quant_backend=quant_backend,
+        quant_profile=quant_profile,
+        quant_group_size=quant_group_size,
         wkv_backend=wkv_backend,
         decode_backend=decode_backend,
         decode_norm_backend=decode_norm_backend,

@@ -84,6 +84,8 @@ def main() -> int:
         help="Separate min-params threshold for attention r/k/v projection quantization; -1 preserves --quant-min-params.",
     )
     ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference", "metal", "auto", "groupwise"], help="MLX quantized matmul backend.")
+    ap.add_argument("--quant-profile", default="uniform", choices=["uniform", "q4_k_m"])
+    ap.add_argument("--quant-group-size", type=int, default=64, choices=[32, 64, 128])
     ap.add_argument("--wkv-backend", default="reference", choices=["reference", "metal", "auto"], help="MLX recurrent WKV update backend.")
     ap.add_argument("--require-mlx", action="store_true")
     ap.add_argument("--json-only", action="store_true")
@@ -112,6 +114,8 @@ def main() -> int:
             "quant_min_params": int(args.quant_min_params),
             "quant_rkv_min_params": None if int(args.quant_rkv_min_params) < 0 else int(args.quant_rkv_min_params),
             "quant_backend": args.quant_backend,
+            "quant_profile": args.quant_profile,
+            "quant_group_size": int(args.quant_group_size),
             "wkv_backend": args.wkv_backend,
         }
         print(json.dumps(row, ensure_ascii=False))
@@ -129,6 +133,8 @@ def main() -> int:
         quant_min_params=int(args.quant_min_params),
         quant_rkv_min_params=None if int(args.quant_rkv_min_params) < 0 else int(args.quant_rkv_min_params),
         quant_backend=args.quant_backend,
+        quant_profile=args.quant_profile,
+        quant_group_size=int(args.quant_group_size),
         wkv_backend=args.wkv_backend,
     )
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
@@ -146,6 +152,8 @@ def main() -> int:
         "quant_min_params": int(args.quant_min_params),
         "quant_rkv_min_params": None if int(args.quant_rkv_min_params) < 0 else int(args.quant_rkv_min_params),
         "quant_backend": args.quant_backend,
+        "quant_profile": args.quant_profile,
+        "quant_group_size": int(args.quant_group_size),
         "wkv_backend": args.wkv_backend,
         "load_s": round(float(load_s), 6),
         **model.telemetry(),
@@ -206,6 +214,8 @@ def main() -> int:
                     if int(args.quant_rkv_min_params) < 0
                     else int(args.quant_rkv_min_params),
                     "quant_backend": args.quant_backend,
+                    "quant_profile": args.quant_profile,
+                    "quant_group_size": int(args.quant_group_size),
                     "wkv_backend": args.wkv_backend,
                     "prompt_tokens": int(prompt_tokens),
                     "generated_tokens": int(decode_tokens),
@@ -242,6 +252,8 @@ def main() -> int:
         "quant_min_params": int(args.quant_min_params),
         "quant_rkv_min_params": None if int(args.quant_rkv_min_params) < 0 else int(args.quant_rkv_min_params),
         "quant_backend": args.quant_backend,
+        "quant_profile": args.quant_profile,
+        "quant_group_size": int(args.quant_group_size),
         "wkv_backend": args.wkv_backend,
         "rows": len(rows),
         "max_prompt_tokens": max(prompt_lengths),

@@ -1,0 +1,507 @@
+Requirement already satisfied: pip in /private/var/folders/jb/vq4jn1w94dsc2tt35tfkrvkr0000gn/T/rwkv7-clean-test.NDbeeM/lib/python3.11/site-packages (26.1.2)
+Requirement already satisfied: setuptools in /private/var/folders/jb/vq4jn1w94dsc2tt35tfkrvkr0000gn/T/rwkv7-clean-test.NDbeeM/lib/python3.11/site-packages (82.0.1)
+Collecting setuptools
+  Using cached setuptools-83.0.0-py3-none-any.whl.metadata (6.6 kB)
+Collecting wheel
+  Using cached wheel-0.47.0-py3-none-any.whl.metadata (2.3 kB)
+Collecting packaging>=24.0 (from wheel)
+  Using cached packaging-26.2-py3-none-any.whl.metadata (3.5 kB)
+Using cached setuptools-83.0.0-py3-none-any.whl (1.0 MB)
+Using cached wheel-0.47.0-py3-none-any.whl (32 kB)
+Using cached packaging-26.2-py3-none-any.whl (100 kB)
+Installing collected packages: setuptools, packaging, wheel
+  Attempting uninstall: setuptools
+    Found existing installation: setuptools 82.0.1
+    Uninstalling setuptools-82.0.1:
+      Successfully uninstalled setuptools-82.0.1
+
+Successfully installed packaging-26.2 setuptools-83.0.0 wheel-0.47.0
+Processing ./.
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'done'
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Collecting torch (from rwkv7-hf-adapter==0.5.0)
+  Using cached torch-2.13.0-cp311-cp311-macosx_14_0_arm64.whl.metadata (39 kB)
+Collecting transformers (from rwkv7-hf-adapter==0.5.0)
+  Using cached transformers-5.13.1-py3-none-any.whl.metadata (32 kB)
+Collecting safetensors (from rwkv7-hf-adapter==0.5.0)
+  Using cached safetensors-0.8.0-cp310-abi3-macosx_11_0_arm64.whl.metadata (4.2 kB)
+Collecting pytest>=8.0 (from rwkv7-hf-adapter==0.5.0)
+  Using cached pytest-9.1.1-py3-none-any.whl.metadata (7.6 kB)
+Collecting numpy (from rwkv7-hf-adapter==0.5.0)
+  Using cached numpy-2.4.6-cp311-cp311-macosx_14_0_arm64.whl.metadata (6.6 kB)
+Collecting peft (from rwkv7-hf-adapter==0.5.0)
+  Using cached peft-0.19.1-py3-none-any.whl.metadata (15 kB)
+Collecting accelerate (from rwkv7-hf-adapter==0.5.0)
+  Using cached accelerate-1.14.0-py3-none-any.whl.metadata (19 kB)
+Collecting datasets (from rwkv7-hf-adapter==0.5.0)
+  Using cached datasets-5.0.0-py3-none-any.whl.metadata (23 kB)
+Collecting trl (from rwkv7-hf-adapter==0.5.0)
+  Using cached trl-1.8.0-py3-none-any.whl.metadata (12 kB)
+Collecting mlx (from rwkv7-hf-adapter==0.5.0)
+  Using cached mlx-0.32.0-cp311-cp311-macosx_26_0_arm64.whl.metadata (5.9 kB)
+Collecting iniconfig>=1.0.1 (from pytest>=8.0->rwkv7-hf-adapter==0.5.0)
+  Using cached iniconfig-2.3.0-py3-none-any.whl.metadata (2.5 kB)
+Requirement already satisfied: packaging>=22 in /private/var/folders/jb/vq4jn1w94dsc2tt35tfkrvkr0000gn/T/rwkv7-clean-test.NDbeeM/lib/python3.11/site-packages (from pytest>=8.0->rwkv7-hf-adapter==0.5.0) (26.2)
+Collecting pluggy<2,>=1.5 (from pytest>=8.0->rwkv7-hf-adapter==0.5.0)
+  Using cached pluggy-1.6.0-py3-none-any.whl.metadata (4.8 kB)
+Collecting pygments>=2.7.2 (from pytest>=8.0->rwkv7-hf-adapter==0.5.0)
+  Using cached pygments-2.20.0-py3-none-any.whl.metadata (2.5 kB)
+Collecting psutil (from accelerate->rwkv7-hf-adapter==0.5.0)
+  Using cached psutil-7.2.2-cp36-abi3-macosx_11_0_arm64.whl.metadata (22 kB)
+Collecting pyyaml (from accelerate->rwkv7-hf-adapter==0.5.0)
+  Using cached pyyaml-6.0.3-cp311-cp311-macosx_11_0_arm64.whl.metadata (2.4 kB)
+Collecting huggingface_hub>=0.21.0 (from accelerate->rwkv7-hf-adapter==0.5.0)
+  Using cached huggingface_hub-1.23.0-py3-none-any.whl.metadata (14 kB)
+Collecting click<9.0.0,>=8.4.2 (from huggingface_hub>=0.21.0->accelerate->rwkv7-hf-adapter==0.5.0)
+  Using cached click-8.4.2-py3-none-any.whl.metadata (2.6 kB)
+Collecting filelock>=3.10.0 (from huggingface_hub>=0.21.0->accelerate->rwkv7-hf-adapter==0.5.0)
+  Using cached filelock-3.29.7-py3-none-any.whl.metadata (2.0 kB)
+Collecting fsspec>=2023.5.0 (from huggingface_hub>=0.21.0->accelerate->rwkv7-hf-adapter==0.5.0)
+  Using cached fsspec-2026.6.0-py3-none-any.whl.metadata (10 kB)
+Collecting hf-xet<2.0.0,>=1.5.1 (from huggingface_hub>=0.21.0->accelerate->rwkv7-hf-adapter==0.5.0)
+  Using cached hf_xet-1.5.1-cp37-abi3-macosx_11_0_arm64.whl.metadata (4.9 kB)
+Collecting httpx<1,>=0.23.0 (from huggingface_hub>=0.21.0->accelerate->rwkv7-hf-adapter==0.5.0)
+  Using cached httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+Collecting tqdm>=4.42.1 (from huggingface_hub>=0.21.0->accelerate->rwkv7-hf-adapter==0.5.0)
+  Using cached tqdm-4.68.4-py3-none-any.whl.metadata (57 kB)
+Collecting typing-extensions>=4.1.0 (from huggingface_hub>=0.21.0->accelerate->rwkv7-hf-adapter==0.5.0)
+  Using cached typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting anyio (from httpx<1,>=0.23.0->huggingface_hub>=0.21.0->accelerate->rwkv7-hf-adapter==0.5.0)
+  Using cached anyio-4.14.1-py3-none-any.whl.metadata (4.6 kB)
+Collecting certifi (from httpx<1,>=0.23.0->huggingface_hub>=0.21.0->accelerate->rwkv7-hf-adapter==0.5.0)
+  Using cached certifi-2026.6.17-py3-none-any.whl.metadata (2.5 kB)
+Collecting httpcore==1.* (from httpx<1,>=0.23.0->huggingface_hub>=0.21.0->accelerate->rwkv7-hf-adapter==0.5.0)
+  Using cached httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+Collecting idna (from httpx<1,>=0.23.0->huggingface_hub>=0.21.0->accelerate->rwkv7-hf-adapter==0.5.0)
+  Using cached idna-3.18-py3-none-any.whl.metadata (6.1 kB)
+Collecting h11>=0.16 (from httpcore==1.*->httpx<1,>=0.23.0->huggingface_hub>=0.21.0->accelerate->rwkv7-hf-adapter==0.5.0)
+  Using cached h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+Requirement already satisfied: setuptools>=77.0.3 in /private/var/folders/jb/vq4jn1w94dsc2tt35tfkrvkr0000gn/T/rwkv7-clean-test.NDbeeM/lib/python3.11/site-packages (from torch->rwkv7-hf-adapter==0.5.0) (83.0.0)
+Collecting sympy>=1.13.3 (from torch->rwkv7-hf-adapter==0.5.0)
+  Using cached sympy-1.14.0-py3-none-any.whl.metadata (12 kB)
+Collecting networkx>=2.5.1 (from torch->rwkv7-hf-adapter==0.5.0)
+  Using cached networkx-3.6.1-py3-none-any.whl.metadata (6.8 kB)
+Collecting jinja2 (from torch->rwkv7-hf-adapter==0.5.0)
+  Using cached jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+Collecting mpmath<1.4,>=1.1.0 (from sympy>=1.13.3->torch->rwkv7-hf-adapter==0.5.0)
+  Using cached mpmath-1.3.0-py3-none-any.whl.metadata (8.6 kB)
+Collecting pyarrow>=21.0.0 (from datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached pyarrow-25.0.0-cp311-cp311-macosx_12_0_arm64.whl.metadata (3.0 kB)
+Collecting dill<0.4.2,>=0.3.0 (from datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached dill-0.4.1-py3-none-any.whl.metadata (10 kB)
+Collecting pandas (from datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached pandas-3.0.3-cp311-cp311-macosx_11_0_arm64.whl.metadata (79 kB)
+Collecting requests>=2.32.2 (from datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached requests-2.34.2-py3-none-any.whl.metadata (4.8 kB)
+Collecting xxhash (from datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached xxhash-3.8.1-cp311-cp311-macosx_11_0_arm64.whl.metadata (15 kB)
+Collecting multiprocess<0.70.20 (from datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached multiprocess-0.70.19-py311-none-any.whl.metadata (7.5 kB)
+Collecting fsspec>=2023.5.0 (from huggingface_hub>=0.21.0->accelerate->rwkv7-hf-adapter==0.5.0)
+  Using cached fsspec-2026.4.0-py3-none-any.whl.metadata (10 kB)
+Collecting aiohttp!=4.0.0a0,!=4.0.0a1 (from fsspec[http]<=2026.4.0,>=2023.1.0->datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached aiohttp-3.14.1-cp311-cp311-macosx_11_0_arm64.whl.metadata (8.3 kB)
+Collecting aiohappyeyeballs>=2.5.0 (from aiohttp!=4.0.0a0,!=4.0.0a1->fsspec[http]<=2026.4.0,>=2023.1.0->datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached aiohappyeyeballs-2.7.1-py3-none-any.whl.metadata (5.9 kB)
+Collecting aiosignal>=1.4.0 (from aiohttp!=4.0.0a0,!=4.0.0a1->fsspec[http]<=2026.4.0,>=2023.1.0->datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached aiosignal-1.4.0-py3-none-any.whl.metadata (3.7 kB)
+Collecting attrs>=17.3.0 (from aiohttp!=4.0.0a0,!=4.0.0a1->fsspec[http]<=2026.4.0,>=2023.1.0->datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached attrs-26.1.0-py3-none-any.whl.metadata (8.8 kB)
+Collecting frozenlist>=1.1.1 (from aiohttp!=4.0.0a0,!=4.0.0a1->fsspec[http]<=2026.4.0,>=2023.1.0->datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached frozenlist-1.8.0-cp311-cp311-macosx_11_0_arm64.whl.metadata (20 kB)
+Collecting multidict<7.0,>=4.5 (from aiohttp!=4.0.0a0,!=4.0.0a1->fsspec[http]<=2026.4.0,>=2023.1.0->datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached multidict-6.7.1-cp311-cp311-macosx_11_0_arm64.whl.metadata (5.3 kB)
+Collecting propcache>=0.2.0 (from aiohttp!=4.0.0a0,!=4.0.0a1->fsspec[http]<=2026.4.0,>=2023.1.0->datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached propcache-0.5.2-cp311-cp311-macosx_11_0_arm64.whl.metadata (16 kB)
+Collecting yarl<2.0,>=1.17.0 (from aiohttp!=4.0.0a0,!=4.0.0a1->fsspec[http]<=2026.4.0,>=2023.1.0->datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached yarl-1.24.2-cp311-cp311-macosx_11_0_arm64.whl.metadata (94 kB)
+Collecting charset_normalizer<4,>=2 (from requests>=2.32.2->datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached charset_normalizer-3.4.9-cp311-cp311-macosx_10_9_universal2.whl.metadata (41 kB)
+Collecting urllib3<3,>=1.26 (from requests>=2.32.2->datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached urllib3-2.7.0-py3-none-any.whl.metadata (6.9 kB)
+Collecting MarkupSafe>=2.0 (from jinja2->torch->rwkv7-hf-adapter==0.5.0)
+  Using cached markupsafe-3.0.3-cp311-cp311-macosx_11_0_arm64.whl.metadata (2.7 kB)
+Collecting mlx-metal==0.32.0 (from mlx->rwkv7-hf-adapter==0.5.0)
+  Using cached mlx_metal-0.32.0-py3-none-macosx_26_0_arm64.whl.metadata (5.1 kB)
+Collecting python-dateutil>=2.8.2 (from pandas->datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached python_dateutil-2.9.0.post0-py2.py3-none-any.whl.metadata (8.4 kB)
+Collecting six>=1.5 (from python-dateutil>=2.8.2->pandas->datasets->rwkv7-hf-adapter==0.5.0)
+  Using cached six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+Collecting regex>=2025.10.22 (from transformers->rwkv7-hf-adapter==0.5.0)
+  Using cached regex-2026.7.10-cp311-cp311-macosx_11_0_arm64.whl.metadata (40 kB)
+Collecting tokenizers<=0.23.0,>=0.22.0 (from transformers->rwkv7-hf-adapter==0.5.0)
+  Using cached tokenizers-0.22.2-cp39-abi3-macosx_11_0_arm64.whl.metadata (7.3 kB)
+Collecting typer (from transformers->rwkv7-hf-adapter==0.5.0)
+  Using cached typer-0.26.8-py3-none-any.whl.metadata (15 kB)
+Collecting shellingham>=1.3.0 (from typer->transformers->rwkv7-hf-adapter==0.5.0)
+  Using cached shellingham-1.5.4-py2.py3-none-any.whl.metadata (3.5 kB)
+Collecting rich>=13.8.0 (from typer->transformers->rwkv7-hf-adapter==0.5.0)
+  Using cached rich-15.0.0-py3-none-any.whl.metadata (18 kB)
+Collecting annotated-doc>=0.0.2 (from typer->transformers->rwkv7-hf-adapter==0.5.0)
+  Using cached annotated_doc-0.0.4-py3-none-any.whl.metadata (6.6 kB)
+Collecting markdown-it-py>=2.2.0 (from rich>=13.8.0->typer->transformers->rwkv7-hf-adapter==0.5.0)
+  Using cached markdown_it_py-4.2.0-py3-none-any.whl.metadata (7.4 kB)
+Collecting mdurl~=0.1 (from markdown-it-py>=2.2.0->rich>=13.8.0->typer->transformers->rwkv7-hf-adapter==0.5.0)
+  Using cached mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+Using cached pytest-9.1.1-py3-none-any.whl (386 kB)
+Using cached pluggy-1.6.0-py3-none-any.whl (20 kB)
+Using cached iniconfig-2.3.0-py3-none-any.whl (7.5 kB)
+Using cached pygments-2.20.0-py3-none-any.whl (1.2 MB)
+Using cached accelerate-1.14.0-py3-none-any.whl (389 kB)
+Using cached huggingface_hub-1.23.0-py3-none-any.whl (770 kB)
+Using cached click-8.4.2-py3-none-any.whl (119 kB)
+Using cached hf_xet-1.5.1-cp37-abi3-macosx_11_0_arm64.whl (3.8 MB)
+Using cached httpx-0.28.1-py3-none-any.whl (73 kB)
+Using cached httpcore-1.0.9-py3-none-any.whl (78 kB)
+Using cached filelock-3.29.7-py3-none-any.whl (46 kB)
+Using cached h11-0.16.0-py3-none-any.whl (37 kB)
+Using cached numpy-2.4.6-cp311-cp311-macosx_14_0_arm64.whl (5.5 MB)
+Using cached pyyaml-6.0.3-cp311-cp311-macosx_11_0_arm64.whl (175 kB)
+Using cached safetensors-0.8.0-cp310-abi3-macosx_11_0_arm64.whl (484 kB)
+Using cached torch-2.13.0-cp311-cp311-macosx_14_0_arm64.whl (111.2 MB)
+Using cached networkx-3.6.1-py3-none-any.whl (2.1 MB)
+Using cached sympy-1.14.0-py3-none-any.whl (6.3 MB)
+Using cached mpmath-1.3.0-py3-none-any.whl (536 kB)
+Using cached tqdm-4.68.4-py3-none-any.whl (676 kB)
+Using cached typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+Using cached anyio-4.14.1-py3-none-any.whl (124 kB)
+Using cached idna-3.18-py3-none-any.whl (65 kB)
+Using cached certifi-2026.6.17-py3-none-any.whl (133 kB)
+Using cached datasets-5.0.0-py3-none-any.whl (555 kB)
+Using cached dill-0.4.1-py3-none-any.whl (120 kB)
+Using cached fsspec-2026.4.0-py3-none-any.whl (203 kB)
+Using cached multiprocess-0.70.19-py311-none-any.whl (144 kB)
+Using cached aiohttp-3.14.1-cp311-cp311-macosx_11_0_arm64.whl (514 kB)
+Using cached multidict-6.7.1-cp311-cp311-macosx_11_0_arm64.whl (44 kB)
+Using cached yarl-1.24.2-cp311-cp311-macosx_11_0_arm64.whl (91 kB)
+Using cached aiohappyeyeballs-2.7.1-py3-none-any.whl (15 kB)
+Using cached aiosignal-1.4.0-py3-none-any.whl (7.5 kB)
+Using cached attrs-26.1.0-py3-none-any.whl (67 kB)
+Using cached frozenlist-1.8.0-cp311-cp311-macosx_11_0_arm64.whl (50 kB)
+Using cached propcache-0.5.2-cp311-cp311-macosx_11_0_arm64.whl (52 kB)
+Using cached pyarrow-25.0.0-cp311-cp311-macosx_12_0_arm64.whl (35.9 MB)
+Using cached requests-2.34.2-py3-none-any.whl (73 kB)
+Using cached charset_normalizer-3.4.9-cp311-cp311-macosx_10_9_universal2.whl (317 kB)
+Using cached urllib3-2.7.0-py3-none-any.whl (131 kB)
+Using cached jinja2-3.1.6-py3-none-any.whl (134 kB)
+Using cached markupsafe-3.0.3-cp311-cp311-macosx_11_0_arm64.whl (12 kB)
+Using cached mlx-0.32.0-cp311-cp311-macosx_26_0_arm64.whl (562 kB)
+Using cached mlx_metal-0.32.0-py3-none-macosx_26_0_arm64.whl (56.5 MB)
+Using cached pandas-3.0.3-cp311-cp311-macosx_11_0_arm64.whl (9.9 MB)
+Using cached python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+Using cached six-1.17.0-py2.py3-none-any.whl (11 kB)
+Using cached peft-0.19.1-py3-none-any.whl (680 kB)
+Using cached psutil-7.2.2-cp36-abi3-macosx_11_0_arm64.whl (129 kB)
+Using cached transformers-5.13.1-py3-none-any.whl (11.5 MB)
+Using cached tokenizers-0.22.2-cp39-abi3-macosx_11_0_arm64.whl (3.0 MB)
+Using cached regex-2026.7.10-cp311-cp311-macosx_11_0_arm64.whl (290 kB)
+Using cached trl-1.8.0-py3-none-any.whl (863 kB)
+Using cached typer-0.26.8-py3-none-any.whl (122 kB)
+Using cached annotated_doc-0.0.4-py3-none-any.whl (5.3 kB)
+Using cached rich-15.0.0-py3-none-any.whl (310 kB)
+Using cached markdown_it_py-4.2.0-py3-none-any.whl (91 kB)
+Using cached mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+Using cached shellingham-1.5.4-py2.py3-none-any.whl (9.8 kB)
+Using cached xxhash-3.8.1-cp311-cp311-macosx_11_0_arm64.whl (32 kB)
+Building wheels for collected packages: rwkv7-hf-adapter
+  Building wheel for rwkv7-hf-adapter (pyproject.toml): started
+  Building wheel for rwkv7-hf-adapter (pyproject.toml): finished with status 'done'
+  Created wheel for rwkv7-hf-adapter: filename=rwkv7_hf_adapter-0.5.0-py3-none-any.whl size=252859 sha256=b526b1f4f202244166d571ff5fae5f882db3278b29508bc4aa646353a44aa11e
+  Stored in directory: /Users/wangyue/Library/Caches/pip/wheels/23/6c/ac/b8f37294d7b0891c507188bfec82428e034b41f6378ecd91e5
+Successfully built rwkv7-hf-adapter
+Installing collected packages: mpmath, xxhash, urllib3, typing-extensions, tqdm, sympy, six, shellingham, safetensors, regex, pyyaml, pygments, pyarrow, psutil, propcache, pluggy, numpy, networkx, multidict, mlx-metal, mdurl, MarkupSafe, iniconfig, idna, hf-xet, h11, fsspec, frozenlist, filelock, dill, click, charset_normalizer, certifi, attrs, annotated-doc, aiohappyeyeballs, yarl, requests, python-dateutil, pytest, multiprocess, mlx, markdown-it-py, jinja2, httpcore, anyio, aiosignal, torch, rich, pandas, httpx, aiohttp, typer, huggingface_hub, tokenizers, datasets, accelerate, transformers, trl, rwkv7-hf-adapter, peft
+
+Successfully installed MarkupSafe-3.0.3 accelerate-1.14.0 aiohappyeyeballs-2.7.1 aiohttp-3.14.1 aiosignal-1.4.0 annotated-doc-0.0.4 anyio-4.14.1 attrs-26.1.0 certifi-2026.6.17 charset_normalizer-3.4.9 click-8.4.2 datasets-5.0.0 dill-0.4.1 filelock-3.29.7 frozenlist-1.8.0 fsspec-2026.4.0 h11-0.16.0 hf-xet-1.5.1 httpcore-1.0.9 httpx-0.28.1 huggingface_hub-1.23.0 idna-3.18 iniconfig-2.3.0 jinja2-3.1.6 markdown-it-py-4.2.0 mdurl-0.1.2 mlx-0.32.0 mlx-metal-0.32.0 mpmath-1.3.0 multidict-6.7.1 multiprocess-0.70.19 networkx-3.6.1 numpy-2.4.6 pandas-3.0.3 peft-0.19.1 pluggy-1.6.0 propcache-0.5.2 psutil-7.2.2 pyarrow-25.0.0 pygments-2.20.0 pytest-9.1.1 python-dateutil-2.9.0.post0 pyyaml-6.0.3 regex-2026.7.10 requests-2.34.2 rich-15.0.0 rwkv7-hf-adapter-0.5.0 safetensors-0.8.0 shellingham-1.5.4 six-1.17.0 sympy-1.14.0 tokenizers-0.22.2 torch-2.13.0 tqdm-4.68.4 transformers-5.13.1 trl-1.8.0 typer-0.26.8 typing-extensions-4.16.0 urllib3-2.7.0 xxhash-3.8.1 yarl-1.24.2
+No broken requirements found.
+RWKV7_CLEAN_ENVIRONMENT={"cuda_available": false, "machine": "arm64", "modules": {"bitsandbytes": false, "coremltools": false, "fla": false, "flash_linear_attention": false, "mlx": true, "triton": false}, "mps_available": true, "platform": "macOS-26.5-arm64-arm-64bit", "versions": {"coremltools": null, "mlx": "0.32.0", "rwkv7-hf-adapter": "0.5.0", "torch": "2.13.0", "transformers": "5.13.1"}}
+installed rwkv7-hf-adapter=0.5.0 from /private/var/folders/jb/vq4jn1w94dsc2tt35tfkrvkr0000gn/T/rwkv7-clean-test.NDbeeM/lib/python3.11/site-packages/rwkv7_hf/__init__.py
+tests/test_acceptance_scripts.py::test_shell_syntax_and_executable_bits
+tests/test_acceptance_scripts.py::test_a6000_validation_runner_contract
+tests/test_acceptance_scripts.py::test_acceptance_requires_model
+tests/test_acceptance_scripts.py::test_hardware_wrapper_requires_model
+tests/test_acceptance_scripts.py::test_apple_silicon_smoke_requires_model
+tests/test_acceptance_scripts.py::test_apple_silicon_model_training_requires_model
+tests/test_acceptance_scripts.py::test_apple_silicon_model_trl_sft_requires_model
+tests/test_acceptance_scripts.py::test_apple_silicon_model_rl_requires_model
+tests/test_acceptance_scripts.py::test_apple_silicon_model_sweep_requires_model
+tests/test_acceptance_scripts.py::test_apple_silicon_mlx_session_requires_model
+tests/test_acceptance_scripts.py::test_apple_silicon_mlx_session_batch_requires_model
+tests/test_acceptance_scripts.py::test_apple_silicon_mlx_generation_sweep_requires_model
+tests/test_acceptance_scripts.py::test_math500_acceptance_defaults_are_final_benchmark
+tests/test_acceptance_scripts.py::test_common_pythonpath_separator_linux
+tests/test_acceptance_scripts.py::test_common_pythonpath_separator_windows_msys
+tests/test_ada_lora.py::test_shape_policy
+tests/test_ada_lora.py::test_cpu_fallback_shapes_and_values
+tests/test_ada_lora.py::test_cpu_fallback_can_fuse_a_sigmoid_and_skip_v
+tests/test_ada_lora.py::test_ada_cuda_matches_fallback_for_fp16_and_bf16[dtype0-0.02]
+tests/test_ada_lora.py::test_ada_cuda_matches_fallback_for_fp16_and_bf16[dtype1-0.03]
+tests/test_ada_sparse_ffn.py::test_shape_policy_is_narrow
+tests/test_ada_sparse_ffn.py::test_cpu_fallback_matches_torch
+tests/test_ada_sparse_ffn.py::test_scalar_fallback_preserves_shape
+tests/test_ada_sparse_ffn.py::test_fallback_out_buffer_is_reused
+tests/test_ada_sparse_ffn.py::test_ffn_up_cpu_fallback_matches_torch
+tests/test_ada_sparse_ffn.py::test_ada_linear_cpu_fallback_matches_torch
+tests/test_apple_production_acceptance.py::test_jsonl_query_checks_filters_requirements_and_coverage
+tests/test_apple_production_acceptance.py::test_missing_and_compound_proofs_remain_incomplete
+tests/test_apple_production_acceptance.py::test_all_matches_rejects_a_mixed_pass_fail_evidence_set
+tests/test_apple_production_acceptance.py::test_malformed_or_out_of_root_proof_is_unknown
+tests/test_apple_production_acceptance.py::test_manifest_rejects_duplicate_or_incomplete_gate_ids
+tests/test_apple_production_acceptance.py::test_default_manifest_is_exhaustive_and_rendered_without_drift
+tests/test_apple_production_acceptance.py::test_registered_evidence_never_silently_fails
+tests/test_apple_production_acceptance.py::test_latest_m5_close_passes_only_bounded_atomic_gates
+tests/test_apple_production_acceptance.py::test_summary_uses_gate_status_vocabulary
+tests/test_apple_production_acceptance.py::test_strict_cli_exits_nonzero_and_appends_summary
+tests/test_apple_production_acceptance.py::test_one_command_wrapper_can_run_nonstrict_audit
+tests/test_apple_silicon_packaging.py::test_fla_is_optional_dependency
+tests/test_apple_silicon_packaging.py::test_mlx_extra_is_apple_optional_dependency
+tests/test_apple_silicon_packaging.py::test_apple_smoke_script_static
+tests/test_apple_silicon_packaging.py::test_apple_doc_links_entry_points
+tests/test_backend_boundaries.py::test_exact_device_names_stay_out_of_core_model_files
+tests/test_clean_install_acceptance.py::test_parse_clean_install_counts
+tests/test_clean_install_acceptance.py::test_clean_install_evidence_dry_run
+tests/test_clean_install_packaging.py::test_test_extra_covers_collection_dependencies
+tests/test_clean_install_packaging.py::test_pep517_build_backend_is_explicit
+tests/test_clean_install_packaging.py::test_clean_install_runner_contract
+tests/test_clean_install_packaging.py::test_ci_profiles_use_the_clean_install_runner
+tests/test_clean_install_packaging.py::test_clean_runner_does_not_inherit_pythonpath
+tests/test_coreml_export.py::test_coreml_export_dry_run_cli_writes_manifest_and_results
+tests/test_coreml_export.py::test_coreml_export_skip_row_when_stack_unavailable
+tests/test_coreml_export.py::test_coreml_export_require_coremltools_returns_structured_failure
+tests/test_coreml_export.py::test_coreml_runtime_dry_run_cli_uses_manifest
+tests/test_coreml_export.py::test_coreml_runtime_missing_package_emits_skip_rows
+tests/test_coreml_export.py::test_coreml_stateful_dry_run_contract
+tests/test_coreml_export.py::test_coreml_stateful_rejects_oversized_static_prefill
+tests/test_coreml_export.py::test_coreml_runtime_require_flags_need_matching_verification
+tests/test_coreml_export.py::test_coreml_state_read_write_helpers
+tests/test_coreml_export.py::test_coreml_masked_prefill_chunks_exact_tokens
+tests/test_coreml_export.py::test_coreml_runtime_static_contract
+tests/test_coreml_export.py::test_coreml_export_static_contract
+tests/test_dplr_prefill_scan.py::test_dplr_chunk_scan_bthn_matches_torch_recurrent_scan
+tests/test_dplr_prefill_scan.py::test_dplr_chunk_scan_flat_matches_torch_recurrent_scan
+tests/test_dplr_prefill_scan.py::test_dplr_chunk_scan_force_fallback_matches_reference
+tests/test_dplr_prefill_scan.py::test_dplr_chunk_scan_lowrank_fp32_matches_torch_recurrent_scan
+tests/test_dplr_prefill_scan.py::test_dplr_chunk_scan_triton_stage_fallbacks_match_reference
+tests/test_dplr_prefill_scan.py::test_dplr_chunk_scan_env_algorithm_lowrank_matches_reference
+tests/test_dplr_prefill_scan.py::test_lowrank_chunk_summary_metadata_shapes
+tests/test_dplr_prefill_triton.py::test_dense_chunk_summary_torch_final_state_matches_recurrent_scan
+tests/test_dplr_prefill_triton.py::test_dense_chunk_summary_triton_matches_torch_cuda
+tests/test_fused_attention_projection.py::test_fused_rkv_wavg_projection_matches_fallback
+tests/test_fused_decode_norm_mix.py::test_fallback_matches_reference
+tests/test_fused_decode_norm_mix.py::test_cuda_matches_fallback
+tests/test_fused_norm_mix.py::test_matches_native_prefill_norm_shift_mix_expression_with_and_without_pre_norm
+tests/test_fused_norm_mix.py::test_layer_norm_absent_is_identity_before_time_mix
+tests/test_fused_norm_mix.py::test_decode_rank2_shape_is_supported_for_telemetry_probes
+tests/test_fused_sequence_mix.py::test_attention_sequence_shift_mix_cpu_matches_reference_and_updates_state
+tests/test_fused_sequence_mix.py::test_ffn_sequence_shift_mix_cpu_matches_reference_and_updates_state
+tests/test_fused_sequence_mix.py::test_fused_relu_square_cpu_fallback_matches_expression
+tests/test_fused_sequence_mix.py::test_sequence_mix_and_relu_square_cuda_kernels_match_reference
+tests/test_fused_state_scan_split.py::test_split_state_scan_matches_full_head_and_torch
+tests/test_hf_parallel_download.py::test_make_ranges_exact_multiple
+tests/test_hf_parallel_download.py::test_make_ranges_tail_chunk
+tests/test_hf_parallel_download.py::test_build_resolve_url_quotes_path_parts
+tests/test_hf_parallel_download.py::test_human_bytes
+tests/test_kernel_policy.py::test_gpu_family_classification
+tests/test_kernel_policy.py::test_policy_defaults_are_conservative
+tests/test_kernel_policy.py::test_mps_runtime_detection
+tests/test_kernel_policy.py::test_every_policy_family_has_an_adaptation_rule
+tests/test_kernel_policy.py::test_env_helpers_override_defaults
+tests/test_math500_compare.py::test_math500_compare_acceptance_gates_pass
+tests/test_math500_compare.py::test_math500_compare_acceptance_gates_fail
+tests/test_mlx_component_profile.py::test_component_recorder_summary_orders_by_total
+tests/test_mlx_component_profile.py::test_component_name_groups_layer_norm_prefixes
+tests/test_mlx_component_profile.py::test_profile_mlx_components_dry_run
+tests/test_mlx_component_profile.py::test_make_prompt_reaches_requested_chars
+tests/test_mlx_dplr_prefill.py::test_mlx_dplr_prefill_import_safe
+tests/test_mlx_dplr_prefill.py::test_mlx_dplr_three_stage_matches_recurrent_scan_if_available
+tests/test_mlx_dplr_prefill.py::test_mlx_dplr_summary_rejects_partial_chunk_if_available
+tests/test_mlx_dplr_prefill.py::test_mlx_model_dplr_prefill_partial_chunk_and_decode_if_available
+tests/test_mlx_dplr_prefill.py::test_mlx_dplr_prefill_bench_dry_run
+tests/test_mlx_dplr_prefill.py::test_mlx_dplr_model_prefill_bench_dry_run
+tests/test_mlx_dynamic_scheduler.py::test_ragged_arrival_departure_true_batch_and_prefix_reuse
+tests/test_mlx_dynamic_scheduler.py::test_cancellation_backpressure_and_duplicate_ids
+tests/test_mlx_dynamic_scheduler.py::test_timeout_releases_state_without_decode
+tests/test_mlx_dynamic_serving_bench.py::test_dynamic_serving_runtime_is_shipped_with_remote_adapter
+tests/test_mlx_dynamic_serving_bench.py::test_dynamic_serving_bench_dry_run
+tests/test_mlx_mix.py::test_mlx_mix_import_safe
+tests/test_mlx_mix.py::test_mlx_attn_mix_formula_if_available
+tests/test_mlx_module_boundaries.py::test_mlx_model_preserves_public_reexports
+tests/test_mlx_module_boundaries.py::test_mlx_policy_parsing_is_dependency_free
+tests/test_mlx_module_boundaries.py::test_adapter_manifest_is_unique_and_contains_extracted_runtime_modules
+tests/test_mlx_prefix_cache.py::test_prefix_cache_exact_longest_and_state_isolation
+tests/test_mlx_prefix_cache.py::test_prefix_cache_lru_ttl_oversize_and_namespace_isolation
+tests/test_mlx_prefix_cache.py::test_generation_session_uses_exact_cache_without_state_aliasing
+tests/test_mlx_quant.py::test_mlx_quant_import_safe
+tests/test_mlx_quant.py::test_mlx_q4_k_m_profile_policy
+tests/test_mlx_quant.py::test_mlx_quant_formula_if_available
+tests/test_mlx_quant.py::test_mlx_model_quantized_linear_hook_if_available
+tests/test_mlx_quant.py::test_mlx_model_q4_k_m_mixed_precision_hook_if_available
+tests/test_mlx_quant.py::test_mlx_model_metal_quantized_linear_hook_if_available
+tests/test_mlx_quant.py::test_mlx_model_rkv_quant_min_params_if_available
+tests/test_mlx_quant.py::test_mlx_model_step_eval_interval_if_available
+tests/test_mlx_quant.py::test_mlx_model_grouped_rkv_quant_projection_if_available
+tests/test_mlx_quant.py::test_mlx_model_fused_ffn_key_relu2_if_available
+tests/test_mlx_quant.py::test_mlx_model_auto_quantized_linear_hook_if_available
+tests/test_mlx_quant_quality.py::test_quant_quality_agreement_helpers
+tests/test_mlx_quant_quality.py::test_quant_quality_gate
+tests/test_mlx_quant_quality.py::test_quant_quality_dry_run
+tests/test_mlx_scan.py::test_mlx_scan_import_safe
+tests/test_mlx_scan.py::test_mlx_wkv_scan_formula_if_available
+tests/test_mlx_scan.py::test_mlx_model_scan_prefill_matches_token_path_if_available
+tests/test_mlx_scan.py::test_mlx_model_scan_prefill_state_only_if_available
+tests/test_mlx_scan.py::test_mlx_model_scan_prefill_auto_threshold_if_available
+tests/test_mlx_speculative.py::test_mlx_speculative_same_model_matches_greedy_if_available
+tests/test_mlx_wkv.py::test_mlx_wkv_import_safe
+tests/test_mlx_wkv.py::test_mlx_wkv_formula_if_available
+tests/test_mlx_wkv.py::test_mlx_model_metal_wkv_hook_if_available
+tests/test_mlx_wkv.py::test_mlx_prefill_eval_interval_parity_if_available
+tests/test_mlx_wkv.py::test_mlx_compiled_decode_matches_eager_if_available
+tests/test_mlx_wkv.py::test_mlx_decode_compile_bench_dry_run
+tests/test_mlx_wkv.py::test_mlx_model_decode_step_matches_forward_t1_if_available
+tests/test_mlx_wkv.py::test_mlx_model_fast_group_norm_matches_manual_if_available
+tests/test_native_prefill_scan.py::test_prefill_matches_token_loop
+tests/test_native_prefill_scan.py::test_prefill_opt_in_lora_state_prep_fallback_matches_token_loop
+tests/test_native_prefill_scan.py::test_prefill_opt_in_fused_state_scan_fallback_matches_token_loop
+tests/test_native_prefill_scan.py::test_sm70_scan_tile_policy_is_batch_aware_and_exact_arch
+tests/test_native_quant_a8w8.py::test_cpu_fallback_tracks_dense_linear
+tests/test_native_quant_a8w8.py::test_cpu_fallback_tracks_dense_linear_for_strided_last_token_slice
+tests/test_native_quant_a8w8.py::test_cuda_kernel_tracks_strided_last_token_slice
+tests/test_native_quant_a8w8.py::test_speed_policy_replaces_head_only
+tests/test_native_quant_a8w8.py::test_memory_policy_replaces_all_size_gated_linears
+tests/test_native_quant_config.py::test_native_mm8_config_roundtrip
+tests/test_native_quant_config.py::test_native_mm4_config_roundtrip
+tests/test_native_quant_config.py::test_native_mm8_mm4_are_mutually_exclusive
+tests/test_native_quant_config.py::test_native_mm_speed_policy_quantizes_lm_head_only
+tests/test_native_quant_torchao.py::test_torchao_w8_selection_and_cache_invalidation
+tests/test_native_quant_torchao.py::test_torchao_w4_requires_bf16
+tests/test_native_quant_torchao.py::test_torchao_w4_forwards_group_size
+tests/test_qwen35_apple_baseline.py::test_make_prompt_hits_target_chars
+tests/test_qwen35_apple_baseline.py::test_ollama_stream_row_uses_final_duration_metrics
+tests/test_qwen35_apple_baseline.py::test_ollama_row_tracks_thinking_without_treating_it_as_answer
+tests/test_qwen35_apple_baseline.py::test_ollama_loaded_model_telemetry_keeps_loaded_memory_distinct_from_peak
+tests/test_qwen35_apple_baseline.py::test_ollama_row_can_store_full_response_for_quality
+tests/test_qwen35_apple_baseline.py::test_ollama_pull_progress_times_out_repeated_non_progress
+tests/test_qwen35_apple_baseline.py::test_ollama_pull_progress_accepts_completed_bytes_and_success
+tests/test_qwen35_apple_baseline.py::test_quality_scoring_and_pair_comparison
+tests/test_qwen35_apple_baseline.py::test_quality_cli_keeps_missing_response_unknown
+tests/test_qwen35_apple_baseline.py::test_summary_groups_engines_and_min_decode
+tests/test_qwen35_apple_baseline.py::test_tok_s_rejects_empty_duration
+tests/test_qwen35_apple_baseline.py::test_dry_run_cli_writes_jsonl
+tests/test_qwen35_apple_baseline.py::test_acceptance_wrapper_dry_run
+tests/test_qwen35_apple_baseline.py::test_mlx_prefill_eval_interval_bench_dry_run
+tests/test_qwen35_apple_baseline.py::test_compare_rows_reports_decode_and_memory_pass
+tests/test_qwen35_apple_baseline.py::test_compare_rows_keeps_missing_memory_unknown
+tests/test_qwen35_apple_baseline.py::test_compare_rows_emit_gap_diagnostics_for_failed_gates
+tests/test_qwen35_apple_baseline.py::test_compare_cli_can_append_gap_diagnostics
+tests/test_qwen35_apple_baseline.py::test_compare_cli_writes_comparison_rows
+tests/test_qwen35_apple_baseline.py::test_mlx_model_reset_telemetry_counters_without_mlx_runtime
+tests/test_qwen35_apple_goal_audit.py::test_goal_audit_can_pass_complete_tiny_matrix
+tests/test_qwen35_apple_goal_audit.py::test_goal_audit_reports_missing_rwkv_and_comparison_actions
+tests/test_qwen35_apple_goal_audit.py::test_goal_audit_reports_coreml_stateful_contract_prototype
+tests/test_qwen35_apple_goal_audit.py::test_goal_audit_cli_appends_and_fail_on_gate
+tests/test_runtime_compat_and_bench_contracts.py::test_configuration_applies_runtime_compat_before_fla_import
+tests/test_runtime_compat_and_bench_contracts.py::test_batch_sweep_times_prefill_inside_inference_mode
+tests/test_runtime_compat_and_bench_contracts.py::test_pytorch26_triton33_disables_worker_compile
+tests/test_runtime_compat_and_bench_contracts.py::test_pytorch27_keeps_compile_enabled
+tests/test_sm70_quant.py::test_row_quantized_layout_and_cpu_fallback
+tests/test_sm70_quant.py::test_sm70_dp4a_batch_reuse_and_forward_into
+tests/test_sm70_wagv.py::test_wagv_fallback_matches_reference
+tests/test_sm70_wagv.py::test_orig_linear_fallback_for_unsupported_shape
+tests/test_tokenizer_fast_trie.py::test_fast_trie_greedy_roundtrip
+tests/test_tokenizer_fast_trie.py::test_fast_trie_save_vocab_and_missing_ids
+tests/test_tokenizer_fast_trie.py::test_fast_trie_uses_literal_eval_for_vocab_lines
+tests/test_triton_compat.py::test_legacy_attrs_descriptor_is_dataclass_compatible
+
+=============================== warnings summary ===============================
+../../../../../private/var/folders/jb/vq4jn1w94dsc2tt35tfkrvkr0000gn/T/rwkv7-clean-test.NDbeeM/lib/python3.11/site-packages/torch/jit/_script.py:1488: 13 warnings
+  /private/var/folders/jb/vq4jn1w94dsc2tt35tfkrvkr0000gn/T/rwkv7-clean-test.NDbeeM/lib/python3.11/site-packages/torch/jit/_script.py:1488: DeprecationWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+195 tests collected in 26.55s
+..................ss.................................................s.. [ 36%]
+.......s................................................................ [ 73%]
+.....s......................................s......                      [100%]
+=============================== warnings summary ===============================
+../../../../../private/var/folders/jb/vq4jn1w94dsc2tt35tfkrvkr0000gn/T/rwkv7-clean-test.NDbeeM/lib/python3.11/site-packages/torch/jit/_script.py:1488: 13 warnings
+  /private/var/folders/jb/vq4jn1w94dsc2tt35tfkrvkr0000gn/T/rwkv7-clean-test.NDbeeM/lib/python3.11/site-packages/torch/jit/_script.py:1488: DeprecationWarning: `torch.jit.script` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [2] tests/test_ada_lora.py:61: Ada sm_89 CUDA kernel is unavailable
+SKIPPED [1] tests/test_dplr_prefill_triton.py:130: cuda unavailable
+SKIPPED [1] tests/test_fused_sequence_mix.py:44: CUDA/Triton kernel test
+SKIPPED [1] tests/test_native_quant_a8w8.py:48: CUDA is required
+SKIPPED [1] tests/test_sm70_quant.py:34: exact sm_70 CUDA device required
+189 passed, 6 skipped, 13 warnings in 11.27s
+{"axis": "apple_silicon_env", "status": "info", "platform": "macOS-26.5-arm64-arm-64bit", "machine": "arm64", "chip": "Apple M5", "memory_gb": 16, "torch": "2.13.0", "transformers": "5.13.1", "mps_built": true, "mps_available": true, "device": "mps", "dtype": "fp32", "native_model": "1", "mps_current_allocated_memory_bytes": 0, "mps_driver_allocated_memory_bytes": 458752, "mps_recommended_max_memory_bytes": 12713115648}
+{"axis": "apple_silicon_tiny_native", "status": "pass", "device": "mps", "dtype": "float32", "generated_tokens": 2, "elapsed_s": 0.3984}
+APPLE SILICON SMOKE PASS
+{"axis": "apple_silicon_training_env", "status": "info", "platform": "macOS-26.5-arm64-arm-64bit", "machine": "arm64", "torch": "2.13.0", "mps_built": true, "mps_available": true, "device": "mps", "dtype": "fp32", "peft_available": true}
+{"axis": "apple_silicon_tiny_train", "status": "pass", "device": "mps", "dtype": "float32", "batch_size": 2, "length": 8, "loss": 3.870411, "grad_l1": 54.496305, "changed_l1": 6.180057, "elapsed_s": 0.2778}
+{"axis": "apple_silicon_peft_lora_train", "status": "pass", "device": "mps", "dtype": "float32", "batch_size": 2, "length": 8, "trainable_params": 1792, "loss": 3.870411, "grad_l1": 8.152142, "changed_l1": 0.896971, "elapsed_s": 0.0817}
+APPLE SILICON TRAINING SMOKE PASS
+{"axis": "apple_silicon_trainer_env", "status": "info", "platform": "macOS-26.5-arm64-arm-64bit", "machine": "arm64", "chip": "Apple M5", "memory_gb": 16, "torch": "2.13.0", "transformers": "5.13.1", "peft": "0.19.1", "mps_built": true, "mps_available": true, "device": "mps", "dtype": "fp32", "peft_available": true}
+{'loss': '3.878', 'grad_norm': '2.623', 'learning_rate': '0.001', 'epoch': '0.25'}
+{'train_runtime': '0.2484', 'train_samples_per_second': '4.025', 'train_steps_per_second': '4.025', 'train_loss': '3.878', 'epoch': '0.25'}
+{"axis": "apple_silicon_native_trainer", "status": "pass", "max_steps": 1, "batch_size": 1, "length": 8, "training_loss": 3.877832, "changed_l1": 6.063786, "trainable_params": 7024, "elapsed_s": 0.3102, "device": "mps", "dtype": "float32"}
+{'loss': '3.878', 'grad_norm': '1.074', 'learning_rate': '0.001', 'epoch': '0.25'}
+{'train_runtime': '0.1017', 'train_samples_per_second': '9.834', 'train_steps_per_second': '9.834', 'train_loss': '3.878', 'epoch': '0.25'}
+{"axis": "apple_silicon_peft_lora_trainer", "status": "pass", "max_steps": 1, "batch_size": 1, "length": 8, "training_loss": 3.877832, "changed_l1": 0.891996, "trainable_params": 1792, "elapsed_s": 0.1733, "device": "mps", "dtype": "float32"}
+APPLE SILICON TRAINER SMOKE PASS
+{"axis": "apple_silicon_native_quant_env", "status": "info", "platform": "macOS-26.5-arm64-arm-64bit", "machine": "arm64", "chip": "Apple M5", "memory_gb": 16, "torch": "2.13.0", "transformers": "5.13.1", "mps_built": true, "mps_available": true, "device": "mps", "dtype": "fp32", "quantizations": ["mm8", "mm4"], "min_params_values": [8000000], "model": "", "mps_current_allocated_memory_bytes": 0, "mps_driver_allocated_memory_bytes": 458752, "mps_recommended_max_memory_bytes": 12713115648}
+
+Writing model shards:   0%|          | 0/1 [00:00<?, ?it/s]
+Writing model shards: 100%|██████████| 1/1 [00:00<00:00, 290.69it/s]
+
+Loading weights:   0%|          | 0/69 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 69/69 [00:00<00:00, 11925.46it/s]
+{"axis": "apple_silicon_native_quant_tiny", "status": "pass", "quantization": "mm8", "device": "mps", "dtype": "float32", "replaced_modules": 27, "module_class": "MM8Linear", "dense_linear_weight_bytes": 92928, "quantized_linear_buffer_bytes": 36392, "footprint_ratio": 0.391615, "generated_tokens": 1, "decode_backend": "eager", "elapsed_s": 0.1663, "mps_current_allocated_memory_bytes": 93952, "mps_driver_allocated_memory_bytes": 19660800, "mps_recommended_max_memory_bytes": 12713115648}
+
+Writing model shards:   0%|          | 0/1 [00:00<?, ?it/s]
+Writing model shards: 100%|██████████| 1/1 [00:00<00:00, 1111.07it/s]
+
+Loading weights:   0%|          | 0/69 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 69/69 [00:00<00:00, 14399.07it/s]
+{"axis": "apple_silicon_native_quant_tiny", "status": "pass", "quantization": "mm4", "device": "mps", "dtype": "float32", "replaced_modules": 27, "module_class": "MM4Linear", "dense_linear_weight_bytes": 92928, "quantized_linear_buffer_bytes": 24880, "footprint_ratio": 0.267734, "generated_tokens": 1, "decode_backend": "eager", "elapsed_s": 0.0284, "mps_current_allocated_memory_bytes": 258304, "mps_driver_allocated_memory_bytes": 19660800, "mps_recommended_max_memory_bytes": 12713115648}
+APPLE SILICON NATIVE QUANT SMOKE PASS
+{"axis": "apple_silicon_mlx_env", "status": "info", "platform": "macOS-26.5-arm64-arm-64bit", "machine": "arm64", "chip": "Apple M5", "memory_gb": 16, "mlx": "0.32.0", "mlx_default_device": "Device(gpu, 0)", "dtype": "fp16", "model": ""}
+{"axis": "apple_silicon_mlx_tiny", "status": "pass", "dtype": "mlx.core.float32", "output_shape": [1, 24], "elapsed_s": 0.037465, "tensor_count": 3, "total_params": 424, "total_bytes": 1696, "dtype_counts": {"mlx.core.float32": 424}, "bytes_by_dtype": {"mlx.core.float32": 1696}}
+APPLE SILICON MLX SMOKE PASS
+{"axis": "apple_silicon_mlx_recurrent_env", "status": "info", "platform": "macOS-26.5-arm64-arm-64bit", "machine": "arm64", "chip": "Apple M5", "memory_gb": 16, "mlx": "0.32.0", "mlx_default_device": "Device(gpu, 0)", "dtype": "fp16", "model": ""}
+{"axis": "apple_silicon_mlx_recurrent_tiny_parity", "status": "pass", "batch_size": 2, "seq_len": 4, "vocab_size": 32, "hidden_size": 16, "num_hidden_layers": 2, "max_abs": 0.00282228, "argmax_match": true, "seen_tokens": 4, "elapsed_s": 0.015684}
+{"axis": "apple_silicon_mlx_state_cache_tiny", "status": "pass", "batch_size": 2, "seq_len": 4, "chunk_size": 2, "chunked_prefill_max_abs": 0.0, "select_batch_decode_max_abs": 0.0014168, "state_only_prefill_calls": 1, "state_only_prefill_tokens": 2, "seen_tokens": 4}
+{"axis": "apple_silicon_mlx_session_tiny", "status": "pass", "prompt_tokens": 4, "generated_tokens": 4, "step_sizes": [2, 2], "session_one_shot_token_match": true, "session_one_shot_text_match": true, "seen_tokens_after_generate": 8, "generated_preview": [10, 1, 12, 16]}
+{"axis": "apple_silicon_mlx_session_batch_tiny", "status": "pass", "session_count": 2, "rounds": [1, 2], "batched_round_backends": ["batched", "batched"], "generated_tokens": [3, 3], "seen_tokens": [7, 7], "all_session_one_shot_token_match": true, "all_session_one_shot_text_match": true, "generated_previews": [[10, 1, 12], [10, 1, 12]]}
+APPLE SILICON MLX RECURRENT SMOKE PASS
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+{"axis": "apple_silicon_model_sweep_env", "status": "info", "platform": "macOS-26.5-arm64-arm-64bit", "machine": "arm64", "chip": "Apple M5", "memory_gb": 16, "torch": "2.13.0", "transformers": "5.13.1", "mps_built": true, "mps_available": true, "device": "mps", "dtype": "fp32", "model": "rwkv7-g1d-0.1b-hf", "model_size_label": "0.1b", "prompt_lengths": [16, 64, 128], "max_new_tokens": 4, "native_model": "1", "mps_current_allocated_memory_bytes": 0, "mps_driver_allocated_memory_bytes": 458752, "mps_recommended_max_memory_bytes": 12713115648}
+
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]
+Loading weights:   0%|          | 1/399 [00:00<01:53,  3.50it/s]
+Loading weights:  90%|█████████ | 360/399 [00:00<00:00, 1192.50it/s]
+Loading weights: 100%|██████████| 399/399 [00:00<00:00, 1000.70it/s]
+{"axis": "apple_silicon_model_generate_sweep", "status": "pass", "model": "rwkv7-g1d-0.1b-hf", "model_size_label": "0.1b", "device": "mps", "dtype": "float32", "prompt_tokens": 16, "generated_tokens": 4, "prefill_s": 0.235959, "generate_s": 0.206166, "total_s": 0.442126, "prefill_tokens_per_second": 67.808, "decode_tokens_per_second": 19.402, "backend_class": "NativeRWKV7ForCausalLM", "mps_current_allocated_memory_bytes": 773621760, "mps_driver_allocated_memory_bytes": 1116405760, "mps_recommended_max_memory_bytes": 12713115648}
+{"axis": "apple_silicon_model_generate_sweep", "status": "pass", "model": "rwkv7-g1d-0.1b-hf", "model_size_label": "0.1b", "device": "mps", "dtype": "float32", "prompt_tokens": 64, "generated_tokens": 4, "prefill_s": 1.286706, "generate_s": 1.006707, "total_s": 2.293413, "prefill_tokens_per_second": 49.739, "decode_tokens_per_second": 3.973, "backend_class": "NativeRWKV7ForCausalLM", "mps_current_allocated_memory_bytes": 786403840, "mps_driver_allocated_memory_bytes": 1124794368, "mps_recommended_max_memory_bytes": 12713115648}
+{"axis": "apple_silicon_model_generate_sweep", "status": "pass", "model": "rwkv7-g1d-0.1b-hf", "model_size_label": "0.1b", "device": "mps", "dtype": "float32", "prompt_tokens": 128, "generated_tokens": 4, "prefill_s": 1.730799, "generate_s": 1.865965, "total_s": 3.596764, "prefill_tokens_per_second": 73.954, "decode_tokens_per_second": 2.144, "backend_class": "NativeRWKV7ForCausalLM", "mps_current_allocated_memory_bytes": 803183616, "mps_driver_allocated_memory_bytes": 1141571584, "mps_recommended_max_memory_bytes": 12713115648}
+APPLE SILICON MODEL SWEEP PASS
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+{"axis": "apple_silicon_model_training_env", "status": "info", "platform": "macOS-26.5-arm64-arm-64bit", "machine": "arm64", "chip": "Apple M5", "memory_gb": 16, "torch": "2.13.0", "transformers": "5.13.1", "peft": "0.19.1", "trl": "1.8.0", "datasets": "5.0.0", "mps_built": true, "mps_available": true, "device": "mps", "dtype": "fp32", "model": "rwkv7-g1d-0.1b-hf", "model_size_label": "0.1b", "mps_current_allocated_memory_bytes": 0, "mps_driver_allocated_memory_bytes": 458752, "mps_recommended_max_memory_bytes": 12713115648}
+
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]
+Loading weights: 100%|██████████| 399/399 [00:00<00:00, 8975.94it/s]
+{"axis": "apple_silicon_model_peft_lora_train", "status": "pass", "model": "rwkv7-g1d-0.1b-hf", "model_size_label": "0.1b", "device": "mps", "dtype": "float32", "attn_mode": "chunk", "lora_r": 4, "lora_alpha": 8, "max_length": 8, "batch_size": 1, "max_steps": 1, "hidden_size": 768, "num_hidden_layers": 12, "head_dim": 64, "backend_class": "PeftModelForCausalLM", "trainable_params": 663552, "total_params": 191698176, "prompt_tokens": 8, "loss": 2.70401, "grad_l1": 7560.157535, "changed_l1": 26.898995, "load_s": 0.8419, "elapsed_s": 0.7644, "mps_current_allocated_memory_bytes": 796615424, "mps_driver_allocated_memory_bytes": 1227603968, "mps_recommended_max_memory_bytes": 12713115648}
+
+Loading weights:   0%|          | 0/399 [00:00<?, ?it/s]
+Loading weights:  27%|██▋       | 109/399 [00:00<00:00, 1089.80it/s]
+Loading weights:  98%|█████████▊| 393/399 [00:00<00:00, 2096.57it/s]
+Loading weights: 100%|██████████| 399/399 [00:00<00:00, 1970.07it/s]
+[transformers] The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None}.
+{'loss': '2.704', 'grad_norm': '37.96', 'learning_rate': '0.0001', 'epoch': '0.25'}
+{'train_runtime': '0.4475', 'train_samples_per_second': '2.235', 'train_steps_per_second': '2.235', 'train_loss': '2.704', 'epoch': '0.25'}
+{"axis": "apple_silicon_model_peft_lora_trainer", "status": "pass", "model": "rwkv7-g1d-0.1b-hf", "model_size_label": "0.1b", "device": "mps", "dtype": "float32", "attn_mode": "chunk", "lora_r": 4, "lora_alpha": 8, "max_length": 8, "batch_size": 1, "max_steps": 1, "hidden_size": 768, "num_hidden_layers": 12, "head_dim": 64, "backend_class": "PeftModelForCausalLM", "trainable_params": 663552, "total_params": 191698176, "dataset_rows": 4, "training_loss": 2.70401, "changed_l1": 26.626687, "load_s": 0.6611, "elapsed_s": 0.6726, "train_runtime_s": 0.4475, "train_samples_per_second": 2.235, "train_steps_per_second": 2.235, "mps_current_allocated_memory_bytes": 1591130112, "mps_driver_allocated_memory_bytes": 2586558464, "mps_recommended_max_memory_bytes": 12713115648}
+APPLE SILICON MODEL TRAINING SMOKE PASS
