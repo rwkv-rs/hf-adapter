@@ -25,6 +25,9 @@ from rwkv7_hf.native_quant_mm8 import (
     mm8_matmul,
     mm8_gemv_triton,
     mm8_gemv_triton_sk,
+    mm8_batched_gemv_triton,
+    mm8_batched_dot_triton,
+    mm8_matmul_triton,
     mm8_gemv_available,
     quantize_model_mm8,
 )
@@ -75,6 +78,27 @@ def main() -> int:
         print(f"triton vs torch-ref max_abs = {d:.6f}; split-K = {dsk:.6f} (<= {args.triton_max_abs})", flush=True)
         ok = ok and d <= args.triton_max_abs and dsk <= args.triton_max_abs
 
+        # Blackwell decode uses one launch for the complete batch.  Exercise
+        # both the low-batch GEMV kernel and the tensor-core path selected for
+        # bsz>=4, including the public dispatcher used by MM8Linear.forward.
+        batched_cases = [(2, mm8_batched_gemv_triton)]
+        if torch.cuda.get_device_capability(x1.device)[0] >= 12:
+            batched_cases.append((8, mm8_batched_dot_triton))
+        for batch, kernel in batched_cases:
+            xb = torch.randn(batch, w.shape[1], dtype=w.dtype, device=w.device)
+            with torch.no_grad():
+                refb = mm8_matmul(xb, wu8, mx, rx, my, ry)
+                fused = kernel(xb, wu8, mx, rx, my, ry)
+                dispatched = mm8_matmul_triton(xb, wu8, mx, rx, my, ry)
+            db = (fused - refb).abs().max().item()
+            dd = (dispatched - refb).abs().max().item()
+            print(
+                f"batched triton bsz={batch} vs torch-ref max_abs = {db:.6f}; "
+                f"dispatcher = {dd:.6f} (<= {args.triton_max_abs})",
+                flush=True,
+            )
+            ok = ok and db <= args.triton_max_abs and dd <= args.triton_max_abs
+
     # 3. end-to-end size-gated quantization
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     ids = tok("The quick brown fox jumps over the lazy dog.",
@@ -97,10 +121,10 @@ def main() -> int:
     try:
         with torch.no_grad():
             os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "fla"
-            fast_ref = model(one).logits[0, -1].float().cpu()
+            fast_ref = model.rwkv7_forward_token(one, past_key_values=None).logits[0, -1].float().cpu()
             for backend in ("native_jit", "native_graph"):
                 os.environ["RWKV7_FAST_TOKEN_BACKEND"] = backend
-                fast_q = model(one).logits[0, -1].float().cpu()
+                fast_q = model.rwkv7_forward_token(one, past_key_values=None).logits[0, -1].float().cpu()
                 used = getattr(model, "_rwkv7_last_fast_token_backend", None)
                 fast_cos = F.cosine_similarity(fast_ref.unsqueeze(0), fast_q.unsqueeze(0)).item()
                 print(

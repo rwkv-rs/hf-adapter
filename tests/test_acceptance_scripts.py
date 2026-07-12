@@ -42,7 +42,10 @@ def run_bash(script: str, *, env: dict[str, str] | None = None) -> subprocess.Co
     if env:
         merged.update(env)
     return subprocess.run(
-        [bash, "-lc", script],
+        # A login shell may reset cwd to $HOME (notably in root-owned GPU
+        # containers), which makes every repository-relative script vanish.
+        # cwd already provides the isolated repository context we need.
+        [bash, "-c", script],
         cwd=ROOT,
         env=merged,
         text=True,
@@ -169,6 +172,24 @@ def test_math500_acceptance_defaults_are_final_benchmark() -> None:
     assert 'ACCEPTANCE_MIN_SUMMARY_SPEED_RATIO="${ACCEPTANCE_MIN_SUMMARY_SPEED_RATIO:-2.0}"' in text
 
 
+def test_blackwell_matrix_supports_paired_baselines() -> None:
+    matrix = (ROOT / "bench/run_blackwell_quant_matrix.py").read_text(encoding="utf-8")
+    decode = (ROOT / "bench/bench_native_quant_e2e_decode.py").read_text(encoding="utf-8")
+    assert '"--paired-baseline"' in matrix
+    assert 'cmd.append("--paired-baseline")' in matrix
+    assert '"--timing-repeats"' in matrix
+    assert '"--paired-baseline"' in decode
+    assert '"--timing-repeats"' in decode
+    assert "quantization != \"none\" and args.paired_baseline" in decode
+
+
+def test_converter_exposes_low_memory_path() -> None:
+    converter = (ROOT / "scripts/convert_rwkv7_to_hf.py").read_text(encoding="utf-8")
+    assert '"--low-memory"' in converter
+    assert 'with torch.device("meta")' in converter
+    assert "save_torch_state_dict(" in converter
+
+
 def test_common_pythonpath_separator_linux() -> None:
     proc = run_bash(
         "export PYTHONPATH=/tmp/existing; source scripts/_hf_script_common.sh >/dev/null; "
@@ -199,6 +220,8 @@ def main() -> int:
     test_apple_silicon_mlx_session_batch_requires_model()
     test_apple_silicon_mlx_generation_sweep_requires_model()
     test_math500_acceptance_defaults_are_final_benchmark()
+    test_blackwell_matrix_supports_paired_baselines()
+    test_converter_exposes_low_memory_path()
     test_common_pythonpath_separator_linux()
     test_common_pythonpath_separator_windows_msys()
     print("ACCEPTANCE SCRIPTS PASS")

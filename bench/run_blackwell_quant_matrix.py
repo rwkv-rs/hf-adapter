@@ -134,6 +134,7 @@ def main() -> int:
     ap.add_argument("--min-params", type=int, default=8_000_000)
     ap.add_argument("--policy", choices=["memory", "speed"], default="speed")
     ap.add_argument("--warmup", type=int, default=4)
+    ap.add_argument("--timing-repeats", type=int, default=1)
     ap.add_argument("--dtype", choices=["fp16", "bf16", "fp32"], default="fp16")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="native_graph")
@@ -144,6 +145,11 @@ def main() -> int:
     ap.add_argument("--skip-existing", action="store_true")
     ap.add_argument("--fail-fast", action="store_true")
     ap.add_argument("--allow-missing-baseline", action="store_true")
+    ap.add_argument(
+        "--paired-baseline",
+        action="store_true",
+        help="For quantized rows, benchmark dense and quantized paths in the same fresh process",
+    )
     ap.add_argument("--max-runs", type=int, default=0, help="Debug helper: stop after N subprocess rows")
     args = ap.parse_args()
 
@@ -200,6 +206,8 @@ def main() -> int:
                             str(decode),
                             "--warmup",
                             str(args.warmup),
+                            "--timing-repeats",
+                            str(args.timing_repeats),
                             "--baseline-dir",
                             args.baseline_dir,
                             "--baseline-key",
@@ -209,6 +217,8 @@ def main() -> int:
                         ]
                         if args.allow_missing_baseline:
                             cmd.append("--allow-missing-baseline")
+                        if args.paired_baseline and quant != "none":
+                            cmd.append("--paired-baseline")
                         print("\n$ " + " ".join(shlex.quote(part) for part in cmd), flush=True)
                         t0 = time.time()
                         proc = subprocess.run(cmd, text=True, capture_output=True, env=env)

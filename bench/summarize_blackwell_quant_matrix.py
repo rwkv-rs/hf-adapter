@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import statistics
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -27,12 +28,57 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def acceptance_failures(
+    rows: list[dict[str, Any]],
+    *,
+    expected_rows: int = 0,
+    min_speed_ratio: float = 0.99,
+    max_footprint_ratio: float = 0.9999,
+    min_prompt_cos: float = 0.998,
+    min_final_cos: float = 0.998,
+) -> list[str]:
+    """Return fail-closed native-quant acceptance diagnostics."""
+
+    failures: list[str] = []
+    if expected_rows and len(rows) != expected_rows:
+        failures.append(f"row_count={len(rows)} expected={expected_rows}")
+    failed_rows = [r for r in rows if r.get("status") != "pass"]
+    if failed_rows:
+        failures.append(f"non_pass_rows={len(failed_rows)}")
+    quant_rows = [r for r in rows if r.get("quantization") in {"mm8", "mm4"}]
+    if not quant_rows:
+        failures.append("quant_rows=0")
+        return failures
+
+    checks = (
+        ("speed", "decode_speed_ratio_vs_fp16", lambda x: x >= min_speed_ratio, min_speed_ratio),
+        ("footprint", "footprint_ratio_vs_fp16", lambda x: x <= max_footprint_ratio, max_footprint_ratio),
+        ("prompt_cos", "prompt_logits_cos_vs_fp16", lambda x: x >= min_prompt_cos, min_prompt_cos),
+        ("final_cos", "final_logits_cos_vs_fp16", lambda x: x >= min_final_cos, min_final_cos),
+    )
+    for label, field, predicate, threshold in checks:
+        bad = [r for r in quant_rows if r.get(field) is None or not predicate(float(r[field]))]
+        if bad:
+            failures.append(f"{label}_fail={len(bad)}/{len(quant_rows)} threshold={threshold}")
+    bad_next = [r for r in quant_rows if r.get("same_next_token_as_fp16") is not True]
+    if bad_next:
+        failures.append(f"same_next_fail={len(bad_next)}/{len(quant_rows)}")
+    return failures
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("jsonl")
     ap.add_argument("--only-pass", action="store_true")
+    ap.add_argument("--gate", action="store_true", help="Exit non-zero unless every quant row passes the requested thresholds")
+    ap.add_argument("--expected-rows", type=int, default=0, help="Fail the gate unless the JSONL has exactly this many rows")
+    ap.add_argument("--min-speed-ratio", type=float, default=0.99)
+    ap.add_argument("--max-footprint-ratio", type=float, default=0.9999)
+    ap.add_argument("--min-prompt-cos", type=float, default=0.998)
+    ap.add_argument("--min-final-cos", type=float, default=0.998)
     args = ap.parse_args()
-    rows = load_rows(Path(args.jsonl))
+    all_rows = load_rows(Path(args.jsonl))
+    rows = all_rows
     if args.only_pass:
         rows = [r for r in rows if r.get("status") == "pass"]
 
@@ -78,9 +124,22 @@ def main() -> int:
         ratios = sorted(float(v["decode_speed_ratio_vs_fp16"]) for v in vals if v.get("decode_speed_ratio_vs_fp16") is not None)
         fr = sorted(float(v["footprint_ratio_vs_fp16"]) for v in vals if v.get("footprint_ratio_vs_fp16") is not None)
         same = sum(1 for v in vals if v.get("same_next_token_as_fp16") is True)
-        median = ratios[len(ratios) // 2] if ratios else None
+        median = statistics.median(ratios) if ratios else None
         print(f"| {model} | {quant} | {len(vals)} | {fmt(min(ratios) if ratios else None, 4)} | {fmt(median, 4)} | {fmt(min(fr) if fr else None, 4)} | {same}/{len(vals)} |")
-    return 0
+
+    if not args.gate:
+        return 0
+    failures = acceptance_failures(
+        all_rows,
+        expected_rows=args.expected_rows,
+        min_speed_ratio=args.min_speed_ratio,
+        max_footprint_ratio=args.max_footprint_ratio,
+        min_prompt_cos=args.min_prompt_cos,
+        min_final_cos=args.min_final_cos,
+    )
+    print("\n## Acceptance gate")
+    print("PASS" if not failures else "FAIL: " + "; ".join(failures))
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

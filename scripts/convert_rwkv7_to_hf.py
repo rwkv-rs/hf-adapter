@@ -241,12 +241,126 @@ def patch_hf_metadata(output: Path) -> None:
     (output / "special_tokens_map.json").write_text(json.dumps(special, indent=2, ensure_ascii=False) + "\n")
 
 
+def prepare_translated_weight(
+    src_weight: torch.Tensor,
+    *,
+    src_name: str,
+    dst_name: str,
+    transposed: bool,
+    expected: torch.Tensor,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """Translate one tensor without cloning when its dtype/layout already fit."""
+
+    weight = src_weight.detach()
+    if transposed:
+        weight = weight.t().contiguous()
+    if tuple(weight.shape) != tuple(expected.shape):
+        # Official time-mix vectors are sometimes stored as [H] while the HF
+        # module keeps [1, 1, H] (or vice versa). They are the same parameter;
+        # materialize the exact template shape so a directly saved state dict
+        # loads without relying on copy_ broadcasting.
+        if int(weight.numel()) == int(expected.numel()):
+            weight = weight.reshape(expected.shape)
+        else:
+            raise AssertionError(
+                f"Shape mismatch {src_name} -> {dst_name}: "
+                f"{tuple(weight.shape)} vs {tuple(expected.shape)}"
+            )
+    if weight.dtype != dtype:
+        weight = weight.to(dtype=dtype)
+    return weight
+
+
+def save_low_memory_model(
+    *,
+    weights: Dict[str, torch.Tensor],
+    config: RWKV7Config,
+    dtype: torch.dtype,
+    output: Path,
+    max_shard_size: str,
+) -> None:
+    """Translate and shard a checkpoint without allocating a dense template.
+
+    A 13.3B fp16 template is another ~26GB allocation on top of the official
+    checkpoint. Building the exact module structure on the ``meta`` device
+    preserves key/shape validation while keeping resident memory close to one
+    checkpoint. Source entries are popped as translated tensors are retained,
+    so dtype conversion also stays near that bound.
+    """
+
+    with torch.device("meta"):
+        template = build_template_model(config, dtype)
+    expected_state = template.state_dict()
+    missing = set(expected_state)
+    translated: Dict[str, torch.Tensor] = {}
+
+    for src_name in list(weights):
+        src_weight = weights.pop(src_name)
+        dst_name, transposed = translate_name(src_name, config.num_hidden_layers)
+        if not dst_name:
+            continue
+        if dst_name not in expected_state:
+            raise KeyError(f"Translated name not in HF model: {src_name} -> {dst_name}")
+        translated[dst_name] = prepare_translated_weight(
+            src_weight,
+            src_name=src_name,
+            dst_name=dst_name,
+            transposed=transposed,
+            expected=expected_state[dst_name],
+            dtype=dtype,
+        )
+        missing.discard(dst_name)
+
+    allowed_missing = {"model.layers.0.pre_norm.weight", "model.layers.0.pre_norm.bias"}
+    unexpected_missing = sorted(missing - allowed_missing)
+    if unexpected_missing:
+        raise KeyError(f"Uninitialized HF parameters: {unexpected_missing[:20]} ... total={len(unexpected_missing)}")
+    for name in sorted(missing & allowed_missing):
+        expected = expected_state[name]
+        fill = torch.ones if name.endswith("weight") else torch.zeros
+        translated[name] = fill(tuple(expected.shape), dtype=dtype, device="cpu")
+
+    del template, expected_state
+    from huggingface_hub import save_torch_state_dict
+    from transformers import GenerationConfig
+
+    config.save_pretrained(output)
+    GenerationConfig.from_model_config(config).save_pretrained(output)
+    save_torch_state_dict(
+        translated,
+        output,
+        max_shard_size=max_shard_size,
+        safe_serialization=True,
+        metadata={"format": "pt"},
+    )
+
+
 def convert(args: argparse.Namespace) -> None:
     dtype_name, dtype = DTYPES[args.precision]
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
-    weights = torch.load(args.input, weights_only=True, map_location="cpu")
+    weights = torch.load(
+        args.input,
+        weights_only=True,
+        map_location="cpu",
+        mmap=bool(args.low_memory),
+    )
     config = infer_config(weights, dtype_name=dtype_name, attn_mode=args.attn_mode, fuse_norm=args.fuse_norm)
+    if args.low_memory:
+        save_low_memory_model(
+            weights=weights,
+            config=config,
+            dtype=dtype,
+            output=output,
+            max_shard_size=args.max_shard_size,
+        )
+        vocab = Path(args.vocab_file) if args.vocab_file else None
+        copy_adapter_files(output, vocab)
+        patch_hf_metadata(output)
+        print(f"Saved HF RWKV-7 model to: {output} (low-memory path)")
+        return
+
     model = build_template_model(config, dtype)
     model_dict = model.state_dict()
     missing = set(model_dict)
@@ -257,19 +371,16 @@ def convert(args: argparse.Namespace) -> None:
             continue
         if dst_name not in model_dict:
             raise KeyError(f"Translated name not in HF model: {src_name} -> {dst_name}")
-        weight = src_weight.detach().clone()
-        if transposed:
-            weight = weight.t().contiguous()
-        if list(weight.shape) == [1, 1, config.hidden_size]:
-            weight = weight.squeeze()
         expected = model_dict[dst_name]
-        if "attn.x_" in dst_name:
-            ok = tuple(expected.shape[2:]) == tuple(weight.shape)
-        else:
-            ok = tuple(expected.shape) == tuple(weight.shape)
-        if not ok:
-            raise AssertionError(f"Shape mismatch {src_name} -> {dst_name}: {tuple(weight.shape)} vs {tuple(expected.shape)}")
-        expected.copy_(weight.to(dtype=expected.dtype))
+        weight = prepare_translated_weight(
+            src_weight,
+            src_name=src_name,
+            dst_name=dst_name,
+            transposed=transposed,
+            expected=expected,
+            dtype=expected.dtype,
+        )
+        expected.copy_(weight)
         missing.discard(dst_name)
 
     allowed_missing = {"model.layers.0.pre_norm.weight", "model.layers.0.pre_norm.bias"}
@@ -299,6 +410,11 @@ def main() -> None:
     norm_group.add_argument("--no-fuse-norm", dest="fuse_norm", action="store_false", help="Use native PyTorch norm modules; faster for V100 decode in current tests")
     parser.set_defaults(fuse_norm=False)
     parser.add_argument("--max-shard-size", default="1000GB")
+    parser.add_argument(
+        "--low-memory",
+        action="store_true",
+        help="Build the template on meta and stream translated tensors into safetensors shards; required for 13B on ~48GB RAM hosts",
+    )
     args = parser.parse_args()
     convert(args)
 

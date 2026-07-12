@@ -44,6 +44,7 @@ def main() -> int:
                 "bf16",
                 "--attn-mode",
                 "fused_recurrent",
+                "--low-memory",
                 "--dry-run",
             ],
             cwd=repo,
@@ -70,7 +71,9 @@ def main() -> int:
         assert a["precision"] == "bf16"
         assert a["attn_mode"] == "fused_recurrent"
         assert a["fuse_norm"] is False
+        assert a["low_memory"] is True
         assert "--no-fuse-norm" in a["command"]
+        assert "--low-memory" in a["command"]
 
         proc = subprocess.run(
             [
