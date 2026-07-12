@@ -64,6 +64,7 @@ python scripts/verify_hf_release.py \
   --revision v1.0.0 \
   --device cuda \
   --cache-dir /results/hub-smoke/rwkv7-g1d-0.1b-hf/cache \
+  --modules-cache-dir /results/hub-smoke/rwkv7-g1d-0.1b-hf/modules-cache \
   --require-empty-cache \
   --force-download \
   --require-package-free \
@@ -73,8 +74,19 @@ python scripts/verify_hf_release.py \
 Repeat for all six repositories. The smoke report retains the resolved tag
 commit, weight metadata, `RWKV7ForCausalLM`, `RWKV7Cache`, finite logits, and
 cached generation. `--require-package-free` additionally proves that neither
-project wheel is installed in the smoke environment; the loaded architecture
-therefore came entirely from the tagged Hub repository.
+project wheel nor a local source checkout is importable in the smoke
+environment; the loaded architecture therefore came entirely from the tagged
+Hub repository.
+
+The release run uses the checked-in sequential wrapper so no repository or
+remote-code cache is accidentally reused:
+
+```bash
+python scripts/run_hub_release_smokes.py \
+  --output-dir /results/hub-smoke-v1.0.0 \
+  --revision v1.0.0 \
+  --device cuda
+```
 
 The GitHub release is prepared as a draft after the final wheel pair completes
 all three device gates. The exact wheel/source archives, `SHA256SUMS`, and

@@ -29,7 +29,8 @@ The final release process stages all six repositories from the same tagged
 source SHA, commits code/config/model-card changes, creates Hub tag `v1.0.0`,
 then redownloads every repository through a new empty cache. Weight hashes,
 resolved Hub revisions, finite forward/cache-generation results and the exact
-reference class names are retained in the release audit.
+reference class names are retained in the release audit. Hub blob caches and
+Transformers remote-code module caches are distinct and empty for every model.
 
 The stage manifest is also the publication transaction record: it binds every
 small file to SHA256, every existing safetensors shard to its Hub LFS

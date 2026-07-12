@@ -45,3 +45,18 @@ def test_package_free_inventory_has_both_distributions(monkeypatch):
         "rwkv7-hf": "1.0.0",
         "rwkv7-kernels": None,
     }
+
+
+def test_package_free_inventory_detects_source_checkout(monkeypatch):
+    class Spec:
+        origin = "/checkout/rwkv7_hf/__init__.py"
+
+    monkeypatch.setattr(
+        MODULE.importlib.util,
+        "find_spec",
+        lambda name: Spec() if name == "rwkv7_hf" else None,
+    )
+    assert MODULE.local_rwkv_import_origins() == {
+        "rwkv7_hf": "/checkout/rwkv7_hf/__init__.py",
+        "rwkv7_kernels": None,
+    }

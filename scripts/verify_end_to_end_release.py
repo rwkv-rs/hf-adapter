@@ -28,6 +28,15 @@ HUB_REPOSITORIES = {
     "wangyue114514/rwkv7-g1g-7.2b-hf",
     "wangyue114514/rwkv7-g1g-13.3b-hf",
 }
+HUB_CANONICAL_CODE = {
+    "cache_rwkv7.py",
+    "chat_template.jinja",
+    "configuration_rwkv7.py",
+    "modeling_rwkv7.py",
+    "ops_rwkv7.py",
+    "tokenization_rwkv7.py",
+}
+HUB_RELEASE_FILES = {"README.md", "config.json", *HUB_CANONICAL_CODE}
 
 
 def arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -85,6 +94,67 @@ def require_report(report: dict[str, Any], schema: str, label: str) -> None:
         raise ValueError(f"{label} audit did not pass")
 
 
+def verify_hub_provenance_files(
+    hub: dict[str, Any], *, source_sha: str, tag: str
+) -> dict[str, Any]:
+    """Open and cross-check the stage and pre-release weight manifests."""
+
+    loaded = {}
+    for field in ("release_manifest", "weight_baseline"):
+        identity = hub.get(field) or {}
+        path = Path(str(identity.get("path", "")))
+        payload = safe_json(path)
+        digest = sha256_file(path.expanduser().resolve())
+        if identity.get("sha256") != digest:
+            raise ValueError(f"Hub {field} SHA256 differs")
+        loaded[field] = (path.expanduser().resolve(), payload, digest)
+
+    _stage_path, stage, stage_sha = loaded["release_manifest"]
+    if (
+        stage.get("schema") != "rwkv7-hub-release-stage-v1"
+        or stage.get("source_sha") != source_sha
+        or stage.get("tag") != tag
+    ):
+        raise ValueError("Hub stage manifest source/tag/schema differs")
+    stage_rows = {
+        str(row.get("repo_id")): row for row in stage.get("repositories", [])
+    }
+    if len(stage.get("repositories", [])) != 6 or set(stage_rows) != HUB_REPOSITORIES:
+        raise ValueError("Hub stage manifest repository set differs")
+
+    _baseline_path, baseline, baseline_sha = loaded["weight_baseline"]
+    baseline_rows = {
+        str(row.get("repo")): row for row in baseline.get("repositories", [])
+    }
+    if set(baseline_rows) != HUB_REPOSITORIES:
+        raise ValueError("Hub weight baseline repository set differs")
+    audit_rows = {
+        str(row.get("repo")): row for row in hub.get("repositories", [])
+    }
+    for repo in HUB_REPOSITORIES:
+        staged = stage_rows[repo]
+        audited = audit_rows[repo]
+        if (
+            staged.get("source_sha") != source_sha
+            or set(staged.get("files") or []) != HUB_RELEASE_FILES
+            or staged.get("weights") != audited.get("weights")
+            or baseline_rows[repo].get("weights") != audited.get("weights")
+        ):
+            raise ValueError(f"Hub stage/weight provenance differs: {repo}")
+        expected = staged.get("file_sha256") or {}
+        actual = audited.get("release_file_sha256") or {}
+        if set(expected) != HUB_RELEASE_FILES or any(
+            (actual.get(name) or {}).get("expected") != digest
+            or not (actual.get(name) or {}).get("match")
+            for name, digest in expected.items()
+        ):
+            raise ValueError(f"Hub staged-file provenance differs: {repo}")
+    return {
+        "stage_manifest_sha256": stage_sha,
+        "weight_baseline_sha256": baseline_sha,
+    }
+
+
 def validate_external_evidence(
     *,
     version: str,
@@ -103,8 +173,8 @@ def validate_external_evidence(
         raise ValueError("Hub audit does not bind main to the release tag")
     if (
         hub.get("code_sha") != source_sha
-        or not hub.get("weight_baseline")
-        or not hub.get("release_manifest")
+        or not (hub.get("weight_baseline") or {}).get("sha256")
+        or not (hub.get("release_manifest") or {}).get("sha256")
         or (hub.get("source_checkout") or {}).get("commit") != source_sha
     ):
         raise ValueError(
@@ -122,12 +192,22 @@ def validate_external_evidence(
             raise ValueError(f"Hub repository revision is missing: {repo}")
         code = row.get("code_sha256") or {}
         release_files = row.get("release_file_sha256") or {}
-        if not code or not all(value.get("match") for value in code.values()):
+        weights = row.get("weights") or {}
+        if set(code) != HUB_CANONICAL_CODE or not all(
+            value.get("match") for value in code.values()
+        ):
             raise ValueError(f"Hub canonical code was not byte-verified: {repo}")
-        if not release_files or not all(
+        if set(release_files) != HUB_RELEASE_FILES or not all(
             value.get("match") for value in release_files.values()
         ):
             raise ValueError(f"Hub staged release files were not byte-verified: {repo}")
+        if not weights or any(
+            not value.get("sha256") or value.get("size") is None
+            for value in weights.values()
+        ):
+            raise ValueError(f"Hub weight identities are incomplete: {repo}")
+        if (row.get("tags") or {}).get(tag) != resolved:
+            raise ValueError(f"Hub tag target differs from audited main: {repo}")
 
     if pypi.get("harness_sha") != release.get("harness_sha"):
         raise ValueError("PyPI audit harness SHA differs from GPU release evidence")
@@ -178,20 +258,24 @@ def validate_external_evidence(
         download = smoke.get("download") or {}
         package_free = smoke.get("package_free") or {}
         if (
-            smoke.get("status") != "passed"
+            smoke.get("schema") != "rwkv7-hub-release-smoke-v1"
+            or smoke.get("status") != "passed"
             or smoke.get("model") != repo
             or smoke.get("revision") != tag
             or smoke.get("commit") != row.get("resolved_revision")
             or not download.get("force_download")
             or not download.get("require_empty_cache")
             or download.get("cache_was_empty") is not True
+            or download.get("modules_cache_was_empty") is not True
             or not download.get("cache_dir")
+            or not download.get("modules_cache_dir")
             or smoke.get("model_class") != "RWKV7ForCausalLM"
             or smoke.get("cache_class") != "RWKV7Cache"
             or not smoke.get("generated")
             or package_free.get("required") is not True
             or package_free.get("passed") is not True
             or any((package_free.get("installed_distributions") or {}).values())
+            or any((package_free.get("local_import_origins") or {}).values())
         ):
             raise ValueError(
                 f"fresh Hub redownload/load/cache/generation failed: {repo}"
@@ -220,6 +304,9 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         "github": args.github_audit.expanduser().resolve(),
     }
     reports = {name: safe_json(path) for name, path in audit_paths.items()}
+    hub_provenance = verify_hub_provenance_files(
+        reports["hub"], source_sha=args.source_sha, tag=f"v{args.version}"
+    )
     smoke_paths = parse_smokes(args.hub_smoke)
     smokes = {repo: safe_json(path) for repo, path in smoke_paths.items()}
     external = validate_external_evidence(
@@ -239,6 +326,7 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         repo: {"path": str(path.resolve()), "sha256": sha256_file(path.resolve())}
         for repo, path in smoke_paths.items()
     }
+    evidence["hub_provenance"] = hub_provenance
     return {
         "schema": "rwkv7-end-to-end-release-verification-v1",
         "status": "passed",

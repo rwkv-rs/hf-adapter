@@ -46,11 +46,22 @@ def fixture():
                 "repo": repo,
                 "status": "passed",
                 "resolved_revision": revision,
-                "code_sha256": {"modeling_rwkv7.py": {"match": True}},
-                "release_file_sha256": {"README.md": {"match": True}},
+                "code_sha256": {
+                    name: {"match": True}
+                    for name in MODULE.HUB_CANONICAL_CODE
+                },
+                "release_file_sha256": {
+                    name: {"match": True}
+                    for name in MODULE.HUB_RELEASE_FILES
+                },
+                "weights": {
+                    "model.safetensors": {"size": 1, "sha256": "8" * 64}
+                },
+                "tags": {f"v{version}": revision},
             }
         )
         smokes[repo] = {
+            "schema": "rwkv7-hub-release-smoke-v1",
             "status": "passed",
             "model": repo,
             "revision": f"v{version}",
@@ -63,6 +74,8 @@ def fixture():
                 "require_empty_cache": True,
                 "cache_was_empty": True,
                 "cache_dir": f"/fresh/{index}",
+                "modules_cache_was_empty": True,
+                "modules_cache_dir": f"/fresh/{index}/modules",
             },
             "package_free": {
                 "required": True,
@@ -70,6 +83,10 @@ def fixture():
                 "installed_distributions": {
                     "rwkv7-hf": None,
                     "rwkv7-kernels": None,
+                },
+                "local_import_origins": {
+                    "rwkv7_hf": None,
+                    "rwkv7_kernels": None,
                 },
             },
         }
@@ -80,7 +97,7 @@ def fixture():
         "revision": "main",
         "code_sha": source_sha,
         "source_checkout": {"commit": source_sha},
-        "weight_baseline": "/baseline.json",
+        "weight_baseline": {"path": "/baseline.json", "sha256": "8" * 64},
         "release_manifest": {"path": "/stage.json", "sha256": "9" * 64},
         "repositories": repositories,
     }
@@ -154,4 +171,57 @@ def test_end_to_end_evidence_rejects_cached_hub_smoke():
             pypi=pypi,
             github=github,
             smokes=smokes,
+        )
+
+
+def test_hub_stage_and_weight_files_are_reopened_and_cross_checked(tmp_path):
+    version, source_sha, _release, hub, _pypi, _github, _smokes = fixture()
+    stage_rows = []
+    baseline_rows = []
+    for row in hub["repositories"]:
+        file_sha = {name: "7" * 64 for name in MODULE.HUB_RELEASE_FILES}
+        row["release_file_sha256"] = {
+            name: {"expected": digest, "match": True}
+            for name, digest in file_sha.items()
+        }
+        stage_rows.append(
+            {
+                "repo_id": row["repo"],
+                "source_sha": source_sha,
+                "files": sorted(MODULE.HUB_RELEASE_FILES),
+                "file_sha256": file_sha,
+                "weights": row["weights"],
+            }
+        )
+        baseline_rows.append({"repo": row["repo"], "weights": row["weights"]})
+    stage = tmp_path / "stage.json"
+    stage.write_text(
+        MODULE.json.dumps(
+            {
+                "schema": "rwkv7-hub-release-stage-v1",
+                "source_sha": source_sha,
+                "tag": f"v{version}",
+                "repositories": stage_rows,
+            }
+        )
+    )
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(MODULE.json.dumps({"repositories": baseline_rows}))
+    hub["release_manifest"] = {
+        "path": str(stage),
+        "sha256": MODULE.sha256_file(stage),
+    }
+    hub["weight_baseline"] = {
+        "path": str(baseline),
+        "sha256": MODULE.sha256_file(baseline),
+    }
+    result = MODULE.verify_hub_provenance_files(
+        hub, source_sha=source_sha, tag=f"v{version}"
+    )
+    assert result["stage_manifest_sha256"] == MODULE.sha256_file(stage)
+
+    baseline.write_text("{}")
+    with pytest.raises(ValueError, match="weight_baseline SHA256 differs"):
+        MODULE.verify_hub_provenance_files(
+            hub, source_sha=source_sha, tag=f"v{version}"
         )

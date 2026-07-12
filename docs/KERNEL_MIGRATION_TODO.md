@@ -1314,12 +1314,17 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   all-surfaces verifier requires this stage-manifest proof rather than
   accepting canonical-code hashes alone.
 - Fresh-cache Hub smokes gained `--require-package-free`; final evidence must
-  show that neither `rwkv7-hf` nor `rwkv7-kernels` was installed while the
-  tagged remote model produced finite logits, `RWKV7Cache`, and cached
-  generation. This makes package-free Hub loading an explicit six-model gate.
+  show that neither `rwkv7-hf` nor `rwkv7-kernels` was installed or importable
+  from a local checkout while the tagged remote model produced finite logits,
+  `RWKV7Cache`, and cached generation. This makes package-free Hub loading an
+  explicit six-model gate.
+- Added `run_hub_release_smokes.py` to execute those six loads sequentially
+  from an initially empty output root. Every model receives separate empty Hub
+  blob and Transformers remote-code module caches, and the wrapper retains the
+  exact command, timestamps and report SHA256 in one manifest.
 - A real read-only six-repository stage and publish dry run passed against the
   frozen parents. A final-audit dry run failed exactly as expected before
   release because main still contains the old code/tag state, while all 32
   weight-shard identities remained equal to the frozen baseline. No Hub write
   occurred. Targeted Ruff/compileall, `git diff --check`, and the complete
-  local suite pass `170 passed` with `133` expected warnings.
+  local suite pass `174 passed` with `133` expected warnings.

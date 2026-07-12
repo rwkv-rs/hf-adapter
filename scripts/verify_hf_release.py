@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import argparse
 import importlib.metadata
+import importlib.util
 import json
+import os
 import platform
 from pathlib import Path
 
@@ -29,6 +31,11 @@ def parse_args():
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--cache-dir", type=Path)
+    parser.add_argument(
+        "--modules-cache-dir",
+        type=Path,
+        help="fresh Transformers remote-code module cache for this model",
+    )
     parser.add_argument("--force-download", action="store_true")
     parser.add_argument(
         "--require-package-free",
@@ -66,14 +73,35 @@ def installed_rwkv_distributions() -> dict[str, str | None]:
     return result
 
 
+def local_rwkv_import_origins() -> dict[str, str | None]:
+    result = {}
+    for name in ("rwkv7_hf", "rwkv7_kernels"):
+        spec = importlib.util.find_spec(name)
+        result[name] = None if spec is None else str(spec.origin)
+    return result
+
+
 def main():
     args = parse_args()
+    if args.require_empty_cache and args.modules_cache_dir is None:
+        raise ValueError("--require-empty-cache requires --modules-cache-dir")
+    modules_cache = prepare_cache_dir(
+        args.modules_cache_dir, args.require_empty_cache
+    )
+    if modules_cache["path"] is not None:
+        os.environ["HF_MODULES_CACHE"] = str(modules_cache["path"])
     from huggingface_hub import HfApi, hf_hub_download
 
     cache = prepare_cache_dir(args.cache_dir, args.require_empty_cache)
     installed = installed_rwkv_distributions()
-    if args.require_package_free and any(installed.values()):
-        raise SystemExit(f"RWKV distributions are installed: {installed}")
+    import_origins = local_rwkv_import_origins()
+    if args.require_package_free and (
+        any(installed.values()) or any(import_origins.values())
+    ):
+        raise SystemExit(
+            "RWKV distributions or local source packages are visible: "
+            f"installed={installed} origins={import_origins}"
+        )
     download_options = {
         "cache_dir": cache["path"],
         "force_download": args.force_download,
@@ -111,6 +139,7 @@ def main():
         raise SystemExit(f"hardware/backend policy leaked into config.json: {leaked}")
 
     report = {
+        "schema": "rwkv7-hub-release-smoke-v1",
         "status": "passed",
         "model": args.model,
         "revision": args.revision,
@@ -134,11 +163,14 @@ def main():
             "cache_was_empty": cache["was_empty"],
             "require_empty_cache": args.require_empty_cache,
             "force_download": args.force_download,
+            "modules_cache_dir": modules_cache["path"],
+            "modules_cache_was_empty": modules_cache["was_empty"],
         },
         "package_free": {
             "required": args.require_package_free,
             "installed_distributions": installed,
-            "passed": not any(installed.values()),
+            "local_import_origins": import_origins,
+            "passed": not any(installed.values()) and not any(import_origins.values()),
         },
     }
 

@@ -352,7 +352,10 @@ def main() -> int:
         "source_dir": str(source_dir),
         "source_checkout": source_checkout,
         "weight_baseline": (
-            str(args.weight_baseline.expanduser().resolve())
+            {
+                "path": str(args.weight_baseline.expanduser().resolve()),
+                "sha256": sha256_file(args.weight_baseline.expanduser().resolve()),
+            }
             if args.weight_baseline is not None
             else None
         ),
