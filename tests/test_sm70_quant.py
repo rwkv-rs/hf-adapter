@@ -67,6 +67,16 @@ def test_sm70_dp4a_batch_reuse_and_forward_into() -> None:
         fused_relu2.float(), (torch.relu(out4) ** 2).float(), dim=-1,
     ).min() >= 0.9999
     assert F.cosine_similarity(out4.float(), ref, dim=-1).min() >= 0.989
+
+    x_long = torch.randn(17, 768, device="cuda", dtype=torch.float16) * 0.1
+    chunked4 = w4_linear(x_long, q4, s4, 4096, inputs)
+    chunked4_relu2 = w4_linear_relu2(x_long, q4, s4, 4096, inputs)
+    chunked_ref4 = F.linear(x_long, dequant4)
+    assert F.cosine_similarity(chunked4.float(), chunked_ref4.float(), dim=-1).min() >= 0.9999
+    assert F.cosine_similarity(
+        chunked4_relu2.float(), (torch.relu(chunked4) ** 2).float(), dim=-1,
+    ).min() >= 0.9999
+
     graph = torch.cuda.CUDAGraph()
     with torch.cuda.graph(graph):
         captured = w4_linear(x, q4, s4, 4096, inputs, out=out4)

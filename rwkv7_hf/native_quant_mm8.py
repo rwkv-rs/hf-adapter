@@ -508,4 +508,15 @@ def quantize_model_mm8(
         parent_name, _, attr = full_name.rpartition(".")
         parent = model.get_submodule(parent_name) if parent_name else model
         setattr(parent, attr, MM8Linear(getattr(parent, attr), fused=fused))
+    setattr(model, "_rwkv7_native_mm_quantization", "mm8")
+    setattr(model, "_rwkv7_native_mm_replaced_modules", len(targets))
+    for cache_attr in (
+        "_rwkv7_native_jit_pack_cache",
+        "_rwkv7_native_graph_pack_cache",
+        "_rwkv7_native_graph_runner_cache",
+        "_rwkv7_native_prefill_graph_runner_cache",
+        "_rwkv7_native_prefill_graph_hot_runner",
+    ):
+        if hasattr(model, cache_attr):
+            delattr(model, cache_attr)
     return len(targets)

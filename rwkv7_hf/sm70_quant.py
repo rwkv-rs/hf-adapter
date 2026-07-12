@@ -208,18 +208,24 @@ def w4_linear(x, q, s, out_features, in_features, out=None):
             return out
         return result
     o = int(os.environ.get("RWKV7_SM70_QUANT_OUT_TILE", "4"))
-    y = (
-        e.w4(x2.contiguous(), q, s, int(out_features), o)
-        if out is None
-        else e.w4_out(
-            x2.contiguous(),
-            q,
-            s,
-            out.reshape(x2.shape[0], out_features),
-            int(out_features),
-            o,
+    if int(x2.shape[0]) <= 8:
+        y = (
+            e.w4(x2.contiguous(), q, s, int(out_features), o)
+            if out is None
+            else e.w4_out(
+                x2.contiguous(),
+                q,
+                s,
+                out.reshape(x2.shape[0], out_features),
+                int(out_features),
+                o,
+            )
         )
-    )
+    else:
+        y = x2.new_empty((x2.shape[0], out_features)) if out is None else out.reshape(x2.shape[0], out_features)
+        for start in range(0, int(x2.shape[0]), 8):
+            end = min(start + 8, int(x2.shape[0]))
+            e.w4_out(x2[start:end].contiguous(), q, s, y[start:end], int(out_features), o)
     return y.reshape(out_features) if scalar else y.reshape(*x.shape[:-1], out_features)
 
 
@@ -232,5 +238,11 @@ def w4_linear_relu2(x, q, s, out_features, in_features):
     if e is None:
         return torch.relu(w4_linear(x, q, s, out_features, in_features)) ** 2
     tile = int(os.environ.get("RWKV7_SM70_QUANT_OUT_TILE", "4"))
-    y = e.w4_relu2(x2.contiguous(), q, s, int(out_features), tile)
+    if int(x2.shape[0]) <= 8:
+        y = e.w4_relu2(x2.contiguous(), q, s, int(out_features), tile)
+    else:
+        y = x2.new_empty((x2.shape[0], out_features))
+        for start in range(0, int(x2.shape[0]), 8):
+            end = min(start + 8, int(x2.shape[0]))
+            y[start:end].copy_(e.w4_relu2(x2[start:end].contiguous(), q, s, int(out_features), tile))
     return y.reshape(out_features) if scalar else y.reshape(*x.shape[:-1], out_features)

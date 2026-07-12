@@ -40,6 +40,7 @@ def _install_runtime_stubs() -> None:
     torch_mod.Tensor = Tensor
     torch_mod.LongTensor = Tensor
     torch_mod.no_grad = lambda: _NoGrad()
+    torch_mod.inference_mode = lambda: _NoGrad()
     torch_mod.float32 = "float32"
     torch_mod.cuda = types.SimpleNamespace(is_available=lambda: True)
     _ensure_module("torch.nn")
@@ -406,12 +407,14 @@ def main() -> int:
     old_jit_block_step = modeling._native_jit_block_step
     old_jit_block_step_batched = modeling._native_jit_block_step_batched
     old_jit_extract = modeling._native_jit_extract
+    old_graph_extract = modeling._native_graph_extract
     old_graph_block_ip = modeling._native_graph_block_ip
     old_graph_block_ip_batched = modeling._native_graph_block_ip_batched
     try:
         modeling._native_jit_block_step = object()
         modeling._native_jit_block_step_batched = object()
         modeling._native_jit_extract = lambda owner: (packs, None, None, None)
+        modeling._native_graph_extract = lambda owner: (packs, None, None, None)
         modeling._native_graph_block_ip = object()
         modeling._native_graph_block_ip_batched = object()
 
@@ -490,6 +493,7 @@ def main() -> int:
         modeling._native_jit_block_step = old_jit_block_step
         modeling._native_jit_block_step_batched = old_jit_block_step_batched
         modeling._native_jit_extract = old_jit_extract
+        modeling._native_graph_extract = old_graph_extract
         modeling._native_graph_block_ip = old_graph_block_ip
         modeling._native_graph_block_ip_batched = old_graph_block_ip_batched
         if old_backend is None:

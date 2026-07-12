@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 from rwkv7_hf.native_jit import _native_graph_ffn_up_relu2_dispatch
 from rwkv7_hf.native_quant_mm4 import MM4Linear
-from rwkv7_hf.native_quant_mm8 import MM8Linear
+from rwkv7_hf.native_quant_mm8 import MM8Linear, quantize_model_mm8
 
 
 def _assert_module_fallback(module_type) -> None:
@@ -75,10 +75,29 @@ def test_native_graph_quant_ffn_route_is_opt_in() -> None:
             os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN"] = old
 
 
+def test_mm8_quantization_invalidates_native_weight_caches() -> None:
+    model = torch.nn.Sequential(torch.nn.Linear(16, 32, bias=False))
+    cache_names = (
+        "_rwkv7_native_jit_pack_cache",
+        "_rwkv7_native_graph_pack_cache",
+        "_rwkv7_native_graph_runner_cache",
+        "_rwkv7_native_prefill_graph_runner_cache",
+        "_rwkv7_native_prefill_graph_hot_runner",
+    )
+    for name in cache_names:
+        setattr(model, name, object())
+
+    assert quantize_model_mm8(model, min_params=1, fused=False) == 1
+    assert model._rwkv7_native_mm_quantization == "mm8"
+    assert model._rwkv7_native_mm_replaced_modules == 1
+    assert all(not hasattr(model, name) for name in cache_names)
+
+
 def main() -> int:
     test_mm8_relu2_cpu_fallback()
     test_mm4_relu2_cpu_fallback()
     test_native_graph_quant_ffn_route_is_opt_in()
+    test_mm8_quantization_invalidates_native_weight_caches()
     print("NATIVE QUANT FUSED FFN TESTS PASS")
     return 0
 

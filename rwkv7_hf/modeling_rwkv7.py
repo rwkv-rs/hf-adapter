@@ -1750,7 +1750,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                         raise RuntimeError(f"native_graph fast-token backend is unavailable for batch_size={batch_size}")
                     chosen = "native_jit" if self._rwkv7_can_use_native_backend("native_jit", batch_size) else "fla"
                 else:
-                    packs = self._rwkv7_native_jit_packs()
+                    packs = self._rwkv7_native_jit_packs(for_graph=True)
                     self._rwkv7_native_graph_runner(packs, batch_size)
             if chosen == "native_jit":
                 if not self._rwkv7_can_use_native_backend("native_jit", batch_size):
@@ -1834,7 +1834,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             if not _cuda_available() or getattr(weight.device, "type", None) != "cuda":
                 return False
             try:
-                self._rwkv7_native_jit_packs()
+                self._rwkv7_native_jit_packs(for_graph=True)
             except Exception:
                 return False
             return True
@@ -2212,6 +2212,11 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         batch_size = int(input_ids.shape[0])
         if self._rwkv7_uses_external_quantization():
             raise RuntimeError("native prefill currently requires dense floating-point weights")
+        if int(getattr(self, "_rwkv7_native_mm_replaced_modules", 0)) > 0:
+            raise RuntimeError(
+                "native prefill currently requires dense projection weights; "
+                "use the standard HF prefill path for native MM8/MM4 models"
+            )
         source_seen = None
         if past_key_values is not None and hasattr(past_key_values, "get_seq_length"):
             try:
@@ -2867,6 +2872,8 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         if _native_jit_prefill is None:
             return None
         if self._rwkv7_has_multi_cuda_device_map() or self._rwkv7_uses_external_quantization():
+            return None
+        if int(getattr(self, "_rwkv7_native_mm_replaced_modules", 0)) > 0:
             return None
         if kwargs.get("inputs_embeds") is not None or kwargs.get("labels") is not None:
             return None
