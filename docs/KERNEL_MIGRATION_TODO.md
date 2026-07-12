@@ -298,6 +298,15 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   evidence and was not stopped or restarted.
 - Direct-entrypoint, timestamp/order failure tests and the full local suite
   pass: `163 passed`, with `133` expected TorchScript deprecation warnings.
+- At `2026-08-28T07:29:56+08:00`, the untouched RTX 4080 formal reference
+  lane remained 35/48 exit-zero with no failed unit. Its active 1.5B/B1
+  HellaSwag process was about 10% through 40,168 log-likelihood requests with
+  an approximately 2h35 remaining estimate; it was the only GPU process.
+  Optimized/FLA and all backend-v2 watchers remained sequentially queued.
+- The ordered-acceptance change was pushed as
+  `4084cf9679cb9e0f74b01a8a158658d339490b39`; fork and local branch heads
+  match. GitGuardian passed and the four upstream Python checks were still
+  running at the final read-only check.
 
 ### 2026-08-27 — backend-v2 training boundary wired locally
 
