@@ -1189,3 +1189,9 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   had advanced to 29/48 units with 29 exit-zero and zero failures. The active
   0.4B/batch-8 ARC-Easy unit was the only GPU process; the backend-v2 chain
   remained asleep and sequential.
+- At `2026-08-28T07:13:05+08:00`, the same reference lane reached 35/48 with
+  35 exit-zero and zero failures. The active 1.5B/batch-1 HellaSwag unit was
+  the only GPU process and reported an approximately three-hour remaining
+  estimate at the start of its 40,168 requests. No watcher was restarted or
+  allowed to contend. Upstream draft PR #146 had all five checks green at
+  source `63c61a0fc900b51ce258d85717689b40e1f57bad`.
