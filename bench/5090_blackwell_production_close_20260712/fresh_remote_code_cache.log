@@ -1,0 +1,6 @@
+FRESH_REMOTE_CLASS_PASS <class 'transformers_modules.rwkv7_hyphen_g1d_hyphen_0_dot_4b_hyphen_hf.modeling_rwkv7.RWKV7ForCausalLM'>
+ada_lora.py True
+ada_sparse_ffn.py True
+fused_elementwise.py True
+sm70_quant.py True
+sm70_wagv.py True

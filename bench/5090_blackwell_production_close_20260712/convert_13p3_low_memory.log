@@ -1,0 +1,6 @@
+Current Triton version 3.1.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Triton version 3.1.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Triton version 3.1.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+`torch_dtype` is deprecated! Use `dtype` instead!
+FLA unavailable; using native RWKV-7 template for conversion.
+Saved HF RWKV-7 model to: /root/models/rwkv7-g1g-13.3b-hf (low-memory path)
