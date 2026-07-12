@@ -54,4 +54,3 @@ end-to-end integration point without changing quantization policy or defaults.
 - V100 promotion requires bsz 1/2/4/8 correctness plus end-to-end decode A/B.
   Isolated speedup alone does not change defaults or support a quantized-speed
   claim.
-

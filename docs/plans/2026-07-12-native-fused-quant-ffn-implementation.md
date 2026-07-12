@@ -71,4 +71,3 @@
 2. Run 1.5B end-to-end memory-policy decode with the flag off/on.
 3. Check logits/greedy alignment and peak VRAM.
 4. Keep the default off unless all claimed batch sizes are correct and non-negative end to end.
-
