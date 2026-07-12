@@ -12,6 +12,8 @@ CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 WARMUP="${WARMUP:-1}"
 RUNS="${RUNS:-1}"
 QWEN_BACKEND="${QWEN_BACKEND:-auto}"
+COMPARE_AFTER="${COMPARE_AFTER:-1}"
+read -r -a MODEL_ROLE_ARGS <<< "${MODEL_ROLES:-candidate reference}"
 QWEN_FAST_ARGS=()
 if [[ "${QWEN_BACKEND}" == "auto" ]]; then
   QWEN_FAST_ARGS+=(--require-qwen-fast-path)
@@ -41,16 +43,22 @@ cd "${ROOT}"
   --benchmark-matrix qwen35_3090_hf \
   --dtype fp16 --qwen-backend "${QWEN_BACKEND}" \
   "${QWEN_FAST_ARGS[@]}" \
+  --model-roles "${MODEL_ROLE_ARGS[@]}" \
   --warmup "${WARMUP}" --runs "${RUNS}" \
   --results "${OUT_DIR}/results.jsonl" --skip-existing
 matrix_rc=$?
 
-"${PYTHON_BIN}" bench/compare_qwen35_speed_matrix.py \
-  --results "${OUT_DIR}/results.jsonl" --expected-cells 72 \
-  --min-prefill-speedup 1.05 --min-decode-speedup 1.05 \
-  --json-output "${OUT_DIR}/summary.json" \
-  --markdown-output "${OUT_DIR}/summary.md" --fail-on-gate
-compare_rc=$?
+compare_rc=0
+if [[ "${COMPARE_AFTER}" != "0" ]]; then
+  "${PYTHON_BIN}" bench/compare_qwen35_speed_matrix.py \
+    --results "${OUT_DIR}/results.jsonl" --expected-cells 72 \
+    --min-prefill-speedup 1.05 --min-decode-speedup 1.05 \
+    --json-output "${OUT_DIR}/summary.json" \
+    --markdown-output "${OUT_DIR}/summary.md" --fail-on-gate
+  compare_rc=$?
+else
+  printf '%s\n' "comparison deferred until both model roles are present" > "${OUT_DIR}/comparison_deferred.txt"
+fi
 
 printf '%s\n' "${matrix_rc}" > "${OUT_DIR}/matrix_exit_code.txt"
 printf '%s\n' "${compare_rc}" > "${OUT_DIR}/compare_exit_code.txt"

@@ -256,6 +256,13 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--rwkv-code-source", choices=["repo", "model"], default="repo")
     ap.add_argument("--qwen-backend", choices=["auto", "torch"], default="auto")
     ap.add_argument("--require-qwen-fast-path", action="store_true")
+    ap.add_argument(
+        "--model-roles",
+        nargs="+",
+        choices=["candidate", "reference"],
+        default=["candidate", "reference"],
+        help="Run one side at a time when both checkpoints cannot coexist on local storage",
+    )
     ap.add_argument("--rwkv-fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="native_graph")
     ap.add_argument("--python-bin", default=sys.executable)
     ap.add_argument("--bench-script", default=str(Path(__file__).with_name("bench_cross_model_speed.py")))
@@ -293,7 +300,8 @@ def main() -> int:
         dtype=args.dtype,
     )
     validate_matrix(config)
-    specs = build_run_specs(config)
+    selected_roles = set(args.model_roles)
+    specs = [spec for spec in build_run_specs(config) if spec.model_role in selected_roles]
     seen = existing_keys(args.results) if args.skip_existing else set()
     env = build_run_environment(args)
 
