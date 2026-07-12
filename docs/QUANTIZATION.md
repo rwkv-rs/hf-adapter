@@ -24,6 +24,18 @@ The 36-row pressure artifact covers 1.5B/2.9B/7.2B × fp16/MM8/MM4 × prompt
 
 Evidence: [`../bench/5090_blackwell_production_close_20260712/README.md`](../bench/5090_blackwell_production_close_20260712/README.md).
 
+## V100 fused FFN probe
+
+The opt-in native fused FFN epilogue passes isolated MM8/MM4 bsz1/2/4/8
+correctness and speed A/B. On the paired 1.5B/bsz1/prompt128/decode128
+end-to-end row, MM4 reaches `1.1867x` fp16 with `0.5389x` model footprint and
+the same next token. MM8 remains a memory lane at `0.4145x` fp16 speed and
+`0.6932x` footprint. This is a selected MM4 close, not a universal
+full-memory quant speed promotion, so `RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN`
+remains disabled by default.
+
+Evidence: [`../bench/v100_native_fused_quant_ffn_20260712/README.md`](../bench/v100_native_fused_quant_ffn_20260712/README.md).
+
 ## Acceptance gate
 
 A promoted quant row must provide:

@@ -43,6 +43,26 @@ Canonical matrix: 0.1B/0.4B/1.5B × bsz1/2/4/8.
 
 Evidence: [`bench/v100_production_close_20260711/README.md`](bench/v100_production_close_20260711/README.md).
 
+### V100 full-memory fused quant FFN probe
+
+The 1.5B/bsz1/prompt128/decode128 paired-baseline probe validates the
+default-off fused MM8/MM4 FFN key projection plus ReLU-square epilogue.
+
+| Quant | Fused FFN | Decode / fp16 | Footprint / fp16 | Same next |
+|---|---|---:|---:|---|
+| MM8 | off | `0.4110x` | 0.6932 | yes |
+| MM8 | on | `0.4145x` | 0.6932 | yes |
+| MM4 | off | `1.1462x` | 0.5389 | yes |
+| MM4 | on | `1.1867x` | 0.5389 | yes |
+
+The isolated `2048 -> 8192` FFN epilogue rows pass for bsz1/2/4/8: MM8
+speedup is `1.0075x-1.0989x` and MM4 is `1.1541x-1.7242x`, with minimum
+cosine `0.99999988`. MM4 closes the speed/footprint gate for this exact
+end-to-end shape, but MM8 remains slower than fp16. The flag therefore stays
+opt-in pending broader model/batch/card evidence.
+
+Evidence: [`bench/v100_native_fused_quant_ffn_20260712/README.md`](bench/v100_native_fused_quant_ffn_20260712/README.md).
+
 ## RTX 4090 promoted rows
 
 0.4B dense fp16 native-graph decode:

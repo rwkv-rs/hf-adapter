@@ -366,6 +366,13 @@ serving speed.
      the current source tree without modifying converted checkpoints. This path
      remains default-off until exact-card decode rows show correctness and
      non-negative value across claimed batch sizes.
+   - V100 evidence on 1.5B/bsz1/prompt128/decode128 now closes the MM4 shape:
+     fused MM4 reaches `272.7 tok/s`, `1.1867x` paired fp16, at `0.5389x`
+     footprint with the same next token. Fused MM8 reaches only `95.2 tok/s`,
+     `0.4145x` fp16, despite a `0.6932x` footprint. Isolated bsz1/2/4/8 FFN
+     rows are all positive, but the mixed end-to-end result keeps the flag
+     default-off. Raw rows are in
+     `bench/v100_native_fused_quant_ffn_20260712/`.
 19. V100 + Ada/Blackwell benchmark matrix.
    - `bench/run_v100_fast_decode_validation.sh` remains the broad V100
      regression gate.

@@ -91,9 +91,13 @@ must pursue, in order:
 
 The current native-quant probe is
 `RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN=1`: it fuses the MM8/MM4 FFN key
-projection with its ReLU-square epilogue. Keep it opt-in until exact V100
-bsz=1/2/4/8 rows pass fused-vs-separate correctness and end-to-end decode A/B;
-an isolated launch-count win is not sufficient for promotion.
+projection with its ReLU-square epilogue. Exact V100 isolated bsz1/2/4/8 rows
+pass, and 1.5B/bsz1/prompt128/decode128 end-to-end evidence shows MM4 improving
+from `1.1462x` to `1.1867x` fp16 while footprint is `0.5389x`; MM8 improves
+slightly with fusion but remains only `0.4145x` fp16 at `0.6932x` footprint.
+Keep the flag opt-in: one MM4 shape is not enough for default promotion, and
+the full-memory MM8 speed gate remains open. Evidence is under
+`bench/v100_native_fused_quant_ffn_20260712/`.
 
 ## Parallel Prefill Goal: DPLR/WY Compiled Prototype
 

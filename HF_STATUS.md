@@ -29,7 +29,7 @@ Last updated: **2026-07-12**.
 
 | Platform | Status | Canonical evidence / boundary |
 |---|---|---|
-| V100 32GB | **Production-close** | Dense Albatross P1 plus native W8/W4 speed lane; [`bench/v100_production_close_20260711/`](bench/v100_production_close_20260711/README.md) |
+| V100 32GB | **Production-close** | Dense Albatross P1 plus native W8/W4 speed lane; full-memory fused-FFN MM4 closes one 1.5B bsz1 shape while MM8 remains slower; [`bench/v100_production_close_20260711/`](bench/v100_production_close_20260711/README.md), [`bench/v100_native_fused_quant_ffn_20260712/`](bench/v100_native_fused_quant_ffn_20260712/README.md) |
 | RTX 4090 | **Production-close for measured lanes** | All measured 0.4B decode batches pass; current-session bsz4 prefill passes; historical high-water remains |
 | RTX 5090 | **Production-close** | Quant pressure, 13.3B low-memory conversion and full MATH500; [`bench/5090_blackwell_production_close_20260712/`](bench/5090_blackwell_production_close_20260712/README.md) |
 | Apple M5 | **Production-close for measured MLX pairs** | Selected Qwen3.5 comparison gates and CoreML state correctness; [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PRODUCTION_CLOSE.md) |
