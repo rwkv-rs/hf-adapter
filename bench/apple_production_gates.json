@@ -1,6 +1,6 @@
 {
   "schema": "rwkv7.apple.production-gates.v1",
-  "version": "2026-07-12.5",
+  "version": "2026-07-12.6",
   "policy": {
     "completion": "Every required gate must have machine-verifiable passing evidence. Missing, unknown, or failed evidence makes the aggregate incomplete.",
     "no_inference_from_source": true,
@@ -2659,12 +2659,88 @@
         ]
       }
     },
-    {
-      "id": "serve.cache_hit_rate",
-      "category": "mlx_serving",
-      "title": "合理 cache 命中率",
-      "criterion": "公开可复现的 Zipf/共享前缀负载下报告请求/字节加权命中率；达到预设 workload SLO，不能用合成全相同 prompt 夸大。",
-      "required": true
+  {
+    "id": "serve.cache_hit_rate",
+    "category": "mlx_serving",
+    "title": "合理 cache 命中率",
+    "criterion": "公开可复现的 Zipf/共享前缀负载下报告请求/字节加权命中率；达到预设 workload SLO，不能用合成全相同 prompt 夸大。",
+    "required": true,
+    "proof": {
+      "type": "all",
+      "proofs": [
+        {
+          "type": "tracked_files",
+          "paths": [
+            "rwkv7_hf/mlx_cache.py",
+            "rwkv7_hf/mlx_scheduler.py",
+            "scripts/mlx_serving_load_bench.py",
+            "tests/test_mlx_serving_load_bench.py",
+            "bench/results_mlx_serving_load_m5_20260712_0p1b_fp16.jsonl"
+          ]
+        },
+        {
+          "type": "jsonl_query",
+          "path": "bench/results_mlx_serving_load_m5_20260712_0p1b_fp16.jsonl",
+          "axis": "mlx_serving_load",
+          "where": [
+            {
+              "field": "status",
+              "op": "eq",
+              "value": "pass"
+            }
+          ],
+          "require": [
+            {
+              "field": "process_isolated",
+              "op": "truthy"
+            },
+            {
+              "field": "git_dirty",
+              "op": "falsy"
+            },
+            {
+              "field": "unique_prompts",
+              "op": "ge",
+              "value": 64
+            },
+            {
+              "field": "zipf_alpha",
+              "op": "gt",
+              "value": 1.0
+            },
+            {
+              "field": "request_cache_hit_rate",
+              "op": "ge",
+              "value": 0.8
+            },
+            {
+              "field": "byte_cache_hit_rate",
+              "op": "ge",
+              "value": 0.8
+            },
+            {
+              "field": "cache.key_schema",
+              "op": "not_empty"
+            },
+            {
+              "field": "cache.entries",
+              "op": "eq",
+              "value": 64
+            },
+            {
+              "field": "gates.request_cache_hit_rate",
+              "op": "truthy"
+            },
+            {
+              "field": "gates.byte_cache_hit_rate",
+              "op": "truthy"
+            }
+          ],
+          "all_matches": true,
+          "min_matches": 1
+        }
+      ]
+    }
     },
     {
       "id": "serve.cancellation_backpressure",
@@ -2752,12 +2828,81 @@
       "criterion": "逐 token 流式输出、停止词/EOS、客户端取消和错误传播正确，首 token/结束状态可观测。",
       "required": true
     },
-    {
-      "id": "serve.concurrency_32",
-      "category": "mlx_serving",
-      "title": "高并发稳定性",
-      "criterion": "在能容纳的量化模型上 32 并发、混合长度、至少 10k 请求；无错 token、死锁、崩溃或无界内存。",
-      "required": true
+  {
+    "id": "serve.concurrency_32",
+    "category": "mlx_serving",
+    "title": "高并发稳定性",
+    "criterion": "在能容纳的量化模型上 32 并发、混合长度、至少 10k 请求；无错 token、死锁、崩溃或无界内存。",
+    "required": true,
+    "proof": {
+      "type": "jsonl_query",
+      "path": "bench/results_mlx_serving_load_m5_20260712_0p1b_fp16.jsonl",
+      "axis": "mlx_serving_load",
+      "where": [
+        {
+          "field": "status",
+          "op": "eq",
+          "value": "pass"
+        }
+      ],
+      "require": [
+        {
+          "field": "process_isolated",
+          "op": "truthy"
+        },
+        {
+          "field": "git_dirty",
+          "op": "falsy"
+        },
+        {
+          "field": "requests",
+          "op": "ge",
+          "value": 10000
+        },
+        {
+          "field": "concurrency",
+          "op": "ge",
+          "value": 32
+        },
+        {
+          "field": "unique_prompts",
+          "op": "ge",
+          "value": 64
+        },
+        {
+          "field": "max_observed_batch",
+          "op": "ge",
+          "value": 32
+        },
+        {
+          "field": "batch_backends",
+          "op": "contains",
+          "value": "batched"
+        },
+        {
+          "field": "gates.all_completed",
+          "op": "truthy"
+        },
+        {
+          "field": "gates.all_token_match",
+          "op": "truthy"
+        },
+        {
+          "field": "gates.all_state_released",
+          "op": "truthy"
+        },
+        {
+          "field": "gates.true_batched",
+          "op": "truthy"
+        },
+        {
+          "field": "memory_samples",
+          "op": "not_empty"
+        }
+      ],
+      "all_matches": true,
+      "min_matches": 1
+    }
     },
     {
       "id": "serve.latency_percentiles",
@@ -4879,12 +5024,78 @@
       "criterion": "MLX fp16/W8/W4 生产混合负载连续 24 小时；零崩溃/死锁/错 token，错误率满足 SLO。",
       "required": true
     },
-    {
-      "id": "reliability.requests_10k",
-      "category": "reliability",
-      "title": "至少 10k 请求回归",
-      "criterion": "固定可复现混合长度/并发 workload 完成≥10k 请求，结果、延迟分位和资源统计完整。",
-      "required": true
+  {
+    "id": "reliability.requests_10k",
+    "category": "reliability",
+    "title": "至少 10k 请求回归",
+    "criterion": "固定可复现混合长度/并发 workload 完成≥10k 请求，结果、延迟分位和资源统计完整。",
+    "required": true,
+    "proof": {
+      "type": "jsonl_query",
+      "path": "bench/results_mlx_serving_load_m5_20260712_0p1b_fp16.jsonl",
+      "axis": "mlx_serving_load",
+      "where": [
+        {
+          "field": "status",
+          "op": "eq",
+          "value": "pass"
+        }
+      ],
+      "require": [
+        {
+          "field": "process_isolated",
+          "op": "truthy"
+        },
+        {
+          "field": "git_dirty",
+          "op": "falsy"
+        },
+        {
+          "field": "requests",
+          "op": "ge",
+          "value": 10000
+        },
+        {
+          "field": "concurrency",
+          "op": "ge",
+          "value": 32
+        },
+        {
+          "field": "gates.request_count",
+          "op": "truthy"
+        },
+        {
+          "field": "gates.all_completed",
+          "op": "truthy"
+        },
+        {
+          "field": "gates.all_token_match",
+          "op": "truthy"
+        },
+        {
+          "field": "gates.all_state_released",
+          "op": "truthy"
+        },
+        {
+          "field": "ttft_s.p99",
+          "op": "not_none"
+        },
+        {
+          "field": "e2e_s.p99",
+          "op": "not_none"
+        },
+        {
+          "field": "queue_s.p99",
+          "op": "not_none"
+        },
+        {
+          "field": "memory_samples",
+          "op": "not_empty"
+        }
+      ],
+      "all_matches": true,
+      "min_matches": 1
+    }
     },
     {
       "id": "reliability.memory_leak",
