@@ -260,6 +260,21 @@ def parse_args() -> argparse.Namespace:
     return ap.parse_args()
 
 
+def build_run_environment(args: argparse.Namespace, base: dict[str, str] | None = None) -> dict[str, str]:
+    env = dict(os.environ if base is None else base)
+    root = str(Path(__file__).resolve().parents[1])
+    env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    env.setdefault("RWKV_V7_ON", "1")
+    env.setdefault("RWKV7_FAST_CACHE", "1")
+    env["RWKV7_FAST_TOKEN_BACKEND"] = args.rwkv_fast_token_backend
+    # Cross-model acceptance measures the production HF wrapper. The pure
+    # PyTorch native model remains an explicitly separate experimental lane.
+    env["RWKV7_NATIVE_MODEL"] = "0"
+    env.setdefault("RWKV7_NATIVE_MODEL_JIT", "1")
+    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    return env
+
+
 def main() -> int:
     args = parse_args()
     config = MatrixConfig(
@@ -273,15 +288,7 @@ def main() -> int:
     validate_matrix(config)
     specs = build_run_specs(config)
     seen = existing_keys(args.results) if args.skip_existing else set()
-    env = os.environ.copy()
-    root = str(Path(__file__).resolve().parents[1])
-    env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-    env.setdefault("RWKV_V7_ON", "1")
-    env.setdefault("RWKV7_FAST_CACHE", "1")
-    env.setdefault("RWKV7_FAST_TOKEN_BACKEND", args.rwkv_fast_token_backend)
-    env.setdefault("RWKV7_NATIVE_MODEL", "1")
-    env.setdefault("RWKV7_NATIVE_MODEL_JIT", "1")
-    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    env = build_run_environment(args)
 
     executed = 0
     failures = 0
