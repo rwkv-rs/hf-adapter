@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import statistics
+import sys
 import tempfile
 import time
 from importlib.metadata import PackageNotFoundError, version
@@ -21,6 +22,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 os.environ.setdefault("RWKV_V7_ON", "1")
+QWEN_FORCE_TORCH = os.environ.get("RWKV7_QWEN35_FORCE_TORCH", "0").lower() in {"1", "true", "yes", "on"}
+if QWEN_FORCE_TORCH:
+    sys.path[:] = [path for path in sys.path if "flash-linear-attention" not in path.replace("\\", "/").lower()]
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -85,6 +89,7 @@ def base_row(args: argparse.Namespace) -> dict[str, Any]:
         "model_kind": args.model_kind,
         "dtype": args.dtype,
         "quantization": args.quantization,
+        "qwen_backend_requested": args.qwen_backend,
         "batch_size": args.batch_size,
         "prompt_tokens": args.prompt_tokens,
         "decode_tokens": args.decode_tokens,
@@ -290,6 +295,8 @@ def environment_metadata(args: argparse.Namespace) -> dict[str, Any]:
         "bitsandbytes_version": package_version("bitsandbytes"),
         "fla_version": package_version("flash-linear-attention"),
         "causal_conv1d_version": package_version("causal-conv1d"),
+        "qwen_fla_importable": importlib.util.find_spec("fla") is not None,
+        "qwen_force_torch": QWEN_FORCE_TORCH,
         "rwkv_fast_token_backend_requested": os.environ.get("RWKV7_FAST_TOKEN_BACKEND"),
     }
 
@@ -331,7 +338,11 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "decode_tokps_per_seq": round(args.decode_tokens / decode_s, 3),
         "decode_ms_per_step": round(1000 * decode_s / args.decode_tokens, 6),
         "step_backend": step_backend,
-        "effective_backend": effective_backend or step_backend,
+        "effective_backend": (
+            "transformers_torch_fallback"
+            if args.model_kind == "qwen35" and QWEN_FORCE_TORCH
+            else effective_backend or step_backend
+        ),
         "cache_type": cache_type,
         "model_footprint_mb": model_footprint_mb(model),
         "peak_vram_mb": peak_mb(args.device),
@@ -375,6 +386,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--rwkv-attn-mode", choices=["chunk", "fused_recurrent"], default="fused_recurrent")
     ap.add_argument("--rwkv-code-source", choices=["repo", "model"], default="repo")
+    ap.add_argument("--qwen-backend", choices=["auto", "torch"], default="auto")
     ap.add_argument("--results", default="")
     ap.add_argument("--optional", action="store_true")
     args = ap.parse_args()

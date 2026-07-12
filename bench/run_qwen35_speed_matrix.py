@@ -186,6 +186,8 @@ def worker_command(args: argparse.Namespace, spec: RunSpec) -> list[str]:
         args.rwkv_attn_mode,
         "--rwkv-code-source",
         args.rwkv_code_source,
+        "--qwen-backend",
+        args.qwen_backend,
         "--results",
         str(args.results),
     ]
@@ -246,6 +248,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--rwkv-attn-mode", choices=["chunk", "fused_recurrent"], default="fused_recurrent")
     ap.add_argument("--rwkv-code-source", choices=["repo", "model"], default="repo")
+    ap.add_argument("--qwen-backend", choices=["auto", "torch"], default="auto")
     ap.add_argument("--rwkv-fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="native_graph")
     ap.add_argument("--python-bin", default=sys.executable)
     ap.add_argument("--bench-script", default=str(Path(__file__).with_name("bench_cross_model_speed.py")))
@@ -293,7 +296,10 @@ def main() -> int:
             executed += 1
         else:
             row_started = time.perf_counter()
-            proc = subprocess.run(cmd, text=True, capture_output=True, env=env)
+            run_env = env.copy()
+            if spec.model_kind == "qwen35" and args.qwen_backend == "torch":
+                run_env["RWKV7_QWEN35_FORCE_TORCH"] = "1"
+            proc = subprocess.run(cmd, text=True, capture_output=True, env=run_env)
             print(proc.stdout, end="", flush=True)
             if proc.stderr:
                 print(proc.stderr, end="", file=sys.stderr, flush=True)
