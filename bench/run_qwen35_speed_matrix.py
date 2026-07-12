@@ -153,7 +153,7 @@ def existing_keys(path: Path) -> set[tuple[Any, ...]]:
 
 
 def worker_command(args: argparse.Namespace, spec: RunSpec) -> list[str]:
-    return [
+    command = [
         args.python_bin,
         args.bench_script,
         "--model",
@@ -166,6 +166,8 @@ def worker_command(args: argparse.Namespace, spec: RunSpec) -> list[str]:
         spec.model_pair,
         "--model-size-label",
         spec.model_size_label,
+        "--benchmark-matrix",
+        args.benchmark_matrix,
         "--dtype",
         spec.dtype,
         "--quantization",
@@ -191,6 +193,9 @@ def worker_command(args: argparse.Namespace, spec: RunSpec) -> list[str]:
         "--results",
         str(args.results),
     ]
+    if args.require_qwen_fast_path:
+        command.append("--require-qwen-fast-path")
+    return command
 
 
 def append_orchestrator_failure(
@@ -201,7 +206,7 @@ def append_orchestrator_failure(
 ) -> None:
     row = {
         "axis": "qwen35_cross_model_speed",
-        "benchmark_matrix": "qwen35_v100_hf",
+        "benchmark_matrix": args.benchmark_matrix,
         "status": "fail",
         "model_pair": spec.model_pair,
         "model_role": spec.model_role,
@@ -243,12 +248,14 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--batch-sizes", nargs="+", type=int, default=[1, 2, 4, 8])
     ap.add_argument("--quantizations", nargs="+", choices=["none", "bnb8", "bnb4"], default=["none", "bnb8", "bnb4"])
     ap.add_argument("--dtype", choices=["fp16", "bf16", "fp32"], default="fp16")
+    ap.add_argument("--benchmark-matrix", default="qwen35_hf")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--warmup", type=int, default=1)
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--rwkv-attn-mode", choices=["chunk", "fused_recurrent"], default="fused_recurrent")
     ap.add_argument("--rwkv-code-source", choices=["repo", "model"], default="repo")
     ap.add_argument("--qwen-backend", choices=["auto", "torch"], default="auto")
+    ap.add_argument("--require-qwen-fast-path", action="store_true")
     ap.add_argument("--rwkv-fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="native_graph")
     ap.add_argument("--python-bin", default=sys.executable)
     ap.add_argument("--bench-script", default=str(Path(__file__).with_name("bench_cross_model_speed.py")))

@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-ROOT="${ROOT:-/home/data/wangyue/projects/rwkv7-hf-adapter-qwen35}"
-PYTHON_BIN="${PYTHON_BIN:-/home/data/wangyue/envs/rwkv7/bin/python}"
-OUT_DIR="${OUT_DIR:-/home/data/wangyue/bench/qwen35_v100_20260712/full_matrix}"
-RWKV_ROOT="${RWKV_ROOT:-/home/data/wangyue/models/rwkv7}"
-QWEN_ROOT="${QWEN_ROOT:-/home/data/wangyue/models/qwen}"
-QWEN9_MODEL="${QWEN9_MODEL:-/home/wzu/.cache/huggingface/hub/models--Qwen--Qwen3.5-9B/snapshots/c202236235762e1c871ad0ccb60c8ee5ba337b9a}"
-CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-1}"
+ROOT="${ROOT:-/home/ubuntu/hf-adapter}"
+PYTHON_BIN="${PYTHON_BIN:-/data/venvs/rwkv3090/bin/python}"
+OUT_DIR="${OUT_DIR:-/data/logs/3090/qwen35_full_matrix}"
+RWKV_ROOT="${RWKV_ROOT:-/data/models}"
+QWEN_ROOT="${QWEN_ROOT:-/home/ubuntu/models/qwen}"
+QWEN9_MODEL="${QWEN9_MODEL:-/home/ubuntu/models/qwen/Qwen3.5-9B}"
+CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 WARMUP="${WARMUP:-1}"
 RUNS="${RUNS:-1}"
+QWEN_BACKEND="${QWEN_BACKEND:-auto}"
+QWEN_FAST_ARGS=()
+if [[ "${QWEN_BACKEND}" == "auto" ]]; then
+  QWEN_FAST_ARGS+=(--require-qwen-fast-path)
+fi
 
 mkdir -p "${OUT_DIR}"
 export CUDA_VISIBLE_DEVICES
@@ -25,9 +30,10 @@ cd "${ROOT}"
   --decode-tokens 128 512 \
   --batch-sizes 1 2 4 8 \
   --quantizations none bnb8 bnb4 \
-  --benchmark-matrix qwen35_v100_hf \
+  --benchmark-matrix qwen35_3090_hf \
   --dtype fp16 \
-  --qwen-backend torch \
+  --qwen-backend "${QWEN_BACKEND}" \
+  "${QWEN_FAST_ARGS[@]}" \
   --warmup "${WARMUP}" \
   --runs "${RUNS}" \
   --results "${OUT_DIR}/results.jsonl" \
