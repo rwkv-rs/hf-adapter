@@ -30,11 +30,17 @@ except Exception:  # pragma: no cover
 from .native_quant_policy import normalize_native_mm_policy, should_quantize_linear
 
 try:
-    from .sm70_quant import is_sm70, quantize_w4_row, w4_linear as sm70_w4_linear
+    from .sm70_quant import (
+        is_sm70,
+        quantize_w4_row,
+        w4_linear as sm70_w4_linear,
+        w4_linear_relu2 as sm70_w4_linear_relu2,
+    )
 except Exception:  # pragma: no cover
     is_sm70 = lambda _device=None: False  # type: ignore[assignment]
     quantize_w4_row = None  # type: ignore[assignment]
     sm70_w4_linear = None  # type: ignore[assignment]
+    sm70_w4_linear_relu2 = None  # type: ignore[assignment]
 
 
 def quantize_mm4(weight):
@@ -121,7 +127,7 @@ if _HAS_TRITON:
     def _mm4_gemv_kernel(
         x_ptr, p_ptr, mx_ptr, rx_ptr, my_ptr, ry_ptr, y_ptr,
         N, M, MH,
-        BLOCK_PAIRS: tl.constexpr, BLOCK_N: tl.constexpr,
+        BLOCK_PAIRS: tl.constexpr, BLOCK_N: tl.constexpr, RELU2: tl.constexpr,
     ):
         """Paired-nibble GEMV. Each program owns BLOCK_PAIRS packed bytes, i.e.
         ``2*BLOCK_PAIRS`` output cols. Loads every packed byte once and extracts
@@ -155,6 +161,11 @@ if _HAS_TRITON:
             deq1 = (hi + 0.5) * ry_n[:, None] * rx1[None, :] + my_n[:, None] + mx1[None, :]
             acc0 += tl.sum(x[:, None] * deq0, axis=0)
             acc1 += tl.sum(x[:, None] * deq1, axis=0)
+        if RELU2:
+            acc0 = tl.maximum(acc0, 0.0)
+            acc1 = tl.maximum(acc1, 0.0)
+            acc0 = acc0 * acc0
+            acc1 = acc1 * acc1
         tl.store(y_ptr + m0, acc0, mask=mask0)
         tl.store(y_ptr + m1, acc1, mask=mask1)
 
@@ -162,7 +173,7 @@ if _HAS_TRITON:
     def _mm4_batched_gemv_kernel(
         x_ptr, p_ptr, mx_ptr, rx_ptr, my_ptr, ry_ptr, y_ptr,
         B, N, M, MH,
-        BLOCK_PAIRS: tl.constexpr, BLOCK_N: tl.constexpr,
+        BLOCK_PAIRS: tl.constexpr, BLOCK_N: tl.constexpr, RELU2: tl.constexpr,
     ):
         """Paired-nibble decode GEMV with one launch for all batch rows."""
         pid_b = tl.program_id(0)
@@ -195,6 +206,11 @@ if _HAS_TRITON:
             acc0 += tl.sum(x[:, None] * deq0, axis=0)
             acc1 += tl.sum(x[:, None] * deq1, axis=0)
         base = pid_b * M
+        if RELU2:
+            acc0 = tl.maximum(acc0, 0.0)
+            acc1 = tl.maximum(acc1, 0.0)
+            acc0 = acc0 * acc0
+            acc1 = acc1 * acc1
         tl.store(y_ptr + base + m0, acc0, mask=mask0)
         tl.store(y_ptr + base + m1, acc1, mask=mask1)
 
@@ -203,6 +219,7 @@ if _HAS_TRITON:
         x_ptr, p_ptr, mx_ptr, rx_ptr, my_ptr, ry_ptr, y_ptr,
         B, N, M, MH,
         BLOCK_B: tl.constexpr, BLOCK_PAIRS: tl.constexpr, BLOCK_N: tl.constexpr,
+        RELU2: tl.constexpr,
     ):
         """Tensor-core paired-nibble kernel; each packed byte is loaded once."""
         pid_b = tl.program_id(0)
@@ -247,6 +264,11 @@ if _HAS_TRITON:
         base = offs_b[:, None] * M
         out0 = acc0 * rx0[None, :] + sum_x_my[:, None] + sum_x[:, None] * mx0[None, :]
         out1 = acc1 * rx1[None, :] + sum_x_my[:, None] + sum_x[:, None] * mx1[None, :]
+        if RELU2:
+            out0 = tl.maximum(out0, 0.0)
+            out1 = tl.maximum(out1, 0.0)
+            out0 = out0 * out0
+            out1 = out1 * out1
         tl.store(y_ptr + base + m0[None, :], out0, mask=mask_b[:, None] & mask0[None, :])
         tl.store(y_ptr + base + m1[None, :], out1, mask=mask_b[:, None] & mask1[None, :])
 
@@ -266,10 +288,13 @@ def _mm4_decode_blocks(x, block_pairs, block_n):
     return int(block_pairs or (128 if blackwell else 64)), int(block_n or (128 if blackwell else 64))
 
 
-def mm4_gemv_triton(x, packed, mx, rx_s, my, ry_s, m_orig, *, block_pairs=None, block_n=None):
+def mm4_gemv_triton(
+    x, packed, mx, rx_s, my, ry_s, m_orig, *, block_pairs=None, block_n=None, relu2=False,
+):
     """Fused int4 dequant GEMV: ``x: [N]`` -> ``[M_orig]``."""
     if not (x.is_cuda and mm4_gemv_available(x.device)):
-        return mm4_matmul(x, packed, mx, rx_s, my, ry_s, m_orig)
+        out = mm4_matmul(x, packed, mx, rx_s, my, ry_s, m_orig)
+        return torch.relu(out) ** 2 if relu2 else out
     block_pairs, block_n = _mm4_decode_blocks(x, block_pairs, block_n)
     n = packed.shape[0]
     mh = packed.shape[1]
@@ -278,11 +303,14 @@ def mm4_gemv_triton(x, packed, mx, rx_s, my, ry_s, m_orig, *, block_pairs=None, 
     grid = (triton.cdiv(mh, block_pairs),)
     _mm4_gemv_kernel[grid](
         x, packed, mx.reshape(-1), rx_s.reshape(-1), my.reshape(-1), ry_s.reshape(-1), y,
-        n, m_padded, mh, BLOCK_PAIRS=block_pairs, BLOCK_N=block_n, num_warps=4)
+        n, m_padded, mh, BLOCK_PAIRS=block_pairs, BLOCK_N=block_n,
+        RELU2=bool(relu2), num_warps=4)
     return y[:m_orig]
 
 
-def mm4_batched_gemv_triton(x, packed, mx, rx_s, my, ry_s, m_orig, *, block_pairs=None, block_n=None):
+def mm4_batched_gemv_triton(
+    x, packed, mx, rx_s, my, ry_s, m_orig, *, block_pairs=None, block_n=None, relu2=False,
+):
     """Fused int4 dequant GEMV for a small contiguous ``[B, N]`` decode batch."""
     if not (x.is_cuda and x.dim() == 2 and mm4_gemv_available(x.device)):
         raise RuntimeError("mm4_batched_gemv_triton requires a 2-D CUDA input")
@@ -297,13 +325,15 @@ def mm4_batched_gemv_triton(x, packed, mx, rx_s, my, ry_s, m_orig, *, block_pair
     grid = (b, triton.cdiv(mh, block_pairs))
     _mm4_batched_gemv_kernel[grid](
         x, packed, mx.reshape(-1), rx_s.reshape(-1), my.reshape(-1), ry_s.reshape(-1), y,
-        b, n, m_padded, mh, BLOCK_PAIRS=block_pairs, BLOCK_N=block_n, num_warps=4,
+        b, n, m_padded, mh, BLOCK_PAIRS=block_pairs, BLOCK_N=block_n,
+        RELU2=bool(relu2), num_warps=4,
     )
     return y[:, :m_orig]
 
 
 def mm4_batched_dot_triton(
-    x, packed, mx, rx_s, my, ry_s, m_orig, *, block_b=16, block_pairs=128, block_n=32,
+    x, packed, mx, rx_s, my, ry_s, m_orig, *, block_b=16, block_pairs=128,
+    block_n=32, relu2=False,
 ):
     """Tensor-core fp16 W4 path for decode batches large enough to reuse weights."""
     if not (x.is_cuda and x.dim() == 2 and mm4_gemv_available(x.device)):
@@ -321,31 +351,50 @@ def mm4_batched_dot_triton(
     _mm4_batched_dot_kernel[grid](
         x, packed, mx.reshape(-1), rx_s.reshape(-1), my.reshape(-1), ry_s.reshape(-1), y,
         b, n, m_padded, mh,
-        BLOCK_B=block_b, BLOCK_PAIRS=block_pairs, BLOCK_N=block_n, num_warps=8,
+        BLOCK_B=block_b, BLOCK_PAIRS=block_pairs, BLOCK_N=block_n,
+        RELU2=bool(relu2), num_warps=8,
     )
     return y[:, :m_orig]
 
 
-def mm4_matmul_triton(x, packed, mx, rx_s, my, ry_s, m_orig, *, max_gemv_rows: int | None = None):
+def mm4_matmul_triton(
+    x, packed, mx, rx_s, my, ry_s, m_orig, *, max_gemv_rows: int | None = None,
+    relu2=False,
+):
     """Fused int4 dequant matmul with safe fallbacks (see native_quant_mm8)."""
     if not (x.is_cuda and mm4_gemv_available(x.device)):
-        return mm4_matmul(x, packed, mx, rx_s, my, ry_s, m_orig)
+        out = mm4_matmul(x, packed, mx, rx_s, my, ry_s, m_orig)
+        return torch.relu(out) ** 2 if relu2 else out
     if x.dim() == 1:
-        return mm4_gemv_triton(x, packed, mx, rx_s, my, ry_s, m_orig)
+        return mm4_gemv_triton(x, packed, mx, rx_s, my, ry_s, m_orig, relu2=relu2)
     if x.dim() != 2:
-        return mm4_matmul(x, packed, mx, rx_s, my, ry_s, m_orig)
+        out = mm4_matmul(x, packed, mx, rx_s, my, ry_s, m_orig)
+        return torch.relu(out) ** 2 if relu2 else out
     if int(x.shape[0]) == 1:
-        return mm4_gemv_triton(x[0], packed, mx, rx_s, my, ry_s, m_orig).unsqueeze(0)
+        return mm4_gemv_triton(
+            x[0], packed, mx, rx_s, my, ry_s, m_orig, relu2=relu2,
+        ).unsqueeze(0)
     blackwell = torch.cuda.get_device_capability(x.device)[0] >= 12
     row_limit = int(max_gemv_rows) if max_gemv_rows is not None else (16 if blackwell else 4)
     if int(x.shape[0]) > row_limit:
-        return mm4_matmul(x, packed, mx, rx_s, my, ry_s, m_orig)
+        out = mm4_matmul(x, packed, mx, rx_s, my, ry_s, m_orig)
+        return torch.relu(out) ** 2 if relu2 else out
     if blackwell and int(x.shape[0]) >= 4 and x.dtype == torch.float16:
-        return mm4_batched_dot_triton(x, packed, mx, rx_s, my, ry_s, m_orig)
+        return mm4_batched_dot_triton(
+            x, packed, mx, rx_s, my, ry_s, m_orig, relu2=relu2,
+        )
     if blackwell:
-        return mm4_batched_gemv_triton(x, packed, mx, rx_s, my, ry_s, m_orig)
+        return mm4_batched_gemv_triton(
+            x, packed, mx, rx_s, my, ry_s, m_orig, relu2=relu2,
+        )
     return torch.stack(
-        [mm4_gemv_triton(row, packed, mx, rx_s, my, ry_s, m_orig) for row in x], dim=0,
+        [
+            mm4_gemv_triton(
+                row, packed, mx, rx_s, my, ry_s, m_orig, relu2=relu2,
+            )
+            for row in x
+        ],
+        dim=0,
     )
 
 
@@ -405,6 +454,25 @@ class MM4Linear(torch.nn.Module):
         result = self.forward(x)
         out.copy_(result)
         return out
+
+    def rwkv7_forward_relu2(self, x):
+        """Quantized FFN-up projection with a fused ReLU-square epilogue."""
+
+        if self.bias is not None or not self.fused:
+            return torch.relu(self.forward(x)) ** 2
+        if self.sm70_rowwise and sm70_w4_linear_relu2 is not None:
+            return sm70_w4_linear_relu2(
+                x, self.packed_row, self.row_scale, self.out_features, self.in_features,
+            )
+        if not (x.is_cuda and mm4_gemv_available(x.device)):
+            return torch.relu(self.forward(x)) ** 2
+        leading = x.shape[:-1]
+        x2 = x.reshape(-1, self.in_features)
+        y = mm4_matmul_triton(
+            x2, self.packed, self.mx, self.rx_s, self.my, self.ry_s, self.m_orig,
+            relu2=True,
+        )
+        return y.reshape(*leading, self.out_features)
 
     def extra_repr(self):
         return f"in={self.in_features}, out={self.out_features}, mm4(fused={self.fused})"

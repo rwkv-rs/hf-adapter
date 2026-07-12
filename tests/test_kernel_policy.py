@@ -68,6 +68,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert not v100.ada_sparse_ffn_up
     assert not v100.fused_projection
     assert not v100.fused_output_project
+    assert not v100.fused_quant_ffn
 
     ada = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 4090", (8, 9)))
     assert ada.fused_output
@@ -90,6 +91,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert ada.ada_sparse_ffn_inplace
     assert ada.rkv_policy == "vkwr_auto"
     assert ada.norm_mix_num_warps == 8
+    assert not ada.fused_quant_ffn
 
     other_ada = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 4070", (8, 9)))
     assert not other_ada.fast_prefill
@@ -104,6 +106,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert blackwell.fused_output
     assert blackwell.fused_recurrent_output
     assert not blackwell.fused_projection
+    assert not blackwell.fused_quant_ffn
     assert "triton_compat" in blackwell.notes
 
     apple = policy_for_profile(classify_gpu("Apple M5", None, is_mps=True))

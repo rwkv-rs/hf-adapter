@@ -844,6 +844,14 @@ def _native_graph_fused_norm_mix_num_warps() -> int:
     return value
 
 
+def _native_graph_fused_quant_ffn_enabled() -> bool:
+    policy = _kernel_policy()
+    return env_flag(
+        "RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN",
+        bool(getattr(policy, "fused_quant_ffn", False)),
+    )
+
+
 def _native_graph_sm70_linear_enabled() -> bool:
     """Whether measured sm_70 small-row linear routes may be captured."""
 
@@ -960,6 +968,12 @@ def _native_graph_ffn_up_relu2_dispatch(x: torch.Tensor, weight) -> torch.Tensor
         and ada_linear_should_use(rows, outputs, inputs)
     ):
         return torch.relu(ada_linear(x, weight)) ** 2
+    if (
+        not _graph_linear_is_dense(weight)
+        and _native_graph_fused_quant_ffn_enabled()
+        and callable(getattr(weight, "rwkv7_forward_relu2", None))
+    ):
+        return weight.rwkv7_forward_relu2(x)
     if not _graph_linear_is_dense(weight):
         return torch.relu(_graph_linear_call(x, weight)) ** 2
     if (

@@ -356,6 +356,14 @@ serving speed.
      win rather than a decode-speed win until the next design uses tensor-core
      friendly activation quantization or fuses quant projection with more of the
      native_graph token path.
+   - The next opt-in full-memory integration is
+     `RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN=1`. It fuses the MM8/MM4 FFN key
+     projection with its ReLU-square epilogue, removing one pointwise launch
+     per quantized FFN layer while preserving the existing packed weight
+     formats. `bench/bench_native_quant_fused_ffn.py` records isolated A/B
+     rows, and `bench_native_quant_e2e_decode.py --fused-quant-ffn` records the
+     end-to-end gate. This path remains default-off until exact-card decode
+     rows show correctness and non-negative value across claimed batch sizes.
 19. V100 + Ada/Blackwell benchmark matrix.
    - `bench/run_v100_fast_decode_validation.sh` remains the broad V100
      regression gate.

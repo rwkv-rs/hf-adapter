@@ -89,6 +89,12 @@ must pursue, in order:
 3. exact-card reproduction on 4090/A100/H100/Blackwell and AMD fallback;
 4. continued prefill/DPLR work without regressing the promoted decode routes.
 
+The current native-quant probe is
+`RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN=1`: it fuses the MM8/MM4 FFN key
+projection with its ReLU-square epilogue. Keep it opt-in until exact V100
+bsz=1/2/4/8 rows pass fused-vs-separate correctness and end-to-end decode A/B;
+an isolated launch-count win is not sufficient for promotion.
+
 ## Parallel Prefill Goal: DPLR/WY Compiled Prototype
 
 Active branch work is now the opt-in DPLR/WY compiled prefill backend, not
@@ -634,7 +640,8 @@ Run this checklist for every new GPU before marking it as supported:
 - Role: current regression baseline and conservative production-smoke target.
 - Default-on: `fast_cache`, `fused_recurrent_output`, `fused_output`.
 - Default-off: `fused_recurrent`, `fused_prefill_scan`, `fused_output_project`,
-  `fused_projection`, `fused_wag_lora`, `fused_wavg_lora`.
+  `fused_projection`, `fused_wag_lora`, `fused_wavg_lora`,
+  `fused_quant_ffn`.
 - Required validation: functional checklist plus HF Trainer, PEFT LoRA, TRL
   SFT/DPO/GRPO, checkpoint resume, decode greedy-match, cache telemetry, and
   Albatross A/B rows when available.

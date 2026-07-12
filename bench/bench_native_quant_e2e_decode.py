@@ -110,6 +110,7 @@ def baseline_path(args) -> Path | None:
             f"dtype-{args.dtype}",
             f"attn-{args.attn_mode}",
             f"fast-{args.fast_token_backend}",
+            f"quantffn-{int(args.fused_quant_ffn)}",
             f"bsz-{args.batch_size}",
             f"prompt-{args.prompt_tokens}",
             f"decode-{args.decode_tokens}",
@@ -242,6 +243,7 @@ def count_modules(model) -> dict[str, int]:
 
 def load_model(args, dtype):
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN"] = "1" if args.fused_quant_ffn else "0"
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
     model = AutoModelForCausalLM.from_pretrained(
@@ -324,6 +326,11 @@ def main() -> int:
     ap.add_argument("--fuse-norm", choices=["auto", "true", "false"], default="auto")
     ap.add_argument("--fast-cache", choices=["auto", "true", "false"], default="true")
     ap.add_argument("--fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="native_graph")
+    ap.add_argument(
+        "--fused-quant-ffn",
+        action="store_true",
+        help="Fuse MM8/MM4 FFN-up dequant projection with the ReLU-square epilogue",
+    )
     quantization_choices = ["none", "mm8", "mm4", "a8w8", "torchao_w8", "torchao_w4"]
     ap.add_argument("--quantizations", nargs="+", choices=quantization_choices, default=["none", "mm8", "mm4"])
     ap.add_argument(
@@ -443,6 +450,7 @@ def main() -> int:
             "attn_mode": args.attn_mode,
             "fuse_norm": getattr(model.config, "fuse_norm", None),
             "fast_cache": os.environ.get("RWKV7_FAST_CACHE", "1") not in {"0", "false", "False", "no", "off"},
+            "fused_quant_ffn": bool(args.fused_quant_ffn),
             "batch_size": args.batch_size,
             "prompt_tokens": int(ids.shape[1]),
             "decode_tokens": args.decode_tokens,

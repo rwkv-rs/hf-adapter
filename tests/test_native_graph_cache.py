@@ -244,6 +244,7 @@ def main() -> int:
     old_fused_norm_mix_warps = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS")
     old_sm70_linear = os.environ.get("RWKV7_NATIVE_GRAPH_SM70_LINEAR")
     old_wavg_bsz1_max_hidden = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BSZ1_MAX_HIDDEN")
+    old_fused_quant_ffn = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN")
     os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = "2"
     try:
         os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", None)
@@ -267,6 +268,8 @@ def main() -> int:
         assert modeling._native_graph_vkwr_rkv_thresholds() == (1, 4096)
         os.environ["RWKV7_NATIVE_GRAPH_RKV_MAX_ROWS"] = "1"
         assert modeling._native_graph_vkwr_rkv_thresholds() == (1, 1)
+        os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN", None)
+        assert modeling._native_graph_fused_quant_ffn_requested() is False
 
         get_runner = modeling.RWKV7ForCausalLM._rwkv7_native_graph_runner
         clear_cache = modeling.RWKV7ForCausalLM.rwkv7_clear_native_graph_cache
@@ -337,13 +340,16 @@ def main() -> int:
         sm70_linear_on = get_runner(owner, packs, 1)
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BSZ1_MAX_HIDDEN"] = "1024"
         wavg_bsz1_routed = get_runner(owner, packs, 1)
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN"] = "1"
+        fused_quant_ffn_on = get_runner(owner, packs, 1)
         assert norm_mix_off is not norm_mix_on
         assert norm_mix_on is not norm_mix_w8
         assert norm_mix_w8 is not recurrent_raw_off
         assert recurrent_raw_off is not sm70_linear_on
         assert sm70_linear_on is not wavg_bsz1_routed
-        assert len(owner._rwkv7_native_graph_runner_cache) == 6
-        assert clear_cache(owner) == 6
+        assert wavg_bsz1_routed is not fused_quant_ffn_on
+        assert len(owner._rwkv7_native_graph_runner_cache) == 7
+        assert clear_cache(owner) == 7
 
         os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = "2"
         assert modeling._native_graph_cache_size() == 2
@@ -390,6 +396,10 @@ def main() -> int:
             os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BSZ1_MAX_HIDDEN", None)
         else:
             os.environ["RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BSZ1_MAX_HIDDEN"] = old_wavg_bsz1_max_hidden
+        if old_fused_quant_ffn is None:
+            os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN", None)
+        else:
+            os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN"] = old_fused_quant_ffn
 
     old_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND")
     old_fast_forward = os.environ.get("RWKV7_FAST_FORWARD")

@@ -40,6 +40,7 @@ def main() -> int:
     ap.add_argument("--e2e-cos-min", type=float, default=0.999)
     ap.add_argument("--triton-max-abs", type=float, default=0.5)
     ap.add_argument("--fast-token-cos-min", type=float, default=0.999)
+    ap.add_argument("--relu2-cos-min", type=float, default=0.999)
     args = ap.parse_args()
 
     model = AutoModelForCausalLM.from_pretrained(
@@ -72,11 +73,17 @@ def main() -> int:
         with torch.no_grad():
             ref = mm8_matmul(x1, wu8, mx, rx, my, ry)
             t = mm8_gemv_triton(x1, wu8, mx, rx, my, ry)
+            relu2 = mm8_gemv_triton(x1, wu8, mx, rx, my, ry, relu2=True)
             sk = mm8_gemv_triton_sk(x1, wu8, mx, rx, my, ry)
         d = (t - ref).abs().max().item()
         dsk = (sk - ref).abs().max().item()
         print(f"triton vs torch-ref max_abs = {d:.6f}; split-K = {dsk:.6f} (<= {args.triton_max_abs})", flush=True)
         ok = ok and d <= args.triton_max_abs and dsk <= args.triton_max_abs
+        relu2_cos = F.cosine_similarity(
+            relu2.float().unsqueeze(0), (torch.relu(t) ** 2).float().unsqueeze(0),
+        ).item()
+        print(f"fused relu2 cosine = {relu2_cos:.6f} (>= {args.relu2_cos_min})", flush=True)
+        ok = ok and relu2_cos >= args.relu2_cos_min
 
         # Blackwell decode uses one launch for the complete batch.  Exercise
         # both the low-batch GEMV kernel and the tensor-core path selected for
@@ -90,6 +97,7 @@ def main() -> int:
                 refb = mm8_matmul(xb, wu8, mx, rx, my, ry)
                 fused = kernel(xb, wu8, mx, rx, my, ry)
                 dispatched = mm8_matmul_triton(xb, wu8, mx, rx, my, ry)
+                dispatched_relu2 = mm8_matmul_triton(xb, wu8, mx, rx, my, ry, relu2=True)
             db = (fused - refb).abs().max().item()
             dd = (dispatched - refb).abs().max().item()
             print(
@@ -98,6 +106,16 @@ def main() -> int:
                 flush=True,
             )
             ok = ok and db <= args.triton_max_abs and dd <= args.triton_max_abs
+            relu2_cos = F.cosine_similarity(
+                dispatched_relu2.float().flatten().unsqueeze(0),
+                (torch.relu(dispatched) ** 2).float().flatten().unsqueeze(0),
+            ).item()
+            print(
+                f"batched fused relu2 bsz={batch} cosine = {relu2_cos:.6f} "
+                f"(>= {args.relu2_cos_min})",
+                flush=True,
+            )
+            ok = ok and relu2_cos >= args.relu2_cos_min
 
     # 3. end-to-end size-gated quantization
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)

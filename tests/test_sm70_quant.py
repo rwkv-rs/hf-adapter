@@ -10,6 +10,7 @@ from rwkv7_hf.sm70_quant import (
     quantize_w4_row,
     quantize_w8_row,
     w4_linear,
+    w4_linear_relu2,
     w8_linear,
 )
 
@@ -27,8 +28,10 @@ def test_row_quantized_layout_and_cpu_fallback() -> None:
     ref = F.linear(x, weight)
     y8 = w8_linear(x, q8, s8)
     y4 = w4_linear(x, q4, s4, 48, inputs)
+    y4_relu2 = w4_linear_relu2(x, q4, s4, 48, inputs)
     assert F.cosine_similarity(y8.flatten(), ref.flatten(), dim=0) >= 0.9999
     assert F.cosine_similarity(y4.flatten(), ref.flatten(), dim=0) >= 0.99
+    torch.testing.assert_close(y4_relu2, torch.relu(y4) ** 2, rtol=0, atol=0)
 
 
 @pytest.mark.skipif(
@@ -46,6 +49,7 @@ def test_sm70_dp4a_batch_reuse_and_forward_into() -> None:
     out4 = torch.empty_like(out8)
     returned8 = w8_linear(x, q8, s8, out=out8)
     returned4 = w4_linear(x, q4, s4, 4096, inputs, out=out4)
+    fused_relu2 = w4_linear_relu2(x, q4, s4, 4096, inputs)
     torch.cuda.synchronize()
     assert is_sm70(x.device) and build_error() is None
     assert returned8.data_ptr() == out8.data_ptr()
@@ -59,6 +63,9 @@ def test_sm70_dp4a_batch_reuse_and_forward_into() -> None:
     dequant4.mul_(s4[:, None])
     kernel_reference4 = F.linear(x, dequant4).float()
     assert F.cosine_similarity(out4.float(), kernel_reference4, dim=-1).min() >= 0.9999
+    assert F.cosine_similarity(
+        fused_relu2.float(), (torch.relu(out4) ** 2).float(), dim=-1,
+    ).min() >= 0.9999
     assert F.cosine_similarity(out4.float(), ref, dim=-1).min() >= 0.989
     graph = torch.cuda.CUDAGraph()
     with torch.cuda.graph(graph):

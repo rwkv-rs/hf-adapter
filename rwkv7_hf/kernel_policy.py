@@ -79,6 +79,7 @@ class KernelPolicy:
     fused_projection: bool = False
     fused_wag_lora: bool = False
     fused_wavg_lora: bool = False
+    fused_quant_ffn: bool = False
     wavg_lora_bsz1_max_hidden: int | None = None
     output_project_block_m: int = 16
     wag_lora_blocks: tuple[int, int, int] = (64, 64, 64)
