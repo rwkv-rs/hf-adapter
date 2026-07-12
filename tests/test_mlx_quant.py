@@ -20,6 +20,35 @@ def test_mlx_quant_import_safe():
     assert hasattr(mq, "quantize_mlx_mm4")
 
 
+def test_mlx_q4_k_m_profile_policy():
+    from rwkv7_hf.mlx_model import mlx_quant_bits_for_weight
+
+    assert mlx_quant_bits_for_weight("lm_head.weight", bits=4, profile="q4_k_m") == 8
+    assert mlx_quant_bits_for_weight(
+        "model.layers.3.ffn.value.weight", bits=4, profile="q4_k_m"
+    ) == 8
+    assert mlx_quant_bits_for_weight(
+        "model.layers.3.attn.r_proj.weight", bits=4, profile="q4_k_m"
+    ) == 8
+    assert mlx_quant_bits_for_weight(
+        "model.layers.3.attn.v_proj.weight", bits=4, profile="q4_k_m"
+    ) == 8
+    assert mlx_quant_bits_for_weight(
+        "model.layers.3.ffn.key.weight", bits=4, profile="q4_k_m"
+    ) == 4
+    assert mlx_quant_bits_for_weight(
+        "model.layers.3.attn.k_proj.weight", bits=4, profile="q4_k_m"
+    ) == 4
+    assert mlx_quant_bits_for_weight("lm_head.weight", bits=8, profile="q4_k_m") == 8
+
+    try:
+        mlx_quant_bits_for_weight("lm_head.weight", bits=4, profile="unknown")
+    except ValueError as exc:
+        assert "quant profile" in str(exc)
+    else:
+        raise AssertionError("unknown MLX quant profile must fail")
+
+
 def test_mlx_quant_formula_if_available():
     if importlib.util.find_spec("mlx") is None:
         return
@@ -234,6 +263,32 @@ def test_mlx_model_quantized_linear_hook_if_available():
     assert model.telemetry()["quantized_linear_last_backend_counts"]["affine"] > 0
 
 
+def test_mlx_model_q4_k_m_mixed_precision_hook_if_available():
+    if importlib.util.find_spec("mlx") is None:
+        return
+
+    from tests.test_apple_silicon_mlx_model_smoke import tiny_torch_model_to_mlx
+
+    _, model, _ = tiny_torch_model_to_mlx()
+    replaced = model.quantize_linears(
+        "mm4",
+        min_params=1,
+        backend="affine",
+        profile="q4_k_m",
+    )
+    assert replaced > 0
+    assert model.quantized_linears["lm_head.weight"].bits == 8
+    assert model.quantized_linears["model.layers.0.ffn.value.weight"].bits == 8
+    assert model.quantized_linears["model.layers.0.attn.r_proj.weight"].bits == 8
+    assert model.quantized_linears["model.layers.0.attn.v_proj.weight"].bits == 8
+    assert model.quantized_linears["model.layers.0.ffn.key.weight"].bits == 4
+    assert model.quantized_linears["model.layers.0.attn.k_proj.weight"].bits == 4
+    telemetry = model.telemetry()
+    assert telemetry["quantized_linear_profile"] == "q4_k_m"
+    assert telemetry["quantized_linear_bits_histogram"][4] > 0
+    assert telemetry["quantized_linear_bits_histogram"][8] > 0
+
+
 def test_mlx_model_metal_quantized_linear_hook_if_available():
     if importlib.util.find_spec("mlx") is None:
         return
@@ -396,8 +451,10 @@ def test_mlx_model_auto_quantized_linear_hook_if_available():
 
 if __name__ == "__main__":
     test_mlx_quant_import_safe()
+    test_mlx_q4_k_m_profile_policy()
     test_mlx_quant_formula_if_available()
     test_mlx_model_quantized_linear_hook_if_available()
+    test_mlx_model_q4_k_m_mixed_precision_hook_if_available()
     test_mlx_model_metal_quantized_linear_hook_if_available()
     test_mlx_model_rkv_quant_min_params_if_available()
     test_mlx_model_step_eval_interval_if_available()

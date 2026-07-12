@@ -1,0 +1,2721 @@
+{
+  "schema": "rwkv7.apple.production-gates.v1",
+  "version": "2026-07-11.4",
+  "policy": {
+    "completion": "Every required gate must have machine-verifiable passing evidence. Missing, unknown, or failed evidence makes the aggregate incomplete.",
+    "no_inference_from_source": true,
+    "no_smoke_as_production_substitute": true,
+    "performance_statistics": "Production performance rows require exact hardware identity, cold/warm separation, true peak memory, at least five repeats unless a gate explicitly says otherwise, and correctness/quality passing in the same configuration.",
+    "scope": "Apple Silicon support for the RWKV-7 Hugging Face adapter: HF/MPS training and compatibility, MLX/Metal production inference, CoreML/ANE deployment. CUDA, vLLM, SGLang and DeepSpeed ZeRO are separate non-Apple gates."
+  },
+  "categories": [
+    {
+      "id": "release",
+      "title": "发布、安装与证据"
+    },
+    {
+      "id": "hf_mps_inference",
+      "title": "HF/Transformers MPS 推理"
+    },
+    {
+      "id": "hf_mps_training",
+      "title": "HF PEFT/Trainer/TRL 训练"
+    },
+    {
+      "id": "mlx_correctness",
+      "title": "MLX/Metal 数值与模型正确性"
+    },
+    {
+      "id": "mlx_serving",
+      "title": "MLX 生产服务能力"
+    },
+    {
+      "id": "performance",
+      "title": "性能与 Qwen3.5 验收"
+    },
+    {
+      "id": "quantization",
+      "title": "W8/W4 量化"
+    },
+    {
+      "id": "coreml_ane",
+      "title": "CoreML/ANE 部署"
+    },
+    {
+      "id": "reliability",
+      "title": "稳定性、运维与 CI"
+    },
+    {
+      "id": "hardware",
+      "title": "Apple 芯片与内存档覆盖"
+    }
+  ],
+  "gates": [
+    {
+      "id": "release.clean_install",
+      "category": "release",
+      "title": "干净环境安装",
+      "criterion": "在受支持 macOS/arm64 的全新虚拟环境中安装基础包及 mlx extra；不需要 CUDA、Triton 或 FLA，安装、导入和最小推理均成功。",
+      "required": true
+    },
+    {
+      "id": "release.import_without_cuda",
+      "category": "release",
+      "title": "无 CUDA/FLA 安全导入",
+      "criterion": "未安装 CUDA、Triton、flash-linear-attention、bitsandbytes 时，rwkv7_hf 与 HF auto classes 可安全导入，Apple 后端延迟加载。",
+      "required": true
+    },
+    {
+      "id": "release.mlx_optional_extra",
+      "category": "release",
+      "title": "MLX 可选依赖契约",
+      "criterion": "pyproject 的 mlx extra 能安装受支持版本；非 macOS 平台不会误装或在 import 时失败。",
+      "required": true
+    },
+    {
+      "id": "release.converter_cli",
+      "category": "release",
+      "title": "可复现模型转换 CLI",
+      "criterion": "HF→MLX/CoreML 转换命令具备参数校验、模型/config/tokenizer 哈希、量化元数据、失败非零退出和可复现产物清单。",
+      "required": true
+    },
+    {
+      "id": "release.one_command_gate",
+      "category": "release",
+      "title": "一键严格验收入口",
+      "criterion": "提供单命令生产验收审计；默认不清空旧证据，STRICT=1 时只要一个硬门缺失/失败就非零退出。",
+      "required": true,
+      "proof": {
+        "type": "files",
+        "paths": [
+          "scripts/run_apple_production_acceptance.sh",
+          "bench/apple_production_gates.json",
+          "bench/check_apple_production_acceptance.py"
+        ]
+      }
+    },
+    {
+      "id": "release.machine_readable_evidence",
+      "category": "release",
+      "title": "机器可读证据",
+      "criterion": "每次功能/性能/质量运行输出带 axis、status、环境、模型、精度、后端、参数和测量值的 append-only JSONL。",
+      "required": true
+    },
+    {
+      "id": "release.safe_defaults",
+      "category": "release",
+      "title": "保守生产默认值",
+      "criterion": "未对当前芯片、模型、精度和 bsz 验证的 fused/compiled/quant 路径不得自动启用；必须回退到已验证路径。",
+      "required": true
+    },
+    {
+      "id": "release.backend_telemetry",
+      "category": "release",
+      "title": "路由与回退遥测",
+      "criterion": "每次请求可观测实际 prefill/decode/WKV/quant backend、策略原因、编译命中/回退原因和数值门结果。",
+      "required": true
+    },
+    {
+      "id": "release.artifact_roundtrip",
+      "category": "release",
+      "title": "保存与重载",
+      "criterion": "HF、MLX 及量化产物 save/load 后 config、tokenizer、权重、量化布局和固定输入输出保持一致。",
+      "required": true
+    },
+    {
+      "id": "release.production_runbook",
+      "category": "release",
+      "title": "生产运维文档",
+      "criterion": "文档覆盖安装、转换、服务、训练、量化、性能复现、故障排查、限制和硬门状态，且列出所有验收项。",
+      "required": true,
+      "proof": {
+        "type": "files",
+        "paths": [
+          "docs/hardware/APPLE_PRODUCTION_ACCEPTANCE.md",
+          "docs/hardware/APPLE_SILICON.md",
+          "AGENTS.md"
+        ]
+      }
+    },
+    {
+      "id": "hf.mps.load_generate.models",
+      "category": "hf_mps_inference",
+      "title": "MPS 模型加载与生成矩阵",
+      "criterion": "0.1B、0.4B、1.5B 在 MPS 上通过真实 checkpoint load、forward 与 generate。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "axis": "apple_silicon_hf_model",
+        "where": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          },
+          {
+            "field": "device",
+            "op": "eq",
+            "value": "mps"
+          }
+        ],
+        "require": [],
+        "min_matches": 3,
+        "coverage": [
+          {
+            "field": "model",
+            "values": [
+              "rwkv7-g1d-0.1b-hf",
+              "rwkv7-g1d-0.4b-hf",
+              "rwkv7-g1g-1.5b-hf"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "hf.mps.dtype_matrix",
+      "category": "hf_mps_inference",
+      "title": "MPS dtype 矩阵",
+      "criterion": "0.1B/0.4B/1.5B 的 fp32 与 fp16 均完成 forward、cache continuation、generate 和峰值内存验收。",
+      "required": true
+    },
+    {
+      "id": "hf.mps.official_logits_parity",
+      "category": "hf_mps_inference",
+      "title": "官方数学 logits 对齐",
+      "criterion": "固定语料、短长序列和全部模型上与官方 RWKV-7 参考实现逐步 logits 达到声明容差，argmax/greedy 完全一致。",
+      "required": true
+    },
+    {
+      "id": "hf.mps.state_parity",
+      "category": "hf_mps_inference",
+      "title": "递归状态对齐",
+      "criterion": "每层 time-mix/shift/WKV state 在 full、token-by-token、分块执行间达到声明容差，seen_tokens 精确。",
+      "required": true
+    },
+    {
+      "id": "hf.mps.chunked_prefill",
+      "category": "hf_mps_inference",
+      "title": "HF 分块 prefill",
+      "criterion": "prompt 1/127/128/129/512/1k/4k/8k tokens 的 full 与多种 chunk 切分 logits/state/greedy 对齐。",
+      "required": true
+    },
+    {
+      "id": "hf.mps.cache_continuation",
+      "category": "hf_mps_inference",
+      "title": "HF state cache 连续生成",
+      "criterion": "prefill 一次后多轮 generate/forward 复用 RWKV7StateCache，与 one-shot 输出一致且缓存不被意外别名修改。",
+      "required": true
+    },
+    {
+      "id": "hf.mps.batch_matrix",
+      "category": "hf_mps_inference",
+      "title": "HF 批大小矩阵",
+      "criterion": "bsz 1/2/4/8 的 forward、prefill、decode、cache 和 generate 均正确，并记录吞吐与内存。",
+      "required": true
+    },
+    {
+      "id": "hf.mps.ragged_dynamic_batch",
+      "category": "hf_mps_inference",
+      "title": "HF 动态/不等长批",
+      "criterion": "不同 prompt 长度、不同 seen_tokens 的请求可 select/reorder/compact；加入和离开后各会话与独立执行一致。",
+      "required": true
+    },
+    {
+      "id": "hf.mps.generate_modes",
+      "category": "hf_mps_inference",
+      "title": "HF GenerationMixin 常用模式",
+      "criterion": "greedy、temperature/top-k/top-p sampling、stopping criteria、streamer、return_dict_in_generate 均正常。",
+      "required": true
+    },
+    {
+      "id": "hf.mps.beam_cache_reorder",
+      "category": "hf_mps_inference",
+      "title": "Beam 与 cache reorder",
+      "criterion": "beam search/beam sample 调用 cache reorder 后 state、batch 索引和输出正确，无跨 beam 污染。",
+      "required": true
+    },
+    {
+      "id": "hf.mps.tokenizer_chat",
+      "category": "hf_mps_inference",
+      "title": "Tokenizer 与聊天模板",
+      "criterion": "官方 tokenizer、特殊 token、Unicode/中英文、chat template、encode/decode roundtrip 与 model.generate 集成通过。",
+      "required": true
+    },
+    {
+      "id": "hf.mps.save_reload",
+      "category": "hf_mps_inference",
+      "title": "HF save_pretrained roundtrip",
+      "criterion": "save_pretrained/from_pretrained 后固定语料 logits/state/greedy、generation config 和自定义代码加载一致。",
+      "required": true
+    },
+    {
+      "id": "hf.mps.long_context",
+      "category": "hf_mps_inference",
+      "title": "HF 长上下文稳定性",
+      "criterion": "1k/4k/8k token prefill+至少 256 token decode 无 NaN/OOM/状态漂移，内存符合 RWKV 状态常数上下文增长预期。",
+      "required": true
+    },
+    {
+      "id": "hf.mps.no_silent_cpu_fallback",
+      "category": "hf_mps_inference",
+      "title": "禁止静默 CPU 回退",
+      "criterion": "MPS 路径通过 profiler/算子审计证明关键算子未静默落 CPU；必要回退显式记录且不作为性能通过。",
+      "required": true
+    },
+    {
+      "id": "train.mps.backward_smoke",
+      "category": "hf_mps_training",
+      "title": "MPS 原生反向传播",
+      "criterion": "真实模型 loss 有限、梯度非零且一步更新后参数变化；覆盖 0.1B/0.4B/1.5B。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "axis": "apple_silicon_model_peft_lora_train",
+        "where": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          },
+          {
+            "field": "device",
+            "op": "eq",
+            "value": "mps"
+          }
+        ],
+        "require": [
+          {
+            "field": "loss",
+            "op": "not_none"
+          },
+          {
+            "field": "grad_l1",
+            "op": "gt",
+            "value": 0
+          },
+          {
+            "field": "changed_l1",
+            "op": "gt",
+            "value": 0
+          }
+        ],
+        "min_matches": 3,
+        "coverage": [
+          {
+            "field": "model_size_label",
+            "values": [
+              "0.1b",
+              "0.4b",
+              "1.5b"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "train.mps.peft_lora",
+      "category": "hf_mps_training",
+      "title": "PEFT LoRA 模型矩阵",
+      "criterion": "0.1B/0.4B/1.5B PEFT LoRA 注入、backward、optimizer step 和可训练参数统计通过。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "axis": "apple_silicon_model_peft_lora_train",
+        "where": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          }
+        ],
+        "require": [
+          {
+            "field": "trainable_params",
+            "op": "gt",
+            "value": 0
+          },
+          {
+            "field": "grad_l1",
+            "op": "gt",
+            "value": 0
+          },
+          {
+            "field": "changed_l1",
+            "op": "gt",
+            "value": 0
+          }
+        ],
+        "min_matches": 3,
+        "coverage": [
+          {
+            "field": "model_size_label",
+            "values": [
+              "0.1b",
+              "0.4b",
+              "1.5b"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "train.mps.trainer",
+      "category": "hf_mps_training",
+      "title": "HF Trainer 模型矩阵",
+      "criterion": "0.1B/0.4B/1.5B 的 Trainer+LoRA 有限 loss、参数更新和至少 20 步 1.5B 记录。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "axis": "apple_silicon_model_peft_lora_trainer",
+        "where": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          }
+        ],
+        "require": [
+          {
+            "field": "training_loss",
+            "op": "not_none"
+          },
+          {
+            "field": "changed_l1",
+            "op": "gt",
+            "value": 0
+          }
+        ],
+        "min_matches": 3,
+        "coverage": [
+          {
+            "field": "model_size_label",
+            "values": [
+              "0.1b",
+              "0.4b",
+              "1.5b"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "train.mps.trl_sft",
+      "category": "hf_mps_training",
+      "title": "TRL SFTTrainer 模型矩阵",
+      "criterion": "0.1B/0.4B/1.5B SFTTrainer+LoRA 训练成功，loss 有限且参数更新。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "axis": "apple_silicon_model_peft_lora_trl_sft",
+        "where": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          }
+        ],
+        "require": [
+          {
+            "field": "training_loss",
+            "op": "not_none"
+          },
+          {
+            "field": "changed_l1",
+            "op": "gt",
+            "value": 0
+          }
+        ],
+        "min_matches": 3,
+        "coverage": [
+          {
+            "field": "model_size_label",
+            "values": [
+              "0.1b",
+              "0.4b",
+              "1.5b"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "train.mps.trl_dpo",
+      "category": "hf_mps_training",
+      "title": "TRL DPOTrainer 模型矩阵",
+      "criterion": "0.1B/0.4B/1.5B DPOTrainer+LoRA 训练成功，loss 有限且参数更新。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "axis": "apple_silicon_model_peft_lora_trl_dpo",
+        "where": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          }
+        ],
+        "require": [
+          {
+            "field": "training_loss",
+            "op": "not_none"
+          },
+          {
+            "field": "changed_l1",
+            "op": "gt",
+            "value": 0
+          }
+        ],
+        "min_matches": 3,
+        "coverage": [
+          {
+            "field": "model_size_label",
+            "values": [
+              "0.1b",
+              "0.4b",
+              "1.5b"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "train.mps.trl_grpo",
+      "category": "hf_mps_training",
+      "title": "TRL GRPOTrainer 模型矩阵",
+      "criterion": "0.1B/0.4B/1.5B GRPOTrainer+LoRA 训练成功、奖励/生成链路有效且参数更新。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "axis": "apple_silicon_model_peft_lora_trl_grpo",
+        "where": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          }
+        ],
+        "require": [
+          {
+            "field": "training_loss",
+            "op": "not_none"
+          },
+          {
+            "field": "changed_l1",
+            "op": "gt",
+            "value": 0
+          }
+        ],
+        "min_matches": 3,
+        "coverage": [
+          {
+            "field": "model_size_label",
+            "values": [
+              "0.1b",
+              "0.4b",
+              "1.5b"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "train.mps.peft_methods",
+      "category": "hf_mps_training",
+      "title": "常见 PEFT 方法兼容",
+      "criterion": "LoRA、AdaLoRA、IA3、prefix/prompt tuning 中适用于 CausalLM 的常见配置能初始化、训练、保存和加载；不支持项有明确技术说明。",
+      "required": true
+    },
+    {
+      "id": "train.mps.gradient_accumulation",
+      "category": "hf_mps_training",
+      "title": "梯度累积",
+      "criterion": "gradient_accumulation_steps 1/2/4 的有效 batch、loss 缩放和更新次数正确。",
+      "required": true
+    },
+    {
+      "id": "train.mps.checkpoint_resume",
+      "category": "hf_mps_training",
+      "title": "训练断点续训",
+      "criterion": "Trainer/TRL 保存 optimizer、scheduler、RNG、adapter 与 global step；resume 后与连续训练在声明容差内一致。",
+      "required": true
+    },
+    {
+      "id": "train.mps.adapter_roundtrip",
+      "category": "hf_mps_training",
+      "title": "Adapter 保存合并与重载",
+      "criterion": "PEFT adapter save/load、merge/unmerge 后固定评测 logits/greedy 与训练前后预期一致。",
+      "required": true
+    },
+    {
+      "id": "train.mps.mixed_precision",
+      "category": "hf_mps_training",
+      "title": "混合精度训练",
+      "criterion": "MPS fp16/autocast 可训练，无不支持算子静默错误；loss/grad 有限并与 fp32 基线质量对齐。",
+      "required": true
+    },
+    {
+      "id": "train.mps.long_run_1000",
+      "category": "hf_mps_training",
+      "title": "1000 步稳定训练",
+      "criterion": "至少 1.5B LoRA 的 Trainer、SFT、DPO、GRPO 各完成生产形状长跑（至少 1000 optimizer steps），无 NaN、OOM 或持续内存增长。",
+      "required": true
+    },
+    {
+      "id": "train.mps.context_batch_matrix",
+      "category": "hf_mps_training",
+      "title": "训练序列与批矩阵",
+      "criterion": "seq 128/512/2k 与 micro-bsz 1/2/4 覆盖 Trainer/PEFT/TRL，记录 steps/s、峰值内存和梯度稳定性。",
+      "required": true
+    },
+    {
+      "id": "train.mps.deterministic_resume",
+      "category": "hf_mps_training",
+      "title": "训练可复现性",
+      "criterion": "固定 seed 的两次短训与中断恢复在声明容差内复现 loss、梯度、权重与样本顺序。",
+      "required": true
+    },
+    {
+      "id": "mlx.converted_models_load",
+      "category": "mlx_correctness",
+      "title": "MLX 转换模型加载生成",
+      "criterion": "0.1B/0.4B/1.5B 转换产物均能真实加载、prefill 和 decode。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "axis": "mlx_generate",
+        "where": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          },
+          {
+            "field": "dtype",
+            "op": "eq",
+            "value": "fp16"
+          }
+        ],
+        "require": [
+          {
+            "field": "generated_tokens",
+            "op": "gt",
+            "value": 0
+          }
+        ],
+        "min_matches": 3,
+        "coverage": [
+          {
+            "field": "model",
+            "values": [
+              "rwkv7-g1d-0.1b-hf",
+              "rwkv7-g1d-0.4b-hf",
+              "rwkv7-g1g-1.5b-hf"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "mlx.hf_parity_matrix",
+      "category": "mlx_correctness",
+      "title": "MLX 与 HF 全模型对齐",
+      "criterion": "0.1B/0.4B/1.5B 在 fp32/fp16、短长 prompt、bsz 1/2/4 上逐层/最终 logits、state 和 greedy 与 HF 参考对齐。",
+      "required": true
+    },
+    {
+      "id": "mlx.recurrent_state_parity",
+      "category": "mlx_correctness",
+      "title": "MLX recurrent state 对齐",
+      "criterion": "token、full、chunk 多种切分的五类/全部层状态和 seen_tokens 达到容差，无序列边界污染。",
+      "required": true
+    },
+    {
+      "id": "mlx.metal_wkv_reference",
+      "category": "mlx_correctness",
+      "title": "Metal WKV 与参考实现",
+      "criterion": "支持 shape/dtype/bsz/context 矩阵下 Metal WKV 与独立 MLX/PyTorch reference 对齐，unsupported shape 安全回退。",
+      "required": true
+    },
+    {
+      "id": "mlx.dplr_model_matrix",
+      "category": "mlx_correctness",
+      "title": "DPLR/WY 真实模型矩阵",
+      "criterion": "M5 fp16 0.1B/0.4B/1.5B、真实 prompt 的 tiled Metal DPLR prefill 通过 logits/state 容差和 greedy 完全一致。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_mlx_dplr_tiled_model_m5_20260710_final_fp16.jsonl",
+        "axis": "mlx_dplr_model_prefill",
+        "where": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          },
+          {
+            "field": "prefill_backend",
+            "op": "eq",
+            "value": "dplr_metal"
+          },
+          {
+            "field": "dplr_summary_implementation",
+            "op": "eq",
+            "value": "tiled"
+          }
+        ],
+        "require": [
+          {
+            "field": "generated_tokens_match",
+            "op": "truthy"
+          },
+          {
+            "field": "logits_max_abs",
+            "op": "le",
+            "value": 0.25
+          },
+          {
+            "field": "state_max_abs",
+            "op": "le",
+            "value": 0.15
+          }
+        ],
+        "min_matches": 9,
+        "coverage": [
+          {
+            "field": "model",
+            "values": [
+              "rwkv7-g1d-0.1b-hf",
+              "rwkv7-g1d-0.4b-hf",
+              "rwkv7-g1g-1.5b-hf"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "mlx.dplr_partial_chunks",
+      "category": "mlx_correctness",
+      "title": "DPLR 尾块与边界",
+      "criterion": "长度 1/7/63/64/65/127/128/129/511/512/513 的 identity padding、trim 和最终 state/output 与 recurrent 对齐。",
+      "required": true
+    },
+    {
+      "id": "mlx.dplr_chunk_matrix",
+      "category": "mlx_correctness",
+      "title": "DPLR chunk/window 矩阵",
+      "criterion": "chunk 16/32/64/128、window 256/512/1024 与跨窗口 prefix combine 均通过，策略不依赖单一硬编码形状。",
+      "required": true
+    },
+    {
+      "id": "mlx.long_context_matrix",
+      "category": "mlx_correctness",
+      "title": "MLX 1k/4k/8k 上下文矩阵",
+      "criterion": "0.1B/0.4B/1.5B 的 fp16 及 W4 在 1k/4k/8k tokens 上 full/chunk/DPLR continuation 一致，至少 decode 256 tokens。",
+      "required": true
+    },
+    {
+      "id": "mlx.long_context_w4_1p5b",
+      "category": "mlx_correctness",
+      "title": "1.5B W4 8k 实测",
+      "criterion": "1.5B W4/Metal 完成 8192-token prefill、1024-token decode，chunked/full max_abs=0 且 token/state 计数正确。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "axis": "mlx_generation_sweep",
+        "where": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          },
+          {
+            "field": "model",
+            "op": "eq",
+            "value": "rwkv7-g1g-1.5b-hf"
+          },
+          {
+            "field": "quantization",
+            "op": "eq",
+            "value": "mm4"
+          },
+          {
+            "field": "prompt_tokens",
+            "op": "eq",
+            "value": 8192
+          },
+          {
+            "field": "generated_tokens",
+            "op": "eq",
+            "value": 1024
+          }
+        ],
+        "require": [
+          {
+            "field": "chunked_prefill_max_abs",
+            "op": "eq",
+            "value": 0.0
+          },
+          {
+            "field": "seen_tokens_after_generate",
+            "op": "eq",
+            "value": 9216
+          }
+        ],
+        "min_matches": 1,
+        "coverage": []
+      }
+    },
+    {
+      "id": "mlx.session_continuation_models",
+      "category": "mlx_correctness",
+      "title": "MLX 会话续写矩阵",
+      "criterion": "0.1B/0.4B/1.5B 分多轮 decode 与 one-shot token/text 完全一致，seen_tokens 正确。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "axis": "mlx_session_generate",
+        "where": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          }
+        ],
+        "require": [
+          {
+            "field": "session_one_shot_token_match",
+            "op": "truthy"
+          },
+          {
+            "field": "session_one_shot_text_match",
+            "op": "truthy"
+          }
+        ],
+        "min_matches": 3,
+        "coverage": [
+          {
+            "field": "model",
+            "values": [
+              "rwkv7-g1d-0.1b-hf",
+              "rwkv7-g1d-0.4b-hf",
+              "rwkv7-g1g-1.5b-hf"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "mlx.cache_select_reorder",
+      "category": "mlx_correctness",
+      "title": "MLX cache select/reorder/clone",
+      "criterion": "状态 cache select、reorder、clone、concat、split 后每个序列 continuation 与独立运行一致，源 cache 不被修改。",
+      "required": true
+    },
+    {
+      "id": "mlx.compiled_decode_fp16_0p4",
+      "category": "mlx_correctness",
+      "title": "0.4B fp16 guarded compiled decode",
+      "criterion": "0.4B fp16 batch1 64-token eager/compiled token、logits、全部 state 严格一致，auto 实际选择 compiled。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_mlx_decode_compile_m5_20260710_fp16.jsonl",
+        "axis": "mlx_decode_compile_summary",
+        "where": [
+          {
+            "field": "model",
+            "op": "eq",
+            "value": "rwkv7-g1d-0.4b-hf"
+          },
+          {
+            "field": "quantization",
+            "op": "eq",
+            "value": "none"
+          },
+          {
+            "field": "decode_backend",
+            "op": "eq",
+            "value": "auto"
+          }
+        ],
+        "require": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          },
+          {
+            "field": "decode_backend_used",
+            "op": "eq",
+            "value": "compiled"
+          },
+          {
+            "field": "compiled_validation.status",
+            "op": "eq",
+            "value": "pass"
+          },
+          {
+            "field": "compiled_validation.generated_tokens_match",
+            "op": "truthy"
+          },
+          {
+            "field": "compiled_validation.logits_max_abs",
+            "op": "eq",
+            "value": 0.0
+          },
+          {
+            "field": "compiled_validation.state_max_abs",
+            "op": "eq",
+            "value": 0.0
+          }
+        ],
+        "min_matches": 1,
+        "coverage": []
+      }
+    },
+    {
+      "id": "mlx.compiled_decode_w4_0p4",
+      "category": "mlx_correctness",
+      "title": "0.4B W4 guarded compiled decode",
+      "criterion": "0.4B W4 batch1 64-token eager/compiled token、logits、全部 state 严格一致，auto 实际选择 compiled。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_mlx_decode_compile_m5_20260710_w4.jsonl",
+        "axis": "mlx_decode_compile_summary",
+        "where": [
+          {
+            "field": "model",
+            "op": "eq",
+            "value": "rwkv7-g1d-0.4b-hf"
+          },
+          {
+            "field": "quantization",
+            "op": "eq",
+            "value": "mm4"
+          },
+          {
+            "field": "decode_backend",
+            "op": "eq",
+            "value": "auto"
+          }
+        ],
+        "require": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          },
+          {
+            "field": "decode_backend_used",
+            "op": "eq",
+            "value": "compiled"
+          },
+          {
+            "field": "compiled_validation.status",
+            "op": "eq",
+            "value": "pass"
+          },
+          {
+            "field": "compiled_validation.generated_tokens_match",
+            "op": "truthy"
+          },
+          {
+            "field": "compiled_validation.logits_max_abs",
+            "op": "eq",
+            "value": 0.0
+          },
+          {
+            "field": "compiled_validation.state_max_abs",
+            "op": "eq",
+            "value": 0.0
+          }
+        ],
+        "min_matches": 1,
+        "coverage": []
+      }
+    },
+    {
+      "id": "mlx.decode_policy_model_matrix",
+      "category": "mlx_correctness",
+      "title": "自动 decode 策略全模型",
+      "criterion": "按 chip+model shape+dtype+quant+bsz 自动选择 reference/fast norm 与 eager/compiled；0.1B/0.4B/1.5B 全部通过数值门且不得比安全基线慢。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_mlx_decode_policy_m5_20260711_fp16.jsonl",
+        "axis": "mlx_decode_policy",
+        "where": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          },
+          {
+            "field": "dtype",
+            "op": "eq",
+            "value": "fp16"
+          },
+          {
+            "field": "quantization",
+            "op": "eq",
+            "value": "none"
+          }
+        ],
+        "require": [
+          {
+            "field": "policy.status",
+            "op": "eq",
+            "value": "matched"
+          },
+          {
+            "field": "generated_tokens_match",
+            "op": "truthy"
+          },
+          {
+            "field": "correctness_gate_pass",
+            "op": "truthy"
+          },
+          {
+            "field": "validation_gate_pass",
+            "op": "truthy"
+          },
+          {
+            "field": "speed_gate_pass",
+            "op": "truthy"
+          },
+          {
+            "field": "process_isolated",
+            "op": "truthy"
+          },
+          {
+            "field": "repeat",
+            "op": "ge",
+            "value": 5
+          }
+        ],
+        "min_matches": 3,
+        "coverage": [
+          {
+            "field": "model",
+            "values": [
+              "rwkv7-g1d-0.1b-hf",
+              "rwkv7-g1d-0.4b-hf",
+              "rwkv7-g1g-1.5b-hf"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "mlx.decode_policy_batch_matrix",
+      "category": "mlx_correctness",
+      "title": "Compiled decode 批矩阵",
+      "criterion": "bsz 1/2/4/8 分别编译、验证和缓存图；动态批切换不复用错误 shape 图，失败自动回退。",
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_mlx_decode_batch_m5_20260711_0p1b_fp16.jsonl",
+            "axis": "mlx_decode_compile_summary",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1d-0.1b-hf"
+              },
+              {
+                "field": "decode_backend",
+                "op": "eq",
+                "value": "auto"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "decode_backend_used",
+                "op": "eq",
+                "value": "compiled"
+              },
+              {
+                "field": "compiled_validation.status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "repeats",
+                "op": "ge",
+                "value": 3
+              }
+            ],
+            "min_matches": 4,
+            "coverage": [
+              {
+                "field": "batch_size",
+                "values": [
+                  1,
+                  2,
+                  4,
+                  8
+                ]
+              }
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_mlx_decode_batch_m5_20260711_0p4b_fp16.jsonl",
+            "axis": "mlx_decode_compile_summary",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1d-0.4b-hf"
+              },
+              {
+                "field": "batch_size",
+                "op": "eq",
+                "value": 1
+              },
+              {
+                "field": "decode_backend",
+                "op": "eq",
+                "value": "auto"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "decode_backend_used",
+                "op": "eq",
+                "value": "compiled"
+              },
+              {
+                "field": "compiled_validation.status",
+                "op": "eq",
+                "value": "pass"
+              }
+            ],
+            "min_matches": 1,
+            "coverage": []
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_mlx_decode_batch_m5_20260711_0p4b_fp16_extended.jsonl",
+            "axis": "mlx_decode_compile_summary",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1d-0.4b-hf"
+              },
+              {
+                "field": "decode_backend",
+                "op": "eq",
+                "value": "auto"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "decode_backend_used",
+                "op": "eq",
+                "value": "compiled"
+              },
+              {
+                "field": "compiled_validation.status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "compiled_validation.steps",
+                "op": "ge",
+                "value": 256
+              }
+            ],
+            "min_matches": 3,
+            "coverage": [
+              {
+                "field": "batch_size",
+                "values": [
+                  2,
+                  4,
+                  8
+                ]
+              }
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_mlx_decode_batch_m5_20260711_1p5b_fp16.jsonl",
+            "axis": "mlx_decode_compile_summary",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1g-1.5b-hf"
+              },
+              {
+                "field": "decode_backend",
+                "op": "eq",
+                "value": "auto"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "decode_backend_used",
+                "op": "eq",
+                "value": "eager"
+              },
+              {
+                "field": "compiled_validation.status",
+                "op": "eq",
+                "value": "fail"
+              },
+              {
+                "field": "compiled_validation.generated_tokens_match",
+                "op": "falsy"
+              }
+            ],
+            "min_matches": 4,
+            "coverage": [
+              {
+                "field": "batch_size",
+                "values": [
+                  1,
+                  2,
+                  4,
+                  8
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "mlx.fast_norm_matrix",
+      "category": "mlx_correctness",
+      "title": "Fast LayerNorm 全矩阵",
+      "criterion": "0.1B/0.4B/1.5B、fp16/W8/W4、bsz 1/2/4/8 与 reference norm 的 greedy、logits、state 和质量门通过。",
+      "required": true
+    },
+    {
+      "id": "mlx.fallback_contract",
+      "category": "mlx_correctness",
+      "title": "不支持形状安全回退",
+      "criterion": "Metal/DPLR/compiled/quant 的不支持 dtype、shape、芯片和 batch 明确回退；输出正确、原因可观测、无崩溃。",
+      "required": true
+    },
+    {
+      "id": "mlx.determinism",
+      "category": "mlx_correctness",
+      "title": "MLX 确定性",
+      "criterion": "固定 seed/greedy 下跨进程、冷/热图、chunk 切分和会话调度产生相同 token；数值差在门限内。",
+      "required": true
+    },
+    {
+      "id": "serve.interleaved_sessions_smoke",
+      "category": "mlx_serving",
+      "title": "多会话交错执行实测",
+      "criterion": "0.1B/0.4B/1.5B 至少 2 个会话交错执行，one-shot token/text/seen_tokens 全匹配。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "axis": "mlx_session_batch_generate",
+        "where": [
+          {
+            "field": "status",
+            "op": "eq",
+            "value": "pass"
+          }
+        ],
+        "require": [
+          {
+            "field": "all_session_one_shot_token_match",
+            "op": "truthy"
+          },
+          {
+            "field": "all_session_one_shot_text_match",
+            "op": "truthy"
+          },
+          {
+            "field": "all_seen_tokens_match",
+            "op": "truthy"
+          },
+          {
+            "field": "session_count",
+            "op": "ge",
+            "value": 2
+          }
+        ],
+        "min_matches": 3,
+        "coverage": [
+          {
+            "field": "model",
+            "values": [
+              "rwkv7-g1d-0.1b-hf",
+              "rwkv7-g1d-0.4b-hf",
+              "rwkv7-g1g-1.5b-hf"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "serve.true_dynamic_batch",
+      "category": "mlx_serving",
+      "title": "真实动态批处理",
+      "criterion": "非顺序循环伪批：bsz 1/2/4/8 使用实际 batched kernel，吞吐随批量合理增长且每会话严格对齐。",
+      "required": true
+    },
+    {
+      "id": "serve.ragged_mixed_prompts",
+      "category": "mlx_serving",
+      "title": "不等长 prompt 批处理",
+      "criterion": "混合 prompt/已生成长度在同轮 compact/expand，mask/state 索引正确，无跨请求污染。",
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "files",
+            "paths": [
+              "rwkv7_hf/mlx_cache.py",
+              "rwkv7_hf/mlx_scheduler.py",
+              "rwkv7_hf/mlx_model.py",
+              "scripts/mlx_dynamic_serving_bench.py",
+              "tests/test_mlx_prefix_cache.py",
+              "tests/test_mlx_dynamic_scheduler.py",
+              "tests/test_mlx_dynamic_serving_bench.py"
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
+            "axis": "mlx_dynamic_serving",
+            "where": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "dtype",
+                "op": "eq",
+                "value": "fp16"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "none"
+              },
+              {
+                "field": "process_isolated",
+                "op": "truthy"
+              }
+            ],
+            "require": [
+              {
+                "field": "ragged_prompt_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "all_rounds_true_batched",
+                "op": "truthy"
+              },
+              {
+                "field": "all_token_match",
+                "op": "truthy"
+              },
+              {
+                "field": "all_seen_tokens_match",
+                "op": "truthy"
+              }
+            ],
+            "min_matches": 3,
+            "coverage": [
+              {
+                "field": "model",
+                "values": [
+                  "rwkv7-g1d-0.1b-hf",
+                  "rwkv7-g1d-0.4b-hf",
+                  "rwkv7-g1g-1.5b-hf"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "serve.arrival_departure",
+      "category": "mlx_serving",
+      "title": "请求动态加入退出",
+      "criterion": "持续 decode 中请求可加入、完成、取消并释放槽位；剩余请求输出和延迟不受错误影响。",
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "files",
+            "paths": [
+              "rwkv7_hf/mlx_cache.py",
+              "rwkv7_hf/mlx_scheduler.py",
+              "rwkv7_hf/mlx_model.py",
+              "scripts/mlx_dynamic_serving_bench.py",
+              "tests/test_mlx_prefix_cache.py",
+              "tests/test_mlx_dynamic_scheduler.py",
+              "tests/test_mlx_dynamic_serving_bench.py"
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
+            "axis": "mlx_dynamic_serving",
+            "where": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "dtype",
+                "op": "eq",
+                "value": "fp16"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "none"
+              },
+              {
+                "field": "process_isolated",
+                "op": "truthy"
+              }
+            ],
+            "require": [
+              {
+                "field": "arrival_departure_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "all_rounds_true_batched",
+                "op": "truthy"
+              },
+              {
+                "field": "all_token_match",
+                "op": "truthy"
+              },
+              {
+                "field": "all_session_state_released",
+                "op": "truthy"
+              }
+            ],
+            "min_matches": 3,
+            "coverage": [
+              {
+                "field": "model",
+                "values": [
+                  "rwkv7-g1d-0.1b-hf",
+                  "rwkv7-g1d-0.4b-hf",
+                  "rwkv7-g1g-1.5b-hf"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "serve.state_prefix_cache",
+      "category": "mlx_serving",
+      "title": "State/prefix cache",
+      "criterion": "规范化 token prefix 生成可复用 RWKV state；命中后 continuation 与完整 prefill 一致，支持 chunk boundary。",
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "files",
+            "paths": [
+              "rwkv7_hf/mlx_cache.py",
+              "rwkv7_hf/mlx_scheduler.py",
+              "rwkv7_hf/mlx_model.py",
+              "scripts/mlx_dynamic_serving_bench.py",
+              "tests/test_mlx_prefix_cache.py",
+              "tests/test_mlx_dynamic_scheduler.py",
+              "tests/test_mlx_dynamic_serving_bench.py"
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
+            "axis": "mlx_dynamic_serving",
+            "where": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "dtype",
+                "op": "eq",
+                "value": "fp16"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "none"
+              },
+              {
+                "field": "process_isolated",
+                "op": "truthy"
+              }
+            ],
+            "require": [
+              {
+                "field": "prefix_continuation_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "all_token_match",
+                "op": "truthy"
+              },
+              {
+                "field": "all_seen_tokens_match",
+                "op": "truthy"
+              }
+            ],
+            "min_matches": 3,
+            "coverage": [
+              {
+                "field": "model",
+                "values": [
+                  "rwkv7-g1d-0.1b-hf",
+                  "rwkv7-g1d-0.4b-hf",
+                  "rwkv7-g1g-1.5b-hf"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "serve.cache_key_isolation",
+      "category": "mlx_serving",
+      "title": "Cache key 与模型隔离",
+      "criterion": "cache key 包含 model/revision/tokenizer/dtype/quant/backend/prefix；不同租户或配置不得误命中。",
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "files",
+            "paths": [
+              "rwkv7_hf/mlx_cache.py",
+              "rwkv7_hf/mlx_scheduler.py",
+              "rwkv7_hf/mlx_model.py",
+              "scripts/mlx_dynamic_serving_bench.py",
+              "tests/test_mlx_prefix_cache.py",
+              "tests/test_mlx_dynamic_scheduler.py",
+              "tests/test_mlx_dynamic_serving_bench.py"
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
+            "axis": "mlx_dynamic_serving",
+            "where": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "dtype",
+                "op": "eq",
+                "value": "fp16"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "none"
+              },
+              {
+                "field": "process_isolated",
+                "op": "truthy"
+              }
+            ],
+            "require": [
+              {
+                "field": "cache_key_isolation_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "all_token_match",
+                "op": "truthy"
+              }
+            ],
+            "min_matches": 3,
+            "coverage": [
+              {
+                "field": "model",
+                "values": [
+                  "rwkv7-g1d-0.1b-hf",
+                  "rwkv7-g1d-0.4b-hf",
+                  "rwkv7-g1g-1.5b-hf"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "serve.cache_eviction",
+      "category": "mlx_serving",
+      "title": "Cache 容量与淘汰",
+      "criterion": "LRU/TTL/显存水位淘汰可配置；引用中的 state 不被提前释放，淘汰后内存回收。",
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "files",
+            "paths": [
+              "rwkv7_hf/mlx_cache.py",
+              "rwkv7_hf/mlx_scheduler.py",
+              "rwkv7_hf/mlx_model.py",
+              "scripts/mlx_dynamic_serving_bench.py",
+              "tests/test_mlx_prefix_cache.py",
+              "tests/test_mlx_dynamic_scheduler.py",
+              "tests/test_mlx_dynamic_serving_bench.py"
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
+            "axis": "mlx_dynamic_serving",
+            "where": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "dtype",
+                "op": "eq",
+                "value": "fp16"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "none"
+              },
+              {
+                "field": "process_isolated",
+                "op": "truthy"
+              }
+            ],
+            "require": [
+              {
+                "field": "cache_eviction_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "cache_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "all_session_state_released",
+                "op": "truthy"
+              }
+            ],
+            "min_matches": 3,
+            "coverage": [
+              {
+                "field": "model",
+                "values": [
+                  "rwkv7-g1d-0.1b-hf",
+                  "rwkv7-g1d-0.4b-hf",
+                  "rwkv7-g1g-1.5b-hf"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "serve.cache_hit_rate",
+      "category": "mlx_serving",
+      "title": "合理 cache 命中率",
+      "criterion": "公开可复现的 Zipf/共享前缀负载下报告请求/字节加权命中率；达到预设 workload SLO，不能用合成全相同 prompt 夸大。",
+      "required": true
+    },
+    {
+      "id": "serve.cancellation_backpressure",
+      "category": "mlx_serving",
+      "title": "取消与背压",
+      "criterion": "队列上限、超时、取消、过载拒绝和清理路径正确；不会无限排队或遗留 state/graph。",
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "files",
+            "paths": [
+              "rwkv7_hf/mlx_cache.py",
+              "rwkv7_hf/mlx_scheduler.py",
+              "rwkv7_hf/mlx_model.py",
+              "scripts/mlx_dynamic_serving_bench.py",
+              "tests/test_mlx_prefix_cache.py",
+              "tests/test_mlx_dynamic_scheduler.py",
+              "tests/test_mlx_dynamic_serving_bench.py"
+            ]
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_mlx_dynamic_serving_m5_20260711_fp16.jsonl",
+            "axis": "mlx_dynamic_serving",
+            "where": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "dtype",
+                "op": "eq",
+                "value": "fp16"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "none"
+              },
+              {
+                "field": "process_isolated",
+                "op": "truthy"
+              }
+            ],
+            "require": [
+              {
+                "field": "backpressure_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "cancellation_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "timeout_gate_pass",
+                "op": "truthy"
+              },
+              {
+                "field": "all_session_state_released",
+                "op": "truthy"
+              }
+            ],
+            "min_matches": 3,
+            "coverage": [
+              {
+                "field": "model",
+                "values": [
+                  "rwkv7-g1d-0.1b-hf",
+                  "rwkv7-g1d-0.4b-hf",
+                  "rwkv7-g1g-1.5b-hf"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "serve.streaming_api",
+      "category": "mlx_serving",
+      "title": "流式生成接口",
+      "criterion": "逐 token 流式输出、停止词/EOS、客户端取消和错误传播正确，首 token/结束状态可观测。",
+      "required": true
+    },
+    {
+      "id": "serve.concurrency_32",
+      "category": "mlx_serving",
+      "title": "高并发稳定性",
+      "criterion": "在能容纳的量化模型上 32 并发、混合长度、至少 10k 请求；无错 token、死锁、崩溃或无界内存。",
+      "required": true
+    },
+    {
+      "id": "serve.latency_percentiles",
+      "category": "mlx_serving",
+      "title": "服务延迟分位数",
+      "criterion": "统一负载报告 TTFT/TPOT/E2E 的 p50/p95/p99、吞吐、公平性、队列时间及冷/热状态。",
+      "required": true
+    },
+    {
+      "id": "perf.dplr_prefill_m5_models",
+      "category": "performance",
+      "title": "M5 DPLR prefill 性能台阶",
+      "criterion": "M5 prompt111 fp16 tiled DPLR：0.1B median≥4.5k、0.4B≥2.0k、1.5B≥0.9k tok/s，且每项三次以上正确性通过。",
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_mlx_dplr_tiled_model_m5_20260710_final_fp16.jsonl",
+            "axis": "mlx_dplr_model_prefill_summary",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1d-0.1b-hf"
+              },
+              {
+                "field": "prefill_backend",
+                "op": "eq",
+                "value": "dplr_metal"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "repeats",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "median_prefill_tok_s",
+                "op": "ge",
+                "value": 4500
+              }
+            ],
+            "min_matches": 1,
+            "coverage": []
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_mlx_dplr_tiled_model_m5_20260710_final_fp16.jsonl",
+            "axis": "mlx_dplr_model_prefill_summary",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1d-0.4b-hf"
+              },
+              {
+                "field": "prefill_backend",
+                "op": "eq",
+                "value": "dplr_metal"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "repeats",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "median_prefill_tok_s",
+                "op": "ge",
+                "value": 2000
+              }
+            ],
+            "min_matches": 1,
+            "coverage": []
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_mlx_dplr_tiled_model_m5_20260710_final_fp16.jsonl",
+            "axis": "mlx_dplr_model_prefill_summary",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1g-1.5b-hf"
+              },
+              {
+                "field": "prefill_backend",
+                "op": "eq",
+                "value": "dplr_metal"
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "repeats",
+                "op": "ge",
+                "value": 3
+              },
+              {
+                "field": "median_prefill_tok_s",
+                "op": "ge",
+                "value": 900
+              }
+            ],
+            "min_matches": 1,
+            "coverage": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "perf.qwen_0p4_short_speed",
+      "category": "performance",
+      "title": "0.4B 对 Qwen0.8B 短请求速度",
+      "criterion": "M5 chars128/512、decode32、repeat3：RWKV decode/prefill≥Qwen，TTFT≤1.1×Qwen；独立于内存门。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_qwen35_apple_m5_20260710_dplr_tiled_compiled_fp16.jsonl",
+        "axis": "qwen35_apple_baseline_comparison",
+        "where": [],
+        "require": [
+          {
+            "field": "gates.decode_gate_pass",
+            "op": "truthy"
+          },
+          {
+            "field": "gates.prefill_gate_pass",
+            "op": "truthy"
+          },
+          {
+            "field": "gates.ttft_gate_pass",
+            "op": "truthy"
+          }
+        ],
+        "min_matches": 2,
+        "coverage": [
+          {
+            "field": "prompt_case",
+            "values": [
+              "chars128",
+              "chars512"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "perf.qwen_0p4_memory",
+      "category": "performance",
+      "title": "0.4B 对 Qwen0.8B 峰值内存",
+      "criterion": "相同实际运行范围内捕获双方 process/device true peak；RWKV≤Qwen，不能用包大小替代 Qwen 峰值。",
+      "required": true
+    },
+    {
+      "id": "perf.qwen_0p4_full_matrix",
+      "category": "performance",
+      "title": "0.4B 对 Qwen0.8B 完整矩阵",
+      "criterion": "prompt 128/512/1k/4k/8k tokens、decode 32/128/512、bsz 1/2/4/8 的 prefill/decode/TTFT/峰值内存全部不差于 Qwen。",
+      "required": true
+    },
+    {
+      "id": "perf.qwen_1p5_vs_2b",
+      "category": "performance",
+      "title": "1.5B 对 Qwen3.5 2B",
+      "criterion": "同 prompt、tokenizer 统计透明、相同精度级别和运行条件下，全部长度/bsz 的速度、TTFT、峰值内存与质量通过。",
+      "required": true
+    },
+    {
+      "id": "perf.qwen_2p9_vs_4b",
+      "category": "performance",
+      "title": "2.9B 对 Qwen3.5 4B",
+      "criterion": "同 prompt、相同运行条件下，全部长度/bsz 的速度、TTFT、峰值内存与质量通过。",
+      "required": true
+    },
+    {
+      "id": "perf.qwen_7p2_vs_9b",
+      "category": "performance",
+      "title": "7.2B 对 Qwen3.5 9B",
+      "criterion": "同 prompt、相同运行条件下，全部长度/bsz 的速度、TTFT、峰值内存与质量通过；不适配内存不足机器时明确能力边界。",
+      "required": true
+    },
+    {
+      "id": "perf.batch_scaling",
+      "category": "performance",
+      "title": "吞吐批量扩展",
+      "criterion": "0.1B/0.4B/1.5B、fp16/W8/W4 在 bsz 1/2/4/8 的 prefill/decode 总吞吐、每请求延迟和内存满足生产 SLO。",
+      "required": true
+    },
+    {
+      "id": "perf.cold_ttft",
+      "category": "performance",
+      "title": "冷启动 TTFT",
+      "criterion": "包含模型加载、首次 Metal 编译和 tokenizer 的冷 TTFT 单独报告并满足对标门；不把预热结果冒充冷启动。",
+      "required": true
+    },
+    {
+      "id": "perf.warm_ttft",
+      "category": "performance",
+      "title": "热请求 TTFT",
+      "criterion": "已加载/已编译、cache miss 与 hit 分开报告，p50/p95 不差于对应 Qwen 基线。",
+      "required": true
+    },
+    {
+      "id": "perf.peak_memory",
+      "category": "performance",
+      "title": "真实峰值内存",
+      "criterion": "统一进程隔离采集 MLX active/peak/cache、MPS driver、RSS/压缩/交换；报告权重、state、临时 buffer 和编译 cache。",
+      "required": true
+    },
+    {
+      "id": "perf.state_memory_scaling",
+      "category": "performance",
+      "title": "State cache 内存缩放",
+      "criterion": "实测 state cache 随 layers×heads×head_dim²×active_sequences 线性，和 prompt 长度无关；误差在 10% 内。",
+      "required": true
+    },
+    {
+      "id": "perf.compile_amortization",
+      "category": "performance",
+      "title": "编译收益与摊销",
+      "criterion": "每个策略记录 compile/warmup 时间、图缓存命中和 break-even token/request 数；短请求策略不得因编译变慢。",
+      "required": true
+    },
+    {
+      "id": "perf.variance",
+      "category": "performance",
+      "title": "可重复性能",
+      "criterion": "隔离负载、固定功耗/温度说明、至少 5 次重复；报告 min/median/p95，关键门在独立复跑仍通过且变异系数≤10%。",
+      "required": true
+    },
+    {
+      "id": "perf.thermal_sustained",
+      "category": "performance",
+      "title": "持续热稳态性能",
+      "criterion": "至少 30 分钟连续负载记录温度/频率/功耗和吞吐；热稳态 p95 不低于冷峰值的既定 SLO。",
+      "required": true
+    },
+    {
+      "id": "perf.model_load_startup",
+      "category": "performance",
+      "title": "模型加载与首次请求",
+      "criterion": "fp16/W8/W4 各模型的磁盘读取、转换/反序列化、首次请求和缓存后加载时间达到生产预算。",
+      "required": true
+    },
+    {
+      "id": "quant.w8_memory_1p5b",
+      "category": "quantization",
+      "title": "1.5B W8 内存下降",
+      "criterion": "同 M5 4k 形状下 1.5B W8 peak≤2.2GB，fp16 peak≥3.0GB，证明实际运行峰值下降。",
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+            "axis": "mlx_generation_sweep_summary",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1g-1.5b-hf"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "none"
+              },
+              {
+                "field": "max_prompt_tokens",
+                "op": "eq",
+                "value": 4096
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "max_mlx_peak_memory_bytes",
+                "op": "ge",
+                "value": 3000000000
+              }
+            ],
+            "min_matches": 1,
+            "coverage": []
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+            "axis": "mlx_generation_sweep_summary",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1g-1.5b-hf"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "mm8"
+              },
+              {
+                "field": "max_prompt_tokens",
+                "op": "eq",
+                "value": 4096
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "max_mlx_peak_memory_bytes",
+                "op": "le",
+                "value": 2200000000
+              }
+            ],
+            "min_matches": 1,
+            "coverage": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "quant.w4_memory_0p4b",
+      "category": "quantization",
+      "title": "0.4B W4 内存下降",
+      "criterion": "同 M5 4k 形状下优化 W4 peak≤0.60GB，fp16 peak≥0.90GB。",
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+            "axis": "mlx_generation_sweep_summary",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1d-0.4b-hf"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "none"
+              },
+              {
+                "field": "max_prompt_tokens",
+                "op": "eq",
+                "value": 4096
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "max_mlx_peak_memory_bytes",
+                "op": "ge",
+                "value": 900000000
+              }
+            ],
+            "min_matches": 1,
+            "coverage": []
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+            "axis": "mlx_generation_sweep_summary",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1d-0.4b-hf"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "mm4"
+              },
+              {
+                "field": "quant_min_params",
+                "op": "eq",
+                "value": 500000
+              },
+              {
+                "field": "max_prompt_tokens",
+                "op": "eq",
+                "value": 4096
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "max_mlx_peak_memory_bytes",
+                "op": "le",
+                "value": 600000000
+              }
+            ],
+            "min_matches": 1,
+            "coverage": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "quant.w4_memory_1p5b",
+      "category": "quantization",
+      "title": "1.5B W4 内存下降",
+      "criterion": "同 M5 4k 形状下优化 W4 peak≤1.20GB，fp16 peak≥3.0GB。",
+      "required": true,
+      "proof": {
+        "type": "all",
+        "proofs": [
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+            "axis": "mlx_generation_sweep_summary",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1g-1.5b-hf"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "none"
+              },
+              {
+                "field": "max_prompt_tokens",
+                "op": "eq",
+                "value": 4096
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "max_mlx_peak_memory_bytes",
+                "op": "ge",
+                "value": 3000000000
+              }
+            ],
+            "min_matches": 1,
+            "coverage": []
+          },
+          {
+            "type": "jsonl_query",
+            "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+            "axis": "mlx_generation_sweep_summary",
+            "where": [
+              {
+                "field": "model",
+                "op": "eq",
+                "value": "rwkv7-g1g-1.5b-hf"
+              },
+              {
+                "field": "quantization",
+                "op": "eq",
+                "value": "mm4"
+              },
+              {
+                "field": "quant_min_params",
+                "op": "eq",
+                "value": 4000000
+              },
+              {
+                "field": "max_prompt_tokens",
+                "op": "eq",
+                "value": 4096
+              }
+            ],
+            "require": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": "pass"
+              },
+              {
+                "field": "max_mlx_peak_memory_bytes",
+                "op": "le",
+                "value": 1200000000
+              }
+            ],
+            "min_matches": 1,
+            "coverage": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "quant.memory_all_models",
+      "category": "quantization",
+      "title": "W8/W4 全模型内存矩阵",
+      "criterion": "0.1B/0.4B/1.5B/可运行更大模型的真实 process/device peak 分别低于 W16，W8/W4 降幅接近权重量化理论且无隐藏全量反量化副本。",
+      "required": true
+    },
+    {
+      "id": "quant.w8_decode_faster",
+      "category": "quantization",
+      "title": "W8 decode 不慢于 W16",
+      "criterion": "所有支持 Apple 芯片、模型和 bsz 上，稳态 W8 decode tok/s≥W16；正确性/质量门同时通过。",
+      "required": true
+    },
+    {
+      "id": "quant.w4_decode_faster",
+      "category": "quantization",
+      "title": "W4 decode 不慢于 W16",
+      "criterion": "所有支持 Apple 芯片、模型和 bsz 上，稳态 W4 decode tok/s≥W16；正确性/质量门同时通过。",
+      "required": true
+    },
+    {
+      "id": "quant.prefill_faster",
+      "category": "quantization",
+      "title": "量化 prefill 不慢于 W16",
+      "criterion": "1k/4k/8k 与 bsz 1/2/4/8 的 W8/W4 prefill tok/s≥W16，包含 dequant/pack 开销。",
+      "required": true
+    },
+    {
+      "id": "quant.packed_kernels",
+      "category": "quantization",
+      "title": "真实 packed W8/W4 kernel",
+      "criterion": "关键 Linear/RKV/FFN/lm_head 直接消费 packed 权重；profiler/计数证明走 Metal kernel，无全权重 materialize。",
+      "required": true
+    },
+    {
+      "id": "quant.greedy_state_parity",
+      "category": "quantization",
+      "title": "量化 token/state 门",
+      "criterion": "固定短长语料和随机输入，W8/W4 相对 W16 的 greedy token、state 稳定性和 logits 误差达到模型级门。",
+      "required": true
+    },
+    {
+      "id": "quant.quality_qkm",
+      "category": "quantization",
+      "title": "Q*_K_M 水准质量",
+      "criterion": "标准 perplexity/任务集/长上下文上，W8/W4 质量尽可能达到对应 llama.cpp Q*_K_M 水准；报告均值、最坏项和统计置信区间。",
+      "required": true
+    },
+    {
+      "id": "quant.batch_dynamic",
+      "category": "quantization",
+      "title": "量化动态批正确性",
+      "criterion": "W8/W4 bsz 1/2/4/8、ragged session、select/reorder、stable argmax 均与独立执行一致。",
+      "required": true
+    },
+    {
+      "id": "quant.long_context",
+      "category": "quantization",
+      "title": "量化长上下文",
+      "criterion": "W8/W4 1k/4k/8k prefill+512 decode 无溢出/漂移，内存和速度门继续成立。",
+      "required": true
+    },
+    {
+      "id": "quant.serialization",
+      "category": "quantization",
+      "title": "量化产物序列化",
+      "criterion": "packed 权重、scale/zero/group metadata 可保存、哈希验证、跨进程重载，不在启动时重新全量量化。",
+      "required": true
+    },
+    {
+      "id": "quant.auto_policy",
+      "category": "quantization",
+      "title": "量化后端自动策略",
+      "criterion": "按芯片/shape/bsz 选择 affine/Metal/grouped kernel；只有同时通过速度与质量门才默认启用，否则显式回退。",
+      "required": true
+    },
+    {
+      "id": "quant.error_handling",
+      "category": "quantization",
+      "title": "量化能力与错误契约",
+      "criterion": "不支持的 group size、shape、dtype 或旧芯片给出明确错误/安全回退；不产生静默错误输出。",
+      "required": true
+    },
+    {
+      "id": "coreml.tools_export",
+      "category": "coreml_ane",
+      "title": "CoreML 工具链真实导出",
+      "criterion": "非 dry-run 使用受支持 coremltools 导出并编译 .mlpackage/.mlmodelc；manifest 含版本、目标、compute units 和 hashes。",
+      "required": true
+    },
+    {
+      "id": "coreml.model_matrix",
+      "category": "coreml_ane",
+      "title": "CoreML 模型尺寸矩阵",
+      "criterion": "0.1B/0.4B/1.5B 均能导出、编译、加载和执行；超出设备能力的型号有明确限制而非假通过。",
+      "required": true
+    },
+    {
+      "id": "coreml.stateful_multifunction",
+      "category": "coreml_ane",
+      "title": "Stateful multifunction 图",
+      "criterion": "prefill/decode 函数共享并更新 CoreML state；跨多轮调用 seen_tokens/state 语义正确，无 host 全量 state copy。",
+      "required": true
+    },
+    {
+      "id": "coreml.chunked_prefill",
+      "category": "coreml_ane",
+      "title": "CoreML chunked prefill",
+      "criterion": "chunk 1/16/64/128 与 full prefill 的 logits/state/greedy 对齐，尾块和跨 chunk state 正确。",
+      "required": true
+    },
+    {
+      "id": "coreml.hf_parity",
+      "category": "coreml_ane",
+      "title": "CoreML 与 HF 对齐",
+      "criterion": "真实 checkpoint 的 fp16 CoreML 在短长语料上相对 HF reference 通过 logits/state/greedy 门。",
+      "required": true
+    },
+    {
+      "id": "coreml.compute_unit_matrix",
+      "category": "coreml_ane",
+      "title": "Compute unit 矩阵",
+      "criterion": "CPUOnly、CPUAndGPU、CPUAndNeuralEngine/All 的可用配置均运行并报告实际设备、正确性、速度和峰值内存。",
+      "required": true
+    },
+    {
+      "id": "coreml.ane_placement",
+      "category": "coreml_ane",
+      "title": "ANE 实际落核证据",
+      "criterion": "使用 Instruments/Core ML compute plan 或等价证据证明关键层实际运行在 ANE；仅设置 compute_units 不算通过。",
+      "required": true
+    },
+    {
+      "id": "coreml.macos_runtime",
+      "category": "coreml_ane",
+      "title": "macOS 生产运行时",
+      "criterion": "独立 macOS app/CLI 加载 compiled model，完成多轮 prefill/decode、错误处理、资源释放和性能采集。",
+      "required": true
+    },
+    {
+      "id": "coreml.ios_runtime",
+      "category": "coreml_ane",
+      "title": "iOS/iPadOS 运行时",
+      "criterion": "真机 iPhone/iPad app 完成加载、状态续写、后台/前台切换、内存警告处理和性能/能耗采集。",
+      "required": true
+    },
+    {
+      "id": "coreml.swift_api",
+      "category": "coreml_ane",
+      "title": "Swift 示例与 API",
+      "criterion": "提供可构建 Swift 包/示例，覆盖 tokenizer、state、streaming、取消、错误和量化模型选择。",
+      "required": true
+    },
+    {
+      "id": "coreml.int8_size",
+      "category": "coreml_ane",
+      "title": "CoreML INT8 体积与内存",
+      "criterion": "INT8 包大小和运行峰值相对 fp16 明显下降，无隐藏 fp16 权重副本。",
+      "required": true
+    },
+    {
+      "id": "coreml.int8_speed",
+      "category": "coreml_ane",
+      "title": "CoreML INT8 速度",
+      "criterion": "所有目标设备上 INT8 prefill/decode 均不慢于 fp16，且落在预期计算单元。",
+      "required": true
+    },
+    {
+      "id": "coreml.int8_quality",
+      "category": "coreml_ane",
+      "title": "CoreML INT8 精度",
+      "criterion": "INT8 logits/greedy/状态与任务质量达到量化门。",
+      "required": true
+    },
+    {
+      "id": "coreml.int4_size",
+      "category": "coreml_ane",
+      "title": "CoreML INT4/LUT4 体积与内存",
+      "criterion": "INT4/LUT4 包大小和运行峰值相对 fp16/INT8 按预期下降。",
+      "required": true
+    },
+    {
+      "id": "coreml.int4_speed",
+      "category": "coreml_ane",
+      "title": "CoreML INT4/LUT4 速度",
+      "criterion": "目标设备上 INT4/LUT4 prefill/decode 均不慢于 fp16，包含解包开销。",
+      "required": true
+    },
+    {
+      "id": "coreml.int4_quality",
+      "category": "coreml_ane",
+      "title": "CoreML INT4/LUT4 精度",
+      "criterion": "INT4/LUT4 greedy、logits/state 和标准质量达到既定门，不接受当前已知 token 漂移。",
+      "required": true
+    },
+    {
+      "id": "coreml.long_context_memory",
+      "category": "coreml_ane",
+      "title": "CoreML 长上下文与内存",
+      "criterion": "1k/4k/8k prefill、512 decode、state 生命周期与峰值内存通过，反复请求无泄漏。",
+      "required": true
+    },
+    {
+      "id": "reliability.soak_24h",
+      "category": "reliability",
+      "title": "24 小时 soak",
+      "criterion": "MLX fp16/W8/W4 生产混合负载连续 24 小时；零崩溃/死锁/错 token，错误率满足 SLO。",
+      "required": true
+    },
+    {
+      "id": "reliability.requests_10k",
+      "category": "reliability",
+      "title": "至少 10k 请求回归",
+      "criterion": "固定可复现混合长度/并发 workload 完成≥10k 请求，结果、延迟分位和资源统计完整。",
+      "required": true
+    },
+    {
+      "id": "reliability.memory_leak",
+      "category": "reliability",
+      "title": "内存泄漏门",
+      "criterion": "稳态窗口内 active/RSS/driver/cache 在请求释放后回落；24h 趋势增长≤2% 或有可解释有界 cache。",
+      "required": true
+    },
+    {
+      "id": "reliability.thermal_energy",
+      "category": "reliability",
+      "title": "温度与能耗",
+      "criterion": "记录 wall power/energy per token、热降频和电池场景；不同 backend/quant 的性能功耗比可复现。",
+      "required": true
+    },
+    {
+      "id": "reliability.oom_recovery",
+      "category": "reliability",
+      "title": "OOM 与压力恢复",
+      "criterion": "内存预算、预检查、cache eviction、清晰 OOM 错误和后续请求恢复通过；不导致系统卡死/重启。",
+      "required": true
+    },
+    {
+      "id": "reliability.crash_recovery",
+      "category": "reliability",
+      "title": "进程异常恢复",
+      "criterion": "worker 异常退出、编译失败、损坏 cache 后能重启并重建状态；未完成请求明确失败，不返回错误 continuation。",
+      "required": true
+    },
+    {
+      "id": "reliability.input_validation",
+      "category": "reliability",
+      "title": "输入与边界校验",
+      "criterion": "空 prompt、超长 prompt、非法 token id、坏 config/权重、NaN 参数和不支持选项给出确定错误。",
+      "required": true
+    },
+    {
+      "id": "reliability.model_integrity",
+      "category": "reliability",
+      "title": "模型完整性与版本锁定",
+      "criterion": "模型 revision、config/tokenizer/weight hashes、转换器版本记录并在加载时校验，避免混用产物。",
+      "required": true
+    },
+    {
+      "id": "reliability.thread_process_safety",
+      "category": "reliability",
+      "title": "线程/进程安全",
+      "criterion": "并发调用、fork/spawn 限制、Metal command queue 与 cache 锁行为有测试，无 data race 或状态串线。",
+      "required": true
+    },
+    {
+      "id": "reliability.ci_unit",
+      "category": "reliability",
+      "title": "跨平台 CPU 单测 CI",
+      "criterion": "Linux/macOS CPU CI 覆盖数学、cache、转换、manifest、错误路径，主分支持续通过。",
+      "required": true
+    },
+    {
+      "id": "reliability.ci_apple",
+      "category": "reliability",
+      "title": "Apple 真机 CI",
+      "criterion": "至少一台 Apple Silicon runner 对 MPS+MLX 做真实模型 smoke、数值门和短性能回归，不以 mock 替代。",
+      "required": true
+    },
+    {
+      "id": "reliability.performance_regression",
+      "category": "reliability",
+      "title": "性能回归 CI",
+      "criterion": "按芯片保存基线；prefill/decode/TTFT/memory 超过允许回退即阻止发布，结果保留可追溯。",
+      "required": true
+    },
+    {
+      "id": "reliability.version_matrix",
+      "category": "reliability",
+      "title": "依赖与系统版本矩阵",
+      "criterion": "项目声明的最小/最新 macOS、Python、PyTorch、Transformers、PEFT、TRL、MLX、coremltools 组合均通过或明确锁定。",
+      "required": true
+    },
+    {
+      "id": "hardware.m1_family",
+      "category": "hardware",
+      "title": "Apple M1 系列",
+      "criterion": "至少 M1 base 与一款高 GPU/内存档实测全部适用正确性门、性能、量化、稳定性；记录具体 SKU。",
+      "required": true
+    },
+    {
+      "id": "hardware.m2_family",
+      "category": "hardware",
+      "title": "Apple M2 系列",
+      "criterion": "至少 M2 base 与一款高 GPU/内存档实测全部适用门；专门策略不得照搬 M5。",
+      "required": true
+    },
+    {
+      "id": "hardware.m3_family",
+      "category": "hardware",
+      "title": "Apple M3 系列",
+      "criterion": "至少 M3 base 与一款高 GPU/内存档实测全部适用门。",
+      "required": true
+    },
+    {
+      "id": "hardware.m4_family",
+      "category": "hardware",
+      "title": "Apple M4 系列",
+      "criterion": "至少 M4 base 与一款高 GPU/内存档实测全部适用门。",
+      "required": true
+    },
+    {
+      "id": "hardware.m5_base",
+      "category": "hardware",
+      "title": "Apple M5 base 证据",
+      "criterion": "M5 base 机器环境、MPS 与 MLX 真机结果可追溯。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "axis": "apple_silicon_env",
+        "where": [
+          {
+            "field": "chip",
+            "op": "eq",
+            "value": "Apple M5"
+          },
+          {
+            "field": "machine",
+            "op": "eq",
+            "value": "arm64"
+          }
+        ],
+        "require": [
+          {
+            "field": "mps_available",
+            "op": "truthy"
+          },
+          {
+            "field": "memory_gb",
+            "op": "ge",
+            "value": 16
+          }
+        ],
+        "min_matches": 1,
+        "coverage": []
+      }
+    },
+    {
+      "id": "hardware.m5_high_tier",
+      "category": "hardware",
+      "title": "Apple M5 高配档",
+      "criterion": "M5 系列可商购高 GPU/内存档至少一款完成适用全门，记录具体 SKU/核心数/内存带宽。",
+      "required": true
+    },
+    {
+      "id": "hardware.memory_8gb",
+      "category": "hardware",
+      "title": "8GB 统一内存档",
+      "criterion": "8GB 真机验证能运行的模型/量化、并发、OOM 防护和系统响应；明确不能运行的边界。",
+      "required": true
+    },
+    {
+      "id": "hardware.memory_16gb",
+      "category": "hardware",
+      "title": "16GB 统一内存档",
+      "criterion": "16GB M5 真机环境与峰值证据存在。",
+      "required": true,
+      "proof": {
+        "type": "jsonl_query",
+        "path": "bench/results_apple_silicon_m5_20260704.jsonl",
+        "axis": "apple_silicon_env",
+        "where": [
+          {
+            "field": "machine",
+            "op": "eq",
+            "value": "arm64"
+          }
+        ],
+        "require": [
+          {
+            "field": "memory_gb",
+            "op": "ge",
+            "value": 16
+          }
+        ],
+        "min_matches": 1,
+        "coverage": []
+      }
+    },
+    {
+      "id": "hardware.memory_32gb_plus",
+      "category": "hardware",
+      "title": "32GB+ 统一内存档",
+      "criterion": "32GB 或更高真机覆盖较大模型、并发、长上下文和 W8/W4 性能门。",
+      "required": true
+    },
+    {
+      "id": "hardware.mobile_ane",
+      "category": "hardware",
+      "title": "iPhone/iPad ANE 真机",
+      "criterion": "至少一代仍受支持 iPhone 与 iPad 真机完成 CoreML/ANE 正确性、内存、速度、能耗和热稳态门。",
+      "required": true
+    }
+  ]
+}
