@@ -14,8 +14,12 @@ from pathlib import PurePosixPath
 import re
 import sys
 import tarfile
-import tomllib
 from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10
+    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:

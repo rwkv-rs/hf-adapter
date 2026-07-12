@@ -307,6 +307,10 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   `4084cf9679cb9e0f74b01a8a158658d339490b39`; fork and local branch heads
   match. GitGuardian passed and the four upstream Python checks were still
   running at the final read-only check.
+- The next Python 3.10 CI run exposed a real compatibility omission in the
+  new source-archive verifier: it imported the Python 3.11 `tomllib` name
+  directly. The verifier now uses the already-declared Python 3.10 `tomli`
+  fallback; no GPU process or release artifact was changed.
 
 ### 2026-08-27 — backend-v2 training boundary wired locally
 
