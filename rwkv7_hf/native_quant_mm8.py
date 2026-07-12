@@ -154,6 +154,88 @@ if _HAS_TRITON:
             acc += tl.sum(x[:, None] * deq, axis=0)
         tl.store(y_ptr + offs_m, acc, mask=mask_m)
 
+    @triton.jit
+    def _mm8_batched_gemv_kernel(
+        x_ptr, w_ptr, mx_ptr, rx_ptr, my_ptr, ry_ptr, y_ptr,
+        B, N, M,
+        BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr,
+    ):
+        """Batched decode GEMV with one launch for all active rows.
+
+        The previous path launched one kernel per row through ``torch.stack``
+        and fell back to materializing the complete fp16 weight above four
+        rows.  A two-dimensional launch keeps every row independent while
+        removing Python/launch serialization and the large-batch dequantize
+        fallback.
+        """
+        pid_b = tl.program_id(0)
+        pid_m = tl.program_id(1)
+        offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+        mask_m = offs_m < M
+        rx_m = tl.load(rx_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
+        mx_m = tl.load(mx_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
+        acc = tl.zeros((BLOCK_M,), dtype=tl.float32)
+        offs_n = tl.arange(0, BLOCK_N)
+        for n_start in range(0, N, BLOCK_N):
+            n = n_start + offs_n
+            mask_n = n < N
+            x = tl.load(x_ptr + pid_b * N + n, mask=mask_n, other=0.0).to(tl.float32)
+            ry_n = tl.load(ry_ptr + n, mask=mask_n, other=0.0).to(tl.float32)
+            my_n = tl.load(my_ptr + n, mask=mask_n, other=0.0).to(tl.float32)
+            w_addr = n.to(tl.int64)[:, None] * M + offs_m.to(tl.int64)[None, :]
+            w_mask = mask_n[:, None] & mask_m[None, :]
+            w = tl.load(w_ptr + w_addr, mask=w_mask, other=0.0).to(tl.float32)
+            deq = (w + 0.5) * ry_n[:, None] * rx_m[None, :] + my_n[:, None] + mx_m[None, :]
+            acc += tl.sum(x[:, None] * deq, axis=0)
+        tl.store(y_ptr + pid_b * M + offs_m, acc, mask=mask_m)
+
+    @triton.jit
+    def _mm8_batched_dot_kernel(
+        x_ptr, w_ptr, mx_ptr, rx_ptr, my_ptr, ry_ptr, y_ptr,
+        B, N, M,
+        BLOCK_B: tl.constexpr, BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr,
+    ):
+        """Tensor-core batched decode kernel with algebraic affine dequant.
+
+        Expanding the affine format lets the large ``x @ uint8_weight`` term
+        use ``tl.dot`` while the row/column offsets are applied as two small
+        reductions.  Unlike row-wise GEMV, every weight tile is read once for
+        the complete decode batch.
+        """
+        pid_b = tl.program_id(0)
+        pid_m = tl.program_id(1)
+        offs_b = pid_b * BLOCK_B + tl.arange(0, BLOCK_B)
+        offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+        mask_b = offs_b < B
+        mask_m = offs_m < M
+        acc = tl.zeros((BLOCK_B, BLOCK_M), dtype=tl.float32)
+        sum_x = tl.zeros((BLOCK_B,), dtype=tl.float32)
+        sum_x_my = tl.zeros((BLOCK_B,), dtype=tl.float32)
+        offs_n = tl.arange(0, BLOCK_N)
+        for n0 in range(0, N, BLOCK_N):
+            n = n0 + offs_n
+            mask_n = n < N
+            x = tl.load(
+                x_ptr + offs_b[:, None] * N + n[None, :],
+                mask=mask_b[:, None] & mask_n[None, :], other=0.0,
+            ).to(tl.float32)
+            ry_n = tl.load(ry_ptr + n, mask=mask_n, other=0.0).to(tl.float32)
+            my_n = tl.load(my_ptr + n, mask=mask_n, other=0.0).to(tl.float32)
+            w = tl.load(
+                w_ptr + n[:, None].to(tl.int64) * M + offs_m[None, :].to(tl.int64),
+                mask=mask_n[:, None] & mask_m[None, :], other=0.0,
+            ).to(tl.float32)
+            acc += tl.dot((x * ry_n[None, :]).to(tl.float16), (w + 0.5).to(tl.float16))
+            sum_x += tl.sum(x, axis=1)
+            sum_x_my += tl.sum(x * my_n[None, :], axis=1)
+        rx_m = tl.load(rx_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
+        mx_m = tl.load(mx_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
+        out = acc * rx_m[None, :] + sum_x_my[:, None] + sum_x[:, None] * mx_m[None, :]
+        tl.store(
+            y_ptr + offs_b[:, None] * M + offs_m[None, :], out,
+            mask=mask_b[:, None] & mask_m[None, :],
+        )
+
 
 def mm8_gemv_available(device=None) -> bool:
     """Return whether the fused Triton GEMV path can run on ``device``.
@@ -175,10 +257,18 @@ def _as_1d(t):
     return t.reshape(-1) if t is not None else None
 
 
-def mm8_gemv_triton(x, w_u8, mx, rx, my, ry, *, block_m=64, block_n=64):
+def _mm8_decode_blocks(x, block_m, block_n):
+    if block_m is not None and block_n is not None:
+        return int(block_m), int(block_n)
+    blackwell = bool(x.is_cuda and torch.cuda.get_device_capability(x.device)[0] >= 12)
+    return int(block_m or (128 if blackwell else 64)), int(block_n or (128 if blackwell else 64))
+
+
+def mm8_gemv_triton(x, w_u8, mx, rx, my, ry, *, block_m=None, block_n=None):
     """Fused int8 dequant GEMV: ``x: [N]`` -> ``[M]`` (single vector, decode path)."""
     if not (x.is_cuda and mm8_gemv_available(x.device)):
         raise RuntimeError("mm8_gemv_triton requires triton + torch + CUDA input")
+    block_m, block_n = _mm8_decode_blocks(x, block_m, block_n)
     n, m = w_u8.shape
     y = torch.empty(m, device=x.device, dtype=x.dtype)
     grid = (triton.cdiv(m, block_m),)
@@ -189,13 +279,54 @@ def mm8_gemv_triton(x, w_u8, mx, rx, my, ry, *, block_m=64, block_n=64):
     return y
 
 
-def mm8_matmul_triton(x, w_u8, mx, rx, my, ry, *, max_gemv_rows: int = 4):
+def mm8_batched_gemv_triton(x, w_u8, mx, rx, my, ry, *, block_m=None, block_n=None):
+    """Fused int8 dequant GEMV for a small contiguous ``[B, N]`` decode batch."""
+    if not (x.is_cuda and x.dim() == 2 and mm8_gemv_available(x.device)):
+        raise RuntimeError("mm8_batched_gemv_triton requires a 2-D CUDA input")
+    block_m, block_n = _mm8_decode_blocks(x, block_m, block_n)
+    x = x.contiguous()
+    b, n = x.shape
+    wn, m = w_u8.shape
+    if int(n) != int(wn):
+        raise ValueError(f"input width {n} does not match quantized weight width {wn}")
+    y = torch.empty((b, m), device=x.device, dtype=x.dtype)
+    grid = (b, triton.cdiv(m, block_m))
+    _mm8_batched_gemv_kernel[grid](
+        x, w_u8, _as_1d(mx), _as_1d(rx), _as_1d(my), _as_1d(ry), y,
+        b, n, m, BLOCK_M=block_m, BLOCK_N=block_n, num_warps=4,
+    )
+    return y
+
+
+def mm8_batched_dot_triton(
+    x, w_u8, mx, rx, my, ry, *, block_b=16, block_m=128, block_n=64,
+):
+    """Tensor-core fp16 W8 path for decode batches large enough to reuse weights."""
+    if not (x.is_cuda and x.dim() == 2 and mm8_gemv_available(x.device)):
+        raise RuntimeError("mm8_batched_dot_triton requires a 2-D CUDA input")
+    if x.dtype != torch.float16:
+        raise TypeError("mm8_batched_dot_triton currently requires fp16 input")
+    x = x.contiguous()
+    b, n = x.shape
+    wn, m = w_u8.shape
+    if int(n) != int(wn):
+        raise ValueError(f"input width {n} does not match quantized weight width {wn}")
+    y = torch.empty((b, m), device=x.device, dtype=x.dtype)
+    grid = (triton.cdiv(b, block_b), triton.cdiv(m, block_m))
+    _mm8_batched_dot_kernel[grid](
+        x, w_u8, _as_1d(mx), _as_1d(rx), _as_1d(my), _as_1d(ry), y,
+        b, n, m, BLOCK_B=block_b, BLOCK_M=block_m, BLOCK_N=block_n, num_warps=8,
+    )
+    return y
+
+
+def mm8_matmul_triton(x, w_u8, mx, rx, my, ry, *, max_gemv_rows: int | None = None):
     """Fused int8 dequant matmul with safe fallbacks.
 
-    ``x: [N]`` uses the fused GEMV decode path.  Small ``[B, N]`` decode
-    batches can loop GEMV rows, but prefill / large-batch inputs must not launch
-    hundreds of sequential GEMV kernels; those fall back to the reference path
-    that materializes once and uses a single PyTorch GEMM.
+    ``x: [N]`` uses the fused GEMV decode path. On compute capability 12+, small
+    ``[B, N]`` decode batches use one two-dimensional Triton launch; older architectures
+    retain their previously validated dispatch. Prefill / large-batch inputs
+    fall back to the reference path that materializes once for one PyTorch GEMM.
     """
     if not (x.is_cuda and mm8_gemv_available(x.device)):
         return mm8_matmul(x, w_u8, mx, rx, my, ry)
@@ -205,11 +336,17 @@ def mm8_matmul_triton(x, w_u8, mx, rx, my, ry, *, max_gemv_rows: int = 4):
         return mm8_matmul(x, w_u8, mx, rx, my, ry)
     if int(x.shape[0]) == 1:
         return mm8_gemv_triton(x[0], w_u8, mx, rx, my, ry).unsqueeze(0)
-    if int(x.shape[0]) > int(max_gemv_rows):
+    blackwell = torch.cuda.get_device_capability(x.device)[0] >= 12
+    row_limit = int(max_gemv_rows) if max_gemv_rows is not None else (16 if blackwell else 4)
+    if int(x.shape[0]) > row_limit:
         return mm8_matmul(x, w_u8, mx, rx, my, ry)
-    # Small batched decode: loop rows through the GEMV kernel.
-    outs = [mm8_gemv_triton(x[i], w_u8, mx, rx, my, ry) for i in range(x.shape[0])]
-    return torch.stack(outs, dim=0)
+    if blackwell and int(x.shape[0]) >= 4 and x.dtype == torch.float16:
+        return mm8_batched_dot_triton(x, w_u8, mx, rx, my, ry)
+    if blackwell:
+        return mm8_batched_gemv_triton(x, w_u8, mx, rx, my, ry)
+    # Preserve the measured pre-sm120 route until every older family has
+    # an exact-card batched-kernel A/B artifact.
+    return torch.stack([mm8_gemv_triton(row, w_u8, mx, rx, my, ry) for row in x], dim=0)
 
 
 if _HAS_TRITON:

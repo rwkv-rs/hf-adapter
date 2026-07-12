@@ -274,36 +274,44 @@ def benchmark_decode(args, tok, model, ids):
 
         step_backend = last_fast_token_backend(model) or os.environ.get("RWKV7_FAST_TOKEN_BACKEND", "auto")
 
-    with torch.inference_mode():
-        out = model(ids, use_cache=True, logits_to_keep=1)
-        state = out.past_key_values
-        nxt = out.logits[:, -1:].argmax(dim=-1)
-        prompt_logits = out.logits[:, -1].float().detach().cpu()
-        for _ in range(args.warmup):
-            out = step_fn(nxt, past_key_values=state)
+    samples = []
+    for _repeat in range(args.timing_repeats):
+        with torch.inference_mode():
+            out = model(ids, use_cache=True, logits_to_keep=1)
             state = out.past_key_values
             nxt = out.logits[:, -1:].argmax(dim=-1)
-        cuda_sync(args.device)
-        t0 = time.time()
-        for _ in range(args.decode_tokens):
-            out = step_fn(nxt, past_key_values=state)
-            state = out.past_key_values
-            nxt = out.logits[:, -1:].argmax(dim=-1)
-        cuda_sync(args.device)
-        dt = time.time() - t0
-        final_logits = out.logits[:, -1].float().detach().cpu()
-    return {
-        "decode_sec": dt,
-        "decode_tokps_total": round((ids.shape[0] * args.decode_tokens) / dt, 1),
-        "decode_tokps_per_seq": round(args.decode_tokens / dt, 1),
-        "decode_ms_per_step": round(1000 * dt / args.decode_tokens, 3),
-        "prompt_logits": prompt_logits,
-        "final_logits": final_logits,
-        "next_token": int(nxt[0, -1].detach().cpu()),
-        "fast_token_backend_effective": step_backend,
-        "native_model_decode_backend_effective": last_native_model_decode_backend(model),
-        "cache_type": type(state).__name__ if state is not None else None,
-    }
+            prompt_logits = out.logits[:, -1].float().detach().cpu()
+            for _ in range(args.warmup):
+                out = step_fn(nxt, past_key_values=state)
+                state = out.past_key_values
+                nxt = out.logits[:, -1:].argmax(dim=-1)
+            cuda_sync(args.device)
+            t0 = time.time()
+            for _ in range(args.decode_tokens):
+                out = step_fn(nxt, past_key_values=state)
+                state = out.past_key_values
+                nxt = out.logits[:, -1:].argmax(dim=-1)
+            cuda_sync(args.device)
+            dt = time.time() - t0
+            final_logits = out.logits[:, -1].float().detach().cpu()
+        samples.append(
+            {
+                "decode_sec": dt,
+                "decode_tokps_total": round((ids.shape[0] * args.decode_tokens) / dt, 1),
+                "decode_tokps_per_seq": round(args.decode_tokens / dt, 1),
+                "decode_ms_per_step": round(1000 * dt / args.decode_tokens, 3),
+                "prompt_logits": prompt_logits,
+                "final_logits": final_logits,
+                "next_token": int(nxt[0, -1].detach().cpu()),
+                "fast_token_backend_effective": step_backend,
+                "native_model_decode_backend_effective": last_native_model_decode_backend(model),
+                "cache_type": type(state).__name__ if state is not None else None,
+            }
+        )
+    selected = sorted(samples, key=lambda item: float(item["decode_sec"]))[len(samples) // 2]
+    selected["timing_repeats"] = len(samples)
+    selected["decode_tokps_samples"] = [float(item["decode_tokps_total"]) for item in samples]
+    return selected
 
 
 def main() -> int:
@@ -335,11 +343,19 @@ def main() -> int:
     ap.add_argument("--prompt-tokens", type=int, default=32)
     ap.add_argument("--decode-tokens", type=int, default=32)
     ap.add_argument("--warmup", type=int, default=1)
+    ap.add_argument("--timing-repeats", type=int, default=1, help="Independent decode measurements; report the median run")
     ap.add_argument("--baseline-dir", default="", help="Directory for fp16 baseline logits/tokps used by fresh quant-only runs")
     ap.add_argument("--baseline-key", default="", help="Optional explicit baseline-cache key shared by fp16/mm8/mm4 subprocesses")
+    ap.add_argument(
+        "--paired-baseline",
+        action="store_true",
+        help="Measure a dense baseline in the same fresh process immediately before quantizing; removes cross-process clock noise",
+    )
     ap.add_argument("--allow-missing-baseline", action="store_true", help="Emit quant-only rows with null ratios when fp16 OOM/no baseline")
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     args = ap.parse_args()
+    if args.timing_repeats < 1:
+        ap.error("--timing-repeats must be >= 1")
     if args.single_quantization is not None:
         args.quantizations = [args.single_quantization]
     else:
@@ -363,6 +379,14 @@ def main() -> int:
             torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats()
         model = load_model(args, dtype)
+        if quantization != "none" and args.paired_baseline:
+            dense_footprint = module_footprint_mb(model)
+            dense_res = benchmark_decode(args, tok, model, ids)
+            baseline_prompt = dense_res["prompt_logits"]
+            baseline_final = dense_res["final_logits"]
+            baseline_next = dense_res["next_token"]
+            baseline_tokps = dense_res["decode_tokps_total"]
+            baseline_footprint = dense_footprint
         replaced, module_counts = quantize_model(model, quantization, args.min_params, args.policy)
         footprint = module_footprint_mb(model)
         # Measure steady-state inference memory, not temporary fp32 tensors
@@ -424,9 +448,12 @@ def main() -> int:
             "decode_tokens": args.decode_tokens,
             "min_params": args.min_params,
             "native_mm_policy": args.policy,
+            "paired_baseline": bool(args.paired_baseline and quantization != "none"),
             "replaced_modules": replaced,
             "module_counts": module_counts,
             "model_footprint_mb": footprint,
+            "baseline_decode_tokps_total": round(float(baseline_tokps), 1) if baseline_tokps is not None else None,
+            "baseline_model_footprint_mb": round(float(baseline_footprint), 1) if baseline_footprint is not None else None,
             "footprint_ratio_vs_fp16": round(footprint_ratio, 4) if footprint_ratio is not None else None,
             "decode_speed_ratio_vs_fp16": round(speed_ratio, 4) if speed_ratio is not None else None,
             "prompt_logits_cos_vs_fp16": round(float(prompt_cos), 8) if prompt_cos is not None else None,

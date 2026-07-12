@@ -1,0 +1,766 @@
+{
+  "axis": "math500_final_acceptance",
+  "bsz_sweep": [
+    {
+      "bsz": 128,
+      "correct_generations": 40,
+      "decode_sec": 4.785538404947147,
+      "decoded_token_events": 57457,
+      "effective_bsz": 128,
+      "generation_token_per_sec": 9026.823738439338,
+      "pass_at_rollout_accuracy": 0.5,
+      "prefill_sec": 1.5796019439585507,
+      "summary_path": "/root/results/math500_5090_04_wrapper/bsz_sweep/bsz_128/summary.json",
+      "token_per_sec": 9026.823738439338,
+      "verification_sec": 6.660561176948249
+    },
+    {
+      "bsz": 192,
+      "correct_generations": 38,
+      "decode_sec": 5.053014060948044,
+      "decoded_token_events": 57133,
+      "effective_bsz": 192,
+      "generation_token_per_sec": 8618.60577670296,
+      "pass_at_rollout_accuracy": 0.5,
+      "prefill_sec": 1.5760163739323616,
+      "summary_path": "/root/results/math500_5090_04_wrapper/bsz_sweep/bsz_192/summary.json",
+      "token_per_sec": 8618.60577670296,
+      "verification_sec": 7.0606288749258965
+    },
+    {
+      "bsz": 96,
+      "correct_generations": 32,
+      "decode_sec": 5.453794903121889,
+      "decoded_token_events": 57987,
+      "effective_bsz": 96,
+      "generation_token_per_sec": 8331.163171283184,
+      "pass_at_rollout_accuracy": 0.5,
+      "prefill_sec": 1.5064576820004731,
+      "summary_path": "/root/results/math500_5090_04_wrapper/bsz_sweep/bsz_96/summary.json",
+      "token_per_sec": 8331.163171283184,
+      "verification_sec": 6.577129187062383
+    },
+    {
+      "bsz": 64,
+      "correct_generations": 34,
+      "decode_sec": 6.347733858041465,
+      "decoded_token_events": 57799,
+      "effective_bsz": 64,
+      "generation_token_per_sec": 7381.3354286766025,
+      "pass_at_rollout_accuracy": 0.5,
+      "prefill_sec": 1.4826920260675251,
+      "summary_path": "/root/results/math500_5090_04_wrapper/bsz_sweep/bsz_64/summary.json",
+      "token_per_sec": 7381.3354286766025,
+      "verification_sec": 7.077016741968691
+    }
+  ],
+  "comparison": {
+    "accuracy": {
+      "albatross_correct_generations": 4670.0,
+      "albatross_pass_at_rollout_accuracy": 0.37,
+      "albatross_rollout_accuracy": 0.1459375,
+      "correct_delta": -111.0,
+      "hf_correct_generations": 4559.0,
+      "hf_pass_at_rollout_accuracy": 0.38,
+      "hf_rollout_accuracy": 0.14246875,
+      "pass_at_rollout_delta": 0.010000000000000009,
+      "rollout_accuracy_delta": -0.0034687499999999927
+    },
+    "albatross_log_decode": {
+      "decode_sec_from_log": 4945.952,
+      "decoded_token_events_from_log": 19636096.0,
+      "steady_token_per_sec_from_log": 3970.1347687967855
+    },
+    "compatible_shape": {
+      "albatross_num_tasks": 500,
+      "albatross_rollout": 64,
+      "albatross_total_generations": 32000,
+      "hf_num_tasks": 500,
+      "hf_rollout": 64,
+      "hf_total_generations": 32000,
+      "num_tasks_match": true,
+      "rollout_match": true,
+      "total_generations_match": true
+    },
+    "gates": {
+      "compatible_shape": {
+        "actual": true,
+        "passed": true,
+        "required": true
+      },
+      "decode_speed_ratio": {
+        "actual": 4.871257211233716,
+        "minimum": 2.0,
+        "passed": true,
+        "required": true
+      },
+      "overall_pass": true,
+      "pass_at_rollout": {
+        "actual": 0.38,
+        "minimum": 0.37,
+        "passed": true,
+        "required": true
+      },
+      "summary_speed_ratio": {
+        "actual": 4.3358599849621475,
+        "minimum": 2.0,
+        "passed": true,
+        "required": true
+      }
+    },
+    "speed": {
+      "albatross": {
+        "decode_sec": 4945.952,
+        "decoded_token_events": 19636096.0,
+        "elapsed_sec": 5030.210774466395,
+        "generation_token_per_sec": 0.0,
+        "sample_per_sec_summary": 6.361562454287924,
+        "speed_elapsed_sec": 0.0,
+        "steady_token_per_sec": 3970.1347687967855,
+        "token_per_sec_summary": 3903.63284569979,
+        "wall_token_per_sec": 0.0
+      },
+      "albatross_speed_timing": "wall",
+      "hf": {
+        "decode_sec": 1014.438516525086,
+        "decoded_token_events": 19618782.0,
+        "elapsed_sec": 1217.1862035479862,
+        "generation_token_per_sec": 16925.605451653635,
+        "sample_per_sec_summary": 27.607186544654823,
+        "speed_elapsed_sec": 1159.1184762069024,
+        "steady_token_per_sec": 19339.54762207104,
+        "token_per_sec_summary": 16925.605451653635,
+        "wall_token_per_sec": 16118.14358625907
+      },
+      "hf_speed_timing": "generation",
+      "sample_per_sec_ratio_hf_over_albatross": 4.339686475300825,
+      "steady_decode_token_per_sec_ratio_hf_over_albatross": 4.871257211233716,
+      "summary_token_per_sec_ratio_hf_over_albatross": 4.3358599849621475
+    }
+  },
+  "compression_alignment": {
+    "add_bos": true,
+    "axis": "uncheatable_logit_compression_alignment",
+    "candidate": {
+      "bits_per_token": 1.924101500129069,
+      "by_position": {
+        "1": {
+          "bits": 2378.249879837036,
+          "bits_per_token": 4.756499759674072,
+          "tokens": 500
+        },
+        "129-256": {
+          "bits": 5464.0201353237435,
+          "bits_per_token": 1.127532013067219,
+          "tokens": 4846
+        },
+        "17-32": {
+          "bits": 16139.646144451704,
+          "bits_per_token": 2.029378365956457,
+          "tokens": 7953
+        },
+        "2-8": {
+          "bits": 13995.166859445366,
+          "bits_per_token": 3.998619102698676,
+          "tokens": 3500
+        },
+        "257-512": {
+          "bits": 1495.5360036630173,
+          "bits_per_token": 0.860987912298801,
+          "tokens": 1737
+        },
+        "33-64": {
+          "bits": 21256.92607403914,
+          "bits_per_token": 1.7715581360145962,
+          "tokens": 11999
+        },
+        "513-1024": {
+          "bits": 488.6823805011894,
+          "bits_per_token": 0.676845402356218,
+          "tokens": 722
+        },
+        "65-128": {
+          "bits": 13240.266680806448,
+          "bits_per_token": 1.5381350697962881,
+          "tokens": 8608
+        },
+        "9-16": {
+          "bits": 9942.21824672844,
+          "bits_per_token": 2.48555456168211,
+          "tokens": 4000
+        }
+      },
+      "name": "hf:rwkv7-g1d-0.4b-hf:none",
+      "total_bits": 84400.71230316162,
+      "total_tokens": 43865
+    },
+    "comparison": {
+      "by_position": {
+        "1": {
+          "candidate_bits_per_token": 4.756499759674072,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "reference_bits_per_token": 4.756499759674072,
+          "tokens": 500
+        },
+        "129-256": {
+          "candidate_bits_per_token": 1.127532013067219,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "reference_bits_per_token": 1.127532013067219,
+          "tokens": 4846
+        },
+        "17-32": {
+          "candidate_bits_per_token": 2.029378365956457,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "reference_bits_per_token": 2.029378365956457,
+          "tokens": 7953
+        },
+        "2-8": {
+          "candidate_bits_per_token": 3.998619102698676,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "reference_bits_per_token": 3.998619102698676,
+          "tokens": 3500
+        },
+        "257-512": {
+          "candidate_bits_per_token": 0.860987912298801,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "reference_bits_per_token": 0.860987912298801,
+          "tokens": 1737
+        },
+        "33-64": {
+          "candidate_bits_per_token": 1.7715581360145962,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "reference_bits_per_token": 1.7715581360145962,
+          "tokens": 11999
+        },
+        "513-1024": {
+          "candidate_bits_per_token": 0.676845402356218,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "reference_bits_per_token": 0.676845402356218,
+          "tokens": 722
+        },
+        "65-128": {
+          "candidate_bits_per_token": 1.5381350697962881,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "reference_bits_per_token": 1.5381350697962881,
+          "tokens": 8608
+        },
+        "9-16": {
+          "candidate_bits_per_token": 2.48555456168211,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "reference_bits_per_token": 2.48555456168211,
+          "tokens": 4000
+        }
+      },
+      "candidate_bits_per_token": 1.924101500129069,
+      "candidate_minus_reference_bits_per_token": 0.0,
+      "candidate_over_reference_bits_ratio": 1.0,
+      "reference_bits_per_token": 1.924101500129069,
+      "tokens": 43865,
+      "worst_texts_by_ratio": [
+        {
+          "candidate_bits_per_token": 1.4229618326822917,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 0,
+          "level": "2",
+          "line_no": 1,
+          "reference_bits_per_token": 1.4229618326822917,
+          "subject": "Precalculus",
+          "tokens": 75,
+          "unique_id": "test/precalculus/807.json"
+        },
+        {
+          "candidate_bits_per_token": 1.324156176142332,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 1,
+          "level": "5",
+          "line_no": 2,
+          "reference_bits_per_token": 1.324156176142332,
+          "subject": "Intermediate Algebra",
+          "tokens": 119,
+          "unique_id": "test/intermediate_algebra/1994.json"
+        },
+        {
+          "candidate_bits_per_token": 1.5863917254019475,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 2,
+          "level": "3",
+          "line_no": 3,
+          "reference_bits_per_token": 1.5863917254019475,
+          "subject": "Algebra",
+          "tokens": 69,
+          "unique_id": "test/algebra/2584.json"
+        },
+        {
+          "candidate_bits_per_token": 2.910448534735318,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 3,
+          "level": "3",
+          "line_no": 4,
+          "reference_bits_per_token": 2.910448534735318,
+          "subject": "Number Theory",
+          "tokens": 29,
+          "unique_id": "test/number_theory/572.json"
+        },
+        {
+          "candidate_bits_per_token": 1.5303470435827404,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 4,
+          "level": "2",
+          "line_no": 5,
+          "reference_bits_per_token": 1.5303470435827404,
+          "subject": "Algebra",
+          "tokens": 369,
+          "unique_id": "test/algebra/1349.json"
+        },
+        {
+          "candidate_bits_per_token": 1.8625708840110085,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 5,
+          "level": "2",
+          "line_no": 6,
+          "reference_bits_per_token": 1.8625708840110085,
+          "subject": "Prealgebra",
+          "tokens": 55,
+          "unique_id": "test/prealgebra/1622.json"
+        },
+        {
+          "candidate_bits_per_token": 2.27640380859375,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 6,
+          "level": "3",
+          "line_no": 7,
+          "reference_bits_per_token": 2.27640380859375,
+          "subject": "Number Theory",
+          "tokens": 35,
+          "unique_id": "test/number_theory/515.json"
+        },
+        {
+          "candidate_bits_per_token": 1.9032631358881107,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 7,
+          "level": "4",
+          "line_no": 8,
+          "reference_bits_per_token": 1.9032631358881107,
+          "subject": "Precalculus",
+          "tokens": 87,
+          "unique_id": "test/precalculus/927.json"
+        },
+        {
+          "candidate_bits_per_token": 1.9379841839825664,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 8,
+          "level": "3",
+          "line_no": 9,
+          "reference_bits_per_token": 1.9379841839825664,
+          "subject": "Algebra",
+          "tokens": 54,
+          "unique_id": "test/algebra/2036.json"
+        },
+        {
+          "candidate_bits_per_token": 2.7254447428385418,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 9,
+          "level": "5",
+          "line_no": 10,
+          "reference_bits_per_token": 2.7254447428385418,
+          "subject": "Prealgebra",
+          "tokens": 150,
+          "unique_id": "test/prealgebra/1139.json"
+        },
+        {
+          "candidate_bits_per_token": 3.033537613718133,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 10,
+          "level": "3",
+          "line_no": 11,
+          "reference_bits_per_token": 3.033537613718133,
+          "subject": "Number Theory",
+          "tokens": 38,
+          "unique_id": "test/number_theory/1032.json"
+        },
+        {
+          "candidate_bits_per_token": 1.898438887162642,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 11,
+          "level": "5",
+          "line_no": 12,
+          "reference_bits_per_token": 1.898438887162642,
+          "subject": "Intermediate Algebra",
+          "tokens": 77,
+          "unique_id": "test/intermediate_algebra/1197.json"
+        },
+        {
+          "candidate_bits_per_token": 1.8289568937277492,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 12,
+          "level": "5",
+          "line_no": 13,
+          "reference_bits_per_token": 1.8289568937277492,
+          "subject": "Number Theory",
+          "tokens": 79,
+          "unique_id": "test/number_theory/737.json"
+        },
+        {
+          "candidate_bits_per_token": 1.6600315985988028,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 13,
+          "level": "2",
+          "line_no": 14,
+          "reference_bits_per_token": 1.6600315985988028,
+          "subject": "Geometry",
+          "tokens": 201,
+          "unique_id": "test/geometry/248.json"
+        },
+        {
+          "candidate_bits_per_token": 1.360410417829241,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 14,
+          "level": "1",
+          "line_no": 15,
+          "reference_bits_per_token": 1.360410417829241,
+          "subject": "Precalculus",
+          "tokens": 154,
+          "unique_id": "test/precalculus/1303.json"
+        },
+        {
+          "candidate_bits_per_token": 1.7655939093218163,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 15,
+          "level": "5",
+          "line_no": 16,
+          "reference_bits_per_token": 1.7655939093218163,
+          "subject": "Precalculus",
+          "tokens": 213,
+          "unique_id": "test/precalculus/990.json"
+        },
+        {
+          "candidate_bits_per_token": 2.4017251504434123,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 16,
+          "level": "1",
+          "line_no": 17,
+          "reference_bits_per_token": 2.4017251504434123,
+          "subject": "Intermediate Algebra",
+          "tokens": 37,
+          "unique_id": "test/intermediate_algebra/134.json"
+        },
+        {
+          "candidate_bits_per_token": 0.5053023415050287,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 17,
+          "level": "4",
+          "line_no": 18,
+          "reference_bits_per_token": 0.5053023415050287,
+          "subject": "Precalculus",
+          "tokens": 261,
+          "unique_id": "test/precalculus/1199.json"
+        },
+        {
+          "candidate_bits_per_token": 1.4679325403792134,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 18,
+          "level": "1",
+          "line_no": 19,
+          "reference_bits_per_token": 1.4679325403792134,
+          "subject": "Geometry",
+          "tokens": 178,
+          "unique_id": "test/geometry/434.json"
+        },
+        {
+          "candidate_bits_per_token": 1.65380859375,
+          "candidate_minus_reference_bits_per_token": 0.0,
+          "candidate_over_reference_bits_ratio": 1.0,
+          "index": 19,
+          "level": "3",
+          "line_no": 20,
+          "reference_bits_per_token": 1.65380859375,
+          "subject": "Intermediate Algebra",
+          "tokens": 60,
+          "unique_id": "test/intermediate_algebra/1000.json"
+        }
+      ]
+    },
+    "config": {
+      "add_bos": true,
+      "bos_token_id": 0,
+      "candidate_albatross_batched_rkv": "off",
+      "candidate_albatross_cmix_sparse": "no-fc",
+      "candidate_albatross_dir": "",
+      "candidate_albatross_emb": "cpu",
+      "candidate_albatross_lowrank_weight": "both",
+      "candidate_albatross_model": "",
+      "candidate_albatross_module": "rwkv7_fast_v3a",
+      "candidate_albatross_orig_linear_groups": "att_c2c,ffn_key,head",
+      "candidate_albatross_wkv": "fp32io16",
+      "candidate_chdir_albatross": false,
+      "candidate_dtype": "fp16",
+      "candidate_fast_token_backend": "native_graph",
+      "candidate_hf_dir": "/root/models/rwkv7-g1d-0.4b-hf",
+      "candidate_kind": "hf",
+      "candidate_quant_min_params": 8000000,
+      "candidate_quant_policy": "speed",
+      "candidate_quantization": "none",
+      "dataset": "/data/datasets/math500/MATH500.jsonl",
+      "device": "cuda",
+      "limit": 500,
+      "logit_chunk_size": 128,
+      "max_tokens_per_text": 1024,
+      "out_json": "/root/results/math500_5090_04_wrapper/compression_alignment/compression_alignment.json",
+      "out_md": "/root/results/math500_5090_04_wrapper/compression_alignment/compression_alignment.md",
+      "position_bins": "1,8,16,32,64,128,256,512,1024,2048,4096,8192",
+      "progress_every": 25,
+      "reference_albatross_batched_rkv": "off",
+      "reference_albatross_cmix_sparse": "no-fc",
+      "reference_albatross_dir": "",
+      "reference_albatross_emb": "cpu",
+      "reference_albatross_lowrank_weight": "both",
+      "reference_albatross_model": "",
+      "reference_albatross_module": "rwkv7_fast_v3a",
+      "reference_albatross_orig_linear_groups": "att_c2c,ffn_key,head",
+      "reference_albatross_wkv": "fp32io16",
+      "reference_chdir_albatross": false,
+      "reference_dtype": "fp16",
+      "reference_fast_token_backend": "native_graph",
+      "reference_hf_dir": "/root/models/rwkv7-g1d-0.4b-hf",
+      "reference_kind": "hf",
+      "reference_quant_min_params": 8000000,
+      "reference_quant_policy": "speed",
+      "reference_quantization": "none",
+      "text_field": "",
+      "text_template": "User: {problem}\n\nAssistant: The final answer is \\boxed{{{answer}}}.",
+      "tokenizer_dir": "/root/models/rwkv7-g1d-0.4b-hf"
+    },
+    "dataset": "/data/datasets/math500/MATH500.jsonl",
+    "elapsed_sec": 107.03804403613321,
+    "max_tokens_per_text": 1024,
+    "num_texts": 500,
+    "reference": {
+      "bits_per_token": 1.924101500129069,
+      "by_position": {
+        "1": {
+          "bits": 2378.249879837036,
+          "bits_per_token": 4.756499759674072,
+          "tokens": 500
+        },
+        "129-256": {
+          "bits": 5464.0201353237435,
+          "bits_per_token": 1.127532013067219,
+          "tokens": 4846
+        },
+        "17-32": {
+          "bits": 16139.646144451704,
+          "bits_per_token": 2.029378365956457,
+          "tokens": 7953
+        },
+        "2-8": {
+          "bits": 13995.166859445366,
+          "bits_per_token": 3.998619102698676,
+          "tokens": 3500
+        },
+        "257-512": {
+          "bits": 1495.5360036630173,
+          "bits_per_token": 0.860987912298801,
+          "tokens": 1737
+        },
+        "33-64": {
+          "bits": 21256.92607403914,
+          "bits_per_token": 1.7715581360145962,
+          "tokens": 11999
+        },
+        "513-1024": {
+          "bits": 488.6823805011894,
+          "bits_per_token": 0.676845402356218,
+          "tokens": 722
+        },
+        "65-128": {
+          "bits": 13240.266680806448,
+          "bits_per_token": 1.5381350697962881,
+          "tokens": 8608
+        },
+        "9-16": {
+          "bits": 9942.21824672844,
+          "bits_per_token": 2.48555456168211,
+          "tokens": 4000
+        }
+      },
+      "name": "hf:rwkv7-g1d-0.4b-hf:none",
+      "total_bits": 84400.71230316162,
+      "total_tokens": 43865
+    },
+    "status": "pass",
+    "text_field": "",
+    "text_template": "User: {problem}\n\nAssistant: The final answer is \\boxed{{{answer}}}."
+  },
+  "config": {
+    "add_bos": true,
+    "albatross_log": "/root/hf-adapter/bench/math500_hf_seed43_bsz128_defer_text_full_compare_4090_20260704/albatross_run.log",
+    "albatross_summary": "/root/hf-adapter/bench/math500_hf_seed43_bsz128_defer_text_full_compare_4090_20260704/albatross_summary.json",
+    "bsz_list": "64 96 128 192",
+    "compression_candidate_dtype": "fp16",
+    "compression_candidate_hf_dir": "/root/models/rwkv7-g1d-0.4b-hf",
+    "compression_candidate_kind": "hf",
+    "compression_candidate_quant_min_params": 8000000,
+    "compression_candidate_quant_policy": "speed",
+    "compression_candidate_quantization": "none",
+    "compression_limit": 500,
+    "compression_max_tokens_per_text": 1024,
+    "compression_progress_every": 25,
+    "compression_reference_albatross_batched_rkv": "off",
+    "compression_reference_albatross_cmix_sparse": "no-fc",
+    "compression_reference_albatross_dir": "",
+    "compression_reference_albatross_emb": "cpu",
+    "compression_reference_albatross_lowrank_weight": "both",
+    "compression_reference_albatross_model": "",
+    "compression_reference_albatross_module": "rwkv7_fast_v3a",
+    "compression_reference_albatross_orig_linear_groups": "att_c2c,ffn_key,head",
+    "compression_reference_albatross_wkv": "fp32io16",
+    "compression_reference_chdir_albatross": false,
+    "compression_reference_dtype": "fp16",
+    "compression_reference_hf_dir": "/root/models/rwkv7-g1d-0.4b-hf",
+    "compression_reference_kind": "hf",
+    "compression_reference_quant_min_params": 8000000,
+    "compression_reference_quant_policy": "speed",
+    "compression_reference_quantization": "none",
+    "ctx_limit": 8192,
+    "dataset": "/data/datasets/math500/MATH500.jsonl",
+    "decode_backend": "fast_token",
+    "defer_text_decode": true,
+    "defer_verification": true,
+    "device": "cuda",
+    "dtype": "fp16",
+    "fail_on_gate": true,
+    "fixed_bsz": 128,
+    "full_limit": 0,
+    "full_max_new_tokens": 1500,
+    "full_rollout": 64,
+    "hf_dir": "/root/models/rwkv7-g1d-0.4b-hf",
+    "min_decode_speed_ratio": 2.0,
+    "min_pass_at_rollout": 0.37,
+    "min_summary_speed_ratio": 2.0,
+    "out_dir": "/root/results/math500_5090_04_wrapper",
+    "prefill_backend": "native",
+    "progress_every": 500,
+    "prompt_style": "fake_think",
+    "rng_mode": "global",
+    "seed": 43,
+    "skip_bsz_sweep": false,
+    "skip_compression": false,
+    "skip_full": false,
+    "summary_speed_timing": "generation",
+    "sweep_limit": 4,
+    "sweep_max_new_tokens": 256,
+    "sweep_rollout": 64,
+    "temperature": 1.0,
+    "tokenizer_dir": "/root/models/rwkv7-g1d-0.4b-hf",
+    "top_k": 32,
+    "top_p": 0.28,
+    "verify_workers": 4
+  },
+  "dataset": "/data/datasets/math500/MATH500.jsonl",
+  "elapsed_sec": 1423.8756101108156,
+  "full_summary": {
+    "axis": "math500_hf_adapter",
+    "backend": "hf_adapter",
+    "cache_metrics": {
+      "batch_select_calls": 0,
+      "batch_size": 128,
+      "clones": 0,
+      "detaches": 0,
+      "device_moves": 0,
+      "layers": 24,
+      "native_graph_bound_selects": 0,
+      "new_layers": 0,
+      "reorder_calls": 0,
+      "resets": 0,
+      "seen_tokens": 153749,
+      "select_batch_calls": 0,
+      "updates": 0
+    },
+    "config": {
+      "add_bos": true,
+      "bsz": 128,
+      "ctx_limit": 8192,
+      "dataset": "/data/datasets/math500/MATH500.jsonl",
+      "decode_backend": "fast_token",
+      "defer_text_decode": true,
+      "defer_verification": true,
+      "device": "cuda",
+      "dtype": "fp16",
+      "dynamic_batching": true,
+      "hf_dir": "/root/models/rwkv7-g1d-0.4b-hf",
+      "limit": 0,
+      "max_new_tokens": 1500,
+      "prefill_backend": "native",
+      "prompt_style": "fake_think",
+      "rng_mode": "global",
+      "rng_salt": 0,
+      "rollout": 64,
+      "seed": 43,
+      "summary_speed_timing": "generation",
+      "temperature": 1.0,
+      "top_k": 32,
+      "top_p": 0.28,
+      "verify_workers": 4
+    },
+    "correct_generations": 4559,
+    "dataset": "/data/datasets/math500/MATH500.jsonl",
+    "decode_sec": 1014.438516525086,
+    "decoded_token_events": 19618782,
+    "defer_text_decode": true,
+    "deferred_verification": true,
+    "dynamic_bsz": 128,
+    "elapsed_sec": 1217.1862035479862,
+    "ended_eod": 25137,
+    "ended_user_stop": 0,
+    "fast_token_backend_effective": "native_graph",
+    "forward_steps": 153749,
+    "generation_elapsed_sec": 1159.1184762069024,
+    "generation_sample_per_sec": 27.607186544654823,
+    "generation_token_per_sec": 16925.605451653635,
+    "generations_jsonl": "/root/results/math500_5090_04_wrapper/full_avg64/generations.jsonl",
+    "mean_generated_tokens": 612.30140625,
+    "mean_tokens_including_stop": 613.0869375,
+    "model": "/root/models/rwkv7-g1d-0.4b-hf",
+    "num_tasks": 500,
+    "pass_at_rollout_accuracy": 0.38,
+    "prefill_sec": 144.6799596818164,
+    "rng_mode": "global",
+    "rng_salt": 0,
+    "rollout": 64,
+    "rollout_accuracy": 0.14246875,
+    "sample_per_sec": 27.607186544654823,
+    "speed_elapsed_sec": 1159.1184762069024,
+    "speed_timing": "generation",
+    "status": "pass",
+    "token_per_sec": 16925.605451653635,
+    "total_generations": 32000,
+    "truncated": 6863,
+    "truncated_rate": 0.21446875,
+    "verification_sec": 57.45175509597175,
+    "verify_workers": 4,
+    "wall_sample_per_sec": 26.290143534919252,
+    "wall_token_per_sec": 16118.14358625907
+  },
+  "hf_dir": "/root/models/rwkv7-g1d-0.4b-hf",
+  "selected_bsz": 128,
+  "status": "pass"
+}

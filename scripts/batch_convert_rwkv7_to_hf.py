@@ -64,6 +64,8 @@ def convert_command(args: argparse.Namespace, input_path: Path, output_path: Pat
         args.max_shard_size,
     ]
     cmd.append("--fuse-norm" if args.fuse_norm else "--no-fuse-norm")
+    if args.low_memory:
+        cmd.append("--low-memory")
     if args.vocab_file:
         cmd += ["--vocab-file", str(args.vocab_file)]
     return cmd
@@ -78,6 +80,7 @@ def entry_base(args: argparse.Namespace, input_path: Path, output_path: Path) ->
         "precision": args.precision,
         "attn_mode": args.attn_mode,
         "fuse_norm": bool(args.fuse_norm),
+        "low_memory": bool(args.low_memory),
     }
 
 
@@ -146,6 +149,11 @@ def main() -> int:
     norm_group.add_argument("--no-fuse-norm", dest="fuse_norm", action="store_false")
     ap.set_defaults(fuse_norm=False)
     ap.add_argument("--max-shard-size", default="1000GB")
+    ap.add_argument(
+        "--low-memory",
+        action="store_true",
+        help="Use the meta-template/mmap converter path for 13B-class checkpoints on memory-constrained hosts",
+    )
     ap.add_argument("--dry-run", action="store_true", help="Only enumerate, hash, and write the manifest")
     ap.add_argument("--force", action="store_true", help="Convert even if the output directory already exists")
     args = ap.parse_args()

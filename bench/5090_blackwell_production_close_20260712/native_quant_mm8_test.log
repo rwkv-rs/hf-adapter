@@ -1,0 +1,11 @@
+`torch_dtype` is deprecated! Use `dtype` instead!
+/data/venv5090/lib/python3.12/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+per-layer worst cos = 0.999023 (>= 0.999)
+triton vs torch-ref max_abs = 0.003906; split-K = 0.003906 (<= 0.5)
+batched triton bsz=2 vs torch-ref max_abs = 0.006592; dispatcher = 0.006592 (<= 0.5)
+batched triton bsz=8 vs torch-ref max_abs = 0.005859; dispatcher = 0.005859 (<= 0.5)
+e2e (1 layer(s) quantized) cos = 0.999991 (>= 0.999)
+fast-token native_jit used=native_jit cos vs quantized-fla = 0.999993 (>= 0.999)
+fast-token native_graph used=native_graph cos vs quantized-fla = 0.999992 (>= 0.999)
+PASS
