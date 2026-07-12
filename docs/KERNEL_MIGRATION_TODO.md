@@ -311,6 +311,10 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   new source-archive verifier: it imported the Python 3.11 `tomllib` name
   directly. The verifier now uses the already-declared Python 3.10 `tomli`
   fallback; no GPU process or release artifact was changed.
+- The fix was pushed as
+  `794c24d56ad3a9730997dea2b8b75e483084713d`; GitGuardian, reference-model,
+  training-stack, Python 3.10/Transformers 4.48.3 and Python 3.12/Transformers
+  <6 all passed on the exact fork/PR head.
 
 ### 2026-08-27 — backend-v2 training boundary wired locally
 
