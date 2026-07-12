@@ -1,0 +1,64 @@
+name: full-tests
+
+# Formal clean-install suites. CPU runs on every main update and weekly. The
+# Apple/MPS/MLX job is intentionally scheduled or manually requested because it
+# consumes a macOS arm64 runner; model-backed tests remain opt-in via a runner
+# with RWKV7_TEST_MODEL configured.
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      run_apple:
+        description: Run the Apple MPS/MLX tiny-model acceptance profile
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  cpu-full:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      RWKV7_CPU_ONLY: "1"
+      PYTHON_BIN: python
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Clean install and full CPU/offline test suite
+        run: scripts/run_clean_install_tests.sh full
+
+  apple-full:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_apple)
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      RWKV7_REQUIRE_APPLE: "1"
+      PYTHON_BIN: python3
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Verify hosted Apple runner identity
+        run: |
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          system_profiler SPHardwareDataType
+
+      - name: Clean install and Apple MPS/MLX acceptance suite
+        run: scripts/run_clean_install_tests.sh apple
