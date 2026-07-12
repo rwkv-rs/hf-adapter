@@ -64,6 +64,19 @@ def parse_test_counts(text: str) -> dict[str, int | None]:
     }
 
 
+def parse_clean_environment(text: str) -> dict[str, Any] | None:
+    prefix = "RWKV7_CLEAN_ENVIRONMENT="
+    for line in text.splitlines():
+        if not line.startswith(prefix):
+            continue
+        try:
+            value = json.loads(line[len(prefix) :])
+        except json.JSONDecodeError:
+            return None
+        return value if isinstance(value, dict) else None
+    return None
+
+
 def evidence_row(
     *,
     profile: str,
@@ -75,6 +88,7 @@ def evidence_row(
     log_path: str,
 ) -> dict[str, Any]:
     counts = parse_test_counts(output)
+    clean_environment = parse_clean_environment(output)
     import_pass = "installed rwkv7-hf-adapter=" in output and "clean-install import leaked" not in output
     pip_check_pass = "No broken requirements found." in output
     collection_pass = bool(counts["collected"] and counts["errors"] == 0)
@@ -98,6 +112,7 @@ def evidence_row(
         "clean_wheel_import_pass": bool(import_pass),
         "pip_check_pass": bool(pip_check_pass),
         "pytest_collection_pass": bool(collection_pass),
+        "clean_environment": clean_environment,
         **counts,
         "log_path": log_path,
         "log_sha256": hashlib.sha256(output.encode("utf-8", errors="replace")).hexdigest(),

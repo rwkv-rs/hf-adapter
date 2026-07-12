@@ -85,6 +85,33 @@ fi
 # contents, dependency resolution, and importability as a user would install it.
 "$PY" -m pip install "${ROOT}[test]"
 "$PY" -m pip check
+"$PY" - <<'PY'
+import importlib.metadata
+import importlib.util
+import json
+import platform
+
+import torch
+
+modules = {
+    name: importlib.util.find_spec(name) is not None
+    for name in ("mlx", "coremltools", "triton", "flash_linear_attention", "fla", "bitsandbytes")
+}
+versions = {}
+for distribution in ("rwkv7-hf-adapter", "torch", "transformers", "mlx", "coremltools"):
+    try:
+        versions[distribution] = importlib.metadata.version(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        versions[distribution] = None
+print("RWKV7_CLEAN_ENVIRONMENT=" + json.dumps({
+    "platform": platform.platform(),
+    "machine": platform.machine(),
+    "modules": modules,
+    "versions": versions,
+    "cuda_available": bool(torch.cuda.is_available()),
+    "mps_available": bool(torch.backends.mps.is_available()),
+}, sort_keys=True))
+PY
 
 (
   cd "$VENV"
