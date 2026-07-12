@@ -259,6 +259,30 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
 - HF wheel: `rwkv7_hf-1.0.0-py3-none-any.whl`, SHA256
   `07b4f6668c3123a3e996e33d4fab8230c468db23bbd7249c3454a93e2f04338f`.
 
+### 2026-08-28 — complete-performance scope and dependency gate
+
+- The active goal and release gate cover the **entire** migrated NVIDIA
+  backend, not only recurrent-v1: fused decode, fused/DPLR/self-chunk prefill,
+  projections, Norm/FFN/LoRA, graph/state pools, SM70/Ada/Blackwell routing,
+  W8/W4/A8W8/BnTn/BnB/Marlin/TorchAO adapters, and train-temp
+  forward/backward/autograd all remain in scope.
+- The wheel/source audits bind 102 NVIDIA destination files to the frozen
+  historical trees: 100 byte-identical transfers and the two declared clean
+  boundary adaptations. Any omitted file, changed Git blob, or undeclared
+  third adaptation fails the release audit.
+- Audited package imports and made direct runtime dependencies explicit in the
+  independent kernel distribution: `torch`, `numpy`, and `packaging`.
+  Transformers, DeepSpeed, BitsAndBytes and TorchAO stay lazy feature-specific
+  integrations; they are not required to import or use the base kernel API.
+- The stable-wheel audit now rejects missing or extra direct dependencies in
+  `rwkv7-kernels==1.0.0` metadata.
+- Local gate after this change:
+  `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q` -> `159 passed`,
+  `133` expected TorchScript deprecation warnings.
+- RTX 4080 formal reference/optimized/FLA run remains the active GPU task; no
+  competing process was started. Production `auto`, stable wheels, V100 and
+  RTX 4090 remain ordered behind the 4080 diagnostic gate.
+
 ### 2026-08-27 — backend-v2 training boundary wired locally
 
 - Added `nvidia/training_runtime.py`, which directly executes the clean

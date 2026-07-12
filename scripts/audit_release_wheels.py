@@ -87,6 +87,7 @@ REQUIRED_CAPABILITIES = {
     "quant_runtime",
     "training_autograd",
 }
+KERNEL_REQUIRED_DEPENDENCIES = {"torch", "numpy", "packaging"}
 ALLOWED_PHASES = {"prefill", "decode", "training", "quantize"}
 ALLOWED_ACTIVATION = {
     "auto_or_explicit",
@@ -651,6 +652,33 @@ def audit_kernel_wheel(path: Path) -> dict[str, Any]:
             raise ValueError(
                 f"kernel wheel reintroduces model/config/cache ownership: {forbidden}"
             )
+        metadata_members = sorted(
+            name
+            for name in names
+            if name.endswith(".dist-info/METADATA")
+            and PurePosixPath(name).name == "METADATA"
+        )
+        if len(metadata_members) != 1:
+            raise ValueError("kernel wheel must contain exactly one METADATA file")
+        metadata = BytesParser(policy=email_policy).parsebytes(
+            archive.read(metadata_members[0])
+        )
+        if (
+            metadata.get("Name") != "rwkv7-kernels"
+            or metadata.get("Version") != "1.0.0"
+        ):
+            raise ValueError("kernel wheel metadata name/version differs from release")
+        dependencies = {
+            Requirement(value).name
+            for value in metadata.get_all("Requires-Dist", [])
+            if Requirement(value).marker is None
+        }
+        if dependencies != KERNEL_REQUIRED_DEPENDENCIES:
+            raise ValueError(
+                "kernel wheel direct dependencies differ: "
+                f"expected={sorted(KERNEL_REQUIRED_DEPENDENCIES)} "
+                f"actual={sorted(dependencies)}"
+            )
         if MIGRATION_MANIFEST not in members:
             raise ValueError("kernel wheel is missing NVIDIA migration manifest")
         manifest = json.loads(archive.read(MIGRATION_MANIFEST))
@@ -712,6 +740,7 @@ def audit_kernel_wheel(path: Path) -> dict[str, Any]:
             "migrated_files": len(migrated),
             "transfers": transfers,
             "runtime_files": len(KERNEL_REQUIRED),
+            "dependencies": sorted(dependencies),
             "members": len(members),
         }
     finally:

@@ -63,6 +63,23 @@ def test_base_distribution_does_not_depend_on_kernel_wheel():
     )
 
 
+def test_kernel_distribution_declares_direct_runtime_dependencies():
+    project = tomllib.loads(
+        (ROOT / "kernels" / "pyproject.toml").read_text(encoding="utf-8")
+    )
+    dependencies = {
+        dependency.split(";", 1)[0]
+        .split("[", 1)[0]
+        .split("<", 1)[0]
+        .split(">", 1)[0]
+        .split("=", 1)[0]
+        .strip()
+        .lower()
+        for dependency in project["project"]["dependencies"]
+    }
+    assert dependencies == {"torch", "numpy", "packaging"}
+
+
 def test_one_console_entrypoint_dispatches_all_tools():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert project["project"]["scripts"] == {

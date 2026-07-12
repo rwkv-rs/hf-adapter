@@ -10,7 +10,11 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "123123213weqw", email = "300659282+123123213weqw@users.noreply.github.com" }]
-dependencies = ["torch"]
+dependencies = [
+  "torch",
+  "numpy",
+  "packaging",
+]
 
 [project.urls]
 Repository = "https://github.com/123123213weqw/hf-adapter"

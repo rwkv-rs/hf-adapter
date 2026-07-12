@@ -45,6 +45,22 @@ def test_release_wheel_audit_accepts_clean_hf_and_all_102_sources(tmp_path: Path
     assert report["source_scope"]["dispositions"]["adapted_protocol"] == 12
     assert report["recurrent_source_scope"]["historical_files"] == 3
     assert report["recurrent_source_scope"]["byte_identical_implementations"] == 2
+    assert report["dependencies"] == ["numpy", "packaging", "torch"]
+
+
+def test_kernel_wheel_audit_rejects_incomplete_direct_dependencies(tmp_path: Path):
+    kernel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    write_valid_kernel_wheel(
+        kernel,
+        metadata=(
+            b"Metadata-Version: 2.4\n"
+            b"Name: rwkv7-kernels\n"
+            b"Version: 1.0.0\n"
+            b"Requires-Dist: torch\n"
+        ),
+    )
+    with pytest.raises(ValueError, match="direct dependencies differ"):
+        audit_kernel_wheel(kernel)
 
 
 def test_kernel_wheel_audit_rejects_omitted_migrated_source(tmp_path: Path):

@@ -88,6 +88,7 @@ def write_valid_kernel_wheel(
     omit: str | None = None,
     tamper: str | None = None,
     extra: dict[str, bytes] | None = None,
+    metadata: bytes | None = None,
 ) -> None:
     manifest_path = ROOT / "kernels/rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json"
     manifest = json.loads(manifest_path.read_text())
@@ -100,6 +101,14 @@ def write_valid_kernel_wheel(
         members[member] = source.read_bytes()
     for member in KERNEL_REQUIRED:
         members[member] = (ROOT / "kernels" / member).read_bytes()
+    members["rwkv7_kernels-1.0.0.dist-info/METADATA"] = metadata or (
+        b"Metadata-Version: 2.4\n"
+        b"Name: rwkv7-kernels\n"
+        b"Version: 1.0.0\n"
+        b"Requires-Dist: torch\n"
+        b"Requires-Dist: numpy\n"
+        b"Requires-Dist: packaging\n"
+    )
     members.update(extra or {})
     if omit is not None:
         members.pop(omit)
