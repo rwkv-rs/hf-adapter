@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import write_valid_hf_wheel, write_valid_kernel_wheel
+from conftest import write_valid_hf_wheel, write_valid_kernel_wheel, write_valid_sdist
 from evaluation.build_backend_v2_compact_bundle import build_bundle
 from scripts.build_release_provenance import DEVICE_REPORT, REQUIRED_GATES, build
 from scripts.verify_release_assets import (
@@ -31,6 +31,20 @@ def create_artifacts(root: Path) -> dict[str, str]:
             write_valid_hf_wheel(path)
         elif name.endswith(".whl") and name.startswith("rwkv7_kernels-"):
             write_valid_kernel_wheel(path)
+        elif name == f"rwkv7_hf-{VERSION}.tar.gz":
+            write_valid_sdist(
+                path,
+                wheel=root / f"rwkv7_hf-{VERSION}-py3-none-any.whl",
+                distribution="rwkv7-hf",
+                version=VERSION,
+            )
+        elif name == f"rwkv7_kernels-{VERSION}.tar.gz":
+            write_valid_sdist(
+                path,
+                wheel=root / f"rwkv7_kernels-{VERSION}-py3-none-any.whl",
+                distribution="rwkv7-kernels",
+                version=VERSION,
+            )
         else:
             path.write_bytes(f"release-artifact-{index}".encode())
         identities[name] = hashlib.sha256(path.read_bytes()).hexdigest()

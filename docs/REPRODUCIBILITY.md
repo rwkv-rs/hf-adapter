@@ -97,6 +97,12 @@ transfers, the two declared clean-boundary adaptations, the reconstructed
 recurrent subtree. A locally complete source tree therefore cannot hide an
 incomplete wheel.
 
+The same final verifier opens both `.tar.gz` source distributions without
+extracting them, rejects traversal, links, devices and duplicate members,
+checks `PKG-INFO` plus `pyproject.toml`, and requires every packaged HF/kernel
+file to be byte-identical to the corresponding already-audited wheel member.
+Thus PyPI cannot receive a correct wheel paired with a stale or unsafe sdist.
+
 Generate the final provenance from the three compact bundles rather than
 writing it by hand:
 

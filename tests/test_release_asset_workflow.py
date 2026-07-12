@@ -4,13 +4,15 @@ from argparse import Namespace
 import hashlib
 import json
 from pathlib import Path
+import tarfile
 
 import pytest
 
-from conftest import write_valid_hf_wheel, write_valid_kernel_wheel
+from conftest import write_valid_hf_wheel, write_valid_kernel_wheel, write_valid_sdist
 from scripts.verify_release_assets import (
     DEVICES,
     FLA_COMMIT,
+    audit_sdist,
     expected_artifacts,
     verify,
 )
@@ -27,6 +29,20 @@ def write_release(tmp_path: Path, *, mismatch_device: str | None = None) -> Name
             write_valid_hf_wheel(path)
         elif name.endswith(".whl") and name.startswith("rwkv7_kernels-"):
             write_valid_kernel_wheel(path)
+        elif name == f"rwkv7_hf-{version}.tar.gz":
+            write_valid_sdist(
+                path,
+                wheel=tmp_path / f"rwkv7_hf-{version}-py3-none-any.whl",
+                distribution="rwkv7-hf",
+                version=version,
+            )
+        elif name == f"rwkv7_kernels-{version}.tar.gz":
+            write_valid_sdist(
+                path,
+                wheel=tmp_path / f"rwkv7_kernels-{version}-py3-none-any.whl",
+                distribution="rwkv7-kernels",
+                version=version,
+            )
         else:
             path.write_bytes(f"artifact-{index}".encode())
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -99,6 +115,68 @@ def test_release_asset_verifier_rejects_a_device_using_another_wheel(tmp_path: P
     args = write_release(tmp_path, mismatch_device="rtx-4090")
     with pytest.raises(ValueError, match="kernel wheel mismatch"):
         verify(args)
+
+
+def test_sdist_audit_rejects_payload_that_differs_from_wheel(tmp_path: Path):
+    wheel = tmp_path / "rwkv7_hf-1.0.0-py3-none-any.whl"
+    sdist = tmp_path / "rwkv7_hf-1.0.0.tar.gz"
+    write_valid_hf_wheel(wheel)
+    write_valid_sdist(
+        sdist,
+        wheel=wheel,
+        distribution="rwkv7-hf",
+        replace={"rwkv7_hf/modeling_rwkv7.py": b"different"},
+    )
+    with pytest.raises(ValueError, match="payload differs from wheel"):
+        audit_sdist(
+            sdist,
+            distribution="rwkv7-hf",
+            version="1.0.0",
+            wheel=wheel,
+            package_prefixes=("rwkv7_hf/", "rwkv7_hf_tools/"),
+            forbidden_prefix="rwkv7_kernels/",
+        )
+
+
+def test_sdist_audit_rejects_symbolic_link_member(tmp_path: Path):
+    wheel = tmp_path / "rwkv7_hf-1.0.0-py3-none-any.whl"
+    sdist = tmp_path / "rwkv7_hf-1.0.0.tar.gz"
+    write_valid_hf_wheel(wheel)
+    with tarfile.open(sdist, "w:gz") as archive:
+        member = tarfile.TarInfo("rwkv7_hf-1.0.0/rwkv7_hf/modeling_rwkv7.py")
+        member.type = tarfile.SYMTYPE
+        member.linkname = "/etc/passwd"
+        archive.addfile(member)
+    with pytest.raises(ValueError, match="non-regular source-distribution member"):
+        audit_sdist(
+            sdist,
+            distribution="rwkv7-hf",
+            version="1.0.0",
+            wheel=wheel,
+            package_prefixes=("rwkv7_hf/", "rwkv7_hf_tools/"),
+            forbidden_prefix="rwkv7_kernels/",
+        )
+
+
+def test_kernel_sdist_audit_rejects_hf_tooling_ownership(tmp_path: Path):
+    wheel = tmp_path / "rwkv7_kernels-1.0.0-py3-none-any.whl"
+    sdist = tmp_path / "rwkv7_kernels-1.0.0.tar.gz"
+    write_valid_kernel_wheel(wheel)
+    write_valid_sdist(
+        sdist,
+        wheel=wheel,
+        distribution="rwkv7-kernels",
+        replace={"rwkv7_hf_tools/cli.py": b"wrong owner"},
+    )
+    with pytest.raises(ValueError, match="crosses package ownership"):
+        audit_sdist(
+            sdist,
+            distribution="rwkv7-kernels",
+            version="1.0.0",
+            wheel=wheel,
+            package_prefixes=("rwkv7_kernels/",),
+            forbidden_prefix="rwkv7_hf",
+        )
 
 
 def test_publish_workflow_never_rebuilds_validated_artifacts():

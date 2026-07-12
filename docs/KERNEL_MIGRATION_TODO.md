@@ -1195,3 +1195,28 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   estimate at the start of its 40,168 requests. No watcher was restarted or
   allowed to contend. Upstream draft PR #146 had all five checks green at
   source `63c61a0fc900b51ce258d85717689b40e1f57bad`.
+
+### 2026-08-28 — source distributions are bound to the validated wheels
+
+- Extended the immutable release verifier to audit both PyPI source archives,
+  not only their SHA256 rows. It reads tar members without extraction, requires
+  a single expected package root, rejects traversal, symlinks, hardlinks,
+  devices and duplicate files, and validates `PKG-INFO` plus
+  `pyproject.toml` name/version.
+- Every `rwkv7_hf`, `rwkv7_hf_tools`, and `rwkv7_kernels` payload shipped in a
+  wheel must exist byte-for-byte in the matching sdist. Cross-package
+  ownership is rejected. This closes the case where validated wheels are
+  published beside stale or unsafe source archives.
+- Built real disposable wheel+sdist pairs and passed the new audit: HF wheel
+  `717c9ff6eda82741782c2f9911e6d8cbde30acb546ec613ebc6e23e0b9c0d7cb`,
+  HF sdist
+  `d11526eb67de7d49300330ab4e9ab21fb9896e6d60b982da705ff54d1e478238`,
+  kernel wheel
+  `770ecd245e68468b5738b7a5fb4cd07b0cdaa888d8dd219f3cee46bb986c65a5`,
+  and kernel sdist
+  `6bcb44c944971f5d4aa67a436b5b6b13d642cc984fc17ee69ed0d1169c97d7a0`.
+  They are development audit artifacts, not final stable files.
+- Tests cover a source payload that differs from its wheel, a malicious tar
+  symlink, and HF tooling injected into the kernel sdist. The complete local
+  suite passes `157 passed` with `133` expected TorchScript deprecation
+  warnings. RTX 4080 remained untouched throughout.

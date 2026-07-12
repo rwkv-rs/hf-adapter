@@ -4,18 +4,27 @@
 from __future__ import annotations
 
 import argparse
+from email.parser import BytesParser
+from email.policy import default as email_policy
 import hashlib
 import json
 from pathlib import Path
+from pathlib import PurePosixPath
 import re
 import sys
+import tarfile
+import tomllib
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.audit_release_wheels import audit_hf_wheel, audit_kernel_wheel  # noqa: E402
+from scripts.audit_release_wheels import (  # noqa: E402
+    audit_hf_wheel,
+    audit_kernel_wheel,
+    open_wheel,
+)
 
 
 FLA_COMMIT = "80e494f6c588e091fc8316b612870df29375c5b8"
@@ -69,6 +78,100 @@ def read_sums(path: Path) -> dict[str, str]:
     return rows
 
 
+def read_sdist(path: Path, expected_root: str) -> dict[str, bytes]:
+    """Read a source distribution without trusting or extracting tar paths."""
+
+    path = path.expanduser().resolve()
+    if not path.is_file() or path.is_symlink() or not path.name.endswith(".tar.gz"):
+        raise ValueError(f"missing or unsafe source distribution: {path}")
+    files: dict[str, bytes] = {}
+    with tarfile.open(path, mode="r:gz") as archive:
+        for member in archive.getmembers():
+            name = PurePosixPath(member.name)
+            if (
+                name.is_absolute()
+                or ".." in name.parts
+                or not name.parts
+                or name.parts[0] != expected_root
+            ):
+                raise ValueError(f"unsafe source-distribution member: {member.name}")
+            if member.isdir():
+                continue
+            if not member.isfile():
+                raise ValueError(
+                    f"non-regular source-distribution member: {member.name}"
+                )
+            normalized = str(name)
+            if normalized in files:
+                raise ValueError(f"duplicate source-distribution member: {member.name}")
+            stream = archive.extractfile(member)
+            if stream is None:
+                raise ValueError(
+                    f"unreadable source-distribution member: {member.name}"
+                )
+            files[normalized] = stream.read()
+    return files
+
+
+def audit_sdist(
+    path: Path,
+    *,
+    distribution: str,
+    version: str,
+    wheel: Path,
+    package_prefixes: tuple[str, ...],
+    forbidden_prefix: str,
+) -> dict[str, Any]:
+    """Bind an sdist to the exact package payload already audited in its wheel."""
+
+    root = f"{distribution.replace('-', '_')}-{version}"
+    files = read_sdist(path, root)
+    pkg_info_name = f"{root}/PKG-INFO"
+    pyproject_name = f"{root}/pyproject.toml"
+    if pkg_info_name not in files or pyproject_name not in files:
+        raise ValueError(f"source distribution is missing metadata: {distribution}")
+    metadata = BytesParser(policy=email_policy).parsebytes(files[pkg_info_name])
+    if metadata.get("Name") != distribution or metadata.get("Version") != version:
+        raise ValueError(f"source-distribution metadata differs: {distribution}")
+    project = tomllib.loads(files[pyproject_name].decode())["project"]
+    if project.get("name") != distribution or project.get("version") != version:
+        raise ValueError(f"source-distribution pyproject differs: {distribution}")
+
+    relative_files = {
+        str(PurePosixPath(*PurePosixPath(name).parts[1:])): payload
+        for name, payload in files.items()
+    }
+    if any(name.startswith(forbidden_prefix) for name in relative_files):
+        raise ValueError(
+            f"source distribution crosses package ownership: {distribution}"
+        )
+    wheel_archive, wheel_members = open_wheel(wheel)
+    try:
+        package_members = sorted(
+            name
+            for name in wheel_members
+            if any(name.startswith(prefix) for prefix in package_prefixes)
+        )
+        if not package_members:
+            raise ValueError(f"wheel contains no package payload: {distribution}")
+        for member in package_members:
+            if member not in relative_files:
+                raise ValueError(f"source distribution omitted wheel payload: {member}")
+            if relative_files[member] != wheel_archive.read(member):
+                raise ValueError(
+                    f"source distribution payload differs from wheel: {member}"
+                )
+    finally:
+        wheel_archive.close()
+    return {
+        "status": "passed",
+        "distribution": distribution,
+        "version": version,
+        "matched_package_files": len(package_members),
+        "members": len(files),
+    }
+
+
 def verify(args: argparse.Namespace) -> dict[str, Any]:
     root = args.directory.expanduser().resolve()
     if not root.is_dir():
@@ -84,8 +187,28 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         if sums.get(name) != digest:
             raise ValueError(f"SHA256SUMS mismatch: {name}")
         artifacts[name] = {"sha256": digest, "size": path.stat().st_size}
-    audit_hf_wheel(root / f"rwkv7_hf-{args.version}-py3-none-any.whl")
-    audit_kernel_wheel(root / f"rwkv7_kernels-{args.version}-py3-none-any.whl")
+    hf_wheel_path = root / f"rwkv7_hf-{args.version}-py3-none-any.whl"
+    kernel_wheel_path = root / f"rwkv7_kernels-{args.version}-py3-none-any.whl"
+    audit_hf_wheel(hf_wheel_path)
+    audit_kernel_wheel(kernel_wheel_path)
+    sdists = {
+        "rwkv7-hf": audit_sdist(
+            root / f"rwkv7_hf-{args.version}.tar.gz",
+            distribution="rwkv7-hf",
+            version=args.version,
+            wheel=hf_wheel_path,
+            package_prefixes=("rwkv7_hf/", "rwkv7_hf_tools/"),
+            forbidden_prefix="rwkv7_kernels/",
+        ),
+        "rwkv7-kernels": audit_sdist(
+            root / f"rwkv7_kernels-{args.version}.tar.gz",
+            distribution="rwkv7-kernels",
+            version=args.version,
+            wheel=kernel_wheel_path,
+            package_prefixes=("rwkv7_kernels/",),
+            forbidden_prefix="rwkv7_hf",
+        ),
+    }
 
     provenance_path = root / "release-provenance.json"
     if sums.get(provenance_path.name) != sha256_file(provenance_path):
@@ -160,6 +283,7 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         "source_sha": args.source_sha,
         "harness_sha": harness_sha,
         "artifacts": artifacts,
+        "sdists": sdists,
         "devices": sorted(devices),
     }
 

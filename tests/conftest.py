@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
+import tarfile
 import zipfile
 
 import pytest
@@ -18,6 +20,41 @@ from scripts.audit_release_wheels import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def write_valid_sdist(
+    path: Path,
+    *,
+    wheel: Path,
+    distribution: str,
+    version: str = "1.0.0",
+    replace: dict[str, bytes] | None = None,
+) -> None:
+    root = f"{distribution.replace('-', '_')}-{version}"
+    prefixes = (
+        ("rwkv7_hf/", "rwkv7_hf_tools/")
+        if distribution == "rwkv7-hf"
+        else ("rwkv7_kernels/",)
+    )
+    files = {
+        "PKG-INFO": (
+            f"Metadata-Version: 2.4\nName: {distribution}\nVersion: {version}\n"
+        ).encode(),
+        "pyproject.toml": (
+            f'[project]\nname = "{distribution}"\nversion = "{version}"\n'
+        ).encode(),
+    }
+    with zipfile.ZipFile(wheel) as archive:
+        for name in archive.namelist():
+            if any(name.startswith(prefix) for prefix in prefixes):
+                files[name] = archive.read(name)
+    files.update(replace or {})
+    with tarfile.open(path, "w:gz") as archive:
+        for relative, payload in sorted(files.items()):
+            info = tarfile.TarInfo(f"{root}/{relative}")
+            info.mode = 0o644
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
 
 
 def write_valid_hf_wheel(
