@@ -40,6 +40,7 @@ def _install_runtime_stubs() -> None:
     torch_mod.Tensor = Tensor
     torch_mod.LongTensor = Tensor
     torch_mod.no_grad = lambda: _NoGrad()
+    torch_mod.inference_mode = lambda: _NoGrad()
     torch_mod.float32 = "float32"
     torch_mod.cuda = types.SimpleNamespace(is_available=lambda: True)
     _ensure_module("torch.nn")
@@ -102,6 +103,16 @@ def main() -> int:
         if name == "rwkv7_hf" or name.startswith("rwkv7_hf."):
             del sys.modules[name]
     modeling = importlib.import_module("rwkv7_hf.modeling_rwkv7")
+
+    class SourceCache(modeling._FLACache):
+        def get_seq_length(self):
+            return 17
+
+        def to_legacy_cache(self):
+            return [{}]
+
+    converted = modeling.RWKV7StateCache.from_legacy_cache(SourceCache())
+    assert converted.get_seq_length() == 17
 
     state_cache = modeling.RWKV7StateCache()
     assert state_cache.rwkv7_cache_metrics()["updates"] == 0
