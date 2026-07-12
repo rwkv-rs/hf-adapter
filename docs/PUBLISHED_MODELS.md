@@ -22,6 +22,9 @@ files or model class:
 python -m pip install "rwkv7-hf==1.0.0" "rwkv7-kernels==1.0.0"
 ```
 
+The equivalent single requirement is
+`python -m pip install "rwkv7-hf[kernels]==1.0.0"`.
+
 The final release process stages all six repositories from the same tagged
 source SHA, commits code/config/model-card changes, creates Hub tag `v1.0.0`,
 then redownloads every repository through a new empty cache. Weight hashes,

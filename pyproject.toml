@@ -32,6 +32,9 @@ dependencies = [
 rwkv7-hf = "rwkv7_hf_tools.cli:cli"
 
 [project.optional-dependencies]
+kernels = [
+  "rwkv7-kernels==1.0.0",
+]
 test = [
   "pytest>=8.0",
   "numpy",

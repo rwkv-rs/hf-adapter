@@ -57,6 +57,7 @@ def test_v1_model_card_keeps_reference_self_contained_and_kernel_optional():
     )
     assert 'revision = "v1.0.0"' in card
     assert '"rwkv7-kernels==1.0.0"' in card
+    assert '"rwkv7-hf[kernels]==1.0.0"' in card
     assert "does **not** require `rwkv7-hf`" in card
     assert "does not replace the model/config/cache classes" in card
 

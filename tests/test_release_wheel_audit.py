@@ -63,6 +63,22 @@ def test_kernel_wheel_audit_rejects_changed_migrated_bytes(tmp_path: Path):
         audit_kernel_wheel(kernel)
 
 
+def test_hf_wheel_audit_rejects_unpinned_kernel_extra(tmp_path: Path):
+    hf = tmp_path / "rwkv7_hf-1.0.0-py3-none-any.whl"
+    write_valid_hf_wheel(
+        hf,
+        metadata=(
+            "Metadata-Version: 2.4\n"
+            "Name: rwkv7-hf\n"
+            "Version: 1.0.0\n"
+            "Provides-Extra: kernels\n"
+            'Requires-Dist: rwkv7-kernels>=1; extra == "kernels"\n'
+        ).encode(),
+    )
+    with pytest.raises(ValueError, match="extra is not pinned to 1.0.0"):
+        audit_hf_wheel(hf)
+
+
 def test_kernel_wheel_audit_rejects_false_migrated_git_blob(tmp_path: Path):
     root = Path(__file__).resolve().parents[1]
     manifest_path = root / "kernels/rwkv7_kernels/nvidia/MIGRATION_MANIFEST.json"

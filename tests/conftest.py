@@ -20,13 +20,29 @@ from scripts.audit_release_wheels import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def write_valid_hf_wheel(path: Path, *, extra: dict[str, bytes] | None = None) -> None:
+def write_valid_hf_wheel(
+    path: Path,
+    *,
+    extra: dict[str, bytes] | None = None,
+    metadata: bytes | None = None,
+) -> None:
     with zipfile.ZipFile(path, "w") as archive:
         for member in sorted(HF_REQUIRED):
             source = ROOT / member
             archive.writestr(member, source.read_bytes())
         for member, payload in sorted((extra or {}).items()):
             archive.writestr(member, payload)
+        archive.writestr(
+            "rwkv7_hf-1.0.0.dist-info/METADATA",
+            metadata
+            or (
+                "Metadata-Version: 2.4\n"
+                "Name: rwkv7-hf\n"
+                "Version: 1.0.0\n"
+                "Provides-Extra: kernels\n"
+                'Requires-Dist: rwkv7-kernels==1.0.0; extra == "kernels"\n'
+            ).encode(),
+        )
 
 
 def write_valid_kernel_wheel(

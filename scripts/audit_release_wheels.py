@@ -5,12 +5,16 @@ from __future__ import annotations
 
 import argparse
 import ast
+from email.parser import BytesParser
+from email.policy import default as email_policy
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import stat
 from typing import Any
 import zipfile
+
+from packaging.requirements import Requirement
 
 
 HF_REQUIRED = {
@@ -162,9 +166,40 @@ def audit_hf_wheel(path: Path) -> dict[str, Any]:
             raise ValueError(
                 f"HF model package contains tooling/compatibility files: {forbidden}"
             )
+        metadata_members = sorted(
+            name
+            for name in names
+            if name.endswith(".dist-info/METADATA")
+            and PurePosixPath(name).name == "METADATA"
+        )
+        if len(metadata_members) != 1:
+            raise ValueError("HF wheel must contain exactly one METADATA file")
+        metadata = BytesParser(policy=email_policy).parsebytes(
+            archive.read(metadata_members[0])
+        )
+        if metadata.get("Name") != "rwkv7-hf" or metadata.get("Version") != "1.0.0":
+            raise ValueError("HF wheel metadata name/version differs from release")
+        extras = set(metadata.get_all("Provides-Extra", []))
+        if "kernels" not in extras:
+            raise ValueError("HF wheel is missing the optional kernels extra")
+        kernel_requirements = [
+            Requirement(value)
+            for value in metadata.get_all("Requires-Dist", [])
+            if Requirement(value).name == "rwkv7-kernels"
+        ]
+        if len(kernel_requirements) != 1:
+            raise ValueError("HF wheel must declare one rwkv7-kernels extra")
+        kernel_requirement = kernel_requirements[0]
+        if (
+            str(kernel_requirement.specifier) != "==1.0.0"
+            or kernel_requirement.marker is None
+            or 'extra == "kernels"' not in str(kernel_requirement.marker)
+        ):
+            raise ValueError("HF wheel rwkv7-kernels extra is not pinned to 1.0.0")
         return {
             "status": "passed",
             "canonical_files": len(HF_REQUIRED),
+            "kernel_extra": str(kernel_requirement),
             "members": len(members),
         }
     finally:

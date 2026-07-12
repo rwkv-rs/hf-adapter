@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rwkv7-kernels"
 version = "1.0.0.dev0"
-description = "Optional optimized recurrent operators for rwkv7-hf"
+description = "Optional optimized NVIDIA inference, training, and quantization backends for rwkv7-hf"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"

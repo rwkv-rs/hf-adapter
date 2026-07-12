@@ -166,6 +166,8 @@ training stay on the reference implementation.
 python -m pip install "rwkv7-hf==1.0.0" "rwkv7-kernels==1.0.0"
 ```
 
+Equivalent: `python -m pip install "rwkv7-hf[kernels]==1.0.0"`.
+
 The optional package includes recurrent, fused prefill/decode, projection,
 norm, FFN/LoRA, CUDA Graph/state-pool, SM70/Ada/Blackwell, quantization and
 training operator families. Exact supported routes and three-device evidence

@@ -55,6 +55,11 @@ After installing the PyTorch build for the target GPU:
 python -m pip install "rwkv7-hf==1.0.0" "rwkv7-kernels==1.0.0"
 ```
 
+The equivalent single requirement is
+`python -m pip install "rwkv7-hf[kernels]==1.0.0"`. In both forms the model
+API stays unchanged; uninstalling `rwkv7-kernels` restores package-free
+reference execution.
+
 No model-code change is required. The default `RWKV7_BACKEND=auto` uses only
 device/dtype/shape routes accepted by the release matrix and otherwise runs the
 same reference body. `RWKV7_BACKEND=reference` disables the plugin;

@@ -1174,3 +1174,18 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   correction. The queued RTX 4080 diagnostic continues to use its original
   immutable wheel pair; final stable wheels will include the corrected audit
   metadata after the diagnostic gate.
+- Added the user-facing `rwkv7-hf[kernels]==1.0.0` extra, pinned to the matching
+  companion distribution. The two-package command remains valid, but users can
+  now request the complete optional backend with one requirement. The
+  release-wheel audit parses the built HF `METADATA` and rejects a missing or
+  unpinned kernel extra; model cards and both READMEs document the equivalent
+  forms. A disposable package build passed with HF wheel
+  `693e6c8118000b43937868a74bc0366cd813348685d4681d1eb908f2cff352e8`
+  and kernel wheel
+  `0d200966845399a0216ab4d051fba2eecb4c44c2a1d3cf67a4689f40663f8721`.
+  These remain non-final audit artifacts. The complete local suite now passes
+  `154 passed` with `133` expected warnings.
+- At `2026-08-28T06:24:32+08:00`, the untouched RTX 4080 formal reference lane
+  had advanced to 29/48 units with 29 exit-zero and zero failures. The active
+  0.4B/batch-8 ARC-Easy unit was the only GPU process; the backend-v2 chain
+  remained asleep and sequential.

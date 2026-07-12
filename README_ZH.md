@@ -49,6 +49,10 @@ kernel wheel。
 python -m pip install "rwkv7-hf==1.0.0" "rwkv7-kernels==1.0.0"
 ```
 
+也可以写成一个等价依赖：
+`python -m pip install "rwkv7-hf[kernels]==1.0.0"`。两种安装方式都不会改变
+模型 API；卸载 `rwkv7-kernels` 后仍可直接走无需插件的参考实现。
+
 模型调用方式完全不变。默认 `RWKV7_BACKEND=auto` 只选择已经通过发布矩阵的
 设备、dtype 和 shape 路由，不支持时执行同一份 reference 主体。
 `RWKV7_BACKEND=reference` 可关闭插件；`RWKV7_BACKEND=optimized` 是严格诊断
