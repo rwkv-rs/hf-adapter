@@ -1,0 +1,23 @@
+Current Triton version 3.2.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+`torch_dtype` is deprecated! Use `dtype` instead!
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None}.
+  0%|          | 0/1 [00:00<?, ?it/s]/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+100%|██████████| 1/1 [01:52<00:00, 112.37s/it]                                              100%|██████████| 1/1 [01:52<00:00, 112.37s/it]                                              100%|██████████| 1/1 [01:52<00:00, 112.37s/it]100%|██████████| 1/1 [01:52<00:00, 112.52s/it]
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+The tokenizer has new PAD/BOS/EOS tokens that differ from the model config and generation config. The model config and generation config were aligned accordingly, being updated with the tokenizer's values. Updated tokens: {'bos_token_id': None}.
+{'loss': 1.9096, 'grad_norm': 9.655561447143555, 'learning_rate': 0.0001, 'epoch': 0.12}
+{'train_runtime': 112.5214, 'train_samples_per_second': 0.009, 'train_steps_per_second': 0.009, 'train_loss': 1.9095649719238281, 'epoch': 0.12}
+  0%|          | 0/2 [00:00<?, ?it/s]/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+100%|██████████| 2/2 [00:00<00:00,  5.76it/s]                                             100%|██████████| 2/2 [00:00<00:00,  5.76it/s]                                             100%|██████████| 2/2 [00:00<00:00,  5.76it/s]100%|██████████| 2/2 [00:00<00:00,  4.23it/s]
+{'loss': 3.1519, 'grad_norm': 12.937240600585938, 'learning_rate': 0.0, 'epoch': 0.25}
+{'train_runtime': 0.4771, 'train_samples_per_second': 4.192, 'train_steps_per_second': 4.192, 'train_loss': 1.5759702920913696, 'epoch': 0.25}
+{"axis": "checkpoint_resume_smoke", "backend": "hf_adapter", "trainer_backend": "trainer_resume", "status": "pass", "dtype": "bf16", "train_dtype": "bf16", "device": "NVIDIA GeForce RTX 3090", "model_name": "rwkv7-g1d-0.4b-hf", "model_size_label": "0.4b", "hf_model_dir": "/data/models/rwkv7-g1d-0.4b-hf", "hidden_size": 1024, "intermediate_size": 4096, "num_hidden_layers": 24, "head_dim": 64, "num_heads": 16, "attn_mode": "fused_recurrent", "batch_size": 1, "gradient_accumulation_steps": 1, "effective_batch_size": 1, "first_steps": 1, "resume_steps": 2, "dataset_repeats": 4, "max_length": 32, "checkpoint": "checkpoint-1", "first_loss": 1.9095649719238281, "resume_loss": 1.5759702920913696, "train_runtime_s": 0.4771, "first_max_trainable_delta": 9.999999747378752e-05, "resume_max_trainable_delta": 0.0625, "global_step": 2}
+HF TRAINER RESUME PASS

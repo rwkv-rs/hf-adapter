@@ -1,0 +1,428 @@
+
+[2026-07-12 16:49:55] environment
+Current Triton version 3.2.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+python=3.10.12 executable=/data/venvs/rwkv3090/bin/python
+platform=Linux-5.15.0-128-generic-x86_64-with-glibc2.35
+torch=2.6.0+cu124
+transformers=4.57.6
+peft=0.19.1
+trl=1.8.0
+deepspeed=0.19.2
+bitsandbytes=0.49.2
+fla=0.5.1
+mlx=missing
+torch_cuda_available=True
+torch_cuda_device_count=1
+cuda_device_0=NVIDIA GeForce RTX 3090 sm_86
+torch_mps_built=False
+torch_mps_available=False
+env_CUDA_VISIBLE_DEVICES=
+env_PYTHONNOUSERSITE=1
+env_RWKV_V7_ON=1
+env_TORCHDYNAMO_DISABLE=1
+env_DS_IGNORE_CUDA_DETECTION=1
+env_RWKV7_NATIVE_MODEL=
+env_RWKV7_FAST_FORWARD=
+env_RWKV7_FAST_TOKEN_BACKEND=
+
+[2026-07-12 16:50:04] HF acceptance model=/data/models/rwkv7-g1d-0.4b-hf device=cuda dtype=fp16 results=/data/logs/3090/results.jsonl
+
+[2026-07-12 16:50:04] model API/generation checks
++ /data/venvs/rwkv3090/bin/python tests/smoke_hf_generate.py --model /data/models/rwkv7-g1d-0.4b-hf --device cuda --max-new-tokens 4 
+Current Triton version 3.2.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+`torch_dtype` is deprecated! Use `dtype` instead!
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+logits_shape (1, 8, 65536)
+top5 [36786, 3880, 308, 28980, 20039]
+forward_sec 50.0924
+generate_fast_token_backend native_graph
+generated_ids_shape (1, 12)
+decoded_BEGIN
+User: Hello!
+
+Assistant: Hello! How can
+decoded_END
++ /data/venvs/rwkv3090/bin/python tests/test_hf_api_contract.py --model /data/models/rwkv7-g1d-0.4b-hf --device cuda --dtype fp16 --attn-mode fused_recurrent --fuse-norm auto 
+Current Triton version 3.2.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+`torch_dtype` is deprecated! Use `dtype` instead!
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+generate_fast_token_backend native_graph
+beam_ids [36274, 47]
+PASS
+
+[2026-07-12 16:51:45] single-model speed smoke
++ /data/venvs/rwkv3090/bin/python bench/bench_speed.py --hf-dir /data/models/rwkv7-g1d-0.4b-hf --backend hf --dtype fp16 --device cuda --prompt-tokens 128 --decode-tokens 32 --warmup 4 --runs 3 --attn-mode fused_recurrent --fuse-norm auto --fast-cache auto --fast-token-backend auto --results /data/logs/3090/results.jsonl 
+
+===== backend: hf_adapter (fp16) =====
+Current Triton version 3.2.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+`torch_dtype` is deprecated! Use `dtype` instead!
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+{
+  "axis": "speed_mem",
+  "backend": "hf_adapter",
+  "dtype": "fp16",
+  "device": "NVIDIA GeForce RTX 3090",
+  "attn_mode": "fused_recurrent",
+  "model_name": "rwkv7-g1d-0.4b-hf",
+  "model_size_label": "0.4b",
+  "hf_model_dir": "/data/models/rwkv7-g1d-0.4b-hf",
+  "checkpoint_path": null,
+  "hidden_size": 1024,
+  "intermediate_size": 4096,
+  "num_hidden_layers": 24,
+  "head_dim": 64,
+  "num_heads": 16,
+  "prompt_tokens": 128,
+  "decode_tokens": 32,
+  "prefill_tokps": 1817.8,
+  "decode_tokps": 23.8,
+  "decode_ms_per_tok": 42.04,
+  "peak_vram_mb": 1133.6,
+  "hf_logits_to_keep": 1,
+  "hf_prefill_use_cache": true,
+  "fuse_norm": false,
+  "fast_cache": true,
+  "cache_type": "RWKV7StateCache",
+  "hf_decode_api": "forward"
+}
+
+appended 1 rows -> /data/logs/3090/results.jsonl
+
+[2026-07-12 16:53:28] batch sweep smoke
++ /data/venvs/rwkv3090/bin/python bench/bench_batch_sweep.py --hf-dir /data/models/rwkv7-g1d-0.4b-hf --dtype fp16 --device cuda --attn-mode fused_recurrent --fuse-norm auto --fast-cache auto --fast-token-backend auto --batch-sizes 1 2 4 8 --prompt-tokens 128 --decode-tokens 32 --warmup 4 --runs 3 --results /data/logs/3090/results.jsonl 
+Current Triton version 3.2.0 is below the recommended 3.3.0 version. Errors may occur and these issues will not be fixed. Please consider upgrading Triton.
+Current Python version 3.10 is below the recommended 3.11 version. It is recommended to upgrade to Python 3.11 or higher for the best experience.
+`torch_dtype` is deprecated! Use `dtype` instead!
+/data/venvs/rwkv3090/lib/python3.10/site-packages/fla/layers/rwkv7.py:148: UserWarning: According to Bo, you are using a potentially buggy FLA implementation of RWKV. If you plan to report any numbers based on this implementation, we strongly recommend cross-checking with the official repo: https://github.com/BlinkDL/RWKV-LM. Bo may disagree with results reported from this version.
+  warnings.warn(
+
+===== batch_size=1 =====
+/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+{
+  "axis": "batch_sweep",
+  "backend": "hf_adapter",
+  "decode_api": "forward",
+  "dtype": "fp16",
+  "device": "NVIDIA GeForce RTX 3090",
+  "model_name": "rwkv7-g1d-0.4b-hf",
+  "model_size_label": "0.4b",
+  "hf_model_dir": "/data/models/rwkv7-g1d-0.4b-hf",
+  "hidden_size": 1024,
+  "intermediate_size": 4096,
+  "num_hidden_layers": 24,
+  "head_dim": 64,
+  "num_heads": 16,
+  "attn_mode": "fused_recurrent",
+  "fuse_norm": false,
+  "fast_cache": true,
+  "cache_type": "RWKV7StateCache",
+  "batch_size": 1,
+  "prompt_tokens": 128,
+  "decode_tokens": 32,
+  "prefill_tokps_total": 1933.9,
+  "prefill_tokps_per_seq": 1933.9,
+  "prefill_ms": 66.19,
+  "decode_tokps_total": 24.8,
+  "decode_tokps_per_seq": 24.8,
+  "decode_ms_per_step": 40.27,
+  "peak_vram_mb": 1133.6
+}
+{
+  "axis": "batch_sweep",
+  "backend": "hf_adapter",
+  "decode_api": "rwkv7_forward_token",
+  "dtype": "fp16",
+  "device": "NVIDIA GeForce RTX 3090",
+  "model_name": "rwkv7-g1d-0.4b-hf",
+  "model_size_label": "0.4b",
+  "hf_model_dir": "/data/models/rwkv7-g1d-0.4b-hf",
+  "hidden_size": 1024,
+  "intermediate_size": 4096,
+  "num_hidden_layers": 24,
+  "head_dim": 64,
+  "num_heads": 16,
+  "attn_mode": "fused_recurrent",
+  "fuse_norm": false,
+  "fast_cache": true,
+  "cache_type": "RWKV7StateCache",
+  "batch_size": 1,
+  "prompt_tokens": 128,
+  "decode_tokens": 32,
+  "prefill_tokps_total": 1933.9,
+  "prefill_tokps_per_seq": 1933.9,
+  "prefill_ms": 66.19,
+  "decode_tokps_total": 243.3,
+  "decode_tokps_per_seq": 243.3,
+  "decode_ms_per_step": 4.11,
+  "peak_vram_mb": 1133.6,
+  "fast_token_backend": "auto",
+  "fast_token_backend_effective": "native_graph",
+  "native_graph_fused_recurrent": false,
+  "native_graph_fused_recurrent_output": true,
+  "native_graph_fused_recurrent_raw": false,
+  "native_graph_fused_output": true,
+  "native_graph_fused_output_project": false,
+  "native_graph_fused_wag_lora": false,
+  "native_graph_fused_wavg_lora": false,
+  "native_graph_fused_projection": false,
+  "native_graph_fused_norm_mix": false,
+  "native_graph_sm70_linear": false,
+  "native_graph_ada_linear": false,
+  "native_graph_ada_wagv_lora": false,
+  "native_graph_ada_sparse_ffn": false,
+  "native_graph_ada_sparse_ffn_max_rows": 19,
+  "native_graph_ada_sparse_ffn_inplace": false
+}
+
+===== batch_size=2 =====
+/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+{
+  "axis": "batch_sweep",
+  "backend": "hf_adapter",
+  "decode_api": "forward",
+  "dtype": "fp16",
+  "device": "NVIDIA GeForce RTX 3090",
+  "model_name": "rwkv7-g1d-0.4b-hf",
+  "model_size_label": "0.4b",
+  "hf_model_dir": "/data/models/rwkv7-g1d-0.4b-hf",
+  "hidden_size": 1024,
+  "intermediate_size": 4096,
+  "num_hidden_layers": 24,
+  "head_dim": 64,
+  "num_heads": 16,
+  "attn_mode": "fused_recurrent",
+  "fuse_norm": false,
+  "fast_cache": true,
+  "cache_type": "RWKV7StateCache",
+  "batch_size": 2,
+  "prompt_tokens": 128,
+  "decode_tokens": 32,
+  "prefill_tokps_total": 3879.6,
+  "prefill_tokps_per_seq": 1939.8,
+  "prefill_ms": 65.99,
+  "decode_tokps_total": 46.3,
+  "decode_tokps_per_seq": 23.2,
+  "decode_ms_per_step": 43.15,
+  "peak_vram_mb": 934.2
+}
+{
+  "axis": "batch_sweep",
+  "backend": "hf_adapter",
+  "decode_api": "rwkv7_forward_token",
+  "dtype": "fp16",
+  "device": "NVIDIA GeForce RTX 3090",
+  "model_name": "rwkv7-g1d-0.4b-hf",
+  "model_size_label": "0.4b",
+  "hf_model_dir": "/data/models/rwkv7-g1d-0.4b-hf",
+  "hidden_size": 1024,
+  "intermediate_size": 4096,
+  "num_hidden_layers": 24,
+  "head_dim": 64,
+  "num_heads": 16,
+  "attn_mode": "fused_recurrent",
+  "fuse_norm": false,
+  "fast_cache": true,
+  "cache_type": "RWKV7StateCache",
+  "batch_size": 2,
+  "prompt_tokens": 128,
+  "decode_tokens": 32,
+  "prefill_tokps_total": 3879.6,
+  "prefill_tokps_per_seq": 1939.8,
+  "prefill_ms": 65.99,
+  "decode_tokps_total": 413.3,
+  "decode_tokps_per_seq": 206.6,
+  "decode_ms_per_step": 4.84,
+  "peak_vram_mb": 934.2,
+  "fast_token_backend": "auto",
+  "fast_token_backend_effective": "native_graph",
+  "native_graph_fused_recurrent": false,
+  "native_graph_fused_recurrent_output": true,
+  "native_graph_fused_recurrent_raw": false,
+  "native_graph_fused_output": true,
+  "native_graph_fused_output_project": false,
+  "native_graph_fused_wag_lora": false,
+  "native_graph_fused_wavg_lora": false,
+  "native_graph_fused_projection": false,
+  "native_graph_fused_norm_mix": false,
+  "native_graph_sm70_linear": false,
+  "native_graph_ada_linear": false,
+  "native_graph_ada_wagv_lora": false,
+  "native_graph_ada_sparse_ffn": false,
+  "native_graph_ada_sparse_ffn_max_rows": 19,
+  "native_graph_ada_sparse_ffn_inplace": false
+}
+
+===== batch_size=4 =====
+/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+{
+  "axis": "batch_sweep",
+  "backend": "hf_adapter",
+  "decode_api": "forward",
+  "dtype": "fp16",
+  "device": "NVIDIA GeForce RTX 3090",
+  "model_name": "rwkv7-g1d-0.4b-hf",
+  "model_size_label": "0.4b",
+  "hf_model_dir": "/data/models/rwkv7-g1d-0.4b-hf",
+  "hidden_size": 1024,
+  "intermediate_size": 4096,
+  "num_hidden_layers": 24,
+  "head_dim": 64,
+  "num_heads": 16,
+  "attn_mode": "fused_recurrent",
+  "fuse_norm": false,
+  "fast_cache": true,
+  "cache_type": "RWKV7StateCache",
+  "batch_size": 4,
+  "prompt_tokens": 128,
+  "decode_tokens": 32,
+  "prefill_tokps_total": 7507.2,
+  "prefill_tokps_per_seq": 1876.8,
+  "prefill_ms": 68.2,
+  "decode_tokps_total": 92.2,
+  "decode_tokps_per_seq": 23.0,
+  "decode_ms_per_step": 43.39,
+  "peak_vram_mb": 998.5
+}
+{
+  "axis": "batch_sweep",
+  "backend": "hf_adapter",
+  "decode_api": "rwkv7_forward_token",
+  "dtype": "fp16",
+  "device": "NVIDIA GeForce RTX 3090",
+  "model_name": "rwkv7-g1d-0.4b-hf",
+  "model_size_label": "0.4b",
+  "hf_model_dir": "/data/models/rwkv7-g1d-0.4b-hf",
+  "hidden_size": 1024,
+  "intermediate_size": 4096,
+  "num_hidden_layers": 24,
+  "head_dim": 64,
+  "num_heads": 16,
+  "attn_mode": "fused_recurrent",
+  "fuse_norm": false,
+  "fast_cache": true,
+  "cache_type": "RWKV7StateCache",
+  "batch_size": 4,
+  "prompt_tokens": 128,
+  "decode_tokens": 32,
+  "prefill_tokps_total": 7507.2,
+  "prefill_tokps_per_seq": 1876.8,
+  "prefill_ms": 68.2,
+  "decode_tokps_total": 817.5,
+  "decode_tokps_per_seq": 204.4,
+  "decode_ms_per_step": 4.89,
+  "peak_vram_mb": 998.5,
+  "fast_token_backend": "auto",
+  "fast_token_backend_effective": "native_graph",
+  "native_graph_fused_recurrent": false,
+  "native_graph_fused_recurrent_output": true,
+  "native_graph_fused_recurrent_raw": false,
+  "native_graph_fused_output": true,
+  "native_graph_fused_output_project": false,
+  "native_graph_fused_wag_lora": false,
+  "native_graph_fused_wavg_lora": false,
+  "native_graph_fused_projection": false,
+  "native_graph_fused_norm_mix": false,
+  "native_graph_sm70_linear": false,
+  "native_graph_ada_linear": false,
+  "native_graph_ada_wagv_lora": false,
+  "native_graph_ada_sparse_ffn": false,
+  "native_graph_ada_sparse_ffn_max_rows": 19,
+  "native_graph_ada_sparse_ffn_inplace": false
+}
+
+===== batch_size=8 =====
+/data/venvs/rwkv3090/lib/python3.10/site-packages/torch/amp/autocast_mode.py:503: RuntimeWarning: Set chunk_size to 16, to avoid triton compiler erorr. original chunk_size 64
+  return fwd(*args, **kwargs)
+{
+  "axis": "batch_sweep",
+  "backend": "hf_adapter",
+  "decode_api": "forward",
+  "dtype": "fp16",
+  "device": "NVIDIA GeForce RTX 3090",
+  "model_name": "rwkv7-g1d-0.4b-hf",
+  "model_size_label": "0.4b",
+  "hf_model_dir": "/data/models/rwkv7-g1d-0.4b-hf",
+  "hidden_size": 1024,
+  "intermediate_size": 4096,
+  "num_hidden_layers": 24,
+  "head_dim": 64,
+  "num_heads": 16,
+  "attn_mode": "fused_recurrent",
+  "fuse_norm": false,
+  "fast_cache": true,
+  "cache_type": "RWKV7StateCache",
+  "batch_size": 8,
+  "prompt_tokens": 128,
+  "decode_tokens": 32,
+  "prefill_tokps_total": 14965.9,
+  "prefill_tokps_per_seq": 1870.7,
+  "prefill_ms": 68.42,
+  "decode_tokps_total": 189.0,
+  "decode_tokps_per_seq": 23.6,
+  "decode_ms_per_step": 42.33,
+  "peak_vram_mb": 1119.0
+}
+{
+  "axis": "batch_sweep",
+  "backend": "hf_adapter",
+  "decode_api": "rwkv7_forward_token",
+  "dtype": "fp16",
+  "device": "NVIDIA GeForce RTX 3090",
+  "model_name": "rwkv7-g1d-0.4b-hf",
+  "model_size_label": "0.4b",
+  "hf_model_dir": "/data/models/rwkv7-g1d-0.4b-hf",
+  "hidden_size": 1024,
+  "intermediate_size": 4096,
+  "num_hidden_layers": 24,
+  "head_dim": 64,
+  "num_heads": 16,
+  "attn_mode": "fused_recurrent",
+  "fuse_norm": false,
+  "fast_cache": true,
+  "cache_type": "RWKV7StateCache",
+  "batch_size": 8,
+  "prompt_tokens": 128,
+  "decode_tokens": 32,
+  "prefill_tokps_total": 14965.9,
+  "prefill_tokps_per_seq": 1870.7,
+  "prefill_ms": 68.42,
+  "decode_tokps_total": 1597.9,
+  "decode_tokps_per_seq": 199.7,
+  "decode_ms_per_step": 5.01,
+  "peak_vram_mb": 1119.0,
+  "fast_token_backend": "auto",
+  "fast_token_backend_effective": "native_graph",
+  "native_graph_fused_recurrent": false,
+  "native_graph_fused_recurrent_output": true,
+  "native_graph_fused_recurrent_raw": false,
+  "native_graph_fused_output": true,
+  "native_graph_fused_output_project": false,
+  "native_graph_fused_wag_lora": false,
+  "native_graph_fused_wavg_lora": false,
+  "native_graph_fused_projection": false,
+  "native_graph_fused_norm_mix": false,
+  "native_graph_sm70_linear": false,
+  "native_graph_ada_linear": false,
+  "native_graph_ada_wagv_lora": false,
+  "native_graph_ada_sparse_ffn": false,
+  "native_graph_ada_sparse_ffn_max_rows": 19,
+  "native_graph_ada_sparse_ffn_inplace": false
+}
+
+appended 8 rows -> /data/logs/3090/results.jsonl
+
+[2026-07-12 16:54:22] HF acceptance complete

@@ -1,0 +1,28 @@
+{
+  "sha256": "0c9e4febd16ceb6ab160e5d6d8c85b41b9308f5578d0d781f4ee6dfed3cc9ef9",
+  "rows": 32000,
+  "tasks": 500,
+  "tasks_with_any_correct": 184,
+  "correct_generations": 4582,
+  "keys": [
+    "answer",
+    "completion",
+    "correct",
+    "ended_eod",
+    "ended_user_stop",
+    "generated_tokens",
+    "level",
+    "local_task_index",
+    "problem",
+    "prompt_tokens",
+    "sample_id",
+    "stop_reason",
+    "subject",
+    "task_index",
+    "tokens_including_eod",
+    "tokens_including_stop",
+    "truncated",
+    "unique_id",
+    "verify_error"
+  ]
+}
