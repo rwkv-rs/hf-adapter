@@ -49,6 +49,8 @@ def load_native(model_dir: str, dtype: torch.dtype, device: str):
         device_map=device_map_for(device),
     )
     model.config.use_cache = False
+    if not device.startswith("cuda"):
+        model = model.to(device)
     return model
 
 

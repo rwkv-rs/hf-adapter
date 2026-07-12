@@ -145,6 +145,8 @@ def load_lora_model(model_path: str, device: str, attn_mode: str, train_dtype: s
     model.config.fuse_cross_entropy = False
     model.config.use_l2warp = False
     model.config.attn_mode = attn_mode
+    if not device.startswith("cuda"):
+        model = model.to(device)
     for layer in getattr(model.model, "layers", []):
         attn = getattr(layer, "attn", None)
         if hasattr(attn, "mode"):
