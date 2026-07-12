@@ -31,6 +31,7 @@ def test_release_wheel_audit_accepts_clean_hf_and_all_102_sources(tmp_path: Path
     write_valid_hf_wheel(hf)
     write_valid_kernel_wheel(kernel)
     assert audit_hf_wheel(hf)["status"] == "passed"
+    assert audit_hf_wheel(hf)["tool_files"] == 5
     report = audit_kernel_wheel(kernel)
     assert report["status"] == "passed"
     assert report["migrated_files"] == 102

@@ -26,6 +26,13 @@ HF_REQUIRED = {
     "rwkv7_hf/ops_rwkv7.py",
     "rwkv7_hf/tokenization_rwkv7.py",
 }
+HF_TOOL_REQUIRED = {
+    "rwkv7_hf_tools/__init__.py",
+    "rwkv7_hf_tools/cli.py",
+    "rwkv7_hf_tools/converter.py",
+    "rwkv7_hf_tools/manifest.py",
+    "rwkv7_hf_tools/smoke.py",
+}
 HF_FORBIDDEN = {
     "adapter_manifest.py",
     "cli.py",
@@ -152,7 +159,7 @@ def audit_hf_wheel(path: Path) -> dict[str, Any]:
     archive, members = open_wheel(path)
     try:
         names = set(members)
-        missing = sorted(HF_REQUIRED - names)
+        missing = sorted((HF_REQUIRED | HF_TOOL_REQUIRED) - names)
         if missing:
             raise ValueError(f"HF wheel is missing canonical files: {missing}")
         if any(name.startswith("rwkv7_kernels/") for name in names):
@@ -200,6 +207,7 @@ def audit_hf_wheel(path: Path) -> dict[str, Any]:
         return {
             "status": "passed",
             "canonical_files": len(HF_REQUIRED),
+            "tool_files": len(HF_TOOL_REQUIRED),
             "kernel_extra": str(kernel_requirement),
             "members": len(members),
         }

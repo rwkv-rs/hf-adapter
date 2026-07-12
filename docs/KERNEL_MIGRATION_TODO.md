@@ -316,6 +316,23 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   training-stack, Python 3.10/Transformers 4.48.3 and Python 3.12/Transformers
   <6 all passed on the exact fork/PR head.
 
+### 2026-08-28 — release archives are bound to the tagged checkout
+
+- The final asset verifier now compares every package-owned member in both
+  wheels byte-for-byte with the checked-out release source: `rwkv7_hf/`,
+  `rwkv7_hf_tools/`, and `kernels/rwkv7_kernels/`. A wheel/sdist pair can no
+  longer agree with itself while carrying code from a different commit.
+- The HF wheel audit now also requires all five sibling CLI/converter/manifest/
+  smoke tool files, while continuing to reject them from the clean model
+  package. Kernel/model ownership remains unchanged.
+- Failure coverage includes a wheel whose modeling payload differs from the
+  checkout. Targeted release tests and the complete suite pass: `164 passed`,
+  with `133` expected TorchScript deprecation warnings.
+- Fresh disposable wheel builds passed the checkout binding against their
+  actual ZIP payloads: all 12 HF/model-tool files and all 124 kernel package
+  files matched the current source byte-for-byte. These development artifacts
+  were deleted and are not final release wheels.
+
 ### 2026-08-27 — backend-v2 training boundary wired locally
 
 - Added `nvidia/training_runtime.py`, which directly executes the clean

@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import tarfile
+import zipfile
 
 import pytest
 
@@ -13,6 +14,7 @@ from scripts.verify_release_assets import (
     DEVICES,
     FLA_COMMIT,
     audit_sdist,
+    audit_wheel_against_checkout,
     expected_artifacts,
     verify,
 )
@@ -140,6 +142,17 @@ def test_release_asset_verifier_rejects_overlapping_device_order(tmp_path: Path)
     (tmp_path / "SHA256SUMS").write_text("\n".join(sums) + "\n")
     with pytest.raises(ValueError, match="overlap or violate required order"):
         verify(args)
+
+
+def test_checkout_audit_rejects_wheel_payload_from_another_source(tmp_path: Path):
+    wheel = tmp_path / "bad.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("rwkv7_hf/modeling_rwkv7.py", b"not tagged source")
+    with pytest.raises(ValueError, match="differs from checkout"):
+        audit_wheel_against_checkout(
+            wheel,
+            mappings=(("rwkv7_hf/", Path(__file__).parents[1] / "rwkv7_hf"),),
+        )
 
 
 def test_sdist_audit_rejects_payload_that_differs_from_wheel(tmp_path: Path):

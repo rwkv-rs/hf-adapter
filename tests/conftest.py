@@ -12,6 +12,7 @@ from rwkv7_hf.configuration_rwkv7 import RWKV7Config
 from scripts.audit_release_wheels import (
     CAPABILITY_INVENTORY,
     HF_REQUIRED,
+    HF_TOOL_REQUIRED,
     KERNEL_REQUIRED,
     MIGRATION_MANIFEST,
     RECURRENT_SOURCE_SCOPE,
@@ -64,7 +65,7 @@ def write_valid_hf_wheel(
     metadata: bytes | None = None,
 ) -> None:
     with zipfile.ZipFile(path, "w") as archive:
-        for member in sorted(HF_REQUIRED):
+        for member in sorted(HF_REQUIRED | HF_TOOL_REQUIRED):
             source = ROOT / member
             archive.writestr(member, source.read_bytes())
         for member, payload in sorted((extra or {}).items()):

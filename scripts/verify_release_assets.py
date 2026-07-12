@@ -82,6 +82,40 @@ def expected_artifacts(version: str) -> tuple[str, ...]:
     )
 
 
+def audit_wheel_against_checkout(
+    wheel: Path,
+    *,
+    mappings: tuple[tuple[str, Path], ...],
+) -> dict[str, Any]:
+    """Require every package payload in a wheel to equal the tagged checkout."""
+
+    archive, members = open_wheel(wheel)
+    matched: list[str] = []
+    try:
+        for member in sorted(members):
+            mapping = next(
+                (row for row in mappings if member.startswith(row[0])), None
+            )
+            if mapping is None:
+                continue
+            prefix, source_root = mapping
+            relative = PurePosixPath(member).relative_to(PurePosixPath(prefix))
+            source = source_root.joinpath(*relative.parts).resolve()
+            resolved_root = source_root.resolve()
+            if resolved_root != source and resolved_root not in source.parents:
+                raise ValueError(f"wheel payload escaped checkout root: {member}")
+            if not source.is_file() or source.is_symlink():
+                raise ValueError(f"wheel payload is absent from checkout: {member}")
+            if archive.read(member) != source.read_bytes():
+                raise ValueError(f"wheel payload differs from checkout: {member}")
+            matched.append(member)
+    finally:
+        archive.close()
+    if not matched:
+        raise ValueError("wheel has no checkout-owned package payload")
+    return {"status": "passed", "matched_files": len(matched)}
+
+
 def read_sums(path: Path) -> dict[str, str]:
     rows: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -207,6 +241,19 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
     kernel_wheel_path = root / f"rwkv7_kernels-{args.version}-py3-none-any.whl"
     audit_hf_wheel(hf_wheel_path)
     audit_kernel_wheel(kernel_wheel_path)
+    checkout_payloads = {
+        "rwkv7-hf": audit_wheel_against_checkout(
+            hf_wheel_path,
+            mappings=(
+                ("rwkv7_hf/", ROOT / "rwkv7_hf"),
+                ("rwkv7_hf_tools/", ROOT / "rwkv7_hf_tools"),
+            ),
+        ),
+        "rwkv7-kernels": audit_wheel_against_checkout(
+            kernel_wheel_path,
+            mappings=(("rwkv7_kernels/", ROOT / "kernels" / "rwkv7_kernels"),),
+        ),
+    }
     sdists = {
         "rwkv7-hf": audit_sdist(
             root / f"rwkv7_hf-{args.version}.tar.gz",
@@ -322,6 +369,7 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         "harness_sha": harness_sha,
         "artifacts": artifacts,
         "sdists": sdists,
+        "checkout_payloads": checkout_payloads,
         "devices": sorted(devices),
     }
 

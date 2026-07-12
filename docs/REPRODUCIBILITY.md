@@ -101,7 +101,10 @@ The same final verifier opens both `.tar.gz` source distributions without
 extracting them, rejects traversal, links, devices and duplicate members,
 checks `PKG-INFO` plus `pyproject.toml`, and requires every packaged HF/kernel
 file to be byte-identical to the corresponding already-audited wheel member.
-Thus PyPI cannot receive a correct wheel paired with a stale or unsafe sdist.
+It also compares every package-owned member of both wheels byte-for-byte with
+the checked-out release tag. Thus PyPI cannot receive a correct wheel paired
+with a stale or unsafe sdist, nor mutually consistent archives built from a
+different source tree.
 
 Generate the final provenance from the three compact bundles rather than
 writing it by hand:
