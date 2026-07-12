@@ -33,6 +33,8 @@ def main() -> int:
     ap.add_argument("--quant-min-params", type=int, default=8_000_000)
     ap.add_argument("--quant-rkv-min-params", type=int, default=-1, help="Separate min-params threshold for attention r/k/v projection quantization; -1 preserves --quant-min-params.")
     ap.add_argument("--quant-backend", default="affine", choices=["affine", "reference", "metal", "auto", "groupwise"])
+    ap.add_argument("--quant-profile", default="uniform", choices=["uniform", "q4_k_m"])
+    ap.add_argument("--quant-group-size", type=int, default=64, choices=[32, 64, 128])
     ap.add_argument("--wkv-backend", default="reference", choices=["reference", "metal", "auto"])
     ap.add_argument("--decode-backend", default="auto", choices=["eager", "compiled", "auto"])
     ap.add_argument("--decode-norm-backend", default="reference", choices=["reference", "fast"])
@@ -68,6 +70,8 @@ def main() -> int:
             "quant_min_params": int(args.quant_min_params),
             "quant_rkv_min_params": None if int(args.quant_rkv_min_params) < 0 else int(args.quant_rkv_min_params),
             "quant_backend": args.quant_backend,
+            "quant_profile": args.quant_profile,
+            "quant_group_size": int(args.quant_group_size),
             "wkv_backend": args.wkv_backend,
             "decode_backend": args.decode_backend,
             "decode_norm_backend": args.decode_norm_backend,
@@ -87,6 +91,8 @@ def main() -> int:
         quant_min_params=int(args.quant_min_params),
         quant_rkv_min_params=None if int(args.quant_rkv_min_params) < 0 else int(args.quant_rkv_min_params),
         quant_backend=args.quant_backend,
+        quant_profile=args.quant_profile,
+        quant_group_size=int(args.quant_group_size),
         wkv_backend=args.wkv_backend,
         decode_backend=args.decode_backend,
         decode_norm_backend=args.decode_norm_backend,
@@ -112,6 +118,8 @@ def main() -> int:
         "quant_min_params": int(args.quant_min_params),
         "quant_rkv_min_params": None if int(args.quant_rkv_min_params) < 0 else int(args.quant_rkv_min_params),
         "quant_backend": args.quant_backend,
+        "quant_profile": args.quant_profile,
+        "quant_group_size": int(args.quant_group_size),
         "wkv_backend": args.wkv_backend,
         "decode_backend": args.decode_backend,
         "decode_norm_backend": args.decode_norm_backend,
