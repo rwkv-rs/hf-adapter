@@ -114,7 +114,7 @@ def runtime_metadata(model) -> dict[str, Any]:
             check=False,
         )
         chip = proc.stdout.strip() or None
-    dirty = git("status", "--porcelain")
+    dirty = git("status", "--porcelain", "--untracked-files=no")
     return {
         "platform": platform.platform(),
         "machine": platform.machine(),

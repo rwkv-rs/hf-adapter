@@ -104,7 +104,7 @@ def runtime_metadata(parameter_device: str) -> dict:
             check=False,
         )
         chip = proc.stdout.strip() or None
-    dirty = git("status", "--porcelain")
+    dirty = git("status", "--porcelain", "--untracked-files=no")
     return {
         "platform": platform.platform(),
         "machine": platform.machine(),
