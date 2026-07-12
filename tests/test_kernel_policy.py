@@ -105,7 +105,7 @@ def test_policy_defaults_are_conservative() -> None:
     assert rtx3090.fused_prefill_scan
     assert rtx3090.prefill_graph
     assert rtx3090.prefill_graph_cache_size == 4
-    assert rtx3090.bnb_skip_policy == "decode_hot"
+    assert rtx3090.bnb_skip_policy == "prefill_hot"
 
     a6000 = policy_for_profile(classify_gpu("NVIDIA RTX A6000", (8, 6)))
     assert not a6000.fast_prefill

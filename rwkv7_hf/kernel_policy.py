@@ -476,7 +476,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
         return KernelPolicy(
             profile=profile,
             fast_prefill=is_3090,
-            bnb_skip_policy="decode_hot" if is_3090 else "memory",
+            bnb_skip_policy="prefill_hot" if is_3090 else "memory",
             fused_recurrent_output=True,
             fused_output=True,
             fused_prefill_scan=is_3090,
@@ -484,7 +484,7 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             prefill_graph_cache_size=4 if is_3090 else 2,
             output_project_block_m=16,
             notes=(
-                "RTX 3090: measured native fused-scan prefill graphs and decode-hot bnb routing; "
+                "RTX 3090: measured native fused-scan prefill graphs and prefill-hot bnb routing; "
                 "other CUDA tensor-core cards retain stable output fusions pending a local sweep"
                 if is_3090
                 else "CUDA tensor-core generation: use stable output fusions; require local sweep before projection/LoRA defaults"

@@ -20,6 +20,12 @@ def main() -> int:
     assert "model.layers.1.attn.o_proj" in decode_hot
     assert "model.layers.0.ffn.key" not in decode_hot
 
+    prefill_hot = RWKV7ForCausalLM.rwkv7_bnb_skip_modules("prefill_hot", cfg)
+    assert "model.layers.0.attn.r_proj" in prefill_hot
+    assert "model.layers.0.ffn.key" in prefill_hot
+    assert "model.layers.1.ffn.key" in prefill_hot
+    assert "model.layers.0.ffn.value" not in prefill_hot
+
     dense = RWKV7ForCausalLM.rwkv7_bnb_skip_modules("dense", cfg)
     assert r".*ffn\.(key|value)" in dense
     assert "model.layers.0.ffn.key" in dense
