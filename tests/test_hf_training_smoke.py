@@ -303,6 +303,11 @@ def run_trl(args) -> dict[str, Any]:
             max_length=args.max_length,
             dataset_text_field="text",
             packing=False,
+            # TRL 1.7 defaults to ``chunked_nll`` and patches a decoder-only
+            # backbone interface that RWKV intentionally does not expose.
+            # The standard NLL path delegates to the public CausalLM forward
+            # contract and is the portable choice for recurrent architectures.
+            loss_type="nll",
         )
         trainer = SFTTrainer(model=model, args=sft_args, train_dataset=dataset, processing_class=tok)
         result = trainer.train()
