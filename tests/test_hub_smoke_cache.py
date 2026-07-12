@@ -32,3 +32,16 @@ def test_hub_smoke_cache_records_fresh_directory(tmp_path: Path):
         "was_empty": True,
     }
     assert cache.is_dir()
+
+
+def test_package_free_inventory_has_both_distributions(monkeypatch):
+    def version(name):
+        if name == "rwkv7-hf":
+            return "1.0.0"
+        raise MODULE.importlib.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(MODULE.importlib.metadata, "version", version)
+    assert MODULE.installed_rwkv_distributions() == {
+        "rwkv7-hf": "1.0.0",
+        "rwkv7-kernels": None,
+    }

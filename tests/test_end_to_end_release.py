@@ -47,6 +47,7 @@ def fixture():
                 "status": "passed",
                 "resolved_revision": revision,
                 "code_sha256": {"modeling_rwkv7.py": {"match": True}},
+                "release_file_sha256": {"README.md": {"match": True}},
             }
         )
         smokes[repo] = {
@@ -63,6 +64,14 @@ def fixture():
                 "cache_was_empty": True,
                 "cache_dir": f"/fresh/{index}",
             },
+            "package_free": {
+                "required": True,
+                "passed": True,
+                "installed_distributions": {
+                    "rwkv7-hf": None,
+                    "rwkv7-kernels": None,
+                },
+            },
         }
     hub = {
         "schema": "rwkv7-hub-release-audit-v1",
@@ -70,7 +79,9 @@ def fixture():
         "required_tag": f"v{version}",
         "revision": "main",
         "code_sha": source_sha,
+        "source_checkout": {"commit": source_sha},
         "weight_baseline": "/baseline.json",
+        "release_manifest": {"path": "/stage.json", "sha256": "9" * 64},
         "repositories": repositories,
     }
     pypi = {

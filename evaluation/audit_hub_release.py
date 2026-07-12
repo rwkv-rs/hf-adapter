@@ -16,6 +16,8 @@ import hashlib
 import importlib.metadata
 import json
 from pathlib import Path
+import re
+import subprocess
 import sys
 from typing import Any, Callable
 
@@ -28,10 +30,19 @@ CANONICAL_CODE = (
     "ops_rwkv7.py",
     "tokenization_rwkv7.py",
 )
+HUB_REPOSITORIES = {
+    "wangyue114514/rwkv7-g1d-0.1b-hf",
+    "wangyue114514/rwkv7-g1d-0.4b-hf",
+    "wangyue114514/rwkv7-g1g-1.5b-hf",
+    "wangyue114514/rwkv7-g1g-2.9b-hf",
+    "wangyue114514/rwkv7-g1g-7.2b-hf",
+    "wangyue114514/rwkv7-g1g-13.3b-hf",
+}
 REQUIRED_FILES = (
     "LICENSE",
     "README.md",
     "config.json",
+    "conversion_manifest.json",
     "generation_config.json",
     "rwkv_vocab_v20230424.txt",
     "special_tokens_map.json",
@@ -73,6 +84,11 @@ def arguments() -> argparse.Namespace:
         type=Path,
         help="Earlier audit JSON whose LFS weight hashes must remain unchanged.",
     )
+    parser.add_argument(
+        "--release-manifest",
+        type=Path,
+        help="Staging manifest whose exact small-file bytes must be on the Hub.",
+    )
     return parser.parse_args()
 
 
@@ -100,6 +116,44 @@ def load_weight_baseline(path: Path | None) -> dict[str, dict[str, Any]]:
     }
 
 
+def load_release_manifest(path: Path | None) -> dict[str, Any]:
+    if path is None:
+        return {}
+    payload = json.loads(path.expanduser().resolve().read_text(encoding="utf-8"))
+    if payload.get("schema") != "rwkv7-hub-release-stage-v1":
+        raise ValueError("unexpected Hub release-stage manifest schema")
+    rows = payload.get("repositories") or []
+    repositories = {str(row.get("repo_id")): row for row in rows}
+    if len(rows) != 6 or set(repositories) != HUB_REPOSITORIES:
+        raise ValueError("Hub release-stage manifest does not cover the six repositories")
+    return {**payload, "repositories_by_id": repositories}
+
+
+def verify_source_checkout(source_dir: Path, code_sha: str) -> dict[str, str]:
+    if not re.fullmatch(r"[0-9a-f]{40}", code_sha):
+        raise ValueError("code SHA is not a full Git commit")
+    git_root = Path(
+        subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"], cwd=source_dir, text=True
+        ).strip()
+    ).resolve()
+    head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=git_root, text=True
+    ).strip()
+    if head != code_sha:
+        raise ValueError(f"code SHA {code_sha} does not equal checkout HEAD {head}")
+    relative_root = source_dir.relative_to(git_root)
+    for name in CANONICAL_CODE:
+        path = source_dir / name
+        committed = subprocess.check_output(
+            ["git", "show", f"{code_sha}:{relative_root.as_posix()}/{name}"],
+            cwd=git_root,
+        )
+        if not path.is_file() or path.read_bytes() != committed:
+            raise ValueError(f"source file differs from checkout commit: {name}")
+    return {"root": str(git_root), "commit": head}
+
+
 @dataclass
 class RepositoryAudit:
     repo: str
@@ -107,6 +161,7 @@ class RepositoryAudit:
     resolved_revision: str | None
     files: list[str]
     code_sha256: dict[str, dict[str, str | bool]]
+    release_file_sha256: dict[str, dict[str, str | bool]]
     weights: dict[str, dict[str, Any]]
     tags: dict[str, str]
     failures: list[str]
@@ -125,6 +180,7 @@ def audit_repository(
     source_dir: Path,
     required_tag: str | None,
     baseline_weights: dict[str, dict[str, Any]] | None,
+    expected_release_files: dict[str, str] | None = None,
 ) -> RepositoryAudit:
     info = api.model_info(repo, revision=revision, files_metadata=True)
     siblings = list(info.siblings or [])
@@ -156,7 +212,12 @@ def audit_repository(
         if name not in files:
             continue
         downloaded = Path(
-            downloader(repo_id=repo, filename=name, revision=revision)
+            downloader(
+                repo_id=repo,
+                filename=name,
+                revision=revision,
+                force_download=True,
+            )
         ).resolve()
         expected = sha256_file(expected_path)
         actual = sha256_file(downloaded)
@@ -169,9 +230,40 @@ def audit_repository(
         if not match:
             failures.append(f"canonical source differs: {name}")
 
+    release_file_sha256: dict[str, dict[str, str | bool]] = {}
+    for name, expected in sorted((expected_release_files or {}).items()):
+        if Path(name).name != name or not re.fullmatch(r"[0-9a-f]{64}", expected):
+            failures.append(f"invalid staged file identity: {name}")
+            continue
+        if name not in files:
+            failures.append(f"staged release file is missing: {name}")
+            continue
+        downloaded = Path(
+            downloader(
+                repo_id=repo,
+                filename=name,
+                revision=revision,
+                force_download=True,
+            )
+        ).resolve()
+        actual = sha256_file(downloaded)
+        match = actual == expected
+        release_file_sha256[name] = {
+            "expected": expected,
+            "actual": actual,
+            "match": match,
+        }
+        if not match:
+            failures.append(f"staged release file differs: {name}")
+
     if "config.json" in files:
         config_path = Path(
-            downloader(repo_id=repo, filename="config.json", revision=revision)
+            downloader(
+                repo_id=repo,
+                filename="config.json",
+                revision=revision,
+                force_download=True,
+            )
         )
         config = json.loads(config_path.read_text(encoding="utf-8"))
         if config.get("model_type") != "rwkv7":
@@ -196,6 +288,7 @@ def audit_repository(
         resolved_revision=str(info.sha) if info.sha is not None else None,
         files=files,
         code_sha256=code_sha256,
+        release_file_sha256=release_file_sha256,
         weights=weights,
         tags=tags,
         failures=failures,
@@ -212,7 +305,19 @@ def main() -> int:
         ) from exc
 
     source_dir = args.source_dir.expanduser().resolve()
+    if set(args.repo) != HUB_REPOSITORIES or len(args.repo) != 6:
+        raise SystemExit("the Hub release audit must cover each of the six repositories")
+    source_checkout = verify_source_checkout(source_dir, args.code_sha)
     baseline = load_weight_baseline(args.weight_baseline)
+    if args.weight_baseline is not None and set(baseline) != HUB_REPOSITORIES:
+        raise SystemExit("the weight baseline must cover the six repositories")
+    release_manifest = load_release_manifest(args.release_manifest)
+    if release_manifest:
+        if (
+            release_manifest.get("source_sha") != args.code_sha
+            or release_manifest.get("tag") != args.require_tag
+        ):
+            raise SystemExit("release-stage manifest source SHA/tag mismatch")
     api = HfApi()
     repositories = []
     for repo in args.repo:
@@ -227,6 +332,11 @@ def main() -> int:
                 baseline_weights=baseline.get(repo)
                 if args.weight_baseline is not None
                 else None,
+                expected_release_files=(
+                    release_manifest["repositories_by_id"][repo].get("file_sha256")
+                    if release_manifest
+                    else None
+                ),
             )
         )
     passed = all(row.status == "passed" for row in repositories)
@@ -240,9 +350,18 @@ def main() -> int:
         "revision": args.revision,
         "required_tag": args.require_tag,
         "source_dir": str(source_dir),
+        "source_checkout": source_checkout,
         "weight_baseline": (
             str(args.weight_baseline.expanduser().resolve())
             if args.weight_baseline is not None
+            else None
+        ),
+        "release_manifest": (
+            {
+                "path": str(args.release_manifest.expanduser().resolve()),
+                "sha256": sha256_file(args.release_manifest.expanduser().resolve()),
+            }
+            if args.release_manifest is not None
             else None
         ),
         "repositories": [{**asdict(row), "status": row.status} for row in repositories],

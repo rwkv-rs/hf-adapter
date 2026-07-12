@@ -4,6 +4,8 @@ import importlib.util
 from pathlib import Path
 import sys
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
@@ -68,3 +70,17 @@ def test_version_specific_release_script_names_are_removed():
     assert (scripts / "publish_hf_release.py").is_file()
     assert not (scripts / "prepare_hf_v090_release.py").exists()
     assert not (scripts / "publish_hf_v090_release.py").exists()
+
+
+def test_release_stage_requires_source_sha_to_match_checkout():
+    with pytest.raises(ValueError, match="does not equal checkout HEAD"):
+        MODULE.verify_reference_checkout(ROOT, "0" * 40)
+
+
+def test_weight_inventory_rejects_missing_lfs_metadata():
+    class Sibling:
+        rfilename = "model.safetensors"
+        lfs = {"size": 123, "sha256": None}
+
+    with pytest.raises(ValueError, match="LFS SHA256"):
+        MODULE.weight_rows([Sibling()])

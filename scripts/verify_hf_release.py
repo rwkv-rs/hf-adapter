@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
 import json
 import platform
 from pathlib import Path
@@ -30,6 +31,11 @@ def parse_args():
     parser.add_argument("--cache-dir", type=Path)
     parser.add_argument("--force-download", action="store_true")
     parser.add_argument(
+        "--require-package-free",
+        action="store_true",
+        help="fail if either rwkv7-hf or rwkv7-kernels is installed",
+    )
+    parser.add_argument(
         "--require-empty-cache",
         action="store_true",
         help="fail unless --cache-dir is absent or empty before the Hub download",
@@ -50,11 +56,24 @@ def prepare_cache_dir(cache_dir: Path | None, require_empty: bool) -> dict:
     return {"path": str(cache_dir), "was_empty": was_empty}
 
 
+def installed_rwkv_distributions() -> dict[str, str | None]:
+    result = {}
+    for name in ("rwkv7-hf", "rwkv7-kernels"):
+        try:
+            result[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            result[name] = None
+    return result
+
+
 def main():
     args = parse_args()
     from huggingface_hub import HfApi, hf_hub_download
 
     cache = prepare_cache_dir(args.cache_dir, args.require_empty_cache)
+    installed = installed_rwkv_distributions()
+    if args.require_package_free and any(installed.values()):
+        raise SystemExit(f"RWKV distributions are installed: {installed}")
     download_options = {
         "cache_dir": cache["path"],
         "force_download": args.force_download,
@@ -115,6 +134,11 @@ def main():
             "cache_was_empty": cache["was_empty"],
             "require_empty_cache": args.require_empty_cache,
             "force_download": args.force_download,
+        },
+        "package_free": {
+            "required": args.require_package_free,
+            "installed_distributions": installed,
+            "passed": not any(installed.values()),
         },
     }
 

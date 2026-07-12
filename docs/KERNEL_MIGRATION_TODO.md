@@ -1294,3 +1294,32 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   symlink, and HF tooling injected into the kernel sdist. The complete local
   suite passes `157 passed` with `133` expected TorchScript deprecation
   warnings. RTX 4080 remained untouched throughout.
+
+### 2026-08-28 — six-repository Hub transaction is cryptographically bound
+
+- Replaced the old claim-only Hub stage list with schema
+  `rwkv7-hub-release-stage-v1`. One manifest now requires all six repositories
+  exactly once and binds the tagged source commit, each Hub parent commit,
+  every staged README/config/reference byte, and every existing safetensors
+  shard's Hub LFS SHA256/size. Staging rejects canonical source files that
+  differ from the named Git `HEAD`.
+- `publish_hf_release.py` rehashes the local stage before any write, rechecks
+  parent and weight identities, never includes a weight in the commit, and
+  verifies the exact tag files and unchanged LFS identities after publication
+  or when resuming an already-published tag.
+- The post-release Hub audit now requires all six repositories and
+  `conversion_manifest.json`, proves the local source directory is the stated
+  Git commit, force-downloads the small files, compares the complete staged
+  file manifest, and rejects an incomplete weight baseline. The final
+  all-surfaces verifier requires this stage-manifest proof rather than
+  accepting canonical-code hashes alone.
+- Fresh-cache Hub smokes gained `--require-package-free`; final evidence must
+  show that neither `rwkv7-hf` nor `rwkv7-kernels` was installed while the
+  tagged remote model produced finite logits, `RWKV7Cache`, and cached
+  generation. This makes package-free Hub loading an explicit six-model gate.
+- A real read-only six-repository stage and publish dry run passed against the
+  frozen parents. A final-audit dry run failed exactly as expected before
+  release because main still contains the old code/tag state, while all 32
+  weight-shard identities remained equal to the frozen baseline. No Hub write
+  occurred. Targeted Ruff/compileall, `git diff --check`, and the complete
+  local suite pass `170 passed` with `133` expected warnings.

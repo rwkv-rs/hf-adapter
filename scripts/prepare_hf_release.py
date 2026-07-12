@@ -10,6 +10,8 @@ Publishing remains a separate, auditable Hub commit.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
+import hashlib
 import json
 import re
 import shutil
@@ -42,10 +44,54 @@ AUTO_MAP = {
 }
 
 
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def weight_rows(siblings) -> dict[str, dict[str, int | str | None]]:
+    rows = {}
+    for sibling in siblings or []:
+        name = str(sibling.rfilename)
+        if not name.endswith(".safetensors"):
+            continue
+        lfs = sibling.lfs
+        if isinstance(lfs, dict):
+            size = lfs.get("size")
+            digest = lfs.get("sha256")
+        else:
+            size = getattr(lfs, "size", None)
+            digest = getattr(lfs, "sha256", None)
+        rows[name] = {"size": size, "sha256": digest}
+    if not rows or any(
+        row["size"] is None or not row["sha256"] for row in rows.values()
+    ):
+        raise ValueError("Hub weights are missing complete LFS SHA256/size metadata")
+    return rows
+
+
 def git_sha(root: Path) -> str:
     return subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=root, text=True
     ).strip()
+
+
+def verify_reference_checkout(root: Path, source_sha: str) -> None:
+    """Bind staged source bytes to the named checkout commit."""
+
+    head = git_sha(root)
+    if source_sha != head or not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise ValueError(f"source SHA {source_sha!r} does not equal checkout HEAD {head}")
+    for name in REFERENCE_FILES:
+        disk = (root / "rwkv7_hf" / name).read_bytes()
+        committed = subprocess.check_output(
+            ["git", "show", f"{source_sha}:rwkv7_hf/{name}"], cwd=root
+        )
+        if disk != committed:
+            raise ValueError(f"reference source differs from {source_sha}: {name}")
 
 
 def size_label(repo_id: str) -> str:
@@ -206,6 +252,7 @@ def stage(
 ) -> dict:
     api = HfApi()
     info = api.model_info(repo_id, files_metadata=True)
+    weights = weight_rows(info.siblings)
     target = output / repo_id.rsplit("/", 1)[-1]
     target.mkdir(parents=True, exist_ok=True)
 
@@ -222,12 +269,15 @@ def stage(
     )
     for name in REFERENCE_FILES:
         shutil.copy2(source_root / "rwkv7_hf" / name, target / name)
+    files = ["README.md", "config.json", *REFERENCE_FILES]
     release = {
         "repo_id": repo_id,
         "parent_commit": info.sha,
         "source_sha": source_sha,
         "tag": tag,
-        "files": ["README.md", "config.json", *REFERENCE_FILES],
+        "files": files,
+        "file_sha256": {name: sha256(target / name) for name in files},
+        "weights": weights,
         "weights_unchanged": True,
     }
     (target / "release.json").write_text(
@@ -245,13 +295,30 @@ def main() -> None:
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     source_sha = args.source_sha or git_sha(root)
+    verify_reference_checkout(root, source_sha)
+    repositories = tuple(args.repo or REPOSITORIES)
+    if len(repositories) != len(set(repositories)) or set(repositories) != set(
+        REPOSITORIES
+    ):
+        raise SystemExit("a release stage must cover each of the six repositories once")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     rows = [
         stage(repo, args.output_dir, root, source_sha, args.tag)
-        for repo in (args.repo or REPOSITORIES)
+        for repo in repositories
     ]
     (args.output_dir / "manifest.json").write_text(
-        json.dumps(rows, indent=2) + "\n", encoding="utf-8"
+        json.dumps(
+            {
+                "schema": "rwkv7-hub-release-stage-v1",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "source_sha": source_sha,
+                "tag": args.tag,
+                "repositories": rows,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
     )
     print(json.dumps({"status": "staged", "repositories": len(rows)}))
 

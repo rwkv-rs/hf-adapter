@@ -83,6 +83,19 @@ def test_hub_audit_accepts_identical_code_weights_and_tag(tmp_path):
     assert not row.failures
 
 
+def test_release_manifest_requires_all_six_repositories(tmp_path):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        '{"schema":"rwkv7-hub-release-stage-v1","repositories":[]}'
+    )
+    try:
+        MODULE.load_release_manifest(manifest)
+    except ValueError as exc:
+        assert "six repositories" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("incomplete release manifest was accepted")
+
+
 def test_hub_audit_rejects_code_drift_forbidden_file_and_weight_change(tmp_path):
     source = tmp_path / "source"
     remote = tmp_path / "remote"

@@ -101,8 +101,15 @@ def validate_external_evidence(
     require_report(github, "rwkv7-github-release-audit-v1", "GitHub")
     if hub.get("required_tag") != tag or hub.get("revision") != "main":
         raise ValueError("Hub audit does not bind main to the release tag")
-    if hub.get("code_sha") != source_sha or not hub.get("weight_baseline"):
-        raise ValueError("Hub audit lacks source or weight-baseline provenance")
+    if (
+        hub.get("code_sha") != source_sha
+        or not hub.get("weight_baseline")
+        or not hub.get("release_manifest")
+        or (hub.get("source_checkout") or {}).get("commit") != source_sha
+    ):
+        raise ValueError(
+            "Hub audit lacks source, stage-manifest, or weight-baseline provenance"
+        )
 
     repositories = {str(row.get("repo")): row for row in hub.get("repositories", [])}
     if set(repositories) != HUB_REPOSITORIES:
@@ -114,8 +121,13 @@ def validate_external_evidence(
         if not re.fullmatch(r"[0-9a-f]{40}", resolved):
             raise ValueError(f"Hub repository revision is missing: {repo}")
         code = row.get("code_sha256") or {}
+        release_files = row.get("release_file_sha256") or {}
         if not code or not all(value.get("match") for value in code.values()):
             raise ValueError(f"Hub canonical code was not byte-verified: {repo}")
+        if not release_files or not all(
+            value.get("match") for value in release_files.values()
+        ):
+            raise ValueError(f"Hub staged release files were not byte-verified: {repo}")
 
     if pypi.get("harness_sha") != release.get("harness_sha"):
         raise ValueError("PyPI audit harness SHA differs from GPU release evidence")
@@ -164,6 +176,7 @@ def validate_external_evidence(
     for repo, smoke in smokes.items():
         row = repositories[repo]
         download = smoke.get("download") or {}
+        package_free = smoke.get("package_free") or {}
         if (
             smoke.get("status") != "passed"
             or smoke.get("model") != repo
@@ -176,6 +189,9 @@ def validate_external_evidence(
             or smoke.get("model_class") != "RWKV7ForCausalLM"
             or smoke.get("cache_class") != "RWKV7Cache"
             or not smoke.get("generated")
+            or package_free.get("required") is not True
+            or package_free.get("passed") is not True
+            or any((package_free.get("installed_distributions") or {}).values())
         ):
             raise ValueError(
                 f"fresh Hub redownload/load/cache/generation failed: {repo}"
