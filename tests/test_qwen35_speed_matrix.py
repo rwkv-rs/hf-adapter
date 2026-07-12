@@ -36,6 +36,7 @@ def row(
     prefill: float,
     decode: float,
     status: str = "pass",
+    quantization: str = "none",
 ) -> dict:
     return {
         "axis": "qwen35_cross_model_speed",
@@ -45,7 +46,7 @@ def row(
         "model_kind": "rwkv" if role == "candidate" else "qwen35",
         "status": status,
         "dtype": "fp16",
-        "quantization": "none",
+        "quantization": quantization,
         "prompt_tokens": prompt,
         "decode_tokens": 128,
         "batch_size": 1,
@@ -128,6 +129,29 @@ def test_comparator_reports_missing_and_slow_cells(tmp_path: Path) -> None:
     assert len(summary["missing"]["reference"]) == 1
     assert len(summary["red_cells"]) == 1
     assert summary["gates"]["overall_pass"] is False
+
+
+def test_comparator_supports_strict_nonnegative_quant_gate(tmp_path: Path) -> None:
+    rows = [
+        row("candidate", prompt=128, prefill=101.0, decode=202.0, quantization="bnb4"),
+        row("reference", prompt=128, prefill=100.0, decode=200.0, quantization="bnb4"),
+    ]
+    proc = run_compare(
+        tmp_path,
+        rows,
+        "--expected-cells",
+        "1",
+        "--min-prefill-speedup",
+        "1.05",
+        "--min-decode-speedup",
+        "1.05",
+        "--min-quant-prefill-speedup",
+        "1.0",
+        "--min-quant-decode-speedup",
+        "1.0",
+        "--fail-on-gate",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
 class FakeTokenizer:
@@ -258,6 +282,8 @@ def test_hardware_entrypoints_are_fail_closed() -> None:
     assert "--expected-cells 72" in pair_script
     assert "--min-prefill-speedup 1.05" in pair_script
     assert "--min-decode-speedup 1.05" in pair_script
+    assert "--min-quant-prefill-speedup 1.00" in pair_script
+    assert "--min-quant-decode-speedup 1.00" in pair_script
     assert "--fail-on-gate" in pair_script
     assert 'QWEN_BACKEND="${QWEN_BACKEND:-auto}"' in pair_script
     assert '--qwen-backend "${QWEN_BACKEND}"' in pair_script
@@ -270,6 +296,8 @@ def main() -> int:
         test_comparator_passes_complete_matrix(Path(td))
     with tempfile.TemporaryDirectory() as td:
         test_comparator_reports_missing_and_slow_cells(Path(td))
+    with tempfile.TemporaryDirectory() as td:
+        test_comparator_supports_strict_nonnegative_quant_gate(Path(td))
     test_worker_helpers_build_exact_shape_and_metadata()
     test_worker_helpers_validate_and_emit_failure()
     test_orchestrator_expands_432_raw_rows()

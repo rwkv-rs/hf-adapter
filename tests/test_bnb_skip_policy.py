@@ -5,7 +5,7 @@ from rwkv7_hf import RWKV7Config, RWKV7ForCausalLM
 
 
 def main() -> int:
-    cfg = RWKV7Config(num_hidden_layers=2)
+    cfg = RWKV7Config(num_hidden_layers=8)
 
     memory = RWKV7ForCausalLM.rwkv7_bnb_skip_modules("memory", cfg)
     assert "lm_head" in memory
@@ -24,7 +24,9 @@ def main() -> int:
     assert "model.layers.0.attn.r_proj" in prefill_hot
     assert "model.layers.0.ffn.key" in prefill_hot
     assert "model.layers.1.ffn.key" in prefill_hot
-    assert "model.layers.0.ffn.value" not in prefill_hot
+    assert "model.layers.0.ffn.value" in prefill_hot
+    assert "model.layers.1.ffn.value" in prefill_hot
+    assert "model.layers.7.ffn.value" not in prefill_hot
 
     dense = RWKV7ForCausalLM.rwkv7_bnb_skip_modules("dense", cfg)
     assert r".*ffn\.(key|value)" in dense

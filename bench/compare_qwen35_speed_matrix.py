@@ -57,6 +57,8 @@ def compare(
     expected_cells: int,
     min_prefill_speedup: float,
     min_decode_speedup: float,
+    min_quant_prefill_speedup: float | None = None,
+    min_quant_decode_speedup: float | None = None,
 ) -> dict[str, Any]:
     indexed: dict[str, dict[tuple[Any, ...], dict[str, Any]]] = {"candidate": {}, "reference": {}}
     for row in rows:
@@ -84,12 +86,23 @@ def compare(
             prefill_ratios.append(prefill_speedup)
         if decode_speedup is not None:
             decode_ratios.append(decode_speedup)
+        quantized = key_dict(key).get("quantization") != "none"
+        prefill_gate = (
+            min_quant_prefill_speedup
+            if quantized and min_quant_prefill_speedup is not None
+            else min_prefill_speedup
+        )
+        decode_gate = (
+            min_quant_decode_speedup
+            if quantized and min_quant_decode_speedup is not None
+            else min_decode_speedup
+        )
         passed = bool(
             both_pass
             and prefill_speedup is not None
             and decode_speedup is not None
-            and prefill_speedup >= min_prefill_speedup
-            and decode_speedup >= min_decode_speedup
+            and prefill_speedup >= prefill_gate
+            and decode_speedup >= decode_gate
         )
         cell = {
             **key_dict(key),
@@ -125,6 +138,8 @@ def compare(
         "thresholds": {
             "min_prefill_speedup": min_prefill_speedup,
             "min_decode_speedup": min_decode_speedup,
+            "min_quant_prefill_speedup": min_quant_prefill_speedup,
+            "min_quant_decode_speedup": min_quant_decode_speedup,
         },
         "speed": {
             "min_prefill_speedup": min(prefill_ratios) if prefill_ratios else None,
@@ -208,6 +223,8 @@ def main() -> int:
     ap.add_argument("--expected-cells", type=int, default=216)
     ap.add_argument("--min-prefill-speedup", type=float, default=1.05)
     ap.add_argument("--min-decode-speedup", type=float, default=1.05)
+    ap.add_argument("--min-quant-prefill-speedup", type=float, default=None)
+    ap.add_argument("--min-quant-decode-speedup", type=float, default=None)
     ap.add_argument("--json-output", default="")
     ap.add_argument("--markdown-output", default="")
     ap.add_argument("--fail-on-gate", action="store_true")
@@ -218,6 +235,8 @@ def main() -> int:
         expected_cells=args.expected_cells,
         min_prefill_speedup=args.min_prefill_speedup,
         min_decode_speedup=args.min_decode_speedup,
+        min_quant_prefill_speedup=args.min_quant_prefill_speedup,
+        min_quant_decode_speedup=args.min_quant_decode_speedup,
     )
     markdown = render_markdown(summary)
     if args.json_output:

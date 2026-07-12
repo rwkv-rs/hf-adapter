@@ -1465,8 +1465,9 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     # - decode_hot: keep attention r/k/v/o projections dense; validation smoke
     #   showed this can improve W4 cached decode while still keeping a lower
     #   footprint than fp16. FFN key/value remain quantized.
-    # - prefill_hot: additionally keep the FFN up projection dense. This uses
-    #   more memory than decode_hot but retains a material reduction vs fp16.
+    # - prefill_hot: additionally keep every FFN up projection and seven of
+    #   every eight FFN down projections dense. This uses more memory than
+    #   decode_hot but retains a measurable reduction vs fp16.
     # - dense: keep all large Linear modules dense (diagnostic upper bound).
     _rwkv7_bnb_policy_extra_skips = {
         "memory": [],
@@ -1490,6 +1491,8 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                     skips.append(f"model.layers.{layer_idx}.attn.{proj_name}")
             if policy == "prefill_hot":
                 skips.append(f"model.layers.{layer_idx}.ffn.key")
+                if layer_idx % 8 != 7:
+                    skips.append(f"model.layers.{layer_idx}.ffn.value")
             if policy == "dense":
                 for ffn_name in ("key", "value"):
                     skips.append(f"model.layers.{layer_idx}.ffn.{ffn_name}")
