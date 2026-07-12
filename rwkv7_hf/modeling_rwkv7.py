@@ -1524,6 +1524,15 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                     bnb_kwargs[key] = kwargs.pop(key)
             quantization_config = BitsAndBytesConfig(**bnb_kwargs)
             kwargs["quantization_config"] = quantization_config
+        # The RTX 3090 prefill-hot route is needed for W4's small-matrix
+        # overhead. W8 already clears the same Qwen speed gate with the more
+        # memory-efficient decode-hot route, so retain that stronger footprint.
+        if (
+            rwkv7_bnb_skip_policy == "prefill_hot"
+            and quantization_config is not None
+            and bool(getattr(quantization_config, "load_in_8bit", False))
+        ):
+            rwkv7_bnb_skip_policy = "decode_hot"
         if quantization_config is not None and hasattr(quantization_config, "llm_int8_skip_modules"):
             config_for_skip = kwargs.get("config")
             if config_for_skip is None:
