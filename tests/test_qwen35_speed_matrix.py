@@ -143,6 +143,7 @@ def worker_args(**updates) -> Namespace:
         "decode_tokens": 4,
         "warmup": 1,
         "runs": 1,
+        "rwkv_code_source": "repo",
     }
     values.update(updates)
     return Namespace(**values)
