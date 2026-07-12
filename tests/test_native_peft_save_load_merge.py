@@ -131,6 +131,23 @@ def logits_for(model, tokenizer, text: str) -> torch.Tensor:
     return logits
 
 
+def generate_tail(model, tokenizer, text: str, tokens: int = 2) -> list[int]:
+    model.eval()
+    dev = first_param_device(model)
+    enc = tokenizer(text, return_tensors="pt", add_special_tokens=False)
+    enc = {k: v.to(dev) for k, v in enc.items()}
+    with torch.no_grad():
+        generated = model.generate(
+            **enc,
+            max_new_tokens=tokens,
+            do_sample=False,
+            use_cache=True,
+            pad_token_id=tokenizer.pad_token_id or 0,
+            eos_token_id=None,
+        )
+    return generated[0, -tokens:].detach().cpu().tolist()
+
+
 def train_adapter_step(model, tokenizer, text: str, lr: float, steps: int) -> float:
     model.train()
     dev = first_param_device(model)
@@ -164,6 +181,7 @@ def main() -> int:
     dtype = torch.float32 if args.dtype == "fp32" else torch.float16
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     base = load_native(args.model, dtype, args.device)
+    base_logits = logits_for(base, tok, "User: Hello.\n\nAssistant:")
     model = get_peft_model(base, lora_config())
     parameter_device = str(first_param_device(model))
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -178,6 +196,8 @@ def main() -> int:
     )
     assert math.isfinite(loss), loss
     ref_logits = logits_for(model, tok, "User: Hello.\n\nAssistant:")
+    trained_tail = generate_tail(model, tok, "User: Hello.\n\nAssistant:")
+    trained_vs_base_diff = float((ref_logits - base_logits).abs().max().item())
 
     with tempfile.TemporaryDirectory(prefix="native_peft_adapter_") as adapter_dir:
         model.save_pretrained(adapter_dir)
@@ -192,6 +212,18 @@ def main() -> int:
         reload_logits = logits_for(reloaded, tok, "User: Hello.\n\nAssistant:")
         reload_diff = float((ref_logits - reload_logits).abs().max().item())
 
+        # Exercise reversible in-place merge before the destructive
+        # merge_and_unload path. Both directions must preserve the trained
+        # adapter function within the declared tolerance.
+        reloaded.merge_adapter()
+        merged_inplace_logits = logits_for(reloaded, tok, "User: Hello.\n\nAssistant:")
+        merged_inplace_diff = float((ref_logits - merged_inplace_logits).abs().max().item())
+        reloaded.unmerge_adapter()
+        unmerged_logits = logits_for(reloaded, tok, "User: Hello.\n\nAssistant:")
+        unmerge_diff = float((ref_logits - unmerged_logits).abs().max().item())
+
+        reloaded_tail = generate_tail(reloaded, tok, "User: Hello.\n\nAssistant:")
+
         merged = reloaded.merge_and_unload()
         merge_logits = logits_for(merged, tok, "User: Hello.\n\nAssistant:")
         merge_diff = float((ref_logits - merge_logits).abs().max().item())
@@ -199,24 +231,22 @@ def main() -> int:
         del fresh, reloaded, merged
         release_cuda()
 
-        # Exercise GenerationMixin after reload before declaring the adapter usable.
+        # Exercise GenerationMixin in a second fresh process-style load before
+        # declaring the serialized adapter usable.
         reloaded_for_generate = PeftModel.from_pretrained(
             load_native(args.model, dtype, args.device), adapter_dir
         ).eval()
-        dev = first_param_device(reloaded_for_generate)
-        enc = tok("User: Hello.\n\nAssistant:", return_tensors="pt", add_special_tokens=False)
-        enc = {k: v.to(dev) for k, v in enc.items()}
-        with torch.no_grad():
-            generated = reloaded_for_generate.generate(
-                **enc,
-                max_new_tokens=2,
-                do_sample=False,
-                use_cache=True,
-                pad_token_id=tok.pad_token_id or 0,
-            )
-        generated_tail = generated[0, -2:].detach().cpu().tolist()
+        generated_tail = generate_tail(reloaded_for_generate, tok, "User: Hello.\n\nAssistant:")
 
-    ok = reload_diff <= args.max_logit_diff and merge_diff <= args.max_logit_diff
+    greedy_match = trained_tail == reloaded_tail == generated_tail
+    ok = (
+        trained_vs_base_diff > 0.0
+        and reload_diff <= args.max_logit_diff
+        and merged_inplace_diff <= args.max_logit_diff
+        and unmerge_diff <= args.max_logit_diff
+        and merge_diff <= args.max_logit_diff
+        and greedy_match
+    )
     row = {
         "axis": "adapter_roundtrip",
         "status": "pass" if ok else "fail",
@@ -230,11 +260,17 @@ def main() -> int:
         "learning_rate": args.lr,
         "train_loss": loss,
         "trainable_parameters": trainable,
+        "trained_vs_base_logits_max_abs": trained_vs_base_diff,
         "reload_logits_max_abs": reload_diff,
+        "merge_inplace_logits_max_abs": merged_inplace_diff,
+        "unmerge_logits_max_abs": unmerge_diff,
         "merge_logits_max_abs": merge_diff,
         "max_logit_diff": args.max_logit_diff,
+        "trained_tail": trained_tail,
+        "reloaded_tail": reloaded_tail,
         "generated_tail": generated_tail,
         "generated_tokens": len(generated_tail),
+        "greedy_token_match": greedy_match,
         **runtime_metadata(parameter_device),
     }
     if args.results:
