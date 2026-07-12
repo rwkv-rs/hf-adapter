@@ -10,6 +10,7 @@ import pytest
 from conftest import write_valid_hf_wheel, write_valid_kernel_wheel, write_valid_sdist
 from evaluation.build_backend_v2_compact_bundle import build_bundle
 from scripts.build_release_provenance import DEVICE_REPORT, REQUIRED_GATES, build
+from scripts.build_release_provenance import DEVICE_RUN_REPORT
 from scripts.verify_release_assets import (
     DEVICES,
     FLA_COMMIT,
@@ -21,6 +22,11 @@ from scripts.verify_release_assets import (
 VERSION = "1.0.0"
 SOURCE_SHA = "a" * 40
 HARNESS_SHA = "b" * 40
+DEVICE_TIMES = {
+    "rtx-4080": ("2026-08-28T00:00:00+00:00", "2026-08-28T01:00:00+00:00"),
+    "tesla-v100": ("2026-08-28T01:00:00+00:00", "2026-08-28T02:00:00+00:00"),
+    "rtx-4090": ("2026-08-28T02:00:00+00:00", "2026-08-28T03:00:00+00:00"),
+}
 
 
 def create_artifacts(root: Path) -> dict[str, str]:
@@ -73,6 +79,31 @@ def device_report(device: str, identities: dict[str, str]) -> dict:
     }
 
 
+def write_device_run(source: Path, device: str, report_path: Path) -> None:
+    started_at, completed_at = DEVICE_TIMES[device]
+    report = json.loads(report_path.read_text())
+    (source / DEVICE_RUN_REPORT).write_text(
+        json.dumps(
+            {
+                "schema": "rwkv7-device-acceptance-run-v1",
+                "device": device,
+                "status": "passed",
+                "source_sha": report["source_sha"],
+                "harness_sha": report["harness_sha"],
+                "hf_wheel_sha256": report["hf_wheel_sha256"],
+                "kernel_wheel_sha256": report["kernel_wheel_sha256"],
+                "started_at": started_at,
+                "completed_at": completed_at,
+                "release_validation_sha256": hashlib.sha256(
+                    report_path.read_bytes()
+                ).hexdigest(),
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def compact_args(source: Path, output: Path, device: str) -> Namespace:
     return Namespace(
         input_dir=source,
@@ -91,9 +122,11 @@ def setup_release(tmp_path: Path) -> tuple[Namespace, dict[str, Path], dict[str,
     for device in sorted(DEVICES):
         source = tmp_path / f"raw-{device}"
         source.mkdir()
-        (source / DEVICE_REPORT).write_text(
+        report_path = source / DEVICE_REPORT
+        report_path.write_text(
             json.dumps(device_report(device, identities)) + "\n", encoding="utf-8"
         )
+        write_device_run(source, device, report_path)
         bundles[device] = build_bundle(
             compact_args(source, tmp_path / f"bundle-{device}", device)
         )
@@ -140,6 +173,7 @@ def rewrite_bundle(
     source = tmp_path / f"rewritten-{device}"
     source.mkdir()
     (source / DEVICE_REPORT).write_text(json.dumps(report) + "\n")
+    write_device_run(source, device, source / DEVICE_REPORT)
     replacement = tmp_path / f"replacement-{device}"
     return build_bundle(compact_args(source, replacement, device))
 
@@ -205,4 +239,21 @@ def test_builder_rejects_requested_selector_as_actual_route(tmp_path: Path):
     )
     replace_arg(args, device, replacement)
     with pytest.raises(ValueError, match="requested selector"):
+        build(args)
+
+
+def test_builder_rejects_overlapping_device_acceptance(tmp_path: Path):
+    args, bundles, _ = setup_release(tmp_path)
+    device = "tesla-v100"
+    source = tmp_path / "overlap-v100"
+    source.mkdir()
+    report_path = source / DEVICE_REPORT
+    report_path.write_bytes((bundles[device] / DEVICE_REPORT).read_bytes())
+    write_device_run(source, device, report_path)
+    run = json.loads((source / DEVICE_RUN_REPORT).read_text())
+    run["started_at"] = "2026-08-28T00:30:00+00:00"
+    (source / DEVICE_RUN_REPORT).write_text(json.dumps(run) + "\n")
+    replacement = build_bundle(compact_args(source, tmp_path / "overlap-bundle", device))
+    replace_arg(args, device, replacement)
+    with pytest.raises(ValueError, match="overlap or violate required order"):
         build(args)

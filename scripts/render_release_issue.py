@@ -174,7 +174,16 @@ def render_issue(
         f"- `{hf_name}` SHA256: `{provenance['artifacts'][hf_name]['sha256']}`",
         f"- `{kernel_name}` SHA256: `{provenance['artifacts'][kernel_name]['sha256']}`",
         "",
-        "The same wheel pair was used on RTX 4080, V100, and RTX 4090.",
+        "The same wheel pair was used sequentially, with non-overlapping "
+        "acceptance runs in the fixed RTX 4080 -> V100 -> RTX 4090 order.",
+        "",
+        "| device | acceptance started (UTC) | acceptance completed (UTC) |",
+        "|---|---|---|",
+        *[
+            f"| {device} | {devices[device]['acceptance_started_at']} | "
+            f"{devices[device]['acceptance_completed_at']} |"
+            for device in DEVICES
+        ],
         "",
         "## Gate matrix",
         "",

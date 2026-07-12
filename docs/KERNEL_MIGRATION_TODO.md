@@ -283,6 +283,22 @@ Total: `3 lanes × 3 models × 8 tasks × 2 batches = 144` units.
   competing process was started. Production `auto`, stable wheels, V100 and
   RTX 4090 remain ordered behind the 4080 diagnostic gate.
 
+### 2026-08-28 — immutable-wheel device order is now evidence, not convention
+
+- Added `evaluation/record_device_acceptance.py`. A final device run writes an
+  immutable-wheel/source/harness start marker before its first GPU command and
+  can transition to `passed` only by hashing a matching passed
+  `release-validation.json` after the last gate.
+- Compact bundles now retain that marker. Final provenance rejects a missing
+  marker, different wheel/source/harness/device identity, invalid or naive
+  timestamp, completion before start, overlapping runs, or any order other
+  than RTX 4080 -> V100 -> RTX 4090.
+- This applies to the future final stable `1.0.0` wheel pair. The already
+  running recurrent diagnostic is deliberately not relabeled as final release
+  evidence and was not stopped or restarted.
+- Direct-entrypoint, timestamp/order failure tests and the full local suite
+  pass: `163 passed`, with `133` expected TorchScript deprecation warnings.
+
 ### 2026-08-27 — backend-v2 training boundary wired locally
 
 - Added `nvidia/training_runtime.py`, which directly executes the clean

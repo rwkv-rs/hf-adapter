@@ -64,6 +64,8 @@ REQUIRED_ISSUE_TERMS = (
     "clean-boundary",
     "byte-identical",
     "v0.10",
+    "sequentially",
+    "non-overlapping",
 )
 REQUIRED_SOURCE_PATHS = (
     ".github/workflows/publish.yml",

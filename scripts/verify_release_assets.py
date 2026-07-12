@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 from email.parser import BytesParser
 from email.policy import default as email_policy
 import hashlib
@@ -38,6 +39,7 @@ SELECTOR_ONLY_ROUTES = {
     "reference",
     "triton",
 }
+DEVICE_ORDER = ("rtx-4080", "tesla-v100", "rtx-4090")
 
 
 def arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -55,6 +57,16 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def aware_datetime(value: Any, *, label: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError as exc:
+        raise ValueError(f"invalid {label} timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{label} timestamp is not timezone-aware")
+    return parsed
 
 
 def expected_artifacts(version: str) -> tuple[str, ...]:
@@ -263,6 +275,14 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
         bundle_sha = str(row.get("compact_bundle_manifest_sha256", ""))
         if not re.fullmatch(r"[0-9a-f]{64}", bundle_sha):
             raise ValueError(f"compact evidence identity is missing: {device}")
+        started_at = aware_datetime(
+            row.get("acceptance_started_at"), label=f"{device} start"
+        )
+        completed_at = aware_datetime(
+            row.get("acceptance_completed_at"), label=f"{device} completion"
+        )
+        if completed_at <= started_at:
+            raise ValueError(f"device acceptance completion precedes start: {device}")
         routes = row.get("actual_routes")
         if not isinstance(routes, dict) or not REQUIRED_ROUTE_PHASES <= set(routes):
             raise ValueError(f"actual route evidence is missing: {device}")
@@ -277,6 +297,20 @@ def verify(args: argparse.Namespace) -> dict[str, Any]:
                 or any(value.lower() in SELECTOR_ONLY_ROUTES for value in values)
             ):
                 raise ValueError(f"actual {phase} route evidence is invalid: {device}")
+    for previous, following in zip(DEVICE_ORDER, DEVICE_ORDER[1:]):
+        previous_completed = aware_datetime(
+            devices[previous]["acceptance_completed_at"],
+            label=f"{previous} completion",
+        )
+        following_started = aware_datetime(
+            devices[following]["acceptance_started_at"],
+            label=f"{following} start",
+        )
+        if following_started < previous_completed:
+            raise ValueError(
+                "device acceptance runs overlap or violate required order: "
+                f"{previous} -> {following}"
+            )
     return {
         "status": "passed",
         "version": args.version,

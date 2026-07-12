@@ -71,6 +71,16 @@ def write_release(tmp_path: Path, *, mismatch_device: str | None = None) -> Name
             "compact_bundle_manifest_sha256": hashlib.sha256(
                 device.encode()
             ).hexdigest(),
+            "acceptance_started_at": {
+                "rtx-4080": "2026-08-28T00:00:00+00:00",
+                "tesla-v100": "2026-08-28T01:00:00+00:00",
+                "rtx-4090": "2026-08-28T02:00:00+00:00",
+            }[device],
+            "acceptance_completed_at": {
+                "rtx-4080": "2026-08-28T01:00:00+00:00",
+                "tesla-v100": "2026-08-28T02:00:00+00:00",
+                "rtx-4090": "2026-08-28T03:00:00+00:00",
+            }[device],
             "actual_routes": {
                 "prefill": ["native-self-chunk-prefill-v2"],
                 "decode": ["native-fused-token-decode-v2"],
@@ -114,6 +124,21 @@ def test_release_asset_verifier_accepts_exact_three_device_artifacts(tmp_path: P
 def test_release_asset_verifier_rejects_a_device_using_another_wheel(tmp_path: Path):
     args = write_release(tmp_path, mismatch_device="rtx-4090")
     with pytest.raises(ValueError, match="kernel wheel mismatch"):
+        verify(args)
+
+
+def test_release_asset_verifier_rejects_overlapping_device_order(tmp_path: Path):
+    args = write_release(tmp_path)
+    path = tmp_path / "release-provenance.json"
+    provenance = json.loads(path.read_text())
+    provenance["validation"]["devices"]["tesla-v100"][
+        "acceptance_started_at"
+    ] = "2026-08-28T00:30:00+00:00"
+    path.write_text(json.dumps(provenance) + "\n")
+    sums = (tmp_path / "SHA256SUMS").read_text().splitlines()
+    sums[-1] = f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}"
+    (tmp_path / "SHA256SUMS").write_text("\n".join(sums) + "\n")
+    with pytest.raises(ValueError, match="overlap or violate required order"):
         verify(args)
 
 

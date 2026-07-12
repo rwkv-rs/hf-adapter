@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
@@ -25,6 +26,7 @@ from scripts.verify_release_assets import (  # noqa: E402
 
 
 DEVICE_REPORT = "release-validation.json"
+DEVICE_RUN_REPORT = "device-acceptance.json"
 REPORT_SCHEMA = "rwkv7-device-release-validation-v1"
 PROVENANCE_SCHEMA = "rwkv7-release-provenance-v1"
 REQUIRED_GATES = (
@@ -117,6 +119,16 @@ def route_values(value: Any) -> list[str]:
     return values
 
 
+def aware_datetime(value: Any, *, label: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError as exc:
+        raise ValueError(f"invalid {label} timestamp") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{label} timestamp is not timezone-aware")
+    return parsed
+
+
 def read_device_report(
     *,
     device: str,
@@ -170,6 +182,30 @@ def read_device_report(
             raise ValueError(f"actual {phase} route evidence is missing: {device}")
         route_values(routes[phase])
 
+    run_path = bundle / DEVICE_RUN_REPORT
+    if not run_path.is_file() or run_path.is_symlink():
+        raise ValueError(f"compact evidence is missing {DEVICE_RUN_REPORT}: {device}")
+    run = json.loads(run_path.read_text(encoding="utf-8"))
+    if (
+        run.get("schema") != "rwkv7-device-acceptance-run-v1"
+        or run.get("status") != "passed"
+        or run.get("device") != device
+    ):
+        raise ValueError(f"device acceptance run did not pass: {device}")
+    for field, expected in (
+        ("source_sha", source_sha),
+        ("harness_sha", harness_sha),
+        ("hf_wheel_sha256", hf_wheel_sha256),
+        ("kernel_wheel_sha256", kernel_wheel_sha256),
+        ("release_validation_sha256", sha256_file(report_path)),
+    ):
+        if run.get(field) != expected:
+            raise ValueError(f"device acceptance run identity mismatch: {device}/{field}")
+    started_at = aware_datetime(run.get("started_at"), label=f"{device} start")
+    completed_at = aware_datetime(run.get("completed_at"), label=f"{device} completion")
+    if completed_at <= started_at:
+        raise ValueError(f"device acceptance completion precedes start: {device}")
+
     manifest_sha = sha256_file(bundle / "MANIFEST.sha256")
     return {
         "status": "passed",
@@ -180,6 +216,8 @@ def read_device_report(
         "lm_eval_status": "passed",
         **{f"{gate}_status": "passed" for gate in REQUIRED_GATES},
         "compact_bundle_manifest_sha256": manifest_sha,
+        "acceptance_started_at": started_at.isoformat(),
+        "acceptance_completed_at": completed_at.isoformat(),
         "actual_routes": routes,
     }
 
@@ -221,6 +259,21 @@ def build(args: argparse.Namespace) -> dict[str, Any]:
             parse_device_evidence(args.device_evidence).items()
         )
     }
+    ordered = ("rtx-4080", "tesla-v100", "rtx-4090")
+    for previous, following in zip(ordered, ordered[1:]):
+        previous_completed = aware_datetime(
+            devices[previous]["acceptance_completed_at"],
+            label=f"{previous} completion",
+        )
+        following_started = aware_datetime(
+            devices[following]["acceptance_started_at"],
+            label=f"{following} start",
+        )
+        if following_started < previous_completed:
+            raise ValueError(
+                "device acceptance runs overlap or violate required order: "
+                f"{previous} -> {following}"
+            )
     provenance = {
         "schema": PROVENANCE_SCHEMA,
         "version": args.version,

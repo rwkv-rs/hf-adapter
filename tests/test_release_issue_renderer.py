@@ -51,6 +51,11 @@ def fixtures():
             "quantization": ["native-w8-mm8-v1"],
         },
     }
+    acceptance_times = {
+        "rtx-4080": ("2026-08-28T00:00:00+00:00", "2026-08-28T01:00:00+00:00"),
+        "tesla-v100": ("2026-08-28T01:00:00+00:00", "2026-08-28T02:00:00+00:00"),
+        "rtx-4090": ("2026-08-28T02:00:00+00:00", "2026-08-28T03:00:00+00:00"),
+    }
     provenance = {
         "version": version,
         "harness_sha": "b" * 40,
@@ -60,7 +65,14 @@ def fixtures():
         },
         "validation": {
             "status": "passed",
-            "devices": {device: dict(device_row) for device in MODULE.DEVICES},
+            "devices": {
+                device: {
+                    **device_row,
+                    "acceptance_started_at": acceptance_times[device][0],
+                    "acceptance_completed_at": acceptance_times[device][1],
+                }
+                for device in MODULE.DEVICES
+            },
         },
     }
     lane = {
@@ -160,6 +172,7 @@ def test_release_issue_is_rendered_from_complete_speed_and_eval_matrices():
     assert "dense decode" in body and "DPLR/self-chunk" in body
     assert "SM70, Ada and Blackwell" in body
     assert "source scope" in body and "all 153 files" in body
+    assert "sequentially" in body and "non-overlapping" in body
     normalized = body.lower().replace("lm-eval", "lm_eval")
     assert not [term for term in AUDIT.REQUIRED_ISSUE_TERMS if term not in normalized]
     assert len(body.encode()) < 65_000

@@ -107,7 +107,17 @@ Generate the final provenance from the three compact bundles rather than
 writing it by hand:
 
 ```bash
-# Run once per device before compacting the raw result directory.
+# Start this marker before the first GPU command on each device. Finish the
+# complete RTX 4080 run before starting V100, and finish V100 before RTX 4090.
+python evaluation/record_device_acceptance.py start \
+  --device rtx-4080 \
+  --source-sha "$FINAL_SOURCE_SHA" \
+  --harness-sha "$FINAL_HARNESS_SHA" \
+  --hf-wheel /artifacts/rwkv7_hf-1.0.0-py3-none-any.whl \
+  --kernel-wheel /artifacts/rwkv7_kernels-1.0.0-py3-none-any.whl \
+  --output /results/4080/device-acceptance.json
+
+# Run once per device after all validators have completed.
 python evaluation/build_backend_v2_device_validation.py \
   --device rtx-4080 \
   --source-sha "$FINAL_SOURCE_SHA" \
@@ -123,6 +133,10 @@ python evaluation/build_backend_v2_device_validation.py \
   --finetune-report /results/4080/finetune/validation.json \
   --lm-eval-report /results/4080/lm-eval/validation-three-way.json \
   --output /results/4080/release-validation.json
+
+python evaluation/record_device_acceptance.py finish \
+  --run-report /results/4080/device-acceptance.json \
+  --release-validation /results/4080/release-validation.json
 
 python evaluation/build_backend_v2_compact_bundle.py \
   --input-dir /results/4080 \
@@ -147,12 +161,14 @@ python scripts/verify_release_assets.py \
   --require-validation-passed
 ```
 
-Each compact bundle must contain a manifest-covered
-`release-validation.json`. The generator rejects a missing gate, selector-only
-route name, invalid compact manifest, different wheel byte hash, different
+Each compact bundle must contain manifest-covered `release-validation.json`
+and `device-acceptance.json` files. The generator cryptographically binds the
+run marker to the device summary and rejects overlapping or out-of-order
+RTX 4080 -> V100 -> RTX 4090 lifetimes, a missing gate, selector-only route
+name, invalid compact manifest, different wheel byte hash, different
 harness/source revision, or an FLA revision other than the pinned commit. It
-then deterministically writes `release-provenance.json` and `SHA256SUMS` for the
-four already-built archives; it never builds or alters those archives.
+then deterministically writes `release-provenance.json` and `SHA256SUMS` for
+the four already-built archives; it never builds or alters those archives.
 `build_backend_v2_device_validation.py` creates that device summary directly
 from the individual validator outputs. It checks the report schemas, exact
 wheel bytes, shared harness, pinned FLA revision, 144-unit result, actual
