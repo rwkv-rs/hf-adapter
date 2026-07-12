@@ -27,6 +27,7 @@ from rwkv7_hf.native_quant_mm4 import (
     mm4_gemv_triton,
     mm4_batched_gemv_triton,
     mm4_batched_dot_triton,
+    mm4_batched_dot_enabled,
     mm4_matmul_triton,
     mm4_gemv_available,
     quantize_model_mm4,
@@ -78,7 +79,7 @@ def main() -> int:
 
         # Cover both batched launch families and the production dispatcher.
         batched_cases = [(2, mm4_batched_gemv_triton)]
-        if torch.cuda.get_device_capability(x1.device)[0] >= 12:
+        if mm4_batched_dot_enabled(x1.device):
             batched_cases.append((8, mm4_batched_dot_triton))
         for batch, kernel in batched_cases:
             xb = torch.randn(batch, w.shape[1], dtype=w.dtype, device=w.device)

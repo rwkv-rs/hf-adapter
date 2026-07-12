@@ -244,8 +244,8 @@ ADAPTATION_RULES: dict[str, GPUAdaptationRule] = {
     "ampere": GPUAdaptationRule(
         family="ampere",
         cards=("A100", "A800", "RTX A6000", "A10", "RTX 30-series"),
-        status="A100/A800/RTX A6000 validation rows exist; keep conservative Ampere defaults",
-        default_stance="stable output fusions; tune larger batch and training paths per card",
+        status="A100/A800/RTX A6000 rows exist; RTX 3090 native-prefill graph and quant-policy rows exist",
+        default_stance="stable family defaults with exact-card RTX 3090 prefill and decode-hot quant routing",
         default_on=("fast_cache", "fused_recurrent_output", "fused_output"),
         default_off=("fused_prefill_scan", "fused_output_project", "projection/LoRA fusions"),
         required_functional=COMMON_FUNCTIONAL_SMOKES
@@ -472,13 +472,23 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             notes="V100 production path: four-shape prefill graph cache, fused shift mix, tuned WAVG/WAGV, sparse FFN, shape-routed sm70 linear/RKV, output/recurrent-output, and decode norm/mix are default; full projection/output-project remain opt-in",
         )
     if family in {"turing", "ampere"}:
+        is_3090 = family == "ampere" and "3090" in profile.name.lower()
         return KernelPolicy(
             profile=profile,
+            fast_prefill=is_3090,
+            bnb_skip_policy="decode_hot" if is_3090 else "memory",
             fused_recurrent_output=True,
             fused_output=True,
-            fused_prefill_scan=False,
+            fused_prefill_scan=is_3090,
+            prefill_graph=is_3090,
+            prefill_graph_cache_size=4 if is_3090 else 2,
             output_project_block_m=16,
-            notes="CUDA tensor-core generation: use stable output fusions; require local sweep before projection/LoRA defaults",
+            notes=(
+                "RTX 3090: measured native fused-scan prefill graphs and decode-hot bnb routing; "
+                "other CUDA tensor-core cards retain stable output fusions pending a local sweep"
+                if is_3090
+                else "CUDA tensor-core generation: use stable output fusions; require local sweep before projection/LoRA defaults"
+            ),
         )
     if family == "ada":
         is_4090 = "4090" in profile.name.lower()
