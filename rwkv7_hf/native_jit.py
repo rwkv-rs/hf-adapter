@@ -22,6 +22,15 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_relu_square = None  # type: ignore[assignment]
         fused_relu_square_available = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - optional sequence FFN tensor-core path
+    from .fused_ffn import fused_sequence_ffn, fused_sequence_ffn_available
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from fused_ffn import fused_sequence_ffn, fused_sequence_ffn_available
+    except Exception:
+        fused_sequence_ffn = None  # type: ignore[assignment]
+        fused_sequence_ffn_available = None  # type: ignore[assignment]
+
 
 def _linear_module(module, x: torch.Tensor) -> torch.Tensor:
     """Linear call that also supports native MM8/MM4Linear lm_head modules."""
@@ -247,6 +256,15 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_prefill_state_prep = None  # type: ignore[assignment]
         fused_prefill_state_prep_available = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - vendored FLA-independent chunk forward
+    from .self_chunk_rwkv7 import self_chunk_rwkv7, self_chunk_rwkv7_available
+except Exception:  # pragma: no cover
+    try:
+        from self_chunk_rwkv7 import self_chunk_rwkv7, self_chunk_rwkv7_available
+    except Exception:
+        self_chunk_rwkv7 = None  # type: ignore[assignment]
+        self_chunk_rwkv7_available = None  # type: ignore[assignment]
+
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
     from .fused_time_mix import (
         fused_attn_sequence_shift_mix,
@@ -402,6 +420,30 @@ def _native_prefill_fused_scan_enabled() -> bool:
         return False
 
 
+def _native_prefill_self_chunk_enabled(tokens: int, head_dim: int) -> bool:
+    """Select the vendored sequence-parallel DPLR forward for long prompts."""
+
+    policy = _kernel_policy()
+    if not env_flag(
+        "RWKV7_NATIVE_PREFILL_SELF_CHUNK",
+        bool(getattr(policy, "fused_prefill_self_chunk", False)),
+    ):
+        return False
+    min_tokens = env_int(
+        "RWKV7_NATIVE_PREFILL_SELF_CHUNK_MIN_TOKENS",
+        int(getattr(policy, "prefill_self_chunk_min_tokens", 1024)),
+        lower=16,
+    )
+    if int(tokens) < min_tokens or int(tokens) % 16 or int(head_dim) != 64:
+        return False
+    if self_chunk_rwkv7 is None or self_chunk_rwkv7_available is None:
+        return False
+    try:
+        return bool(self_chunk_rwkv7_available())
+    except Exception:
+        return False
+
+
 def _native_prefill_dplr_scan_enabled() -> bool:
     """Runtime switch for the correctness-first DPLR/chunked prefill scan."""
 
@@ -448,6 +490,18 @@ def _native_prefill_default_scan_block_m(head_dim: int, batch_size: int | None =
     """Architecture-aware default row tile for optional prefill scans."""
 
     head_dim = int(head_dim)
+    policy = _kernel_policy()
+    policy_value = getattr(policy, "prefill_scan_block_m", None)
+    if policy_value is not None:
+        if batch_size is not None and int(batch_size) >= 4:
+            batch_value = getattr(policy, "prefill_scan_block_m_b4", None)
+            if batch_value is not None:
+                return int(batch_value)
+        if batch_size is not None and int(batch_size) >= 2:
+            batch_value = getattr(policy, "prefill_scan_block_m_b2", None)
+            if batch_value is not None:
+                return int(batch_value)
+        return int(policy_value)
     if head_dim == 64 and torch.cuda.is_available():
         try:
             major, minor = torch.cuda.get_device_capability()
@@ -481,7 +535,9 @@ def _native_prefill_scan_num_warps(head_dim: int, block_m: int | None = None) ->
 
     if block_m is None:
         block_m = _native_prefill_scan_block_m(head_dim)
-    default = 4 if int(block_m) < int(head_dim) else 8
+    policy = _kernel_policy()
+    policy_value = getattr(policy, "prefill_scan_num_warps", None)
+    default = int(policy_value) if policy_value is not None else (4 if int(block_m) < int(head_dim) else 8)
     value = env_int("RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS", default, lower=1, upper=8)
     if value not in {1, 2, 4, 8}:
         raise ValueError(f"RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS must be one of 1, 2, 4, or 8; got {value}")
@@ -686,6 +742,144 @@ def _native_prefill_fused_wavg_lora_blocks() -> tuple[int, int, int]:
                 val = int(default)
             vals.append(min(max(1, val), upper))
     return vals[0], vals[1], vals[2]
+
+
+def _native_prefill_fused_sequence_ffn_enabled(total_rows: int) -> bool:
+    """Enable the tensor-core sequence FFN only for measured prefill shapes."""
+
+    policy = _kernel_policy()
+    if not env_flag(
+        "RWKV7_NATIVE_PREFILL_FUSED_SEQUENCE_FFN",
+        bool(getattr(policy, "fused_prefill_sequence_ffn", False)),
+    ):
+        return False
+    min_rows = env_int(
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_MIN_ROWS",
+        int(getattr(policy, "prefill_sequence_ffn_min_rows", 128)),
+        lower=1,
+    )
+    policy_max = getattr(policy, "prefill_sequence_ffn_max_rows", None)
+    max_rows = env_int(
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_MAX_ROWS",
+        (1 << 30) if policy_max is None else int(policy_max),
+        lower=1,
+    )
+    raw_extra = os.environ.get("RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_EXTRA_ROWS")
+    if raw_extra is None:
+        extra_rows = {int(v) for v in getattr(policy, "prefill_sequence_ffn_extra_rows", ())}
+    else:
+        try:
+            extra_rows = {int(v) for v in raw_extra.replace(",", " ").split() if int(v) > 0}
+        except ValueError as exc:
+            raise ValueError("RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_EXTRA_ROWS must contain integers") from exc
+    if not (min_rows <= int(total_rows) <= max_rows or int(total_rows) in extra_rows):
+        return False
+    if fused_sequence_ffn is None or fused_sequence_ffn_available is None:
+        return False
+    try:
+        return bool(fused_sequence_ffn_available())
+    except Exception:
+        return False
+
+
+def _native_prefill_stacked_rkv_enabled(total_rows: int) -> bool:
+    """Shape gate for lazy packed strided-batched R/K/V GEMM."""
+
+    policy = _kernel_policy()
+    if not env_flag(
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV",
+        bool(getattr(policy, "fused_prefill_stacked_rkv", False)),
+    ):
+        return False
+    min_rows = env_int(
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV_MIN_ROWS",
+        int(getattr(policy, "prefill_stacked_rkv_min_rows", 128)),
+        lower=1,
+    )
+    policy_max = getattr(policy, "prefill_stacked_rkv_max_rows", None)
+    max_rows = env_int(
+        "RWKV7_NATIVE_PREFILL_STACKED_RKV_MAX_ROWS",
+        (1 << 30) if policy_max is None else int(policy_max),
+        lower=1,
+    )
+    raw_extra = os.environ.get("RWKV7_NATIVE_PREFILL_STACKED_RKV_EXTRA_ROWS")
+    if raw_extra is None:
+        extra_rows = {int(v) for v in getattr(policy, "prefill_stacked_rkv_extra_rows", ())}
+    else:
+        try:
+            extra_rows = {int(v) for v in raw_extra.replace(",", " ").split() if int(v) > 0}
+        except ValueError as exc:
+            raise ValueError("RWKV7_NATIVE_PREFILL_STACKED_RKV_EXTRA_ROWS must contain integers") from exc
+    return min_rows <= int(total_rows) <= max_rows or int(total_rows) in extra_rows
+
+
+def _native_prefill_stacked_rkv_weights(model, packs) -> list[torch.Tensor]:
+    """Lazily pack transposed dense R/K/V weights for one bmm per layer.
+
+    The cache is an ordinary Python attribute (not a parameter/buffer), so it
+    never changes checkpoints.  Weight data pointers and tensor versions form
+    the key, which makes adapter merges or in-place edits rebuild safely.
+    """
+
+    signatures = []
+    for p in packs:
+        rw, kw, vw = p[20], p[21], p[22]
+        if not all(isinstance(weight, torch.Tensor) and weight.dim() == 2 for weight in (rw, kw, vw)):
+            return []
+        signatures.append(
+            tuple((int(weight.data_ptr()), int(getattr(weight, "_version", 0))) for weight in (rw, kw, vw))
+        )
+    key = tuple(signatures)
+    cached = getattr(model, "_rwkv7_native_prefill_stacked_rkv_cache", None)
+    if isinstance(cached, tuple) and len(cached) == 2 and cached[0] == key:
+        return cached[1]
+    packed = [torch.stack((p[20].t(), p[21].t(), p[22].t()), dim=0).contiguous() for p in packs]
+    setattr(model, "_rwkv7_native_prefill_stacked_rkv_cache", (key, packed))
+    return packed
+
+
+def _native_prefill_sequence_ffn_blocks(total_rows: int | None = None) -> tuple[int, int, int, int, int]:
+    """Return measured ``(BM, BN, key-BK, value-BK, group-M)`` tiles."""
+
+    policy = _kernel_policy()
+    large_min = int(getattr(policy, "prefill_sequence_ffn_large_min_rows", 1024))
+    use_large = total_rows is not None and int(total_rows) >= large_min
+    defaults = tuple(
+        getattr(
+            policy,
+            "prefill_sequence_ffn_large_blocks" if use_large else "prefill_sequence_ffn_blocks",
+            (128, 128, 32, 64, 8),
+        )
+    )
+    names = (
+        f"RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_{'LARGE_' if use_large else ''}BLOCK_M",
+        f"RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_{'LARGE_' if use_large else ''}BLOCK_N",
+        f"RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_{'LARGE_' if use_large else ''}KEY_BLOCK_K",
+        f"RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_{'LARGE_' if use_large else ''}VALUE_BLOCK_K",
+        f"RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_{'LARGE_' if use_large else ''}GROUP_M",
+    )
+    return tuple(env_int(name, int(default), lower=1, upper=256) for name, default in zip(names, defaults))  # type: ignore[return-value]
+
+
+def _native_prefill_sequence_ffn_launch() -> tuple[int, int]:
+    """Return measured ``(num_stages, num_warps)`` launch settings."""
+
+    policy = _kernel_policy()
+    stages = env_int(
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_NUM_STAGES",
+        int(getattr(policy, "prefill_sequence_ffn_num_stages", 3)),
+        lower=1,
+        upper=5,
+    )
+    warps = env_int(
+        "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_NUM_WARPS",
+        int(getattr(policy, "prefill_sequence_ffn_num_warps", 4)),
+        lower=1,
+        upper=8,
+    )
+    if warps not in {1, 2, 4, 8}:
+        raise ValueError("RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_NUM_WARPS must be 1, 2, 4, or 8")
+    return stages, warps
 
 
 def _native_graph_fused_recurrent_output_enabled() -> bool:
@@ -1639,6 +1833,19 @@ def _native_prefill_scan(
     if w_is_raw:
         w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
 
+    if _native_prefill_self_chunk_enabled(T, N):
+        out, new_state = self_chunk_rwkv7(
+            r.view(B, T, H, N),
+            w.view(B, T, H, N),
+            k.view(B, T, H, N),
+            v.view(B, T, H, N),
+            kk.view(B, T, H, N),
+            a.view(B, T, H, N),
+            state,
+            chunk_size=16,
+        )
+        return out.reshape(B, T, H * N), new_state
+
     if _native_prefill_fused_scan_enabled():
         scan_block_m = _native_prefill_scan_block_m(N, B)
         out, new_state = fused_recurrent_scan(
@@ -1729,6 +1936,18 @@ def prefill(
 
     x = F.embedding(ids, base.embeddings.weight).reshape(B, T, hidden)
     v_first_seq = torch.zeros(B, T, hidden, device=ids.device, dtype=dtype)
+    use_prefill_sequence_ffn = _native_prefill_fused_sequence_ffn_enabled(B * T)
+    sequence_ffn_blocks = _native_prefill_sequence_ffn_blocks(B * T) if use_prefill_sequence_ffn else None
+    sequence_ffn_launch = _native_prefill_sequence_ffn_launch() if use_prefill_sequence_ffn else None
+    sequence_ffn_workspace = None
+    sequence_attn_mix_workspace = None
+    sequence_ffn_mix_workspace = None
+    stacked_rkv_weights = (
+        _native_prefill_stacked_rkv_weights(model, packs)
+        if _native_prefill_stacked_rkv_enabled(B * T)
+        else None
+    )
+    stacked_rkv_used = False
 
     for p in packs:
         (i, H, N, eps, has_pre,
@@ -1746,8 +1965,20 @@ def prefill(
         use_prefill_shift_mix = _native_prefill_fused_shift_mix_enabled()
         use_sequence_attn_mix = use_prefill_shift_mix and fused_attn_sequence_shift_mix is not None
         if use_sequence_attn_mix:
+            if sequence_attn_mix_workspace is None:
+                sequence_attn_mix_workspace = torch.empty(
+                    (6, B, T, hidden), device=h.device, dtype=h.dtype
+                )
             xr, xw, xk, xv, xa, xg, next_xpa = fused_attn_sequence_shift_mix(
-                h, xpa[layer_idx], x_r, x_w, x_k, x_v, x_a, x_g
+                h,
+                xpa[layer_idx],
+                x_r,
+                x_w,
+                x_k,
+                x_v,
+                x_a,
+                x_g,
+                workspace=sequence_attn_mix_workspace,
             )
         else:
             prev_h = torch.cat([xpa[layer_idx].view(B, 1, hidden), h[:, :-1, :]], dim=1)
@@ -1759,9 +1990,29 @@ def prefill(
             xa = h + xx * x_a.view(1, 1, hidden)
             xg = h + xx * x_g.view(1, 1, hidden)
 
-        r = F.linear(xr, Rw)
-        k = F.linear(xk, Kw)
-        v = F.linear(xv, Vw)
+        use_stacked_rkv = False
+        if stacked_rkv_weights:
+            row_values = B * T * hidden
+            use_stacked_rkv = bool(
+                xr.is_contiguous()
+                and xk.is_contiguous()
+                and xv.is_contiguous()
+                and xr.untyped_storage().data_ptr() == xk.untyped_storage().data_ptr()
+                and xr.untyped_storage().data_ptr() == xv.untyped_storage().data_ptr()
+                and int(xk.storage_offset()) == int(xr.storage_offset()) + row_values
+                and int(xv.storage_offset()) == int(xr.storage_offset()) + 2 * row_values
+            )
+        if use_stacked_rkv:
+            stacked_rkv_used = True
+            rkv_inputs = xr.as_strided((3, B * T, hidden), (B * T * hidden, hidden, 1))
+            rkv = torch.bmm(rkv_inputs, stacked_rkv_weights[layer_idx])
+            r = rkv[0].view(B, T, hidden)
+            k = rkv[1].view(B, T, hidden)
+            v = rkv[2].view(B, T, hidden)
+        else:
+            r = F.linear(xr, Rw)
+            k = F.linear(xk, Kw)
+            v = F.linear(xv, Vw)
         v_gate = None
         use_prefill_wavg_lora = layer_idx > 0 and _native_prefill_fused_wavg_lora_enabled(B * T)
         if use_prefill_wavg_lora:
@@ -1965,35 +2216,70 @@ def prefill(
             out = (out + (sk * v.view(B, T, H, N)).view(B, T, hidden)) * g
         if not out_projected:
             out = F.linear(out, Ow)
-        x = residual + out
+            x = residual + out
+        else:
+            x = residual + out
         xpa[layer_idx] = next_xpa if use_sequence_attn_mix else h[:, -1, :].contiguous()
         state[layer_idx] = new_state.contiguous()
 
         residual = x
         h2 = F.layer_norm(x, [hidden], fn_w, fn_b, 1e-5)
-        if use_prefill_shift_mix and fused_ffn_sequence_shift_mix is not None:
-            fk, next_xpf = fused_ffn_sequence_shift_mix(h2, xpf[layer_idx], fx_k)
+        if use_prefill_sequence_ffn:
+            assert sequence_ffn_blocks is not None
+            assert sequence_ffn_launch is not None
+            if sequence_ffn_workspace is None:
+                sequence_ffn_workspace = (
+                    torch.empty((B * T, hidden), device=h2.device, dtype=h2.dtype),
+                    torch.empty((B * T, int(fK.shape[0])), device=h2.device, dtype=h2.dtype),
+                )
+            ffn_out, next_xpf = fused_sequence_ffn(
+                h2,
+                xpf[layer_idx],
+                fx_k,
+                fK,
+                fV,
+                block_m=sequence_ffn_blocks[0],
+                block_n=sequence_ffn_blocks[1],
+                key_block_k=sequence_ffn_blocks[2],
+                value_block_k=sequence_ffn_blocks[3],
+                group_m=sequence_ffn_blocks[4],
+                num_stages=sequence_ffn_launch[0],
+                num_warps=sequence_ffn_launch[1],
+                workspace=sequence_ffn_workspace,
+            )
+            x = residual + ffn_out
         else:
-            prev_h2 = torch.cat([xpf[layer_idx].view(B, 1, hidden), h2[:, :-1, :]], dim=1)
-            fxx = prev_h2 - h2
-            fk = h2 + fxx * fx_k.view(1, 1, hidden)
-            next_xpf = h2[:, -1, :].contiguous()
-        fk = F.linear(fk, fK)
-        if (
-            use_prefill_shift_mix
-            and fused_relu_square is not None
-            and fused_relu_square_available is not None
-            and fused_relu_square_available()
-        ):
-            fk = fused_relu_square(fk)
-        else:
-            fk = torch.relu(fk) ** 2
-        x = residual + F.linear(fk, fV)
+            if use_prefill_shift_mix and fused_ffn_sequence_shift_mix is not None:
+                if sequence_ffn_mix_workspace is None:
+                    sequence_ffn_mix_workspace = torch.empty_like(h2)
+                fk, next_xpf = fused_ffn_sequence_shift_mix(
+                    h2,
+                    xpf[layer_idx],
+                    fx_k,
+                    workspace=sequence_ffn_mix_workspace,
+                )
+            else:
+                prev_h2 = torch.cat([xpf[layer_idx].view(B, 1, hidden), h2[:, :-1, :]], dim=1)
+                fxx = prev_h2 - h2
+                fk = h2 + fxx * fx_k.view(1, 1, hidden)
+                next_xpf = h2[:, -1, :].contiguous()
+            fk = F.linear(fk, fK)
+            if (
+                use_prefill_shift_mix
+                and fused_relu_square is not None
+                and fused_relu_square_available is not None
+                and fused_relu_square_available()
+            ):
+                fk = fused_relu_square(fk)
+            else:
+                fk = torch.relu(fk) ** 2
+            x = residual + F.linear(fk, fV)
         xpf[layer_idx] = next_xpf
 
     x = F.layer_norm(x, [hidden], base.norm.weight, base.norm.bias, 1e-5)
     keep = T if logits_to_keep is None or int(logits_to_keep) <= 0 else min(int(logits_to_keep), T)
     logits = _lm_head(model, x[:, -keep:, :])
+    setattr(model, "_rwkv7_native_prefill_stacked_rkv_effective", bool(stacked_rkv_used))
     return logits, state, xpa, xpf
 
 
