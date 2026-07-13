@@ -109,6 +109,23 @@ V100 fp16 token, but same-card cosine and greedy gates remain unevaluated.
 
 Evidence: [`../bench/5070_native_quant_large_models_20260713/README.md`](../bench/5070_native_quant_large_models_20260713/README.md).
 
+## RTX 5070 Laptop 2.9B groupwise MM4 close
+
+The independent `mm4_groupwise` prototype replaces the old whole-matrix
+factorized affine approximation with scale and bias per K group. Exact-weight
+oracles showed group32 had the lowest error, but native_graph probes reached
+only `0.6045x` fp16; group64 reached `0.9049x`. Group128 preserves the corrected
+quality while reducing scale traffic enough for the fused path.
+
+The final group128 implementation uses paired-nibble GEMV for bsz1 and a
+tensor-core groupwise batched dot path from bsz2. On 2.9B, all seven strict
+cells pass at `1.0895x-1.1656x` fp16 with `0.5402x` footprint, minimum final
+cosine `0.99966836`, and greedy 7/7. The format and fused FFN epilogues remain
+explicit/default-off; this evidence does not promote V100, another 50-series
+card, or 7.2B.
+
+Evidence: [`../bench/5070_native_mm4_groupwise_20260713/README.md`](../bench/5070_native_mm4_groupwise_20260713/README.md).
+
 ## Acceptance gate
 
 A promoted quant row must provide:

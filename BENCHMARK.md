@@ -135,6 +135,15 @@ reference, which is corroboration rather than a same-card acceptance gate.
 
 Evidence: [`bench/5070_native_quant_large_models_20260713/README.md`](bench/5070_native_quant_large_models_20260713/README.md).
 
+The default-off groupwise MM4 follow-up fixes the 2.9B quality failure. With
+K-group size 128, fused paired-nibble GEMV for bsz1, and a tensor-core batched
+dot route from bsz2, all seven exact cells pass: decode is
+`1.0895x-1.1656x` paired fp16, footprint is `0.5402x`, minimum final cosine is
+`0.99966836`, and greedy is 7/7. This is an exact 5070 Laptop/2.9B close only;
+kernel-policy defaults and the V100/7.2B boundaries are unchanged.
+
+Evidence: [`bench/5070_native_mm4_groupwise_20260713/README.md`](bench/5070_native_mm4_groupwise_20260713/README.md).
+
 ### V100 RWKV-7 vs Qwen3.5 HF matrix
 
 The complete official text-only matrix covers three model pairs, fp16/bnb8/

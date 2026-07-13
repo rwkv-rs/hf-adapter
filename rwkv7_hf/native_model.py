@@ -1090,7 +1090,14 @@ class NativeRWKV7ForCausalLM(PreTrainedModel, GenerationMixin):
         is safe for JIT because ``native_jit._lm_head`` calls the module.
         Detected by class name to avoid importing optional quantization deps.
         """
-        quantized_names = {"Linear4bit", "Linear8bit", "Linear8bitLt", "MM8Linear", "MM4Linear"}
+        quantized_names = {
+            "Linear4bit",
+            "Linear8bit",
+            "Linear8bitLt",
+            "MM8Linear",
+            "MM4Linear",
+            "MM4GroupwiseLinear",
+        }
         try:
             return any(type(module).__name__ in quantized_names for module in self.model.layers.modules())
         except Exception:

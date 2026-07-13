@@ -1,0 +1,29 @@
+{
+  "axis": "native_mm4_groupwise_summary",
+  "status": "pass",
+  "device": "NVIDIA GeForce RTX 5070 Laptop GPU",
+  "compute_capability": "sm_120",
+  "model_size_label": "2.9b",
+  "dtype": "fp16",
+  "format": "k_grouped_affine_w4",
+  "group_size": 128,
+  "strict_cells": 7,
+  "speed_pass_cells": 7,
+  "greedy_pass_cells": 7,
+  "footprint_pass_cells": 7,
+  "decode_speed_ratio_vs_fp16": {
+    "minimum": 1.0895,
+    "median": 1.1397,
+    "maximum": 1.1656
+  },
+  "model_footprint_ratio_vs_fp16": 0.5402,
+  "minimum_prompt_logits_cosine_vs_fp16": 0.99965918,
+  "minimum_final_logits_cosine_vs_fp16": 0.99966836,
+  "maximum_peak_vram_mb": 3604.4,
+  "paired_baseline": true,
+  "exact_card_model_accepted": true,
+  "universal_promotion": false,
+  "defaults_changed": false,
+  "results_file": "results.jsonl",
+  "oracle_file": "weight-oracle.jsonl"
+}

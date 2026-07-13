@@ -16,12 +16,17 @@ import json
 import os
 import re
 import shutil
+import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
 os.environ.setdefault("RWKV_V7_ON", "1")
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import torch
 import torch.nn.functional as F
@@ -209,7 +214,14 @@ def last_native_model_decode_backend(model):
     return getattr(model, "_rwkv7_native_model_last_decode_backend", None)
 
 
-def quantize_model(model, quantization: str, min_params: int, policy: str) -> tuple[int, dict[str, int]]:
+def quantize_model(
+    model,
+    quantization: str,
+    min_params: int,
+    policy: str,
+    *,
+    mm4_group_size: int = 64,
+) -> tuple[int, dict[str, int]]:
     if quantization == "none":
         return 0, count_modules(model)
     if quantization == "mm8":
@@ -218,6 +230,21 @@ def quantize_model(model, quantization: str, min_params: int, policy: str) -> tu
     elif quantization == "mm4":
         from rwkv7_hf.native_quant_mm4 import quantize_model_mm4
         replaced = quantize_model_mm4(model, min_params=min_params, policy=policy)
+    elif quantization == "mm4_groupwise":
+        from rwkv7_hf.native_quant_mm4_groupwise import quantize_model_mm4_groupwise
+
+        replaced = quantize_model_mm4_groupwise(
+            model,
+            min_params=min_params,
+            policy=policy,
+            group_size=mm4_group_size,
+        )
+    elif quantization == "mm4_q4km":
+        from rwkv7_hf.native_quant_q4km import quantize_model_q4km
+
+        replaced = quantize_model_q4km(
+            model, min_params=min_params, policy=policy, fused=True
+        )
     elif quantization in {"torchao_w8", "torchao_w4"}:
         from rwkv7_hf.native_quant_torchao import quantize_model_torchao
 
@@ -245,6 +272,7 @@ def count_modules(model) -> dict[str, int]:
         "linear_dense": 0,
         "mm8": 0,
         "mm4": 0,
+        "mm4_groupwise": 0,
         "a8w8": 0,
         "torchao_w8": 0,
         "torchao_w4": 0,
@@ -263,6 +291,8 @@ def count_modules(model) -> dict[str, int]:
             counts["mm8"] += 1
         elif name == "MM4Linear":
             counts["mm4"] += 1
+        elif name == "MM4GroupwiseLinear":
+            counts["mm4_groupwise"] += 1
         elif name == "A8W8Linear":
             counts["a8w8"] += 1
     return counts
@@ -418,7 +448,10 @@ def main() -> int:
         action="store_true",
         help="Also fuse the MM8 FFN-down dequant projection with residual add; requires --fused-quant-ffn",
     )
-    quantization_choices = ["none", "mm8", "mm4", "a8w8", "torchao_w8", "torchao_w4"]
+    quantization_choices = [
+        "none", "mm8", "mm4", "mm4_groupwise", "mm4_q4km",
+        "a8w8", "torchao_w8", "torchao_w4"
+    ]
     ap.add_argument("--quantizations", nargs="+", choices=quantization_choices, default=["none", "mm8", "mm4"])
     ap.add_argument(
         "--single-quantization",
@@ -427,6 +460,13 @@ def main() -> int:
         help="Run exactly one quantization in this process. Useful for fresh-process 7B+ rows.",
     )
     ap.add_argument("--min-params", type=int, default=8_000_000)
+    ap.add_argument(
+        "--mm4-group-size",
+        type=int,
+        choices=[32, 64, 128],
+        default=64,
+        help="K-group size for the default-off mm4_groupwise quality prototype",
+    )
     ap.add_argument(
         "--policy",
         default="memory",
@@ -504,7 +544,13 @@ def main() -> int:
             baseline_next = dense_res["next_token"]
             baseline_tokps = dense_res["decode_tokps_total"]
             baseline_footprint = dense_footprint
-        replaced, module_counts = quantize_model(model, quantization, args.min_params, args.policy)
+        replaced, module_counts = quantize_model(
+            model,
+            quantization,
+            args.min_params,
+            args.policy,
+            mm4_group_size=args.mm4_group_size,
+        )
         if args.quantize_before_device:
             gc.collect()
             model.to(args.device)
@@ -575,6 +621,9 @@ def main() -> int:
             "decode_tokens": args.decode_tokens,
             "min_params": args.min_params,
             "native_mm_policy": args.policy,
+            "mm4_group_size": (
+                args.mm4_group_size if quantization == "mm4_groupwise" else None
+            ),
             "paired_baseline": bool(args.paired_baseline and quantization != "none"),
             "quantize_before_device": bool(args.quantize_before_device),
             "replaced_modules": replaced,

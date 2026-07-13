@@ -410,6 +410,14 @@ serving speed.
      0/7. CPU-first packing also makes 7.2B MM4/MM8 bsz1 fit in 8GB, but those
      quant-only rows have no same-card fp16 speed or logits gate. Evidence is
      under `bench/5070_native_quant_large_models_20260713/`.
+   - The default-off K-grouped MM4 follow-up closes the matching 5070/2.9B
+     quality gap. Group32 and group64 preserved greedy but reached only
+     `0.6045x` and `0.9049x` native_graph fp16; group128 plus fused GEMV and
+     the bsz2+ tensor-core batched dot passes all seven exact cells at
+     `1.0895x-1.1656x`, `0.5402x` footprint, minimum final cosine
+     `0.99966836`, and greedy 7/7. Keep the format explicit and do not inherit
+     the group size or tiles on V100/other cards. Evidence is under
+     `bench/5070_native_mm4_groupwise_20260713/`.
 19. V100 + Ada/Blackwell benchmark matrix.
    - `bench/run_v100_fast_decode_validation.sh` remains the broad V100
      regression gate.

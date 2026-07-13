@@ -148,6 +148,18 @@ deep uses `7340.5 MiB` / `7700.4 MiB`. There is no same-card fp16 timing or
 logits baseline for 7.2B; do not turn those standalone tok/s rows into speed
 acceptance. All fused flags remain default-off.
 
+The next 2.9B quality pass is under
+`bench/5070_native_mm4_groupwise_20260713/`. The independent
+`mm4_groupwise` format stores fp16 scale/bias per K group and is never selected
+by kernel policy. Group128 plus fused paired-nibble GEMV and a bsz2+ tensor-core
+batched dot closes all seven exact 5070 Laptop/2.9B cells: decode
+`1.0895x-1.1656x` fp16, footprint `0.5402x`, minimum final cosine
+`0.99966836`, and greedy 7/7. Group32 (`0.6045x`), group64 (`0.9049x`), and the
+Q4_K_M-inspired mixed W4/W8 probe (`0.3955x`) are retained negative speed
+evidence. Keep groupwise MM4 and both fused FFN epilogues default-off. Do not
+reuse the group128 decision or Blackwell tensor-core path on V100 without
+independent exact-shape evidence; V100 MM4 quality and MM8 speed remain open.
+
 ## Parallel Prefill Goal: DPLR/WY Compiled Prototype
 
 Active branch work is now the opt-in DPLR/WY compiled prefill backend, not
@@ -868,9 +880,11 @@ Run this checklist for every new GPU before marking it as supported:
     for this exact card/model only; larger models and other cards remain open.
   - The 2.9B expanded follow-up closes MM8 off/up/deep separately at 7/7 strict
     cells per lane (`1.0567x-1.1918x` fp16, `0.6876x` footprint, greedy 7/7).
-    MM4 remains open because greedy is 0/7 despite 7/7 speed wins. The 7.2B
-    MM4/MM8 bsz1 rows are 8GB feasibility evidence only: dense fp16 cannot fit,
-    so same-card speed and logits acceptance are not evaluated.
+    The old affine MM4 remains 0/7 greedy, but the explicit group128 MM4 format
+    closes the same seven cells at `1.0895x-1.1656x`, `0.5402x` footprint, and
+    greedy 7/7. This is not a default or a cross-card promotion. The 7.2B
+    MM4/MM8 bsz1 rows remain 8GB feasibility evidence only: dense fp16 cannot
+    fit, so same-card speed and logits acceptance are not evaluated.
 - Mandatory before claiming support: import/generate, fast decode, dynamic batch,
   chunked prefill, bnb W8/W4 functional inference, `triton_compat` remote-code
   import on early sm_120 stacks, native_model no-FLA fallback/training smoke,
