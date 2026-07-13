@@ -1,6 +1,6 @@
 {
   "schema": "rwkv7.apple.production-gates.v1",
-  "version": "2026-07-13.1",
+  "version": "2026-07-13.2",
   "policy": {
     "completion": "Every required gate must have machine-verifiable passing evidence. Missing, unknown, or failed evidence makes the aggregate incomplete.",
     "no_inference_from_source": true,
@@ -1489,7 +1489,7 @@
     "id": "train.mps.state_tuning",
     "category": "hf_mps_training",
     "title": "RWKV State Tuning",
-    "criterion": "提供可训练初始 RWKV recurrent/shift state adapter：base 权重冻结，按 batch 安全展开且无别名；0.1B/0.4B/1.5B 在 MPS 上通过有限 loss、非零梯度与更新、Trainer 训练、保存重载、断点续训和 generate continuation，重载后 logits/state/greedy 在声明容差内一致。",
+    "criterion": "提供与官方 time_state 兼容的可训练初始 WKV recurrent state adapter（每层 [H,N,N] FP32；xpa/xpf 保持零初始化，v_first 不持久化）：base 权重冻结，按 batch 安全展开且无别名；0.1B/0.4B/1.5B 在 MPS 上通过有限 loss、非零梯度与更新、Trainer 训练、保存重载、断点续训和 generate continuation，重载后 logits/state/greedy 在声明容差内一致。",
     "required": true
   },
   {
