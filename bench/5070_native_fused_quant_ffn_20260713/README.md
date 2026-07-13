@@ -41,6 +41,10 @@ This is a useful Blackwell architecture result, not a promotion. Both
 deep flag is independent because the matching V100 micro and end-to-end rows
 regress on common bsz1/2/4 shapes.
 
+Follow-up: the exact-card MM8 tile sweep subsequently closes all seven MM8
+cells at `1.0765x-1.1548x` fp16 while keeping the `0.6932x` footprint. See
+[`../5070_native_mm8_tuned_deep_20260713/README.md`](../5070_native_mm8_tuned_deep_20260713/README.md).
+
 Files:
 
 - `results.jsonl`: 42 valid end-to-end rows.

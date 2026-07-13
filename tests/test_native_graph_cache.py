@@ -246,6 +246,8 @@ def main() -> int:
     old_sm70_linear = os.environ.get("RWKV7_NATIVE_GRAPH_SM70_LINEAR")
     old_wavg_bsz1_max_hidden = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_WAVG_LORA_BSZ1_MAX_HIDDEN")
     old_fused_quant_ffn = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN")
+    old_mm8_block_m = os.environ.get("RWKV7_NATIVE_MM8_BLOCK_M")
+    old_mm8_block_n = os.environ.get("RWKV7_NATIVE_MM8_BLOCK_N")
     os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = "2"
     try:
         os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", None)
@@ -343,14 +345,18 @@ def main() -> int:
         wavg_bsz1_routed = get_runner(owner, packs, 1)
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN"] = "1"
         fused_quant_ffn_on = get_runner(owner, packs, 1)
+        os.environ["RWKV7_NATIVE_MM8_BLOCK_M"] = "64"
+        os.environ["RWKV7_NATIVE_MM8_BLOCK_N"] = "256"
+        mm8_tuned = get_runner(owner, packs, 1)
         assert norm_mix_off is not norm_mix_on
         assert norm_mix_on is not norm_mix_w8
         assert norm_mix_w8 is not recurrent_raw_off
         assert recurrent_raw_off is not sm70_linear_on
         assert sm70_linear_on is not wavg_bsz1_routed
         assert wavg_bsz1_routed is not fused_quant_ffn_on
-        assert len(owner._rwkv7_native_graph_runner_cache) == 7
-        assert clear_cache(owner) == 7
+        assert fused_quant_ffn_on is not mm8_tuned
+        assert len(owner._rwkv7_native_graph_runner_cache) == 8
+        assert clear_cache(owner) == 8
 
         os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = "2"
         assert modeling._native_graph_cache_size() == 2
@@ -401,6 +407,14 @@ def main() -> int:
             os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN", None)
         else:
             os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN"] = old_fused_quant_ffn
+        if old_mm8_block_m is None:
+            os.environ.pop("RWKV7_NATIVE_MM8_BLOCK_M", None)
+        else:
+            os.environ["RWKV7_NATIVE_MM8_BLOCK_M"] = old_mm8_block_m
+        if old_mm8_block_n is None:
+            os.environ.pop("RWKV7_NATIVE_MM8_BLOCK_N", None)
+        else:
+            os.environ["RWKV7_NATIVE_MM8_BLOCK_N"] = old_mm8_block_n
 
     old_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND")
     old_fast_forward = os.environ.get("RWKV7_FAST_FORWARD")

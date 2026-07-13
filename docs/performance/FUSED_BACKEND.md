@@ -380,6 +380,13 @@ serving speed.
      MM4 remains `0.8171x` fp16 at the median. Keep the deep flag default-off,
      especially because V100 bsz1/2/4 telemetry is negative. Raw rows are in
      `bench/5070_native_fused_quant_ffn_20260713/`.
+   - The following 5070 exact-card MM8 tile sweep finds `64x256` instead of
+     `128x128`. Deep MM8 then beats fp16 in all 7/7 expanded 1.5B cells with
+     ratios `1.0765x-1.1548x`, footprint `0.6932x`, minimum final cosine
+     `0.9999553`, and greedy 7/7. The runtime selects this tile only for device
+     names containing `5070`; the fused flags remain opt-in. MM4 and other
+     cards/models remain separate open gates. Evidence is under
+     `bench/5070_native_mm8_tuned_deep_20260713/`.
 19. V100 + Ada/Blackwell benchmark matrix.
    - `bench/run_v100_fast_decode_validation.sh` remains the broad V100
      regression gate.

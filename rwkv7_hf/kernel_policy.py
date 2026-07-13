@@ -80,6 +80,8 @@ class KernelPolicy:
     fused_wag_lora: bool = False
     fused_wavg_lora: bool = False
     fused_quant_ffn: bool = False
+    mm8_block_m: int | None = None
+    mm8_block_n: int | None = None
     wavg_lora_bsz1_max_hidden: int | None = None
     output_project_block_m: int = 16
     wag_lora_blocks: tuple[int, int, int] = (64, 64, 64)
@@ -516,13 +518,16 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             notes="Hopper profile: stable output fusions on; H100-specific projection/quant kernels require sweep rows",
         )
     if family == "blackwell":
+        exact_5070 = "5070" in profile.name.lower()
         return KernelPolicy(
             profile=profile,
             fused_recurrent_output=True,
             fused_output=True,
             fused_prefill_scan=False,
+            mm8_block_m=64 if exact_5070 else None,
+            mm8_block_n=256 if exact_5070 else None,
             output_project_block_m=32,
-            notes="RTX 50/Blackwell: use triton_compat for early sm_120 stacks, prefer native/no-FLA smokes, keep unvalidated projection/LoRA fusions off",
+            notes="RTX 50/Blackwell: use triton_compat for early sm_120 stacks; exact RTX 5070 MM8 decode uses 64x256 while other cards retain their measured/default tile; keep unvalidated projection/LoRA fusions off",
         )
     return KernelPolicy(profile=profile)
 

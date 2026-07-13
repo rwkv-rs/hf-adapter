@@ -33,6 +33,8 @@ x @ w.T``), quantize ``weight.t().contiguous()`` (i.e. ``W = weight.T`` with
 """
 from __future__ import annotations
 
+import os
+
 try:  # pragma: no cover
     import torch
 except Exception:  # pragma: no cover
@@ -283,7 +285,19 @@ def _mm8_decode_blocks(x, block_m, block_n):
     if block_m is not None and block_n is not None:
         return int(block_m), int(block_n)
     blackwell = bool(x.is_cuda and torch.cuda.get_device_capability(x.device)[0] >= 12)
-    return int(block_m or (128 if blackwell else 64)), int(block_n or (128 if blackwell else 64))
+    device_name = torch.cuda.get_device_name(x.device).lower() if blackwell else ""
+    exact_5070 = "5070" in device_name
+    default_m = 64 if exact_5070 else 128 if blackwell else 64
+    default_n = 256 if exact_5070 else 128 if blackwell else 64
+    env_m = os.environ.get("RWKV7_NATIVE_MM8_BLOCK_M")
+    env_n = os.environ.get("RWKV7_NATIVE_MM8_BLOCK_N")
+    resolved_m = int(block_m or env_m or default_m)
+    resolved_n = int(block_n or env_n or default_n)
+    if resolved_m not in {8, 16, 32, 64, 128, 256}:
+        raise ValueError(f"RWKV7_NATIVE_MM8_BLOCK_M must be a supported power of two; got {resolved_m}")
+    if resolved_n not in {32, 64, 128, 256}:
+        raise ValueError(f"RWKV7_NATIVE_MM8_BLOCK_N must be one of 32, 64, 128, or 256; got {resolved_n}")
+    return resolved_m, resolved_n
 
 
 def mm8_gemv_triton(

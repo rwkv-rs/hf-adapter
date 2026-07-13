@@ -51,6 +51,15 @@ small Blackwell gain onto V100, where the measured deep route regresses.
 
 Evidence: [`../bench/5070_native_fused_quant_ffn_20260713/README.md`](../bench/5070_native_fused_quant_ffn_20260713/README.md).
 
+The follow-up MM8 tile sweep selects exact-card `64x256` instead of the prior
+Blackwell `128x128` small-row tile. With deep FFN epilogues, the seven 1.5B
+cells reach `1.0765x-1.1548x` fp16 at `0.6932x` footprint; minimum final cosine
+is `0.9999553` and greedy is 7/7. RTX 5070 selects this tile automatically,
+while `RWKV7_NATIVE_MM8_BLOCK_M/N` remain explicit overrides. Fused FFN flags
+remain default-off. MM4 is not closed by this result.
+
+Evidence: [`../bench/5070_native_mm8_tuned_deep_20260713/README.md`](../bench/5070_native_mm8_tuned_deep_20260713/README.md).
+
 ## Acceptance gate
 
 A promoted quant row must provide:

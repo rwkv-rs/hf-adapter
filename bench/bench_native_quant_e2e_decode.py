@@ -505,6 +505,8 @@ def main() -> int:
             "fast_cache": os.environ.get("RWKV7_FAST_CACHE", "1") not in {"0", "false", "False", "no", "off"},
             "fused_quant_ffn": bool(args.fused_quant_ffn),
             "fused_quant_ffn_down_add": bool(args.fused_quant_ffn_down_add),
+            "native_mm8_block_m": os.environ.get("RWKV7_NATIVE_MM8_BLOCK_M"),
+            "native_mm8_block_n": os.environ.get("RWKV7_NATIVE_MM8_BLOCK_N"),
             "batch_size": args.batch_size,
             "prompt_tokens": int(ids.shape[1]),
             "decode_tokens": args.decode_tokens,

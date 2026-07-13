@@ -83,6 +83,13 @@ a memory path on this card. Both fusions remain opt-in.
 
 Evidence: [`bench/5070_native_fused_quant_ffn_20260713/README.md`](bench/5070_native_fused_quant_ffn_20260713/README.md).
 
+The exact-card follow-up changes RTX 5070 MM8 decode tiles from `128x128` to
+`64x256`. With the opt-in deep FFN epilogues, all seven 1.5B cells now beat
+same-process fp16: minimum/median/maximum `1.0765x/1.1036x/1.1548x`, footprint
+`0.6932x`, minimum final cosine `0.9999553`, and greedy 7/7. MM4 remains open.
+
+Evidence: [`bench/5070_native_mm8_tuned_deep_20260713/README.md`](bench/5070_native_mm8_tuned_deep_20260713/README.md).
+
 ### V100 RWKV-7 vs Qwen3.5 HF matrix
 
 The complete official text-only matrix covers three model pairs, fp16/bnb8/

@@ -107,6 +107,15 @@ end-to-end rows. MM8 deep has a median `0.9671x` fp16 decode ratio and a
 MM4 remains a footprint-only lane at a median `0.8171x` fp16. Keep both flags
 default-off. Evidence is under `bench/5070_native_fused_quant_ffn_20260713/`.
 
+The follow-up exact-card MM8 tile sweep selects `BLOCK_M=64`, `BLOCK_N=256`
+for RTX 5070. With deep MM8 epilogues enabled, the 1.5B expanded matrix now
+passes the speed gate in 7/7 cells (`1.0765x-1.1548x` fp16), keeps footprint
+at `0.6932x`, minimum final cosine `0.9999553`, and greedy 7/7. Device names
+containing `5070` select this MM8 tile automatically; environment overrides
+remain available and the fused FFN flags remain default-off. This closes only
+the exact 5070/1.5B/MM8 matrix. MM4 and larger-model rows remain open. Evidence:
+`bench/5070_native_mm8_tuned_deep_20260713/`.
+
 ## Parallel Prefill Goal: DPLR/WY Compiled Prototype
 
 Active branch work is now the opt-in DPLR/WY compiled prefill backend, not
@@ -813,6 +822,10 @@ Run this checklist for every new GPU before marking it as supported:
     `0.6932x` footprint; MM4 reaches `0.8171x` at `0.5394x` footprint. Greedy
     tokens match in 35/35 quant rows. These validate compatibility and card-local
     telemetry only; neither quant path is promoted.
+  - The subsequent exact-card MM8 `64x256` tile plus opt-in deep FFN epilogues
+    beats fp16 in all 7/7 expanded 1.5B cells (`1.0765x-1.1548x`) at `0.6932x`
+    footprint. Treat this as a closed MM8 lane for this exact card/model only;
+    MM4 remains below fp16 and other 50-series cards must retain their own tile.
 - Mandatory before claiming support: import/generate, fast decode, dynamic batch,
   chunked prefill, bnb W8/W4 functional inference, `triton_compat` remote-code
   import on early sm_120 stacks, native_model no-FLA fallback/training smoke,

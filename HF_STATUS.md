@@ -34,7 +34,7 @@ Last updated: **2026-07-13**.
 | RTX 5090 | **Production-close** | Quant pressure, 13.3B low-memory conversion and full MATH500; [`bench/5090_blackwell_production_close_20260712/`](bench/5090_blackwell_production_close_20260712/README.md) |
 | Apple M5 | **Production-close for measured MLX pairs** | Selected Qwen3.5 comparison gates and CoreML state correctness; [`docs/hardware/APPLE_PRODUCTION_CLOSE.md`](docs/hardware/APPLE_PRODUCTION_CLOSE.md) |
 | A100 40GB / A800 80GB / A6000 48GB | **Validated** | Large-model API/training/quant/ZeRO matrices; production performance remains card-specific |
-| GTX 1080 Ti / RTX 5070 Laptop | **Smoke / measured quant telemetry** | compatibility evidence plus RTX 5070 Laptop 1.5B native MM8/MM4 42-row matrix; quant remains default-off and not production-close; [`bench/5070_native_fused_quant_ffn_20260713/`](bench/5070_native_fused_quant_ffn_20260713/README.md) |
+| GTX 1080 Ti / RTX 5070 Laptop | **Smoke / exact MM8 lane closed** | compatibility evidence plus RTX 5070 Laptop 1.5B native MM8/MM4 42-row matrix; tuned deep-MM8 beats fp16 in 7/7 cells while MM4 remains open; fused flags stay default-off; [`bench/5070_native_mm8_tuned_deep_20260713/`](bench/5070_native_mm8_tuned_deep_20260713/README.md) |
 | H100 / AMD / Turing | **Open** | real-card matrix required |
 
 Full matrix: [`docs/HARDWARE_MATRIX.md`](docs/HARDWARE_MATRIX.md).

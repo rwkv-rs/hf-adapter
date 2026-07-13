@@ -402,6 +402,13 @@ def _native_graph_fused_quant_ffn_down_add_requested() -> bool:
     )
 
 
+def _native_graph_native_mm8_signature() -> tuple[str, str]:
+    return (
+        os.environ.get("RWKV7_NATIVE_MM8_BLOCK_M", ""),
+        os.environ.get("RWKV7_NATIVE_MM8_BLOCK_N", ""),
+    )
+
+
 def _native_graph_sm70_linear_requested() -> bool:
     policy = _rwkv7_kernel_policy()
     return env_flag("RWKV7_NATIVE_GRAPH_SM70_LINEAR", bool(getattr(policy, "sm70_linear", False)))
@@ -1990,6 +1997,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_fused_norm_mix_num_warps(),
             _native_graph_fused_quant_ffn_requested(),
             _native_graph_fused_quant_ffn_down_add_requested(),
+            _native_graph_native_mm8_signature(),
             _native_graph_sm70_linear_requested(),
             _native_graph_ada_linear_requested(),
             _native_graph_ada_linear_signature(),

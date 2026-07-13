@@ -21,6 +21,7 @@ import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from rwkv7_hf.native_quant_mm8 import (
+    _mm8_decode_blocks,
     quantize_mm8,
     mm8_matmul,
     mm8_gemv_triton,
@@ -31,6 +32,27 @@ from rwkv7_hf.native_quant_mm8 import (
     mm8_gemv_available,
     quantize_model_mm8,
 )
+
+
+class _NonCudaInput:
+    is_cuda = False
+
+
+def test_mm8_decode_block_environment_override(monkeypatch) -> None:
+    monkeypatch.setenv("RWKV7_NATIVE_MM8_BLOCK_M", "64")
+    monkeypatch.setenv("RWKV7_NATIVE_MM8_BLOCK_N", "256")
+    assert _mm8_decode_blocks(_NonCudaInput(), None, None) == (64, 256)
+
+
+def test_mm8_decode_block_environment_validation(monkeypatch) -> None:
+    monkeypatch.setenv("RWKV7_NATIVE_MM8_BLOCK_M", "7")
+    monkeypatch.setenv("RWKV7_NATIVE_MM8_BLOCK_N", "256")
+    try:
+        _mm8_decode_blocks(_NonCudaInput(), None, None)
+    except ValueError as error:
+        assert "BLOCK_M" in str(error)
+    else:
+        raise AssertionError("invalid MM8 block size must fail")
 
 
 def main() -> int:
