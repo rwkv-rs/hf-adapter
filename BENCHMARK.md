@@ -25,6 +25,7 @@ Status vocabulary:
 | Platform | Scope | Correctness / quality | Performance | Result |
 |---|---|---|---|---|
 | V100 32GB | 0.1B/0.4B/1.5B × bsz1/2/4/8 | greedy, cache handoff and focused regressions pass | dense decode `0.908x–1.248x`; prompt512 prefill `0.930x–1.047x` same-host Albatross | **PASS P1** |
+| RTX 3090 | RWKV-7 7.2B vs Qwen3.5-9B, prompt2048, bsz1/2 | finite logits, greedy equality and cosine `>=0.999995` | self-fused dense prefill `1.0527x–1.1029x`; decode `1.9716x–2.1100x` | **PASS measured cells** |
 | RTX 4090 | 0.4B dense and W8/W4 speed lanes | 32-step greedy and cache handoff pass | decode `1.007x–1.418x` matching Albatross; bsz4 prefill `1.007x` current-session / `0.916x` historical high-water | **PASS measured lanes** |
 | RTX 5090 | 0.4B MATH500; 1.5B/2.9B/7.2B quant; 13.3B inference | pass@64 `0.38`; compression ratio `1.0`; all quant same-next | MATH summary/decode `4.336x/4.871x` committed Albatross reference; 2.9B/7.2B quant `>=0.99x` paired fp16 | **PASS artifact** |
 | Apple M5 | 0.4B/1.5B selected MLX vs Qwen3.5 pairs | state/session/greedy and speculative target oracle pass | selected conservative decode/prefill/TTFT/memory gates pass | **PASS measured pairs** |
@@ -52,6 +53,26 @@ explicitly recorded Qwen Transformers torch-fallback backend rather than an
 FLA/causal-conv optimized Qwen lane.
 
 Evidence: [`bench/v100_qwen35_full_matrix_20260713/README.md`](bench/v100_qwen35_full_matrix_20260713/README.md).
+
+## RTX 3090 self-fused long-prefill rows
+
+The vendored sequence-mode DPLR kernel is now the measured production route
+for RWKV-7 7.2B long prefill on RTX 3090.  It computes the RWKV-specific DPLR
+A/B terms in-register, directly consumes/emits the native recurrent-state
+layout and removes standalone gate/residual work.  The effective HF backend is
+`native_graph`, not FLA.
+
+| Bsz | RWKV/Qwen prefill tok/s | Prefill ratio | RWKV/Qwen decode tok/s | Decode ratio | Result |
+|---:|---:|---:|---:|---:|---|
+| 1 | 4,536.404 / 4,113.174 | `1.1029x` | 49.922 / 23.660 | `2.1100x` | PASS |
+| 2 | 4,579.237 / 4,349.864 | `1.0527x` | 89.369 / 45.329 | `1.9716x` | PASS |
+
+Both rows use fp16, prompt 2048, decode 128 and three warmups/three measured
+runs.  RWKV also has the lower model footprint and peak VRAM in both rows.
+This closes these two dense cells only; the full 3090 216-cell dense/W8/W4
+matrix remains open.
+
+Evidence: [`bench/3090_self_fused_20260713/README.md`](bench/3090_self_fused_20260713/README.md).
 
 ## RTX 4090 promoted rows
 

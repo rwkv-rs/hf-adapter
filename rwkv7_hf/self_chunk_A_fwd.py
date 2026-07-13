@@ -54,6 +54,7 @@ def chunk_dplr_fwd_A_kernel_intra_sub_intra(
     BK: tl.constexpr,
     IS_VARLEN: tl.constexpr,
     GATHER_SUPPORTED: tl.constexpr,
+    RWKV7_AB: tl.constexpr,
 ):
     i_t, i_b, i_h = tl.program_id(0), tl.program_id(1), tl.program_id(2)
 
@@ -91,6 +92,11 @@ def chunk_dplr_fwd_A_kernel_intra_sub_intra(
     b_k = tl.load(p_k, boundary_check=(0, 1))
     b_a = tl.load(p_a, boundary_check=(0, 1))
     b_b = tl.load(p_b, boundary_check=(0, 1))
+    if RWKV7_AB:
+        # Inputs are (kk, a_gate); materialize DPLR a=-kk and b=kk*a in
+        # registers instead of two full sequence tensors.
+        b_b = (b_a * b_b).to(p_b.dtype.element_ty)
+        b_a = -b_a
     b_gi = tl.load(p_gi, boundary_check=(0, 1)).to(tl.float32)
     b_ge = tl.load(p_ge, boundary_check=(0, 1)).to(tl.float32)
 
@@ -181,6 +187,7 @@ def chunk_dplr_fwd_A_kernel_intra_tensorcore(
     BK: tl.constexpr,
     IS_VARLEN: tl.constexpr,
     GATHER_SUPPORTED: tl.constexpr,
+    RWKV7_AB: tl.constexpr,
 ):
     i_t, i_b, i_h = tl.program_id(0), tl.program_id(1), tl.program_id(2)
 
@@ -210,6 +217,9 @@ def chunk_dplr_fwd_A_kernel_intra_tensorcore(
     b_k = tl.load(p_k, boundary_check=(0, 1))
     b_a = tl.load(p_a, boundary_check=(0, 1))
     b_b = tl.load(p_b, boundary_check=(0, 1))
+    if RWKV7_AB:
+        b_b = (b_a * b_b).to(p_b.dtype.element_ty)
+        b_a = -b_a
     b_gi_val = tl.load(p_gi, boundary_check=(0, 1)).to(tl.float32)
     b_ge_val = tl.load(p_ge, boundary_check=(0, 1)).to(tl.float32)
 
@@ -273,7 +283,9 @@ def chunk_dplr_fwd_A_kernel_intra_tensorcore(
     k_ops_t = tl.trans(k_ops)
     b_ops_t = tl.trans(b_ops)
 
-    # Compute intra-chunk attention using TensorCores
+    # Compute intra-chunk attention using TensorCores. Keep float32/TF32
+    # operands here: model-dtype QK or QB inputs can overflow long 7.2B
+    # trajectories even when isolated synthetic cosine remains high.
     q_ops_h = q_ops.to(b_q.dtype)
     b_A_qk = tl.dot(q_ops_h, k_ops_t.to(b_q.dtype))
     b_A_qb = tl.dot(q_ops_h, b_ops_t.to(b_q.dtype))
@@ -316,6 +328,7 @@ def chunk_dplr_fwd_intra(
     scale: float,
     chunk_size: int,
     safe_gate: bool = False,
+    rwkv7_ab: bool = False,
     cu_seqlens: torch.LongTensor | None = None,
     chunk_indices: torch.LongTensor | None = None,
 ):
@@ -367,5 +380,6 @@ def chunk_dplr_fwd_intra(
         BC=BT,
         BK=BK,
         GATHER_SUPPORTED=IS_GATHER_SUPPORTED,
+        RWKV7_AB=bool(rwkv7_ab),
     )
     return Aab, Aqk, Aak, Aqb, qg, kg, ag, bg

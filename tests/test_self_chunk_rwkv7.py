@@ -26,6 +26,7 @@ def test_self_chunk_matches_recurrent_reference():
     expected, expected_state = fused_recurrent_scan(
         r, w, k, v, kk, a, state, block_n=64, block_m=8, num_warps=4
     )
-    actual, actual_state = self_chunk_rwkv7(r, w, k, v, kk, a, state)
-    torch.testing.assert_close(actual.float(), expected.float(), rtol=2e-3, atol=3e-4)
-    torch.testing.assert_close(actual_state, expected_state, rtol=2e-3, atol=3e-4)
+    for chunk_size in (16, 32):
+        actual, actual_state = self_chunk_rwkv7(r, w, k, v, kk, a, state, chunk_size=chunk_size)
+        torch.testing.assert_close(actual.float(), expected.float(), rtol=2e-3, atol=3e-4)
+        torch.testing.assert_close(actual_state, expected_state, rtol=2e-3, atol=3e-4)

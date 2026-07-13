@@ -56,6 +56,8 @@ if _HAS_TRITON:
         hidden: tl.constexpr,
         head_dim: tl.constexpr,
         has_v_gate: tl.constexpr,
+        a_is_raw: tl.constexpr,
+        v_gate_is_raw: tl.constexpr,
         output_log_decay: tl.constexpr,
         block_n: tl.constexpr,
     ):
@@ -70,6 +72,12 @@ if _HAS_TRITON:
         k_raw = tl.load(k_raw_ptr + offs, mask=mask, other=0.0).to(tl.float32)
         v_raw = tl.load(v_raw_ptr + offs, mask=mask, other=0.0).to(tl.float32)
         a_val = tl.load(a_ptr + offs, mask=mask, other=0.0).to(tl.float32)
+        if a_is_raw:
+            a_val = tl.sigmoid(a_val).to(a_ptr.dtype.element_ty).to(tl.float32)
+            # The recurrent scan also consumes A.  Publish the materialized
+            # gate in-place so the fused state-prep launch replaces, rather
+            # than merely duplicates, the standalone sigmoid kernel.
+            tl.store(a_ptr + offs, a_val, mask=mask)
         kk_scale = tl.load(k_k_ptr + param_offs, mask=mask, other=0.0).to(tl.float32)
         ka_scale = tl.load(k_a_ptr + param_offs, mask=mask, other=0.0).to(tl.float32)
 
@@ -85,6 +93,8 @@ if _HAS_TRITON:
         if has_v_gate:
             v_first = tl.load(v_first_ptr + offs, mask=mask, other=0.0).to(tl.float32)
             v_gate = tl.load(v_gate_ptr + offs, mask=mask, other=0.0).to(tl.float32)
+            if v_gate_is_raw:
+                v_gate = tl.sigmoid(v_gate).to(v_gate_ptr.dtype.element_ty).to(tl.float32)
             v_out = v_raw + (v_first - v_raw) * v_gate
 
         tl.store(w_out_ptr + offs, w_decay, mask=mask)
@@ -185,6 +195,8 @@ def fused_prefill_state_prep(
     head_dim: int,
     w_out_dtype: str = "fp32",
     w_transform: str = "decay",
+    a_is_raw: bool = False,
+    v_gate_is_raw: bool = False,
     force_fallback: bool = False,
 ):
     """Fuse native-prefill recurrent state preparation.
@@ -243,6 +255,10 @@ def fused_prefill_state_prep(
         and (not has_v_gate or (vf2.dtype == w2.dtype and vg2.dtype == w2.dtype))
     )
     if not use_triton:
+        if a_is_raw:
+            a2.sigmoid_()
+        if has_v_gate and v_gate_is_raw:
+            vg2 = torch.sigmoid(vg2)
         shaped = (int(w2.shape[0]), int(num_heads), int(head_dim))
         kk = F.normalize((k2 * k_k.reshape(1, hidden)).reshape(shaped), dim=-1, p=2.0).reshape_as(k2)
         k_out = k2 * (1 + (a2 - 1) * k_a.reshape(1, hidden))
@@ -291,6 +307,8 @@ def fused_prefill_state_prep(
         hidden,
         int(head_dim),
         has_v_gate=bool(has_v_gate),
+        a_is_raw=bool(a_is_raw),
+        v_gate_is_raw=bool(v_gate_is_raw),
         output_log_decay=w_transform == "log_decay",
         block_n=block_n,
         num_warps=1,

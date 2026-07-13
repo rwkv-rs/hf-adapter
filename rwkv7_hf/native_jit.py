@@ -444,12 +444,50 @@ def _native_prefill_self_chunk_enabled(tokens: int, head_dim: int) -> bool:
         return False
 
 
+def _native_prefill_self_chunk_size(_batch_size: int) -> int:
+    """Return the exact-card sequence chunk size."""
+
+    policy = _kernel_policy()
+    default = int(getattr(policy, "prefill_self_chunk_size", 16))
+    chunk_size = env_int(
+        "RWKV7_NATIVE_PREFILL_SELF_CHUNK_SIZE",
+        default,
+        lower=16,
+        upper=64,
+    )
+    if chunk_size not in {16, 32, 64}:
+        raise ValueError("RWKV7_NATIVE_PREFILL_SELF_CHUNK_SIZE must be 16, 32, or 64")
+    return chunk_size
+
+
 def _native_prefill_dplr_scan_enabled() -> bool:
     """Runtime switch for the correctness-first DPLR/chunked prefill scan."""
 
     if not env_flag("RWKV7_NATIVE_PREFILL_DPLR_SCAN", False):
         return False
     return dplr_chunk_scan is not None
+
+
+def _native_prefill_fused_residual_gemm_enabled() -> bool:
+    """Use GEMM beta=1 epilogues for the two residual projections."""
+
+    policy = _kernel_policy()
+    return env_flag(
+        "RWKV7_NATIVE_PREFILL_FUSED_RESIDUAL_GEMM",
+        bool(getattr(policy, "fused_prefill_residual_gemm", False)),
+    )
+
+
+def _native_prefill_linear_add_residual(x, weight, residual):
+    """Compute ``residual + linear(x, weight)`` with one GEMM output write."""
+
+    hidden = int(weight.shape[0])
+    out = residual.reshape(-1, hidden)
+    out.addmm_(
+        x.reshape(-1, int(weight.shape[1])),
+        weight.t(),
+    )
+    return out.view_as(residual)
 
 
 def _native_prefill_dplr_chunk_size() -> int:
@@ -1835,6 +1873,9 @@ def _native_prefill_scan(
         w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
 
     if _native_prefill_self_chunk_enabled(T, N):
+        chunk_size = _native_prefill_self_chunk_size(B)
+        if T % chunk_size:
+            chunk_size = 16
         out, new_state = self_chunk_rwkv7(
             r.view(B, T, H, N),
             w.view(B, T, H, N),
@@ -1843,7 +1884,7 @@ def _native_prefill_scan(
             kk.view(B, T, H, N),
             a.view(B, T, H, N),
             state,
-            chunk_size=16,
+            chunk_size=chunk_size,
             w_is_log=w_is_log,
         )
         return out.reshape(B, T, H * N), new_state
@@ -2019,6 +2060,12 @@ def prefill(
             k = F.linear(xk, Kw)
             v = F.linear(xv, Vw)
         v_gate = None
+        state_sigmoid_is_raw = False
+        defer_state_sigmoid = bool(
+            _native_prefill_fused_state_prep_enabled()
+            and not _native_prefill_fused_state_scan_enabled(B)
+            and not _native_prefill_fused_clampw_scan_enabled()
+        )
         use_prefill_wavg_lora = layer_idx > 0 and _native_prefill_fused_wavg_lora_enabled(B * T)
         if use_prefill_wavg_lora:
             block_m, block_r, block_k = _native_prefill_fused_wavg_lora_blocks()
@@ -2048,11 +2095,23 @@ def prefill(
             g = g.view(B, T, hidden)
             v_gate = v_gate.view(B, T, hidden)
         else:
-            w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
-            a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
-            g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
+            w_mid = F.linear(xw, w1)
+            w_mid.tanh_()
+            w = F.linear(w_mid, w2, w0)
+            a_mid = F.linear(xa, a1)
+            a = F.linear(a_mid, a2, a0)
+            if not defer_state_sigmoid:
+                a.sigmoid_()
+            else:
+                state_sigmoid_is_raw = True
+            g_mid = F.linear(xg, g1)
+            g_mid.sigmoid_()
+            g = F.linear(g_mid, g2)
             if layer_idx != 0:
-                v_gate = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
+                v_mid = F.linear(xv, v1)
+                v_gate = F.linear(v_mid, v2, v0)
+                if not defer_state_sigmoid:
+                    v_gate.sigmoid_()
         use_fused_scan_output = _native_prefill_fused_scan_output_enabled()
         use_self_chunk = _native_prefill_self_chunk_enabled(T, N) and not use_fused_scan_output
         self_chunk_w_is_log = False
@@ -2137,6 +2196,8 @@ def prefill(
                     head_dim=N,
                     w_out_dtype=_native_prefill_state_prep_w_dtype(),
                     w_transform="log_decay" if use_self_chunk else "decay",
+                    a_is_raw=state_sigmoid_is_raw,
+                    v_gate_is_raw=state_sigmoid_is_raw,
                 )
                 v_first_seq = v
             else:
@@ -2153,6 +2214,8 @@ def prefill(
                     head_dim=N,
                     w_out_dtype=_native_prefill_state_prep_w_dtype(),
                     w_transform="log_decay" if use_self_chunk else "decay",
+                    a_is_raw=state_sigmoid_is_raw,
+                    v_gate_is_raw=state_sigmoid_is_raw,
                 )
         else:
             kk = F.normalize((k * k_k.view(1, 1, hidden)).view(B, T, H, N), dim=-1, p=2.0).view(B, T, hidden)
@@ -2229,8 +2292,11 @@ def prefill(
             sk = (r.view(B, T, H, N) * k.view(B, T, H, N) * r_k.view(1, 1, H, N)).sum(dim=-1, keepdim=True)
             out = (out + (sk * v.view(B, T, H, N)).view(B, T, hidden)) * g
         if not out_projected:
-            out = F.linear(out, Ow)
-            x = residual + out
+            if _native_prefill_fused_residual_gemm_enabled():
+                x = _native_prefill_linear_add_residual(out, Ow, residual)
+            else:
+                out = F.linear(out, Ow)
+                x = residual + out
         else:
             x = residual + out
         xpa[layer_idx] = next_xpa if use_sequence_attn_mix else h[:, -1, :].contiguous()
@@ -2287,7 +2353,10 @@ def prefill(
                 fk = fused_relu_square(fk)
             else:
                 fk = torch.relu(fk) ** 2
-            x = residual + F.linear(fk, fV)
+            if _native_prefill_fused_residual_gemm_enabled():
+                x = _native_prefill_linear_add_residual(fk, fV, residual)
+            else:
+                x = residual + F.linear(fk, fV)
         xpf[layer_idx] = next_xpf
 
     x = F.layer_norm(x, [hidden], base.norm.weight, base.norm.bias, 1e-5)

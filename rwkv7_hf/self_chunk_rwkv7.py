@@ -50,29 +50,27 @@ def self_chunk_rwkv7(
 
     if not self_chunk_rwkv7_available():
         raise RuntimeError("self chunk RWKV-7 requires CUDA, Triton, and torch")
-    if int(chunk_size) != 16:
-        raise ValueError("self chunk RWKV-7 currently uses chunk_size=16")
+    if int(chunk_size) not in {16, 32, 64}:
+        raise ValueError("self chunk RWKV-7 chunk_size must be 16, 32, or 64")
     if r.dim() != 4 or any(tuple(x.shape) != tuple(r.shape) for x in (w_decay, k, v, kk, a_gate)):
         raise ValueError("self chunk inputs must share [B,T,H,N]")
     B, T, H, N = (int(x) for x in r.shape)
-    if N != 64 or T % 16:
-        raise ValueError("self chunk RWKV-7 currently requires head_dim=64 and T divisible by 16")
+    if N != 64 or T % int(chunk_size):
+        raise ValueError("self chunk RWKV-7 requires head_dim=64 and T divisible by chunk_size")
 
-    # FLA's generalized DPLR convention for RWKV-7 is a=-kk, b=kk*a.
-    dplr_a = -kk
-    dplr_b = kk * a_gate
     log_decay = w_decay.float() if w_is_log else torch.log(w_decay.float())
-    gi, ge = chunk_rwkv6_fwd_cumsum(log_decay, 16, scale=1.0 / math.log(2.0))
+    gi, ge = chunk_rwkv6_fwd_cumsum(log_decay, int(chunk_size), scale=1.0 / math.log(2.0))
     A_ab, A_qk, A_ak, A_qb, qg, kg, ag, bg = chunk_dplr_fwd_intra(
         q=r,
         k=k,
-        a=dplr_a,
-        b=dplr_b,
+        a=kk,
+        b=a_gate,
         gi=gi,
         ge=ge,
         scale=1.0,
-        chunk_size=16,
+        chunk_size=int(chunk_size),
         safe_gate=True,
+        rwkv7_ab=True,
     )
     wy_w, wy_u, _ = prepare_wy_repr_fwd(
         ag=ag,
@@ -80,9 +78,8 @@ def self_chunk_rwkv7(
         A_ak=A_ak,
         A_ab=A_ab,
         cu_seqlens=None,
-        chunk_size=16,
+        chunk_size=int(chunk_size),
     )
-    initial = state_native.transpose(-1, -2).contiguous()
     h, v_new, final = chunk_dplr_fwd_h(
         kg=kg,
         v=v,
@@ -90,9 +87,10 @@ def self_chunk_rwkv7(
         u=wy_u,
         bg=bg,
         gk=gi,
-        initial_state=initial,
+        initial_state=state_native,
         output_final_state=True,
-        chunk_size=16,
+        chunk_size=int(chunk_size),
+        native_state_v_k=True,
     )
     out = chunk_dplr_fwd_o(
         qg=qg,
@@ -101,9 +99,9 @@ def self_chunk_rwkv7(
         A_qk=A_qk,
         A_qb=A_qb,
         h=h,
-        chunk_size=16,
+        chunk_size=int(chunk_size),
     )
-    return out, final.transpose(-1, -2).contiguous()
+    return out, final
 
 
 __all__ = ["self_chunk_rwkv7", "self_chunk_rwkv7_available"]

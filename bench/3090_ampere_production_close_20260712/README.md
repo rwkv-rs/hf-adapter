@@ -192,8 +192,10 @@ matches the torch reference within 0.010742 max-abs and the end-to-end cosine
 is 0.998872. The measured route is capability-gated to exact sm86 within the Ampere
 family; unmeasured sm80/Ada defaults are unchanged.
 
-The remaining chained acceptance runs 7.2B load/forward/generate, dense batch,
-bnb W8/W4 and native quant pressure rows.
+The 7.2B dense prompt-2048 batch-1/2 sequence-fused rows were subsequently
+closed against the same-card Qwen3.5-9B fast path; see
+[`../3090_self_fused_20260713/README.md`](../3090_self_fused_20260713/README.md).
+The remaining full 3090 matrix and strict W8/W4 speed gates are still open.
 
 The 13.3B fp16 model has a known footprint above this card's 24 GiB physical
 VRAM and is not presented as a 3090 fp16 support row. Its conversion/load gate
