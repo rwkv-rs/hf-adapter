@@ -109,11 +109,23 @@ def test_policy_defaults_are_conservative() -> None:
     assert not blackwell.fused_quant_ffn
     assert blackwell.mm8_block_m is None
     assert blackwell.mm8_block_n is None
+    assert blackwell.mm4_block_pairs is None
+    assert blackwell.mm4_block_n is None
+    assert blackwell.mm4_dot_block_b is None
+    assert blackwell.mm4_dot_block_pairs_small is None
+    assert blackwell.mm4_dot_block_pairs_large is None
+    assert blackwell.mm4_dot_block_n is None
     assert "triton_compat" in blackwell.notes
 
     rtx5070 = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 5070 Laptop GPU", (12, 0)))
     assert rtx5070.mm8_block_m == 64
     assert rtx5070.mm8_block_n == 256
+    assert rtx5070.mm4_block_pairs == 64
+    assert rtx5070.mm4_block_n == 256
+    assert rtx5070.mm4_dot_block_b == 16
+    assert rtx5070.mm4_dot_block_pairs_small == 64
+    assert rtx5070.mm4_dot_block_pairs_large == 128
+    assert rtx5070.mm4_dot_block_n == 128
     assert not rtx5070.fused_quant_ffn
 
     apple = policy_for_profile(classify_gpu("Apple M5", None, is_mps=True))

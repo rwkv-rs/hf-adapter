@@ -44,5 +44,7 @@ probe. Although its isolated FFN kernel was faster, it regressed tuned
 end-to-end bsz1/2 and was removed before commit. The rejected boundary is
 documented in `docs/plans/2026-07-13-native-quant-shift-mix-fusion-design.md`.
 
-This closes MM8 for this exact model/card/matrix. It does not close MM4, other
-model sizes, or other Blackwell cards.
+This closes MM8 for this exact model/card/matrix. MM4 was subsequently closed
+for the same exact matrix by
+[`../5070_native_mm4_tuned_deep_20260713/README.md`](../5070_native_mm4_tuned_deep_20260713/README.md).
+Other model sizes and Blackwell cards remain open.

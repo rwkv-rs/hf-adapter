@@ -248,6 +248,11 @@ def main() -> int:
     old_fused_quant_ffn = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN")
     old_mm8_block_m = os.environ.get("RWKV7_NATIVE_MM8_BLOCK_M")
     old_mm8_block_n = os.environ.get("RWKV7_NATIVE_MM8_BLOCK_N")
+    old_mm4_block_pairs = os.environ.get("RWKV7_NATIVE_MM4_BLOCK_PAIRS")
+    old_mm4_block_n = os.environ.get("RWKV7_NATIVE_MM4_BLOCK_N")
+    old_mm4_dot_block_b = os.environ.get("RWKV7_NATIVE_MM4_DOT_BLOCK_B")
+    old_mm4_dot_block_pairs = os.environ.get("RWKV7_NATIVE_MM4_DOT_BLOCK_PAIRS")
+    old_mm4_dot_block_n = os.environ.get("RWKV7_NATIVE_MM4_DOT_BLOCK_N")
     os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = "2"
     try:
         os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_RECURRENT_OUTPUT", None)
@@ -329,7 +334,7 @@ def main() -> int:
 
         # Every capture-affecting norm/mix setting must produce a distinct
         # runner. Otherwise an env change can silently replay a stale graph.
-        os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = "8"
+        os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = "10"
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX"] = "0"
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_NORM_MIX_NUM_WARPS"] = "4"
         norm_mix_off = get_runner(owner, packs, 1)
@@ -348,6 +353,11 @@ def main() -> int:
         os.environ["RWKV7_NATIVE_MM8_BLOCK_M"] = "64"
         os.environ["RWKV7_NATIVE_MM8_BLOCK_N"] = "256"
         mm8_tuned = get_runner(owner, packs, 1)
+        os.environ["RWKV7_NATIVE_MM4_BLOCK_PAIRS"] = "64"
+        os.environ["RWKV7_NATIVE_MM4_BLOCK_N"] = "256"
+        mm4_tuned = get_runner(owner, packs, 1)
+        os.environ["RWKV7_NATIVE_MM4_DOT_BLOCK_PAIRS"] = "64"
+        mm4_dot_tuned = get_runner(owner, packs, 1)
         assert norm_mix_off is not norm_mix_on
         assert norm_mix_on is not norm_mix_w8
         assert norm_mix_w8 is not recurrent_raw_off
@@ -355,8 +365,10 @@ def main() -> int:
         assert sm70_linear_on is not wavg_bsz1_routed
         assert wavg_bsz1_routed is not fused_quant_ffn_on
         assert fused_quant_ffn_on is not mm8_tuned
-        assert len(owner._rwkv7_native_graph_runner_cache) == 8
-        assert clear_cache(owner) == 8
+        assert mm8_tuned is not mm4_tuned
+        assert mm4_tuned is not mm4_dot_tuned
+        assert len(owner._rwkv7_native_graph_runner_cache) == 10
+        assert clear_cache(owner) == 10
 
         os.environ["RWKV7_NATIVE_GRAPH_CACHE_SIZE"] = "2"
         assert modeling._native_graph_cache_size() == 2
@@ -415,6 +427,23 @@ def main() -> int:
             os.environ.pop("RWKV7_NATIVE_MM8_BLOCK_N", None)
         else:
             os.environ["RWKV7_NATIVE_MM8_BLOCK_N"] = old_mm8_block_n
+        if old_mm4_block_pairs is None:
+            os.environ.pop("RWKV7_NATIVE_MM4_BLOCK_PAIRS", None)
+        else:
+            os.environ["RWKV7_NATIVE_MM4_BLOCK_PAIRS"] = old_mm4_block_pairs
+        if old_mm4_block_n is None:
+            os.environ.pop("RWKV7_NATIVE_MM4_BLOCK_N", None)
+        else:
+            os.environ["RWKV7_NATIVE_MM4_BLOCK_N"] = old_mm4_block_n
+        for name, value in (
+            ("RWKV7_NATIVE_MM4_DOT_BLOCK_B", old_mm4_dot_block_b),
+            ("RWKV7_NATIVE_MM4_DOT_BLOCK_PAIRS", old_mm4_dot_block_pairs),
+            ("RWKV7_NATIVE_MM4_DOT_BLOCK_N", old_mm4_dot_block_n),
+        ):
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
     old_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND")
     old_fast_forward = os.environ.get("RWKV7_FAST_FORWARD")

@@ -51,6 +51,10 @@ def test_mm4_relu2_cpu_fallback() -> None:
     _assert_module_fallback(MM4Linear)
 
 
+def test_mm4_add_cpu_fallback() -> None:
+    _assert_add_fallback(MM4Linear)
+
+
 class ProbeQuantLinear(torch.nn.Module):
     in_features = 4
     out_features = 8

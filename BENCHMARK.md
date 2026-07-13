@@ -86,9 +86,19 @@ Evidence: [`bench/5070_native_fused_quant_ffn_20260713/README.md`](bench/5070_na
 The exact-card follow-up changes RTX 5070 MM8 decode tiles from `128x128` to
 `64x256`. With the opt-in deep FFN epilogues, all seven 1.5B cells now beat
 same-process fp16: minimum/median/maximum `1.0765x/1.1036x/1.1548x`, footprint
-`0.6932x`, minimum final cosine `0.9999553`, and greedy 7/7. MM4 remains open.
+`0.6932x`, minimum final cosine `0.9999553`, and greedy 7/7. The MM4 follow-up
+below closes the matching exact-card matrix separately.
 
 Evidence: [`bench/5070_native_mm8_tuned_deep_20260713/README.md`](bench/5070_native_mm8_tuned_deep_20260713/README.md).
+
+The matching MM4 follow-up fuses the FFN-down residual epilogue and adds an
+exact-card, output-aware tensor-core dot route from bsz2. All seven 1.5B cells
+beat same-process fp16: minimum/median/maximum `1.0580x/1.1360x/1.2525x`,
+footprint `0.5394x`, minimum final cosine `0.99809039`, and greedy 7/7. The
+measured 5070 tiles are selected automatically, while both FFN fusion flags
+remain opt-in and other cards/models remain open gates.
+
+Evidence: [`bench/5070_native_mm4_tuned_deep_20260713/README.md`](bench/5070_native_mm4_tuned_deep_20260713/README.md).
 
 ### V100 RWKV-7 vs Qwen3.5 HF matrix
 

@@ -1,0 +1,19 @@
+{
+  "status": "pass",
+  "rows": 7,
+  "speed_pass_rows": 7,
+  "min_decode_ratio": 1.058,
+  "median_decode_ratio": 1.136,
+  "max_decode_ratio": 1.2525,
+  "footprint_ratio": 0.5394,
+  "min_prompt_cosine": 0.9976756,
+  "min_final_cosine": 0.99809039,
+  "greedy_match_rows": 7,
+  "max_peak_vram_mb": 1970.9,
+  "gemv_block_pairs": 64,
+  "gemv_block_n": 256,
+  "dot_block_b": 16,
+  "dot_block_pairs_small": 64,
+  "dot_block_pairs_large": 128,
+  "dot_block_n": 128
+}

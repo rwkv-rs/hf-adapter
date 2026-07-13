@@ -22,6 +22,8 @@ import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from rwkv7_hf.native_quant_mm4 import (
+    _mm4_decode_blocks,
+    _mm4_dot_blocks,
     quantize_mm4,
     mm4_matmul,
     mm4_gemv_triton,
@@ -31,6 +33,35 @@ from rwkv7_hf.native_quant_mm4 import (
     mm4_gemv_available,
     quantize_model_mm4,
 )
+
+
+class _NonCudaInput:
+    is_cuda = False
+
+
+def test_mm4_decode_block_environment_override(monkeypatch) -> None:
+    monkeypatch.setenv("RWKV7_NATIVE_MM4_BLOCK_PAIRS", "64")
+    monkeypatch.setenv("RWKV7_NATIVE_MM4_BLOCK_N", "256")
+    assert _mm4_decode_blocks(_NonCudaInput(), None, None) == (64, 256)
+
+
+def test_mm4_dot_block_environment_override(monkeypatch) -> None:
+    monkeypatch.setenv("RWKV7_NATIVE_MM4_DOT_BLOCK_B", "16")
+    monkeypatch.setenv("RWKV7_NATIVE_MM4_DOT_BLOCK_PAIRS", "64")
+    monkeypatch.setenv("RWKV7_NATIVE_MM4_DOT_BLOCK_N", "128")
+    assert _mm4_dot_blocks(_NonCudaInput(), None, None, None) == (16, 64, 128)
+
+
+def test_mm4_gemv_reference_residual() -> None:
+    weight = torch.randn(8, 16, dtype=torch.float32)
+    packed, mx, rx_s, my, ry_s, m_orig, _ = quantize_mm4(weight.t().contiguous())
+    x = torch.randn(16, dtype=torch.float32)
+    residual = torch.randn(8, dtype=torch.float32)
+    expected = mm4_matmul(x, packed, mx, rx_s, my, ry_s, m_orig) + residual
+    actual = mm4_gemv_triton(
+        x, packed, mx, rx_s, my, ry_s, m_orig, residual=residual,
+    )
+    torch.testing.assert_close(actual, expected)
 
 
 def main() -> int:

@@ -82,6 +82,12 @@ class KernelPolicy:
     fused_quant_ffn: bool = False
     mm8_block_m: int | None = None
     mm8_block_n: int | None = None
+    mm4_block_pairs: int | None = None
+    mm4_block_n: int | None = None
+    mm4_dot_block_b: int | None = None
+    mm4_dot_block_pairs_small: int | None = None
+    mm4_dot_block_pairs_large: int | None = None
+    mm4_dot_block_n: int | None = None
     wavg_lora_bsz1_max_hidden: int | None = None
     output_project_block_m: int = 16
     wag_lora_blocks: tuple[int, int, int] = (64, 64, 64)
@@ -526,8 +532,14 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             fused_prefill_scan=False,
             mm8_block_m=64 if exact_5070 else None,
             mm8_block_n=256 if exact_5070 else None,
+            mm4_block_pairs=64 if exact_5070 else None,
+            mm4_block_n=256 if exact_5070 else None,
+            mm4_dot_block_b=16 if exact_5070 else None,
+            mm4_dot_block_pairs_small=64 if exact_5070 else None,
+            mm4_dot_block_pairs_large=128 if exact_5070 else None,
+            mm4_dot_block_n=128 if exact_5070 else None,
             output_project_block_m=32,
-            notes="RTX 50/Blackwell: use triton_compat for early sm_120 stacks; exact RTX 5070 MM8 decode uses 64x256 while other cards retain their measured/default tile; keep unvalidated projection/LoRA fusions off",
+            notes="RTX 50/Blackwell: use triton_compat for early sm_120 stacks; exact RTX 5070 uses measured MM8/MM4 decode tiles while other cards retain their defaults; keep quant FFN fusion and unvalidated projection/LoRA fusions off by default",
         )
     return KernelPolicy(profile=profile)
 

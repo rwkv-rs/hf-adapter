@@ -384,9 +384,17 @@ serving speed.
      `128x128`. Deep MM8 then beats fp16 in all 7/7 expanded 1.5B cells with
      ratios `1.0765x-1.1548x`, footprint `0.6932x`, minimum final cosine
      `0.9999553`, and greedy 7/7. The runtime selects this tile only for device
-     names containing `5070`; the fused flags remain opt-in. MM4 and other
-     cards/models remain separate open gates. Evidence is under
+     names containing `5070`; the fused flags remain opt-in. The MM4 follow-up
+     below closes the matching exact-card matrix; other cards/models remain
+     separate open gates. Evidence is under
      `bench/5070_native_mm8_tuned_deep_20260713/`.
+   - The 5070 MM4 follow-up fuses FFN-down residual add and uses measured,
+     output-aware tensor-core dot tiles from bsz2. The final fresh-process 1.5B
+     matrix beats paired fp16 in 7/7 cells (`1.0580x-1.2525x`) at `0.5394x`
+     footprint, with minimum final cosine `0.99809039` and greedy 7/7. The
+     exact-card tile policy is automatic but both FFN fusion flags stay
+     default-off; other cards and larger models require independent rows.
+     Evidence is under `bench/5070_native_mm4_tuned_deep_20260713/`.
 19. V100 + Ada/Blackwell benchmark matrix.
    - `bench/run_v100_fast_decode_validation.sh` remains the broad V100
      regression gate.

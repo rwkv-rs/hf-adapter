@@ -113,8 +113,19 @@ passes the speed gate in 7/7 cells (`1.0765x-1.1548x` fp16), keeps footprint
 at `0.6932x`, minimum final cosine `0.9999553`, and greedy 7/7. Device names
 containing `5070` select this MM8 tile automatically; environment overrides
 remain available and the fused FFN flags remain default-off. This closes only
-the exact 5070/1.5B/MM8 matrix. MM4 and larger-model rows remain open. Evidence:
+the exact 5070/1.5B/MM8 matrix. Larger-model rows remain open. Evidence:
 `bench/5070_native_mm8_tuned_deep_20260713/`.
+
+The following exact-card MM4 pass adds FFN-down residual fusion, selects
+`BLOCK_PAIRS=64/BLOCK_N=256` for bsz1 GEMV, and routes bsz2+ through an
+output-aware tensor-core dot tile (`BLOCK_B=16`, `BLOCK_N=128`, pair tile
+64/128). The fresh-process 1.5B expanded matrix beats paired fp16 in all 7/7
+cells (`1.0580x-1.2525x`) at `0.5394x` footprint, minimum final cosine
+`0.99809039`, and greedy 7/7. Device names containing `5070` select these
+tiles and the bsz2 dot threshold automatically; environment overrides remain
+available. Both fused FFN flags stay default-off. This closes only the exact
+5070/1.5B/MM4 matrix; larger models and other cards remain open. Evidence:
+`bench/5070_native_mm4_tuned_deep_20260713/`.
 
 ## Parallel Prefill Goal: DPLR/WY Compiled Prototype
 
@@ -825,7 +836,11 @@ Run this checklist for every new GPU before marking it as supported:
   - The subsequent exact-card MM8 `64x256` tile plus opt-in deep FFN epilogues
     beats fp16 in all 7/7 expanded 1.5B cells (`1.0765x-1.1548x`) at `0.6932x`
     footprint. Treat this as a closed MM8 lane for this exact card/model only;
-    MM4 remains below fp16 and other 50-series cards must retain their own tile.
+    other 50-series cards must retain their own tile.
+  - The exact-card MM4 GEMV/dot tiles plus the same opt-in deep FFN epilogues
+    subsequently beat fp16 in all 7/7 expanded 1.5B cells
+    (`1.0580x-1.2525x`) at `0.5394x` footprint. Treat this as a closed MM4 lane
+    for this exact card/model only; larger models and other cards remain open.
 - Mandatory before claiming support: import/generate, fast decode, dynamic batch,
   chunked prefill, bnb W8/W4 functional inference, `triton_compat` remote-code
   import on early sm_120 stacks, native_model no-FLA fallback/training smoke,

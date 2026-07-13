@@ -56,9 +56,21 @@ Blackwell `128x128` small-row tile. With deep FFN epilogues, the seven 1.5B
 cells reach `1.0765x-1.1548x` fp16 at `0.6932x` footprint; minimum final cosine
 is `0.9999553` and greedy is 7/7. RTX 5070 selects this tile automatically,
 while `RWKV7_NATIVE_MM8_BLOCK_M/N` remain explicit overrides. Fused FFN flags
-remain default-off. MM4 is not closed by this result.
+remain default-off. The MM4 follow-up below closes its matching exact-card
+matrix separately.
 
 Evidence: [`../bench/5070_native_mm8_tuned_deep_20260713/README.md`](../bench/5070_native_mm8_tuned_deep_20260713/README.md).
+
+The subsequent MM4 pass adds the matching fused residual epilogue, tunes the
+bsz1 paired-nibble GEMV to `64x256`, and routes exact-card bsz2+ through an
+output-aware tensor-core dot kernel. The seven 1.5B cells reach
+`1.0580x-1.2525x` fp16 at `0.5394x` footprint; minimum final cosine is
+`0.99809039` and greedy is 7/7. RTX 5070 selects the measured tiles
+automatically, with explicit `RWKV7_NATIVE_MM4_BLOCK_*` and
+`RWKV7_NATIVE_MM4_DOT_BLOCK_*` overrides. Both FFN fusion flags remain
+default-off, and this result does not promote another card or model size.
+
+Evidence: [`../bench/5070_native_mm4_tuned_deep_20260713/README.md`](../bench/5070_native_mm4_tuned_deep_20260713/README.md).
 
 ## Acceptance gate
 

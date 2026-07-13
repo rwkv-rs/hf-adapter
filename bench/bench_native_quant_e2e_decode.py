@@ -31,6 +31,30 @@ DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
 SEED = "The quick brown fox jumps over the lazy dog. " * 256
 
 
+def effective_native_quant_tiles(device: str) -> dict[str, int | None]:
+    from rwkv7_hf.kernel_policy import current_kernel_policy
+
+    policy = current_kernel_policy(device=device, torch_module=torch)
+
+    def resolved(env_name: str, default: int | None) -> int | None:
+        value = os.environ.get(env_name)
+        return int(value) if value is not None else default
+
+    dot_pairs_override = os.environ.get("RWKV7_NATIVE_MM4_DOT_BLOCK_PAIRS")
+    dot_pairs_small = int(dot_pairs_override) if dot_pairs_override else policy.mm4_dot_block_pairs_small
+    dot_pairs_large = int(dot_pairs_override) if dot_pairs_override else policy.mm4_dot_block_pairs_large
+    return {
+        "native_mm8_block_m": resolved("RWKV7_NATIVE_MM8_BLOCK_M", policy.mm8_block_m),
+        "native_mm8_block_n": resolved("RWKV7_NATIVE_MM8_BLOCK_N", policy.mm8_block_n),
+        "native_mm4_block_pairs": resolved("RWKV7_NATIVE_MM4_BLOCK_PAIRS", policy.mm4_block_pairs),
+        "native_mm4_block_n": resolved("RWKV7_NATIVE_MM4_BLOCK_N", policy.mm4_block_n),
+        "native_mm4_dot_block_b": resolved("RWKV7_NATIVE_MM4_DOT_BLOCK_B", policy.mm4_dot_block_b),
+        "native_mm4_dot_block_pairs_small": dot_pairs_small,
+        "native_mm4_dot_block_pairs_large": dot_pairs_large,
+        "native_mm4_dot_block_n": resolved("RWKV7_NATIVE_MM4_DOT_BLOCK_N", policy.mm4_dot_block_n),
+    }
+
+
 def infer_model_size_label(hf_dir: str, explicit: str = "") -> str | None:
     if explicit:
         return explicit.lower()
@@ -505,8 +529,7 @@ def main() -> int:
             "fast_cache": os.environ.get("RWKV7_FAST_CACHE", "1") not in {"0", "false", "False", "no", "off"},
             "fused_quant_ffn": bool(args.fused_quant_ffn),
             "fused_quant_ffn_down_add": bool(args.fused_quant_ffn_down_add),
-            "native_mm8_block_m": os.environ.get("RWKV7_NATIVE_MM8_BLOCK_M"),
-            "native_mm8_block_n": os.environ.get("RWKV7_NATIVE_MM8_BLOCK_N"),
+            **effective_native_quant_tiles(args.device),
             "batch_size": args.batch_size,
             "prompt_tokens": int(ids.shape[1]),
             "decode_tokens": args.decode_tokens,

@@ -45,6 +45,10 @@ Follow-up: the exact-card MM8 tile sweep subsequently closes all seven MM8
 cells at `1.0765x-1.1548x` fp16 while keeping the `0.6932x` footprint. See
 [`../5070_native_mm8_tuned_deep_20260713/README.md`](../5070_native_mm8_tuned_deep_20260713/README.md).
 
+The matching exact-card MM4 GEMV/dot tuning and fused residual follow-up also
+closes all seven MM4 cells at `1.0580x-1.2525x` fp16 and `0.5394x` footprint.
+See [`../5070_native_mm4_tuned_deep_20260713/README.md`](../5070_native_mm4_tuned_deep_20260713/README.md).
+
 Files:
 
 - `results.jsonl`: 42 valid end-to-end rows.

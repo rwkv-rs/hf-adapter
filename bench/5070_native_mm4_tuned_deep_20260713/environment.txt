@@ -1,0 +1,12 @@
+2026-07-13T10:11:26.3200540+08:00
+GPU=NVIDIA GeForce RTX 5070 Laptop GPU
+capability=sm_120
+driver=582.05
+nvidia_smi_cuda=13.0
+torch=2.11.0+cu128
+torch_cuda=12.8
+triton=3.7.1
+transformers=5.12.1
+base_commit=5df781e0a987c2f69ce3c0bced261422d31c90f2
+model=D:\models\rwkv7\rwkv7-g1g-1.5b-hf
+source=D:\bench\rwkv7-native-quant-5070-20260713\mm4_tuned_deep_full_final_v2
