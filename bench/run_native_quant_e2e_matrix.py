@@ -183,6 +183,8 @@ def run_one(args, case: BaseCase, quantization: str, fusion_mode: str, results: 
         str(args.output_dir / "baselines"),
         "--baseline-key",
         baseline_key(case, args),
+        "--staging-root",
+        str(args.output_dir / "staging"),
         "--results",
         str(case_result),
     ]

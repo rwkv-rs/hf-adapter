@@ -244,19 +244,35 @@ def count_modules(model) -> dict[str, int]:
     return counts
 
 
-def prepare_model_dir(model_path: str, code_source: str):
+def prepare_model_dir(model_path: str, code_source: str, staging_root: str = ""):
     if code_source == "model":
         return model_path, None
     source = Path(model_path).resolve()
     if not source.is_dir():
         raise ValueError("--code-source repo requires a local converted model directory")
     repo_code = Path(__file__).resolve().parents[1] / "rwkv7_hf"
-    temporary = tempfile.TemporaryDirectory(prefix="rwkv7_native_quant_e2e_")
+    staging_path = Path(staging_root).resolve() if staging_root else None
+    if staging_path is not None:
+        staging_path.mkdir(parents=True, exist_ok=True)
+    temporary = tempfile.TemporaryDirectory(prefix="rwkv7_native_quant_e2e_", dir=staging_path)
     target = Path(temporary.name)
     for item in source.iterdir():
         if item.name == "__pycache__" or item.suffix == ".py":
             continue
-        (target / item.name).symlink_to(item, target_is_directory=item.is_dir())
+        destination = target / item.name
+        if item.is_file():
+            try:
+                os.link(item, destination)
+                continue
+            except OSError:
+                pass
+        try:
+            destination.symlink_to(item, target_is_directory=item.is_dir())
+        except OSError:
+            if item.is_dir():
+                shutil.copytree(item, destination)
+            else:
+                shutil.copy2(item, destination)
     for py_file in repo_code.glob("*.py"):
         shutil.copy2(py_file, target / py_file.name)
     return str(target), temporary
@@ -386,6 +402,7 @@ def main() -> int:
     ap.add_argument("--timing-repeats", type=int, default=1, help="Independent decode measurements; report the median run")
     ap.add_argument("--baseline-dir", default="", help="Directory for fp16 baseline logits/tokps used by fresh quant-only runs")
     ap.add_argument("--baseline-key", default="", help="Optional explicit baseline-cache key shared by fp16/mm8/mm4 subprocesses")
+    ap.add_argument("--staging-root", default="", help="Optional same-volume directory for repo-code hardlink staging")
     ap.add_argument(
         "--paired-baseline",
         action="store_true",
@@ -404,7 +421,7 @@ def main() -> int:
         args.quantizations = list(dict.fromkeys(["none", *args.quantizations]))
 
     dtype = DTYPES[args.dtype]
-    effective_hf_dir, temporary_model_dir = prepare_model_dir(args.hf_dir, args.code_source)
+    effective_hf_dir, temporary_model_dir = prepare_model_dir(args.hf_dir, args.code_source, args.staging_root)
     tok = AutoTokenizer.from_pretrained(effective_hf_dir, trust_remote_code=True)
     ids = encode(tok, args.prompt_tokens, args.batch_size, args.device)
     rows = []

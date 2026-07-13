@@ -7,6 +7,7 @@ from bench.run_native_quant_e2e_matrix import (
     expanded_cases,
     read_completed,
 )
+from bench.bench_native_quant_e2e_decode import prepare_model_dir
 
 
 def test_expanded_profile_has_seven_shapes_per_model():
@@ -48,3 +49,18 @@ def test_read_completed_ignores_failure_rows(tmp_path: Path):
         encoding="utf-8",
     )
     assert read_completed(path) == {("1.5b", 1, 128, 128, "mm8", "deep")}
+
+
+def test_repo_code_staging_uses_requested_volume(tmp_path: Path):
+    source = tmp_path / "model"
+    staging = tmp_path / "staging"
+    source.mkdir()
+    weight = source / "model.safetensors"
+    weight.write_bytes(b"weights")
+    effective, temporary = prepare_model_dir(str(source), "repo", str(staging))
+    try:
+        staged = Path(effective) / weight.name
+        assert staged.read_bytes() == b"weights"
+        assert Path(effective).parent == staging.resolve()
+    finally:
+        temporary.cleanup()
