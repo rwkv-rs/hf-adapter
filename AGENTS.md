@@ -137,6 +137,17 @@ available. Both fused FFN flags stay default-off. This closes only the exact
 5070/1.5B/MM4 matrix; larger models and other cards remain open. Evidence:
 `bench/5070_native_mm4_tuned_deep_20260713/`.
 
+The larger-model follow-up is under
+`bench/5070_native_quant_large_models_20260713/`. On 2.9B, the complete 42-row
+same-process matrix closes MM8 off/up/deep independently: every lane is 7/7 on
+speed, footprint, and greedy, with overall decode ratios `1.0567x-1.1918x` and
+`0.6876x` footprint. MM4 is 7/7 faster at `0.5310x` footprint but 0/7 on greedy,
+so it remains unaccepted. On 7.2B/8GB, CPU-first packing proves only quantized
+bsz1 feasibility: MM4 up uses `4140.5 MiB` model / `4769.9 MiB` peak and MM8
+deep uses `7340.5 MiB` / `7700.4 MiB`. There is no same-card fp16 timing or
+logits baseline for 7.2B; do not turn those standalone tok/s rows into speed
+acceptance. All fused flags remain default-off.
+
 ## Parallel Prefill Goal: DPLR/WY Compiled Prototype
 
 Active branch work is now the opt-in DPLR/WY compiled prefill backend, not
@@ -855,6 +866,11 @@ Run this checklist for every new GPU before marking it as supported:
     subsequently beat fp16 in all 7/7 expanded 1.5B cells
     (`1.0580x-1.2525x`) at `0.5394x` footprint. Treat this as a closed MM4 lane
     for this exact card/model only; larger models and other cards remain open.
+  - The 2.9B expanded follow-up closes MM8 off/up/deep separately at 7/7 strict
+    cells per lane (`1.0567x-1.1918x` fp16, `0.6876x` footprint, greedy 7/7).
+    MM4 remains open because greedy is 0/7 despite 7/7 speed wins. The 7.2B
+    MM4/MM8 bsz1 rows are 8GB feasibility evidence only: dense fp16 cannot fit,
+    so same-card speed and logits acceptance are not evaluated.
 - Mandatory before claiming support: import/generate, fast decode, dynamic batch,
   chunked prefill, bnb W8/W4 functional inference, `triton_compat` remote-code
   import on early sm_120 stacks, native_model no-FLA fallback/training smoke,

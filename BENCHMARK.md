@@ -111,6 +111,30 @@ remain opt-in and other cards/models remain open gates.
 
 Evidence: [`bench/5070_native_mm4_tuned_deep_20260713/README.md`](bench/5070_native_mm4_tuned_deep_20260713/README.md).
 
+### RTX 5070 Laptop 2.9B strict matrix and 7.2B feasibility
+
+The 2.9B expanded matrix completes `42/42` fresh-process rows. All three MM8
+lanes independently pass all seven exact-shape speed, footprint, and greedy
+gates. MM4 is faster and smaller in every cell but fails every greedy check.
+
+| Path | Speed >= fp16 | Decode / fp16 range | Footprint / fp16 | Greedy | Accepted |
+|---|---:|---:|---:|---:|---:|
+| MM8 off | 7/7 | `1.0870x-1.1887x` | `0.6876x` | 7/7 | yes |
+| MM8 up | 7/7 | `1.0567x-1.1906x` | `0.6876x` | 7/7 | yes |
+| MM8 deep | 7/7 | `1.1019x-1.1918x` | `0.6876x` | 7/7 | yes |
+| MM4 off | 7/7 | `1.1012x-1.3737x` | `0.5310x` | 0/7 | no |
+| MM4 up | 7/7 | `1.1518x-1.3834x` | `0.5310x` | 0/7 | no |
+
+Dense 7.2B fp16 has a `13731.3 MiB` model footprint and cannot fit in the
+card's `8151 MiB`. CPU-first quantization makes bsz1 prompt128/decode128
+feasible: MM4 up records `4140.5 MiB` model, `4769.9 MiB` peak, and `40.1
+tok/s`; MM8 deep records `7340.5 MiB`, `7700.4 MiB`, and `32.7 tok/s`. These
+rows have no same-card fp16 timing or logits baseline, so they are footprint and
+execution evidence only. Their token `31261` matches the exact-shape V100 fp16
+reference, which is corroboration rather than a same-card acceptance gate.
+
+Evidence: [`bench/5070_native_quant_large_models_20260713/README.md`](bench/5070_native_quant_large_models_20260713/README.md).
+
 ### V100 RWKV-7 vs Qwen3.5 HF matrix
 
 The complete official text-only matrix covers three model pairs, fp16/bnb8/

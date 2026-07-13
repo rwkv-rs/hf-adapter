@@ -302,7 +302,7 @@ def prepare_model_dir(model_path: str, code_source: str, staging_root: str = "")
     return str(target), temporary
 
 
-def load_model(args, dtype, model_path: str | None = None):
+def load_model(args, dtype, model_path: str | None = None, *, load_on_cpu: bool = False):
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN"] = "1" if args.fused_quant_ffn else "0"
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD"] = "1" if args.fused_quant_ffn_down_add else "0"
@@ -312,7 +312,8 @@ def load_model(args, dtype, model_path: str | None = None):
         model_path or args.hf_dir,
         trust_remote_code=True,
         torch_dtype=dtype,
-        device_map=args.device if args.device.startswith("cuda") else None,
+        device_map=None if load_on_cpu else (args.device if args.device.startswith("cuda") else None),
+        low_cpu_mem_usage=True,
     ).eval()
     if args.fuse_norm != "auto":
         desired = args.fuse_norm == "true"
@@ -321,6 +322,19 @@ def load_model(args, dtype, model_path: str | None = None):
             raise ValueError(f"Loaded model config has fuse_norm={actual}; expected {desired}")
     set_attn_mode(model, args.attn_mode)
     return model
+
+
+def validate_quantize_before_device(args) -> None:
+    if not args.quantize_before_device:
+        return
+    if not args.device.startswith("cuda"):
+        raise ValueError("--quantize-before-device requires a CUDA target device")
+    if args.single_quantization not in {"mm8", "mm4"}:
+        raise ValueError("--quantize-before-device requires --single-quantization mm8 or mm4")
+    if args.paired_baseline:
+        raise ValueError("--quantize-before-device cannot measure an in-process fp16 baseline")
+    if not args.allow_missing_baseline:
+        raise ValueError("--quantize-before-device requires --allow-missing-baseline")
 
 
 def benchmark_decode(args, tok, model, ids):
@@ -433,12 +447,24 @@ def main() -> int:
         help="Measure a dense baseline in the same fresh process immediately before quantizing; removes cross-process clock noise",
     )
     ap.add_argument("--allow-missing-baseline", action="store_true", help="Emit quant-only rows with null ratios when fp16 OOM/no baseline")
+    ap.add_argument(
+        "--quantize-before-device",
+        action="store_true",
+        help=(
+            "Load dense weights on CPU, quantize there, then move only the packed model to the target device. "
+            "Requires a single native MM8/MM4 quantization and --allow-missing-baseline."
+        ),
+    )
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     args = ap.parse_args()
     if args.fused_quant_ffn_down_add and not args.fused_quant_ffn:
         ap.error("--fused-quant-ffn-down-add requires --fused-quant-ffn")
     if args.timing_repeats < 1:
         ap.error("--timing-repeats must be >= 1")
+    try:
+        validate_quantize_before_device(args)
+    except ValueError as exc:
+        ap.error(str(exc))
     if args.single_quantization is not None:
         args.quantizations = [args.single_quantization]
     else:
@@ -462,7 +488,14 @@ def main() -> int:
         if args.device.startswith("cuda"):
             torch.cuda.empty_cache()
             torch.cuda.reset_peak_memory_stats()
-        model = load_model(args, dtype, effective_hf_dir)
+        model = load_model(
+            args,
+            dtype,
+            effective_hf_dir,
+            load_on_cpu=args.quantize_before_device,
+        )
+        if args.quantize_before_device:
+            baseline_footprint = module_footprint_mb(model)
         if quantization != "none" and args.paired_baseline:
             dense_footprint = module_footprint_mb(model)
             dense_res = benchmark_decode(args, tok, model, ids)
@@ -472,6 +505,9 @@ def main() -> int:
             baseline_tokps = dense_res["decode_tokps_total"]
             baseline_footprint = dense_footprint
         replaced, module_counts = quantize_model(model, quantization, args.min_params, args.policy)
+        if args.quantize_before_device:
+            gc.collect()
+            model.to(args.device)
         footprint = module_footprint_mb(model)
         # Measure steady-state inference memory, not temporary fp32 tensors
         # created while quantizing a dense checkpoint at process startup.
@@ -509,7 +545,11 @@ def main() -> int:
                 prompt_cos = final_cos = None
                 same_next = None
                 speed_ratio = None
-                footprint_ratio = None
+                footprint_ratio = (
+                    float(footprint) / float(baseline_footprint)
+                    if baseline_footprint is not None
+                    else None
+                )
             else:
                 prompt_cos = F.cosine_similarity(baseline_prompt.flatten().unsqueeze(0), prompt_logits.flatten().unsqueeze(0)).item()
                 final_cos = F.cosine_similarity(baseline_final.flatten().unsqueeze(0), final_logits.flatten().unsqueeze(0)).item()
@@ -536,6 +576,7 @@ def main() -> int:
             "min_params": args.min_params,
             "native_mm_policy": args.policy,
             "paired_baseline": bool(args.paired_baseline and quantization != "none"),
+            "quantize_before_device": bool(args.quantize_before_device),
             "replaced_modules": replaced,
             "module_counts": module_counts,
             "model_footprint_mb": footprint,

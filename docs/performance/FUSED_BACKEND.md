@@ -402,6 +402,14 @@ serving speed.
      exact-card tile policy is automatic but both FFN fusion flags stay
      default-off; other cards and larger models require independent rows.
      Evidence is under `bench/5070_native_mm4_tuned_deep_20260713/`.
+   - The 5070 2.9B expanded follow-up closes MM8 off/up/deep independently:
+     every lane passes 7/7 exact-shape speed, footprint, and greedy cells, with
+     ratios `1.0567x-1.1918x` at `0.6876x` footprint. Fused-up is not uniformly
+     better than off and deep has one `0.9762x` paired regression, so both flags
+     stay default-off. MM4 is 7/7 faster at `0.5310x` footprint but greedy is
+     0/7. CPU-first packing also makes 7.2B MM4/MM8 bsz1 fit in 8GB, but those
+     quant-only rows have no same-card fp16 speed or logits gate. Evidence is
+     under `bench/5070_native_quant_large_models_20260713/`.
 19. V100 + Ada/Blackwell benchmark matrix.
    - `bench/run_v100_fast_decode_validation.sh` remains the broad V100
      regression gate.

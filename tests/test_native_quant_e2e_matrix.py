@@ -1,13 +1,15 @@
 from argparse import Namespace
 from pathlib import Path
 
+import pytest
+
 from bench.run_native_quant_e2e_matrix import (
     BaseCase,
     baseline_key,
     expanded_cases,
     read_completed,
 )
-from bench.bench_native_quant_e2e_decode import prepare_model_dir
+from bench.bench_native_quant_e2e_decode import prepare_model_dir, validate_quantize_before_device
 
 
 def test_expanded_profile_has_seven_shapes_per_model():
@@ -64,3 +66,23 @@ def test_repo_code_staging_uses_requested_volume(tmp_path: Path):
         assert Path(effective).parent == staging.resolve()
     finally:
         temporary.cleanup()
+
+
+def test_quantize_before_device_requires_explicit_quant_only_mode():
+    args = Namespace(
+        quantize_before_device=True,
+        device="cuda",
+        single_quantization="mm4",
+        paired_baseline=False,
+        allow_missing_baseline=True,
+    )
+    validate_quantize_before_device(args)
+
+    args.single_quantization = None
+    with pytest.raises(ValueError, match="single-quantization"):
+        validate_quantize_before_device(args)
+
+    args.single_quantization = "mm4"
+    args.paired_baseline = True
+    with pytest.raises(ValueError, match="fp16 baseline"):
+        validate_quantize_before_device(args)

@@ -89,6 +89,26 @@ default-off, and this result does not promote another card or model size.
 
 Evidence: [`../bench/5070_native_mm4_tuned_deep_20260713/README.md`](../bench/5070_native_mm4_tuned_deep_20260713/README.md).
 
+## RTX 5070 Laptop large-model follow-up
+
+The 2.9B expanded matrix completes 42/42 rows. MM8 off, up, and deep each pass
+all 7/7 speed, footprint, and greedy cells; the combined range is
+`1.0567x-1.1918x` fp16 at `0.6876x` model footprint. This closes the three
+measured MM8 lanes on the exact card/model, but does not justify defaulting a
+fusion: up versus off has median `0.9891x`, while deep versus up has a `0.9762x`
+minimum. MM4 reaches `1.1012x-1.3834x` and `0.5310x` footprint but greedy is
+0/7, so it fails quality acceptance.
+
+For 7.2B on the 8GB card, `--quantize-before-device` loads dense weights on CPU,
+packs native MM8/MM4 there, then moves only the quantized model to CUDA. MM4 up
+fits at `4140.5 MiB` model / `4769.9 MiB` peak; MM8 deep fits narrowly at
+`7340.5 MiB` / `7700.4 MiB`. Dense fp16 is `13731.3 MiB` and cannot provide a
+same-card baseline, so the reported `40.1` and `32.7 tok/s` are standalone
+telemetry, not fp16 speed claims. The local quant tokens match the exact-shape
+V100 fp16 token, but same-card cosine and greedy gates remain unevaluated.
+
+Evidence: [`../bench/5070_native_quant_large_models_20260713/README.md`](../bench/5070_native_quant_large_models_20260713/README.md).
+
 ## Acceptance gate
 
 A promoted quant row must provide:
