@@ -56,6 +56,7 @@ if _HAS_TRITON:
         hidden: tl.constexpr,
         head_dim: tl.constexpr,
         has_v_gate: tl.constexpr,
+        output_log_decay: tl.constexpr,
         block_n: tl.constexpr,
     ):
         row = tl.program_id(0)
@@ -77,7 +78,8 @@ if _HAS_TRITON:
         inv_norm = tl.rsqrt(tl.maximum(norm2, 1.0e-20))
         kk = kk_raw * inv_norm
         k_adj = k_raw * (1.0 + (a_val - 1.0) * ka_scale)
-        w_decay = tl.exp(-0.606531 * tl.sigmoid(w_raw))
+        w_log = -0.606531 * tl.sigmoid(w_raw)
+        w_decay = w_log if output_log_decay else tl.exp(w_log)
 
         v_out = v_raw
         if has_v_gate:
@@ -182,6 +184,7 @@ def fused_prefill_state_prep(
     num_heads: int,
     head_dim: int,
     w_out_dtype: str = "fp32",
+    w_transform: str = "decay",
     force_fallback: bool = False,
 ):
     """Fuse native-prefill recurrent state preparation.
@@ -199,6 +202,8 @@ def fused_prefill_state_prep(
         raise RuntimeError("fused_prefill_state_prep requires torch")
     if w_out_dtype not in {"fp32", "input"}:
         raise ValueError(f"w_out_dtype must be 'fp32' or 'input'; got {w_out_dtype!r}")
+    if w_transform not in {"decay", "log_decay"}:
+        raise ValueError(f"w_transform must be 'decay' or 'log_decay'; got {w_transform!r}")
     hidden = int(num_heads) * int(head_dim)
     w2, prefix = _flatten_seq_hidden(w_raw, hidden=hidden, name="w_raw")
     k2, k_prefix = _flatten_seq_hidden(k_raw, hidden=hidden, name="k_raw")
@@ -245,7 +250,8 @@ def fused_prefill_state_prep(
             v_out = v2 + (vf2 - v2) * vg2
         else:
             v_out = v2
-        w_out = torch.exp(-0.606531 * torch.sigmoid(w2.float()))
+        w_log = -0.606531 * torch.sigmoid(w2.float())
+        w_out = w_log if w_transform == "log_decay" else torch.exp(w_log)
         if w_out_dtype == "input":
             w_out = w_out.to(w2.dtype)
         return (
@@ -285,6 +291,7 @@ def fused_prefill_state_prep(
         hidden,
         int(head_dim),
         has_v_gate=bool(has_v_gate),
+        output_log_decay=w_transform == "log_decay",
         block_n=block_n,
         num_warps=1,
     )

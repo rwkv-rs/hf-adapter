@@ -1811,6 +1811,7 @@ def _native_prefill_scan(
     N: int,
     *,
     w_is_raw: bool = False,
+    w_is_log: bool = False,
 ):
     """Run the recurrent prefill scan, using Triton only when explicitly enabled."""
 
@@ -1843,8 +1844,12 @@ def _native_prefill_scan(
             a.view(B, T, H, N),
             state,
             chunk_size=16,
+            w_is_log=w_is_log,
         )
         return out.reshape(B, T, H * N), new_state
+
+    if w_is_log:
+        w = torch.exp(w.float())
 
     if _native_prefill_fused_scan_enabled():
         scan_block_m = _native_prefill_scan_block_m(N, B)
@@ -2049,6 +2054,8 @@ def prefill(
             if layer_idx != 0:
                 v_gate = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
         use_fused_scan_output = _native_prefill_fused_scan_output_enabled()
+        use_self_chunk = _native_prefill_self_chunk_enabled(T, N) and not use_fused_scan_output
+        self_chunk_w_is_log = False
         use_clampw_scan = _native_prefill_fused_clampw_scan_enabled() and not use_fused_scan_output
         use_fused_state_scan = _native_prefill_fused_state_scan_enabled(B) and not use_fused_scan_output
         if use_clampw_scan and _native_prefill_fused_state_prep_enabled() and fused_prefill_kv_kk_prep is None:
@@ -2093,6 +2100,7 @@ def prefill(
             v = v.reshape(B, T, hidden)
             state_scan_done = True
         elif _native_prefill_fused_state_prep_enabled():
+            self_chunk_w_is_log = bool(use_self_chunk and not use_clampw_scan)
             if use_clampw_scan:
                 if layer_idx == 0:
                     k, v, kk = fused_prefill_kv_kk_prep(
@@ -2128,6 +2136,7 @@ def prefill(
                     num_heads=H,
                     head_dim=N,
                     w_out_dtype=_native_prefill_state_prep_w_dtype(),
+                    w_transform="log_decay" if use_self_chunk else "decay",
                 )
                 v_first_seq = v
             else:
@@ -2143,6 +2152,7 @@ def prefill(
                     num_heads=H,
                     head_dim=N,
                     w_out_dtype=_native_prefill_state_prep_w_dtype(),
+                    w_transform="log_decay" if use_self_chunk else "decay",
                 )
         else:
             kk = F.normalize((k * k_k.view(1, 1, hidden)).view(B, T, H, N), dim=-1, p=2.0).view(B, T, hidden)
@@ -2172,7 +2182,11 @@ def prefill(
             )
             out = out.reshape(B, T, hidden)
         elif not state_scan_done:
-            out, new_state = _native_prefill_scan(r, w, k, v, kk, a, state[layer_idx], B, T, H, N, w_is_raw=use_clampw_scan)
+            out, new_state = _native_prefill_scan(
+                r, w, k, v, kk, a, state[layer_idx], B, T, H, N,
+                w_is_raw=use_clampw_scan,
+                w_is_log=self_chunk_w_is_log,
+            )
         out_projected = False
         if use_fused_scan_output:
             pass
