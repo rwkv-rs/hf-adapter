@@ -1,6 +1,6 @@
 {
   "schema": "rwkv7.apple.production-gates.v1",
-  "version": "2026-07-12.8",
+  "version": "2026-07-13.1",
   "policy": {
     "completion": "Every required gate must have machine-verifiable passing evidence. Missing, unknown, or failed evidence makes the aggregate incomplete.",
     "no_inference_from_source": true,
@@ -1313,13 +1313,185 @@
         ]
       }
     },
-    {
-      "id": "train.mps.peft_methods",
-      "category": "hf_mps_training",
-      "title": "常见 PEFT 方法兼容",
-      "criterion": "LoRA、AdaLoRA、IA3、prefix/prompt tuning 中适用于 CausalLM 的常见配置能初始化、训练、保存和加载；不支持项有明确技术说明。",
-      "required": true
-    },
+  {
+    "id": "train.mps.peft_methods",
+    "category": "hf_mps_training",
+    "title": "常见 PEFT 方法兼容",
+    "criterion": "LoRA、AdaLoRA、IA3、prefix/prompt tuning 中适用于 CausalLM 的常见配置能初始化、训练、保存和加载；不支持项有明确技术说明。",
+    "required": true,
+    "proof": {
+      "type": "all",
+      "proofs": [
+        {
+          "type": "tracked_files",
+          "paths": [
+            "scripts/mps_peft_methods_bench.py",
+            "bench/apple_mps_peft_methods_m5_20260712.jsonl",
+            "bench/logs/apple_mps_peft_methods_m5_20260712.log"
+          ]
+        },
+        {
+          "type": "jsonl_query",
+          "path": "bench/apple_mps_peft_methods_m5_20260712.jsonl",
+          "axis": "mps_peft_method",
+          "where": [
+            {
+              "field": "support_status",
+              "op": "eq",
+              "value": "supported"
+            }
+          ],
+          "require": [
+            {
+              "field": "status",
+              "op": "eq",
+              "value": "pass"
+            },
+            {
+              "field": "device",
+              "op": "eq",
+              "value": "mps"
+            },
+            {
+              "field": "parameter_device",
+              "op": "contains",
+              "value": "mps"
+            },
+            {
+              "field": "trainable_parameters",
+              "op": "gt",
+              "value": 0
+            },
+            {
+              "field": "train_loss",
+              "op": "gt",
+              "value": 0.0
+            },
+            {
+              "field": "gradient_l2",
+              "op": "gt",
+              "value": 0.0
+            },
+            {
+              "field": "max_trainable_delta",
+              "op": "gt",
+              "value": 0.0
+            },
+            {
+              "field": "reload_logits_max_abs",
+              "op": "le",
+              "value": 0.0001
+            },
+            {
+              "field": "artifact_files",
+              "op": "contains",
+              "value": "adapter_config.json"
+            },
+            {
+              "field": "artifact_files",
+              "op": "contains",
+              "value": "adapter_model.safetensors"
+            },
+            {
+              "field": "git_dirty",
+              "op": "falsy"
+            }
+          ],
+          "all_matches": true,
+          "min_matches": 4,
+          "coverage": [
+            {
+              "field": "method",
+              "values": [
+                "lora",
+                "adalora",
+                "ia3",
+                "prompt_tuning"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "jsonl_query",
+          "path": "bench/apple_mps_peft_methods_m5_20260712.jsonl",
+          "axis": "mps_peft_method",
+          "where": [
+            {
+              "field": "method",
+              "op": "eq",
+              "value": "prefix_tuning"
+            },
+            {
+              "field": "support_status",
+              "op": "eq",
+              "value": "unsupported"
+            }
+          ],
+          "require": [
+            {
+              "field": "status",
+              "op": "eq",
+              "value": "pass"
+            },
+            {
+              "field": "expected_rejection",
+              "op": "truthy"
+            },
+            {
+              "field": "technical_reason",
+              "op": "contains",
+              "value": "NativeRWKV7Cache"
+            },
+            {
+              "field": "capability_contract",
+              "op": "not_empty"
+            },
+            {
+              "field": "git_dirty",
+              "op": "falsy"
+            }
+          ],
+          "all_matches": true,
+          "min_matches": 1
+        },
+        {
+          "type": "jsonl_query",
+          "path": "bench/apple_mps_peft_methods_m5_20260712.jsonl",
+          "axis": "mps_peft_methods_summary",
+          "where": [],
+          "require": [
+            {
+              "field": "status",
+              "op": "eq",
+              "value": "pass"
+            },
+            {
+              "field": "pass_rows",
+              "op": "eq",
+              "value": 5
+            },
+            {
+              "field": "total_rows",
+              "op": "eq",
+              "value": 5
+            },
+            {
+              "field": "git_dirty",
+              "op": "falsy"
+            }
+          ],
+          "min_matches": 1
+        }
+      ]
+    }
+  },
+  {
+    "id": "train.mps.state_tuning",
+    "category": "hf_mps_training",
+    "title": "RWKV State Tuning",
+    "criterion": "提供可训练初始 RWKV recurrent/shift state adapter：base 权重冻结，按 batch 安全展开且无别名；0.1B/0.4B/1.5B 在 MPS 上通过有限 loss、非零梯度与更新、Trainer 训练、保存重载、断点续训和 generate continuation，重载后 logits/state/greedy 在声明容差内一致。",
+    "required": true
+  },
   {
     "id": "train.mps.gradient_accumulation",
     "category": "hf_mps_training",
