@@ -113,6 +113,7 @@ def baseline_path(args) -> Path | None:
             f"attn-{args.attn_mode}",
             f"fast-{args.fast_token_backend}",
             f"quantffn-{int(args.fused_quant_ffn)}",
+            f"quantffndown-{int(args.fused_quant_ffn_down_add)}",
             f"bsz-{args.batch_size}",
             f"prompt-{args.prompt_tokens}",
             f"decode-{args.decode_tokens}",
@@ -264,6 +265,7 @@ def prepare_model_dir(model_path: str, code_source: str):
 def load_model(args, dtype, model_path: str | None = None):
     os.environ["RWKV7_FAST_TOKEN_BACKEND"] = args.fast_token_backend
     os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN"] = "1" if args.fused_quant_ffn else "0"
+    os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD"] = "1" if args.fused_quant_ffn_down_add else "0"
     if args.fast_cache != "auto":
         os.environ["RWKV7_FAST_CACHE"] = "1" if args.fast_cache == "true" else "0"
     model = AutoModelForCausalLM.from_pretrained(
@@ -357,6 +359,11 @@ def main() -> int:
         action="store_true",
         help="Fuse MM8/MM4 FFN-up dequant projection with the ReLU-square epilogue",
     )
+    ap.add_argument(
+        "--fused-quant-ffn-down-add",
+        action="store_true",
+        help="Also fuse the MM8 FFN-down dequant projection with residual add; requires --fused-quant-ffn",
+    )
     quantization_choices = ["none", "mm8", "mm4", "a8w8", "torchao_w8", "torchao_w4"]
     ap.add_argument("--quantizations", nargs="+", choices=quantization_choices, default=["none", "mm8", "mm4"])
     ap.add_argument(
@@ -387,6 +394,8 @@ def main() -> int:
     ap.add_argument("--allow-missing-baseline", action="store_true", help="Emit quant-only rows with null ratios when fp16 OOM/no baseline")
     ap.add_argument("--results", default=str(Path(__file__).parent / "results.jsonl"))
     args = ap.parse_args()
+    if args.fused_quant_ffn_down_add and not args.fused_quant_ffn:
+        ap.error("--fused-quant-ffn-down-add requires --fused-quant-ffn")
     if args.timing_repeats < 1:
         ap.error("--timing-repeats must be >= 1")
     if args.single_quantization is not None:
@@ -478,6 +487,7 @@ def main() -> int:
             "fuse_norm": getattr(model.config, "fuse_norm", None),
             "fast_cache": os.environ.get("RWKV7_FAST_CACHE", "1") not in {"0", "false", "False", "no", "off"},
             "fused_quant_ffn": bool(args.fused_quant_ffn),
+            "fused_quant_ffn_down_add": bool(args.fused_quant_ffn_down_add),
             "batch_size": args.batch_size,
             "prompt_tokens": int(ids.shape[1]),
             "decode_tokens": args.decode_tokens,

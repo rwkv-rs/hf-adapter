@@ -76,11 +76,13 @@ class ProbeQuantLinear(torch.nn.Module):
 
 def test_native_graph_quant_ffn_route_is_opt_in() -> None:
     old = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN")
+    old_down = os.environ.get("RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD")
     try:
         x = torch.ones(2, 4)
         probe = ProbeQuantLinear()
 
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN"] = "0"
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD"] = "0"
         disabled = _native_graph_ffn_up_relu2_dispatch(x, probe)
         assert probe.fused_calls == 0
         assert probe.forward_calls == 1
@@ -101,14 +103,24 @@ def test_native_graph_quant_ffn_route_is_opt_in() -> None:
 
         os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN"] = "1"
         enabled_down = _native_graph_ffn_down_add_dispatch(x, probe, residual)
+        assert probe.add_calls == 0
+        assert probe.forward_calls == 3
+        torch.testing.assert_close(enabled_down, torch.ones(2, 8))
+
+        os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD"] = "1"
+        enabled_down = _native_graph_ffn_down_add_dispatch(x, probe, residual)
         assert probe.add_calls == 1
-        assert probe.forward_calls == 2
+        assert probe.forward_calls == 3
         torch.testing.assert_close(enabled_down, torch.full((2, 8), 3.0))
     finally:
         if old is None:
             os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN", None)
         else:
             os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN"] = old
+        if old_down is None:
+            os.environ.pop("RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD", None)
+        else:
+            os.environ["RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD"] = old_down
 
 
 def test_mm8_quantization_invalidates_native_weight_caches() -> None:

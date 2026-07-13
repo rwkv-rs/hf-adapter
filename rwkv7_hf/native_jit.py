@@ -852,6 +852,13 @@ def _native_graph_fused_quant_ffn_enabled() -> bool:
     )
 
 
+def _native_graph_fused_quant_ffn_down_add_enabled() -> bool:
+    return bool(
+        _native_graph_fused_quant_ffn_enabled()
+        and env_flag("RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD", False)
+    )
+
+
 def _native_graph_sm70_linear_enabled() -> bool:
     """Whether measured sm_70 small-row linear routes may be captured."""
 
@@ -1003,7 +1010,7 @@ def _native_graph_ffn_down_add_dispatch(
         return residual + ada_linear(x, weight)
     if (
         not _graph_linear_is_dense(weight)
-        and _native_graph_fused_quant_ffn_enabled()
+        and _native_graph_fused_quant_ffn_down_add_enabled()
         and callable(getattr(weight, "rwkv7_forward_add", None))
     ):
         return weight.rwkv7_forward_add(x, residual)

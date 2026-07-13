@@ -395,6 +395,13 @@ def _native_graph_fused_quant_ffn_requested() -> bool:
     return env_flag("RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN", default)
 
 
+def _native_graph_fused_quant_ffn_down_add_requested() -> bool:
+    return bool(
+        _native_graph_fused_quant_ffn_requested()
+        and env_flag("RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD", False)
+    )
+
+
 def _native_graph_sm70_linear_requested() -> bool:
     policy = _rwkv7_kernel_policy()
     return env_flag("RWKV7_NATIVE_GRAPH_SM70_LINEAR", bool(getattr(policy, "sm70_linear", False)))
@@ -1982,6 +1989,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             _native_graph_fused_norm_mix_requested(),
             _native_graph_fused_norm_mix_num_warps(),
             _native_graph_fused_quant_ffn_requested(),
+            _native_graph_fused_quant_ffn_down_add_requested(),
             _native_graph_sm70_linear_requested(),
             _native_graph_ada_linear_requested(),
             _native_graph_ada_linear_signature(),

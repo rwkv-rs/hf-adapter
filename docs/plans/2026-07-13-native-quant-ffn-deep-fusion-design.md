@@ -8,8 +8,9 @@ Extend the default-off native quant FFN route from an isolated
 1. MM8 key dequant-GEMV plus ReLU-square;
 2. MM8 value dequant-GEMV plus residual add.
 
-The first stage already exists. This change adds the second stage and routes
-both stages together under `RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN=1`.
+The first stage already exists. This change adds the second stage under the
+independent `RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD=1` experiment. It
+also requires `RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN=1`.
 
 ## Chosen boundary
 
@@ -34,7 +35,9 @@ little parallelism for 1.5B and larger FFNs.
 
 ## Runtime contract
 
-- The existing environment flag remains default-off.
+- Both environment flags remain default-off. The down-add flag is separate
+  because the first V100 shape sweep showed a regression against up-only
+  fusion while RTX 5070 improved.
 - Dense, MM4, A8W8, CPU, unsupported shapes, and disabled flags keep their
   current behavior.
 - MM8 kernels accept an optional residual pointer and compile-time epilogue
