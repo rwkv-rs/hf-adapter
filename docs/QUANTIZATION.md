@@ -36,6 +36,23 @@ remains disabled by default.
 
 Evidence: [`../bench/v100_native_fused_quant_ffn_20260712/README.md`](../bench/v100_native_fused_quant_ffn_20260712/README.md).
 
+## V100 expanded full-memory matrix
+
+The complete 126-row matrix covers 1.5B/2.9B/7.2B and seven batch/context/
+decode cells per model. MM4 off and fused-up both beat fp16 in all 21 cells;
+fused-up ranges from `1.0415x` to `1.9110x` across the three models while
+reducing footprint to `0.5389x/0.5306x/0.3010x`. It is not accepted because
+greedy equality is only 6/7, 6/7, and 4/7. MM8 remains a footprint-only path:
+all off/up/deep lanes are 0/7 on speed for every model, with ratios
+`0.1123x-0.4394x` fp16.
+
+A batched W4A16 probe proved activation quantization alone is not the MM4
+quality fix: it matched the dequantized linear oracle but still diverged
+end-to-end and reduced bsz8 speed below fp16. Better groupwise/K-style W4 is
+the next quality direction. Both fused flags remain default-off.
+
+Evidence: [`../bench/v100_native_quant_full_matrix_20260713/README.md`](../bench/v100_native_quant_full_matrix_20260713/README.md).
+
 ## RTX 5070 Laptop deep MM8 matrix
 
 The 1.5B expanded matrix passes 42/42 rows. Full-memory MM8 reduces model

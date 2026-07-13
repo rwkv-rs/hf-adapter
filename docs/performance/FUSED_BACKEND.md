@@ -373,6 +373,13 @@ serving speed.
      rows are all positive, but the mixed end-to-end result keeps the flag
      default-off. Raw rows are in
      `bench/v100_native_fused_quant_ffn_20260712/`.
+   - The expanded V100 matrix now covers 126/126 rows for 1.5B/2.9B/7.2B.
+     MM4 off/up beat fp16 in all 21 cells, but greedy is only 6/7, 6/7, and
+     4/7, so no MM4 promotion is made. MM8 passes zero speed cells in every
+     off/up/deep lane and remains `0.1123x-0.4394x` fp16. A batched W4A16
+     correctness prototype was rejected because it did not restore greedy and
+     moved 1.5B/7.2B bsz8 below fp16. Raw evidence and strict machine-readable
+     acceptance fields are in `bench/v100_native_quant_full_matrix_20260713/`.
    - The deeper MM8 value projection + residual epilogue is separately guarded
      by `RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD=1`. RTX 5070 Laptop 1.5B
      expanded evidence passes 42/42 rows: deep MM8 has median `0.9671x` fp16

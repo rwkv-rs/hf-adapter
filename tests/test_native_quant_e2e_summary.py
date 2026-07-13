@@ -40,6 +40,9 @@ def test_summary_pairs_fusion_modes():
     assert summary["paired"]["mm4_up_vs_off"]["ratio_median"] == 1.1
     assert summary["paired"]["mm8_up_vs_off"]["right_wins"] == 1
     assert summary["paired"]["mm8_deep_vs_up"]["right_wins"] == 0
+    assert summary["acceptance"]["1.5b/mm4/up"]["acceptance_pass"] is True
+    assert summary["acceptance"]["1.5b/mm8/up"]["speed_gate_pass"] is False
+    assert summary["all_quant_paths_accepted"] is False
 
 
 def test_load_rows_deduplicates_success_and_keeps_failure(tmp_path: Path):

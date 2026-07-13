@@ -99,6 +99,16 @@ Keep the flag opt-in: one MM4 shape is not enough for default promotion, and
 the full-memory MM8 speed gate remains open. Evidence is under
 `bench/v100_native_fused_quant_ffn_20260712/`.
 
+The expanded V100 full-memory matrix is complete at 126/126 rows across
+1.5B/2.9B/7.2B and seven cells per model. MM4 off/up beat fp16 in all 21
+model/cell pairs and reduce footprint to `0.5389x/0.5306x/0.3010x`, but greedy
+is only 6/7, 6/7, and 4/7, so MM4 is not accepted or promoted. MM8 off/up/deep
+pass zero speed cells for every model and remain `0.1123x-0.4394x` fp16. A
+default-off batched W4A16 probe matched its linear oracle but did not restore
+end-to-end greedy and lost the bsz8 speed gate, so it was removed. Do not call
+execution completeness quant acceptance; keep all fused quant flags off by
+default. Evidence: `bench/v100_native_quant_full_matrix_20260713/`.
+
 The independent deep MM8 down+residual experiment is
 `RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD=1`; it also requires the existing
 fused-quant-FFN flag. RTX 5070 Laptop 1.5B evidence covers 42/42 expanded
@@ -681,6 +691,10 @@ Run this checklist for every new GPU before marking it as supported:
   native `memory` rows as non-speed paths unless they beat fp16. Native
   `speed` policy may be reported as the speed-acceptance lane only with
   card-local footprint, speed, and logits/greedy-token parity rows.
+- Full-memory matrix boundary: MM4 speed+footprint is 21/21 but greedy remains
+  6/7, 6/7, and 4/7 for 1.5B/2.9B/7.2B. MM8 speed is 0/21 per off/up/deep
+  lane. Neither path is promoted; next work is groupwise W4 quality and a true
+  Volta W8A16/deeper fused projection.
 - Promotion rule: any default change must preserve V100 training and decode rows.
 
 #### Turing / RTX 20 / T4 (`sm_75`)

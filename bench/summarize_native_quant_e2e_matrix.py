@@ -66,6 +66,16 @@ def metric_summary(rows: list[dict]) -> dict:
     peak = values("peak_vram_mb")
     return {
         "count": len(rows),
+        "speed_pass_count": sum(
+            row.get("decode_speed_ratio_vs_fp16") is not None
+            and float(row["decode_speed_ratio_vs_fp16"]) >= 1.0
+            for row in rows
+        ),
+        "footprint_pass_count": sum(
+            row.get("footprint_ratio_vs_fp16") is not None
+            and float(row["footprint_ratio_vs_fp16"]) < 1.0
+            for row in rows
+        ),
         "decode_ratio_median": statistics.median(speed) if speed else None,
         "decode_ratio_min": min(speed) if speed else None,
         "decode_ratio_max": max(speed) if speed else None,
@@ -112,6 +122,23 @@ def summarize(rows: list[dict], failures: list[dict], expected_models: int) -> d
         "/".join(key): metric_summary(group_rows)
         for key, group_rows in sorted(grouped.items())
     }
+    acceptance = {}
+    for name, item in aggregates.items():
+        if "/none/" in name:
+            continue
+        speed = item["speed_pass_count"] == item["count"]
+        footprint = item["footprint_pass_count"] == item["count"]
+        greedy = item["same_token_count"] == item["count"]
+        acceptance[name] = {
+            "cells": item["count"],
+            "speed_pass_cells": item["speed_pass_count"],
+            "footprint_pass_cells": item["footprint_pass_count"],
+            "greedy_pass_cells": item["same_token_count"],
+            "speed_gate_pass": speed,
+            "footprint_gate_pass": footprint,
+            "greedy_gate_pass": greedy,
+            "acceptance_pass": speed and footprint and greedy,
+        }
     return {
         "profile": "expanded",
         "expected_models": expected_models,
@@ -121,7 +148,10 @@ def summarize(rows: list[dict], failures: list[dict], expected_models: int) -> d
         "failure_attempts": len(failures),
         "unresolved_failures": len(unresolved_failures),
         "complete": len(rows) == expected_rows and not unresolved_failures,
+        "all_quant_paths_accepted": bool(acceptance)
+        and all(item["acceptance_pass"] for item in acceptance.values()),
         "aggregates": aggregates,
+        "acceptance": acceptance,
         "paired": {
             "mm4_up_vs_off": paired_summary(rows_by_key, "mm4", "off", "up"),
             "mm8_up_vs_off": paired_summary(rows_by_key, "mm8", "off", "up"),
@@ -141,17 +171,20 @@ def markdown(summary: dict) -> str:
         f"- Completion: `{summary['completed_rows']}/{summary['expected_rows']}` rows",
         f"- Failed attempts: `{summary['failure_attempts']}`",
         f"- Unresolved failures: `{summary['unresolved_failures']}`",
-        f"- Complete: `{'yes' if summary['complete'] else 'no'}`",
+        f"- Execution complete: `{'yes' if summary['complete'] else 'no'}`",
+        f"- All quant paths accepted: `{'yes' if summary['all_quant_paths_accepted'] else 'no'}`",
         "",
-        "| Model / quant / fusion | Rows | Decode/fp16 median | Min | Max | Footprint median | Min final cosine | Greedy match |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| Model / quant / fusion | Rows | Speed >=fp16 | Decode/fp16 median | Min | Max | Footprint median | Min final cosine | Greedy match | Accepted |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for name, item in summary["aggregates"].items():
         lines.append(
-            f"| {name} | {item['count']} | {fmt(item['decode_ratio_median'])} | "
+            f"| {name} | {item['count']} | {item['speed_pass_count']}/{item['count']} | "
+            f"{fmt(item['decode_ratio_median'])} | "
             f"{fmt(item['decode_ratio_min'])} | {fmt(item['decode_ratio_max'])} | "
             f"{fmt(item['footprint_ratio_median'])} | {fmt(item['final_cosine_min'], 8)} | "
-            f"{item['same_token_count']}/{item['count']} |"
+            f"{item['same_token_count']}/{item['count']} | "
+            f"{'n/a' if '/none/' in name else ('yes' if summary['acceptance'][name]['acceptance_pass'] else 'no')} |"
         )
     lines.extend(
         [

@@ -63,6 +63,17 @@ opt-in pending broader model/batch/card evidence.
 
 Evidence: [`bench/v100_native_fused_quant_ffn_20260712/README.md`](bench/v100_native_fused_quant_ffn_20260712/README.md).
 
+The expanded V100 full-memory matrix completes `126/126` rows across 1.5B,
+2.9B, and 7.2B. MM4 off/up beat fp16 in every `21/21` model/cell pair; fused
+MM4 ranges are `1.0553x-1.1951x`, `1.0415x-1.2564x`, and
+`1.2238x-1.9110x`, with footprint ratios `0.5389x/0.5306x/0.3010x`.
+Strict acceptance remains open because greedy is only 6/7, 6/7, and 4/7.
+MM8 passes zero of 21 speed cells for every off/up/deep lane and reaches only
+`0.1123x-0.4394x` fp16. Execution completeness must not be reported as quant
+acceptance.
+
+Evidence: [`bench/v100_native_quant_full_matrix_20260713/README.md`](bench/v100_native_quant_full_matrix_20260713/README.md).
+
 ### RTX 5070 Laptop full-memory fused quant FFN matrix
 
 The 1.5B expanded matrix covers seven batch/context/decode cells and six paths
