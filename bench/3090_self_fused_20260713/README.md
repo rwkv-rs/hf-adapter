@@ -21,12 +21,18 @@ the selected prefill or decode backend.
 
 | Bsz | RWKV prefill tok/s | Qwen prefill tok/s | Ratio | RWKV decode tok/s | Qwen decode tok/s | Ratio | RWKV/Qwen footprint MiB | Result |
 |---:|---:|---:|---:|---:|---:|---:|---:|---|
-| 1 | 4,536.404 | 4,113.174 | **1.1029x** | 49.922 | 23.660 | **2.1100x** | 13,731.3 / 17,078.0 | PASS |
-| 2 | 4,579.237 | 4,349.864 | **1.0527x** | 89.369 | 45.329 | **1.9716x** | 13,731.3 / 17,078.0 | PASS |
+| 1 | 4,536.404 | 4,182.369 | **1.0846x** | 49.922 | 23.283 | **2.1441x** | 13,731.3 / 17,078.0 | PASS |
+| 2 | 4,579.237 | 4,353.260 | **1.0519x** | 89.369 | 46.406 | **1.9258x** | 13,731.3 / 17,078.0 | PASS |
 
 Peak VRAM is 14,592.3/15,260.6 MiB for RWKV at batch 1/2, versus
 17,610.2/18,002.3 MiB for Qwen.  All four raw rows report `status=pass` and
 finite logits.  Raw harness output is in [`results.jsonl`](results.jsonl).
+The Qwen rows also report `qwen_fast_path_verified=true` across all 24
+GatedDeltaNet layers.  Their live callable origins are
+`causal_conv1d.causal_conv1d_interface`,
+`fla.ops.gated_delta_rule.chunk`, and
+`fla.ops.gated_delta_rule.fused_recurrent`; the recorded effective backend is
+therefore `fla+causal_conv1d`, not a package-availability inference.
 
 ## Kernel correctness and delta
 

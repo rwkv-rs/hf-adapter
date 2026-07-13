@@ -15,7 +15,13 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from bench.bench_cross_model_speed import build_exact_prompt, failure_row, model_metadata, validate_args
+from bench.bench_cross_model_speed import (
+    build_exact_prompt,
+    failure_row,
+    model_metadata,
+    qwen35_fast_path_bindings,
+    validate_args,
+)
 from bench.run_qwen35_speed_matrix import (
     MatrixConfig,
     build_run_environment,
@@ -250,6 +256,41 @@ def test_worker_helpers_validate_and_emit_failure() -> None:
     assert result["status"] == "fail"
     assert result["model_role"] == "candidate"
     assert "synthetic failure" in result["error"]
+
+
+def _fake_operator(module_name: str):
+    def op(*_args, **_kwargs):
+        return None
+
+    op.__module__ = module_name
+    return op
+
+
+class FakeQwenModel:
+    def __init__(self, *, fast: bool) -> None:
+        origin = {
+            "causal_conv1d_fn": "causal_conv1d.causal_conv1d_interface",
+            "causal_conv1d_update": "causal_conv1d.causal_conv1d_interface",
+            "chunk_gated_delta_rule": "fla.ops.gated_delta_rule.chunk",
+            "recurrent_gated_delta_rule": "fla.ops.gated_delta_rule.fused_recurrent",
+        }
+        if not fast:
+            origin["chunk_gated_delta_rule"] = "transformers.models.qwen3_5.modeling_qwen3_5"
+        self.layer = SimpleNamespace(**{name: _fake_operator(module) for name, module in origin.items()})
+
+    def modules(self):
+        return [self, self.layer]
+
+
+def test_qwen_fast_path_binding_verification_is_fail_closed() -> None:
+    fast = qwen35_fast_path_bindings(FakeQwenModel(fast=True))
+    assert fast["verified"] is True
+    assert fast["layer_count"] == 1
+    assert fast["bindings"]["chunk_gated_delta_rule"].startswith("fla.")
+
+    fallback = qwen35_fast_path_bindings(FakeQwenModel(fast=False))
+    assert fallback["verified"] is False
+    assert fallback["layer_count"] == 1
 
 
 def test_orchestrator_expands_432_raw_rows() -> None:
