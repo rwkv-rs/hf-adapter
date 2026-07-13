@@ -373,6 +373,13 @@ serving speed.
      rows are all positive, but the mixed end-to-end result keeps the flag
      default-off. Raw rows are in
      `bench/v100_native_fused_quant_ffn_20260712/`.
+   - The deeper MM8 value projection + residual epilogue is separately guarded
+     by `RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD=1`. RTX 5070 Laptop 1.5B
+     expanded evidence passes 42/42 rows: deep MM8 has median `0.9671x` fp16
+     decode and `1.0059x` versus up-only, but one paired cell is `0.9888x`.
+     MM4 remains `0.8171x` fp16 at the median. Keep the deep flag default-off,
+     especially because V100 bsz1/2/4 telemetry is negative. Raw rows are in
+     `bench/5070_native_fused_quant_ffn_20260713/`.
 19. V100 + Ada/Blackwell benchmark matrix.
    - `bench/run_v100_fast_decode_validation.sh` remains the broad V100
      regression gate.

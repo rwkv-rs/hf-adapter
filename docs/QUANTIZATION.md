@@ -36,6 +36,21 @@ remains disabled by default.
 
 Evidence: [`../bench/v100_native_fused_quant_ffn_20260712/README.md`](../bench/v100_native_fused_quant_ffn_20260712/README.md).
 
+## RTX 5070 Laptop deep MM8 matrix
+
+The 1.5B expanded matrix passes 42/42 rows. Full-memory MM8 reduces model
+footprint to `0.6932x`; off/up/deep median decode ratios are
+`0.9551x/0.9620x/0.9671x` fp16. Deep down+residual fusion wins 5/7 paired
+cells over up-only with median `1.0059x`, but its minimum is `0.9888x`.
+Full-memory MM4 reduces footprint to `0.5394x` while decoding at a median
+`0.8171x` fp16. All 35 quant rows preserve the fp16 greedy token.
+
+`RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD=1` is independent and default-off;
+it also requires `RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN=1`. Do not project this
+small Blackwell gain onto V100, where the measured deep route regresses.
+
+Evidence: [`../bench/5070_native_fused_quant_ffn_20260713/README.md`](../bench/5070_native_fused_quant_ffn_20260713/README.md).
+
 ## Acceptance gate
 
 A promoted quant row must provide:

@@ -99,6 +99,14 @@ Keep the flag opt-in: one MM4 shape is not enough for default promotion, and
 the full-memory MM8 speed gate remains open. Evidence is under
 `bench/v100_native_fused_quant_ffn_20260712/`.
 
+The independent deep MM8 down+residual experiment is
+`RWKV7_NATIVE_GRAPH_FUSED_QUANT_FFN_DOWN_ADD=1`; it also requires the existing
+fused-quant-FFN flag. RTX 5070 Laptop 1.5B evidence covers 42/42 expanded
+end-to-end rows. MM8 deep has a median `0.9671x` fp16 decode ratio and a
+`1.0059x` median gain over up-only, but one paired cell falls to `0.9888x`.
+MM4 remains a footprint-only lane at a median `0.8171x` fp16. Keep both flags
+default-off. Evidence is under `bench/5070_native_fused_quant_ffn_20260713/`.
+
 ## Parallel Prefill Goal: DPLR/WY Compiled Prototype
 
 Active branch work is now the opt-in DPLR/WY compiled prefill backend, not
@@ -800,6 +808,11 @@ Run this checklist for every new GPU before marking it as supported:
     prove both correctness and speed. Isolated kernel wins do not promote.
   - Quantization must include footprint, long/short decode speed, and greedy or
     quality rows. Treat bnb as a compatibility/memory baseline, not a fast path.
+  - RTX 5070 Laptop / 1.5B / fp16 now has 42/42 expanded native MM8/MM4
+    end-to-end rows. Full-memory MM8 deep reaches a median `0.9671x` fp16 at
+    `0.6932x` footprint; MM4 reaches `0.8171x` at `0.5394x` footprint. Greedy
+    tokens match in 35/35 quant rows. These validate compatibility and card-local
+    telemetry only; neither quant path is promoted.
 - Mandatory before claiming support: import/generate, fast decode, dynamic batch,
   chunked prefill, bnb W8/W4 functional inference, `triton_compat` remote-code
   import on early sm_120 stacks, native_model no-FLA fallback/training smoke,

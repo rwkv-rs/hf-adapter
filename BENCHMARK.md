@@ -63,6 +63,26 @@ opt-in pending broader model/batch/card evidence.
 
 Evidence: [`bench/v100_native_fused_quant_ffn_20260712/README.md`](bench/v100_native_fused_quant_ffn_20260712/README.md).
 
+### RTX 5070 Laptop full-memory fused quant FFN matrix
+
+The 1.5B expanded matrix covers seven batch/context/decode cells and six paths
+per cell: fp16, MM8 off/up/deep, and MM4 off/up. All `42/42` rows pass and all
+quantized rows preserve the fp16 greedy token.
+
+| Path | Median decode / fp16 | Range | Footprint / fp16 | Greedy |
+|---|---:|---:|---:|---:|
+| MM8 off | `0.9551x` | `0.9413x-1.0820x` | `0.6932x` | 7/7 |
+| MM8 up | `0.9620x` | `0.9472x-1.0852x` | `0.6932x` | 7/7 |
+| MM8 deep | `0.9671x` | `0.9471x-1.0893x` | `0.6932x` | 7/7 |
+| MM4 off | `0.8171x` | `0.8025x-0.9868x` | `0.5394x` | 7/7 |
+| MM4 up | `0.8171x` | `0.7870x-0.9911x` | `0.5394x` | 7/7 |
+
+MM8 deep is a small Blackwell-local improvement over up-only at the median,
+but it regresses one paired cell and remains below fp16 at the median. MM4 is
+a memory path on this card. Both fusions remain opt-in.
+
+Evidence: [`bench/5070_native_fused_quant_ffn_20260713/README.md`](bench/5070_native_fused_quant_ffn_20260713/README.md).
+
 ### V100 RWKV-7 vs Qwen3.5 HF matrix
 
 The complete official text-only matrix covers three model pairs, fp16/bnb8/
