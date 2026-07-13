@@ -22,12 +22,37 @@ from pathlib import Path
 from typing import Any, Callable
 
 os.environ.setdefault("RWKV_V7_ON", "1")
-QWEN_FORCE_TORCH = os.environ.get("RWKV7_QWEN35_FORCE_TORCH", "0").lower() in {"1", "true", "yes", "on"}
+
+
+def _bootstrap_qwen_backend(argv: list[str]) -> str:
+    """Read the backend before importing Transformers, which binds Qwen ops."""
+
+    for index, value in enumerate(argv):
+        if value == "--qwen-backend" and index + 1 < len(argv):
+            return argv[index + 1].strip().lower()
+        if value.startswith("--qwen-backend="):
+            return value.split("=", 1)[1].strip().lower()
+    return "auto"
+
+
+QWEN_BACKEND_BOOTSTRAP = _bootstrap_qwen_backend(sys.argv[1:])
+QWEN_FORCE_TORCH = (
+    os.environ.get("RWKV7_QWEN35_FORCE_TORCH", "0").lower() in {"1", "true", "yes", "on"}
+    or QWEN_BACKEND_BOOTSTRAP == "torch"
+)
 if QWEN_FORCE_TORCH:
     sys.path[:] = [path for path in sys.path if "flash-linear-attention" not in path.replace("\\", "/").lower()]
+    _original_find_spec = importlib.util.find_spec
 
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+    def _find_spec_without_fla(name: str, *args, **kwargs):
+        if name == "fla" or name.startswith("fla."):
+            return None
+        return _original_find_spec(name, *args, **kwargs)
+
+    importlib.util.find_spec = _find_spec_without_fla
+
+import torch  # noqa: E402
+from transformers import AutoModelForCausalLM, AutoTokenizer  # noqa: E402
 
 DTYPES = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp32": torch.float32}
 PROMPT_SEED = (
@@ -37,10 +62,15 @@ PROMPT_SEED = (
 
 
 def package_version(name: str) -> str | None:
-    try:
-        return version(name)
-    except PackageNotFoundError:
-        return None
+    candidates = [name]
+    if name == "triton":
+        candidates.append("triton-windows")
+    for candidate in candidates:
+        try:
+            return version(candidate)
+        except PackageNotFoundError:
+            continue
+    return None
 
 
 def validate_args(args: argparse.Namespace) -> None:
@@ -53,6 +83,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--model-role must be candidate or reference")
     if args.model_kind not in {"rwkv", "qwen35"}:
         raise ValueError("--model-kind must be rwkv or qwen35")
+    if args.qwen_backend not in {"auto", "fla", "torch"}:
+        raise ValueError("--qwen-backend must be auto, fla, or torch")
+    if args.probe_output and args.probe_tokens <= 0:
+        raise ValueError("--probe-tokens must be positive when --probe-output is set")
 
 
 def build_exact_prompt(tokenizer, prompt_tokens: int, batch_size: int, device: str) -> torch.Tensor:
@@ -83,7 +117,7 @@ def model_metadata(args: argparse.Namespace, model=None) -> dict[str, Any]:
 def base_row(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "axis": "qwen35_cross_model_speed",
-        "benchmark_matrix": "qwen35_v100_hf",
+        "benchmark_matrix": args.benchmark_matrix,
         "model_pair": args.model_pair,
         "model_role": args.model_role,
         "model_kind": args.model_kind,
@@ -177,13 +211,19 @@ def prepare_rwkv_model_dir(model_path: str, code_source: str) -> tuple[str, temp
     repo_code = Path(__file__).resolve().parents[1] / "rwkv7_hf"
     if not source.is_dir():
         raise ValueError("--rwkv-code-source repo requires a local converted model directory")
-    temporary = tempfile.TemporaryDirectory(prefix="rwkv7_qwen35_repo_code_")
+    temporary = tempfile.TemporaryDirectory(prefix="rwkv7_qwen35_repo_code_", dir=source.parent)
     target = Path(temporary.name)
     for item in source.iterdir():
         if item.name == "__pycache__" or item.suffix == ".py":
             continue
         link = target / item.name
-        link.symlink_to(item, target_is_directory=item.is_dir())
+        try:
+            link.symlink_to(item, target_is_directory=item.is_dir())
+        except OSError:
+            if item.is_dir():
+                shutil.copytree(item, link)
+            else:
+                os.link(item, link)
     for py_file in repo_code.glob("*.py"):
         shutil.copy2(py_file, target / py_file.name)
     return str(target), temporary
@@ -209,6 +249,148 @@ def load_model(args: argparse.Namespace, dtype: torch.dtype, model_path: str | N
     except ImportError as exc:
         raise RuntimeError("installed Transformers does not provide Qwen3_5ForCausalLM") from exc
     return Qwen3_5ForCausalLM.from_pretrained(args.model, **kwargs).eval()
+
+
+def _operator_origin(value: Any) -> str:
+    """Return a stable module-qualified name for a bound kernel or module."""
+
+    inner = getattr(value, "func", None)
+    if inner is not None and inner is not value:
+        value = inner
+    module = getattr(value, "__module__", None)
+    qualname = getattr(value, "__qualname__", getattr(value, "__name__", None))
+    if module and qualname:
+        return f"{module}.{qualname}"
+    value_type = type(value)
+    return f"{value_type.__module__}.{value_type.__qualname__}"
+
+
+def _origin_is(origin: str, prefixes: tuple[str, ...]) -> bool:
+    return any(origin == prefix or origin.startswith(prefix + ".") for prefix in prefixes)
+
+
+def qwen_fla_operator_contract(model) -> dict[str, Any]:
+    """Inspect the operators actually bound by every Qwen3.5 linear layer.
+
+    Transformers silently substitutes Python/Torch reference functions when
+    FLA or causal-conv1d is unavailable. Package presence alone therefore is
+    not sufficient evidence that the benchmark used accelerated kernels. The
+    Gated DeltaNet and norm operators form the required FLA core contract;
+    causal-conv1d is tracked as a separate optional acceleration capability so
+    Windows exact-card rows can exercise FLA without overstating full fusion.
+    """
+
+    operator_attrs = (
+        "chunk_gated_delta_rule",
+        "recurrent_gated_delta_rule",
+        "causal_conv1d_fn",
+        "causal_conv1d_update",
+    )
+    layers: list[tuple[str, Any]] = []
+    named_modules = getattr(model, "named_modules", None)
+    if callable(named_modules):
+        for name, module in named_modules():
+            if type(module).__name__ == "Qwen3_5GatedDeltaNet" or any(
+                hasattr(module, attr) for attr in operator_attrs
+            ):
+                layers.append((name, module))
+
+    prefill_origins = sorted({_operator_origin(getattr(layer, "chunk_gated_delta_rule", None)) for _, layer in layers})
+    decode_origins = sorted(
+        {_operator_origin(getattr(layer, "recurrent_gated_delta_rule", None)) for _, layer in layers}
+    )
+    conv_update_origins = sorted(
+        {_operator_origin(getattr(layer, "causal_conv1d_update", None)) for _, layer in layers}
+    )
+    conv_prefill_origins = sorted({_operator_origin(getattr(layer, "causal_conv1d_fn", None)) for _, layer in layers})
+    norm_origins = sorted({_operator_origin(layer.norm) for _, layer in layers if hasattr(layer, "norm")})
+
+    prefill_fla_layers = sum(
+        _origin_is(_operator_origin(getattr(layer, "chunk_gated_delta_rule", None)), ("fla",))
+        for _, layer in layers
+    )
+    decode_fla_layers = sum(
+        _origin_is(_operator_origin(getattr(layer, "recurrent_gated_delta_rule", None)), ("fla",))
+        for _, layer in layers
+    )
+    conv_update_fused_layers = sum(
+        _origin_is(_operator_origin(getattr(layer, "causal_conv1d_update", None)), ("causal_conv1d",))
+        for _, layer in layers
+    )
+    conv_prefill_fused_layers = sum(
+        getattr(layer, "causal_conv1d_fn", None) is not None
+        and _origin_is(_operator_origin(getattr(layer, "causal_conv1d_fn", None)), ("causal_conv1d",))
+        for _, layer in layers
+    )
+    norm_fla_layers = sum(
+        hasattr(layer, "norm") and _origin_is(_operator_origin(layer.norm), ("fla",)) for _, layer in layers
+    )
+
+    total = len(layers)
+    core_missing: list[str] = []
+    if total == 0:
+        core_missing.append("qwen3.5 linear-attention layers")
+    if prefill_fla_layers != total:
+        core_missing.append("FLA chunk_gated_delta_rule prefill")
+    if decode_fla_layers != total:
+        core_missing.append("FLA fused_recurrent_gated_delta_rule decode")
+    if norm_fla_layers != total:
+        core_missing.append("FLA FusedRMSNormGated")
+
+    conv_missing: list[str] = []
+    if conv_prefill_fused_layers != total:
+        conv_missing.append("causal_conv1d prefill")
+    if conv_update_fused_layers != total:
+        conv_missing.append("causal_conv1d cached update")
+
+    return {
+        "qwen_linear_attention_layers": total,
+        "qwen_fla_prefill_layers": prefill_fla_layers,
+        "qwen_fla_decode_layers": decode_fla_layers,
+        "qwen_causal_conv1d_prefill_layers": conv_prefill_fused_layers,
+        "qwen_causal_conv1d_update_layers": conv_update_fused_layers,
+        "qwen_fla_norm_layers": norm_fla_layers,
+        "qwen_prefill_operator_origins": prefill_origins,
+        "qwen_decode_operator_origins": decode_origins,
+        "qwen_conv_prefill_operator_origins": conv_prefill_origins,
+        "qwen_conv_update_operator_origins": conv_update_origins,
+        "qwen_norm_operator_origins": norm_origins,
+        "qwen_fla_core_contract_missing": core_missing,
+        "qwen_fla_core_contract_pass": not core_missing,
+        "qwen_causal_conv1d_contract_missing": conv_missing,
+        "qwen_causal_conv1d_contract_pass": not conv_missing,
+        "qwen_full_fused_contract_pass": not core_missing and not conv_missing,
+        # Kept as the comparator-facing compatibility key. It intentionally
+        # means the required FLA core, not optional causal-conv1d availability.
+        "qwen_operator_contract_missing": core_missing,
+        "qwen_operator_contract_pass": not core_missing,
+    }
+
+
+def enforce_qwen_backend(model, args: argparse.Namespace) -> dict[str, Any]:
+    if args.model_kind != "qwen35":
+        return {}
+    contract = qwen_fla_operator_contract(model)
+    if args.qwen_backend == "fla" and not contract["qwen_operator_contract_pass"]:
+        missing = ", ".join(contract["qwen_operator_contract_missing"])
+        raise RuntimeError(
+            "Qwen3.5 FLA backend was required but Transformers bound fallback operators; "
+            f"missing: {missing}. Install a card-compatible "
+            "flash-linear-attention, PyTorch, and Triton stack."
+        )
+    if args.qwen_backend == "torch" and contract["qwen_operator_contract_pass"]:
+        raise RuntimeError("Qwen3.5 torch backend was requested but FLA operators remain bound")
+    return contract
+
+
+def qwen_effective_backend(args: argparse.Namespace, contract: dict[str, Any]) -> str:
+    if args.model_kind != "qwen35":
+        return ""
+    if contract.get("qwen_operator_contract_pass"):
+        if contract.get("qwen_causal_conv1d_contract_pass"):
+            return "qwen_fla_gated_delta_rule"
+        return "qwen_fla_gated_delta_rule_torch_conv"
+    return "transformers_torch_fallback"
 
 
 def last_rwkv_backend(model) -> str | None:
@@ -286,17 +468,66 @@ def timed_decode(args: argparse.Namespace, model, ids) -> tuple[float, str, str 
     )
 
 
+def save_backend_probe(args: argparse.Namespace, model, ids) -> dict[str, Any]:
+    """Save deterministic logits and greedy tokens for cross-process checks."""
+
+    step, _ = step_function(model, args.model_kind, 1)
+    probe_ids = ids[:1]
+    greedy_tokens: list[int] = []
+    with torch.inference_mode():
+        out = forward_prefill(model, probe_ids)
+        state = out.past_key_values
+        prompt_logits = out.logits[:, -1].float().cpu()
+        token = out.logits[:, -1:].argmax(dim=-1)
+        for _ in range(args.probe_tokens):
+            greedy_tokens.append(int(token[0, 0].item()))
+            out = step(token, state)
+            state = out.past_key_values
+            token = out.logits[:, -1:].argmax(dim=-1)
+        final_logits = out.logits[:, -1].float().cpu()
+
+    output = Path(args.probe_output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "input_ids": probe_ids.cpu(),
+            "prompt_logits": prompt_logits,
+            "final_logits": final_logits,
+            "greedy_tokens": torch.tensor(greedy_tokens, dtype=torch.int64),
+            "qwen_backend_requested": args.qwen_backend,
+        },
+        output,
+    )
+    return {
+        "probe_output": str(output),
+        "probe_tokens": args.probe_tokens,
+        "probe_greedy_tokens": greedy_tokens,
+    }
+
+
 def environment_metadata(args: argparse.Namespace) -> dict[str, Any]:
+    capability = None
+    if args.device.startswith("cuda") and torch.cuda.is_available():
+        capability = list(torch.cuda.get_device_capability(cuda_device_index(args.device)))
+    arch = f"sm_{capability[0]}{capability[1]}" if capability is not None else None
+    qwen_device_route = None
+    if args.model_kind == "qwen35" and arch is not None:
+        qwen_device_route = "fla_triton_sm70" if capability == [7, 0] else f"fla_runtime_dispatch_{arch}"
     return {
         "device": device_name(args.device),
+        "gpu_compute_capability": capability,
+        "gpu_arch": arch,
         "torch_version": torch.__version__,
         "torch_cuda_version": torch.version.cuda,
+        "triton_version": package_version("triton"),
         "transformers_version": package_version("transformers"),
         "bitsandbytes_version": package_version("bitsandbytes"),
         "fla_version": package_version("flash-linear-attention"),
         "causal_conv1d_version": package_version("causal-conv1d"),
         "qwen_fla_importable": importlib.util.find_spec("fla") is not None,
+        "qwen_causal_conv1d_importable": importlib.util.find_spec("causal_conv1d") is not None,
         "qwen_force_torch": QWEN_FORCE_TORCH,
+        "qwen_fla_expected_device_route": qwen_device_route,
         "rwkv_fast_token_backend_requested": os.environ.get("RWKV7_FAST_TOKEN_BACKEND"),
     }
 
@@ -310,6 +541,7 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         effective_model_path, temporary = prepare_rwkv_model_dir(args.model, args.rwkv_code_source)
     tokenizer = AutoTokenizer.from_pretrained(effective_model_path, trust_remote_code=args.model_kind == "rwkv")
     model = load_model(args, dtype, effective_model_path)
+    qwen_contract = enforce_qwen_backend(model, args)
     load_s = time.perf_counter() - started
     input_device = str(next(model.parameters()).device)
     ids = build_exact_prompt(tokenizer, args.prompt_tokens, args.batch_size, input_device)
@@ -324,11 +556,14 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         logits_finite = bool(torch.isfinite(check.logits).all().item())
     if not logits_finite:
         raise RuntimeError("model produced non-finite logits")
+    probe_metadata = save_backend_probe(args, model, ids) if args.probe_output else {}
 
     row = {
         **base_row(args),
         **model_metadata(args, model),
         **environment_metadata(args),
+        **qwen_contract,
+        **probe_metadata,
         "status": "pass",
         "input_device": input_device,
         "prefill_sec_median": round(prefill_s, 6),
@@ -338,11 +573,7 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "decode_tokps_per_seq": round(args.decode_tokens / decode_s, 3),
         "decode_ms_per_step": round(1000 * decode_s / args.decode_tokens, 6),
         "step_backend": step_backend,
-        "effective_backend": (
-            "transformers_torch_fallback"
-            if args.model_kind == "qwen35" and QWEN_FORCE_TORCH
-            else effective_backend or step_backend
-        ),
+        "effective_backend": qwen_effective_backend(args, qwen_contract) or effective_backend or step_backend,
         "cache_type": cache_type,
         "model_footprint_mb": model_footprint_mb(model),
         "peak_vram_mb": peak_mb(args.device),
@@ -376,6 +607,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--model-role", required=True, choices=["candidate", "reference"])
     ap.add_argument("--model-pair", required=True)
     ap.add_argument("--model-size-label", required=True)
+    ap.add_argument("--benchmark-matrix", default="qwen35_hf")
     ap.add_argument("--dtype", default="fp16", choices=sorted(DTYPES))
     ap.add_argument("--quantization", default="none", choices=["none", "bnb8", "bnb4"])
     ap.add_argument("--device", default="cuda")
@@ -386,8 +618,15 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--rwkv-attn-mode", choices=["chunk", "fused_recurrent"], default="fused_recurrent")
     ap.add_argument("--rwkv-code-source", choices=["repo", "model"], default="repo")
-    ap.add_argument("--qwen-backend", choices=["auto", "torch"], default="auto")
+    ap.add_argument(
+        "--qwen-backend",
+        choices=["auto", "fla", "torch"],
+        default="fla",
+        help="Require verified FLA operators by default; torch is an explicit diagnostic fallback lane",
+    )
     ap.add_argument("--results", default="")
+    ap.add_argument("--probe-output", default="")
+    ap.add_argument("--probe-tokens", type=int, default=8)
     ap.add_argument("--optional", action="store_true")
     args = ap.parse_args()
     validate_args(args)
