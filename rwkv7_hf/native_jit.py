@@ -1001,6 +1001,12 @@ def _native_graph_ffn_down_add_dispatch(
         and ada_linear_should_use(rows, outputs, inputs)
     ):
         return residual + ada_linear(x, weight)
+    if (
+        not _graph_linear_is_dense(weight)
+        and _native_graph_fused_quant_ffn_enabled()
+        and callable(getattr(weight, "rwkv7_forward_add", None))
+    ):
+        return weight.rwkv7_forward_add(x, residual)
     if not _graph_linear_is_dense(weight):
         return residual + _graph_linear_call(x, weight)
     if (

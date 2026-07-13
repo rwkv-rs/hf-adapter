@@ -129,9 +129,10 @@ if _HAS_TRITON:
 
     @triton.jit
     def _mm8_gemv_kernel(
-        x_ptr, w_ptr, mx_ptr, rx_ptr, my_ptr, ry_ptr, y_ptr,
+        x_ptr, w_ptr, mx_ptr, rx_ptr, my_ptr, ry_ptr, residual_ptr, y_ptr,
         N, M,
-        BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, RELU2: tl.constexpr,
+        BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr,
+        RELU2: tl.constexpr, ADD_RESIDUAL: tl.constexpr,
     ):
         """y[m] = sum_n x[n] * ((w[n,m]+0.5)*ry[n]*rx[m] + my[n] + mx[m])."""
         pid_m = tl.program_id(0)
@@ -155,13 +156,16 @@ if _HAS_TRITON:
         if RELU2:
             acc = tl.maximum(acc, 0.0)
             acc = acc * acc
+        if ADD_RESIDUAL:
+            acc += tl.load(residual_ptr + offs_m, mask=mask_m, other=0.0).to(tl.float32)
         tl.store(y_ptr + offs_m, acc, mask=mask_m)
 
     @triton.jit
     def _mm8_batched_gemv_kernel(
-        x_ptr, w_ptr, mx_ptr, rx_ptr, my_ptr, ry_ptr, y_ptr,
+        x_ptr, w_ptr, mx_ptr, rx_ptr, my_ptr, ry_ptr, residual_ptr, y_ptr,
         B, N, M,
-        BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, RELU2: tl.constexpr,
+        BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr,
+        RELU2: tl.constexpr, ADD_RESIDUAL: tl.constexpr,
     ):
         """Batched decode GEMV with one launch for all active rows.
 
@@ -193,14 +197,17 @@ if _HAS_TRITON:
         if RELU2:
             acc = tl.maximum(acc, 0.0)
             acc = acc * acc
-        tl.store(y_ptr + pid_b * M + offs_m, acc, mask=mask_m)
+        base = pid_b * M
+        if ADD_RESIDUAL:
+            acc += tl.load(residual_ptr + base + offs_m, mask=mask_m, other=0.0).to(tl.float32)
+        tl.store(y_ptr + base + offs_m, acc, mask=mask_m)
 
     @triton.jit
     def _mm8_batched_dot_kernel(
-        x_ptr, w_ptr, mx_ptr, rx_ptr, my_ptr, ry_ptr, y_ptr,
+        x_ptr, w_ptr, mx_ptr, rx_ptr, my_ptr, ry_ptr, residual_ptr, y_ptr,
         B, N, M,
         BLOCK_B: tl.constexpr, BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr,
-        RELU2: tl.constexpr,
+        RELU2: tl.constexpr, ADD_RESIDUAL: tl.constexpr,
     ):
         """Tensor-core batched decode kernel with algebraic affine dequant.
 
@@ -241,6 +248,11 @@ if _HAS_TRITON:
         if RELU2:
             out = tl.maximum(out, 0.0)
             out = out * out
+        if ADD_RESIDUAL:
+            out += tl.load(
+                residual_ptr + offs_b[:, None] * M + offs_m[None, :],
+                mask=mask_b[:, None] & mask_m[None, :], other=0.0,
+            ).to(tl.float32)
         tl.store(
             y_ptr + offs_b[:, None] * M + offs_m[None, :], out,
             mask=mask_b[:, None] & mask_m[None, :],
@@ -274,23 +286,29 @@ def _mm8_decode_blocks(x, block_m, block_n):
     return int(block_m or (128 if blackwell else 64)), int(block_n or (128 if blackwell else 64))
 
 
-def mm8_gemv_triton(x, w_u8, mx, rx, my, ry, *, block_m=None, block_n=None, relu2=False):
+def mm8_gemv_triton(
+    x, w_u8, mx, rx, my, ry, *, block_m=None, block_n=None, relu2=False, residual=None,
+):
     """Fused int8 dequant GEMV: ``x: [N]`` -> ``[M]`` (single vector, decode path)."""
     if not (x.is_cuda and mm8_gemv_available(x.device)):
         raise RuntimeError("mm8_gemv_triton requires triton + torch + CUDA input")
     block_m, block_n = _mm8_decode_blocks(x, block_m, block_n)
     n, m = w_u8.shape
     y = torch.empty(m, device=x.device, dtype=x.dtype)
+    if residual is not None and int(residual.numel()) != int(m):
+        raise ValueError(f"residual has {residual.numel()} elements; expected {m}")
+    residual_ptr = y if residual is None else residual.reshape(m).contiguous()
     grid = (triton.cdiv(m, block_m),)
     _mm8_gemv_kernel[grid](
-        x, w_u8, _as_1d(mx), _as_1d(rx), _as_1d(my), _as_1d(ry), y,
-        n, m, BLOCK_M=block_m, BLOCK_N=block_n, RELU2=bool(relu2), num_warps=4,
+        x, w_u8, _as_1d(mx), _as_1d(rx), _as_1d(my), _as_1d(ry), residual_ptr, y,
+        n, m, BLOCK_M=block_m, BLOCK_N=block_n,
+        RELU2=bool(relu2), ADD_RESIDUAL=residual is not None, num_warps=4,
     )
     return y
 
 
 def mm8_batched_gemv_triton(
-    x, w_u8, mx, rx, my, ry, *, block_m=None, block_n=None, relu2=False,
+    x, w_u8, mx, rx, my, ry, *, block_m=None, block_n=None, relu2=False, residual=None,
 ):
     """Fused int8 dequant GEMV for a small contiguous ``[B, N]`` decode batch."""
     if not (x.is_cuda and x.dim() == 2 and mm8_gemv_available(x.device)):
@@ -302,16 +320,21 @@ def mm8_batched_gemv_triton(
     if int(n) != int(wn):
         raise ValueError(f"input width {n} does not match quantized weight width {wn}")
     y = torch.empty((b, m), device=x.device, dtype=x.dtype)
+    if residual is not None and tuple(residual.shape) != (b, m):
+        raise ValueError(f"residual shape {tuple(residual.shape)} does not match {(b, m)}")
+    residual_ptr = y if residual is None else residual.contiguous()
     grid = (b, triton.cdiv(m, block_m))
     _mm8_batched_gemv_kernel[grid](
-        x, w_u8, _as_1d(mx), _as_1d(rx), _as_1d(my), _as_1d(ry), y,
-        b, n, m, BLOCK_M=block_m, BLOCK_N=block_n, RELU2=bool(relu2), num_warps=4,
+        x, w_u8, _as_1d(mx), _as_1d(rx), _as_1d(my), _as_1d(ry), residual_ptr, y,
+        b, n, m, BLOCK_M=block_m, BLOCK_N=block_n,
+        RELU2=bool(relu2), ADD_RESIDUAL=residual is not None, num_warps=4,
     )
     return y
 
 
 def mm8_batched_dot_triton(
-    x, w_u8, mx, rx, my, ry, *, block_b=16, block_m=128, block_n=64, relu2=False,
+    x, w_u8, mx, rx, my, ry, *, block_b=16, block_m=128, block_n=64,
+    relu2=False, residual=None,
 ):
     """Tensor-core fp16 W8 path for decode batches large enough to reuse weights."""
     if not (x.is_cuda and x.dim() == 2 and mm8_gemv_available(x.device)):
@@ -324,17 +347,21 @@ def mm8_batched_dot_triton(
     if int(n) != int(wn):
         raise ValueError(f"input width {n} does not match quantized weight width {wn}")
     y = torch.empty((b, m), device=x.device, dtype=x.dtype)
+    if residual is not None and tuple(residual.shape) != (b, m):
+        raise ValueError(f"residual shape {tuple(residual.shape)} does not match {(b, m)}")
+    residual_ptr = y if residual is None else residual.contiguous()
     grid = (triton.cdiv(b, block_b), triton.cdiv(m, block_m))
     _mm8_batched_dot_kernel[grid](
-        x, w_u8, _as_1d(mx), _as_1d(rx), _as_1d(my), _as_1d(ry), y,
+        x, w_u8, _as_1d(mx), _as_1d(rx), _as_1d(my), _as_1d(ry), residual_ptr, y,
         b, n, m, BLOCK_B=block_b, BLOCK_M=block_m, BLOCK_N=block_n,
-        RELU2=bool(relu2), num_warps=8,
+        RELU2=bool(relu2), ADD_RESIDUAL=residual is not None, num_warps=8,
     )
     return y
 
 
 def mm8_matmul_triton(
-    x, w_u8, mx, rx, my, ry, *, max_gemv_rows: int | None = None, relu2=False,
+    x, w_u8, mx, rx, my, ry, *, max_gemv_rows: int | None = None,
+    relu2=False, residual=None,
 ):
     """Fused int8 dequant matmul with safe fallbacks.
 
@@ -345,28 +372,42 @@ def mm8_matmul_triton(
     """
     if not (x.is_cuda and mm8_gemv_available(x.device)):
         out = mm8_matmul(x, w_u8, mx, rx, my, ry)
-        return torch.relu(out) ** 2 if relu2 else out
+        out = torch.relu(out) ** 2 if relu2 else out
+        return out + residual if residual is not None else out
     if x.dim() == 1:
-        return mm8_gemv_triton(x, w_u8, mx, rx, my, ry, relu2=relu2)
+        return mm8_gemv_triton(x, w_u8, mx, rx, my, ry, relu2=relu2, residual=residual)
     if x.dim() != 2:
         out = mm8_matmul(x, w_u8, mx, rx, my, ry)
-        return torch.relu(out) ** 2 if relu2 else out
+        out = torch.relu(out) ** 2 if relu2 else out
+        return out + residual if residual is not None else out
     if int(x.shape[0]) == 1:
-        return mm8_gemv_triton(x[0], w_u8, mx, rx, my, ry, relu2=relu2).unsqueeze(0)
+        residual_row = None if residual is None else residual.reshape(1, -1)[0]
+        return mm8_gemv_triton(
+            x[0], w_u8, mx, rx, my, ry, relu2=relu2, residual=residual_row,
+        ).unsqueeze(0)
     blackwell = torch.cuda.get_device_capability(x.device)[0] >= 12
     row_limit = int(max_gemv_rows) if max_gemv_rows is not None else (16 if blackwell else 4)
     if int(x.shape[0]) > row_limit:
         out = mm8_matmul(x, w_u8, mx, rx, my, ry)
-        return torch.relu(out) ** 2 if relu2 else out
+        out = torch.relu(out) ** 2 if relu2 else out
+        return out + residual if residual is not None else out
     if blackwell and int(x.shape[0]) >= 4 and x.dtype == torch.float16:
-        return mm8_batched_dot_triton(x, w_u8, mx, rx, my, ry, relu2=relu2)
+        return mm8_batched_dot_triton(
+            x, w_u8, mx, rx, my, ry, relu2=relu2, residual=residual,
+        )
     if blackwell:
-        return mm8_batched_gemv_triton(x, w_u8, mx, rx, my, ry, relu2=relu2)
+        return mm8_batched_gemv_triton(
+            x, w_u8, mx, rx, my, ry, relu2=relu2, residual=residual,
+        )
     # Preserve the measured pre-sm120 route until every older family has
     # an exact-card batched-kernel A/B artifact.
-    return torch.stack(
-        [mm8_gemv_triton(row, w_u8, mx, rx, my, ry, relu2=relu2) for row in x], dim=0,
-    )
+    rows = []
+    for index, row in enumerate(x):
+        residual_row = None if residual is None else residual[index]
+        rows.append(mm8_gemv_triton(
+            row, w_u8, mx, rx, my, ry, relu2=relu2, residual=residual_row,
+        ))
+    return torch.stack(rows, dim=0)
 
 
 if _HAS_TRITON:
@@ -470,6 +511,22 @@ class MM8Linear(torch.nn.Module):
         x2 = x.reshape(-1, self.in_features)
         y = mm8_matmul_triton(
             x2, self.w_u8, self.mx, self.rx, self.my, self.ry, relu2=True,
+        )
+        return y.reshape(*leading, self.out_features)
+
+    def rwkv7_forward_add(self, x, residual):
+        """Quantized FFN-down projection with a fused residual epilogue."""
+
+        expected = (*x.shape[:-1], self.out_features)
+        if tuple(residual.shape) != expected:
+            raise ValueError(f"residual shape {tuple(residual.shape)} does not match {expected}")
+        if self.bias is not None or not (self.fused and x.is_cuda and mm8_gemv_available(x.device)):
+            return residual + self.forward(x)
+        leading = x.shape[:-1]
+        x2 = x.reshape(-1, self.in_features)
+        residual2 = residual.reshape(-1, self.out_features)
+        y = mm8_matmul_triton(
+            x2, self.w_u8, self.mx, self.rx, self.my, self.ry, residual=residual2,
         )
         return y.reshape(*leading, self.out_features)
 
