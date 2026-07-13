@@ -1,0 +1,11 @@
+{
+  "status": "pass",
+  "file_bytes": 4548221488,
+  "tensor_keys": 632,
+  "index_keys": 632,
+  "missing_from_file": [],
+  "extra_in_file": [],
+  "metadata": {
+    "total_size": 4548144832
+  }
+}
