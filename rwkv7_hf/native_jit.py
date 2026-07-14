@@ -31,6 +31,27 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
         fused_sequence_ffn = None  # type: ignore[assignment]
         fused_sequence_ffn_available = None  # type: ignore[assignment]
 
+try:  # pragma: no cover - optional BnB W8 FFN activation fusion
+    from .native_quant_bnb8 import (
+        fused_bnb8_attn_sequence_mix_quant,
+        fused_bnb8_ffn_sequence_mix_quant,
+        fused_bnb8_relu_square_quant,
+        fused_bnb8_relu_square_quant_available,
+    )
+except Exception:  # pragma: no cover - direct remote-file execution fallback
+    try:
+        from native_quant_bnb8 import (
+            fused_bnb8_attn_sequence_mix_quant,
+            fused_bnb8_ffn_sequence_mix_quant,
+            fused_bnb8_relu_square_quant,
+            fused_bnb8_relu_square_quant_available,
+        )
+    except Exception:
+        fused_bnb8_attn_sequence_mix_quant = None  # type: ignore[assignment]
+        fused_bnb8_ffn_sequence_mix_quant = None  # type: ignore[assignment]
+        fused_bnb8_relu_square_quant = None  # type: ignore[assignment]
+        fused_bnb8_relu_square_quant_available = None  # type: ignore[assignment]
+
 
 def _linear_module(module, x: torch.Tensor) -> torch.Tensor:
     """Linear call that also supports native MM8/MM4Linear lm_head modules."""
@@ -43,9 +64,9 @@ def _graph_linear_operand(module):
     """Return a dense weight when possible, otherwise retain the quant module.
 
     Native CUDA-graph decode historically packed bare ``nn.Linear.weight``
-    tensors.  MM8/MM4 modules intentionally have no dense weight, so retaining
-    the module lets graph capture record their fused dequant GEMV without
-    materialising a second fp16 copy of the model.
+    tensors. Packed MM8/MM4 and BnB modules must remain live callables, letting
+    graph capture record their quantized GEMV without materialising a second
+    fp16 copy of the model.
     """
 
     if type(module) is torch.nn.Linear and type(module.weight) is torch.nn.Parameter:
@@ -63,9 +84,230 @@ def _graph_linear_shape(operand) -> tuple[int, int]:
     return int(operand.out_features), int(operand.in_features)
 
 
+def _native_bnb8_policy_flag(env_name: str, policy_name: str) -> bool:
+    try:
+        default = bool(getattr(_kernel_policy(), policy_name, False))
+    except Exception:
+        default = False
+    raw = os.environ.get(env_name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def _native_bnb8_policy_block(env_name: str, policy_name: str, fallback: int) -> int:
+    try:
+        default = int(getattr(_kernel_policy(), policy_name, fallback))
+    except Exception:
+        default = int(fallback)
+    raw = os.environ.get(env_name)
+    value = default if raw is None else int(raw)
+    if value not in {256, 512, 1024, 2048, 4096}:
+        raise ValueError(f"{env_name} must be 256, 512, 1024, 2048, or 4096")
+    return value
+
+
+def _native_bnb8_direct_enabled() -> bool:
+    """Use the inference-only BnB W8 operator path without autograd wrappers.
+
+    ``Linear8bitLt.forward`` enters a custom ``autograd.Function`` for every
+    projection even under ``torch.inference_mode``.  Native prefill invokes six
+    large projections per layer, so that Python/autograd dispatch is visible at
+    serving-sized row counts.  The direct path below executes the exact two BnB
+    operators used by the threshold-zero fast path while preserving the module
+    fallback for training, gradients, outliers, and non-BnB quantizers.
+    """
+
+    return _native_bnb8_policy_flag("RWKV7_NATIVE_BNB8_DIRECT", "native_bnb8_direct")
+
+
+def _is_bnb8_linear(operand) -> bool:
+    cls = type(operand)
+    return bool(
+        cls.__name__ == "Linear8bitLt"
+        and cls.__module__.startswith("bitsandbytes.")
+        and hasattr(operand, "state")
+        and hasattr(operand, "weight")
+    )
+
+
+def _bnb8_direct_linear(x: torch.Tensor, operand) -> torch.Tensor | None:
+    """Run BnB's threshold-zero inference operators directly, if eligible."""
+
+    if (
+        not _native_bnb8_direct_enabled()
+        or not _is_bnb8_linear(operand)
+        or torch.is_grad_enabled()
+        or bool(getattr(operand, "training", False))
+    ):
+        return None
+    state = operand.state
+    if float(getattr(state, "threshold", 0.0) or 0.0) != 0.0:
+        return None
+    if getattr(state, "CB", None) is None:
+        if getattr(operand.weight, "CB", None) is None:
+            return None
+        operand.init_8bit_state()
+    cb = getattr(state, "CB", None)
+    scb = getattr(state, "SCB", None)
+    if cb is None or scb is None:
+        return None
+
+    input_shape = tuple(x.shape)
+    rows = x.reshape(-1, input_shape[-1]) if x.dim() != 2 else x
+    quantized, scales, _ = torch.ops.bitsandbytes.int8_vectorwise_quant.default(
+        rows.to(torch.float16),
+        0.0,
+    )
+    bias = getattr(operand, "bias", None)
+    if bias is not None and bias.dtype != x.dtype:
+        bias = bias.to(x.dtype)
+    out = torch.ops.bitsandbytes.int8_scaled_mm.default(
+        quantized,
+        cb,
+        scales,
+        scb,
+        bias=bias,
+        dtype=x.dtype,
+    )
+    if x.dim() != 2:
+        out = out.reshape(*input_shape[:-1], int(operand.out_features))
+    return out
+
+
+def _bnb8_direct_relu_square_linear(x: torch.Tensor, operand) -> torch.Tensor | None:
+    """Fuse RWKV FFN ReLU² preparation into BnB W8 activation quantization."""
+
+    enabled = _native_bnb8_policy_flag(
+        "RWKV7_NATIVE_BNB8_RELU_QUANT",
+        "native_bnb8_relu_quant",
+    )
+    if (
+        not enabled
+        or not _native_bnb8_direct_enabled()
+        or not _is_bnb8_linear(operand)
+        or torch.is_grad_enabled()
+        or bool(getattr(operand, "training", False))
+        or fused_bnb8_relu_square_quant is None
+        or fused_bnb8_relu_square_quant_available is None
+        or not fused_bnb8_relu_square_quant_available()
+    ):
+        return None
+    state = operand.state
+    if float(getattr(state, "threshold", 0.0) or 0.0) != 0.0:
+        return None
+    if getattr(state, "CB", None) is None:
+        if getattr(operand.weight, "CB", None) is None:
+            return None
+        operand.init_8bit_state()
+    cb = getattr(state, "CB", None)
+    scb = getattr(state, "SCB", None)
+    if cb is None or scb is None:
+        return None
+    quantized, scales = fused_bnb8_relu_square_quant(x)
+    bias = getattr(operand, "bias", None)
+    if bias is not None and bias.dtype != x.dtype:
+        bias = bias.to(x.dtype)
+    out = torch.ops.bitsandbytes.int8_scaled_mm.default(
+        quantized,
+        cb,
+        scales,
+        scb,
+        bias=bias,
+        dtype=x.dtype,
+    )
+    input_shape = tuple(x.shape)
+    if x.dim() != 2:
+        out = out.reshape(*input_shape[:-1], int(operand.out_features))
+    return out
+
+
+def _bnb8_prequant_linear(quantized, scales, operand, *, dtype, output_shape):
+    """Apply a BnB W8 matrix to already row-quantized activations."""
+
+    if not _is_bnb8_linear(operand):
+        raise TypeError("prequantized BnB dispatch requires Linear8bitLt")
+    state = operand.state
+    if float(getattr(state, "threshold", 0.0) or 0.0) != 0.0:
+        raise ValueError("prequantized BnB dispatch requires threshold=0")
+    if getattr(state, "CB", None) is None:
+        operand.init_8bit_state()
+    bias = getattr(operand, "bias", None)
+    if bias is not None and bias.dtype != dtype:
+        bias = bias.to(dtype)
+    out = torch.ops.bitsandbytes.int8_scaled_mm.default(
+        quantized,
+        state.CB,
+        scales,
+        state.SCB,
+        bias=bias,
+        dtype=dtype,
+    )
+    return out.reshape(*output_shape, int(operand.out_features))
+
+
+def _bnb8_rkv_mix_quant_enabled(*operands) -> bool:
+    if (
+        not _native_bnb8_policy_flag(
+            "RWKV7_NATIVE_BNB8_RKV_MIX_QUANT",
+            "native_bnb8_rkv_mix_quant",
+        )
+        or not _native_bnb8_direct_enabled()
+        or fused_bnb8_attn_sequence_mix_quant is None
+        or fused_bnb8_relu_square_quant_available is None
+        or not fused_bnb8_relu_square_quant_available()
+        or torch.is_grad_enabled()
+    ):
+        return False
+    for operand in operands:
+        if not _is_bnb8_linear(operand) or bool(getattr(operand, "training", False)):
+            return False
+        if float(getattr(operand.state, "threshold", 0.0) or 0.0) != 0.0:
+            return False
+    return True
+
+
+def _bnb8_ffn_mix_quant_enabled(operand) -> bool:
+    return bool(
+        _native_bnb8_policy_flag(
+            "RWKV7_NATIVE_BNB8_FFN_MIX_QUANT",
+            "native_bnb8_ffn_mix_quant",
+        )
+        and _native_bnb8_direct_enabled()
+        and fused_bnb8_ffn_sequence_mix_quant is not None
+        and fused_bnb8_relu_square_quant_available is not None
+        and fused_bnb8_relu_square_quant_available()
+        and not torch.is_grad_enabled()
+        and _is_bnb8_linear(operand)
+        and not bool(getattr(operand, "training", False))
+        and float(getattr(operand.state, "threshold", 0.0) or 0.0) == 0.0
+    )
+
+
 def _graph_linear_call(x: torch.Tensor, operand) -> torch.Tensor:
     if _graph_linear_is_dense(operand):
         return F.linear(x, operand)
+    direct = _bnb8_direct_linear(x, operand)
+    if direct is not None:
+        return direct
+    # bitsandbytes W8 accepts only rank-2/3 activations, whereas the scalar
+    # native-graph runner deliberately keeps hidden state rank-1. Preserve the
+    # runner ABI while presenting a supported matrix shape to quant modules.
+    if x.dim() == 1:
+        return operand(x.unsqueeze(0)).squeeze(0)
+    return operand(x)
+
+
+def _native_prefill_linear(x: torch.Tensor, operand, bias=None) -> torch.Tensor:
+    """Sequence linear supporting dense and HF/native quantized operands."""
+
+    if _graph_linear_is_dense(operand):
+        return F.linear(x, operand, bias)
+    direct = _bnb8_direct_linear(x, operand)
+    if direct is not None:
+        return direct
+    # Quantized modules retain and apply their own bias. Explicit packed biases
+    # belong only to dense low-rank operands.
     return operand(x)
 
 
@@ -225,10 +467,20 @@ except Exception:  # pragma: no cover - direct remote-file execution fallback
 
 
 try:  # pragma: no cover - optional Triton fast path on CUDA hosts
-    from .fused_lora import fused_wag_lora, fused_wag_lora_available, fused_wavg_lora, fused_wavg_lora_available
+    from .fused_lora import (
+        fused_wag_lora,
+        fused_wag_lora_available,
+        fused_wavg_lora,
+        fused_wavg_lora_available,
+    )
 except Exception:  # pragma: no cover - direct remote-file execution fallback
     try:
-        from fused_lora import fused_wag_lora, fused_wag_lora_available, fused_wavg_lora, fused_wavg_lora_available
+        from fused_lora import (
+            fused_wag_lora,
+            fused_wag_lora_available,
+            fused_wavg_lora,
+            fused_wavg_lora_available,
+        )
     except Exception:
         fused_wag_lora = None  # type: ignore[assignment]
         fused_wag_lora_available = None  # type: ignore[assignment]
@@ -420,7 +672,13 @@ def _native_prefill_fused_scan_enabled() -> bool:
         return False
 
 
-def _native_prefill_self_chunk_enabled(tokens: int, head_dim: int) -> bool:
+def _native_prefill_self_chunk_enabled(
+    tokens: int,
+    head_dim: int,
+    batch_size: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> bool:
     """Select the vendored sequence-parallel DPLR forward for long prompts."""
 
     policy = _kernel_policy()
@@ -434,7 +692,34 @@ def _native_prefill_self_chunk_enabled(tokens: int, head_dim: int) -> bool:
         int(getattr(policy, "prefill_self_chunk_min_tokens", 1024)),
         lower=16,
     )
-    if int(tokens) < min_tokens or int(tokens) % 16 or int(head_dim) != 64:
+    raw_model_shapes = os.environ.get("RWKV7_NATIVE_PREFILL_SELF_CHUNK_MODEL_SHAPES")
+    if raw_model_shapes is None:
+        model_shapes = {
+            tuple(int(value) for value in shape)
+            for shape in getattr(policy, "prefill_self_chunk_model_shapes", ())
+            if len(shape) == 4
+        }
+    else:
+        model_shapes = set()
+        try:
+            for item in raw_model_shapes.replace(",", " ").split():
+                values = tuple(int(value) for value in item.lower().split("x"))
+                if len(values) != 4 or any(value <= 0 for value in values):
+                    raise ValueError
+                model_shapes.add(values)
+        except ValueError as exc:
+            raise ValueError(
+                "RWKV7_NATIVE_PREFILL_SELF_CHUNK_MODEL_SHAPES must contain HxLxBxT tuples"
+            ) from exc
+    exact_model_shape = (
+        (int(hidden_size), int(num_layers), int(batch_size), int(tokens))
+        if None not in (hidden_size, num_layers, batch_size)
+        else None
+    )
+    if (
+        int(tokens) < min_tokens
+        and exact_model_shape not in model_shapes
+    ) or int(tokens) % 16 or int(head_dim) != 64:
         return False
     if self_chunk_rwkv7 is None or self_chunk_rwkv7_available is None:
         return False
@@ -444,11 +729,20 @@ def _native_prefill_self_chunk_enabled(tokens: int, head_dim: int) -> bool:
         return False
 
 
-def _native_prefill_self_chunk_size(_batch_size: int) -> int:
+def _native_prefill_self_chunk_size(batch_size: int, tokens: int | None = None) -> int:
     """Return the exact-card sequence chunk size."""
 
     policy = _kernel_policy()
     default = int(getattr(policy, "prefill_self_chunk_size", 16))
+    if tokens is not None:
+        for policy_batch, policy_tokens, policy_size in getattr(
+            policy,
+            "prefill_self_chunk_shape_sizes",
+            (),
+        ):
+            if (int(batch_size), int(tokens)) == (int(policy_batch), int(policy_tokens)):
+                default = int(policy_size)
+                break
     chunk_size = env_int(
         "RWKV7_NATIVE_PREFILL_SELF_CHUNK_SIZE",
         default,
@@ -458,6 +752,12 @@ def _native_prefill_self_chunk_size(_batch_size: int) -> int:
     if chunk_size not in {16, 32, 64}:
         raise ValueError("RWKV7_NATIVE_PREFILL_SELF_CHUNK_SIZE must be 16, 32, or 64")
     return chunk_size
+
+
+def _native_prefill_self_chunk_safe_gate() -> bool:
+    """Select the numerically conservative tensor-core intra-chunk kernel."""
+
+    return env_flag("RWKV7_NATIVE_PREFILL_SELF_CHUNK_SAFE_GATE", True)
 
 
 def _native_prefill_dplr_scan_enabled() -> bool:
@@ -488,6 +788,14 @@ def _native_prefill_linear_add_residual(x, weight, residual):
         weight.t(),
     )
     return out.view_as(residual)
+
+
+def _native_prefill_project_residual(x, operand, residual):
+    """Use GEMM beta=1 for dense weights and a safe add for quant modules."""
+
+    if _graph_linear_is_dense(operand) and _native_prefill_fused_residual_gemm_enabled():
+        return _native_prefill_linear_add_residual(x, operand, residual)
+    return residual + _native_prefill_linear(x, operand)
 
 
 def _native_prefill_dplr_chunk_size() -> int:
@@ -782,7 +1090,13 @@ def _native_prefill_fused_wavg_lora_blocks() -> tuple[int, int, int]:
     return vals[0], vals[1], vals[2]
 
 
-def _native_prefill_fused_sequence_ffn_enabled(total_rows: int) -> bool:
+def _native_prefill_fused_sequence_ffn_enabled(
+    total_rows: int,
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> bool:
     """Enable the tensor-core sequence FFN only for measured prefill shapes."""
 
     policy = _kernel_policy()
@@ -810,7 +1124,35 @@ def _native_prefill_fused_sequence_ffn_enabled(total_rows: int) -> bool:
             extra_rows = {int(v) for v in raw_extra.replace(",", " ").split() if int(v) > 0}
         except ValueError as exc:
             raise ValueError("RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_EXTRA_ROWS must contain integers") from exc
-    if not (min_rows <= int(total_rows) <= max_rows or int(total_rows) in extra_rows):
+    raw_model_shapes = os.environ.get("RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_MODEL_SHAPES")
+    if raw_model_shapes is None:
+        model_shapes = {
+            tuple(int(value) for value in shape)
+            for shape in getattr(policy, "prefill_sequence_ffn_model_shapes", ())
+            if len(shape) == 4
+        }
+    else:
+        model_shapes = set()
+        try:
+            for item in raw_model_shapes.replace(",", " ").split():
+                values = tuple(int(value) for value in item.lower().split("x"))
+                if len(values) != 4 or any(value <= 0 for value in values):
+                    raise ValueError
+                model_shapes.add(values)
+        except ValueError as exc:
+            raise ValueError(
+                "RWKV7_NATIVE_PREFILL_SEQUENCE_FFN_MODEL_SHAPES must contain HxLxBxT tuples"
+            ) from exc
+    exact_model_shape = (
+        (int(hidden_size), int(num_layers), int(batch_size), int(prompt_tokens))
+        if None not in (hidden_size, num_layers, batch_size, prompt_tokens)
+        else None
+    )
+    if not (
+        min_rows <= int(total_rows) <= max_rows
+        or int(total_rows) in extra_rows
+        or exact_model_shape in model_shapes
+    ):
         return False
     if fused_sequence_ffn is None or fused_sequence_ffn_available is None:
         return False
@@ -820,7 +1162,13 @@ def _native_prefill_fused_sequence_ffn_enabled(total_rows: int) -> bool:
         return False
 
 
-def _native_prefill_stacked_rkv_enabled(total_rows: int) -> bool:
+def _native_prefill_stacked_rkv_enabled(
+    total_rows: int,
+    batch_size: int | None = None,
+    prompt_tokens: int | None = None,
+    hidden_size: int | None = None,
+    num_layers: int | None = None,
+) -> bool:
     """Shape gate for lazy packed strided-batched R/K/V GEMM."""
 
     policy = _kernel_policy()
@@ -848,7 +1196,61 @@ def _native_prefill_stacked_rkv_enabled(total_rows: int) -> bool:
             extra_rows = {int(v) for v in raw_extra.replace(",", " ").split() if int(v) > 0}
         except ValueError as exc:
             raise ValueError("RWKV7_NATIVE_PREFILL_STACKED_RKV_EXTRA_ROWS must contain integers") from exc
-    return min_rows <= int(total_rows) <= max_rows or int(total_rows) in extra_rows
+    raw_shapes = os.environ.get("RWKV7_NATIVE_PREFILL_STACKED_RKV_SHAPES")
+    if raw_shapes is None:
+        shapes = {
+            (int(shape[0]), int(shape[1]))
+            for shape in getattr(policy, "prefill_stacked_rkv_shapes", ())
+            if len(shape) == 2
+        }
+    else:
+        shapes = set()
+        try:
+            for item in raw_shapes.replace(",", " ").split():
+                left, right = item.lower().split("x", 1)
+                shape = (int(left), int(right))
+                if shape[0] <= 0 or shape[1] <= 0:
+                    raise ValueError
+                shapes.add(shape)
+        except ValueError as exc:
+            raise ValueError(
+                "RWKV7_NATIVE_PREFILL_STACKED_RKV_SHAPES must contain BxT pairs"
+            ) from exc
+    exact_shape = (
+        (int(batch_size), int(prompt_tokens))
+        if batch_size is not None and prompt_tokens is not None
+        else None
+    )
+    raw_model_shapes = os.environ.get("RWKV7_NATIVE_PREFILL_STACKED_RKV_MODEL_SHAPES")
+    if raw_model_shapes is None:
+        model_shapes = {
+            tuple(int(v) for v in shape)
+            for shape in getattr(policy, "prefill_stacked_rkv_model_shapes", ())
+            if len(shape) == 4
+        }
+    else:
+        model_shapes = set()
+        try:
+            for item in raw_model_shapes.replace(",", " ").split():
+                values = tuple(int(v) for v in item.lower().split("x"))
+                if len(values) != 4 or any(v <= 0 for v in values):
+                    raise ValueError
+                model_shapes.add(values)
+        except ValueError as exc:
+            raise ValueError(
+                "RWKV7_NATIVE_PREFILL_STACKED_RKV_MODEL_SHAPES must contain HxLxBxT tuples"
+            ) from exc
+    exact_model_shape = (
+        (int(hidden_size), int(num_layers), int(batch_size), int(prompt_tokens))
+        if None not in (hidden_size, num_layers, batch_size, prompt_tokens)
+        else None
+    )
+    return bool(
+        min_rows <= int(total_rows) <= max_rows
+        or int(total_rows) in extra_rows
+        or exact_shape in shapes
+        or exact_model_shape in model_shapes
+    )
 
 
 def _native_prefill_stacked_rkv_weights(model, packs) -> list[torch.Tensor]:
@@ -1850,6 +2252,7 @@ def _native_prefill_scan(
     *,
     w_is_raw: bool = False,
     w_is_log: bool = False,
+    use_self_chunk: bool | None = None,
 ):
     """Run the recurrent prefill scan, using Triton only when explicitly enabled."""
 
@@ -1872,8 +2275,10 @@ def _native_prefill_scan(
     if w_is_raw:
         w = torch.exp(-0.606531 * torch.sigmoid(w.float()))
 
-    if _native_prefill_self_chunk_enabled(T, N):
-        chunk_size = _native_prefill_self_chunk_size(B)
+    if use_self_chunk is None:
+        use_self_chunk = _native_prefill_self_chunk_enabled(T, N)
+    if use_self_chunk:
+        chunk_size = _native_prefill_self_chunk_size(B, T)
         if T % chunk_size:
             chunk_size = 16
         out, new_state = self_chunk_rwkv7(
@@ -1886,6 +2291,7 @@ def _native_prefill_scan(
             state,
             chunk_size=chunk_size,
             w_is_log=w_is_log,
+            safe_gate=_native_prefill_self_chunk_safe_gate(),
         )
         return out.reshape(B, T, H * N), new_state
 
@@ -1982,15 +2388,28 @@ def prefill(
 
     x = F.embedding(ids, base.embeddings.weight).reshape(B, T, hidden)
     v_first_seq = torch.zeros(B, T, hidden, device=ids.device, dtype=dtype)
-    use_prefill_sequence_ffn = _native_prefill_fused_sequence_ffn_enabled(B * T)
+    use_prefill_sequence_ffn = _native_prefill_fused_sequence_ffn_enabled(
+        B * T,
+        B,
+        T,
+        hidden,
+        len(packs),
+    )
     sequence_ffn_blocks = _native_prefill_sequence_ffn_blocks(B * T) if use_prefill_sequence_ffn else None
     sequence_ffn_launch = _native_prefill_sequence_ffn_launch() if use_prefill_sequence_ffn else None
     sequence_ffn_workspace = None
     sequence_attn_mix_workspace = None
+    bnb8_attn_mix_workspace = None
+    bnb8_attn_quant_workspace = None
+    bnb8_attn_scale_workspace = None
     sequence_ffn_mix_workspace = None
+    bnb8_ffn_quant_workspace = None
+    bnb8_ffn_scale_workspace = None
+    self_chunk_used = False
+    sequence_ffn_used = False
     stacked_rkv_weights = (
         _native_prefill_stacked_rkv_weights(model, packs)
-        if _native_prefill_stacked_rkv_enabled(B * T)
+        if _native_prefill_stacked_rkv_enabled(B * T, B, T, hidden, len(packs))
         else None
     )
     stacked_rkv_used = False
@@ -2008,9 +2427,47 @@ def prefill(
 
         residual = F.layer_norm(x, [hidden], pre_w, pre_b, 1e-5) if int(has_pre) == 1 else x
         h = F.layer_norm(residual, [hidden], an_w, an_b, 1e-5)
+        defer_state_sigmoid = bool(
+            _native_prefill_fused_state_prep_enabled()
+            and not _native_prefill_fused_state_scan_enabled(B)
+            and not _native_prefill_fused_clampw_scan_enabled()
+        )
+        state_sigmoid_is_raw = False
         use_prefill_shift_mix = _native_prefill_fused_shift_mix_enabled()
         use_sequence_attn_mix = use_prefill_shift_mix and fused_attn_sequence_shift_mix is not None
-        if use_sequence_attn_mix:
+        v_gate = None
+        prequantized_rkv = None
+        use_bnb8_rkv_mix = bool(
+            use_sequence_attn_mix and _bnb8_rkv_mix_quant_enabled(Rw, Kw, Vw)
+        )
+        if use_bnb8_rkv_mix:
+            (
+                qr, sr, qk, sk, qv, sv,
+                xw, xv, xa, xg, next_xpa,
+                bnb8_attn_mix_workspace,
+                bnb8_attn_quant_workspace,
+                bnb8_attn_scale_workspace,
+            ) = fused_bnb8_attn_sequence_mix_quant(
+                h,
+                xpa[layer_idx],
+                x_r,
+                x_w,
+                x_k,
+                x_v,
+                x_a,
+                x_g,
+                mix_workspace=bnb8_attn_mix_workspace,
+                quant_workspace=bnb8_attn_quant_workspace,
+                scale_workspace=bnb8_attn_scale_workspace,
+                block=_native_bnb8_policy_block(
+                    "RWKV7_NATIVE_BNB8_ATTN_MIX_BLOCK",
+                    "native_bnb8_attn_mix_block",
+                    1024,
+                ),
+            )
+            prequantized_rkv = (qr, sr, qk, sk, qv, sv)
+            xr = xk = None
+        elif use_sequence_attn_mix:
             if sequence_attn_mix_workspace is None:
                 sequence_attn_mix_workspace = torch.empty(
                     (6, B, T, hidden), device=h.device, dtype=h.dtype
@@ -2037,7 +2494,12 @@ def prefill(
             xg = h + xx * x_g.view(1, 1, hidden)
 
         use_stacked_rkv = False
-        if stacked_rkv_weights:
+        if prequantized_rkv is not None:
+            qr, sr, qk, sk, qv, sv = prequantized_rkv
+            r = _bnb8_prequant_linear(qr, sr, Rw, dtype=h.dtype, output_shape=(B, T))
+            k = _bnb8_prequant_linear(qk, sk, Kw, dtype=h.dtype, output_shape=(B, T))
+            v = _bnb8_prequant_linear(qv, sv, Vw, dtype=h.dtype, output_shape=(B, T))
+        elif stacked_rkv_weights:
             row_values = B * T * hidden
             use_stacked_rkv = bool(
                 xr.is_contiguous()
@@ -2048,7 +2510,9 @@ def prefill(
                 and int(xk.storage_offset()) == int(xr.storage_offset()) + row_values
                 and int(xv.storage_offset()) == int(xr.storage_offset()) + 2 * row_values
             )
-        if use_stacked_rkv:
+        if prequantized_rkv is not None:
+            pass
+        elif use_stacked_rkv:
             stacked_rkv_used = True
             rkv_inputs = xr.as_strided((3, B * T, hidden), (B * T * hidden, hidden, 1))
             rkv = torch.bmm(rkv_inputs, stacked_rkv_weights[layer_idx])
@@ -2056,17 +2520,14 @@ def prefill(
             k = rkv[1].view(B, T, hidden)
             v = rkv[2].view(B, T, hidden)
         else:
-            r = F.linear(xr, Rw)
-            k = F.linear(xk, Kw)
-            v = F.linear(xv, Vw)
-        v_gate = None
-        state_sigmoid_is_raw = False
-        defer_state_sigmoid = bool(
-            _native_prefill_fused_state_prep_enabled()
-            and not _native_prefill_fused_state_scan_enabled(B)
-            and not _native_prefill_fused_clampw_scan_enabled()
+            r = _native_prefill_linear(xr, Rw)
+            k = _native_prefill_linear(xk, Kw)
+            v = _native_prefill_linear(xv, Vw)
+        use_prefill_wavg_lora = bool(
+            layer_idx > 0
+            and _native_prefill_fused_wavg_lora_enabled(B * T)
+            and _graph_linears_are_dense(w1, w2, a1, a2, g1, g2, v1, v2)
         )
-        use_prefill_wavg_lora = layer_idx > 0 and _native_prefill_fused_wavg_lora_enabled(B * T)
         if use_prefill_wavg_lora:
             block_m, block_r, block_k = _native_prefill_fused_wavg_lora_blocks()
             w, a, g, v_gate = fused_wavg_lora(
@@ -2095,25 +2556,32 @@ def prefill(
             g = g.view(B, T, hidden)
             v_gate = v_gate.view(B, T, hidden)
         else:
-            w_mid = F.linear(xw, w1)
+            w_mid = _native_prefill_linear(xw, w1)
             w_mid.tanh_()
-            w = F.linear(w_mid, w2, w0)
-            a_mid = F.linear(xa, a1)
-            a = F.linear(a_mid, a2, a0)
+            w = _native_prefill_linear(w_mid, w2, w0)
+            a_mid = _native_prefill_linear(xa, a1)
+            a = _native_prefill_linear(a_mid, a2, a0)
             if not defer_state_sigmoid:
                 a.sigmoid_()
             else:
                 state_sigmoid_is_raw = True
-            g_mid = F.linear(xg, g1)
+            g_mid = _native_prefill_linear(xg, g1)
             g_mid.sigmoid_()
-            g = F.linear(g_mid, g2)
+            g = _native_prefill_linear(g_mid, g2)
             if layer_idx != 0:
-                v_mid = F.linear(xv, v1)
-                v_gate = F.linear(v_mid, v2, v0)
+                v_mid = _native_prefill_linear(xv, v1)
+                v_gate = _native_prefill_linear(v_mid, v2, v0)
                 if not defer_state_sigmoid:
                     v_gate.sigmoid_()
         use_fused_scan_output = _native_prefill_fused_scan_output_enabled()
-        use_self_chunk = _native_prefill_self_chunk_enabled(T, N) and not use_fused_scan_output
+        use_self_chunk = _native_prefill_self_chunk_enabled(
+            T,
+            N,
+            B,
+            hidden,
+            len(packs),
+        ) and not use_fused_scan_output
+        self_chunk_used = bool(self_chunk_used or use_self_chunk)
         self_chunk_w_is_log = False
         use_clampw_scan = _native_prefill_fused_clampw_scan_enabled() and not use_fused_scan_output
         use_fused_state_scan = _native_prefill_fused_state_scan_enabled(B) and not use_fused_scan_output
@@ -2249,11 +2717,12 @@ def prefill(
                 r, w, k, v, kk, a, state[layer_idx], B, T, H, N,
                 w_is_raw=use_clampw_scan,
                 w_is_log=self_chunk_w_is_log,
+                use_self_chunk=use_self_chunk,
             )
         out_projected = False
         if use_fused_scan_output:
             pass
-        elif _native_prefill_fused_output_project_enabled():
+        elif _native_prefill_fused_output_project_enabled() and _graph_linear_is_dense(Ow):
             out = fused_attn_output_project(
                 out.reshape(B * T, hidden),
                 r.reshape(B * T, H, N),
@@ -2292,19 +2761,23 @@ def prefill(
             sk = (r.view(B, T, H, N) * k.view(B, T, H, N) * r_k.view(1, 1, H, N)).sum(dim=-1, keepdim=True)
             out = (out + (sk * v.view(B, T, H, N)).view(B, T, hidden)) * g
         if not out_projected:
-            if _native_prefill_fused_residual_gemm_enabled():
-                x = _native_prefill_linear_add_residual(out, Ow, residual)
-            else:
-                out = F.linear(out, Ow)
-                x = residual + out
+            x = _native_prefill_project_residual(out, Ow, residual)
         else:
             x = residual + out
-        xpa[layer_idx] = next_xpa if use_sequence_attn_mix else h[:, -1, :].contiguous()
+        xpa[layer_idx] = (
+            next_xpa
+            if use_sequence_attn_mix
+            else h[:, -1, :].contiguous()
+        )
         state[layer_idx] = new_state.contiguous()
 
         residual = x
         h2 = F.layer_norm(x, [hidden], fn_w, fn_b, 1e-5)
-        if use_prefill_sequence_ffn:
+        use_layer_sequence_ffn = bool(
+            use_prefill_sequence_ffn and _graph_linears_are_dense(fK, fV)
+        )
+        if use_layer_sequence_ffn:
+            sequence_ffn_used = True
             assert sequence_ffn_blocks is not None
             assert sequence_ffn_launch is not None
             if sequence_ffn_workspace is None:
@@ -2329,7 +2802,29 @@ def prefill(
             )
             x = residual + ffn_out
         else:
-            if use_prefill_shift_mix and fused_ffn_sequence_shift_mix is not None:
+            ffn_up_prequantized = False
+            if use_prefill_shift_mix and _bnb8_ffn_mix_quant_enabled(fK):
+                (
+                    qfk,
+                    sfk,
+                    next_xpf,
+                ) = fused_bnb8_ffn_sequence_mix_quant(
+                    h2,
+                    xpf[layer_idx],
+                    fx_k,
+                    quant_workspace=bnb8_ffn_quant_workspace,
+                    scale_workspace=bnb8_ffn_scale_workspace,
+                    block=_native_bnb8_policy_block(
+                        "RWKV7_NATIVE_BNB8_FFN_MIX_BLOCK",
+                        "native_bnb8_ffn_mix_block",
+                        1024,
+                    ),
+                )
+                bnb8_ffn_quant_workspace = qfk
+                bnb8_ffn_scale_workspace = sfk
+                fk = _bnb8_prequant_linear(qfk, sfk, fK, dtype=h2.dtype, output_shape=(B, T))
+                ffn_up_prequantized = True
+            elif use_prefill_shift_mix and fused_ffn_sequence_shift_mix is not None:
                 if sequence_ffn_mix_workspace is None:
                     sequence_ffn_mix_workspace = torch.empty_like(h2)
                 fk, next_xpf = fused_ffn_sequence_shift_mix(
@@ -2343,26 +2838,34 @@ def prefill(
                 fxx = prev_h2 - h2
                 fk = h2 + fxx * fx_k.view(1, 1, hidden)
                 next_xpf = h2[:, -1, :].contiguous()
-            fk = F.linear(fk, fK)
-            if (
+            if not ffn_up_prequantized:
+                fk = _native_prefill_linear(fk, fK)
+            fused_bnb8_ffn = _bnb8_direct_relu_square_linear(fk, fV)
+            if fused_bnb8_ffn is not None:
+                x = residual + fused_bnb8_ffn
+            elif (
                 use_prefill_shift_mix
                 and fused_relu_square is not None
                 and fused_relu_square_available is not None
                 and fused_relu_square_available()
             ):
                 fk = fused_relu_square(fk)
+                x = _native_prefill_project_residual(fk, fV, residual)
             else:
                 fk = torch.relu(fk) ** 2
-            if _native_prefill_fused_residual_gemm_enabled():
-                x = _native_prefill_linear_add_residual(fk, fV, residual)
-            else:
-                x = residual + F.linear(fk, fV)
+                x = _native_prefill_project_residual(fk, fV, residual)
         xpf[layer_idx] = next_xpf
 
-    x = F.layer_norm(x, [hidden], base.norm.weight, base.norm.bias, 1e-5)
     keep = T if logits_to_keep is None or int(logits_to_keep) <= 0 else min(int(logits_to_keep), T)
-    logits = _lm_head(model, x[:, -keep:, :])
+    # Recurrent/shift state is already complete. Final norm is consumed only
+    # by the language head, so serving requests that ask for the last logits
+    # must not normalize and materialize the entire prompt sequence.
+    x_for_logits = x if keep == T else x[:, -keep:, :]
+    x_for_logits = F.layer_norm(x_for_logits, [hidden], base.norm.weight, base.norm.bias, 1e-5)
+    logits = _lm_head(model, x_for_logits)
     setattr(model, "_rwkv7_native_prefill_stacked_rkv_effective", bool(stacked_rkv_used))
+    setattr(model, "_rwkv7_native_prefill_self_chunk_effective", bool(self_chunk_used))
+    setattr(model, "_rwkv7_native_prefill_sequence_ffn_effective", bool(sequence_ffn_used))
     return logits, state, xpa, xpf
 
 

@@ -9,7 +9,7 @@ QWEN_ROOT="${QWEN_ROOT:-/home/ubuntu/models/qwen}"
 QWEN9_MODEL="${QWEN9_MODEL:-/home/ubuntu/models/qwen/Qwen3.5-9B}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 WARMUP="${WARMUP:-1}"
-RUNS="${RUNS:-1}"
+RUNS="${RUNS:-3}"
 QWEN_BACKEND="${QWEN_BACKEND:-auto}"
 QWEN_FAST_ARGS=()
 if [[ "${QWEN_BACKEND}" == "auto" ]]; then
@@ -47,6 +47,11 @@ matrix_rc=$?
   --min-decode-speedup 1.05 \
   --min-quant-prefill-speedup 1.00 \
   --min-quant-decode-speedup 1.00 \
+  --require-native-candidate \
+  --require-qwen-fast-path \
+  --require-quant-memory-reduction \
+  --require-prefill-mode-match \
+  --require-quant-not-slower-than-dense \
   --json-output "${OUT_DIR}/summary.json" \
   --markdown-output "${OUT_DIR}/summary.md" \
   --fail-on-gate

@@ -3,10 +3,10 @@
 """Quantized inference smoke test for RWKV-7 HF loading.
 
 The adapter should remain loadable through standard HF quantization configs.
-This script exercises normal HF `forward`/`generate` plus the quantized
-fast-forward fallback. Bitsandbytes replaces Linear modules with quantized
-modules whose packed weights are not compatible with the native weight
-extractor, so quantized decode should resolve to the FLA fast-token backend.
+This script exercises normal HF `forward`/`generate` plus quantized
+fast-forward. Promoted exact-card policies may retain bitsandbytes W8/W4
+modules as live native-prefill/native-graph operands; unsupported hardware or
+non-graph-safe quantizers must remain on the compatibility path.
 """
 from __future__ import annotations
 

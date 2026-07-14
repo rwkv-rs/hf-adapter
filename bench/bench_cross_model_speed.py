@@ -49,10 +49,24 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError(f"--{field.replace('_', '-')} must be positive")
     if int(args.warmup) < 0:
         raise ValueError("--warmup must be non-negative")
+    if int(getattr(args, "prefill_chunk_size", 0) or 0) < 0:
+        raise ValueError("--prefill-chunk-size must be non-negative")
     if args.model_role not in {"candidate", "reference"}:
         raise ValueError("--model-role must be candidate or reference")
     if args.model_kind not in {"rwkv", "qwen35"}:
         raise ValueError("--model-kind must be rwkv or qwen35")
+    native_quantizations = {
+        "torchao_w8",
+        "torchao_w4",
+        "a8w8",
+        "mm8",
+        "mm4",
+        "bnb8_a8w8_head",
+    }
+    if args.model_kind != "rwkv" and str(args.quantization) in native_quantizations:
+        raise ValueError(
+            f"{args.quantization} is an RWKV candidate backend; use bnb8/bnb4 for Qwen reference rows"
+        )
 
 
 def build_exact_prompt(tokenizer, prompt_tokens: int, batch_size: int, device: str) -> torch.Tensor:
@@ -93,6 +107,10 @@ def base_row(args: argparse.Namespace) -> dict[str, Any]:
         "batch_size": args.batch_size,
         "prompt_tokens": args.prompt_tokens,
         "decode_tokens": args.decode_tokens,
+        "prefill_chunk_size": int(getattr(args, "prefill_chunk_size", 0) or 0),
+        "native_quant_min_params_requested": int(getattr(args, "native_quant_min_params", 1_000_000)),
+        "native_quant_policy_requested": str(getattr(args, "native_quant_policy", "memory")),
+        "torchao_group_size_requested": int(getattr(args, "torchao_group_size", 128)),
         **model_metadata(args),
     }
 
@@ -131,27 +149,53 @@ def peak_mb(device: str) -> float | None:
     return round(torch.cuda.max_memory_allocated(cuda_device_index(device)) / 1024 / 1024, 1)
 
 
+def _tensor_payload_bytes(tensor, seen: set[int]) -> int:
+    """Count physical payloads for ordinary and wrapper-subclass tensors."""
+
+    ident = id(tensor)
+    if ident in seen:
+        return 0
+    seen.add(ident)
+    flatten = getattr(tensor, "__tensor_flatten__", None)
+    if callable(flatten) and type(tensor) not in {torch.Tensor, torch.nn.Parameter}:
+        try:
+            names = flatten()[0]
+            payload = 0
+            for name in names:
+                value = getattr(tensor, name)
+                if isinstance(value, torch.Tensor):
+                    payload += _tensor_payload_bytes(value, seen)
+            if payload:
+                return payload
+        except Exception:
+            pass
+    return int(tensor.numel()) * int(tensor.element_size())
+
+
 def model_footprint_mb(model) -> float:
     total = 0
     seen: set[int] = set()
     for tensor in list(model.parameters()) + list(model.buffers()):
-        ident = id(tensor)
-        if ident in seen:
-            continue
-        seen.add(ident)
-        total += tensor.numel() * tensor.element_size()
+        total += _tensor_payload_bytes(tensor, seen)
     return round(total / 1024 / 1024, 1)
 
 
 def quantization_config(args: argparse.Namespace, dtype: torch.dtype):
-    if args.quantization == "none":
+    if args.quantization in {"none", "torchao_w8", "torchao_w4", "a8w8", "mm8", "mm4"}:
         return None
     if importlib.util.find_spec("bitsandbytes") is None:
         raise RuntimeError("bitsandbytes is required for bnb8/bnb4 rows")
     from transformers import BitsAndBytesConfig
 
-    if args.quantization == "bnb8":
-        return BitsAndBytesConfig(load_in_8bit=True)
+    if args.quantization in {"bnb8", "bnb8_a8w8_head"}:
+        # bitsandbytes' LLM.int8 outlier path evaluates ``outliers.any()`` on
+        # the host and therefore cannot be captured by a CUDA graph.  Keep the
+        # library default for ordinary runs, while allowing the strict native
+        # graph matrix to disable that path explicitly and reproducibly.
+        threshold = float(os.environ.get("RWKV7_BNB_INT8_THRESHOLD", "6.0"))
+        if threshold < 0.0:
+            raise ValueError("RWKV7_BNB_INT8_THRESHOLD must be non-negative")
+        return BitsAndBytesConfig(load_in_8bit=True, llm_int8_threshold=threshold)
     return BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -201,6 +245,42 @@ def load_model(args: argparse.Namespace, dtype: torch.dtype, model_path: str | N
     if args.model_kind == "rwkv":
         kwargs["trust_remote_code"] = True
         model = AutoModelForCausalLM.from_pretrained(model_path or args.model, **kwargs).eval()
+        if args.quantization == "bnb8_a8w8_head":
+            from rwkv7_hf.native_quant_a8w8 import quantize_model_a8w8
+
+            replaced = quantize_model_a8w8(
+                model,
+                min_params=int(getattr(args, "native_quant_min_params", 1_000_000)),
+                policy="speed",
+            )
+            setattr(model, "_rwkv7_cross_model_quant_backend", args.quantization)
+            setattr(model, "_rwkv7_cross_model_quant_replaced_modules", int(replaced))
+        elif args.quantization in {"torchao_w8", "torchao_w4"}:
+            from rwkv7_hf.native_quant_torchao import quantize_model_torchao
+
+            replaced = quantize_model_torchao(
+                model,
+                args.quantization,
+                min_params=int(getattr(args, "native_quant_min_params", 1_000_000)),
+                policy=str(getattr(args, "native_quant_policy", "memory")),
+                group_size=int(getattr(args, "torchao_group_size", 128)),
+            )
+            setattr(model, "_rwkv7_cross_model_quant_backend", args.quantization)
+            setattr(model, "_rwkv7_cross_model_quant_replaced_modules", int(replaced))
+        elif args.quantization in {"a8w8", "mm8", "mm4"}:
+            if args.quantization == "a8w8":
+                from rwkv7_hf.native_quant_a8w8 import quantize_model_a8w8 as quantize_model
+            elif args.quantization == "mm8":
+                from rwkv7_hf.native_quant_mm8 import quantize_model_mm8 as quantize_model
+            else:
+                from rwkv7_hf.native_quant_mm4 import quantize_model_mm4 as quantize_model
+            replaced = quantize_model(
+                model,
+                min_params=int(getattr(args, "native_quant_min_params", 1_000_000)),
+                policy=str(getattr(args, "native_quant_policy", "memory")),
+            )
+            setattr(model, "_rwkv7_cross_model_quant_backend", args.quantization)
+            setattr(model, "_rwkv7_cross_model_quant_replaced_modules", int(replaced))
         set_rwkv_runtime(model, args)
         return model
 
@@ -218,6 +298,13 @@ def last_rwkv_backend(model) -> str | None:
     return getattr(model, "_rwkv7_last_fast_token_backend", None)
 
 
+def last_rwkv_prefill_backend(model) -> str | None:
+    getter = getattr(model, "rwkv7_last_fast_prefill_backend", None)
+    if callable(getter):
+        return getter()
+    return getattr(model, "_rwkv7_last_fast_prefill_backend", None)
+
+
 def step_function(model, model_kind: str, batch_size: int) -> tuple[Callable[..., Any], str]:
     if model_kind == "rwkv":
         fast = getattr(model, "rwkv7_forward_token", None)
@@ -231,21 +318,44 @@ def step_function(model, model_kind: str, batch_size: int) -> tuple[Callable[...
     )
 
 
-def forward_prefill(model, ids):
-    return model(ids, use_cache=True, logits_to_keep=1)
+def forward_prefill(args: argparse.Namespace, model, ids):
+    chunk_size = int(getattr(args, "prefill_chunk_size", 0) or 0)
+    if chunk_size <= 0 or int(ids.shape[1]) <= chunk_size:
+        return model(ids, use_cache=True, logits_to_keep=1)
+
+    # RWKV exposes a cache-correct serving helper. Qwen follows the same HF
+    # cache contract directly. This permits memory-safe, apples-to-apples
+    # reruns of large (batch, prompt) cells without weakening the matrix key.
+    rwkv_chunks = getattr(model, "rwkv7_prefill_chunks", None)
+    if args.model_kind == "rwkv" and callable(rwkv_chunks):
+        return rwkv_chunks(ids, chunk_size=chunk_size, logits_to_keep=1)
+
+    out = None
+    past = None
+    for start in range(0, int(ids.shape[1]), chunk_size):
+        out = model(
+            ids[:, start : start + chunk_size],
+            past_key_values=past,
+            use_cache=True,
+            logits_to_keep=1,
+        )
+        past = out.past_key_values
+    if out is None:
+        raise RuntimeError("chunked prefill produced no output")
+    return out
 
 
 def timed_prefill(args: argparse.Namespace, model, ids) -> tuple[float, float]:
     with torch.inference_mode():
         for _ in range(args.warmup):
-            _ = forward_prefill(model, ids)
+            _ = forward_prefill(args, model, ids)
     cuda_sync(args.device)
     samples: list[float] = []
     with torch.inference_mode():
         for _ in range(args.runs):
             cuda_sync(args.device)
             started = time.perf_counter()
-            _ = forward_prefill(model, ids)
+            _ = forward_prefill(args, model, ids)
             cuda_sync(args.device)
             samples.append(time.perf_counter() - started)
     median_s = float(statistics.median(samples))
@@ -254,7 +364,7 @@ def timed_prefill(args: argparse.Namespace, model, ids) -> tuple[float, float]:
 
 def decode_once(args: argparse.Namespace, model, ids, step: Callable[..., Any]) -> tuple[float, Any]:
     with torch.inference_mode():
-        out = forward_prefill(model, ids)
+        out = forward_prefill(args, model, ids)
         state = out.past_key_values
         token = out.logits[:, -1:].argmax(dim=-1)
         for _ in range(args.warmup):
@@ -295,6 +405,24 @@ def environment_metadata(args: argparse.Namespace) -> dict[str, Any]:
             qwen_fast_path = bool(is_fast_path_available)
         except Exception:
             qwen_fast_path = False
+    self_chunk_h_bv_effective = None
+    self_chunk_h_bc_effective = None
+    if args.model_kind == "rwkv" and str(args.device).startswith("cuda"):
+        try:
+            from rwkv7_hf.native_jit import _native_prefill_self_chunk_size
+            from rwkv7_hf.self_chunk_h_fwd import resolve_chunk_h_tiles
+
+            self_chunk_size = _native_prefill_self_chunk_size(
+                int(args.batch_size), int(args.prompt_tokens)
+            )
+            self_chunk_h_bv_effective, self_chunk_h_bc_effective = resolve_chunk_h_tiles(
+                torch.cuda.current_device(),
+                self_chunk_size,
+                batch_size=int(args.batch_size),
+                tokens=int(args.prompt_tokens),
+            )
+        except Exception:
+            pass
     return {
         "device": device_name(args.device),
         "torch_version": torch.__version__,
@@ -307,6 +435,228 @@ def environment_metadata(args: argparse.Namespace) -> dict[str, Any]:
         "qwen_force_torch": QWEN_FORCE_TORCH,
         "qwen_fast_path_available": qwen_fast_path,
         "rwkv_fast_token_backend_requested": os.environ.get("RWKV7_FAST_TOKEN_BACKEND"),
+        "rwkv_prefill_external_quant_graph_requested": os.environ.get(
+            "RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT_GRAPH"
+        ),
+        "rwkv_prefill_blas_requested": os.environ.get("RWKV7_NATIVE_PREFILL_BLAS"),
+        "rwkv_prefill_self_chunk_requested": os.environ.get("RWKV7_NATIVE_PREFILL_SELF_CHUNK"),
+        "rwkv_prefill_self_chunk_min_tokens_requested": os.environ.get(
+            "RWKV7_NATIVE_PREFILL_SELF_CHUNK_MIN_TOKENS"
+        ),
+        "rwkv_prefill_self_chunk_size_requested": os.environ.get(
+            "RWKV7_NATIVE_PREFILL_SELF_CHUNK_SIZE"
+        ),
+        "rwkv_prefill_self_chunk_safe_gate_requested": os.environ.get(
+            "RWKV7_NATIVE_PREFILL_SELF_CHUNK_SAFE_GATE"
+        ),
+        "rwkv_prefill_self_chunk_h_bv_requested": os.environ.get(
+            "RWKV7_NATIVE_PREFILL_SELF_CHUNK_H_BV"
+        ),
+        "rwkv_prefill_self_chunk_h_bc_requested": os.environ.get(
+            "RWKV7_NATIVE_PREFILL_SELF_CHUNK_H_BC"
+        ),
+        "rwkv_prefill_self_chunk_h_bv_effective": self_chunk_h_bv_effective,
+        "rwkv_prefill_self_chunk_h_bc_effective": self_chunk_h_bc_effective,
+        "rwkv_prefill_scan_block_m_requested": os.environ.get("RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M"),
+        "rwkv_prefill_scan_num_warps_requested": os.environ.get(
+            "RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS"
+        ),
+        "rwkv_native_bnb8_direct_requested": os.environ.get("RWKV7_NATIVE_BNB8_DIRECT"),
+        "rwkv_native_bnb8_relu_quant_requested": os.environ.get(
+            "RWKV7_NATIVE_BNB8_RELU_QUANT"
+        ),
+        "rwkv_native_bnb8_rkv_mix_quant_requested": os.environ.get(
+            "RWKV7_NATIVE_BNB8_RKV_MIX_QUANT"
+        ),
+        "rwkv_native_bnb8_ffn_mix_quant_requested": os.environ.get(
+            "RWKV7_NATIVE_BNB8_FFN_MIX_QUANT"
+        ),
+        "rwkv_native_bnb8_attn_mix_block_requested": os.environ.get(
+            "RWKV7_NATIVE_BNB8_ATTN_MIX_BLOCK"
+        ),
+        "rwkv_native_bnb8_ffn_mix_block_requested": os.environ.get(
+            "RWKV7_NATIVE_BNB8_FFN_MIX_BLOCK"
+        ),
+        "bnb_int8_threshold_requested": (
+            float(os.environ["RWKV7_BNB_INT8_THRESHOLD"])
+            if args.quantization in {"bnb8", "bnb8_a8w8_head"}
+            and "RWKV7_BNB_INT8_THRESHOLD" in os.environ
+            else None
+        ),
+    }
+
+
+def effective_quantization_metadata(model, args: argparse.Namespace) -> dict[str, Any]:
+    quantizer = getattr(model, "hf_quantizer", None)
+    config = getattr(quantizer, "quantization_config", None)
+    if config is None:
+        config = getattr(getattr(model, "config", None), "quantization_config", None)
+    getter = config.get if isinstance(config, dict) else lambda name, default=None: getattr(config, name, default)
+    if args.quantization == "bnb8_a8w8_head":
+        backend = "bitsandbytes+rwkv_native"
+    elif args.quantization.startswith("bnb"):
+        backend = "bitsandbytes"
+    elif args.quantization.startswith("torchao"):
+        backend = "torchao"
+    elif args.quantization in {"a8w8", "mm8", "mm4"}:
+        backend = "rwkv_native"
+    else:
+        backend = "dense"
+    native_quant = args.quantization in {
+        "a8w8",
+        "mm8",
+        "mm4",
+        "torchao_w8",
+        "torchao_w4",
+        "bnb8_a8w8_head",
+    }
+    a8w8_effective_rows = None
+    mm4_launch: dict[str, int] = {}
+    if args.quantization in {"a8w8", "bnb8_a8w8_head"}:
+        from rwkv7_hf.native_quant_a8w8 import a8w8_gemv_max_rows
+
+        try:
+            native_device = next(model.parameters()).device
+        except Exception:
+            native_device = None
+        a8w8_effective_rows = a8w8_gemv_max_rows(native_device)
+    elif args.quantization == "mm4":
+        from rwkv7_hf.native_quant_mm4 import mm4_effective_launch_config
+
+        try:
+            native_device = next(model.parameters()).device
+        except Exception:
+            native_device = None
+        mm4_launch = mm4_effective_launch_config(native_device)
+    native_jit_module = None
+    if args.model_kind == "rwkv":
+        method = getattr(model, "rwkv7_prefill_native", None)
+        fn = getattr(method, "__func__", method)
+        globals_dict = getattr(fn, "__globals__", {})
+        native_jit_module = globals_dict.get("native_jit")
+        if native_jit_module is None:
+            # The production remote-code wrapper imports individual helpers as
+            # ``_native_jit_prefill`` rather than retaining the module object.
+            # Resolve the exact dynamically loaded module through that helper
+            # so telemetry follows the code used by this model instance.
+            prefill_fn = globals_dict.get("_native_jit_prefill")
+            native_jit_module = sys.modules.get(getattr(prefill_fn, "__module__", ""))
+        if native_jit_module is None:
+            # Some Transformers remote-code loaders wrap/copy imported
+            # callables without preserving their original module in
+            # ``sys.modules``.  ``--rwkv-code-source repo`` guarantees this
+            # fallback is byte-identical to the files overlaid on the model.
+            from rwkv7_hf import native_jit as native_jit_module
+
+    def bnb8_flag(env_name: str, policy_name: str) -> bool | None:
+        if args.quantization not in {"bnb8", "bnb8_a8w8_head"} or native_jit_module is None:
+            return None
+        return bool(native_jit_module._native_bnb8_policy_flag(env_name, policy_name))
+
+    def bnb8_block(env_name: str, policy_name: str, fallback: int) -> int | None:
+        if args.quantization not in {"bnb8", "bnb8_a8w8_head"} or native_jit_module is None:
+            return None
+        return int(native_jit_module._native_bnb8_policy_block(env_name, policy_name, fallback))
+
+    return {
+        "bnb_int8_threshold": (
+            float(getter("llm_int8_threshold", 6.0))
+            if args.quantization in {"bnb8", "bnb8_a8w8_head"}
+            else None
+        ),
+        "rwkv_bnb_skip_policy": (
+            getattr(model, "_rwkv7_bnb_skip_policy", None) if args.model_kind == "rwkv" else None
+        ),
+        "rwkv_bnb_prefill_value_stride": (
+            int(os.environ.get("RWKV7_BNB_PREFILL_VALUE_STRIDE", "8"))
+            if args.model_kind == "rwkv" and args.quantization.startswith("bnb")
+            else None
+        ),
+        # Record resolved hardware-policy values as well as the raw requested
+        # environment variables in ``runtime_metadata``.  This makes a result
+        # produced with zero tuning variables fully reproducible and proves
+        # that the exact-card defaults, rather than shell-only overrides, were
+        # active during the acceptance run.
+        "rwkv_native_bnb8_direct_effective": bnb8_flag(
+            "RWKV7_NATIVE_BNB8_DIRECT", "native_bnb8_direct"
+        ),
+        "rwkv_native_bnb8_relu_quant_effective": bnb8_flag(
+            "RWKV7_NATIVE_BNB8_RELU_QUANT", "native_bnb8_relu_quant"
+        ),
+        "rwkv_native_bnb8_rkv_mix_quant_effective": bnb8_flag(
+            "RWKV7_NATIVE_BNB8_RKV_MIX_QUANT", "native_bnb8_rkv_mix_quant"
+        ),
+        "rwkv_native_bnb8_ffn_mix_quant_effective": bnb8_flag(
+            "RWKV7_NATIVE_BNB8_FFN_MIX_QUANT", "native_bnb8_ffn_mix_quant"
+        ),
+        "rwkv_native_bnb8_attn_mix_block_effective": bnb8_block(
+            "RWKV7_NATIVE_BNB8_ATTN_MIX_BLOCK", "native_bnb8_attn_mix_block", 1024
+        ),
+        "rwkv_native_bnb8_ffn_mix_block_effective": bnb8_block(
+            "RWKV7_NATIVE_BNB8_FFN_MIX_BLOCK", "native_bnb8_ffn_mix_block", 1024
+        ),
+        "quantization_backend": backend,
+        "quantized_modules": getattr(model, "_rwkv7_cross_model_quant_replaced_modules", None),
+        "native_quant_block_modules": getattr(
+            model, "_rwkv7_native_mm_block_replaced_modules", None
+        ),
+        # Capture every native-kernel launch knob that can change an acceptance
+        # row. Missing values mean the documented kernel default was used.
+        "a8w8_gemv_max_rows": (
+            a8w8_effective_rows
+            if args.quantization in {"a8w8", "bnb8_a8w8_head"}
+            else None
+        ),
+        "a8w8_gemv_block_k": (
+            int(os.environ.get("RWKV7_A8W8_GEMV_BLOCK_K", "256"))
+            if args.quantization in {"a8w8", "bnb8_a8w8_head"}
+            else None
+        ),
+        "a8w8_gemv_block_n": (
+            int(os.environ.get("RWKV7_A8W8_GEMV_BLOCK_N", "64"))
+            if args.quantization in {"a8w8", "bnb8_a8w8_head"}
+            else None
+        ),
+        "a8w8_gemv_warps": (
+            int(os.environ.get("RWKV7_A8W8_GEMV_WARPS", "1"))
+            if args.quantization in {"a8w8", "bnb8_a8w8_head"}
+            else None
+        ),
+        "mm4_fused_max_rows": (
+            mm4_launch.get("fused_max_rows")
+            if args.quantization == "mm4"
+            else None
+        ),
+        "mm4_gemv_block_pairs": (
+            mm4_launch.get("gemv_block_pairs") if args.quantization == "mm4" else None
+        ),
+        "mm4_gemv_block_n": (
+            mm4_launch.get("gemv_block_n") if args.quantization == "mm4" else None
+        ),
+        "mm4_dot_min_rows": (
+            mm4_launch.get("dot_min_rows") if args.quantization == "mm4" else None
+        ),
+        "mm4_dot_block_b": (
+            mm4_launch.get("dot_block_b")
+            if args.quantization == "mm4"
+            else None
+        ),
+        "mm4_dot_block_pairs": (
+            mm4_launch.get("dot_block_pairs")
+            if args.quantization == "mm4"
+            else None
+        ),
+        "mm4_dot_block_n": (
+            mm4_launch.get("dot_block_n")
+            if args.quantization == "mm4"
+            else None
+        ),
+        "mm4_dot_warps": (
+            mm4_launch.get("dot_warps")
+            if args.quantization == "mm4"
+            else None
+        ),
+        "native_quant_kernel_active": native_quant,
     }
 
 
@@ -349,40 +699,57 @@ def qwen35_fast_path_bindings(model) -> dict[str, Any]:
     }
 
 
-def benchmark(args: argparse.Namespace) -> dict[str, Any]:
-    dtype = DTYPES[args.dtype]
-    started = time.perf_counter()
-    effective_model_path = args.model
-    temporary = None
-    if args.model_kind == "rwkv":
-        effective_model_path, temporary = prepare_rwkv_model_dir(args.model, args.rwkv_code_source)
-    tokenizer = AutoTokenizer.from_pretrained(effective_model_path, trust_remote_code=args.model_kind == "rwkv")
-    model = load_model(args, dtype, effective_model_path)
-    if args.model_kind == "qwen35" and args.require_qwen_fast_path:
-        from transformers.models.qwen3_5.modeling_qwen3_5 import is_fast_path_available
+def validate_loaded_model(args: argparse.Namespace, model) -> None:
+    if args.model_kind != "qwen35" or not args.require_qwen_fast_path:
+        return
+    from transformers.models.qwen3_5.modeling_qwen3_5 import is_fast_path_available
 
-        if not bool(is_fast_path_available):
-            raise RuntimeError(
-                "Qwen3.5 optimized fast path is unavailable; install compatible "
-                "flash-linear-attention and causal-conv1d packages"
-            )
-        binding_check = qwen35_fast_path_bindings(model)
-        if not bool(binding_check["verified"]):
-            raise RuntimeError(
-                "Qwen3.5 optimized packages imported but the loaded GatedDeltaNet "
-                f"layers are not bound to FLA/causal-conv1d: {binding_check}"
-            )
-    load_s = time.perf_counter() - started
+    if not bool(is_fast_path_available):
+        raise RuntimeError(
+            "Qwen3.5 optimized fast path is unavailable; install compatible "
+            "flash-linear-attention and causal-conv1d packages"
+        )
+    binding_check = qwen35_fast_path_bindings(model)
+    if not bool(binding_check["verified"]):
+        raise RuntimeError(
+            "Qwen3.5 optimized packages imported but the loaded GatedDeltaNet "
+            f"layers are not bound to FLA/causal-conv1d: {binding_check}"
+        )
+
+
+def benchmark_loaded(
+    args: argparse.Namespace,
+    tokenizer,
+    model,
+    *,
+    load_s: float,
+) -> dict[str, Any]:
     input_device = str(next(model.parameters()).device)
     ids = build_exact_prompt(tokenizer, args.prompt_tokens, args.batch_size, input_device)
 
     if args.device.startswith("cuda"):
         torch.cuda.reset_peak_memory_stats(cuda_device_index(args.device))
     prefill_s, prefill_tokps = timed_prefill(args, model, ids)
+    prefill_backend = last_rwkv_prefill_backend(model) if args.model_kind == "rwkv" else None
+    prefill_stacked_rkv = (
+        bool(getattr(model, "_rwkv7_native_prefill_stacked_rkv_effective", False))
+        if args.model_kind == "rwkv"
+        else None
+    )
+    prefill_self_chunk = (
+        bool(getattr(model, "_rwkv7_native_prefill_self_chunk_effective", False))
+        if args.model_kind == "rwkv"
+        else None
+    )
+    prefill_sequence_ffn = (
+        bool(getattr(model, "_rwkv7_native_prefill_sequence_ffn_effective", False))
+        if args.model_kind == "rwkv"
+        else None
+    )
     decode_s, step_backend, effective_backend, cache_type = timed_decode(args, model, ids)
     logits_finite = True
     with torch.inference_mode():
-        check = forward_prefill(model, ids[:, : min(8, ids.shape[1])])
+        check = forward_prefill(args, model, ids[:, : min(8, ids.shape[1])])
         logits_finite = bool(torch.isfinite(check.logits).all().item())
     if not logits_finite:
         raise RuntimeError("model produced non-finite logits")
@@ -392,6 +759,7 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         **base_row(args),
         **model_metadata(args, model),
         **environment_metadata(args),
+        **effective_quantization_metadata(model, args),
         "status": "pass",
         "input_device": input_device,
         "prefill_sec_median": round(prefill_s, 6),
@@ -401,6 +769,10 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "decode_tokps_per_seq": round(args.decode_tokens / decode_s, 3),
         "decode_ms_per_step": round(1000 * decode_s / args.decode_tokens, 6),
         "step_backend": step_backend,
+        "prefill_effective_backend": prefill_backend or ("module_call" if args.model_kind == "qwen35" else None),
+        "rwkv_prefill_stacked_rkv_effective": prefill_stacked_rkv,
+        "rwkv_prefill_self_chunk_effective": prefill_self_chunk,
+        "rwkv_prefill_sequence_ffn_effective": prefill_sequence_ffn,
         "effective_backend": (
             "transformers_torch_fallback"
             if args.model_kind == "qwen35" and QWEN_FORCE_TORCH
@@ -421,13 +793,34 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "warmup": args.warmup,
         "runs": args.runs,
     }
-    del model
-    gc.collect()
-    if args.device.startswith("cuda"):
-        torch.cuda.empty_cache()
-    if temporary is not None:
-        temporary.cleanup()
     return row
+
+
+def benchmark(args: argparse.Namespace) -> dict[str, Any]:
+    dtype = DTYPES[args.dtype]
+    started = time.perf_counter()
+    effective_model_path = args.model
+    temporary = None
+    model = None
+    try:
+        if args.model_kind == "rwkv":
+            effective_model_path, temporary = prepare_rwkv_model_dir(args.model, args.rwkv_code_source)
+        tokenizer = AutoTokenizer.from_pretrained(
+            effective_model_path,
+            trust_remote_code=args.model_kind == "rwkv",
+        )
+        model = load_model(args, dtype, effective_model_path)
+        validate_loaded_model(args, model)
+        load_s = time.perf_counter() - started
+        return benchmark_loaded(args, tokenizer, model, load_s=load_s)
+    finally:
+        if model is not None:
+            del model
+        gc.collect()
+        if args.device.startswith("cuda"):
+            torch.cuda.empty_cache()
+        if temporary is not None:
+            temporary.cleanup()
 
 
 def append_row(path: str, row: dict[str, Any]) -> None:
@@ -448,11 +841,34 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--model-size-label", required=True)
     ap.add_argument("--benchmark-matrix", default="qwen35_hf")
     ap.add_argument("--dtype", default="fp16", choices=sorted(DTYPES))
-    ap.add_argument("--quantization", default="none", choices=["none", "bnb8", "bnb4"])
+    ap.add_argument(
+        "--quantization",
+        default="none",
+        choices=[
+            "none",
+            "bnb8",
+            "bnb4",
+            "bnb8_a8w8_head",
+            "torchao_w8",
+            "torchao_w4",
+            "a8w8",
+            "mm8",
+            "mm4",
+        ],
+    )
+    ap.add_argument("--native-quant-min-params", type=int, default=1_000_000)
+    ap.add_argument("--native-quant-policy", choices=["memory", "speed"], default="memory")
+    ap.add_argument("--torchao-group-size", type=int, default=128)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--prompt-tokens", type=int, default=128)
     ap.add_argument("--decode-tokens", type=int, default=128)
+    ap.add_argument(
+        "--prefill-chunk-size",
+        type=int,
+        default=0,
+        help="Split prefill into cache-carrying chunks; 0 benchmarks one full call.",
+    )
     ap.add_argument("--warmup", type=int, default=1)
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--rwkv-attn-mode", choices=["chunk", "fused_recurrent"], default="fused_recurrent")

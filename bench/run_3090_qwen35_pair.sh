@@ -10,7 +10,7 @@ ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 WARMUP="${WARMUP:-1}"
-RUNS="${RUNS:-1}"
+RUNS="${RUNS:-3}"
 QWEN_BACKEND="${QWEN_BACKEND:-auto}"
 COMPARE_AFTER="${COMPARE_AFTER:-1}"
 read -r -a MODEL_ROLE_ARGS <<< "${MODEL_ROLES:-candidate reference}"
@@ -54,6 +54,9 @@ if [[ "${COMPARE_AFTER}" != "0" ]]; then
     --results "${OUT_DIR}/results.jsonl" --expected-cells 72 \
     --min-prefill-speedup 1.05 --min-decode-speedup 1.05 \
     --min-quant-prefill-speedup 1.00 --min-quant-decode-speedup 1.00 \
+    --require-native-candidate --require-qwen-fast-path \
+    --require-quant-memory-reduction --require-prefill-mode-match \
+    --require-quant-not-slower-than-dense \
     --json-output "${OUT_DIR}/summary.json" \
     --markdown-output "${OUT_DIR}/summary.md" --fail-on-gate
   compare_rc=$?

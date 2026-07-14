@@ -8,6 +8,7 @@ no ``fla`` import and exposes the native adapter state layout.
 from __future__ import annotations
 
 import math
+import os
 
 try:
     import torch
@@ -40,6 +41,7 @@ def self_chunk_rwkv7(
     *,
     chunk_size: int = 16,
     w_is_log: bool = False,
+    safe_gate: bool | None = None,
 ):
     """Return ``(recurrent_output, final_native_state)`` for equal lengths.
 
@@ -58,6 +60,11 @@ def self_chunk_rwkv7(
     if N != 64 or T % int(chunk_size):
         raise ValueError("self chunk RWKV-7 requires head_dim=64 and T divisible by chunk_size")
 
+    if safe_gate is None:
+        safe_gate = os.environ.get(
+            "RWKV7_NATIVE_PREFILL_SELF_CHUNK_SAFE_GATE", "1"
+        ).strip().lower() not in {"0", "false", "no", "off"}
+
     log_decay = w_decay.float() if w_is_log else torch.log(w_decay.float())
     gi, ge = chunk_rwkv6_fwd_cumsum(log_decay, int(chunk_size), scale=1.0 / math.log(2.0))
     A_ab, A_qk, A_ak, A_qb, qg, kg, ag, bg = chunk_dplr_fwd_intra(
@@ -69,7 +76,7 @@ def self_chunk_rwkv7(
         ge=ge,
         scale=1.0,
         chunk_size=int(chunk_size),
-        safe_gate=True,
+        safe_gate=bool(safe_gate),
         rwkv7_ab=True,
     )
     wy_w, wy_u, _ = prepare_wy_repr_fwd(

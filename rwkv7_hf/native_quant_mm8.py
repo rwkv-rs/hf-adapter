@@ -476,4 +476,11 @@ def quantize_model_mm8(
         parent_name, _, attr = full_name.rpartition(".")
         parent = model.get_submodule(parent_name) if parent_name else model
         setattr(parent, attr, MM8Linear(getattr(parent, attr), fused=fused))
+    setattr(model, "_rwkv7_native_mm_quantization", "mm8")
+    setattr(model, "_rwkv7_native_mm_replaced_modules", len(targets))
+    setattr(
+        model,
+        "_rwkv7_native_mm_block_replaced_modules",
+        sum(name.startswith("model.layers.") for name in targets),
+    )
     return len(targets)

@@ -1,0 +1,34 @@
+{
+  "axis": "rwkv7_bnb_quality_gate",
+  "status": "pass",
+  "gates": {
+    "max_candidate_over_reference_bits_ratio": 1.01,
+    "min_scored_tokens": 900
+  },
+  "rows": [
+    {
+      "quantization": "bnb8",
+      "report": "bnb_quality_72_bnb8.json",
+      "reference_bits_per_token": 4.047408447265625,
+      "candidate_bits_per_token": 4.0533764327199835,
+      "candidate_over_reference_bits_ratio": 1.0014745201854758,
+      "candidate_minus_reference_bits_per_token": 0.005967985454358171,
+      "tokens": 950,
+      "max_bits_ratio": 1.01,
+      "min_tokens": 900,
+      "passed": true
+    },
+    {
+      "quantization": "bnb4",
+      "report": "bnb_quality_72_bnb4.json",
+      "reference_bits_per_token": 4.047408447265625,
+      "candidate_bits_per_token": 4.053740330746299,
+      "candidate_over_reference_bits_ratio": 1.0015644290817625,
+      "candidate_minus_reference_bits_per_token": 0.006331883480673817,
+      "tokens": 950,
+      "max_bits_ratio": 1.01,
+      "min_tokens": 900,
+      "passed": true
+    }
+  ]
+}
