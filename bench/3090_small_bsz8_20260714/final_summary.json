@@ -1,0 +1,167 @@
+{
+  "axis": "rtx3090_small_bsz8_qwen35_acceptance",
+  "date": "2026-07-14",
+  "scope": {
+    "batch_size": [
+      8
+    ],
+    "prompt_tokens": [
+      128,
+      512,
+      2048
+    ],
+    "decode_tokens": [
+      128,
+      512
+    ],
+    "dtype": "fp16",
+    "quantization_families": [
+      "none",
+      "w8",
+      "w4"
+    ]
+  },
+  "policy": {
+    "dense_prefill_min_vs_qwen": 1.0,
+    "dense_decode_min_vs_qwen": {
+      "rwkv-1.5b__qwen3.5-2b": 1.65,
+      "rwkv-2.9b__qwen3.5-4b": 1.75
+    },
+    "qwen_backend": "fla operator contract required",
+    "quant_memory": "model footprint and peak VRAM must both be lower than matching RWKV fp16",
+    "quant_speed": "both phase ratios >=1, or explicit exact-cell prefill+decode total-latency ratio >=1; phase ratios remain reported"
+  },
+  "coverage": {
+    "expected_cells": 36,
+    "joined_cells": 36,
+    "qwen_fla_cells": 36,
+    "red_cells": 0
+  },
+  "pairs": {
+    "rwkv-1.5b__qwen3.5-2b": {
+      "overall_pass": true,
+      "coverage": {
+        "expected_cells": 18,
+        "joined_cells": 18,
+        "complete": true
+      },
+      "qwen_fla": {
+        "required": "fla",
+        "matching_cells": 18,
+        "total_cells": 18,
+        "complete": true
+      },
+      "red_cells": 0,
+      "dense": {
+        "cells": 6,
+        "min_prefill_speedup": 1.0306,
+        "median_prefill_speedup": 1.084926,
+        "min_decode_speedup": 3.382793,
+        "median_decode_speedup": 3.415355,
+        "min_prefill_speedup_vs_dense": null,
+        "median_prefill_speedup_vs_dense": null,
+        "min_decode_speedup_vs_dense": null,
+        "median_decode_speedup_vs_dense": null,
+        "min_total_speedup_vs_dense": null,
+        "median_total_speedup_vs_dense": null,
+        "max_footprint_ratio_vs_dense": null,
+        "max_peak_vram_ratio_vs_dense": null
+      },
+      "w8": {
+        "cells": 6,
+        "min_prefill_speedup": 1.47363,
+        "median_prefill_speedup": 1.622987,
+        "min_decode_speedup": 3.998405,
+        "median_decode_speedup": 4.063875,
+        "min_prefill_speedup_vs_dense": 1.373451,
+        "median_prefill_speedup_vs_dense": 1.542578,
+        "min_decode_speedup_vs_dense": 1.181983,
+        "median_decode_speedup_vs_dense": 1.186825,
+        "min_total_speedup_vs_dense": 1.192926,
+        "median_total_speedup_vs_dense": 1.212889,
+        "max_footprint_ratio_vs_dense": 0.604572,
+        "max_peak_vram_ratio_vs_dense": 0.816767
+      },
+      "w4": {
+        "cells": 6,
+        "min_prefill_speedup": 1.013585,
+        "median_prefill_speedup": 1.075318,
+        "min_decode_speedup": 3.482606,
+        "median_decode_speedup": 3.531371,
+        "min_prefill_speedup_vs_dense": 0.98349,
+        "median_prefill_speedup_vs_dense": 0.988836,
+        "min_decode_speedup_vs_dense": 1.027871,
+        "median_decode_speedup_vs_dense": 1.032416,
+        "min_total_speedup_vs_dense": 1.010746,
+        "median_total_speedup_vs_dense": 1.028308,
+        "max_footprint_ratio_vs_dense": 0.934198,
+        "max_peak_vram_ratio_vs_dense": 0.969464
+      }
+    },
+    "rwkv-2.9b__qwen3.5-4b": {
+      "overall_pass": true,
+      "coverage": {
+        "expected_cells": 18,
+        "joined_cells": 18,
+        "complete": true
+      },
+      "qwen_fla": {
+        "required": "fla",
+        "matching_cells": 18,
+        "total_cells": 18,
+        "complete": true
+      },
+      "red_cells": 0,
+      "dense": {
+        "cells": 6,
+        "min_prefill_speedup": 1.355888,
+        "median_prefill_speedup": 1.364018,
+        "min_decode_speedup": 2.921276,
+        "median_decode_speedup": 2.956659,
+        "min_prefill_speedup_vs_dense": null,
+        "median_prefill_speedup_vs_dense": null,
+        "min_decode_speedup_vs_dense": null,
+        "median_decode_speedup_vs_dense": null,
+        "min_total_speedup_vs_dense": null,
+        "median_total_speedup_vs_dense": null,
+        "max_footprint_ratio_vs_dense": null,
+        "max_peak_vram_ratio_vs_dense": null
+      },
+      "w8": {
+        "cells": 6,
+        "min_prefill_speedup": 1.947067,
+        "median_prefill_speedup": 2.041469,
+        "min_decode_speedup": 3.428346,
+        "median_decode_speedup": 3.486388,
+        "min_prefill_speedup_vs_dense": 1.410536,
+        "median_prefill_speedup_vs_dense": 1.43605,
+        "min_decode_speedup_vs_dense": 1.170867,
+        "median_decode_speedup_vs_dense": 1.176477,
+        "min_total_speedup_vs_dense": 1.180859,
+        "median_total_speedup_vs_dense": 1.206331,
+        "max_footprint_ratio_vs_dense": 0.573136,
+        "max_peak_vram_ratio_vs_dense": 0.760342
+      },
+      "w4": {
+        "cells": 6,
+        "min_prefill_speedup": 1.337336,
+        "median_prefill_speedup": 1.350974,
+        "min_decode_speedup": 2.997743,
+        "median_decode_speedup": 3.028836,
+        "min_prefill_speedup_vs_dense": 0.986317,
+        "median_prefill_speedup_vs_dense": 0.989176,
+        "min_decode_speedup_vs_dense": 1.019774,
+        "median_decode_speedup_vs_dense": 1.025013,
+        "min_total_speedup_vs_dense": 1.006781,
+        "median_total_speedup_vs_dense": 1.019803,
+        "max_footprint_ratio_vs_dense": 0.961227,
+        "max_peak_vram_ratio_vs_dense": 0.976036
+      }
+    }
+  },
+  "overall_pass": true,
+  "limitations": [
+    "This closes only the declared RTX 3090 bsz=8 speed/memory matrix.",
+    "Model quality and broader batch/model/hardware matrices are separate acceptance axes."
+  ]
+}
