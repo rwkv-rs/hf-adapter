@@ -80,6 +80,7 @@ def compare(
     min_prefill_speedup: float,
     min_decode_speedup: float,
     required_reference_backend: str,
+    require_memory_not_larger: bool = False,
 ) -> dict[str, Any]:
     indexed: dict[str, dict[tuple[Any, ...], dict[str, Any]]] = {"candidate": {}, "reference": {}}
     for row in rows:
@@ -110,6 +111,15 @@ def compare(
         decode_speedup = ratio(candidate.get("decode_tokps_total"), reference.get("decode_tokps_total"))
         footprint_ratio = ratio(candidate.get("model_footprint_mb"), reference.get("model_footprint_mb"))
         peak_vram_ratio = ratio(candidate.get("peak_vram_mb"), reference.get("peak_vram_mb"))
+        memory_pass = bool(
+            not require_memory_not_larger
+            or (
+                footprint_ratio is not None
+                and peak_vram_ratio is not None
+                and footprint_ratio <= 1.0
+                and peak_vram_ratio <= 1.0
+            )
+        )
         if prefill_speedup is not None:
             prefill_ratios.append(prefill_speedup)
         if decode_speedup is not None:
@@ -125,6 +135,7 @@ def compare(
             and decode_speedup is not None
             and prefill_speedup >= min_prefill_speedup
             and decode_speedup >= min_decode_speedup
+            and memory_pass
         )
         cell = {
             **key_dict(key),
@@ -145,6 +156,7 @@ def compare(
             "candidate_peak_vram_mb": candidate.get("peak_vram_mb"),
             "reference_peak_vram_mb": reference.get("peak_vram_mb"),
             "peak_vram_ratio": peak_vram_ratio,
+            "memory_pass": memory_pass,
             "passed": passed,
         }
         cells.append(cell)
@@ -169,6 +181,7 @@ def compare(
             "min_prefill_speedup": min_prefill_speedup,
             "min_decode_speedup": min_decode_speedup,
             "required_reference_backend": required_reference_backend,
+            "require_memory_not_larger": require_memory_not_larger,
         },
         "reference_backend": {
             "required": required_reference_backend,
@@ -210,6 +223,7 @@ def compare(
         "gates": {
             "coverage_pass": coverage_complete,
             "reference_backend_pass": reference_backend_complete,
+            "memory_pass": all(cell["memory_pass"] for cell in cells) and bool(cells),
             "speed_pass": cells_pass,
             "overall_pass": overall_pass,
         },
@@ -295,6 +309,7 @@ def main() -> int:
     ap.add_argument("--min-prefill-speedup", type=float, default=1.05)
     ap.add_argument("--min-decode-speedup", type=float, default=1.05)
     ap.add_argument("--required-reference-backend", choices=["fla", "torch", "any"], default="fla")
+    ap.add_argument("--require-memory-not-larger", action="store_true")
     ap.add_argument("--json-output", default="")
     ap.add_argument("--markdown-output", default="")
     ap.add_argument("--fail-on-gate", action="store_true")
@@ -306,6 +321,7 @@ def main() -> int:
         min_prefill_speedup=args.min_prefill_speedup,
         min_decode_speedup=args.min_decode_speedup,
         required_reference_backend=args.required_reference_backend,
+        require_memory_not_larger=args.require_memory_not_larger,
     )
     markdown = render_markdown(summary)
     if args.json_output:

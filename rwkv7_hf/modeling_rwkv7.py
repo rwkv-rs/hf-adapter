@@ -219,6 +219,18 @@ def _fast_forward_quant_enabled() -> bool:
     return os.environ.get("RWKV7_FAST_FORWARD_QUANT", "1") not in _FALSE_VALUES
 
 
+def _fast_token_quant_enabled() -> bool:
+    """Allow validated external quantized modules in the native graph path."""
+
+    return os.environ.get("RWKV7_FAST_TOKEN_QUANT", "0") not in _FALSE_VALUES
+
+
+def _fast_prefill_quant_enabled() -> bool:
+    """Allow external quantized modules through the native prefill bridge."""
+
+    return os.environ.get("RWKV7_FAST_PREFILL_QUANT", "0") not in _FALSE_VALUES
+
+
 def _fast_prefill_enabled() -> bool:
     """Allow normal HF forward/generate to use the native prefill path."""
 
@@ -238,6 +250,8 @@ def _bnb_skip_policy(policy: str | None = None) -> str:
         return "memory"
     if policy in {"decode", "decode_hot", "hot", "hybrid"}:
         return "decode_hot"
+    if policy in {"decode_rk", "rk_dense"}:
+        return "decode_rk"
     if policy in {"dense", "all_dense", "no_quant"}:
         return "dense"
     return "memory"
@@ -1457,6 +1471,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     # - dense: keep all large Linear modules dense (diagnostic upper bound).
     _rwkv7_bnb_policy_extra_skips = {
         "memory": [],
+        "decode_rk": [r".*attn\.(r_proj|k_proj)"],
         "decode_hot": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)"],
         "dense": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)", r".*ffn\.(key|value)"],
     }
@@ -1471,8 +1486,13 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             for lora_name in ("w_lora", "a_lora", "g_lora", "v_lora"):
                 for linear_idx in (0, 2):
                     skips.append(f"model.layers.{layer_idx}.attn.{lora_name}.lora.{linear_idx}")
-            if policy in {"decode_hot", "dense"}:
-                for proj_name in ("r_proj", "k_proj", "v_proj", "o_proj"):
+            if policy in {"decode_rk", "decode_hot", "dense"}:
+                proj_names = (
+                    ("r_proj", "k_proj")
+                    if policy == "decode_rk"
+                    else ("r_proj", "k_proj", "v_proj", "o_proj")
+                )
+                for proj_name in proj_names:
                     skips.append(f"model.layers.{layer_idx}.attn.{proj_name}")
             if policy == "dense":
                 for ffn_name in ("key", "value"):
@@ -1736,7 +1756,13 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             if batch_size <= 0:
                 raise ValueError("rwkv7_warmup_fast_token batch sizes must be positive")
             chosen = self._rwkv7_resolve_fast_token_backend(batch_size) if requested == "auto" else requested
-            if chosen in {"native_graph", "native_jit"} and self._rwkv7_uses_external_quantization():
+            if chosen == "native_jit" and self._rwkv7_uses_external_quantization():
+                chosen = "fla"
+            if (
+                chosen == "native_graph"
+                and self._rwkv7_uses_external_quantization()
+                and not self._rwkv7_external_quant_graph_enabled()
+            ):
                 chosen = "fla"
             if chosen == "native_graph":
                 if not self._rwkv7_can_use_native_backend("native_graph", batch_size):
@@ -1744,7 +1770,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                         raise RuntimeError(f"native_graph fast-token backend is unavailable for batch_size={batch_size}")
                     chosen = "native_jit" if self._rwkv7_can_use_native_backend("native_jit", batch_size) else "fla"
                 else:
-                    packs = self._rwkv7_native_jit_packs()
+                    packs = self._rwkv7_native_jit_packs(for_graph=True)
                     self._rwkv7_native_graph_runner(packs, batch_size)
             if chosen == "native_jit":
                 if not self._rwkv7_can_use_native_backend("native_jit", batch_size):
@@ -1791,10 +1817,10 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     def _rwkv7_uses_external_quantization(self) -> bool:
         """Detect generic HF/bitsandbytes quantization wrappers.
 
-        The native fast-token paths expect dense floating-point projection
-        weights extracted from the FLA modules. Generic 8-bit/4-bit wrappers are
-        still supported through the normal FLA fast-token path until a dedicated
-        quantized native path exists.
+        Generic 8-bit wrappers use the normal FLA fast-token path. A dedicated,
+        opt-in BNB4 native-graph route is available when the exact-card gate has
+        been validated; other native fast-token implementations still require
+        dense floating-point projection weights.
         """
         if bool(getattr(self, "is_loaded_in_8bit", False)) or bool(getattr(self, "is_loaded_in_4bit", False)):
             return True
@@ -1803,10 +1829,22 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         config = getattr(self, "config", None)
         return getattr(config, "quantization_config", None) is not None
 
+    def _rwkv7_external_quant_graph_enabled(self) -> bool:
+        """Return whether this external quantizer has a validated graph route."""
+
+        return bool(
+            _fast_token_quant_enabled()
+            and getattr(self, "is_loaded_in_4bit", False)
+            and not getattr(self, "is_loaded_in_8bit", False)
+        )
+
     def _rwkv7_can_use_native_backend(self, backend: str, batch_size: int) -> bool:
         if self._rwkv7_has_multi_cuda_device_map():
             return False
-        if self._rwkv7_uses_external_quantization():
+        external_quantization = self._rwkv7_uses_external_quantization()
+        if external_quantization and backend != "native_graph":
+            return False
+        if external_quantization and not self._rwkv7_external_quant_graph_enabled():
             return False
         if backend == "native_jit":
             if _native_jit_block_step is None or _native_jit_extract is None:
@@ -1828,7 +1866,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             if not _cuda_available() or getattr(weight.device, "type", None) != "cuda":
                 return False
             try:
-                self._rwkv7_native_jit_packs()
+                self._rwkv7_native_jit_packs(for_graph=True)
             except Exception:
                 return False
             return True
@@ -1837,13 +1875,14 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     def _rwkv7_resolve_fast_token_backend(self, batch_size: int) -> str:
         requested = _fast_token_backend()
         if requested != "auto":
-            if self._rwkv7_uses_external_quantization() and requested in {"native_graph", "native_jit"}:
+            if self._rwkv7_uses_external_quantization() and (
+                requested == "native_jit"
+                or (requested == "native_graph" and not self._rwkv7_external_quant_graph_enabled())
+            ):
                 # Bitsandbytes/HF quantization wraps Linear weights in packed
-                # int8/int4 modules. The native paths extract and replay dense
-                # floating-point projection weights, so a global serving env
-                # such as RWKV7_FAST_TOKEN_BACKEND=native_graph must not make
-                # quantized generate crash. Keep quantized fast-forward on the
-                # FLA tensor path until a real native quant kernel exists.
+                # int8/int4 modules. Native JIT remains tensor-only, while the
+                # graph path requires an explicit opt-in before retaining the
+                # wrappers as callable capture operands.
                 return "fla"
             return requested
         if self._rwkv7_can_use_native_backend("native_graph", batch_size):
@@ -2203,8 +2242,12 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         if int(input_ids.shape[1]) <= 0:
             raise ValueError("rwkv7_prefill_native requires at least one token")
         batch_size = int(input_ids.shape[0])
-        if self._rwkv7_uses_external_quantization():
-            raise RuntimeError("native prefill currently requires dense floating-point weights")
+        external_quantization = self._rwkv7_uses_external_quantization()
+        if external_quantization and not _fast_prefill_quant_enabled():
+            raise RuntimeError(
+                "native prefill with external quantization requires "
+                "RWKV7_FAST_PREFILL_QUANT=1"
+            )
         source_seen = None
         if past_key_values is not None and hasattr(past_key_values, "get_seq_length"):
             try:
@@ -2213,7 +2256,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                 source_seen = None
         past = RWKV7StateCache.from_legacy_cache(past_key_values)
         initial_seen = source_seen if source_seen is not None else (int(past.get_seq_length()) if hasattr(past, "get_seq_length") else 0)
-        if _native_prefill_graph_enabled():
+        if _native_prefill_graph_enabled() and not external_quantization:
             keep_value = 0 if logits_to_keep is None else int(logits_to_keep)
             prompt_tokens = int(input_ids.shape[1])
             runner = getattr(self, "_rwkv7_native_prefill_graph_hot_runner", None)
@@ -2232,7 +2275,10 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             if not return_dict:
                 return logits, past
             return CausalLMOutputWithPast(logits=logits, past_key_values=past)
-        packs = self._rwkv7_native_jit_packs()
+        # Quantized modules have no dense ``.weight`` tensor. The graph packer
+        # retains them as callable operands, which native prefill can consume
+        # without requiring CUDA graph capture.
+        packs = self._rwkv7_native_jit_packs(for_graph=external_quantization)
         state_native, xpa, xpf = self._rwkv7_native_prefill_initial_state(past, packs, batch_size)
         logits, state_native, xpa, xpf = _native_jit_prefill(
             self,
@@ -2859,7 +2905,9 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return None
         if _native_jit_prefill is None:
             return None
-        if self._rwkv7_has_multi_cuda_device_map() or self._rwkv7_uses_external_quantization():
+        if self._rwkv7_has_multi_cuda_device_map():
+            return None
+        if self._rwkv7_uses_external_quantization() and not _fast_prefill_quant_enabled():
             return None
         if kwargs.get("inputs_embeds") is not None or kwargs.get("labels") is not None:
             return None

@@ -25,6 +25,7 @@ from bench.bench_cross_model_speed import (  # noqa: E402
     validate_args,
 )
 from bench.compare_qwen35_backend_probe import compare as compare_backend_probe  # noqa: E402
+from bench.compare_rwkv_prefill_probe import compare as compare_rwkv_prefill_probe  # noqa: E402
 from bench.run_qwen35_speed_matrix import (  # noqa: E402
     MatrixConfig,
     build_run_environment,
@@ -157,6 +158,38 @@ def test_comparator_reports_missing_and_slow_cells(tmp_path: Path) -> None:
     assert len(summary["missing"]["reference"]) == 1
     assert len(summary["red_cells"]) == 1
     assert summary["gates"]["overall_pass"] is False
+
+
+def test_comparator_can_gate_memory_per_cell(tmp_path: Path) -> None:
+    candidate = row("candidate", prompt=128, prefill=120.0, decode=220.0)
+    reference = row("reference", prompt=128, prefill=100.0, decode=200.0)
+    candidate.update({"model_footprint_mb": 90.0, "peak_vram_mb": 110.0})
+    reference.update({"model_footprint_mb": 100.0, "peak_vram_mb": 100.0})
+    proc = run_compare(
+        tmp_path,
+        [candidate, reference],
+        "--expected-cells",
+        "1",
+        "--require-memory-not-larger",
+        "--fail-on-gate",
+    )
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    summary = json.loads((tmp_path / "summary.json").read_text(encoding="utf-8"))
+    assert summary["gates"]["memory_pass"] is False
+    assert summary["red_cells"][0]["memory_pass"] is False
+
+
+def test_rwkv_prefill_probe_requires_greedy_and_logits_alignment() -> None:
+    reference = {
+        "input_ids": torch.tensor([[1, 2]]),
+        "greedy_tokens": torch.tensor([3, 4]),
+        "prompt_logits": torch.tensor([[1.0, 2.0]]),
+        "final_logits": torch.tensor([[2.0, 3.0]]),
+    }
+    native = {key: value.clone() for key, value in reference.items()}
+    assert compare_rwkv_prefill_probe(reference, native, 0.9999)["status"] == "pass"
+    native["greedy_tokens"][1] = 5
+    assert compare_rwkv_prefill_probe(reference, native, 0.9999)["status"] == "fail"
 
 
 def test_comparator_rejects_torch_qwen_reference(tmp_path: Path) -> None:
@@ -452,6 +485,10 @@ def test_orchestrator_isolates_qwen_import_backend() -> None:
     base = {"RWKV7_QWEN35_FORCE_TORCH": "1"}
     assert "RWKV7_QWEN35_FORCE_TORCH" not in build_worker_environment(base, qwen_spec, "fla")
     assert build_worker_environment({}, qwen_spec, "torch")["RWKV7_QWEN35_FORCE_TORCH"] == "1"
+    rwkv_bnb8 = next(spec for spec in specs if spec.model_kind == "rwkv")
+    rwkv_bnb8 = type(rwkv_bnb8)(**{**rwkv_bnb8.__dict__, "quantization": "bnb8"})
+    env = build_worker_environment({}, rwkv_bnb8, "fla", "decode_rk")
+    assert env["RWKV7_BNB_SKIP_POLICY"] == "decode_rk"
 
 
 def test_5070_qwen_fla_evidence_is_complete() -> None:

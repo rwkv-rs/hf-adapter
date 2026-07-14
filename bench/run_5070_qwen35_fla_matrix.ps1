@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$Root = "",
-    [string]$OutDir = "D:\bench\qwen35-5070-fla-20260713\matrix-2b-fixed",
+    [string]$OutDir = "D:\bench\qwen35-5070-fla-20260714\matrix-2b-native-prefill",
     [string]$RwkvModel = "D:\models\rwkv7\rwkv7-g1g-1.5b-hf",
     [string]$QwenModel = "D:\models\qwen\Qwen3.5-2B",
     [string]$Python = "",
@@ -23,6 +23,22 @@ $modelPair = "rwkv-1.5b__qwen3.5-2b"
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $env:CUDA_VISIBLE_DEVICES = "0"
 $env:RWKV7_NATIVE_MODEL = "0"
+$env:RWKV7_FAST_TOKEN_QUANT = "1"
+$env:RWKV7_FAST_PREFILL = "1"
+$env:RWKV7_FAST_PREFILL_QUANT = "1"
+$env:RWKV7_NATIVE_PREFILL_GRAPH = "1"
+$env:RWKV7_NATIVE_PREFILL_FUSED_SCAN = "1"
+$env:RWKV7_NATIVE_PREFILL_FUSED_SHIFT_MIX = "1"
+$env:RWKV7_NATIVE_PREFILL_FUSED_STATE_PREP = "1"
+$env:RWKV7_NATIVE_PREFILL_FUSED_STATE_SCAN = "0"
+$env:RWKV7_NATIVE_PREFILL_FUSED_OUTPUT = "1"
+$env:RWKV7_NATIVE_PREFILL_FUSED_SCAN_OUTPUT = "0"
+$env:RWKV7_NATIVE_PREFILL_FUSED_CLAMPW_SCAN = "0"
+$env:RWKV7_NATIVE_PREFILL_DPLR_SCAN = "0"
+# The sm_120 policy chooses M8/M16/M32/M64 for bsz 1/2/4/8. Do not let a
+# developer shell's diagnostic override leak into the acceptance matrix.
+$env:RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M = $null
+$env:RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS = $null
 $env:PYTORCH_CUDA_ALLOC_CONF = $null
 $env:PYTHONPATH = if ($env:PYTHONPATH) { "$Root;$env:PYTHONPATH" } else { $Root }
 Set-Location $Root
@@ -94,6 +110,61 @@ Invoke-CheckedPython `
     ) `
     -ExitCodePath (Join-Path $OutDir "probe-compare-exit-code.txt")
 
+$rwkvProbeCommon = @(
+    "bench/bench_cross_model_speed.py",
+    "--model", $RwkvModel,
+    "--model-kind", "rwkv",
+    "--model-role", "candidate",
+    "--model-pair", $modelPair,
+    "--model-size-label", "1.5b",
+    "--benchmark-matrix", $matrixName,
+    "--dtype", "fp16",
+    "--device", "cuda",
+    "--batch-size", "1",
+    "--prompt-tokens", "128",
+    "--decode-tokens", "8",
+    "--warmup", "1",
+    "--runs", "1",
+    "--rwkv-code-source", "repo",
+    "--probe-tokens", "8"
+)
+foreach ($quantization in @("none", "bnb8", "bnb4")) {
+    $referenceProbe = Join-Path $OutDir "rwkv-prefill-reference-$quantization.pt"
+    $nativeProbe = Join-Path $OutDir "rwkv-prefill-native-$quantization.pt"
+    $env:RWKV7_BNB_SKIP_POLICY = if ($quantization -eq "bnb8") { "decode_rk" } else { "memory" }
+    $env:RWKV7_FAST_PREFILL = "0"
+    $env:RWKV7_FAST_TOKEN_QUANT = "0"
+    Invoke-CheckedPython `
+        -Arguments ($rwkvProbeCommon + @(
+            "--quantization", $quantization,
+            "--probe-output", $referenceProbe,
+            "--results", (Join-Path $OutDir "rwkv-prefill-reference.jsonl")
+        )) `
+        -ExitCodePath (Join-Path $OutDir "rwkv-prefill-reference-$quantization-exit-code.txt")
+    $env:RWKV7_FAST_PREFILL = "1"
+    $env:RWKV7_FAST_TOKEN_QUANT = "1"
+    Invoke-CheckedPython `
+        -Arguments ($rwkvProbeCommon + @(
+            "--quantization", $quantization,
+            "--probe-output", $nativeProbe,
+            "--results", (Join-Path $OutDir "rwkv-prefill-native.jsonl")
+        )) `
+        -ExitCodePath (Join-Path $OutDir "rwkv-prefill-native-$quantization-exit-code.txt")
+    Invoke-CheckedPython `
+        -Arguments @(
+            "bench/compare_rwkv_prefill_probe.py",
+            "--reference-probe", $referenceProbe,
+            "--native-probe", $nativeProbe,
+            "--min-cosine", "0.9999",
+            "--output", (Join-Path $OutDir "rwkv-prefill-correctness-$quantization.json"),
+            "--fail-on-gate"
+        ) `
+        -ExitCodePath (Join-Path $OutDir "rwkv-prefill-compare-$quantization-exit-code.txt")
+}
+$env:RWKV7_FAST_PREFILL = "1"
+$env:RWKV7_FAST_TOKEN_QUANT = "1"
+$env:RWKV7_BNB_SKIP_POLICY = "memory"
+
 if ($SmokeOnly) {
     exit 0
 }
@@ -110,6 +181,7 @@ $matrixArgs = @(
     "--benchmark-matrix", $matrixName,
     "--qwen-backend", "fla",
     "--rwkv-fast-token-backend", "native_graph",
+    "--rwkv-bnb8-skip-policy", "decode_rk",
     "--warmup", $Warmup.ToString(),
     "--runs", $Runs.ToString(),
     "--results", $results,
@@ -128,6 +200,7 @@ $compareArgs = @(
     "--expected-cells", "72",
     "--min-prefill-speedup", "1.05",
     "--min-decode-speedup", "1.05",
+    "--require-memory-not-larger",
     "--required-reference-backend", "fla",
     "--json-output", (Join-Path $OutDir "summary.json"),
     "--markdown-output", (Join-Path $OutDir "summary.md")

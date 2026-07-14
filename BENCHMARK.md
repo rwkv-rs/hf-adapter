@@ -74,22 +74,34 @@ Design: [`docs/plans/2026-07-13-qwen35-5070-fla-design.md`](docs/plans/2026-07-1
 
 ### RTX 5070 Laptop RWKV-7 vs verified Qwen3.5 FLA
 
-The exact-card 1.5B RWKV vs 2B Qwen matrix covers 144/144 passing raw rows and
-72/72 joined cells across prompt128/512/2048, decode128/512, bsz1/2/4/8, and
-fp16/bnb8/bnb4. Every Qwen row binds all 18 Gated DeltaNet layers to FLA
-prefill, fused-recurrent decode, and fused gated norm. Windows lacks
-`causal-conv1d`, so the honest effective backend is
+The final exact-card 1.5B RWKV vs 2B Qwen matrix covers 144/144 passing raw
+rows and 72/72 joined cells across prompt128/512/2048, decode128/512,
+bsz1/2/4/8, and fp16/bnb8/bnb4. Every Qwen row binds all 18 Gated DeltaNet
+layers to FLA prefill, fused-recurrent decode, and fused gated norm. Windows
+lacks `causal-conv1d`, so the honest effective backend is
 `qwen_fla_gated_delta_rule_torch_conv`, not full fusion.
 
-The separate FLA/Torch probe passes 8/8 greedy tokens with prompt/final logits
-cosine `0.99999076` / `0.99999213`. The strict matrix result is **FAIL**:
-prefill is >=1.0x in 41/72 and >=1.05x in 35/72; decode is >=1.0x in 72/72 and
->=1.05x in 71/72. Model footprint and peak VRAM are lower in 72/72 cells, with
-ratio ranges `0.729x-0.812x` and `0.742x-0.913x`. These are one-warmup,
-one-run, fresh-process laptop rows; retain every red cell and do not replace
-the strict result with the median.
+| Metric | Minimum | Median | Maximum | Strict pass |
+|---|---:|---:|---:|---:|
+| Prefill RWKV/Qwen | `1.109682x` | `1.473473x` | `4.298400x` | 72/72 at >=1.05x |
+| Decode RWKV/Qwen | `1.466175x` | `2.720961x` | `6.882948x` | 72/72 at >=1.05x |
+| Model footprint RWKV/Qwen | `0.729146x` | `0.811662x` | `0.856635x` | 72/72 no larger |
+| Peak VRAM RWKV/Qwen | `0.648549x` | `0.823298x` | `0.967497x` | 72/72 no larger |
 
-Evidence: [`bench/5070_qwen35_fla_matrix_20260713/README.md`](bench/5070_qwen35_fla_matrix_20260713/README.md).
+The strict result is **PASS** with no red or missing cells. Fp16 and BNB4
+decode use native graph; BNB8 decode conservatively uses FLA with the
+`decode_rk` hybrid policy because BNB8 CUDA graph capture is invalid on this
+stack. All three precisions use opt-in native prefill. The separate Qwen
+FLA/Torch probe passes 8/8 greedy tokens at prompt/final cosine
+`0.99999076`/`0.99999213`; RWKV native-prefill probes also pass 8/8 greedy and
+the `0.9999` cosine gate for fp16, BNB8, and BNB4.
+
+This supersedes the 2026-07-13 35/72 performance result while preserving it as
+historical evidence. It is an exact-card performance and memory close, not a
+claim that RWKV exceeds Qwen3.5 model quality.
+
+Final evidence: [`bench/5070_qwen35_fla_native_prefill_20260714/README.md`](bench/5070_qwen35_fla_native_prefill_20260714/README.md).
+Historical baseline: [`bench/5070_qwen35_fla_matrix_20260713/README.md`](bench/5070_qwen35_fla_matrix_20260713/README.md).
 
 ## RTX 4090 promoted rows
 
