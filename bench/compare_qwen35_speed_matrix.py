@@ -69,6 +69,17 @@ def ratio(candidate: Any, reference: Any) -> float | None:
     return round(float(candidate) / float(reference), 6)
 
 
+def active_parameter_efficiency(row: dict[str, Any], phase: str) -> float | None:
+    recorded = row.get(f"{phase}_tokps_per_active_billion")
+    if recorded is not None:
+        return float(recorded)
+    tokps = row.get(f"{phase}_tokps_total")
+    active = row.get("active_parameter_count")
+    if tokps is None or active is None or float(active) <= 0:
+        return None
+    return float(tokps) / (float(active) / 1e9)
+
+
 def median_or_none(values: list[float]) -> float | None:
     return round(float(statistics.median(values)), 6) if values else None
 
@@ -85,6 +96,7 @@ def reference_backend_matches(row: dict[str, Any], required: str) -> bool:
             in {
                 "qwen_fla_gated_delta_rule",
                 "qwen_fla_gated_delta_rule_torch_conv",
+                "qwen_fla_gated_delta_rule_fla_triton_conv",
             }
             and row.get("qwen_operator_contract_pass") is True
         )
@@ -105,11 +117,14 @@ def compare(
     min_quant_decode_speedup: float | None = None,
     require_native_candidate: bool = False,
     require_qwen_fast_path: bool = False,
+    require_qwen_full_fused: bool = False,
     require_quant_memory_reduction: bool = False,
     require_prefill_mode_match: bool = False,
     require_quant_not_slower_than_dense: bool = False,
     required_reference_backend: str = "any",
     require_memory_not_larger: bool = False,
+    min_active_parameter_throughput_ratio: float | None = None,
+    min_active_parameter_efficiency_ratio: float | None = None,
 ) -> dict[str, Any]:
     indexed: dict[str, dict[tuple[Any, ...], dict[str, Any]]] = {"candidate": {}, "reference": {}}
     for row in rows:
@@ -134,6 +149,15 @@ def compare(
     family_metrics: dict[str, dict[str, list[float]]] = {}
     footprint_ratios: list[float] = []
     peak_vram_ratios: list[float] = []
+    working_set_ratios: list[float] = []
+    active_parameter_ratios: list[float] = []
+    prefill_parameter_throughput_ratios: list[float] = []
+    decode_parameter_throughput_ratios: list[float] = []
+    prefill_parameter_efficiency_ratios: list[float] = []
+    decode_parameter_efficiency_ratios: list[float] = []
+    active_parameter_work_failures = 0
+    active_parameter_efficiency_failures = 0
+    active_parameter_failures = 0
     backend_matches = 0
     for key in joined_keys:
         candidate = indexed["candidate"][key]
@@ -145,6 +169,49 @@ def compare(
         decode_speedup = ratio(candidate.get("decode_tokps_total"), reference.get("decode_tokps_total"))
         footprint_ratio = ratio(candidate.get("model_footprint_mb"), reference.get("model_footprint_mb"))
         peak_vram_ratio = ratio(candidate.get("peak_vram_mb"), reference.get("peak_vram_mb"))
+        working_set_ratio = ratio(
+            candidate.get("runtime_working_set_mb"), reference.get("runtime_working_set_mb")
+        )
+        active_parameter_ratio = ratio(
+            candidate.get("active_parameter_count"), reference.get("active_parameter_count")
+        )
+        prefill_parameter_throughput_ratio = ratio(
+            candidate.get("prefill_active_parameter_tops"),
+            reference.get("prefill_active_parameter_tops"),
+        )
+        decode_parameter_throughput_ratio = ratio(
+            candidate.get("decode_active_parameter_tops"),
+            reference.get("decode_active_parameter_tops"),
+        )
+        prefill_parameter_efficiency_ratio = ratio(
+            active_parameter_efficiency(candidate, "prefill"),
+            active_parameter_efficiency(reference, "prefill"),
+        )
+        decode_parameter_efficiency_ratio = ratio(
+            active_parameter_efficiency(candidate, "decode"),
+            active_parameter_efficiency(reference, "decode"),
+        )
+        active_parameter_work_pass = bool(
+            min_active_parameter_throughput_ratio is None
+            or (
+                prefill_parameter_throughput_ratio is not None
+                and decode_parameter_throughput_ratio is not None
+                and prefill_parameter_throughput_ratio >= min_active_parameter_throughput_ratio
+                and decode_parameter_throughput_ratio >= min_active_parameter_throughput_ratio
+            )
+        )
+        active_parameter_efficiency_pass = bool(
+            min_active_parameter_efficiency_ratio is None
+            or (
+                prefill_parameter_efficiency_ratio is not None
+                and decode_parameter_efficiency_ratio is not None
+                and prefill_parameter_efficiency_ratio >= min_active_parameter_efficiency_ratio
+                and decode_parameter_efficiency_ratio >= min_active_parameter_efficiency_ratio
+            )
+        )
+        active_parameter_pass = (
+            active_parameter_work_pass and active_parameter_efficiency_pass
+        )
         memory_pass = bool(
             not require_memory_not_larger
             or (
@@ -203,6 +270,15 @@ def compare(
                     reference_backend == "fla+causal_conv1d"
                     and reference.get("qwen_fast_path_verified") is True
                 )
+            )
+        )
+        qwen_full_fused_pass = bool(
+            not require_qwen_full_fused
+            or (
+                reference.get("qwen_full_fused_contract_pass") is True
+                and reference.get("qwen_fast_path_verified") is True
+                and reference.get("qwen_conv_backend_effective")
+                in {"causal_conv1d", "fla_triton", "mixed_accelerated"}
             )
         )
         candidate_prefill_chunk_size = int(candidate.get("prefill_chunk_size") or 0)
@@ -266,15 +342,30 @@ def compare(
                 metrics["quant_prefill_vs_dense"].append(quant_prefill_speedup_vs_dense)
             if quant_decode_speedup_vs_dense is not None:
                 metrics["quant_decode_vs_dense"].append(quant_decode_speedup_vs_dense)
-        backend_pass = native_backend_pass and qwen_backend_pass
+        backend_pass = native_backend_pass and qwen_backend_pass and qwen_full_fused_pass
         backend_failures += int(not backend_pass)
         memory_failures += int(not quant_memory_pass)
         prefill_mode_failures += int(not prefill_mode_pass)
         quant_dense_speed_failures += int(not quant_dense_speed_pass)
+        active_parameter_work_failures += int(not active_parameter_work_pass)
+        active_parameter_efficiency_failures += int(not active_parameter_efficiency_pass)
+        active_parameter_failures += int(not active_parameter_pass)
         if footprint_ratio is not None:
             footprint_ratios.append(footprint_ratio)
         if peak_vram_ratio is not None:
             peak_vram_ratios.append(peak_vram_ratio)
+        if working_set_ratio is not None:
+            working_set_ratios.append(working_set_ratio)
+        if active_parameter_ratio is not None:
+            active_parameter_ratios.append(active_parameter_ratio)
+        if prefill_parameter_throughput_ratio is not None:
+            prefill_parameter_throughput_ratios.append(prefill_parameter_throughput_ratio)
+        if decode_parameter_throughput_ratio is not None:
+            decode_parameter_throughput_ratios.append(decode_parameter_throughput_ratio)
+        if prefill_parameter_efficiency_ratio is not None:
+            prefill_parameter_efficiency_ratios.append(prefill_parameter_efficiency_ratio)
+        if decode_parameter_efficiency_ratio is not None:
+            decode_parameter_efficiency_ratios.append(decode_parameter_efficiency_ratio)
         passed = bool(
             both_pass
             and reference_backend_pass
@@ -287,6 +378,7 @@ def compare(
             and prefill_mode_pass
             and quant_dense_speed_pass
             and memory_pass
+            and active_parameter_pass
         )
         cell = {
             **key_dict(key),
@@ -307,7 +399,20 @@ def compare(
             "candidate_peak_vram_mb": candidate.get("peak_vram_mb"),
             "reference_peak_vram_mb": reference.get("peak_vram_mb"),
             "peak_vram_ratio": peak_vram_ratio,
+            "candidate_runtime_working_set_mb": candidate.get("runtime_working_set_mb"),
+            "reference_runtime_working_set_mb": reference.get("runtime_working_set_mb"),
+            "runtime_working_set_ratio": working_set_ratio,
             "memory_pass": memory_pass,
+            "candidate_active_parameter_count": candidate.get("active_parameter_count"),
+            "reference_active_parameter_count": reference.get("active_parameter_count"),
+            "active_parameter_ratio": active_parameter_ratio,
+            "prefill_active_parameter_throughput_ratio": prefill_parameter_throughput_ratio,
+            "decode_active_parameter_throughput_ratio": decode_parameter_throughput_ratio,
+            "prefill_active_parameter_efficiency_ratio": prefill_parameter_efficiency_ratio,
+            "decode_active_parameter_efficiency_ratio": decode_parameter_efficiency_ratio,
+            "active_parameter_work_pass": active_parameter_work_pass,
+            "active_parameter_efficiency_pass": active_parameter_efficiency_pass,
+            "active_parameter_pass": active_parameter_pass,
             "candidate_prefill_backend": candidate_prefill_backend,
             "candidate_decode_backend": candidate_decode_backend,
             "reference_backend": reference_backend,
@@ -315,6 +420,7 @@ def compare(
             "reference_quantization_backend": reference.get("quantization_backend"),
             "native_backend_pass": native_backend_pass,
             "qwen_backend_pass": qwen_backend_pass,
+            "qwen_full_fused_pass": qwen_full_fused_pass,
             "quant_memory_ratio_vs_dense": quant_memory_ratio,
             "quant_peak_memory_ratio_vs_dense": quant_peak_memory_ratio,
             "quant_memory_pass": quant_memory_pass,
@@ -388,11 +494,14 @@ def compare(
             "min_quant_decode_speedup": min_quant_decode_speedup,
             "require_native_candidate": require_native_candidate,
             "require_qwen_fast_path": require_qwen_fast_path,
+            "require_qwen_full_fused": require_qwen_full_fused,
             "require_quant_memory_reduction": require_quant_memory_reduction,
             "require_prefill_mode_match": require_prefill_mode_match,
             "require_quant_not_slower_than_dense": require_quant_not_slower_than_dense,
             "required_reference_backend": required_reference_backend,
             "require_memory_not_larger": require_memory_not_larger,
+            "min_active_parameter_throughput_ratio": min_active_parameter_throughput_ratio,
+            "min_active_parameter_efficiency_ratio": min_active_parameter_efficiency_ratio,
         },
         "reference_backend": {
             "required": required_reference_backend,
@@ -423,6 +532,57 @@ def compare(
             "median_peak_vram_ratio": median_or_none(peak_vram_ratios),
             "max_peak_vram_ratio": max(peak_vram_ratios) if peak_vram_ratios else None,
             "peak_vram_not_larger_cells": sum(value <= 1.0 for value in peak_vram_ratios),
+            "min_runtime_working_set_ratio": min(working_set_ratios) if working_set_ratios else None,
+            "median_runtime_working_set_ratio": median_or_none(working_set_ratios),
+            "max_runtime_working_set_ratio": max(working_set_ratios) if working_set_ratios else None,
+            "runtime_working_set_not_larger_cells": sum(value <= 1.0 for value in working_set_ratios),
+            "total_cells": len(cells),
+        },
+        "active_parameter_work": {
+            "gate_enabled": min_active_parameter_throughput_ratio is not None,
+            "min_active_parameter_ratio": min(active_parameter_ratios) if active_parameter_ratios else None,
+            "median_active_parameter_ratio": median_or_none(active_parameter_ratios),
+            "max_active_parameter_ratio": max(active_parameter_ratios) if active_parameter_ratios else None,
+            "min_prefill_throughput_ratio": (
+                min(prefill_parameter_throughput_ratios)
+                if prefill_parameter_throughput_ratios
+                else None
+            ),
+            "median_prefill_throughput_ratio": median_or_none(prefill_parameter_throughput_ratios),
+            "min_decode_throughput_ratio": (
+                min(decode_parameter_throughput_ratios)
+                if decode_parameter_throughput_ratios
+                else None
+            ),
+            "median_decode_throughput_ratio": median_or_none(decode_parameter_throughput_ratios),
+            "passing_cells": len(cells) - active_parameter_work_failures,
+            "total_cells": len(cells),
+        },
+        "active_parameter_efficiency": {
+            "gate_enabled": min_active_parameter_efficiency_ratio is not None,
+            "min_prefill_ratio": (
+                min(prefill_parameter_efficiency_ratios)
+                if prefill_parameter_efficiency_ratios
+                else None
+            ),
+            "median_prefill_ratio": median_or_none(prefill_parameter_efficiency_ratios),
+            "max_prefill_ratio": (
+                max(prefill_parameter_efficiency_ratios)
+                if prefill_parameter_efficiency_ratios
+                else None
+            ),
+            "min_decode_ratio": (
+                min(decode_parameter_efficiency_ratios)
+                if decode_parameter_efficiency_ratios
+                else None
+            ),
+            "median_decode_ratio": median_or_none(decode_parameter_efficiency_ratios),
+            "max_decode_ratio": (
+                max(decode_parameter_efficiency_ratios)
+                if decode_parameter_efficiency_ratios
+                else None
+            ),
+            "passing_cells": len(cells) - active_parameter_efficiency_failures,
             "total_cells": len(cells),
         },
         "speed_by_quantization": speed_by_quantization,
@@ -441,6 +601,11 @@ def compare(
             "quant_dense_speed_pass": quant_dense_speed_failures == 0,
             "reference_backend_pass": reference_backend_complete,
             "memory_pass": all(cell["memory_pass"] for cell in cells) and bool(cells),
+            "active_parameter_work_pass": active_parameter_work_failures == 0 and bool(cells),
+            "active_parameter_efficiency_pass": (
+                active_parameter_efficiency_failures == 0 and bool(cells)
+            ),
+            "active_parameter_pass": active_parameter_failures == 0 and bool(cells),
             "overall_pass": overall_pass,
         },
     }
@@ -459,6 +624,15 @@ def render_markdown(summary: dict[str, Any]) -> str:
     backend = summary["reference_backend"]
     speed = summary["speed"]
     memory = summary["memory"]
+    active = summary["active_parameter_work"]
+    efficiency = summary["active_parameter_efficiency"]
+    active_work_cells = (
+        f"{active['passing_cells']}/{active['total_cells']}"
+        if active["gate_enabled"]
+        else f"reported {active['total_cells']}/{active['total_cells']}"
+    )
+    full_fused_required = bool(summary["thresholds"].get("require_qwen_full_fused"))
+    full_fused_cells = sum(cell.get("qwen_full_fused_pass") is True for cell in summary["cells"])
     overall = "PASS" if summary["gates"]["overall_pass"] else "FAIL"
     lines = [
         "# RWKV-7 vs Qwen3.5 HF speed matrix",
@@ -469,6 +643,9 @@ def render_markdown(summary: dict[str, Any]) -> str:
         "",
         f"Required Qwen backend: `{backend['required']}`; verified: "
         f"`{backend['matching_cells']}/{backend['total_cells']}` cells.",
+        "",
+        f"Required Qwen full fusion: `{str(full_fused_required).lower()}`; verified: "
+        f"`{full_fused_cells}/{backend['total_cells']}` cells.",
         "",
         "| Metric | Minimum | Median | Maximum | Passing cells |",
         "|---|---:|---:|---:|---:|",
@@ -482,6 +659,24 @@ def render_markdown(summary: dict[str, Any]) -> str:
         f"| Peak VRAM RWKV/Qwen | {fmt(memory['min_peak_vram_ratio'])}x | "
         f"{fmt(memory['median_peak_vram_ratio'])}x | {fmt(memory['max_peak_vram_ratio'])}x | "
         f"{memory['peak_vram_not_larger_cells']}/{memory['total_cells']} |",
+        f"| Runtime working set RWKV/Qwen | {fmt(memory['min_runtime_working_set_ratio'])}x | "
+        f"{fmt(memory['median_runtime_working_set_ratio'])}x | {fmt(memory['max_runtime_working_set_ratio'])}x | "
+        f"{memory['runtime_working_set_not_larger_cells']}/{memory['total_cells']} |",
+        f"| Active parameters RWKV/Qwen | {fmt(active['min_active_parameter_ratio'])}x | "
+        f"{fmt(active['median_active_parameter_ratio'])}x | {fmt(active['max_active_parameter_ratio'])}x | "
+        f"{active['total_cells']}/{active['total_cells']} |",
+        f"| Prefill tok/s per active-B | {fmt(efficiency['min_prefill_ratio'])}x | "
+        f"{fmt(efficiency['median_prefill_ratio'])}x | {fmt(efficiency['max_prefill_ratio'])}x | "
+        f"{efficiency['passing_cells']}/{efficiency['total_cells']} |",
+        f"| Decode tok/s per active-B | {fmt(efficiency['min_decode_ratio'])}x | "
+        f"{fmt(efficiency['median_decode_ratio'])}x | {fmt(efficiency['max_decode_ratio'])}x | "
+        f"{efficiency['passing_cells']}/{efficiency['total_cells']} |",
+        f"| Prefill active-param work rate | {fmt(active['min_prefill_throughput_ratio'])}x | "
+        f"{fmt(active['median_prefill_throughput_ratio'])}x | - | "
+        f"{active_work_cells} |",
+        f"| Decode active-param work rate | {fmt(active['min_decode_throughput_ratio'])}x | "
+        f"{fmt(active['median_decode_throughput_ratio'])}x | - | "
+        f"{active_work_cells} |",
         "",
         f"Strict speed cells: `{speed['strict_gate_cells']}/{speed['total_cells']}`.",
         "",
@@ -582,11 +777,14 @@ def main() -> int:
     ap.add_argument("--min-quant-decode-speedup", type=float, default=None)
     ap.add_argument("--require-native-candidate", action="store_true")
     ap.add_argument("--require-qwen-fast-path", action="store_true")
+    ap.add_argument("--require-qwen-full-fused", action="store_true")
     ap.add_argument("--require-quant-memory-reduction", action="store_true")
     ap.add_argument("--require-prefill-mode-match", action="store_true")
     ap.add_argument("--require-quant-not-slower-than-dense", action="store_true")
     ap.add_argument("--required-reference-backend", choices=["fla", "torch", "any"], default="fla")
     ap.add_argument("--require-memory-not-larger", action="store_true")
+    ap.add_argument("--min-active-parameter-throughput-ratio", type=float, default=None)
+    ap.add_argument("--min-active-parameter-efficiency-ratio", type=float, default=None)
     ap.add_argument("--json-output", default="")
     ap.add_argument("--markdown-output", default="")
     ap.add_argument("--fail-on-gate", action="store_true")
@@ -601,11 +799,14 @@ def main() -> int:
         min_quant_decode_speedup=args.min_quant_decode_speedup,
         require_native_candidate=args.require_native_candidate,
         require_qwen_fast_path=args.require_qwen_fast_path,
+        require_qwen_full_fused=args.require_qwen_full_fused,
         require_quant_memory_reduction=args.require_quant_memory_reduction,
         require_prefill_mode_match=args.require_prefill_mode_match,
         require_quant_not_slower_than_dense=args.require_quant_not_slower_than_dense,
         required_reference_backend=args.required_reference_backend,
         require_memory_not_larger=args.require_memory_not_larger,
+        min_active_parameter_throughput_ratio=args.min_active_parameter_throughput_ratio,
+        min_active_parameter_efficiency_ratio=args.min_active_parameter_efficiency_ratio,
     )
     markdown = render_markdown(summary)
     if args.json_output:
