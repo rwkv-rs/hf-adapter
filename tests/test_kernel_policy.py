@@ -75,6 +75,26 @@ def test_policy_defaults_are_conservative() -> None:
     assert ada.fused_recurrent_raw
     assert ada.fused_norm_mix
     assert ada.fast_prefill
+    assert ada.bnb_skip_policy == "memory"
+    assert ada.bnb_int8_threshold == 0.0
+    assert ada.native_external_quant_prefill
+    assert ada.native_external_quant_graph
+    assert ada.native_external_quant_prefill_graph
+    assert ada.native_bnb8_direct
+    assert ada.native_bnb8_relu_quant
+    assert ada.native_bnb8_rkv_mix_quant
+    assert ada.native_bnb8_ffn_mix_quant
+    assert ada.native_bnb8_attn_mix_block == 4096
+    assert ada.native_bnb8_ffn_mix_block == 2048
+    assert ada.mm4_fused_max_rows == 16
+    assert ada.mm4_gemv_block_pairs == 128
+    assert ada.mm4_gemv_block_n == 128
+    assert ada.mm4_dot_min_rows == 2
+    assert ada.mm4_dot_block_b == 16
+    assert ada.mm4_dot_block_pairs == 64
+    assert ada.mm4_dot_block_n == 64
+    assert ada.mm4_dot_warps == 4
+    assert ada.prefill_scan_block_m_shapes == ((8, 128, 32),)
     assert ada.prefill_graph
     assert ada.fused_prefill_scan
     assert ada.fused_prefill_state_prep
@@ -93,6 +113,17 @@ def test_policy_defaults_are_conservative() -> None:
 
     other_ada = policy_for_profile(classify_gpu("NVIDIA GeForce RTX 4070", (8, 9)))
     assert not other_ada.fast_prefill
+    assert other_ada.bnb_int8_threshold is None
+    assert not other_ada.native_external_quant_prefill
+    assert not other_ada.native_external_quant_graph
+    assert not other_ada.native_external_quant_prefill_graph
+    assert not other_ada.native_bnb8_direct
+    assert not other_ada.native_bnb8_relu_quant
+    assert not other_ada.native_bnb8_rkv_mix_quant
+    assert not other_ada.native_bnb8_ffn_mix_quant
+    assert other_ada.mm4_fused_max_rows is None
+    assert other_ada.mm4_dot_min_rows is None
+    assert other_ada.prefill_scan_block_m_shapes == ()
     assert not other_ada.prefill_graph
     assert not other_ada.fused_prefill_scan
     assert not other_ada.ada_sparse_ffn
