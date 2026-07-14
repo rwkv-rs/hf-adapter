@@ -1,0 +1,3 @@
+torch 2.6.0+cu124
+torchao 0.9.0
+api <function quantize_ at 0x14f7384fc430> <class 'torchao.quantization.quant_api.Int8WeightOnlyConfig'> <class 'torchao.quantization.quant_api.Int4WeightOnlyConfig'>
