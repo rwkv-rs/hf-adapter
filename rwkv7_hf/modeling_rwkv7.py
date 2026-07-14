@@ -146,6 +146,7 @@ if False:  # pragma: no cover
     from .fused_attention_projection import fused_rkv_wag_projection as _rwkv7_fused_attn_projection_dependency_sentinel
     from .fused_decode_norm_mix import fused_attn_norm_mix6_decode as _rwkv7_fused_decode_norm_mix_dependency_sentinel
     from .fused_elementwise import fused_relu_square as _rwkv7_fused_elementwise_dependency_sentinel
+    from .fused_ffn import fused_sequence_ffn as _rwkv7_fused_ffn_dependency_sentinel
     from .sm70_linear import sm70_linear as _rwkv7_sm70_linear_dependency_sentinel
     from .sm70_quant import w4_linear as _rwkv7_sm70_quant_dependency_sentinel
     from .sm70_wagv import sm70_wagv_lora as _rwkv7_sm70_wagv_dependency_sentinel
@@ -155,6 +156,14 @@ if False:  # pragma: no cover
     from .fused_recurrent_update import fused_recurrent_update as _rwkv7_fused_recurrent_dependency_sentinel
     from .fused_time_mix import fused_attn_shift_mix as _rwkv7_fused_time_mix_dependency_sentinel
     from .native import _init_state_batched as _rwkv7_native_dependency_sentinel
+    from .native_quant_bnb8 import fused_bnb8_relu_square_quant as _rwkv7_native_bnb8_dependency_sentinel
+    from .self_chunk_A_fwd import chunk_dplr_fwd_intra as _rwkv7_self_chunk_a_dependency_sentinel
+    from .self_chunk_cumsum import chunk_rwkv6_fwd_cumsum as _rwkv7_self_chunk_cumsum_dependency_sentinel
+    from .self_chunk_h_fwd import chunk_dplr_fwd_h as _rwkv7_self_chunk_h_dependency_sentinel
+    from .self_chunk_o_fwd import chunk_dplr_fwd_o as _rwkv7_self_chunk_o_dependency_sentinel
+    from .self_chunk_rwkv7 import self_chunk_rwkv7 as _rwkv7_self_chunk_dependency_sentinel
+    from .self_chunk_utils import check_shared_mem as _rwkv7_self_chunk_utils_dependency_sentinel
+    from .self_chunk_wy_fwd import prepare_wy_repr_fwd as _rwkv7_self_chunk_wy_dependency_sentinel
 
 
 _FALSE_VALUES = {"0", "false", "False", "no", "off"}
