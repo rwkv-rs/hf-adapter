@@ -210,6 +210,59 @@ Remaining before this goal is complete:
 - Do not call the DPLR/WY goal finished until compact WY or an equivalent
   compiled path is verified end-to-end against the original acceptance target.
 
+## Current Apple M5 B8 Active-Parameter Milestone (2026-07-14)
+
+The current Apple acceptance axis is **true batch 8**, a 512-character prompt,
+64 generated tokens per sequence, group-128 W4 on both sides, and throughput
+normalized as `aggregate tok/s * active text parameter count`. Treat cold
+prefill and prefix-state-cache prefill as different scenarios; never use the
+cache row to claim a universal cold-start win.
+
+- The production candidate uses a thread-local Metal WKV scan, fused
+  scan+GroupNorm+bonus+gate post-processing, quantized Metal embedding lookup,
+  guarded compiled zero-state prefill, fast LayerNorm/GroupNorm, exact lockstep
+  B8 speculative decode with the 0.1B RWKV draft, and native groupwise W4.
+- 0.4B RWKV versus Qwen3.5 0.8B passes the **cold** row. Current clean medians
+  are `9636.69 vs 5162.62 tok/s` prefill and
+  `940.86 vs 456.21 tok/s` decode. Active-parameter-normalized ratios are
+  `1.1183x` and `1.2356x`; raw peak memory is
+  `1.261 GB vs 1.644 GB`. Keep W/A LoRA-down double-GEMM fusion enabled for
+  this profile.
+- 1.5B RWKV versus Qwen3.5 2B passes the separately labelled
+  **87.5%-hit prefix-state coalescing** row. Current medians are
+  `17113.84 vs 2841.44 tok/s` prefill and
+  `872.01 vs 232.10 tok/s` decode. Active-parameter-normalized ratios are
+  `4.8886x` and `3.0494x`; raw peak memory is
+  `1.838 GB vs 2.152 GB`. Disable LoRA-down fusion for this profile because
+  duplicated packed caches increase memory without a useful speed gain.
+- The 1.5B **cold** row is not closed: its best recorded normalized prefill is
+  about `0.88-0.90x` Qwen2. Decode passes by about `3.05x`; after validation
+  allocations are released and LoRA-down fusion is disabled, isolated raw
+  peak memory is about `2.09 GB`, below the `2.15 GB` Qwen row. The remaining
+  cold bottleneck is block compute, especially W4 FFN/projection and WKV/RKV
+  launch traffic; the next useful step is a native W4 FFN/block megakernel,
+  not another wrapper or cache-only optimization.
+- Correctness gates pass at B8/T133/decode64. For 0.4B, W4 and fp16 greedy
+  tokens are exactly equal; fused-post versus generic W4 and cache versus cold
+  also preserve every greedy token with bounded state/logit drift. The 1.5B
+  cache route preserves every cold W4 greedy token. Compiled prefill is exact
+  for the validated concrete shapes. Quantized linear and embedding payload
+  ratios are both `0.265625` of dense fp16 storage.
+- Reproduce with `scripts/run_apple_bsz8_active_acceptance.sh`. Permanent raw
+  rows and methodology are under `bench/apple_bsz8_active_m5_20260714/`.
+
+Desktop load materially affects this fanless device. Do not classify an A/B
+from separated runs alone. The final order-balanced, same-process A/B shows
+fused scan/post at `1.0938x` the split path and two-GEMM LoRA-down at `1.0189x`
+the direct path; both preserve greedy tokens with bounded numeric drift. The
+permanent A/B summaries are stored beside the end-to-end evidence.
+
+Rejected A/B routes must remain disabled by default: concatenating LoRA-down
+into one GEMM, adding G/V to the fused down path, fused LoRA-up, grouped RKV W4,
+flattened rank-3 quant matmul, group sizes 32/64, two-lane WKV state ownership,
+fp16 recurrent state, and threadgroup-resident full state all regressed speed,
+memory, or both on this M5.
+
 ## Current Apple Branch Checkpoint: MLX DPLR/WY Stage 1
 
 > **Historical checkpoint.** Apple M5 production-close and the current module map supersede this stage note. Use `docs/hardware/APPLE_PRODUCTION_CLOSE.md` and `docs/reference/MLX_RUNTIME_ARCHITECTURE.md` for active work; retain the measurements below only as provenance.

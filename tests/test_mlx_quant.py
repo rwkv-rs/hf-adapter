@@ -56,6 +56,7 @@ def test_mlx_quant_formula_if_available():
 
     from rwkv7_hf.mlx_quant import (
         MLXQuantizedLinear,
+        groupwise_embedding,
         metal_quant_available,
         mm4_group_matmul_metal,
         mm4_group_matmul_metal_inputs,
@@ -226,6 +227,21 @@ def test_mlx_quant_formula_if_available():
         assert groupwise.storage_bytes < int(groupwise_weight.size * groupwise_weight.itemsize)
         assert groupwise.telemetry()["last_backend"] == "groupwise"
         assert groupwise.telemetry()["backend_counts"]["groupwise"] == 1
+        embedding_ids = mx.array([[0, 3], [7, 11]], dtype=mx.int32)
+        embedding_metal, embedding_backend = groupwise_embedding(
+            embedding_ids,
+            groupwise.weight,
+            backend="auto",
+        )
+        embedding_reference, _ = groupwise_embedding(
+            embedding_ids,
+            groupwise.weight,
+            backend="reference",
+        )
+        mx.eval(embedding_metal, embedding_reference)
+        assert tuple(int(v) for v in embedding_metal.shape) == (2, 2, 64)
+        assert float(mx.max(mx.abs(embedding_metal - embedding_reference))) == 0.0
+        assert embedding_backend == ("metal" if metal_quant_available() else "reference")
 
 
 def test_mlx_model_quantized_linear_hook_if_available():
@@ -261,6 +277,44 @@ def test_mlx_model_quantized_linear_hook_if_available():
     assert tuple(int(v) for v in q_logits.shape) == tuple(int(v) for v in dense_logits.shape)
     assert int(q_state.seen_tokens) == 3
     assert model.telemetry()["quantized_linear_last_backend_counts"]["affine"] > 0
+
+
+def test_mlx_groupwise_batched_rkv_matches_three_calls_if_available():
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    mx.random.seed(20260714)
+    weights = [mx.random.normal((96, 64)).astype(mx.float16) for _ in range(3)]
+    packed = [mx.quantize(weight, group_size=32, bits=4, mode="affine") for weight in weights]
+    inputs = [mx.random.normal((2, 5, 64)).astype(mx.float16) for _ in range(3)]
+    separate = [
+        mx.quantized_matmul(
+            value,
+            q,
+            scales=scale,
+            biases=bias,
+            transpose=True,
+            group_size=32,
+            bits=4,
+            mode="affine",
+        )
+        for value, (q, scale, bias) in zip(inputs, packed, strict=True)
+    ]
+    grouped = mx.quantized_matmul(
+        mx.stack(inputs, axis=0),
+        mx.stack([value[0] for value in packed], axis=0)[:, None],
+        scales=mx.stack([value[1] for value in packed], axis=0)[:, None],
+        biases=mx.stack([value[2] for value in packed], axis=0)[:, None],
+        transpose=True,
+        group_size=32,
+        bits=4,
+        mode="affine",
+    )
+    mx.eval(grouped, *separate)
+    assert tuple(int(dim) for dim in grouped.shape) == (3, 2, 5, 96)
+    for index, expected in enumerate(separate):
+        assert float(mx.max(mx.abs(grouped[index] - expected))) == 0.0
 
 
 def test_mlx_model_q4_k_m_mixed_precision_hook_if_available():
