@@ -371,21 +371,23 @@ serving speed.
    - Blackwell/5070-specific evidence lives in `BLACKWELL_50SERIES.md`; 5070
      uses the same software stack but `sm_120`-specific kernel behavior must not
      be projected onto Ada without the 4090 gate.
-   - The final RTX 5070 Laptop / 1.5B RWKV vs official Qwen3.5 2B artifact is
-     `bench/5070_qwen35_fla_native_prefill_20260714/`. Its 144 passing raw rows
-     form 72/72 strict cells across fp16/BNB8/BNB4, bsz 1/2/4/8,
-     prompt 128/512/2048, and decode 128/512. Minimum prefill/decode speedups are
-     `1.109682x`/`1.466175x`; footprint and peak VRAM are no larger in 72/72.
+   - The promoted RTX 5070 Laptop / 1.5B RWKV vs official Qwen3.5 2B artifact is
+     `bench/5070_qwen35_full_fla_bsz8_20260714/`. Its 36 passing raw rows form
+     18/18 strict bsz8 cells across fp16/BNB8/BNB4, prompt 128/512/2048, and
+     decode 128/512. Minimum prefill/decode speedups are
+     `1.082707x`/`1.795119x`; footprint and peak VRAM are no larger in 18/18,
+     and tok/s per active-B is at least `1.333940x`/`2.211641x`.
    - Blackwell fused prefill auto-selects scan `block_m=8/16/32/64` for bsz
      1/2/4/8+ and 1/1/1/4 warps. Fp16 can use the full native prefill graph;
-     external BNB4/BNB8 use the native prefill bridge without graph capture.
-     BNB4 one-token decode has a validated opt-in native-graph path, while BNB8
-     remains on FLA decode with the explicit `decode_rk` hybrid policy. These
+     external BNB8 uses the native prefill bridge without graph capture. BNB4
+     external-quant prefill graph and one-token decode graph are validated as
+     opt-in bsz8 paths; BNB8 uses the explicit `decode_rk` hybrid policy. These
      routes are exact-card and default-off.
-   - Qwen's gated-delta core and fused norm are FLA-backed in all 72 reference
-     rows, but missing Windows `causal-conv1d` leaves convolution on the
-     Transformers Torch fallback. Report the effective backend as
-     `qwen_fla_gated_delta_rule_torch_conv`; do not describe it as fully fused.
+   - Qwen's gated-delta core, fused norm, and FLA Triton causal convolution are
+     accelerated in all 18 promoted reference rows. Report the effective
+     backend as `qwen_fla_gated_delta_rule_fla_triton_conv` and fail closed if
+     any performance row retains the Transformers Torch convolution fallback.
+     The older 72-cell FLA-core-only artifact remains historical coverage.
 20. Native fused prefill scan and bsz=1 bottleneck breakdown.
    - `bench/bench_native_prefill_scan.py` now records model-size-labeled
      end-to-end native prefill rows, and the analyzer compares

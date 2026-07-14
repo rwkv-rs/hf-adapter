@@ -45,14 +45,16 @@ the declared same-card fp16 equivalence/speed threshold. See
 - [x] Record exact 5070, driver, CUDA, Torch, Triton, FLA, Transformers, and
       causal-conv1d versions with operator-origin telemetry.
 
-Result: correctness and coverage pass, but strict speed is only 35/72 because
-prefill reaches >=1.05x in 35/72 cells. Decode is >=1.0x in 72/72 and >=1.05x
-in 71/72. Larger 4B/9B feasibility and prefill stabilization remain follow-up.
+Result: the promoted RTX 5070 Laptop bsz8 matrix passes 36/36 raw rows and
+18/18 strict cells across fp16/W8/W4, prompt128/512/2048, and decode128/512.
+Minimum prefill/decode speedups are `1.082707x/1.795119x`; footprint, peak VRAM,
+and tok/s per active-B gates also pass in 18/18. Larger 4B/9B feasibility and
+bsz1/2/4 full-FLA coverage remain follow-up.
 
-Acceptance: every Qwen reference row reports the verified FLA core backend.
-Rows with missing Windows `causal-conv1d` must explicitly report
-`qwen_fla_gated_delta_rule_torch_conv`; they are not full-fusion claims. The
-2026-07-12 V100 Torch matrix remains diagnostic only.
+Acceptance: every promoted Qwen reference row reports the full FLA core, norm,
+and FLA Triton causal-conv backend. Rows with
+`qwen_fla_gated_delta_rule_torch_conv` remain historical diagnostics and are
+not full-fusion claims. The 2026-07-12 V100 Torch matrix is diagnostic only.
 
 ### 3. Missing hardware
 
