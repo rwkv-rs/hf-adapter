@@ -10,6 +10,25 @@
 | Apple MLX packed W8/W4 | Apple GPU inference and mobile memory lane | W4 production evidence exists on M5; broader device/shape gates remain |
 | CoreML INT8/INT4 | Apple deployment package/runtime path | Stateful correctness and INT8 evidence exist; INT4 quality/ANE placement remains open |
 
+## RTX 4090 g1h 7.2B promoted result
+
+The bsz8 matrix covers prompt 128/512/2048 and decode 128/512. Route
+composition selects the BNB8+A8W8-head hybrid for all six W8 cells and native
+MM4 or TorchAO per cell for W4.
+
+- W8 minimum prefill/decode/total speed versus RWKV fp16 is
+  `1.472988x/1.356914x/1.360072x`; maximum footprint/peak ratio is
+  `0.533926x/0.455834x`.
+- W4 minimum prefill/decode/total speed is
+  `0.976859x/1.022724x/1.013273x`; maximum footprint/peak ratio is
+  `0.972617x/0.983054x`. W4 therefore uses the disclosed exact-cell total
+  latency fallback rather than claiming every prefill phase is faster.
+- BNB8 and MM4 same-quant native/HF probes pass cosine and greedy-token gates.
+- Full BNB4 offers deeper compression but is not selected because it misses
+  the no-slower speed contract.
+
+Evidence: [`../bench/4090_g1h_7p2_bsz8_20260715/README.md`](../bench/4090_g1h_7p2_bsz8_20260715/README.md).
+
 ## RTX 5090 promoted result
 
 The 36-row pressure artifact covers 1.5B/2.9B/7.2B × fp16/MM8/MM4 × prompt
