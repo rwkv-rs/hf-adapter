@@ -171,6 +171,80 @@ def test_mlx_batch_speculative_rejection_replays_exact_target_if_available(monke
     mx.eval(*result.target_state.recurrent_state)
 
 
+def test_mlx_single_speculative_rejection_falls_back_and_preserves_state_if_available(monkeypatch) -> None:
+    if importlib.util.find_spec("mlx") is None:
+        return
+    import mlx.core as mx
+
+    from rwkv7_hf.mlx_dplr_prefill import mlx_dplr_metal_available
+    from rwkv7_hf.mlx_model import MLXRWKV7Model
+    from rwkv7_hf.mlx_speculative import speculative_decode_greedy
+    from tests.test_apple_silicon_mlx_model_smoke import tiny_torch_model_to_mlx
+
+    if not mlx_dplr_metal_available():
+        return
+    monkeypatch.setenv("RWKV7_MLX_WKV_SCAN_PREFILL", "0")
+    _, source, cfg = tiny_torch_model_to_mlx()
+    arrays = dict(source.arrays)
+    draft_arrays = dict(arrays)
+    draft_arrays["lm_head.weight"] = -draft_arrays["lm_head.weight"]
+    greedy = MLXRWKV7Model.from_arrays(cfg, dict(arrays), wkv_backend="metal")
+    target = MLXRWKV7Model.from_arrays(cfg, dict(arrays), wkv_backend="metal")
+    draft = MLXRWKV7Model.from_arrays(cfg, draft_arrays, wkv_backend="metal")
+    for model in (target, draft):
+        model.prefill_backend = "dplr_metal"
+        model.dplr_chunk_size = 4
+        model.dplr_min_tokens = 2
+        model.dplr_layer_eval_interval = 1
+        model.dplr_layer_eval_min_tokens = 1
+
+    prompt = [[1, 2, 3, 4]]
+    greedy_logits, greedy_state = greedy.prefill(prompt)
+    expected, expected_state = greedy.decode_greedy(greedy_logits, greedy_state, max_new_tokens=8)
+    expected_plus_one, _ = greedy.decode_greedy(
+        *greedy.prefill(prompt),
+        max_new_tokens=9,
+    )
+    target_logits, target_state = target.prefill(prompt)
+    draft_logits, draft_state = draft.prefill(prompt)
+    result = speculative_decode_greedy(
+        target,
+        draft,
+        target_logits,
+        target_state,
+        draft_logits,
+        draft_state,
+        max_new_tokens=8,
+        proposal_tokens=4,
+        min_acceptance_rate=0.9,
+    )
+
+    assert result.generated_ids == expected.reshape(-1).tolist()
+    assert result.accepted_draft_tokens < result.draft_tokens
+    assert result.target_replay_calls >= 1
+    assert result.adaptive_fallback is True
+    assert result.fallback_tokens >= 1
+    assert result.target_state.seen_tokens == 12
+    assert int(mx.argmax(result.target_logits[:, -1, :], axis=-1).item()) == int(
+        expected_plus_one[0, -1].item()
+    )
+    actual_state = [
+        result.target_state.v_first,
+        *result.target_state.recurrent_state,
+        *result.target_state.attn_x_prev,
+        *result.target_state.ffn_x_prev,
+    ]
+    reference_state = [
+        expected_state.v_first,
+        *expected_state.recurrent_state,
+        *expected_state.attn_x_prev,
+        *expected_state.ffn_x_prev,
+    ]
+    mx.eval(*actual_state, *reference_state)
+    for actual, reference in zip(actual_state, reference_state, strict=True):
+        assert float(mx.max(mx.abs(actual.astype(mx.float32) - reference.astype(mx.float32)))) < 1e-2
+
+
 def test_mlx_identical_prefix_state_coalescing_matches_cold_batch_if_available(monkeypatch) -> None:
     if importlib.util.find_spec("mlx") is None:
         return

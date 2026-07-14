@@ -227,6 +227,23 @@ def test_mlx_quant_formula_if_available():
         assert groupwise.storage_bytes < int(groupwise_weight.size * groupwise_weight.itemsize)
         assert groupwise.telemetry()["last_backend"] == "groupwise"
         assert groupwise.telemetry()["backend_counts"]["groupwise"] == 1
+
+        # Wide-to-narrow sequence projections may flatten leading dimensions
+        # for the faster Apple prefill route without changing values or shape.
+        wide_weight = mx.arange(64 * 128, dtype=mx.float32).reshape(64, 128)
+        wide_weight = ((wide_weight % 29) - 14).astype(mx.float16) / 16
+        wide = MLXQuantizedLinear.from_linear_weight(
+            wide_weight,
+            bits=bits,
+            backend="groupwise",
+            group_size=32,
+        )
+        wide_x = mx.ones((2, 3, 128), dtype=mx.float16)
+        rank_preserving = wide(wide_x)
+        flattened = wide(wide_x, flatten_wide=True)
+        mx.eval(rank_preserving, flattened)
+        assert tuple(int(v) for v in flattened.shape) == (2, 3, 64)
+        assert float(mx.max(mx.abs(rank_preserving - flattened))) == 0.0
         embedding_ids = mx.array([[0, 3], [7, 11]], dtype=mx.int32)
         embedding_metal, embedding_backend = groupwise_embedding(
             embedding_ids,

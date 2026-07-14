@@ -151,6 +151,10 @@ class MLXRWKV7Model:
         self.quantized_linear_profile: str | None = None
         self.quantized_linear_group_size: int | None = None
         self.quantized_linear_bits_histogram: dict[int, int] = {}
+        self.flatten_wide_groupwise_prefill = _env_flag(
+            "RWKV7_MLX_FLATTEN_WIDE_GROUPWISE_PREFILL",
+            False,
+        )
         self.step_eval_interval = max(1, _env_int("RWKV7_MLX_STEP_EVAL_INTERVAL", 1))
         self.fused_ffn_key_relu2 = _env_flag("RWKV7_MLX_FUSED_FFN_KEY_RELU2", False)
         self.fused_ffn_key_relu2_counts: dict[str, int] = {"metal": 0, "fallback": 0}
@@ -162,6 +166,12 @@ class MLXRWKV7Model:
         self.fused_lora_down = _env_flag("RWKV7_MLX_FUSED_LORA_DOWN", False)
         self.fused_lora_down_include_g = _env_flag("RWKV7_MLX_FUSED_LORA_DOWN_INCLUDE_G", False)
         self.fused_lora_down_include_v = _env_flag("RWKV7_MLX_FUSED_LORA_DOWN_INCLUDE_V", False)
+        self.fused_lora_down_evict_source = _env_flag(
+            "RWKV7_MLX_FUSED_LORA_DOWN_EVICT_SOURCE",
+            True,
+        )
+        self.fused_lora_down_source_bytes_released = 0
+        self.fused_lora_down_cache_bytes = 0
         self._fused_lora_down_cache: dict[int, tuple[Any, Any, dict[str, tuple[int, int]]]] = {}
         self.fused_lora_down_counts: dict[str, int] = {"fused": 0, "fallback": 0}
         self.fused_lora_up = _env_flag("RWKV7_MLX_FUSED_LORA_UP", False)
@@ -477,6 +487,9 @@ class MLXRWKV7Model:
             "fused_lora_down": bool(self.fused_lora_down),
             "fused_lora_down_include_g": bool(self.fused_lora_down_include_g),
             "fused_lora_down_include_v": bool(self.fused_lora_down_include_v),
+            "fused_lora_down_evict_source": bool(self.fused_lora_down_evict_source),
+            "fused_lora_down_source_bytes_released": int(self.fused_lora_down_source_bytes_released),
+            "fused_lora_down_cache_bytes": int(self.fused_lora_down_cache_bytes),
             "fused_lora_down_counts": dict(self.fused_lora_down_counts),
             "fused_lora_up": bool(self.fused_lora_up),
             "fused_lora_up_counts": dict(self.fused_lora_up_counts),
@@ -553,6 +566,7 @@ class MLXRWKV7Model:
             ),
             "quantized_embedding_backend_last": self.quantized_embedding_backend_last,
             "quantized_embedding_backend_counts": dict(self.quantized_embedding_backend_counts),
+            "flatten_wide_groupwise_prefill": bool(self.flatten_wide_groupwise_prefill),
             **summarize_mlx_arrays(self.arrays),
         }
         if self.quantized_linears:
@@ -607,6 +621,7 @@ class MLXRWKV7Model:
 
         mx = _mx()
         packed = []
+        source_keys: list[str] = []
         for layer in range(self.num_hidden_layers):
             prefix = f"model.layers.{layer}.attn"
             names = ["w", "a"]
@@ -619,19 +634,32 @@ class MLXRWKV7Model:
             slices: dict[str, tuple[int, int]] = {}
             offset = 0
             for name in names:
-                weight = self._get(f"{prefix}.{name}_lora.lora.0.weight")
+                weight_key = f"{prefix}.{name}_lora.lora.0.weight"
+                weight = self._get(weight_key)
                 mix = self._get(f"{prefix}.x_{name}").reshape(1, self.hidden_size)
                 rank = int(weight.shape[0])
                 base_weights.append(weight)
                 delta_weights.append(weight * mix)
                 slices[name] = (offset, offset + rank)
                 offset += rank
+                source_keys.append(weight_key)
             base = mx.concatenate(base_weights, axis=0)
             delta = mx.concatenate(delta_weights, axis=0)
             packed.extend((base, delta))
             self._fused_lora_down_cache[layer] = (base, delta, slices)
         if packed:
             mx.eval(*packed)
+            self.fused_lora_down_cache_bytes = sum(mlx_array_nbytes(value) for value in packed)
+        # The packed base matrix contains the original down-projection values,
+        # so retaining the per-branch source matrices wastes resident memory.
+        # This is safe because a fused model never enters the direct fallback.
+        if self.fused_lora_down_evict_source:
+            released = 0
+            for key in source_keys:
+                value = self.arrays.pop(key, None)
+                if value is not None:
+                    released += mlx_array_nbytes(value)
+            self.fused_lora_down_source_bytes_released = int(released)
 
     def _attn_lora_down(self, layer: int, x, xx) -> dict[str, Any] | None:
         if not self.fused_lora_down:
@@ -721,7 +749,7 @@ class MLXRWKV7Model:
     def _linear(self, x, weight_key: str, bias_key: str | None = None):
         qlinear = self.quantized_linears.get(weight_key)
         if qlinear is not None:
-            y = qlinear(x)
+            y = qlinear(x, flatten_wide=self.flatten_wide_groupwise_prefill)
         else:
             y = x @ self._get(weight_key).T
         if bias_key is not None and bias_key in self.arrays:
@@ -1268,6 +1296,7 @@ class MLXRWKV7Model:
         k = x + xx * self._get(f"{prefix}.x_k").reshape(1, 1, hidden)
         key_weight = f"{prefix}.key.weight"
         key_qlinear = self.quantized_linears.get(key_weight)
+        value_weight = f"{prefix}.value.weight"
         if (
             self.fused_ffn_key_relu2
             and key_qlinear is not None
@@ -1285,7 +1314,7 @@ class MLXRWKV7Model:
                 ) + 1
             k = mx.maximum(self._linear(k, key_weight), 0)
             k = k * k
-        return self._linear(k, f"{prefix}.value.weight"), x[:, -1, :]
+        return self._linear(k, value_weight), x[:, -1, :]
 
     def _should_scan_prefill(self, tokens: int) -> tuple[bool, str]:
         T = int(tokens)

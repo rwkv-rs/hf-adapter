@@ -131,6 +131,9 @@ def run_rwkv_child(args: argparse.Namespace) -> dict[str, Any]:
     os.environ["RWKV7_MLX_FUSED_LORA_UP"] = "1" if args.rwkv_fused_lora_up else "0"
     os.environ["RWKV7_MLX_GROUP_RKV_QUANT_PROJECTION"] = "1" if args.rwkv_group_rkv else "0"
     os.environ["RWKV7_MLX_FUSED_SCAN_POST"] = "1" if args.rwkv_fused_scan_post else "0"
+    os.environ["RWKV7_MLX_FLATTEN_WIDE_GROUPWISE_PREFILL"] = (
+        "1" if args.rwkv_flatten_wide_groupwise_prefill else "0"
+    )
 
     import mlx.core as mx
     from transformers import AutoTokenizer
@@ -170,6 +173,7 @@ def run_rwkv_child(args: argparse.Namespace) -> dict[str, Any]:
     prompt = make_prompt(args.prompt_chars)
     prompt_ids = [int(value) for value in tokenizer(prompt, add_special_tokens=True).input_ids]
     ids = mx.array([prompt_ids] * int(args.batch_size), dtype=mx.int32)
+    unique_prompt_count = len({tuple(int(token) for token in row) for row in ids.tolist()})
     cache_indices = [0] * int(args.batch_size)
 
     def prefill_request(request_model):
@@ -337,10 +341,14 @@ def run_rwkv_child(args: argparse.Namespace) -> dict[str, Any]:
             "generated_preview": values[0][:16],
             "all_sequences_equal": len({tuple(value) for value in values}) == 1,
             "prefix_state_cache_dedup": bool(args.rwkv_prefix_cache_dedup),
-            "prefix_state_cache_unique_prompts": 1 if args.rwkv_prefix_cache_dedup else int(args.batch_size),
-            "prefix_state_cache_hits": int(args.batch_size) - 1 if args.rwkv_prefix_cache_dedup else 0,
+            "prefix_state_cache_unique_prompts": int(unique_prompt_count),
+            "prefix_state_cache_hits": (
+                int(args.batch_size) - int(unique_prompt_count)
+                if args.rwkv_prefix_cache_dedup
+                else 0
+            ),
             "prefix_state_cache_hit_rate": (
-                (int(args.batch_size) - 1) / int(args.batch_size)
+                (int(args.batch_size) - int(unique_prompt_count)) / int(args.batch_size)
                 if args.rwkv_prefix_cache_dedup
                 else 0.0
             ),
@@ -358,6 +366,13 @@ def run_rwkv_child(args: argparse.Namespace) -> dict[str, Any]:
             "decode_fast_group_norm": telemetry.get("decode_fast_group_norm"),
             "fused_lora_down_counts": telemetry.get("fused_lora_down_counts"),
             "fused_lora_down_include_v": telemetry.get("fused_lora_down_include_v"),
+            "fused_lora_down_source_bytes_released": telemetry.get(
+                "fused_lora_down_source_bytes_released"
+            ),
+            "fused_lora_down_cache_bytes": telemetry.get("fused_lora_down_cache_bytes"),
+            "flatten_wide_groupwise_prefill": telemetry.get(
+                "flatten_wide_groupwise_prefill"
+            ),
             "fused_lora_up_counts": telemetry.get("fused_lora_up_counts"),
             "fused_scan_post_counts": telemetry.get("fused_scan_post_counts"),
             "group_rkv_quant_projection_counts": telemetry.get("group_rkv_quant_projection_counts"),
@@ -459,6 +474,11 @@ def child_command(args: argparse.Namespace, engine: str) -> list[str]:
     command.append("--rwkv-fused-scan-post" if args.rwkv_fused_scan_post else "--no-rwkv-fused-scan-post")
     command.append("--rwkv-group-rkv" if args.rwkv_group_rkv else "--no-rwkv-group-rkv")
     command.append(
+        "--rwkv-flatten-wide-groupwise-prefill"
+        if args.rwkv_flatten_wide_groupwise_prefill
+        else "--no-rwkv-flatten-wide-groupwise-prefill"
+    )
+    command.append(
         "--rwkv-prefix-cache-dedup"
         if args.rwkv_prefix_cache_dedup
         else "--no-rwkv-prefix-cache-dedup"
@@ -480,6 +500,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rwkv-quant-min-params", type=int, default=1_000_000)
     parser.add_argument("--rwkv-quant-group-size", type=int, choices=[32, 64, 128], default=128)
     parser.add_argument("--rwkv-step-eval-interval", type=int, default=64)
+    parser.add_argument(
+        "--rwkv-flatten-wide-groupwise-prefill",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Flatten only wide-to-narrow native groupwise W4 sequence GEMMs.",
+    )
     parser.add_argument(
         "--rwkv-compiled-prefill",
         action=argparse.BooleanOptionalAction,

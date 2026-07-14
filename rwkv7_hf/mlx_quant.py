@@ -444,12 +444,23 @@ class MLXQuantizedLinear:
             f"unsupported MLX quant backend {self.backend!r}; expected reference, affine, metal, auto, or groupwise"
         )
 
-    def __call__(self, x: Any) -> Any:
+    def __call__(self, x: Any, *, flatten_wide: bool = False) -> Any:
         backend = self._selected_backend(x)
         if isinstance(self.weight, MLXGroupwiseWeight):
             mx = _mx()
+            original_shape = tuple(int(dim) for dim in x.shape)
+            # MLX's native groupwise kernel is faster for RWKV's sequence
+            # FFN value projection when all leading dimensions are presented
+            # as one row dimension. Square and expanding projections keep the
+            # rank-preserving path, where flattening is neutral or slower.
+            flatten = bool(
+                flatten_wide
+                and int(x.ndim) > 2
+                and self.in_features > self.out_features
+            )
+            x_mat = x.reshape(-1, self.in_features) if flatten else x
             y = mx.quantized_matmul(
-                x,
+                x_mat,
                 self.weight.w_q,
                 scales=self.weight.scales,
                 biases=self.weight.biases,
@@ -458,6 +469,8 @@ class MLXQuantizedLinear:
                 bits=int(self.weight.bits),
                 mode="affine",
             )
+            if flatten:
+                y = y.reshape(*original_shape[:-1], self.out_features)
         elif isinstance(self.weight, MLXMM8Weight):
             y = mm8_matmul_mlx(x, self.weight, backend=backend)
         else:

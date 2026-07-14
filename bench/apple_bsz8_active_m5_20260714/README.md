@@ -13,7 +13,8 @@
 
 Each runtime runs in an isolated child process. The measured workload is true
 batch 8, a 512-character prompt, 64 generated tokens per sequence, one warmup,
-and three measured repeats. Both model families use group-128 W4. Throughput is
+and three measured repeats. RWKV uses group-128 affine W4; the compared
+published MLX-LM Qwen checkpoints use group-64 affine W4. Throughput is
 aggregate tokens per second. The requested active-parameter comparison is:
 
 ```text
@@ -35,15 +36,15 @@ not evidence that cold 1.5B prefill beats Qwen2.
 
 | Scenario | RWKV prefill | Qwen prefill | Active-normalized prefill | RWKV decode | Qwen decode | Active-normalized decode | Raw peak RWKV / Qwen | Gate |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
-| 0.4B vs 0.8B, cold | 9636.69 | 5162.62 | 1.1183x | 940.86 | 456.21 | 1.2356x | 1.261 / 1.644 GB | PASS |
-| 1.5B vs 2B, 87.5%-hit prefix cache | 17113.84 | 2841.44 | 4.8886x | 872.01 | 232.10 | 3.0494x | 1.838 / 2.152 GB | PASS |
-| 1.5B vs 2B, cold reference | 3202.66 | 2943.15 | 0.8832x | 886.73 | 235.82 | 3.0520x | see note | FAIL (prefill) |
+| 0.4B vs 0.8B, cold | 7942.62 | 4276.23 | 1.1128x | 781.66 | 379.17 | 1.2351x | 1.253 / 1.644 GB | PASS |
+| 1.5B vs 2B, 87.5%-hit prefix cache | 13677.81 | 2113.13 | 5.2537x | 686.01 | 174.40 | 3.1928x | 1.858 / 2.152 GB | PASS |
+| 1.5B vs 2B, cold | 2478.03 | 2235.16 | 0.8999x | 695.14 | 184.59 | 3.0567x | 2.112 / 2.152 GB | FAIL (prefill) |
 
 The historical cold 1.5B pair retained validation/candidate allocations and
-reported 2.468 GB. After releasing validation state and disabling the
-model-size-regressing LoRA-down packed cache, an isolated RWKV row is about
-2.09 GB versus the recorded Qwen 2.15 GB. The cold speed gap remains real:
-current normalized prefill is approximately 0.88-0.90x, so this repository does
+reported 2.468 GB. The current route releases validation state and evicts the
+W/A source matrices after building their mathematically equivalent packed
+LoRA-down cache. The cold speed gap remains real: current normalized prefill
+is `0.8999x`, so this repository does
 not make a blanket cold 1.5B victory claim.
 
 Both final rows were taken with the normal desktop applications left running;
@@ -60,9 +61,15 @@ direct path. See `ab_scan_post_same_process.json` and
 - 0.4B W4 versus fp16: exact B8 x 64 greedy token equality (100% match).
 - Fused scan/post versus generic W4: exact greedy tokens; prefill logits/state
   max-abs 0.0625; final-state max-abs 0.046875.
-- Prefix cache versus cold W4: exact greedy tokens. The 0.4B max-abs bounds are
-  0.0625 logits, 0.0625 prefill state, and 0.125 final state. The 1.5B bounds
-  are 0.078125 logits and 0.133675 state.
+- Mixed-prefix cache versus cold W4: exact greedy tokens with two genuinely
+  different equal-length prefixes, six hits (75%), and exact reorder/compact.
+  The 0.4B max-abs bounds are 0.0625 logits/state and 0.046875 final state.
+  The 1.5B bounds are 0.09375 logits, 0.137917 prefill state, and 0.191262
+  final state.
+- 1.5B W4 versus fp16: exact B8 x 64 greedy equality (100% match). The
+  prefill-logit max-abs is 6.125, so this is a token-level gate.
+- Real 1.5B target / 0.1B draft rejection: acceptance rate `0.116369`, 56
+  verifier/replay calls, and exact target-greedy output for all 512 B8 tokens.
 - Compiled zero-state prefill versus eager: exact logits and state on both
   validated concrete shapes.
 - Quantized embedding and linear payload ratios are both 0.265625 of their
@@ -84,8 +91,9 @@ scripts/run_apple_bsz8_active_acceptance.sh
 ```
 
 The one-click script removes only its four named prior JSONL outputs before a
-run, validates fidelity, and then executes the isolated comparisons. It enables
-LoRA-down double-GEMM fusion for 0.4B and disables it for 1.5B.
+run, validates fidelity, and then executes the isolated comparisons. It
+enables W/A LoRA-down double-GEMM fusion for both model sizes and evicts the
+now-redundant original W/A down-projection matrices.
 
 ## Candidate and rejected A/B routes
 
@@ -93,16 +101,17 @@ The accepted candidate combines the thread-local Metal WKV scan, fused
 scan+GroupNorm+bonus+gate post-processing, groupwise W4 Metal embedding lookup,
 guarded compiled zero-state prefill, fast norms, prefix-state coalescing where
 explicitly requested, and exact lockstep B8 speculative decode with a 0.1B
-RWKV draft. The 0.4B profile enables two-GEMM W/A LoRA-down fusion; the 1.5B
-profile disables it because the duplicate packed cache does not pay back at
-that model size.
+RWKV draft. Both profiles enable two-GEMM W/A LoRA-down fusion. The 1.5B route
+releases 18,874,368 bytes of redundant source matrices after packing.
 
 Rejected on this M5: a concatenated single-GEMM LoRA-down path, adding G/V to
-the fused down path, fused LoRA-up, grouped RKV W4, flattened rank-3 quantized
-matmul, group sizes 32/64, two-lane WKV state ownership, fp16 recurrent state,
-and threadgroup-resident full state. These remain disabled by default. The
-fused scan/post and two-GEMM LoRA-down candidates are not in this rejected
-list: order-balanced same-process measurements confirmed both are positive.
+the fused down path, fused LoRA-up, grouped RKV W4, blanket rank-3 flattening,
+group sizes 32/64, SIMD/two-lane WKV state ownership, MXFP4/NVFP4, nested local
+FFN compilation, fp16 recurrent state, and threadgroup-resident full state.
+Selective flattening is enabled only for exact wide-to-narrow groupwise FFN
+value projections; the end-to-end same-process B8 gain is `1.0066x` with zero
+logit/state difference. The fused scan/post and two-GEMM LoRA-down candidates
+also remain accepted.
 
 The remaining 1.5B cold-prefill work is a native W4 FFN/projection or block
 megakernel. Cache/wrapper tuning alone cannot close that acceptance row.
