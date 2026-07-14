@@ -4,7 +4,7 @@ Only **unfinished, actionable HF-adapter work** belongs here. Completed
 experiments and historical plans belong in benchmark artifacts or Git history.
 Native vLLM/SGLang scheduler work is out of scope for this file.
 
-Last updated: **2026-07-12**.
+Last updated: **2026-07-13**.
 
 ## P0 — Final production gaps
 
@@ -31,6 +31,28 @@ the declared same-card fp16 equivalence/speed threshold. See
 - [ ] Recheck RTX 4090 prompt-512 historical high-water reference.
 - [ ] Add larger-model prefill/decode rows with explicit memory ceilings.
 - [ ] Keep shape, dtype, checkpoint and timing method identical.
+
+### 2a. Verified-FLA Qwen3.5 RTX 5070 comparison
+
+- [x] Define a 5070-compatible FLA core contract that independently reports
+      the optional Windows `causal-conv1d` capability.
+- [x] Run the Qwen3.5 2B fp16 prompt128/decode8/bsz1 operator-contract smoke on
+      the RTX 5070 Laptop.
+- [x] Compare FLA and explicit Torch oracle logits/greedy decode before speed
+      promotion.
+- [x] Run the first 72-cell 1.5B RWKV vs 2B Qwen matrix with
+      `--qwen-backend fla`; do not merge historical V100 forced-Torch rows.
+- [x] Record exact 5070, driver, CUDA, Torch, Triton, FLA, Transformers, and
+      causal-conv1d versions with operator-origin telemetry.
+
+Result: correctness and coverage pass, but strict speed is only 35/72 because
+prefill reaches >=1.05x in 35/72 cells. Decode is >=1.0x in 72/72 and >=1.05x
+in 71/72. Larger 4B/9B feasibility and prefill stabilization remain follow-up.
+
+Acceptance: every Qwen reference row reports the verified FLA core backend.
+Rows with missing Windows `causal-conv1d` must explicitly report
+`qwen_fla_gated_delta_rule_torch_conv`; they are not full-fusion claims. The
+2026-07-12 V100 Torch matrix remains diagnostic only.
 
 ### 3. Missing hardware
 

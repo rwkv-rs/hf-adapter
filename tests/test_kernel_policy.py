@@ -140,6 +140,7 @@ def test_policy_defaults_are_conservative() -> None:
         (2, 2048, 16),
         (8, 128, 16),
     )
+    assert rtx3090.prefill_self_chunk_h_tile_shapes == ((4, 2048, 16, 16),)
     assert rtx3090.prefill_self_chunk_model_shapes == (
         (4096, 32, 1, 512),
         (4096, 32, 2, 512),

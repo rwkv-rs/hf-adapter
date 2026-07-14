@@ -76,6 +76,7 @@ class KernelPolicy:
     prefill_self_chunk_min_tokens: int = 1024
     prefill_self_chunk_size: int = 16
     prefill_self_chunk_shape_sizes: tuple[tuple[int, int, int], ...] = ()
+    prefill_self_chunk_h_tile_shapes: tuple[tuple[int, int, int, int], ...] = ()
     prefill_self_chunk_model_shapes: tuple[tuple[int, int, int, int], ...] = ()
     prefill_scan_block_m: int | None = None
     prefill_scan_block_m_b2: int | None = None
@@ -559,6 +560,9 @@ def policy_for_profile(profile: GPUProfile) -> KernelPolicy:
             prefill_self_chunk_size=32,
             prefill_self_chunk_shape_sizes=(
                 ((2, 512, 16), (2, 2048, 16), (8, 128, 16)) if is_3090 else ()
+            ),
+            prefill_self_chunk_h_tile_shapes=(
+                ((4, 2048, 16, 16),) if is_3090 else ()
             ),
             prefill_self_chunk_model_shapes=(
                 (

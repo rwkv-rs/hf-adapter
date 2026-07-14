@@ -71,6 +71,9 @@ class RunSpec:
     def raw_key(self) -> tuple[Any, ...]:
         return (*self.cell_key, self.model_role)
 
+    def raw_key_for_backend(self, qwen_backend: str) -> tuple[Any, ...]:
+        return (*self.raw_key, qwen_backend)
+
 
 def parse_pair_spec(value: str) -> PairSpec:
     if "=" not in value or "::" not in value:
@@ -131,7 +134,10 @@ def build_run_specs(config: MatrixConfig) -> list[RunSpec]:
 
 
 def row_key(row: dict[str, Any]) -> tuple[Any, ...]:
-    return tuple(row.get(field) for field in CELL_FIELDS) + (row.get("model_role"),)
+    return tuple(row.get(field) for field in CELL_FIELDS) + (
+        row.get("model_role"),
+        row.get("qwen_backend_requested", "auto"),
+    )
 
 
 def existing_keys(path: Path) -> set[tuple[Any, ...]]:
@@ -212,6 +218,7 @@ def append_orchestrator_failure(
     cmd: list[str],
     proc: subprocess.CompletedProcess[str],
     *,
+    qwen_backend: str = "auto",
     benchmark_matrix: str,
 ) -> None:
     row = {
@@ -225,6 +232,7 @@ def append_orchestrator_failure(
         "model_id_or_path": spec.model,
         "dtype": spec.dtype,
         "quantization": spec.quantization,
+        "qwen_backend_requested": qwen_backend,
         "batch_size": spec.batch_size,
         "prompt_tokens": spec.prompt_tokens,
         "decode_tokens": spec.decode_tokens,
@@ -283,7 +291,12 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--prefill-chunk-size", type=int, default=0)
     ap.add_argument("--rwkv-attn-mode", choices=["chunk", "fused_recurrent"], default="fused_recurrent")
     ap.add_argument("--rwkv-code-source", choices=["repo", "model"], default="repo")
-    ap.add_argument("--qwen-backend", choices=["auto", "torch"], default="auto")
+    ap.add_argument(
+        "--qwen-backend",
+        choices=["auto", "fla", "torch"],
+        default="fla",
+        help="Require verified Qwen FLA Gated DeltaNet operators by default",
+    )
     ap.add_argument("--require-qwen-fast-path", action="store_true")
     ap.add_argument(
         "--model-roles",
@@ -293,6 +306,11 @@ def parse_args() -> argparse.Namespace:
         help="Run one side at a time when both checkpoints cannot coexist on local storage",
     )
     ap.add_argument("--rwkv-fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="native_graph")
+    ap.add_argument(
+        "--rwkv-bnb8-skip-policy",
+        choices=["memory", "decode_rk", "decode_hot"],
+        default="memory",
+    )
     ap.add_argument("--python-bin", default=sys.executable)
     ap.add_argument("--bench-script", default=str(Path(__file__).with_name("bench_cross_model_speed.py")))
     ap.add_argument("--results", type=Path, required=True)
@@ -314,7 +332,28 @@ def build_run_environment(args: argparse.Namespace, base: dict[str, str] | None 
     # PyTorch native model remains an explicitly separate experimental lane.
     env["RWKV7_NATIVE_MODEL"] = "0"
     env.setdefault("RWKV7_NATIVE_MODEL_JIT", "1")
-    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    if os.name != "nt":
+        env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    return env
+
+
+def build_worker_environment(
+    base: dict[str, str],
+    spec: RunSpec,
+    qwen_backend: str,
+    rwkv_bnb8_skip_policy: str = "memory",
+) -> dict[str, str]:
+    """Isolate import-time Qwen backend selection for each fresh worker."""
+
+    env = base.copy()
+    if spec.model_kind == "qwen35" and qwen_backend == "torch":
+        env["RWKV7_QWEN35_FORCE_TORCH"] = "1"
+    else:
+        env.pop("RWKV7_QWEN35_FORCE_TORCH", None)
+    if spec.model_kind == "rwkv" and spec.quantization == "bnb8":
+        env["RWKV7_BNB_SKIP_POLICY"] = rwkv_bnb8_skip_policy
+    else:
+        env.pop("RWKV7_BNB_SKIP_POLICY", None)
     return env
 
 
@@ -351,8 +390,9 @@ def main() -> int:
     failures = 0
     started = time.perf_counter()
     for index, spec in enumerate(specs, 1):
-        if spec.raw_key in seen:
-            print(f"skip existing {index}/{len(specs)} {spec.raw_key}", flush=True)
+        raw_key = spec.raw_key_for_backend(args.qwen_backend)
+        if raw_key in seen:
+            print(f"skip existing {index}/{len(specs)} {raw_key}", flush=True)
             continue
         cmd = worker_command(args, spec)
         print(f"\n[{index}/{len(specs)}] $ " + " ".join(shlex.quote(part) for part in cmd), flush=True)
@@ -360,9 +400,12 @@ def main() -> int:
             executed += 1
         else:
             row_started = time.perf_counter()
-            run_env = env.copy()
-            if spec.model_kind == "qwen35" and args.qwen_backend == "torch":
-                run_env["RWKV7_QWEN35_FORCE_TORCH"] = "1"
+            run_env = build_worker_environment(
+                env,
+                spec,
+                args.qwen_backend,
+                args.rwkv_bnb8_skip_policy,
+            )
             proc = subprocess.run(cmd, text=True, capture_output=True, env=run_env)
             print(proc.stdout, end="", flush=True)
             if proc.stderr:
@@ -370,15 +413,16 @@ def main() -> int:
             current_keys = existing_keys(args.results)
             if proc.returncode != 0:
                 failures += 1
-                if spec.raw_key not in current_keys:
+                if raw_key not in current_keys:
                     append_orchestrator_failure(
                         args.results,
                         spec,
                         cmd,
                         proc,
+                        qwen_backend=args.qwen_backend,
                         benchmark_matrix=args.benchmark_matrix,
                     )
-                    current_keys.add(spec.raw_key)
+                    current_keys.add(raw_key)
                 if args.fail_fast:
                     return proc.returncode
             seen.update(current_keys)

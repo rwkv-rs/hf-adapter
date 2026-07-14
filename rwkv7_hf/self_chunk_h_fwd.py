@@ -22,13 +22,12 @@ def resolve_chunk_h_tiles(
     *,
     batch_size: int | None = None,
     tokens: int | None = None,
+    preferred_tiles: tuple[int, int] | None = None,
 ) -> tuple[int, int]:
     """Resolve the recurrent chunk-H ``(BV, BC)`` tiles for this device.
 
-    Consumer Ampere has substantially less shared memory per SM than A100.
-    An exact RTX 3090 B4/P2048 sweep therefore uses a 16x16 tile.  Do not
-    silently apply that route to every sm80 device or unmeasured 3090 shape:
-    A100 and the remaining routes retain the original 32x32 default. Explicit
+    Capability tiers select conservative defaults. Exact-card, exact-shape
+    overrides are supplied by ``kernel_policy.py`` through ``preferred_tiles``;
     environment overrides remain the highest-priority reproduction mechanism.
     """
 
@@ -36,20 +35,10 @@ def resolve_chunk_h_tiles(
         bv, bc = 64, 64
     elif check_shared_mem('ampere', device_index):
         bv, bc = 32, 32
-        try:
-            # Only the measured B4/P2048 route benefits from BC16 while still
-            # using a chunk-32 temporal tile. B2 already has chunk_size=16;
-            # retain BC32 for unmeasured RTX 3090 shapes.
-            if (
-                "3090" in torch.cuda.get_device_name(device_index).lower()
-                and (batch_size, tokens) == (4, 2048)
-            ):
-                bv = 16
-                bc = 16
-        except Exception:
-            pass
     else:
         bv, bc = 16, 16
+    if preferred_tiles is not None:
+        bv, bc = (int(value) for value in preferred_tiles)
 
     raw_bv = os.environ.get("RWKV7_NATIVE_PREFILL_SELF_CHUNK_H_BV")
     raw_bc = os.environ.get("RWKV7_NATIVE_PREFILL_SELF_CHUNK_H_BC")
@@ -180,6 +169,7 @@ def chunk_dplr_fwd_h(
     chunk_size: int = 64,
     chunk_indices: torch.LongTensor | None = None,
     native_state_v_k: bool = False,
+    preferred_tiles: tuple[int, int] | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     B, T, H, K, V = *kg.shape, u.shape[-1]
     BT = chunk_size
@@ -198,6 +188,7 @@ def chunk_dplr_fwd_h(
         BT,
         batch_size=B,
         tokens=T,
+        preferred_tiles=preferred_tiles,
     )
     NK = triton.cdiv(K, BK)
     NV = triton.cdiv(V, BV)

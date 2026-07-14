@@ -219,6 +219,18 @@ def _fast_forward_quant_enabled() -> bool:
     return os.environ.get("RWKV7_FAST_FORWARD_QUANT", "1") not in _FALSE_VALUES
 
 
+def _fast_token_quant_enabled() -> bool:
+    """Allow validated external quantized modules in the native graph path."""
+
+    return os.environ.get("RWKV7_FAST_TOKEN_QUANT", "0") not in _FALSE_VALUES
+
+
+def _fast_prefill_quant_enabled() -> bool:
+    """Allow external quantized modules through the native prefill bridge."""
+
+    return os.environ.get("RWKV7_FAST_PREFILL_QUANT", "0") not in _FALSE_VALUES
+
+
 def _fast_prefill_enabled() -> bool:
     """Allow normal HF forward/generate to use the native prefill path."""
 
@@ -242,6 +254,8 @@ def _bnb_skip_policy(policy: str | None = None) -> str:
         return "output_hot"
     if policy in {"prefill", "prefill_hot", "throughput"}:
         return "prefill_hot"
+    if policy in {"decode_rk", "rk_dense"}:
+        return "decode_rk"
     if policy in {"dense", "all_dense", "no_quant"}:
         return "dense"
     return "memory"
@@ -1622,6 +1636,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
     _rwkv7_bnb_policy_extra_skips = {
         "memory": [],
         "output_hot": [r".*attn\.o_proj"],
+        "decode_rk": [r".*attn\.(r_proj|k_proj)"],
         "decode_hot": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)"],
         "prefill_hot": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)", r".*ffn\.key"],
         "dense": [r".*attn\.(r_proj|k_proj|v_proj|o_proj)", r".*ffn\.(key|value)"],
@@ -1647,8 +1662,13 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
                     skips.append(f"model.layers.{layer_idx}.attn.{lora_name}.lora.{linear_idx}")
             if policy == "output_hot":
                 skips.append(f"model.layers.{layer_idx}.attn.o_proj")
-            if policy in {"decode_hot", "prefill_hot", "dense"}:
-                for proj_name in ("r_proj", "k_proj", "v_proj", "o_proj"):
+            if policy in {"decode_rk", "decode_hot", "prefill_hot", "dense"}:
+                proj_names = (
+                    ("r_proj", "k_proj")
+                    if policy == "decode_rk"
+                    else ("r_proj", "k_proj", "v_proj", "o_proj")
+                )
+                for proj_name in proj_names:
                     skips.append(f"model.layers.{layer_idx}.attn.{proj_name}")
             if policy == "prefill_hot":
                 skips.append(f"model.layers.{layer_idx}.ffn.key")
@@ -1929,9 +1949,14 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             if batch_size <= 0:
                 raise ValueError("rwkv7_warmup_fast_token batch sizes must be positive")
             chosen = self._rwkv7_resolve_fast_token_backend(batch_size) if requested == "auto" else requested
-            if chosen in {"native_graph", "native_jit"} and self._rwkv7_uses_external_quantization():
-                if chosen != "native_graph" or not _native_graph_external_quant_enabled():
-                    chosen = "fla"
+            if chosen == "native_jit" and self._rwkv7_uses_external_quantization():
+                chosen = "fla"
+            if (
+                chosen == "native_graph"
+                and self._rwkv7_uses_external_quantization()
+                and not self._rwkv7_external_quant_graph_enabled()
+            ):
+                chosen = "fla"
             if chosen == "native_graph":
                 if not self._rwkv7_can_use_native_backend("native_graph", batch_size):
                     if requested != "auto":
@@ -2057,19 +2082,31 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         # host. CUDA rejects that synchronization while a graph is capturing.
         return float(getter("llm_int8_threshold", 6.0)) <= 0.0
 
+    def _rwkv7_external_quant_graph_enabled(self) -> bool:
+        """Return whether this BnB load has an opt-in, graph-safe route."""
+
+        if not self._rwkv7_external_quant_native_safe() or not self._rwkv7_external_quant_graph_safe():
+            return False
+        if _native_graph_external_quant_enabled():
+            return True
+        quant_config = self._rwkv7_external_quant_config()
+        getter = (
+            quant_config.get
+            if isinstance(quant_config, dict)
+            else lambda name, default=None: getattr(quant_config, name, default)
+        )
+        is_w4 = bool(getattr(self, "is_loaded_in_4bit", False) or getter("load_in_4bit", False))
+        is_w8 = bool(getattr(self, "is_loaded_in_8bit", False) or getter("load_in_8bit", False))
+        return bool(_fast_token_quant_enabled() and is_w4 and not is_w8)
+
     def _rwkv7_can_use_native_backend(self, backend: str, batch_size: int) -> bool:
         if self._rwkv7_has_multi_cuda_device_map():
             return False
         external_quant = self._rwkv7_uses_external_quantization()
-        if external_quant:
-            if not self._rwkv7_external_quant_native_safe():
-                return False
-            if (
-                backend != "native_graph"
-                or not _native_graph_external_quant_enabled()
-                or not self._rwkv7_external_quant_graph_safe()
-            ):
-                return False
+        if external_quant and (
+            backend != "native_graph" or not self._rwkv7_external_quant_graph_enabled()
+        ):
+            return False
         if backend == "native_jit":
             # TorchScript packs are tensor-only. Native/external quant modules
             # remain callable operands and therefore require the eager CUDA-
@@ -2107,8 +2144,12 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         requested = _fast_token_backend()
         if requested != "auto":
             if self._rwkv7_uses_external_quantization() and requested in {"native_graph", "native_jit"}:
-                if requested != "native_graph" or not _native_graph_external_quant_enabled():
+                if requested != "native_graph" or not self._rwkv7_external_quant_graph_enabled():
                     return "fla"
+                # Bitsandbytes/HF quantization wraps Linear weights in packed
+                # int8/int4 modules. Native JIT remains tensor-only, while the
+                # graph path requires an explicit opt-in before retaining the
+                # wrappers as callable capture operands.
             return requested
         if self._rwkv7_can_use_native_backend("native_graph", batch_size):
             return "native_graph"
@@ -2509,12 +2550,12 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         external_quant = self._rwkv7_uses_external_quantization()
         quantized_operands = self._rwkv7_uses_quantized_linear_operands()
         if external_quant and (
-            not _native_prefill_external_quant_enabled()
+            not (_native_prefill_external_quant_enabled() or _fast_prefill_quant_enabled())
             or not self._rwkv7_external_quant_native_safe()
         ):
             raise RuntimeError(
                 "native prefill external-quant bridge requires a supported BnB W8/W4 load "
-                "and RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT=1"
+                "and RWKV7_NATIVE_PREFILL_EXTERNAL_QUANT=1 or RWKV7_FAST_PREFILL_QUANT=1"
             )
         source_seen = None
         if past_key_values is not None and hasattr(past_key_values, "get_seq_length"):
@@ -2525,7 +2566,11 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
         past = RWKV7StateCache.from_legacy_cache(past_key_values)
         initial_seen = source_seen if source_seen is not None else (int(past.get_seq_length()) if hasattr(past, "get_seq_length") else 0)
         if _native_prefill_graph_enabled() and (
-            not external_quant or _native_prefill_external_quant_graph_enabled()
+            not external_quant
+            or (
+                _native_prefill_external_quant_graph_enabled()
+                and self._rwkv7_external_quant_graph_safe()
+            )
         ):
             keep_value = 0 if logits_to_keep is None else int(logits_to_keep)
             prompt_tokens = int(input_ids.shape[1])
@@ -3183,7 +3228,7 @@ class RWKV7ForCausalLM(_RWKV7ForCausalLM):
             return None
         if self._rwkv7_uses_external_quantization():
             if (
-                not _native_prefill_external_quant_enabled()
+                not (_native_prefill_external_quant_enabled() or _fast_prefill_quant_enabled())
                 or not self._rwkv7_external_quant_native_safe()
             ):
                 return None
