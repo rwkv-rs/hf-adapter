@@ -529,6 +529,13 @@ def environment_metadata(args: argparse.Namespace) -> dict[str, Any]:
         "qwen_force_torch": QWEN_FORCE_TORCH,
         "qwen_fla_expected_device_route": qwen_device_route,
         "rwkv_fast_token_backend_requested": os.environ.get("RWKV7_FAST_TOKEN_BACKEND"),
+        "rwkv_fast_token_quant_requested": os.environ.get("RWKV7_FAST_TOKEN_QUANT"),
+        "rwkv_fast_prefill_requested": os.environ.get("RWKV7_FAST_PREFILL"),
+        "rwkv_fast_prefill_quant_requested": os.environ.get("RWKV7_FAST_PREFILL_QUANT"),
+        "rwkv_prefill_graph_requested": os.environ.get("RWKV7_NATIVE_PREFILL_GRAPH"),
+        "rwkv_prefill_fused_scan_requested": os.environ.get("RWKV7_NATIVE_PREFILL_FUSED_SCAN"),
+        "rwkv_prefill_scan_block_m_requested": os.environ.get("RWKV7_NATIVE_PREFILL_SCAN_BLOCK_M"),
+        "rwkv_prefill_scan_num_warps_requested": os.environ.get("RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS"),
     }
 
 
@@ -574,6 +581,7 @@ def benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "decode_ms_per_step": round(1000 * decode_s / args.decode_tokens, 6),
         "step_backend": step_backend,
         "effective_backend": qwen_effective_backend(args, qwen_contract) or effective_backend or step_backend,
+        "prefill_backend_effective": getattr(model, "rwkv7_last_fast_prefill_backend", lambda: None)(),
         "cache_type": cache_type,
         "model_footprint_mb": model_footprint_mb(model),
         "peak_vram_mb": peak_mb(args.device),

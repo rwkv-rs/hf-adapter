@@ -57,6 +57,8 @@ def _graph_linear_shape(operand) -> tuple[int, int]:
 def _graph_linear_call(x: torch.Tensor, operand) -> torch.Tensor:
     if _graph_linear_is_dense(operand):
         return F.linear(x, operand)
+    if x.dim() == 1:
+        return operand(x.unsqueeze(0)).squeeze(0)
     return operand(x)
 
 
@@ -462,6 +464,15 @@ def _native_prefill_default_scan_block_m(head_dim: int, batch_size: int | None =
                 name = ""
             if "4090" in name:
                 return 8 if batch_size is not None and int(batch_size) >= 2 else 4
+        if int(major) >= 12:
+            batch_size = 1 if batch_size is None else int(batch_size)
+            if batch_size <= 1:
+                return 8
+            if batch_size <= 2:
+                return 16
+            if batch_size <= 4:
+                return 32
+            return 64
     return head_dim
 
 
@@ -481,7 +492,17 @@ def _native_prefill_scan_num_warps(head_dim: int, block_m: int | None = None) ->
 
     if block_m is None:
         block_m = _native_prefill_scan_block_m(head_dim)
-    default = 4 if int(block_m) < int(head_dim) else 8
+    is_blackwell = False
+    if torch.cuda.is_available():
+        try:
+            major, _minor = torch.cuda.get_device_capability()
+            is_blackwell = int(major) >= 12
+        except Exception:
+            pass
+    if is_blackwell and int(head_dim) == 64:
+        default = 4 if int(block_m) >= 64 else 1
+    else:
+        default = 4 if int(block_m) < int(head_dim) else 8
     value = env_int("RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS", default, lower=1, upper=8)
     if value not in {1, 2, 4, 8}:
         raise ValueError(f"RWKV7_NATIVE_PREFILL_SCAN_NUM_WARPS must be one of 1, 2, 4, or 8; got {value}")
@@ -1759,9 +1780,9 @@ def prefill(
             xa = h + xx * x_a.view(1, 1, hidden)
             xg = h + xx * x_g.view(1, 1, hidden)
 
-        r = F.linear(xr, Rw)
-        k = F.linear(xk, Kw)
-        v = F.linear(xv, Vw)
+        r = _graph_linear_call(xr, Rw)
+        k = _graph_linear_call(xk, Kw)
+        v = _graph_linear_call(xv, Vw)
         v_gate = None
         use_prefill_wavg_lora = layer_idx > 0 and _native_prefill_fused_wavg_lora_enabled(B * T)
         if use_prefill_wavg_lora:
@@ -1792,11 +1813,13 @@ def prefill(
             g = g.view(B, T, hidden)
             v_gate = v_gate.view(B, T, hidden)
         else:
-            w = F.linear(torch.tanh(F.linear(xw, w1)), w2, w0)
-            a = torch.sigmoid(a0 + F.linear(F.linear(xa, a1), a2))
-            g = F.linear(torch.sigmoid(F.linear(xg, g1)), g2)
+            w = _graph_linear_call_with_explicit_bias(
+                torch.tanh(_graph_linear_call(xw, w1)), w2, w0
+            )
+            a = torch.sigmoid(a0 + _graph_linear_call(_graph_linear_call(xa, a1), a2))
+            g = _graph_linear_call(torch.sigmoid(_graph_linear_call(xg, g1)), g2)
             if layer_idx != 0:
-                v_gate = torch.sigmoid(v0 + F.linear(F.linear(xv, v1), v2))
+                v_gate = torch.sigmoid(v0 + _graph_linear_call(_graph_linear_call(xv, v1), v2))
         use_fused_scan_output = _native_prefill_fused_scan_output_enabled()
         use_clampw_scan = _native_prefill_fused_clampw_scan_enabled() and not use_fused_scan_output
         use_fused_state_scan = _native_prefill_fused_state_scan_enabled(B) and not use_fused_scan_output
@@ -1925,7 +1948,7 @@ def prefill(
         out_projected = False
         if use_fused_scan_output:
             pass
-        elif _native_prefill_fused_output_project_enabled():
+        elif _native_prefill_fused_output_project_enabled() and _graph_linear_is_dense(Ow):
             out = fused_attn_output_project(
                 out.reshape(B * T, hidden),
                 r.reshape(B * T, H, N),
@@ -1964,7 +1987,7 @@ def prefill(
             sk = (r.view(B, T, H, N) * k.view(B, T, H, N) * r_k.view(1, 1, H, N)).sum(dim=-1, keepdim=True)
             out = (out + (sk * v.view(B, T, H, N)).view(B, T, hidden)) * g
         if not out_projected:
-            out = F.linear(out, Ow)
+            out = _graph_linear_call(out, Ow)
         x = residual + out
         xpa[layer_idx] = next_xpa if use_sequence_attn_mix else h[:, -1, :].contiguous()
         state[layer_idx] = new_state.contiguous()
@@ -1978,7 +2001,7 @@ def prefill(
             fxx = prev_h2 - h2
             fk = h2 + fxx * fx_k.view(1, 1, hidden)
             next_xpf = h2[:, -1, :].contiguous()
-        fk = F.linear(fk, fK)
+        fk = _graph_linear_call(fk, fK)
         if (
             use_prefill_shift_mix
             and fused_relu_square is not None
@@ -1988,7 +2011,7 @@ def prefill(
             fk = fused_relu_square(fk)
         else:
             fk = torch.relu(fk) ** 2
-        x = residual + F.linear(fk, fV)
+        x = residual + _graph_linear_call(fk, fV)
         xpf[layer_idx] = next_xpf
 
     x = F.layer_norm(x, [hidden], base.norm.weight, base.norm.bias, 1e-5)

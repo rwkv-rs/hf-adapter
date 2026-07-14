@@ -267,6 +267,11 @@ def parse_args() -> argparse.Namespace:
         help="Require verified Qwen FLA Gated DeltaNet operators by default",
     )
     ap.add_argument("--rwkv-fast-token-backend", choices=["auto", "fla", "native_jit", "native_graph"], default="native_graph")
+    ap.add_argument(
+        "--rwkv-bnb8-skip-policy",
+        choices=["memory", "decode_rk", "decode_hot"],
+        default="memory",
+    )
     ap.add_argument("--python-bin", default=sys.executable)
     ap.add_argument("--bench-script", default=str(Path(__file__).with_name("bench_cross_model_speed.py")))
     ap.add_argument("--results", type=Path, required=True)
@@ -297,6 +302,7 @@ def build_worker_environment(
     base: dict[str, str],
     spec: RunSpec,
     qwen_backend: str,
+    rwkv_bnb8_skip_policy: str = "memory",
 ) -> dict[str, str]:
     """Isolate import-time Qwen backend selection for each fresh worker."""
 
@@ -305,6 +311,10 @@ def build_worker_environment(
         env["RWKV7_QWEN35_FORCE_TORCH"] = "1"
     else:
         env.pop("RWKV7_QWEN35_FORCE_TORCH", None)
+    if spec.model_kind == "rwkv" and spec.quantization == "bnb8":
+        env["RWKV7_BNB_SKIP_POLICY"] = rwkv_bnb8_skip_policy
+    else:
+        env.pop("RWKV7_BNB_SKIP_POLICY", None)
     return env
 
 
@@ -337,7 +347,12 @@ def main() -> int:
             executed += 1
         else:
             row_started = time.perf_counter()
-            run_env = build_worker_environment(env, spec, args.qwen_backend)
+            run_env = build_worker_environment(
+                env,
+                spec,
+                args.qwen_backend,
+                args.rwkv_bnb8_skip_policy,
+            )
             proc = subprocess.run(cmd, text=True, capture_output=True, env=run_env)
             print(proc.stdout, end="", flush=True)
             if proc.stderr:

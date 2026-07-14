@@ -393,6 +393,7 @@ def main() -> int:
 
     old_backend = os.environ.get("RWKV7_FAST_TOKEN_BACKEND")
     old_fast_forward = os.environ.get("RWKV7_FAST_FORWARD")
+    old_fast_token_quant = os.environ.get("RWKV7_FAST_TOKEN_QUANT")
     old_jit_block_step = modeling._native_jit_block_step
     old_jit_block_step_batched = modeling._native_jit_block_step_batched
     old_jit_extract = modeling._native_jit_extract
@@ -411,6 +412,9 @@ def main() -> int:
         )
         owner._rwkv7_uses_external_quantization = types.MethodType(
             modeling.RWKV7ForCausalLM._rwkv7_uses_external_quantization, owner
+        )
+        owner._rwkv7_external_quant_graph_enabled = types.MethodType(
+            modeling.RWKV7ForCausalLM._rwkv7_external_quant_graph_enabled, owner
         )
         owner._rwkv7_can_use_native_backend = types.MethodType(
             modeling.RWKV7ForCausalLM._rwkv7_can_use_native_backend, owner
@@ -452,6 +456,14 @@ def main() -> int:
         os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "native_jit"
         assert owner._rwkv7_resolve_fast_token_backend(1) == "fla"
         assert owner.rwkv7_warmup_fast_token([1], backend="native_jit") == {1: "fla"}
+        os.environ["RWKV7_FAST_TOKEN_QUANT"] = "1"
+        os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "native_graph"
+        assert modeling._fast_token_quant_enabled() is True
+        assert owner._rwkv7_resolve_fast_token_backend(1) == "native_graph"
+        owner.is_loaded_in_8bit = True
+        assert owner._rwkv7_resolve_fast_token_backend(1) == "fla"
+        owner.is_loaded_in_8bit = False
+        os.environ.pop("RWKV7_FAST_TOKEN_QUANT", None)
         os.environ["RWKV7_FAST_TOKEN_BACKEND"] = "auto"
         owner.is_loaded_in_4bit = False
 
@@ -477,6 +489,10 @@ def main() -> int:
         os.environ["RWKV7_FAST_FORWARD"] = "1"
         assert modeling._fast_forward_enabled() is True
     finally:
+        if old_fast_token_quant is None:
+            os.environ.pop("RWKV7_FAST_TOKEN_QUANT", None)
+        else:
+            os.environ["RWKV7_FAST_TOKEN_QUANT"] = old_fast_token_quant
         modeling._native_jit_block_step = old_jit_block_step
         modeling._native_jit_block_step_batched = old_jit_block_step_batched
         modeling._native_jit_extract = old_jit_extract
